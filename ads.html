@@ -112,7 +112,12 @@ button { font-family: inherit; cursor: pointer; border: none; }
   align-items: start;
 }
 @media (max-width: 900px) {
-  .above-fold-inner { grid-template-columns: 1fr; gap: 40px; }
+  .above-fold-inner { grid-template-columns: 1fr; gap: 32px; }
+  .above-fold-inner .hero-copy { order: 2; }
+  .above-fold-inner > div:last-child { order: 1; }
+  .social-proof { display: none; }
+  .objection-bullets { display: none; }
+  .hero-sub { font-size: 15px; margin-bottom: 20px; }
 }
 
 /* LEFT: HERO COPY */
@@ -382,12 +387,12 @@ h2.section-title em { font-style: italic; font-weight: 400; color: var(--accent-
 .tier-bonuses { margin-top: 16px; padding-top: 16px; border-top: 2px dashed rgba(10,22,40,0.1); }
 .tier-bonuses-label { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.14em; color: var(--muted); margin-bottom: 10px; text-transform: uppercase; }
 .tier-bonus-item { display: flex; align-items: flex-start; gap: 8px; font-size: 13px; color: #334155; margin-bottom: 7px; line-height: 1.35; }
-.tier-bonus-item .emoji { flex-shrink: 0; }
 .tier-bonus-value { font-family: var(--font-mono); font-size: 10px; color: var(--muted); white-space: nowrap; margin-left: auto; padding-left: 8px; flex-shrink: 0; }
 .tier-total { background: var(--paper-warm); padding: 14px 28px; border-top: 1px solid rgba(10,22,40,0.08); }
 .tier-total-row { display: flex; justify-content: space-between; align-items: center; font-size: 13px; }
-.tier-total-row .label { color: var(--muted); font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; }
-.tier-total-row .val { font-family: var(--font-display); font-size: 18px; font-weight: 700; color: var(--muted); text-decoration: line-through; }
+.tier-total-row .tier-label { color: var(--muted); font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; text-decoration: none !important; }
+.tier-total-row .val { font-family: var(--font-display); font-size: 18px; font-weight: 700; color: var(--ink); white-space: nowrap; text-decoration: none; }
+
 .tier-cta { padding: 20px 28px; }
 .tier-cta a { display: block; text-align: center; background: var(--accent); color: white; padding: 15px; font-weight: 700; font-size: 15px; border-radius: var(--radius); transition: background 0.2s; letter-spacing: -0.01em; }
 .tier-cta a:hover { background: var(--accent-deep); }
@@ -660,8 +665,8 @@ footer { background: #060e1a; color: var(--muted-dark); padding: 28px 0; font-si
         </div>
 
         <!-- BELOW FORM: call option -->
-        <div style="text-align:center; margin-top:16px;">
-          <a href="tel:+19706589454" style="font-size:14px; color:var(--muted); font-weight:500;">
+        <div style="text-align:center; margin-top:16px; padding: 12px 0;">
+          <a href="tel:+19706589454" style="font-size:14px; color:var(--muted); font-weight:500; padding: 10px 20px; display:inline-block;">
             📞 Prefer to call? (970) 658-9454
           </a>
         </div>
@@ -776,15 +781,15 @@ footer { background: #060e1a; color: var(--muted-dark); padding: 28px 0; font-si
           </ul>
           <div class="tier-bonuses">
             <div class="tier-bonuses-label">Bonuses Included</div>
-            <div class="tier-bonus-item"><span class="emoji">📸</span> <span>Before & After Photo Report — emailed same day</span> <span class="tier-bonus-value">$50 value</span></div>
-            <div class="tier-bonus-item"><span class="emoji">🧹</span> <span>The Deep Sweep — every corner, floor clean enough to park on</span> <span class="tier-bonus-value">$75 value</span></div>
-            <div class="tier-bonus-item"><span class="emoji">⚡</span> <span>Same-Day Rush Availability — no extra charge</span> <span class="tier-bonus-value">$150 value</span></div>
-            <div class="tier-bonus-item"><span class="emoji">🔍</span> <span>The Valuables Promise — anything found is yours, always</span> <span class="tier-bonus-value">Priceless</span></div>
+            <div class="tier-bonus-item">✓ <span>Before & After Photo Report — emailed same day</span> <span class="tier-bonus-value">$50 value</span></div>
+            <div class="tier-bonus-item">✓ <span>The Deep Sweep — every corner, floor clean enough to park on</span> <span class="tier-bonus-value">$75 value</span></div>
+            <div class="tier-bonus-item">✓ <span>Same-Day Rush Availability — no extra charge</span> <span class="tier-bonus-value">$150 value</span></div>
+            <div class="tier-bonus-item">✓ <span>The Valuables Promise — anything found is yours, always</span> <span class="tier-bonus-value">Priceless</span></div>
           </div>
         </div>
         <div class="tier-total">
           <div class="tier-total-row">
-            <span class="label">Total Bonus Value</span>
+            <span class="tier-label">Total Bonus Value</span>
             <span class="val">$275+</span>
           </div>
         </div>
@@ -818,18 +823,18 @@ footer { background: #060e1a; color: var(--muted-dark); padding: 28px 0; font-si
           </ul>
           <div class="tier-bonuses">
             <div class="tier-bonuses-label">Bonuses Included</div>
-            <div class="tier-bonus-item"><span class="emoji">📸</span> <span>Before & After Photo Report — multiple angles, emailed same day</span> <span class="tier-bonus-value">$50 value</span></div>
-            <div class="tier-bonus-item"><span class="emoji">🧹</span> <span>The Deep Sweep — every corner, floor spotless</span> <span class="tier-bonus-value">$75 value</span></div>
-            <div class="tier-bonus-item"><span class="emoji">📋</span> <span>The Donation Receipt Package — itemized, multi-charity, ready for your CPA</span> <span class="tier-bonus-value">$200–500 value</span></div>
-            <div class="tier-bonus-item"><span class="emoji">⚡</span> <span>Same-Day Rush Availability — no extra charge</span> <span class="tier-bonus-value">$200 value</span></div>
-            <div class="tier-bonus-item"><span class="emoji">🕐</span> <span>The 2-Hour Quote Guarantee — text a photo, firm price in 2 hours</span> <span class="tier-bonus-value">$50 value</span></div>
-            <div class="tier-bonus-item"><span class="emoji">🔍</span> <span>The Valuables Promise — full walkthrough, everything found is yours</span> <span class="tier-bonus-value">Priceless</span></div>
+            <div class="tier-bonus-item">✓ <span>Before & After Photo Report — multiple angles, emailed same day</span> <span class="tier-bonus-value">$50 value</span></div>
+            <div class="tier-bonus-item">✓ <span>The Deep Sweep — every corner, floor spotless</span> <span class="tier-bonus-value">$75 value</span></div>
+            <div class="tier-bonus-item">✓ <span>The Donation Receipt Package — itemized, multi-charity, ready for your CPA</span> <span class="tier-bonus-value">$200–500 value</span></div>
+            <div class="tier-bonus-item">✓ <span>Same-Day Rush Availability — no extra charge</span> <span class="tier-bonus-value">$200 value</span></div>
+            <div class="tier-bonus-item">✓ <span>The 2-Hour Quote Guarantee — text a photo, firm price in 2 hours</span> <span class="tier-bonus-value">$50 value</span></div>
+            <div class="tier-bonus-item">✓ <span>The Valuables Promise — full walkthrough, everything found is yours</span> <span class="tier-bonus-value">Priceless</span></div>
           </div>
         </div>
         <div class="tier-total">
           <div class="tier-total-row">
-            <span class="label">Total Bonus Value</span>
-            <span class="val">$575–825+</span>
+            <span class="tier-label">Total Bonus Value</span>
+            <span class="val">$575-825+</span>
           </div>
         </div>
         <div class="tier-cta"><a href="#form">Claim This Package &rarr;</a></div>
@@ -849,29 +854,29 @@ footer { background: #060e1a; color: var(--muted-dark); padding: 28px 0; font-si
         <div class="tier-body">
           <ul class="tier-features">
             <li><span class="check">✓</span> <div>Everything in Tier 1 & 2 — plus all of the below</div></li>
-            <li><span class="check">✓</span> <div><strong>Free on-site walkthrough</strong> — we assess the full scope, give you a firm flat price before any work begins</div></li>
-            <li><span class="check">✓</span> <div><strong>Multi-day availability</strong> — large jobs don't get rushed. We come back until done at the same flat rate</div></li>
-            <li><span class="check">✓</span> <div><strong>Crew scaling</strong> — if the job needs more hands we bring them, same flat rate regardless</div></li>
-            <li><span class="check">✓</span> <div><strong>Full estate donation coordination</strong> — multiple drop-offs, all receipts consolidated into one document for your estate attorney or CPA</div></li>
-            <li><span class="check">✓</span> <div><strong>Hazardous material flagging</strong> — we identify anything we can't haul and tell you exactly where to take it and the cost</div></li>
-            <li><span class="check">✓</span> <div>Priority emergency scheduling — listing, sale, or move this week? We make it happen</div></li>
-            <li><span class="check">✓</span> <div><strong>The Spouse & Realtor Approval Guarantee</strong> — if your partner or realtor isn't satisfied we come back until they are, no extra charge</div></li>
-            <li><span class="check">✓</span> <div>Dedicated direct contact — text or call us throughout the entire job, no middlemen</div></li>
+            <li><span class="check">✓</span> <div><strong>Free on-site walkthrough</strong> — we come to you first, assess the full scope, give you a firm flat price before any work begins. Zero surprises.</div></li>
+            <li><span class="check">✓</span> <div><strong>Extended availability</strong> — large jobs don't get rushed. If needed, we return the next day to finish at no extra charge.</div></li>
+            <li><span class="check">✓</span> <div><strong>Extra hands when needed</strong> — we bring additional help for large jobs so it still gets done in a single day whenever possible.</div></li>
+            <li><span class="check">✓</span> <div><strong>Full estate donation coordination</strong> — multiple charity drop-offs handled for you, all receipts consolidated into one clean document for your CPA or estate attorney.</div></li>
+            <li><span class="check">✓</span> <div><strong>Hazardous material flagging</strong> — we identify anything we can't haul and tell you exactly where to take it and what it costs.</div></li>
+            <li><span class="check">✓</span> <div>Priority scheduling — need it done this week for a listing, sale, or move? We make it work.</div></li>
+            <li><span class="check">✓</span> <div><strong>Realtor & Homeowner Approval Guarantee</strong> — if the space isn't cleared and cleaned to your satisfaction we come back until it is, no extra charge.</div></li>
+            <li><span class="check">✓</span> <div>Dedicated direct contact — text or call us throughout the entire job. No call centers, no middlemen.</div></li>
           </ul>
           <div class="tier-bonuses">
             <div class="tier-bonuses-label">Bonuses Included</div>
-            <div class="tier-bonus-item"><span class="emoji">📸</span> <span>Full Before & After Report — multiple angles, timestamped</span> <span class="tier-bonus-value">$100 value</span></div>
-            <div class="tier-bonus-item"><span class="emoji">🧹</span> <span>Deep Sweep & Wipe-Down — shelving, walls, floor spotless</span> <span class="tier-bonus-value">$150 value</span></div>
-            <div class="tier-bonus-item"><span class="emoji">📋</span> <span>Master Donation Receipt Package — multi-charity, ready for CPA</span> <span class="tier-bonus-value">$500–1,000 value</span></div>
-            <div class="tier-bonus-item"><span class="emoji">🏠</span> <span>Realtor Ready Guarantee — staged & clean for listing photos within 24hrs</span> <span class="tier-bonus-value">$200 value</span></div>
-            <div class="tier-bonus-item"><span class="emoji">📞</span> <span>48-Hour Post-Job Check-In — if anything was missed we come back free</span> <span class="tier-bonus-value">$100 value</span></div>
-            <div class="tier-bonus-item"><span class="emoji">🤝</span> <span>Referral Partner Status — $75 per booked referral, paid same day</span> <span class="tier-bonus-value">Ongoing</span></div>
+            <div class="tier-bonus-item">✓ <span>Full Before & After Report — multiple angles, timestamped, emailed same day</span> <span class="tier-bonus-value">$100 value</span></div>
+            <div class="tier-bonus-item">✓ <span>Deep Sweep & Wipe-Down — shelving wiped, walls cleared, floor spotless</span> <span class="tier-bonus-value">$150 value</span></div>
+            <div class="tier-bonus-item">✓ <span>Master Donation Receipt Package — multi-charity, fully itemized, ready for your CPA</span> <span class="tier-bonus-value">Included</span></div>
+            <div class="tier-bonus-item">✓ <span>Cleared & Clean for Listing Photos — garage emptied and swept within your timeline</span> <span class="tier-bonus-value">$200 value</span></div>
+            <div class="tier-bonus-item">✓ <span>48-Hour Post-Job Check-In — if anything was missed we come back at no charge</span> <span class="tier-bonus-value">$100 value</span></div>
+            <div class="tier-bonus-item">✓ <span>Referral Partner Status — send us a job that books and we pay you $75 same day</span> <span class="tier-bonus-value">Ongoing</span></div>
           </div>
         </div>
         <div class="tier-total">
           <div class="tier-total-row">
-            <span class="label">Total Bonus Value</span>
-            <span class="val">$1,050–1,550+</span>
+            <span class="tier-label">Total Bonus Value</span>
+            <span class="val">$1,050-1,550+</span>
           </div>
         </div>
         <div class="tier-cta"><a href="#form">Claim This Package &rarr;</a></div>
