@@ -1040,6 +1040,7 @@ footer { background: #060e1a; color: var(--muted-dark); padding: 28px 0; font-si
   form.addEventListener('submit', async function(e) {
     e.preventDefault();
     if (typeof fbq !== 'undefined') fbq('track', 'Lead');
+    if (typeof gtag !== 'undefined') gtag('event', 'generate_lead', { 'event_category': 'form', 'event_label': 'ads_page' });
     submitBtn.disabled = true;
     submitBtn.textContent = 'Sending...';
     try {
