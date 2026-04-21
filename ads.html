@@ -29,6 +29,15 @@ fbq('track', 'PageView');
 </script>
 <noscript><img height="1" width="1" style="display:none" src="https://www.facebook.com/tr?id=861741726934219&ev=PageView&noscript=1"/></noscript>
 
+<!-- Google tag (gtag.js) -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-CV7HJ2QGHX"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+  gtag('config', 'G-CV7HJ2QGHX');
+</script>
+
 <style>
 :root {
   --ink: #0a1628;
@@ -64,7 +73,7 @@ button { font-family: inherit; cursor: pointer; border: none; }
 .wrap { max-width: var(--maxw); margin: 0 auto; padding: 0 20px; }
 .mono { font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; }
 
-/* STICKY MOBILE CTA - hides when form is visible */
+/* STICKY MOBILE CTA */
 .sticky-cta {
   display: none;
   position: fixed; bottom: 0; left: 0; right: 0;
@@ -94,12 +103,10 @@ button { font-family: inherit; cursor: pointer; border: none; }
 }
 .top-bar strong { color: var(--accent); }
 
-/* ===================== ABOVE THE FOLD ===================== */
-/* Hero + Form side by side on desktop, stacked on mobile */
+/* ABOVE THE FOLD */
 .above-fold {
   padding: 48px 0 60px;
-  position: relative;
-  overflow: hidden;
+  position: relative; overflow: hidden;
 }
 .above-fold::before {
   content: ''; position: absolute; inset: 0;
@@ -110,8 +117,7 @@ button { font-family: inherit; cursor: pointer; border: none; }
   position: relative;
   display: grid;
   grid-template-columns: 1fr 420px;
-  gap: 60px;
-  align-items: start;
+  gap: 60px; align-items: start;
 }
 @media (max-width: 900px) {
   .above-fold-inner { grid-template-columns: 1fr; gap: 32px; }
@@ -122,7 +128,6 @@ button { font-family: inherit; cursor: pointer; border: none; }
   .hero-sub { font-size: 15px; margin-bottom: 20px; }
 }
 
-/* LEFT: HERO COPY */
 .hero-copy { padding-top: 8px; }
 .hero-eyebrow {
   display: inline-flex; align-items: center; gap: 10px;
@@ -147,7 +152,6 @@ h1.hero-title .done::after {
   height: 8px; background: var(--accent); opacity: 0.3; z-index: -1;
 }
 
-/* DREAM OUTCOME — the big promise right under headline */
 .dream-outcome {
   background: var(--accent); color: var(--white);
   display: inline-flex; align-items: center; gap: 10px;
@@ -163,27 +167,20 @@ h1.hero-title .done::after {
 }
 .hero-sub strong { color: var(--ink); font-weight: 700; }
 
-/* SOCIAL PROOF — above fold per Hormozi */
-.social-proof {
-  display: flex; flex-wrap: wrap; gap: 16px;
-  margin-bottom: 28px;
-}
+.social-proof { display: flex; flex-wrap: wrap; gap: 16px; margin-bottom: 28px; }
 .proof-item {
   display: flex; align-items: center; gap: 8px;
   font-size: 14px; font-weight: 600; color: var(--ink);
   background: var(--white); padding: 8px 14px;
-  border: 1px solid rgba(10,22,40,0.1);
-  border-radius: var(--radius);
+  border: 1px solid rgba(10,22,40,0.1); border-radius: var(--radius);
 }
 .proof-item svg { color: var(--accent); flex-shrink: 0; }
 
-/* 3 OBJECTION BULLETS — Hormozi above fold */
 .objection-bullets { list-style: none; margin-bottom: 32px; }
 .objection-bullets li {
   display: flex; align-items: flex-start; gap: 12px;
   font-size: 16px; color: #1e293b; padding: 10px 0;
-  border-bottom: 1px solid rgba(10,22,40,0.08);
-  line-height: 1.4;
+  border-bottom: 1px solid rgba(10,22,40,0.08); line-height: 1.4;
 }
 .objection-bullets li:last-child { border-bottom: none; }
 .objection-bullets .bullet-icon {
@@ -194,7 +191,7 @@ h1.hero-title .done::after {
 }
 .objection-bullets strong { color: var(--ink); }
 
-/* RIGHT: FORM — above fold */
+/* FORM */
 .form-card {
   background: var(--white);
   border: 1px solid rgba(10,22,40,0.1);
@@ -202,9 +199,7 @@ h1.hero-title .done::after {
   box-shadow: 0 24px 60px -16px rgba(10,22,40,0.18);
   position: sticky; top: 24px;
 }
-.form-card-header {
-  text-align: center; margin-bottom: 24px;
-}
+.form-card-header { text-align: center; margin-bottom: 24px; }
 .form-card-header h2 {
   font-family: var(--font-display); font-size: 26px;
   font-weight: 600; letter-spacing: -0.02em; margin-bottom: 6px;
@@ -214,8 +209,7 @@ h1.hero-title .done::after {
   background: var(--accent); color: white;
   text-align: center; padding: 10px 16px;
   font-family: var(--font-mono); font-size: 11px;
-  letter-spacing: 0.1em; margin-bottom: 20px;
-  font-weight: 600;
+  letter-spacing: 0.1em; margin-bottom: 20px; font-weight: 600;
 }
 .form-row { margin-bottom: 12px; }
 .field label {
@@ -251,10 +245,7 @@ h1.hero-title .done::after {
   font-family: var(--font-mono); letter-spacing: 0.07em;
 }
 
-/* SUCCESS STATE */
-.form-success {
-  display: none; text-align: center; padding: 32px 16px;
-}
+.form-success { display: none; text-align: center; padding: 32px 16px; }
 .form-success .checkmark {
   width: 56px; height: 56px; background: #dcfce7;
   border-radius: 50%; display: flex; align-items: center;
@@ -266,7 +257,7 @@ h1.hero-title .done::after {
 }
 .form-success p { color: #334155; font-size: 15px; line-height: 1.5; }
 
-/* ===================== BELOW FOLD ===================== */
+/* SECTIONS */
 .section { padding: 72px 0; }
 h2.section-title {
   font-family: var(--font-display); font-weight: 500;
@@ -277,15 +268,11 @@ h2.section-title em { font-style: italic; font-weight: 400; color: var(--accent-
 .section-label { font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.14em; color: var(--accent-deep); margin-bottom: 12px; text-transform: uppercase; }
 .section-head { margin-bottom: 44px; }
 
-/* PROBLEM SECTION */
+/* PROBLEM */
 .problems { background: var(--paper); }
 .prob-grid { display: grid; grid-template-columns: 1fr; gap: 18px; margin-top: 32px; }
 @media (min-width: 700px) { .prob-grid { grid-template-columns: repeat(3, 1fr); } }
-.prob-card {
-  padding: 28px 24px; background: var(--white);
-  border: 1px solid rgba(10,22,40,0.08);
-  border-left: 4px solid var(--accent);
-}
+.prob-card { padding: 28px 24px; background: var(--white); border: 1px solid rgba(10,22,40,0.08); border-left: 4px solid var(--accent); }
 .prob-num { font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.18em; color: var(--accent-deep); margin-bottom: 10px; display: block; }
 .prob-card h3 { font-family: var(--font-display); font-size: 19px; font-weight: 600; margin-bottom: 10px; letter-spacing: -0.01em; line-height: 1.2; }
 .prob-card p { color: #334155; font-size: 14.5px; line-height: 1.55; }
@@ -298,23 +285,17 @@ h2.section-title em { font-style: italic; font-weight: 400; color: var(--accent-
   background-size: 28px 28px; pointer-events: none;
 }
 .guarantee-inner { position: relative; }
-.guarantee-box {
-  border-left: 6px solid var(--accent);
-  padding: 44px 36px;
-  position: relative;
-}
+.guarantee-box { border-left: 6px solid var(--accent); padding: 44px 36px; position: relative; }
 .guarantee-box::before {
   content: 'OUR GUARANTEE'; position: absolute;
   top: -12px; left: 36px; background: var(--accent);
   color: white; padding: 5px 14px;
-  font-family: var(--font-mono); font-size: 10px;
-  letter-spacing: 0.2em; font-weight: 600;
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.2em; font-weight: 600;
 }
 .guarantee-box h2 {
   font-family: var(--font-display);
   font-size: clamp(26px, 4vw, 40px); font-weight: 500;
-  line-height: 1.05; letter-spacing: -0.025em;
-  margin-bottom: 24px; max-width: 22ch;
+  line-height: 1.05; letter-spacing: -0.025em; margin-bottom: 24px; max-width: 22ch;
 }
 .guarantee-box h2 em { color: var(--accent); font-style: italic; font-weight: 400; }
 .guarantee-list { list-style: none; margin-bottom: 36px; }
@@ -326,63 +307,31 @@ h2.section-title em { font-style: italic; font-weight: 400; color: var(--accent-
 .guarantee-list li:last-child { border-bottom: none; }
 .guarantee-list .g-num {
   font-family: var(--font-display); font-size: 28px;
-  font-weight: 800; color: var(--accent); line-height: 1;
-  flex-shrink: 0; width: 32px;
+  font-weight: 800; color: var(--accent); line-height: 1; flex-shrink: 0; width: 32px;
 }
 .guarantee-list strong { color: var(--paper); display: block; margin-bottom: 4px; font-size: 17px; }
-.no-brainer {
-  background: rgba(255,91,31,0.12); border: 1px solid rgba(255,91,31,0.3);
-  padding: 20px 24px; margin-top: 8px;
-}
+.no-brainer { background: rgba(255,91,31,0.12); border: 1px solid rgba(255,91,31,0.3); padding: 20px 24px; margin-top: 8px; }
 .no-brainer p { font-size: 16px; line-height: 1.55; color: var(--muted-dark); }
 .no-brainer strong { color: var(--paper); }
 
 /* TIERS */
 .tiers-section { background: var(--paper-warm); }
-.tiers-grid {
-  display: grid; grid-template-columns: 1fr;
-  gap: 24px; margin-top: 8px;
-}
+.tiers-grid { display: grid; grid-template-columns: 1fr; gap: 24px; margin-top: 8px; }
 @media (min-width: 800px) { .tiers-grid { grid-template-columns: repeat(3, 1fr); } }
-
-.tier-card {
-  background: var(--white);
-  border: 1px solid rgba(10,22,40,0.1);
-  position: relative; overflow: hidden;
-}
+.tier-card { background: var(--white); border: 1px solid rgba(10,22,40,0.1); position: relative; overflow: hidden; }
 .tier-card.featured { border: 2px solid var(--accent); }
-.tier-badge {
-  background: var(--accent); color: white;
-  font-family: var(--font-mono); font-size: 10px;
-  letter-spacing: 0.15em; padding: 6px 14px;
-  text-align: center; font-weight: 600;
-}
+.tier-badge { background: var(--accent); color: white; font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.15em; padding: 6px 14px; text-align: center; font-weight: 600; }
 .tier-header { padding: 28px 28px 20px; border-bottom: 1px solid rgba(10,22,40,0.08); }
-.tier-name {
-  font-family: var(--font-mono); font-size: 11px;
-  letter-spacing: 0.14em; color: var(--accent-deep);
-  margin-bottom: 8px; text-transform: uppercase;
-}
-.tier-title {
-  font-family: var(--font-display); font-size: 22px;
-  font-weight: 600; letter-spacing: -0.02em; margin-bottom: 6px;
-}
+.tier-name { font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.14em; color: var(--accent-deep); margin-bottom: 8px; text-transform: uppercase; }
+.tier-title { font-family: var(--font-display); font-size: 22px; font-weight: 600; letter-spacing: -0.02em; margin-bottom: 6px; }
 .tier-desc { font-size: 13.5px; color: var(--muted); line-height: 1.4; }
 .tier-price-block { padding: 20px 28px; border-bottom: 1px solid rgba(10,22,40,0.08); }
-.tier-price {
-  font-family: var(--font-display); font-size: 48px;
-  font-weight: 800; letter-spacing: -0.03em; line-height: 1;
-  color: var(--ink);
-}
+.tier-price { font-family: var(--font-display); font-size: 48px; font-weight: 800; letter-spacing: -0.03em; line-height: 1; color: var(--ink); }
 .tier-price span { font-size: 22px; font-weight: 500; vertical-align: top; padding-top: 10px; display: inline-block; }
 .tier-was { font-size: 13px; color: var(--muted); margin-top: 4px; text-decoration: line-through; }
 .tier-body { padding: 24px 28px; }
 .tier-features { list-style: none; margin-bottom: 20px; }
-.tier-features li {
-  display: flex; align-items: flex-start; gap: 10px;
-  font-size: 14px; color: #334155; padding: 8px 0;
-  border-bottom: 1px solid rgba(10,22,40,0.06); line-height: 1.4;
-}
+.tier-features li { display: flex; align-items: flex-start; gap: 10px; font-size: 14px; color: #334155; padding: 8px 0; border-bottom: 1px solid rgba(10,22,40,0.06); line-height: 1.4; }
 .tier-features li:last-child { border-bottom: none; }
 .tier-features .check { color: var(--accent); flex-shrink: 0; margin-top: 1px; }
 .tier-features strong { color: var(--ink); font-weight: 600; }
@@ -394,7 +343,6 @@ h2.section-title em { font-style: italic; font-weight: 400; color: var(--accent-
 .tier-total-row { display: flex; justify-content: space-between; align-items: center; font-size: 13px; }
 .tier-total-row .tier-label { color: var(--muted); font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; text-decoration: none !important; }
 .tier-total-row .val { font-family: var(--font-display); font-size: 18px; font-weight: 700; color: var(--ink); white-space: nowrap; text-decoration: none; }
-
 .tier-cta { padding: 20px 28px; }
 .tier-cta a { display: block; text-align: center; background: var(--accent); color: white; padding: 15px; font-weight: 700; font-size: 15px; border-radius: var(--radius); transition: background 0.2s; letter-spacing: -0.01em; }
 .tier-cta a:hover { background: var(--accent-deep); }
@@ -402,11 +350,7 @@ h2.section-title em { font-style: italic; font-weight: 400; color: var(--accent-
 
 /* HOW IT WORKS */
 .how { background: var(--ink); color: var(--paper); position: relative; overflow: hidden; }
-.how::before {
-  content: ''; position: absolute; inset: 0;
-  background-image: radial-gradient(circle at 1px 1px, rgba(255,255,255,0.04) 1px, transparent 0);
-  background-size: 30px 30px; pointer-events: none;
-}
+.how::before { content: ''; position: absolute; inset: 0; background-image: radial-gradient(circle at 1px 1px, rgba(255,255,255,0.04) 1px, transparent 0); background-size: 30px 30px; pointer-events: none; }
 .how-inner { position: relative; }
 .how .section-label { color: var(--accent); }
 .how h2.section-title { color: var(--paper); }
@@ -421,27 +365,12 @@ h2.section-title em { font-style: italic; font-weight: 400; color: var(--accent-
 
 /* URGENCY */
 .urgency { background: var(--accent); color: white; padding: 52px 0; text-align: center; }
-.urgency h2 {
-  font-family: var(--font-display);
-  font-size: clamp(24px, 4vw, 36px); font-weight: 500;
-  line-height: 1.1; letter-spacing: -0.02em;
-  max-width: 28ch; margin: 0 auto 14px;
-}
+.urgency h2 { font-family: var(--font-display); font-size: clamp(24px, 4vw, 36px); font-weight: 500; line-height: 1.1; letter-spacing: -0.02em; max-width: 28ch; margin: 0 auto 14px; }
 .urgency h2 em { font-style: italic; font-weight: 400; }
 .urgency p { font-size: 16px; max-width: 56ch; margin: 0 auto 28px; opacity: 0.92; }
-.urgency-counter {
-  display: inline-flex; gap: 14px; align-items: center;
-  background: rgba(0,0,0,0.15); padding: 14px 24px;
-  font-family: var(--font-mono); font-size: 13px;
-  letter-spacing: 0.1em; font-weight: 500; border-radius: var(--radius);
-  margin-bottom: 28px;
-}
+.urgency-counter { display: inline-flex; gap: 14px; align-items: center; background: rgba(0,0,0,0.15); padding: 14px 24px; font-family: var(--font-mono); font-size: 13px; letter-spacing: 0.1em; font-weight: 500; border-radius: var(--radius); margin-bottom: 28px; }
 .urgency-counter strong { font-family: var(--font-display); font-size: 26px; font-weight: 800; letter-spacing: -0.02em; }
-.deadline-stack {
-  display: flex; flex-wrap: wrap; justify-content: center; gap: 16px;
-  font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.12em;
-  opacity: 0.85;
-}
+.deadline-stack { display: flex; flex-wrap: wrap; justify-content: center; gap: 16px; font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.12em; opacity: 0.85; }
 .deadline-stack span { background: rgba(0,0,0,0.15); padding: 6px 14px; }
 
 /* FAQ */
@@ -451,25 +380,9 @@ h2.section-title em { font-style: italic; font-weight: 400; color: var(--accent-
 .faq-q-num { color: var(--accent-deep); font-family: var(--font-mono); font-size: 11px; font-weight: 500; letter-spacing: 0.1em; padding-top: 5px; flex-shrink: 0; }
 .faq-a { color: #334155; font-size: 15px; line-height: 1.6; padding-left: 44px; max-width: 65ch; }
 
-/* SECOND FORM SECTION */
-.form-section-2 { background: var(--paper-warm); padding: 72px 0; }
-.form-wrap-2 {
-  max-width: 520px; margin: 0 auto; background: var(--white);
-  padding: 44px 36px; border: 1px solid rgba(10,22,40,0.1);
-  box-shadow: 0 28px 60px -18px rgba(10,22,40,0.2);
-}
-.form-wrap-2 h2 { font-family: var(--font-display); font-size: 30px; font-weight: 600; letter-spacing: -0.02em; margin-bottom: 6px; text-align: center; }
-.form-wrap-2 .form-sub { text-align: center; color: #334155; margin-bottom: 24px; font-size: 14px; }
-
 /* FINAL CTA */
 .final-cta { background: var(--ink); color: var(--paper); padding: 80px 0; text-align: center; }
-.final-cta h2 {
-  font-family: var(--font-display);
-  font-size: clamp(30px, 5vw, 52px); font-weight: 500;
-  letter-spacing: -0.025em; line-height: 1.0;
-  margin-bottom: 20px; max-width: 20ch;
-  margin-left: auto; margin-right: auto;
-}
+.final-cta h2 { font-family: var(--font-display); font-size: clamp(30px, 5vw, 52px); font-weight: 500; letter-spacing: -0.025em; line-height: 1.0; margin-bottom: 20px; max-width: 20ch; margin-left: auto; margin-right: auto; }
 .final-cta h2 em { color: var(--accent); font-style: italic; font-weight: 400; }
 .final-cta p { font-size: 17px; color: var(--muted-dark); max-width: 48ch; margin: 0 auto 36px; }
 
@@ -482,12 +395,8 @@ footer { background: #060e1a; color: var(--muted-dark); padding: 28px 0; font-si
 .reveal { opacity: 0; transform: translateY(18px); transition: opacity 0.65s ease, transform 0.65s ease; }
 .reveal.visible { opacity: 1; transform: translateY(0); }
 .text-center { text-align: center; }
-.mt-8 { margin-top: 8px; }
-.mt-12 { margin-top: 12px; }
-.mt-20 { margin-top: 20px; }
 .mt-32 { margin-top: 32px; }
 .mt-40 { margin-top: 40px; }
-.mb-0 { margin-bottom: 0; }
 
 .btn-primary {
   display: inline-flex; align-items: center; gap: 10px;
@@ -510,14 +419,6 @@ footer { background: #060e1a; color: var(--muted-dark); padding: 28px 0; font-si
 }
 .btn-white:hover { transform: translateY(-2px); opacity: 0.92; }
 </style>
-<!-- Google tag (gtag.js) -->
-<script async src="https://www.googletagmanager.com/gtag/js?id=G-CV7HJ2QGHX"></script>
-<script>
-  window.dataLayer = window.dataLayer || [];
-  function gtag(){dataLayer.push(arguments);}
-  gtag('js', new Date());
-  gtag('config', 'G-CV7HJ2QGHX');
-</script>
 </head>
 <body>
 
@@ -527,14 +428,12 @@ footer { background: #060e1a; color: var(--muted-dark); padding: 28px 0; font-si
 <!-- TOP BAR -->
 <div class="top-bar">
   <span class="pulse"></span>
-  Launch pricing ends <strong>April 30th</strong> or after <strong>10 jobs</strong> &mdash; whichever comes first
+  Launch pricing ends <strong>April 30th</strong> — only <strong>2 spots left</strong>
 </div>
 
 <main>
 
-<!-- ============================================================ -->
-<!-- ABOVE THE FOLD: HEADLINE + FORM (Hormozi #1 rule)           -->
-<!-- ============================================================ -->
+<!-- ABOVE THE FOLD -->
 <section class="above-fold">
   <div class="wrap">
     <div class="above-fold-inner">
@@ -543,27 +442,23 @@ footer { background: #060e1a; color: var(--muted-dark); padding: 28px 0; font-si
       <div class="hero-copy">
         <div class="hero-eyebrow">Fort Collins &middot; Loveland &middot; Windsor &middot; Timnath</div>
 
-        <!-- HEADLINE: Dream outcome -->
         <h1 class="hero-title">
           <span class="line">Your garage &mdash;</span>
           <em>cleared by dinner.</em>
           <span class="done">Guaranteed.</span>
         </h1>
 
-        <!-- DREAM OUTCOME BADGE -->
         <div class="dream-outcome">
           <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
           Done by dinner or the job is free. No exceptions.
         </div>
 
-        <!-- SUB-HEADLINE: USP -->
         <p class="hero-sub">
-          We haul everything, donate what we can, and hand you a tax receipt worth $200&ndash;500.
+          We haul everything, donate what we can, and handle the donation receipt for your taxes.
           <strong>Flat rate. No hourly fees. No dump fee surprises.</strong>
           Two CSU students who can't afford a bad job.
         </p>
 
-        <!-- ABOVE-FOLD SOCIAL PROOF (Hormozi: trust immediately) -->
         <div class="social-proof">
           <div class="proof-item">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6L9 17l-5-5"/></svg>
@@ -575,7 +470,7 @@ footer { background: #060e1a; color: var(--muted-dark); padding: 28px 0; font-si
           </div>
           <div class="proof-item">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6L9 17l-5-5"/></svg>
-            Tax Receipt Included
+            Donation Receipt Included
           </div>
           <div class="proof-item">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M20 6L9 17l-5-5"/></svg>
@@ -583,7 +478,6 @@ footer { background: #060e1a; color: var(--muted-dark); padding: 28px 0; font-si
           </div>
         </div>
 
-        <!-- 3 OBJECTION BULLETS (Hormozi above fold) -->
         <ul class="objection-bullets">
           <li>
             <div class="bullet-icon">
@@ -601,22 +495,15 @@ footer { background: #060e1a; color: var(--muted-dark); padding: 28px 0; font-si
             <div class="bullet-icon">
               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6L9 17l-5-5"/></svg>
             </div>
-            <div><strong>"I'm not sure it's worth $650."</strong> The tax receipt alone recovers $200&ndash;500. Most customers net less than $200 out of pocket after their deduction. And you get your weekend back.</div>
+            <div><strong>"Is $650 really worth it?"</strong> We donate usable items and get you a receipt — ask your CPA, many clients recover money on their taxes. And you get your weekend back.</div>
           </li>
         </ul>
-
-        <!-- MOBILE ONLY: show CTA button above form on small screens -->
-        <div style="display:none;" class="mobile-cta-hint">
-          <a href="#form" style="display:inline-flex;align-items:center;gap:10px;background:var(--accent);color:white;padding:16px 24px;font-weight:700;font-size:16px;border-radius:var(--radius);box-shadow:0 12px 28px -8px rgba(255,91,31,0.5);">
-            Get My Free Quote <span>&rarr;</span>
-          </a>
-        </div>
       </div>
 
-      <!-- RIGHT: FORM ABOVE THE FOLD -->
+      <!-- RIGHT: FORM -->
       <div>
         <div class="form-card" id="form">
-          <div class="form-scarcity">⚡ 3 OF 10 LAUNCH SPOTS REMAINING — ENDS APRIL 30TH</div>
+          <div class="form-scarcity">⚡ 2 OF 10 LAUNCH SPOTS REMAINING — ENDS APRIL 30TH</div>
           <div class="form-card-header">
             <h2>Get Your Free Quote</h2>
             <p>3 fields &middot; Response within 2 hours &middot; No obligation</p>
@@ -641,21 +528,8 @@ footer { background: #060e1a; color: var(--muted-dark); padding: 28px 0; font-si
                   <input type="tel" id="phone" name="Phone" required autocomplete="tel" placeholder="(970) 555-0100" />
                 </div>
               </div>
-              <div class="form-row">
-                <div class="field">
-                  <label for="size">Garage Size</label>
-                  <select id="size" name="Garage Size" required>
-                    <option value="">Select one&hellip;</option>
-                    <option>Single Car — $600 launch price</option>
-                    <option>Double Car — $650 launch price</option>
-                    <option>Three-Car+ — Custom quote</option>
-                    <option>Not Sure</option>
-                  </select>
-                </div>
-              </div>
-
               <button type="submit" class="form-submit" id="submitBtn">
-                🔒 Claim My Launch Price &rarr;
+                Get My Free Quote &rarr;
               </button>
               <div class="form-trust">
                 <span>✓ No obligation</span>
@@ -674,7 +548,6 @@ footer { background: #060e1a; color: var(--muted-dark); padding: 28px 0; font-si
           </div>
         </div>
 
-        <!-- BELOW FORM: call option -->
         <div style="text-align:center; margin-top:16px; padding: 12px 0;">
           <a href="tel:+19706589454" style="font-size:14px; color:var(--muted); font-weight:500; padding: 10px 20px; display:inline-block;">
             📞 Prefer to call? (970) 658-9454
@@ -685,10 +558,6 @@ footer { background: #060e1a; color: var(--muted-dark); padding: 28px 0; font-si
     </div>
   </div>
 </section>
-
-<!-- ============================================================ -->
-<!-- BELOW FOLD: EVERYTHING ELSE SUPPORTS THE SINGLE CTA         -->
-<!-- ============================================================ -->
 
 <!-- PROBLEM -->
 <section class="problems section">
@@ -823,8 +692,7 @@ footer { background: #060e1a; color: var(--muted-dark); padding: 28px 0; font-si
             <li><span class="check">✓</span> <div>Full two-car garage haul-out — everything you point at, gone in one trip</div></li>
             <li><span class="check">✓</span> <div>Dump fees included — no matter how much there is</div></li>
             <li><span class="check">✓</span> <div>Deep floor sweep, cobweb removal, walls cleared</div></li>
-            <li><span class="check">✓</span> <div><strong>The Donation Maximizer</strong> — we sort, drive to Habitat ReStore, ARC & Goodwill, get you a fully itemized tax receipt worth $200&ndash;500</div></li>
-            <li><span class="check">✓</span> <div><strong>Multi-charity coordination</strong> — donations split across Fort Collins charities to maximize your deduction</div></li>
+            <li><span class="check">✓</span> <div><strong>Donation Coordination</strong> — we sort, drive to Habitat ReStore, ARC & Goodwill, and handle the donation receipt for your taxes</div></li>
             <li><span class="check">✓</span> <div><strong>Sort & Save Walkthrough</strong> — we text photos before anything big goes in the truck. No lost heirlooms.</div></li>
             <li><span class="check">✓</span> <div>Priority scheduling — you pick the time window, we build around you</div></li>
             <li><span class="check">✓</span> <div>Same-day availability — most companies booked 2 weeks out, we can be there today</div></li>
@@ -835,7 +703,7 @@ footer { background: #060e1a; color: var(--muted-dark); padding: 28px 0; font-si
             <div class="tier-bonuses-label">Bonuses Included</div>
             <div class="tier-bonus-item">✓ <span>Before & After Photo Report — multiple angles, emailed same day</span> <span class="tier-bonus-value">$50 value</span></div>
             <div class="tier-bonus-item">✓ <span>The Deep Sweep — every corner, floor spotless</span> <span class="tier-bonus-value">$75 value</span></div>
-            <div class="tier-bonus-item">✓ <span>The Donation Receipt Package — itemized, multi-charity, ready for your CPA</span> <span class="tier-bonus-value">$200–500 value</span></div>
+            <div class="tier-bonus-item">✓ <span>Donation Receipt — itemized, multi-charity, ready for your CPA</span> <span class="tier-bonus-value">Included</span></div>
             <div class="tier-bonus-item">✓ <span>Same-Day Rush Availability — no extra charge</span> <span class="tier-bonus-value">$200 value</span></div>
             <div class="tier-bonus-item">✓ <span>The 2-Hour Quote Guarantee — text a photo, firm price in 2 hours</span> <span class="tier-bonus-value">$50 value</span></div>
             <div class="tier-bonus-item">✓ <span>The Valuables Promise — full walkthrough, everything found is yours</span> <span class="tier-bonus-value">Priceless</span></div>
@@ -844,7 +712,7 @@ footer { background: #060e1a; color: var(--muted-dark); padding: 28px 0; font-si
         <div class="tier-total">
           <div class="tier-total-row">
             <span class="tier-label">Total Bonus Value</span>
-            <span class="val">$575-825+</span>
+            <span class="val">$375-575+</span>
           </div>
         </div>
         <div class="tier-cta"><a href="#form">Claim This Package &rarr;</a></div>
@@ -867,7 +735,7 @@ footer { background: #060e1a; color: var(--muted-dark); padding: 28px 0; font-si
             <li><span class="check">✓</span> <div><strong>Free on-site walkthrough</strong> — we come to you first, assess the full scope, give you a firm flat price before any work begins. Zero surprises.</div></li>
             <li><span class="check">✓</span> <div><strong>Extended availability</strong> — large jobs don't get rushed. If needed, we return the next day to finish at no extra charge.</div></li>
             <li><span class="check">✓</span> <div><strong>Extra hands when needed</strong> — we bring additional help for large jobs so it still gets done in a single day whenever possible.</div></li>
-            <li><span class="check">✓</span> <div><strong>Full estate donation coordination</strong> — multiple charity drop-offs handled for you, all receipts consolidated into one clean document for your CPA or estate attorney.</div></li>
+            <li><span class="check">✓</span> <div><strong>Full estate donation coordination</strong> — multiple charity drop-offs, all receipts consolidated into one document for your CPA or estate attorney.</div></li>
             <li><span class="check">✓</span> <div><strong>Hazardous material flagging</strong> — we identify anything we can't haul and tell you exactly where to take it and what it costs.</div></li>
             <li><span class="check">✓</span> <div>Priority scheduling — need it done this week for a listing, sale, or move? We make it work.</div></li>
             <li><span class="check">✓</span> <div><strong>Realtor & Homeowner Approval Guarantee</strong> — if the space isn't cleared and cleaned to your satisfaction we come back until it is, no extra charge.</div></li>
@@ -886,7 +754,7 @@ footer { background: #060e1a; color: var(--muted-dark); padding: 28px 0; font-si
         <div class="tier-total">
           <div class="tier-total-row">
             <span class="tier-label">Total Bonus Value</span>
-            <span class="val">$1,050-1,550+</span>
+            <span class="val">$550-750+</span>
           </div>
         </div>
         <div class="tier-cta"><a href="#form">Claim This Package &rarr;</a></div>
@@ -930,15 +798,15 @@ footer { background: #060e1a; color: var(--muted-dark); padding: 28px 0; font-si
 <!-- URGENCY -->
 <section class="urgency">
   <div class="wrap">
-    <h2>Launch pricing ends <em>April 30th</em> or after 10 jobs.</h2>
+    <h2>Only <em>2 launch spots left.</em> Pricing goes up April 30th.</h2>
     <p>We're a brand-new Fort Collins LLC building our reputation from zero. You save $200&ndash;400 for being early. Once spots fill, pricing goes back to full rate — permanently.</p>
     <div class="urgency-counter">
-      <strong>3/10</strong> &nbsp;launch spots filled
+      <strong>8/10</strong> &nbsp;launch spots filled
     </div>
     <div class="deadline-stack">
-      <span>TIER 1: $600 → $750 AFTER APRIL 30</span>
-      <span>TIER 2: $650 → $850 AFTER APRIL 30</span>
-      <span>TIER 3: $1,200 → $1,600 AFTER APRIL 30</span>
+      <span>TIER 1: $600 &rarr; $750 AFTER APRIL 30</span>
+      <span>TIER 2: $650 &rarr; $850 AFTER APRIL 30</span>
+      <span>TIER 3: $1,200 &rarr; $1,600 AFTER APRIL 30</span>
     </div>
     <div style="margin-top:32px;">
       <a href="#form" style="display:inline-flex;align-items:center;gap:10px;background:white;color:var(--ink);padding:16px 28px;font-weight:700;font-size:16px;border-radius:var(--radius);">
@@ -957,31 +825,35 @@ footer { background: #060e1a; color: var(--muted-dark); padding: 28px 0; font-si
     </div>
     <div class="reveal">
       <div class="faq-item">
-        <h3 class="faq-q"><span class="faq-q-num">Q.01</span>What if my garage is bigger than 2 cars?</h3>
+        <h3 class="faq-q"><span class="faq-q-num">Q.01</span>Why $600 or $650 and not hourly?</h3>
+        <p class="faq-a">Because hourly pricing is stressful. You're watching the clock, wondering if we're moving fast enough, not knowing what the final bill will be. We quote a flat price before we start — you know exactly what you're paying before we touch anything. No surprises at the end.</p>
+      </div>
+      <div class="faq-item">
+        <h3 class="faq-q"><span class="faq-q-num">Q.02</span>What if my garage is bigger than 2 cars?</h3>
         <p class="faq-a">That's Tier 3 territory. We do a free on-site walkthrough, assess the full scope, and give you a firm flat price before any work starts. Text us a photo — we'll give you a ballpark within 2 hours. No hourly surprises, ever.</p>
       </div>
       <div class="faq-item">
-        <h3 class="faq-q"><span class="faq-q-num">Q.02</span>What's the catch with "pay 50% less"?</h3>
+        <h3 class="faq-q"><span class="faq-q-num">Q.03</span>What's the catch with "pay 50% less"?</h3>
         <p class="faq-a">No catch. We're building reputation from zero and cannot afford a bad job. If our work is good enough that you'd leave an honest Google review, we charge full launch price. If we didn't earn it, we eat half. That incentive is entirely on us.</p>
       </div>
       <div class="faq-item">
-        <h3 class="faq-q"><span class="faq-q-num">Q.03</span>What do you NOT haul?</h3>
+        <h3 class="faq-q"><span class="faq-q-num">Q.04</span>What do you NOT haul?</h3>
         <p class="faq-a">Hazardous materials only: asbestos, live paint, motor oil in quantity, medical waste. We flag these during the quote. Everything else — appliances, furniture, boxes, tires, yard equipment, mattresses — fair game.</p>
       </div>
       <div class="faq-item">
-        <h3 class="faq-q"><span class="faq-q-num">Q.04</span>Do I need to be home?</h3>
+        <h3 class="faq-q"><span class="faq-q-num">Q.05</span>Do I need to be home?</h3>
         <p class="faq-a">Yes at the start — 20-30 minutes to walk through what goes and what stays. After that we work unsupervised. Most customers run errands. We text photos before anything big goes in the truck and you can reach us directly the whole time.</p>
       </div>
       <div class="faq-item">
-        <h3 class="faq-q"><span class="faq-q-num">Q.05</span>How does the tax receipt actually work?</h3>
-        <p class="faq-a">We itemize every donated item — furniture, appliances, boxes, clothing, tools — and get you a receipt from the charity. You give that to your CPA. Most 2-car garage cleanouts generate $200&ndash;500 in deductible donations. It typically nets your real out-of-pocket cost well below the sticker price.</p>
+        <h3 class="faq-q"><span class="faq-q-num">Q.06</span>How does the donation receipt work?</h3>
+        <p class="faq-a">We take usable items to Habitat ReStore, ARC, and Goodwill and get you an itemized receipt. Whether it helps on your taxes depends on your situation — ask your CPA. Either way, your stuff goes to a good home instead of a landfill.</p>
       </div>
       <div class="faq-item">
-        <h3 class="faq-q"><span class="faq-q-num">Q.06</span>Are you licensed and insured?</h3>
+        <h3 class="faq-q"><span class="faq-q-num">Q.07</span>Are you licensed and insured?</h3>
         <p class="faq-a">Yes. Easy Garage Cleaning LLC is a Colorado-registered limited liability company with general liability and commercial auto insurance. Fort Collins city business license on file. Proof of insurance available on request before we show up.</p>
       </div>
       <div class="faq-item">
-        <h3 class="faq-q"><span class="faq-q-num">Q.07</span>How do I pay?</h3>
+        <h3 class="faq-q"><span class="faq-q-num">Q.08</span>How do I pay?</h3>
         <p class="faq-a">On-site when we finish — tap-to-pay (Apple Pay, Google Pay, any card). Receipt sent immediately. If you prefer a deposit first and final payment on completion, we can do that too.</p>
       </div>
     </div>
@@ -995,7 +867,7 @@ footer { background: #060e1a; color: var(--muted-dark); padding: 28px 0; font-si
 <section class="final-cta">
   <div class="wrap">
     <h2>Stop looking at it. <em>Start parking in it.</em></h2>
-    <p>3 of 10 launch spots remaining. Pricing goes up April 30th. The only risk is doing nothing.</p>
+    <p>2 launch spots remaining. Pricing goes up April 30th. The only risk is doing nothing.</p>
     <a href="#form" class="btn-primary" style="font-size:18px; padding:20px 36px;">
       Get My Free Quote — 60 Seconds &rarr;
     </a>
@@ -1005,7 +877,6 @@ footer { background: #060e1a; color: var(--muted-dark); padding: 28px 0; font-si
 
 </main>
 
-<!-- FOOTER — no external links per Hormozi -->
 <footer>
   <div class="wrap foot">
     <div><strong style="color:rgba(245,241,234,0.8);">Easy Garage Cleaning LLC</strong> &middot; Fort Collins, CO &middot; Licensed &amp; Insured &middot; Colorado LLC</div>
@@ -1015,7 +886,6 @@ footer { background: #060e1a; color: var(--muted-dark); padding: 28px 0; font-si
 </footer>
 
 <script>
-  // Reveal on scroll
   const io = new IntersectionObserver((entries) => {
     entries.forEach(e => {
       if (e.isIntersecting) { e.target.classList.add('visible'); io.unobserve(e.target); }
@@ -1023,7 +893,6 @@ footer { background: #060e1a; color: var(--muted-dark); padding: 28px 0; font-si
   }, { threshold: 0.1 });
   document.querySelectorAll('.reveal').forEach(el => io.observe(el));
 
-  // Hide sticky CTA when form visible
   const formEl = document.getElementById('form');
   const stickyCta = document.querySelector('.sticky-cta');
   const formObs = new IntersectionObserver((entries) => {
@@ -1033,7 +902,6 @@ footer { background: #060e1a; color: var(--muted-dark); padding: 28px 0; font-si
   }, { threshold: 0.3 });
   if (formEl) formObs.observe(formEl);
 
-  // Form submit
   const form = document.getElementById('adsForm');
   const submitBtn = document.getElementById('submitBtn');
 
@@ -1053,12 +921,12 @@ footer { background: #060e1a; color: var(--muted-dark); padding: 28px 0; font-si
         if (stickyCta) stickyCta.style.display = 'none';
       } else {
         submitBtn.disabled = false;
-        submitBtn.textContent = '🔒 Claim My Launch Price →';
+        submitBtn.textContent = 'Get My Free Quote →';
         alert('Something went wrong. Please call us at (970) 658-9454.');
       }
     } catch(err) {
       submitBtn.disabled = false;
-      submitBtn.textContent = '🔒 Claim My Launch Price →';
+      submitBtn.textContent = 'Get My Free Quote →';
       alert('Something went wrong. Please call us at (970) 658-9454.');
     }
   });
