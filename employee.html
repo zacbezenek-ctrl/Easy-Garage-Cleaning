@@ -1,0 +1,1412 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Employee Portal — Easy Garage Cleaning</title>
+  <meta name="robots" content="noindex, nofollow">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,400;0,500;0,700;1,400;1,500&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400&display=swap">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --navy:       #0a1628;
+      --navy-soft:  #14243d;
+      --navy-light: #1e3356;
+      --accent:     #ff5b1f;
+      --accent-deep:#d94208;
+      --paper:      #f5f1ea;
+      --paper-warm: #ebe4d6;
+      --muted:      #6b7280;
+      --white:      #ffffff;
+      --green:      #22c55e;
+      --green-dark: #16a34a;
+      --yellow:     #f59e0b;
+      --red:        #ef4444;
+    }
+
+    html, body {
+      height: 100%;
+      font-family: 'Inter', sans-serif;
+      background: var(--navy);
+      color: var(--white);
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* ── LOGIN SCREEN ───────────────────────────────────── */
+    #login-screen {
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: var(--navy);
+      padding: 1.5rem;
+    }
+
+    .login-card {
+      background: var(--navy-soft);
+      border: 1px solid rgba(255,255,255,.08);
+      border-radius: 1.25rem;
+      padding: 2.5rem 2rem;
+      width: 100%;
+      max-width: 400px;
+      box-shadow: 0 24px 64px rgba(0,0,0,.5);
+    }
+
+    .login-logo {
+      text-align: center;
+      margin-bottom: 2rem;
+    }
+
+    .login-logo .badge {
+      display: inline-block;
+      background: var(--accent);
+      color: var(--white);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: .65rem;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+      padding: .3rem .7rem;
+      border-radius: 99px;
+      margin-bottom: .75rem;
+    }
+
+    .login-logo h1 {
+      font-family: 'Fraunces', serif;
+      font-size: 1.6rem;
+      font-weight: 700;
+      line-height: 1.2;
+    }
+
+    .login-logo p {
+      color: var(--muted);
+      font-size: .875rem;
+      margin-top: .4rem;
+    }
+
+    .form-group {
+      margin-bottom: 1.1rem;
+    }
+
+    .form-group label {
+      display: block;
+      font-size: .8rem;
+      font-weight: 600;
+      letter-spacing: .05em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: .4rem;
+    }
+
+    .form-group input {
+      width: 100%;
+      background: var(--navy);
+      border: 1px solid rgba(255,255,255,.12);
+      border-radius: .5rem;
+      color: var(--white);
+      font-family: 'Inter', sans-serif;
+      font-size: .95rem;
+      padding: .7rem 1rem;
+      outline: none;
+      transition: border-color .2s;
+    }
+
+    .form-group input:focus {
+      border-color: var(--accent);
+    }
+
+    .btn-primary {
+      width: 100%;
+      background: var(--accent);
+      color: var(--white);
+      border: none;
+      border-radius: .6rem;
+      font-family: 'Inter', sans-serif;
+      font-size: .95rem;
+      font-weight: 600;
+      padding: .8rem 1.5rem;
+      cursor: pointer;
+      transition: background .2s, transform .1s;
+      margin-top: .5rem;
+    }
+
+    .btn-primary:hover { background: var(--accent-deep); }
+    .btn-primary:active { transform: scale(.98); }
+
+    .login-error {
+      background: rgba(239,68,68,.15);
+      border: 1px solid rgba(239,68,68,.3);
+      color: #fca5a5;
+      border-radius: .5rem;
+      padding: .65rem 1rem;
+      font-size: .85rem;
+      margin-bottom: 1rem;
+      display: none;
+    }
+
+    /* ── DASHBOARD ──────────────────────────────────────── */
+    #dashboard { display: none; min-height: 100vh; flex-direction: column; }
+
+    .top-bar {
+      background: var(--navy-soft);
+      border-bottom: 1px solid rgba(255,255,255,.08);
+      padding: 0 1.5rem;
+      height: 60px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+
+    .top-bar-brand {
+      display: flex;
+      align-items: center;
+      gap: .75rem;
+    }
+
+    .top-bar-brand .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--accent);
+    }
+
+    .top-bar-brand span {
+      font-family: 'Fraunces', serif;
+      font-size: 1rem;
+      font-weight: 700;
+    }
+
+    .top-bar-right {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+
+    .user-chip {
+      background: var(--navy-light);
+      border: 1px solid rgba(255,255,255,.1);
+      border-radius: 99px;
+      padding: .3rem .85rem;
+      font-size: .8rem;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: .5rem;
+    }
+
+    .user-chip .avatar {
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      background: var(--accent);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: .65rem;
+      font-weight: 700;
+    }
+
+    .btn-logout {
+      background: transparent;
+      border: 1px solid rgba(255,255,255,.15);
+      color: var(--muted);
+      border-radius: .5rem;
+      font-size: .8rem;
+      padding: .35rem .75rem;
+      cursor: pointer;
+      transition: all .2s;
+    }
+
+    .btn-logout:hover { border-color: var(--accent); color: var(--accent); }
+
+    /* ── TABS ───────────────────────────────────────────── */
+    .tab-bar {
+      background: var(--navy-soft);
+      border-bottom: 1px solid rgba(255,255,255,.08);
+      display: flex;
+      padding: 0 1.5rem;
+      gap: .25rem;
+    }
+
+    .tab-btn {
+      background: transparent;
+      border: none;
+      color: var(--muted);
+      font-family: 'Inter', sans-serif;
+      font-size: .875rem;
+      font-weight: 500;
+      padding: .85rem 1.1rem;
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      transition: all .2s;
+    }
+
+    .tab-btn:hover { color: var(--white); }
+    .tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+    /* ── MAIN CONTENT ───────────────────────────────────── */
+    .main-content {
+      flex: 1;
+      padding: 1.5rem;
+      max-width: 1100px;
+      margin: 0 auto;
+      width: 100%;
+    }
+
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+
+    /* ── CALENDAR ───────────────────────────────────────── */
+    .cal-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 1.25rem;
+    }
+
+    .cal-header h2 {
+      font-family: 'Fraunces', serif;
+      font-size: 1.4rem;
+      font-weight: 700;
+    }
+
+    .cal-nav {
+      display: flex;
+      align-items: center;
+      gap: .5rem;
+    }
+
+    .cal-nav button {
+      background: var(--navy-soft);
+      border: 1px solid rgba(255,255,255,.1);
+      color: var(--white);
+      border-radius: .5rem;
+      width: 36px;
+      height: 36px;
+      cursor: pointer;
+      font-size: 1rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: border-color .2s;
+    }
+
+    .cal-nav button:hover { border-color: var(--accent); }
+
+    .cal-nav .month-label {
+      font-weight: 600;
+      font-size: .95rem;
+      min-width: 140px;
+      text-align: center;
+    }
+
+    .btn-add {
+      background: var(--accent);
+      color: var(--white);
+      border: none;
+      border-radius: .6rem;
+      font-family: 'Inter', sans-serif;
+      font-size: .875rem;
+      font-weight: 600;
+      padding: .55rem 1.1rem;
+      cursor: pointer;
+      transition: background .2s;
+      display: flex;
+      align-items: center;
+      gap: .4rem;
+    }
+
+    .btn-add:hover { background: var(--accent-deep); }
+
+    .cal-grid {
+      display: grid;
+      grid-template-columns: repeat(7, 1fr);
+      gap: 1px;
+      background: rgba(255,255,255,.06);
+      border: 1px solid rgba(255,255,255,.06);
+      border-radius: .75rem;
+      overflow: hidden;
+    }
+
+    .cal-day-name {
+      background: var(--navy-soft);
+      padding: .5rem;
+      text-align: center;
+      font-size: .7rem;
+      font-weight: 600;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    .cal-day {
+      background: var(--navy-soft);
+      min-height: 80px;
+      padding: .5rem;
+      cursor: pointer;
+      transition: background .15s;
+      position: relative;
+    }
+
+    .cal-day:hover { background: var(--navy-light); }
+    .cal-day.other-month { opacity: .35; }
+
+    .cal-day.today .day-num {
+      background: var(--accent);
+      color: var(--white);
+      border-radius: 50%;
+      width: 24px;
+      height: 24px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: .8rem;
+    }
+
+    .cal-day.selected { background: var(--navy-light); outline: 2px solid var(--accent); outline-offset: -2px; }
+
+    .day-num {
+      font-size: .8rem;
+      font-weight: 600;
+      margin-bottom: .35rem;
+      width: 24px;
+      height: 24px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .day-events {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .day-dot {
+      font-size: .65rem;
+      padding: 1px 5px;
+      border-radius: 3px;
+      font-weight: 500;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .day-dot.walkthrough { background: rgba(245,158,11,.2); color: #fcd34d; }
+    .day-dot.job         { background: rgba(34,197,94,.2);  color: #86efac; }
+    .day-dot.more        { color: var(--muted); font-size: .6rem; }
+
+    /* ── DAY DETAIL PANEL ───────────────────────────────── */
+    .day-panel {
+      background: var(--navy-soft);
+      border: 1px solid rgba(255,255,255,.08);
+      border-radius: .75rem;
+      padding: 1.25rem;
+      margin-top: 1.25rem;
+    }
+
+    .day-panel h3 {
+      font-family: 'Fraunces', serif;
+      font-size: 1.1rem;
+      margin-bottom: 1rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .no-events {
+      color: var(--muted);
+      font-size: .875rem;
+      text-align: center;
+      padding: 1.5rem 0;
+    }
+
+    /* ── JOB CARDS ──────────────────────────────────────── */
+    .job-card {
+      background: var(--navy);
+      border: 1px solid rgba(255,255,255,.07);
+      border-radius: .6rem;
+      padding: 1rem;
+      margin-bottom: .75rem;
+      display: flex;
+      flex-direction: column;
+      gap: .6rem;
+    }
+
+    .job-card-top {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 1rem;
+      flex-wrap: wrap;
+    }
+
+    .job-card-info h4 {
+      font-size: .95rem;
+      font-weight: 600;
+    }
+
+    .job-card-info .meta {
+      color: var(--muted);
+      font-size: .8rem;
+      margin-top: .2rem;
+    }
+
+    .job-badges {
+      display: flex;
+      gap: .4rem;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+
+    .badge {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: .6rem;
+      letter-spacing: .06em;
+      text-transform: uppercase;
+      padding: .25rem .55rem;
+      border-radius: 99px;
+      font-weight: 400;
+    }
+
+    .badge.walkthrough { background: rgba(245,158,11,.2); color: #fcd34d; border: 1px solid rgba(245,158,11,.3); }
+    .badge.job         { background: rgba(34,197,94,.2);  color: #86efac; border: 1px solid rgba(34,197,94,.3); }
+    .badge.scheduled   { background: rgba(107,114,128,.2); color: #d1d5db; border: 1px solid rgba(107,114,128,.3); }
+    .badge.completed   { background: rgba(245,158,11,.15); color: #fcd34d; border: 1px solid rgba(245,158,11,.3); }
+    .badge.paid        { background: rgba(34,197,94,.15);  color: #86efac; border: 1px solid rgba(34,197,94,.3); }
+
+    .job-card-actions {
+      display: flex;
+      gap: .5rem;
+      flex-wrap: wrap;
+    }
+
+    .btn-sm {
+      font-family: 'Inter', sans-serif;
+      font-size: .775rem;
+      font-weight: 600;
+      padding: .4rem .85rem;
+      border-radius: .45rem;
+      border: none;
+      cursor: pointer;
+      transition: all .2s;
+    }
+
+    .btn-complete { background: rgba(245,158,11,.15); color: #fcd34d; border: 1px solid rgba(245,158,11,.3); }
+    .btn-complete:hover { background: rgba(245,158,11,.3); }
+
+    .btn-approve  { background: rgba(34,197,94,.15); color: #86efac; border: 1px solid rgba(34,197,94,.3); }
+    .btn-approve:hover  { background: rgba(34,197,94,.3); }
+
+    .btn-delete   { background: rgba(239,68,68,.1); color: #fca5a5; border: 1px solid rgba(239,68,68,.2); }
+    .btn-delete:hover   { background: rgba(239,68,68,.25); }
+
+    .btn-edit     { background: rgba(255,255,255,.07); color: var(--white); border: 1px solid rgba(255,255,255,.12); }
+    .btn-edit:hover     { background: rgba(255,255,255,.14); }
+
+    /* ── PAYOUT TAB ─────────────────────────────────────── */
+    .payout-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 1.5rem;
+      flex-wrap: wrap;
+      gap: 1rem;
+    }
+
+    .payout-header h2 {
+      font-family: 'Fraunces', serif;
+      font-size: 1.4rem;
+    }
+
+    .payout-total-card {
+      background: var(--navy-soft);
+      border: 1px solid rgba(34,197,94,.25);
+      border-radius: 1rem;
+      padding: 1.5rem 2rem;
+      display: flex;
+      align-items: center;
+      gap: 1.5rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .payout-total-card .icon {
+      width: 56px;
+      height: 56px;
+      background: rgba(34,197,94,.15);
+      border-radius: .75rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.5rem;
+      flex-shrink: 0;
+    }
+
+    .payout-total-card .total-label {
+      font-size: .8rem;
+      color: var(--muted);
+      font-weight: 500;
+      letter-spacing: .05em;
+      text-transform: uppercase;
+      margin-bottom: .25rem;
+    }
+
+    .payout-total-card .total-amount {
+      font-family: 'Fraunces', serif;
+      font-size: 2.2rem;
+      font-weight: 700;
+      color: #86efac;
+      line-height: 1;
+    }
+
+    .payout-total-card .total-sub {
+      font-size: .8rem;
+      color: var(--muted);
+      margin-top: .3rem;
+    }
+
+    .payout-stats {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: .75rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .stat-card {
+      background: var(--navy-soft);
+      border: 1px solid rgba(255,255,255,.07);
+      border-radius: .75rem;
+      padding: 1rem;
+      text-align: center;
+    }
+
+    .stat-card .stat-val {
+      font-family: 'Fraunces', serif;
+      font-size: 1.6rem;
+      font-weight: 700;
+      line-height: 1;
+    }
+
+    .stat-card .stat-label {
+      font-size: .75rem;
+      color: var(--muted);
+      margin-top: .3rem;
+    }
+
+    .payout-jobs-title {
+      font-family: 'Fraunces', serif;
+      font-size: 1.1rem;
+      margin-bottom: 1rem;
+    }
+
+    /* ── ALL JOBS TAB ───────────────────────────────────── */
+    .jobs-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 1.25rem;
+      flex-wrap: wrap;
+      gap: .75rem;
+    }
+
+    .jobs-header h2 {
+      font-family: 'Fraunces', serif;
+      font-size: 1.4rem;
+    }
+
+    .filter-bar {
+      display: flex;
+      gap: .4rem;
+      flex-wrap: wrap;
+    }
+
+    .filter-btn {
+      background: var(--navy-soft);
+      border: 1px solid rgba(255,255,255,.1);
+      color: var(--muted);
+      border-radius: 99px;
+      font-size: .775rem;
+      font-weight: 500;
+      padding: .35rem .85rem;
+      cursor: pointer;
+      transition: all .2s;
+    }
+
+    .filter-btn.active, .filter-btn:hover {
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+
+    /* ── MODAL ──────────────────────────────────────────── */
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,.7);
+      backdrop-filter: blur(4px);
+      z-index: 200;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 1rem;
+    }
+
+    .modal-overlay.open { display: flex; }
+
+    .modal {
+      background: var(--navy-soft);
+      border: 1px solid rgba(255,255,255,.1);
+      border-radius: 1rem;
+      padding: 2rem;
+      width: 100%;
+      max-width: 480px;
+      max-height: 90vh;
+      overflow-y: auto;
+    }
+
+    .modal h2 {
+      font-family: 'Fraunces', serif;
+      font-size: 1.3rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .modal .form-group input,
+    .modal .form-group select,
+    .modal .form-group textarea {
+      width: 100%;
+      background: var(--navy);
+      border: 1px solid rgba(255,255,255,.12);
+      border-radius: .5rem;
+      color: var(--white);
+      font-family: 'Inter', sans-serif;
+      font-size: .9rem;
+      padding: .65rem 1rem;
+      outline: none;
+      transition: border-color .2s;
+    }
+
+    .modal .form-group select option { background: var(--navy); }
+    .modal .form-group textarea { resize: vertical; min-height: 70px; }
+
+    .modal .form-group input:focus,
+    .modal .form-group select:focus,
+    .modal .form-group textarea:focus { border-color: var(--accent); }
+
+    .form-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: .75rem;
+    }
+
+    .modal-actions {
+      display: flex;
+      gap: .75rem;
+      margin-top: 1.5rem;
+      justify-content: flex-end;
+    }
+
+    .btn-cancel {
+      background: transparent;
+      border: 1px solid rgba(255,255,255,.15);
+      color: var(--muted);
+      border-radius: .5rem;
+      font-family: 'Inter', sans-serif;
+      font-size: .875rem;
+      font-weight: 500;
+      padding: .6rem 1.2rem;
+      cursor: pointer;
+      transition: all .2s;
+    }
+
+    .btn-cancel:hover { border-color: var(--white); color: var(--white); }
+
+    .empty-state {
+      text-align: center;
+      padding: 3rem 1rem;
+      color: var(--muted);
+    }
+
+    .empty-state .emoji { font-size: 2.5rem; margin-bottom: .75rem; }
+
+    @media (max-width: 600px) {
+      .form-row { grid-template-columns: 1fr; }
+      .payout-total-card { flex-direction: column; text-align: center; }
+      .cal-day { min-height: 60px; }
+      .day-dot { display: none; }
+      .day-dot:first-child { display: block; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ══════════════════════════════════════════════════════
+     LOGIN SCREEN
+══════════════════════════════════════════════════════ -->
+<div id="login-screen">
+  <div class="login-card">
+    <div class="login-logo">
+      <div class="badge">Employee Portal</div>
+      <h1>Easy Garage<br><em>Cleaning</em></h1>
+      <p>Sign in to access the team dashboard</p>
+    </div>
+    <div class="login-error" id="login-error">Incorrect username or password.</div>
+    <div class="form-group">
+      <label>Username</label>
+      <input type="text" id="login-user" placeholder="e.g. ZacB" autocomplete="username">
+    </div>
+    <div class="form-group">
+      <label>Password</label>
+      <input type="password" id="login-pass" placeholder="••••••••••" autocomplete="current-password">
+    </div>
+    <button class="btn-primary" onclick="attemptLogin()">Sign In</button>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════════════════════════
+     DASHBOARD
+══════════════════════════════════════════════════════ -->
+<div id="dashboard" style="display:flex; flex-direction:column;">
+
+  <!-- Top Bar -->
+  <div class="top-bar">
+    <div class="top-bar-brand">
+      <div class="dot"></div>
+      <span>EGC Portal</span>
+    </div>
+    <div class="top-bar-right">
+      <div class="user-chip">
+        <div class="avatar" id="user-avatar">Z</div>
+        <span id="user-label">ZacB</span>
+      </div>
+      <button class="btn-logout" onclick="logout()">Sign out</button>
+    </div>
+  </div>
+
+  <!-- Tab Bar -->
+  <div class="tab-bar">
+    <button class="tab-btn active" onclick="switchTab('calendar', this)">📅 Calendar</button>
+    <button class="tab-btn" onclick="switchTab('jobs', this)">📋 All Jobs</button>
+    <button class="tab-btn" onclick="switchTab('payout', this)">💰 Tyler's Payout</button>
+  </div>
+
+  <!-- Main -->
+  <div class="main-content">
+
+    <!-- ── CALENDAR TAB ── -->
+    <div id="tab-calendar" class="tab-panel active">
+      <div class="cal-header">
+        <div class="cal-nav">
+          <button onclick="changeMonth(-1)">&#8592;</button>
+          <span class="month-label" id="cal-month-label"></span>
+          <button onclick="changeMonth(1)">&#8594;</button>
+        </div>
+        <h2 id="cal-heading" style="display:none"></h2>
+        <button class="btn-add" onclick="openModal()">+ Book Appointment</button>
+      </div>
+
+      <div class="cal-grid" id="cal-grid"></div>
+
+      <div class="day-panel" id="day-panel" style="display:none">
+        <h3>
+          <span id="day-panel-title"></span>
+          <button class="btn-add" style="font-size:.8rem;padding:.4rem .9rem" onclick="openModal(selectedDate)">+ Add</button>
+        </h3>
+        <div id="day-jobs-list"></div>
+      </div>
+    </div>
+
+    <!-- ── ALL JOBS TAB ── -->
+    <div id="tab-jobs" class="tab-panel">
+      <div class="jobs-header">
+        <h2>All Appointments</h2>
+        <div style="display:flex;gap:.75rem;flex-wrap:wrap;align-items:center">
+          <div class="filter-bar">
+            <button class="filter-btn active" onclick="setFilter('all',this)">All</button>
+            <button class="filter-btn" onclick="setFilter('walkthrough',this)">Walk-Throughs</button>
+            <button class="filter-btn" onclick="setFilter('job',this)">Jobs</button>
+            <button class="filter-btn" onclick="setFilter('scheduled',this)">Scheduled</button>
+            <button class="filter-btn" onclick="setFilter('completed',this)">Completed</button>
+            <button class="filter-btn" onclick="setFilter('paid',this)">Paid</button>
+          </div>
+          <button class="btn-add" onclick="openModal()">+ Book Appointment</button>
+        </div>
+      </div>
+      <div id="all-jobs-list"></div>
+    </div>
+
+    <!-- ── PAYOUT TAB ── -->
+    <div id="tab-payout" class="tab-panel">
+      <div class="payout-header">
+        <h2>Tyler's Payout Tracker</h2>
+      </div>
+
+      <div class="payout-total-card">
+        <div class="icon">💵</div>
+        <div>
+          <div class="total-label">Total Earned</div>
+          <div class="total-amount" id="payout-total">$0</div>
+          <div class="total-sub" id="payout-sub">0 jobs completed &amp; paid</div>
+        </div>
+      </div>
+
+      <div class="payout-stats" id="payout-stats"></div>
+
+      <div class="payout-jobs-title">TylerG's Jobs</div>
+      <div id="payout-jobs-list"></div>
+    </div>
+
+  </div><!-- /main-content -->
+</div><!-- /dashboard -->
+
+<!-- ══════════════════════════════════════════════════════
+     BOOKING MODAL
+══════════════════════════════════════════════════════ -->
+<div class="modal-overlay" id="modal-overlay" onclick="closeModalOnOverlay(event)">
+  <div class="modal">
+    <h2 id="modal-title">Book Appointment</h2>
+    <input type="hidden" id="edit-id">
+
+    <div class="form-group">
+      <label>Type</label>
+      <select id="f-type">
+        <option value="walkthrough">Walk-Through</option>
+        <option value="job">Job (Cleanup)</option>
+      </select>
+    </div>
+
+    <div class="form-row">
+      <div class="form-group">
+        <label>Date</label>
+        <input type="date" id="f-date">
+      </div>
+      <div class="form-group">
+        <label>Time</label>
+        <input type="time" id="f-time">
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label>Customer Name</label>
+      <input type="text" id="f-customer" placeholder="John Smith">
+    </div>
+
+    <div class="form-row">
+      <div class="form-group">
+        <label>Phone</label>
+        <input type="tel" id="f-phone" placeholder="(970) 555-0100">
+      </div>
+      <div class="form-group">
+        <label>Assigned To</label>
+        <select id="f-assigned">
+          <option value="ZacB">ZacB</option>
+          <option value="TylerG">TylerG</option>
+          <option value="Both">Both</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label>Address</label>
+      <input type="text" id="f-address" placeholder="123 Main St, Fort Collins, CO">
+    </div>
+
+    <div class="form-group">
+      <label>Notes</label>
+      <textarea id="f-notes" placeholder="Any special instructions..."></textarea>
+    </div>
+
+    <div class="modal-actions">
+      <button class="btn-cancel" onclick="closeModal()">Cancel</button>
+      <button class="btn-primary" style="width:auto;padding:.6rem 1.4rem" onclick="saveJob()">Save</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ═══════════════════════════════════════════════════════
+   AUTH
+═══════════════════════════════════════════════════════ */
+const USERS = {
+  'ZacB':   'Iloveyou.2',
+  'TylerG': 'Placeholder'
+};
+
+let currentUser = null;
+
+function attemptLogin() {
+  const u = document.getElementById('login-user').value.trim();
+  const p = document.getElementById('login-pass').value;
+  const err = document.getElementById('login-error');
+
+  if (USERS[u] && USERS[u] === p) {
+    err.style.display = 'none';
+    currentUser = u;
+    sessionStorage.setItem('egc_user', u);
+    showDashboard();
+  } else {
+    err.style.display = 'block';
+  }
+}
+
+function logout() {
+  sessionStorage.removeItem('egc_user');
+  currentUser = null;
+  document.getElementById('login-screen').style.display = 'flex';
+  document.getElementById('dashboard').style.display = 'none';
+  document.getElementById('login-pass').value = '';
+}
+
+function showDashboard() {
+  document.getElementById('login-screen').style.display = 'none';
+  document.getElementById('dashboard').style.display = 'flex';
+  document.getElementById('user-label').textContent = currentUser;
+  document.getElementById('user-avatar').textContent = currentUser[0];
+  renderCalendar();
+  renderAllJobs();
+  renderPayout();
+}
+
+// Restore session on page load
+window.addEventListener('DOMContentLoaded', () => {
+  const saved = sessionStorage.getItem('egc_user');
+  if (saved && USERS[saved]) {
+    currentUser = saved;
+    showDashboard();
+  }
+
+  // Enter key on login
+  document.getElementById('login-pass').addEventListener('keydown', e => {
+    if (e.key === 'Enter') attemptLogin();
+  });
+  document.getElementById('login-user').addEventListener('keydown', e => {
+    if (e.key === 'Enter') document.getElementById('login-pass').focus();
+  });
+});
+
+/* ═══════════════════════════════════════════════════════
+   DATA
+═══════════════════════════════════════════════════════ */
+function loadJobs() {
+  try { return JSON.parse(localStorage.getItem('egc_jobs') || '[]'); }
+  catch { return []; }
+}
+
+function saveJobs(jobs) {
+  localStorage.setItem('egc_jobs', JSON.stringify(jobs));
+}
+
+function generateId() {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+}
+
+/* ═══════════════════════════════════════════════════════
+   TABS
+═══════════════════════════════════════════════════════ */
+function switchTab(name, btn) {
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('tab-' + name).classList.add('active');
+  btn.classList.add('active');
+  if (name === 'jobs')   renderAllJobs();
+  if (name === 'payout') renderPayout();
+  if (name === 'calendar') renderCalendar();
+}
+
+/* ═══════════════════════════════════════════════════════
+   CALENDAR
+═══════════════════════════════════════════════════════ */
+let calDate = new Date();
+let selectedDate = null;
+
+const MONTH_NAMES = ['January','February','March','April','May','June',
+                     'July','August','September','October','November','December'];
+const DAY_NAMES = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+
+function changeMonth(dir) {
+  calDate = new Date(calDate.getFullYear(), calDate.getMonth() + dir, 1);
+  selectedDate = null;
+  document.getElementById('day-panel').style.display = 'none';
+  renderCalendar();
+}
+
+function renderCalendar() {
+  const jobs = loadJobs();
+  const y = calDate.getFullYear();
+  const m = calDate.getMonth();
+  const today = new Date();
+
+  document.getElementById('cal-month-label').textContent = MONTH_NAMES[m] + ' ' + y;
+
+  const grid = document.getElementById('cal-grid');
+  grid.innerHTML = '';
+
+  // Day name headers
+  DAY_NAMES.forEach(d => {
+    const el = document.createElement('div');
+    el.className = 'cal-day-name';
+    el.textContent = d;
+    grid.appendChild(el);
+  });
+
+  const firstDay = new Date(y, m, 1).getDay();
+  const daysInMonth = new Date(y, m + 1, 0).getDate();
+  const daysInPrev = new Date(y, m, 0).getDate();
+
+  // Prev month fill
+  for (let i = firstDay - 1; i >= 0; i--) {
+    grid.appendChild(makeDayCell(new Date(y, m - 1, daysInPrev - i), jobs, true));
+  }
+  // Current month
+  for (let d = 1; d <= daysInMonth; d++) {
+    grid.appendChild(makeDayCell(new Date(y, m, d), jobs, false));
+  }
+  // Next month fill
+  const total = firstDay + daysInMonth;
+  const remaining = total % 7 === 0 ? 0 : 7 - (total % 7);
+  for (let d = 1; d <= remaining; d++) {
+    grid.appendChild(makeDayCell(new Date(y, m + 1, d), jobs, true));
+  }
+
+  if (selectedDate) renderDayPanel(selectedDate);
+}
+
+function makeDayCell(date, jobs, otherMonth) {
+  const dateStr = toDateStr(date);
+  const dayJobs = jobs.filter(j => j.date === dateStr);
+  const today = new Date();
+  const isToday = date.toDateString() === today.toDateString();
+  const isSelected = selectedDate === dateStr;
+
+  const cell = document.createElement('div');
+  cell.className = 'cal-day' +
+    (otherMonth ? ' other-month' : '') +
+    (isToday ? ' today' : '') +
+    (isSelected ? ' selected' : '');
+
+  const numEl = document.createElement('div');
+  numEl.className = 'day-num';
+  numEl.textContent = date.getDate();
+  cell.appendChild(numEl);
+
+  if (dayJobs.length > 0) {
+    const evtsEl = document.createElement('div');
+    evtsEl.className = 'day-events';
+    dayJobs.slice(0, 2).forEach(j => {
+      const dot = document.createElement('div');
+      dot.className = 'day-dot ' + j.type;
+      dot.textContent = j.customer || (j.type === 'walkthrough' ? 'Walk-Through' : 'Job');
+      evtsEl.appendChild(dot);
+    });
+    if (dayJobs.length > 2) {
+      const more = document.createElement('div');
+      more.className = 'day-dot more';
+      more.textContent = '+' + (dayJobs.length - 2) + ' more';
+      evtsEl.appendChild(more);
+    }
+    cell.appendChild(evtsEl);
+  }
+
+  cell.addEventListener('click', () => selectDay(dateStr));
+  return cell;
+}
+
+function selectDay(dateStr) {
+  selectedDate = dateStr;
+  renderCalendar();
+  renderDayPanel(dateStr);
+}
+
+function renderDayPanel(dateStr) {
+  const panel = document.getElementById('day-panel');
+  const title = document.getElementById('day-panel-title');
+  const list  = document.getElementById('day-jobs-list');
+  const d = new Date(dateStr + 'T12:00:00');
+  title.textContent = d.toLocaleDateString('en-US', { weekday:'long', month:'long', day:'numeric' });
+  panel.style.display = 'block';
+
+  const jobs = loadJobs().filter(j => j.date === dateStr).sort((a,b) => (a.time||'').localeCompare(b.time||''));
+  if (jobs.length === 0) {
+    list.innerHTML = '<div class="no-events">No appointments — <a href="javascript:void(0)" onclick="openModal(selectedDate)" style="color:var(--accent)">book one</a></div>';
+  } else {
+    list.innerHTML = '';
+    jobs.forEach(j => list.appendChild(buildJobCard(j)));
+  }
+}
+
+/* ═══════════════════════════════════════════════════════
+   ALL JOBS
+═══════════════════════════════════════════════════════ */
+let currentFilter = 'all';
+
+function setFilter(f, btn) {
+  currentFilter = f;
+  document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  renderAllJobs();
+}
+
+function renderAllJobs() {
+  let jobs = loadJobs();
+  if (currentFilter !== 'all') {
+    if (['walkthrough','job'].includes(currentFilter)) {
+      jobs = jobs.filter(j => j.type === currentFilter);
+    } else {
+      jobs = jobs.filter(j => j.status === currentFilter);
+    }
+  }
+  jobs.sort((a, b) => {
+    const da = (a.date||'') + (a.time||'');
+    const db = (b.date||'') + (b.time||'');
+    return db.localeCompare(da);
+  });
+
+  const list = document.getElementById('all-jobs-list');
+  if (jobs.length === 0) {
+    list.innerHTML = '<div class="empty-state"><div class="emoji">📋</div><div>No appointments yet.</div></div>';
+    return;
+  }
+  list.innerHTML = '';
+  jobs.forEach(j => list.appendChild(buildJobCard(j)));
+}
+
+/* ═══════════════════════════════════════════════════════
+   PAYOUT
+═══════════════════════════════════════════════════════ */
+function renderPayout() {
+  const jobs = loadJobs();
+  const tylerJobs = jobs.filter(j => j.assignedTo === 'TylerG' || j.assignedTo === 'Both');
+  const paidJobs  = tylerJobs.filter(j => j.status === 'paid');
+  const pendingJobs = tylerJobs.filter(j => j.status === 'completed');
+  const scheduledJobs = tylerJobs.filter(j => j.status === 'scheduled');
+  const total = paidJobs.length * 30;
+
+  document.getElementById('payout-total').textContent = '$' + total.toLocaleString();
+  document.getElementById('payout-sub').textContent = paidJobs.length + ' job' + (paidJobs.length !== 1 ? 's' : '') + ' completed & paid';
+
+  document.getElementById('payout-stats').innerHTML = `
+    <div class="stat-card">
+      <div class="stat-val" style="color:#86efac">${paidJobs.length}</div>
+      <div class="stat-label">Paid Jobs</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-val" style="color:#fcd34d">${pendingJobs.length}</div>
+      <div class="stat-label">Awaiting Approval</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-val" style="color:#d1d5db">${scheduledJobs.length}</div>
+      <div class="stat-label">Upcoming</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-val">${tylerJobs.length}</div>
+      <div class="stat-label">Total Assigned</div>
+    </div>
+  `;
+
+  const list = document.getElementById('payout-jobs-list');
+  if (tylerJobs.length === 0) {
+    list.innerHTML = '<div class="empty-state"><div class="emoji">💼</div><div>No jobs assigned to TylerG yet.</div></div>';
+    return;
+  }
+
+  // Sort: pending first, then completed, then paid, then scheduled
+  const order = { completed: 0, paid: 1, scheduled: 2 };
+  const sorted = [...tylerJobs].sort((a, b) => {
+    const oa = order[a.status] ?? 99;
+    const ob = order[b.status] ?? 99;
+    if (oa !== ob) return oa - ob;
+    return ((b.date||'') + (b.time||'')).localeCompare((a.date||'') + (a.time||''));
+  });
+
+  list.innerHTML = '';
+  sorted.forEach(j => list.appendChild(buildJobCard(j)));
+}
+
+/* ═══════════════════════════════════════════════════════
+   JOB CARD
+═══════════════════════════════════════════════════════ */
+function buildJobCard(job) {
+  const card = document.createElement('div');
+  card.className = 'job-card';
+
+  const dateLabel = job.date
+    ? new Date(job.date + 'T12:00:00').toLocaleDateString('en-US', { weekday:'short', month:'short', day:'numeric' })
+    : '—';
+  const timeLabel = job.time ? formatTime(job.time) : '';
+
+  card.innerHTML = `
+    <div class="job-card-top">
+      <div class="job-card-info">
+        <h4>${escHtml(job.customer || 'Unnamed Customer')}</h4>
+        <div class="meta">${dateLabel}${timeLabel ? ' · ' + timeLabel : ''}${job.address ? ' · ' + escHtml(job.address) : ''}${job.phone ? ' · ' + escHtml(job.phone) : ''}</div>
+        ${job.notes ? `<div class="meta" style="margin-top:.25rem;font-style:italic">${escHtml(job.notes)}</div>` : ''}
+      </div>
+      <div class="job-badges">
+        <span class="badge ${job.type}">${job.type === 'walkthrough' ? 'Walk-Through' : 'Job'}</span>
+        <span class="badge ${job.status}">${capitalize(job.status)}</span>
+        <span class="badge" style="background:rgba(255,91,31,.1);color:#ffa07a;border:1px solid rgba(255,91,31,.2)">${escHtml(job.assignedTo)}</span>
+        ${job.status === 'paid' ? '<span class="badge" style="background:rgba(34,197,94,.2);color:#86efac;border:1px solid rgba(34,197,94,.3)">💵 $30</span>' : ''}
+      </div>
+    </div>
+    <div class="job-card-actions" id="actions-${job.id}"></div>
+  `;
+
+  const actions = card.querySelector('#actions-' + job.id);
+  buildActions(actions, job);
+  return card;
+}
+
+function buildActions(container, job) {
+  container.innerHTML = '';
+
+  if (job.status === 'scheduled') {
+    const btn = document.createElement('button');
+    btn.className = 'btn-sm btn-complete';
+    btn.textContent = '✓ Mark Complete';
+    btn.onclick = () => updateJobStatus(job.id, 'completed');
+    container.appendChild(btn);
+  }
+
+  if (job.status === 'completed') {
+    const btn = document.createElement('button');
+    btn.className = 'btn-sm btn-approve';
+    btn.textContent = '💵 Approve Payment Received';
+    btn.onclick = () => updateJobStatus(job.id, 'paid');
+    container.appendChild(btn);
+  }
+
+  // Edit (anyone can edit)
+  const editBtn = document.createElement('button');
+  editBtn.className = 'btn-sm btn-edit';
+  editBtn.textContent = 'Edit';
+  editBtn.onclick = () => openModal(null, job);
+  container.appendChild(editBtn);
+
+  // Delete (anyone can delete for now)
+  const delBtn = document.createElement('button');
+  delBtn.className = 'btn-sm btn-delete';
+  delBtn.textContent = 'Delete';
+  delBtn.onclick = () => deleteJob(job.id);
+  container.appendChild(delBtn);
+}
+
+function updateJobStatus(id, status) {
+  const jobs = loadJobs();
+  const idx = jobs.findIndex(j => j.id === id);
+  if (idx === -1) return;
+  jobs[idx].status = status;
+  saveJobs(jobs);
+  refreshAll();
+}
+
+function deleteJob(id) {
+  if (!confirm('Delete this appointment?')) return;
+  const jobs = loadJobs().filter(j => j.id !== id);
+  saveJobs(jobs);
+  refreshAll();
+}
+
+function refreshAll() {
+  renderCalendar();
+  renderAllJobs();
+  renderPayout();
+}
+
+/* ═══════════════════════════════════════════════════════
+   MODAL
+═══════════════════════════════════════════════════════ */
+function openModal(dateStr, editJob) {
+  document.getElementById('modal-overlay').classList.add('open');
+  document.getElementById('edit-id').value = editJob ? editJob.id : '';
+  document.getElementById('modal-title').textContent = editJob ? 'Edit Appointment' : 'Book Appointment';
+
+  if (editJob) {
+    document.getElementById('f-type').value     = editJob.type     || 'walkthrough';
+    document.getElementById('f-date').value     = editJob.date     || '';
+    document.getElementById('f-time').value     = editJob.time     || '';
+    document.getElementById('f-customer').value = editJob.customer || '';
+    document.getElementById('f-phone').value    = editJob.phone    || '';
+    document.getElementById('f-assigned').value = editJob.assignedTo || 'ZacB';
+    document.getElementById('f-address').value  = editJob.address  || '';
+    document.getElementById('f-notes').value    = editJob.notes    || '';
+  } else {
+    document.getElementById('f-type').value     = 'walkthrough';
+    document.getElementById('f-date').value     = dateStr || toDateStr(new Date());
+    document.getElementById('f-time').value     = '';
+    document.getElementById('f-customer').value = '';
+    document.getElementById('f-phone').value    = '';
+    document.getElementById('f-assigned').value = 'ZacB';
+    document.getElementById('f-address').value  = '';
+    document.getElementById('f-notes').value    = '';
+  }
+}
+
+function closeModal() {
+  document.getElementById('modal-overlay').classList.remove('open');
+}
+
+function closeModalOnOverlay(e) {
+  if (e.target === document.getElementById('modal-overlay')) closeModal();
+}
+
+function saveJob() {
+  const id       = document.getElementById('edit-id').value;
+  const type     = document.getElementById('f-type').value;
+  const date     = document.getElementById('f-date').value;
+  const time     = document.getElementById('f-time').value;
+  const customer = document.getElementById('f-customer').value.trim();
+  const phone    = document.getElementById('f-phone').value.trim();
+  const assigned = document.getElementById('f-assigned').value;
+  const address  = document.getElementById('f-address').value.trim();
+  const notes    = document.getElementById('f-notes').value.trim();
+
+  if (!date || !customer) {
+    alert('Please fill in at least the date and customer name.');
+    return;
+  }
+
+  const jobs = loadJobs();
+
+  if (id) {
+    const idx = jobs.findIndex(j => j.id === id);
+    if (idx !== -1) {
+      jobs[idx] = { ...jobs[idx], type, date, time, customer, phone, assignedTo: assigned, address, notes };
+    }
+  } else {
+    jobs.push({ id: generateId(), type, date, time, customer, phone, assignedTo: assigned, address, notes, status: 'scheduled', createdBy: currentUser, createdAt: new Date().toISOString() });
+  }
+
+  saveJobs(jobs);
+  closeModal();
+  refreshAll();
+}
+
+/* ═══════════════════════════════════════════════════════
+   HELPERS
+═══════════════════════════════════════════════════════ */
+function toDateStr(d) {
+  return d.getFullYear() + '-' +
+    String(d.getMonth() + 1).padStart(2,'0') + '-' +
+    String(d.getDate()).padStart(2,'0');
+}
+
+function formatTime(t) {
+  if (!t) return '';
+  const [h, m] = t.split(':').map(Number);
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  const hr = h % 12 || 12;
+  return hr + ':' + String(m).padStart(2,'0') + ' ' + ampm;
+}
+
+function capitalize(s) { return s ? s[0].toUpperCase() + s.slice(1) : ''; }
+
+function escHtml(str) {
+  if (!str) return '';
+  return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+</script>
+</body>
+</html>
