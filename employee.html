@@ -1845,35 +1845,40 @@ function adjFloors(d) {
   updateQDisplay();
 }
 
-function lookupDistance(addr) {
+async function lookupDistance(addr) {
   if (!addr.trim()) return;
   oc.quote.custAddr = addr.trim();
   const statusEl = document.getElementById('dist-status');
-  if (!window._mapsReady) {
-    if (statusEl) statusEl.textContent = 'Maps not loaded — enter miles manually.';
+  if (!CFG.GOOGLE_MAPS_KEY) {
+    if (statusEl) statusEl.textContent = 'No API key — enter miles manually.';
     return;
   }
   if (statusEl) statusEl.textContent = 'Calculating…';
-  const svc = new google.maps.DistanceMatrixService();
-  svc.getDistanceMatrix({
-    origins: [CFG.BASE_ADDRESS],
-    destinations: [addr.trim()],
-    travelMode: google.maps.TravelMode.DRIVING,
-    unitSystem: google.maps.UnitSystem.IMPERIAL,
-  }, (res, status) => {
-    if (status !== 'OK' || res.rows[0].elements[0].status !== 'OK') {
-      if (statusEl) statusEl.textContent = 'Could not calculate — enter miles manually.';
-      return;
-    }
-    const meters = res.rows[0].elements[0].distance.value;
-    const miles  = Math.round(meters / 1609.34);
+  try {
+    const geocode = async (address) => {
+      const r = await fetch(`https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(address)}&key=${CFG.GOOGLE_MAPS_KEY}`);
+      const j = await r.json();
+      if (j.status !== 'OK') throw new Error(j.status);
+      return j.results[0].geometry.location; // { lat, lng }
+    };
+    const [base, dest] = await Promise.all([geocode(CFG.BASE_ADDRESS), geocode(addr.trim())]);
+    // Haversine straight-line distance
+    const R = 3958.8; // Earth radius miles
+    const dLat = (dest.lat - base.lat) * Math.PI / 180;
+    const dLng = (dest.lng - base.lng) * Math.PI / 180;
+    const a = Math.sin(dLat/2)**2 + Math.cos(base.lat*Math.PI/180) * Math.cos(dest.lat*Math.PI/180) * Math.sin(dLng/2)**2;
+    const straightMiles = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    // ~1.3 road-distance factor
+    const miles = Math.round(straightMiles * 1.3);
     oc.quote.distanceMiles = miles;
     const over = Math.max(0, miles - CFG.FREE_MILES);
-    if (statusEl) statusEl.textContent = `${miles} mi from base${over > 0 ? ` · +$${over} surcharge` : ' · within free zone'}`;
+    if (statusEl) statusEl.textContent = `~${miles} mi from base${over > 0 ? ` · +$${over} surcharge` : ' · within free zone'}`;
     const input = document.getElementById('dist-miles');
     if (input) input.value = miles;
     updateQDisplay();
-  });
+  } catch(e) {
+    if (statusEl) statusEl.textContent = 'Could not geocode — enter miles manually.';
+  }
 }
 
 function setDistanceMiles(val) {
