@@ -1847,7 +1847,11 @@ function adjFloors(d) {
 
 async function lookupDistance(addr) {
   if (!addr.trim()) return;
-  oc.quote.custAddr = addr.trim();
+  // Auto-append city if no state/zip detected so Tyler can type just a street
+  const raw = addr.trim();
+  const hasLocation = /\b(CO|colorado|\d{5})\b/i.test(raw);
+  const fullAddr = hasLocation ? raw : `${raw}, Fort Collins, CO`;
+  oc.quote.custAddr = raw;
   const statusEl = document.getElementById('dist-status');
   if (!CFG.GOOGLE_MAPS_KEY) {
     if (statusEl) statusEl.textContent = 'No API key — enter miles manually.';
@@ -1861,7 +1865,7 @@ async function lookupDistance(addr) {
       if (j.status !== 'OK') throw new Error(j.status);
       return j.results[0].geometry.location; // { lat, lng }
     };
-    const [base, dest] = await Promise.all([geocode(CFG.BASE_ADDRESS), geocode(addr.trim())]);
+    const [base, dest] = await Promise.all([geocode(CFG.BASE_ADDRESS), geocode(fullAddr)]);
     // Haversine straight-line distance
     const R = 3958.8; // Earth radius miles
     const dLat = (dest.lat - base.lat) * Math.PI / 180;
