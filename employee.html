@@ -907,7 +907,7 @@ const CFG = {
   EMAILJS_PUBLIC_KEY:   'RyH7Kwhn5-T5ebvN9',
   GOOGLE_SHEET_CSV_URL: '',
   GOOGLE_MAPS_KEY:      'AIzaSyCxL7-EDDaQjidBnbrUAFgdODQ1S8oVuuw',
-  BASE_ADDRESS:         'Fort Collins, CO',
+  BASE_ADDRESS:         '801 W Laurel St, Fort Collins, CO',
   FREE_MILES:           25,          // no charge within this radius
   PRICE_PER_MILE:       1,           // $ per mile beyond free radius
 };
@@ -1787,30 +1787,28 @@ function ocToggleNew() {
 
 /* ─── Step 2: Quote Builder ────────────────────────── */
 function calcQuote() {
-  const base = { small:125, medium:250, large:425, oversized:625 }[oc.quote.size] || 250;
-  const mul  = { light:.8, moderate:1.0, heavy:1.4, packed:1.9 }[oc.quote.fill] || 1.0;
-  let extras = 0, lines = [];
+  let total = 0, lines = [];
+
+  // Cubic yards — $25/yd
+  const cy = oc.quote.cubicYards || 0;
+  if (cy > 0) { total += cy * 25; lines.push(`📦 Cubic yards (${cy} yd³)  +$${cy*25}`); }
 
   // Special items
   SPECIALS.forEach(item => {
     const qty = oc.quote.specials[item.id] || 0;
-    if (qty > 0) { extras += item.price * qty; lines.push(`${item.icon} ${item.name} ×${qty}  +$${item.price*qty}`); }
+    if (qty > 0) { total += item.price * qty; lines.push(`${item.icon} ${item.name} ×${qty}  +$${item.price*qty}`); }
   });
-
-  // Cubic yards — $25/yd
-  const cy = oc.quote.cubicYards || 0;
-  if (cy > 0) { extras += cy * 25; lines.push(`📦 Cubic yards (${cy} yd³)  +$${cy*25}`); }
 
   // Floors — $20/floor
   const fl = oc.quote.floors || 0;
-  if (fl > 0) { extras += fl * 20; lines.push(`🏢 Floors to climb (${fl})  +$${fl*20}`); }
+  if (fl > 0) { total += fl * 20; lines.push(`🏢 Floors to climb (${fl})  +$${fl*20}`); }
 
   // Distance — $1/mile beyond free radius
   const dm = oc.quote.distanceMiles || 0;
   const billableMiles = Math.max(0, dm - CFG.FREE_MILES);
-  if (billableMiles > 0) { extras += billableMiles * CFG.PRICE_PER_MILE; lines.push(`📍 Distance (${dm} mi, ${billableMiles} mi over)  +$${billableMiles}`); }
+  if (billableMiles > 0) { total += billableMiles * CFG.PRICE_PER_MILE; lines.push(`📍 Distance (${dm} mi, ${billableMiles} mi over)  +$${billableMiles}`); }
 
-  const low  = Math.round((base * mul + extras) / 5) * 5;
+  const low  = Math.round(total / 5) * 5;
   const high = Math.round(low * 1.18 / 5) * 5;
   return { low, high, lines };
 }
@@ -1909,26 +1907,6 @@ function ocStep2(body) {
         <div class="opt${sel('space','basement')}" onclick="setOpt('space','basement',this)"><span class="oi">🏚</span><div class="on">Basement</div></div>
         <div class="opt${sel('space','attic')}"    onclick="setOpt('space','attic',this)">   <span class="oi">🏠</span><div class="on">Attic</div></div>
         <div class="opt${sel('space','other')}"    onclick="setOpt('space','other',this)">   <span class="oi">📦</span><div class="on">Other</div></div>
-      </div>
-    </div>
-
-    <div class="q-section">
-      <div class="q-lbl">Size of space</div>
-      <div class="opt-grid g4">
-        <div class="opt${sel('size','small')}"     onclick="setOpt('size','small',this)">    <span class="oi">🚘</span><div class="on">1-Car</div><div class="os">Small</div></div>
-        <div class="opt${sel('size','medium')}"    onclick="setOpt('size','medium',this)">   <span class="oi">🚗</span><div class="on">2-Car</div><div class="os">Medium</div></div>
-        <div class="opt${sel('size','large')}"     onclick="setOpt('size','large',this)">    <span class="oi">🚙</span><div class="on">3-Car</div><div class="os">Large</div></div>
-        <div class="opt${sel('size','oversized')}" onclick="setOpt('size','oversized',this)"><span class="oi">🏗</span><div class="on">Oversized</div><div class="os">Commercial</div></div>
-      </div>
-    </div>
-
-    <div class="q-section">
-      <div class="q-lbl">How full is it?</div>
-      <div class="opt-grid g4">
-        <div class="opt${sel('fill','light')}"    onclick="setOpt('fill','light',this)">   <span class="oi">🌱</span><div class="on">Light</div><div class="os">~25%</div></div>
-        <div class="opt${sel('fill','moderate')}" onclick="setOpt('fill','moderate',this)"><span class="oi">📦</span><div class="on">Moderate</div><div class="os">~50%</div></div>
-        <div class="opt${sel('fill','heavy')}"    onclick="setOpt('fill','heavy',this)">   <span class="oi">🏋</span><div class="on">Heavy</div><div class="os">~75%</div></div>
-        <div class="opt${sel('fill','packed')}"   onclick="setOpt('fill','packed',this)">  <span class="oi">🔴</span><div class="on">Packed</div><div class="os">100%</div></div>
       </div>
     </div>
 
