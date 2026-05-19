@@ -102,6 +102,11 @@
 
     .week-body { display: flex; overflow-y: auto; height: calc(100vh - 220px); min-height: 400px; }
     .blocked-overlay { position:absolute; inset:0; background:repeating-linear-gradient(135deg,rgba(239,68,68,.07) 0px,rgba(239,68,68,.07) 8px,transparent 8px,transparent 16px); pointer-events:none; z-index:3; }
+    .hour-slot.slot-blocked { background:rgba(239,68,68,.07); cursor:not-allowed; }
+    .hour-slot.slot-blocked::before { content:'🔒'; position:absolute; right:4px; top:50%; transform:translateY(-50%); font-size:.6rem; opacity:.4; }
+    .slot-lock-btn { display:none; position:absolute; right:3px; top:2px; font-size:.6rem; background:rgba(255,255,255,.07); border:none; border-radius:3px; color:var(--muted); cursor:pointer; padding:1px 4px; z-index:2; }
+    .hour-slot:hover .slot-lock-btn { display:block; }
+    .hour-slot.slot-blocked .slot-lock-btn { display:block; color:rgba(239,68,68,.6); background:rgba(239,68,68,.1); }
     .blocked-label { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); font-size:.7rem; font-weight:700; letter-spacing:.06em; text-transform:uppercase; color:rgba(239,68,68,.6); white-space:nowrap; z-index:4; pointer-events:none; }
     .week-day-hd.blocked-hd { color: rgba(239,68,68,.7); }
     .block-btn { font-size:.6rem; background:none; border:1px solid rgba(255,255,255,.12); border-radius:4px; color:var(--muted); cursor:pointer; padding:1px 5px; margin-top:2px; display:block; width:100%; }
@@ -981,7 +986,8 @@ const db = firebase.firestore();
 let jobsCache = [];
 let custsCache = [];
 let leadsCache = [];
-let blockedDays = new Set();
+let blockedDays  = new Set();
+let blockedSlots = new Set(); // keys: "YYYY-MM-DD_H"
 let _leadsTimer = null;
 
 /* ═══════════════════════════════════════════════════════
@@ -1050,6 +1056,10 @@ function startListeners() {
   });
   db.collection('blocked_days').onSnapshot(snap => {
     blockedDays = new Set(snap.docs.map(d => d.id));
+    renderCal();
+  });
+  db.collection('blocked_slots').onSnapshot(snap => {
+    blockedSlots = new Set(snap.docs.map(d => d.id));
     renderCal();
   });
   db.collection('leads').onSnapshot(snap => {
@@ -1159,6 +1169,15 @@ function toggleBlockDay(ds) {
     db.collection('blocked_days').doc(ds).delete();
   } else {
     db.collection('blocked_days').doc(ds).set({ blockedBy: me, blockedAt: new Date().toISOString() });
+  }
+}
+
+function toggleBlockSlot(slotKey) {
+  if (!ADMINS.includes(me)) return;
+  if (blockedSlots.has(slotKey)) {
+    db.collection('blocked_slots').doc(slotKey).delete();
+  } else {
+    db.collection('blocked_slots').doc(slotKey).set({ blockedBy: me, blockedAt: new Date().toISOString() });
   }
 }
 
@@ -1344,12 +1363,22 @@ function renderCal() {
 
     // Hour slots
     for (let h=START_HR; h<END_HR; h++) {
+      const slotKey = `${ds}_${h}`;
+      const isSlotBlocked = blockedSlots.has(slotKey);
       const slot = document.createElement('div');
-      slot.className = 'hour-slot';
+      slot.className = 'hour-slot' + (isSlotBlocked ? ' slot-blocked' : '');
       slot.onclick = () => {
-        if (isBlocked && !ADMINS.includes(me)) { alert('This day is blocked — no bookings allowed.'); return; }
+        if ((isBlocked || isSlotBlocked) && !ADMINS.includes(me)) { alert('This time is blocked — no bookings allowed.'); return; }
         openBooking(ds, null, String(h).padStart(2,'0')+':00');
       };
+      if (ADMINS.includes(me)) {
+        const lockBtn = document.createElement('button');
+        lockBtn.className = 'slot-lock-btn';
+        lockBtn.textContent = isSlotBlocked ? '🔒' : '🔓';
+        lockBtn.title = isSlotBlocked ? 'Unblock slot' : 'Block slot';
+        lockBtn.onclick = e => { e.stopPropagation(); toggleBlockSlot(slotKey); };
+        slot.appendChild(lockBtn);
+      }
       col.appendChild(slot);
     }
 
@@ -1405,7 +1434,7 @@ function showPopup(job, anchor) {
     </div>
     <div class="pacts">
       ${job.status==='scheduled'?`<button class="bsm complete" onclick="setStatus('${job.id}','completed');closePopup()">✓ Mark Complete</button>`:''}
-      ${job.status==='completed'?`<button class="bsm approve" onclick="setStatus('${job.id}','paid');closePopup()">💵 Approve Payment</button>`:''}
+      ${job.status==='completed'&&ADMINS.includes(me)?`<button class="bsm approve" onclick="setStatus('${job.id}','paid');closePopup()">💵 Approve Payment</button>`:''}
       <button class="bsm edit" onclick="closePopup();openBooking(null,loadJobs().find(j=>j.id==='${job.id}'))">Edit</button>
       <button class="bsm del" onclick="closePopup();delJob('${job.id}')">Delete</button>
     </div>`;
@@ -1564,7 +1593,7 @@ function mkJobCard(job) {
   if (job.status==='scheduled') {
     const b=document.createElement('button'); b.className='bsm complete'; b.textContent='✓ Mark Complete'; b.onclick=()=>setStatus(job.id,'completed'); acts.appendChild(b);
   }
-  if (job.status==='completed') {
+  if (job.status==='completed' && ADMINS.includes(me)) {
     const b=document.createElement('button'); b.className='bsm approve'; b.textContent='💵 Approve Payment'; b.onclick=()=>setStatus(job.id,'paid'); acts.appendChild(b);
   }
   const eb=document.createElement('button'); eb.className='bsm edit'; eb.textContent='Edit'; eb.onclick=()=>openBooking(null,job); acts.appendChild(eb);
