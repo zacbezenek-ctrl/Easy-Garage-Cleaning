@@ -1960,8 +1960,17 @@ function ocStep1(body) {
 }
 
 function ocFilter(q) {
-  const custs = loadCustomers();
-  const fil = q ? custs.filter(c => c.name.toLowerCase().includes(q.toLowerCase()) || (c.phone||'').includes(q)) : custs;
+  // Merge customers + unresponded leads, dedupe by phone
+  const custs = loadCustomers().map(c => ({ ...c, _isLead: false }));
+  const leadEntries = leadsCache
+    .filter(l => !l.respondedAt && (l.name || l.phone))
+    .map(l => ({ id: l.id, name: l.name||l.phone, phone: l.phone, email: l.email, address: '', items: l.items, _isLead: true }));
+  const seenPhones = new Set(custs.map(c => c.phone).filter(Boolean));
+  const merged = [...custs, ...leadEntries.filter(l => !seenPhones.has(l.phone))];
+
+  const lq = q.toLowerCase();
+  const fil = q ? merged.filter(c => (c.name||'').toLowerCase().includes(lq) || (c.phone||'').includes(q)) : merged;
+
   const list = document.getElementById('oc-list');
   if (!list) return;
   list.innerHTML = '';
@@ -1970,7 +1979,10 @@ function ocFilter(q) {
     const card = document.createElement('div');
     card.className = 'cust-card' + (oc.customer?.id===c.id ? ' selected' : '');
     card.innerHTML = `<div class="cust-av" style="background:${avatarBg(c.name)}">${initials(c.name)}</div>
-      <div class="cust-info"><div class="cname">${esc(c.name)}</div><div class="csub">${[c.phone,c.email].filter(Boolean).join(' · ')||'No contact info'}</div></div>
+      <div class="cust-info">
+        <div class="cname">${esc(c.name)}${c._isLead ? ' <span style="font-size:.65rem;background:rgba(255,91,31,.2);color:var(--accent);border-radius:4px;padding:1px 5px;vertical-align:middle">🔥 Lead</span>' : ''}</div>
+        <div class="csub">${[c.phone,c.email].filter(Boolean).join(' · ')||'No contact info'}${c.items ? ' · '+esc(c.items) : ''}</div>
+      </div>
       <div class="cust-check">✓</div>`;
     card.onclick = () => {
       oc.customer = c; oc.isNew = false;
