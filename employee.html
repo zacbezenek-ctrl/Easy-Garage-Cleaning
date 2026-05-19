@@ -66,30 +66,81 @@
     .panel { display: none; }
     .panel.active { display: block; }
 
-    /* ── CALENDAR ──────────────────────────────────────── */
-    .cal-hd { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.25rem; flex-wrap: wrap; gap: .75rem; }
-    .cal-hd h2 { font-family: 'Fraunces', serif; font-size: 1.35rem; font-weight: 700; }
-    .cal-nav { display: flex; align-items: center; gap: .4rem; }
-    .cal-nav button { background: var(--navy-soft); border: 1px solid rgba(255,255,255,.1); color: var(--white); border-radius: .45rem; width: 34px; height: 34px; cursor: pointer; font-size: .9rem; display: flex; align-items: center; justify-content: center; transition: border-color .2s; }
+    /* ── CALENDAR HEADER ───────────────────────────────── */
+    .cal-hd { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1rem; flex-wrap: wrap; gap: .65rem; }
+    .cal-nav { display: flex; align-items: center; gap: .35rem; }
+    .cal-nav button { background: var(--navy-soft); border: 1px solid rgba(255,255,255,.1); color: var(--white); border-radius: .45rem; width: 32px; height: 32px; cursor: pointer; font-size: .85rem; display: flex; align-items: center; justify-content: center; transition: border-color .2s; }
     .cal-nav button:hover { border-color: var(--accent); }
-    .cal-nav .mo { font-size: .9rem; font-weight: 600; min-width: 150px; text-align: center; }
+    .cal-nav .mo { font-size: .875rem; font-weight: 600; min-width: 160px; text-align: center; }
+    .btn-today { background: transparent; border: 1px solid rgba(255,255,255,.15); color: var(--white); border-radius: .45rem; font-family: 'Inter', sans-serif; font-size: .8rem; font-weight: 500; padding: .35rem .85rem; cursor: pointer; transition: all .2s; }
+    .btn-today:hover { border-color: var(--accent); color: var(--accent); }
     .btn-book { background: var(--accent); color: #fff; border: none; border-radius: .55rem; font-family: 'Inter', sans-serif; font-size: .85rem; font-weight: 600; padding: .5rem 1rem; cursor: pointer; transition: background .2s; display: flex; align-items: center; gap: .35rem; }
     .btn-book:hover { background: var(--accent-deep); }
-    .cal-grid { display: grid; grid-template-columns: repeat(7,1fr); gap: 1px; background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.05); border-radius: .75rem; overflow: hidden; }
-    .cal-dn { background: var(--navy-soft); padding: .45rem; text-align: center; font-size: .68rem; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); }
-    .cal-day { background: var(--navy-soft); min-height: 78px; padding: .45rem; cursor: pointer; transition: background .15s; }
-    .cal-day:hover { background: var(--navy-light); }
-    .cal-day.other { opacity: .3; }
-    .cal-day.today .dn { background: var(--accent); color: #fff; border-radius: 50%; width: 23px; height: 23px; display: flex; align-items: center; justify-content: center; }
-    .cal-day.sel { background: var(--navy-light); outline: 2px solid var(--accent); outline-offset: -2px; }
-    .dn { font-size: .78rem; font-weight: 600; width: 23px; height: 23px; display: flex; align-items: center; justify-content: center; margin-bottom: .3rem; }
-    .devts { display: flex; flex-direction: column; gap: 2px; }
-    .devt { font-size: .62rem; padding: 1px 5px; border-radius: 3px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .devt.walkthrough { background: rgba(245,158,11,.2); color: #fcd34d; }
-    .devt.job { background: rgba(34,197,94,.2); color: #86efac; }
-    .devt.more { color: var(--muted); }
-    .day-panel { background: var(--navy-soft); border: 1px solid var(--navy-border); border-radius: .75rem; padding: 1.25rem; margin-top: 1.25rem; }
-    .day-panel h3 { font-family: 'Fraunces', serif; font-size: 1.05rem; margin-bottom: 1rem; display: flex; align-items: center; justify-content: space-between; }
+
+    /* ── WEEK VIEW ─────────────────────────────────────── */
+    .week-wrap { background: var(--navy-soft); border: 1px solid var(--navy-border); border-radius: .85rem; overflow: hidden; }
+    .week-head-row { display: grid; grid-template-columns: 52px repeat(7,1fr); position: sticky; top: 58px; z-index: 20; background: var(--navy-soft); border-bottom: 1px solid var(--navy-border); }
+    .week-time-gutter { border-right: 1px solid var(--navy-border); }
+    .week-head-day { padding: .6rem .25rem; text-align: center; border-left: 1px solid rgba(255,255,255,.04); cursor: pointer; transition: background .15s; }
+    .week-head-day:hover { background: var(--navy-light); }
+    .week-head-day .wdn { font-size: .65rem; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+    .week-head-day .wdd { font-size: 1.1rem; font-weight: 700; width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin: .2rem auto 0; transition: all .2s; }
+    .week-head-day.today .wdd { background: var(--accent); color: #fff; }
+    .week-head-day.today .wdn { color: var(--accent); }
+
+    .week-allday-row { display: grid; grid-template-columns: 52px repeat(7,1fr); border-bottom: 1px solid var(--navy-border); min-height: 28px; }
+    .week-allday-label { border-right: 1px solid var(--navy-border); display: flex; align-items: center; justify-content: flex-end; padding-right: .4rem; font-size: .58rem; font-family: 'JetBrains Mono',monospace; color: var(--muted); }
+    .week-allday-cell { border-left: 1px solid rgba(255,255,255,.04); padding: 2px 3px; display: flex; flex-direction: column; gap: 2px; }
+    .allday-evt { border-radius: 3px; padding: 2px 5px; font-size: .67rem; font-weight: 600; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .allday-evt.walkthrough { background: rgba(245,158,11,.25); color: #fcd34d; }
+    .allday-evt.job { background: rgba(34,197,94,.25); color: #86efac; }
+
+    .week-body { display: flex; overflow-y: auto; max-height: calc(100vh - 240px); }
+    .week-body::-webkit-scrollbar { width: 4px; }
+    .week-body::-webkit-scrollbar-thumb { background: rgba(255,255,255,.08); border-radius: 2px; }
+    .week-time-col { width: 52px; flex-shrink: 0; border-right: 1px solid var(--navy-border); }
+    .week-time-lbl { height: 60px; display: flex; align-items: flex-start; justify-content: flex-end; padding: 0 .5rem; padding-top: -4px; font-size: .62rem; font-family: 'JetBrains Mono',monospace; color: var(--muted); transform: translateY(-8px); }
+    .week-days-grid { flex: 1; display: grid; grid-template-columns: repeat(7,1fr); }
+    .week-day-col { border-left: 1px solid rgba(255,255,255,.04); position: relative; }
+    .week-day-col.today-col { background: rgba(255,91,31,.025); }
+    .hour-slot { height: 60px; border-bottom: 1px solid rgba(255,255,255,.04); cursor: pointer; position: relative; }
+    .hour-slot:hover { background: rgba(255,255,255,.025); }
+    .hour-slot::after { content:''; position:absolute; bottom:50%; left:0; right:0; border-bottom: 1px dashed rgba(255,255,255,.03); }
+    .now-line { position: absolute; left: 0; right: 0; height: 2px; background: var(--accent); z-index: 5; pointer-events: none; }
+    .now-line::before { content:''; position:absolute; left:-4px; top:-4px; width:10px; height:10px; border-radius:50%; background:var(--accent); }
+
+    .week-evt {
+      position: absolute; left: 3px; right: 3px;
+      border-radius: .35rem;
+      padding: .25rem .45rem;
+      font-size: .72rem; font-weight: 600;
+      cursor: pointer; overflow: hidden; z-index: 2;
+      transition: filter .15s, box-shadow .15s;
+      min-height: 22px;
+    }
+    .week-evt:hover { filter: brightness(1.2); box-shadow: 0 2px 12px rgba(0,0,0,.3); }
+    .week-evt.walkthrough { background: rgba(245,158,11,.22); border-left: 3px solid #f59e0b; color: #fcd34d; }
+    .week-evt.job { background: rgba(34,197,94,.22); border-left: 3px solid #22c55e; color: #86efac; }
+    .week-evt.completed { opacity: .7; }
+    .week-evt.paid { opacity: .5; }
+    .week-evt .ev-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .week-evt .ev-time { font-size: .62rem; opacity: .75; margin-top: 1px; }
+
+    /* Job popup */
+    .job-popup {
+      position: fixed; z-index: 300;
+      background: var(--navy-soft);
+      border: 1px solid rgba(255,255,255,.12);
+      border-radius: .75rem;
+      padding: 1rem;
+      width: 240px;
+      box-shadow: 0 16px 48px rgba(0,0,0,.5);
+    }
+    .job-popup h4 { font-size: .9rem; font-weight: 600; margin-bottom: .35rem; }
+    .job-popup .pmeta { font-size: .75rem; color: var(--muted); line-height: 1.6; margin-bottom: .75rem; }
+    .job-popup .pacts { display: flex; flex-direction: column; gap: .35rem; }
+    .popup-close { position: absolute; top: .6rem; right: .6rem; background: transparent; border: none; color: var(--muted); cursor: pointer; font-size: .85rem; }
+
     .no-evts { color: var(--muted); font-size: .875rem; text-align: center; padding: 1.5rem 0; }
 
     /* ── JOB CARDS ─────────────────────────────────────── */
@@ -496,19 +547,17 @@
     <div id="tab-cal" class="panel active">
       <div class="cal-hd">
         <div class="cal-nav">
-          <button onclick="changeMonth(-1)">&#8592;</button>
+          <button onclick="changeWeek(-1)">&#8592;</button>
           <span class="mo" id="cal-mo"></span>
-          <button onclick="changeMonth(1)">&#8594;</button>
+          <button onclick="changeWeek(1)">&#8594;</button>
         </div>
-        <button class="btn-book" onclick="openBooking()">+ Book Appointment</button>
+        <div style="display:flex;gap:.5rem;align-items:center">
+          <button class="btn-today" onclick="goToday()">Today</button>
+          <button class="btn-book" onclick="openBooking()">+ Book Appointment</button>
+        </div>
       </div>
-      <div class="cal-grid" id="cal-grid"></div>
-      <div class="day-panel" id="day-panel" style="display:none">
-        <h3>
-          <span id="dp-title"></span>
-          <button class="btn-book" style="font-size:.78rem;padding:.38rem .85rem" onclick="openBooking(selDate)">+ Add</button>
-        </h3>
-        <div id="dp-list"></div>
+      <div class="week-wrap">
+        <div id="week-view"></div>
       </div>
     </div>
 
@@ -845,62 +894,201 @@ function switchTab(name, btn) {
 /* ═══════════════════════════════════════════════════════
    CALENDAR
 ═══════════════════════════════════════════════════════ */
-let calDate = new Date(), selDate = null;
 const MOS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 const DNS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+const START_HR = 7, END_HR = 21;
+let weekStart = getWeekStart(new Date());
+let activePopup = null;
 
-function changeMonth(d) {
-  calDate = new Date(calDate.getFullYear(), calDate.getMonth()+d, 1);
-  selDate = null;
-  document.getElementById('day-panel').style.display = 'none';
+function getWeekStart(d) {
+  const date = new Date(d);
+  date.setDate(date.getDate() - date.getDay());
+  date.setHours(0,0,0,0);
+  return date;
+}
+
+function changeWeek(dir) {
+  weekStart = new Date(weekStart);
+  weekStart.setDate(weekStart.getDate() + dir * 7);
   renderCal();
+}
+
+function goToday() {
+  weekStart = getWeekStart(new Date());
+  renderCal();
+  setTimeout(scrollToNow, 100);
+}
+
+function scrollToNow() {
+  const body = document.querySelector('.week-body');
+  if (!body) return;
+  const now = new Date();
+  const offset = (now.getHours() - START_HR) * 60 + now.getMinutes();
+  body.scrollTop = Math.max(0, offset - 80);
 }
 
 function renderCal() {
   const jobs = loadJobs();
-  const y = calDate.getFullYear(), m = calDate.getMonth();
-  document.getElementById('cal-mo').textContent = MOS[m] + ' ' + y;
-  const grid = document.getElementById('cal-grid');
-  grid.innerHTML = '';
-  DNS.forEach(d => { const el = document.createElement('div'); el.className='cal-dn'; el.textContent=d; grid.appendChild(el); });
-  const first = new Date(y,m,1).getDay();
-  const dim = new Date(y,m+1,0).getDate();
-  const prev = new Date(y,m,0).getDate();
   const today = new Date();
-  for (let i=first-1;i>=0;i--) grid.appendChild(mkDay(new Date(y,m-1,prev-i),jobs,true,today));
-  for (let d=1;d<=dim;d++) grid.appendChild(mkDay(new Date(y,m,d),jobs,false,today));
-  const rem = (first+dim)%7; if(rem) for(let d=1;d<=7-rem;d++) grid.appendChild(mkDay(new Date(y,m+1,d),jobs,true,today));
-  if (selDate) renderDayPanel(selDate);
-}
+  const days = Array.from({length:7}, (_,i) => { const d=new Date(weekStart); d.setDate(d.getDate()+i); return d; });
 
-function mkDay(date, jobs, other, today) {
-  const ds = fmtDate(date);
-  const dj = jobs.filter(j=>j.date===ds);
-  const isToday = date.toDateString()===today.toDateString();
-  const isSel = selDate===ds;
-  const cell = document.createElement('div');
-  cell.className = 'cal-day'+(other?' other':'')+(isToday?' today':'')+(isSel?' sel':'');
-  const dn = document.createElement('div'); dn.className='dn'; dn.textContent=date.getDate(); cell.appendChild(dn);
-  if (dj.length) {
-    const ev = document.createElement('div'); ev.className='devts';
-    dj.slice(0,2).forEach(j=>{ const d=document.createElement('div'); d.className='devt '+j.type; d.textContent=j.customer||(j.type==='walkthrough'?'Walk-Through':'Job'); ev.appendChild(d); });
-    if(dj.length>2){ const m=document.createElement('div'); m.className='devt more'; m.textContent='+' +(dj.length-2)+' more'; ev.appendChild(m); }
-    cell.appendChild(ev);
+  // Month label
+  const ws = days[0], we = days[6];
+  document.getElementById('cal-mo').textContent =
+    ws.getMonth()===we.getMonth()
+      ? MOS[ws.getMonth()] + ' ' + ws.getFullYear()
+      : MOS[ws.getMonth()] + ' – ' + MOS[we.getMonth()] + ' ' + we.getFullYear();
+
+  const view = document.getElementById('week-view');
+  view.innerHTML = '';
+
+  // ── Header row
+  const headRow = document.createElement('div');
+  headRow.className = 'week-head-row';
+  const gutterHead = document.createElement('div');
+  gutterHead.className = 'week-time-gutter';
+  headRow.appendChild(gutterHead);
+  days.forEach(day => {
+    const isToday = day.toDateString()===today.toDateString();
+    const ds = fmtDate(day);
+    const cell = document.createElement('div');
+    cell.className = 'week-head-day' + (isToday?' today':'');
+    cell.innerHTML = `<div class="wdn">${DNS[day.getDay()]}</div><div class="wdd">${day.getDate()}</div>`;
+    cell.onclick = () => openBooking(ds);
+    headRow.appendChild(cell);
+  });
+  view.appendChild(headRow);
+
+  // ── All-day row (jobs with no time)
+  const allDayJobs = days.map(d => jobs.filter(j=>j.date===fmtDate(d)&&!j.time));
+  if (allDayJobs.some(dj=>dj.length)) {
+    const adRow = document.createElement('div');
+    adRow.className = 'week-allday-row';
+    const adLabel = document.createElement('div');
+    adLabel.className = 'week-allday-label';
+    adLabel.textContent = 'All day';
+    adRow.appendChild(adLabel);
+    allDayJobs.forEach((dj,i) => {
+      const cell = document.createElement('div');
+      cell.className = 'week-allday-cell';
+      dj.forEach(j => {
+        const ev = document.createElement('div');
+        ev.className = 'allday-evt ' + j.type;
+        ev.textContent = j.customer || (j.type==='walkthrough'?'Walk-Through':'Job');
+        ev.onclick = e => { e.stopPropagation(); showPopup(j, ev); };
+        cell.appendChild(ev);
+      });
+      adRow.appendChild(cell);
+    });
+    view.appendChild(adRow);
   }
-  cell.addEventListener('click', ()=>{ selDate=ds; renderCal(); renderDayPanel(ds); });
-  return cell;
+
+  // ── Body
+  const body = document.createElement('div');
+  body.className = 'week-body';
+  body.id = 'week-body';
+
+  // Time gutter
+  const timeCol = document.createElement('div');
+  timeCol.className = 'week-time-col';
+  for (let h=START_HR; h<END_HR; h++) {
+    const lbl = document.createElement('div');
+    lbl.className = 'week-time-lbl';
+    lbl.textContent = h===12?'12 PM':h<12?h+' AM':(h-12)+' PM';
+    timeCol.appendChild(lbl);
+  }
+  body.appendChild(timeCol);
+
+  // Days grid
+  const daysGrid = document.createElement('div');
+  daysGrid.className = 'week-days-grid';
+
+  days.forEach(day => {
+    const ds = fmtDate(day);
+    const isToday = day.toDateString()===today.toDateString();
+    const col = document.createElement('div');
+    col.className = 'week-day-col' + (isToday?' today-col':'');
+    col.style.height = ((END_HR-START_HR)*60)+'px';
+
+    // Hour slots
+    for (let h=START_HR; h<END_HR; h++) {
+      const slot = document.createElement('div');
+      slot.className = 'hour-slot';
+      slot.onclick = () => openBooking(ds, null, String(h).padStart(2,'0')+':00');
+      col.appendChild(slot);
+    }
+
+    // Now line (today only)
+    if (isToday) {
+      const now = new Date();
+      const topPx = (now.getHours()-START_HR)*60 + now.getMinutes();
+      if (topPx>=0 && topPx<=(END_HR-START_HR)*60) {
+        const line = document.createElement('div');
+        line.className = 'now-line';
+        line.style.top = topPx+'px';
+        col.appendChild(line);
+      }
+    }
+
+    // Timed events
+    const timedJobs = jobs.filter(j=>j.date===ds&&j.time);
+    timedJobs.forEach(j => {
+      const [jh,jm] = j.time.split(':').map(Number);
+      if (jh<START_HR||jh>=END_HR) return;
+      const top = (jh-START_HR)*60+(jm/60*60);
+      const ev = document.createElement('div');
+      ev.className = 'week-evt ' + j.type + ' ' + (j.status||'');
+      ev.style.top = top+'px';
+      ev.style.height = '54px';
+      ev.innerHTML = `<div class="ev-name">${esc(j.customer||(j.type==='walkthrough'?'Walk-Through':'Job'))}</div><div class="ev-time">${fmtTime(j.time)}</div>`;
+      ev.onclick = e => { e.stopPropagation(); showPopup(j, ev); };
+      col.appendChild(ev);
+    });
+
+    daysGrid.appendChild(col);
+  });
+
+  body.appendChild(daysGrid);
+  view.appendChild(body);
+  body.onclick = () => closePopup();
 }
 
-function renderDayPanel(ds) {
-  const dp = document.getElementById('day-panel');
-  const d = new Date(ds+'T12:00:00');
-  document.getElementById('dp-title').textContent = d.toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric'});
-  dp.style.display='block';
-  const jobs = loadJobs().filter(j=>j.date===ds).sort((a,b)=>(a.time||'').localeCompare(b.time||''));
-  const list = document.getElementById('dp-list');
-  if (!jobs.length) { list.innerHTML='<div class="no-evts">No appointments — <a href="#" onclick="openBooking(selDate);return false" style="color:var(--accent)">book one</a></div>'; return; }
-  list.innerHTML='';
-  jobs.forEach(j=>list.appendChild(mkJobCard(j)));
+function showPopup(job, anchor) {
+  closePopup();
+  const pop = document.createElement('div');
+  pop.className = 'job-popup';
+  const dl = job.date ? new Date(job.date+'T12:00:00').toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'}) : '';
+  const tl = job.time ? fmtTime(job.time) : '';
+  pop.innerHTML = `
+    <button class="popup-close" onclick="closePopup()">✕</button>
+    <h4>${esc(job.customer||'Unnamed')}</h4>
+    <div class="pmeta">
+      ${job.type==='walkthrough'?'🚶 Walk-Through':'🏠 Cleanup Job'}<br>
+      📅 ${dl}${tl?' · '+tl:''}<br>
+      👷 ${esc(job.assignedTo||'')}${job.address?'<br>📍 '+esc(job.address):''}
+      ${job.notes?'<br>📝 '+esc(job.notes):''}
+    </div>
+    <div class="pacts">
+      ${job.status==='scheduled'?`<button class="bsm complete" onclick="setStatus('${job.id}','completed');closePopup()">✓ Mark Complete</button>`:''}
+      ${job.status==='completed'?`<button class="bsm approve" onclick="setStatus('${job.id}','paid');closePopup()">💵 Approve Payment</button>`:''}
+      <button class="bsm edit" onclick="closePopup();openBooking(null,loadJobs().find(j=>j.id==='${job.id}'))">Edit</button>
+      <button class="bsm del" onclick="closePopup();delJob('${job.id}')">Delete</button>
+    </div>`;
+  document.body.appendChild(pop);
+  activePopup = pop;
+
+  // Position near anchor
+  const r = anchor.getBoundingClientRect();
+  let left = r.right + 8;
+  let top = r.top;
+  if (left + 248 > window.innerWidth) left = r.left - 248;
+  if (top + 280 > window.innerHeight) top = window.innerHeight - 290;
+  pop.style.left = Math.max(8,left)+'px';
+  pop.style.top = Math.max(8,top)+'px';
+}
+
+function closePopup() {
+  if (activePopup) { activePopup.remove(); activePopup = null; }
 }
 
 /* ═══════════════════════════════════════════════════════
@@ -1056,13 +1244,13 @@ let bk = {
   editId:null
 };
 
-function openBooking(dateStr, editJob) {
+function openBooking(dateStr, editJob, timeStr) {
   bk = {
     step: editJob ? 2 : 1,
     customer: null, isNew: false,
     type: editJob?.type || 'walkthrough',
     date: editJob?.date || dateStr || fmtDate(new Date()),
-    time: editJob?.time || '',
+    time: editJob?.time || timeStr || '',
     assignedTo: editJob?.assignedTo || (me==='TylerG'?'TylerG':'ZacB'),
     address: editJob?.address || '',
     notes: editJob?.notes || '',
