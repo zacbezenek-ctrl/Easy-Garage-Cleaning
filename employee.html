@@ -100,7 +100,7 @@
     .allday-evt.walkthrough { background: rgba(245,158,11,.25); color: #fcd34d; }
     .allday-evt.job { background: rgba(34,197,94,.25); color: #86efac; }
 
-    .week-body { display: flex; overflow-y: auto; max-height: calc(100vh - 240px); }
+    .week-body { display: flex; overflow-y: auto; height: calc(100vh - 220px); min-height: 400px; }
     .week-body::-webkit-scrollbar { width: 4px; }
     .week-body::-webkit-scrollbar-thumb { background: rgba(255,255,255,.08); border-radius: 2px; }
     .week-time-col { width: 52px; flex-shrink: 0; border-right: 1px solid var(--navy-border); }
@@ -1052,7 +1052,7 @@ function switchTab(name, btn) {
 ═══════════════════════════════════════════════════════ */
 const MOS = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 const DNS = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
-const START_HR = 7, END_HR = 21;
+const START_HR = 5, END_HR = 22;
 let weekStart = getWeekStart(new Date());
 let activePopup = null;
 
@@ -1190,7 +1190,7 @@ function renderCal() {
     const timedJobs = jobs.filter(j=>j.date===ds&&j.time);
     timedJobs.forEach(j => {
       const [jh,jm] = j.time.split(':').map(Number);
-      if (jh<START_HR||jh>=END_HR) return;
+      if (jh<START_HR||jh>=END_HR) return; // still skip truly off-grid
       const top = (jh-START_HR)*60+(jm/60*60);
       const ev = document.createElement('div');
       ev.className = 'week-evt ' + j.type + ' ' + (j.status||'');
