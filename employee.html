@@ -101,6 +101,11 @@
     .allday-evt.job { background: rgba(34,197,94,.25); color: #86efac; }
 
     .week-body { display: flex; overflow-y: auto; height: calc(100vh - 220px); min-height: 400px; }
+    .blocked-overlay { position:absolute; inset:0; background:repeating-linear-gradient(135deg,rgba(239,68,68,.07) 0px,rgba(239,68,68,.07) 8px,transparent 8px,transparent 16px); pointer-events:none; z-index:3; }
+    .blocked-label { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); font-size:.7rem; font-weight:700; letter-spacing:.06em; text-transform:uppercase; color:rgba(239,68,68,.6); white-space:nowrap; z-index:4; pointer-events:none; }
+    .week-day-hd.blocked-hd { color: rgba(239,68,68,.7); }
+    .block-btn { font-size:.6rem; background:none; border:1px solid rgba(255,255,255,.12); border-radius:4px; color:var(--muted); cursor:pointer; padding:1px 5px; margin-top:2px; display:block; width:100%; }
+    .block-btn.active { border-color:rgba(239,68,68,.4); color:rgba(239,68,68,.7); }
     .week-body::-webkit-scrollbar { width: 4px; }
     .week-body::-webkit-scrollbar-thumb { background: rgba(255,255,255,.08); border-radius: 2px; }
     .week-time-col { width: 52px; flex-shrink: 0; border-right: 1px solid var(--navy-border); }
@@ -976,12 +981,14 @@ const db = firebase.firestore();
 let jobsCache = [];
 let custsCache = [];
 let leadsCache = [];
+let blockedDays = new Set();
 let _leadsTimer = null;
 
 /* ═══════════════════════════════════════════════════════
    AUTH
 ═══════════════════════════════════════════════════════ */
-const USERS = { ZacB: 'Iloveyou.2', TylerG: 'Placeholder' };
+const USERS = { ZacB: 'Iloveyou.2', TylerG: 'Placeholder', AlexK: 'Placeholder' };
+const ADMINS = ['ZacB', 'AlexK'];
 let me = null;
 
 function doLogin() {
@@ -1041,8 +1048,13 @@ function startListeners() {
     custsCache = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     renderCustomersTab();
   });
+  db.collection('blocked_days').onSnapshot(snap => {
+    blockedDays = new Set(snap.docs.map(d => d.id));
+    renderCal();
+  });
   db.collection('leads').onSnapshot(snap => {
     leadsCache = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+      .filter(l => l.name || l.phone || l.email)
       .sort((a,b) => (b.createdAt||b.timestamp||'').localeCompare(a.createdAt||a.timestamp||''));
     renderLeads();
     updateLeadsBadge();
@@ -1135,6 +1147,15 @@ function renderLeads() {
       <div class="lead-timer ${timerClass}">${timerText}</div>
     </div>`;
   }).join('');
+}
+
+function toggleBlockDay(ds) {
+  if (!ADMINS.includes(me)) return;
+  if (blockedDays.has(ds)) {
+    db.collection('blocked_days').doc(ds).delete();
+  } else {
+    db.collection('blocked_days').doc(ds).set({ blockedBy: me, blockedAt: new Date().toISOString() });
+  }
 }
 
 function respondLead(id, method) {
@@ -1251,9 +1272,11 @@ function renderCal() {
     const isToday = day.toDateString()===today.toDateString();
     const ds = fmtDate(day);
     const cell = document.createElement('div');
-    cell.className = 'week-head-day' + (isToday?' today':'');
-    cell.innerHTML = `<div class="wdn">${DNS[day.getDay()]}</div><div class="wdd">${day.getDate()}</div>`;
-    cell.onclick = () => openBooking(ds);
+    const isBlocked = blockedDays.has(ds);
+    cell.className = 'week-head-day' + (isToday?' today':'') + (isBlocked?' blocked-hd':'');
+    cell.innerHTML = `<div class="wdn">${DNS[day.getDay()]}</div><div class="wdd">${day.getDate()}</div>`
+      + (ADMINS.includes(me) ? `<button class="block-btn${isBlocked?' active':''}" onclick="event.stopPropagation();toggleBlockDay('${ds}')">${isBlocked?'🔴 Blocked':'Block day'}</button>` : '');
+    cell.onclick = () => { if (!isBlocked || ADMINS.includes(me)) openBooking(ds); };
     headRow.appendChild(cell);
   });
   view.appendChild(headRow);
@@ -1306,14 +1329,23 @@ function renderCal() {
     const ds = fmtDate(day);
     const isToday = day.toDateString()===today.toDateString();
     const col = document.createElement('div');
+    const isBlocked = blockedDays.has(ds);
     col.className = 'week-day-col' + (isToday?' today-col':'');
     col.style.height = ((END_HR-START_HR)*60)+'px';
+
+    if (isBlocked) {
+      const ov = document.createElement('div'); ov.className = 'blocked-overlay'; col.appendChild(ov);
+      const lbl = document.createElement('div'); lbl.className = 'blocked-label'; lbl.textContent = '🔴 Day Off'; col.appendChild(lbl);
+    }
 
     // Hour slots
     for (let h=START_HR; h<END_HR; h++) {
       const slot = document.createElement('div');
       slot.className = 'hour-slot';
-      slot.onclick = () => openBooking(ds, null, String(h).padStart(2,'0')+':00');
+      slot.onclick = () => {
+        if (isBlocked && !ADMINS.includes(me)) { alert('This day is blocked — no bookings allowed.'); return; }
+        openBooking(ds, null, String(h).padStart(2,'0')+':00');
+      };
       col.appendChild(slot);
     }
 
@@ -1817,7 +1849,7 @@ function showModeSelect() {
   document.getElementById('mode-screen').style.display   = 'flex';
   document.getElementById('mode-user-lbl').textContent   = me;
   // Hide admin card for TylerG
-  document.getElementById('admin-card').style.display    = me === 'ZacB' ? '' : 'none';
+  document.getElementById('admin-card').style.display    = ADMINS.includes(me) ? '' : 'none';
   emailjs.init(CFG.EMAILJS_PUBLIC_KEY);
   startListeners();
   fetchSheetCustomers();
