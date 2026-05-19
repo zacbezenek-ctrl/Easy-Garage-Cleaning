@@ -1853,19 +1853,15 @@ async function lookupDistance(addr) {
   const fullAddr = hasLocation ? raw : `${raw}, Fort Collins, CO`;
   oc.quote.custAddr = raw;
   const statusEl = document.getElementById('dist-status');
-  if (!CFG.GOOGLE_MAPS_KEY) {
-    if (statusEl) statusEl.textContent = 'No API key — enter miles manually.';
-    return;
-  }
   if (statusEl) statusEl.textContent = 'Calculating…';
   try {
     const geocode = async (address) => {
-      const r = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(address)}&format=json&limit=1`, {
-        headers: { 'Accept-Language': 'en-US' }
-      });
+      const url = `https://geocoding.geo.census.gov/geocoder/locations/onelineaddress?address=${encodeURIComponent(address)}&benchmark=Public_AR_Current&format=json`;
+      const r = await fetch(url);
       const j = await r.json();
-      if (!j.length) throw new Error('not found');
-      return { lat: parseFloat(j[0].lat), lng: parseFloat(j[0].lon) };
+      const match = j?.result?.addressMatches?.[0];
+      if (!match) throw new Error('not found: ' + address);
+      return { lat: match.coordinates.y, lng: match.coordinates.x };
     };
     const base = await geocode(CFG.BASE_ADDRESS);
     const dest = await geocode(fullAddr);
