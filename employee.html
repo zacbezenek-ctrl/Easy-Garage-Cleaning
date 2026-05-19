@@ -1418,13 +1418,27 @@ function renderPayout() {
   const all = loadJobs();
   const tj = all.filter(j=>j.assignedTo==='TylerG'||j.assignedTo==='Both');
   const paid=tj.filter(j=>j.status==='paid'), comp=tj.filter(j=>j.status==='completed'), sched=tj.filter(j=>j.status==='scheduled');
-  document.getElementById('po-total').textContent='$'+(paid.length*30).toLocaleString();
-  document.getElementById('po-sub').textContent=paid.length+' job'+(paid.length!==1?'s':'')+' completed & paid';
+
+  // Fast lead bonuses — $3 per lead contacted under 2 min
+  const fastLeads = leadsCache.filter(l => {
+    if (!l.respondedAt) return false;
+    const start = new Date(l.notifiedAt || l.createdAt).getTime();
+    const secs = Math.floor((new Date(l.respondedAt).getTime() - start) / 1000);
+    return secs <= 120;
+  });
+  const jobPay  = paid.length * 30;
+  const leadPay = fastLeads.length * 3;
+  const total   = jobPay + leadPay;
+
+  document.getElementById('po-total').textContent = '$' + total.toLocaleString();
+  document.getElementById('po-sub').textContent =
+    paid.length + ' job' + (paid.length!==1?'s':'') + ' · ' +
+    fastLeads.length + ' fast lead' + (fastLeads.length!==1?'s':'');
   document.getElementById('po-stats').innerHTML=`
-    <div class="stat"><div class="v" style="color:#86efac">${paid.length}</div><div class="l">Paid Jobs</div></div>
+    <div class="stat"><div class="v" style="color:#86efac">${paid.length}</div><div class="l">Paid Jobs<br><span style="font-size:.65rem;color:var(--muted)">$${jobPay}</span></div></div>
     <div class="stat"><div class="v" style="color:#fcd34d">${comp.length}</div><div class="l">Awaiting Approval</div></div>
-    <div class="stat"><div class="v" style="color:#d1d5db">${sched.length}</div><div class="l">Upcoming</div></div>
-    <div class="stat"><div class="v">${tj.length}</div><div class="l">Total Assigned</div></div>`;
+    <div class="stat"><div class="v" style="color:#60a5fa">${fastLeads.length}</div><div class="l">Fast Responses<br><span style="font-size:.65rem;color:var(--muted)">+$${leadPay}</span></div></div>
+    <div class="stat"><div class="v" style="color:#86efac">$${total}</div><div class="l">Total Owed</div></div>`;
   const list = document.getElementById('po-list');
   if (!tj.length) { list.innerHTML='<div class="empty"><div class="ico">💼</div><div>No jobs assigned to TylerG yet.</div></div>'; return; }
   const ord={completed:0,paid:1,scheduled:2};
