@@ -11,6 +11,11 @@
   <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
+  <script>
+    // Maps API loaded after CFG is defined (see bottom of body)
+    window._mapsReady = false;
+    function _onMapsLoaded() { window._mapsReady = true; }
+  </script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     :root {
@@ -897,10 +902,14 @@
    CONFIG  — paste your values here
 ═══════════════════════════════════════════════════════ */
 const CFG = {
-  EMAILJS_SERVICE_ID:  'service_ilze1lr',
-  EMAILJS_TEMPLATE_ID: 'template_m6o3bn6',
-  EMAILJS_PUBLIC_KEY:  'RyH7Kwhn5-T5ebvN9',
-  GOOGLE_SHEET_CSV_URL: ''
+  EMAILJS_SERVICE_ID:   'service_ilze1lr',
+  EMAILJS_TEMPLATE_ID:  'template_m6o3bn6',
+  EMAILJS_PUBLIC_KEY:   'RyH7Kwhn5-T5ebvN9',
+  GOOGLE_SHEET_CSV_URL: '',
+  GOOGLE_MAPS_KEY:      '',          // paste your Maps JS API key here
+  BASE_ADDRESS:         'Fort Collins, CO',
+  FREE_MILES:           25,          // no charge within this radius
+  PRICE_PER_MILE:       1,           // $ per mile beyond free radius
 };
 
 firebase.initializeApp({
@@ -1651,22 +1660,21 @@ function selectMode(mode) {
 /* ═══════════════════════════════════════════════════════
    ON-CALL FLOW
 ═══════════════════════════════════════════════════════ */
-let oc = { step:1, customer:null, isNew:false, quote:{ space:'garage', size:'medium', fill:'moderate', specials:{} }, booking:{ assignedTo:'TylerG' } };
+let oc = { step:1, customer:null, isNew:false, quote:{ space:'garage', size:'medium', fill:'moderate', specials:{}, cubicYards:0, floors:0, distanceMiles:0, custAddr:'' }, booking:{ assignedTo:'TylerG' } };
 
 const SPECIALS = [
-  { id:'fridge',    name:'Refrigerator',    price:60, icon:'🧊' },
-  { id:'washer',    name:'Washer / Dryer',  price:50, icon:'👕' },
-  { id:'appliance', name:'Other Appliance', price:40, icon:'📦' },
-  { id:'mattress',  name:'Mattress',        price:35, icon:'🛏' },
-  { id:'furniture', name:'Large Furniture', price:40, icon:'🪑' },
-  { id:'tire',      name:'Tire',            price:25, icon:'⚫' },
-  { id:'electronics',name:'Electronics',   price:25, icon:'📺' },
-  { id:'paint',     name:'Paint / Hazmat',  price:45, icon:'🪣' },
+  { id:'fridge',     name:'Refrigerator',   price:60, icon:'🧊' },
+  { id:'washer',     name:'Washer / Dryer', price:50, icon:'👕' },
+  { id:'appliance',  name:'Other Appliance',price:40, icon:'📦' },
+  { id:'mattress',   name:'Mattress',       price:45, icon:'🛏' },
+  { id:'tire',       name:'Tire',           price:50, icon:'⚫' },
+  { id:'electronics',name:'Electronics',    price:25, icon:'📺' },
+  { id:'paint',      name:'Paint / Hazmat', price:45, icon:'🪣' },
 ];
 
 function openOnCall() {
   oc = { step:1, customer:null, isNew:false,
-    quote:{ space:'garage', size:'medium', fill:'moderate', specials:{} },
+    quote:{ space:'garage', size:'medium', fill:'moderate', specials:{}, cubicYards:0, floors:0, distanceMiles:0, custAddr:'' },
     booking:{ assignedTo: me==='TylerG'?'TylerG':'ZacB' }
   };
   document.getElementById('oncall-overlay').classList.add('open');
@@ -1782,10 +1790,26 @@ function calcQuote() {
   const base = { small:125, medium:250, large:425, oversized:625 }[oc.quote.size] || 250;
   const mul  = { light:.8, moderate:1.0, heavy:1.4, packed:1.9 }[oc.quote.fill] || 1.0;
   let extras = 0, lines = [];
+
+  // Special items
   SPECIALS.forEach(item => {
     const qty = oc.quote.specials[item.id] || 0;
     if (qty > 0) { extras += item.price * qty; lines.push(`${item.icon} ${item.name} ×${qty}  +$${item.price*qty}`); }
   });
+
+  // Cubic yards — $25/yd
+  const cy = oc.quote.cubicYards || 0;
+  if (cy > 0) { extras += cy * 25; lines.push(`📦 Cubic yards (${cy} yd³)  +$${cy*25}`); }
+
+  // Floors — $20/floor
+  const fl = oc.quote.floors || 0;
+  if (fl > 0) { extras += fl * 20; lines.push(`🏢 Floors to climb (${fl})  +$${fl*20}`); }
+
+  // Distance — $1/mile beyond free radius
+  const dm = oc.quote.distanceMiles || 0;
+  const billableMiles = Math.max(0, dm - CFG.FREE_MILES);
+  if (billableMiles > 0) { extras += billableMiles * CFG.PRICE_PER_MILE; lines.push(`📍 Distance (${dm} mi, ${billableMiles} mi over)  +$${billableMiles}`); }
+
   const low  = Math.round((base * mul + extras) / 5) * 5;
   const high = Math.round(low * 1.18 / 5) * 5;
   return { low, high, lines };
@@ -1807,6 +1831,60 @@ function setOpt(key, val, btn) {
 function adjSI(id, d) {
   oc.quote.specials[id] = Math.max(0, (oc.quote.specials[id]||0) + d);
   const el = document.getElementById('sin-'+id); if (el) el.textContent = oc.quote.specials[id];
+  updateQDisplay();
+}
+
+function setCubicYards(val) {
+  oc.quote.cubicYards = parseInt(val) || 0;
+  const lbl = document.getElementById('cy-lbl');
+  if (lbl) lbl.textContent = oc.quote.cubicYards > 0 ? `${oc.quote.cubicYards} yd³  (+$${oc.quote.cubicYards*25})` : '0 yd³';
+  updateQDisplay();
+}
+
+function adjFloors(d) {
+  oc.quote.floors = Math.max(0, (oc.quote.floors||0) + d);
+  const el = document.getElementById('floors-n'); if (el) el.textContent = oc.quote.floors;
+  updateQDisplay();
+}
+
+function lookupDistance(addr) {
+  if (!addr.trim()) return;
+  oc.quote.custAddr = addr.trim();
+  const statusEl = document.getElementById('dist-status');
+  if (!window._mapsReady) {
+    if (statusEl) statusEl.textContent = 'Maps not loaded — enter miles manually.';
+    return;
+  }
+  if (statusEl) statusEl.textContent = 'Calculating…';
+  const svc = new google.maps.DistanceMatrixService();
+  svc.getDistanceMatrix({
+    origins: [CFG.BASE_ADDRESS],
+    destinations: [addr.trim()],
+    travelMode: google.maps.TravelMode.DRIVING,
+    unitSystem: google.maps.UnitSystem.IMPERIAL,
+  }, (res, status) => {
+    if (status !== 'OK' || res.rows[0].elements[0].status !== 'OK') {
+      if (statusEl) statusEl.textContent = 'Could not calculate — enter miles manually.';
+      return;
+    }
+    const meters = res.rows[0].elements[0].distance.value;
+    const miles  = Math.round(meters / 1609.34);
+    oc.quote.distanceMiles = miles;
+    const over = Math.max(0, miles - CFG.FREE_MILES);
+    if (statusEl) statusEl.textContent = `${miles} mi from base${over > 0 ? ` · +$${over} surcharge` : ' · within free zone'}`;
+    const input = document.getElementById('dist-miles');
+    if (input) input.value = miles;
+    updateQDisplay();
+  });
+}
+
+function setDistanceMiles(val) {
+  oc.quote.distanceMiles = Math.max(0, parseInt(val)||0);
+  const over = Math.max(0, oc.quote.distanceMiles - CFG.FREE_MILES);
+  const statusEl = document.getElementById('dist-status');
+  if (statusEl) statusEl.textContent = oc.quote.distanceMiles > 0
+    ? `${oc.quote.distanceMiles} mi from base${over > 0 ? ` · +$${over} surcharge` : ' · within free zone'}`
+    : '';
   updateQDisplay();
 }
 
@@ -1857,6 +1935,51 @@ function ocStep2(body) {
     <div class="q-section">
       <div class="q-lbl">Special items <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted)">(tap + to add)</span></div>
       <div class="specials" id="oc-specials"></div>
+    </div>
+
+    <div class="q-section">
+      <div class="q-lbl">Estimated volume <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted)">($25 per cubic yard)</span></div>
+      <div style="display:flex;align-items:center;gap:1rem;padding:.5rem 0">
+        <input type="range" id="cy-slider" min="0" max="30" step="1" value="${oc.quote.cubicYards}"
+          oninput="setCubicYards(this.value)"
+          style="flex:1;accent-color:var(--accent);height:6px;cursor:pointer">
+        <div id="cy-lbl" style="min-width:10rem;font-family:'JetBrains Mono',monospace;font-size:.9rem;color:var(--accent);text-align:right">
+          ${oc.quote.cubicYards > 0 ? `${oc.quote.cubicYards} yd³  (+$${oc.quote.cubicYards*25})` : '0 yd³'}
+        </div>
+      </div>
+      <div style="display:flex;justify-content:space-between;font-size:.68rem;color:var(--muted);padding:0 2px">
+        <span>0</span><span>5</span><span>10</span><span>15</span><span>20</span><span>25</span><span>30 yd³</span>
+      </div>
+    </div>
+
+    <div class="q-section">
+      <div class="q-lbl">Floors to climb <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted)">($20 per floor above ground)</span></div>
+      <div class="si" style="background:rgba(255,255,255,.04)">
+        <div class="si-info"><div class="sn">🏢 Floors up</div><div class="sp">+$20 per floor</div></div>
+        <div class="si-ctr">
+          <button class="si-b" onclick="adjFloors(-1)">−</button>
+          <div class="si-n" id="floors-n">${oc.quote.floors}</div>
+          <button class="si-b" onclick="adjFloors(1)">+</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="q-section">
+      <div class="q-lbl">Distance from base <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted)">($1/mi beyond ${CFG.FREE_MILES} mi)</span></div>
+      <div class="fg" style="margin-bottom:.5rem">
+        <input type="text" id="dist-addr" placeholder="Customer address (auto-calculates miles)"
+          value="${esc(oc.quote.custAddr || oc.customer?.address || '')}"
+          onblur="lookupDistance(this.value)"
+          style="width:100%">
+      </div>
+      <div style="display:flex;align-items:center;gap:.75rem">
+        <input type="number" id="dist-miles" min="0" placeholder="Miles" value="${oc.quote.distanceMiles || ''}"
+          oninput="setDistanceMiles(this.value)"
+          style="width:6rem;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);border-radius:.5rem;padding:.5rem .75rem;color:#fff;font-size:.875rem">
+        <div id="dist-status" style="font-size:.78rem;color:var(--muted);flex:1">
+          ${oc.quote.distanceMiles > 0 ? `${oc.quote.distanceMiles} mi from base${Math.max(0,oc.quote.distanceMiles-CFG.FREE_MILES)>0?' · +$'+Math.max(0,oc.quote.distanceMiles-CFG.FREE_MILES)+' surcharge':' · within free zone'}` : 'Enter address above or type miles manually'}
+        </div>
+      </div>
     </div>`;
 
   const sg = document.getElementById('oc-specials');
@@ -1959,6 +2082,16 @@ async function ocBook() {
   showToast('Booked for ' + c.name + '! 🎉');
   bootDashboard();
 }
+</script>
+<script>
+  // Load Google Maps JS API dynamically so CFG.GOOGLE_MAPS_KEY is available
+  (function() {
+    if (!CFG.GOOGLE_MAPS_KEY) return; // no key = manual miles entry only
+    const s = document.createElement('script');
+    s.src = `https://maps.googleapis.com/maps/api/js?key=${CFG.GOOGLE_MAPS_KEY}&libraries=places&callback=_onMapsLoaded`;
+    s.async = true; s.defer = true;
+    document.head.appendChild(s);
+  })();
 </script>
 </body>
 </html>
