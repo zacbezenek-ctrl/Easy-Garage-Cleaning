@@ -1860,12 +1860,15 @@ async function lookupDistance(addr) {
   if (statusEl) statusEl.textContent = 'Calculating…';
   try {
     const geocode = async (address) => {
-      const r = await fetch(`https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(address)}&key=${CFG.GOOGLE_MAPS_KEY}`);
+      const r = await fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(address)}&format=json&limit=1`, {
+        headers: { 'Accept-Language': 'en-US' }
+      });
       const j = await r.json();
-      if (j.status !== 'OK') throw new Error(j.status);
-      return j.results[0].geometry.location; // { lat, lng }
+      if (!j.length) throw new Error('not found');
+      return { lat: parseFloat(j[0].lat), lng: parseFloat(j[0].lon) };
     };
-    const [base, dest] = await Promise.all([geocode(CFG.BASE_ADDRESS), geocode(fullAddr)]);
+    const base = await geocode(CFG.BASE_ADDRESS);
+    const dest = await geocode(fullAddr);
     // Haversine straight-line distance
     const R = 3958.8; // Earth radius miles
     const dLat = (dest.lat - base.lat) * Math.PI / 180;
