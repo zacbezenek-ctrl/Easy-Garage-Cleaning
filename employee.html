@@ -1921,16 +1921,14 @@ function ocStep2(body) {
     </div>
 
     <div class="q-section">
-      <div class="q-lbl">Estimated volume <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted)">($25 per cubic yard)</span></div>
-      <div style="display:flex;align-items:center;gap:1rem;padding:.5rem 0">
-        <input type="range" id="cy-slider" min="0" max="30" step="1" value="${oc.quote.cubicYards}"
-          oninput="setCubicYards(this.value)"
-          style="flex:1;accent-color:var(--accent);height:6px;cursor:pointer">
-        <div id="cy-lbl" style="min-width:10rem;font-family:'JetBrains Mono',monospace;font-size:.9rem;color:var(--accent);text-align:right">
-          ${oc.quote.cubicYards > 0 ? `${oc.quote.cubicYards} yd³  (+$${oc.quote.cubicYards*35})` : '0 yd³'}
-        </div>
+      <div class="q-lbl">Estimated volume <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted)">($35 per cubic yard)</span></div>
+      <div id="cy-lbl" style="font-family:'JetBrains Mono',monospace;font-size:1.1rem;font-weight:600;color:var(--accent);margin:.25rem 0 .5rem">
+        ${oc.quote.cubicYards > 0 ? `${oc.quote.cubicYards} yd³  (+$${oc.quote.cubicYards*35})` : '0 yd³'}
       </div>
-      <div style="display:flex;justify-content:space-between;font-size:.68rem;color:var(--muted);padding:0 2px">
+      <input type="range" id="cy-slider" min="0" max="30" step="1" value="${oc.quote.cubicYards}"
+        oninput="setCubicYards(this.value)"
+        style="width:100%;accent-color:var(--accent);height:6px;cursor:pointer;display:block">
+      <div style="display:flex;justify-content:space-between;font-size:.68rem;color:var(--muted);padding:.3rem 2px 0">
         <span>0</span><span>5</span><span>10</span><span>15</span><span>20</span><span>25</span><span>30 yd³</span>
       </div>
     </div>
