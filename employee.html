@@ -190,6 +190,69 @@
     .stat .l { font-size: .72rem; color: var(--muted); margin-top: .3rem; }
     .payout-title { font-family: 'Fraunces', serif; font-size: 1.05rem; margin-bottom: 1rem; }
 
+    /* ── MODE SELECT ───────────────────────────────────── */
+    #mode-screen { min-height:100vh; display:flex; align-items:center; justify-content:center; padding:1.5rem; background:var(--navy); }
+    .mode-wrap { width:100%; max-width:460px; }
+    .mode-logo { text-align:center; margin-bottom:2rem; }
+    .mode-logo h2 { font-family:'Fraunces',serif; font-size:1.5rem; font-weight:700; margin:.5rem 0 .35rem; }
+    .mode-logo p { color:var(--muted); font-size:.875rem; }
+    .mode-cards { display:flex; flex-direction:column; gap:.65rem; }
+    .mode-card { background:var(--navy-soft); border:1.5px solid rgba(255,255,255,.08); border-radius:1rem; padding:1.1rem 1.35rem; cursor:pointer; transition:all .2s; display:flex; align-items:center; gap:.9rem; position:relative; }
+    .mode-card:hover { border-color:rgba(255,255,255,.2); background:var(--navy-light); }
+    .mode-primary { border-color:var(--accent); background:rgba(255,91,31,.08); }
+    .mode-primary:hover { background:rgba(255,91,31,.15); }
+    .mode-icon { font-size:1.6rem; flex-shrink:0; }
+    .mode-title { font-size:.95rem; font-weight:700; margin-bottom:.15rem; }
+    .mode-desc { font-size:.76rem; color:var(--muted); line-height:1.4; }
+    .mode-arrow { position:absolute; right:1.25rem; color:var(--accent); font-size:1.1rem; font-weight:700; }
+
+    /* ── ON-CALL OVERLAY ───────────────────────────────── */
+    #oncall-overlay { position:fixed; inset:0; background:var(--navy); z-index:400; display:none; flex-direction:column; }
+    #oncall-overlay.open { display:flex; }
+    .oncall-head { background:var(--navy-soft); border-bottom:1px solid var(--navy-border); padding:0 1.5rem; height:58px; display:flex; align-items:center; justify-content:space-between; flex-shrink:0; }
+    .oncall-badge { background:rgba(255,91,31,.15); border:1px solid rgba(255,91,31,.3); color:var(--accent); border-radius:99px; padding:.25rem .75rem; font-size:.75rem; font-weight:600; }
+    .oncall-cname { font-weight:600; font-size:.9rem; color:var(--muted); }
+    .oncall-cname.set { color:var(--white); }
+    .oncall-progress { background:var(--navy-soft); border-bottom:1px solid var(--navy-border); display:flex; align-items:center; padding:.75rem 1.5rem; flex-shrink:0; }
+    .oc-step { display:flex; align-items:center; gap:.4rem; font-size:.78rem; font-weight:600; color:var(--muted); white-space:nowrap; }
+    .oc-step span { width:22px; height:22px; border-radius:50%; border:2px solid rgba(255,255,255,.15); display:flex; align-items:center; justify-content:center; font-size:.68rem; }
+    .oc-step.active { color:var(--accent); }
+    .oc-step.active span { border-color:var(--accent); background:rgba(255,91,31,.1); }
+    .oc-step.done { color:var(--green); }
+    .oc-step.done span { border-color:var(--green); background:rgba(34,197,94,.1); }
+    .oc-line { flex:1; height:2px; background:rgba(255,255,255,.07); margin:0 .65rem; }
+    .oc-line.done { background:var(--green); }
+    .oncall-body { flex:1; overflow-y:auto; padding:1.5rem; max-width:660px; margin:0 auto; width:100%; }
+    .oncall-body::-webkit-scrollbar { width:4px; }
+    .oncall-body::-webkit-scrollbar-thumb { background:rgba(255,255,255,.1); }
+    .oncall-foot { background:var(--navy-soft); border-top:1px solid var(--navy-border); padding:1rem 1.5rem; display:flex; align-items:center; justify-content:space-between; flex-shrink:0; }
+
+    /* Quote builder */
+    .q-section { margin-bottom:1.5rem; }
+    .q-lbl { font-size:.72rem; font-weight:600; letter-spacing:.07em; text-transform:uppercase; color:var(--muted); margin-bottom:.6rem; }
+    .opt-grid { display:grid; gap:.45rem; }
+    .opt-grid.g2 { grid-template-columns:1fr 1fr; }
+    .opt-grid.g4 { grid-template-columns:repeat(4,1fr); }
+    .opt { background:var(--navy); border:1.5px solid rgba(255,255,255,.08); border-radius:.6rem; padding:.65rem .4rem; text-align:center; cursor:pointer; transition:all .18s; color:var(--muted); }
+    .opt:hover { border-color:rgba(255,255,255,.2); color:var(--white); }
+    .opt.sel { border-color:var(--accent); color:var(--white); background:rgba(255,91,31,.1); }
+    .opt .oi { font-size:1.3rem; display:block; margin-bottom:.2rem; }
+    .opt .on { font-size:.78rem; font-weight:600; }
+    .opt .os { font-size:.64rem; color:var(--muted); margin-top:.1rem; }
+    .specials { display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:.45rem; }
+    .si { background:var(--navy); border:1px solid rgba(255,255,255,.07); border-radius:.55rem; padding:.55rem .75rem; display:flex; align-items:center; justify-content:space-between; gap:.5rem; }
+    .si-info .sn { font-size:.78rem; font-weight:500; }
+    .si-info .sp { font-size:.64rem; color:var(--muted); }
+    .si-ctr { display:flex; align-items:center; gap:.35rem; flex-shrink:0; }
+    .si-b { background:var(--navy-soft); border:1px solid rgba(255,255,255,.1); color:var(--white); width:22px; height:22px; border-radius:50%; cursor:pointer; font-size:.85rem; display:flex; align-items:center; justify-content:center; }
+    .si-b:hover { border-color:var(--accent); color:var(--accent); }
+    .si-n { font-size:.85rem; font-weight:700; min-width:16px; text-align:center; }
+    .quote-box { background:linear-gradient(135deg,rgba(255,91,31,.12),rgba(245,158,11,.07)); border:1px solid rgba(255,91,31,.25); border-radius:.85rem; padding:1.1rem 1.4rem; margin-bottom:1.5rem; }
+    .quote-box .ql { font-size:.68rem; font-weight:600; letter-spacing:.08em; text-transform:uppercase; color:rgba(255,255,255,.45); margin-bottom:.2rem; }
+    .quote-box .qr { font-family:'Fraunces',serif; font-size:2rem; font-weight:700; line-height:1; }
+    .quote-box .qs { font-size:.73rem; color:rgba(255,255,255,.45); margin-top:.3rem; }
+    .quote-box .qb { font-size:.68rem; color:rgba(255,255,255,.35); font-family:'JetBrains Mono',monospace; margin-top:.4rem; line-height:1.7; }
+
     /* ══════════════════════════════════════════════════════
        BOOKING WIZARD OVERLAY
     ══════════════════════════════════════════════════════ */
@@ -517,6 +580,72 @@
 </div>
 
 <!-- ═══════════════════════════════════════
+     MODE SELECT
+═══════════════════════════════════════ -->
+<div id="mode-screen" style="display:none">
+  <div class="mode-wrap">
+    <div class="mode-logo">
+      <div class="pill">Easy Garage Cleaning</div>
+      <h2>What are you doing?</h2>
+      <p>Signed in as <strong id="mode-user-lbl"></strong></p>
+    </div>
+    <div class="mode-cards">
+      <div class="mode-card mode-primary" onclick="selectMode('call')">
+        <div class="mode-icon">📞</div>
+        <div>
+          <div class="mode-title">Actively on a Call</div>
+          <div class="mode-desc">Customer on the line — quote &amp; book in one flow</div>
+        </div>
+        <div class="mode-arrow">→</div>
+      </div>
+      <div class="mode-card" onclick="selectMode('dashboard')">
+        <div class="mode-icon">📅</div>
+        <div>
+          <div class="mode-title">Dashboard</div>
+          <div class="mode-desc">Calendar, jobs, and payout tracker</div>
+        </div>
+      </div>
+      <div class="mode-card" id="admin-card" onclick="selectMode('admin')">
+        <div class="mode-icon">⚙️</div>
+        <div>
+          <div class="mode-title">Admin</div>
+          <div class="mode-desc">Customers, settings, and reports</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
+     ON-CALL OVERLAY
+═══════════════════════════════════════ -->
+<div id="oncall-overlay">
+  <div class="oncall-head">
+    <div style="display:flex;align-items:center;gap:.75rem">
+      <div class="oncall-badge">📞 On a Call</div>
+      <span class="oncall-cname" id="oc-cname">Select a customer to start</span>
+    </div>
+    <button class="bk-close" onclick="exitCall()">✕</button>
+  </div>
+
+  <div class="oncall-progress">
+    <div class="oc-step active" id="ocs1"><span>1</span> Customer</div>
+    <div class="oc-line" id="ocl1"></div>
+    <div class="oc-step" id="ocs2"><span>2</span> Quote</div>
+    <div class="oc-line" id="ocl2"></div>
+    <div class="oc-step" id="ocs3"><span>3</span> Book</div>
+  </div>
+
+  <div class="oncall-body" id="oncall-body"></div>
+
+  <div class="oncall-foot">
+    <button class="btn-back" id="oc-back" onclick="ocBack()" style="visibility:hidden">← Back</button>
+    <span></span>
+    <button class="btn-next" id="oc-next" onclick="ocNext()">Next →</button>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════
      DASHBOARD
 ═══════════════════════════════════════ -->
 <div id="dashboard">
@@ -800,7 +929,7 @@ function doLogin() {
     err.style.display = 'none';
     me = u;
     sessionStorage.setItem('egc_u', u);
-    bootDashboard();
+    showModeSelect();
   } else {
     err.style.display = 'block';
   }
@@ -828,7 +957,7 @@ function bootDashboard() {
 
 window.addEventListener('DOMContentLoaded', () => {
   const saved = sessionStorage.getItem('egc_u');
-  if (saved && USERS[saved]) { me = saved; bootDashboard(); }
+  if (saved && USERS[saved]) { me = saved; showModeSelect(); }
   document.getElementById('l-pass').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
   document.getElementById('l-user').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('l-pass').focus(); });
 });
@@ -1492,6 +1621,343 @@ function avatarBg(n) {
   const palettes=['linear-gradient(135deg,#ff5b1f,#f59e0b)','linear-gradient(135deg,#3b82f6,#8b5cf6)','linear-gradient(135deg,#22c55e,#0ea5e9)','linear-gradient(135deg,#ec4899,#f43f5e)','linear-gradient(135deg,#14b8a6,#6366f1)'];
   let h=0; for(let i=0;i<(n||'').length;i++)h=(h*31+n.charCodeAt(i))&0xffff;
   return palettes[h%palettes.length];
+}
+
+/* ═══════════════════════════════════════════════════════
+   MODE SELECT
+═══════════════════════════════════════════════════════ */
+function showModeSelect() {
+  document.getElementById('login-screen').style.display  = 'none';
+  document.getElementById('dashboard').style.display     = 'none';
+  document.getElementById('oncall-overlay').classList.remove('open');
+  document.getElementById('mode-screen').style.display   = 'flex';
+  document.getElementById('mode-user-lbl').textContent   = me;
+  // Hide admin card for TylerG
+  document.getElementById('admin-card').style.display    = me === 'ZacB' ? '' : 'none';
+  emailjs.init(CFG.EMAILJS_PUBLIC_KEY);
+  startListeners();
+  fetchSheetCustomers();
+}
+
+function selectMode(mode) {
+  document.getElementById('mode-screen').style.display = 'none';
+  if (mode === 'call') {
+    openOnCall();
+  } else {
+    bootDashboard();
+  }
+}
+
+/* ═══════════════════════════════════════════════════════
+   ON-CALL FLOW
+═══════════════════════════════════════════════════════ */
+let oc = { step:1, customer:null, isNew:false, quote:{ space:'garage', size:'medium', fill:'moderate', specials:{} }, booking:{ assignedTo:'TylerG' } };
+
+const SPECIALS = [
+  { id:'fridge',    name:'Refrigerator',    price:60, icon:'🧊' },
+  { id:'washer',    name:'Washer / Dryer',  price:50, icon:'👕' },
+  { id:'appliance', name:'Other Appliance', price:40, icon:'📦' },
+  { id:'mattress',  name:'Mattress',        price:35, icon:'🛏' },
+  { id:'furniture', name:'Large Furniture', price:40, icon:'🪑' },
+  { id:'tire',      name:'Tire',            price:25, icon:'⚫' },
+  { id:'electronics',name:'Electronics',   price:25, icon:'📺' },
+  { id:'paint',     name:'Paint / Hazmat',  price:45, icon:'🪣' },
+];
+
+function openOnCall() {
+  oc = { step:1, customer:null, isNew:false,
+    quote:{ space:'garage', size:'medium', fill:'moderate', specials:{} },
+    booking:{ assignedTo: me==='TylerG'?'TylerG':'ZacB' }
+  };
+  document.getElementById('oncall-overlay').classList.add('open');
+  renderOcStep();
+}
+
+function exitCall() {
+  document.getElementById('oncall-overlay').classList.remove('open');
+  showModeSelect();
+}
+
+function renderOcStep() {
+  const s = oc.step;
+  [1,2,3].forEach(n => {
+    document.getElementById('ocs'+n).classList.toggle('active', n===s);
+    document.getElementById('ocs'+n).classList.toggle('done',   n<s);
+  });
+  [1,2].forEach(n => document.getElementById('ocl'+n).classList.toggle('done', n<s));
+  document.getElementById('oc-back').style.visibility = s>1 ? 'visible' : 'hidden';
+  const nx = document.getElementById('oc-next');
+  nx.textContent = s===3 ? '📅 Book Appointment' : 'Next →';
+  nx.disabled = false;
+  const body = document.getElementById('oncall-body');
+  body.innerHTML = '';
+  if (s===1) ocStep1(body);
+  if (s===2) ocStep2(body);
+  if (s===3) ocStep3(body);
+}
+
+function ocNext() {
+  if (oc.step===1) {
+    if (oc.isNew) {
+      const name = document.getElementById('oc-nc-name')?.value.trim();
+      if (!name) { alert('Please enter a customer name.'); return; }
+      oc.customer = { id:uid(), name, phone:document.getElementById('oc-nc-phone')?.value.trim()||'', email:document.getElementById('oc-nc-email')?.value.trim()||'', address:document.getElementById('oc-nc-addr')?.value.trim()||'' };
+      db.collection('customers').doc(oc.customer.id).set(oc.customer);
+    }
+    if (!oc.customer) { alert('Please select or add a customer.'); return; }
+    oc.step = 2;
+  } else if (oc.step===2) {
+    oc.step = 3;
+  } else {
+    ocBook(); return;
+  }
+  renderOcStep();
+}
+
+function ocBack() { if (oc.step>1) { oc.step--; renderOcStep(); } }
+
+/* ─── Step 1: Customer ─────────────────────────────── */
+function ocStep1(body) {
+  document.getElementById('oc-cname').textContent = 'Who are you talking to?';
+  document.getElementById('oc-cname').classList.remove('set');
+  body.innerHTML = `
+    <div class="step-q" style="font-family:'Fraunces',serif;font-size:1rem;color:rgba(255,255,255,.55);margin-bottom:1rem">Who's on the line?</div>
+    <div class="cust-search-wrap"><span class="icon">🔍</span>
+      <input class="cust-search" id="oc-search" type="text" placeholder="Search by name or phone…" oninput="ocFilter(this.value)" autocomplete="off">
+    </div>
+    <div class="cust-list" id="oc-list" style="margin-top:.65rem;max-height:300px"></div>
+    <div class="new-cust-card" id="oc-new-card" onclick="ocToggleNew()" style="margin-top:.45rem">
+      <div class="plus">+</div>
+      <div><div style="font-weight:600;font-size:.875rem">New Customer</div><div style="font-size:.75rem;margin-top:.1rem">First time calling</div></div>
+    </div>
+    <div class="new-cust-form" id="oc-new-form">
+      <div class="frow" style="margin-bottom:.65rem">
+        <div class="fg" style="margin:0"><label>Name *</label><input type="text" id="oc-nc-name" placeholder="John Smith"></div>
+        <div class="fg" style="margin:0"><label>Phone</label><input type="tel" id="oc-nc-phone" placeholder="(970) 555-0100"></div>
+      </div>
+      <div class="frow">
+        <div class="fg" style="margin:0"><label>Email</label><input type="email" id="oc-nc-email" placeholder="john@email.com"></div>
+        <div class="fg" style="margin:0"><label>Address</label><input type="text" id="oc-nc-addr" placeholder="123 Main St"></div>
+      </div>
+    </div>`;
+  ocFilter('');
+  setTimeout(() => document.getElementById('oc-search')?.focus(), 60);
+}
+
+function ocFilter(q) {
+  const custs = loadCustomers();
+  const fil = q ? custs.filter(c => c.name.toLowerCase().includes(q.toLowerCase()) || (c.phone||'').includes(q)) : custs;
+  const list = document.getElementById('oc-list');
+  if (!list) return;
+  list.innerHTML = '';
+  if (!fil.length) { list.innerHTML = `<div style="color:var(--muted);font-size:.85rem;padding:.4rem 0">${q ? 'No matches — add as new customer below.' : 'No customers yet.'}</div>`; return; }
+  fil.forEach(c => {
+    const card = document.createElement('div');
+    card.className = 'cust-card' + (oc.customer?.id===c.id ? ' selected' : '');
+    card.innerHTML = `<div class="cust-av" style="background:${avatarBg(c.name)}">${initials(c.name)}</div>
+      <div class="cust-info"><div class="cname">${esc(c.name)}</div><div class="csub">${[c.phone,c.email].filter(Boolean).join(' · ')||'No contact info'}</div></div>
+      <div class="cust-check">✓</div>`;
+    card.onclick = () => {
+      oc.customer = c; oc.isNew = false;
+      document.getElementById('oc-new-card')?.classList.remove('selected');
+      document.getElementById('oc-new-form')?.classList.remove('open');
+      document.getElementById('oc-cname').textContent = c.name;
+      document.getElementById('oc-cname').classList.add('set');
+      ocFilter(q);
+    };
+    list.appendChild(card);
+  });
+}
+
+function ocToggleNew() {
+  oc.isNew = !oc.isNew; oc.customer = null;
+  document.getElementById('oc-new-card')?.classList.toggle('selected', oc.isNew);
+  document.getElementById('oc-new-form')?.classList.toggle('open', oc.isNew);
+  ocFilter(document.getElementById('oc-search')?.value || '');
+  if (oc.isNew) setTimeout(() => document.getElementById('oc-nc-name')?.focus(), 50);
+}
+
+/* ─── Step 2: Quote Builder ────────────────────────── */
+function calcQuote() {
+  const base = { small:125, medium:250, large:425, oversized:625 }[oc.quote.size] || 250;
+  const mul  = { light:.8, moderate:1.0, heavy:1.4, packed:1.9 }[oc.quote.fill] || 1.0;
+  let extras = 0, lines = [];
+  SPECIALS.forEach(item => {
+    const qty = oc.quote.specials[item.id] || 0;
+    if (qty > 0) { extras += item.price * qty; lines.push(`${item.icon} ${item.name} ×${qty}  +$${item.price*qty}`); }
+  });
+  const low  = Math.round((base * mul + extras) / 5) * 5;
+  const high = Math.round(low * 1.18 / 5) * 5;
+  return { low, high, lines };
+}
+
+function updateQDisplay() {
+  const { low, high, lines } = calcQuote();
+  const r = document.getElementById('oc-qrange'); if (r) r.textContent = `$${low.toLocaleString()} – $${high.toLocaleString()}`;
+  const b = document.getElementById('oc-qbreak'); if (b) b.innerHTML = lines.join('<br>');
+}
+
+function setOpt(key, val, btn) {
+  oc.quote[key] = val;
+  btn.closest('.opt-grid').querySelectorAll('.opt').forEach(b => b.classList.remove('sel'));
+  btn.classList.add('sel');
+  updateQDisplay();
+}
+
+function adjSI(id, d) {
+  oc.quote.specials[id] = Math.max(0, (oc.quote.specials[id]||0) + d);
+  const el = document.getElementById('sin-'+id); if (el) el.textContent = oc.quote.specials[id];
+  updateQDisplay();
+}
+
+function ocStep2(body) {
+  document.getElementById('oc-cname').textContent = oc.customer?.name || '';
+  document.getElementById('oc-cname').classList.add('set');
+
+  const sel = (key, val) => oc.quote[key]===val ? ' sel' : '';
+
+  body.innerHTML = `
+    <div class="quote-box">
+      <div class="ql">Estimated Quote</div>
+      <div class="qr" id="oc-qrange">$0 – $0</div>
+      <div class="qs">Updates as you fill in the details below</div>
+      <div class="qb" id="oc-qbreak"></div>
+    </div>
+
+    <div class="q-section">
+      <div class="q-lbl">Space type</div>
+      <div class="opt-grid g2">
+        <div class="opt${sel('space','garage')}"   onclick="setOpt('space','garage',this)">  <span class="oi">🚗</span><div class="on">Garage</div></div>
+        <div class="opt${sel('space','basement')}" onclick="setOpt('space','basement',this)"><span class="oi">🏚</span><div class="on">Basement</div></div>
+        <div class="opt${sel('space','attic')}"    onclick="setOpt('space','attic',this)">   <span class="oi">🏠</span><div class="on">Attic</div></div>
+        <div class="opt${sel('space','other')}"    onclick="setOpt('space','other',this)">   <span class="oi">📦</span><div class="on">Other</div></div>
+      </div>
+    </div>
+
+    <div class="q-section">
+      <div class="q-lbl">Size of space</div>
+      <div class="opt-grid g4">
+        <div class="opt${sel('size','small')}"     onclick="setOpt('size','small',this)">    <span class="oi">🚘</span><div class="on">1-Car</div><div class="os">Small</div></div>
+        <div class="opt${sel('size','medium')}"    onclick="setOpt('size','medium',this)">   <span class="oi">🚗</span><div class="on">2-Car</div><div class="os">Medium</div></div>
+        <div class="opt${sel('size','large')}"     onclick="setOpt('size','large',this)">    <span class="oi">🚙</span><div class="on">3-Car</div><div class="os">Large</div></div>
+        <div class="opt${sel('size','oversized')}" onclick="setOpt('size','oversized',this)"><span class="oi">🏗</span><div class="on">Oversized</div><div class="os">Commercial</div></div>
+      </div>
+    </div>
+
+    <div class="q-section">
+      <div class="q-lbl">How full is it?</div>
+      <div class="opt-grid g4">
+        <div class="opt${sel('fill','light')}"    onclick="setOpt('fill','light',this)">   <span class="oi">🌱</span><div class="on">Light</div><div class="os">~25%</div></div>
+        <div class="opt${sel('fill','moderate')}" onclick="setOpt('fill','moderate',this)"><span class="oi">📦</span><div class="on">Moderate</div><div class="os">~50%</div></div>
+        <div class="opt${sel('fill','heavy')}"    onclick="setOpt('fill','heavy',this)">   <span class="oi">🏋</span><div class="on">Heavy</div><div class="os">~75%</div></div>
+        <div class="opt${sel('fill','packed')}"   onclick="setOpt('fill','packed',this)">  <span class="oi">🔴</span><div class="on">Packed</div><div class="os">100%</div></div>
+      </div>
+    </div>
+
+    <div class="q-section">
+      <div class="q-lbl">Special items <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted)">(tap + to add)</span></div>
+      <div class="specials" id="oc-specials"></div>
+    </div>`;
+
+  const sg = document.getElementById('oc-specials');
+  SPECIALS.forEach(item => {
+    const qty = oc.quote.specials[item.id] || 0;
+    const el = document.createElement('div'); el.className = 'si';
+    el.innerHTML = `<div class="si-info"><div class="sn">${item.icon} ${item.name}</div><div class="sp">+$${item.price} each</div></div>
+      <div class="si-ctr">
+        <button class="si-b" onclick="adjSI('${item.id}',-1)">−</button>
+        <div class="si-n" id="sin-${item.id}">${qty}</div>
+        <button class="si-b" onclick="adjSI('${item.id}',1)">+</button>
+      </div>`;
+    sg.appendChild(el);
+  });
+  updateQDisplay();
+}
+
+/* ─── Step 3: Book ─────────────────────────────────── */
+function ocStep3(body) {
+  const { low, high } = calcQuote();
+  const c = oc.customer;
+  body.innerHTML = `
+    <div class="step-q" style="font-family:'Fraunces',serif;font-size:1rem;color:rgba(255,255,255,.55);margin-bottom:1rem">Lock in the appointment</div>
+
+    <div style="background:rgba(34,197,94,.08);border:1px solid rgba(34,197,94,.2);border-radius:.75rem;padding:1rem 1.25rem;margin-bottom:1.25rem;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.5rem">
+      <div>
+        <div style="font-size:.68rem;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--muted)">Quoted Price</div>
+        <div style="font-family:'Fraunces',serif;font-size:1.5rem;font-weight:700;color:#86efac">$${low.toLocaleString()} – $${high.toLocaleString()}</div>
+      </div>
+      <div style="text-align:right;font-size:.8rem;color:var(--muted)">${esc(c.name)}<br>${esc(c.phone||'')}</div>
+    </div>
+
+    <div class="fg">
+      <label>Appointment Type</label>
+      <select id="oc-type">
+        <option value="walkthrough">Walk-Through / Assessment</option>
+        <option value="job">Cleanup Job</option>
+      </select>
+    </div>
+    <div class="frow">
+      <div class="fg" style="margin:0"><label>Date *</label><input type="date" id="oc-date" value="${fmtDate(new Date())}"></div>
+      <div class="fg" style="margin:0"><label>Time</label><input type="time" id="oc-time"></div>
+    </div>
+    <div class="fg" style="margin-top:.65rem">
+      <label>Assigned To</label>
+      <div class="assignees">
+        <div class="asgn${oc.booking.assignedTo==='ZacB'?' selected':''}"   id="ocas-Z" onclick="ocAsgn('ZacB')">  <div class="aav" style="background:linear-gradient(135deg,var(--accent),#f59e0b)">Z</div>ZacB</div>
+        <div class="asgn${oc.booking.assignedTo==='TylerG'?' selected':''}" id="ocas-T" onclick="ocAsgn('TylerG')"><div class="aav" style="background:linear-gradient(135deg,#3b82f6,#8b5cf6)">T</div>TylerG</div>
+        <div class="asgn${oc.booking.assignedTo==='Both'?' selected':''}"   id="ocas-B" onclick="ocAsgn('Both')">  <div class="aav" style="background:linear-gradient(135deg,#22c55e,#3b82f6)">B</div>Both</div>
+      </div>
+    </div>
+    <div class="fg"><label>Address</label><input type="text" id="oc-addr" value="${esc(c.address||'')}" placeholder="123 Main St, Fort Collins, CO"></div>
+    <div class="fg"><label>Notes</label><textarea id="oc-notes">Quote discussed: $${low}–$${high}. ${SPECIALS.filter(s=>(oc.quote.specials[s.id]||0)>0).map(s=>s.name+' ×'+oc.quote.specials[s.id]).join(', ')}</textarea></div>
+    ${c.email ? `<div class="email-toggle-row"><input type="checkbox" id="oc-email" checked><label for="oc-email">Send confirmation email<span class="esub">${esc(c.email)}</span></label></div>` : ''}`;
+}
+
+function ocAsgn(who) {
+  oc.booking.assignedTo = who;
+  ['ZacB','TylerG','Both'].forEach(w => {
+    document.getElementById('ocas-'+(w==='ZacB'?'Z':w==='TylerG'?'T':'B'))?.classList.toggle('selected', w===who);
+  });
+}
+
+async function ocBook() {
+  const btn = document.getElementById('oc-next');
+  btn.disabled = true; btn.textContent = 'Booking…';
+  const date = document.getElementById('oc-date')?.value;
+  if (!date) { btn.disabled=false; btn.textContent='📅 Book Appointment'; alert('Please pick a date.'); return; }
+  const { low, high } = calcQuote();
+  const c = oc.customer;
+  const jobId = uid();
+  const job = {
+    id: jobId,
+    type: document.getElementById('oc-type')?.value || 'walkthrough',
+    date,
+    time: document.getElementById('oc-time')?.value || '',
+    customer: c.name, phone: c.phone||'', email: c.email||'',
+    address: document.getElementById('oc-addr')?.value.trim() || c.address || '',
+    assignedTo: oc.booking.assignedTo,
+    notes: document.getElementById('oc-notes')?.value.trim() || '',
+    quote: `$${low}–$${high}`,
+    status: 'scheduled', createdBy: me, createdAt: new Date().toISOString()
+  };
+  await db.collection('jobs').doc(jobId).set(job);
+  if (document.getElementById('oc-email')?.checked && c.email) {
+    try {
+      const dl = new Date(date+'T12:00:00').toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric'});
+      await emailjs.send(CFG.EMAILJS_SERVICE_ID, CFG.EMAILJS_TEMPLATE_ID, {
+        to_email: c.email, to_name: c.name,
+        appointment_type: job.type==='walkthrough'?'Walk-Through':'Cleanup Job',
+        appointment_date: dl,
+        appointment_time: job.time ? fmtTime(job.time) : 'Time TBD',
+        address: job.address||'TBD',
+        employee_name: job.assignedTo,
+        notes: job.notes||''
+      });
+    } catch(e) { console.error('Email failed:', e); }
+  }
+  document.getElementById('oncall-overlay').classList.remove('open');
+  showToast('Booked for ' + c.name + '! 🎉');
+  bootDashboard();
 }
 </script>
 </body>
