@@ -1791,7 +1791,7 @@ function calcQuote() {
 
   // Cubic yards — $25/yd
   const cy = oc.quote.cubicYards || 0;
-  if (cy > 0) { total += cy * 25; lines.push(`📦 Cubic yards (${cy} yd³)  +$${cy*25}`); }
+  if (cy > 0) { total += cy * 35; lines.push(`📦 Cubic yards (${cy} yd³)  +$${cy*35}`); }
 
   // Special items
   SPECIALS.forEach(item => {
@@ -1835,7 +1835,7 @@ function adjSI(id, d) {
 function setCubicYards(val) {
   oc.quote.cubicYards = parseInt(val) || 0;
   const lbl = document.getElementById('cy-lbl');
-  if (lbl) lbl.textContent = oc.quote.cubicYards > 0 ? `${oc.quote.cubicYards} yd³  (+$${oc.quote.cubicYards*25})` : '0 yd³';
+  if (lbl) lbl.textContent = oc.quote.cubicYards > 0 ? `${oc.quote.cubicYards} yd³  (+$${oc.quote.cubicYards*35})` : '0 yd³';
   updateQDisplay();
 }
 
@@ -1927,7 +1927,7 @@ function ocStep2(body) {
           oninput="setCubicYards(this.value)"
           style="flex:1;accent-color:var(--accent);height:6px;cursor:pointer">
         <div id="cy-lbl" style="min-width:10rem;font-family:'JetBrains Mono',monospace;font-size:.9rem;color:var(--accent);text-align:right">
-          ${oc.quote.cubicYards > 0 ? `${oc.quote.cubicYards} yd³  (+$${oc.quote.cubicYards*25})` : '0 yd³'}
+          ${oc.quote.cubicYards > 0 ? `${oc.quote.cubicYards} yd³  (+$${oc.quote.cubicYards*35})` : '0 yd³'}
         </div>
       </div>
       <div style="display:flex;justify-content:space-between;font-size:.68rem;color:var(--muted);padding:0 2px">
