@@ -719,7 +719,7 @@
 const CFG = {
   EMAILJS_SERVICE_ID:  'service_ilze1lr',
   EMAILJS_TEMPLATE_ID: 'template_m6o3bn6',
-  EMAILJS_PUBLIC_KEY:  'r72qBTC55Po5iM9Q3bY0K',
+  EMAILJS_PUBLIC_KEY:  'RyH7Kwhn5-T5ebvN9',
   // Optional: paste a Google Sheet published-as-CSV URL to auto-import customers
   // File → Share → Publish to web → Sheet1 → CSV → copy link
   GOOGLE_SHEET_CSV_URL: ''
@@ -1260,8 +1260,10 @@ async function confirmBooking() {
       es.className=''; es.classList.add('sent'); es.textContent='✓ Confirmation sent to '+c.email;
       await new Promise(r=>setTimeout(r,1200));
     } catch(err) {
-      es.className=''; es.classList.add('fail'); es.textContent='Email failed — appointment still saved.';
-      await new Promise(r=>setTimeout(r,1500));
+      console.error('EmailJS error:', err);
+      const detail = err?.text || err?.message || JSON.stringify(err);
+      es.className=''; es.classList.add('fail'); es.textContent='Email failed: ' + detail;
+      await new Promise(r=>setTimeout(r,3000));
     }
   }
 
