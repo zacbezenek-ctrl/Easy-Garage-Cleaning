@@ -174,6 +174,30 @@
     .empty { text-align: center; padding: 3rem 1rem; color: var(--muted); }
     .empty .ico { font-size: 2.25rem; margin-bottom: .65rem; }
 
+    /* ── LEADS ─────────────────────────────────────────── */
+    .lead-card { background: var(--navy-soft); border: 1px solid var(--navy-border); border-radius: .85rem; padding: 1rem 1.25rem; margin-bottom: .75rem; display: flex; align-items: flex-start; gap: 1rem; flex-wrap: wrap; }
+    .lead-card.urgent { border-color: rgba(239,68,68,.5); background: rgba(239,68,68,.04); }
+    .lead-card.warning { border-color: rgba(245,158,11,.4); background: rgba(245,158,11,.03); }
+    .lead-card.done { border-color: rgba(34,197,94,.25); background: rgba(34,197,94,.03); opacity: .75; }
+    .lead-main { flex: 1; min-width: 180px; }
+    .lead-name { font-weight: 600; font-size: .95rem; margin-bottom: .2rem; }
+    .lead-meta { font-size: .78rem; color: var(--muted); margin-bottom: .5rem; }
+    .lead-msg { font-size: .82rem; color: rgba(255,255,255,.65); background: rgba(255,255,255,.04); border-radius: .5rem; padding: .5rem .75rem; margin-bottom: .65rem; }
+    .lead-timer { font-family: 'JetBrains Mono', monospace; font-size: 1.1rem; font-weight: 700; min-width: 72px; text-align: center; }
+    .lead-timer.green { color: #86efac; }
+    .lead-timer.yellow { color: #fcd34d; }
+    .lead-timer.red { color: #f87171; animation: pulse-red .8s infinite; }
+    .lead-timer.done { color: var(--muted); font-size: .8rem; font-weight: 400; }
+    @keyframes pulse-red { 0%,100%{opacity:1} 50%{opacity:.5} }
+    .lead-actions { display: flex; gap: .5rem; flex-wrap: wrap; }
+    .lead-btn { background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.1); border-radius: .5rem; padding: .4rem .85rem; color: #fff; font-size: .8rem; cursor: pointer; transition: background .15s; }
+    .lead-btn:hover { background: rgba(255,255,255,.13); }
+    .lead-btn.called { background: rgba(34,197,94,.15); border-color: rgba(34,197,94,.3); color: #86efac; }
+    .lead-btn.texted { background: rgba(59,130,246,.15); border-color: rgba(59,130,246,.3); color: #93c5fd; }
+    .lead-btn.emailed { background: rgba(168,85,247,.15); border-color: rgba(168,85,247,.3); color: #d8b4fe; }
+    .lead-responded { font-size: .78rem; color: #86efac; margin-top: .4rem; }
+    .lead-source { display: inline-block; background: rgba(255,255,255,.07); border-radius: 999px; padding: 2px 10px; font-size: .7rem; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); margin-bottom: .4rem; }
+
     /* ── JOBS FILTER ───────────────────────────────────── */
     .jobs-hd { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.25rem; flex-wrap: wrap; gap: .75rem; }
     .jobs-hd h2 { font-family: 'Fraunces', serif; font-size: 1.35rem; }
@@ -670,6 +694,7 @@
 
   <div class="tabbar">
     <button class="tab active" onclick="switchTab('cal',this)">📅 Calendar</button>
+    <button class="tab" onclick="switchTab('leads',this)">🔥 Leads <span id="leads-badge" style="display:none;background:var(--accent);color:#fff;border-radius:999px;font-size:.65rem;font-weight:700;padding:1px 6px;margin-left:4px;vertical-align:middle"></span></button>
     <button class="tab" onclick="switchTab('jobs',this)">📋 All Jobs</button>
     <button class="tab" onclick="switchTab('payout',this)">💰 Tyler's Payout</button>
     <button class="tab" onclick="switchTab('customers',this)">👥 Customers</button>
@@ -693,6 +718,15 @@
       <div class="week-wrap">
         <div id="week-view"></div>
       </div>
+    </div>
+
+    <!-- LEADS -->
+    <div id="tab-leads" class="panel">
+      <div class="jobs-hd" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.5rem">
+        <h2>Leads</h2>
+        <div style="font-size:.78rem;color:var(--muted)">Zapier writes to <code style="background:rgba(255,255,255,.07);padding:2px 6px;border-radius:4px">leads</code> collection · respond within 2 min</div>
+      </div>
+      <div id="leads-list"></div>
     </div>
 
     <!-- ALL JOBS -->
@@ -941,6 +975,8 @@ firebase.initializeApp({
 const db = firebase.firestore();
 let jobsCache = [];
 let custsCache = [];
+let leadsCache = [];
+let _leadsTimer = null;
 
 /* ═══════════════════════════════════════════════════════
    AUTH
@@ -1005,6 +1041,109 @@ function startListeners() {
     custsCache = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     renderCustomersTab();
   });
+  db.collection('leads').orderBy('createdAt', 'desc').onSnapshot(snap => {
+    leadsCache = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    renderLeads();
+    updateLeadsBadge();
+  });
+  // Tick countdown every second
+  if (_leadsTimer) clearInterval(_leadsTimer);
+  _leadsTimer = setInterval(() => {
+    if (document.getElementById('tab-leads')?.classList.contains('active')) renderLeads();
+    updateLeadsBadge();
+  }, 1000);
+}
+
+/* ═══════════════════════════════════════════════════════
+   LEADS
+═══════════════════════════════════════════════════════ */
+function updateLeadsBadge() {
+  const unresponded = leadsCache.filter(l => !l.respondedAt);
+  const badge = document.getElementById('leads-badge');
+  if (!badge) return;
+  if (unresponded.length > 0) {
+    badge.style.display = 'inline';
+    badge.textContent = unresponded.length;
+  } else {
+    badge.style.display = 'none';
+  }
+}
+
+function leadElapsed(lead) {
+  const created = new Date(lead.createdAt).getTime();
+  const end = lead.respondedAt ? new Date(lead.respondedAt).getTime() : Date.now();
+  return Math.floor((end - created) / 1000); // seconds
+}
+
+function fmtCountdown(sec) {
+  const m = Math.floor(Math.abs(sec) / 60);
+  const s = Math.abs(sec) % 60;
+  return (sec < 0 ? '-' : '') + m + ':' + String(s).padStart(2, '0');
+}
+
+function renderLeads() {
+  const el = document.getElementById('leads-list');
+  if (!el) return;
+  if (!leadsCache.length) {
+    el.innerHTML = `<div style="text-align:center;padding:3rem;color:var(--muted)">No leads yet — Zapier will push them here automatically.</div>`;
+    return;
+  }
+
+  el.innerHTML = leadsCache.map(lead => {
+    const elapsed = leadElapsed(lead);
+    const responded = !!lead.respondedAt;
+    const withinTwo = lead.responseSeconds != null && lead.responseSeconds <= 120;
+    const remaining = 120 - elapsed;
+
+    let timerClass = 'green', timerText = '';
+    if (responded) {
+      timerClass = 'done';
+      timerText = lead.responseSeconds <= 120
+        ? `✓ ${fmtCountdown(lead.responseSeconds)}`
+        : `✗ ${fmtCountdown(lead.responseSeconds)}`;
+    } else {
+      if (remaining > 60)       timerClass = 'green';
+      else if (remaining > 0)   timerClass = 'yellow';
+      else                      timerClass = 'red';
+      timerText = fmtCountdown(Math.max(0, remaining));
+    }
+
+    const cardClass = responded
+      ? 'done'
+      : remaining > 60 ? '' : remaining > 0 ? 'warning' : 'urgent';
+
+    const createdStr = new Date(lead.createdAt).toLocaleString('en-US', { month:'short', day:'numeric', hour:'numeric', minute:'2-digit' });
+
+    return `<div class="lead-card ${cardClass}">
+      <div class="lead-main">
+        <div class="lead-source">${esc(lead.source || 'Unknown')}</div>
+        <div class="lead-name">${esc(lead.name || 'Unknown')}</div>
+        <div class="lead-meta">${lead.phone ? '📞 '+esc(lead.phone) : ''} ${lead.email ? '· ✉️ '+esc(lead.email) : ''} · ${createdStr}</div>
+        ${lead.message ? `<div class="lead-msg">${esc(lead.message)}</div>` : ''}
+        ${responded
+          ? `<div class="lead-responded">✅ ${esc(lead.respondedBy)} responded via ${lead.responseMethod} in ${fmtCountdown(lead.responseSeconds)} ${withinTwo ? '🟢 under 2 min' : '🔴 over 2 min'}</div>`
+          : `<div class="lead-actions">
+              <button class="lead-btn" onclick="respondLead('${lead.id}','called')">📞 Called</button>
+              <button class="lead-btn" onclick="respondLead('${lead.id}','texted')">💬 Texted</button>
+              <button class="lead-btn" onclick="respondLead('${lead.id}','emailed')">✉️ Emailed</button>
+            </div>`
+        }
+      </div>
+      <div class="lead-timer ${timerClass}">${timerText}</div>
+    </div>`;
+  }).join('');
+}
+
+function respondLead(id, method) {
+  const lead = leadsCache.find(l => l.id === id);
+  if (!lead) return;
+  const responseSeconds = leadElapsed(lead);
+  db.collection('leads').doc(id).update({
+    respondedAt: new Date().toISOString(),
+    respondedBy: me,
+    responseMethod: method,
+    responseSeconds
+  });
 }
 
 /* ═══════════════════════════════════════════════════════
@@ -1045,6 +1184,7 @@ function switchTab(name, btn) {
   if (name === 'payout')    renderPayout();
   if (name === 'customers') renderCustomersTab();
   if (name === 'cal')       renderCal();
+  if (name === 'leads')     renderLeads();
 }
 
 /* ═══════════════════════════════════════════════════════
