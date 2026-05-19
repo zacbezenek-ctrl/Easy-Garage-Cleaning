@@ -1070,9 +1070,10 @@ function updateLeadsBadge() {
 }
 
 function leadElapsed(lead) {
-  const created = new Date(lead.createdAt).getTime();
+  // Count from notifiedAt (when Tyler's SMS fired) if available, else createdAt
+  const start = new Date(lead.notifiedAt || lead.createdAt).getTime();
   const end = lead.respondedAt ? new Date(lead.respondedAt).getTime() : Date.now();
-  return Math.floor((end - created) / 1000); // seconds
+  return Math.floor((end - start) / 1000); // seconds
 }
 
 function fmtCountdown(sec) {
