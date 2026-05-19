@@ -1120,7 +1120,7 @@ function renderLeads() {
     return `<div class="lead-card ${cardClass}">
       <div class="lead-main">
         <div class="lead-source">${esc(lead.source || 'Unknown')}</div>
-        <div class="lead-name">${esc(lead.name || 'Unknown')}</div>
+        <div class="lead-name">${esc(lead.name || lead.full_name || lead.phone || 'Unknown')}</div>
         <div class="lead-meta">${lead.phone ? '📞 '+esc(lead.phone) : ''} ${lead.email ? '· ✉️ '+esc(lead.email) : ''} · ${createdStr}</div>
         ${lead.message ? `<div class="lead-msg">${esc(lead.message)}</div>` : ''}
         ${responded
