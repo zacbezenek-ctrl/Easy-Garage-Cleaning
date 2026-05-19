@@ -1058,6 +1058,10 @@ function startListeners() {
       .sort((a,b) => (b.createdAt||b.timestamp||'').localeCompare(a.createdAt||a.timestamp||''));
     renderLeads();
     updateLeadsBadge();
+    // Refresh on-call customer picker if step 1 is open
+    if (oc.step === 1 && document.getElementById('oncall-overlay')?.classList.contains('open')) {
+      ocFilter(document.getElementById('oc-search')?.value || '');
+    }
   });
   // Tick countdown every second
   if (_leadsTimer) clearInterval(_leadsTimer);
