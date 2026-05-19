@@ -9,6 +9,8 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,400;0,500;0,700;1,400;1,500&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
   <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     :root {
@@ -720,10 +722,20 @@ const CFG = {
   EMAILJS_SERVICE_ID:  'service_ilze1lr',
   EMAILJS_TEMPLATE_ID: 'template_m6o3bn6',
   EMAILJS_PUBLIC_KEY:  'RyH7Kwhn5-T5ebvN9',
-  // Optional: paste a Google Sheet published-as-CSV URL to auto-import customers
-  // File → Share → Publish to web → Sheet1 → CSV → copy link
   GOOGLE_SHEET_CSV_URL: ''
 };
+
+firebase.initializeApp({
+  apiKey:            "AIzaSyA8g4UAW4P4bsCrQNZhUe81CbC7BvjJbNc",
+  authDomain:        "egcw-1ec83.firebaseapp.com",
+  projectId:         "egcw-1ec83",
+  storageBucket:     "egcw-1ec83.firebasestorage.app",
+  messagingSenderId: "763340109795",
+  appId:             "1:763340109795:web:ac203b3eb71831fa4ed2d6"
+});
+const db = firebase.firestore();
+let jobsCache = [];
+let custsCache = [];
 
 /* ═══════════════════════════════════════════════════════
    AUTH
@@ -761,11 +773,8 @@ function bootDashboard() {
   // Default assignee to current user
   bk.assignedTo = me === 'TylerG' ? 'TylerG' : 'ZacB';
   emailjs.init(CFG.EMAILJS_PUBLIC_KEY);
+  startListeners();
   fetchSheetCustomers();
-  renderCal();
-  renderJobs();
-  renderPayout();
-  renderCustomersTab();
 }
 
 window.addEventListener('DOMContentLoaded', () => {
@@ -778,11 +787,20 @@ window.addEventListener('DOMContentLoaded', () => {
 /* ═══════════════════════════════════════════════════════
    DATA — jobs & customers
 ═══════════════════════════════════════════════════════ */
-function loadJobs() { try { return JSON.parse(localStorage.getItem('egc_jobs')||'[]'); } catch { return []; } }
-function saveJobs(j) { localStorage.setItem('egc_jobs', JSON.stringify(j)); }
-function loadCustomers() { try { return JSON.parse(localStorage.getItem('egc_custs')||'[]'); } catch { return []; } }
-function saveCustomers(c) { localStorage.setItem('egc_custs', JSON.stringify(c)); }
+function loadJobs()      { return jobsCache; }
+function loadCustomers() { return custsCache; }
 function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2,6); }
+
+function startListeners() {
+  db.collection('jobs').onSnapshot(snap => {
+    jobsCache = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    refresh();
+  });
+  db.collection('customers').onSnapshot(snap => {
+    custsCache = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    renderCustomersTab();
+  });
+}
 
 /* ═══════════════════════════════════════════════════════
    GOOGLE SHEETS CSV SYNC
@@ -968,19 +986,16 @@ function closeAddCust(e) { if(e.target===document.getElementById('add-cust-overl
 function saveNewCustomer() {
   const name = document.getElementById('ac-name').value.trim();
   if (!name) { alert('Name is required'); return; }
-  const c = { id:uid(), name, phone:document.getElementById('ac-phone').value.trim(), email:document.getElementById('ac-email').value.trim(), address:document.getElementById('ac-addr').value.trim() };
-  const custs = loadCustomers();
-  custs.push(c);
-  saveCustomers(custs);
+  const id = uid();
+  const c = { id, name, phone:document.getElementById('ac-phone').value.trim(), email:document.getElementById('ac-email').value.trim(), address:document.getElementById('ac-addr').value.trim() };
+  db.collection('customers').doc(id).set(c);
   document.getElementById('add-cust-overlay').style.display='none';
-  renderCustomersTab();
   showToast('Customer added!');
 }
 
 function deleteCust(id) {
   if (!confirm('Remove this customer?')) return;
-  saveCustomers(loadCustomers().filter(c=>c.id!==id));
-  renderCustomersTab();
+  db.collection('customers').doc(id).delete();
 }
 
 /* ═══════════════════════════════════════════════════════
@@ -1021,13 +1036,12 @@ function mkJobCard(job) {
 }
 
 function setStatus(id, status) {
-  const jobs=loadJobs(); const i=jobs.findIndex(j=>j.id===id); if(i<0)return;
-  jobs[i].status=status; saveJobs(jobs); refresh();
+  db.collection('jobs').doc(id).update({ status });
 }
 
 function delJob(id) {
   if(!confirm('Delete this appointment?'))return;
-  saveJobs(loadJobs().filter(j=>j.id!==id)); refresh();
+  db.collection('jobs').doc(id).delete();
 }
 
 function refresh() { renderCal(); renderJobs(); renderPayout(); renderCustomersTab(); }
@@ -1101,7 +1115,7 @@ function stepNext() {
       const name=document.getElementById('nc-name').value.trim();
       if (!name) { showErr('Please enter a customer name.'); return; }
       const nc = { id:uid(), name, phone:document.getElementById('nc-phone').value.trim(), email:document.getElementById('nc-email').value.trim(), address:document.getElementById('nc-addr').value.trim() };
-      const custs=loadCustomers(); custs.push(nc); saveCustomers(custs);
+      db.collection('customers').doc(nc.id).set(nc);
       bk.customer=nc; bk.isNew=false;
     }
     if (!bk.customer) { showErr('Please select or add a customer.'); return; }
@@ -1212,11 +1226,12 @@ async function confirmBooking() {
   const btn=document.getElementById('btn-next');
   btn.disabled=true; btn.textContent='Saving…';
 
-  const jobs=loadJobs();
   const c=bk.customer;
   const addr=bk.address||c.address||'';
+  const jobId = bk.editId||uid();
+  const existing = bk.editId ? jobsCache.find(j=>j.id===bk.editId) : null;
   const job = {
-    id: bk.editId||uid(),
+    id: jobId,
     type: bk.type,
     date: bk.date,
     time: bk.time,
@@ -1226,19 +1241,12 @@ async function confirmBooking() {
     address: addr,
     assignedTo: bk.assignedTo,
     notes: bk.notes,
-    status: 'scheduled',
+    status: existing?.status || 'scheduled',
     createdBy: me,
-    createdAt: new Date().toISOString()
+    createdAt: existing?.createdAt || new Date().toISOString()
   };
 
-  if (bk.editId) {
-    const i=jobs.findIndex(j=>j.id===bk.editId);
-    if(i>=0){ job.status=jobs[i].status; jobs[i]=job; }
-    else jobs.push(job);
-  } else {
-    jobs.push(job);
-  }
-  saveJobs(jobs);
+  await db.collection('jobs').doc(jobId).set(job);
 
   // Send email
   const sendEmail=document.getElementById('send-email')?.checked && c.email;
