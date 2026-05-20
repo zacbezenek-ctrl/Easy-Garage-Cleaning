@@ -294,7 +294,8 @@ SHARED_CSS = r"""
 *{box-sizing:border-box;margin:0;padding:0}html{scroll-behavior:smooth}body{font-family:var(--font-body);color:var(--ink);background:var(--paper);line-height:1.6;-webkit-font-smoothing:antialiased;overflow-x:hidden}a{color:inherit;text-decoration:none}a.content-link{color:var(--accent-deep);font-weight:600;text-decoration:underline;text-underline-offset:2px}.wrap{max-width:var(--maxw);margin:0 auto;padding:0 18px}.mono{font-family:var(--font-mono);font-size:11px;letter-spacing:.12em;text-transform:uppercase}.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 .btn-primary{display:inline-flex;align-items:center;justify-content:center;gap:8px;background:var(--accent);color:var(--white);padding:14px 22px;font-weight:700;font-size:15px;border:none;border-radius:var(--radius);cursor:pointer;font-family:inherit;transition:background .2s,transform .2s,box-shadow .2s;box-shadow:0 4px 20px -6px rgba(255,91,31,.5)}.btn-primary:hover{background:var(--accent-deep);transform:translateY(-1px);box-shadow:0 6px 24px -4px rgba(255,91,31,.55)}.btn-primary:active{transform:translateY(0);box-shadow:0 2px 12px -4px rgba(255,91,31,.4)}.btn-secondary{display:inline-flex;align-items:center;justify-content:center;gap:8px;background:transparent;color:var(--ink);padding:13px 22px;font-weight:600;font-size:15px;border:1px solid rgba(10,22,40,.2);border-radius:var(--radius);transition:border-color .2s,color .2s,background .2s}.btn-secondary:hover{border-color:var(--accent);color:var(--accent-deep);background:rgba(255,91,31,.04)}.btn-secondary:active{background:rgba(10,22,40,.06)}
 .nav{position:sticky;top:0;z-index:50;background:rgba(245,241,234,.95);border-bottom:1px solid rgba(10,22,40,.08);backdrop-filter:blur(8px)}.nav-inner{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 18px;max-width:var(--maxw);margin:0 auto}.logo{font-family:var(--font-display);font-weight:900;font-size:18px;letter-spacing:-.02em;display:flex;align-items:center;gap:6px;flex-shrink:0}.logo-mark{display:inline-block;width:9px;height:9px;background:var(--accent);border-radius:50%}.nav-links{display:none;align-items:center;gap:18px;list-style:none;font-size:13px;font-weight:500}.nav-links>li{display:flex;align-items:center}.nav-links a:hover,.nav-dropdown-trigger:hover{color:var(--accent-deep)}.nav-right{display:none;align-items:center;gap:14px;flex-shrink:0}.nav-phone{font-weight:600;font-size:14px;white-space:nowrap}.nav-phone:hover{color:var(--accent)}.nav-cta{background:var(--accent);color:var(--white);padding:10px 16px;font-size:13px;font-weight:700;border-radius:var(--radius);white-space:nowrap}.nav-cta:hover{background:var(--accent-deep)}.nav-cta:active{transform:scale(.98)}.nav-toggle{display:flex;flex-direction:column;justify-content:center;gap:5px;width:44px;height:44px;padding:10px;background:transparent;border:1px solid rgba(10,22,40,.15);border-radius:var(--radius);cursor:pointer;flex-shrink:0}.nav-toggle-bar{display:block;width:100%;height:2px;background:var(--ink);transition:transform .2s,opacity .2s}.nav-toggle[aria-expanded=true] .nav-toggle-bar:nth-child(1){transform:translateY(7px) rotate(45deg)}.nav-toggle[aria-expanded=true] .nav-toggle-bar:nth-child(2){opacity:0}.nav-toggle[aria-expanded=true] .nav-toggle-bar:nth-child(3){transform:translateY(-7px) rotate(-45deg)}.nav-dropdown{position:relative}.nav-dropdown-trigger{display:flex;align-items:center;gap:4px;background:none;border:none;font:inherit;font-size:13px;font-weight:500;cursor:pointer;color:inherit;padding:0}.nav-dropdown-trigger::after{content:'';border:4px solid transparent;border-top-color:currentColor;margin-top:3px;opacity:.6}.nav-dropdown-panel{display:none;position:absolute;top:calc(100% + 8px);left:50%;transform:translateX(-50%);min-width:480px;background:var(--white);border:1px solid rgba(10,22,40,.1);box-shadow:0 12px 40px rgba(10,22,40,.12);padding:20px 24px;border-radius:4px;z-index:60;grid-template-columns:1fr 1fr;gap:24px}.nav-dropdown-locations .nav-dropdown-panel{min-width:200px;grid-template-columns:1fr;left:0;transform:none}.nav-dropdown:hover .nav-dropdown-panel,.nav-dropdown:focus-within .nav-dropdown-panel{display:grid}.dropdown-label{font-family:var(--font-mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:10px;display:block}.dropdown-col{display:flex;flex-direction:column;gap:4px}.dropdown-col a{font-size:13px;padding:5px 0;color:var(--text)}.dropdown-col a:hover{color:var(--accent-deep)}.nav-drawer{position:fixed;top:0;right:0;width:min(320px,88vw);height:100%;background:var(--paper);z-index:200;transform:translateX(100%);transition:transform .35s cubic-bezier(.4,0,.2,1);overflow-y:auto;padding:20px 24px 100px;border-left:1px solid rgba(10,22,40,.08);will-change:transform}.nav-drawer.open{transform:translateX(0)}.nav-drawer-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:24px;padding-bottom:16px;border-bottom:1px solid rgba(10,22,40,.08)}.nav-drawer-close{background:none;border:none;font-size:28px;line-height:1;cursor:pointer;color:var(--ink);padding:4px 8px}.drawer-phone{display:block;font-weight:600;font-size:16px;margin-bottom:20px;color:var(--accent-deep)}.drawer-section{margin-bottom:4px;border-bottom:1px solid rgba(10,22,40,.06)}.drawer-toggle{width:100%;display:flex;justify-content:space-between;align-items:center;background:none;border:none;font:inherit;font-size:15px;font-weight:600;padding:14px 0;cursor:pointer;color:var(--ink)}.drawer-toggle::after{content:'+';font-size:18px;color:var(--muted);transition:transform .2s}.drawer-toggle[aria-expanded=true]::after{transform:rotate(45deg)}.drawer-links{display:none;flex-direction:column;gap:10px;padding:0 0 14px 8px}.drawer-links.open{display:flex}.drawer-links a{font-size:14px;color:var(--text)}.drawer-links a:hover{color:var(--accent-deep)}.drawer-link-row{display:block;font-size:15px;font-weight:600;padding:14px 0;color:var(--ink)}.drawer-cta{display:block;text-align:center;margin-top:24px;padding:14px;background:var(--accent);color:var(--white);font-weight:700;border-radius:var(--radius)}.drawer-cta:active{transform:scale(.98)}.nav-overlay{position:fixed;inset:0;background:rgba(10,22,40,.5);z-index:199;opacity:0;pointer-events:none;transition:opacity .35s ease}.nav-overlay.open{opacity:1;pointer-events:auto}body.nav-open{overflow:hidden;position:fixed;width:100%}@media(min-width:1024px){.nav-links{display:flex}.nav-right{display:flex}.nav-toggle,.nav-drawer,.nav-overlay{display:none!important}}@media(max-width:1023px){.nav-links,.nav-right{display:none!important}}
-.trust-strip{background:var(--white);border-bottom:1px solid rgba(10,22,40,.08);padding:14px 0}.trust-strip-inner{display:flex;flex-wrap:wrap;gap:10px 20px;justify-content:center;font-size:12px;font-weight:600;color:var(--text)}.trust-strip-inner span{display:inline-flex;align-items:center;gap:6px}.trust-strip-inner span::before{content:'';width:6px;height:6px;background:var(--accent);border-radius:50%}
+.trust-strip{background:var(--white);border-bottom:1px solid rgba(10,22,40,.08);padding:12px 0;overflow:hidden}.trust-strip-inner{display:flex;flex-wrap:wrap;gap:8px 18px;justify-content:center;align-items:center;font-size:12px;font-weight:600;color:var(--text);max-width:100%}.trust-strip-inner span{display:inline-flex;align-items:center;gap:6px}.trust-strip-inner span::before{content:'';width:6px;height:6px;background:var(--accent);border-radius:50%;flex-shrink:0}
+.seasonal-banner{background:linear-gradient(90deg,var(--accent-deep),var(--accent));color:var(--white);font-size:13px;font-weight:500;border-bottom:1px solid rgba(255,255,255,.15)}.seasonal-banner[hidden]{display:none!important}.seasonal-banner-inner{display:flex;align-items:center;justify-content:center;gap:10px 16px;padding:10px 44px 10px 18px;flex-wrap:wrap;text-align:center;position:relative;min-height:44px;max-width:100%}.seasonal-banner-inner span{flex:1 1 200px;min-width:0;line-height:1.4}.seasonal-banner-inner a{color:var(--white);font-weight:700;text-decoration:underline;text-underline-offset:2px;white-space:nowrap;flex-shrink:0}.seasonal-banner-inner a:hover{color:var(--paper)}.seasonal-banner-dismiss{position:absolute;right:10px;top:50%;transform:translateY(-50%);background:rgba(255,255,255,.15);border:none;color:var(--white);width:32px;height:32px;border-radius:50%;font-size:20px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0}.seasonal-banner-dismiss:hover{background:rgba(255,255,255,.25)}@media(max-width:540px){.seasonal-banner-inner{padding:10px 40px 10px 14px;font-size:12px;gap:8px}.trust-strip{padding:10px 0}.trust-strip-inner{gap:6px 12px;font-size:11px}}
 section{padding:var(--section-gap) 0}@media(min-width:900px){section{padding:var(--section-gap-lg) 0}}.section-head{margin-bottom:36px}.section-num{color:var(--accent-deep);margin-bottom:10px;display:block}h2.section-title{font-family:var(--font-display);font-weight:500;font-size:clamp(26px,5vw,44px);line-height:1.08;letter-spacing:-.025em;max-width:22ch}h2.section-title em{font-style:italic;font-weight:400;color:var(--accent-deep)}.section-sub{color:var(--text);font-size:16px;max-width:58ch;margin-top:12px}
 .hero{padding:32px 0 48px}.hero-grid{display:grid;grid-template-columns:1fr;gap:32px;align-items:center}.hero-eyebrow{display:inline-flex;align-items:center;gap:10px;margin-bottom:14px;color:var(--accent-deep);font-size:11px}.hero-eyebrow::before{content:'';width:16px;height:1px;background:var(--accent-deep)}h1.hero-title{font-family:var(--font-display);font-weight:500;font-size:clamp(32px,7vw,54px);line-height:1.02;letter-spacing:-.03em;color:var(--ink);max-width:18ch}h1.hero-title em{font-style:italic;font-weight:400;color:var(--accent-deep)}.hero-sub{font-size:16px;color:var(--text);max-width:48ch;margin-top:14px;line-height:1.55}.hero-ctas{display:flex;flex-wrap:wrap;gap:12px;margin-top:24px}.hero-trust{display:flex;flex-wrap:wrap;gap:10px 16px;margin-top:24px;padding-top:20px;border-top:1px solid rgba(10,22,40,.1)}.trust-badge{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:500;color:var(--text)}.trust-badge::before{content:'';width:6px;height:6px;background:var(--accent);border-radius:50%;flex-shrink:0}.hero-ba{display:grid;grid-template-columns:1fr 1fr;gap:3px;background:var(--ink);padding:3px;border-radius:4px}.hero-ba-cell{aspect-ratio:4/5;position:relative;overflow:hidden;display:flex;align-items:center;justify-content:center}.hero-ba-cell.before{background:repeating-linear-gradient(135deg,#2a3a4f 0 6px,#1a2a3f 6px 12px),#1a2a3f;color:rgba(255,255,255,.5)}.hero-ba-cell.after{background:radial-gradient(circle at 30% 20%,rgba(255,91,31,.12),transparent 60%),var(--paper-warm);color:var(--ink)}.hero-ba-label{position:absolute;top:10px;left:10px;font-family:var(--font-mono);font-size:9px;letter-spacing:.18em;background:rgba(0,0,0,.75);color:var(--paper);padding:4px 8px}.hero-ba-cell.after .hero-ba-label{background:var(--accent);color:var(--white)}.hero-ba-icon{font-family:var(--font-display);font-size:40px;font-style:italic;opacity:.4}@media(min-width:900px){.hero{padding:56px 0 72px}.hero-grid{grid-template-columns:1.05fr .95fr;gap:48px}.hero-sub{font-size:17px}}
 .body-copy{background:var(--white)}.body-copy-inner{max-width:68ch;font-size:16px;line-height:1.7;color:var(--text)}.body-copy-inner p{margin-bottom:16px}.body-copy-inner h2{font-family:var(--font-display);font-size:clamp(22px,3vw,32px);font-weight:500;margin:32px 0 12px;letter-spacing:-.02em}
@@ -424,7 +425,7 @@ img,video,iframe,svg{max-width:100%;height:auto}
 .not-found-links a{background:var(--paper-warm);border:1px solid rgba(10,22,40,.1);padding:10px 16px;font-size:14px;font-weight:500;border-radius:3px}
 .not-found-links a:hover{border-color:var(--accent);color:var(--accent-deep)}
 .print-only{display:none}
-@media print{.nav,.nav-drawer,.nav-overlay,.trust-strip,.mobile-sticky-cta,.mobile-text-chip,.back-to-top{display:none!important}body{padding-bottom:0!important;background:#fff;color:#000}.final-cta .quote-form{border:2px solid #000}.print-only{display:block!important;font-size:14px;margin-bottom:16px;color:#000}.print-only a{color:#000;font-weight:600}}
+@media print{.nav,.nav-drawer,.nav-overlay,.seasonal-banner,.trust-strip,.mobile-sticky-cta,.mobile-text-chip,.back-to-top{display:none!important}body{padding-bottom:0!important;background:#fff;color:#000}.final-cta .quote-form{border:2px solid #000}.print-only{display:block!important;font-size:14px;margin-bottom:16px;color:#000}.print-only a{color:#000;font-weight:600}}
 .skip-link{position:absolute;left:-9999px;top:auto;width:1px;height:1px;overflow:hidden;z-index:300}.skip-link:focus{left:16px;top:16px;width:auto;height:auto;padding:12px 18px;background:var(--accent);color:var(--white);font-weight:700;border-radius:var(--radius);outline:none}
 .article-header{padding:72px 0 44px}@media(min-width:900px){.article-header{padding:96px 0 52px}}
 .quick-summary{background:var(--white);border:1px solid rgba(10,22,40,.1);border-left:3px solid var(--accent);padding:20px 24px;margin-bottom:32px;border-radius:0 4px 4px 0;font-size:15px;line-height:1.65;color:var(--text)}.quick-summary .qs-label{font-family:var(--font-mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--accent-deep);margin-bottom:10px;display:block}
@@ -2346,26 +2347,24 @@ Standards: HTML5, CSS3, schema.org LocalBusiness
 def patch_index_iteration6(text):
     """Homepage-only: seasonal banner, FAQ accordion, lazy sections, footer links."""
     if 'id="seasonal-banner"' not in text:
-        banner = f"""<div id="seasonal-banner" class="seasonal-banner" role="region" aria-label="Spring promotion" hidden>
-  <div class="wrap seasonal-banner-inner">
-    <span>🌱 <strong>Spring cleanout</strong> — book now and park inside before hail season.</span>
-    <a href="/book.html">Book now →</a>
-    <button type="button" class="seasonal-banner-dismiss" aria-label="Dismiss banner">×</button>
-  </div>
-</div>
-<script>
-(function(){{
-  var k='egc-spring-banner-2026';
-  var b=document.getElementById('seasonal-banner');
-  if(!b||localStorage.getItem(k))return;
-  b.hidden=false;
-  b.querySelector('.seasonal-banner-dismiss').addEventListener('click',function(){{
-    b.hidden=true;localStorage.setItem(k,'1');
-  }});
-}})();
-</script>
-"""
-        text = text.replace('<div class="trust-strip" aria-label="Trust signals">', banner + '\n<div class="trust-strip" aria-label="Trust signals">', 1)
+        text = text.replace(
+            '<nav class="nav" aria-label="Primary">',
+            SEASONAL_BANNER_BLOCK + '\n<nav class="nav" aria-label="Primary">',
+            1,
+        )
+    elif re.search(r"</aside>\s*<div id=\"seasonal-banner\"", text):
+        text = re.sub(
+            r'</aside>\s*<div id="seasonal-banner"[\s\S]*?</script>\s*',
+            "</aside>\n",
+            text,
+            count=1,
+        )
+        if 'id="seasonal-banner"' not in text.split('<nav class="nav"')[0]:
+            text = text.replace(
+                '<nav class="nav" aria-label="Primary">',
+                SEASONAL_BANNER_BLOCK + '\n<nav class="nav" aria-label="Primary">',
+                1,
+            )
     if 'class="faq-accordion"' not in text and '<div class="faq-list reveal">' in text:
         text = text.replace('<div class="faq-list reveal">', '<div class="faq-list faq-accordion reveal">', 1)
         text = re.sub(
@@ -2653,9 +2652,28 @@ def generate_sitemap(urls):
 
 TRUST_STRIP_BLOCK = """<div class="trust-strip" aria-label="Trust signals">
   <div class="wrap trust-strip-inner">
-    <span>Response within 5 minutes</span><span>No hidden fees</span><span>Only pay after approving quote</span><span>We do all lifting</span><span>Text photos now</span><span>Same-day availability</span><span><em>CSU</em> · Fort Collins roots</span><span>Locally owned — not a franchise</span>
+    <span>Response within 5 minutes</span><span>No hidden fees</span><span>Only pay after approving quote</span><span>We do all lifting</span><span>Text photos now</span><span>Same-day availability</span>
   </div>
 </div>"""
+
+SEASONAL_BANNER_BLOCK = """<div id="seasonal-banner" class="seasonal-banner" role="region" aria-label="Spring promotion" hidden>
+  <div class="wrap seasonal-banner-inner">
+    <span>🌱 <strong>Spring cleanout</strong> — book now and park inside before hail season.</span>
+    <a href="/book.html">Book now →</a>
+    <button type="button" class="seasonal-banner-dismiss" aria-label="Dismiss banner">×</button>
+  </div>
+</div>
+<script>
+(function(){{
+  var k='egc-spring-banner-2026';
+  var b=document.getElementById('seasonal-banner');
+  if(!b||localStorage.getItem(k))return;
+  b.hidden=false;
+  b.querySelector('.seasonal-banner-dismiss').addEventListener('click',function(){{
+    b.hidden=true;localStorage.setItem(k,'1');
+  }});
+}})();
+</script>"""
 
 
 def collapse_trust_strips_before_main(text):
@@ -2664,7 +2682,13 @@ def collapse_trust_strips_before_main(text):
     main_start = re.search(r"<main", text)
     if not aside_end or not main_start or aside_end.end() >= main_start.start():
         return text
-    return text[: aside_end.end()] + "\n" + TRUST_STRIP_BLOCK + "\n" + text[main_start.start() :]
+    between = text[aside_end.end() : main_start.start()]
+    banner_match = re.search(
+        r'(<div id="seasonal-banner"[\s\S]*?</script>\s*)',
+        between,
+    )
+    banner = banner_match.group(1) if banner_match else ""
+    return text[: aside_end.end()] + "\n" + banner + TRUST_STRIP_BLOCK + "\n" + text[main_start.start() :]
 
 
 def normalize_page_header(text, nav_html):
@@ -2814,6 +2838,33 @@ def patch_index_home_fixes(text):
         text,
         count=1,
     )
+    text = re.sub(
+        r'(<div class="trust-strip" aria-label="Trust signals">\s*<div class="wrap trust-strip-inner">\s*)'
+        r'(<span>Response within 5 minutes</span><span>No hidden fees</span><span>Only pay after approving quote</span>'
+        r'<span>We do all lifting</span><span>Text photos now</span><span>Same-day availability</span>)'
+        r'(?:<span><em>CSU</em> · Fort Collins roots</span><span>Locally owned — not a franchise</span>)?',
+        r"\1\2",
+        text,
+        count=1,
+    )
+    if ".seasonal-banner{" not in text and "<style>" in text:
+        css = (
+            ".seasonal-banner{background:linear-gradient(90deg,var(--accent-deep),var(--accent));color:var(--white);"
+            "font-size:13px;font-weight:500;border-bottom:1px solid rgba(255,255,255,.15)}"
+            ".seasonal-banner[hidden]{display:none!important}"
+            ".seasonal-banner-inner{display:flex;align-items:center;justify-content:center;gap:10px 16px;"
+            "padding:10px 44px 10px 18px;flex-wrap:wrap;text-align:center;position:relative;min-height:44px;max-width:100%}"
+            ".seasonal-banner-inner span{flex:1 1 200px;min-width:0;line-height:1.4}"
+            ".seasonal-banner-inner a{color:var(--white);font-weight:700;text-decoration:underline;"
+            "text-underline-offset:2px;white-space:nowrap;flex-shrink:0}"
+            ".seasonal-banner-dismiss{position:absolute;right:10px;top:50%;transform:translateY(-50%);"
+            "background:rgba(255,255,255,.15);border:none;color:var(--white);width:32px;height:32px;border-radius:50%;"
+            "font-size:20px;line-height:1;cursor:pointer;display:flex;align-items:center;justify-content:center}"
+            ".trust-strip{overflow:hidden}.trust-strip-inner{max-width:100%}"
+            "@media(max-width:540px){.seasonal-banner-inner{padding:10px 40px 10px 14px;font-size:12px}"
+            ".trust-strip-inner{gap:6px 12px;font-size:11px}}\n"
+        )
+        text = text.replace("</style>", css + "</style>", 1)
     text = text.replace("</p>\n      </div>\n      <details", "</p></details>\n      <details")
     text = text.replace('href="/loveland-garage-cleanout.html"', 'href="/garage-cleanouts-loveland-co.html"')
     text = text.replace('href="/windsor-garage-cleanout.html"', 'href="/garage-cleanouts-windsor-co.html"')
@@ -3153,7 +3204,7 @@ ITER5_CSS_TAIL = r"""
 .service-card-icon svg{width:32px;height:32px}
 .project-cards{display:grid;gap:20px;margin-top:32px}@media(min-width:768px){.project-cards{grid-template-columns:repeat(3,1fr)}}
 .print-only{display:none}
-@media print{.nav,.nav-drawer,.nav-overlay,.trust-strip,.mobile-sticky-cta,.mobile-text-chip,.back-to-top{display:none!important}body{padding-bottom:0!important;background:#fff;color:#000}.final-cta .quote-form{border:2px solid #000}.print-only{display:block!important;font-size:14px;margin-bottom:16px;color:#000}.print-only a{color:#000;font-weight:600}}
+@media print{.nav,.nav-drawer,.nav-overlay,.seasonal-banner,.trust-strip,.mobile-sticky-cta,.mobile-text-chip,.back-to-top{display:none!important}body{padding-bottom:0!important;background:#fff;color:#000}.final-cta .quote-form{border:2px solid #000}.print-only{display:block!important;font-size:14px;margin-bottom:16px;color:#000}.print-only a{color:#000;font-weight:600}}
 """
 
 
