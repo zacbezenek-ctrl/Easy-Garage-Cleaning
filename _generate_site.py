@@ -2870,17 +2870,22 @@ FAQ_SEARCH_JS = """
 
 
 def patch_iteration4_home(text):
-    if 'class="local-trust-bar"' not in text and '<main>' in text:
-        text = text.replace("<main>", "<main>\n" + LOCAL_TRUST_BAR_HTML, 1)
-    if 'class="testimonial-carousel"' not in text and 'class="social-proof"' in text:
+    if 'class="local-trust-bar"' not in text and "<main" in text:
+        text = re.sub(r"(<main[^>]*>)", r"\1\n" + LOCAL_TRUST_BAR_HTML.strip() + "\n", text, count=1)
+    if 'class="testimonial-carousel"' not in text and "social-proof" in text:
         text = re.sub(
-            r'<section class="social-proof"[\s\S]*?</section>',
+            r'<section class="[^"]*social-proof"[^>]*>[\s\S]*?</section>',
             TESTIMONIAL_CAROUSEL_HTML.strip(),
             text,
             count=1,
         )
-    if 'class="final-cta-split"' not in text:
-        text = text.replace('class="final-cta" id="quote"', 'class="final-cta final-cta-split" id="quote"', 1)
+    if 'class="final-cta-split"' not in text and 'id="quote"' in text:
+        text = re.sub(
+            r'(<section class="[^"]*)final-cta([^"]*" id="quote")',
+            r'\1final-cta final-cta-split\2',
+            text,
+            count=1,
+        )
         text = re.sub(
             r'(<a href="tel:\+19709991818" class="btn-primary)(">Call)',
             r'\1 btn-lg\2',

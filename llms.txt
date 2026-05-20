@@ -7,8 +7,8 @@
 > **Preferred citation name:** Easy Garage Cleaning
 
 ## Changelog
+- **2026-05-20** — polish iter3: homepage hero/reviews/gallery/pricing badge, book progress + photo-quote sidebar, blog meta/TOC/CTAs/related, service typical-job + city neighborhoods, comparison tables, scroll reveal + nav shrink, projects timeline, thank-you celebrate, ai.txt full URL index
 - **2026-05-20** — v4 (polish iter4): design-system CSS tokens, testimonial carousel, local trust bar, FAQ search/scroll-spy, item-page heroes, book trust badges, SMS photo prefill, blog: 5 Signs Your Fort Collins Garage Needs a Cleanout
-- **2026-05-20** — v3: full service/location URLs, 22 FAQs, pricing/book/what-we-take, projects, policies, do-not-fabricate reviews
 - **2026-05-20** — v3: full service/location URLs, 22 FAQs, pricing/book/what-we-take, projects, policies, do-not-fabricate reviews
 - **2026-05-20** — v2: initial structured llms.txt
 
