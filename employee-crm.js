@@ -29,10 +29,10 @@
   const SOURCES = ['website', 'phone', 'text', 'referral', 'other'];
 
   const PRICE_TIERS = [
-    { label: 'Small load', low: 99, high: 199 },
-    { label: 'Medium garage', low: 199, high: 399 },
-    { label: 'Large cleanout', low: 399, high: 650 },
-    { label: 'Full haul + sweep', low: 650, high: 950 },
+    { label: 'Single item ($99–150)', low: 99, high: 150 },
+    { label: 'Small load ($250–400)', low: 250, high: 400 },
+    { label: 'Medium garage ($400–650)', low: 400, high: 650 },
+    { label: 'Large / estate ($650+)', low: 650, high: 950 },
   ];
 
   let prefs = loadPrefs();
