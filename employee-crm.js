@@ -332,7 +332,8 @@
     const rev = revenueThisWeek(jobs);
     const inbox = leads.filter((l) => {
       const st = getLeadStatus(l);
-      return st !== 'converted' && st !== 'lost';
+      const raw = getLeadStatusRaw(l);
+      return !['booked', 'dead'].includes(st) && raw !== 'no_answer_6_attempts';
     });
     const overdueQuotes = jobs.filter(
       (j) =>
