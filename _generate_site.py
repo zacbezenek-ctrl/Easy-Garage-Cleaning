@@ -10,6 +10,7 @@ SITE = "https://easygaragecleaning.com"
 PHONE = "+19709991818"
 PHONE_DISPLAY = "(970) 999-1818"
 FORM_KEY = "3c4fe752-ac1d-45b9-89dd-4275ea162d22"
+GA4_ID = "G-J0W6Y4MMP9"
 TODAY = date.today().isoformat()
 
 AREA_SERVED = [
@@ -49,22 +50,30 @@ footer{background:var(--ink);color:var(--muted-dark);padding:36px 0;border-top:1
 .article-wrap{max-width:740px;margin:0 auto;padding:0 18px}.article-body{padding-bottom:80px;font-size:16px;line-height:1.75}.article-body h2{font-family:var(--font-display);font-size:26px;font-weight:500;margin:40px 0 14px;letter-spacing:-.02em}.article-body p{margin-bottom:18px}.article-body ul,.article-body ol{margin:0 0 18px 24px}
 """
 
+GTAG_BLOCK = """<!-- Google tag (gtag.js) -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-J0W6Y4MMP9"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){{dataLayer.push(arguments);}}
+  gtag('js', new Date());
+
+  gtag('config', 'G-J0W6Y4MMP9');
+  gtag('config', 'AW-18102284288');
+</script>
+"""
+
 TRACKING_BLOCK = """
 <!--
-  MERCHANT SETUP CHECKLIST — paste your IDs:
-  1. Google Analytics 4: replace G-XXXXXXXXXX with your Measurement ID
-  2. Microsoft Clarity: replace CLARITY_PROJECT_ID with your project ID
-  3. Google Search Console: uncomment meta verification tag below
-  4. CallRail: see body comment block for dynamic number swap
-  5. AggregateRating: add real review count in schema when available
+  MERCHANT SETUP CHECKLIST — optional tags:
+  1. Microsoft Clarity: replace CLARITY_PROJECT_ID with your project ID
+  2. Google Search Console: uncomment meta verification tag below
+  3. CallRail: see body comment block for dynamic number swap
+  4. AggregateRating: add real review count in schema when available
 -->
-<!-- Replace with your GA4 Measurement ID -->
-<script async src="https://www.googletagmanager.com/gtag/js?id=G-XXXXXXXXXX"></script>
-<script>gtag('config','G-XXXXXXXXXX');</script>
 <!-- Google Search Console: <meta name="google-site-verification" content="YOUR_VERIFICATION_CODE" /> -->
 <!-- Microsoft Clarity: replace CLARITY_PROJECT_ID -->
 <script type="text/javascript">
-(function(c,l,a,r,i,t,y){c[a]=c[a]||function(){(c[a].q=c[a].q||[]).push(arguments)};t=l.createElement(r);t.async=1;t.src="https://www.clarity.ms/tag/"+i;y=l.getElementsByTagName(r)[0];y.parentNode.insertBefore(t,y);})(window,document,"clarity","script","CLARITY_PROJECT_ID");
+(function(c,l,a,r,i,t,y){{c[a]=c[a]||function(){{(c[a].q=c[a].q||[]).push(arguments)}};t=l.createElement(r);t.async=1;t.src="https://www.clarity.ms/tag/"+i;y=l.getElementsByTagName(r)[0];y.parentNode.insertBefore(t,y);}})(window,document,"clarity","script","CLARITY_PROJECT_ID");
 </script>
 """
 
@@ -81,8 +90,7 @@ CALLRAIL_BLOCK = """
 HEAD = """<!DOCTYPE html>
 <html lang="en">
 <head>
-<script async src="https://www.googletagmanager.com/gtag/js?id=AW-18102284288"></script>
-<script>window.dataLayer=window.dataLayer||[];function gtag(){{dataLayer.push(arguments);}}gtag('js',new Date());gtag('config','AW-18102284288');</script>
+""" + GTAG_BLOCK + """
 """ + TRACKING_BLOCK + """
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -623,12 +631,18 @@ def patch_static_pages():
                 text = text.replace('</body>', sticky + '\n</body>')
             if '/about.html' not in text and 'nav-links' in text and 'About' not in text:
                 text = text.replace('<li><a href="/faq.html">FAQ</a></li>', '<li><a href="/about.html">About</a></li>\n      <li><a href="/faq.html">FAQ</a></li>', 1)
-            if 'G-XXXXXXXXXX' not in text and 'googletagmanager.com/gtag/js?id=AW-18102284288' in text:
-                text = text.replace(
-                    "gtag('config', 'AW-18102284288');",
-                    "gtag('config', 'AW-18102284288');\n</script>\n" + TRACKING_BLOCK.strip(),
-                    1,
+            if GA4_ID not in text:
+                had_aw = 'AW-18102284288' in text
+                for pat in (
+                    r"<!-- Google tag \(gtag\.js\) -->[\s\S]*?</script>\s*",
+                    r"<script async src=\"https://www\.googletagmanager\.com/gtag/js\?id=[^\"]+\"></script>\s*"
+                    r"<script>[\s\S]*?</script>\s*",
+                ):
+                    text = re.sub(pat, "", text, count=1)
+                block = GTAG_BLOCK if had_aw else GTAG_BLOCK.replace(
+                    "  gtag('config', 'AW-18102284288');\n", ""
                 )
+                text = re.sub(r"(<head[^>]*>\s*\n)", r"\1" + block + "\n", text, count=1, flags=re.I)
             if text != orig:
                 path.write_text(text, encoding="utf-8")
 
