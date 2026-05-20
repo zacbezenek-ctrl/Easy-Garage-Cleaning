@@ -60,7 +60,7 @@ a { color: inherit; text-decoration: none; }
 .logo { font-family: var(--font-display); font-weight: 900; font-size: 19px; letter-spacing: -0.02em; display: flex; align-items: center; gap: 6px; }
 .logo-mark { display: inline-block; width: 9px; height: 9px; background: var(--accent); border-radius: 50%; }
 .nav-links { display: none; gap: 28px; list-style: none; font-size: 14px; font-weight: 500; }
-.nav-cta { background: var(--ink); color: var(--paper); padding: 10px 16px; font-size: 13px; font-weight: 600; border-radius: var(--radius); }
+.nav-cta{background:var(--accent);color:var(--white);padding:10px 16px;font-size:13px;font-weight:700;border-radius:2px}.nav-cta:hover{background:var(--accent-deep)}
 @media (min-width: 820px) { .nav-links { display: flex; } }
 footer { background: var(--ink); color: rgba(245,241,234,0.6); padding: 40px 0; font-size: 13px; }
 .foot { display: flex; flex-direction: column; gap: 16px; justify-content: space-between; }
@@ -103,7 +103,7 @@ footer { background: var(--ink); color: rgba(245,241,234,0.6); padding: 40px 0; 
       <li><a href="/faq.html">FAQ</a></li>
       <li><a href="/blog/">Blog</a></li>
     </ul>
-    <a href="/#contact" class="nav-cta">Get a Quote</a>
+    <a href="/#quote" class="nav-cta">Get Free Quote</a>
   </div>
 </nav>
 
@@ -223,9 +223,10 @@ footer { background: var(--ink); color: rgba(245,241,234,0.6); padding: 40px 0; 
         <p style="font-family:var(--font-mono);font-size:11px;letter-spacing:0.15em;color:var(--accent);margin-bottom:12px;">EASY GARAGE CLEANING — FORT COLLINS, CO</p>
         <h3 style="font-family:var(--font-display);font-size:28px;font-weight:500;letter-spacing:-0.02em;margin-bottom:12px;">Ready to get your garage cleared?</h3>
         <p style="color:rgba(245,241,234,0.7);margin-bottom:24px;">Flat-rate pricing. Fully insured. We respond in 5 minutes.</p>
-        <a href="/#contact" style="display:inline-block;background:var(--accent);color:white;padding:14px 24px;font-weight:700;border-radius:2px;">Get a Free Quote &rarr;</a>
+        <a href="/#quote" style="display:inline-block;background:var(--accent);color:white;padding:14px 24px;font-weight:700;border-radius:2px;">Get a Free Quote &rarr;</a>
       </div>
 
+    <p style="margin-top:24px">Ready to donate during a cleanout? <a href="/garage-cleanouts-fort-collins-co.html">Book a Fort Collins garage cleanout</a> — we handle ReStore drop-offs and your tax receipt.</p>
     </article>
   </div>
 </main>
@@ -235,5 +236,12 @@ footer { background: var(--ink); color: rgba(245,241,234,0.6); padding: 40px 0; 
   <div>&copy; 2026 Easy Garage Cleaning LLC &middot; Fort Collins, CO &middot; Licensed &amp; Insured &middot; <a href="tel:+19709991818">(970) 999-1818</a></div>
 </div></footer>
 
+
+<div class="mobile-sticky-cta" aria-label="Quick contact">
+  <a href="tel:+19709991818" class="mobile-cta-btn mobile-cta-call" style="padding:12px 6px;font-weight:700;font-size:12px;text-align:center;border-radius:3px;background:#14243d;color:#f5f1ea;border:1px solid rgba(255,255,255,.08);">Call</a>
+  <a href="sms:+19709991818" class="mobile-cta-btn mobile-cta-text" style="padding:12px 6px;font-weight:700;font-size:12px;text-align:center;border-radius:3px;background:#14243d;color:#f5f1ea;border:1px solid rgba(255,255,255,.08);">Text</a>
+  <a href="/#quote" class="mobile-cta-btn mobile-cta-quote" style="padding:12px 6px;font-weight:700;font-size:12px;text-align:center;border-radius:3px;background:#ff5b1f;color:#fff;">Get Quote</a>
+</div>
+<style>@media(max-width:1023px){.mobile-sticky-cta{position:fixed;bottom:0;left:0;right:0;z-index:100;display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;background:#0a1628;padding:8px 10px 12px}body{padding-bottom:72px}}</style>
 </body>
 </html>
