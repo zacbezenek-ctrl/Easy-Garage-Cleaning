@@ -123,7 +123,7 @@ LEGACY_META_REDIRECTS = {
 }
 
 # Replace YOUR_GBP_PLACE_ID with Place ID from Google Business Profile → Share & promote
-GBP_REVIEW_URL = "https://search.google.com/local/writereview?placeid=YOUR_GBP_PLACE_ID"
+GBP_REVIEW_URL = "https://search.google.com/local/writereview?placeid=YOUR_GBP_PLACE_ID"  # Zap 7: Quo sends this link after job complete
 
 BLOG_QUICK_SUMMARIES = {
     "fort-collins-junk-removal-what-you-can-cant-throw-away.html": (
@@ -874,8 +874,23 @@ function initMultiStepForm(form){{
     }});
   }}
   let submitting=false;
+  function syncZapierLeadFields(form){{
+    const normPhone=(raw)=>{{const d=String(raw||'').replace(/\\D/g,'');if(d.length===10)return'+1'+d;if(d.length===11&&d[0]==='1')return'+'+d;return String(raw||'').trim();}};
+    const phone=form.querySelector('[name="Phone"]');const zapPhone=form.querySelector('[name="phone"]');
+    const name=form.querySelector('[name="Name"]');const zapName=form.querySelector('[name="name"]');
+    const email=form.querySelector('[name="Email"]');const zapEmail=form.querySelector('[name="email"]');
+    const zip=form.querySelector('[name="Zip code"]');const zapZip=form.querySelector('[name="serviceZip"]');
+    const svc=form.querySelector('[name="Service type"]:checked')||form.querySelector('[name="Service type"]');
+    const sizeSel=form.querySelector('[data-size-tier]');const zapItems=form.querySelector('[name="items"]');
+    if(zapPhone&&phone)zapPhone.value=normPhone(phone.value);
+    if(zapName&&name)zapName.value=(name.value||'').trim();
+    if(zapEmail&&email)zapEmail.value=(email.value||'').trim();
+    if(zapZip&&zip)zapZip.value=(zip.value||'').trim();
+    if(zapItems&&svc){{const size=sizeSel?.options[sizeSel.selectedIndex]?.text||'';zapItems.value=[svc.value||'',size].filter(Boolean).join(' — ');}}
+  }}
   form.addEventListener('submit',(e)=>{{
     syncBookingSlot();
+    syncZapierLeadFields(form);
     const svc=form.querySelector('[name="Service type"]:checked')||form.querySelector('[name="Service type"]');
     const desc=form.querySelector('[name="Photo description"]');const city=form.querySelector('[name="City"]');
     const size=sizeSel?.options[sizeSel.selectedIndex]?.text||'';
@@ -985,6 +1000,14 @@ QUOTE_FORM = """
           <input type="hidden" name="from_name" value="Easy Garage Cleaning Website">
           <input type="hidden" name="redirect" value="{SITE}/thank-you.html">
           <input type="checkbox" name="botcheck" class="sr-only" tabindex="-1" autocomplete="off">
+          <!-- Zapier Zap: Web3forms → Firestore leads (phone doc ID) -->
+          <input type="hidden" name="phone" value="">
+          <input type="hidden" name="name" value="">
+          <input type="hidden" name="email" value="">
+          <input type="hidden" name="items" value="">
+          <input type="hidden" name="serviceZip" value="">
+          <input type="hidden" name="source" value="Website">
+          <input type="hidden" name="status" value="new">
           <input type="hidden" name="What to remove" value="">
           <input type="hidden" name="estimated_range" value="">
           <input type="hidden" name="booking_slot" value="">
@@ -1070,7 +1093,7 @@ QUOTE_FORM = """
           <div class="form-panel" data-step="6">
             <div class="form-row two">
               <div class="field"><label for="name-{form_id}">Name</label><input type="text" id="name-{form_id}" name="Name" required autocomplete="name" placeholder="Your name" /></div>
-              <div class="field"><label for="phone-f-{form_id}">Phone</label><input type="tel" id="phone-f-{form_id}" name="Phone" required autocomplete="tel" inputmode="tel" placeholder="(970) 555-1234" /></div>
+              <div class="field"><label for="phone-f-{form_id}">Phone</label><input type="tel" id="phone-f-{form_id}" name="Phone" required autocomplete="tel" inputmode="tel" placeholder="(970) 555-1234" /><p class="field-hint">10-digit US number — normalized to E.164 for Zapier/Firestore.</p></div>
             </div>
             <div class="form-row"><div class="field"><label for="email-{form_id}">Email (optional)</label><input type="email" id="email-{form_id}" name="Email" autocomplete="email" placeholder="you@email.com" /></div></div>
             <div class="form-row two">
@@ -2192,6 +2215,7 @@ def render_reviews():
 <div class="review-actions reveal">
 <a href="{GBP_REVIEW_URL}" class="btn-secondary" rel="noopener noreferrer">Leave a review on Google</a>
 <!-- Replace YOUR_GBP_PLACE_ID in _generate_site.py GBP_REVIEW_URL with your Place ID -->
+<!-- Zap 7 sends review link via Quo SMS after job complete (GBP_REVIEW_URL) -->
 <a href="/book.html" class="btn-primary">Get Free Quote</a>
 </div>
 <p class="reveal" style="margin-top:16px;text-align:center"><a href="/service-areas.html" class="content-link">Service areas →</a></p>

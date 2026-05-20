@@ -125,6 +125,10 @@ Full guide: https://easygaragecleaning.com/pricing.html
 
 Flat-rate locked before work. Pay only after approving quote.
 
+## Automation
+
+Leads are managed via **Zapier + Quo + Firebase Firestore** (`leads` collection, phone doc IDs). Website forms submit to Web3forms with Zapier-ready fields (`phone`, `name`, `items`, `source=Website`, `status=new`). Customers opt out by replying **STOP** (TCPA — no further automated SMS). Full spec: `/docs/zapier-automation.md`.
+
 ## FAQs
 
 1. **How much does a garage cleanout cost in Fort Collins?** Most jobs: $99–$150 single item, $250–$400 small load, $400–$650 standard garage, $650+ large. Text photos to (970) 999-1818 for your exact flat-rate quote before we start.

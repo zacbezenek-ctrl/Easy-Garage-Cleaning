@@ -463,6 +463,14 @@ img,video,iframe,svg{max-width:100%;height:auto}
           <input type="hidden" name="from_name" value="Easy Garage Cleaning Website">
           <input type="hidden" name="redirect" value="https://easygaragecleaning.com/thank-you.html">
           <input type="checkbox" name="botcheck" class="sr-only" tabindex="-1" autocomplete="off">
+          <!-- Zapier Zap: Web3forms → Firestore leads (phone doc ID) -->
+          <input type="hidden" name="phone" value="">
+          <input type="hidden" name="name" value="">
+          <input type="hidden" name="email" value="">
+          <input type="hidden" name="items" value="">
+          <input type="hidden" name="serviceZip" value="">
+          <input type="hidden" name="source" value="Website">
+          <input type="hidden" name="status" value="new">
           <input type="hidden" name="What to remove" value="">
           <input type="hidden" name="estimated_range" value="">
           <input type="hidden" name="booking_slot" value="">
@@ -548,7 +556,7 @@ img,video,iframe,svg{max-width:100%;height:auto}
           <div class="form-panel" data-step="6">
             <div class="form-row two">
               <div class="field"><label for="name-garagecleano">Name</label><input type="text" id="name-garagecleano" name="Name" required autocomplete="name" placeholder="Your name" /></div>
-              <div class="field"><label for="phone-f-garagecleano">Phone</label><input type="tel" id="phone-f-garagecleano" name="Phone" required autocomplete="tel" inputmode="tel" placeholder="(970) 555-1234" /></div>
+              <div class="field"><label for="phone-f-garagecleano">Phone</label><input type="tel" id="phone-f-garagecleano" name="Phone" required autocomplete="tel" inputmode="tel" placeholder="(970) 555-1234" /><p class="field-hint">10-digit US number — normalized to E.164 for Zapier/Firestore.</p></div>
             </div>
             <div class="form-row"><div class="field"><label for="email-garagecleano">Email (optional)</label><input type="email" id="email-garagecleano" name="Email" autocomplete="email" placeholder="you@email.com" /></div></div>
             <div class="form-row two">
@@ -739,9 +747,24 @@ function initMultiStepForm(form){
       });
     });
   }
+  function syncZapierLeadFields(form){
+    const normPhone=(raw)=>{const d=String(raw||'').replace(/\D/g,'');if(d.length===10)return'+1'+d;if(d.length===11&&d[0]==='1')return'+'+d;return String(raw||'').trim();};
+    const phone=form.querySelector('[name="Phone"]');const zapPhone=form.querySelector('[name="phone"]');
+    const name=form.querySelector('[name="Name"]');const zapName=form.querySelector('[name="name"]');
+    const email=form.querySelector('[name="Email"]');const zapEmail=form.querySelector('[name="email"]');
+    const zip=form.querySelector('[name="Zip code"]');const zapZip=form.querySelector('[name="serviceZip"]');
+    const svc=form.querySelector('[name="Service type"]:checked')||form.querySelector('[name="Service type"]');
+    const zapItems=form.querySelector('[name="items"]');
+    if(zapPhone&&phone)zapPhone.value=normPhone(phone.value);
+    if(zapName&&name)zapName.value=(name.value||'').trim();
+    if(zapEmail&&email)zapEmail.value=(email.value||'').trim();
+    if(zapZip&&zip)zapZip.value=(zip.value||'').trim();
+    if(zapItems&&svc){const size=sizeSel?.options[sizeSel.selectedIndex]?.text||'';zapItems.value=[svc.value||'',size].filter(Boolean).join(' — ');}
+  }
   let submitting=false;
   form.addEventListener('submit',(e)=>{
     syncBookingSlot();
+    syncZapierLeadFields(form);
     const svc=form.querySelector('[name="Service type"]:checked')||form.querySelector('[name="Service type"]');
     const desc=form.querySelector('[name="Photo description"]');const city=form.querySelector('[name="City"]');
     const size=sizeSel?.options[sizeSel.selectedIndex]?.text||'';

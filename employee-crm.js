@@ -22,7 +22,37 @@
     { id: 'paid', label: 'Paid', color: '#22c55e' },
   ];
 
-  const LEAD_STATUSES = ['new', 'contacted', 'quoted', 'scheduled', 'converted', 'lost'];
+  // Firestore `leads` doc ID: Zapier uses normalized phone (E.164). Manual CRM entries may use auto IDs — doc.id shown in UI.
+  const LEAD_STATUSES = ['new', 'quoted', 'booked', 'dead', 'no_answer_6_attempts'];
+  const LEAD_STATUS_FILTER = ['new', 'quoted', 'booked', 'dead'];
+  const LEGACY_STATUS_MAP = {
+    contacted: 'new',
+    converted: 'booked',
+    scheduled: 'booked',
+    lost: 'dead',
+  };
+  const LEAD_STATUS_LABELS = {
+    new: 'New',
+    quoted: 'Quoted',
+    booked: 'Booked',
+    dead: 'Dead',
+    no_answer_6_attempts: 'No Answer (6×)',
+    contacted: 'Contacted',
+    converted: 'Booked',
+    scheduled: 'Booked',
+    lost: 'Dead',
+  };
+  const ZAP_AUTOMATION = [
+    { id: 1, title: 'Facebook Lead Intake', desc: 'New lead → Firestore status=new, Quo welcome SMS, alert Zac/Tyler.' },
+    { id: '2A', title: 'Inbound SMS', desc: 'Sets conversationActive=true and lastTouchAt.' },
+    { id: '2B', title: 'Outbound SMS', desc: 'Sets conversationActive=true and lastOutboundAt.' },
+    { id: 3, title: 'STOP (TCPA)', desc: 'Sets optedOutAt — never message again.' },
+    { id: 4, title: 'No-Answer Cadence', desc: 'Hourly 9am–6pm MT: contactAttempts 0–5, then dead/no_answer_6_attempts.' },
+    { id: 5, title: 'Quote Follow-Up', desc: 'Runs when status=quoted.' },
+    { id: 6, title: 'Booking Confirmation', desc: 'Runs when status=booked.' },
+    { id: 7, title: 'Review Request', desc: 'After job complete — Quo sends GBP review link.' },
+    { id: 8, title: 'Daily Digest', desc: '9pm MT summary to Zac/Tyler.' },
+  ];
   const LEAD_ASSIGNEES = [
     { id: 'Tyler', label: 'Tyler', aliases: ['Tyler', 'TylerG'] },
     { id: 'Zac', label: 'Zac', aliases: ['Zac', 'ZacB'] },
@@ -47,7 +77,17 @@
   let _detailJobId = null;
   let _detailCustId = null;
   let _detailLeadId = null;
-  let leadsFilter = { status: 'all', source: 'all', assignedTo: 'all', dateFrom: '', dateTo: '', search: '' };
+  let leadsFilter = {
+    status: 'all',
+    source: 'all',
+    assignedTo: 'all',
+    dateFrom: '',
+    dateTo: '',
+    search: '',
+    optedOutOnly: false,
+    conversationActive: false,
+    dueFollowUp: false,
+  };
   let leadsSort = 'newest';
   let leadsFiltersOpen = false;
   let _leadsLoading = true;
@@ -614,8 +654,71 @@
   };
 
   /* ── Leads CRM (full stack) ────────────────────────── */
-  function getLeadStatus(lead) {
+  function getLeadStatusRaw(lead) {
     return lead?.status || lead?.crmStatus || 'new';
+  }
+
+  function canonicalLeadStatus(leadOrStatus) {
+    const raw = typeof leadOrStatus === 'string' ? leadOrStatus : getLeadStatusRaw(leadOrStatus);
+    return LEGACY_STATUS_MAP[raw] || raw;
+  }
+
+  function getLeadStatus(lead) {
+    return canonicalLeadStatus(lead);
+  }
+
+  function leadStatusLabel(st) {
+    return LEAD_STATUS_LABELS[st] || st;
+  }
+
+  function leadStatusPillClass(st) {
+    const canon = LEGACY_STATUS_MAP[st] || st;
+    if (canon === 'dead' || st === 'no_answer_6_attempts') return st === 'no_answer_6_attempts' ? 'no_answer_6_attempts' : 'dead';
+    return canon;
+  }
+
+  function normalizePhoneE164(phone) {
+    const digits = String(phone || '').replace(/\D/g, '');
+    if (digits.length === 10) return '+1' + digits;
+    if (digits.length === 11 && digits[0] === '1') return '+' + digits;
+    if (digits.length > 10) return '+' + digits;
+    return null;
+  }
+
+  window.findLeadByPhone = function (phone) {
+    const e164 = normalizePhoneE164(phone);
+    const digits = String(phone || '').replace(/\D/g, '');
+    if (!digits) return null;
+    return (typeof leadsCache !== 'undefined' ? leadsCache : []).find((l) => {
+      if (l.id === e164 || l.id === digits) return true;
+      const ld = String(l.phone || '').replace(/\D/g, '');
+      return ld === digits || ld === digits.slice(-10) || digits.endsWith(ld);
+    }) || null;
+  };
+
+  function fmtFollowUpCountdown(iso) {
+    if (!iso) return null;
+    const t = new Date(iso).getTime();
+    if (isNaN(t)) return null;
+    const diff = t - Date.now();
+    const abs = Math.abs(diff);
+    const h = Math.floor(abs / 3600000);
+    const m = Math.floor((abs % 3600000) / 60000);
+    const label = h ? h + 'h ' + m + 'm' : m + 'm';
+    return diff < 0 ? { text: 'Overdue ' + label, cls: 'over' } : { text: 'In ' + label, cls: 'ok' };
+  }
+
+  function zapHintForStatus(st) {
+    const canon = LEGACY_STATUS_MAP[st] || st;
+    if (canon === 'quoted') return 'Zap 5 (Quote Follow-Up) may send automated SMS via Quo.';
+    if (canon === 'booked') return 'Zap 6 (Booking Confirmation) may send confirmation SMS.';
+    if (canon === 'dead') return 'Cadence and follow-up Zaps stop for dead leads.';
+    if (canon === 'new') return 'Zap 4 (No-Answer Cadence) runs while status=new and cadence not paused.';
+    return 'Status changes can trigger Zapier automations — use with care.';
+  }
+
+  function cadencePaused(lead) {
+    return !!(lead.conversationActive || lead.optedOutAt);
   }
 
   function getLeadDisplayName(lead) {
@@ -726,11 +829,24 @@
         return hay.includes(q);
       });
     }
-    if (leadsFilter.status !== 'all') list = list.filter((l) => getLeadStatus(l) === leadsFilter.status);
+    if (leadsFilter.status !== 'all') {
+      list = list.filter((l) => {
+        const raw = getLeadStatusRaw(l);
+        const canon = canonicalLeadStatus(l);
+        if (leadsFilter.status === 'dead') return canon === 'dead' || raw === 'no_answer_6_attempts';
+        return canon === leadsFilter.status || raw === leadsFilter.status;
+      });
+    }
     if (leadsFilter.source !== 'all') list = list.filter((l) => (l.source || '') === leadsFilter.source);
     if (leadsFilter.assignedTo !== 'all') {
       if (leadsFilter.assignedTo === '') list = list.filter((l) => !l.assignedTo);
       else list = list.filter((l) => assigneeMatches(l.assignedTo, leadsFilter.assignedTo));
+    }
+    if (leadsFilter.optedOutOnly) list = list.filter((l) => !!l.optedOutAt);
+    if (leadsFilter.conversationActive) list = list.filter((l) => !!l.conversationActive);
+    if (leadsFilter.dueFollowUp) {
+      const now = Date.now();
+      list = list.filter((l) => l.nextFollowUpAt && new Date(l.nextFollowUpAt).getTime() < now);
     }
     if (leadsFilter.dateFrom) {
       list = list.filter((l) => (l.createdAt || l.timestamp || '') >= leadsFilter.dateFrom);
@@ -756,7 +872,11 @@
   }
 
   window.setLeadsFilter = function (key, val) {
-    leadsFilter[key] = val;
+    if (key === 'optedOutOnly' || key === 'conversationActive' || key === 'dueFollowUp') {
+      leadsFilter[key] = val === true || val === 'true';
+    } else {
+      leadsFilter[key] = val;
+    }
     renderLeadsEnhanced();
   };
 
@@ -811,7 +931,7 @@
           <div class="leads-filter-row">
             <select aria-label="Filter by status" onchange="setLeadsFilter('status', this.value)">
               <option value="all" ${leadsFilter.status === 'all' ? 'selected' : ''}>All statuses</option>
-              ${LEAD_STATUSES.map((s) => `<option value="${s}" ${leadsFilter.status === s ? 'selected' : ''}>${s}</option>`).join('')}
+              ${LEAD_STATUS_FILTER.map((s) => `<option value="${s}" ${leadsFilter.status === s ? 'selected' : ''}>${leadStatusLabel(s)}</option>`).join('')}
             </select>
             <select aria-label="Filter by source" onchange="setLeadsFilter('source', this.value)">
               <option value="all">All sources</option>
@@ -825,6 +945,11 @@
             <input type="date" aria-label="From date" value="${esc(leadsFilter.dateFrom)}" onchange="setLeadsFilter('dateFrom', this.value)">
             <input type="date" aria-label="To date" value="${esc(leadsFilter.dateTo)}" onchange="setLeadsFilter('dateTo', this.value)">
           </div>
+          <div class="leads-filter-row leads-filter-toggles">
+            <label class="leads-toggle"><input type="checkbox" ${leadsFilter.optedOutOnly ? 'checked' : ''} onchange="setLeadsFilter('optedOutOnly', this.checked)"> Opted out only</label>
+            <label class="leads-toggle"><input type="checkbox" ${leadsFilter.conversationActive ? 'checked' : ''} onchange="setLeadsFilter('conversationActive', this.checked)"> Conversation active</label>
+            <label class="leads-toggle"><input type="checkbox" ${leadsFilter.dueFollowUp ? 'checked' : ''} onchange="setLeadsFilter('dueFollowUp', this.checked)"> Due for follow-up</label>
+          </div>
           <div class="leads-sort-row">
             <span class="leads-sort-lbl">Sort</span>
             <button type="button" class="leads-sort-btn ${leadsSort === 'newest' ? 'active' : ''}" data-sort="newest" onclick="setLeadsSort('newest', this)">Newest</button>
@@ -837,47 +962,56 @@
     const bar = document.getElementById('leads-status-bar');
     if (bar) {
       const counts = {};
-      LEAD_STATUSES.forEach((s) => (counts[s] = 0));
+      LEAD_STATUS_FILTER.forEach((s) => (counts[s] = 0));
       leads.forEach((l) => {
-        const st = getLeadStatus(l);
-        if (counts[st] !== undefined) counts[st]++;
+        const canon = canonicalLeadStatus(l);
+        if (counts[canon] !== undefined) counts[canon]++;
+        else if (getLeadStatusRaw(l) === 'no_answer_6_attempts') counts.dead++;
       });
-      bar.innerHTML = LEAD_STATUSES.filter((s) => counts[s] > 0)
-        .map((s) => `<span class="leads-stat-chip"><span class="lead-pill ${s}">${s}</span> <em>${counts[s]}</em></span>`)
+      bar.innerHTML = LEAD_STATUS_FILTER.filter((s) => counts[s] > 0)
+        .map((s) => `<span class="leads-stat-chip"><span class="lead-pill ${s}">${leadStatusLabel(s)}</span> <em>${counts[s]}</em></span>`)
         .join('');
     }
   }
 
   function renderLeadRow(lead) {
-    const st = getLeadStatus(lead);
+    const rawSt = getLeadStatusRaw(lead);
+    const pillCls = leadStatusPillClass(rawSt);
     const sla = getSlaInfo(lead);
     const created = fmtTs(lead.createdAt || lead.timestamp);
+    const followUp = fmtFollowUpCountdown(lead.nextFollowUpAt);
+    const attempts = Number(lead.contactAttempts) || 0;
     const rowCls = [
+      lead.optedOutAt ? 'opted-out' : '',
       sla && !sla.responded && sla.cls === 'over' ? 'urgent' : '',
       sla && !sla.responded && sla.cls === 'warn' ? 'warning' : '',
+      followUp && followUp.cls === 'over' ? 'urgent' : '',
       lead.prohibitedItemsFlag ? 'has-prohibited' : '',
     ]
       .filter(Boolean)
       .join(' ');
-    const phoneDigits = (lead.phone || '').replace(/\D/g, '');
     return `<button type="button" class="lead-row ${rowCls}" onclick="openLeadDetail('${lead.id}')" role="listitem">
+      ${lead.optedOutAt ? '<div class="lead-opted-banner">OPTED OUT</div>' : ''}
       <div class="lead-row-main">
         <div class="lead-row-top">
-          <div class="lead-row-name">${esc(getLeadDisplayName(lead))}</div>
+          <div class="lead-row-name">${lead.conversationActive ? '<span class="lead-conv-dot" title="Conversation active"></span>' : ''}${esc(getLeadDisplayName(lead))}</div>
           <div class="lead-row-badges">
-            <span class="lead-pill ${st}">${esc(st)}</span>
+            <span class="lead-pill ${pillCls}">${esc(leadStatusLabel(rawSt))}</span>
             ${lead.prohibitedItemsFlag ? '<span class="lead-pill prohibited">⚠ Prohibited</span>' : ''}
-            ${lead.scheduledJobAt ? '<span class="lead-pill booking">📅 Booked</span>' : ''}
+            ${lead.scheduledJobAt ? '<span class="lead-pill booking">📅 ' + esc(fmtTs(lead.scheduledJobAt).relative) + '</span>' : ''}
           </div>
         </div>
         <div class="lead-row-meta">
           ${lead.phone ? `<span>📞 ${esc(lead.phone)}</span>` : ''}
           ${lead.source ? `<span>${esc(lead.source)}</span>` : ''}
-          ${lead.items ? `<span>${esc(lead.items)}</span>` : ''}
           ${lead.assignedTo ? `<span>👤 ${esc(assigneeLabel(lead.assignedTo))}</span>` : ''}
+          ${attempts ? `<span class="lead-attempt-pill">Attempt ${attempts}/6</span>` : ''}
+          ${followUp ? `<span class="lead-followup ${followUp.cls}">${esc(followUp.text)}</span>` : ''}
+          ${lead.reviewRequestedAt ? '<span>⭐ Review sent</span>' : ''}
+          ${lead.notifiedAt ? '<span>🔔 Notified</span>' : ''}
           <span>${esc(created.relative)}</span>
-          ${lead.contactAttempts ? `<span>${lead.contactAttempts} attempt(s)</span>` : ''}
         </div>
+        ${lead.items ? `<div class="lead-row-items">${esc(String(lead.items).slice(0, 80))}${String(lead.items).length > 80 ? '…' : ''}</div>` : ''}
       </div>
       <div class="lead-row-side">
         ${
@@ -943,12 +1077,17 @@
     if (title) title.textContent = getLeadDisplayName(lead);
     if (sub) sub.textContent = [lead.phone, lead.email, lead.source].filter(Boolean).join(' · ');
 
-    const st = getLeadStatus(lead);
+    const st = getLeadStatusRaw(lead);
     const sla = getSlaInfo(lead);
     const phone = (lead.phone || '').replace(/\D/g, '');
     const notes = (lead.notesLog || []).slice().reverse();
+    const optedOut = !!lead.optedOutAt;
+    const paused = cadencePaused(lead);
+    const followUp = fmtFollowUpCountdown(lead.nextFollowUpAt);
+    const isAdmin = typeof ADMINS !== 'undefined' && ADMINS.includes(me);
 
     body.innerHTML = `
+      ${optedOut ? '<div class="lead-opted-banner lead-opted-banner-drawer">OPTED OUT — TCPA: do not send SMS</div>' : ''}
       ${
         sla
           ? `<div class="lead-sla-banner ${sla.responded ? 'ok' : sla.cls}"><span>${sla.responded ? 'Responded within SLA window' : sla.remaining <= 0 ? 'SLA exceeded — respond now' : '2-min SLA countdown'}</span><time>${esc(sla.text)}</time></div>`
@@ -956,12 +1095,25 @@
       }
       ${lead.prohibitedItemsFlag ? '<div class="lead-sla-banner over"><span>⚠ Prohibited items flagged</span></div>' : ''}
       <div class="lead-detail-actions">
-        ${phone ? `<a class="bsm edit" href="tel:${phone}">📞 Call</a><a class="bsm edit" href="sms:${phone}">💬 Text</a>` : ''}
+        ${phone ? `<a class="bsm edit" href="tel:${phone}">📞 Call</a>` : ''}
+        ${phone && !optedOut ? `<a class="bsm edit" href="sms:${phone}">💬 Text</a>` : ''}
+        ${phone && optedOut ? `<span class="bsm edit tcpa-disabled" title="TCPA: lead opted out">💬 Text (blocked)</span>` : ''}
         ${lead.email ? `<a class="bsm edit" href="mailto:${esc(lead.email)}">✉️ Email</a>` : ''}
         <button type="button" class="bsm edit" onclick="logContactAttempt('${lead.id}')">Log attempt</button>
         ${st === 'new' && lead.notifiedAt && !lead.respondedAt ? `<button type="button" class="bsm approve" onclick="respondLead('${lead.id}','called')">📞 SLA</button>` : ''}
         <button type="button" class="bsm edit" onclick="convertLeadToJob('${lead.id}')">→ Job</button>
-        <button type="button" class="bsm del" onclick="promptMarkLeadLost('${lead.id}')">Mark lost</button>
+        <button type="button" class="bsm del" onclick="promptMarkLeadDead('${lead.id}')">Mark dead</button>
+      </div>
+
+      <div class="lead-section lead-automation-section">
+        <div class="lead-section-title">Automation</div>
+        <p class="lead-automation-hint">${esc(zapHintForStatus(st))}</p>
+        ${paused ? '<p class="lead-cadence-paused">Cadence paused — conversation active or opted out.</p>' : '<p class="lead-cadence-active muted small">No-answer cadence (Zap 4) active when status=new.</p>'}
+        <div class="lead-automation-btns">
+          ${isAdmin ? `<button type="button" class="bsm del" onclick="markLeadOptedOut('${lead.id}')" ${optedOut ? 'disabled' : ''}>Mark opted out</button>` : ''}
+          <button type="button" class="bsm edit" onclick="logManualTouch('${lead.id}')">Log manual touch</button>
+        </div>
+        <p class="muted small" style="margin-top:.5rem">Firestore doc ID: <code>${esc(lead.id)}</code>${normalizePhoneE164(lead.phone) && lead.id !== normalizePhoneE164(lead.phone) ? ' · Zapier expects phone ID ' + esc(normalizePhoneE164(lead.phone)) : ''}</p>
       </div>
 
       <div class="lead-section">
@@ -981,8 +1133,9 @@
           <div class="lead-field">
             <span class="lead-field-lbl">Status</span>
             <div class="lead-field-row">
-              <select class="lead-inline-select" onchange="setLeadStatus('${lead.id}', this.value)">
-                ${LEAD_STATUSES.map((s) => `<option value="${s}" ${st === s ? 'selected' : ''}>${s}</option>`).join('')}
+              <select class="lead-inline-select" id="lead-status-select-${lead.id}" onchange="setLeadStatus('${lead.id}', this.value, this)">
+                ${LEAD_STATUSES.map((s) => `<option value="${s}" ${st === s ? 'selected' : ''}>${leadStatusLabel(s)}</option>`).join('')}
+                ${!LEAD_STATUSES.includes(st) ? `<option value="${st}" selected>${leadStatusLabel(st)}</option>` : ''}
               </select>
             </div>
           </div>
@@ -997,32 +1150,30 @@
               ).join('')}
             </div>
           </div>
-          ${leadField('Prohibited items', lead.prohibitedItemsFlag, 'bool', lead.prohibitedItemsFlag)}
           ${leadField('Conversation active', lead.conversationActive, 'bool')}
+          ${leadField('Contact attempts', (lead.contactAttempts ?? 0) + ' / 6')}
         </div>
       </div>
 
       <div class="lead-section">
         <div class="lead-section-title">Activity</div>
         <div class="lead-field-grid">
-          ${leadField('Contact attempts', lead.contactAttempts ?? 0)}
           ${leadTsField('Created', lead.createdAt || lead.timestamp)}
-          ${leadTsField('Last contact', lead.lastContactAt)}
           ${leadTsField('Last touch', lead.lastTouchAt)}
-          ${leadTsField('Last inbound', lead.lastInboundAt)}
           ${leadTsField('Last outbound', lead.lastOutboundAt)}
           ${leadTsField('Notified', lead.notifiedAt)}
+          ${leadTsField('Review requested', lead.reviewRequestedAt)}
           ${lead.message ? leadField('Message', lead.message) : ''}
         </div>
       </div>
 
       <div class="lead-section">
-        <div class="lead-section-title">Follow-up</div>
+        <div class="lead-section-title">Follow-up &amp; booking</div>
         <div class="lead-field-grid">
-          ${leadTsField('Next follow-up', lead.nextFollowUpAt)}
+          <div class="lead-field"><span class="lead-field-lbl">Next follow-up</span>${followUp ? `<span class="lead-field-val ${followUp.cls === 'over' ? 'danger' : ''}">${esc(followUp.text)}</span>${fmtTsHtml(lead.nextFollowUpAt)}` : fmtTsHtml(lead.nextFollowUpAt)}</div>
+          ${leadTsField('Scheduled job', lead.scheduledJobAt)}
           ${leadField('Loss reason', lead.lossReason)}
           ${leadTsField('Quote sent', lead.quoteSentAt)}
-          ${leadTsField('Scheduled job', lead.scheduledJobAt)}
         </div>
       </div>
 
@@ -1066,7 +1217,32 @@
     document.body.style.overflow = '';
   };
 
-  window.setLeadStatus = async function (id, status) {
+  window.setLeadStatus = async function (id, status, selectEl) {
+    const lead = leadsCache.find((l) => l.id === id);
+    const prev = lead ? getLeadStatusRaw(lead) : '';
+    if (status !== prev) {
+      const warn = zapHintForStatus(status);
+      const deadStatuses = ['dead', 'no_answer_6_attempts'];
+      if (deadStatuses.includes(status)) {
+        const reason = prompt('Mark lead dead? Optional loss reason:', '');
+        if (reason === null) {
+          if (selectEl) selectEl.value = prev;
+          return;
+        }
+        const now = new Date().toISOString();
+        await db.collection('leads').doc(id).set(
+          { status, crmStatus: status, lossReason: reason.trim() || '—', updatedAt: now },
+          { merge: true }
+        );
+        if (typeof showToast === 'function') showToast('Lead marked dead');
+        openLeadDetail(id, true);
+        return;
+      }
+      if (!confirm('Change status to "' + leadStatusLabel(status) + '"?\n\n' + warn + '\n\nThis may trigger Zapier automations (Zaps 5/6/7).')) {
+        if (selectEl) selectEl.value = prev;
+        return;
+      }
+    }
     const now = new Date().toISOString();
     await db.collection('leads').doc(id).set({ status, crmStatus: status, updatedAt: now }, { merge: true });
     if (typeof showToast === 'function') showToast('Status updated');
@@ -1098,24 +1274,55 @@
     openLeadDetail(id, true);
   };
 
-  window.promptMarkLeadLost = function (id) {
-    const reason = prompt('Loss reason (optional):', '');
+  window.promptMarkLeadDead = function (id) {
+    const reason = prompt('Mark lead dead? Optional loss reason:', '');
     if (reason === null) return;
-    markLeadLost(id, reason.trim());
+    markLeadDead(id, reason.trim(), 'dead');
   };
 
-  window.markLeadLost = async function (id, reason) {
+  window.markLeadDead = async function (id, reason, status) {
     const now = new Date().toISOString();
     await db.collection('leads').doc(id).set(
       {
-        status: 'lost',
-        crmStatus: 'lost',
+        status: status || 'dead',
+        crmStatus: status || 'dead',
         lossReason: reason || '—',
         updatedAt: now,
       },
       { merge: true }
     );
-    if (typeof showToast === 'function') showToast('Lead marked lost');
+    if (typeof showToast === 'function') showToast('Lead marked dead');
+    openLeadDetail(id, true);
+  };
+
+  window.promptMarkLeadLost = window.promptMarkLeadDead;
+
+  window.markLeadLost = async function (id, reason) {
+    return markLeadDead(id, reason, 'dead');
+  };
+
+  window.markLeadOptedOut = async function (id) {
+    const isAdmin = typeof ADMINS !== 'undefined' && ADMINS.includes(me);
+    if (!isAdmin) {
+      alert('Admin only');
+      return;
+    }
+    if (!confirm('Mark this lead as opted out (TCPA)? They will never receive automated SMS again.')) return;
+    const now = new Date().toISOString();
+    await db.collection('leads').doc(id).set({ optedOutAt: now, updatedAt: now }, { merge: true });
+    if (typeof showToast === 'function') showToast('Lead opted out');
+    openLeadDetail(id, true);
+  };
+
+  window.logManualTouch = async function (id) {
+    const lead = leadsCache.find((l) => l.id === id);
+    if (!lead) return;
+    const bump = confirm('Also increment contactAttempts?');
+    const now = new Date().toISOString();
+    const patch = { lastTouchAt: now, updatedAt: now };
+    if (bump) patch.contactAttempts = (Number(lead.contactAttempts) || 0) + 1;
+    await db.collection('leads').doc(id).set(patch, { merge: true });
+    if (typeof showToast === 'function') showToast('Manual touch logged');
     openLeadDetail(id, true);
   };
 
@@ -1153,12 +1360,17 @@
   };
 
   window.saveLeadForm = async function () {
-    const id = document.getElementById('lf-id').value || uid();
+    const existingId = document.getElementById('lf-id').value;
+    const phoneRaw = document.getElementById('lf-phone').value.trim();
+    const e164 = normalizePhoneE164(phoneRaw);
+    // Prefer E.164 phone as doc ID for new leads (matches Zapier); keep existing ID when editing.
+    const id = existingId || e164 || uid();
     const data = {
       name: document.getElementById('lf-name').value.trim(),
-      phone: document.getElementById('lf-phone').value.trim(),
+      phone: phoneRaw,
       email: document.getElementById('lf-email').value.trim(),
       city: document.getElementById('lf-city').value.trim(),
+      serviceZip: document.getElementById('lf-city').value.trim(),
       items: document.getElementById('lf-service').value.trim(),
       service: document.getElementById('lf-service').value.trim(),
       timing: document.getElementById('lf-timing').value.trim(),
@@ -1166,7 +1378,7 @@
       source: document.getElementById('lf-source').value,
       status: document.getElementById('lf-status').value,
       crmStatus: document.getElementById('lf-status').value,
-      createdAt: document.getElementById('lf-id').value ? undefined : new Date().toISOString(),
+      createdAt: existingId ? undefined : new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
     if (!data.name && !data.phone) {
@@ -1185,7 +1397,7 @@
   window.convertLeadToJob = async function (leadId) {
     const lead = leadsCache.find((l) => l.id === leadId);
     if (!lead) return;
-    if (!confirm('Convert this lead to a job? The lead stays in Firebase and is marked converted.')) return;
+    if (!confirm('Convert this lead to a job? Lead will be marked booked with scheduledJobAt if set.')) return;
     let cust = custsCache.find((c) => c.phone && lead.phone && c.phone === lead.phone);
     const displayName = getLeadDisplayName(lead);
     if (!cust) {
@@ -1205,6 +1417,7 @@
     const bookingNote = flow === 'booking' ? 'Online booking request — confirm slot from form.' : '';
     const srcNote = lead.source ? `Source: ${lead.source}` : '';
     const notes = [lead.message || '', bookingNote, srcNote].filter(Boolean).join('\n');
+    const scheduledAt = lead.scheduledJobAt || null;
     const jobPatch = {
       id: jobId,
       customer: cust.name,
@@ -1213,7 +1426,7 @@
       city: lead.serviceZip || lead.city || '',
       serviceType: lead.items || lead.service || 'Garage Cleanout',
       type: 'job',
-      pipelineStatus: 'lead',
+      pipelineStatus: 'scheduled',
       status: 'scheduled',
       notes,
       source: lead.source || '',
@@ -1222,16 +1435,25 @@
       createdAt: new Date().toISOString(),
       leadId,
     };
-    if (lead.scheduledJobAt) {
+    if (scheduledAt) {
+      jobPatch.date = String(scheduledAt).slice(0, 10);
+    } else if (lead.scheduledJobAt) {
       jobPatch.date = lead.scheduledJobAt.slice(0, 10);
     }
+    const now = new Date().toISOString();
+    const leadPatch = {
+      status: 'booked',
+      crmStatus: 'booked',
+      convertedAt: now,
+      updatedAt: now,
+    };
+    if (!lead.scheduledJobAt && jobPatch.date) {
+      leadPatch.scheduledJobAt = jobPatch.date + 'T12:00:00.000Z';
+    }
     await db.collection('jobs').doc(jobId).set(jobPatch);
-    await db.collection('leads').doc(leadId).set(
-      { status: 'converted', crmStatus: 'converted', convertedAt: new Date().toISOString() },
-      { merge: true }
-    );
+    await db.collection('leads').doc(leadId).set(leadPatch, { merge: true });
     closeLeadDetail();
-    if (typeof showToast === 'function') showToast('Lead converted to job');
+    if (typeof showToast === 'function') showToast('Lead converted — status booked');
     openJobDetail(jobId);
   };
 
@@ -1252,8 +1474,8 @@
         lastTouchAt: now,
         lastOutboundAt: now,
         contactAttempts: attempts,
-        status: st === 'new' ? 'contacted' : st,
-        crmStatus: st === 'new' ? 'contacted' : st,
+        status: st === 'new' ? 'new' : st,
+        crmStatus: st === 'new' ? 'new' : st,
         updatedAt: now,
       },
       { merge: true }
@@ -1417,10 +1639,17 @@
       ${isAdmin ? `<div class="more-section"><h3>Admin</h3>
         <button type="button" class="btn-back" onclick="seedDemoData()">Seed DEMO records</button>
       </div>` : ''}
+      <div class="more-section">
+        <h3>Automation System</h3>
+        <p class="muted small">Zapier + Quo + Firestore · <a href="/docs/zapier-automation.md" target="_blank" rel="noopener" style="color:var(--accent)">Full spec (zapier-automation.md)</a></p>
+        <div class="automation-cards">
+          ${ZAP_AUTOMATION.map(
+            (z) => `<details class="automation-card"><summary><span class="automation-zap-id">Zap ${z.id}</span> ${esc(z.title)}</summary><p>${esc(z.desc)}</p></details>`
+          ).join('')}
+        </div>
+      </div>
       <div class="more-section muted small">
-        <!-- FUTURE: Web3forms webhook → leads collection
-        POST /api/ingest-lead { name, phone, city, service, ... } -->
-        Zapier → Firestore <code>leads</code> · Web3forms fields: Name, Phone, City, Service type, Photos, Preferred timing
+        Website leads: Web3forms → Zapier → Firestore <code>leads</code> (phone doc ID). Fields: phone, name, email, items, serviceZip, source, status=new.
       </div>`;
   };
 

@@ -1295,6 +1295,14 @@ fbq('init','970332989051988');fbq('track','PageView');
           <input type="hidden" name="from_name" value="Easy Garage Cleaning Website">
           <input type="hidden" name="redirect" value="https://easygaragecleaning.com/thank-you.html">
           <input type="checkbox" name="botcheck" class="sr-only" tabindex="-1" autocomplete="off">
+          <!-- Zapier Zap: Web3forms → Firestore leads (phone doc ID) -->
+          <input type="hidden" name="phone" value="">
+          <input type="hidden" name="name" value="">
+          <input type="hidden" name="email" value="">
+          <input type="hidden" name="items" value="">
+          <input type="hidden" name="serviceZip" value="">
+          <input type="hidden" name="source" value="Website">
+          <input type="hidden" name="status" value="new">
           <input type="hidden" name="What to remove" value="">
           <input type="hidden" name="estimated_range" value="">
           <input type="hidden" name="booking_slot" value="">
@@ -1380,7 +1388,7 @@ fbq('init','970332989051988');fbq('track','PageView');
           <div class="form-panel" data-step="6">
             <div class="form-row two">
               <div class="field"><label for="name-garagecleano">Name</label><input type="text" id="name-garagecleano" name="Name" required autocomplete="name" placeholder="Your name" /></div>
-              <div class="field"><label for="phone-f-garagecleano">Phone</label><input type="tel" id="phone-f-garagecleano" name="Phone" required autocomplete="tel" inputmode="tel" placeholder="(970) 555-1234" /></div>
+              <div class="field"><label for="phone-f-garagecleano">Phone</label><input type="tel" id="phone-f-garagecleano" name="Phone" required autocomplete="tel" inputmode="tel" placeholder="(970) 555-1234" /><p class="field-hint">10-digit US number — normalized to E.164 for Zapier/Firestore.</p></div>
             </div>
             <div class="form-row"><div class="field"><label for="email-garagecleano">Email (optional)</label><input type="email" id="email-garagecleano" name="Email" autocomplete="email" placeholder="you@email.com" /></div></div>
             <div class="form-row two">
@@ -1530,51 +1538,64 @@ fbq('init','970332989051988');fbq('track','PageView');
   document.addEventListener('keydown',e=>{if(e.key==='Escape')setOpen(false);});
 }
 if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',initNavDrawer);}else{initNavDrawer();}
-  document.querySelectorAll('.multi-step-form').forEach(function(form) {
-    let step = 1;
-    const panels = form.querySelectorAll('.form-panel');
-    const dots = form.querySelectorAll('.form-step-dot');
-    const total = panels.length;
-    function show(n) {
-      panels.forEach(function(p, i) { p.classList.toggle('active', i + 1 === n); });
-      dots.forEach(function(d, i) { d.classList.toggle('active', i + 1 === n); d.classList.toggle('done', i + 1 < n); });
-      step = n;
-      const lbl = form.querySelector('.form-step-label');
-      if (lbl) { const names = ['What do you need?', 'Where are you located?', 'Upload photos', 'Contact & timing']; lbl.textContent = 'Step ' + n + ' of ' + total + (names[n - 1] ? ': ' + names[n - 1] : ''); }
-    }
-    function validateStep(n) {
-      if (n === 1) { if (!form.querySelector('[name="Service type"]:checked')) return false; }
-      if (n === 2) { const city = form.querySelector('[name="City"]'); if (city && !city.value) { city.focus(); return false; } }
-      return true;
-    }
-    form.querySelectorAll('[data-next]').forEach(function(b) { b.addEventListener('click', function() { if (!validateStep(step)) return; if (step < total) show(step + 1); }); });
-    form.querySelectorAll('[data-prev]').forEach(function(b) { b.addEventListener('click', function() { if (step > 1) show(step - 1); }); });
-    var fileInput = form.querySelector('input[type="file"][name="Photos"]');
-    var previewBox = form.querySelector('[data-photo-previews]');
-    if (fileInput && previewBox) {
-      fileInput.addEventListener('change', function() {
-        previewBox.innerHTML = '';
-        Array.prototype.slice.call(fileInput.files || [], 0, 8).forEach(function(f, i) {
-          if (!f.type.startsWith('image/')) return;
-          var wrap = document.createElement('div');
-          wrap.className = 'photo-preview-item';
-          var img = document.createElement('img');
-          img.src = URL.createObjectURL(f);
-          img.alt = 'Photo preview ' + (i + 1);
-          wrap.appendChild(img);
-          previewBox.appendChild(wrap);
-        });
-      });
-    }
-    var submitting = false;
-    form.addEventListener('submit', function(e) {
-      if (submitting) { e.preventDefault(); return; }
-      submitting = true;
-      var btn = form.querySelector('[type="submit"]');
-      if (btn) { btn.disabled = true; btn.classList.add('is-loading'); btn.textContent = 'Sending…'; }
-    });
-    show(1);
+  document.querySelectorAll('.multi-step-form').forEach(initMultiStepForm);
+function initMultiStepForm(form){
+  let step=1;const panels=form.querySelectorAll('.form-panel');const dots=form.querySelectorAll('.form-step-dot');const total=panels.length;
+  const pctEl=form.closest('.quote-form')?.querySelector('[data-progress-pct]')||document.querySelector('[data-progress-pct]');
+  const names=['What do you need?','Job size','Your estimate','Where are you located?','Upload photos','Contact & timing'];
+  const sizeSel=form.querySelector('[data-size-tier]');
+  const flowInput=form.querySelector('[name="flow_type"]');
+  const rangeInput=form.querySelector('[name="estimated_range"]');
+  const slotInput=form.querySelector('[name="booking_slot"]');
+  const submitBtn=form.querySelector('[data-submit-label]');
+  function syncBookingSlot(){const picked=form.querySelector('[name="booking_slot_choice"]:checked');if(slotInput&&picked)slotInput.value=picked.value;}
+  function syncZapierLeadFields(){
+    const normPhone=(raw)=>{const d=String(raw||'').replace(/\D/g,'');if(d.length===10)return'+1'+d;if(d.length===11&&d[0]==='1')return'+'+d;return String(raw||'').trim();};
+    const phone=form.querySelector('[name="Phone"]');const zapPhone=form.querySelector('[name="phone"]');
+    const name=form.querySelector('[name="Name"]');const zapName=form.querySelector('[name="name"]');
+    const email=form.querySelector('[name="Email"]');const zapEmail=form.querySelector('[name="email"]');
+    const zip=form.querySelector('[name="Zip code"]');const zapZip=form.querySelector('[name="serviceZip"]');
+    const svc=form.querySelector('[name="Service type"]:checked');
+    const zapItems=form.querySelector('[name="items"]');
+    if(zapPhone&&phone)zapPhone.value=normPhone(phone.value);
+    if(zapName&&name)zapName.value=(name.value||'').trim();
+    if(zapEmail&&email)zapEmail.value=(email.value||'').trim();
+    if(zapZip&&zip)zapZip.value=(zip.value||'').trim();
+    if(zapItems&&svc){const size=sizeSel?.options[sizeSel.selectedIndex]?.text||'';zapItems.value=[svc.value||'',size].filter(Boolean).join(' — ');}
+  }
+  function showQuoteResult(){const opt=sizeSel?.options[sizeSel.selectedIndex];if(!opt||!opt.value)return false;const flow=opt.dataset.flow||'booking';const range=opt.dataset.range||'';if(flowInput)flowInput.value=flow;if(rangeInput)rangeInput.value=range;const callPanel=form.querySelector('[data-result-call]');const bookPanel=form.querySelector('[data-result-booking]');if(callPanel)callPanel.hidden=flow!=='call_text';if(bookPanel)bookPanel.hidden=flow==='call_text';const rangeEl=form.querySelector('[data-result-range]');if(rangeEl)rangeEl.textContent=range;if(submitBtn)submitBtn.textContent=flow==='call_text'?'Send request (optional) →':'Confirm booking request →';return true;}
+  const show=(n)=>{if(n===3)showQuoteResult();panels.forEach((p,i)=>p.classList.toggle('active',i+1===n));dots.forEach((d,i)=>{d.classList.toggle('active',i+1===n);d.classList.toggle('done',i+1<n);});step=n;const lbl=form.querySelector('.form-step-label');if(lbl)lbl.textContent='Step '+n+' of '+total+(names[n-1]?': '+names[n-1]:'');if(pctEl)pctEl.textContent=Math.round((n/total)*100)+'%';};
+  function showErr(panel,msg){let el=panel.querySelector('.form-error');if(!el){el=document.createElement('p');el.className='form-error';el.setAttribute('role','alert');panel.appendChild(el);}el.textContent=msg;el.classList.add('visible');}
+  function clearErr(panel){const el=panel.querySelector('.form-error');if(el)el.classList.remove('visible');}
+  function validateStep(n){
+    const panel=panels[n-1];clearErr(panel);
+    if(n===1&&!form.querySelector('[name="Service type"]:checked')){showErr(panel,'Please choose a service type.');return false;}
+    if(n===2&&sizeSel&&!sizeSel.value){showErr(panel,'Please choose job size.');sizeSel.focus();return false;}
+    if(n===3){if(!showQuoteResult())return false;if(flowInput?.value==='booking'){syncBookingSlot();if(!form.querySelector('[name="booking_slot_choice"]:checked')){showErr(panel,'Pick a booking time.');return false;}}}
+    if(n===4){const city=form.querySelector('[name="City"]');if(city&&!city.value){showErr(panel,'Select your city.');city.focus();return false;}}
+    if(n===6){const name=form.querySelector('[name="Name"]');const phone=form.querySelector('[name="Phone"]');if(name&&!name.value.trim()){showErr(panel,'Enter your name.');name.focus();return false;}if(phone&&!phone.value.trim()){showErr(panel,'Enter your phone.');phone.focus();return false;}}
+    return true;
+  }
+  form.querySelectorAll('[name="booking_slot_choice"]').forEach(r=>r.addEventListener('change',syncBookingSlot));
+  if(sizeSel)sizeSel.addEventListener('change',()=>{if(step===3)showQuoteResult();});
+  form.querySelectorAll('[data-next]').forEach(b=>b.addEventListener('click',()=>{if(!validateStep(step))return;if(step<total)show(step+1);}));
+  form.querySelectorAll('[data-prev]').forEach(b=>b.addEventListener('click',()=>{if(step>1)show(step-1);}));
+  let submitting=false;
+  form.addEventListener('submit',(e)=>{
+    syncBookingSlot();syncZapierLeadFields();
+    const svc=form.querySelector('[name="Service type"]:checked');
+    const desc=form.querySelector('[name="Photo description"]');const city=form.querySelector('[name="City"]');
+    const size=sizeSel?.options[sizeSel.selectedIndex]?.text||'';
+    const combined=form.querySelector('[name="What to remove"]');
+    if(combined&&svc){combined.value=[svc.value||'',size,city?.value||'',rangeInput?.value?'Est. '+rangeInput.value:'',slotInput?.value?'Slot: '+slotInput.value:'',flowInput?.value?'Flow: '+flowInput.value:'',desc?.value||''].filter(Boolean).join(' — ');}
+    if(submitting){e.preventDefault();return;}
+    submitting=true;
+    const btn=form.querySelector('[type="submit"]');
+    if(btn){btn.disabled=true;btn.classList.add('is-loading');btn.textContent='Sending…';}
+    if(typeof gtag==='function')gtag('event','quote_submit',{event_category:'lead',event_label:svc?.value||'quote',flow_type:flowInput?.value||''});
   });
+  show(1);
+}
 </script>
 
 <script>(function(){const s=document.getElementById('mobile-quote-sheet');if(!s||window.matchMedia('(min-width:1024px)').matches)return;let shown=false,d=sessionStorage.getItem('egc-quote-sheet')==='1';s.querySelector('.mobile-quote-sheet-close')?.addEventListener('click',()=>{s.classList.remove('visible');sessionStorage.setItem('egc-quote-sheet','1');d=true;});window.addEventListener('scroll',()=>{if(d||shown)return;const m=document.documentElement.scrollHeight-window.innerHeight;if(m>0&&window.scrollY/m>=0.5){shown=true;s.classList.add('visible');}},{passive:true});})();</script>
