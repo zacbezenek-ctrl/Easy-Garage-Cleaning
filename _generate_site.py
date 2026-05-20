@@ -61,11 +61,8 @@ SERVICE_DEFINITIONS = {
 SMS_PHOTOS_BODY = "Hi!%20I'd%20like%20a%20quote.%20I%20can%20text%20photos%20of%20my%20garage/junk."
 
 # Design system (CSS variables) — documented for maintainers; tokens in :root below
-DESIGN_SYSTEM_DOC = """
-Spacing: 4/8/16/24/32/48/64 (--space-1 … --space-7)
-Radius: sm/md/lg (--radius-sm, --radius-md, --radius-lg)
-Shadows: sm/md/lg/accent (--shadow-sm … --shadow-accent)
-Font sizes: xs/sm/base/md/lg/xl/2xl/hero (--text-xs … --text-hero)
+DESIGN_TOKENS_CSS = r"""
+:root{--space-1:4px;--space-2:8px;--space-3:16px;--space-4:24px;--space-5:32px;--space-6:48px;--space-7:64px;--radius-sm:2px;--radius-md:4px;--radius-lg:8px;--shadow-sm:0 2px 8px -2px rgba(10,22,40,.08);--shadow-md:0 8px 24px -8px rgba(10,22,40,.12);--shadow-lg:0 16px 40px -12px rgba(10,22,40,.16);--shadow-accent:0 8px 28px -6px rgba(255,91,31,.35);--text-xs:11px;--text-sm:13px;--text-base:15px;--text-md:16px;--text-lg:18px;--text-xl:22px;--text-2xl:clamp(26px,5vw,44px);--text-hero:clamp(32px,7vw,54px)}
 """
 
 ITEM_ICONS = {
@@ -424,7 +421,7 @@ img,video,iframe,svg{max-width:100%;height:auto}
 """
 
 POLISH_CSS_MARKER = "/* site-polish-v4 */"
-POLISH_CSS = POLISH_CSS_MARKER + DESIGN_SYSTEM_DOC + r"""
+POLISH_CSS = POLISH_CSS_MARKER + DESIGN_TOKENS_CSS + r"""
 .faq-hero-actions .btn-primary,.faq-cta .cta-main{background:var(--accent,#ff5b1f);color:#fff;border:none}
 .faq-hero-actions .btn-primary:hover,.faq-cta .cta-main:hover{background:var(--accent-deep,#d94208)}
 .faq-layout{display:grid;grid-template-columns:min(220px,28%) 1fr;gap:clamp(24px,5vw,60px);padding:0 0 100px;align-items:start}
@@ -2590,7 +2587,19 @@ def dedupe_nav_footer_css(text):
     return text
 
 
+def strip_invalid_polish_doc(text):
+    for junk in (
+        "Spacing: 4/8/16/24/32/48/64 (--space-1 … --space-7)",
+        "Radius: sm/md/lg (--radius-sm, --radius-md, --radius-lg)",
+        "Shadows: sm/md/lg/accent (--shadow-sm … --shadow-accent)",
+        "Font sizes: xs/sm/base/md/lg/xl/2xl/hero (--text-xs … --text-hero)",
+    ):
+        text = text.replace(junk + "\n", "")
+    return text
+
+
 def inject_polish_css(text):
+    text = strip_invalid_polish_doc(text)
     if POLISH_CSS_MARKER not in text and "<style>" in text:
         text = text.replace("</style>", POLISH_CSS + "\n</style>", 1)
     return text
@@ -2881,8 +2890,8 @@ def patch_iteration4_home(text):
         )
     if 'class="final-cta-split"' not in text and 'id="quote"' in text:
         text = re.sub(
-            r'(<section class="[^"]*)final-cta([^"]*" id="quote")',
-            r'\1final-cta final-cta-split\2',
+            r'(<section class="[^"]*?\bfinal-cta\b)(?! final-cta-split)([^"]*" id="quote")',
+            r'\1 final-cta-split\2',
             text,
             count=1,
         )
@@ -2923,7 +2932,7 @@ def patch_iteration4_faq(text):
 
 
 def patch_legacy_banner(text, filename):
-    if filename not in LEGACY_REDIRECTS or "legacy-redirect-banner" in text:
+    if filename not in LEGACY_REDIRECTS or 'class="legacy-redirect-banner"' in text:
         return text
     href, label = LEGACY_REDIRECTS[filename]
     banner = f'<div class="legacy-redirect-banner" role="note">Updated page → <a href="{href}">{esc(label)}</a></div>\n'
@@ -3025,7 +3034,7 @@ def patch_blog_index_garage_signs(text):
 
 """
     if "5-signs-your-fort-collins-garage-needs-a-cleanout" not in text:
-        text = text.replace('<div class="blog-grid">', '<div class="blog-grid">\n' + card, 1)
+        text = text.replace('<div class="blog-grid">\n', '<div class="blog-grid">\n' + card, 1)
     return text
 
 
