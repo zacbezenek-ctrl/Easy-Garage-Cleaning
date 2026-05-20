@@ -1,18 +1,57 @@
 # Easy Garage Cleaning
 
 Business Name: Easy Garage Cleaning LLC
-What We Do: Professional garage cleanout, junk removal, and garage organizing services
-Cities Served: Fort Collins (Old Town, Midtown, Fossil Creek, Harmony corridor, South College), Loveland (Centerra area), Windsor, Timnath, Wellington, Severance, LaPorte — Northern Colorado
+What We Do: Garage reclaiming specialist — cleanouts, junk removal, organization, and item pickup in Northern Colorado
+Owner: Zac Bezenek (CSU student-run, Fort Collins native)
+Cities Served: Fort Collins (Old Town, Midtown, Fossil Creek, Harmony corridor, South College), Loveland (Centerra, Mariana Butte), Windsor (Raindance, Pelican Lakes), Timnath, Wellington, Severance, LaPorte
 Phone: (970) 999-1818
+Email: contact@easygaragecleaning.com
 Website: https://easygaragecleaning.com
 Hours: Monday–Saturday, 7:00 AM – 7:00 PM
-Pricing Summary: Single-car garage cleanouts from $500 flat rate; double-car garages from $800 flat rate; 3-car/estate jobs quoted after a free on-site walkthrough. All pricing is flat-rate and all-inclusive — no per-item fees, no surprise charges. Dump fees and donation coordination are included.
+Geo: 40.585260, -105.084419 (Fort Collins, CO)
 
-Easy Garage Cleaning was founded by Zac Bezenek, a Fort Collins college student and Northern Colorado native who built the business to serve his community with honest, hands-on service. Unlike national junk removal franchises, the owners are on every job — customers know exactly who is showing up to their home. The company is a Colorado-registered LLC carrying general liability and commercial auto insurance, licensed to operate in the City of Fort Collins.
+Pricing Summary: Flat-rate only — single-item pickup $99–150, small loads $250–400, standard garage cleanouts $400–650, large/estate $650+. Photo quotes in 5 minutes. No hidden fees. Only pay after approving quote.
 
-What makes Easy Garage Cleaning unique: usable items are donated to Habitat for Humanity ReStore, ARC Thrift, and Goodwill — and customers receive an itemized tax receipt in their name. The business offers a "Done by Dinner — or It's Free" guarantee: if the cleanout isn't finished by end of day, the job is free, no exceptions.
+Positioning: "Garage reclaiming" not generic junk hauling. Tagline: Park in your garage again. Reclaim usable space.
 
-Services:
-- Full Garage Cleanouts: Complete haul-out, floor sweep, cobweb removal. Crew arrives with truck and handles everything.
-- Junk Removal & Hauling: Single items or full loads. Appliances, furniture, tires, construction debris, and more.
-- Garage Organizing: Shelving plans, zone layouts, labeled bins, optional storage install (hooks, pegboards, overhead racks).
+Services (Fort Collins):
+- Garage Cleanouts: /garage-cleanouts-fort-collins-co.html
+- Junk Removal: /junk-removal-fort-collins-co.html
+- Garage Cleaning: /garage-cleaning-fort-collins-co.html
+- Garage Organization: /garage-organization-fort-collins-co.html
+- Furniture Removal: /furniture-removal-fort-collins-co.html
+- Appliance Removal: /appliance-removal-fort-collins-co.html
+- Mattress Removal: /mattress-removal-fort-collins-co.html
+- Storage Unit Cleanout: /storage-unit-cleanout-fort-collins-co.html
+- Yard Debris Removal: /yard-debris-removal-fort-collins-co.html
+
+Item pickup pages:
+- Couch Removal: /couch-removal-fort-collins-co.html
+- Hot Tub Removal: /hot-tub-removal-fort-collins-co.html
+- Treadmill Removal: /treadmill-removal-fort-collins-co.html
+- Refrigerator Removal: /refrigerator-removal-fort-collins-co.html
+- Shed Cleanout: /shed-cleanout-fort-collins-co.html
+
+City pages:
+- Loveland junk / garage: /junk-removal-loveland-co.html, /garage-cleanouts-loveland-co.html
+- Windsor junk / garage: /junk-removal-windsor-co.html, /garage-cleanouts-windsor-co.html
+- Wellington junk / garage: /junk-removal-wellington-co.html, /garage-cleanouts-wellington-co.html
+
+Comparison guides:
+- Junk removal vs dumpster rental: /blog/junk-removal-vs-dumpster-rental-fort-collins.html
+- Garage cleanout vs storage unit: /blog/garage-cleanout-vs-storage-unit-fort-collins.html
+- DIY vs hiring professionals: /blog/diy-junk-removal-vs-hiring-professionals-fort-collins.html
+- GOT-JUNK vs local: /blog/got-junk-vs-local-junk-removal-fort-collins.html
+- Organization after cleanout: /blog/garage-organization-after-cleanout-fort-collins.html
+
+Project case studies:
+- Old Town Fort Collins garage: /projects/fort-collins-garage-cleanout-old-town.html
+- Loveland storage unit: /projects/loveland-storage-unit-cleanout.html
+- Windsor Raindance garage: /projects/windsor-garage-junk-removal.html
+
+About: /about.html
+FAQ: /faq.html
+
+Community partners: Habitat for Humanity ReStore Fort Collins, ARC Thrift, Goodwill. Donation receipts included on every job.
+
+Trust signals: Response within 5 minutes, no hidden fees, only pay after approving quote, we do all lifting, text photos for estimate, same-day availability when schedule allows.

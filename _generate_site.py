@@ -43,7 +43,7 @@ section{padding:56px 0}@media(min-width:900px){section{padding:88px 0}}.section-
 .compare-table{width:100%;border-collapse:collapse;margin:24px 0;font-size:14px}.compare-table th,.compare-table td{border:1px solid rgba(10,22,40,.12);padding:12px 14px;text-align:left;vertical-align:top}.compare-table th{background:var(--paper-warm);font-weight:600}.compare-table tr:nth-child(even) td{background:rgba(245,241,234,.5)}
 .video-section{background:var(--paper-warm)}.video-wrap{aspect-ratio:16/9;background:var(--navy-soft);border:1px solid var(--navy-line);border-radius:4px;display:flex;align-items:center;justify-content:center;color:var(--muted-dark);font-size:14px;margin-top:24px}
 .final-cta{background:var(--navy);color:var(--paper)}.final-cta h2.section-title{color:var(--paper)}.final-cta h2.section-title em{color:var(--accent)}.final-cta .section-sub{color:var(--muted-dark)}.cta-layout{display:grid;grid-template-columns:1fr;gap:40px;margin-top:32px;align-items:start}@media(min-width:900px){.cta-layout{grid-template-columns:1fr 1.1fr;gap:56px}}.cta-points{display:flex;flex-direction:column;gap:16px}.cta-point{display:flex;gap:12px;align-items:flex-start;font-size:15px;color:var(--muted-dark)}.cta-point::before{content:'✓';color:var(--accent);font-weight:700;flex-shrink:0}.quote-form{background:var(--navy-soft);border:1px solid var(--navy-line);padding:28px 24px;border-radius:4px}.quote-form h3{font-family:var(--font-display);font-size:22px;font-weight:500;margin-bottom:6px}.quote-form .form-note{font-size:13px;color:var(--muted-dark);margin-bottom:20px}.form-row{display:grid;grid-template-columns:1fr;gap:14px;margin-bottom:14px}@media(min-width:540px){.form-row.two{grid-template-columns:1fr 1fr}}.field label{display:block;font-family:var(--font-mono);font-size:10px;letter-spacing:.15em;color:var(--muted-dark);margin-bottom:6px;text-transform:uppercase}.field input,.field select,.field textarea{width:100%;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.15);border-radius:3px;color:var(--paper);font-family:inherit;font-size:16px;padding:12px 14px;outline:none}.field input::placeholder,.field textarea::placeholder{color:rgba(245,241,234,.35)}.field input:focus,.field select:focus,.field textarea:focus{border-color:var(--accent)}.field select option{background:var(--navy-soft);color:var(--paper)}.field textarea{resize:vertical;min-height:80px}.form-submit{width:100%;margin-top:6px}
-.form-steps{display:flex;gap:8px;margin-bottom:20px}.form-step-dot{flex:1;height:4px;background:rgba(255,255,255,.15);border-radius:2px;transition:background .2s}.form-step-dot.active,.form-step-dot.done{background:var(--accent)}.form-panel{display:none}.form-panel.active{display:block}.form-nav{display:flex;gap:10px;margin-top:16px}.form-nav .btn-secondary{color:var(--paper);border-color:rgba(255,255,255,.25)}
+.form-steps{display:flex;gap:8px;margin-bottom:20px}.form-step-dot{flex:1;height:4px;background:rgba(255,255,255,.15);border-radius:2px;transition:background .2s}.form-step-dot.active,.form-step-dot.done{background:var(--accent)}.form-panel{display:none}.form-panel.active{display:block}.form-nav{display:flex;gap:10px;margin-top:16px}.form-nav .btn-secondary{color:var(--paper);border-color:rgba(255,255,255,.25)}.form-step-label{font-family:var(--font-mono);font-size:10px;letter-spacing:.12em;color:var(--muted-dark);margin-bottom:14px;text-transform:uppercase}.service-picker{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:8px}@media(min-width:480px){.service-picker{grid-template-columns:repeat(3,1fr)}}.service-pick-card{position:relative;display:flex;flex-direction:column;align-items:flex-start;gap:4px;padding:14px 12px;background:rgba(255,255,255,.04);border:2px solid rgba(255,255,255,.12);border-radius:4px;cursor:pointer;transition:border-color .2s,background .2s;min-height:88px}.service-pick-card:hover{border-color:rgba(255,91,31,.5)}.service-pick-card input{position:absolute;opacity:0;width:0;height:0}.service-pick-card:has(input:checked){border-color:var(--accent);background:rgba(255,91,31,.12)}.spc-icon{font-size:20px;line-height:1}.spc-title{font-size:13px;font-weight:700;color:var(--paper);line-height:1.2}.spc-desc{font-size:11px;color:var(--muted-dark);line-height:1.3}.hero-phone{display:inline-flex;align-items:center;gap:8px;font-family:var(--font-display);font-size:clamp(20px,4vw,26px);font-weight:600;color:var(--accent-deep);margin-bottom:12px;letter-spacing:-.02em}.hero-phone:hover{color:var(--accent)}.hero-phone-sub{font-size:12px;font-weight:500;color:var(--muted);font-family:var(--font-body);margin-left:4px}.def-block{background:var(--white);border-left:3px solid var(--accent);padding:16px 20px;margin:24px 0;border-radius:0 4px 4px 0;font-size:15px;line-height:1.65;color:var(--text)}.def-block strong{font-family:var(--font-display);font-weight:500;font-size:17px;display:block;margin-bottom:6px;color:var(--ink)}
 footer{background:var(--ink);color:var(--muted-dark);padding:36px 0;border-top:1px solid var(--navy-line);font-size:13px}.foot{display:flex;flex-direction:column;gap:14px;align-items:flex-start;justify-content:space-between}.foot .logo{color:var(--paper)}.foot-links{display:flex;flex-wrap:wrap;gap:12px 20px}.foot-links a:hover{color:var(--accent)}.community{margin-top:20px;font-size:12px;line-height:1.6;max-width:52ch}@media(min-width:700px){.foot{flex-direction:row;align-items:flex-start}}
 .mobile-sticky-cta{position:fixed;bottom:0;left:0;right:0;z-index:100;display:none;grid-template-columns:1fr 1fr 1fr;gap:6px;background:var(--ink);border-top:1px solid var(--navy-line);padding:8px 10px 12px}.mobile-cta-btn{padding:12px 6px;font-weight:700;font-size:12px;text-align:center;border-radius:3px;font-family:var(--font-body)}.mobile-cta-call,.mobile-cta-text{background:var(--navy-soft);color:var(--paper);border:1px solid var(--navy-line)}.mobile-cta-quote{background:var(--accent);color:var(--white)}@media(max-width:1023px){.mobile-sticky-cta{display:grid}body{padding-bottom:72px}}
 .reveal{opacity:0;transform:translateY(16px);transition:opacity .7s ease,transform .7s ease}.reveal.visible{opacity:1;transform:translateY(0)}
@@ -122,14 +122,15 @@ NAV = """
       <li><a href="/junk-removal-fort-collins-co.html">Junk Removal</a></li>
       <li><a href="/garage-cleanouts-fort-collins-co.html">Garage Cleanouts</a></li>
       <li><a href="/garage-cleaning-fort-collins-co.html">Garage Cleaning</a></li>
+      <li><a href="{service_areas_href}">Service Areas</a></li>
+      <li><a href="{reviews_href}">Reviews</a></li>
       <li><a href="/about.html">About</a></li>
-      <li><a href="/faq.html">FAQ</a></li>
     </ul>
     <div class="nav-right">
       <a href="tel:{phone}" class="nav-phone">{phone_display}</a>
-      <a href="#quote" class="nav-cta">Get Free Quote</a>
+      <a href="{quote_href}" class="nav-cta">Get Free Quote</a>
     </div>
-    <a href="#quote" class="nav-cta nav-mobile-cta" aria-label="Get Free Quote">Quote</a>
+    <a href="{quote_href}" class="nav-cta nav-mobile-cta" aria-label="Get Free Quote">Quote</a>
   </div>
 </nav>
 <div class="trust-strip" aria-label="Trust signals">
@@ -161,7 +162,7 @@ FOOTER = """
 <div class="mobile-sticky-cta" aria-label="Quick contact">
   <a href="tel:{phone}" class="mobile-cta-btn mobile-cta-call">Call</a>
   <a href="sms:{phone}?body=Hi!%20I'd%20like%20a%20quote." class="mobile-cta-btn mobile-cta-text">Text</a>
-  <a href="#quote" class="mobile-cta-btn mobile-cta-quote">Get Quote</a>
+  <a href="{quote_href}" class="mobile-cta-btn mobile-cta-quote">Quote</a>
 </div>
 <script>
 const io=new IntersectionObserver((entries)=>{{entries.forEach(e=>{{if(e.isIntersecting){{e.target.classList.add('visible');io.unobserve(e.target);}}}});}},{{threshold:0.08}});
@@ -169,13 +170,20 @@ document.querySelectorAll('.reveal').forEach(el=>io.observe(el));
 document.querySelectorAll('.multi-step-form').forEach(initMultiStepForm);
 function initMultiStepForm(form){{
   let step=1;const panels=form.querySelectorAll('.form-panel');const dots=form.querySelectorAll('.form-step-dot');const total=panels.length;
-  const show=(n)=>{{panels.forEach((p,i)=>p.classList.toggle('active',i+1===n));dots.forEach((d,i)=>{{d.classList.toggle('active',i+1===n);d.classList.toggle('done',i+1<n);}});step=n;}};
-  form.querySelectorAll('[data-next]').forEach(b=>b.addEventListener('click',()=>{{if(step<total)show(step+1);}}));
+  const show=(n)=>{{panels.forEach((p,i)=>p.classList.toggle('active',i+1===n));dots.forEach((d,i)=>{{d.classList.toggle('active',i+1===n);d.classList.toggle('done',i+1<n);}});step=n;const lbl=form.querySelector('.form-step-label');if(lbl){{const names=['What do you need?','Where are you located?','Upload photos','Contact & timing'];lbl.textContent='Step '+n+' of '+total+(names[n-1]?': '+names[n-1]:'');}}}};
+  function validateStep(n){{
+    const panel=panels[n-1];
+    if(n===1){{const svc=form.querySelector('[name="Service type"]:checked');if(!svc){{panel.querySelector('.service-picker')?.scrollIntoView({{behavior:'smooth',block:'center'}});return false;}}}}
+    if(n===2){{const city=form.querySelector('[name="City"]');if(city&&!city.value){{city.focus();return false;}}}}
+    return true;
+  }}
+  form.querySelectorAll('[data-next]').forEach(b=>b.addEventListener('click',()=>{{if(!validateStep(step))return;if(step<total)show(step+1);}}));
   form.querySelectorAll('[data-prev]').forEach(b=>b.addEventListener('click',()=>{{if(step>1)show(step-1);}}));
   form.addEventListener('submit',()=>{{
-    const svc=form.querySelector('[name="Service type"]');const desc=form.querySelector('[name="Photo description"]');
+    const svc=form.querySelector('[name="Service type"]:checked')||form.querySelector('[name="Service type"]');
+    const desc=form.querySelector('[name="Photo description"]');const city=form.querySelector('[name="City"]');
     const combined=form.querySelector('[name="What to remove"]');
-    if(combined&&svc){{const parts=[svc.value,desc&&desc.value?desc.value:''].filter(Boolean);combined.value=parts.join(' — ');}}
+    if(combined&&svc){{const parts=[svc.value||svc.options?.[svc.selectedIndex]?.value,city&&city.value?city.value:'',desc&&desc.value?desc.value:''].filter(Boolean);combined.value=parts.join(' — ');}}
   }});
   show(1);
 }}
@@ -237,7 +245,7 @@ QUOTE_FORM = """
   <div class="wrap">
     <div class="section-head reveal"><span class="mono section-num">Ready?</span>
       <h2 class="section-title" id="cta-heading">{cta_title}</h2>
-      <p class="section-sub">Get a free flat-rate quote in 5 minutes. Text photos or fill out the form — we'll call you right back.</p>
+      <p class="section-sub">Get a free flat-rate quote in 5 minutes. Text photos or complete the steps below — we'll call you right back.</p>
     </div>
     <div class="cta-layout reveal">
       <div class="cta-points">
@@ -252,7 +260,7 @@ QUOTE_FORM = """
       </div>
       <div class="quote-form">
         <h3>Get Free Quote</h3>
-        <p class="form-note">Step 1: photos first — fastest way to your flat-rate price.</p>
+        <p class="form-step-label">Step 1 of 4: What do you need?</p>
         <form class="multi-step-form" action="https://api.web3forms.com/submit" method="POST" enctype="multipart/form-data">
           <input type="hidden" name="access_key" value="{form_key}">
           <input type="hidden" name="subject" value="{form_subject}">
@@ -260,36 +268,51 @@ QUOTE_FORM = """
           <input type="hidden" name="redirect" value="{SITE}/thank-you.html">
           <input type="checkbox" name="botcheck" class="sr-only" tabindex="-1" autocomplete="off">
           <input type="hidden" name="What to remove" value="">
-          <div class="form-steps" aria-hidden="true"><div class="form-step-dot active"></div><div class="form-step-dot"></div><div class="form-step-dot"></div></div>
+          <div class="form-steps" aria-hidden="true"><div class="form-step-dot active"></div><div class="form-step-dot"></div><div class="form-step-dot"></div><div class="form-step-dot"></div></div>
           <div class="form-panel active" data-step="1">
-            <div class="form-row"><div class="field"><label for="photos">Upload photos (recommended)</label><input type="file" id="photos" name="Photos" accept="image/*" multiple loading="lazy" /></div></div>
-            <div class="form-row"><div class="field"><label for="photo-desc">Describe what we see (optional)</label><textarea id="photo-desc" name="Photo description" placeholder="Wide shot of garage, couch in corner, etc."></textarea></div></div>
-            <button type="button" class="btn-primary form-submit" data-next>Next: Service type →</button>
+            <div class="service-picker" role="radiogroup" aria-label="Service type">
+              <label class="service-pick-card"><input type="radio" name="Service type" value="Garage Cleanout"{default_garage} required><span class="spc-icon">🏠</span><span class="spc-title">Garage Cleanout</span><span class="spc-desc">Full haul-out &amp; sweep</span></label>
+              <label class="service-pick-card"><input type="radio" name="Service type" value="Junk Removal"{default_junk}><span class="spc-icon">🚛</span><span class="spc-title">Junk Removal</span><span class="spc-desc">Single items to full loads</span></label>
+              <label class="service-pick-card"><input type="radio" name="Service type" value="Furniture Removal"><span class="spc-icon">🛋️</span><span class="spc-title">Furniture</span><span class="spc-desc">Couches, beds, dressers</span></label>
+              <label class="service-pick-card"><input type="radio" name="Service type" value="Appliance Removal"><span class="spc-icon">🔌</span><span class="spc-title">Appliances</span><span class="spc-desc">Fridges, washers, dryers</span></label>
+              <label class="service-pick-card"><input type="radio" name="Service type" value="Mattress Removal"><span class="spc-icon">🛏️</span><span class="spc-title">Mattress</span><span class="spc-desc">Mattress &amp; box spring</span></label>
+              <label class="service-pick-card"><input type="radio" name="Service type" value="Storage Unit Cleanout"><span class="spc-icon">📦</span><span class="spc-title">Storage Unit</span><span class="spc-desc">Empty a paid unit fast</span></label>
+              <label class="service-pick-card"><input type="radio" name="Service type" value="Garage Organization"><span class="spc-icon">🗂️</span><span class="spc-title">Organization</span><span class="spc-desc">Zones, shelves, bins</span></label>
+              <label class="service-pick-card"><input type="radio" name="Service type" value="Other"><span class="spc-icon">❓</span><span class="spc-title">Other</span><span class="spc-desc">Not sure — we'll help</span></label>
+            </div>
+            <button type="button" class="btn-primary form-submit" data-next style="margin-top:12px;">Next: Location →</button>
           </div>
           <div class="form-panel" data-step="2">
-            <div class="form-row"><div class="field"><label for="service-type">Service type</label>
-              <select id="service-type" name="Service type" required>
-                <option value="">Select service…</option>
-                <option value="Garage Cleanout"{default_garage}>Garage Cleanout</option>
-                <option value="Junk Removal"{default_junk}>Junk Removal</option>
-                <option value="Furniture Removal">Furniture Removal</option>
-                <option value="Appliance Removal">Appliance Removal</option>
-                <option value="Mattress Removal">Mattress Removal</option>
-                <option value="Storage Unit Cleanout">Storage Unit Cleanout</option>
-                <option value="Garage Organization">Garage Organization</option>
-                <option value="Other">Other / Not sure</option>
+            <div class="form-row"><div class="field"><label for="city-{form_id}">City</label>
+              <select id="city-{form_id}" name="City" required>
+                <option value="">Select your city…</option>
+                <option value="Fort Collins"{sel_fc}>Fort Collins</option>
+                <option value="Loveland"{sel_lo}>Loveland</option>
+                <option value="Windsor"{sel_wi}>Windsor</option>
+                <option value="Timnath"{sel_ti}>Timnath</option>
+                <option value="Wellington"{sel_we}>Wellington</option>
+                <option value="Severance">Severance</option>
+                <option value="LaPorte">LaPorte</option>
+                <option value="Other Northern Colorado">Other Northern Colorado</option>
               </select>
             </div></div>
-            <div class="form-nav"><button type="button" class="btn-secondary" data-prev>← Back</button><button type="button" class="btn-primary" data-next>Next: Contact info →</button></div>
+            <div class="form-row"><div class="field"><label for="zip-{form_id}">Zip code (optional)</label><input type="text" id="zip-{form_id}" name="Zip code" inputmode="numeric" placeholder="80525" autocomplete="postal-code" /></div></div>
+            <div class="form-nav"><button type="button" class="btn-secondary" data-prev>← Back</button><button type="button" class="btn-primary" data-next>Next: Photos →</button></div>
           </div>
           <div class="form-panel" data-step="3">
+            <div class="form-row"><div class="field"><label for="photos-{form_id}">Upload photos (recommended)</label><input type="file" id="photos-{form_id}" name="Photos" accept="image/*" multiple /></div></div>
+            <div class="form-row"><div class="field"><label for="photo-desc-{form_id}">Describe what we see (optional)</label><textarea id="photo-desc-{form_id}" name="Photo description" placeholder="Wide shot of garage, couch in corner, etc."></textarea></div></div>
+            <p class="form-note" style="margin-bottom:12px;">No photos? Text them to {phone_display} — often faster.</p>
+            <div class="form-nav"><button type="button" class="btn-secondary" data-prev>← Back</button><button type="button" class="btn-primary" data-next>Next: Contact →</button></div>
+          </div>
+          <div class="form-panel" data-step="4">
             <div class="form-row two">
-              <div class="field"><label for="name">Name</label><input type="text" id="name" name="Name" required autocomplete="name" placeholder="Your name" /></div>
-              <div class="field"><label for="phone-f">Phone</label><input type="tel" id="phone-f" name="Phone" required autocomplete="tel" inputmode="tel" placeholder="(970) 555-1234" /></div>
+              <div class="field"><label for="name-{form_id}">Name</label><input type="text" id="name-{form_id}" name="Name" required autocomplete="name" placeholder="Your name" /></div>
+              <div class="field"><label for="phone-f-{form_id}">Phone</label><input type="tel" id="phone-f-{form_id}" name="Phone" required autocomplete="tel" inputmode="tel" placeholder="(970) 555-1234" /></div>
             </div>
-            <div class="form-row"><div class="field"><label for="city">City</label><input type="text" id="city" name="City" required placeholder="{city_placeholder}" value="{city_default}" /></div></div>
-            <div class="form-row"><div class="field"><label for="timing">Preferred timing</label>
-              <select id="timing" name="Preferred timing">
+            <div class="form-row"><div class="field"><label for="email-{form_id}">Email (optional)</label><input type="email" id="email-{form_id}" name="Email" autocomplete="email" placeholder="you@email.com" /></div></div>
+            <div class="form-row"><div class="field"><label for="timing-{form_id}">Preferred timing</label>
+              <select id="timing-{form_id}" name="Preferred timing">
                 <option value="ASAP / Same-day">ASAP / Same-day</option>
                 <option value="This week">This week</option>
                 <option value="Next week">Next week</option>
@@ -322,7 +345,7 @@ PROCESS_HTML = """
 """
 
 LOCAL_FC = """
-<section class="local" aria-labelledby="local-heading">
+<section class="local" id="service-area" aria-labelledby="local-heading">
   <div class="wrap">
     <div class="section-head reveal"><span class="mono section-num">Service area</span>
       <h2 class="section-title" id="local-heading">Fort Collins &amp; <em>neighborhoods</em></h2>
@@ -366,12 +389,67 @@ def business_schema():
         "image": f"{SITE}/og-image.png",
         "logo": f"{SITE}/android-chrome-512x512.png",
         "priceRange": "$$",
-        "address": {"@type": "PostalAddress", "addressLocality": "Fort Collins", "addressRegion": "CO", "postalCode": "80525", "addressCountry": "US"},
+        "address": {"@type": "PostalAddress", "streetAddress": "Fort Collins", "addressLocality": "Fort Collins", "addressRegion": "CO", "postalCode": "80525", "addressCountry": "US"},
         "geo": {"@type": "GeoCoordinates", "latitude": 40.585260, "longitude": -105.084419},
         "areaServed": AREA_SERVED,
         "openingHoursSpecification": [{"@type": "OpeningHoursSpecification", "dayOfWeek": ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"], "opens": "07:00", "closes": "19:00"}],
         "founder": {"@type": "Person", "name": "Zac Bezenek", "url": f"{SITE}/about.html"},
+        "sameAs": [
+            "https://www.google.com/maps/place/Fort+Collins,+CO",
+            "https://www.facebook.com/PLACEHOLDER",
+            "https://www.instagram.com/PLACEHOLDER",
+            "https://www.yelp.com/biz/PLACEHOLDER",
+        ],
     }
+
+
+def howto_schema():
+    return json.dumps({
+        "@context": "https://schema.org",
+        "@type": "HowTo",
+        "name": "How to book a garage cleanout in Fort Collins",
+        "description": "Get a flat-rate garage cleanout quote from Easy Garage Cleaning in three simple steps.",
+        "totalTime": "PT5M",
+        "step": [
+            {"@type": "HowToStep", "position": 1, "name": "Send photos", "text": f"Text photos of your garage or junk to {PHONE_DISPLAY}, or upload them in the quote form at easygaragecleaning.com. Wide shots work best."},
+            {"@type": "HowToStep", "position": 2, "name": "Get a flat-rate quote", "text": "We respond within 5 minutes with a firm price. No hourly billing, no truck visit required for most jobs."},
+            {"@type": "HowToStep", "position": 3, "name": "We reclaim your garage", "text": "We haul everything, donate usable items, sweep the floor, and hand you a donation receipt. You only pay after approving the quote."},
+        ],
+    }, ensure_ascii=False)
+
+
+def website_schema():
+    return json.dumps({
+        "@context": "https://schema.org",
+        "@type": "WebSite",
+        "@id": f"{SITE}/#website",
+        "name": "Easy Garage Cleaning",
+        "url": SITE,
+        "description": "Garage cleanouts and junk removal in Fort Collins and Northern Colorado.",
+        "publisher": {"@id": f"{SITE}/#business"},
+        "potentialAction": {
+            "@type": "SearchAction",
+            "target": {"@type": "EntryPoint", "urlTemplate": f"{SITE}/faq.html?q={{search_term_string}}"},
+            "query-input": "required name=search_term_string",
+        },
+    }, ensure_ascii=False)
+
+
+def webpage_schema(title, desc, url):
+    return json.dumps({
+        "@context": "https://schema.org",
+        "@type": "WebPage",
+        "@id": f"{url}#webpage",
+        "url": url,
+        "name": title,
+        "description": desc,
+        "isPartOf": {"@id": f"{SITE}/#website"},
+        "about": {"@id": f"{SITE}/#business"},
+        "speakable": {
+            "@type": "SpeakableSpecification",
+            "cssSelector": [".hero-sub", ".faq-q", ".faq-a", ".def-block"],
+        },
+    }, ensure_ascii=False)
 
 
 def service_schema(name, desc, slug, stype):
@@ -416,28 +494,41 @@ def related_html(links):
 
 
 def fmt(template, **kwargs):
-    defaults = {"phone": PHONE, "phone_display": PHONE_DISPLAY, "form_key": FORM_KEY, "SITE": SITE, "default_garage": "", "default_junk": "", "og_type": "website"}
+    defaults = {
+        "phone": PHONE, "phone_display": PHONE_DISPLAY, "form_key": FORM_KEY, "SITE": SITE,
+        "default_garage": "", "default_junk": "", "og_type": "website",
+        "quote_href": "#quote", "service_areas_href": "/#service-area", "reviews_href": "/#reviews",
+        "form_id": "q", "sel_fc": "", "sel_lo": "", "sel_wi": "", "sel_ti": "", "sel_we": "",
+    }
     defaults.update(kwargs)
     return template.format(**defaults)
 
 
 def quote_form_for(stype, **kwargs):
-    dg = ' selected' if 'garage' in stype.lower() and 'junk' not in stype.lower() else ''
-    dj = ' selected' if 'junk' in stype.lower() else ''
-    return fmt(QUOTE_FORM, default_garage=dg, default_junk=dj, **kwargs)
+    dg = ' checked' if 'garage' in stype.lower() and 'junk' not in stype.lower() and 'organization' not in stype.lower() else ''
+    dj = ' checked' if stype.lower() == 'junk removal' else ''
+    city = kwargs.pop("city_default", "")
+    sel = {"sel_fc": "", "sel_lo": "", "sel_wi": "", "sel_ti": "", "sel_we": ""}
+    key = {"Fort Collins": "sel_fc", "Loveland": "sel_lo", "Windsor": "sel_wi", "Timnath": "sel_ti", "Wellington": "sel_we"}.get(city, "")
+    if key:
+        sel[key] = " selected"
+    form_id = re.sub(r"[^a-z0-9]", "", stype.lower())[:12] or "q"
+    return fmt(QUOTE_FORM, default_garage=dg, default_junk=dj, form_id=form_id, **sel, **kwargs)
 
 
-def page_shell(title, desc, canonical, schema, body, og_type="website"):
-    return HEAD.format(title=title, desc=desc, canonical=canonical, schema=schema, css=SHARED_CSS, SITE=SITE, og_type=og_type) + fmt(NAV) + body + fmt(FOOTER)
+def page_shell(title, desc, canonical, schema, body, og_type="website", quote_href="#quote"):
+    extra = f'\n<script type="application/ld+json">{webpage_schema(title, desc, canonical)}</script>'
+    return HEAD.format(title=title, desc=desc, canonical=canonical, schema=schema + extra, css=SHARED_CSS, SITE=SITE, og_type=og_type) + fmt(NAV, quote_href=quote_href) + body + fmt(FOOTER, quote_href=quote_href)
 
 
 def render_service(s):
     from _services_data import NO_ITEMS
     slug = s["slug"]
     canonical = f"{SITE}/{slug}"
-    schema = f'<script type="application/ld+json">{service_schema(s["h1"], s["desc"], slug, s["stype"])}</script>\n<script type="application/ld+json">{faq_schema(s["faqs"])}</script>'
+    schema = f'<script type="application/ld+json">{service_schema(s["h1"], s["desc"], slug, s["stype"])}</script>\n<script type="application/ld+json">{faq_schema(s["faqs"])}</script>\n<script type="application/ld+json">{howto_schema()}</script>'
     trust = '<span class="trust-badge">No hidden fees</span><span class="trust-badge">We do all lifting</span><span class="trust-badge">Text photos now</span>'
     hero = f"""<header class="hero" id="top"><div class="wrap hero-grid"><div><div class="hero-eyebrow mono">Fort Collins &amp; Northern Colorado</div>
+<a href="tel:{PHONE}" class="hero-phone">{PHONE_DISPLAY}<span class="hero-phone-sub">· 5-min quote response</span></a>
 <h1 class="hero-title">{esc(s["h1"])} — <em>{esc(s["hero_em"])}</em></h1>
 <p class="hero-sub">{s["hero_sub"]}</p>
 <div class="hero-ctas"><a href="#quote" class="btn-primary">Get Free Quote</a>
@@ -469,6 +560,7 @@ def render_city(c):
     canonical = f"{SITE}/{slug}"
     schema = f'<script type="application/ld+json">{service_schema(c["h1"], c["desc"], slug, c["service"])}</script>\n<script type="application/ld+json">{faq_schema(c["faqs"])}</script>'
     hero = f"""<header class="hero" id="top"><div class="wrap hero-grid"><div><div class="hero-eyebrow mono">Serving {c["city"]}, CO</div>
+<a href="tel:{PHONE}" class="hero-phone">{PHONE_DISPLAY}<span class="hero-phone-sub">· 5-min quote response</span></a>
 <h1 class="hero-title">{esc(c["h1"])}</h1>
 <p class="hero-sub">{c["intro"]}</p>
 <div class="hero-ctas"><a href="#quote" class="btn-primary">Get Free Quote</a>
