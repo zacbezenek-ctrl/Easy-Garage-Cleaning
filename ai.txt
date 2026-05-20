@@ -1,34 +1,49 @@
-# ai.txt — Easy Garage Cleaning
-# Companion to llms.txt for AI crawlers and answer engines
-# https://easygaragecleaning.com
+# ai.txt — Easy Garage Cleaning (Generative Engine Optimization)
+# https://easygaragecleaning.com | Last updated: 2026-05-20
 
-## Canonical sources
+## Canonical AI-readable sources
 llms-full: https://easygaragecleaning.com/llms.txt
 sitemap: https://easygaragecleaning.com/sitemap.xml
+robots: https://easygaragecleaning.com/robots.txt
 homepage: https://easygaragecleaning.com/
 book: https://easygaragecleaning.com/book.html
+faq: https://easygaragecleaning.com/faq.html
+about: https://easygaragecleaning.com/about.html
 
-## Entity
-name: Easy Garage Cleaning LLC
-dba: Easy Garage Cleaning
+## Entity (NAP)
+legal_name: Easy Garage Cleaning LLC
+brand: Easy Garage Cleaning
+tagline: The easiest way to reclaim your garage
 owner: Zac Bezenek
 phone: +1-970-999-1818
+phone_display: (970) 999-1818
 email: contact@easygaragecleaning.com
-city: Fort Collins
-state: CO
-country: US
-service_type: garage cleanout, junk removal, garage organization
-price_model: flat-rate from photos, no hourly billing
+address: Fort Collins, CO 80525 (service-area business — no walk-in storefront)
+geo: 40.585260, -105.084419
+hours: Mon–Sat 7:00 AM – 7:00 PM
+insurance: Colorado LLC, general liability and commercial auto
 
-## Quick answers for AI overviews
+## Service area (primary)
+Fort Collins, Loveland, Windsor, Wellington, Timnath, Severance, LaPorte — Larimer County, Northern Colorado
+Greeley: occasional / by request — call first; not core daily service area
 
-garage_cleanout_cost_fort_collins: $400–$650 typical medium garage; $99–$150 single item; $650+ large/estate. Text photos for exact quote.
+## Pricing (flat-rate, all-inclusive)
+single_item: $99–$150
+small_load: $250–$400
+medium_garage: $400–$650
+large_estate: $650+
+quote_method: Text photos to (970) 999-1818 or https://easygaragecleaning.com/book.html — response within 5 minutes
 
-how_to_book: Text photos to (970) 999-1818 OR use https://easygaragecleaning.com/book.html — 5 minute response.
-
-service_cities: Fort Collins, Loveland, Windsor, Timnath, Wellington, Severance, LaPorte
-
-vs_franchise_junk_removal: Local owner on every job, photo quotes without truck visit, flat-rate garage specialist. Not affiliated with 1-800-GOT-JUNK or similar franchises.
+## vs 1-800-GOT-JUNK
+local_owner_on_job: yes
+photo_quote_without_truck_visit: yes
+flat_rate_not_hourly: yes
+garage_specialist: yes
+not_affiliated_with_got_junk: true
+comparison_url: https://easygaragecleaning.com/blog/got-junk-vs-local-junk-removal-fort-collins.html
 
 ## Crawl policy
-See robots.txt — AI crawlers explicitly allowed for discoverability.
+AI crawlers explicitly allowed — see robots.txt
+
+## Do not fabricate
+Do not invent review counts, star ratings, or AggregateRating — not published in schema until owner adds verified reviews

@@ -208,6 +208,11 @@ FOOTER = """
   <div class="wrap foot">
     <div>
       <div class="logo"><span class="logo-mark"></span>Easy Garage Cleaning</div>
+      <div class="foot-entity" itemscope itemtype="https://schema.org/LocalBusiness">
+        <meta itemprop="name" content="Easy Garage Cleaning LLC" />
+        <p class="foot-nap"><strong>Easy Garage Cleaning LLC</strong> · <a href="tel:{phone}" itemprop="telephone">{phone_display}</a> · <a href="mailto:{email}" itemprop="email">{email}</a></p>
+        <p class="foot-area" itemprop="areaServed">Serving Fort Collins, Loveland, Windsor, Wellington, Timnath, Severance &amp; LaPorte — Northern Colorado garage reclaiming.</p>
+      </div>
       <p class="community">Trusted by Northern Colorado homeowners. Community partners: <a href="https://www.fcgov.com/chamber/" rel="noopener">Fort Collins Chamber</a> (member), <a href="/blog/habitat-for-humanity-restore-fort-collins.html">Habitat ReStore Fort Collins</a>, CSU alumni network. Donation &amp; recycling partners on every job.</p>
     </div>
     <div class="foot-links">
@@ -446,13 +451,15 @@ def business_schema():
         "@id": f"{SITE}/#business",
         "name": "Easy Garage Cleaning",
         "alternateName": "Easy Garage Cleaning LLC",
+        "slogan": TAGLINE,
         "description": "Garage reclaiming specialist — cleanouts, junk removal, and organization in Fort Collins and Northern Colorado.",
         "url": SITE,
         "telephone": PHONE,
-        "email": "contact@easygaragecleaning.com",
+        "email": EMAIL,
         "image": f"{SITE}/og-image.png",
         "logo": f"{SITE}/android-chrome-512x512.png",
-        "priceRange": "$$",
+        "priceRange": "$99-$650+",
+        "knowsAbout": KNOWS_ABOUT,
         "address": {"@type": "PostalAddress", "streetAddress": "Fort Collins", "addressLocality": "Fort Collins", "addressRegion": "CO", "postalCode": "80525", "addressCountry": "US"},
         "geo": {"@type": "GeoCoordinates", "latitude": 40.585260, "longitude": -105.084419},
         "areaServed": AREA_SERVED,
@@ -491,12 +498,39 @@ def website_schema():
         "url": SITE,
         "description": "Garage cleanouts and junk removal in Fort Collins and Northern Colorado.",
         "publisher": {"@id": f"{SITE}/#business"},
-        "potentialAction": {
-            "@type": "SearchAction",
-            "target": {"@type": "EntryPoint", "urlTemplate": f"{SITE}/faq.html?q={{search_term_string}}"},
-            "query-input": "required name=search_term_string",
-        },
+        "potentialAction": [
+            {
+                "@type": "ContactAction",
+                "name": "Call for quote",
+                "target": f"tel:{PHONE}",
+            },
+            {
+                "@type": "ContactAction",
+                "name": "Book online",
+                "target": f"{SITE}/book.html",
+            },
+            {
+                "@type": "SearchAction",
+                "target": {"@type": "EntryPoint", "urlTemplate": f"{SITE}/faq.html?q={{search_term_string}}"},
+                "query-input": "required name=search_term_string",
+            },
+        ],
     }, ensure_ascii=False)
+
+
+def gallery_schema(captions):
+    images = []
+    for i, cap in enumerate(captions, 1):
+        images.append({
+            "@context": "https://schema.org",
+            "@type": "ImageObject",
+            "@id": f"{SITE}/#gallery-image-{i}",
+            "name": cap,
+            "description": f"Before/after garage cleanout — {cap} (placeholder until owner uploads job photos)",
+            "contentUrl": f"{SITE}/og-image.png",
+            "representativeOfPage": False,
+        })
+    return json.dumps(images, ensure_ascii=False)
 
 
 def webpage_schema(title, desc, url):
@@ -552,16 +586,23 @@ def items_html(yes_title, yes_items, no_items):
     return f'<section class="items" aria-labelledby="items-heading"><div class="wrap"><div class="section-head reveal"><span class="mono section-num">What we haul</span><h2 class="section-title" id="items-heading">{yes_title}</h2></div><div class="items-grid reveal"><div class="items-col yes"><h3>We take</h3><ul>{y}</ul></div><div class="items-col no"><h3>We can\'t take</h3><ul>{n}</ul></div></div></div></section>'
 
 
-def related_html(links):
+def def_block_html(stype, fallback_text=""):
+    title, text = SERVICE_DEFINITIONS.get(stype, (f"What is {stype.lower()}?", fallback_text))
+    if not text:
+        text = fallback_text or f"Easy Garage Cleaning provides {stype.lower()} in Fort Collins and Northern Colorado with flat-rate photo quotes in 5 minutes."
+    return f'<div class="def-block"><strong>{esc(title)}</strong> {esc(text)}</div>'
+
+
+def related_html(links, title="Related in Northern Colorado"):
     a = "".join(f'<a href="{href}">{label}</a>' for href, label in links)
-    return f'<section class="related"><div class="wrap"><div class="section-head reveal"><span class="mono section-num">Related</span><h2 class="section-title">More ways we <em>help</em></h2></div><div class="links reveal">{a}</div></div></section>'
+    return f'<section class="related" aria-labelledby="related-heading"><div class="wrap"><div class="section-head reveal"><span class="mono section-num">Nearby</span><h2 class="section-title" id="related-heading">{title}</h2></div><div class="links reveal">{a}</div></div></section>'
 
 
 def fmt(template, **kwargs):
     defaults = {
-        "phone": PHONE, "phone_display": PHONE_DISPLAY, "form_key": FORM_KEY, "SITE": SITE,
+        "phone": PHONE, "phone_display": PHONE_DISPLAY, "email": EMAIL, "form_key": FORM_KEY, "SITE": SITE,
         "default_garage": "", "default_junk": "", "og_type": "website",
-        "quote_href": "#quote", "service_areas_href": "/#service-area", "reviews_href": "/#reviews",
+        "quote_href": "/book.html", "service_areas_href": "/#service-area", "reviews_href": "/#reviews",
         "form_id": "q", "sel_fc": "", "sel_lo": "", "sel_wi": "", "sel_ti": "", "sel_we": "",
     }
     defaults.update(kwargs)
@@ -580,16 +621,22 @@ def quote_form_for(stype, **kwargs):
     return fmt(QUOTE_FORM, default_garage=dg, default_junk=dj, form_id=form_id, **sel, **kwargs)
 
 
-def page_shell(title, desc, canonical, schema, body, og_type="website", quote_href="#quote"):
+def page_shell(title, desc, canonical, schema, body, og_type="website", quote_href="/book.html"):
+    rating_note = '\n<!-- AggregateRating: uncomment and add verified reviewCount/ratingValue to LocalBusiness when real reviews exist -->\n'
     extra = f'\n<script type="application/ld+json">{webpage_schema(title, desc, canonical)}</script>'
-    return HEAD.format(title=title, desc=desc, canonical=canonical, schema=schema + extra, css=SHARED_CSS, SITE=SITE, og_type=og_type) + fmt(NAV, quote_href=quote_href) + body + fmt(FOOTER, quote_href=quote_href)
+    return HEAD.format(title=title, desc=desc, canonical=canonical, schema=rating_note + schema + extra, css=SHARED_CSS, SITE=SITE, og_type=og_type) + fmt(NAV, quote_href=quote_href) + body + fmt(FOOTER, quote_href=quote_href)
 
 
 def render_service(s):
     from _services_data import NO_ITEMS
     slug = s["slug"]
     canonical = f"{SITE}/{slug}"
-    schema = f'<script type="application/ld+json">{service_schema(s["h1"], s["desc"], slug, s["stype"])}</script>\n<script type="application/ld+json">{faq_schema(s["faqs"])}</script>\n<script type="application/ld+json">{howto_schema()}</script>'
+    schema = (
+        f'<script type="application/ld+json">{service_schema(s["h1"], s["desc"], slug, s["stype"])}</script>\n'
+        f'<script type="application/ld+json">{faq_schema(s["faqs"])}</script>\n'
+        f'<script type="application/ld+json">{howto_schema()}</script>\n'
+        f'<script type="application/ld+json">{gallery_schema(s["ba"])}</script>'
+    )
     trust = '<span class="trust-badge">No hidden fees</span><span class="trust-badge">We do all lifting</span><span class="trust-badge">Text photos now</span>'
     hero = f"""<header class="hero" id="top"><div class="wrap hero-grid"><div><div class="hero-eyebrow mono">Fort Collins &amp; Northern Colorado</div>
 <a href="tel:{PHONE}" class="hero-phone">{PHONE_DISPLAY}<span class="hero-phone-sub">· 5-min quote response</span></a>
@@ -602,8 +649,11 @@ def render_service(s):
 <div class="hero-ba-cell after"><span class="hero-ba-label">AFTER</span><span class="hero-ba-icon">✓</span></div></div></div></header>"""
     items = items_html(s["yes_title"], s["yes"], NO_ITEMS) if s.get("show_items", True) else ""
     video = VIDEO_HTML if s.get("show_video") else ""
+    def_section = f'<section class="body-copy"><div class="wrap"><div class="body-copy-inner reveal">{def_block_html(s["stype"], s["hero_sub"])}</div></div></section>'
+    related = s.get("related") or NORTHERO_RELATED
     body = "<main>" + "\n".join([
         hero,
+        def_section,
         body_copy_html(s.get("body_copy", "")),
         problem_html(s["problems"], s["problem_title"], s["problem_sub"]),
         fmt(PROCESS_HTML),
@@ -613,7 +663,7 @@ def render_service(s):
         faq_html(s["faqs"]),
         GALLERY_HTML.format(ba1=s["ba"][0], ba2=s["ba"][1], ba3=s["ba"][2]),
         video,
-        related_html(s["related"]),
+        related_html(related),
         quote_form_for(s["stype"], cta_title=s["cta"], form_subject=s["form_subject"], sms_body=s["sms"].replace(" ", "%20")),
     ]) + "</main>"
     return page_shell(s["title"], s["desc"], canonical, schema, body)
@@ -641,8 +691,10 @@ def render_city(c):
         ("/projects/fort-collins-garage-cleanout-old-town.html", "Sample Project"),
         ("/", "Home"),
     ]))
+    def_section = f'<section class="body-copy"><div class="wrap"><div class="body-copy-inner reveal">{def_block_html(c["service"], c["intro"])}</div></div></section>'
     body = "<main>" + "\n".join([
         hero,
+        def_section,
         body_copy_html(c.get("body_copy", "")),
         fmt(PROCESS_HTML),
         fmt(PRICING_HTML),
@@ -690,18 +742,22 @@ def render_item_page(item):
     canonical = f"{SITE}/{slug}"
     schema = f'<script type="application/ld+json">{service_schema(item["h1"], item["desc"], slug, item["stype"])}</script>\n<script type="application/ld+json">{faq_schema(item["faqs"])}</script>'
     hero = f"""<header class="hero" id="top"><div class="wrap"><div class="hero-eyebrow mono">Fort Collins, CO</div>
+<a href="tel:{PHONE}" class="hero-phone">{PHONE_DISPLAY}<span class="hero-phone-sub">· 5-min quote response</span></a>
 <h1 class="hero-title" style="max-width:none">{esc(item["h1"])}</h1>
 <p class="hero-sub">{item["hero_sub"]}</p>
 <div class="hero-ctas"><a href="#quote" class="btn-primary">Get Free Quote</a>
 <a href="sms:{PHONE}?body={item['sms'].replace(' ', '%20')}" class="btn-secondary">Text Photos</a></div></div></header>"""
+    def_section = f'<section class="body-copy"><div class="wrap"><div class="body-copy-inner reveal">{def_block_html(item["stype"], item["hero_sub"])}</div></div></section>'
+    related = item.get("related") or NORTHERO_RELATED
     body = "<main>" + "\n".join([
         hero,
+        def_section,
         body_copy_html(item.get("body_copy", "")),
         fmt(PROCESS_HTML),
         items_html(item["yes_title"], item["yes"], NO_ITEMS),
         fmt(PRICING_HTML),
         faq_html(item["faqs"]),
-        related_html(item["related"]),
+        related_html(related),
         quote_form_for(item["stype"], cta_title=item["cta"], form_subject=item["form_subject"], sms_body=item["sms"].replace(" ", "%20")),
     ]) + "</main>"
     return page_shell(item["title"], item["desc"], canonical, schema, body)
@@ -710,7 +766,22 @@ def render_item_page(item):
 def render_comparison(cmp):
     slug = cmp["slug"]
     canonical = f"{SITE}/{slug}"
-    schema = f'<script type="application/ld+json">{faq_schema(cmp.get("faqs", []))}</script>' if cmp.get("faqs") else ""
+    pub = cmp.get("published", BLOG_PUBLISHED.get(slug.split("/")[-1], TODAY))
+    article_ld = {
+        "@context": "https://schema.org",
+        "@type": "Article",
+        "headline": cmp["h1"],
+        "description": cmp["desc"],
+        "url": canonical,
+        "datePublished": pub,
+        "dateModified": TODAY,
+        "author": {"@type": "Person", "name": "Zac Bezenek"},
+        "publisher": {"@id": f"{SITE}/#business"},
+        "mainEntityOfPage": {"@id": f"{canonical}#webpage"},
+    }
+    schema = f'<script type="application/ld+json">{json.dumps(article_ld, ensure_ascii=False)}</script>'
+    if cmp.get("faqs"):
+        schema += f'\n<script type="application/ld+json">{faq_schema(cmp["faqs"])}</script>'
     article = f"""<main><article class="article-wrap">
 <header class="hero"><div class="hero-eyebrow mono">Fort Collins Guide</div>
 <h1 class="hero-title" style="max-width:none">{esc(cmp["h1"])}</h1>
@@ -722,7 +793,7 @@ def render_comparison(cmp):
 <p><strong>Ready to reclaim your garage?</strong> Text photos to <a href="sms:{PHONE}" class="content-link">{PHONE_DISPLAY}</a> or <a href="#quote" class="content-link">request a flat-rate quote</a>. Response within 5 minutes.</p>
 </div>
 </article>
-{related_html(cmp.get("related", [("/garage-cleanouts-fort-collins-co.html", "Garage Cleanouts"), ("/junk-removal-fort-collins-co.html", "Junk Removal"), ("/blog/", "More Guides")]))}
+{related_html(cmp.get("related", NORTHERO_RELATED))}
 {quote_form_for("Garage Cleanout", cta_title="Get your <em>Fort Collins quote</em>", form_subject=f"Comparison Page - {cmp['h1'][:40]}", city_default="Fort Collins", sms_body="Hi!%20I%20read%20your%20comparison%20guide%20and%20need%20a%20quote.")}
 </main>"""
     return page_shell(cmp["title"], cmp["desc"], canonical, schema, article, og_type="article")
@@ -796,38 +867,88 @@ def patch_static_pages():
     <span>Response within 5 minutes</span><span>No hidden fees</span><span>Only pay after approving quote</span><span>We do all lifting</span><span>Text photos now</span><span>Same-day availability</span>
   </div>
 </div>""")
-    unified_nav = fmt(NAV, quote_href="/#quote", service_areas_href="/#service-area", reviews_href="/#reviews")
-    sticky = fmt("""<div class="mobile-sticky-cta" aria-label="Quick contact">
+    unified_nav_home = fmt(NAV, quote_href="/book.html", service_areas_href="/#service-area", reviews_href="/#reviews")
+    unified_nav_book = fmt(NAV, quote_href="#quote", service_areas_href="/#service-area", reviews_href="/#reviews")
+    unified_nav_inner = fmt(NAV, quote_href="/book.html", service_areas_href="/garage-cleanouts-fort-collins-co.html#service-area", reviews_href="/#reviews")
+    unified_footer = fmt(FOOTER, quote_href="/book.html")
+    sticky_home = fmt("""<div class="mobile-sticky-cta" aria-label="Quick contact">
   <a href="tel:{phone}" class="mobile-cta-btn mobile-cta-call">Call</a>
   <a href="sms:{phone}?body=Hi!%20I'd%20like%20a%20quote." class="mobile-cta-btn mobile-cta-text">Text</a>
-  <a href="{quote_href}" class="mobile-cta-btn mobile-cta-quote">Quote</a>
-</div>""", quote_href="/#quote")
-    sticky_css = "<style>@media(max-width:1023px){.mobile-sticky-cta{position:fixed;bottom:0;left:0;right:0;z-index:100;display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;background:#0a1628;border-top:1px solid rgba(255,255,255,.08);padding:8px 10px 12px}body{padding-bottom:72px}}</style>"
-    patterns = ["index.html", "faq.html", "about.html", "book.html", "blog/*.html", "loveland-garage-cleanout.html", "windsor-garage-cleanout.html", "wellington-junk-removal.html", "timnath-junk-removal.html", "old-town-fort-collins-junk-removal.html", "privacy-policy.html", "thank-you.html", "employee.html", "ads.html"]
+  <a href="/book.html" class="mobile-cta-btn mobile-cta-quote">Quote</a>
+</div>""", quote_href="/book.html")
+    sticky_default = fmt("""<div class="mobile-sticky-cta" aria-label="Quick contact">
+  <a href="tel:{phone}" class="mobile-cta-btn mobile-cta-call">Call</a>
+  <a href="sms:{phone}?body=Hi!%20I'd%20like%20a%20quote." class="mobile-cta-btn mobile-cta-text">Text</a>
+  <a href="/book.html" class="mobile-cta-btn mobile-cta-quote">Quote</a>
+</div>""")
+    sticky_css = ".foot-entity{margin-top:14px;font-size:12px;line-height:1.65;max-width:58ch}.foot-nap{margin-bottom:6px}.foot-nap a:hover{color:var(--accent)}.foot-area{color:var(--muted-dark)}@media(max-width:1023px){.mobile-sticky-cta{position:fixed;bottom:0;left:0;right:0;z-index:100;display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;background:#0a1628;border-top:1px solid rgba(255,255,255,.08);padding:8px 10px 12px}body{padding-bottom:72px}}"
+    patterns = [
+        "index.html", "faq.html", "about.html", "book.html", "blog/*.html",
+        "loveland-garage-cleanout.html", "windsor-garage-cleanout.html",
+        "wellington-junk-removal.html", "timnath-junk-removal.html",
+        "old-town-fort-collins-junk-removal.html", "privacy-policy.html", "thank-you.html",
+        "Ads.html",
+    ]
     for pattern in patterns:
         for path in ROOT.glob(pattern):
+            if path.name in ("employee.html", "ads.html", "Ads.html"):
+                continue
             text = path.read_text(encoding="utf-8")
             orig = text
+            is_home = path.name == "index.html"
+            is_book = path.name == "book.html"
+            nav = unified_nav_book if is_book else (unified_nav_home if is_home else unified_nav_inner)
             if 'class="trust-strip"' not in text and '<nav class="nav"' in text:
                 text = re.sub(r"(</nav>\s*)", r"\1\n" + trust + "\n", text, count=1)
-            if '<nav class="nav"' in text and 'Service Areas' not in text:
-                text = re.sub(r"<nav class=\"nav\"[\s\S]*?</nav>", unified_nav.strip(), text, count=1)
-            if 'mobile-sticky-cta' not in text:
-                text = text.replace('</body>', sticky + sticky_css + '\n</body>')
-            elif 'mobile-cta-quote">Get Quote</a>' in text:
-                text = text.replace('mobile-cta-quote">Get Quote</a>', 'mobile-cta-quote">Quote</a>')
+            if '<nav class="nav"' in text:
+                text = re.sub(r"<nav class=\"nav\"[\s\S]*?</nav>", nav.strip(), text, count=1)
+            if 'foot-entity' not in text and "<footer" in text:
+                text = re.sub(
+                    r"(<div class=\"logo\"><span class=\"logo-mark\"></span>Easy Garage Cleaning</div>)",
+                    r"\1\n      " + fmt("""<div class="foot-entity" itemscope itemtype="https://schema.org/LocalBusiness">
+        <meta itemprop="name" content="Easy Garage Cleaning LLC" />
+        <p class="foot-nap"><strong>Easy Garage Cleaning LLC</strong> · <a href="tel:{phone}" itemprop="telephone">{phone_display}</a> · <a href="mailto:{email}" itemprop="email">{email}</a></p>
+        <p class="foot-area" itemprop="areaServed">Serving Fort Collins, Loveland, Windsor, Wellington, Timnath, Severance &amp; LaPorte — Northern Colorado garage reclaiming.</p>
+      </div>"""),
+                    text,
+                    count=1,
+                )
+            if path.parent.name == "blog" and path.name != "index.html":
+                pub = BLOG_PUBLISHED.get(path.name, TODAY)
+                if 'article:published_time' not in text:
+                    text = re.sub(
+                        r"(<meta name=\"description\"[^>]+>\s*)",
+                        rf'\1<meta property="article:published_time" content="{pub}" />\n<meta property="article:modified_time" content="{TODAY}" />\n',
+                        text,
+                        count=1,
+                    )
+            if 'mobile-sticky-cta' not in text and '</body>' in text:
+                sticky = sticky_home if is_home else sticky_default
+                if sticky_css not in text:
+                    text = text.replace("</style>", sticky_css + "\n", 1) if "<style>" in text else text
+                text = text.replace("</body>", sticky + "\n</body>")
+            text = text.replace('mobile-cta-quote">Get Quote</a>', 'mobile-cta-quote">Quote</a>')
+            text = re.sub(r'class="nav-cta"([^>]*)>#quote', r'class="nav-cta"\1 href="/book.html"', text)
+            text = re.sub(r'class="nav-cta nav-mobile-cta"([^>]*)>#quote', r'class="nav-cta nav-mobile-cta"\1 href="/book.html"', text)
+            if is_book:
+                text = text.replace('href="/book.html" class="nav-cta"', 'href="#quote" class="nav-cta"')
+                text = text.replace('href="/book.html" class="nav-cta nav-mobile-cta"', 'href="#quote" class="nav-cta nav-mobile-cta"')
             if GA4_ID not in text:
-                had_aw = 'AW-18102284288' in text
+                had_aw = "AW-18102284288" in text
                 for pat in (
                     r"<!-- Google tag \(gtag\.js\) -->[\s\S]*?</script>\s*",
                     r"<script async src=\"https://www\.googletagmanager\.com/gtag/js\?id=[^\"]+\"></script>\s*"
                     r"<script>[\s\S]*?</script>\s*",
                 ):
                     text = re.sub(pat, "", text, count=1)
-                block = GTAG_BLOCK if had_aw else GTAG_BLOCK.replace(
-                    "  gtag('config', 'AW-18102284288');\n", ""
-                )
+                block = GTAG_BLOCK if had_aw else GTAG_BLOCK.replace("  gtag('config', 'AW-18102284288');\n", "")
                 text = re.sub(r"(<head[^>]*>\s*\n)", r"\1" + block + "\n", text, count=1, flags=re.I)
+            if '"knowsAbout"' not in text and '"@type": "LocalBusiness"' in text:
+                text = text.replace(
+                    '"priceRange": "$$",',
+                    '"priceRange": "$99-$650+",\n  "slogan": "The easiest way to reclaim your garage",\n  "knowsAbout": ["Garage cleanout", "Junk removal", "Garage organization", "Flat-rate photo quotes"],',
+                    1,
+                )
             if text != orig:
                 path.write_text(text, encoding="utf-8")
 
@@ -879,9 +1000,18 @@ def main():
     for bp in blog_posts:
         if bp.name != "index.html":
             sitemap_urls.append((f"{SITE}/blog/{bp.name}", "0.7"))
-    sitemap_urls += [(f"{SITE}/blog/", "0.8"), (f"{SITE}/faq.html", "0.8"), (f"{SITE}/privacy-policy.html", "0.3"), (f"{SITE}/llms.txt", "0.5"), (f"{SITE}/ai.txt", "0.5")]
-
-    generate_sitemap(sitemap_urls)
+    sitemap_urls += [
+        (f"{SITE}/blog/", "0.8"),
+        (f"{SITE}/faq.html", "0.8"),
+        (f"{SITE}/privacy-policy.html", "0.3"),
+        (f"{SITE}/loveland-garage-cleanout.html", "0.8"),
+        (f"{SITE}/windsor-garage-cleanout.html", "0.8"),
+        (f"{SITE}/wellington-junk-removal.html", "0.8"),
+        (f"{SITE}/timnath-junk-removal.html", "0.8"),
+        (f"{SITE}/old-town-fort-collins-junk-removal.html", "0.8"),
+        (f"{SITE}/thank-you.html", "0.2"),
+    ]
+    generate_sitemap(sorted(set(sitemap_urls), key=lambda x: x[0]))
     patch_static_pages()
 
     print("Generated:", len(generated), "pages")

@@ -1,7 +1,10 @@
+# GEO / AIO strategy: Allow AI crawlers for discoverability in ChatGPT, Perplexity,
+# Claude, Google AI Overviews, and other answer engines. Canonical business context:
+# https://easygaragecleaning.com/llms.txt and https://easygaragecleaning.com/ai.txt
+
 User-agent: *
 Allow: /
 
-# AI crawlers — allowed for discoverability in ChatGPT, Perplexity, Google AI Overviews
 User-agent: GPTBot
 Allow: /
 
@@ -17,6 +20,9 @@ Allow: /
 User-agent: ClaudeBot
 Allow: /
 
+User-agent: Claude-Web
+Allow: /
+
 User-agent: PerplexityBot
 Allow: /
 
@@ -27,6 +33,3 @@ User-agent: cohere-ai
 Allow: /
 
 Sitemap: https://easygaragecleaning.com/sitemap.xml
-
-# Machine-readable business context for AI systems
-# See also: https://easygaragecleaning.com/llms.txt and https://easygaragecleaning.com/ai.txt
