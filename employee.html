@@ -66,7 +66,11 @@
     .topbar-left { display: flex; align-items: center; gap: .6rem; }
     .topbar-left .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); }
     .topbar-left span { font-family: 'Fraunces', serif; font-size: .95rem; font-weight: 700; }
-    .topbar-right { display: flex; align-items: center; gap: .75rem; }
+    .topbar-right { display: flex; align-items: center; gap: .75rem; flex-wrap: wrap; }
+    .firebase-status { font-size: .68rem; font-weight: 600; padding: .25rem .55rem; border-radius: 999px; white-space: nowrap; }
+    .firebase-status.ok { background: rgba(34,197,94,.12); color: #86efac; border: 1px solid rgba(34,197,94,.25); }
+    .firebase-status.pending { background: rgba(255,255,255,.06); color: var(--muted); border: 1px solid rgba(255,255,255,.1); }
+    .firebase-status.error { background: rgba(239,68,68,.12); color: #fca5a5; border: 1px solid rgba(239,68,68,.25); }
     .user-chip { display: flex; align-items: center; gap: .5rem; background: var(--navy-light); border: 1px solid rgba(255,255,255,.1); border-radius: 99px; padding: .28rem .85rem .28rem .35rem; font-size: .8rem; font-weight: 600; }
     .user-chip .av { width: 22px; height: 22px; border-radius: 50%; background: var(--accent); display: flex; align-items: center; justify-content: center; font-size: .65rem; font-weight: 700; }
     .btn-logout { background: transparent; border: 1px solid rgba(255,255,255,.14); color: var(--muted); border-radius: .45rem; font-size: .78rem; padding: .32rem .75rem; cursor: pointer; transition: all .2s; }
@@ -836,6 +840,7 @@
       <span>EGC CRM</span>
     </div>
     <div class="topbar-right">
+      <span id="firebase-status" class="firebase-status pending" title="Firebase Firestore real-time sync">Connecting…</span>
       <div class="user-chip">
         <div class="av" id="u-av">Z</div>
         <span id="u-lbl">ZacB</span>
@@ -1214,6 +1219,28 @@ let leadsCache = [];
 let blockedDays  = new Set();
 let blockedSlots = new Set(); // keys: "YYYY-MM-DD_H"
 let _leadsTimer = null;
+let _listenersStarted = false;
+const firebaseConn = { leads: 'connecting', jobs: 'connecting', customers: 'connecting' };
+
+function scheduleTabActive() {
+  return document.getElementById('tab-schedule')?.classList.contains('active');
+}
+
+function updateFirebaseStatus() {
+  const el = document.getElementById('firebase-status');
+  if (!el) return;
+  const states = [firebaseConn.leads, firebaseConn.jobs, firebaseConn.customers];
+  if (states.some(s => s === 'error')) {
+    el.textContent = 'Firebase sync error';
+    el.className = 'firebase-status error';
+  } else if (states.every(s => s === 'connected')) {
+    el.textContent = 'Connected to Firebase';
+    el.className = 'firebase-status ok';
+  } else {
+    el.textContent = 'Connecting to Firebase…';
+    el.className = 'firebase-status pending';
+  }
+}
 
 /* ═══════════════════════════════════════════════════════
    AUTH
@@ -1271,24 +1298,47 @@ function loadCustomers() { return custsCache; }
 function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2,6); }
 
 function startListeners() {
+  if (_listenersStarted) return;
+  _listenersStarted = true;
+  updateFirebaseStatus();
+
   db.collection('jobs').onSnapshot(snap => {
+    firebaseConn.jobs = 'connected';
     jobsCache = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    updateFirebaseStatus();
     refresh();
+  }, err => {
+    firebaseConn.jobs = 'error';
+    updateFirebaseStatus();
+    console.error('Jobs listener error', err);
   });
+
   db.collection('customers').onSnapshot(snap => {
+    firebaseConn.customers = 'connected';
     custsCache = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    updateFirebaseStatus();
     renderCustomersTab();
+  }, err => {
+    firebaseConn.customers = 'error';
+    updateFirebaseStatus();
+    console.error('Customers listener error', err);
   });
+
   db.collection('blocked_days').onSnapshot(snap => {
     blockedDays = new Set(snap.docs.map(d => d.id));
-    renderCal();
-  });
+    if (scheduleTabActive()) renderCal();
+  }, err => console.error('blocked_days listener error', err));
+
   db.collection('blocked_slots').onSnapshot(snap => {
     blockedSlots = new Set(snap.docs.map(d => d.id));
-    renderCal();
-  });
+    if (scheduleTabActive()) renderCal();
+  }, err => console.error('blocked_slots listener error', err));
+
+  // All leads — no where() filters; full collection real-time sync
   db.collection('leads').onSnapshot(snap => {
+    firebaseConn.leads = 'connected';
     leadsCache = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    updateFirebaseStatus();
     if (typeof onLeadsSnapshot === 'function') onLeadsSnapshot();
     else {
       renderLeads();
@@ -1298,10 +1348,12 @@ function startListeners() {
       ocFilter(document.getElementById('oc-search')?.value || '');
     }
   }, err => {
+    firebaseConn.leads = 'error';
+    updateFirebaseStatus();
     console.error('Leads listener error', err);
     if (typeof onLeadsError === 'function') onLeadsError(err);
   });
-  // Tick countdown every second
+
   if (_leadsTimer) clearInterval(_leadsTimer);
   _leadsTimer = setInterval(() => {
     if (document.getElementById('tab-leads')?.classList.contains('active')) renderLeads();
@@ -1457,18 +1509,23 @@ function scrollToNow() {
 }
 
 function renderCal() {
+  const calMo = document.getElementById('cal-mo');
+  const view = document.getElementById('week-view');
+  if (!calMo || !view) return;
+
   const jobs = loadJobs();
   const today = new Date();
   const days = Array.from({length:7}, (_,i) => { const d=new Date(weekStart); d.setDate(d.getDate()+i); return d; });
+  const prevBody = document.getElementById('week-body');
+  const scrollTop = prevBody ? prevBody.scrollTop : 0;
 
   // Month label
   const ws = days[0], we = days[6];
-  document.getElementById('cal-mo').textContent =
+  calMo.textContent =
     ws.getMonth()===we.getMonth()
       ? MOS[ws.getMonth()] + ' ' + ws.getFullYear()
       : MOS[ws.getMonth()] + ' – ' + MOS[we.getMonth()] + ' ' + we.getFullYear();
 
-  const view = document.getElementById('week-view');
   view.innerHTML = '';
 
   // ── Header row
@@ -1601,6 +1658,7 @@ function renderCal() {
   body.appendChild(daysGrid);
   view.appendChild(body);
   body.onclick = () => closePopup();
+  if (scrollTop) body.scrollTop = scrollTop;
 }
 
 function showPopup(job, anchor) {
@@ -1803,7 +1861,12 @@ function delJob(id) {
   db.collection('jobs').doc(id).delete();
 }
 
-function refresh() { renderCal(); renderJobs(); renderPayout(); renderCustomersTab(); }
+function refresh() {
+  if (scheduleTabActive()) renderCal();
+  renderJobs();
+  renderPayout();
+  renderCustomersTab();
+}
 
 /* ═══════════════════════════════════════════════════════
    BOOKING WIZARD

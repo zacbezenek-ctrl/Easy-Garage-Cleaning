@@ -36,6 +36,9 @@
   margin-top: 0.15rem;
 }
 
+.leads-header-sub .conn-ok { color: #86efac; }
+.leads-header-sub .conn-err { color: #fca5a5; }
+
 .leads-count-pill {
   display: inline-flex;
   align-items: center;

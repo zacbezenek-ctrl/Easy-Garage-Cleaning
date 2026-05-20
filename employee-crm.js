@@ -181,7 +181,8 @@
       try {
         const payload = JSON.parse(reader.result);
         if (!payload.jobs && !payload.customers) throw new Error('Invalid backup');
-        if (!confirm('Import will merge records into Firestore. Continue?')) return;
+        if (confirm('Download a backup of current data before importing?')) exportCrmBackup();
+        if (!confirm('Import will MERGE records into Firebase (never deletes existing). Continue?')) return;
         const batch = db.batch();
         let n = 0;
         (payload.customers || []).forEach((c) => {
@@ -771,6 +772,13 @@
     renderLeadsToolbar();
   };
 
+  function firebaseConnLabel() {
+    if (typeof firebaseConn === 'undefined') return 'syncing…';
+    if (firebaseConn.leads === 'error') return 'sync error — check Firebase rules';
+    if (firebaseConn.leads === 'connected') return 'live · ' + (typeof leadsCache !== 'undefined' ? leadsCache.length : 0) + ' leads';
+    return 'connecting…';
+  }
+
   function renderLeadsToolbar() {
     const host = document.getElementById('leads-toolbar-host');
     if (!host) return;
@@ -782,7 +790,7 @@
         <div class="leads-header-row">
           <div>
             <h2>Leads inbox</h2>
-            <div class="leads-header-sub">Web3forms → Zapier → Firestore · 2 min SLA on new Facebook leads</div>
+            <div class="leads-header-sub">Web3forms → Zapier → Firebase · ${firebaseConnLabel()} · 2 min SLA on new Facebook leads</div>
           </div>
           <div style="display:flex;gap:.45rem;flex-wrap:wrap;align-items:center">
             <span class="leads-count-pill"><strong>${filtered.length}</strong> / ${leads.length}</span>
@@ -893,7 +901,7 @@
     }
 
     if (_leadsLoading && !leadsCache.length) {
-      el.innerHTML = `<div class="leads-state"><div class="leads-spinner"></div><h3>Loading leads…</h3><p>Connecting to Firestore in real time.</p></div>`;
+      el.innerHTML = `<div class="leads-state"><div class="leads-spinner"></div><h3>Loading leads…</h3><p>Connecting to Firebase in real time.</p></div>`;
       return;
     }
 
@@ -1177,6 +1185,7 @@
   window.convertLeadToJob = async function (leadId) {
     const lead = leadsCache.find((l) => l.id === leadId);
     if (!lead) return;
+    if (!confirm('Convert this lead to a job? The lead stays in Firebase and is marked converted.')) return;
     let cust = custsCache.find((c) => c.phone && lead.phone && c.phone === lead.phone);
     const displayName = getLeadDisplayName(lead);
     if (!cust) {
@@ -1416,7 +1425,8 @@
   };
 
   window.seedDemoData = async function () {
-    if (!confirm('Add 3 DEMO customers/jobs?')) return;
+    if (custsCache.some((c) => c.demo) && !confirm('DEMO records already exist. Add 3 more (does not delete anything)?')) return;
+    if (!confirm('Add 3 DEMO customers/jobs (demo:true flag only)?')) return;
     const demos = [
       { name: 'DEMO — Pat Sample', phone: '970-555-0101', city: 'Fort Collins', address: '100 Demo St' },
       { name: 'DEMO — Sam Example', phone: '970-555-0102', city: 'Loveland', address: '200 Demo Ave' },
@@ -1465,7 +1475,10 @@
       else toggleJobsView(document.querySelector('.view-toggle-btn.active')?.dataset.view || 'board');
       initKanbanDrag();
     }
-    if (name === 'schedule' && typeof renderCal === 'function') renderCal();
+    if (name === 'schedule' && typeof renderCal === 'function') {
+      renderCal();
+      setTimeout(() => { if (typeof scrollToNow === 'function') scrollToNow(); }, 100);
+    }
     if (name === 'leads') renderLeadsEnhanced();
     if (name === 'customers') renderCustomersTabEnhanced();
     if (name === 'payout' && typeof renderPayout === 'function') renderPayout();
@@ -1475,6 +1488,9 @@
   /* ── Enhance refresh / boot ────────────────────────── */
   window.crmRefresh = function () {
     renderDashboard();
+    if (document.getElementById('tab-schedule')?.classList.contains('active') && typeof renderCal === 'function') {
+      renderCal();
+    }
     const jobsTab = document.getElementById('tab-jobs');
     if (jobsTab?.classList.contains('active')) {
       const view = document.querySelector('.view-toggle-btn.active')?.dataset.view || 'board';
@@ -1594,6 +1610,11 @@
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') closeLeadDetail();
     });
+    // Sync leads UI if Firebase snapshot arrived before CRM module init
+    if (typeof leadsCache !== 'undefined' && leadsCache.length) {
+      _leadsLoading = false;
+      renderLeadsEnhanced();
+    }
   });
 
   window.EGC_CRM = { PIPELINE, exportCrmBackup, importCrmBackup, getPipelineStatus };
