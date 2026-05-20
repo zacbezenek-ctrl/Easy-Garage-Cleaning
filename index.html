@@ -98,7 +98,57 @@
     "opens": "07:00",
     "closes": "19:00"
   }],
-  "sameAs": []
+  "sameAs": [
+    "https://www.google.com/maps/place/Fort+Collins,+CO",
+    "https://www.facebook.com/PLACEHOLDER",
+    "https://www.instagram.com/PLACEHOLDER",
+    "https://www.yelp.com/biz/PLACEHOLDER"
+  ]
+}
+</script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "WebSite",
+  "@id": "https://easygaragecleaning.com/#website",
+  "name": "Easy Garage Cleaning",
+  "url": "https://easygaragecleaning.com",
+  "publisher": { "@id": "https://easygaragecleaning.com/#business" },
+  "potentialAction": {
+    "@type": "SearchAction",
+    "target": { "@type": "EntryPoint", "urlTemplate": "https://easygaragecleaning.com/faq.html?q={search_term_string}" },
+    "query-input": "required name=search_term_string"
+  }
+}
+</script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "HowTo",
+  "name": "How to book a garage cleanout in Fort Collins",
+  "description": "Get a flat-rate garage cleanout quote from Easy Garage Cleaning in three simple steps.",
+  "totalTime": "PT5M",
+  "step": [
+    { "@type": "HowToStep", "position": 1, "name": "Send photos", "text": "Text photos of your garage or junk to (970) 999-1818, or upload them at easygaragecleaning.com/book.html. Wide shots work best." },
+    { "@type": "HowToStep", "position": 2, "name": "Get a flat-rate quote", "text": "We respond within 5 minutes with a firm price. No hourly billing, no truck visit required for most jobs." },
+    { "@type": "HowToStep", "position": 3, "name": "We reclaim your garage", "text": "We haul everything, donate usable items, sweep the floor, and hand you a donation receipt. You only pay after approving the quote." }
+  ]
+}
+</script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "WebPage",
+  "@id": "https://easygaragecleaning.com/#webpage",
+  "url": "https://easygaragecleaning.com/",
+  "name": "Garage Cleanouts Fort Collins CO | Easy Garage Cleaning",
+  "description": "Reclaim your garage — Fort Collins cleanouts and junk removal with flat-rate photo quotes in 5 minutes.",
+  "isPartOf": { "@id": "https://easygaragecleaning.com/#website" },
+  "about": { "@id": "https://easygaragecleaning.com/#business" },
+  "speakable": {
+    "@type": "SpeakableSpecification",
+    "cssSelector": [".hero-sub", ".faq-q", ".faq-a", ".def-block"]
+  }
 }
 </script>
 <!-- AggregateRating: add to LocalBusiness schema when verified reviews available -->
@@ -462,6 +512,28 @@
   .field input[type="file"] { padding: 10px; font-size: 13px; }
   .form-submit { width: 100%; margin-top: 6px; }
 
+  .hero-phone { display: inline-flex; align-items: center; gap: 8px; font-family: var(--font-display); font-size: clamp(20px, 4vw, 26px); font-weight: 600; color: var(--accent-deep); margin-bottom: 12px; letter-spacing: -0.02em; }
+  .hero-phone:hover { color: var(--accent); }
+  .hero-phone-sub { font-size: 12px; font-weight: 500; color: var(--muted); font-family: var(--font-body); margin-left: 4px; }
+  .form-steps { display: flex; gap: 8px; margin-bottom: 20px; }
+  .form-step-dot { flex: 1; height: 4px; background: rgba(255,255,255,0.15); border-radius: 2px; transition: background 0.2s; }
+  .form-step-dot.active, .form-step-dot.done { background: var(--accent); }
+  .form-panel { display: none; }
+  .form-panel.active { display: block; }
+  .form-nav { display: flex; gap: 10px; margin-top: 16px; }
+  .form-step-label { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.12em; color: var(--muted-dark); margin-bottom: 14px; text-transform: uppercase; }
+  .service-picker { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 8px; }
+  @media (min-width: 480px) { .service-picker { grid-template-columns: repeat(3, 1fr); } }
+  .service-pick-card { position: relative; display: flex; flex-direction: column; align-items: flex-start; gap: 4px; padding: 14px 12px; background: rgba(255,255,255,0.04); border: 2px solid rgba(255,255,255,0.12); border-radius: 4px; cursor: pointer; transition: border-color 0.2s, background 0.2s; min-height: 88px; }
+  .service-pick-card:hover { border-color: rgba(255,91,31,0.5); }
+  .service-pick-card input { position: absolute; opacity: 0; width: 0; height: 0; }
+  .service-pick-card:has(input:checked) { border-color: var(--accent); background: rgba(255,91,31,0.12); }
+  .spc-icon { font-size: 20px; line-height: 1; }
+  .spc-title { font-size: 13px; font-weight: 700; color: var(--paper); line-height: 1.2; }
+  .spc-desc { font-size: 11px; color: var(--muted-dark); line-height: 1.3; }
+  .def-block { background: var(--white); border-left: 3px solid var(--accent); padding: 16px 20px; margin: 24px 0; border-radius: 0 4px 4px 0; font-size: 15px; line-height: 1.65; color: var(--text); }
+  .def-block strong { font-family: var(--font-display); font-weight: 500; font-size: 17px; display: block; margin-bottom: 6px; color: var(--ink); }
+
   footer { background: var(--ink); color: var(--muted-dark); padding: 36px 0; border-top: 1px solid var(--navy-line); font-size: 13px; }
   .foot { display: flex; flex-direction: column; gap: 14px; align-items: flex-start; justify-content: space-between; }
   .foot .logo { color: var(--paper); }
@@ -496,9 +568,9 @@ fbq('init','970332989051988');fbq('track','PageView');
       <li><a href="/junk-removal-fort-collins-co.html">Junk Removal</a></li>
       <li><a href="/garage-cleanouts-fort-collins-co.html">Garage Cleanouts</a></li>
       <li><a href="/garage-cleaning-fort-collins-co.html">Garage Cleaning</a></li>
-      <li><a href="/about.html">About</a></li>
       <li><a href="#service-area">Service Areas</a></li>
       <li><a href="#reviews">Reviews</a></li>
+      <li><a href="/about.html">About</a></li>
     </ul>
     <div class="nav-right">
       <a href="tel:+19709991818" class="nav-phone">(970) 999-1818</a>
@@ -526,6 +598,7 @@ fbq('init','970332989051988');fbq('track','PageView');
   <div class="wrap hero-grid">
     <div>
       <div class="hero-eyebrow mono">Fort Collins &amp; Northern Colorado</div>
+      <a href="tel:+19709991818" class="hero-phone">(970) 999-1818<span class="hero-phone-sub">· 5-min quote response</span></a>
       <h1 class="hero-title">Reclaim Your Garage — <em>Park Inside Again</em></h1>
       <p class="hero-sub">The easiest way to get your garage back. We haul, sort, donate, and sweep — flat-rate from photos, no hidden fees. You don't lift a finger.</p>
       <div class="hero-ctas">
@@ -881,6 +954,7 @@ fbq('init','970332989051988');fbq('track','PageView');
       <h2 class="section-title" id="faq-heading">Questions we get <em>a lot</em></h2>
     </div>
     <div class="faq-list reveal">
+      <div class="def-block"><strong>What is a garage cleanout?</strong> A garage cleanout is a full haul-out of unwanted items from your garage — furniture, boxes, appliances, and clutter — followed by donation of usable goods and a floor sweep so you can park inside again. Easy Garage Cleaning quotes flat-rate from photos with no hourly billing.</div>
       <div class="faq-item">
         <h3 class="faq-q"><span class="faq-q-num">Q.01</span>How much does a garage cleanout cost in Fort Collins?</h3>
         <p class="faq-a">Most jobs fall into four ranges: single-item pickup ($99–$150), small loads ($250–$400), medium garage cleanouts ($400–$650), and large or full garages ($650+). Text photos for your exact flat-rate quote — no hourly billing.</p>
@@ -947,7 +1021,7 @@ fbq('init','970332989051988');fbq('track','PageView');
       </div>
       <div class="quote-form">
         <h3>Get Free Quote</h3>
-        <p class="form-note">Step 1: photos first — fastest way to your flat-rate price.</p>
+        <p class="form-step-label">Step 1 of 4: What do you need?</p>
         <form id="quoteForm" class="multi-step-form" action="https://api.web3forms.com/submit" method="POST" enctype="multipart/form-data">
           <input type="hidden" name="access_key" value="3c4fe752-ac1d-45b9-89dd-4275ea162d22">
           <input type="hidden" name="subject" value="New Quote Request - Easy Garage Cleaning">
@@ -955,41 +1029,58 @@ fbq('init','970332989051988');fbq('track','PageView');
           <input type="hidden" name="redirect" value="https://easygaragecleaning.com/thank-you.html">
           <input type="checkbox" name="botcheck" class="sr-only" tabindex="-1" autocomplete="off">
           <input type="hidden" name="What to remove" value="">
-          <div class="form-steps" aria-hidden="true" style="display:flex;gap:8px;margin-bottom:20px;"><div class="form-step-dot active" style="flex:1;height:4px;background:var(--accent);border-radius:2px;"></div><div class="form-step-dot" style="flex:1;height:4px;background:rgba(255,255,255,0.15);border-radius:2px;"></div><div class="form-step-dot" style="flex:1;height:4px;background:rgba(255,255,255,0.15);border-radius:2px;"></div></div>
+          <div class="form-steps" aria-hidden="true"><div class="form-step-dot active"></div><div class="form-step-dot"></div><div class="form-step-dot"></div><div class="form-step-dot"></div></div>
           <div class="form-panel active" data-step="1">
-            <div class="form-row"><div class="field"><label for="photos">Upload photos (recommended)</label><input type="file" id="photos" name="Photos" accept="image/*" multiple /></div></div>
-            <div class="form-row"><div class="field"><label for="photo-desc">Describe what we see (optional)</label><textarea id="photo-desc" name="Photo description" placeholder="Wide shot of garage, couch in corner, etc."></textarea></div></div>
-            <button type="button" class="btn-primary form-submit" data-next>Next: Service type →</button>
+            <div class="service-picker" role="radiogroup" aria-label="Service type">
+              <label class="service-pick-card"><input type="radio" name="Service type" value="Garage Cleanout" checked required><span class="spc-icon">🏠</span><span class="spc-title">Garage Cleanout</span><span class="spc-desc">Full haul-out &amp; sweep</span></label>
+              <label class="service-pick-card"><input type="radio" name="Service type" value="Junk Removal"><span class="spc-icon">🚛</span><span class="spc-title">Junk Removal</span><span class="spc-desc">Single items to full loads</span></label>
+              <label class="service-pick-card"><input type="radio" name="Service type" value="Furniture Removal"><span class="spc-icon">🛋️</span><span class="spc-title">Furniture</span><span class="spc-desc">Couches, beds, dressers</span></label>
+              <label class="service-pick-card"><input type="radio" name="Service type" value="Appliance Removal"><span class="spc-icon">🔌</span><span class="spc-title">Appliances</span><span class="spc-desc">Fridges, washers, dryers</span></label>
+              <label class="service-pick-card"><input type="radio" name="Service type" value="Mattress Removal"><span class="spc-icon">🛏️</span><span class="spc-title">Mattress</span><span class="spc-desc">Mattress &amp; box spring</span></label>
+              <label class="service-pick-card"><input type="radio" name="Service type" value="Storage Unit Cleanout"><span class="spc-icon">📦</span><span class="spc-title">Storage Unit</span><span class="spc-desc">Empty a paid unit fast</span></label>
+              <label class="service-pick-card"><input type="radio" name="Service type" value="Garage Organization"><span class="spc-icon">🗂️</span><span class="spc-title">Organization</span><span class="spc-desc">Zones, shelves, bins</span></label>
+              <label class="service-pick-card"><input type="radio" name="Service type" value="Other"><span class="spc-icon">❓</span><span class="spc-title">Other</span><span class="spc-desc">Not sure — we'll help</span></label>
+            </div>
+            <button type="button" class="btn-primary form-submit" data-next style="margin-top:12px;">Next: Location →</button>
           </div>
-          <div class="form-panel" data-step="2" style="display:none;">
-            <div class="form-row"><div class="field"><label for="service-type">Service type</label>
-              <select id="service-type" name="Service type" required>
-                <option value="">Select service…</option>
-                <option value="Garage Cleanout" selected>Garage Cleanout</option>
-                <option value="Junk Removal">Junk Removal</option>
-                <option value="Furniture Removal">Furniture Removal</option>
-                <option value="Appliance Removal">Appliance Removal</option>
-                <option value="Storage Unit Cleanout">Storage Unit Cleanout</option>
-                <option value="Other">Other / Not sure</option>
+          <div class="form-panel" data-step="2">
+            <div class="form-row"><div class="field"><label for="city-home">City</label>
+              <select id="city-home" name="City" required>
+                <option value="">Select your city…</option>
+                <option value="Fort Collins" selected>Fort Collins</option>
+                <option value="Loveland">Loveland</option>
+                <option value="Windsor">Windsor</option>
+                <option value="Timnath">Timnath</option>
+                <option value="Wellington">Wellington</option>
+                <option value="Severance">Severance</option>
+                <option value="LaPorte">LaPorte</option>
+                <option value="Other Northern Colorado">Other Northern Colorado</option>
               </select>
             </div></div>
-            <div style="display:flex;gap:10px;margin-top:16px;"><button type="button" class="btn-secondary" data-prev style="color:var(--paper);border-color:rgba(255,255,255,0.25);">← Back</button><button type="button" class="btn-primary" data-next>Next: Contact info →</button></div>
+            <div class="form-row"><div class="field"><label for="zip-home">Zip code (optional)</label><input type="text" id="zip-home" name="Zip code" inputmode="numeric" placeholder="80525" autocomplete="postal-code" /></div></div>
+            <div class="form-nav"><button type="button" class="btn-secondary" data-prev style="color:var(--paper);border-color:rgba(255,255,255,0.25);">← Back</button><button type="button" class="btn-primary" data-next>Next: Photos →</button></div>
           </div>
-          <div class="form-panel" data-step="3" style="display:none;">
+          <div class="form-panel" data-step="3">
+            <div class="form-row"><div class="field"><label for="photos-home">Upload photos (recommended)</label><input type="file" id="photos-home" name="Photos" accept="image/*" multiple /></div></div>
+            <div class="form-row"><div class="field"><label for="photo-desc-home">Describe what we see (optional)</label><textarea id="photo-desc-home" name="Photo description" placeholder="Wide shot of garage, couch in corner, etc."></textarea></div></div>
+            <p class="form-note" style="margin-bottom:12px;">No photos? Text them to (970) 999-1818 — often faster. Or use our <a href="/book.html" style="color:var(--accent);">dedicated booking page</a>.</p>
+            <div class="form-nav"><button type="button" class="btn-secondary" data-prev style="color:var(--paper);border-color:rgba(255,255,255,0.25);">← Back</button><button type="button" class="btn-primary" data-next>Next: Contact →</button></div>
+          </div>
+          <div class="form-panel" data-step="4">
             <div class="form-row two">
-              <div class="field"><label for="name">Name</label><input type="text" id="name" name="Name" required autocomplete="name" placeholder="Your name" /></div>
-              <div class="field"><label for="phone">Phone</label><input type="tel" id="phone" name="Phone" required autocomplete="tel" inputmode="tel" placeholder="(970) 555-1234" /></div>
+              <div class="field"><label for="name-home">Name</label><input type="text" id="name-home" name="Name" required autocomplete="name" placeholder="Your name" /></div>
+              <div class="field"><label for="phone-home">Phone</label><input type="tel" id="phone-home" name="Phone" required autocomplete="tel" inputmode="tel" placeholder="(970) 555-1234" /></div>
             </div>
-            <div class="form-row"><div class="field"><label for="city">City</label><input type="text" id="city" name="City" required placeholder="Fort Collins, Loveland, etc." /></div></div>
-            <div class="form-row"><div class="field"><label for="timing">Preferred timing</label>
-              <select id="timing" name="Preferred timing">
+            <div class="form-row"><div class="field"><label for="email-home">Email (optional)</label><input type="email" id="email-home" name="Email" autocomplete="email" placeholder="you@email.com" /></div></div>
+            <div class="form-row"><div class="field"><label for="timing-home">Preferred timing</label>
+              <select id="timing-home" name="Preferred timing">
                 <option value="ASAP / Same-day">ASAP / Same-day</option>
                 <option value="This week">This week</option>
                 <option value="Next week">Next week</option>
                 <option value="Flexible">Flexible — just getting a quote</option>
               </select>
             </div></div>
-            <div style="display:flex;gap:10px;margin-top:16px;"><button type="button" class="btn-secondary" data-prev style="color:var(--paper);border-color:rgba(255,255,255,0.25);">← Back</button><button type="submit" class="btn-primary form-submit" onclick="return gtagSendEvent('https://easygaragecleaning.com/thank-you.html')">Get Free Quote →</button></div>
+            <div class="form-nav"><button type="button" class="btn-secondary" data-prev style="color:var(--paper);border-color:rgba(255,255,255,0.25);">← Back</button><button type="submit" class="btn-primary form-submit" onclick="return gtagSendEvent('https://easygaragecleaning.com/thank-you.html')">Get Free Quote →</button></div>
           </div>
         </form>
       </div>
@@ -1005,6 +1096,7 @@ fbq('init','970332989051988');fbq('track','PageView');
     <div class="foot-links">
       <a href="/junk-removal-fort-collins-co.html">Junk Removal</a>
       <a href="/garage-cleanouts-fort-collins-co.html">Garage Cleanouts</a>
+      <a href="/book.html">Book Online</a>
       <a href="/about.html">About</a>
       <a href="/faq.html">FAQ</a>
       <a href="/blog/">Blog</a>
@@ -1019,7 +1111,7 @@ fbq('init','970332989051988');fbq('track','PageView');
 <div class="mobile-sticky-cta" id="mobileCta" aria-label="Quick contact">
   <a href="tel:+19709991818" class="mobile-cta-btn mobile-cta-call">Call</a>
   <a href="sms:+19709991818?body=Hi!%20I'd%20like%20a%20garage%20cleanout%20quote." class="mobile-cta-btn mobile-cta-text">Text</a>
-  <a href="#quote" class="mobile-cta-btn mobile-cta-quote">Get Quote</a>
+  <a href="#quote" class="mobile-cta-btn mobile-cta-quote">Quote</a>
 </div>
 
 <script>
@@ -1035,10 +1127,11 @@ fbq('init','970332989051988');fbq('track','PageView');
   document.getElementById('quoteForm').addEventListener('submit', function() {
     if (typeof fbq !== 'undefined') { fbq('track', 'Lead'); fbq('track', 'CompleteRegistration'); }
     const form = this;
-    const svc = form.querySelector('[name="Service type"]');
+    const svc = form.querySelector('[name="Service type"]:checked') || form.querySelector('[name="Service type"]');
     const desc = form.querySelector('[name="Photo description"]');
+    const city = form.querySelector('[name="City"]');
     const combined = form.querySelector('[name="What to remove"]');
-    if (combined && svc) { combined.value = [svc.value, desc && desc.value ? desc.value : ''].filter(Boolean).join(' — '); }
+    if (combined && svc) { combined.value = [svc.value, city && city.value ? city.value : '', desc && desc.value ? desc.value : ''].filter(Boolean).join(' — '); }
   });
   document.querySelectorAll('.multi-step-form').forEach(function(form) {
     let step = 1;
@@ -1046,11 +1139,18 @@ fbq('init','970332989051988');fbq('track','PageView');
     const dots = form.querySelectorAll('.form-step-dot');
     const total = panels.length;
     function show(n) {
-      panels.forEach(function(p, i) { p.style.display = i + 1 === n ? 'block' : 'none'; p.classList.toggle('active', i + 1 === n); });
-      dots.forEach(function(d, i) { d.style.background = i + 1 <= n ? 'var(--accent)' : 'rgba(255,255,255,0.15)'; });
+      panels.forEach(function(p, i) { p.classList.toggle('active', i + 1 === n); });
+      dots.forEach(function(d, i) { d.classList.toggle('active', i + 1 === n); d.classList.toggle('done', i + 1 < n); });
       step = n;
+      const lbl = form.querySelector('.form-step-label');
+      if (lbl) { const names = ['What do you need?', 'Where are you located?', 'Upload photos', 'Contact & timing']; lbl.textContent = 'Step ' + n + ' of ' + total + (names[n - 1] ? ': ' + names[n - 1] : ''); }
     }
-    form.querySelectorAll('[data-next]').forEach(function(b) { b.addEventListener('click', function() { if (step < total) show(step + 1); }); });
+    function validateStep(n) {
+      if (n === 1) { if (!form.querySelector('[name="Service type"]:checked')) return false; }
+      if (n === 2) { const city = form.querySelector('[name="City"]'); if (city && !city.value) { city.focus(); return false; } }
+      return true;
+    }
+    form.querySelectorAll('[data-next]').forEach(function(b) { b.addEventListener('click', function() { if (!validateStep(step)) return; if (step < total) show(step + 1); }); });
     form.querySelectorAll('[data-prev]').forEach(function(b) { b.addEventListener('click', function() { if (step > 1) show(step - 1); }); });
     show(1);
   });

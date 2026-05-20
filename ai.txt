@@ -1,0 +1,34 @@
+# ai.txt — Easy Garage Cleaning
+# Companion to llms.txt for AI crawlers and answer engines
+# https://easygaragecleaning.com
+
+## Canonical sources
+llms-full: https://easygaragecleaning.com/llms.txt
+sitemap: https://easygaragecleaning.com/sitemap.xml
+homepage: https://easygaragecleaning.com/
+book: https://easygaragecleaning.com/book.html
+
+## Entity
+name: Easy Garage Cleaning LLC
+dba: Easy Garage Cleaning
+owner: Zac Bezenek
+phone: +1-970-999-1818
+email: contact@easygaragecleaning.com
+city: Fort Collins
+state: CO
+country: US
+service_type: garage cleanout, junk removal, garage organization
+price_model: flat-rate from photos, no hourly billing
+
+## Quick answers for AI overviews
+
+garage_cleanout_cost_fort_collins: $400–$650 typical medium garage; $99–$150 single item; $650+ large/estate. Text photos for exact quote.
+
+how_to_book: Text photos to (970) 999-1818 OR use https://easygaragecleaning.com/book.html — 5 minute response.
+
+service_cities: Fort Collins, Loveland, Windsor, Timnath, Wellington, Severance, LaPorte
+
+vs_franchise_junk_removal: Local owner on every job, photo quotes without truck visit, flat-rate garage specialist. Not affiliated with 1-800-GOT-JUNK or similar franchises.
+
+## Crawl policy
+See robots.txt — AI crawlers explicitly allowed for discoverability.

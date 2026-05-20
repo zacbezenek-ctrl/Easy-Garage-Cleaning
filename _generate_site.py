@@ -13,6 +13,9 @@ FORM_KEY = "3c4fe752-ac1d-45b9-89dd-4275ea162d22"
 GA4_ID = "G-J0W6Y4MMP9"
 TODAY = date.today().isoformat()
 
+TAGLINE = "The easiest way to reclaim your garage"
+EMAIL = "contact@easygaragecleaning.com"
+
 AREA_SERVED = [
     {"@type": "City", "name": "Fort Collins"},
     {"@type": "City", "name": "Loveland"},
@@ -21,6 +24,66 @@ AREA_SERVED = [
     {"@type": "City", "name": "Wellington"},
     {"@type": "City", "name": "Severance"},
     {"@type": "City", "name": "LaPorte"},
+]
+
+KNOWS_ABOUT = [
+    "Garage cleanout",
+    "Junk removal",
+    "Garage cleaning",
+    "Garage organization",
+    "Furniture removal",
+    "Appliance removal",
+    "Mattress disposal",
+    "Storage unit cleanout",
+    "Yard debris removal",
+    "Northern Colorado hauling",
+    "Habitat ReStore donation",
+    "Flat-rate photo quotes",
+]
+
+SERVICE_DEFINITIONS = {
+    "Junk Removal": ("What is junk removal?", "Junk removal is professional hauling of unwanted furniture, appliances, boxes, and clutter from your home or garage. Easy Garage Cleaning provides flat-rate junk removal in Fort Collins from photos — we lift, haul, donate usable items, and recycle the rest with no hourly billing."),
+    "Garage Cleanout": ("What is a garage cleanout?", "A garage cleanout is a full haul-out of unwanted garage contents — furniture, boxes, tools, and clutter — followed by donation drop-offs and a floor sweep so you can park inside again. We quote flat-rate from photos; labor, hauling, and dump fees are included."),
+    "Garage Cleaning": ("What is garage cleaning?", "Garage cleaning is a post-cleanout reset: sweeping floors, removing dust and cobwebs, and wiping accessible surfaces after junk is gone. It turns an empty garage into a truly clean, usable space — often booked with a garage cleanout in Fort Collins."),
+    "Garage Organization": ("What is garage organization?", "Garage organization is structured zoning after a cleanout — shelving plans, labeled bins, and layout so items have a permanent home. Easy Garage Cleaning helps Northern Colorado homeowners keep garages clear long-term, not just empty for a week."),
+    "Furniture Removal": ("What is furniture removal?", "Furniture removal is pickup and haul-away of couches, beds, dressers, tables, and other bulky pieces from your garage or home. We carry items out, donate what's usable to local charities, and dispose of the rest with a flat-rate photo quote."),
+    "Appliance Removal": ("What is appliance removal?", "Appliance removal covers fridges, washers, dryers, water heaters, and other large appliances hauled from your property. Working units may go to Habitat ReStore Fort Collins; we handle heavy lifting and proper disposal with flat-rate pricing."),
+    "Mattress Removal": ("What is mattress removal?", "Mattress removal is haul-away of mattresses and box springs from garages, bedrooms, or curbside. We handle the weight and disposal requirements so you do not need a truck rental — quoted flat from photos before we arrive."),
+    "Storage Unit Cleanout": ("What is a storage unit cleanout?", "A storage unit cleanout empties a paid storage unit in one trip — boxes, furniture, and forgotten items hauled, donated, or disposed. Ideal when monthly fees exceed the value of what's inside; we quote flat from photos of the unit."),
+    "Yard Debris Removal": ("What is yard debris removal?", "Yard debris removal hauls branches, lawn equipment, outdoor furniture, and garage-stored yard clutter from your property. We load, haul, and recycle or dispose — common after storms or when clearing space for parking."),
+    "Couch Removal": ("What is couch removal?", "Couch removal is single-item pickup of sofas, sectionals, and loveseats from your garage or home. We navigate stairs and tight spaces, donate usable upholstery when possible, and quote a flat rate from photos — typically $99–$150 for one piece."),
+    "Hot Tub Removal": ("What is hot tub removal?", "Hot tub removal includes on-site dismantling and haul-away of spas and hot tubs from patios or garages. We handle the weight and disposal logistics so you avoid DIY injury and dump runs — quoted flat after photos of access and size."),
+    "Treadmill Removal": ("What is treadmill removal?", "Treadmill removal is heavy exercise equipment haul-away from garages or basements. We disassemble when needed, carry out safely, and recycle or dispose — flat-rate from photos without hourly surprises."),
+    "Refrigerator Removal": ("What is refrigerator removal?", "Refrigerator removal is freon-safe pickup of fridges and freezers from garages or kitchens. Working units may be donated to Habitat ReStore; we handle doors, weight, and disposal rules with a flat photo quote."),
+    "Shed Cleanout": ("What is a shed cleanout?", "A shed cleanout empties a detached shed or backyard workshop — tools, lumber, old equipment, and clutter hauled in one visit. We sweep the floor and leave a usable space, with flat-rate pricing from photos."),
+}
+
+BLOG_PUBLISHED = {
+    "how-much-does-garage-cleanout-cost-fort-collins.html": "2025-10-15",
+    "how-to-prepare-for-garage-cleanout.html": "2025-10-22",
+    "fort-collins-junk-removal-what-you-can-cant-throw-away.html": "2025-11-01",
+    "junk-removal-vs-dumpster-rental-fort-collins.html": "2025-11-08",
+    "garage-cleanout-vs-storage-unit-fort-collins.html": "2025-11-15",
+    "got-junk-vs-local-junk-removal-fort-collins.html": "2025-11-22",
+    "diy-junk-removal-vs-hiring-professionals-fort-collins.html": "2025-12-01",
+    "garage-organization-after-cleanout-fort-collins.html": "2025-12-08",
+    "garage-organizing-ideas-two-car-garage.html": "2025-12-15",
+    "habitat-for-humanity-restore-fort-collins.html": "2026-01-10",
+    "tax-deduction-donating-junk.html": "2026-01-18",
+    "what-to-do-with-old-appliances-fort-collins.html": "2026-02-01",
+    "estate-cleanout-checklist-colorado.html": "2026-02-15",
+    "index.html": "2026-03-01",
+}
+
+NORTHERO_RELATED = [
+    ("/garage-cleanouts-fort-collins-co.html", "Garage Cleanouts — Fort Collins"),
+    ("/junk-removal-fort-collins-co.html", "Junk Removal — Fort Collins"),
+    ("/garage-cleanouts-loveland-co.html", "Garage Cleanouts — Loveland"),
+    ("/junk-removal-windsor-co.html", "Junk Removal — Windsor"),
+    ("/junk-removal-wellington-co.html", "Junk Removal — Wellington"),
+    ("/book.html", "Book Online"),
+    ("/blog/", "Guides & Comparisons"),
+    ("/", "Home"),
 ]
 
 SHARED_CSS = r"""
@@ -44,7 +107,7 @@ section{padding:56px 0}@media(min-width:900px){section{padding:88px 0}}.section-
 .video-section{background:var(--paper-warm)}.video-wrap{aspect-ratio:16/9;background:var(--navy-soft);border:1px solid var(--navy-line);border-radius:4px;display:flex;align-items:center;justify-content:center;color:var(--muted-dark);font-size:14px;margin-top:24px}
 .final-cta{background:var(--navy);color:var(--paper)}.final-cta h2.section-title{color:var(--paper)}.final-cta h2.section-title em{color:var(--accent)}.final-cta .section-sub{color:var(--muted-dark)}.cta-layout{display:grid;grid-template-columns:1fr;gap:40px;margin-top:32px;align-items:start}@media(min-width:900px){.cta-layout{grid-template-columns:1fr 1.1fr;gap:56px}}.cta-points{display:flex;flex-direction:column;gap:16px}.cta-point{display:flex;gap:12px;align-items:flex-start;font-size:15px;color:var(--muted-dark)}.cta-point::before{content:'✓';color:var(--accent);font-weight:700;flex-shrink:0}.quote-form{background:var(--navy-soft);border:1px solid var(--navy-line);padding:28px 24px;border-radius:4px}.quote-form h3{font-family:var(--font-display);font-size:22px;font-weight:500;margin-bottom:6px}.quote-form .form-note{font-size:13px;color:var(--muted-dark);margin-bottom:20px}.form-row{display:grid;grid-template-columns:1fr;gap:14px;margin-bottom:14px}@media(min-width:540px){.form-row.two{grid-template-columns:1fr 1fr}}.field label{display:block;font-family:var(--font-mono);font-size:10px;letter-spacing:.15em;color:var(--muted-dark);margin-bottom:6px;text-transform:uppercase}.field input,.field select,.field textarea{width:100%;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.15);border-radius:3px;color:var(--paper);font-family:inherit;font-size:16px;padding:12px 14px;outline:none}.field input::placeholder,.field textarea::placeholder{color:rgba(245,241,234,.35)}.field input:focus,.field select:focus,.field textarea:focus{border-color:var(--accent)}.field select option{background:var(--navy-soft);color:var(--paper)}.field textarea{resize:vertical;min-height:80px}.form-submit{width:100%;margin-top:6px}
 .form-steps{display:flex;gap:8px;margin-bottom:20px}.form-step-dot{flex:1;height:4px;background:rgba(255,255,255,.15);border-radius:2px;transition:background .2s}.form-step-dot.active,.form-step-dot.done{background:var(--accent)}.form-panel{display:none}.form-panel.active{display:block}.form-nav{display:flex;gap:10px;margin-top:16px}.form-nav .btn-secondary{color:var(--paper);border-color:rgba(255,255,255,.25)}.form-step-label{font-family:var(--font-mono);font-size:10px;letter-spacing:.12em;color:var(--muted-dark);margin-bottom:14px;text-transform:uppercase}.service-picker{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:8px}@media(min-width:480px){.service-picker{grid-template-columns:repeat(3,1fr)}}.service-pick-card{position:relative;display:flex;flex-direction:column;align-items:flex-start;gap:4px;padding:14px 12px;background:rgba(255,255,255,.04);border:2px solid rgba(255,255,255,.12);border-radius:4px;cursor:pointer;transition:border-color .2s,background .2s;min-height:88px}.service-pick-card:hover{border-color:rgba(255,91,31,.5)}.service-pick-card input{position:absolute;opacity:0;width:0;height:0}.service-pick-card:has(input:checked){border-color:var(--accent);background:rgba(255,91,31,.12)}.spc-icon{font-size:20px;line-height:1}.spc-title{font-size:13px;font-weight:700;color:var(--paper);line-height:1.2}.spc-desc{font-size:11px;color:var(--muted-dark);line-height:1.3}.hero-phone{display:inline-flex;align-items:center;gap:8px;font-family:var(--font-display);font-size:clamp(20px,4vw,26px);font-weight:600;color:var(--accent-deep);margin-bottom:12px;letter-spacing:-.02em}.hero-phone:hover{color:var(--accent)}.hero-phone-sub{font-size:12px;font-weight:500;color:var(--muted);font-family:var(--font-body);margin-left:4px}.def-block{background:var(--white);border-left:3px solid var(--accent);padding:16px 20px;margin:24px 0;border-radius:0 4px 4px 0;font-size:15px;line-height:1.65;color:var(--text)}.def-block strong{font-family:var(--font-display);font-weight:500;font-size:17px;display:block;margin-bottom:6px;color:var(--ink)}
-footer{background:var(--ink);color:var(--muted-dark);padding:36px 0;border-top:1px solid var(--navy-line);font-size:13px}.foot{display:flex;flex-direction:column;gap:14px;align-items:flex-start;justify-content:space-between}.foot .logo{color:var(--paper)}.foot-links{display:flex;flex-wrap:wrap;gap:12px 20px}.foot-links a:hover{color:var(--accent)}.community{margin-top:20px;font-size:12px;line-height:1.6;max-width:52ch}@media(min-width:700px){.foot{flex-direction:row;align-items:flex-start}}
+footer{background:var(--ink);color:var(--muted-dark);padding:36px 0;border-top:1px solid var(--navy-line);font-size:13px}.foot{display:flex;flex-direction:column;gap:14px;align-items:flex-start;justify-content:space-between}.foot .logo{color:var(--paper)}.foot-links{display:flex;flex-wrap:wrap;gap:12px 20px}.foot-links a:hover{color:var(--accent)}.community{margin-top:20px;font-size:12px;line-height:1.6;max-width:52ch}.foot-entity{margin-top:14px;font-size:12px;line-height:1.65;max-width:58ch}.foot-nap{margin-bottom:6px}.foot-nap a:hover{color:var(--accent)}.foot-area{color:var(--muted-dark)}@media(min-width:700px){.foot{flex-direction:row;align-items:flex-start}}
 .mobile-sticky-cta{position:fixed;bottom:0;left:0;right:0;z-index:100;display:none;grid-template-columns:1fr 1fr 1fr;gap:6px;background:var(--ink);border-top:1px solid var(--navy-line);padding:8px 10px 12px}.mobile-cta-btn{padding:12px 6px;font-weight:700;font-size:12px;text-align:center;border-radius:3px;font-family:var(--font-body)}.mobile-cta-call,.mobile-cta-text{background:var(--navy-soft);color:var(--paper);border:1px solid var(--navy-line)}.mobile-cta-quote{background:var(--accent);color:var(--white)}@media(max-width:1023px){.mobile-sticky-cta{display:grid}body{padding-bottom:72px}}
 .reveal{opacity:0;transform:translateY(16px);transition:opacity .7s ease,transform .7s ease}.reveal.visible{opacity:1;transform:translateY(0)}
 .article-wrap{max-width:740px;margin:0 auto;padding:0 18px}.article-body{padding-bottom:80px;font-size:16px;line-height:1.75}.article-body h2{font-family:var(--font-display);font-size:26px;font-weight:500;margin:40px 0 14px;letter-spacing:-.02em}.article-body p{margin-bottom:18px}.article-body ul,.article-body ol{margin:0 0 18px 24px}
@@ -150,6 +213,7 @@ FOOTER = """
     <div class="foot-links">
       <a href="/junk-removal-fort-collins-co.html">Junk Removal</a>
       <a href="/garage-cleanouts-fort-collins-co.html">Garage Cleanouts</a>
+      <a href="/book.html">Book Online</a>
       <a href="/about.html">About</a>
       <a href="/faq.html">FAQ</a>
       <a href="/blog/">Blog</a>
@@ -550,7 +614,7 @@ def render_service(s):
         GALLERY_HTML.format(ba1=s["ba"][0], ba2=s["ba"][1], ba3=s["ba"][2]),
         video,
         related_html(s["related"]),
-        quote_form_for(s["stype"], cta_title=s["cta"], form_subject=s["form_subject"], city_placeholder="Fort Collins, Loveland, etc.", city_default="", sms_body=s["sms"].replace(" ", "%20")),
+        quote_form_for(s["stype"], cta_title=s["cta"], form_subject=s["form_subject"], sms_body=s["sms"].replace(" ", "%20")),
     ]) + "</main>"
     return page_shell(s["title"], s["desc"], canonical, schema, body)
 
@@ -586,7 +650,7 @@ def render_city(c):
         faq_html(c["faqs"]),
         GALLERY_HTML.format(ba1=f"{c['city']} job 1", ba2=f"{c['city']} job 2", ba3=f"{c['city']} job 3"),
         related,
-        quote_form_for(c["service"], cta_title=f"Book {c['service']} in {c['city']} <em>today</em>", form_subject=f"{c['service'].title()} Quote - {c['city']}", city_placeholder=f"{c['city']}, CO", city_default=c["city"], sms_body=f"Hi!%20I%20need%20{c['service'].replace(' ', '%20')}%20in%20{c['city']}."),
+        quote_form_for(c["service"], cta_title=f"Book {c['service']} in {c['city']} <em>today</em>", form_subject=f"{c['service'].title()} Quote - {c['city']}", city_default=c["city"], sms_body=f"Hi!%20I%20need%20{c['service'].replace(' ', '%20')}%20in%20{c['city']}."),
     ]) + "</main>"
     return page_shell(c["title"], c["desc"], canonical, schema, body)
 
@@ -615,7 +679,7 @@ def render_project(p):
 <h2 class="section-title" style="margin-top:32px">What we <em>removed</em></h2><p class="section-sub">{p["removed"]}</p></div></div></section>
 {related_html(p.get("related", [("/garage-cleanouts-fort-collins-co.html", "Garage Cleanouts"), ("/junk-removal-fort-collins-co.html", "Junk Removal"), ("/", "Home")]))}
 {fmt(PRICING_HTML)}
-{quote_form_for(p["job_type"], cta_title="Get a quote like this <em>for your home</em>", form_subject=f"Project Inquiry - {p['city']}", city_placeholder="Your city", city_default=p["city"], sms_body="Hi!%20I%20saw%20your%20project%20page%20and%20need%20a%20quote.")}
+{quote_form_for(p["job_type"], cta_title="Get a quote like this <em>for your home</em>", form_subject=f"Project Inquiry - {p['city']}", city_default=p["city"], sms_body="Hi!%20I%20saw%20your%20project%20page%20and%20need%20a%20quote.")}
 </main>"""
     return page_shell(p["title"], p["desc"], canonical, f'<script type="application/ld+json">{schema}</script>', content)
 
@@ -638,7 +702,7 @@ def render_item_page(item):
         fmt(PRICING_HTML),
         faq_html(item["faqs"]),
         related_html(item["related"]),
-        quote_form_for(item["stype"], cta_title=item["cta"], form_subject=item["form_subject"], city_placeholder="Fort Collins, Loveland, etc.", city_default="", sms_body=item["sms"].replace(" ", "%20")),
+        quote_form_for(item["stype"], cta_title=item["cta"], form_subject=item["form_subject"], sms_body=item["sms"].replace(" ", "%20")),
     ]) + "</main>"
     return page_shell(item["title"], item["desc"], canonical, schema, body)
 
@@ -659,9 +723,28 @@ def render_comparison(cmp):
 </div>
 </article>
 {related_html(cmp.get("related", [("/garage-cleanouts-fort-collins-co.html", "Garage Cleanouts"), ("/junk-removal-fort-collins-co.html", "Junk Removal"), ("/blog/", "More Guides")]))}
-{quote_form_for("Garage Cleanout", cta_title="Get your <em>Fort Collins quote</em>", form_subject=f"Comparison Page - {cmp['h1'][:40]}", city_placeholder="Fort Collins", city_default="Fort Collins", sms_body="Hi!%20I%20read%20your%20comparison%20guide%20and%20need%20a%20quote.")}
+{quote_form_for("Garage Cleanout", cta_title="Get your <em>Fort Collins quote</em>", form_subject=f"Comparison Page - {cmp['h1'][:40]}", city_default="Fort Collins", sms_body="Hi!%20I%20read%20your%20comparison%20guide%20and%20need%20a%20quote.")}
 </main>"""
     return page_shell(cmp["title"], cmp["desc"], canonical, schema, article, og_type="article")
+
+
+def render_book():
+    title = "Book Garage Cleanout or Junk Removal | Fort Collins CO"
+    desc = "Book your garage cleanout or junk removal in Fort Collins. Choose service, location, upload photos, and get a flat-rate quote in 5 minutes."
+    canonical = f"{SITE}/book.html"
+    schema = f"""<script type="application/ld+json">{json.dumps(business_schema(), ensure_ascii=False)}</script>
+<script type="application/ld+json">{howto_schema()}</script>"""
+    body = f"""<main>
+<section class="hero"><div class="wrap">
+<div class="hero-eyebrow mono">Book online</div>
+<a href="tel:{PHONE}" class="hero-phone">{PHONE_DISPLAY}<span class="hero-phone-sub">· 5-min quote response</span></a>
+<h1 class="hero-title" style="max-width:none">Book your <em>garage reclaiming</em> service</h1>
+<p class="hero-sub">Choose what you need, tell us where you are, upload photos, and we'll call back with a flat-rate price — no obligation, no hidden fees.</p>
+</div></section>
+{fmt(PROCESS_HTML)}
+{quote_form_for("Garage Cleanout", cta_title="Complete your <em>free quote</em>", form_subject="Book Page Quote Request", sms_body="Hi!%20I'm%20booking%20on%20your%20website%20and%20need%20a%20quote.")}
+</main>"""
+    return page_shell(title, desc, canonical, schema, body, quote_href="#quote")
 
 
 def render_about():
@@ -675,6 +758,7 @@ def render_about():
     body = f"""<main>
 <section class="hero"><div class="wrap hero-grid"><div>
 <div class="hero-eyebrow mono">About us</div>
+<a href="tel:{PHONE}" class="hero-phone">{PHONE_DISPLAY}<span class="hero-phone-sub">· Owner on every job</span></a>
 <h1 class="hero-title">Garage reclaiming, <em>built in Fort Collins</em></h1>
 <p class="hero-sub">Easy Garage Cleaning isn't a franchise call center — it's Zac Bezenek and a local crew helping Northern Colorado homeowners park in their garage again.</p>
 <div class="hero-ctas"><a href="#quote" class="btn-primary">Get Free Quote</a><a href="tel:{PHONE}" class="btn-secondary">Call {PHONE_DISPLAY}</a></div>
@@ -693,7 +777,7 @@ def render_about():
 </div></div></section>
 {VIDEO_HTML}
 {fmt(PRICING_HTML)}
-{quote_form_for("Garage Cleanout", cta_title="Reclaim your garage <em>today</em>", form_subject="About Page Quote", city_placeholder="Your city", city_default="", sms_body="Hi!%20I%20visited%20your%20about%20page%20and%20need%20a%20quote.")}
+{quote_form_for("Garage Cleanout", cta_title="Reclaim your garage <em>today</em>", form_subject="About Page Quote", sms_body="Hi!%20I%20visited%20your%20about%20page%20and%20need%20a%20quote.")}
 </main>"""
     return page_shell(title, desc, canonical, f'<script type="application/ld+json">{schema}</script>', body)
 
@@ -707,22 +791,31 @@ def generate_sitemap(urls):
 
 
 def patch_static_pages():
-    sticky = f"""
-<div class="mobile-sticky-cta" aria-label="Quick contact">
-  <a href="tel:{PHONE}" class="mobile-cta-btn mobile-cta-call" style="padding:12px 6px;font-weight:700;font-size:12px;text-align:center;border-radius:3px;background:#14243d;color:#f5f1ea;border:1px solid rgba(255,255,255,.08);">Call</a>
-  <a href="sms:{PHONE}" class="mobile-cta-btn mobile-cta-text" style="padding:12px 6px;font-weight:700;font-size:12px;text-align:center;border-radius:3px;background:#14243d;color:#f5f1ea;border:1px solid rgba(255,255,255,.08);">Text</a>
-  <a href="#quote" class="mobile-cta-btn mobile-cta-quote" style="padding:12px 6px;font-weight:700;font-size:12px;text-align:center;border-radius:3px;background:#ff5b1f;color:#fff;">Get Quote</a>
-</div>
-<style>@media(max-width:1023px){{.mobile-sticky-cta{{position:fixed;bottom:0;left:0;right:0;z-index:100;display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;background:#0a1628;padding:8px 10px 12px}}body{{padding-bottom:72px}}}}</style>"""
-    patterns = ["index.html", "faq.html", "about.html", "blog/*.html", "loveland-garage-cleanout.html", "windsor-garage-cleanout.html", "wellington-junk-removal.html", "timnath-junk-removal.html", "old-town-fort-collins-junk-removal.html", "privacy-policy.html", "thank-you.html"]
+    trust = fmt("""<div class="trust-strip" aria-label="Trust signals">
+  <div class="wrap trust-strip-inner">
+    <span>Response within 5 minutes</span><span>No hidden fees</span><span>Only pay after approving quote</span><span>We do all lifting</span><span>Text photos now</span><span>Same-day availability</span>
+  </div>
+</div>""")
+    unified_nav = fmt(NAV, quote_href="/#quote", service_areas_href="/#service-area", reviews_href="/#reviews")
+    sticky = fmt("""<div class="mobile-sticky-cta" aria-label="Quick contact">
+  <a href="tel:{phone}" class="mobile-cta-btn mobile-cta-call">Call</a>
+  <a href="sms:{phone}?body=Hi!%20I'd%20like%20a%20quote." class="mobile-cta-btn mobile-cta-text">Text</a>
+  <a href="{quote_href}" class="mobile-cta-btn mobile-cta-quote">Quote</a>
+</div>""", quote_href="/#quote")
+    sticky_css = "<style>@media(max-width:1023px){.mobile-sticky-cta{position:fixed;bottom:0;left:0;right:0;z-index:100;display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;background:#0a1628;border-top:1px solid rgba(255,255,255,.08);padding:8px 10px 12px}body{padding-bottom:72px}}</style>"
+    patterns = ["index.html", "faq.html", "about.html", "book.html", "blog/*.html", "loveland-garage-cleanout.html", "windsor-garage-cleanout.html", "wellington-junk-removal.html", "timnath-junk-removal.html", "old-town-fort-collins-junk-removal.html", "privacy-policy.html", "thank-you.html", "employee.html", "ads.html"]
     for pattern in patterns:
         for path in ROOT.glob(pattern):
             text = path.read_text(encoding="utf-8")
             orig = text
+            if 'class="trust-strip"' not in text and '<nav class="nav"' in text:
+                text = re.sub(r"(</nav>\s*)", r"\1\n" + trust + "\n", text, count=1)
+            if '<nav class="nav"' in text and 'Service Areas' not in text:
+                text = re.sub(r"<nav class=\"nav\"[\s\S]*?</nav>", unified_nav.strip(), text, count=1)
             if 'mobile-sticky-cta' not in text:
-                text = text.replace('</body>', sticky + '\n</body>')
-            if '/about.html' not in text and 'nav-links' in text and 'About' not in text:
-                text = text.replace('<li><a href="/faq.html">FAQ</a></li>', '<li><a href="/about.html">About</a></li>\n      <li><a href="/faq.html">FAQ</a></li>', 1)
+                text = text.replace('</body>', sticky + sticky_css + '\n</body>')
+            elif 'mobile-cta-quote">Get Quote</a>' in text:
+                text = text.replace('mobile-cta-quote">Get Quote</a>', 'mobile-cta-quote">Quote</a>')
             if GA4_ID not in text:
                 had_aw = 'AW-18102284288' in text
                 for pat in (
@@ -743,7 +836,7 @@ def main():
     from _services_data import SERVICES, CITIES, PROJECTS, ITEM_PAGES, COMPARISON_PAGES
 
     generated = []
-    sitemap_urls = [(f"{SITE}/", "1.0"), (f"{SITE}/about.html", "0.8")]
+    sitemap_urls = [(f"{SITE}/", "1.0"), (f"{SITE}/about.html", "0.8"), (f"{SITE}/book.html", "0.9")]
 
     for s in SERVICES:
         (ROOT / s["slug"]).write_text(render_service(s), encoding="utf-8")
@@ -779,11 +872,14 @@ def main():
     (ROOT / "about.html").write_text(render_about(), encoding="utf-8")
     generated.append("about.html")
 
+    (ROOT / "book.html").write_text(render_book(), encoding="utf-8")
+    generated.append("book.html")
+
     blog_posts = list(ROOT.glob("blog/*.html"))
     for bp in blog_posts:
         if bp.name != "index.html":
             sitemap_urls.append((f"{SITE}/blog/{bp.name}", "0.7"))
-    sitemap_urls += [(f"{SITE}/blog/", "0.8"), (f"{SITE}/faq.html", "0.8"), (f"{SITE}/privacy-policy.html", "0.3")]
+    sitemap_urls += [(f"{SITE}/blog/", "0.8"), (f"{SITE}/faq.html", "0.8"), (f"{SITE}/privacy-policy.html", "0.3"), (f"{SITE}/llms.txt", "0.5"), (f"{SITE}/ai.txt", "0.5")]
 
     generate_sitemap(sitemap_urls)
     patch_static_pages()

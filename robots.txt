@@ -1,4 +1,32 @@
 User-agent: *
 Allow: /
 
+# AI crawlers — allowed for discoverability in ChatGPT, Perplexity, Google AI Overviews
+User-agent: GPTBot
+Allow: /
+
+User-agent: ChatGPT-User
+Allow: /
+
+User-agent: Google-Extended
+Allow: /
+
+User-agent: anthropic-ai
+Allow: /
+
+User-agent: ClaudeBot
+Allow: /
+
+User-agent: PerplexityBot
+Allow: /
+
+User-agent: Applebot-Extended
+Allow: /
+
+User-agent: cohere-ai
+Allow: /
+
 Sitemap: https://easygaragecleaning.com/sitemap.xml
+
+# Machine-readable business context for AI systems
+# See also: https://easygaragecleaning.com/llms.txt and https://easygaragecleaning.com/ai.txt
