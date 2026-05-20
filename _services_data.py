@@ -45,7 +45,7 @@ SERVICES = [
     },
     {
         "slug": "garage-cleanouts-fort-collins-co.html",
-        "title": "Garage Cleanouts Fort Collins CO | Get Your Garage Back Fast",
+        "title": "Garage Cleanouts Fort Collins CO | Easy Garage",
         "desc": "Park in your garage again — full Fort Collins cleanouts with haul-out, sweep & donations. Text photos for a flat-rate quote in 5 minutes. Same-day available.",
         "body_copy": """<p>Our Fort Collins garage cleanouts are built for reclaiming usable space — not just hauling junk. Pair with <a href="/garage-cleaning-fort-collins-co.html" class="content-link">garage cleaning in Fort Collins</a> or <a href="/garage-organization-fort-collins-co.html" class="content-link">garage organization in Fort Collins</a> to keep it organized long-term.</p>
 <p>Need help deciding? Read <a href="/blog/garage-cleanout-vs-storage-unit-fort-collins.html" class="content-link">garage cleanout vs storage unit</a> or <a href="/blog/how-to-prepare-for-garage-cleanout.html" class="content-link">how to prepare for a garage cleanout</a>. We also serve <a href="/garage-cleanouts-loveland-co.html" class="content-link">garage cleanouts in Loveland</a> and <a href="/garage-cleanouts-windsor-co.html" class="content-link">garage cleanouts in Windsor</a>.</p>
@@ -454,12 +454,65 @@ CITIES = [
         "related_city": "/junk-removal-wellington-co.html",
         "related_label": "Junk Removal Wellington",
     },
+    {
+        "slug": "timnath-junk-removal.html",
+        "title": "Timnath Junk Removal CO | Easy Garage Cleaning",
+        "desc": "Timnath junk removal & garage cleanouts — flat-rate from photos, same-day when available. Timnath Ranch & Larimer County. 5-min quote.",
+        "body_copy": """<p>Timnath is minutes from our Fort Collins base — see <a href="/junk-removal-fort-collins-co.html" class="content-link">Fort Collins junk removal</a>, <a href="/garage-cleanouts-fort-collins-co.html" class="content-link">garage cleanouts</a>, and <a href="/service-areas.html" class="content-link">all service areas</a>.</p>""",
+        "h1": "Timnath Junk Removal & Garage Cleanout",
+        "city": "Timnath",
+        "service": "junk removal",
+        "intro": "Timnath Ranch, Wildwing, and east Larimer County homes fill garages fast with move-in boxes and seasonal gear. We're 10 minutes from Fort Collins with same flat-rate photo quotes — no franchise call center, owner on every job.",
+        "neighborhoods": "Timnath Ranch, Wildwing, Harmony Club, east Timnath growth corridor, and Larimer County addresses south of Fort Collins.",
+        "faqs": [
+            ("How much does junk removal cost in Timnath?", "Same core ranges as Fort Collins: $99–$150 single item, $300–$400 small cleanout, $400–$650 medium garage, $650+ large. No Timnath travel surcharge."),
+            ("Do you serve Timnath Ranch and Wildwing?", "Yes — daily routes through Timnath from our Fort Collins base."),
+            ("Same-day junk removal in Timnath?", "Often available — text photos for today's schedule."),
+            ("Garage cleanouts in Timnath?", "Yes — full haul-out, donations, and sweep. See Fort Collins garage cleanout pricing."),
+            ("Are you insured in Timnath?", "Yes — fully licensed and insured throughout Larimer County."),
+            ("How do I get a quote?", "Text photos to (970) 999-1818 or book online — 5-minute flat-rate response."),
+            ("Do you donate usable items?", "Yes — Habitat ReStore and ARC with tax receipt in your name."),
+            ("Is Timnath in your core service area?", "Yes — no hidden travel fees for Timnath addresses."),
+        ],
+        "related_city": "/garage-cleanouts-fort-collins-co.html",
+        "related_label": "Fort Collins Garage Cleanouts",
+    },
+    {
+        "slug": "old-town-fort-collins-junk-removal.html",
+        "title": "Old Town Junk Removal Fort Collins | Easy Garage",
+        "desc": "Junk removal & garage cleanout in Old Town Fort Collins. Historic homes, narrow detached garages. Flat-rate, insured, 5-min quote.",
+        "body_copy": """<p>Historic detached garages and alley access are common in Old Town — see our <a href="/projects/fort-collins-garage-cleanout-old-town.html" class="content-link">Old Town garage project</a>, <a href="/garage-cleanouts-fort-collins-co.html" class="content-link">Fort Collins garage cleanouts</a>, and <a href="/junk-removal-fort-collins-co.html" class="content-link">junk removal</a>.</p>""",
+        "h1": "Old Town Fort Collins Junk Removal",
+        "city": "Old Town Fort Collins",
+        "service": "junk removal",
+        "intro": "Old Town Fort Collins means narrow detached garages, alley access, and decades of accumulation in historic homes. We haul junk and full garage cleanouts with flat-rate photo quotes — local crew, not a Denver franchise dispatch line.",
+        "neighborhoods": "Old Town, Mountain Avenue, Matthews Street corridor, Whitcomb Street area, and adjacent Fort Collins 80521 addresses.",
+        "faqs": [
+            ("Do you serve Old Town Fort Collins?", "Yes — daily routes through Old Town, Midtown, and all Fort Collins neighborhoods."),
+            ("Can you access narrow Old Town alleys?", "Yes — note alley or gate access when you text photos so we bring the right truck."),
+            ("How much does junk removal cost in Old Town?", "$99–$150 single item, $300–$400 small load, $400–$650 typical garage. Flat-rate locked before work."),
+            ("Detached garage cleanouts in Old Town?", "Common job type — we empty, donate, and sweep so you can park again."),
+            ("Same-day service in Old Town?", "Often available — text photos for fastest scheduling."),
+            ("Estate or multi-room cleanouts?", "Yes — quoted individually from photos, typically $650+ for full-property hauls."),
+            ("Donation receipts?", "Included for usable goods dropped at Habitat ReStore Fort Collins."),
+            ("Who does the work?", "Owner Zac Bezenek and local crew — Fort Collins LLC, fully insured."),
+        ],
+        "related_city": "/garage-cleanouts-fort-collins-co.html",
+        "related_label": "Fort Collins Garage Cleanouts",
+        "related": [
+            ("/garage-cleanouts-fort-collins-co.html", "Garage Cleanouts Fort Collins"),
+            ("/junk-removal-fort-collins-co.html", "Junk Removal Fort Collins"),
+            ("/projects/fort-collins-garage-cleanout-old-town.html", "Old Town Project"),
+            ("/service-areas.html", "All Service Areas"),
+            ("/", "Home"),
+        ],
+    },
 ]
 
 PROJECTS = [
     {
         "slug": "projects/fort-collins-garage-cleanout-old-town.html",
-        "title": "Project: Old Town Fort Collins Garage Cleanout | Easy Garage Cleaning",
+        "title": "Project: Old Town Garage Cleanout | Fort Collins",
         "desc": "Before/after case study — packed single-car garage in Old Town Fort Collins cleared in one afternoon. Flat-rate garage cleanout by Easy Garage Cleaning.",
         "h1": "Old Town Fort Collins Garage Cleanout",
         "city": "Fort Collins",
@@ -474,7 +527,7 @@ PROJECTS = [
     },
     {
         "slug": "projects/loveland-storage-unit-cleanout.html",
-        "title": "Project: Loveland Storage Unit Cleanout | Easy Garage Cleaning",
+        "title": "Project: Loveland Storage Unit Cleanout",
         "desc": "Case study — 10x10 storage unit in Loveland emptied in one trip. Client cancelled $165/month lease. Flat-rate cleanout.",
         "h1": "Loveland Storage Unit Cleanout",
         "city": "Loveland",
@@ -752,7 +805,7 @@ COMPARISON_PAGES = [
     },
     {
         "slug": "blog/garage-organization-after-cleanout-fort-collins.html",
-        "title": "Garage Organization After Cleanout Fort Collins | Keep It Clear",
+        "title": "Garage Organization After Cleanout | Fort Collins",
         "desc": "Cleaned your garage but worried it'll fill again? Fort Collins organization guide — zones, shelving & habits after cleanout. Book organization service.",
         "h1": "Garage Organization After Cleanout in Fort Collins",
         "intro": "Clearing junk is step one. Without a system, Fort Collins garages refill within a year. Here's how to keep your reclaimed garage functional long-term.",

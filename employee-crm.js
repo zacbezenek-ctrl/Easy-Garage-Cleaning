@@ -30,7 +30,7 @@
 
   const PRICE_TIERS = [
     { label: 'Single item ($99–150)', low: 99, high: 150 },
-    { label: 'Small load ($250–400)', low: 250, high: 400 },
+    { label: 'Small cleanout — half garage+ ($300–400)', low: 300, high: 400 },
     { label: 'Medium garage ($400–650)', low: 400, high: 650 },
     { label: 'Large / estate ($650+)', low: 650, high: 950 },
   ];
@@ -68,6 +68,12 @@
   window.pipelineLabel = function (id) {
     return PIPELINE.find((p) => p.id === id)?.label || id;
   };
+
+  function leadFlowType(lead) {
+    const msg = String(lead?.message || lead?.notes || '');
+    const m = msg.match(/Flow:\s*(\w+)/i);
+    return m ? m[1].toLowerCase() : '';
+  }
 
   function touchSession() {
     sessionStorage.setItem('egc_exp', String(Date.now() + SESSION_MS));
@@ -661,6 +667,9 @@
       await db.collection('customers').doc(cid).set(cust);
     }
     const jobId = uid();
+    const flow = leadFlowType(lead);
+    const bookingNote = flow === 'booking' ? 'Online booking request — confirm slot from form.' : '';
+    const notes = [lead.message || '', bookingNote].filter(Boolean).join('\n');
     await db.collection('jobs').doc(jobId).set({
       id: jobId,
       customer: cust.name,
@@ -671,7 +680,7 @@
       type: 'job',
       pipelineStatus: 'lead',
       status: 'scheduled',
-      notes: lead.message || '',
+      notes,
       assignedTo: me === 'TylerG' ? 'TylerG' : 'ZacB',
       createdBy: me,
       createdAt: new Date().toISOString(),
@@ -712,9 +721,11 @@
           const createdStr = lead.createdAt
             ? new Date(lead.createdAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
             : '';
+          const flow = leadFlowType(lead);
+          const flowBadge = flow === 'booking' ? ' · <span class="bdg quoted">📅 booking</span>' : flow === 'call_text' ? ' · <span class="bdg">call/text</span>' : '';
           return `<div class="lead-card ${responded ? 'done' : ''}">
             <div class="lead-main">
-              <div class="lead-source">${esc(lead.source || 'website')} · <span class="bdg ${crmSt}">${crmSt}</span></div>
+              <div class="lead-source">${esc(lead.source || 'website')} · <span class="bdg ${crmSt}">${crmSt}</span>${flowBadge}</div>
               <div class="lead-name">${esc(lead.name || lead.full_name || lead.phone || 'Unknown')}</div>
               <div class="lead-meta">${lead.phone ? '📞 ' + esc(lead.phone) : ''} ${lead.city ? '· ' + esc(lead.city) : ''} ${lead.service ? '· ' + esc(lead.service) : ''} · ${createdStr}</div>
               ${lead.message ? `<div class="lead-msg">${esc(lead.message)}</div>` : ''}

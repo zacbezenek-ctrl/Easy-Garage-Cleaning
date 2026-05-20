@@ -114,9 +114,16 @@ LEGACY_REDIRECTS = {
     "loveland-garage-cleanout.html": ("/garage-cleanouts-loveland-co.html", "Garage cleanouts in Loveland"),
     "windsor-garage-cleanout.html": ("/garage-cleanouts-windsor-co.html", "Garage cleanouts in Windsor"),
     "wellington-junk-removal.html": ("/junk-removal-wellington-co.html", "Junk removal in Wellington"),
-    "timnath-junk-removal.html": ("/junk-removal-fort-collins-co.html", "Junk removal — we serve Timnath"),
-    "old-town-fort-collins-junk-removal.html": ("/old-town-fort-collins-junk-removal.html", "Old Town Fort Collins junk removal"),
 }
+
+LEGACY_META_REDIRECTS = {
+    "loveland-garage-cleanout.html": "/garage-cleanouts-loveland-co.html",
+    "windsor-garage-cleanout.html": "/garage-cleanouts-windsor-co.html",
+    "wellington-junk-removal.html": "/junk-removal-wellington-co.html",
+}
+
+# Replace YOUR_GBP_PLACE_ID with Place ID from Google Business Profile → Share & promote
+GBP_REVIEW_URL = "https://search.google.com/local/writereview?placeid=YOUR_GBP_PLACE_ID"
 
 BLOG_QUICK_SUMMARIES = {
     "fort-collins-junk-removal-what-you-can-cant-throw-away.html": (
@@ -179,12 +186,16 @@ CITY_NEIGHBORHOODS = {
     "Loveland": ["Centerra", "Downtown Loveland", "Mariana Butte"],
     "Windsor": ["Raindance", "Pelican Lakes", "Boardwalk Park"],
     "Wellington": ["Downtown Wellington", "Crystal Lakes", "CR 7 acreage corridor"],
+    "Timnath": ["Timnath Ranch", "Wildwing", "Harmony Club"],
+    "Old Town Fort Collins": ["Old Town", "Mountain Ave", "Matthews St corridor"],
 }
 
 CITY_PROJECT_LINK = {
     "Loveland": ("/projects/loveland-storage-unit-cleanout.html", "Loveland storage unit project"),
     "Windsor": ("/projects/windsor-garage-junk-removal.html", "Windsor Raindance project"),
     "Fort Collins": ("/projects/fort-collins-garage-cleanout-old-town.html", "Old Town Fort Collins project"),
+    "Old Town Fort Collins": ("/projects/fort-collins-garage-cleanout-old-town.html", "Old Town garage project"),
+    "Timnath": ("/garage-cleanouts-fort-collins-co.html", "Fort Collins garage cleanouts"),
 }
 
 BLOG_RELATED = {
@@ -462,6 +473,23 @@ POLISH_CSS = POLISH_CSS_MARKER + DESIGN_TOKENS_CSS + r"""
 .faq-search{width:100%;padding:14px 18px;font-size:var(--text-md);border:1px solid rgba(10,22,40,.15);border-radius:var(--radius-md);min-height:48px}
 .faq-item.is-hidden,details.faq-item.is-hidden{display:none}
 .faq-nav-list a.is-active{color:var(--accent-deep);background:var(--paper-warm);font-weight:700}
+.areas-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin-top:28px}@media(min-width:640px){.areas-grid{grid-template-columns:repeat(3,1fr)}}@media(min-width:900px){.areas-grid{grid-template-columns:repeat(4,1fr)}}
+.area-card{display:flex;flex-direction:column;gap:6px;padding:18px 16px;background:var(--white);border:1px solid rgba(10,22,40,.08);border-top:3px solid var(--accent);border-radius:var(--radius-md);min-height:88px;transition:border-color .2s,box-shadow .2s,transform .2s}
+.area-card:hover{border-color:var(--accent);box-shadow:var(--shadow-md);transform:translateY(-2px)}
+.area-card strong{font-family:var(--font-display);font-size:17px;font-weight:600;color:var(--ink)}
+.area-card span{font-size:12px;color:var(--muted);line-height:1.4}
+.areas-map{margin-top:32px;border:2px dashed rgba(10,22,40,.12);border-radius:var(--radius-md);overflow:hidden;background:linear-gradient(135deg,var(--paper-warm),var(--white));min-height:220px;display:flex;align-items:center;justify-content:center;text-align:center;padding:24px}
+.areas-map-inner{max-width:52ch;font-size:14px;color:var(--muted);line-height:1.6}
+.areas-map-inner strong{display:block;font-family:var(--font-mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--accent-deep);margin-bottom:8px}
+.reviews-grid{display:grid;grid-template-columns:1fr;gap:16px;margin-top:28px}@media(min-width:640px){.reviews-grid{grid-template-columns:repeat(2,1fr)}}@media(min-width:900px){.reviews-grid{grid-template-columns:repeat(3,1fr)}}
+.review-card{background:var(--white);border:1px solid rgba(10,22,40,.08);border-left:3px solid var(--accent);padding:20px;border-radius:var(--radius-md);min-height:120px}
+.review-card-placeholder{font-family:var(--font-mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:10px}
+.review-embed-slot{margin:32px 0;padding:24px;background:var(--paper-warm);border:2px dashed rgba(10,22,40,.12);border-radius:var(--radius-md);min-height:180px;display:flex;align-items:center;justify-content:center;text-align:center}
+.review-embed-placeholder{font-size:14px;color:var(--muted);max-width:48ch;line-height:1.55}
+.review-embed-note{margin-top:24px;padding:16px 20px;background:var(--white);border:1px solid rgba(10,22,40,.08);border-radius:var(--radius-md);font-size:14px;color:var(--text);line-height:1.6}
+.review-actions{display:flex;flex-wrap:wrap;gap:12px;justify-content:center;margin-top:24px}
+.project-card .project-card-link{font-size:13px;font-weight:600;color:var(--accent-deep);margin-top:auto}
+.project-card h3 a:hover{color:var(--accent-deep)}
 """
 
 # Nav/footer styles live in SHARED_CSS — patch uses minimal extras only
@@ -839,7 +867,7 @@ function initMultiStepForm(form){{
     submitting=true;
     const btn=form.querySelector('[type="submit"]');
     if(btn){{btn.disabled=true;btn.classList.add('is-loading');btn.textContent='Sending…';}}
-    if(typeof gtag==='function'){{gtag('event','quote_submit',{{event_category:'lead',event_label:svc?.value||'quote'}});}}
+    if(typeof gtag==='function'){{gtag('event','quote_submit',{{event_category:'lead',event_label:svc?.value||'quote',flow_type:flowInput?.value||''}});}}
   }});
   show(1);
 }}
@@ -1967,7 +1995,7 @@ def render_projects_index():
         f'<article class="project-card reveal"><p class="project-card-meta">{esc(p["city"])} · {esc(p["job_type"])} · {esc(p["time"])}</p>'
         f'<h3><a href="/{p["slug"]}">{esc(p["h1"])}</a></h3>'
         f'<p>{esc(p["problem"][:160])}…</p>'
-        f'<a href="/{p["slug"]}" class="content-link">Read case study →</a></article>'
+        f'<a href="/{p["slug"]}" class="project-card-link content-link">Read case study →</a></article>'
         for p in PROJECTS
     )
     schema = json.dumps([
@@ -2064,7 +2092,7 @@ SERVICE_AREA_GRID = [
 
 
 def render_service_areas():
-    title = "Service Areas | Fort Collins, Loveland, Windsor & Northern Colorado"
+    title = "Service Areas | Fort Collins & Northern CO"
     desc = "Easy Garage Cleaning service area map — Fort Collins, Loveland, Windsor, Wellington, Timnath, Severance, and LaPorte. No travel surcharge in core Larimer County."
     canonical = f"{SITE}/service-areas.html"
     cards = "".join(
@@ -2092,11 +2120,14 @@ def render_service_areas():
 </div>
 <div class="areas-grid reveal">{cards}</div>
 <p class="neighborhoods reveal" style="margin-top:28px">{neighborhoods}</p>
-<div class="areas-map reveal" role="img" aria-label="Service area map placeholder">
-<!-- Google Maps embed: replace MAP_EMBED_SRC with your GBP map iframe src -->
-<p>Map embed placeholder — paste Google Maps iframe for Fort Collins service area</p>
+<div class="areas-map reveal" role="img" aria-label="Northern Colorado service area map placeholder">
+<div class="areas-map-inner">
+<strong>Map placeholder</strong>
+Paste a Google Maps iframe here (GBP → Share → Embed a map) showing Fort Collins, Loveland, Windsor &amp; Wellington coverage.
+<!-- Example: <iframe src="https://www.google.com/maps/embed?pb=..." loading="lazy" referrerpolicy="no-referrer-when-downgrade" title="Easy Garage Cleaning service area"></iframe> -->
 </div>
-<p class="reveal" style="margin-top:20px;text-align:center"><a href="/reviews.html" class="content-link">Customer reviews →</a> · <a href="/projects/fort-collins-garage-cleanout-old-town.html" class="content-link">Sample projects →</a></p>
+</div>
+<p class="reveal" style="margin-top:20px;text-align:center"><a href="/reviews.html" class="content-link">Customer reviews →</a> · <a href="/projects/" class="content-link">All projects →</a></p>
 </div></section>
 {quote_form_for("Garage Cleanout", cta_title="Get a quote in <em>your city</em>", form_subject="Service Areas Page Quote", sms_body="Hi!%20I%20checked%20your%20service%20areas%20and%20need%20a%20quote.")}
 </main>"""
@@ -2110,8 +2141,8 @@ def render_reviews():
     canonical = f"{SITE}/reviews.html"
     cards = "".join(
         f"""<div class="review-card reveal">
-<div class="review-card-placeholder">Add Google reviews</div>
-<p style="color:var(--text);font-size:14px">Placeholder card {i} — import verified Google Business Profile reviews when available.</p>
+<div class="review-card-placeholder">Review slot {i}</div>
+<p style="color:var(--text);font-size:14px">Paste a verified Google review quote here when available from your Business Profile.</p>
 </div>"""
         for i in range(1, 7)
     )
@@ -2119,18 +2150,32 @@ def render_reviews():
 <section class="hero"><div class="wrap">
 <div class="hero-eyebrow mono">Social proof</div>
 <h1 class="hero-title" style="max-width:none">Customer <em>reviews</em></h1>
-<p class="hero-sub">We're building our Fort Collins reputation one reclaimed garage at a time. When verified Google reviews are live, they'll appear here.</p>
+<p class="hero-sub">We're building our Fort Collins reputation one reclaimed garage at a time. Verified Google reviews will appear here — and on our Business Profile.</p>
 </div></section>
 <section class="social-proof"><div class="wrap">
 <div class="section-head reveal"><span class="mono section-num">Reviews</span>
 <h2 class="section-title">What neighbors <em>say</em></h2>
 </div>
+<div class="review-embed-slot reveal" id="gbp-reviews-embed">
+<!-- GOOGLE BUSINESS PROFILE EMBED — setup steps:
+  1. business.google.com → your listing → Home
+  2. Share &amp; promote → Embed a map OR third-party widget that shows reviews
+  3. Copy the iframe/script and paste it here (replace this comment block)
+  4. Do NOT add AggregateRating schema until review count is verified in GBP
+-->
+<p class="review-embed-placeholder">Google reviews widget goes here — paste your GBP embed iframe above this line in reviews.html (or update render_reviews in _generate_site.py).</p>
+</div>
 <div class="reviews-grid reveal">{cards}</div>
 <div class="review-embed-note reveal">
-<strong>Google Business Profile widget</strong> — In Google Business Profile → Share &amp; promote → Embed reviews, copy the script or iframe, and paste above this note in reviews.html. Do not publish AggregateRating schema until review count and rating are verified.
+<strong>Manual review cards (optional)</strong> — Until the embed is live, you can replace placeholder cards above with real quotes copied from Google Business Profile. Do not publish star counts in schema until verified.
 <!-- AggregateRating schema: add only when Google review count and rating are verified in GBP -->
 </div>
-<p class="reveal" style="margin-top:24px;text-align:center"><a href="/book.html" class="btn-primary">Get Free Quote</a> · <a href="/service-areas.html" class="content-link">Service areas →</a></p>
+<div class="review-actions reveal">
+<a href="{GBP_REVIEW_URL}" class="btn-secondary" rel="noopener noreferrer">Leave a review on Google</a>
+<!-- Replace YOUR_GBP_PLACE_ID in _generate_site.py GBP_REVIEW_URL with your Place ID -->
+<a href="/book.html" class="btn-primary">Get Free Quote</a>
+</div>
+<p class="reveal" style="margin-top:16px;text-align:center"><a href="/service-areas.html" class="content-link">Service areas →</a></p>
 </div></section>
 </main>"""
     notes = [
@@ -2757,6 +2802,12 @@ def normalize_final_cta_section(text):
 
 def patch_index_home_fixes(text):
     text = normalize_final_cta_section(text)
+    if "<title>Garage Cleanouts Fort Collins CO | Get Your Garage Back Fast</title>" in text:
+        text = text.replace(
+            "<title>Garage Cleanouts Fort Collins CO | Get Your Garage Back Fast</title>",
+            "<title>Easy Garage Cleaning | Fort Collins Garage Cleanouts</title>",
+            1,
+        )
     text = re.sub(
         r'<section class="local-trust-bar"[\s\S]*?</section>\s*',
         "",
@@ -2796,27 +2847,30 @@ def patch_index_home_fixes(text):
 
 def patch_legacy_city_pages(text, path):
     text = patch_legacy_banner(text, path.name)
+    text = patch_legacy_meta_redirect(text, path.name)
     text = patch_sitewide_pricing(text)
-    if path.name == "timnath-junk-removal.html" and 'class="template-banner"' not in text:
-        banner = '<p class="template-banner">Updated: <a href="/junk-removal-fort-collins-co.html">Fort Collins junk removal</a> · <a href="/service-areas.html">All areas</a></p>'
-        text = text.replace("<main", banner + "\n<main", 1)
-    if path.name == "old-town-fort-collins-junk-removal.html" and "/projects/fort-collins-garage-cleanout-old-town.html" not in text[:12000]:
-        insert = '<p class="neighborhoods" style="padding:0 18px 16px;max-width:68ch"><a href="/garage-cleanouts-fort-collins-co.html" class="content-link">Fort Collins garage cleanouts</a> · <a href="/junk-removal-fort-collins-co.html" class="content-link">Junk removal</a> · <a href="/projects/fort-collins-garage-cleanout-old-town.html" class="content-link">Old Town project</a></p>'
-        text = re.sub(r"(<main[^>]*>\s*)", r"\1" + insert + "\n", text, count=1)
     return text
+
+
+def _blog_article_body_match(text):
+    """Match article-body whether wrapped in <article> or nested <div>."""
+    m = re.search(r'(<article class="article-body[^"]*">)([\s\S]*?)(</article>)', text)
+    if m:
+        return m
+    return re.search(r'(<div class="article-body[^"]*">)([\s\S]*?)(</div>\s*</article>)', text)
 
 
 def inject_blog_related_links(text, filename):
     """Enrich static blog posts with meta, TOC, CTAs, related links, and compare wrappers."""
-    if "related-posts" in text and "article-cta" in text and "article-meta" in text:
+    if "related-posts" in text and "article-cta" in text:
         return text
-    m = re.search(r'(<div class="article-body[^"]*">)([\s\S]*?)(</div>\s*</article>)', text)
+    m = _blog_article_body_match(text)
     if not m:
         return text
     pub = BLOG_PUBLISHED.get(filename, TODAY)
     body = enrich_blog_content(m.group(2), filename, pub)
     read_m = article_read_time(body)
-    header = article_header_html("", pub, read_m) if "article-meta" not in text else ""
+    header = article_header_html("", pub, read_m) if "article-hero-strip" not in text else ""
     toc = article_toc_html(body) if read_m >= 4 and "article-toc" not in text else ""
     related = related_posts_html(filename) if "related-posts" not in text else ""
     if "compare-scroll" not in body:
@@ -2894,6 +2948,12 @@ def patch_index_iteration7(text):
         text,
         count=1,
     )
+    if 'id="recent-jobs"' in text and 'href="/projects/"' not in text.split('id="recent-jobs"')[1].split("<!-- VIDEO -->")[0]:
+        text = text.replace(
+            '</div>\n  </div>\n</section>\n\n<!-- VIDEO -->',
+            '<p class="reveal" style="margin-top:24px;text-align:center"><a href="/projects/" class="content-link">View all projects →</a></p>\n    </div>\n  </div>\n</section>\n\n<!-- VIDEO -->',
+            1,
+        )
     for old, new in [
         ('class="btn-primary">Get Free Quote', 'class="btn-primary" data-cta="hero-quote">Get Free Quote'),
         ('class="nav-cta">Book Now', 'class="nav-cta" data-cta="nav-book">Book Now'),
@@ -3212,6 +3272,29 @@ def patch_legacy_banner(text, filename):
     return re.sub(r"(<section class=\"hero\")", banner + r"\1", text, count=1)
 
 
+def patch_legacy_meta_redirect(text, filename):
+    """Canonical + meta refresh for legacy city URLs superseded by new slugs."""
+    if filename not in LEGACY_META_REDIRECTS or 'http-equiv="refresh"' in text:
+        return text
+    target = LEGACY_META_REDIRECTS[filename]
+    full = f"{SITE}{target}"
+    text = re.sub(
+        r'<link rel="canonical" href="[^"]*"',
+        f'<link rel="canonical" href="{full}"',
+        text,
+        count=1,
+    )
+    text = re.sub(
+        r'<meta property="og:url" content="[^"]*"',
+        f'<meta property="og:url" content="{full}"',
+        text,
+        count=1,
+    )
+    refresh = f'<meta http-equiv="refresh" content="0;url={target}" />\n  <meta name="robots" content="noindex, follow" />'
+    text = re.sub(r'(<meta name="viewport"[^>]*>)', r"\1\n  " + refresh, text, count=1)
+    return text
+
+
 def write_garage_signs_blog():
     slug = "blog/5-signs-your-fort-collins-garage-needs-a-cleanout.html"
     filename = "5-signs-your-fort-collins-garage-needs-a-cleanout.html"
@@ -3231,7 +3314,7 @@ def write_garage_signs_blog():
 <p>Walk the garage with your phone and shoot wide photos — one from the door, one from each corner. Text them to <a href="sms:+19709991818" class="content-link">(970) 999-1818</a> or <a href="/book.html" class="content-link">book online</a> for a flat-rate quote in about 5 minutes. Read <a href="/blog/how-to-prepare-for-garage-cleanout.html" class="content-link">how to prepare for a garage cleanout</a> so the job goes faster. Same-day slots are often available in Fort Collins, Loveland, and Windsor when the schedule allows.</p>"""
     cmp = {
         "slug": slug,
-        "title": "5 Signs Your Fort Collins Garage Needs a Cleanout | Easy Garage",
+        "title": "5 Signs Your Garage Needs a Cleanout | Fort Collins",
         "desc": "Five clear signs your Fort Collins garage needs a professional cleanout — parking outside, blocked aisles, storage unit fees, bulky junk, and avoidance. Flat-rate quotes from photos.",
         "h1": "5 Signs Your Fort Collins Garage Needs a Cleanout",
         "intro": "Not sure if your garage is \"bad enough\" for help? These five Fort Collins-specific signs mean a flat-rate cleanout will save you more time and money than another year of parking outside.",
@@ -3348,7 +3431,7 @@ def patch_static_pages():
         "loveland-garage-cleanout.html", "windsor-garage-cleanout.html",
         "wellington-junk-removal.html", "timnath-junk-removal.html",
         "old-town-fort-collins-junk-removal.html",
-        "Ads.html", "ads.html",
+        "ads.html",
     ]
     for pattern in patterns:
         for path in ROOT.glob(pattern):
@@ -3402,13 +3485,6 @@ def patch_static_pages():
                 )
             if path.name == "employee.html":
                 text = patch_employee_portal(text)
-            if path.name == "timnath-junk-removal.html":
-                text = re.sub(
-                    r'<meta name="description" content="[^"]*"',
-                    '<meta name="description" content="Timnath garage cleanout &amp; junk removal — flat-rate from photos, same-day when available. Timnath Ranch &amp; Larimer County. 5-min quote."',
-                    text,
-                    count=1,
-                )
             css_patch = NAV_FOOTER_PATCH_CSS
             if ".quick-answer" not in text and "<style>" in text:
                 css_patch += "\n.quick-answer{background:#fff;border:1px solid rgba(10,22,40,.1);border-left:3px solid #ff5b1f;padding:18px 22px;margin:0 auto 32px;max-width:1240px;font-size:15px;line-height:1.6}.quick-answer .qa-label{font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:#d94208;margin-bottom:8px;display:block}\n.article-toc{background:#ebe4d6;border:1px solid rgba(10,22,40,.08);padding:18px 22px;margin-bottom:28px;border-radius:4px}.article-toc h2{font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:#6b7280;margin-bottom:12px}.article-toc ol{margin:0 0 0 20px;font-size:14px}\n.ba-placeholder-note{font-family:'JetBrains Mono',monospace;font-size:9px;color:#6b7280;margin-top:6px;text-align:center}\na:focus-visible,button:focus-visible{outline:2px solid #ff5b1f;outline-offset:2px}\n"
@@ -3421,7 +3497,7 @@ def patch_static_pages():
                 org_block = f'<script type="application/ld+json">\n{json.dumps(organization_schema(), ensure_ascii=False, indent=2)}\n</script>\n'
                 text = re.sub(r"(</script>\s*)(<script type=\"application/ld\+json\">)", org_block + r"\1\2", text, count=1)
             if path.parent.name == "blog" and path.name != "index.html" and "article-toc" not in text:
-                m = re.search(r'(<div class="article-body[^"]*">)([\s\S]*?)(</div>\s*</article>)', text)
+                m = _blog_article_body_match(text)
                 if m and m.group(2).count("<h2") >= 2:
                     content = inject_heading_ids(m.group(2))
                     toc = article_toc_html(content)
@@ -3460,6 +3536,73 @@ def patch_static_pages():
                 text = re.sub(r"(<head[^>]*>\s*\n)", r"\1" + block + "\n", text, count=1, flags=re.I)
             if text != orig:
                 path.write_text(text, encoding="utf-8")
+
+
+def audit_seo_meta(fix_long_titles=False):
+    """Report titles >60 chars and duplicate title/description meta. Optionally trim titles."""
+    issues = []
+    titles = {}
+    descriptions = {}
+    title_fixes = {
+        "Old Town Fort Collins Junk Removal & Garage Cleanout | Easy Garage Cleaning": "Old Town Junk Removal Fort Collins | Easy Garage",
+        "Timnath Junk Removal & Garage Cleanout | Easy Garage Cleaning": "Timnath Junk Removal CO | Easy Garage Cleaning",
+        "The garage you've been meaning to deal with — handled tonight | Fort Collins": "Garage Cleanout Tonight | Fort Collins CO",
+        "Garage Cleanouts Fort Collins CO | Get Your Garage Back Fast": "Garage Cleanouts Fort Collins CO | Easy Garage",
+        "5 Signs Your Fort Collins Garage Needs a Cleanout | Easy Garage": "5 Signs Your Garage Needs a Cleanout | Fort Collins",
+        "Estate Cleanout Checklist for Colorado Homeowners (Step-by-Step)": "Estate Cleanout Checklist Colorado | Step-by-Step",
+        "Fort Collins Junk Removal: What You Can and Can't Throw Away (2026)": "Fort Collins Junk Removal: What You Can & Can't Haul",
+        "Garage Organization After Cleanout Fort Collins | Keep It Clear": "Garage Organization After Cleanout | Fort Collins",
+        "Garage Organizing Ideas for a Two-Car Garage (That Actually Work)": "Two-Car Garage Organizing Ideas That Work",
+        "Habitat for Humanity ReStore Fort Collins: What They Accept (and What to Do With the Rest)": "Habitat ReStore Fort Collins | What They Accept",
+        "How Much Does a Garage Cleanout Cost in Fort Collins? (2026 Prices)": "Garage Cleanout Cost Fort Collins (2026 Prices)",
+        "Garage Cleanout &amp; Junk Removal Tips | Easy Garage Cleaning Blog": "Garage Cleanout Tips | Easy Garage Blog",
+        "How to Get a Tax Deduction When Donating Your Junk (IRS Rules Explained)": "Tax Deduction for Donating Junk | IRS Rules",
+        "What to Do With Old Appliances in Fort Collins (Don't Just Dump Them)": "Old Appliances in Fort Collins | Disposal Guide",
+        "Loveland Garage Cleanout &amp; Junk Removal | Easy Garage Cleaning": "Loveland Garage Cleanout | Easy Garage",
+        "Project: Old Town Fort Collins Garage Cleanout | Easy Garage Cleaning": "Old Town Garage Cleanout Project | Fort Collins",
+        "Project: Loveland Storage Unit Cleanout | Easy Garage Cleaning": "Loveland Storage Unit Cleanout Project",
+        "Service Areas | Fort Collins, Loveland, Windsor & Northern Colorado": "Service Areas | Fort Collins & Northern CO",
+        "Wellington Junk Removal &amp; Junk Removal | Easy Garage Cleaning": "Wellington Junk Removal | Easy Garage",
+        "Wellington Junk Removal &amp; Garage Cleanout | Easy Garage Cleaning": "Wellington Junk Removal | Easy Garage",
+        "Windsor Garage Cleanout &amp; Junk Removal | Easy Garage Cleaning": "Windsor Garage Cleanout | Easy Garage",
+    }
+    index_title = "Easy Garage Cleaning | Fort Collins Garage Cleanouts"
+    for path in sorted(ROOT.rglob("*.html")):
+        if "employee" in path.name.lower():
+            continue
+        rel = path.relative_to(ROOT).as_posix()
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        tm = re.search(r"<title>([^<]+)</title>", text, re.I)
+        dm = re.search(r'<meta name="description" content="([^"]*)"', text, re.I)
+        if tm:
+            title = tm.group(1).strip()
+            if len(title) > 60:
+                issues.append(f"title>{60}: {rel} ({len(title)}) {title[:70]}")
+                if fix_long_titles and title in title_fixes:
+                    new_title = title_fixes[title]
+                    path.write_text(
+                        text.replace(f"<title>{title}</title>", f"<title>{new_title}</title>", 1),
+                        encoding="utf-8",
+                    )
+            if rel == "index.html" and fix_long_titles and title != index_title:
+                path.write_text(
+                    text.replace(f"<title>{title}</title>", f"<title>{index_title}</title>", 1),
+                    encoding="utf-8",
+                )
+            if title in titles:
+                issues.append(f"dup title: {rel} + {titles[title]}")
+            else:
+                titles[title] = rel
+        if dm:
+            desc = dm.group(1).strip()
+            if desc in descriptions and descriptions[desc] != rel:
+                issues.append(f"dup meta: {rel} + {descriptions[desc]}")
+            else:
+                descriptions[desc] = rel
+    return issues
 
 
 def main():
@@ -3563,6 +3706,14 @@ def main():
     generate_llms_txt()
     generate_ai_txt()
     patch_static_pages()
+
+    seo_issues = audit_seo_meta(fix_long_titles=True)
+    if seo_issues:
+        print("SEO audit:", len(seo_issues), "issue(s)")
+        for issue in seo_issues[:20]:
+            print(" ", issue)
+    else:
+        print("SEO audit: OK")
 
     print("Generated:", len(generated), "pages")
     for g in generated:

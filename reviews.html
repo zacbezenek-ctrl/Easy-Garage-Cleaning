@@ -248,6 +248,23 @@ img,video,iframe,svg{max-width:100%;height:auto}
 .faq-search{width:100%;padding:14px 18px;font-size:var(--text-md);border:1px solid rgba(10,22,40,.15);border-radius:var(--radius-md);min-height:48px}
 .faq-item.is-hidden,details.faq-item.is-hidden{display:none}
 .faq-nav-list a.is-active{color:var(--accent-deep);background:var(--paper-warm);font-weight:700}
+.areas-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin-top:28px}@media(min-width:640px){.areas-grid{grid-template-columns:repeat(3,1fr)}}@media(min-width:900px){.areas-grid{grid-template-columns:repeat(4,1fr)}}
+.area-card{display:flex;flex-direction:column;gap:6px;padding:18px 16px;background:var(--white);border:1px solid rgba(10,22,40,.08);border-top:3px solid var(--accent);border-radius:var(--radius-md);min-height:88px;transition:border-color .2s,box-shadow .2s,transform .2s}
+.area-card:hover{border-color:var(--accent);box-shadow:var(--shadow-md);transform:translateY(-2px)}
+.area-card strong{font-family:var(--font-display);font-size:17px;font-weight:600;color:var(--ink)}
+.area-card span{font-size:12px;color:var(--muted);line-height:1.4}
+.areas-map{margin-top:32px;border:2px dashed rgba(10,22,40,.12);border-radius:var(--radius-md);overflow:hidden;background:linear-gradient(135deg,var(--paper-warm),var(--white));min-height:220px;display:flex;align-items:center;justify-content:center;text-align:center;padding:24px}
+.areas-map-inner{max-width:52ch;font-size:14px;color:var(--muted);line-height:1.6}
+.areas-map-inner strong{display:block;font-family:var(--font-mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--accent-deep);margin-bottom:8px}
+.reviews-grid{display:grid;grid-template-columns:1fr;gap:16px;margin-top:28px}@media(min-width:640px){.reviews-grid{grid-template-columns:repeat(2,1fr)}}@media(min-width:900px){.reviews-grid{grid-template-columns:repeat(3,1fr)}}
+.review-card{background:var(--white);border:1px solid rgba(10,22,40,.08);border-left:3px solid var(--accent);padding:20px;border-radius:var(--radius-md);min-height:120px}
+.review-card-placeholder{font-family:var(--font-mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:10px}
+.review-embed-slot{margin:32px 0;padding:24px;background:var(--paper-warm);border:2px dashed rgba(10,22,40,.12);border-radius:var(--radius-md);min-height:180px;display:flex;align-items:center;justify-content:center;text-align:center}
+.review-embed-placeholder{font-size:14px;color:var(--muted);max-width:48ch;line-height:1.55}
+.review-embed-note{margin-top:24px;padding:16px 20px;background:var(--white);border:1px solid rgba(10,22,40,.08);border-radius:var(--radius-md);font-size:14px;color:var(--text);line-height:1.6}
+.review-actions{display:flex;flex-wrap:wrap;gap:12px;justify-content:center;margin-top:24px}
+.project-card .project-card-link{font-size:13px;font-weight:600;color:var(--accent-deep);margin-top:auto}
+.project-card h3 a:hover{color:var(--accent-deep)}
 </style>
 </head>
 <body>
@@ -379,36 +396,50 @@ img,video,iframe,svg{max-width:100%;height:auto}
 <section class="hero"><div class="wrap">
 <div class="hero-eyebrow mono">Social proof</div>
 <h1 class="hero-title" style="max-width:none">Customer <em>reviews</em></h1>
-<p class="hero-sub">We're building our Fort Collins reputation one reclaimed garage at a time. When verified Google reviews are live, they'll appear here.</p>
+<p class="hero-sub">We're building our Fort Collins reputation one reclaimed garage at a time. Verified Google reviews will appear here — and on our Business Profile.</p>
 </div></section>
 <section class="social-proof"><div class="wrap">
 <div class="section-head reveal"><span class="mono section-num">Reviews</span>
 <h2 class="section-title">What neighbors <em>say</em></h2>
 </div>
+<div class="review-embed-slot reveal" id="gbp-reviews-embed">
+<!-- GOOGLE BUSINESS PROFILE EMBED — setup steps:
+  1. business.google.com → your listing → Home
+  2. Share &amp; promote → Embed a map OR third-party widget that shows reviews
+  3. Copy the iframe/script and paste it here (replace this comment block)
+  4. Do NOT add AggregateRating schema until review count is verified in GBP
+-->
+<p class="review-embed-placeholder">Google reviews widget goes here — paste your GBP embed iframe above this line in reviews.html (or update render_reviews in _generate_site.py).</p>
+</div>
 <div class="reviews-grid reveal"><div class="review-card reveal">
-<div class="review-card-placeholder">Add Google reviews</div>
-<p style="color:var(--text);font-size:14px">Placeholder card 1 — import verified Google Business Profile reviews when available.</p>
+<div class="review-card-placeholder">Review slot 1</div>
+<p style="color:var(--text);font-size:14px">Paste a verified Google review quote here when available from your Business Profile.</p>
 </div><div class="review-card reveal">
-<div class="review-card-placeholder">Add Google reviews</div>
-<p style="color:var(--text);font-size:14px">Placeholder card 2 — import verified Google Business Profile reviews when available.</p>
+<div class="review-card-placeholder">Review slot 2</div>
+<p style="color:var(--text);font-size:14px">Paste a verified Google review quote here when available from your Business Profile.</p>
 </div><div class="review-card reveal">
-<div class="review-card-placeholder">Add Google reviews</div>
-<p style="color:var(--text);font-size:14px">Placeholder card 3 — import verified Google Business Profile reviews when available.</p>
+<div class="review-card-placeholder">Review slot 3</div>
+<p style="color:var(--text);font-size:14px">Paste a verified Google review quote here when available from your Business Profile.</p>
 </div><div class="review-card reveal">
-<div class="review-card-placeholder">Add Google reviews</div>
-<p style="color:var(--text);font-size:14px">Placeholder card 4 — import verified Google Business Profile reviews when available.</p>
+<div class="review-card-placeholder">Review slot 4</div>
+<p style="color:var(--text);font-size:14px">Paste a verified Google review quote here when available from your Business Profile.</p>
 </div><div class="review-card reveal">
-<div class="review-card-placeholder">Add Google reviews</div>
-<p style="color:var(--text);font-size:14px">Placeholder card 5 — import verified Google Business Profile reviews when available.</p>
+<div class="review-card-placeholder">Review slot 5</div>
+<p style="color:var(--text);font-size:14px">Paste a verified Google review quote here when available from your Business Profile.</p>
 </div><div class="review-card reveal">
-<div class="review-card-placeholder">Add Google reviews</div>
-<p style="color:var(--text);font-size:14px">Placeholder card 6 — import verified Google Business Profile reviews when available.</p>
+<div class="review-card-placeholder">Review slot 6</div>
+<p style="color:var(--text);font-size:14px">Paste a verified Google review quote here when available from your Business Profile.</p>
 </div></div>
 <div class="review-embed-note reveal">
-<strong>Google Business Profile widget</strong> — In Google Business Profile → Share &amp; promote → Embed reviews, copy the script or iframe, and paste above this note in reviews.html. Do not publish AggregateRating schema until review count and rating are verified.
+<strong>Manual review cards (optional)</strong> — Until the embed is live, you can replace placeholder cards above with real quotes copied from Google Business Profile. Do not publish star counts in schema until verified.
 <!-- AggregateRating schema: add only when Google review count and rating are verified in GBP -->
 </div>
-<p class="reveal" style="margin-top:24px;text-align:center"><a href="/book.html" class="btn-primary">Get Free Quote</a> · <a href="/service-areas.html" class="content-link">Service areas →</a></p>
+<div class="review-actions reveal">
+<a href="https://search.google.com/local/writereview?placeid=YOUR_GBP_PLACE_ID" class="btn-secondary" rel="noopener noreferrer">Leave a review on Google</a>
+<!-- Replace YOUR_GBP_PLACE_ID in _generate_site.py GBP_REVIEW_URL with your Place ID -->
+<a href="/book.html" class="btn-primary">Get Free Quote</a>
+</div>
+<p class="reveal" style="margin-top:16px;text-align:center"><a href="/service-areas.html" class="content-link">Service areas →</a></p>
 </div></section>
 </main>
 <a href="sms:+19709991818?body=Hi!%20I'd%20like%20a%20quote.%20Here%20are%20photos%20of%20my%20garage:" class="mobile-text-chip" aria-label="Text us photos for a quote"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>Text us photos</a>
@@ -577,7 +608,7 @@ function initMultiStepForm(form){
     submitting=true;
     const btn=form.querySelector('[type="submit"]');
     if(btn){btn.disabled=true;btn.classList.add('is-loading');btn.textContent='Sending…';}
-    if(typeof gtag==='function'){gtag('event','quote_submit',{event_category:'lead',event_label:svc?.value||'quote'});}
+    if(typeof gtag==='function'){gtag('event','quote_submit',{event_category:'lead',event_label:svc?.value||'quote',flow_type:flowInput?.value||''});}
   });
   show(1);
 }
