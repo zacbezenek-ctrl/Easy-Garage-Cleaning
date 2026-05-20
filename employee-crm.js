@@ -22,7 +22,11 @@
     { id: 'paid', label: 'Paid', color: '#22c55e' },
   ];
 
-  const LEAD_STATUSES = ['new', 'contacted', 'quoted', 'converted', 'lost'];
+  const LEAD_STATUSES = ['new', 'contacted', 'quoted', 'scheduled', 'converted', 'lost'];
+  const LEAD_ASSIGNEES = [
+    { id: 'Tyler', label: 'Tyler', aliases: ['Tyler', 'TylerG'] },
+    { id: 'Zac', label: 'Zac', aliases: ['Zac', 'ZacB'] },
+  ];
   const QUOTE_STATUSES = ['draft', 'sent', 'approved', 'declined'];
   const PAY_METHODS = ['cash', 'card', 'check'];
   const CREW = ['ZacB', 'TylerG', 'Both'];
@@ -42,6 +46,12 @@
   let custSearchQ = '';
   let _detailJobId = null;
   let _detailCustId = null;
+  let _detailLeadId = null;
+  let leadsFilter = { status: 'all', source: 'all', assignedTo: 'all', dateFrom: '', dateTo: '', search: '' };
+  let leadsSort = 'newest';
+  let leadsFiltersOpen = false;
+  let _leadsLoading = true;
+  let _leadsError = null;
 
   function loadPrefs() {
     try {
@@ -279,7 +289,10 @@
       .slice(0, 8);
     const counts = countByPipeline(jobs);
     const rev = revenueThisWeek(jobs);
-    const inbox = leads.filter((l) => !l.respondedAt && (l.crmStatus || 'new') !== 'converted' && (l.crmStatus || 'new') !== 'lost');
+    const inbox = leads.filter((l) => {
+      const st = getLeadStatus(l);
+      return st !== 'converted' && st !== 'lost';
+    });
     const overdueQuotes = jobs.filter(
       (j) =>
         getPipelineStatus(j) === 'quoted' &&
@@ -599,7 +612,516 @@
     openCustomerDetail(id);
   };
 
-  /* ── Leads CRM ─────────────────────────────────────── */
+  /* ── Leads CRM (full stack) ────────────────────────── */
+  function getLeadStatus(lead) {
+    return lead?.status || lead?.crmStatus || 'new';
+  }
+
+  function getLeadDisplayName(lead) {
+    return lead?.name || lead?.firstName || lead?.full_name || lead?.phone || lead?.email || 'Unknown';
+  }
+
+  function fmtLeadField(val, type) {
+    if (val === null || val === undefined || val === '') return '—';
+    if (type === 'bool') return val ? 'Yes' : 'No';
+    return String(val);
+  }
+
+  function fmtTs(iso) {
+    if (!iso) return { relative: '—', absolute: '—' };
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return { relative: String(iso), absolute: String(iso) };
+    const now = Date.now();
+    const diff = now - d.getTime();
+    const abs = d.toLocaleString('en-US', {
+      weekday: 'short',
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+    });
+    const sec = Math.floor(diff / 1000);
+    let relative;
+    if (sec < 60) relative = 'just now';
+    else if (sec < 3600) relative = Math.floor(sec / 60) + 'm ago';
+    else if (sec < 86400) relative = Math.floor(sec / 3600) + 'h ago';
+    else if (sec < 604800) relative = Math.floor(sec / 86400) + 'd ago';
+    else relative = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    return { relative, absolute: abs };
+  }
+
+  function fmtTsHtml(iso) {
+    const t = fmtTs(iso);
+    if (t.relative === '—') return '<span class="lead-field-val muted-val">—</span>';
+    return `<span class="lead-field-val">${esc(t.relative)}</span><span class="lead-field-sub">${esc(t.absolute)}</span>`;
+  }
+
+  function assigneeLabel(id) {
+    if (!id) return '—';
+    if (id === 'TylerG' || id === 'Tyler') return 'Tyler';
+    if (id === 'ZacB' || id === 'Zac') return 'Zac';
+    return id;
+  }
+
+  function assigneeMatches(leadAssignee, filterId) {
+    if (!filterId) return !leadAssignee;
+    const entry = LEAD_ASSIGNEES.find((a) => a.id === filterId);
+    if (entry) return entry.aliases.includes(leadAssignee);
+    return (leadAssignee || '') === filterId;
+  }
+
+  function leadIsAssignedTo(lead, assigneeId) {
+    const entry = LEAD_ASSIGNEES.find((a) => a.id === assigneeId);
+    if (!entry) return (lead.assignedTo || '') === assigneeId;
+    return entry.aliases.includes(lead.assignedTo);
+  }
+
+  function getSlaInfo(lead) {
+    const st = getLeadStatus(lead);
+    if (st !== 'new' || !lead.notifiedAt) return null;
+    const elapsed =
+      typeof leadElapsed === 'function'
+        ? leadElapsed(lead)
+        : Math.floor((Date.now() - new Date(lead.notifiedAt).getTime()) / 1000);
+    const remaining = 120 - elapsed;
+    const responded = !!lead.respondedAt;
+    let cls = 'ok';
+    if (responded) cls = 'done';
+    else if (remaining <= 0) cls = 'over';
+    else if (remaining <= 60) cls = 'warn';
+    return {
+      elapsed,
+      remaining,
+      responded,
+      cls,
+      text: responded
+        ? typeof fmtCountdown === 'function'
+          ? '✓ ' + fmtCountdown(lead.responseSeconds ?? elapsed)
+          : 'Responded'
+        : typeof fmtCountdown === 'function'
+          ? fmtCountdown(Math.max(0, remaining))
+          : remaining + 's',
+    };
+  }
+
+  function uniqueLeadSources(leads) {
+    const set = new Set();
+    leads.forEach((l) => {
+      if (l.source) set.add(l.source);
+    });
+    return [...set].sort();
+  }
+
+  function filterAndSortLeads(leads) {
+    let list = [...leads];
+    const q = (leadsFilter.search || '').toLowerCase().trim();
+    if (q) {
+      list = list.filter((l) => {
+        const hay = [l.name, l.firstName, l.phone, l.email, l.source, l.items, l.serviceZip, l.assignedTo]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase();
+        return hay.includes(q);
+      });
+    }
+    if (leadsFilter.status !== 'all') list = list.filter((l) => getLeadStatus(l) === leadsFilter.status);
+    if (leadsFilter.source !== 'all') list = list.filter((l) => (l.source || '') === leadsFilter.source);
+    if (leadsFilter.assignedTo !== 'all') {
+      if (leadsFilter.assignedTo === '') list = list.filter((l) => !l.assignedTo);
+      else list = list.filter((l) => assigneeMatches(l.assignedTo, leadsFilter.assignedTo));
+    }
+    if (leadsFilter.dateFrom) {
+      list = list.filter((l) => (l.createdAt || l.timestamp || '') >= leadsFilter.dateFrom);
+    }
+    if (leadsFilter.dateTo) {
+      const end = leadsFilter.dateTo + 'T23:59:59';
+      list = list.filter((l) => (l.createdAt || l.timestamp || '') <= end);
+    }
+    if (leadsSort === 'followup') {
+      list.sort((a, b) => {
+        const af = a.nextFollowUpAt || '9999';
+        const bf = b.nextFollowUpAt || '9999';
+        return af.localeCompare(bf);
+      });
+    } else if (leadsSort === 'status') {
+      list.sort((a, b) => getLeadStatus(a).localeCompare(getLeadStatus(b)));
+    } else {
+      list.sort((a, b) =>
+        (b.createdAt || b.timestamp || '').localeCompare(a.createdAt || a.timestamp || '')
+      );
+    }
+    return list;
+  }
+
+  window.setLeadsFilter = function (key, val) {
+    leadsFilter[key] = val;
+    renderLeadsEnhanced();
+  };
+
+  window.setLeadsSort = function (sort, btn) {
+    leadsSort = sort;
+    document.querySelectorAll('.leads-sort-btn').forEach((b) => b.classList.toggle('active', b.dataset.sort === sort));
+    if (btn) btn.classList.add('active');
+    renderLeadsEnhanced();
+  };
+
+  window.toggleLeadsFilters = function () {
+    leadsFiltersOpen = !leadsFiltersOpen;
+    renderLeadsToolbar();
+  };
+
+  function renderLeadsToolbar() {
+    const host = document.getElementById('leads-toolbar-host');
+    if (!host) return;
+    const leads = typeof leadsCache !== 'undefined' ? leadsCache : [];
+    const sources = uniqueLeadSources(leads);
+    const filtered = filterAndSortLeads(leads);
+    host.innerHTML = `
+      <div class="leads-header">
+        <div class="leads-header-row">
+          <div>
+            <h2>Leads inbox</h2>
+            <div class="leads-header-sub">Web3forms → Zapier → Firestore · 2 min SLA on new Facebook leads</div>
+          </div>
+          <div style="display:flex;gap:.45rem;flex-wrap:wrap;align-items:center">
+            <span class="leads-count-pill"><strong>${filtered.length}</strong> / ${leads.length}</span>
+            <button type="button" class="btn-book" onclick="openLeadModal()">+ Lead</button>
+          </div>
+        </div>
+      </div>
+      <div class="leads-toolbar">
+        <div class="leads-search-wrap">
+          <span class="leads-search-icon">🔍</span>
+          <input type="search" class="leads-search" placeholder="Search name, phone, email…" value="${esc(leadsFilter.search)}"
+            oninput="setLeadsFilter('search', this.value)" aria-label="Search leads">
+        </div>
+        <button type="button" class="leads-filter-toggle ${leadsFiltersOpen ? 'open' : ''}" onclick="toggleLeadsFilters()">
+          ${leadsFiltersOpen ? '▲ Hide filters' : '▼ Filters & sort'}
+        </button>
+        <div class="leads-filters-collapsible ${leadsFiltersOpen ? '' : 'collapsed'}">
+          <div class="leads-filter-row">
+            <select aria-label="Filter by status" onchange="setLeadsFilter('status', this.value)">
+              <option value="all" ${leadsFilter.status === 'all' ? 'selected' : ''}>All statuses</option>
+              ${LEAD_STATUSES.map((s) => `<option value="${s}" ${leadsFilter.status === s ? 'selected' : ''}>${s}</option>`).join('')}
+            </select>
+            <select aria-label="Filter by source" onchange="setLeadsFilter('source', this.value)">
+              <option value="all">All sources</option>
+              ${sources.map((s) => `<option value="${esc(s)}" ${leadsFilter.source === s ? 'selected' : ''}>${esc(s)}</option>`).join('')}
+            </select>
+            <select aria-label="Filter by assignee" onchange="setLeadsFilter('assignedTo', this.value)">
+              <option value="all">All assignees</option>
+              ${LEAD_ASSIGNEES.map((a) => `<option value="${a.id}" ${leadsFilter.assignedTo === a.id ? 'selected' : ''}>${a.label}</option>`).join('')}
+              <option value="" ${leadsFilter.assignedTo === '' ? 'selected' : ''}>Unassigned</option>
+            </select>
+            <input type="date" aria-label="From date" value="${esc(leadsFilter.dateFrom)}" onchange="setLeadsFilter('dateFrom', this.value)">
+            <input type="date" aria-label="To date" value="${esc(leadsFilter.dateTo)}" onchange="setLeadsFilter('dateTo', this.value)">
+          </div>
+          <div class="leads-sort-row">
+            <span class="leads-sort-lbl">Sort</span>
+            <button type="button" class="leads-sort-btn ${leadsSort === 'newest' ? 'active' : ''}" data-sort="newest" onclick="setLeadsSort('newest', this)">Newest</button>
+            <button type="button" class="leads-sort-btn ${leadsSort === 'followup' ? 'active' : ''}" data-sort="followup" onclick="setLeadsSort('followup', this)">Follow-up due</button>
+            <button type="button" class="leads-sort-btn ${leadsSort === 'status' ? 'active' : ''}" data-sort="status" onclick="setLeadsSort('status', this)">Status</button>
+          </div>
+        </div>
+      </div>`;
+
+    const bar = document.getElementById('leads-status-bar');
+    if (bar) {
+      const counts = {};
+      LEAD_STATUSES.forEach((s) => (counts[s] = 0));
+      leads.forEach((l) => {
+        const st = getLeadStatus(l);
+        if (counts[st] !== undefined) counts[st]++;
+      });
+      bar.innerHTML = LEAD_STATUSES.filter((s) => counts[s] > 0)
+        .map((s) => `<span class="leads-stat-chip"><span class="lead-pill ${s}">${s}</span> <em>${counts[s]}</em></span>`)
+        .join('');
+    }
+  }
+
+  function renderLeadRow(lead) {
+    const st = getLeadStatus(lead);
+    const sla = getSlaInfo(lead);
+    const created = fmtTs(lead.createdAt || lead.timestamp);
+    const rowCls = [
+      sla && !sla.responded && sla.cls === 'over' ? 'urgent' : '',
+      sla && !sla.responded && sla.cls === 'warn' ? 'warning' : '',
+      lead.prohibitedItemsFlag ? 'has-prohibited' : '',
+    ]
+      .filter(Boolean)
+      .join(' ');
+    const phoneDigits = (lead.phone || '').replace(/\D/g, '');
+    return `<button type="button" class="lead-row ${rowCls}" onclick="openLeadDetail('${lead.id}')" role="listitem">
+      <div class="lead-row-main">
+        <div class="lead-row-top">
+          <div class="lead-row-name">${esc(getLeadDisplayName(lead))}</div>
+          <div class="lead-row-badges">
+            <span class="lead-pill ${st}">${esc(st)}</span>
+            ${lead.prohibitedItemsFlag ? '<span class="lead-pill prohibited">⚠ Prohibited</span>' : ''}
+            ${lead.scheduledJobAt ? '<span class="lead-pill booking">📅 Booked</span>' : ''}
+          </div>
+        </div>
+        <div class="lead-row-meta">
+          ${lead.phone ? `<span>📞 ${esc(lead.phone)}</span>` : ''}
+          ${lead.source ? `<span>${esc(lead.source)}</span>` : ''}
+          ${lead.items ? `<span>${esc(lead.items)}</span>` : ''}
+          ${lead.assignedTo ? `<span>👤 ${esc(assigneeLabel(lead.assignedTo))}</span>` : ''}
+          <span>${esc(created.relative)}</span>
+          ${lead.contactAttempts ? `<span>${lead.contactAttempts} attempt(s)</span>` : ''}
+        </div>
+      </div>
+      <div class="lead-row-side">
+        ${
+          sla
+            ? `<div class="lead-sla ${sla.responded ? 'done' : sla.cls}">${esc(sla.text)}</div>`
+            : ''
+        }
+        <span style="font-size:.65rem;color:var(--muted)">→</span>
+      </div>
+    </button>`;
+  }
+
+  window.renderLeadsEnhanced = function () {
+    renderLeadsToolbar();
+    const el = document.getElementById('leads-list');
+    if (!el || typeof leadsCache === 'undefined') return;
+
+    if (_leadsError) {
+      el.innerHTML = `<div class="leads-state error"><div class="ico">⚠️</div><h3>Could not load leads</h3><p>${esc(_leadsError.message || String(_leadsError))}</p><button type="button" class="btn-book" onclick="location.reload()">Retry</button></div>`;
+      return;
+    }
+
+    if (_leadsLoading && !leadsCache.length) {
+      el.innerHTML = `<div class="leads-state"><div class="leads-spinner"></div><h3>Loading leads…</h3><p>Connecting to Firestore in real time.</p></div>`;
+      return;
+    }
+
+    const filtered = filterAndSortLeads(leadsCache);
+    if (!filtered.length) {
+      el.innerHTML = `<div class="leads-state"><div class="ico">📥</div><h3>${leadsCache.length ? 'No matches' : 'No leads yet'}</h3><p>${leadsCache.length ? 'Try adjusting filters or search.' : 'Zapier / Facebook Ads leads appear here automatically.'}</p><button type="button" class="btn-book" onclick="openLeadModal()">+ Add lead</button></div>`;
+      return;
+    }
+
+    el.innerHTML = filtered.map((l) => renderLeadRow(l)).join('');
+    if (_detailLeadId) openLeadDetail(_detailLeadId, true);
+  };
+
+  window.onLeadsSnapshot = function () {
+    _leadsLoading = false;
+    _leadsError = null;
+    renderLeadsEnhanced();
+    if (typeof updateLeadsBadge === 'function') updateLeadsBadge();
+    if (document.getElementById('tab-leads')?.classList.contains('active') === false) {
+      /* still refresh badge */
+    }
+  };
+
+  window.onLeadsError = function (err) {
+    _leadsLoading = false;
+    _leadsError = err;
+    renderLeadsEnhanced();
+  };
+
+  window.openLeadDetail = function (id, silent) {
+    _detailLeadId = id;
+    const lead = leadsCache.find((l) => l.id === id);
+    const drawer = document.getElementById('lead-detail-drawer');
+    const body = document.getElementById('lead-detail-body');
+    const title = document.getElementById('lead-detail-title');
+    const sub = document.getElementById('lead-detail-subtitle');
+    if (!lead || !drawer || !body) return;
+
+    if (title) title.textContent = getLeadDisplayName(lead);
+    if (sub) sub.textContent = [lead.phone, lead.email, lead.source].filter(Boolean).join(' · ');
+
+    const st = getLeadStatus(lead);
+    const sla = getSlaInfo(lead);
+    const phone = (lead.phone || '').replace(/\D/g, '');
+    const notes = (lead.notesLog || []).slice().reverse();
+
+    body.innerHTML = `
+      ${
+        sla
+          ? `<div class="lead-sla-banner ${sla.responded ? 'ok' : sla.cls}"><span>${sla.responded ? 'Responded within SLA window' : sla.remaining <= 0 ? 'SLA exceeded — respond now' : '2-min SLA countdown'}</span><time>${esc(sla.text)}</time></div>`
+          : ''
+      }
+      ${lead.prohibitedItemsFlag ? '<div class="lead-sla-banner over"><span>⚠ Prohibited items flagged</span></div>' : ''}
+      <div class="lead-detail-actions">
+        ${phone ? `<a class="bsm edit" href="tel:${phone}">📞 Call</a><a class="bsm edit" href="sms:${phone}">💬 Text</a>` : ''}
+        ${lead.email ? `<a class="bsm edit" href="mailto:${esc(lead.email)}">✉️ Email</a>` : ''}
+        <button type="button" class="bsm edit" onclick="logContactAttempt('${lead.id}')">Log attempt</button>
+        ${st === 'new' && lead.notifiedAt && !lead.respondedAt ? `<button type="button" class="bsm approve" onclick="respondLead('${lead.id}','called')">📞 SLA</button>` : ''}
+        <button type="button" class="bsm edit" onclick="convertLeadToJob('${lead.id}')">→ Job</button>
+        <button type="button" class="bsm del" onclick="promptMarkLeadLost('${lead.id}')">Mark lost</button>
+      </div>
+
+      <div class="lead-section">
+        <div class="lead-section-title">Contact</div>
+        <div class="lead-field-grid">
+          ${leadField('Name', lead.name)}
+          ${leadField('First name', lead.firstName)}
+          ${leadField('Phone', lead.phone)}
+          ${leadField('Email', lead.email)}
+          ${leadField('Service ZIP', lead.serviceZip)}
+        </div>
+      </div>
+
+      <div class="lead-section">
+        <div class="lead-section-title">Lead meta</div>
+        <div class="lead-field-grid">
+          <div class="lead-field">
+            <span class="lead-field-lbl">Status</span>
+            <div class="lead-field-row">
+              <select class="lead-inline-select" onchange="setLeadStatus('${lead.id}', this.value)">
+                ${LEAD_STATUSES.map((s) => `<option value="${s}" ${st === s ? 'selected' : ''}>${s}</option>`).join('')}
+              </select>
+            </div>
+          </div>
+          ${leadField('Source', lead.source)}
+          ${leadField('Items', lead.items || lead.service)}
+          <div class="lead-field">
+            <span class="lead-field-lbl">Assigned to</span>
+            <div class="lead-field-row">
+              ${LEAD_ASSIGNEES.map(
+                (a) =>
+                  `<button type="button" class="bsm ${leadIsAssignedTo(lead, a.id) ? 'approve' : 'edit'}" onclick="assignLead('${lead.id}','${a.id}')">${a.label}</button>`
+              ).join('')}
+            </div>
+          </div>
+          ${leadField('Prohibited items', lead.prohibitedItemsFlag, 'bool', lead.prohibitedItemsFlag)}
+          ${leadField('Conversation active', lead.conversationActive, 'bool')}
+        </div>
+      </div>
+
+      <div class="lead-section">
+        <div class="lead-section-title">Activity</div>
+        <div class="lead-field-grid">
+          ${leadField('Contact attempts', lead.contactAttempts ?? 0)}
+          ${leadTsField('Created', lead.createdAt || lead.timestamp)}
+          ${leadTsField('Last contact', lead.lastContactAt)}
+          ${leadTsField('Last touch', lead.lastTouchAt)}
+          ${leadTsField('Last inbound', lead.lastInboundAt)}
+          ${leadTsField('Last outbound', lead.lastOutboundAt)}
+          ${leadTsField('Notified', lead.notifiedAt)}
+          ${lead.message ? leadField('Message', lead.message) : ''}
+        </div>
+      </div>
+
+      <div class="lead-section">
+        <div class="lead-section-title">Follow-up</div>
+        <div class="lead-field-grid">
+          ${leadTsField('Next follow-up', lead.nextFollowUpAt)}
+          ${leadField('Loss reason', lead.lossReason)}
+          ${leadTsField('Quote sent', lead.quoteSentAt)}
+          ${leadTsField('Scheduled job', lead.scheduledJobAt)}
+        </div>
+      </div>
+
+      <div class="lead-section">
+        <div class="lead-section-title">Compliance</div>
+        <div class="lead-field-grid">
+          ${leadTsField('Consent captured', lead.consentCapturedAt)}
+          ${leadTsField('Opted out', lead.optedOutAt)}
+        </div>
+      </div>
+
+      <div class="lead-section">
+        <div class="lead-section-title">Notes</div>
+        <div class="lead-notes-list">${notes.length ? notes.map((n) => `<div class="lead-note-item"><time>${esc(fmtTs(n.at).absolute)} — ${esc(n.by || '')}</time>${esc(n.text)}</div>`).join('') : '<div class="muted" style="font-size:.8rem">No notes yet.</div>'}</div>
+        <textarea id="lead-note-input" class="lead-note-input" rows="2" placeholder="Add a note…"></textarea>
+        <button type="button" class="btn-next" style="margin-top:.5rem;min-height:44px" onclick="addLeadNote('${lead.id}')">Save note</button>
+      </div>`;
+
+    drawer.classList.add('open');
+    drawer.setAttribute('aria-hidden', 'false');
+    document.body.style.overflow = 'hidden';
+  };
+
+  function leadField(label, val, type, danger) {
+    const display = fmtLeadField(val, type);
+    const cls = danger ? 'lead-field-val danger' : display === '—' ? 'lead-field-val muted-val' : 'lead-field-val';
+    return `<div class="lead-field"><span class="lead-field-lbl">${label}</span><span class="${cls}">${esc(display)}</span></div>`;
+  }
+
+  function leadTsField(label, iso) {
+    return `<div class="lead-field"><span class="lead-field-lbl">${label}</span>${fmtTsHtml(iso)}</div>`;
+  }
+
+  window.closeLeadDetail = function () {
+    _detailLeadId = null;
+    const drawer = document.getElementById('lead-detail-drawer');
+    if (drawer) {
+      drawer.classList.remove('open');
+      drawer.setAttribute('aria-hidden', 'true');
+    }
+    document.body.style.overflow = '';
+  };
+
+  window.setLeadStatus = async function (id, status) {
+    const now = new Date().toISOString();
+    await db.collection('leads').doc(id).set({ status, crmStatus: status, updatedAt: now }, { merge: true });
+    if (typeof showToast === 'function') showToast('Status updated');
+    openLeadDetail(id, true);
+  };
+
+  window.assignLead = async function (id, assignee) {
+    await db.collection('leads').doc(id).set({ assignedTo: assignee, updatedAt: new Date().toISOString() }, { merge: true });
+    if (typeof showToast === 'function') showToast('Assigned to ' + assigneeLabel(assignee));
+    openLeadDetail(id, true);
+  };
+
+  window.logContactAttempt = async function (id) {
+    const lead = leadsCache.find((l) => l.id === id);
+    if (!lead) return;
+    const now = new Date().toISOString();
+    const attempts = (Number(lead.contactAttempts) || 0) + 1;
+    await db.collection('leads').doc(id).set(
+      {
+        contactAttempts: attempts,
+        lastContactAt: now,
+        lastTouchAt: now,
+        lastOutboundAt: now,
+        updatedAt: now,
+      },
+      { merge: true }
+    );
+    if (typeof showToast === 'function') showToast('Contact attempt logged');
+    openLeadDetail(id, true);
+  };
+
+  window.promptMarkLeadLost = function (id) {
+    const reason = prompt('Loss reason (optional):', '');
+    if (reason === null) return;
+    markLeadLost(id, reason.trim());
+  };
+
+  window.markLeadLost = async function (id, reason) {
+    const now = new Date().toISOString();
+    await db.collection('leads').doc(id).set(
+      {
+        status: 'lost',
+        crmStatus: 'lost',
+        lossReason: reason || '—',
+        updatedAt: now,
+      },
+      { merge: true }
+    );
+    if (typeof showToast === 'function') showToast('Lead marked lost');
+    openLeadDetail(id, true);
+  };
+
+  window.addLeadNote = async function (id) {
+    const text = document.getElementById('lead-note-input')?.value?.trim();
+    if (!text) return;
+    const lead = leadsCache.find((l) => l.id === id);
+    const log = lead?.notesLog || [];
+    log.push({ at: new Date().toISOString(), by: typeof me !== 'undefined' ? me : '', text });
+    await db.collection('leads').doc(id).set({ notesLog: log.slice(-100), updatedAt: new Date().toISOString() }, { merge: true });
+    if (typeof showToast === 'function') showToast('Note saved');
+    openLeadDetail(id, true);
+  };
+
   window.openLeadModal = function (leadId) {
     const modal = document.getElementById('lead-form-modal');
     const form = document.getElementById('lead-form');
@@ -614,7 +1136,7 @@
     document.getElementById('lf-timing').value = lead?.timing || '';
     document.getElementById('lf-message').value = lead?.message || '';
     document.getElementById('lf-source').value = lead?.source || 'phone';
-    document.getElementById('lf-status').value = lead?.crmStatus || 'new';
+    document.getElementById('lf-status').value = lead ? getLeadStatus(lead) : 'new';
     modal.classList.add('open');
   };
 
@@ -629,10 +1151,12 @@
       phone: document.getElementById('lf-phone').value.trim(),
       email: document.getElementById('lf-email').value.trim(),
       city: document.getElementById('lf-city').value.trim(),
+      items: document.getElementById('lf-service').value.trim(),
       service: document.getElementById('lf-service').value.trim(),
       timing: document.getElementById('lf-timing').value.trim(),
       message: document.getElementById('lf-message').value.trim(),
       source: document.getElementById('lf-source').value,
+      status: document.getElementById('lf-status').value,
       crmStatus: document.getElementById('lf-status').value,
       createdAt: document.getElementById('lf-id').value ? undefined : new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -647,101 +1171,86 @@
   };
 
   window.setLeadCrmStatus = async function (id, status) {
-    await db.collection('leads').doc(id).update({ crmStatus: status, updatedAt: new Date().toISOString() });
+    await db.collection('leads').doc(id).set({ status, crmStatus: status, updatedAt: new Date().toISOString() }, { merge: true });
   };
 
   window.convertLeadToJob = async function (leadId) {
     const lead = leadsCache.find((l) => l.id === leadId);
     if (!lead) return;
     let cust = custsCache.find((c) => c.phone && lead.phone && c.phone === lead.phone);
+    const displayName = getLeadDisplayName(lead);
     if (!cust) {
       const cid = uid();
       cust = {
         id: cid,
-        name: lead.name || lead.phone || 'Lead',
+        name: displayName,
         phone: lead.phone || '',
         email: lead.email || '',
         address: '',
-        city: lead.city || '',
+        city: lead.serviceZip || lead.city || '',
       };
       await db.collection('customers').doc(cid).set(cust);
     }
     const jobId = uid();
     const flow = leadFlowType(lead);
     const bookingNote = flow === 'booking' ? 'Online booking request — confirm slot from form.' : '';
-    const notes = [lead.message || '', bookingNote].filter(Boolean).join('\n');
-    await db.collection('jobs').doc(jobId).set({
+    const srcNote = lead.source ? `Source: ${lead.source}` : '';
+    const notes = [lead.message || '', bookingNote, srcNote].filter(Boolean).join('\n');
+    const jobPatch = {
       id: jobId,
       customer: cust.name,
       phone: cust.phone,
       email: cust.email,
-      city: lead.city,
-      serviceType: lead.service || 'Garage Cleanout',
+      city: lead.serviceZip || lead.city || '',
+      serviceType: lead.items || lead.service || 'Garage Cleanout',
       type: 'job',
       pipelineStatus: 'lead',
       status: 'scheduled',
       notes,
-      assignedTo: me === 'TylerG' ? 'TylerG' : 'ZacB',
+      source: lead.source || '',
+      assignedTo: lead.assignedTo || (me === 'TylerG' ? 'TylerG' : 'ZacB'),
       createdBy: me,
       createdAt: new Date().toISOString(),
       leadId,
-    });
-    await db.collection('leads').doc(leadId).update({ crmStatus: 'converted', convertedAt: new Date().toISOString() });
+    };
+    if (lead.scheduledJobAt) {
+      jobPatch.date = lead.scheduledJobAt.slice(0, 10);
+    }
+    await db.collection('jobs').doc(jobId).set(jobPatch);
+    await db.collection('leads').doc(leadId).set(
+      { status: 'converted', crmStatus: 'converted', convertedAt: new Date().toISOString() },
+      { merge: true }
+    );
+    closeLeadDetail();
     if (typeof showToast === 'function') showToast('Lead converted to job');
     openJobDetail(jobId);
   };
 
-  window.renderLeadsEnhanced = function () {
-    const el = document.getElementById('leads-list');
-    if (!el || typeof leadsCache === 'undefined') return;
-    if (!leadsCache.length) {
-      el.innerHTML = `<div class="empty"><div class="ico">📥</div><div>No leads — add manually or via Zapier/Web3forms.</div><button type="button" class="btn-book" style="margin-top:1rem" onclick="openLeadModal()">+ Add lead</button></div>`;
-      return;
-    }
-    el.innerHTML =
-      `<div style="margin-bottom:1rem;display:flex;gap:.5rem;flex-wrap:wrap">
-        <button type="button" class="btn-book" onclick="openLeadModal()">+ Add lead</button>
-      </div>` +
-      leadsCache
-        .map((lead) => {
-          const elapsed = typeof leadElapsed === 'function' ? leadElapsed(lead) : 0;
-          const responded = !!lead.respondedAt;
-          const remaining = 120 - elapsed;
-          const crmSt = lead.crmStatus || 'new';
-          let timerClass = 'green',
-            timerText = '';
-          if (responded) {
-            timerClass = 'done';
-            timerText = '✓';
-          } else {
-            if (remaining <= 0) timerClass = 'red';
-            else if (remaining <= 60) timerClass = 'yellow';
-            timerText = typeof fmtCountdown === 'function' ? fmtCountdown(Math.max(0, remaining)) : '';
-          }
-          const createdStr = lead.createdAt
-            ? new Date(lead.createdAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
-            : '';
-          const flow = leadFlowType(lead);
-          const flowBadge = flow === 'booking' ? ' · <span class="bdg quoted">📅 booking</span>' : flow === 'call_text' ? ' · <span class="bdg">call/text</span>' : '';
-          return `<div class="lead-card ${responded ? 'done' : ''}">
-            <div class="lead-main">
-              <div class="lead-source">${esc(lead.source || 'website')} · <span class="bdg ${crmSt}">${crmSt}</span>${flowBadge}</div>
-              <div class="lead-name">${esc(lead.name || lead.full_name || lead.phone || 'Unknown')}</div>
-              <div class="lead-meta">${lead.phone ? '📞 ' + esc(lead.phone) : ''} ${lead.city ? '· ' + esc(lead.city) : ''} ${lead.service ? '· ' + esc(lead.service) : ''} · ${createdStr}</div>
-              ${lead.message ? `<div class="lead-msg">${esc(lead.message)}</div>` : ''}
-              <div class="lead-actions">
-                <select onchange="setLeadCrmStatus('${lead.id}', this.value)" style="background:var(--navy);color:#fff;border:1px solid rgba(255,255,255,.15);border-radius:.4rem;padding:.35rem">
-                  ${LEAD_STATUSES.map((s) => `<option value="${s}" ${crmSt === s ? 'selected' : ''}>${s}</option>`).join('')}
-                </select>
-                <button type="button" class="lead-btn" onclick="openLeadModal('${lead.id}')">Edit</button>
-                <button type="button" class="lead-btn" onclick="convertLeadToJob('${lead.id}')">→ Job</button>
-                ${!responded ? `<button type="button" class="lead-btn" onclick="respondLead('${lead.id}','called')">📞</button>` : ''}
-              </div>
-            </div>
-            <div class="lead-timer ${timerClass}">${timerText}</div>
-          </div>`;
-        })
-        .join('');
+  window.respondLead = async function (id, method) {
+    const lead = leadsCache.find((l) => l.id === id);
+    if (!lead) return;
+    const responseSeconds = typeof leadElapsed === 'function' ? leadElapsed(lead) : 0;
+    const now = new Date().toISOString();
+    const attempts = (Number(lead.contactAttempts) || 0) + 1;
+    const st = getLeadStatus(lead);
+    await db.collection('leads').doc(id).set(
+      {
+        respondedAt: now,
+        respondedBy: me,
+        responseMethod: method,
+        responseSeconds,
+        lastContactAt: now,
+        lastTouchAt: now,
+        lastOutboundAt: now,
+        contactAttempts: attempts,
+        status: st === 'new' ? 'contacted' : st,
+        crmStatus: st === 'new' ? 'contacted' : st,
+        updatedAt: now,
+      },
+      { merge: true }
+    );
+    if (typeof showToast === 'function') showToast('Response logged');
+    if (_detailLeadId === id) openLeadDetail(id, true);
   };
 
   /* ── Quote modal ───────────────────────────────────── */
@@ -892,6 +1401,7 @@
         <h3>Quick links</h3>
         <div class="more-btns">
           <button type="button" class="btn-back" onclick="switchTab('leads', document.querySelector('[data-tab=leads]'))">Leads inbox</button>
+          <button type="button" class="btn-back" onclick="switchTab('customers', document.querySelector('.tab[data-tab=customers]'))">Customers</button>
           <button type="button" class="btn-back" onclick="selectMode('call')">On-call quote flow</button>
         </div>
       </div>
@@ -951,7 +1461,8 @@
 
     if (name === 'home') renderDashboard();
     if (name === 'jobs') {
-      toggleJobsView(document.querySelector('.view-toggle-btn.active')?.dataset.view || 'board');
+      if (window.innerWidth <= 768) toggleJobsView('list');
+      else toggleJobsView(document.querySelector('.view-toggle-btn.active')?.dataset.view || 'board');
       initKanbanDrag();
     }
     if (name === 'schedule' && typeof renderCal === 'function') renderCal();
@@ -1072,6 +1583,7 @@
         if (e.target.closest('.modal-backdrop')) {
           closeJobDetail();
           closeCustomerDetail();
+          closeLeadDetail();
           closeLeadModal();
           closeQuoteModal();
         }
@@ -1079,6 +1591,9 @@
       true
     );
     ['click', 'keydown', 'touchstart'].forEach((ev) => document.addEventListener(ev, touchSession, { passive: true }));
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') closeLeadDetail();
+    });
   });
 
   window.EGC_CRM = { PIPELINE, exportCrmBackup, importCrmBackup, getPipelineStatus };

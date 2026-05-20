@@ -17,6 +17,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,400;0,500;0,700;1,400;1,500&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="employee-crm.css">
   <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
@@ -854,9 +855,9 @@
 
   <nav class="bottom-nav" aria-label="Main navigation">
     <button type="button" class="bn-item active" data-tab="home" onclick="switchTab('home',this)"><span class="bn-ico">🏠</span>Home</button>
+    <button type="button" class="bn-item" data-tab="leads" onclick="switchTab('leads',this)"><span class="bn-ico">🔥</span>Leads<span id="leads-badge-mobile"></span></button>
     <button type="button" class="bn-item" data-tab="jobs" onclick="switchTab('jobs',this)"><span class="bn-ico">📋</span>Jobs</button>
     <button type="button" class="bn-item" data-tab="schedule" onclick="switchTab('schedule',this)"><span class="bn-ico">📅</span>Schedule</button>
-    <button type="button" class="bn-item" data-tab="customers" onclick="switchTab('customers',this)"><span class="bn-ico">👥</span>Clients</button>
     <button type="button" class="bn-item" data-tab="more" onclick="switchTab('more',this)"><span class="bn-ico">☰</span>More</button>
   </nav>
 
@@ -916,11 +917,11 @@
 
     <!-- LEADS -->
     <div id="tab-leads" class="panel">
-      <div class="jobs-hd" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.5rem">
-        <h2>Leads inbox</h2>
-        <div style="font-size:.78rem;color:var(--muted)">Web3forms → Zapier → Firestore · 2 min SLA</div>
+      <div class="leads-stack">
+        <div id="leads-toolbar-host"></div>
+        <div id="leads-status-bar"></div>
+        <div id="leads-list" class="leads-list" role="list" aria-live="polite"></div>
       </div>
-      <div id="leads-list"></div>
     </div>
 
     <!-- CUSTOMERS -->
@@ -964,6 +965,19 @@
 <div id="cust-detail-modal" class="modal-backdrop" onclick="if(event.target===this)closeCustomerDetail()">
   <div class="modal-sheet"><button type="button" class="modal-close" onclick="closeCustomerDetail()">✕</button><div id="cust-detail-body"></div></div>
 </div>
+<div id="lead-detail-drawer" class="lead-drawer" aria-hidden="true">
+  <div class="lead-drawer-backdrop" onclick="closeLeadDetail()"></div>
+  <div class="lead-drawer-panel" role="dialog" aria-modal="true" aria-labelledby="lead-detail-title">
+    <div class="lead-drawer-head">
+      <div>
+        <h3 id="lead-detail-title">Lead</h3>
+        <div id="lead-detail-subtitle" style="font-size:.78rem;color:var(--muted);margin-top:.2rem"></div>
+      </div>
+      <button type="button" class="lead-drawer-close" onclick="closeLeadDetail()" aria-label="Close">✕</button>
+    </div>
+    <div class="lead-drawer-body" id="lead-detail-body"></div>
+  </div>
+</div>
 <div id="lead-form-modal" class="modal-backdrop" onclick="if(event.target===this)closeLeadModal()">
   <div class="modal-sheet">
     <button type="button" class="modal-close" onclick="closeLeadModal()">✕</button>
@@ -982,7 +996,7 @@
     <div class="fg"><label>Message</label><textarea id="lf-message" rows="2"></textarea></div>
     <div class="frow" style="margin-bottom:1rem">
       <div class="fg" style="margin:0"><label>Source</label><select id="lf-source"><option value="website">Website</option><option value="phone">Phone</option><option value="text">Text</option><option value="referral">Referral</option><option value="other">Other</option></select></div>
-      <div class="fg" style="margin:0"><label>Status</label><select id="lf-status"><option value="new">New</option><option value="contacted">Contacted</option><option value="quoted">Quoted</option><option value="converted">Converted</option><option value="lost">Lost</option></select></div>
+      <div class="fg" style="margin:0"><label>Status</label><select id="lf-status"><option value="new">New</option><option value="contacted">Contacted</option><option value="quoted">Quoted</option><option value="scheduled">Scheduled</option><option value="converted">Converted</option><option value="lost">Lost</option></select></div>
     </div>
     <button type="button" class="btn-main" onclick="saveLeadForm()">Save lead</button>
   </div>
@@ -1274,15 +1288,18 @@ function startListeners() {
     renderCal();
   });
   db.collection('leads').onSnapshot(snap => {
-    leadsCache = snap.docs.map(d => ({ id: d.id, ...d.data() }))
-      .filter(l => l.name || l.phone || l.email)
-      .sort((a,b) => (b.createdAt||b.timestamp||'').localeCompare(a.createdAt||a.timestamp||''));
-    renderLeads();
-    updateLeadsBadge();
-    // Refresh on-call customer picker if step 1 is open
+    leadsCache = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    if (typeof onLeadsSnapshot === 'function') onLeadsSnapshot();
+    else {
+      renderLeads();
+      updateLeadsBadge();
+    }
     if (oc.step === 1 && document.getElementById('oncall-overlay')?.classList.contains('open')) {
       ocFilter(document.getElementById('oc-search')?.value || '');
     }
+  }, err => {
+    console.error('Leads listener error', err);
+    if (typeof onLeadsError === 'function') onLeadsError(err);
   });
   // Tick countdown every second
   if (_leadsTimer) clearInterval(_leadsTimer);
@@ -1296,15 +1313,21 @@ function startListeners() {
    LEADS
 ═══════════════════════════════════════════════════════ */
 function updateLeadsBadge() {
-  const unresponded = leadsCache.filter(l => !l.respondedAt);
-  const badge = document.getElementById('leads-badge');
-  if (!badge) return;
-  if (unresponded.length > 0) {
-    badge.style.display = 'inline';
-    badge.textContent = unresponded.length;
-  } else {
-    badge.style.display = 'none';
-  }
+  const isActive = (l) => {
+    const st = l.status || l.crmStatus || 'new';
+    return st !== 'converted' && st !== 'lost';
+  };
+  const urgent = leadsCache.filter(l => isActive(l) && (l.status || l.crmStatus || 'new') === 'new');
+  ['leads-badge', 'leads-badge-mobile'].forEach(id => {
+    const badge = document.getElementById(id);
+    if (!badge) return;
+    if (urgent.length > 0) {
+      badge.style.display = id === 'leads-badge-mobile' ? 'flex' : 'inline';
+      badge.textContent = urgent.length;
+    } else {
+      badge.style.display = 'none';
+    }
+  });
 }
 
 function leadElapsed(lead) {
@@ -1321,57 +1344,7 @@ function fmtCountdown(sec) {
 }
 
 function renderLeads() {
-  const el = document.getElementById('leads-list');
-  if (!el) return;
-  if (!leadsCache.length) {
-    el.innerHTML = `<div style="text-align:center;padding:3rem;color:var(--muted)">No leads yet — Zapier will push them here automatically.</div>`;
-    return;
-  }
-
-  el.innerHTML = leadsCache.map(lead => {
-    const elapsed = leadElapsed(lead);
-    const responded = !!lead.respondedAt;
-    const respSec = lead.responseSeconds ?? elapsed;
-    const withinTwo = responded && respSec <= 120;
-    const remaining = 120 - elapsed;
-
-    let timerClass = 'green', timerText = '';
-    if (responded) {
-      timerClass = 'done';
-      timerText = withinTwo
-        ? `✓ ${fmtCountdown(respSec)}`
-        : `✗ ${fmtCountdown(respSec)}`;
-    } else {
-      if (remaining > 60)       timerClass = 'green';
-      else if (remaining > 0)   timerClass = 'yellow';
-      else                      timerClass = 'red';
-      timerText = fmtCountdown(Math.max(0, remaining));
-    }
-
-    const cardClass = responded
-      ? 'done'
-      : remaining > 60 ? '' : remaining > 0 ? 'warning' : 'urgent';
-
-    const createdStr = new Date(lead.createdAt).toLocaleString('en-US', { month:'short', day:'numeric', hour:'numeric', minute:'2-digit' });
-
-    return `<div class="lead-card ${cardClass}">
-      <div class="lead-main">
-        <div class="lead-source">${esc(lead.source || 'Unknown')}</div>
-        <div class="lead-name">${esc(lead.name || lead.full_name || lead.phone || 'Unknown')}</div>
-        <div class="lead-meta">${lead.phone ? '📞 '+esc(lead.phone) : ''} ${lead.email ? '· ✉️ '+esc(lead.email) : ''} · ${createdStr}</div>
-        ${lead.message ? `<div class="lead-msg">${esc(lead.message)}</div>` : ''}
-        ${responded
-          ? `<div class="lead-responded">✅ ${esc(lead.respondedBy)} responded via ${lead.responseMethod} in ${fmtCountdown(lead.responseSeconds)} ${withinTwo ? '🟢 under 2 min' : '🔴 over 2 min'}</div>`
-          : `<div class="lead-actions">
-              <button class="lead-btn" onclick="respondLead('${lead.id}','called')">📞 Called</button>
-              <button class="lead-btn" onclick="respondLead('${lead.id}','texted')">💬 Texted</button>
-              <button class="lead-btn" onclick="respondLead('${lead.id}','emailed')">✉️ Emailed</button>
-            </div>`
-        }
-      </div>
-      <div class="lead-timer ${timerClass}">${timerText}</div>
-    </div>`;
-  }).join('');
+  if (typeof renderLeadsEnhanced === 'function') renderLeadsEnhanced();
 }
 
 function toggleBlockDay(ds) {
