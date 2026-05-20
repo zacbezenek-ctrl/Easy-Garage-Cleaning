@@ -110,7 +110,13 @@ section{padding:56px 0}@media(min-width:900px){section{padding:88px 0}}.section-
 footer{background:var(--ink);color:var(--muted-dark);border-top:1px solid var(--navy-line);font-size:13px}.foot-grid{display:grid;grid-template-columns:1fr;gap:28px;padding:48px 0 32px}@media(min-width:640px){.foot-grid{grid-template-columns:repeat(2,1fr)}}@media(min-width:900px){.foot-grid{grid-template-columns:1.5fr repeat(4,1fr);gap:32px}}.foot-brand .logo{color:var(--paper);margin-bottom:12px}.foot-col h3{font-family:var(--font-display);font-size:15px;font-weight:600;color:var(--paper);margin-bottom:12px}.foot-col ul{list-style:none;display:flex;flex-direction:column;gap:8px}.foot-col a:hover{color:var(--accent)}.foot-contact p{margin-bottom:6px;line-height:1.55}.foot-contact a:hover{color:var(--accent)}.foot-hours{font-size:12px;margin-top:8px;color:var(--muted-dark)}.community{margin-top:16px;font-size:12px;line-height:1.6;max-width:52ch}.foot-entity{margin-top:10px;font-size:12px;line-height:1.65}.foot-nap a:hover{color:var(--accent)}.foot-bar{border-top:1px solid var(--navy-line);padding:16px 0;font-size:12px}.foot-bar-inner{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:12px}.foot-bar a:hover{color:var(--accent)}.services-grid{display:grid;grid-template-columns:1fr;gap:16px;margin-top:32px}@media(min-width:640px){.services-grid{grid-template-columns:repeat(2,1fr)}}@media(min-width:900px){.services-grid{grid-template-columns:repeat(3,1fr)}}.service-card{background:var(--white);border:1px solid rgba(10,22,40,.08);padding:24px;border-radius:4px;border-top:3px solid var(--accent)}.service-card h3{font-family:var(--font-display);font-size:20px;margin-bottom:8px}.service-card p{font-size:14px;color:var(--text);margin-bottom:12px;line-height:1.55}.service-card a{font-size:13px;font-weight:600;color:var(--accent-deep)}.pricing-how{background:var(--white)}.pricing-how-grid{display:grid;grid-template-columns:1fr;gap:20px;margin-top:32px}@media(min-width:768px){.pricing-how-grid{grid-template-columns:repeat(2,1fr)}}
 .mobile-sticky-cta{position:fixed;bottom:0;left:0;right:0;z-index:100;display:none;grid-template-columns:1fr 1fr 1fr;gap:6px;background:var(--ink);border-top:1px solid var(--navy-line);padding:8px 10px 12px}.mobile-cta-btn{padding:12px 6px;font-weight:700;font-size:12px;text-align:center;border-radius:3px;font-family:var(--font-body)}.mobile-cta-call,.mobile-cta-text{background:var(--navy-soft);color:var(--paper);border:1px solid var(--navy-line)}.mobile-cta-quote{background:var(--accent);color:var(--white)}@media(max-width:1023px){.mobile-sticky-cta{display:grid}body{padding-bottom:72px}}
 .reveal{opacity:0;transform:translateY(16px);transition:opacity .7s ease,transform .7s ease}.reveal.visible{opacity:1;transform:translateY(0)}
-.article-wrap{max-width:740px;margin:0 auto;padding:0 18px}.article-body{padding-bottom:80px;font-size:16px;line-height:1.75}.article-body h2{font-family:var(--font-display);font-size:26px;font-weight:500;margin:40px 0 14px;letter-spacing:-.02em}.article-body p{margin-bottom:18px}.article-body ul,.article-body ol{margin:0 0 18px 24px}
+.article-wrap{max-width:740px;margin:0 auto;padding:0 18px}.article-body{padding-bottom:80px;font-size:16px;line-height:1.75}.article-body h2{font-family:var(--font-display);font-size:26px;font-weight:500;margin:40px 0 14px;letter-spacing:-.02em;scroll-margin-top:88px}.article-body p{margin-bottom:18px}.article-body ul,.article-body ol{margin:0 0 18px 24px}
+a:focus-visible,.btn-primary:focus-visible,.btn-secondary:focus-visible,.nav-toggle:focus-visible,.nav-dropdown-trigger:focus-visible,.drawer-toggle:focus-visible,.service-pick-card:focus-within{outline:2px solid var(--accent);outline-offset:2px}
+.quick-answer{background:var(--white);border:1px solid rgba(10,22,40,.1);border-left:3px solid var(--accent);padding:18px 22px;margin:0 auto 32px;max-width:var(--maxw);border-radius:0 4px 4px 0;font-size:15px;line-height:1.6;color:var(--text)}.quick-answer .qa-label{font-family:var(--font-mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--accent-deep);margin-bottom:8px;display:block}
+.article-toc{background:var(--paper-warm);border:1px solid rgba(10,22,40,.08);padding:18px 22px;margin-bottom:28px;border-radius:4px}.article-toc h2{font-family:var(--font-mono);font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:12px;font-weight:400}.article-toc ol{margin:0 0 0 20px;font-size:14px;line-height:1.8}.article-toc a{color:var(--accent-deep);font-weight:500}
+.ba-cell,.hero-ba-cell{border:1px dashed rgba(10,22,40,.12)}.ba-cell.before,.hero-ba-cell.before{border-color:rgba(255,255,255,.15)}.ba-placeholder-note{font-family:var(--font-mono);font-size:9px;letter-spacing:.1em;color:var(--muted);margin-top:6px;text-align:center}
+.btn-primary,.nav-cta,.drawer-cta{min-height:44px}.btn-primary:active{transform:translateY(0)}
+.mobile-sticky-cta{z-index:90}
 """
 
 NAV_FOOTER_PATCH_CSS = r"""
@@ -303,6 +309,7 @@ FOOTER = """
       <div class="logo"><span class="logo-mark"></span>Easy Garage Cleaning</div>
       <p class="community">The easiest way to reclaim your garage. Locally owned in Fort Collins — not a franchise call center.</p>
       <p class="community">Partners: <a href="https://www.fcgov.com/chamber/" rel="noopener">Fort Collins Chamber</a>, <a href="/blog/habitat-for-humanity-restore-fort-collins.html">Habitat ReStore</a>.</p>
+      <p class="foot-entity foot-nap"><strong>Easy Garage Cleaning</strong> · Easy Garage Cleaning LLC · Fort Collins, CO 80525 · <a href="tel:{phone}">{phone_display}</a> · <a href="mailto:{email}">{email}</a> · <a href="{SITE}/#business">Schema @id #business</a> · <a href="{SITE}/llms.txt">llms.txt</a></p>
     </div>
     <div class="foot-col">
       <h3>Services</h3>
@@ -447,9 +454,9 @@ GALLERY_HTML = """
       <p class="section-sub">Placeholder photos — owner to swap with real job images.</p>
     </div>
     <div class="gallery-grid reveal">
-      <div><div class="ba-pair"><div class="ba-cell before"><span class="ba-label">BEFORE</span><span class="ba-icon">B.</span></div><div class="ba-cell after"><span class="ba-label">AFTER</span><span class="ba-icon">A.</span></div></div><div class="ba-caption"><strong>{ba1}</strong> · Photo coming soon</div></div>
-      <div><div class="ba-pair"><div class="ba-cell before"><span class="ba-label">BEFORE</span><span class="ba-icon">B.</span></div><div class="ba-cell after"><span class="ba-label">AFTER</span><span class="ba-icon">A.</span></div></div><div class="ba-caption"><strong>{ba2}</strong> · Photo coming soon</div></div>
-      <div><div class="ba-pair"><div class="ba-cell before"><span class="ba-label">BEFORE</span><span class="ba-icon">B.</span></div><div class="ba-cell after"><span class="ba-label">AFTER</span><span class="ba-icon">A.</span></div></div><div class="ba-caption"><strong>{ba3}</strong> · Photo coming soon</div></div>
+      <div><div class="ba-pair"><div class="ba-cell before" aria-label="Before photo placeholder"><span class="ba-label">BEFORE</span><span class="ba-icon">B.</span></div><div class="ba-cell after" aria-label="After photo placeholder"><span class="ba-label">AFTER</span><span class="ba-icon">A.</span></div></div><div class="ba-caption"><strong>{ba1}</strong></div><p class="ba-placeholder-note">Owner photo slot — replace with real job image</p></div>
+      <div><div class="ba-pair"><div class="ba-cell before" aria-label="Before photo placeholder"><span class="ba-label">BEFORE</span><span class="ba-icon">B.</span></div><div class="ba-cell after" aria-label="After photo placeholder"><span class="ba-label">AFTER</span><span class="ba-icon">A.</span></div></div><div class="ba-caption"><strong>{ba2}</strong></div><p class="ba-placeholder-note">Owner photo slot — replace with real job image</p></div>
+      <div><div class="ba-pair"><div class="ba-cell before" aria-label="Before photo placeholder"><span class="ba-label">BEFORE</span><span class="ba-icon">B.</span></div><div class="ba-cell after" aria-label="After photo placeholder"><span class="ba-label">AFTER</span><span class="ba-icon">A.</span></div></div><div class="ba-caption"><strong>{ba3}</strong></div><p class="ba-placeholder-note">Owner photo slot — replace with real job image</p></div>
     </div>
   </div>
 </section>
@@ -714,12 +721,82 @@ def webpage_schema(title, desc, url):
 def service_schema(name, desc, slug, stype):
     return json.dumps([
         business_schema(),
-        {"@context": "https://schema.org", "@type": "Service", "name": name, "description": desc, "provider": {"@type": "LocalBusiness", "@id": f"{SITE}/#business"}, "areaServed": {"@type": "City", "name": "Fort Collins", "addressRegion": "CO"}, "serviceType": stype},
+        {
+            "@context": "https://schema.org",
+            "@type": "Service",
+            "name": name,
+            "description": desc,
+            "url": f"{SITE}/{slug}",
+            "provider": {"@type": "LocalBusiness", "@id": f"{SITE}/#business"},
+            "areaServed": AREA_SERVED,
+            "serviceType": stype,
+            "offers": {
+                "@type": "Offer",
+                "priceCurrency": "USD",
+                "priceSpecification": {
+                    "@type": "PriceSpecification",
+                    "minPrice": "99",
+                    "maxPrice": "650",
+                    "priceCurrency": "USD",
+                    "description": "Flat-rate photo quotes: single-item $99–$150, partial $250–$400, standard garage $400–$650, large $650+",
+                },
+                "availability": "https://schema.org/InStock",
+                "url": f"{SITE}/book.html",
+            },
+        },
         {"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [
             {"@type": "ListItem", "position": 1, "name": "Home", "item": f"{SITE}/"},
             {"@type": "ListItem", "position": 2, "name": name, "item": f"{SITE}/{slug}"},
         ]},
     ], ensure_ascii=False)
+
+
+def organization_schema():
+    return {
+        "@context": "https://schema.org",
+        "@type": "Organization",
+        "@id": f"{SITE}/#organization",
+        "name": "Easy Garage Cleaning",
+        "legalName": "Easy Garage Cleaning LLC",
+        "url": SITE,
+        "logo": f"{SITE}/android-chrome-512x512.png",
+        "founder": {"@type": "Person", "name": "Zac Bezenek"},
+        "parentOrganization": {"@id": f"{SITE}/#business"},
+    }
+
+
+def item_list_schema(items):
+    return {
+        "@context": "https://schema.org",
+        "@type": "ItemList",
+        "name": "What Easy Garage Cleaning hauls away",
+        "itemListElement": [
+            {"@type": "ListItem", "position": i + 1, "name": t, "url": f"{SITE}{h}"}
+            for i, (t, _d, h) in enumerate(items)
+        ],
+    }
+
+
+def quick_answer_html(text):
+    return f'<div class="wrap"><aside class="quick-answer reveal" role="note"><span class="qa-label">Quick answer</span><p>{esc(text)}</p></aside></div>'
+
+
+def article_toc_html(content):
+    heads = re.findall(r'<h2[^>]*id="([^"]+)"[^>]*>([^<]+)</h2>', content)
+    if not heads:
+        heads = [(f"section-{i}", re.sub(r"<[^>]+>", "", h)) for i, h in enumerate(re.findall(r"<h2[^>]*>([^<]+)</h2>", content))]
+    if len(heads) < 2:
+        return ""
+    items = "".join(f'<li><a href="#{hid}">{esc(title)}</a></li>' for hid, title in heads)
+    return f'<nav class="article-toc" aria-label="Table of contents"><h2>On this page</h2><ol>{items}</ol></nav>'
+
+
+def inject_heading_ids(content):
+    def add_id(m):
+        title = re.sub(r"<[^>]+>", "", m.group(1)).strip()
+        slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")[:48]
+        return f'<h2 id="{slug}">{m.group(1)}</h2>'
+    return re.sub(r"<h2>([^<]+)</h2>", add_id, content)
 
 
 def faq_html(faqs):
@@ -820,10 +897,13 @@ def render_service(s):
     video = VIDEO_HTML if s.get("show_video") else ""
     def_section = f'<section class="body-copy"><div class="wrap"><div class="body-copy-inner reveal">{def_block_html(s["stype"], s["hero_sub"])}</div></div></section>'
     related = s.get("related") or NORTHERO_RELATED
+    qa = s.get("quick_answer") or f"{s['stype']} in Fort Collins starts at $99 for a single item or $400–$650 for a typical garage — flat-rate from photos, response in 5 minutes. Text {PHONE_DISPLAY} or book at easygaragecleaning.com/book.html."
+    std_links = '<p class="section-sub reveal" style="margin-top:0">See <a href="/pricing.html" class="content-link">pricing</a>, <a href="/what-we-take.html" class="content-link">what we take</a>, and <a href="/book.html" class="content-link">book online</a>.</p>'
     body = "<main>" + "\n".join([
         hero,
+        quick_answer_html(qa),
         def_section,
-        body_copy_html(s.get("body_copy", "")),
+        body_copy_html(s.get("body_copy", "") + std_links),
         problem_html(s["problems"], s["problem_title"], s["problem_sub"]),
         fmt(PROCESS_HTML),
         items,
@@ -861,10 +941,13 @@ def render_city(c):
         ("/", "Home"),
     ]))
     def_section = f'<section class="body-copy"><div class="wrap"><div class="body-copy-inner reveal">{def_block_html(c["service"], c["intro"])}</div></div></section>'
+    qa = c.get("quick_answer") or f"{c['service']} in {c['city']} is flat-rate from photos — typically $400–$650 for garages, $99–$150 for single items. No travel surcharge in our core area. Call {PHONE_DISPLAY} for a 5-minute quote."
+    std_links = '<p>See <a href="/pricing.html" class="content-link">pricing</a>, <a href="/what-we-take.html" class="content-link">what we take</a>, and <a href="/book.html" class="content-link">book online</a>.</p>'
     body = "<main>" + "\n".join([
         hero,
+        quick_answer_html(qa),
         def_section,
-        body_copy_html(c.get("body_copy", "")),
+        body_copy_html((c.get("body_copy", "") or "") + std_links),
         fmt(PROCESS_HTML),
         fmt(PRICING_HTML),
         local,
@@ -918,10 +1001,13 @@ def render_item_page(item):
 <a href="sms:{PHONE}?body={item['sms'].replace(' ', '%20')}" class="btn-secondary">Text Photos</a></div></div></header>"""
     def_section = f'<section class="body-copy"><div class="wrap"><div class="body-copy-inner reveal">{def_block_html(item["stype"], item["hero_sub"])}</div></div></section>'
     related = item.get("related") or NORTHERO_RELATED
+    qa = item.get("quick_answer") or f"{item['stype']} in Fort Collins is quoted flat from photos — usually $99–$150 for one bulky item. We lift, haul, and donate when possible. Text {PHONE_DISPLAY} for a 5-minute response."
+    std_links = '<p>See <a href="/pricing.html" class="content-link">pricing</a>, <a href="/what-we-take.html" class="content-link">all items we take</a>, and <a href="/book.html" class="content-link">book online</a>.</p>'
     body = "<main>" + "\n".join([
         hero,
+        quick_answer_html(qa),
         def_section,
-        body_copy_html(item.get("body_copy", "")),
+        body_copy_html((item.get("body_copy", "") or "") + std_links),
         fmt(PROCESS_HTML),
         items_html(item["yes_title"], item["yes"], NO_ITEMS),
         fmt(PRICING_HTML),
@@ -936,21 +1022,29 @@ def render_comparison(cmp):
     slug = cmp["slug"]
     canonical = f"{SITE}/{slug}"
     pub = cmp.get("published", BLOG_PUBLISHED.get(slug.split("/")[-1], TODAY))
+    content = inject_heading_ids(cmp["content"])
+    toc = article_toc_html(content)
     article_ld = {
         "@context": "https://schema.org",
-        "@type": "Article",
+        "@type": "BlogPosting",
         "headline": cmp["h1"],
         "description": cmp["desc"],
         "url": canonical,
         "datePublished": pub,
         "dateModified": TODAY,
-        "author": {"@type": "Person", "name": "Zac Bezenek"},
+        "author": {"@type": "Organization", "@id": f"{SITE}/#business", "name": "Easy Garage Cleaning"},
         "publisher": {"@id": f"{SITE}/#business"},
         "mainEntityOfPage": {"@id": f"{canonical}#webpage"},
     }
-    schema = f'<script type="application/ld+json">{json.dumps(article_ld, ensure_ascii=False)}</script>'
+    breadcrumbs = {"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [
+        {"@type": "ListItem", "position": 1, "name": "Home", "item": f"{SITE}/"},
+        {"@type": "ListItem", "position": 2, "name": "Blog", "item": f"{SITE}/blog/"},
+        {"@type": "ListItem", "position": 3, "name": cmp["h1"], "item": canonical},
+    ]}
+    schema = f'<script type="application/ld+json">{json.dumps(article_ld, ensure_ascii=False)}</script>\n<script type="application/ld+json">{json.dumps(breadcrumbs, ensure_ascii=False)}</script>'
     if cmp.get("faqs"):
         schema += f'\n<script type="application/ld+json">{faq_schema(cmp["faqs"])}</script>'
+    blog_links = '<p>Book <a href="/book.html" class="content-link">online</a>, see <a href="/pricing.html" class="content-link">pricing</a>, or browse <a href="/what-we-take.html" class="content-link">what we take</a>.</p>'
     article = f"""<main><article class="article-wrap">
 <header class="hero"><div class="hero-eyebrow mono">Fort Collins Guide</div>
 <h1 class="hero-title" style="max-width:none">{esc(cmp["h1"])}</h1>
@@ -958,7 +1052,9 @@ def render_comparison(cmp):
 <div class="hero-ctas" style="margin-top:20px"><a href="#quote" class="btn-primary">Get Free Quote</a></div>
 </header>
 <div class="article-body reveal">
-{cmp["content"]}
+{toc}
+{content}
+{blog_links}
 <p><strong>Ready to reclaim your garage?</strong> Text photos to <a href="sms:{PHONE}" class="content-link">{PHONE_DISPLAY}</a> or <a href="#quote" class="content-link">request a flat-rate quote</a>. Response within 5 minutes.</p>
 </div>
 </article>
@@ -1024,7 +1120,6 @@ def render_what_we_take():
     title = "What We Take | Garage & Junk Removal Fort Collins CO"
     desc = "Couches, appliances, mattresses, hot tubs, treadmills, yard debris, and full garage cleanouts in Fort Collins. See everything Easy Garage Cleaning hauls away."
     canonical = f"{SITE}/what-we-take.html"
-    schema = f'<script type="application/ld+json">{json.dumps(business_schema(), ensure_ascii=False)}</script>'
     cards = [
         ("Garage Cleanouts", "Full haul-out of cluttered garages — furniture, boxes, tools, and junk.", "/garage-cleanouts-fort-collins-co.html"),
         ("Junk Removal", "Single items to full loads from garages, basements, and curbside.", "/junk-removal-fort-collins-co.html"),
@@ -1040,6 +1135,11 @@ def render_what_we_take():
         ("Shed Cleanout", "Detached sheds and backyard workshops emptied and swept.", "/shed-cleanout-fort-collins-co.html"),
     ]
     grid = "".join(f'<div class="service-card reveal"><h3>{esc(t)}</h3><p>{esc(d)}</p><a href="{h}">Learn more →</a></div>' for t, d, h in cards)
+    schema = (
+        f'<script type="application/ld+json">{json.dumps(business_schema(), ensure_ascii=False)}</script>\n'
+        f'<script type="application/ld+json">{json.dumps(item_list_schema(cards), ensure_ascii=False)}</script>\n'
+        f'<script type="application/ld+json">{json.dumps({"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Home", "item": f"{SITE}/"}, {"@type": "ListItem", "position": 2, "name": "What We Take", "item": canonical}]}, ensure_ascii=False)}</script>'
+    )
     body = f"""<main>
 <section class="hero"><div class="wrap">
 <div class="hero-eyebrow mono">What we haul</div>
@@ -1101,6 +1201,192 @@ def render_about():
     return page_shell(title, desc, canonical, f'<script type="application/ld+json">{schema}</script>', body)
 
 
+LLM_FAQS = [
+    ("How much does a garage cleanout cost in Fort Collins?", "Most jobs: $99–$150 single item, $250–$400 small load, $400–$650 standard garage, $650+ large. Text photos to (970) 999-1818 for your exact flat-rate quote before we start."),
+    ("How do I get a quote with photos?", "Text (970) 999-1818 or use https://easygaragecleaning.com/book.html — choose service, city, upload photos, contact info. Response within 5 minutes Mon–Sat 7am–7pm."),
+    ("Do you offer same-day service?", "Yes when the schedule allows — often same-day or next-day in Fort Collins, Loveland, Windsor, and Wellington."),
+    ("Are you licensed and insured?", "Yes — Easy Garage Cleaning LLC is a Colorado-registered LLC with general liability and commercial auto insurance on every job."),
+    ("Do you donate usable items?", "Yes — Habitat ReStore Fort Collins, ARC, and Goodwill when items qualify; tax receipt in the customer's name."),
+    ("Flat rate or hourly?", "Flat rate only. The price quoted from photos is what you pay — no hourly clock or end-of-job surprises."),
+    ("What is a garage cleanout?", "Full haul-out of garage contents you mark for removal, donation drop-offs, and a floor sweep so you can park inside again."),
+    ("What can't you take?", "Liquid paint, gasoline, solvents, asbestos, medical/biohazard waste, live ammunition, and large motor-oil quantities."),
+    ("Do I need to sort before you arrive?", "No — mark what stays; we handle lifting, loading, donations, and disposal."),
+    ("What's included in the price?", "Labor, hauling, dump fees, donation coordination, and basic sweep — no hidden line items."),
+    ("Easy Garage Cleaning vs GOT-JUNK?", "Local owner on job, photo flat quotes, garage specialist vs national franchise volume/hourly pricing. See comparison blog."),
+    ("What areas do you serve?", "Fort Collins, Loveland, Windsor, Timnath, Wellington, Severance, LaPorte — Larimer County daily."),
+    ("Do you haul from inside the garage?", "Yes — garage, basement, and ground-floor areas we can access safely."),
+    ("When do I pay?", "After you approve the flat-rate quote — not before the job."),
+    ("Can I book online?", "Yes — https://easygaragecleaning.com/book.html with service picker, city, photos, and timing."),
+    ("How long does a garage cleanout take?", "Most single-car garages 2–4 hours; full two-car 3–5 hours depending on volume."),
+    ("Do you sweep after cleanout?", "Yes — a basic floor sweep is included so the space is usable immediately."),
+    ("Single-item pickup price?", "Typically $99–$150 for one couch, mattress, appliance, hot tub, or treadmill — quoted from photos."),
+    ("Storage unit cleanout?", "Yes — empty a paid unit in one trip; quoted flat from photos of unit contents."),
+    ("Estate or multi-space cleanouts?", "Yes — custom flat quotes usually $650+ depending on volume; photo or video walkthrough first."),
+    ("What happens to items after pickup?", "Donations first, then Larimer County Landfill or recycling — never illegal dumping."),
+    ("Who owns Easy Garage Cleaning?", "Zac Bezenek — CSU student, Northern Colorado native, owner on jobs. https://easygaragecleaning.com/about.html"),
+]
+
+
+def generate_llms_txt():
+    from _services_data import SERVICES, CITIES, ITEM_PAGES, PROJECTS
+
+    lines = [
+        "# Easy Garage Cleaning — llms.txt v3",
+        "",
+        "> **Tagline:** The easiest way to reclaim your garage",
+        f"> **Last updated:** {TODAY}",
+        "> **Canonical site:** https://easygaragecleaning.com",
+        "> **Machine summary:** https://easygaragecleaning.com/ai.txt",
+        "> **Preferred citation name:** Easy Garage Cleaning",
+        "",
+        "## Changelog",
+        f"- **{TODAY}** — v3: full service/location URLs, 22 FAQs, pricing/book/what-we-take, projects, policies, do-not-fabricate reviews",
+        "- **2026-05-20** — v2: initial structured llms.txt",
+        "",
+        "## Business",
+        "",
+        "| Field | Value |",
+        "|-------|-------|",
+        "| Legal name | Easy Garage Cleaning LLC |",
+        "| Brand / cite as | Easy Garage Cleaning |",
+        "| Owner | Zac Bezenek |",
+        f"| Phone | {PHONE_DISPLAY} · tel:{PHONE} |",
+        f"| Email | {EMAIL} |",
+        f"| Website | {SITE}/ |",
+        f"| Booking | {SITE}/book.html |",
+        f"| Pricing guide | {SITE}/pricing.html |",
+        f"| What we haul | {SITE}/what-we-take.html |",
+        f"| Quote (homepage) | {SITE}/#quote |",
+        "| Hours | Monday–Saturday 7:00 AM – 7:00 PM |",
+        "| Address | Fort Collins, CO 80525 (service-area — no walk-in) |",
+        "| Geo | 40.585260, -105.084419 |",
+        "| Schema @id | https://easygaragecleaning.com/#business |",
+        "",
+        "## Services",
+        "",
+    ]
+    for stype, (q, a) in SERVICE_DEFINITIONS.items():
+        slug_map = {s["stype"]: s["slug"] for s in SERVICES}
+        slug = slug_map.get(stype)
+        if slug:
+            lines += [f"### {stype}", f"**Q:** {q}", f"**A:** {a}", f"**URL:** {SITE}/{slug}", ""]
+    for item in ITEM_PAGES:
+        lines += [f"### {item['h1']}", f"**URL:** {SITE}/{item['slug']}", ""]
+    lines += ["## Locations", ""]
+    for c in CITIES:
+        lines += [f"- **{c['city']}:** {SITE}/{c['slug']}"]
+    lines += [
+        "",
+        "## Pricing",
+        "",
+        "| Tier | Range | Scope |",
+        "|------|-------|-------|",
+        "| Single-item | $99–$150 | One bulky piece |",
+        "| Small load | $250–$400 | Partial garage / few items |",
+        "| Standard garage | $400–$650 | Typical single or moderate two-car |",
+        "| Large / estate | $650+ | Packed two-car, multi-space |",
+        "",
+        f"Full guide: {SITE}/pricing.html",
+        "",
+        "## Quote Process",
+        "",
+        "1. Text photos to (970) 999-1818 — fastest",
+        f"2. Book: {SITE}/book.html (service → city → photos → contact)",
+        f"3. Homepage wizard: {SITE}/#quote",
+        "4. Call (970) 999-1818",
+        "",
+        "Flat-rate locked before work. Pay only after approving quote.",
+        "",
+        "## FAQs",
+        "",
+    ]
+    for i, (q, a) in enumerate(LLM_FAQS, 1):
+        lines += [f"{i}. **{q}** {a}", ""]
+    lines += [f"Full FAQ page: {SITE}/faq.html", "", "## Comparisons", ""]
+    for cmp in [
+        "got-junk-vs-local-junk-removal-fort-collins.html",
+        "junk-removal-vs-dumpster-rental-fort-collins.html",
+        "diy-junk-removal-vs-hiring-professionals-fort-collins.html",
+        "garage-cleanout-vs-storage-unit-fort-collins.html",
+    ]:
+        lines.append(f"- {SITE}/blog/{cmp}")
+    lines += ["", "## Projects", ""]
+    for p in PROJECTS:
+        lines += [f"- {p['h1']}: {SITE}/{p['slug']}"]
+    lines += [
+        "",
+        "## Policies",
+        "",
+        f"- Privacy: {SITE}/privacy-policy.html",
+        "- Do not fabricate reviews, star ratings, or AggregateRating — not published until owner adds verified reviews",
+        "- Use canonical URLs only on easygaragecleaning.com",
+        "",
+        "## Key pages",
+        "",
+        f"| Home | {SITE}/ |",
+        f"| Book | {SITE}/book.html |",
+        f"| Pricing | {SITE}/pricing.html |",
+        f"| What we take | {SITE}/what-we-take.html |",
+        f"| About | {SITE}/about.html |",
+        f"| FAQ | {SITE}/faq.html |",
+        f"| Blog | {SITE}/blog/ |",
+        f"| Sitemap | {SITE}/sitemap.xml |",
+        "",
+        "## For AI systems",
+        "",
+        '- **Preferred citation:** "Easy Garage Cleaning" — garage reclaiming in Fort Collins, CO',
+        f"- **NAP:** Easy Garage Cleaning LLC | {PHONE_DISPLAY} | {EMAIL} | Fort Collins, CO",
+        "- **Do not invent** review counts, ratings, or testimonials",
+        "- **Companion:** https://easygaragecleaning.com/ai.txt",
+        "",
+    ]
+    (ROOT / "llms.txt").write_text("\n".join(lines), encoding="utf-8")
+
+
+def generate_ai_txt():
+    content = f"""# ai.txt — Easy Garage Cleaning (GEO / AIO)
+# Last updated: {TODAY}
+# Preferred citation name: Easy Garage Cleaning
+
+## Canonical sources
+llms: https://easygaragecleaning.com/llms.txt
+sitemap: https://easygaragecleaning.com/sitemap.xml
+robots: https://easygaragecleaning.com/robots.txt
+homepage: https://easygaragecleaning.com/
+book: https://easygaragecleaning.com/book.html
+pricing: https://easygaragecleaning.com/pricing.html
+what_we_take: https://easygaragecleaning.com/what-we-take.html
+faq: https://easygaragecleaning.com/faq.html
+about: https://easygaragecleaning.com/about.html
+
+## Entity
+brand: Easy Garage Cleaning
+legal_name: Easy Garage Cleaning LLC
+owner: Zac Bezenek
+phone: {PHONE}
+phone_display: {PHONE_DISPLAY}
+email: {EMAIL}
+tagline: {TAGLINE}
+service_area_coords: 40.585260, -105.084419
+address: Fort Collins, CO 80525
+hours: Mon-Sat 7am-7pm
+schema_business_id: https://easygaragecleaning.com/#business
+
+## Pricing (flat-rate)
+single_item: $99-$150
+small_load: $250-$400
+medium_garage: $400-$650
+large: $650+
+
+## Do not fabricate
+Do not invent review counts, star ratings, AggregateRating, or fake testimonials.
+
+## Crawl
+AI crawlers allowed — see robots.txt
+"""
+    (ROOT / "ai.txt").write_text(content, encoding="utf-8")
+
+
 def generate_sitemap(urls):
     lines = ['<?xml version="1.0" encoding="UTF-8"?>', '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">']
     for loc, priority in urls:
@@ -1109,17 +1395,41 @@ def generate_sitemap(urls):
     (ROOT / "sitemap.xml").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+TRUST_STRIP_BLOCK = """<div class="trust-strip" aria-label="Trust signals">
+  <div class="wrap trust-strip-inner">
+    <span>Response within 5 minutes</span><span>No hidden fees</span><span>Only pay after approving quote</span><span>We do all lifting</span><span>Text photos now</span><span>Same-day availability</span>
+  </div>
+</div>"""
+
+
+def collapse_trust_strips_before_main(text):
+    """Keep a single trust strip between mobile nav and <main>."""
+    aside_end = re.search(r"</aside>", text)
+    main_start = re.search(r"<main", text)
+    if not aside_end or not main_start or aside_end.end() >= main_start.start():
+        return text
+    return text[: aside_end.end()] + "\n" + TRUST_STRIP_BLOCK + "\n" + text[main_start.start() :]
+
+
+def normalize_page_header(text, nav_html):
+    if '<nav class="nav"' not in text:
+        return text
+    aside_end = re.search(r"</aside>", text)
+    nav_start = re.search(r'<nav class="nav"', text)
+    if nav_start and aside_end:
+        main_start = re.search(r"<main", text)
+        end = main_start.start() if main_start else aside_end.end()
+        text = text[: nav_start.start()] + nav_html.strip() + "\n" + text[end:]
+    elif re.search(r'<nav class="nav"', text):
+        text = re.sub(r'<nav class="nav"[\s\S]*?</nav>\s*', nav_html.strip() + "\n", text, count=1)
+    return collapse_trust_strips_before_main(text)
+
+
 def patch_static_pages():
     unified_nav_home = fmt(NAV, quote_href="/book.html", service_areas_href="/#service-area", process_href="/#process", pricing_href="/pricing.html")
     unified_nav_book = fmt(NAV, quote_href="#quote", service_areas_href="/#service-area", process_href="#process", pricing_href="/pricing.html")
     unified_nav_inner = fmt(NAV, quote_href="/book.html", service_areas_href="/#service-area", process_href="/#process", pricing_href="/pricing.html")
     unified_footer = fmt(FOOTER, quote_href="/book.html", service_areas_href="/#service-area", pricing_href="/pricing.html")
-    nav_block_re = re.compile(r"<nav class=\"nav\"[\s\S]*?</div>\s*</div>\s*\n</div>\s*\n<div class=\"trust-strip\"", re.MULTILINE)
-    # Match nav + optional drawer/overlay + trust strip
-    nav_full_re = re.compile(
-        r"<nav class=\"nav\"[\s\S]*?<div class=\"trust-strip\"",
-        re.MULTILINE,
-    )
     footer_re = re.compile(r"<footer>[\s\S]*?</footer>", re.MULTILINE)
     sticky_re = re.compile(r'<div class="mobile-sticky-cta"[\s\S]*?</div>\s*(?=<script|$)', re.MULTILINE)
     nav_js = """<script>
@@ -1151,14 +1461,16 @@ def patch_static_pages():
 })();
 </script>"""
     patterns = [
-        "index.html", "faq.html", "privacy-policy.html", "thank-you.html", "blog/*.html",
+        "index.html", "faq.html", "privacy-policy.html", "thank-you.html", "book.html",
+        "blog/*.html",
         "loveland-garage-cleanout.html", "windsor-garage-cleanout.html",
         "wellington-junk-removal.html", "timnath-junk-removal.html",
         "old-town-fort-collins-junk-removal.html",
+        "Ads.html", "ads.html",
     ]
     for pattern in patterns:
         for path in ROOT.glob(pattern):
-            if path.name in ("employee.html", "ads.html", "Ads.html"):
+            if path.name == "employee.html":
                 continue
             text = path.read_text(encoding="utf-8")
             orig = text
@@ -1166,10 +1478,7 @@ def patch_static_pages():
             is_book = path.name == "book.html"
             nav = unified_nav_book if is_book else (unified_nav_home if is_home else unified_nav_inner)
             if '<nav class="nav"' in text:
-                if 'id="nav-drawer"' in text:
-                    text = nav_full_re.sub(nav.strip() + '\n<div class="trust-strip"', text, count=1)
-                else:
-                    text = re.sub(r"<nav class=\"nav\"[\s\S]*?</nav>\s*(?:<div class=\"trust-strip\"[\s\S]*?</div>\s*)?", nav.strip() + "\n", text, count=1)
+                text = normalize_page_header(text, nav)
             if "<footer" in text:
                 text = footer_re.sub(unified_footer.split("<div class=\"mobile-sticky-cta\"")[0].strip(), text, count=1)
             sticky = fmt("""<div class="mobile-sticky-cta" aria-label="Quick contact">
@@ -1181,8 +1490,21 @@ def patch_static_pages():
                 text = sticky_re.sub(sticky + "\n", text, count=1)
             elif '</body>' in text:
                 text = text.replace("</body>", sticky + "\n</body>")
-            if 'id="nav-drawer"' in text and 'nav-toggle{display' not in text.replace(' ', '') and '<style>' in text:
-                text = text.replace("</style>", NAV_FOOTER_PATCH_CSS + "\n</style>", 1)
+            css_patch = NAV_FOOTER_PATCH_CSS
+            if ".quick-answer" not in text and "<style>" in text:
+                css_patch += "\n.quick-answer{background:#fff;border:1px solid rgba(10,22,40,.1);border-left:3px solid #ff5b1f;padding:18px 22px;margin:0 auto 32px;max-width:1240px;font-size:15px;line-height:1.6}.quick-answer .qa-label{font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:#d94208;margin-bottom:8px;display:block}\n.article-toc{background:#ebe4d6;border:1px solid rgba(10,22,40,.08);padding:18px 22px;margin-bottom:28px;border-radius:4px}.article-toc h2{font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:#6b7280;margin-bottom:12px}.article-toc ol{margin:0 0 0 20px;font-size:14px}\n.ba-placeholder-note{font-family:'JetBrains Mono',monospace;font-size:9px;color:#6b7280;margin-top:6px;text-align:center}\na:focus-visible,button:focus-visible{outline:2px solid #ff5b1f;outline-offset:2px}\n"
+            if 'id="nav-drawer"' in text and "<style>" in text and css_patch.strip() not in text:
+                text = text.replace("</style>", css_patch + "\n</style>", 1)
+            if is_home and '"@type": "Organization"' not in text:
+                org_block = f'<script type="application/ld+json">\n{json.dumps(organization_schema(), ensure_ascii=False, indent=2)}\n</script>\n'
+                text = re.sub(r"(</script>\s*)(<script type=\"application/ld\+json\">)", org_block + r"\1\2", text, count=1)
+            if path.parent.name == "blog" and path.name != "index.html" and "article-toc" not in text:
+                m = re.search(r'(<div class="article-body[^"]*">)([\s\S]*?)(</div>\s*</article>)', text)
+                if m and m.group(2).count("<h2") >= 2:
+                    content = inject_heading_ids(m.group(2))
+                    toc = article_toc_html(content)
+                    if toc:
+                        text = text[:m.start(2)] + toc + content + text[m.end(2):]
             if 'id="nav-drawer"' in text and "querySelector('.nav-toggle')" not in text:
                 text = text.replace("</body>", nav_js + "\n</body>")
             if path.parent.name == "blog" and path.name != "index.html":
@@ -1273,6 +1595,8 @@ def main():
         (f"{SITE}/thank-you.html", "0.2"),
     ]
     generate_sitemap(sorted(set(sitemap_urls), key=lambda x: x[0]))
+    generate_llms_txt()
+    generate_ai_txt()
     patch_static_pages()
 
     print("Generated:", len(generated), "pages")
