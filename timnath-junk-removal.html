@@ -248,7 +248,10 @@
     .nearby-links { display: flex; flex-wrap: wrap; gap: 12px; }
     .nearby-links a { background: var(--white); border: 1px solid rgba(10,22,40,0.1); border-radius: 4px; padding: 10px 18px; font-size: 14px; font-weight: 500; transition: border-color 0.2s; }
     .nearby-links a:hover { border-color: var(--accent); color: var(--accent); }
-  </style>
+  
+.nav-links{display:none;align-items:center;gap:18px;list-style:none;font-size:13px;font-weight:500}.nav-links>li{display:flex;align-items:center}.nav-toggle{display:flex;flex-direction:column;justify-content:center;gap:5px;width:44px;height:44px;padding:10px;background:transparent;border:1px solid rgba(10,22,40,.15);border-radius:var(--radius,2px);cursor:pointer;flex-shrink:0}.nav-toggle-bar{display:block;width:100%;height:2px;background:#0a1628;transition:transform .2s,opacity .2s}.nav-toggle[aria-expanded=true] .nav-toggle-bar:nth-child(1){transform:translateY(7px) rotate(45deg)}.nav-toggle[aria-expanded=true] .nav-toggle-bar:nth-child(2){opacity:0}.nav-toggle[aria-expanded=true] .nav-toggle-bar:nth-child(3){transform:translateY(-7px) rotate(-45deg)}.nav-dropdown{position:relative}.nav-dropdown-trigger{display:flex;align-items:center;gap:4px;background:none;border:none;font:inherit;font-size:13px;font-weight:500;cursor:pointer;color:inherit;padding:0}.nav-dropdown-trigger::after{content:'';border:4px solid transparent;border-top-color:currentColor;margin-top:3px;opacity:.6}.nav-dropdown-panel{display:none;position:absolute;top:calc(100% + 8px);left:50%;transform:translateX(-50%);min-width:480px;background:#fff;border:1px solid rgba(10,22,40,.1);box-shadow:0 12px 40px rgba(10,22,40,.12);padding:20px 24px;border-radius:4px;z-index:60;grid-template-columns:1fr 1fr;gap:24px}.nav-dropdown-locations .nav-dropdown-panel{min-width:200px;grid-template-columns:1fr;left:0;transform:none}.nav-dropdown:hover .nav-dropdown-panel,.nav-dropdown:focus-within .nav-dropdown-panel{display:grid}.dropdown-label{font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:#6b7280;margin-bottom:10px;display:block}.dropdown-col{display:flex;flex-direction:column;gap:4px}.dropdown-col a{font-size:13px;padding:5px 0;color:#334155}.nav-drawer{position:fixed;top:0;right:0;width:min(320px,88vw);height:100%;background:#f5f1ea;z-index:200;transform:translateX(100%);transition:transform .3s ease;overflow-y:auto;padding:20px 24px 100px;border-left:1px solid rgba(10,22,40,.08)}.nav-drawer.open{transform:translateX(0)}.nav-drawer-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:24px;padding-bottom:16px;border-bottom:1px solid rgba(10,22,40,.08)}.nav-drawer-close{background:none;border:none;font-size:28px;line-height:1;cursor:pointer;padding:4px 8px}.drawer-phone{display:block;font-weight:600;font-size:16px;margin-bottom:20px;color:#d94208}.drawer-section{margin-bottom:4px;border-bottom:1px solid rgba(10,22,40,.06)}.drawer-toggle{width:100%;display:flex;justify-content:space-between;align-items:center;background:none;border:none;font:inherit;font-size:15px;font-weight:600;padding:14px 0;cursor:pointer}.drawer-toggle::after{content:'+';font-size:18px;color:#6b7280}.drawer-toggle[aria-expanded=true]::after{transform:rotate(45deg);display:inline-block}.drawer-links{display:none;flex-direction:column;gap:10px;padding:0 0 14px 8px}.drawer-links.open{display:flex}.drawer-link-row{display:block;font-size:15px;font-weight:600;padding:14px 0}.drawer-cta{display:block;text-align:center;margin-top:24px;padding:14px;background:#ff5b1f;color:#fff;font-weight:700;border-radius:2px}.nav-overlay{position:fixed;inset:0;background:rgba(10,22,40,.45);z-index:199;opacity:0;pointer-events:none;transition:opacity .3s}.nav-overlay.open{opacity:1;pointer-events:auto}body.nav-open{overflow:hidden}.foot-grid{display:grid;grid-template-columns:1fr;gap:28px;padding:48px 0 32px}.foot-col h3{font-family:'Fraunces',Georgia,serif;font-size:15px;font-weight:600;color:#f5f1ea;margin-bottom:12px}.foot-col ul{list-style:none;display:flex;flex-direction:column;gap:8px}.foot-bar{border-top:1px solid rgba(255,255,255,.08);padding:16px 0;font-size:12px}.foot-bar-inner{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:12px}@media(min-width:640px){.foot-grid{grid-template-columns:repeat(2,1fr)}}@media(min-width:900px){.foot-grid{grid-template-columns:1.5fr repeat(4,1fr);gap:32px}.nav-links{display:flex!important}.nav-right{display:flex!important}.nav-toggle,.nav-drawer,.nav-overlay{display:none!important}}@media(max-width:1023px){.nav-links,.nav-right{display:none!important}}
+
+</style>
 </head>
 <body>
 
@@ -256,24 +259,124 @@
   <div class="nav-inner">
     <a href="/" class="logo" aria-label="Easy Garage Cleaning Home"><span class="logo-mark"></span>Easy Garage</a>
     <ul class="nav-links">
-      <li><a href="/junk-removal-fort-collins-co.html">Junk Removal</a></li>
-      <li><a href="/garage-cleanouts-fort-collins-co.html">Garage Cleanouts</a></li>
-      <li><a href="/garage-cleaning-fort-collins-co.html">Garage Cleaning</a></li>
-      <li><a href="/garage-cleanouts-fort-collins-co.html#service-area">Service Areas</a></li>
-      <li><a href="/#reviews">Reviews</a></li>
+      <li class="nav-dropdown">
+        <button type="button" class="nav-dropdown-trigger" aria-expanded="false" aria-haspopup="true">Services</button>
+        <div class="nav-dropdown-panel" role="menu">
+          <div class="dropdown-col">
+            <span class="dropdown-label">Core services</span>
+            <a href="/garage-cleanouts-fort-collins-co.html" role="menuitem">Garage Cleanouts</a>
+            <a href="/junk-removal-fort-collins-co.html" role="menuitem">Junk Removal</a>
+            <a href="/garage-cleaning-fort-collins-co.html" role="menuitem">Garage Cleaning</a>
+            <a href="/garage-organization-fort-collins-co.html" role="menuitem">Garage Organization</a>
+            <a href="/furniture-removal-fort-collins-co.html" role="menuitem">Furniture Removal</a>
+            <a href="/appliance-removal-fort-collins-co.html" role="menuitem">Appliance Removal</a>
+            <a href="/mattress-removal-fort-collins-co.html" role="menuitem">Mattress Removal</a>
+            <a href="/storage-unit-cleanout-fort-collins-co.html" role="menuitem">Storage Unit Cleanout</a>
+            <a href="/yard-debris-removal-fort-collins-co.html" role="menuitem">Yard Debris Removal</a>
+          </div>
+          <div class="dropdown-col">
+            <span class="dropdown-label">What we take</span>
+            <a href="/what-we-take.html" role="menuitem"><strong>View all items →</strong></a>
+            <a href="/couch-removal-fort-collins-co.html" role="menuitem">Couch &amp; Sofa</a>
+            <a href="/refrigerator-removal-fort-collins-co.html" role="menuitem">Refrigerator</a>
+            <a href="/hot-tub-removal-fort-collins-co.html" role="menuitem">Hot Tub</a>
+            <a href="/treadmill-removal-fort-collins-co.html" role="menuitem">Treadmill</a>
+            <a href="/shed-cleanout-fort-collins-co.html" role="menuitem">Shed Cleanout</a>
+          </div>
+        </div>
+      </li>
+      <li class="nav-dropdown nav-dropdown-locations">
+        <button type="button" class="nav-dropdown-trigger" aria-expanded="false" aria-haspopup="true">Locations</button>
+        <div class="nav-dropdown-panel" role="menu">
+          <div class="dropdown-col">
+            <span class="dropdown-label">Northern Colorado</span>
+            <a href="/garage-cleanouts-fort-collins-co.html" role="menuitem">Fort Collins</a>
+            <a href="/garage-cleanouts-loveland-co.html" role="menuitem">Loveland</a>
+            <a href="/garage-cleanouts-windsor-co.html" role="menuitem">Windsor</a>
+            <a href="/junk-removal-wellington-co.html" role="menuitem">Wellington</a>
+            <a href="/#service-area" role="menuitem">All service areas →</a>
+          </div>
+        </div>
+      </li>
+      <li><a href="/#process">How It Works</a></li>
+      <li><a href="/pricing.html">Pricing</a></li>
       <li><a href="/about.html">About</a></li>
+      <li><a href="/faq.html">FAQ</a></li>
+      <li><a href="/blog/">Blog</a></li>
     </ul>
     <div class="nav-right">
       <a href="tel:+19709991818" class="nav-phone">(970) 999-1818</a>
-      <a href="/book.html" class="nav-cta">Get Free Quote</a>
+      <a href="/book.html" class="nav-cta">Book Now</a>
     </div>
-    <a href="/book.html" class="nav-cta nav-mobile-cta" aria-label="Get Free Quote">Quote</a>
+    <button type="button" class="nav-toggle" aria-label="Open menu" aria-expanded="false" aria-controls="nav-drawer">
+      <span class="nav-toggle-bar"></span><span class="nav-toggle-bar"></span><span class="nav-toggle-bar"></span>
+    </button>
   </div>
 </nav>
+<div class="nav-overlay" id="nav-overlay" aria-hidden="true"></div>
+<aside class="nav-drawer" id="nav-drawer" aria-hidden="true" aria-label="Mobile navigation">
+  <div class="nav-drawer-head">
+    <span class="logo"><span class="logo-mark"></span>Easy Garage</span>
+    <button type="button" class="nav-drawer-close" aria-label="Close menu">&times;</button>
+  </div>
+  <a href="tel:+19709991818" class="drawer-phone">(970) 999-1818</a>
+  <div class="drawer-section">
+    <button type="button" class="drawer-toggle" aria-expanded="false">Services</button>
+    <div class="drawer-links">
+      <a href="/garage-cleanouts-fort-collins-co.html">Garage Cleanouts</a>
+      <a href="/junk-removal-fort-collins-co.html">Junk Removal</a>
+      <a href="/garage-cleaning-fort-collins-co.html">Garage Cleaning</a>
+      <a href="/garage-organization-fort-collins-co.html">Garage Organization</a>
+      <a href="/furniture-removal-fort-collins-co.html">Furniture Removal</a>
+      <a href="/appliance-removal-fort-collins-co.html">Appliance Removal</a>
+      <a href="/mattress-removal-fort-collins-co.html">Mattress Removal</a>
+      <a href="/storage-unit-cleanout-fort-collins-co.html">Storage Unit Cleanout</a>
+      <a href="/yard-debris-removal-fort-collins-co.html">Yard Debris Removal</a>
+    </div>
+  </div>
+  <div class="drawer-section">
+    <button type="button" class="drawer-toggle" aria-expanded="false">What We Take</button>
+    <div class="drawer-links">
+      <a href="/what-we-take.html">View all items</a>
+      <a href="/couch-removal-fort-collins-co.html">Couch &amp; Sofa</a>
+      <a href="/refrigerator-removal-fort-collins-co.html">Refrigerator</a>
+      <a href="/hot-tub-removal-fort-collins-co.html">Hot Tub</a>
+      <a href="/treadmill-removal-fort-collins-co.html">Treadmill</a>
+      <a href="/shed-cleanout-fort-collins-co.html">Shed Cleanout</a>
+    </div>
+  </div>
+  <div class="drawer-section">
+    <button type="button" class="drawer-toggle" aria-expanded="false">Locations</button>
+    <div class="drawer-links">
+      <a href="/garage-cleanouts-fort-collins-co.html">Fort Collins</a>
+      <a href="/garage-cleanouts-loveland-co.html">Loveland</a>
+      <a href="/garage-cleanouts-windsor-co.html">Windsor</a>
+      <a href="/junk-removal-wellington-co.html">Wellington</a>
+      <a href="/#service-area">All service areas</a>
+    </div>
+  </div>
+  <a href="/#process" class="drawer-link-row">How It Works</a>
+  <a href="/pricing.html" class="drawer-link-row">Pricing</a>
+  <a href="/about.html" class="drawer-link-row">About</a>
+  <a href="/faq.html" class="drawer-link-row">FAQ</a>
+  <a href="/blog/" class="drawer-link-row">Blog</a>
+  <a href="/book.html" class="drawer-cta">Get Free Quote</a>
+</aside>
 <div class="trust-strip" aria-label="Trust signals">
   <div class="wrap trust-strip-inner">
     <span>Response within 5 minutes</span><span>No hidden fees</span><span>Only pay after approving quote</span><span>We do all lifting</span><span>Text photos now</span><span>Same-day availability</span>
   </div>
+</div>
+<div class="trust-strip" aria-label="Trust signals">
+  <div class="wrap trust-strip-inner">
+    <span>Response within 5 minutes</span><span>No hidden fees</span><span>Only pay after approving quote</span><span>We do all lifting</span><span>Text photos now</span><span>Same-day availability</span>
+  </div>
+</div>
+<div class="trust-strip" aria-label="Trust signals">
+  <div class="wrap trust-strip-inner">
+    <span>Response within 5 minutes</span><span>No hidden fees</span><span>Only pay after approving quote</span><span>We do all lifting</span><span>Text photos now</span><span>Same-day availability</span>
+  </div>
+</div>
 </div>
 <div class="trust-strip" aria-label="Trust signals">
   <div class="wrap trust-strip-inner">
@@ -479,14 +582,61 @@
 </section>
 
 <footer>
-  <div class="wrap foot">
-    <div class="logo"><span class="logo-mark"></span>Easy Garage Cleaning</div>
-      <div class="foot-entity" itemscope itemtype="https://schema.org/LocalBusiness">
-        <meta itemprop="name" content="Easy Garage Cleaning LLC" />
-        <p class="foot-nap"><strong>Easy Garage Cleaning LLC</strong> · <a href="tel:+19709991818" itemprop="telephone">(970) 999-1818</a> · <a href="mailto:contact@easygaragecleaning.com" itemprop="email">contact@easygaragecleaning.com</a></p>
-        <p class="foot-area" itemprop="areaServed">Serving Fort Collins, Loveland, Windsor, Wellington, Timnath, Severance &amp; LaPorte — Northern Colorado garage reclaiming.</p>
-      </div>
-    <div>&copy; 2026 Easy Garage Cleaning LLC &middot; Fort Collins, CO &middot; Licensed &amp; Insured &middot; <a href="tel:+19709991818">(970) 999-1818</a></div>
+  <div class="wrap foot-grid">
+    <div class="foot-brand">
+      <div class="logo"><span class="logo-mark"></span>Easy Garage Cleaning</div>
+      <p class="community">The easiest way to reclaim your garage. Locally owned in Fort Collins — not a franchise call center.</p>
+      <p class="community">Partners: <a href="https://www.fcgov.com/chamber/" rel="noopener">Fort Collins Chamber</a>, <a href="/blog/habitat-for-humanity-restore-fort-collins.html">Habitat ReStore</a>.</p>
+    </div>
+    <div class="foot-col">
+      <h3>Services</h3>
+      <ul>
+        <li><a href="/garage-cleanouts-fort-collins-co.html">Garage Cleanouts</a></li>
+        <li><a href="/junk-removal-fort-collins-co.html">Junk Removal</a></li>
+        <li><a href="/garage-cleaning-fort-collins-co.html">Garage Cleaning</a></li>
+        <li><a href="/garage-organization-fort-collins-co.html">Garage Organization</a></li>
+        <li><a href="/furniture-removal-fort-collins-co.html">Furniture Removal</a></li>
+        <li><a href="/appliance-removal-fort-collins-co.html">Appliance Removal</a></li>
+        <li><a href="/mattress-removal-fort-collins-co.html">Mattress Removal</a></li>
+        <li><a href="/storage-unit-cleanout-fort-collins-co.html">Storage Unit Cleanout</a></li>
+        <li><a href="/what-we-take.html">What We Take</a></li>
+      </ul>
+    </div>
+    <div class="foot-col">
+      <h3>Locations</h3>
+      <ul>
+        <li><a href="/garage-cleanouts-fort-collins-co.html">Fort Collins</a></li>
+        <li><a href="/garage-cleanouts-loveland-co.html">Loveland</a></li>
+        <li><a href="/garage-cleanouts-windsor-co.html">Windsor</a></li>
+        <li><a href="/junk-removal-wellington-co.html">Wellington</a></li>
+        <li><a href="/timnath-junk-removal.html">Timnath</a></li>
+        <li><a href="/#service-area">All service areas</a></li>
+      </ul>
+    </div>
+    <div class="foot-col">
+      <h3>Company</h3>
+      <ul>
+        <li><a href="/about.html">About</a></li>
+        <li><a href="/faq.html">FAQ</a></li>
+        <li><a href="/blog/">Blog</a></li>
+        <li><a href="/book.html">Book Online</a></li>
+        <li><a href="/pricing.html">Pricing</a></li>
+        <li><a href="/privacy-policy.html">Privacy Policy</a></li>
+      </ul>
+    </div>
+    <div class="foot-col foot-contact">
+      <h3>Contact</h3>
+      <p><a href="tel:+19709991818">(970) 999-1818</a></p>
+      <p><a href="mailto:contact@easygaragecleaning.com">contact@easygaragecleaning.com</a></p>
+      <p><a href="sms:+19709991818?body=Hi!%20I'd%20like%20a%20quote.">Text for quote</a></p>
+      <p class="foot-hours">Mon–Sat · 7am–7pm<br>Fort Collins, CO</p>
+    </div>
+  </div>
+  <div class="foot-bar">
+    <div class="wrap foot-bar-inner">
+      <span>&copy; 2026 Easy Garage Cleaning LLC · Licensed &amp; Insured</span>
+      <a href="/privacy-policy.html">Privacy Policy</a>
+    </div>
   </div>
 </footer>
 
@@ -502,10 +652,39 @@
 </script>
 
 <div class="mobile-sticky-cta" aria-label="Quick contact">
-  <a href="tel:+19709991818" class="mobile-cta-btn mobile-cta-call" style="padding:12px 6px;font-weight:700;font-size:12px;text-align:center;border-radius:3px;background:#14243d;color:#f5f1ea;border:1px solid rgba(255,255,255,.08);">Call</a>
-  <a href="sms:+19709991818" class="mobile-cta-btn mobile-cta-text" style="padding:12px 6px;font-weight:700;font-size:12px;text-align:center;border-radius:3px;background:#14243d;color:#f5f1ea;border:1px solid rgba(255,255,255,.08);">Text</a>
-  <a href="/#quote" class="mobile-cta-btn mobile-cta-quote" style="padding:12px 6px;font-weight:700;font-size:12px;text-align:center;border-radius:3px;background:#ff5b1f;color:#fff;">Get Quote</a>
+  <a href="tel:+19709991818" class="mobile-cta-btn mobile-cta-call">Call</a>
+  <a href="sms:+19709991818?body=Hi!%20I'd%20like%20a%20quote." class="mobile-cta-btn mobile-cta-text">Text</a>
+  <a href="/book.html" class="mobile-cta-btn mobile-cta-quote">Quote</a>
 </div>
+
 <style>@media(max-width:1023px){.mobile-sticky-cta{position:fixed;bottom:0;left:0;right:0;z-index:100;display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;background:#0a1628;padding:8px 10px 12px}body{padding-bottom:72px}}</style>
+<script>
+(function(){
+  const toggle=document.querySelector('.nav-toggle');
+  const drawer=document.getElementById('nav-drawer');
+  const overlay=document.getElementById('nav-overlay');
+  const closeBtn=document.querySelector('.nav-drawer-close');
+  if(!toggle||!drawer)return;
+  function setOpen(open){
+    toggle.setAttribute('aria-expanded',open);
+    drawer.classList.toggle('open',open);
+    drawer.setAttribute('aria-hidden',!open);
+    if(overlay){overlay.classList.toggle('open',open);overlay.setAttribute('aria-hidden',!open);}
+    document.body.classList.toggle('nav-open',open);
+  }
+  toggle.addEventListener('click',()=>setOpen(toggle.getAttribute('aria-expanded')!=='true'));
+  if(closeBtn)closeBtn.addEventListener('click',()=>setOpen(false));
+  if(overlay)overlay.addEventListener('click',()=>setOpen(false));
+  document.querySelectorAll('.drawer-toggle').forEach(btn=>{
+    btn.addEventListener('click',()=>{
+      const open=btn.getAttribute('aria-expanded')==='true';
+      btn.setAttribute('aria-expanded',!open);
+      const links=btn.nextElementSibling;
+      if(links)links.classList.toggle('open',!open);
+    });
+  });
+  document.addEventListener('keydown',e=>{if(e.key==='Escape')setOpen(false);});
+})();
+</script>
 </body>
 </html>

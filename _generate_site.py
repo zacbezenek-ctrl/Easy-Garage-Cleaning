@@ -90,7 +90,7 @@ SHARED_CSS = r"""
 :root{--navy:#0a1628;--navy-soft:#14243d;--navy-line:rgba(255,255,255,0.08);--ink:#0a1628;--paper:#f5f1ea;--paper-warm:#ebe4d6;--white:#fff;--accent:#ff5b1f;--accent-deep:#d94208;--muted:#6b7280;--text:#334155;--muted-dark:rgba(245,241,234,0.6);--font-display:'Fraunces',Georgia,serif;--font-body:'Inter',system-ui,sans-serif;--font-mono:'JetBrains Mono',ui-monospace,monospace;--radius:2px;--maxw:1240px}
 *{box-sizing:border-box;margin:0;padding:0}html{scroll-behavior:smooth}body{font-family:var(--font-body);color:var(--ink);background:var(--paper);line-height:1.6;-webkit-font-smoothing:antialiased;overflow-x:hidden}a{color:inherit;text-decoration:none}a.content-link{color:var(--accent-deep);font-weight:600;text-decoration:underline;text-underline-offset:2px}.wrap{max-width:var(--maxw);margin:0 auto;padding:0 18px}.mono{font-family:var(--font-mono);font-size:11px;letter-spacing:.12em;text-transform:uppercase}.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
 .btn-primary{display:inline-flex;align-items:center;justify-content:center;gap:8px;background:var(--accent);color:var(--white);padding:14px 22px;font-weight:700;font-size:15px;border:none;border-radius:var(--radius);cursor:pointer;font-family:inherit;transition:background .2s,transform .2s;box-shadow:0 4px 20px -6px rgba(255,91,31,.5)}.btn-primary:hover{background:var(--accent-deep);transform:translateY(-1px)}.btn-secondary{display:inline-flex;align-items:center;justify-content:center;gap:8px;background:transparent;color:var(--ink);padding:13px 22px;font-weight:600;font-size:15px;border:1px solid rgba(10,22,40,.2);border-radius:var(--radius)}.btn-secondary:hover{border-color:var(--accent);color:var(--accent-deep)}
-.nav{position:sticky;top:0;z-index:50;background:rgba(245,241,234,.95);border-bottom:1px solid rgba(10,22,40,.08);backdrop-filter:blur(8px)}.nav-inner{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 18px;max-width:var(--maxw);margin:0 auto}.logo{font-family:var(--font-display);font-weight:900;font-size:18px;letter-spacing:-.02em;display:flex;align-items:center;gap:6px;flex-shrink:0}.logo-mark{display:inline-block;width:9px;height:9px;background:var(--accent);border-radius:50%}.nav-links{display:none;gap:22px;list-style:none;font-size:13px;font-weight:500}.nav-links a:hover{color:var(--accent-deep)}.nav-right{display:none;align-items:center;gap:14px;flex-shrink:0}.nav-phone{font-weight:600;font-size:14px;white-space:nowrap}.nav-phone:hover{color:var(--accent)}.nav-cta{background:var(--accent);color:var(--white);padding:10px 16px;font-size:13px;font-weight:700;border-radius:var(--radius);white-space:nowrap}.nav-cta:hover{background:var(--accent-deep)}.nav-mobile-cta{display:block}@media(min-width:1024px){.nav-links{display:flex}.nav-right{display:flex}.nav-mobile-cta{display:none}}
+.nav{position:sticky;top:0;z-index:50;background:rgba(245,241,234,.95);border-bottom:1px solid rgba(10,22,40,.08);backdrop-filter:blur(8px)}.nav-inner{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 18px;max-width:var(--maxw);margin:0 auto}.logo{font-family:var(--font-display);font-weight:900;font-size:18px;letter-spacing:-.02em;display:flex;align-items:center;gap:6px;flex-shrink:0}.logo-mark{display:inline-block;width:9px;height:9px;background:var(--accent);border-radius:50%}.nav-links{display:none;align-items:center;gap:18px;list-style:none;font-size:13px;font-weight:500}.nav-links>li{display:flex;align-items:center}.nav-links a:hover,.nav-dropdown-trigger:hover{color:var(--accent-deep)}.nav-right{display:none;align-items:center;gap:14px;flex-shrink:0}.nav-phone{font-weight:600;font-size:14px;white-space:nowrap}.nav-phone:hover{color:var(--accent)}.nav-cta{background:var(--accent);color:var(--white);padding:10px 16px;font-size:13px;font-weight:700;border-radius:var(--radius);white-space:nowrap}.nav-cta:hover{background:var(--accent-deep)}.nav-toggle{display:flex;flex-direction:column;justify-content:center;gap:5px;width:44px;height:44px;padding:10px;background:transparent;border:1px solid rgba(10,22,40,.15);border-radius:var(--radius);cursor:pointer;flex-shrink:0}.nav-toggle-bar{display:block;width:100%;height:2px;background:var(--ink);transition:transform .2s,opacity .2s}.nav-toggle[aria-expanded=true] .nav-toggle-bar:nth-child(1){transform:translateY(7px) rotate(45deg)}.nav-toggle[aria-expanded=true] .nav-toggle-bar:nth-child(2){opacity:0}.nav-toggle[aria-expanded=true] .nav-toggle-bar:nth-child(3){transform:translateY(-7px) rotate(-45deg)}.nav-dropdown{position:relative}.nav-dropdown-trigger{display:flex;align-items:center;gap:4px;background:none;border:none;font:inherit;font-size:13px;font-weight:500;cursor:pointer;color:inherit;padding:0}.nav-dropdown-trigger::after{content:'';border:4px solid transparent;border-top-color:currentColor;margin-top:3px;opacity:.6}.nav-dropdown-panel{display:none;position:absolute;top:calc(100% + 8px);left:50%;transform:translateX(-50%);min-width:480px;background:var(--white);border:1px solid rgba(10,22,40,.1);box-shadow:0 12px 40px rgba(10,22,40,.12);padding:20px 24px;border-radius:4px;z-index:60;grid-template-columns:1fr 1fr;gap:24px}.nav-dropdown-locations .nav-dropdown-panel{min-width:200px;grid-template-columns:1fr;left:0;transform:none}.nav-dropdown:hover .nav-dropdown-panel,.nav-dropdown:focus-within .nav-dropdown-panel{display:grid}.dropdown-label{font-family:var(--font-mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:10px;display:block}.dropdown-col{display:flex;flex-direction:column;gap:4px}.dropdown-col a{font-size:13px;padding:5px 0;color:var(--text)}.dropdown-col a:hover{color:var(--accent-deep)}.nav-drawer{position:fixed;top:0;right:0;width:min(320px,88vw);height:100%;background:var(--paper);z-index:200;transform:translateX(100%);transition:transform .3s ease;overflow-y:auto;padding:20px 24px 100px;border-left:1px solid rgba(10,22,40,.08)}.nav-drawer.open{transform:translateX(0)}.nav-drawer-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:24px;padding-bottom:16px;border-bottom:1px solid rgba(10,22,40,.08)}.nav-drawer-close{background:none;border:none;font-size:28px;line-height:1;cursor:pointer;color:var(--ink);padding:4px 8px}.drawer-phone{display:block;font-weight:600;font-size:16px;margin-bottom:20px;color:var(--accent-deep)}.drawer-section{margin-bottom:4px;border-bottom:1px solid rgba(10,22,40,.06)}.drawer-toggle{width:100%;display:flex;justify-content:space-between;align-items:center;background:none;border:none;font:inherit;font-size:15px;font-weight:600;padding:14px 0;cursor:pointer;color:var(--ink)}.drawer-toggle::after{content:'+';font-size:18px;color:var(--muted);transition:transform .2s}.drawer-toggle[aria-expanded=true]::after{transform:rotate(45deg)}.drawer-links{display:none;flex-direction:column;gap:10px;padding:0 0 14px 8px}.drawer-links.open{display:flex}.drawer-links a{font-size:14px;color:var(--text)}.drawer-links a:hover{color:var(--accent-deep)}.drawer-link-row{display:block;font-size:15px;font-weight:600;padding:14px 0;color:var(--ink)}.drawer-cta{display:block;text-align:center;margin-top:24px;padding:14px;background:var(--accent);color:var(--white);font-weight:700;border-radius:var(--radius)}.nav-overlay{position:fixed;inset:0;background:rgba(10,22,40,.45);z-index:199;opacity:0;pointer-events:none;transition:opacity .3s}.nav-overlay.open{opacity:1;pointer-events:auto}body.nav-open{overflow:hidden}@media(min-width:1024px){.nav-links{display:flex}.nav-right{display:flex}.nav-toggle,.nav-drawer,.nav-overlay{display:none!important}}@media(max-width:1023px){.nav-links,.nav-right{display:none!important}}
 .trust-strip{background:var(--white);border-bottom:1px solid rgba(10,22,40,.08);padding:14px 0}.trust-strip-inner{display:flex;flex-wrap:wrap;gap:10px 20px;justify-content:center;font-size:12px;font-weight:600;color:var(--text)}.trust-strip-inner span{display:inline-flex;align-items:center;gap:6px}.trust-strip-inner span::before{content:'';width:6px;height:6px;background:var(--accent);border-radius:50%}
 section{padding:56px 0}@media(min-width:900px){section{padding:88px 0}}.section-head{margin-bottom:36px}.section-num{color:var(--accent-deep);margin-bottom:10px;display:block}h2.section-title{font-family:var(--font-display);font-weight:500;font-size:clamp(26px,5vw,44px);line-height:1.08;letter-spacing:-.025em;max-width:22ch}h2.section-title em{font-style:italic;font-weight:400;color:var(--accent-deep)}.section-sub{color:var(--text);font-size:16px;max-width:58ch;margin-top:12px}
 .hero{padding:32px 0 48px}.hero-grid{display:grid;grid-template-columns:1fr;gap:32px;align-items:center}.hero-eyebrow{display:inline-flex;align-items:center;gap:10px;margin-bottom:14px;color:var(--accent-deep);font-size:11px}.hero-eyebrow::before{content:'';width:16px;height:1px;background:var(--accent-deep)}h1.hero-title{font-family:var(--font-display);font-weight:500;font-size:clamp(32px,7vw,54px);line-height:1.02;letter-spacing:-.03em;color:var(--ink);max-width:18ch}h1.hero-title em{font-style:italic;font-weight:400;color:var(--accent-deep)}.hero-sub{font-size:16px;color:var(--text);max-width:48ch;margin-top:14px;line-height:1.55}.hero-ctas{display:flex;flex-wrap:wrap;gap:12px;margin-top:24px}.hero-trust{display:flex;flex-wrap:wrap;gap:10px 16px;margin-top:24px;padding-top:20px;border-top:1px solid rgba(10,22,40,.1)}.trust-badge{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:500;color:var(--text)}.trust-badge::before{content:'';width:6px;height:6px;background:var(--accent);border-radius:50%;flex-shrink:0}.hero-ba{display:grid;grid-template-columns:1fr 1fr;gap:3px;background:var(--ink);padding:3px;border-radius:4px}.hero-ba-cell{aspect-ratio:4/5;position:relative;overflow:hidden;display:flex;align-items:center;justify-content:center}.hero-ba-cell.before{background:repeating-linear-gradient(135deg,#2a3a4f 0 6px,#1a2a3f 6px 12px),#1a2a3f;color:rgba(255,255,255,.5)}.hero-ba-cell.after{background:radial-gradient(circle at 30% 20%,rgba(255,91,31,.12),transparent 60%),var(--paper-warm);color:var(--ink)}.hero-ba-label{position:absolute;top:10px;left:10px;font-family:var(--font-mono);font-size:9px;letter-spacing:.18em;background:rgba(0,0,0,.75);color:var(--paper);padding:4px 8px}.hero-ba-cell.after .hero-ba-label{background:var(--accent);color:var(--white)}.hero-ba-icon{font-family:var(--font-display);font-size:40px;font-style:italic;opacity:.4}@media(min-width:900px){.hero{padding:56px 0 72px}.hero-grid{grid-template-columns:1.05fr .95fr;gap:48px}.hero-sub{font-size:17px}}
@@ -107,10 +107,14 @@ section{padding:56px 0}@media(min-width:900px){section{padding:88px 0}}.section-
 .video-section{background:var(--paper-warm)}.video-wrap{aspect-ratio:16/9;background:var(--navy-soft);border:1px solid var(--navy-line);border-radius:4px;display:flex;align-items:center;justify-content:center;color:var(--muted-dark);font-size:14px;margin-top:24px}
 .final-cta{background:var(--navy);color:var(--paper)}.final-cta h2.section-title{color:var(--paper)}.final-cta h2.section-title em{color:var(--accent)}.final-cta .section-sub{color:var(--muted-dark)}.cta-layout{display:grid;grid-template-columns:1fr;gap:40px;margin-top:32px;align-items:start}@media(min-width:900px){.cta-layout{grid-template-columns:1fr 1.1fr;gap:56px}}.cta-points{display:flex;flex-direction:column;gap:16px}.cta-point{display:flex;gap:12px;align-items:flex-start;font-size:15px;color:var(--muted-dark)}.cta-point::before{content:'✓';color:var(--accent);font-weight:700;flex-shrink:0}.quote-form{background:var(--navy-soft);border:1px solid var(--navy-line);padding:28px 24px;border-radius:4px}.quote-form h3{font-family:var(--font-display);font-size:22px;font-weight:500;margin-bottom:6px}.quote-form .form-note{font-size:13px;color:var(--muted-dark);margin-bottom:20px}.form-row{display:grid;grid-template-columns:1fr;gap:14px;margin-bottom:14px}@media(min-width:540px){.form-row.two{grid-template-columns:1fr 1fr}}.field label{display:block;font-family:var(--font-mono);font-size:10px;letter-spacing:.15em;color:var(--muted-dark);margin-bottom:6px;text-transform:uppercase}.field input,.field select,.field textarea{width:100%;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.15);border-radius:3px;color:var(--paper);font-family:inherit;font-size:16px;padding:12px 14px;outline:none}.field input::placeholder,.field textarea::placeholder{color:rgba(245,241,234,.35)}.field input:focus,.field select:focus,.field textarea:focus{border-color:var(--accent)}.field select option{background:var(--navy-soft);color:var(--paper)}.field textarea{resize:vertical;min-height:80px}.form-submit{width:100%;margin-top:6px}
 .form-steps{display:flex;gap:8px;margin-bottom:20px}.form-step-dot{flex:1;height:4px;background:rgba(255,255,255,.15);border-radius:2px;transition:background .2s}.form-step-dot.active,.form-step-dot.done{background:var(--accent)}.form-panel{display:none}.form-panel.active{display:block}.form-nav{display:flex;gap:10px;margin-top:16px}.form-nav .btn-secondary{color:var(--paper);border-color:rgba(255,255,255,.25)}.form-step-label{font-family:var(--font-mono);font-size:10px;letter-spacing:.12em;color:var(--muted-dark);margin-bottom:14px;text-transform:uppercase}.service-picker{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:8px}@media(min-width:480px){.service-picker{grid-template-columns:repeat(3,1fr)}}.service-pick-card{position:relative;display:flex;flex-direction:column;align-items:flex-start;gap:4px;padding:14px 12px;background:rgba(255,255,255,.04);border:2px solid rgba(255,255,255,.12);border-radius:4px;cursor:pointer;transition:border-color .2s,background .2s;min-height:88px}.service-pick-card:hover{border-color:rgba(255,91,31,.5)}.service-pick-card input{position:absolute;opacity:0;width:0;height:0}.service-pick-card:has(input:checked){border-color:var(--accent);background:rgba(255,91,31,.12)}.spc-icon{font-size:20px;line-height:1}.spc-title{font-size:13px;font-weight:700;color:var(--paper);line-height:1.2}.spc-desc{font-size:11px;color:var(--muted-dark);line-height:1.3}.hero-phone{display:inline-flex;align-items:center;gap:8px;font-family:var(--font-display);font-size:clamp(20px,4vw,26px);font-weight:600;color:var(--accent-deep);margin-bottom:12px;letter-spacing:-.02em}.hero-phone:hover{color:var(--accent)}.hero-phone-sub{font-size:12px;font-weight:500;color:var(--muted);font-family:var(--font-body);margin-left:4px}.def-block{background:var(--white);border-left:3px solid var(--accent);padding:16px 20px;margin:24px 0;border-radius:0 4px 4px 0;font-size:15px;line-height:1.65;color:var(--text)}.def-block strong{font-family:var(--font-display);font-weight:500;font-size:17px;display:block;margin-bottom:6px;color:var(--ink)}
-footer{background:var(--ink);color:var(--muted-dark);padding:36px 0;border-top:1px solid var(--navy-line);font-size:13px}.foot{display:flex;flex-direction:column;gap:14px;align-items:flex-start;justify-content:space-between}.foot .logo{color:var(--paper)}.foot-links{display:flex;flex-wrap:wrap;gap:12px 20px}.foot-links a:hover{color:var(--accent)}.community{margin-top:20px;font-size:12px;line-height:1.6;max-width:52ch}.foot-entity{margin-top:14px;font-size:12px;line-height:1.65;max-width:58ch}.foot-nap{margin-bottom:6px}.foot-nap a:hover{color:var(--accent)}.foot-area{color:var(--muted-dark)}@media(min-width:700px){.foot{flex-direction:row;align-items:flex-start}}
+footer{background:var(--ink);color:var(--muted-dark);border-top:1px solid var(--navy-line);font-size:13px}.foot-grid{display:grid;grid-template-columns:1fr;gap:28px;padding:48px 0 32px}@media(min-width:640px){.foot-grid{grid-template-columns:repeat(2,1fr)}}@media(min-width:900px){.foot-grid{grid-template-columns:1.5fr repeat(4,1fr);gap:32px}}.foot-brand .logo{color:var(--paper);margin-bottom:12px}.foot-col h3{font-family:var(--font-display);font-size:15px;font-weight:600;color:var(--paper);margin-bottom:12px}.foot-col ul{list-style:none;display:flex;flex-direction:column;gap:8px}.foot-col a:hover{color:var(--accent)}.foot-contact p{margin-bottom:6px;line-height:1.55}.foot-contact a:hover{color:var(--accent)}.foot-hours{font-size:12px;margin-top:8px;color:var(--muted-dark)}.community{margin-top:16px;font-size:12px;line-height:1.6;max-width:52ch}.foot-entity{margin-top:10px;font-size:12px;line-height:1.65}.foot-nap a:hover{color:var(--accent)}.foot-bar{border-top:1px solid var(--navy-line);padding:16px 0;font-size:12px}.foot-bar-inner{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:12px}.foot-bar a:hover{color:var(--accent)}.services-grid{display:grid;grid-template-columns:1fr;gap:16px;margin-top:32px}@media(min-width:640px){.services-grid{grid-template-columns:repeat(2,1fr)}}@media(min-width:900px){.services-grid{grid-template-columns:repeat(3,1fr)}}.service-card{background:var(--white);border:1px solid rgba(10,22,40,.08);padding:24px;border-radius:4px;border-top:3px solid var(--accent)}.service-card h3{font-family:var(--font-display);font-size:20px;margin-bottom:8px}.service-card p{font-size:14px;color:var(--text);margin-bottom:12px;line-height:1.55}.service-card a{font-size:13px;font-weight:600;color:var(--accent-deep)}.pricing-how{background:var(--white)}.pricing-how-grid{display:grid;grid-template-columns:1fr;gap:20px;margin-top:32px}@media(min-width:768px){.pricing-how-grid{grid-template-columns:repeat(2,1fr)}}
 .mobile-sticky-cta{position:fixed;bottom:0;left:0;right:0;z-index:100;display:none;grid-template-columns:1fr 1fr 1fr;gap:6px;background:var(--ink);border-top:1px solid var(--navy-line);padding:8px 10px 12px}.mobile-cta-btn{padding:12px 6px;font-weight:700;font-size:12px;text-align:center;border-radius:3px;font-family:var(--font-body)}.mobile-cta-call,.mobile-cta-text{background:var(--navy-soft);color:var(--paper);border:1px solid var(--navy-line)}.mobile-cta-quote{background:var(--accent);color:var(--white)}@media(max-width:1023px){.mobile-sticky-cta{display:grid}body{padding-bottom:72px}}
 .reveal{opacity:0;transform:translateY(16px);transition:opacity .7s ease,transform .7s ease}.reveal.visible{opacity:1;transform:translateY(0)}
 .article-wrap{max-width:740px;margin:0 auto;padding:0 18px}.article-body{padding-bottom:80px;font-size:16px;line-height:1.75}.article-body h2{font-family:var(--font-display);font-size:26px;font-weight:500;margin:40px 0 14px;letter-spacing:-.02em}.article-body p{margin-bottom:18px}.article-body ul,.article-body ol{margin:0 0 18px 24px}
+"""
+
+NAV_FOOTER_PATCH_CSS = r"""
+.nav-links{display:none;align-items:center;gap:18px;list-style:none;font-size:13px;font-weight:500}.nav-links>li{display:flex;align-items:center}.nav-toggle{display:flex;flex-direction:column;justify-content:center;gap:5px;width:44px;height:44px;padding:10px;background:transparent;border:1px solid rgba(10,22,40,.15);border-radius:var(--radius,2px);cursor:pointer;flex-shrink:0}.nav-toggle-bar{display:block;width:100%;height:2px;background:#0a1628;transition:transform .2s,opacity .2s}.nav-toggle[aria-expanded=true] .nav-toggle-bar:nth-child(1){transform:translateY(7px) rotate(45deg)}.nav-toggle[aria-expanded=true] .nav-toggle-bar:nth-child(2){opacity:0}.nav-toggle[aria-expanded=true] .nav-toggle-bar:nth-child(3){transform:translateY(-7px) rotate(-45deg)}.nav-dropdown{position:relative}.nav-dropdown-trigger{display:flex;align-items:center;gap:4px;background:none;border:none;font:inherit;font-size:13px;font-weight:500;cursor:pointer;color:inherit;padding:0}.nav-dropdown-trigger::after{content:'';border:4px solid transparent;border-top-color:currentColor;margin-top:3px;opacity:.6}.nav-dropdown-panel{display:none;position:absolute;top:calc(100% + 8px);left:50%;transform:translateX(-50%);min-width:480px;background:#fff;border:1px solid rgba(10,22,40,.1);box-shadow:0 12px 40px rgba(10,22,40,.12);padding:20px 24px;border-radius:4px;z-index:60;grid-template-columns:1fr 1fr;gap:24px}.nav-dropdown-locations .nav-dropdown-panel{min-width:200px;grid-template-columns:1fr;left:0;transform:none}.nav-dropdown:hover .nav-dropdown-panel,.nav-dropdown:focus-within .nav-dropdown-panel{display:grid}.dropdown-label{font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:#6b7280;margin-bottom:10px;display:block}.dropdown-col{display:flex;flex-direction:column;gap:4px}.dropdown-col a{font-size:13px;padding:5px 0;color:#334155}.nav-drawer{position:fixed;top:0;right:0;width:min(320px,88vw);height:100%;background:#f5f1ea;z-index:200;transform:translateX(100%);transition:transform .3s ease;overflow-y:auto;padding:20px 24px 100px;border-left:1px solid rgba(10,22,40,.08)}.nav-drawer.open{transform:translateX(0)}.nav-drawer-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:24px;padding-bottom:16px;border-bottom:1px solid rgba(10,22,40,.08)}.nav-drawer-close{background:none;border:none;font-size:28px;line-height:1;cursor:pointer;padding:4px 8px}.drawer-phone{display:block;font-weight:600;font-size:16px;margin-bottom:20px;color:#d94208}.drawer-section{margin-bottom:4px;border-bottom:1px solid rgba(10,22,40,.06)}.drawer-toggle{width:100%;display:flex;justify-content:space-between;align-items:center;background:none;border:none;font:inherit;font-size:15px;font-weight:600;padding:14px 0;cursor:pointer}.drawer-toggle::after{content:'+';font-size:18px;color:#6b7280}.drawer-toggle[aria-expanded=true]::after{transform:rotate(45deg);display:inline-block}.drawer-links{display:none;flex-direction:column;gap:10px;padding:0 0 14px 8px}.drawer-links.open{display:flex}.drawer-link-row{display:block;font-size:15px;font-weight:600;padding:14px 0}.drawer-cta{display:block;text-align:center;margin-top:24px;padding:14px;background:#ff5b1f;color:#fff;font-weight:700;border-radius:2px}.nav-overlay{position:fixed;inset:0;background:rgba(10,22,40,.45);z-index:199;opacity:0;pointer-events:none;transition:opacity .3s}.nav-overlay.open{opacity:1;pointer-events:auto}body.nav-open{overflow:hidden}.foot-grid{display:grid;grid-template-columns:1fr;gap:28px;padding:48px 0 32px}.foot-col h3{font-family:'Fraunces',Georgia,serif;font-size:15px;font-weight:600;color:#f5f1ea;margin-bottom:12px}.foot-col ul{list-style:none;display:flex;flex-direction:column;gap:8px}.foot-bar{border-top:1px solid rgba(255,255,255,.08);padding:16px 0;font-size:12px}.foot-bar-inner{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:12px}@media(min-width:640px){.foot-grid{grid-template-columns:repeat(2,1fr)}}@media(min-width:900px){.foot-grid{grid-template-columns:1.5fr repeat(4,1fr);gap:32px}.nav-links{display:flex!important}.nav-right{display:flex!important}.nav-toggle,.nav-drawer,.nav-overlay{display:none!important}}@media(max-width:1023px){.nav-links,.nav-right{display:none!important}}
 """
 
 GTAG_BLOCK = """<!-- Google tag (gtag.js) -->
@@ -182,20 +186,109 @@ NAV = """
   <div class="nav-inner">
     <a href="/" class="logo" aria-label="Easy Garage Cleaning Home"><span class="logo-mark"></span>Easy Garage</a>
     <ul class="nav-links">
-      <li><a href="/junk-removal-fort-collins-co.html">Junk Removal</a></li>
-      <li><a href="/garage-cleanouts-fort-collins-co.html">Garage Cleanouts</a></li>
-      <li><a href="/garage-cleaning-fort-collins-co.html">Garage Cleaning</a></li>
-      <li><a href="{service_areas_href}">Service Areas</a></li>
-      <li><a href="{reviews_href}">Reviews</a></li>
+      <li class="nav-dropdown">
+        <button type="button" class="nav-dropdown-trigger" aria-expanded="false" aria-haspopup="true">Services</button>
+        <div class="nav-dropdown-panel" role="menu">
+          <div class="dropdown-col">
+            <span class="dropdown-label">Core services</span>
+            <a href="/garage-cleanouts-fort-collins-co.html" role="menuitem">Garage Cleanouts</a>
+            <a href="/junk-removal-fort-collins-co.html" role="menuitem">Junk Removal</a>
+            <a href="/garage-cleaning-fort-collins-co.html" role="menuitem">Garage Cleaning</a>
+            <a href="/garage-organization-fort-collins-co.html" role="menuitem">Garage Organization</a>
+            <a href="/furniture-removal-fort-collins-co.html" role="menuitem">Furniture Removal</a>
+            <a href="/appliance-removal-fort-collins-co.html" role="menuitem">Appliance Removal</a>
+            <a href="/mattress-removal-fort-collins-co.html" role="menuitem">Mattress Removal</a>
+            <a href="/storage-unit-cleanout-fort-collins-co.html" role="menuitem">Storage Unit Cleanout</a>
+            <a href="/yard-debris-removal-fort-collins-co.html" role="menuitem">Yard Debris Removal</a>
+          </div>
+          <div class="dropdown-col">
+            <span class="dropdown-label">What we take</span>
+            <a href="/what-we-take.html" role="menuitem"><strong>View all items →</strong></a>
+            <a href="/couch-removal-fort-collins-co.html" role="menuitem">Couch &amp; Sofa</a>
+            <a href="/refrigerator-removal-fort-collins-co.html" role="menuitem">Refrigerator</a>
+            <a href="/hot-tub-removal-fort-collins-co.html" role="menuitem">Hot Tub</a>
+            <a href="/treadmill-removal-fort-collins-co.html" role="menuitem">Treadmill</a>
+            <a href="/shed-cleanout-fort-collins-co.html" role="menuitem">Shed Cleanout</a>
+          </div>
+        </div>
+      </li>
+      <li class="nav-dropdown nav-dropdown-locations">
+        <button type="button" class="nav-dropdown-trigger" aria-expanded="false" aria-haspopup="true">Locations</button>
+        <div class="nav-dropdown-panel" role="menu">
+          <div class="dropdown-col">
+            <span class="dropdown-label">Northern Colorado</span>
+            <a href="/garage-cleanouts-fort-collins-co.html" role="menuitem">Fort Collins</a>
+            <a href="/garage-cleanouts-loveland-co.html" role="menuitem">Loveland</a>
+            <a href="/garage-cleanouts-windsor-co.html" role="menuitem">Windsor</a>
+            <a href="/junk-removal-wellington-co.html" role="menuitem">Wellington</a>
+            <a href="{service_areas_href}" role="menuitem">All service areas →</a>
+          </div>
+        </div>
+      </li>
+      <li><a href="{process_href}">How It Works</a></li>
+      <li><a href="{pricing_href}">Pricing</a></li>
       <li><a href="/about.html">About</a></li>
+      <li><a href="/faq.html">FAQ</a></li>
+      <li><a href="/blog/">Blog</a></li>
     </ul>
     <div class="nav-right">
       <a href="tel:{phone}" class="nav-phone">{phone_display}</a>
-      <a href="{quote_href}" class="nav-cta">Get Free Quote</a>
+      <a href="{quote_href}" class="nav-cta">Book Now</a>
     </div>
-    <a href="{quote_href}" class="nav-cta nav-mobile-cta" aria-label="Get Free Quote">Quote</a>
+    <button type="button" class="nav-toggle" aria-label="Open menu" aria-expanded="false" aria-controls="nav-drawer">
+      <span class="nav-toggle-bar"></span><span class="nav-toggle-bar"></span><span class="nav-toggle-bar"></span>
+    </button>
   </div>
 </nav>
+<div class="nav-overlay" id="nav-overlay" aria-hidden="true"></div>
+<aside class="nav-drawer" id="nav-drawer" aria-hidden="true" aria-label="Mobile navigation">
+  <div class="nav-drawer-head">
+    <span class="logo"><span class="logo-mark"></span>Easy Garage</span>
+    <button type="button" class="nav-drawer-close" aria-label="Close menu">&times;</button>
+  </div>
+  <a href="tel:{phone}" class="drawer-phone">{phone_display}</a>
+  <div class="drawer-section">
+    <button type="button" class="drawer-toggle" aria-expanded="false">Services</button>
+    <div class="drawer-links">
+      <a href="/garage-cleanouts-fort-collins-co.html">Garage Cleanouts</a>
+      <a href="/junk-removal-fort-collins-co.html">Junk Removal</a>
+      <a href="/garage-cleaning-fort-collins-co.html">Garage Cleaning</a>
+      <a href="/garage-organization-fort-collins-co.html">Garage Organization</a>
+      <a href="/furniture-removal-fort-collins-co.html">Furniture Removal</a>
+      <a href="/appliance-removal-fort-collins-co.html">Appliance Removal</a>
+      <a href="/mattress-removal-fort-collins-co.html">Mattress Removal</a>
+      <a href="/storage-unit-cleanout-fort-collins-co.html">Storage Unit Cleanout</a>
+      <a href="/yard-debris-removal-fort-collins-co.html">Yard Debris Removal</a>
+    </div>
+  </div>
+  <div class="drawer-section">
+    <button type="button" class="drawer-toggle" aria-expanded="false">What We Take</button>
+    <div class="drawer-links">
+      <a href="/what-we-take.html">View all items</a>
+      <a href="/couch-removal-fort-collins-co.html">Couch &amp; Sofa</a>
+      <a href="/refrigerator-removal-fort-collins-co.html">Refrigerator</a>
+      <a href="/hot-tub-removal-fort-collins-co.html">Hot Tub</a>
+      <a href="/treadmill-removal-fort-collins-co.html">Treadmill</a>
+      <a href="/shed-cleanout-fort-collins-co.html">Shed Cleanout</a>
+    </div>
+  </div>
+  <div class="drawer-section">
+    <button type="button" class="drawer-toggle" aria-expanded="false">Locations</button>
+    <div class="drawer-links">
+      <a href="/garage-cleanouts-fort-collins-co.html">Fort Collins</a>
+      <a href="/garage-cleanouts-loveland-co.html">Loveland</a>
+      <a href="/garage-cleanouts-windsor-co.html">Windsor</a>
+      <a href="/junk-removal-wellington-co.html">Wellington</a>
+      <a href="{service_areas_href}">All service areas</a>
+    </div>
+  </div>
+  <a href="{process_href}" class="drawer-link-row">How It Works</a>
+  <a href="{pricing_href}" class="drawer-link-row">Pricing</a>
+  <a href="/about.html" class="drawer-link-row">About</a>
+  <a href="/faq.html" class="drawer-link-row">FAQ</a>
+  <a href="/blog/" class="drawer-link-row">Blog</a>
+  <a href="{quote_href}" class="drawer-cta">Get Free Quote</a>
+</aside>
 <div class="trust-strip" aria-label="Trust signals">
   <div class="wrap trust-strip-inner">
     <span>Response within 5 minutes</span><span>No hidden fees</span><span>Only pay after approving quote</span><span>We do all lifting</span><span>Text photos now</span><span>Same-day availability</span>
@@ -205,27 +298,61 @@ NAV = """
 
 FOOTER = """
 <footer>
-  <div class="wrap foot">
-    <div>
+  <div class="wrap foot-grid">
+    <div class="foot-brand">
       <div class="logo"><span class="logo-mark"></span>Easy Garage Cleaning</div>
-      <div class="foot-entity" itemscope itemtype="https://schema.org/LocalBusiness">
-        <meta itemprop="name" content="Easy Garage Cleaning LLC" />
-        <p class="foot-nap"><strong>Easy Garage Cleaning LLC</strong> · <a href="tel:{phone}" itemprop="telephone">{phone_display}</a> · <a href="mailto:{email}" itemprop="email">{email}</a></p>
-        <p class="foot-area" itemprop="areaServed">Serving Fort Collins, Loveland, Windsor, Wellington, Timnath, Severance &amp; LaPorte — Northern Colorado garage reclaiming.</p>
-      </div>
-      <p class="community">Trusted by Northern Colorado homeowners. Community partners: <a href="https://www.fcgov.com/chamber/" rel="noopener">Fort Collins Chamber</a> (member), <a href="/blog/habitat-for-humanity-restore-fort-collins.html">Habitat ReStore Fort Collins</a>, CSU alumni network. Donation &amp; recycling partners on every job.</p>
+      <p class="community">The easiest way to reclaim your garage. Locally owned in Fort Collins — not a franchise call center.</p>
+      <p class="community">Partners: <a href="https://www.fcgov.com/chamber/" rel="noopener">Fort Collins Chamber</a>, <a href="/blog/habitat-for-humanity-restore-fort-collins.html">Habitat ReStore</a>.</p>
     </div>
-    <div class="foot-links">
-      <a href="/junk-removal-fort-collins-co.html">Junk Removal</a>
-      <a href="/garage-cleanouts-fort-collins-co.html">Garage Cleanouts</a>
-      <a href="/book.html">Book Online</a>
-      <a href="/about.html">About</a>
-      <a href="/faq.html">FAQ</a>
-      <a href="/blog/">Blog</a>
-      <a href="/privacy-policy.html">Privacy</a>
-      <a href="tel:{phone}">{phone_display}</a>
+    <div class="foot-col">
+      <h3>Services</h3>
+      <ul>
+        <li><a href="/garage-cleanouts-fort-collins-co.html">Garage Cleanouts</a></li>
+        <li><a href="/junk-removal-fort-collins-co.html">Junk Removal</a></li>
+        <li><a href="/garage-cleaning-fort-collins-co.html">Garage Cleaning</a></li>
+        <li><a href="/garage-organization-fort-collins-co.html">Garage Organization</a></li>
+        <li><a href="/furniture-removal-fort-collins-co.html">Furniture Removal</a></li>
+        <li><a href="/appliance-removal-fort-collins-co.html">Appliance Removal</a></li>
+        <li><a href="/mattress-removal-fort-collins-co.html">Mattress Removal</a></li>
+        <li><a href="/storage-unit-cleanout-fort-collins-co.html">Storage Unit Cleanout</a></li>
+        <li><a href="/what-we-take.html">What We Take</a></li>
+      </ul>
     </div>
-    <div>&copy; 2026 Easy Garage Cleaning LLC · Fort Collins, CO · Licensed &amp; Insured</div>
+    <div class="foot-col">
+      <h3>Locations</h3>
+      <ul>
+        <li><a href="/garage-cleanouts-fort-collins-co.html">Fort Collins</a></li>
+        <li><a href="/garage-cleanouts-loveland-co.html">Loveland</a></li>
+        <li><a href="/garage-cleanouts-windsor-co.html">Windsor</a></li>
+        <li><a href="/junk-removal-wellington-co.html">Wellington</a></li>
+        <li><a href="/timnath-junk-removal.html">Timnath</a></li>
+        <li><a href="{service_areas_href}">All service areas</a></li>
+      </ul>
+    </div>
+    <div class="foot-col">
+      <h3>Company</h3>
+      <ul>
+        <li><a href="/about.html">About</a></li>
+        <li><a href="/faq.html">FAQ</a></li>
+        <li><a href="/blog/">Blog</a></li>
+        <li><a href="/book.html">Book Online</a></li>
+        <li><a href="{pricing_href}">Pricing</a></li>
+        <li><a href="/privacy-policy.html">Privacy Policy</a></li>
+      </ul>
+    </div>
+    <div class="foot-col foot-contact">
+      <h3>Contact</h3>
+      <p><a href="tel:{phone}">{phone_display}</a></p>
+      <p><a href="mailto:{email}">{email}</a></p>
+      <p><a href="sms:{phone}?body=Hi!%20I'd%20like%20a%20quote.">Text for quote</a></p>
+      <p class="foot-hours">Mon–Sat · 7am–7pm<br>Fort Collins, CO</p>
+    </div>
+  </div>
+  <div class="foot-bar">
+    <div class="wrap foot-bar-inner">
+      <span>&copy; 2026 Easy Garage Cleaning LLC · Licensed &amp; Insured</span>
+      <a href="/privacy-policy.html">Privacy Policy</a>
+    </div>
   </div>
 </footer>
 <div class="mobile-sticky-cta" aria-label="Quick contact">
@@ -234,6 +361,40 @@ FOOTER = """
   <a href="{quote_href}" class="mobile-cta-btn mobile-cta-quote">Quote</a>
 </div>
 <script>
+(function(){{
+  const toggle=document.querySelector('.nav-toggle');
+  const drawer=document.getElementById('nav-drawer');
+  const overlay=document.getElementById('nav-overlay');
+  const closeBtn=document.querySelector('.nav-drawer-close');
+  if(!toggle||!drawer)return;
+  function setOpen(open){{
+    toggle.setAttribute('aria-expanded',open);
+    drawer.classList.toggle('open',open);
+    drawer.setAttribute('aria-hidden',!open);
+    if(overlay){{overlay.classList.toggle('open',open);overlay.setAttribute('aria-hidden',!open);}}
+    document.body.classList.toggle('nav-open',open);
+  }}
+  toggle.addEventListener('click',()=>setOpen(toggle.getAttribute('aria-expanded')!=='true'));
+  if(closeBtn)closeBtn.addEventListener('click',()=>setOpen(false));
+  if(overlay)overlay.addEventListener('click',()=>setOpen(false));
+  document.querySelectorAll('.drawer-toggle').forEach(btn=>{{
+    btn.addEventListener('click',()=>{{
+      const open=btn.getAttribute('aria-expanded')==='true';
+      btn.setAttribute('aria-expanded',!open);
+      const links=btn.nextElementSibling;
+      if(links)links.classList.toggle('open',!open);
+    }});
+  }});
+  document.querySelectorAll('.nav-dropdown-trigger').forEach(btn=>{{
+    btn.addEventListener('click',e=>{{
+      e.stopPropagation();
+      const open=btn.getAttribute('aria-expanded')==='true';
+      document.querySelectorAll('.nav-dropdown-trigger').forEach(b=>b.setAttribute('aria-expanded','false'));
+      btn.setAttribute('aria-expanded',open?'false':'true');
+    }});
+  }});
+  document.addEventListener('keydown',e=>{{if(e.key==='Escape')setOpen(false);}});
+}})();
 const io=new IntersectionObserver((entries)=>{{entries.forEach(e=>{{if(e.isIntersecting){{e.target.classList.add('visible');io.unobserve(e.target);}}}});}},{{threshold:0.08}});
 document.querySelectorAll('.reveal').forEach(el=>io.observe(el));
 document.querySelectorAll('.multi-step-form').forEach(initMultiStepForm);
@@ -273,7 +434,7 @@ PRICING_HTML = """
       <div class="price-card featured"><div class="price-tier">Medium</div><div class="price-range">$400–650</div><div class="price-name">Standard garage</div><p class="price-desc">Most single-car or moderately full two-car garages.</p></div>
       <div class="price-card"><div class="price-tier">Large</div><div class="price-range">$650+</div><div class="price-name">Full garage / estate</div><p class="price-desc">Packed two-car garages or multi-space cleanouts.</p></div>
     </div>
-    <p class="pricing-disclaimer reveal">All quotes are flat-rate and include labor, hauling, dump fees, and donation drop-offs. Final price depends on volume and access — text photos for your exact number. <a href="#quote" style="color:var(--accent);font-weight:600;">Get Free Quote →</a></p>
+    <p class="pricing-disclaimer reveal">All quotes are flat-rate and include labor, hauling, dump fees, and donation drop-offs. Final price depends on volume and access — text photos for your exact number. <a href="/pricing.html" style="color:var(--accent);font-weight:600;">Full pricing guide →</a> · <a href="#quote" style="color:var(--accent);font-weight:600;">Get Free Quote →</a></p>
   </div>
 </section>
 """
@@ -398,7 +559,7 @@ QUOTE_FORM = """
 """
 
 PROCESS_HTML = """
-<section class="process" aria-labelledby="process-heading">
+<section class="process" id="process" aria-labelledby="process-heading">
   <div class="wrap">
     <div class="section-head reveal"><span class="mono section-num">How it works</span>
       <h2 class="section-title" id="process-heading">Three steps to <em>reclaim your space</em></h2>
@@ -603,6 +764,7 @@ def fmt(template, **kwargs):
         "phone": PHONE, "phone_display": PHONE_DISPLAY, "email": EMAIL, "form_key": FORM_KEY, "SITE": SITE,
         "default_garage": "", "default_junk": "", "og_type": "website",
         "quote_href": "/book.html", "service_areas_href": "/#service-area", "reviews_href": "/#reviews",
+        "process_href": "/#process", "pricing_href": "/pricing.html",
         "form_id": "q", "sel_fc": "", "sel_lo": "", "sel_wi": "", "sel_ti": "", "sel_we": "",
     }
     defaults.update(kwargs)
@@ -621,10 +783,17 @@ def quote_form_for(stype, **kwargs):
     return fmt(QUOTE_FORM, default_garage=dg, default_junk=dj, form_id=form_id, **sel, **kwargs)
 
 
-def page_shell(title, desc, canonical, schema, body, og_type="website", quote_href="/book.html"):
+def page_shell(title, desc, canonical, schema, body, og_type="website", quote_href="/book.html", **nav_kw):
     rating_note = '\n<!-- AggregateRating: uncomment and add verified reviewCount/ratingValue to LocalBusiness when real reviews exist -->\n'
     extra = f'\n<script type="application/ld+json">{webpage_schema(title, desc, canonical)}</script>'
-    return HEAD.format(title=title, desc=desc, canonical=canonical, schema=rating_note + schema + extra, css=SHARED_CSS, SITE=SITE, og_type=og_type) + fmt(NAV, quote_href=quote_href) + body + fmt(FOOTER, quote_href=quote_href)
+    nav_opts = {
+        "quote_href": quote_href,
+        "service_areas_href": nav_kw.get("service_areas_href", "/#service-area"),
+        "process_href": nav_kw.get("process_href", "/#process"),
+        "pricing_href": nav_kw.get("pricing_href", "/pricing.html"),
+    }
+    nav_opts.update(nav_kw)
+    return HEAD.format(title=title, desc=desc, canonical=canonical, schema=rating_note + schema + extra, css=SHARED_CSS, SITE=SITE, og_type=og_type) + fmt(NAV, **nav_opts) + body + fmt(FOOTER, **nav_opts)
 
 
 def render_service(s):
@@ -812,10 +981,89 @@ def render_book():
 <h1 class="hero-title" style="max-width:none">Book your <em>garage reclaiming</em> service</h1>
 <p class="hero-sub">Choose what you need, tell us where you are, upload photos, and we'll call back with a flat-rate price — no obligation, no hidden fees.</p>
 </div></section>
-{fmt(PROCESS_HTML)}
+{fmt(PROCESS_HTML, process_href="#process")}
 {quote_form_for("Garage Cleanout", cta_title="Complete your <em>free quote</em>", form_subject="Book Page Quote Request", sms_body="Hi!%20I'm%20booking%20on%20your%20website%20and%20need%20a%20quote.")}
 </main>"""
-    return page_shell(title, desc, canonical, schema, body, quote_href="#quote")
+    return page_shell(title, desc, canonical, schema, body, quote_href="#quote", process_href="#process", pricing_href="/pricing.html")
+
+
+def render_pricing():
+    title = "Garage Cleanout Pricing Fort Collins | How Our Quotes Work"
+    desc = "Transparent garage cleanout and junk removal pricing in Fort Collins. Single-item pickup from $99, full garage cleanouts $400–650+. Flat-rate photo quotes — no hourly billing."
+    canonical = f"{SITE}/pricing.html"
+    schema = f'<script type="application/ld+json">{json.dumps(business_schema(), ensure_ascii=False)}</script>'
+    body = f"""<main>
+<section class="hero"><div class="wrap">
+<div class="hero-eyebrow mono">Transparent pricing</div>
+<a href="tel:{PHONE}" class="hero-phone">{PHONE_DISPLAY}<span class="hero-phone-sub">· Flat-rate from photos</span></a>
+<h1 class="hero-title" style="max-width:none">How our <em>pricing works</em></h1>
+<p class="hero-sub">No hourly billing, no truck visit required for most jobs. Text photos and get a locked flat-rate quote in 5 minutes — you only pay after approving.</p>
+<div class="hero-ctas"><a href="/book.html" class="btn-primary">Get Free Quote</a><a href="sms:{PHONE}?body=Hi!%20I'd%20like%20a%20pricing%20quote." class="btn-secondary">Text Photos</a></div>
+</div></section>
+{fmt(PROCESS_HTML)}
+<section class="pricing-how"><div class="wrap">
+<div class="section-head reveal"><span class="mono section-num">How pricing works</span>
+<h2 class="section-title">Single item or <em>full garage</em> — we quote flat</h2>
+<p class="section-sub">Unlike volume-based haulers, we give you a firm price from photos before we arrive. These ranges help you plan; your exact quote is locked before we start.</p>
+</div>
+<div class="pricing-how-grid reveal">
+<div class="step"><div class="step-num">Single item</div><h3>$99–150</h3><p>One couch, mattress, appliance, hot tub, treadmill, or bulky piece. Priced individually — not by the hour.</p></div>
+<div class="step"><div class="step-num">Partial load</div><h3>$250–400</h3><p>A corner of the garage, a few furniture pieces, or a small haul. Great for targeted cleanouts.</p></div>
+<div class="step"><div class="step-num">Standard garage</div><h3>$400–650</h3><p>Most single-car or moderately full two-car garages. Our most common booking in Fort Collins.</p></div>
+<div class="step"><div class="step-num">Full garage / estate</div><h3>$650+</h3><p>Packed two-car garages, multi-space cleanouts, or estate situations. Quoted from wide photos.</p></div>
+</div>
+<p class="section-sub reveal" style="margin-top:24px;">All prices include labor, hauling, dump fees, and donation drop-offs. <a href="/blog/how-much-does-garage-cleanout-cost-fort-collins.html" class="content-link">Read our full cost guide →</a></p>
+</div></section>
+{fmt(PRICING_HTML)}
+{quote_form_for("Garage Cleanout", cta_title="Get your <em>exact quote</em> today", form_subject="Pricing Page Quote", sms_body="Hi!%20I%20checked%20your%20pricing%20page%20and%20need%20a%20quote.")}
+</main>"""
+    return page_shell(title, desc, canonical, schema, body)
+
+
+def render_what_we_take():
+    title = "What We Take | Garage & Junk Removal Fort Collins CO"
+    desc = "Couches, appliances, mattresses, hot tubs, treadmills, yard debris, and full garage cleanouts in Fort Collins. See everything Easy Garage Cleaning hauls away."
+    canonical = f"{SITE}/what-we-take.html"
+    schema = f'<script type="application/ld+json">{json.dumps(business_schema(), ensure_ascii=False)}</script>'
+    cards = [
+        ("Garage Cleanouts", "Full haul-out of cluttered garages — furniture, boxes, tools, and junk.", "/garage-cleanouts-fort-collins-co.html"),
+        ("Junk Removal", "Single items to full loads from garages, basements, and curbside.", "/junk-removal-fort-collins-co.html"),
+        ("Furniture", "Couches, sectionals, beds, dressers, tables, and outdoor furniture.", "/furniture-removal-fort-collins-co.html"),
+        ("Appliances", "Fridges, washers, dryers, water heaters, and BBQ grills.", "/appliance-removal-fort-collins-co.html"),
+        ("Mattresses", "Mattresses and box springs — any size, from garage or bedroom.", "/mattress-removal-fort-collins-co.html"),
+        ("Couch & Sofa", "Sectionals, loveseats, and upholstery from tight spaces.", "/couch-removal-fort-collins-co.html"),
+        ("Refrigerator", "Freon-safe fridge and freezer pickup with donation when possible.", "/refrigerator-removal-fort-collins-co.html"),
+        ("Hot Tub", "On-site dismantling and haul-away of spas and hot tubs.", "/hot-tub-removal-fort-collins-co.html"),
+        ("Treadmill", "Heavy exercise equipment from garages and basements.", "/treadmill-removal-fort-collins-co.html"),
+        ("Storage Units", "Empty a paid storage unit in one trip — boxes, furniture, forgotten items.", "/storage-unit-cleanout-fort-collins-co.html"),
+        ("Yard Debris", "Branches, lawn equipment, outdoor furniture, and storm cleanup.", "/yard-debris-removal-fort-collins-co.html"),
+        ("Shed Cleanout", "Detached sheds and backyard workshops emptied and swept.", "/shed-cleanout-fort-collins-co.html"),
+    ]
+    grid = "".join(f'<div class="service-card reveal"><h3>{esc(t)}</h3><p>{esc(d)}</p><a href="{h}">Learn more →</a></div>' for t, d, h in cards)
+    body = f"""<main>
+<section class="hero"><div class="wrap">
+<div class="hero-eyebrow mono">What we haul</div>
+<a href="tel:{PHONE}" class="hero-phone">{PHONE_DISPLAY}</a>
+<h1 class="hero-title" style="max-width:none">What we <em>take</em></h1>
+<p class="hero-sub">Garage clutter, bulky furniture, appliances, and more — as long as it's non-hazardous and our crew can lift it safely. Not sure? Text photos and we'll confirm in minutes.</p>
+<div class="hero-ctas"><a href="/book.html" class="btn-primary">Get Free Quote</a><a href="/pricing.html" class="btn-secondary">See pricing</a></div>
+</div></section>
+<section class="items"><div class="wrap">
+<div class="section-head reveal"><span class="mono section-num">Services &amp; items</span>
+<h2 class="section-title">From single items to <em>full garages</em></h2>
+<p class="section-sub">We specialize in garage reclaiming in Fort Collins and Northern Colorado — but we haul almost anything cluttering your space.</p>
+</div>
+<div class="services-grid">{grid}</div>
+</div></section>
+{items_html("We take most garage &amp; household items", [
+    "Furniture — couches, beds, dressers, tables", "Appliances — fridges, washers, dryers, water heaters",
+    "Mattresses &amp; box springs", "Exercise equipment — treadmills, bikes, weights",
+    "Hot tubs &amp; spas (dismantled on site)", "Yard debris &amp; outdoor furniture",
+    "Boxes, bins, tools, and general clutter", "Storage unit contents",
+], ["Paint, chemicals &amp; solvents", "Asbestos or hazardous materials", "Oil drums &amp; fuel tanks", "Medical or biohazard waste"])}
+{quote_form_for("Junk Removal", cta_title="Not sure if we take it? <em>Text photos</em>", form_subject="What We Take Page Quote", sms_body="Hi!%20I%20have%20items%20to%20remove%20and%20want%20to%20confirm%20you%20take%20them.")}
+</main>"""
+    return page_shell(title, desc, canonical, schema, body)
 
 
 def render_about():
@@ -862,32 +1110,51 @@ def generate_sitemap(urls):
 
 
 def patch_static_pages():
-    trust = fmt("""<div class="trust-strip" aria-label="Trust signals">
-  <div class="wrap trust-strip-inner">
-    <span>Response within 5 minutes</span><span>No hidden fees</span><span>Only pay after approving quote</span><span>We do all lifting</span><span>Text photos now</span><span>Same-day availability</span>
-  </div>
-</div>""")
-    unified_nav_home = fmt(NAV, quote_href="/book.html", service_areas_href="/#service-area", reviews_href="/#reviews")
-    unified_nav_book = fmt(NAV, quote_href="#quote", service_areas_href="/#service-area", reviews_href="/#reviews")
-    unified_nav_inner = fmt(NAV, quote_href="/book.html", service_areas_href="/garage-cleanouts-fort-collins-co.html#service-area", reviews_href="/#reviews")
-    unified_footer = fmt(FOOTER, quote_href="/book.html")
-    sticky_home = fmt("""<div class="mobile-sticky-cta" aria-label="Quick contact">
-  <a href="tel:{phone}" class="mobile-cta-btn mobile-cta-call">Call</a>
-  <a href="sms:{phone}?body=Hi!%20I'd%20like%20a%20quote." class="mobile-cta-btn mobile-cta-text">Text</a>
-  <a href="/book.html" class="mobile-cta-btn mobile-cta-quote">Quote</a>
-</div>""", quote_href="/book.html")
-    sticky_default = fmt("""<div class="mobile-sticky-cta" aria-label="Quick contact">
-  <a href="tel:{phone}" class="mobile-cta-btn mobile-cta-call">Call</a>
-  <a href="sms:{phone}?body=Hi!%20I'd%20like%20a%20quote." class="mobile-cta-btn mobile-cta-text">Text</a>
-  <a href="/book.html" class="mobile-cta-btn mobile-cta-quote">Quote</a>
-</div>""")
-    sticky_css = ".foot-entity{margin-top:14px;font-size:12px;line-height:1.65;max-width:58ch}.foot-nap{margin-bottom:6px}.foot-nap a:hover{color:var(--accent)}.foot-area{color:var(--muted-dark)}@media(max-width:1023px){.mobile-sticky-cta{position:fixed;bottom:0;left:0;right:0;z-index:100;display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;background:#0a1628;border-top:1px solid rgba(255,255,255,.08);padding:8px 10px 12px}body{padding-bottom:72px}}"
+    unified_nav_home = fmt(NAV, quote_href="/book.html", service_areas_href="/#service-area", process_href="/#process", pricing_href="/pricing.html")
+    unified_nav_book = fmt(NAV, quote_href="#quote", service_areas_href="/#service-area", process_href="#process", pricing_href="/pricing.html")
+    unified_nav_inner = fmt(NAV, quote_href="/book.html", service_areas_href="/#service-area", process_href="/#process", pricing_href="/pricing.html")
+    unified_footer = fmt(FOOTER, quote_href="/book.html", service_areas_href="/#service-area", pricing_href="/pricing.html")
+    nav_block_re = re.compile(r"<nav class=\"nav\"[\s\S]*?</div>\s*</div>\s*\n</div>\s*\n<div class=\"trust-strip\"", re.MULTILINE)
+    # Match nav + optional drawer/overlay + trust strip
+    nav_full_re = re.compile(
+        r"<nav class=\"nav\"[\s\S]*?<div class=\"trust-strip\"",
+        re.MULTILINE,
+    )
+    footer_re = re.compile(r"<footer>[\s\S]*?</footer>", re.MULTILINE)
+    sticky_re = re.compile(r'<div class="mobile-sticky-cta"[\s\S]*?</div>\s*(?=<script|$)', re.MULTILINE)
+    nav_js = """<script>
+(function(){
+  const toggle=document.querySelector('.nav-toggle');
+  const drawer=document.getElementById('nav-drawer');
+  const overlay=document.getElementById('nav-overlay');
+  const closeBtn=document.querySelector('.nav-drawer-close');
+  if(!toggle||!drawer)return;
+  function setOpen(open){
+    toggle.setAttribute('aria-expanded',open);
+    drawer.classList.toggle('open',open);
+    drawer.setAttribute('aria-hidden',!open);
+    if(overlay){overlay.classList.toggle('open',open);overlay.setAttribute('aria-hidden',!open);}
+    document.body.classList.toggle('nav-open',open);
+  }
+  toggle.addEventListener('click',()=>setOpen(toggle.getAttribute('aria-expanded')!=='true'));
+  if(closeBtn)closeBtn.addEventListener('click',()=>setOpen(false));
+  if(overlay)overlay.addEventListener('click',()=>setOpen(false));
+  document.querySelectorAll('.drawer-toggle').forEach(btn=>{
+    btn.addEventListener('click',()=>{
+      const open=btn.getAttribute('aria-expanded')==='true';
+      btn.setAttribute('aria-expanded',!open);
+      const links=btn.nextElementSibling;
+      if(links)links.classList.toggle('open',!open);
+    });
+  });
+  document.addEventListener('keydown',e=>{if(e.key==='Escape')setOpen(false);});
+})();
+</script>"""
     patterns = [
-        "index.html", "faq.html", "about.html", "book.html", "blog/*.html",
+        "index.html", "faq.html", "privacy-policy.html", "thank-you.html", "blog/*.html",
         "loveland-garage-cleanout.html", "windsor-garage-cleanout.html",
         "wellington-junk-removal.html", "timnath-junk-removal.html",
-        "old-town-fort-collins-junk-removal.html", "privacy-policy.html", "thank-you.html",
-        "Ads.html",
+        "old-town-fort-collins-junk-removal.html",
     ]
     for pattern in patterns:
         for path in ROOT.glob(pattern):
@@ -898,21 +1165,26 @@ def patch_static_pages():
             is_home = path.name == "index.html"
             is_book = path.name == "book.html"
             nav = unified_nav_book if is_book else (unified_nav_home if is_home else unified_nav_inner)
-            if 'class="trust-strip"' not in text and '<nav class="nav"' in text:
-                text = re.sub(r"(</nav>\s*)", r"\1\n" + trust + "\n", text, count=1)
             if '<nav class="nav"' in text:
-                text = re.sub(r"<nav class=\"nav\"[\s\S]*?</nav>", nav.strip(), text, count=1)
-            if 'foot-entity' not in text and "<footer" in text:
-                text = re.sub(
-                    r"(<div class=\"logo\"><span class=\"logo-mark\"></span>Easy Garage Cleaning</div>)",
-                    r"\1\n      " + fmt("""<div class="foot-entity" itemscope itemtype="https://schema.org/LocalBusiness">
-        <meta itemprop="name" content="Easy Garage Cleaning LLC" />
-        <p class="foot-nap"><strong>Easy Garage Cleaning LLC</strong> · <a href="tel:{phone}" itemprop="telephone">{phone_display}</a> · <a href="mailto:{email}" itemprop="email">{email}</a></p>
-        <p class="foot-area" itemprop="areaServed">Serving Fort Collins, Loveland, Windsor, Wellington, Timnath, Severance &amp; LaPorte — Northern Colorado garage reclaiming.</p>
-      </div>"""),
-                    text,
-                    count=1,
-                )
+                if 'id="nav-drawer"' in text:
+                    text = nav_full_re.sub(nav.strip() + '\n<div class="trust-strip"', text, count=1)
+                else:
+                    text = re.sub(r"<nav class=\"nav\"[\s\S]*?</nav>\s*(?:<div class=\"trust-strip\"[\s\S]*?</div>\s*)?", nav.strip() + "\n", text, count=1)
+            if "<footer" in text:
+                text = footer_re.sub(unified_footer.split("<div class=\"mobile-sticky-cta\"")[0].strip(), text, count=1)
+            sticky = fmt("""<div class="mobile-sticky-cta" aria-label="Quick contact">
+  <a href="tel:{phone}" class="mobile-cta-btn mobile-cta-call">Call</a>
+  <a href="sms:{phone}?body=Hi!%20I'd%20like%20a%20quote." class="mobile-cta-btn mobile-cta-text">Text</a>
+  <a href="/book.html" class="mobile-cta-btn mobile-cta-quote">Quote</a>
+</div>""")
+            if 'mobile-sticky-cta' in text:
+                text = sticky_re.sub(sticky + "\n", text, count=1)
+            elif '</body>' in text:
+                text = text.replace("</body>", sticky + "\n</body>")
+            if 'id="nav-drawer"' in text and 'nav-toggle{display' not in text.replace(' ', '') and '<style>' in text:
+                text = text.replace("</style>", NAV_FOOTER_PATCH_CSS + "\n</style>", 1)
+            if 'id="nav-drawer"' in text and "querySelector('.nav-toggle')" not in text:
+                text = text.replace("</body>", nav_js + "\n</body>")
             if path.parent.name == "blog" and path.name != "index.html":
                 pub = BLOG_PUBLISHED.get(path.name, TODAY)
                 if 'article:published_time' not in text:
@@ -922,17 +1194,6 @@ def patch_static_pages():
                         text,
                         count=1,
                     )
-            if 'mobile-sticky-cta' not in text and '</body>' in text:
-                sticky = sticky_home if is_home else sticky_default
-                if sticky_css not in text:
-                    text = text.replace("</style>", sticky_css + "\n", 1) if "<style>" in text else text
-                text = text.replace("</body>", sticky + "\n</body>")
-            text = text.replace('mobile-cta-quote">Get Quote</a>', 'mobile-cta-quote">Quote</a>')
-            text = re.sub(r'class="nav-cta"([^>]*)>#quote', r'class="nav-cta"\1 href="/book.html"', text)
-            text = re.sub(r'class="nav-cta nav-mobile-cta"([^>]*)>#quote', r'class="nav-cta nav-mobile-cta"\1 href="/book.html"', text)
-            if is_book:
-                text = text.replace('href="/book.html" class="nav-cta"', 'href="#quote" class="nav-cta"')
-                text = text.replace('href="/book.html" class="nav-cta nav-mobile-cta"', 'href="#quote" class="nav-cta nav-mobile-cta"')
             if GA4_ID not in text:
                 had_aw = "AW-18102284288" in text
                 for pat in (
@@ -943,12 +1204,6 @@ def patch_static_pages():
                     text = re.sub(pat, "", text, count=1)
                 block = GTAG_BLOCK if had_aw else GTAG_BLOCK.replace("  gtag('config', 'AW-18102284288');\n", "")
                 text = re.sub(r"(<head[^>]*>\s*\n)", r"\1" + block + "\n", text, count=1, flags=re.I)
-            if '"knowsAbout"' not in text and '"@type": "LocalBusiness"' in text:
-                text = text.replace(
-                    '"priceRange": "$$",',
-                    '"priceRange": "$99-$650+",\n  "slogan": "The easiest way to reclaim your garage",\n  "knowsAbout": ["Garage cleanout", "Junk removal", "Garage organization", "Flat-rate photo quotes"],',
-                    1,
-                )
             if text != orig:
                 path.write_text(text, encoding="utf-8")
 
@@ -957,7 +1212,7 @@ def main():
     from _services_data import SERVICES, CITIES, PROJECTS, ITEM_PAGES, COMPARISON_PAGES
 
     generated = []
-    sitemap_urls = [(f"{SITE}/", "1.0"), (f"{SITE}/about.html", "0.8"), (f"{SITE}/book.html", "0.9")]
+    sitemap_urls = [(f"{SITE}/", "1.0"), (f"{SITE}/about.html", "0.8"), (f"{SITE}/book.html", "0.9"), (f"{SITE}/pricing.html", "0.9"), (f"{SITE}/what-we-take.html", "0.9")]
 
     for s in SERVICES:
         (ROOT / s["slug"]).write_text(render_service(s), encoding="utf-8")
@@ -995,6 +1250,12 @@ def main():
 
     (ROOT / "book.html").write_text(render_book(), encoding="utf-8")
     generated.append("book.html")
+
+    (ROOT / "pricing.html").write_text(render_pricing(), encoding="utf-8")
+    generated.append("pricing.html")
+
+    (ROOT / "what-we-take.html").write_text(render_what_we_take(), encoding="utf-8")
+    generated.append("what-we-take.html")
 
     blog_posts = list(ROOT.glob("blog/*.html"))
     for bp in blog_posts:
