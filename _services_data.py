@@ -631,18 +631,43 @@ COMPARISON_PAGES = [
         "intro": "Renting a dumpster sounds cheap until you load it yourself, pay overage fees, and block your driveway for a week. Here's how full-service junk removal compares for Fort Collins homeowners reclaiming garage space.",
         "content": """<h2>Quick comparison</h2>
 <table class="compare-table"><thead><tr><th>Factor</th><th>Junk Removal</th><th>Dumpster Rental</th></tr></thead><tbody>
-<tr><td>Labor</td><td>We do all lifting</td><td>You load everything</td></tr>
-<tr><td>Timeline</td><td>Done in hours, same day often</td><td>3–7 day rental typical</td></tr>
-<tr><td>Driveway</td><td>No container sitting on asphalt</td><td>Risk of stains/damage</td></tr>
-<tr><td>Cost surprise</td><td>Flat-rate quote upfront</td><td>Overage, weight, extension fees</td></tr>
-<tr><td>Donations</td><td>We sort & drop off — tax receipt</td><td>You handle separately</td></tr>
+<tr><td>Labor</td><td>We do all lifting &amp; loading</td><td>You load everything yourself</td></tr>
+<tr><td>Timeline</td><td>Done in hours — often same day</td><td>3–7 day rental window typical</td></tr>
+<tr><td>Driveway</td><td>No container on asphalt</td><td>Weight, stains, and ruts possible</td></tr>
+<tr><td>Cost surprise</td><td>Flat-rate quote from photos</td><td>Overage, weight, extension fees</td></tr>
+<tr><td>Donations</td><td>We sort &amp; drop off — tax receipt</td><td>You haul donations separately</td></tr>
+<tr><td>Permits</td><td>None required</td><td>Street placement may need city approval</td></tr>
 </tbody></table>
-<h2>When junk removal wins</h2>
-<p>Garage cleanouts, single bulky items (couches, fridges), and jobs where you want to <strong>park inside again today</strong> — not spend your weekend loading a bin. Our <a href="/garage-cleanouts-fort-collins-co.html" class="content-link">Fort Collins garage cleanouts</a> include haul, donation, and sweep.</p>
-<h2>When a dumpster might make sense</h2>
-<p>Major renovation debris over multiple weeks, or rural properties with long-term construction projects. For most homeowners clearing a garage, full-service <a href="/junk-removal-fort-collins-co.html" class="content-link">junk removal in Fort Collins</a> is faster and often comparable in total cost once you factor in your time.</p>""",
+<h2 id="true-cost">The true cost of dumpster rental in Fort Collins</h2>
+<p>A 10-yard dumpster in Northern Colorado often advertises at <strong>$300–450 for the base rental</strong> — but that rarely tells the whole story. Homeowners in Fort Collins, Loveland, and Windsor routinely pay more once you add delivery fees, weight overage, extension days, prohibited-item surcharges, and a full weekend of loading.</p>
+<p>When you add labor, dump runs for items the dumpster company won't take, and donation trips, many Fort Collins homeowners find the <em>all-in cost</em> lands within $100–200 of full-service <a href="/junk-removal-fort-collins-co.html" class="content-link">junk removal</a> — without the back strain.</p>
+<h2 id="junk-removal-pricing">How junk removal pricing works here</h2>
+<p>Easy Garage Cleaning quotes <strong>flat-rate from photos</strong>. Typical Larimer County ranges: $99–150 single item, $250–400 partial garage, $400–650 standard garage, $650+ packed two-car. Includes labor, hauling, dump fees, and donations — see our <a href="/pricing.html" class="content-link">pricing guide</a>.</p>
+<h2 id="garage-cleanout">Garage cleanouts: why removal beats a bin</h2>
+<p>Garage clutter mixes heavy furniture, donation-worthy items, and awkward shapes. A dumpster forces you to sort, carry, and guess yardage while a bin sits in your driveway. Our <a href="/garage-cleanouts-fort-collins-co.html" class="content-link">Fort Collins garage cleanouts</a> sort on site, donate to <a href="/blog/habitat-for-humanity-restore-fort-collins.html" class="content-link">Habitat ReStore</a>, and sweep so you park same day. See our <a href="/projects/fort-collins-garage-cleanout-old-town.html" class="content-link">Old Town case study</a>.</p>
+<h2 id="driveway-damage">Driveway and HOA considerations</h2>
+<p>Loaded roll-offs can rut asphalt or crack older concrete. HOAs in Centerra, Raindance, and Fossil Creek often limit how long a dumpster can sit curbside. Junk removal avoids container damage and street permits — the truck is only on site while we load.</p>
+<h2 id="permits">Do you need a permit for a dumpster in Fort Collins?</h2>
+<p>Street or sidewalk placement may require a City of Fort Collins right-of-way permit. Driveway placement usually does not — but you lose parking for days. Junk removal requires no permit; text photos to <a href="sms:+19709991818" class="content-link">(970) 999-1818</a>.</p>
+<h2 id="timeline">Timeline: same day vs rental week</h2>
+<p>Dumpsters typically rent for 3–7 days. A standard garage cleanout takes our crew <strong>2–5 hours</strong>, often same-day or next-day. If you need to park inside tonight, a week-long bin is the wrong tool.</p>
+<h2 id="environment">Donation, recycling, and landfill</h2>
+<p>We donate usable items first, recycle where accepted, then landfill at Larimer County. Mixed dumpster loads can trigger weight overages and bury donatable furniture. Read <a href="/blog/fort-collins-junk-removal-what-you-can-cant-throw-away.html" class="content-link">local disposal rules</a>.</p>
+<h2 id="when-dumpster">When a dumpster actually makes sense</h2>
+<p>Multi-week renovations, steady contractor debris, rural properties with long driveways, or when you have free labor to load the bin. For typical residential garage reclaiming, full-service removal wins on speed and total cost.</p>
+<h2 id="vs-franchise">Local specialist vs national haulers</h2>
+<p>Easy Garage Cleaning is Fort Collins-based — owner on the job, photo quotes in ~5 minutes, No-Surprise Quote Guarantee. Compare with <a href="/blog/got-junk-vs-local-junk-removal-fort-collins.html" class="content-link">national franchises vs local removal</a>.</p>
+<h2 id="decision">How to decide in 5 minutes</h2>
+<p>Text wide garage photos or <a href="/book.html" class="content-link">book online</a>. We reply with a flat rate to compare against dumpster quotes before you commit.</p>
+<div class="compare-winner"><strong>Bottom line</strong> Dumpster rental looks cheaper upfront; junk removal is often comparable all-in when you count labor, overages, donations, and your weekend. For garage reclaiming, hauling is usually faster and less stressful.</div>""",
         "related": [("/junk-removal-fort-collins-co.html", "Junk Removal"), ("/garage-cleanouts-fort-collins-co.html", "Garage Cleanouts"), ("/blog/diy-junk-removal-vs-hiring-professionals-fort-collins.html", "DIY vs Pro"), ("/blog/how-much-does-garage-cleanout-cost-fort-collins.html", "Cleanout Pricing")],
-        "faqs": [("Is junk removal more expensive than a dumpster?", "Often comparable all-in when you count labor, dump fees, and your time. We quote flat from photos — no overage surprises."), ("Do I need a permit for a dumpster in Fort Collins?", "Some placements require city approval. Junk removal avoids permitting entirely.")],
+        "faqs": [
+            ("Is junk removal more expensive than a dumpster?", "Often comparable all-in when you count labor, dump fees, overages, and your time. We quote flat from photos — no surprise fees at the end."),
+            ("Do I need a permit for a dumpster in Fort Collins?", "Street or sidewalk placement may require a city right-of-way permit. Junk removal avoids permitting entirely."),
+            ("What size dumpster do I need for a garage cleanout?", "Most two-car garages need 15–20 yards if packed tight — but weight limits matter. Many homeowners underestimate density of furniture and appliances."),
+            ("Can I put a mattress or fridge in a rented dumpster?", "Often no — or with heavy surcharges. We haul appliances, mattresses, and freon items with proper disposal included in flat quotes."),
+            ("How fast can junk removal finish vs a dumpster?", "Most garage jobs take our crew 2–5 hours same visit. Dumpsters usually sit 3–7 days while you load in your spare time."),
+        ],
     },
     {
         "slug": "blog/garage-cleanout-vs-storage-unit-fort-collins.html",

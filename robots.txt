@@ -2,6 +2,8 @@
 # Claude, Google AI Overviews, and other answer engines. Canonical business context:
 # https://easygaragecleaning.com/llms.txt and https://easygaragecleaning.com/ai.txt
 
+# Host: easygaragecleaning.com (canonical domain — use www redirect at DNS/CDN if applicable)
+
 User-agent: *
 Allow: /
 

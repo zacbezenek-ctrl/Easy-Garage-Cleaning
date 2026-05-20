@@ -688,9 +688,57 @@
     @media (min-width: 769px) {
       .bottom-nav { display: none; }
     }
-  </style>
+  /* site-polish-v4 */
+Spacing: 4/8/16/24/32/48/64 (--space-1 … --space-7)
+Radius: sm/md/lg (--radius-sm, --radius-md, --radius-lg)
+Shadows: sm/md/lg/accent (--shadow-sm … --shadow-accent)
+Font sizes: xs/sm/base/md/lg/xl/2xl/hero (--text-xs … --text-hero)
+
+.faq-hero-actions .btn-primary,.faq-cta .cta-main{background:var(--accent,#ff5b1f);color:#fff;border:none}
+.faq-hero-actions .btn-primary:hover,.faq-cta .cta-main:hover{background:var(--accent-deep,#d94208)}
+.faq-layout{display:grid;grid-template-columns:min(220px,28%) 1fr;gap:clamp(24px,5vw,60px);padding:0 0 100px;align-items:start}
+@media(max-width:820px){.faq-layout{grid-template-columns:1fr;gap:0}.faq-nav-mobile{display:block;margin-bottom:28px}}
+.faq-nav{position:sticky;top:88px}
+.faq-nav-mobile{display:none}
+.faq-nav-mobile select{width:100%;padding:12px 14px;font:inherit;font-size:14px;border:1px solid rgba(10,22,40,.15);border-radius:var(--radius,2px);background:var(--white,#fff);min-height:48px}
+.drawer-phone-sticky{position:sticky;top:0;z-index:2;display:flex;align-items:center;justify-content:center;margin:-20px -24px var(--space-3);padding:var(--space-3) var(--space-4);background:var(--accent);color:var(--white);font-weight:700;font-size:var(--text-base);min-height:48px;box-shadow:var(--shadow-md)}.drawer-phone-sticky:hover{background:var(--accent-deep)}
+.nav-drawer{padding-top:0}.nav-drawer .nav-drawer-head{margin-top:var(--space-2)}
+.drawer-toggle,.drawer-link-row,.nav-drawer-close{min-height:44px}
+.local-trust-bar{background:var(--white);border-bottom:1px solid rgba(10,22,40,.08);padding:var(--space-4) 0}
+.local-trust-inner{display:flex;flex-wrap:wrap;gap:var(--space-2);justify-content:center}
+.trust-pill{display:inline-flex;align-items:center;padding:10px 16px;font-size:var(--text-sm);font-weight:600;background:var(--paper);border:1px solid rgba(10,22,40,.1);border-radius:999px;min-height:44px}
+.testimonial-carousel{padding:var(--space-6) 0;background:var(--paper-warm)}
+.carousel-track{display:flex;gap:var(--space-3);overflow-x:auto;scroll-snap-type:x mandatory;-webkit-overflow-scrolling:touch;padding:var(--space-2) 0 var(--space-4)}
+.carousel-slide{flex:0 0 min(88%,340px);scroll-snap-align:start;background:var(--white);border:1px solid rgba(10,22,40,.08);padding:var(--space-4);border-radius:var(--radius-md);box-shadow:var(--shadow-sm)}
+.carousel-slide .example-label{font-family:var(--font-mono);font-size:var(--text-xs);letter-spacing:.1em;text-transform:uppercase;color:var(--accent-deep);margin-bottom:var(--space-2);display:block}
+.carousel-slide blockquote{font-family:var(--font-display);font-size:var(--text-lg);line-height:1.45;margin-bottom:var(--space-3)}
+.carousel-slide cite{font-size:var(--text-sm);color:var(--muted);font-style:normal}
+.final-cta-split{position:relative;overflow:hidden}
+.final-cta-split::before{content:'';position:absolute;inset:0;background:linear-gradient(135deg,var(--navy) 55%,var(--accent-deep) 55%);z-index:0}
+.final-cta-split>.wrap{position:relative;z-index:1}
+.final-cta .btn-primary.btn-lg,.final-cta .btn-secondary.btn-lg{padding:var(--space-3) var(--space-5);font-size:var(--text-md);min-height:48px}
+.item-hero-icon{width:72px;height:72px;display:flex;align-items:center;justify-content:center;font-size:40px;background:var(--paper-warm);border:2px solid rgba(10,22,40,.08);border-radius:var(--radius-md);margin-bottom:var(--space-3)}
+.similar-items-row{display:flex;flex-wrap:wrap;gap:var(--space-2);margin:var(--space-4) 0}
+.similar-items-row a{padding:10px 16px;font-size:var(--text-sm);font-weight:600;background:var(--white);border:1px solid rgba(10,22,40,.1);border-radius:var(--radius-md);min-height:44px;display:inline-flex;align-items:center}
+.price-sticky-mobile{display:none}
+@media(max-width:1023px){.price-sticky-mobile{display:flex;position:fixed;bottom:calc(56px + env(safe-area-inset-bottom,0px));left:0;right:0;z-index:85;align-items:center;justify-content:space-between;gap:var(--space-2);padding:var(--space-2) var(--space-3);background:var(--ink);color:var(--paper);border-top:1px solid var(--navy-line)}.price-sticky-mobile .price-sticky-range{font-family:var(--font-display);font-size:var(--text-lg);font-weight:700;color:var(--accent)}.price-sticky-mobile a{padding:10px 18px;background:var(--accent);color:var(--white);font-weight:700;min-height:44px;display:inline-flex;align-items:center}}
+.book-trust-badges{display:flex;flex-wrap:wrap;gap:var(--space-2);justify-content:center;margin-top:var(--space-4);padding-top:var(--space-4);border-top:1px solid var(--navy-line)}
+.book-trust-badges span{font-size:var(--text-xs);font-weight:600;color:var(--muted-dark);padding:8px 12px;background:rgba(255,255,255,.04);border-radius:var(--radius-md);min-height:44px;display:inline-flex;align-items:center}
+.legacy-redirect-banner{background:linear-gradient(90deg,var(--accent-deep),var(--accent));color:var(--white);padding:var(--space-3) var(--space-4);text-align:center;font-weight:600}
+.legacy-redirect-banner a{color:var(--white);text-decoration:underline}
+.faq-search-wrap{margin-bottom:var(--space-5)}
+.faq-search{width:100%;padding:14px 18px;font-size:var(--text-md);border:1px solid rgba(10,22,40,.15);border-radius:var(--radius-md);min-height:48px}
+.faq-item.is-hidden,details.faq-item.is-hidden{display:none}
+.faq-nav-list a.is-active{color:var(--accent-deep);background:var(--paper-warm);font-weight:700}
+
+</style>
 </head>
 <body>
+<div class="egc-portal-bar" style="background:#14243d;border-bottom:1px solid rgba(255,255,255,.1);padding:10px 18px;display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:13px">
+  <a href="/" style="color:#f5f1ea;font-weight:700;text-decoration:none"><span style="display:inline-block;width:8px;height:8px;background:#ff5b1f;border-radius:50%;margin-right:6px"></span>Easy Garage — Public site</a>
+  <a href="tel:+19709991818" style="color:#ff5b1f;font-weight:600;text-decoration:none">(970) 999-1818</a>
+</div>
+<a href="#main-content" class="skip-link">Skip to content</a>
 
 <!-- ═══════════════════════════════════════
      LOGIN
@@ -2546,5 +2594,16 @@ async function ocBook() {
   })();
 </script>
 <script src="employee-crm.js"></script>
+<div class="mobile-sticky-cta" aria-label="Quick contact">
+  <a href="tel:+19709991818" class="mobile-cta-btn mobile-cta-call">Call</a>
+  <a href="sms:+19709991818?body=Hi!%20I'd%20like%20a%20quote.%20I%20can%20text%20photos%20of%20my%20garage/junk." class="mobile-cta-btn mobile-cta-text">Text</a>
+  <a href="/book.html" class="mobile-cta-btn mobile-cta-quote">Quote</a>
+</div>
+
+<div class="egc-portal-foot" style="background:#0a1628;border-top:1px solid rgba(255,255,255,.08);padding:14px 18px;text-align:center;font-size:12px;color:rgba(245,241,234,.55)">
+  <a href="/privacy-policy.html" style="color:#ff5b1f;margin:0 8px">Privacy</a> · <a href="/" style="color:#ff5b1f">Home</a> · Employee portal — internal use only
+</div>
+<a href="#top" id="back-to-top" class="back-to-top" aria-label="Back to top" hidden>Top</a>
+<script>(function(){const btt=document.getElementById('back-to-top');if(!btt)return;const onScroll=()=>{btt.hidden=window.scrollY<420};btt.addEventListener('click',e=>{e.preventDefault();window.scrollTo({top:0,behavior:'smooth'})});window.addEventListener('scroll',onScroll,{passive:true});onScroll();})();</script>
 </body>
 </html>
