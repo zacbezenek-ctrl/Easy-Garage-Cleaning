@@ -671,6 +671,17 @@ COMPARISON_PAGES = [
 <p>Some homeowners rent a small bin for bagged construction debris during a remodel, then hire us for the heavy garage furniture, appliances, and donation runs the dumpster company will not take. That split can work — but for a straight garage reclaim with no active construction, one full-service visit is usually simpler and similarly priced all-in.</p>
 <h2 id="vs-franchise">Local specialist vs national haulers</h2>
 <p>Easy Garage Cleaning is Fort Collins-based — owner on the job, photo quotes in ~5 minutes, No-Surprise Quote Guarantee. Compare with <a href="/blog/got-junk-vs-local-junk-removal-fort-collins.html" class="content-link">national franchises vs local removal</a>.</p>
+<h2 id="checklist">Checklist: questions to ask before renting a dumpster</h2>
+<p>Call any Fort Collins-area roll-off company with this list — then text us the same garage photos so you can compare total cost side by side:</p>
+<ul>
+<li>What is the base price for 10, 15, and 20 yards — and how many days are included?</li>
+<li>What is the weight limit per container, and what is the overage fee per ton?</li>
+<li>Which items are prohibited or surcharged (mattresses, appliances, tires, dirt, concrete)?</li>
+<li>Do I need a city right-of-way permit if the bin sits on the street?</li>
+<li>What is the fee if I need the dumpster picked up late or swapped for an empty one mid-project?</li>
+<li>Who loads — and do I need to break down furniture or bag loose debris first?</li>
+</ul>
+<p>If the answers add more than a few hundred dollars or a full weekend of labor, full-service <a href="/junk-removal-fort-collins-co.html" class="content-link">junk removal in Fort Collins</a> deserves a serious look. Most homeowners who text us photos get a flat quote back before the dumpster delivery truck even arrives.</p>
 <h2 id="decision">How to decide in 5 minutes</h2>
 <p>Text wide garage photos or <a href="/book.html" class="content-link">book online</a>. We reply with a flat rate to compare against dumpster quotes before you commit.</p>
 <div class="compare-winner"><strong>Bottom line</strong> Dumpster rental looks cheaper upfront; junk removal is often comparable all-in when you count labor, overages, donations, and your weekend. For garage reclaiming, hauling is usually faster and less stressful.</div>""",
