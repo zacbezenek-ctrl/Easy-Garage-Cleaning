@@ -10,7 +10,7 @@ SITE = "https://easygaragecleaning.com"
 PHONE = "+19709991818"
 PHONE_DISPLAY = "(970) 999-1818"
 FORM_KEY = "3c4fe752-ac1d-45b9-89dd-4275ea162d22"
-GA4_ID = "G-J0W6Y4MMP9"
+GA4_ID = "G-CV7HJ2QGHX"
 TODAY = date.today().isoformat()
 
 TAGLINE = "The easiest way to reclaim your garage"
@@ -541,13 +541,13 @@ if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded'
 NAV_JS_SCRIPT = "<script>\n" + NAV_JS_IIFE + "\n</script>"
 
 GTAG_BLOCK = """<!-- Google tag (gtag.js) -->
-<script async src="https://www.googletagmanager.com/gtag/js?id=G-J0W6Y4MMP9"></script>
+<script async src="https://www.googletagmanager.com/gtag/js?id=G-CV7HJ2QGHX"></script>
 <script>
   window.dataLayer = window.dataLayer || [];
   function gtag(){{dataLayer.push(arguments);}}
   gtag('js', new Date());
 
-  gtag('config', 'G-J0W6Y4MMP9');
+  gtag('config', 'G-CV7HJ2QGHX');
   gtag('config', 'AW-18102284288');
 </script>
 """
