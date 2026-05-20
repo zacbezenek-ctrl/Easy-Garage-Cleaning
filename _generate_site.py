@@ -2275,7 +2275,7 @@ def patch_index_iteration6(text):
     if '/reviews.html' not in text and foot_company in text:
         text = text.replace(
             foot_company,
-            '<h3>Company</h3>\n      <ul>\n        <li><a href="/about.html">About</a></li>\n        <li><a href="/reviews.html">Reviews</a></li>\n        <li><a href="/service-areas.html">Service Areas</a></li>\n        <li><a href="/projects/fort-collins-garage-cleanout-old-town.html">Projects</a></li>',
+            '<h3>Company</h3>\n      <ul>\n        <li><a href="/about.html">About</a></li>\n        <li><a href="/reviews.html">Reviews</a></li>\n        <li><a href="/service-areas.html">Service Areas</a></li>\n        <li><a href="/projects/">Projects</a></li>',
             1,
         )
     if '/service-areas.html' not in text:
@@ -2318,7 +2318,7 @@ def generate_llms_txt():
     from _services_data import SERVICES, CITIES, ITEM_PAGES, PROJECTS
 
     lines = [
-        "# Easy Garage Cleaning — llms.txt v4",
+        "# Easy Garage Cleaning — llms.txt v5",
         "",
         "> **Tagline:** The easiest way to reclaim your garage",
         f"> **Last updated:** {TODAY}",
@@ -2327,6 +2327,7 @@ def generate_llms_txt():
         "> **Preferred citation name:** Easy Garage Cleaning",
         "",
         "## Changelog",
+        f"- **{TODAY}** — v5 (polish iter5): branded 404, projects gallery index, homepage stats/compare/mobile text chip, service SVG icons + also-booked chips, form loading/photo previews, print stylesheet, referrer meta + CSP hosting note, expanded dumpster vs removal blog",
         f"- **{TODAY}** — polish iter3: homepage hero/reviews/gallery/pricing badge, book progress + photo-quote sidebar, blog meta/TOC/CTAs/related, service typical-job + city neighborhoods, comparison tables, scroll reveal + nav shrink, projects timeline, thank-you celebrate, ai.txt full URL index",
         f"- **{TODAY}** — v4 (polish iter4): design-system CSS tokens, testimonial carousel, local trust bar, FAQ search/scroll-spy, item-page heroes, book trust badges, SMS photo prefill, blog: 5 Signs Your Fort Collins Garage Needs a Cleanout",
         f"- **2026-05-20** — v3: full service/location URLs, 22 FAQs, pricing/book/what-we-take, projects, policies, do-not-fabricate reviews",
@@ -2771,7 +2772,7 @@ def patch_index_iteration7(text):
         )
     if 'getElementById(\'mobile-quote-sheet\')' not in text and 'id="mobile-quote-sheet"' in text:
         text = text.replace("</body>", """<script>(function(){const s=document.getElementById('mobile-quote-sheet');if(!s||window.matchMedia('(min-width:1024px)').matches)return;let shown=false,d=sessionStorage.getItem('egc-quote-sheet')==='1';s.querySelector('.mobile-quote-sheet-close')?.addEventListener('click',()=>{s.classList.remove('visible');sessionStorage.setItem('egc-quote-sheet','1');d=true;});window.addEventListener('scroll',()=>{if(d||shown)return;const m=document.documentElement.scrollHeight-window.innerHeight;if(m>0&&window.scrollY/m>=0.5){shown=true;s.classList.add('visible');}},{passive:true});})();</script>\n</body>""")
-    return patch_iteration4_home(text)
+    return patch_iteration5_home(patch_iteration4_home(text))
 
 
 def collect_public_html_urls():
@@ -2876,6 +2877,129 @@ FAQ_SEARCH_JS = """
 })();
 </script>
 """
+
+
+CSP_HOSTING_NOTE = """
+<!--
+  HOSTING CSP — configure on server (Cloudflare, Netlify, Apache), not as a blocking meta tag:
+  default-src 'self'; script-src 'self' 'unsafe-inline' https://www.googletagmanager.com https://www.clarity.ms https://connect.facebook.net;
+  style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com;
+  img-src 'self' data: blob: https:; connect-src 'self' https://api.web3forms.com https://www.google-analytics.com;
+  frame-src https://www.youtube.com; upgrade-insecure-requests
+-->"""
+
+MERCHANT_SETUP_COMMENT = """<!--
+  MERCHANT SETUP: Microsoft Clarity — replace CLARITY_PROJECT_ID below
+  Google Search Console: <meta name="google-site-verification" content="YOUR_CODE" />
+  CallRail: see comment in _generate_site.py CALLRAIL_BLOCK
+-->"""
+
+STATS_BAR_HTML = """<section class="stats-bar" aria-label="Service highlights">
+  <div class="wrap stats-bar-inner reveal">
+    <div><div class="stat-num">Same-day</div><div class="stat-label">Often available when schedule allows</div></div>
+    <div><div class="stat-num">~5 min</div><div class="stat-label">Typical photo quote response</div></div>
+    <div><div class="stat-num">Locally owned</div><div class="stat-label">Fort Collins · owner on every job</div></div>
+  </div>
+</section>"""
+
+COMPARE_MINI_HTML = """<section class="compare-mini" aria-labelledby="compare-heading">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <span class="mono section-num">Why local</span>
+      <h2 class="section-title" id="compare-heading">Local specialist vs <em>national franchise</em></h2>
+      <p class="section-sub">Fort Collins homeowners deserve flat photo quotes and the owner on site — not a 1-800 call center.</p>
+    </div>
+    <div class="compare-mini-grid reveal">
+      <div class="compare-mini-col highlight">
+        <h3>Easy Garage Cleaning</h3>
+        <ul>
+          <li>Flat-rate quote from photos in ~5 minutes</li>
+          <li>Garage reclaiming specialist — not generic hauling</li>
+          <li>Owner Zac on every job · No-Surprise Quote Guarantee</li>
+          <li>Donation receipts · Same-day when available</li>
+        </ul>
+        <a href="/book.html" class="btn-primary" data-cta="hero-quote">Get Free Quote</a>
+      </div>
+      <div class="compare-mini-col">
+        <h3>National franchise haulers</h3>
+        <ul>
+          <li>Volume or hourly pricing · common add-on fees</li>
+          <li>Call-center scheduling · rotating crews</li>
+          <li>Less focus on garage cleanouts &amp; donations</li>
+        </ul>
+        <a href="/blog/got-junk-vs-local-junk-removal-fort-collins.html" class="content-link">Read full comparison →</a>
+      </div>
+    </div>
+  </div>
+</section>"""
+
+HOME_SERVICE_ICONS = [
+    ("garage-cleanouts-fort-collins-co.html", "garage"),
+    ("junk-removal-fort-collins-co.html", "junk"),
+    ("furniture-removal-fort-collins-co.html", "furniture"),
+    ("appliance-removal-fort-collins-co.html", "appliance"),
+    ("mattress-removal-fort-collins-co.html", "mattress"),
+    ("storage-unit-cleanout-fort-collins-co.html", "storage"),
+    ("yard-debris-removal-fort-collins-co.html", "yard"),
+    ("garage-organization-fort-collins-co.html", "organization"),
+]
+
+ITER5_CSS_TAIL = r"""
+.service-icon-svg,.service-card-icon svg{width:36px;height:36px;color:var(--accent-deep);margin-bottom:12px;display:block}
+.service-card-icon svg{width:32px;height:32px}
+.project-cards{display:grid;gap:20px;margin-top:32px}@media(min-width:768px){.project-cards{grid-template-columns:repeat(3,1fr)}}
+.print-only{display:none}
+@media print{.nav,.nav-drawer,.nav-overlay,.trust-strip,.mobile-sticky-cta,.mobile-text-chip,.back-to-top{display:none!important}body{padding-bottom:0!important;background:#fff;color:#000}.final-cta .quote-form{border:2px solid #000}.print-only{display:block!important;font-size:14px;margin-bottom:16px;color:#000}.print-only a{color:#000;font-weight:600}}
+"""
+
+
+def patch_iteration5_home(text):
+    """Homepage iter5: security meta, stats, compare, SVG icons, print CSS, head fix."""
+    text = re.sub(
+        r"<!--\s*\n\s*MERCHANT SETUP:[\s\S]*?</body>\s*\n-->",
+        MERCHANT_SETUP_COMMENT.strip(),
+        text,
+        count=1,
+    )
+    if 'name="referrer"' not in text:
+        text = text.replace(
+            '<meta name="viewport" content="width=device-width, initial-scale=1.0" />',
+            '<meta name="viewport" content="width=device-width, initial-scale=1.0" />\n<meta name="referrer" content="strict-origin-when-cross-origin" />',
+            1,
+        )
+    if "HOSTING CSP" not in text:
+        text = text.replace(
+            '<meta name="referrer" content="strict-origin-when-cross-origin" />',
+            '<meta name="referrer" content="strict-origin-when-cross-origin" />' + CSP_HOSTING_NOTE,
+            1,
+        )
+    if 'class="stats-bar"' not in text and "</header>" in text:
+        text = text.replace("</header>\n", "</header>\n\n" + STATS_BAR_HTML + "\n", 1)
+    if 'class="compare-mini"' not in text and "<!-- WHY CHOOSE US -->" in text:
+        text = text.replace("<!-- WHY CHOOSE US -->", COMPARE_MINI_HTML + "\n\n<!-- WHY CHOOSE US -->", 1)
+    elif 'class="compare-mini"' not in text and 'id="services"' in text:
+        text = re.sub(
+            r'(</section>\s*\n)(<!-- WHY CHOOSE US -->|<section class="[^"]*why)',
+            COMPARE_MINI_HTML + r"\n\n\1\2",
+            text,
+            count=1,
+        )
+    chip = f'<a href="sms:{PHONE}?body=Hi!%20I\'d%20like%20a%20quote.%20Here%20are%20photos%20of%20my%20garage:" class="mobile-text-chip" aria-label="Text us photos for a quote"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>Text us photos</a>'
+    if 'class="mobile-text-chip"' not in text and 'class="mobile-sticky-cta"' in text:
+        text = text.replace('<div class="mobile-sticky-cta"', chip + '\n<div class="mobile-sticky-cta"', 1)
+    for slug, key in HOME_SERVICE_ICONS:
+        svg = service_icon(key)
+        pat = rf'(<a href="/{re.escape(slug)}" class="service-card">\s*)<div class="service-card-icon">[^<]*</div>'
+        repl = rf'\1<div class="service-card-icon">{svg}</div>'
+        text = re.sub(pat, repl, text, count=1)
+        text = text.replace('class=\\"service-card-icon\\"', 'class="service-card-icon"')
+    if "@media print" not in text and "</style>" in text:
+        text = text.replace("</style>", ITER5_CSS_TAIL + "\n</style>", 1)
+    text = text.replace(
+        "/projects/fort-collins-garage-cleanout-old-town.html\">Projects",
+        "/projects/\">Projects",
+    )
+    return text
 
 
 def patch_iteration4_home(text):

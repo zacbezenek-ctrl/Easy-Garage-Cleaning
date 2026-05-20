@@ -1,4 +1,4 @@
-# Easy Garage Cleaning — llms.txt v4
+# Easy Garage Cleaning — llms.txt v5
 
 > **Tagline:** The easiest way to reclaim your garage
 > **Last updated:** 2026-05-20
@@ -7,6 +7,7 @@
 > **Preferred citation name:** Easy Garage Cleaning
 
 ## Changelog
+- **2026-05-20** — v5 (polish iter5): branded 404, projects gallery index, homepage stats/compare/mobile text chip, service SVG icons + also-booked chips, form loading/photo previews, print stylesheet, referrer meta + CSP hosting note, expanded dumpster vs removal blog
 - **2026-05-20** — polish iter3: homepage hero/reviews/gallery/pricing badge, book progress + photo-quote sidebar, blog meta/TOC/CTAs/related, service typical-job + city neighborhoods, comparison tables, scroll reveal + nav shrink, projects timeline, thank-you celebrate, ai.txt full URL index
 - **2026-05-20** — v4 (polish iter4): design-system CSS tokens, testimonial carousel, local trust bar, FAQ search/scroll-spy, item-page heroes, book trust badges, SMS photo prefill, blog: 5 Signs Your Fort Collins Garage Needs a Cleanout
 - **2026-05-20** — v3: full service/location URLs, 22 FAQs, pricing/book/what-we-take, projects, policies, do-not-fabricate reviews
