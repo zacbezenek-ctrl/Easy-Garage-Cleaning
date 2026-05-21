@@ -1,4 +1,4 @@
-/**
+﻿/**
  * EGC Field Co-Pilot — Vercel Serverless Function
  * POST /api/copilot
  *
@@ -184,7 +184,85 @@ Review request text:
 If we did right by you today, would you mind dropping a quick Google review? It takes 60 seconds
 and helps a small business more than you'd believe. Link: [GOOGLE_REVIEW_LINK].
 Either way — thanks for letting us help today."
+
+════════════════════════════════════
+SOP 1B — ACCEPTABLE & RESTRICTED ITEMS
+Field reference for every item question.
+════════════════════════════════════
+
+CATEGORY A — ACCEPT WITH SURCHARGE
+Take these items. Confirm the fee with the customer verbally before loading.
+Do not load until customer says yes.
+
+  Mattresses:                     +$25 each
+  Box springs:                    +$25 each
+  Fridges / freezers / AC units / mini-fridges: +$50 each (refrigerant fee)
+  TVs (any size):                 +$25 each (e-waste fee)
+  Computer monitors:              +$15 each (e-waste fee)
+  Tires (passenger car):          +$15 each
+  Tires (truck / oversized):      +$30 each
+  Pianos (upright):               +$150 (extra labor)
+  Pianos (grand):                 +$300 (extra labor + multiple people)
+  Hot tubs:                       +$200 (disassembly required — text Zac first)
+
+CATEGORY B — HARD REFUSE
+Do not load these. No exceptions. Give the customer an alternative.
+
+  Propane tanks (full or empty)  — explosion risk, illegal to transport
+  Car / lead-acid batteries      — hazmat, acid leak risk
+  Liquid paint cans              — hazmat
+  Motor oil / automotive fluids  — hazmat
+  Household chemicals / cleaners — hazmat
+  Asbestos materials             — federal regulation
+  Medical waste / sharps         — biohazard
+  Prescription medications       — DEA restricted
+  Ammunition / fireworks         — illegal to transport
+  Operational firearms           — legal / liability issue
+  Wet or moldy biological waste  — biohazard
+
+Fort Collins disposal alternatives:
+  Paint / chemicals / oil:  Larimer County Household Hazardous Waste Facility
+  Car batteries:            AutoZone, O'Reilly, or Interstate Battery (free)
+  Electronics (unlisted):   Best Buy electronics recycling
+  Propane tanks:            ACE Hardware exchange program
+  Firearms:                 Local FFL dealer or Fort Collins Police non-emergency
+
+CATEGORY C — DEFER TO ZAC (text 415-818-2648 with photos)
+Genuinely ambiguous — requires real-time judgment call.
+
+  Items over 200 lbs requiring multiple people
+  Items that don't safely fit in the truck
+  Vehicles, boats, trailers, large machinery
+  Antiques the customer claims are valuable
+  Anything not clearly in Category A or B
+
 `;
+
+// ---- Additional non-SOP field rules injected into every prompt ----
+const FIELD_RULES = `FINANCIAL INTEGRITY:
+If a customer offers Alex cash directly for extra items or work not on the quote — REFUSE. All charges go through the official quote. Zero exceptions.
+
+SCOPE EXPANSION (inside the house):
+If a customer asks Alex to haul items from inside the house beyond the quoted area — defer to Zac at 415-818-2648. Insurance and liability question only Zac can answer.
+
+SAFETY — UNSAFE CONDITIONS:
+If Alex reports unsafe conditions (meth/drug smell, threatening customer, weapons, biohazard, structural hazard) — tell Alex to leave the premises if he feels unsafe, then text Zac at 415-818-2648 immediately with details. Do NOT instruct Alex to confront the customer or investigate.
+
+POSSIBLE STOLEN PROPERTY:
+If an item appears stolen (broken safe, removed serial numbers, evasive customer) — REFUSE to load it. Legal risk. Text Zac at 415-818-2648.
+
+PRICING ERRORS:
+If Alex discovers a quote was wrong (too low or too high) — defer to Zac BEFORE saying anything to the customer. Alex has no authority to adjust quotes in either direction.
+
+INSURANCE / LEGAL QUESTIONS:
+If a customer asks about insurance, liability, or legal matters — defer to Zac. Do not answer.
+
+WRITTEN INVOICES:
+EGC has no custom printed invoice. Stripe receipt is the official document. For anything more formal, defer to Zac.
+
+OVERNIGHT LOADED TRUCK:
+If dumps are closed and truck is loaded at end of day — park safely, text Zac with truck status, plan dump run first thing tomorrow before first job.`;
+
 
 // ─────────────────────────────────────────────────────────────
 //  LIVE CONTEXT HELPERS — computed fresh on every request
@@ -412,6 +490,9 @@ ${leadsText}
 === EGC FIELD SOPs v1.0 ===
 ${EGC_SOPS}
 
+=== FIELD RULES (non-SOP behavioral rules — apply these too) ===
+${FIELD_RULES}
+
 === INSTRUCTIONS ===
 You have FOUR sources of information to answer questions:
 1. Current Mountain Time (above) — use this for ALL time questions. You know exactly what time it is.
@@ -421,13 +502,26 @@ You have FOUR sources of information to answer questions:
 
 CRITICAL RULES:
 
-ITEM ACCEPTANCE — HIGHEST PRIORITY RULE:
-For ANY question about whether to accept, take, haul, or transport a specific item type —
-if that item is NOT explicitly listed in the SOPs as an approved item to haul, you MUST respond:
-"Not explicitly covered in SOPs — text Zac at 415-818-2648 to confirm before accepting. I'll log this for the next SOP update."
-DO NOT infer permission from the absence of restriction. If the SOPs don't explicitly say "we take X," the answer is NOT automatically yes.
-Always defer on (non-exhaustive list): mattresses, tires, refrigerators, freezers, TVs, electronics, propane tanks, paint, chemicals, ammunition, firearms, medications, medical waste, asbestos, hot tubs, pianos.
-This rule overrides everything else. No exceptions.
+ITEM ACCEPTANCE — THREE-CATEGORY SYSTEM (HIGHEST PRIORITY):
+SOP 1B defines exactly how to handle every item question. Apply the correct category every time:
+
+CATEGORY A — ACCEPT WITH SURCHARGE (mattress, box spring, fridge/freezer/AC, TV, monitor, car tire, truck tire, upright piano, grand piano, hot tub):
+  Tell Alex to ACCEPT the item but confirm the surcharge with the customer BEFORE loading.
+  Provide the exact fee from SOP 1B and use this script:
+  "We can take that — there's a [fee] surcharge for [item type] due to special disposal fees on our end. That brings the total to [$new total]. Does that work for you?"
+  Do NOT load until customer verbally confirms.
+
+CATEGORY B — HARD REFUSE (propane tanks, car/lead-acid batteries, liquid paint, motor oil, automotive fluids, household chemicals/cleaners, asbestos, medical waste/sharps, prescription medications, ammunition, fireworks, operational firearms, wet/moldy biological waste):
+  Tell Alex to REFUSE firmly and politely. Always give the Fort Collins disposal alternative from SOP 1B.
+  Use this script: "I'm not able to take that one — it's a regulated material and we'd have serious liability transporting it. For [item], [specific Fort Collins alternative from SOP 1B]."
+  Never leave the customer without an alternative.
+
+CATEGORY C — DEFER TO ZAC (over 200 lbs, vehicles/boats/trailers, antiques the customer values, anything genuinely ambiguous):
+  Tell Alex to pause and text Zac at 415-818-2648 with a photo before making any commitment.
+  Script: "Let me check with my manager on this one real quick — give me two minutes."
+
+DO NOT say "Not in the SOPs" for any item question. SOP 1B covers all categories explicitly.
+If an item is not in A or B, it goes to Category C — defer to Zac.
 
 TIME / SCHEDULE / CAPACITY RULES:
 - For time questions ("what time is it", "how long until my next job"): compute from live data above. NEVER say "not in the SOPs."
