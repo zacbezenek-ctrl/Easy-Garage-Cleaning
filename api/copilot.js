@@ -186,60 +186,143 @@ and helps a small business more than you'd believe. Link: [GOOGLE_REVIEW_LINK].
 Either way — thanks for letting us help today."
 `;
 
-function getMountainTime() {
-  const now  = new Date();
-  const opts = { timeZone: 'America/Denver' };
-  const date = now.toLocaleDateString('en-US',  { ...opts, weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
-  const time = now.toLocaleTimeString('en-US',  { ...opts, hour: '2-digit', minute: '2-digit', timeZoneName: 'short' });
-  return `${date} · ${time}`;
+// ─────────────────────────────────────────────────────────────
+//  LIVE CONTEXT HELPERS — computed fresh on every request
+// ─────────────────────────────────────────────────────────────
+
+const TRUCK_CAPACITY = 15; // U-Haul 15ft box truck, cubic yards
+
+/** Full MT datetime object with all derived fields */
+function getMTContext() {
+  const now = new Date();
+  const tz  = { timeZone: 'America/Denver' };
+
+  const dateStr = now.toLocaleDateString('en-US', {
+    ...tz, weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
+  });
+  const timeStr = now.toLocaleTimeString('en-US', {
+    ...tz, hour: '2-digit', minute: '2-digit', timeZoneName: 'short',
+  });
+  const dayOfWeek = now.toLocaleDateString('en-US', { ...tz, weekday: 'long' });
+  const hour24    = parseInt(now.toLocaleString('en-US', { ...tz, hour: '2-digit', hour12: false }), 10);
+  const minute    = now.getMinutes();
+  const totalMins = hour24 * 60 + minute; // minutes since midnight MT
+
+  // Dump sites (Larimer County = closes 16:30, Fort Collins Transfer = closes 18:00)
+  const dumpCloseMins   = 16 * 60 + 30; // 4:30 PM
+  const transferCloseMins = 18 * 60;    // 6:00 PM
+  const minsUntilDump   = Math.max(0, dumpCloseMins - totalMins);
+  const minsUntilTransfer = Math.max(0, transferCloseMins - totalMins);
+
+  // Approximate sunset (MDT summer ≈ 8:15 PM, MST winter ≈ 5:30 PM)
+  // Simple seasonal estimate — good enough for field use
+  const month = now.getMonth() + 1; // 1-12
+  const sunsetHour = (month >= 4 && month <= 9) ? 20 : 17; // summer vs winter
+  const sunsetStr  = sunsetHour === 20 ? '~8:00 PM MT' : '~5:30 PM MT';
+  const minsUntilSunset = Math.max(0, sunsetHour * 60 - totalMins);
+
+  const isSunday = dayOfWeek === 'Sunday';
+
+  return {
+    dateStr, timeStr, dayOfWeek, hour24, totalMins,
+    minsUntilDump, minsUntilTransfer, minsUntilSunset,
+    sunsetStr, isSunday,
+    dumpOpen: totalMins < dumpCloseMins && !isSunday,
+    transferOpen: totalMins < transferCloseMins && !isSunday,
+  };
 }
 
-function getTimeFlags() {
-  const now    = new Date();
-  const mtHour = parseInt(now.toLocaleString('en-US', { timeZone: 'America/Denver', hour: '2-digit', hour12: false }), 10);
-  const mtDay  = now.toLocaleDateString('en-US', { timeZone: 'America/Denver', weekday: 'long' });
-  const flags  = [];
-
-  if (mtDay === 'Sunday') {
-    flags.push('⚠️  SUNDAY — Larimer County Landfill and Timberline Recycling CLOSED. No dump runs possible today.');
-  }
-
-  const dumpHoursLeft = Math.max(0, 16 - mtHour);
-  if (dumpHoursLeft <= 2 && dumpHoursLeft > 0) {
-    flags.push(`⏰  Larimer County dump closes in ~${dumpHoursLeft} hour(s). Fort Collins Transfer open until 6 PM.`);
-  } else if (mtHour >= 16) {
-    flags.push('🚫  Larimer County Landfill closed for today. Fort Collins Transfer Station open until 6 PM.');
-  }
-
-  if (mtHour >= 17) {
-    flags.push('🕔  Past 5 PM — Done by Dinner deadline. Wrap up and confirm completion with customer.');
-  }
-
-  return flags.length ? flags.join('\n') : 'No time-sensitive flags.';
+/** Format minutes as "1 hr 20 min" or "45 min" */
+function fmtMins(m) {
+  if (m <= 0) return '0 min';
+  const h = Math.floor(m / 60);
+  const min = m % 60;
+  if (h === 0) return `${min} min`;
+  if (min === 0) return `${h} hr`;
+  return `${h} hr ${min} min`;
 }
 
+/**
+ * Parse a time string like "9:00 AM", "9:00 AM – 12:00 PM", "14:30"
+ * Returns minutes since midnight, or null if unparseable.
+ */
+function parseTimeMins(str) {
+  if (!str) return null;
+  // Take first time token
+  const match = str.match(/(\d{1,2}):(\d{2})\s*(AM|PM)?/i);
+  if (!match) return null;
+  let h = parseInt(match[1], 10);
+  const m = parseInt(match[2], 10);
+  const ampm = (match[3] || '').toUpperCase();
+  if (ampm === 'PM' && h < 12) h += 12;
+  if (ampm === 'AM' && h === 12) h = 0;
+  return h * 60 + m;
+}
+
+/** Compute truck capacity from jobs list */
+function computeTruckStatus(jobs) {
+  let loadedYards = 0;
+  for (const j of jobs) {
+    const status = (j.status || '').toLowerCase();
+    if (status === 'completed' || status === 'in-progress' || status === 'inprogress') {
+      const yards = parseFloat(j.cubicYards) || 0;
+      loadedYards += yards;
+    }
+  }
+  const remaining = Math.max(0, TRUCK_CAPACITY - loadedYards);
+  return { loadedYards: Math.round(loadedYards * 10) / 10, remaining: Math.round(remaining * 10) / 10 };
+}
+
+/** Find the next scheduled (not started) job and compute time until it */
+function getNextJobContext(jobs, totalMins) {
+  const upcoming = jobs
+    .filter(j => {
+      const s = (j.status || '').toLowerCase();
+      return s === 'scheduled' || s === '' || !s;
+    })
+    .map(j => {
+      const t = parseTimeMins(j.timeWindow || j.scheduledTime || '');
+      return { ...j, startMins: t };
+    })
+    .filter(j => j.startMins !== null && j.startMins > totalMins)
+    .sort((a, b) => a.startMins - b.startMins);
+
+  if (!upcoming.length) return null;
+  const next = upcoming[0];
+  const minsUntil = next.startMins - totalMins;
+  const name = next.customerName || next.name || 'Unknown customer';
+  return { job: next, minsUntil, name };
+}
+
+/** Build the full schedule section string */
 function formatSchedule(jobs) {
-  if (!jobs || jobs.length === 0) return 'No jobs scheduled today.';
+  if (!jobs || jobs.length === 0) {
+    return 'No jobs found in the database for today. (Schedule may not have loaded — Alex should check the employee portal.)';
+  }
   return jobs.map((j, i) => {
-    const parts = [
-      `JOB ${i + 1}: ${j.customerName || j.name || 'Unknown'}`,
-      `  Address:    ${j.address || j.customerAddress || 'Not set'}`,
-      `  Window:     ${j.timeWindow || j.scheduledTime || j.scheduledDate || 'TBD'}`,
-      `  Est. cu yd: ${j.cubicYards || 'Unknown'}`,
-      `  Quote:      ${j.amount || j.quoteAmount || 'Unknown'}`,
-      `  Phone:      ${j.customerPhone || j.phone || 'Not set'}`,
-      `  Status:     ${j.status || 'scheduled'}`,
-    ];
-    if (j.notes)         parts.push(`  Notes:      ${j.notes}`);
-    if (j.depositAmount) parts.push(`  Deposit:    ${j.depositAmount} required`);
-    return parts.join('\n');
-  }).join('\n\n');
+    const status  = j.status || 'scheduled';
+    const name    = j.customerName || j.name || 'Unknown';
+    const time    = j.timeWindow || j.scheduledTime || 'TBD';
+    const address = j.address || j.customerAddress || 'Not set';
+    const yards   = j.cubicYards ? `${j.cubicYards} cu yd` : 'Unknown cu yd';
+    const price   = j.amount || j.quoteAmount || 'Unknown';
+    const phone   = j.customerPhone || j.phone || 'Not set';
+    let line = `Job ${i + 1}: ${name} at ${time}, ${address}, ${yards}, ${price}, status: ${status}, phone: ${phone}`;
+    if (j.notes) line += `, notes: ${j.notes}`;
+    return line;
+  }).join('\n');
 }
+
+// ─────────────────────────────────────────────────────────────
+//  HANDLER
+// ─────────────────────────────────────────────────────────────
 
 export default async function handler(req, res) {
-  // CORS — same origin only (easygaragecleaning.com)
-  const origin = req.headers.origin || '';
-  const allowed = /easygaragecleaning\.com$/.test(origin) || /^https?:\/\/(localhost|127\.0\.0\.1)/.test(origin);
+  // CORS — same origin only
+  const origin  = req.headers.origin || '';
+  const allowed = /easygaragecleaning\.com/.test(origin)
+               || /^https?:\/\/(localhost|127\.0\.0\.1)/.test(origin)
+               || /vercel\.app$/.test(origin);
   res.setHeader('Access-Control-Allow-Origin',  allowed ? origin : 'https://easygaragecleaning.com');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
@@ -257,36 +340,79 @@ export default async function handler(req, res) {
     return res.status(500).json({ error: 'Server misconfigured — contact Zac' });
   }
 
+  // ── Build live context ──────────────────────────────────────
+  const mt      = getMTContext();
+  const truck   = computeTruckStatus(schedule);
+  const nextJob = getNextJobContext(schedule, mt.totalMins);
+
   const userLabel = {
     TylerG: 'Tyler (lead handler — office/phone)',
     ZacB:   'Zac (owner)',
     AlexK:  'Alex (field operator — on-site)',
   }[user] || `${user} (field)`;
 
-  const systemPrompt = `You are the EGC Field Co-Pilot — a real-time operations assistant for Easy Garage Cleaning in Fort Collins, CO. Alex and Tyler use you on their phones during the workday.
+  // Dump status string
+  let dumpStatus;
+  if (mt.isSunday) {
+    dumpStatus = 'CLOSED — Sunday. No dump runs available today.';
+  } else if (!mt.dumpOpen && !mt.transferOpen) {
+    dumpStatus = 'ALL DUMP SITES CLOSED for today.';
+  } else if (!mt.dumpOpen) {
+    dumpStatus = `Larimer County Landfill CLOSED. Fort Collins Transfer Station open for ${fmtMins(mt.minsUntilTransfer)} more.`;
+  } else {
+    dumpStatus = `Larimer County Landfill open for ${fmtMins(mt.minsUntilDump)} more (closes 4:30 PM). Fort Collins Transfer open for ${fmtMins(mt.minsUntilTransfer)} more (closes 6:00 PM).`;
+  }
 
-CORE RULES — follow every one, every response:
-1. Give a specific action, not a list of considerations.
-2. If the answer requires customer communication, write the exact text to send. Format it as:
-   SEND THIS:
-   [exact message ready to copy-paste, with [Name] bracketed where needed]
-3. End every answer with the SOP reference: [SOP 1], [SOP 4 Trigger A], etc.
-4. If the question is NOT covered by the SOPs or schedule context, say exactly:
-   "Not in the SOPs — text Zac. I'll note this for the next SOP update." Do NOT invent procedure.
-5. Keep the non-script portion under 60 words. Scripts can be as long as needed.
-6. If safety is at risk, say so first.
+  // Next job string
+  const nextJobStr = nextJob
+    ? `Next job: ${nextJob.name} in ${fmtMins(nextJob.minsUntil)} (starts at ${nextJob.job.timeWindow || nextJob.job.scheduledTime})`
+    : 'No more jobs scheduled after this point today.';
 
-LOGGED IN: ${userLabel}
-MOUNTAIN TIME: ${getMountainTime()}
+  // ── System prompt ───────────────────────────────────────────
+  const systemPrompt = `You are the EGC Field Co-Pilot for Easy Garage Cleaning (Fort Collins, CO).
+Alex and Tyler use you on their phones in the field during the workday.
 
-TIME FLAGS:
-${getTimeFlags()}
+Logged in: ${userLabel}
+Current Mountain Time: ${mt.timeStr}
+Date: ${mt.dateStr}
+Day of week: ${mt.dayOfWeek}
+Sunset today: ${mt.sunsetStr} (${fmtMins(mt.minsUntilSunset)} from now)
 
-TODAY'S SCHEDULE:
+=== DUMP SITES ===
+${dumpStatus}
+
+=== NEXT JOB ===
+${nextJobStr}
+
+=== TODAY'S SCHEDULE ===
 ${formatSchedule(schedule)}
 
-EGC FIELD SOPs v1.0:
-${EGC_SOPS}`;
+=== TRUCK STATUS ===
+Capacity: ${TRUCK_CAPACITY} cubic yards (U-Haul 15ft box truck)
+Loaded today (completed + in-progress jobs): ${truck.loadedYards} cubic yards
+Remaining capacity: ${truck.remaining} cubic yards
+
+=== EGC FIELD SOPs v1.0 ===
+${EGC_SOPS}
+
+=== INSTRUCTIONS ===
+You have FOUR sources of information to answer questions:
+1. Current Mountain Time (above) — use this for ALL time questions. You know exactly what time it is.
+2. Today's schedule (above) — use this for scheduling, timing, and "am I on track" questions.
+3. Truck status (above) — use this for ALL capacity questions.
+4. EGC Field SOPs — use this for procedure questions.
+
+CRITICAL RULES:
+- For time questions ("what time is it", "how long until my next job"): compute the answer from the live data above. NEVER say "not in the SOPs."
+- For schedule questions ("am I on track", "can I fit a dump run"): use the schedule + current time to do the math. NEVER say "not in the SOPs."
+- For capacity questions ("can I take more stuff", "how much room do I have"): use Truck Status above. NEVER say "not in the SOPs."
+- For dump timing questions: use the dump status above + current time. NEVER say "not in the SOPs."
+- ONLY use "Not in the SOPs — text Zac" for genuinely novel situations not covered by SOPs OR live data (medical emergencies, legal disputes, customer threats, etc.).
+
+ANSWER FORMAT (use this every time):
+ACTION: [specific action in 1-2 sentences]
+SCRIPT (if a customer text is needed): [exact text, ready to copy-paste]
+BASIS: [which SOP section OR which live context data this is based on]`;
 
   const messages = [
     { role: 'system', content: systemPrompt },
@@ -304,8 +430,8 @@ ${EGC_SOPS}`;
       body: JSON.stringify({
         model:       'gpt-4o',
         messages,
-        max_tokens:  700,
-        temperature: 0.25,
+        max_tokens:  800,
+        temperature: 0.2,
       }),
     });
 
