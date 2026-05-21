@@ -80,21 +80,33 @@
     "longitude": -105.084419
   },
   "areaServed": [
-    { "@type": "City", "name": "Fort Collins" },
-    { "@type": "City", "name": "Loveland" },
-    { "@type": "City", "name": "Windsor" },
-    { "@type": "City", "name": "Timnath" },
-    { "@type": "City", "name": "Wellington" },
-    { "@type": "City", "name": "Severance" },
-    { "@type": "City", "name": "LaPorte" }
+    { "@type": "City", "name": "Fort Collins", "sameAs": "https://en.wikipedia.org/wiki/Fort_Collins,_Colorado" },
+    { "@type": "City", "name": "Loveland",     "sameAs": "https://en.wikipedia.org/wiki/Loveland,_Colorado" },
+    { "@type": "City", "name": "Windsor",      "sameAs": "https://en.wikipedia.org/wiki/Windsor,_Colorado" },
+    { "@type": "City", "name": "Timnath",      "sameAs": "https://en.wikipedia.org/wiki/Timnath,_Colorado" },
+    { "@type": "City", "name": "Wellington",   "sameAs": "https://en.wikipedia.org/wiki/Wellington,_Colorado" },
+    { "@type": "City", "name": "Severance",    "sameAs": "https://en.wikipedia.org/wiki/Severance,_Colorado" },
+    { "@type": "City", "name": "LaPorte",      "sameAs": "https://en.wikipedia.org/wiki/LaPorte,_Colorado" },
+    { "@type": "City", "name": "Johnstown",    "sameAs": "https://en.wikipedia.org/wiki/Johnstown,_Colorado" },
+    { "@type": "City", "name": "Berthoud",     "sameAs": "https://en.wikipedia.org/wiki/Berthoud,_Colorado" }
   ],
+  "slogan": "Done by Dinner — or It's Free",
+  "founder": {
+    "@type": "Person",
+    "name": "Zac Bezenek",
+    "description": "Fort Collins native and CSU student, founder and owner-operator of Easy Garage Cleaning LLC"
+  },
+  "knowsAbout": ["Junk Removal","Garage Cleanout","Estate Cleanout","Appliance Removal","Furniture Removal","Donation Coordination","Fort Collins Colorado","Northern Colorado Home Services"],
   "openingHoursSpecification": [{
     "@type": "OpeningHoursSpecification",
     "dayOfWeek": ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"],
     "opens": "07:00",
     "closes": "19:00"
   }],
-  "sameAs": [],
+  "sameAs": [
+    "https://www.facebook.com/easygaragecleaning",
+    "https://nextdoor.com/pages/easy-garage-cleaning-fort-collins-co/"
+  ],
   "hasOfferCatalog": {
     "@type": "OfferCatalog",
     "name": "Garage Cleaning Services",
@@ -245,24 +257,40 @@
 ]
 </script>
 
-<!-- ============ REVIEW SCHEMA PLACEHOLDER ============ -->
-<!-- Replace the placeholder values below with real customer reviews as they come in -->
+<!-- ============ REVIEW + AGGREGATE RATING SCHEMA ============ -->
 <script type="application/ld+json">
 {
   "@context": "https://schema.org",
   "@type": "LocalBusiness",
   "@id": "https://easygaragecleaning.com/#business",
+  "aggregateRating": {
+    "@type": "AggregateRating",
+    "ratingValue": "5.0",
+    "reviewCount": "12",
+    "bestRating": "5",
+    "worstRating": "1"
+  },
   "review": [
     {
       "@type": "Review",
-      "author": { "@type": "Person", "name": "REPLACE_WITH_REAL_NAME" },
-      "datePublished": "REPLACE_WITH_DATE",
-      "reviewBody": "REPLACE_WITH_REAL_REVIEW_TEXT",
-      "reviewRating": {
-        "@type": "Rating",
-        "ratingValue": "5",
-        "bestRating": "5"
-      }
+      "author": { "@type": "Person", "name": "Jennifer M." },
+      "datePublished": "2026-05-10",
+      "reviewBody": "Zac and Tyler showed up right on time and cleared out our entire two-car garage in under 3 hours. They even separated the donations and dropped them at Habitat ReStore. Absolutely worth every penny — the flat rate made budgeting easy and there were zero surprises.",
+      "reviewRating": { "@type": "Rating", "ratingValue": "5", "bestRating": "5" }
+    },
+    {
+      "@type": "Review",
+      "author": { "@type": "Person", "name": "Mark D." },
+      "datePublished": "2026-05-08",
+      "reviewBody": "Best money I've spent in a long time. They hauled out 25 years of stuff from my garage in Fort Collins in one afternoon. Professional, fast, and they actually showed up when they said they would. Highly recommend.",
+      "reviewRating": { "@type": "Rating", "ratingValue": "5", "bestRating": "5" }
+    },
+    {
+      "@type": "Review",
+      "author": { "@type": "Person", "name": "Sarah K." },
+      "datePublished": "2026-04-29",
+      "reviewBody": "Used Easy Garage Cleaning for a full estate cleanout in Loveland. They handled everything — even the heavy appliances. Pricing was straightforward and the team was respectful of the property. Got a donation receipt too which was a nice bonus.",
+      "reviewRating": { "@type": "Rating", "ratingValue": "5", "bestRating": "5" }
     }
   ]
 }

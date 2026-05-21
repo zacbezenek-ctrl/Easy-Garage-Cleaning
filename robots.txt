@@ -1,4 +1,10 @@
 User-agent: *
 Allow: /
+Disallow: /employee.html
+Disallow: /copilot.html
+Disallow: /api/
+Disallow: /node_modules/
+Disallow: /ads.html
+Disallow: /quote.html
 
 Sitemap: https://easygaragecleaning.com/sitemap.xml
