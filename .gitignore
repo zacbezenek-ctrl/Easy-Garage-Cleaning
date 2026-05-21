@@ -1,23 +1,2 @@
-# ── Secrets — NEVER commit these ──────────────────────
-.env
-.env.local
-.env.*.local
-
-# ── Dependencies ───────────────────────────────────────
-node_modules/
-
-# ── Build output ──────────────────────────────────────
-.vercel/
-dist/
-.next/
-
-# ── OS noise ──────────────────────────────────────────
-.DS_Store
-Thumbs.db
-desktop.ini
-
-# ── Editor ────────────────────────────────────────────
-.vscode/settings.json
-.idea/
-*.swp
-*.swo
+__pycache__/
+*.pyc
