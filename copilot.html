@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -314,6 +314,7 @@ const USERS = {
 let me        = null;
 let db        = null;
 let todayJobs = [];
+let allLeads  = [];
 let history   = [];
 let recording = false;
 let recog     = null;
@@ -356,7 +357,7 @@ async function checkSession() {
 function doLogout() {
   sessionStorage.removeItem('egc_cp_u');
   sessionStorage.removeItem('egc_cp_tok');
-  me = null; history = []; todayJobs = [];
+  me = null; history = []; todayJobs = []; allLeads = [];
   document.getElementById('copilot-screen').classList.remove('active');
   document.getElementById('login-screen').style.display = '';
   document.getElementById('chat-area').innerHTML = '';
@@ -385,7 +386,8 @@ async function boot() {
 
   updateClock();
   setInterval(updateClock, 30000);
-  loadTodaySchedule();
+  loadSchedule();
+  loadLeads();
 
   document.getElementById('query-input').addEventListener('input', () => {
     document.getElementById('send-btn').disabled =
@@ -407,32 +409,37 @@ function updateClock() {
 /* ══════════════════════════════════════════════════
    SCHEDULE
 ══════════════════════════════════════════════════ */
-function loadTodaySchedule() {
+function loadSchedule() {
   if (!db) return;
-  const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+  // No date filter — fetch all jobs. Small collection, AI needs full context.
+  db.collection('jobs').onSnapshot(
+    snap => {
+      todayJobs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      renderStrip(todayJobs);
+      console.log('[Co-Pilot] Jobs loaded:', todayJobs.length);
+    },
+    err => {
+      console.error('[Co-Pilot] Jobs failed:', err.code, err.message);
+      document.getElementById('jobs-strip').innerHTML =
+        '<div class="no-jobs-msg">Jobs unavailable — check Firestore rules</div>';
+    }
+  );
+}
 
-  db.collection('jobs')
-    .orderBy('scheduledDate')
-    .startAt(today)
-    .endAt(today + '')
-    .onSnapshot(
-      snap => {
-        todayJobs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-        renderStrip(todayJobs);
-      },
-      () => {
-        // Fallback: no index, fetch all and filter
-        db.collection('jobs').get().then(snap => {
-          todayJobs = snap.docs
-            .map(d => ({ id: d.id, ...d.data() }))
-            .filter(j => (j.scheduledDate || '').startsWith(today));
-          renderStrip(todayJobs);
-        }).catch(() => {
-          document.getElementById('jobs-strip').innerHTML =
-            '<div class="no-jobs-msg">Could not load schedule</div>';
-        });
-      }
-    );
+function loadLeads() {
+  if (!db) return;
+  const onLeads = snap => {
+    allLeads = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    console.log('[Co-Pilot] Leads loaded:', allLeads.length);
+  };
+  db.collection('leads').orderBy('createdAt', 'desc').limit(50).onSnapshot(
+    onLeads,
+    () => {
+      db.collection('leads').limit(50).get()
+        .then(onLeads)
+        .catch(e => console.warn('[Co-Pilot] Leads unavailable:', e.code));
+    }
+  );
 }
 
 function renderStrip(jobs) {
@@ -577,6 +584,7 @@ async function sendQuery() {
         user:     me,
         query,
         schedule: todayJobs,
+        leads:    allLeads,
         history:  history.slice(-8),
       }),
     });

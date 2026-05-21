@@ -331,7 +331,7 @@ export default async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(204).end();
   if (req.method !== 'POST')   return res.status(405).json({ error: 'Method not allowed' });
 
-  const { user = 'field', query, schedule = [], history = [] } = req.body || {};
+  const { user = 'field', query, schedule = [], leads = [], history = [] } = req.body || {};
 
   if (!query?.trim()) return res.status(400).json({ error: 'Missing query' });
 
@@ -344,6 +344,20 @@ export default async function handler(req, res) {
   const mt      = getMTContext();
   const truck   = computeTruckStatus(schedule);
   const nextJob = getNextJobContext(schedule, mt.totalMins);
+
+  // Format leads for system prompt
+  const leadsText = leads.length === 0
+    ? 'No leads in database.'
+    : leads.slice(0, 30).map((l, i) => {
+        const name    = l.name || l.full_name || l.customerName || 'Unknown';
+        const phone   = l.phone || l.customerPhone || '—';
+        const status  = l.status || 'new';
+        const amount  = l.quoteAmount || l.amount || '—';
+        const service = l.services || l.serviceType || '—';
+        const date    = l.scheduledDate || l.preferredDate || '—';
+        const notes   = l.notes ? ` | ${l.notes}` : '';
+        return `Lead ${i + 1}: ${name}, ${phone}, status: ${status}, quote: ${amount}, service: ${service}, date: ${date}${notes}`;
+      }).join('\n');
 
   const userLabel = {
     TylerG: 'Tyler (lead handler — office/phone)',
@@ -391,6 +405,9 @@ ${formatSchedule(schedule)}
 Capacity: ${TRUCK_CAPACITY} cubic yards (U-Haul 15ft box truck)
 Loaded today (completed + in-progress jobs): ${truck.loadedYards} cubic yards
 Remaining capacity: ${truck.remaining} cubic yards
+
+=== LEADS / PIPELINE (${leads.length} total) ===
+${leadsText}
 
 === EGC FIELD SOPs v1.0 ===
 ${EGC_SOPS}
