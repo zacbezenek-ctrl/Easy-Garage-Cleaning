@@ -1904,7 +1904,7 @@
     const lead = leadsCache.find((l) => l.id === leadId);
     const phone = lead?.phone || leadId;
     const firstName = (lead?.name || '').split(' ')[0] || '';
-    fetch('CONVERSION_WEBHOOK_URL', {
+    fetch('https://hooks.zapier.com/hooks/catch/27280948/4oqqlje/', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ phone, firstName, signal: 'qualified', leadId }),
@@ -1916,7 +1916,7 @@
     const lead = leadsCache.find((l) => l.id === leadId);
     const phone = lead?.phone || leadId;
     const firstName = (lead?.name || '').split(' ')[0] || '';
-    fetch('CONVERSION_WEBHOOK_URL', {
+    fetch('https://hooks.zapier.com/hooks/catch/27280948/4oqqlje/', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ phone, firstName, signal: 'not_qualified', leadId }),
@@ -1928,7 +1928,7 @@
     const lead = leadsCache.find((l) => l.id === leadId);
     const phone = lead?.phone || leadId;
     const firstName = (lead?.name || '').split(' ')[0] || '';
-    fetch('CONVERSION_WEBHOOK_URL', {
+    fetch('https://hooks.zapier.com/hooks/catch/27280948/4oqqlje/', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ phone, firstName, signal: 'converted', leadId }),
