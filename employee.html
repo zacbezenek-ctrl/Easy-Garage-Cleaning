@@ -2365,6 +2365,22 @@ function setStatus(id, status) {
   else if (status === 'scheduled') patch.pipelineStatus = 'scheduled';
   db.collection('jobs').doc(id).update(patch);
   if (typeof logActivity === 'function') logActivity(id, 'Status → ' + cap(status), me);
+
+  // ── Review-request webhook ─────────────────────────────
+  // When a job is marked complete, fire the Zapier Zap that
+  // sends the customer an SMS review request.
+  if (status === 'completed') {
+    const job = loadJobs().find(j => j.id === id);
+    if (job && job.phone) {
+      const firstName = (job.customer || '').split(' ')[0] || job.customer || '';
+      fetch('https://hooks.zapier.com/hooks/catch/27280948/4orzd4m/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone: job.phone, firstName })
+      }).catch(err => console.warn('Review webhook failed:', err));
+    }
+  }
+  // ── End review-request webhook ─────────────────────────
 }
 
 function delJob(id) {
