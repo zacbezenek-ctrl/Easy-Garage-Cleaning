@@ -1,0 +1,637 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>EGC Lead System — Standard Operating Procedure</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Georgia', serif; color: #1a1a1a; background: #fff; font-size: 14px; line-height: 1.7; }
+
+  .cover {
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    text-align: center;
+    background: #1a1a1a;
+    color: #fff;
+    padding: 60px 40px;
+    page-break-after: always;
+  }
+  .cover .logo { font-size: 13px; letter-spacing: 4px; text-transform: uppercase; color: #888; margin-bottom: 40px; }
+  .cover h1 { font-size: 42px; font-weight: 700; line-height: 1.2; margin-bottom: 20px; }
+  .cover .subtitle { font-size: 18px; color: #aaa; margin-bottom: 60px; }
+  .cover .meta { font-size: 12px; color: #666; line-height: 2; }
+
+  .page { max-width: 780px; margin: 0 auto; padding: 60px 40px; }
+  @media print {
+    .page { padding: 40px 40px; }
+    .page-break { page-break-before: always; }
+  }
+
+  h2 { font-size: 26px; font-weight: 700; margin-bottom: 8px; margin-top: 50px; padding-bottom: 10px; border-bottom: 2px solid #1a1a1a; }
+  h2:first-child { margin-top: 0; }
+  h3 { font-size: 17px; font-weight: 700; margin-top: 30px; margin-bottom: 8px; color: #1a1a1a; }
+  h4 { font-size: 14px; font-weight: 700; margin-top: 20px; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 1px; color: #555; }
+  p { margin-bottom: 12px; }
+
+  .toc { background: #f7f7f7; border-left: 4px solid #1a1a1a; padding: 24px 30px; margin: 30px 0; border-radius: 0 4px 4px 0; }
+  .toc h3 { margin-top: 0; margin-bottom: 14px; font-size: 15px; text-transform: uppercase; letter-spacing: 2px; }
+  .toc ol { padding-left: 20px; }
+  .toc li { margin-bottom: 6px; font-size: 13px; }
+
+  .callout { border-radius: 6px; padding: 16px 20px; margin: 20px 0; }
+  .callout.green { background: #f0faf0; border-left: 4px solid #2d9b4e; }
+  .callout.yellow { background: #fffbf0; border-left: 4px solid #f5a623; }
+  .callout.red { background: #fff5f5; border-left: 4px solid #e53e3e; }
+  .callout.blue { background: #f0f7ff; border-left: 4px solid #3182ce; }
+  .callout strong { display: block; margin-bottom: 4px; font-size: 13px; text-transform: uppercase; letter-spacing: 1px; }
+
+  table { width: 100%; border-collapse: collapse; margin: 16px 0 24px; font-size: 13px; }
+  th { background: #1a1a1a; color: #fff; padding: 10px 14px; text-align: left; font-size: 12px; letter-spacing: 1px; text-transform: uppercase; }
+  td { padding: 10px 14px; border-bottom: 1px solid #e8e8e8; vertical-align: top; }
+  tr:nth-child(even) td { background: #f9f9f9; }
+
+  .step-list { counter-reset: steps; list-style: none; padding: 0; margin: 16px 0; }
+  .step-list li { counter-increment: steps; display: flex; gap: 14px; margin-bottom: 14px; }
+  .step-list li::before { content: counter(steps); background: #1a1a1a; color: #fff; width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; flex-shrink: 0; margin-top: 2px; }
+
+  .cmd { display: inline-block; background: #1a1a1a; color: #a8ff78; font-family: 'Courier New', monospace; font-size: 13px; padding: 2px 8px; border-radius: 4px; letter-spacing: 1px; }
+
+  .flow { display: flex; flex-wrap: wrap; gap: 0; align-items: center; margin: 16px 0 24px; }
+  .flow-step { background: #f0f7ff; border: 1px solid #c3d9f5; padding: 8px 14px; border-radius: 4px; font-size: 12px; font-weight: 600; }
+  .flow-arrow { color: #aaa; padding: 0 6px; font-size: 16px; }
+
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; }
+  .badge.auto { background: #e8f5e9; color: #2e7d32; }
+  .badge.manual { background: #fff3e0; color: #e65100; }
+  .badge.both { background: #e8eaf6; color: #283593; }
+
+  .rule-block { border: 1px solid #e0e0e0; border-radius: 6px; padding: 16px 20px; margin: 12px 0; }
+  .rule-block .rule-title { font-weight: 700; margin-bottom: 6px; }
+  .rule-block .rule-body { color: #444; font-size: 13px; }
+
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin: 16px 0; }
+  @media (max-width: 600px) { .two-col { grid-template-columns: 1fr; } }
+
+  .section-label { font-size: 11px; text-transform: uppercase; letter-spacing: 3px; color: #888; margin-bottom: 6px; }
+  hr { border: none; border-top: 1px solid #e8e8e8; margin: 40px 0; }
+
+  ul { padding-left: 20px; margin-bottom: 12px; }
+  ul li { margin-bottom: 5px; }
+
+  .print-btn { position: fixed; bottom: 24px; right: 24px; background: #1a1a1a; color: #fff; border: none; padding: 12px 24px; border-radius: 6px; font-size: 14px; cursor: pointer; font-weight: 600; box-shadow: 0 4px 12px rgba(0,0,0,0.2); z-index: 999; }
+  .print-btn:hover { background: #333; }
+  @media print { .print-btn { display: none; } .cover { min-height: auto; padding: 80px 40px; } }
+</style>
+</head>
+<body>
+
+<button class="print-btn" onclick="window.print()">Save as PDF</button>
+
+<!-- COVER PAGE -->
+<div class="cover">
+  <div class="logo">Easy Garage Cleaning</div>
+  <h1>Lead System<br>Standard Operating Procedure</h1>
+  <div class="subtitle">How leads move from inquiry to booked job —<br>and how Tyler works with the automation</div>
+  <div class="meta">
+    Version 1.0 &nbsp;·&nbsp; May 2026<br>
+    For internal use — Tyler &amp; EGC Team<br>
+    Confidential
+  </div>
+</div>
+
+<!-- PAGE 1 -->
+<div class="page">
+
+  <div class="section-label">Overview</div>
+  <h2>What This Document Is</h2>
+  <p>EGC runs an automated lead system built on Zapier, Firestore, Quo (our SMS/call platform), and the employee portal at <strong>easygaragecleaning.com/employee</strong>. This SOP explains what the system does automatically, what Tyler needs to do manually, and how the two work together without stepping on each other.</p>
+  <p>The core idea: <strong>the system handles leads when Tyler isn't — and stays out of the way when he is.</strong></p>
+
+  <div class="toc">
+    <h3>Table of Contents</h3>
+    <ol>
+      <li>How a Lead Enters the System</li>
+      <li>The Automation Sequence (What Happens Without Tyler)</li>
+      <li>Tyler's Role — Working Leads Manually</li>
+      <li>Tyler's Text Commands</li>
+      <li>The Employee Portal</li>
+      <li>The conversationActive Flag — The Guard System</li>
+      <li>After the Job — Reviews & Follow-Up</li>
+      <li>What Tyler Should Never Do</li>
+      <li>Quick Reference Card</li>
+      <li>Full Zap Map</li>
+    </ol>
+  </div>
+
+  <hr>
+
+  <div class="section-label">Section 1</div>
+  <h2>How a Lead Enters the System</h2>
+  <p>Leads come in from two sources:</p>
+
+  <div class="two-col">
+    <div class="rule-block">
+      <div class="rule-title">📘 Facebook Ads</div>
+      <div class="rule-body">Customer fills out a Facebook Lead Ad form. Zapier instantly picks it up, texts Tyler + Zac, creates a contact in Quo, and saves the lead to Firestore.</div>
+    </div>
+    <div class="rule-block">
+      <div class="rule-title">📗 Google Sheet / Manual</div>
+      <div class="rule-body">A lead is manually added to the EGC Google Sheet (used for walk-ins, referrals, or imports). Same result — texts go out, contact created, Firestore updated.</div>
+    </div>
+  </div>
+
+  <p>Once a lead is in Firestore, the automation begins.</p>
+
+  <div class="callout blue">
+    <strong>What is Firestore?</strong>
+    Firestore is EGC's lead database. Every customer has a record there. All Zaps read and write to it. Tyler doesn't need to touch Firestore directly — the system manages it.
+  </div>
+
+  <hr>
+
+  <div class="section-label">Section 2</div>
+  <h2>The Automation Sequence</h2>
+  <p>Here's what happens to a lead automatically if Tyler doesn't engage:</p>
+
+  <ol class="step-list">
+    <li><strong>Lead arrives</strong> — texted to Tyler + Zac instantly via SMS. A contact is created in Quo.</li>
+    <li><strong>Hour 1+</strong> — No-Answer Cadence fires every hour. If the lead hasn't responded and Tyler hasn't engaged, an automated SMS goes out (Attempt 0).</li>
+    <li><strong>Subsequent hours</strong> — Up to 4 more automated follow-up texts (Attempts 1–4) go out at set intervals if there's still no reply.</li>
+    <li><strong>Lead replies</strong> — Tyler is notified. Automation pauses. Tyler takes over.</li>
+    <li><strong>Quote sent</strong> — Quote Follow-Up cadence starts: 4 rounds of automated follow-up texts over several days if the customer doesn't book.</li>
+    <li><strong>Customer books</strong> — Booking confirmation SMS sent immediately, reminder SMS sent before the job.</li>
+    <li><strong>Job completed</strong> — Tyler marks it done in the employee portal. 24 hours later, the customer gets a Google review request SMS.</li>
+  </ol>
+
+  <div class="callout green">
+    <strong>Key Point</strong>
+    Steps 2–4 (the No-Answer Cadence) only fire when <code>conversationActive = false</code>. The moment Tyler engages, the system steps back. See Section 6.
+  </div>
+
+  <hr>
+
+  <div class="section-label">Section 3</div>
+  <h2>Tyler's Role — Working Leads Manually</h2>
+
+  <h3>When Tyler Should Jump In</h3>
+  <ul>
+    <li>When a lead replies to an automated text</li>
+    <li>When a lead calls in directly</li>
+    <li>When Zac assigns a lead to follow up on</li>
+    <li>When a lead is hot and Tyler wants to skip the automated cadence</li>
+  </ul>
+
+  <h3>How Tyler Works a Lead</h3>
+  <ol class="step-list">
+    <li>Tyler sees the lead notification SMS with the customer's number.</li>
+    <li>Tyler opens Quo and finds the conversation.</li>
+    <li>Tyler texts or calls the customer from Quo using the EGC number <strong>(970) 999-1818</strong>.</li>
+    <li>The moment Tyler sends a text via Quo, the system automatically sets <code>conversationActive = true</code> — automation pauses for that lead.</li>
+    <li>Tyler works the lead — qualifies, schedules a site visit, gives a quote.</li>
+    <li>When done (call ended, conversation over), Tyler texts a command to update the system. See Section 4.</li>
+  </ol>
+
+  <div class="callout yellow">
+    <strong>Important</strong>
+    Always work leads from Quo using the EGC number. Do not text customers from your personal number — the system can't track it and the lead will remain in the automated sequence.
+  </div>
+
+</div>
+
+<!-- PAGE 2 -->
+<div class="page page-break">
+
+  <div class="section-label">Section 4</div>
+  <h2>Tyler's Text Commands</h2>
+  <p>Tyler controls the system by texting commands to the EGC Quo number <span class="cmd">(970) 999-1818</span> from his personal phone <strong>(925) 457-4584</strong>. These only work from Tyler's number — the system ignores the same commands from anyone else.</p>
+
+  <div class="callout blue">
+    <strong>Format</strong>
+    Text: <span class="cmd">COMMAND {10-digit phone number}</span><br>
+    Example: <span class="cmd">CALL 9704441234</span><br>
+    You'll get a confirmation text back confirming the update.
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Command</th>
+        <th>When to Use It</th>
+        <th>What It Does</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><span class="cmd">CALL 9701234567</span></td>
+        <td>The moment you get on a call with a lead</td>
+        <td>Sets <code>conversationActive = true</code>. Pauses all automated follow-ups for that lead. Logs call start time.</td>
+      </tr>
+      <tr>
+        <td><span class="cmd">DONE 9701234567</span></td>
+        <td>After a call ends with no definitive outcome</td>
+        <td>Sets <code>conversationActive = false</code>. Resumes automation. Logs last contact time.</td>
+      </tr>
+      <tr>
+        <td><span class="cmd">BOOKED 9701234567</span></td>
+        <td>Customer confirmed the job</td>
+        <td>Sets status to <code>booked</code>. Stops all follow-up sequences permanently. Logs the booking.</td>
+      </tr>
+      <tr>
+        <td><span class="cmd">LOST 9701234567</span></td>
+        <td>Customer said no, ghosted, or went with someone else</td>
+        <td>Sets status to <code>lost</code>. Stops all follow-up sequences permanently.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="callout green">
+    <strong>Note on calls</strong>
+    When a call ends via Quo, the system automatically clears <code>conversationActive</code> — so DONE is only needed if you used your personal phone or if you want to manually close a conversation without a call.
+  </div>
+
+  <h3>Example Workflow</h3>
+  <div class="flow">
+    <div class="flow-step">Lead comes in</div><div class="flow-arrow">→</div>
+    <div class="flow-step">Tyler calls customer</div><div class="flow-arrow">→</div>
+    <div class="flow-step">Text: CALL 9701234567</div><div class="flow-arrow">→</div>
+    <div class="flow-step">Call ends</div><div class="flow-arrow">→</div>
+    <div class="flow-step">Text: DONE or BOOKED</div>
+  </div>
+
+  <hr>
+
+  <div class="section-label">Section 5</div>
+  <h2>The Employee Portal</h2>
+  <p>The employee portal lives at <strong>easygaragecleaning.com/employee</strong>. Log in with your credentials. It shows:</p>
+
+  <ul>
+    <li><strong>CRM Dashboard</strong> — weekly calendar view of all scheduled jobs</li>
+    <li><strong>Jobs list</strong> — all active leads with status, customer name, phone, address</li>
+    <li><strong>Admin section</strong> — Zac-only controls</li>
+  </ul>
+
+  <h3>Marking a Job Complete</h3>
+  <p>This is the most important thing Tyler does in the portal. When the job is done:</p>
+
+  <ol class="step-list">
+    <li>Find the job in the portal (calendar or jobs list).</li>
+    <li>Click <strong>"Mark Complete"</strong> on the job card.</li>
+    <li>The system automatically fires the review request sequence — 24 hours later, the customer gets a Google review request SMS. No action needed from Tyler.</li>
+  </ol>
+
+  <div class="callout yellow">
+    <strong>Don't skip this step.</strong>
+    If you don't mark the job complete, the customer never gets a review request. Reviews are critical for EGC's Google ranking. Every completed job should be marked immediately on-site or right after.
+  </div>
+
+  <hr>
+
+  <div class="section-label">Section 6</div>
+  <h2>The conversationActive Flag — The Guard System</h2>
+  <p>Every lead in Firestore has a field called <code>conversationActive</code> — it's either <strong>true</strong> or <strong>false</strong>. This is what prevents the automation from texting customers while Tyler is actively working them.</p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>What Happens</th>
+        <th>conversationActive Changes To</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Tyler sends a text to a lead via Quo</td>
+        <td><strong>true</strong> (automatic)</td>
+      </tr>
+      <tr>
+        <td>Tyler texts <span class="cmd">CALL {phone}</span></td>
+        <td><strong>true</strong> (manual)</td>
+      </tr>
+      <tr>
+        <td>A call ends on the EGC Quo number</td>
+        <td><strong>false</strong> (automatic)</td>
+      </tr>
+      <tr>
+        <td>Tyler texts <span class="cmd">DONE {phone}</span></td>
+        <td><strong>false</strong> (manual)</td>
+      </tr>
+      <tr>
+        <td>Tyler texts <span class="cmd">BOOKED {phone}</span></td>
+        <td><strong>false</strong> + status = booked</td>
+      </tr>
+      <tr>
+        <td>Tyler texts <span class="cmd">LOST {phone}</span></td>
+        <td><strong>false</strong> + status = lost</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <p>When <code>conversationActive = true</code>, the No-Answer Cadence and Quote Follow-Up Zaps skip that lead entirely. The system will not text the customer while Tyler is in an active conversation.</p>
+
+</div>
+
+<!-- PAGE 3 -->
+<div class="page page-break">
+
+  <div class="section-label">Section 7</div>
+  <h2>After the Job — Reviews & Follow-Up</h2>
+
+  <h3>Review Requests (Automatic)</h3>
+  <p>The moment Tyler clicks "Mark Complete" in the employee portal:</p>
+  <ol class="step-list">
+    <li>The system checks if the customer has opted out of texts. If yes — nothing happens.</li>
+    <li>It waits exactly 24 hours.</li>
+    <li>It re-checks opt-out status (in case they opted out during the wait).</li>
+    <li>It sends this SMS from the EGC number:</li>
+  </ol>
+  <div class="callout blue" style="font-style:italic; font-size:13px;">
+    "Hi [FirstName], thanks for using EGC garage cleaning! Would you mind leaving us a quick Google review? It really helps our small business: [Google Review Link] - Tyler &amp; the EGC team"
+  </div>
+  <p>Tyler does not need to do anything else. The review request is fully automated.</p>
+
+  <h3>Opt-Outs</h3>
+  <p>If a customer texts any of the following words, they are immediately removed from all automated sequences and Tyler is notified:</p>
+  <div style="display:flex; gap:10px; flex-wrap:wrap; margin:12px 0;">
+    <span class="cmd">STOP</span>
+    <span class="cmd">UNSUBSCRIBE</span>
+    <span class="cmd">CANCEL</span>
+    <span class="cmd">QUIT</span>
+    <span class="cmd">END</span>
+  </div>
+  <p>Any capitalization works — "stop", "Stop", "STOP" all work. Tyler gets a text: <em>"[Customer] opted out. DO NOT CONTACT."</em> Do not message that customer again.</p>
+
+  <hr>
+
+  <div class="section-label">Section 8</div>
+  <h2>What Tyler Should Never Do</h2>
+
+  <div class="rule-block">
+    <div class="rule-title">❌ Text customers from your personal phone</div>
+    <div class="rule-body">The system can't see personal texts. The lead stays in the automated sequence and will get both your personal texts and automated follow-ups — double contact.</div>
+  </div>
+
+  <div class="rule-block">
+    <div class="rule-title">❌ Ignore the BOOKED and LOST commands</div>
+    <div class="rule-body">If you book a job without texting BOOKED, the Quote Follow-Up sequence keeps running and will text the customer "Have you had a chance to think about our quote?" even after they've booked. That looks bad.</div>
+  </div>
+
+  <div class="rule-block">
+    <div class="rule-title">❌ Skip marking jobs complete in the portal</div>
+    <div class="rule-body">No Mark Complete = no review request. Reviews directly impact how many leads EGC gets from Google. Every job needs to be marked.</div>
+  </div>
+
+  <div class="rule-block">
+    <div class="rule-title">❌ Contact customers who have opted out</div>
+    <div class="rule-body">If a customer texted STOP, do not reach out via any channel. The system blocks automated texts but Tyler is responsible for not contacting them manually either.</div>
+  </div>
+
+  <hr>
+
+  <div class="section-label">Section 9</div>
+  <h2>Quick Reference Card</h2>
+  <p style="color:#888; font-size:12px;">Print this page and keep it handy.</p>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Situation</th>
+        <th>What to Do</th>
+        <th>Who Does It</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>New lead comes in</td>
+        <td>Check Quo for the new contact, call or text within the hour</td>
+        <td><span class="badge manual">Tyler</span></td>
+      </tr>
+      <tr>
+        <td>You call a lead</td>
+        <td>Text <span class="cmd">CALL {phone}</span> to (970) 999-1818</td>
+        <td><span class="badge manual">Tyler</span></td>
+      </tr>
+      <tr>
+        <td>Call ends, no outcome</td>
+        <td>Text <span class="cmd">DONE {phone}</span> to (970) 999-1818</td>
+        <td><span class="badge manual">Tyler</span></td>
+      </tr>
+      <tr>
+        <td>Customer books the job</td>
+        <td>Text <span class="cmd">BOOKED {phone}</span> to (970) 999-1818</td>
+        <td><span class="badge manual">Tyler</span></td>
+      </tr>
+      <tr>
+        <td>Lead goes cold / says no</td>
+        <td>Text <span class="cmd">LOST {phone}</span> to (970) 999-1818</td>
+        <td><span class="badge manual">Tyler</span></td>
+      </tr>
+      <tr>
+        <td>No response from lead</td>
+        <td>Automated follow-up texts fire every hour (up to 4)</td>
+        <td><span class="badge auto">System</span></td>
+      </tr>
+      <tr>
+        <td>Quote sent, customer silent</td>
+        <td>4-round quote follow-up cadence fires automatically</td>
+        <td><span class="badge auto">System</span></td>
+      </tr>
+      <tr>
+        <td>Job is done</td>
+        <td>Click "Mark Complete" in the employee portal</td>
+        <td><span class="badge manual">Tyler</span></td>
+      </tr>
+      <tr>
+        <td>Review request</td>
+        <td>Sent automatically 24h after Mark Complete</td>
+        <td><span class="badge auto">System</span></td>
+      </tr>
+      <tr>
+        <td>Customer texts STOP</td>
+        <td>System blocks them automatically, Tyler gets alerted</td>
+        <td><span class="badge auto">System</span></td>
+      </tr>
+      <tr>
+        <td>Daily activity summary</td>
+        <td>Sent to Tyler every day at 7 AM MT via SMS</td>
+        <td><span class="badge auto">System</span></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="callout green">
+    <strong>Tyler's 3 Golden Rules</strong>
+    1. Always text from Quo — never your personal phone.<br>
+    2. Always text BOOKED or LOST when a lead is resolved.<br>
+    3. Always click Mark Complete after every job.
+  </div>
+
+</div>
+
+<!-- PAGE 4 -->
+<div class="page page-break">
+
+  <div class="section-label">Section 10</div>
+  <h2>Full Zap Map</h2>
+  <p>Every automation running in the background. Tyler doesn't need to manage these — this is for reference and troubleshooting.</p>
+
+  <h3>Lead Intake</h3>
+  <table>
+    <thead><tr><th>Zap</th><th>Trigger</th><th>What It Does</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>Facebook Lead Intake</td>
+        <td>New Facebook Lead Ad submission</td>
+        <td>Texts Tyler + Zac · Creates Quo contact · Writes lead to Firestore</td>
+      </tr>
+      <tr>
+        <td>Sheet Lead Entry</td>
+        <td>New row in Google Sheet</td>
+        <td>Same as above — for manual/referral leads</td>
+      </tr>
+      <tr>
+        <td>Sheets → Firebase Import</td>
+        <td>Every hour</td>
+        <td>Syncs new contacts from the Google Sheet to Firestore (deduped — won't create duplicates)</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>Activity Tracking</h3>
+  <table>
+    <thead><tr><th>Zap</th><th>Trigger</th><th>What It Does</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>Inbound Tracker (2A)</td>
+        <td>Customer texts EGC number</td>
+        <td>Logs inbound SMS to Firestore · Notifies Tyler</td>
+      </tr>
+      <tr>
+        <td>Outbound Tracker (2B)</td>
+        <td>Outbound SMS delivered via Quo</td>
+        <td>Logs delivery to Firestore · Sets conversationActive = true</td>
+      </tr>
+      <tr>
+        <td>Call Activity Tracker</td>
+        <td>Outgoing call ends on Quo</td>
+        <td>Sets conversationActive = false · Logs call duration + timestamp</td>
+      </tr>
+      <tr>
+        <td>Tyler Call Status</td>
+        <td>Tyler texts a command to Quo</td>
+        <td>Parses CALL/DONE/BOOKED/LOST · Updates Firestore · Confirms back to Tyler</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>Follow-Up Sequences</h3>
+  <table>
+    <thead><tr><th>Zap</th><th>Trigger</th><th>What It Does</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>No-Answer Cadence (Zap 4)</td>
+        <td>Every hour</td>
+        <td>Finds uncontacted leads → sends up to 5 follow-up texts (skips active conversations)</td>
+      </tr>
+      <tr>
+        <td>Quote Follow-Up (Zap 5)</td>
+        <td>Webhook when quote is sent</td>
+        <td>4-round SMS cadence over several days for leads who received a quote but haven't booked</td>
+      </tr>
+      <tr>
+        <td>Quote Bridge</td>
+        <td>Every hour</td>
+        <td>Polls Firestore for quoted leads and fires the Quote Follow-Up Zap for any not yet in sequence</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>Conversion & Closing</h3>
+  <table>
+    <thead><tr><th>Zap</th><th>Trigger</th><th>What It Does</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>Booking Confirmation (Zap 6)</td>
+        <td>Webhook when booking confirmed</td>
+        <td>Sends immediate booking confirmation SMS · Logs to Firestore · Sends reminder SMS before job</td>
+      </tr>
+      <tr>
+        <td>Review Request (Zap 7)</td>
+        <td>Tyler clicks "Mark Complete" in portal</td>
+        <td>Waits 24h · Sends Google review request SMS to customer</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>Compliance & Reporting</h3>
+  <table>
+    <thead><tr><th>Zap</th><th>Trigger</th><th>What It Does</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>Opt-Out Handler</td>
+        <td>Customer texts STOP/UNSUBSCRIBE/etc.</td>
+        <td>Marks lead opted-out in Firestore · Sends confirmation to customer · Alerts Tyler</td>
+      </tr>
+      <tr>
+        <td>Daily Digest (Zap 8)</td>
+        <td>Every day at 7 AM MT</td>
+        <td>Pulls Firestore data · Sends Tyler a summary SMS of the day's leads and activity</td>
+      </tr>
+      <tr>
+        <td>Backlog Classifier</td>
+        <td>Daily</td>
+        <td>Pulls all Quo conversations · Sends lead events to Meta CAPI for ad optimization</td>
+      </tr>
+      <tr>
+        <td>Meta Conversion Leads</td>
+        <td>HubSpot contact created/updated</td>
+        <td>Sends funnel event to Meta CAPI · Keeps Facebook ad data current</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <hr>
+
+  <div class="section-label">Contact & Access</div>
+  <h2>Key Info</h2>
+
+  <div class="two-col">
+    <div>
+      <h4>EGC SMS Number</h4>
+      <p style="font-size:18px; font-weight:700;">(970) 999-1818</p>
+      <p>All customer-facing texts come from this number. Tyler's commands go to this number.</p>
+    </div>
+    <div>
+      <h4>Employee Portal</h4>
+      <p style="font-size:15px; font-weight:700;">easygaragecleaning.com/employee</p>
+      <p>Mark jobs complete here. Also shows the weekly job calendar.</p>
+    </div>
+  </div>
+
+  <div class="two-col">
+    <div>
+      <h4>Tyler's Registered Number</h4>
+      <p style="font-size:18px; font-weight:700;">(925) 457-4584</p>
+      <p>Commands only work from this number. If Tyler changes phones, Zac needs to update the system.</p>
+    </div>
+    <div>
+      <h4>Questions / Issues</h4>
+      <p>Contact Zac. If a lead seems to be getting automated texts when it shouldn't, Zac can manually set <code>conversationActive</code> in Firestore to pause the sequence.</p>
+    </div>
+  </div>
+
+  <div class="callout blue" style="margin-top:30px;">
+    <strong>Reminder</strong>
+    This system runs 24/7 in the background. Tyler doesn't need to monitor it — just focus on working hot leads and let the automation handle everything else. The three things that matter: text from Quo, send BOOKED/LOST when resolved, mark jobs complete in the portal.
+  </div>
+
+  <div style="margin-top:60px; text-align:center; color:#aaa; font-size:11px; border-top:1px solid #eee; padding-top:20px;">
+    Easy Garage Cleaning — Internal SOP v1.0 — May 2026 — Confidential
+  </div>
+
+</div>
+
+</body>
+</html>
