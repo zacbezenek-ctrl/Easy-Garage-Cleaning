@@ -562,6 +562,32 @@
 .tyler-booked-badge { background: rgba(22,163,74,0.15); color: #86efac; border: 1px solid rgba(22,163,74,0.3); }
 .tyler-lost-badge { background: rgba(220,38,38,0.12); color: #fca5a5; border: 1px solid rgba(220,38,38,0.25); }
 
+/* ── META SIGNAL BUTTONS ── */
+.lead-signal-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+.signal-btn {
+  border: none;
+  border-radius: 0.6rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  padding: 0.6rem 0.3rem;
+  cursor: pointer;
+  min-height: 44px;
+  font-family: 'Inter', sans-serif;
+  transition: filter 0.15s;
+}
+.signal-btn:active { transform: scale(0.97); }
+.signal-qualified { background: #064e3b; color: #6ee7b7; border: 1px solid #065f46; }
+.signal-qualified:hover { filter: brightness(1.2); }
+.signal-not-qualified { background: #450a0a; color: #fca5a5; border: 1px solid #7f1d1d; }
+.signal-not-qualified:hover { filter: brightness(1.2); }
+.signal-converted { background: #3b1f00; color: #fcd34d; border: 1px solid #92400e; }
+.signal-converted:hover { filter: brightness(1.2); }
+
 .lead-detail-actions {
   display: flex;
   flex-wrap: wrap;

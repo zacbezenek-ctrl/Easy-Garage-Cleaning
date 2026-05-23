@@ -1248,6 +1248,17 @@
           <label>Notes</label>
           <textarea id="b-notes" placeholder="Any special instructions…"></textarea>
         </div>
+
+        <div class="fg">
+          <label>Repeat</label>
+          <select id="job-recurrence" name="recurrence">
+            <option value="none">One-time</option>
+            <option value="weekly">Weekly</option>
+            <option value="biweekly">Every 2 Weeks</option>
+            <option value="monthly">Monthly</option>
+            <option value="quarterly">Quarterly (every 3 months)</option>
+          </select>
+        </div>
       </div>
 
       <!-- STEP 3: REVIEW -->
@@ -2073,7 +2084,7 @@ function renderCal() {
       dj.forEach(j => {
         const ev = document.createElement('div');
         ev.className = 'allday-evt ' + j.type;
-        ev.textContent = j.customer || (j.type==='walkthrough'?'Walk-Through':'Job');
+        ev.textContent = (j.customer || (j.type==='walkthrough'?'Walk-Through':'Job')) + (j.isRecurring?' 🔁':'');
         ev.onclick = e => { e.stopPropagation(); showPopup(j, ev); };
         cell.appendChild(ev);
       });
@@ -2158,7 +2169,7 @@ function renderCal() {
       ev.className = 'week-evt ' + j.type + ' ' + (j.status||'');
       ev.style.top = top+'px';
       ev.style.height = '54px';
-      ev.innerHTML = `<div class="ev-name">${esc(j.customer||(j.type==='walkthrough'?'Walk-Through':'Job'))}</div><div class="ev-time">${fmtTime(j.time)}</div>`;
+      ev.innerHTML = `<div class="ev-name">${esc(j.customer||(j.type==='walkthrough'?'Walk-Through':'Job'))}${j.isRecurring?' 🔁':''}</div><div class="ev-time">${fmtTime(j.time)}</div>`;
       ev.onclick = e => { e.stopPropagation(); showPopup(j, ev); };
       col.appendChild(ev);
     });
@@ -2475,6 +2486,7 @@ function stepNext() {
     bk.time=document.getElementById('b-time').value;
     bk.address=document.getElementById('b-addr').value.trim();
     bk.notes=document.getElementById('b-notes').value.trim();
+    bk.recurrence=document.getElementById('job-recurrence').value||'none';
     if (!bk.date) { showErr('Please pick a date.'); return; }
     bk.step=3;
   } else if (bk.step===3) {
@@ -2536,6 +2548,7 @@ function fillDetails() {
   document.getElementById('b-time').value=bk.time||'';
   document.getElementById('b-addr').value=bk.address||bk.customer?.address||'';
   document.getElementById('b-notes').value=bk.notes||'';
+  document.getElementById('job-recurrence').value=bk.recurrence||'none';
   selAssignee(bk.assignedTo);
 }
 
@@ -2587,6 +2600,7 @@ async function confirmBooking() {
   const addr=bk.address||c.address||'';
   const jobId = bk.editId||uid();
   const existing = bk.editId ? jobsCache.find(j=>j.id===bk.editId) : null;
+  const recurrence = bk.recurrence || 'none';
   const job = {
     id: jobId,
     type: bk.type,
@@ -2599,6 +2613,7 @@ async function confirmBooking() {
     address: addr,
     assignedTo: bk.assignedTo,
     notes: bk.notes,
+    recurrence,
     status: existing?.status || 'scheduled',
     pipelineStatus: existing?.pipelineStatus || 'scheduled',
     createdBy: me,
@@ -2607,6 +2622,40 @@ async function confirmBooking() {
   };
 
   await db.collection('jobs').doc(jobId).set(job);
+
+  // Generate recurring instances for new (non-edit) appointments
+  if (!bk.editId && recurrence !== 'none') {
+    const recurrenceConfig = {
+      weekly:    { daysStep: 7,   count: 8 },
+      biweekly:  { daysStep: 14,  count: 6 },
+      monthly:   { daysStep: null, monthStep: 1, count: 6 },
+      quarterly: { daysStep: null, monthStep: 3, count: 4 },
+    };
+    const cfg = recurrenceConfig[recurrence];
+    if (cfg) {
+      const baseDate = new Date(bk.date + 'T12:00:00');
+      const saves = [];
+      for (let i = 1; i <= cfg.count; i++) {
+        const nextDate = new Date(baseDate);
+        if (cfg.daysStep) {
+          nextDate.setDate(nextDate.getDate() + cfg.daysStep * i);
+        } else {
+          nextDate.setMonth(nextDate.getMonth() + cfg.monthStep * i);
+        }
+        const instanceId = uid();
+        saves.push(db.collection('jobs').doc(instanceId).set({
+          ...job,
+          id: instanceId,
+          date: fmtDate(nextDate),
+          parentJobId: jobId,
+          isRecurring: true,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        }));
+      }
+      await Promise.all(saves);
+    }
+  }
 
   // If booked from a lead: mark lead as booked + fire Zap 6
   if (bk._fromLeadId) {

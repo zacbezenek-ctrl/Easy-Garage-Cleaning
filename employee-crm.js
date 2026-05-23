@@ -1104,6 +1104,13 @@
         </button>
       </div>
 
+      <!-- ── META SIGNAL BUTTONS ── -->
+      <div class="lead-signal-actions">
+        <button type="button" class="signal-btn signal-qualified" onclick="signalQualified('${lead.id}')">👍 QUALIFIED</button>
+        <button type="button" class="signal-btn signal-not-qualified" onclick="signalNotQualified('${lead.id}')">👎 NOT QUALIFIED</button>
+        <button type="button" class="signal-btn signal-converted" onclick="signalConverted('${lead.id}')">💰 CONVERTED</button>
+      </div>
+
       <div class="lead-detail-actions">
         ${phone ? `<a class="bsm edit" href="tel:${phone}">📞 Call</a>` : ''}
         ${phone && !optedOut ? `<a class="bsm edit" href="sms:${phone}">💬 Text via Quo</a>` : ''}
@@ -1890,6 +1897,44 @@
       renderLeadsEnhanced();
     }
   });
+
+  /* ── META CONVERSION SIGNAL BUTTONS ───────────────── */
+
+  window.signalQualified = async function (leadId) {
+    const lead = leadsCache.find((l) => l.id === leadId);
+    const phone = lead?.phone || leadId;
+    const firstName = (lead?.name || '').split(' ')[0] || '';
+    fetch('CONVERSION_WEBHOOK_URL', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phone, firstName, signal: 'qualified', leadId }),
+    }).catch((err) => console.warn('Signal webhook failed:', err));
+    if (typeof showToast === 'function') showToast('✅ Sent qualified signal to Meta');
+  };
+
+  window.signalNotQualified = async function (leadId) {
+    const lead = leadsCache.find((l) => l.id === leadId);
+    const phone = lead?.phone || leadId;
+    const firstName = (lead?.name || '').split(' ')[0] || '';
+    fetch('CONVERSION_WEBHOOK_URL', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phone, firstName, signal: 'not_qualified', leadId }),
+    }).catch((err) => console.warn('Signal webhook failed:', err));
+    if (typeof showToast === 'function') showToast('❌ Sent not-qualified signal to Meta');
+  };
+
+  window.signalConverted = async function (leadId) {
+    const lead = leadsCache.find((l) => l.id === leadId);
+    const phone = lead?.phone || leadId;
+    const firstName = (lead?.name || '').split(' ')[0] || '';
+    fetch('CONVERSION_WEBHOOK_URL', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phone, firstName, signal: 'converted', leadId }),
+    }).catch((err) => console.warn('Signal webhook failed:', err));
+    if (typeof showToast === 'function') showToast('💰 Sent converted signal to Meta');
+  };
 
   window.EGC_CRM = { PIPELINE, exportCrmBackup, importCrmBackup, getPipelineStatus };
 })();
