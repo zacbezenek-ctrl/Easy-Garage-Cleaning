@@ -1095,21 +1095,29 @@
           : ''
       }
       ${lead.prohibitedItemsFlag ? '<div class="lead-sla-banner over"><span>⚠ Prohibited items flagged</span></div>' : ''}
+      <!-- ── TYLER'S PRIMARY ACTION BUTTONS ── -->
+      <div class="lead-tyler-actions">
+        ${st !== 'booked' ? `<button type="button" class="tyler-btn tyler-booked" onclick="tylerMarkBooked('${lead.id}')">✅ BOOKED</button>` : '<div class="tyler-booked-badge">✅ Booked</div>'}
+        ${st !== 'dead' ? `<button type="button" class="tyler-btn tyler-lost" onclick="tylerMarkLost('${lead.id}')">❌ LOST</button>` : '<div class="tyler-lost-badge">❌ Lost</div>'}
+        <button type="button" class="tyler-btn ${lead.conversationActive ? 'tyler-resume' : 'tyler-pause'}" onclick="tylerToggleActive('${lead.id}', ${!!lead.conversationActive})">
+          ${lead.conversationActive ? '▶ RESUME AUTO' : '⏸ PAUSE AUTO'}
+        </button>
+      </div>
+
       <div class="lead-detail-actions">
         ${phone ? `<a class="bsm edit" href="tel:${phone}">📞 Call</a>` : ''}
-        ${phone && !optedOut ? `<a class="bsm edit" href="sms:${phone}">💬 Text</a>` : ''}
+        ${phone && !optedOut ? `<a class="bsm edit" href="sms:${phone}">💬 Text via Quo</a>` : ''}
         ${phone && optedOut ? `<span class="bsm edit tcpa-disabled" title="TCPA: lead opted out">💬 Text (blocked)</span>` : ''}
         ${lead.email ? `<a class="bsm edit" href="mailto:${esc(lead.email)}">✉️ Email</a>` : ''}
         <button type="button" class="bsm edit" onclick="logContactAttempt('${lead.id}')">Log attempt</button>
-        ${st === 'new' && lead.notifiedAt && !lead.respondedAt ? `<button type="button" class="bsm approve" onclick="respondLead('${lead.id}','called')">📞 SLA</button>` : ''}
         <button type="button" class="bsm edit" onclick="convertLeadToJob('${lead.id}')">→ Job</button>
-        <button type="button" class="bsm del" onclick="promptMarkLeadDead('${lead.id}')">Mark dead</button>
       </div>
 
       <div class="lead-section lead-automation-section">
-        <div class="lead-section-title">Automation</div>
-        <p class="lead-automation-hint">${esc(zapHintForStatus(st))}</p>
-        ${paused ? '<p class="lead-cadence-paused">Cadence paused — conversation active or opted out.</p>' : '<p class="lead-cadence-active muted small">No-answer cadence (Zap 4) active when status=new.</p>'}
+        <div class="lead-section-title">Automation status</div>
+        ${paused
+          ? '<p class="lead-cadence-paused">⏸ Automation paused — Tyler is working this lead.</p>'
+          : '<p class="lead-cadence-active muted small">▶ Automation active — review request fires when job is marked complete.</p>'}
         <div class="lead-automation-btns">
           ${isAdmin ? `<button type="button" class="bsm del" onclick="markLeadOptedOut('${lead.id}')" ${optedOut ? 'disabled' : ''}>Mark opted out</button>` : ''}
           <button type="button" class="bsm edit" onclick="logManualTouch('${lead.id}')">Log manual touch</button>
@@ -1312,6 +1320,42 @@
     const now = new Date().toISOString();
     await db.collection('leads').doc(id).set({ optedOutAt: now, updatedAt: now }, { merge: true });
     if (typeof showToast === 'function') showToast('Lead opted out');
+    openLeadDetail(id, true);
+  };
+
+  /* ── TYLER'S 3 BIG BUTTONS ─────────────────────────── */
+
+  window.tylerMarkBooked = async function (id) {
+    if (!confirm('Mark this lead as BOOKED? This stops all follow-up automation.')) return;
+    const now = new Date().toISOString();
+    await db.collection('leads').doc(id).set(
+      { status: 'booked', crmStatus: 'booked', conversationActive: false, updatedAt: now, bookedAt: now },
+      { merge: true }
+    );
+    if (typeof showToast === 'function') showToast('🎉 Lead marked BOOKED');
+    openLeadDetail(id, true);
+  };
+
+  window.tylerMarkLost = async function (id) {
+    const reason = prompt('Why did we lose this lead? (optional)');
+    if (reason === null) return; // cancelled
+    const now = new Date().toISOString();
+    await db.collection('leads').doc(id).set(
+      { status: 'dead', crmStatus: 'dead', conversationActive: false, lossReason: reason.trim() || '—', updatedAt: now, lostAt: now },
+      { merge: true }
+    );
+    if (typeof showToast === 'function') showToast('Lead marked LOST');
+    openLeadDetail(id, true);
+  };
+
+  window.tylerToggleActive = async function (id, currentlyActive) {
+    const now = new Date().toISOString();
+    const newVal = !currentlyActive;
+    await db.collection('leads').doc(id).set(
+      { conversationActive: newVal, lastTouchAt: now, updatedAt: now },
+      { merge: true }
+    );
+    if (typeof showToast === 'function') showToast(newVal ? '⏸ Automation paused' : '▶ Automation resumed');
     openLeadDetail(id, true);
   };
 
