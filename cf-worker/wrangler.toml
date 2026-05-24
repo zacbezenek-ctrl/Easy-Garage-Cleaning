@@ -1,0 +1,13 @@
+name = "egc-copilot-proxy"
+main = "worker.js"
+compatibility_date = "2024-01-01"
+
+routes = [
+  { pattern = "easygaragecleaning.com/copilot.html", zone_name = "easygaragecleaning.com" },
+  { pattern = "easygaragecleaning.com/api/copilot*", zone_name = "easygaragecleaning.com" },
+  { pattern = "easygaragecleaning.com/sop.html", zone_name = "easygaragecleaning.com" },
+  { pattern = "easygaragecleaning.com/EGC-Lead-System-SOP.pdf", zone_name = "easygaragecleaning.com" },
+  { pattern = "easygaragecleaning.com/employee.html", zone_name = "easygaragecleaning.com" },
+  { pattern = "easygaragecleaning.com/employee-crm.js", zone_name = "easygaragecleaning.com" },
+  { pattern = "easygaragecleaning.com/employee-crm.css", zone_name = "easygaragecleaning.com" }
+]
