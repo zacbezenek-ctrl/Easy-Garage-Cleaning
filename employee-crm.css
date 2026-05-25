@@ -422,6 +422,44 @@
 
 @keyframes spin { to { transform: rotate(360deg); } }
 
+/* ── Skeleton rows (shimmer while leads first load) ─ */
+.leads-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-top: 0.25rem;
+}
+.skel-row {
+  background: var(--navy-soft);
+  border: 1px solid var(--navy-border);
+  border-radius: 0.65rem;
+  padding: 0.85rem 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  position: relative;
+  overflow: hidden;
+  min-height: 72px;
+}
+.skel-line {
+  height: 12px;
+  border-radius: 6px;
+  background: linear-gradient(90deg, rgba(255,255,255,.05) 0%, rgba(255,255,255,.12) 50%, rgba(255,255,255,.05) 100%);
+  background-size: 200% 100%;
+  animation: skelShimmer 1.4s ease-in-out infinite;
+}
+.skel-line.w-60 { width: 60%; }
+.skel-line.w-40 { width: 40%; height: 10px; }
+.skel-line.w-30 { width: 30%; height: 9px; }
+@keyframes skelShimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* Lead row hover lift — keeps lists feeling responsive without disruptive animations on every re-render */
+.lead-row { transition: border-color .15s, background .15s, transform .12s; }
+.lead-row:hover { transform: translateY(-1px); }
+
 /* ── Lead detail drawer ────────────────────────────── */
 .lead-drawer {
   position: fixed;

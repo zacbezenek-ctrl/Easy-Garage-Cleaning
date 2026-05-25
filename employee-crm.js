@@ -315,6 +315,8 @@
   }
 
   /* ── Dashboard ─────────────────────────────────────── */
+  let _prevInboxCount = null;
+
   window.renderDashboard = function () {
     const el = document.getElementById('dash-content');
     if (!el) return;
@@ -342,32 +344,41 @@
         j.quoteSentAt &&
         Date.now() - new Date(j.quoteSentAt).getTime() > 2 * 86400000
     );
+    const newLeadCount = leads.filter((l) => {
+      const raw = getLeadStatusRaw(l);
+      return (raw === 'new' || !raw) && !l.optedOutAt;
+    }).length;
+    // Extract first name from camelCase username ("ZacB" → "Zac", "TylerGriffith" → "Tyler")
+    const firstName = ((me || 'team').match(/^[A-Z][a-z]*/) || [me || 'team'])[0];
+    const inboxBumped = _prevInboxCount !== null && inbox.length > _prevInboxCount;
+    _prevInboxCount = inbox.length;
 
     el.innerHTML = `
       <div class="dash-greeting">
-        <h2>Good ${greetingTime()}, ${esc(me || 'team')}</h2>
-        <p class="dash-sub">${new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}</p>
+        <h2>Good ${greetingTime()}, ${esc(firstName)}</h2>
+        <p class="dash-sub">${new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })} <span class="dash-live" id="dash-live-indicator" title="Live sync with Firestore">Live</span></p>
       </div>
       <div class="quick-actions">
         <button type="button" class="qa-btn" onclick="openBooking()">+ Job</button>
         <button type="button" class="qa-btn secondary" onclick="openLeadModal()">+ Lead</button>
         <button type="button" class="qa-btn secondary" onclick="switchTab('schedule', document.querySelector('[data-tab=schedule]'))">Block Time</button>
       </div>
+      ${newLeadCount > 0 ? `<div class="alert-banner alert-leads" onclick="switchTab('leads', document.querySelector('[data-tab=leads]'))" style="cursor:pointer">🔥 <strong>${newLeadCount} new lead${newLeadCount === 1 ? '' : 's'}</strong> waiting on first response — <span style="color:var(--accent);text-decoration:underline">open inbox →</span></div>` : ''}
       <div class="stats-grid dash-stats">
-        <div class="stat"><div class="v" style="color:#60a5fa">${counts.quoted || 0}</div><div class="l">Pending quotes</div></div>
-        <div class="stat"><div class="v" style="color:#a78bfa">${counts.scheduled || 0}</div><div class="l">Scheduled</div></div>
-        <div class="stat"><div class="v" style="color:#f59e0b">${counts.in_progress || 0}</div><div class="l">In progress</div></div>
-        <div class="stat"><div class="v" style="color:#86efac">${counts.completed + counts.paid || 0}</div><div class="l">Done / paid</div></div>
-        <div class="stat"><div class="v" style="color:var(--accent)">${inbox.length}</div><div class="l">Leads inbox</div></div>
+        <div class="stat tappable" onclick="switchTab('jobs', document.querySelector('[data-tab=jobs]'))"><div class="v" style="color:#60a5fa">${counts.quoted || 0}</div><div class="l">Pending quotes</div></div>
+        <div class="stat tappable" onclick="switchTab('schedule', document.querySelector('[data-tab=schedule]'))"><div class="v" style="color:#a78bfa">${counts.scheduled || 0}</div><div class="l">Scheduled</div></div>
+        <div class="stat tappable" onclick="switchTab('jobs', document.querySelector('[data-tab=jobs]'))"><div class="v" style="color:#f59e0b">${counts.in_progress || 0}</div><div class="l">In progress</div></div>
+        <div class="stat tappable" onclick="switchTab('jobs', document.querySelector('[data-tab=jobs]'))"><div class="v" style="color:#86efac">${counts.completed + counts.paid || 0}</div><div class="l">Done / paid</div></div>
+        <div class="stat tappable" onclick="switchTab('leads', document.querySelector('[data-tab=leads]'))"><div class="v ${inboxBumped ? 'count-bump' : ''}" style="color:var(--accent)">${inbox.length}</div><div class="l">Leads inbox</div></div>
         <div class="stat"><div class="v" style="color:#86efac">$${rev.toLocaleString()}</div><div class="l">Revenue this week</div></div>
       </div>
       ${overdueQuotes.length ? `<div class="alert-banner">⚠ ${overdueQuotes.length} quote(s) need follow-up — <a href="#" onclick="switchTab('jobs',document.querySelector('[data-tab=jobs]'));return false">View pipeline</a></div>` : ''}
       <div class="dash-section">
-        <div class="dash-section-hd"><h3>Today's schedule</h3><span class="muted">${todayJobs.length} job(s)</span></div>
+        <div class="dash-section-hd"><h3>Today's schedule</h3><span class="muted">${todayJobs.length} job${todayJobs.length === 1 ? '' : 's'}</span></div>
         <div class="dash-list">${todayJobs.length ? todayJobs.map((j) => dashJobRow(j)).join('') : '<div class="empty-inline">No jobs scheduled today.</div>'}</div>
       </div>
       <div class="dash-section">
-        <div class="dash-section-hd"><h3>Upcoming</h3></div>
+        <div class="dash-section-hd"><h3>Upcoming</h3><span class="muted">${upcoming.length} job${upcoming.length === 1 ? '' : 's'}</span></div>
         <div class="dash-list">${upcoming.length ? upcoming.map((j) => dashJobRow(j)).join('') : '<div class="empty-inline">Nothing upcoming.</div>'}</div>
       </div>`;
   };
@@ -1036,7 +1047,13 @@
     }
 
     if (_leadsLoading && !leadsCache.length) {
-      el.innerHTML = `<div class="leads-state"><div class="leads-spinner"></div><h3>Loading leads…</h3><p>Connecting to Firebase in real time.</p></div>`;
+      const skel = Array.from({ length: 5 }, () => `
+        <div class="skel-row">
+          <div class="skel-line w-60"></div>
+          <div class="skel-line w-40"></div>
+          <div class="skel-line w-30"></div>
+        </div>`).join('');
+      el.innerHTML = `<div class="leads-skeleton" aria-busy="true" aria-label="Loading leads from Firebase">${skel}</div>`;
       return;
     }
 

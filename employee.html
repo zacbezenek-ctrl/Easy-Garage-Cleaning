@@ -78,10 +78,22 @@
     .topbar-left .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); }
     .topbar-left span { font-family: 'Fraunces', serif; font-size: .95rem; font-weight: 700; }
     .topbar-right { display: flex; align-items: center; gap: .75rem; flex-wrap: wrap; }
-    .firebase-status { font-size: .68rem; font-weight: 600; padding: .25rem .55rem; border-radius: 999px; white-space: nowrap; }
+    .firebase-status { font-size: .68rem; font-weight: 600; padding: .25rem .55rem; border-radius: 999px; white-space: nowrap; display: inline-flex; align-items: center; gap: .35rem; }
+    .firebase-status::before { content: ''; width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
     .firebase-status.ok { background: rgba(34,197,94,.12); color: #86efac; border: 1px solid rgba(34,197,94,.25); }
+    .firebase-status.ok::before { background: #22c55e; box-shadow: 0 0 6px rgba(34,197,94,.6); animation: livePulse 2.4s ease-in-out infinite; }
     .firebase-status.pending { background: rgba(255,255,255,.06); color: var(--muted); border: 1px solid rgba(255,255,255,.1); }
+    .firebase-status.pending::before { background: var(--muted); }
     .firebase-status.error { background: rgba(239,68,68,.12); color: #fca5a5; border: 1px solid rgba(239,68,68,.25); }
+    .firebase-status.error::before { background: #ef4444; }
+    @keyframes livePulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+    /* On mobile: compact connection chip to just the dot */
+    @media (max-width: 768px) {
+      .firebase-status { font-size: 0; padding: .35rem; }
+      .firebase-status::before { width: 8px; height: 8px; }
+      /* Hide the redundant "Easy Garage — Public site" bar on small screens */
+      .egc-portal-bar { display: none !important; }
+    }
     .user-chip { display: flex; align-items: center; gap: .5rem; background: var(--navy-light); border: 1px solid rgba(255,255,255,.1); border-radius: 99px; padding: .28rem .85rem .28rem .35rem; font-size: .8rem; font-weight: 600; }
     .user-chip .av { width: 22px; height: 22px; border-radius: 50%; background: var(--accent); display: flex; align-items: center; justify-content: center; font-size: .65rem; font-weight: 700; }
     .btn-logout { background: transparent; border: 1px solid rgba(255,255,255,.14); color: var(--muted); border-radius: .45rem; font-size: .78rem; padding: .32rem .75rem; cursor: pointer; transition: all .2s; }
@@ -283,9 +295,24 @@
     .total-amt { font-family: 'Fraunces', serif; font-size: 2rem; font-weight: 700; color: #86efac; line-height: 1; }
     .total-sub { font-size: .78rem; color: var(--muted); margin-top: .25rem; }
     .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px,1fr)); gap: .65rem; margin-bottom: 1.5rem; }
-    .stat { background: var(--navy-soft); border: 1px solid var(--navy-border); border-radius: .75rem; padding: 1rem; text-align: center; }
-    .stat .v { font-family: 'Fraunces', serif; font-size: 1.5rem; font-weight: 700; line-height: 1; }
+    .stat { background: var(--navy-soft); border: 1px solid var(--navy-border); border-radius: .75rem; padding: 1rem; text-align: center; transition: border-color .2s, transform .15s, background .2s; }
+    .stat.tappable { cursor: pointer; }
+    .stat.tappable:hover { border-color: rgba(255,91,31,.35); background: rgba(255,91,31,.04); transform: translateY(-1px); }
+    .stat.tappable:active { transform: translateY(0); }
+    .stat .v { font-family: 'Fraunces', serif; font-size: 1.5rem; font-weight: 700; line-height: 1; transition: color .2s; }
     .stat .l { font-size: .72rem; color: var(--muted); margin-top: .3rem; }
+    .stat .v.count-bump { animation: countBump .45s ease-out; }
+    @keyframes countBump {
+      0%   { transform: scale(1);   }
+      40%  { transform: scale(1.18); color: var(--accent); }
+      100% { transform: scale(1);   }
+    }
+    @keyframes badgePulse {
+      0%   { box-shadow: 0 0 0 0 rgba(255,91,31,.6);  transform: scale(1); }
+      60%  { box-shadow: 0 0 0 10px rgba(255,91,31,0); transform: scale(1.15); }
+      100% { box-shadow: 0 0 0 0 rgba(255,91,31,0);   transform: scale(1); }
+    }
+    .badge-pulse { animation: badgePulse 1.2s ease-out 3; }
     .payout-title { font-family: 'Fraunces', serif; font-size: 1.05rem; margin-bottom: 1rem; }
 
     /* ── MODE SELECT ───────────────────────────────────── */
@@ -750,6 +777,11 @@
     .empty-inline { color: var(--muted); font-size: .85rem; padding: 1rem 0; text-align: center; }
     .alert-banner { background: rgba(245,158,11,.12); border: 1px solid rgba(245,158,11,.3); color: #fcd34d; border-radius: .6rem; padding: .75rem 1rem; margin-bottom: 1rem; font-size: .85rem; }
     .alert-banner a { color: var(--accent); }
+    .alert-banner.alert-leads { background: linear-gradient(135deg, rgba(255,91,31,.18), rgba(255,91,31,.06)); border-color: rgba(255,91,31,.4); color: #fff; transition: filter .15s, transform .12s; }
+    .alert-banner.alert-leads:hover { filter: brightness(1.08); transform: translateY(-1px); }
+    .alert-banner.alert-leads strong { color: var(--accent); }
+    .dash-live { display: inline-flex; align-items: center; gap: .35rem; font-size: .65rem; font-weight: 700; color: #86efac; margin-left: .5rem; letter-spacing: .08em; text-transform: uppercase; vertical-align: middle; }
+    .dash-live::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: #22c55e; box-shadow: 0 0 4px rgba(34,197,94,.6); animation: livePulse 2.4s ease-in-out infinite; }
 
     /* Pipeline kanban */
     .jobs-toolbar { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; justify-content: space-between; margin-bottom: 1rem; }
@@ -777,9 +809,31 @@
 
     /* Bottom nav (mobile) */
     .bottom-nav { display: none; position: fixed; bottom: 0; left: 0; right: 0; z-index: 60; background: var(--navy-soft); border-top: 1px solid var(--navy-border); padding: 6px 8px calc(6px + env(safe-area-inset-bottom)); grid-template-columns: repeat(5, 1fr); gap: 4px; }
-    .bn-item { background: transparent; border: none; color: var(--muted); font-size: .62rem; font-weight: 600; padding: .45rem .2rem; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 2px; border-radius: .5rem; min-height: 48px; justify-content: center; }
-    .bn-item .bn-ico { font-size: 1.15rem; }
+    .bn-item { background: transparent; border: none; color: var(--muted); font-size: .62rem; font-weight: 600; padding: .45rem .2rem; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 2px; border-radius: .5rem; min-height: 48px; justify-content: center; position: relative; transition: color .15s, background .15s; }
+    .bn-item .bn-ico { font-size: 1.15rem; transition: transform .15s; }
+    .bn-item:active .bn-ico { transform: scale(.9); }
     .bn-item.active { color: var(--accent); background: rgba(255,91,31,.08); }
+    .bn-item.active .bn-ico { transform: scale(1.08); }
+    /* Mobile leads badge — small, prominent, top-right of icon */
+    #leads-badge-mobile {
+      display: none;
+      position: absolute;
+      top: 4px;
+      right: calc(50% - 22px);
+      background: var(--accent);
+      color: #fff;
+      font-size: .58rem;
+      font-weight: 800;
+      min-width: 18px;
+      height: 18px;
+      padding: 0 5px;
+      border-radius: 999px;
+      align-items: center;
+      justify-content: center;
+      line-height: 1;
+      box-shadow: 0 1px 4px rgba(0,0,0,.4);
+      border: 1.5px solid var(--navy-soft);
+    }
     .tabbar-desktop { display: flex; }
     .cust-search-bar { width: 100%; max-width: 320px; background: var(--navy); border: 1px solid rgba(255,255,255,.12); border-radius: .55rem; color: #fff; padding: .6rem 1rem; margin-bottom: 1rem; font-size: .9rem; }
 
@@ -1558,14 +1612,29 @@ function startListeners() {
   }, err => console.error('blocked_slots listener error', err));
 
   // All leads — no where() filters; full collection real-time sync
+  let _prevLeadCount = 0;
   db.collection('leads').onSnapshot(snap => {
     firebaseConn.leads = 'connected';
+    const prevLen = _prevLeadCount;
     leadsCache = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    window._lastLeadsSync = Date.now();
+    _prevLeadCount = leadsCache.length;
     updateFirebaseStatus();
     if (typeof onLeadsSnapshot === 'function') onLeadsSnapshot();
     else {
       renderLeads();
       updateLeadsBadge();
+    }
+    // Re-render dashboard so "Leads inbox" stat & badges stay live
+    if (document.getElementById('tab-home')?.classList.contains('active') && typeof renderDashboard === 'function') {
+      renderDashboard();
+    }
+    // Pulse badge if a new lead arrived (not the initial load)
+    if (prevLen > 0 && leadsCache.length > prevLen) {
+      ['leads-badge', 'leads-badge-mobile'].forEach(id => {
+        const b = document.getElementById(id);
+        if (b) { b.classList.remove('badge-pulse'); void b.offsetWidth; b.classList.add('badge-pulse'); }
+      });
     }
     if (oc.step === 1 && document.getElementById('oncall-overlay')?.classList.contains('open')) {
       ocFilter(document.getElementById('oc-search')?.value || '');
@@ -1577,11 +1646,16 @@ function startListeners() {
     if (typeof onLeadsError === 'function') onLeadsError(err);
   });
 
+  // Lightweight tick (60s): refresh badge count + dashboard age displays.
+  // Heavy lists (leads, jobs) re-render only on actual data changes via onSnapshot,
+  // so scrolling/typing on those tabs is never interrupted.
   if (_leadsTimer) clearInterval(_leadsTimer);
   _leadsTimer = setInterval(() => {
-    if (document.getElementById('tab-leads')?.classList.contains('active')) renderLeads();
     updateLeadsBadge();
-  }, 1000);
+    if (document.getElementById('tab-home')?.classList.contains('active') && typeof renderDashboard === 'function') {
+      renderDashboard();
+    }
+  }, 60000);
 }
 
 /* ═══════════════════════════════════════════════════════
