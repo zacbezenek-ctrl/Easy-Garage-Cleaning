@@ -1124,8 +1124,9 @@
       <!-- ── META SIGNAL BUTTONS ── -->
       <div class="lead-signal-actions">
         <button type="button" class="signal-btn signal-qualified" onclick="signalQualified('${lead.id}')">👍 QUALIFIED</button>
-        <button type="button" class="signal-btn signal-not-qualified" onclick="signalNotQualified('${lead.id}')">👎 NOT QUALIFIED</button>
         <button type="button" class="signal-btn signal-converted" onclick="signalConverted('${lead.id}')">💰 CONVERTED</button>
+        <button type="button" class="signal-btn signal-not-interested" onclick="signalNotInterested('${lead.id}')">🚫 NOT INTERESTED</button>
+        <button type="button" class="signal-btn signal-archived" onclick="signalArchived('${lead.id}')">🗂 ARCHIVED</button>
       </div>
 
       <div class="lead-detail-actions">
@@ -1929,18 +1930,6 @@
     if (typeof showToast === 'function') showToast('✅ Sent qualified signal to Meta');
   };
 
-  window.signalNotQualified = async function (leadId) {
-    const lead = leadsCache.find((l) => l.id === leadId);
-    const phone = lead?.phone || leadId;
-    const firstName = (lead?.name || '').split(' ')[0] || '';
-    fetch('https://hooks.zapier.com/hooks/catch/27280948/4oqqlje/', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ phone, firstName, signal: 'not_qualified', leadId }),
-    }).catch((err) => console.warn('Signal webhook failed:', err));
-    if (typeof showToast === 'function') showToast('❌ Sent not-qualified signal to Meta');
-  };
-
   window.signalConverted = async function (leadId) {
     const lead = leadsCache.find((l) => l.id === leadId);
     const phone = lead?.phone || leadId;
@@ -1952,6 +1941,33 @@
     }).catch((err) => console.warn('Signal webhook failed:', err));
     if (typeof showToast === 'function') showToast('💰 Sent converted signal to Meta');
   };
+
+  window.signalNotInterested = async function (leadId) {
+    const lead = leadsCache.find((l) => l.id === leadId);
+    const phone = lead?.phone || leadId;
+    const firstName = (lead?.name || '').split(' ')[0] || '';
+    fetch('https://hooks.zapier.com/hooks/catch/27280948/4oqqlje/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phone, firstName, signal: 'not_interested', leadId }),
+    }).catch((err) => console.warn('Signal webhook failed:', err));
+    if (typeof showToast === 'function') showToast('🚫 Sent not-interested signal to Meta');
+  };
+
+  window.signalArchived = async function (leadId) {
+    const lead = leadsCache.find((l) => l.id === leadId);
+    const phone = lead?.phone || leadId;
+    const firstName = (lead?.name || '').split(' ')[0] || '';
+    fetch('https://hooks.zapier.com/hooks/catch/27280948/4oqqlje/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ phone, firstName, signal: 'archived', leadId }),
+    }).catch((err) => console.warn('Signal webhook failed:', err));
+    if (typeof showToast === 'function') showToast('🗂 Sent archived signal to Meta');
+  };
+
+  // Backwards-compat alias — old buttons (if any are still cached) keep working
+  window.signalNotQualified = window.signalNotInterested;
 
   window.EGC_CRM = { PIPELINE, exportCrmBackup, importCrmBackup, getPipelineStatus };
 })();

@@ -100,7 +100,7 @@
   <h1>Lead System<br>Standard Operating Procedure</h1>
   <div class="subtitle">Simple. Three tools. One goal — book the job.</div>
   <div class="meta">
-    Version 2.1 &nbsp;·&nbsp; May 2026<br>
+    Version 2.2 &nbsp;·&nbsp; May 2026<br>
     For Tyler &amp; future EGC employees<br>
     Confidential
   </div>
@@ -241,12 +241,13 @@
 
   <div class="section-label">Section 4</div>
   <h2>Meta Conversion Signals — Click One on Every Lead</h2>
-  <p>Below the BOOKED / LOST / PAUSE buttons in the lead drawer are three NEW signal buttons. These feed data back to Facebook so the ad algorithm learns what good leads look like and finds more of them. <strong>Tyler should click one of these on EVERY lead</strong> — it's how the ads get smarter and cheaper over time.</p>
+  <p>Below the BOOKED / LOST / PAUSE buttons in the lead drawer are four signal buttons that match Facebook's standard lead-stage values. These feed data back to Meta so the ad algorithm learns what good leads look like and finds more of them. <strong>Tyler should click one of these on EVERY lead</strong> — it's how the ads get smarter and cheaper over time.</p>
 
-  <div class="big-buttons">
+  <div class="big-buttons" style="grid-template-columns: 1fr 1fr;">
     <div class="big-btn green">👍 QUALIFIED<small>Real lead, worth pursuing</small></div>
-    <div class="big-btn red">👎 NOT QUALIFIED<small>Junk / spam / wrong fit</small></div>
-    <div class="big-btn amber" style="background:#7c3aed;">💰 CONVERTED<small>Booked &amp; paid</small></div>
+    <div class="big-btn amber">💰 CONVERTED<small>Booked &amp; paid</small></div>
+    <div class="big-btn red">🚫 NOT INTERESTED<small>Real person, said no</small></div>
+    <div class="big-btn" style="background:#4b5563;color:#fff;">🗂 ARCHIVED<small>Junk / spam / unreachable</small></div>
   </div>
 
   <table>
@@ -257,12 +258,16 @@
         <td>The lead is real and worth pursuing — right area, reasonable budget, real job — even if they haven't booked yet.</td>
       </tr>
       <tr>
-        <td><strong>👎 NOT QUALIFIED</strong></td>
-        <td>Junk lead. Spam, fake info, wrong service area, way out of budget, or any reason this lead is a waste.</td>
-      </tr>
-      <tr>
         <td><strong>💰 CONVERTED</strong></td>
         <td>Lead actually booked and paid (or scheduled a paid job). This is the strongest signal — Meta uses it to find more leads like this one.</td>
+      </tr>
+      <tr>
+        <td><strong>🚫 NOT INTERESTED</strong></td>
+        <td>You reached the customer, the lead was real, but they said no, went with someone else, or aren't ready right now.</td>
+      </tr>
+      <tr>
+        <td><strong>🗂 ARCHIVED</strong></td>
+        <td>Junk lead — spam, fake info, wrong service area, totally unreachable after multiple attempts, or any reason this lead can't progress.</td>
       </tr>
     </tbody>
   </table>
@@ -270,6 +275,11 @@
   <div class="callout yellow">
     <strong>Why this matters</strong>
     Every signal you send teaches Facebook's algorithm. Skip this and the ads stay dumb — they keep finding tire-kickers because they have no idea what a good EGC lead looks like. Click one on every lead and watch cost-per-lead drop over the following weeks.
+  </div>
+
+  <div class="callout blue">
+    <strong>NOT INTERESTED vs ARCHIVED</strong>
+    <em>NOT INTERESTED</em> = you got through, they're a real person, they declined. <em>ARCHIVED</em> = the lead was junk from the start (wrong number, fake info, totally unreachable). The difference matters — Meta treats "real-person-said-no" very differently from "this was never a real lead."
   </div>
 
   <hr>
@@ -400,8 +410,8 @@
   </div>
 
   <div class="rule-block">
-    <div class="rule-title" style="font-size:16px;">4. Always click a Meta signal (QUALIFIED / NOT QUALIFIED / CONVERTED) on every lead.</div>
-    <div class="rule-body">Every signal teaches the Facebook ad algorithm. Skip it and the ads stay dumb — they keep finding tire-kickers. Click one on every lead and watch cost-per-lead drop over the following weeks. This is how EGC's ads get cheaper and smarter.</div>
+    <div class="rule-title" style="font-size:16px;">4. Always click a Meta signal on every lead (QUALIFIED / CONVERTED / NOT INTERESTED / ARCHIVED).</div>
+    <div class="rule-body">Every signal teaches the Facebook ad algorithm. Skip it and the ads stay dumb — they keep finding tire-kickers. Pick the right bucket: <em>Qualified</em> = real and pursuing, <em>Converted</em> = booked &amp; paid, <em>Not Interested</em> = real person said no, <em>Archived</em> = junk lead.</div>
   </div>
 
   <hr>
@@ -416,7 +426,7 @@
       <tr><td>Working a lead actively</td><td>Tap ⏸ Pause Auto in portal (optional — Quo texts auto-pause)</td><td>Holds all automated messages</td></tr>
       <tr><td>Lead says yes</td><td>Tap ✅ BOOKED in portal</td><td>Stops all automation for that lead</td></tr>
       <tr><td>Lead says no / ghosts</td><td>Tap ❌ LOST in portal</td><td>Stops all automation for that lead</td></tr>
-      <tr><td>Lead is real (or junk, or booked)</td><td>Tap 👍 QUALIFIED / 👎 NOT QUALIFIED / 💰 CONVERTED</td><td>Sends signal to Meta to train the ad algorithm</td></tr>
+      <tr><td>After every lead interaction</td><td>Tap 👍 QUALIFIED, 💰 CONVERTED, 🚫 NOT INTERESTED, or 🗂 ARCHIVED</td><td>Sends signal to Meta to train the ad algorithm</td></tr>
       <tr><td>Setting up a recurring job</td><td>Schedule tab → New Job → Repeat dropdown</td><td>Auto-generates future instances on calendar</td></tr>
       <tr><td>Job is finished</td><td>Click Mark Complete in portal</td><td>Sends review request SMS 24h later</td></tr>
       <tr><td>Customer texts STOP</td><td>Do not contact them</td><td>Blocks them, alerts Tyler</td></tr>
@@ -453,7 +463,7 @@
       <tr><td>Sends Google review request SMS</td><td>24 hours after Tyler clicks Mark Complete</td></tr>
       <tr><td>Sends booking confirmation SMS</td><td>When a booking is confirmed</td></tr>
       <tr><td>Sends instant greeting SMS to new leads</td><td>The moment a lead submits the FB ad form (8AM–9PM vs after-hours messaging)</td></tr>
-      <tr><td>Sends conversion signal to Meta (Facebook ads)</td><td>When Tyler clicks 👍 QUALIFIED, 👎 NOT QUALIFIED, or 💰 CONVERTED on a lead</td></tr>
+      <tr><td>Sends conversion signal to Meta (Facebook ads)</td><td>When Tyler clicks 👍 QUALIFIED, 💰 CONVERTED, 🚫 NOT INTERESTED, or 🗂 ARCHIVED on a lead</td></tr>
     </tbody>
   </table>
 
@@ -463,7 +473,7 @@
   </div>
 
   <div style="margin-top:60px;text-align:center;color:#aaa;font-size:11px;border-top:1px solid #eee;padding-top:20px;">
-    Easy Garage Cleaning — Internal SOP v2.1 — May 2026 — Confidential
+    Easy Garage Cleaning — Internal SOP v2.2 — May 2026 — Confidential
   </div>
 
 </div>
