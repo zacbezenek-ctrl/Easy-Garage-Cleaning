@@ -13,166 +13,118 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
-  <style>
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-    * { -webkit-tap-highlight-color: transparent; }
-    html { -webkit-text-size-adjust: 100%; height: 100%; }
-    body {
-      font-family: 'Inter', sans-serif;
-      background: #0a1628;
-      color: #fff;
-      height: 100%;
-      -webkit-font-smoothing: antialiased;
-      touch-action: pan-y;
-    }
-    :root {
-      --navy:       #0a1628;
-      --navy-soft:  #14243d;
-      --navy-light: #1e3356;
-      --border:     rgba(255,255,255,.09);
-      --accent:     #ff5b1f;
-      --muted:      #6b7280;
-      --green:      #22c55e;
-      --yellow:     #f59e0b;
-      --red:        #ef4444;
-    }
-
-    /* ── LOGIN ──────────────────────────────────────── */
-    #login-screen {
-      min-height: 100vh;
-      display: flex; align-items: center; justify-content: center;
-      padding: 1.5rem;
-    }
-    .login-card {
+  <link rel="stylesheet" href="/styles.css">
+<style>
+.login-card {
       background: var(--navy-soft); border: 1px solid var(--border);
       border-radius: 1.25rem; padding: 2.5rem 2rem;
       width: 100%; max-width: 360px;
       box-shadow: 0 24px 64px rgba(0,0,0,.5);
     }
-    .login-logo { text-align: center; margin-bottom: 2rem; }
-    .login-logo .wordmark { font-size: 1.05rem; font-weight: 700; }
-    .login-logo .sub {
+.login-logo { text-align: center; margin-bottom: 2rem; }
+.login-logo .wordmark { font-size: 1.05rem; font-weight: 700; }
+.login-logo .sub {
       font-size: .7rem; color: var(--accent);
       letter-spacing: .12em; text-transform: uppercase; margin-top: .25rem;
     }
-    .login-card label {
+.login-card label {
       display: block; font-size: .72rem; font-weight: 600;
       letter-spacing: .06em; text-transform: uppercase;
       color: var(--muted); margin-bottom: .4rem;
     }
-    .login-card input {
+.login-card input {
       width: 100%; background: var(--navy-light);
       border: 1px solid var(--border); border-radius: .65rem;
       padding: .75rem 1rem; color: #fff; font-size: .95rem;
       font-family: inherit; margin-bottom: 1rem; outline: none;
       transition: border-color .15s;
     }
-    .login-card input:focus { border-color: var(--accent); }
-    .login-btn {
+.login-card input:focus { border-color: var(--accent); }
+.login-btn {
       width: 100%; background: var(--accent); border: none;
       border-radius: .65rem; padding: .85rem; color: #fff;
       font-size: .95rem; font-weight: 600; cursor: pointer;
       font-family: inherit; transition: opacity .15s;
     }
-    .login-btn:active { opacity: .85; }
-    .login-error {
+.login-btn:active { opacity: .85; }
+.login-error {
       background: rgba(239,68,68,.1); border: 1px solid rgba(239,68,68,.3);
       border-radius: .5rem; padding: .6rem .85rem; font-size: .8rem;
       color: #fca5a5; margin-bottom: 1rem; display: none;
     }
-
-    /* ── COPILOT SCREEN ─────────────────────────────── */
-    #copilot-screen { display: none; flex-direction: column; height: 100vh; }
-    #copilot-screen.active { display: flex; }
-
-    /* Top bar */
-    .topbar {
+.topbar {
       display: flex; align-items: center; gap: .65rem;
       padding: .7rem 1rem;
       background: var(--navy-soft); border-bottom: 1px solid var(--border);
       flex-shrink: 0;
     }
-    .topbar-logo { font-weight: 700; font-size: .88rem; flex: 1; }
-    .topbar-logo span { color: var(--accent); }
-    #topbar-time { font-size: .68rem; color: var(--muted); font-family: 'JetBrains Mono', monospace; }
-    #topbar-user {
-      font-size: .7rem; font-weight: 600;
-      background: var(--navy-light); border-radius: 99px;
-      padding: .28rem .65rem;
-    }
-    .logout-btn {
+.topbar-logo { font-weight: 700; font-size: .88rem; flex: 1; }
+.topbar-logo span { color: var(--accent); }
+.logout-btn {
       background: none; border: none; color: var(--muted);
       font-size: .85rem; cursor: pointer; padding: .25rem;
       line-height: 1;
     }
-
-    /* Schedule strip */
-    .schedule-strip {
+.schedule-strip {
       flex-shrink: 0; padding: .65rem 1rem .45rem;
       border-bottom: 1px solid var(--border); background: var(--navy);
     }
-    .strip-label {
+.strip-label {
       font-size: .62rem; font-weight: 600; letter-spacing: .12em;
       text-transform: uppercase; color: var(--muted); margin-bottom: .45rem;
     }
-    .jobs-scroll {
+.jobs-scroll {
       display: flex; gap: .55rem; overflow-x: auto;
       padding-bottom: .35rem; -webkit-overflow-scrolling: touch;
       scrollbar-width: none;
     }
-    .jobs-scroll::-webkit-scrollbar { display: none; }
-    .job-chip {
+.jobs-scroll::-webkit-scrollbar { display: none; }
+.job-chip {
       flex-shrink: 0; background: var(--navy-soft);
       border: 1px solid var(--border); border-radius: .6rem;
       padding: .5rem .75rem; min-width: 130px;
     }
-    .job-chip .jc-name { font-size: .8rem; font-weight: 600; }
-    .job-chip .jc-time { font-size: .68rem; color: var(--muted); margin-top: .12rem; }
-    .job-chip .jc-meta { font-size: .65rem; color: var(--muted); margin-top: .08rem; }
-    .job-chip.s-inprogress { border-color: var(--yellow); }
-    .job-chip.s-completed  { border-color: var(--green); opacity: .6; }
-    .status-dot {
+.job-chip .jc-name { font-size: .8rem; font-weight: 600; }
+.job-chip .jc-time { font-size: .68rem; color: var(--muted); margin-top: .12rem; }
+.job-chip .jc-meta { font-size: .65rem; color: var(--muted); margin-top: .08rem; }
+.job-chip.s-inprogress { border-color: var(--yellow); }
+.job-chip.s-completed  { border-color: var(--green); opacity: .6; }
+.status-dot {
       display: inline-block; width: 6px; height: 6px; border-radius: 50%;
       margin-right: .3rem; vertical-align: middle; background: var(--muted);
     }
-    .s-inprogress .status-dot { background: var(--yellow); }
-    .s-completed  .status-dot { background: var(--green); }
-    .no-jobs-msg { font-size: .78rem; color: var(--muted); padding: .2rem 0 .35rem; }
-
-    /* Chat */
-    .chat-area {
+.s-inprogress .status-dot { background: var(--yellow); }
+.s-completed  .status-dot { background: var(--green); }
+.no-jobs-msg { font-size: .78rem; color: var(--muted); padding: .2rem 0 .35rem; }
+.chat-area {
       flex: 1; overflow-y: auto; padding: 1rem;
       display: flex; flex-direction: column; gap: .8rem;
       -webkit-overflow-scrolling: touch;
     }
-    .msg { display: flex; flex-direction: column; animation: fadein .18s ease; }
-    @keyframes fadein { from { opacity:0; transform:translateY(3px); } to { opacity:1; transform:none; } }
-
-    .msg-bubble {
+.msg { display: flex; flex-direction: column; animation: fadein .18s ease; }
+.msg-bubble {
       padding: .8rem .95rem; border-radius: .95rem;
       font-size: .875rem; line-height: 1.62;
     }
-    .msg.user .msg-bubble {
+.msg.user .msg-bubble {
       background: var(--accent); color: #fff;
       border-bottom-right-radius: .25rem; align-self: flex-end; max-width: 84%;
     }
-    .msg.assistant .msg-bubble {
+.msg.assistant .msg-bubble {
       background: var(--navy-soft); border: 1px solid var(--border);
       border-bottom-left-radius: .25rem;
     }
-
-    /* Script block */
-    .script-block {
+.script-block {
       background: rgba(255,91,31,.07); border: 1px solid rgba(255,91,31,.22);
       border-radius: .55rem; padding: .7rem .85rem;
       margin: .55rem 0 .25rem; font-size: .83rem;
       line-height: 1.65; white-space: pre-wrap;
     }
-    .script-label {
+.script-label {
       font-size: .62rem; font-weight: 700; letter-spacing: .1em;
       text-transform: uppercase; color: var(--accent); margin-bottom: .35rem;
     }
-    .copy-btn {
+.copy-btn {
       display: inline-flex; align-items: center; gap: .28rem;
       background: rgba(255,91,31,.12); border: 1px solid rgba(255,91,31,.28);
       border-radius: .38rem; padding: .32rem .6rem;
@@ -180,71 +132,51 @@
       cursor: pointer; font-family: inherit; margin-top: .35rem;
       transition: background .15s;
     }
-    .copy-btn:active { background: rgba(255,91,31,.25); }
-    .copy-btn.copied { color: var(--green); border-color: rgba(34,197,94,.4); background: rgba(34,197,94,.08); }
-
-    /* SOP citation */
-    .sop-pill {
+.copy-btn:active { background: rgba(255,91,31,.25); }
+.copy-btn.copied { color: var(--green); border-color: rgba(34,197,94,.4); background: rgba(34,197,94,.08); }
+.sop-pill {
       display: inline-block; background: rgba(255,255,255,.06);
       border: 1px solid var(--border); border-radius: 99px;
       padding: .12rem .5rem; font-size: .65rem;
       font-family: 'JetBrains Mono', monospace; color: var(--muted);
       margin-top: .45rem;
     }
-
-    /* Thinking dots */
-    .dot-row { display: flex; gap: .28rem; align-items: center; height: 1.1rem; }
-    .dot {
+.dot-row { display: flex; gap: .28rem; align-items: center; height: 1.1rem; }
+.dot {
       width: 6px; height: 6px; border-radius: 50%;
       background: var(--muted); animation: bounce .85s infinite;
     }
-    .dot:nth-child(2) { animation-delay: .14s; }
-    .dot:nth-child(3) { animation-delay: .28s; }
-    @keyframes bounce {
-      0%,80%,100% { transform: translateY(0); }
-      40%          { transform: translateY(-5px); }
-    }
-
-    /* Input area */
-    .input-area {
+.dot:nth-child(2) { animation-delay: .14s; }
+.dot:nth-child(3) { animation-delay: .28s; }
+.input-area {
       flex-shrink: 0; padding: .7rem 1rem;
       padding-bottom: calc(.7rem + env(safe-area-inset-bottom));
       background: var(--navy-soft); border-top: 1px solid var(--border);
       display: flex; align-items: flex-end; gap: .55rem;
     }
-    .input-wrap {
+.input-wrap {
       flex: 1; background: var(--navy-light); border: 1px solid var(--border);
       border-radius: 1.2rem; display: flex; align-items: flex-end; gap: .45rem;
       padding: .5rem .7rem; transition: border-color .15s;
     }
-    .input-wrap:focus-within { border-color: rgba(255,91,31,.4); }
-    #query-input {
-      flex: 1; background: none; border: none; color: #fff;
-      font-size: .9rem; font-family: inherit; outline: none;
-      resize: none; max-height: 120px; min-height: 22px; line-height: 1.45;
-    }
-    #query-input::placeholder { color: var(--muted); }
-    .voice-btn, .send-btn {
+.input-wrap:focus-within { border-color: rgba(255,91,31,.4); }
+.voice-btn, .send-btn {
       border: none; border-radius: 50%; width: 38px; height: 38px;
       display: flex; align-items: center; justify-content: center;
       cursor: pointer; flex-shrink: 0; transition: opacity .15s;
     }
-    .voice-btn {
+.voice-btn {
       background: var(--navy-light); border: 1px solid var(--border);
       color: var(--muted); font-size: 1rem;
     }
-    .voice-btn.recording {
+.voice-btn.recording {
       background: rgba(239,68,68,.18); border-color: rgba(239,68,68,.45);
       color: var(--red); animation: pulse 1.1s infinite;
     }
-    @keyframes pulse {
-      0%,100% { box-shadow: 0 0 0 0 rgba(239,68,68,.3); }
-      50%      { box-shadow: 0 0 0 8px rgba(239,68,68,0); }
-    }
-    .send-btn { background: var(--accent); color: #fff; }
-    .send-btn:disabled { opacity: .35; cursor: default; }
-    .send-btn:not(:disabled):active { opacity: .8; }
-  </style>
+.send-btn { background: var(--accent); color: #fff; }
+.send-btn:disabled { opacity: .35; cursor: default; }
+.send-btn:not(:disabled):active { opacity: .8; }
+</style>
 </head>
 <body>
 
