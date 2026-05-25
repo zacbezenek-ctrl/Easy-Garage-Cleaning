@@ -4,11 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>EGC Lead System — Standard Operating Procedure</title>
+<link rel="stylesheet" href="/styles.css">
 <style>
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { font-family: 'Georgia', serif; color: #1a1a1a; background: #fff; font-size: 14px; line-height: 1.7; }
-
-  .cover {
+.cover {
     min-height: 100vh;
     display: flex;
     flex-direction: column;
@@ -20,74 +18,48 @@
     padding: 60px 40px;
     page-break-after: always;
   }
-  .cover .logo { font-size: 13px; letter-spacing: 4px; text-transform: uppercase; color: #888; margin-bottom: 40px; }
-  .cover h1 { font-size: 42px; font-weight: 700; line-height: 1.2; margin-bottom: 20px; }
-  .cover .subtitle { font-size: 18px; color: #aaa; margin-bottom: 60px; }
-  .cover .meta { font-size: 12px; color: #666; line-height: 2; }
-
-  .page { max-width: 780px; margin: 0 auto; padding: 60px 40px; }
-  @media print {
+.cover .logo { font-size: 13px; letter-spacing: 4px; text-transform: uppercase; color: #888; margin-bottom: 40px; }
+.cover h1 { font-size: 42px; font-weight: 700; line-height: 1.2; margin-bottom: 20px; }
+.cover .subtitle { font-size: 18px; color: #aaa; margin-bottom: 60px; }
+.cover .meta { font-size: 12px; color: #666; line-height: 2; }
+.page { max-width: 780px; margin: 0 auto; padding: 60px 40px; }
+@media print {
     .page { padding: 40px 40px; }
     .page-break { page-break-before: always; }
   }
-
-  h2 { font-size: 26px; font-weight: 700; margin-bottom: 8px; margin-top: 50px; padding-bottom: 10px; border-bottom: 2px solid #1a1a1a; }
-  h2:first-child { margin-top: 0; }
-  h3 { font-size: 17px; font-weight: 700; margin-top: 30px; margin-bottom: 8px; color: #1a1a1a; }
-  h4 { font-size: 14px; font-weight: 700; margin-top: 20px; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 1px; color: #555; }
-  p { margin-bottom: 12px; }
-
-  .toc { background: #f7f7f7; border-left: 4px solid #1a1a1a; padding: 24px 30px; margin: 30px 0; border-radius: 0 4px 4px 0; }
-  .toc h3 { margin-top: 0; margin-bottom: 14px; font-size: 15px; text-transform: uppercase; letter-spacing: 2px; }
-  .toc ol { padding-left: 20px; }
-  .toc li { margin-bottom: 6px; font-size: 13px; }
-
-  .callout { border-radius: 6px; padding: 16px 20px; margin: 20px 0; }
-  .callout.green { background: #f0faf0; border-left: 4px solid #2d9b4e; }
-  .callout.yellow { background: #fffbf0; border-left: 4px solid #f5a623; }
-  .callout.red { background: #fff5f5; border-left: 4px solid #e53e3e; }
-  .callout.blue { background: #f0f7ff; border-left: 4px solid #3182ce; }
-  .callout strong { display: block; margin-bottom: 4px; font-size: 13px; text-transform: uppercase; letter-spacing: 1px; }
-
-  table { width: 100%; border-collapse: collapse; margin: 16px 0 24px; font-size: 13px; }
-  th { background: #1a1a1a; color: #fff; padding: 10px 14px; text-align: left; font-size: 12px; letter-spacing: 1px; text-transform: uppercase; }
-  td { padding: 10px 14px; border-bottom: 1px solid #e8e8e8; vertical-align: top; }
-  tr:nth-child(even) td { background: #f9f9f9; }
-
-  .step-list { counter-reset: steps; list-style: none; padding: 0; margin: 16px 0; }
-  .step-list li { counter-increment: steps; display: flex; gap: 14px; margin-bottom: 14px; }
-  .step-list li::before { content: counter(steps); background: #1a1a1a; color: #fff; width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; flex-shrink: 0; margin-top: 2px; }
-
-  .cmd { display: inline-block; background: #1a1a1a; color: #a8ff78; font-family: 'Courier New', monospace; font-size: 13px; padding: 2px 8px; border-radius: 4px; letter-spacing: 1px; }
-
-  .big-buttons { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; margin: 20px 0; }
-  .big-btn { border-radius: 8px; padding: 16px 12px; text-align: center; font-weight: 700; font-size: 15px; font-family: Georgia, serif; }
-  .big-btn.green { background: #16a34a; color: #fff; }
-  .big-btn.red { background: #dc2626; color: #fff; }
-  .big-btn.amber { background: #d97706; color: #fff; }
-  .big-btn small { display: block; font-weight: 400; font-size: 11px; margin-top: 4px; opacity: 0.85; }
-
-  .flow { display: flex; flex-wrap: wrap; gap: 0; align-items: center; margin: 16px 0 24px; }
-  .flow-step { background: #f0f7ff; border: 1px solid #c3d9f5; padding: 8px 14px; border-radius: 4px; font-size: 12px; font-weight: 600; }
-  .flow-arrow { color: #aaa; padding: 0 6px; font-size: 16px; }
-
-  .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; }
-  .badge.auto { background: #e8f5e9; color: #2e7d32; }
-  .badge.manual { background: #fff3e0; color: #e65100; }
-
-  .rule-block { border: 1px solid #e0e0e0; border-radius: 6px; padding: 16px 20px; margin: 12px 0; }
-  .rule-block .rule-title { font-weight: 700; margin-bottom: 6px; }
-  .rule-block .rule-body { color: #444; font-size: 13px; }
-
-  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin: 16px 0; }
-
-  .section-label { font-size: 11px; text-transform: uppercase; letter-spacing: 3px; color: #888; margin-bottom: 6px; }
-  hr { border: none; border-top: 1px solid #e8e8e8; margin: 40px 0; }
-  ul { padding-left: 20px; margin-bottom: 12px; }
-  ul li { margin-bottom: 5px; }
-
-  .print-btn { position: fixed; bottom: 24px; right: 24px; background: #1a1a1a; color: #fff; border: none; padding: 12px 24px; border-radius: 6px; font-size: 14px; cursor: pointer; font-weight: 600; box-shadow: 0 4px 12px rgba(0,0,0,0.2); z-index: 999; }
-  @media print { .print-btn { display: none; } .cover { min-height: auto; padding: 80px 40px; } }
+.toc { background: #f7f7f7; border-left: 4px solid #1a1a1a; padding: 24px 30px; margin: 30px 0; border-radius: 0 4px 4px 0; }
+.toc h3 { margin-top: 0; margin-bottom: 14px; font-size: 15px; text-transform: uppercase; letter-spacing: 2px; }
+.toc ol { padding-left: 20px; }
+.toc li { margin-bottom: 6px; font-size: 13px; }
+.callout { border-radius: 6px; padding: 16px 20px; margin: 20px 0; }
+.callout.green { background: #f0faf0; border-left: 4px solid #2d9b4e; }
+.callout.yellow { background: #fffbf0; border-left: 4px solid #f5a623; }
+.callout.red { background: #fff5f5; border-left: 4px solid #e53e3e; }
+.callout.blue { background: #f0f7ff; border-left: 4px solid #3182ce; }
+.callout strong { display: block; margin-bottom: 4px; font-size: 13px; text-transform: uppercase; letter-spacing: 1px; }
+.step-list { counter-reset: steps; list-style: none; padding: 0; margin: 16px 0; }
+.step-list li { counter-increment: steps; display: flex; gap: 14px; margin-bottom: 14px; }
+.step-list li::before { content: counter(steps); background: #1a1a1a; color: #fff; width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; flex-shrink: 0; margin-top: 2px; }
+.cmd { display: inline-block; background: #1a1a1a; color: #a8ff78; font-family: 'Courier New', monospace; font-size: 13px; padding: 2px 8px; border-radius: 4px; letter-spacing: 1px; }
+.big-buttons { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; margin: 20px 0; }
+.big-btn { border-radius: 8px; padding: 16px 12px; text-align: center; font-weight: 700; font-size: 15px; font-family: Georgia, serif; }
+.big-btn.green { background: #16a34a; color: #fff; }
+.big-btn.red { background: #dc2626; color: #fff; }
+.big-btn.amber { background: #d97706; color: #fff; }
+.big-btn small { display: block; font-weight: 400; font-size: 11px; margin-top: 4px; opacity: 0.85; }
+.flow { display: flex; flex-wrap: wrap; gap: 0; align-items: center; margin: 16px 0 24px; }
+.flow-step { background: #f0f7ff; border: 1px solid #c3d9f5; padding: 8px 14px; border-radius: 4px; font-size: 12px; font-weight: 600; }
+.flow-arrow { color: #aaa; padding: 0 6px; font-size: 16px; }
+.badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; }
+.badge.auto { background: #e8f5e9; color: #2e7d32; }
+.badge.manual { background: #fff3e0; color: #e65100; }
+.rule-block { border: 1px solid #e0e0e0; border-radius: 6px; padding: 16px 20px; margin: 12px 0; }
+.rule-block .rule-title { font-weight: 700; margin-bottom: 6px; }
+.rule-block .rule-body { color: #444; font-size: 13px; }
+.two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin: 16px 0; }
+.section-label { font-size: 11px; text-transform: uppercase; letter-spacing: 3px; color: #888; margin-bottom: 6px; }
+.print-btn { position: fixed; bottom: 24px; right: 24px; background: #1a1a1a; color: #fff; border: none; padding: 12px 24px; border-radius: 6px; font-size: 14px; cursor: pointer; font-weight: 600; box-shadow: 0 4px 12px rgba(0,0,0,0.2); z-index: 999; }
+@media print { .print-btn { display: none; } .cover { min-height: auto; padding: 80px 40px; } }
 </style>
 </head>
 <body>
