@@ -1,9 +1,12 @@
-﻿/**
- * EGC Field Co-Pilot — Vercel Serverless Function
+/**
+ * EGC Field Co-Pilot — Cloudflare Pages Function
  * POST /api/copilot
  *
- * Set in Vercel dashboard → Project Settings → Environment Variables:
- *   OPENAI_API_KEY   — your OpenAI secret key
+ * Env var (set in Cloudflare Pages dashboard → Settings → Environment Variables):
+ *   openaiapi — OpenAI secret key
+ *
+ * For local dev with `wrangler pages dev`, create a .dev.vars file in repo root:
+ *   openaiapi=sk-...
  */
 
 const EGC_SOPS = `
@@ -238,7 +241,6 @@ Genuinely ambiguous — requires real-time judgment call.
 
 `;
 
-// ---- Additional non-SOP field rules injected into every prompt ----
 const FIELD_RULES = `FINANCIAL INTEGRITY:
 If a customer offers Alex cash directly for extra items or work not on the quote — REFUSE. All charges go through the official quote. Zero exceptions.
 
@@ -270,32 +272,24 @@ If dumps are closed and truck is loaded at end of day — park safely, text Zac 
 
 const TRUCK_CAPACITY = 15; // U-Haul 15ft box truck, cubic yards
 
-/** Full MT datetime object with all derived fields */
 function getMTContext() {
   const now = new Date();
   const tz  = { timeZone: 'America/Denver' };
 
-  const dateStr = now.toLocaleDateString('en-US', {
-    ...tz, weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
-  });
-  const timeStr = now.toLocaleTimeString('en-US', {
-    ...tz, hour: '2-digit', minute: '2-digit', timeZoneName: 'short',
-  });
+  const dateStr = now.toLocaleDateString('en-US', { ...tz, weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+  const timeStr = now.toLocaleTimeString('en-US', { ...tz, hour: '2-digit', minute: '2-digit', timeZoneName: 'short' });
   const dayOfWeek = now.toLocaleDateString('en-US', { ...tz, weekday: 'long' });
   const hour24    = parseInt(now.toLocaleString('en-US', { ...tz, hour: '2-digit', hour12: false }), 10);
   const minute    = now.getMinutes();
-  const totalMins = hour24 * 60 + minute; // minutes since midnight MT
+  const totalMins = hour24 * 60 + minute;
 
-  // Dump sites (Larimer County = closes 16:30, Fort Collins Transfer = closes 18:00)
-  const dumpCloseMins   = 16 * 60 + 30; // 4:30 PM
-  const transferCloseMins = 18 * 60;    // 6:00 PM
+  const dumpCloseMins   = 16 * 60 + 30;
+  const transferCloseMins = 18 * 60;
   const minsUntilDump   = Math.max(0, dumpCloseMins - totalMins);
   const minsUntilTransfer = Math.max(0, transferCloseMins - totalMins);
 
-  // Approximate sunset (MDT summer ≈ 8:15 PM, MST winter ≈ 5:30 PM)
-  // Simple seasonal estimate — good enough for field use
-  const month = now.getMonth() + 1; // 1-12
-  const sunsetHour = (month >= 4 && month <= 9) ? 20 : 17; // summer vs winter
+  const month = now.getMonth() + 1;
+  const sunsetHour = (month >= 4 && month <= 9) ? 20 : 17;
   const sunsetStr  = sunsetHour === 20 ? '~8:00 PM MT' : '~5:30 PM MT';
   const minsUntilSunset = Math.max(0, sunsetHour * 60 - totalMins);
 
@@ -310,7 +304,6 @@ function getMTContext() {
   };
 }
 
-/** Format minutes as "1 hr 20 min" or "45 min" */
 function fmtMins(m) {
   if (m <= 0) return '0 min';
   const h = Math.floor(m / 60);
@@ -320,13 +313,8 @@ function fmtMins(m) {
   return `${h} hr ${min} min`;
 }
 
-/**
- * Parse a time string like "9:00 AM", "9:00 AM – 12:00 PM", "14:30"
- * Returns minutes since midnight, or null if unparseable.
- */
 function parseTimeMins(str) {
   if (!str) return null;
-  // Take first time token
   const match = str.match(/(\d{1,2}):(\d{2})\s*(AM|PM)?/i);
   if (!match) return null;
   let h = parseInt(match[1], 10);
@@ -337,7 +325,6 @@ function parseTimeMins(str) {
   return h * 60 + m;
 }
 
-/** Compute truck capacity from jobs list */
 function computeTruckStatus(jobs) {
   let loadedYards = 0;
   for (const j of jobs) {
@@ -351,7 +338,6 @@ function computeTruckStatus(jobs) {
   return { loadedYards: Math.round(loadedYards * 10) / 10, remaining: Math.round(remaining * 10) / 10 };
 }
 
-/** Find the next scheduled (not started) job and compute time until it */
 function getNextJobContext(jobs, totalMins) {
   const upcoming = jobs
     .filter(j => {
@@ -372,7 +358,6 @@ function getNextJobContext(jobs, totalMins) {
   return { job: next, minsUntil, name };
 }
 
-/** Build the full schedule section string */
 function formatSchedule(jobs) {
   if (!jobs || jobs.length === 0) {
     return 'No jobs found in the database for today. (Schedule may not have loaded — Alex should check the employee portal.)';
@@ -392,38 +377,51 @@ function formatSchedule(jobs) {
 }
 
 // ─────────────────────────────────────────────────────────────
-//  HANDLER
+//  CF PAGES FUNCTION HANDLER
 // ─────────────────────────────────────────────────────────────
 
-export default async function handler(req, res) {
-  // CORS — same origin only
-  const origin  = req.headers.origin || '';
-  const allowed = /easygaragecleaning\.com/.test(origin)
-               || /^https?:\/\/(localhost|127\.0\.0\.1)/.test(origin)
-               || /vercel\.app$/.test(origin);
-  res.setHeader('Access-Control-Allow-Origin',  allowed ? origin : 'https://easygaragecleaning.com');
-  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-  res.setHeader('Vary', 'Origin');
+function corsHeaders(origin) {
+  const allowed =
+    /easygaragecleaning\.com/.test(origin) ||
+    /^https?:\/\/(localhost|127\.0\.0\.1)/.test(origin);
+  return {
+    'Access-Control-Allow-Origin':  allowed ? origin : 'https://easygaragecleaning.com',
+    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type',
+    'Vary': 'Origin',
+  };
+}
 
-  if (req.method === 'OPTIONS') return res.status(204).end();
-  if (req.method !== 'POST')   return res.status(405).json({ error: 'Method not allowed' });
+export async function onRequestOptions({ request }) {
+  return new Response(null, { status: 204, headers: corsHeaders(request.headers.get('Origin') || '') });
+}
 
-  const { user = 'field', query, schedule = [], leads = [], history = [] } = req.body || {};
+export async function onRequestPost({ request, env }) {
+  const origin = request.headers.get('Origin') || '';
+  const cors = corsHeaders(origin);
+  const json = (status, body) => new Response(JSON.stringify(body), {
+    status,
+    headers: { 'Content-Type': 'application/json', ...cors },
+  });
 
-  if (!query?.trim()) return res.status(400).json({ error: 'Missing query' });
-
-  if (!process.env.openaiapi) {
-    console.error('openaiapi not set in Vercel environment variables');
-    return res.status(500).json({ error: 'Server misconfigured — contact Zac' });
+  if (!env.openaiapi) {
+    console.error('openaiapi not set in Cloudflare Pages environment variables');
+    return json(500, { error: 'Server misconfigured — contact Zac' });
   }
 
-  // ── Build live context ──────────────────────────────────────
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return json(400, { error: 'Invalid JSON' });
+  }
+  const { user = 'field', query, schedule = [], leads = [], history = [] } = body || {};
+  if (!query?.trim()) return json(400, { error: 'Missing query' });
+
   const mt      = getMTContext();
   const truck   = computeTruckStatus(schedule);
   const nextJob = getNextJobContext(schedule, mt.totalMins);
 
-  // Format leads for system prompt
   const leadsText = leads.length === 0
     ? 'No leads in database.'
     : leads.slice(0, 30).map((l, i) => {
@@ -443,7 +441,6 @@ export default async function handler(req, res) {
     AlexK:  'Alex (field operator — on-site)',
   }[user] || `${user} (field)`;
 
-  // Dump status string
   let dumpStatus;
   if (mt.isSunday) {
     dumpStatus = 'CLOSED — Sunday. No dump runs available today.';
@@ -455,12 +452,10 @@ export default async function handler(req, res) {
     dumpStatus = `Larimer County Landfill open for ${fmtMins(mt.minsUntilDump)} more (closes 4:30 PM). Fort Collins Transfer open for ${fmtMins(mt.minsUntilTransfer)} more (closes 6:00 PM).`;
   }
 
-  // Next job string
   const nextJobStr = nextJob
     ? `Next job: ${nextJob.name} in ${fmtMins(nextJob.minsUntil)} (starts at ${nextJob.job.timeWindow || nextJob.job.scheduledTime})`
     : 'No more jobs scheduled after this point today.';
 
-  // ── System prompt ───────────────────────────────────────────
   const systemPrompt = `You are the EGC Field Co-Pilot for Easy Garage Cleaning (Fort Collins, CO).
 Alex and Tyler use you on their phones in the field during the workday.
 
@@ -546,7 +541,7 @@ BASIS: [which SOP section OR which live context data this is based on]`;
       method:  'POST',
       headers: {
         'Content-Type':  'application/json',
-        'Authorization': `Bearer ${process.env.openaiapi}`,
+        'Authorization': `Bearer ${env.openaiapi}`,
       },
       body: JSON.stringify({
         model:       'gpt-4o',
@@ -559,17 +554,16 @@ BASIS: [which SOP section OR which live context data this is based on]`;
     if (!r.ok) {
       const err = await r.text();
       console.error('OpenAI error:', r.status, err);
-      return res.status(502).json({ error: 'AI error — try again in a moment' });
+      return json(502, { error: 'AI error — try again in a moment' });
     }
 
     const data   = await r.json();
     const answer = data.choices?.[0]?.message?.content?.trim();
-    if (!answer) return res.status(502).json({ error: 'Empty response from AI' });
+    if (!answer) return json(502, { error: 'Empty response from AI' });
 
-    return res.status(200).json({ answer, tokens: data.usage?.total_tokens });
-
+    return json(200, { answer, tokens: data.usage?.total_tokens });
   } catch (e) {
     console.error('Fetch error:', e);
-    return res.status(500).json({ error: 'Network error — try again' });
+    return json(500, { error: 'Network error — try again' });
   }
 }
