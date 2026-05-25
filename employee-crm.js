@@ -363,7 +363,7 @@
         <button type="button" class="qa-btn secondary" onclick="openLeadModal()">+ Lead</button>
         <button type="button" class="qa-btn secondary" onclick="switchTab('schedule', document.querySelector('[data-tab=schedule]'))">Block Time</button>
       </div>
-      ${newLeadCount > 0 ? `<div class="alert-banner alert-leads" onclick="switchTab('leads', document.querySelector('[data-tab=leads]'))" style="cursor:pointer">🔥 <strong>${newLeadCount} new lead${newLeadCount === 1 ? '' : 's'}</strong> waiting on first response — <span style="color:var(--accent);text-decoration:underline">open inbox →</span></div>` : ''}
+      ${newLeadCount > 0 ? `<div class="alert-banner alert-leads" onclick="switchTab('leads', document.querySelector('[data-tab=leads]'))" style="cursor:pointer"><span class="alert-dot"></span><strong>${newLeadCount} new lead${newLeadCount === 1 ? '' : 's'}</strong> waiting on first response <span class="alert-cta">Open inbox →</span></div>` : ''}
       <div class="stats-grid dash-stats">
         <div class="stat tappable" onclick="switchTab('jobs', document.querySelector('[data-tab=jobs]'))"><div class="v" style="color:#60a5fa">${counts.quoted || 0}</div><div class="l">Pending quotes</div></div>
         <div class="stat tappable" onclick="switchTab('schedule', document.querySelector('[data-tab=schedule]'))"><div class="v" style="color:#a78bfa">${counts.scheduled || 0}</div><div class="l">Scheduled</div></div>
@@ -372,7 +372,7 @@
         <div class="stat tappable" onclick="switchTab('leads', document.querySelector('[data-tab=leads]'))"><div class="v ${inboxBumped ? 'count-bump' : ''}" style="color:var(--accent)">${inbox.length}</div><div class="l">Leads inbox</div></div>
         <div class="stat"><div class="v" style="color:#86efac">$${rev.toLocaleString()}</div><div class="l">Revenue this week</div></div>
       </div>
-      ${overdueQuotes.length ? `<div class="alert-banner">⚠ ${overdueQuotes.length} quote(s) need follow-up — <a href="#" onclick="switchTab('jobs',document.querySelector('[data-tab=jobs]'));return false">View pipeline</a></div>` : ''}
+      ${overdueQuotes.length ? `<div class="alert-banner"><strong>${overdueQuotes.length} quote${overdueQuotes.length === 1 ? '' : 's'}</strong> need follow-up &nbsp;<a href="#" onclick="switchTab('jobs',document.querySelector('[data-tab=jobs]'));return false">View pipeline →</a></div>` : ''}
       <div class="dash-section">
         <div class="dash-section-hd"><h3>Today's schedule</h3><span class="muted">${todayJobs.length} job${todayJobs.length === 1 ? '' : 's'}</span></div>
         <div class="dash-list">${todayJobs.length ? todayJobs.map((j) => dashJobRow(j)).join('') : '<div class="empty-inline">No jobs scheduled today.</div>'}</div>
@@ -534,7 +534,7 @@
         <span class="bdg ${ps}">${pipelineLabel(ps)}</span>
       </div>
       <div class="detail-actions">
-        ${phone ? `<a class="bsm edit" href="tel:${phone}">📞 Call</a><a class="bsm edit" href="sms:${phone}">💬 Text</a>` : ''}
+        ${phone ? `<a class="bsm edit" href="tel:${phone}">Call</a><a class="bsm edit" href="sms:${phone}">Text</a>` : ''}
         <button type="button" class="bsm edit" onclick="openBooking(null, jobsCache.find(j=>j.id==='${job.id}'))">Edit</button>
         <button type="button" class="bsm edit" onclick="openInvoice('${job.id}')">Invoice</button>
         ${ps === 'completed' && typeof ADMINS !== 'undefined' && ADMINS.includes(me) ? `<button type="button" class="bsm approve" onclick="markJobPaid('${job.id}')">Mark paid</button>` : ''}
@@ -594,7 +594,7 @@
       );
     }
     if (!custs.length) {
-      list.innerHTML = `<div class="empty"><div class="ico">👥</div><div>No customers match.</div></div>`;
+      list.innerHTML = `<div class="empty"><div>No customers match.</div></div>`;
       return;
     }
     list.innerHTML = '';
@@ -615,7 +615,7 @@
             </div>
           </div>
           <div class="cust-quick" onclick="event.stopPropagation()">
-            ${phone ? `<a class="bsm edit" href="tel:${phone}">📞</a><a class="bsm edit" href="sms:${phone}">💬</a>` : ''}
+            ${phone ? `<a class="bsm edit" href="tel:${phone}">Call</a><a class="bsm edit" href="sms:${phone}">Text</a>` : ''}
             <button type="button" class="bsm del" onclick="deleteCust('${c.id}')">Remove</button>
           </div>
         </div>`;
@@ -637,7 +637,7 @@
     body.innerHTML = `
       <h3>${esc(c.name)}${c.demo ? ' <span class="bdg scheduled">DEMO</span>' : ''}</h3>
       <div class="detail-actions">
-        ${phone ? `<a class="bsm edit" href="tel:${phone}">📞 Call</a><a class="bsm edit" href="sms:${phone}">💬 Text</a>` : ''}
+        ${phone ? `<a class="bsm edit" href="tel:${phone}">Call</a><a class="bsm edit" href="sms:${phone}">Text</a>` : ''}
         <button type="button" class="bsm edit" onclick="openBooking();closeCustomerDetail()">+ Job</button>
       </div>
       <div class="detail-grid">
@@ -813,7 +813,7 @@
       cls,
       text: responded
         ? typeof fmtCountdown === 'function'
-          ? '✓ ' + fmtCountdown(lead.responseSeconds ?? elapsed)
+          ? 'Responded in ' + fmtCountdown(lead.responseSeconds ?? elapsed)
           : 'Responded'
         : typeof fmtCountdown === 'function'
           ? fmtCountdown(Math.max(0, remaining))
@@ -932,12 +932,12 @@
       </div>
       <div class="leads-toolbar">
         <div class="leads-search-wrap">
-          <span class="leads-search-icon">🔍</span>
+          <span class="leads-search-icon" aria-hidden="true"></span>
           <input type="search" class="leads-search" placeholder="Search name, phone, email…" value="${esc(leadsFilter.search)}"
             oninput="setLeadsFilter('search', this.value)" aria-label="Search leads">
         </div>
         <button type="button" class="leads-filter-toggle ${leadsFiltersOpen ? 'open' : ''}" onclick="toggleLeadsFilters()">
-          ${leadsFiltersOpen ? '▲ Hide filters' : '▼ Filters & sort'}
+          ${leadsFiltersOpen ? 'Hide filters' : 'Filters & sort'}
         </button>
         <div class="leads-filters-collapsible ${leadsFiltersOpen ? '' : 'collapsed'}">
           <div class="leads-filter-row">
@@ -1009,18 +1009,18 @@
           <div class="lead-row-name">${lead.conversationActive ? '<span class="lead-conv-dot" title="Conversation active"></span>' : ''}${esc(getLeadDisplayName(lead))}</div>
           <div class="lead-row-badges">
             <span class="lead-pill ${pillCls}">${esc(leadStatusLabel(rawSt))}</span>
-            ${lead.prohibitedItemsFlag ? '<span class="lead-pill prohibited">⚠ Prohibited</span>' : ''}
-            ${lead.scheduledJobAt ? '<span class="lead-pill booking">📅 ' + esc(fmtTs(lead.scheduledJobAt).relative) + '</span>' : ''}
+            ${lead.prohibitedItemsFlag ? '<span class="lead-pill prohibited">Prohibited</span>' : ''}
+            ${lead.scheduledJobAt ? '<span class="lead-pill booking">Booked ' + esc(fmtTs(lead.scheduledJobAt).relative) + '</span>' : ''}
           </div>
         </div>
         <div class="lead-row-meta">
-          ${lead.phone ? `<span>📞 ${esc(lead.phone)}</span>` : ''}
+          ${lead.phone ? `<span>${esc(lead.phone)}</span>` : ''}
           ${lead.source ? `<span>${esc(lead.source)}</span>` : ''}
-          ${lead.assignedTo ? `<span>👤 ${esc(assigneeLabel(lead.assignedTo))}</span>` : ''}
+          ${lead.assignedTo ? `<span>${esc(assigneeLabel(lead.assignedTo))}</span>` : ''}
           ${attempts ? `<span class="lead-attempt-pill">Attempt ${attempts}/6</span>` : ''}
           ${followUp ? `<span class="lead-followup ${followUp.cls}">${esc(followUp.text)}</span>` : ''}
-          ${lead.reviewRequestedAt ? '<span>⭐ Review sent</span>' : ''}
-          ${lead.notifiedAt ? '<span>🔔 Notified</span>' : ''}
+          ${lead.reviewRequestedAt ? '<span>Review sent</span>' : ''}
+          ${lead.notifiedAt ? '<span>Notified</span>' : ''}
           <span>${esc(created.relative)}</span>
         </div>
         ${lead.items ? `<div class="lead-row-items">${esc(String(lead.items).slice(0, 80))}${String(lead.items).length > 80 ? '…' : ''}</div>` : ''}
@@ -1042,7 +1042,7 @@
     if (!el || typeof leadsCache === 'undefined') return;
 
     if (_leadsError) {
-      el.innerHTML = `<div class="leads-state error"><div class="ico">⚠️</div><h3>Could not load leads</h3><p>${esc(_leadsError.message || String(_leadsError))}</p><button type="button" class="btn-book" onclick="location.reload()">Retry</button></div>`;
+      el.innerHTML = `<div class="leads-state error"><h3>Could not load leads</h3><p>${esc(_leadsError.message || String(_leadsError))}</p><button type="button" class="btn-book" onclick="location.reload()">Retry</button></div>`;
       return;
     }
 
@@ -1059,7 +1059,7 @@
 
     const filtered = filterAndSortLeads(leadsCache);
     if (!filtered.length) {
-      el.innerHTML = `<div class="leads-state"><div class="ico">📥</div><h3>${leadsCache.length ? 'No matches' : 'No leads yet'}</h3><p>${leadsCache.length ? 'Try adjusting filters or search.' : 'Zapier / Facebook Ads leads appear here automatically.'}</p><button type="button" class="btn-book" onclick="openLeadModal()">+ Add lead</button></div>`;
+      el.innerHTML = `<div class="leads-state"><h3>${leadsCache.length ? 'No matches' : 'No leads yet'}</h3><p>${leadsCache.length ? 'Try adjusting filters or search.' : 'Zapier / Facebook Ads leads appear here automatically.'}</p><button type="button" class="btn-book" onclick="openLeadModal()">+ Add lead</button></div>`;
       return;
     }
 
@@ -1111,29 +1111,29 @@
           ? `<div class="lead-sla-banner ${sla.responded ? 'ok' : sla.cls}"><span>${sla.responded ? 'Responded within SLA window' : sla.remaining <= 0 ? 'SLA exceeded — respond now' : '2-min SLA countdown'}</span><time>${esc(sla.text)}</time></div>`
           : ''
       }
-      ${lead.prohibitedItemsFlag ? '<div class="lead-sla-banner over"><span>⚠ Prohibited items flagged</span></div>' : ''}
+      ${lead.prohibitedItemsFlag ? '<div class="lead-sla-banner over"><span>Prohibited items flagged</span></div>' : ''}
       <!-- ── TYLER'S PRIMARY ACTION BUTTONS ── -->
       <div class="lead-tyler-actions">
-        ${st !== 'booked' ? `<button type="button" class="tyler-btn tyler-booked" onclick="tylerMarkBooked('${lead.id}')">✅ BOOKED</button>` : '<div class="tyler-booked-badge">✅ Booked</div>'}
-        ${st !== 'dead' ? `<button type="button" class="tyler-btn tyler-lost" onclick="tylerMarkLost('${lead.id}')">❌ LOST</button>` : '<div class="tyler-lost-badge">❌ Lost</div>'}
+        ${st !== 'booked' ? `<button type="button" class="tyler-btn tyler-booked" onclick="tylerMarkBooked('${lead.id}')">BOOKED</button>` : '<div class="tyler-booked-badge">Booked</div>'}
+        ${st !== 'dead' ? `<button type="button" class="tyler-btn tyler-lost" onclick="tylerMarkLost('${lead.id}')">LOST</button>` : '<div class="tyler-lost-badge">Lost</div>'}
         <button type="button" class="tyler-btn ${lead.conversationActive ? 'tyler-resume' : 'tyler-pause'}" onclick="tylerToggleActive('${lead.id}', ${!!lead.conversationActive})">
-          ${lead.conversationActive ? '▶ RESUME AUTO' : '⏸ PAUSE AUTO'}
+          ${lead.conversationActive ? 'RESUME AUTO' : 'PAUSE AUTO'}
         </button>
       </div>
 
       <!-- ── META SIGNAL BUTTONS ── -->
       <div class="lead-signal-actions">
-        <button type="button" class="signal-btn signal-qualified" onclick="signalQualified('${lead.id}')">👍 QUALIFIED</button>
-        <button type="button" class="signal-btn signal-converted" onclick="signalConverted('${lead.id}')">💰 CONVERTED</button>
-        <button type="button" class="signal-btn signal-not-interested" onclick="signalNotInterested('${lead.id}')">🚫 NOT INTERESTED</button>
-        <button type="button" class="signal-btn signal-archived" onclick="signalArchived('${lead.id}')">🗂 ARCHIVED</button>
+        <button type="button" class="signal-btn signal-qualified" onclick="signalQualified('${lead.id}')">QUALIFIED</button>
+        <button type="button" class="signal-btn signal-converted" onclick="signalConverted('${lead.id}')">CONVERTED</button>
+        <button type="button" class="signal-btn signal-not-interested" onclick="signalNotInterested('${lead.id}')">NOT INTERESTED</button>
+        <button type="button" class="signal-btn signal-archived" onclick="signalArchived('${lead.id}')">ARCHIVED</button>
       </div>
 
       <div class="lead-detail-actions">
-        ${phone ? `<a class="bsm edit" href="tel:${phone}">📞 Call</a>` : ''}
-        ${phone && !optedOut ? `<a class="bsm edit" href="sms:${phone}">💬 Text via Quo</a>` : ''}
-        ${phone && optedOut ? `<span class="bsm edit tcpa-disabled" title="TCPA: lead opted out">💬 Text (blocked)</span>` : ''}
-        ${lead.email ? `<a class="bsm edit" href="mailto:${esc(lead.email)}">✉️ Email</a>` : ''}
+        ${phone ? `<a class="bsm edit" href="tel:${phone}">Call</a>` : ''}
+        ${phone && !optedOut ? `<a class="bsm edit" href="sms:${phone}">Text via Quo</a>` : ''}
+        ${phone && optedOut ? `<span class="bsm edit tcpa-disabled" title="TCPA: lead opted out">Text (blocked)</span>` : ''}
+        ${lead.email ? `<a class="bsm edit" href="mailto:${esc(lead.email)}">Email</a>` : ''}
         <button type="button" class="bsm edit" onclick="logContactAttempt('${lead.id}')">Log attempt</button>
         <button type="button" class="bsm edit" onclick="convertLeadToJob('${lead.id}')">→ Job</button>
       </div>
@@ -1141,8 +1141,8 @@
       <div class="lead-section lead-automation-section">
         <div class="lead-section-title">Automation status</div>
         ${paused
-          ? '<p class="lead-cadence-paused">⏸ Automation paused — Tyler is working this lead.</p>'
-          : '<p class="lead-cadence-active muted small">▶ Automation active — review request fires when job is marked complete.</p>'}
+          ? '<p class="lead-cadence-paused">Automation paused — Tyler is working this lead.</p>'
+          : '<p class="lead-cadence-active muted small">Automation active — review request fires when job is marked complete.</p>'}
         <div class="lead-automation-btns">
           ${isAdmin ? `<button type="button" class="bsm del" onclick="markLeadOptedOut('${lead.id}')" ${optedOut ? 'disabled' : ''}>Mark opted out</button>` : ''}
           <button type="button" class="bsm edit" onclick="logManualTouch('${lead.id}')">Log manual touch</button>
@@ -1357,7 +1357,7 @@
       { status: 'booked', crmStatus: 'booked', conversationActive: false, updatedAt: now, bookedAt: now },
       { merge: true }
     );
-    if (typeof showToast === 'function') showToast('🎉 Lead marked BOOKED');
+    if (typeof showToast === 'function') showToast('Lead marked BOOKED');
     openLeadDetail(id, true);
   };
 
@@ -1380,7 +1380,7 @@
       { conversationActive: newVal, lastTouchAt: now, updatedAt: now },
       { merge: true }
     );
-    if (typeof showToast === 'function') showToast(newVal ? '⏸ Automation paused' : '▶ Automation resumed');
+    if (typeof showToast === 'function') showToast(newVal ? 'Automation paused' : 'Automation resumed');
     openLeadDetail(id, true);
   };
 
@@ -1927,7 +1927,7 @@
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ phone, firstName, signal: 'qualified', leadId }),
     }).catch((err) => console.warn('Signal webhook failed:', err));
-    if (typeof showToast === 'function') showToast('✅ Sent qualified signal to Meta');
+    if (typeof showToast === 'function') showToast('Sent QUALIFIED signal to Meta');
   };
 
   window.signalConverted = async function (leadId) {
@@ -1939,7 +1939,7 @@
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ phone, firstName, signal: 'converted', leadId }),
     }).catch((err) => console.warn('Signal webhook failed:', err));
-    if (typeof showToast === 'function') showToast('💰 Sent converted signal to Meta');
+    if (typeof showToast === 'function') showToast('Sent CONVERTED signal to Meta');
   };
 
   window.signalNotInterested = async function (leadId) {
@@ -1951,7 +1951,7 @@
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ phone, firstName, signal: 'not_interested', leadId }),
     }).catch((err) => console.warn('Signal webhook failed:', err));
-    if (typeof showToast === 'function') showToast('🚫 Sent not-interested signal to Meta');
+    if (typeof showToast === 'function') showToast('Sent NOT INTERESTED signal to Meta');
   };
 
   window.signalArchived = async function (leadId) {
@@ -1963,7 +1963,7 @@
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ phone, firstName, signal: 'archived', leadId }),
     }).catch((err) => console.warn('Signal webhook failed:', err));
-    if (typeof showToast === 'function') showToast('🗂 Sent archived signal to Meta');
+    if (typeof showToast === 'function') showToast('Sent ARCHIVED signal to Meta');
   };
 
   // Backwards-compat alias — old buttons (if any are still cached) keep working

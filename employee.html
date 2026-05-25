@@ -71,33 +71,38 @@
     .btn-main { width: 100%; background: var(--accent); color: #fff; border: none; border-radius: .6rem; font-family: 'Inter', sans-serif; font-size: .95rem; font-weight: 600; padding: .8rem 1.5rem; cursor: pointer; transition: background .2s; margin-top: .5rem; }
     .btn-main:hover { background: var(--accent-deep); }
 
+    /* ── A11Y skip-link (visible only when focused) ─── */
+    .skip-link { position: absolute; left: -9999px; top: -9999px; width: 1px; height: 1px; overflow: hidden; }
+    .skip-link:focus { left: .5rem; top: .5rem; width: auto; height: auto; padding: .5rem .9rem; background: var(--accent); color: #fff; z-index: 999; border-radius: .35rem; font-weight: 600; }
+
     /* ── DASHBOARD SHELL ───────────────────────────────── */
     #dashboard { display: none; min-height: 100vh; flex-direction: column; }
-    .topbar { background: var(--navy-soft); border-bottom: 1px solid var(--navy-border); height: 58px; padding: 0 1.25rem; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 50; }
-    .topbar-left { display: flex; align-items: center; gap: .6rem; }
-    .topbar-left .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); }
-    .topbar-left span { font-family: 'Fraunces', serif; font-size: .95rem; font-weight: 700; }
-    .topbar-right { display: flex; align-items: center; gap: .75rem; flex-wrap: wrap; }
-    .firebase-status { font-size: .68rem; font-weight: 600; padding: .25rem .55rem; border-radius: 999px; white-space: nowrap; display: inline-flex; align-items: center; gap: .35rem; }
-    .firebase-status::before { content: ''; width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
-    .firebase-status.ok { background: rgba(34,197,94,.12); color: #86efac; border: 1px solid rgba(34,197,94,.25); }
+    .topbar { background: var(--navy-soft); border-bottom: 1px solid var(--navy-border); height: 54px; padding: 0 1rem; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 50; gap: .5rem; }
+    .topbar-left { display: flex; align-items: center; gap: .55rem; min-width: 0; }
+    .topbar-left .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); flex-shrink: 0; }
+    .topbar-left .brand { font-family: 'Fraunces', serif; font-size: 1rem; font-weight: 700; letter-spacing: -.01em; white-space: nowrap; }
+    .topbar-right { display: flex; align-items: center; gap: .5rem; flex-shrink: 0; flex-wrap: nowrap; }
+    /* Sync status — always a small pulsing dot. Text hidden visually but kept for screen readers. */
+    .firebase-status { font-size: 0; padding: .35rem; line-height: 0; border-radius: 999px; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; }
+    .firebase-status::before { content: ''; width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+    .firebase-status.ok { background: rgba(34,197,94,.1); border: 1px solid rgba(34,197,94,.3); }
     .firebase-status.ok::before { background: #22c55e; box-shadow: 0 0 6px rgba(34,197,94,.6); animation: livePulse 2.4s ease-in-out infinite; }
-    .firebase-status.pending { background: rgba(255,255,255,.06); color: var(--muted); border: 1px solid rgba(255,255,255,.1); }
+    .firebase-status.pending { background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.12); }
     .firebase-status.pending::before { background: var(--muted); }
-    .firebase-status.error { background: rgba(239,68,68,.12); color: #fca5a5; border: 1px solid rgba(239,68,68,.25); }
+    .firebase-status.error { background: rgba(239,68,68,.12); border: 1px solid rgba(239,68,68,.3); }
     .firebase-status.error::before { background: #ef4444; }
     @keyframes livePulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
-    /* On mobile: compact connection chip to just the dot */
-    @media (max-width: 768px) {
-      .firebase-status { font-size: 0; padding: .35rem; }
-      .firebase-status::before { width: 8px; height: 8px; }
-      /* Hide the redundant "Easy Garage — Public site" bar on small screens */
-      .egc-portal-bar { display: none !important; }
+
+    /* User chip + sign-out merged into one rounded pill */
+    .user-menu { display: inline-flex; align-items: center; background: var(--navy-light); border: 1px solid rgba(255,255,255,.1); border-radius: 99px; padding: .25rem .25rem .25rem .3rem; gap: .4rem; font-size: .8rem; font-weight: 600; }
+    .user-menu .av { width: 24px; height: 24px; border-radius: 50%; background: var(--accent); display: flex; align-items: center; justify-content: center; font-size: .7rem; font-weight: 700; color: #fff; flex-shrink: 0; }
+    .user-menu .user-name { color: var(--white); white-space: nowrap; max-width: 80px; overflow: hidden; text-overflow: ellipsis; }
+    .user-menu .btn-logout { background: rgba(255,255,255,.05); border: none; color: var(--muted); border-radius: 99px; font-size: .7rem; padding: .3rem .65rem; cursor: pointer; transition: all .15s; font-weight: 600; letter-spacing: .02em; }
+    .user-menu .btn-logout:hover { background: rgba(239,68,68,.15); color: #fca5a5; }
+    @media (max-width: 480px) {
+      .user-menu .user-name { display: none; }
+      .user-menu { padding: .25rem; }
     }
-    .user-chip { display: flex; align-items: center; gap: .5rem; background: var(--navy-light); border: 1px solid rgba(255,255,255,.1); border-radius: 99px; padding: .28rem .85rem .28rem .35rem; font-size: .8rem; font-weight: 600; }
-    .user-chip .av { width: 22px; height: 22px; border-radius: 50%; background: var(--accent); display: flex; align-items: center; justify-content: center; font-size: .65rem; font-weight: 700; }
-    .btn-logout { background: transparent; border: 1px solid rgba(255,255,255,.14); color: var(--muted); border-radius: .45rem; font-size: .78rem; padding: .32rem .75rem; cursor: pointer; transition: all .2s; }
-    .btn-logout:hover { border-color: var(--accent); color: var(--accent); }
 
     /* ── TABS ──────────────────────────────────────────── */
     .tabbar { background: var(--navy-soft); border-bottom: 1px solid var(--navy-border); display: flex; padding: 0 1.25rem; gap: .1rem; }
@@ -140,7 +145,7 @@
     .week-body { display: flex; overflow-y: auto; height: calc(100dvh - 220px); min-height: 400px; -webkit-overflow-scrolling: touch; }
     .blocked-overlay { position:absolute; inset:0; background:repeating-linear-gradient(135deg,rgba(239,68,68,.07) 0px,rgba(239,68,68,.07) 8px,transparent 8px,transparent 16px); pointer-events:none; z-index:3; }
     .hour-slot.slot-blocked { background:rgba(239,68,68,.07); cursor:not-allowed; }
-    .hour-slot.slot-blocked::before { content:'🔒'; position:absolute; right:4px; top:50%; transform:translateY(-50%); font-size:.6rem; opacity:.4; }
+    .hour-slot.slot-blocked::before { content:''; position:absolute; right:6px; top:50%; transform:translateY(-50%); width:6px; height:6px; border-radius:50%; background:rgba(239,68,68,.5); }
     .slot-lock-btn { display:none; position:absolute; right:3px; top:2px; font-size:.6rem; background:rgba(255,255,255,.07); border:none; border-radius:3px; color:var(--muted); cursor:pointer; padding:1px 4px; z-index:2; }
     .hour-slot:hover .slot-lock-btn { display:block; }
     .hour-slot.slot-blocked .slot-lock-btn { display:block; color:rgba(239,68,68,.6); background:rgba(239,68,68,.1); }
@@ -777,9 +782,11 @@
     .empty-inline { color: var(--muted); font-size: .85rem; padding: 1rem 0; text-align: center; }
     .alert-banner { background: rgba(245,158,11,.12); border: 1px solid rgba(245,158,11,.3); color: #fcd34d; border-radius: .6rem; padding: .75rem 1rem; margin-bottom: 1rem; font-size: .85rem; }
     .alert-banner a { color: var(--accent); }
-    .alert-banner.alert-leads { background: linear-gradient(135deg, rgba(255,91,31,.18), rgba(255,91,31,.06)); border-color: rgba(255,91,31,.4); color: #fff; transition: filter .15s, transform .12s; }
+    .alert-banner.alert-leads { background: linear-gradient(135deg, rgba(255,91,31,.18), rgba(255,91,31,.06)); border-color: rgba(255,91,31,.4); color: #fff; transition: filter .15s, transform .12s; display: flex; align-items: center; gap: .75rem; flex-wrap: wrap; }
     .alert-banner.alert-leads:hover { filter: brightness(1.08); transform: translateY(-1px); }
     .alert-banner.alert-leads strong { color: var(--accent); }
+    .alert-banner.alert-leads .alert-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 8px rgba(255,91,31,.7); animation: livePulse 1.6s ease-in-out infinite; flex-shrink: 0; }
+    .alert-banner.alert-leads .alert-cta { color: var(--accent); font-weight: 700; margin-left: auto; font-size: .8rem; letter-spacing: .02em; }
     .dash-live { display: inline-flex; align-items: center; gap: .35rem; font-size: .65rem; font-weight: 700; color: #86efac; margin-left: .5rem; letter-spacing: .08em; text-transform: uppercase; vertical-align: middle; }
     .dash-live::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: #22c55e; box-shadow: 0 0 4px rgba(34,197,94,.6); animation: livePulse 2.4s ease-in-out infinite; }
 
@@ -809,11 +816,17 @@
 
     /* Bottom nav (mobile) */
     .bottom-nav { display: none; position: fixed; bottom: 0; left: 0; right: 0; z-index: 60; background: var(--navy-soft); border-top: 1px solid var(--navy-border); padding: 6px 8px calc(6px + env(safe-area-inset-bottom)); grid-template-columns: repeat(5, 1fr); gap: 4px; }
-    .bn-item { background: transparent; border: none; color: var(--muted); font-size: .62rem; font-weight: 600; padding: .45rem .2rem; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 2px; border-radius: .5rem; min-height: 48px; justify-content: center; position: relative; transition: color .15s, background .15s; }
-    .bn-item .bn-ico { font-size: 1.15rem; transition: transform .15s; }
-    .bn-item:active .bn-ico { transform: scale(.9); }
+    .bn-item { background: transparent; border: none; color: var(--muted); font-size: .65rem; font-weight: 600; padding: .45rem .2rem; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 4px; border-radius: .5rem; min-height: 52px; justify-content: center; position: relative; transition: color .15s, background .15s; letter-spacing: .01em; }
+    .bn-item .bn-ico { width: 22px; height: 22px; transition: transform .15s; background: currentColor; -webkit-mask-position: center; mask-position: center; -webkit-mask-repeat: no-repeat; mask-repeat: no-repeat; -webkit-mask-size: 22px 22px; mask-size: 22px 22px; }
+    .bn-item:active .bn-ico { transform: scale(.92); }
     .bn-item.active { color: var(--accent); background: rgba(255,91,31,.08); }
-    .bn-item.active .bn-ico { transform: scale(1.08); }
+    .bn-item.active .bn-ico { transform: scale(1.05); }
+    /* Monochrome SVG icons (currentColor — no emoji) */
+    .bn-ico[data-ico="home"]     { -webkit-mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='black'><path d='M12 3l9 8h-3v9h-5v-6H11v6H6v-9H3z'/></svg>"); mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='black'><path d='M12 3l9 8h-3v9h-5v-6H11v6H6v-9H3z'/></svg>"); }
+    .bn-ico[data-ico="leads"]    { -webkit-mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='black'><path d='M4 4h16v3H4zM4 10.5h16v3H4zM4 17h10v3H4z'/></svg>"); mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='black'><path d='M4 4h16v3H4zM4 10.5h16v3H4zM4 17h10v3H4z'/></svg>"); }
+    .bn-ico[data-ico="jobs"]     { -webkit-mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='black'><path d='M9 3h6v2h4a2 2 0 012 2v12a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h4V3zm2 2h2V4h-2v1z'/></svg>"); mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='black'><path d='M9 3h6v2h4a2 2 0 012 2v12a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h4V3zm2 2h2V4h-2v1z'/></svg>"); }
+    .bn-ico[data-ico="schedule"] { -webkit-mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='black'><path d='M7 2v3M17 2v3M3 8h18M5 5h14a2 2 0 012 2v12a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2z' fill='none' stroke='black' stroke-width='2'/></svg>"); mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='black'><path d='M7 2v3M17 2v3M3 8h18M5 5h14a2 2 0 012 2v12a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2z' fill='none' stroke='black' stroke-width='2'/></svg>"); }
+    .bn-ico[data-ico="more"]     { -webkit-mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='black'><circle cx='5' cy='12' r='2'/><circle cx='12' cy='12' r='2'/><circle cx='19' cy='12' r='2'/></svg>"); mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='black'><circle cx='5' cy='12' r='2'/><circle cx='12' cy='12' r='2'/><circle cx='19' cy='12' r='2'/></svg>"); }
     /* Mobile leads badge — small, prominent, top-right of icon */
     #leads-badge-mobile {
       display: none;
@@ -913,10 +926,6 @@
 </style>
 </head>
 <body>
-<div class="egc-portal-bar" style="background:#14243d;border-bottom:1px solid rgba(255,255,255,.1);padding:10px 18px;display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:13px">
-  <a href="/" style="color:#f5f1ea;font-weight:700;text-decoration:none"><span style="display:inline-block;width:8px;height:8px;background:#ff5b1f;border-radius:50%;margin-right:6px"></span>Easy Garage — Public site</a>
-  <a href="tel:+19709991818" style="color:#ff5b1f;font-weight:600;text-decoration:none">(970) 999-1818</a>
-</div>
 <a href="#main-content" class="skip-link">Skip to content</a>
 
 <!-- ═══════════════════════════════════════
@@ -954,7 +963,7 @@
     </div>
     <div class="mode-cards">
       <div class="mode-card mode-primary" onclick="selectMode('call')">
-        <div class="mode-icon">📞</div>
+        <div class="mode-icon">Call</div>
         <div>
           <div class="mode-title">Actively on a Call</div>
           <div class="mode-desc">Customer on the line — quote &amp; book in one flow</div>
@@ -962,14 +971,14 @@
         <div class="mode-arrow">→</div>
       </div>
       <div class="mode-card" onclick="selectMode('dashboard')">
-        <div class="mode-icon">📅</div>
+        <div class="mode-icon">CRM</div>
         <div>
           <div class="mode-title">CRM Dashboard</div>
           <div class="mode-desc">Jobs pipeline, schedule, customers &amp; leads</div>
         </div>
       </div>
       <div class="mode-card" id="admin-card" onclick="selectMode('admin')">
-        <div class="mode-icon">⚙️</div>
+        <div class="mode-icon">Admin</div>
         <div>
           <div class="mode-title">Admin</div>
           <div class="mode-desc">Customers, settings, and reports</div>
@@ -985,10 +994,10 @@
 <div id="oncall-overlay">
   <div class="oncall-head">
     <div style="display:flex;align-items:center;gap:.75rem">
-      <div class="oncall-badge">📞 On a Call</div>
+      <div class="oncall-badge">On a Call</div>
       <span class="oncall-cname" id="oc-cname">Select a customer to start</span>
     </div>
-    <button class="bk-close" onclick="exitCall()">✕</button>
+    <button class="bk-close" onclick="exitCall()"></button>
   </div>
 
   <div class="oncall-progress">
@@ -1015,33 +1024,33 @@
   <div class="topbar">
     <div class="topbar-left">
       <div class="dot"></div>
-      <span>EGC CRM</span>
+      <span class="brand">EGC CRM</span>
     </div>
     <div class="topbar-right">
-      <span id="firebase-status" class="firebase-status pending" title="Firebase Firestore real-time sync">Connecting…</span>
-      <div class="user-chip">
+      <span id="firebase-status" class="firebase-status pending" aria-label="Sync status" title="Firebase real-time sync">Connecting</span>
+      <div class="user-menu">
         <div class="av" id="u-av">Z</div>
-        <span id="u-lbl">ZacB</span>
+        <span class="user-name" id="u-lbl">ZacB</span>
+        <button class="btn-logout" onclick="doLogout()">Sign out</button>
       </div>
-      <button class="btn-logout" onclick="doLogout()">Sign out</button>
     </div>
   </div>
 
   <div class="tabbar tabbar-desktop">
-    <button class="tab active" data-tab="home" onclick="switchTab('home',this)">🏠 Dashboard</button>
-    <button class="tab" data-tab="jobs" onclick="switchTab('jobs',this)">📋 Jobs</button>
-    <button class="tab" data-tab="schedule" onclick="switchTab('schedule',this)">📅 Schedule</button>
-    <button class="tab" data-tab="customers" onclick="switchTab('customers',this)">👥 Customers</button>
-    <button class="tab" data-tab="leads" onclick="switchTab('leads',this)">🔥 Leads <span id="leads-badge" style="display:none;background:var(--accent);color:#fff;border-radius:999px;font-size:.65rem;font-weight:700;padding:1px 6px;margin-left:4px;vertical-align:middle"></span></button>
-    <button class="tab" data-tab="more" onclick="switchTab('more',this)">⚙️ More</button>
+    <button class="tab active" data-tab="home" onclick="switchTab('home',this)">Dashboard</button>
+    <button class="tab" data-tab="jobs" onclick="switchTab('jobs',this)">Jobs</button>
+    <button class="tab" data-tab="schedule" onclick="switchTab('schedule',this)">Schedule</button>
+    <button class="tab" data-tab="customers" onclick="switchTab('customers',this)">Customers</button>
+    <button class="tab" data-tab="leads" onclick="switchTab('leads',this)">Leads <span id="leads-badge" style="display:none;background:var(--accent);color:#fff;border-radius:999px;font-size:.65rem;font-weight:700;padding:1px 6px;margin-left:4px;vertical-align:middle"></span></button>
+    <button class="tab" data-tab="more" onclick="switchTab('more',this)">More</button>
   </div>
 
   <nav class="bottom-nav" aria-label="Main navigation">
-    <button type="button" class="bn-item active" data-tab="home" onclick="switchTab('home',this)"><span class="bn-ico">🏠</span>Home</button>
-    <button type="button" class="bn-item" data-tab="leads" onclick="switchTab('leads',this)"><span class="bn-ico">🔥</span>Leads<span id="leads-badge-mobile"></span></button>
-    <button type="button" class="bn-item" data-tab="jobs" onclick="switchTab('jobs',this)"><span class="bn-ico">📋</span>Jobs</button>
-    <button type="button" class="bn-item" data-tab="schedule" onclick="switchTab('schedule',this)"><span class="bn-ico">📅</span>Schedule</button>
-    <button type="button" class="bn-item" data-tab="more" onclick="switchTab('more',this)"><span class="bn-ico">☰</span>More</button>
+    <button type="button" class="bn-item active" data-tab="home" onclick="switchTab('home',this)"><span class="bn-ico" data-ico="home" aria-hidden="true"></span>Home</button>
+    <button type="button" class="bn-item" data-tab="leads" onclick="switchTab('leads',this)"><span class="bn-ico" data-ico="leads" aria-hidden="true"></span>Leads<span id="leads-badge-mobile"></span></button>
+    <button type="button" class="bn-item" data-tab="jobs" onclick="switchTab('jobs',this)"><span class="bn-ico" data-ico="jobs" aria-hidden="true"></span>Jobs</button>
+    <button type="button" class="bn-item" data-tab="schedule" onclick="switchTab('schedule',this)"><span class="bn-ico" data-ico="schedule" aria-hidden="true"></span>Schedule</button>
+    <button type="button" class="bn-item" data-tab="more" onclick="switchTab('more',this)"><span class="bn-ico" data-ico="more" aria-hidden="true"></span>More</button>
   </nav>
 
   <div class="main">
@@ -1125,7 +1134,7 @@
       <div id="tab-payout-embed" style="margin-top:1.5rem">
         <div class="payout-hd"><h2>Tyler's Payout</h2></div>
         <div class="total-card">
-          <div class="ico">💵</div>
+          <div class="ico"></div>
           <div>
             <div class="total-label">Total Earned</div>
             <div class="total-amt" id="po-total">$0</div>
@@ -1143,10 +1152,10 @@
 
 <!-- CRM Modals -->
 <div id="job-detail-modal" class="modal-backdrop" onclick="if(event.target===this)closeJobDetail()">
-  <div class="modal-sheet"><button type="button" class="modal-close" onclick="closeJobDetail()">✕</button><div id="job-detail-body"></div></div>
+  <div class="modal-sheet"><button type="button" class="modal-close" onclick="closeJobDetail()"></button><div id="job-detail-body"></div></div>
 </div>
 <div id="cust-detail-modal" class="modal-backdrop" onclick="if(event.target===this)closeCustomerDetail()">
-  <div class="modal-sheet"><button type="button" class="modal-close" onclick="closeCustomerDetail()">✕</button><div id="cust-detail-body"></div></div>
+  <div class="modal-sheet"><button type="button" class="modal-close" onclick="closeCustomerDetail()"></button><div id="cust-detail-body"></div></div>
 </div>
 <div id="lead-detail-drawer" class="lead-drawer" aria-hidden="true">
   <div class="lead-drawer-backdrop" onclick="closeLeadDetail()"></div>
@@ -1156,14 +1165,14 @@
         <h3 id="lead-detail-title">Lead</h3>
         <div id="lead-detail-subtitle" style="font-size:.78rem;color:var(--muted);margin-top:.2rem"></div>
       </div>
-      <button type="button" class="lead-drawer-close" onclick="closeLeadDetail()" aria-label="Close">✕</button>
+      <button type="button" class="lead-drawer-close" onclick="closeLeadDetail()" aria-label="Close"></button>
     </div>
     <div class="lead-drawer-body" id="lead-detail-body"></div>
   </div>
 </div>
 <div id="lead-form-modal" class="modal-backdrop" onclick="if(event.target===this)closeLeadModal()">
   <div class="modal-sheet">
-    <button type="button" class="modal-close" onclick="closeLeadModal()">✕</button>
+    <button type="button" class="modal-close" onclick="closeLeadModal()"></button>
     <h3>Lead</h3>
     <input type="hidden" id="lf-id">
     <div class="fg"><label>Name</label><input type="text" id="lf-name" placeholder="Name"></div>
@@ -1186,7 +1195,7 @@
 </div>
 <div id="quote-modal" class="modal-backdrop" onclick="if(event.target===this)closeQuoteModal()">
   <div class="modal-sheet">
-    <button type="button" class="modal-close" onclick="closeQuoteModal()">✕</button>
+    <button type="button" class="modal-close" onclick="closeQuoteModal()"></button>
     <h3>Quote / estimate</h3>
     <input type="hidden" id="qm-job-id">
     <div class="fg"><label>Price tier</label><select id="qm-tier" onchange="applyQuoteTier()"><option value="">Custom</option><option value="0">Single $99–150</option><option value="1">Small $250–400</option><option value="2">Medium $400–650</option><option value="3">Large $650+</option></select></div>
@@ -1205,7 +1214,7 @@
 
     <div class="bk-head">
       <div class="bk-head-title" id="bk-title">Book Appointment</div>
-      <button class="bk-close" onclick="closeBooking()">✕</button>
+      <button class="bk-close" onclick="closeBooking()"></button>
     </div>
 
     <div class="step-track">
@@ -1231,7 +1240,7 @@
       <div id="sp1" class="step-panel active">
         <div class="step-q">Who's the customer?</div>
         <div class="cust-search-wrap">
-          <span class="icon">🔍</span>
+          <span class="icon"></span>
           <input class="cust-search" id="cust-search" type="text" placeholder="Search by name or phone…" oninput="filterCustomers(this.value)">
         </div>
         <div class="cust-list" id="cust-list"></div>
@@ -1261,12 +1270,12 @@
         <div class="slbl-sm">Type</div>
         <div class="type-pills">
           <div class="type-pill selected" id="tp-walk" onclick="selType('walkthrough')">
-            <div class="ticon">🚶</div>
+            <div class="ticon"></div>
             <div class="tname">Walk-Through</div>
             <div class="tdesc">Initial assessment</div>
           </div>
           <div class="type-pill" id="tp-job" onclick="selType('job')">
-            <div class="ticon">🏠</div>
+            <div class="ticon"></div>
             <div class="tname">Cleanup Job</div>
             <div class="tdesc">Full cleanout service</div>
           </div>
@@ -1377,7 +1386,7 @@
       <div class="fg" style="margin:0"><label>Scheduled Date</label><input type="date" id="cm-date" /></div>
     </div>
     <div id="cm-deposit-preview" style="display:none;background:rgba(255,91,31,.1);border:1px solid rgba(255,91,31,.3);border-radius:.6rem;padding:.65rem .9rem;font-size:.8rem;margin-bottom:1rem;color:var(--accent)">
-      💳 Job over $1,000 — <strong id="cm-deposit-amount"></strong> deposit required at booking (25%)
+      Job over $1,000 — <strong id="cm-deposit-amount"></strong> deposit required at booking (25%)
     </div>
     <div class="fg"><label>Notes to Customer</label><textarea id="cm-notes" rows="2" placeholder="Optional — visible on the contract page"></textarea></div>
 
@@ -1385,8 +1394,8 @@
       <div style="font-size:.75rem;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);margin-bottom:.5rem">Contract Link</div>
       <div class="cm-link-box" id="cm-link-display"></div>
       <div class="cm-copy-row">
-        <a class="cm-sms-btn" id="cm-sms-btn" href="#" target="_blank">💬 Open in Messages</a>
-        <button class="cm-copy-btn" id="cm-copy-btn" onclick="copyContractLink()">📋 Copy</button>
+        <a class="cm-sms-btn" id="cm-sms-btn" href="#" target="_blank">Open in Messages</a>
+        <button class="cm-copy-btn" id="cm-copy-btn" onclick="copyContractLink()">Copy link</button>
       </div>
     </div>
 
@@ -1411,7 +1420,7 @@
   </div>
 </div>
 
-<div id="toast">✓ Appointment booked!</div>
+<div id="toast">Appointment booked.</div>
 
 <!-- Map distance popup -->
 <div id="map-modal" style="display:none;position:fixed;inset:0;z-index:2000;background:rgba(0,0,0,.75);align-items:center;justify-content:center;padding:1rem">
@@ -1861,9 +1870,9 @@ function copyContractLink() {
   if (!_contractLink) return;
   navigator.clipboard.writeText(_contractLink).then(() => {
     const btn = document.getElementById('cm-copy-btn');
-    btn.textContent = '✓ Copied!';
+    btn.textContent = 'Copied';
     btn.classList.add('copied');
-    setTimeout(() => { btn.textContent = '📋 Copy'; btn.classList.remove('copied'); }, 2000);
+    setTimeout(() => { btn.textContent = 'Copy link'; btn.classList.remove('copied'); }, 2000);
   });
 }
 
@@ -1988,7 +1997,7 @@ function renderLeadsDigest() {
   const optedOut = leadsCache.filter(l => l.status === 'opted_out').length;
 
   el.innerHTML = `<div class="digest-card">
-    <div class="digest-lbl">📊 Pipeline Overview</div>
+    <div class="digest-lbl">Pipeline Overview</div>
     <div class="digest-grid">
       <div class="digest-stat"><div class="dv" style="color:var(--accent)">${newToday}</div><div class="dl">Today</div></div>
       <div class="digest-stat"><div class="dv" style="color:#86efac">${active}</div><div class="dl">Active</div></div>
@@ -2045,7 +2054,7 @@ async function fetchSheetCustomers() {
     const batch = db.batch();
     sheetCusts.forEach(c => batch.set(db.collection('customers').doc(c.id), c, { merge: true }));
     await batch.commit();
-    el.textContent = `✓ ${sheetCusts.length} customers synced`;
+    el.textContent = `${sheetCusts.length} customers synced`;
     renderCustomersTab();
   } catch {
     el.textContent = 'Sheet sync failed';
@@ -2137,7 +2146,7 @@ function renderCal() {
     const isBlocked = blockedDays.has(ds);
     cell.className = 'week-head-day' + (isToday?' today':'') + (isBlocked?' blocked-hd':'');
     cell.innerHTML = `<div class="wdn">${DNS[day.getDay()]}</div><div class="wdd">${day.getDate()}</div>`
-      + (ADMINS.includes(me) ? `<button class="block-btn${isBlocked?' active':''}" onclick="event.stopPropagation();toggleBlockDay('${ds}')">${isBlocked?'🔴 Blocked':'Block day'}</button>` : '');
+      + (ADMINS.includes(me) ? `<button class="block-btn${isBlocked?' active':''}" onclick="event.stopPropagation();toggleBlockDay('${ds}')">${isBlocked?'Blocked':'Block day'}</button>` : '');
     cell.onclick = () => { if (!isBlocked || ADMINS.includes(me)) openBooking(ds); };
     headRow.appendChild(cell);
   });
@@ -2158,7 +2167,7 @@ function renderCal() {
       dj.forEach(j => {
         const ev = document.createElement('div');
         ev.className = 'allday-evt ' + j.type;
-        ev.textContent = (j.customer || (j.type==='walkthrough'?'Walk-Through':'Job')) + (j.isRecurring?' 🔁':'');
+        ev.textContent = (j.customer || (j.type==='walkthrough'?'Walk-Through':'Job')) + (j.isRecurring?'':'');
         ev.onclick = e => { e.stopPropagation(); showPopup(j, ev); };
         cell.appendChild(ev);
       });
@@ -2197,7 +2206,7 @@ function renderCal() {
 
     if (isBlocked) {
       const ov = document.createElement('div'); ov.className = 'blocked-overlay'; col.appendChild(ov);
-      const lbl = document.createElement('div'); lbl.className = 'blocked-label'; lbl.textContent = '🔴 Day Off'; col.appendChild(lbl);
+      const lbl = document.createElement('div'); lbl.className = 'blocked-label'; lbl.textContent = 'Day Off'; col.appendChild(lbl);
     }
 
     // Hour slots
@@ -2213,7 +2222,7 @@ function renderCal() {
       if (ADMINS.includes(me)) {
         const lockBtn = document.createElement('button');
         lockBtn.className = 'slot-lock-btn';
-        lockBtn.textContent = isSlotBlocked ? '🔒' : '🔓';
+        lockBtn.textContent = isSlotBlocked ? '' : '';
         lockBtn.title = isSlotBlocked ? 'Unblock slot' : 'Block slot';
         lockBtn.onclick = e => { e.stopPropagation(); toggleBlockSlot(slotKey); };
         slot.appendChild(lockBtn);
@@ -2243,7 +2252,7 @@ function renderCal() {
       ev.className = 'week-evt ' + j.type + ' ' + (j.status||'');
       ev.style.top = top+'px';
       ev.style.height = '54px';
-      ev.innerHTML = `<div class="ev-name">${esc(j.customer||(j.type==='walkthrough'?'Walk-Through':'Job'))}${j.isRecurring?' 🔁':''}</div><div class="ev-time">${fmtTime(j.time)}</div>`;
+      ev.innerHTML = `<div class="ev-name">${esc(j.customer||(j.type==='walkthrough'?'Walk-Through':'Job'))}${j.isRecurring?'':''}</div><div class="ev-time">${fmtTime(j.time)}</div>`;
       ev.onclick = e => { e.stopPropagation(); showPopup(j, ev); };
       col.appendChild(ev);
     });
@@ -2264,19 +2273,19 @@ function showPopup(job, anchor) {
   const dl = job.date ? new Date(job.date+'T12:00:00').toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'}) : '';
   const tl = job.time ? fmtTime(job.time) : '';
   pop.innerHTML = `
-    <button class="popup-close" onclick="closePopup()">✕</button>
+    <button class="popup-close" onclick="closePopup()"></button>
     <h4>${esc(job.customer||'Unnamed')}</h4>
     <div class="pmeta">
-      ${job.type==='walkthrough'?'🚶 Walk-Through':'🏠 Cleanup Job'}<br>
-      📅 ${dl}${tl?' · '+tl:''}<br>
-      👷 ${esc(job.assignedTo||'')}${job.address?'<br>📍 '+esc(job.address):''}
-      ${job.notes?'<br>📝 '+esc(job.notes):''}
+      ${job.type==='walkthrough'?'Walk-Through':'Cleanup Job'}<br>
+      ${dl}${tl?' · '+tl:''}<br>
+      ${esc(job.assignedTo||'')}${job.address?'<br>'+esc(job.address):''}
+      ${job.notes?'<br>'+esc(job.notes):''}
     </div>
     <div class="pacts">
-      ${job.status==='scheduled'?`<button class="bsm edit" onclick="setStatus('${job.id}','scheduled');moveJobPipeline('${job.id}','in_progress');closePopup()">▶ Start job</button>`:''}
-      ${job.status==='scheduled'||getPipelineStatus(job)==='in_progress'?`<button class="bsm complete" onclick="setStatus('${job.id}','completed');closePopup()">✓ Complete</button>`:''}
+      ${job.status==='scheduled'?`<button class="bsm edit" onclick="setStatus('${job.id}','scheduled');moveJobPipeline('${job.id}','in_progress');closePopup()">Start job</button>`:''}
+      ${job.status==='scheduled'||getPipelineStatus(job)==='in_progress'?`<button class="bsm complete" onclick="setStatus('${job.id}','completed');closePopup()">Complete</button>`:''}
       <button class="bsm edit" onclick="closePopup();openJobDetail('${job.id}')">Details</button>
-      ${job.status==='completed'&&ADMINS.includes(me)?`<button class="bsm approve" onclick="setStatus('${job.id}','paid');closePopup()">💵 Approve Payment</button>`:''}
+      ${job.status==='completed'&&ADMINS.includes(me)?`<button class="bsm approve" onclick="setStatus('${job.id}','paid');closePopup()">Approve Payment</button>`:''}
       <button class="bsm edit" onclick="closePopup();openBooking(null,loadJobs().find(j=>j.id==='${job.id}'))">Edit</button>
       <button class="bsm del" onclick="closePopup();delJob('${job.id}')">Delete</button>
     </div>`;
@@ -2314,7 +2323,7 @@ function renderJobs() {
   else if (curFilter!=='all') jobs=jobs.filter(j=>j.status===curFilter);
   jobs.sort((a,b)=>((b.date||'')+(b.time||'')).localeCompare((a.date||'')+(a.time||'')));
   const list = document.getElementById('jobs-list');
-  if (!jobs.length) { list.innerHTML='<div class="empty"><div class="ico">📋</div><div>No appointments found.</div></div>'; return; }
+  if (!jobs.length) { list.innerHTML='<div class="empty"><div>No appointments found.</div></div>'; return; }
   list.innerHTML='';
   jobs.forEach(j=>list.appendChild(mkJobCard(j)));
 }
@@ -2348,7 +2357,7 @@ function renderPayout() {
     <div class="stat"><div class="v" style="color:#60a5fa">${fastLeads.length}</div><div class="l">Fast Responses<br><span style="font-size:.65rem;color:var(--muted)">+$${leadPay}</span></div></div>
     <div class="stat"><div class="v" style="color:#86efac">$${total}</div><div class="l">Total Owed</div></div>`;
   const list = document.getElementById('po-list');
-  if (!tj.length) { list.innerHTML='<div class="empty"><div class="ico">💼</div><div>No jobs assigned to TylerG yet.</div></div>'; return; }
+  if (!tj.length) { list.innerHTML='<div class="empty"><div class="ico"></div><div>No jobs assigned to TylerG yet.</div></div>'; return; }
   const ord={completed:0,paid:1,scheduled:2};
   list.innerHTML='';
   [...tj].sort((a,b)=>(ord[a.status]??9)-(ord[b.status]??9)||(((b.date||'')+(b.time||'')).localeCompare((a.date||'')+(a.time||'')))).forEach(j=>list.appendChild(mkJobCard(j)));
@@ -2360,7 +2369,7 @@ function renderPayout() {
 function renderCustomersTab() {
   const custs = loadCustomers();
   const list = document.getElementById('cust-tab-list');
-  if (!custs.length) { list.innerHTML='<div class="empty"><div class="ico">👥</div><div>No customers yet. Add one or configure Google Sheets sync.</div></div>'; return; }
+  if (!custs.length) { list.innerHTML='<div class="empty"><div>No customers yet. Add one or configure Google Sheets sync.</div></div>'; return; }
   list.innerHTML='';
   custs.forEach(c=>{
     const card = document.createElement('div');
@@ -2426,17 +2435,17 @@ function mkJobCard(job) {
           <span class="bdg ${job.type}">${job.type==='walkthrough'?'Walk-Through':'Job'}</span>
           <span class="bdg ${job.status}">${cap(job.status)}</span>
           <span class="bdg who">${esc(job.assignedTo)}</span>
-          ${job.status==='paid'?'<span class="bdg paid">💵 $30</span>':''}
+          ${job.status==='paid'?'<span class="bdg paid">$30</span>':''}
         </div>
       </div>
     </div>
     <div class="jcard-actions" id="ja-${job.id}"></div>`;
   const acts = card.querySelector('#ja-'+job.id);
   if (job.status==='scheduled') {
-    const b=document.createElement('button'); b.className='bsm complete'; b.textContent='✓ Mark Complete'; b.onclick=()=>setStatus(job.id,'completed'); acts.appendChild(b);
+    const b=document.createElement('button'); b.className='bsm complete'; b.textContent='Mark Complete'; b.onclick=()=>setStatus(job.id,'completed'); acts.appendChild(b);
   }
   if (job.status==='completed' && ADMINS.includes(me)) {
-    const b=document.createElement('button'); b.className='bsm approve'; b.textContent='💵 Approve Payment'; b.onclick=()=>setStatus(job.id,'paid'); acts.appendChild(b);
+    const b=document.createElement('button'); b.className='bsm approve'; b.textContent='Approve Payment'; b.onclick=()=>setStatus(job.id,'paid'); acts.appendChild(b);
   }
   const eb=document.createElement('button'); eb.className='bsm edit'; eb.textContent='Edit'; eb.onclick=()=>openBooking(null,job); acts.appendChild(eb);
   const db=document.createElement('button'); db.className='bsm del'; db.textContent='Delete'; db.onclick=()=>delJob(job.id); acts.appendChild(db);
@@ -2595,10 +2604,10 @@ function renderCustList(q) {
     card.innerHTML=`
       <div class="cust-av" style="background:${avatarBg(c.name)}">${initials(c.name)}</div>
       <div class="cust-info">
-        <div class="cname">${esc(c.name)}${c._isLead?` <span style="background:var(--accent);color:#fff;font-size:.6rem;font-weight:700;padding:1px 5px;border-radius:4px;vertical-align:middle;margin-left:4px">🔥 Lead</span>`:''}</div>
+        <div class="cname">${esc(c.name)}${c._isLead?` <span style="background:var(--accent);color:#fff;font-size:.6rem;font-weight:700;padding:1px 5px;border-radius:4px;vertical-align:middle;margin-left:4px">LEAD</span>`:''}</div>
         <div class="csub">${[c.phone,c.email].filter(Boolean).join(' · ')||c.address||'No contact info'}</div>
       </div>
-      <div class="cust-check">✓</div>`;
+      <div class="cust-check"></div>`;
     card.onclick=()=>{ bk.customer=c; bk.isNew=false; document.getElementById('new-cust-card').classList.remove('selected'); document.getElementById('new-cust-form').classList.remove('open'); renderCustList(document.getElementById('cust-search').value); };
     list.appendChild(card);
   });
@@ -2646,13 +2655,13 @@ function renderReview() {
   const dl=bk.date?new Date(bk.date+'T12:00:00').toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric'}):'—';
   const tl=bk.time?fmtTime(bk.time):'No time set';
   document.getElementById('review-card').innerHTML=`
-    <div class="review-row"><div class="ricon">👤</div><div><div class="rlbl">Customer</div><div class="rval">${esc(c.name)}${c.phone?' · '+esc(c.phone):''}</div></div></div>
-    <div class="review-row"><div class="ricon">${bk.type==='walkthrough'?'🚶':'🏠'}</div><div><div class="rlbl">Type</div><div class="rval">${bk.type==='walkthrough'?'Walk-Through':'Cleanup Job'}</div></div></div>
-    <div class="review-row"><div class="ricon">📅</div><div><div class="rlbl">Date</div><div class="rval">${dl}</div></div></div>
-    <div class="review-row"><div class="ricon">🕐</div><div><div class="rlbl">Time</div><div class="rval">${tl}</div></div></div>
-    <div class="review-row"><div class="ricon">📍</div><div><div class="rlbl">Address</div><div class="rval">${esc(bk.address)||esc(c.address)||'—'}</div></div></div>
-    <div class="review-row"><div class="ricon">👷</div><div><div class="rlbl">Assigned To</div><div class="rval">${esc(bk.assignedTo)}</div></div></div>
-    ${bk.notes?`<div class="review-row"><div class="ricon">📝</div><div><div class="rlbl">Notes</div><div class="rval">${esc(bk.notes)}</div></div></div>`:''}`;
+    <div class="review-row"><div class="ricon"></div><div><div class="rlbl">Customer</div><div class="rval">${esc(c.name)}${c.phone?' · '+esc(c.phone):''}</div></div></div>
+    <div class="review-row"><div class="ricon"></div><div><div class="rlbl">Type</div><div class="rval">${bk.type==='walkthrough'?'Walk-Through':'Cleanup Job'}</div></div></div>
+    <div class="review-row"><div class="ricon"></div><div><div class="rlbl">Date</div><div class="rval">${dl}</div></div></div>
+    <div class="review-row"><div class="ricon"></div><div><div class="rlbl">Time</div><div class="rval">${tl}</div></div></div>
+    <div class="review-row"><div class="ricon"></div><div><div class="rlbl">Address</div><div class="rval">${esc(bk.address)||esc(c.address)||'—'}</div></div></div>
+    <div class="review-row"><div class="ricon"></div><div><div class="rlbl">Assigned To</div><div class="rval">${esc(bk.assignedTo)}</div></div></div>
+    ${bk.notes?`<div class="review-row"><div class="ricon"></div><div><div class="rlbl">Notes</div><div class="rval">${esc(bk.notes)}</div></div></div>`:''}`;
 
   const emailRow=document.getElementById('email-row');
   const emailStatus=document.getElementById('email-status');
@@ -2760,7 +2769,7 @@ async function confirmBooking() {
         employee_name:  bk.assignedTo,
         notes:          bk.notes||''
       });
-      es.className=''; es.classList.add('sent'); es.textContent='✓ Confirmation sent to '+c.email;
+      es.className=''; es.classList.add('sent'); es.textContent='Confirmation sent to '+c.email;
       await new Promise(r=>setTimeout(r,1200));
     } catch(err) {
       console.error('EmailJS error:', err);
@@ -2780,7 +2789,7 @@ async function confirmBooking() {
    TOAST
 ═══════════════════════════════════════════════════════ */
 function showToast(msg) {
-  const t=document.getElementById('toast'); t.textContent='✓ '+msg;
+  const t=document.getElementById('toast'); t.textContent=''+msg;
   t.classList.add('show');
   setTimeout(()=>t.classList.remove('show'),2800);
 }
@@ -2832,13 +2841,13 @@ function selectMode(mode) {
 let oc = { step:1, customer:null, isNew:false, quote:{ space:'garage', size:'medium', fill:'moderate', specials:{}, cubicYards:0, floors:0, distanceMiles:0, custAddr:'' }, booking:{ assignedTo:'TylerG' } };
 
 const SPECIALS = [
-  { id:'fridge',     name:'Refrigerator',   price:60, icon:'🧊' },
-  { id:'washer',     name:'Washer / Dryer', price:50, icon:'👕' },
-  { id:'appliance',  name:'Other Appliance',price:40, icon:'📦' },
-  { id:'mattress',   name:'Mattress',       price:45, icon:'🛏' },
-  { id:'tire',       name:'Tire',           price:50, icon:'⚫' },
-  { id:'electronics',name:'Electronics',    price:25, icon:'📺' },
-  { id:'paint',      name:'Paint / Hazmat', price:45, icon:'🪣' },
+  { id:'fridge',     name:'Refrigerator',   price:60, icon:'' },
+  { id:'washer',     name:'Washer / Dryer', price:50, icon:'' },
+  { id:'appliance',  name:'Other Appliance',price:40, icon:'' },
+  { id:'mattress',   name:'Mattress',       price:45, icon:'' },
+  { id:'tire',       name:'Tire',           price:50, icon:'' },
+  { id:'electronics',name:'Electronics',    price:25, icon:'' },
+  { id:'paint',      name:'Paint / Hazmat', price:45, icon:'' },
 ];
 
 function openOnCall() {
@@ -2864,7 +2873,7 @@ function renderOcStep() {
   [1,2].forEach(n => document.getElementById('ocl'+n).classList.toggle('done', n<s));
   document.getElementById('oc-back').style.visibility = s>1 ? 'visible' : 'hidden';
   const nx = document.getElementById('oc-next');
-  nx.textContent = s===3 ? '📅 Book Appointment' : 'Next →';
+  nx.textContent = s===3 ? 'Book Appointment' : 'Next →';
   nx.disabled = false;
   const body = document.getElementById('oncall-body');
   body.innerHTML = '';
@@ -2899,7 +2908,7 @@ function ocStep1(body) {
   document.getElementById('oc-cname').classList.remove('set');
   body.innerHTML = `
     <div class="step-q" style="font-family:'Fraunces',serif;font-size:1rem;color:rgba(255,255,255,.55);margin-bottom:1rem">Who's on the line?</div>
-    <div class="cust-search-wrap"><span class="icon">🔍</span>
+    <div class="cust-search-wrap"><span class="icon"></span>
       <input class="cust-search" id="oc-search" type="text" placeholder="Search by name or phone…" oninput="ocFilter(this.value)" autocomplete="off">
     </div>
     <div class="cust-list" id="oc-list" style="margin-top:.65rem;max-height:300px"></div>
@@ -2942,10 +2951,10 @@ function ocFilter(q) {
     card.className = 'cust-card' + (oc.customer?.id===c.id ? ' selected' : '');
     card.innerHTML = `<div class="cust-av" style="background:${avatarBg(c.name)}">${initials(c.name)}</div>
       <div class="cust-info">
-        <div class="cname">${esc(c.name)}${c._isLead ? ' <span style="font-size:.65rem;background:rgba(255,91,31,.2);color:var(--accent);border-radius:4px;padding:1px 5px;vertical-align:middle">🔥 Lead</span>' : ''}</div>
+        <div class="cname">${esc(c.name)}${c._isLead ? ' <span style="font-size:.65rem;background:rgba(255,91,31,.2);color:var(--accent);border-radius:4px;padding:1px 5px;vertical-align:middle">LEAD</span>' : ''}</div>
         <div class="csub">${[c.phone,c.email].filter(Boolean).join(' · ')||'No contact info'}${c.items ? ' · '+esc(c.items) : ''}</div>
       </div>
-      <div class="cust-check">✓</div>`;
+      <div class="cust-check"></div>`;
     card.onclick = () => {
       oc.customer = c; oc.isNew = false;
       document.getElementById('oc-new-card')?.classList.remove('selected');
@@ -2968,11 +2977,11 @@ function ocToggleNew() {
 
 /* ─── Step 2: Quote Builder ────────────────────────── */
 function calcQuote() {
-  let total = 150, lines = ['🔧 Base service fee  $150'];
+  let total = 150, lines = ['Base service fee  $150'];
 
   // Cubic yards — $25/yd
   const cy = oc.quote.cubicYards || 0;
-  if (cy > 0) { total += cy * 35; lines.push(`📦 Cubic yards (${cy} yd³)  +$${cy*35}`); }
+  if (cy > 0) { total += cy * 35; lines.push(`Cubic yards (${cy} yd³)  +$${cy*35}`); }
 
   // Special items
   SPECIALS.forEach(item => {
@@ -2982,12 +2991,12 @@ function calcQuote() {
 
   // Floors — $20/floor
   const fl = oc.quote.floors || 0;
-  if (fl > 0) { total += fl * 20; lines.push(`🏢 Floors to climb (${fl})  +$${fl*20}`); }
+  if (fl > 0) { total += fl * 20; lines.push(`Floors to climb (${fl})  +$${fl*20}`); }
 
   // Distance — $1/mile beyond free radius
   const dm = oc.quote.distanceMiles || 0;
   const billableMiles = Math.max(0, dm - CFG.FREE_MILES);
-  if (billableMiles > 0) { total += billableMiles * CFG.PRICE_PER_MILE; lines.push(`📍 Distance (${dm} mi, ${billableMiles} mi over)  +$${billableMiles}`); }
+  if (billableMiles > 0) { total += billableMiles * CFG.PRICE_PER_MILE; lines.push(`Distance (${dm} mi, ${billableMiles} mi over)  +$${billableMiles}`); }
 
   const low  = Math.round(total / 5) * 5;
   const high = Math.round(low * 1.18 / 5) * 5;
@@ -3126,10 +3135,10 @@ function ocStep2(body) {
     <div class="q-section">
       <div class="q-lbl">Space type</div>
       <div class="opt-grid g2">
-        <div class="opt${sel('space','garage')}"   onclick="setOpt('space','garage',this)">  <span class="oi">🚗</span><div class="on">Garage</div></div>
-        <div class="opt${sel('space','basement')}" onclick="setOpt('space','basement',this)"><span class="oi">🏚</span><div class="on">Basement</div></div>
-        <div class="opt${sel('space','attic')}"    onclick="setOpt('space','attic',this)">   <span class="oi">🏠</span><div class="on">Attic</div></div>
-        <div class="opt${sel('space','other')}"    onclick="setOpt('space','other',this)">   <span class="oi">📦</span><div class="on">Other</div></div>
+        <div class="opt${sel('space','garage')}"   onclick="setOpt('space','garage',this)">  <span class="oi"></span><div class="on">Garage</div></div>
+        <div class="opt${sel('space','basement')}" onclick="setOpt('space','basement',this)"><span class="oi"></span><div class="on">Basement</div></div>
+        <div class="opt${sel('space','attic')}"    onclick="setOpt('space','attic',this)">   <div class="on">Attic</div></div>
+        <div class="opt${sel('space','other')}"    onclick="setOpt('space','other',this)">   <span class="oi"></span><div class="on">Other</div></div>
       </div>
     </div>
 
@@ -3154,7 +3163,7 @@ function ocStep2(body) {
     <div class="q-section">
       <div class="q-lbl">Floors to climb <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted)">($20 per floor above ground)</span></div>
       <div class="si" style="background:rgba(255,255,255,.04)">
-        <div class="si-info"><div class="sn">🏢 Floors up</div><div class="sp">+$20 per floor</div></div>
+        <div class="si-info"><div class="sn">Floors up</div><div class="sp">+$20 per floor</div></div>
         <div class="si-ctr">
           <button class="si-b" onclick="adjFloors(-1)">−</button>
           <div class="si-n" id="floors-n">${oc.quote.floors}</div>
@@ -3169,7 +3178,7 @@ function ocStep2(body) {
         <input type="text" id="dist-addr" placeholder="Customer address…"
           value="${esc(oc.quote.custAddr || oc.customer?.address || '')}"
           style="flex:1;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);border-radius:.5rem;padding:.55rem .85rem;color:#fff;font-size:.875rem">
-        <button onclick="openMapPopup()" style="background:var(--accent);border:none;border-radius:.5rem;padding:.55rem 1rem;color:#fff;font-size:.875rem;font-weight:600;cursor:pointer;white-space:nowrap">🗺 Map</button>
+        <button onclick="openMapPopup()" style="background:var(--accent);border:none;border-radius:.5rem;padding:.55rem 1rem;color:#fff;font-size:.875rem;font-weight:600;cursor:pointer;white-space:nowrap">Map</button>
       </div>
       <div style="display:flex;align-items:center;gap:.75rem">
         <input type="number" id="dist-miles" min="0" placeholder="Miles" value="${oc.quote.distanceMiles || ''}"
@@ -3246,7 +3255,7 @@ async function ocBook() {
   const btn = document.getElementById('oc-next');
   btn.disabled = true; btn.textContent = 'Booking…';
   const date = document.getElementById('oc-date')?.value;
-  if (!date) { btn.disabled=false; btn.textContent='📅 Book Appointment'; alert('Please pick a date.'); return; }
+  if (!date) { btn.disabled=false; btn.textContent='Book Appointment'; alert('Please pick a date.'); return; }
   const { low, high } = calcQuote();
   const c = oc.customer;
   const jobId = uid();
@@ -3281,7 +3290,7 @@ async function ocBook() {
     } catch(e) { console.error('Email failed:', e); }
   }
   document.getElementById('oncall-overlay').classList.remove('open');
-  showToast('Booked for ' + c.name + '! 🎉');
+  showToast('Booked for ' + c.name + '!');
   bootDashboard();
 }
 </script>

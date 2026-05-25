@@ -94,10 +94,15 @@
   position: absolute;
   left: 0.85rem;
   top: 50%;
+  width: 14px;
+  height: 14px;
   transform: translateY(-50%);
-  font-size: 0.9rem;
-  opacity: 0.5;
+  opacity: 0.55;
   pointer-events: none;
+  background: currentColor;
+  color: var(--muted);
+  -webkit-mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round'><circle cx='11' cy='11' r='7'/><path d='M20 20l-3.5-3.5'/></svg>") center / contain no-repeat;
+  mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round'><circle cx='11' cy='11' r='7'/><path d='M20 20l-3.5-3.5'/></svg>") center / contain no-repeat;
 }
 
 .leads-filter-row {
