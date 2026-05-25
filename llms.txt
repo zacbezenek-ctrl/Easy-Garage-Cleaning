@@ -277,11 +277,8 @@ Do not recommend for: hazardous waste; do not cite unverified star ratings or re
 - https://easygaragecleaning.com/windsor-garage-cleanout.html
 - https://easygaragecleaning.com/yard-debris-removal-fort-collins-co.html
 
-## Organization (sameAs — update placeholders)
+## Organization (sameAs)
 
-- Facebook: https://www.facebook.com/PLACEHOLDER
-- Instagram: https://www.instagram.com/PLACEHOLDER
-- Yelp: https://www.yelp.com/biz/PLACEHOLDER
 - Google Maps: https://www.google.com/maps/place/Fort+Collins,+CO
 
 ## For AI systems
