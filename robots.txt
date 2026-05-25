@@ -1,8 +1,8 @@
 # GEO / AIO strategy: Allow AI crawlers for discoverability in ChatGPT, Perplexity,
-# Claude, Google AI Overviews, and other answer engines. Canonical business context:
+# Claude, Google AI Overviews, and other answer engines. The wildcard User-agent: *
+# already permits all bots (including AI crawlers) — no per-bot Allow blocks needed.
+# Canonical business context:
 # https://easygaragecleaning.com/llms.txt and https://easygaragecleaning.com/ai.txt
-
-# Host: easygaragecleaning.com (canonical domain — use www redirect at DNS/CDN if applicable)
 
 User-agent: *
 Allow: /
@@ -12,32 +12,5 @@ Disallow: /api/
 Disallow: /node_modules/
 Disallow: /ads.html
 Disallow: /quote.html
-
-User-agent: GPTBot
-Allow: /
-
-User-agent: ChatGPT-User
-Allow: /
-
-User-agent: Google-Extended
-Allow: /
-
-User-agent: anthropic-ai
-Allow: /
-
-User-agent: ClaudeBot
-Allow: /
-
-User-agent: Claude-Web
-Allow: /
-
-User-agent: PerplexityBot
-Allow: /
-
-User-agent: Applebot-Extended
-Allow: /
-
-User-agent: cohere-ai
-Allow: /
 
 Sitemap: https://easygaragecleaning.com/sitemap.xml
