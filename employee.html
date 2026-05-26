@@ -430,8 +430,8 @@ body.has-session #login-screen { display: none; }
       text-transform: uppercase;
     }
 .cust-info { flex: 1; min-width: 0; }
-.cust-info .cname { font-size: .9rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.cust-info .csub  { font-size: .75rem; color: var(--muted); margin-top: .15rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cust-info .cname { font-size: .9rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--white); }
+.cust-info .csub  { font-size: .75rem; color: rgba(255,255,255,.55); margin-top: .15rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cust-check { color: var(--accent); font-size: 1rem; flex-shrink: 0; opacity: 0; transition: opacity .2s; }
 .cust-card.selected .cust-check { opacity: 1; }
 .new-cust-card {
@@ -702,7 +702,7 @@ body.has-session #login-screen { display: none; }
 .cust-search-bar { width: 100%; max-width: 320px; background: var(--navy); border: 1px solid rgba(255,255,255,.12); border-radius: .55rem; color: #fff; padding: .6rem 1rem; margin-bottom: 1rem; font-size: .9rem; }
 .modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.75); backdrop-filter: blur(4px); z-index: 350; display: none; align-items: flex-end; justify-content: center; padding: 0; }
 .modal-backdrop.open { display: flex; }
-#booking-overlay, #contract-modal, .lead-quote-overlay { position: fixed; inset: 0; z-index: 350; display: none; align-items: center; justify-content: center; background: rgba(0,0,0,.75); backdrop-filter: blur(4px); padding: 1rem; }
+#booking-overlay, #contract-modal, .lead-quote-overlay { position: fixed; inset: 0; z-index: 350; display: none; align-items: center; justify-content: center; background: rgba(0,0,0,.75); backdrop-filter: blur(4px); padding: 1rem; color: var(--white); }
 #booking-overlay.open, #contract-modal.open, .lead-quote-overlay.open { display: flex; }
 @media (min-width: 640px) { .modal-backdrop.open { align-items: center; padding: 1rem; } }
 .modal-sheet { background: var(--navy-soft); border: 1px solid rgba(255,255,255,.08); border-radius: 1.25rem 1.25rem 0 0; width: 100%; max-width: 520px; max-height: 90vh; overflow-y: auto; padding: 1.5rem 1.75rem 2rem; box-shadow: 0 24px 64px rgba(0,0,0,.5); }
@@ -1442,6 +1442,9 @@ function startListeners() {
     custsCache = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     updateFirebaseStatus();
     renderCustomersTab();
+    if (typeof bk !== 'undefined' && bk.step === 1 && document.getElementById('booking-overlay')?.classList.contains('open')) {
+      renderCustList(document.getElementById('cust-search')?.value || '');
+    }
   }, err => {
     firebaseConn.customers = 'error';
     updateFirebaseStatus();
@@ -1485,6 +1488,9 @@ function startListeners() {
     }
     if (oc.step === 1 && document.getElementById('oncall-overlay')?.classList.contains('open')) {
       ocFilter(document.getElementById('oc-search')?.value || '');
+    }
+    if (typeof bk !== 'undefined' && bk.step === 1 && document.getElementById('booking-overlay')?.classList.contains('open')) {
+      renderCustList(document.getElementById('cust-search')?.value || '');
     }
   }, err => {
     firebaseConn.leads = 'error';
