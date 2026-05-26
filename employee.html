@@ -1065,23 +1065,8 @@
 
         <div class="frow" style="margin-bottom:1.1rem">
           <div class="fg" style="margin:0"><label>Date *</label><input type="date" id="b-date"></div>
-          <div class="fg" style="margin:0"><label>Time</label><input type="time" id="b-time"></div>
-        </div>
-
-        <div class="fg" style="margin-bottom:1.1rem">
-          <label>Duration</label>
-          <select id="b-duration">
-            <option value="30">30 minutes</option>
-            <option value="60" selected>1 hour</option>
-            <option value="90">1.5 hours</option>
-            <option value="120">2 hours</option>
-            <option value="150">2.5 hours</option>
-            <option value="180">3 hours</option>
-            <option value="240">4 hours</option>
-            <option value="300">5 hours</option>
-            <option value="360">6 hours</option>
-            <option value="480">8 hours (full day)</option>
-          </select>
+          <div class="fg" style="margin:0"><label>Start Time</label><input type="time" id="b-time"></div>
+          <div class="fg" style="margin:0"><label>End Time</label><input type="time" id="b-endtime"></div>
         </div>
 
         <div class="slbl-sm">Assigned To</div>
@@ -2052,8 +2037,8 @@ function renderCal() {
       ev.className = 'week-evt ' + j.type + ' ' + (j.status||'');
       ev.style.top = top+'px';
       ev.style.height = evHeight+'px';
-      const durLabel = dur >= 60 ? (dur/60)+'h' : dur+'m';
-      ev.innerHTML = `<div class="ev-name">${esc(j.customer||(j.type==='walkthrough'?'Walk-Through':'Job'))}${j.isRecurring?'':''}</div><div class="ev-time">${fmtTime(j.time)} · ${durLabel}</div>`;
+      const endLabel = j.endTime ? fmtTime(j.endTime) : fmtTime(calcEndTime(j.time, dur));
+      ev.innerHTML = `<div class="ev-name">${esc(j.customer||(j.type==='walkthrough'?'Walk-Through':'Job'))}${j.isRecurring?'':''}</div><div class="ev-time">${fmtTime(j.time)} – ${endLabel}</div>`;
       ev.onclick = e => { e.stopPropagation(); showPopup(j, ev); };
       col.appendChild(ev);
     });
@@ -2078,7 +2063,7 @@ function showPopup(job, anchor) {
     <h4>${esc(job.customer||'Unnamed')}</h4>
     <div class="pmeta">
       ${job.type==='walkthrough'?'Walk-Through':'Cleanup Job'}<br>
-      ${dl}${tl?' · '+tl:''}${job.durationMin?' · '+(job.durationMin>=60?(job.durationMin/60)+' hr'+(job.durationMin>60?'s':''):job.durationMin+' min'):''}<br>
+      ${dl}${tl?' · '+tl+(job.endTime?' – '+fmtTime(job.endTime):''):''}<br>
       ${esc(job.assignedTo||'')}${job.address?'<br>'+esc(job.address):''}
       ${job.notes?'<br>'+esc(job.notes):''}
     </div>
@@ -2295,19 +2280,37 @@ function refresh() {
 ═══════════════════════════════════════════════════════ */
 let bk = {
   step:1, customer:null, isNew:false,
-  type:'walkthrough', date:'', time:'', durationMin:60,
+  type:'walkthrough', date:'', time:'', endTime:'', durationMin:60,
   assignedTo:'ZacB', address:'', notes:'',
   editId:null, _fromLeadId:null
 };
 
+function calcEndTime(start, durMin) {
+  if (!start) return '';
+  const [h,m] = start.split(':').map(Number);
+  const total = h*60+m+(durMin||60);
+  return String(Math.floor(total/60)%24).padStart(2,'0')+':'+String(total%60).padStart(2,'0');
+}
+function calcDurFromTimes(start, end) {
+  if (!start||!end) return 60;
+  const [sh,sm]=start.split(':').map(Number);
+  const [eh,em]=end.split(':').map(Number);
+  const d=(eh*60+em)-(sh*60+sm);
+  return d>0?d:60;
+}
+
 function openBooking(dateStr, editJob, timeStr) {
+  const eTime = editJob?.time || timeStr || '';
+  const eDur = editJob?.durationMin || 60;
+  const eEnd = editJob?.endTime || calcEndTime(eTime, eDur);
   bk = {
     step: editJob ? 2 : 1,
     customer: null, isNew: false,
     type: editJob?.type || 'walkthrough',
     date: editJob?.date || dateStr || fmtDate(new Date()),
-    time: editJob?.time || timeStr || '',
-    durationMin: editJob?.durationMin || 60,
+    time: eTime,
+    endTime: eEnd,
+    durationMin: eDur,
     assignedTo: editJob?.assignedTo || (me==='TylerG'?'TylerG':'ZacB'),
     address: editJob?.address || '',
     notes: editJob?.notes || '',
@@ -2369,7 +2372,8 @@ function stepNext() {
   } else if (bk.step===2) {
     bk.date=document.getElementById('b-date').value;
     bk.time=document.getElementById('b-time').value;
-    bk.durationMin=parseInt(document.getElementById('b-duration').value)||60;
+    bk.endTime=document.getElementById('b-endtime').value;
+    bk.durationMin=calcDurFromTimes(bk.time,bk.endTime);
     bk.address=document.getElementById('b-addr').value.trim();
     bk.notes=document.getElementById('b-notes').value.trim();
     bk.recurrence=document.getElementById('job-recurrence').value||'none';
@@ -2432,7 +2436,7 @@ function fillDetails() {
   selType(bk.type);
   document.getElementById('b-date').value=bk.date||fmtDate(new Date());
   document.getElementById('b-time').value=bk.time||'';
-  document.getElementById('b-duration').value=String(bk.durationMin||60);
+  document.getElementById('b-endtime').value=bk.endTime||calcEndTime(bk.time,bk.durationMin||60);
   document.getElementById('b-addr').value=bk.address||bk.customer?.address||'';
   document.getElementById('b-notes').value=bk.notes||'';
   document.getElementById('job-recurrence').value=bk.recurrence||'none';
@@ -2462,8 +2466,7 @@ function renderReview() {
     <div class="review-row"><div class="ricon"></div><div><div class="rlbl">Customer</div><div class="rval">${esc(c.name)}${c.phone?' · '+esc(c.phone):''}</div></div></div>
     <div class="review-row"><div class="ricon"></div><div><div class="rlbl">Type</div><div class="rval">${bk.type==='walkthrough'?'Walk-Through':'Cleanup Job'}</div></div></div>
     <div class="review-row"><div class="ricon"></div><div><div class="rlbl">Date</div><div class="rval">${dl}</div></div></div>
-    <div class="review-row"><div class="ricon"></div><div><div class="rlbl">Time</div><div class="rval">${tl}</div></div></div>
-    <div class="review-row"><div class="ricon"></div><div><div class="rlbl">Duration</div><div class="rval">${bk.durationMin>=60?(bk.durationMin/60)+' hr'+(bk.durationMin>60?'s':''):bk.durationMin+' min'}</div></div></div>
+    <div class="review-row"><div class="ricon"></div><div><div class="rlbl">Time</div><div class="rval">${tl}${bk.endTime?' – '+fmtTime(bk.endTime):''}</div></div></div>
     <div class="review-row"><div class="ricon"></div><div><div class="rlbl">Address</div><div class="rval">${esc(bk.address)||esc(c.address)||'—'}</div></div></div>
     <div class="review-row"><div class="ricon"></div><div><div class="rlbl">Assigned To</div><div class="rval">${esc(bk.assignedTo)}</div></div></div>
     ${bk.notes?`<div class="review-row"><div class="ricon"></div><div><div class="rlbl">Notes</div><div class="rval">${esc(bk.notes)}</div></div></div>`:''}`;
@@ -2495,6 +2498,7 @@ async function confirmBooking() {
     serviceType: bk.type === 'walkthrough' ? 'Walk-Through' : 'Garage Cleanout',
     date: bk.date,
     time: bk.time,
+    endTime: bk.endTime || '',
     durationMin: bk.durationMin || 60,
     customer: c.name,
     phone: c.phone||'',
@@ -3035,22 +3039,8 @@ function ocStep3(body) {
     </div>
     <div class="frow">
       <div class="fg" style="margin:0"><label>Date *</label><input type="date" id="oc-date" value="${fmtDate(new Date())}"></div>
-      <div class="fg" style="margin:0"><label>Time</label><input type="time" id="oc-time"></div>
-    </div>
-    <div class="fg">
-      <label>Duration</label>
-      <select id="oc-duration">
-        <option value="30">30 minutes</option>
-        <option value="60" selected>1 hour</option>
-        <option value="90">1.5 hours</option>
-        <option value="120">2 hours</option>
-        <option value="150">2.5 hours</option>
-        <option value="180">3 hours</option>
-        <option value="240">4 hours</option>
-        <option value="300">5 hours</option>
-        <option value="360">6 hours</option>
-        <option value="480">8 hours (full day)</option>
-      </select>
+      <div class="fg" style="margin:0"><label>Start Time</label><input type="time" id="oc-time"></div>
+      <div class="fg" style="margin:0"><label>End Time</label><input type="time" id="oc-endtime"></div>
     </div>
     <div class="fg" style="margin-top:.65rem">
       <label>Assigned To</label>
@@ -3085,7 +3075,8 @@ async function ocBook() {
     type: document.getElementById('oc-type')?.value || 'walkthrough',
     date,
     time: document.getElementById('oc-time')?.value || '',
-    durationMin: parseInt(document.getElementById('oc-duration')?.value) || 60,
+    endTime: document.getElementById('oc-endtime')?.value || '',
+    durationMin: calcDurFromTimes(document.getElementById('oc-time')?.value, document.getElementById('oc-endtime')?.value),
     customer: c.name, phone: c.phone||'', email: c.email||'',
     address: document.getElementById('oc-addr')?.value.trim() || c.address || '',
     assignedTo: oc.booking.assignedTo,
