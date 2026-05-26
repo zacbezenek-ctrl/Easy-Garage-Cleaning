@@ -685,6 +685,8 @@ body.has-session #login-screen { display: none; }
 .cust-search-bar { width: 100%; max-width: 320px; background: var(--navy); border: 1px solid rgba(255,255,255,.12); border-radius: .55rem; color: #fff; padding: .6rem 1rem; margin-bottom: 1rem; font-size: .9rem; }
 .modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.75); backdrop-filter: blur(4px); z-index: 350; display: none; align-items: flex-end; justify-content: center; padding: 0; }
 .modal-backdrop.open { display: flex; }
+#booking-overlay, #contract-modal, .lead-quote-overlay { position: fixed; inset: 0; z-index: 350; display: none; align-items: center; justify-content: center; background: rgba(0,0,0,.75); backdrop-filter: blur(4px); padding: 1rem; }
+#booking-overlay.open, #contract-modal.open, .lead-quote-overlay.open { display: flex; }
 @media (min-width: 640px) { .modal-backdrop.open { align-items: center; padding: 1rem; } }
 .modal-sheet { background: var(--navy-soft); border: 1px solid var(--navy-border); border-radius: 1rem 1rem 0 0; width: 100%; max-width: 520px; max-height: 90vh; overflow-y: auto; padding: 1.25rem 1.5rem 2rem; }
 @media (min-width: 640px) { .modal-sheet { border-radius: 1rem; } }
@@ -1008,7 +1010,7 @@ body.has-session #login-screen { display: none; }
 <!-- ═══════════════════════════════════════
      BOOKING WIZARD
 ═══════════════════════════════════════ -->
-<div id="booking-overlay" class="modal-backdrop" onclick="overlayClick(event)">
+<div id="booking-overlay" onclick="overlayClick(event)">
   <div class="bk-panel">
 
     <div class="bk-head">
@@ -1168,7 +1170,7 @@ body.has-session #login-screen { display: none; }
 </div>
 
 <!-- ── CONTRACT MODAL ───────────────────────────────── -->
-<div id="contract-modal" class="modal-backdrop" onclick="contractModalBgClick(event)">
+<div id="contract-modal" onclick="contractModalBgClick(event)">
   <div class="cm-panel">
     <div class="cm-title">Send Quote Contract</div>
     <div class="cm-sub" id="cm-lead-sub">Customer gets a link — they tap, read, type their name, done.</div>
@@ -1206,8 +1208,8 @@ body.has-session #login-screen { display: none; }
   </div>
 </div>
 
-<!-- ── QUOTE MODAL ─────────────────────────────────── -->
-<div id="quote-modal" class="modal-backdrop" onclick="quoteModalBgClick(event)">
+<!-- ── QUOTE MODAL (leads) ─────────────────────────── -->
+<div id="quote-modal" class="lead-quote-overlay" onclick="quoteModalBgClick(event)">
   <div class="qm-panel">
     <div class="qm-title">Mark as Quoted</div>
     <div class="qm-sub" id="qm-lead-name">Enter the quote amount for this lead</div>
