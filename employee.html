@@ -2452,11 +2452,11 @@ function stepBack() { if(bk.step>1){ bk.step--; renderStep(); } }
 
 /* Step 1 helpers */
 function renderCustList(q) {
-  const custs = loadCustomers().map(c => ({ ...c, _isLead: false }));
+  const custs = loadCustomers().map(c => ({ ...c, name: c.name || c.full_name || c.customerName || c.firstName || '', _isLead: false }));
   const seenPhones = new Set(custs.map(c => c.phone).filter(Boolean));
   const leadEntries = leadsCache
-    .filter(l => !l.respondedAt && (l.name || l.phone))
-    .map(l => ({ id: l.id, name: l.name||l.phone, phone: l.phone, email: l.email, address: '', _isLead: true }))
+    .filter(l => !l.respondedAt && (l.name || l.full_name || l.phone))
+    .map(l => ({ id: l.id, name: l.name || l.full_name || l.phone, phone: l.phone, email: l.email, address: '', _isLead: true }))
     .filter(l => !seenPhones.has(l.phone));
   const merged = [...custs, ...leadEntries];
   const lq = (q||'').toLowerCase();
@@ -2470,11 +2470,12 @@ function renderCustList(q) {
   fil.forEach(c=>{
     const card=document.createElement('div');
     card.className='cust-card'+(bk.customer?.id===c.id?' selected':'');
+    const displayName = c.name || c.full_name || c.customerName || c.firstName || '';
     card.innerHTML=`
-      <div class="cust-av" style="background:${avatarBg(c.name)}">${initials(c.name)}</div>
+      <div class="cust-av" style="background:${avatarBg(displayName||c.phone)};color:#fff">${initials(displayName||c.phone)}</div>
       <div class="cust-info">
-        <div class="cname">${esc(c.name)}${c._isLead?` <span style="background:var(--accent);color:#fff;font-size:.6rem;font-weight:700;padding:1px 5px;border-radius:4px;vertical-align:middle;margin-left:4px">LEAD</span>`:''}</div>
-        <div class="csub">${[c.phone,c.email].filter(Boolean).join(' · ')||c.address||'No contact info'}</div>
+        <div class="cname" style="color:#fff;font-size:.9rem;font-weight:600">${esc(displayName)}${c._isLead?` <span style="background:var(--accent);color:#fff;font-size:.6rem;font-weight:700;padding:1px 5px;border-radius:4px;vertical-align:middle;margin-left:4px">LEAD</span>`:''}</div>
+        <div class="csub" style="color:rgba(255,255,255,.6);font-size:.75rem">${[c.phone,c.email].filter(Boolean).join(' · ')||c.address||'No contact info'}</div>
       </div>
       <div class="cust-check"></div>`;
     card.onclick=()=>{ bk.customer=c; bk.isNew=false; document.getElementById('new-cust-card').classList.remove('selected'); document.getElementById('new-cust-form').classList.remove('open'); renderCustList(document.getElementById('cust-search').value); };
