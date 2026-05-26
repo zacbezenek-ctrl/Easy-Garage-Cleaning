@@ -545,7 +545,7 @@
         <div><span class="dl">Address</span><span>${esc(job.address || '—')}</span></div>
         <div><span class="dl">Crew</span><span>${esc(job.assignedTo || '—')}</span></div>
         <div><span class="dl">Quote</span><span>${esc(job.quote || '')} ${job.priceQuoted ? '$' + job.priceQuoted : ''} ${job.quoteStatus ? '(' + job.quoteStatus + ')' : ''}</span></div>
-        <div><span class="dl">Duration</span><span>${job.durationMin ? job.durationMin + ' min est.' : '—'}</span></div>
+        <div><span class="dl">Duration</span><span>${job.durationMin ? (job.durationMin >= 60 ? (job.durationMin/60) + ' hr' + (job.durationMin > 60 ? 's' : '') : job.durationMin + ' min') : '—'}</span></div>
         <div><span class="dl">Notes</span><span>${esc(job.notes || '—')}</span></div>
       </div>
       <div class="detail-section">

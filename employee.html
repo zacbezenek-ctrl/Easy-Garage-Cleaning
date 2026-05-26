@@ -1068,6 +1068,22 @@
           <div class="fg" style="margin:0"><label>Time</label><input type="time" id="b-time"></div>
         </div>
 
+        <div class="fg" style="margin-bottom:1.1rem">
+          <label>Duration</label>
+          <select id="b-duration">
+            <option value="30">30 minutes</option>
+            <option value="60" selected>1 hour</option>
+            <option value="90">1.5 hours</option>
+            <option value="120">2 hours</option>
+            <option value="150">2.5 hours</option>
+            <option value="180">3 hours</option>
+            <option value="240">4 hours</option>
+            <option value="300">5 hours</option>
+            <option value="360">6 hours</option>
+            <option value="480">8 hours (full day)</option>
+          </select>
+        </div>
+
         <div class="slbl-sm">Assigned To</div>
         <div class="assignees">
           <div class="asgn" id="as-Zac" onclick="selAssignee('ZacB')">
@@ -2030,11 +2046,14 @@ function renderCal() {
       const [jh,jm] = j.time.split(':').map(Number);
       if (jh<START_HR||jh>=END_HR) return; // still skip truly off-grid
       const top = (jh-START_HR)*60+(jm/60*60);
+      const dur = j.durationMin || 60;
+      const evHeight = Math.max(22, dur);
       const ev = document.createElement('div');
       ev.className = 'week-evt ' + j.type + ' ' + (j.status||'');
       ev.style.top = top+'px';
-      ev.style.height = '54px';
-      ev.innerHTML = `<div class="ev-name">${esc(j.customer||(j.type==='walkthrough'?'Walk-Through':'Job'))}${j.isRecurring?'':''}</div><div class="ev-time">${fmtTime(j.time)}</div>`;
+      ev.style.height = evHeight+'px';
+      const durLabel = dur >= 60 ? (dur/60)+'h' : dur+'m';
+      ev.innerHTML = `<div class="ev-name">${esc(j.customer||(j.type==='walkthrough'?'Walk-Through':'Job'))}${j.isRecurring?'':''}</div><div class="ev-time">${fmtTime(j.time)} · ${durLabel}</div>`;
       ev.onclick = e => { e.stopPropagation(); showPopup(j, ev); };
       col.appendChild(ev);
     });
@@ -2059,7 +2078,7 @@ function showPopup(job, anchor) {
     <h4>${esc(job.customer||'Unnamed')}</h4>
     <div class="pmeta">
       ${job.type==='walkthrough'?'Walk-Through':'Cleanup Job'}<br>
-      ${dl}${tl?' · '+tl:''}<br>
+      ${dl}${tl?' · '+tl:''}${job.durationMin?' · '+(job.durationMin>=60?(job.durationMin/60)+' hr'+(job.durationMin>60?'s':''):job.durationMin+' min'):''}<br>
       ${esc(job.assignedTo||'')}${job.address?'<br>'+esc(job.address):''}
       ${job.notes?'<br>'+esc(job.notes):''}
     </div>
@@ -2276,7 +2295,7 @@ function refresh() {
 ═══════════════════════════════════════════════════════ */
 let bk = {
   step:1, customer:null, isNew:false,
-  type:'walkthrough', date:'', time:'',
+  type:'walkthrough', date:'', time:'', durationMin:60,
   assignedTo:'ZacB', address:'', notes:'',
   editId:null, _fromLeadId:null
 };
@@ -2288,6 +2307,7 @@ function openBooking(dateStr, editJob, timeStr) {
     type: editJob?.type || 'walkthrough',
     date: editJob?.date || dateStr || fmtDate(new Date()),
     time: editJob?.time || timeStr || '',
+    durationMin: editJob?.durationMin || 60,
     assignedTo: editJob?.assignedTo || (me==='TylerG'?'TylerG':'ZacB'),
     address: editJob?.address || '',
     notes: editJob?.notes || '',
@@ -2349,6 +2369,7 @@ function stepNext() {
   } else if (bk.step===2) {
     bk.date=document.getElementById('b-date').value;
     bk.time=document.getElementById('b-time').value;
+    bk.durationMin=parseInt(document.getElementById('b-duration').value)||60;
     bk.address=document.getElementById('b-addr').value.trim();
     bk.notes=document.getElementById('b-notes').value.trim();
     bk.recurrence=document.getElementById('job-recurrence').value||'none';
@@ -2411,6 +2432,7 @@ function fillDetails() {
   selType(bk.type);
   document.getElementById('b-date').value=bk.date||fmtDate(new Date());
   document.getElementById('b-time').value=bk.time||'';
+  document.getElementById('b-duration').value=String(bk.durationMin||60);
   document.getElementById('b-addr').value=bk.address||bk.customer?.address||'';
   document.getElementById('b-notes').value=bk.notes||'';
   document.getElementById('job-recurrence').value=bk.recurrence||'none';
@@ -2441,6 +2463,7 @@ function renderReview() {
     <div class="review-row"><div class="ricon"></div><div><div class="rlbl">Type</div><div class="rval">${bk.type==='walkthrough'?'Walk-Through':'Cleanup Job'}</div></div></div>
     <div class="review-row"><div class="ricon"></div><div><div class="rlbl">Date</div><div class="rval">${dl}</div></div></div>
     <div class="review-row"><div class="ricon"></div><div><div class="rlbl">Time</div><div class="rval">${tl}</div></div></div>
+    <div class="review-row"><div class="ricon"></div><div><div class="rlbl">Duration</div><div class="rval">${bk.durationMin>=60?(bk.durationMin/60)+' hr'+(bk.durationMin>60?'s':''):bk.durationMin+' min'}</div></div></div>
     <div class="review-row"><div class="ricon"></div><div><div class="rlbl">Address</div><div class="rval">${esc(bk.address)||esc(c.address)||'—'}</div></div></div>
     <div class="review-row"><div class="ricon"></div><div><div class="rlbl">Assigned To</div><div class="rval">${esc(bk.assignedTo)}</div></div></div>
     ${bk.notes?`<div class="review-row"><div class="ricon"></div><div><div class="rlbl">Notes</div><div class="rval">${esc(bk.notes)}</div></div></div>`:''}`;
@@ -2472,6 +2495,7 @@ async function confirmBooking() {
     serviceType: bk.type === 'walkthrough' ? 'Walk-Through' : 'Garage Cleanout',
     date: bk.date,
     time: bk.time,
+    durationMin: bk.durationMin || 60,
     customer: c.name,
     phone: c.phone||'',
     email: c.email||'',
@@ -3013,6 +3037,21 @@ function ocStep3(body) {
       <div class="fg" style="margin:0"><label>Date *</label><input type="date" id="oc-date" value="${fmtDate(new Date())}"></div>
       <div class="fg" style="margin:0"><label>Time</label><input type="time" id="oc-time"></div>
     </div>
+    <div class="fg">
+      <label>Duration</label>
+      <select id="oc-duration">
+        <option value="30">30 minutes</option>
+        <option value="60" selected>1 hour</option>
+        <option value="90">1.5 hours</option>
+        <option value="120">2 hours</option>
+        <option value="150">2.5 hours</option>
+        <option value="180">3 hours</option>
+        <option value="240">4 hours</option>
+        <option value="300">5 hours</option>
+        <option value="360">6 hours</option>
+        <option value="480">8 hours (full day)</option>
+      </select>
+    </div>
     <div class="fg" style="margin-top:.65rem">
       <label>Assigned To</label>
       <div class="assignees">
@@ -3046,6 +3085,7 @@ async function ocBook() {
     type: document.getElementById('oc-type')?.value || 'walkthrough',
     date,
     time: document.getElementById('oc-time')?.value || '',
+    durationMin: parseInt(document.getElementById('oc-duration')?.value) || 60,
     customer: c.name, phone: c.phone||'', email: c.email||'',
     address: document.getElementById('oc-addr')?.value.trim() || c.address || '',
     assignedTo: oc.booking.assignedTo,
