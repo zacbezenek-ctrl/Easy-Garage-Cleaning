@@ -22,7 +22,7 @@
     { id: 'paid', label: 'Paid', color: '#22c55e' },
   ];
 
-  // Firestore `leads` doc ID: Zapier uses normalized phone (E.164). Manual CRM entries may use auto IDs — doc.id shown in UI.
+  // Firestore `leads` doc ID: Facebook leads use FB lead ID; website/manual may use E.164 phone or auto ID. Ghost phone-keyed docs from Zap 2A are auto-merged.
   const LEAD_STATUSES = ['new', 'quoted', 'booked', 'dead', 'no_answer_6_attempts'];
   const LEAD_STATUS_FILTER = ['new', 'quoted', 'booked', 'dead'];
   const LEGACY_STATUS_MAP = {
@@ -77,6 +77,44 @@
   let _detailJobId = null;
   let _detailCustId = null;
   let _detailLeadId = null;
+  const _mergedGhosts = new Set();
+
+  async function mergeGhostLeads() {
+    if (typeof leadsCache === 'undefined' || !leadsCache.length || typeof db === 'undefined') return;
+    const meaningfulFields = ['name', 'email', 'source', 'status', 'crmStatus', 'items', 'assignedTo', 'createdAt'];
+    const ghosts = leadsCache.filter(l => {
+      if (_mergedGhosts.has(l.id)) return false;
+      if (meaningfulFields.some(f => l[f])) return false;
+      return l.conversationActive !== undefined || l.lastInboundAt || l.lastTouchAt || l.lastOutboundAt;
+    });
+    for (const ghost of ghosts) {
+      _mergedGhosts.add(ghost.id);
+      const ghostDigits = String(ghost.id).replace(/\D/g, '');
+      if (ghostDigits.length < 10) continue;
+      const ghostLast10 = ghostDigits.slice(-10);
+      const realLead = leadsCache.find(l => {
+        if (l.id === ghost.id) return false;
+        const ld = String(l.phone || '').replace(/\D/g, '');
+        return ld.length >= 10 && ld.slice(-10) === ghostLast10;
+      });
+      if (!realLead) continue;
+      try {
+        const patch = {};
+        if (ghost.conversationActive && !realLead.conversationActive) patch.conversationActive = true;
+        if (ghost.lastInboundAt && (!realLead.lastInboundAt || ghost.lastInboundAt > realLead.lastInboundAt)) patch.lastInboundAt = ghost.lastInboundAt;
+        if (ghost.lastTouchAt && (!realLead.lastTouchAt || ghost.lastTouchAt > realLead.lastTouchAt)) patch.lastTouchAt = ghost.lastTouchAt;
+        if (ghost.lastOutboundAt && (!realLead.lastOutboundAt || ghost.lastOutboundAt > realLead.lastOutboundAt)) patch.lastOutboundAt = ghost.lastOutboundAt;
+        if (Object.keys(patch).length) {
+          await db.collection('leads').doc(realLead.id).set(patch, { merge: true });
+        }
+        await db.collection('leads').doc(ghost.id).delete();
+        console.log('[ghost-merge] Merged ' + ghost.id + ' → ' + realLead.id);
+      } catch (e) {
+        console.warn('[ghost-merge] Failed for ' + ghost.id + ':', e);
+      }
+    }
+  }
+
   let leadsFilter = {
     status: 'all',
     source: 'all',
@@ -1070,6 +1108,7 @@
   window.onLeadsSnapshot = function () {
     _leadsLoading = false;
     _leadsError = null;
+    mergeGhostLeads();
     renderLeadsEnhanced();
     if (typeof updateLeadsBadge === 'function') updateLeadsBadge();
     if (document.getElementById('tab-leads')?.classList.contains('active') === false) {
@@ -1147,7 +1186,7 @@
           ${isAdmin ? `<button type="button" class="bsm del" onclick="markLeadOptedOut('${lead.id}')" ${optedOut ? 'disabled' : ''}>Mark opted out</button>` : ''}
           <button type="button" class="bsm edit" onclick="logManualTouch('${lead.id}')">Log manual touch</button>
         </div>
-        <p class="muted small" style="margin-top:.5rem">Firestore doc ID: <code>${esc(lead.id)}</code>${normalizePhoneE164(lead.phone) && lead.id !== normalizePhoneE164(lead.phone) ? ' · Zapier expects phone ID ' + esc(normalizePhoneE164(lead.phone)) : ''}</p>
+        <p class="muted small" style="margin-top:.5rem">Firestore doc ID: <code>${esc(lead.id)}</code></p>
       </div>
 
       <div class="lead-section">
