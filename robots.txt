@@ -7,10 +7,15 @@
 User-agent: *
 Allow: /
 Disallow: /employee.html
+Disallow: /employee-crm.js
+Disallow: /employee-crm.css
 Disallow: /copilot.html
+Disallow: /sop.html
+Disallow: /tyler-contract.html
 Disallow: /api/
 Disallow: /node_modules/
 Disallow: /ads.html
 Disallow: /quote.html
+Disallow: /thank-you.html
 
 Sitemap: https://easygaragecleaning.com/sitemap.xml

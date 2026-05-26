@@ -1,0 +1,12 @@
+{
+  "cleanUrls": false,
+  "trailingSlash": false,
+  "redirects": [
+    {
+      "source": "/:path(.*)",
+      "has": [{ "type": "host", "value": "www.easygaragecleaning.com" }],
+      "destination": "https://easygaragecleaning.com/:path",
+      "permanent": true
+    }
+  ]
+}
