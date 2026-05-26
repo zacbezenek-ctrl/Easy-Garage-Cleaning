@@ -33,6 +33,15 @@
   </script>
   <link rel="stylesheet" href="/styles.css">
 <style>
+/* ── View-container defaults: only login visible on cold load ── */
+#login-screen { display: flex; align-items: center; justify-content: center; min-height: 100dvh; }
+#mode-screen  { display: none; align-items: center; justify-content: center; min-height: 100dvh; }
+#oncall-overlay { display: none; flex-direction: column; min-height: 100dvh; }
+#oncall-overlay.open { display: flex; }
+#dashboard    { display: none; flex-direction: column; min-height: 100dvh; }
+/* When a returning session is detected synchronously, hide login until async verify completes */
+body.has-session #login-screen { display: none; }
+
 .login-card { background: var(--navy-soft); border: 1px solid var(--navy-border); border-radius: 1.25rem; padding: 2.5rem 2rem; width: 100%; max-width: 400px; box-shadow: 0 24px 64px rgba(0,0,0,.5); }
 .login-logo { text-align: center; margin-bottom: 2rem; }
 .login-logo .pill { display: inline-block; background: var(--accent); color: #fff; font-family: 'JetBrains Mono', monospace; font-size: .62rem; letter-spacing: .1em; text-transform: uppercase; padding: .3rem .75rem; border-radius: 99px; margin-bottom: .75rem; }
@@ -525,6 +534,7 @@
 .btn-next { background: var(--accent); color: #fff; border: none; border-radius: .55rem; font-family: 'Inter', sans-serif; font-size: .875rem; font-weight: 600; padding: .6rem 1.4rem; cursor: pointer; transition: background .2s; white-space: nowrap; }
 .btn-next:hover { background: var(--accent-deep); }
 .btn-next:disabled { opacity: .5; cursor: not-allowed; }
+#toast { position: fixed; bottom: 1.5rem; left: 50%; transform: translateX(-50%) translateY(calc(100% + 2rem)); background: var(--navy-soft); border: 1px solid rgba(255,255,255,.12); color: #fff; padding: .65rem 1.25rem; border-radius: .6rem; font-size: .875rem; font-weight: 500; z-index: 500; pointer-events: none; transition: transform .35s ease; white-space: nowrap; }
 #toast.show { transform: translateX(-50%) translateY(0); }
 @media (max-width: 700px) {
       /* Contain overflow at the content level, not the root (avoids iOS clipping) */
@@ -708,6 +718,13 @@
 </style>
 </head>
 <body>
+<script>
+(function(){
+  if (sessionStorage.getItem('egc_u') && sessionStorage.getItem('egc_tok')) {
+    document.body.classList.add('has-session');
+  }
+})();
+</script>
 <a href="#main-content" class="skip-link">Skip to content</a>
 
 <!-- ═══════════════════════════════════════
@@ -736,7 +753,7 @@
 <!-- ═══════════════════════════════════════
      MODE SELECT
 ═══════════════════════════════════════ -->
-<div id="mode-screen" style="display:none">
+<div id="mode-screen">
   <div class="mode-wrap">
     <div class="mode-logo">
       <div class="pill">Easy Garage Cleaning</div>
@@ -991,7 +1008,7 @@
 <!-- ═══════════════════════════════════════
      BOOKING WIZARD
 ═══════════════════════════════════════ -->
-<div id="booking-overlay" onclick="overlayClick(event)">
+<div id="booking-overlay" class="modal-backdrop" onclick="overlayClick(event)">
   <div class="bk-panel">
 
     <div class="bk-head">
@@ -1151,7 +1168,7 @@
 </div>
 
 <!-- ── CONTRACT MODAL ───────────────────────────────── -->
-<div id="contract-modal" onclick="contractModalBgClick(event)">
+<div id="contract-modal" class="modal-backdrop" onclick="contractModalBgClick(event)">
   <div class="cm-panel">
     <div class="cm-title">Send Quote Contract</div>
     <div class="cm-sub" id="cm-lead-sub">Customer gets a link — they tap, read, type their name, done.</div>
@@ -1190,7 +1207,7 @@
 </div>
 
 <!-- ── QUOTE MODAL ─────────────────────────────────── -->
-<div id="quote-modal" onclick="quoteModalBgClick(event)">
+<div id="quote-modal" class="modal-backdrop" onclick="quoteModalBgClick(event)">
   <div class="qm-panel">
     <div class="qm-title">Mark as Quoted</div>
     <div class="qm-sub" id="qm-lead-name">Enter the quote amount for this lead</div>
@@ -1325,8 +1342,11 @@ function doLogout() {
   sessionStorage.removeItem('egc_u');
   sessionStorage.removeItem('egc_tok');
   me = null;
-  document.getElementById('login-screen').style.display = 'flex';
-  document.getElementById('dashboard').style.display = 'none';
+  document.body.classList.remove('has-session');
+  document.getElementById('oncall-overlay').classList.remove('open');
+  document.getElementById('mode-screen').style.display   = '';
+  document.getElementById('dashboard').style.display     = '';
+  document.getElementById('login-screen').style.display  = '';
   document.getElementById('l-pass').value = '';
 }
 
@@ -1352,7 +1372,9 @@ window.addEventListener('DOMContentLoaded', async () => {
   if (saved && USERS[saved] && savedTok) {
     const expectedTok = await sessionToken(saved);
     if (savedTok === expectedTok) { me = saved; showModeSelect(); }
-    else { sessionStorage.removeItem('egc_u'); sessionStorage.removeItem('egc_tok'); }
+    else { sessionStorage.removeItem('egc_u'); sessionStorage.removeItem('egc_tok'); document.body.classList.remove('has-session'); }
+  } else {
+    document.body.classList.remove('has-session');
   }
   document.getElementById('l-pass').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
   document.getElementById('l-user').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('l-pass').focus(); });
