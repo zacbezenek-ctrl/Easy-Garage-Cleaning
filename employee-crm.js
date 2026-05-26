@@ -1448,8 +1448,7 @@
 
   window.openLeadModal = function (leadId) {
     const modal = document.getElementById('lead-form-modal');
-    const form = document.getElementById('lead-form');
-    if (!modal || !form) return;
+    if (!modal) return;
     const lead = leadId ? leadsCache.find((l) => l.id === leadId) : null;
     document.getElementById('lf-id').value = lead?.id || '';
     document.getElementById('lf-name').value = lead?.name || lead?.full_name || '';
