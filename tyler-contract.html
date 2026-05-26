@@ -1,0 +1,540 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Independent Contractor Agreement — Easy Garage Cleaning</title>
+<meta name="robots" content="noindex, nofollow" />
+<style>
+  :root {
+    --navy: #0b1120; --navy-soft: #111827; --navy-light: #1a2332;
+    --navy-border: rgba(255,255,255,.08); --accent: #ff5b1f;
+    --accent-deep: #e04e18; --white: #f1f5f9; --muted: rgba(255,255,255,.45);
+    --green: #22c55e;
+  }
+  @media print {
+    body { font-size: 11pt; background: #fff !important; color: #111 !important; }
+    .no-print { display: none !important; }
+    #login-screen { display: none !important; }
+    #contract { display: block !important; background: #fff !important; color: #111 !important; }
+    .sig-field { border-color: #111 !important; color: #111 !important; }
+    .sig-stamp { color: #333 !important; }
+    @page { margin: 1in; }
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: "Times New Roman", Times, serif;
+    background: var(--navy);
+    color: var(--white);
+    min-height: 100dvh;
+  }
+
+  /* Login screen — matches employee portal */
+  #login-screen {
+    display: flex; align-items: center; justify-content: center;
+    min-height: 100dvh; padding: 1rem;
+    background: linear-gradient(135deg, var(--navy), var(--navy-soft));
+  }
+  .login-card {
+    background: var(--navy-soft); border: 1px solid var(--navy-border);
+    border-radius: 1.25rem; padding: 2.5rem 2rem; width: 100%; max-width: 400px;
+    box-shadow: 0 24px 64px rgba(0,0,0,.5);
+    font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  }
+  .login-logo { text-align: center; margin-bottom: 2rem; }
+  .login-logo .pill {
+    display: inline-block; background: var(--accent); color: #fff;
+    font-family: monospace; font-size: .62rem; letter-spacing: .1em;
+    text-transform: uppercase; padding: .3rem .75rem; border-radius: 99px; margin-bottom: .75rem;
+  }
+  .login-logo h1 { font-family: Georgia, serif; font-size: 1.6rem; font-weight: 700; line-height: 1.2; }
+  .login-logo h1 em { font-style: italic; }
+  .login-logo p { color: var(--muted); font-size: .875rem; margin-top: .4rem; }
+  .login-error {
+    background: rgba(239,68,68,.12); border: 1px solid rgba(239,68,68,.3);
+    color: #fca5a5; border-radius: .5rem; padding: .65rem 1rem;
+    font-size: .85rem; margin-bottom: 1rem; display: none;
+  }
+  .fg { margin-bottom: 1.1rem; }
+  .fg label {
+    display: block; font-size: .75rem; font-weight: 600; letter-spacing: .06em;
+    text-transform: uppercase; color: var(--muted); margin-bottom: .4rem;
+  }
+  .fg input {
+    width: 100%; background: var(--navy); border: 1px solid rgba(255,255,255,.12);
+    border-radius: .5rem; color: var(--white); font-family: inherit;
+    font-size: 1rem; padding: .7rem 1rem; outline: none; transition: border-color .2s;
+  }
+  .fg input:focus { border-color: var(--accent); }
+  .btn-main {
+    width: 100%; background: var(--accent); color: #fff; border: none;
+    border-radius: .6rem; font-size: .95rem; font-weight: 600;
+    padding: .8rem 1.5rem; cursor: pointer; transition: background .2s; margin-top: .5rem;
+  }
+  .btn-main:hover { background: var(--accent-deep); }
+  .login-note { color: var(--muted); font-size: .72rem; text-align: center; margin-top: 1.2rem; line-height: 1.5; }
+
+  /* Contract body */
+  #contract {
+    display: none; max-width: 8.5in; margin: 0 auto; padding: 1in;
+    line-height: 1.6; background: var(--navy);
+  }
+  .toolbar {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 1rem; flex-wrap: wrap; margin-bottom: 2em;
+    font-family: system-ui, sans-serif;
+  }
+  .toolbar-left { display: flex; align-items: center; gap: .75rem; }
+  .toolbar-user {
+    background: var(--navy-soft); border: 1px solid rgba(255,255,255,.1);
+    border-radius: 99px; padding: .3rem .8rem .3rem .4rem;
+    font-size: .8rem; font-weight: 600; display: flex; align-items: center; gap: .4rem;
+  }
+  .toolbar-user .av {
+    width: 24px; height: 24px; border-radius: 50%; background: var(--accent);
+    display: flex; align-items: center; justify-content: center;
+    font-size: .7rem; font-weight: 700; color: #fff;
+  }
+  .btn-sm {
+    background: var(--navy-soft); border: 1px solid rgba(255,255,255,.12);
+    color: var(--white); border-radius: .45rem; font-size: .8rem; font-weight: 500;
+    padding: .4rem .85rem; cursor: pointer; transition: all .2s;
+    font-family: system-ui, sans-serif;
+  }
+  .btn-sm:hover { border-color: var(--accent); color: var(--accent); }
+  .btn-sm.danger:hover { border-color: #ef4444; color: #fca5a5; }
+
+  h1.doc-title { text-align: center; font-size: 1.4em; margin-bottom: 0.3em; }
+  h2 { font-size: 1.1em; margin-top: 1.5em; margin-bottom: 0.4em; }
+  p, li { margin-bottom: 0.6em; }
+  ol.sections { padding-left: 1.5em; }
+  ol.sections > li { margin-bottom: 0.8em; }
+  ul { padding-left: 1.5em; list-style: disc; }
+  .center { text-align: center; }
+  hr { border: none; border-top: 1px solid rgba(255,255,255,.15); margin: 1.5em 0; }
+
+  /* E-Signature section */
+  .sig-section {
+    margin-top: 2.5em; font-family: system-ui, sans-serif;
+  }
+  .sig-section h3 {
+    font-size: 1rem; margin-bottom: 1rem; font-family: system-ui, sans-serif;
+  }
+  .sig-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 2rem; }
+  @media (max-width: 600px) { .sig-grid { grid-template-columns: 1fr; } }
+  .sig-box {
+    background: var(--navy-soft); border: 1px solid var(--navy-border);
+    border-radius: .85rem; padding: 1.25rem; position: relative;
+  }
+  .sig-box.signed { border-color: rgba(34,197,94,.3); background: rgba(34,197,94,.04); }
+  .sig-label {
+    font-size: .7rem; font-weight: 600; letter-spacing: .07em;
+    text-transform: uppercase; color: var(--muted); margin-bottom: .75rem;
+  }
+  .sig-field {
+    width: 100%; background: var(--navy); border: 1px solid rgba(255,255,255,.12);
+    border-radius: .5rem; color: var(--white); font-family: 'Brush Script MT', 'Segoe Script', cursive;
+    font-size: 1.4rem; padding: .6rem 1rem; outline: none; transition: border-color .2s;
+  }
+  .sig-field:focus { border-color: var(--accent); }
+  .sig-field:disabled { opacity: .7; cursor: not-allowed; }
+  .sig-check {
+    display: flex; align-items: flex-start; gap: .5rem; margin: .75rem 0;
+    font-size: .78rem; color: var(--muted); line-height: 1.4;
+  }
+  .sig-check input { margin-top: 2px; accent-color: var(--accent); cursor: pointer; }
+  .sig-check label { cursor: pointer; }
+  .sig-btn {
+    width: 100%; background: var(--accent); color: #fff; border: none;
+    border-radius: .5rem; font-size: .85rem; font-weight: 600;
+    padding: .6rem 1rem; cursor: pointer; transition: background .2s; margin-top: .5rem;
+  }
+  .sig-btn:hover { background: var(--accent-deep); }
+  .sig-btn:disabled { opacity: .4; cursor: not-allowed; }
+  .sig-stamp {
+    font-size: .72rem; color: rgba(34,197,94,.8); margin-top: .75rem;
+    line-height: 1.5; display: none;
+  }
+  .sig-stamp.visible { display: block; }
+  .sig-signed-name {
+    font-family: 'Brush Script MT', 'Segoe Script', cursive;
+    font-size: 1.4rem; padding: .6rem 0; color: var(--white);
+    border-bottom: 1px solid rgba(255,255,255,.15);
+  }
+  .sig-badge {
+    display: inline-flex; align-items: center; gap: .3rem;
+    background: rgba(34,197,94,.12); border: 1px solid rgba(34,197,94,.25);
+    border-radius: 99px; padding: .2rem .6rem; font-size: .68rem;
+    font-weight: 700; color: #86efac; position: absolute; top: 1rem; right: 1rem;
+  }
+  .status-bar {
+    background: var(--navy-soft); border: 1px solid var(--navy-border);
+    border-radius: .75rem; padding: 1rem 1.25rem; margin-top: 1.5rem;
+    font-family: system-ui, sans-serif; font-size: .85rem;
+  }
+  .status-bar .status-title { font-weight: 600; margin-bottom: .4rem; }
+  .status-row { display: flex; align-items: center; gap: .5rem; margin-top: .35rem; }
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  .status-dot.pending { background: var(--muted); }
+  .status-dot.done { background: var(--green); box-shadow: 0 0 6px rgba(34,197,94,.5); }
+</style>
+</head>
+<body>
+
+<!-- LOGIN SCREEN -->
+<div id="login-screen">
+  <div class="login-card">
+    <div class="login-logo">
+      <div class="pill">Contract Portal</div>
+      <h1>Easy Garage<br><em>Cleaning</em></h1>
+      <p>Sign in to view &amp; sign the contractor agreement</p>
+    </div>
+    <div class="login-error" id="login-error">Incorrect username or password.</div>
+    <div class="fg">
+      <label>Username</label>
+      <input type="text" id="l-user" placeholder="e.g. ZacB" autocomplete="username">
+    </div>
+    <div class="fg">
+      <label>Password</label>
+      <input type="password" id="l-pass" placeholder="••••••••••" autocomplete="current-password">
+    </div>
+    <button class="btn-main" onclick="doLogin()">Sign In</button>
+    <p class="login-note">Use your Employee Portal login.<br>Only Zac and Tyler have access to this document.</p>
+  </div>
+</div>
+
+<!-- CONTRACT -->
+<div id="contract">
+
+  <div class="toolbar no-print">
+    <div class="toolbar-left">
+      <div class="toolbar-user">
+        <span class="av" id="u-av"></span>
+        <span id="u-lbl"></span>
+      </div>
+    </div>
+    <div style="display:flex;gap:.5rem;">
+      <button class="btn-sm" onclick="window.print()">Print / PDF</button>
+      <button class="btn-sm danger" onclick="doLogout()">Sign Out</button>
+    </div>
+  </div>
+
+  <h1 class="doc-title">INDEPENDENT CONTRACTOR AGREEMENT</h1>
+  <p class="center"><strong>Lead Setter Services</strong></p>
+
+  <p>This Independent Contractor Agreement ("Agreement") is entered into as of
+  <strong>_______________</strong>, 2025 ("Effective Date"), by and between:</p>
+
+  <p><strong>Company:</strong> Easy Garage Cleaning, owned and operated by Zac Bezenek<br />
+  Fort Collins, Colorado<br />
+  ("Company")</p>
+
+  <p><strong>Contractor:</strong> Tyler <strong>_______________</strong><br />
+  Address: _______________<br />
+  Phone: _______________<br />
+  Email: _______________<br />
+  ("Contractor")</p>
+
+  <hr />
+
+  <ol class="sections">
+
+  <li>
+  <h2>1. Scope of Services</h2>
+  <p>Contractor shall serve as an independent lead setter for the Company. Contractor's duties include but are not limited to:</p>
+  <ul>
+    <li>Responding to inbound customer inquiries (calls, texts, form submissions, and messages) on behalf of the Company.</li>
+    <li>Qualifying prospective customers and gathering necessary job details (address, scope, timeline).</li>
+    <li>Scheduling and booking appointments for garage cleanouts, junk removal, and related services.</li>
+    <li>Following Company-provided scripts, pricing guidelines, and customer communication standards.</li>
+    <li>Maintaining accurate records of all leads contacted, response times, and appointments booked.</li>
+  </ul>
+  </li>
+
+  <li>
+  <h2>2. Compensation</h2>
+  <p>Company shall pay Contractor according to the following commission structure:</p>
+  <ul>
+    <li><strong>$30.00 per booked appointment</strong> — A "booked appointment" is defined as a confirmed, scheduled service appointment with a qualified customer that appears on the Company's calendar.</li>
+    <li><strong>$3.00 per rapid response</strong> — Paid for each unique customer inquiry that Contractor responds to within two (2) minutes of the inquiry being received, regardless of whether the inquiry converts to a booked appointment.</li>
+  </ul>
+  <p>Payment shall be issued on a <strong>bi-weekly</strong> basis via <strong>_______________</strong> (Venmo / Zelle / check / direct deposit). Company will provide Contractor with a summary of qualifying leads and responses for each pay period. Contractor has five (5) business days after receiving the summary to dispute any discrepancies.</p>
+  <p>As an independent contractor, Contractor is responsible for all federal, state, and local taxes on earnings. Company will issue a 1099-NEC form at year-end if total payments equal or exceed $600.</p>
+  </li>
+
+  <li>
+  <h2>3. Independent Contractor Status</h2>
+  <p>Contractor is an independent contractor and not an employee, partner, or agent of the Company. Contractor shall:</p>
+  <ul>
+    <li>Control the manner and means by which services are performed.</li>
+    <li>Set their own schedule, provided response-time targets are met.</li>
+    <li>Provide their own phone, computer, and internet access.</li>
+    <li>Not be entitled to employee benefits, workers' compensation, unemployment insurance, or any other employee benefits from the Company.</li>
+  </ul>
+  </li>
+
+  <li>
+  <h2>4. Term and Termination</h2>
+  <p>This Agreement begins on the Effective Date and continues on an <strong>at-will</strong> basis. Either party may terminate this Agreement at any time, with or without cause, by providing <strong>seven (7) days</strong> written notice (text or email is acceptable). Upon termination:</p>
+  <ul>
+    <li>Company shall pay Contractor for all qualifying leads and responses completed through the termination date.</li>
+    <li>Contractor shall return or delete any Company materials, customer lists, login credentials, and proprietary information within 48 hours.</li>
+  </ul>
+  </li>
+
+  <li>
+  <h2>5. Confidentiality</h2>
+  <p>Contractor agrees to keep confidential all non-public business information, including but not limited to: customer lists, contact information, pricing structures, marketing strategies, scripts, and internal processes. This obligation survives termination of this Agreement for a period of <strong>two (2) years</strong>.</p>
+  </li>
+
+  <li>
+  <h2>6. Non-Solicitation</h2>
+  <p>For a period of <strong>twelve (12) months</strong> following termination of this Agreement, Contractor shall not directly or indirectly:</p>
+  <ul>
+    <li>Solicit, contact, or attempt to divert any customer or prospective customer of the Company for the purpose of providing competing services (garage cleanouts, junk removal, hauling, or related services).</li>
+    <li>Encourage or induce any other contractor or employee of the Company to leave or reduce their engagement with the Company.</li>
+  </ul>
+  </li>
+
+  <li>
+  <h2>7. Performance Standards</h2>
+  <p>To qualify for the rapid-response bonus, Contractor must respond within two (2) minutes of the inquiry timestamp as recorded by the Company's CRM, phone system, or messaging platform. Company's system records shall be the sole authority for determining response times.</p>
+  </li>
+
+  <li>
+  <h2>8. Use of Company Brand</h2>
+  <p>When communicating with customers, Contractor shall represent themselves as acting on behalf of Easy Garage Cleaning. Contractor shall not use the Company's name, logo, or brand for any purpose outside the scope of this Agreement without prior written consent.</p>
+  </li>
+
+  <li>
+  <h2>9. Indemnification</h2>
+  <p>Contractor agrees to indemnify and hold harmless the Company from any claims, damages, or liabilities arising out of Contractor's negligence, willful misconduct, or breach of this Agreement.</p>
+  </li>
+
+  <li>
+  <h2>10. Dispute Resolution</h2>
+  <p>Any disputes arising under this Agreement shall first be addressed through good-faith negotiation. If unresolved within thirty (30) days, disputes shall be resolved through binding mediation in Larimer County, Colorado. Colorado law governs this Agreement.</p>
+  </li>
+
+  <li>
+  <h2>11. Electronic Signatures</h2>
+  <p>The parties agree that electronic signatures on this Agreement are valid and binding, with the same legal effect as handwritten signatures, in accordance with the federal ESIGN Act and the Colorado Uniform Electronic Transactions Act (UETA).</p>
+  </li>
+
+  <li>
+  <h2>12. Entire Agreement</h2>
+  <p>This Agreement constitutes the entire understanding between the parties and supersedes all prior agreements, written or oral. Any amendments must be in writing and signed by both parties.</p>
+  </li>
+
+  </ol>
+
+  <hr />
+
+  <p><strong>IN WITNESS WHEREOF</strong>, the parties have executed this Agreement as of the date first written above.</p>
+
+  <!-- E-SIGNATURE SECTION -->
+  <div class="sig-section">
+    <h3>Electronic Signatures</h3>
+    <div class="sig-grid">
+
+      <!-- Zac's signature -->
+      <div class="sig-box" id="sig-box-zac">
+        <div class="sig-label">Company — Zac Bezenek, Owner</div>
+        <div id="sig-form-zac">
+          <input type="text" class="sig-field" id="sig-name-zac" placeholder="Type your full legal name" />
+          <div class="sig-check">
+            <input type="checkbox" id="sig-agree-zac" />
+            <label for="sig-agree-zac">I, Zac Bezenek, agree that typing my name above constitutes my electronic signature and that I accept all terms of this Agreement.</label>
+          </div>
+          <button class="sig-btn" id="sig-submit-zac" onclick="submitSignature('zac')" disabled>Sign as Company</button>
+        </div>
+        <div id="sig-done-zac" style="display:none;">
+          <span class="sig-badge">Signed</span>
+          <div class="sig-signed-name" id="sig-display-zac"></div>
+          <div class="sig-stamp visible" id="sig-stamp-zac"></div>
+        </div>
+      </div>
+
+      <!-- Tyler's signature -->
+      <div class="sig-box" id="sig-box-tyler">
+        <div class="sig-label">Contractor — Tyler</div>
+        <div id="sig-form-tyler">
+          <input type="text" class="sig-field" id="sig-name-tyler" placeholder="Type your full legal name" />
+          <div class="sig-check">
+            <input type="checkbox" id="sig-agree-tyler" />
+            <label for="sig-agree-tyler">I agree that typing my name above constitutes my electronic signature and that I accept all terms of this Agreement.</label>
+          </div>
+          <button class="sig-btn" id="sig-submit-tyler" onclick="submitSignature('tyler')" disabled>Sign as Contractor</button>
+        </div>
+        <div id="sig-done-tyler" style="display:none;">
+          <span class="sig-badge">Signed</span>
+          <div class="sig-signed-name" id="sig-display-tyler"></div>
+          <div class="sig-stamp visible" id="sig-stamp-tyler"></div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Status bar -->
+    <div class="status-bar no-print">
+      <div class="status-title">Agreement Status</div>
+      <div class="status-row">
+        <span class="status-dot pending" id="dot-zac"></span>
+        <span id="status-zac">Zac Bezenek — awaiting signature</span>
+      </div>
+      <div class="status-row">
+        <span class="status-dot pending" id="dot-tyler"></span>
+        <span id="status-tyler">Tyler — awaiting signature</span>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+/* Same auth system as employee portal */
+const ALLOWED_USERS = {
+  ZacB:   '6b8670f397174ff99440629b877581216a0b26b6770054be198988ff48a16861',
+  TylerG: '28b50fd5ee98af8cf015972811def03dbc2eaff52997f82ecfc4342ece6cfa36',
+};
+
+const SIG_ROLE = { ZacB: 'zac', TylerG: 'tyler' };
+let me = null;
+
+async function sha256(str) {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+async function hashPassword(username, password) {
+  return sha256(username + ':' + password + ':egc-salt-2026');
+}
+
+async function sessionToken(username) {
+  return sha256(username + ':' + ALLOWED_USERS[username] + ':egc-session');
+}
+
+async function doLogin() {
+  const u = document.getElementById('l-user').value.trim();
+  const p = document.getElementById('l-pass').value;
+  const err = document.getElementById('login-error');
+  if (!ALLOWED_USERS[u]) { err.style.display = 'block'; return; }
+  const hashed = await hashPassword(u, p);
+  if (hashed === ALLOWED_USERS[u]) {
+    err.style.display = 'none';
+    me = u;
+    const tok = await sessionToken(u);
+    sessionStorage.setItem('egc_contract_u', u);
+    sessionStorage.setItem('egc_contract_tok', tok);
+    showContract();
+  } else {
+    err.style.display = 'block';
+  }
+}
+
+function doLogout() {
+  sessionStorage.removeItem('egc_contract_u');
+  sessionStorage.removeItem('egc_contract_tok');
+  me = null;
+  document.getElementById('login-screen').style.display = 'flex';
+  document.getElementById('contract').style.display = 'none';
+  document.getElementById('l-pass').value = '';
+}
+
+function showContract() {
+  document.getElementById('login-screen').style.display = 'none';
+  document.getElementById('contract').style.display = 'block';
+  document.getElementById('u-lbl').textContent = me;
+  document.getElementById('u-av').textContent = me[0];
+
+  const role = SIG_ROLE[me];
+  const other = role === 'zac' ? 'tyler' : 'zac';
+  document.getElementById('sig-form-' + other).querySelectorAll('input, button').forEach(el => el.disabled = true);
+  document.getElementById('sig-form-' + other).style.opacity = '.4';
+
+  loadSignatures();
+}
+
+/* Signature persistence via localStorage */
+const SIG_KEY = 'egc_contract_sigs';
+
+function getSigs() {
+  try { return JSON.parse(localStorage.getItem(SIG_KEY)) || {}; }
+  catch { return {}; }
+}
+
+function loadSignatures() {
+  const sigs = getSigs();
+  ['zac', 'tyler'].forEach(role => {
+    if (sigs[role]) {
+      renderSigned(role, sigs[role].name, sigs[role].timestamp, sigs[role].username);
+    }
+  });
+  updateStatus();
+}
+
+function renderSigned(role, name, timestamp, username) {
+  document.getElementById('sig-form-' + role).style.display = 'none';
+  document.getElementById('sig-done-' + role).style.display = 'block';
+  document.getElementById('sig-display-' + role).textContent = name;
+  document.getElementById('sig-stamp-' + role).textContent =
+    'Signed electronically by ' + name + ' (' + username + ') on ' + new Date(timestamp).toLocaleString();
+  document.getElementById('sig-box-' + role).classList.add('signed');
+}
+
+function submitSignature(role) {
+  const nameEl = document.getElementById('sig-name-' + role);
+  const name = nameEl.value.trim();
+  if (!name) return;
+
+  const sigs = getSigs();
+  sigs[role] = {
+    name: name,
+    username: me,
+    timestamp: new Date().toISOString()
+  };
+  localStorage.setItem(SIG_KEY, JSON.stringify(sigs));
+  renderSigned(role, name, sigs[role].timestamp, me);
+  updateStatus();
+}
+
+function updateStatus() {
+  const sigs = getSigs();
+  ['zac', 'tyler'].forEach(role => {
+    const dot = document.getElementById('dot-' + role);
+    const lbl = document.getElementById('status-' + role);
+    if (sigs[role]) {
+      dot.className = 'status-dot done';
+      const label = role === 'zac' ? 'Zac Bezenek' : 'Tyler';
+      lbl.textContent = label + ' — signed ' + new Date(sigs[role].timestamp).toLocaleDateString();
+    }
+  });
+}
+
+/* Enable sign button only when name is typed + checkbox is checked */
+['zac', 'tyler'].forEach(role => {
+  const nameEl = document.getElementById('sig-name-' + role);
+  const checkEl = document.getElementById('sig-agree-' + role);
+  const btnEl = document.getElementById('sig-submit-' + role);
+  function toggle() {
+    btnEl.disabled = !(nameEl.value.trim().length > 1 && checkEl.checked);
+  }
+  nameEl.addEventListener('input', toggle);
+  checkEl.addEventListener('change', toggle);
+});
+
+/* Auto-login from session */
+window.addEventListener('DOMContentLoaded', async () => {
+  const saved = sessionStorage.getItem('egc_contract_u');
+  const savedTok = sessionStorage.getItem('egc_contract_tok');
+  if (saved && ALLOWED_USERS[saved] && savedTok) {
+    const expected = await sessionToken(saved);
+    if (savedTok === expected) { me = saved; showContract(); }
+    else { sessionStorage.removeItem('egc_contract_u'); sessionStorage.removeItem('egc_contract_tok'); }
+  }
+  document.getElementById('l-pass').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
+  document.getElementById('l-user').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('l-pass').focus(); });
+});
+</script>
+</body>
+</html>
