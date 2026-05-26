@@ -431,7 +431,7 @@
     return `<div class="kanban-card" draggable="true" data-job-id="${j.id}" onclick="openJobDetail('${j.id}')">
       <div class="kc-name">${esc(j.customer || 'Unnamed')}</div>
       <div class="kc-meta">${j.date || 'No date'}${j.time ? ' · ' + fmtTime(j.time) : ''}</div>
-      <div class="kc-meta">${esc(j.serviceType || (j.type === 'walkthrough' ? 'Walk-through' : 'Cleanout'))}</div>
+      <div class="kc-meta">${esc(j.serviceType || typeLabel(j.type))}</div>
       ${price ? `<div class="kc-price">${esc(String(price))}</div>` : ''}
       <div class="kc-foot"><span class="bdg who">${esc(j.assignedTo || '')}</span>${j.sameDay ? '<span class="bdg walkthrough">Same day</span>' : ''}</div>
     </div>`;

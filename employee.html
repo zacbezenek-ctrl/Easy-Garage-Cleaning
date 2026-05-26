@@ -111,6 +111,8 @@ body.has-session #login-screen { display: none; }
 .allday-evt { border-radius: 3px; padding: 2px 5px; font-size: .67rem; font-weight: 600; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .allday-evt.walkthrough { background: rgba(245,158,11,.25); color: #fcd34d; }
 .allday-evt.job { background: rgba(34,197,94,.25); color: #86efac; }
+.allday-evt.cleanout { background: rgba(34,197,94,.25); color: #86efac; }
+.allday-evt.reorg { background: rgba(99,102,241,.25); color: #a5b4fc; }
 .week-body { display: flex; overflow-y: auto; height: calc(100dvh - 220px); min-height: 400px; -webkit-overflow-scrolling: touch; }
 .blocked-overlay { position:absolute; inset:0; background:repeating-linear-gradient(135deg,rgba(239,68,68,.07) 0px,rgba(239,68,68,.07) 8px,transparent 8px,transparent 16px); pointer-events:none; z-index:3; }
 .hour-slot.slot-blocked { background:rgba(239,68,68,.07); cursor:not-allowed; }
@@ -146,6 +148,8 @@ body.has-session #login-screen { display: none; }
 .week-evt:hover { filter: brightness(1.2); box-shadow: 0 2px 12px rgba(0,0,0,.3); }
 .week-evt.walkthrough { background: rgba(245,158,11,.22); border-left: 3px solid #f59e0b; color: #fcd34d; }
 .week-evt.job { background: rgba(34,197,94,.22); border-left: 3px solid #22c55e; color: #86efac; }
+.week-evt.cleanout { background: rgba(34,197,94,.22); border-left: 3px solid #22c55e; color: #86efac; }
+.week-evt.reorg { background: rgba(99,102,241,.22); border-left: 3px solid #6366f1; color: #a5b4fc; }
 .week-evt.completed { opacity: .7; }
 .week-evt.paid { opacity: .5; }
 .week-evt .ev-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -177,6 +181,8 @@ body.has-session #login-screen { display: none; }
 .bdg.completed   { background: rgba(245,158,11,.12); color: #fbbf24; }
 .bdg.paid        { background: rgba(34,197,94,.12);  color: #4ade80; }
 .bdg.who         { background: rgba(255,91,31,.1); color: #fb923c; }
+.bdg.cleanout    { background: rgba(34,197,94,.12);  color: #4ade80; }
+.bdg.reorg       { background: rgba(99,102,241,.12); color: #a5b4fc; }
 .jcard-actions { display: flex; gap: .45rem; flex-wrap: wrap; margin-top: .6rem; }
 .bsm { font-family: 'Inter', sans-serif; font-size: .75rem; font-weight: 600; padding: .38rem .8rem; border-radius: .4rem; border: none; cursor: pointer; transition: all .18s; }
 .bsm.complete { background: rgba(245,158,11,.12); color: #fcd34d; border: 1px solid rgba(245,158,11,.25); }
@@ -468,6 +474,8 @@ body.has-session #login-screen { display: none; }
 .type-pill .ticon { font-size: 1.5rem; margin-bottom: .4rem; }
 .type-pill .tname { font-size: .875rem; font-weight: 600; }
 .type-pill .tdesc { font-size: .72rem; color: var(--muted); margin-top: .15rem; }
+.type-pill .tdur { font-size: .68rem; font-weight: 700; color: rgba(255,255,255,.3); margin-top: .35rem; letter-spacing: .03em; }
+.type-pill.selected .tdur { color: var(--accent); }
 .slbl-sm { font-size: .72rem; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); margin-bottom: .5rem; }
 .assignees { display: flex; gap: .5rem; margin-bottom: 1.1rem; }
 .asgn {
@@ -606,7 +614,9 @@ body.has-session #login-screen { display: none; }
 
       /* New customer form */
       .frow { grid-template-columns: 1fr; }
-      .type-pills { grid-template-columns: 1fr 1fr; }
+      .type-pills { grid-template-columns: 1fr 1fr 1fr !important; }
+      .type-pill .tname { font-size: .78rem; }
+      .type-pill .ticon { font-size: 1.2rem; margin-bottom: .25rem; }
       .assignees { flex-wrap: wrap; }
 
       /* Filters: scrollable row */
@@ -895,7 +905,8 @@ body.has-session #login-screen { display: none; }
       <div id="jobs-list-filters" class="filters" style="display:none;margin-bottom:.75rem">
         <button type="button" class="fbtn active" onclick="setFilter('all',this)">All</button>
         <button type="button" class="fbtn" onclick="setFilter('walkthrough',this)">Walk-through</button>
-        <button type="button" class="fbtn" onclick="setFilter('job',this)">Jobs</button>
+        <button type="button" class="fbtn" onclick="setFilter('cleanout',this)">Cleanout</button>
+        <button type="button" class="fbtn" onclick="setFilter('reorg',this)">Reorg</button>
         <button type="button" class="fbtn" onclick="setFilter('completed',this)">Completed</button>
         <button type="button" class="fbtn" onclick="setFilter('paid',this)">Paid</button>
       </div>
@@ -1081,16 +1092,24 @@ body.has-session #login-screen { display: none; }
         <div class="step-q">Appointment details</div>
 
         <div class="slbl-sm">Type</div>
-        <div class="type-pills">
+        <div class="type-pills" style="grid-template-columns:1fr 1fr 1fr">
           <div class="type-pill selected" id="tp-walk" onclick="selType('walkthrough')">
-            <div class="ticon"></div>
+            <div class="ticon">📋</div>
             <div class="tname">Walk-Through</div>
             <div class="tdesc">Initial assessment</div>
+            <div class="tdur">30 min</div>
           </div>
-          <div class="type-pill" id="tp-job" onclick="selType('job')">
-            <div class="ticon"></div>
-            <div class="tname">Cleanup Job</div>
+          <div class="type-pill" id="tp-cleanout" onclick="selType('cleanout')">
+            <div class="ticon">🧹</div>
+            <div class="tname">Cleanout</div>
             <div class="tdesc">Full cleanout service</div>
+            <div class="tdur">1.5 hrs</div>
+          </div>
+          <div class="type-pill" id="tp-reorg" onclick="selType('reorg')">
+            <div class="ticon">📦</div>
+            <div class="tname">Reorganization</div>
+            <div class="tdesc">Sort &amp; reorganize</div>
+            <div class="tdur">2.5 hrs</div>
           </div>
         </div>
 
@@ -1986,7 +2005,7 @@ function renderCal() {
       dj.forEach(j => {
         const ev = document.createElement('div');
         ev.className = 'allday-evt ' + j.type;
-        ev.textContent = (j.customer || (j.type==='walkthrough'?'Walk-Through':'Job')) + (j.isRecurring?'':'');
+        ev.textContent = (j.customer || typeLabel(j.type)) + (j.isRecurring?'':'');
         ev.onclick = e => { e.stopPropagation(); showPopup(j, ev); };
         cell.appendChild(ev);
       });
@@ -2074,7 +2093,7 @@ function renderCal() {
       ev.style.top = top+'px';
       ev.style.height = evHeight+'px';
       const endLabel = j.endTime ? fmtTime(j.endTime) : fmtTime(calcEndTime(j.time, dur));
-      ev.innerHTML = `<div class="ev-name">${esc(j.customer||(j.type==='walkthrough'?'Walk-Through':'Job'))}${j.isRecurring?'':''}</div><div class="ev-time">${fmtTime(j.time)} – ${endLabel}</div>`;
+      ev.innerHTML = `<div class="ev-name">${esc(j.customer||typeLabel(j.type))}${j.isRecurring?'':''}</div><div class="ev-time">${fmtTime(j.time)} – ${endLabel}</div>`;
       ev.onclick = e => { e.stopPropagation(); showPopup(j, ev); };
       col.appendChild(ev);
     });
@@ -2098,7 +2117,7 @@ function showPopup(job, anchor) {
     <button class="popup-close" onclick="closePopup()"></button>
     <h4>${esc(job.customer||'Unnamed')}</h4>
     <div class="pmeta">
-      ${job.type==='walkthrough'?'Walk-Through':'Cleanup Job'}<br>
+      ${typeLabel(job.type)}<br>
       ${dl}${tl?' · '+tl+(job.endTime?' – '+fmtTime(job.endTime):''):''}<br>
       ${esc(job.assignedTo||'')}${job.address?'<br>'+esc(job.address):''}
       ${job.notes?'<br>'+esc(job.notes):''}
@@ -2141,7 +2160,7 @@ function setFilter(f,btn) {
 
 function renderJobs() {
   let jobs = loadJobs();
-  if (curFilter==='walkthrough'||curFilter==='job') jobs=jobs.filter(j=>j.type===curFilter);
+  if (['walkthrough','cleanout','reorg','job'].includes(curFilter)) jobs=jobs.filter(j=>j.type===curFilter);
   else if (curFilter!=='all') jobs=jobs.filter(j=>j.status===curFilter);
   jobs.sort((a,b)=>((b.date||'')+(b.time||'')).localeCompare((a.date||'')+(a.time||'')));
   const list = document.getElementById('jobs-list');
@@ -2254,7 +2273,7 @@ function mkJobCard(job) {
       </div>
       <div>
         <div class="badges">
-          <span class="bdg ${job.type}">${job.type==='walkthrough'?'Walk-Through':'Job'}</span>
+          <span class="bdg ${job.type}">${typeLabel(job.type)}</span>
           <span class="bdg ${job.status}">${cap(job.status)}</span>
           <span class="bdg who">${esc(job.assignedTo)}</span>
           ${job.status==='paid'?'<span class="bdg paid">$30</span>':''}
@@ -2336,13 +2355,14 @@ function calcDurFromTimes(start, end) {
 }
 
 function openBooking(dateStr, editJob, timeStr) {
+  const eType = editJob?.type || 'walkthrough';
   const eTime = editJob?.time || timeStr || '';
-  const eDur = editJob?.durationMin || 60;
+  const eDur = editJob?.durationMin || typeDefaultDur(eType);
   const eEnd = editJob?.endTime || calcEndTime(eTime, eDur);
   bk = {
     step: editJob ? 2 : 1,
     customer: null, isNew: false,
-    type: editJob?.type || 'walkthrough',
+    type: eType,
     date: editJob?.date || dateStr || fmtDate(new Date()),
     time: eTime,
     endTime: eEnd,
@@ -2469,20 +2489,34 @@ function toggleNewCust() {
 
 /* Step 2 helpers */
 function fillDetails() {
-  selType(bk.type);
   document.getElementById('b-date').value=bk.date||fmtDate(new Date());
   document.getElementById('b-time').value=bk.time||'';
-  document.getElementById('b-endtime').value=bk.endTime||calcEndTime(bk.time,bk.durationMin||60);
+  document.getElementById('b-endtime').value=bk.endTime||calcEndTime(bk.time,bk.durationMin||typeDefaultDur(bk.type));
   document.getElementById('b-addr').value=bk.address||bk.customer?.address||'';
   document.getElementById('b-notes').value=bk.notes||'';
   document.getElementById('job-recurrence').value=bk.recurrence||'none';
   selAssignee(bk.assignedTo);
+  selType(bk.type);
 }
 
+function typeDefaultDur(t) { return t==='walkthrough'?30:t==='reorg'?150:90; }
+function typeLabel(t) { return t==='walkthrough'?'Walk-Through':t==='reorg'?'Reorganization':'Cleanout'; }
+function typeServiceLabel(t) { return t==='walkthrough'?'Walk-Through':t==='reorg'?'Garage Reorganization':'Garage Cleanout'; }
+
 function selType(t) {
+  if(t==='job') t='cleanout';
   bk.type=t;
   document.getElementById('tp-walk').classList.toggle('selected',t==='walkthrough');
-  document.getElementById('tp-job').classList.toggle('selected',t==='job');
+  document.getElementById('tp-cleanout').classList.toggle('selected',t==='cleanout');
+  document.getElementById('tp-reorg').classList.toggle('selected',t==='reorg');
+  const dur=typeDefaultDur(t);
+  bk.durationMin=dur;
+  const startTime=document.getElementById('b-time').value||bk.time;
+  if(startTime) {
+    const end=calcEndTime(startTime,dur);
+    document.getElementById('b-endtime').value=end;
+    bk.endTime=end;
+  }
 }
 
 function selAssignee(who) {
@@ -2500,7 +2534,7 @@ function renderReview() {
   const tl=bk.time?fmtTime(bk.time):'No time set';
   document.getElementById('review-card').innerHTML=`
     <div class="review-row"><div class="ricon"></div><div><div class="rlbl">Customer</div><div class="rval">${esc(c.name)}${c.phone?' · '+esc(c.phone):''}</div></div></div>
-    <div class="review-row"><div class="ricon"></div><div><div class="rlbl">Type</div><div class="rval">${bk.type==='walkthrough'?'Walk-Through':'Cleanup Job'}</div></div></div>
+    <div class="review-row"><div class="ricon"></div><div><div class="rlbl">Type</div><div class="rval">${typeLabel(bk.type)}</div></div></div>
     <div class="review-row"><div class="ricon"></div><div><div class="rlbl">Date</div><div class="rval">${dl}</div></div></div>
     <div class="review-row"><div class="ricon"></div><div><div class="rlbl">Time</div><div class="rval">${tl}${bk.endTime?' – '+fmtTime(bk.endTime):''}</div></div></div>
     <div class="review-row"><div class="ricon"></div><div><div class="rlbl">Address</div><div class="rval">${esc(bk.address)||esc(c.address)||'—'}</div></div></div>
@@ -2531,7 +2565,7 @@ async function confirmBooking() {
   const job = {
     id: jobId,
     type: bk.type,
-    serviceType: bk.type === 'walkthrough' ? 'Walk-Through' : 'Garage Cleanout',
+    serviceType: typeServiceLabel(bk.type),
     date: bk.date,
     time: bk.time,
     endTime: bk.endTime || '',
@@ -2608,7 +2642,7 @@ async function confirmBooking() {
       await emailjs.send(CFG.EMAILJS_SERVICE_ID, CFG.EMAILJS_TEMPLATE_ID, {
         to_email:       c.email,
         to_name:        c.name,
-        appointment_type: bk.type==='walkthrough'?'Walk-Through':'Cleanup Job',
+        appointment_type: typeLabel(bk.type),
         appointment_date: dl,
         appointment_time: bk.time?fmtTime(bk.time):'Time TBD',
         address:        addr||'TBD',
@@ -3129,7 +3163,7 @@ async function ocBook() {
       const dl = new Date(date+'T12:00:00').toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric'});
       await emailjs.send(CFG.EMAILJS_SERVICE_ID, CFG.EMAILJS_TEMPLATE_ID, {
         to_email: c.email, to_name: c.name,
-        appointment_type: job.type==='walkthrough'?'Walk-Through':'Cleanup Job',
+        appointment_type: typeLabel(job.type),
         appointment_date: dl,
         appointment_time: job.time ? fmtTime(job.time) : 'Time TBD',
         address: job.address||'TBD',
