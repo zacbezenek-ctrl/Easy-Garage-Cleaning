@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Independent Contractor Agreement — Easy Garage Cleaning</title>
 <meta name="robots" content="noindex, nofollow" />
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
 <style>
   :root {
     --navy: #0b1120; --navy-soft: #111827; --navy-light: #1a2332;
@@ -400,6 +402,17 @@ const ALLOWED_USERS = {
   TylerG: '28b50fd5ee98af8cf015972811def03dbc2eaff52997f82ecfc4342ece6cfa36',
 };
 
+firebase.initializeApp({
+  apiKey:            "AIzaSyA8g4UAW4P4bsCrQNZhUe81CbC7BvjJbNc",
+  authDomain:        "egcw-1ec83.firebaseapp.com",
+  projectId:         "egcw-1ec83",
+  storageBucket:     "egcw-1ec83.firebasestorage.app",
+  messagingSenderId: "763340109795",
+  appId:             "1:763340109795:web:ac203b3eb71831fa4ed2d6"
+});
+const db = firebase.firestore();
+const SIG_DOC = db.collection('contracts').doc('tyler-lead-setter');
+
 const SIG_ROLE = { ZacB: 'zac', TylerG: 'tyler' };
 let me = null;
 
@@ -457,24 +470,6 @@ function showContract() {
   loadSignatures();
 }
 
-/* Signature persistence via localStorage */
-const SIG_KEY = 'egc_contract_sigs';
-
-function getSigs() {
-  try { return JSON.parse(localStorage.getItem(SIG_KEY)) || {}; }
-  catch { return {}; }
-}
-
-function loadSignatures() {
-  const sigs = getSigs();
-  ['zac', 'tyler'].forEach(role => {
-    if (sigs[role]) {
-      renderSigned(role, sigs[role].name, sigs[role].timestamp, sigs[role].username);
-    }
-  });
-  updateStatus();
-}
-
 function renderSigned(role, name, timestamp, username) {
   document.getElementById('sig-form-' + role).style.display = 'none';
   document.getElementById('sig-done-' + role).style.display = 'block';
@@ -484,33 +479,48 @@ function renderSigned(role, name, timestamp, username) {
   document.getElementById('sig-box-' + role).classList.add('signed');
 }
 
-function submitSignature(role) {
-  const nameEl = document.getElementById('sig-name-' + role);
-  const name = nameEl.value.trim();
-  if (!name) return;
-
-  const sigs = getSigs();
-  sigs[role] = {
-    name: name,
-    username: me,
-    timestamp: new Date().toISOString()
-  };
-  localStorage.setItem(SIG_KEY, JSON.stringify(sigs));
-  renderSigned(role, name, sigs[role].timestamp, me);
+async function loadSignatures() {
+  try {
+    const snap = await SIG_DOC.get();
+    if (snap.exists) {
+      const data = snap.data();
+      ['zac', 'tyler'].forEach(role => {
+        if (data[role]) renderSigned(role, data[role].name, data[role].timestamp, data[role].username);
+      });
+    }
+  } catch (e) { console.error('Failed to load signatures:', e); }
   updateStatus();
 }
 
-function updateStatus() {
-  const sigs = getSigs();
-  ['zac', 'tyler'].forEach(role => {
-    const dot = document.getElementById('dot-' + role);
-    const lbl = document.getElementById('status-' + role);
-    if (sigs[role]) {
-      dot.className = 'status-dot done';
-      const label = role === 'zac' ? 'Zac Bezenek' : 'Tyler';
-      lbl.textContent = label + ' — signed ' + new Date(sigs[role].timestamp).toLocaleDateString();
-    }
-  });
+async function submitSignature(role) {
+  const nameEl = document.getElementById('sig-name-' + role);
+  const name = nameEl.value.trim();
+  if (!name) return;
+  const sigData = { name: name, username: me, timestamp: new Date().toISOString() };
+  try {
+    await SIG_DOC.set({ [role]: sigData }, { merge: true });
+    renderSigned(role, name, sigData.timestamp, me);
+    updateStatus();
+  } catch (e) {
+    console.error('Failed to save signature:', e);
+    alert('Could not save signature. Check your connection and try again.');
+  }
+}
+
+async function updateStatus() {
+  try {
+    const snap = await SIG_DOC.get();
+    const data = snap.exists ? snap.data() : {};
+    ['zac', 'tyler'].forEach(role => {
+      const dot = document.getElementById('dot-' + role);
+      const lbl = document.getElementById('status-' + role);
+      if (data[role]) {
+        dot.className = 'status-dot done';
+        const label = role === 'zac' ? 'Zac Bezenek' : 'Tyler';
+        lbl.textContent = label + ' — signed ' + new Date(data[role].timestamp).toLocaleDateString();
+      }
+    });
+  } catch (e) { console.error('Status check failed:', e); }
 }
 
 /* Enable sign button only when name is typed + checkbox is checked */
