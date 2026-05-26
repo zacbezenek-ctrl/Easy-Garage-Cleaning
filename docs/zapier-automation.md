@@ -9,7 +9,7 @@
 
 | Property | Value |
 |----------|--------|
-| Document ID | Normalized **phone number** (E.164, e.g. `+19705551234`) |
+| Document ID | **Facebook Lead ID** for FB leads; E.164 phone for website/manual leads |
 | Primary fields | `status`, `contactAttempts`, `optedOutAt`, `conversationActive`, `lastTouchAt`, `lastOutboundAt`, `nextFollowUpAt`, `scheduledJobAt`, `notifiedAt`, `reviewRequestedAt` |
 | Contact fields | `name`, `email`, `items`, `source`, `assignedTo`, `serviceZip`, `lossReason` |
 
@@ -35,10 +35,12 @@
 
 ### Zap 2A — Inbound SMS
 - Trigger: Quo inbound SMS
-- Updates: `conversationActive=true`, `lastTouchAt`
+- **IMPORTANT:** Must look up lead by `phone` field first (Firestore query), then update the found document. Do NOT use the phone number as the document ID — Facebook leads use the FB lead ID as their doc ID, so writing directly by phone creates ghost documents.
+- Updates: `conversationActive=true`, `lastInboundAt`, `lastTouchAt`
 
 ### Zap 2B — Outbound SMS
 - Trigger: Quo outbound SMS
+- **IMPORTANT:** Same as 2A — query by `phone` field to find the correct doc ID before updating.
 - Updates: `conversationActive=true`, `lastOutboundAt`
 
 ### Zap 3 — STOP (TCPA)
@@ -98,7 +100,8 @@ HTML comment in forms: `<!-- Zapier Zap: Web3forms → Firestore leads (phone do
 - Mark dead requires confirm + optional `lossReason`
 - Opted-out leads: SMS buttons disabled (TCPA)
 - Convert lead → job sets `status=booked` + `scheduledJobAt`
-- Manual leads may use auto doc IDs; Zapier intake uses phone IDs
+- Facebook leads use FB lead ID as doc ID; website/manual leads use E.164 phone or auto ID
+- Ghost documents (phone-keyed docs with only conversation fields) are auto-merged by the CRM into the correct lead and deleted
 
 ---
 
