@@ -27,25 +27,60 @@
 
 ---
 
+## API Endpoints (Cloudflare Pages Functions)
+
+### POST /api/lead-intake
+Receives new lead data and writes to Firestore. Use this as the Zapier webhook target for Facebook Lead Ads (replaces direct Firestore write).
+
+**Zapier setup:** Webhooks by Zapier → POST → `https://easygaragecleaning.com/api/lead-intake`
+
+| Field | Maps from | Required |
+|-------|-----------|----------|
+| `leadId` | Facebook Lead ID | Yes (used as Firestore doc ID) |
+| `name` | Full Name | Yes |
+| `firstName` | First Name | No |
+| `phone` | Phone Number | Yes |
+| `email` | Email | No |
+| `items` | What service / items | No |
+| `source` | Hardcode `Facebook Ads (fb)` | No (defaults to FB) |
+| `serviceZip` | Zip code | No |
+| `message` | Any notes | No |
+
+### POST /api/sms-event
+Receives SMS events and updates the correct lead by phone lookup. Use this instead of direct Firestore writes for Zaps 2A/2B/3.
+
+**Zapier setup:** Webhooks by Zapier → POST → `https://easygaragecleaning.com/api/sms-event`
+
+| Field | Value |
+|-------|-------|
+| `phone` | SMS sender/recipient phone number |
+| `direction` | `inbound` or `outbound` |
+| `stop` | `true` if STOP message (TCPA opt-out) |
+
+**Env var required:** `FIREBASE_API_KEY` in Cloudflare Pages dashboard.
+
+---
+
 ## Zaps (1–8)
 
 ### Zap 1 — Facebook Lead Intake
 - Trigger: Facebook Lead Ads
-- Actions: Create/update Firestore `leads` doc (phone ID), `status=new`, Quo welcome SMS, alert Zac/Tyler
+- Action: **Webhooks by Zapier → POST to `/api/lead-intake`** with lead fields mapped
+- The endpoint writes to Firestore using the Facebook Lead ID as the doc ID
 
 ### Zap 2A — Inbound SMS
 - Trigger: Quo inbound SMS
-- **IMPORTANT:** Must look up lead by `phone` field first (Firestore query), then update the found document. Do NOT use the phone number as the document ID — Facebook leads use the FB lead ID as their doc ID, so writing directly by phone creates ghost documents.
-- Updates: `conversationActive=true`, `lastInboundAt`, `lastTouchAt`
+- Action: **Webhooks by Zapier → POST to `/api/sms-event`** with `phone` and `direction: inbound`
+- The endpoint looks up the lead by phone and updates the correct document
 
 ### Zap 2B — Outbound SMS
 - Trigger: Quo outbound SMS
-- **IMPORTANT:** Same as 2A — query by `phone` field to find the correct doc ID before updating.
-- Updates: `conversationActive=true`, `lastOutboundAt`
+- Action: **Webhooks by Zapier → POST to `/api/sms-event`** with `phone` and `direction: outbound`
 
 ### Zap 3 — STOP (TCPA)
 - Trigger: Inbound SMS contains STOP
-- Updates: `optedOutAt` — **never message again**
+- Action: **POST to `/api/sms-event`** with `phone` and `stop: true`
+- Sets `optedOutAt` — **never message again**
 
 ### Zap 4 — No-Answer Cadence
 - Schedule: Hourly, business hours 9am–6pm MT
