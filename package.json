@@ -1,5 +1,8 @@
 {
   "devDependencies": {
     "firebase-admin": "^13.10.0"
+  },
+  "dependencies": {
+    "firebase": "^12.13.0"
   }
 }
