@@ -867,6 +867,7 @@ body.has-session #login-screen { display: none; }
     <button class="tab" data-tab="schedule" onclick="switchTab('schedule',this)">Schedule</button>
     <button class="tab" data-tab="customers" onclick="switchTab('customers',this)">Customers</button>
     <button class="tab" data-tab="leads" onclick="switchTab('leads',this)">Leads <span id="leads-badge" style="display:none;background:var(--accent);color:#fff;border-radius:999px;font-size:.65rem;font-weight:700;padding:1px 6px;margin-left:4px;vertical-align:middle"></span></button>
+    <button class="tab" data-tab="sops" onclick="switchTab('sops',this)">SOPs</button>
     <button class="tab" data-tab="more" onclick="switchTab('more',this)">More</button>
   </div>
 
@@ -951,6 +952,15 @@ body.has-session #login-screen { display: none; }
       <input type="search" class="cust-search-bar" placeholder="Search name, phone, city…" oninput="filterCustomersTab(this.value)">
       <div id="sheet-status" style="font-size:.75rem;color:var(--muted);margin-bottom:.75rem"></div>
       <div id="cust-tab-list"></div>
+    </div>
+
+    <!-- SOPs -->
+    <div id="tab-sops" class="panel">
+      <div class="jobs-hd">
+        <h2>SOPs</h2>
+        <button class="btn-book" id="sop-upload-btn" onclick="document.getElementById('sop-upload-modal').style.display='flex'" style="display:none">+ Upload SOP</button>
+      </div>
+      <div id="sop-list" style="display:flex;flex-direction:column;gap:.75rem"></div>
     </div>
 
     <!-- MORE -->
@@ -1179,6 +1189,30 @@ body.has-session #login-screen { display: none; }
       <button class="btn-back" id="btn-back" onclick="stepBack()" style="visibility:hidden">← Back</button>
       <span class="step-err" id="step-err"></span>
       <button class="btn-next" id="btn-next" onclick="stepNext()">Next →</button>
+    </div>
+  </div>
+</div>
+
+<!-- SOP Upload Modal -->
+<div id="sop-upload-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);backdrop-filter:blur(4px);z-index:300;align-items:center;justify-content:center;padding:1rem" onclick="if(event.target===this)this.style.display='none'">
+  <div style="background:var(--navy-soft);border:1px solid rgba(255,255,255,.1);border-radius:1rem;padding:1.75rem;width:100%;max-width:480px">
+    <div style="font-family:'Fraunces',serif;font-size:1.1rem;font-weight:700;margin-bottom:1.25rem">Upload SOP</div>
+    <div class="fg"><label>Title *</label><input type="text" id="sop-title" placeholder="e.g. Truck Loading Procedure"></div>
+    <div class="fg"><label>Category</label>
+      <select id="sop-category">
+        <option value="General">General</option>
+        <option value="Safety">Safety</option>
+        <option value="Operations">Operations</option>
+        <option value="Customer Service">Customer Service</option>
+        <option value="Equipment">Equipment</option>
+      </select>
+    </div>
+    <div class="fg"><label>Description (optional)</label><textarea id="sop-desc" rows="2" placeholder="Brief summary…"></textarea></div>
+    <div class="fg"><label>File (PDF, DOC, image) *</label><input type="file" id="sop-file" accept=".pdf,.doc,.docx,.txt,.png,.jpg,.jpeg,.webp"></div>
+    <div id="sop-upload-status" style="font-size:.8rem;margin-bottom:.75rem"></div>
+    <div style="display:flex;gap:.65rem;justify-content:flex-end">
+      <button class="btn-back" onclick="document.getElementById('sop-upload-modal').style.display='none'">Cancel</button>
+      <button class="btn-next" onclick="uploadSOP()">Upload SOP</button>
     </div>
   </div>
 </div>
@@ -1921,6 +1955,7 @@ function switchTab(name, btn) {
   if (name === 'customers') renderCustomersTab();
   if (name === 'cal' || name === 'schedule') renderCal();
   if (name === 'leads') renderLeads();
+  if (name === 'sops') renderSOPs();
 }
 
 /* ═══════════════════════════════════════════════════════
@@ -2713,6 +2748,7 @@ function showModeSelect() {
   emailjs.init(CFG.EMAILJS_PUBLIC_KEY);
   startListeners();
   fetchSheetCustomers();
+  initSOPs();
 }
 
 function selectMode(mode) {
@@ -3188,6 +3224,92 @@ async function ocBook() {
   document.getElementById('oncall-overlay').classList.remove('open');
   showToast('Booked for ' + c.name + '!');
   bootDashboard();
+}
+
+/* ═══════════════════════════════════════════════════════
+   SOPs — Firestore-backed, ZacB can upload, everyone views
+═══════════════════════════════════════════════════════ */
+let sopsCache = [];
+
+function initSOPs() {
+  if (ADMINS.includes(me)) {
+    const btn = document.getElementById('sop-upload-btn');
+    if (btn) btn.style.display = '';
+  }
+  db.collection('sops').orderBy('createdAt', 'desc').onSnapshot(snap => {
+    sopsCache = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    if (document.getElementById('tab-sops')?.classList.contains('active')) renderSOPs();
+  }, err => console.error('SOPs listener error', err));
+}
+
+function renderSOPs() {
+  const el = document.getElementById('sop-list');
+  if (!el) return;
+  if (!sopsCache.length) {
+    el.innerHTML = '<div style="color:var(--muted);font-size:.9rem;padding:1rem 0">No SOPs uploaded yet.' + (ADMINS.includes(me) ? ' Click "+ Upload SOP" to add one.' : '') + '</div>';
+    return;
+  }
+  const cats = {};
+  sopsCache.forEach(s => { const c = s.category || 'General'; if (!cats[c]) cats[c] = []; cats[c].push(s); });
+  el.innerHTML = Object.entries(cats).map(([cat, items]) => `
+    <div style="margin-bottom:.5rem">
+      <div style="font-size:.7rem;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--muted);margin-bottom:.5rem">${esc(cat)}</div>
+      ${items.map(s => `<div style="background:var(--navy-soft);border:1px solid rgba(255,255,255,.08);border-radius:.75rem;padding:1rem 1.25rem;margin-bottom:.5rem;display:flex;align-items:center;justify-content:space-between;gap:.75rem;flex-wrap:wrap">
+        <div style="min-width:0;flex:1">
+          <div style="font-weight:600;font-size:.95rem">${esc(s.title)}</div>
+          ${s.description ? `<div style="font-size:.8rem;color:var(--muted);margin-top:.2rem">${esc(s.description)}</div>` : ''}
+          <div style="font-size:.7rem;color:var(--muted);margin-top:.35rem">Uploaded by ${esc(s.uploadedBy||'—')} · ${s.createdAt ? new Date(s.createdAt).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : '—'}${s.fileName ? ' · '+esc(s.fileName) : ''}</div>
+        </div>
+        <div style="display:flex;gap:.4rem;flex-shrink:0">
+          ${s.fileData ? `<a href="${s.fileData}" download="${esc(s.fileName||'sop')}" class="bsm edit" style="text-decoration:none">Download</a>` : ''}
+          ${ADMINS.includes(me) ? `<button class="bsm del" onclick="deleteSOP('${s.id}')">Delete</button>` : ''}
+        </div>
+      </div>`).join('')}
+    </div>`).join('');
+}
+
+async function uploadSOP() {
+  if (!ADMINS.includes(me)) { alert('Only ZacB can upload SOPs.'); return; }
+  const title = document.getElementById('sop-title')?.value.trim();
+  const category = document.getElementById('sop-category')?.value || 'General';
+  const desc = document.getElementById('sop-desc')?.value.trim();
+  const fileInput = document.getElementById('sop-file');
+  const status = document.getElementById('sop-upload-status');
+  if (!title) { status.textContent = 'Please enter a title.'; status.style.color = '#fca5a5'; return; }
+  if (!fileInput?.files?.length) { status.textContent = 'Please select a file.'; status.style.color = '#fca5a5'; return; }
+  const file = fileInput.files[0];
+  if (file.size > 5 * 1024 * 1024) { status.textContent = 'File must be under 5MB.'; status.style.color = '#fca5a5'; return; }
+  status.textContent = 'Uploading…'; status.style.color = '#fcd34d';
+  try {
+    const reader = new FileReader();
+    const dataUrl = await new Promise((resolve, reject) => {
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+    const sopId = uid();
+    await db.collection('sops').doc(sopId).set({
+      id: sopId, title, category, description: desc || '',
+      fileName: file.name, fileType: file.type, fileSize: file.size,
+      fileData: dataUrl,
+      uploadedBy: me, createdAt: new Date().toISOString()
+    });
+    status.textContent = 'Uploaded!'; status.style.color = '#86efac';
+    document.getElementById('sop-title').value = '';
+    document.getElementById('sop-desc').value = '';
+    fileInput.value = '';
+    setTimeout(() => { document.getElementById('sop-upload-modal').style.display = 'none'; status.textContent = ''; }, 800);
+  } catch (err) {
+    console.error('SOP upload error:', err);
+    status.textContent = 'Upload failed: ' + (err.message || err); status.style.color = '#fca5a5';
+  }
+}
+
+async function deleteSOP(id) {
+  if (!ADMINS.includes(me)) return;
+  if (!confirm('Delete this SOP?')) return;
+  await db.collection('sops').doc(id).delete();
+  showToast('SOP deleted');
 }
 </script>
 <script>
