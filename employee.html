@@ -1234,6 +1234,18 @@ body.has-session #login-screen { display: none; }
   </div>
 </div>
 
+<!-- SOP Viewer Modal -->
+<div id="sop-viewer-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.85);backdrop-filter:blur(6px);z-index:310;flex-direction:column" onclick="if(event.target===this)closeSopViewer()">
+  <div style="display:flex;align-items:center;justify-content:space-between;padding:.75rem 1.25rem;flex-shrink:0;border-bottom:1px solid rgba(255,255,255,.08)">
+    <div style="font-weight:600;font-size:.95rem;color:#fff;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" id="sop-viewer-title"></div>
+    <div style="display:flex;gap:.5rem;flex-shrink:0">
+      <a id="sop-viewer-download" class="bsm edit" style="text-decoration:none" download>Download</a>
+      <button class="bsm del" onclick="closeSopViewer()">Close</button>
+    </div>
+  </div>
+  <div id="sop-viewer-body" style="flex:1;overflow:auto;display:flex;align-items:center;justify-content:center;padding:1rem"></div>
+</div>
+
 <!-- Add Customer Modal (simple) -->
 <div id="add-cust-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);backdrop-filter:blur(4px);z-index:300;align-items:center;justify-content:center;padding:1rem" onclick="closeAddCust(event)">
   <div style="background:var(--navy-soft);border:1px solid rgba(255,255,255,.1);border-radius:1rem;padding:1.75rem;width:100%;max-width:420px">
@@ -3288,7 +3300,7 @@ function renderSOPs() {
           <div style="font-size:.7rem;color:var(--muted);margin-top:.35rem">Uploaded by ${esc(s.uploadedBy||'—')} · ${s.createdAt ? new Date(s.createdAt).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) : '—'}${s.fileName ? ' · '+esc(s.fileName) : ''}</div>
         </div>
         <div style="display:flex;gap:.4rem;flex-shrink:0">
-          ${s.fileData ? `<a href="${s.fileData}" download="${esc(s.fileName||'sop')}" class="bsm edit" style="text-decoration:none">Download</a>` : ''}
+          ${s.fileData ? `<button class="bsm edit" onclick="viewSOP('${s.id}')">View</button><a href="${s.fileData}" download="${esc(s.fileName||'sop')}" class="bsm edit" style="text-decoration:none">Download</a>` : ''}
           <button class="bsm del" onclick="deleteSOP('${s.id}')">Delete</button>
         </div>
       </div>`).join('')}
@@ -3336,6 +3348,33 @@ async function deleteSOP(id) {
   if (!confirm('Delete this SOP?')) return;
   await db.collection('sops').doc(id).delete();
   showToast('SOP deleted');
+}
+
+function viewSOP(id) {
+  const sop = sopsCache.find(s => s.id === id);
+  if (!sop || !sop.fileData) return;
+  const modal = document.getElementById('sop-viewer-modal');
+  const body = document.getElementById('sop-viewer-body');
+  const title = document.getElementById('sop-viewer-title');
+  const dl = document.getElementById('sop-viewer-download');
+  title.textContent = sop.title;
+  dl.href = sop.fileData;
+  dl.download = sop.fileName || 'sop';
+  const type = (sop.fileType || '').toLowerCase();
+  if (type === 'application/pdf' || (sop.fileName || '').toLowerCase().endsWith('.pdf')) {
+    body.innerHTML = '<iframe src="' + sop.fileData + '" style="width:100%;height:100%;border:none;border-radius:.5rem;background:#fff"></iframe>';
+  } else if (type.startsWith('image/')) {
+    body.innerHTML = '<img src="' + sop.fileData + '" style="max-width:100%;max-height:100%;border-radius:.5rem;object-fit:contain" alt="' + esc(sop.title) + '">';
+  } else {
+    body.innerHTML = '<div style="text-align:center;color:var(--muted);padding:2rem"><div style="font-size:1.1rem;margin-bottom:.5rem">Preview not available for this file type</div><div style="font-size:.85rem">' + esc(sop.fileName || '') + '</div><a href="' + sop.fileData + '" download="' + esc(sop.fileName || 'sop') + '" class="btn-book" style="margin-top:1rem;display:inline-block;text-decoration:none">Download to view</a></div>';
+  }
+  modal.style.display = 'flex';
+}
+
+function closeSopViewer() {
+  const modal = document.getElementById('sop-viewer-modal');
+  modal.style.display = 'none';
+  document.getElementById('sop-viewer-body').innerHTML = '';
 }
 </script>
 <script>
