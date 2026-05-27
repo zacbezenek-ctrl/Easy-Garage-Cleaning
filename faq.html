@@ -247,34 +247,7 @@
 }
 </script>
 
-<link rel="stylesheet" href="/styles.css">
-<style>
-.foot { display: flex; flex-direction: column; gap: 16px; justify-content: space-between; }
-.foot .logo { color: var(--paper); }
-@media (min-width: 700px) { .foot { flex-direction: row; align-items: center; } }
-.faq-hero { padding: 72px 0 56px; }
-.faq-hero .eyebrow { font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.15em; color: var(--accent); margin-bottom: 16px; }
-.faq-hero h1 { font-family: var(--font-display); font-size: clamp(30px, 5vw, 52px); font-weight: 700; letter-spacing: -0.03em; line-height: 1.1; max-width: 700px; }
-.faq-hero p { margin-top: 18px; font-size: 17px; color: var(--muted); max-width: 520px; }
-.faq-nav-list .nav-section { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.12em; color: var(--accent); padding: 14px 12px 4px; }
-.faq-sections { }
-.faq-section { margin-bottom: 72px; }
-.faq-section:last-child { margin-bottom: 0; }
-.section-header { display: flex; align-items: baseline; gap: 14px; margin-bottom: 32px; padding-bottom: 16px; border-bottom: 1px solid rgba(10,22,40,0.1); }
-.section-header h2 { font-family: var(--font-display); font-size: 24px; font-weight: 700; letter-spacing: -0.02em; }
-.faq-q .q-num { font-family: var(--font-mono); font-size: 11px; color: var(--muted); flex-shrink: 0; padding-top: 3px; min-width: 24px; }
-.faq-q .q-text { font-size: 16px; font-weight: 600; line-height: 1.4; flex: 1; }
-.faq-q .q-arrow { flex-shrink: 0; width: 20px; height: 20px; display: flex; align-items: center; justify-content: center; color: var(--muted); transition: transform 0.2s; }
-details[open] .faq-q .q-arrow { transform: rotate(180deg); }
-details[open] .faq-q .q-text { color: var(--accent); }
-.faq-cta .eyebrow { font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.15em; color: var(--accent); margin-bottom: 12px; }
-.faq-cta-actions { display: flex; gap: 12px; flex-wrap: wrap; }
-.faq-cta-actions a { padding: 14px 24px; font-weight: 700; border-radius: var(--radius); font-size: 15px; }
-.cta-phone { background: transparent; border: 1px solid rgba(245,241,234,0.25); color: var(--paper); }
-@media(min-width:640px){.foot-grid{grid-template-columns:repeat(2,1fr)}}
-@media(min-width:900px){.foot-grid{grid-template-columns:1.5fr repeat(4,1fr);gap:32px}}
-@media(min-width:900px){.foot-grid{grid-template-columns:1.5fr repeat(4,1fr);gap:32px}}
-</style>
+
 </head>
 <body>
 <a href="#main-content" class="skip-link">Skip to content</a>
@@ -966,7 +939,7 @@ details[open] .faq-q .q-text { color: var(--accent); }
   <a href="/book.html" class="mobile-cta-btn mobile-cta-quote">Quote</a>
 </div>
 
-<style>@media(max-width:1023px){.mobile-sticky-cta{position:fixed;bottom:0;left:0;right:0;z-index:100;display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;background:#0a1628;padding:8px 10px 12px}body{padding-bottom:72px}}</style>
+
 <script>
 function initNavDrawer(){
   const toggle=document.querySelector('.nav-toggle');
