@@ -676,6 +676,7 @@
       <h3>${esc(c.name)}${c.demo ? ' <span class="bdg scheduled">DEMO</span>' : ''}</h3>
       <div class="detail-actions">
         ${phone ? `<a class="bsm edit" href="tel:${phone}">Call</a><a class="bsm edit" href="sms:${phone}">Text</a>` : ''}
+        ${c.email ? `<button type="button" class="bsm approve" onclick="sendReviewRequest('customer','${c.id}','${esc(c.email)}','${esc(c.name || '')}')">⭐ Request Review</button>` : ''}
         <button type="button" class="bsm edit" onclick="openBooking();closeCustomerDetail()">+ Job</button>
       </div>
       <div class="detail-grid">
@@ -1173,6 +1174,7 @@
         ${phone && !optedOut ? `<a class="bsm edit" href="sms:${phone}">Text via Quo</a>` : ''}
         ${phone && optedOut ? `<span class="bsm edit tcpa-disabled" title="TCPA: lead opted out">Text (blocked)</span>` : ''}
         ${lead.email ? `<a class="bsm edit" href="mailto:${esc(lead.email)}">Email</a>` : ''}
+        ${lead.email ? `<button type="button" class="bsm approve" onclick="sendReviewRequest('lead','${lead.id}','${esc(lead.email)}','${esc(lead.firstName || lead.name || '')}')">⭐ Request Review</button>` : ''}
         <button type="button" class="bsm edit" onclick="logContactAttempt('${lead.id}')">Log attempt</button>
         <button type="button" class="bsm edit" onclick="convertLeadToJob('${lead.id}')">→ Job</button>
       </div>
@@ -1288,6 +1290,28 @@
       drawer.setAttribute('aria-hidden', 'true');
     }
     document.body.style.overflow = '';
+  };
+
+  window.sendReviewRequest = async function (type, id, email, name) {
+    if (!email) { if (typeof showToast === 'function') showToast('No email on file'); return; }
+    const btn = event?.target?.closest('button');
+    if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
+    try {
+      await emailjs.send(CFG.EMAILJS_SERVICE_ID, CFG.EMAILJS_REVIEW_TEMPLATE_ID, {
+        to_email: email,
+        to_name: name || 'Valued Customer',
+        review_link: CFG.GOOGLE_REVIEW_LINK,
+        company_name: 'Easy Garage Cleaning'
+      });
+      const collection = type === 'lead' ? 'leads' : 'customers';
+      await db.collection(collection).doc(id).update({ reviewRequestedAt: new Date().toISOString() });
+      if (typeof showToast === 'function') showToast('Review request sent to ' + email);
+      if (btn) { btn.textContent = '✓ Review Sent'; btn.classList.remove('approve'); btn.classList.add('edit'); }
+    } catch (err) {
+      console.error('Review email failed:', err);
+      if (typeof showToast === 'function') showToast('Failed to send review email');
+      if (btn) { btn.disabled = false; btn.textContent = '⭐ Request Review'; }
+    }
   };
 
   window.setLeadStatus = async function (id, status, selectEl) {
