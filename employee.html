@@ -523,6 +523,7 @@ body.has-session #login-screen { display: none; }
     }
 .email-toggle-row label { font-size: .875rem; cursor: pointer; line-height: 1.4; }
 .email-toggle-row .esub { font-size: .75rem; color: var(--muted); display: block; margin-top: .1rem; }
+#email-status { font-size: .8rem; border-radius: .5rem; padding: .5rem .85rem; margin-bottom: .75rem; }
 #email-status.sending { background: rgba(245,158,11,.1); color: #fcd34d; border: 1px solid rgba(245,158,11,.2); }
 #email-status.sent    { background: rgba(34,197,94,.1);  color: #86efac; border: 1px solid rgba(34,197,94,.2); }
 #email-status.fail    { background: rgba(239,68,68,.1);  color: #fca5a5; border: 1px solid rgba(239,68,68,.2); }
@@ -2744,6 +2745,10 @@ function openOnCall() {
     booking:{ assignedTo: me==='TylerG'?'TylerG':'ZacB' }
   };
   document.getElementById('oncall-overlay').classList.add('open');
+  db.collection('leads').get().then(snap => {
+    leadsCache = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    if (oc.step === 1) ocFilter(document.getElementById('oc-search')?.value || '');
+  }).catch(e => console.error('Leads refresh error:', e));
   renderOcStep();
 }
 
