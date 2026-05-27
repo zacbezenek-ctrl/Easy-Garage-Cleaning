@@ -3,6 +3,12 @@
   "trailingSlash": false,
   "redirects": [
     {
+      "source": "/",
+      "has": [{ "type": "host", "value": "www.easygaragecleaning.com" }],
+      "destination": "https://easygaragecleaning.com/",
+      "permanent": true
+    },
+    {
       "source": "/:path(.*)",
       "has": [{ "type": "host", "value": "www.easygaragecleaning.com" }],
       "destination": "https://easygaragecleaning.com/:path",
