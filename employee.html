@@ -3261,10 +3261,8 @@ async function ocBook() {
 let sopsCache = [];
 
 function initSOPs() {
-  if (ADMINS.includes(me)) {
-    const btn = document.getElementById('sop-upload-btn');
-    if (btn) btn.style.display = '';
-  }
+  const btn = document.getElementById('sop-upload-btn');
+  if (btn) btn.style.display = '';
   db.collection('sops').orderBy('createdAt', 'desc').onSnapshot(snap => {
     sopsCache = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     if (document.getElementById('sops-screen')?.style.display === 'flex') renderSOPs();
@@ -3275,7 +3273,7 @@ function renderSOPs() {
   const el = document.getElementById('sop-list');
   if (!el) return;
   if (!sopsCache.length) {
-    el.innerHTML = '<div style="color:var(--muted);font-size:.9rem;padding:1rem 0">No SOPs uploaded yet.' + (ADMINS.includes(me) ? ' Click "+ Upload SOP" to add one.' : '') + '</div>';
+    el.innerHTML = '<div style="color:var(--muted);font-size:.9rem;padding:1rem 0">No SOPs uploaded yet. Click "+ Upload SOP" to add one.</div>';
     return;
   }
   const cats = {};
@@ -3291,14 +3289,14 @@ function renderSOPs() {
         </div>
         <div style="display:flex;gap:.4rem;flex-shrink:0">
           ${s.fileData ? `<a href="${s.fileData}" download="${esc(s.fileName||'sop')}" class="bsm edit" style="text-decoration:none">Download</a>` : ''}
-          ${ADMINS.includes(me) ? `<button class="bsm del" onclick="deleteSOP('${s.id}')">Delete</button>` : ''}
+          <button class="bsm del" onclick="deleteSOP('${s.id}')">Delete</button>
         </div>
       </div>`).join('')}
     </div>`).join('');
 }
 
 async function uploadSOP() {
-  if (!ADMINS.includes(me)) { alert('Only ZacB can upload SOPs.'); return; }
+  if (!me) { alert('Please log in first.'); return; }
   const title = document.getElementById('sop-title')?.value.trim();
   const category = document.getElementById('sop-category')?.value || 'General';
   const desc = document.getElementById('sop-desc')?.value.trim();
@@ -3335,7 +3333,6 @@ async function uploadSOP() {
 }
 
 async function deleteSOP(id) {
-  if (!ADMINS.includes(me)) return;
   if (!confirm('Delete this SOP?')) return;
   await db.collection('sops').doc(id).delete();
   showToast('SOP deleted');
