@@ -16,8 +16,8 @@
   Google Search Console: <meta name="google-site-verification" content="YOUR_CODE" />
   CallRail: see comment in _generate_site.py CALLRAIL_BLOCK
 -->
-<script type="text/javascript">
-(function(c,l,a,r,i,t,y){c[a]=c[a]||function(){(c[a].q=c[a].q||[]).push(arguments)};t=l.createElement(r);t.async=1;t.src="https://www.clarity.ms/tag/"+i;y=l.getElementsByTagName(r)[0];y.parentNode.insertBefore(t,y);})(window,document,"clarity","script","CLARITY_PROJECT_ID");
+<script type="text/javascript" defer>
+(function(c,l,a,r,i,t,y){c[a]=c[a]||function(){(c[a].q=c[a].q||[]).push(arguments)};t=l.createElement(r);t.async=1;t.defer=1;t.src="https://www.clarity.ms/tag/"+i;y=l.getElementsByTagName(r)[0];y.parentNode.insertBefore(t,y);})(window,document,"clarity","script","CLARITY_PROJECT_ID");
 </script>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -335,6 +335,8 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="dns-prefetch" href="https://connect.facebook.net">
 <link rel="dns-prefetch" href="https://www.googletagmanager.com">
+<link rel="preload" as="image" type="image/webp" href="/images/garage-before.webp">
+<link rel="preload" as="image" type="image/webp" href="/images/garage-after.webp">
 <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,700;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400&display=swap">
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,700;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
 <noscript><link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,700;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet"></noscript>
@@ -531,8 +533,8 @@ fbq('init','970332989051988');fbq('track','PageView');
     </div>
     <div class="hero-visual">
       <div class="hero-ba" role="img" aria-label="Before and after garage cleanout">
-        <div class="hero-ba-cell before"><img src="/images/garage-before.jpg" alt="Cluttered garage before cleanout" loading="eager"><span class="hero-ba-label">BEFORE</span></div>
-        <div class="hero-ba-cell after"><img src="/images/garage-after.jpg" alt="Clean garage after cleanout" loading="eager"><span class="hero-ba-label">AFTER</span></div>
+        <div class="hero-ba-cell before"><picture><source srcset="/images/garage-before.webp" type="image/webp"><img src="/images/garage-before.jpg" alt="Cluttered garage before cleanout" loading="eager" width="1200" height="1200" fetchpriority="high"></picture><span class="hero-ba-label">BEFORE</span></div>
+        <div class="hero-ba-cell after"><picture><source srcset="/images/garage-after.webp" type="image/webp"><img src="/images/garage-after.jpg" alt="Clean garage after cleanout" loading="eager" width="1200" height="1200" fetchpriority="high"></picture><span class="hero-ba-label">AFTER</span></div>
       </div>
     </div>
   </div>
@@ -877,7 +879,7 @@ fbq('init','970332989051988');fbq('track','PageView');
     </div>
     <div class="gallery-grid gallery-polish reveal">
       <div>
-        <div class="ba-pair"><div class="ba-cell before"><img src="/images/garage-before.jpg" alt="Cluttered two-car garage before cleanout" loading="lazy"><span class="ba-label">BEFORE</span></div><div class="ba-cell after"><img src="/images/garage-after.jpg" alt="Clean organized garage after cleanout" loading="lazy"><span class="ba-label">AFTER</span></div></div>
+        <div class="ba-pair"><div class="ba-cell before"><picture><source srcset="/images/garage-before.webp" type="image/webp"><img src="/images/garage-before.jpg" alt="Cluttered two-car garage before cleanout" loading="lazy" width="1200" height="1200"></picture><span class="ba-label">BEFORE</span></div><div class="ba-cell after"><picture><source srcset="/images/garage-after.webp" type="image/webp"><img src="/images/garage-after.jpg" alt="Clean organized garage after cleanout" loading="lazy" width="1200" height="1200"></picture><span class="ba-label">AFTER</span></div></div>
         <div class="ba-caption"><strong>Two-car garage — Fort Collins</strong> · <a href="/projects/fort-collins-garage-cleanout-old-town.html" style="color:var(--accent-deep);font-weight:600;">See project →</a></div>
       </div>
       <div>
