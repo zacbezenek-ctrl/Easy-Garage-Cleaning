@@ -3350,9 +3350,21 @@ async function deleteSOP(id) {
   showToast('SOP deleted');
 }
 
+let _sopBlobUrl = null;
+
+function dataUrlToBlob(dataUrl) {
+  const parts = dataUrl.split(',');
+  const mime = parts[0].match(/:(.*?);/)[1];
+  const raw = atob(parts[1]);
+  const arr = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
+  return new Blob([arr], { type: mime });
+}
+
 function viewSOP(id) {
   const sop = sopsCache.find(s => s.id === id);
   if (!sop || !sop.fileData) return;
+  if (_sopBlobUrl) { URL.revokeObjectURL(_sopBlobUrl); _sopBlobUrl = null; }
   const modal = document.getElementById('sop-viewer-modal');
   const body = document.getElementById('sop-viewer-body');
   const title = document.getElementById('sop-viewer-title');
@@ -3361,8 +3373,11 @@ function viewSOP(id) {
   dl.href = sop.fileData;
   dl.download = sop.fileName || 'sop';
   const type = (sop.fileType || '').toLowerCase();
-  if (type === 'application/pdf' || (sop.fileName || '').toLowerCase().endsWith('.pdf')) {
-    body.innerHTML = '<iframe src="' + sop.fileData + '" style="width:100%;height:100%;border:none;border-radius:.5rem;background:#fff"></iframe>';
+  const isPdf = type === 'application/pdf' || (sop.fileName || '').toLowerCase().endsWith('.pdf');
+  if (isPdf) {
+    const blob = dataUrlToBlob(sop.fileData);
+    _sopBlobUrl = URL.createObjectURL(blob);
+    body.innerHTML = '<iframe src="' + _sopBlobUrl + '" style="width:100%;height:100%;border:none;border-radius:.5rem;background:#fff"></iframe>';
   } else if (type.startsWith('image/')) {
     body.innerHTML = '<img src="' + sop.fileData + '" style="max-width:100%;max-height:100%;border-radius:.5rem;object-fit:contain" alt="' + esc(sop.title) + '">';
   } else {
@@ -3372,6 +3387,7 @@ function viewSOP(id) {
 }
 
 function closeSopViewer() {
+  if (_sopBlobUrl) { URL.revokeObjectURL(_sopBlobUrl); _sopBlobUrl = null; }
   const modal = document.getElementById('sop-viewer-modal');
   modal.style.display = 'none';
   document.getElementById('sop-viewer-body').innerHTML = '';
