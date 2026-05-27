@@ -24,7 +24,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,400;0,500;0,700;1,400;1,500&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="employee-crm.css">
   <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
   <script>
@@ -3371,25 +3371,41 @@ async function viewSOP(id) {
   body.style.overflow = 'auto';
   const type = (sop.fileType || '').toLowerCase();
   const isPdf = type === 'application/pdf' || (sop.fileName || '').toLowerCase().endsWith('.pdf');
-  if (isPdf && window.pdfjsLib) {
+  if (isPdf) {
     body.innerHTML = '<div style="text-align:center;color:var(--muted);padding:2rem">Loading PDF…</div>';
     modal.style.display = 'flex';
     try {
+      // Wait up to 8 s for PDF.js to finish loading (handles slow connections)
+      if (!window.pdfjsLib) {
+        await new Promise((resolve, reject) => {
+          const t0 = Date.now();
+          const poll = () => {
+            if (window.pdfjsLib) return resolve();
+            if (Date.now() - t0 > 8000) return reject(new Error('PDF.js did not load'));
+            setTimeout(poll, 100);
+          };
+          poll();
+        });
+      }
       pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
       const pdf = await pdfjsLib.getDocument({ data: dataUrlToUint8(sop.fileData) }).promise;
       body.innerHTML = '';
-      const containerWidth = body.clientWidth - 16;
+      const containerWidth = Math.max(body.clientWidth - 16, 200);
       for (let i = 1; i <= pdf.numPages; i++) {
         const page = await pdf.getPage(i);
         const vp = page.getViewport({ scale: 1 });
         const scale = containerWidth / vp.width;
         const viewport = page.getViewport({ scale });
         const canvas = document.createElement('canvas');
-        canvas.width = viewport.width;
-        canvas.height = viewport.height;
+        // Use devicePixelRatio for crisp rendering on high-DPI / Retina mobile screens
+        const dpr = Math.min(window.devicePixelRatio || 1, 2);
+        canvas.width = viewport.width * dpr;
+        canvas.height = viewport.height * dpr;
         canvas.style.cssText = 'width:100%;height:auto;display:block;margin-bottom:4px;background:#fff;border-radius:4px';
         body.appendChild(canvas);
-        await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+        const ctx = canvas.getContext('2d');
+        ctx.scale(dpr, dpr);
+        await page.render({ canvasContext: ctx, viewport }).promise;
       }
     } catch (e) {
       console.error('PDF render error:', e);
