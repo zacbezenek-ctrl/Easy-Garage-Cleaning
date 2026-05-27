@@ -532,13 +532,16 @@
   }
 
   window.moveJobPipeline = async function (jobId, pipelineStatus) {
-    const patch = { pipelineStatus, updatedAt: new Date().toISOString() };
-    if (pipelineStatus === 'scheduled') patch.status = 'scheduled';
-    if (pipelineStatus === 'completed') patch.status = 'completed';
-    if (pipelineStatus === 'paid') patch.status = 'paid';
-    if (pipelineStatus === 'in_progress') patch.status = 'scheduled';
+    const patch = { pipelineStatus, status: pipelineStatus, updatedAt: new Date().toISOString() };
     await db.collection('jobs').doc(jobId).update(patch);
     logActivity(jobId, `Status → ${pipelineLabel(pipelineStatus)}`, me);
+    const job = jobsCache.find((j) => j.id === jobId);
+    if (job?.leadId) {
+      const leadStatus = pipelineStatus === 'completed' || pipelineStatus === 'paid' ? 'booked' : pipelineStatus === 'quoted' ? 'quoted' : undefined;
+      if (leadStatus) {
+        db.collection('leads').doc(job.leadId).set({ status: leadStatus, crmStatus: leadStatus, updatedAt: patch.updatedAt }, { merge: true }).catch(() => {});
+      }
+    }
     if (typeof showToast === 'function') showToast('Job updated');
   };
 
@@ -680,13 +683,14 @@
         <button type="button" class="bsm edit" onclick="openBooking();closeCustomerDetail()">+ Job</button>
       </div>
       <div class="detail-grid">
-        <div><span class="dl">Phone</span><span>${esc(c.phone || '—')}</span></div>
-        <div><span class="dl">Email</span><span>${esc(c.email || '—')}</span></div>
-        <div><span class="dl">Address</span><span>${esc(c.address || '—')}</span></div>
-        <div><span class="dl">City</span><span>${esc(c.city || '—')}</span></div>
+        <div><span class="dl">Name</span><input type="text" id="cust-name-edit" value="${esc(c.name || '')}" class="cust-inline-input"></div>
+        <div><span class="dl">Phone</span><input type="tel" id="cust-phone-edit" value="${esc(c.phone || '')}" class="cust-inline-input"></div>
+        <div><span class="dl">Email</span><input type="email" id="cust-email-edit" value="${esc(c.email || '')}" class="cust-inline-input" placeholder="Add email…"></div>
+        <div><span class="dl">Address</span><input type="text" id="cust-address-edit" value="${esc(c.address || '')}" class="cust-inline-input" placeholder="Add address…"></div>
+        <div><span class="dl">City</span><input type="text" id="cust-city-edit" value="${esc(c.city || '')}" class="cust-inline-input"></div>
       </div>
       <div class="fg"><label>Notes</label><textarea id="cust-notes-edit" rows="3">${esc(c.notes || '')}</textarea></div>
-      <button type="button" class="btn-next" onclick="saveCustomerNotes('${c.id}')">Save notes</button>
+      <button type="button" class="btn-next" onclick="saveCustomerDetails('${c.id}')">Save</button>
       <div class="detail-section"><label class="slbl-sm">Job history</label>
         ${history.length ? history.map((j) => `<div class="dash-job" onclick="openJobDetail('${j.id}');closeCustomerDetail()"><strong>${esc(j.date || '')}</strong> <span class="muted">${pipelineLabel(getPipelineStatus(j))}</span></div>`).join('') : '<div class="muted">No jobs yet.</div>'}
       </div>`;
@@ -701,6 +705,22 @@
     const notes = document.getElementById('cust-notes-edit')?.value?.trim() || '';
     await db.collection('customers').doc(id).update({ notes, updatedAt: new Date().toISOString() });
     if (typeof showToast === 'function') showToast('Notes saved');
+    openCustomerDetail(id);
+  };
+
+  window.saveCustomerDetails = async function (id) {
+    const patch = {
+      name: document.getElementById('cust-name-edit')?.value?.trim() || '',
+      phone: document.getElementById('cust-phone-edit')?.value?.trim() || '',
+      email: document.getElementById('cust-email-edit')?.value?.trim() || '',
+      address: document.getElementById('cust-address-edit')?.value?.trim() || '',
+      city: document.getElementById('cust-city-edit')?.value?.trim() || '',
+      notes: document.getElementById('cust-notes-edit')?.value?.trim() || '',
+      updatedAt: new Date().toISOString(),
+    };
+    if (!patch.name && !patch.phone) { alert('Name or phone required'); return; }
+    await db.collection('customers').doc(id).update(patch);
+    if (typeof showToast === 'function') showToast('Customer saved');
     openCustomerDetail(id);
   };
 
@@ -1175,6 +1195,7 @@
         ${phone && optedOut ? `<span class="bsm edit tcpa-disabled" title="TCPA: lead opted out">Text (blocked)</span>` : ''}
         ${lead.email ? `<a class="bsm edit" href="mailto:${esc(lead.email)}">Email</a>` : ''}
         ${lead.email ? `<button type="button" class="bsm approve" onclick="sendReviewRequest('lead','${lead.id}','${esc(lead.email)}','${esc(lead.firstName || lead.name || '')}')">⭐ Request Review</button>` : ''}
+        <button type="button" class="bsm edit" onclick="openLeadModal('${lead.id}')">✏ Edit</button>
         <button type="button" class="bsm edit" onclick="logContactAttempt('${lead.id}')">Log attempt</button>
         <button type="button" class="bsm edit" onclick="convertLeadToJob('${lead.id}')">→ Job</button>
       </div>
@@ -1520,6 +1541,7 @@
     await db.collection('leads').doc(id).set(data, { merge: true });
     closeLeadModal();
     if (typeof showToast === 'function') showToast('Lead saved');
+    if (_detailLeadId) openLeadDetail(_detailLeadId, true);
   };
 
   window.setLeadCrmStatus = async function (id, status) {
@@ -1532,6 +1554,7 @@
     if (!confirm('Convert this lead to a job? Lead will be marked booked with scheduledJobAt if set.')) return;
     let cust = custsCache.find((c) => c.phone && lead.phone && c.phone === lead.phone);
     const displayName = getLeadDisplayName(lead);
+    const leadNotes = (lead.notesLog || []).map((n) => `[${n.at ? new Date(n.at).toLocaleDateString() : ''}] ${n.by ? n.by + ': ' : ''}${n.text}`).join('\n');
     if (!cust) {
       const cid = uid();
       cust = {
@@ -1541,8 +1564,15 @@
         email: lead.email || '',
         address: '',
         city: lead.serviceZip || lead.city || '',
+        source: lead.source || '',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
       };
+      if (leadNotes) cust.notes = leadNotes;
       await db.collection('customers').doc(cid).set(cust);
+    } else if (leadNotes) {
+      const merged = [cust.notes, leadNotes].filter(Boolean).join('\n');
+      await db.collection('customers').doc(cust.id).update({ notes: merged, updatedAt: new Date().toISOString() });
     }
     const jobId = uid();
     const flow = leadFlowType(lead);
@@ -1550,6 +1580,9 @@
     const srcNote = lead.source ? `Source: ${lead.source}` : '';
     const notes = [lead.message || '', bookingNote, srcNote].filter(Boolean).join('\n');
     const scheduledAt = lead.scheduledJobAt || null;
+    const hasDate = !!(scheduledAt || lead.scheduledJobAt);
+    const hasQuote = !!(lead.quoteSentAt || lead.priceQuoted);
+    const initPipeline = hasDate ? 'scheduled' : hasQuote ? 'quoted' : 'lead';
     const jobPatch = {
       id: jobId,
       customer: cust.name,
@@ -1558,8 +1591,8 @@
       city: lead.serviceZip || lead.city || '',
       serviceType: lead.items || lead.service || 'Garage Cleanout',
       type: 'job',
-      pipelineStatus: 'scheduled',
-      status: 'scheduled',
+      pipelineStatus: initPipeline,
+      status: initPipeline,
       notes,
       source: lead.source || '',
       assignedTo: lead.assignedTo || (me === 'TylerG' ? 'TylerG' : 'ZacB'),
@@ -1984,7 +2017,7 @@
     const lead = leadsCache.find((l) => l.id === leadId);
     const phone = lead?.phone || leadId;
     const firstName = (lead?.name || '').split(' ')[0] || '';
-    fetch('https://hooks.zapier.com/hooks/catch/27280948/4oqqlje/', {
+    fetch(CFG.SIGNAL_WEBHOOK, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ phone, firstName, signal: 'qualified', leadId }),
@@ -1996,7 +2029,7 @@
     const lead = leadsCache.find((l) => l.id === leadId);
     const phone = lead?.phone || leadId;
     const firstName = (lead?.name || '').split(' ')[0] || '';
-    fetch('https://hooks.zapier.com/hooks/catch/27280948/4oqqlje/', {
+    fetch(CFG.SIGNAL_WEBHOOK, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ phone, firstName, signal: 'converted', leadId }),
@@ -2008,7 +2041,7 @@
     const lead = leadsCache.find((l) => l.id === leadId);
     const phone = lead?.phone || leadId;
     const firstName = (lead?.name || '').split(' ')[0] || '';
-    fetch('https://hooks.zapier.com/hooks/catch/27280948/4oqqlje/', {
+    fetch(CFG.SIGNAL_WEBHOOK, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ phone, firstName, signal: 'not_interested', leadId }),
@@ -2020,7 +2053,7 @@
     const lead = leadsCache.find((l) => l.id === leadId);
     const phone = lead?.phone || leadId;
     const firstName = (lead?.name || '').split(' ')[0] || '';
-    fetch('https://hooks.zapier.com/hooks/catch/27280948/4oqqlje/', {
+    fetch(CFG.SIGNAL_WEBHOOK, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ phone, firstName, signal: 'archived', leadId }),

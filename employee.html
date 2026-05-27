@@ -716,6 +716,8 @@ body.has-session #login-screen { display: none; }
 .detail-actions .bsm { border-radius: .55rem; padding: .45rem .9rem; }
 .detail-grid { display: grid; gap: .85rem; margin-bottom: 1.25rem; font-size: .85rem; }
 .detail-grid .dl { display: block; font-size: .65rem; font-weight: 600; text-transform: uppercase; letter-spacing: .08em; color: rgba(255,255,255,.35); margin-bottom: .2rem; }
+.cust-inline-input { width: 100%; background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.12); border-radius: .4rem; color: var(--white); padding: .35rem .55rem; font-size: .85rem; font-family: inherit; transition: border-color .15s; }
+.cust-inline-input:focus { outline: none; border-color: rgba(96,165,250,.5); background: rgba(255,255,255,.09); }
 .detail-section { margin-top: 1.5rem; }
 .detail-section h4 { font-size: .75rem; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: rgba(255,255,255,.35); margin-bottom: .75rem; }
 .timeline { font-size: .8rem; max-height: 180px; overflow-y: auto; }
@@ -1294,6 +1296,7 @@ const CFG = {
   ZAP5_QUOTE_WEBHOOK:   '',   // Zap 5: quote follow-up cadence
   ZAP6_BOOKING_WEBHOOK: '',   // Zap 6: booking confirmation + reminder
   ZAP7_REVIEW_WEBHOOK:  '',   // Zap 7: post-job review request
+  SIGNAL_WEBHOOK:       'https://hooks.zapier.com/hooks/catch/27280948/4oqqlje/',
 };
 
 firebase.initializeApp({
