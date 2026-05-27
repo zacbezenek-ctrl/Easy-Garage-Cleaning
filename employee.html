@@ -1243,7 +1243,7 @@ body.has-session #login-screen { display: none; }
       <button class="bsm del" onclick="closeSopViewer()">Close</button>
     </div>
   </div>
-  <div id="sop-viewer-body" style="flex:1;overflow:auto;display:flex;align-items:center;justify-content:center;padding:1rem"></div>
+  <div id="sop-viewer-body" style="flex:1;overflow:auto;padding:.5rem;min-height:0"></div>
 </div>
 
 <!-- Add Customer Modal (simple) -->
@@ -3377,10 +3377,13 @@ function viewSOP(id) {
   if (isPdf) {
     const blob = dataUrlToBlob(sop.fileData);
     _sopBlobUrl = URL.createObjectURL(blob);
-    body.innerHTML = '<iframe src="' + _sopBlobUrl + '" style="width:100%;height:100%;border:none;border-radius:.5rem;background:#fff"></iframe>';
+    body.style.overflow = 'hidden';
+    body.innerHTML = '<iframe src="' + _sopBlobUrl + '#view=FitH" style="width:100%;height:100%;border:none;background:#fff;display:block"></iframe>';
   } else if (type.startsWith('image/')) {
-    body.innerHTML = '<img src="' + sop.fileData + '" style="max-width:100%;max-height:100%;border-radius:.5rem;object-fit:contain" alt="' + esc(sop.title) + '">';
+    body.style.overflow = 'auto';
+    body.innerHTML = '<img src="' + sop.fileData + '" style="width:100%;height:auto;display:block;object-fit:contain" alt="' + esc(sop.title) + '">';
   } else {
+    body.style.overflow = 'auto';
     body.innerHTML = '<div style="text-align:center;color:var(--muted);padding:2rem"><div style="font-size:1.1rem;margin-bottom:.5rem">Preview not available for this file type</div><div style="font-size:.85rem">' + esc(sop.fileName || '') + '</div><a href="' + sop.fileData + '" download="' + esc(sop.fileName || 'sop') + '" class="btn-book" style="margin-top:1rem;display:inline-block;text-decoration:none">Download to view</a></div>';
   }
   modal.style.display = 'flex';
