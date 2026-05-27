@@ -42,102 +42,7 @@ fbq('track', 'Lead');
 </script>
 <noscript><img loading="lazy" height="1" width="1" style="display:none" src="https://www.facebook.com/tr?id=861741726934219&ev=PageView&noscript=1"/></noscript>
 
-<link rel="stylesheet" href="/styles.css">
-<style>
-.main {
-    flex: 1;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 80px 0;
-    position: relative;
-  }
-.main::before {
-    content: ''; position: absolute; inset: 0;
-    background-image: radial-gradient(circle at 1px 1px, rgba(10,22,40,0.1) 1px, transparent 0);
-    background-size: 28px 28px;
-    opacity: 0.4; pointer-events: none;
-  }
-.content {
-    text-align: center;
-    position: relative;
-  }
-.checkmark {
-    width: 80px; height: 80px;
-    margin: 0 auto 32px;
-    background: var(--accent);
-    border-radius: 50%;
-    display: flex; align-items: center; justify-content: center;
-    box-shadow: 0 20px 40px -10px rgba(255,91,31,0.5);
-    animation: pop 0.6s cubic-bezier(0.175, 0.885, 0.32, 1.275);
-  }
-.checkmark svg { color: white; }
-.eyebrow {
-    font-family: var(--font-mono);
-    font-size: 12px;
-    letter-spacing: 0.15em;
-    text-transform: uppercase;
-    color: var(--accent-deep);
-    margin-bottom: 20px;
-    font-weight: 600;
-  }
-.lead {
-    font-size: 18px;
-    color: #334155;
-    max-width: 52ch;
-    margin: 0 auto 40px;
-    line-height: 1.55;
-  }
-.what-next {
-    background: var(--white);
-    border: 1px solid rgba(10,22,40,0.1);
-    padding: 32px 28px;
-    max-width: 520px;
-    margin: 0 auto 40px;
-    text-align: left;
-    box-shadow: 0 20px 40px -15px rgba(10,22,40,0.1);
-  }
-.what-next h2 {
-    font-family: var(--font-display);
-    font-size: 20px;
-    font-weight: 600;
-    margin-bottom: 20px;
-    letter-spacing: -0.01em;
-  }
-.cta-row {
-    display: flex;
-    gap: 12px;
-    justify-content: center;
-    flex-wrap: wrap;
-    margin-bottom: 24px;
-  }
-.btn {
-    display: inline-flex; align-items: center; gap: 10px;
-    padding: 14px 24px;
-    font-size: 15px; font-weight: 600;
-    border-radius: 2px;
-    transition: transform 0.2s ease, background 0.2s ease;
-  }
-.btn-call {
-    background: var(--accent);
-    color: var(--white);
-    box-shadow: 0 14px 30px -12px rgba(255,91,31,0.55);
-  }
-.btn-call:hover { background: var(--accent-deep); transform: translateY(-2px); }
-.btn-home {
-    background: transparent;
-    color: var(--ink);
-    border: 1.5px solid var(--ink);
-  }
-.btn-home:hover { background: var(--ink); color: var(--paper); }
-.contact-strip {
-    font-size: 13px;
-    color: var(--muted);
-    font-family: var(--font-mono);
-    letter-spacing: 0.08em;
-  }
-.contact-strip a { color: var(--ink); font-weight: 600; text-decoration: none; }
-</style>
+
 </head>
 <body>
 <a href="#main-content" class="skip-link">Skip to content</a>
@@ -343,7 +248,7 @@ fbq('track', 'Lead');
   <a href="/book.html" class="mobile-cta-btn mobile-cta-quote">Quote</a>
 </div>
 
-<style>@media(max-width:1023px){.mobile-sticky-cta{position:fixed;bottom:0;left:0;right:0;z-index:100;display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;background:#0a1628;padding:8px 10px 12px}body{padding-bottom:72px}}</style>
+
 <script>
 function initNavDrawer(){
   const toggle=document.querySelector('.nav-toggle');

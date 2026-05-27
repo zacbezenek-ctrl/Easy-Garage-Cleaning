@@ -146,58 +146,7 @@
   }
   </script>
 
-  <link rel="stylesheet" href="/styles.css">
-<style>
-.foot { display: flex; flex-direction: column; gap: 16px; align-items: flex-start; justify-content: space-between; }
-.foot .logo { color: var(--paper); }
-@media (min-width: 700px) { .foot { flex-direction: row; align-items: center; } }
-.form-card { background: var(--navy-soft); border: 1px solid var(--navy-line); border-radius: 6px; padding: 28px 24px; }
-.form-card h2 { font-size: 18px; font-weight: 700; margin-bottom: 6px; color: var(--paper); }
-.form-card p { font-size: 13px; color: var(--muted-dark); margin-bottom: 20px; }
-.form-card input { background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.18); border-radius: 3px; color: var(--paper); font-family: inherit; font-size: 16px; padding: 14px 16px; outline: none; width: 100%; }
-.form-card input::placeholder { color: rgba(245,241,234,0.4); }
-.form-card input:focus { border-color: var(--accent); }
-.form-card button { background: var(--accent); color: var(--white); padding: 16px; font-weight: 700; font-size: 16px; border: none; border-radius: 3px; cursor: pointer; font-family: inherit; width: 100%; transition: background 0.2s; }
-.form-card button:hover { background: var(--accent-deep); }
-.section-label { display: inline-block; background: var(--paper-warm); border-radius: 100px; padding: 4px 14px; font-size: 11px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); margin-bottom: 16px; }
-.services { background: var(--paper); }
-@media (min-width: 640px) { .services-grid { grid-template-columns: repeat(2, 1fr); } }
-@media (min-width: 900px) { .services-grid { grid-template-columns: repeat(3, 1fr); } }
-.service-icon { width: 44px; height: 44px; background: rgba(255,91,31,0.1); border-radius: 6px; display: flex; align-items: center; justify-content: center; font-size: 22px; margin-bottom: 16px; }
-.why { background: var(--navy); color: var(--paper); }
-.why .section-title { color: var(--paper); }
-.why .section-sub { color: var(--muted-dark); }
-.why-grid { display: grid; grid-template-columns: 1fr; gap: 32px; }
-@media (min-width: 640px) { .why-grid { grid-template-columns: repeat(2, 1fr); } }
-@media (min-width: 900px) { .why-grid { grid-template-columns: repeat(4, 1fr); } }
-.why-item { border-top: 2px solid var(--accent); padding-top: 20px; }
-.why-item h3 { font-size: 15px; font-weight: 700; color: var(--paper); margin-bottom: 8px; }
-.why-item p { font-size: 14px; color: var(--muted-dark); line-height: 1.6; }
-.price-label { font-size: 12px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); margin-bottom: 8px; }
-.price-card.featured .price-label { color: var(--muted-dark); }
-.price-amount { font-family: var(--font-display); font-size: 2.8rem; font-weight: 700; letter-spacing: -0.04em; line-height: 1; margin-bottom: 4px; }
-.price-features { list-style: none; display: flex; flex-direction: column; gap: 8px; }
-.price-features li { font-size: 14px; display: flex; gap: 8px; align-items: flex-start; }
-.price-features li::before { content: '✓'; color: var(--accent); font-weight: 700; flex-shrink: 0; margin-top: 1px; }
-.price-card.featured .price-features li { color: var(--muted-dark); }
-.faq-q .chevron { flex-shrink: 0; transition: transform 0.2s; }
-.faq-item.open .faq-q .chevron { transform: rotate(180deg); }
-.cta-strip { background: var(--accent); color: var(--white); padding: 60px 0; text-align: center; }
-.cta-strip h2 { font-size: clamp(1.6rem, 4vw, 2.4rem); font-weight: 700; margin-bottom: 10px; }
-.cta-strip p { font-size: 16px; opacity: 0.9; margin-bottom: 28px; }
-.cta-strip a { display: inline-block; background: var(--white); color: var(--accent); font-weight: 700; font-size: 16px; padding: 14px 32px; border-radius: var(--radius); margin: 6px; }
-.cta-strip a:hover { background: var(--navy); color: var(--white); }
-.cta-strip a.secondary { background: rgba(255,255,255,0.15); color: var(--white); border: 2px solid rgba(255,255,255,0.5); }
-.cta-strip a.secondary:hover { background: var(--white); color: var(--accent); }
-.nearby { background: var(--paper-warm); padding: 50px 0; }
-.nearby h2 { font-size: 18px; font-weight: 700; margin-bottom: 16px; }
-.nearby-links { display: flex; flex-wrap: wrap; gap: 12px; }
-.nearby-links a { background: var(--white); border: 1px solid rgba(10,22,40,0.1); border-radius: 4px; padding: 10px 18px; font-size: 14px; font-weight: 500; transition: border-color 0.2s; }
-.nearby-links a:hover { border-color: var(--accent); color: var(--accent); }
-@media(min-width:640px){.foot-grid{grid-template-columns:repeat(2,1fr)}}
-@media(min-width:900px){.foot-grid{grid-template-columns:1.5fr repeat(4,1fr);gap:32px}}
-@media(min-width:900px){.foot-grid{grid-template-columns:1.5fr repeat(4,1fr);gap:32px}}
-</style>
+  
 </head>
 <body>
 <a href="#main-content" class="skip-link">Skip to content</a>
@@ -775,7 +724,7 @@
   <a href="/book.html" class="mobile-cta-btn mobile-cta-quote">Quote</a>
 </div>
 
-<style>@media(max-width:1023px){.mobile-sticky-cta{position:fixed;bottom:0;left:0;right:0;z-index:100;display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;background:#0a1628;padding:8px 10px 12px}body{padding-bottom:72px}}</style>
+
 <script>
 function initNavDrawer(){
   const toggle=document.querySelector('.nav-toggle');
