@@ -15,7 +15,7 @@
   <title>Employee Portal — Easy Garage Cleaning</title>
   <meta name="robots" content="noindex, nofollow">
   <!-- Content Security Policy — restricts where scripts/connections can go -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' cdn.jsdelivr.net www.gstatic.com maps.googleapis.com; style-src 'self' 'unsafe-inline' fonts.googleapis.com; font-src fonts.gstatic.com data:; connect-src *.googleapis.com *.firebaseio.com *.firebaseapp.com firestore.googleapis.com api.emailjs.com hooks.zapier.com; img-src 'self' data: maps.gstatic.com maps.googleapis.com; frame-src data: blob:; object-src 'none'; base-uri 'self';">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' cdn.jsdelivr.net www.gstatic.com maps.googleapis.com; style-src 'self' 'unsafe-inline' fonts.googleapis.com; font-src fonts.gstatic.com data:; worker-src blob:; connect-src *.googleapis.com *.firebaseio.com *.firebaseapp.com firestore.googleapis.com api.emailjs.com hooks.zapier.com cdn.jsdelivr.net; img-src 'self' data: maps.gstatic.com maps.googleapis.com; frame-src data: blob:; object-src 'none'; base-uri 'self';">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-title" content="EGC Portal">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -24,6 +24,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,400;0,500;0,700;1,400;1,500&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="employee-crm.css">
   <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js" defer></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
   <script>
@@ -3350,21 +3351,16 @@ async function deleteSOP(id) {
   showToast('SOP deleted');
 }
 
-let _sopBlobUrl = null;
-
-function dataUrlToBlob(dataUrl) {
-  const parts = dataUrl.split(',');
-  const mime = parts[0].match(/:(.*?);/)[1];
-  const raw = atob(parts[1]);
+function dataUrlToUint8(dataUrl) {
+  const raw = atob(dataUrl.split(',')[1]);
   const arr = new Uint8Array(raw.length);
   for (let i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
-  return new Blob([arr], { type: mime });
+  return arr;
 }
 
-function viewSOP(id) {
+async function viewSOP(id) {
   const sop = sopsCache.find(s => s.id === id);
   if (!sop || !sop.fileData) return;
-  if (_sopBlobUrl) { URL.revokeObjectURL(_sopBlobUrl); _sopBlobUrl = null; }
   const modal = document.getElementById('sop-viewer-modal');
   const body = document.getElementById('sop-viewer-body');
   const title = document.getElementById('sop-viewer-title');
@@ -3372,25 +3368,43 @@ function viewSOP(id) {
   title.textContent = sop.title;
   dl.href = sop.fileData;
   dl.download = sop.fileName || 'sop';
+  body.style.overflow = 'auto';
   const type = (sop.fileType || '').toLowerCase();
   const isPdf = type === 'application/pdf' || (sop.fileName || '').toLowerCase().endsWith('.pdf');
-  if (isPdf) {
-    const blob = dataUrlToBlob(sop.fileData);
-    _sopBlobUrl = URL.createObjectURL(blob);
-    body.style.overflow = 'hidden';
-    body.innerHTML = '<iframe src="' + _sopBlobUrl + '#view=FitH" style="width:100%;height:100%;border:none;background:#fff;display:block"></iframe>';
+  if (isPdf && window.pdfjsLib) {
+    body.innerHTML = '<div style="text-align:center;color:var(--muted);padding:2rem">Loading PDF…</div>';
+    modal.style.display = 'flex';
+    try {
+      pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
+      const pdf = await pdfjsLib.getDocument({ data: dataUrlToUint8(sop.fileData) }).promise;
+      body.innerHTML = '';
+      const containerWidth = body.clientWidth - 16;
+      for (let i = 1; i <= pdf.numPages; i++) {
+        const page = await pdf.getPage(i);
+        const vp = page.getViewport({ scale: 1 });
+        const scale = containerWidth / vp.width;
+        const viewport = page.getViewport({ scale });
+        const canvas = document.createElement('canvas');
+        canvas.width = viewport.width;
+        canvas.height = viewport.height;
+        canvas.style.cssText = 'width:100%;height:auto;display:block;margin-bottom:4px;background:#fff;border-radius:4px';
+        body.appendChild(canvas);
+        await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+      }
+    } catch (e) {
+      console.error('PDF render error:', e);
+      body.innerHTML = '<div style="text-align:center;color:#fca5a5;padding:2rem">Could not render PDF. <a href="' + sop.fileData + '" download="' + esc(sop.fileName || 'sop') + '" style="color:var(--accent)">Download instead</a></div>';
+    }
   } else if (type.startsWith('image/')) {
-    body.style.overflow = 'auto';
     body.innerHTML = '<img src="' + sop.fileData + '" style="width:100%;height:auto;display:block;object-fit:contain" alt="' + esc(sop.title) + '">';
+    modal.style.display = 'flex';
   } else {
-    body.style.overflow = 'auto';
     body.innerHTML = '<div style="text-align:center;color:var(--muted);padding:2rem"><div style="font-size:1.1rem;margin-bottom:.5rem">Preview not available for this file type</div><div style="font-size:.85rem">' + esc(sop.fileName || '') + '</div><a href="' + sop.fileData + '" download="' + esc(sop.fileName || 'sop') + '" class="btn-book" style="margin-top:1rem;display:inline-block;text-decoration:none">Download to view</a></div>';
+    modal.style.display = 'flex';
   }
-  modal.style.display = 'flex';
 }
 
 function closeSopViewer() {
-  if (_sopBlobUrl) { URL.revokeObjectURL(_sopBlobUrl); _sopBlobUrl = null; }
   const modal = document.getElementById('sop-viewer-modal');
   modal.style.display = 'none';
   document.getElementById('sop-viewer-body').innerHTML = '';
