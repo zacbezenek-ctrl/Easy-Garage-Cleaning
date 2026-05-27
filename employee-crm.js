@@ -1990,7 +1990,7 @@
     document.body.addEventListener(
       'click',
       (e) => {
-        if (e.target.closest('.modal-backdrop')) {
+        if (e.target.classList.contains('modal-backdrop')) {
           closeJobDetail();
           closeCustomerDetail();
           closeLeadDetail();
