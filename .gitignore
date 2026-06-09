@@ -12,3 +12,6 @@ __pycache__/
 node_modules/
 .wrangler/
 .vercel/
+
+# Crew-tools verification output (scripts/verify-crew.mjs)
+verify-shots/
