@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>EGC · Crew Tools</title>
+<meta name="robots" content="noindex">
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{--navy:#13203a;--navy2:#1d2d4f;--orange:#e8581c;--orange2:#c4470f;--cream:#f2e9dc;
+        --paper:#faf5ec;--khaki:#8a8170;--line:#d9cdb8;--r:16px}
+  *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{font-family:'Inter',system-ui,sans-serif;background:var(--cream);color:var(--navy);min-height:100dvh;
+       display:flex;flex-direction:column}
+  #topbar{background:var(--navy);color:#fff;padding:max(env(safe-area-inset-top),14px) 20px 14px}
+  #topbar .row{display:flex;align-items:center;justify-content:space-between;max-width:720px;margin:0 auto}
+  #brand{font-family:'Oswald';font-weight:700;font-size:15px;letter-spacing:.06em}
+  #brand span{color:var(--orange)}
+  #chip{font-family:'Oswald';font-weight:600;font-size:12px;letter-spacing:.08em;background:var(--orange);
+        padding:3px 10px;border-radius:99px;text-transform:uppercase}
+  main{flex:1;width:100%;max-width:720px;margin:0 auto;padding:28px 20px 40px}
+  .eyebrow{font-family:'Oswald';font-weight:600;font-size:12px;letter-spacing:.12em;color:var(--orange);text-transform:uppercase}
+  h1{font-family:'Oswald';font-weight:700;font-size:clamp(32px,7vw,46px);text-transform:uppercase;line-height:1.04;margin:6px 0 10px}
+  .sub{font-size:16px;color:var(--khaki);font-weight:500;line-height:1.5;margin-bottom:24px}
+  #activejob{display:none;background:var(--navy);color:#fff;border-radius:var(--r);padding:14px 18px;margin-bottom:20px;
+             font-family:'Oswald';font-weight:600;font-size:14px;letter-spacing:.03em}
+  #activejob span{color:var(--orange)}
+  #activejob small{display:block;font-family:'Inter';font-weight:500;font-size:13px;margin-top:3px;color:#aeb8cc}
+  .tools{display:flex;flex-direction:column;gap:14px}
+  a.tool{display:flex;align-items:center;gap:18px;background:var(--paper);border:2px solid var(--line);
+         border-radius:var(--r);padding:22px 20px;text-decoration:none;color:var(--navy);min-height:96px;
+         transition:border-color .15s,transform .1s}
+  a.tool:active{transform:scale(.985)}
+  a.tool .num{font-family:'Oswald';font-weight:700;font-size:26px;color:#fff;background:var(--navy);width:54px;height:54px;
+              border-radius:14px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+  a.tool.hot .num{background:var(--orange)}
+  a.tool .tx h2{font-family:'Oswald';font-weight:700;font-size:22px;text-transform:uppercase;letter-spacing:.02em}
+  a.tool .tx p{font-size:14px;color:var(--khaki);font-weight:500;margin-top:3px;line-height:1.4}
+  a.tool .arrow{margin-left:auto;font-family:'Oswald';font-weight:700;font-size:22px;color:var(--orange);flex-shrink:0}
+  footer{padding:0 20px max(env(safe-area-inset-bottom),24px);max-width:720px;margin:0 auto;width:100%;
+         display:flex;justify-content:space-between;align-items:center;gap:12px}
+  footer a,footer button{font-family:'Oswald';font-weight:600;font-size:12px;letter-spacing:.08em;text-transform:uppercase;
+         color:var(--khaki);background:none;border:none;cursor:pointer;text-decoration:none;padding:8px 0}
+  footer a:hover,footer button:hover{color:var(--orange)}
+</style>
+</head>
+<body>
+
+<!-- ═══ EGC crew gate — same credentials as /employee.html (a portal sign-in in this tab carries over) ═══ -->
+<style>
+  #egc-gate{position:fixed;inset:0;z-index:99999;background:#13203a;display:flex;align-items:center;justify-content:center;padding:24px;font-family:'Inter',system-ui,sans-serif}
+  #egc-gate.off{display:none}
+  #egc-gate .gcard{width:100%;max-width:360px;background:#1d2d4f;border:1px solid rgba(255,255,255,.1);border-radius:16px;padding:28px 24px;box-shadow:0 24px 64px rgba(0,0,0,.5)}
+  #egc-gate .gpill{display:inline-block;background:#e8581c;color:#fff;font-family:'Oswald',sans-serif;font-size:11px;letter-spacing:.12em;text-transform:uppercase;padding:4px 12px;border-radius:99px;margin-bottom:12px}
+  #egc-gate h2{font-family:'Oswald',sans-serif;color:#fff;font-size:22px;text-transform:uppercase;letter-spacing:.03em;margin:0 0 4px}
+  #egc-gate .gsub{color:#aeb8cc;font-size:13.5px;margin:0 0 6px;line-height:1.45}
+  #egc-gate label{display:block;color:#aeb8cc;font-family:'Oswald',sans-serif;font-size:11px;letter-spacing:.1em;text-transform:uppercase;margin:14px 0 5px}
+  #egc-gate input{width:100%;box-sizing:border-box;background:#13203a;border:1.5px solid rgba(255,255,255,.15);border-radius:10px;color:#fff;font-size:16px;padding:12px 13px;font-family:inherit}
+  #egc-gate input:focus{outline:none;border-color:#e8581c}
+  #egc-gate .gbtn{width:100%;margin-top:18px;background:#e8581c;border:none;color:#fff;font-family:'Oswald',sans-serif;font-weight:600;font-size:15px;letter-spacing:.06em;text-transform:uppercase;padding:13px;border-radius:10px;cursor:pointer;min-height:48px}
+  #egc-gate .gerr{display:none;background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.35);color:#fca5a5;border-radius:8px;padding:9px 12px;font-size:13px;margin-top:14px}
+</style>
+<div id="egc-gate">
+  <div class="gcard">
+    <div class="gpill">EGC Crew Tools</div>
+    <h2>Crew Sign-In</h2>
+    <p class="gsub">Use your employee portal username &amp; password.</p>
+    <label for="gate-u">Username</label>
+    <input type="text" id="gate-u" autocomplete="username" autocapitalize="none" spellcheck="false">
+    <label for="gate-p">Password</label>
+    <input type="password" id="gate-p" autocomplete="current-password">
+    <button class="gbtn" onclick="gateLogin()">Unlock</button>
+    <div class="gerr" id="gate-err">Incorrect username or password.</div>
+  </div>
+</div>
+<script>
+/* Auth matches /employee.html: salted SHA-256, same usernames & passwords.
+   To rotate a password, update the hash here AND in employee.html:
+   sha256(username + ':' + newPass + ':egc-salt-2026') */
+const GATE_USERS={
+  ZacB:"6b8670f397174ff99440629b877581216a0b26b6770054be198988ff48a16861",
+  TylerG:"28b50fd5ee98af8cf015972811def03dbc2eaff52997f82ecfc4342ece6cfa36",
+  AlexK:"52e2e9901adc10406ad9597084ece4770d1c9fd0e3b76e1f31abf35f8030ac50"};
+async function gateSha(s){const b=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(s));
+  return Array.from(new Uint8Array(b)).map(x=>x.toString(16).padStart(2,"0")).join("");}
+function gateTok(u){return gateSha(u+":"+GATE_USERS[u]+":egc-session");}
+async function gateOk(){
+  try{
+    for(const st of[sessionStorage,localStorage]){
+      const u=st.getItem("egc_u"),t=st.getItem("egc_tok");
+      if(u&&GATE_USERS[u]&&t&&t===await gateTok(u))return u;
+    }
+  }catch(e){}
+  return null;
+}
+async function gateLogin(){
+  const u=document.getElementById("gate-u").value.trim(),p=document.getElementById("gate-p").value;
+  if(GATE_USERS[u]&&await gateSha(u+":"+p+":egc-salt-2026")===GATE_USERS[u]){
+    const t=await gateTok(u);
+    try{sessionStorage.setItem("egc_u",u);sessionStorage.setItem("egc_tok",t);
+        localStorage.setItem("egc_u",u);localStorage.setItem("egc_tok",t);}catch(e){}
+    document.getElementById("egc-gate").classList.add("off");
+  }else document.getElementById("gate-err").style.display="block";
+}
+function gateLock(){
+  try{["egc_u","egc_tok"].forEach(k=>{sessionStorage.removeItem(k);localStorage.removeItem(k);});}catch(e){}
+  location.reload();
+}
+gateOk().then(u=>{
+  if(u){document.getElementById("egc-gate").classList.add("off");return;}
+  document.getElementById("gate-p").addEventListener("keydown",e=>{if(e.key==="Enter")gateLogin()});
+  document.getElementById("gate-u").addEventListener("keydown",e=>{if(e.key==="Enter")document.getElementById("gate-p").focus()});
+});
+</script>
+
+<div id="topbar">
+  <div class="row">
+    <div id="brand">EASY GARAGE <span>CLEANING</span></div>
+    <div id="chip">Crew Tools</div>
+  </div>
+</div>
+
+<main>
+  <div class="eyebrow">Internal field tools — one job, three steps</div>
+  <h1>Crew Tools</h1>
+  <p class="sub">Run every job through all three, in order. They hand off to each other automatically on this iPad.</p>
+
+  <div id="activejob"></div>
+
+  <div class="tools">
+    <a class="tool hot" href="gameplan.html">
+      <span class="num">1</span>
+      <span class="tx"><h2>Game Plan</h2><p>14-point walkthrough — quote it top-down, lock the rate, close on the driveway</p></span>
+      <span class="arrow">&rarr;</span>
+    </a>
+    <a class="tool" href="prejob.html">
+      <span class="num">2</span>
+      <span class="tx"><h2>Pre-Job Playbook</h2><p>Night-before lock-in, truck load-out, arrival &amp; before-capture checks</p></span>
+      <span class="arrow">&rarr;</span>
+    </a>
+    <a class="tool" href="postjob.html">
+      <span class="num">3</span>
+      <span class="tx"><h2>Post-Job Playbook</h2><p>The reveal, cash &amp; review, Garage Guard pitch, content capture</p></span>
+      <span class="arrow">&rarr;</span>
+    </a>
+  </div>
+</main>
+
+<footer>
+  <a href="/employee.html">&larr; Employee portal</a>
+  <button onclick="gateLock()">Lock tools</button>
+</footer>
+
+<script>
+  // show the active job handed off from the Game Plan, if one is in flight
+  try{
+    const a=JSON.parse(localStorage.getItem("egc_active_job"));
+    if(a&&a.name){
+      const el=document.getElementById("activejob");
+      el.style.display="block";
+      el.innerHTML="ACTIVE JOB: <span>"+a.name.toUpperCase()+"</span>"+
+        ((a.pkg||a.jobdate)?"<small>"+[a.pkg,a.jobdate].filter(Boolean).join(" · ")+"</small>":"");
+    }
+  }catch(e){}
+</script>
+</body>
+</html>

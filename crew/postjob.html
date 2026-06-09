@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>EGC · Post-Job Playbook</title>
+<meta name="robots" content="noindex">
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{--navy:#13203a;--navy2:#1d2d4f;--orange:#e8581c;--orange2:#c4470f;--cream:#f2e9dc;
+        --paper:#faf5ec;--khaki:#8a8170;--line:#d9cdb8;--ok:#2e7d4f;--r:14px}
+  *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{font-family:'Inter',system-ui,sans-serif;background:var(--cream);color:var(--navy);padding-bottom:90px}
+  #topbar{position:sticky;top:0;z-index:10;background:var(--navy);color:#fff;
+          padding:max(env(safe-area-inset-top),12px) 18px 12px}
+  #topbar .row{display:flex;justify-content:space-between;align-items:center;max-width:720px;margin:0 auto}
+  #brand{font-family:'Oswald';font-weight:700;font-size:14px;letter-spacing:.06em}
+  #brand span{color:var(--orange)}
+  #prog{font-family:'Oswald';font-weight:700;font-size:15px}
+  #prog b{color:var(--orange)}
+  #bar{height:4px;background:rgba(255,255,255,.15);border-radius:2px;margin-top:8px;max-width:720px;margin-left:auto;margin-right:auto}
+  #bar i{display:block;height:100%;background:var(--orange);border-radius:2px;width:0%;transition:width .2s}
+  main{max-width:720px;margin:0 auto;padding:20px 18px}
+  .eyebrow{font-family:'Oswald';font-weight:600;font-size:12px;letter-spacing:.12em;color:var(--orange);text-transform:uppercase}
+  h1{font-family:'Oswald';font-weight:700;font-size:clamp(28px,6vw,38px);text-transform:uppercase;line-height:1.05;margin:4px 0 14px}
+  .jobcard{background:var(--paper);border:1.5px solid var(--line);border-radius:var(--r);padding:16px;margin-bottom:8px}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
+  label.fl{display:block;font-family:'Oswald';font-weight:600;font-size:11px;letter-spacing:.1em;
+           text-transform:uppercase;color:var(--khaki);margin:8px 0 5px}
+  input,textarea{width:100%;background:#fff;border:1.5px solid var(--line);border-radius:10px;
+    padding:12px 13px;font:inherit;font-size:16px;color:var(--navy)}
+  input:focus,textarea:focus{outline:none;border-color:var(--orange)}
+  textarea{min-height:70px;resize:none}
+  section{margin-top:26px}
+  .sechead{display:flex;align-items:baseline;justify-content:space-between;border-bottom:2.5px solid var(--navy);padding-bottom:8px;margin-bottom:12px}
+  .sechead h2{font-family:'Oswald';font-weight:700;font-size:19px;text-transform:uppercase}
+  .sechead .cnt{font-family:'Oswald';font-weight:600;font-size:13px;color:var(--khaki)}
+  .sechead.done .cnt{color:var(--ok)}
+  .when{font-family:'Oswald';font-size:11px;letter-spacing:.12em;color:var(--orange);text-transform:uppercase;margin-bottom:8px}
+  .item{display:flex;gap:13px;align-items:flex-start;background:var(--paper);border:1.5px solid var(--line);
+        border-radius:var(--r);padding:14px 15px;margin-bottom:8px;cursor:pointer;user-select:none}
+  .item .bx{width:26px;height:26px;border:2px solid var(--navy);border-radius:7px;flex-shrink:0;margin-top:1px;
+            display:flex;align-items:center;justify-content:center;color:#fff;font-size:15px}
+  .item.on{border-color:var(--ok);background:#eef4ee}
+  .item.on .bx{background:var(--ok);border-color:var(--ok)}
+  .item.on .bx::after{content:"✓"}
+  .item .tx{flex:1;font-size:15.5px;font-weight:600;line-height:1.4}
+  .item .tx small{display:block;font-weight:500;color:var(--khaki);font-size:13.5px;margin-top:2px;line-height:1.45}
+  .item.crit{border-left:5px solid var(--orange)}
+  .script{background:var(--navy);color:#fff;border-radius:var(--r);padding:16px 18px;margin:10px 0 14px}
+  .script h4{font-family:'Oswald';font-weight:600;font-size:12px;letter-spacing:.12em;color:var(--orange);
+             text-transform:uppercase;margin-bottom:8px}
+  .script p{font-size:15.5px;line-height:1.55;font-weight:500}
+  .script p+p{margin-top:8px}
+  .script i{color:#aeb8cc;font-style:normal;font-size:13.5px}
+  .copybtn{margin-top:10px;background:var(--orange);border:none;color:#fff;font-family:'Oswald';font-weight:600;
+           font-size:13px;letter-spacing:.06em;text-transform:uppercase;padding:10px 16px;border-radius:9px;cursor:pointer}
+  .guardrow{margin:4px 0 16px}
+  .guardlbl{font-family:'Oswald';font-weight:600;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--khaki);margin:0 0 8px}
+  .gchips{display:flex;flex-wrap:wrap;gap:8px}
+  .gchip{border:1.5px solid var(--line);background:var(--paper);border-radius:99px;padding:11px 16px;font-size:14.5px;
+         font-weight:600;color:var(--navy);cursor:pointer;user-select:none;min-height:44px;display:inline-flex;align-items:center}
+  .gchip.on{background:var(--orange);border-color:var(--orange);color:#fff}
+  .gchip.no.on{background:var(--navy);border-color:var(--navy)}
+  #donebar{position:fixed;left:0;right:0;bottom:0;background:var(--cream);border-top:1.5px solid var(--line);
+           padding:12px 18px max(env(safe-area-inset-bottom),12px)}
+  #donebar .inner{max-width:720px;margin:0 auto}
+  #donebtn{width:100%;font-family:'Oswald';font-weight:600;font-size:18px;letter-spacing:.05em;text-transform:uppercase;
+           border:none;border-radius:var(--r);padding:17px;background:var(--line);color:var(--khaki);min-height:56px}
+  #donebtn.ready{background:var(--orange);color:#fff;cursor:pointer}
+</style>
+</head>
+<body>
+
+<!-- ═══ EGC crew gate — same credentials as /employee.html (a portal sign-in in this tab carries over) ═══ -->
+<style>
+  #egc-gate{position:fixed;inset:0;z-index:99999;background:#13203a;display:flex;align-items:center;justify-content:center;padding:24px;font-family:'Inter',system-ui,sans-serif}
+  #egc-gate.off{display:none}
+  #egc-gate .gcard{width:100%;max-width:360px;background:#1d2d4f;border:1px solid rgba(255,255,255,.1);border-radius:16px;padding:28px 24px;box-shadow:0 24px 64px rgba(0,0,0,.5)}
+  #egc-gate .gpill{display:inline-block;background:#e8581c;color:#fff;font-family:'Oswald',sans-serif;font-size:11px;letter-spacing:.12em;text-transform:uppercase;padding:4px 12px;border-radius:99px;margin-bottom:12px}
+  #egc-gate h2{font-family:'Oswald',sans-serif;color:#fff;font-size:22px;text-transform:uppercase;letter-spacing:.03em;margin:0 0 4px}
+  #egc-gate .gsub{color:#aeb8cc;font-size:13.5px;margin:0 0 6px;line-height:1.45}
+  #egc-gate label{display:block;color:#aeb8cc;font-family:'Oswald',sans-serif;font-size:11px;letter-spacing:.1em;text-transform:uppercase;margin:14px 0 5px}
+  #egc-gate input{width:100%;box-sizing:border-box;background:#13203a;border:1.5px solid rgba(255,255,255,.15);border-radius:10px;color:#fff;font-size:16px;padding:12px 13px;font-family:inherit}
+  #egc-gate input:focus{outline:none;border-color:#e8581c}
+  #egc-gate .gbtn{width:100%;margin-top:18px;background:#e8581c;border:none;color:#fff;font-family:'Oswald',sans-serif;font-weight:600;font-size:15px;letter-spacing:.06em;text-transform:uppercase;padding:13px;border-radius:10px;cursor:pointer;min-height:48px}
+  #egc-gate .gerr{display:none;background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.35);color:#fca5a5;border-radius:8px;padding:9px 12px;font-size:13px;margin-top:14px}
+</style>
+<div id="egc-gate">
+  <div class="gcard">
+    <div class="gpill">EGC Crew Tools</div>
+    <h2>Crew Sign-In</h2>
+    <p class="gsub">Use your employee portal username &amp; password.</p>
+    <label for="gate-u">Username</label>
+    <input type="text" id="gate-u" autocomplete="username" autocapitalize="none" spellcheck="false">
+    <label for="gate-p">Password</label>
+    <input type="password" id="gate-p" autocomplete="current-password">
+    <button class="gbtn" onclick="gateLogin()">Unlock</button>
+    <div class="gerr" id="gate-err">Incorrect username or password.</div>
+  </div>
+</div>
+<script>
+/* Auth matches /employee.html: salted SHA-256, same usernames & passwords.
+   To rotate a password, update the hash here AND in employee.html:
+   sha256(username + ':' + newPass + ':egc-salt-2026') */
+const GATE_USERS={
+  ZacB:"6b8670f397174ff99440629b877581216a0b26b6770054be198988ff48a16861",
+  TylerG:"28b50fd5ee98af8cf015972811def03dbc2eaff52997f82ecfc4342ece6cfa36",
+  AlexK:"52e2e9901adc10406ad9597084ece4770d1c9fd0e3b76e1f31abf35f8030ac50"};
+async function gateSha(s){const b=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(s));
+  return Array.from(new Uint8Array(b)).map(x=>x.toString(16).padStart(2,"0")).join("");}
+function gateTok(u){return gateSha(u+":"+GATE_USERS[u]+":egc-session");}
+async function gateOk(){
+  try{
+    for(const st of[sessionStorage,localStorage]){
+      const u=st.getItem("egc_u"),t=st.getItem("egc_tok");
+      if(u&&GATE_USERS[u]&&t&&t===await gateTok(u))return u;
+    }
+  }catch(e){}
+  return null;
+}
+async function gateLogin(){
+  const u=document.getElementById("gate-u").value.trim(),p=document.getElementById("gate-p").value;
+  if(GATE_USERS[u]&&await gateSha(u+":"+p+":egc-salt-2026")===GATE_USERS[u]){
+    const t=await gateTok(u);
+    try{sessionStorage.setItem("egc_u",u);sessionStorage.setItem("egc_tok",t);
+        localStorage.setItem("egc_u",u);localStorage.setItem("egc_tok",t);}catch(e){}
+    document.getElementById("egc-gate").classList.add("off");
+  }else document.getElementById("gate-err").style.display="block";
+}
+function gateLock(){
+  try{["egc_u","egc_tok"].forEach(k=>{sessionStorage.removeItem(k);localStorage.removeItem(k);});}catch(e){}
+  location.reload();
+}
+gateOk().then(u=>{
+  if(u){document.getElementById("egc-gate").classList.add("off");return;}
+  document.getElementById("gate-p").addEventListener("keydown",e=>{if(e.key==="Enter")gateLogin()});
+  document.getElementById("gate-u").addEventListener("keydown",e=>{if(e.key==="Enter")document.getElementById("gate-p").focus()});
+});
+</script>
+
+
+<div id="topbar">
+  <div class="row">
+    <div id="brand">EASY GARAGE <span>CLEANING</span></div>
+    <div id="prog"><b id="pc">0</b><span id="pt">/0 DONE</span></div>
+  </div>
+  <div id="bar"><i id="barfill"></i></div>
+</div>
+
+<main>
+  <div class="eyebrow">Run before the truck leaves the driveway</div>
+  <h1>Post-Job Playbook</h1>
+
+  <div class="jobcard">
+    <div class="grid2">
+      <div><label class="fl">Customer</label><input type="text" id="j_name" placeholder="Name"></div>
+      <div><label class="fl">Date</label><input type="date" id="j_date"></div>
+    </div>
+    <label class="fl">Customer mobile (for the review text)</label>
+    <input type="tel" id="j_phone" placeholder="(970) 555-0123">
+    <div class="grid3">
+      <div><label class="fl">Actual loads</label><input type="number" inputmode="decimal" id="j_loads" placeholder="0"></div>
+      <div><label class="fl">Hours on site</label><input type="number" inputmode="decimal" id="j_hours" placeholder="0"></div>
+      <div><label class="fl">Dump fees $</label><input type="number" inputmode="decimal" id="j_fees" placeholder="0"></div>
+    </div>
+    <label class="fl">Job notes / issues / damage</label>
+    <textarea id="j_notes" placeholder="Anything off-plan, anything broken, anything to flag for Zac"></textarea>
+  </div>
+
+  <div id="sections"></div>
+</main>
+
+<div id="donebar"><div class="inner">
+  <button id="donebtn" onclick="finish()">Complete all checks to close the job</button>
+</div></div>
+
+<script>
+/* ============ PLAYBOOK CONFIG — EDIT ME ============ */
+const WEBHOOK=""; // ← paste your Zapier Catch Hook URL here (same hook as the Game Plan)
+const REVIEW_LINK="https://search.google.com/local/writereview?placeid=ChIJ17AGfBiyRIsRyJ3k4mDtX8Q";
+const SECTIONS = [
+  {
+    when:"Still in the garage — homeowner present", title:"The Victory Walk", items:[
+      {t:"AFTER capture: 3 clips + photos — BEFORE the reveal", s:"(1) empty garage from the same door angle as the before, (2) swept floor pan, (3) the worst zone, now clear. 5+ photos for GBP. Match the before angles or the pair is worthless.", crit:true},
+      {t:"Walk the garage with the homeowner", s:"The final walkthrough sign-off — guarantee #2. Use the script — let them stand in the empty space and react. Don't talk first.", crit:true},
+      {t:"Get their reaction on camera (ask permission)", s:"“Mind if I grab your reaction for our page?” A real ‘holy shit’ is the best ad EGC will ever run."},
+      {t:"Installed upgrades demoed", s:"If racks/bins went in — show them the system. Open a bin. Point at the labels. They bought an outcome, show it working."},
+      {t:"Keep-items walkthrough", s:"Show where everything they kept lives now. Zero ‘where did my…’ texts tomorrow."},
+    ],
+    script:{h:"The reveal — say this, then shut up", p:[
+      "“Come take a look.” <i>(Open the door. Let them walk in first. Count to five in your head — silence does the work.)</i>",
+      "“Remember what you told me — [THEIR PAIN, e.g. ‘your wife’s been parking in the snow for two years’]? That's over tonight.”",
+      "“Walk every corner. If anything's not how you pictured it, tell me now and we fix it before we leave.”"
+    ]}
+  },
+  {
+    when:"At peak satisfaction — within 5 minutes of the reveal", title:"Cash, Review, Referral", items:[
+      {t:"Balance collected", s:"Stripe card on file — charge it on the spot, receipt auto-sent. Don't leave with money outstanding.", crit:true},
+      {t:"Review ask — face to face, then text the link", s:"Use the script. Ask while they're standing in the empty garage, not tomorrow. Send the Google link via Quo before you pull away.", crit:true},
+      {t:"Referral ask — the neighbor line", s:"Script below. Every garage on the street looks the same inside. One job per street should become two."},
+      {t:"Garage Guard pitched — top-down", s:"Open at Guard Black. Step down one tier on hesitation. Lite is the save. Two options, never yes/no."},
+      {t:"6-month check-in scheduled", s:"Log it in Jobber. ‘We'll text you in 6 months to see how the system's holding up’ — said out loud, then actually scheduled."},
+    ],
+    script:{h:"Review + referral — exact words", p:[
+      "“One favor — reviews are how a local crew like us survives against the big franchises. I'm texting you the link right now, it's 30 seconds. Mention the garage if you can — photos are gold.”",
+      "“And hey — anyone else on the street with a garage like yours used to be? We're already here with the truck. If a neighbor books off your word, there's a $50 EGC gift card in it for you.”"
+    ]},
+    script2:{h:"Garage Guard — open at the top, step down only", p:[
+      "“Guard Black — $2,500/yr: monthly whole-property visits, free monthly single-item pickup, annual deep clean, front-of-line scheduling. Only 5 memberships in Fort Collins.”",
+      "<i>On hesitation →</i> “Garage Guard — $800/yr: four visits a year, up to 5 cubic yards hauled each, unused visits convert to $100 gift cards.”",
+      "<i>Save →</i> “Guard Lite — $450/yr.”"
+    ]},
+    guard:true
+  },
+  {
+    when:"Before leaving the neighborhood", title:"Disposal & Wrap", items:[
+      {t:"Donation drop-off done + receipt photographed", s:"Receipt goes to the customer — it's their tax deduction and your proof the donate run happened."},
+      {t:"E-waste routed responsibly", s:"Standard on every job. Log where it went."},
+      {t:"Dump run logged with fees", s:"Fees go in the job card above — Zac needs real cost per job, not vibes."},
+      {t:"Truck swept + equipment counted", s:"Straps, dollies, tripod. Losing a $40 strap weekly is a $2k/yr leak."},
+    ]
+  },
+  {
+    when:"Same night — 10 minutes, phone on the couch", title:"Feed the Machine", items:[
+      {t:"Footage uploaded to shared album", s:"Before/after pairs + reaction clip + GBP photos, dropped in the shared album for Zac. Tonight, not ‘this weekend’.", crit:true},
+      {t:"GBP photos posted (geotagged)", s:"5+ from today's job straight to the Google Business Profile."},
+      {t:"Job marked complete in Jobber", s:"Triggers invoicing/receipt flow and closes the loop for Tyler."},
+      {t:"Flag the best clip for ads", s:"One message to Zac: ‘this one's the ad.’ That's the whole creative pipeline."},
+    ]
+  },
+];
+/* =================================================== */
+
+const state={};
+const SAVEKEY="egc_postjob_v1";
+const FIELD_IDS=["j_name","j_date","j_phone","j_loads","j_hours","j_fees","j_notes"];
+const GUARD_OPTS=["Guard Black","Garage Guard","Guard Lite","Not today"];
+let GUARD="";
+let ACTIVE={};
+function setGuard(v){GUARD=(GUARD===v?"":v);render();saveAll();}
+function saveAll(){
+  try{const f={};FIELD_IDS.forEach(id=>{const el=document.getElementById(id);if(el)f[id]=el.value;});
+    localStorage.setItem(SAVEKEY,JSON.stringify({state:state,fields:f,guard:GUARD}));}catch(e){}
+}
+function restoreAll(){
+  try{const d=JSON.parse(localStorage.getItem(SAVEKEY));
+    if(d){Object.assign(state,d.state||{});GUARD=d.guard||"";
+      FIELD_IDS.forEach(id=>{const el=document.getElementById(id);if(el&&d.fields&&d.fields[id]!=null)el.value=d.fields[id];});}
+  }catch(e){}
+  try{ACTIVE=JSON.parse(localStorage.getItem("egc_active_job"))||{};
+    if(ACTIVE.name&&!document.getElementById("j_name").value){
+      document.getElementById("j_name").value=ACTIVE.name||"";
+      document.getElementById("j_phone").value=ACTIVE.phone||"";
+      document.getElementById("j_date").value=ACTIVE.jobdate||"";
+      const b=document.createElement("div");
+      b.style.cssText="background:#13203a;color:#fff;border-radius:14px;padding:12px 16px;margin-bottom:14px;font-family:Oswald;font-weight:600;font-size:14px;letter-spacing:.03em";
+      b.innerHTML="LOADED FROM GAME PLAN: <span style='color:#e8581c'>"+ACTIVE.name.toUpperCase()+"</span>"+(ACTIVE.pain?"<div style='font-family:Inter;font-weight:500;font-size:13px;margin-top:4px;color:#aeb8cc'>Their pain: “"+ACTIVE.pain+"”</div>":"");
+      const card=document.querySelector(".jobcard");card.parentNode.insertBefore(b,card);
+      saveAll();
+    }}catch(e){}
+}
+function key(si,ii){return si+"_"+ii;}
+function render(){
+  document.getElementById("sections").innerHTML = SECTIONS.map((sec,si)=>{
+    const done=sec.items.filter((_,ii)=>state[key(si,ii)]).length;
+    return `<section>
+      <div class="when">${sec.when}</div>
+      <div class="sechead ${done===sec.items.length?'done':''}">
+        <h2>${sec.title}</h2><span class="cnt">${done}/${sec.items.length}</span></div>
+      ${sec.items.map((it,ii)=>`
+        <div class="item ${state[key(si,ii)]?'on':''} ${it.crit?'crit':''}" onclick="tog(${si},${ii})">
+          <span class="bx"></span>
+          <div class="tx">${it.t}${it.s?`<small>${it.s}</small>`:""}</div>
+        </div>`).join("")}
+      ${sec.script?`<div class="script"><h4>${sec.script.h}</h4>${sec.script.p.map(p=>`<p>${p}</p>`).join("")}
+        <button class="copybtn" onclick="event.stopPropagation();copyScript(${si})">Copy text</button>
+        ${si===1?`<button class="copybtn" id="revbtn" style="margin-left:8px;background:#2e7d4f" onclick="event.stopPropagation();sendReview(this)">Send review link from EGC number</button>`:""}
+      </div>`:""}
+      ${sec.script2?`<div class="script"><h4>${sec.script2.h}</h4>${sec.script2.p.map(p=>`<p>${p}</p>`).join("")}</div>`:""}
+      ${sec.guard?`<div class="guardrow"><div class="guardlbl">Garage Guard result</div>
+        <div class="gchips">${GUARD_OPTS.map(g=>`<div class="gchip ${GUARD===g?'on':''} ${g==='Not today'?'no':''}" onclick="setGuard('${g}')">${g}</div>`).join("")}</div></div>`:""}
+    </section>`;
+  }).join("");
+  const total=SECTIONS.reduce((a,s)=>a+s.items.length,0);
+  const done=Object.values(state).filter(Boolean).length;
+  document.getElementById("pc").textContent=done;
+  document.getElementById("pt").textContent="/"+total+" DONE";
+  document.getElementById("barfill").style.width=(100*done/total)+"%";
+  const btn=document.getElementById("donebtn");
+  if(done===total){btn.classList.add("ready");btn.textContent="Job closed — every loop fed ✓";}
+  else{btn.classList.remove("ready");btn.textContent=`Complete all checks to close the job (${total-done} left)`;}
+}
+function tog(si,ii){state[key(si,ii)]=!state[key(si,ii)];render();saveAll();}
+function copyScript(si){
+  const name=document.getElementById("j_name").value||"[NAME]";
+  let txt=SECTIONS[si].script.p.join("\n\n").replace(/<[^>]+>/g,"").replaceAll("[NAME]",name);
+  if(ACTIVE.pain) txt=txt.replace(/\[THEIR PAIN[^\]]*\]/g,ACTIVE.pain);
+  navigator.clipboard&&navigator.clipboard.writeText(txt);
+  event.target.textContent="Copied ✓";setTimeout(()=>{event.target.textContent="Copy text";},1500);
+}
+async function sendReview(btn){
+  const phone=(document.getElementById("j_phone").value||"").replace(/\D/g,"");
+  const name=document.getElementById("j_name").value||"";
+  if(!phone){alert("Add the customer's mobile number first.");return;}
+  if(!WEBHOOK){alert("No webhook set — paste your Zapier Catch Hook URL into WEBHOOK at the top of this file.");return;}
+  btn.disabled=true;btn.textContent="Sending…";
+  const body=JSON.stringify({tool:"review_request",sent_at:new Date().toISOString(),
+    customer:name,phone:phone,review_link:REVIEW_LINK,
+    message:`Hi ${name?name.split(" ")[0]:"there"}, it was great working with you! If you have a moment, we'd really appreciate it if you left us a review — it goes a long way in helping us grow. As a thank-you for choosing us, we'd love to offer you 10% off your next service. We look forward to working with you again! ${REVIEW_LINK||"[REVIEW LINK]"}`});
+  try{await fetch(WEBHOOK,{method:"POST",headers:{"Content-Type":"application/json"},body:body});}
+  catch(e){try{await fetch(WEBHOOK,{method:"POST",mode:"no-cors",headers:{"Content-Type":"text/plain"},body:body});}
+    catch(e2){btn.disabled=false;btn.textContent="Send review link from EGC number";alert("Send failed — check connection.");return;}}
+  btn.textContent="Review text sent ✓";
+}
+async function finish(){
+  const total=SECTIONS.reduce((a,s)=>a+s.items.length,0);
+  if(Object.values(state).filter(Boolean).length<total) return;
+  const v=id=>document.getElementById(id).value;
+  const payload={tool:"post_job",sent_at:new Date().toISOString(),
+    job:{customer:v("j_name"),phone:v("j_phone"),date:v("j_date"),actual_loads:v("j_loads"),
+         hours_on_site:v("j_hours"),dump_fees:v("j_fees"),notes:v("j_notes"),
+         package:ACTIVE.pkg||"",quoted_rate:ACTIVE.rate||"",pain:ACTIVE.pain||""},
+    garage_guard:GUARD||"not recorded",
+    checklist:SECTIONS.map(s=>s.items.map(it=>it.t)).flat().map((t,i)=>t+": done").join("\n")};
+  if(WEBHOOK){
+    const btn=document.getElementById("donebtn");btn.textContent="Sending to HQ…";
+    const body=JSON.stringify(payload);
+    try{await fetch(WEBHOOK,{method:"POST",headers:{"Content-Type":"application/json"},body:body});}
+    catch(e){try{await fetch(WEBHOOK,{method:"POST",mode:"no-cors",headers:{"Content-Type":"text/plain"},body:body});}catch(e2){}}
+    btn.textContent="Job closed & logged to HQ ✓";
+  }
+  localStorage.removeItem(SAVEKEY);
+  localStorage.removeItem("egc_active_job");
+  alert("Job closed. Review asked, content captured, money in. That's the system. 🧹");
+}
+document.addEventListener("input",saveAll);
+restoreAll();
+render();
+</script>
+</body>
+</html>

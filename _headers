@@ -1,0 +1,5 @@
+# Cloudflare Pages headers
+# Internal crew tooling — never index, never cache an old build in the field
+/crew/*
+  X-Robots-Tag: noindex
+  Cache-Control: no-cache

@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>EGC · Pre-Job Playbook</title>
+<meta name="robots" content="noindex">
+<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{--navy:#13203a;--navy2:#1d2d4f;--orange:#e8581c;--orange2:#c4470f;--cream:#f2e9dc;
+        --paper:#faf5ec;--khaki:#8a8170;--line:#d9cdb8;--ok:#2e7d4f;--r:14px}
+  *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{font-family:'Inter',system-ui,sans-serif;background:var(--cream);color:var(--navy);padding-bottom:90px}
+  .disp{font-family:'Oswald','Arial Narrow',sans-serif;text-transform:uppercase}
+
+  #topbar{position:sticky;top:0;z-index:10;background:var(--navy);color:#fff;
+          padding:max(env(safe-area-inset-top),12px) 18px 12px}
+  #topbar .row{display:flex;justify-content:space-between;align-items:center;max-width:720px;margin:0 auto}
+  #brand{font-family:'Oswald';font-weight:700;font-size:14px;letter-spacing:.06em}
+  #brand span{color:var(--orange)}
+  #prog{font-family:'Oswald';font-weight:700;font-size:15px}
+  #prog b{color:var(--orange)}
+  #bar{height:4px;background:rgba(255,255,255,.15);border-radius:2px;margin-top:8px;max-width:720px;margin-left:auto;margin-right:auto}
+  #bar i{display:block;height:100%;background:var(--orange);border-radius:2px;width:0%;transition:width .2s}
+
+  main{max-width:720px;margin:0 auto;padding:20px 18px}
+  .eyebrow{font-family:'Oswald';font-weight:600;font-size:12px;letter-spacing:.12em;color:var(--orange);text-transform:uppercase}
+  h1{font-family:'Oswald';font-weight:700;font-size:clamp(28px,6vw,38px);text-transform:uppercase;line-height:1.05;margin:4px 0 14px}
+
+  .jobcard{background:var(--paper);border:1.5px solid var(--line);border-radius:var(--r);padding:16px;margin-bottom:8px}
+  .jobcard .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  label.fl{display:block;font-family:'Oswald';font-weight:600;font-size:11px;letter-spacing:.1em;
+           text-transform:uppercase;color:var(--khaki);margin:8px 0 5px}
+  input,select,textarea{width:100%;background:#fff;border:1.5px solid var(--line);border-radius:10px;
+    padding:12px 13px;font:inherit;font-size:16px;color:var(--navy)}
+  input:focus,textarea:focus,select:focus{outline:none;border-color:var(--orange)}
+  textarea{min-height:70px;resize:none}
+
+  section{margin-top:26px}
+  .sechead{display:flex;align-items:baseline;justify-content:space-between;border-bottom:2.5px solid var(--navy);padding-bottom:8px;margin-bottom:12px}
+  .sechead h2{font-family:'Oswald';font-weight:700;font-size:19px;text-transform:uppercase;letter-spacing:.03em}
+  .sechead .cnt{font-family:'Oswald';font-weight:600;font-size:13px;color:var(--khaki)}
+  .sechead.done .cnt{color:var(--ok)}
+  .when{font-family:'Oswald';font-size:11px;letter-spacing:.12em;color:var(--orange);text-transform:uppercase;margin-bottom:8px}
+
+  .item{display:flex;gap:13px;align-items:flex-start;background:var(--paper);border:1.5px solid var(--line);
+        border-radius:var(--r);padding:14px 15px;margin-bottom:8px;cursor:pointer;user-select:none}
+  .item .bx{width:26px;height:26px;border:2px solid var(--navy);border-radius:7px;flex-shrink:0;margin-top:1px;
+            display:flex;align-items:center;justify-content:center;color:#fff;font-size:15px}
+  .item.on{border-color:var(--ok);background:#eef4ee}
+  .item.on .bx{background:var(--ok);border-color:var(--ok)}
+  .item.on .bx::after{content:"✓"}
+  .item .tx{flex:1;font-size:15.5px;font-weight:600;line-height:1.4}
+  .item .tx small{display:block;font-weight:500;color:var(--khaki);font-size:13.5px;margin-top:2px;line-height:1.45}
+  .item.crit{border-left:5px solid var(--orange)}
+
+  .script{background:var(--navy);color:#fff;border-radius:var(--r);padding:16px 18px;margin:10px 0 14px}
+  .script h4{font-family:'Oswald';font-weight:600;font-size:12px;letter-spacing:.12em;color:var(--orange);
+             text-transform:uppercase;margin-bottom:8px}
+  .script p{font-size:15.5px;line-height:1.55;font-weight:500}
+  .script p+p{margin-top:8px}
+  .script i{color:#aeb8cc;font-style:normal;font-size:13.5px}
+  .copybtn{margin-top:10px;background:var(--orange);border:none;color:#fff;font-family:'Oswald';font-weight:600;
+           font-size:13px;letter-spacing:.06em;text-transform:uppercase;padding:10px 16px;border-radius:9px;cursor:pointer}
+
+  #donebar{position:fixed;left:0;right:0;bottom:0;background:var(--cream);border-top:1.5px solid var(--line);
+           padding:12px 18px max(env(safe-area-inset-bottom),12px)}
+  #donebar .inner{max-width:720px;margin:0 auto}
+  #donebtn{width:100%;font-family:'Oswald';font-weight:600;font-size:18px;letter-spacing:.05em;text-transform:uppercase;
+           border:none;border-radius:var(--r);padding:17px;background:var(--line);color:var(--khaki);min-height:56px}
+  #donebtn.ready{background:var(--orange);color:#fff;cursor:pointer}
+</style>
+</head>
+<body>
+
+<!-- ═══ EGC crew gate — same credentials as /employee.html (a portal sign-in in this tab carries over) ═══ -->
+<style>
+  #egc-gate{position:fixed;inset:0;z-index:99999;background:#13203a;display:flex;align-items:center;justify-content:center;padding:24px;font-family:'Inter',system-ui,sans-serif}
+  #egc-gate.off{display:none}
+  #egc-gate .gcard{width:100%;max-width:360px;background:#1d2d4f;border:1px solid rgba(255,255,255,.1);border-radius:16px;padding:28px 24px;box-shadow:0 24px 64px rgba(0,0,0,.5)}
+  #egc-gate .gpill{display:inline-block;background:#e8581c;color:#fff;font-family:'Oswald',sans-serif;font-size:11px;letter-spacing:.12em;text-transform:uppercase;padding:4px 12px;border-radius:99px;margin-bottom:12px}
+  #egc-gate h2{font-family:'Oswald',sans-serif;color:#fff;font-size:22px;text-transform:uppercase;letter-spacing:.03em;margin:0 0 4px}
+  #egc-gate .gsub{color:#aeb8cc;font-size:13.5px;margin:0 0 6px;line-height:1.45}
+  #egc-gate label{display:block;color:#aeb8cc;font-family:'Oswald',sans-serif;font-size:11px;letter-spacing:.1em;text-transform:uppercase;margin:14px 0 5px}
+  #egc-gate input{width:100%;box-sizing:border-box;background:#13203a;border:1.5px solid rgba(255,255,255,.15);border-radius:10px;color:#fff;font-size:16px;padding:12px 13px;font-family:inherit}
+  #egc-gate input:focus{outline:none;border-color:#e8581c}
+  #egc-gate .gbtn{width:100%;margin-top:18px;background:#e8581c;border:none;color:#fff;font-family:'Oswald',sans-serif;font-weight:600;font-size:15px;letter-spacing:.06em;text-transform:uppercase;padding:13px;border-radius:10px;cursor:pointer;min-height:48px}
+  #egc-gate .gerr{display:none;background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.35);color:#fca5a5;border-radius:8px;padding:9px 12px;font-size:13px;margin-top:14px}
+</style>
+<div id="egc-gate">
+  <div class="gcard">
+    <div class="gpill">EGC Crew Tools</div>
+    <h2>Crew Sign-In</h2>
+    <p class="gsub">Use your employee portal username &amp; password.</p>
+    <label for="gate-u">Username</label>
+    <input type="text" id="gate-u" autocomplete="username" autocapitalize="none" spellcheck="false">
+    <label for="gate-p">Password</label>
+    <input type="password" id="gate-p" autocomplete="current-password">
+    <button class="gbtn" onclick="gateLogin()">Unlock</button>
+    <div class="gerr" id="gate-err">Incorrect username or password.</div>
+  </div>
+</div>
+<script>
+/* Auth matches /employee.html: salted SHA-256, same usernames & passwords.
+   To rotate a password, update the hash here AND in employee.html:
+   sha256(username + ':' + newPass + ':egc-salt-2026') */
+const GATE_USERS={
+  ZacB:"6b8670f397174ff99440629b877581216a0b26b6770054be198988ff48a16861",
+  TylerG:"28b50fd5ee98af8cf015972811def03dbc2eaff52997f82ecfc4342ece6cfa36",
+  AlexK:"52e2e9901adc10406ad9597084ece4770d1c9fd0e3b76e1f31abf35f8030ac50"};
+async function gateSha(s){const b=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(s));
+  return Array.from(new Uint8Array(b)).map(x=>x.toString(16).padStart(2,"0")).join("");}
+function gateTok(u){return gateSha(u+":"+GATE_USERS[u]+":egc-session");}
+async function gateOk(){
+  try{
+    for(const st of[sessionStorage,localStorage]){
+      const u=st.getItem("egc_u"),t=st.getItem("egc_tok");
+      if(u&&GATE_USERS[u]&&t&&t===await gateTok(u))return u;
+    }
+  }catch(e){}
+  return null;
+}
+async function gateLogin(){
+  const u=document.getElementById("gate-u").value.trim(),p=document.getElementById("gate-p").value;
+  if(GATE_USERS[u]&&await gateSha(u+":"+p+":egc-salt-2026")===GATE_USERS[u]){
+    const t=await gateTok(u);
+    try{sessionStorage.setItem("egc_u",u);sessionStorage.setItem("egc_tok",t);
+        localStorage.setItem("egc_u",u);localStorage.setItem("egc_tok",t);}catch(e){}
+    document.getElementById("egc-gate").classList.add("off");
+  }else document.getElementById("gate-err").style.display="block";
+}
+function gateLock(){
+  try{["egc_u","egc_tok"].forEach(k=>{sessionStorage.removeItem(k);localStorage.removeItem(k);});}catch(e){}
+  location.reload();
+}
+gateOk().then(u=>{
+  if(u){document.getElementById("egc-gate").classList.add("off");return;}
+  document.getElementById("gate-p").addEventListener("keydown",e=>{if(e.key==="Enter")gateLogin()});
+  document.getElementById("gate-u").addEventListener("keydown",e=>{if(e.key==="Enter")document.getElementById("gate-p").focus()});
+});
+</script>
+
+
+<div id="topbar">
+  <div class="row">
+    <div id="brand">EASY GARAGE <span>CLEANING</span></div>
+    <div id="prog"><b id="pc">0</b><span id="pt">/0 DONE</span></div>
+  </div>
+  <div id="bar"><i id="barfill"></i></div>
+</div>
+
+<main>
+  <div class="eyebrow">Run before every job — no exceptions</div>
+  <h1>Pre-Job Playbook</h1>
+
+  <div class="jobcard">
+    <div class="grid2">
+      <div><label class="fl">Customer</label><input type="text" id="j_name" placeholder="Name"></div>
+      <div><label class="fl">Job date</label><input type="date" id="j_date"></div>
+    </div>
+    <label class="fl">Address</label><input type="text" id="j_addr" placeholder="Street address">
+    <div class="grid2">
+      <div><label class="fl">Package</label><input type="text" id="j_pkg" placeholder="From Game Plan"></div>
+      <div><label class="fl">Flat rate</label><input type="number" inputmode="decimal" id="j_rate" placeholder="$"></div>
+    </div>
+  </div>
+
+  <div id="sections"></div>
+</main>
+
+<div id="donebar"><div class="inner">
+  <button id="donebtn" onclick="finish()">Complete all checks to start the job</button>
+</div></div>
+
+<script>
+/* ============ PLAYBOOK CONFIG — EDIT ME ============ */
+const SECTIONS = [
+  {
+    when:"Night before", title:"Lock the Job", items:[
+      {t:"Deposit verified on Stripe", s:"Card on file + deposit captured. No deposit = call Tyler before anything else.", crit:true},
+      {t:"Game Plan reviewed", s:"Re-read the walkthrough: scope, hazards, heavy items, the zone they said drives them craziest. You'll quote it back tomorrow."},
+      {t:"Confirmation text sent", s:"Use the script below. If no reply by 8 PM, Tyler calls.", crit:true},
+      {t:"Upsell materials purchased & staged", s:"Racks / bins from the Game Plan bought (Home Depot pickup) and staged for load-out. Job day is too late."},
+      {t:"Dump / donation route planned", s:"Transfer station hours checked. Donation drop-off mapped if the plan includes a donation run."},
+    ],
+    script:{h:"Confirmation text — copy & send via Quo", p:[
+      "Hi [NAME], it's Easy Garage Cleaning — confirming your garage comeback tomorrow at [TIME]. Crew of [N], we'll knock when we arrive. Flat rate locked at $[RATE] like we agreed — nothing changes. Reply C to confirm. — Alex"
+    ]}
+  },
+  {
+    when:"Morning of — load-out", title:"Truck Checklist", items:[
+      {t:"Dollies + straps + moving blankets"},
+      {t:"Gloves, masks, eye protection", s:"Hazards were flagged on the Game Plan — match PPE to what's in there.", crit:true},
+      {t:"Contractor bags + bins + tarps"},
+      {t:"Broom, dustpan, shop vac", s:"The swept floor IS the after photo. Never skip."},
+      {t:"Shelving / bins for install loaded", s:"Only if sold on the Game Plan — check it."},
+      {t:"Tripod + phone mount + charged phone", s:"Content kit. Footage is ad inventory — treat it like equipment.", crit:true},
+      {t:"Fuel + route + arrival ETA texted", s:"Text 'On our way, see you ~[TIME]' when wheels roll."},
+    ]
+  },
+  {
+    when:"On arrival — before anything moves", title:"Arrival Playbook", items:[
+      {t:"BEFORE capture: 3 clips + photos", s:"(1) the pile from the door, (2) walking the worst zone, (3) wide shot. Plus 5+ photos for GBP. Shoot FIRST — once the crew starts you can't get it back.", crit:true},
+      {t:"Doorstep re-walk with homeowner", s:"Use the script below. Re-confirm scope + flat rate before a single item moves.", crit:true},
+      {t:"Keep-items confirmed & flagged", s:"Walk the keep list from the Game Plan. Tape or move anything staying. A hauled keep-item is a refund and a lost review."},
+      {t:"Driveway / staging zone set", s:"Tarp down, truck positioned, clear carry path."},
+      {t:"Start time logged", s:"Note it — you'll need actual hours for the post-job log."},
+    ],
+    script:{h:"Doorstep script — say this before starting", p:[
+      "“Morning [NAME] — before we touch anything, let's do a 60-second walk. Same plan we built together: [SCOPE] is going, [KEEP ITEMS] stay put, and we're done by [TIME].”",
+      "“Flat rate's locked at $[RATE] — that doesn't move no matter what we find. And at the end, we walk it together. If you're not thrilled, we fix it before we leave.”",
+      "<i>Then point at their worst zone:</i> “And THIS — this is gone in two hours.”"
+    ]}
+  },
+];
+/* =================================================== */
+
+const state={};
+const SAVEKEY="egc_prejob_v1";
+const FIELD_IDS=["j_name","j_date","j_addr","j_pkg","j_rate"];
+function saveAll(){
+  try{const f={};FIELD_IDS.forEach(id=>{const el=document.getElementById(id);if(el)f[id]=el.value;});
+    localStorage.setItem(SAVEKEY,JSON.stringify({state:state,fields:f}));}catch(e){}
+}
+function restoreAll(){
+  try{const d=JSON.parse(localStorage.getItem(SAVEKEY));
+    if(d){Object.assign(state,d.state||{});
+      FIELD_IDS.forEach(id=>{const el=document.getElementById(id);if(el&&d.fields&&d.fields[id]!=null)el.value=d.fields[id];});}
+  }catch(e){}
+  // pull from Game Plan handoff if fields still empty
+  try{const a=JSON.parse(localStorage.getItem("egc_active_job"));
+    if(a&&a.name&&!document.getElementById("j_name").value){
+      document.getElementById("j_name").value=a.name||"";
+      document.getElementById("j_addr").value=a.addr||"";
+      document.getElementById("j_date").value=a.jobdate||"";
+      document.getElementById("j_rate").value=a.rate||"";
+      document.getElementById("j_pkg").value=(a.pkg||"")+(a.upsells?" + "+a.upsells:"");
+      const b=document.createElement("div");
+      b.style.cssText="background:#13203a;color:#fff;border-radius:14px;padding:12px 16px;margin-bottom:14px;font-family:Oswald;font-weight:600;font-size:14px;letter-spacing:.03em";
+      b.innerHTML="LOADED FROM GAME PLAN: <span style='color:#e8581c'>"+a.name.toUpperCase()+"</span>"+(a.addr?" — "+a.addr:"");
+      const card=document.querySelector(".jobcard");card.parentNode.insertBefore(b,card);
+      saveAll();
+    }}catch(e){}
+}
+function key(si,ii){return si+"_"+ii;}
+function render(){
+  document.getElementById("sections").innerHTML = SECTIONS.map((sec,si)=>{
+    const done=sec.items.filter((_,ii)=>state[key(si,ii)]).length;
+    return `<section>
+      <div class="when">${sec.when}</div>
+      <div class="sechead ${done===sec.items.length?'done':''}">
+        <h2>${sec.title}</h2><span class="cnt">${done}/${sec.items.length}</span></div>
+      ${sec.items.map((it,ii)=>`
+        <div class="item ${state[key(si,ii)]?'on':''} ${it.crit?'crit':''}" onclick="tog(${si},${ii})">
+          <span class="bx"></span>
+          <div class="tx">${it.t}${it.s?`<small>${it.s}</small>`:""}</div>
+        </div>`).join("")}
+      ${sec.script?`<div class="script"><h4>${sec.script.h}</h4>${sec.script.p.map(p=>`<p>${p}</p>`).join("")}
+        <button class="copybtn" onclick="event.stopPropagation();copyScript(${si})">Copy text</button></div>`:""}
+    </section>`;
+  }).join("");
+  const total=SECTIONS.reduce((a,s)=>a+s.items.length,0);
+  const done=Object.values(state).filter(Boolean).length;
+  document.getElementById("pc").textContent=done;
+  document.getElementById("pt").textContent="/"+total+" DONE";
+  document.getElementById("barfill").style.width=(100*done/total)+"%";
+  const btn=document.getElementById("donebtn");
+  if(done===total){btn.classList.add("ready");btn.textContent="All checks complete — start the job";}
+  else{btn.classList.remove("ready");btn.textContent=`Complete all checks to start the job (${total-done} left)`;}
+}
+function tog(si,ii){state[key(si,ii)]=!state[key(si,ii)];render();saveAll();}
+function copyScript(si){
+  const name=document.getElementById("j_name").value||"[NAME]";
+  const rate=document.getElementById("j_rate").value||"[RATE]";
+  let txt=SECTIONS[si].script.p.join("\n\n").replace(/<[^>]+>/g,"")
+    .replaceAll("[NAME]",name).replaceAll("[RATE]",rate);
+  navigator.clipboard&&navigator.clipboard.writeText(txt);
+  event.target.textContent="Copied ✓";setTimeout(()=>{event.target.textContent="Copy text";},1500);
+}
+function finish(){
+  const total=SECTIONS.reduce((a,s)=>a+s.items.length,0);
+  if(Object.values(state).filter(Boolean).length<total) return;
+  localStorage.removeItem(SAVEKEY);
+  alert("Pre-job complete. Go make it disappear. 🛻");
+}
+document.addEventListener("input",saveAll);
+restoreAll();
+render();
+</script>
+</body>
+</html>

@@ -13,6 +13,7 @@ Disallow: /copilot.html
 Disallow: /sop.html
 Disallow: /tyler-contract.html
 Disallow: /api/
+Disallow: /crew/
 Disallow: /node_modules/
 Disallow: /ads.html
 Disallow: /quote.html
