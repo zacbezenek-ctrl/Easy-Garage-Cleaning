@@ -102,38 +102,45 @@
   </div>
 </div>
 <script>
-/* Auth matches /employee.html: salted SHA-256, same usernames & passwords.
-   To rotate a password, update the hash here AND in employee.html:
+/* SOFT GATE — keeps customers, bots, and casual snoops out of the field tools.
+   It is NOT real authentication: the page source is public, so a determined
+   reader can forge the token. For true protection put Cloudflare Access in
+   front of /crew/* and /api/crew-hook (identity-checked at the edge).
+   Auth mirrors /employee.html: salted SHA-256, same usernames & passwords.
+   Sessions expire after GATE_TTL so a lost/left iPad re-locks itself.
+   Rotate a password by updating the hash here AND in employee.html:
    sha256(username + ':' + newPass + ':egc-salt-2026') */
 const GATE_USERS={
   ZacB:"6b8670f397174ff99440629b877581216a0b26b6770054be198988ff48a16861",
   TylerG:"28b50fd5ee98af8cf015972811def03dbc2eaff52997f82ecfc4342ece6cfa36",
   AlexK:"52e2e9901adc10406ad9597084ece4770d1c9fd0e3b76e1f31abf35f8030ac50"};
+const GATE_TTL=12*60*60*1000; // 12h — covers a work day, bounds a lost device
 async function gateSha(s){const b=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(s));
   return Array.from(new Uint8Array(b)).map(x=>x.toString(16).padStart(2,"0")).join("");}
 function gateTok(u){return gateSha(u+":"+GATE_USERS[u]+":egc-session");}
+function gateSet(u,t){const exp=String(Date.now()+GATE_TTL);
+  try{for(const st of[sessionStorage,localStorage]){st.setItem("egc_u",u);st.setItem("egc_tok",t);st.setItem("egc_exp",exp);}}catch(e){}}
 async function gateOk(){
   try{
     for(const st of[sessionStorage,localStorage]){
-      const u=st.getItem("egc_u"),t=st.getItem("egc_tok");
-      if(u&&GATE_USERS[u]&&t&&t===await gateTok(u))return u;
+      const u=st.getItem("egc_u"),t=st.getItem("egc_tok"),exp=parseInt(st.getItem("egc_exp")||"0",10);
+      if(u&&GATE_USERS[u]&&t&&t===await gateTok(u)){
+        if(exp&&Date.now()<exp){gateSet(u,t);return u;} // valid → slide the window
+        gateClear(); // token ok but expired (or pre-expiry session) → require re-login
+      }
     }
   }catch(e){}
   return null;
 }
+function gateClear(){try{["egc_u","egc_tok","egc_exp"].forEach(k=>{sessionStorage.removeItem(k);localStorage.removeItem(k);});}catch(e){}}
 async function gateLogin(){
   const u=document.getElementById("gate-u").value.trim(),p=document.getElementById("gate-p").value;
   if(GATE_USERS[u]&&await gateSha(u+":"+p+":egc-salt-2026")===GATE_USERS[u]){
-    const t=await gateTok(u);
-    try{sessionStorage.setItem("egc_u",u);sessionStorage.setItem("egc_tok",t);
-        localStorage.setItem("egc_u",u);localStorage.setItem("egc_tok",t);}catch(e){}
+    gateSet(u,await gateTok(u));
     document.getElementById("egc-gate").classList.add("off");
   }else document.getElementById("gate-err").style.display="block";
 }
-function gateLock(){
-  try{["egc_u","egc_tok"].forEach(k=>{sessionStorage.removeItem(k);localStorage.removeItem(k);});}catch(e){}
-  location.reload();
-}
+function gateLock(){gateClear();location.reload();}
 gateOk().then(u=>{
   if(u){document.getElementById("egc-gate").classList.add("off");return;}
   document.getElementById("gate-p").addEventListener("keydown",e=>{if(e.key==="Enter")gateLogin()});
@@ -179,7 +186,7 @@ gateOk().then(u=>{
 
 <script>
 /* ============ PLAYBOOK CONFIG — EDIT ME ============ */
-const WEBHOOK="https://hooks.zapier.com/hooks/catch/27280948/433e00a/"; // ← paste your Zapier Catch Hook URL here (same hook as the Game Plan)
+const WEBHOOK="/api/crew-hook"; // same-origin proxy → Zapier. Real hook URL lives server-side in functions/api/crew-hook.js (not in page source).
 const REVIEW_LINK="https://search.google.com/local/writereview?placeid=ChIJ17AGfBiyRIsRyJ3k4mDtX8Q";
 const SECTIONS = [
   {
@@ -240,6 +247,13 @@ const FIELD_IDS=["j_name","j_date","j_phone","j_loads","j_hours","j_fees","j_not
 const GUARD_OPTS=["Guard Black","Garage Guard","Guard Lite","Not today"];
 let GUARD="";
 let ACTIVE={};
+const esc=s=>String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const normPhone=raw=>{const d=String(raw||"").replace(/\D/g,"");if(d.length===10)return"+1"+d;if(d.length===11&&d[0]==="1")return"+"+d;if(d.length>10)return"+"+d;return d||"";};
+const STORAGE_OK=(()=>{try{localStorage.setItem("__egc_t","1");localStorage.removeItem("__egc_t");return true;}catch(e){return false;}})();
+const uid=()=>Date.now().toString(36)+"-"+Math.random().toString(36).slice(2,8);
+// The Works / Full Property Reset bundle "Garage Guard year one free" — so the
+// paid Guard pitch must reframe as a renewal/upgrade, not a cold sell.
+function guardYearOneFree(){const p=(ACTIVE.pkg||"").toLowerCase();return p.includes("works")||p.includes("full property reset");}
 function setGuard(v){GUARD=(GUARD===v?"":v);render();saveAll();}
 function saveAll(){
   try{const f={};FIELD_IDS.forEach(id=>{const el=document.getElementById(id);if(el)f[id]=el.value;});
@@ -257,7 +271,12 @@ function restoreAll(){
       document.getElementById("j_date").value=ACTIVE.jobdate||"";
       const b=document.createElement("div");
       b.style.cssText="background:#13203a;color:#fff;border-radius:14px;padding:12px 16px;margin-bottom:14px;font-family:Oswald;font-weight:600;font-size:14px;letter-spacing:.03em";
-      b.innerHTML="LOADED FROM GAME PLAN: <span style='color:#e8581c'>"+ACTIVE.name.toUpperCase()+"</span>"+(ACTIVE.pain?"<div style='font-family:Inter;font-weight:500;font-size:13px;margin-top:4px;color:#aeb8cc'>Their pain: “"+ACTIVE.pain+"”</div>":"");
+      const lockedTotal=(ACTIVE.total!=null&&ACTIVE.total!=="")?ACTIVE.total:ACTIVE.rate;
+      const stale=ACTIVE.savedAt&&(Date.now()-new Date(ACTIVE.savedAt).getTime())>14*864e5;
+      b.innerHTML="LOADED FROM GAME PLAN: <span style='color:#e8581c'>"+esc((ACTIVE.name||"").toUpperCase())+"</span>"+
+        (lockedTotal?"<div style='font-family:Inter;font-weight:500;font-size:13px;margin-top:4px;color:#aeb8cc'>Locked total: $"+esc(lockedTotal)+(ACTIVE.pkg?" · "+esc(ACTIVE.pkg):"")+"</div>":"")+
+        (ACTIVE.pain?"<div style='font-family:Inter;font-weight:500;font-size:13px;margin-top:4px;color:#aeb8cc'>Their pain: “"+esc(ACTIVE.pain)+"”</div>":"")+
+        (stale?"<div style='font-family:Inter;font-weight:600;font-size:12px;margin-top:6px;color:#fca5a5'>⚠ This handoff is over 2 weeks old — confirm it's the right job.</div>":"");
       const card=document.querySelector(".jobcard");card.parentNode.insertBefore(b,card);
       saveAll();
     }}catch(e){}
@@ -279,7 +298,7 @@ function render(){
         <button class="copybtn" onclick="event.stopPropagation();copyScript(${si})">Copy text</button>
         ${si===1?`<button class="copybtn" id="revbtn" style="margin-left:8px;background:#2e7d4f" onclick="event.stopPropagation();sendReview(this)">Send review link from EGC number</button>`:""}
       </div>`:""}
-      ${sec.script2?`<div class="script"><h4>${sec.script2.h}</h4>${sec.script2.p.map(p=>`<p>${p}</p>`).join("")}</div>`:""}
+      ${sec.script2?`<div class="script"><h4>${sec.script2.h}</h4>${guardYearOneFree()?`<p style="background:#e8581c;color:#fff;border-radius:8px;padding:8px 11px;font-size:13.5px;margin-bottom:8px"><b>This package already includes Garage Guard year one free.</b> Don't cold-sell — frame it as “here's what kicks in after your free year,” or pitch the Guard Black upgrade.</p>`:""}${sec.script2.p.map(p=>`<p>${p}</p>`).join("")}</div>`:""}
       ${sec.guard?`<div class="guardrow"><div class="guardlbl">Garage Guard result</div>
         <div class="gchips">${GUARD_OPTS.map(g=>`<div class="gchip ${GUARD===g?'on':''} ${g==='Not today'?'no':''}" onclick="setGuard('${g}')">${g}</div>`).join("")}</div></div>`:""}
     </section>`;
@@ -301,42 +320,54 @@ function copyScript(si){
   navigator.clipboard&&navigator.clipboard.writeText(txt);
   event.target.textContent="Copied ✓";setTimeout(()=>{event.target.textContent="Copy text";},1500);
 }
+async function postHook(payload){
+  // Same-origin proxy → real, readable status. No opaque no-cors that "succeeds" on a dead hook.
+  const res=await fetch(WEBHOOK,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
+  let ok=res.ok; try{const j=await res.json();ok=ok&&j&&j.ok!==false;}catch(e){}
+  return ok;
+}
+let _reviewId="";
 async function sendReview(btn){
-  const phone=(document.getElementById("j_phone").value||"").replace(/\D/g,"");
+  const phone=normPhone(document.getElementById("j_phone").value||"");
   const name=document.getElementById("j_name").value||"";
   if(!phone){alert("Add the customer's mobile number first.");return;}
-  if(!WEBHOOK){alert("No webhook set — paste your Zapier Catch Hook URL into WEBHOOK at the top of this file.");return;}
+  _reviewId=_reviewId||uid(); // stable across retries → downstream can dedupe, no double-texts
   btn.disabled=true;btn.textContent="Sending…";
-  const body=JSON.stringify({tool:"review_request",sent_at:new Date().toISOString(),
+  const ok=await postHook({tool:"review_request",request_id:_reviewId,job_id:ACTIVE.jobId||"",sent_at:new Date().toISOString(),
     customer:name,phone:phone,review_link:REVIEW_LINK,
-    message:`Hi ${name?name.split(" ")[0]:"there"}, it was great working with you! If you have a moment, we'd really appreciate it if you left us a review — it goes a long way in helping us grow. As a thank-you for choosing us, we'd love to offer you 10% off your next service. We look forward to working with you again! ${REVIEW_LINK||"[REVIEW LINK]"}`});
-  try{await fetch(WEBHOOK,{method:"POST",headers:{"Content-Type":"application/json"},body:body});}
-  catch(e){try{await fetch(WEBHOOK,{method:"POST",mode:"no-cors",headers:{"Content-Type":"text/plain"},body:body});}
-    catch(e2){btn.disabled=false;btn.textContent="Send review link from EGC number";alert("Send failed — check connection.");return;}}
-  btn.textContent="Review text sent ✓";
+    message:`Hi ${name?name.split(" ")[0]:"there"}, it was great working with you! If you have a moment, we'd really appreciate it if you left us a review — it goes a long way in helping us grow. As a thank-you for choosing us, we'd love to offer you 10% off your next service. We look forward to working with you again! ${REVIEW_LINK||"[REVIEW LINK]"}`}).catch(()=>false);
+  if(ok){btn.textContent="Review text sent ✓";}
+  else{btn.disabled=false;btn.textContent="Retry → Send review link";alert("Review text did NOT send (HQ unreachable). Check signal and tap again.");}
 }
+let _finishId="";
 async function finish(){
   const total=SECTIONS.reduce((a,s)=>a+s.items.length,0);
   if(Object.values(state).filter(Boolean).length<total) return;
   const v=id=>document.getElementById(id).value;
-  const payload={tool:"post_job",sent_at:new Date().toISOString(),
-    job:{customer:v("j_name"),phone:v("j_phone"),date:v("j_date"),actual_loads:v("j_loads"),
+  _finishId=_finishId||uid();
+  const payload={tool:"post_job",request_id:_finishId,job_id:ACTIVE.jobId||"",sent_at:new Date().toISOString(),
+    job:{customer:v("j_name"),phone:normPhone(v("j_phone")),date:v("j_date"),actual_loads:v("j_loads"),
          hours_on_site:v("j_hours"),dump_fees:v("j_fees"),notes:v("j_notes"),
-         package:ACTIVE.pkg||"",quoted_rate:ACTIVE.rate||"",pain:ACTIVE.pain||""},
+         package:ACTIVE.pkg||"",quoted_rate:ACTIVE.rate||"",locked_total:ACTIVE.total||ACTIVE.rate||"",pain:ACTIVE.pain||""},
     garage_guard:GUARD||"not recorded",
     checklist:SECTIONS.map(s=>s.items.map(it=>it.t)).flat().map((t,i)=>t+": done").join("\n")};
-  if(WEBHOOK){
-    const btn=document.getElementById("donebtn");btn.textContent="Sending to HQ…";
-    const body=JSON.stringify(payload);
-    try{await fetch(WEBHOOK,{method:"POST",headers:{"Content-Type":"application/json"},body:body});}
-    catch(e){try{await fetch(WEBHOOK,{method:"POST",mode:"no-cors",headers:{"Content-Type":"text/plain"},body:body});}catch(e2){}}
-    btn.textContent="Job closed & logged to HQ ✓";
+  // Local backup FIRST — job-costing data (loads/hours/fees) must survive even if HQ is down.
+  try{const log=JSON.parse(localStorage.getItem("egc_job_log")||"[]");log.push(payload);
+    localStorage.setItem("egc_job_log",JSON.stringify(log.slice(-50)));}catch(e){}
+  const btn=document.getElementById("donebtn");btn.textContent="Sending to HQ…";
+  let ok=false; try{ ok=await postHook(payload); }catch(e){ ok=false; }
+  if(!ok){
+    btn.classList.remove("ready");btn.textContent="Retry → Close & log to HQ";
+    alert("Job NOT logged to HQ (unreachable). It's saved on this iPad — reconnect and tap again. Nothing cleared.");
+    return; // don't wipe the handoff/checklist on failure, so a retry still works
   }
+  btn.textContent="Job closed & logged to HQ ✓";
   localStorage.removeItem(SAVEKEY);
   localStorage.removeItem("egc_active_job");
   alert("Job closed. Review asked, content captured, money in. That's the system. 🧹");
 }
 document.addEventListener("input",saveAll);
+if(!STORAGE_OK) setTimeout(()=>alert("Heads up: this browser is blocking local storage (often Private Browsing). The job won't pre-fill from the Game Plan and progress won't save. Switch off Private Browsing for this iPad."),200);
 restoreAll();
 render();
 </script>

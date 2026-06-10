@@ -35,10 +35,18 @@ const ok = (name, cond, extra = '') => {
 
 const browser = await chromium.launch({ headless: !process.env.HEADFUL });
 const ctx = await browser.newContext({ viewport: { width: 380, height: 800 } });
+// The same-origin proxy (/api/crew-hook) is a Cloudflare Function — python http.server
+// can't run it, so stub a real readable 200 {ok:true}. Capture bodies to assert payloads.
+const sent = [];
+await ctx.route('**/api/crew-hook', async route => {
+  try { sent.push(JSON.parse(route.request().postData() || '{}')); } catch {}
+  await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, tool: 'stub' }) });
+});
 const page = await ctx.newPage();
 const errors = [];
 page.on('pageerror', e => errors.push(e.message));
 page.on('dialog', d => d.accept());
+const FUTURE = String(Date.now() + 6 * 3600 * 1000); // valid (unexpired) gate session
 
 /* ── 1. Gate blocks anonymous access ───────────────────────── */
 await page.goto(`${BASE}/crew/index.html`);
@@ -56,13 +64,21 @@ await page.waitForTimeout(300);
 ok('gate: wrong password shows error, stays locked',
    await page.locator('#gate-err').isVisible() && await page.locator('#egc-gate:not(.off)').isVisible());
 
-/* ── 3. Portal-style token unlocks (sessionStorage egc_u/egc_tok) ── */
-await page.evaluate(([t]) => { sessionStorage.setItem('egc_u','ZacB'); sessionStorage.setItem('egc_tok',t); }, [TOKEN]);
+/* ── 3. Portal-style token unlocks (needs egc_u/egc_tok + unexpired egc_exp) ── */
+await page.evaluate(([t,e]) => { sessionStorage.setItem('egc_u','ZacB'); sessionStorage.setItem('egc_tok',t); sessionStorage.setItem('egc_exp',e); }, [TOKEN, FUTURE]);
 await page.reload(); await page.waitForTimeout(400);
-ok('gate: valid portal session token unlocks hub', await page.locator('#egc-gate.off').count() === 1);
+ok('gate: valid session token + unexpired exp unlocks hub', await page.locator('#egc-gate.off').count() === 1);
 // persist for the rest of the run the way the gate itself would
-await page.evaluate(([t]) => { localStorage.setItem('egc_u','ZacB'); localStorage.setItem('egc_tok',t); }, [TOKEN]);
+await page.evaluate(([t,e]) => { localStorage.setItem('egc_u','ZacB'); localStorage.setItem('egc_tok',t); localStorage.setItem('egc_exp',e); }, [TOKEN, FUTURE]);
 await page.screenshot({ path: `${SHOTS}/02-hub-380.png`, fullPage: true });
+
+/* ── 3b. Expired session re-locks ──────────────────────────── */
+await page.evaluate(([t]) => { localStorage.setItem('egc_u','ZacB'); localStorage.setItem('egc_tok',t); localStorage.setItem('egc_exp', String(Date.now()-1000));
+  sessionStorage.setItem('egc_exp', String(Date.now()-1000)); }, [TOKEN]);
+await page.reload(); await page.waitForTimeout(400);
+ok('gate: expired session re-locks', await page.locator('#egc-gate:not(.off)').isVisible());
+// restore a valid session for the remainder
+await page.evaluate(([t,e]) => { for (const st of [localStorage,sessionStorage]){ st.setItem('egc_u','ZacB'); st.setItem('egc_tok',t); st.setItem('egc_exp',e);} }, [TOKEN, FUTURE]);
 
 /* ── 4. Game Plan: drive a dummy walkthrough ───────────────── */
 await page.goto(`${BASE}/crew/gameplan.html`);
@@ -151,13 +167,40 @@ const payload = await page.evaluate(() => buildPayload());
 ok('close: line items = package + 3 upgrades', payload.quote.line_items_count === 4,
    payload.quote.line_items.map(i=>i.name+' $'+i.total).join(' | '));
 ok('close: quote total in payload', payload.quote.total === 1950);
+ok('close: payload carries day_of_bonus + signature fields',
+   payload.day_of_bonus === true && 'signature' in payload);
 await page.screenshot({ path: `${SHOTS}/04-gameplan-close-ipad.png`, fullPage: false });
 await page.setViewportSize({ width: 380, height: 800 });
 await page.waitForTimeout(150);
 await page.screenshot({ path: `${SHOTS}/05-gameplan-close-380.png` });
+
+/* escaping: a name with HTML must not inject into the rendered plan */
+const escOk = await page.evaluate(() => esc('<b>"x"</b>') === '&lt;b&gt;&quot;x&quot;&lt;/b&gt;');
+ok('close: free-text escape helper neutralizes HTML', escOk);
+
+/* validation: a quote missing the package must NOT send or write a handoff */
+await page.evaluate(() => { localStorage.removeItem('egc_active_job'); const p = S.pkg; S.pkg = null; render(); window.__pkg = p; });
+await page.locator('button', { hasText: 'Send to Jobber' }).click();
+await page.waitForTimeout(200);
+ok('close: validation blocks send when package missing',
+   /Add .*package/i.test(await page.locator('#sendstatus').textContent()) &&
+   await page.evaluate(() => !localStorage.getItem('egc_active_job')));
+await page.evaluate(() => { S.pkg = window.__pkg; render(); });
+
+/* real commit: Send to Jobber writes the handoff (with locked TOTAL) and posts via the proxy */
+const before = sent.length;
+await page.locator('button', { hasText: 'Send to Jobber' }).click();
+await page.waitForTimeout(400);
+ok('close: Send to Jobber shows real success status',
+   /pushed/i.test(await page.locator('#sendstatus').textContent()) &&
+   /Sent to Jobber/i.test(await page.locator('button', { hasText: 'Sent to Jobber' }).textContent().catch(()=> '')));
+const gpSent = sent.slice(before).find(p => p.tool === 'game_plan');
+ok('close: game_plan payload reached the proxy', !!gpSent && gpSent.quote.total === 1950,
+   gpSent ? '$' + gpSent.quote.total : 'none');
 const activeJob = await page.evaluate(() => JSON.parse(localStorage.getItem('egc_active_job')));
-ok('handoff: egc_active_job written by close screen',
-   activeJob && activeJob.name === 'Dana Tester' && activeJob.pkg === 'Garage Transformation' && activeJob.rate === '800',
+ok('handoff: egc_active_job written on Send, carries locked total + priced upsells',
+   activeJob && activeJob.name === 'Dana Tester' && activeJob.pkg === 'Garage Transformation' &&
+   activeJob.rate === '800' && activeJob.total === 1950 && /Both Walls .*\$750/.test(activeJob.upsellsPriced || ''),
    JSON.stringify(activeJob));
 
 /* ── 5. Pre-Job pre-fills from handoff ─────────────────────── */
@@ -168,9 +211,11 @@ const banner = await page.evaluate(() => document.querySelector('main').innerTex
 ok('prejob: LOADED FROM GAME PLAN banner', /LOADED FROM GAME PLAN/.test(banner) && /DANA TESTER/.test(banner));
 ok('prejob: name prefilled', await page.inputValue('#j_name') === 'Dana Tester');
 ok('prejob: address prefilled', await page.inputValue('#j_addr') === '746 Star Grass Ln');
-ok('prejob: rate prefilled', await page.inputValue('#j_rate') === '800');
+ok('prejob: flat-rate field shows LOCKED TOTAL (not just package rate)', await page.inputValue('#j_rate') === '1950',
+   await page.inputValue('#j_rate'));
+ok('prejob: banner shows locked total', /Locked total: \$1950/.test(banner), banner.replace(/\s+/g,' ').slice(0,160));
 const pkgVal = await page.inputValue('#j_pkg');
-ok('prejob: package + upsells prefilled', /Garage Transformation/.test(pkgVal) && /Both Walls/.test(pkgVal), pkgVal);
+ok('prejob: package + priced upsells prefilled', /Garage Transformation/.test(pkgVal) && /Both Walls .*\$750/.test(pkgVal), pkgVal);
 ok('prejob: job date prefilled', await page.inputValue('#j_date') === '2026-06-12');
 await page.screenshot({ path: `${SHOTS}/06-prejob-380.png` });
 
@@ -203,14 +248,33 @@ ok('postjob: review message wording swapped', /it was great working with you/.te
 ok('postjob: REVIEW_LINK set', await page.evaluate(() => REVIEW_LINK) === 'https://search.google.com/local/writereview?placeid=ChIJ17AGfBiyRIsRyJ3k4mDtX8Q');
 await page.screenshot({ path: `${SHOTS}/07-postjob-380.png` });
 
-// build the finish payload exactly as finish() does, without needing every box ticked
-const pjPayload = await page.evaluate(() => {
-  const v=id=>document.getElementById(id).value;
-  return {tool:'post_job', garage_guard: GUARD||'not recorded', customer: v('j_name')};
-});
-ok('postjob: webhook payload carries garage_guard', pjPayload.garage_guard === 'Guard Lite');
-// confirm the real finish() includes it (source check of the live function)
-ok('postjob: finish() includes garage_guard field', await page.evaluate(() => finish.toString().includes('garage_guard:GUARD')));
+// Garage Transformation is NOT a year-one-free bundle → the package-aware warning must be ABSENT
+ok('postjob: Guard year-one-free note absent for non-bundle package',
+   !(await page.evaluate(() => guardYearOneFree())) &&
+   !/already includes Garage Guard year one free/.test(await page.locator('#sections').textContent()));
+// ...but it DOES appear when the package bundles Guard (simulate The Works)
+const noteForWorks = await page.evaluate(() => { ACTIVE.pkg = 'The Works'; render();
+  return document.querySelector('#sections').textContent.includes('already includes Garage Guard year one free'); });
+ok('postjob: Guard year-one-free note shows for bundled package (The Works)', noteForWorks);
+await page.evaluate(() => { ACTIVE.pkg = 'Garage Transformation'; render(); });
+
+/* review send → real proxy post, E.164 phone, dedupe id, exact wording */
+const beforeRev = sent.length;
+await page.locator('#revbtn').click();
+await page.waitForTimeout(300);
+const rev = sent.slice(beforeRev).find(p => p.tool === 'review_request');
+ok('postjob: review send posts via proxy with E.164 phone + request_id',
+   !!rev && rev.phone === '+19705550123' && !!rev.request_id, rev ? rev.phone : 'none');
+ok('postjob: review message is the proven wording verbatim',
+   !!rev && /it was great working with you/.test(rev.message) && /10% off your next service/.test(rev.message) && rev.message.endsWith(rev.review_link));
+ok('postjob: review button shows real success', /Review text sent/i.test(await page.locator('#revbtn').textContent()));
+
+// finish payload shape (build it the way finish() does) — carries locked_total + garage_guard
+const finishSrc = await page.evaluate(() => finish.toString());
+ok('postjob: finish() carries garage_guard + locked_total + request_id',
+   /garage_guard:GUARD/.test(finishSrc) && /locked_total:/.test(finishSrc) && /request_id:_finishId/.test(finishSrc));
+ok('postjob: finish() writes a local job-log backup before sending',
+   /egc_job_log/.test(finishSrc) && finishSrc.indexOf('egc_job_log') < finishSrc.indexOf('postHook'));
 
 /* ── 7. Hub shows active job; iPad width pass ──────────────── */
 await page.goto(`${BASE}/crew/`);

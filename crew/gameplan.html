@@ -157,6 +157,15 @@
   .btn.navy{flex:1;background:var(--navy);color:#fff}
   .num{font-family:'Oswald';font-weight:700;color:var(--orange);font-size:15px;letter-spacing:.08em}
   @media (prefers-reduced-motion:no-preference){ .screen{animation:in .18s ease} @keyframes in{from{opacity:0;transform:translateX(14px)}to{opacity:1;transform:none}} }
+  /* Save PDF / print: un-fix the clipped app shell so the WHOLE plan prints, not just the viewport */
+  @media print{
+    html,body{position:static!important;height:auto!important;overflow:visible!important;display:block!important;background:#fff}
+    #stage{overflow:visible!important;height:auto!important;padding:0!important}
+    #topbar,#nav,#rail,#zonechip,#egc-gate,#sendstatus,.sigbar,.btn{display:none!important}
+    .screen{max-width:none;animation:none}
+    .quoteblock{background:#13203a!important;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+    canvas#sig{border:1px solid #999}
+  }
 </style>
 </head>
 <body>
@@ -189,38 +198,45 @@
   </div>
 </div>
 <script>
-/* Auth matches /employee.html: salted SHA-256, same usernames & passwords.
-   To rotate a password, update the hash here AND in employee.html:
+/* SOFT GATE — keeps customers, bots, and casual snoops out of the field tools.
+   It is NOT real authentication: the page source is public, so a determined
+   reader can forge the token. For true protection put Cloudflare Access in
+   front of /crew/* and /api/crew-hook (identity-checked at the edge).
+   Auth mirrors /employee.html: salted SHA-256, same usernames & passwords.
+   Sessions expire after GATE_TTL so a lost/left iPad re-locks itself.
+   Rotate a password by updating the hash here AND in employee.html:
    sha256(username + ':' + newPass + ':egc-salt-2026') */
 const GATE_USERS={
   ZacB:"6b8670f397174ff99440629b877581216a0b26b6770054be198988ff48a16861",
   TylerG:"28b50fd5ee98af8cf015972811def03dbc2eaff52997f82ecfc4342ece6cfa36",
   AlexK:"52e2e9901adc10406ad9597084ece4770d1c9fd0e3b76e1f31abf35f8030ac50"};
+const GATE_TTL=12*60*60*1000; // 12h — covers a work day, bounds a lost device
 async function gateSha(s){const b=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(s));
   return Array.from(new Uint8Array(b)).map(x=>x.toString(16).padStart(2,"0")).join("");}
 function gateTok(u){return gateSha(u+":"+GATE_USERS[u]+":egc-session");}
+function gateSet(u,t){const exp=String(Date.now()+GATE_TTL);
+  try{for(const st of[sessionStorage,localStorage]){st.setItem("egc_u",u);st.setItem("egc_tok",t);st.setItem("egc_exp",exp);}}catch(e){}}
 async function gateOk(){
   try{
     for(const st of[sessionStorage,localStorage]){
-      const u=st.getItem("egc_u"),t=st.getItem("egc_tok");
-      if(u&&GATE_USERS[u]&&t&&t===await gateTok(u))return u;
+      const u=st.getItem("egc_u"),t=st.getItem("egc_tok"),exp=parseInt(st.getItem("egc_exp")||"0",10);
+      if(u&&GATE_USERS[u]&&t&&t===await gateTok(u)){
+        if(exp&&Date.now()<exp){gateSet(u,t);return u;} // valid → slide the window
+        gateClear(); // token ok but expired (or pre-expiry session) → require re-login
+      }
     }
   }catch(e){}
   return null;
 }
+function gateClear(){try{["egc_u","egc_tok","egc_exp"].forEach(k=>{sessionStorage.removeItem(k);localStorage.removeItem(k);});}catch(e){}}
 async function gateLogin(){
   const u=document.getElementById("gate-u").value.trim(),p=document.getElementById("gate-p").value;
   if(GATE_USERS[u]&&await gateSha(u+":"+p+":egc-salt-2026")===GATE_USERS[u]){
-    const t=await gateTok(u);
-    try{sessionStorage.setItem("egc_u",u);sessionStorage.setItem("egc_tok",t);
-        localStorage.setItem("egc_u",u);localStorage.setItem("egc_tok",t);}catch(e){}
+    gateSet(u,await gateTok(u));
     document.getElementById("egc-gate").classList.add("off");
   }else document.getElementById("gate-err").style.display="block";
 }
-function gateLock(){
-  try{["egc_u","egc_tok"].forEach(k=>{sessionStorage.removeItem(k);localStorage.removeItem(k);});}catch(e){}
-  location.reload();
-}
+function gateLock(){gateClear();location.reload();}
 gateOk().then(u=>{
   if(u){document.getElementById("egc-gate").classList.add("off");return;}
   document.getElementById("gate-p").addEventListener("keydown",e=>{if(e.key==="Enter")gateLogin()});
@@ -247,7 +263,7 @@ gateOk().then(u=>{
 <script>
 /* ===================== CONFIG — EDIT ME ===================== */
 const CONFIG = {
-  webhook: "https://hooks.zapier.com/hooks/catch/27280948/433e00a/", // ← paste your Zapier Catch Hook URL here (Webhooks by Zapier → Catch Hook)
+  webhook: "/api/crew-hook", // same-origin proxy → Zapier. Real hook URL lives server-side in functions/api/crew-hook.js (not in page source).
   bizPhone: "9709991818",
   // Master Offer Menu v3.0 — array order IS the sales sequence. Quote TOP-DOWN:
   // open at The Works, step down only on hesitation. Rate stays a manual input —
@@ -290,12 +306,18 @@ const S = {  // session state — autosaved locally on every tap
   layout:null, layoutNote:"",
   stay:[],
   pkg:null, rate:"", deposit:"", jobdate:"",
-  dayBonus:false,
+  dayBonus:false, jobId:"", sig:"",
 };
 
 const chip=(arr,v)=>arr.includes(v)?arr.filter(x=>x!==v):[...arr,v];
 const $=id=>document.getElementById(id);
 const money=n=>"$"+Number(n||0).toLocaleString();
+// escape free-text before it goes into innerHTML / value="" (customer-dictated notes can contain < " etc.)
+const esc=s=>String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+// US phone → E.164 so Quo/Jobber accept it regardless of how the crew typed it
+const normPhone=raw=>{const d=String(raw||"").replace(/\D/g,"");if(d.length===10)return"+1"+d;if(d.length===11&&d[0]==="1")return"+"+d;if(d.length>10)return"+"+d;return d||"";};
+const STORAGE_OK=(()=>{try{localStorage.setItem("__egc_t","1");localStorage.removeItem("__egc_t");return true;}catch(e){return false;}})();
+const uid=()=>Date.now().toString(36)+"-"+Math.random().toString(36).slice(2,8);
 
 function priceFor(u){ return u.price; }
 function upgradesTotal(){
@@ -336,11 +358,11 @@ R.start=()=>`
     <p style="font-size:19px;color:var(--khaki);margin:14px 0 26px;max-width:540px;line-height:1.5">
       Fourteen points. One walkthrough. You leave with a written plan, a locked flat rate, and a date.</p>
     <label class="fl">Homeowner</label>
-    <input type="text" id="f_name" value="${S.name}" placeholder="First name" oninput="S.name=this.value">
+    <input type="text" id="f_name" value="${esc(S.name)}" placeholder="First name" oninput="S.name=this.value">
     <label class="fl">Address</label>
-    <input type="text" id="f_addr" value="${S.addr}" placeholder="Street address" oninput="S.addr=this.value">
+    <input type="text" id="f_addr" value="${esc(S.addr)}" placeholder="Street address" oninput="S.addr=this.value">
     <label class="fl">Mobile (for the Game Plan text)</label>
-    <input type="tel" id="f_phone" value="${S.phone}" placeholder="(970) 555-0123" oninput="S.phone=this.value">
+    <input type="tel" id="f_phone" value="${esc(S.phone)}" placeholder="(970) 555-0123" oninput="S.phone=this.value">
   </div>`;
 
 R.zone=s=>`
@@ -371,7 +393,7 @@ R.p2=()=>head("p2",`Hand them the iPad. <b>“Tap every spot that's buried.”</
   <div class="doorlabel">▲ GARAGE DOOR ▲</div>
   <div class="gridlegend"><span><i style="background:var(--orange)"></i>Clutter</span><span><i style="background:var(--navy)"></i>Car / parking</span></div>
   <label class="fl">The zone that bugs them most</label>
-  <input type="text" value="${S.worstZone}" placeholder="e.g. back wall — can't reach the freezer" oninput="S.worstZone=this.value">`;
+  <input type="text" value="${esc(S.worstZone)}" placeholder="e.g. back wall — can't reach the freezer" oninput="S.worstZone=this.value">`;
 
 R.p3=()=>head("p3",`<b>“How long has this been building?”</b> Then the money question: <b>“What has it stopped you from doing?”</b>`)+`
   <div class="chips">${["6 months","1 year","2 years","5+ years","Since we moved in"].map(v=>
@@ -380,20 +402,20 @@ R.p3=()=>head("p3",`<b>“How long has this been building?”</b> Then the money
   <div class="chips">${["Parking inside","Workshop","Home gym","Hosting / hobby space","Just walking through it","Selling the house"].map(v=>
     `<div class="chip ${S.missing.includes(v)?'on':''}" onclick="S.missing=chip(S.missing,'${v}');render()">${v}</div>`).join("")}</div>
   <label class="fl">Their exact words (use these later)</label>
-  <textarea placeholder="“My wife parks in the snow…”" oninput="S.missNote=this.value">${S.missNote}</textarea>`;
+  <textarea placeholder="“My wife parks in the snow…”" oninput="S.missNote=this.value">${esc(S.missNote)}</textarea>`;
 
 R.p4=()=>head("p4",`<b>“What in here have you actually used in the last 12 months?”</b> Let the silence work. Then sort it out loud: keep, donate, haul.`)+`
   <label class="fl">Their answer</label>
   <div class="chips">${["Almost everything","Maybe half","Honestly, very little"].map(v=>
     `<div class="chip ${S.used12===v?'on hot':''}" onclick="S.used12='${v}';render()">${v}</div>`).join("")}</div>
   <label class="fl">Keep & re-home / notable items</label>
-  <textarea placeholder="Tools stay, camping gear stays, everything on the left wall goes…" oninput="S.keepNote=this.value">${S.keepNote}</textarea>`;
+  <textarea placeholder="Tools stay, camping gear stays, everything on the left wall goes…" oninput="S.keepNote=this.value">${esc(S.keepNote)}</textarea>`;
 
 R.p5=()=>head("p5",`Walk the perimeter together. <b>“Most homeowners don't know what's living behind a pile like this.”</b> Tap what you find.`)+`
   <div class="checks">${["Pest droppings / nests","Moisture or mold","Old paint & chemicals","Fire load near water heater","Blocked outlets / panel","Unstable stacked piles"].map(v=>
     `<div class="check ${S.hazards.includes(v)?'on':''}" onclick="S.hazards=chip(S.hazards,'${v}');render()"><span class="bx"></span>${v}</div>`).join("")}</div>
   <label class="fl">Notes</label>
-  <textarea oninput="S.hazNote=this.value">${S.hazNote}</textarea>`;
+  <textarea oninput="S.hazNote=this.value">${esc(S.hazNote)}</textarea>`;
 
 R.p6=()=>head("p6",`Call it in plain numbers — <b>“This is about ___ truckloads.”</b> Concrete volume makes the flat rate feel earned.`)+`
   <div class="stepper">
@@ -402,13 +424,13 @@ R.p6=()=>head("p6",`Call it in plain numbers — <b>“This is about ___ trucklo
     <button onclick="S.loads=S.loads+.5;render()">+</button>
   </div>
   <label class="fl" style="margin-top:10px">Truckloads</label>
-  <textarea placeholder="What's driving the volume…" oninput="S.loadNote=this.value">${S.loadNote}</textarea>`;
+  <textarea placeholder="What's driving the volume…" oninput="S.loadNote=this.value">${esc(S.loadNote)}</textarea>`;
 
 R.p7=()=>head("p7",`<b>“Anything in here that takes two people or special handling?”</b> Tap everything — this protects the quote.`)+`
   <div class="checks">${["Fridge / freezer","Washer / dryer","Furniture / mattress","TVs / electronics","Exercise equipment","Construction debris"].map(v=>
     `<div class="check ${S.heavy.includes(v)?'on':''}" onclick="S.heavy=chip(S.heavy,'${v}');render()"><span class="bx"></span>${v}</div>`).join("")}</div>
   <label class="fl">Other / details</label>
-  <textarea oninput="S.heavyNote=this.value">${S.heavyNote}</textarea>`;
+  <textarea oninput="S.heavyNote=this.value">${esc(S.heavyNote)}</textarea>`;
 
 R.p8=()=>head("p8",`Lock the logistics now so job day is friction-free. <b>“When could you be home for a crew window?”</b>`)+`
   <div class="checks">${["Driveway clear for truck","HOA rules apply","Gate / access code needed","Pets on site"].map(v=>
@@ -417,21 +439,21 @@ R.p8=()=>head("p8",`Lock the logistics now so job day is friction-free. <b>“Wh
   <div class="chips">${["Weekday AM","Weekday PM","Saturday","Sunday"].map(v=>
     `<div class="chip ${S.window===v?'on hot':''}" onclick="S.window='${v}';render()">${v}</div>`).join("")}</div>
   <label class="fl">Notes</label>
-  <textarea oninput="S.accessNote=this.value">${S.accessNote}</textarea>`;
+  <textarea oninput="S.accessNote=this.value">${esc(S.accessNote)}</textarea>`;
 
 R.p9=()=>head("p9",`<b>“Anything you'd feel better about donating than dumping?”</b> People say yes to clearing out faster when it isn't all landfill.`)+`
   <div class="checks">${["Donation run (furniture, goods)","Metal recycling"].map(v=>
     `<div class="check ${S.donate.includes(v)?'on':''}" onclick="S.donate=chip(S.donate,'${v}');render()"><span class="bx"></span>${v}</div>`).join("")}</div>
   <div class="pain" style="margin-top:14px">Electronics never hit the landfill with us — <b>every EGC job includes responsible e-waste disposal. Standard, not extra.</b></div>
   <label class="fl">Notes</label>
-  <textarea oninput="S.donateNote=this.value">${S.donateNote}</textarea>`;
+  <textarea oninput="S.donateNote=this.value">${esc(S.donateNote)}</textarea>`;
 
 R.p10=()=>head("p10",`Point at the floor. <b>“Picture this swept and clear, wall to wall.”</b> First time they visualize the after.`)+`
   <label class="fl">Floor condition under the pile</label>
   <div class="chips">${["Solid — just needs a sweep","Stained — still fine","Cracked / needs attention"].map(v=>
     `<div class="chip ${S.floor===v?'on hot':''}" onclick="S.floor='${v}';render()">${v}</div>`).join("")}</div>
   <label class="fl">Notes</label>
-  <textarea oninput="S.floorNote=this.value">${S.floorNote}</textarea>`;
+  <textarea oninput="S.floorNote=this.value">${esc(S.floorNote)}</textarea>`;
 
 R.p11=()=>head("p11",`<b>“What would keep this from coming back?”</b> Point at the cleared wall on the sketch — rack here, bins there. Freestanding, no drilling. Shelving and Deep Clean are two-option pairs: one or the other, never both.`)+`
   ${CONFIG.upgrades.map((u,i)=>{
@@ -451,7 +473,7 @@ R.p12=()=>head("p12",`Back to the map. <b>“Where does the car live?”</b> Fli
   <div id="grid">${S.grid.map((c,i)=>`<div class="cell ${c===1?'clutter':c===2?'park':''}" onclick="S.gridMode=2;tapCell(${i})"></div>`).join("")}</div>
   <div class="doorlabel">▲ GARAGE DOOR ▲</div>
   <label class="fl">Notes</label>
-  <input type="text" value="${S.layoutNote}" placeholder="Truck side, door clearance…" oninput="S.layoutNote=this.value">`;
+  <input type="text" value="${esc(S.layoutNote)}" placeholder="Truck side, door clearance…" oninput="S.layoutNote=this.value">`;
 
 R.p13=()=>head("p13",`<b>“The cleanout is the easy part — staying clean is the system.”</b> Tap what's included in their plan.`)+`
   <div class="checks">${["Labeled zones (tools / seasonal / sports)","Everything off the floor","Donate-box by the door","6-month check-in text from EGC"].map(v=>
@@ -479,13 +501,13 @@ R.plan=()=>{
   else if(S.parkLast&&S.parkLast!=="This month") pains.push(`Last time a car parked inside: <b>${S.parkLast}</b>.`);
   if(S.howLong) pains.push(`This has been building for <b>${S.howLong}</b>.`);
   if(S.missing.length) pains.push(`It's been costing you: <b>${S.missing.join(", ").toLowerCase()}</b>.`);
-  if(S.missNote) pains.push(`In your words: <b>“${S.missNote}”</b>`);
-  if(S.hazards.length) pains.push(`We found <b>${S.hazards.length} hazard${S.hazards.length>1?"s":""}</b> behind the pile: ${S.hazards.join(", ").toLowerCase()}.`);
+  if(S.missNote) pains.push(`In your words: <b>“${esc(S.missNote)}”</b>`);
+  if(S.hazards.length) pains.push(`We found <b>${S.hazards.length} hazard${S.hazards.length>1?"s":""}</b> behind the pile: ${esc(S.hazards.join(", ").toLowerCase())}.`);
   const pkg=S.pkg!=null?CONFIG.packages[S.pkg]:null;
   const ups=CONFIG.upgrades.filter((u,i)=>S.storage.includes(i));
   return `
-  <div class="eyebrow">${S.addr||"Your garage"} · ${new Date().toLocaleDateString()}</div>
-  <h1>${S.name?S.name+"'s":"Your"} Garage Comeback Plan</h1>
+  <div class="eyebrow">${esc(S.addr)||"Your garage"} · ${new Date().toLocaleDateString()}</div>
+  <h1>${S.name?esc(S.name)+"'s":"Your"} Garage Comeback Plan</h1>
   <div class="ask">Here's everything we walked through — in your own words.</div>
   ${pains.map(p=>`<div class="pain">${p}</div>`).join("")||""}
   <div class="bonus">
@@ -527,19 +549,23 @@ function toggleUp(i){
 }
 
 let sigCtx=null;
+function captureSig(){ try{const cv=$("sig"); if(cv){S.sig=cv.toDataURL("image/png"); save();} }catch(e){} }
 function initSig(){
   const cv=$("sig"); if(!cv) return;
   const r=cv.getBoundingClientRect(); cv.width=r.width*2; cv.height=300;
   sigCtx=cv.getContext("2d"); sigCtx.scale(2,2); sigCtx.lineWidth=2.4; sigCtx.lineCap="round"; sigCtx.strokeStyle="#13203a";
+  // restore a previously captured signature so it survives re-render / reload
+  if(S.sig){const img=new Image();img.onload=()=>sigCtx.drawImage(img,0,0,r.width,150);img.src=S.sig;}
   let draw=false,lx=0,ly=0;
   const pos=e=>{const b=cv.getBoundingClientRect();const t=e.touches?e.touches[0]:e;return[t.clientX-b.left,t.clientY-b.top];};
   const dn=e=>{draw=true;[lx,ly]=pos(e);e.preventDefault();};
   const mv=e=>{if(!draw)return;const[x,y]=pos(e);sigCtx.beginPath();sigCtx.moveTo(lx,ly);sigCtx.lineTo(x,y);sigCtx.stroke();[lx,ly]=[x,y];e.preventDefault();};
+  const end=()=>{if(draw){draw=false;captureSig();}};
   cv.addEventListener("touchstart",dn,{passive:false});cv.addEventListener("touchmove",mv,{passive:false});
   cv.addEventListener("mousedown",dn);cv.addEventListener("mousemove",mv);
-  window.addEventListener("mouseup",()=>draw=false);window.addEventListener("touchend",()=>draw=false);
+  window.addEventListener("mouseup",end);window.addEventListener("touchend",end);
 }
-function clearSig(){ if(sigCtx){const cv=$("sig");sigCtx.clearRect(0,0,cv.width,cv.height);} }
+function clearSig(){ if(sigCtx){const cv=$("sig");sigCtx.clearRect(0,0,cv.width,cv.height);} S.sig=""; save(); }
 
 /* ---------- nav / render ---------- */
 const SAVEKEY="egc_gameplan_v1";
@@ -589,12 +615,15 @@ function buildLineItems(){
 function buildPayload(){
   const parts=(S.name||"").trim().split(/\s+/);
   const items=buildLineItems();
+  if(!S.jobId)S.jobId=uid();
   const p={
-    tool:"game_plan", sent_at:new Date().toISOString(),
-    client:{first_name:parts[0]||"", last_name:parts.slice(1).join(" ")||"", phone:S.phone, address:S.addr},
+    tool:"game_plan", job_id:S.jobId, sent_at:new Date().toISOString(),
+    client:{first_name:parts[0]||"", last_name:parts.slice(1).join(" ")||"", phone:normPhone(S.phone), address:S.addr},
     quote:{title:"14-Point Garage Game Plan — "+(S.addr||S.name||"garage"),
       total:grandTotal(), deposit:Number(S.deposit||0), job_date:S.jobdate,
       line_items:items, line_items_count:items.length},
+    day_of_bonus:!!S.dayBonus,
+    signature:S.sig||"",
     notes:compileNotes(), raw:S,
   };
   // flattened 4-slot mapping for easy Zapier field mapping
@@ -604,42 +633,66 @@ function buildPayload(){
   return p;
 }
 
+// Validate before any send: a quote with no name/package/rate creates junk in Jobber.
+function validateClose(){
+  const miss=[];
+  if(!(S.name||"").trim()) miss.push("homeowner name");
+  if(S.pkg==null) miss.push("a package");
+  if(!(Number(S.rate)>0)) miss.push("a flat rate");
+  return miss;
+}
+
+async function postHook(payload){
+  // Same-origin proxy returns a real, readable status — no opaque no-cors guessing.
+  const res=await fetch(CONFIG.webhook,{method:"POST",headers:{"Content-Type":"application/json"},
+    body:JSON.stringify(payload)});
+  let ok=res.ok; try{const j=await res.json();ok=ok&&j&&j.ok!==false;}catch(e){}
+  return ok;
+}
+
 async function sendToJobber(btn){
-  if(!CONFIG.webhook){alert("No webhook set. Open this file in a text editor and paste your Zapier Catch Hook URL into CONFIG.webhook at the top.");return;}
-  const st=$("sendstatus"); btn.disabled=true; btn.textContent="Sending…";
-  const body=JSON.stringify(buildPayload());
-  try{
-    await fetch(CONFIG.webhook,{method:"POST",headers:{"Content-Type":"application/json"},body:body});
-  }catch(e){
-    try{await fetch(CONFIG.webhook,{method:"POST",mode:"no-cors",headers:{"Content-Type":"text/plain"},body:body});}
-    catch(e2){btn.disabled=false;btn.textContent="Send to Jobber";if(st)st.textContent="Send failed — check connection and retry.";return;}
-  }
-  btn.textContent="Sent to Jobber ✓"; if(st)st.textContent="Quote + notes pushed. Tyler can see it.";
+  const st=$("sendstatus");
+  const miss=validateClose();
+  if(miss.length){if(st){st.style.color="var(--orange2)";st.textContent="Add "+miss.join(", ")+" before sending.";}return;}
+  writeActive("sent_to_jobber"); // local handoff first — must survive even if HQ is unreachable
+  btn.disabled=true; btn.textContent="Sending…"; if(st){st.style.color="var(--ok)";st.textContent="";}
+  let ok=false;
+  try{ ok=await postHook(buildPayload()); }catch(e){ ok=false; }
+  if(ok){ btn.textContent="Sent to Jobber ✓"; if(st)st.textContent="Quote + notes pushed. Tyler can see it."; }
+  else{ btn.disabled=false; btn.textContent="Retry → Send to Jobber"; if(st){st.style.color="var(--orange2)";
+    st.textContent="NOT logged to HQ — handoff saved locally. Check signal and retry."; } }
 }
 
 function textPlan(){
   const pkg=S.pkg!=null?CONFIG.packages[S.pkg].name:"your package";
-  const ups=CONFIG.upgrades.filter((u,i)=>S.storage.includes(i)).map((u)=>{
-    const i=CONFIG.upgrades.indexOf(u);const q=u.qty?(S.storageQty[i]||1):1;
-    return "+ "+u.name+(u.qty?" x"+q:"")+" "+money(priceFor(u,q));}).join("\n");
+  const ups=CONFIG.upgrades.filter((u,i)=>S.storage.includes(i)).map((u)=>
+    "+ "+u.name+" "+money(u.price)).join("\n");
   const msg=`${S.name?S.name+", h":"H"}ere's your Garage Comeback Plan from Easy Garage Cleaning:\n\n`+
     `Package: ${pkg} — ${money(S.rate)}\n${ups?ups+"\n":""}TOTAL (flat, locked): ${money(grandTotal())}\n`+
     `${S.jobdate?"Job date: "+S.jobdate+"\n":""}${S.deposit?"Deposit on file: "+money(S.deposit)+"\n":""}`+
     `\nPrice never moves. Questions? Call/text ${CONFIG.bizPhone}. — EGC`;
-  const num=(S.phone||"").replace(/\D/g,"");
-  location.href="sms:"+(num?num:"")+"&body="+encodeURIComponent(msg);
+  if(S.name) writeActive("texted_plan"); // texting the plan is a commit too — keep the handoff
+  const num=normPhone(S.phone).replace(/^\+/,"");
+  location.href="sms:"+num+"&body="+encodeURIComponent(msg);
 }
 
-function writeActive(){
+// Single source of truth for the cross-tool handoff. Carries the locked TOTAL
+// (not just the package rate) and priced upsells so prejob/postjob confirm the
+// real number. Only called on a commit (Send to Jobber / Text Plan), never on
+// mere screen views — that stops abandoned/no-show quotes leaking into the next job.
+function writeActive(via){
   try{
-    const ups=CONFIG.upgrades.filter((u,i)=>S.storage.includes(i)).map(u=>{
-      const i=CONFIG.upgrades.indexOf(u);return u.name+(u.qty?" x"+(S.storageQty[i]||1):"");});
+    const chosen=CONFIG.upgrades.filter((u,i)=>S.storage.includes(i));
+    const upsells=chosen.map(u=>u.name).join(", ");
+    const upsellsPriced=chosen.map(u=>u.name+" "+money(u.price)).join(", ");
+    if(!S.jobId)S.jobId=uid();
     localStorage.setItem("egc_active_job",JSON.stringify({
-      name:S.name,addr:S.addr,phone:S.phone,
-      pkg:S.pkg!=null?CONFIG.packages[S.pkg].name:"",upsells:ups.join(", "),
-      rate:S.rate,deposit:S.deposit,jobdate:S.jobdate,
+      jobId:S.jobId, name:S.name, addr:S.addr, phone:S.phone,
+      pkg:S.pkg!=null?CONFIG.packages[S.pkg].name:"", upsells, upsellsPriced,
+      rate:S.rate, upgradesTotal:upgradesTotal(), total:grandTotal(),
+      deposit:S.deposit, jobdate:S.jobdate, dayBonus:!!S.dayBonus, hasSignature:!!S.sig,
       pain:S.missNote||(S.parkLast?"hasn't parked inside since "+S.parkLast:"")||S.worstZone,
-      savedAt:new Date().toISOString()}));
+      committedVia:via||"", savedAt:new Date().toISOString()}));
   }catch(e){}
 }
 function jump(i){ idx=i; render(); }
@@ -671,11 +724,13 @@ function render(){
   $("navinner").innerHTML=nav;
   paintTotal();
   $("stage").scrollTop=0;
-  if(s.id==="plan"){setTimeout(initSig,60);writeActive();}
+  if(s.id==="plan")setTimeout(initSig,60); // handoff is written on commit (Send/Text), not on view
   save();
 }
 function go(d){ idx=Math.min(steps.length-1,Math.max(0,idx+d)); render(); }
+if(!STORAGE_OK) setTimeout(()=>alert("Heads up: this browser is blocking local storage (often Private Browsing). The walkthrough won't auto-save and the pre-fill into the Pre/Post-Job tools won't work. Switch off Private Browsing for this iPad."),200);
 restore();
+if(!S.jobId)S.jobId=uid();
 render();
 </script>
 </body>
