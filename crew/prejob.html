@@ -64,6 +64,28 @@
   .copybtn{margin-top:10px;background:var(--orange);border:none;color:#fff;font-family:'Oswald';font-weight:600;
            font-size:13px;letter-spacing:.06em;text-transform:uppercase;padding:10px 16px;border-radius:9px;cursor:pointer}
 
+  /* inline item actions (photo / text / call / clock) */
+  .item{flex-wrap:wrap}
+  .itemact{flex-basis:100%;width:100%;margin-top:10px}
+  .actbtn{background:var(--navy);color:#fff;border:none;border-radius:11px;font-family:'Oswald';font-weight:600;
+          font-size:13.5px;letter-spacing:.04em;text-transform:uppercase;padding:12px 16px;cursor:pointer;
+          min-height:46px;display:inline-flex;align-items:center;gap:8px}
+  .actbtn.alt{background:var(--orange)}
+  .actbtn.done{background:var(--ok)}
+  .acthint{font-size:12.5px;color:var(--khaki);font-weight:500;margin-top:6px}
+  .photostrip{display:flex;gap:10px;flex-wrap:wrap;margin-top:2px}
+  .pthumb{position:relative;width:92px;height:92px;border-radius:12px;overflow:hidden;border:1.5px solid var(--line);background:#fff}
+  .pthumb img{width:100%;height:100%;object-fit:cover;display:block}
+  .pthumb .del{position:absolute;top:4px;right:4px;width:23px;height:23px;border:none;border-radius:50%;
+               background:rgba(19,32,58,.82);color:#fff;font-size:14px;line-height:23px;cursor:pointer;padding:0}
+  .padd{width:92px;height:92px;border-radius:12px;border:2px dashed var(--khaki);background:#fff;
+        display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;cursor:pointer;
+        font-family:'Oswald';font-weight:600;font-size:11px;letter-spacing:.05em;text-transform:uppercase;color:var(--khaki)}
+  .padd span{font-size:23px;line-height:1}
+  #pviewer{position:fixed;inset:0;z-index:9000;background:rgba(8,14,26,.92);display:none;align-items:center;justify-content:center;padding:16px}
+  #pviewer.on{display:flex}
+  #pviewer img{max-width:100%;max-height:88vh;border-radius:10px}
+  #pviewer .x{position:absolute;top:14px;right:16px;background:none;border:none;color:#fff;font-size:34px;cursor:pointer}
   #donebar{position:fixed;left:0;right:0;bottom:0;background:var(--cream);border-top:1.5px solid var(--line);
            padding:12px 18px max(env(safe-area-inset-bottom),12px)}
   #donebar .inner{max-width:720px;margin:0 auto}
@@ -176,6 +198,8 @@ gateOk().then(u=>{
   <div id="sections"></div>
 </main>
 
+<div id="pviewer" onclick="this.classList.remove('on')"><button class="x" aria-label="Close">×</button><img id="pviewerimg" alt="photo"></div>
+
 <div id="donebar"><div class="inner">
   <button id="donebtn" onclick="finish()">Complete all checks to start the job</button>
 </div></div>
@@ -185,9 +209,9 @@ gateOk().then(u=>{
 const SECTIONS = [
   {
     when:"Night before", title:"Lock the Job", items:[
-      {t:"Deposit verified on Stripe", s:"Card on file + deposit captured. No deposit = call Tyler before anything else.", crit:true},
+      {t:"Deposit verified on Stripe", s:"Card on file + deposit captured. No deposit = call Tyler before anything else.", crit:true, act:{type:"call"}},
       {t:"Game Plan reviewed", s:"Re-read the walkthrough: scope, hazards, heavy items, the zone they said drives them craziest. You'll quote it back tomorrow."},
-      {t:"Confirmation text sent", s:"Use the script below. If no reply by 8 PM, Tyler calls.", crit:true},
+      {t:"Confirmation text sent", s:"Use the script below. If no reply by 8 PM, Tyler calls.", crit:true, act:{type:"sms", body:"Hi [NAME], it's Easy Garage Cleaning — confirming your garage comeback tomorrow at [TIME]. Crew of [N], we'll knock when we arrive. Flat rate locked at $[RATE] like we agreed — nothing changes. Reply C to confirm. — Alex"}},
       {t:"Upsell materials purchased & staged", s:"Racks / bins from the Game Plan bought (Home Depot pickup) and staged for load-out. Job day is too late."},
       {t:"Dump / donation route planned", s:"Transfer station hours checked. Donation drop-off mapped if the plan includes a donation run."},
     ],
@@ -203,16 +227,16 @@ const SECTIONS = [
       {t:"Broom, dustpan, shop vac", s:"The swept floor IS the after photo. Never skip."},
       {t:"Shelving / bins for install loaded", s:"Only if sold on the Game Plan — check it."},
       {t:"Tripod + phone mount + charged phone", s:"Content kit. Footage is ad inventory — treat it like equipment.", crit:true},
-      {t:"Fuel + route + arrival ETA texted", s:"Text 'On our way, see you ~[TIME]' when wheels roll."},
+      {t:"Fuel + route + arrival ETA texted", s:"Text 'On our way, see you ~[TIME]' when wheels roll.", act:{type:"sms", body:"On our way to your garage now — see you shortly! — Easy Garage Cleaning"}},
     ]
   },
   {
     when:"On arrival — before anything moves", title:"Arrival Playbook", items:[
-      {t:"BEFORE capture: 3 clips + photos", s:"(1) the pile from the door, (2) walking the worst zone, (3) wide shot. Plus 5+ photos for GBP. Shoot FIRST — once the crew starts you can't get it back.", crit:true},
+      {t:"BEFORE capture: 3 clips + photos", s:"(1) the pile from the door, (2) walking the worst zone, (3) wide shot. Plus 5+ photos for GBP. Shoot FIRST — once the crew starts you can't get it back.", crit:true, act:{type:"photo", tag:"before", label:"Take before photos"}},
       {t:"Doorstep re-walk with homeowner", s:"Use the script below. Re-confirm scope + flat rate before a single item moves.", crit:true},
       {t:"Keep-items confirmed & flagged", s:"Walk the keep list from the Game Plan. Tape or move anything staying. A hauled keep-item is a refund and a lost review."},
       {t:"Driveway / staging zone set", s:"Tarp down, truck positioned, clear carry path."},
-      {t:"Start time logged", s:"Note it — you'll need actual hours for the post-job log."},
+      {t:"Start time logged", s:"Note it — you'll need actual hours for the post-job log.", act:{type:"clock"}},
     ],
     script:{h:"Doorstep script — say this before starting", p:[
       "“Morning [NAME] — before we touch anything, let's do a 60-second walk. Same plan we built together: [SCOPE] is going, [KEEP ITEMS] stay put, and we're done by [TIME].”",
@@ -228,6 +252,71 @@ const SAVEKEY="egc_prejob_v1";
 const FIELD_IDS=["j_name","j_date","j_addr","j_pkg","j_rate"];
 const esc=s=>String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const STORAGE_OK=(()=>{try{localStorage.setItem("__egc_t","1");localStorage.removeItem("__egc_t");return true;}catch(e){return false;}})();
+const uid=()=>Date.now().toString(36)+"-"+Math.random().toString(36).slice(2,8);
+const BIZPHONE="9709991818"; // EGC office line — tap to call
+let ACTIVE={};
+const STARTKEY="egc_prejob_start";
+
+/* ===== Per-job photos — on-device (IndexedDB), shared with the Game Plan/Post-Job
+   tools via the egc_active_job jobId. Job-day "before" capture lives here. ===== */
+function jobKey(){return ACTIVE.jobId||"prejob_"+((document.getElementById("j_name").value||"unknown").toLowerCase().replace(/\s+/g,"_"));}
+function idbOpen(){return new Promise((res,rej)=>{const r=indexedDB.open("egc_photos",1);
+  r.onupgradeneeded=e=>{const db=e.target.result;if(!db.objectStoreNames.contains("p")){
+    const s=db.createObjectStore("p",{keyPath:"id"});s.createIndex("job","job",{unique:false});}};
+  r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error);});}
+async function photoAdd(job,tag,dataUrl){const db=await idbOpen();return new Promise((res,rej)=>{
+  const tx=db.transaction("p","readwrite");const id=uid();
+  tx.objectStore("p").put({id,job,tag,dataUrl,at:Date.now()});tx.oncomplete=()=>res(id);tx.onerror=()=>rej(tx.error);});}
+async function photoDel(id){const db=await idbOpen();return new Promise(res=>{
+  const tx=db.transaction("p","readwrite");tx.objectStore("p").delete(id);tx.oncomplete=()=>res();tx.onerror=()=>res();});}
+async function photoList(job,tag){const db=await idbOpen();return new Promise(res=>{
+  const tx=db.transaction("p","readonly");const out=[];
+  tx.objectStore("p").index("job").openCursor(IDBKeyRange.only(job)).onsuccess=e=>{const c=e.target.result;
+    if(c){if(!tag||c.value.tag===tag)out.push(c.value);c.continue();}else res(out.sort((a,b)=>a.at-b.at));};});}
+function fileToDataUrl(file,max=1600,q=0.82){return new Promise((res,rej)=>{const img=new Image();
+  img.onload=()=>{let w=img.width,h=img.height;const sc=Math.min(1,max/Math.max(w,h));w=Math.round(w*sc);h=Math.round(h*sc);
+    const cv=document.createElement("canvas");cv.width=w;cv.height=h;cv.getContext("2d").drawImage(img,0,0,w,h);
+    res(cv.toDataURL("image/jpeg",q));};img.onerror=rej;img.src=URL.createObjectURL(file);});}
+function viewPhoto(src){const v=document.getElementById("pviewer");document.getElementById("pviewerimg").src=src;v.classList.add("on");}
+
+/* ===== Inline item actions ===== */
+function actId(si,ii){return "act_"+si+"_"+ii;}
+async function mountActions(){
+  for(let si=0;si<SECTIONS.length;si++){for(let ii=0;ii<SECTIONS[si].items.length;ii++){
+    const it=SECTIONS[si].items[ii]; if(!it.act) continue;
+    const el=document.getElementById(actId(si,ii)); if(!el) continue;
+    if(it.act.type==="photo") await mountPhotoAct(el,it.act);
+    else if(it.act.type==="sms") el.innerHTML=`<button class="actbtn alt" onclick="event.stopPropagation();smsCustomer(${si},${ii})">💬 Text the customer</button>`;
+    else if(it.act.type==="call") el.innerHTML=`<button class="actbtn" onclick="event.stopPropagation();callOffice()">📞 Call office</button>`;
+    else if(it.act.type==="clock"){const t=localStorage.getItem(STARTKEY);
+      el.innerHTML=t?`<button class="actbtn done" onclick="event.stopPropagation();logStart()">⏱️ Started ${esc(t)} — tap to reset</button>`
+                     :`<button class="actbtn" onclick="event.stopPropagation();logStart()">⏱️ Log start time now</button>`;}
+  }}
+}
+async function mountPhotoAct(el,act){
+  let photos=[]; try{photos=await photoList(jobKey(),act.tag);}catch(e){}
+  el.innerHTML=`<div class="photostrip">
+    <label class="padd"><span>+</span>${esc(act.label||"Add photo")}
+      <input type="file" accept="image/*" capture="environment" style="display:none" onchange="onActPhoto(this,'${act.tag}')"></label>
+    ${photos.map(p=>`<div class="pthumb"><img src="${p.dataUrl}" onclick="viewPhoto(this.src)">
+      <button class="del" onclick="onActPhotoDel('${p.id}')">×</button></div>`).join("")}</div>`;
+}
+async function onActPhoto(input,tag){const f=input.files&&input.files[0]; if(!f) return;
+  try{const url=await fileToDataUrl(f);await photoAdd(jobKey(),tag,url);}catch(e){}
+  input.value="";mountActions();}
+async function onActPhotoDel(id){await photoDel(id);mountActions();}
+function custPhoneDigits(){return String(ACTIVE.phone||"").replace(/\D/g,"");}
+function smsCustomer(si,ii){
+  const it=SECTIONS[si].items[ii];
+  const name=(document.getElementById("j_name").value||"").split(" ")[0]||"there";
+  const rate=document.getElementById("j_rate").value||"[RATE]";
+  const body=String(it.act.body||"").replaceAll("[NAME]",name).replaceAll("[RATE]",rate);
+  const num=custPhoneDigits();
+  location.href="sms:"+num+"&body="+encodeURIComponent(body);
+}
+function callOffice(){location.href="tel:"+BIZPHONE;}
+function logStart(){const now=new Date().toLocaleTimeString([], {hour:"numeric",minute:"2-digit"});
+  localStorage.setItem(STARTKEY,now);mountActions();}
 function saveAll(){
   try{const f={};FIELD_IDS.forEach(id=>{const el=document.getElementById(id);if(el)f[id]=el.value;});
     localStorage.setItem(SAVEKEY,JSON.stringify({state:state,fields:f}));}catch(e){}
@@ -239,6 +328,7 @@ function restoreAll(){
   }catch(e){}
   // pull from Game Plan handoff if fields still empty
   try{const a=JSON.parse(localStorage.getItem("egc_active_job"));
+    if(a)ACTIVE=a;
     if(a&&a.name&&!document.getElementById("j_name").value){
       // Flat rate field carries the LOCKED TOTAL (package + upgrades) — that's the
       // number the customer signed off on, so the confirmation script quotes it right.
@@ -270,11 +360,13 @@ function render(){
         <div class="item ${state[key(si,ii)]?'on':''} ${it.crit?'crit':''}" onclick="tog(${si},${ii})">
           <span class="bx"></span>
           <div class="tx">${it.t}${it.s?`<small>${it.s}</small>`:""}</div>
+          ${it.act?`<div class="itemact" id="${actId(si,ii)}" onclick="event.stopPropagation()"></div>`:""}
         </div>`).join("")}
       ${sec.script?`<div class="script"><h4>${sec.script.h}</h4>${sec.script.p.map(p=>`<p>${p}</p>`).join("")}
         <button class="copybtn" onclick="event.stopPropagation();copyScript(${si})">Copy text</button></div>`:""}
     </section>`;
   }).join("");
+  setTimeout(mountActions,0);
   const total=SECTIONS.reduce((a,s)=>a+s.items.length,0);
   const done=Object.values(state).filter(Boolean).length;
   document.getElementById("pc").textContent=done;

@@ -246,6 +246,16 @@ ok('prejob: banner shows locked total', /Locked total: \$1950/.test(banner), ban
 const pkgVal = await page.inputValue('#j_pkg');
 ok('prejob: package + priced upsells prefilled', /Garage Transformation/.test(pkgVal) && /Both Walls .*\$750/.test(pkgVal), pkgVal);
 ok('prejob: job date prefilled', await page.inputValue('#j_date') === '2026-06-12');
+/* in-app actions on prejob items */
+ok('prejob: confirmation item has in-app "Text the customer"', /Text the customer/.test(await page.locator('#act_0_2').textContent()));
+ok('prejob: deposit item has tap-to-call office', /Call office/.test(await page.locator('#act_0_0').textContent()));
+ok('prejob: arrival BEFORE-capture has inline photo control', await page.locator('#act_2_0 input[type=file]').count() === 1);
+await page.setInputFiles('#act_2_0 input[type=file]', '/tmp/egc-before.png');
+await page.waitForTimeout(400);
+ok('prejob: before photo captured on the job', await page.locator('#act_2_0 .pthumb img').count() >= 1);
+await page.locator('#act_2_4 button').click();
+await page.waitForTimeout(150);
+ok('prejob: "Log start time" records a time', /Started/.test(await page.locator('#act_2_4').textContent()));
 await page.screenshot({ path: `${SHOTS}/06-prejob-380.png` });
 
 /* ── 6. Post-Job pre-fills + Garage Guard ──────────────────── */
@@ -305,15 +315,18 @@ ok('postjob: finish() carries garage_guard + locked_total + request_id',
 ok('postjob: finish() writes a local job-log backup before sending',
    /egc_job_log/.test(finishSrc) && finishSrc.indexOf('egc_job_log') < finishSrc.indexOf('postHook'));
 
-/* postjob photos: before + AI preview carry over by jobId; after-capture works */
-await page.waitForTimeout(300);
-ok('postjob: job photo card present', await page.locator('#photocard').count() === 1);
-ok('postjob: before + AI preview carried from Game Plan (same jobId)',
+/* postjob photos: before + AI preview carry over by jobId; inline after-capture works */
+await page.waitForTimeout(400);
+ok('postjob: reference card shows before + AI preview (same jobId)',
    await page.locator('#pb_ref .aiout img').count() === 1 && await page.locator('#pb_ref .pthumb img').count() >= 1);
-await page.setInputFiles('#pb_after input[type=file]', '/tmp/egc-before.png');
+ok('postjob: inline after-capture on the AFTER-capture checklist item',
+   await page.locator('#act_0_0 input[type=file]').count() === 1);
+await page.setInputFiles('#act_0_0 input[type=file]', '/tmp/egc-before.png');
 await page.waitForTimeout(450);
-ok('postjob: after photo captured + stored on-device',
-   (await page.locator('#pb_after .pthumb img').count()) >= 1 && (await page.evaluate(() => AFTER_COUNT >= 1)));
+ok('postjob: after photo captured inline + counted',
+   (await page.locator('#act_0_0 .pthumb img').count()) >= 1 && (await page.evaluate(() => AFTER_COUNT >= 1)));
+ok('postjob: donation-receipt photo action present', await page.locator('#act_2_0 input[type=file]').count() === 1);
+ok('postjob: share-to-album action present', /Share all job photos/.test(await page.locator('#act_3_0').textContent()));
 await page.screenshot({ path: `${SHOTS}/14-postjob-photos-380.png` });
 
 /* ── 7. Hub shows active job; iPad width pass ──────────────── */

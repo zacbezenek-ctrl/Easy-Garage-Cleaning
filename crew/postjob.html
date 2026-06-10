@@ -64,6 +64,12 @@
          font-weight:600;color:var(--navy);cursor:pointer;user-select:none;min-height:44px;display:inline-flex;align-items:center}
   .gchip.on{background:var(--orange);border-color:var(--orange);color:#fff}
   .gchip.no.on{background:var(--navy);border-color:var(--navy)}
+  .item{flex-wrap:wrap}
+  .itemact{flex-basis:100%;width:100%;margin-top:10px}
+  .actbtn{background:var(--navy);color:#fff;border:none;border-radius:11px;font-family:'Oswald';font-weight:600;
+          font-size:13.5px;letter-spacing:.04em;text-transform:uppercase;padding:12px 16px;cursor:pointer;
+          min-height:46px;display:inline-flex;align-items:center;gap:8px}
+  .actbtn.alt{background:var(--orange)}
   .photostrip{display:flex;gap:10px;flex-wrap:wrap;margin-top:6px}
   .pthumb{position:relative;width:96px;height:96px;border-radius:12px;overflow:hidden;border:1.5px solid var(--line);background:var(--paper)}
   .pthumb img{width:100%;height:100%;object-fit:cover;display:block}
@@ -195,10 +201,8 @@ gateOk().then(u=>{
   </div>
 
   <div class="photocard" id="photocard">
-    <div class="ttl">Job photos — before &amp; after</div>
+    <div class="ttl">From the Game Plan — before &amp; AI preview</div>
     <div id="pb_ref"></div>
-    <div class="ttl" style="margin-top:14px">After photos (this job)</div>
-    <div id="pb_after"></div>
   </div>
 
   <div id="sections"></div>
@@ -217,7 +221,7 @@ const REVIEW_LINK="https://search.google.com/local/writereview?placeid=ChIJ17AGf
 const SECTIONS = [
   {
     when:"Still in the garage — homeowner present", title:"The Victory Walk", items:[
-      {t:"AFTER capture: 3 clips + photos — BEFORE the reveal", s:"(1) empty garage from the same door angle as the before, (2) swept floor pan, (3) the worst zone, now clear. 5+ photos for GBP. Match the before angles or the pair is worthless.", crit:true},
+      {t:"AFTER capture: 3 clips + photos — BEFORE the reveal", s:"(1) empty garage from the same door angle as the before, (2) swept floor pan, (3) the worst zone, now clear. 5+ photos for GBP. Match the before angles or the pair is worthless.", crit:true, act:{type:"photo", tag:"after", label:"Take after photos"}},
       {t:"Walk the garage with the homeowner", s:"The final walkthrough sign-off — guarantee #2. Use the script — let them stand in the empty space and react. Don't talk first.", crit:true},
       {t:"Get their reaction on camera (ask permission)", s:"“Mind if I grab your reaction for our page?” A real ‘holy shit’ is the best ad EGC will ever run."},
       {t:"Installed upgrades demoed", s:"If racks/bins went in — show them the system. Open a bin. Point at the labels. They bought an outcome, show it working."},
@@ -250,7 +254,7 @@ const SECTIONS = [
   },
   {
     when:"Before leaving the neighborhood", title:"Disposal & Wrap", items:[
-      {t:"Donation drop-off done + receipt photographed", s:"Receipt goes to the customer — it's their tax deduction and your proof the donate run happened."},
+      {t:"Donation drop-off done + receipt photographed", s:"Receipt goes to the customer — it's their tax deduction and your proof the donate run happened.", act:{type:"photo", tag:"receipt", label:"Photo the receipt"}},
       {t:"E-waste routed responsibly", s:"Standard on every job. Log where it went."},
       {t:"Dump run logged with fees", s:"Fees go in the job card above — Zac needs real cost per job, not vibes."},
       {t:"Truck swept + equipment counted", s:"Straps, dollies, tripod. Losing a $40 strap weekly is a $2k/yr leak."},
@@ -258,7 +262,7 @@ const SECTIONS = [
   },
   {
     when:"Same night — 10 minutes, phone on the couch", title:"Feed the Machine", items:[
-      {t:"Footage uploaded to shared album", s:"Before/after pairs + reaction clip + GBP photos, dropped in the shared album for Zac. Tonight, not ‘this weekend’.", crit:true},
+      {t:"Footage uploaded to shared album", s:"Before/after pairs + reaction clip + GBP photos, dropped in the shared album for Zac. Tonight, not ‘this weekend’.", crit:true, act:{type:"share"}},
       {t:"GBP photos posted (geotagged)", s:"5+ from today's job straight to the Google Business Profile."},
       {t:"Job marked complete in Jobber", s:"Triggers invoicing/receipt flow and closes the loop for Tyler."},
       {t:"Flag the best clip for ads", s:"One message to Zac: ‘this one's the ad.’ That's the whole creative pipeline."},
@@ -305,20 +309,46 @@ function fileToDataUrl(file,max=1600,q=0.82){return new Promise((res,rej)=>{cons
     res(cv.toDataURL("image/jpeg",q));};img.onerror=rej;img.src=URL.createObjectURL(file);});}
 function viewPhoto(src){const v=document.getElementById("pviewer");document.getElementById("pviewerimg").src=src;v.classList.add("on");}
 let AFTER_COUNT=0;
-async function mountAfter(){
-  const el=document.getElementById("pb_after"); if(!el) return;
-  let photos=[]; try{photos=await photoList(jobKey(),"after");}catch(e){}
-  AFTER_COUNT=photos.length;
-  el.innerHTML=`<div class="photostrip">
-    <label class="padd"><span>+</span>Add after
-      <input type="file" accept="image/*" capture="environment" style="display:none" onchange="onAfterPick(this)"></label>
-    ${photos.map(p=>`<div class="pthumb"><img src="${p.dataUrl}" onclick="viewPhoto(this.src)">
-      <button class="del" onclick="onAfterDel('${p.id}')">×</button></div>`).join("")}</div>`;
+async function refreshAfterCount(){try{AFTER_COUNT=(await photoList(jobKey(),"after")).length;}catch(e){}}
+
+/* ===== Inline item actions (after/receipt photos + share to album) ===== */
+function actId(si,ii){return "act_"+si+"_"+ii;}
+async function mountActions(){
+  for(let si=0;si<SECTIONS.length;si++){for(let ii=0;ii<SECTIONS[si].items.length;ii++){
+    const it=SECTIONS[si].items[ii]; if(!it.act) continue;
+    const el=document.getElementById(actId(si,ii)); if(!el) continue;
+    if(it.act.type==="photo") await mountPhotoAct(el,it.act,si,ii);
+    else if(it.act.type==="share") el.innerHTML=`<button class="actbtn alt" onclick="event.stopPropagation();shareAllPhotos()">📤 Share all job photos</button>`;
+  }}
+  refreshAfterCount();
 }
-async function onAfterPick(input){const f=input.files&&input.files[0]; if(!f) return;
-  try{const url=await fileToDataUrl(f);await photoAdd(jobKey(),"after",url);}catch(e){}
-  input.value="";mountAfter();}
-async function onAfterDel(id){await photoDel(id);mountAfter();}
+async function mountPhotoAct(el,act){
+  let photos=[]; try{photos=await photoList(jobKey(),act.tag);}catch(e){}
+  el.innerHTML=`<div class="photostrip">
+    <label class="padd"><span>+</span>${act.label||"Add photo"}
+      <input type="file" accept="image/*" capture="environment" style="display:none" onchange="onActPhoto(this,'${act.tag}')"></label>
+    ${photos.map(p=>`<div class="pthumb"><img src="${p.dataUrl}" onclick="viewPhoto(this.src)">
+      <button class="del" onclick="onActPhotoDel('${p.id}')">×</button></div>`).join("")}</div>`;
+}
+async function onActPhoto(input,tag){const f=input.files&&input.files[0]; if(!f) return;
+  try{const url=await fileToDataUrl(f);await photoAdd(jobKey(),tag,url);}catch(e){}
+  input.value="";mountActions();}
+async function onActPhotoDel(id){await photoDel(id);mountActions();}
+async function shareAllPhotos(){
+  const job=jobKey(); let ps=[]; try{ps=await photoList(job);}catch(e){}
+  if(!ps.length){alert("No photos on this device for this job yet — capture before/after first.");return;}
+  try{
+    const files=[];
+    for(const p of ps){const b=await(await fetch(p.dataUrl)).blob();
+      files.push(new File([b],(p.tag||"photo")+"-"+p.id+".jpg",{type:b.type||"image/jpeg"}));}
+    if(navigator.canShare&&navigator.canShare({files})){
+      await navigator.share({files,title:"EGC job photos",text:"Before/after — "+(document.getElementById("j_name").value||"job")});
+      return;
+    }
+  }catch(e){if(e&&e.name==="AbortError")return;}
+  // fallback: trigger downloads so they can be saved to the album manually
+  ps.forEach(p=>{const a=document.createElement("a");a.href=p.dataUrl;a.download=(p.tag||"photo")+"-"+p.id+".jpg";document.body.appendChild(a);a.click();a.remove();});
+}
 async function mountRef(){
   const el=document.getElementById("pb_ref"); if(!el) return;
   let befs=[],ai=[]; try{befs=await photoList(jobKey(),"before");ai=await photoList(jobKey(),"after_ai");}catch(e){}
@@ -365,6 +395,7 @@ function render(){
         <div class="item ${state[key(si,ii)]?'on':''} ${it.crit?'crit':''}" onclick="tog(${si},${ii})">
           <span class="bx"></span>
           <div class="tx">${it.t}${it.s?`<small>${it.s}</small>`:""}</div>
+          ${it.act?`<div class="itemact" id="${actId(si,ii)}" onclick="event.stopPropagation()"></div>`:""}
         </div>`).join("")}
       ${sec.script?`<div class="script"><h4>${sec.script.h}</h4>${sec.script.p.map(p=>`<p>${p}</p>`).join("")}
         <button class="copybtn" onclick="event.stopPropagation();copyScript(${si})">Copy text</button>
@@ -375,6 +406,7 @@ function render(){
         <div class="gchips">${GUARD_OPTS.map(g=>`<div class="gchip ${GUARD===g?'on':''} ${g==='Not today'?'no':''}" onclick="setGuard('${g}')">${g}</div>`).join("")}</div></div>`:""}
     </section>`;
   }).join("");
+  setTimeout(mountActions,0);
   const total=SECTIONS.reduce((a,s)=>a+s.items.length,0);
   const done=Object.values(state).filter(Boolean).length;
   document.getElementById("pc").textContent=done;
@@ -443,7 +475,7 @@ document.addEventListener("input",saveAll);
 if(!STORAGE_OK) setTimeout(()=>alert("Heads up: this browser is blocking local storage (often Private Browsing). The job won't pre-fill from the Game Plan and progress won't save. Switch off Private Browsing for this iPad."),200);
 restoreAll();
 render();
-mountRef(); mountAfter();
+mountRef(); // after/receipt capture is now inline on the checklist items (mountActions)
 </script>
 </body>
 </html>
