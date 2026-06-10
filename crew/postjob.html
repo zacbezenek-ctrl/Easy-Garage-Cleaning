@@ -64,6 +64,23 @@
          font-weight:600;color:var(--navy);cursor:pointer;user-select:none;min-height:44px;display:inline-flex;align-items:center}
   .gchip.on{background:var(--orange);border-color:var(--orange);color:#fff}
   .gchip.no.on{background:var(--navy);border-color:var(--navy)}
+  .photostrip{display:flex;gap:10px;flex-wrap:wrap;margin-top:6px}
+  .pthumb{position:relative;width:96px;height:96px;border-radius:12px;overflow:hidden;border:1.5px solid var(--line);background:var(--paper)}
+  .pthumb img{width:100%;height:100%;object-fit:cover;display:block}
+  .pthumb .del{position:absolute;top:4px;right:4px;width:24px;height:24px;border:none;border-radius:50%;
+               background:rgba(19,32,58,.82);color:#fff;font-size:15px;line-height:24px;cursor:pointer;padding:0}
+  .padd{width:96px;height:96px;border-radius:12px;border:2px dashed var(--khaki);background:var(--paper);
+        display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;cursor:pointer;
+        font-family:'Oswald';font-weight:600;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--khaki)}
+  .padd span{font-size:24px;line-height:1}
+  .photocard{background:var(--paper);border:1.5px solid var(--line);border-radius:var(--r);padding:16px;margin-bottom:8px}
+  .photocard .ttl{font-family:'Oswald';font-weight:600;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--khaki);margin-bottom:8px}
+  .photocard .aibadge{display:inline-block;background:#13203a;color:#fff;font-family:'Oswald';font-size:10px;letter-spacing:.1em;text-transform:uppercase;padding:3px 8px;border-radius:99px;margin:8px 0 4px}
+  .photocard .aiout img{width:100%;border-radius:10px;border:1.5px solid var(--line);display:block}
+  #pviewer{position:fixed;inset:0;z-index:9000;background:rgba(8,14,26,.92);display:none;align-items:center;justify-content:center;padding:16px}
+  #pviewer.on{display:flex}
+  #pviewer img{max-width:100%;max-height:88vh;border-radius:10px}
+  #pviewer .x{position:absolute;top:14px;right:16px;background:none;border:none;color:#fff;font-size:34px;cursor:pointer}
   #donebar{position:fixed;left:0;right:0;bottom:0;background:var(--cream);border-top:1.5px solid var(--line);
            padding:12px 18px max(env(safe-area-inset-bottom),12px)}
   #donebar .inner{max-width:720px;margin:0 auto}
@@ -177,8 +194,17 @@ gateOk().then(u=>{
     <textarea id="j_notes" placeholder="Anything off-plan, anything broken, anything to flag for Zac"></textarea>
   </div>
 
+  <div class="photocard" id="photocard">
+    <div class="ttl">Job photos — before &amp; after</div>
+    <div id="pb_ref"></div>
+    <div class="ttl" style="margin-top:14px">After photos (this job)</div>
+    <div id="pb_after"></div>
+  </div>
+
   <div id="sections"></div>
 </main>
+
+<div id="pviewer" onclick="this.classList.remove('on')"><button class="x" aria-label="Close">×</button><img id="pviewerimg" alt="photo"></div>
 
 <div id="donebar"><div class="inner">
   <button id="donebtn" onclick="finish()">Complete all checks to close the job</button>
@@ -254,6 +280,52 @@ const uid=()=>Date.now().toString(36)+"-"+Math.random().toString(36).slice(2,8);
 // The Works / Full Property Reset bundle "Garage Guard year one free" — so the
 // paid Guard pitch must reframe as a renewal/upgrade, not a cold sell.
 function guardYearOneFree(){const p=(ACTIVE.pkg||"").toLowerCase();return p.includes("works")||p.includes("full property reset");}
+
+/* ===== Per-job photos (on-device, IndexedDB) — keyed by the Game Plan jobId =====
+   Same shared DB the Game Plan wrote to. After-photos attach to the same job so
+   before + AI preview + after live together. Jobber's Zapier has no attachment
+   action, so these stay on the iPad; the close payload carries counts only. */
+function jobKey(){return ACTIVE.jobId||"postjob_"+(document.getElementById("j_name").value||"unknown").toLowerCase().replace(/\s+/g,"_");}
+function idbOpen(){return new Promise((res,rej)=>{const r=indexedDB.open("egc_photos",1);
+  r.onupgradeneeded=e=>{const db=e.target.result;if(!db.objectStoreNames.contains("p")){
+    const s=db.createObjectStore("p",{keyPath:"id"});s.createIndex("job","job",{unique:false});}};
+  r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error);});}
+async function photoAdd(job,tag,dataUrl){const db=await idbOpen();return new Promise((res,rej)=>{
+  const tx=db.transaction("p","readwrite");const id=uid();
+  tx.objectStore("p").put({id,job,tag,dataUrl,at:Date.now()});tx.oncomplete=()=>res(id);tx.onerror=()=>rej(tx.error);});}
+async function photoDel(id){const db=await idbOpen();return new Promise(res=>{
+  const tx=db.transaction("p","readwrite");tx.objectStore("p").delete(id);tx.oncomplete=()=>res();tx.onerror=()=>res();});}
+async function photoList(job,tag){const db=await idbOpen();return new Promise(res=>{
+  const tx=db.transaction("p","readonly");const out=[];
+  tx.objectStore("p").index("job").openCursor(IDBKeyRange.only(job)).onsuccess=e=>{const c=e.target.result;
+    if(c){if(!tag||c.value.tag===tag)out.push(c.value);c.continue();}else res(out.sort((a,b)=>a.at-b.at));};});}
+function fileToDataUrl(file,max=1600,q=0.82){return new Promise((res,rej)=>{const img=new Image();
+  img.onload=()=>{let w=img.width,h=img.height;const sc=Math.min(1,max/Math.max(w,h));w=Math.round(w*sc);h=Math.round(h*sc);
+    const cv=document.createElement("canvas");cv.width=w;cv.height=h;cv.getContext("2d").drawImage(img,0,0,w,h);
+    res(cv.toDataURL("image/jpeg",q));};img.onerror=rej;img.src=URL.createObjectURL(file);});}
+function viewPhoto(src){const v=document.getElementById("pviewer");document.getElementById("pviewerimg").src=src;v.classList.add("on");}
+let AFTER_COUNT=0;
+async function mountAfter(){
+  const el=document.getElementById("pb_after"); if(!el) return;
+  let photos=[]; try{photos=await photoList(jobKey(),"after");}catch(e){}
+  AFTER_COUNT=photos.length;
+  el.innerHTML=`<div class="photostrip">
+    <label class="padd"><span>+</span>Add after
+      <input type="file" accept="image/*" capture="environment" style="display:none" onchange="onAfterPick(this)"></label>
+    ${photos.map(p=>`<div class="pthumb"><img src="${p.dataUrl}" onclick="viewPhoto(this.src)">
+      <button class="del" onclick="onAfterDel('${p.id}')">×</button></div>`).join("")}</div>`;
+}
+async function onAfterPick(input){const f=input.files&&input.files[0]; if(!f) return;
+  try{const url=await fileToDataUrl(f);await photoAdd(jobKey(),"after",url);}catch(e){}
+  input.value="";mountAfter();}
+async function onAfterDel(id){await photoDel(id);mountAfter();}
+async function mountRef(){
+  const el=document.getElementById("pb_ref"); if(!el) return;
+  let befs=[],ai=[]; try{befs=await photoList(jobKey(),"before");ai=await photoList(jobKey(),"after_ai");}catch(e){}
+  if(!befs.length&&!ai.length){el.innerHTML=`<div style="color:var(--khaki);font-size:13.5px">No Game Plan photos on this device for this job.</div>`;return;}
+  el.innerHTML=(ai.length?`<div class="aibadge">AI preview from the Game Plan</div><div class="aiout"><img src="${ai[ai.length-1].dataUrl}" onclick="viewPhoto(this.src)"></div>`:"")+
+    (befs.length?`<div class="ttl" style="margin-top:10px">Before</div><div class="photostrip">${befs.map(p=>`<div class="pthumb"><img src="${p.dataUrl}" onclick="viewPhoto(this.src)"></div>`).join("")}</div>`:"");
+}
 function setGuard(v){GUARD=(GUARD===v?"":v);render();saveAll();}
 function saveAll(){
   try{const f={};FIELD_IDS.forEach(id=>{const el=document.getElementById(id);if(el)f[id]=el.value;});
@@ -350,6 +422,7 @@ async function finish(){
          hours_on_site:v("j_hours"),dump_fees:v("j_fees"),notes:v("j_notes"),
          package:ACTIVE.pkg||"",quoted_rate:ACTIVE.rate||"",locked_total:ACTIVE.total||ACTIVE.rate||"",pain:ACTIVE.pain||""},
     garage_guard:GUARD||"not recorded",
+    photos:{after:AFTER_COUNT}, // on-device; count only
     checklist:SECTIONS.map(s=>s.items.map(it=>it.t)).flat().map((t,i)=>t+": done").join("\n")};
   // Local backup FIRST — job-costing data (loads/hours/fees) must survive even if HQ is down.
   try{const log=JSON.parse(localStorage.getItem("egc_job_log")||"[]");log.push(payload);
@@ -370,6 +443,7 @@ document.addEventListener("input",saveAll);
 if(!STORAGE_OK) setTimeout(()=>alert("Heads up: this browser is blocking local storage (often Private Browsing). The job won't pre-fill from the Game Plan and progress won't save. Switch off Private Browsing for this iPad."),200);
 restoreAll();
 render();
+mountRef(); mountAfter();
 </script>
 </body>
 </html>

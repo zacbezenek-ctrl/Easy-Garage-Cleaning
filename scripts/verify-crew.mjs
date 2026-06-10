@@ -42,6 +42,13 @@ await ctx.route('**/api/crew-hook', async route => {
   try { sent.push(JSON.parse(route.request().postData() || '{}')); } catch {}
   await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, tool: 'stub' }) });
 });
+// Stub the image generator — sandbox can't reach OpenAI and we won't spend money in tests.
+const sentImg = [];
+const TINY_PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+await ctx.route('**/api/garage-render', async route => {
+  try { sentImg.push(JSON.parse(route.request().postData() || '{}')); } catch {}
+  await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, image: TINY_PNG }) });
+});
 const page = await ctx.newPage();
 const errors = [];
 page.on('pageerror', e => errors.push(e.message));
@@ -119,6 +126,23 @@ await page.locator('.up', { hasText: 'Rush Scheduling' }).click();
 const upTotal = await page.evaluate(() => upgradesTotal());
 ok('gameplan: upgrades total = 750+250+150', upTotal === 1150, '$' + upTotal);
 
+/* ── 4b. Point 10: before photo capture + AI "after" generator ── */
+await page.evaluate(() => jump(13));
+await page.waitForTimeout(250);
+ok('gameplan: Point 10 shows photo capture tile', await page.locator('#pb_before .padd').count() === 1);
+ok('gameplan: Generate-the-After disabled with no photo', await page.locator('#aibtn').isDisabled());
+await page.setInputFiles('#pb_before input[type=file]', '/tmp/egc-before.png');
+await page.waitForTimeout(500);
+ok('gameplan: before photo stored on-device + thumb shown', await page.locator('#pb_before .pthumb img').count() >= 1);
+ok('gameplan: Generate-the-After enabled after a before photo', !(await page.locator('#aibtn').isDisabled()));
+const beforeGen = sentImg.length;
+await page.locator('#aibtn').click();
+await page.waitForTimeout(600);
+ok('gameplan: garage-render received the before image',
+   sentImg.length > beforeGen && /^data:image\//.test((sentImg[sentImg.length-1] || {}).image || ''));
+ok('gameplan: AI after rendered + stored in state', await page.locator('#aiout img').count() === 1 && await page.evaluate(() => !!S.aiAfter));
+await page.screenshot({ path: `${SHOTS}/13-gameplan-ai-after-380.png` });
+
 /* package screen */
 await page.evaluate(() => jump(17));
 await page.waitForTimeout(200);
@@ -169,6 +193,11 @@ ok('close: line items = package + 3 upgrades', payload.quote.line_items_count ==
 ok('close: quote total in payload', payload.quote.total === 1950);
 ok('close: payload carries day_of_bonus + signature fields',
    payload.day_of_bonus === true && 'signature' in payload);
+ok('close: payload reports photo counts (before + ai_after)',
+   payload.photos && payload.photos.before === 1 && payload.photos.ai_after === 1,
+   JSON.stringify(payload.photos));
+ok('close: before→after block shows the AI preview on the plan',
+   await page.locator('#pb_plan .aiout img').count() === 1 && await page.locator('#pb_plan .pthumb img').count() >= 1);
 await page.screenshot({ path: `${SHOTS}/04-gameplan-close-ipad.png`, fullPage: false });
 await page.setViewportSize({ width: 380, height: 800 });
 await page.waitForTimeout(150);
@@ -275,6 +304,17 @@ ok('postjob: finish() carries garage_guard + locked_total + request_id',
    /garage_guard:GUARD/.test(finishSrc) && /locked_total:/.test(finishSrc) && /request_id:_finishId/.test(finishSrc));
 ok('postjob: finish() writes a local job-log backup before sending',
    /egc_job_log/.test(finishSrc) && finishSrc.indexOf('egc_job_log') < finishSrc.indexOf('postHook'));
+
+/* postjob photos: before + AI preview carry over by jobId; after-capture works */
+await page.waitForTimeout(300);
+ok('postjob: job photo card present', await page.locator('#photocard').count() === 1);
+ok('postjob: before + AI preview carried from Game Plan (same jobId)',
+   await page.locator('#pb_ref .aiout img').count() === 1 && await page.locator('#pb_ref .pthumb img').count() >= 1);
+await page.setInputFiles('#pb_after input[type=file]', '/tmp/egc-before.png');
+await page.waitForTimeout(450);
+ok('postjob: after photo captured + stored on-device',
+   (await page.locator('#pb_after .pthumb img').count()) >= 1 && (await page.evaluate(() => AFTER_COUNT >= 1)));
+await page.screenshot({ path: `${SHOTS}/14-postjob-photos-380.png` });
 
 /* ── 7. Hub shows active job; iPad width pass ──────────────── */
 await page.goto(`${BASE}/crew/`);

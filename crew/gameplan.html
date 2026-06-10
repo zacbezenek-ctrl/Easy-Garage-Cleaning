@@ -157,6 +157,31 @@
   .btn.navy{flex:1;background:var(--navy);color:#fff}
   .num{font-family:'Oswald';font-weight:700;color:var(--orange);font-size:15px;letter-spacing:.08em}
   @media (prefers-reduced-motion:no-preference){ .screen{animation:in .18s ease} @keyframes in{from{opacity:0;transform:translateX(14px)}to{opacity:1;transform:none}} }
+  /* ---------- per-job photos + AI after ---------- */
+  .photostrip{display:flex;gap:10px;flex-wrap:wrap;margin-top:6px}
+  .pthumb{position:relative;width:104px;height:104px;border-radius:12px;overflow:hidden;border:1.5px solid var(--line);background:var(--paper)}
+  .pthumb img{width:100%;height:100%;object-fit:cover;display:block}
+  .pthumb .del{position:absolute;top:4px;right:4px;width:24px;height:24px;border:none;border-radius:50%;
+               background:rgba(19,32,58,.82);color:#fff;font-size:15px;line-height:24px;cursor:pointer;padding:0}
+  .padd{width:104px;height:104px;border-radius:12px;border:2px dashed var(--khaki);background:var(--paper);
+        display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;cursor:pointer;
+        font-family:'Oswald';font-weight:600;font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--khaki)}
+  .padd span{font-size:26px;line-height:1}
+  .aibtn{margin-top:12px;background:var(--navy);color:#fff;border:none;border-radius:12px;font-family:'Oswald';
+         font-weight:600;font-size:15px;letter-spacing:.04em;text-transform:uppercase;padding:14px 18px;cursor:pointer;
+         min-height:50px;display:inline-flex;align-items:center;gap:9px}
+  .aibtn:disabled{opacity:.55}
+  .aibtn.hot{background:var(--orange)}
+  .aiout{margin-top:12px}
+  .aiout img{width:100%;border-radius:var(--r);border:1.5px solid var(--line);display:block}
+  .ailbl{font-family:'Oswald';font-weight:600;font-size:11px;letter-spacing:.08em;text-transform:uppercase;
+         color:var(--khaki);margin-top:6px}
+  .aibadge{display:inline-block;background:#13203a;color:#fff;font-family:'Oswald';font-size:10px;letter-spacing:.1em;
+           text-transform:uppercase;padding:3px 8px;border-radius:99px;margin-bottom:6px}
+  #pviewer{position:fixed;inset:0;z-index:9000;background:rgba(8,14,26,.92);display:none;align-items:center;justify-content:center;padding:16px}
+  #pviewer.on{display:flex}
+  #pviewer img{max-width:100%;max-height:88vh;border-radius:10px}
+  #pviewer .x{position:absolute;top:14px;right:16px;background:none;border:none;color:#fff;font-size:34px;cursor:pointer}
   /* Save PDF / print: un-fix the clipped app shell so the WHOLE plan prints, not just the viewport */
   @media print{
     html,body{position:static!important;height:auto!important;overflow:visible!important;display:block!important;background:#fff}
@@ -258,6 +283,8 @@ gateOk().then(u=>{
 
 <div id="stage"><div class="screen" id="screen"></div></div>
 
+<div id="pviewer" onclick="this.classList.remove('on')"><button class="x" aria-label="Close">×</button><img id="pviewerimg" alt="photo"></div>
+
 <div id="nav"><div class="inner" id="navinner"></div></div>
 
 <script>
@@ -306,7 +333,7 @@ const S = {  // session state — autosaved locally on every tap
   layout:null, layoutNote:"",
   stay:[],
   pkg:null, rate:"", deposit:"", jobdate:"",
-  dayBonus:false, jobId:"", sig:"",
+  dayBonus:false, jobId:"", sig:"", aiAfter:"",
 };
 
 const chip=(arr,v)=>arr.includes(v)?arr.filter(x=>x!==v):[...arr,v];
@@ -318,6 +345,87 @@ const esc=s=>String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;"
 const normPhone=raw=>{const d=String(raw||"").replace(/\D/g,"");if(d.length===10)return"+1"+d;if(d.length===11&&d[0]==="1")return"+"+d;if(d.length>10)return"+"+d;return d||"";};
 const STORAGE_OK=(()=>{try{localStorage.setItem("__egc_t","1");localStorage.removeItem("__egc_t");return true;}catch(e){return false;}})();
 const uid=()=>Date.now().toString(36)+"-"+Math.random().toString(36).slice(2,8);
+
+/* ===== Per-job photos — on-device (IndexedDB), keyed by jobId =====
+   Jobber's Zapier integration has no photo-attachment action, so photos live
+   on the iPad and travel with the job (same DB shared by prejob/postjob via
+   the egc_active_job handoff). Only counts go to HQ — images stay local. */
+const PHOTO_COUNTS={before:0,after:0,after_ai:0};
+function idbOpen(){return new Promise((res,rej)=>{const r=indexedDB.open("egc_photos",1);
+  r.onupgradeneeded=e=>{const db=e.target.result;if(!db.objectStoreNames.contains("p")){
+    const s=db.createObjectStore("p",{keyPath:"id"});s.createIndex("job","job",{unique:false});}};
+  r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error);});}
+async function photoAdd(job,tag,dataUrl){const db=await idbOpen();return new Promise((res,rej)=>{
+  const tx=db.transaction("p","readwrite");const id=uid();
+  tx.objectStore("p").put({id,job,tag,dataUrl,at:Date.now()});
+  tx.oncomplete=()=>res(id);tx.onerror=()=>rej(tx.error);});}
+async function photoDel(id){const db=await idbOpen();return new Promise(res=>{
+  const tx=db.transaction("p","readwrite");tx.objectStore("p").delete(id);tx.oncomplete=()=>res();tx.onerror=()=>res();});}
+async function photoList(job,tag){const db=await idbOpen();return new Promise(res=>{
+  const tx=db.transaction("p","readonly");const out=[];
+  tx.objectStore("p").index("job").openCursor(IDBKeyRange.only(job)).onsuccess=e=>{const c=e.target.result;
+    if(c){if(!tag||c.value.tag===tag)out.push(c.value);c.continue();}else res(out.sort((a,b)=>a.at-b.at));};});}
+function fileToDataUrl(file,max=1600,q=0.82){return new Promise((res,rej)=>{const img=new Image();
+  img.onload=()=>{let w=img.width,h=img.height;const sc=Math.min(1,max/Math.max(w,h));
+    w=Math.round(w*sc);h=Math.round(h*sc);const cv=document.createElement("canvas");cv.width=w;cv.height=h;
+    cv.getContext("2d").drawImage(img,0,0,w,h);res(cv.toDataURL("image/jpeg",q));};
+  img.onerror=rej;img.src=URL.createObjectURL(file);});}
+function viewPhoto(src){const v=$("pviewer");$("pviewerimg").src=src;v.classList.add("on");}
+async function refreshCounts(){
+  try{const job=S.jobId||"";const all=await photoList(job);
+    PHOTO_COUNTS.before=all.filter(p=>p.tag==="before").length;
+    PHOTO_COUNTS.after=all.filter(p=>p.tag==="after").length;
+    PHOTO_COUNTS.after_ai=all.filter(p=>p.tag==="after_ai").length;
+    paintTotal();}catch(e){}
+}
+// paint a capture strip for one tag into a container; opts.ai adds the generator
+async function mountStrip(containerId,tag,opts={}){
+  const el=$(containerId); if(!el) return;
+  const job=S.jobId||(S.jobId=uid());
+  let photos=[]; try{photos=await photoList(job,tag);}catch(e){}
+  el.innerHTML=`<div class="photostrip">
+    <label class="padd"><span>+</span>Add photo
+      <input type="file" accept="image/*" capture="environment" style="display:none" onchange="onPhotoPick(this,'${tag}')"></label>
+    ${photos.map(p=>`<div class="pthumb"><img src="${p.dataUrl}" onclick="viewPhoto(this.src)">
+      <button class="del" onclick="onPhotoDel('${p.id}')">×</button></div>`).join("")}
+  </div>${opts.ai?`<button class="aibtn hot" id="aibtn" onclick="genAfter()" ${photos.length?"":"disabled"}>✨ Generate the After</button>
+    <div class="aiout" id="aiout"></div>`:""}`;
+  if(opts.ai) paintAi();
+  refreshCounts();
+}
+async function onPhotoPick(input,tag){
+  const f=input.files&&input.files[0]; if(!f) return;
+  try{const url=await fileToDataUrl(f);await photoAdd(S.jobId||(S.jobId=uid()),tag,url);}catch(e){}
+  input.value="";
+  mountStrip(tag==="before"?"pb_before":"pb_after",tag,{ai:tag==="before"});
+}
+async function onPhotoDel(id){await photoDel(id);
+  mountStrip("pb_before","before",{ai:true});}
+function paintAi(){
+  const out=$("aiout"); if(!out) return;
+  out.innerHTML=S.aiAfter?`<div class="aibadge">AI preview — actual results vary</div>
+    <img src="${S.aiAfter}" onclick="viewPhoto(this.src)">
+    <div class="ailbl">Show the homeowner what tonight looks like.</div>`:"";
+}
+async function genAfter(){
+  const btn=$("aibtn"); if(!btn) return;
+  const job=S.jobId||""; let befs=[]; try{befs=await photoList(job,"before");}catch(e){}
+  if(!befs.length){alert("Snap a before photo first.");return;}
+  btn.disabled=true;btn.textContent="✨ Generating… (~10s)";
+  try{
+    const res=await fetch("/api/garage-render",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({image:befs[befs.length-1].dataUrl})});
+    const j=await res.json();
+    if(res.ok&&j&&j.ok&&j.image){
+      S.aiAfter=j.image; save();
+      try{await photoAdd(job,"after_ai",j.image);}catch(e){}
+      paintAi(); refreshCounts();
+      btn.textContent="✨ Regenerate the After";btn.disabled=false;
+    }else{ btn.textContent="✨ Generate the After";btn.disabled=false;
+      alert("Couldn't generate: "+((j&&j.error)||res.status)+". Check signal and try again."); }
+  }catch(e){ btn.textContent="✨ Generate the After";btn.disabled=false;
+    alert("Image service unreachable — check signal and try again."); }
+}
 
 function priceFor(u){ return u.price; }
 function upgradesTotal(){
@@ -453,7 +561,10 @@ R.p10=()=>head("p10",`Point at the floor. <b>“Picture this swept and clear, wa
   <div class="chips">${["Solid — just needs a sweep","Stained — still fine","Cracked / needs attention"].map(v=>
     `<div class="chip ${S.floor===v?'on hot':''}" onclick="S.floor='${v}';render()">${v}</div>`).join("")}</div>
   <label class="fl">Notes</label>
-  <textarea oninput="S.floorNote=this.value">${esc(S.floorNote)}</textarea>`;
+  <textarea oninput="S.floorNote=this.value">${esc(S.floorNote)}</textarea>
+  <label class="fl" style="margin-top:20px">Snap the garage → generate the “after”</label>
+  <div class="ask" style="margin:0 0 8px;font-size:14px">Take a before shot, then tap Generate to show them their garage cleaned out tonight.</div>
+  <div id="pb_before"></div>`;
 
 R.p11=()=>head("p11",`<b>“What would keep this from coming back?”</b> Point at the cleared wall on the sketch — rack here, bins there. Freestanding, no drilling. Shelving and Deep Clean are two-option pairs: one or the other, never both.`)+`
   ${CONFIG.upgrades.map((u,i)=>{
@@ -526,6 +637,7 @@ R.plan=()=>{
     <div class="ln"><span>Job date</span><b>${S.jobdate?new Date(S.jobdate+"T12:00").toLocaleDateString(undefined,{weekday:"short",month:"short",day:"numeric"}):"—"}</b></div>
   </div>
   <div class="holdnote">Quote holds for 7 days. Day-Of Bonus is today only.</div>
+  <div id="pb_plan"></div>
   <div class="guarantee"><h4>The EGC No-Surprises Guarantee</h4>
     <ol>${CONFIG.guarantee.map(g=>`<li>${g}</li>`).join("")}</ol></div>
   <label class="fl">Homeowner sign-off</label>
@@ -624,6 +736,7 @@ function buildPayload(){
       line_items:items, line_items_count:items.length},
     day_of_bonus:!!S.dayBonus,
     signature:S.sig||"",
+    photos:{before:PHOTO_COUNTS.before, ai_after:PHOTO_COUNTS.after_ai}, // images stay on-device; counts only
     notes:compileNotes(), raw:S,
   };
   // flattened 4-slot mapping for easy Zapier field mapping
@@ -691,6 +804,7 @@ function writeActive(via){
       pkg:S.pkg!=null?CONFIG.packages[S.pkg].name:"", upsells, upsellsPriced,
       rate:S.rate, upgradesTotal:upgradesTotal(), total:grandTotal(),
       deposit:S.deposit, jobdate:S.jobdate, dayBonus:!!S.dayBonus, hasSignature:!!S.sig,
+      photosBefore:PHOTO_COUNTS.before, hasAiAfter:!!S.aiAfter,
       pain:S.missNote||(S.parkLast?"hasn't parked inside since "+S.parkLast:"")||S.worstZone,
       committedVia:via||"", savedAt:new Date().toISOString()}));
   }catch(e){}
@@ -724,8 +838,19 @@ function render(){
   $("navinner").innerHTML=nav;
   paintTotal();
   $("stage").scrollTop=0;
-  if(s.id==="plan")setTimeout(initSig,60); // handoff is written on commit (Send/Text), not on view
+  if(s.id==="p10")setTimeout(()=>mountStrip("pb_before","before",{ai:true}),0);
+  if(s.id==="plan"){setTimeout(initSig,60);setTimeout(mountPlanPhotos,0);} // handoff is written on commit (Send/Text), not on view
   save();
+}
+async function mountPlanPhotos(){
+  const el=$("pb_plan"); if(!el) return;
+  const job=S.jobId||""; let befs=[]; try{befs=await photoList(job,"before");}catch(e){}
+  if(!befs.length&&!S.aiAfter){el.innerHTML="";return;}
+  el.innerHTML=`<label class="fl" style="margin-top:4px">Before → After</label>`+
+    (S.aiAfter?`<div class="aiout"><div class="aibadge">AI preview — actual results vary</div>
+      <img src="${S.aiAfter}" onclick="viewPhoto(this.src)"></div>`:"")+
+    (befs.length?`<div class="photostrip" style="margin-top:8px">${befs.map(p=>
+      `<div class="pthumb"><img src="${p.dataUrl}" onclick="viewPhoto(this.src)"></div>`).join("")}</div>`:"");
 }
 function go(d){ idx=Math.min(steps.length-1,Math.max(0,idx+d)); render(); }
 if(!STORAGE_OK) setTimeout(()=>alert("Heads up: this browser is blocking local storage (often Private Browsing). The walkthrough won't auto-save and the pre-fill into the Pre/Post-Job tools won't work. Switch off Private Browsing for this iPad."),200);
