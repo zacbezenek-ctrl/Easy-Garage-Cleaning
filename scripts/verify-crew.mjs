@@ -49,6 +49,20 @@ await ctx.route('**/api/garage-render', async route => {
   try { sentImg.push(JSON.parse(route.request().postData() || '{}')); } catch {}
   await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, image: TINY_PNG }) });
 });
+// Stub Jobber lookup + Drive upload — live calls need the one-time OAuth setups.
+await ctx.route('**/api/jobber-clients*', async route => {
+  await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, clients: [
+    { id: 'JCLIENT1', name: 'Dana Tester', phone: '(970) 555-0123', address: '746 Star Grass Ln, Fort Collins', email: 'dana@example.com' },
+    { id: 'JCLIENT2', name: 'Dana Q. Other', phone: '(970) 555-0999', address: '12 Elsewhere Rd', email: '' },
+  ] }) });
+});
+const driveBatches = [];
+await ctx.route('**/api/drive-upload', async route => {
+  let ids = [];
+  try { const b = JSON.parse(route.request().postData() || '{}'); driveBatches.push(b); ids = (b.photos || []).map(p => p.id); } catch {}
+  await route.fulfill({ status: 200, contentType: 'application/json',
+    body: JSON.stringify({ ok: true, folderId: 'FOLDER1', folderUrl: 'https://drive.google.com/drive/folders/FOLDER1', uploaded: ids }) });
+});
 const page = await ctx.newPage();
 const errors = [];
 page.on('pageerror', e => errors.push(e.message));
@@ -92,10 +106,21 @@ await page.goto(`${BASE}/crew/gameplan.html`);
 await page.waitForTimeout(400);
 ok('gameplan: unlocked via stored token', await page.locator('#egc-gate.off').count() === 1);
 
-// fill the start screen through the real inputs
-await page.fill('#f_name', 'Dana Tester');
+/* Jobber customer lookup on the start screen */
+await page.fill('#f_name', 'Dana');
+await page.locator('.lookbtn').click();
+await page.waitForTimeout(300);
+ok('gameplan: Jobber lookup lists matches', await page.locator('.lkr').count() === 2,
+   (await page.locator('.lkr .nm').allTextContents()).join(' | '));
+await page.locator('.lkr').first().click();
+await page.waitForTimeout(200);
+ok('gameplan: picking a Jobber client fills name/address/phone + id',
+   await page.inputValue('#f_name') === 'Dana Tester' &&
+   /746 Star Grass Ln/.test(await page.inputValue('#f_addr')) &&
+   await page.inputValue('#f_phone') === '(970) 555-0123' &&
+   await page.evaluate(() => S.jobberClientId === 'JCLIENT1'));
+// keep the canonical test address (lookup returns city suffix)
 await page.fill('#f_addr', '746 Star Grass Ln');
-await page.fill('#f_phone', '(970) 555-0123');
 
 // jump to point 11 (upgrades) and exercise the two-option pairs through real taps
 await page.evaluate(() => { S.park=false; S.parkLast='3+ years'; S.howLong='2 years';
@@ -226,6 +251,17 @@ ok('close: Send to Jobber shows real success status',
 const gpSent = sent.slice(before).find(p => p.tool === 'game_plan');
 ok('close: game_plan payload reached the proxy', !!gpSent && gpSent.quote.total === 1950,
    gpSent ? '$' + gpSent.quote.total : 'none');
+ok('close: payload carries jobber_client_id', !!gpSent && gpSent.client.jobber_client_id === 'JCLIENT1');
+
+/* Drive upload from the close screen */
+ok('close: Upload-to-Drive button present', /Upload job photos to Drive/.test(await page.locator('#pb_plan').textContent()));
+await page.locator('#pb_plan .drivebtn').click();
+await page.waitForTimeout(500);
+ok('close: Drive upload completes + folder link shown',
+   /Photos in Drive/.test(await page.locator('#pb_plan .drivebtn').textContent()) &&
+   (await page.locator('#pb_plan a.drivelink').getAttribute('href')) === 'https://drive.google.com/drive/folders/FOLDER1');
+ok('close: Drive batch carried job label (date — name — address)',
+   driveBatches.length > 0 && /2026-06-12 — Dana Tester — 746 Star Grass Ln/.test(driveBatches[0].label), driveBatches[0] && driveBatches[0].label);
 const activeJob = await page.evaluate(() => JSON.parse(localStorage.getItem('egc_active_job')));
 ok('handoff: egc_active_job written on Send, carries locked total + priced upsells',
    activeJob && activeJob.name === 'Dana Tester' && activeJob.pkg === 'Garage Transformation' &&
@@ -247,6 +283,7 @@ const pkgVal = await page.inputValue('#j_pkg');
 ok('prejob: package + priced upsells prefilled', /Garage Transformation/.test(pkgVal) && /Both Walls .*\$750/.test(pkgVal), pkgVal);
 ok('prejob: job date prefilled', await page.inputValue('#j_date') === '2026-06-12');
 /* in-app actions on prejob items */
+ok('prejob: lookup button present on job card', await page.locator('.lookbtn').count() === 1);
 ok('prejob: confirmation item has in-app "Text the customer"', /Text the customer/.test(await page.locator('#act_0_2').textContent()));
 ok('prejob: deposit item has tap-to-call office', /Call office/.test(await page.locator('#act_0_0').textContent()));
 ok('prejob: arrival BEFORE-capture has inline photo control', await page.locator('#act_2_0 input[type=file]').count() === 1);
@@ -326,7 +363,23 @@ await page.waitForTimeout(450);
 ok('postjob: after photo captured inline + counted',
    (await page.locator('#act_0_0 .pthumb img').count()) >= 1 && (await page.evaluate(() => AFTER_COUNT >= 1)));
 ok('postjob: donation-receipt photo action present', await page.locator('#act_2_0 input[type=file]').count() === 1);
-ok('postjob: share-to-album action present', /Share all job photos/.test(await page.locator('#act_3_0').textContent()));
+ok('postjob: GBP item replaced by Drive-folder item',
+   !/GBP photos posted/.test(await page.locator('#sections').textContent()) &&
+   /All job photos → the job's Drive folder/.test(await page.locator('#sections').textContent()));
+ok('postjob: video share action present', /Share all job photos/.test(await page.locator('#act_3_1').textContent()));
+/* Drive upload from the Feed-the-Machine item (uploads the new after+receipt photos) */
+const batchesBefore = driveBatches.length;
+await page.locator('#act_3_0 .actbtn').click();
+await page.waitForTimeout(600);
+ok('postjob: Drive upload completes + folder link shown',
+   /Photos in Drive/.test(await page.locator('#act_3_0 .actbtn').textContent()) &&
+   (await page.locator('#act_3_0 a.drivelink').getAttribute('href')) === 'https://drive.google.com/drive/folders/FOLDER1');
+ok('postjob: only NEW photos uploaded (already-uploaded ones skipped)',
+   driveBatches.slice(batchesBefore).flatMap(b => b.photos).length >= 1 &&
+   driveBatches.slice(batchesBefore).every(b => b.jobId === driveBatches[0].jobId));
+ok('postjob: lookup button present on job card', await page.locator('.lookbtn').count() === 1);
+const pjFinishSrc = await page.evaluate(() => finish.toString());
+ok('postjob: finish() carries drive_folder + jobber_client_id', /drive_folder/.test(pjFinishSrc) && /jobber_client_id/.test(pjFinishSrc));
 await page.screenshot({ path: `${SHOTS}/14-postjob-photos-380.png` });
 
 /* ── 7. Hub shows active job; iPad width pass ──────────────── */

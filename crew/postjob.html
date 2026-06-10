@@ -64,6 +64,19 @@
          font-weight:600;color:var(--navy);cursor:pointer;user-select:none;min-height:44px;display:inline-flex;align-items:center}
   .gchip.on{background:var(--orange);border-color:var(--orange);color:#fff}
   .gchip.no.on{background:var(--navy);border-color:var(--navy)}
+  .lookrow{display:flex;gap:8px}
+  .lookrow input{flex:1}
+  .lookbtn{background:var(--navy);color:#fff;border:none;border-radius:10px;font-family:'Oswald';font-weight:600;
+           font-size:12.5px;letter-spacing:.04em;text-transform:uppercase;padding:0 13px;cursor:pointer;min-height:46px;white-space:nowrap}
+  #lookout{margin-top:8px}
+  .lkr{display:flex;justify-content:space-between;align-items:center;gap:12px;background:#fff;
+       border:1.5px solid var(--line);border-radius:11px;padding:11px 13px;margin-bottom:7px;cursor:pointer}
+  .lkr .nm{font-weight:600;font-size:14.5px}
+  .lkr .nm small{display:block;font-weight:500;color:var(--khaki);font-size:12.5px}
+  .lkr .go{font-family:'Oswald';font-weight:700;color:var(--orange);font-size:17px}
+  .looknote{font-size:12.5px;color:var(--khaki);font-weight:500;margin-top:6px}
+  .drivelink{display:inline-block;margin:8px 0 0 10px;font-family:'Oswald';font-weight:600;font-size:12.5px;
+             letter-spacing:.04em;text-transform:uppercase;color:var(--orange2)}
   .item{flex-wrap:wrap}
   .itemact{flex-basis:100%;width:100%;margin-top:10px}
   .actbtn{background:var(--navy);color:#fff;border:none;border-radius:11px;font-family:'Oswald';font-weight:600;
@@ -186,9 +199,12 @@ gateOk().then(u=>{
 
   <div class="jobcard">
     <div class="grid2">
-      <div><label class="fl">Customer</label><input type="text" id="j_name" placeholder="Name"></div>
+      <div><label class="fl">Customer</label>
+        <div class="lookrow"><input type="text" id="j_name" placeholder="Name">
+          <button class="lookbtn" onclick="jobberLookup()">🔍</button></div></div>
       <div><label class="fl">Date</label><input type="date" id="j_date"></div>
     </div>
+    <div id="lookout"></div>
     <label class="fl">Customer mobile (for the review text)</label>
     <input type="tel" id="j_phone" placeholder="(970) 555-0123">
     <div class="grid3">
@@ -262,8 +278,8 @@ const SECTIONS = [
   },
   {
     when:"Same night — 10 minutes, phone on the couch", title:"Feed the Machine", items:[
-      {t:"Footage uploaded to shared album", s:"Before/after pairs + reaction clip + GBP photos, dropped in the shared album for Zac. Tonight, not ‘this weekend’.", crit:true, act:{type:"share"}},
-      {t:"GBP photos posted (geotagged)", s:"5+ from today's job straight to the Google Business Profile."},
+      {t:"All job photos → the job's Drive folder", s:"Before, after, receipt + the AI preview. One tap creates the job's own folder in EGC Job Photos and uploads everything new. Tonight, not ‘this weekend’.", crit:true, act:{type:"drive"}},
+      {t:"Video clips shared to Zac", s:"Reaction clip + walkthrough pans via AirDrop/album — video is too heavy to live in this tool.", act:{type:"share"}},
       {t:"Job marked complete in Jobber", s:"Triggers invoicing/receipt flow and closes the loop for Tyler."},
       {t:"Flag the best clip for ads", s:"One message to Zac: ‘this one's the ad.’ That's the whole creative pipeline."},
     ]
@@ -311,6 +327,77 @@ function viewPhoto(src){const v=document.getElementById("pviewer");document.getE
 let AFTER_COUNT=0;
 async function refreshAfterCount(){try{AFTER_COUNT=(await photoList(jobKey(),"after")).length;}catch(e){}}
 
+/* ===== Jobber customer lookup (read-only, via /api/jobber-clients) ===== */
+let LOOK=[];
+async function jobberLookup(){
+  const out=document.getElementById("lookout"); if(!out) return;
+  const q=(document.getElementById("j_name").value||"").trim();
+  if(q.length<2){out.innerHTML=`<div class="looknote">Type at least 2 letters of the name first, then tap 🔍.</div>`;return;}
+  out.innerHTML=`<div class="looknote">Searching Jobber…</div>`;
+  try{
+    const res=await fetch("/api/jobber-clients?q="+encodeURIComponent(q));
+    const j=await res.json().catch(()=>({}));
+    if(res.status===501){out.innerHTML=`<div class="looknote">Jobber lookup isn't connected yet — Zac: run /api/jobber-auth once.</div>`;return;}
+    if(!res.ok||!j.ok){out.innerHTML=`<div class="looknote">Lookup failed — type it manually.</div>`;return;}
+    LOOK=j.clients||[];
+    out.innerHTML=LOOK.length?LOOK.map((c,i)=>`<div class="lkr" onclick="lookPick(${i})">
+        <div class="nm">${esc(c.name)}<small>${esc([c.address,c.phone].filter(Boolean).join(" · "))}</small></div>
+        <span class="go">→</span></div>`).join("")
+      :`<div class="looknote">No Jobber match for “${esc(q)}”.</div>`;
+  }catch(e){out.innerHTML=`<div class="looknote">Lookup unreachable — type it manually.</div>`;}
+}
+function lookPick(i){
+  const c=LOOK[i]; if(!c) return;
+  if(c.name)document.getElementById("j_name").value=c.name;
+  if(c.phone)document.getElementById("j_phone").value=c.phone;
+  ACTIVE.jobberClientId=ACTIVE.jobberClientId||c.id||"";
+  LOOK=[];document.getElementById("lookout").innerHTML="";saveAll();
+}
+
+/* ===== Upload this job's photos to its Google Drive folder ===== */
+function driveKey(){return "egc_drive_"+jobKey();}
+async function photoMark(id){try{const db=await idbOpen();await new Promise(res=>{const tx=db.transaction("p","readwrite");
+  const st=tx.objectStore("p");const g=st.get(id);
+  g.onsuccess=()=>{const v=g.result;if(v){v.uploaded=true;st.put(v);}};
+  tx.oncomplete=()=>res();tx.onerror=()=>res();});}catch(e){}}
+function driveLabel(){
+  const v=id=>document.getElementById(id).value;
+  return [(v("j_date")||ACTIVE.jobdate||new Date().toISOString().slice(0,10)),
+          (v("j_name")||ACTIVE.name||"job"),(ACTIVE.addr||"")].filter(Boolean).join(" — ");
+}
+async function driveUploadAll(btn,doneEl){
+  const job=jobKey();
+  let ps=[]; try{ps=await photoList(job);}catch(e){}
+  const todo=ps.filter(p=>!p.uploaded);
+  const linkHtml=u=>`<a class="drivelink" href="${u}" target="_blank" rel="noopener">Open Drive folder ↗</a>`;
+  const known=localStorage.getItem(driveKey());
+  if(!todo.length){
+    if(doneEl)doneEl.innerHTML=known?linkHtml(known):"";
+    alert(ps.length?"All photos for this job are already in Drive.":"No photos on this job yet — capture before/after first.");return;
+  }
+  btn.disabled=true;
+  let folderUrl=known||"",sent=0,failed=false;
+  for(let i=0;i<todo.length;i+=6){
+    const batch=todo.slice(i,i+6);
+    btn.textContent=`⬆️ Uploading ${Math.min(i+batch.length,todo.length)}/${todo.length}…`;
+    try{
+      const res=await fetch("/api/drive-upload",{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({jobId:job,label:driveLabel(),photos:batch.map(p=>({id:p.id,tag:p.tag,dataUrl:p.dataUrl}))})});
+      const j=await res.json().catch(()=>({}));
+      if(res.status===501){alert("Drive upload isn't connected yet — Zac: run /api/drive-auth once.");failed=true;break;}
+      if(!res.ok||!j.ok){failed=true;break;}
+      folderUrl=j.folderUrl||folderUrl;
+      for(const id of (j.uploaded||[])){await photoMark(id);sent++;}
+    }catch(e){failed=true;break;}
+  }
+  if(folderUrl){try{localStorage.setItem(driveKey(),folderUrl);}catch(e){}}
+  btn.disabled=false;
+  if(failed&&!sent){btn.textContent="⬆️ Retry Drive upload";alert("Upload didn't go through — check signal and tap again. Photos are still on this iPad.");}
+  else if(failed){btn.textContent=`⬆️ ${sent} up — retry the rest`;}
+  else{btn.textContent="✓ Photos in Drive";}
+  if(doneEl&&folderUrl)doneEl.innerHTML=linkHtml(folderUrl);
+}
+
 /* ===== Inline item actions (after/receipt photos + share to album) ===== */
 function actId(si,ii){return "act_"+si+"_"+ii;}
 async function mountActions(){
@@ -319,6 +406,8 @@ async function mountActions(){
     const el=document.getElementById(actId(si,ii)); if(!el) continue;
     if(it.act.type==="photo") await mountPhotoAct(el,it.act,si,ii);
     else if(it.act.type==="share") el.innerHTML=`<button class="actbtn alt" onclick="event.stopPropagation();shareAllPhotos()">📤 Share all job photos</button>`;
+    else if(it.act.type==="drive"){const known=localStorage.getItem(driveKey())||"";
+      el.innerHTML=`<button class="actbtn" onclick="event.stopPropagation();driveUploadAll(this,this.nextElementSibling)">⬆️ Upload to Drive folder</button><span>${known?`<a class="drivelink" href="${known}" target="_blank" rel="noopener">Open Drive folder ↗</a>`:""}</span>`;}
   }}
   refreshAfterCount();
 }
@@ -454,7 +543,9 @@ async function finish(){
          hours_on_site:v("j_hours"),dump_fees:v("j_fees"),notes:v("j_notes"),
          package:ACTIVE.pkg||"",quoted_rate:ACTIVE.rate||"",locked_total:ACTIVE.total||ACTIVE.rate||"",pain:ACTIVE.pain||""},
     garage_guard:GUARD||"not recorded",
-    photos:{after:AFTER_COUNT}, // on-device; count only
+    photos:{after:AFTER_COUNT},
+    drive_folder:(function(){try{return localStorage.getItem(driveKey())||"";}catch(e){return "";}})(),
+    jobber_client_id:ACTIVE.jobberClientId||"",
     checklist:SECTIONS.map(s=>s.items.map(it=>it.t)).flat().map((t,i)=>t+": done").join("\n")};
   // Local backup FIRST — job-costing data (loads/hours/fees) must survive even if HQ is down.
   try{const log=JSON.parse(localStorage.getItem("egc_job_log")||"[]");log.push(payload);

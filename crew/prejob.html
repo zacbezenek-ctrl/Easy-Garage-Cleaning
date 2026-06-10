@@ -64,6 +64,17 @@
   .copybtn{margin-top:10px;background:var(--orange);border:none;color:#fff;font-family:'Oswald';font-weight:600;
            font-size:13px;letter-spacing:.06em;text-transform:uppercase;padding:10px 16px;border-radius:9px;cursor:pointer}
 
+  .lookrow{display:flex;gap:8px}
+  .lookrow input{flex:1}
+  .lookbtn{background:var(--navy);color:#fff;border:none;border-radius:10px;font-family:'Oswald';font-weight:600;
+           font-size:12.5px;letter-spacing:.04em;text-transform:uppercase;padding:0 13px;cursor:pointer;min-height:46px;white-space:nowrap}
+  #lookout{margin-top:8px}
+  .lkr{display:flex;justify-content:space-between;align-items:center;gap:12px;background:#fff;
+       border:1.5px solid var(--line);border-radius:11px;padding:11px 13px;margin-bottom:7px;cursor:pointer}
+  .lkr .nm{font-weight:600;font-size:14.5px}
+  .lkr .nm small{display:block;font-weight:500;color:var(--khaki);font-size:12.5px}
+  .lkr .go{font-family:'Oswald';font-weight:700;color:var(--orange);font-size:17px}
+  .looknote{font-size:12.5px;color:var(--khaki);font-weight:500;margin-top:6px}
   /* inline item actions (photo / text / call / clock) */
   .item{flex-wrap:wrap}
   .itemact{flex-basis:100%;width:100%;margin-top:10px}
@@ -185,9 +196,12 @@ gateOk().then(u=>{
 
   <div class="jobcard">
     <div class="grid2">
-      <div><label class="fl">Customer</label><input type="text" id="j_name" placeholder="Name"></div>
+      <div><label class="fl">Customer</label>
+        <div class="lookrow"><input type="text" id="j_name" placeholder="Name">
+          <button class="lookbtn" onclick="jobberLookup()">🔍</button></div></div>
       <div><label class="fl">Job date</label><input type="date" id="j_date"></div>
     </div>
+    <div id="lookout"></div>
     <label class="fl">Address</label><input type="text" id="j_addr" placeholder="Street address">
     <div class="grid2">
       <div><label class="fl">Package</label><input type="text" id="j_pkg" placeholder="From Game Plan"></div>
@@ -317,6 +331,33 @@ function smsCustomer(si,ii){
 function callOffice(){location.href="tel:"+BIZPHONE;}
 function logStart(){const now=new Date().toLocaleTimeString([], {hour:"numeric",minute:"2-digit"});
   localStorage.setItem(STARTKEY,now);mountActions();}
+
+/* ===== Jobber customer lookup (read-only, via /api/jobber-clients) ===== */
+let LOOK=[];
+async function jobberLookup(){
+  const out=document.getElementById("lookout"); if(!out) return;
+  const q=(document.getElementById("j_name").value||"").trim();
+  if(q.length<2){out.innerHTML=`<div class="looknote">Type at least 2 letters of the name first, then tap 🔍.</div>`;return;}
+  out.innerHTML=`<div class="looknote">Searching Jobber…</div>`;
+  try{
+    const res=await fetch("/api/jobber-clients?q="+encodeURIComponent(q));
+    const j=await res.json().catch(()=>({}));
+    if(res.status===501){out.innerHTML=`<div class="looknote">Jobber lookup isn't connected yet — Zac: run /api/jobber-auth once.</div>`;return;}
+    if(!res.ok||!j.ok){out.innerHTML=`<div class="looknote">Lookup failed — type it manually.</div>`;return;}
+    LOOK=j.clients||[];
+    out.innerHTML=LOOK.length?LOOK.map((c,i)=>`<div class="lkr" onclick="lookPick(${i})">
+        <div class="nm">${esc(c.name)}<small>${esc([c.address,c.phone].filter(Boolean).join(" · "))}</small></div>
+        <span class="go">→</span></div>`).join("")
+      :`<div class="looknote">No Jobber match for “${esc(q)}”.</div>`;
+  }catch(e){out.innerHTML=`<div class="looknote">Lookup unreachable — type it manually.</div>`;}
+}
+function lookPick(i){
+  const c=LOOK[i]; if(!c) return;
+  if(c.name)document.getElementById("j_name").value=c.name;
+  if(c.address)document.getElementById("j_addr").value=c.address;
+  if(c.phone)ACTIVE.phone=ACTIVE.phone||c.phone;
+  LOOK=[];document.getElementById("lookout").innerHTML="";saveAll();
+}
 function saveAll(){
   try{const f={};FIELD_IDS.forEach(id=>{const el=document.getElementById(id);if(el)f[id]=el.value;});
     localStorage.setItem(SAVEKEY,JSON.stringify({state:state,fields:f}));}catch(e){}
