@@ -320,120 +320,27 @@
       </div>
       <div class="quote-form">
         <h3>Get Free Quote</h3>
-        <p class="form-note">Typical response in under 5 minutes · No spam · No obligation</p>
-        <div class="form-steps-wrap">
-          <div class="form-progress-row"><span class="form-step-label">Step 1 of 6: What do you need?</span><span class="form-progress-pct" data-progress-pct>17%</span></div>
-          <div class="form-steps" aria-hidden="true"><div class="form-step-dot active"></div><div class="form-step-dot"></div><div class="form-step-dot"></div><div class="form-step-dot"></div><div class="form-step-dot"></div><div class="form-step-dot"></div></div>
-        </div>
-        <form class="multi-step-form" action="https://api.web3forms.com/submit" method="POST" enctype="multipart/form-data">
+        <p class="form-note">3 quick fields · No spam · No obligation</p>
+        <form class="lead-form-lite" action="https://api.web3forms.com/submit" method="POST">
           <input type="hidden" name="access_key" value="3c4fe752-ac1d-45b9-89dd-4275ea162d22">
           <input type="hidden" name="subject" value="Garage Cleaning Quote - Fort Collins">
           <input type="hidden" name="from_name" value="Easy Garage Cleaning Website">
           <input type="hidden" name="redirect" value="https://easygaragecleaning.com/thank-you.html">
           <input type="checkbox" name="botcheck" class="sr-only" tabindex="-1" autocomplete="off">
-          <input type="hidden" name="What to remove" value="">
-          <input type="hidden" name="estimated_range" value="">
-          <input type="hidden" name="booking_slot" value="">
-          <input type="hidden" name="flow_type" value="">
-          <div class="form-panel active" data-step="1">
-            <div class="service-picker" role="radiogroup" aria-label="Service type">
-              <label class="service-pick-card"><input type="radio" name="Service type" value="Garage Cleanout" checked required><svg class="spc-icon" width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 10h18v10H3zM5 10V6h14v4" stroke="currentColor" stroke-width="1.5" fill="none"/></svg><span class="spc-title">Garage Cleanout</span><span class="spc-desc">Full haul-out &amp; sweep</span></label>
-              <label class="service-pick-card"><input type="radio" name="Service type" value="Junk Removal"><svg class="spc-icon" width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h11v8H3zM14 10h3l3 3v2h-6V10z" stroke="currentColor" stroke-width="1.5" fill="none"/><circle cx="7" cy="17" r="1.5" fill="currentColor"/><circle cx="18" cy="17" r="1.5" fill="currentColor"/></svg><span class="spc-title">Junk Removal</span><span class="spc-desc">Single items to full loads</span></label>
-              <label class="service-pick-card"><input type="radio" name="Service type" value="Furniture Removal"><svg class="spc-icon" width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12v4h16v-4l-2-5H6l-2 5zM4 16v2h16v-2" stroke="currentColor" stroke-width="1.5" fill="none"/></svg><span class="spc-title">Furniture</span><span class="spc-desc">Couches, beds, dressers</span></label>
-              <label class="service-pick-card"><input type="radio" name="Service type" value="Appliance Removal"><svg class="spc-icon" width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3v6M15 3v6M6 9h12v8a3 3 0 01-3 3H9a3 3 0 01-3-3V9z" stroke="currentColor" stroke-width="1.5" fill="none"/></svg><span class="spc-title">Appliances</span><span class="spc-desc">Fridges, washers, dryers</span></label>
-              <label class="service-pick-card"><input type="radio" name="Service type" value="Mattress Removal"><svg class="spc-icon" width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h16v6H4zM4 12V8h6v4M14 8h6v4" stroke="currentColor" stroke-width="1.5" fill="none"/></svg><span class="spc-title">Mattress</span><span class="spc-desc">Mattress &amp; box spring</span></label>
-              <label class="service-pick-card"><input type="radio" name="Service type" value="Storage Unit Cleanout"><svg class="spc-icon" width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7l8-4 8 4v10l-8 4-8-4V7z" stroke="currentColor" stroke-width="1.5" fill="none"/></svg><span class="spc-title">Storage Unit</span><span class="spc-desc">Empty a paid unit fast</span></label>
-              <label class="service-pick-card"><input type="radio" name="Service type" value="Garage Organization"><svg class="spc-icon" width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z" stroke="currentColor" stroke-width="1.5" fill="none"/></svg><span class="spc-title">Organization</span><span class="spc-desc">Zones, shelves, bins</span></label>
-              <label class="service-pick-card"><input type="radio" name="Service type" value="Other"><svg class="spc-icon" width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9" stroke="currentColor" stroke-width="1.5" fill="none"/><path d="M9.5 9a2.5 2.5 0 014.5 1c0 1.5-2 2-2 3.5M12 17h.01" stroke="currentColor" stroke-width="1.5"/></svg><span class="spc-title">Other</span><span class="spc-desc">Not sure — we'll help</span></label>
-            </div>
-            <p class="form-error" role="alert" aria-live="polite"></p>
-            <button type="button" class="btn-primary form-submit" data-next style="margin-top:12px;">Next: Job size →</button>
-          </div>
-          <div class="form-panel" data-step="2">
-            <div class="form-row"><div class="field"><label for="size-garagecleani">Approximate job size</label>
-              <select id="size-garagecleani" name="Job size" required data-size-tier>
-                <option value="">Choose size for estimate…</option>
-                <option value="single" data-flow="call_text" data-range="Call for price">Single item / few bags — call for price</option>
-                <option value="small_light" data-flow="call_text" data-range="$250–$400">Small haul / corner of the garage ($250–$400)</option>
-                <option value="small_plus" data-flow="booking" data-range="$400–$650">Basic garage clear-out ($400–$650)</option>
-                <option value="medium" data-flow="booking" data-range="$650–$1,200">Full two-car cleanout ($650–$1,200)</option>
-                <option value="large" data-flow="booking" data-range="$1,200–$3,500">Garage turnaround / whole-property ($1,200–$3,500)</option>
-              </select>
-              <p class="field-hint">Final price depends on volume, weight, accessibility, dump fees. Text photos for exact quote.</p>
-            </div></div>
-            <div class="form-nav"><button type="button" class="btn-secondary" data-prev>← Back</button><button type="button" class="btn-primary" data-next>Next: Your estimate →</button></div>
-          </div>
-          <div class="form-panel" data-step="3" data-quote-result-step>
-            <div class="quote-result-panel" data-result-call hidden>
-              <h4>Your job looks like a smaller pickup</h4>
-              <p class="quote-result-note">Call or text for the fastest booking — we respond in about 5 minutes with your exact flat rate.</p>
-              <div class="quote-result-actions">
-                <a href="tel:+19709991818" class="btn-primary">Call (970) 999-1818</a>
-                <a href="sms:+19709991818?body=Hi!%20I%20need%20garage%20cleaning%20in%20Fort%20Collins." class="btn-secondary" style="color:var(--paper);border-color:rgba(255,255,255,.25);">Text Photos</a>
-              </div>
-              <p class="form-note">Prefer the form? Continue below — we'll still email your request.</p>
-            </div>
-            <div class="quote-result-panel" data-result-booking hidden>
-              <h4>Estimated price range</h4>
-              <p class="quote-result-range" data-result-range>$400–$650</p>
-              <p class="quote-result-note">Pick a preferred time — we'll confirm your exact slot within 5 minutes. Final price depends on volume, weight, accessibility, dump fees. Text photos for exact quote.</p>
-              <fieldset class="booking-slots" aria-label="Preferred booking time">
-                <legend class="sr-only">Booking time options</legend>
-                <label class="booking-slot"><input type="radio" name="booking_slot_choice" value="Today PM"> Today PM</label>
-                <label class="booking-slot"><input type="radio" name="booking_slot_choice" value="Tomorrow AM"> Tomorrow AM</label>
-                <label class="booking-slot"><input type="radio" name="booking_slot_choice" value="Tomorrow PM"> Tomorrow PM</label>
-                <label class="booking-slot"><input type="radio" name="booking_slot_choice" value="This week"> This week</label>
-                <label class="booking-slot"><input type="radio" name="booking_slot_choice" value="Flexible"> Flexible — quote first</label>
-              </fieldset>
-            </div>
-            <p class="form-error" role="alert" aria-live="polite"></p>
-            <div class="form-nav"><button type="button" class="btn-secondary" data-prev>← Back</button><button type="button" class="btn-primary" data-next>Next: Location →</button></div>
-          </div>
-          <div class="form-panel" data-step="4">
-            <div class="form-row"><div class="field"><label for="city-garagecleani">City</label>
-              <select id="city-garagecleani" name="City" required>
-                <option value="">Select your city…</option>
-                <option value="Fort Collins">Fort Collins</option>
-                <option value="Loveland">Loveland</option>
-                <option value="Windsor">Windsor</option>
-                <option value="Timnath">Timnath</option>
-                <option value="Wellington">Wellington</option>
-                <option value="Severance">Severance</option>
-                <option value="LaPorte">LaPorte</option>
-                <option value="Other Northern Colorado">Other Northern Colorado</option>
-              </select>
-            </div></div>
-            <div class="form-row"><div class="field"><label for="zip-garagecleani">Zip code (optional)</label><input type="text" id="zip-garagecleani" name="Zip code" inputmode="numeric" placeholder="80525" autocomplete="postal-code" /><p class="field-hint">Helps us confirm you're in our no-surcharge service area.</p></div></div>
-            <div class="form-nav"><button type="button" class="btn-secondary" data-prev>← Back</button><button type="button" class="btn-primary" data-next>Next: Photos →</button></div>
-          </div>
-          <div class="form-panel" data-step="5">
-            <div class="form-row"><div class="field"><label for="photos-garagecleani">Upload photos (recommended)</label><input type="file" id="photos-garagecleani" name="Photos" accept="image/*" multiple /></div></div>
-            <div class="photo-previews" data-photo-previews aria-live="polite"></div>
-            <div class="form-row"><div class="field"><label for="photo-desc-garagecleani">Describe what we see (optional)</label><textarea id="photo-desc-garagecleani" name="Photo description" placeholder="Wide shot of garage, couch in corner, etc."></textarea></div></div>
-            <p class="form-note" style="margin-bottom:12px;">No photos? Text them to (970) 999-1818 — often faster.</p>
-            <div class="form-nav"><button type="button" class="btn-secondary" data-prev>← Back</button><button type="button" class="btn-primary" data-next>Next: Contact →</button></div>
-          </div>
-          <div class="form-panel" data-step="6">
-            <div class="form-row two">
-              <div class="field"><label for="name-garagecleani">Name</label><input type="text" id="name-garagecleani" name="Name" required autocomplete="name" placeholder="Your name" /></div>
-              <div class="field"><label for="phone-f-garagecleani">Phone</label><input type="tel" id="phone-f-garagecleani" name="Phone" required autocomplete="tel" inputmode="tel" placeholder="(970) 999-1818" /></div>
-            </div>
-            <div class="form-row"><div class="field"><label for="email-garagecleani">Email (optional)</label><input type="email" id="email-garagecleani" name="Email" autocomplete="email" placeholder="you@email.com" /></div></div>
-            <div class="form-row two">
-              <div class="field"><label for="date-garagecleani">Preferred date (optional)</label><input type="date" id="date-garagecleani" name="Preferred date" /></div>
-              <div class="field"><label for="timing-garagecleani">Preferred timing</label>
-                <select id="timing-garagecleani" name="Preferred timing">
-                  <option value="ASAP / Same-day">ASAP / Same-day</option>
-                  <option value="This week">This week</option>
-                  <option value="Next week">Next week</option>
-                  <option value="Flexible">Flexible — just getting a quote</option>
-                </select>
-              </div>
-            </div>
-            <p class="form-note" style="margin-top:8px">Most quotes returned in under 5 minutes during business hours.</p>
-            <p class="form-privacy">We only use your info for this quote — never sold or shared.</p>
-            <div class="form-nav"><button type="button" class="btn-secondary" data-prev>← Back</button><button type="submit" class="btn-primary form-submit" data-submit-label>Confirm booking request →</button></div>
-          </div>
+          <input type="hidden" name="source" value="Website">
+          <div class="form-row"><div class="field"><label for="lf-name">Name</label><input type="text" id="lf-name" name="name" required autocomplete="name" placeholder="First name"></div></div>
+          <div class="form-row"><div class="field"><label for="lf-phone">Phone</label><input type="tel" id="lf-phone" name="phone" required autocomplete="tel" inputmode="tel" placeholder="Your mobile number"></div></div>
+          <div class="form-row"><div class="field"><label for="lf-size">Garage size</label>
+            <select id="lf-size" name="items" required>
+              <option value="" disabled selected>Choose your garage&hellip;</option>
+              <option value="Garage cleanout — 1-car">1-car garage</option>
+              <option value="Garage cleanout — 2-car">2-car garage</option>
+              <option value="Garage cleanout — 3-car or larger">3-car or larger</option>
+              <option value="Garage + other spaces (basement / shed / attic)">Garage + other spaces</option>
+              <option value="Not sure — call me">Not sure — call me</option>
+            </select></div></div>
+          <button type="submit" class="btn-primary form-submit" style="width:100%;margin-top:14px">Get My Flat-Rate Quote &rarr;</button>
+          <p class="form-note" style="margin-top:10px">3 fields, 30 seconds — we call or text you back. Got photos? Text them to <a href="sms:+19709991818">(970) 999-1818</a> for the fastest exact quote.</p>
         </form>
       </div>
     </div>
