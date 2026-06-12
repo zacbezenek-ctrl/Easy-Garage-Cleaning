@@ -529,14 +529,40 @@ fbq('init','970332989051988');fbq('track','PageView');
       <h1 class="hero-title">Fort Collins Garage Cleanouts — <em>Buried to Parked-Inside in One Day</em></h1>
       <p class="hero-sub">Garage cleanouts and full garage turnarounds are all we do. We haul, sort, donate, organize, and sweep — most jobs run <strong>$400&ndash;$3,500 flat-rate</strong> depending on how far you want the turnaround to go, and your car parks inside that night. Call <a href="tel:+19709991818">(970) 999-1818</a> for a locked quote, no hidden fees.</p>
       <div class="hero-ctas">
-        <a href="tel:+19709991818" class="btn-primary" data-cta="hero-call">Call (970) 999-1818 for a Quote</a>
-        <a href="sms:+19709991818?body=Hi!%20I'd%20like%20a%20garage%20cleanout%20quote.%20Here%20are%20photos%20of%20my%20garage:" class="btn-secondary btn-lg">Or Text Photos</a>
+        <a href="tel:+19709991818" class="btn-primary" data-cta="hero-call">Call (970) 999-1818</a>
+        <a href="#process" class="btn-secondary btn-lg">How it works</a>
       </div>
     </div>
     <div class="hero-visual">
-      <div class="hero-ba" role="img" aria-label="Before and after garage cleanout">
-        <div class="hero-ba-cell before"><picture><source srcset="/images/garage-before.webp" type="image/webp"><img src="/images/garage-before.jpg" alt="Cluttered garage before cleanout" loading="eager" width="1200" height="1200" fetchpriority="high"></picture><span class="hero-ba-label">BEFORE</span></div>
-        <div class="hero-ba-cell after"><picture><source srcset="/images/garage-after.webp" type="image/webp"><img src="/images/garage-after.jpg" alt="Clean garage after cleanout" loading="eager" width="1200" height="1200" fetchpriority="high"></picture><span class="hero-ba-label">AFTER</span></div>
+      <div class="quote-form hero-form">
+        <h3 style="margin-top:0">Get your free flat-rate quote</h3>
+        <p class="form-note" style="margin:-6px 0 14px">Garage cleanouts $400&ndash;$3,500 &middot; we call or text you right back</p>
+        <form class="lead-form-lite" action="https://api.web3forms.com/submit" method="POST">
+          <input type="hidden" name="access_key" value="3c4fe752-ac1d-45b9-89dd-4275ea162d22">
+          <input type="hidden" name="subject" value="New Quote Request - Easy Garage Cleaning (hero)">
+          <input type="hidden" name="from_name" value="Easy Garage Cleaning Website">
+          <input type="hidden" name="redirect" value="https://easygaragecleaning.com/thank-you.html">
+          <input type="checkbox" name="botcheck" class="sr-only" tabindex="-1" autocomplete="off">
+          <input type="hidden" name="source" value="Website (hero)">
+          <input type="hidden" name="fbc" value="">
+          <input type="hidden" name="fbp" value="">
+          <input type="hidden" name="fbclid" value="">
+          <input type="hidden" name="landing_url" value="">
+          <input type="hidden" name="referrer" value="">
+          <div class="form-row"><div class="field"><label for="hf-name">Name</label><input type="text" id="hf-name" name="name" required autocomplete="name" placeholder="First name"></div></div>
+          <div class="form-row"><div class="field"><label for="hf-phone">Phone</label><input type="tel" id="hf-phone" name="phone" required autocomplete="tel" inputmode="tel" placeholder="Your mobile number"></div></div>
+          <div class="form-row"><div class="field"><label for="hf-size">Garage size</label>
+            <select id="hf-size" name="items" required>
+              <option value="" disabled selected>Choose your garage&hellip;</option>
+              <option value="Garage cleanout — 1-car">1-car garage</option>
+              <option value="Garage cleanout — 2-car">2-car garage</option>
+              <option value="Garage cleanout — 3-car or larger">3-car or larger</option>
+              <option value="Garage + other spaces (basement / shed / attic)">Garage + other spaces</option>
+              <option value="Not sure — call me">Not sure — call me</option>
+            </select></div></div>
+          <button type="submit" class="btn-primary form-submit" style="width:100%;margin-top:14px">Get My Flat-Rate Quote &rarr;</button>
+          <p class="form-note" style="margin-top:10px">Prefer to talk? Call <a href="tel:+19709991818">(970) 999-1818</a> or text photos for the fastest exact quote.</p>
+        </form>
       </div>
     </div>
   </div>
