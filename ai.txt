@@ -9,6 +9,7 @@ robots: https://easygaragecleaning.com/robots.txt
 homepage: https://easygaragecleaning.com/
 book: https://easygaragecleaning.com/book.html
 pricing: https://easygaragecleaning.com/pricing.html
+garage_turnaround: https://easygaragecleaning.com/garage-turnaround-fort-collins-co.html
 what_we_take: https://easygaragecleaning.com/what-we-take.html
 faq: https://easygaragecleaning.com/faq.html
 about: https://easygaragecleaning.com/about.html
