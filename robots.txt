@@ -1,8 +1,13 @@
-# GEO / AIO strategy: Allow AI crawlers for discoverability in ChatGPT, Perplexity,
-# Claude, Google AI Overviews, and other answer engines. The wildcard User-agent: *
-# already permits all bots (including AI crawlers) — no per-bot Allow blocks needed.
-# Canonical business context:
-# https://easygaragecleaning.com/llms.txt and https://easygaragecleaning.com/ai.txt
+# GEO / AIO policy: AI crawlers and answer engines are WELCOME on public pages.
+# Explicitly permitted (covered by the User-agent: * group below — intentionally no
+# per-bot groups, so the Disallow list stays authoritative for every crawler):
+#   GPTBot, OAI-SearchBot, ChatGPT-User, ClaudeBot, Claude-User, Claude-SearchBot,
+#   PerplexityBot, Perplexity-User, Google-Extended, Applebot-Extended, CCBot,
+#   meta-externalagent, Amazonbot, DuckAssistBot, cohere-ai, MistralAI-User, Bytespider
+# Machine-readable business context for LLMs:
+#   https://easygaragecleaning.com/llms.txt        (summary)
+#   https://easygaragecleaning.com/llms-full.txt   (full reference)
+#   https://easygaragecleaning.com/ai.txt          (URL index)
 
 User-agent: *
 Allow: /

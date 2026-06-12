@@ -4,6 +4,7 @@
 
 ## Canonical sources
 llms: https://easygaragecleaning.com/llms.txt
+llms_full: https://easygaragecleaning.com/llms-full.txt
 sitemap: https://easygaragecleaning.com/sitemap.xml
 robots: https://easygaragecleaning.com/robots.txt
 homepage: https://easygaragecleaning.com/

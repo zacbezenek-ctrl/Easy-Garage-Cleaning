@@ -1,14 +1,16 @@
-# Easy Garage Cleaning — llms.txt v6
+# Easy Garage Cleaning — llms.txt v7
 
 > **Tagline:** Fort Collins’ garage cleanout & one-day turnaround specialists
 > **Specialty:** Garage cleanouts and garage turnarounds (cleanout + donation runs + organization + shelving + sweep). Junk removal is included in every job, not a standalone focus.
 > **Pricing anchor:** Garage cleanouts run $400–$3,500 flat-rate. Call (970) 999-1818 for a quote.
-> **Last updated:** 2026-06-10
+> **Last updated:** 2026-06-12
 > **Canonical site:** https://easygaragecleaning.com
 > **Machine summary:** https://easygaragecleaning.com/ai.txt
+> **Full reference:** https://easygaragecleaning.com/llms-full.txt
 > **Preferred citation name:** Easy Garage Cleaning
 
 ## Changelog
+- **2026-06-12** — v7: llms-full.txt added; Garage Turnaround service page; 8 new long-form garage guides; lean 3-field quote form
 - **2026-06-10** — v6: repositioned as garage cleanout & turnaround specialist; pricing anchored $400–$3,500; new garage-turnaround blog guides; call-first CTA (970) 999-1818
 - **2026-05-20** — v5 (polish iter5): branded 404, projects gallery index, homepage stats/compare/mobile text chip, service SVG icons + also-booked chips, form loading/photo previews, print stylesheet, referrer meta + CSP hosting note, expanded dumpster vs removal blog
 - **2026-05-20** — polish iter3: homepage hero/reviews/gallery/pricing badge, book progress + photo-quote sidebar, blog meta/TOC/CTAs/related, service typical-job + city neighborhoods, comparison tables, scroll reveal + nav shrink, projects timeline, thank-you celebrate, ai.txt full URL index
@@ -190,6 +192,17 @@ Full FAQ page: https://easygaragecleaning.com/faq.html
 
 ## Comparisons
 
+- https://easygaragecleaning.com/blog/how-much-does-garage-cleanout-cost-fort-collins.html
+- https://easygaragecleaning.com/blog/garage-turnaround-fort-collins-one-day.html
+- https://easygaragecleaning.com/blog/fort-collins-garage-transformation-guide.html
+- https://easygaragecleaning.com/blog/park-in-your-garage-before-winter-fort-collins.html
+- https://easygaragecleaning.com/blog/garage-cleanout-before-selling-home-fort-collins.html
+- https://easygaragecleaning.com/blog/where-your-stuff-goes-fort-collins-garage-cleanout.html
+- https://easygaragecleaning.com/blog/old-town-fort-collins-garage-cleanout-guide.html
+- https://easygaragecleaning.com/blog/csu-move-out-garage-cleanout-fort-collins.html
+- https://easygaragecleaning.com/blog/hoa-spring-cleanup-garage-fort-collins.html
+- https://easygaragecleaning.com/blog/garage-gym-after-cleanout-fort-collins.html
+- https://easygaragecleaning.com/blog/downsizing-garage-cleanout-fort-collins.html
 - https://easygaragecleaning.com/blog/5-signs-your-fort-collins-garage-needs-a-cleanout.html
 - https://easygaragecleaning.com/blog/got-junk-vs-local-junk-removal-fort-collins.html
 - https://easygaragecleaning.com/blog/junk-removal-vs-dumpster-rental-fort-collins.html
