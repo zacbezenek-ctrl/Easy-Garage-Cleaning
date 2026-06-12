@@ -42,4 +42,29 @@
   }
   if (document.readyState !== 'loading') fill();
   else document.addEventListener('DOMContentLoaded', fill);
+
+  /* Mirror lead submissions to /api/web-lead (same-origin relay → Zapier
+     "EGC Website Lead → Instant Text": SMS alert + Meta CAPI Lead).
+     Fire-and-forget: never blocks or delays the native Web3Forms POST,
+     and a relay failure is silent — Web3Forms email stays the source of
+     truth, this only powers the instant-text/CAPI leg. */
+  document.addEventListener('submit', function (e) {
+    var f = e.target;
+    if (!f || !f.classList || !f.classList.contains('lead-form-lite')) return;
+    try {
+      var bot = f.querySelector('input[name="botcheck"]');
+      if (bot && bot.checked) return;
+      var fd = new FormData(f);
+      var payload = { page_url: location.href };
+      ['name', 'phone', 'items', 'source', 'subject', 'fbc', 'fbp', 'fbclid', 'landing_url', 'referrer'].forEach(function (k) {
+        payload[k] = String(fd.get(k) || '');
+      });
+      var body = JSON.stringify(payload);
+      if (window.fetch) {
+        fetch('/api/web-lead', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: body, keepalive: true }).catch(function () {});
+      } else if (navigator.sendBeacon) {
+        navigator.sendBeacon('/api/web-lead', body);
+      }
+    } catch (err) {}
+  }, true);
 })();
