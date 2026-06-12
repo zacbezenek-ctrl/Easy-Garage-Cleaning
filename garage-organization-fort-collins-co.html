@@ -328,6 +328,11 @@
           <input type="hidden" name="redirect" value="https://easygaragecleaning.com/thank-you.html">
           <input type="checkbox" name="botcheck" class="sr-only" tabindex="-1" autocomplete="off">
           <input type="hidden" name="source" value="Website">
+          <input type="hidden" name="fbc" value="">
+          <input type="hidden" name="fbp" value="">
+          <input type="hidden" name="fbclid" value="">
+          <input type="hidden" name="landing_url" value="">
+          <input type="hidden" name="referrer" value="">
           <div class="form-row"><div class="field"><label for="lf-name">Name</label><input type="text" id="lf-name" name="name" required autocomplete="name" placeholder="First name"></div></div>
           <div class="form-row"><div class="field"><label for="lf-phone">Phone</label><input type="tel" id="lf-phone" name="phone" required autocomplete="tel" inputmode="tel" placeholder="Your mobile number"></div></div>
           <div class="form-row"><div class="field"><label for="lf-size">Garage size</label>
@@ -533,4 +538,5 @@ function initMultiStepForm(form){
   window.addEventListener('scroll',onScroll,{passive:true});
 })();
 </script>
+<script src="/fb-capture.js" defer></script>
 </body></html>
