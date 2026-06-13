@@ -27,6 +27,18 @@ function hostOf(value) {
   try { return new URL(value).host; } catch { return ''; }
 }
 
+// Resolve the hook URL tolerant of stray whitespace in the variable NAME — a
+// dashboard env var saved as "WEBSITE_LEAD_HOOK_URL " (trailing space) is a
+// silent footgun: it's present but env.WEBSITE_LEAD_HOOK_URL reads undefined.
+// Prefer the exact key; otherwise match any key that trims to the same name.
+function resolveHook(env) {
+  if (env && env.WEBSITE_LEAD_HOOK_URL) return env.WEBSITE_LEAD_HOOK_URL;
+  for (const k of Object.keys(env || {})) {
+    if (k.trim() === 'WEBSITE_LEAD_HOOK_URL' && env[k]) return env[k];
+  }
+  return '';
+}
+
 function originAllowed(request) {
   const origin = request.headers.get('Origin');
   const referer = request.headers.get('Referer');
@@ -76,7 +88,7 @@ export async function onRequestPost({ request, env }) {
     return json(400, { ok: false, error: 'name and phone required' });
   }
 
-  const hook = env.WEBSITE_LEAD_HOOK_URL;
+  const hook = resolveHook(env);
   if (!hook) return json(503, { ok: false, error: 'Relay not configured' });
 
   const params = new URLSearchParams();
@@ -106,7 +118,7 @@ export async function onRequestPost({ request, env }) {
 // Health/config probe — reports whether the hook is wired (boolean only, never
 // the URL). Lets us confirm the deploy + env var without firing a real lead.
 export async function onRequestGet({ env }) {
-  return new Response(JSON.stringify({ ok: true, configured: !!env.WEBSITE_LEAD_HOOK_URL }), {
+  return new Response(JSON.stringify({ ok: true, configured: !!resolveHook(env) }), {
     status: 200,
     headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
   });
