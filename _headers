@@ -3,3 +3,10 @@
 /crew/*
   X-Robots-Tag: noindex
   Cache-Control: no-cache
+
+# Lead-attribution + relay script — must update instantly on deploy, or the
+# form silently stops mirroring leads to Zapier. Revalidate every load (cheap
+# ETag check) instead of the default 4h cache. Bump the ?v= tag in the <script>
+# refs for an immediate bust of already-cached copies.
+/fb-capture.js
+  Cache-Control: no-cache
