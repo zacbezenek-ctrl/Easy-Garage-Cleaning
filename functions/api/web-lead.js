@@ -56,15 +56,21 @@ function hostOf(value) {
   try { return new URL(value).host; } catch { return ''; }
 }
 
-// Resolve the hook URL tolerant of stray whitespace in the variable NAME — a
-// dashboard env var saved as "WEBSITE_LEAD_HOOK_URL " (trailing space) is a
-// silent footgun: it's present but env.WEBSITE_LEAD_HOOK_URL reads undefined.
-function resolveHook(env) {
-  if (env && env.WEBSITE_LEAD_HOOK_URL) return env.WEBSITE_LEAD_HOOK_URL;
+// Read an env var tolerant of stray whitespace in the NAME — a dashboard var
+// saved as "WEBSITE_LEAD_HOOK_URL " (trailing space) is a silent footgun: it's
+// present but env.WEBSITE_LEAD_HOOK_URL reads undefined. Prefer the exact key;
+// otherwise match any key that trims to the requested name. Used for both the
+// hook URL and the OpenAI key, since both have bitten us on a stray space.
+function envVar(env, name) {
+  if (env && env[name]) return env[name];
   for (const k of Object.keys(env || {})) {
-    if (k.trim() === 'WEBSITE_LEAD_HOOK_URL' && env[k]) return env[k];
+    if (k.trim() === name && env[k]) return env[k];
   }
   return '';
+}
+
+function resolveHook(env) {
+  return envVar(env, 'WEBSITE_LEAD_HOOK_URL');
 }
 
 function originAllowed(request) {
@@ -99,7 +105,7 @@ function isInHours() {
 async function writeOpener(env, firstName, service, inHours) {
   const r = await fetch('https://api.openai.com/v1/chat/completions', {
     method: 'POST',
-    headers: { Authorization: 'Bearer ' + env.openaiapi, 'Content-Type': 'application/json' },
+    headers: { Authorization: 'Bearer ' + envVar(env, 'openaiapi'), 'Content-Type': 'application/json' },
     body: JSON.stringify({
       model: 'gpt-4o-mini',
       temperature: 0.7,
@@ -162,7 +168,7 @@ export async function onRequestPost({ request, env }) {
   // connection. Best-effort: any failure leaves lead_text empty and the alert
   // + Meta legs forward unchanged.
   let leadText = '';
-  if (env.openaiapi) {
+  if (envVar(env, 'openaiapi')) {
     try {
       leadText = await writeOpener(env, name.split(/\s+/)[0] || '', String(body.items || '').trim(), isInHours());
     } catch { /* forward without an opener */ }
@@ -203,7 +209,7 @@ export async function onRequestGet({ env }) {
   return new Response(JSON.stringify({
     ok: true,
     configured: !!resolveHook(env),
-    openerReady: !!(env && env.openaiapi),
+    openerReady: !!envVar(env, 'openaiapi'),
   }), {
     status: 200,
     headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
