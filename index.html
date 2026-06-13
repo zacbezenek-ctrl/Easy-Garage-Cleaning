@@ -1203,6 +1203,6 @@ function initMultiStepForm(form){
 
 <script>(function(){const s=document.getElementById('mobile-quote-sheet');if(!s||window.matchMedia('(min-width:1024px)').matches)return;let shown=false,d=sessionStorage.getItem('egc-quote-sheet')==='1';s.querySelector('.mobile-quote-sheet-close')?.addEventListener('click',()=>{s.classList.remove('visible');sessionStorage.setItem('egc-quote-sheet','1');d=true;});window.addEventListener('scroll',()=>{if(d||shown)return;const m=document.documentElement.scrollHeight-window.innerHeight;if(m>0&&window.scrollY/m>=0.5){shown=true;s.classList.add('visible');}},{passive:true});})();</script>
 <script>(function(){const btt=document.getElementById('back-to-top');if(!btt)return;const onScroll=()=>{btt.hidden=window.scrollY<420};btt.addEventListener('click',e=>{e.preventDefault();window.scrollTo({top:0,behavior:'smooth'})});window.addEventListener('scroll',onScroll,{passive:true});onScroll();})();</script>
-<script src="/fb-capture.js" defer></script>
+<script src="/fb-capture.js?v=20260612b" defer></script>
 </body>
 </html>
