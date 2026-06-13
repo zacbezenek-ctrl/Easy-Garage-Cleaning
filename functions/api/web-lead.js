@@ -4,32 +4,30 @@
  *
  * The quote forms POST natively to Web3Forms (the email leg). fb-capture.js
  * mirrors the same submission here, and this function:
- *   1. Forwards to the Zapier Catch Hook for "EGC Website Lead → Instant Text"
- *      (team SMS alert + Meta CAPI Lead).
- *   2. Optionally texts the lead back in Tyler's voice, time-of-day aware, via
- *      OpenPhone — mirroring the Facebook-lead flow so replies thread to Tyler.
+ *   1. Writes the lead an opener in Tyler's voice (gpt-4o-mini), time-of-day
+ *      aware — identical style to the Facebook-lead Zap.
+ *   2. Forwards everything (incl. that opener + a clean E.164 phone) to the
+ *      Zapier Catch Hook for "EGC Website Lead → Instant Text".
  *
- * Config (Cloudflare Pages → Settings → Variables and Secrets, PRODUCTION):
- *   WEBSITE_LEAD_HOOK_URL   — Zapier Catch Hook URL (team alert + Meta Lead).
- *   openaiapi               — OpenAI key (writes the SMS opener). Already set.
- *   OPENPHONE_API_KEY       — OpenPhone API key (sends the text to the lead).
- *                             Get it in OpenPhone → Settings → API. Without it,
- *                             the text-back simply no-ops (alert still fires).
- *   WEBSITE_AUTOTEXT        — set to "on" to actually send the lead text. Until
- *                             then the opener is never sent — a deliberate
- *                             go-live switch so customers aren't texted untested.
- *   OPENPHONE_FROM_NUMBER   — optional; the OpenPhone/Quo line to send from.
- *                             Defaults to +19709991818 (Customer Intake).
+ * The Zap fires the team SMS alert + Meta CAPI Lead as before, and — once you
+ * add a single OpenPhone "Send Message" step — texts the lead the opener
+ * through your EXISTING OpenPhone connection (no API key needed here). Map that
+ * step's fields to the trigger's `lead_text` (Message) and `lead_phone_e164`
+ * (To Number); replies thread back to Tyler in Quo.
  *
- * Field names (name/phone/items/source/subject) match the trigger's stored
- * sample. They're sent BOTH as query params (so querystring.* references
- * resolve) and as a flat JSON body (so root-level references resolve).
+ * Config (Cloudflare Pages → Variables and Secrets, PRODUCTION):
+ *   WEBSITE_LEAD_HOOK_URL — Zapier Catch Hook URL.
+ *   openaiapi             — OpenAI key (writes the opener). Already set. If it's
+ *                           ever missing, the relay simply forwards without an
+ *                           opener and the alert + Meta legs are unaffected.
+ *
+ * Field names match the trigger's stored sample; sent BOTH as query params (so
+ * querystring.* references resolve) and as flat JSON (so root-level refs do).
  */
 
 const ALLOWED_HOST_RE = /(^|\.)easygaragecleaning\.com$|(\.pages\.dev)$|^localhost(:\d+)?$|^127\.0\.0\.1(:\d+)?$/;
 const MAX_BODY = 32 * 1024;
 const FIELDS = ['name', 'phone', 'items', 'source', 'subject', 'fbc', 'fbp', 'fbclid', 'landing_url', 'referrer', 'page_url'];
-const DEFAULT_FROM = '+19709991818'; // Customer Intake (Quo/OpenPhone)
 
 // Lifted verbatim from the Facebook-lead Zap's AI step so the website opener
 // reads identically — Tyler's casual lowercase voice, service-aware, and it
@@ -61,7 +59,6 @@ function hostOf(value) {
 // Resolve the hook URL tolerant of stray whitespace in the variable NAME — a
 // dashboard env var saved as "WEBSITE_LEAD_HOOK_URL " (trailing space) is a
 // silent footgun: it's present but env.WEBSITE_LEAD_HOOK_URL reads undefined.
-// Prefer the exact key; otherwise match any key that trims to the same name.
 function resolveHook(env) {
   if (env && env.WEBSITE_LEAD_HOOK_URL) return env.WEBSITE_LEAD_HOOK_URL;
   for (const k of Object.keys(env || {})) {
@@ -73,8 +70,6 @@ function resolveHook(env) {
 function originAllowed(request) {
   const origin = request.headers.get('Origin');
   const referer = request.headers.get('Referer');
-  // Same-origin native fetch sometimes omits both — payload validation below
-  // is the real filter, this just rejects obvious off-origin abuse.
   if (!origin && !referer) return true;
   return ALLOWED_HOST_RE.test(hostOf(origin) || hostOf(referer));
 }
@@ -87,9 +82,8 @@ function normalizePhone(raw) {
   return '';
 }
 
-// Business hours: Mon–Sat 07:00–19:00 Mountain. new Date() is fine in the
-// Functions runtime; on any failure we fail OPEN to in-hours (better to say
-// "calling in a couple minutes" than to wrongly promise tomorrow).
+// Business hours: Mon–Sat 07:00–19:00 Mountain. Fails OPEN to in-hours (better
+// to say "calling in a couple minutes" than to wrongly promise tomorrow).
 function isInHours() {
   try {
     const parts = new Intl.DateTimeFormat('en-US', {
@@ -121,35 +115,6 @@ async function writeOpener(env, firstName, service, inHours) {
   return ((j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content) || '').trim();
 }
 
-async function sendOpenPhone(env, toE164, content) {
-  const from = String(env.OPENPHONE_FROM_NUMBER || DEFAULT_FROM).trim();
-  const r = await fetch('https://api.openphone.com/v1/messages', {
-    method: 'POST',
-    headers: { Authorization: env.OPENPHONE_API_KEY, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ from, to: [toE164], content }),
-  });
-  if (!r.ok) throw new Error('openphone ' + r.status + ' ' + (await r.text().catch(() => '')).slice(0, 160));
-  return true;
-}
-
-// Text the lead back like the Facebook flow does. No-ops unless the OpenPhone
-// key is present AND WEBSITE_AUTOTEXT === "on" (the go-live switch), and unless
-// OpenAI is configured. Runs in the background via waitUntil; never throws into
-// the request path.
-async function maybeTextLead(env, lead) {
-  if (!env || !env.OPENPHONE_API_KEY) return;
-  if (String(env.WEBSITE_AUTOTEXT || '').trim().toLowerCase() !== 'on') return;
-  if (!env.openaiapi) return;
-  const to = normalizePhone(lead.phone);
-  if (!to) return;
-  const firstName = String(lead.name || '').trim().split(/\s+/)[0] || '';
-  let opener;
-  try { opener = await writeOpener(env, firstName, lead.items, isInHours()); }
-  catch { return; }
-  if (!opener) return;
-  try { await sendOpenPhone(env, to, opener); } catch { /* alert leg already fired; swallow */ }
-}
-
 export async function onRequestOptions() {
   return new Response(null, {
     status: 204,
@@ -161,8 +126,7 @@ export async function onRequestOptions() {
   });
 }
 
-export async function onRequestPost(context) {
-  const { request, env } = context;
+export async function onRequestPost({ request, env }) {
   const json = (status, body) =>
     new Response(JSON.stringify(body), {
       status,
@@ -191,12 +155,18 @@ export async function onRequestPost(context) {
     return json(400, { ok: false, error: 'name and phone required' });
   }
 
-  // Text the lead back in the background, independent of the alert forward.
-  const textBack = maybeTextLead(env, { name, phone, items: String(body.items || '').trim() }).catch(() => {});
-  if (context.waitUntil) context.waitUntil(textBack);
-
   const hook = resolveHook(env);
   if (!hook) return json(503, { ok: false, error: 'Relay not configured' });
+
+  // Pre-write the lead's opener so the Zap can send it through your OpenPhone
+  // connection. Best-effort: any failure leaves lead_text empty and the alert
+  // + Meta legs forward unchanged.
+  let leadText = '';
+  if (env.openaiapi) {
+    try {
+      leadText = await writeOpener(env, name.split(/\s+/)[0] || '', String(body.items || '').trim(), isInHours());
+    } catch { /* forward without an opener */ }
+  }
 
   const params = new URLSearchParams();
   const flat = {};
@@ -205,6 +175,11 @@ export async function onRequestPost(context) {
     flat[k] = v;
     if (v) params.set(k, v);
   }
+  const phoneE164 = normalizePhone(phone);
+  flat.lead_text = leadText;
+  flat.lead_phone_e164 = phoneE164;
+  if (leadText) params.set('lead_text', leadText);
+  if (phoneE164) params.set('lead_phone_e164', phoneE164);
 
   try {
     const resp = await fetch(hook + (hook.includes('?') ? '&' : '?') + params.toString(), {
@@ -223,12 +198,13 @@ export async function onRequestPost(context) {
 }
 
 // Health/config probe — reports whether the hook is wired and whether the
-// lead text-back is armed (booleans only, never the URL or keys).
+// opener can be written (booleans only, never the URL or keys).
 export async function onRequestGet({ env }) {
-  const autotextArmed = !!(env && env.OPENPHONE_API_KEY) &&
-    String((env && env.WEBSITE_AUTOTEXT) || '').trim().toLowerCase() === 'on' &&
-    !!(env && env.openaiapi);
-  return new Response(JSON.stringify({ ok: true, configured: !!resolveHook(env), autotextArmed }), {
+  return new Response(JSON.stringify({
+    ok: true,
+    configured: !!resolveHook(env),
+    openerReady: !!(env && env.openaiapi),
+  }), {
     status: 200,
     headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
   });
