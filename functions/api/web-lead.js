@@ -103,7 +103,11 @@ export async function onRequestPost({ request, env }) {
   }
 }
 
-// Reject GET so the route can't be probed from a browser address bar.
-export async function onRequestGet() {
-  return new Response('Method Not Allowed', { status: 405, headers: { Allow: 'POST, OPTIONS' } });
+// Health/config probe — reports whether the hook is wired (boolean only, never
+// the URL). Lets us confirm the deploy + env var without firing a real lead.
+export async function onRequestGet({ env }) {
+  return new Response(JSON.stringify({ ok: true, configured: !!env.WEBSITE_LEAD_HOOK_URL }), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
+  });
 }
