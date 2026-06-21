@@ -69,7 +69,10 @@
            background:var(--paper);width:max-content;overflow:hidden}
   .stepper button{width:62px;height:62px;border:none;background:var(--navy);color:#fff;font-size:28px;font-weight:700;cursor:pointer}
   .stepper button:active{background:var(--orange)}
-  .stepper .val{min-width:110px;text-align:center;font-family:'Oswald';font-weight:700;font-size:28px}
+  .stepper .val{width:110px;min-width:110px;height:62px;box-sizing:border-box;text-align:center;font-family:'Oswald';font-weight:700;font-size:28px;
+                border:none;background:var(--paper);color:inherit;outline:none;padding:0;-webkit-appearance:none;-moz-appearance:textfield}
+  .stepper .val:focus{box-shadow:inset 0 -3px 0 var(--orange)}
+  .stepper .val::-webkit-outer-spin-button,.stepper .val::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
 
   /* ---------- garage grid ---------- */
   #grid{display:grid;grid-template-columns:repeat(8,1fr);gap:6px;background:var(--paper);
@@ -323,10 +326,11 @@ const CONFIG = {
   // Day-of add-ons. "group" = mutually exclusive pair: selecting one deselects the other.
   upgrades: [
     {name:"Shelving — One Wall", sub:"Heavy-duty, installed where we mapped it", price:450, group:"shelving"},
-    {name:"Shelving — Both Walls + Bins", sub:"the two-option close: one wall, or both?", price:750, group:"shelving"},
+    {name:"Shelving — Both Walls + Bins", sub:"the two-option close: one wall, or both?", price:800, group:"shelving"},
     {name:"Rush Scheduling", sub:"Guaranteed next-day slot", price:150},
     {name:"Deep Clean — One-Car", sub:"", price:150, group:"deepclean"},
     {name:"Deep Clean — Two-Car", sub:"", price:250, group:"deepclean"},
+    {name:"Storage Bins / Totes", sub:"Labeled & stacked — $23 per container", price:23, qty:true},
   ],
   // The No-Surprises Guarantee
   guarantee: [
@@ -513,10 +517,10 @@ async function genAfter(){
     alert("Image service unreachable — check signal and try again."); }
 }
 
-function priceFor(u){ return u.price; }
+function priceFor(u,q){ return u.qty ? u.price*Math.max(1,q||1) : u.price; }
 function upgradesTotal(){
   let t=0;
-  CONFIG.upgrades.forEach((u,i)=>{ if(S.storage.includes(i)) t+=u.price; });
+  CONFIG.upgrades.forEach((u,i)=>{ if(S.storage.includes(i)) t+=priceFor(u,S.storageQty[i]||1); });
   return t;
 }
 function grandTotal(){ return Number(S.rate||0)+upgradesTotal(); }
@@ -618,7 +622,8 @@ R.p5=()=>head("p5",`Walk the perimeter together. <b>“Most homeowners don't kno
 R.p6=()=>head("p6",`Call it in plain numbers — <b>“This is about ___ truckloads.”</b> Concrete volume makes the flat rate feel earned.`)+`
   <div class="stepper">
     <button onclick="S.loads=Math.max(.5,S.loads-.5);render()">−</button>
-    <div class="val">${S.loads}</div>
+    <input class="val" type="number" inputmode="decimal" min="0" step="0.5" value="${S.loads}" aria-label="Truckloads"
+      onchange="var v=parseFloat(this.value);S.loads=isNaN(v)?S.loads:Math.max(0,v);render()">
     <button onclick="S.loads=S.loads+.5;render()">+</button>
   </div>
   <label class="fl" style="margin-top:10px">Truckloads</label>
@@ -658,11 +663,13 @@ R.p10=()=>head("p10",`Point at the floor. <b>“Picture this swept and clear, wa
 
 R.p11=()=>head("p11",`<b>“What would keep this from coming back?”</b> Point at the cleared wall on the sketch — rack here, bins there. Freestanding, no drilling. Shelving and Deep Clean are two-option pairs: one or the other, never both.`)+`
   ${CONFIG.upgrades.map((u,i)=>{
-    const on=S.storage.includes(i);
+    const on=S.storage.includes(i); const q=S.storageQty[i]||1;
     return `<div class="up ${on?'on':''}" onclick="toggleUp(${i})">
       <span class="bx"></span>
       <div class="nm">${u.name}${u.sub?`<small>${u.sub}</small>`:""}</div>
-      <div class="pr">${money(u.price)}</div>
+      ${u.qty&&on?`<div class="qty" onclick="event.stopPropagation()">
+        <button onclick="event.stopPropagation();setQty(${i},-1)">−</button><span>${q}</span><button onclick="event.stopPropagation();setQty(${i},1)">+</button></div>`:""}
+      <div class="pr">${money(u.qty?priceFor(u,q):u.price)}</div>
     </div>`;}).join("")}
   <div style="text-align:right;font-family:Oswald;font-weight:700;font-size:20px;margin-top:6px">
     Upgrades: <span style="color:var(--orange)">${money(upgradesTotal())}</span></div>`;
@@ -749,6 +756,8 @@ function toggleUp(i){
   if(!S.storage.includes(i)&&u.group) S.storage=S.storage.filter(j=>CONFIG.upgrades[j].group!==u.group);
   S.storage=chip(S.storage,i); render();
 }
+// quantity for qty-priced upgrades (e.g. Storage Bins / Totes @ $23 each)
+function setQty(i,d){ const q=Math.max(1,(S.storageQty[i]||1)+d); S.storageQty[i]=q; if(!S.storage.includes(i)) S.storage=[...S.storage,i]; render(); }
 
 let sigCtx=null;
 function captureSig(){ try{const cv=$("sig"); if(cv){S.sig=cv.toDataURL("image/png"); save();} }catch(e){} }

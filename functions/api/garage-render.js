@@ -28,6 +28,17 @@ const PROMPT =
   "one-day cleanout — a tidy real garage, not a luxury showroom or renovation. Natural daylight.";
 
 function hostOf(v) { try { return new URL(v).host; } catch { return ''; } }
+// Read an env var tolerant of stray whitespace in the var NAME — a dashboard
+// secret saved as "openaiapi " (trailing space) reads back undefined under
+// env.openaiapi. Same guard web-lead.js uses. Prefer the exact key; otherwise
+// match any key that trims to the requested name.
+function envVar(env, name) {
+  if (env && env[name]) return env[name];
+  for (const k of Object.keys(env || {})) {
+    if (k.trim() === name && env[k]) return env[k];
+  }
+  return '';
+}
 function originAllowed(request) {
   const o = request.headers.get('Origin'), r = request.headers.get('Referer');
   if (!o && !r) return true;
@@ -59,7 +70,8 @@ export async function onRequestPost({ request, env }) {
     status, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-store' } });
 
   if (!originAllowed(request)) return json(403, { ok: false, error: 'Forbidden origin' });
-  if (!env.openaiapi) return json(500, { ok: false, error: 'Image generation not configured (openaiapi missing)' });
+  const apiKey = envVar(env, 'openaiapi');
+  if (!apiKey) return json(500, { ok: false, error: 'Image generation not configured (openaiapi missing)' });
 
   const raw = await request.text();
   if (raw.length > MAX_BODY) return json(413, { ok: false, error: 'Image too large — retake at a smaller size' });
@@ -81,7 +93,7 @@ export async function onRequestPost({ request, env }) {
   try {
     const r = await fetch('https://api.openai.com/v1/images/edits', {
       method: 'POST',
-      headers: { Authorization: `Bearer ${env.openaiapi}` },
+      headers: { Authorization: `Bearer ${apiKey}` },
       body: form,
     });
     if (!r.ok) {

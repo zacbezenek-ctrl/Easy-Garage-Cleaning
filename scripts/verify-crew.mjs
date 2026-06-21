@@ -131,8 +131,8 @@ const p11head = await page.locator('h1').first().textContent();
 ok('gameplan: reached Storage & Shelving point', /Storage/i.test(p11head), p11head.trim());
 
 const upNames = await page.locator('.up .nm').allTextContents();
-ok('gameplan: 5 upgrades, no bins/overhead placeholders',
-   upNames.length === 5 && !/Bin & label|Overhead/i.test(upNames.join('|')), upNames.map(s=>s.split('\n')[0]).join(' | '));
+ok('gameplan: 6 upgrades, no bins/overhead placeholders',
+   upNames.length === 6 && !/Bin & label|Overhead/i.test(upNames.join('|')), upNames.map(s=>s.split('\n')[0]).join(' | '));
 ok('gameplan: no qty steppers rendered', await page.locator('.up .qty').count() === 0);
 
 // tap One Wall, then Both Walls — must be mutually exclusive
@@ -149,7 +149,7 @@ ok('gameplan: deep clean pair mutually exclusive',
 // add rush
 await page.locator('.up', { hasText: 'Rush Scheduling' }).click();
 const upTotal = await page.evaluate(() => upgradesTotal());
-ok('gameplan: upgrades total = 750+250+150', upTotal === 1150, '$' + upTotal);
+ok('gameplan: upgrades total = 800+250+150', upTotal === 1200, '$' + upTotal);
 
 /* ── 4b. Point 10: before photo capture + AI "after" generator ── */
 await page.evaluate(() => jump(13));
@@ -203,7 +203,7 @@ ok('close: banner sits above the quote block', bonusBeforeQuote);
 await page.locator('.bonuschk input').check();
 ok('close: Day-Of Bonus checkbox toggles state', await page.evaluate(() => S.dayBonus === true));
 const total = await page.locator('.quoteblock .total').textContent();
-ok('close: grand total = 800 + 1,150', total === '$1,950', total);
+ok('close: grand total = 800 + 1,200', total === '$2,000', total);
 const hold = await page.locator('.holdnote').textContent();
 ok('close: 7-day hold note below total', hold === 'Quote holds for 7 days. Day-Of Bonus is today only.');
 const gItems = await page.locator('.guarantee li').allTextContents();
@@ -215,7 +215,7 @@ ok('close: payload notes include Day-Of Bonus', /DAY-OF BONUS: APPLIED/.test(not
 const payload = await page.evaluate(() => buildPayload());
 ok('close: line items = package + 3 upgrades', payload.quote.line_items_count === 4,
    payload.quote.line_items.map(i=>i.name+' $'+i.total).join(' | '));
-ok('close: quote total in payload', payload.quote.total === 1950);
+ok('close: quote total in payload', payload.quote.total === 2000);
 ok('close: payload carries day_of_bonus + signature fields',
    payload.day_of_bonus === true && 'signature' in payload);
 ok('close: payload reports photo counts (before + ai_after)',
@@ -249,7 +249,7 @@ ok('close: Send to Jobber shows real success status',
    /pushed/i.test(await page.locator('#sendstatus').textContent()) &&
    /Sent to Jobber/i.test(await page.locator('button', { hasText: 'Sent to Jobber' }).textContent().catch(()=> '')));
 const gpSent = sent.slice(before).find(p => p.tool === 'game_plan');
-ok('close: game_plan payload reached the proxy', !!gpSent && gpSent.quote.total === 1950,
+ok('close: game_plan payload reached the proxy', !!gpSent && gpSent.quote.total === 2000,
    gpSent ? '$' + gpSent.quote.total : 'none');
 ok('close: payload carries jobber_client_id', !!gpSent && gpSent.client.jobber_client_id === 'JCLIENT1');
 
@@ -265,7 +265,7 @@ ok('close: Drive batch carried job label (date — name — address)',
 const activeJob = await page.evaluate(() => JSON.parse(localStorage.getItem('egc_active_job')));
 ok('handoff: egc_active_job written on Send, carries locked total + priced upsells',
    activeJob && activeJob.name === 'Dana Tester' && activeJob.pkg === 'Garage Transformation' &&
-   activeJob.rate === '800' && activeJob.total === 1950 && /Both Walls .*\$750/.test(activeJob.upsellsPriced || ''),
+   activeJob.rate === '800' && activeJob.total === 2000 && /Both Walls .*\$800/.test(activeJob.upsellsPriced || ''),
    JSON.stringify(activeJob));
 
 /* ── 5. Pre-Job pre-fills from handoff ─────────────────────── */
@@ -276,9 +276,9 @@ const banner = await page.evaluate(() => document.querySelector('main').innerTex
 ok('prejob: LOADED FROM GAME PLAN banner', /LOADED FROM GAME PLAN/.test(banner) && /DANA TESTER/.test(banner));
 ok('prejob: name prefilled', await page.inputValue('#j_name') === 'Dana Tester');
 ok('prejob: address prefilled', await page.inputValue('#j_addr') === '746 Star Grass Ln');
-ok('prejob: flat-rate field shows LOCKED TOTAL (not just package rate)', await page.inputValue('#j_rate') === '1950',
+ok('prejob: flat-rate field shows LOCKED TOTAL (not just package rate)', await page.inputValue('#j_rate') === '2000',
    await page.inputValue('#j_rate'));
-ok('prejob: banner shows locked total', /Locked total: \$1950/.test(banner), banner.replace(/\s+/g,' ').slice(0,160));
+ok('prejob: banner shows locked total', /Locked total: \$2000/.test(banner), banner.replace(/\s+/g,' ').slice(0,160));
 const pkgVal = await page.inputValue('#j_pkg');
 ok('prejob: package + priced upsells prefilled', /Garage Transformation/.test(pkgVal) && /Both Walls .*\$750/.test(pkgVal), pkgVal);
 ok('prejob: job date prefilled', await page.inputValue('#j_date') === '2026-06-12');
