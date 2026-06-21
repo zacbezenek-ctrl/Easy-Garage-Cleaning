@@ -343,7 +343,7 @@ const CONFIG = {
 /* ============================================================ */
 
 const S = {  // session state — autosaved locally on every tap
-  name:"", addr:"", phone:"",
+  name:"", addr:"", phone:"", email:"",
   park:null, parkLast:null,
   grid:Array(40).fill(0), gridMode:1, worstZone:"",
   howLong:null, missing:[], missNote:"",
@@ -455,7 +455,7 @@ async function jobberLookup(){
 function lookPick(i){
   const c=LOOK[i]; if(!c) return;
   S.name=c.name||S.name; S.addr=c.address||S.addr; S.phone=c.phone||S.phone;
-  S.jobberClientId=c.id||""; LOOK=[]; render();
+  S.email=c.email||S.email; S.jobberClientId=c.id||""; LOOK=[]; render();
 }
 
 /* ===== Upload this job's photos to its Google Drive folder ===== */
@@ -878,7 +878,7 @@ function buildPayload(){
   if(!S.jobId)S.jobId=uid();
   const p={
     tool:"game_plan", job_id:S.jobId, sent_at:new Date().toISOString(),
-    client:{first_name:parts[0]||"", last_name:parts.slice(1).join(" ")||"", phone:normPhone(S.phone), address:S.addr,
+    client:{first_name:parts[0]||"", last_name:parts.slice(1).join(" ")||"", phone:normPhone(S.phone), email:S.email||"", address:S.addr,
       jobber_client_id:S.jobberClientId||""},
     quote:{title:"14-Point Garage Game Plan — "+(S.addr||S.name||"garage"),
       total:grandTotal(), deposit:Number(S.deposit||0), job_date:S.jobdate,
