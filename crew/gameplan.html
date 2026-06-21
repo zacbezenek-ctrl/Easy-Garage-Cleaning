@@ -83,6 +83,8 @@
   .gridlegend{display:flex;gap:18px;margin-top:10px;font-size:13.5px;font-weight:600;color:var(--khaki)}
   .gridlegend i{display:inline-block;width:14px;height:14px;border-radius:4px;margin-right:6px;vertical-align:-2px}
   .gridmode{display:flex;gap:10px;margin:14px 0 12px}
+  .gridmode .zbtn{flex:1;border:1.5px solid var(--line);background:var(--paper);border-radius:10px;padding:10px 6px;font-family:'Oswald';font-weight:600;font-size:13.5px;cursor:pointer;color:var(--navy)}
+  .gridmode .zbtn.on{color:#fff;background:var(--zc,var(--navy));border-color:var(--zc,var(--navy))}
   .doorlabel{text-align:center;font-family:'Oswald';font-size:11px;letter-spacing:.2em;color:var(--khaki);margin-top:8px}
 
   /* ---------- zone interstitial ---------- */
@@ -354,6 +356,7 @@ const S = {  // session state — autosaved locally on every tap
   floor:null, floorNote:"",
   storage:[], storageQty:{}, 
   layout:null, layoutNote:"",
+  layoutGrid:Array(40).fill(0), layoutPaint:1, garages:1,
   stay:[],
   pkg:null, rate:"", deposit:"", jobdate:"",
   dayBonus:false, jobId:"", sig:"", aiAfter:"", jobberClientId:"",
@@ -504,7 +507,7 @@ async function genAfter(){
   btn.disabled=true;btn.textContent="✨ Generating… (~10s)";
   try{
     const res=await fetch("/api/garage-render",{method:"POST",headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({image:befs[befs.length-1].dataUrl})});
+      body:JSON.stringify({image:befs[befs.length-1].dataUrl, hint:layoutHint()})});
     const j=await res.json();
     if(res.ok&&j&&j.ok&&j.image){
       S.aiAfter=j.image; save();
@@ -524,6 +527,11 @@ function upgradesTotal(){
   return t;
 }
 function grandTotal(){ return Number(S.rate||0)+upgradesTotal(); }
+// Quote builds from the answers: picking a package pre-fills the flat rate from
+// its base price (parsed off the price label). Editable — we never overwrite a
+// rate the crew already typed. Upgrades add on top in grandTotal().
+function pkgBase(p){ const m=String(p&&p.price||"").replace(/,/g,"").match(/\d+/); return m?Number(m[0]):0; }
+function pickPkg(i){ S.pkg=i; const b=pkgBase(CONFIG.packages[i]); if(b&&!(Number(S.rate)>0)) S.rate=String(b); render(); }
 
 /* ---------- flow definition ---------- */
 const steps=[
@@ -674,14 +682,28 @@ R.p11=()=>head("p11",`<b>“What would keep this from coming back?”</b> Point 
   <div style="text-align:right;font-family:Oswald;font-weight:700;font-size:20px;margin-top:6px">
     Upgrades: <span style="color:var(--orange)">${money(upgradesTotal())}</span></div>`;
 
-R.p12=()=>head("p12",`Back to the map. <b>“Where does the car live?”</b> Flip the sketch to parking mode and draw it in navy — together.`)+`
-  <div class="chips">${["1 car","2 cars","Car + workbench","Car + gym corner","No car — clean storage"].map(v=>
-    `<div class="chip ${S.layout===v?'on hot':''}" onclick="S.layout='${v}';render()">${v}</div>`).join("")}</div>
-  <div style="margin-top:16px"></div>
-  <div id="grid">${S.grid.map((c,i)=>`<div class="cell ${c===1?'clutter':c===2?'park':''}" onclick="S.gridMode=2;tapCell(${i})"></div>`).join("")}</div>
+R.p12=()=>head("p12",`Back to the map. <b>“Where does the car live?”</b> Tap a layout — we sketch it in, color-coded — then preview it with AI. Tap “Custom” to draw your own.`)+`
+  <div class="chips">${LAYOUT_PRESETS.map(v=>
+    `<div class="chip ${S.layout===v?'on hot':''}" onclick="pickLayout('${v}')">${v}</div>`).join("")}</div>
+  ${S.layout==="Custom"?`<div class="gridmode">${Object.keys(LZONE).map(z=>
+      `<button class="zbtn ${S.layoutPaint==z?'on':''}" style="--zc:${LZONE[z].color}" onclick="S.layoutPaint=${z};render()">${LZONE[z].name}</button>`).join("")}
+      <button class="zbtn ${S.layoutPaint==0?'on':''}" onclick="S.layoutPaint=0;render()">Erase</button></div>`:`<div style="margin-top:16px"></div>`}
+  <div id="grid">${S.layoutGrid.map((c,i)=>`<div class="cell" style="${c?`background:${LZONE[c].color}`:''}" onclick="tapLayout(${i})"></div>`).join("")}</div>
   <div class="doorlabel">▲ GARAGE DOOR ▲</div>
-  <label class="fl">Notes</label>
-  <input type="text" value="${esc(S.layoutNote)}" placeholder="Truck side, door clearance…" oninput="S.layoutNote=this.value">`;
+  <div class="gridlegend">${Object.keys(LZONE).map(z=>`<span><i style="background:${LZONE[z].color}"></i>${LZONE[z].name}</span>`).join("")}</div>
+  <label class="fl" style="margin-top:16px">Garages / bays to clear</label>
+  <div class="stepper">
+    <button onclick="S.garages=Math.max(1,S.garages-1);render()">−</button>
+    <input class="val" type="number" inputmode="numeric" min="1" step="1" value="${S.garages}" aria-label="Garages to clear"
+      onchange="var v=parseInt(this.value,10);S.garages=isNaN(v)?S.garages:Math.max(1,v);render()">
+    <button onclick="S.garages=S.garages+1;render()">+</button>
+  </div>
+  <label class="fl" style="margin-top:14px">Notes</label>
+  <input type="text" value="${esc(S.layoutNote)}" placeholder="Truck side, door clearance…" oninput="S.layoutNote=this.value">
+  <label class="fl" style="margin-top:18px">Bring it to life — AI “after” from the before photo</label>
+  <div class="ask" style="margin:0 0 8px;font-size:14px">Uses the before shot from Point 10${S.layout?` + the <b>${esc(S.layout)}</b> layout`:""}. Pick a layout above to have it reflected.</div>
+  <button class="aibtn hot" id="aibtn" onclick="genAfter()">✨ Generate the After</button>
+  <div class="aiout" id="aiout"></div>`;
 
 R.p13=()=>head("p13",`<b>“The cleanout is the easy part — staying clean is the system.”</b> Tap what's included in their plan.`)+`
   <div class="checks">${["Labeled zones (tools / seasonal / sports)","Everything off the floor","Donate-box by the door","6-month check-in text from EGC"].map(v=>
@@ -689,13 +711,14 @@ R.p13=()=>head("p13",`<b>“The cleanout is the easy part — staying clean is t
 
 R.p14=()=>head("p14",`Quote TOP-DOWN — open at The Works and step down only on hesitation. Quick Clear is never opened. Write the number, lock the date. <b>The price never moves after today.</b>`)+`
   <div class="pkgs">${CONFIG.packages.map((p,i)=>`
-    <div class="pkg ${S.pkg===i?'on':''} ${p.muted?'muted':''}" onclick="S.pkg=${i};render()">
+    <div class="pkg ${S.pkg===i?'on':''} ${p.muted?'muted':''}" onclick="pickPkg(${i})">
       ${p.tag?`<span class="tag">${p.tag}</span>`:""}
       <h3>${p.name}</h3>${p.price?`<div class="pkgprice">${p.price}</div>`:""}<p>${p.desc}</p>
     </div>`).join("")}
   </div>
-  <label class="fl">Flat rate for the package</label>
+  <label class="fl">Flat rate (auto-fills from the package — edit anytime)</label>
   <input type="number" inputmode="decimal" value="${S.rate}" placeholder="0" oninput="S.rate=this.value;paintTotal()">
+  <div class="ask" style="font-size:13.5px;margin:6px 0 0">${S.pkg!=null?`Building from <b>${esc(CONFIG.packages[S.pkg].name)}</b>${upgradesTotal()?" + upgrades":""}: quote total <b>${money(grandTotal())}</b>.`:`Pick a package above and the rate fills in from the answers.`}</div>
   <div style="display:flex;gap:14px">
     <div style="flex:1"><label class="fl">Deposit on file</label>
       <input type="number" inputmode="decimal" value="${S.deposit}" placeholder="0" oninput="S.deposit=this.value"></div>
@@ -724,7 +747,7 @@ R.plan=()=>{
     <label class="bonuschk"><input type="checkbox" ${S.dayBonus?"checked":""} onchange="S.dayBonus=this.checked;save()"> Day-Of Bonus applied</label>
   </div>
   <div class="quoteblock">
-    <div class="ln"><span>Scope</span><b>${S.loads} truckload${S.loads!==1?"s":""}${S.heavy.length?` + ${S.heavy.length} specialty item type${S.heavy.length>1?"s":""}`:""}</b></div>
+    <div class="ln"><span>Scope</span><b>${S.garages>1?S.garages+" garages · ":""}${S.loads} truckload${S.loads!==1?"s":""}${S.heavy.length?` + ${S.heavy.length} specialty item type${S.heavy.length>1?"s":""}`:""}</b></div>
     <div class="ln"><span>Package</span><b>${pkg?pkg.name.toUpperCase():"—"}</b></div>
     ${ups.map((u,j)=>{const i=CONFIG.upgrades.indexOf(u);const q=u.qty?(S.storageQty[i]||1):1;
       return `<div class="ln"><span>${u.name}${u.qty?` × ${q}`:""}</span><b>${money(priceFor(u,q))}</b></div>`}).join("")}
@@ -751,6 +774,31 @@ R.plan=()=>{
 
 /* ---------- grid + signature + upgrades helpers ---------- */
 function tapCell(i){ S.grid[i]=(S.grid[i]===S.gridMode)?0:S.gridMode; render(); }
+/* ---------- parking layout (p12): color-coded zones, presets + custom draw ---------- */
+const LZONE={1:{name:"Car",color:"#13203a"},2:{name:"Workbench",color:"#2f8f6b"},3:{name:"Gym",color:"#7c5cbf"},4:{name:"Storage",color:"#d4a017"}};
+const LAYOUT_PRESETS=["1 car","2 cars","Car + workbench","Car + gym corner","No car — clean storage","Custom"];
+function layoutPreset(name){
+  const g=Array(40).fill(0), set=(r,c,z)=>{ if(r>=0&&r<5&&c>=0&&c<8) g[r*8+c]=z; };
+  const car=c0=>{ for(let r=2;r<5;r++) for(let c=c0;c<c0+2;c++) set(r,c,1); };
+  if(name==="1 car") car(3);
+  else if(name==="2 cars"){ car(1); car(5); }
+  else if(name==="Car + workbench"){ car(2); for(let c=0;c<8;c++) set(0,c,2); }
+  else if(name==="Car + gym corner"){ car(4); for(let r=0;r<2;r++) for(let c=0;c<2;c++) set(r,c,3); }
+  else if(name==="No car — clean storage"){ for(let r=0;r<5;r++){ set(r,0,4); set(r,7,4); } for(let c=0;c<8;c++) set(0,c,4); }
+  return g;
+}
+function pickLayout(v){ S.layout=v; if(v!=="Custom") S.layoutGrid=layoutPreset(v); render(); }
+function tapLayout(i){ if(S.layout!=="Custom") S.layout="Custom"; S.layoutGrid[i]=(S.layoutGrid[i]===S.layoutPaint)?0:S.layoutPaint; render(); }
+// Prompt nudge for the AI "after": chosen parking layout + scope (zones, bays, shelving).
+function layoutHint(){
+  const p=[];
+  if(S.layout&&S.layout!=="Custom") p.push("parking layout: "+S.layout.toLowerCase());
+  else if(S.layout==="Custom"){ const z=[...new Set(S.layoutGrid.filter(Boolean).map(v=>LZONE[v].name.toLowerCase()))]; if(z.length) p.push("zones: "+z.join(", ")); }
+  if(S.garages>1) p.push(S.garages+" garage bays");
+  const shelv=CONFIG.upgrades.filter((u,i)=>S.storage.includes(i)&&u.group==="shelving").map(u=>u.name.toLowerCase());
+  if(shelv.length) p.push(shelv.join(", "));
+  return p.join("; ");
+}
 function toggleUp(i){
   const u=CONFIG.upgrades[i];
   if(!S.storage.includes(i)&&u.group) S.storage=S.storage.filter(j=>CONFIG.upgrades[j].group!==u.group);
@@ -807,6 +855,7 @@ function compileNotes(){
   add("Donate/recycle", S.donate); add("Donate notes", S.donateNote);
   add("Floor", S.floor); add("Floor notes", S.floorNote);
   add("Parking layout", S.layout); add("Layout notes", S.layoutNote);
+  add("Garages to clear", S.garages>1?S.garages:"");
   add("Stay-clean system", S.stay);
   add("DAY-OF BONUS", S.dayBonus?"APPLIED — all special-disposal fees waived (mattress, fridge, tires, paint, e-waste)":"");
   return L.join("\n");
@@ -852,7 +901,8 @@ function validateClose(){
   const miss=[];
   if(!(S.name||"").trim()) miss.push("homeowner name");
   if(S.pkg==null) miss.push("a package");
-  if(!(Number(S.rate)>0)) miss.push("a flat rate");
+  // Flat rate is NOT required — it auto-fills from the package, and the crew can
+  // confirm/adjust the final price in Jobber. Don't force a number here.
   return miss;
 }
 
@@ -877,17 +927,31 @@ async function sendToJobber(btn){
     st.textContent="NOT logged to HQ — handoff saved locally. Check signal and retry."; } }
 }
 
-function textPlan(){
+// Text the plan from the EGC business line via Quo (Zapier hook), never the
+// crew member's personal phone. Posts {tool:"text_plan"} to the same /api/crew-hook
+// proxy; the Zap routes it to Quo "Send message". Set up: add a text_plan path
+// to the EGC crew Zap → Quo, sending `message` to `client.phone`.
+async function textPlan(btn){
+  const phone=normPhone(S.phone);
+  if(!phone){alert("Add the homeowner's mobile number first (Point 1).");return;}
   const pkg=S.pkg!=null?CONFIG.packages[S.pkg].name:"your package";
-  const ups=CONFIG.upgrades.filter((u,i)=>S.storage.includes(i)).map((u)=>
-    "+ "+u.name+" "+money(u.price)).join("\n");
+  const ups=CONFIG.upgrades.filter((u,i)=>S.storage.includes(i)).map((u)=>{
+    const i=CONFIG.upgrades.indexOf(u), q=u.qty?(S.storageQty[i]||1):1;
+    return "+ "+u.name+(u.qty?` × ${q}`:"")+" "+money(priceFor(u,q));}).join("\n");
   const msg=`${S.name?S.name+", h":"H"}ere's your Garage Comeback Plan from Easy Garage Cleaning:\n\n`+
     `Package: ${pkg} — ${money(S.rate)}\n${ups?ups+"\n":""}TOTAL (flat, locked): ${money(grandTotal())}\n`+
     `${S.jobdate?"Job date: "+S.jobdate+"\n":""}${S.deposit?"Deposit on file: "+money(S.deposit)+"\n":""}`+
     `\nPrice never moves. Questions? Call/text ${CONFIG.bizPhone}. — EGC`;
-  if(S.name) writeActive("texted_plan"); // texting the plan is a commit too — keep the handoff
-  const num=normPhone(S.phone).replace(/^\+/,"");
-  location.href="sms:"+num+"&body="+encodeURIComponent(msg);
+  const st=$("sendstatus");
+  if(btn){btn.disabled=true;btn.textContent="Texting…";}
+  if(st){st.style.color="var(--ok)";st.textContent="";}
+  let ok=false;
+  try{ ok=await postHook({tool:"text_plan", job_id:S.jobId||"", sent_at:new Date().toISOString(),
+    client:{name:S.name, phone:phone, jobber_client_id:S.jobberClientId||""}, message:msg}); }catch(e){ ok=false; }
+  if(ok){ if(S.name) writeActive("texted_plan"); // texting the plan is a commit too — keep the handoff
+    if(btn){btn.textContent="Plan texted ✓";} if(st)st.textContent="Handed to the EGC business line (Quo via Zapier)."; }
+  else{ if(btn){btn.disabled=false;btn.textContent="Retry → Text Plan";}
+    if(st){st.style.color="var(--orange2)";st.textContent="Couldn't reach the texting hook — check signal and retry. (Routes through Quo, never a personal number.)";} }
 }
 
 // Single source of truth for the cross-tool handoff. Carries the locked TOTAL
@@ -934,12 +998,13 @@ function render(){
   if(s.id==="start") nav+=`<button class="btn next" onclick="go(1)">Start the Walkthrough</button>`;
   else if(s.id==="zone") nav+=`<button class="btn next" onclick="go(1)">Let's Go</button>`;
   else if(s.id==="p14") nav+=`<button class="btn next" onclick="go(1)">Show the Game Plan →</button>`;
-  else if(s.id==="plan") nav+=`<button class="btn navy" onclick="sendToJobber(this)">Send to Jobber</button><button class="btn next" onclick="textPlan()">Text Plan</button>`;
+  else if(s.id==="plan") nav+=`<button class="btn navy" onclick="sendToJobber(this)">Send to Jobber</button><button class="btn next" onclick="textPlan(this)">Text Plan</button>`;
   else nav+=`<button class="btn next" onclick="go(1)">Next Point →</button>`;
   $("navinner").innerHTML=nav;
   paintTotal();
   $("stage").scrollTop=0;
   if(s.id==="p10")setTimeout(()=>mountStrip("pb_before","before",{ai:true}),0);
+  if(s.id==="p12")setTimeout(paintAi,0);
   if(s.id==="plan"){setTimeout(initSig,60);setTimeout(mountPlanPhotos,0);} // handoff is written on commit (Send/Text), not on view
   save();
 }
