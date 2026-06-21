@@ -928,9 +928,10 @@ async function sendToJobber(btn){
 }
 
 // Text the plan from the EGC business line via Quo (Zapier hook), never the
-// crew member's personal phone. Posts {tool:"text_plan"} to the same /api/crew-hook
-// proxy; the Zap routes it to Quo "Send message". Set up: add a text_plan path
-// to the EGC crew Zap → Quo, sending `message` to `client.phone`.
+// crew member's personal phone. Posts {tool:"plan_text"} to the same /api/crew-hook
+// proxy (plan_text is already on its allow-list); the Zap routes it to Quo "Send
+// message". Uses top-level phone + message like the review-text path. Set up: add
+// a plan_text path to the EGC crew Zap → Quo, sending `message` to `phone`.
 async function textPlan(btn){
   const phone=normPhone(S.phone);
   if(!phone){alert("Add the homeowner's mobile number first (Point 1).");return;}
@@ -946,8 +947,8 @@ async function textPlan(btn){
   if(btn){btn.disabled=true;btn.textContent="Texting…";}
   if(st){st.style.color="var(--ok)";st.textContent="";}
   let ok=false;
-  try{ ok=await postHook({tool:"text_plan", job_id:S.jobId||"", sent_at:new Date().toISOString(),
-    client:{name:S.name, phone:phone, jobber_client_id:S.jobberClientId||""}, message:msg}); }catch(e){ ok=false; }
+  try{ ok=await postHook({tool:"plan_text", job_id:S.jobId||"", sent_at:new Date().toISOString(),
+    name:S.name, phone:phone, message:msg, jobber_client_id:S.jobberClientId||""}); }catch(e){ ok=false; }
   if(ok){ if(S.name) writeActive("texted_plan"); // texting the plan is a commit too — keep the handoff
     if(btn){btn.textContent="Plan texted ✓";} if(st)st.textContent="Handed to the EGC business line (Quo via Zapier)."; }
   else{ if(btn){btn.disabled=false;btn.textContent="Retry → Text Plan";}
