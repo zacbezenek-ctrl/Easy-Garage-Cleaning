@@ -146,7 +146,7 @@ await page.fill('#f_addr', '746 Star Grass Ln');
 
 // jump to point 11 (upgrades) and exercise the two-option pairs through real taps
 await page.evaluate(() => { S.park=false; S.parkLast='3+ years'; S.howLong='2 years';
-  S.missing=['Parking inside']; S.missNote='my wife parks in the snow'; S.loads=2; jump(14); });
+  S.missing=['Parking inside']; S.missNote='my wife parks in the snow'; S.loads=2; jump(steps.findIndex(s=>s.id==='p11')); });
 await page.waitForTimeout(200);
 // p11 is steps index 15? verify by header text
 const p11head = await page.locator('h1').first().textContent();
@@ -174,7 +174,7 @@ const upTotal = await page.evaluate(() => upgradesTotal());
 ok('gameplan: upgrades total = 800+250+150', upTotal === 1200, '$' + upTotal);
 
 /* ── 4b. Point 10: before photo capture + AI "after" generator ── */
-await page.evaluate(() => jump(13));
+await page.evaluate(() => jump(steps.findIndex(s=>s.id==='p10')));
 await page.waitForTimeout(250);
 ok('gameplan: Point 10 shows photo capture tile', await page.locator('#pb_before .padd').count() === 1);
 ok('gameplan: Generate-the-After disabled with no photo', await page.locator('#aibtn').isDisabled());
@@ -191,7 +191,7 @@ ok('gameplan: AI after rendered + stored in state', await page.locator('#aiout i
 await page.screenshot({ path: `${SHOTS}/13-gameplan-ai-after-380.png` });
 
 /* package screen */
-await page.evaluate(() => jump(17));
+await page.evaluate(() => jump(steps.findIndex(s=>s.id==='p14')));
 await page.waitForTimeout(200);
 const pkgs = await page.locator('.pkg h3').allTextContents();
 ok('gameplan: 4 packages in top-down order',
@@ -212,7 +212,7 @@ await page.waitForTimeout(150);
 await page.screenshot({ path: `${SHOTS}/03-gameplan-packages-ipad.png`, fullPage: false });
 
 /* close screen */
-await page.evaluate(() => jump(18));
+await page.evaluate(() => jump(steps.findIndex(s=>s.id==='plan')));
 await page.waitForTimeout(300);
 const bonusText = await page.locator('.bonus p').textContent();
 ok('close: Day-Of Decision Bonus banner above quote',

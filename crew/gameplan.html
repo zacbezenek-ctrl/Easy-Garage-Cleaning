@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<title>EGC · 14-Point Garage Game Plan</title>
+<title>EGC · Garage Game Plan</title>
 <meta name="robots" content="noindex">
 <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
@@ -78,8 +78,6 @@
   #grid{display:grid;grid-template-columns:repeat(8,1fr);gap:6px;background:var(--paper);
         border:1.5px solid var(--line);border-radius:var(--r);padding:14px;touch-action:manipulation}
   #grid .cell{aspect-ratio:1;border-radius:8px;background:#e7ddca;cursor:pointer;transition:background .1s}
-  #grid .cell.clutter{background:var(--orange)}
-  #grid .cell.park{background:var(--navy)}
   .gridlegend{display:flex;gap:18px;margin-top:10px;font-size:13.5px;font-weight:600;color:var(--khaki)}
   .gridlegend i{display:inline-block;width:14px;height:14px;border-radius:4px;margin-right:6px;vertical-align:-2px}
   .gridmode{display:flex;gap:10px;margin:14px 0 12px}
@@ -359,13 +357,12 @@ const CONFIG = {
 const S = {  // session state — autosaved locally on every tap
   name:"", addr:"", phone:"", email:"",
   park:null, parkLast:null,
-  grid:Array(40).fill(0), gridMode:1, worstZone:"",
   howLong:null, missing:[], missNote:"",
   used12:"", keepNote:"",
   hazards:[], hazNote:"",
   loads:1, loadNote:"",
   heavy:[], heavyNote:"",
-  access:[], window:null, accessNote:"",
+  access:[], accessNote:"",
   donate:[], donateNote:"",
   floor:null, floorNote:"",
   storage:[], storageQty:{}, 
@@ -600,7 +597,7 @@ function pickPkg(i){ S.pkg=i; const b=pkgBase(CONFIG.packages[i]); if(b&&!(Numbe
 const steps=[
   {id:"start"},
   {id:"zone",z:"A",title:"The Damage",sub:"First we get honest about where the garage stands today. Your answers here become the plan."},
-  {id:"p1",z:"A"},{id:"p2",z:"A"},{id:"p3",z:"A"},{id:"p4",z:"A"},{id:"p5",z:"A"},
+  {id:"p1",z:"A"},{id:"p3",z:"A"},{id:"p4",z:"A"},{id:"p5",z:"A"},
   {id:"zone",z:"B",title:"The Job",sub:"Now we scope exactly what it takes to clear it — volume, heavy stuff, logistics. No surprises later."},
   {id:"p6",z:"B"},{id:"p7",z:"B"},{id:"p8",z:"B"},{id:"p9",z:"B"},
   {id:"zone",z:"C",title:"The Comeback",sub:"This is what your garage becomes — and how it stays that way."},
@@ -610,12 +607,15 @@ const steps=[
 let idx=0;
 
 const pointMeta={
-  p1:[1,"The Park Test"], p2:[2,"Clutter Zone Map"], p3:[3,"The “How Long” Audit"],
-  p4:[4,"Keep / Donate / Haul"], p5:[5,"Hidden Hazards"], p6:[6,"Volume Estimate"],
-  p7:[7,"Heavy & Specialty Items"], p8:[8,"Access & Logistics"], p9:[9,"Donate & Recycle Plan"],
-  p10:[10,"Floor & Finish"], p11:[11,"Storage & Shelving Fit"], p12:[12,"Parking Layout"],
-  p13:[13,"Stay-Clean System"], p14:[14,"Your Flat Rate"],
+  p1:"The Park Test", p3:"The “How Long” Audit",
+  p4:"Keep / Donate / Haul", p5:"Hidden Hazards", p6:"Volume Estimate",
+  p7:"Heavy & Specialty Items", p8:"Access & Logistics", p9:"Donate & Recycle Plan",
+  p10:"Floor & Finish", p11:"Storage & Shelving Fit", p12:"Parking Layout",
+  p13:"Stay-Clean System", p14:"Your Flat Rate",
 };
+// Numbers + total derive from `steps`, so adding/removing a point renumbers everything.
+function pointNum(id){ return steps.filter(s=>pointMeta[s.id]).findIndex(s=>s.id===id)+1; }
+function pointTotal(){ return steps.filter(s=>pointMeta[s.id]).length; }
 
 /* ---------- renderers ---------- */
 const R={};
@@ -623,9 +623,9 @@ const R={};
 R.start=()=>`
   <div class="zonecard">
     <div class="eyebrow">Free in-garage walkthrough</div>
-    <h1 class="big" style="font-size:clamp(40px,8vw,68px)">14-Point<br>Garage Game Plan</h1>
+    <h1 class="big" style="font-size:clamp(40px,8vw,68px)">${pointTotal()}-Point<br>Garage Game Plan</h1>
     <p style="font-size:19px;color:var(--khaki);margin:14px 0 26px;max-width:540px;line-height:1.5">
-      Fourteen points. One walkthrough. You leave with a written plan, a locked flat rate, and a date.</p>
+      ${pointTotal()} points. One walkthrough. You leave with a written plan, a locked rate, and a date.</p>
     <label class="fl">Pick today's walkthrough</label>
     <div id="jreq"></div>
     <label class="fl" style="margin-top:18px">Homeowner</label>
@@ -650,8 +650,8 @@ R.zone=s=>`
     <p>${s.sub}</p>
   </div>`;
 
-function head(id,ask){const [n,t]=pointMeta[id];return `
-  <div class="num">POINT ${n} / 14</div><h1>${t}</h1><div class="ask">${ask}</div>`;}
+function head(id,ask){const t=pointMeta[id],n=pointNum(id);return `
+  <div class="num">POINT ${n} / ${pointTotal()}</div><h1>${t}</h1><div class="ask">${ask}</div>`;}
 
 R.p1=()=>head("p1",`<b>“Can a car fit in here today?”</b> Then: <b>“When was the last time one did?”</b>`)+`
   <div class="yn">
@@ -661,17 +661,6 @@ R.p1=()=>head("p1",`<b>“Can a car fit in here today?”</b> Then: <b>“When w
   <label class="fl">Last time a car parked inside</label>
   <div class="chips">${["This month","This year","1–2 years","3+ years","Honestly… never"].map(v=>
     `<div class="chip ${S.parkLast===v?'on hot':''}" onclick="S.parkLast='${v}';render()">${v}</div>`).join("")}</div>`;
-
-R.p2=()=>head("p2",`Hand them the iPad. <b>“Tap every spot that's buried.”</b> Then ask: <b>“Which zone drives you craziest?”</b>`)+`
-  <div class="gridmode">
-    <div class="chip ${S.gridMode===1?'on hot':''}" onclick="S.gridMode=1;render()">Mark clutter</div>
-    <div class="chip ${S.gridMode===2?'on':''}" onclick="S.gridMode=2;render()">Mark where the car goes</div>
-  </div>
-  <div id="grid">${S.grid.map((c,i)=>`<div class="cell ${c===1?'clutter':c===2?'park':''}" onclick="tapCell(${i})"></div>`).join("")}</div>
-  <div class="doorlabel">▲ GARAGE DOOR ▲</div>
-  <div class="gridlegend"><span><i style="background:var(--orange)"></i>Clutter</span><span><i style="background:var(--navy)"></i>Car / parking</span></div>
-  <label class="fl">The zone that bugs them most</label>
-  <input type="text" value="${esc(S.worstZone)}" placeholder="e.g. back wall — can't reach the freezer" oninput="S.worstZone=this.value">`;
 
 R.p3=()=>head("p3",`<b>“How long has this been building?”</b> Then the money question: <b>“What has it stopped you from doing?”</b>`)+`
   <div class="chips">${["6 months","1 year","2 years","5+ years","Since we moved in"].map(v=>
@@ -711,12 +700,9 @@ R.p7=()=>head("p7",`<b>“Anything in here that takes two people or special hand
   <label class="fl">Other / details</label>
   <textarea oninput="S.heavyNote=this.value">${esc(S.heavyNote)}</textarea>`;
 
-R.p8=()=>head("p8",`Lock the logistics now so job day is friction-free. <b>“When could you be home for a crew window?”</b>`)+`
+R.p8=()=>head("p8",`Lock the logistics now so job day is friction-free. <b>“Anything we need to know to get the truck in and work clean?”</b>`)+`
   <div class="checks">${["Driveway clear for truck","HOA rules apply","Gate / access code needed","Pets on site"].map(v=>
     `<div class="check ${S.access.includes(v)?'on':''}" onclick="S.access=chip(S.access,'${v}');render()"><span class="bx"></span>${v}</div>`).join("")}</div>
-  <label class="fl">Best crew window</label>
-  <div class="chips">${["Weekday AM","Weekday PM","Saturday","Sunday"].map(v=>
-    `<div class="chip ${S.window===v?'on hot':''}" onclick="S.window='${v}';render()">${v}</div>`).join("")}</div>
   <label class="fl">Notes</label>
   <textarea oninput="S.accessNote=this.value">${esc(S.accessNote)}</textarea>`;
 
@@ -750,7 +736,7 @@ R.p11=()=>head("p11",`<b>“What would keep this from coming back?”</b> Point 
   <div style="text-align:right;font-family:Oswald;font-weight:700;font-size:20px;margin-top:6px">
     Upgrades: <span style="color:var(--orange)">${money(upgradesTotal())}</span></div>`;
 
-R.p12=()=>head("p12",`Back to the map. <b>“Where does the car live?”</b> Tap a layout — we sketch it in, color-coded — then preview it with AI. Tap “Custom” to draw your own.`)+`
+R.p12=()=>head("p12",`Back to the map — a <b>top-down view</b> of the garage. <b>“Where does the car live?”</b> Tap a layout — we sketch it in, color-coded — then preview it with AI. Tap “Custom” to draw your own.`)+`
   <div class="chips">${LAYOUT_PRESETS.map(v=>
     `<div class="chip ${S.layout===v?'on hot':''}" onclick="pickLayout('${v}')">${v}</div>`).join("")}</div>
   ${S.layout==="Custom"?`<div class="gridmode">${Object.keys(LZONE).map(z=>
@@ -841,7 +827,6 @@ R.plan=()=>{
 };
 
 /* ---------- grid + signature + upgrades helpers ---------- */
-function tapCell(i){ S.grid[i]=(S.grid[i]===S.gridMode)?0:S.gridMode; render(); }
 /* ---------- parking layout (p12): color-coded zones, presets + custom draw ---------- */
 const LZONE={1:{name:"Car",color:"#13203a"},2:{name:"Workbench",color:"#2f8f6b"},3:{name:"Gym",color:"#7c5cbf"},4:{name:"Storage",color:"#d4a017"}};
 const LAYOUT_PRESETS=["1 car","2 cars","Car + workbench","Car + gym corner","No car — clean storage","Custom"];
@@ -912,7 +897,6 @@ function compileNotes(){
   const add=(k,v)=>{if(v&&String(v).trim()&&v!=="null")L.push(k+": "+(Array.isArray(v)?v.join(", "):v));};
   add("Car fits today", S.park===true?"Yes":S.park===false?"NO":"");
   add("Last parked inside", S.parkLast);
-  add("Worst zone", S.worstZone);
   add("Building for", S.howLong);
   add("Missing out on", S.missing);
   add("THEIR WORDS", S.missNote);
@@ -921,7 +905,7 @@ function compileNotes(){
   add("HAZARDS", S.hazards); add("Hazard notes", S.hazNote);
   add("Truckloads", S.loads); add("Volume notes", S.loadNote);
   add("Heavy/specialty", S.heavy); add("Heavy notes", S.heavyNote);
-  add("Access flags", S.access); add("Crew window", S.window); add("Access notes", S.accessNote);
+  add("Access flags", S.access); add("Access notes", S.accessNote);
   add("Donate/recycle", S.donate); add("Donate notes", S.donateNote);
   add("Floor", S.floor); add("Floor notes", S.floorNote);
   add("Parking layout", S.layout); add("Layout notes", S.layoutNote);
@@ -950,7 +934,7 @@ function buildPayload(){
     tool:"game_plan", job_id:S.jobId, sent_at:new Date().toISOString(),
     client:{first_name:parts[0]||"", last_name:parts.slice(1).join(" ")||"", phone:normPhone(S.phone), email:S.email||"", address:S.addr,
       jobber_client_id:S.jobberClientId||"", jobber_request_id:S.jobberRequestId||""},
-    quote:{title:"14-Point Garage Game Plan — "+(S.addr||S.name||"garage"),
+    quote:{title:pointTotal()+"-Point Garage Game Plan — "+(S.addr||S.name||"garage"),
       total:grandTotal(), deposit:Number(S.deposit||0), job_date:S.jobdate,
       line_items:items, line_items_count:items.length},
     day_of_bonus:!!S.dayBonus,
@@ -1041,7 +1025,7 @@ function writeActive(via){
       rate:S.rate, upgradesTotal:upgradesTotal(), total:grandTotal(),
       deposit:S.deposit, jobdate:S.jobdate, dayBonus:!!S.dayBonus, hasSignature:!!S.sig,
       photosBefore:PHOTO_COUNTS.before, hasAiAfter:!!S.aiAfter,
-      pain:S.missNote||(S.parkLast?"hasn't parked inside since "+S.parkLast:"")||S.worstZone,
+      pain:S.missNote||(S.parkLast?"hasn't parked inside since "+S.parkLast:""),
       committedVia:via||"", savedAt:new Date().toISOString()}));
   }catch(e){}
 }
