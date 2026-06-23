@@ -6,7 +6,7 @@
  * AI "after" (same garage, cleaned out) for the in-garage sales visualization.
  *
  * Reuses the existing OpenAI key (env.openaiapi — same one copilot.js uses),
- * so no new credential is needed. Calls OpenAI Images edits with gpt-image-1.
+ * so no new credential is needed. Calls OpenAI Images edits with gpt-image-2.
  *
  * Request  (JSON): { image: "data:image/...;base64,...", hint?: "string",
  *                    sketch?: "data:image/png;base64,..." }
@@ -15,7 +15,8 @@
  *   image so the "after" render's zone positions match what the crew drew.
  * Response (JSON): { ok:true, image:"data:image/png;base64,..." } | { ok:false, error }
  *
- * Cost/latency: ~$0.04–0.17 and several seconds per image. Keep it a deliberate
+ * Cost/latency: gpt-image-2 high quality runs a bit richer than v1 (~$0.15–0.40 and
+ * several seconds per image, more when a sketch reference is attached). Keep it a deliberate
  * tap, not automatic. The UI labels the result "AI preview — actual results vary"
  * so it never becomes an implied guarantee against the locked-rate brand.
  */
@@ -110,11 +111,15 @@ export async function onRequestPost({ request, env }) {
   if (sketch) prompt += SKETCH_NOTE;
 
   const form = new FormData();
-  form.append('model', 'gpt-image-1');
+  form.append('model', 'gpt-image-2');    // OpenAI's newest image model (Apr 2026): it reasons
+                                          // about image STRUCTURE before rendering, so the zone
+                                          // layout from the sketch lands far more reliably.
   form.append('prompt', prompt);
-  form.append('size', '1536x1024');
-  form.append('quality', 'high');         // sharper, more detailed render (vs default)
-  form.append('input_fidelity', 'high');  // preserve the SAME garage's window, walls & proportions
+  form.append('size', '1536x1024');       // 1024x1024 | 1024x1536 | 1536x1024
+  form.append('quality', 'high');         // low | medium | high
+  // No input_fidelity: gpt-image-2 ALWAYS processes reference images at high fidelity (the
+  // param is non-configurable on this model), so the garage's real window/walls/proportions
+  // are preserved automatically — and passing the old param would risk a 400.
   form.append('n', '1');
   const ext = pic.mime === 'image/jpeg' ? 'jpg' : 'png';
   if (sketch) {
