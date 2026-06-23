@@ -578,32 +578,49 @@ async function genAfter(){
   // rotate reassuring copy so the crew doesn't think it stalled and re-tap.
   if(out) out.innerHTML=`<div class="genbar"><i></i></div><div class="genmsg" id="genmsg">Rendering the “after”… this can take up to a minute. Hang tight.</div>`;
   const bar=out?out.querySelector(".genbar i"):null;
-  let pct=0,secs=0; const timer=setInterval(()=>{
+  let pct=0,secs=0,phase="run"; const timer=setInterval(()=>{
     secs+=0.5; pct=Math.min(96,pct+(pct<70?0.9:0.35)); if(bar)bar.style.width=pct+"%";
+    if(phase!=="run") return;   // don't clobber the "retrying…" message
     const m=$("genmsg"); if(m){ if(secs>50)m.textContent="Almost there — adding the finishing detail…";
       else if(secs>24)m.textContent="Still working — placing your shelving and zones…"; }
   },500);
   const finish=lbl=>{ btn.textContent=lbl; btn.disabled=false; };
-  try{
-    const res=await fetch("/api/garage-render",{method:"POST",headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({image:befs[befs.length-1].dataUrl, hint:layoutHint(), sketch:layoutSketchDataUrl()})});
-    const j=await res.json();
-    clearInterval(timer);
-    if(res.ok&&j&&j.ok&&j.image){
+  const reqBody=JSON.stringify({image:befs[befs.length-1].dataUrl, hint:layoutHint(), sketch:layoutSketchDataUrl()});
+
+  // The first render can drop at the edge on a cold/slow generation, then land on a
+  // warm retry — so retry automatically (up to 3) instead of making the crew re-tap.
+  // Only retry transient failures (a dropped connection or an upstream 502/503/504);
+  // a 400 / "not configured" won't fix itself, so fail fast on those.
+  let lastErr="that service";
+  for(let attempt=1; attempt<=3; attempt++){
+    let res=null,j=null,threw=false;
+    const ctrl=new AbortController(), to=setTimeout(()=>ctrl.abort(),120000);
+    try{
+      res=await fetch("/api/garage-render",{method:"POST",headers:{"Content-Type":"application/json"},body:reqBody,signal:ctrl.signal});
+      j=await res.json().catch(()=>null);
+    }catch(e){ threw=true; } finally{ clearTimeout(to); }
+
+    if(!threw && res && res.ok && j && j.ok && j.image){
+      clearInterval(timer);
       S.aiAfter=j.image; save();
       try{await photoAdd(job,"after_ai",j.image);}catch(e){}
-      // KEY FIX for "nothing showed, had to click twice": don't call it done on the
-      // response — preload/decode the image first, then paint and scroll to it, so
-      // "done" means the picture is actually on screen, not a blank box.
+      // Don't call it done on the response — preload/decode the image first, then
+      // paint and scroll to it, so "done" means the picture is actually on screen.
       const show=()=>{ if(bar)bar.style.width="100%"; paintAi(); refreshCounts();
         const host=$("aiout"), im=host&&host.querySelector("img");
         if(im) try{ im.scrollIntoView({behavior:"smooth",block:"center"}); }catch(e){}
         finish("✨ Regenerate the After"); };
       const pre=new Image(); pre.onload=show; pre.onerror=show; pre.src=j.image;
-    }else{ if(out)out.innerHTML=""; finish("✨ Generate the After");
-      alert("Couldn't generate: "+((j&&j.error)||res.status)+". Check signal and try again."); }
-  }catch(e){ clearInterval(timer); if(out)out.innerHTML=""; finish("✨ Generate the After");
-    alert("Image service unreachable — check signal and try again."); }
+      return;
+    }
+    const transient = threw || (res && res.status>=502);   // dropped, or upstream hiccup
+    lastErr = threw ? "the connection dropped" : ((j&&j.error)||("status "+(res&&res.status)));
+    if(!transient || attempt===3) break;                   // hard error, or out of tries
+    phase="retry"; const m=$("genmsg");
+    if(m) m.textContent="Taking a little longer — retrying automatically (try "+(attempt+1)+" of 3)…";
+  }
+  clearInterval(timer); if(out)out.innerHTML=""; finish("✨ Generate the After");
+  alert("Couldn't generate — "+lastErr+". Check signal and tap Generate to try again.");
 }
 
 function priceFor(u,q){ return u.qty ? Math.round(u.price*Math.max(1,q||1)*100)/100 : u.price; }
