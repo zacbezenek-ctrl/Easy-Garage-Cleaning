@@ -56,6 +56,14 @@ await ctx.route('**/api/jobber-clients*', async route => {
     { id: 'JCLIENT2', name: 'Dana Q. Other', phone: '(970) 555-0999', address: '12 Elsewhere Rd', email: '' },
   ] }) });
 });
+// Stub today's Jobber walkthrough requests (auto-loaded on the Game Plan start screen).
+await ctx.route('**/api/jobber-requests*', async route => {
+  await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, date: '2026-06-12',
+    today: [
+      { id: 'REQ1', clientId: 'JCLIENT1', name: 'Dana Tester', phone: '(970) 555-0123', email: 'dana@example.com', address: '746 Star Grass Ln, Fort Collins', title: 'Garage walkthrough', createdAt: '2026-06-12T15:00:00Z', day: '2026-06-12' },
+      { id: 'REQ2', clientId: 'JCLIENT2', name: 'Sam Sample', phone: '(970) 555-0777', email: '', address: '9 Pine Ct, Windsor', title: 'Walkthrough', createdAt: '2026-06-12T14:00:00Z', day: '2026-06-12' },
+    ], recent: [] }) });
+});
 const driveBatches = [];
 await ctx.route('**/api/drive-upload', async route => {
   let ids = [];
@@ -105,6 +113,20 @@ await page.evaluate(([t,e]) => { for (const st of [localStorage,sessionStorage])
 await page.goto(`${BASE}/crew/gameplan.html`);
 await page.waitForTimeout(400);
 ok('gameplan: unlocked via stored token', await page.locator('#egc-gate.off').count() === 1);
+
+/* A0: today's Jobber walkthrough requests auto-load on the start screen */
+await page.waitForTimeout(350);
+ok('gameplan: today’s walkthroughs auto-load from Jobber requests',
+   await page.locator('.jrow').count() === 2,
+   (await page.locator('.jrow .nm').allTextContents()).map(s => s.replace(/\s+/g, ' ').trim()).join(' | '));
+await page.locator('.jrow', { hasText: 'Dana Tester' }).click();
+await page.waitForTimeout(150);
+ok('gameplan: tapping a request prefills editable name/phone/email + request id',
+   await page.inputValue('#f_name') === 'Dana Tester' &&
+   await page.inputValue('#f_phone') === '(970) 555-0123' &&
+   await page.inputValue('#f_email') === 'dana@example.com' &&
+   await page.evaluate(() => S.jobberRequestId === 'REQ1' && S.jobberClientId === 'JCLIENT1'),
+   `name=${await page.inputValue('#f_name')} email=${await page.inputValue('#f_email')}`);
 
 /* Jobber customer lookup on the start screen */
 await page.fill('#f_name', 'Dana');

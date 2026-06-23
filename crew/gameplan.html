@@ -178,6 +178,16 @@
   .lkr .nm{font-weight:600;font-size:15.5px}
   .lkr .nm small{display:block;font-weight:500;color:var(--khaki);font-size:13px}
   .lkr .go{font-family:'Oswald';font-weight:700;color:var(--orange);font-size:18px}
+  .jreqhead{display:flex;justify-content:space-between;align-items:center;font-family:'Oswald';font-weight:600;font-size:12px;
+            letter-spacing:.1em;text-transform:uppercase;color:var(--khaki);margin:2px 0 8px}
+  .jreqhead a{color:var(--orange);text-decoration:none;font-size:20px;line-height:1}
+  .jrow{display:flex;justify-content:space-between;align-items:center;gap:12px;background:var(--paper);
+        border:1.5px solid var(--line);border-radius:var(--r);padding:13px 15px;margin-bottom:7px;cursor:pointer}
+  .jrow:active{border-color:var(--orange)}
+  .jrow .nm{font-weight:600;font-size:15.5px}
+  .jrow .nm small{display:block;font-weight:500;color:var(--khaki);font-size:13px}
+  .jrow .go{font-family:'Oswald';font-weight:700;color:var(--orange);font-size:18px}
+  .jmore{display:inline-block;color:var(--orange);text-decoration:none;font-weight:600;font-size:14px;margin:3px 0 4px}
   .looknote{font-size:13px;color:var(--khaki);font-weight:500;margin-top:8px}
   .drivebtn{margin-top:10px;background:var(--navy);color:#fff;border:none;border-radius:11px;font-family:'Oswald';
             font-weight:600;font-size:13.5px;letter-spacing:.04em;text-transform:uppercase;padding:12px 16px;cursor:pointer;
@@ -363,7 +373,7 @@ const S = {  // session state — autosaved locally on every tap
   layoutGrid:Array(40).fill(0), layoutPaint:1, garages:1,
   stay:[],
   pkg:null, rate:"", deposit:"", jobdate:"",
-  dayBonus:false, jobId:"", sig:"", aiAfter:"", jobberClientId:"",
+  dayBonus:false, jobId:"", sig:"", aiAfter:"", jobberClientId:"", jobberRequestId:"",
 };
 
 const chip=(arr,v)=>arr.includes(v)?arr.filter(x=>x!==v):[...arr,v];
@@ -459,7 +469,56 @@ async function jobberLookup(){
 function lookPick(i){
   const c=LOOK[i]; if(!c) return;
   S.name=c.name||S.name; S.addr=c.address||S.addr; S.phone=c.phone||S.phone;
-  S.email=c.email||S.email; S.jobberClientId=c.id||""; LOOK=[]; render();
+  S.email=c.email||S.email; S.jobberClientId=c.id||""; S.jobberRequestId=""; LOOK=[]; render();
+}
+
+/* ===== Today's Jobber requests — auto-pulled at the start of the walkthrough =====
+   Walkthroughs are booked in Jobber as Requests. We load the day's list so the
+   crew taps their customer; the detail fields below pre-fill but stay editable.
+   Cached after the first load so re-renders don't re-hit Jobber. */
+let JREQ={status:"idle", date:"", today:[], recent:[], showAll:false};
+async function loadTodayRequests(force){
+  if(JREQ.status==="loading") return;
+  if(JREQ.status!=="idle" && !force){ paintRequests(); return; } // already attempted — repaint, don't auto-refetch (Retry passes force)
+  JREQ.status="loading"; JREQ.showAll=false; paintRequests();
+  try{
+    const res=await fetch("/api/jobber-requests");
+    const j=await res.json().catch(()=>({}));
+    if(res.status===501){ JREQ.status="unconfigured"; }
+    else if(!res.ok||!j.ok){ JREQ.status="error"; }
+    else { JREQ.status="done"; JREQ.date=j.date||""; JREQ.today=j.today||[]; JREQ.recent=j.recent||[]; }
+  }catch(e){ JREQ.status="error"; }
+  paintRequests();
+}
+function reqList(){ return JREQ.showAll?JREQ.recent:JREQ.today; }
+function fmtDay(d){ try{ return new Date(d+"T12:00").toLocaleDateString(undefined,{weekday:"short",month:"short",day:"numeric"}); }catch(e){ return d; } }
+function paintRequests(){
+  const el=$("jreq"); if(!el) return;
+  if(JREQ.status==="loading"){ el.innerHTML=`<div class="looknote">Pulling today's walkthroughs from Jobber…</div>`; return; }
+  if(JREQ.status==="unconfigured"){ el.innerHTML=`<div class="looknote">Jobber isn't connected yet — Zac: run /api/jobber-auth once. Search by name or type it in for now.</div>`; return; }
+  if(JREQ.status==="error"){ el.innerHTML=`<div class="looknote">Couldn't reach Jobber — search by name below or type it in. <a href="#" onclick="loadTodayRequests(true);return false">Retry</a></div>`; return; }
+  if(JREQ.status!=="done"){ el.innerHTML=""; return; }
+  const list=reqList();
+  const head=`<div class="jreqhead"><span>${JREQ.showAll?"Recent requests":"Today’s walkthroughs"}${(JREQ.date&&!JREQ.showAll)?" · "+esc(fmtDay(JREQ.date)):""}</span><a href="#" title="Refresh" onclick="loadTodayRequests(true);return false">↻</a></div>`;
+  if(!list.length){
+    el.innerHTML=head+`<div class="looknote">${JREQ.showAll?"No requests found.":"No walkthrough requests dated today."}${(!JREQ.showAll&&JREQ.recent.length)?` <a href="#" onclick="JREQ.showAll=true;paintRequests();return false">Show recent requests →</a>`:""}</div>`;
+    return;
+  }
+  el.innerHTML=head+list.map((c,i)=>`<div class="jrow" onclick="reqPick(${i})">
+      <div class="nm">${esc(c.name||"(no name on request)")}<small>${esc([c.address,c.phone].filter(Boolean).join(" · ")||c.title||"")}</small></div>
+      <span class="go">→</span></div>`).join("")
+    + ((!JREQ.showAll&&JREQ.recent.length>JREQ.today.length)?`<a class="jmore" href="#" onclick="JREQ.showAll=true;paintRequests();return false">Show all recent requests →</a>`:"")
+    + (JREQ.showAll?`<a class="jmore" href="#" onclick="JREQ.showAll=false;paintRequests();return false">← Back to today</a>`:"");
+}
+function reqPick(i){
+  const c=reqList()[i]; if(!c) return;
+  if(c.name) S.name=c.name;          // only overwrite a field the request actually has —
+  if(c.address) S.addr=c.address;    // never blank out something the crew already typed
+  if(c.phone) S.phone=c.phone;
+  if(c.email) S.email=c.email;
+  S.jobberClientId=c.clientId||"";
+  S.jobberRequestId=c.id||"";
+  render(); // re-prefills the editable fields + repaints the list from cache
 }
 
 /* ===== Upload this job's photos to its Google Drive folder ===== */
@@ -567,16 +626,21 @@ R.start=()=>`
     <h1 class="big" style="font-size:clamp(40px,8vw,68px)">14-Point<br>Garage Game Plan</h1>
     <p style="font-size:19px;color:var(--khaki);margin:14px 0 26px;max-width:540px;line-height:1.5">
       Fourteen points. One walkthrough. You leave with a written plan, a locked flat rate, and a date.</p>
-    <label class="fl">Homeowner</label>
+    <label class="fl">Pick today's walkthrough</label>
+    <div id="jreq"></div>
+    <label class="fl" style="margin-top:18px">Homeowner</label>
     <div class="lookrow">
       <input type="text" id="f_name" value="${esc(S.name)}" placeholder="First name" oninput="S.name=this.value">
-      <button class="lookbtn" onclick="jobberLookup()">🔍 Jobber</button>
+      <button class="lookbtn" onclick="jobberLookup()">🔍 Name</button>
     </div>
     <div id="lookout"></div>
     <label class="fl">Address</label>
     <input type="text" id="f_addr" value="${esc(S.addr)}" placeholder="Street address" oninput="S.addr=this.value">
     <label class="fl">Mobile (for the Game Plan text)</label>
     <input type="tel" id="f_phone" value="${esc(S.phone)}" placeholder="(970) 555-0123" oninput="S.phone=this.value">
+    <label class="fl">Email</label>
+    <input type="email" id="f_email" value="${esc(S.email)}" placeholder="name@email.com" inputmode="email" oninput="S.email=this.value">
+    <div class="looknote" style="margin-top:12px">Tap a name to pull it from Jobber, then double-check every field with the customer on-site — all editable.</div>
   </div>`;
 
 R.zone=s=>`
@@ -885,7 +949,7 @@ function buildPayload(){
   const p={
     tool:"game_plan", job_id:S.jobId, sent_at:new Date().toISOString(),
     client:{first_name:parts[0]||"", last_name:parts.slice(1).join(" ")||"", phone:normPhone(S.phone), email:S.email||"", address:S.addr,
-      jobber_client_id:S.jobberClientId||""},
+      jobber_client_id:S.jobberClientId||"", jobber_request_id:S.jobberRequestId||""},
     quote:{title:"14-Point Garage Game Plan — "+(S.addr||S.name||"garage"),
       total:grandTotal(), deposit:Number(S.deposit||0), job_date:S.jobdate,
       line_items:items, line_items_count:items.length},
@@ -1010,6 +1074,7 @@ function render(){
   $("navinner").innerHTML=nav;
   paintTotal();
   $("stage").scrollTop=0;
+  if(s.id==="start")setTimeout(loadTodayRequests,0); // auto-pull the day's Jobber walkthroughs (cached after first load)
   if(s.id==="p10")setTimeout(()=>mountStrip("pb_before","before",{ai:true}),0);
   if(s.id==="p12")setTimeout(paintAi,0);
   if(s.id==="plan"){setTimeout(initSig,60);setTimeout(mountPlanPhotos,0);} // handoff is written on commit (Send/Text), not on view
