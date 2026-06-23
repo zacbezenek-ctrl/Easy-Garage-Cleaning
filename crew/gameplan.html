@@ -930,12 +930,10 @@ function layoutSpatial(){
               : (maxR-minR>=3) ? "running most of the depth" : "";
     return LZONE[z].name.toLowerCase()+" "+hor+(dep?", "+dep:"");
   });
-  const names=Object.keys(LZONE).map(k=>LZONE[k].name.toLowerCase());
-  const here=present.map(z=>LZONE[z].name.toLowerCase());
-  const absent=names.filter(n=>!here.includes(n));
-  let s="garage zone layout, viewed from the open door looking in — "+parts.join("; ");
-  if(absent.length) s+=". This garage has NO "+absent.join(", no ")+" — do not add any zone that is not listed here";
-  return s;
+  // Positive-only: list exactly the zones drawn and where they sit. Exclusion of
+  // everything else is handled by the server's end-of-prompt CONSTRAINTS block —
+  // naming absent zones here (mid-prompt) can backfire and summon them.
+  return "garage zone layout, viewed from the open door looking in — "+parts.join("; ");
 }
 function layoutHint(){
   const p=[];

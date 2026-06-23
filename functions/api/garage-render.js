@@ -24,26 +24,35 @@
 const ALLOWED_HOST_RE = /(^|\.)easygaragecleaning\.com$|(\.pages\.dev)$|^localhost(:\d+)?$|^127\.0\.0\.1(:\d+)?$/;
 const MAX_BODY = 12 * 1024 * 1024; // 12 MB — a downscaled garage photo is well under this
 
+// Prompt follows OpenAI's image-edit guidance: positive Scene first, then the
+// invariants to PRESERVE, then (assembled later) the zone layout + sketch note, and
+// finally a short CONSTRAINTS block. Guardrails are deliberately LAST and few — image
+// models weight an early "no X" as a composition cue (naming a thing can summon it),
+// so exclusions belong at the end and capped at a handful.
 const PROMPT =
-  "This is a photo of a customer's cluttered residential garage. Produce a PHOTOREALISTIC 'after' " +
-  "image of the SAME garage — keep the exact same wall color, window style and panes, door, ceiling " +
-  "and proportions from the original. Render it as a clean, straight-on front view looking in from " +
-  "the driveway at eye level. Show it fully cleaned out: clutter and junk gone, concrete floor swept " +
-  "and clear with a car's worth of open space, and the belongings worth keeping tidied onto the exact " +
-  "freestanding shelving and labeled storage bins described below. Reproduce ONLY the zones described " +
-  "below, each in the EXACT position given — do NOT add any zone (no gym, workbench, car or storage) " +
-  "that is not described. " +
-  "It must look like a real estate listing photo of an attainable one-day cleanout: sharp " +
-  "focus, accurate real materials, realistic shadows, natural daylight. NOT a CGI render, " +
-  "illustration, cartoon, luxury showroom, or full renovation.";
+  "Photorealistic real-estate listing 'after' photo of THIS exact residential garage, fully cleaned " +
+  "out and organized. Shoot it straight-on from the driveway at eye level in bright natural daylight, " +
+  "like a real estate agent's phone photo. Preserve the existing walls and wall color, the window and " +
+  "its exact panes, the door, the ceiling, the concrete floor and the room's proportions exactly as in " +
+  "the original photo. Clear all clutter and junk and sweep the floor to open, usable space; tidy the " +
+  "belongings worth keeping onto the freestanding shelving and labeled storage bins described below, " +
+  "arranged in the zones described below.";
+
+// Hard guardrails — appended at the very END of the assembled prompt (after layout +
+// sketch note). Three only, so they don't scatter the model's focus. The pole rule is
+// explicit because gpt-image-2 likes to invent a structural post in an open garage floor.
+const CONSTRAINTS =
+  " Constraints: keep the floor open and unobstructed — do NOT add any support pole, column, post, " +
+  "pillar, or beam standing in the floor. Show only the zones and items described above — no other " +
+  "furniture, equipment, or rooms. Render it as a real photograph, not a CGI render, illustration, or showroom.";
 
 // Appended only when the crew's top-down sketch is supplied as a 2nd image.
 // gpt-image-1 sees both references; this tells it which is which and how to map
 // the floor-plan's positions onto the front-on photo so the result lines up
 // with what the crew actually drew (the #1 complaint was zones in the wrong spot).
 const SKETCH_NOTE =
-  " A SECOND image is attached: a top-down FLOOR PLAN of THIS SAME garage, with color-coded, labeled " +
-  "zones (Car, Workbench, Gym, Storage). The garage door is at the BOTTOM edge of that plan — that bottom " +
+  " A SECOND image is attached: a top-down FLOOR PLAN of THIS SAME garage, with color-coded zones " +
+  "labeled directly on the plan. The garage door is at the BOTTOM edge of that plan — that bottom " +
   "edge is exactly where the camera stands for this 'after' photo. Place every zone in the SAME left-to-" +
   "right and near-to-far position as the plan: a zone drawn on the LEFT of the plan stays on the LEFT of " +
   "the photo, a zone on the RIGHT stays on the RIGHT, and a zone near the TOP of the plan belongs along the " +
@@ -110,6 +119,7 @@ export async function onRequestPost({ request, env }) {
 
   let prompt = body.hint ? `${PROMPT} ${String(body.hint).slice(0, 800)}` : PROMPT;
   if (sketch) prompt += SKETCH_NOTE;
+  prompt += CONSTRAINTS;   // guardrails last, per image-prompting best practice
 
   const form = new FormData();
   form.append('model', 'gpt-image-2');    // OpenAI's newest image model (Apr 2026): it reasons
