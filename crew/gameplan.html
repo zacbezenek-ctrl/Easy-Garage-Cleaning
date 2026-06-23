@@ -148,6 +148,14 @@
   .guarantee{border:2px solid var(--orange);border-radius:var(--r);padding:18px 20px;margin:18px 0;background:var(--paper)}
   .guarantee h4{font-family:'Oswald';color:var(--orange);font-size:16px;letter-spacing:.06em;text-transform:uppercase;margin-bottom:10px}
   .guarantee li{margin-left:18px;font-size:15.5px;font-weight:500;padding:3px 0}
+  .terms{background:var(--paper);border:1.5px solid var(--line);border-radius:var(--r);padding:14px 16px;margin:14px 0}
+  .terms h4{font-family:'Oswald';font-weight:700;font-size:13px;letter-spacing:.07em;text-transform:uppercase;color:var(--navy);margin-bottom:6px}
+  .terms p{font-size:14px;line-height:1.5;color:var(--navy);font-weight:500}
+  .terms details{margin-top:9px}
+  .terms summary{font-family:'Oswald';font-weight:600;font-size:12px;letter-spacing:.06em;text-transform:uppercase;color:var(--orange);cursor:pointer}
+  .terms ul{margin:8px 0 0;padding-left:18px}
+  .terms li{font-size:13px;line-height:1.5;color:var(--khaki);font-weight:500;margin-bottom:6px}
+  .terms li b{color:var(--navy)}
   #sig{width:100%;height:150px;background:var(--paper);border:1.5px dashed var(--khaki);border-radius:var(--r);touch-action:none}
   .sigbar{display:flex;justify-content:space-between;align-items:center;margin-top:6px}
   .sigbar button{background:none;border:none;color:var(--orange);font-weight:700;font-size:14px;cursor:pointer;padding:8px}
@@ -833,7 +841,20 @@ R.plan=()=>{
   <div id="pb_plan"></div>
   <div class="guarantee"><h4>The EGC No-Surprises Guarantee</h4>
     <ol>${CONFIG.guarantee.map(g=>`<li>${g}</li>`).join("")}</ol></div>
-  <label class="fl">Homeowner sign-off</label>
+  <div class="terms">
+    <h4>Deposit &amp; Cancellation</h4>
+    <p>Your <b>20% deposit locks your date</b> and comes off your total. Reschedule or cancel <b>more than 24 hours out — fully refundable</b>. Inside 24 hours — whether you cancel or move the date — the deposit covers your reserved crew and <b>isn't refundable</b>.</p>
+    <details><summary>Full terms</summary>
+      <ul>
+        <li><b>Locked rate.</b> The price quoted today is locked — it won't change. The remaining balance is due when the job's complete.</li>
+        <li><b>What we haul.</b> We only remove what you've okayed in the keep / donate / haul plan — please confirm before we start. We aren't liable for items removed at your direction.</li>
+        <li><b>Access &amp; property.</b> Please have the garage accessible on job day. We work carefully, but aren't responsible for pre-existing damage or hidden/structural conditions.</li>
+        <li><b>Special items.</b> Some items (e-waste, tires, paint, fridges, mattresses) normally carry disposal fees — waived when you book at the walkthrough.</li>
+        <li><b>Photos.</b> We may take before/after photos of the work for our records and marketing; no personal information is shown.</li>
+      </ul>
+    </details>
+  </div>
+  <label class="fl">Homeowner sign-off — accepts this plan &amp; the terms above</label>
   <canvas id="sig"></canvas>
   <div class="sigbar"><span style="font-size:13px;color:var(--khaki);font-weight:600">Sign with your finger</span>
     <button onclick="clearSig()">Clear</button></div>
@@ -981,7 +1002,7 @@ function buildPayload(){
       total:grandTotal(), deposit:Number(S.deposit||0), job_date:S.jobdate,
       line_items:items, line_items_count:items.length},
     day_of_bonus:!!S.dayBonus,
-    signature:S.sig||"",
+    signature:S.sig||"", terms_version:"2026-06", terms_accepted:!!S.sig,
     photos:{before:PHOTO_COUNTS.before, ai_after:PHOTO_COUNTS.after_ai},
     drive_folder:(function(){try{return localStorage.getItem(driveKey())||"";}catch(e){return "";}})(),
     garage:{width:S.garageW||"", depth:S.garageD||"", height:S.garageH||"", bays:S.garages, layout:S.layout||"",
