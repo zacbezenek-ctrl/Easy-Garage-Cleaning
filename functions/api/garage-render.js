@@ -21,11 +21,14 @@ const MAX_BODY = 12 * 1024 * 1024; // 12 MB — a downscaled garage photo is wel
 
 const PROMPT =
   "This is a photo of a customer's cluttered residential garage. Produce a photorealistic " +
-  "'after' image of the SAME garage — keep the same walls, garage door, window placement, " +
-  "ceiling and overall dimensions and camera angle. Show it fully cleaned out and organized: " +
-  "clutter and junk removed, concrete floor swept clean, remaining belongings neatly stored on " +
-  "simple wall shelving, clear floor space for a car. Keep it realistic and attainable for a " +
-  "one-day cleanout — a tidy real garage, not a luxury showroom or renovation. Natural daylight.";
+  "'after' image of the SAME garage, rendered as a FRONT-ON view looking straight in through the " +
+  "open garage door from the driveway — eye level, centered, symmetrical. Keep the same walls, " +
+  "garage door, window placement, ceiling and overall dimensions. Show it fully cleaned out and " +
+  "organized: clutter and junk removed, concrete floor swept clean, remaining belongings neatly " +
+  "stored on simple wall shelving, clear floor space for a car. Arrange the space to match the " +
+  "described top-down layout (where the car, workbench, gym and storage zones go). Keep it " +
+  "realistic and attainable for a one-day cleanout — a tidy real garage, not a luxury showroom " +
+  "or renovation. Natural daylight.";
 
 function hostOf(v) { try { return new URL(v).host; } catch { return ''; } }
 // Read an env var tolerant of stray whitespace in the var NAME — a dashboard
