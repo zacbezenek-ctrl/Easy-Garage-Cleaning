@@ -55,6 +55,10 @@
   .script p{font-size:15.5px;line-height:1.55;font-weight:500}
   .script p+p{margin-top:8px}
   .script i{color:#aeb8cc;font-style:normal;font-size:13.5px}
+  .reviewqr{display:flex;align-items:center;gap:14px;background:#fff;border-radius:12px;padding:12px 14px;margin-top:12px}
+  .reviewqr svg{width:120px;height:120px;flex-shrink:0;display:block}
+  .reviewqr .cap b{font-family:'Oswald';font-weight:700;font-size:16px;color:var(--navy);text-transform:uppercase;letter-spacing:.04em;display:block}
+  .reviewqr .cap small{display:block;margin-top:4px;color:var(--khaki);font-size:13px;line-height:1.4}
   .copybtn{margin-top:10px;background:var(--orange);border:none;color:#fff;font-family:'Oswald';font-weight:600;
            font-size:13px;letter-spacing:.06em;text-transform:uppercase;padding:10px 16px;border-radius:9px;cursor:pointer}
   .guardrow{margin:4px 0 16px}
@@ -235,6 +239,7 @@ gateOk().then(u=>{
 /* ============ PLAYBOOK CONFIG — EDIT ME ============ */
 const WEBHOOK="/api/crew-hook"; // same-origin proxy → Zapier. Real hook URL lives server-side in functions/api/crew-hook.js (not in page source).
 const REVIEW_LINK="https://search.google.com/local/writereview?placeid=ChIJ17AGfBiyRIsRyJ3k4mDtX8Q";
+const REVIEW_QR='<svg viewBox="0 0 37 37"><rect width="37" height="37" fill="#fff"/><path stroke="#13203a" d="M4 4.5h7m7 0h1m3 0h2m2 0h7m-29 1h1m5 0h1m1 0h1m1 0h3m4 0h1m2 0h1m1 0h1m5 0h1m-29 1h1m1 0h3m1 0h1m1 0h2m2 0h1m1 0h1m1 0h1m3 0h1m1 0h1m1 0h3m1 0h1m-29 1h1m1 0h3m1 0h1m1 0h2m1 0h3m8 0h1m1 0h3m1 0h1m-29 1h1m1 0h3m1 0h1m2 0h3m4 0h4m2 0h1m1 0h3m1 0h1m-29 1h1m5 0h1m5 0h1m1 0h1m1 0h3m3 0h1m5 0h1m-29 1h7m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h7m-21 1h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m1 0h1m-21 1h1m5 0h1m1 0h1m1 0h1m1 0h4m1 0h1m3 0h2m2 0h3m-28 1h3m1 0h1m2 0h1m1 0h3m3 0h1m2 0h2m3 0h2m1 0h2m-27 1h4m1 0h1m2 0h1m1 0h5m1 0h1m2 0h1m2 0h2m-25 1h4m1 0h1m2 0h1m1 0h1m3 0h2m5 0h2m1 0h2m-26 1h2m1 0h4m1 0h1m2 0h1m1 0h3m2 0h1m1 0h1m1 0h2m4 0h1m-29 1h3m1 0h2m4 0h3m2 0h2m2 0h2m1 0h3m2 0h2m-29 1h1m1 0h1m2 0h4m1 0h1m4 0h3m2 0h1m3 0h3m-25 1h1m2 0h1m6 0h1m1 0h2m3 0h4m1 0h1m1 0h1m1 0h1m-29 1h1m1 0h1m3 0h2m1 0h1m1 0h1m9 0h1m1 0h1m1 0h2m-27 1h1m4 0h1m3 0h1m1 0h1m1 0h1m1 0h1m3 0h2m1 0h3m1 0h3m-29 1h2m4 0h2m2 0h1m1 0h1m2 0h1m3 0h1m3 0h1m1 0h1m2 0h1m-29 1h1m2 0h1m1 0h1m1 0h1m1 0h3m1 0h1m2 0h1m1 0h2m1 0h3m-24 1h1m3 0h5m2 0h1m2 0h1m5 0h5m1 0h3m-21 1h1m5 0h1m2 0h1m2 0h1m3 0h2m-26 1h7m2 0h2m4 0h1m1 0h1m2 0h1m1 0h1m1 0h3m-27 1h1m5 0h1m5 0h1m1 0h2m3 0h2m3 0h1m2 0h2m-29 1h1m1 0h3m1 0h1m6 0h5m1 0h7m2 0h1m-29 1h1m1 0h3m1 0h1m3 0h1m1 0h3m1 0h1m1 0h4m3 0h2m1 0h1m-29 1h1m1 0h3m1 0h1m2 0h1m1 0h1m3 0h2m2 0h2m1 0h1m1 0h4m-28 1h1m5 0h1m2 0h1m1 0h3m8 0h2m1 0h2m1 0h1m-29 1h7m1 0h2m1 0h1m3 0h1m5 0h4m1 0h1"/></svg>'; // QR for the g.page review link — customer scans it at the reveal
 const SECTIONS = [
   {
     when:"Still in the garage — homeowner present", title:"The Victory Walk", items:[
@@ -490,6 +495,7 @@ function render(){
       ${sec.script?`<div class="script"><h4>${sec.script.h}</h4>${sec.script.p.map(p=>`<p>${p}</p>`).join("")}
         <button class="copybtn" onclick="event.stopPropagation();copyScript(${si})">Copy text</button>
         ${si===1?`<button class="copybtn" id="revbtn" style="margin-left:8px;background:#2e7d4f" onclick="event.stopPropagation();sendReview(this)">Send review link from EGC number</button>`:""}
+        ${si===1?`<div class="reviewqr">${REVIEW_QR}<div class="cap"><b>Or have them scan</b><small>Point their phone camera here — it opens our Google review page.</small></div></div>`:""}
       </div>`:""}
       ${sec.script2?`<div class="script"><h4>${sec.script2.h}</h4>${guardYearOneFree()?`<p style="background:#e8581c;color:#fff;border-radius:8px;padding:8px 11px;font-size:13.5px;margin-bottom:8px"><b>This package already includes Garage Guard year one free.</b> Don't cold-sell — frame it as “here's what kicks in after your free year,” or pitch the Guard Black upgrade.</p>`:""}${sec.script2.p.map(p=>`<p>${p}</p>`).join("")}</div>`:""}
       ${sec.guard?`<div class="guardrow"><div class="guardlbl">Garage Guard result</div>
