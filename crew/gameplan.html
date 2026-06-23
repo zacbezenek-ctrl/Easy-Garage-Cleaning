@@ -132,6 +132,10 @@
   .up .qty{display:flex;align-items:center;gap:0;border:1.5px solid var(--line);border-radius:10px;overflow:hidden}
   .up .qty button{width:42px;height:42px;border:none;background:var(--navy);color:#fff;font-size:20px;font-weight:700}
   .up .qty span{min-width:42px;text-align:center;font-family:'Oswald';font-weight:700;font-size:18px}
+  .up .qty input{width:52px;min-width:52px;height:42px;box-sizing:border-box;text-align:center;font-family:'Oswald';font-weight:700;font-size:18px;
+                 border:none;background:var(--paper);color:var(--navy);outline:none;padding:0;-webkit-appearance:none;-moz-appearance:textfield}
+  .up .qty input:focus{box-shadow:inset 0 -3px 0 var(--orange)}
+  .up .qty input::-webkit-outer-spin-button,.up .qty input::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
   .up .pr{font-family:'Oswald';font-weight:700;font-size:18px;min-width:74px;text-align:right}
 
   /* ---------- summary ---------- */
@@ -332,7 +336,7 @@ const CONFIG = {
     {name:"Rush Scheduling", sub:"Guaranteed next-day slot", price:150},
     {name:"Deep Clean — One-Car", sub:"", price:150, group:"deepclean"},
     {name:"Deep Clean — Two-Car", sub:"", price:250, group:"deepclean"},
-    {name:"Storage Bins / Totes", sub:"Labeled & stacked — $23 per container", price:23, qty:true},
+    {name:"Storage Totes — 27 gal", sub:"Labeled & stacked — $21.49 each", price:21.49, qty:true},
   ],
   // The No-Surprises Guarantee
   guarantee: [
@@ -364,7 +368,7 @@ const S = {  // session state — autosaved locally on every tap
 
 const chip=(arr,v)=>arr.includes(v)?arr.filter(x=>x!==v):[...arr,v];
 const $=id=>document.getElementById(id);
-const money=n=>"$"+Number(n||0).toLocaleString();
+const money=n=>{n=Number(n||0);const cents=Math.round(n*100)%100!==0;return"$"+n.toLocaleString(undefined,{minimumFractionDigits:cents?2:0,maximumFractionDigits:2});};
 // escape free-text before it goes into innerHTML / value="" (customer-dictated notes can contain < " etc.)
 const esc=s=>String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 // US phone → E.164 so Quo/Jobber accept it regardless of how the crew typed it
@@ -520,7 +524,7 @@ async function genAfter(){
     alert("Image service unreachable — check signal and try again."); }
 }
 
-function priceFor(u,q){ return u.qty ? u.price*Math.max(1,q||1) : u.price; }
+function priceFor(u,q){ return u.qty ? Math.round(u.price*Math.max(1,q||1)*100)/100 : u.price; }
 function upgradesTotal(){
   let t=0;
   CONFIG.upgrades.forEach((u,i)=>{ if(S.storage.includes(i)) t+=priceFor(u,S.storageQty[i]||1); });
@@ -676,7 +680,7 @@ R.p11=()=>head("p11",`<b>“What would keep this from coming back?”</b> Point 
       <span class="bx"></span>
       <div class="nm">${u.name}${u.sub?`<small>${u.sub}</small>`:""}</div>
       ${u.qty&&on?`<div class="qty" onclick="event.stopPropagation()">
-        <button onclick="event.stopPropagation();setQty(${i},-1)">−</button><span>${q}</span><button onclick="event.stopPropagation();setQty(${i},1)">+</button></div>`:""}
+        <button onclick="event.stopPropagation();setQty(${i},-1)">−</button><input type="number" inputmode="numeric" min="1" step="1" value="${q}" aria-label="How many totes" onclick="event.stopPropagation()" onchange="setQtyVal(${i},this.value)"><button onclick="event.stopPropagation();setQty(${i},1)">+</button></div>`:""}
       <div class="pr">${money(u.qty?priceFor(u,q):u.price)}</div>
     </div>`;}).join("")}
   <div style="text-align:right;font-family:Oswald;font-weight:700;font-size:20px;margin-top:6px">
@@ -804,8 +808,10 @@ function toggleUp(i){
   if(!S.storage.includes(i)&&u.group) S.storage=S.storage.filter(j=>CONFIG.upgrades[j].group!==u.group);
   S.storage=chip(S.storage,i); render();
 }
-// quantity for qty-priced upgrades (e.g. Storage Bins / Totes @ $23 each)
+// quantity for qty-priced upgrades (e.g. Storage Totes @ $21.49 each) — +/- stepper
 function setQty(i,d){ const q=Math.max(1,(S.storageQty[i]||1)+d); S.storageQty[i]=q; if(!S.storage.includes(i)) S.storage=[...S.storage,i]; render(); }
+// typed quantity straight from the field — clamp to a whole number ≥ 1
+function setQtyVal(i,v){ let q=parseInt(v,10); if(isNaN(q)||q<1)q=1; S.storageQty[i]=q; if(!S.storage.includes(i)) S.storage=[...S.storage,i]; render(); }
 
 let sigCtx=null;
 function captureSig(){ try{const cv=$("sig"); if(cv){S.sig=cv.toDataURL("image/png"); save();} }catch(e){} }
