@@ -579,7 +579,7 @@ async function genAfter(){
   let pct=0; const timer=setInterval(()=>{pct=Math.min(96,pct+(pct<75?2.5:0.7));if(bar)bar.style.width=pct+"%";},500);
   try{
     const res=await fetch("/api/garage-render",{method:"POST",headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({image:befs[befs.length-1].dataUrl, hint:layoutHint()})});
+      body:JSON.stringify({image:befs[befs.length-1].dataUrl, hint:layoutHint(), sketch:layoutSketchDataUrl()})});
     const j=await res.json();
     clearInterval(timer);
     if(res.ok&&j&&j.ok&&j.image){
@@ -913,6 +913,23 @@ function layoutHint(){
   if(CONFIG.upgrades.some((u,i)=>S.storage.includes(i)&&/tote|bin/i.test(u.name)))
     p.push("belongings stored in matching yellow-and-black labeled storage totes neatly stacked on the shelves");
   return p.join("; ");
+}
+// Render the current bay's top-down layout to a labeled diagram the AI can match positions from.
+function layoutSketchDataUrl(){
+  const g=S.layoutGrid; if(!g||!g.some(Boolean)) return ""; // nothing drawn → skip
+  const cols=8, rows=5, cell=60, pad=18, w=cols*cell+pad*2, h=rows*cell+pad*2+26;
+  const cv=document.createElement("canvas"); cv.width=w; cv.height=h;
+  const ctx=cv.getContext("2d");
+  ctx.fillStyle="#ffffff"; ctx.fillRect(0,0,w,h);
+  for(let r=0;r<rows;r++)for(let c=0;c<cols;c++){ const v=g[r*cols+c], x=pad+c*cell, y=pad+r*cell;
+    ctx.fillStyle=v?LZONE[v].color:"#e7ddca"; ctx.fillRect(x+2,y+2,cell-4,cell-4); }
+  ctx.fillStyle="#ffffff"; ctx.font="bold 14px sans-serif"; ctx.textAlign="center";
+  Object.keys(LZONE).forEach(z=>{ const idx=g.map((v,i)=>v==z?i:-1).filter(i=>i>=0); if(!idx.length) return;
+    const cx=idx.reduce((s,i)=>s+(i%cols),0)/idx.length, cy=idx.reduce((s,i)=>s+Math.floor(i/cols),0)/idx.length;
+    ctx.fillText(LZONE[z].name, pad+(cx+0.5)*cell, pad+(cy+0.5)*cell+5); });
+  ctx.fillStyle="#13203a"; ctx.font="bold 12px sans-serif";
+  ctx.fillText("▲ GARAGE DOOR / camera stands here ▲", w/2, h-9);
+  try{ return cv.toDataURL("image/png"); }catch(e){ return ""; }
 }
 function toggleUp(i){
   const u=CONFIG.upgrades[i];

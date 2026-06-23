@@ -8,7 +8,11 @@
  * Reuses the existing OpenAI key (env.openaiapi — same one copilot.js uses),
  * so no new credential is needed. Calls OpenAI Images edits with gpt-image-1.
  *
- * Request  (JSON): { image: "data:image/...;base64,...", hint?: "string" }
+ * Request  (JSON): { image: "data:image/...;base64,...", hint?: "string",
+ *                    sketch?: "data:image/png;base64,..." }
+ *   sketch is the crew's top-down floor-plan diagram (labeled zones, garage door
+ *   at the bottom = camera position). When present it's sent as a SECOND reference
+ *   image so the "after" render's zone positions match what the crew drew.
  * Response (JSON): { ok:true, image:"data:image/png;base64,..." } | { ok:false, error }
  *
  * Cost/latency: ~$0.04–0.17 and several seconds per image. Keep it a deliberate
@@ -30,6 +34,19 @@ const PROMPT =
   "layout. It must look like a real estate listing photo of an attainable one-day cleanout: sharp " +
   "focus, accurate real materials, realistic shadows, natural daylight. NOT a CGI render, " +
   "illustration, cartoon, luxury showroom, or full renovation.";
+
+// Appended only when the crew's top-down sketch is supplied as a 2nd image.
+// gpt-image-1 sees both references; this tells it which is which and how to map
+// the floor-plan's positions onto the front-on photo so the result lines up
+// with what the crew actually drew (the #1 complaint was zones in the wrong spot).
+const SKETCH_NOTE =
+  " A SECOND image is attached: a top-down FLOOR PLAN of THIS SAME garage, with color-coded, labeled " +
+  "zones (Car, Workbench, Gym, Storage). The garage door is at the BOTTOM edge of that plan — that bottom " +
+  "edge is exactly where the camera stands for this 'after' photo. Place every zone in the SAME left-to-" +
+  "right and near-to-far position as the plan: a zone drawn on the LEFT of the plan stays on the LEFT of " +
+  "the photo, a zone on the RIGHT stays on the RIGHT, and a zone near the TOP of the plan belongs along the " +
+  "FAR/back wall. Use the FIRST image only for the real walls, window, door, ceiling and proportions — do " +
+  "not copy any clutter from it. Use the floor plan ONLY to decide where each zone goes, not how it looks.";
 
 function hostOf(v) { try { return new URL(v).host; } catch { return ''; } }
 // Read an env var tolerant of stray whitespace in the var NAME — a dashboard
@@ -87,16 +104,29 @@ export async function onRequestPost({ request, env }) {
 
   const pic = dataUrlToBytes(body.image);
   if (!pic) return json(400, { ok: false, error: 'No before photo supplied' });
+  const sketch = body.sketch ? dataUrlToBytes(body.sketch) : null;
+
+  let prompt = body.hint ? `${PROMPT} ${String(body.hint).slice(0, 400)}` : PROMPT;
+  if (sketch) prompt += SKETCH_NOTE;
 
   const form = new FormData();
   form.append('model', 'gpt-image-1');
-  form.append('prompt', body.hint ? `${PROMPT} ${String(body.hint).slice(0, 400)}` : PROMPT);
+  form.append('prompt', prompt);
   form.append('size', '1536x1024');
   form.append('quality', 'high');         // sharper, more detailed render (vs default)
   form.append('input_fidelity', 'high');  // preserve the SAME garage's window, walls & proportions
   form.append('n', '1');
   const ext = pic.mime === 'image/jpeg' ? 'jpg' : 'png';
-  form.append('image', new Blob([pic.bytes], { type: pic.mime }), `before.${ext}`);
+  if (sketch) {
+    // Two references under image[] (OpenAI takes up to 16, in order):
+    //   [0] the real garage — walls/window/door/proportions
+    //   [1] the top-down floor plan — zone POSITIONS to reproduce
+    const sext = sketch.mime === 'image/jpeg' ? 'jpg' : 'png';
+    form.append('image[]', new Blob([pic.bytes], { type: pic.mime }), `before.${ext}`);
+    form.append('image[]', new Blob([sketch.bytes], { type: sketch.mime }), `layout.${sext}`);
+  } else {
+    form.append('image', new Blob([pic.bytes], { type: pic.mime }), `before.${ext}`);
+  }
 
   try {
     const r = await fetch('https://api.openai.com/v1/images/edits', {
