@@ -898,10 +898,38 @@ function garageSizeHint(){
   return `<div class="looknote" style="margin-top:8px">≈ <b>${sqft} sq ft</b> — reads like a <b>${size}</b> garage. Handy for sizing the deep clean.</div>`;
 }
 // Prompt nudge for the AI "after": chosen parking layout + scope (zones, bays, shelving).
+// Turn the top-down grid into a precise spatial sentence the model can actually
+// follow: each drawn zone's left/center/right + back-wall/door/depth, PLUS an
+// explicit "no <zones they didn't draw>" so gpt-image-2 stops inventing a gym.
+// Works for presets and Custom alike (both populate S.layoutGrid).
+function layoutSpatial(){
+  const g=S.layoutGrid; if(!g||!g.some(Boolean)) return "";
+  const cols=8;
+  const present=[...new Set(g.filter(Boolean))];
+  const parts=present.map(z=>{
+    const cs=[],rs=[]; g.forEach((v,i)=>{ if(v==z){ cs.push(i%cols); rs.push(Math.floor(i/cols)); } });
+    const minC=Math.min(...cs),maxC=Math.max(...cs),ctrC=cs.reduce((a,b)=>a+b,0)/cs.length;
+    const minR=Math.min(...rs),maxR=Math.max(...rs);
+    const hor = (maxC-minC>=6) ? "spanning the full width of the garage"
+              : (ctrC<2.4) ? "on the LEFT side"
+              : (ctrC>4.6) ? "on the RIGHT side" : "in the CENTER";
+    const dep = (minR===0&&maxR<=1) ? "along the back wall"
+              : (minR>=3) ? "toward the garage door (front)"
+              : (maxR-minR>=3) ? "running most of the depth" : "";
+    return LZONE[z].name.toLowerCase()+" "+hor+(dep?", "+dep:"");
+  });
+  const names=Object.keys(LZONE).map(k=>LZONE[k].name.toLowerCase());
+  const here=present.map(z=>LZONE[z].name.toLowerCase());
+  const absent=names.filter(n=>!here.includes(n));
+  let s="garage zone layout, viewed from the open door looking in — "+parts.join("; ");
+  if(absent.length) s+=". This garage has NO "+absent.join(", no ")+" — do not add any zone that is not listed here";
+  return s;
+}
 function layoutHint(){
   const p=[];
-  if(S.layout&&S.layout!=="Custom") p.push("parking layout: "+S.layout.toLowerCase());
-  else if(S.layout==="Custom"){ const z=[...new Set(S.layoutGrid.filter(Boolean).map(v=>LZONE[v].name.toLowerCase()))]; if(z.length) p.push("zones: "+z.join(", ")); }
+  const spatial=layoutSpatial();
+  if(spatial) p.push(spatial);
+  else if(S.layout&&S.layout!=="Custom") p.push("parking layout: "+S.layout.toLowerCase());
   if(S.garages>1) p.push(S.garages+" garage bays");
   // render the actual shelving they chose, as a concrete material
   const shelfDesc={

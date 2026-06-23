@@ -30,9 +30,10 @@ const PROMPT =
   "and proportions from the original. Render it as a clean, straight-on front view looking in from " +
   "the driveway at eye level. Show it fully cleaned out: clutter and junk gone, concrete floor swept " +
   "and clear with a car's worth of open space, and the belongings worth keeping tidied onto the exact " +
-  "freestanding shelving and labeled storage bins described below. Arrange the zones (car, workbench, " +
-  "gym, storage) to match the described " +
-  "layout. It must look like a real estate listing photo of an attainable one-day cleanout: sharp " +
+  "freestanding shelving and labeled storage bins described below. Reproduce ONLY the zones described " +
+  "below, each in the EXACT position given — do NOT add any zone (no gym, workbench, car or storage) " +
+  "that is not described. " +
+  "It must look like a real estate listing photo of an attainable one-day cleanout: sharp " +
   "focus, accurate real materials, realistic shadows, natural daylight. NOT a CGI render, " +
   "illustration, cartoon, luxury showroom, or full renovation.";
 
@@ -107,7 +108,7 @@ export async function onRequestPost({ request, env }) {
   if (!pic) return json(400, { ok: false, error: 'No before photo supplied' });
   const sketch = body.sketch ? dataUrlToBytes(body.sketch) : null;
 
-  let prompt = body.hint ? `${PROMPT} ${String(body.hint).slice(0, 400)}` : PROMPT;
+  let prompt = body.hint ? `${PROMPT} ${String(body.hint).slice(0, 800)}` : PROMPT;
   if (sketch) prompt += SKETCH_NOTE;
 
   const form = new FormData();
