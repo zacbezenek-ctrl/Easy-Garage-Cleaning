@@ -560,7 +560,7 @@ async function genAfter(){
   const btn=$("aibtn"); if(!btn) return;
   const job=S.jobId||""; let befs=[]; try{befs=await photoList(job,"before");}catch(e){}
   if(!befs.length){alert("Snap a before photo first.");return;}
-  btn.disabled=true;btn.textContent="✨ Generating… (~10s)";
+  btn.disabled=true;btn.textContent="✨ Generating… (~30s)";
   try{
     const res=await fetch("/api/garage-render",{method:"POST",headers:{"Content-Type":"application/json"},
       body:JSON.stringify({image:befs[befs.length-1].dataUrl, hint:layoutHint()})});

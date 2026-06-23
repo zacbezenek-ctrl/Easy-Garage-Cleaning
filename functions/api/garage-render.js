@@ -20,15 +20,15 @@ const ALLOWED_HOST_RE = /(^|\.)easygaragecleaning\.com$|(\.pages\.dev)$|^localho
 const MAX_BODY = 12 * 1024 * 1024; // 12 MB — a downscaled garage photo is well under this
 
 const PROMPT =
-  "This is a photo of a customer's cluttered residential garage. Produce a photorealistic " +
-  "'after' image of the SAME garage, rendered as a FRONT-ON view looking straight in through the " +
-  "open garage door from the driveway — eye level, centered, symmetrical. Keep the same walls, " +
-  "garage door, window placement, ceiling and overall dimensions. Show it fully cleaned out and " +
-  "organized: clutter and junk removed, concrete floor swept clean, remaining belongings neatly " +
-  "stored on simple wall shelving, clear floor space for a car. Arrange the space to match the " +
-  "described top-down layout (where the car, workbench, gym and storage zones go). Keep it " +
-  "realistic and attainable for a one-day cleanout — a tidy real garage, not a luxury showroom " +
-  "or renovation. Natural daylight.";
+  "This is a photo of a customer's cluttered residential garage. Produce a PHOTOREALISTIC 'after' " +
+  "image of the SAME garage — keep the exact same wall color, window style and panes, door, ceiling " +
+  "and proportions from the original. Render it as a clean, straight-on front view looking in from " +
+  "the driveway at eye level. Show it fully cleaned out: clutter and junk gone, concrete floor swept " +
+  "and clear with a car's worth of open space, and the belongings worth keeping tidied onto simple " +
+  "heavy-duty wall shelving. Arrange the zones (car, workbench, gym, storage) to match the described " +
+  "layout. It must look like a real estate listing photo of an attainable one-day cleanout: sharp " +
+  "focus, accurate real materials, realistic shadows, natural daylight. NOT a CGI render, " +
+  "illustration, cartoon, luxury showroom, or full renovation.";
 
 function hostOf(v) { try { return new URL(v).host; } catch { return ''; } }
 // Read an env var tolerant of stray whitespace in the var NAME — a dashboard
@@ -91,6 +91,8 @@ export async function onRequestPost({ request, env }) {
   form.append('model', 'gpt-image-1');
   form.append('prompt', body.hint ? `${PROMPT} ${String(body.hint).slice(0, 400)}` : PROMPT);
   form.append('size', '1536x1024');
+  form.append('quality', 'high');         // sharper, more detailed render (vs default)
+  form.append('input_fidelity', 'high');  // preserve the SAME garage's window, walls & proportions
   form.append('n', '1');
   const ext = pic.mime === 'image/jpeg' ? 'jpg' : 'png';
   form.append('image', new Blob([pic.bytes], { type: pic.mime }), `before.${ext}`);
