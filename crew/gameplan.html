@@ -365,7 +365,7 @@ const S = {  // session state — autosaved locally on every tap
   layout:null, layoutNote:"", bay:0, bayGrids:{}, bayLayouts:{},
   layoutGrid:Array(40).fill(0), layoutPaint:1, garages:1, garageW:"", garageD:"", garageH:"",
   stay:[],
-  pkg:null, rate:"", deposit:"", jobdate:"",
+  pkg:null, rate:"", deposit:"", jobdate:"", startTime:"", endTime:"",
   dayBonus:false, jobId:"", sig:"", aiAfter:"", jobberClientId:"", jobberRequestId:"",
 };
 
@@ -782,6 +782,12 @@ R.p14=()=>head("p14",`The number built itself from the scope — $500 a truckloa
       <input type="number" inputmode="decimal" value="${S.deposit}" placeholder="0" oninput="S.deposit=this.value"></div>
     <div style="flex:1"><label class="fl">Job date</label>
       <input type="date" value="${S.jobdate}" oninput="S.jobdate=this.value"></div>
+  </div>
+  <div style="display:flex;gap:14px;margin-top:8px">
+    <div style="flex:1"><label class="fl">Start time</label>
+      <input type="time" value="${S.startTime}" oninput="S.startTime=this.value"></div>
+    <div style="flex:1"><label class="fl">End time</label>
+      <input type="time" value="${S.endTime}" oninput="S.endTime=this.value"></div>
   </div>`;
 
 R.plan=()=>{
@@ -970,6 +976,8 @@ function buildPayload(){
     p["li"+(i+1)+"_name"]=it.name||""; p["li"+(i+1)+"_desc"]=it.description||"";
     p["li"+(i+1)+"_qty"]=it.qty||""; p["li"+(i+1)+"_unit_price"]=it.unit_price||""; p["li"+(i+1)+"_total"]=it.total||"";}
   p.title=p.quote.title; p.instructions=p.notes; p.start_date=S.jobdate||"";
+  p.start_time=S.startTime?S.startTime+":00":""; p.end_time=S.endTime?S.endTime+":00":"";
+  p.create_visits=!!(S.startTime&&S.endTime);
   p.line_items_count=items.length; p.total=grandTotal(); p.deposit=Number(S.deposit||0);
   return p;
 }
