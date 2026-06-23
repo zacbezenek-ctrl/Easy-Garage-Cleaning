@@ -447,7 +447,7 @@ async function onPhotoDel(id){await photoDel(id);
   mountStrip("pb_before","before",{ai:true});}
 function paintAi(){
   const out=$("aiout"); if(!out) return;
-  out.innerHTML=S.aiAfter?`<div class="aibadge">AI preview — actual results vary</div>
+  out.innerHTML=S.aiAfter?`<div class="aibadge">✓ AI preview — actual results vary</div>
     <img src="${S.aiAfter}" onclick="viewPhoto(this.src)">
     <div class="ailbl">Show the homeowner what tonight looks like.</div>`:"";
 }
@@ -568,29 +568,41 @@ async function driveUploadAll(btn,doneEl){
 }
 
 async function genAfter(){
-  const btn=$("aibtn"); if(!btn) return;
+  const btn=$("aibtn"); if(!btn||btn.disabled) return;   // ignore taps while a render is already running (no double charge)
   const job=S.jobId||""; let befs=[]; try{befs=await photoList(job,"before");}catch(e){}
   if(!befs.length){alert("Snap a before photo first.");return;}
   btn.disabled=true;btn.textContent="✨ Generating…";
-  // estimate bar — the model doesn't stream progress, so creep toward ~96% over ~30s, then snap to 100
   const out=$("aiout");
-  if(out) out.innerHTML=`<div class="genbar"><i></i></div><div class="genmsg">Rendering the “after”… about 30 seconds</div>`;
+  // gpt-image-2 reasons about the layout before it renders, so this can run up to a
+  // minute+. Creep an estimate bar toward ~96% over ~70s (never claim done early) and
+  // rotate reassuring copy so the crew doesn't think it stalled and re-tap.
+  if(out) out.innerHTML=`<div class="genbar"><i></i></div><div class="genmsg" id="genmsg">Rendering the “after”… this can take up to a minute. Hang tight.</div>`;
   const bar=out?out.querySelector(".genbar i"):null;
-  let pct=0; const timer=setInterval(()=>{pct=Math.min(96,pct+(pct<75?2.5:0.7));if(bar)bar.style.width=pct+"%";},500);
+  let pct=0,secs=0; const timer=setInterval(()=>{
+    secs+=0.5; pct=Math.min(96,pct+(pct<70?0.9:0.35)); if(bar)bar.style.width=pct+"%";
+    const m=$("genmsg"); if(m){ if(secs>50)m.textContent="Almost there — adding the finishing detail…";
+      else if(secs>24)m.textContent="Still working — placing your shelving and zones…"; }
+  },500);
+  const finish=lbl=>{ btn.textContent=lbl; btn.disabled=false; };
   try{
     const res=await fetch("/api/garage-render",{method:"POST",headers:{"Content-Type":"application/json"},
       body:JSON.stringify({image:befs[befs.length-1].dataUrl, hint:layoutHint(), sketch:layoutSketchDataUrl()})});
     const j=await res.json();
     clearInterval(timer);
     if(res.ok&&j&&j.ok&&j.image){
-      if(bar)bar.style.width="100%";
       S.aiAfter=j.image; save();
       try{await photoAdd(job,"after_ai",j.image);}catch(e){}
-      paintAi(); refreshCounts();
-      btn.textContent="✨ Regenerate the After";btn.disabled=false;
-    }else{ if(out)out.innerHTML=""; btn.textContent="✨ Generate the After";btn.disabled=false;
+      // KEY FIX for "nothing showed, had to click twice": don't call it done on the
+      // response — preload/decode the image first, then paint and scroll to it, so
+      // "done" means the picture is actually on screen, not a blank box.
+      const show=()=>{ if(bar)bar.style.width="100%"; paintAi(); refreshCounts();
+        const host=$("aiout"), im=host&&host.querySelector("img");
+        if(im) try{ im.scrollIntoView({behavior:"smooth",block:"center"}); }catch(e){}
+        finish("✨ Regenerate the After"); };
+      const pre=new Image(); pre.onload=show; pre.onerror=show; pre.src=j.image;
+    }else{ if(out)out.innerHTML=""; finish("✨ Generate the After");
       alert("Couldn't generate: "+((j&&j.error)||res.status)+". Check signal and try again."); }
-  }catch(e){ clearInterval(timer); if(out)out.innerHTML=""; btn.textContent="✨ Generate the After";btn.disabled=false;
+  }catch(e){ clearInterval(timer); if(out)out.innerHTML=""; finish("✨ Generate the After");
     alert("Image service unreachable — check signal and try again."); }
 }
 
