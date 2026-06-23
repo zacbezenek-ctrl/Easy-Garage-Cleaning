@@ -971,8 +971,8 @@ function buildPayload(){
       sqft:(parseFloat(S.garageW)>0&&parseFloat(S.garageD)>0)?Math.round(parseFloat(S.garageW)*parseFloat(S.garageD)):""},
     notes:compileNotes(), raw:S,
   };
-  // flattened 4-slot mapping for easy Zapier field mapping
-  for(let i=0;i<4;i++){const it=items[i]||{};
+  // flattened 6-slot mapping for easy Zapier field mapping (max job = removal + 5 add-ons)
+  for(let i=0;i<6;i++){const it=items[i]||{};
     p["li"+(i+1)+"_name"]=it.name||""; p["li"+(i+1)+"_desc"]=it.description||"";
     p["li"+(i+1)+"_qty"]=it.qty||""; p["li"+(i+1)+"_unit_price"]=it.unit_price||""; p["li"+(i+1)+"_total"]=it.total||"";}
   p.title=p.quote.title; p.instructions=p.notes; p.start_date=S.jobdate||"";
