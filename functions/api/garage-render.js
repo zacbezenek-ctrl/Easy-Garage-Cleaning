@@ -37,8 +37,10 @@ function hostOf(v) { try { return new URL(v).host; } catch { return ''; } }
 // match any key that trims to the requested name.
 function envVar(env, name) {
   if (env && env[name]) return env[name];
+  // tolerate stray whitespace AND case in the var name (e.g. "OpenAIAPI" vs "openaiapi")
+  const want = name.trim().toLowerCase();
   for (const k of Object.keys(env || {})) {
-    if (k.trim() === name && env[k]) return env[k];
+    if (k.trim().toLowerCase() === want && env[k]) return env[k];
   }
   return '';
 }

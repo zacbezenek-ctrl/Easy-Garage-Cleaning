@@ -42,7 +42,8 @@ export async function onRequestPost({ request, env }) {
     status, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-store' } });
 
   if (!originAllowed(request)) return json(403, { ok: false, error: 'Forbidden origin' });
-  if (!env.QUO_API_KEY) return json(501, { ok: false, error: 'Quo not configured — set QUO_API_KEY' });
+  const QUO_KEY = env.QUO_API_KEY || env.QUO; // accept either var name
+  if (!QUO_KEY) return json(501, { ok: false, error: 'Quo not configured — set QUO_API_KEY' });
 
   let body;
   try { body = JSON.parse(await request.text()); } catch { return json(400, { ok: false, error: 'Invalid JSON' }); }
@@ -57,7 +58,7 @@ export async function onRequestPost({ request, env }) {
   try {
     const r = await fetch(base + '/messages', {
       method: 'POST',
-      headers: { Authorization: env.QUO_API_KEY, 'Content-Type': 'application/json' },
+      headers: { Authorization: QUO_KEY, 'Content-Type': 'application/json' },
       body: JSON.stringify({ from, to: [to], content: message }),
     });
     const data = await r.json().catch(() => ({}));
