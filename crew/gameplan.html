@@ -328,27 +328,23 @@ gateOk().then(u=>{
 const CONFIG = {
   webhook: "/api/crew-hook", // same-origin proxy → Zapier. Real hook URL lives server-side in functions/api/crew-hook.js (not in page source).
   bizPhone: "9709991818",
-  // Master Offer Menu v3.0 — array order IS the sales sequence. Quote TOP-DOWN:
-  // open at The Works, step down only on hesitation. Rate stays a manual input —
-  // rates are firm per job; the rate never moves, only scope.
-  packages: [
-    {name:"The Works", price:"$3,100", desc:"Full Property Reset + both-wall shelving system with bins + deep garage clean + Garage Guard year one free. Itemized value ~$3,500.", tag:""},
-    {name:"Full Property Reset", price:"from $2,200", desc:"Every junk-holding space — garage, basement, shed, attic, side yard — done in one day. Donations handled, everything swept. Garage Guard year one free.", tag:""},
-    {name:"Garage Transformation", price:"$800", desc:"Full garage cleanout + donation runs + organize + sweep & wipe-down. Your car parks inside tonight.", tag:"CORE"},
-    {name:"Quick Clear", price:"$300–400", desc:"Haul-out + broom sweep only.", tag:"STEP-DOWN ONLY", muted:true}, // never opened — only stepped down to
-  ],
-  // Day-of add-ons. "group" = mutually exclusive pair: selecting one deselects the other.
+  // Pricing builds from scope: removal base = $500 × truckloads (Volume point);
+  // organize with what they have + a basic sweep are included (not line items);
+  // everything below is an add-on. group = pick one type/size; qty = priced per unit.
+  removalPerTruck: 500,
   upgrades: [
-    {name:"Shelving — One Wall", sub:"Heavy-duty, installed where we mapped it", price:450, group:"shelving"},
-    {name:"Shelving — Both Walls + Bins", sub:"the two-option close: one wall, or both?", price:800, group:"shelving"},
+    {name:"Shelving — Metal", sub:"Heavy-duty steel rack, installed — $419/unit", price:419, qty:true, group:"shelving"},
+    {name:"Shelving — Plastic", sub:"Tough resin shelving, installed — $299/unit", price:299, qty:true, group:"shelving"},
+    {name:"Shelving — Wood + Metal", sub:"Wood shelves on a steel frame — $369/unit", price:369, qty:true, group:"shelving"},
     {name:"Rush Scheduling", sub:"Guaranteed next-day slot", price:150},
-    {name:"Deep Clean — One-Car", sub:"", price:150, group:"deepclean"},
-    {name:"Deep Clean — Two-Car", sub:"", price:250, group:"deepclean"},
-    {name:"Storage Totes — 27 gal", sub:"Labeled & stacked — $21.49 each", price:21.49, qty:true},
+    {name:"Deep Clean — 1-Car", sub:"Degrease, sweep & dust — beyond the standard sweep", price:125, group:"deepclean"},
+    {name:"Deep Clean — 2-Car", sub:"Degrease, sweep & dust — beyond the standard sweep", price:220, group:"deepclean"},
+    {name:"Deep Clean — 3-Car", sub:"Degrease, sweep & dust — beyond the standard sweep", price:320, group:"deepclean"},
+    {name:"Storage Totes — 27 gal", sub:"Labeled & stacked — $21.50 each", price:21.50, qty:true},
   ],
   // The No-Surprises Guarantee
   guarantee: [
-    "Your flat rate is locked today — the price never moves, no matter what we find.",
+    "Your rate is locked today — built from the scope, and it never moves no matter what we find.",
     "Final walkthrough sign-off: we walk the finished garage together, and we make it right before we leave.",
   ],
 };
@@ -586,12 +582,10 @@ function upgradesTotal(){
   CONFIG.upgrades.forEach((u,i)=>{ if(S.storage.includes(i)) t+=priceFor(u,S.storageQty[i]||1); });
   return t;
 }
-function grandTotal(){ return Number(S.rate||0)+upgradesTotal(); }
-// Quote builds from the answers: picking a package pre-fills the flat rate from
-// its base price (parsed off the price label). Editable — we never overwrite a
-// rate the crew already typed. Upgrades add on top in grandTotal().
-function pkgBase(p){ const m=String(p&&p.price||"").replace(/,/g,"").match(/\d+/); return m?Number(m[0]):0; }
-function pickPkg(i){ S.pkg=i; const b=pkgBase(CONFIG.packages[i]); if(b&&!(Number(S.rate)>0)) S.rate=String(b); render(); }
+// The quote builds from scope: removal base ($500 × truckloads) + add-ons.
+// Organize + a basic sweep are included, so they are never line items.
+function removalBase(){ return Math.max(0,Number(S.loads||0))*CONFIG.removalPerTruck; }
+function grandTotal(){ return removalBase()+upgradesTotal(); }
 
 /* ---------- flow definition ---------- */
 const steps=[
@@ -611,7 +605,7 @@ const pointMeta={
   p4:"Keep / Donate / Haul", p5:"Hidden Hazards", p6:"Volume Estimate",
   p7:"Heavy & Specialty Items", p8:"Access & Logistics", p9:"Donate & Recycle Plan",
   p10:"Floor & Finish", p11:"Storage & Shelving Fit", p12:"Parking Layout",
-  p13:"Stay-Clean System", p14:"Your Flat Rate",
+  p13:"Stay-Clean System", p14:"The Number",
 };
 // Numbers + total derive from `steps`, so adding/removing a point renumbers everything.
 function pointNum(id){ return steps.filter(s=>pointMeta[s.id]).findIndex(s=>s.id===id)+1; }
@@ -684,7 +678,7 @@ R.p5=()=>head("p5",`Walk the perimeter together. <b>“Most homeowners don't kno
   <label class="fl">Notes</label>
   <textarea oninput="S.hazNote=this.value">${esc(S.hazNote)}</textarea>`;
 
-R.p6=()=>head("p6",`Call it in plain numbers — <b>“This is about ___ truckloads.”</b> Concrete volume makes the flat rate feel earned.`)+`
+R.p6=()=>head("p6",`Call it in plain numbers — <b>“This is about ___ truckloads.”</b> Removal runs <b>$500 a truckload</b> — this sets the base.`)+`
   <div class="stepper">
     <button onclick="S.loads=Math.max(.5,S.loads-.5);render()">−</button>
     <input class="val" type="number" inputmode="decimal" min="0" step="0.5" value="${S.loads}" aria-label="Truckloads"
@@ -763,17 +757,16 @@ R.p13=()=>head("p13",`<b>“The cleanout is the easy part — staying clean is t
   <div class="checks">${["Labeled zones (tools / seasonal / sports)","Everything off the floor","Donate-box by the door","6-month check-in text from EGC"].map(v=>
     `<div class="check ${S.stay.includes(v)?'on':''}" onclick="S.stay=chip(S.stay,'${v}');render()"><span class="bx"></span>${v}</div>`).join("")}</div>`;
 
-R.p14=()=>head("p14",`Quote TOP-DOWN — open at The Works and step down only on hesitation. Quick Clear is never opened. Write the number, lock the date. <b>The price never moves after today.</b>`)+`
-  <div class="pkgs">${CONFIG.packages.map((p,i)=>`
-    <div class="pkg ${S.pkg===i?'on':''} ${p.muted?'muted':''}" onclick="pickPkg(${i})">
-      ${p.tag?`<span class="tag">${p.tag}</span>`:""}
-      <h3>${p.name}</h3>${p.price?`<div class="pkgprice">${p.price}</div>`:""}<p>${p.desc}</p>
-    </div>`).join("")}
+R.p14=()=>head("p14",`The number built itself from the scope — $500 a truckload of removal, organize + a basic sweep included, everything they added on top. Walk it line by line, then lock the date.`)+`
+  <div class="quoteblock">
+    <div class="ln"><span>Removal — ${S.loads} truckload${S.loads!==1?"s":""} × ${money(CONFIG.removalPerTruck)}</span><b>${money(removalBase())}</b></div>
+    <div class="ln"><span>Organize + basic sweep</span><b>Included</b></div>
+    ${CONFIG.upgrades.filter((u,i)=>S.storage.includes(i)).map(u=>{const i=CONFIG.upgrades.indexOf(u);const q=u.qty?(S.storageQty[i]||1):1;
+      return `<div class="ln"><span>${u.name}${u.qty?` × ${q}`:""}</span><b>${money(priceFor(u,q))}</b></div>`}).join("")}
+    <div class="ln"><span style="align-self:center">TOTAL</span><span class="total">${money(grandTotal())}</span></div>
   </div>
-  <label class="fl">Flat rate (auto-fills from the package — edit anytime)</label>
-  <input type="number" inputmode="decimal" value="${S.rate}" placeholder="0" oninput="S.rate=this.value;paintTotal()">
-  <div class="ask" style="font-size:13.5px;margin:6px 0 0">${S.pkg!=null?`Building from <b>${esc(CONFIG.packages[S.pkg].name)}</b>${upgradesTotal()?" + upgrades":""}: quote total <b>${money(grandTotal())}</b>.`:`Pick a package above and the rate fills in from the answers.`}</div>
-  <div style="display:flex;gap:14px">
+  <div class="ask" style="font-size:13.5px;margin:10px 0 2px">Bigger number? Add scope at the Volume and Storage points — the rate never moves, only scope does.</div>
+  <div style="display:flex;gap:14px;margin-top:8px">
     <div style="flex:1"><label class="fl">Deposit on file</label>
       <input type="number" inputmode="decimal" value="${S.deposit}" placeholder="0" oninput="S.deposit=this.value"></div>
     <div style="flex:1"><label class="fl">Job date</label>
@@ -788,7 +781,6 @@ R.plan=()=>{
   if(S.missing.length) pains.push(`It's been costing you: <b>${S.missing.join(", ").toLowerCase()}</b>.`);
   if(S.missNote) pains.push(`In your words: <b>“${esc(S.missNote)}”</b>`);
   if(S.hazards.length) pains.push(`We found <b>${S.hazards.length} hazard${S.hazards.length>1?"s":""}</b> behind the pile: ${esc(S.hazards.join(", ").toLowerCase())}.`);
-  const pkg=S.pkg!=null?CONFIG.packages[S.pkg]:null;
   const ups=CONFIG.upgrades.filter((u,i)=>S.storage.includes(i));
   return `
   <div class="eyebrow">${esc(S.addr)||"Your garage"} · ${new Date().toLocaleDateString()}</div>
@@ -802,10 +794,10 @@ R.plan=()=>{
   </div>
   <div class="quoteblock">
     <div class="ln"><span>Scope</span><b>${S.garages>1?S.garages+" garages · ":""}${S.loads} truckload${S.loads!==1?"s":""}${S.heavy.length?` + ${S.heavy.length} specialty item type${S.heavy.length>1?"s":""}`:""}</b></div>
-    <div class="ln"><span>Package</span><b>${pkg?pkg.name.toUpperCase():"—"}</b></div>
+    <div class="ln"><span>Removal — ${S.loads} truckload${S.loads!==1?"s":""} × ${money(CONFIG.removalPerTruck)}</span><b>${money(removalBase())}</b></div>
+    <div class="ln"><span>Organize + basic sweep</span><b>Included</b></div>
     ${ups.map((u,j)=>{const i=CONFIG.upgrades.indexOf(u);const q=u.qty?(S.storageQty[i]||1):1;
       return `<div class="ln"><span>${u.name}${u.qty?` × ${q}`:""}</span><b>${money(priceFor(u,q))}</b></div>`}).join("")}
-    <div class="ln"><span>Flat rate — locked today</span><b>${money(S.rate)}</b></div>
     <div class="ln"><span style="align-self:center">TOTAL</span><span class="total">${money(grandTotal())}</span></div>
     <div class="ln"><span>Deposit on file</span><b>${money(S.deposit)}</b></div>
     <div class="ln"><span>Job date</span><b>${S.jobdate?new Date(S.jobdate+"T12:00").toLocaleDateString(undefined,{weekday:"short",month:"short",day:"numeric"}):"—"}</b></div>
@@ -917,8 +909,9 @@ function compileNotes(){
 
 function buildLineItems(){
   const items=[];
-  if(S.pkg!=null) items.push({name:CONFIG.packages[S.pkg].name+" package",
-    description:CONFIG.packages[S.pkg].desc, qty:1, unit_price:Number(S.rate||0), total:Number(S.rate||0)});
+  const base=removalBase();
+  if(base>0) items.push({name:`Removal — ${S.loads} truckload${S.loads!==1?"s":""}`,
+    description:`$${CONFIG.removalPerTruck}/truckload · organize with what they have + a basic sweep included`, qty:1, unit_price:base, total:base});
   CONFIG.upgrades.forEach((u,i)=>{ if(S.storage.includes(i)){
     const q=u.qty?(S.storageQty[i]||1):1, tot=priceFor(u,q);
     items.push({name:u.name, description:u.sub, qty:q, unit_price:Math.round(tot/q*100)/100, total:tot});
@@ -954,9 +947,7 @@ function buildPayload(){
 function validateClose(){
   const miss=[];
   if(!(S.name||"").trim()) miss.push("homeowner name");
-  if(S.pkg==null) miss.push("a package");
-  // Flat rate is NOT required — it auto-fills from the package, and the crew can
-  // confirm/adjust the final price in Jobber. Don't force a number here.
+  if(grandTotal()<=0) miss.push("scope (truckloads or an add-on)");
   return miss;
 }
 
@@ -989,12 +980,11 @@ async function sendToJobber(btn){
 async function textPlan(btn){
   const phone=normPhone(S.phone);
   if(!phone){alert("Add the homeowner's mobile number first (Point 1).");return;}
-  const pkg=S.pkg!=null?CONFIG.packages[S.pkg].name:"your package";
   const ups=CONFIG.upgrades.filter((u,i)=>S.storage.includes(i)).map((u)=>{
     const i=CONFIG.upgrades.indexOf(u), q=u.qty?(S.storageQty[i]||1):1;
     return "+ "+u.name+(u.qty?` × ${q}`:"")+" "+money(priceFor(u,q));}).join("\n");
   const msg=`${S.name?S.name+", h":"H"}ere's your Garage Comeback Plan from Easy Garage Cleaning:\n\n`+
-    `Package: ${pkg} — ${money(S.rate)}\n${ups?ups+"\n":""}TOTAL (flat, locked): ${money(grandTotal())}\n`+
+    `Removal — ${S.loads} truckload${S.loads!==1?"s":""}: ${money(removalBase())}\nOrganize + basic sweep: included\n${ups?ups+"\n":""}TOTAL (locked): ${money(grandTotal())}\n`+
     `${S.jobdate?"Job date: "+S.jobdate+"\n":""}${S.deposit?"Deposit on file: "+money(S.deposit)+"\n":""}`+
     `\nPrice never moves. Questions? Call/text ${CONFIG.bizPhone}. — EGC`;
   const st=$("sendstatus");
@@ -1017,12 +1007,12 @@ function writeActive(via){
   try{
     const chosen=CONFIG.upgrades.filter((u,i)=>S.storage.includes(i));
     const upsells=chosen.map(u=>u.name).join(", ");
-    const upsellsPriced=chosen.map(u=>u.name+" "+money(u.price)).join(", ");
+    const upsellsPriced=chosen.map(u=>{const i=CONFIG.upgrades.indexOf(u);const q=u.qty?(S.storageQty[i]||1):1;return u.name+(u.qty?` × ${q}`:"")+" "+money(priceFor(u,q));}).join(", ");
     if(!S.jobId)S.jobId=uid();
     localStorage.setItem("egc_active_job",JSON.stringify({
       jobId:S.jobId, jobberClientId:S.jobberClientId||"", name:S.name, addr:S.addr, phone:S.phone,
-      pkg:S.pkg!=null?CONFIG.packages[S.pkg].name:"", upsells, upsellsPriced,
-      rate:S.rate, upgradesTotal:upgradesTotal(), total:grandTotal(),
+      pkg:removalBase()>0?`${S.loads} truckload${S.loads!==1?"s":""} removal`:"", upsells, upsellsPriced,
+      rate:removalBase(), upgradesTotal:upgradesTotal(), total:grandTotal(),
       deposit:S.deposit, jobdate:S.jobdate, dayBonus:!!S.dayBonus, hasSignature:!!S.sig,
       photosBefore:PHOTO_COUNTS.before, hasAiAfter:!!S.aiAfter,
       pain:S.missNote||(S.parkLast?"hasn't parked inside since "+S.parkLast:""),

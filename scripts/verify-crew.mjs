@@ -153,25 +153,25 @@ const p11head = await page.locator('h1').first().textContent();
 ok('gameplan: reached Storage & Shelving point', /Storage/i.test(p11head), p11head.trim());
 
 const upNames = await page.locator('.up .nm').allTextContents();
-ok('gameplan: 6 upgrades, no bins/overhead placeholders',
-   upNames.length === 6 && !/Bin & label|Overhead/i.test(upNames.join('|')), upNames.map(s=>s.split('\n')[0]).join(' | '));
-ok('gameplan: no qty steppers rendered', await page.locator('.up .qty').count() === 0);
+ok('gameplan: 8 add-ons (shelving types, deep-clean sizes, rush, totes)',
+   upNames.length === 8 && !/Bin & label|Overhead/i.test(upNames.join('|')), upNames.map(s=>s.split('\n')[0]).join(' | '));
+ok('gameplan: no qty steppers until an item is picked', await page.locator('.up .qty').count() === 0);
 
-// tap One Wall, then Both Walls — must be mutually exclusive
-await page.locator('.up', { hasText: 'Shelving — One Wall' }).click();
-await page.locator('.up', { hasText: 'Both Walls + Bins' }).click();
+// shelving types are mutually exclusive — pick Metal, then Plastic
+await page.locator('.up', { hasText: 'Shelving — Metal' }).click();
+await page.locator('.up', { hasText: 'Shelving — Plastic' }).click();
 let storage = await page.evaluate(() => S.storage.map(i => CONFIG.upgrades[i].name));
-ok('gameplan: shelving pair mutually exclusive', storage.length === 1 && storage[0] === 'Shelving — Both Walls + Bins', storage.join(','));
-// deep clean pair too
-await page.locator('.up', { hasText: 'Deep Clean — One-Car' }).click();
-await page.locator('.up', { hasText: 'Deep Clean — Two-Car' }).click();
+ok('gameplan: shelving types mutually exclusive', storage.length === 1 && storage[0] === 'Shelving — Plastic', storage.join(','));
+// deep-clean sizes mutually exclusive — pick 1-Car, then 2-Car
+await page.locator('.up', { hasText: 'Deep Clean — 1-Car' }).click();
+await page.locator('.up', { hasText: 'Deep Clean — 2-Car' }).click();
 storage = await page.evaluate(() => S.storage.map(i => CONFIG.upgrades[i].name));
-ok('gameplan: deep clean pair mutually exclusive',
-   storage.includes('Deep Clean — Two-Car') && !storage.includes('Deep Clean — One-Car'), storage.join(', '));
+ok('gameplan: deep-clean sizes mutually exclusive',
+   storage.includes('Deep Clean — 2-Car') && !storage.includes('Deep Clean — 1-Car'), storage.join(', '));
 // add rush
 await page.locator('.up', { hasText: 'Rush Scheduling' }).click();
 const upTotal = await page.evaluate(() => upgradesTotal());
-ok('gameplan: upgrades total = 800+250+150', upTotal === 1200, '$' + upTotal);
+ok('gameplan: add-ons total = 299 + 220 + 150', upTotal === 669, '$' + upTotal);
 
 /* ── 4b. Point 10: before photo capture + AI "after" generator ── */
 await page.evaluate(() => jump(steps.findIndex(s=>s.id==='p10')));
@@ -193,23 +193,18 @@ await page.screenshot({ path: `${SHOTS}/13-gameplan-ai-after-380.png` });
 /* package screen */
 await page.evaluate(() => jump(steps.findIndex(s=>s.id==='p14')));
 await page.waitForTimeout(200);
-const pkgs = await page.locator('.pkg h3').allTextContents();
-ok('gameplan: 4 packages in top-down order',
-   JSON.stringify(pkgs) === JSON.stringify(['The Works','Full Property Reset','Garage Transformation','Quick Clear']), pkgs.join(' → '));
-const prices = await page.locator('.pkg .pkgprice').allTextContents();
-ok('gameplan: package prices rendered', JSON.stringify(prices) === JSON.stringify(['$3,100','from $2,200','$800','$300–400']), prices.join(' | '));
-ok('gameplan: Garage Transformation tagged CORE', (await page.locator('.pkg:nth-child(3) .tag').textContent()) === 'CORE');
-const muted = await page.locator('.pkg.muted h3').textContent();
-const mutedOpacity = await page.locator('.pkg.muted').evaluate(el => getComputedStyle(el).opacity);
-ok('gameplan: Quick Clear muted (step-down only)', muted === 'Quick Clear' && parseFloat(mutedOpacity) < 0.7,
-   `tag=${await page.locator('.pkg.muted .tag').textContent()}, opacity=${mutedOpacity}`);
-// pick CORE package + rate as manual input
-await page.locator('.pkg', { hasText: 'Garage Transformation' }).click();
-await page.fill('input[placeholder="0"]', '800'); // flat rate input (first number input)
-await page.evaluate(() => { S.deposit='200'; S.jobdate='2026-06-12'; });
+const numTitle = (await page.locator('h1').first().textContent()).trim();
+ok('gameplan: The Number step replaces the package ladder',
+   /Number/i.test(numTitle) && (await page.locator('.pkg').count()) === 0, numTitle);
+const qlines = (await page.locator('.quoteblock .ln').allTextContents()).join(' ');
+ok('gameplan: quote shows removal base + included + add-ons',
+   /Removal/.test(qlines) && /Included/.test(qlines), qlines.replace(/\s+/g,' ').trim());
+const baseShown = await page.evaluate(() => removalBase());
+ok('gameplan: removal base = 2 truckloads × $500', baseShown === 1000, '$' + baseShown);
+await page.evaluate(() => { S.deposit='400'; S.jobdate='2026-06-12'; });
 await page.setViewportSize({ width: 1024, height: 768 });
 await page.waitForTimeout(150);
-await page.screenshot({ path: `${SHOTS}/03-gameplan-packages-ipad.png`, fullPage: false });
+await page.screenshot({ path: `${SHOTS}/03-gameplan-thenumber-ipad.png`, fullPage: false });
 
 /* close screen */
 await page.evaluate(() => jump(steps.findIndex(s=>s.id==='plan')));
@@ -225,7 +220,7 @@ ok('close: banner sits above the quote block', bonusBeforeQuote);
 await page.locator('.bonuschk input').check();
 ok('close: Day-Of Bonus checkbox toggles state', await page.evaluate(() => S.dayBonus === true));
 const total = await page.locator('.quoteblock .total').textContent();
-ok('close: grand total = 800 + 1,200', total === '$2,000', total);
+ok('close: grand total = base 1,000 + add-ons 669', total === '$1,669', total);
 const hold = await page.locator('.holdnote').textContent();
 ok('close: 7-day hold note below total', hold === 'Quote holds for 7 days. Day-Of Bonus is today only.');
 const gItems = await page.locator('.guarantee li').allTextContents();
@@ -235,9 +230,9 @@ ok('close: No-Surprises Guarantee, 2 items', gItems.length === 2 && /No-Surprise
 const notes = await page.evaluate(() => compileNotes());
 ok('close: payload notes include Day-Of Bonus', /DAY-OF BONUS: APPLIED/.test(notes));
 const payload = await page.evaluate(() => buildPayload());
-ok('close: line items = package + 3 upgrades', payload.quote.line_items_count === 4,
+ok('close: line items = removal base + 3 add-ons', payload.quote.line_items_count === 4,
    payload.quote.line_items.map(i=>i.name+' $'+i.total).join(' | '));
-ok('close: quote total in payload', payload.quote.total === 2000);
+ok('close: quote total in payload', payload.quote.total === 1669);
 ok('close: payload carries day_of_bonus + signature fields',
    payload.day_of_bonus === true && 'signature' in payload);
 ok('close: payload reports photo counts (before + ai_after)',
@@ -254,14 +249,14 @@ await page.screenshot({ path: `${SHOTS}/05-gameplan-close-380.png` });
 const escOk = await page.evaluate(() => esc('<b>"x"</b>') === '&lt;b&gt;&quot;x&quot;&lt;/b&gt;');
 ok('close: free-text escape helper neutralizes HTML', escOk);
 
-/* validation: a quote missing the package must NOT send or write a handoff */
-await page.evaluate(() => { localStorage.removeItem('egc_active_job'); const p = S.pkg; S.pkg = null; render(); window.__pkg = p; });
+/* validation: a zero-scope quote (no truckloads, no add-ons) must NOT send or write a handoff */
+await page.evaluate(() => { localStorage.removeItem('egc_active_job'); window.__loads = S.loads; window.__storage = S.storage.slice(); S.loads = 0; S.storage = []; render(); });
 await page.locator('button', { hasText: 'Send to Jobber' }).click();
 await page.waitForTimeout(200);
-ok('close: validation blocks send when package missing',
-   /Add .*package/i.test(await page.locator('#sendstatus').textContent()) &&
+ok('close: validation blocks send when there is no scope',
+   /Add .*scope/i.test(await page.locator('#sendstatus').textContent()) &&
    await page.evaluate(() => !localStorage.getItem('egc_active_job')));
-await page.evaluate(() => { S.pkg = window.__pkg; render(); });
+await page.evaluate(() => { S.loads = window.__loads; S.storage = window.__storage; render(); });
 
 /* real commit: Send to Jobber writes the handoff (with locked TOTAL) and posts via the proxy */
 const before = sent.length;
@@ -271,7 +266,7 @@ ok('close: Send to Jobber shows real success status',
    /pushed/i.test(await page.locator('#sendstatus').textContent()) &&
    /Sent to Jobber/i.test(await page.locator('button', { hasText: 'Sent to Jobber' }).textContent().catch(()=> '')));
 const gpSent = sent.slice(before).find(p => p.tool === 'game_plan');
-ok('close: game_plan payload reached the proxy', !!gpSent && gpSent.quote.total === 2000,
+ok('close: game_plan payload reached the proxy', !!gpSent && gpSent.quote.total === 1669,
    gpSent ? '$' + gpSent.quote.total : 'none');
 ok('close: payload carries jobber_client_id', !!gpSent && gpSent.client.jobber_client_id === 'JCLIENT1');
 
@@ -285,9 +280,9 @@ ok('close: Drive upload completes + folder link shown',
 ok('close: Drive batch carried job label (date — name — address)',
    driveBatches.length > 0 && /2026-06-12 — Dana Tester — 746 Star Grass Ln/.test(driveBatches[0].label), driveBatches[0] && driveBatches[0].label);
 const activeJob = await page.evaluate(() => JSON.parse(localStorage.getItem('egc_active_job')));
-ok('handoff: egc_active_job written on Send, carries locked total + priced upsells',
-   activeJob && activeJob.name === 'Dana Tester' && activeJob.pkg === 'Garage Transformation' &&
-   activeJob.rate === '800' && activeJob.total === 2000 && /Both Walls .*\$800/.test(activeJob.upsellsPriced || ''),
+ok('handoff: egc_active_job written on Send, carries locked total + priced add-ons',
+   activeJob && activeJob.name === 'Dana Tester' && /truckload/.test(activeJob.pkg || '') &&
+   activeJob.rate === 1000 && activeJob.total === 1669 && /Plastic .*\$299/.test(activeJob.upsellsPriced || ''),
    JSON.stringify(activeJob));
 
 /* ── 5. Pre-Job pre-fills from handoff ─────────────────────── */
@@ -298,11 +293,11 @@ const banner = await page.evaluate(() => document.querySelector('main').innerTex
 ok('prejob: LOADED FROM GAME PLAN banner', /LOADED FROM GAME PLAN/.test(banner) && /DANA TESTER/.test(banner));
 ok('prejob: name prefilled', await page.inputValue('#j_name') === 'Dana Tester');
 ok('prejob: address prefilled', await page.inputValue('#j_addr') === '746 Star Grass Ln');
-ok('prejob: flat-rate field shows LOCKED TOTAL (not just package rate)', await page.inputValue('#j_rate') === '2000',
+ok('prejob: rate field shows LOCKED TOTAL (base + add-ons)', await page.inputValue('#j_rate') === '1669',
    await page.inputValue('#j_rate'));
-ok('prejob: banner shows locked total', /Locked total: \$2000/.test(banner), banner.replace(/\s+/g,' ').slice(0,160));
+ok('prejob: banner shows locked total', /Locked total: \$1669/.test(banner), banner.replace(/\s+/g,' ').slice(0,160));
 const pkgVal = await page.inputValue('#j_pkg');
-ok('prejob: package + priced upsells prefilled', /Garage Transformation/.test(pkgVal) && /Both Walls .*\$750/.test(pkgVal), pkgVal);
+ok('prejob: scope + priced add-ons prefilled', /truckload/.test(pkgVal) && /Plastic .*\$299/.test(pkgVal), pkgVal);
 ok('prejob: job date prefilled', await page.inputValue('#j_date') === '2026-06-12');
 /* in-app actions on prejob items */
 ok('prejob: lookup button present on job card', await page.locator('.lookbtn').count() === 1);
