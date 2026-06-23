@@ -24,8 +24,9 @@ const PROMPT =
   "image of the SAME garage — keep the exact same wall color, window style and panes, door, ceiling " +
   "and proportions from the original. Render it as a clean, straight-on front view looking in from " +
   "the driveway at eye level. Show it fully cleaned out: clutter and junk gone, concrete floor swept " +
-  "and clear with a car's worth of open space, and the belongings worth keeping tidied onto simple " +
-  "heavy-duty wall shelving. Arrange the zones (car, workbench, gym, storage) to match the described " +
+  "and clear with a car's worth of open space, and the belongings worth keeping tidied onto the exact " +
+  "freestanding shelving and labeled storage bins described below. Arrange the zones (car, workbench, " +
+  "gym, storage) to match the described " +
   "layout. It must look like a real estate listing photo of an attainable one-day cleanout: sharp " +
   "focus, accurate real materials, realistic shadows, natural daylight. NOT a CGI render, " +
   "illustration, cartoon, luxury showroom, or full renovation.";

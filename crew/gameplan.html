@@ -209,6 +209,9 @@
   .aibtn.hot{background:var(--orange)}
   .aiout{margin-top:12px}
   .aiout img{width:100%;border-radius:var(--r);border:1.5px solid var(--line);display:block}
+  .genbar{height:10px;background:var(--line);border-radius:99px;overflow:hidden;margin:12px 0 6px}
+  .genbar i{display:block;height:100%;width:0%;background:var(--orange);border-radius:99px;transition:width .5s ease}
+  .genmsg{font-size:13px;color:var(--khaki);font-weight:500}
   .ailbl{font-family:'Oswald';font-weight:600;font-size:11px;letter-spacing:.08em;text-transform:uppercase;
          color:var(--khaki);margin-top:6px}
   .aibadge{display:inline-block;background:#13203a;color:#fff;font-family:'Oswald';font-size:10px;letter-spacing:.1em;
@@ -560,19 +563,26 @@ async function genAfter(){
   const btn=$("aibtn"); if(!btn) return;
   const job=S.jobId||""; let befs=[]; try{befs=await photoList(job,"before");}catch(e){}
   if(!befs.length){alert("Snap a before photo first.");return;}
-  btn.disabled=true;btn.textContent="✨ Generating… (~30s)";
+  btn.disabled=true;btn.textContent="✨ Generating…";
+  // estimate bar — the model doesn't stream progress, so creep toward ~96% over ~30s, then snap to 100
+  const out=$("aiout");
+  if(out) out.innerHTML=`<div class="genbar"><i></i></div><div class="genmsg">Rendering the “after”… about 30 seconds</div>`;
+  const bar=out?out.querySelector(".genbar i"):null;
+  let pct=0; const timer=setInterval(()=>{pct=Math.min(96,pct+(pct<75?2.5:0.7));if(bar)bar.style.width=pct+"%";},500);
   try{
     const res=await fetch("/api/garage-render",{method:"POST",headers:{"Content-Type":"application/json"},
       body:JSON.stringify({image:befs[befs.length-1].dataUrl, hint:layoutHint()})});
     const j=await res.json();
+    clearInterval(timer);
     if(res.ok&&j&&j.ok&&j.image){
+      if(bar)bar.style.width="100%";
       S.aiAfter=j.image; save();
       try{await photoAdd(job,"after_ai",j.image);}catch(e){}
       paintAi(); refreshCounts();
       btn.textContent="✨ Regenerate the After";btn.disabled=false;
-    }else{ btn.textContent="✨ Generate the After";btn.disabled=false;
+    }else{ if(out)out.innerHTML=""; btn.textContent="✨ Generate the After";btn.disabled=false;
       alert("Couldn't generate: "+((j&&j.error)||res.status)+". Check signal and try again."); }
-  }catch(e){ btn.textContent="✨ Generate the After";btn.disabled=false;
+  }catch(e){ clearInterval(timer); if(out)out.innerHTML=""; btn.textContent="✨ Generate the After";btn.disabled=false;
     alert("Image service unreachable — check signal and try again."); }
 }
 
@@ -872,8 +882,15 @@ function layoutHint(){
   if(S.layout&&S.layout!=="Custom") p.push("parking layout: "+S.layout.toLowerCase());
   else if(S.layout==="Custom"){ const z=[...new Set(S.layoutGrid.filter(Boolean).map(v=>LZONE[v].name.toLowerCase()))]; if(z.length) p.push("zones: "+z.join(", ")); }
   if(S.garages>1) p.push(S.garages+" garage bays");
-  const shelv=CONFIG.upgrades.filter((u,i)=>S.storage.includes(i)&&u.group==="shelving").map(u=>u.name.toLowerCase());
-  if(shelv.length) p.push(shelv.join(", "));
+  // render the actual shelving they chose, as a concrete material
+  const shelfDesc={
+    "Shelving — Metal":"freestanding black heavy-duty steel shelving racks",
+    "Shelving — Plastic":"freestanding black plastic/resin shelving units",
+    "Shelving — Wood + Metal":"freestanding shelving with wood shelves on black steel frames"};
+  CONFIG.upgrades.forEach((u,i)=>{ if(S.storage.includes(i)&&u.group==="shelving"&&shelfDesc[u.name]) p.push(shelfDesc[u.name]); });
+  // EGC bins are the yellow-and-black HDX-style totes
+  if(CONFIG.upgrades.some((u,i)=>S.storage.includes(i)&&/tote|bin/i.test(u.name)))
+    p.push("belongings stored in matching yellow-and-black labeled storage totes neatly stacked on the shelves");
   return p.join("; ");
 }
 function toggleUp(i){
