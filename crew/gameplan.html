@@ -362,8 +362,8 @@ const S = {  // session state — autosaved locally on every tap
   donate:[], donateNote:"",
   floor:null, floorNote:"",
   storage:[], storageQty:{}, 
-  layout:null, layoutNote:"",
-  layoutGrid:Array(40).fill(0), layoutPaint:1, garages:1,
+  layout:null, layoutNote:"", bay:0, bayGrids:{}, bayLayouts:{},
+  layoutGrid:Array(40).fill(0), layoutPaint:1, garages:1, garageW:"", garageD:"", garageH:"",
   stay:[],
   pkg:null, rate:"", deposit:"", jobdate:"",
   dayBonus:false, jobId:"", sig:"", aiAfter:"", jobberClientId:"", jobberRequestId:"",
@@ -713,8 +713,8 @@ R.p10=()=>head("p10",`Point at the floor. <b>“Picture this swept and clear, wa
     `<div class="chip ${S.floor===v?'on hot':''}" onclick="S.floor='${v}';render()">${v}</div>`).join("")}</div>
   <label class="fl">Notes</label>
   <textarea oninput="S.floorNote=this.value">${esc(S.floorNote)}</textarea>
-  <label class="fl" style="margin-top:20px">Snap the garage → generate the “after”</label>
-  <div class="ask" style="margin:0 0 8px;font-size:14px">Take a before shot, then tap Generate to show them their garage cleaned out tonight.</div>
+  <label class="fl" style="margin-top:20px">Snap the garage — the before shot</label>
+  <div class="ask" style="margin:0 0 8px;font-size:14px">Take the before photo here; you generate the “after” from the top-down sketch at the Parking Layout step.</div>
   <div id="pb_before"></div>`;
 
 R.p11=()=>head("p11",`<b>“What would keep this from coming back?”</b> Point at the cleared wall on the sketch — rack here, bins there. Freestanding, no drilling. Shelving and Deep Clean are two-option pairs: one or the other, never both.`)+`
@@ -730,7 +730,8 @@ R.p11=()=>head("p11",`<b>“What would keep this from coming back?”</b> Point 
   <div style="text-align:right;font-family:Oswald;font-weight:700;font-size:20px;margin-top:6px">
     Upgrades: <span style="color:var(--orange)">${money(upgradesTotal())}</span></div>`;
 
-R.p12=()=>head("p12",`Back to the map — a <b>top-down view</b> of the garage. <b>“Where does the car live?”</b> Tap a layout — we sketch it in, color-coded — then preview it with AI. Tap “Custom” to draw your own.`)+`
+R.p12=()=>head("p12",`Back to the map — a <b>top-down view</b> of the garage. <b>“Where does the car live?”</b> Tap a layout — we sketch it in, color-coded — then generate the “after.” Tap “Custom” to draw your own.`)+`
+  ${S.garages>1?`<label class="fl" style="margin-top:0">Which garage?</label><div class="chips" style="margin-bottom:12px">${Array.from({length:S.garages},(_,n)=>`<div class="chip ${S.bay===n?"on hot":""}" onclick="selectBay(${n})">Garage ${n+1}</div>`).join("")}</div>`:""}
   <div class="chips">${LAYOUT_PRESETS.map(v=>
     `<div class="chip ${S.layout===v?'on hot':''}" onclick="pickLayout('${v}')">${v}</div>`).join("")}</div>
   ${S.layout==="Custom"?`<div class="gridmode">${Object.keys(LZONE).map(z=>
@@ -741,20 +742,30 @@ R.p12=()=>head("p12",`Back to the map — a <b>top-down view</b> of the garage. 
   <div class="gridlegend">${Object.keys(LZONE).map(z=>`<span><i style="background:${LZONE[z].color}"></i>${LZONE[z].name}</span>`).join("")}</div>
   <label class="fl" style="margin-top:16px">Garages / bays to clear</label>
   <div class="stepper">
-    <button onclick="S.garages=Math.max(1,S.garages-1);render()">−</button>
+    <button onclick="var g=Math.max(1,S.garages-1);S.garages=g;if(S.bay>=g)selectBay(g-1);else render()">−</button>
     <input class="val" type="number" inputmode="numeric" min="1" step="1" value="${S.garages}" aria-label="Garages to clear"
-      onchange="var v=parseInt(this.value,10);S.garages=isNaN(v)?S.garages:Math.max(1,v);render()">
+      onchange="var v=parseInt(this.value,10);S.garages=isNaN(v)?S.garages:Math.max(1,v);if(S.bay>=S.garages)selectBay(S.garages-1);else render()">
     <button onclick="S.garages=S.garages+1;render()">+</button>
   </div>
+  <label class="fl" style="margin-top:16px">Garage measurements — measure it as you walk (feet)</label>
+  <div style="display:flex;gap:10px">
+    <div style="flex:1"><label class="fl" style="margin-top:0">Width</label>
+      <input type="number" inputmode="decimal" min="0" step="0.5" value="${esc(S.garageW)}" placeholder="ft" onchange="S.garageW=this.value;render()"></div>
+    <div style="flex:1"><label class="fl" style="margin-top:0">Depth</label>
+      <input type="number" inputmode="decimal" min="0" step="0.5" value="${esc(S.garageD)}" placeholder="ft" onchange="S.garageD=this.value;render()"></div>
+    <div style="flex:1"><label class="fl" style="margin-top:0">Height</label>
+      <input type="number" inputmode="decimal" min="0" step="0.5" value="${esc(S.garageH)}" placeholder="ft" onchange="S.garageH=this.value;render()"></div>
+  </div>
+  ${garageSizeHint()}
   <label class="fl" style="margin-top:14px">Notes</label>
   <input type="text" value="${esc(S.layoutNote)}" placeholder="Truck side, door clearance…" oninput="S.layoutNote=this.value">
   <label class="fl" style="margin-top:18px">Bring it to life — AI “after” from the before photo</label>
-  <div class="ask" style="margin:0 0 8px;font-size:14px">Uses the before shot from Point 10${S.layout?` + the <b>${esc(S.layout)}</b> layout`:""}. Pick a layout above to have it reflected.</div>
+  <div class="ask" style="margin:0 0 8px;font-size:14px">Uses the before shot + this top-down sketch${S.layout?` (<b>${esc(S.layout)}</b>)`:""} as the guide. Pick a layout above to shape it.</div>
   <button class="aibtn hot" id="aibtn" onclick="genAfter()">✨ Generate the After</button>
   <div class="aiout" id="aiout"></div>`;
 
 R.p13=()=>head("p13",`<b>“The cleanout is the easy part — staying clean is the system.”</b> Tap what's included in their plan.`)+`
-  <div class="checks">${["Labeled zones (tools / seasonal / sports)","Everything off the floor","Donate-box by the door","6-month check-in text from EGC"].map(v=>
+  <div class="checks">${["Labeled zones — tools / seasonal / sports / auto","Everything off the floor — up on walls & shelves","Clear, labeled bins you can see into","Donate-box by the door for easy purging","Seasonal swap shelf (holiday / camping rotates out)","Reset photo — a map of where it all goes","6-month check-in text from EGC"].map(v=>
     `<div class="check ${S.stay.includes(v)?'on':''}" onclick="S.stay=chip(S.stay,'${v}');render()"><span class="bx"></span>${v}</div>`).join("")}</div>`;
 
 R.p14=()=>head("p14",`The number built itself from the scope — $500 a truckload of removal, organize + a basic sweep included, everything they added on top. Walk it line by line, then lock the date.`)+`
@@ -833,7 +844,22 @@ function layoutPreset(name){
   return g;
 }
 function pickLayout(v){ S.layout=v; if(v!=="Custom") S.layoutGrid=layoutPreset(v); render(); }
+// Multi-garage: each bay keeps its own sketch; selectBay stashes the current and loads another.
+function selectBay(n){
+  S.bayGrids[S.bay]=S.layoutGrid; S.bayLayouts[S.bay]=S.layout;
+  S.bay=n;
+  S.layoutGrid=S.bayGrids[n]||Array(40).fill(0);
+  S.layout=S.bayLayouts[n]||null;
+  render();
+}
 function tapLayout(i){ if(S.layout!=="Custom") S.layout="Custom"; S.layoutGrid[i]=(S.layoutGrid[i]===S.layoutPaint)?0:S.layoutPaint; render(); }
+// Live size read from the custom measurements — rough bays by width, handy for the deep-clean size.
+function garageSizeHint(){
+  const w=parseFloat(S.garageW), d=parseFloat(S.garageD);
+  if(!(w>0)||!(d>0)) return "";
+  const sqft=Math.round(w*d), size=w<16?"1-car":w<26?"2-car":"3-car";
+  return `<div class="looknote" style="margin-top:8px">≈ <b>${sqft} sq ft</b> — reads like a <b>${size}</b> garage. Handy for sizing the deep clean.</div>`;
+}
 // Prompt nudge for the AI "after": chosen parking layout + scope (zones, bays, shelving).
 function layoutHint(){
   const p=[];
@@ -902,6 +928,7 @@ function compileNotes(){
   add("Floor", S.floor); add("Floor notes", S.floorNote);
   add("Parking layout", S.layout); add("Layout notes", S.layoutNote);
   add("Garages to clear", S.garages>1?S.garages:"");
+  add("Garage size", (parseFloat(S.garageW)>0&&parseFloat(S.garageD)>0)?`${S.garageW} × ${S.garageD}${S.garageH?" × "+S.garageH+"H":""} ft (~${Math.round(parseFloat(S.garageW)*parseFloat(S.garageD))} sq ft)`:"");
   add("Stay-clean system", S.stay);
   add("DAY-OF BONUS", S.dayBonus?"APPLIED — all special-disposal fees waived (mattress, fridge, tires, paint, e-waste)":"");
   return L.join("\n");
@@ -934,12 +961,16 @@ function buildPayload(){
     signature:S.sig||"",
     photos:{before:PHOTO_COUNTS.before, ai_after:PHOTO_COUNTS.after_ai},
     drive_folder:(function(){try{return localStorage.getItem(driveKey())||"";}catch(e){return "";}})(),
+    garage:{width:S.garageW||"", depth:S.garageD||"", height:S.garageH||"", bays:S.garages, layout:S.layout||"",
+      sqft:(parseFloat(S.garageW)>0&&parseFloat(S.garageD)>0)?Math.round(parseFloat(S.garageW)*parseFloat(S.garageD)):""},
     notes:compileNotes(), raw:S,
   };
   // flattened 4-slot mapping for easy Zapier field mapping
   for(let i=0;i<4;i++){const it=items[i]||{};
     p["li"+(i+1)+"_name"]=it.name||""; p["li"+(i+1)+"_desc"]=it.description||"";
     p["li"+(i+1)+"_qty"]=it.qty||""; p["li"+(i+1)+"_unit_price"]=it.unit_price||""; p["li"+(i+1)+"_total"]=it.total||"";}
+  p.title=p.quote.title; p.instructions=p.notes; p.start_date=S.jobdate||"";
+  p.line_items_count=items.length; p.total=grandTotal(); p.deposit=Number(S.deposit||0);
   return p;
 }
 
@@ -1049,7 +1080,7 @@ function render(){
   paintTotal();
   $("stage").scrollTop=0;
   if(s.id==="start")setTimeout(loadTodayRequests,0); // auto-pull the day's Jobber walkthroughs (cached after first load)
-  if(s.id==="p10")setTimeout(()=>mountStrip("pb_before","before",{ai:true}),0);
+  if(s.id==="p10")setTimeout(()=>mountStrip("pb_before","before",{ai:false}),0); // before photo only — the After generates at the Layout step
   if(s.id==="p12")setTimeout(paintAi,0);
   if(s.id==="plan"){setTimeout(initSig,60);setTimeout(mountPlanPhotos,0);} // handoff is written on commit (Send/Text), not on view
   save();

@@ -173,15 +173,18 @@ await page.locator('.up', { hasText: 'Rush Scheduling' }).click();
 const upTotal = await page.evaluate(() => upgradesTotal());
 ok('gameplan: add-ons total = 299 + 220 + 150', upTotal === 669, '$' + upTotal);
 
-/* ── 4b. Point 10: before photo capture + AI "after" generator ── */
+/* ── 4b. before photo at Floor (p10); the AI "after" generates at the Layout step (p12) ── */
 await page.evaluate(() => jump(steps.findIndex(s=>s.id==='p10')));
 await page.waitForTimeout(250);
-ok('gameplan: Point 10 shows photo capture tile', await page.locator('#pb_before .padd').count() === 1);
-ok('gameplan: Generate-the-After disabled with no photo', await page.locator('#aibtn').isDisabled());
+ok('gameplan: Floor step shows before-photo capture tile', await page.locator('#pb_before .padd').count() === 1);
+ok('gameplan: no Generate button on the Floor step (lives at the Layout step)', await page.locator('#aibtn').count() === 0);
 await page.setInputFiles('#pb_before input[type=file]', '/tmp/egc-before.png');
 await page.waitForTimeout(500);
 ok('gameplan: before photo stored on-device + thumb shown', await page.locator('#pb_before .pthumb img').count() >= 1);
-ok('gameplan: Generate-the-After enabled after a before photo', !(await page.locator('#aibtn').isDisabled()));
+// the "after" is generated at the Parking Layout step, from the top-down sketch
+await page.evaluate(() => jump(steps.findIndex(s=>s.id==='p12')));
+await page.waitForTimeout(250);
+ok('gameplan: Layout step has the Generate-the-After button', await page.locator('#aibtn').count() === 1);
 const beforeGen = sentImg.length;
 await page.locator('#aibtn').click();
 await page.waitForTimeout(600);
