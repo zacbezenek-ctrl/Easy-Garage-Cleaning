@@ -135,7 +135,7 @@ BLOG_QUICK_SUMMARIES = {
         "Flat-rate locked before work; text photos for your exact quote."
     ),
     "got-junk-vs-local-junk-removal-fort-collins.html": (
-        "Local garage specialist vs national franchise: flat photo quotes, owner on every job, no hourly surprises. "
+        "Local garage specialist vs national franchise: flat photo quotes, background-checked crew, no hourly surprises. "
         "Easy Garage Cleaning serves Fort Collins and Northern Colorado."
     ),
 }
@@ -285,7 +285,7 @@ ARTICLE_CTA_MID = f"""<aside class="article-cta reveal" aria-label="Book a quote
 
 ARTICLE_CTA_END = f"""<aside class="article-cta reveal" aria-label="Book a quote">
 <h3>Get your garage back — book free quote</h3>
-<p>Same-day when schedule allows. Locally owned in Fort Collins.</p>
+<p>Next-day when schedule allows. Locally owned in Fort Collins.</p>
 <a href="/book.html" class="btn-primary">Book free quote</a> <a href="sms:{PHONE}?body=Hi!%20I'd%20like%20a%20quote." class="btn-secondary" style="margin-left:8px;border-color:rgba(255,255,255,.3);color:var(--paper)">Text photos</a>
 </aside>"""
 
@@ -738,7 +738,7 @@ NAV = """
 </aside>
 <div class="trust-strip" aria-label="Trust signals">
   <div class="wrap trust-strip-inner">
-    <span>Response within 5 minutes</span><span>No hidden fees</span><span>Only pay after approving quote</span><span>We do all lifting</span><span>Text photos now</span><span>Same-day availability</span>
+    <span>Response within 5 minutes</span><span>No hidden fees</span><span>Only pay after approving quote</span><span>We do all lifting</span><span>Text photos now</span><span>Next-day availability</span>
   </div>
 </div>
 """
@@ -800,7 +800,7 @@ FOOTER = """
   </div>
   <div class="foot-bar">
     <div class="wrap foot-bar-inner">
-      <span>&copy; 2026 Easy Garage Cleaning LLC · Licensed &amp; Insured</span>
+      <span>&copy; 2026 Easy Garage Cleaning LLC · Insured</span>
       <a href="/privacy-policy.html">Privacy Policy</a>
     </div>
   </div>
@@ -981,7 +981,7 @@ QUOTE_FORM = """
         <div class="cta-point">Response within 5 minutes</div>
         <div class="cta-point">No hidden fees — only pay after approving quote</div>
         <div class="cta-point">We do all lifting — you don't touch a thing</div>
-        <div class="cta-point">Same-day availability when schedule allows</div>
+        <div class="cta-point">Next-day availability when schedule allows</div>
         <div style="margin-top:12px;display:flex;flex-wrap:wrap;gap:12px;">
           <a href="tel:{phone}" class="btn-primary btn-lg">Call {phone_display}</a>
           <a href="sms:{phone}?body={sms_body}" class="btn-secondary btn-lg" style="color:var(--paper);border-color:rgba(255,255,255,.25);">Text Photos</a>
@@ -1100,7 +1100,7 @@ QUOTE_FORM = """
               <div class="field"><label for="date-{form_id}">Preferred date (optional)</label><input type="date" id="date-{form_id}" name="Preferred date" /></div>
               <div class="field"><label for="timing-{form_id}">Preferred timing</label>
                 <select id="timing-{form_id}" name="Preferred timing">
-                  <option value="ASAP / Same-day">ASAP / Same-day</option>
+                  <option value="ASAP / Next-day">ASAP / Next-day</option>
                   <option value="This week">This week</option>
                   <option value="Next week">Next week</option>
                   <option value="Flexible">Flexible — just getting a quote</option>
@@ -1457,7 +1457,7 @@ def wrap_compare_tables(content):
     if "compare-winner" not in content and "junk removal wins" in content.lower():
         content += (
             '<div class="compare-winner reveal"><strong>Local garage specialist wins for</strong> '
-            "flat photo quotes, owner on every job, donation receipts, and same-day garage reclaiming in Fort Collins — without franchise surcharges.</div>"
+            "flat photo quotes, background-checked crew, donation receipts, and next-day garage reclaiming in Fort Collins — without franchise surcharges.</div>"
         )
     elif "garage cleanout: one-time" in content.lower() and "compare-winner" not in content:
         content += (
@@ -1617,7 +1617,7 @@ def render_service(s):
 <p class="hero-sub">{s["hero_sub"]}</p>
 <div class="hero-ctas"><a href="#quote" class="btn-primary">Get Free Quote</a>
 <a href="sms:{PHONE}?body={s['sms'].replace(' ', '%20')}" class="btn-secondary">Text Photos for Estimate</a></div>
-<div class="hero-trust"><span class="trust-badge">Locally owned</span><span class="trust-badge">Flat-rate pricing</span><span class="trust-badge">Same-day available</span><span class="trust-badge">5-min response</span>{trust}</div></div>
+<div class="hero-trust"><span class="trust-badge">Locally owned</span><span class="trust-badge">Flat-rate pricing</span><span class="trust-badge">Next-day available</span><span class="trust-badge">5-min response</span>{trust}</div></div>
 <div class="hero-ba"><div class="hero-ba-cell before"><span class="hero-ba-label">BEFORE</span><div class="ba-coming-soon"><span class="ba-icon" aria-hidden="true">◇</span><strong>Photo coming soon</strong></div></div>
 <div class="hero-ba-cell after"><span class="hero-ba-label">AFTER</span><div class="ba-coming-soon"><span class="ba-icon" aria-hidden="true">◇</span><strong>Photo coming soon</strong></div></div></div></div></header>"""
     items = items_html(s["yes_title"], s["yes"], NO_ITEMS) if s.get("show_items", True) else ""
@@ -1676,7 +1676,7 @@ def render_city(c):
 <p class="hero-sub">{c["intro"]}</p>
 <div class="hero-ctas"><a href="#quote" class="btn-primary">Get Free Quote</a>
 <a href="sms:{PHONE}?body=Hi!%20I%20need%20{c['service'].replace(' ', '%20')}%20in%20{c['city']}." class="btn-secondary">Text Photos for Estimate</a></div>
-<div class="hero-trust"><span class="trust-badge">Flat-rate pricing</span><span class="trust-badge">Fully insured</span><span class="trust-badge">Same-day available</span><span class="trust-badge">No travel surcharge</span></div></div>
+<div class="hero-trust"><span class="trust-badge">Flat-rate pricing</span><span class="trust-badge">Fully insured</span><span class="trust-badge">Next-day available</span><span class="trust-badge">No travel surcharge</span></div></div>
 {city_hero_visual(c["city"])}</div></header>"""
     local = city_neighborhood_section(c)
     related = related_html(c.get("related", [
@@ -1988,7 +1988,7 @@ def render_what_we_take():
 
 def render_about():
     title = "About Easy Garage Cleaning | Zac Bezenek, Fort Collins"
-    desc = "Meet Zac Bezenek — CSU student-run garage reclaiming specialist in Fort Collins. Local roots, flat-rate quotes, owner on every job."
+    desc = "Meet Zac Bezenek — CSU student-run garage reclaiming specialist in Fort Collins. Flat-rate quotes, background-checked crew."
     canonical = f"{SITE}/about.html"
     schema = json.dumps([
         business_schema(),
@@ -1997,7 +1997,7 @@ def render_about():
     body = f"""<main>
 <section class="hero"><div class="wrap hero-grid"><div>
 <div class="hero-eyebrow mono">About us</div>
-<a href="tel:{PHONE}" class="hero-phone">{PHONE_DISPLAY}<span class="hero-phone-sub">· Owner on every job</span></a>
+<a href="tel:{PHONE}" class="hero-phone">{PHONE_DISPLAY}<span class="hero-phone-sub">· Background-checked crew</span></a>
 <h1 class="hero-title">Garage reclaiming, <em>built in Fort Collins</em></h1>
 <p class="hero-sub">Easy Garage Cleaning isn't a franchise call center — it's Zac Bezenek and a local crew helping Northern Colorado homeowners park in their garage again.</p>
 <div class="hero-ctas"><a href="#quote" class="btn-primary">Get Free Quote</a><a href="tel:{PHONE}" class="btn-secondary">Call {PHONE_DISPLAY}</a></div>
@@ -2007,12 +2007,12 @@ def render_about():
 <section class="body-copy"><div class="wrap"><div class="about-story-grid reveal">
 <div class="body-copy-inner">
 <h2>Zac's story</h2>
-<p>I'm Zac Bezenek — a Colorado State University student and Northern Colorado native. I started Easy Garage Cleaning because I kept seeing neighbors park outside in hail and snow while their garages filled with stuff they'd deal with "someday."</p>
+<p>I'm Zac Bezenek — a Colorado State University student and the owner of Easy Garage Cleaning. I started Easy Garage Cleaning because I kept seeing neighbors park outside in hail and snow while their garages filled with stuff they'd deal with "someday."</p>
 <p>We're not generic junk haulers. We specialize in <strong>garage reclaiming</strong> — emptying the space, donating what's usable to <a href="/blog/habitat-for-humanity-restore-fort-collins.html" class="content-link">Habitat ReStore Fort Collins</a>, sweeping the floor, and handing you keys to a garage that works again.</p>
 <h2>Why we exist</h2>
 <p>Franchise haulers charge hourly and surprise you at the end. We quote flat from photos, respond within 5 minutes, and only start after you approve. No hidden fees. We do all the lifting.</p>
-<h2>Local roots &amp; professionalism</h2>
-<p>Colorado-registered LLC. General liability and commercial auto insurance on every job. Owner on site — you'll know exactly who's coming to your home.</p>
+<h2>Professionalism &amp; community</h2>
+<p>Colorado-registered LLC. General liability and commercial auto insurance on every job. Background-checked, insured crew on site — you'll know exactly who's coming to your home.</p>
 <p>Community involvement: donation partner with Habitat ReStore, supporter of local recycling, and proud to serve Fort Collins, Loveland, Windsor, and surrounding towns.</p>
 </div>
 <div class="team-photo" aria-label="Team photo placeholder">
@@ -2337,8 +2337,8 @@ def render_spring_blog():
 </ul>
 <p>Our <a href="/blog/garage-organization-after-cleanout-fort-collins.html" class="content-link">organization after cleanout guide</a> and <a href="/blog/garage-organizing-ideas-two-car-garage.html" class="content-link">two-car garage ideas</a> help you maintain the space through Colorado summer.</p>
 <h2>Book your spring garage cleanout</h2>
-<p>Text photos for the fastest flat-rate quote — same-day and next-day often available in spring when schedules open up. Call {phone_display}, <a href="/book.html" class="content-link">book online</a> with optional preferred date, or browse <a href="/what-we-take.html" class="content-link">what we take</a> if you are unsure.</p>
-<p>Easy Garage Cleaning is locally owned by Zac Bezenek — not a franchise call center. Owner on every job, insured LLC, donation receipts included, and you only pay after approving the quote.</p>""".format(phone=PHONE, phone_display=PHONE_DISPLAY))
+<p>Text photos for the fastest flat-rate quote — next-day often available in spring when schedules open up. Call {phone_display}, <a href="/book.html" class="content-link">book online</a> with optional preferred date, or browse <a href="/what-we-take.html" class="content-link">what we take</a> if you are unsure.</p>
+<p>Easy Garage Cleaning is locally owned by Zac Bezenek — not a franchise call center. Background-checked crew, insured LLC, donation receipts included, and you only pay after approving the quote.</p>""".format(phone=PHONE, phone_display=PHONE_DISPLAY))
     toc = article_toc_html(content)
     article_ld = {
         "@context": "https://schema.org",
@@ -2439,8 +2439,8 @@ def patch_index_iteration6(text):
 LLM_FAQS = [
     ("How much does a garage cleanout cost in Fort Collins?", "Most jobs: $99–$150 single item, $250–$400 small load, $400–$650 standard garage, $650+ large. Text photos to (970) 999-1818 for your exact flat-rate quote before we start."),
     ("How do I get a quote with photos?", "Text (970) 999-1818 or use https://easygaragecleaning.com/book.html — choose service, city, upload photos, contact info. Response within 5 minutes Mon–Sat 7am–7pm."),
-    ("Do you offer same-day service?", "Yes when the schedule allows — often same-day or next-day in Fort Collins, Loveland, Windsor, and Wellington."),
-    ("Are you licensed and insured?", "Yes — Easy Garage Cleaning LLC is a Colorado-registered LLC with general liability and commercial auto insurance on every job."),
+    ("Do you offer next-day service?", "Yes when the schedule allows — often next-day in Fort Collins, Loveland, Windsor, and Wellington."),
+    ("Are you insured?", "Yes — Easy Garage Cleaning LLC is a Colorado-registered LLC with general liability and commercial auto insurance on every job."),
     ("Do you donate usable items?", "Yes — Habitat ReStore Fort Collins, ARC, and Goodwill when items qualify; tax receipt in the customer's name."),
     ("Flat rate or hourly?", "Flat rate only. The price quoted from photos is what you pay — no hourly clock or end-of-job surprises."),
     ("What is a garage cleanout?", "Full haul-out of garage contents you mark for removal, donation drop-offs, and a floor sweep so you can park inside again."),
@@ -2458,7 +2458,7 @@ LLM_FAQS = [
     ("Storage unit cleanout?", "Yes — empty a paid unit in one trip; quoted flat from photos of unit contents."),
     ("Estate or multi-space cleanouts?", "Yes — custom flat quotes usually $650+ depending on volume; photo or video walkthrough first."),
     ("What happens to items after pickup?", "Donations first, then Larimer County Landfill or recycling — never illegal dumping."),
-    ("Who owns Easy Garage Cleaning?", "Zac Bezenek — CSU student, Northern Colorado native, owner on jobs. https://easygaragecleaning.com/about.html"),
+    ("Who owns Easy Garage Cleaning?", "Zac Bezenek — CSU student, co-owner. https://easygaragecleaning.com/about.html"),
 ]
 
 
@@ -2694,7 +2694,7 @@ def generate_sitemap(urls):
 
 TRUST_STRIP_BLOCK = """<div class="trust-strip" aria-label="Trust signals">
   <div class="wrap trust-strip-inner">
-    <span>Response within 5 minutes</span><span>No hidden fees</span><span>Only pay after approving quote</span><span>We do all lifting</span><span>Text photos now</span><span>Same-day availability</span>
+    <span>Response within 5 minutes</span><span>No hidden fees</span><span>Only pay after approving quote</span><span>We do all lifting</span><span>Text photos now</span><span>Next-day availability</span>
   </div>
 </div>"""
 
@@ -2925,7 +2925,7 @@ def patch_index_home_fixes(text):
     text = re.sub(
         r'(<div class="trust-strip" aria-label="Trust signals">\s*<div class="wrap trust-strip-inner">\s*)'
         r'(<span>Response within 5 minutes</span><span>No hidden fees</span><span>Only pay after approving quote</span>'
-        r'<span>We do all lifting</span><span>Text photos now</span><span>Same-day availability</span>)'
+        r'<span>We do all lifting</span><span>Text photos now</span><span>Next-day availability</span>)'
         r'(?:<span><em>CSU</em> · Fort Collins roots</span><span>Locally owned — not a franchise</span>)?',
         r"\1\2",
         text,
@@ -3181,7 +3181,7 @@ TESTIMONIAL_CAROUSEL_HTML = """
 
 BOOK_TRUST_BADGES = """
 <div class="book-trust-badges" aria-label="Trust signals">
-  <span>✓ Licensed &amp; insured LLC</span>
+  <span>✓ Insured LLC</span>
   <span>✓ Flat-rate photo quotes</span>
   <span>✓ Habitat ReStore donations</span>
   <span>✓ 5-minute response Mon–Sat</span>
@@ -3235,9 +3235,9 @@ MERCHANT_SETUP_COMMENT = """<!--
 
 STATS_BAR_HTML = """<section class="stats-bar" aria-label="Service highlights">
   <div class="wrap stats-bar-inner reveal">
-    <div><div class="stat-num">Same-day</div><div class="stat-label">Often available when schedule allows</div></div>
+    <div><div class="stat-num">Next-day</div><div class="stat-label">Often available when schedule allows</div></div>
     <div><div class="stat-num">~5 min</div><div class="stat-label">Typical photo quote response</div></div>
-    <div><div class="stat-num">Locally owned</div><div class="stat-label">Fort Collins · owner on every job</div></div>
+    <div><div class="stat-num">Locally owned</div><div class="stat-label">Fort Collins · background-checked crew</div></div>
   </div>
 </section>"""
 
@@ -3246,7 +3246,7 @@ COMPARE_MINI_HTML = """<section class="compare-mini" aria-labelledby="compare-he
     <div class="section-head reveal">
       <span class="mono section-num">Why local</span>
       <h2 class="section-title" id="compare-heading">Local specialist vs <em>national franchise</em></h2>
-      <p class="section-sub">Fort Collins homeowners deserve flat photo quotes and the owner on site — not a 1-800 call center.</p>
+      <p class="section-sub">Fort Collins homeowners deserve flat photo quotes and a background-checked local crew — not a 1-800 call center.</p>
     </div>
     <div class="compare-mini-grid reveal">
       <div class="compare-mini-col highlight">
@@ -3255,7 +3255,7 @@ COMPARE_MINI_HTML = """<section class="compare-mini" aria-labelledby="compare-he
           <li>Flat-rate quote from photos in ~5 minutes</li>
           <li>Garage reclaiming specialist — not generic hauling</li>
           <li>Owner Zac on every job · No-Surprise Quote Guarantee</li>
-          <li>Donation receipts · Same-day when available</li>
+          <li>Donation receipts · Next-day when available</li>
         </ul>
         <a href="/book.html" class="btn-primary" data-cta="hero-quote">Get Free Quote</a>
       </div>
@@ -3446,7 +3446,7 @@ def write_garage_signs_blog():
 <h2>5. You are avoiding the space emotionally</h2>
 <p>Garages become guilt rooms — inherited items, old projects, "deal" purchases. Avoidance is a sign the volume exceeds weekend energy, not willpower. Professional crews mark what stays, haul the rest, donate usable goods to <a href="/blog/habitat-for-humanity-restore-fort-collins.html" class="content-link">Habitat ReStore Fort Collins</a>, and sweep so you walk into a neutral space.</p>
 <h2>What to do next</h2>
-<p>Walk the garage with your phone and shoot wide photos — one from the door, one from each corner. Text them to <a href="sms:+19709991818" class="content-link">(970) 999-1818</a> or <a href="/book.html" class="content-link">book online</a> for a flat-rate quote in about 5 minutes. Read <a href="/blog/how-to-prepare-for-garage-cleanout.html" class="content-link">how to prepare for a garage cleanout</a> so the job goes faster. Same-day slots are often available in Fort Collins, Loveland, and Windsor when the schedule allows.</p>"""
+<p>Walk the garage with your phone and shoot wide photos — one from the door, one from each corner. Text them to <a href="sms:+19709991818" class="content-link">(970) 999-1818</a> or <a href="/book.html" class="content-link">book online</a> for a flat-rate quote in about 5 minutes. Read <a href="/blog/how-to-prepare-for-garage-cleanout.html" class="content-link">how to prepare for a garage cleanout</a> so the job goes faster. Next-day slots are often available in Fort Collins, Loveland, and Windsor when the schedule allows.</p>"""
     cmp = {
         "slug": slug,
         "title": "5 Signs Your Garage Needs a Cleanout | Fort Collins",

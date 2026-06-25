@@ -10,14 +10,14 @@ NO_ITEMS = [
 SERVICES = [
     {
         "slug": "junk-removal-fort-collins-co.html",
-        "title": "Junk Removal Fort Collins CO | Fast Same-Day Service",
-        "desc": "Reclaim garage space fast — Fort Collins junk removal with photo quotes in 5 minutes. Flat-rate, no hidden fees. Text photos now for same-day availability.",
+        "title": "Junk Removal Fort Collins CO | Fast Next-Day Service",
+        "desc": "Reclaim garage space fast — Fort Collins junk removal with photo quotes in 5 minutes. Flat-rate, no hidden fees. Text photos now for next-day availability.",
         "body_copy": """<p>When your garage becomes a junk room, <a href="/garage-cleanouts-fort-collins-co.html" class="content-link">garage cleanouts in Fort Collins</a> are the fastest path to parking inside again. We also handle single-item pickups like <a href="/couch-removal-fort-collins-co.html" class="content-link">couch removal</a>, <a href="/refrigerator-removal-fort-collins-co.html" class="content-link">refrigerator removal</a>, and <a href="/mattress-removal-fort-collins-co.html" class="content-link">mattress haul-away</a>.</p>
 <p>Serving Loveland and Windsor? See <a href="/junk-removal-loveland-co.html" class="content-link">junk removal in Loveland</a> and <a href="/junk-removal-windsor-co.html" class="content-link">junk removal in Windsor</a>. Read our guide on <a href="/blog/fort-collins-junk-removal-what-you-can-cant-throw-away.html" class="content-link">what you can and can't throw away in Fort Collins</a>, or compare options in <a href="/blog/junk-removal-vs-dumpster-rental-fort-collins.html" class="content-link">junk removal vs dumpster rental</a>.</p>
 <p>Recent job: <a href="/projects/windsor-garage-junk-removal.html" class="content-link">Windsor garage junk removal</a> — both bays cleared same day.</p>""",
         "h1": "Junk Removal Fort Collins CO",
         "hero_em": "Without the franchise runaround",
-        "hero_sub": "That pile in the garage corner? The old couch in the basement? We haul it — flat-rate, fully insured, and usually same-day in Fort Collins. Text photos for a quote in 5 minutes.",
+        "hero_sub": "That pile in the garage corner? The old couch in the basement? We haul it — flat-rate, fully insured, and usually next-day in Fort Collins. Text photos for a quote in 5 minutes.",
         "sms": "Hi! I need junk removal in Fort Collins.",
         "stype": "Junk Removal",
         "problem_title": "Junk shouldn't steal <em>your weekend</em>",
@@ -32,13 +32,13 @@ SERVICES = [
         "related": [("/garage-cleanouts-fort-collins-co.html", "Garage Cleanouts"), ("/furniture-removal-fort-collins-co.html", "Furniture Removal"), ("/couch-removal-fort-collins-co.html", "Couch Removal"), ("/appliance-removal-fort-collins-co.html", "Appliance Removal"), ("/blog/junk-removal-vs-dumpster-rental-fort-collins.html", "vs Dumpster Rental"), ("/junk-removal-loveland-co.html", "Loveland Junk Removal"), ("/projects/windsor-garage-junk-removal.html", "Windsor Project"), ("/", "Home")],
         "faqs": [
             ("How much does junk removal cost in Fort Collins?", "Most jobs fall into four ranges: single-item pickup ($99–$150), small loads ($250–$400), medium loads ($400–$650), and large hauls ($650+). Text photos for your exact flat-rate quote."),
-            ("Do you offer same-day junk removal in Fort Collins?", "Yes — when our schedule allows. We respond within 5 minutes and often book same-day or next-day in Fort Collins."),
+            ("Do you offer next-day junk removal in Fort Collins?", "Yes — when our schedule allows. We respond within 5 minutes and often book next-day in Fort Collins."),
             ("What items can you not haul?", "We cannot take liquid paint, gasoline, asbestos, medical waste, or live ammunition. See our blog guide for Fort Collins disposal options."),
             ("Do you haul from inside the garage?", "Yes. We carry items from garage, basement, or anywhere on the ground floor. Point us to what's going."),
             ("Is there a minimum load size?", "No minimum for photo quotes. Single-item pickups start around $99–$150 depending on item and access."),
             ("Do you donate usable junk?", "Yes — furniture and household goods in good shape go to Habitat ReStore, ARC, and Goodwill. You get the tax receipt."),
             ("How do I get a quote with photos?", "Text photos to (970) 999-1818 or use the form on this page. Wide shots of the full pile work best."),
-            ("Are you licensed and insured in Fort Collins?", "Yes. Easy Garage Cleaning LLC is a Colorado-registered LLC with general liability and commercial auto insurance."),
+            ("Are you insured in Fort Collins?", "Yes. Easy Garage Cleaning LLC is a Colorado-registered LLC with general liability and commercial auto insurance."),
             ("Do you serve Loveland and Windsor too?", "Yes — Fort Collins is home base, but we serve Loveland, Windsor, Timnath, and Wellington daily."),
             ("What happens to my junk after pickup?", "Donations first, then Larimer County Landfill or recycling for the rest. We never dump illegally."),
         ],
@@ -46,7 +46,7 @@ SERVICES = [
     {
         "slug": "garage-cleanouts-fort-collins-co.html",
         "title": "Garage Cleanouts Fort Collins CO | Easy Garage",
-        "desc": "Park in your garage again — full Fort Collins cleanouts with haul-out, sweep & donations. Text photos for a flat-rate quote in 5 minutes. Same-day available.",
+        "desc": "Park in your garage again — full Fort Collins cleanouts with haul-out, sweep & donations. Text photos for a flat-rate quote in 5 minutes. Next-day available.",
         "body_copy": """<p>Our Fort Collins garage cleanouts are built for reclaiming usable space — not just hauling junk. Pair with <a href="/garage-cleaning-fort-collins-co.html" class="content-link">garage cleaning in Fort Collins</a> or <a href="/garage-organization-fort-collins-co.html" class="content-link">garage organization in Fort Collins</a> to keep it organized long-term.</p>
 <p>Need help deciding? Read <a href="/blog/garage-cleanout-vs-storage-unit-fort-collins.html" class="content-link">garage cleanout vs storage unit</a> or <a href="/blog/how-to-prepare-for-garage-cleanout.html" class="content-link">how to prepare for a garage cleanout</a>. We also serve <a href="/garage-cleanouts-loveland-co.html" class="content-link">garage cleanouts in Loveland</a> and <a href="/garage-cleanouts-windsor-co.html" class="content-link">garage cleanouts in Windsor</a>.</p>
 <p>See a real result: <a href="/projects/fort-collins-garage-cleanout-old-town.html" class="content-link">Old Town Fort Collins garage cleanout</a>.</p>""",
@@ -72,7 +72,7 @@ SERVICES = [
             ("Do I need to sort before you arrive?", "No. Mark what stays, point to what's going. We handle sorting, carrying, and loading."),
             ("How long does a garage cleanout take?", "Most single-car garages take 2–4 hours. Full two-car garages typically 3–5 hours depending on volume."),
             ("Can you clean out attached and detached garages?", "Yes — both in Fort Collins. Detached garages and workshops are common in Old Town and Midtown."),
-            ("Do you offer same-day garage cleanouts?", "Often yes. Text photos and we'll confirm availability within 5 minutes."),
+            ("Do you offer next-day garage cleanouts?", "Often yes. Text photos and we'll confirm availability within 5 minutes."),
             ("What if I want to keep some items?", "We do a 15-minute walkthrough first. You tell us what's staying — we only haul what you approve."),
             ("Do you sweep the garage floor after?", "Yes. A basic sweep is included so you walk into a clear, usable space."),
             ("Are garage cleanouts flat-rate?", "Yes. No hourly billing. The price we quote before the job is the price you pay."),
@@ -116,7 +116,7 @@ SERVICES = [
     },
     {
         "slug": "furniture-removal-fort-collins-co.html",
-        "title": "Furniture Removal Fort Collins CO | Fast Same-Day Pickup",
+        "title": "Furniture Removal Fort Collins CO | Fast Next-Day Pickup",
         "desc": "Stuck couch in the garage? Fort Collins furniture removal — flat-rate from $99–150. Text photos for quote in 5 minutes. We do all lifting.",
         "body_copy": """<p>Garage furniture removal is one of our most common calls — especially <a href="/couch-removal-fort-collins-co.html" class="content-link">couch removal in Fort Collins</a> and sectionals blocking the bay. Part of a bigger project? See <a href="/garage-cleanouts-fort-collins-co.html" class="content-link">garage cleanouts in Fort Collins</a> or <a href="/junk-removal-fort-collins-co.html" class="content-link">junk removal in Fort Collins</a>.</p>
 <p>Usable pieces go to <a href="/blog/habitat-for-humanity-restore-fort-collins.html" class="content-link">Habitat ReStore Fort Collins</a> — tax receipt included.</p>""",
@@ -143,15 +143,15 @@ SERVICES = [
             ("Can you remove a couch from my garage?", "Yes — garage furniture removal is one of our most common calls in Fort Collins."),
             ("Is there a surcharge for heavy items?", "No per-item surcharges. Weight is factored into your flat-rate quote upfront."),
             ("Do I need to wrap or bag furniture?", "No prep needed. We protect floors and walls during carry-out."),
-            ("How fast can you pick up furniture?", "Same-day and next-day often available. Text photos for fastest scheduling."),
+            ("How fast can you pick up furniture?", "Next-day often available. Text photos for fastest scheduling."),
             ("What if my furniture is moldy or broken?", "We still haul it — it goes to disposal instead of donation. No judgment, just removal."),
             ("Do you remove office furniture from home garages?", "Yes — desks, filing cabinets, and chairs from home offices and garages."),
         ],
     },
     {
         "slug": "appliance-removal-fort-collins-co.html",
-        "title": "Appliance Removal Fort Collins CO | Fast Same-Day Haul",
-        "desc": "Dead fridge in the garage? Fort Collins appliance removal — flat-rate, recycled properly. Text photos for 5-minute quote. Same-day available.",
+        "title": "Appliance Removal Fort Collins CO | Fast Next-Day Haul",
+        "desc": "Dead fridge in the garage? Fort Collins appliance removal — flat-rate, recycled properly. Text photos for 5-minute quote. Next-day available.",
         "body_copy": """<p>That dead fridge stealing a parking spot? Our <a href="/refrigerator-removal-fort-collins-co.html" class="content-link">refrigerator removal in Fort Collins</a> handles freon units properly. See also <a href="/blog/what-to-do-with-old-appliances-fort-collins.html" class="content-link">what to do with old appliances in Fort Collins</a>.</p>
 <p>Appliances are included in full <a href="/garage-cleanouts-fort-collins-co.html" class="content-link">garage cleanouts</a> at no per-item surcharge.</p>""",
         "h1": "Appliance Removal Fort Collins CO",
@@ -177,7 +177,7 @@ SERVICES = [
             ("Can you remove appliances from a garage?", "Yes — garage appliance removal is extremely common in Fort Collins."),
             ("Do you take commercial appliances?", "Residential appliances only. Commercial units require a custom quote."),
             ("What about built-in appliances?", "Built-in dishwashers and ovens may need disconnection — send photos for an accurate quote."),
-            ("Is appliance removal same-day?", "Often yes for single items. Text photos for fastest confirmation."),
+            ("Is appliance removal next-day?", "Often yes for single items. Text photos for fastest confirmation."),
             ("Do you recycle appliances?", "Yes — metal and components go to certified recyclers, not illegal dumping."),
             ("Can appliances be part of a garage cleanout?", "Absolutely — appliances are included in full garage cleanout quotes at no per-item surcharge."),
         ],
@@ -209,7 +209,7 @@ SERVICES = [
             ("Will you take stained or torn mattresses?", "Yes — condition doesn't matter. They go to recycling/disposal, not donation."),
             ("Do you remove adjustable bed frames?", "Yes — adjustable bases and foundations are included in mattress removal quotes."),
             ("How do I prepare for mattress pickup?", "Clear a path from the mattress to our truck. We'll handle the rest."),
-            ("Same-day mattress removal?", "Often available for single items. Text photos for fastest booking."),
+            ("Next-day mattress removal?", "Often available for single items. Text photos for fastest booking."),
             ("Can mattresses be part of a garage cleanout?", "Yes — included in full cleanout quotes with no extra per-mattress fee."),
             ("Do you remove mattress from upstairs?", "Ground floor and garage yes. Second floor depends on access — send photos."),
         ],
@@ -239,7 +239,7 @@ SERVICES = [
             ("Do you clean out climate-controlled units?", "Yes — all Fort Collins storage facilities including Public Storage, Extra Space, and CubeSmart."),
             ("Can you meet me at the unit?", "Yes — you unlock, we empty. You don't need to stay for the whole job after the walkthrough."),
             ("What if I haven't seen inside in years?", "Common situation. We sort, haul, and donate — you approve what's trash vs. keep during walkthrough."),
-            ("Do you handle auction deadline cleanouts?", "Yes — urgent cleanouts are prioritized when schedule allows. Call for same-day availability."),
+            ("Do you handle auction deadline cleanouts?", "Yes — urgent cleanouts are prioritized when schedule allows. Call for next-day availability."),
             ("Is there a discount for emptying multiple units?", "Multi-unit cleanouts get a bundled flat-rate quote — text photos of each unit."),
             ("Do you donate items from storage units?", "Yes — usable furniture and household goods go to ReStore/ARC with your tax receipt."),
             ("Do I need to rent a truck?", "No — we bring the truck. One trip for most standard units."),
@@ -249,8 +249,8 @@ SERVICES = [
     },
     {
         "slug": "yard-debris-removal-fort-collins-co.html",
-        "title": "Yard Debris Removal Fort Collins CO | Fast Same-Day Haul",
-        "desc": "Storm branches, old mowers, patio furniture — Fort Collins yard debris removal. Text photos for flat-rate quote. Same-day when available.",
+        "title": "Yard Debris Removal Fort Collins CO | Fast Next-Day Haul",
+        "desc": "Storm branches, old mowers, patio furniture — Fort Collins yard debris removal. Text photos for flat-rate quote. Next-day when available.",
         "h1": "Yard Debris Removal Fort Collins CO",
         "hero_em": "Yard clutter cleared fast",
         "hero_sub": "Branches from last year's storm, old patio furniture in the garage, a broken mower you'll never fix — we haul yard debris across Fort Collins in one trip.",
@@ -274,7 +274,7 @@ SERVICES = [
             ("Is yard debris different from junk removal?", "Same crew, same flat-rate approach. Yard debris is just our label for outdoor/garage-adjacent items."),
             ("Do you take dirt or rocks?", "Small amounts yes. Large soil/rock loads need a custom quote due to weight."),
             ("Can you haul fencing materials?", "Yes — old fence sections, posts, and lumber from Fort Collins properties."),
-            ("Same-day yard debris pickup?", "Often available for smaller loads. Text photos of the pile."),
+            ("Next-day yard debris pickup?", "Often available for smaller loads. Text photos of the pile."),
             ("Do you compost or recycle yard waste?", "Green waste goes to appropriate Larimer County facilities — not mixed with landfill trash."),
             ("Can yard debris be part of a garage cleanout?", "Yes — outdoor items in the garage are included in full cleanout quotes."),
         ],
@@ -318,19 +318,19 @@ SERVICES = [
 CITIES = [
     {
         "slug": "junk-removal-loveland-co.html",
-        "title": "Junk Removal Loveland CO | Fast Same-Day Service",
-        "desc": "Loveland junk removal — flat-rate from Centerra to Downtown. Text photos for quote in 5 minutes. No travel surcharge. Same-day available.",
+        "title": "Junk Removal Loveland CO | Fast Next-Day Service",
+        "desc": "Loveland junk removal — flat-rate from Centerra to Downtown. Text photos for quote in 5 minutes. No travel surcharge. Next-day available.",
         "body_copy": """<p>Also need the garage cleared? See <a href="/garage-cleanouts-loveland-co.html" class="content-link">garage cleanouts in Loveland</a> or our Fort Collins services: <a href="/junk-removal-fort-collins-co.html" class="content-link">junk removal in Fort Collins</a>. Sample job: <a href="/projects/loveland-storage-unit-cleanout.html" class="content-link">Loveland storage unit cleanout</a>.</p>""",
         "h1": "Junk Removal Loveland CO",
         "city": "Loveland",
         "service": "junk removal",
-        "intro": "Loveland sits 20 minutes south of our Fort Collins home base — close enough for same-day service, local enough that you're not calling a Denver franchise. From Centerra townhomes to Mariana Butte ranch homes, we haul junk with flat-rate pricing and donation receipts.",
+        "intro": "Loveland sits 20 minutes south of our Fort Collins home base — close enough for next-day service, local enough that you're not calling a Denver franchise. From Centerra townhomes to Mariana Butte ranch homes, we haul junk with flat-rate pricing and donation receipts.",
         "neighborhoods": "Centerra, Downtown Loveland, Mariana Butte, Boyd Lake, Namaqua, Wilson Ave corridor, and east-side neighborhoods off Boise Avenue.",
         "faqs": [
             ("How much does junk removal cost in Loveland?", "Same ranges as Fort Collins: $99–$150 single item, $250–$400 small load, $400–$650 medium, $650+ large. No Loveland travel surcharge."),
             ("Do you serve Centerra and Mariana Butte?", "Yes — all Loveland neighborhoods including Centerra, Mariana Butte, Boyd Lake, and Downtown."),
-            ("How fast can you come to Loveland?", "Same-day and next-day often available. Loveland is a quick drive down US-287 from Fort Collins."),
-            ("Are you insured in Loveland?", "Yes — fully licensed and insured for all Larimer County jobs."),
+            ("How fast can you come to Loveland?", "Next-day often available. Loveland is a quick drive down US-287 from Fort Collins."),
+            ("Are you insured in Loveland?", "Yes — fully insured for all Larimer County jobs."),
             ("Do you donate items from Loveland jobs?", "Yes — Habitat ReStore Loveland area, ARC, and Goodwill with tax receipt in your name."),
             ("What junk do you remove in Loveland?", "Furniture, appliances, mattresses, boxes, yard debris, garage contents — single items to full loads."),
             ("Is there a travel fee for Loveland?", "No hidden travel fees for Loveland — it's in our core service area."),
@@ -354,7 +354,7 @@ CITIES = [
             ("What's included in a Loveland garage cleanout?", "Full haul-out, donation coordination, dump fees, and floor sweep. Flat-rate — no hourly billing."),
             ("Do you serve all Loveland zip codes?", "Yes — 80537, 80538, and surrounding Larimer County addresses."),
             ("How long does a Loveland cleanout take?", "Single-car: 2–4 hours. Two-car: 3–5 hours depending on volume."),
-            ("Can you do same-day garage cleanouts in Loveland?", "Often yes — text photos for fastest scheduling."),
+            ("Can you do next-day garage cleanouts in Loveland?", "Often yes — text photos for fastest scheduling."),
             ("Do I need to be home?", "Present for 15-minute walkthrough. After that, many clients leave us to finish."),
             ("Do you donate from Loveland cleanouts?", "Yes — ReStore, ARC, Goodwill. Tax receipt in your name."),
             ("Are you local or a franchise?", "Local Fort Collins LLC — owner Zac Bezenek on every job."),
@@ -364,8 +364,8 @@ CITIES = [
     },
     {
         "slug": "junk-removal-windsor-co.html",
-        "title": "Junk Removal Windsor CO | Fast Same-Day Service",
-        "desc": "Windsor junk removal — Raindance, Pelican Lakes & downtown. Text photos for flat-rate quote in 5 minutes. Same-day available.",
+        "title": "Junk Removal Windsor CO | Fast Next-Day Service",
+        "desc": "Windsor junk removal — Raindance, Pelican Lakes & downtown. Text photos for flat-rate quote in 5 minutes. Next-day available.",
         "body_copy": """<p>Garage packed after move-in? Try <a href="/garage-cleanouts-windsor-co.html" class="content-link">garage cleanouts in Windsor</a>. See our <a href="/projects/windsor-garage-junk-removal.html" class="content-link">Raindance garage junk removal project</a>.</p>""",
         "h1": "Junk Removal Windsor CO",
         "city": "Windsor",
@@ -375,8 +375,8 @@ CITIES = [
         "faqs": [
             ("How much does junk removal cost in Windsor?", "$99–$150 single item, $250–$400 small, $400–$650 medium, $650+ large. No Windsor travel fee."),
             ("Do you serve Raindance and Pelican Lakes?", "Yes — all Windsor neighborhoods including master-planned communities."),
-            ("How fast can you get to Windsor?", "Same-day and next-day frequently available — Windsor is 15 minutes from our base."),
-            ("Are you insured in Windsor?", "Yes — fully licensed and insured throughout Larimer and Weld County border areas."),
+            ("How fast can you get to Windsor?", "Next-day frequently available — Windsor is 15 minutes from our base."),
+            ("Are you insured in Windsor?", "Yes — fully insured throughout Larimer and Weld County border areas."),
             ("What do you haul in Windsor?", "Garage junk, furniture, appliances, mattresses, yard debris, and storage contents."),
             ("Can I get a photo quote for Windsor?", "Yes — text photos to (970) 999-1818 for a 5-minute flat-rate response."),
             ("Do you donate usable items?", "Yes — with tax receipt. Usable goods go to ReStore and ARC."),
@@ -388,7 +388,7 @@ CITIES = [
     {
         "slug": "garage-cleanouts-windsor-co.html",
         "title": "Garage Cleanouts Windsor CO | Get Your Garage Back Fast",
-        "desc": "Reclaim your Windsor garage — full empty-out, donation & sweep. Flat-rate pricing. Text photos for 5-minute quote. Owner on every job.",
+        "desc": "Reclaim your Windsor garage — full empty-out, donation & sweep. Flat-rate pricing. Text photos for 5-minute quote. Background-checked crew.",
         "body_copy": """<p>Three-car garages common in Raindance — we quote by volume, not hourly. Also see <a href="/junk-removal-windsor-co.html" class="content-link">junk removal in Windsor</a> and <a href="/garage-cleanouts-fort-collins-co.html" class="content-link">Fort Collins garage cleanouts</a>.</p>""",
         "h1": "Garage Cleanouts Windsor CO",
         "city": "Windsor",
@@ -399,9 +399,9 @@ CITIES = [
             ("How much does a garage cleanout cost in Windsor?", "Most garages: $400–$650. Large three-car or packed garages: $650+. Photo quote for exact price."),
             ("Do you clean out three-car garages in Windsor?", "Yes — common in Raindance and Pelican Lakes. Quoted by volume, not hourly."),
             ("What's included?", "Labor, hauling, dump fees, donations, and floor sweep. All-inclusive flat rate."),
-            ("Same-day Windsor cleanouts?", "Often available — text photos to check today's schedule."),
+            ("Next-day Windsor cleanouts?", "Often available — text photos to check today's schedule."),
             ("Do you serve Weld County side of Windsor?", "Yes — all Windsor addresses in our service area."),
-            ("Owner on every job?", "Yes — Zac Bezenek, local owner, on every Windsor cleanout."),
+            ("Background-checked crew?", "Yes — an insured, background-checked crew on every Windsor cleanout."),
             ("Donation receipts?", "Included — Habitat ReStore and ARC drop-offs with your tax receipt."),
             ("How do I book?", "Text photos or use the quote form — 5-minute callback during business hours."),
         ],
@@ -423,7 +423,7 @@ CITIES = [
             ("Do you serve rural Wellington addresses?", "Yes — including acreage, barns, and outbuildings. Send photos of access paths."),
             ("Is there a travel fee for Wellington?", "No — Wellington is in our core Northern Colorado service area."),
             ("Can you haul ranch equipment and barn junk?", "Yes — old fencing, farm equipment, and barn clutter are common Wellington jobs."),
-            ("Same-day junk removal in Wellington?", "Often available — call or text for today's schedule."),
+            ("Next-day junk removal in Wellington?", "Often available — call or text for today's schedule."),
             ("Do you donate from Wellington jobs?", "Yes — usable household goods to ReStore/ARC with tax receipt."),
             ("Are you insured for rural properties?", "Yes — general liability and commercial auto on every job."),
             ("How do I get a quote?", "Text photos to (970) 999-1818 — include access info for long driveways if relevant."),
@@ -446,7 +446,7 @@ CITIES = [
             ("Do you clean out barns and pole buildings?", "Yes — common on Wellington acreage. Photo quote includes access and volume assessment."),
             ("What's included?", "Full empty-out, hauling, donations, disposal, and sweep. Flat-rate, all-inclusive."),
             ("Rural property access?", "We serve long driveways and rural addresses — note access in your quote request."),
-            ("Same-day Wellington service?", "Available when schedule allows — text photos for fastest response."),
+            ("Next-day Wellington service?", "Available when schedule allows — text photos for fastest response."),
             ("Estate cleanouts in Wellington?", "Yes — multi-building property cleanouts quoted individually from $650+."),
             ("Donation coordination?", "Included — tax receipt provided for usable donations."),
             ("Who does the work?", "Owner Zac Bezenek and crew — local Fort Collins LLC, not a franchise."),
@@ -457,19 +457,19 @@ CITIES = [
     {
         "slug": "timnath-junk-removal.html",
         "title": "Timnath Junk Removal CO | Easy Garage Cleaning",
-        "desc": "Timnath junk removal & garage cleanouts — flat-rate from photos, same-day when available. Timnath Ranch & Larimer County. 5-min quote.",
+        "desc": "Timnath junk removal & garage cleanouts — flat-rate from photos, next-day when available. Timnath Ranch & Larimer County. 5-min quote.",
         "body_copy": """<p>Timnath is minutes from our Fort Collins base — see <a href="/junk-removal-fort-collins-co.html" class="content-link">Fort Collins junk removal</a>, <a href="/garage-cleanouts-fort-collins-co.html" class="content-link">garage cleanouts</a>, and <a href="/service-areas.html" class="content-link">all service areas</a>.</p>""",
         "h1": "Timnath Junk Removal & Garage Cleanout",
         "city": "Timnath",
         "service": "junk removal",
-        "intro": "Timnath Ranch, Wildwing, and east Larimer County homes fill garages fast with move-in boxes and seasonal gear. We're 10 minutes from Fort Collins with same flat-rate photo quotes — no franchise call center, owner on every job.",
+        "intro": "Timnath Ranch, Wildwing, and east Larimer County homes fill garages fast with move-in boxes and seasonal gear. We're 10 minutes from Fort Collins with same flat-rate photo quotes — no franchise call center, background-checked crew.",
         "neighborhoods": "Timnath Ranch, Wildwing, Harmony Club, east Timnath growth corridor, and Larimer County addresses south of Fort Collins.",
         "faqs": [
             ("How much does junk removal cost in Timnath?", "Same core ranges as Fort Collins: $99–$150 single item, $300–$400 small cleanout, $400–$650 medium garage, $650+ large. No Timnath travel surcharge."),
             ("Do you serve Timnath Ranch and Wildwing?", "Yes — daily routes through Timnath from our Fort Collins base."),
-            ("Same-day junk removal in Timnath?", "Often available — text photos for today's schedule."),
+            ("Next-day junk removal in Timnath?", "Often available — text photos for today's schedule."),
             ("Garage cleanouts in Timnath?", "Yes — full haul-out, donations, and sweep. See Fort Collins garage cleanout pricing."),
-            ("Are you insured in Timnath?", "Yes — fully licensed and insured throughout Larimer County."),
+            ("Are you insured in Timnath?", "Yes — fully insured throughout Larimer County."),
             ("How do I get a quote?", "Text photos to (970) 999-1818 or book online — 5-minute flat-rate response."),
             ("Do you donate usable items?", "Yes — Habitat ReStore and ARC with tax receipt in your name."),
             ("Is Timnath in your core service area?", "Yes — no hidden travel fees for Timnath addresses."),
@@ -492,7 +492,7 @@ CITIES = [
             ("Can you access narrow Old Town alleys?", "Yes — note alley or gate access when you text photos so we bring the right truck."),
             ("How much does junk removal cost in Old Town?", "$99–$150 single item, $300–$400 small load, $400–$650 typical garage. Flat-rate locked before work."),
             ("Detached garage cleanouts in Old Town?", "Common job type — we empty, donate, and sweep so you can park again."),
-            ("Same-day service in Old Town?", "Often available — text photos for fastest scheduling."),
+            ("Next-day service in Old Town?", "Often available — text photos for fastest scheduling."),
             ("Estate or multi-room cleanouts?", "Yes — quoted individually from photos, typically $650+ for full-property hauls."),
             ("Donation receipts?", "Included for usable goods dropped at Habitat ReStore Fort Collins."),
             ("Who does the work?", "Owner Zac Bezenek and local crew — Fort Collins LLC, fully insured."),
@@ -560,7 +560,7 @@ PROJECTS = [
 ITEM_PAGES = [
     {
         "slug": "couch-removal-fort-collins-co.html",
-        "title": "Couch Removal Fort Collins CO | Fast Same-Day Pickup",
+        "title": "Couch Removal Fort Collins CO | Fast Next-Day Pickup",
         "desc": "Sectional stuck in the garage? Fort Collins couch removal from $99–150 flat. Text photos for 5-minute quote. We do all lifting.",
         "h1": "Couch Removal Fort Collins CO",
         "hero_sub": "That sectional blocking your garage bay? We haul couches and sectionals in Fort Collins — flat-rate, no franchise per-item fees. Text photos for a quote in 5 minutes.",
@@ -577,7 +577,7 @@ ITEM_PAGES = [
             ("Do you remove sectionals from garages?", "Yes — garage couch removal is extremely common in Fort Collins."),
             ("Will you donate a usable couch?", "If condition is good, yes — Habitat ReStore or ARC with tax receipt."),
             ("Do I need to wrap the couch?", "No prep needed. We protect floors and walls during carry-out."),
-            ("Same-day couch pickup?", "Often available. Text photos for fastest scheduling."),
+            ("Next-day couch pickup?", "Often available. Text photos for fastest scheduling."),
             ("Can a couch be part of a garage cleanout?", "Yes — included in full cleanout quotes with no per-item surcharge."),
         ],
     },
@@ -600,13 +600,13 @@ ITEM_PAGES = [
             ("Do you disconnect electrical?", "You should have a licensed electrician disconnect power before we arrive. We handle removal and haul."),
             ("Can you remove a hot tub from a deck?", "Yes — send photos of access path and deck situation for accurate quoting."),
             ("Do you cut up hot tubs?", "Yes — sectioning is often required for safe removal through gates and garage doors."),
-            ("Same-day hot tub removal?", "Usually scheduled 2–3 days out due to crew size. Text photos for earliest availability."),
+            ("Next-day hot tub removal?", "Usually scheduled 2–3 days out due to crew size. Text photos for earliest availability."),
             ("Where does the hot tub go?", "Metal and components recycled; shell disposed at licensed facilities."),
         ],
     },
     {
         "slug": "treadmill-removal-fort-collins-co.html",
-        "title": "Treadmill Removal Fort Collins CO | Fast Same-Day Haul",
+        "title": "Treadmill Removal Fort Collins CO | Fast Next-Day Haul",
         "desc": "Unused treadmill in the garage? Fort Collins pickup from $99–150. Text photos for flat-rate quote in 5 minutes. We do all lifting.",
         "h1": "Treadmill Removal Fort Collins CO",
         "hero_sub": "That treadmill became a coat rack? We haul treadmills, ellipticals, and home gym equipment from Fort Collins garages — flat-rate, fully insured.",
@@ -623,13 +623,13 @@ ITEM_PAGES = [
             ("Do you disassemble treadmills?", "Basic disassembly when needed for safe removal through doors."),
             ("Will you haul from a second floor?", "Ground floor and garage yes. Upstairs depends on access — send photos."),
             ("Can you donate working equipment?", "Usable equipment sometimes goes to local charities — ask when quoting."),
-            ("Same-day treadmill pickup?", "Often available for single items in Fort Collins."),
+            ("Next-day treadmill pickup?", "Often available for single items in Fort Collins."),
             ("Is there a weight surcharge?", "No — weight is factored into your flat-rate quote upfront."),
         ],
     },
     {
         "slug": "refrigerator-removal-fort-collins-co.html",
-        "title": "Refrigerator Removal Fort Collins CO | Fast Same-Day Haul",
+        "title": "Refrigerator Removal Fort Collins CO | Fast Next-Day Haul",
         "desc": "Dead fridge in the garage? Fort Collins refrigerator removal from $99–150 flat. Freon handled properly. Text photos for 5-minute quote.",
         "h1": "Refrigerator Removal Fort Collins CO",
         "hero_sub": "That old fridge is stealing a parking spot. We haul refrigerators and freezers in Fort Collins — working units to ReStore, the rest recycled per Colorado rules.",
@@ -647,7 +647,7 @@ ITEM_PAGES = [
             ("Should I unplug before pickup?", "Yes — please unplug and empty the unit before we arrive."),
             ("Will you donate a working fridge?", "Working units often go to Habitat ReStore — tax receipt included."),
             ("Can you remove a fridge from a garage?", "Yes — extremely common. Clear a path from fridge to truck."),
-            ("Same-day refrigerator pickup?", "Often available. Text photos for fastest booking."),
+            ("Next-day refrigerator pickup?", "Often available. Text photos for fastest booking."),
         ],
     },
     {
@@ -703,7 +703,7 @@ COMPARISON_PAGES = [
 <h2 id="permits">Do you need a permit for a dumpster in Fort Collins?</h2>
 <p>Street or sidewalk placement may require a City of Fort Collins right-of-way permit. Driveway placement usually does not — but you lose parking for days. Junk removal requires no permit; text photos to <a href="sms:+19709991818" class="content-link">(970) 999-1818</a>.</p>
 <h2 id="timeline">Timeline: same day vs rental week</h2>
-<p>Dumpsters typically rent for 3–7 days. A standard garage cleanout takes our crew <strong>2–5 hours</strong>, often same-day or next-day. If you need to park inside tonight, a week-long bin is the wrong tool.</p>
+<p>Dumpsters typically rent for 3–7 days. A standard garage cleanout takes our crew <strong>2–5 hours</strong>, often next-day. If you need to park inside tonight, a week-long bin is the wrong tool.</p>
 <h2 id="environment">Donation, recycling, and landfill</h2>
 <p>We donate usable items first, recycle where accepted, then landfill at Larimer County. Mixed dumpster loads can trigger weight overages and bury donatable furniture. Read <a href="/blog/fort-collins-junk-removal-what-you-can-cant-throw-away.html" class="content-link">local disposal rules</a>.</p>
 <h2 id="when-dumpster">When a dumpster actually makes sense</h2>
@@ -723,7 +723,7 @@ COMPARISON_PAGES = [
 <h2 id="hybrid">Hybrid approach: dumpster + junk removal</h2>
 <p>Some homeowners rent a small bin for bagged construction debris during a remodel, then hire us for the heavy garage furniture, appliances, and donation runs the dumpster company will not take. That split can work — but for a straight garage reclaim with no active construction, one full-service visit is usually simpler and similarly priced all-in.</p>
 <h2 id="vs-franchise">Local specialist vs national haulers</h2>
-<p>Easy Garage Cleaning is Fort Collins-based — owner on the job, photo quotes in ~5 minutes, No-Surprise Quote Guarantee. Compare with <a href="/blog/got-junk-vs-local-junk-removal-fort-collins.html" class="content-link">national franchises vs local removal</a>.</p>
+<p>Easy Garage Cleaning is Fort Collins-based — background-checked crew on the job, photo quotes in ~5 minutes, No-Surprise Quote Guarantee. Compare with <a href="/blog/got-junk-vs-local-junk-removal-fort-collins.html" class="content-link">national franchises vs local removal</a>.</p>
 <h2 id="checklist">Checklist: questions to ask before renting a dumpster</h2>
 <p>Call any Fort Collins-area roll-off company with this list — then text us the same garage photos so you can compare total cost side by side:</p>
 <ul>
@@ -777,7 +777,7 @@ COMPARISON_PAGES = [
         "content": """<h2>DIY hidden costs</h2>
 <ul><li>Truck rental: $50–120/day</li><li>Larimer County Landfill fees: $15–40+ per load</li><li>Multiple trips for a full garage</li><li>Your time: 4–8 hours typical</li><li>Injury risk on heavy items</li></ul>
 <h2>Professional junk removal</h2>
-<ul><li>Flat-rate quote from photos — <strong>only pay after you approve</strong></li><li>We do all lifting</li><li>Donation sorting included — tax receipt</li><li>Same-day completion common</li><li>Insured crew on your property</li></ul>
+<ul><li>Flat-rate quote from photos — <strong>only pay after you approve</strong></li><li>We do all lifting</li><li>Donation sorting included — tax receipt</li><li>Next-day completion common</li><li>Insured crew on your property</li></ul>
 <p>Read <a href="/blog/junk-removal-vs-dumpster-rental-fort-collins.html" class="content-link">junk removal vs dumpster rental</a> for another common DIY path.</p>
 <h2>When DIY makes sense</h2>
 <p>A few small bags of trash and you already own a truck. When the garage is full, professionals win on total cost and speed.</p>""",
@@ -787,7 +787,7 @@ COMPARISON_PAGES = [
     {
         "slug": "blog/got-junk-vs-local-junk-removal-fort-collins.html",
         "title": "1-800-GOT-JUNK vs Local Junk Removal Fort Collins",
-        "desc": "National franchise vs local Fort Collins junk removal — pricing, accountability & same-day service compared. Text photos for flat-rate local quote.",
+        "desc": "National franchise vs local Fort Collins junk removal — pricing, accountability & next-day service compared. Text photos for flat-rate local quote.",
         "h1": "1-800-GOT-JUNK vs Local Junk Removal in Fort Collins",
         "intro": "National junk franchises advertise everywhere — but Fort Collins homeowners often get hourly surprises and call-center scheduling. Here's how a local garage specialist compares.",
         "content": """<table class="compare-table"><thead><tr><th></th><th>Easy Garage Cleaning (Local)</th><th>National Franchise</th></tr></thead><tbody>
@@ -798,8 +798,8 @@ COMPARISON_PAGES = [
 <tr><td>Donations</td><td>ReStore/ARC — receipt in your name</td><td>Varies by franchise location</td></tr>
 </tbody></table>
 <h2>Why local matters in Fort Collins</h2>
-<p>We're 15 minutes from Loveland, Windsor, and Wellington — not dispatching from Denver. Same-day <a href="/garage-cleanouts-fort-collins-co.html" class="content-link">garage cleanouts in Fort Collins</a> happen because we're already in your neighborhood.</p>
-<p>CSU student-run, Colorado LLC, owner on every job. Not a 1-800 number.</p>""",
+<p>We're 15 minutes from Loveland, Windsor, and Wellington — not dispatching from Denver. Next-day <a href="/garage-cleanouts-fort-collins-co.html" class="content-link">garage cleanouts in Fort Collins</a> happen because we're already in your neighborhood.</p>
+<p>CSU student-run, Colorado LLC, background-checked crew. Not a 1-800 number.</p>""",
         "related": [("/about.html", "About Us"), ("/junk-removal-fort-collins-co.html", "Junk Removal"), ("/garage-cleanouts-fort-collins-co.html", "Garage Cleanouts"), ("/blog/junk-removal-vs-dumpster-rental-fort-collins.html", "vs Dumpster")],
         "faqs": [("Is local junk removal cheaper than GOT-JUNK?", "Often yes on all-in cost — flat photo quotes vs volume pricing with add-ons. Text photos to compare."), ("Are you insured like a national company?", "Yes — Colorado LLC with general liability and commercial auto insurance.")],
     },

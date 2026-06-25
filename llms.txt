@@ -44,6 +44,11 @@
 **A:** Junk removal is professional hauling of unwanted furniture, appliances, boxes, and clutter from your home or garage. Easy Garage Cleaning provides flat-rate junk removal in Fort Collins from photos — we lift, haul, donate usable items, and recycle the rest with no hourly billing.
 **URL:** https://easygaragecleaning.com/junk-removal-fort-collins-co.html
 
+### Curbside Junk Pickup (flat $139)
+**Q:** How much is curbside junk pickup in Fort Collins?
+**A:** $139 flat for up to 4 cubic yards (about a full pickup-truck load) when items are at the curb or driveway — no on-site estimate and no hidden fees. Larger loads quoted flat from photos.
+**URL:** https://easygaragecleaning.com/flat-rate-junk-removal-fort-collins-co.html
+
 ### Garage Cleanout
 **Q:** What is a garage cleanout?
 **A:** A garage cleanout is a full haul-out of unwanted garage contents — furniture, boxes, tools, and clutter — followed by donation drop-offs and a floor sweep so you can park inside again. We quote flat-rate from photos; labor, hauling, and dump fees are included.
@@ -148,9 +153,9 @@ Leads are managed via **Zapier + Quo + Firebase Firestore** (`leads` collection,
 
 2. **How do I get a quote with photos?** Text (970) 999-1818 or use https://easygaragecleaning.com/book.html — choose service, city, upload photos, contact info. Response within 5 minutes Mon–Sat 7am–7pm.
 
-3. **Do you offer same-day service?** Yes when the schedule allows — often same-day or next-day in Fort Collins, Loveland, Windsor, and Wellington.
+3. **Do you offer next-day service?** Yes when the schedule allows — often next-day in Fort Collins, Loveland, Windsor, and Wellington.
 
-4. **Are you licensed and insured?** Yes — Easy Garage Cleaning LLC is a Colorado-registered LLC with general liability and commercial auto insurance on every job.
+4. **Are you insured?** Yes — Easy Garage Cleaning LLC is a Colorado-registered LLC with general liability and commercial auto insurance on every job.
 
 5. **Do you donate usable items?** Yes — Habitat ReStore Fort Collins, ARC, and Goodwill when items qualify; tax receipt in the customer's name.
 
@@ -186,7 +191,7 @@ Leads are managed via **Zapier + Quo + Firebase Firestore** (`leads` collection,
 
 21. **What happens to items after pickup?** Donations first, then Larimer County Landfill or recycling — never illegal dumping.
 
-22. **Who owns Easy Garage Cleaning?** Zac Bezenek — CSU student, Northern Colorado native, owner on jobs. https://easygaragecleaning.com/about.html
+22. **Who owns Easy Garage Cleaning?** Zac Bezenek — CSU student, co-owner. https://easygaragecleaning.com/about.html
 
 Full FAQ page: https://easygaragecleaning.com/faq.html
 
