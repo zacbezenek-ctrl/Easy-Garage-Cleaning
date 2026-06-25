@@ -148,9 +148,9 @@ Leads are managed via **Zapier + Quo + Firebase Firestore** (`leads` collection,
 
 2. **How do I get a quote with photos?** Text (970) 999-1818 or use https://easygaragecleaning.com/book.html — choose service, city, upload photos, contact info. Response within 5 minutes Mon–Sat 7am–7pm.
 
-3. **Do you offer same-day service?** Yes when the schedule allows — often same-day or next-day in Fort Collins, Loveland, Windsor, and Wellington.
+3. **Do you offer next-day service?** Yes when the schedule allows — often next-day in Fort Collins, Loveland, Windsor, and Wellington.
 
-4. **Are you licensed and insured?** Yes — Easy Garage Cleaning LLC is a Colorado-registered LLC with general liability and commercial auto insurance on every job.
+4. **Are you insured?** Yes — Easy Garage Cleaning LLC is a Colorado-registered LLC with general liability and commercial auto insurance on every job.
 
 5. **Do you donate usable items?** Yes — Habitat ReStore Fort Collins, ARC, and Goodwill when items qualify; tax receipt in the customer's name.
 
@@ -186,7 +186,7 @@ Leads are managed via **Zapier + Quo + Firebase Firestore** (`leads` collection,
 
 21. **What happens to items after pickup?** Donations first, then Larimer County Landfill or recycling — never illegal dumping.
 
-22. **Who owns Easy Garage Cleaning?** Zac Bezenek — CSU student, owner on jobs. https://easygaragecleaning.com/about.html
+22. **Who owns Easy Garage Cleaning?** Zac Bezenek — CSU student, co-owner. https://easygaragecleaning.com/about.html
 
 Full FAQ page: https://easygaragecleaning.com/faq.html
 
