@@ -401,7 +401,7 @@ CITIES = [
             ("What's included?", "Labor, hauling, dump fees, donations, and floor sweep. All-inclusive flat rate."),
             ("Same-day Windsor cleanouts?", "Often available — text photos to check today's schedule."),
             ("Do you serve Weld County side of Windsor?", "Yes — all Windsor addresses in our service area."),
-            ("Owner on every job?", "Yes — Zac Bezenek, local owner, on every Windsor cleanout."),
+            ("Owner on every job?", "Yes — Zac Bezenek, owner, on every Windsor cleanout."),
             ("Donation receipts?", "Included — Habitat ReStore and ARC drop-offs with your tax receipt."),
             ("How do I book?", "Text photos or use the quote form — 5-minute callback during business hours."),
         ],

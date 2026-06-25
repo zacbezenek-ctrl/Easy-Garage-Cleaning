@@ -1988,7 +1988,7 @@ def render_what_we_take():
 
 def render_about():
     title = "About Easy Garage Cleaning | Zac Bezenek, Fort Collins"
-    desc = "Meet Zac Bezenek — CSU student-run garage reclaiming specialist in Fort Collins. Local roots, flat-rate quotes, owner on every job."
+    desc = "Meet Zac Bezenek — CSU student-run garage reclaiming specialist in Fort Collins. Flat-rate quotes, owner on every job."
     canonical = f"{SITE}/about.html"
     schema = json.dumps([
         business_schema(),
@@ -2007,11 +2007,11 @@ def render_about():
 <section class="body-copy"><div class="wrap"><div class="about-story-grid reveal">
 <div class="body-copy-inner">
 <h2>Zac's story</h2>
-<p>I'm Zac Bezenek — a Colorado State University student and Northern Colorado native. I started Easy Garage Cleaning because I kept seeing neighbors park outside in hail and snow while their garages filled with stuff they'd deal with "someday."</p>
+<p>I'm Zac Bezenek — a Colorado State University student and the owner of Easy Garage Cleaning. I started Easy Garage Cleaning because I kept seeing neighbors park outside in hail and snow while their garages filled with stuff they'd deal with "someday."</p>
 <p>We're not generic junk haulers. We specialize in <strong>garage reclaiming</strong> — emptying the space, donating what's usable to <a href="/blog/habitat-for-humanity-restore-fort-collins.html" class="content-link">Habitat ReStore Fort Collins</a>, sweeping the floor, and handing you keys to a garage that works again.</p>
 <h2>Why we exist</h2>
 <p>Franchise haulers charge hourly and surprise you at the end. We quote flat from photos, respond within 5 minutes, and only start after you approve. No hidden fees. We do all the lifting.</p>
-<h2>Local roots &amp; professionalism</h2>
+<h2>Professionalism &amp; community</h2>
 <p>Colorado-registered LLC. General liability and commercial auto insurance on every job. Owner on site — you'll know exactly who's coming to your home.</p>
 <p>Community involvement: donation partner with Habitat ReStore, supporter of local recycling, and proud to serve Fort Collins, Loveland, Windsor, and surrounding towns.</p>
 </div>
@@ -2458,7 +2458,7 @@ LLM_FAQS = [
     ("Storage unit cleanout?", "Yes — empty a paid unit in one trip; quoted flat from photos of unit contents."),
     ("Estate or multi-space cleanouts?", "Yes — custom flat quotes usually $650+ depending on volume; photo or video walkthrough first."),
     ("What happens to items after pickup?", "Donations first, then Larimer County Landfill or recycling — never illegal dumping."),
-    ("Who owns Easy Garage Cleaning?", "Zac Bezenek — CSU student, Northern Colorado native, owner on jobs. https://easygaragecleaning.com/about.html"),
+    ("Who owns Easy Garage Cleaning?", "Zac Bezenek — CSU student, owner on jobs. https://easygaragecleaning.com/about.html"),
 ]
 
 

@@ -186,7 +186,7 @@ Leads are managed via **Zapier + Quo + Firebase Firestore** (`leads` collection,
 
 21. **What happens to items after pickup?** Donations first, then Larimer County Landfill or recycling — never illegal dumping.
 
-22. **Who owns Easy Garage Cleaning?** Zac Bezenek — CSU student, Northern Colorado native, owner on jobs. https://easygaragecleaning.com/about.html
+22. **Who owns Easy Garage Cleaning?** Zac Bezenek — CSU student, owner on jobs. https://easygaragecleaning.com/about.html
 
 Full FAQ page: https://easygaragecleaning.com/faq.html
 
