@@ -751,7 +751,7 @@ body.has-session #login-screen { display: none; }
   }
 })();
 </script>
-<a href="#main-content" class="skip-link">Skip to content</a>
+<a href="#dashboard" class="skip-link">Skip to content</a>
 
 <!-- ═══════════════════════════════════════
      LOGIN
@@ -1250,15 +1250,15 @@ body.has-session #login-screen { display: none; }
 </div>
 
 <!-- ── QUOTE MODAL (leads) ─────────────────────────── -->
-<div id="quote-modal" class="lead-quote-overlay" onclick="quoteModalBgClick(event)">
+<div id="lead-quote-modal" class="lead-quote-overlay" onclick="leadQuoteBgClick(event)">
   <div class="qm-panel">
     <div class="qm-title">Mark as Quoted</div>
     <div class="qm-sub" id="qm-lead-name">Enter the quote amount for this lead</div>
-    <input class="qm-input" id="qm-amount" type="text" placeholder="e.g. $350–$425" autocomplete="off" />
+    <input class="qm-input" id="lqm-amount" type="text" placeholder="e.g. $350–$425" autocomplete="off" />
     <div class="qm-note">This starts the Zap 5 follow-up cadence automatically.</div>
     <div class="qm-btns">
-      <button class="btn-back" onclick="closeQuoteModal()">Cancel</button>
-      <button class="btn-next" onclick="submitQuote()">Save Quote</button>
+      <button class="btn-back" onclick="closeLeadQuoteModal()">Cancel</button>
+      <button class="btn-next" onclick="submitLeadQuote()">Save Quote</button>
     </div>
   </div>
 </div>
@@ -1399,9 +1399,11 @@ function bootDashboard() {
   document.getElementById('u-lbl').textContent = me;
   document.getElementById('u-av').textContent = me[0];
   bk.assignedTo = me === 'TylerG' ? 'TylerG' : 'ZacB';
-  // Show admin tab for admins only
+  // Show admin tab for admins only (the button may not exist in this build —
+  // a missing element here must not abort the rest of dashboard boot)
   if (ADMINS.includes(me)) {
-    document.getElementById('tab-btn-admin').style.display = '';
+    const adminTabBtn = document.getElementById('tab-btn-admin');
+    if (adminTabBtn) adminTabBtn.style.display = '';
   }
   addAuditLog('login', `Logged in`);
   emailjs.init(CFG.EMAILJS_PUBLIC_KEY);
@@ -1421,7 +1423,8 @@ window.addEventListener('DOMContentLoaded', async () => {
   }
   document.getElementById('l-pass').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
   document.getElementById('l-user').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('l-pass').focus(); });
-  document.getElementById('qm-amount').addEventListener('keydown', e => { if (e.key === 'Enter') submitQuote(); if (e.key === 'Escape') closeQuoteModal(); });
+  document.getElementById('lqm-amount').addEventListener('keydown', e => { if (e.key === 'Enter') submitLeadQuote(); if (e.key === 'Escape') closeLeadQuoteModal(); });
+  document.getElementById('qm-amount').addEventListener('keydown', e => { if (e.key === 'Enter') saveQuoteModal(); if (e.key === 'Escape') closeQuoteModal(); });
 });
 
 /* ═══════════════════════════════════════════════════════
@@ -1736,25 +1739,26 @@ function markQuoted(id) {
   const lead = leadsCache.find(l => l.id === id);
   _quoteLeadId = id;
   document.getElementById('qm-lead-name').textContent = lead?.name || lead?.phone || 'This lead';
-  document.getElementById('qm-amount').value = '';
-  document.getElementById('quote-modal').classList.add('open');
-  setTimeout(() => document.getElementById('qm-amount').focus(), 80);
+  document.getElementById('lqm-amount').value = '';
+  document.getElementById('lead-quote-modal').classList.add('open');
+  setTimeout(() => document.getElementById('lqm-amount').focus(), 80);
 }
 
-function closeQuoteModal() {
-  document.getElementById('quote-modal').classList.remove('open');
+function closeLeadQuoteModal() {
+  document.getElementById('lead-quote-modal').classList.remove('open');
   _quoteLeadId = null;
 }
 
-function quoteModalBgClick(e) {
-  if (e.target === document.getElementById('quote-modal')) closeQuoteModal();
+function leadQuoteBgClick(e) {
+  if (e.target === document.getElementById('lead-quote-modal')) closeLeadQuoteModal();
 }
 
-function submitQuote() {
-  const amt = document.getElementById('qm-amount').value.trim();
-  if (!amt) { document.getElementById('qm-amount').focus(); return; }
+function submitLeadQuote() {
+  const amt = document.getElementById('lqm-amount').value.trim();
+  if (!amt) { document.getElementById('lqm-amount').focus(); return; }
   const id = _quoteLeadId;
-  closeQuoteModal();
+  if (!id) return;
+  closeLeadQuoteModal();
   db.collection('leads').doc(id).update({
     status: 'quoted', conversationActive: false,
     quotedAt: new Date().toISOString(), quoteAmount: amt

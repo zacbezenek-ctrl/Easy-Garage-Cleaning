@@ -498,7 +498,7 @@ async function acceptQuote() {
           `Quote ID:  ${quoteId}`,
         ].filter(Boolean).join('\n'),
         reply_to: q.customerEmail || 'noreply@easygaragecleaning.com',
-      }, 'RyH7Kwhn5-T5ebvN9');
+      }, { publicKey: 'RyH7Kwhn5-T5ebvN9' });
     }
   } catch(e) { console.warn('EmailJS notification failed:', e); }
 
@@ -515,6 +515,6 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 </script>
 
-<script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js" async></script>
+<script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
 </body>
 </html>

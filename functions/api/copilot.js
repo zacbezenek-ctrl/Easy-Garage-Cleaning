@@ -380,10 +380,22 @@ function formatSchedule(jobs) {
 //  CF PAGES FUNCTION HANDLER
 // ─────────────────────────────────────────────────────────────
 
+// Read an env var tolerant of stray whitespace/case in the var NAME — a
+// dashboard secret saved as "openaiapi " (trailing space) or "OpenAIAPI"
+// reads back undefined under env.openaiapi. Same guard garage-render.js uses.
+function envVar(env, name) {
+  if (env && env[name]) return env[name];
+  const want = name.trim().toLowerCase();
+  for (const k of Object.keys(env || {})) {
+    if (k.trim().toLowerCase() === want && env[k]) return env[k];
+  }
+  return '';
+}
+
 function corsHeaders(origin) {
   const allowed =
-    /easygaragecleaning\.com/.test(origin) ||
-    /^https?:\/\/(localhost|127\.0\.0\.1)/.test(origin);
+    /^https:\/\/([a-z0-9-]+\.)*easygaragecleaning\.com$/i.test(origin) ||
+    /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
   return {
     'Access-Control-Allow-Origin':  allowed ? origin : 'https://easygaragecleaning.com',
     'Access-Control-Allow-Methods': 'POST, OPTIONS',
@@ -404,7 +416,8 @@ export async function onRequestPost({ request, env }) {
     headers: { 'Content-Type': 'application/json', ...cors },
   });
 
-  if (!env.openaiapi) {
+  const apiKey = envVar(env, 'openaiapi');
+  if (!apiKey) {
     console.error('openaiapi not set in Cloudflare Pages environment variables');
     return json(500, { error: 'Server misconfigured — contact Zac' });
   }
@@ -525,10 +538,13 @@ TIME / SCHEDULE / CAPACITY RULES:
 - For dump timing questions: use dump status + current time. NEVER say "not in the SOPs."
 - ONLY use "Not in the SOPs — text Zac" for genuinely novel situations not covered by SOPs OR live data (medical emergencies, legal disputes, customer threats, etc.).
 
-ANSWER FORMAT (use this every time):
+ANSWER FORMAT (use this every time — the app parses it, so follow it exactly):
 ACTION: [specific action in 1-2 sentences]
-SCRIPT (if a customer text is needed): [exact text, ready to copy-paste]
-BASIS: [which SOP section OR which live context data this is based on]`;
+If a customer text is needed, add this block — the label "SEND THIS:" alone on its own line, the exact ready-to-send message on the next line(s), then a blank line:
+SEND THIS:
+[exact text, ready to copy-paste]
+
+BASIS: [which SOP section OR which live context data this is based on — cite SOP sections in square brackets, e.g. [SOP 1B]]`;
 
   const messages = [
     { role: 'system', content: systemPrompt },
@@ -541,7 +557,7 @@ BASIS: [which SOP section OR which live context data this is based on]`;
       method:  'POST',
       headers: {
         'Content-Type':  'application/json',
-        'Authorization': `Bearer ${env.openaiapi}`,
+        'Authorization': `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
         model:       'gpt-4o',

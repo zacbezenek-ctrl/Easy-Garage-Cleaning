@@ -10,6 +10,13 @@
 
   gtag('config', 'G-CV7HJ2QGHX');
   gtag('config', 'AW-18102284288');
+
+  // GA4 lead conversion — every form on the site redirects here on success.
+  // Mark generate_lead as a key event in GA4 (or import it into Google Ads)
+  // so paid campaigns can optimize on it. To track directly in Google Ads,
+  // replace CONVERSION_LABEL with the label from your Ads conversion action:
+  // gtag('event', 'conversion', { send_to: 'AW-18102284288/CONVERSION_LABEL' });
+  gtag('event', 'generate_lead', { event_category: 'lead', event_label: 'thank_you_page' });
 </script>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />

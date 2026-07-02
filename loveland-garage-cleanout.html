@@ -17,7 +17,6 @@
   <meta name="robots" content="noindex, follow" />
   <title>Loveland Garage Cleanout | Easy Garage</title>
   <meta name="description" content="Garage cleanout &amp; junk removal in Loveland, CO. Flat-rate pricing, fully insured, next-day available. Free 5-minute quote callback. Local Fort Collins LLC." />
-  <meta name="robots" content="index, follow" />
   <link rel="canonical" href="https://easygaragecleaning.com/garage-cleanouts-loveland-co.html" />
   <link rel="icon" type="image/x-icon" href="/favicon.ico" />
   <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
@@ -505,7 +504,7 @@
   </div>
 </div>
 <!-- HERO -->
-<section class="hero">
+<section class="hero" id="main-content">
   <div class="wrap hero-grid">
     <div>
       <div class="hero-eyebrow"><span>Serving Loveland, CO</span></div>
@@ -522,13 +521,21 @@
       <div class="form-card">
         <h2>Get a Free Quote in 5 Minutes</h2>
         <p>We'll call you right back — Mon–Sat, 7 AM to 7 PM</p>
-        <form action="https://api.web3forms.com/submit" method="POST" style="display:flex;flex-direction:column;gap:12px;">
+        <form class="lead-form-lite" action="https://api.web3forms.com/submit" method="POST" style="display:flex;flex-direction:column;gap:12px;">
           <input type="hidden" name="access_key" value="3c4fe752-ac1d-45b9-89dd-4275ea162d22">
           <input type="hidden" name="subject" value="New Quote Request — Loveland — Easy Garage Cleaning">
+          <input type="hidden" name="from_name" value="Easy Garage Cleaning Website">
           <input type="hidden" name="redirect" value="https://easygaragecleaning.com/thank-you.html">
           <input type="checkbox" name="botcheck" class="sr-only" tabindex="-1" autocomplete="off">
-          <input type="text" name="Name" required autocomplete="name" placeholder="Your name">
-          <input type="tel" name="Phone" required autocomplete="tel" placeholder="Phone number" inputmode="tel">
+          <input type="hidden" name="source" value="Website">
+          <input type="hidden" name="items" value="Garage cleanout — Loveland">
+          <input type="hidden" name="fbc" value="">
+          <input type="hidden" name="fbp" value="">
+          <input type="hidden" name="fbclid" value="">
+          <input type="hidden" name="landing_url" value="">
+          <input type="hidden" name="referrer" value="">
+          <input type="text" name="name" required autocomplete="name" placeholder="Your name">
+          <input type="tel" name="phone" required autocomplete="tel" placeholder="Phone number" inputmode="tel">
           <button type="submit">Get My Free Quote &rarr;</button>
         </form>
       </div>
@@ -776,5 +783,6 @@ function initNavDrawer(){
 if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',initNavDrawer);}else{initNavDrawer();}
 </script>
 <script>(function(){const btt=document.getElementById('back-to-top');if(!btt)return;const onScroll=()=>{btt.hidden=window.scrollY<420};btt.addEventListener('click',e=>{e.preventDefault();window.scrollTo({top:0,behavior:'smooth'})});window.addEventListener('scroll',onScroll,{passive:true});onScroll();})();</script>
+<script src="/fb-capture.js?v=20260612b" defer></script>
 </body>
 </html>

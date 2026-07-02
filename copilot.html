@@ -15,6 +15,20 @@
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
   <link rel="stylesheet" href="/styles.css">
 <style>
+/* Dark-theme tokens used below but not defined in /styles.css */
+:root {
+  --navy-light: #1c3252;
+  --border: rgba(255,255,255,.08);
+  --red: #ef4444;
+  --green: #22c55e;
+  --yellow: #facc15;
+}
+html, body { height: 100%; }
+body { margin: 0; background: var(--navy); color: #fff; font-family: 'Inter', system-ui, sans-serif; }
+/* Screen gating — the co-pilot UI stays hidden until login adds .active */
+#login-screen { min-height: 100vh; min-height: 100dvh; display: flex; align-items: center; justify-content: center; padding: 1rem; }
+#copilot-screen { display: none; }
+#copilot-screen.active { display: flex; flex-direction: column; height: 100vh; height: 100dvh; }
 .login-card {
       background: var(--navy-soft); border: 1px solid var(--border);
       border-radius: 1.25rem; padding: 2.5rem 2rem;
@@ -343,12 +357,17 @@ function updateClock() {
 ══════════════════════════════════════════════════ */
 function loadSchedule() {
   if (!db) return;
-  // No date filter — fetch all jobs. Small collection, AI needs full context.
   db.collection('jobs').onSnapshot(
     snap => {
-      todayJobs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      // Only today's jobs (Denver time) — the API treats this list as
+      // "today's schedule" for truck capacity and next-job math, so
+      // sending the full history poisons those answers.
+      const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Denver' });
+      todayJobs = snap.docs
+        .map(d => ({ id: d.id, ...d.data() }))
+        .filter(j => j.date === today);
       renderStrip(todayJobs);
-      console.log('[Co-Pilot] Jobs loaded:', todayJobs.length);
+      console.log('[Co-Pilot] Jobs loaded for today:', todayJobs.length);
     },
     err => {
       console.error('[Co-Pilot] Jobs failed:', err.code, err.message);
@@ -517,7 +536,8 @@ async function sendQuery() {
         query,
         schedule: todayJobs,
         leads:    allLeads,
-        history:  history.slice(-8),
+        // Prior turns only — the API appends the current query itself
+        history:  history.slice(0, -1).slice(-8),
       }),
     });
 

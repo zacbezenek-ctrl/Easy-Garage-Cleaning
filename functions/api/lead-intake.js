@@ -98,24 +98,31 @@ export async function onRequestPost({ request, env }) {
   const docId = leadId || phone;
   const now = new Date().toISOString();
 
-  const fields = {
+  // Contact info — safe to (re)write on every delivery.
+  const contactFields = {
     name: name,
     firstName: String(body.firstName || '').trim(),
     phone: phone,
     email: String(body.email || '').trim(),
     items: String(body.items || body.service || '').trim(),
     source: String(body.source || 'Facebook Ads (fb)').trim(),
-    status: 'new',
-    crmStatus: 'new',
     serviceZip: String(body.serviceZip || body.zip || '').trim(),
     message: String(body.message || '').trim(),
+    updatedAt: now,
+  };
+
+  // Workflow state — only written when the lead doc doesn't exist yet.
+  // Zapier retries/duplicate webhook deliveries must NOT reset a lead the
+  // CRM has already worked (status, attempt count, follow-up timestamps).
+  const initFields = {
+    status: 'new',
+    crmStatus: 'new',
     assignedTo: String(body.assignedTo || 'Tyler').trim(),
     contactAttempts: 0,
     conversationActive: false,
     prohibitedItemsFlag: false,
     createdAt: now,
     notifiedAt: now,
-    updatedAt: now,
     consentCapturedAt: '',
     lastContactAt: '',
     lastInboundAt: '',
@@ -128,7 +135,18 @@ export async function onRequestPost({ request, env }) {
     scheduledJobAt: '',
   };
 
-  const url = `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents/leads/${docId}?key=${apiKey}&updateMask.fieldPaths=${Object.keys(fields).join('&updateMask.fieldPaths=')}`;
+  const docUrl = `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents/leads/${docId}`;
+
+  let exists = false;
+  try {
+    const check = await fetch(`${docUrl}?key=${apiKey}&mask.fieldPaths=createdAt`);
+    exists = check.ok; // 404 → new lead; treat lookup errors as new (worst case: reset, same as before)
+  } catch (e) {
+    console.warn('Lead existence check failed, treating as new:', e);
+  }
+
+  const fields = exists ? contactFields : { ...contactFields, ...initFields };
+  const url = `${docUrl}?key=${apiKey}&updateMask.fieldPaths=${Object.keys(fields).join('&updateMask.fieldPaths=')}`;
 
   try {
     const resp = await fetch(url, {
@@ -143,7 +161,7 @@ export async function onRequestPost({ request, env }) {
       return json(502, { error: 'Firestore write failed', detail: err });
     }
 
-    return json(200, { ok: true, docId, name: name || phone });
+    return json(200, { ok: true, docId, name: name || phone, existing: exists });
   } catch (e) {
     console.error('Network error:', e);
     return json(500, { error: 'Network error' });

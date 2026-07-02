@@ -224,7 +224,7 @@
       <li><a href="/faq.html">FAQ</a></li>
       <li><a href="/blog/">Blog</a></li>
     </ul>
-    <a href="/#contact" class="nav-cta">Get a Quote</a>
+    <a href="/book.html" class="nav-cta">Get a Quote</a>
   </div>
 </nav>
 
@@ -255,13 +255,21 @@
         </a>
         <p class="cta-hours">Mon&ndash;Sat &middot; 7 AM &ndash; 7 PM</p>
         <div class="divider-text">or leave your number</div>
-        <form action="https://api.web3forms.com/submit" method="POST">
+        <form class="lead-form-lite" action="https://api.web3forms.com/submit" method="POST">
           <input type="hidden" name="access_key" value="3c4fe752-ac1d-45b9-89dd-4275ea162d22">
           <input type="hidden" name="subject" value="New Quote Request — Estate Cleanout Fort Collins — Easy Garage Cleaning">
+          <input type="hidden" name="from_name" value="Easy Garage Cleaning Website">
           <input type="hidden" name="redirect" value="https://easygaragecleaning.com/thank-you.html">
           <input type="checkbox" name="botcheck" class="sr-only" tabindex="-1" autocomplete="off">
-          <input type="text" name="Name" required autocomplete="name" placeholder="Your name">
-          <input type="tel" name="Phone" required autocomplete="tel" placeholder="Phone number" inputmode="tel">
+          <input type="hidden" name="source" value="Website">
+          <input type="hidden" name="items" value="Estate cleanout — Fort Collins">
+          <input type="hidden" name="fbc" value="">
+          <input type="hidden" name="fbp" value="">
+          <input type="hidden" name="fbclid" value="">
+          <input type="hidden" name="landing_url" value="">
+          <input type="hidden" name="referrer" value="">
+          <input type="text" name="name" required autocomplete="name" placeholder="Your name">
+          <input type="tel" name="phone" required autocomplete="tel" placeholder="Phone number" inputmode="tel">
           <button type="submit">We&rsquo;ll call you back &rarr;</button>
         </form>
       </div>
@@ -607,5 +615,6 @@
     });
   });
 </script>
+<script src="/fb-capture.js?v=20260612b" defer></script>
 </body>
 </html>

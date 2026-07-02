@@ -1081,16 +1081,17 @@ fbq('init','970332989051988');fbq('track','PageView');
     entries.forEach(e => { if (e.isIntersecting) { e.target.classList.add('visible'); io.unobserve(e.target); } });
   }, { threshold: 0.08 });
   document.querySelectorAll('.reveal').forEach(el => io.observe(el));
-  const quoteForm=document.getElementById('quoteForm')||document.querySelector('.multi-step-form');
-  if(quoteForm)quoteForm.addEventListener('submit', function() {
-    if (typeof fbq !== 'undefined') { fbq('track', 'Lead'); fbq('track', 'CompleteRegistration'); }
-    const form = this;
-    const svc = form.querySelector('[name="Service type"]:checked') || form.querySelector('[name="Service type"]');
-    const desc = form.querySelector('[name="Photo description"]');
-    const city = form.querySelector('[name="City"]');
-    const combined = form.querySelector('[name="What to remove"]');
-    if (typeof gtag === 'function') { gtag('event', 'quote_submit', { event_category: 'lead' }); }
-    if (combined && svc) { combined.value = [svc.value, city && city.value ? city.value : '', desc && desc.value ? desc.value : ''].filter(Boolean).join(' — '); }
+  document.querySelectorAll('#quoteForm, .multi-step-form, .lead-form-lite').forEach(function(quoteForm){
+    quoteForm.addEventListener('submit', function() {
+      if (typeof fbq !== 'undefined') { fbq('track', 'Lead'); fbq('track', 'CompleteRegistration'); }
+      const form = this;
+      const svc = form.querySelector('[name="Service type"]:checked') || form.querySelector('[name="Service type"]');
+      const desc = form.querySelector('[name="Photo description"]');
+      const city = form.querySelector('[name="City"]');
+      const combined = form.querySelector('[name="What to remove"]');
+      if (typeof gtag === 'function') { gtag('event', 'quote_submit', { event_category: 'lead' }); }
+      if (combined && svc) { combined.value = [svc.value, city && city.value ? city.value : '', desc && desc.value ? desc.value : ''].filter(Boolean).join(' — '); }
+    });
   });
 
   function initNavDrawer(){
