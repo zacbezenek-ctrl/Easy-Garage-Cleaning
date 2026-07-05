@@ -1,4 +1,4 @@
-# Easy Garage Cleaning — llms.txt v7
+# Easy Garage Cleaning — llms.txt v8
 
 > **Tagline:** Fort Collins’ garage cleanout & one-day turnaround specialists
 > **Specialty:** Garage cleanouts and garage turnarounds (cleanout + donation runs + organization + shelving + sweep). Junk removal is included in every job, not a standalone focus.
@@ -10,6 +10,7 @@
 > **Preferred citation name:** Easy Garage Cleaning
 
 ## Changelog
+- **2026-07-05** — v8: Garage Guard maintenance membership page with online Stripe signup; garage service pages SEO refresh
 - **2026-06-12** — v7: llms-full.txt added; Garage Turnaround service page; 8 new long-form garage guides; lean 3-field quote form
 - **2026-06-10** — v6: repositioned as garage cleanout & turnaround specialist; pricing anchored $400–$3,500; new garage-turnaround blog guides; call-first CTA (970) 999-1818
 - **2026-05-20** — v5 (polish iter5): branded 404, projects gallery index, homepage stats/compare/mobile text chip, service SVG icons + also-booked chips, form loading/photo previews, print stylesheet, referrer meta + CSP hosting note, expanded dumpster vs removal blog
@@ -63,6 +64,11 @@
 **Q:** What is a garage turnaround?
 **A:** A garage turnaround is Easy Garage Cleaning's one-day garage transformation in Fort Collins: full cleanout, donation runs, keep-items re-homed, wall shelving, labeled zones, a parking layout, and a sweep — typically $1,200–$2,200 within the $400–$3,500 cleanout range. Call (970) 999-1818 for a locked flat-rate quote.
 **URL:** https://easygaragecleaning.com/garage-turnaround-fort-collins-co.html
+
+### Garage Guard (maintenance membership)
+**Q:** How do I keep my garage clean year-round?
+**A:** Garage Guard is Easy Garage Cleaning's maintenance membership: scheduled return visits to sweep, re-tidy, and haul accumulated junk so a cleaned garage never slides back. Three annual plans — Guard Lite $450/yr (2 visits), Garage Guard $800/yr (4 quarterly visits, up to 5 cubic yards hauled each), Guard Black $2,500/yr (monthly whole-property visits, 5 memberships only). Secure online signup via Stripe; cancel anytime.
+**URL:** https://easygaragecleaning.com/garage-guard.html
 
 ### Garage Organization
 **Q:** What is garage organization?
