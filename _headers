@@ -10,3 +10,12 @@
 # refs for an immediate bust of already-cached copies.
 /fb-capture.js
   Cache-Control: no-cache
+
+# Garage Guard membership page — hardens the page that starts Stripe checkout:
+# no framing (blocks clickjacking a Join button inside an invisible iframe),
+# no MIME sniffing, and never serve a stale build of a payments page.
+/garage-guard.html
+  X-Frame-Options: DENY
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  Cache-Control: no-cache
