@@ -40,12 +40,21 @@ function hostOf(value) {
   try { return new URL(value).host; } catch { return ''; }
 }
 
-function envVar(env, name) {
-  if (env && env[name]) return env[name];
+// Tolerant env read: exact name first, then any dashboard var whose name
+// normalizes (case/underscores/whitespace ignored) to the name or an alias.
+function envVar(env, name, aliases = []) {
+  const norm = (s) => String(s).toLowerCase().replace(/[^a-z0-9]/g, '');
+  if (env && typeof env[name] === 'string' && env[name].trim()) return env[name].trim();
+  const accepted = new Set([norm(name), ...aliases.map(norm)]);
   for (const k of Object.keys(env || {})) {
-    if (k.trim() === name && env[k]) return env[k];
+    if (accepted.has(norm(k)) && typeof env[k] === 'string' && env[k].trim()) return env[k].trim();
   }
   return '';
+}
+
+function stripeKey(env) {
+  const key = envVar(env, 'STRIPE_SECRET_KEY', ['STRIPE_SECRET', 'STRIPE_KEY']);
+  return /^(sk|rk)_/.test(key) ? key : '';
 }
 
 function originAllowed(request) {
@@ -90,11 +99,11 @@ async function stripe(secretKey, path, params) {
 export async function onRequestGet({ env }) {
   // Only surface the login link if it actually points at Stripe billing —
   // a mispasted env var must not become a redirect to who-knows-where.
-  let portalLoginUrl = envVar(env, 'STRIPE_PORTAL_LOGIN_URL').trim();
+  let portalLoginUrl = envVar(env, 'STRIPE_PORTAL_LOGIN_URL', ['STRIPE_PORTAL_LINK', 'STRIPE_PORTAL_URL', 'STRIPE_PORTAL_LOGIN_LINK']).trim();
   if (!/^https:\/\/billing\.stripe\.com\//.test(portalLoginUrl)) portalLoginUrl = '';
   return json(200, {
     ok: true,
-    configured: !!envVar(env, 'STRIPE_SECRET_KEY'),
+    configured: !!stripeKey(env),
     portal_login_url: portalLoginUrl,
   });
 }
@@ -113,7 +122,7 @@ export async function onRequestPost({ request, env }) {
   if (!SESSION_ID_RE.test(sessionId)) return json(400, { ok: false, error: 'Invalid session id' });
   const mode = body.mode === 'portal' ? 'portal' : 'status';
 
-  const secretKey = envVar(env, 'STRIPE_SECRET_KEY');
+  const secretKey = stripeKey(env);
   if (!secretKey) return json(503, { ok: false, error: 'Payments not configured' });
 
   let session;
