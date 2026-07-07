@@ -56,14 +56,25 @@ function hostOf(value) {
   try { return new URL(value).host; } catch { return ''; }
 }
 
-// Tolerant env read — see web-lead.js for why (dashboard var names with stray
-// whitespace read as undefined under the exact key).
-function envVar(env, name) {
-  if (env && env[name]) return env[name];
+// Tolerant env read: exact name first, then any dashboard var whose name
+// normalizes (case/underscores/whitespace ignored) to the name or an alias —
+// so STRIPE_SECRET_KEY, Stripe_Secret, and "stripe secret" all resolve.
+function envVar(env, name, aliases = []) {
+  const norm = (s) => String(s).toLowerCase().replace(/[^a-z0-9]/g, '');
+  if (env && typeof env[name] === 'string' && env[name].trim()) return env[name].trim();
+  const accepted = new Set([norm(name), ...aliases.map(norm)]);
   for (const k of Object.keys(env || {})) {
-    if (k.trim() === name && env[k]) return env[k];
+    if (accepted.has(norm(k)) && typeof env[k] === 'string' && env[k].trim()) return env[k].trim();
   }
   return '';
+}
+
+// Resolve the Stripe secret key under its common misnamings, and reject
+// values that are clearly the wrong key type (pk_ = publishable, safe to
+// expose but useless server-side) so misconfig fails loud at the probe.
+function stripeKey(env) {
+  const key = envVar(env, 'STRIPE_SECRET_KEY', ['STRIPE_SECRET', 'STRIPE_KEY']);
+  return /^(sk|rk)_/.test(key) ? key : '';
 }
 
 function originAllowed(request) {
@@ -97,7 +108,7 @@ export async function onRequestPost({ request, env }) {
   const plan = PLANS[String(body.plan || '')];
   if (!plan) return json(400, { ok: false, error: 'Unknown plan' });
 
-  const secretKey = envVar(env, 'STRIPE_SECRET_KEY');
+  const secretKey = stripeKey(env);
   if (!secretKey) return json(503, { ok: false, error: 'Payments not configured' });
 
   // Same-origin redirect targets only — the client cannot supply URLs.
@@ -161,7 +172,7 @@ export async function onRequestPost({ request, env }) {
 export async function onRequestGet({ env }) {
   return json(200, {
     ok: true,
-    configured: !!envVar(env, 'STRIPE_SECRET_KEY'),
+    configured: !!stripeKey(env),
     plans: Object.keys(PLANS),
   });
 }

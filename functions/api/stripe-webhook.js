@@ -35,10 +35,14 @@ const HANDLED = new Set([
   'customer.subscription.deleted',
 ]);
 
-function envVar(env, name) {
-  if (env && env[name]) return env[name];
+// Tolerant env read: exact name first, then any dashboard var whose name
+// normalizes (case/underscores/whitespace ignored) to the name or an alias.
+function envVar(env, name, aliases = []) {
+  const norm = (s) => String(s).toLowerCase().replace(/[^a-z0-9]/g, '');
+  if (env && typeof env[name] === 'string' && env[name].trim()) return env[name].trim();
+  const accepted = new Set([norm(name), ...aliases.map(norm)]);
   for (const k of Object.keys(env || {})) {
-    if (k.trim() === name && env[k]) return env[k];
+    if (accepted.has(norm(k)) && typeof env[k] === 'string' && env[k].trim()) return env[k].trim();
   }
   return '';
 }
@@ -122,7 +126,7 @@ export async function onRequestPost({ request, env }) {
       headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
     });
 
-  const secret = envVar(env, 'STRIPE_WEBHOOK_SECRET');
+  const secret = envVar(env, 'STRIPE_WEBHOOK_SECRET', ['STRIPE_WEBHOOK', 'STRIPE_WEBHOOK_KEY', 'STRIPE_SIGNING_SECRET']);
   if (!secret) return json(503, { ok: false, error: 'Webhook not configured' });
 
   const rawBody = await request.text();
