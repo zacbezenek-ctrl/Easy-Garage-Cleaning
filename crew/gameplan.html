@@ -353,10 +353,12 @@ const CONFIG = {
   // everything below is an add-on. group = pick one type/size; qty = priced per unit.
   removalPerTruck: 500,
   upgrades: [
-    // img: swap the SVG for a real product photo anytime — same filename in /images/, done.
-    {name:"Shelving — Metal", sub:"5 steel wire shelves, 1,000 lbs each — installed & loaded, $100/shelf", price:499, qty:true, group:"shelving", img:"/images/shelf-metal.svg"},
-    {name:"Shelving — Plastic", sub:"5 tough resin shelves, no rust, hose-off clean — installed & loaded, $70/shelf", price:349, qty:true, group:"shelving", img:"/images/shelf-plastic.svg"},
-    {name:"Shelving — Wood + Metal", sub:"5 solid wood decks on steel, 800 lbs each — installed & loaded, $90/shelf", price:449, qty:true, group:"shelving", img:"/images/shelf-wood.svg"},
+    // img: the real product photo — upload shelf-metal.jpg / shelf-plastic.jpg /
+    // shelf-wood.jpg to /images/ and they appear automatically; until then each
+    // card falls back to its imgFallback SVG drawing.
+    {name:"Shelving — Metal", sub:"5 steel wire shelves, 1,000 lbs each — installed & loaded, $100/shelf", price:499, qty:true, group:"shelving", img:"/images/shelf-metal.jpg", imgFallback:"/images/shelf-metal.svg"},
+    {name:"Shelving — Plastic", sub:"5 tough resin shelves, no rust, hose-off clean — installed & loaded, $70/shelf", price:349, qty:true, group:"shelving", img:"/images/shelf-plastic.jpg", imgFallback:"/images/shelf-plastic.svg"},
+    {name:"Shelving — Wood + Metal", sub:"5 solid wood decks on steel, 800 lbs each — installed & loaded, $90/shelf", price:449, qty:true, group:"shelving", img:"/images/shelf-wood.jpg", imgFallback:"/images/shelf-wood.svg"},
     {name:"Rush Scheduling", sub:"Guaranteed next-day slot", price:150},
     {name:"Deep Clean — 1-Car", sub:"Degrease, sweep & dust — beyond the standard sweep", price:125, group:"deepclean"},
     {name:"Deep Clean — 2-Car", sub:"Degrease, sweep & dust — beyond the standard sweep", price:220, group:"deepclean"},
@@ -779,7 +781,7 @@ R.p11=()=>head("p11",`<b>“What would keep this from coming back?”</b> Point 
     const on=S.storage.includes(i); const q=S.storageQty[i]||1;
     return `<div class="up ${on?'on':''}" onclick="toggleUp(${i})">
       <span class="bx"></span>
-      ${u.img?`<img class="upimg" src="${u.img}" alt="" loading="lazy" onerror="this.style.display='none'">`:""}
+      ${u.img?`<img class="upimg" src="${u.img}" alt="" loading="lazy" data-fb="${u.imgFallback||""}" onerror="if(this.dataset.fb){this.src=this.dataset.fb;this.removeAttribute('data-fb')}else{this.style.display='none'}">`:""}
       <div class="nm">${u.name}${u.sub?`<small>${u.sub}</small>`:""}</div>
       ${u.qty&&on?`<div class="qty" onclick="event.stopPropagation()">
         <button onclick="event.stopPropagation();setQty(${i},-1)">−</button><input type="number" inputmode="numeric" min="1" step="1" value="${q}" aria-label="How many totes" onclick="event.stopPropagation()" onchange="setQtyVal(${i},this.value)"><button onclick="event.stopPropagation();setQty(${i},1)">+</button></div>`:""}
