@@ -387,7 +387,7 @@ const S = {  // session state — autosaved locally on every tap
   layout:null, layoutNote:"", bay:0, bayGrids:{}, bayLayouts:{},
   layoutGrid:Array(40).fill(0), layoutPaint:1, garages:1, garageW:"", garageD:"", garageH:"",
   stay:[],
-  pkg:null, rate:"", deposit:"", jobdate:"", startTime:"", endTime:"",
+  pkg:null, rate:"", deposit:"", depositTouched:false, jobdate:"", startTime:"", endTime:"",
   dayBonus:false, jobId:"", sig:"", aiAfter:"", jobberClientId:"", jobberRequestId:"",
 };
 
@@ -644,6 +644,10 @@ function upgradesTotal(){
 // Organize + a basic sweep are included, so they are never line items.
 function removalBase(){ return Math.max(0,Number(S.loads||0))*CONFIG.removalPerTruck; }
 function grandTotal(){ return removalBase()+upgradesTotal(); }
+// 20% of the locked total — the deposit that locks the date (see Terms).
+function depositDue(){ return Math.round(grandTotal()*0.2); }
+// Auto-fill the deposit at 20% until the crew edits it by hand.
+function syncDeposit(){ if(!S.depositTouched){ const d=depositDue(); S.deposit=d>0?String(d):""; } }
 
 /* ---------- flow definition ---------- */
 const steps=[
@@ -837,8 +841,8 @@ R.p14=()=>head("p14",`The number built itself from the scope — $500 a truckloa
   </div>
   <div class="ask" style="font-size:13.5px;margin:10px 0 2px">Bigger number? Add scope at the Volume and Storage points — the rate never moves, only scope does.</div>
   <div style="display:flex;gap:14px;margin-top:8px">
-    <div style="flex:1"><label class="fl">Deposit on file</label>
-      <input type="number" inputmode="decimal" value="${S.deposit}" placeholder="0" oninput="S.deposit=this.value"></div>
+    <div style="flex:1"><label class="fl">Deposit due today (20% = ${money(depositDue())})</label>
+      <input type="number" inputmode="decimal" value="${S.deposit}" placeholder="0" oninput="S.deposit=this.value;S.depositTouched=true"></div>
     <div style="flex:1"><label class="fl">Job date</label>
       <input type="date" value="${S.jobdate}" oninput="S.jobdate=this.value"></div>
   </div>
@@ -875,10 +879,11 @@ R.plan=()=>{
     ${ups.map((u,j)=>{const i=CONFIG.upgrades.indexOf(u);const q=u.qty?(S.storageQty[i]||1):1;
       return `<div class="ln"><span>${u.name}${u.qty?` × ${q}`:""}</span><b>${money(priceFor(u,q))}</b></div>`}).join("")}
     <div class="ln"><span style="align-self:center">TOTAL</span><span class="total">${money(grandTotal())}</span></div>
-    <div class="ln"><span>Deposit on file</span><b>${money(S.deposit)}</b></div>
+    <div class="ln"><span>Deposit due today (20%)</span><b>${money(S.deposit)}</b></div>
     <div class="ln"><span>Job date</span><b>${S.jobdate?new Date(S.jobdate+"T12:00").toLocaleDateString(undefined,{weekday:"short",month:"short",day:"numeric"}):"—"}</b></div>
   </div>
   <div class="holdnote">Quote holds for 7 days. Day-Of Bonus is today only.</div>
+  <div class="holdnote">💳 Deposit locks the date: run ${money(depositDue())} through Jobber Payments (client → Collect Payment) before sending — it comes right off the total.</div>
   <div id="pb_plan"></div>
   <div class="guarantee"><h4>The EGC No-Surprises Guarantee</h4>
     <ol>${CONFIG.guarantee.map(g=>`<li>${g}</li>`).join("")}</ol></div>
@@ -1059,6 +1064,7 @@ function compileNotes(){
   add("Garage size", (parseFloat(S.garageW)>0&&parseFloat(S.garageD)>0)?`${S.garageW} × ${S.garageD}${S.garageH?" × "+S.garageH+"H":""} ft (~${Math.round(parseFloat(S.garageW)*parseFloat(S.garageD))} sq ft)`:"");
   add("Stay-clean system", S.stay);
   add("DAY-OF BONUS", S.dayBonus?"APPLIED — all special-disposal fees waived (mattress, fridge, tires, paint, e-waste)":"");
+  add("DEPOSIT COLLECTED", Number(S.deposit)>0?money(S.deposit)+" (20%) via Jobber Payments day-of — apply to the final invoice":"");
   return L.join("\n");
 }
 
@@ -1112,6 +1118,9 @@ function validateClose(){
   const miss=[];
   if(!(S.name||"").trim()) miss.push("homeowner name");
   if(grandTotal()<=0) miss.push("scope (truckloads or an add-on)");
+  // 20% deposit locks the date (matches the signed terms) — collect before sending.
+  const need=depositDue(), dep=Number(S.deposit||0);
+  if(need>0&&dep<need) miss.push("the 20% deposit — collect "+money(need)+" in Jobber Payments (client → Collect Payment), then enter it");
   return miss;
 }
 
@@ -1146,7 +1155,7 @@ async function textPlan(btn){
     return "+ "+u.name+(u.qty?` × ${q}`:"")+" "+money(priceFor(u,q));}).join("\n");
   const msg=`${S.name?S.name+", h":"H"}ere's your Garage Comeback Plan from Easy Garage Cleaning:\n\n`+
     `Removal — ${S.loads} truckload${S.loads!==1?"s":""}: ${money(removalBase())}\nOrganize + basic sweep: included\n${ups?ups+"\n":""}TOTAL (locked): ${money(grandTotal())}\n`+
-    `${S.jobdate?"Job date: "+S.jobdate+"\n":""}${S.deposit?"Deposit on file: "+money(S.deposit)+"\n":""}`+
+    `${S.jobdate?"Job date: "+S.jobdate+"\n":""}${S.deposit?"Deposit to lock your date: "+money(S.deposit)+" (20% — comes off the total)\n":""}`+
     `\nPrice never moves. Questions? Call/text ${CONFIG.bizPhone}. — EGC`;
   const st=$("sendstatus");
   if(btn){btn.disabled=true;btn.textContent="Texting…";}
@@ -1187,6 +1196,7 @@ function paintTotal(){
   else el.style.display="none";
 }
 function render(){
+  syncDeposit();
   const s=steps[idx];
   $("screen").innerHTML = R[s.id]?(s.id==="zone"?R.zone(s):R[s.id]()):"";
   // zone chip
