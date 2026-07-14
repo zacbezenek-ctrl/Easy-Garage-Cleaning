@@ -8,11 +8,10 @@
 
   Phone number on this page: (970) 999-1308 (tel:/sms: links use +19709991308).
 
-  TODO BEFORE LAUNCH (find these markers below):
+  TODO BEFORE LAUNCH (find the marker below):
   1. TODO(GADS)   — paste the 3 real conversion labels (call / sms / form)
                     into ADS_CONVERSIONS in the script at the bottom.
-  2. TODO(PHOTOS) — swap the 3 labeled placeholder blocks for real job photos
-                    (compressed JPG ≤150 KB each, keep loading="lazy").
+  Job photos are real EGC before/afters (from the EGC Drive), compressed ≤150 KB.
 ============================================================================= -->
 <head>
   <!-- Google tag (gtag.js) — same GA4 + Ads account as the rest of the site -->
@@ -86,12 +85,10 @@
     .form-error-msg.visible{display:block}
 
     .ppc-photos{padding:40px 0 8px}
-    .ppc-photo-grid{display:grid;grid-template-columns:1fr;gap:14px;margin-top:20px}
-    @media(min-width:640px){.ppc-photo-grid{grid-template-columns:repeat(3,1fr)}}
-    .photo-ph{aspect-ratio:4/3;border:2px dashed rgba(10,22,40,.3);border-radius:var(--radius-md);background:repeating-linear-gradient(135deg,rgba(10,22,40,.03) 0 10px,transparent 10px 20px),var(--paper-warm);display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:18px;gap:8px}
-    .photo-ph-tag{font-family:var(--font-mono);font-size:10px;letter-spacing:.16em;background:var(--ink);color:var(--paper);padding:4px 10px;border-radius:2px}
-    .photo-ph p{font-size:12px;color:var(--muted);line-height:1.5;max-width:26ch}
-    .photo-ph p strong{color:var(--ink);font-size:13px}
+    .ppc-photo-grid{display:grid;grid-template-columns:1fr;gap:18px;margin-top:20px;max-width:860px}
+    .ppc-photo{margin:0}
+    .ppc-photo img{width:100%;height:auto;display:block;border-radius:var(--radius-md);border:1px solid rgba(10,22,40,.1);box-shadow:var(--shadow-sm)}
+    .ppc-photo figcaption{font-size:12.5px;color:var(--muted);margin-top:7px}
 
     .ppc-take{padding:40px 0}
     .take-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-top:20px}
@@ -245,20 +242,18 @@
       <h2 class="section-title" id="photos-heading">Real Fort Collins jobs, <em>not stock photos</em></h2>
     </div>
     <div class="ppc-photo-grid">
-      <!-- TODO(PHOTOS): replace each .photo-ph div with:
-           <img src="/images/your-photo.jpg" alt="describe the job" loading="lazy" width="800" height="600" style="width:100%;height:auto;border-radius:4px"> -->
-      <div class="photo-ph">
-        <span class="photo-ph-tag">Placeholder</span>
-        <p><strong>REAL JOB PHOTO #1</strong><br>Loaded truck after a Fort Collins pickup</p>
-      </div>
-      <div class="photo-ph">
-        <span class="photo-ph-tag">Placeholder</span>
-        <p><strong>REAL JOB PHOTO #2</strong><br>Before / after of a garage cleanout</p>
-      </div>
-      <div class="photo-ph">
-        <span class="photo-ph-tag">Placeholder</span>
-        <p><strong>REAL JOB PHOTO #3</strong><br>Crew hauling a couch or appliance</p>
-      </div>
+      <figure class="ppc-photo">
+        <img src="/images/job-before-after-1.jpg" alt="Before and after of a Fort Collins garage cleanout — cluttered garage, then a cleared floor" loading="lazy" width="1646" height="615">
+        <figcaption>Same garage, wall to wall — cleared.</figcaption>
+      </figure>
+      <figure class="ppc-photo">
+        <img src="/images/job-before-after-2.jpg" alt="Before and after: a wall of bins and boxes hauled out of a Fort Collins garage" loading="lazy" width="1646" height="615">
+        <figcaption>Bins, boxes, and years of stuff — hauled out.</figcaption>
+      </figure>
+      <figure class="ppc-photo">
+        <img src="/images/job-pile.jpg" alt="Driveway junk pile in Fort Collins ready to be hauled away" loading="lazy" width="1000" height="750">
+        <figcaption>One driveway pile, one trip — gone.</figcaption>
+      </figure>
     </div>
   </div>
 </section>

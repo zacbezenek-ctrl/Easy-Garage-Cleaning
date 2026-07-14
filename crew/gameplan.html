@@ -353,12 +353,11 @@ const CONFIG = {
   // everything below is an add-on. group = pick one type/size; qty = priced per unit.
   removalPerTruck: 500,
   upgrades: [
-    // img: the real product photo — upload shelf-metal.jpg / shelf-plastic.jpg /
-    // shelf-wood.jpg to /images/ and they appear automatically; until then each
-    // card falls back to its imgFallback SVG drawing.
-    {name:"Shelving — Metal", sub:"5 steel wire shelves, 1,000 lbs each — installed & loaded, $100/shelf", price:499, qty:true, group:"shelving", img:"/images/shelf-metal.jpg", imgFallback:"/images/shelf-metal.svg"},
-    {name:"Shelving — Plastic", sub:"5 tough resin shelves, no rust, hose-off clean — installed & loaded, $70/shelf", price:349, qty:true, group:"shelving", img:"/images/shelf-plastic.jpg", imgFallback:"/images/shelf-plastic.svg"},
-    {name:"Shelving — Wood + Metal", sub:"5 solid wood decks on steel, 800 lbs each — installed & loaded, $90/shelf", price:449, qty:true, group:"shelving", img:"/images/shelf-wood.jpg", imgFallback:"/images/shelf-wood.svg"},
+    // img: real product photos (uploaded via GitHub). To swap one, replace the
+    // PNG in /images/ — the SVG imgFallback only shows if the photo is missing.
+    {name:"Shelving — Metal", sub:"5 steel wire shelves, 1,000 lbs each — installed & loaded, $100/shelf", price:499, qty:true, group:"shelving", img:"/images/shelf-metal.png", imgFallback:"/images/shelf-metal.svg"},
+    {name:"Shelving — Plastic", sub:"5 tough resin shelves, no rust, hose-off clean — installed & loaded, $70/shelf", price:349, qty:true, group:"shelving", img:"/images/shelf-plastic.png", imgFallback:"/images/shelf-plastic.svg"},
+    {name:"Shelving — Wood + Metal", sub:"5 solid wood decks on steel, 800 lbs each — installed & loaded, $90/shelf", price:449, qty:true, group:"shelving", img:"/images/shelf-wood.png", imgFallback:"/images/shelf-wood.svg"},
     {name:"Rush Scheduling", sub:"Guaranteed next-day slot", price:150},
     {name:"Deep Clean — 1-Car", sub:"Degrease, sweep & dust — beyond the standard sweep", price:125, group:"deepclean"},
     {name:"Deep Clean — 2-Car", sub:"Degrease, sweep & dust — beyond the standard sweep", price:220, group:"deepclean"},
