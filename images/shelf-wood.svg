@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96">
+  <!-- Boltless steel frame with solid wood decks, 5 shelves -->
+  <rect x="11" y="4" width="5" height="90" rx="1.5" fill="#232a33"/>
+  <rect x="80" y="4" width="5" height="90" rx="1.5" fill="#232a33"/>
+  <g fill="#c99a5b">
+    <rect x="9" y="11" width="78" height="8" rx="1"/>
+    <rect x="9" y="27" width="78" height="8" rx="1"/>
+    <rect x="9" y="43" width="78" height="8" rx="1"/>
+    <rect x="9" y="59" width="78" height="8" rx="1"/>
+    <rect x="9" y="75" width="78" height="8" rx="1"/>
+  </g>
+  <g stroke="#a87c42" stroke-width="1">
+    <path d="M9 16h78M9 32h78M9 48h78M9 64h78M9 80h78"/>
+  </g>
+  <g fill="#f2b32a">
+    <rect x="9" y="11" width="4" height="8" rx="1"/><rect x="83" y="11" width="4" height="8" rx="1"/>
+    <rect x="9" y="43" width="4" height="8" rx="1"/><rect x="83" y="43" width="4" height="8" rx="1"/>
+    <rect x="9" y="75" width="4" height="8" rx="1"/><rect x="83" y="75" width="4" height="8" rx="1"/>
+  </g>
+</svg>

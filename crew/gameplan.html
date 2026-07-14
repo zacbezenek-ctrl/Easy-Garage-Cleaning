@@ -125,6 +125,15 @@
           display:flex;align-items:center;justify-content:center;color:#fff}
   .up.on .bx{background:var(--orange);border-color:var(--orange)}
   .up.on .bx::after{content:"✓"}
+  .up .upimg{width:54px;height:54px;flex-shrink:0;border-radius:9px;background:#fff;border:1.5px solid var(--line);padding:5px;object-fit:contain}
+  .up.on .upimg{border-color:var(--orange)}
+  /* Phones: let the qty stepper + price wrap to their own row instead of crushing */
+  @media(max-width:540px){
+    .up{flex-wrap:wrap}
+    .up .upimg{width:46px;height:46px}
+    .up .nm{flex:1 1 0;min-width:170px}
+    .up .qty{margin-left:auto}
+  }
   .up .nm{flex:1;font-weight:600;font-size:16px}
   .up .nm small{display:block;color:var(--khaki);font-weight:500;font-size:13px}
   .up .qty{display:flex;align-items:center;gap:0;border:1.5px solid var(--line);border-radius:10px;overflow:hidden}
@@ -344,9 +353,10 @@ const CONFIG = {
   // everything below is an add-on. group = pick one type/size; qty = priced per unit.
   removalPerTruck: 500,
   upgrades: [
-    {name:"Shelving — Metal", sub:"Heavy-duty steel rack, installed — $419/unit", price:419, qty:true, group:"shelving"},
-    {name:"Shelving — Plastic", sub:"Tough resin shelving, installed — $299/unit", price:299, qty:true, group:"shelving"},
-    {name:"Shelving — Wood + Metal", sub:"Wood shelves on a steel frame — $369/unit", price:369, qty:true, group:"shelving"},
+    // img: swap the SVG for a real product photo anytime — same filename in /images/, done.
+    {name:"Shelving — Metal", sub:"5 steel wire shelves, 1,000 lbs each — installed & loaded, ≈$84/shelf", price:419, qty:true, group:"shelving", img:"/images/shelf-metal.svg"},
+    {name:"Shelving — Plastic", sub:"5 tough resin shelves, no rust, hose-off clean — installed & loaded, ≈$60/shelf", price:299, qty:true, group:"shelving", img:"/images/shelf-plastic.svg"},
+    {name:"Shelving — Wood + Metal", sub:"5 solid wood decks on steel, 800 lbs each — installed & loaded, ≈$74/shelf", price:369, qty:true, group:"shelving", img:"/images/shelf-wood.svg"},
     {name:"Rush Scheduling", sub:"Guaranteed next-day slot", price:150},
     {name:"Deep Clean — 1-Car", sub:"Degrease, sweep & dust — beyond the standard sweep", price:125, group:"deepclean"},
     {name:"Deep Clean — 2-Car", sub:"Degrease, sweep & dust — beyond the standard sweep", price:220, group:"deepclean"},
@@ -769,6 +779,7 @@ R.p11=()=>head("p11",`<b>“What would keep this from coming back?”</b> Point 
     const on=S.storage.includes(i); const q=S.storageQty[i]||1;
     return `<div class="up ${on?'on':''}" onclick="toggleUp(${i})">
       <span class="bx"></span>
+      ${u.img?`<img class="upimg" src="${u.img}" alt="" loading="lazy" onerror="this.style.display='none'">`:""}
       <div class="nm">${u.name}${u.sub?`<small>${u.sub}</small>`:""}</div>
       ${u.qty&&on?`<div class="qty" onclick="event.stopPropagation()">
         <button onclick="event.stopPropagation();setQty(${i},-1)">−</button><input type="number" inputmode="numeric" min="1" step="1" value="${q}" aria-label="How many totes" onclick="event.stopPropagation()" onchange="setQtyVal(${i},this.value)"><button onclick="event.stopPropagation();setQty(${i},1)">+</button></div>`:""}

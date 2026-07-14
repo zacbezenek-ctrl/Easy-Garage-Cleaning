@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96">
+  <!-- Heavy-duty steel wire rack, 5 shelves -->
+  <rect x="11" y="4" width="5" height="90" rx="1.5" fill="#232a33"/>
+  <rect x="80" y="4" width="5" height="90" rx="1.5" fill="#232a33"/>
+  <g fill="#3d4754">
+    <rect x="9" y="12" width="78" height="6" rx="1.5"/>
+    <rect x="9" y="28" width="78" height="6" rx="1.5"/>
+    <rect x="9" y="44" width="78" height="6" rx="1.5"/>
+    <rect x="9" y="60" width="78" height="6" rx="1.5"/>
+    <rect x="9" y="76" width="78" height="6" rx="1.5"/>
+  </g>
+  <g stroke="#8494a8" stroke-width="1.3">
+    <path d="M22 12v6M32 12v6M42 12v6M52 12v6M62 12v6M72 12v6"/>
+    <path d="M22 28v6M32 28v6M42 28v6M52 28v6M62 28v6M72 28v6"/>
+    <path d="M22 44v6M32 44v6M42 44v6M52 44v6M62 44v6M72 44v6"/>
+    <path d="M22 60v6M32 60v6M42 60v6M52 60v6M62 60v6M72 60v6"/>
+    <path d="M22 76v6M32 76v6M42 76v6M52 76v6M62 76v6M72 76v6"/>
+  </g>
+</svg>
