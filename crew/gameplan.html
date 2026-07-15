@@ -125,21 +125,21 @@
           display:flex;align-items:center;justify-content:center;color:#fff}
   .up.on .bx{background:var(--orange);border-color:var(--orange)}
   .up.on .bx::after{content:"✓"}
-  .up .upimg{width:88px;height:88px;flex-shrink:0;border-radius:10px;background:#fff;border:1.5px solid var(--line);padding:6px;object-fit:contain}
+  .up .upimg{width:150px;height:150px;flex-shrink:0;border-radius:12px;background:#fff;border:1.5px solid var(--line);padding:8px;object-fit:contain}
   .up.on .upimg{border-color:var(--orange)}
   /* One section at a time: titled blocks (Shelving / Deep Clean / Rush / Totes) */
-  .upsec{margin:0 0 24px;padding-top:16px;border-top:2px solid var(--navy)}
-  .upsec-head{display:flex;gap:14px;align-items:center;margin-bottom:12px}
-  .upsec-img{width:84px;height:84px;border-radius:10px;object-fit:cover;border:1.5px solid var(--line);background:#fff;flex-shrink:0}
-  .upsec-head h3{font-family:'Oswald';font-weight:600;font-size:19px;letter-spacing:.03em;text-transform:uppercase}
-  .upsec-head p{font-size:13px;color:var(--khaki);margin-top:3px;line-height:1.45;max-width:52ch}
+  .upsec{margin:0 0 26px;padding-top:16px;border-top:2px solid var(--navy)}
+  .upsec-head{display:flex;gap:16px;align-items:center;margin-bottom:14px}
+  .upsec-img{width:134px;height:134px;border-radius:12px;object-fit:cover;border:1.5px solid var(--line);background:#fff;flex-shrink:0}
+  .upsec-head h3{font-family:'Oswald';font-weight:600;font-size:20px;letter-spacing:.03em;text-transform:uppercase}
+  .upsec-head p{font-size:13.5px;color:var(--khaki);margin-top:4px;line-height:1.45;max-width:52ch}
   /* Phones: let the qty stepper + price wrap to their own row instead of crushing */
   @media(max-width:540px){
     .up{flex-wrap:wrap}
-    .up .upimg{width:64px;height:64px}
-    .up .nm{flex:1 1 0;min-width:150px}
+    .up .upimg{width:104px;height:104px}
+    .up .nm{flex:1 1 0;min-width:140px}
     .up .qty{margin-left:auto}
-    .upsec-img{width:64px;height:64px}
+    .upsec-img{width:96px;height:96px}
   }
   .up .nm{flex:1;font-weight:600;font-size:16px}
   .up .nm small{display:block;color:var(--khaki);font-weight:500;font-size:13px}
@@ -787,7 +787,7 @@ R.p7=()=>head("p7",`<b>“Anything in here that takes two people or special hand
   <textarea oninput="S.heavyNote=this.value">${esc(S.heavyNote)}</textarea>`;
 
 R.p8=()=>head("p8",`Lock the logistics now so job day is friction-free. <b>“Anything we need to know to get the truck in and work clean?”</b>`)+`
-  <div class="checks">${["Driveway clear for truck","HOA rules apply","Gate / access code needed","Pets on site"].map(v=>
+  <div class="checks">${["Driveway clear for truck","HOA rules apply","Gate / access code needed","Pets on site","Apartment / condo — shared building & parking"].map(v=>
     `<div class="check ${S.access.includes(v)?'on':''}" onclick="S.access=chip(S.access,'${v}');render()"><span class="bx"></span>${v}</div>`).join("")}</div>
   <label class="fl">Notes</label>
   <textarea oninput="S.accessNote=this.value">${esc(S.accessNote)}</textarea>`;
@@ -836,7 +836,7 @@ R.p11=()=>head("p11",`<b>“What would keep this from coming back?”</b> Point 
 R.p12=()=>head("p12",`Back to the map — a <b>top-down view</b> of the garage. <b>“Where does the car live?”</b> Tap a layout — we sketch it in, color-coded — then generate the “after.” Tap “Custom” to draw your own.`)+`
   ${S.garages>1?`<label class="fl" style="margin-top:0">Which garage?</label><div class="chips" style="margin-bottom:12px">${Array.from({length:S.garages},(_,n)=>`<div class="chip ${S.bay===n?"on hot":""}" onclick="selectBay(${n})">Garage ${n+1}</div>`).join("")}</div>`:""}
   <div class="chips">${LAYOUT_PRESETS.map(v=>
-    `<div class="chip ${S.layout===v?'on hot':''}" onclick="pickLayout('${v}')">${v}</div>`).join("")}</div>
+    `<div class="chip ${S.layout===v?'on hot':''}" onclick="pickLayout('${v}')">${v}${v==="2 cars"?" · most common":""}</div>`).join("")}</div>
   ${S.layout==="Custom"?`<div class="gridmode">${Object.keys(LZONE).map(z=>
       `<button class="zbtn ${S.layoutPaint==z?'on':''}" style="--zc:${LZONE[z].color}" onclick="S.layoutPaint=${z};render()">${LZONE[z].name}</button>`).join("")}
       <button class="zbtn ${S.layoutPaint==0?'on':''}" onclick="S.layoutPaint=0;render()">Erase</button></div>`:`<div style="margin-top:16px"></div>`}
@@ -949,12 +949,14 @@ R.plan=()=>{
 /* ---------- grid + signature + upgrades helpers ---------- */
 /* ---------- parking layout (p12): color-coded zones, presets + custom draw ---------- */
 const LZONE={1:{name:"Car",color:"#13203a"},2:{name:"Workbench",color:"#2f8f6b"},3:{name:"Gym",color:"#7c5cbf"},4:{name:"Storage",color:"#d4a017"}};
-const LAYOUT_PRESETS=["1 car","2 cars","Car + workbench","Car + gym corner","No car — clean storage","Custom"];
+// "2 cars" leads — it's the most common; plenty of newer & older builds run 3-car.
+const LAYOUT_PRESETS=["2 cars","3 cars","1 car","Car + workbench","Car + gym corner","No car — clean storage","Custom"];
 function layoutPreset(name){
   const g=Array(40).fill(0), set=(r,c,z)=>{ if(r>=0&&r<5&&c>=0&&c<8) g[r*8+c]=z; };
   const car=c0=>{ for(let r=2;r<5;r++) for(let c=c0;c<c0+2;c++) set(r,c,1); };
   if(name==="1 car") car(3);
   else if(name==="2 cars"){ car(1); car(5); }
+  else if(name==="3 cars"){ car(0); car(3); car(6); }
   else if(name==="Car + workbench"){ car(2); for(let c=0;c<8;c++) set(0,c,2); }
   else if(name==="Car + gym corner"){ car(4); for(let r=0;r<2;r++) for(let c=0;c<2;c++) set(r,c,3); }
   else if(name==="No car — clean storage"){ for(let r=0;r<5;r++){ set(r,0,4); set(r,7,4); } for(let c=0;c<8;c++) set(0,c,4); }
@@ -1370,9 +1372,16 @@ function paintTotal(){
   if(grandTotal()>0){el.style.display="block";el.textContent=money(grandTotal());}
   else el.style.display="none";
 }
+let lastRenderIdx=-1;
 function render(){
   syncDeposit();
   const s=steps[idx];
+  // Re-rendering the SAME step (chip taps, grid paints, W/D/H edits) must not
+  // yank the page back to the top — keep the scroll; new steps start at 0.
+  const same=idx===lastRenderIdx;
+  const keepY=same?window.scrollY:0;
+  const keepStage=same&&$("stage")?$("stage").scrollTop:0;
+  lastRenderIdx=idx;
   $("screen").innerHTML = R[s.id]?(s.id==="zone"?R.zone(s):R[s.id]()):"";
   // zone chip
   const zc=$("zonechip");
@@ -1393,7 +1402,8 @@ function render(){
   else nav+=`<button class="btn next" onclick="go(1)">Next Point →</button>`;
   $("navinner").innerHTML=nav;
   paintTotal();
-  $("stage").scrollTop=0;
+  $("stage").scrollTop=keepStage;
+  window.scrollTo(0,keepY);
   if(s.id==="start")setTimeout(loadTodayRequests,0); // auto-pull the day's Jobber walkthroughs (cached after first load)
   if(s.id==="p10")setTimeout(()=>mountStrip("pb_before","before",{ai:false}),0); // before photo only — the After generates at the Layout step
   if(s.id==="p12")setTimeout(paintAi,0);
