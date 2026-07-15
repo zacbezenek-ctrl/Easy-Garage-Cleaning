@@ -125,14 +125,21 @@
           display:flex;align-items:center;justify-content:center;color:#fff}
   .up.on .bx{background:var(--orange);border-color:var(--orange)}
   .up.on .bx::after{content:"✓"}
-  .up .upimg{width:54px;height:54px;flex-shrink:0;border-radius:9px;background:#fff;border:1.5px solid var(--line);padding:5px;object-fit:contain}
+  .up .upimg{width:88px;height:88px;flex-shrink:0;border-radius:10px;background:#fff;border:1.5px solid var(--line);padding:6px;object-fit:contain}
   .up.on .upimg{border-color:var(--orange)}
+  /* One section at a time: titled blocks (Shelving / Deep Clean / Rush / Totes) */
+  .upsec{margin:0 0 24px;padding-top:16px;border-top:2px solid var(--navy)}
+  .upsec-head{display:flex;gap:14px;align-items:center;margin-bottom:12px}
+  .upsec-img{width:84px;height:84px;border-radius:10px;object-fit:cover;border:1.5px solid var(--line);background:#fff;flex-shrink:0}
+  .upsec-head h3{font-family:'Oswald';font-weight:600;font-size:19px;letter-spacing:.03em;text-transform:uppercase}
+  .upsec-head p{font-size:13px;color:var(--khaki);margin-top:3px;line-height:1.45;max-width:52ch}
   /* Phones: let the qty stepper + price wrap to their own row instead of crushing */
   @media(max-width:540px){
     .up{flex-wrap:wrap}
-    .up .upimg{width:46px;height:46px}
-    .up .nm{flex:1 1 0;min-width:170px}
+    .up .upimg{width:64px;height:64px}
+    .up .nm{flex:1 1 0;min-width:150px}
     .up .qty{margin-left:auto}
+    .upsec-img{width:64px;height:64px}
   }
   .up .nm{flex:1;font-weight:600;font-size:16px}
   .up .nm small{display:block;color:var(--khaki);font-weight:500;font-size:13px}
@@ -352,17 +359,28 @@ const CONFIG = {
   // organize with what they have + a basic sweep are included (not line items);
   // everything below is an add-on. group = pick one type/size; qty = priced per unit.
   removalPerTruck: 500,
+  // The Storage & Shelving point walks these one SECTION at a time. `section`
+  // keys each upgrade into a titled block below; shelving deliberately has NO
+  // exclusive group — customers can mix 2–3 shelf types in one job (qty each).
+  // Deep Clean keeps group:"deepclean" so only one size can be picked.
   upgrades: [
     // img: real product photos (uploaded via GitHub). To swap one, replace the
     // PNG in /images/ — the SVG imgFallback only shows if the photo is missing.
-    {name:"Shelving — Metal", sub:"5 steel wire shelves, 1,000 lbs each — installed & loaded, $100/shelf", price:499, qty:true, group:"shelving", img:"/images/shelf-metal.png", imgFallback:"/images/shelf-metal.svg"},
-    {name:"Shelving — Plastic", sub:"5 tough resin shelves, no rust, hose-off clean — installed & loaded, $70/shelf", price:349, qty:true, group:"shelving", img:"/images/shelf-plastic.png", imgFallback:"/images/shelf-plastic.svg"},
-    {name:"Shelving — Wood + Metal", sub:"5 solid wood decks on steel, 800 lbs each — installed & loaded, $90/shelf", price:449, qty:true, group:"shelving", img:"/images/shelf-wood.png", imgFallback:"/images/shelf-wood.svg"},
-    {name:"Rush Scheduling", sub:"Guaranteed next-day slot", price:150},
-    {name:"Deep Clean — 1-Car", sub:"Degrease, sweep & dust — beyond the standard sweep", price:125, group:"deepclean"},
-    {name:"Deep Clean — 2-Car", sub:"Degrease, sweep & dust — beyond the standard sweep", price:220, group:"deepclean"},
-    {name:"Deep Clean — 3-Car", sub:"Degrease, sweep & dust — beyond the standard sweep", price:320, group:"deepclean"},
-    {name:"Storage Totes — 27 gal", sub:"Labeled & stacked — $21.50 each", price:21.50, qty:true},
+    {name:"Shelving — Metal", sub:"5 steel wire shelves, 1,000 lbs each — installed & loaded, $100/shelf", price:499, qty:true, section:"shelving", img:"/images/shelf-metal.png", imgFallback:"/images/shelf-metal.svg"},
+    {name:"Shelving — Plastic", sub:"5 tough resin shelves, no rust, hose-off clean — installed & loaded, $70/shelf", price:349, qty:true, section:"shelving", img:"/images/shelf-plastic.png", imgFallback:"/images/shelf-plastic.svg"},
+    {name:"Shelving — Wood + Metal", sub:"5 solid wood decks on steel, 800 lbs each — installed & loaded, $90/shelf", price:449, qty:true, section:"shelving", img:"/images/shelf-wood.png", imgFallback:"/images/shelf-wood.svg"},
+    {name:"Rush Scheduling", sub:"Guaranteed next-day slot", price:150, section:"rush"},
+    {name:"Deep Clean — 1-Car", sub:"Degrease, sweep & dust — beyond the standard sweep", price:125, group:"deepclean", section:"deepclean"},
+    {name:"Deep Clean — 2-Car", sub:"Degrease, sweep & dust — beyond the standard sweep", price:220, group:"deepclean", section:"deepclean"},
+    {name:"Deep Clean — 3-Car", sub:"Degrease, sweep & dust — beyond the standard sweep", price:320, group:"deepclean", section:"deepclean"},
+    {name:"Storage Totes — 27 gal", sub:"Labeled & stacked — $21.50 each", price:21.50, qty:true, section:"totes"},
+  ],
+  // Section order + headers for the Storage & Shelving point.
+  sections: [
+    {id:"shelving", title:"Shelving", sub:"Mix and match — pick two or three types if the garage needs them, priced per unit"},
+    {id:"deepclean", title:"Deep Clean", sub:"Pick the garage size — degrease, sweep & dust beyond the standard sweep", img:"/images/upsell-deepclean.jpg"},
+    {id:"rush", title:"Rush Scheduling", sub:"Jump the line — guaranteed next-day slot", img:"/images/upsell-rush.svg"},
+    {id:"totes", title:"Storage Totes", sub:"27-gallon, labeled & stacked so everything has a home", img:"/images/upsell-totes.jpg"},
   ],
   // The No-Surprises Guarantee
   guarantee: [
@@ -370,6 +388,17 @@ const CONFIG = {
     "Final walkthrough sign-off: we walk the finished garage together, and we make it right before we leave.",
   ],
 };
+/* Terms are single-sourced here: the close screen AND the saved agreement PDF
+   both render from these, so they can never drift apart. */
+const TERMS_VERSION="2026-06";
+const DEPOSIT_TERMS_HTML=`Your <b>20% deposit locks your date</b> and comes off your total. Reschedule or cancel <b>more than 24 hours out — fully refundable</b>. Inside 24 hours — whether you cancel or move the date — the deposit covers your reserved crew and <b>isn't refundable</b>.`;
+const FULL_TERMS=[
+  ["Locked rate.","The price quoted today is locked — it won't change. The remaining balance is due when the job's complete."],
+  ["What we haul.","We only remove what you've okayed in the keep / donate / haul plan — please confirm before we start. We aren't liable for items removed at your direction."],
+  ["Access & property.","Please have the garage accessible on job day. We work carefully, but aren't responsible for pre-existing damage or hidden/structural conditions."],
+  ["Special items.","Some items (e-waste, tires, paint, fridges, mattresses) normally carry disposal fees — waived when you book at the walkthrough."],
+  ["Photos.","We may take before/after photos of the work for our records and marketing; no personal information is shown."],
+];
 /* ============================================================ */
 
 const S = {  // session state — autosaved locally on every tap
@@ -779,18 +808,28 @@ R.p10=()=>head("p10",`Point at the floor. <b>“Picture this swept and clear, wa
   <div class="ask" style="margin:0 0 8px;font-size:14px">Take the before photo here; you generate the “after” from the top-down sketch at the Parking Layout step.</div>
   <div id="pb_before"></div>`;
 
-R.p11=()=>head("p11",`<b>“What would keep this from coming back?”</b> Point at the cleared wall on the sketch — rack here, bins there. Freestanding, no drilling. Shelving and Deep Clean are two-option pairs: one or the other, never both.`)+`
-  ${CONFIG.upgrades.map((u,i)=>{
-    const on=S.storage.includes(i); const q=S.storageQty[i]||1;
-    return `<div class="up ${on?'on':''}" onclick="toggleUp(${i})">
-      <span class="bx"></span>
-      ${u.img?`<img class="upimg" src="${u.img}" alt="" loading="lazy" data-fb="${u.imgFallback||""}" onerror="if(this.dataset.fb){this.src=this.dataset.fb;this.removeAttribute('data-fb')}else{this.style.display='none'}">`:""}
-      <div class="nm">${u.name}${u.sub?`<small>${u.sub}</small>`:""}</div>
-      ${u.qty&&on?`<div class="qty" onclick="event.stopPropagation()">
-        <button onclick="event.stopPropagation();setQty(${i},-1)">−</button><input type="number" inputmode="numeric" min="1" step="1" value="${q}" aria-label="How many totes" onclick="event.stopPropagation()" onchange="setQtyVal(${i},this.value)"><button onclick="event.stopPropagation();setQty(${i},1)">+</button></div>`:""}
-      <div class="pr">${money(u.qty?priceFor(u,q):u.price)}</div>
-    </div>`;}).join("")}
-  <div style="text-align:right;font-family:Oswald;font-weight:700;font-size:20px;margin-top:6px">
+R.p11=()=>head("p11",`<b>“What would keep this from coming back?”</b> Point at the cleared wall on the sketch — rack here, bins there. Freestanding, no drilling. Walk it one section at a time. Shelving mixes and matches — two or three types is normal. Deep Clean is pick-a-size.`)+
+  CONFIG.sections.map(sec=>{
+    const items=CONFIG.upgrades.map((u,i)=>({u,i})).filter(x=>(x.u.section||"")===sec.id);
+    if(!items.length) return "";
+    return `<div class="upsec">
+      <div class="upsec-head">
+        ${sec.img?`<img class="upsec-img" src="${sec.img}" alt="" loading="lazy" onerror="this.style.display='none'">`:""}
+        <div><h3>${sec.title}</h3><p>${sec.sub||""}</p></div>
+      </div>
+      ${items.map(({u,i})=>{
+        const on=S.storage.includes(i); const q=S.storageQty[i]||1;
+        return `<div class="up ${on?'on':''}" onclick="toggleUp(${i})">
+          <span class="bx"></span>
+          ${u.img?`<img class="upimg" src="${u.img}" alt="" loading="lazy" data-fb="${u.imgFallback||""}" onerror="if(this.dataset.fb){this.src=this.dataset.fb;this.removeAttribute('data-fb')}else{this.style.display='none'}">`:""}
+          <div class="nm">${u.name}${u.sub?`<small>${u.sub}</small>`:""}</div>
+          ${u.qty&&on?`<div class="qty" onclick="event.stopPropagation()">
+            <button onclick="event.stopPropagation();setQty(${i},-1)">−</button><input type="number" inputmode="numeric" min="1" step="1" value="${q}" aria-label="Quantity" onclick="event.stopPropagation()" onchange="setQtyVal(${i},this.value)"><button onclick="event.stopPropagation();setQty(${i},1)">+</button></div>`:""}
+          <div class="pr">${money(u.qty?priceFor(u,q):u.price)}</div>
+        </div>`;}).join("")}
+    </div>`;
+  }).join("")+
+  `<div style="text-align:right;font-family:Oswald;font-weight:700;font-size:20px;margin-top:6px">
     Upgrades: <span style="color:var(--orange)">${money(upgradesTotal())}</span></div>`;
 
 R.p12=()=>head("p12",`Back to the map — a <b>top-down view</b> of the garage. <b>“Where does the car live?”</b> Tap a layout — we sketch it in, color-coded — then generate the “after.” Tap “Custom” to draw your own.`)+`
@@ -889,15 +928,9 @@ R.plan=()=>{
     <ol>${CONFIG.guarantee.map(g=>`<li>${g}</li>`).join("")}</ol></div>
   <div class="terms">
     <h4>Deposit &amp; Cancellation</h4>
-    <p>Your <b>20% deposit locks your date</b> and comes off your total. Reschedule or cancel <b>more than 24 hours out — fully refundable</b>. Inside 24 hours — whether you cancel or move the date — the deposit covers your reserved crew and <b>isn't refundable</b>.</p>
+    <p>${DEPOSIT_TERMS_HTML}</p>
     <details><summary>Full terms</summary>
-      <ul>
-        <li><b>Locked rate.</b> The price quoted today is locked — it won't change. The remaining balance is due when the job's complete.</li>
-        <li><b>What we haul.</b> We only remove what you've okayed in the keep / donate / haul plan — please confirm before we start. We aren't liable for items removed at your direction.</li>
-        <li><b>Access &amp; property.</b> Please have the garage accessible on job day. We work carefully, but aren't responsible for pre-existing damage or hidden/structural conditions.</li>
-        <li><b>Special items.</b> Some items (e-waste, tires, paint, fridges, mattresses) normally carry disposal fees — waived when you book at the walkthrough.</li>
-        <li><b>Photos.</b> We may take before/after photos of the work for our records and marketing; no personal information is shown.</li>
-      </ul>
+      <ul>${FULL_TERMS.map(([t,b])=>`<li><b>${t}</b> ${b}</li>`).join("")}</ul>
     </details>
   </div>
   <label class="fl">Homeowner sign-off — accepts this plan &amp; the terms above</label>
@@ -906,7 +939,7 @@ R.plan=()=>{
     <button onclick="clearSig()">Clear</button></div>
   <div id="sendstatus" style="font-family:Oswald;font-weight:600;font-size:14px;color:var(--ok);margin-top:6px"></div>
   <div style="display:flex;gap:10px;margin-top:14px">
-    <button class="btn back" style="flex:1" onclick="window.print()">Save PDF</button>
+    <button class="btn back" style="flex:1" onclick="savePdf(this)">Save PDF</button>
     <button class="btn back" style="flex:1" onclick="if(confirm('Start a new walkthrough? This one will be cleared.')){localStorage.removeItem(SAVEKEY);location.reload()}">New Walkthrough</button>
   </div>
   <div style="height:10px"></div>`;
@@ -980,7 +1013,7 @@ function layoutHint(){
     "Shelving — Metal":"freestanding black heavy-duty steel shelving racks",
     "Shelving — Plastic":"freestanding black plastic/resin shelving units",
     "Shelving — Wood + Metal":"freestanding shelving with wood shelves on black steel frames"};
-  CONFIG.upgrades.forEach((u,i)=>{ if(S.storage.includes(i)&&u.group==="shelving"&&shelfDesc[u.name]) p.push(shelfDesc[u.name]); });
+  CONFIG.upgrades.forEach((u,i)=>{ if(S.storage.includes(i)&&u.section==="shelving"&&shelfDesc[u.name]) p.push(shelfDesc[u.name]); });
   // EGC bins are the yellow-and-black HDX-style totes
   if(CONFIG.upgrades.some((u,i)=>S.storage.includes(i)&&/tote|bin/i.test(u.name)))
     p.push("belongings stored in matching yellow-and-black labeled storage totes neatly stacked on the shelves");
@@ -1092,7 +1125,7 @@ function buildPayload(){
       total:grandTotal(), deposit:Number(S.deposit||0), job_date:S.jobdate,
       line_items:items, line_items_count:items.length},
     day_of_bonus:!!S.dayBonus,
-    signature:S.sig||"", terms_version:"2026-06", terms_accepted:!!S.sig,
+    signature:S.sig||"", terms_version:TERMS_VERSION, terms_accepted:!!S.sig,
     photos:{before:PHOTO_COUNTS.before, ai_after:PHOTO_COUNTS.after_ai},
     drive_folder:(function(){try{return localStorage.getItem(driveKey())||"";}catch(e){return "";}})(),
     garage:{width:S.garageW||"", depth:S.garageD||"", height:S.garageH||"", bays:S.garages, layout:S.layout||"",
@@ -1122,6 +1155,147 @@ function validateClose(){
   const need=depositDue(), dep=Number(S.deposit||0);
   if(need>0&&dep<need) miss.push("the 20% deposit — collect "+money(need)+" in Jobber Payments (client → Collect Payment), then enter it");
   return miss;
+}
+
+/* ===== Customer-agreement PDF — hand-rolled, no libraries, works offline =====
+   Built from the same S state + FULL_TERMS the close screen renders, with the
+   signature embedded as a JPEG. savePdf() uploads it to Drive via
+   /api/agreement-upload ("Customer Agreements" folder), then opens the normal
+   print dialog exactly like the old Save PDF did. */
+function pdfSan(s){return String(s==null?"":s)
+  .replace(/—|–/g,"-").replace(/[’‘]/g,"'").replace(/[“”]/g,'"')
+  .replace(/·/g,"-").replace(/≈/g,"~").replace(/…/g,"...").replace(/×/g,"x")
+  .replace(/[^\x20-\x7E\n]/g,"");}
+function pdfEsc(s){return pdfSan(s).replace(/\\/g,"\\\\").replace(/\(/g,"\\(").replace(/\)/g,"\\)");}
+
+async function buildAgreementPdf(){
+  const W=612,H=792,M=48,BOT=64;
+  const NAVY="0.04 0.09 0.16",ORANGE="0.91 0.35 0.11",GRAY="0.36 0.40 0.45";
+  const pages=[];let ops=null,y=0;
+  const newPage=()=>{ops=[];pages.push(ops);y=H-M;};
+  const need=h=>{if(y-h<BOT)newPage();};
+  const estW=(s,size)=>pdfSan(s).length*size*0.52;
+  const txt=(x,size,s,bold,color)=>{ops.push(`BT /F${bold?2:1} ${size} Tf ${color||"0 0 0"} rg 1 0 0 1 ${x.toFixed(1)} ${y.toFixed(1)} Tm (${pdfEsc(s)}) Tj ET`);};
+  const rtxt=(size,s,bold,color)=>txt(W-M-estW(s,size),size,s,bold,color);
+  const rule=c=>{ops.push(`${c||"0.85 0.81 0.75"} RG 0.8 w ${M} ${y.toFixed(1)} m ${W-M} ${y.toFixed(1)} l S`);};
+  const wrap=(s,width,size)=>{const out=[];let line="";
+    pdfSan(s).split(/\s+/).forEach(w=>{const t=line?line+" "+w:w;
+      if(estW(t,size)>width&&line){out.push(line);line=w;}else line=t;});
+    if(line)out.push(line);return out;};
+  const para=(s,size,lh,color)=>{wrap(s,W-M*2,size).forEach(l=>{need(lh);txt(M,size,l,false,color);y-=lh;});};
+  const gap=h=>{y-=h;};
+  const kv=(label,val)=>{need(15);txt(M,10,label,true,GRAY);txt(M+150,10,val||"-");y-=15;};
+  const item=(name,val,bold)=>{need(16);txt(M,10.5,name,bold);rtxt(10.5,val,bold);y-=16;};
+  const heading=s=>{need(30);txt(M,12,s,true,NAVY);y-=17;};
+
+  newPage();
+  txt(M,9,"EASY GARAGE CLEANING & JUNK REMOVAL LLC - FORT COLLINS, CO",true,ORANGE);y-=20;
+  txt(M,19,"Garage Comeback Plan - Customer Agreement",true,NAVY);y-=14;
+  rule();gap(18);
+  const today=new Date().toLocaleDateString();
+  kv("Date",today);kv("Customer",S.name);kv("Address",S.addr);kv("Phone",S.phone);
+  if(S.email)kv("Email",S.email);
+  kv("Job date",S.jobdate||"To be scheduled");
+  if(S.startTime)kv("Arrival window",S.startTime+(S.endTime?" - "+S.endTime:""));
+  kv("Job ID",S.jobId);
+  gap(10);
+  heading("SCOPE & PRICING");
+  item(`Removal - ${S.loads} truckload${S.loads!==1?"s":""} x ${money(CONFIG.removalPerTruck)}`,money(removalBase()));
+  item("Organize + basic sweep","Included");
+  CONFIG.upgrades.forEach((u,i)=>{if(!S.storage.includes(i))return;const q=u.qty?(S.storageQty[i]||1):1;
+    item(u.name+(u.qty?` x ${q}`:""),money(priceFor(u,q)));});
+  if(S.dayBonus)item("Day-Of Bonus - special-disposal fees waived","$0");
+  gap(2);rule();gap(17);
+  need(20);txt(M,13,"TOTAL (locked)",true,NAVY);rtxt(13,money(grandTotal()),true,ORANGE);y-=20;
+  const dep=Number(S.deposit||0)||depositDue();
+  item("Deposit due today (20%)",money(dep));
+  item("Balance due on completion",money(Math.max(0,grandTotal()-dep)));
+  gap(12);
+  heading("THE EGC NO-SURPRISES GUARANTEE");
+  CONFIG.guarantee.forEach((g,i)=>{para(`${i+1}. ${g}`,9.5,13,GRAY);gap(2);});
+  gap(8);
+  heading("DEPOSIT & CANCELLATION");
+  para(DEPOSIT_TERMS_HTML.replace(/<[^>]+>/g,""),9.5,13,GRAY);
+  gap(8);
+  heading("FULL TERMS");
+  FULL_TERMS.forEach(([t,b])=>{para(t+" "+b,9.5,13,GRAY);gap(3);});
+  gap(14);
+
+  // Signature: re-encode the canvas PNG as a white-backed JPEG for embedding.
+  let sig=null;
+  if(S.sig){sig=await new Promise(res=>{const im=new Image();
+    im.onload=()=>{try{const c=document.createElement("canvas");
+      c.width=im.width;c.height=im.height;const cx=c.getContext("2d");
+      cx.fillStyle="#fff";cx.fillRect(0,0,c.width,c.height);cx.drawImage(im,0,0);
+      res({jpeg:c.toDataURL("image/jpeg",0.85),w:c.width,h:c.height});}catch(e){res(null);}};
+    im.onerror=()=>res(null);im.src=S.sig;});}
+  const sw=210,sh=sig?Math.min(120,sw*sig.h/sig.w):0;
+  need((sig?sh:34)+56);
+  txt(M,12,"HOMEOWNER SIGN-OFF",true,NAVY);y-=14;
+  para("Accepts this plan and the terms above. Terms version "+TERMS_VERSION+".",9,12,GRAY);
+  gap(6);
+  if(sig){y-=sh;ops.push(`q ${sw} 0 0 ${sh.toFixed(1)} ${M} ${y.toFixed(1)} cm /Im1 Do Q`);gap(8);}
+  else{gap(26);rule("0.4 0.4 0.4");gap(12);}
+  txt(M,10,(S.name||"")+"   -   "+today);y-=14;
+
+  /* ---- serialize: objects in id order, then xref ---- */
+  const enc=new TextEncoder();
+  const chunks=[];let clen=0;
+  const push=b=>{const u=typeof b==="string"?enc.encode(b):b;chunks.push(u);clen+=u.length;};
+  const offsets=[];
+  const beginObj=()=>offsets.push(clen);
+  const nImg=sig?1:0;
+  const contentId=i=>5+nImg+2*i, pageId=i=>6+nImg+2*i;
+  push("%PDF-1.4\n");
+  beginObj();push("1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n");
+  beginObj();push(`2 0 obj\n<< /Type /Pages /Kids [${pages.map((_,i)=>pageId(i)+" 0 R").join(" ")}] /Count ${pages.length} /MediaBox [0 0 ${W} ${H}] >>\nendobj\n`);
+  beginObj();push("3 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>\nendobj\n");
+  beginObj();push("4 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>\nendobj\n");
+  if(sig){
+    const b64=sig.jpeg.split(",")[1],bin=atob(b64),bytes=new Uint8Array(bin.length);
+    for(let i=0;i<bin.length;i++)bytes[i]=bin.charCodeAt(i);
+    beginObj();push(`5 0 obj\n<< /Type /XObject /Subtype /Image /Width ${sig.w} /Height ${sig.h} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${bytes.length} >>\nstream\n`);
+    push(bytes);push("\nendstream\nendobj\n");
+  }
+  pages.forEach((p,i)=>{
+    const stream=p.join("\n");
+    beginObj();push(`${contentId(i)} 0 obj\n<< /Length ${enc.encode(stream).length} >>\nstream\n${stream}\nendstream\nendobj\n`);
+    beginObj();push(`${pageId(i)} 0 obj\n<< /Type /Page /Parent 2 0 R /Resources << /Font << /F1 3 0 R /F2 4 0 R >>${sig?" /XObject << /Im1 5 0 R >>":""} >> /Contents ${contentId(i)} 0 R >>\nendobj\n`);
+  });
+  const xrefAt=clen,N=offsets.length;
+  push(`xref\n0 ${N+1}\n0000000000 65535 f \n`+offsets.map(o=>String(o).padStart(10,"0")+" 00000 n \n").join(""));
+  push(`trailer\n<< /Size ${N+1} /Root 1 0 R >>\nstartxref\n${xrefAt}\n%%EOF`);
+  const all=new Uint8Array(clen);let at=0;chunks.forEach(c=>{all.set(c,at);at+=c.length;});
+  let bin="";for(let i=0;i<all.length;i+=0x8000)bin+=String.fromCharCode.apply(null,all.subarray(i,i+0x8000));
+  return "data:application/pdf;base64,"+btoa(bin);
+}
+
+function agreementFilename(){
+  const d=S.jobdate||new Date().toISOString().slice(0,10);
+  return (`${d} - ${S.name||"EGC customer"}${S.addr?" - "+S.addr:""} - agreement.pdf`).replace(/[\\/:*?"<>|]/g,"-");
+}
+
+// Save PDF: build → store in the Drive "Customer Agreements" folder → then the
+// familiar print dialog opens either way (AirPrint / local save still works).
+async function savePdf(btn){
+  const st=$("sendstatus");const old=btn.textContent;
+  btn.disabled=true;btn.textContent="Saving…";
+  if(!S.jobId)S.jobId=uid();
+  try{
+    const dataUrl=await buildAgreementPdf();
+    try{
+      const res=await fetch("/api/agreement-upload",{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({jobId:S.jobId,label:S.name||"",filename:agreementFilename(),dataUrl}),keepalive:true});
+      const j=await res.json().catch(()=>({}));
+      if(st){
+        if(res.ok&&j.ok){st.style.color="var(--ok)";st.textContent="Agreement PDF saved to Drive ✓";}
+        else if(res.status===501){st.style.color="var(--orange2)";st.textContent="Drive isn't connected — Zac: run /api/drive-auth once. Opening print instead.";}
+        else{st.style.color="var(--orange2)";st.textContent="Couldn't reach Drive — check signal and tap Save PDF again. Opening print.";}
+      }
+    }catch(e){if(st){st.style.color="var(--orange2)";st.textContent="Couldn't reach Drive — check signal and tap Save PDF again. Opening print.";}}
+  }catch(e){if(st){st.style.color="var(--orange2)";st.textContent="PDF build failed — using the print dialog.";}}
+  btn.disabled=false;btn.textContent=old;
+  window.print();
 }
 
 async function postHook(payload){

@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96">
+  <!-- Rush scheduling: calendar + bolt -->
+  <rect x="10" y="16" width="76" height="70" rx="8" fill="#13203a"/>
+  <rect x="10" y="16" width="76" height="18" rx="8" fill="#e8581c"/>
+  <rect x="10" y="26" width="76" height="8" fill="#e8581c"/>
+  <rect x="24" y="8" width="8" height="16" rx="3" fill="#13203a"/>
+  <rect x="64" y="8" width="8" height="16" rx="3" fill="#13203a"/>
+  <g fill="rgba(255,255,255,.25)">
+    <rect x="22" y="44" width="12" height="10" rx="2"/><rect x="42" y="44" width="12" height="10" rx="2"/><rect x="62" y="44" width="12" height="10" rx="2"/>
+    <rect x="22" y="62" width="12" height="10" rx="2"/><rect x="62" y="62" width="12" height="10" rx="2"/>
+  </g>
+  <path d="M52 38 L38 62 h9 l-4 20 L60 56 h-10 l6-18 z" fill="#f2b32a" stroke="#13203a" stroke-width="2"/>
+</svg>
