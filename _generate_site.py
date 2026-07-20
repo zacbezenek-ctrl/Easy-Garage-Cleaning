@@ -940,12 +940,11 @@ GALLERY_HTML = """
   <div class="wrap">
     <div class="section-head reveal"><span class="mono section-num">Results</span>
       <h2 class="section-title" id="gallery-heading">Before. <em>After.</em> Same day.</h2>
-      <p class="section-sub">Placeholder photos — owner to swap with real job images.</p>
+      
     </div>
     <div class="gallery-grid gallery-polish reveal">
-      <div class="gallery-item"><div class="ba-pair"><div class="ba-cell before" aria-label="Before photo placeholder"><span class="ba-label">BEFORE</span><span class="ba-icon">B.</span></div><div class="ba-cell after" aria-label="After photo placeholder"><span class="ba-label">AFTER</span><span class="ba-icon">A.</span></div></div><div class="ba-caption"><strong>{ba1}</strong></div><p class="ba-placeholder-note">Owner photo slot — replace with real job image</p></div>
-      <div class="gallery-item"><div class="ba-pair"><div class="ba-cell before" aria-label="Before photo placeholder"><span class="ba-label">BEFORE</span><span class="ba-icon">B.</span></div><div class="ba-cell after" aria-label="After photo placeholder"><span class="ba-label">AFTER</span><span class="ba-icon">A.</span></div></div><div class="ba-caption"><strong>{ba2}</strong></div><p class="ba-placeholder-note">Owner photo slot — replace with real job image</p></div>
-      <div class="gallery-item"><div class="ba-pair"><div class="ba-cell before" aria-label="Before photo placeholder"><span class="ba-label">BEFORE</span><span class="ba-icon">B.</span></div><div class="ba-cell after" aria-label="After photo placeholder"><span class="ba-label">AFTER</span><span class="ba-icon">A.</span></div></div><div class="ba-caption"><strong>{ba3}</strong></div><p class="ba-placeholder-note">Owner photo slot — replace with real job image</p></div>
+      
+      
     </div>
   </div>
 </section>
@@ -1618,8 +1617,8 @@ def render_service(s):
 <div class="hero-ctas"><a href="#quote" class="btn-primary">Get Free Quote</a>
 <a href="sms:{PHONE}?body={s['sms'].replace(' ', '%20')}" class="btn-secondary">Text Photos for Estimate</a></div>
 <div class="hero-trust"><span class="trust-badge">Locally owned</span><span class="trust-badge">Flat-rate pricing</span><span class="trust-badge">Next-day available</span><span class="trust-badge">5-min response</span>{trust}</div></div>
-<div class="hero-ba"><div class="hero-ba-cell before"><span class="hero-ba-label">BEFORE</span><div class="ba-coming-soon"><span class="ba-icon" aria-hidden="true">◇</span><strong>Photo coming soon</strong></div></div>
-<div class="hero-ba-cell after"><span class="hero-ba-label">AFTER</span><div class="ba-coming-soon"><span class="ba-icon" aria-hidden="true">◇</span><strong>Photo coming soon</strong></div></div></div></div></header>"""
+<div class="hero-ba"><div class="hero-ba-cell before"><span class="hero-ba-label">BEFORE</span><picture><source srcset="/images/garage-before.webp" type="image/webp"><img src="/images/garage-before.jpg" alt="Cluttered two-car garage in Fort Collins before our crew arrived" width="1200" height="1200"></picture></div>
+<div class="hero-ba-cell after"><span class="hero-ba-label">AFTER</span><picture><source srcset="/images/garage-before.webp" type="image/webp"><img src="/images/garage-before.jpg" alt="Cluttered two-car garage in Fort Collins before our crew arrived" width="1200" height="1200"></picture></div></div></div></header>"""
     items = items_html(s["yes_title"], s["yes"], NO_ITEMS) if s.get("show_items", True) else ""
     video = VIDEO_HTML if s.get("show_video") else ""
     def_section = f'<section class="body-copy"><div class="wrap"><div class="body-copy-inner reveal">{def_block_html(s["stype"], s["hero_sub"])}</div></div></section>'
@@ -1660,8 +1659,8 @@ ITEM_PARENT_CATEGORY = {
 def city_hero_visual(city):
     if city in CITY_HERO_OVERLAY:
         return f"""<div class="hero-ba city-hero-placeholder"><div class="hero-ba-cell after"><span class="hero-ba-label">PHOTO PLACEHOLDER</span><span class="city-hero-overlay">{esc(city)}, CO</span></div></div>"""
-    return """<div class="hero-ba"><div class="hero-ba-cell before"><span class="hero-ba-label">BEFORE</span><div class="ba-coming-soon"><span class="ba-icon" aria-hidden="true">◇</span><strong>Photo coming soon</strong></div></div>
-<div class="hero-ba-cell after"><span class="hero-ba-label">AFTER</span><div class="ba-coming-soon"><span class="ba-icon" aria-hidden="true">◇</span><strong>Photo coming soon</strong></div></div></div>"""
+    return """<div class="hero-ba"><div class="hero-ba-cell before"><span class="hero-ba-label">BEFORE</span><picture><source srcset="/images/garage-before.webp" type="image/webp"><img src="/images/garage-before.jpg" alt="Cluttered two-car garage in Fort Collins before our crew arrived" width="1200" height="1200"></picture></div>
+<div class="hero-ba-cell after"><span class="hero-ba-label">AFTER</span><picture><source srcset="/images/garage-before.webp" type="image/webp"><img src="/images/garage-before.jpg" alt="Cluttered two-car garage in Fort Collins before our crew arrived" width="1200" height="1200"></picture></div></div>"""
 
 
 def render_city(c):
@@ -2002,7 +2001,7 @@ def render_about():
 <p class="hero-sub">Easy Garage Cleaning isn't a franchise call center — it's Zac Bezenek and a local crew helping Northern Colorado homeowners park in their garage again.</p>
 <div class="hero-ctas"><a href="#quote" class="btn-primary">Get Free Quote</a><a href="tel:{PHONE}" class="btn-secondary">Call {PHONE_DISPLAY}</a></div>
 </div>
-<div class="hero-ba"><div class="hero-ba-cell before" style="grid-column:span 2;aspect-ratio:16/10"><span class="hero-ba-label">PHOTO</span><div class="ba-coming-soon"><span class="ba-icon" aria-hidden="true">◇</span><strong>Photo coming soon</strong></div></div></div>
+<div class="hero-ba"><div class="hero-ba-cell before" style="grid-column:span 2;aspect-ratio:16/10"><span class="hero-ba-label">PHOTO</span><picture><source srcset="/images/garage-before.webp" type="image/webp"><img src="/images/garage-before.jpg" alt="Cluttered two-car garage in Fort Collins before our crew arrived" width="1200" height="1200"></picture></div></div>
 </div></section>
 <section class="body-copy"><div class="wrap"><div class="about-story-grid reveal">
 <div class="body-copy-inner">
