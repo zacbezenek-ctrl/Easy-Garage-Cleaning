@@ -12,16 +12,23 @@
 User-agent: *
 Allow: /
 Disallow: /employee.html
+Disallow: /employee
 Disallow: /employee-crm.js
 Disallow: /employee-crm.css
 Disallow: /copilot.html
+Disallow: /copilot
 Disallow: /sop.html
+Disallow: /sop
 Disallow: /tyler-contract.html
+Disallow: /tyler-contract
 Disallow: /api/
 Disallow: /crew/
 Disallow: /node_modules/
 Disallow: /ads.html
+Disallow: /ads
 Disallow: /quote.html
+Disallow: /quote
 Disallow: /thank-you.html
+Disallow: /thank-you
 
 Sitemap: https://easygaragecleaning.com/sitemap.xml

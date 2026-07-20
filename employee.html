@@ -1713,7 +1713,7 @@ async function generateContract() {
     addAuditLog('send_contract', `Lead: ${name} · Quote: ${amount} · ID: ${quoteId}`);
   }
 
-  _contractLink = `https://easygaragecleaning.com/quote.html?id=${quoteId}`;
+  _contractLink = `https://easygaragecleaning.com/quote?id=${quoteId}`;
 
   // Show link + SMS button
   document.getElementById('cm-link-display').textContent = _contractLink;
@@ -3216,11 +3216,11 @@ async function ocBook() {
 <div class="mobile-sticky-cta" aria-label="Quick contact">
   <a href="tel:+19709991818" class="mobile-cta-btn mobile-cta-call">Call</a>
   <a href="sms:+19709991818?body=Hi!%20I'd%20like%20a%20quote.%20I%20can%20text%20photos%20of%20my%20garage/junk." class="mobile-cta-btn mobile-cta-text">Text</a>
-  <a href="/book.html" class="mobile-cta-btn mobile-cta-quote">Quote</a>
+  <a href="/book" class="mobile-cta-btn mobile-cta-quote">Quote</a>
 </div>
 
 <div class="egc-portal-foot" style="background:#0a1628;border-top:1px solid rgba(255,255,255,.08);padding:14px 18px;text-align:center;font-size:12px;color:rgba(245,241,234,.55)">
-  <a href="/privacy-policy.html" style="color:#ff5b1f;margin:0 8px">Privacy</a> · <a href="/" style="color:#ff5b1f">Home</a> · Employee portal — internal use only
+  <a href="/privacy-policy" style="color:#ff5b1f;margin:0 8px">Privacy</a> · <a href="/" style="color:#ff5b1f">Home</a> · Employee portal — internal use only
 </div>
 <a href="#top" id="back-to-top" class="back-to-top" aria-label="Back to top" hidden>Top</a>
 <script>(function(){const btt=document.getElementById('back-to-top');if(!btt)return;const onScroll=()=>{btt.hidden=window.scrollY<420};btt.addEventListener('click',e=>{e.preventDefault();window.scrollTo({top:0,behavior:'smooth'})});window.addEventListener('scroll',onScroll,{passive:true});onScroll();})();</script>

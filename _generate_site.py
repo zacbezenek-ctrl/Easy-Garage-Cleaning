@@ -3816,6 +3816,15 @@ def main():
     generate_ai_txt()
     patch_static_pages()
 
+    # Cloudflare Pages 308-redirects every .html path to its extensionless
+    # twin, so Google only indexes extensionless URLs. Keep every emitted
+    # canonical/link/sitemap URL in that format or GSC reports the whole
+    # sitemap as "Page with redirect" (0 of 67 indexed, July 2026).
+    from _finalize_urls import finalize_site
+    finalized = finalize_site(ROOT)
+    if finalized:
+        print("URL finalize:", len(finalized), "file(s) rewritten to extensionless URLs")
+
     seo_issues = audit_seo_meta(fix_long_titles=True)
     if seo_issues:
         print("SEO audit:", len(seo_issues), "issue(s)")
