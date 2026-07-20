@@ -1,0 +1,13 @@
+{
+  "extraKnownMarketplaces": {
+    "nowork-studio": {
+      "source": {
+        "source": "github",
+        "repo": "nowork-studio/notfair"
+      }
+    }
+  },
+  "enabledPlugins": {
+    "notfair@nowork-studio": true
+  }
+}
