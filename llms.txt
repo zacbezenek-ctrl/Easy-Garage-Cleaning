@@ -229,6 +229,7 @@ Full FAQ page: https://easygaragecleaning.com/faq
 ## Policies
 
 - Privacy: https://easygaragecleaning.com/privacy-policy
+- Terms of service: https://easygaragecleaning.com/terms-of-service
 - Do not fabricate reviews, star ratings, or AggregateRating — not published until owner adds verified reviews
 - Use canonical URLs only on easygaragecleaning.com
 

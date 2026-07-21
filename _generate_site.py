@@ -791,6 +791,7 @@ FOOTER = """
         <li><a href="/book.html">Book Online</a></li>
         <li><a href="{pricing_href}">Pricing</a></li>
         <li><a href="/privacy-policy.html">Privacy Policy</a></li>
+        <li><a href="/terms-of-service.html">Terms of Service</a></li>
       </ul>
     </div>
     <div class="foot-col foot-contact">
@@ -804,7 +805,7 @@ FOOTER = """
   <div class="foot-bar">
     <div class="wrap foot-bar-inner">
       <span>&copy; 2026 Easy Garage Cleaning LLC · Insured</span>
-      <a href="/privacy-policy.html">Privacy Policy</a>
+      <span><a href="/privacy-policy.html">Privacy Policy</a> · <a href="/terms-of-service.html">Terms of Service</a></span>
     </div>
   </div>
 </footer>
@@ -2124,6 +2125,47 @@ def render_privacy_policy():
     return page_shell(title, desc, canonical, "", body)
 
 
+def render_terms_of_service():
+    title = "Terms of Service | Easy Garage Cleaning"
+    desc = "Terms of service for Easy Garage Cleaning LLC — quotes, scheduling, payment, disposal of removed items, and the rules that apply when you use our website or book a cleanout."
+    canonical = f"{SITE}/terms-of-service.html"
+    body = f"""<main>
+<section class="body-copy"><div class="wrap"><div class="body-copy-inner reveal" style="max-width:720px;margin:0 auto;padding:48px 0 80px">
+<h1 class="hero-title" style="max-width:none;font-size:clamp(28px,5vw,40px)">Terms of Service</h1>
+<p class="section-sub" style="margin-bottom:32px">Easy Garage Cleaning LLC · Last updated: {TODAY}</p>
+<h2>1. Acceptance of These Terms</h2>
+<p>These Terms of Service ("Terms") govern your use of the Easy Garage Cleaning LLC ("we," "us," "our") website at easygaragecleaning.com and the garage cleanout, junk removal, and related hauling services we provide in Northern Colorado. By using our website, requesting a quote, or booking a service, you agree to these Terms. If you do not agree, please do not use the site or our services.</p>
+<h2>2. Our Services</h2>
+<p>We provide garage cleanouts, junk removal, hauling, and related services to residential and commercial customers in Fort Collins, Loveland, Windsor, Wellington, Timnath, Severance, LaPorte, and surrounding Northern Colorado communities. Service availability may vary by location and season.</p>
+<h2>3. Quotes &amp; Pricing</h2>
+<p>Quotes provided by phone, text, email, or through our website — including photo-based quotes — are good-faith estimates based on the information and photos you provide. The final price is confirmed on site before work begins. If the scope of the job differs materially from what was described (for example, additional items, restricted access, or items we cannot legally haul), we will discuss any price adjustment with you before starting. You are never obligated to proceed with a quote.</p>
+<h2>4. Scheduling, Cancellations &amp; Access</h2>
+<p>Appointment windows are scheduled with you in advance. If you need to cancel or reschedule, please give us as much notice as you can — ideally at least 24 hours. We may need to reschedule due to weather, safety concerns, or circumstances beyond our control, and will notify you as soon as possible if that happens. You agree to provide safe, lawful access to the service location at the scheduled time.</p>
+<h2>5. Payment</h2>
+<p>Payment is due upon completion of service unless we have agreed otherwise in writing. Accepted payment methods are confirmed at booking. Amounts unpaid after service is complete may be subject to reasonable collection efforts as permitted by Colorado law.</p>
+<h2>6. Items We Can &amp; Cannot Take</h2>
+<p>We cannot accept hazardous materials — including paint, chemicals, oils, fuels, asbestos, and similar regulated waste — or any items we cannot legally transport or dispose of. See our <a href="/what-we-take.html" class="content-link">What We Take</a> page for details. We may decline any item at our discretion for safety or legal reasons.</p>
+<h2>7. Ownership &amp; Disposal of Removed Items</h2>
+<p>Once items are loaded onto our vehicle with your authorization, they become the property of Easy Garage Cleaning LLC. Where practical, we donate or recycle items in good condition; remaining items are disposed of responsibly. You are responsible for confirming, before removal, that you own or have the right to dispose of every item — please double-check for personal documents, valuables, and keepsakes beforehand. We are not responsible for items removed at your direction.</p>
+<h2>8. Text Messaging (SMS) Terms</h2>
+<p>If you opt in to text messages, we will text you about your quote, scheduling, and appointment updates at the number you provide. Message frequency varies, and message and data rates may apply. Reply STOP at any time to opt out or HELP for help. Consent to receive texts is not a condition of purchase. See our <a href="/privacy-policy.html" class="content-link">Privacy Policy</a> for how we handle your information.</p>
+<h2>9. Website Use</h2>
+<p>You agree not to misuse our website — including attempting to disrupt it, submitting false or misleading quote requests, or scraping content for commercial purposes without permission. Content on the site is provided for general information and may change without notice.</p>
+<h2>10. Intellectual Property</h2>
+<p>The content on this website — including text, photos, logos, and design — belongs to Easy Garage Cleaning LLC or its licensors and may not be copied or reused for commercial purposes without our written permission.</p>
+<h2>11. Disclaimers &amp; Limitation of Liability</h2>
+<p>Our website is provided "as is" without warranties of any kind. We carry insurance and take care in our work; however, to the fullest extent permitted by law, our total liability arising out of any service is limited to the amount you paid us for that service. We are not liable for indirect, incidental, or consequential damages. Nothing in these Terms limits liability that cannot be limited under applicable law.</p>
+<h2>12. Governing Law</h2>
+<p>These Terms are governed by the laws of the State of Colorado. Any dispute arising from these Terms or our services will be resolved in the state courts located in Larimer County, Colorado, unless applicable law requires otherwise.</p>
+<h2>13. Changes to These Terms</h2>
+<p>We may update these Terms from time to time. The "Last updated" date above reflects the most recent version. Continued use of our website or services after changes take effect constitutes acceptance of the updated Terms.</p>
+<h2>14. Contact</h2>
+<p>Easy Garage Cleaning LLC<br>Fort Collins, Colorado<br><a href="mailto:{EMAIL}" class="content-link">{EMAIL}</a><br><a href="tel:{PHONE}" class="content-link">{PHONE_DISPLAY}</a></p>
+</div></div></section>
+</main>"""
+    return page_shell(title, desc, canonical, "", body)
+
+
 SERVICE_AREA_GRID = [
     ("Fort Collins", "/garage-cleanouts-fort-collins-co.html", "Garage cleanouts & junk"),
     ("Loveland", "/garage-cleanouts-loveland-co.html", "Garage cleanouts"),
@@ -2560,6 +2602,7 @@ def generate_llms_txt():
         "## Policies",
         "",
         f"- Privacy: {SITE}/privacy-policy.html",
+        f"- Terms of service: {SITE}/terms-of-service.html",
         "- Do not fabricate reviews, star ratings, or AggregateRating — not published until owner adds verified reviews",
         "- Use canonical URLs only on easygaragecleaning.com",
         "",
@@ -3536,7 +3579,7 @@ def patch_static_pages():
     sticky_re = re.compile(r'<div class="mobile-sticky-cta"[\s\S]*?</div>\s*(?=<script|$)', re.MULTILINE)
     nav_js = NAV_JS_SCRIPT
     patterns = [
-        "index.html", "faq.html", "privacy-policy.html", "thank-you.html", "book.html", "employee.html",
+        "index.html", "faq.html", "privacy-policy.html", "terms-of-service.html", "thank-you.html", "book.html", "employee.html",
         "service-areas.html", "reviews.html",
         "blog/*.html",
         "loveland-garage-cleanout.html", "windsor-garage-cleanout.html",
@@ -3776,6 +3819,9 @@ def main():
     (ROOT / "privacy-policy.html").write_text(render_privacy_policy(), encoding="utf-8")
     generated.append("privacy-policy.html")
 
+    (ROOT / "terms-of-service.html").write_text(render_terms_of_service(), encoding="utf-8")
+    generated.append("terms-of-service.html")
+
     (ROOT / "service-areas.html").write_text(render_service_areas(), encoding="utf-8")
     generated.append("service-areas.html")
 
@@ -3803,6 +3849,7 @@ def main():
         (f"{SITE}/service-areas.html", "0.8"),
         (f"{SITE}/reviews.html", "0.7"),
         (f"{SITE}/privacy-policy.html", "0.3"),
+        (f"{SITE}/terms-of-service.html", "0.3"),
         (f"{SITE}/loveland-garage-cleanout.html", "0.8"),
         (f"{SITE}/windsor-garage-cleanout.html", "0.8"),
         (f"{SITE}/wellington-junk-removal.html", "0.8"),
