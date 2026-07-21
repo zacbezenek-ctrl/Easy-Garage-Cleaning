@@ -78,6 +78,9 @@
   .apply-btn:hover{background:var(--accent-deep)}
   .apply-btn:disabled{opacity:.6;cursor:not-allowed}
   .form-fine{font-size:12px;color:var(--muted);margin-top:13px;line-height:1.6;text-align:center}
+  .sms-consent{display:flex;gap:10px;align-items:flex-start;margin:2px 0 16px;font-size:12px;line-height:1.55;color:var(--muted);cursor:pointer}
+  .sms-consent input[type="checkbox"]{flex:none;width:16px;height:16px;margin-top:1px;accent-color:var(--accent);cursor:pointer}
+  .sms-consent a{color:inherit;text-decoration:underline}
   .form-fine a{color:var(--accent-deep);font-weight:600}
   #form-result{margin-top:14px;font-size:14px;font-weight:600;color:#b91c1c;text-align:center}
 
@@ -168,6 +171,7 @@
           <textarea id="ap-note" name="Anything else" placeholder="Experience, availability, do you have a valid driver's license, etc."></textarea>
         </div>
 
+        <label class="sms-consent"><input type="checkbox" name="sms_consent" value="yes"><span>I agree to receive text messages from Easy Garage Cleaning about my job application at the number provided. Message frequency varies, msg &amp; data rates may apply. Reply STOP to opt out or HELP for help. See our <a href="/privacy-policy" target="_blank" rel="noopener">Privacy Policy</a>.</span></label>
         <button type="submit" class="apply-btn">Submit application</button>
         <p id="form-result" hidden></p>
         <p class="form-fine">By submitting, you agree we may contact you about working at Easy Garage Cleaning. Prefer to talk? Call or text <a href="tel:+19709991818">(970)&nbsp;999-1818</a>.</p>

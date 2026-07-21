@@ -128,6 +128,9 @@ h1.hero-title .marker { background: linear-gradient(180deg, transparent 62%, rgb
 .form-head h2 { font-family: var(--font-display); font-size: 26px; font-weight: 600; letter-spacing: -0.02em; margin-bottom: 6px; }
 .form-head p { font-size: 14px; color: var(--muted); }
 .field .hint { font-size: 11.5px; color: var(--muted); margin-top: 5px; font-family: var(--font-mono); letter-spacing: 0.05em; }
+.sms-consent { display: flex; gap: 10px; align-items: flex-start; margin: 2px 0 14px; font-size: 12px; line-height: 1.55; color: var(--muted); cursor: pointer; }
+.sms-consent input[type="checkbox"] { flex: none; width: 16px; height: 16px; margin-top: 1px; accent-color: var(--accent); cursor: pointer; }
+.sms-consent a { color: inherit; text-decoration: underline; }
 .form-or { display: flex; align-items: center; gap: 12px; margin: 18px 0 14px; font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.18em; color: var(--muted); text-transform: uppercase; }
 .form-or::before, .form-or::after { content: ''; flex: 1; height: 1px; background: rgba(10,22,40,0.12); }
 .form-call { display: flex; align-items: center; justify-content: center; gap: 10px; width: 100%; padding: 15px; background: var(--white); color: var(--ink); border: 1.5px solid var(--ink); border-radius: var(--radius); font-weight: 700; font-size: 16px; letter-spacing: -0.01em; transition: background 0.2s; }
@@ -333,6 +336,7 @@ h1.hero-title .marker { background: linear-gradient(180deg, transparent 62%, rgb
                   <div class="hint">Fort Collins, Loveland, Windsor &amp; Timnath only</div>
                 </div>
               </div>
+              <label class="sms-consent"><input type="checkbox" name="sms_consent" value="yes"><span>I agree to receive text messages from Easy Garage Cleaning about my quote and appointment at the number provided. Message frequency varies, msg &amp; data rates may apply. Reply STOP to opt out or HELP for help. See our <a href="/privacy-policy" target="_blank" rel="noopener">Privacy Policy</a>.</span></label>
               <button type="submit" class="form-submit" id="submitBtn">Get My Free Quote &rarr;</button>
 
               <div class="form-or">or call now</div>
