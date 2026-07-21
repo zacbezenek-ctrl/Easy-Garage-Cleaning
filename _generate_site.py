@@ -1112,7 +1112,7 @@ QUOTE_FORM = """
             </div>
             <p class="form-note" style="margin-top:8px">Most quotes returned in under 5 minutes during business hours.</p>
             <p class="form-privacy">We only use your info for this quote — never sold or shared.</p>
-            <label class="sms-consent"><input type="checkbox" name="sms_consent" value="yes"><span>I agree to receive text messages from Easy Garage Cleaning about my quote and appointment at the number provided. Message frequency varies, msg &amp; data rates may apply. Reply STOP to opt out or HELP for help. See our <a href="/privacy-policy">Privacy Policy</a>.</span></label>
+            <label class="sms-consent"><input type="checkbox" name="sms_consent" value="yes"><span>I agree to receive text messages from Easy Garage Cleaning about my quote and appointment at the number provided. Consent is not a condition of purchase. Message frequency varies, msg &amp; data rates may apply. Reply STOP to opt out or HELP for help. See our <a href="/privacy-policy">Privacy Policy</a> and <a href="/terms-of-service">Terms of Service</a>.</span></label>
             <div class="form-nav"><button type="button" class="btn-secondary" data-prev>← Back</button><button type="submit" class="btn-primary form-submit" data-submit-label>Confirm booking request →</button></div>
           </div>
         </form>
@@ -2113,8 +2113,13 @@ def render_privacy_policy():
 <p>Our website uses Google Analytics, Microsoft Clarity, and the Meta Pixel to measure advertising performance. These tools may collect anonymized data about your visit. You can opt out of interest-based advertising through your browser or device settings.</p>
 <h2>Data Retention</h2>
 <p>We retain your contact information only as long as necessary to fulfill your quote request or as required by law. You may request deletion at any time.</p>
+<h2>Data Security</h2>
+<p>We use reasonable administrative and technical safeguards to protect the information you submit. Form submissions are transmitted over encrypted HTTPS connections. No method of transmission or storage is completely secure, so we cannot guarantee absolute security.</p>
 <h2>Third Parties</h2>
 <p>We use Web3Forms to process form submissions securely. Your data is transmitted over HTTPS and is not used by third parties for their own marketing.</p>
+<h2>SMS / Text Message Consent</h2>
+<p>Our quote and contact forms include an optional checkbox that lets you consent to receive text messages (SMS) from Easy Garage Cleaning LLC about your quote request, scheduling, and appointment updates at the phone number you provide. Consent is not a condition of purchasing any goods or services. Message frequency varies. Message and data rates may apply. You can opt out at any time by replying STOP to any message, or get assistance by replying HELP or contacting us using the information below.</p>
+<p>No mobile phone numbers or SMS opt-in data will be shared with or sold to third parties or affiliates for marketing or promotional purposes.</p>
 <h2>Your Rights</h2>
 <p>You have the right to request access to, correction of, or deletion of your personal information. Contact us using the information below.</p>
 <h2>Contact</h2>
@@ -2127,40 +2132,46 @@ def render_privacy_policy():
 
 def render_terms_of_service():
     title = "Terms of Service | Easy Garage Cleaning"
-    desc = "Terms of service for Easy Garage Cleaning LLC — quotes, scheduling, payment, disposal of removed items, and the rules that apply when you use our website or book a cleanout."
+    desc = "Terms of service for Easy Garage Cleaning LLC — quotes, scheduling, payment, what we haul, liability, and text-messaging terms for our Fort Collins garage cleanout and junk removal services."
     canonical = f"{SITE}/terms-of-service.html"
     body = f"""<main>
 <section class="body-copy"><div class="wrap"><div class="body-copy-inner reveal" style="max-width:720px;margin:0 auto;padding:48px 0 80px">
 <h1 class="hero-title" style="max-width:none;font-size:clamp(28px,5vw,40px)">Terms of Service</h1>
 <p class="section-sub" style="margin-bottom:32px">Easy Garage Cleaning LLC · Last updated: {TODAY}</p>
-<h2>1. Acceptance of These Terms</h2>
-<p>These Terms of Service ("Terms") govern your use of the Easy Garage Cleaning LLC ("we," "us," "our") website at easygaragecleaning.com and the garage cleanout, junk removal, and related hauling services we provide in Northern Colorado. By using our website, requesting a quote, or booking a service, you agree to these Terms. If you do not agree, please do not use the site or our services.</p>
-<h2>2. Our Services</h2>
-<p>We provide garage cleanouts, junk removal, hauling, and related services to residential and commercial customers in Fort Collins, Loveland, Windsor, Wellington, Timnath, Severance, LaPorte, and surrounding Northern Colorado communities. Service availability may vary by location and season.</p>
-<h2>3. Quotes &amp; Pricing</h2>
-<p>Quotes provided by phone, text, email, or through our website — including photo-based quotes — are good-faith estimates based on the information and photos you provide. The final price is confirmed on site before work begins. If the scope of the job differs materially from what was described (for example, additional items, restricted access, or items we cannot legally haul), we will discuss any price adjustment with you before starting. You are never obligated to proceed with a quote.</p>
-<h2>4. Scheduling, Cancellations &amp; Access</h2>
-<p>Appointment windows are scheduled with you in advance. If you need to cancel or reschedule, please give us as much notice as you can — ideally at least 24 hours. We may need to reschedule due to weather, safety concerns, or circumstances beyond our control, and will notify you as soon as possible if that happens. You agree to provide safe, lawful access to the service location at the scheduled time.</p>
-<h2>5. Payment</h2>
-<p>Payment is due upon completion of service unless we have agreed otherwise in writing. Accepted payment methods are confirmed at booking. Amounts unpaid after service is complete may be subject to reasonable collection efforts as permitted by Colorado law.</p>
-<h2>6. Items We Can &amp; Cannot Take</h2>
-<p>We cannot accept hazardous materials — including paint, chemicals, oils, fuels, asbestos, and similar regulated waste — or any items we cannot legally transport or dispose of. See our <a href="/what-we-take.html" class="content-link">What We Take</a> page for details. We may decline any item at our discretion for safety or legal reasons.</p>
-<h2>7. Ownership &amp; Disposal of Removed Items</h2>
-<p>Once items are loaded onto our vehicle with your authorization, they become the property of Easy Garage Cleaning LLC. Where practical, we donate or recycle items in good condition; remaining items are disposed of responsibly. You are responsible for confirming, before removal, that you own or have the right to dispose of every item — please double-check for personal documents, valuables, and keepsakes beforehand. We are not responsible for items removed at your direction.</p>
-<h2>8. Text Messaging (SMS) Terms</h2>
-<p>If you opt in to text messages, we will text you about your quote, scheduling, and appointment updates at the number you provide. Message frequency varies, and message and data rates may apply. Reply STOP at any time to opt out or HELP for help. Consent to receive texts is not a condition of purchase. See our <a href="/privacy-policy.html" class="content-link">Privacy Policy</a> for how we handle your information.</p>
-<h2>9. Website Use</h2>
-<p>You agree not to misuse our website — including attempting to disrupt it, submitting false or misleading quote requests, or scraping content for commercial purposes without permission. Content on the site is provided for general information and may change without notice.</p>
-<h2>10. Intellectual Property</h2>
-<p>The content on this website — including text, photos, logos, and design — belongs to Easy Garage Cleaning LLC or its licensors and may not be copied or reused for commercial purposes without our written permission.</p>
-<h2>11. Disclaimers &amp; Limitation of Liability</h2>
-<p>Our website is provided "as is" without warranties of any kind. We carry insurance and take care in our work; however, to the fullest extent permitted by law, our total liability arising out of any service is limited to the amount you paid us for that service. We are not liable for indirect, incidental, or consequential damages. Nothing in these Terms limits liability that cannot be limited under applicable law.</p>
-<h2>12. Governing Law</h2>
-<p>These Terms are governed by the laws of the State of Colorado. Any dispute arising from these Terms or our services will be resolved in the state courts located in Larimer County, Colorado, unless applicable law requires otherwise.</p>
-<h2>13. Changes to These Terms</h2>
-<p>We may update these Terms from time to time. The "Last updated" date above reflects the most recent version. Continued use of our website or services after changes take effect constitutes acceptance of the updated Terms.</p>
-<h2>14. Contact</h2>
+<p>These Terms of Service ("Terms") govern your use of this website and the garage cleanout, garage organization, and junk removal services provided by Easy Garage Cleaning LLC ("Easy Garage Cleaning," "we," "us," or "our"). By requesting a quote, booking a job, or otherwise using our services, you agree to these Terms.</p>
+<h2>Eligibility</h2>
+<p>You must be at least 18 years old and able to enter into a binding contract to use our website, request a quote, opt in to text messages, or book our services. By using our services you represent that you meet these requirements.</p>
+<h2>Our Services</h2>
+<p>We provide garage cleanouts, garage organization, junk removal, and related hauling services in Fort Collins and Northern Colorado. Service availability, scheduling, and pricing may vary by location and job scope.</p>
+<h2>Quotes &amp; Pricing</h2>
+<p>Quotes are provided as flat-rate estimates based on the photos and information you supply. A final price is confirmed on site before work begins, and you only pay after approving that quote. If the actual volume, weight, access, or contents differ materially from what was described, we may adjust the quote and will review any change with you before continuing.</p>
+<h2>Scheduling &amp; Cancellation</h2>
+<p>We schedule service by appointment. Please give us as much notice as possible if you need to reschedule or cancel. We reserve the right to reschedule due to weather, safety conditions, crew availability, or other circumstances outside our control. You agree to provide safe and lawful access to the service location at the scheduled time.</p>
+<h2>Payment</h2>
+<p>Payment is due upon completion of the job unless otherwise agreed in writing. We accept the payment methods communicated to you at the time of booking. You are responsible for any fees or charges associated with returned or failed payments.</p>
+<h2>Customer Responsibilities</h2>
+<p>You represent that you own the items to be removed, or that you are authorized to have them removed and disposed of. You agree to identify anything you wish to keep before we begin — please double-check for personal documents, valuables, and keepsakes beforehand. We are not responsible for items you fail to identify as items to keep.</p>
+<h2>Items We Do Not Accept</h2>
+<p>For safety and legal reasons, we do not haul hazardous materials, including but not limited to paint, solvents, chemicals, fuel, oil, asbestos, ammunition, or biohazardous waste. If such items are present, we may decline to remove them and will let you know how they can be disposed of properly. See our <a href="/what-we-take.html" class="content-link">What We Take</a> page for details.</p>
+<h2>Donation &amp; Disposal</h2>
+<p>Where practical, we donate or recycle usable items — including through partners such as the Habitat for Humanity ReStore — and dispose of the remainder at appropriate facilities. Once items are removed with your authorization, they become our property to donate, recycle, or dispose of at our discretion, and cannot be returned.</p>
+<h2>Property &amp; Liability</h2>
+<p>We take reasonable care while working on your property, and Easy Garage Cleaning is insured. To the fullest extent permitted by law, we are not liable for pre-existing conditions, damage arising from unsafe or concealed conditions, or indirect, incidental, or consequential damages. Our total liability for any claim is limited to the amount you paid for the specific service giving rise to the claim.</p>
+<h2>SMS / Text Message Terms</h2>
+<p><strong>Program description.</strong> When you provide your mobile number and opt in — for example, by checking the consent box on one of our quote or contact forms — Easy Garage Cleaning LLC may send you recurring text messages (SMS) about your quote request, appointment scheduling and reminders, crew-arrival and service updates, and follow-up questions about your job. This is a transactional and customer-care messaging program.</p>
+<p><strong>Message frequency &amp; rates.</strong> Message frequency varies based on your interaction with us. Message and data rates may apply according to your mobile carrier plan.</p>
+<p><strong>Opting out and help.</strong> You can cancel at any time by replying STOP to any message; we will send one confirmation and then stop texting you. Reply HELP for assistance, or contact us directly at <a href="tel:{PHONE}" class="content-link">{PHONE_DISPLAY}</a> or <a href="mailto:{EMAIL}" class="content-link">{EMAIL}</a>.</p>
+<p><strong>Carrier disclaimer.</strong> Mobile carriers are not liable for delayed or undelivered messages. Consent to receive text messages is not a condition of purchasing any goods or services.</p>
+<p><strong>Privacy.</strong> No mobile phone numbers or SMS opt-in data will be shared with or sold to third parties or affiliates for marketing or promotional purposes. See our <a href="/privacy-policy.html" class="content-link">Privacy Policy</a> for how we handle your information.</p>
+<h2>Website Content</h2>
+<p>All content on this website, including text, images, logos, and design, is the property of Easy Garage Cleaning LLC or its licensors and may not be copied or reused without permission. This website is provided "as is" without warranties of any kind.</p>
+<h2>Changes to These Terms</h2>
+<p>We may update these Terms from time to time. The "Last updated" date above reflects the most recent version. Continued use of our website or services after changes are posted constitutes acceptance of the updated Terms.</p>
+<h2>Governing Law</h2>
+<p>These Terms are governed by the laws of the State of Colorado, without regard to its conflict-of-law provisions. Any dispute arising from these Terms or our services will be handled in the courts located in Larimer County, Colorado.</p>
+<h2>Contact</h2>
 <p>Easy Garage Cleaning LLC<br>Fort Collins, Colorado<br><a href="mailto:{EMAIL}" class="content-link">{EMAIL}</a><br><a href="tel:{PHONE}" class="content-link">{PHONE_DISPLAY}</a></p>
+<p style="font-size:13px;color:var(--muted);margin-top:32px">If any provision of these Terms is found to be unenforceable, the remaining provisions will remain in full force and effect.</p>
 </div></div></section>
 </main>"""
     return page_shell(title, desc, canonical, "", body)
