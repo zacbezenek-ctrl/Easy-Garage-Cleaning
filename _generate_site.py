@@ -331,6 +331,9 @@ a:focus-visible,.btn-primary:focus-visible,.btn-secondary:focus-visible,.nav-tog
 .ba-cell .ba-coming-soon,.hero-ba-cell .ba-coming-soon{position:absolute;inset:0;background:inherit}
 .form-hint{font-size:12px;color:var(--muted-dark);margin-top:4px;line-height:1.45}
 .form-privacy{font-size:12px;color:var(--muted-dark);margin-top:10px;line-height:1.5;opacity:.9}
+.sms-consent{display:flex;gap:10px;align-items:flex-start;margin-top:12px;font-size:12px;line-height:1.5;color:var(--muted-dark);cursor:pointer;text-align:left;opacity:.9}
+.sms-consent input[type="checkbox"]{flex:none;width:16px;height:16px;margin-top:1px;accent-color:var(--accent);cursor:pointer}
+.sms-consent a{color:inherit;text-decoration:underline}
 .form-step-dot.active{box-shadow:0 0 0 1px var(--accent)}
 .field .field-hint{font-size:11px;color:var(--muted-dark);margin-top:5px;font-family:var(--font-body);letter-spacing:0;text-transform:none}
 .back-to-top{position:fixed;bottom:calc(76px + env(safe-area-inset-bottom,0px));right:14px;z-index:85;width:44px;height:44px;display:flex;align-items:center;justify-content:center;background:var(--ink);color:var(--paper);border:1px solid var(--navy-line);border-radius:var(--radius);font-family:var(--font-mono);font-size:11px;font-weight:600;letter-spacing:.06em;opacity:0;pointer-events:none;transition:opacity .25s,transform .25s;transform:translateY(8px)}
@@ -1108,6 +1111,7 @@ QUOTE_FORM = """
             </div>
             <p class="form-note" style="margin-top:8px">Most quotes returned in under 5 minutes during business hours.</p>
             <p class="form-privacy">We only use your info for this quote — never sold or shared.</p>
+            <label class="sms-consent"><input type="checkbox" name="sms_consent" value="yes"><span>I agree to receive text messages from Easy Garage Cleaning about my quote and appointment at the number provided. Message frequency varies, msg &amp; data rates may apply. Reply STOP to opt out or HELP for help. See our <a href="/privacy-policy">Privacy Policy</a>.</span></label>
             <div class="form-nav"><button type="button" class="btn-secondary" data-prev>← Back</button><button type="submit" class="btn-primary form-submit" data-submit-label>Confirm booking request →</button></div>
           </div>
         </form>
