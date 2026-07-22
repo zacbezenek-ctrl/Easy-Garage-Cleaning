@@ -173,7 +173,7 @@ NORTHERO_RELATED = [
 TYPICAL_JOBS = {
     "Junk Removal": ("2–4 hours", "$250–$650"),
     "Garage Cleanout": ("2–5 hours", "$400–$650"),
-    "Garage Cleaning": ("1–3 hours", "$150–$300"),
+    "Garage Cleaning": ("2 hrs – full day", "$300–$3,200"),
     "Garage Organization": ("2–4 hours", "$250–$500"),
     "Furniture Removal": ("30 min – 2 hrs", "$99–$400"),
     "Appliance Removal": ("30 min – 2 hrs", "$99–$400"),

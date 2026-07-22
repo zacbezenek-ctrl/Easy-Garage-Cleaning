@@ -90,6 +90,7 @@ SERVICES = [
         "hero_sub": "After the junk is gone, dust and cobwebs remain. We sweep, wipe surfaces, and reset your Fort Collins garage so it feels truly clean — not just empty.",
         "sms": "Hi! I need garage cleaning in Fort Collins.",
         "stype": "Garage Cleaning",
+        "quick_answer": "Professional garage cleaning in Fort Collins runs $300–$3,200 depending on size and condition — from a single-car reset to a full multi-bay deep clean with floor degreasing. Flat-rate from photos, 5-minute response. Text (970) 999-1818 or book at easygaragecleaning.com/book.html.",
         "problem_title": "Empty isn't the same as <em>clean</em>",
         "problem_sub": "You've cleared the clutter but the floor is dusty, cobwebs hang in corners, and oil stains mark where the old mower sat.",
         "problems": [("🕸️", "Dust and cobwebs", "Years of accumulation in corners and rafters."), ("🛢️", "Oil and stain spots", "Old equipment left marks on concrete."), ("🧹", "No time to deep clean", "You got the junk out — now who sweeps?"), ("✨", "Want a fresh start", "Clean garage = easier to organize and maintain.")],
@@ -103,7 +104,7 @@ SERVICES = [
         "related": [("/garage-cleanouts-fort-collins-co.html", "Garage Cleanouts"), ("/garage-organization-fort-collins-co.html", "Garage Organization"), ("/junk-removal-fort-collins-co.html", "Junk Removal"), ("/blog/garage-organization-after-cleanout-fort-collins.html", "Organization After Cleanout"), ("/projects/fort-collins-garage-cleanout-old-town.html", "Sample Project"), ("/", "Home")],
         "faqs": [
             ("Do you offer garage cleaning without a cleanout?", "Yes — if the junk is already gone, we can come sweep and reset the space. Most clients pair cleaning with our cleanout service."),
-            ("How much does garage cleaning cost in Fort Collins?", "Standalone cleaning typically runs $150–$300 depending on garage size. Bundled with a cleanout, it's often included or discounted."),
+            ("How much does garage cleaning cost in Fort Collins?", "Garage cleaning runs $300–$3,200 depending on size and condition — from a single-car reset to a full multi-bay deep clean with floor degreasing and stain treatment. Flat-rate from your photos. Bundled with a cleanout, it's discounted."),
             ("Do you pressure wash garage floors?", "We focus on sweep and wipe service. Heavy oil stain removal or pressure washing can be quoted separately."),
             ("What cleaning supplies do you use?", "We bring brooms, dusters, bags, and basic cleaning supplies. No harsh chemicals unless you request them."),
             ("How long does garage cleaning take?", "Most single-car garages take 1–2 hours. Two-car garages 2–3 hours depending on condition."),
