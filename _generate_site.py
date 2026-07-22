@@ -603,7 +603,7 @@ HEAD = """<!DOCTYPE html>
 -->
 <title>{title}</title>
 <meta name="description" content="{desc}" />
-<meta name="robots" content="index, follow" />
+<meta name="robots" content="{robots}" />
 <link rel="canonical" href="{canonical}" />
 <link rel="icon" type="image/x-icon" href="/favicon.ico" />
 <meta name="theme-color" content="#ff5b1f" />
@@ -1589,7 +1589,7 @@ def quote_form_for(stype, **kwargs):
     return fmt(QUOTE_FORM, default_garage=dg, default_junk=dj, form_id=form_id, **spc, **sel, **kwargs)
 
 
-def page_shell(title, desc, canonical, schema, body, og_type="website", quote_href="/book.html", **nav_kw):
+def page_shell(title, desc, canonical, schema, body, og_type="website", quote_href="/book.html", robots="index, follow", **nav_kw):
     rating_note = '\n<!-- AggregateRating: uncomment and add verified reviewCount/ratingValue to LocalBusiness when real reviews exist -->\n'
     extra = f'\n<script type="application/ld+json">{webpage_schema(title, desc, canonical)}</script>'
     nav_opts = {
@@ -1601,7 +1601,7 @@ def page_shell(title, desc, canonical, schema, body, og_type="website", quote_hr
     nav_opts.update(nav_kw)
     if "<main" in body and 'id="main-content"' not in body:
         body = re.sub(r"<main(\s|>)", r'<main id="main-content"\1', body, count=1)
-    return HEAD.format(title=title, desc=desc, canonical=canonical, schema=rating_note + schema + extra, css=SHARED_CSS + POLISH_CSS, SITE=SITE, og_type=og_type) + fmt(NAV, **nav_opts) + body + fmt(FOOTER, **nav_opts)
+    return HEAD.format(title=title, desc=desc, canonical=canonical, schema=rating_note + schema + extra, css=SHARED_CSS + POLISH_CSS, SITE=SITE, og_type=og_type, robots=robots) + fmt(NAV, **nav_opts) + body + fmt(FOOTER, **nav_opts)
 
 
 def render_service(s):
@@ -1648,7 +1648,8 @@ def render_service(s):
         also_booked_html(s["stype"]),
         quote_form_for(s["stype"], cta_title=s["cta"], form_subject=s["form_subject"], sms_body=s["sms"].replace(" ", "%20")),
     ]) + "</main>"
-    return page_shell(s["title"], s["desc"], canonical, schema, body)
+    robots = "noindex, nofollow" if s.get("noindex") else "index, follow"
+    return page_shell(s["title"], s["desc"], canonical, schema, body, robots=robots)
 
 
 CITY_HERO_OVERLAY = frozenset({"Windsor", "Loveland", "Wellington"})
@@ -3773,6 +3774,10 @@ def audit_seo_meta(fix_long_titles=False):
 
 def main():
     from _services_data import SERVICES, CITIES, PROJECTS, ITEM_PAGES, COMPARISON_PAGES
+    try:
+        from _services_data import PPC_LANDERS
+    except ImportError:
+        PPC_LANDERS = []
 
     generated = []
     sitemap_urls = [(f"{SITE}/", "1.0"), (f"{SITE}/about.html", "0.8"), (f"{SITE}/book.html", "0.9"), (f"{SITE}/pricing.html", "0.9"), (f"{SITE}/what-we-take.html", "0.9")]
@@ -3781,6 +3786,12 @@ def main():
         (ROOT / s["slug"]).write_text(render_service(s), encoding="utf-8")
         generated.append(s["slug"])
         sitemap_urls.append((f"{SITE}/{s['slug']}", "0.9"))
+
+    # PPC landing pages: rendered noindex and intentionally excluded from the
+    # sitemap and internal cross-links (they live outside SERVICES). Ad traffic only.
+    for s in PPC_LANDERS:
+        (ROOT / s["slug"]).write_text(render_service(s), encoding="utf-8")
+        generated.append(s["slug"])
 
     for c in CITIES:
         (ROOT / c["slug"]).write_text(render_city(c), encoding="utf-8")
