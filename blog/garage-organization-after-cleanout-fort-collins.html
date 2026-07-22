@@ -69,7 +69,7 @@
 <script type="application/ld+json">{"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Home", "item": "https://easygaragecleaning.com/"}, {"@type": "ListItem", "position": 2, "name": "Blog", "item": "https://easygaragecleaning.com/blog/"}, {"@type": "ListItem", "position": 3, "name": "Garage Organization After Cleanout in Fort Collins", "item": "https://easygaragecleaning.com/blog/garage-organization-after-cleanout-fort-collins"}]}</script>
 <script type="application/ld+json">{"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [{"@type": "Question", "name": "Should I organize before or after junk removal?", "acceptedAnswer": {"@type": "Answer", "text": "After — organizing around junk wastes money. Cleanout first, then zones."}}, {"@type": "Question", "name": "Do you install shelving?", "acceptedAnswer": {"@type": "Answer", "text": "We recommend layouts and install basic shelving you purchase — labor-only, no markup."}}]}</script>
 <script type="application/ld+json">{"@context": "https://schema.org", "@type": "WebPage", "@id": "https://easygaragecleaning.com/blog/garage-organization-after-cleanout-fort-collins#webpage", "url": "https://easygaragecleaning.com/blog/garage-organization-after-cleanout-fort-collins", "name": "Garage Organization After Cleanout | Fort Collins", "description": "Cleaned your garage but worried it'll fill again? Fort Collins organization guide — zones, shelving & habits after cleanout. Book organization service.", "isPartOf": {"@id": "https://easygaragecleaning.com/#website"}, "about": {"@id": "https://easygaragecleaning.com/#business"}, "speakable": {"@type": "SpeakableSpecification", "cssSelector": [".hero-sub", ".faq-q", ".faq-a", ".def-block"]}}</script>
-<link rel="stylesheet" href="/styles.css?v=20260722">
+<link rel="stylesheet" href="/styles.css?v=20260723">
 </head>
 <body>
 <a href="#main-content" class="skip-link">Skip to content</a>
@@ -377,6 +377,7 @@ function initNavDrawer(){
   toggle.addEventListener('click',()=>setOpen(toggle.getAttribute('aria-expanded')!=='true'));
   if(closeBtn)closeBtn.addEventListener('click',()=>setOpen(false));
   if(overlay)overlay.addEventListener('click',()=>setOpen(false));
+  drawer.querySelectorAll('a[href]').forEach(a=>a.addEventListener('click',()=>setOpen(false)));
   document.querySelectorAll('.drawer-toggle').forEach(btn=>{
     btn.addEventListener('click',()=>{
       const open=btn.getAttribute('aria-expanded')==='true';

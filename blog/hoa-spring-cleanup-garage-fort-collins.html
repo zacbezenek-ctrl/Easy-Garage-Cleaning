@@ -102,7 +102,7 @@
 }
 </script>
 
-<link rel="stylesheet" href="/styles.css?v=20260722">
+<link rel="stylesheet" href="/styles.css?v=20260723">
 <style>
 .foot { display: flex; flex-direction: column; gap: 16px; justify-content: space-between; }
 .foot .logo { color: var(--paper); }
@@ -479,7 +479,7 @@
   <a href="/book" class="mobile-cta-btn mobile-cta-quote">Quote</a>
 </div>
 
-<style>@media(max-width:1023px){.mobile-sticky-cta{position:fixed;bottom:0;left:0;right:0;z-index:100;display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;background:#0a1628;padding:8px 10px 12px}body{padding-bottom:72px}}</style>
+
 <script>
 function initNavDrawer(){
   const toggle=document.querySelector('.nav-toggle');
@@ -499,6 +499,7 @@ function initNavDrawer(){
   toggle.addEventListener('click',()=>setOpen(toggle.getAttribute('aria-expanded')!=='true'));
   if(closeBtn)closeBtn.addEventListener('click',()=>setOpen(false));
   if(overlay)overlay.addEventListener('click',()=>setOpen(false));
+  drawer.querySelectorAll('a[href]').forEach(a=>a.addEventListener('click',()=>setOpen(false)));
   document.querySelectorAll('.drawer-toggle').forEach(btn=>{
     btn.addEventListener('click',()=>{
       const open=btn.getAttribute('aria-expanded')==='true';
@@ -512,5 +513,6 @@ function initNavDrawer(){
 if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',initNavDrawer);}else{initNavDrawer();}
 </script>
 <script>(function(){const btt=document.getElementById('back-to-top');if(!btt)return;const onScroll=()=>{btt.hidden=window.scrollY<420};btt.addEventListener('click',e=>{e.preventDefault();window.scrollTo({top:0,behavior:'smooth'})});window.addEventListener('scroll',onScroll,{passive:true});onScroll();})();</script>
+<script>(function(){var els=document.querySelectorAll('.reveal');if(!('IntersectionObserver' in window)){els.forEach(function(el){el.classList.add('visible');});return;}var io=new IntersectionObserver(function(es){es.forEach(function(e){if(e.isIntersecting){e.target.classList.add('visible');io.unobserve(e.target);}});},{threshold:0.08});els.forEach(function(el){io.observe(el);});})();</script>
 </body>
 </html>

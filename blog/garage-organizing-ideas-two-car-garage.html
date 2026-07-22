@@ -53,7 +53,7 @@
 }
 </script>
 
-<link rel="stylesheet" href="/styles.css?v=20260722">
+<link rel="stylesheet" href="/styles.css?v=20260723">
 <style>
 .foot { display: flex; flex-direction: column; gap: 16px; justify-content: space-between; }
 .foot .logo { color: var(--paper); }
@@ -224,11 +224,13 @@
 
       <p>Once you've cleared the clutter, then the organizing begins.</p>
 
-      <h2 id="zone-planning-the-foundation-of-a-functional-gar">Zone Planning: The Foundation of a Functional Garage</h2><aside class="article-cta reveal" aria-label="Book a quote">
+      <aside class="article-cta reveal" aria-label="Book a quote">
 <h3>Get your garage back</h3>
 <p>Text photos for a flat-rate quote in 5 minutes — no obligation.</p>
 <a href="/book" class="btn-primary">Book free quote</a>
 </aside>
+
+      <h2 id="zone-planning-the-foundation-of-a-functional-gar">Zone Planning: The Foundation of a Functional Garage</h2>
 
       <p>A well-organized two-car garage works because everything has a place and those places make sense together. Zone planning means dividing your garage into dedicated areas based on activity type. Here's a typical setup for a Fort Collins two-car garage:</p>
 
@@ -236,11 +238,7 @@
         <div class="zone">
           <h4>LAWN &amp; GARDEN ZONE</h4>
           <p>Lawn mower, string trimmer, rakes, shovels, hoses, sprinkler supplies. Usually near the door for easy pull-out access. Keep fuel containers separate.</p>
-        <aside class="article-cta reveal" aria-label="Book a quote">
-<h3>Get your garage back — book free quote</h3>
-<p>Next-day when schedule allows. Locally owned in Fort Collins.</p>
-<a href="/book" class="btn-primary">Book free quote</a> <a href="sms:+19709991818?body=Hi!%20I'd%20like%20a%20quote." class="btn-secondary" style="margin-left:8px;border-color:rgba(255,255,255,.3);color:var(--paper)">Text photos</a>
-</aside><nav class="related-posts reveal" aria-label="Related articles"><h3>Related reading</h3><ul><li><a href="/blog/garage-organization-after-cleanout-fort-collins">After cleanout guide</a></li><li><a href="/garage-organization-fort-collins-co">Organization service</a></li><li><a href="/garage-cleanouts-fort-collins-co">Garage cleanouts</a></li></ul></nav></div>
+        </div>
         <div class="zone">
           <h4>TOOLS ZONE</h4>
           <p>Workbench, tool chest, pegboard for hand tools, shelving for power tools and hardware. One wall, everything visible and reachable.</p>
@@ -254,6 +252,12 @@
           <p>Holiday décor, off-season gear, anything used less than a few times a year. This is where overhead racks make sense — out of the way, but accessible with a step ladder.</p>
         </div>
       </div>
+
+      <aside class="article-cta reveal" aria-label="Book a quote">
+<h3>Get your garage back — book free quote</h3>
+<p>Next-day when schedule allows. Locally owned in Fort Collins.</p>
+<a href="/book" class="btn-primary">Book free quote</a> <a href="sms:+19709991818?body=Hi!%20I'd%20like%20a%20quote." class="btn-secondary" style="margin-left:8px;border-color:rgba(255,255,255,.3);color:var(--paper)">Text photos</a>
+</aside>
 
       <p>The key principle: things you use frequently should be easiest to reach. Things you use once a year go overhead or in the back. Don't put seasonal Christmas boxes at eye level and the lawn mower in the back corner.</p>
 
@@ -336,6 +340,8 @@
       </div>
 
     <p style="margin-top:24px"><a href="/garage-organization-fort-collins-co">Garage organization service</a> in Fort Collins.</p>
+
+    <nav class="related-posts reveal" aria-label="Related articles"><h3>Related reading</h3><ul><li><a href="/blog/garage-organization-after-cleanout-fort-collins">After cleanout guide</a></li><li><a href="/garage-organization-fort-collins-co">Organization service</a></li><li><a href="/garage-cleanouts-fort-collins-co">Garage cleanouts</a></li></ul></nav>
     </article>
   </div>
 </main>
@@ -413,7 +419,7 @@
   <a href="/book" class="mobile-cta-btn mobile-cta-quote">Quote</a>
 </div>
 
-<style>@media(max-width:1023px){.mobile-sticky-cta{position:fixed;bottom:0;left:0;right:0;z-index:100;display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;background:#0a1628;padding:8px 10px 12px}body{padding-bottom:72px}}</style>
+
 <script>
 function initNavDrawer(){
   const toggle=document.querySelector('.nav-toggle');
@@ -433,6 +439,7 @@ function initNavDrawer(){
   toggle.addEventListener('click',()=>setOpen(toggle.getAttribute('aria-expanded')!=='true'));
   if(closeBtn)closeBtn.addEventListener('click',()=>setOpen(false));
   if(overlay)overlay.addEventListener('click',()=>setOpen(false));
+  drawer.querySelectorAll('a[href]').forEach(a=>a.addEventListener('click',()=>setOpen(false)));
   document.querySelectorAll('.drawer-toggle').forEach(btn=>{
     btn.addEventListener('click',()=>{
       const open=btn.getAttribute('aria-expanded')==='true';
@@ -446,5 +453,6 @@ function initNavDrawer(){
 if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',initNavDrawer);}else{initNavDrawer();}
 </script>
 <script>(function(){const btt=document.getElementById('back-to-top');if(!btt)return;const onScroll=()=>{btt.hidden=window.scrollY<420};btt.addEventListener('click',e=>{e.preventDefault();window.scrollTo({top:0,behavior:'smooth'})});window.addEventListener('scroll',onScroll,{passive:true});onScroll();})();</script>
+<script>(function(){var els=document.querySelectorAll('.reveal');if(!('IntersectionObserver' in window)){els.forEach(function(el){el.classList.add('visible');});return;}var io=new IntersectionObserver(function(es){es.forEach(function(e){if(e.isIntersecting){e.target.classList.add('visible');io.unobserve(e.target);}});},{threshold:0.08});els.forEach(function(el){io.observe(el);});})();</script>
 </body>
 </html>

@@ -53,7 +53,7 @@
 }
 </script>
 
-<link rel="stylesheet" href="/styles.css?v=20260722">
+<link rel="stylesheet" href="/styles.css?v=20260723">
 <style>
 .foot { display: flex; flex-direction: column; gap: 16px; justify-content: space-between; }
 .foot .logo { color: var(--paper); }
@@ -210,20 +210,24 @@
 
       <p>If your appliance still runs, donation is almost always the right first move. Someone else can use it, you get a tax receipt, and you keep it out of a landfill. The key word is <em>working</em> — donation centers can't accept appliances that need significant repair.</p>
 
-      <div class="option-block">
-        <h3>Habitat for <aside class="article-cta reveal" aria-label="Book a quote">
+      <aside class="article-cta reveal" aria-label="Book a quote">
 <h3>Get your garage back</h3>
 <p>Text photos for a flat-rate quote in 5 minutes — no obligation.</p>
 <a href="/book" class="btn-primary">Book free quote</a>
-</aside>Humanity ReStore — Fort Collins</h3>
+</aside>
+
+      <div class="option-block">
+        <h3>Habitat for Humanity ReStore — Fort Collins</h3>
         <p>ReStore is the best local option for appliances. They accept refrigerators, washing machines, dryers, dishwashers, ranges, and microwaves — as long as they're in good working condition and reasonably clean. They sell them at below-retail prices and the proceeds fund Habitat builds in Larimer County.</p>
         <p><strong>What they need:</strong> Appliances should run without issue. Cosmetic wear is fine, but broken heating elements, dead compressors, or drum issues are not. Call ahead if you're unsure — they do occasionally decline items at the door.</p>
         <p><strong>Drop-off:</strong> They accept drop-offs during scheduled hours (call ahead to confirm, as hours change seasonally). Large appliances may need a scheduled donation appointment. You'll get a receipt you can use for your taxes.</p>
+      </div>
+
       <aside class="article-cta reveal" aria-label="Book a quote">
 <h3>Get your garage back — book free quote</h3>
 <p>Next-day when schedule allows. Locally owned in Fort Collins.</p>
 <a href="/book" class="btn-primary">Book free quote</a> <a href="sms:+19709991818?body=Hi!%20I'd%20like%20a%20quote." class="btn-secondary" style="margin-left:8px;border-color:rgba(255,255,255,.3);color:var(--paper)">Text photos</a>
-</aside><nav class="related-posts reveal" aria-label="Related articles"><h3>Related reading</h3><ul><li><a href="/appliance-removal-fort-collins-co">Appliance removal</a></li><li><a href="/refrigerator-removal-fort-collins-co">Refrigerator removal</a></li><li><a href="/garage-cleanouts-fort-collins-co">Garage cleanouts</a></li></ul></nav></div>
+</aside>
 
       <div class="option-block">
         <h3>ARC Thrift — Fort Collins</h3>
@@ -295,6 +299,7 @@
       </div>
 
     <p style="margin-top:24px">We haul appliances — <a href="/appliance-removal-fort-collins-co">appliance removal in Fort Collins</a>.</p>
+      <nav class="related-posts reveal" aria-label="Related articles"><h3>Related reading</h3><ul><li><a href="/appliance-removal-fort-collins-co">Appliance removal</a></li><li><a href="/refrigerator-removal-fort-collins-co">Refrigerator removal</a></li><li><a href="/garage-cleanouts-fort-collins-co">Garage cleanouts</a></li></ul></nav>
     </article>
   </div>
 </main>
@@ -372,7 +377,7 @@
   <a href="/book" class="mobile-cta-btn mobile-cta-quote">Quote</a>
 </div>
 
-<style>@media(max-width:1023px){.mobile-sticky-cta{position:fixed;bottom:0;left:0;right:0;z-index:100;display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;background:#0a1628;padding:8px 10px 12px}body{padding-bottom:72px}}</style>
+
 <script>
 function initNavDrawer(){
   const toggle=document.querySelector('.nav-toggle');
@@ -392,6 +397,7 @@ function initNavDrawer(){
   toggle.addEventListener('click',()=>setOpen(toggle.getAttribute('aria-expanded')!=='true'));
   if(closeBtn)closeBtn.addEventListener('click',()=>setOpen(false));
   if(overlay)overlay.addEventListener('click',()=>setOpen(false));
+  drawer.querySelectorAll('a[href]').forEach(a=>a.addEventListener('click',()=>setOpen(false)));
   document.querySelectorAll('.drawer-toggle').forEach(btn=>{
     btn.addEventListener('click',()=>{
       const open=btn.getAttribute('aria-expanded')==='true';
@@ -405,5 +411,6 @@ function initNavDrawer(){
 if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',initNavDrawer);}else{initNavDrawer();}
 </script>
 <script>(function(){const btt=document.getElementById('back-to-top');if(!btt)return;const onScroll=()=>{btt.hidden=window.scrollY<420};btt.addEventListener('click',e=>{e.preventDefault();window.scrollTo({top:0,behavior:'smooth'})});window.addEventListener('scroll',onScroll,{passive:true});onScroll();})();</script>
+<script>(function(){var els=document.querySelectorAll('.reveal');if(!('IntersectionObserver' in window)){els.forEach(function(el){el.classList.add('visible');});return;}var io=new IntersectionObserver(function(es){es.forEach(function(e){if(e.isIntersecting){e.target.classList.add('visible');io.unobserve(e.target);}});},{threshold:0.08});els.forEach(function(el){io.observe(el);});})();</script>
 </body>
 </html>

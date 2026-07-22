@@ -342,7 +342,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,700;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
 <noscript><link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,700;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet"></noscript>
 
-<link rel="stylesheet" href="/styles.css?v=20260722">
+<link rel="stylesheet" href="/styles.css?v=20260723">
 <style>
 .btn-white { background: var(--white); color: var(--accent); }
 .btn-white:hover { background: var(--paper); color: var(--accent-deep); }
@@ -385,16 +385,16 @@ fbq('init','970332989051988');fbq('track','PageView');
 </script>
 <noscript><img loading="lazy" height="1" width="1" alt="" style="display:none" src="https://www.facebook.com/tr?id=970332989051988&ev=PageView&noscript=1"/></noscript>
 
-<div id="seasonal-banner" class="seasonal-banner" role="region" aria-label="Spring promotion" hidden>
+<div id="seasonal-banner" class="seasonal-banner" role="region" aria-label="Seasonal promotion" hidden>
   <div class="wrap seasonal-banner-inner">
-    <span>🌱 <strong>Spring cleanout</strong> — book now and park inside before hail season.</span>
+    <span>☀️ <strong>Summer cleanout</strong> — book now and park inside before the season turns.</span>
     <a href="/book">Book now →</a>
     <button type="button" class="seasonal-banner-dismiss" aria-label="Dismiss banner">×</button>
   </div>
 </div>
 <script>
 (function(){
-  var k='egc-spring-banner-2026';
+  var k='egc-summer-banner-2026';
   var b=document.getElementById('seasonal-banner');
   if(!b||localStorage.getItem(k))return;
   b.hidden=false;
@@ -847,7 +847,7 @@ fbq('init','970332989051988');fbq('track','PageView');
       <details class="faq-item"><summary class="faq-q"><span class="faq-q-num">Q.07</span>Do I need to be home during the cleanout?</summary><p class="faq-a">You need to be present for the initial 15–20 minute walkthrough. After that, many clients leave us to finish the job.</p></details>
       <details class="faq-item"><summary class="faq-q"><span class="faq-q-num">Q.08</span>Do you charge by the hour or flat rate?</summary><p class="faq-a">Flat rate only. The price we quote before the job is the price you pay — no clock-watching, no line-item surprises.</p></details>
       <details class="faq-item"><summary class="faq-q"><span class="faq-q-num">Q.09</span>What is the No-Surprise Quote Guarantee?</summary><p class="faq-a">If the scope matches what you described, your quoted price is locked. We will not add fees at the end. If something unexpected comes up, we discuss it with you before hauling.</p></details>
-      <details class="faq-item"><summary class="faq-q"><span class="faq-q-num">Q.10</span>What areas of Northern Colorado do you serve?</summary><p class="faq-a">Fort Collins, Loveland, Windsor, Timnath, Wellington, Severance, and LaPorte — including Old Town, Fossil Creek, Centerra, and surrounding neighborhoods.</p>
+      <details class="faq-item"><summary class="faq-q"><span class="faq-q-num">Q.10</span>What areas of Northern Colorado do you serve?</summary><p class="faq-a">Fort Collins, Loveland, Windsor, Timnath, Wellington, Severance, and LaPorte — including Old Town, Fossil Creek, Centerra, and surrounding neighborhoods.</p></details>
       </div>
     </div>
     <p class="faq-more reveal"><a href="/faq">See all 25+ questions in our full FAQ →</a></p>
@@ -1119,6 +1119,7 @@ fbq('init','970332989051988');fbq('track','PageView');
   toggle.addEventListener('click',()=>setOpen(toggle.getAttribute('aria-expanded')!=='true'));
   if(closeBtn)closeBtn.addEventListener('click',()=>setOpen(false));
   if(overlay)overlay.addEventListener('click',()=>setOpen(false));
+  drawer.querySelectorAll('a[href]').forEach(a=>a.addEventListener('click',()=>setOpen(false)));
   document.querySelectorAll('.drawer-toggle').forEach(btn=>{
     btn.addEventListener('click',()=>{
       const open=btn.getAttribute('aria-expanded')==='true';

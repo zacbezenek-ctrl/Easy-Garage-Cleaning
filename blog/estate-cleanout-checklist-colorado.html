@@ -53,7 +53,7 @@
 }
 </script>
 
-<link rel="stylesheet" href="/styles.css?v=20260722">
+<link rel="stylesheet" href="/styles.css?v=20260723">
 <style>
 .foot { display: flex; flex-direction: column; gap: 16px; justify-content: space-between; }
 .foot .logo { color: var(--paper); }
@@ -215,11 +215,13 @@
 
       <p>Estate cleanouts are unlike any other job. You're often dealing with decades of a person's life, and the people doing the clearing are usually family members who are simultaneously grieving, making legal decisions, and trying to meet a deadline on a house sale. This guide is written with that reality in mind — not as a clinical checklist, but as a practical framework for getting through one of the harder tasks that comes with losing someone.</p>
 
-      <p>Take it at whatever pace you need. There's no single right o<aside class="article-cta reveal" aria-label="Book a quote">
+      <p>Take it at whatever pace you need. There's no single right order. This is just a structure that helps when you're not sure where to start.</p>
+
+      <aside class="article-cta reveal" aria-label="Book a quote">
 <h3>Get your garage back</h3>
 <p>Text photos for a flat-rate quote in 5 minutes — no obligation.</p>
 <a href="/book" class="btn-primary">Book free quote</a>
-</aside>rder. This is just a structure that helps when you're not sure where to start.</p>
+</aside>
 
       <h2 id="the-four-categories-establish-these-first">The Four Categories — Establish These First</h2>
 
@@ -229,11 +231,7 @@
         <div class="cat-box">
           <h4>KEEP</h4>
           <p>Items going to family members. Sentimental items, heirlooms, furniture being claimed.</p>
-        <aside class="article-cta reveal" aria-label="Book a quote">
-<h3>Get your garage back — book free quote</h3>
-<p>Next-day when schedule allows. Locally owned in Fort Collins.</p>
-<a href="/book" class="btn-primary">Book free quote</a> <a href="sms:+19709991818?body=Hi!%20I'd%20like%20a%20quote." class="btn-secondary" style="margin-left:8px;border-color:rgba(255,255,255,.3);color:var(--paper)">Text photos</a>
-</aside><nav class="related-posts reveal" aria-label="Related articles"><h3>Related reading</h3><ul><li><a href="/garage-cleanouts-fort-collins-co">Garage cleanouts</a></li><li><a href="/junk-removal-fort-collins-co">Junk removal</a></li><li><a href="/blog/how-to-prepare-for-garage-cleanout">Prep guide</a></li></ul></nav></div>
+        </div>
         <div class="cat-box">
           <h4>SELL</h4>
           <p>Valuable items worth selling through an estate sale, auction, or online listing.</p>
@@ -247,6 +245,12 @@
           <p>Everything else. What a cleanout service takes when the keep/sell/donate decisions are made.</p>
         </div>
       </div>
+
+      <aside class="article-cta reveal" aria-label="Book a quote">
+<h3>Get your garage back — book free quote</h3>
+<p>Next-day when schedule allows. Locally owned in Fort Collins.</p>
+<a href="/book" class="btn-primary">Book free quote</a> <a href="sms:+19709991818?body=Hi!%20I'd%20like%20a%20quote." class="btn-secondary" style="margin-left:8px;border-color:rgba(255,255,255,.3);color:var(--paper)">Text photos</a>
+</aside>
 
       <p>The cleanout service — us or anyone else — works primarily on the Haul category. We show up after the valuable decisions are made and clear what's left. The work that precedes us is yours to do, and this checklist will help.</p>
 
@@ -324,6 +328,7 @@
       </div>
 
     <p style="margin-top:24px">Need help with an estate cleanout? <a href="/garage-cleanouts-fort-collins-co">Garage and property cleanouts</a> in Fort Collins and Northern Colorado.</p>
+    <nav class="related-posts reveal" aria-label="Related articles"><h3>Related reading</h3><ul><li><a href="/garage-cleanouts-fort-collins-co">Garage cleanouts</a></li><li><a href="/junk-removal-fort-collins-co">Junk removal</a></li><li><a href="/blog/how-to-prepare-for-garage-cleanout">Prep guide</a></li></ul></nav>
     </article>
   </div>
 </main>
@@ -401,7 +406,7 @@
   <a href="/book" class="mobile-cta-btn mobile-cta-quote">Quote</a>
 </div>
 
-<style>@media(max-width:1023px){.mobile-sticky-cta{position:fixed;bottom:0;left:0;right:0;z-index:100;display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;background:#0a1628;padding:8px 10px 12px}body{padding-bottom:72px}}</style>
+
 <script>
 function initNavDrawer(){
   const toggle=document.querySelector('.nav-toggle');
@@ -421,6 +426,7 @@ function initNavDrawer(){
   toggle.addEventListener('click',()=>setOpen(toggle.getAttribute('aria-expanded')!=='true'));
   if(closeBtn)closeBtn.addEventListener('click',()=>setOpen(false));
   if(overlay)overlay.addEventListener('click',()=>setOpen(false));
+  drawer.querySelectorAll('a[href]').forEach(a=>a.addEventListener('click',()=>setOpen(false)));
   document.querySelectorAll('.drawer-toggle').forEach(btn=>{
     btn.addEventListener('click',()=>{
       const open=btn.getAttribute('aria-expanded')==='true';
@@ -434,5 +440,6 @@ function initNavDrawer(){
 if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',initNavDrawer);}else{initNavDrawer();}
 </script>
 <script>(function(){const btt=document.getElementById('back-to-top');if(!btt)return;const onScroll=()=>{btt.hidden=window.scrollY<420};btt.addEventListener('click',e=>{e.preventDefault();window.scrollTo({top:0,behavior:'smooth'})});window.addEventListener('scroll',onScroll,{passive:true});onScroll();})();</script>
+<script>(function(){var els=document.querySelectorAll('.reveal');if(!('IntersectionObserver' in window)){els.forEach(function(el){el.classList.add('visible');});return;}var io=new IntersectionObserver(function(es){es.forEach(function(e){if(e.isIntersecting){e.target.classList.add('visible');io.unobserve(e.target);}});},{threshold:0.08});els.forEach(function(el){io.observe(el);});})();</script>
 </body>
 </html>

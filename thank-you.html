@@ -49,7 +49,7 @@ fbq('track', 'Lead');
 </script>
 <noscript><img loading="lazy" height="1" width="1" style="display:none" src="https://www.facebook.com/tr?id=861741726934219&ev=PageView&noscript=1"/></noscript>
 
-<link rel="stylesheet" href="/styles.css?v=20260722">
+<link rel="stylesheet" href="/styles.css?v=20260723">
 <style>
 .main {
     flex: 1;
@@ -357,7 +357,7 @@ fbq('track', 'Lead');
   <a href="/book" class="mobile-cta-btn mobile-cta-quote">Quote</a>
 </div>
 
-<style>@media(max-width:1023px){.mobile-sticky-cta{position:fixed;bottom:0;left:0;right:0;z-index:100;display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;background:#0a1628;padding:8px 10px 12px}body{padding-bottom:72px}}</style>
+
 <script>
 function initNavDrawer(){
   const toggle=document.querySelector('.nav-toggle');
@@ -377,6 +377,7 @@ function initNavDrawer(){
   toggle.addEventListener('click',()=>setOpen(toggle.getAttribute('aria-expanded')!=='true'));
   if(closeBtn)closeBtn.addEventListener('click',()=>setOpen(false));
   if(overlay)overlay.addEventListener('click',()=>setOpen(false));
+  drawer.querySelectorAll('a[href]').forEach(a=>a.addEventListener('click',()=>setOpen(false)));
   document.querySelectorAll('.drawer-toggle').forEach(btn=>{
     btn.addEventListener('click',()=>{
       const open=btn.getAttribute('aria-expanded')==='true';

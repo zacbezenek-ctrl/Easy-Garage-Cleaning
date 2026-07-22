@@ -39,8 +39,9 @@ fbq('track', 'PageView');
 </script>
 <noscript><img loading="lazy" height="1" width="1" style="display:none" src="https://www.facebook.com/tr?id=861741726934219&ev=PageView&noscript=1"/></noscript>
 
-<link rel="stylesheet" href="/styles.css?v=20260722">
+<link rel="stylesheet" href="/styles.css?v=20260723">
 <style>
+:root { --ink-soft: #334155; --accent-soft: rgba(255,91,31,.08); }
 .site-header { background: var(--ink); color: var(--paper); padding: 14px 0; position: sticky; top: 0; z-index: 100; border-bottom: 2px solid var(--accent); }
 .site-header .wrap { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .brand-mark { font-family: var(--font-display); font-weight: 600; font-size: 19px; letter-spacing: -0.01em; display: flex; align-items: center; gap: 10px; }
@@ -52,8 +53,6 @@ fbq('track', 'PageView');
   .header-phone { padding: 10px 14px; font-size: 14px; gap: 6px; }
   .header-phone .lbl { display: none; }
 }
-.sticky-cta { display: none; position: fixed; bottom: 0; left: 0; right: 0; background: var(--accent); color: var(--white); text-align: center; padding: 16px 20px; font-weight: 700; font-size: 15px; z-index: 999; box-shadow: 0 -4px 24px rgba(255,91,31,0.5); }
-@media (max-width: 768px) { .sticky-cta { display: block; } }
 .service-bar { background: var(--paper-warm); color: var(--ink); padding: 10px 0; text-align: center; font-size: 13px; font-weight: 500; border-bottom: 1px solid rgba(10,22,40,0.08); }
 .service-bar strong { color: var(--accent-deep); font-weight: 700; }
 .hero-inner { display: grid; grid-template-columns: 1fr 420px; gap: 60px; align-items: start; }
@@ -228,6 +227,7 @@ h1.hero-title .marker { background: linear-gradient(180deg, transparent 62%, rgb
 .form-card .field input::placeholder, .form-card .field textarea::placeholder { color: #6b7280; }
 .form-card .field select, .form-card .field select option { color: #0a1628; background: #ffffff; }
 </style>
+<script src="/fb-capture.js" defer></script>
 <script type="text/javascript">
   (function(c,l,a,r,i,t,y){
     c[a]=c[a]||function(){(c[a].q=c[a].q||[]).push(arguments)};
@@ -238,8 +238,6 @@ h1.hero-title .marker { background: linear-gradient(180deg, transparent 62%, rgb
 </head>
 <body>
 <a href="#main-content" class="skip-link">Skip to content</a>
-
-<a href="#form" class="sticky-cta">Get My Free Quote — We Reply in 5 Minutes</a>
 
 <header class="site-header">
   <div class="wrap">
@@ -315,8 +313,14 @@ h1.hero-title .marker { background: linear-gradient(180deg, transparent 62%, rgb
           </div>
 
           <div id="formContent">
-            <form id="adsForm" novalidate>
+            <form id="adsForm" class="lead-form-lite">
               <input type="hidden" name="access_key" value="3c4fe752-ac1d-45b9-89dd-4275ea162d22">
+              <input type="hidden" name="source" value="Ads Landing Page">
+              <input type="hidden" name="fbc" value="">
+              <input type="hidden" name="fbp" value="">
+              <input type="hidden" name="fbclid" value="">
+              <input type="hidden" name="landing_url" value="">
+              <input type="hidden" name="referrer" value="">
               <input type="hidden" name="subject" value="🔥 LEAD - Easy Garage Cleaning Ads Page">
               <input type="hidden" name="from_name" value="Easy Garage Cleaning Ads Page">
               <input type="checkbox" name="botcheck" class="sr-only" tabindex="-1" autocomplete="off">
@@ -324,13 +328,13 @@ h1.hero-title .marker { background: linear-gradient(180deg, transparent 62%, rgb
               <div class="form-row">
                 <div class="field">
                   <label for="fname">First Name</label>
-                  <input type="text" id="fname" name="First Name" required autocomplete="given-name" placeholder="Jane" />
+                  <input type="text" id="fname" name="name" required autocomplete="given-name" placeholder="Jane" />
                 </div>
               </div>
               <div class="form-row">
                 <div class="field">
                   <label for="phone">Phone Number</label>
-                  <input type="tel" id="phone" name="Phone" required autocomplete="tel" placeholder="(970) 555-0100" />
+                  <input type="tel" id="phone" name="phone" required autocomplete="tel" inputmode="tel" placeholder="(970) 555-0100" />
                 </div>
               </div>
               <div class="form-row">
@@ -341,7 +345,7 @@ h1.hero-title .marker { background: linear-gradient(180deg, transparent 62%, rgb
                 </div>
               </div>
               <label class="sms-consent"><input type="checkbox" name="sms_consent" value="yes"><span>I agree to receive text messages from Easy Garage Cleaning about my quote and appointment at the number provided. Consent is not a condition of purchase. Message frequency varies, msg &amp; data rates may apply. Reply STOP to opt out or HELP for help. See our <a href="/privacy-policy" target="_blank" rel="noopener">Privacy Policy</a> and <a href="/terms-of-service" target="_blank" rel="noopener">Terms of Service</a>.</span></label>
-              <button type="submit" class="form-submit" id="submitBtn">Get My Free Quote &rarr;</button>
+              <button type="submit" class="btn-primary form-submit" id="submitBtn">Get My Free Quote &rarr;</button>
 
               <div class="form-or">or call now</div>
               <a href="tel:+19706589454" class="form-call" onclick="if(typeof gtag!=='undefined')gtag('event','phone_call',{'event_category':'form'});">
@@ -560,9 +564,11 @@ h1.hero-title .marker { background: linear-gradient(180deg, transparent 62%, rgb
     <div class="section-head reveal text-center">
       <div class="section-label">Flat-Rate Pricing</div>
       <h2 class="section-title" style="max-width:100%; text-align:center;">No hourly meter. No surprises. <em>Just one number.</em></h2>
-      <p class="pricing-intro">We quote a firm price before we touch anything. The number we tell you is the number you pay — even if it takes us longer than expected.</p>
+      <p class="pricing-intro">We quote a firm price before we touch anything. The number we tell you is the number you pay — even if it takes us longer than expected. Most garage cleanouts run <strong>$400&ndash;$3,500 flat</strong> depending on how full the garage is and how far you want the turnaround to go &mdash; a typical packed 2-car cleanout lands around <strong>$650</strong>. Text photos and you'll have your exact number in minutes.</p>
     </div>
-    
+    <div class="mt-40 text-center reveal">
+      <a href="#form" class="btn-primary">Get My Exact Price <span class="arrow">&rarr;</span></a>
+    </div>
   </div>
 </section>
 
@@ -592,7 +598,7 @@ h1.hero-title .marker { background: linear-gradient(180deg, transparent 62%, rgb
       </div>
       <div class="faq-item">
         <h3 class="faq-q"><span class="faq-q-num">Q.05</span>What if my garage is bigger than 2 cars?</h3>
-        <p class="faq-a">That's Tier 3 territory. We do a free on-site walkthrough, assess the full scope, and give you a firm flat price before any work starts. Text us a photo and we'll give you a ballpark within 5 minutes.</p>
+        <p class="faq-a">No problem — bigger garages just get a walkthrough first. We come out free, assess the full scope, and give you a firm flat price before any work starts. Text us a photo and we'll give you a ballpark within 5 minutes.</p>
       </div>
       <div class="faq-item">
         <h3 class="faq-q"><span class="faq-q-num">Q.06</span>What do you NOT haul?</h3>
@@ -641,7 +647,7 @@ h1.hero-title .marker { background: linear-gradient(180deg, transparent 62%, rgb
       <div class="logo"><span class="logo-mark"></span>Easy Garage Cleaning</div>
       <p class="community">The easiest way to reclaim your garage. Locally owned in Fort Collins — not a franchise call center.</p>
       <p class="community">Partners: <a href="https://www.fcgov.com/chamber/" rel="noopener">Fort Collins Chamber</a>, <a href="/blog/habitat-for-humanity-restore-fort-collins">Habitat ReStore</a>.</p>
-      <p class="foot-entity foot-nap"><strong>Easy Garage Cleaning</strong> · Easy Garage Cleaning LLC · 746 Star Grass Ln, Fort Collins, CO 80525 · <a href="tel:+19709991818">(970) 999-1818</a> · <a href="mailto:contact@easygaragecleaning.com">contact@easygaragecleaning.com</a> · <a href="https://easygaragecleaning.com/#business">Schema @id #business</a> · <a href="https://easygaragecleaning.com/llms.txt">llms.txt</a></p>
+      <p class="foot-entity foot-nap"><strong>Easy Garage Cleaning</strong> · Easy Garage Cleaning LLC · 746 Star Grass Ln, Fort Collins, CO 80525 · <a href="tel:+19706589454">(970) 658-9454</a> · <a href="mailto:contact@easygaragecleaning.com">contact@easygaragecleaning.com</a> · <a href="https://easygaragecleaning.com/#business">Schema @id #business</a> · <a href="https://easygaragecleaning.com/llms.txt">llms.txt</a></p>
     </div>
     <div class="foot-col">
       <h3>Services</h3>
@@ -685,7 +691,7 @@ h1.hero-title .marker { background: linear-gradient(180deg, transparent 62%, rgb
     </div>
     <div class="foot-col foot-contact">
       <h3>Contact</h3>
-      <p><a href="tel:+19709991818">(970) 999-1818</a></p>
+      <p><a href="tel:+19706589454">(970) 658-9454</a></p>
       <p><a href="mailto:contact@easygaragecleaning.com">contact@easygaragecleaning.com</a></p>
       <p><a href="sms:+19709991818?body=Hi!%20I'd%20like%20a%20quote.">Text for quote</a></p>
       <p class="foot-hours">Mon–Sat · 7am–7pm<br>Fort Collins, CO</p>
@@ -706,13 +712,6 @@ h1.hero-title .marker { background: linear-gradient(180deg, transparent 62%, rgb
   }, { threshold: 0.1 });
   document.querySelectorAll('.reveal').forEach(el => io.observe(el));
 
-  const formEl = document.getElementById('form');
-  const stickyCta = document.querySelector('.sticky-cta');
-  const formObs = new IntersectionObserver((entries) => {
-    entries.forEach(e => { if (stickyCta) stickyCta.style.display = e.isIntersecting ? 'none' : ''; });
-  }, { threshold: 0.3 });
-  if (formEl) formObs.observe(formEl);
-
   const SERVICE_ZIPS = new Set([
     '80521','80522','80523','80524','80525','80526','80527','80528',
     '80537','80538','80539',
@@ -728,6 +727,7 @@ h1.hero-title .marker { background: linear-gradient(180deg, transparent 62%, rgb
 
   form.addEventListener('submit', async function(e) {
     e.preventDefault();
+    if (!form.checkValidity()) { form.reportValidity(); return; }
     const zip = (document.getElementById('zip').value || '').trim();
     const inServiceArea = SERVICE_ZIPS.has(zip);
 
@@ -745,7 +745,6 @@ h1.hero-title .marker { background: linear-gradient(180deg, transparent 62%, rgb
       if (response.ok) {
         formContent.style.display = 'none';
         if (inServiceArea) { formSuccess.style.display = 'block'; } else { formOutOfArea.style.display = 'block'; }
-        if (stickyCta) stickyCta.style.display = 'none';
       } else {
         submitBtn.disabled = false;
         submitBtn.textContent = 'Get My Free Quote →';
@@ -760,10 +759,10 @@ h1.hero-title .marker { background: linear-gradient(180deg, transparent 62%, rgb
 </script>
 
 <div class="mobile-sticky-cta" aria-label="Quick contact">
-  <a href="tel:+19709991818" class="mobile-cta-btn mobile-cta-call">Call</a>
-  <a href="sms:+19709991818?body=Hi!%20I'd%20like%20a%20quote." class="mobile-cta-btn mobile-cta-text">Text</a>
-  <a href="/#quote" class="mobile-cta-btn mobile-cta-quote">Quote</a>
-</div><style>@media(max-width:1023px){.mobile-sticky-cta{position:fixed;bottom:0;left:0;right:0;z-index:100;display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;background:#0a1628;border-top:1px solid rgba(255,255,255,.08);padding:8px 10px 12px}body{padding-bottom:72px}}</style>
+  <a href="tel:+19706589454" class="mobile-cta-btn mobile-cta-call">Call</a>
+  <a href="sms:+19709991818?body=Hi!%20I'd%20like%20a%20quote.%20Here%20are%20photos%20of%20my%20garage:" class="mobile-cta-btn mobile-cta-text">Text</a>
+  <a href="#form" class="mobile-cta-btn mobile-cta-quote">Quote</a>
+</div>
 <script>(function(){const btt=document.getElementById('back-to-top');if(!btt)return;const onScroll=()=>{btt.hidden=window.scrollY<420};btt.addEventListener('click',e=>{e.preventDefault();window.scrollTo({top:0,behavior:'smooth'})});window.addEventListener('scroll',onScroll,{passive:true});onScroll();})();</script>
 </body>
 </html>
