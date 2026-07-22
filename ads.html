@@ -223,6 +223,10 @@ h1.hero-title .marker { background: linear-gradient(180deg, transparent 62%, rgb
 .btn-primary:hover .arrow { transform: translateX(5px); }
 .btn-white { display: inline-flex; align-items: center; gap: 10px; background: var(--white); color: var(--ink); padding: 18px 30px; font-size: 16px; font-weight: 700; border-radius: var(--radius); cursor: pointer; transition: transform 0.18s ease, opacity 0.18s ease; }
 .btn-white:hover { transform: translateY(-2px); opacity: 0.92; }
+/* FIX: form-card inputs were inheriting near-white global text on a white card (invisible). Force readable dark text. */
+.form-card .field input, .form-card .field select, .form-card .field textarea { color: #0a1628; background: #ffffff; border: 1.5px solid rgba(10,22,40,0.18); }
+.form-card .field input::placeholder, .form-card .field textarea::placeholder { color: #6b7280; }
+.form-card .field select, .form-card .field select option { color: #0a1628; background: #ffffff; }
 </style>
 <script type="text/javascript">
   (function(c,l,a,r,i,t,y){
