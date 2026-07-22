@@ -209,3 +209,14 @@ img,video,iframe,svg{max-width:100%;height:auto}
 .sms-consent{display:flex;gap:10px;align-items:flex-start;margin-top:12px;font-size:12px;line-height:1.5;color:var(--muted-dark);cursor:pointer;text-align:left;opacity:.9}
 .sms-consent input[type="checkbox"]{flex:none;width:16px;height:16px;margin-top:1px;accent-color:var(--accent);cursor:pointer}
 .sms-consent a{color:inherit;text-decoration:underline}
+
+/* === Form input readability safety net (fixes white-text-on-light-background) === */
+/* Every text field: dark ink on solid white, readable on ANY container/section. */
+.field input:not([type=checkbox]):not([type=radio]),.field select,.field textarea,
+.form-card input:not([type=checkbox]):not([type=radio]),.form-card select,.form-card textarea,
+.contact-card input:not([type=checkbox]):not([type=radio]),.contact-card select,.contact-card textarea,
+.lead-form-lite input:not([type=checkbox]):not([type=radio]),.lead-form-lite select,.lead-form-lite textarea,
+.fg input:not([type=checkbox]):not([type=radio]),.fg select,.fg textarea,
+.sig-input{background:#ffffff;color:#0a1628;border:1px solid rgba(10,22,40,.22)}
+.field input::placeholder,.field textarea::placeholder,.form-card input::placeholder,.form-card textarea::placeholder,.contact-card input::placeholder,.contact-card textarea::placeholder,.lead-form-lite input::placeholder,.lead-form-lite textarea::placeholder,.fg input::placeholder,.fg textarea::placeholder,.sig-input::placeholder{color:#6b7280}
+.field select option,.form-card select option,.contact-card select option,.lead-form-lite select option,.fg select option{background:#ffffff;color:#0a1628}
