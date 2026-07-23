@@ -122,8 +122,9 @@ LEGACY_META_REDIRECTS = {
     "wellington-junk-removal.html": "/junk-removal-wellington-co.html",
 }
 
-# Replace YOUR_GBP_PLACE_ID with Place ID from Google Business Profile → Share & promote
-GBP_REVIEW_URL = "https://search.google.com/local/writereview?placeid=YOUR_GBP_PLACE_ID"  # Zap 7: Quo sends this link after job complete
+# TODO: swap in the real Place ID (Google Business Profile → Share & promote) and restore
+# the direct link: https://search.google.com/local/writereview?placeid=PLACE_ID
+GBP_REVIEW_URL = "https://www.google.com/maps/search/Easy+Garage+Cleaning+Fort+Collins"  # Zap 7: Quo sends this link after job complete
 
 BLOG_QUICK_SUMMARIES = {
     "fort-collins-junk-removal-what-you-can-cant-throw-away.html": (
@@ -175,11 +176,17 @@ TYPICAL_JOBS = {
     "Garage Cleanout": ("2–5 hours", "$400–$650"),
     "Garage Cleaning": ("2 hrs – full day", "$300–$3,200"),
     "Garage Organization": ("2–4 hours", "$250–$500"),
-    "Furniture Removal": ("30 min – 2 hrs", "$99–$400"),
-    "Appliance Removal": ("30 min – 2 hrs", "$99–$400"),
+    "Furniture Removal": ("30 min – 2 hrs", "$99–$150"),
+    "Appliance Removal": ("30 min – 2 hrs", "$99–$150"),
     "Mattress Removal": ("30 min – 1 hr", "$99–$150"),
     "Storage Unit Cleanout": ("1–3 hours", "$250–$650"),
-    "Yard Debris Removal": ("1–3 hours", "$250–$500"),
+    "Yard Debris Removal": ("1–3 hours", "$99–$250"),
+    # Item-page stypes — drives the mobile sticky price bar on each item page.
+    "Couch Removal": ("30 min – 1 hr", "$99–$150"),
+    "Refrigerator Removal": ("30 min – 1 hr", "$99–$150"),
+    "Treadmill Removal": ("30 min – 1 hr", "$99–$150"),
+    "Shed Cleanout": ("1–3 hours", "$250–$650"),
+    "Hot Tub Removal": ("2–4 hours", "$400–$800"),
 }
 
 CITY_NEIGHBORHOODS = {
@@ -289,6 +296,9 @@ ARTICLE_CTA_END = f"""<aside class="article-cta reveal" aria-label="Book a quote
 <a href="/book.html" class="btn-primary">Book free quote</a> <a href="sms:{PHONE}?body=Hi!%20I'd%20like%20a%20quote." class="btn-secondary" style="margin-left:8px;border-color:rgba(255,255,255,.3);color:var(--paper)">Text photos</a>
 </aside>"""
 
+# NOTE: /styles.css is now the canonical stylesheet — generated pages link it with a
+# ?v= cache-bust (see HEAD) instead of inlining this blob. SHARED_CSS is retained only
+# as reference for the legacy static-page patch pipeline.
 SHARED_CSS = r"""
 :root{--navy:#0a1628;--navy-soft:#14243d;--navy-line:rgba(255,255,255,0.08);--ink:#0a1628;--paper:#f5f1ea;--paper-warm:#ebe4d6;--white:#fff;--accent:#ff5b1f;--accent-deep:#d94208;--muted:#5c6573;--text:#334155;--muted-dark:rgba(245,241,234,0.78);--font-display:'Fraunces',Georgia,serif;--font-body:'Inter',system-ui,sans-serif;--font-mono:'JetBrains Mono',ui-monospace,monospace;--space-1:4px;--space-2:8px;--space-3:16px;--space-4:24px;--space-5:32px;--space-6:48px;--space-7:64px;--radius-sm:2px;--radius-md:4px;--radius-lg:8px;--radius:var(--radius-sm);--shadow-sm:0 2px 8px rgba(10,22,40,.06);--shadow-md:0 8px 24px rgba(10,22,40,.1);--shadow-lg:0 12px 40px rgba(10,22,40,.12);--shadow-accent:0 4px 20px -6px rgba(255,91,31,.5);--text-xs:11px;--text-sm:13px;--text-base:15px;--text-md:16px;--text-lg:18px;--text-xl:22px;--text-2xl:clamp(26px,5vw,44px);--text-hero:clamp(32px,7vw,54px);--maxw:1120px;--section-gap:56px;--section-gap-lg:88px}
 *{box-sizing:border-box;margin:0;padding:0}html{scroll-behavior:smooth}body{font-family:var(--font-body);color:var(--ink);background:var(--paper);line-height:1.6;-webkit-font-smoothing:antialiased;overflow-x:hidden}a{color:inherit;text-decoration:none}a.content-link{color:var(--accent-deep);font-weight:600;text-decoration:underline;text-underline-offset:2px}.wrap{max-width:var(--maxw);margin:0 auto;padding:0 18px}.mono{font-family:var(--font-mono);font-size:11px;letter-spacing:.12em;text-transform:uppercase}.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
@@ -312,7 +322,7 @@ section{padding:var(--section-gap) 0}@media(min-width:900px){section{padding:var
 .final-cta{background:var(--navy);color:var(--paper)}.final-cta h2.section-title{color:var(--paper)}.final-cta h2.section-title em{color:var(--accent)}.final-cta .section-sub{color:var(--muted-dark)}.cta-layout{display:grid;grid-template-columns:1fr;gap:40px;margin-top:32px;align-items:start}@media(min-width:900px){.cta-layout{grid-template-columns:1fr 1.1fr;gap:56px}}.cta-points{display:flex;flex-direction:column;gap:16px}.cta-point{display:flex;gap:12px;align-items:flex-start;font-size:15px;color:var(--muted-dark)}.cta-point::before{content:'✓';color:var(--accent);font-weight:700;flex-shrink:0}.quote-form{background:var(--navy-soft);border:1px solid var(--navy-line);padding:28px 24px;border-radius:4px}.quote-form h3{font-family:var(--font-display);font-size:22px;font-weight:500;margin-bottom:6px;color:var(--paper)}.quote-form .form-note{font-size:13px;color:var(--muted-dark);margin-bottom:20px}.form-row{display:grid;grid-template-columns:1fr;gap:14px;margin-bottom:14px}@media(min-width:540px){.form-row.two{grid-template-columns:1fr 1fr}}.field label{display:block;font-family:var(--font-mono);font-size:10px;letter-spacing:.15em;color:var(--muted-dark);margin-bottom:6px;text-transform:uppercase}.field input,.field select,.field textarea{width:100%;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.15);border-radius:3px;color:var(--paper);font-family:inherit;font-size:16px;padding:12px 14px;outline:none}.field input::placeholder,.field textarea::placeholder{color:rgba(245,241,234,.35)}.field input:focus,.field select:focus,.field textarea:focus{border-color:var(--accent)}.field select option{background:var(--navy-soft);color:var(--paper)}.field textarea{resize:vertical;min-height:80px}.form-submit{width:100%;margin-top:6px}
 .form-steps{display:flex;gap:8px;margin-bottom:20px}.form-step-dot{flex:1;height:4px;background:rgba(255,255,255,.15);border-radius:2px;transition:background .2s}.form-step-dot.active,.form-step-dot.done{background:var(--accent)}.form-panel{display:none}.form-panel.active{display:block}.form-nav{display:flex;gap:10px;margin-top:16px;flex-wrap:wrap}.form-nav .btn-secondary{color:var(--paper);border-color:rgba(255,255,255,.25)}.form-step-label{font-family:var(--font-mono);font-size:10px;letter-spacing:.12em;color:var(--muted-dark);margin-bottom:14px;text-transform:uppercase}.quote-result-panel h4{font-family:var(--font-display);font-size:20px;font-weight:500;margin-bottom:8px;color:var(--paper)}.quote-result-range{font-family:var(--font-display);font-size:28px;color:var(--accent);margin:8px 0 12px}.quote-result-note{font-size:14px;color:var(--muted-dark);line-height:1.55;margin-bottom:16px}.quote-result-actions{display:flex;flex-direction:column;gap:10px;margin:16px 0}.quote-result-actions .btn-primary,.quote-result-actions .btn-secondary{width:100%;justify-content:center}.booking-slots{display:flex;flex-direction:column;gap:8px;margin:12px 0 16px}.booking-slot{display:flex;align-items:center;gap:10px;padding:12px 14px;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.15);border-radius:3px;cursor:pointer;font-size:14px;color:var(--paper)}.booking-slot:has(input:checked){border-color:var(--accent);background:rgba(255,91,31,.12)}.booking-slot input{accent-color:var(--accent)}.field-hint{font-size:12px;color:var(--muted-dark);margin-top:6px;line-height:1.45}.service-picker{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:8px}@media(min-width:480px){.service-picker{grid-template-columns:repeat(3,1fr)}}.service-pick-card{position:relative;display:flex;flex-direction:column;align-items:flex-start;gap:4px;padding:14px 12px;background:rgba(255,255,255,.04);border:2px solid rgba(255,255,255,.12);border-radius:4px;cursor:pointer;transition:border-color .2s,background .2s;min-height:88px}.service-pick-card:hover{border-color:rgba(255,91,31,.5)}.service-pick-card input{position:absolute;opacity:0;width:0;height:0}.service-pick-card:has(input:checked){border-color:var(--accent);background:rgba(255,91,31,.12)}.spc-icon{font-size:20px;line-height:1}.spc-title{font-size:13px;font-weight:700;color:var(--paper);line-height:1.2}.spc-desc{font-size:11px;color:var(--muted-dark);line-height:1.3}.hero-phone{display:inline-flex;align-items:center;gap:8px;font-family:var(--font-display);font-size:clamp(20px,4vw,26px);font-weight:600;color:var(--accent-deep);margin-bottom:12px;letter-spacing:-.02em}.hero-phone:hover{color:var(--accent)}.hero-phone-sub{font-size:12px;font-weight:500;color:var(--muted);font-family:var(--font-body);margin-left:4px}.def-block{background:var(--white);border-left:3px solid var(--accent);padding:16px 20px;margin:24px 0;border-radius:0 4px 4px 0;font-size:15px;line-height:1.65;color:var(--text)}.def-block strong{font-family:var(--font-display);font-weight:500;font-size:17px;display:block;margin-bottom:6px;color:var(--ink)}
 footer{background:var(--ink);color:var(--muted-dark);border-top:1px solid var(--navy-line);font-size:13px}.foot-col a,.foot-bar a,.foot-contact a{color:rgba(245,241,234,0.82)}.foot-col a:hover,.foot-bar a:hover{color:var(--accent)}.foot-grid{display:grid;grid-template-columns:1fr;gap:28px;padding:48px 0 32px}@media(min-width:640px){.foot-grid{grid-template-columns:repeat(2,1fr)}}@media(min-width:900px){.foot-grid{grid-template-columns:1.5fr repeat(4,1fr);gap:32px}}.foot-brand .logo{color:var(--paper);margin-bottom:12px}.foot-col h3{font-family:var(--font-display);font-size:15px;font-weight:600;color:var(--paper);margin-bottom:12px}.foot-col ul{list-style:none;display:flex;flex-direction:column;gap:8px}.foot-col a:hover{color:var(--accent)}.foot-contact p{margin-bottom:6px;line-height:1.55}.foot-contact a:hover{color:var(--accent)}.foot-hours{font-size:12px;margin-top:8px;color:var(--muted-dark)}.community{margin-top:16px;font-size:12px;line-height:1.6;max-width:52ch}.foot-entity{margin-top:10px;font-size:12px;line-height:1.65}.foot-nap a:hover{color:var(--accent)}.foot-bar{border-top:1px solid var(--navy-line);padding:16px 0;font-size:12px}.foot-bar-inner{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:12px}.foot-bar a:hover{color:var(--accent)}.services-grid{display:grid;grid-template-columns:1fr;gap:16px;margin-top:32px}@media(min-width:640px){.services-grid{grid-template-columns:repeat(2,1fr)}}@media(min-width:900px){.services-grid{grid-template-columns:repeat(3,1fr)}}.service-card{background:var(--white);border:1px solid rgba(10,22,40,.08);padding:24px;border-radius:4px;border-top:3px solid var(--accent)}.service-card h3{font-family:var(--font-display);font-size:20px;margin-bottom:8px}.service-card p{font-size:14px;color:var(--text);margin-bottom:12px;line-height:1.55}.service-card a{font-size:13px;font-weight:600;color:var(--accent-deep)}.pricing-how{background:var(--white)}.pricing-how-grid{display:grid;grid-template-columns:1fr;gap:20px;margin-top:32px}@media(min-width:768px){.pricing-how-grid{grid-template-columns:repeat(2,1fr)}}
-.mobile-sticky-cta{position:fixed;bottom:0;left:0;right:0;z-index:100;display:none;grid-template-columns:1fr 1fr 1fr;gap:6px;background:var(--ink);border-top:1px solid var(--navy-line);padding:8px 10px calc(12px + env(safe-area-inset-bottom,0px))}.mobile-cta-btn{padding:12px 8px;font-weight:700;font-size:12px;text-align:center;border-radius:3px;font-family:var(--font-body);min-height:44px;display:flex;align-items:center;justify-content:center}.mobile-cta-call,.mobile-cta-text{background:var(--navy-soft);color:var(--paper);border:1px solid var(--navy-line)}.mobile-cta-quote{background:var(--accent);color:var(--white)}@media(max-width:1023px){.mobile-sticky-cta{display:grid}body{padding-bottom:calc(56px + env(safe-area-inset-bottom,0px))}}
+/* .mobile-sticky-cta rules now live in styles.css only — do not re-add inline. */
 .reveal{opacity:0;transform:translateY(16px);transition:opacity .7s ease,transform .7s ease}.reveal.visible{opacity:1;transform:translateY(0)}
 .article-wrap{max-width:740px;margin:0 auto;padding:0 18px}.article-body{padding-bottom:80px;font-size:16px;line-height:1.75}.article-body h2{font-family:var(--font-display);font-size:26px;font-weight:500;margin:40px 0 14px;letter-spacing:-.02em;scroll-margin-top:88px}.article-body p{margin-bottom:18px}.article-body ul,.article-body ol{margin:0 0 18px 24px}
 a:focus-visible,.btn-primary:focus-visible,.btn-secondary:focus-visible,.nav-toggle:focus-visible,.nav-dropdown-trigger:focus-visible,.drawer-toggle:focus-visible,.service-pick-card:focus-within{outline:2px solid var(--accent);outline-offset:2px}
@@ -528,6 +538,7 @@ function initNavDrawer(){
   toggle.addEventListener('click',()=>setOpen(toggle.getAttribute('aria-expanded')!=='true'));
   if(closeBtn)closeBtn.addEventListener('click',()=>setOpen(false));
   if(overlay)overlay.addEventListener('click',()=>setOpen(false));
+  drawer.querySelectorAll('a[href]').forEach(a=>a.addEventListener('click',()=>setOpen(false)));
   document.querySelectorAll('.drawer-toggle').forEach(btn=>{
     btn.addEventListener('click',()=>{
       const open=btn.getAttribute('aria-expanded')==='true';
@@ -623,7 +634,7 @@ HEAD = """<!DOCTYPE html>
 """ + RESOURCE_HINTS + """
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,700;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
 {schema}
-<style>{css}</style>
+<link rel="stylesheet" href="/styles.css?v=20260723">
 </head>
 <body>
 <a href="#main-content" class="skip-link">Skip to content</a>
@@ -944,15 +955,23 @@ GALLERY_HTML = """
   <div class="wrap">
     <div class="section-head reveal"><span class="mono section-num">Results</span>
       <h2 class="section-title" id="gallery-heading">Before. <em>After.</em> Same day.</h2>
-      
+
     </div>
     <div class="gallery-grid gallery-polish reveal">
-      
-      
+      {cells}
     </div>
   </div>
 </section>
 """
+
+
+def gallery_html(photos=None):
+    """Results/gallery section. Emitted ONLY when the page has real photo cells
+    to show — with no photos we skip the section entirely rather than render a
+    'Results' heading over an empty grid (previously broke city/item/project pages)."""
+    if not photos:
+        return ""
+    return GALLERY_HTML.format(cells="".join(photos))
 
 VIDEO_HTML = """
 <section class="video-section" aria-labelledby="video-heading">
@@ -971,6 +990,25 @@ VIDEO_HTML = """
   </div>
 </section>
 """
+
+# Step-2 size select — two variants. Garage-family pages (cleanout/cleaning/
+# turnaround/organization) keep the garage-size tiers; every other service
+# (junk removal, single-item removal, storage unit, property cleanout) gets a
+# generic "Job size" list so visitors aren't asked about garage bays.
+GARAGE_SIZE_LABEL = "Garage size"
+GARAGE_SIZE_OPTIONS = """<option value="">Choose size for estimate…</option>
+                <option value="single" data-flow="call_text" data-range="$99–$150">Single item / few bags ($99–$150)</option>
+                <option value="small_light" data-flow="call_text" data-range="$250–$299">Small cleanout — light partial ($250–$299)</option>
+                <option value="small_plus" data-flow="booking" data-range="$300–$400">Small cleanout — half garage+ ($300–$400)</option>
+                <option value="medium" data-flow="booking" data-range="$400–$650">Medium garage ($400–$650)</option>
+                <option value="large" data-flow="booking" data-range="$650+">Large garage / estate ($650+)</option>"""
+JOB_SIZE_LABEL = "Job size"
+JOB_SIZE_OPTIONS = """<option value="">What needs to go…</option>
+                <option value="One bulky item" data-flow="call_text" data-range="$99–$150">One bulky item</option>
+                <option value="A few items (2–5)" data-flow="call_text" data-range="$250–$400">A few items (2–5)</option>
+                <option value="Half a garage or room" data-flow="booking" data-range="$300–$400">Half a garage or room</option>
+                <option value="Full space cleanout" data-flow="booking" data-range="$400–$650">Full space cleanout</option>
+                <option value="Not sure — call me" data-flow="call_text" data-range="">Not sure — call me</option>"""
 
 QUOTE_FORM = """
 <section class="final-cta final-cta-split" id="quote" aria-labelledby="cta-heading">
@@ -1030,14 +1068,9 @@ QUOTE_FORM = """
             <button type="button" class="btn-primary form-submit" data-next style="margin-top:12px;">Next: Job size →</button>
           </div>
           <div class="form-panel" data-step="2">
-            <div class="form-row"><div class="field"><label for="size-{form_id}">Approximate job size</label>
+            <div class="form-row"><div class="field"><label for="size-{form_id}">{size_label}</label>
               <select id="size-{form_id}" name="Job size" required data-size-tier>
-                <option value="">Choose size for estimate…</option>
-                <option value="single" data-flow="call_text" data-range="$99–$150">Single item / few bags ($99–$150)</option>
-                <option value="small_light" data-flow="call_text" data-range="$250–$299">Small cleanout — light partial ($250–$299)</option>
-                <option value="small_plus" data-flow="booking" data-range="$300–$400">Small cleanout — half garage+ ($300–$400)</option>
-                <option value="medium" data-flow="booking" data-range="$400–$650">Medium garage ($400–$650)</option>
-                <option value="large" data-flow="booking" data-range="$650+">Large garage / estate ($650+)</option>
+                {size_options}
               </select>
               <p class="field-hint">{PRICING_DISCLAIMER}</p>
             </div></div>
@@ -1497,6 +1530,28 @@ def related_posts_html(filename):
     return f'<nav class="related-posts reveal" aria-label="Related articles"><h3>Related reading</h3><ul>{items}</ul></nav>'
 
 
+def _top_level_block_boundaries(html):
+    """Offsets immediately after a closing top-level block tag (</p>, </ul>,
+    </ol>, </table>, </div>, </blockquote>) where the tag-nesting depth returns
+    to zero. These are the only safe insertion points for injected blocks —
+    never mid-word, inside a heading, or inside a nested grid/table cell."""
+    boundaries = []
+    depth = 0
+    void_tags = {"br", "img", "hr", "input", "source", "meta", "link", "wbr", "area", "col", "embed", "track", "param"}
+    block_tags = {"p", "ul", "ol", "table", "div", "blockquote", "aside"}
+    for m in re.finditer(r"<(/?)([a-zA-Z][a-zA-Z0-9-]*)(?:\s[^>]*?)?(/?)>", html):
+        closing, tag, self_closing = m.group(1), m.group(2).lower(), m.group(3)
+        if tag in void_tags or self_closing:
+            continue
+        if closing:
+            depth = max(0, depth - 1)
+            if depth == 0 and tag in block_tags:
+                boundaries.append(m.end())
+        else:
+            depth += 1
+    return boundaries
+
+
 def enrich_blog_content(content, filename, pub_date):
     content = inject_heading_ids(content)
     content = wrap_compare_tables(content)
@@ -1504,13 +1559,18 @@ def enrich_blog_content(content, filename, pub_date):
     if summary and "quick-summary" not in content:
         content = quick_summary_html(summary) + content
     if "article-cta" not in content:
-        parts = content.split("</h2>", 2)
-        if len(parts) >= 3:
-            content = parts[0] + "</h2>" + parts[1] + "</h2>" + ARTICLE_CTA_MID + parts[2]
-        else:
-            mid = len(content) // 2
+        # Boundary rule: the mid-article CTA may only land BETWEEN top-level
+        # blocks (depth-0 closing </p>/</ul>/</ol>/…), never at an arbitrary
+        # character offset or straight after a heading.
+        boundaries = _top_level_block_boundaries(content)
+        if boundaries:
+            mid = min(boundaries, key=lambda b: abs(b - len(content) // 2))
             content = content[:mid] + ARTICLE_CTA_MID + content[mid:]
+        else:
+            content += ARTICLE_CTA_MID
     if content.count("article-cta") < 2:
+        # End CTA (and the related-posts nav added by callers) always append
+        # at the END of the content — never inserted mid-article.
         content += ARTICLE_CTA_END
     return content
 
@@ -1586,7 +1646,15 @@ def quote_form_for(stype, **kwargs):
         sel[key] = " selected"
     form_id = kwargs.pop("form_id", None) or re.sub(r"[^a-z0-9]", "", stype.lower())[:12] or "q"
     spc = {f"spc_{k}": v for k, v in SPC_SVG.items()}
-    return fmt(QUOTE_FORM, default_garage=dg, default_junk=dj, form_id=form_id, **spc, **sel, **kwargs)
+    # Garage-family services (cleanout/cleaning/turnaround/organization) keep the
+    # garage-size select; junk removal, single-item, storage-unit, and property
+    # pages get the generic "Job size" options instead.
+    low = stype.lower()
+    if "garage" in low and "junk" not in low:
+        size_label, size_options = GARAGE_SIZE_LABEL, GARAGE_SIZE_OPTIONS
+    else:
+        size_label, size_options = JOB_SIZE_LABEL, JOB_SIZE_OPTIONS
+    return fmt(QUOTE_FORM, default_garage=dg, default_junk=dj, form_id=form_id, size_label=size_label, size_options=size_options, **spc, **sel, **kwargs)
 
 
 def page_shell(title, desc, canonical, schema, body, og_type="website", quote_href="/book.html", robots="index, follow", **nav_kw):
@@ -1601,7 +1669,8 @@ def page_shell(title, desc, canonical, schema, body, og_type="website", quote_hr
     nav_opts.update(nav_kw)
     if "<main" in body and 'id="main-content"' not in body:
         body = re.sub(r"<main(\s|>)", r'<main id="main-content"\1', body, count=1)
-    return HEAD.format(title=title, desc=desc, canonical=canonical, schema=rating_note + schema + extra, css=SHARED_CSS + POLISH_CSS, SITE=SITE, og_type=og_type, robots=robots) + fmt(NAV, **nav_opts) + body + fmt(FOOTER, **nav_opts)
+    # Page CSS is no longer inlined — every generated page links /styles.css?v=20260723 (see HEAD).
+    return HEAD.format(title=title, desc=desc, canonical=canonical, schema=rating_note + schema + extra, SITE=SITE, og_type=og_type, robots=robots) + fmt(NAV, **nav_opts) + body + fmt(FOOTER, **nav_opts)
 
 
 def render_service(s):
@@ -1623,7 +1692,7 @@ def render_service(s):
 <a href="sms:{PHONE}?body={s['sms'].replace(' ', '%20')}" class="btn-secondary">Text Photos for Estimate</a></div>
 <div class="hero-trust"><span class="trust-badge">Locally owned</span><span class="trust-badge">Flat-rate pricing</span><span class="trust-badge">Next-day available</span><span class="trust-badge">5-min response</span>{trust}</div></div>
 <div class="hero-ba"><div class="hero-ba-cell before"><span class="hero-ba-label">BEFORE</span><picture><source srcset="/images/garage-before.webp" type="image/webp"><img src="/images/garage-before.jpg" alt="Cluttered two-car garage in Fort Collins before our crew arrived" width="1200" height="1200"></picture></div>
-<div class="hero-ba-cell after"><span class="hero-ba-label">AFTER</span><picture><source srcset="/images/garage-before.webp" type="image/webp"><img src="/images/garage-before.jpg" alt="Cluttered two-car garage in Fort Collins before our crew arrived" width="1200" height="1200"></picture></div></div></div></header>"""
+<div class="hero-ba-cell after"><span class="hero-ba-label">AFTER</span><picture><source srcset="/images/garage-after.webp" type="image/webp"><img src="/images/garage-after.jpg" alt="Clean swept garage after an Easy Garage Cleaning visit" width="1200" height="1200"></picture></div></div></div></header>"""
     items = items_html(s["yes_title"], s["yes"], NO_ITEMS) if s.get("show_items", True) else ""
     video = VIDEO_HTML if s.get("show_video") else ""
     def_section = f'<section class="body-copy"><div class="wrap"><div class="body-copy-inner reveal">{def_block_html(s["stype"], s["hero_sub"])}</div></div></section>'
@@ -1642,7 +1711,7 @@ def render_service(s):
         fmt(PRICING_HTML),
         LOCAL_FC,
         faq_html(s["faqs"]),
-        GALLERY_HTML.format(ba1=s["ba"][0], ba2=s["ba"][1], ba3=s["ba"][2]),
+        gallery_html(),  # no real job photos wired yet — section omitted
         video,
         related_html(related),
         also_booked_html(s["stype"]),
@@ -1652,7 +1721,6 @@ def render_service(s):
     return page_shell(s["title"], s["desc"], canonical, schema, body, robots=robots)
 
 
-CITY_HERO_OVERLAY = frozenset({"Windsor", "Loveland", "Wellington"})
 ITEM_PARENT_CATEGORY = {
     "Couch Removal": ("Furniture Removal", "/furniture-removal-fort-collins-co.html"),
     "Hot Tub Removal": ("Junk Removal", "/junk-removal-fort-collins-co.html"),
@@ -1663,10 +1731,10 @@ ITEM_PARENT_CATEGORY = {
 
 
 def city_hero_visual(city):
-    if city in CITY_HERO_OVERLAY:
-        return f"""<div class="hero-ba city-hero-placeholder"><div class="hero-ba-cell after"><span class="hero-ba-label">PHOTO PLACEHOLDER</span><span class="city-hero-overlay">{esc(city)}, CO</span></div></div>"""
-    return """<div class="hero-ba"><div class="hero-ba-cell before"><span class="hero-ba-label">BEFORE</span><picture><source srcset="/images/garage-before.webp" type="image/webp"><img src="/images/garage-before.jpg" alt="Cluttered two-car garage in Fort Collins before our crew arrived" width="1200" height="1200"></picture></div>
-<div class="hero-ba-cell after"><span class="hero-ba-label">AFTER</span><picture><source srcset="/images/garage-before.webp" type="image/webp"><img src="/images/garage-before.jpg" alt="Cluttered two-car garage in Fort Collins before our crew arrived" width="1200" height="1200"></picture></div></div>"""
+    # All city pages get the same real before/after image pair as the Fort
+    # Collins page — no visible placeholder cells.
+    return """<div class="hero-ba"><div class="hero-ba-cell before"><span class="hero-ba-label">BEFORE</span><picture><source srcset="/images/garage-before.webp" type="image/webp"><img src="/images/garage-before.jpg" alt="Cluttered two-car garage before a cleanout" width="1200" height="1200"></picture></div>
+<div class="hero-ba-cell after"><span class="hero-ba-label">AFTER</span><picture><source srcset="/images/garage-after.webp" type="image/webp"><img src="/images/garage-after.jpg" alt="Clean, swept garage after a cleanout" width="1200" height="1200"></picture></div></div>"""
 
 
 def render_city(c):
@@ -1703,7 +1771,7 @@ def render_city(c):
         fmt(PRICING_HTML),
         local,
         faq_html(c["faqs"]),
-        GALLERY_HTML.format(ba1=f"{c['city']} job 1", ba2=f"{c['city']} job 2", ba3=f"{c['city']} job 3"),
+        gallery_html(),  # no real job photos wired yet — section omitted
         related,
         quote_form_for(c["service"], cta_title=f"Book {c['service']} in {c['city']} <em>today</em>", form_subject=f"{c['service'].title()} Quote - {c['city']}", city_default=c["city"], sms_body=f"Hi!%20I%20need%20{c['service'].replace(' ', '%20')}%20in%20{c['city']}."),
     ]) + "</main>"
@@ -1720,7 +1788,6 @@ def render_project(p):
     content = f"""<main><section class="hero"><div class="wrap">
 <h1 class="hero-title" style="max-width:none">{esc(p["h1"])}</h1>
 <p class="hero-sub">{p["desc"]}</p>
-<p class="mono" style="color:var(--accent-deep);margin-top:12px;">PLACEHOLDER CASE STUDY — swap photos when available</p>
 </div></section>
 {body_copy_html(p.get("body_copy", ""))}
 <section class="process"><div class="wrap">
@@ -1731,7 +1798,7 @@ def render_project(p):
 <div class="project-timeline-step"><div class="project-timeline-num">03</div><div><h3>Result</h3><p>{p["result"]}</p></div></div>
 </div>
 </div></section>
-{GALLERY_HTML.format(ba1="Before — placeholder", ba2="After — placeholder", ba3="Detail — placeholder")}
+{gallery_html()}
 <section class="items"><div class="wrap"><div class="section-head"><span class="mono section-num">Scope</span><h2 class="section-title">Customer <em>problem</em></h2><p class="section-sub">{p["problem"]}</p>
 <h2 class="section-title" style="margin-top:32px">What we <em>removed</em></h2><p class="section-sub">{p["removed"]}</p></div></div></section>
 {related_html(p.get("related", [("/garage-cleanouts-fort-collins-co.html", "Garage Cleanouts"), ("/junk-removal-fort-collins-co.html", "Junk Removal"), ("/", "Home")]))}
@@ -2057,7 +2124,7 @@ def render_projects_index():
 <section class="hero"><div class="wrap">
 <div class="hero-eyebrow mono">Case studies</div>
 <h1 class="hero-title" style="max-width:none">Real garage <em>transformations</em></h1>
-<p class="hero-sub">Placeholder before/after photos — swap with owner job images. These Northern Colorado projects show typical scope, timeline, and results.</p>
+<p class="hero-sub">Real jobs from around Northern Colorado — here's how they went. These projects show typical scope, timeline, and results.</p>
 </div></section>
 <section class="gallery"><div class="wrap">
 <div class="section-head reveal"><span class="mono section-num">Projects</span>

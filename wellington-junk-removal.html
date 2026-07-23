@@ -340,13 +340,19 @@
       <div class="form-card" id="quote">
         <h2>Free Quote — We Call in 5 Minutes</h2>
         <p>Mon–Sat, 7 AM to 7 PM. No pressure, no commitment.</p>
-        <form action="https://api.web3forms.com/submit" method="POST" style="display:flex;flex-direction:column;gap:12px;">
+        <form class="lead-form-lite" action="https://api.web3forms.com/submit" method="POST" style="display:flex;flex-direction:column;gap:12px;">
           <input type="hidden" name="access_key" value="3c4fe752-ac1d-45b9-89dd-4275ea162d22">
           <input type="hidden" name="subject" value="New Quote Request — Wellington — Easy Garage Cleaning">
           <input type="hidden" name="redirect" value="https://easygaragecleaning.com/thank-you">
+          <input type="hidden" name="source" value="Website — legacy page — /wellington-junk-removal">
+          <input type="hidden" name="fbc" value="">
+          <input type="hidden" name="fbp" value="">
+          <input type="hidden" name="fbclid" value="">
+          <input type="hidden" name="landing_url" value="">
+          <input type="hidden" name="referrer" value="">
           <input type="checkbox" name="botcheck" class="sr-only" tabindex="-1" autocomplete="off">
-          <input type="text" name="Name" required autocomplete="name" placeholder="Your name">
-          <input type="tel" name="Phone" required autocomplete="tel" placeholder="Phone number" inputmode="tel">
+          <input type="text" name="name" required autocomplete="name" placeholder="Your name">
+          <input type="tel" name="phone" required autocomplete="tel" placeholder="Phone number" inputmode="tel">
           <button type="submit">Get My Free Quote &rarr;</button>
         </form>
       </div>
@@ -596,5 +602,6 @@ function initNavDrawer(){
 if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',initNavDrawer);}else{initNavDrawer();}
 </script>
 <script>(function(){const btt=document.getElementById('back-to-top');if(!btt)return;const onScroll=()=>{btt.hidden=window.scrollY<420};btt.addEventListener('click',e=>{e.preventDefault();window.scrollTo({top:0,behavior:'smooth'})});window.addEventListener('scroll',onScroll,{passive:true});onScroll();})();</script>
+<script src="/fb-capture.js" defer></script>
 </body>
 </html>
