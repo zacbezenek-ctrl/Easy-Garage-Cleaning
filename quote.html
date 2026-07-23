@@ -11,8 +11,14 @@
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,700;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
-<link rel="stylesheet" href="/styles.css?v=20260722">
+<link rel="stylesheet" href="/styles.css?v=20260723">
 <style>
+:root { --green: #16a34a; --red: #dc2626; --border: rgba(10,22,40,.14); --r: 8px; }
+/* Only the loading state is visible until the quote data resolves */
+#state-error, #state-accepted, #state-quote, #state-sig, #state-done { display: none; }
+#state-loading { text-align: center; padding: 72px 20px; color: var(--muted); }
+#state-error .wrap, #state-accepted .wrap { max-width: 560px; text-align: center; padding: 64px 18px; }
+#state-error h2, #state-accepted h2 { font-family: var(--font-display); font-size: 26px; margin-bottom: 12px; }
 .logo-dot { width: 8px; height: 8px; background: var(--accent); border-radius: 50%; flex-shrink:0; }
 .spinner { width: 36px; height: 36px; border: 3px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin .7s linear infinite; margin: 0 auto 16px; }
 .accepted-icon { font-size: 56px; margin-bottom: 16px; }
@@ -344,7 +350,7 @@ const STATES = ['state-loading','state-error','state-accepted','state-quote','st
 function show(id) {
   STATES.forEach(s => {
     const el = document.getElementById(s);
-    if (el) el.style.display = (s === id) ? '' : 'none';
+    if (el) el.style.display = (s === id) ? 'block' : 'none';
   });
 }
 
@@ -437,7 +443,7 @@ function populatePage() {
   }
 
   show('state-quote');
-  document.getElementById('state-sig').style.display = '';
+  document.getElementById('state-sig').style.display = 'block';
 }
 
 async function acceptQuote() {
@@ -516,5 +522,16 @@ document.addEventListener('DOMContentLoaded', () => {
 </script>
 
 <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
+<script>
+/* Safety net: if the quote hasn't resolved after 12s (e.g. Firebase CDN blocked),
+   fall through to the error state instead of an infinite spinner. */
+setTimeout(function () {
+  var l = document.getElementById('state-loading');
+  if (l && getComputedStyle(l).display !== 'none') {
+    var e = document.getElementById('state-error');
+    if (e) { l.style.display = 'none'; e.style.display = 'block'; }
+  }
+}, 12000);
+</script>
 </body>
 </html>

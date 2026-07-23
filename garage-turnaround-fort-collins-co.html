@@ -72,7 +72,7 @@
 <script type="application/ld+json">{"@context": "https://schema.org", "@type": "HowTo", "name": "How to book a garage cleanout in Fort Collins", "description": "Get a flat-rate garage cleanout quote from Easy Garage Cleaning in three simple steps.", "totalTime": "PT5M", "step": [{"@type": "HowToStep", "position": 1, "name": "Send photos", "text": "Text photos of your garage or junk to (970) 999-1818, or upload them in the quote form at easygaragecleaning.com. Wide shots work best."}, {"@type": "HowToStep", "position": 2, "name": "Get a flat-rate quote", "text": "We respond within 5 minutes with a firm price. No hourly billing, no truck visit required for most jobs."}, {"@type": "HowToStep", "position": 3, "name": "We reclaim your garage", "text": "We haul everything, donate usable items, sweep the floor, and hand you a donation receipt. You only pay after approving the quote."}]}</script>
 <script type="application/ld+json">[{"@context": "https://schema.org", "@type": "ImageObject", "@id": "https://easygaragecleaning.com/#gallery-image-1", "name": "One-day turnaround — Fort Collins", "description": "Before/after garage turnaround — One-day turnaround — Fort Collins (placeholder until owner uploads job photos)", "contentUrl": "https://easygaragecleaning.com/og-image.png", "representativeOfPage": false}, {"@context": "https://schema.org", "@type": "ImageObject", "@id": "https://easygaragecleaning.com/#gallery-image-2", "name": "Parking layout restored — Fossil Creek", "description": "Before/after garage turnaround — Parking layout restored — Fossil Creek (placeholder until owner uploads job photos)", "contentUrl": "https://easygaragecleaning.com/og-image.png", "representativeOfPage": false}, {"@context": "https://schema.org", "@type": "ImageObject", "@id": "https://easygaragecleaning.com/#gallery-image-3", "name": "Shelving and zones — Old Town", "description": "Before/after garage turnaround — Shelving and zones — Old Town (placeholder until owner uploads job photos)", "contentUrl": "https://easygaragecleaning.com/og-image.png", "representativeOfPage": false}]</script>
 <script type="application/ld+json">{"@context": "https://schema.org", "@type": "WebPage", "@id": "https://easygaragecleaning.com/garage-turnaround-fort-collins-co#webpage", "url": "https://easygaragecleaning.com/garage-turnaround-fort-collins-co", "name": "Garage Turnaround Fort Collins CO | One-Day Transformation", "description": "One-day garage turnaround in Fort Collins: cleanout, shelving, labeled zones & parking layout. Flat-rate $400–$3,500. Call (970) 999-1818.", "isPartOf": {"@id": "https://easygaragecleaning.com/#website"}, "about": {"@id": "https://easygaragecleaning.com/#business"}, "speakable": {"@type": "SpeakableSpecification", "cssSelector": [".hero-sub", ".faq-q", ".faq-a", ".def-block"]}}</script>
-<link rel="stylesheet" href="/styles.css?v=20260722">
+<link rel="stylesheet" href="/styles.css?v=20260723">
 </head>
 <body>
 <a href="#main-content" class="skip-link">Skip to content</a>
@@ -337,18 +337,6 @@
 <div class="faq-item"><details><summary><span class="faq-q-num">Q.10</span> How do I get a turnaround quote?</summary><p class="faq-a">Text wide photos of your garage to (970) 999-1818 or call. We respond within 5 minutes with a flat-rate quote, and you only pay after approving it.</p></details></div>
 </div><p style="text-align:center;margin-top:24px;" class="reveal"><a href="/faq" class="content-link">See full FAQ →</a></p></div></section>
 
-<section class="gallery" aria-labelledby="gallery-heading">
-  <div class="wrap">
-    <div class="section-head reveal"><span class="mono section-num">Results</span>
-      <h2 class="section-title" id="gallery-heading">Before. <em>After.</em> Same day.</h2>
-      
-    </div>
-    <div class="gallery-grid gallery-polish reveal">
-      
-      
-    </div>
-  </div>
-</section>
 
 
 <section class="related" aria-labelledby="related-heading"><div class="wrap"><div class="section-head reveal"><span class="mono section-num">Nearby</span><h2 class="section-title" id="related-heading">Related in Northern Colorado</h2></div><div class="links reveal"><a href="/garage-cleanouts-fort-collins-co">Garage Cleanouts</a><a href="/garage-organization-fort-collins-co">Garage Organization</a><a href="/garage-cleaning-fort-collins-co">Garage Cleaning</a><a href="/blog/garage-turnaround-fort-collins-one-day">One-Day Turnaround Guide</a><a href="/blog/fort-collins-garage-transformation-guide">Transformation Guide</a><a href="/blog/park-in-your-garage-before-winter-fort-collins">Park Inside Before Winter</a><a href="/">Home</a></div></div></section>
@@ -496,6 +484,7 @@ function initNavDrawer(){
   toggle.addEventListener('click',()=>setOpen(toggle.getAttribute('aria-expanded')!=='true'));
   if(closeBtn)closeBtn.addEventListener('click',()=>setOpen(false));
   if(overlay)overlay.addEventListener('click',()=>setOpen(false));
+  drawer.querySelectorAll('a[href]').forEach(a=>a.addEventListener('click',()=>setOpen(false)));
   document.querySelectorAll('.drawer-toggle').forEach(btn=>{
     btn.addEventListener('click',()=>{
       const open=btn.getAttribute('aria-expanded')==='true';

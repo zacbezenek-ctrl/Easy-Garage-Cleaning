@@ -71,7 +71,7 @@
 <script type="application/ld+json">{"@context": "https://schema.org", "@type": "Question", "name": "Are you insured?", "acceptedAnswer": {"@type": "Answer", "text": "Yes — Easy Garage Cleaning LLC is a Colorado-registered LLC with general liability and commercial auto insurance on every job."}}</script>
 <script type="application/ld+json">{"@context": "https://schema.org", "@type": "Question", "name": "Do you donate usable items?", "acceptedAnswer": {"@type": "Answer", "text": "Yes — Habitat ReStore Fort Collins, ARC, and Goodwill when items qualify; tax receipt in the customer's name."}}</script>
 <script type="application/ld+json">{"@context": "https://schema.org", "@type": "WebPage", "@id": "https://easygaragecleaning.com/book#webpage", "url": "https://easygaragecleaning.com/book", "name": "Book Garage Cleanout or Junk Removal | Fort Collins CO", "description": "Book garage cleanout or junk removal in Fort Collins. Upload photos, pick your city, get a flat-rate quote in 5 minutes — pay only after you approve.", "isPartOf": {"@id": "https://easygaragecleaning.com/#website"}, "about": {"@id": "https://easygaragecleaning.com/#business"}, "speakable": {"@type": "SpeakableSpecification", "cssSelector": [".hero-sub", ".faq-q", ".faq-a", ".def-block"]}}</script>
-<link rel="stylesheet" href="/styles.css?v=20260722">
+<link rel="stylesheet" href="/styles.css?v=20260723">
 </head>
 <body>
 <a href="#main-content" class="skip-link">Skip to content</a>
@@ -228,25 +228,17 @@
 <section class="final-cta final-cta-split" id="quote" aria-labelledby="cta-heading">
   <div class="wrap">
     <div class="book-layout reveal">
-      <div class="cta-point">No hidden fees — only pay after approving quote</div>
-        <div class="cta-point">We do all lifting — you don't touch a thing</div>
-        <div class="cta-point">Next-day availability when schedule allows</div>
-        <div style="margin-top:12px;display:flex;flex-wrap:wrap;gap:12px;">
+      <div>
+        <div class="cta-points">
+          <div class="cta-point">No hidden fees — only pay after approving quote</div>
+          <div class="cta-point">We do all lifting — you don't touch a thing</div>
+          <div class="cta-point">Next-day availability when schedule allows</div>
+        </div>
+        <div style="margin-top:16px;display:flex;flex-wrap:wrap;gap:12px;">
           <a href="tel:+19709991818" class="btn-primary btn-lg">Call (970) 999-1818</a>
           <a href="sms:+19709991818?body=Hi!%20I'd%20like%20a%20quote.%20I%20can%20text%20photos%20of%20my%20garage/junk." class="btn-secondary btn-lg" style="color:var(--paper);border-color:rgba(255,255,255,.25);">Text Photos</a>
         </div>
-      </div>
-      <aside class="book-sidebar reveal" aria-label="Why photo quotes work">
-<h3>Why photo quotes work</h3>
-<ul>
-<li>We see volume and access before we arrive — your price is locked, not hourly.</li>
-<li>Wide shots of the full garage beat close-ups of random piles.</li>
-<li>No truck visit required for most Fort Collins jobs.</li>
-<li>Text photos to (970) 999-1818 if upload is easier on your phone.</li>
-<li>Pay only after you approve the flat-rate quote.</li>
-</ul>
-</aside>
-<div class="quote-form">
+        <div class="quote-form" style="margin-top:24px">
         <h3>Get Free Quote</h3>
         <p class="form-note">3 quick fields · No spam · No obligation</p>
         <form class="lead-form-lite" action="https://api.web3forms.com/submit" method="POST">
@@ -284,7 +276,18 @@
   <span>✓ 5-minute response Mon–Sat</span>
 </div>
 
+        </div>
       </div>
+      <aside class="book-sidebar reveal" aria-label="Why photo quotes work">
+        <h3>Why photo quotes work</h3>
+        <ul>
+          <li>We see volume and access before we arrive — your price is locked, not hourly.</li>
+          <li>Wide shots of the full garage beat close-ups of random piles.</li>
+          <li>No truck visit required for most Fort Collins jobs.</li>
+          <li>Text photos to (970) 999-1818 if upload is easier on your phone.</li>
+          <li>Pay only after you approve the flat-rate quote.</li>
+        </ul>
+      </aside>
     </div>
   </div>
 </section>
@@ -357,7 +360,7 @@
 <div class="mobile-sticky-cta" aria-label="Quick contact">
   <a href="tel:+19709991818" class="mobile-cta-btn mobile-cta-call">Call</a>
   <a href="sms:+19709991818?body=Hi!%20I'd%20like%20a%20quote.%20I%20can%20text%20photos%20of%20my%20garage/junk." class="mobile-cta-btn mobile-cta-text">Text</a>
-  <a href="/book" class="mobile-cta-btn mobile-cta-quote">Quote</a>
+  <a href="#quote" class="mobile-cta-btn mobile-cta-quote">Quote</a>
 </div>
 <script>
 
@@ -379,6 +382,7 @@ function initNavDrawer(){
   toggle.addEventListener('click',()=>setOpen(toggle.getAttribute('aria-expanded')!=='true'));
   if(closeBtn)closeBtn.addEventListener('click',()=>setOpen(false));
   if(overlay)overlay.addEventListener('click',()=>setOpen(false));
+  drawer.querySelectorAll('a[href]').forEach(a=>a.addEventListener('click',()=>setOpen(false)));
   document.querySelectorAll('.drawer-toggle').forEach(btn=>{
     btn.addEventListener('click',()=>{
       const open=btn.getAttribute('aria-expanded')==='true';

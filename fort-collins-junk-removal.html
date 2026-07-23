@@ -98,7 +98,7 @@
   }
   </script>
 
-  <link rel="stylesheet" href="/styles.css?v=20260722">
+  <link rel="stylesheet" href="/styles.css?v=20260723">
 <style>
 .form-card {
       background: var(--navy-soft);
@@ -436,6 +436,14 @@
 .foot .logo { color: var(--white); }
 .foot a { color: var(--accent); }
 @media (min-width: 700px) { .foot { flex-direction: row; align-items: center; } }
+
+/* === audit-2026-07 fixes: define the vars this page references but never
+   declared, and give the navy sections light headings (the shared stylesheet's
+   .section-title is dark ink). === */
+:root { --muted-light: rgba(245,241,234,0.72); --navy-border: rgba(255,255,255,0.11); }
+.haul .section-title, .no-haul .section-title, .how .section-title, .why .section-title, .service-area .section-title { color: var(--paper); }
+.haul .section-sub, .no-haul .section-sub, .how .section-sub, .why .section-sub, .service-area .section-sub { color: var(--muted-light); }
+.form-card .sms-consent { color: rgba(245,241,234,0.72); }
 </style>
 </head>
 <body>
@@ -467,16 +475,22 @@
       </div>
     </div>
     <div>
-      <div class="form-card">
+      <div class="form-card" id="quote">
         <h2>Get a Free Quote in 5 Minutes</h2>
         <p>We'll call you right back — Mon–Sat, 7 AM to 7 PM</p>
-        <form action="https://api.web3forms.com/submit" method="POST" class="form-stack">
+        <form action="https://api.web3forms.com/submit" method="POST" class="form-stack lead-form-lite">
           <input type="hidden" name="access_key" value="3c4fe752-ac1d-45b9-89dd-4275ea162d22">
           <input type="hidden" name="subject" value="New Quote Request — Fort Collins Junk Removal — Easy Garage Cleaning">
           <input type="hidden" name="redirect" value="https://easygaragecleaning.com/thank-you">
+          <input type="hidden" name="source" value="Website — legacy page — /fort-collins-junk-removal">
+          <input type="hidden" name="fbc" value="">
+          <input type="hidden" name="fbp" value="">
+          <input type="hidden" name="fbclid" value="">
+          <input type="hidden" name="landing_url" value="">
+          <input type="hidden" name="referrer" value="">
           <input type="checkbox" name="botcheck" class="sr-only" tabindex="-1" autocomplete="off">
-          <input type="text" name="Name" required autocomplete="name" placeholder="Your name">
-          <input type="tel" name="Phone" required autocomplete="tel" placeholder="Phone number" inputmode="tel">
+          <input type="text" name="name" required autocomplete="name" placeholder="Your name">
+          <input type="tel" name="phone" required autocomplete="tel" placeholder="Phone number" inputmode="tel">
           <button type="submit">Get My Free Quote &rarr;</button>
         </form>
       </div>
@@ -777,7 +791,7 @@
     <p>Call us Monday–Saturday, 7 AM–7 PM. Next-day slots often available.</p>
     <div class="cta-btns">
       <a href="tel:+19709991818">(970) 999-1818</a>
-      <a href="#" onclick="window.scrollTo({top:0,behavior:'smooth'});return false;" class="secondary">Get a Free Quote</a>
+      <a href="#quote" class="secondary">Get a Free Quote</a>
     </div>
   </div>
 </div>
@@ -819,5 +833,6 @@
   });
 </script>
 
+<script src="/fb-capture.js" defer></script>
 </body>
 </html>

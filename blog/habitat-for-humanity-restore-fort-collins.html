@@ -53,7 +53,7 @@
 }
 </script>
 
-<link rel="stylesheet" href="/styles.css?v=20260722">
+<link rel="stylesheet" href="/styles.css?v=20260723">
 <style>
 .foot { display: flex; flex-direction: column; gap: 16px; justify-content: space-between; }
 .foot .logo { color: var(--paper); }
@@ -219,11 +219,7 @@
       <ul>
         <li><strong>Furniture:</strong> Sofas, chairs, dining sets, dressers, beds — must be in good, clean condition without major structural damage or heavy staining</li>
         <li><strong>Working appliances:</strong> Refrigerators, washers, dryers, dishwashers, ranges — must be in working order and reasonably clean</li>
-        <li><strong>Cabinets:</strong> Kitchen and bathroom cabinets in good shape are among their most popular<aside class="article-cta reveal" aria-label="Book a quote">
-<h3>Get your garage back</h3>
-<p>Text photos for a flat-rate quote in 5 minutes — no obligation.</p>
-<a href="/book" class="btn-primary">Book free quote</a>
-</aside> items</li>
+        <li><strong>Cabinets:</strong> Kitchen and bathroom cabinets in good shape are among their most popular items</li>
         <li><strong>Doors and windows:</strong> Interior and exterior doors, windows (must be intact, no broken glass)</li>
         <li><strong>Hardware:</strong> Door hardware, cabinet pulls, hinges, locks</li>
         <li><strong>Lighting:</strong> Light fixtures in working condition</li>
@@ -232,6 +228,12 @@
         <li><strong>Power tools:</strong> Working power tools are often accepted</li>
         <li><strong>Building materials:</strong> Lumber, drywall, insulation (unused or lightly used)</li>
       </ul>
+
+      <aside class="article-cta reveal" aria-label="Book a quote">
+<h3>Get your garage back</h3>
+<p>Text photos for a flat-rate quote in 5 minutes — no obligation.</p>
+<a href="/book" class="btn-primary">Book free quote</a>
+</aside>
 
       <div class="two-col">
         <div class="accept-box">
@@ -246,11 +248,7 @@
             <li>Power tools (working)</li>
             <li>Flooring materials</li>
           </ul>
-        <aside class="article-cta reveal" aria-label="Book a quote">
-<h3>Get your garage back — book free quote</h3>
-<p>Next-day when schedule allows. Locally owned in Fort Collins.</p>
-<a href="/book" class="btn-primary">Book free quote</a> <a href="sms:+19709991818?body=Hi!%20I'd%20like%20a%20quote." class="btn-secondary" style="margin-left:8px;border-color:rgba(255,255,255,.3);color:var(--paper)">Text photos</a>
-</aside><nav class="related-posts reveal" aria-label="Related articles"><h3>Related reading</h3><ul><li><a href="/blog/tax-deduction-donating-junk">Tax deduction guide</a></li><li><a href="/furniture-removal-fort-collins-co">Furniture removal</a></li><li><a href="/appliance-removal-fort-collins-co">Appliance removal</a></li></ul></nav></div>
+        </div>
         <div class="decline-box">
           <h3>Generally Not Accepted</h3>
           <ul>
@@ -265,6 +263,12 @@
           </ul>
         </div>
       </div>
+
+      <aside class="article-cta reveal" aria-label="Book a quote">
+<h3>Get your garage back — book free quote</h3>
+<p>Next-day when schedule allows. Locally owned in Fort Collins.</p>
+<a href="/book" class="btn-primary">Book free quote</a> <a href="sms:+19709991818?body=Hi!%20I'd%20like%20a%20quote." class="btn-secondary" style="margin-left:8px;border-color:rgba(255,255,255,.3);color:var(--paper)">Text photos</a>
+</aside>
 
       <div class="callout">
         <p><strong>Call ahead for large items.</strong> ReStore sometimes has limited floor space and may need to schedule large appliance or furniture donations. Their Fort Collins location is on E. Harmony Rd — confirm current drop-off hours on their website or by phone before loading up your truck.</p>
@@ -324,6 +328,8 @@
       </div>
 
     <p style="margin-top:24px">Ready to donate during a cleanout? <a href="/garage-cleanouts-fort-collins-co">Book a Fort Collins garage cleanout</a> — we handle ReStore drop-offs and your tax receipt.</p>
+
+    <nav class="related-posts reveal" aria-label="Related articles"><h3>Related reading</h3><ul><li><a href="/blog/tax-deduction-donating-junk">Tax deduction guide</a></li><li><a href="/furniture-removal-fort-collins-co">Furniture removal</a></li><li><a href="/appliance-removal-fort-collins-co">Appliance removal</a></li></ul></nav>
     </article>
   </div>
 </main>
@@ -401,7 +407,7 @@
   <a href="/book" class="mobile-cta-btn mobile-cta-quote">Quote</a>
 </div>
 
-<style>@media(max-width:1023px){.mobile-sticky-cta{position:fixed;bottom:0;left:0;right:0;z-index:100;display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;background:#0a1628;padding:8px 10px 12px}body{padding-bottom:72px}}</style>
+
 <script>
 function initNavDrawer(){
   const toggle=document.querySelector('.nav-toggle');
@@ -421,6 +427,7 @@ function initNavDrawer(){
   toggle.addEventListener('click',()=>setOpen(toggle.getAttribute('aria-expanded')!=='true'));
   if(closeBtn)closeBtn.addEventListener('click',()=>setOpen(false));
   if(overlay)overlay.addEventListener('click',()=>setOpen(false));
+  drawer.querySelectorAll('a[href]').forEach(a=>a.addEventListener('click',()=>setOpen(false)));
   document.querySelectorAll('.drawer-toggle').forEach(btn=>{
     btn.addEventListener('click',()=>{
       const open=btn.getAttribute('aria-expanded')==='true';
@@ -434,5 +441,6 @@ function initNavDrawer(){
 if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',initNavDrawer);}else{initNavDrawer();}
 </script>
 <script>(function(){const btt=document.getElementById('back-to-top');if(!btt)return;const onScroll=()=>{btt.hidden=window.scrollY<420};btt.addEventListener('click',e=>{e.preventDefault();window.scrollTo({top:0,behavior:'smooth'})});window.addEventListener('scroll',onScroll,{passive:true});onScroll();})();</script>
+<script>(function(){var els=document.querySelectorAll('.reveal');if(!('IntersectionObserver' in window)){els.forEach(function(el){el.classList.add('visible');});return;}var io=new IntersectionObserver(function(es){es.forEach(function(e){if(e.isIntersecting){e.target.classList.add('visible');io.unobserve(e.target);}});},{threshold:0.08});els.forEach(function(el){io.observe(el);});})();</script>
 </body>
 </html>

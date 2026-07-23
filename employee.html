@@ -31,7 +31,7 @@
     window._mapsReady = false;
     function _onMapsLoaded() { window._mapsReady = true; }
   </script>
-  <link rel="stylesheet" href="/styles.css?v=20260722">
+  <link rel="stylesheet" href="/styles.css?v=20260723">
 <style>
 body { background: var(--navy); color: var(--white); }
 /* ── View-container defaults: only login visible on cold load ── */
@@ -55,7 +55,7 @@ body.has-session #login-screen { display: none; }
 .fg label { display: block; font-size: .75rem; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); margin-bottom: .4rem; }
 .fg input, .fg select, .fg textarea { width: 100%; background: var(--navy); border: 1px solid rgba(255,255,255,.12); border-radius: .5rem; color: var(--white); font-family: 'Inter', sans-serif; font-size: 1rem; padding: .7rem 1rem; outline: none; transition: border-color .2s; -webkit-appearance: none; }
 .fg input:focus, .fg select:focus, .fg textarea:focus { border-color: var(--accent); }
-.fg select option { background: var(--navy); }
+.fg select option { background: #fff; color: var(--ink); }
 .fg textarea { resize: vertical; min-height: 72px; }
 .btn-main { width: 100%; background: var(--accent); color: #fff; border: none; border-radius: .6rem; font-family: 'Inter', sans-serif; font-size: .95rem; font-weight: 600; padding: .8rem 1.5rem; cursor: pointer; transition: background .2s; margin-top: .5rem; }
 .btn-main:hover { background: var(--accent-deep); }
@@ -706,6 +706,22 @@ body.has-session #login-screen { display: none; }
 .modal-backdrop.open { display: flex; }
 #booking-overlay, #contract-modal, .lead-quote-overlay { position: fixed; inset: 0; z-index: 350; display: none; align-items: center; justify-content: center; background: rgba(0,0,0,.75); backdrop-filter: blur(4px); padding: 1rem; color: var(--white); }
 #booking-overlay.open, #contract-modal.open, .lead-quote-overlay.open { display: flex; }
+/* Contract + lead-quote modal panels (white cards on the dark overlay) */
+.cm-panel, .qm-panel { background: #fff; color: var(--ink); border-radius: var(--radius-lg); width: 100%; max-width: 480px; max-height: 90vh; overflow-y: auto; padding: 1.5rem 1.75rem; box-shadow: 0 24px 64px rgba(0,0,0,.5); }
+.cm-title, .qm-title { font-family: 'Fraunces', serif; font-size: 1.15rem; font-weight: 700; margin-bottom: .35rem; }
+.cm-sub, .qm-sub { font-size: .85rem; color: var(--muted); line-height: 1.5; margin-bottom: 1.25rem; }
+.cm-link-box { font-family: 'JetBrains Mono', monospace; font-size: .78rem; line-height: 1.5; word-break: break-all; background: var(--paper); border: 1px solid rgba(10,22,40,.15); border-radius: .5rem; padding: .6rem .75rem; margin-bottom: .65rem; }
+.cm-copy-row { display: flex; flex-wrap: wrap; gap: .5rem; margin-bottom: 1.25rem; }
+.cm-sms-btn { flex: 1; display: inline-flex; align-items: center; justify-content: center; background: var(--accent); color: #fff; border-radius: .55rem; font-family: 'Inter', sans-serif; font-size: .875rem; font-weight: 600; padding: .6rem 1.1rem; text-decoration: none; transition: background .2s; white-space: nowrap; }
+.cm-sms-btn:hover { background: var(--accent-deep); color: #fff; }
+.cm-copy-btn { background: transparent; border: 1px solid rgba(10,22,40,.25); color: var(--ink); border-radius: .5rem; font-family: 'Inter', sans-serif; font-size: .875rem; font-weight: 600; padding: .6rem 1.1rem; cursor: pointer; transition: all .2s; }
+.cm-copy-btn:hover { border-color: var(--accent); color: var(--accent); }
+.qm-input { width: 100%; background: #fff; border: 1px solid rgba(10,22,40,.22); border-radius: .5rem; color: var(--ink); font-family: 'Inter', sans-serif; font-size: 1rem; padding: .7rem 1rem; min-height: 44px; outline: none; transition: border-color .2s; margin-bottom: .65rem; }
+.qm-input:focus { border-color: var(--accent); }
+.qm-note { font-size: .78rem; color: var(--muted); line-height: 1.45; margin-bottom: 1.25rem; }
+.qm-btns { display: flex; gap: .65rem; justify-content: flex-end; }
+.cm-panel .btn-back, .qm-panel .btn-back { border-color: rgba(10,22,40,.25); color: var(--muted); }
+.cm-panel .btn-back:hover, .qm-panel .btn-back:hover { border-color: var(--ink); color: var(--ink); }
 @media (min-width: 640px) { .modal-backdrop.open { align-items: center; padding: 1rem; } }
 .modal-sheet { background: var(--navy-soft); border: 1px solid rgba(255,255,255,.08); border-radius: 1.25rem 1.25rem 0 0; width: 100%; max-width: 520px; max-height: 90vh; overflow-y: auto; padding: 1.5rem 1.75rem 2rem; box-shadow: 0 24px 64px rgba(0,0,0,.5); }
 @media (min-width: 640px) { .modal-sheet { border-radius: 1.25rem; } }

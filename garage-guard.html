@@ -45,7 +45,7 @@
 <script type="application/ld+json">{"@context": "https://schema.org", "@type": "WebPage", "@id": "https://easygaragecleaning.com/garage-guard#webpage", "url": "https://easygaragecleaning.com/garage-guard", "name": "Garage Guard Membership | Year-Round Garage Upkeep Fort Collins", "description": "Garage Guard membership plans: scheduled sweep, re-tidy, and junk-haul visits so your garage never slides back.", "isPartOf": {"@id": "https://easygaragecleaning.com/#website"}, "about": {"@id": "https://easygaragecleaning.com/#business"}}</script>
 <script type="application/ld+json">{"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [{"@type": "Question", "name": "Can I cancel my Garage Guard membership?", "acceptedAnswer": {"@type": "Answer", "text": "Yes — anytime, no phone call required. Open the billing portal from this page, click cancel, and your plan stays active through the end of the period you already paid for."}}, {"@type": "Question", "name": "Is paying online secure?", "acceptedAnswer": {"@type": "Answer", "text": "Checkout is handled entirely by Stripe, the payment processor used by Amazon and Google. Your card number goes straight to Stripe over an encrypted connection — Easy Garage Cleaning never sees or stores it."}}, {"@type": "Question", "name": "What happens after I subscribe?", "acceptedAnswer": {"@type": "Answer", "text": "You get a Stripe receipt by email immediately, and we text you within one business day to schedule your first visit."}}]}</script>
 
-<link rel="stylesheet" href="/styles.css?v=20260722">
+<link rel="stylesheet" href="/styles.css?v=20260723">
 <style>
 /* ===== Garage Guard page-scoped styles (site tokens from styles.css) ===== */
 .gg-plans{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:24px;margin-top:36px;align-items:stretch}
@@ -57,6 +57,8 @@
 .gg-plan.gg-black .gg-price,.gg-plan.gg-black h3{color:#fff}
 .gg-plan.gg-black .gg-feat li{color:var(--muted-dark)}
 .gg-plan.gg-black .gg-feat li::before{color:var(--accent)}
+.gg-plan.gg-black .gg-price small{color:var(--muted-dark)}
+.gg-plan.gg-black .gg-feat li{border-bottom-color:rgba(255,255,255,.12)}
 .gg-plan h3{font-family:var(--font-display);font-size:22px;font-weight:700;letter-spacing:-.01em}
 .gg-tagline{font-size:13px;color:var(--muted);margin-top:2px;min-height:20px}
 .gg-plan.gg-black .gg-tagline{color:var(--muted-dark)}
@@ -326,7 +328,7 @@
 </div></section>
 
 <section style="background:var(--navy);padding:var(--section-gap) 0"><div class="wrap" style="text-align:center">
-<h2 class="section-title" style="color:#fff">Rather talk it through first?</h2>
+<h2 class="section-title" style="color:#fff;margin-left:auto;margin-right:auto">Rather talk it through first?</h2>
 <p class="section-sub" style="color:var(--muted-dark);margin:10px auto 22px;max-width:56ch">Two minutes on the phone and we'll tell you straight which plan fits your garage — or whether you even need one yet.</p>
 <div class="hero-ctas" style="justify-content:center"><a href="tel:+19709991818" class="btn-primary">Call (970) 999-1818</a><a href="sms:+19709991818?body=Hi!%20I%20have%20a%20question%20about%20Garage%20Guard." class="btn-secondary" style="border-color:rgba(255,255,255,.4);color:#fff">Text us instead</a></div>
 </div></section>
@@ -421,6 +423,7 @@ function initNavDrawer(){
   toggle.addEventListener('click',()=>setOpen(toggle.getAttribute('aria-expanded')!=='true'));
   if(closeBtn)closeBtn.addEventListener('click',()=>setOpen(false));
   if(overlay)overlay.addEventListener('click',()=>setOpen(false));
+  drawer.querySelectorAll('a[href]').forEach(a=>a.addEventListener('click',()=>setOpen(false)));
   document.querySelectorAll('.drawer-toggle').forEach(btn=>{
     btn.addEventListener('click',()=>{
       const open=btn.getAttribute('aria-expanded')==='true';

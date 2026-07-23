@@ -63,9 +63,9 @@
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,700;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
 
 <!-- AggregateRating: uncomment and add verified reviewCount/ratingValue to LocalBusiness when real reviews exist -->
-<script type="application/ld+json">[{"@context": "https://schema.org", "@type": "Article", "headline": "Windsor Garage Junk Removal", "description": "Case study — Raindance Windsor two-car garage junk removal. Appliances, furniture, and boxes cleared same day.", "url": "https://easygaragecleaning.com/projects/windsor-garage-junk-removal", "author": {"@type": "Person", "name": "Zac Bezenek"}}, {"@context": "https://schema.org", "@type": "ImageObject", "contentUrl": "https://easygaragecleaning.com/og-image.png", "description": "Before/after placeholder — Windsor Garage Junk Removal"}]</script>
+<script type="application/ld+json">[{"@context": "https://schema.org", "@type": "Article", "headline": "Windsor Garage Junk Removal", "description": "Case study — Raindance Windsor two-car garage junk removal. Appliances, furniture, and boxes cleared same day.", "url": "https://easygaragecleaning.com/projects/windsor-garage-junk-removal", "author": {"@type": "Person", "name": "Zac Bezenek"}}, {"@context": "https://schema.org", "@type": "ImageObject", "contentUrl": "https://easygaragecleaning.com/og-image.png", "description": "Before/after — Windsor Garage Junk Removal"}]</script>
 <script type="application/ld+json">{"@context": "https://schema.org", "@type": "WebPage", "@id": "https://easygaragecleaning.com/projects/windsor-garage-junk-removal#webpage", "url": "https://easygaragecleaning.com/projects/windsor-garage-junk-removal", "name": "Project: Windsor Garage Junk Removal | Easy Garage Cleaning", "description": "Case study — Raindance Windsor two-car garage junk removal. Appliances, furniture, and boxes cleared same day.", "isPartOf": {"@id": "https://easygaragecleaning.com/#website"}, "about": {"@id": "https://easygaragecleaning.com/#business"}, "speakable": {"@type": "SpeakableSpecification", "cssSelector": [".hero-sub", ".faq-q", ".faq-a", ".def-block"]}}</script>
-<link rel="stylesheet" href="/styles.css?v=20260722">
+<link rel="stylesheet" href="/styles.css?v=20260723">
 </head>
 <body>
 <a href="#main-content" class="skip-link">Skip to content</a>
@@ -199,7 +199,6 @@
 <main id="main-content"><section class="hero"><div class="wrap">
 <h1 class="hero-title" style="max-width:none">Windsor Garage Junk Removal</h1>
 <p class="hero-sub">Case study — Raindance Windsor two-car garage junk removal. Appliances, furniture, and boxes cleared same day.</p>
-<p class="mono" style="color:var(--accent-deep);margin-top:12px;">PLACEHOLDER CASE STUDY — swap photos when available</p>
 </div></section>
 <section class="body-copy"><div class="wrap"><div class="body-copy-inner reveal"><p>Included <a href="/refrigerator-removal-fort-collins-co" class="content-link">refrigerator removal</a> and full <a href="/garage-cleanouts-windsor-co" class="content-link">garage cleanouts in Windsor</a>.</p></div></div></section>
 <section class="process"><div class="wrap">
@@ -210,19 +209,6 @@
 <div class="project-timeline-step"><div class="project-timeline-num">03</div><div><h3>Result</h3><p>Both bays clear — family parked both cars inside. Working washer donated to ReStore.</p></div></div>
 </div>
 </div></section>
-
-<section class="gallery" aria-labelledby="gallery-heading">
-  <div class="wrap">
-    <div class="section-head reveal"><span class="mono section-num">Results</span>
-      <h2 class="section-title" id="gallery-heading">Before. <em>After.</em> Same day.</h2>
-      
-    </div>
-    <div class="gallery-grid gallery-polish reveal">
-      
-      
-    </div>
-  </div>
-</section>
 
 <section class="items"><div class="wrap"><div class="section-head"><span class="mono section-num">Scope</span><h2 class="section-title">Customer <em>problem</em></h2><p class="section-sub">Raindance two-car garage used as storage since move-in. Old fridge, kids' outgrown sports gear, and contractor leftovers blocked both bays.</p>
 <h2 class="section-title" style="margin-top:32px">What we <em>removed</em></h2><p class="section-sub">Refrigerator, washer, 8 furniture pieces, sports equipment, and 2 truckloads of boxes and debris.</p></div></div></section>
@@ -383,6 +369,7 @@ function initNavDrawer(){
   toggle.addEventListener('click',()=>setOpen(toggle.getAttribute('aria-expanded')!=='true'));
   if(closeBtn)closeBtn.addEventListener('click',()=>setOpen(false));
   if(overlay)overlay.addEventListener('click',()=>setOpen(false));
+  drawer.querySelectorAll('a[href]').forEach(a=>a.addEventListener('click',()=>setOpen(false)));
   document.querySelectorAll('.drawer-toggle').forEach(btn=>{
     btn.addEventListener('click',()=>{
       const open=btn.getAttribute('aria-expanded')==='true';

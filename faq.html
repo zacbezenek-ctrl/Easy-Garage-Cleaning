@@ -247,7 +247,7 @@
 }
 </script>
 
-<link rel="stylesheet" href="/styles.css?v=20260722">
+<link rel="stylesheet" href="/styles.css?v=20260723">
 <style>
 .foot { display: flex; flex-direction: column; gap: 16px; justify-content: space-between; }
 .foot .logo { color: var(--paper); }
@@ -267,7 +267,13 @@
 .faq-q .q-arrow { flex-shrink: 0; width: 20px; height: 20px; display: flex; align-items: center; justify-content: center; color: var(--muted); transition: transform 0.2s; }
 details[open] .faq-q .q-arrow { transform: rotate(180deg); }
 details[open] .faq-q .q-text { color: var(--accent); }
+.faq-cta { background: var(--navy); color: var(--paper); padding: 64px 0; margin-top: 32px; }
+.faq-cta h2 { font-family: var(--font-display); font-size: clamp(24px, 4vw, 36px); font-weight: 500; letter-spacing: -0.02em; margin-bottom: 10px; }
+.faq-cta > .wrap > p { color: var(--muted-dark); max-width: 60ch; }
 .faq-cta .eyebrow { font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.15em; color: var(--accent); margin-bottom: 12px; }
+.faq-cta .faq-cta-actions { margin-top: 22px; }
+.faq-cta .cta-phone { border: 1px solid rgba(255,255,255,.3); color: var(--paper); }
+.faq-cta .cta-phone:hover { border-color: var(--accent); color: var(--accent); }
 .faq-cta-actions { display: flex; gap: 12px; flex-wrap: wrap; }
 .faq-cta-actions a { padding: 14px 24px; font-weight: 700; border-radius: var(--radius); font-size: 15px; }
 .cta-phone { background: transparent; border: 1px solid rgba(245,241,234,0.25); color: var(--paper); }
@@ -413,6 +419,21 @@ details[open] .faq-q .q-text { color: var(--accent); }
   <div class="wrap faq-search-wrap"><label class="sr-only" for="faq-search">Search FAQ</label><input type="search" id="faq-search" class="faq-search" placeholder="Search questions — pricing, donations, booking…" autocomplete="off"></div>
 <div class="wrap">
     <div class="faq-layout">
+
+      <!-- Mobile section jump (shown ≤820px; sidebar hides) -->
+      <div class="faq-nav-mobile">
+        <label class="sr-only" for="faq-section-select">Jump to section</label>
+        <select id="faq-section-select">
+          <option value="" selected>Jump to a section…</option>
+          <option value="#pricing">Pricing</option>
+          <option value="#process">Process</option>
+          <option value="#what-we-haul">What We Haul</option>
+          <option value="#donations">Donations &amp; Taxes</option>
+          <option value="#insurance">Insurance &amp; Trust</option>
+          <option value="#service-area">Service Area</option>
+          <option value="#booking">Booking</option>
+        </select>
+      </div>
 
       <!-- Sticky sidebar nav -->
       <nav class="faq-nav" aria-label="FAQ sections">
@@ -973,7 +994,7 @@ details[open] .faq-q .q-text { color: var(--accent); }
   <a href="/book" class="mobile-cta-btn mobile-cta-quote">Quote</a>
 </div>
 
-<style>@media(max-width:1023px){.mobile-sticky-cta{position:fixed;bottom:0;left:0;right:0;z-index:100;display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;background:#0a1628;padding:8px 10px 12px}body{padding-bottom:72px}}</style>
+
 <script>
 function initNavDrawer(){
   const toggle=document.querySelector('.nav-toggle');
@@ -993,6 +1014,7 @@ function initNavDrawer(){
   toggle.addEventListener('click',()=>setOpen(toggle.getAttribute('aria-expanded')!=='true'));
   if(closeBtn)closeBtn.addEventListener('click',()=>setOpen(false));
   if(overlay)overlay.addEventListener('click',()=>setOpen(false));
+  drawer.querySelectorAll('a[href]').forEach(a=>a.addEventListener('click',()=>setOpen(false)));
   document.querySelectorAll('.drawer-toggle').forEach(btn=>{
     btn.addEventListener('click',()=>{
       const open=btn.getAttribute('aria-expanded')==='true';
@@ -1018,6 +1040,8 @@ if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded'
       el.classList.toggle('is-hidden',q.length>0&&!text.includes(q));
     });
   });
+  var sectionSelect=document.getElementById('faq-section-select');
+  if(sectionSelect){sectionSelect.addEventListener('change',function(){var t=this.value&&document.querySelector(this.value);if(t){t.scrollIntoView({behavior:'smooth',block:'start'});}});}
   var navLinks=document.querySelectorAll('.faq-nav-list a[href^="#"]');
   var sections=[].slice.call(document.querySelectorAll('.faq-sections .faq-section[id]'));
   function onScroll(){

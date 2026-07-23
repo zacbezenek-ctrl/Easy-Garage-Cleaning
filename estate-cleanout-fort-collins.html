@@ -122,7 +122,7 @@
   }
   </script>
 
-  <link rel="stylesheet" href="/styles.css?v=20260722">
+  <link rel="stylesheet" href="/styles.css?v=20260723">
 <style>
 .hero-lead { font-size: 17px; color: var(--muted-light); margin-bottom: 10px; max-width: 520px; line-height: 1.7; }
 .hero-note { font-size: 14px; color: rgba(255,255,255,0.45); max-width: 480px; margin-bottom: 28px; line-height: 1.6; }
@@ -212,6 +212,24 @@
 .foot { display: flex; flex-direction: column; gap: 16px; align-items: flex-start; justify-content: space-between; }
 .foot .logo { color: rgba(255,255,255,0.7); }
 @media (min-width: 700px) { .foot { flex-direction: row; align-items: center; } }
+
+/* === audit-2026-07 fixes ===
+   1) The page's dark design referenced three variables that were never defined,
+      so borders/buttons/muted text silently fell back to invisible defaults.
+   2) The shared stylesheet gives body/.faq/.pricing light backgrounds; this
+      page's white text needs its navy baseline everywhere. */
+:root { --muted-light: rgba(245,241,234,0.72); --navy-border: rgba(255,255,255,0.11); --navy-light: #1b2c47; }
+body { background: var(--navy); color: var(--paper); }
+.hero { background: var(--navy); }
+.pricing { background: var(--navy); }
+.faq { background: var(--navy); }
+.section-title { color: var(--paper); }
+.faq .faq-q { color: var(--paper); }
+.faq .faq-a { color: var(--muted-light); }
+.hero-note { color: rgba(245,241,234,0.6); }
+.contact-card .sms-consent { color: rgba(245,241,234,0.72); }
+.contact-card button { background: var(--accent); border-color: var(--accent); font-weight: 700; }
+.contact-card button:hover { background: var(--accent-deep); border-color: var(--accent-deep); }
 </style>
 </head>
 <body>
@@ -245,7 +263,7 @@
       </div>
     </div>
     <div>
-      <div class="contact-card">
+      <div class="contact-card" id="quote">
         <p class="contact-card-label">Free on-site walkthrough</p>
         <h2>Call to schedule your walkthrough</h2>
         <p>Every estate is different. We&rsquo;ll walk the property with you, assess the scope, and give you a flat price on the spot &mdash; no obligation.</p>
@@ -572,7 +590,7 @@
     <p>Call us during business hours and we&rsquo;ll listen first, then schedule a free on-site walkthrough at a time that works for your family.</p>
     <div class="cta-strip-actions">
       <a href="tel:+19709991818" class="btn-white">(970) 999-1818</a>
-      <a href="#" onclick="window.scrollTo({top:0,behavior:'smooth'});return false;" class="btn-outline">Get a Free Walkthrough</a>
+      <a href="#quote" class="btn-outline">Get a Free Walkthrough</a>
     </div>
     <p style="font-size:13px;opacity:0.7;margin-top:18px;margin-bottom:0;">Mon&ndash;Sat &middot; 7 AM &ndash; 7 PM &middot; Fort Collins, CO</p>
   </div>

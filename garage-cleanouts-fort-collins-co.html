@@ -68,7 +68,7 @@
 <script type="application/ld+json">{"@context": "https://schema.org", "@type": "HowTo", "name": "How to book a garage cleanout in Fort Collins", "description": "Get a flat-rate garage cleanout quote from Easy Garage Cleaning in three simple steps.", "totalTime": "PT5M", "step": [{"@type": "HowToStep", "position": 1, "name": "Send photos", "text": "Text photos of your garage or junk to (970) 999-1818, or upload them in the quote form at easygaragecleaning.com. Wide shots work best."}, {"@type": "HowToStep", "position": 2, "name": "Get a flat-rate quote", "text": "We respond within 5 minutes with a firm price. No hourly billing, no truck visit required for most jobs."}, {"@type": "HowToStep", "position": 3, "name": "We reclaim your garage", "text": "We haul everything, donate usable items, sweep the floor, and hand you a donation receipt. You only pay after approving the quote."}]}</script>
 <script type="application/ld+json">[{"@context": "https://schema.org", "@type": "ImageObject", "@id": "https://easygaragecleaning.com/#gallery-image-1", "name": "Two-car garage — Fort Collins", "description": "Before/after garage cleanout — Two-car garage — Fort Collins (placeholder until owner uploads job photos)", "contentUrl": "https://easygaragecleaning.com/og-image.png", "representativeOfPage": false}, {"@context": "https://schema.org", "@type": "ImageObject", "@id": "https://easygaragecleaning.com/#gallery-image-2", "name": "Single-car cleanout — Fossil Creek", "description": "Before/after garage cleanout — Single-car cleanout — Fossil Creek (placeholder until owner uploads job photos)", "contentUrl": "https://easygaragecleaning.com/og-image.png", "representativeOfPage": false}, {"@context": "https://schema.org", "@type": "ImageObject", "@id": "https://easygaragecleaning.com/#gallery-image-3", "name": "Move-out garage — Harmony", "description": "Before/after garage cleanout — Move-out garage — Harmony (placeholder until owner uploads job photos)", "contentUrl": "https://easygaragecleaning.com/og-image.png", "representativeOfPage": false}]</script>
 <script type="application/ld+json">{"@context": "https://schema.org", "@type": "WebPage", "@id": "https://easygaragecleaning.com/garage-cleanouts-fort-collins-co#webpage", "url": "https://easygaragecleaning.com/garage-cleanouts-fort-collins-co", "name": "Garage Cleanout Service Fort Collins CO | Flat-Rate, Next-Day", "description": "Fort Collins garage cleanout service — full haul-out, sweep & donation runs so you can park inside again. Text photos for a flat-rate quote in 5 minutes. Next-day available.", "isPartOf": {"@id": "https://easygaragecleaning.com/#website"}, "about": {"@id": "https://easygaragecleaning.com/#business"}, "speakable": {"@type": "SpeakableSpecification", "cssSelector": [".hero-sub", ".faq-q", ".faq-a", ".def-block"]}}</script>
-<link rel="stylesheet" href="/styles.css?v=20260722">
+<link rel="stylesheet" href="/styles.css?v=20260723">
 </head>
 <body>
 <a href="#main-content" class="skip-link">Skip to content</a>
@@ -209,8 +209,10 @@
 <div class="hero-ba"><div class="hero-ba-cell before"><span class="hero-ba-label">BEFORE</span><picture><source srcset="/images/garage-before.webp" type="image/webp"><img src="/images/garage-before.jpg" alt="Cluttered two-car garage in Fort Collins before our crew arrived" width="1200" height="1200"></picture></div>
 <div class="hero-ba-cell after"><span class="hero-ba-label">AFTER</span><picture><source srcset="/images/garage-after.webp" type="image/webp"><img src="/images/garage-after.jpg" alt="Clean swept garage after an Easy Garage Cleaning visit" width="1200" height="1200"></picture></div></div></div></header>
 <section class="body-copy" id="lp-quote"><div class="wrap"><div class="body-copy-inner reveal">
-<div class="def-block"><strong>Get your flat-rate quote</strong> — 3 fields, 30 seconds. We call or text back with a locked price.
-<form class="lead-form-lite" action="https://api.web3forms.com/submit" method="POST" style="margin-top:14px">
+<div class="quote-form">
+<h3>Get your flat-rate quote</h3>
+<p class="form-note">3 fields, 30 seconds. We call or text back with a locked price.</p>
+<form class="lead-form-lite" action="https://api.web3forms.com/submit" method="POST">
           <input type="hidden" name="access_key" value="3c4fe752-ac1d-45b9-89dd-4275ea162d22">
           <input type="hidden" name="subject" value="Garage Cleanout LP Quote Request">
           <input type="hidden" name="from_name" value="Easy Garage Cleaning Website">
@@ -319,19 +321,6 @@
 <div class="faq-item"><details><summary><span class="faq-q-num">Q.09</span> Are garage cleanouts flat-rate?</summary><p class="faq-a">Yes. No hourly billing. The price we quote before the job is the price you pay.</p></details></div>
 <div class="faq-item"><details><summary><span class="faq-q-num">Q.10</span> Do you handle estate garage cleanouts?</summary><p class="faq-a">Yes. Multi-space, estate, and whole-property cleanouts are quoted individually — usually $1,200–$3,500 depending on volume.</p></details></div>
 </div><p style="text-align:center;margin-top:24px;" class="reveal"><a href="/faq" class="content-link">See full FAQ →</a></p></div></section>
-
-<section class="gallery" aria-labelledby="gallery-heading">
-  <div class="wrap">
-    <div class="section-head reveal"><span class="mono section-num">Results</span>
-      <h2 class="section-title" id="gallery-heading">Before. <em>After.</em> Same day.</h2>
-      
-    </div>
-    <div class="gallery-grid gallery-polish reveal">
-      
-      
-    </div>
-  </div>
-</section>
 
 
 
@@ -481,6 +470,7 @@ function initNavDrawer(){
   toggle.addEventListener('click',()=>setOpen(toggle.getAttribute('aria-expanded')!=='true'));
   if(closeBtn)closeBtn.addEventListener('click',()=>setOpen(false));
   if(overlay)overlay.addEventListener('click',()=>setOpen(false));
+  drawer.querySelectorAll('a[href]').forEach(a=>a.addEventListener('click',()=>setOpen(false)));
   document.querySelectorAll('.drawer-toggle').forEach(btn=>{
     btn.addEventListener('click',()=>{
       const open=btn.getAttribute('aria-expanded')==='true';

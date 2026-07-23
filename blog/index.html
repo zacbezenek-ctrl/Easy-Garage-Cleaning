@@ -101,13 +101,13 @@
 }
 </script>
 
-<link rel="stylesheet" href="/styles.css?v=20260722">
+<link rel="stylesheet" href="/styles.css?v=20260723">
 <style>
 .foot { display: flex; flex-direction: column; gap: 16px; justify-content: space-between; }
 .foot .logo { color: var(--paper); }
 @media (min-width: 700px) { .foot { flex-direction: row; align-items: center; } }
 .blog-hero { padding: 72px 0 48px; border-bottom: 1px solid rgba(10,22,40,0.08); }
-.blog-hero .eyebrow { font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.15em; color: var(--accent); margin-bottom: 16px; }
+.blog-hero .eyebrow { font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.15em; color: var(--accent-deep); margin-bottom: 16px; }
 .blog-hero h1 { font-family: var(--font-display); font-size: clamp(32px, 5vw, 52px); font-weight: 700; letter-spacing: -0.03em; line-height: 1.1; max-width: 680px; }
 .blog-hero p { margin-top: 16px; color: var(--muted); font-size: 17px; max-width: 520px; }
 .blog-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 1px; padding: 0; margin: 48px 0 80px; background: rgba(10,22,40,0.08); border: 1px solid rgba(10,22,40,0.08); }
@@ -116,8 +116,8 @@
 .card-meta { font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.12em; color: var(--muted); }
 .card h2 { font-family: var(--font-display); font-size: 20px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.3; }
 .card p { font-size: 14px; color: var(--muted); line-height: 1.6; flex: 1; }
-.card-link { font-size: 13px; font-weight: 600; color: var(--accent); display: inline-flex; align-items: center; gap: 4px; margin-top: 4px; }
-.card-link:hover { color: var(--accent-deep); }
+.card-link { font-size: 13px; font-weight: 600; color: var(--accent-deep); display: inline-flex; align-items: center; gap: 4px; margin-top: 4px; }
+.card-link:hover { color: var(--accent); }
 @media(min-width:640px){.foot-grid{grid-template-columns:repeat(2,1fr)}}
 @media(min-width:900px){.foot-grid{grid-template-columns:1.5fr repeat(4,1fr);gap:32px}}
 @media(min-width:900px){.foot-grid{grid-template-columns:1.5fr repeat(4,1fr);gap:32px}}
@@ -126,16 +126,16 @@
 <body>
 <a href="#main-content" class="skip-link">Skip to content</a>
 
-<div id="seasonal-banner" class="seasonal-banner" role="region" aria-label="Spring promotion" hidden>
+<div id="seasonal-banner" class="seasonal-banner" role="region" aria-label="Seasonal promotion" hidden>
   <div class="wrap seasonal-banner-inner">
-    <span>🌱 <strong>Spring cleanout</strong> — book now and park inside before hail season.</span>
+    <span>☀️ <strong>Summer cleanout</strong> — book now and park inside before the season turns.</span>
     <a href="/book">Book now →</a>
     <button type="button" class="seasonal-banner-dismiss" aria-label="Dismiss banner">×</button>
   </div>
 </div>
 <script>
 (function(){{
-  var k='egc-spring-banner-2026';
+  var k='egc-summer-banner-2026';
   var b=document.getElementById('seasonal-banner');
   if(!b||localStorage.getItem(k))return;
   b.hidden=false;
@@ -479,7 +479,7 @@
   <a href="/book" class="mobile-cta-btn mobile-cta-quote" data-cta="sticky-quote">Quote</a>
 </div>
 
-<style>@media(max-width:1023px){.mobile-sticky-cta{position:fixed;bottom:0;left:0;right:0;z-index:100;display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;background:#0a1628;padding:8px 10px 12px}body{padding-bottom:72px}}</style>
+
 <script>
 function initNavDrawer(){
   const toggle=document.querySelector('.nav-toggle');
@@ -499,6 +499,7 @@ function initNavDrawer(){
   toggle.addEventListener('click',()=>setOpen(toggle.getAttribute('aria-expanded')!=='true'));
   if(closeBtn)closeBtn.addEventListener('click',()=>setOpen(false));
   if(overlay)overlay.addEventListener('click',()=>setOpen(false));
+  drawer.querySelectorAll('a[href]').forEach(a=>a.addEventListener('click',()=>setOpen(false)));
   document.querySelectorAll('.drawer-toggle').forEach(btn=>{
     btn.addEventListener('click',()=>{
       const open=btn.getAttribute('aria-expanded')==='true';
