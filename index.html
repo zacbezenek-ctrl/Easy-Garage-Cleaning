@@ -1,24 +1,13 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<!-- Google tag (gtag.js) -->
-<script async src="https://www.googletagmanager.com/gtag/js?id=G-CV7HJ2QGHX"></script>
-<script>
-  window.dataLayer = window.dataLayer || [];
-  function gtag(){dataLayer.push(arguments);}
-  gtag('js', new Date());
-
-  gtag('config', 'G-CV7HJ2QGHX');
-  gtag('config', 'AW-18102284288');
-</script>
+<!-- Analytics events queue immediately; vendor libraries load after interaction. -->
+<script src="/analytics-loader.js?v=20260903a" defer></script>
 <!--
   Microsoft Clarity analytics
   Google Search Console: <meta name="google-site-verification" content="YOUR_CODE" />
   CallRail: see comment in _generate_site.py CALLRAIL_BLOCK
 -->
-<script type="text/javascript" defer>
-(function(c,l,a,r,i,t,y){c[a]=c[a]||function(){(c[a].q=c[a].q||[]).push(arguments)};t=l.createElement(r);t.async=1;t.defer=1;t.src="https://www.clarity.ms/tag/"+i;y=l.getElementsByTagName(r)[0];y.parentNode.insertBefore(t,y);})(window,document,"clarity","script","wf7ba129jm");
-</script>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <meta name="referrer" content="strict-origin-when-cross-origin" />
@@ -336,13 +325,11 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="dns-prefetch" href="https://connect.facebook.net">
 <link rel="dns-prefetch" href="https://www.googletagmanager.com">
-<link rel="preload" as="image" type="image/webp" href="/images/garage-before.webp">
-<link rel="preload" as="image" type="image/webp" href="/images/garage-after.webp">
-<link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,700;1,9..144,400&family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400&display=swap">
+<link rel="preload" as="image" type="image/webp" href="/images/job-before-after-1-824.webp" imagesrcset="/images/job-before-after-1-824.webp 824w, /images/job-before-after-1.webp 1646w" imagesizes="(max-width: 899px) calc(100vw - 32px), 50vw" fetchpriority="high">
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,700;1,9..144,400&family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
 <noscript><link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,700;1,9..144,400&family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet"></noscript>
 
-<link rel="stylesheet" href="/styles.css?v=20260903e">
+<link rel="stylesheet" href="/styles.css?v=20260903f">
 <style>
 .btn-white { background: var(--white); color: var(--accent); }
 .btn-white:hover { background: var(--paper); color: var(--accent-deep); }
@@ -379,10 +366,6 @@
 <body>
 <a href="#main-content" class="skip-link">Skip to content</a>
 
-<script>
-!function(f,b,e,v,n,t,s){if(f.fbq)return;n=f.fbq=function(){n.callMethod?n.callMethod.apply(n,arguments):n.queue.push(arguments)};if(!f._fbq)f._fbq=n;n.push=n;n.loaded=!0;n.version='2.0';n.queue=[];t=b.createElement(e);t.async=!0;t.src=v;s=b.getElementsByTagName(e)[0];s.parentNode.insertBefore(t,s)}(window,document,'script','https://connect.facebook.net/en_US/fbevents.js');
-fbq('init','970332989051988');fbq('track','PageView');
-</script>
 <noscript><img loading="lazy" height="1" width="1" alt="" style="display:none" src="https://www.facebook.com/tr?id=970332989051988&ev=PageView&noscript=1"/></noscript>
 
 <div id="seasonal-banner" class="seasonal-banner" role="region" aria-label="Seasonal promotion" hidden>
@@ -538,7 +521,7 @@ fbq('init','970332989051988');fbq('track','PageView');
     </div>
     <div class="hero-visual">
       <figure class="hero-result">
-        <img src="/images/job-before-after-1.jpg" alt="A Fort Collins garage before and after an Easy Garage Cleaning cleanout" width="1648" height="615" decoding="async">
+        <picture><source type="image/webp" srcset="/images/job-before-after-1-824.webp 824w, /images/job-before-after-1.webp 1646w" sizes="(max-width: 899px) calc(100vw - 32px), 50vw"><img src="/images/job-before-after-1.jpg" alt="A Fort Collins garage before and after an Easy Garage Cleaning cleanout" width="1646" height="615" decoding="async" fetchpriority="high"></picture>
         <figcaption><span>Real Fort Collins cleanout</span><strong>One-day result</strong></figcaption>
       </figure>
       <div class="quote-form hero-form" id="turnaround-plan">
@@ -1036,6 +1019,23 @@ fbq('init','970332989051988');fbq('track','PageView');
   </div>
 </footer>
 <a href="#top" id="back-to-top" class="back-to-top" aria-label="Back to top" hidden>Top</a>
+
+<div class="contact-widget" id="chat-widget">
+  <button type="button" class="contact-widget-toggle" aria-expanded="false" aria-controls="contact-widget-panel" aria-label="Chat with Easy Garage Cleaning">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h14v10H9l-4 4V5z"></path></svg><span>Chat</span>
+  </button>
+  <section class="contact-widget-panel" id="contact-widget-panel" role="dialog" aria-label="Chat with Easy Garage Cleaning" hidden>
+    <div class="contact-widget-head"><div><strong>Easy Garage Cleaning</strong><span><i aria-hidden="true"></i> Usually replies in 5 minutes</span></div><button type="button" class="contact-widget-close" aria-label="Close chat">&times;</button></div>
+    <p>Hi! Send photos for a fast, flat-rate quote or choose another way to reach us.</p>
+    <div class="contact-widget-actions">
+      <a class="contact-widget-primary" href="sms:+19709991818?body=Hi!%20I'd%20like%20a%20garage%20cleanout%20quote.%20Here%20are%20photos%20of%20my%20garage:">Text photos now</a>
+      <a href="tel:+19709991818">Call (970) 999-1818</a>
+      <a href="/book">Book online</a>
+    </div>
+    <small>Mon–Sat · 7am–7pm</small>
+  </section>
+</div>
+<script src="/site-enhancements.js?v=20260903a" defer></script>
 
 <div class="mobile-quote-sheet" id="mobile-quote-sheet" role="dialog" aria-label="Ready for a quote?" aria-hidden="true">
   <button type="button" class="mobile-quote-sheet-close" aria-label="Dismiss">&times;</button>

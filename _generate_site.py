@@ -554,16 +554,8 @@ if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded'
 
 NAV_JS_SCRIPT = "<script>\n" + NAV_JS_IIFE + "\n</script>"
 
-GTAG_BLOCK = """<!-- Google tag (gtag.js) -->
-<script async src="https://www.googletagmanager.com/gtag/js?id=G-CV7HJ2QGHX"></script>
-<script>
-  window.dataLayer = window.dataLayer || [];
-  function gtag(){{dataLayer.push(arguments);}}
-  gtag('js', new Date());
-
-  gtag('config', 'G-CV7HJ2QGHX');
-  gtag('config', 'AW-18102284288');
-</script>
+GTAG_BLOCK = """<!-- Analytics events queue immediately; vendor libraries load after interaction. -->
+<script src="/analytics-loader.js?v=20260903a" defer></script>
 """
 
 TRACKING_BLOCK = """
@@ -575,10 +567,7 @@ TRACKING_BLOCK = """
   4. AggregateRating: add real review count in schema when available
 -->
 <!-- Google Search Console: <meta name="google-site-verification" content="YOUR_VERIFICATION_CODE" /> -->
-<!-- Microsoft Clarity analytics -->
-<script type="text/javascript" defer>
-(function(c,l,a,r,i,t,y){{c[a]=c[a]||function(){{(c[a].q=c[a].q||[]).push(arguments)}};t=l.createElement(r);t.async=1;t.defer=1;t.src="https://www.clarity.ms/tag/"+i;y=l.getElementsByTagName(r)[0];y.parentNode.insertBefore(t,y);}})(window,document,"clarity","script","wf7ba129jm");
-</script>
+<!-- Microsoft Clarity is loaded by analytics-loader.js after first interaction. -->
 """
 
 RESOURCE_HINTS = """
@@ -628,13 +617,13 @@ HEAD = """<!DOCTYPE html>
 <!-- llms.txt discovery (emerging convention): <link rel="alternate" type="application/llms+txt" href="/llms.txt" /> -->
 <link rel="alternate" type="text/plain" href="{SITE}/llms.txt" title="LLM site summary" />
 <link rel="author" type="text/plain" href="{SITE}/humans.txt" />
-<link rel="preconnect" href="https://www.googletagmanager.com" crossorigin>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="dns-prefetch" href="https://fonts.googleapis.com">
+<link rel="dns-prefetch" href="https://fonts.gstatic.com">
 """ + RESOURCE_HINTS + """
-<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,700;1,9..144,400&family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,700;1,9..144,400&family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
+<noscript><link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,700;1,9..144,400&family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet"></noscript>
 {schema}
-<link rel="stylesheet" href="/styles.css?v=20260903e">
+<link rel="stylesheet" href="/styles.css?v=20260903f">
 </head>
 <body>
 <a href="#main-content" class="skip-link">Skip to content</a>
@@ -821,6 +810,22 @@ FOOTER = """
   </div>
 </footer>
 <a href="#top" id="back-to-top" class="back-to-top" aria-label="Back to top" hidden>Top</a>
+<div class="contact-widget" id="chat-widget">
+  <button type="button" class="contact-widget-toggle" aria-expanded="false" aria-controls="contact-widget-panel" aria-label="Chat with Easy Garage Cleaning">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h14v10H9l-4 4V5z"></path></svg><span>Chat</span>
+  </button>
+  <section class="contact-widget-panel" id="contact-widget-panel" role="dialog" aria-label="Chat with Easy Garage Cleaning" hidden>
+    <div class="contact-widget-head"><div><strong>Easy Garage Cleaning</strong><span><i aria-hidden="true"></i> Usually replies in 5 minutes</span></div><button type="button" class="contact-widget-close" aria-label="Close chat">&times;</button></div>
+    <p>Hi! Send photos for a fast, flat-rate quote or choose another way to reach us.</p>
+    <div class="contact-widget-actions">
+      <a class="contact-widget-primary" href="sms:{phone}?body=Hi!%20I'd%20like%20a%20garage%20cleanout%20quote.%20Here%20are%20photos%20of%20my%20garage:">Text photos now</a>
+      <a href="tel:{phone}">Call {phone_display}</a>
+      <a href="{quote_href}">Book online</a>
+    </div>
+    <small>Mon–Sat · 7am–7pm</small>
+  </section>
+</div>
+<script src="/site-enhancements.js?v=20260903a" defer></script>
 <div class="mobile-sticky-cta" aria-label="Quick contact">
   <a href="tel:{phone}" class="mobile-cta-btn mobile-cta-call">Call</a>
   <a href="sms:{phone}?body=Hi!%20I'd%20like%20a%20quote." class="mobile-cta-btn mobile-cta-text">Text</a>
@@ -3187,7 +3192,7 @@ def patch_index_iteration7(text):
     )
     if 'class="hero-result"' not in text and 'class="hero-visual"' in text:
         hero_result = '''<figure class="hero-result">
-        <img src="/images/job-before-after-1.jpg" alt="A Fort Collins garage before and after an Easy Garage Cleaning cleanout" width="1648" height="615" decoding="async">
+        <picture><source type="image/webp" srcset="/images/job-before-after-1-824.webp 824w, /images/job-before-after-1.webp 1646w" sizes="(max-width: 899px) calc(100vw - 32px), 50vw"><img src="/images/job-before-after-1.jpg" alt="A Fort Collins garage before and after an Easy Garage Cleaning cleanout" width="1646" height="615" decoding="async" fetchpriority="high"></picture>
         <figcaption><span>Real Fort Collins cleanout</span><strong>One-day result</strong></figcaption>
       </figure>'''
         text = text.replace('<div class="hero-visual">', '<div class="hero-visual">\n      ' + hero_result, 1)
@@ -3566,6 +3571,54 @@ def patch_legacy_meta_redirect(text, filename):
     return text
 
 
+def patch_performance_and_tracking(text, is_home=False):
+    """Keep analytics out of the critical path and give the home LCP image priority."""
+    text = re.sub(
+        r'<!-- Google tag \(gtag\.js\) -->\s*<script[^>]*googletagmanager\.com/gtag/js[^>]*></script>\s*<script>(?:(?!</script>)[\s\S])*?</script>\s*',
+        "",
+        text,
+        count=1,
+    )
+    text = re.sub(
+        r'<script(?:(?!</script>)[\s\S])*?clarity\.ms/tag(?:(?!</script>)[\s\S])*?</script>\s*',
+        "",
+        text,
+    )
+    text = re.sub(
+        r'<script(?:(?!</script>)[\s\S])*?connect\.facebook\.net/(?:en_US/)?fbevents\.js(?:(?!</script>)[\s\S])*?</script>\s*',
+        "",
+        text,
+    )
+    if "analytics-loader.js" not in text and "<head" in text:
+        text = re.sub(
+            r"(<head[^>]*>\s*)",
+            r'\1\n<!-- Analytics events queue immediately; vendor libraries load after interaction. -->\n<script src="/analytics-loader.js?v=20260903a" defer></script>\n',
+            text,
+            count=1,
+            flags=re.I,
+        )
+    if not is_home:
+        return text
+
+    text = re.sub(
+        r'<link rel="preload" as="image"[^>]+garage-(?:before|after)\.webp[^>]*>\s*',
+        "",
+        text,
+    )
+    text = re.sub(
+        r'<link rel="preload" as="style" href="https://fonts\.googleapis\.com/[^>]+>\s*',
+        "",
+        text,
+    )
+    hero_preload = '<link rel="preload" as="image" type="image/webp" href="/images/job-before-after-1-824.webp" imagesrcset="/images/job-before-after-1-824.webp 824w, /images/job-before-after-1.webp 1646w" imagesizes="(max-width: 899px) calc(100vw - 32px), 50vw" fetchpriority="high">'
+    if "job-before-after-1-824.webp" not in text.split("</head>", 1)[0]:
+        text = text.replace('<link rel="stylesheet" href="/styles.css', hero_preload + '\n<link rel="stylesheet" href="/styles.css', 1)
+    old_hero = '<img src="/images/job-before-after-1.jpg" alt="A Fort Collins garage before and after an Easy Garage Cleaning cleanout" width="1648" height="615" decoding="async">'
+    new_hero = '<picture><source type="image/webp" srcset="/images/job-before-after-1-824.webp 824w, /images/job-before-after-1.webp 1646w" sizes="(max-width: 899px) calc(100vw - 32px), 50vw"><img src="/images/job-before-after-1.jpg" alt="A Fort Collins garage before and after an Easy Garage Cleaning cleanout" width="1646" height="615" decoding="async" fetchpriority="high"></picture>'
+    text = text.replace(old_hero, new_hero, 1)
+    return text
+
+
 def write_garage_signs_blog():
     slug = "blog/5-signs-your-fort-collins-garage-needs-a-cleanout.html"
     filename = "5-signs-your-fort-collins-garage-needs-a-cleanout.html"
@@ -3619,7 +3672,7 @@ def patch_a11y_shell(text):
 def patch_lazy_images(text):
     def add_lazy(m):
         tag = m.group(0)
-        if "loading=" in tag:
+        if "loading=" in tag or 'fetchpriority="high"' in tag:
             return tag
         return tag.replace("<img ", '<img loading="lazy" ', 1)
     return re.sub(r"<img(?![^>]*loading=)[^>]*>", add_lazy, text)
@@ -3683,6 +3736,7 @@ def patch_static_pages():
             orig = text
             is_home = path.name == "index.html"
             is_book = path.name == "book.html"
+            is_internal = path.name == "employee.html"
             nav = unified_nav_book if is_book else (unified_nav_home if is_home else unified_nav_inner)
             if '<nav class="nav"' in text:
                 text = normalize_page_header(text, nav)
@@ -3701,6 +3755,8 @@ def patch_static_pages():
             text = patch_nav_hamburger(text)
             text = inject_polish_css(text)
             text = patch_a11y_shell(text)
+            if not is_internal:
+                text = patch_performance_and_tracking(text, is_home)
             text = patch_lazy_images(text)
             text = add_noopener_external(text)
             text = fix_blog_canonicals(text)
@@ -3769,7 +3825,7 @@ def patch_static_pages():
                         text,
                         count=1,
                     )
-            if GA4_ID not in text:
+            if GA4_ID not in text and "analytics-loader.js" not in text:
                 had_aw = "AW-18102284288" in text
                 for pat in (
                     r"<!-- Google tag \(gtag\.js\) -->[\s\S]*?</script>\s*",
