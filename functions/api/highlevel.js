@@ -369,7 +369,9 @@ async function createAppointment(c, payload, contactId) {
 }
 
 function noteBody(payload) {
-  const p = payload || {}, q = p.quote || {}, d = p.discovery || {}, s = p.scope || {};
+  const p = payload || {}, q = p.quote || {}, d = p.discovery || {}, s = p.scope || {}, l = p.logistics || {};
+  const list = value => Array.isArray(value) ? value.filter(Boolean).join(', ') : (value || '—');
+  const finish = s.finish_details || {};
   const lines = [
     'EGC WALKTHROUGH PLAN',
     `Completed: ${p.sent_at || p.completed_at || new Date().toISOString()}`,
@@ -377,18 +379,48 @@ function noteBody(payload) {
     `Locked total: $${Number(q.total || 0).toLocaleString('en-US')}`,
     `Deposit: $${Number(q.deposit || 0).toLocaleString('en-US')}`,
     `Target date: ${q.job_date || 'TBD'}`,
+    `Arrival window: ${q.start_time || 'TBD'}–${q.end_time || 'TBD'}`,
+    `Assigned crew: ${l.assigned_to || 'Unassigned'}${l.crew_size ? ` (${l.crew_size} needed)` : ''}`,
     `Why now: ${d.why_now || '—'}`,
     `Success looks like: ${d.success || '—'}`,
     `Decision maker: ${d.decision_maker || '—'}`,
-    `Scope: ${s.loads || 0} truckload(s); ${s.garages || 1} garage(s)` ,
+    `Scope: ${s.loads || 0} truckload(s); ${s.garages || 1} garage(s); fullness ${s.fullness || 'not recorded'}`,
+    `Sort method: ${s.sort_method || '—'}`,
+    `KEEP: ${s.keep_items || '—'}`,
+    `REMOVE: ${s.remove_items || '—'}`,
     `Keep / remove plan: ${s.keep_remove || s.sort_method || 'See signed Game Plan'}`,
     `Exclusions: ${s.exclusions || 'None recorded'}`,
-    `Hazards: ${Array.isArray(s.hazards) ? s.hazards.join(', ') : (s.hazards || 'None recorded')}`,
-    `Truck placement: ${s.truck_placement || '—'}`,
+    `Hazards: ${list(s.hazards)}`,
+    `Access: ${list(s.access)}`,
+    `Access notes: ${l.notes || '—'}`,
+    `Truck placement: ${l.truck_placement || s.truck_placement || '—'}`,
+    `Special handling: ${list(s.special_items)}`,
+    `Finish: ${list(s.finish)}`,
+    `Materials: ${finish.shelf_qty || 0} ${finish.shelf_type || ''} shelf unit(s); ${finish.tote_qty || 0} tote(s)`,
+    `Before photos captured: ${Number(p.photos?.before || 0)}`,
+    `Scope accepted by: ${p.acceptance?.accepted_by || '—'} at ${p.acceptance?.accepted_at || '—'}`,
     '',
-    p.notes || '',
+    `Customer / crew notes: ${p.notes || 'None recorded'}`,
   ];
   return lines.filter((x, i) => x || lines[i - 1]).join('\n').slice(0, 4900);
+}
+
+function appointmentInstructions(payload) {
+  const p = payload || {}, d = p.discovery || {}, s = p.scope || {}, l = p.logistics || {};
+  const list = value => Array.isArray(value) ? value.filter(Boolean).join(', ') : (value || '—');
+  return [
+    `CUSTOMER GOAL: ${d.success || '—'}`,
+    `WHY NOW: ${d.why_now || '—'}`,
+    `KEEP: ${s.keep_items || '—'}`,
+    `REMOVE: ${s.remove_items || '—'}`,
+    `DO NOT MOVE / EXCLUSIONS: ${s.exclusions || 'None recorded'}`,
+    `HAZARDS: ${list(s.hazards)}`,
+    `ACCESS: ${list(s.access)}${l.notes ? ` — ${l.notes}` : ''}`,
+    `TRUCK: ${l.truck_placement || s.truck_placement || '—'}`,
+    `SPECIAL HANDLING: ${list(s.special_items)}`,
+    `FINISH: ${list(s.finish)}`,
+    `CUSTOMER NOTES: ${p.notes || 'None recorded'}`,
+  ].join('\n').slice(0, 3000);
 }
 
 function closeoutNote(payload) {
@@ -404,8 +436,10 @@ function closeoutNote(payload) {
     `Garage Guard: ${payload.garage_guard || 'not recorded'}`,
     `After photos: ${payload.photos && payload.photos.after || 0}`,
     `Drive folder: ${payload.drive_folder || '—'}`,
+    `Original customer goal: ${job.customer_goal || '—'}`,
+    `Original walkthrough notes: ${job.original_customer_notes || '—'}`,
     '',
-    job.notes || '',
+    `Crew closeout notes: ${job.notes || 'None recorded'}`,
   ].join('\n').slice(0, 4900);
 }
 
@@ -501,7 +535,7 @@ export async function onRequestPost({ request, env }) {
         const scheduled = await createAppointment(c, {
           event_type: 'job', start_time: q.start_at || `${q.job_date}T${q.start_time}:00-06:00`,
           end_time: q.end_at || `${q.job_date}T${q.end_time}:00-06:00`, title: q.title || 'EGC Garage Service',
-          address: client.address, notes: payload.notes || '', notify: true, idempotency_key: payload.idempotency_key || '',
+          address: client.address, notes: appointmentInstructions(payload), notify: true, idempotency_key: payload.idempotency_key || '',
         }, contactId);
         let tagSynced = true;
         try { await addTags(c, contactId, ['egc-hub-scheduled', 'egc-job-scheduled']); } catch { tagSynced = false; }

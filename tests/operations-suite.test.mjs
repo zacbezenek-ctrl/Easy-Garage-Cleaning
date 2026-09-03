@@ -7,6 +7,8 @@ const read=(p)=>fs.readFileSync(new URL('../'+p,import.meta.url),'utf8');
 const employee=read('employee.html');
 const suite=read('employee-suite.js');
 const crew=read('crew/gameplan.html');
+const prejob=read('crew/prejob.html');
+const postjob=read('crew/postjob.html');
 const copilot=read('copilot.html');
 const relay=read('functions/api/operations-event.js');
 const highlevel=read('functions/api/highlevel.js');
@@ -77,12 +79,59 @@ test('walkthrough conversion keeps canonical IDs and durable acceptance metadata
   assert.match(crew,/hubDb\.collection\('jobs'\)\.doc\(S\.jobId\)/);
   assert.match(crew,/status:'completed',pipelineStatus:'completed'/);
   assert.match(crew,/tx\.set\(sourceRef,\{status:'completed'/);
-  for(const page of [read('crew/prejob.html'),read('crew/postjob.html')]){
+  for(const page of [prejob,postjob]){
     assert.match(page,/new URLSearchParams\(location\.search\)\.get\("jobId"\)/);
     assert.match(page,/collection\('jobs'\)\.doc\(CENTRAL_JOB_ID\)\.get\(\)/);
   }
   assert.match(suite,/prejob\.html\?jobId=/);
   assert.match(suite,/postjob\.html\?jobId=/);
+});
+
+test('walkthrough promise syncs to the job, customer profile, crew brief, and HighLevel notes',()=>{
+  for(const marker of ['buildJobInstructions','jobInstructions:instructions','customerNotesSummary','latestJobInstructions','customerGoal','keepItems','removeItems','operationalNotes','walkthroughSyncedAt']){
+    assert.match(crew,new RegExp(marker),marker+' is missing from the walkthrough handoff');
+  }
+  assert.match(crew,/hubDb\.collection\('customers'\)\.doc\(customerId\)/);
+  for(const page of [prejob,postjob]){
+    assert.match(page,/function normalizedInstructions/);
+    assert.match(page,/id="job-brief"/);
+    assert.match(page,/Customer promise|Promised outcome/);
+    assert.match(page,/keepItems/);
+    assert.match(page,/removeItems/);
+    assert.match(page,/customerNotes/);
+  }
+  for(const marker of ['appointmentInstructions','CUSTOMER GOAL','KEEP:','REMOVE:','DO NOT MOVE / EXCLUSIONS','Original customer goal','Crew closeout notes'])assert.match(highlevel,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
+  assert.match(suite,/Latest walkthrough promise/);
+  assert.match(suite,/hasCrewBrief/);
+  assert.doesNotMatch(prejob,/status:j\.status==='scheduled'\?'arrived'/);
+  assert.doesNotMatch(postjob,/collection\(['"]scheduleLocks['"]\)/);
+  assert.match(postjob,/_egc_schedule_lock_/);
+});
+
+test('HighLevel receives the customer promise in both the contact note and job appointment',async()=>{
+  const {onRequestPost}=await import('../functions/api/highlevel.js');
+  const calls=[],originalFetch=globalThis.fetch;
+  globalThis.fetch=async(url,options={})=>{
+    calls.push({url:String(url),options});
+    if(String(url).includes('/calendars/events?'))return new Response(JSON.stringify({events:[]}),{status:200});
+    if(String(url).endsWith('/calendars/events/appointments'))return new Response(JSON.stringify({id:'appt-job'}),{status:200});
+    if(String(url).includes('/opportunities/search?'))return new Response(JSON.stringify({opportunities:[{id:'opp-1',contactId:'contact-1',pipelineId:'anSgrMpYHtAX6YlUHnIR',name:'Customer job',status:'open'}]}),{status:200});
+    if(String(url).endsWith('/contacts/contact-1/notes'))return new Response(JSON.stringify({note:{id:'note-1'}}),{status:200});
+    return new Response('{}',{status:200});
+  };
+  try{
+    const payload={tool:'game_plan',job_id:'job-1',opportunity_id:'opp-1',sent_at:'2026-09-03T22:00:00.000Z',client:{name:'Test Customer',highlevel_contact_id:'contact-1',address:'123 Main'},quote:{title:'Test garage',total:1500,deposit:300,job_date:'2026-09-15',start_time:'09:00',end_time:'13:00',start_at:'2026-09-15T15:00:00.000Z',end_at:'2026-09-15T19:00:00.000Z'},discovery:{why_now:'Moving soon',success:'Park two cars'},scope:{loads:2,garages:2,fullness:'full',sort_method:'Customer decides',keep_items:'Tools and bikes',remove_items:'Boxes and broken furniture',exclusions:'Red cabinet',hazards:['paint'],access:['keypad'],finish:['deep clean']},logistics:{truck_placement:'left driveway',notes:'Code 1234',assigned_to:'Alex',crew_size:3},acceptance:{accepted_by:'Test Customer',accepted_at:'2026-09-03T22:00:00.000Z'},photos:{before:5},notes:'Call before arrival'};
+    const request=new Request('https://easygaragecleaning.com/api/highlevel',{method:'POST',headers:{Origin:'https://easygaragecleaning.com','Content-Type':'application/json'},body:JSON.stringify(payload)});
+    const response=await onRequestPost({request,env:{HIGHLEVEL_API_KEY:'test-key',HIGHLEVEL_LOCATION_ID:'location-1'}});
+    assert.equal(response.status,200);
+    const noteCall=calls.find(x=>x.url.endsWith('/contacts/contact-1/notes'));
+    const appointmentCall=calls.find(x=>x.url.endsWith('/calendars/events/appointments')&&x.options.method==='POST');
+    assert.ok(noteCall,'walkthrough contact note was not written');
+    assert.ok(appointmentCall,'job appointment was not written');
+    const note=JSON.parse(noteCall.options.body).body,appointment=JSON.parse(appointmentCall.options.body).description;
+    for(const text of ['Success looks like: Park two cars','KEEP: Tools and bikes','REMOVE: Boxes and broken furniture','Exclusions: Red cabinet','Access notes: Code 1234','Customer / crew notes: Call before arrival'])assert.match(note,new RegExp(text));
+    for(const text of ['CUSTOMER GOAL: Park two cars','KEEP: Tools and bikes','REMOVE: Boxes and broken furniture','DO NOT MOVE / EXCLUSIONS: Red cabinet','CUSTOMER NOTES: Call before arrival'])assert.match(appointment,new RegExp(text));
+  }finally{globalThis.fetch=originalFetch}
 });
 
 test('Hub finance scaffolding and customer history work without claiming external settlement',()=>{
@@ -238,7 +287,7 @@ test('open-shift scheduling fields persist on the canonical job record',()=>{
   assert.match(suite,/openShift:b\.type==='job'/);
   assert.match(suite,/assignedCrew\.length<crewNeeded/);
   assert.match(employee,/employee-suite\.css\?v=20260903h/);
-  assert.match(employee,/employee-suite\.js\?v=20260903i/);
+  assert.match(employee,/employee-suite\.js\?v=20260903j/);
 });
 
 test('walkthrough preserves job creation time and hands off the scheduled job appointment',()=>{
@@ -259,7 +308,7 @@ test('public quote progress and production links stay configured',()=>{
 });
 
 test('all employee and field-tool inline scripts parse',()=>{
-  for(const [name,html] of [['employee.html',employee],['crew/gameplan.html',crew],['crew/prejob.html',read('crew/prejob.html')],['crew/postjob.html',read('crew/postjob.html')]]){
+  for(const [name,html] of [['employee.html',employee],['crew/gameplan.html',crew],['crew/prejob.html',prejob],['crew/postjob.html',postjob]]){
     const scripts=[...html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/gi)].map(x=>x[1]).filter(Boolean);
     scripts.forEach((code,i)=>assert.doesNotThrow(()=>new vm.Script(code,{filename:name+'#'+i})));
   }
