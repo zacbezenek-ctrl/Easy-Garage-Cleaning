@@ -634,7 +634,7 @@ HEAD = """<!DOCTYPE html>
 """ + RESOURCE_HINTS + """
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,700;1,9..144,400&family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
 {schema}
-<link rel="stylesheet" href="/styles.css?v=20260903b">
+<link rel="stylesheet" href="/styles.css?v=20260903c">
 </head>
 <body>
 <a href="#main-content" class="skip-link">Skip to content</a>
@@ -1666,7 +1666,7 @@ def page_shell(title, desc, canonical, schema, body, og_type="website", quote_hr
     nav_opts.update(nav_kw)
     if "<main" in body and 'id="main-content"' not in body:
         body = re.sub(r"<main(\s|>)", r'<main id="main-content"\1', body, count=1)
-    # Page CSS is no longer inlined — every generated page links /styles.css?v=20260903b (see HEAD).
+    # Page CSS is no longer inlined — every generated page links /styles.css?v=20260903c (see HEAD).
     return HEAD.format(title=title, desc=desc, canonical=canonical, schema=rating_note + schema + extra, SITE=SITE, og_type=og_type, robots=robots) + fmt(NAV, **nav_opts) + body + fmt(FOOTER, **nav_opts)
 
 
