@@ -12,12 +12,12 @@
   gtag('config', 'AW-18102284288');
 </script>
 <!--
-  MERCHANT SETUP: Microsoft Clarity — replace CLARITY_PROJECT_ID below
+  Microsoft Clarity analytics
   Google Search Console: <meta name="google-site-verification" content="YOUR_CODE" />
   CallRail: see comment in _generate_site.py CALLRAIL_BLOCK
 -->
 <script type="text/javascript" defer>
-(function(c,l,a,r,i,t,y){c[a]=c[a]||function(){(c[a].q=c[a].q||[]).push(arguments)};t=l.createElement(r);t.async=1;t.defer=1;t.src="https://www.clarity.ms/tag/"+i;y=l.getElementsByTagName(r)[0];y.parentNode.insertBefore(t,y);})(window,document,"clarity","script","CLARITY_PROJECT_ID");
+(function(c,l,a,r,i,t,y){c[a]=c[a]||function(){(c[a].q=c[a].q||[]).push(arguments)};t=l.createElement(r);t.async=1;t.defer=1;t.src="https://www.clarity.ms/tag/"+i;y=l.getElementsByTagName(r)[0];y.parentNode.insertBefore(t,y);})(window,document,"clarity","script","wf7ba129jm");
 </script>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -342,7 +342,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,700;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
 <noscript><link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,700;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet"></noscript>
 
-<link rel="stylesheet" href="/styles.css?v=20260903">
+<link rel="stylesheet" href="/styles.css?v=20260903a">
 <style>
 .btn-white { background: var(--white); color: var(--accent); }
 .btn-white:hover { background: var(--paper); color: var(--accent-deep); }
@@ -1007,7 +1007,7 @@ fbq('init','970332989051988');fbq('track','PageView');
     <div class="foot-brand">
       <div class="logo"><span class="logo-mark"></span>Easy Garage Cleaning</div>
       <p class="community">The easiest way to reclaim your garage. Locally owned in Fort Collins — not a franchise call center.</p>
-      <p class="community">Partners: <a href="https://www.fcgov.com/chamber/" rel="noopener">Fort Collins Chamber</a>, <a href="/blog/habitat-for-humanity-restore-fort-collins">Habitat ReStore</a>.</p>
+      <p class="community">Partners: <a href="https://fortcollinschamber.com/" rel="noopener">Fort Collins Chamber</a>, <a href="/blog/habitat-for-humanity-restore-fort-collins">Habitat ReStore</a>.</p>
       <p class="foot-entity foot-nap"><strong>Easy Garage Cleaning</strong> · Easy Garage Cleaning LLC · 746 Star Grass Ln, Fort Collins, CO 80525 · <a href="tel:+19709991818">(970) 999-1818</a> · <a href="mailto:contact@easygaragecleaning.com">contact@easygaragecleaning.com</a> · <a href="https://easygaragecleaning.com/#business">Schema @id #business</a> · <a href="https://easygaragecleaning.com/llms.txt">llms.txt</a> · <a href="/humans.txt">humans.txt</a></p>
     </div>
     <div class="foot-col">
@@ -1132,8 +1132,8 @@ fbq('init','970332989051988');fbq('track','PageView');
 if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',initNavDrawer);}else{initNavDrawer();}
   document.querySelectorAll('.multi-step-form').forEach(initMultiStepForm);
 function initMultiStepForm(form){
-  let step=1;const panels=form.querySelectorAll('.form-panel');const dots=form.querySelectorAll('.form-step-dot');const total=panels.length;
-  const pctEl=form.closest('.quote-form')?.querySelector('[data-progress-pct]')||document.querySelector('[data-progress-pct]');
+  let step=1;const shell=form.closest('.quote-form')||document;const panels=form.querySelectorAll('.form-panel');const dots=shell.querySelectorAll('.form-step-dot');const total=panels.length;
+  const pctEl=shell.querySelector('[data-progress-pct]');
   const names=['What do you need?','Job size','Your estimate','Where are you located?','Upload photos','Contact & timing'];
   const sizeSel=form.querySelector('[data-size-tier]');
   const flowInput=form.querySelector('[name="flow_type"]');
@@ -1156,7 +1156,7 @@ function initMultiStepForm(form){
     if(zapItems&&svc){const size=sizeSel?.options[sizeSel.selectedIndex]?.text||'';zapItems.value=[svc.value||'',size].filter(Boolean).join(' — ');}
   }
   function showQuoteResult(){const opt=sizeSel?.options[sizeSel.selectedIndex];if(!opt||!opt.value)return false;const flow=opt.dataset.flow||'booking';const range=opt.dataset.range||'';if(flowInput)flowInput.value=flow;if(rangeInput)rangeInput.value=range;const callPanel=form.querySelector('[data-result-call]');const bookPanel=form.querySelector('[data-result-booking]');if(callPanel)callPanel.hidden=flow!=='call_text';if(bookPanel)bookPanel.hidden=flow==='call_text';const rangeEl=form.querySelector('[data-result-range]');if(rangeEl)rangeEl.textContent=range;if(submitBtn)submitBtn.textContent=flow==='call_text'?'Send request (optional) →':'Confirm booking request →';return true;}
-  const show=(n)=>{if(n===3)showQuoteResult();panels.forEach((p,i)=>p.classList.toggle('active',i+1===n));dots.forEach((d,i)=>{d.classList.toggle('active',i+1===n);d.classList.toggle('done',i+1<n);});step=n;const lbl=form.querySelector('.form-step-label');if(lbl)lbl.textContent='Step '+n+' of '+total+(names[n-1]?': '+names[n-1]:'');if(pctEl)pctEl.textContent=Math.round((n/total)*100)+'%';};
+  const show=(n)=>{if(n===3)showQuoteResult();panels.forEach((p,i)=>p.classList.toggle('active',i+1===n));dots.forEach((d,i)=>{d.classList.toggle('active',i+1===n);d.classList.toggle('done',i+1<n);});step=n;const lbl=shell.querySelector('.form-step-label');if(lbl)lbl.textContent='Step '+n+' of '+total+(names[n-1]?': '+names[n-1]:'');if(pctEl)pctEl.textContent=Math.round((n/total)*100)+'%';};
   function showErr(panel,msg){let el=panel.querySelector('.form-error');if(!el){el=document.createElement('p');el.className='form-error';el.setAttribute('role','alert');panel.appendChild(el);}el.textContent=msg;el.classList.add('visible');}
   function clearErr(panel){const el=panel.querySelector('.form-error');if(el)el.classList.remove('visible');}
   function validateStep(n){

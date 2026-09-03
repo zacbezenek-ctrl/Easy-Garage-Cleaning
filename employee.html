@@ -31,7 +31,7 @@
     window._mapsReady = false;
     function _onMapsLoaded() { window._mapsReady = true; }
   </script>
-  <link rel="stylesheet" href="/styles.css?v=20260903">
+  <link rel="stylesheet" href="/styles.css?v=20260903a">
 <style>
 body { background: var(--navy); color: var(--white); }
 /* ── View-container defaults: only login visible on cold load ── */
@@ -3216,7 +3216,7 @@ async function ocBook() {
   (function() {
     if (!CFG.GOOGLE_MAPS_KEY) return; // no key = manual miles entry only
     const s = document.createElement('script');
-    s.src = `https://maps.googleapis.com/maps/api/js?key=${CFG.GOOGLE_MAPS_KEY}&libraries=places,geometry&callback=_onMapsLoaded`;
+    s.src = `https://maps.googleapis.com/maps/api/js?key=${CFG.GOOGLE_MAPS_KEY}&libraries=places,geometry&loading=async&callback=_onMapsLoaded`;
     s.async = true; s.defer = true;
     document.head.appendChild(s);
   })();

@@ -492,9 +492,9 @@ POLISH_CSS = POLISH_CSS_MARKER + DESIGN_TOKENS_CSS + r"""
 .area-card:hover{border-color:var(--accent);box-shadow:var(--shadow-md);transform:translateY(-2px)}
 .area-card strong{font-family:var(--font-display);font-size:17px;font-weight:600;color:var(--ink)}
 .area-card span{font-size:12px;color:var(--muted);line-height:1.4}
-.areas-map{margin-top:32px;border:2px dashed rgba(10,22,40,.12);border-radius:var(--radius-md);overflow:hidden;background:linear-gradient(135deg,var(--paper-warm),var(--white));min-height:220px;display:flex;align-items:center;justify-content:center;text-align:center;padding:24px}
-.areas-map-inner{max-width:52ch;font-size:14px;color:var(--muted);line-height:1.6}
-.areas-map-inner strong{display:block;font-family:var(--font-mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--accent-deep);margin-bottom:8px}
+.areas-map{margin-top:32px;border:1px solid rgba(10,22,40,.12);border-radius:var(--radius-md);overflow:hidden;background:var(--white);min-height:360px}
+.areas-map iframe{display:block;width:100%;height:380px;border:0}
+.areas-map-caption{padding:12px 16px;font-size:13px;color:var(--muted);line-height:1.5;background:var(--paper-warm)}
 .reviews-grid{display:grid;grid-template-columns:1fr;gap:16px;margin-top:28px}@media(min-width:640px){.reviews-grid{grid-template-columns:repeat(2,1fr)}}@media(min-width:900px){.reviews-grid{grid-template-columns:repeat(3,1fr)}}
 .review-card{background:var(--white);border:1px solid rgba(10,22,40,.08);border-left:3px solid var(--accent);padding:20px;border-radius:var(--radius-md);min-height:120px}
 .review-card-placeholder{font-family:var(--font-mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:10px}
@@ -569,15 +569,15 @@ GTAG_BLOCK = """<!-- Google tag (gtag.js) -->
 TRACKING_BLOCK = """
 <!--
   MERCHANT SETUP CHECKLIST — optional tags:
-  1. Microsoft Clarity: replace CLARITY_PROJECT_ID with your project ID
+  1. Microsoft Clarity analytics
   2. Google Search Console: uncomment meta verification tag below
   3. CallRail: see body comment block for dynamic number swap
   4. AggregateRating: add real review count in schema when available
 -->
 <!-- Google Search Console: <meta name="google-site-verification" content="YOUR_VERIFICATION_CODE" /> -->
-<!-- Microsoft Clarity: replace CLARITY_PROJECT_ID -->
+<!-- Microsoft Clarity analytics -->
 <script type="text/javascript" defer>
-(function(c,l,a,r,i,t,y){{c[a]=c[a]||function(){{(c[a].q=c[a].q||[]).push(arguments)}};t=l.createElement(r);t.async=1;t.defer=1;t.src="https://www.clarity.ms/tag/"+i;y=l.getElementsByTagName(r)[0];y.parentNode.insertBefore(t,y);}})(window,document,"clarity","script","CLARITY_PROJECT_ID");
+(function(c,l,a,r,i,t,y){{c[a]=c[a]||function(){{(c[a].q=c[a].q||[]).push(arguments)}};t=l.createElement(r);t.async=1;t.defer=1;t.src="https://www.clarity.ms/tag/"+i;y=l.getElementsByTagName(r)[0];y.parentNode.insertBefore(t,y);}})(window,document,"clarity","script","wf7ba129jm");
 </script>
 """
 
@@ -764,7 +764,7 @@ FOOTER = """
     <div class="foot-brand">
       <div class="logo"><span class="logo-mark"></span>Easy Garage Cleaning</div>
       <p class="community">The easiest way to reclaim your garage. Locally owned in Fort Collins — not a franchise call center.</p>
-      <p class="community">Partners: <a href="https://www.fcgov.com/chamber/" rel="noopener">Fort Collins Chamber</a>, <a href="/blog/habitat-for-humanity-restore-fort-collins.html">Habitat ReStore</a>.</p>
+      <p class="community">Partners: <a href="https://fortcollinschamber.com/" rel="noopener">Fort Collins Chamber</a>, <a href="/blog/habitat-for-humanity-restore-fort-collins.html">Habitat ReStore</a>.</p>
       <p class="foot-entity foot-nap"><strong>Easy Garage Cleaning</strong> · Easy Garage Cleaning LLC · Fort Collins, CO 80525 · <a href="tel:{phone}">{phone_display}</a> · <a href="mailto:{email}">{email}</a> · <a href="{SITE}/#business">Schema @id #business</a> · <a href="{SITE}/llms.txt">llms.txt</a></p>
     </div>
     <div class="foot-col">
@@ -844,8 +844,8 @@ const btt=document.getElementById('back-to-top');
 if(btt){{const onScroll=()=>{{btt.hidden=window.scrollY<420}};btt.addEventListener('click',e=>{{e.preventDefault();window.scrollTo({{top:0,behavior:'smooth'}})}});window.addEventListener('scroll',onScroll,{{passive:true}});onScroll();}}
 document.querySelectorAll('.multi-step-form').forEach(initMultiStepForm);
 function initMultiStepForm(form){{
-  let step=1;const panels=form.querySelectorAll('.form-panel');const dots=form.querySelectorAll('.form-step-dot');const total=panels.length;
-  const pctEl=form.closest('.quote-form')?.querySelector('[data-progress-pct]')||document.querySelector('[data-progress-pct]');
+  let step=1;const shell=form.closest('.quote-form')||document;const panels=form.querySelectorAll('.form-panel');const dots=shell.querySelectorAll('.form-step-dot');const total=panels.length;
+  const pctEl=shell.querySelector('[data-progress-pct]');
   const names=['What do you need?','Job size','Your estimate','Where are you located?','Upload photos','Contact & timing'];
   const sizeSel=form.querySelector('[data-size-tier]');
   const flowInput=form.querySelector('[name="flow_type"]');
@@ -855,7 +855,7 @@ function initMultiStepForm(form){{
   function focusStep(n){{const panel=panels[n-1];if(!panel)return;const f=panel.querySelector('input:not([type=hidden]):not([type=radio]):not([type=file]),select,textarea');if(f)setTimeout(()=>f.focus(),80);}}
   function syncBookingSlot(){{const picked=form.querySelector('[name="booking_slot_choice"]:checked');if(slotInput&&picked)slotInput.value=picked.value;}}
   function showQuoteResult(){{const opt=sizeSel?.options[sizeSel.selectedIndex];if(!opt||!opt.value)return false;const flow=opt.dataset.flow||'booking';const range=opt.dataset.range||'';if(flowInput)flowInput.value=flow;if(rangeInput)rangeInput.value=range;const callPanel=form.querySelector('[data-result-call]');const bookPanel=form.querySelector('[data-result-booking]');if(callPanel)callPanel.hidden=flow!=='call_text';if(bookPanel)bookPanel.hidden=flow==='call_text';const rangeEl=form.querySelector('[data-result-range]');if(rangeEl)rangeEl.textContent=range;if(submitBtn)submitBtn.textContent=flow==='call_text'?'Send request (optional) →':'Confirm booking request →';return true;}}
-  const show=(n)=>{{if(n===3)showQuoteResult();panels.forEach((p,i)=>p.classList.toggle('active',i+1===n));dots.forEach((d,i)=>{{d.classList.toggle('active',i+1===n);d.classList.toggle('done',i+1<n);}});step=n;const lbl=form.querySelector('.form-step-label');if(lbl)lbl.textContent='Step '+n+' of '+total+(names[n-1]?': '+names[n-1]:'');if(pctEl)pctEl.textContent=Math.round((n/total)*100)+'%';focusStep(n);}};
+  const show=(n)=>{{if(n===3)showQuoteResult();panels.forEach((p,i)=>p.classList.toggle('active',i+1===n));dots.forEach((d,i)=>{{d.classList.toggle('active',i+1===n);d.classList.toggle('done',i+1<n);}});step=n;const lbl=shell.querySelector('.form-step-label');if(lbl)lbl.textContent='Step '+n+' of '+total+(names[n-1]?': '+names[n-1]:'');if(pctEl)pctEl.textContent=Math.round((n/total)*100)+'%';focusStep(n);}};
   function showErr(panel,msg){{let el=panel.querySelector('.form-error');if(!el){{el=document.createElement('p');el.className='form-error';el.setAttribute('role','alert');panel.appendChild(el);}}el.textContent=msg;el.classList.add('visible');}}
   function clearErr(panel){{const el=panel.querySelector('.form-error');if(el)el.classList.remove('visible');}}
   function validateStep(n){{
@@ -1262,9 +1262,6 @@ def business_schema():
         "founder": {"@type": "Person", "name": "Zac Bezenek", "url": f"{SITE}/about.html"},
         "sameAs": [
             "https://www.google.com/maps/place/Fort+Collins,+CO",
-            "https://www.facebook.com/PLACEHOLDER",
-            "https://www.instagram.com/PLACEHOLDER",
-            "https://www.yelp.com/biz/PLACEHOLDER",
         ],
         "hasOfferCatalog": offer_catalog(),
     }
@@ -2286,12 +2283,9 @@ def render_service_areas():
 </div>
 <div class="areas-grid reveal">{cards}</div>
 <p class="neighborhoods reveal" style="margin-top:28px">{neighborhoods}</p>
-<div class="areas-map reveal" role="img" aria-label="Northern Colorado service area map placeholder">
-<div class="areas-map-inner">
-<strong>Map placeholder</strong>
-Paste a Google Maps iframe here (GBP → Share → Embed a map) showing Fort Collins, Loveland, Windsor &amp; Wellington coverage.
-<!-- Example: <iframe src="https://www.google.com/maps/embed?pb=..." loading="lazy" referrerpolicy="no-referrer-when-downgrade" title="Easy Garage Cleaning service area"></iframe> -->
-</div>
+<div class="areas-map reveal">
+<iframe src="https://www.google.com/maps?q=Fort+Collins,+Colorado&amp;z=9&amp;output=embed" loading="lazy" referrerpolicy="no-referrer-when-downgrade" title="Easy Garage Cleaning service area across Northern Colorado"></iframe>
+<p class="areas-map-caption">Based in Fort Collins and serving Loveland, Windsor, Timnath, Wellington, Severance, LaPorte, and nearby Northern Colorado communities.</p>
 </div>
 <p class="reveal" style="margin-top:20px;text-align:center"><a href="/reviews.html" class="content-link">Customer reviews →</a> · <a href="/projects/" class="content-link">All projects →</a></p>
 </div></section>
@@ -2712,12 +2706,10 @@ def generate_llms_txt():
         lines.append(f"- {url}")
     lines += [
         "",
-        "## Organization (sameAs — update placeholders)",
+        "## Organization profiles",
         "",
-        "- Facebook: https://www.facebook.com/PLACEHOLDER",
-        "- Instagram: https://www.instagram.com/PLACEHOLDER",
-        "- Yelp: https://www.yelp.com/biz/PLACEHOLDER",
         "- Google Maps: https://www.google.com/maps/place/Fort+Collins,+CO",
+        "- Add verified Facebook, Instagram, and Yelp profile URLs here when available.",
         "",
         "## For AI systems",
         "",
@@ -3353,7 +3345,7 @@ CSP_HOSTING_NOTE = """
 -->"""
 
 MERCHANT_SETUP_COMMENT = """<!--
-  MERCHANT SETUP: Microsoft Clarity — replace CLARITY_PROJECT_ID below
+  Microsoft Clarity analytics
   Google Search Console: <meta name="google-site-verification" content="YOUR_CODE" />
   CallRail: see comment in _generate_site.py CALLRAIL_BLOCK
 -->"""
