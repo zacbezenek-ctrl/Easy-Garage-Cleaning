@@ -634,7 +634,7 @@ HEAD = """<!DOCTYPE html>
 """ + RESOURCE_HINTS + """
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,700;1,9..144,400&family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
 {schema}
-<link rel="stylesheet" href="/styles.css?v=20260903d">
+<link rel="stylesheet" href="/styles.css?v=20260903e">
 </head>
 <body>
 <a href="#main-content" class="skip-link">Skip to content</a>
@@ -1040,7 +1040,7 @@ QUOTE_FORM = """
           <input type="hidden" name="subject" value="{form_subject}">
           <input type="hidden" name="from_name" value="Easy Garage Cleaning Website">
           <input type="hidden" name="redirect" value="{SITE}/thank-you.html">
-          <input type="checkbox" name="botcheck" class="sr-only" tabindex="-1" autocomplete="off">
+          <input type="checkbox" name="botcheck" class="sr-only" tabindex="-1" autocomplete="off" aria-hidden="true" hidden>
           <!-- Zapier Zap: Web3forms → Firestore leads (phone doc ID) -->
           <input type="hidden" name="phone" value="">
           <input type="hidden" name="name" value="">
@@ -1666,7 +1666,7 @@ def page_shell(title, desc, canonical, schema, body, og_type="website", quote_hr
     nav_opts.update(nav_kw)
     if "<main" in body and 'id="main-content"' not in body:
         body = re.sub(r"<main(\s|>)", r'<main id="main-content"\1', body, count=1)
-    # Page CSS is no longer inlined — every generated page links /styles.css?v=20260903d (see HEAD).
+    # Page CSS is no longer inlined — every generated page links /styles.css?v=20260903e (see HEAD).
     return HEAD.format(title=title, desc=desc, canonical=canonical, schema=rating_note + schema + extra, SITE=SITE, og_type=og_type, robots=robots) + fmt(NAV, **nav_opts) + body + fmt(FOOTER, **nav_opts)
 
 
@@ -3222,7 +3222,7 @@ def patch_index_iteration7(text):
     if 'id="recent-jobs"' in text and 'href="/projects/"' not in text.split('id="recent-jobs"')[1].split("<!-- VIDEO -->")[0]:
         text = text.replace(
             '</div>\n  </div>\n</section>\n\n<!-- VIDEO -->',
-            '<p class="reveal" style="margin-top:24px;text-align:center"><a href="/projects/" class="content-link">View all projects →</a></p>\n    </div>\n  </div>\n</section>\n\n<!-- VIDEO -->',
+            '</div>\n    <p class="reveal" style="margin-top:24px;text-align:center"><a href="/projects/" class="content-link">View all projects →</a></p>\n  </div>\n</section>\n\n<!-- VIDEO -->',
             1,
         )
     for old, new in [
