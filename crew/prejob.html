@@ -200,7 +200,7 @@ gateOk().then(u=>{
     <div class="grid2">
       <div><label class="fl">Customer</label>
         <div class="lookrow"><input type="text" id="j_name" placeholder="Name">
-          <button class="lookbtn" onclick="jobberLookup()">🔍</button></div></div>
+          <button class="lookbtn" onclick="highlevelLookup()">🔍</button></div></div>
       <div><label class="fl">Job date</label><input type="date" id="j_date"></div>
     </div>
     <div id="lookout"></div>
@@ -334,23 +334,23 @@ function callOffice(){location.href="tel:"+BIZPHONE;}
 function logStart(){const now=new Date().toLocaleTimeString([], {hour:"numeric",minute:"2-digit"});
   localStorage.setItem(STARTKEY,now);mountActions();}
 
-/* ===== Jobber customer lookup (read-only, via /api/jobber-clients) ===== */
+/* ===== HighLevel contact lookup (read-only, via /api/highlevel) ===== */
 let LOOK=[];
-async function jobberLookup(){
+async function highlevelLookup(){
   const out=document.getElementById("lookout"); if(!out) return;
   const q=(document.getElementById("j_name").value||"").trim();
   if(q.length<2){out.innerHTML=`<div class="looknote">Type at least 2 letters of the name first, then tap 🔍.</div>`;return;}
-  out.innerHTML=`<div class="looknote">Searching Jobber…</div>`;
+  out.innerHTML=`<div class="looknote">Searching HighLevel…</div>`;
   try{
-    const res=await fetch("/api/jobber-clients?q="+encodeURIComponent(q));
+    const res=await fetch("/api/highlevel?view=contacts&q="+encodeURIComponent(q));
     const j=await res.json().catch(()=>({}));
-    if(res.status===501){out.innerHTML=`<div class="looknote">Jobber lookup isn't connected yet — Zac: run /api/jobber-auth once.</div>`;return;}
+    if(res.status===501){out.innerHTML=`<div class="looknote">HighLevel needs its API key and location ID. Type the details manually for now.</div>`;return;}
     if(!res.ok||!j.ok){out.innerHTML=`<div class="looknote">Lookup failed — type it manually.</div>`;return;}
     LOOK=j.clients||[];
     out.innerHTML=LOOK.length?LOOK.map((c,i)=>`<div class="lkr" onclick="lookPick(${i})">
         <div class="nm">${esc(c.name)}<small>${esc([c.address,c.phone].filter(Boolean).join(" · "))}</small></div>
         <span class="go">→</span></div>`).join("")
-      :`<div class="looknote">No Jobber match for “${esc(q)}”.</div>`;
+      :`<div class="looknote">No HighLevel opportunity match for “${esc(q)}”.</div>`;
   }catch(e){out.innerHTML=`<div class="looknote">Lookup unreachable — type it manually.</div>`;}
 }
 function lookPick(i){
@@ -358,6 +358,7 @@ function lookPick(i){
   if(c.name)document.getElementById("j_name").value=c.name;
   if(c.address)document.getElementById("j_addr").value=c.address;
   if(c.phone)ACTIVE.phone=ACTIVE.phone||c.phone;
+  ACTIVE.highlevelContactId=ACTIVE.highlevelContactId||c.id||"";
   LOOK=[];document.getElementById("lookout").innerHTML="";saveAll();
 }
 function saveAll(){

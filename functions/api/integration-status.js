@@ -4,6 +4,7 @@ export async function onRequestGet({env}){
   const any=(...keys)=>keys.some(k=>Boolean(env[k]));
   const status={
     firebase:any('FIREBASE_API_KEY','FIREBASE_SERVICE_ACCOUNT_JSON'),
+    highlevel:any('HIGHLEVEL_API_KEY','GHL_API_KEY')&&any('HIGHLEVEL_LOCATION_ID','GHL_LOCATION_ID'),
     jobber:all('JOBBER_CLIENT_ID','JOBBER_CLIENT_SECRET','JOBBER_REFRESH_TOKEN'),
     quo:any('QUO_API_KEY','QUO'),
     google:all('GOOGLE_CLIENT_ID','GOOGLE_CLIENT_SECRET','GOOGLE_REFRESH_TOKEN'),

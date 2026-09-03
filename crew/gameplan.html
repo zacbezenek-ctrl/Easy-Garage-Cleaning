@@ -359,7 +359,7 @@ gateOk().then(u=>{
 <script>
 /* ===================== CONFIG — EDIT ME ===================== */
 const CONFIG = {
-  webhook: "/api/crew-hook", // same-origin proxy → Zapier. Real hook URL lives server-side in functions/api/crew-hook.js (not in page source).
+  webhook: "/api/highlevel", // same-origin bridge → pinned contact note in HighLevel.
   bizPhone: "9709991818",
   // Pricing builds from scope: removal base = $500 × truckloads (Volume point);
   // organize with what they have + a basic sweep are included (not line items);
@@ -424,7 +424,7 @@ const S = {  // session state — autosaved locally on every tap
   layoutGrid:Array(40).fill(0), layoutPaint:1, garages:1, garageW:"", garageD:"", garageH:"",
   stay:[],
   pkg:null, rate:"", deposit:"", depositTouched:false, jobdate:"", startTime:"", endTime:"",
-  dayBonus:false, jobId:"", sig:"", aiAfter:"", jobberClientId:"", jobberRequestId:"",
+  dayBonus:false, jobId:"", sig:"", aiAfter:"", highlevelContactId:"", highlevelAppointmentId:"",
 };
 
 const chip=(arr,v)=>arr.includes(v)?arr.filter(x=>x!==v):[...arr,v];
@@ -432,13 +432,13 @@ const $=id=>document.getElementById(id);
 const money=n=>{n=Number(n||0);const cents=Math.round(n*100)%100!==0;return"$"+n.toLocaleString(undefined,{minimumFractionDigits:cents?2:0,maximumFractionDigits:2});};
 // escape free-text before it goes into innerHTML / value="" (customer-dictated notes can contain < " etc.)
 const esc=s=>String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
-// US phone → E.164 so Quo/Jobber accept it regardless of how the crew typed it
+// US phone → E.164 so Quo/HighLevel accept it regardless of how the crew typed it
 const normPhone=raw=>{const d=String(raw||"").replace(/\D/g,"");if(d.length===10)return"+1"+d;if(d.length===11&&d[0]==="1")return"+"+d;if(d.length>10)return"+"+d;return d||"";};
 const STORAGE_OK=(()=>{try{localStorage.setItem("__egc_t","1");localStorage.removeItem("__egc_t");return true;}catch(e){return false;}})();
 const uid=()=>Date.now().toString(36)+"-"+Math.random().toString(36).slice(2,8);
 
 /* ===== Per-job photos — on-device (IndexedDB), keyed by jobId =====
-   Jobber's Zapier integration has no photo-attachment action, so photos live
+   HighLevel receives the written handoff while full-size photos live
    on the iPad and travel with the job (same DB shared by prejob/postjob via
    the egc_active_job handoff). Only counts go to HQ — images stay local. */
 const PHOTO_COUNTS={before:0,after:0,after_ai:0};
@@ -498,46 +498,46 @@ function paintAi(){
     <img src="${S.aiAfter}" onclick="viewPhoto(this.src)">
     <div class="ailbl">Show the homeowner what tonight looks like.</div>`:"";
 }
-/* ===== Jobber customer lookup (read-only, via /api/jobber-clients) ===== */
+/* ===== HighLevel contact lookup (read-only, via /api/highlevel) ===== */
 let LOOK=[];
-async function jobberLookup(){
+async function highlevelLookup(){
   const out=$("lookout"); if(!out) return;
   const q=($("f_name")&&$("f_name").value||"").trim();
   if(q.length<2){out.innerHTML=`<div class="looknote">Type at least 2 letters of the name first, then tap 🔍.</div>`;return;}
-  out.innerHTML=`<div class="looknote">Searching Jobber…</div>`;
+  out.innerHTML=`<div class="looknote">Searching HighLevel…</div>`;
   try{
-    const res=await fetch("/api/jobber-clients?q="+encodeURIComponent(q));
+    const res=await fetch("/api/highlevel?view=contacts&q="+encodeURIComponent(q));
     const j=await res.json().catch(()=>({}));
-    if(res.status===501){out.innerHTML=`<div class="looknote">Jobber lookup isn't connected yet — Zac: run /api/jobber-auth once. Type the details manually for now.</div>`;return;}
+    if(res.status===501){out.innerHTML=`<div class="looknote">HighLevel needs its API key and location ID. Type the details manually for now.</div>`;return;}
     if(!res.ok||!j.ok){out.innerHTML=`<div class="looknote">Lookup failed — type it manually.</div>`;return;}
     LOOK=j.clients||[];
     out.innerHTML=LOOK.length?LOOK.map((c,i)=>`<div class="lkr" onclick="lookPick(${i})">
         <div class="nm">${esc(c.name)}<small>${esc([c.address,c.phone].filter(Boolean).join(" · "))}</small></div>
         <span class="go">→</span></div>`).join("")
-      :`<div class="looknote">No Jobber match for “${esc(q)}” — new customer, type the details.</div>`;
+      :`<div class="looknote">No HighLevel opportunity match for “${esc(q)}” — type the details manually.</div>`;
   }catch(e){out.innerHTML=`<div class="looknote">Lookup unreachable — type it manually.</div>`;}
 }
 function lookPick(i){
   const c=LOOK[i]; if(!c) return;
   S.name=c.name||S.name; S.addr=c.address||S.addr; S.phone=c.phone||S.phone;
-  S.email=c.email||S.email; S.jobberClientId=c.id||""; S.jobberRequestId=""; LOOK=[]; render();
+  S.email=c.email||S.email; S.highlevelContactId=c.id||""; S.highlevelAppointmentId=""; LOOK=[]; render();
 }
 
-/* ===== Today's Jobber requests — auto-pulled at the start of the walkthrough =====
-   Walkthroughs are booked in Jobber as Requests. We load the day's list so the
+/* ===== Today's HighLevel walkthrough calendar =====
+   Walkthroughs are booked in HighLevel. We load the day's appointments so the
    crew taps their customer; the detail fields below pre-fill but stay editable.
-   Cached after the first load so re-renders don't re-hit Jobber. */
+   Cached after the first load so re-renders don't re-hit HighLevel. */
 let JREQ={status:"idle", date:"", today:[], recent:[], showAll:false};
 async function loadTodayRequests(force){
   if(JREQ.status==="loading") return;
   if(JREQ.status!=="idle" && !force){ paintRequests(); return; } // already attempted — repaint, don't auto-refetch (Retry passes force)
   JREQ.status="loading"; JREQ.showAll=false; paintRequests();
   try{
-    const res=await fetch("/api/jobber-requests");
+    const res=await fetch("/api/highlevel?view=walkthroughs");
     const j=await res.json().catch(()=>({}));
     if(res.status===501){ JREQ.status="unconfigured"; }
     else if(!res.ok||!j.ok){ JREQ.status="error"; }
-    else { JREQ.status="done"; JREQ.date=j.date||""; JREQ.today=j.today||[]; JREQ.recent=j.recent||[]; }
+    else { JREQ.status="done"; JREQ.date=new Date().toISOString().slice(0,10); JREQ.today=j.events||[]; JREQ.recent=j.events||[]; }
   }catch(e){ JREQ.status="error"; }
   paintRequests();
 }
@@ -545,9 +545,9 @@ function reqList(){ return JREQ.showAll?JREQ.recent:JREQ.today; }
 function fmtDay(d){ try{ return new Date(d+"T12:00").toLocaleDateString(undefined,{weekday:"short",month:"short",day:"numeric"}); }catch(e){ return d; } }
 function paintRequests(){
   const el=$("jreq"); if(!el) return;
-  if(JREQ.status==="loading"){ el.innerHTML=`<div class="looknote">Pulling today's walkthroughs from Jobber…</div>`; return; }
-  if(JREQ.status==="unconfigured"){ el.innerHTML=`<div class="looknote">Jobber isn't connected yet — Zac: run /api/jobber-auth once. Search by name or type it in for now.</div>`; return; }
-  if(JREQ.status==="error"){ el.innerHTML=`<div class="looknote">Couldn't reach Jobber — search by name below or type it in. <a href="#" onclick="loadTodayRequests(true);return false">Retry</a></div>`; return; }
+  if(JREQ.status==="loading"){ el.innerHTML=`<div class="looknote">Pulling today's walkthroughs from HighLevel…</div>`; return; }
+  if(JREQ.status==="unconfigured"){ el.innerHTML=`<div class="looknote">HighLevel needs its API key and location ID. Search by name or type it manually for now.</div>`; return; }
+  if(JREQ.status==="error"){ el.innerHTML=`<div class="looknote">Couldn't reach HighLevel — search by name below or type it in. <a href="#" onclick="loadTodayRequests(true);return false">Retry</a></div>`; return; }
   if(JREQ.status!=="done"){ el.innerHTML=""; return; }
   const list=reqList();
   const head=`<div class="jreqhead"><span>${JREQ.showAll?"Recent requests":"Today’s walkthroughs"}${(JREQ.date&&!JREQ.showAll)?" · "+esc(fmtDay(JREQ.date)):""}</span><a href="#" title="Refresh" onclick="loadTodayRequests(true);return false">↻</a></div>`;
@@ -567,8 +567,8 @@ function reqPick(i){
   if(c.address) S.addr=c.address;    // never blank out something the crew already typed
   if(c.phone) S.phone=c.phone;
   if(c.email) S.email=c.email;
-  S.jobberClientId=c.clientId||"";
-  S.jobberRequestId=c.id||"";
+  S.highlevelContactId=c.contactId||c.id||"";
+  S.highlevelAppointmentId=c.id||"";
   render(); // re-prefills the editable fields + repaints the list from cache
 }
 
@@ -723,7 +723,7 @@ R.start=()=>`
     <label class="fl" style="margin-top:18px">Homeowner</label>
     <div class="lookrow">
       <input type="text" id="f_name" value="${esc(S.name)}" placeholder="First name" oninput="S.name=this.value">
-      <button class="lookbtn" onclick="jobberLookup()">🔍 Name</button>
+      <button class="lookbtn" onclick="highlevelLookup()">🔍 Name</button>
     </div>
     <div id="lookout"></div>
     <label class="fl">Address</label>
@@ -737,7 +737,7 @@ R.start=()=>`
       <option value="">Select source</option>${["Google","Referral","Facebook / Instagram","Repeat customer","Yard sign / truck","Other"].map(v=>`<option ${S.leadSource===v?'selected':''}>${v}</option>`).join("")}
     </select>
     ${S.leadSource==="Referral"?`<label class="fl">Referred by</label><input type="text" value="${esc(S.referredBy)}" placeholder="Name" oninput="S.referredBy=this.value">`:""}
-    <div class="looknote" style="margin-top:12px">Tap a name to pull it from Jobber, then double-check every field with the customer on-site — all editable.</div>
+    <div class="looknote" style="margin-top:12px">Tap a HighLevel appointment or contact, then double-check every field with the customer on-site — all editable.</div>
   </div>`;
 
 R.zone=s=>`
@@ -966,7 +966,7 @@ R.plan=()=>{
     <div class="ln"><span>Job date</span><b>${S.jobdate?new Date(S.jobdate+"T12:00").toLocaleDateString(undefined,{weekday:"short",month:"short",day:"numeric"}):"—"}</b></div>
   </div>
   <div class="holdnote">Quote holds for 7 days. Day-Of Bonus is today only.</div>
-  <div class="holdnote">💳 Deposit locks the date: run ${money(depositDue())} through Jobber Payments (client → Collect Payment) before sending — it comes right off the total.</div>
+  <div class="holdnote">💳 Deposit locks the date: collect ${money(depositDue())} through the EGC payment link before sending — it comes right off the total.</div>
   <div id="pb_plan"></div>
   <div class="guarantee"><h4>The EGC No-Surprises Guarantee</h4>
     <ol>${CONFIG.guarantee.map(g=>`<li>${g}</li>`).join("")}</ol></div>
@@ -1147,7 +1147,7 @@ function compileNotes(){
   add("Garage size", (parseFloat(S.garageW)>0&&parseFloat(S.garageD)>0)?`${S.garageW} × ${S.garageD}${S.garageH?" × "+S.garageH+"H":""} ft (~${Math.round(parseFloat(S.garageW)*parseFloat(S.garageD))} sq ft)`:"");
   add("Stay-clean system", S.stay);
   add("DAY-OF BONUS", S.dayBonus?"APPLIED — all special-disposal fees waived (mattress, fridge, tires, paint, e-waste)":"");
-  add("DEPOSIT COLLECTED", Number(S.deposit)>0?money(S.deposit)+" (20%) via Jobber Payments day-of — apply to the final invoice":"");
+  add("DEPOSIT COLLECTED", Number(S.deposit)>0?money(S.deposit)+" (20%) via the EGC payment link — apply to the final invoice":"");
   return L.join("\n");
 }
 
@@ -1170,12 +1170,13 @@ function buildPayload(){
   const p={
     tool:"game_plan", job_id:S.jobId, sent_at:new Date().toISOString(),
     client:{name:S.name||"", first_name:parts[0]||"", last_name:parts.slice(1).join(" ")||"", phone:normPhone(S.phone), email:S.email||"", address:S.addr,
-      jobber_client_id:S.jobberClientId||"", jobber_request_id:S.jobberRequestId||""},
+      highlevel_contact_id:S.highlevelContactId||"", highlevel_appointment_id:S.highlevelAppointmentId||"", lead_source:S.leadSource||""},
     quote:{title:pointTotal()+"-Point Garage Game Plan — "+(S.addr||S.name||"garage"),
       total:grandTotal(), deposit:Number(S.deposit||0), job_date:S.jobdate,
       line_items:items, line_items_count:items.length},
     day_of_bonus:!!S.dayBonus,
     discovery:{decision_maker:S.decisionMaker||"",why_now:S.whyNow||"",success:S.idealOutcome||"",deadline:S.deadline||"",priority:S.priority||"",lead_source:S.leadSource||"",referred_by:S.referredBy||""},
+    scope:{loads:S.loads||0,garages:S.garages||1,keep_remove:S.keepNote||"",exclusions:[...(S.exclusions||[]),S.exclusionNote||""].filter(Boolean).join(", "),hazards:S.hazards||[],truck_placement:S.truckPlacement||""},
     exclusions:{items:S.exclusions||[],notes:S.exclusionNote||""},
     logistics:{truck_placement:S.truckPlacement||"",access:S.access||[],notes:S.accessNote||""},
     signature:S.sig||"", terms_version:TERMS_VERSION, terms_accepted:!!S.sig,
@@ -1199,7 +1200,7 @@ function buildPayload(){
   return p;
 }
 
-// Validate before any send: a quote with no name/package/rate creates junk in Jobber.
+// Validate before any send: an incomplete plan creates a weak HighLevel handoff.
 function validateClose(){
   const miss=[];
   if(!(S.name||"").trim()) miss.push("homeowner name");
@@ -1212,7 +1213,7 @@ function validateClose(){
   if(!S.sig) miss.push("homeowner signature");
   // 20% deposit locks the date (matches the signed terms) — collect before sending.
   const need=depositDue(), dep=Number(S.deposit||0);
-  if(need>0&&dep<need) miss.push("the 20% deposit — collect "+money(need)+" in Jobber Payments (client → Collect Payment), then enter it");
+  if(need>0&&dep<need) miss.push("the 20% deposit — collect "+money(need)+" with the EGC payment link, then enter it");
   return miss;
 }
 
@@ -1365,16 +1366,16 @@ async function postHook(payload){
   return ok;
 }
 
-async function sendToJobber(btn){
+async function sendToHighLevel(btn){
   const st=$("sendstatus");
   const miss=validateClose();
   if(miss.length){if(st){st.style.color="var(--orange2)";st.textContent="Add "+miss.join(", ")+" before sending.";}return;}
-  writeActive("sent_to_jobber"); // local handoff first — must survive even if HQ is unreachable
+  writeActive("saved_to_highlevel"); // local handoff first — must survive even if HQ is unreachable
   btn.disabled=true; btn.textContent="Sending…"; if(st){st.style.color="var(--ok)";st.textContent="";}
   let ok=false;
   try{ ok=await postHook(buildPayload()); }catch(e){ ok=false; }
-  if(ok){ btn.textContent="Sent to Jobber ✓"; if(st)st.textContent="Quote + notes pushed. Tyler can see it."; }
-  else{ btn.disabled=false; btn.textContent="Retry → Send to Jobber"; if(st){st.style.color="var(--orange2)";
+  if(ok){ btn.textContent="Saved to HighLevel ✓"; if(st)st.textContent="Pinned Garage Comeback Plan saved on the contact."; }
+  else{ btn.disabled=false; btn.textContent="Retry → Save to HighLevel"; if(st){st.style.color="var(--orange2)";
     st.textContent="NOT logged to HQ — handoff saved locally. Check signal and retry."; } }
 }
 
@@ -1404,7 +1405,7 @@ async function textPlan(btn){
 
 // Single source of truth for the cross-tool handoff. Carries the locked TOTAL
 // (not just the package rate) and priced upsells so prejob/postjob confirm the
-// real number. Only called on a commit (Send to Jobber / Text Plan), never on
+// real number. Only called on a commit (Save to HighLevel / Text Plan), never on
 // mere screen views — that stops abandoned/no-show quotes leaking into the next job.
 function writeActive(via){
   try{
@@ -1413,7 +1414,7 @@ function writeActive(via){
     const upsellsPriced=chosen.map(u=>{const i=CONFIG.upgrades.indexOf(u);const q=u.qty?(S.storageQty[i]||1):1;return u.name+(u.qty?` × ${q}`:"")+" "+money(priceFor(u,q));}).join(", ");
     if(!S.jobId)S.jobId=uid();
     localStorage.setItem("egc_active_job",JSON.stringify({
-      jobId:S.jobId, jobberClientId:S.jobberClientId||"", name:S.name, addr:S.addr, phone:S.phone,
+      jobId:S.jobId, highlevelContactId:S.highlevelContactId||"", highlevelAppointmentId:S.highlevelAppointmentId||"", name:S.name, addr:S.addr, phone:S.phone,
       pkg:removalBase()>0?`${S.loads} truckload${S.loads!==1?"s":""} removal`:"", upsells, upsellsPriced,
       rate:removalBase(), upgradesTotal:upgradesTotal(), total:grandTotal(),
       deposit:S.deposit, jobdate:S.jobdate, dayBonus:!!S.dayBonus, hasSignature:!!S.sig,
@@ -1459,13 +1460,13 @@ function render(){
   if(s.id==="start") nav+=`<button class="btn next" onclick="go(1)">Start the Walkthrough</button>`;
   else if(s.id==="zone") nav+=`<button class="btn next" onclick="go(1)">Let's Go</button>`;
   else if(s.id==="p14") nav+=`<button class="btn next" onclick="go(1)">Show the Game Plan →</button>`;
-  else if(s.id==="plan") nav+=`<button class="btn navy" onclick="sendToJobber(this)">Send to Jobber</button><button class="btn next" onclick="textPlan(this)">Text Plan</button>`;
+  else if(s.id==="plan") nav+=`<button class="btn navy" onclick="sendToHighLevel(this)">Save to HighLevel</button><button class="btn next" onclick="textPlan(this)">Text Plan</button>`;
   else nav+=`<button class="btn next" onclick="go(1)">Next Point →</button>`;
   $("navinner").innerHTML=nav;
   paintTotal();
   $("stage").scrollTop=keepStage;
   window.scrollTo(0,keepY);
-  if(s.id==="start")setTimeout(loadTodayRequests,0); // auto-pull the day's Jobber walkthroughs (cached after first load)
+  if(s.id==="start")setTimeout(loadTodayRequests,0); // auto-pull the day's HighLevel walkthroughs (cached after first load)
   if(s.id==="p10")setTimeout(()=>mountStrip("pb_before","before",{ai:false}),0); // before photo only — the After generates at the Layout step
   if(s.id==="p12")setTimeout(paintAi,0);
   if(s.id==="plan"){setTimeout(initSig,60);setTimeout(mountPlanPhotos,0);} // handoff is written on commit (Send/Text), not on view

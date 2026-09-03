@@ -8,19 +8,26 @@ const employee=read('employee.html');
 const suite=read('employee-suite.js');
 const crew=read('crew/gameplan.html');
 const relay=read('functions/api/operations-event.js');
+const highlevel=read('functions/api/highlevel.js');
 
 test('employee hub loads the operations suite after the CRM layer',()=>{
   assert.match(employee,/employee-crm\.js[\s\S]*employee-suite\.js/);
   assert.match(employee,/employee-suite\.css/);
 });
 
-test('operations suite contains the core Jobber-style work areas',()=>{
-  for(const area of ['quotes','invoices','payments','expenses','time','tasks','team','reports','services']){
+test('operations suite follows the EGC operating model instead of duplicating the CRM',()=>{
+  for(const area of ['today','pipeline','walkthroughs','delivery','scorecard','proof','playbook','settings']){
     assert.match(suite,new RegExp("'"+area+"'"),area+' is missing');
   }
-  for(const collection of ['invoices','payments','expenses','time_entries','tasks','crew_members','services']){
-    assert.match(suite,new RegExp(collection),collection+' persistence is missing');
-  }
+  for(const marker of ['HighLevel is CRM','Walkthrough-first','Contribution / lead','The EGC playbook'])assert.match(suite,new RegExp(marker));
+  for(const duplicate of ['collection:\'invoices\'','collection:\'payments\'','crew_members','time_entries'])assert.doesNotMatch(suite,new RegExp(duplicate));
+});
+
+test('HighLevel bridge keeps credentials server-side and supports field continuity',()=>{
+  for(const marker of ['HIGHLEVEL_API_KEY','HIGHLEVEL_LOCATION_ID','/opportunities/search','/calendars/events','/contacts/upsert','Garage Comeback Plan','6-month garage check-in'])assert.match(highlevel,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
+  assert.doesNotMatch(employee,/HIGHLEVEL_API_KEY\s*[:=]\s*['"][^'"]+/);
+  assert.match(crew,/\/api\/highlevel/);
+  assert.match(crew,/highlevel_contact_id/);
 });
 
 test('private webhook destinations are absent from browser and function source',()=>{
@@ -37,8 +44,8 @@ test('walkthrough enforces discovery, exclusions, logistics, proof, and close',(
   assert.match(crew,/function validateStep/);
 });
 
-test('all inline scripts parse',()=>{
-  for(const [name,html] of [['employee.html',employee],['crew/gameplan.html',crew]]){
+test('all employee and field-tool inline scripts parse',()=>{
+  for(const [name,html] of [['employee.html',employee],['crew/gameplan.html',crew],['crew/prejob.html',read('crew/prejob.html')],['crew/postjob.html',read('crew/postjob.html')]]){
     const scripts=[...html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/gi)].map(x=>x[1]).filter(Boolean);
     scripts.forEach((code,i)=>assert.doesNotThrow(()=>new vm.Script(code,{filename:name+'#'+i})));
   }

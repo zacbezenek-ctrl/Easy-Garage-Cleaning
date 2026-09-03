@@ -23,7 +23,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,400;0,500;0,700;1,400;1,500&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="employee-crm.css">
-  <link rel="stylesheet" href="employee-suite.css?v=20260903">
+  <link rel="stylesheet" href="employee-suite.css?v=20260903b">
   <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
@@ -813,10 +813,10 @@ body.has-session #login-screen { display: none; }
         <div class="mode-arrow">→</div>
       </div>
       <div class="mode-card" onclick="selectMode('dashboard')">
-        <div class="mode-icon">CRM</div>
+        <div class="mode-icon">Ops</div>
         <div>
-          <div class="mode-title">CRM Dashboard</div>
-          <div class="mode-desc">Jobs pipeline, schedule, customers &amp; leads</div>
+          <div class="mode-title">EGC Field Command</div>
+          <div class="mode-desc">HighLevel pipeline, walkthroughs, crew handoff &amp; growth</div>
         </div>
       </div>
       <div class="mode-card" id="admin-card" onclick="selectMode('admin')">
@@ -874,7 +874,7 @@ body.has-session #login-screen { display: none; }
   <div class="topbar">
     <div class="topbar-left">
       <div class="dot"></div>
-      <span class="brand">EGC CRM</span>
+      <span class="brand">EGC Field Command</span>
     </div>
     <div class="topbar-right">
       <span id="firebase-status" class="firebase-status pending" aria-label="Sync status" title="Firebase real-time sync">Connecting</span>
@@ -3231,7 +3231,7 @@ async function ocBook() {
   })();
 </script>
 <script src="employee-crm.js"></script>
-<script src="employee-suite.js?v=20260903"></script>
+<script src="employee-suite.js?v=20260903b"></script>
 <div class="mobile-sticky-cta" aria-label="Quick contact">
   <a href="tel:+19709991818" class="mobile-cta-btn mobile-cta-call">Call</a>
   <a href="sms:+19709991818?body=Hi!%20I'd%20like%20a%20quote.%20I%20can%20text%20photos%20of%20my%20garage/junk." class="mobile-cta-btn mobile-cta-text">Text</a>

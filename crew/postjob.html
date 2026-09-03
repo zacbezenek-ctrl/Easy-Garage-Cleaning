@@ -207,7 +207,7 @@ gateOk().then(u=>{
     <div class="grid2">
       <div><label class="fl">Customer</label>
         <div class="lookrow"><input type="text" id="j_name" placeholder="Name">
-          <button class="lookbtn" onclick="jobberLookup()">🔍</button></div></div>
+          <button class="lookbtn" onclick="highlevelLookup()">🔍</button></div></div>
       <div><label class="fl">Date</label><input type="date" id="j_date"></div>
     </div>
     <div id="lookout"></div>
@@ -262,7 +262,7 @@ const SECTIONS = [
       {t:"Review ask — face to face, then text the link", s:"Use the script. Ask while they're standing in the empty garage, not tomorrow. Send the Google link via Quo before you pull away.", crit:true},
       {t:"Referral ask — the neighbor line", s:"Script below. Every garage on the street looks the same inside. One job per street should become two."},
       {t:"Garage Guard pitched — top-down", s:"Open at Guard Black. Step down one tier on hesitation. Lite is the save. Two options, never yes/no."},
-      {t:"6-month check-in scheduled", s:"Log it in Jobber. ‘We'll text you in 6 months to see how the system's holding up’ — said out loud, then actually scheduled."},
+      {t:"6-month check-in scheduled", s:"Confirm the HighLevel follow-up is active. ‘We'll text you in 6 months to see how the system's holding up’ — said out loud, then actually scheduled."},
     ],
     script:{h:"Review + referral — exact words", p:[
       "“One favor — reviews are how a local crew like us survives against the big franchises. I'm texting you the link right now, it's 30 seconds. Mention the garage if you can — photos are gold.”",
@@ -287,7 +287,7 @@ const SECTIONS = [
     when:"Same night — 10 minutes, phone on the couch", title:"Feed the Machine", items:[
       {t:"All job photos → the job's Drive folder", s:"Before, after, receipt + the AI preview. One tap creates the job's own folder in EGC Job Photos and uploads everything new. Tonight, not ‘this weekend’.", crit:true, act:{type:"drive"}},
       {t:"Video clips shared to Zac", s:"Reaction clip + walkthrough pans via AirDrop/album — video is too heavy to live in this tool.", act:{type:"share"}},
-      {t:"Job marked complete in Jobber", s:"Triggers invoicing/receipt flow and closes the loop for Tyler."},
+      {t:"Opportunity marked won in HighLevel", s:"Closes the CRM loop and starts the review, referral, and maintenance follow-up."},
       {t:"Flag the best clip for ads", s:"One message to Zac: ‘this one's the ad.’ That's the whole creative pipeline."},
     ]
   },
@@ -310,7 +310,7 @@ function guardYearOneFree(){const p=(ACTIVE.pkg||"").toLowerCase();return p.incl
 
 /* ===== Per-job photos (on-device, IndexedDB) — keyed by the Game Plan jobId =====
    Same shared DB the Game Plan wrote to. After-photos attach to the same job so
-   before + AI preview + after live together. Jobber's Zapier has no attachment
+   before + AI preview + after live together. HighLevel receives the written closeout;
    action, so these stay on the iPad; the close payload carries counts only. */
 function jobKey(){return ACTIVE.jobId||"postjob_"+(document.getElementById("j_name").value||"unknown").toLowerCase().replace(/\s+/g,"_");}
 function idbOpen(){return new Promise((res,rej)=>{const r=indexedDB.open("egc_photos",1);
@@ -334,30 +334,30 @@ function viewPhoto(src){const v=document.getElementById("pviewer");document.getE
 let AFTER_COUNT=0;
 async function refreshAfterCount(){try{AFTER_COUNT=(await photoList(jobKey(),"after")).length;}catch(e){}}
 
-/* ===== Jobber customer lookup (read-only, via /api/jobber-clients) ===== */
+/* ===== HighLevel contact lookup (read-only, via /api/highlevel) ===== */
 let LOOK=[];
-async function jobberLookup(){
+async function highlevelLookup(){
   const out=document.getElementById("lookout"); if(!out) return;
   const q=(document.getElementById("j_name").value||"").trim();
   if(q.length<2){out.innerHTML=`<div class="looknote">Type at least 2 letters of the name first, then tap 🔍.</div>`;return;}
-  out.innerHTML=`<div class="looknote">Searching Jobber…</div>`;
+  out.innerHTML=`<div class="looknote">Searching HighLevel…</div>`;
   try{
-    const res=await fetch("/api/jobber-clients?q="+encodeURIComponent(q));
+    const res=await fetch("/api/highlevel?view=contacts&q="+encodeURIComponent(q));
     const j=await res.json().catch(()=>({}));
-    if(res.status===501){out.innerHTML=`<div class="looknote">Jobber lookup isn't connected yet — Zac: run /api/jobber-auth once.</div>`;return;}
+    if(res.status===501){out.innerHTML=`<div class="looknote">HighLevel needs its API key and location ID. Type the details manually for now.</div>`;return;}
     if(!res.ok||!j.ok){out.innerHTML=`<div class="looknote">Lookup failed — type it manually.</div>`;return;}
     LOOK=j.clients||[];
     out.innerHTML=LOOK.length?LOOK.map((c,i)=>`<div class="lkr" onclick="lookPick(${i})">
         <div class="nm">${esc(c.name)}<small>${esc([c.address,c.phone].filter(Boolean).join(" · "))}</small></div>
         <span class="go">→</span></div>`).join("")
-      :`<div class="looknote">No Jobber match for “${esc(q)}”.</div>`;
+      :`<div class="looknote">No HighLevel opportunity match for “${esc(q)}”.</div>`;
   }catch(e){out.innerHTML=`<div class="looknote">Lookup unreachable — type it manually.</div>`;}
 }
 function lookPick(i){
   const c=LOOK[i]; if(!c) return;
   if(c.name)document.getElementById("j_name").value=c.name;
   if(c.phone)document.getElementById("j_phone").value=c.phone;
-  ACTIVE.jobberClientId=ACTIVE.jobberClientId||c.id||"";
+  ACTIVE.highlevelContactId=ACTIVE.highlevelContactId||c.id||"";
   LOOK=[];document.getElementById("lookout").innerHTML="";saveAll();
 }
 
@@ -527,6 +527,11 @@ async function postHook(payload){
   let ok=res.ok; try{const j=await res.json();ok=ok&&j&&j.ok!==false;}catch(e){}
   return ok;
 }
+async function postHighLevel(payload){
+  const res=await fetch('/api/highlevel',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+  let ok=res.ok;try{const j=await res.json();ok=ok&&j&&j.ok!==false;}catch(e){}
+  return ok;
+}
 let _reviewId="";
 async function sendReview(btn){
   const phone=normPhone(document.getElementById("j_phone").value||"");
@@ -553,19 +558,19 @@ async function finish(){
     garage_guard:GUARD||"not recorded",
     photos:{after:AFTER_COUNT},
     drive_folder:(function(){try{return localStorage.getItem(driveKey())||"";}catch(e){return "";}})(),
-    jobber_client_id:ACTIVE.jobberClientId||"",
+    highlevel_contact_id:ACTIVE.highlevelContactId||"",
     checklist:SECTIONS.map(s=>s.items.map(it=>it.t)).flat().map((t,i)=>t+": done").join("\n")};
   // Local backup FIRST — job-costing data (loads/hours/fees) must survive even if HQ is down.
   try{const log=JSON.parse(localStorage.getItem("egc_job_log")||"[]");log.push(payload);
     localStorage.setItem("egc_job_log",JSON.stringify(log.slice(-50)));}catch(e){}
-  const btn=document.getElementById("donebtn");btn.textContent="Sending to HQ…";
-  let ok=false; try{ ok=await postHook(payload); }catch(e){ ok=false; }
+  const btn=document.getElementById("donebtn");btn.textContent="Saving to HighLevel…";
+  let ok=false; try{ ok=await postHighLevel(payload); }catch(e){ ok=false; }
   if(!ok){
-    btn.classList.remove("ready");btn.textContent="Retry → Close & log to HQ";
-    alert("Job NOT logged to HQ (unreachable). It's saved on this iPad — reconnect and tap again. Nothing cleared.");
+    btn.classList.remove("ready");btn.textContent="Retry → Save closeout to HighLevel";
+    alert("Job not saved to HighLevel. It's still saved on this iPad — reconnect and tap again. Nothing was cleared.");
     return; // don't wipe the handoff/checklist on failure, so a retry still works
   }
-  btn.textContent="Job closed & logged to HQ ✓";
+  btn.textContent="Job closed & saved to HighLevel ✓";
   localStorage.removeItem(SAVEKEY);
   localStorage.removeItem("egc_active_job");
   alert("Job closed. Review asked, content captured, money in. That's the system. 🧹");
