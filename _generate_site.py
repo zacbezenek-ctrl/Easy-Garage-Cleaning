@@ -632,9 +632,9 @@ HEAD = """<!DOCTYPE html>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 """ + RESOURCE_HINTS + """
-<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,700;1,9..144,400&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,700;1,9..144,400&family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
 {schema}
-<link rel="stylesheet" href="/styles.css?v=20260723">
+<link rel="stylesheet" href="/styles.css?v=20260903b">
 </head>
 <body>
 <a href="#main-content" class="skip-link">Skip to content</a>
@@ -1666,7 +1666,7 @@ def page_shell(title, desc, canonical, schema, body, og_type="website", quote_hr
     nav_opts.update(nav_kw)
     if "<main" in body and 'id="main-content"' not in body:
         body = re.sub(r"<main(\s|>)", r'<main id="main-content"\1', body, count=1)
-    # Page CSS is no longer inlined — every generated page links /styles.css?v=20260723 (see HEAD).
+    # Page CSS is no longer inlined — every generated page links /styles.css?v=20260903b (see HEAD).
     return HEAD.format(title=title, desc=desc, canonical=canonical, schema=rating_note + schema + extra, SITE=SITE, og_type=og_type, robots=robots) + fmt(NAV, **nav_opts) + body + fmt(FOOTER, **nav_opts)
 
 
@@ -3173,6 +3173,25 @@ def patch_employee_portal(text):
 
 def patch_index_iteration7(text):
     text = patch_index_iteration6(text)
+    text = re.sub(
+        r'\s*<section class="testimonial-carousel"[\s\S]*?</section>\s*',
+        "\n\n",
+        text,
+        count=1,
+    )
+    text = re.sub(
+        r'\s*<section class="related" aria-labelledby="explore-heading">[\s\S]*?</section>\s*',
+        "\n\n",
+        text,
+        count=1,
+    )
+    if 'class="hero-result"' not in text and 'class="hero-visual"' in text:
+        hero_result = '''<figure class="hero-result">
+        <img src="/images/job-before-after-1.jpg" alt="A Fort Collins garage before and after an Easy Garage Cleaning cleanout" width="1648" height="615" decoding="async">
+        <figcaption><span>Real Fort Collins cleanout</span><strong>One-day result</strong></figcaption>
+      </figure>'''
+        text = text.replace('<div class="hero-visual">', '<div class="hero-visual">\n      ' + hero_result, 1)
+    text = text.replace('class="quote-form hero-form">', 'class="quote-form hero-form" id="turnaround-plan">', 1)
     if 'class="hero hero-premium"' not in text:
         text = text.replace('<header class="hero" id="top">', '<header class="hero hero-premium" id="top">', 1)
         text = text.replace('<header class="hero">', '<header class="hero hero-premium">', 1)
