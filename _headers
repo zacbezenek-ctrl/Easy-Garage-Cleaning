@@ -36,7 +36,7 @@
   Referrer-Policy: strict-origin-when-cross-origin
 
 # Lead-attribution + relay script — must update instantly on deploy, or the
-# form silently stops mirroring leads to Zapier. Revalidate every load (cheap
+# form silently stops mirroring leads to HighLevel/Zapier. Revalidate every load (cheap
 # ETag check) instead of the default 4h cache. Bump the ?v= tag in the <script>
 # refs for an immediate bust of already-cached copies.
 /fb-capture.js

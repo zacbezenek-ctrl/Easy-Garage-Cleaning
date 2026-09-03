@@ -10,6 +10,7 @@ const crew=read('crew/gameplan.html');
 const copilot=read('copilot.html');
 const relay=read('functions/api/operations-event.js');
 const highlevel=read('functions/api/highlevel.js');
+const webLead=read('functions/api/web-lead.js');
 const statusApi=read('functions/api/integration-status.js');
 const commercial=read('commercial-junk-removal-fort-collins-co.html');
 
@@ -51,7 +52,7 @@ test('walkthrough is photo-led, builds price in the background, and saves Hub sc
 });
 
 test('Hub owns scheduling while HighLevel owns CRM automation',()=>{
-  for(const marker of ['HUB SCHEDULE','Schedule the work here','scheduleSource','Save + sync','HighLevel = leads, contacts, conversations, pipeline, automations'])assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
+  for(const marker of ['HUB SCHEDULE','Schedule the work here','scheduleSource','Save + sync','New HighLevel leads'])assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
   assert.match(suite,/\.set\(job,\{merge:true\}\)/);
   assert.match(suite,/Choose an end time after the start time/);
   for(const field of ['phone','email','address','date','time','endTime','assignedTo','notes','notify'])assert.match(suite,new RegExp(`opsBookField\\('${field}'`));
@@ -163,6 +164,60 @@ test('HighLevel reuses the same exact appointment after a response-lost retry',a
   }finally{globalThis.fetch=originalFetch}
 });
 
+test('Hub lead feed resets at the cutoff and excludes historical HighLevel opportunities',async()=>{
+  const {onRequestGet}=await import('../functions/api/highlevel.js');
+  const originalFetch=globalThis.fetch;
+  globalThis.fetch=async url=>{
+    if(String(url).includes('/opportunities/pipelines?'))return new Response(JSON.stringify({pipelines:[]}),{status:200});
+    if(String(url).includes('/opportunities/search?'))return new Response(JSON.stringify({opportunities:[
+      {id:'old',createdAt:'2026-09-03T21:50:00.000Z'},
+      {id:'new',createdAt:'2026-09-03T21:52:00.000Z'},
+      {id:'undated'}
+    ]}),{status:200});
+    return new Response('{}',{status:200});
+  };
+  try{
+    const response=await onRequestGet({request:new Request('https://easygaragecleaning.com/api/highlevel?view=command',{headers:{Origin:'https://easygaragecleaning.com'}}),env:{HIGHLEVEL_API_KEY:'test-key',HIGHLEVEL_LOCATION_ID:'location-1',HIGHLEVEL_LEADS_RESET_AT:'2026-09-03T21:51:19.314Z'}});
+    const result=await response.json();
+    assert.equal(response.status,200);
+    assert.equal(result.leadResetAt,'2026-09-03T21:51:19.314Z');
+    assert.deepEqual(result.opportunities.map(row=>row.id),['new']);
+  }finally{globalThis.fetch=originalFetch}
+});
+
+test('website leads go directly to HighLevel before the existing automation relay',async()=>{
+  const {onRequestPost}=await import('../functions/api/web-lead.js');
+  const calls=[],originalFetch=globalThis.fetch;
+  globalThis.fetch=async(url,options={})=>{
+    calls.push({url:String(url),options});
+    if(String(url).endsWith('/contacts/upsert'))return new Response(JSON.stringify({contact:{id:'contact-web'}}),{status:200});
+    if(String(url).includes('/opportunities/pipelines?'))return new Response(JSON.stringify({pipelines:[{id:'pipe-1',stages:[{id:'stage-new'}]}]}),{status:200});
+    if(String(url).endsWith('/opportunities/upsert'))return new Response(JSON.stringify({opportunity:{id:'opp-web'},new:true}),{status:200});
+    return new Response('{}',{status:200});
+  };
+  try{
+    const request=new Request('https://easygaragecleaning.com/api/web-lead',{method:'POST',headers:{Origin:'https://easygaragecleaning.com','Content-Type':'application/json'},body:JSON.stringify({name:'New Customer',phone:'9705550199',items:'Garage cleanout',source:'Website'})});
+    const response=await onRequestPost({request,env:{HIGHLEVEL_API_KEY:'test-key',HIGHLEVEL_LOCATION_ID:'location-1',HIGHLEVEL_PIPELINE_ID:'pipe-1',HIGHLEVEL_USER_ID:'user-1',WEBSITE_LEAD_HOOK_URL:'https://hooks.example.test/lead'}});
+    const result=await response.json();
+    assert.equal(response.status,200);
+    assert.equal(result.highlevel.synced,true);
+    assert.equal(result.relay.sent,true);
+    assert.equal(calls.filter(call=>call.url.endsWith('/contacts/upsert')).length,1);
+    assert.equal(calls.filter(call=>call.url.endsWith('/opportunities/upsert')).length,1);
+    assert.equal(calls.filter(call=>call.url.startsWith('https://hooks.example.test/lead')).length,1);
+  }finally{globalThis.fetch=originalFetch}
+});
+
+test('legacy Firebase leads are not loaded into the reset Hub',()=>{
+  assert.doesNotMatch(employee,/db\.collection\('leads'\)\.onSnapshot/);
+  assert.doesNotMatch(employee,/db\.collection\('leads'\)\.get/);
+  assert.match(employee,/leadsCache = \[\];/);
+  assert.match(suite,/New HighLevel leads/);
+  assert.match(suite,/setInterval\(\(\)=>\{if\(!document\.hidden\)loadGhl\(\)\},60000\)/);
+  assert.match(highlevel,/DEFAULT_LEAD_RESET_AT/);
+  assert.match(webLead,/syncHighLevelLead/);
+});
+
 test('employees can discover and safely pick up manager-opened crew shifts',()=>{
   for(const marker of ["'open_shifts'",'Open shifts','Crew needed','openShift','crewNeeded','assignedCrew','remaining</b>','Route','Pick up shift']){
     assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),marker+' is missing');
@@ -183,7 +238,7 @@ test('open-shift scheduling fields persist on the canonical job record',()=>{
   assert.match(suite,/openShift:b\.type==='job'/);
   assert.match(suite,/assignedCrew\.length<crewNeeded/);
   assert.match(employee,/employee-suite\.css\?v=20260903h/);
-  assert.match(employee,/employee-suite\.js\?v=20260903h/);
+  assert.match(employee,/employee-suite\.js\?v=20260903i/);
 });
 
 test('walkthrough preserves job creation time and hands off the scheduled job appointment',()=>{

@@ -1484,43 +1484,12 @@ function startListeners() {
     if (scheduleTabActive()) renderCal();
   }, err => console.error('blocked_slots listener error', err));
 
-  // All leads — no where() filters; full collection real-time sync
-  let _prevLeadCount = 0;
-  db.collection('leads').onSnapshot(snap => {
-    firebaseConn.leads = 'connected';
-    const prevLen = _prevLeadCount;
-    leadsCache = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-    window._lastLeadsSync = Date.now();
-    _prevLeadCount = leadsCache.length;
-    updateFirebaseStatus();
-    if (typeof onLeadsSnapshot === 'function') onLeadsSnapshot();
-    else {
-      renderLeads();
-      updateLeadsBadge();
-    }
-    // Re-render dashboard so "Leads inbox" stat & badges stay live
-    if (document.getElementById('tab-home')?.classList.contains('active') && typeof renderDashboard === 'function') {
-      renderDashboard();
-    }
-    // Pulse badge if a new lead arrived (not the initial load)
-    if (prevLen > 0 && leadsCache.length > prevLen) {
-      ['leads-badge', 'leads-badge-mobile'].forEach(id => {
-        const b = document.getElementById(id);
-        if (b) { b.classList.remove('badge-pulse'); void b.offsetWidth; b.classList.add('badge-pulse'); }
-      });
-    }
-    if (oc.step === 1 && document.getElementById('oncall-overlay')?.classList.contains('open')) {
-      ocFilter(document.getElementById('oc-search')?.value || '');
-    }
-    if (typeof bk !== 'undefined' && bk.step === 1 && document.getElementById('booking-overlay')?.classList.contains('open')) {
-      renderCustList(document.getElementById('cust-search')?.value || '');
-    }
-  }, err => {
-    firebaseConn.leads = 'error';
-    updateFirebaseStatus();
-    console.error('Leads listener error', err);
-    if (typeof onLeadsError === 'function') onLeadsError(err);
-  });
+  // Lead history remains in Firestore, but the Hub intentionally starts fresh.
+  // The visible lead feed is sourced only from HighLevel after the reset cutoff.
+  leadsCache = [];
+  firebaseConn.leads = 'connected';
+  window._lastLeadsSync = Date.now();
+  updateFirebaseStatus();
 
   // Lightweight tick (60s): refresh badge count + dashboard age displays.
   // Heavy lists (leads, jobs) re-render only on actual data changes via onSnapshot,
@@ -2766,10 +2735,9 @@ function openOnCall() {
     booking:{ assignedTo: me==='TylerG'?'TylerG':'ZacB' }
   };
   document.getElementById('oncall-overlay').classList.add('open');
-  db.collection('leads').get().then(snap => {
-    leadsCache = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-    if (oc.step === 1) ocFilter(document.getElementById('oc-search')?.value || '');
-  }).catch(e => console.error('Leads refresh error:', e));
+  // Legacy Firestore leads are intentionally excluded after the HighLevel reset.
+  leadsCache = [];
+  if (oc.step === 1) ocFilter(document.getElementById('oc-search')?.value || '');
   renderOcStep();
 }
 
@@ -3221,7 +3189,7 @@ async function ocBook() {
     document.head.appendChild(s);
   })();
 </script>
-<script src="employee-suite.js?v=20260903h"></script>
+<script src="employee-suite.js?v=20260903i"></script>
 <div class="mobile-sticky-cta" aria-label="Quick contact">
   <a href="tel:+19709991818" class="mobile-cta-btn mobile-cta-call">Call</a>
   <a href="sms:+19709991818?body=Hi!%20I'd%20like%20a%20quote.%20I%20can%20text%20photos%20of%20my%20garage/junk." class="mobile-cta-btn mobile-cta-text">Text</a>

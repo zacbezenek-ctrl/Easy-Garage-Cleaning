@@ -43,11 +43,11 @@
   if (document.readyState !== 'loading') fill();
   else document.addEventListener('DOMContentLoaded', fill);
 
-  /* Mirror lead submissions to /api/web-lead (same-origin relay → Zapier
-     "EGC Website Lead → Instant Text": SMS alert + Meta CAPI Lead).
+  /* Mirror lead submissions to /api/web-lead (same-origin relay → HighLevel
+     as the CRM source of truth, plus the existing Zapier instant-text/CAPI leg).
      Fire-and-forget: never blocks or delays the native Web3Forms POST,
-     and a relay failure is silent — Web3Forms email stays the source of
-     truth, this only powers the instant-text/CAPI leg. */
+     and a relay failure is silent — Web3Forms email remains a fallback while
+     the relay powers HighLevel plus the instant-text/CAPI leg. */
   document.addEventListener('submit', function (e) {
     var f = e.target;
     if (!f || !f.classList || !f.classList.contains('lead-form-lite')) return;

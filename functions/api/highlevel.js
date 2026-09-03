@@ -18,9 +18,11 @@
  *   HIGHLEVEL_PIPELINE_STAGE_WALKTHROUGH_COMPLETE_ID
  *   HIGHLEVEL_PIPELINE_STAGE_JOB_COMPLETE_ID
  *   HIGHLEVEL_USER_ID
+ *   HIGHLEVEL_LEADS_RESET_AT
  */
 
 const API = 'https://services.leadconnectorhq.com';
+const DEFAULT_LEAD_RESET_AT = '2026-09-03T21:51:19.314Z';
 const HOST = /(^|\.)easygaragecleaning\.com$|\.pages\.dev$|^localhost(:\d+)?$|^127\.0\.0\.1(:\d+)?$/;
 
 function reply(status, body) {
@@ -101,6 +103,19 @@ async function opportunities(c, query = '') {
   if (c.pipelineId) params.set('pipelineId', c.pipelineId);
   const data = await ghl(c, `/opportunities/search?${params}`);
   return data.opportunities || [];
+}
+
+function leadResetAt(env) {
+  const configured = env.HIGHLEVEL_LEADS_RESET_AT || env.GHL_LEADS_RESET_AT || DEFAULT_LEAD_RESET_AT;
+  return Number.isFinite(Date.parse(configured)) ? new Date(configured).toISOString() : DEFAULT_LEAD_RESET_AT;
+}
+
+function opportunitiesSince(rows, cutoff) {
+  const after = Date.parse(cutoff);
+  return (rows || []).filter(row => {
+    const created = Date.parse(row && row.createdAt || '');
+    return Number.isFinite(created) && created >= after;
+  });
 }
 
 async function contacts(c, query) {
@@ -420,8 +435,9 @@ export async function onRequestGet({ request, env }) {
       const result = await getSchedule(c, url.searchParams.get('start') || '', url.searchParams.get('end') || '');
       return reply(200, { ok: true, ...result });
     }
-    const [pipes, opps] = await Promise.all([pipelines(c), opportunities(c)]);
-    return reply(200, { ok: true, pipelines: pipes, opportunities: opps, locationId: c.locationId });
+    const [pipes, allOpps] = await Promise.all([pipelines(c), opportunities(c)]);
+    const resetAt = leadResetAt(env), opps = opportunitiesSince(allOpps, resetAt);
+    return reply(200, { ok: true, pipelines: pipes, opportunities: opps, leadResetAt: resetAt, locationId: c.locationId });
   } catch (error) {
     return reply(502, { ok: false, error: 'HighLevel is unreachable', detail: error.detail || error.message });
   }

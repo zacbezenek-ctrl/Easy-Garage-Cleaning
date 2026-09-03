@@ -3,8 +3,8 @@
  * POST /api/web-lead
  *
  * The quote forms POST natively to Web3Forms (the email leg). fb-capture.js
- * mirrors the same submission here, and this function forwards everything to
- * the Zapier Catch Hook for "EGC Website Lead → Instant Text".
+ * mirrors the same submission here. This function writes the lead directly to
+ * HighLevel, then forwards it to the existing Zapier instant-text/CAPI hook.
  *
  * The Zap then fires the team SMS alert + Meta CAPI Lead, and — once you add an
  * "AI by Zapier" step + an OpenPhone "Send Message" step — texts the lead back
@@ -25,6 +25,7 @@
 const ALLOWED_HOST_RE = /(^|\.)easygaragecleaning\.com$|(\.pages\.dev)$|^localhost(:\d+)?$|^127\.0\.0\.1(:\d+)?$/;
 const MAX_BODY = 32 * 1024;
 const FIELDS = ['name', 'phone', 'items', 'source', 'subject', 'fbc', 'fbp', 'fbclid', 'landing_url', 'referrer', 'page_url'];
+const HIGHLEVEL_API = 'https://services.leadconnectorhq.com';
 
 function hostOf(value) {
   try { return new URL(value).host; } catch { return ''; }
@@ -44,6 +45,77 @@ function envVar(env, name) {
 
 function resolveHook(env) {
   return envVar(env, 'WEBSITE_LEAD_HOOK_URL');
+}
+
+function highLevelConfig(env) {
+  return {
+    token: envVar(env, 'HIGHLEVEL_API_KEY') || envVar(env, 'GHL_API_KEY'),
+    locationId: envVar(env, 'HIGHLEVEL_LOCATION_ID') || envVar(env, 'GHL_LOCATION_ID'),
+    pipelineId: envVar(env, 'HIGHLEVEL_PIPELINE_ID') || envVar(env, 'GHL_PIPELINE_ID'),
+    stageId: envVar(env, 'HIGHLEVEL_NEW_LEAD_STAGE_ID') || envVar(env, 'GHL_NEW_LEAD_STAGE_ID'),
+    assignedTo: envVar(env, 'HIGHLEVEL_USER_ID') || envVar(env, 'GHL_USER_ID'),
+  };
+}
+
+async function highLevelRequest(config, path, options = {}) {
+  const response = await fetch(HIGHLEVEL_API + path, {
+    ...options,
+    headers: {
+      Authorization: `Bearer ${config.token}`,
+      Version: 'v3',
+      ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+      ...(options.headers || {}),
+    },
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(`HighLevel returned ${response.status}: ${JSON.stringify(data).slice(0, 240)}`);
+  return data;
+}
+
+async function syncHighLevelLead(env, lead) {
+  const config = highLevelConfig(env);
+  if (!config.token || !config.locationId) return { configured: false, synced: false };
+
+  const contactResult = await highLevelRequest(config, '/contacts/upsert', {
+    method: 'POST',
+    body: JSON.stringify({
+      locationId: config.locationId,
+      name: lead.name,
+      phone: lead.phone,
+      source: lead.source || 'EGC Website',
+    }),
+  });
+  const contactId = contactResult.contact && contactResult.contact.id || contactResult.id || '';
+  if (!contactId) throw new Error('HighLevel did not return a contact ID');
+  if (!config.pipelineId) return { configured: true, synced: true, contactId, opportunityId: '' };
+
+  let stageId = config.stageId;
+  if (!stageId) {
+    const data = await highLevelRequest(config, `/opportunities/pipelines?locationId=${encodeURIComponent(config.locationId)}`);
+    const pipeline = (data.pipelines || []).find(item => item.id === config.pipelineId);
+    stageId = pipeline && pipeline.stages && pipeline.stages[0] && pipeline.stages[0].id || '';
+  }
+  if (!stageId) throw new Error('HighLevel new-lead pipeline stage is unavailable');
+
+  const body = {
+    pipelineId: config.pipelineId,
+    locationId: config.locationId,
+    name: `${lead.name} — Website lead`,
+    pipelineStageId: stageId,
+    status: 'open',
+    contactId,
+    monetaryValue: 0,
+    followers: config.assignedTo ? [config.assignedTo] : [],
+    isRemoveAllFollowers: false,
+    followersActionType: 'add',
+    ...(config.assignedTo ? { assignedTo: config.assignedTo } : {}),
+  };
+  const result = await highLevelRequest(config, '/opportunities/upsert', {
+    method: 'POST',
+    headers: { 'Idempotency-Key': `website-lead:${contactId}:${config.pipelineId}` },
+    body: JSON.stringify(body),
+  });
+  return { configured: true, synced: true, contactId, opportunityId: result.opportunity && result.opportunity.id || result.id || '' };
 }
 
 function originAllowed(request) {
@@ -116,7 +188,6 @@ export async function onRequestPost({ request, env }) {
   }
 
   const hook = resolveHook(env);
-  if (!hook) return json(503, { ok: false, error: 'Relay not configured' });
 
   const params = new URLSearchParams();
   const flat = {};
@@ -136,25 +207,29 @@ export async function onRequestPost({ request, env }) {
     if (v) params.set(k, v);
   }
 
-  try {
-    const resp = await fetch(hook + (hook.includes('?') ? '&' : '?') + params.toString(), {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(flat),
-    });
-    if (!resp.ok) {
-      const detail = (await resp.text().catch(() => '')).slice(0, 300);
-      return json(502, { ok: false, error: 'Upstream rejected', status: resp.status, detail });
-    }
-    return json(200, { ok: true });
-  } catch {
-    return json(502, { ok: false, error: 'Upstream unreachable' });
+  let highlevel;
+  try { highlevel = await syncHighLevelLead(env, { name, phone, source: flat.source || 'EGC Website' }); }
+  catch (error) { return json(502, { ok: false, error: 'HighLevel lead sync failed', detail: String(error.message || error).slice(0, 300) }); }
+
+  let relay = { configured: !!hook, sent: false };
+  if (hook) {
+    try {
+      const resp = await fetch(hook + (hook.includes('?') ? '&' : '?') + params.toString(), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(flat),
+      });
+      relay = { configured: true, sent: resp.ok };
+    } catch { relay = { configured: true, sent: false }; }
   }
+  if (!highlevel.configured && !relay.sent) return json(503, { ok: false, error: 'Lead destinations are not configured' });
+  return json(200, { ok: true, highlevel: { configured: highlevel.configured, synced: highlevel.synced }, relay });
 }
 
 // Health/config probe — reports whether the hook is wired (boolean only).
 export async function onRequestGet({ env }) {
-  return new Response(JSON.stringify({ ok: true, configured: !!resolveHook(env) }), {
+  const highlevel = highLevelConfig(env);
+  return new Response(JSON.stringify({ ok: true, configured: !!resolveHook(env) || Boolean(highlevel.token && highlevel.locationId), highlevel: Boolean(highlevel.token && highlevel.locationId), relay: !!resolveHook(env) }), {
     status: 200,
     headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
   });
