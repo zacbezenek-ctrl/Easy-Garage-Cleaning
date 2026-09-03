@@ -44,11 +44,16 @@
            text-transform:uppercase;color:var(--khaki);margin:18px 0 8px}
 
   /* ---------- inputs ---------- */
-  input[type=text],input[type=number],input[type=date],textarea{
+  input[type=text],input[type=number],input[type=date],input[type=time],input[type=tel],input[type=email],select,textarea{
     width:100%;background:var(--paper);border:1.5px solid var(--line);border-radius:var(--r);
     padding:15px 16px;font:inherit;font-size:17px;color:var(--navy)}
   input:focus,textarea:focus{outline:none;border-color:var(--orange)}
   textarea{min-height:84px;resize:none}
+  select{appearance:none;background-image:linear-gradient(45deg,transparent 50%,var(--navy) 50%),linear-gradient(135deg,var(--navy) 50%,transparent 50%);background-position:calc(100% - 19px) 21px,calc(100% - 14px) 21px;background-size:5px 5px;background-repeat:no-repeat}
+  .coach{display:flex;align-items:flex-start;gap:10px;background:#e8edf5;border-left:4px solid var(--navy);border-radius:0 12px 12px 0;padding:12px 14px;margin:0 0 18px;font-size:13.5px;line-height:1.45;color:#43506a}
+  .coach b{display:block;color:var(--navy);font-family:'Oswald';font-size:11px;letter-spacing:.08em;text-transform:uppercase;margin-bottom:2px}
+  .required-note{font-size:12px;color:var(--orange2);font-weight:700;margin-top:10px}
+  .scope-lock{background:var(--navy);color:#fff;border-radius:var(--r);padding:16px 18px;margin:18px 0}.scope-lock h3{font-family:'Oswald';font-size:15px;text-transform:uppercase;letter-spacing:.06em;margin-bottom:10px}.scope-lock .row{display:flex;justify-content:space-between;gap:16px;padding:7px 0;border-bottom:1px solid rgba(255,255,255,.12);font-size:13.5px}.scope-lock .row:last-child{border:0}.scope-lock .row span:first-child{color:#aeb8cc}
   .chips{display:flex;flex-wrap:wrap;gap:10px}
   .chip{border:1.5px solid var(--line);background:var(--paper);border-radius:99px;
         padding:13px 20px;font-size:16px;font-weight:600;color:var(--navy);cursor:pointer;user-select:none;
@@ -404,13 +409,14 @@ const FULL_TERMS=[
 
 const S = {  // session state — autosaved locally on every tap
   name:"", addr:"", phone:"", email:"",
+  leadSource:"", referredBy:"", decisionMaker:"", whyNow:"", idealOutcome:"", deadline:"", priority:"",
   park:null, parkLast:null,
   howLong:null, missing:[], missNote:"",
-  used12:"", keepNote:"",
-  hazards:[], hazNote:"",
+  used12:"", keepNote:"", exclusions:[], exclusionNote:"",
+  hazards:[], noHazards:false, hazNote:"",
   loads:1, loadNote:"",
   heavy:[], heavyNote:"",
-  access:[], accessNote:"",
+  access:[], accessNote:"", truckPlacement:"",
   donate:[], donateNote:"",
   floor:null, floorNote:"",
   storage:[], storageQty:{}, 
@@ -683,7 +689,7 @@ function syncDeposit(){ if(!S.depositTouched){ const d=depositDue(); S.deposit=d
 const steps=[
   {id:"start"},
   {id:"zone",z:"A",title:"The Damage",sub:"First we get honest about where the garage stands today. Your answers here become the plan."},
-  {id:"p1",z:"A"},{id:"p3",z:"A"},{id:"p4",z:"A"},{id:"p5",z:"A"},
+  {id:"p1",z:"A"},{id:"p2",z:"A"},{id:"p3",z:"A"},{id:"p4",z:"A"},{id:"p5",z:"A"},
   {id:"zone",z:"B",title:"The Job",sub:"Now we scope exactly what it takes to clear it — volume, heavy stuff, logistics. No surprises later."},
   {id:"p6",z:"B"},{id:"p7",z:"B"},{id:"p8",z:"B"},{id:"p9",z:"B"},
   {id:"zone",z:"C",title:"The Comeback",sub:"This is what your garage becomes — and how it stays that way."},
@@ -693,7 +699,7 @@ const steps=[
 let idx=0;
 
 const pointMeta={
-  p1:"The Park Test", p3:"The “How Long” Audit",
+  p1:"The Park Test", p2:"Why Now & The Win", p3:"The “How Long” Audit",
   p4:"Keep / Donate / Haul", p5:"Hidden Hazards", p6:"Volume Estimate",
   p7:"Heavy & Specialty Items", p8:"Access & Logistics", p9:"Donate & Recycle Plan",
   p10:"Floor & Finish", p11:"Storage & Shelving Fit", p12:"Parking Layout",
@@ -726,6 +732,11 @@ R.start=()=>`
     <input type="tel" id="f_phone" value="${esc(S.phone)}" placeholder="(970) 555-0123" oninput="S.phone=this.value">
     <label class="fl">Email</label>
     <input type="email" id="f_email" value="${esc(S.email)}" placeholder="name@email.com" inputmode="email" oninput="S.email=this.value">
+    <label class="fl">How they found EGC</label>
+    <select onchange="S.leadSource=this.value;render()">
+      <option value="">Select source</option>${["Google","Referral","Facebook / Instagram","Repeat customer","Yard sign / truck","Other"].map(v=>`<option ${S.leadSource===v?'selected':''}>${v}</option>`).join("")}
+    </select>
+    ${S.leadSource==="Referral"?`<label class="fl">Referred by</label><input type="text" value="${esc(S.referredBy)}" placeholder="Name" oninput="S.referredBy=this.value">`:""}
     <div class="looknote" style="margin-top:12px">Tap a name to pull it from Jobber, then double-check every field with the customer on-site — all editable.</div>
   </div>`;
 
@@ -737,7 +748,7 @@ R.zone=s=>`
   </div>`;
 
 function head(id,ask){const t=pointMeta[id],n=pointNum(id);return `
-  <div class="num">POINT ${n} / ${pointTotal()}</div><h1>${t}</h1><div class="ask">${ask}</div>`;}
+  <div class="num">POINT ${n} / ${pointTotal()}</div><h1>${t}</h1><div class="ask">${ask}</div><div class="coach"><div><b>Crew rhythm</b>Ask it exactly, listen without filling the silence, confirm what you heard, then record it in the homeowner's words.</div></div>`;}
 
 R.p1=()=>head("p1",`<b>“Can a car fit in here today?”</b> Then: <b>“When was the last time one did?”</b>`)+`
   <div class="yn">
@@ -747,6 +758,20 @@ R.p1=()=>head("p1",`<b>“Can a car fit in here today?”</b> Then: <b>“When w
   <label class="fl">Last time a car parked inside</label>
   <div class="chips">${["This month","This year","1–2 years","3+ years","Honestly… never"].map(v=>
     `<div class="chip ${S.parkLast===v?'on hot':''}" onclick="S.parkLast='${v}';render()">${v}</div>`).join("")}</div>`;
+
+R.p2=()=>head("p2",`Before solving anything, learn what is driving the decision. <b>“Why does getting this garage back matter right now—and what would make this feel like a win?”</b>`)+`
+  <label class="fl">Who is deciding today?</label>
+  <div class="chips">${["Homeowner here","Both decision-makers here","Need another person's approval"].map(v=>
+    `<div class="chip ${S.decisionMaker===v?'on hot':''}" onclick="S.decisionMaker='${v}';render()">${v}</div>`).join("")}</div>
+  <label class="fl">Why now? Use their exact words</label>
+  <textarea placeholder="Snow is coming, moving, family visiting, finally ready…" oninput="S.whyNow=this.value">${esc(S.whyNow)}</textarea>
+  <label class="fl">What does a successful finish look like to them?</label>
+  <textarea placeholder="Both cars inside, tools easy to reach, clear floor, no decisions left…" oninput="S.idealOutcome=this.value">${esc(S.idealOutcome)}</textarea>
+  <label class="fl">Timing / hard deadline</label>
+  <input type="text" value="${esc(S.deadline)}" placeholder="Before first snow / by move date / no hard deadline" oninput="S.deadline=this.value">
+  <label class="fl">Top priority</label>
+  <div class="chips">${["Fastest finish","Lowest cost","Donate the most","Maximum organization","Make room to park"].map(v=>
+    `<div class="chip ${S.priority===v?'on':''}" onclick="S.priority='${v}';render()">${v}</div>`).join("")}</div>`;
 
 R.p3=()=>head("p3",`<b>“How long has this been building?”</b> Then the money question: <b>“What has it stopped you from doing?”</b>`)+`
   <div class="chips">${["6 months","1 year","2 years","5+ years","Since we moved in"].map(v=>
@@ -762,11 +787,17 @@ R.p4=()=>head("p4",`<b>“What in here have you actually used in the last 12 mon
   <div class="chips">${["Almost everything","Maybe half","Honestly, very little"].map(v=>
     `<div class="chip ${S.used12===v?'on hot':''}" onclick="S.used12='${v}';render()">${v}</div>`).join("")}</div>
   <label class="fl">Keep & re-home / notable items</label>
-  <textarea placeholder="Tools stay, camping gear stays, everything on the left wall goes…" oninput="S.keepNote=this.value">${esc(S.keepNote)}</textarea>`;
+  <textarea placeholder="Tools stay, camping gear stays, everything on the left wall goes…" oninput="S.keepNote=this.value">${esc(S.keepNote)}</textarea>
+  <label class="fl">Do-not-touch list — confirm these out loud</label>
+  <div class="checks">${["Documents / photos","Tools","Seasonal gear","Keepsakes","Items belonging to someone else","Locked cabinets / bins"].map(v=>
+    `<div class="check ${S.exclusions.includes(v)?'on':''}" onclick="S.exclusions=chip(S.exclusions,'${v}');render()"><span class="bx"></span>${v}</div>`).join("")}</div>
+  <label class="fl">Other exclusions or decision rules</label>
+  <textarea placeholder="If uncertain, place in the review zone—never load it." oninput="S.exclusionNote=this.value">${esc(S.exclusionNote)}</textarea>`;
 
 R.p5=()=>head("p5",`Walk the perimeter together. <b>“Most homeowners don't know what's living behind a pile like this.”</b> Tap what you find.`)+`
   <div class="checks">${["Pest droppings / nests","Moisture or mold","Old paint & chemicals","Fire load near water heater","Blocked outlets / panel","Unstable stacked piles"].map(v=>
-    `<div class="check ${S.hazards.includes(v)?'on':''}" onclick="S.hazards=chip(S.hazards,'${v}');render()"><span class="bx"></span>${v}</div>`).join("")}</div>
+    `<div class="check ${S.hazards.includes(v)?'on':''}" onclick="S.noHazards=false;S.hazards=chip(S.hazards,'${v}');render()"><span class="bx"></span>${v}</div>`).join("")}</div>
+  <div class="check ${S.noHazards?'on':''}" style="margin-top:10px" onclick="S.noHazards=!S.noHazards;if(S.noHazards)S.hazards=[];render()"><span class="bx"></span>No visible hazards found</div>
   <label class="fl">Notes</label>
   <textarea oninput="S.hazNote=this.value">${esc(S.hazNote)}</textarea>`;
 
@@ -789,6 +820,9 @@ R.p7=()=>head("p7",`<b>“Anything in here that takes two people or special hand
 R.p8=()=>head("p8",`Lock the logistics now so job day is friction-free. <b>“Anything we need to know to get the truck in and work clean?”</b>`)+`
   <div class="checks">${["Driveway clear for truck","HOA rules apply","Gate / access code needed","Pets on site","Apartment / condo — shared building & parking"].map(v=>
     `<div class="check ${S.access.includes(v)?'on':''}" onclick="S.access=chip(S.access,'${v}');render()"><span class="bx"></span>${v}</div>`).join("")}</div>
+  <label class="fl">Truck placement / carry distance</label>
+  <div class="chips">${["At garage door","Driveway — short carry","Street — medium carry","Long carry / stairs / elevator"].map(v=>
+    `<div class="chip ${S.truckPlacement===v?'on hot':''}" onclick="S.truckPlacement='${v}';render()">${v}</div>`).join("")}</div>
   <label class="fl">Notes</label>
   <textarea oninput="S.accessNote=this.value">${esc(S.accessNote)}</textarea>`;
 
@@ -872,6 +906,13 @@ R.p13=()=>head("p13",`<b>“The cleanout is the easy part — staying clean is t
     `<div class="check ${S.stay.includes(v)?'on':''}" onclick="S.stay=chip(S.stay,'${v}');render()"><span class="bx"></span>${v}</div>`).join("")}</div>`;
 
 R.p14=()=>head("p14",`The number built itself from the scope — $500 a truckload of removal, organize + a basic sweep included, everything they added on top. Walk it line by line, then lock the date.`)+`
+  <div class="scope-lock"><h3>Scope lock — say this back before price</h3>
+    <div class="row"><span>Outcome</span><strong>${esc(S.idealOutcome||"Not captured")}</strong></div>
+    <div class="row"><span>Keep / protect</span><strong>${esc(S.keepNote||"Not captured")}</strong></div>
+    <div class="row"><span>Do not touch</span><strong>${esc([...S.exclusions,S.exclusionNote].filter(Boolean).join(", ")||"None listed")}</strong></div>
+    <div class="row"><span>Removal scope</span><strong>${S.loads} truckload${S.loads!==1?"s":""}</strong></div>
+    <div class="row"><span>Truck access</span><strong>${esc(S.truckPlacement||"Not confirmed")}</strong></div>
+  </div>
   <div class="quoteblock">
     <div class="ln"><span>Removal — ${S.loads} truckload${S.loads!==1?"s":""} × ${money(CONFIG.removalPerTruck)}</span><b>${money(removalBase())}</b></div>
     <div class="ln"><span>Organize + basic sweep</span><b>Included</b></div>
@@ -900,6 +941,8 @@ R.plan=()=>{
   if(S.howLong) pains.push(`This has been building for <b>${S.howLong}</b>.`);
   if(S.missing.length) pains.push(`It's been costing you: <b>${S.missing.join(", ").toLowerCase()}</b>.`);
   if(S.missNote) pains.push(`In your words: <b>“${esc(S.missNote)}”</b>`);
+  if(S.whyNow) pains.unshift(`Why now: <b>“${esc(S.whyNow)}”</b>`);
+  if(S.idealOutcome) pains.push(`A successful finish means: <b>“${esc(S.idealOutcome)}”</b>`);
   if(S.hazards.length) pains.push(`We found <b>${S.hazards.length} hazard${S.hazards.length>1?"s":""}</b> behind the pile: ${esc(S.hazards.join(", ").toLowerCase())}.`);
   const ups=CONFIG.upgrades.filter((u,i)=>S.storage.includes(i));
   return `
@@ -1070,11 +1113,12 @@ function clearSig(){ if(sigCtx){const cv=$("sig");sigCtx.clearRect(0,0,cv.width,
 
 /* ---------- nav / render ---------- */
 const SAVEKEY="egc_gameplan_v1";
-function save(){try{localStorage.setItem(SAVEKEY,JSON.stringify({S:S,idx:idx}))}catch(e){}}
+const FLOW_VERSION=2;
+function save(){try{localStorage.setItem(SAVEKEY,JSON.stringify({S:S,idx:idx,flowVersion:FLOW_VERSION}))}catch(e){}}
 function restore(){
   try{const d=JSON.parse(localStorage.getItem(SAVEKEY));
     if(d&&d.S&&(d.S.name||d.idx>0)&&confirm("Resume walkthrough"+(d.S.name?" for "+d.S.name:"")+"?")){
-      Object.assign(S,d.S); idx=d.idx;
+      Object.assign(S,d.S); idx=Number(d.idx||0)+(d.flowVersion===FLOW_VERSION||Number(d.idx||0)<3?0:1);
     } else localStorage.removeItem(SAVEKEY);
   }catch(e){}
 }
@@ -1084,15 +1128,18 @@ function compileNotes(){
   const add=(k,v)=>{if(v&&String(v).trim()&&v!=="null")L.push(k+": "+(Array.isArray(v)?v.join(", "):v));};
   add("Car fits today", S.park===true?"Yes":S.park===false?"NO":"");
   add("Last parked inside", S.parkLast);
+  add("Decision maker", S.decisionMaker); add("WHY NOW", S.whyNow); add("SUCCESS LOOKS LIKE", S.idealOutcome);
+  add("Timing / deadline", S.deadline); add("Top priority", S.priority); add("Lead source", S.leadSource); add("Referred by", S.referredBy);
   add("Building for", S.howLong);
   add("Missing out on", S.missing);
   add("THEIR WORDS", S.missNote);
   add("Used in last 12mo", S.used12);
   add("Keep / re-home", S.keepNote);
+  add("DO NOT TOUCH", S.exclusions); add("Exclusion rules", S.exclusionNote);
   add("HAZARDS", S.hazards); add("Hazard notes", S.hazNote);
   add("Truckloads", S.loads); add("Volume notes", S.loadNote);
   add("Heavy/specialty", S.heavy); add("Heavy notes", S.heavyNote);
-  add("Access flags", S.access); add("Access notes", S.accessNote);
+  add("Access flags", S.access); add("Truck placement", S.truckPlacement); add("Access notes", S.accessNote);
   add("Donate/recycle", S.donate); add("Donate notes", S.donateNote);
   add("Floor", S.floor); add("Floor notes", S.floorNote);
   add("Parking layout", S.layout); add("Layout notes", S.layoutNote);
@@ -1128,6 +1175,9 @@ function buildPayload(){
       total:grandTotal(), deposit:Number(S.deposit||0), job_date:S.jobdate,
       line_items:items, line_items_count:items.length},
     day_of_bonus:!!S.dayBonus,
+    discovery:{decision_maker:S.decisionMaker||"",why_now:S.whyNow||"",success:S.idealOutcome||"",deadline:S.deadline||"",priority:S.priority||"",lead_source:S.leadSource||"",referred_by:S.referredBy||""},
+    exclusions:{items:S.exclusions||[],notes:S.exclusionNote||""},
+    logistics:{truck_placement:S.truckPlacement||"",access:S.access||[],notes:S.accessNote||""},
     signature:S.sig||"", terms_version:TERMS_VERSION, terms_accepted:!!S.sig,
     photos:{before:PHOTO_COUNTS.before, ai_after:PHOTO_COUNTS.after_ai},
     drive_folder:(function(){try{return localStorage.getItem(driveKey())||"";}catch(e){return "";}})(),
@@ -1153,7 +1203,13 @@ function buildPayload(){
 function validateClose(){
   const miss=[];
   if(!(S.name||"").trim()) miss.push("homeowner name");
+  if(!(S.phone||"").replace(/\D/g,"").match(/^1?\d{10}$/)) miss.push("a valid homeowner mobile number");
+  if(!S.whyNow||!S.idealOutcome) miss.push("the homeowner's why-now and success outcome");
+  if(!S.keepNote) miss.push("the keep / re-home plan");
+  if(!S.truckPlacement) miss.push("truck placement / carry distance");
   if(grandTotal()<=0) miss.push("scope (truckloads or an add-on)");
+  if(!S.jobdate||!S.startTime||!S.endTime) miss.push("job date and arrival window");
+  if(!S.sig) miss.push("homeowner signature");
   // 20% deposit locks the date (matches the signed terms) — collect before sending.
   const need=depositDue(), dep=Number(S.deposit||0);
   if(need>0&&dep<need) miss.push("the 20% deposit — collect "+money(need)+" in Jobber Payments (client → Collect Payment), then enter it");
@@ -1366,13 +1422,18 @@ function writeActive(via){
       committedVia:via||"", savedAt:new Date().toISOString()}));
   }catch(e){}
 }
-function jump(i){ idx=i; render(); }
+function jump(i){
+  if(i<=idx){stepError="";idx=i;render();return;}
+  if(i===idx+1){go(1);return;}
+  stepError="finish this point before moving ahead";render();
+}
 function paintTotal(){
   const el=$("runtotal");
   if(grandTotal()>0){el.style.display="block";el.textContent=money(grandTotal());}
   else el.style.display="none";
 }
 let lastRenderIdx=-1;
+let stepError="";
 function render(){
   syncDeposit();
   const s=steps[idx];
@@ -1382,7 +1443,7 @@ function render(){
   const keepY=same?window.scrollY:0;
   const keepStage=same&&$("stage")?$("stage").scrollTop:0;
   lastRenderIdx=idx;
-  $("screen").innerHTML = R[s.id]?(s.id==="zone"?R.zone(s):R[s.id]()):"";
+  $("screen").innerHTML = (R[s.id]?(s.id==="zone"?R.zone(s):R[s.id]()):"")+(stepError?`<div class="required-note" role="alert">Before continuing: ${esc(stepError)}</div>`:"");
   // zone chip
   const zc=$("zonechip");
   if(s.z) {zc.textContent="ZONE "+s.z; zc.style.display="block";}
@@ -1423,7 +1484,30 @@ async function mountPlanPhotos(){
     `<div><button class="drivebtn" onclick="driveUploadAll(this,$('drivelinkout'))">⬆️ Upload job photos to Drive</button>
       <span id="drivelinkout">${known?`<a class="drivelink" href="${known}" target="_blank" rel="noopener">Open Drive folder ↗</a>`:""}</span></div>`;
 }
-function go(d){ idx=Math.min(steps.length-1,Math.max(0,idx+d)); render(); }
+function validateStep(s){
+  const miss=[];
+  if(s.id==="start"){
+    if(!(S.name||"").trim())miss.push("homeowner name");
+    if(!(S.addr||"").trim())miss.push("service address");
+    if(!(S.phone||"").replace(/\D/g,"").match(/^1?\d{10}$/))miss.push("valid mobile number");
+  }
+  if(s.id==="p1"){if(S.park===null)miss.push("whether a car fits");if(!S.parkLast)miss.push("when a car last parked inside")}
+  if(s.id==="p2"){if(!S.decisionMaker)miss.push("who is deciding");if(!(S.whyNow||"").trim())miss.push("why now");if(!(S.idealOutcome||"").trim())miss.push("what success looks like");if(!S.priority)miss.push("top priority")}
+  if(s.id==="p3"){if(!S.howLong)miss.push("how long it has been building");if(!S.missing.length)miss.push("what the garage has stopped them from doing")}
+  if(s.id==="p4"){if(!S.used12)miss.push("last-12-month use");if(!(S.keepNote||"").trim())miss.push("keep / re-home notes")}
+  if(s.id==="p5"&&!S.noHazards&&!S.hazards.length)miss.push("hazards found, or confirm none visible")
+  if(s.id==="p6"&&!(Number(S.loads)>0))miss.push("truckload estimate")
+  if(s.id==="p8"&&!S.truckPlacement)miss.push("truck placement / carry distance")
+  if(s.id==="p10"){if(!S.floor)miss.push("floor condition");if(PHOTO_COUNTS.before<1)miss.push("at least one before photo")}
+  if(s.id==="p12"){if(!S.layout)miss.push("parking layout");if(!(parseFloat(S.garageW)>0&&parseFloat(S.garageD)>0))miss.push("garage width and depth")}
+  if(s.id==="p13"&&!S.stay.length)miss.push("at least one stay-clean system")
+  if(s.id==="p14"){if(!S.jobdate)miss.push("job date");if(!S.startTime||!S.endTime)miss.push("start and end time");if(S.startTime&&S.endTime&&S.endTime<=S.startTime)miss.push("an end time after the start");const due=depositDue();if(due>0&&Number(S.deposit||0)<due)miss.push("the full 20% deposit")}
+  return miss;
+}
+function go(d){
+  if(d>0){const miss=validateStep(steps[idx]);if(miss.length){stepError=miss.join(", ");render();return;}}
+  stepError="";idx=Math.min(steps.length-1,Math.max(0,idx+d));render();
+}
 if(!STORAGE_OK) setTimeout(()=>alert("Heads up: this browser is blocking local storage (often Private Browsing). The walkthrough won't auto-save and the pre-fill into the Pre/Post-Job tools won't work. Switch off Private Browsing for this iPad."),200);
 restore();
 if(!S.jobId)S.jobId=uid();

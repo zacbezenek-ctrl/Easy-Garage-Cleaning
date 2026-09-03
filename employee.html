@@ -15,7 +15,7 @@
   <title>Employee Portal — Easy Garage Cleaning</title>
   <meta name="robots" content="noindex, nofollow">
   <!-- Content Security Policy — restricts where scripts/connections can go -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' cdn.jsdelivr.net www.gstatic.com maps.googleapis.com; style-src 'self' 'unsafe-inline' fonts.googleapis.com; font-src fonts.gstatic.com data:; connect-src *.googleapis.com *.firebaseio.com *.firebaseapp.com firestore.googleapis.com api.emailjs.com hooks.zapier.com; img-src 'self' data: maps.gstatic.com maps.googleapis.com; frame-src 'none'; object-src 'none'; base-uri 'self';">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' cdn.jsdelivr.net www.gstatic.com maps.googleapis.com; style-src 'self' 'unsafe-inline' fonts.googleapis.com; font-src fonts.gstatic.com data:; connect-src 'self' *.googleapis.com *.firebaseio.com *.firebaseapp.com firestore.googleapis.com api.emailjs.com; img-src 'self' data: maps.gstatic.com maps.googleapis.com; frame-src 'none'; object-src 'none'; base-uri 'self';">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-title" content="EGC Portal">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -23,6 +23,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,400;0,500;0,700;1,400;1,500&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="employee-crm.css">
+  <link rel="stylesheet" href="employee-suite.css?v=20260903">
   <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
@@ -1313,9 +1314,9 @@ const CFG = {
   FREE_MILES:           25,
   PRICE_PER_MILE:       1,
   // ── Zapier Webhook URLs ── paste each Zap's catch-hook URL below
-  ZAP5_QUOTE_WEBHOOK:   '',   // Zap 5: quote follow-up cadence
-  ZAP6_BOOKING_WEBHOOK: '',   // Zap 6: booking confirmation + reminder
-  ZAP7_REVIEW_WEBHOOK:  '',   // Zap 7: post-job review request
+  ZAP5_QUOTE_WEBHOOK:   'operations:quote_followup',
+  ZAP6_BOOKING_WEBHOOK: 'operations:booking',
+  ZAP7_REVIEW_WEBHOOK:  'operations:review_request',
 };
 
 firebase.initializeApp({
@@ -1887,10 +1888,11 @@ function renderLeadsDigest() {
 async function fireWebhook(url, data) {
   if (!url) return;
   try {
-    await fetch(url, {
+    const internal = url.startsWith('operations:');
+    await fetch(internal ? '/api/operations-event' : url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data)
+      body: JSON.stringify(internal ? { event: url.slice(11), payload: data } : data)
     });
   } catch(e) { console.warn('Webhook failed:', e); }
 }
@@ -2344,10 +2346,10 @@ function setStatus(id, status) {
     const job = loadJobs().find(j => j.id === id);
     if (job && job.phone) {
       const firstName = (job.customer || '').split(' ')[0] || job.customer || '';
-      fetch('https://hooks.zapier.com/hooks/catch/27280948/4orzd4m/', {
+      fetch('/api/operations-event', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone: job.phone, firstName })
+        body: JSON.stringify({ event: 'review_request', payload: { phone: job.phone, firstName, jobId: job.id } })
       }).catch(err => console.warn('Review webhook failed:', err));
     }
   }
@@ -3229,6 +3231,7 @@ async function ocBook() {
   })();
 </script>
 <script src="employee-crm.js"></script>
+<script src="employee-suite.js?v=20260903"></script>
 <div class="mobile-sticky-cta" aria-label="Quick contact">
   <a href="tel:+19709991818" class="mobile-cta-btn mobile-cta-call">Call</a>
   <a href="sms:+19709991818?body=Hi!%20I'd%20like%20a%20quote.%20I%20can%20text%20photos%20of%20my%20garage/junk." class="mobile-cta-btn mobile-cta-text">Text</a>

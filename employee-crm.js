@@ -1956,53 +1956,35 @@
 
   /* ── META CONVERSION SIGNAL BUTTONS ───────────────── */
 
-  window.signalQualified = async function (leadId) {
+  async function sendMetaSignal(leadId, signal) {
     const lead = leadsCache.find((l) => l.id === leadId);
-    const phone = lead?.phone || leadId;
-    const firstName = (lead?.name || '').split(' ')[0] || '';
-    fetch('https://hooks.zapier.com/hooks/catch/27280948/4oqqlje/', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ phone, firstName, signal: 'qualified', leadId }),
-    }).catch((err) => console.warn('Signal webhook failed:', err));
-    if (typeof showToast === 'function') showToast('Sent QUALIFIED signal to Meta');
-  };
+    const payload = {
+      phone: lead?.phone || leadId,
+      firstName: (lead?.name || '').split(' ')[0] || '',
+      signal,
+      leadId,
+    };
+    try {
+      const response = await fetch('/api/operations-event', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ event: 'meta_signal', payload }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok || !result.ok) throw new Error(result.error || 'Signal rejected');
+      if (typeof showToast === 'function') showToast(`Sent ${signal.replace('_', ' ').toUpperCase()} signal to Meta`);
+      return true;
+    } catch (err) {
+      console.warn('Signal webhook failed:', err);
+      if (typeof showToast === 'function') showToast('Meta signal not sent — integration needs attention');
+      return false;
+    }
+  }
 
-  window.signalConverted = async function (leadId) {
-    const lead = leadsCache.find((l) => l.id === leadId);
-    const phone = lead?.phone || leadId;
-    const firstName = (lead?.name || '').split(' ')[0] || '';
-    fetch('https://hooks.zapier.com/hooks/catch/27280948/4oqqlje/', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ phone, firstName, signal: 'converted', leadId }),
-    }).catch((err) => console.warn('Signal webhook failed:', err));
-    if (typeof showToast === 'function') showToast('Sent CONVERTED signal to Meta');
-  };
-
-  window.signalNotInterested = async function (leadId) {
-    const lead = leadsCache.find((l) => l.id === leadId);
-    const phone = lead?.phone || leadId;
-    const firstName = (lead?.name || '').split(' ')[0] || '';
-    fetch('https://hooks.zapier.com/hooks/catch/27280948/4oqqlje/', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ phone, firstName, signal: 'not_interested', leadId }),
-    }).catch((err) => console.warn('Signal webhook failed:', err));
-    if (typeof showToast === 'function') showToast('Sent NOT INTERESTED signal to Meta');
-  };
-
-  window.signalArchived = async function (leadId) {
-    const lead = leadsCache.find((l) => l.id === leadId);
-    const phone = lead?.phone || leadId;
-    const firstName = (lead?.name || '').split(' ')[0] || '';
-    fetch('https://hooks.zapier.com/hooks/catch/27280948/4oqqlje/', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ phone, firstName, signal: 'archived', leadId }),
-    }).catch((err) => console.warn('Signal webhook failed:', err));
-    if (typeof showToast === 'function') showToast('Sent ARCHIVED signal to Meta');
-  };
+  window.signalQualified = (leadId) => sendMetaSignal(leadId, 'qualified');
+  window.signalConverted = (leadId) => sendMetaSignal(leadId, 'converted');
+  window.signalNotInterested = (leadId) => sendMetaSignal(leadId, 'not_interested');
+  window.signalArchived = (leadId) => sendMetaSignal(leadId, 'archived');
 
   // Backwards-compat alias — old buttons (if any are still cached) keep working
   window.signalNotQualified = window.signalNotInterested;

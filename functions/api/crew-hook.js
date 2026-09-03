@@ -12,16 +12,13 @@
  *    must not be an open relay).
  *
  * Config (Cloudflare Pages dashboard → Settings → Environment variables):
- *   CREW_WEBHOOK_URL — the Zapier Catch Hook URL (overrides FALLBACK_HOOK).
- *   FALLBACK_HOOK below is the active crew Catch Hook. The Zap on the other end
+ *   CREW_WEBHOOK_URL — the Zapier Catch Hook URL. The Zap on the other end
  *   branches by `tool`:  game_plan → Create Job in Jobber (maps the flattened
  *   li1..li4 line items),  review_request / plan_text → Quo send,  post_job →
  *   post-job updates. This lives in the server-side function (never served to
  *   the browser). If the repo is public and you want the URL private, set
  *   CREW_WEBHOOK_URL as a Cloudflare secret instead and leave the fallback unused.
  */
-
-const FALLBACK_HOOK = 'https://hooks.zapier.com/hooks/catch/27280948/42hee9q/';
 
 // Hosts allowed to POST here. Referer/Origin is spoofable via curl, so this is
 // a casual-abuse filter, not real auth — pair with Cloudflare Access for that.
@@ -84,8 +81,8 @@ export async function onRequestPost({ request, env }) {
     return json(400, { ok: false, error: 'review_request requires phone and message' });
   }
 
-  const hook = env.CREW_WEBHOOK_URL || FALLBACK_HOOK;
-  if (!hook) return json(500, { ok: false, error: 'Server misconfigured: no webhook' });
+  const hook = env.CREW_WEBHOOK_URL;
+  if (!hook) return json(501, { ok: false, error: 'CREW_WEBHOOK_URL is not configured' });
 
   try {
     const resp = await fetch(hook, {

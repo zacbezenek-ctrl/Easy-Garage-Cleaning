@@ -3,6 +3,17 @@
 /crew/*
   X-Robots-Tag: noindex
   Cache-Control: no-cache
+  X-Frame-Options: DENY
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+
+# Internal operations hub — never index, frame, or keep a stale application shell.
+/employee*
+  X-Robots-Tag: noindex
+  Cache-Control: no-cache
+  X-Frame-Options: DENY
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
 
 # Lead-attribution + relay script — must update instantly on deploy, or the
 # form silently stops mirroring leads to Zapier. Revalidate every load (cheap
