@@ -2,11 +2,11 @@
 
 ## Product decision
 
-The employee hub is not a replacement CRM and should not imitate generic field-service software. HighLevel is Easy Garage Cleaning's source of truth for contacts, conversations, calendars, pipeline stages, lead attribution, and nurture automations.
+The employee hub is Easy Garage Cleaning's scheduling and field operating system. HighLevel remains the source of truth for leads, contacts, conversations, pipeline stages, lead attribution, and customer automations. Hub appointments synchronize into HighLevel so confirmations and reminders still run from the CRM.
 
 The EGC hub exists to run the promise after a lead is created:
 
-1. Surface today's HighLevel opportunities and walkthrough appointments.
+1. Schedule walkthroughs, jobs, crews, and blocked time inside the Hub.
 2. Guide the free, diagnostic walkthrough.
 3. Preserve the customer's why, desired outcome, scope, hazards, keep/remove rules, price, signature, and photos.
 4. Hand the full context to the crew so the customer never repeats the story.
@@ -26,8 +26,8 @@ The EGC hub exists to run the promise after a lead is created:
 
 | System | Owns |
 | --- | --- |
-| HighLevel | Leads, contacts, conversations, appointments, pipeline, automations, attribution |
-| EGC employee hub | Today view, walkthrough, signed scope, crew handoff, checklists, proof capture, operating scorecard |
+| HighLevel | Leads, contacts, conversations, pipeline, automations, attribution, customer-facing appointment mirror |
+| EGC employee hub | Schedule, crew assignments, job state, walkthrough, signed scope, crew handoff, checklists, proof capture, operating scorecard |
 | Accounting and payments | Invoices, deposits, payment ledger, payroll, books |
 | Google Drive | Full-resolution job photos and signed agreements |
 | Quo | Business-line transactional texts |
@@ -52,9 +52,10 @@ The EGC hub exists to run the promise after a lead is created:
 ## Rebuild completed
 
 - Replaced the generic back-office sidebar with an EGC Field Command interface.
-- Added Today, HighLevel Pipeline, Walkthroughs, Job Delivery, Scorecard, Proof Library, EGC Playbook, and Integrations views.
-- Added a server-only HighLevel bridge for opportunities, pipelines, calendar events, contact lookup, walkthrough notes, closeout notes, and the six-month follow-up task.
-- Converted Game Plan lookup, appointment loading, customer IDs, and final handoff from Jobber to HighLevel.
+- Added Today, Schedule, HighLevel Pipeline, Walkthroughs, Job Delivery, Scorecard, Proof Library, EGC Playbook, and Integrations views.
+- Added a Hub-owned weekly scheduler for walkthroughs, customer jobs, crews, and blocked time.
+- Added a server-only HighLevel bridge for opportunities, pipelines, contact lookup, appointment mirroring, walkthrough notes, closeout notes, automation tags, and the six-month follow-up task.
+- Rebuilt the Game Plan as a short photo-led walkthrough with background pricing, Hub scheduling, and HighLevel contact/automation synchronization.
 - Converted pre-job and post-job contact lookup to HighLevel.
 - Made the post-job closeout write to HighLevel.
 - Removed the new duplicate CRM ledgers from the visible product.
@@ -67,7 +68,10 @@ The interface and bridge are complete. Live HighLevel data requires these Cloudf
 - `HIGHLEVEL_API_KEY` — HighLevel sub-account private integration token.
 - `HIGHLEVEL_LOCATION_ID` — EGC HighLevel location ID.
 - `HIGHLEVEL_WALKTHROUGH_CALENDAR_ID` — optional; if omitted, the bridge selects the first calendar with walkthrough/consult/estimate/quote in its name.
+- `HIGHLEVEL_JOB_CALENDAR_ID` — optional; if omitted, the bridge selects the first job/service/clean/delivery calendar.
 - `HIGHLEVEL_PIPELINE_ID` — optional; limits the mirror to the EGC sales pipeline.
 - `HIGHLEVEL_USER_ID` — optional; assigns the six-month follow-up task and note author.
 
-Required token scopes: contacts read/write, opportunities read, calendars/events read, contact notes write, and contact tasks write.
+Required token scopes: contacts read/write, opportunities read, calendars/events read/write, contact notes write, contact tags write, and contact tasks write.
+
+HighLevel workflows should trigger from these tags: `egc-walkthrough-scheduled`, `egc-job-scheduled`, `egc-walkthrough-complete`, `egc-quote-ready`, `egc-job-complete`, and `egc-review-ready`. This lets HighLevel handle consent, timing, retries, SMS/email delivery, and conversation history while the Hub stays focused on operations.

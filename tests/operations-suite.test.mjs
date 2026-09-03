@@ -17,7 +17,7 @@ test('employee hub loads the EGC operations suite without the duplicate CRM over
 });
 
 test('operations suite follows the EGC operating model instead of duplicating the CRM',()=>{
-  for(const area of ['today','pipeline','walkthroughs','delivery','scorecard','proof','playbook','settings']){
+  for(const area of ['today','schedule','pipeline','walkthroughs','delivery','scorecard','proof','playbook','settings']){
     assert.match(suite,new RegExp("'"+area+"'"),area+' is missing');
   }
   for(const marker of ['HighLevel is CRM','Walkthrough-first','Contribution / lead','The EGC playbook'])assert.match(suite,new RegExp(marker));
@@ -25,7 +25,7 @@ test('operations suite follows the EGC operating model instead of duplicating th
 });
 
 test('HighLevel bridge keeps credentials server-side and supports field continuity',()=>{
-  for(const marker of ['HIGHLEVEL_API_KEY','HIGHLEVEL_LOCATION_ID','/opportunities/search','/calendars/events','/contacts/upsert','Garage Comeback Plan','6-month garage check-in'])assert.match(highlevel,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
+  for(const marker of ['HIGHLEVEL_API_KEY','HIGHLEVEL_LOCATION_ID','HIGHLEVEL_JOB_CALENDAR_ID','/opportunities/search','/calendars/events','/calendars/events/appointments','/contacts/upsert','egc-job-scheduled','egc-review-ready','6-month garage check-in'])assert.match(highlevel,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
   assert.doesNotMatch(employee,/HIGHLEVEL_API_KEY\s*[:=]\s*['"][^'"]+/);
   assert.match(crew,/\/api\/highlevel/);
   assert.match(crew,/highlevel_contact_id/);
@@ -39,10 +39,15 @@ test('private webhook destinations are absent from browser and function source',
   for(const key of ['QUOTE_FOLLOWUP_WEBHOOK_URL','BOOKING_WEBHOOK_URL','REVIEW_WEBHOOK_URL','META_SIGNAL_WEBHOOK_URL'])assert.match(relay,new RegExp(key));
 });
 
-test('walkthrough enforces discovery, exclusions, logistics, proof, and close',()=>{
-  for(const marker of ['Why Now & The Win','decisionMaker','idealOutcome','exclusions','truckPlacement','PHOTO_COUNTS.before','garage width and depth','homeowner signature'])assert.match(crew,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
+test('walkthrough is photo-led, builds price in the background, and saves Hub scheduling',()=>{
+  for(const marker of ['Customer','Photos','Scope','Finish','Schedule','Review','whyNow','outcome','truckPlacement','PHOTO_COUNT','Homeowner signature','function recommend','saveHubJob','scheduleSource'])assert.match(crew,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
+  assert.doesNotMatch(crew,/14-point|Damage Zone|Comeback Zone|layout sketch|AI after/i);
   assert.match(crew,/discovery:\{/);
   assert.match(crew,/function validateStep/);
+});
+
+test('Hub owns scheduling while HighLevel owns CRM automation',()=>{
+  for(const marker of ['HUB SCHEDULE','Schedule the work here','scheduleSource','Save + sync','HighLevel = leads, contacts, conversations, pipeline, automations'])assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
 });
 
 test('all employee and field-tool inline scripts parse',()=>{

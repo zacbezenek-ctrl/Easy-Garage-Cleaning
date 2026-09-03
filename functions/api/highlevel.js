@@ -12,6 +12,7 @@
  *   HIGHLEVEL_LOCATION_ID (or GHL_LOCATION_ID)
  * Optional:
  *   HIGHLEVEL_WALKTHROUGH_CALENDAR_ID
+ *   HIGHLEVEL_JOB_CALENDAR_ID
  *   HIGHLEVEL_PIPELINE_ID
  *   HIGHLEVEL_USER_ID
  */
@@ -37,7 +38,8 @@ function config(env) {
   return {
     token: env.HIGHLEVEL_API_KEY || env.GHL_API_KEY || '',
     locationId: env.HIGHLEVEL_LOCATION_ID || env.GHL_LOCATION_ID || '',
-    calendarId: env.HIGHLEVEL_WALKTHROUGH_CALENDAR_ID || env.GHL_WALKTHROUGH_CALENDAR_ID || '',
+    walkthroughCalendarId: env.HIGHLEVEL_WALKTHROUGH_CALENDAR_ID || env.GHL_WALKTHROUGH_CALENDAR_ID || '',
+    jobCalendarId: env.HIGHLEVEL_JOB_CALENDAR_ID || env.GHL_JOB_CALENDAR_ID || '',
     pipelineId: env.HIGHLEVEL_PIPELINE_ID || env.GHL_PIPELINE_ID || '',
     userId: env.HIGHLEVEL_USER_ID || env.GHL_USER_ID || '',
   };
@@ -117,12 +119,18 @@ async function contactById(c, id) {
   return data.contact || {};
 }
 
-async function findCalendar(c) {
-  if (c.calendarId) return c.calendarId;
+async function calendarList(c) {
   const data = await ghl(c, `/calendars/?locationId=${encodeURIComponent(c.locationId)}&showDrafted=false`);
-  const list = data.calendars || [];
-  const preferred = list.find(x => /walk|consult|estimate|quote/i.test(x.name || '')) || list[0];
-  return preferred && preferred.id || '';
+  return data.calendars || [];
+}
+
+async function findCalendar(c, type = 'walkthrough') {
+  const configured = type === 'job' ? c.jobCalendarId : c.walkthroughCalendarId;
+  if (configured) return configured;
+  const list = await calendarList(c);
+  const matcher = type === 'job' ? /job|service|clean|delivery/i : /walk|consult|estimate|quote/i;
+  const preferred = list.find(x => matcher.test(x.name || '')) || list[0];
+  return preferred?.id || '';
 }
 
 function localBounds(day) {
@@ -136,7 +144,7 @@ function localBounds(day) {
 }
 
 async function getWalkthroughs(c, day) {
-  const calendarId = await findCalendar(c);
+  const calendarId = await findCalendar(c, 'walkthrough');
   if (!calendarId) return { calendarId: '', events: [] };
   const bounds = localBounds(day);
   const params = new URLSearchParams({ locationId: c.locationId, calendarId,
@@ -159,10 +167,87 @@ async function getWalkthroughs(c, day) {
   return { calendarId, events };
 }
 
+function rangeBounds(start, end) {
+  const startMs = Date.parse(start || '');
+  const endMs = Date.parse(end || '');
+  const now = Date.now();
+  return {
+    start: Number.isFinite(startMs) ? startMs : now - 86400000,
+    end: Number.isFinite(endMs) ? endMs : now + 14 * 86400000,
+  };
+}
+
+async function getSchedule(c, start, end) {
+  const list = await calendarList(c);
+  const configured = [c.walkthroughCalendarId, c.jobCalendarId].filter(Boolean);
+  const ids = configured.length ? [...new Set(configured)] : list.map(x => x.id).filter(Boolean);
+  const bounds = rangeBounds(start, end);
+  const batches = await Promise.all(ids.slice(0, 12).map(async calendarId => {
+    const params = new URLSearchParams({ locationId: c.locationId, calendarId,
+      startTime: String(bounds.start), endTime: String(bounds.end) });
+    try {
+      const data = await ghl(c, `/calendars/events?${params}`);
+      return (data.events || []).map(event => ({ ...event, calendarId }));
+    } catch { return []; }
+  }));
+  const seen = new Set();
+  const events = batches.flat().filter(event => event.id && !seen.has(event.id) && seen.add(event.id)).map(event => ({
+    id: event.id,
+    contactId: event.contactId || event.contact?.id || '',
+    calendarId: event.calendarId,
+    title: event.title || 'Scheduled event',
+    name: event.contact?.name || '',
+    phone: event.contact?.phone || '',
+    email: event.contact?.email || '',
+    address: event.address || event.contact?.address1 || '',
+    startTime: event.startTime || '',
+    endTime: event.endTime || '',
+    status: event.appointmentStatus || event.status || 'scheduled',
+    source: 'highlevel',
+  }));
+  return { events, calendars: list.map(x => ({ id: x.id, name: x.name || 'Calendar' })) };
+}
+
+async function ensureContact(c, client, source = 'EGC Hub') {
+  let contactId = client.highlevel_contact_id || client.ghl_contact_id || client.contactId || '';
+  if (contactId) return contactId;
+  const upsert = await ghl(c, '/contacts/upsert', { method: 'POST', body: JSON.stringify({
+    locationId: c.locationId, name: client.name || client.customer || '', phone: client.phone || '', email: client.email || '',
+    address1: client.address || '', source: client.lead_source || source
+  })});
+  return upsert.contact?.id || '';
+}
+
+async function addTags(c, contactId, tags) {
+  const clean = [...new Set((tags || []).filter(Boolean))];
+  if (!clean.length) return;
+  await ghl(c, `/contacts/${encodeURIComponent(contactId)}/tags`, { method: 'POST', body: JSON.stringify({ tags: clean }) });
+}
+
+async function createAppointment(c, payload, contactId) {
+  const type = payload.event_type === 'job' ? 'job' : 'walkthrough';
+  const calendarId = payload.calendar_id || await findCalendar(c, type);
+  if (!calendarId) throw new Error('No HighLevel calendar is available');
+  const body = {
+    calendarId,
+    startTime: payload.start_time, endTime: payload.end_time,
+    title: payload.title || (type === 'job' ? 'EGC Garage Service' : 'EGC Free Walkthrough'),
+    appointmentStatus: payload.status || 'confirmed', assignedUserId: payload.assigned_user_id || c.userId || undefined,
+    description: payload.notes || '', address: payload.address || payload.client?.address || '',
+    toNotify: payload.notify !== false,
+  };
+  if (payload.appointment_id) {
+    const appointment = await ghl(c, `/calendars/events/appointments/${encodeURIComponent(payload.appointment_id)}`, { method: 'PUT', body: JSON.stringify(body) });
+    return { appointmentId: appointment.id || appointment.event?.id || payload.appointment_id, calendarId, updated: true };
+  }
+  const appointment = await ghl(c, '/calendars/events/appointments', { method: 'POST', body: JSON.stringify({ ...body, locationId: c.locationId, contactId }) });
+  return { appointmentId: appointment.id || appointment.event?.id || appointment.appointment?.id || '', calendarId, updated: false };
+}
+
 function noteBody(payload) {
   const p = payload || {}, q = p.quote || {}, d = p.discovery || {}, s = p.scope || {};
   const lines = [
-    'EGC WALKTHROUGH — GARAGE COMEBACK PLAN',
+    'EGC WALKTHROUGH PLAN',
     `Completed: ${p.sent_at || p.completed_at || new Date().toISOString()}`,
     '',
     `Locked total: $${Number(q.total || 0).toLocaleString('en-US')}`,
@@ -222,6 +307,10 @@ export async function onRequestGet({ request, env }) {
       const result = await getWalkthroughs(c, url.searchParams.get('date') || '');
       return reply(200, { ok: true, ...result });
     }
+    if (view === 'schedule') {
+      const result = await getSchedule(c, url.searchParams.get('start') || '', url.searchParams.get('end') || '');
+      return reply(200, { ok: true, ...result });
+    }
     const [pipes, opps] = await Promise.all([pipelines(c), opportunities(c)]);
     return reply(200, { ok: true, pipelines: pipes, opportunities: opps, locationId: c.locationId });
   } catch (error) {
@@ -237,25 +326,34 @@ export async function onRequestPost({ request, env }) {
   if (raw.length > 256 * 1024) return reply(413, { ok: false, error: 'Payload too large' });
   let payload;
   try { payload = JSON.parse(raw); } catch { return reply(400, { ok: false, error: 'Invalid JSON' }); }
-  if (!['game_plan','post_job'].includes(payload.tool)) return reply(400, { ok: false, error: 'Unsupported HighLevel handoff' });
+  if (!['game_plan','post_job','schedule','lifecycle'].includes(payload.tool)) return reply(400, { ok: false, error: 'Unsupported HighLevel handoff' });
   const client = payload.client || payload.job || {};
   try {
-    let contactId = client.highlevel_contact_id || client.ghl_contact_id || payload.highlevel_contact_id || '';
-    if (!contactId) {
-      const upsert = await ghl(c, '/contacts/upsert', { method: 'POST', body: JSON.stringify({
-        locationId: c.locationId, name: client.name || client.customer || '', phone: client.phone || '', email: client.email || '',
-        address1: client.address || '', source: client.lead_source || 'EGC walkthrough', tags: ['egc-walkthrough']
-      })});
-      contactId = upsert.contact && upsert.contact.id || '';
-    }
+    const contactId = await ensureContact(c, { ...client, highlevel_contact_id: client.highlevel_contact_id || payload.highlevel_contact_id }, payload.tool === 'schedule' ? 'EGC Hub schedule' : 'EGC walkthrough');
     if (!contactId) return reply(502, { ok: false, error: 'HighLevel did not return a contact ID' });
+    if (payload.tool === 'schedule') {
+      if (!payload.start_time || !payload.end_time) return reply(400, { ok: false, error: 'Schedule start and end are required' });
+      const event = await createAppointment(c, payload, contactId);
+      const typeTag = payload.event_type === 'job' ? 'egc-job-scheduled' : 'egc-walkthrough-scheduled';
+      let tagSynced = true;
+      try { await addTags(c, contactId, ['egc-hub-scheduled', typeTag]); } catch { tagSynced = false; }
+      return reply(200, { ok: true, contactId, ...event, automation: { trigger: typeTag, tagSynced, notificationsRequested: payload.notify !== false } });
+    }
+    if (payload.tool === 'lifecycle') {
+      const event = String(payload.event || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+      if (!event) return reply(400, { ok: false, error: 'Lifecycle event is required' });
+      const tag = `egc-${event}`;
+      await addTags(c, contactId, [tag]);
+      return reply(200, { ok: true, contactId, automation: { trigger: tag } });
+    }
     const isCloseout = payload.tool === 'post_job';
     const note = await ghl(c, `/contacts/${encodeURIComponent(contactId)}/notes`, { method: 'POST', body: JSON.stringify({
-      userId: c.userId || undefined, title: isCloseout ? 'EGC Job Closeout' : 'EGC Garage Comeback Plan',
+      userId: c.userId || undefined, title: isCloseout ? 'EGC Job Closeout' : 'EGC Walkthrough Plan',
       body: isCloseout ? closeoutNote(payload) : noteBody(payload), color: '#F15A24', pinned: !isCloseout
     })});
     let taskId = '';
     if (isCloseout) {
+      await addTags(c, contactId, ['egc-job-complete', 'egc-review-ready']);
       const due = new Date(); due.setMonth(due.getMonth() + 6);
       try {
         const task = await ghl(c, `/contacts/${encodeURIComponent(contactId)}/tasks`, { method: 'POST', body: JSON.stringify({
@@ -264,8 +362,21 @@ export async function onRequestPost({ request, env }) {
         })});
         taskId = task.task && task.task.id || '';
       } catch {}
+    } else {
+      await addTags(c, contactId, ['egc-walkthrough-complete', 'egc-quote-ready']);
+      const q = payload.quote || {};
+      if (q.job_date && q.start_time && q.end_time && !client.highlevel_job_appointment_id) {
+        const scheduled = await createAppointment(c, {
+          event_type: 'job', start_time: q.start_at || `${q.job_date}T${q.start_time}:00-06:00`,
+          end_time: q.end_at || `${q.job_date}T${q.end_time}:00-06:00`, title: q.title || 'EGC Garage Service',
+          address: client.address, notes: payload.notes || '', notify: true,
+        }, contactId);
+        let tagSynced = true;
+        try { await addTags(c, contactId, ['egc-hub-scheduled', 'egc-job-scheduled']); } catch { tagSynced = false; }
+        return reply(200, { ok: true, contactId, noteId: note.note?.id || '', taskId, ...scheduled, automation: { trigger: 'egc-job-scheduled', tagSynced } });
+      }
     }
-    return reply(200, { ok: true, contactId, noteId: note.note && note.note.id || '', taskId });
+    return reply(200, { ok: true, contactId, noteId: note.note && note.note.id || '', taskId, automation: { trigger: isCloseout ? 'egc-job-complete' : 'egc-walkthrough-complete' } });
   } catch (error) {
     return reply(502, { ok: false, error: 'HighLevel rejected the field handoff', detail: error.detail || error.message });
   }

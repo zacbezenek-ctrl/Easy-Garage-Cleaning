@@ -1,0 +1,5 @@
+#brand{display:block!important;width:215px!important;height:40px!important;overflow:hidden!important;font-size:0!important;color:transparent!important;background:url('/images/brand/egc-logo-horizontal-white.png') left center/contain no-repeat!important}
+#brand span{display:none!important}
+.brand{background:transparent url('/images/brand/egc-icon-primary.png') center/contain no-repeat!important;color:transparent!important;font-size:0!important}
+.gate-mark{background:transparent url('/images/brand/egc-icon-white.png') center/contain no-repeat!important;color:transparent!important;font-size:0!important}
+@media(max-width:480px){#brand{width:185px!important;height:35px!important}}
