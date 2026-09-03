@@ -22,7 +22,6 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,400;0,500;0,700;1,400;1,500&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="employee-crm.css">
   <link rel="stylesheet" href="employee-suite.css?v=20260903b">
   <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
@@ -804,28 +803,22 @@ body.has-session #login-screen { display: none; }
       <p>Signed in as <strong id="mode-user-lbl"></strong></p>
     </div>
     <div class="mode-cards">
-      <div class="mode-card mode-primary" onclick="selectMode('call')">
-        <div class="mode-icon">Call</div>
-        <div>
-          <div class="mode-title">Actively on a Call</div>
-          <div class="mode-desc">Customer on the line — quote &amp; book in one flow</div>
-        </div>
-        <div class="mode-arrow">→</div>
-      </div>
-      <div class="mode-card" onclick="selectMode('dashboard')">
+      <div class="mode-card mode-primary" onclick="selectMode('dashboard')">
         <div class="mode-icon">Ops</div>
         <div>
           <div class="mode-title">EGC Field Command</div>
           <div class="mode-desc">HighLevel pipeline, walkthroughs, crew handoff &amp; growth</div>
         </div>
+        <div class="mode-arrow">→</div>
       </div>
-      <div class="mode-card" id="admin-card" onclick="selectMode('admin')">
-        <div class="mode-icon">Admin</div>
+      <a class="mode-card" href="https://app.gohighlevel.com/" target="_blank" rel="noopener" style="text-decoration:none;color:inherit">
+        <div class="mode-icon">CRM</div>
         <div>
-          <div class="mode-title">Admin</div>
-          <div class="mode-desc">Customers, settings, and reports</div>
+          <div class="mode-title">Open HighLevel</div>
+          <div class="mode-desc">Contacts, conversations, calendars, pipeline &amp; automations</div>
         </div>
-      </div>
+        <div class="mode-arrow">↗</div>
+      </a>
       <a class="mode-card" href="/crew/" style="text-decoration:none;color:inherit">
         <div class="mode-icon">Crew</div>
         <div>
@@ -2738,8 +2731,6 @@ function showModeSelect() {
   document.getElementById('oncall-overlay').classList.remove('open');
   document.getElementById('mode-screen').style.display   = 'flex';
   document.getElementById('mode-user-lbl').textContent   = me;
-  // Hide admin card for TylerG
-  document.getElementById('admin-card').style.display    = ADMINS.includes(me) ? '' : 'none';
   emailjs.init(CFG.EMAILJS_PUBLIC_KEY);
   startListeners();
   fetchSheetCustomers();
@@ -3230,7 +3221,6 @@ async function ocBook() {
     document.head.appendChild(s);
   })();
 </script>
-<script src="employee-crm.js"></script>
 <script src="employee-suite.js?v=20260903b"></script>
 <div class="mobile-sticky-cta" aria-label="Quick contact">
   <a href="tel:+19709991818" class="mobile-cta-btn mobile-cta-call">Call</a>

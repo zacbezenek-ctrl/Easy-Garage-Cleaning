@@ -10,8 +10,9 @@ const crew=read('crew/gameplan.html');
 const relay=read('functions/api/operations-event.js');
 const highlevel=read('functions/api/highlevel.js');
 
-test('employee hub loads the operations suite after the CRM layer',()=>{
-  assert.match(employee,/employee-crm\.js[\s\S]*employee-suite\.js/);
+test('employee hub loads the EGC operations suite without the duplicate CRM overlay',()=>{
+  assert.doesNotMatch(employee,/employee-crm\.(?:js|css)/);
+  assert.match(employee,/employee-suite\.js/);
   assert.match(employee,/employee-suite\.css/);
 });
 
