@@ -365,7 +365,7 @@ function loadSchedule() {
       const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Denver' });
       todayJobs = snap.docs
         .map(d => ({ id: d.id, ...d.data() }))
-        .filter(j => j.date === today);
+        .filter(j => j.recordType !== 'schedule_lock' && !String(j.id).startsWith('_egc_schedule_lock_') && j.date === today);
       renderStrip(todayJobs);
       console.log('[Co-Pilot] Jobs loaded for today:', todayJobs.length);
     },

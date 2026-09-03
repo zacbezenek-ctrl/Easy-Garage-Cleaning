@@ -7,6 +7,7 @@ const read=(p)=>fs.readFileSync(new URL('../'+p,import.meta.url),'utf8');
 const employee=read('employee.html');
 const suite=read('employee-suite.js');
 const crew=read('crew/gameplan.html');
+const copilot=read('copilot.html');
 const relay=read('functions/api/operations-event.js');
 const highlevel=read('functions/api/highlevel.js');
 const statusApi=read('functions/api/integration-status.js');
@@ -57,11 +58,15 @@ test('Hub owns scheduling while HighLevel owns CRM automation',()=>{
 });
 
 test('schedule writes prevent collisions and retain retryable sync state',()=>{
-  for(const marker of ['function collisionFor','function saveScheduledJob','scheduleLocks','db.runTransaction','SCHEDULE_CONFLICT','remoteCollision','syncAttempts','syncNextRetryAt','retryDueSyncs','opsRetrySync','opsRetryAll','Idempotency-Key']){
+  for(const marker of ['function collisionFor','function saveScheduledJob','scheduleLockRef','recordType:\'schedule_lock\'','db.runTransaction','SCHEDULE_CONFLICT','remoteCollision','syncAttempts','syncNextRetryAt','retryDueSyncs','opsRetrySync','opsRetryAll','Idempotency-Key']){
     assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),marker+' is missing');
   }
   assert.match(suite,/Math\.min\(24\*60,Math\.pow\(2,Math\.min\(attempts,8\)\)\*5\)/);
   assert.match(suite,/tx\.set\(ref,job,\{merge:true\}\)/);
+  assert.doesNotMatch(suite,/collection\(['"]scheduleLocks['"]\)/);
+  assert.match(employee,/recordType !== 'schedule_lock'/);
+  assert.match(copilot,/recordType !== 'schedule_lock'/);
+  assert.doesNotMatch(crew,/collection\(['"]scheduleLocks['"]\)/);
 });
 
 test('walkthrough conversion keeps canonical IDs and durable acceptance metadata',()=>{
@@ -177,8 +182,8 @@ test('open-shift scheduling fields persist on the canonical job record',()=>{
   assert.match(suite,/b\.openShift=fd\.has\('openShift'\)/);
   assert.match(suite,/openShift:b\.type==='job'/);
   assert.match(suite,/assignedCrew\.length<crewNeeded/);
-  assert.match(employee,/employee-suite\.css\?v=20260903g/);
-  assert.match(employee,/employee-suite\.js\?v=20260903g/);
+  assert.match(employee,/employee-suite\.css\?v=20260903h/);
+  assert.match(employee,/employee-suite\.js\?v=20260903h/);
 });
 
 test('walkthrough preserves job creation time and hands off the scheduled job appointment',()=>{
