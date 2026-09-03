@@ -46,6 +46,7 @@
     window.addEventListener(eventName, startAnalytics, { once: true, passive: true });
   });
   window.addEventListener('load', function () {
-    window.setTimeout(startAnalytics, 12000);
+    // Keep analytics out of the first render without losing most short visits.
+    window.setTimeout(startAnalytics, 2500);
   }, { once: true });
 }());

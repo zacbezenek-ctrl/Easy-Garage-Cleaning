@@ -7,6 +7,8 @@
 <title>EGC · Post-Job Playbook</title>
 <meta name="robots" content="noindex">
 <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
 <style>
   :root{--navy:#13203a;--navy2:#1d2d4f;--orange:#e8581c;--orange2:#c4470f;--cream:#f2e9dc;
         --paper:#faf5ec;--khaki:#8a8170;--line:#d9cdb8;--ok:#2e7d4f;--r:14px}
@@ -221,6 +223,10 @@ gateOk().then(u=>{
     </div>
     <label class="fl">Job notes / issues / damage</label>
     <textarea id="j_notes" placeholder="Anything off-plan, anything broken, anything to flag for Zac"></textarea>
+    <div class="grid2">
+      <div><label class="fl">Payment status / method</label><select id="j_payment"><option value="unpaid">Not collected — invoice</option><option value="card">Card / processor</option><option value="cash">Cash</option><option value="check">Check</option><option value="other">Other verified payment</option></select></div>
+      <div><label class="fl">Transaction / receipt reference</label><input id="j_payment_ref" placeholder="Required when payment collected"></div>
+    </div>
   </div>
 
   <div class="photocard" id="photocard">
@@ -296,11 +302,13 @@ const SECTIONS = [
 /* =================================================== */
 
 const state={};
-const SAVEKEY="egc_postjob_v1";
-const FIELD_IDS=["j_name","j_date","j_phone","j_loads","j_hours","j_fees","j_notes"];
+const SAVEKEY="egc_postjob_v1",CENTRAL_JOB_ID=new URLSearchParams(location.search).get("jobId")||"";
+const FIELD_IDS=["j_name","j_date","j_phone","j_loads","j_hours","j_fees","j_notes","j_payment","j_payment_ref"];
 const GUARD_OPTS=["Guard Black","Garage Guard","Guard Lite","Not today"];
 let GUARD="";
 let ACTIVE={};
+let HUBDB=null;try{if(window.firebase){if(!firebase.apps.length)firebase.initializeApp({apiKey:'AIzaSyA8g4UAW4P4bsCrQNZhUe81CbC7BvjJbNc',authDomain:'egcw-1ec83.firebaseapp.com',projectId:'egcw-1ec83',storageBucket:'egcw-1ec83.firebasestorage.app',messagingSenderId:'763340109795',appId:'1:763340109795:web:ac203b3eb71831fa4ed2d6'});HUBDB=firebase.firestore()}}catch(e){}
+const saveKey=()=>SAVEKEY+":"+(CENTRAL_JOB_ID||ACTIVE.jobId||"manual");
 const esc=s=>String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const normPhone=raw=>{const d=String(raw||"").replace(/\D/g,"");if(d.length===10)return"+1"+d;if(d.length===11&&d[0]==="1")return"+"+d;if(d.length>10)return"+"+d;return d||"";};
 const STORAGE_OK=(()=>{try{localStorage.setItem("__egc_t","1");localStorage.removeItem("__egc_t");return true;}catch(e){return false;}})();
@@ -347,7 +355,7 @@ async function highlevelLookup(){
     const j=await res.json().catch(()=>({}));
     if(res.status===501){out.innerHTML=`<div class="looknote">HighLevel needs its API key and location ID. Type the details manually for now.</div>`;return;}
     if(!res.ok||!j.ok){out.innerHTML=`<div class="looknote">Lookup failed — type it manually.</div>`;return;}
-    LOOK=j.clients||[];
+    LOOK=j.contacts||[];
     out.innerHTML=LOOK.length?LOOK.map((c,i)=>`<div class="lkr" onclick="lookPick(${i})">
         <div class="nm">${esc(c.name)}<small>${esc([c.address,c.phone].filter(Boolean).join(" · "))}</small></div>
         <span class="go">→</span></div>`).join("")
@@ -456,10 +464,10 @@ async function mountRef(){
 function setGuard(v){GUARD=(GUARD===v?"":v);render();saveAll();}
 function saveAll(){
   try{const f={};FIELD_IDS.forEach(id=>{const el=document.getElementById(id);if(el)f[id]=el.value;});
-    localStorage.setItem(SAVEKEY,JSON.stringify({state:state,fields:f,guard:GUARD}));}catch(e){}
+    localStorage.setItem(saveKey(),JSON.stringify({state:state,fields:f,guard:GUARD}));}catch(e){}
 }
 function restoreAll(){
-  try{const d=JSON.parse(localStorage.getItem(SAVEKEY));
+  try{const d=JSON.parse(localStorage.getItem(saveKey()));
     if(d){Object.assign(state,d.state||{});GUARD=d.guard||"";
       FIELD_IDS.forEach(id=>{const el=document.getElementById(id);if(el&&d.fields&&d.fields[id]!=null)el.value=d.fields[id];});}
   }catch(e){}
@@ -529,7 +537,7 @@ async function postHook(payload){
   return ok;
 }
 async function postHighLevel(payload){
-  const res=await fetch('/api/highlevel',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+  const res=await fetch('/api/highlevel',{method:'POST',headers:{'Content-Type':'application/json','Idempotency-Key':payload.idempotency_key||payload.request_id||payload.job_id||''},body:JSON.stringify(payload)});
   let ok=res.ok;try{const j=await res.json();ok=ok&&j&&j.ok!==false;}catch(e){}
   return ok;
 }
@@ -543,7 +551,7 @@ async function sendReview(btn){
   const ok=await postHook({tool:"review_request",request_id:_reviewId,job_id:ACTIVE.jobId||"",sent_at:new Date().toISOString(),
     customer:name,phone:phone,review_link:REVIEW_LINK,
     message:`Hi ${name?name.split(" ")[0]:"there"}, it was great working with you! If you have a moment, we'd really appreciate it if you left us a review — it goes a long way in helping us grow. As a thank-you for choosing us, we'd love to offer you 10% off your next service. We look forward to working with you again! ${REVIEW_LINK||"[REVIEW LINK]"}`}).catch(()=>false);
-  if(ok){btn.textContent="Review text sent ✓";}
+  if(ok){btn.textContent="Review text sent ✓";if(HUBDB&&ACTIVE.jobId)await HUBDB.collection('jobs').doc(ACTIVE.jobId).set({reviewStatus:'requested',reviewRequestedAt:new Date().toISOString(),reviewRequestId:_reviewId,updatedAt:new Date().toISOString()},{merge:true}).catch(()=>{});}
   else{btn.disabled=false;btn.textContent="Retry → Send review link";alert("Review text did NOT send (HQ unreachable). Check signal and tap again.");}
 }
 let _finishId="";
@@ -551,8 +559,10 @@ async function finish(){
   const total=SECTIONS.reduce((a,s)=>a+s.items.length,0);
   if(Object.values(state).filter(Boolean).length<total) return;
   const v=id=>document.getElementById(id).value;
+  const paymentMethod=v("j_payment")||"unpaid",paymentReference=(v("j_payment_ref")||"").trim();
+  if(paymentMethod!=="unpaid"&&!paymentReference){alert("Add the processor transaction ID, check number, or receipt reference before recording payment.");return;}
   _finishId=_finishId||uid();
-  const payload={tool:"post_job",request_id:_finishId,job_id:ACTIVE.jobId||"",sent_at:new Date().toISOString(),
+  const payload={tool:"post_job",request_id:_finishId,job_id:ACTIVE.jobId||"",opportunity_id:ACTIVE.highlevelOpportunityId||"",idempotency_key:`post-job:${ACTIVE.jobId||"manual"}:${_finishId}`,sent_at:new Date().toISOString(),
     job:{customer:v("j_name"),phone:normPhone(v("j_phone")),date:v("j_date"),actual_loads:v("j_loads"),
          hours_on_site:v("j_hours"),dump_fees:v("j_fees"),notes:v("j_notes"),
          package:ACTIVE.pkg||"",quoted_rate:ACTIVE.rate||"",locked_total:ACTIVE.total||ACTIVE.rate||"",pain:ACTIVE.pain||""},
@@ -560,27 +570,33 @@ async function finish(){
     photos:{after:AFTER_COUNT},
     drive_folder:(function(){try{return localStorage.getItem(driveKey())||"";}catch(e){return "";}})(),
     highlevel_contact_id:ACTIVE.highlevelContactId||"",
-    checklist:SECTIONS.map(s=>s.items.map(it=>it.t)).flat().map((t,i)=>t+": done").join("\n")};
+     payment:{method:paymentMethod,reference:paymentReference,verified:paymentMethod!=="unpaid"&&Boolean(paymentReference)},
+     checklist:SECTIONS.map(s=>s.items.map(it=>it.t)).flat().map((t,i)=>t+": done").join("\n")};
   // Local backup FIRST — job-costing data (loads/hours/fees) must survive even if HQ is down.
   try{const log=JSON.parse(localStorage.getItem("egc_job_log")||"[]");log.push(payload);
     localStorage.setItem("egc_job_log",JSON.stringify(log.slice(-50)));}catch(e){}
+  const completedAt=new Date().toISOString();
+  if(HUBDB&&ACTIVE.jobId){const total=Number(ACTIVE.total||ACTIVE.rate||0),paid=paymentMethod!=="unpaid"&&paymentReference;await HUBDB.collection('jobs').doc(ACTIVE.jobId).set({status:paid?'paid':'completed',pipelineStatus:paid?'paid':'completed',completedAt,actualLoads:Number(v('j_loads')||0),hoursOnSite:Number(v('j_hours')||0),dumpFees:Number(v('j_fees')||0),closeoutNotes:v('j_notes'),payment:paid?{amount:total,lastAmount:total,lastReceivedAt:completedAt,method:paymentMethod,reference:paymentReference,verified:true,recordedBy:'crew'}:{amount:0,method:'unpaid',verified:false},invoice:{status:paid?'paid':'ready',amount:total,balance:paid?0:total,updatedAt:completedAt},closeoutSyncStatus:'pending',closeoutIdempotencyKey:_finishId,updatedAt:completedAt},{merge:true}).catch(()=>{})}
+  if(HUBDB&&ACTIVE.jobId)await releaseCentralLock();
   const btn=document.getElementById("donebtn");btn.textContent="Saving to HighLevel…";
   let ok=false; try{ ok=await postHighLevel(payload); }catch(e){ ok=false; }
   if(!ok){
+    if(HUBDB&&ACTIVE.jobId)await HUBDB.collection('jobs').doc(ACTIVE.jobId).set({closeoutSyncStatus:'error',closeoutSyncError:'HighLevel unavailable',updatedAt:new Date().toISOString()},{merge:true}).catch(()=>{});
     btn.classList.remove("ready");btn.textContent="Retry → Save closeout to HighLevel";
     alert("Job not saved to HighLevel. It's still saved on this iPad — reconnect and tap again. Nothing was cleared.");
     return; // don't wipe the handoff/checklist on failure, so a retry still works
   }
+  if(HUBDB&&ACTIVE.jobId)await HUBDB.collection('jobs').doc(ACTIVE.jobId).set({closeoutSyncStatus:'synced',closeoutSyncError:'',updatedAt:new Date().toISOString()},{merge:true}).catch(()=>{});
   btn.textContent="Job closed & saved to HighLevel ✓";
-  localStorage.removeItem(SAVEKEY);
+  localStorage.removeItem(saveKey());
   localStorage.removeItem("egc_active_job");
-  alert("Job closed. Review asked, content captured, money in. That's the system. 🧹");
+  alert("Job closed and the Hub record is updated. Send the review request only after confirming the customer is happy. 🧹");
 }
+async function loadCentralJob(){if(!HUBDB||!CENTRAL_JOB_ID)return;try{const snap=await HUBDB.collection('jobs').doc(CENTRAL_JOB_ID).get();if(!snap.exists)return;const j={id:snap.id,...snap.data()};ACTIVE={...ACTIVE,jobId:j.id,highlevelContactId:j.highlevelContactId||'',highlevelOpportunityId:j.highlevelOpportunityId||'',highlevelAppointmentId:j.highlevelAppointmentId||'',name:j.customer||'',phone:j.phone||'',addr:j.address||'',pkg:j.serviceType||'',total:j.total||j.priceQuoted||'',rate:j.total||j.priceQuoted||'',deposit:j.deposit?.amount||'',jobdate:j.date||'',pain:j.walkthroughNotes||'',scope:j.scope||{},savedAt:j.updatedAt||j.createdAt||''};document.getElementById('j_name').value=j.customer||'';document.getElementById('j_phone').value=j.phone||'';document.getElementById('j_date').value=j.date||'';saveAll()}catch(e){}}
+async function releaseCentralLock(){try{const ref=HUBDB.collection('scheduleLocks').doc(ACTIVE.jobdate),snap=await ref.get(),entries=(Array.isArray(snap.data()?.entries)?snap.data().entries:[]).filter(x=>x.id!==ACTIVE.jobId);await ref.set({date:ACTIVE.jobdate,entries,updatedAt:new Date().toISOString()},{merge:true})}catch(e){}}
 document.addEventListener("input",saveAll);
 if(!STORAGE_OK) setTimeout(()=>alert("Heads up: this browser is blocking local storage (often Private Browsing). The job won't pre-fill from the Game Plan and progress won't save. Switch off Private Browsing for this iPad."),200);
-restoreAll();
-render();
-mountRef(); // after/receipt capture is now inline on the checklist items (mountActions)
+(async()=>{restoreAll();await loadCentralJob();render();mountRef()})(); // after/receipt capture is now inline on the checklist items (mountActions)
 </script>
 </body>
 </html>

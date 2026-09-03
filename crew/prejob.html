@@ -7,6 +7,8 @@
 <title>EGC · Pre-Job Playbook</title>
 <meta name="robots" content="noindex">
 <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
 <style>
   :root{--navy:#13203a;--navy2:#1d2d4f;--orange:#e8581c;--orange2:#c4470f;--cream:#f2e9dc;
         --paper:#faf5ec;--khaki:#8a8170;--line:#d9cdb8;--ok:#2e7d4f;--r:14px}
@@ -265,13 +267,15 @@ const SECTIONS = [
 /* =================================================== */
 
 const state={};
-const SAVEKEY="egc_prejob_v1";
+const SAVEKEY="egc_prejob_v1",CENTRAL_JOB_ID=new URLSearchParams(location.search).get("jobId")||"";
 const FIELD_IDS=["j_name","j_date","j_addr","j_pkg","j_rate"];
 const esc=s=>String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const STORAGE_OK=(()=>{try{localStorage.setItem("__egc_t","1");localStorage.removeItem("__egc_t");return true;}catch(e){return false;}})();
 const uid=()=>Date.now().toString(36)+"-"+Math.random().toString(36).slice(2,8);
 const BIZPHONE="9709991818"; // EGC office line — tap to call
 let ACTIVE={};
+let HUBDB=null;try{if(window.firebase){if(!firebase.apps.length)firebase.initializeApp({apiKey:'AIzaSyA8g4UAW4P4bsCrQNZhUe81CbC7BvjJbNc',authDomain:'egcw-1ec83.firebaseapp.com',projectId:'egcw-1ec83',storageBucket:'egcw-1ec83.firebasestorage.app',messagingSenderId:'763340109795',appId:'1:763340109795:web:ac203b3eb71831fa4ed2d6'});HUBDB=firebase.firestore()}}catch(e){}
+const saveKey=()=>SAVEKEY+":"+(CENTRAL_JOB_ID||ACTIVE.jobId||"manual");
 const STARTKEY="egc_prejob_start";
 
 /* ===== Per-job photos — on-device (IndexedDB), shared with the Game Plan/Post-Job
@@ -347,7 +351,7 @@ async function highlevelLookup(){
     const j=await res.json().catch(()=>({}));
     if(res.status===501){out.innerHTML=`<div class="looknote">HighLevel needs its API key and location ID. Type the details manually for now.</div>`;return;}
     if(!res.ok||!j.ok){out.innerHTML=`<div class="looknote">Lookup failed — type it manually.</div>`;return;}
-    LOOK=j.clients||[];
+    LOOK=j.contacts||[];
     out.innerHTML=LOOK.length?LOOK.map((c,i)=>`<div class="lkr" onclick="lookPick(${i})">
         <div class="nm">${esc(c.name)}<small>${esc([c.address,c.phone].filter(Boolean).join(" · "))}</small></div>
         <span class="go">→</span></div>`).join("")
@@ -364,10 +368,10 @@ function lookPick(i){
 }
 function saveAll(){
   try{const f={};FIELD_IDS.forEach(id=>{const el=document.getElementById(id);if(el)f[id]=el.value;});
-    localStorage.setItem(SAVEKEY,JSON.stringify({state:state,fields:f}));}catch(e){}
+    localStorage.setItem(saveKey(),JSON.stringify({state:state,fields:f}));}catch(e){}
 }
 function restoreAll(){
-  try{const d=JSON.parse(localStorage.getItem(SAVEKEY));
+  try{const d=JSON.parse(localStorage.getItem(saveKey()));
     if(d){Object.assign(state,d.state||{});
       FIELD_IDS.forEach(id=>{const el=document.getElementById(id);if(el&&d.fields&&d.fields[id]!=null)el.value=d.fields[id];});}
   }catch(e){}
@@ -430,16 +434,17 @@ function copyScript(si){
   navigator.clipboard&&navigator.clipboard.writeText(txt);
   event.target.textContent="Copied ✓";setTimeout(()=>{event.target.textContent="Copy text";},1500);
 }
-function finish(){
+async function finish(){
   const total=SECTIONS.reduce((a,s)=>a+s.items.length,0);
   if(Object.values(state).filter(Boolean).length<total) return;
-  localStorage.removeItem(SAVEKEY);
+  if(HUBDB&&ACTIVE.jobId)await HUBDB.collection('jobs').doc(ACTIVE.jobId).set({status:'in_progress',pipelineStatus:'in_progress',startedAt:new Date().toISOString(),updatedAt:new Date().toISOString()},{merge:true}).catch(()=>{});
+  localStorage.removeItem(saveKey());
   alert("Pre-job complete. Go make it disappear. 🛻");
 }
+async function loadCentralJob(){if(!HUBDB||!CENTRAL_JOB_ID)return;try{const snap=await HUBDB.collection('jobs').doc(CENTRAL_JOB_ID).get();if(!snap.exists)return;const j={id:snap.id,...snap.data()};ACTIVE={...ACTIVE,jobId:j.id,highlevelContactId:j.highlevelContactId||'',highlevelOpportunityId:j.highlevelOpportunityId||'',highlevelAppointmentId:j.highlevelAppointmentId||'',name:j.customer||'',phone:j.phone||'',addr:j.address||'',pkg:j.serviceType||'',total:j.total||j.priceQuoted||'',rate:j.total||j.priceQuoted||'',deposit:j.deposit?.amount||'',jobdate:j.date||'',pain:j.walkthroughNotes||'',scope:j.scope||{},savedAt:j.updatedAt||j.createdAt||''};document.getElementById('j_name').value=j.customer||'';document.getElementById('j_addr').value=j.address||'';document.getElementById('j_date').value=j.date||'';document.getElementById('j_rate').value=j.total||j.priceQuoted||'';document.getElementById('j_pkg').value=j.serviceType||'Garage service';await HUBDB.collection('jobs').doc(j.id).set({status:j.status==='scheduled'?'arrived':j.status,pipelineStatus:j.pipelineStatus==='scheduled'?'arrived':j.pipelineStatus,arrivedAt:j.arrivedAt||new Date().toISOString(),updatedAt:new Date().toISOString()},{merge:true}).catch(()=>{});saveAll()}catch(e){}}
 document.addEventListener("input",saveAll);
 if(!STORAGE_OK) setTimeout(()=>alert("Heads up: this browser is blocking local storage (often Private Browsing). The job won't pre-fill from the Game Plan and progress won't save. Switch off Private Browsing for this iPad."),200);
-restoreAll();
-render();
+(async()=>{restoreAll();await loadCentralJob();render()})();
 </script>
 </body>
 </html>

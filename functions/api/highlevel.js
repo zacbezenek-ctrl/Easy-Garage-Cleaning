@@ -14,6 +14,9 @@
  *   HIGHLEVEL_WALKTHROUGH_CALENDAR_ID
  *   HIGHLEVEL_JOB_CALENDAR_ID
  *   HIGHLEVEL_PIPELINE_ID
+ *   HIGHLEVEL_PIPELINE_STAGE_SCHEDULED_ID
+ *   HIGHLEVEL_PIPELINE_STAGE_WALKTHROUGH_COMPLETE_ID
+ *   HIGHLEVEL_PIPELINE_STAGE_JOB_COMPLETE_ID
  *   HIGHLEVEL_USER_ID
  */
 
@@ -38,10 +41,14 @@ function config(env) {
   return {
     token: env.HIGHLEVEL_API_KEY || env.GHL_API_KEY || '',
     locationId: env.HIGHLEVEL_LOCATION_ID || env.GHL_LOCATION_ID || '',
-    walkthroughCalendarId: env.HIGHLEVEL_WALKTHROUGH_CALENDAR_ID || env.GHL_WALKTHROUGH_CALENDAR_ID || '',
-    jobCalendarId: env.HIGHLEVEL_JOB_CALENDAR_ID || env.GHL_JOB_CALENDAR_ID || '',
-    pipelineId: env.HIGHLEVEL_PIPELINE_ID || env.GHL_PIPELINE_ID || '',
-    userId: env.HIGHLEVEL_USER_ID || env.GHL_USER_ID || '',
+    walkthroughCalendarId: env.HIGHLEVEL_WALKTHROUGH_CALENDAR_ID || env.GHL_WALKTHROUGH_CALENDAR_ID || '2yYX63nHYvUsL6KKhAc0',
+    jobCalendarId: env.HIGHLEVEL_JOB_CALENDAR_ID || env.GHL_JOB_CALENDAR_ID || '2yYX63nHYvUsL6KKhAc0',
+    pipelineId: env.HIGHLEVEL_PIPELINE_ID || env.GHL_PIPELINE_ID || 'anSgrMpYHtAX6YlUHnIR',
+    scheduledStageId: env.HIGHLEVEL_SCHEDULED_STAGE_ID || env.GHL_SCHEDULED_STAGE_ID || env.HIGHLEVEL_PIPELINE_STAGE_SCHEDULED_ID || env.GHL_PIPELINE_STAGE_SCHEDULED_ID || '06b78f36-b53d-4028-9e36-b41ac4d2da09',
+    walkthroughCompleteStageId: env.HIGHLEVEL_QUOTED_STAGE_ID || env.GHL_QUOTED_STAGE_ID || env.HIGHLEVEL_PIPELINE_STAGE_WALKTHROUGH_COMPLETE_ID || env.GHL_PIPELINE_STAGE_WALKTHROUGH_COMPLETE_ID || '85c56b3e-4886-4fc1-be95-87ad0b0d2bcc',
+    jobCompleteStageId: env.HIGHLEVEL_COMPLETE_STAGE_ID || env.GHL_COMPLETE_STAGE_ID || env.HIGHLEVEL_PIPELINE_STAGE_JOB_COMPLETE_ID || env.GHL_PIPELINE_STAGE_JOB_COMPLETE_ID || '0ccca1f9-3ffb-412a-b15a-3f4be1619514',
+    userId: env.HIGHLEVEL_USER_ID || env.GHL_USER_ID || 'w92vfhwm3a8twTIowpQz',
+    quoteReadyTags: String(env.HIGHLEVEL_QUOTE_READY_TAGS || env.GHL_QUOTE_READY_TAGS || 'egc-quote-ready,gc-quote-open').split(',').map(x => x.trim()).filter(Boolean),
   };
 }
 
@@ -224,6 +231,93 @@ async function addTags(c, contactId, tags) {
   await ghl(c, `/contacts/${encodeURIComponent(contactId)}/tags`, { method: 'POST', body: JSON.stringify({ tags: clean }) });
 }
 
+function opportunityForContact(rows, contactId, pipelineId) {
+  return (rows || []).find(row => {
+    const rowContact = row.contactId || row.contact?.id || '';
+    return rowContact === contactId && (!pipelineId || row.pipelineId === pipelineId);
+  }) || null;
+}
+
+function opportunityInput(payload = {}, client = {}) {
+  const rawValue = payload.monetary_value ?? payload.quote?.total ?? payload.job?.locked_total ?? payload.job?.quoted_rate ?? client.total ?? client.priceQuoted;
+  return {
+    name: payload.opportunity_name || payload.quote?.title || client.name || client.customer || payload.title || 'EGC Garage Service',
+    monetaryValue: rawValue === undefined || rawValue === '' ? undefined : Number(rawValue),
+    idempotencyKey: payload.idempotency_key || '',
+  };
+}
+
+async function advanceOpportunity(c, contactId, stageId, fallbackTag, opportunityId = '', details = {}) {
+  if (!stageId) return { updated: false, reason: 'stage-not-configured', fallbackTag };
+  if (!c.pipelineId) return { updated: false, reason: 'pipeline-not-configured', fallbackTag };
+  try {
+    let opportunity = null, rows = [];
+    if (!opportunityId) {
+      rows = await opportunities(c);
+      opportunity = opportunityForContact(rows, contactId, c.pipelineId);
+    } else {
+      try { rows = await opportunities(c); opportunity = rows.find(row => row.id === opportunityId) || null; } catch {}
+    }
+    const id = opportunityId || opportunity?.id || '';
+    const pipelineId = opportunity?.pipelineId || c.pipelineId;
+    const name = opportunity?.name || opportunity?.contact?.name || details.name || 'EGC Garage Service';
+    const suppliedValue = Number(details.monetaryValue);
+    const monetaryValue = details.monetaryValue !== undefined && Number.isFinite(suppliedValue)
+      ? suppliedValue : Number(opportunity?.monetaryValue || 0);
+    if (!id) {
+      const created = await ghl(c, '/opportunities/upsert', {
+        method: 'POST',
+        headers: { 'Idempotency-Key': details.idempotencyKey || `opportunity:${contactId}:${pipelineId}` },
+        body: JSON.stringify({
+          pipelineId, locationId: c.locationId, name, pipelineStageId: stageId,
+          status: 'open', contactId, monetaryValue, assignedTo: c.userId || undefined,
+          followers: c.userId ? [c.userId] : [], isRemoveAllFollowers: false, followersActionType: 'add',
+        }),
+      });
+      const createdId = created.opportunity?.id || created.id || '';
+      return { updated: true, created: true, opportunityId: createdId, pipelineStageId: stageId, fallbackTag };
+    }
+    await ghl(c, `/opportunities/${encodeURIComponent(id)}`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        pipelineId,
+        name,
+        pipelineStageId: stageId,
+        status: opportunity?.status || 'open',
+        monetaryValue,
+      }),
+    });
+    return { updated: true, opportunityId: id, pipelineStageId: stageId, fallbackTag };
+  } catch (error) {
+    return { updated: false, reason: 'update-failed', detail: error.detail || error.message, fallbackTag };
+  }
+}
+
+async function completeAppointment(c, appointmentId) {
+  if (!appointmentId) return { updated: false, reason: 'appointment-not-linked' };
+  try {
+    const path = `/calendars/events/appointments/${encodeURIComponent(appointmentId)}`;
+    const currentResult = await ghl(c, path);
+    const current = currentResult.appointment || currentResult.event || currentResult;
+    await ghl(c, path, {
+      method: 'PUT', body: JSON.stringify({
+        calendarId: current.calendarId,
+        title: current.title || 'EGC Free Walkthrough',
+        startTime: current.startTime,
+        endTime: current.endTime,
+        address: current.address || '',
+        description: current.description || current.notes || '',
+        assignedUserId: current.assignedUserId || c.userId || undefined,
+        appointmentStatus: 'completed',
+        toNotify: false,
+      }),
+    });
+    return { updated: true, appointmentId, appointmentStatus: 'completed' };
+  } catch (error) {
+    return { updated: false, reason: 'update-failed', detail: error.detail || error.message };
+  }
+}
+
 async function createAppointment(c, payload, contactId) {
   const type = payload.event_type === 'job' ? 'job' : 'walkthrough';
   const calendarId = payload.calendar_id || await findCalendar(c, type);
@@ -237,10 +331,25 @@ async function createAppointment(c, payload, contactId) {
     toNotify: payload.notify !== false,
   };
   if (payload.appointment_id) {
-    const appointment = await ghl(c, `/calendars/events/appointments/${encodeURIComponent(payload.appointment_id)}`, { method: 'PUT', body: JSON.stringify(body) });
+    const appointment = await ghl(c, `/calendars/events/appointments/${encodeURIComponent(payload.appointment_id)}`, { method: 'PUT', headers: payload.idempotency_key ? { 'Idempotency-Key': payload.idempotency_key } : {}, body: JSON.stringify(body) });
     return { appointmentId: appointment.id || appointment.event?.id || payload.appointment_id, calendarId, updated: true };
   }
-  const appointment = await ghl(c, '/calendars/events/appointments', { method: 'POST', body: JSON.stringify({ ...body, locationId: c.locationId, contactId }) });
+  try {
+    const startMs = Date.parse(payload.start_time), endMs = Date.parse(payload.end_time);
+    if (Number.isFinite(startMs) && Number.isFinite(endMs)) {
+      const params = new URLSearchParams({ locationId: c.locationId, calendarId,
+        startTime: String(startMs - 300000), endTime: String(endMs + 300000) });
+      const found = await ghl(c, `/calendars/events?${params}`);
+      const existing = (found.events || []).find(event => {
+        const eventContactId = event.contactId || event.contact?.id || '';
+        const status = String(event.appointmentStatus || event.status || '').toLowerCase();
+        return eventContactId === contactId && !['cancelled', 'canceled'].includes(status) &&
+          Date.parse(event.startTime) === startMs && Date.parse(event.endTime) === endMs;
+      });
+      if (existing?.id) return { appointmentId: existing.id, calendarId, updated: false, reused: true };
+    }
+  } catch {}
+  const appointment = await ghl(c, '/calendars/events/appointments', { method: 'POST', headers: payload.idempotency_key ? { 'Idempotency-Key': payload.idempotency_key } : {}, body: JSON.stringify({ ...body, locationId: c.locationId, contactId }) });
   return { appointmentId: appointment.id || appointment.event?.id || appointment.appointment?.id || '', calendarId, updated: false };
 }
 
@@ -326,6 +435,7 @@ export async function onRequestPost({ request, env }) {
   if (raw.length > 256 * 1024) return reply(413, { ok: false, error: 'Payload too large' });
   let payload;
   try { payload = JSON.parse(raw); } catch { return reply(400, { ok: false, error: 'Invalid JSON' }); }
+  payload.idempotency_key ||= request.headers.get('Idempotency-Key') || '';
   if (!['game_plan','post_job','schedule','lifecycle'].includes(payload.tool)) return reply(400, { ok: false, error: 'Unsupported HighLevel handoff' });
   const client = payload.client || payload.job || {};
   try {
@@ -335,9 +445,12 @@ export async function onRequestPost({ request, env }) {
       if (!payload.start_time || !payload.end_time) return reply(400, { ok: false, error: 'Schedule start and end are required' });
       const event = await createAppointment(c, payload, contactId);
       const typeTag = payload.event_type === 'job' ? 'egc-job-scheduled' : 'egc-walkthrough-scheduled';
+      const reminderDays = Math.min(30, Math.max(1, Number(payload.reminder_days || 2)));
+      const reminderTag = payload.notify === false ? '' : `egc-reminder-${reminderDays}d`;
       let tagSynced = true;
-      try { await addTags(c, contactId, ['egc-hub-scheduled', typeTag]); } catch { tagSynced = false; }
-      return reply(200, { ok: true, contactId, ...event, automation: { trigger: typeTag, tagSynced, notificationsRequested: payload.notify !== false } });
+      try { await addTags(c, contactId, ['egc-hub-scheduled', typeTag, reminderTag]); } catch { tagSynced = false; }
+      const stage = await advanceOpportunity(c, contactId, c.scheduledStageId, typeTag, payload.opportunity_id || '', opportunityInput(payload, client));
+      return reply(200, { ok: true, contactId, ...event, pipeline: stage, automation: { trigger: typeTag, reminderTrigger: reminderTag, tagSynced, notificationsRequested: payload.notify !== false } });
     }
     if (payload.tool === 'lifecycle') {
       const event = String(payload.event || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
@@ -347,7 +460,7 @@ export async function onRequestPost({ request, env }) {
       return reply(200, { ok: true, contactId, automation: { trigger: tag } });
     }
     const isCloseout = payload.tool === 'post_job';
-    const note = await ghl(c, `/contacts/${encodeURIComponent(contactId)}/notes`, { method: 'POST', body: JSON.stringify({
+    const note = await ghl(c, `/contacts/${encodeURIComponent(contactId)}/notes`, { method: 'POST', headers: payload.idempotency_key ? { 'Idempotency-Key': payload.idempotency_key } : {}, body: JSON.stringify({
       userId: c.userId || undefined, title: isCloseout ? 'EGC Job Closeout' : 'EGC Walkthrough Plan',
       body: isCloseout ? closeoutNote(payload) : noteBody(payload), color: '#F15A24', pinned: !isCloseout
     })});
@@ -362,21 +475,27 @@ export async function onRequestPost({ request, env }) {
         })});
         taskId = task.task && task.task.id || '';
       } catch {}
+      const stage = await advanceOpportunity(c, contactId, c.jobCompleteStageId, 'egc-job-complete', payload.opportunity_id || '', opportunityInput(payload, client));
+      return reply(200, { ok: true, contactId, noteId: note.note && note.note.id || '', taskId, pipeline: stage, automation: { trigger: 'egc-job-complete' } });
     } else {
-      await addTags(c, contactId, ['egc-walkthrough-complete', 'egc-quote-ready']);
+      await addTags(c, contactId, ['egc-walkthrough-complete', ...c.quoteReadyTags]);
+      const walkthrough = await completeAppointment(c, client.highlevel_appointment_id || payload.walkthrough_appointment_id || '');
       const q = payload.quote || {};
       if (q.job_date && q.start_time && q.end_time && !client.highlevel_job_appointment_id) {
         const scheduled = await createAppointment(c, {
           event_type: 'job', start_time: q.start_at || `${q.job_date}T${q.start_time}:00-06:00`,
           end_time: q.end_at || `${q.job_date}T${q.end_time}:00-06:00`, title: q.title || 'EGC Garage Service',
-          address: client.address, notes: payload.notes || '', notify: true,
+          address: client.address, notes: payload.notes || '', notify: true, idempotency_key: payload.idempotency_key || '',
         }, contactId);
         let tagSynced = true;
         try { await addTags(c, contactId, ['egc-hub-scheduled', 'egc-job-scheduled']); } catch { tagSynced = false; }
-        return reply(200, { ok: true, contactId, noteId: note.note?.id || '', taskId, ...scheduled, automation: { trigger: 'egc-job-scheduled', tagSynced } });
+        const stage = await advanceOpportunity(c, contactId, c.scheduledStageId, 'egc-job-scheduled', payload.opportunity_id || '', opportunityInput(payload, client));
+        return reply(200, { ok: true, contactId, noteId: note.note?.id || '', taskId, ...scheduled, walkthrough, pipeline: stage, automation: { trigger: 'egc-job-scheduled', tagSynced } });
       }
+      const stage = await advanceOpportunity(c, contactId, c.walkthroughCompleteStageId, 'egc-walkthrough-complete', payload.opportunity_id || '', opportunityInput(payload, client));
+      return reply(200, { ok: true, contactId, noteId: note.note && note.note.id || '', taskId, walkthrough, pipeline: stage, automation: { trigger: 'egc-walkthrough-complete' } });
     }
-    return reply(200, { ok: true, contactId, noteId: note.note && note.note.id || '', taskId, automation: { trigger: isCloseout ? 'egc-job-complete' : 'egc-walkthrough-complete' } });
+    return reply(200, { ok: true, contactId, noteId: note.note && note.note.id || '', taskId, automation: { trigger: 'egc-walkthrough-complete' } });
   } catch (error) {
     return reply(502, { ok: false, error: 'HighLevel rejected the field handoff', detail: error.detail || error.message });
   }

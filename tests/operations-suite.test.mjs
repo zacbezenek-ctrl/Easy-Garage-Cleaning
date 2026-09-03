@@ -56,6 +56,131 @@ test('Hub owns scheduling while HighLevel owns CRM automation',()=>{
   for(const field of ['phone','email','address','date','time','endTime','assignedTo','notes','notify'])assert.match(suite,new RegExp(`opsBookField\\('${field}'`));
 });
 
+test('schedule writes prevent collisions and retain retryable sync state',()=>{
+  for(const marker of ['function collisionFor','function saveScheduledJob','scheduleLocks','db.runTransaction','SCHEDULE_CONFLICT','remoteCollision','syncAttempts','syncNextRetryAt','retryDueSyncs','opsRetrySync','opsRetryAll','Idempotency-Key']){
+    assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),marker+' is missing');
+  }
+  assert.match(suite,/Math\.min\(24\*60,Math\.pow\(2,Math\.min\(attempts,8\)\)\*5\)/);
+  assert.match(suite,/tx\.set\(ref,job,\{merge:true\}\)/);
+});
+
+test('walkthrough conversion keeps canonical IDs and durable acceptance metadata',()=>{
+  for(const marker of ['walkthroughId','sourceWalkthroughId','convertedJobId','conversionStatus','acceptanceAt','acceptanceBy','termsVersion','signatureCaptured','in_person_signature','syncIdempotencyKey']){
+    assert.match(crew,new RegExp(marker),marker+' is missing');
+  }
+  assert.match(crew,/hubDb\.collection\('jobs'\)\.doc\(S\.jobId\)/);
+  assert.match(crew,/status:'completed',pipelineStatus:'completed'/);
+  assert.match(crew,/tx\.set\(sourceRef,\{status:'completed'/);
+  for(const page of [read('crew/prejob.html'),read('crew/postjob.html')]){
+    assert.match(page,/new URLSearchParams\(location\.search\)\.get\("jobId"\)/);
+    assert.match(page,/collection\('jobs'\)\.doc\(CENTRAL_JOB_ID\)\.get\(\)/);
+  }
+  assert.match(suite,/prejob\.html\?jobId=/);
+  assert.match(suite,/postjob\.html\?jobId=/);
+});
+
+test('Hub finance scaffolding and customer history work without claiming external settlement',()=>{
+  for(const marker of ['function customerRows','function customerHistory','function financeState','function financeBoard','opsFinanceAction','Record approval','Record deposit','Issue invoice','Record payment','acceptanceMethod','termsVersion','verified:true','A payment reference is required for verification','Hub records only · keys needed']){
+    assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),marker+' is missing');
+  }
+  assert.match(suite,/jobs\(\)\.filter\(j=>j\.type!=='blocked'\)/);
+  assert.match(suite,/const customerKey=j=>j\.highlevelContactId\|\|String\(j\.phone/);
+  assert.doesNotMatch(suite,/Stripe payment (?:sent|completed)|QuickBooks invoice (?:sent|completed)/i);
+});
+
+test('HighLevel schedule handoff advances the configured pipeline stage',async()=>{
+  const {onRequestPost}=await import('../functions/api/highlevel.js');
+  const calls=[],originalFetch=globalThis.fetch;
+  globalThis.fetch=async(url,options={})=>{
+    calls.push({url:String(url),options});
+    if(String(url).includes('/opportunities/search?'))return new Response(JSON.stringify({opportunities:[{id:'opp-1',contactId:'contact-1',pipelineId:'pipe-1',name:'Test garage',status:'open',monetaryValue:1400}]}),{status:200});
+    if(String(url).endsWith('/calendars/events/appointments'))return new Response(JSON.stringify({id:'appt-1'}),{status:200});
+    return new Response('{}',{status:200});
+  };
+  try{
+    const request=new Request('https://easygaragecleaning.com/api/highlevel',{method:'POST',headers:{Origin:'https://easygaragecleaning.com','Content-Type':'application/json'},body:JSON.stringify({tool:'schedule',event_type:'job',opportunity_id:'opp-1',start_time:'2026-09-10T15:00:00.000Z',end_time:'2026-09-10T18:00:00.000Z',client:{name:'Test Customer',highlevel_contact_id:'contact-1'}})});
+    const response=await onRequestPost({request,env:{HIGHLEVEL_API_KEY:'test-key',HIGHLEVEL_LOCATION_ID:'location-1',HIGHLEVEL_PIPELINE_ID:'pipe-1',HIGHLEVEL_SCHEDULED_STAGE_ID:'stage-scheduled',HIGHLEVEL_JOB_CALENDAR_ID:'calendar-1'}});
+    const result=await response.json();
+    assert.equal(response.status,200);
+    assert.equal(result.pipeline.updated,true);
+    const update=calls.find(x=>x.url.endsWith('/opportunities/opp-1')&&x.options.method==='PUT');
+    assert.ok(update,'opportunity update was not sent');
+    assert.equal(update.options.headers.Version,'v3');
+    assert.deepEqual(JSON.parse(update.options.body),{pipelineId:'pipe-1',name:'Test garage',pipelineStageId:'stage-scheduled',status:'open',monetaryValue:1400});
+  }finally{globalThis.fetch=originalFetch}
+});
+
+test('HighLevel creates one retry-safe pipeline opportunity for a brand-new customer',async()=>{
+  const {onRequestPost}=await import('../functions/api/highlevel.js');
+  const calls=[],originalFetch=globalThis.fetch;
+  globalThis.fetch=async(url,options={})=>{
+    calls.push({url:String(url),options});
+    if(String(url).endsWith('/contacts/upsert'))return new Response(JSON.stringify({contact:{id:'contact-new'}}),{status:200});
+    if(String(url).includes('/calendars/events?'))return new Response(JSON.stringify({events:[]}),{status:200});
+    if(String(url).endsWith('/calendars/events/appointments'))return new Response(JSON.stringify({id:'appt-new'}),{status:200});
+    if(String(url).includes('/opportunities/search?'))return new Response(JSON.stringify({opportunities:[]}),{status:200});
+    if(String(url).endsWith('/opportunities/upsert'))return new Response(JSON.stringify({opportunity:{id:'opp-new'}}),{status:200});
+    return new Response('{}',{status:200});
+  };
+  try{
+    const request=new Request('https://easygaragecleaning.com/api/highlevel',{method:'POST',headers:{Origin:'https://easygaragecleaning.com','Content-Type':'application/json','Idempotency-Key':'schedule:job-new:1'},body:JSON.stringify({tool:'schedule',event_type:'job',opportunity_name:'New Customer — Garage transformation',monetary_value:1750,start_time:'2026-09-11T15:00:00.000Z',end_time:'2026-09-11T18:00:00.000Z',client:{name:'New Customer',phone:'9705550199'}})});
+    const response=await onRequestPost({request,env:{HIGHLEVEL_API_KEY:'test-key',HIGHLEVEL_LOCATION_ID:'location-1',HIGHLEVEL_PIPELINE_ID:'pipe-1',HIGHLEVEL_SCHEDULED_STAGE_ID:'stage-scheduled',HIGHLEVEL_JOB_CALENDAR_ID:'calendar-1'}});
+    const result=await response.json();
+    assert.equal(response.status,200);
+    assert.equal(result.pipeline.created,true);
+    assert.equal(result.pipeline.opportunityId,'opp-new');
+    const upserts=calls.filter(x=>x.url.endsWith('/opportunities/upsert'));
+    assert.equal(upserts.length,1);
+    assert.equal(upserts[0].options.headers.Version,'v3');
+    assert.equal(upserts[0].options.headers['Idempotency-Key'],'schedule:job-new:1');
+    assert.deepEqual(JSON.parse(upserts[0].options.body),{pipelineId:'pipe-1',locationId:'location-1',name:'New Customer — Garage transformation',pipelineStageId:'stage-scheduled',status:'open',contactId:'contact-new',monetaryValue:1750,assignedTo:'w92vfhwm3a8twTIowpQz',followers:['w92vfhwm3a8twTIowpQz'],isRemoveAllFollowers:false,followersActionType:'add'});
+    assert.equal(calls.filter(x=>/\/opportunities\/[^/]+$/.test(new URL(x.url).pathname)&&x.options.method==='PUT').length,0);
+  }finally{globalThis.fetch=originalFetch}
+});
+
+test('HighLevel reuses the same exact appointment after a response-lost retry',async()=>{
+  const {onRequestPost}=await import('../functions/api/highlevel.js');
+  const calls=[],originalFetch=globalThis.fetch,start='2026-09-12T15:00:00.000Z',end='2026-09-12T18:00:00.000Z';
+  globalThis.fetch=async(url,options={})=>{
+    calls.push({url:String(url),options});
+    if(String(url).includes('/calendars/events?'))return new Response(JSON.stringify({events:[{id:'appt-existing',contactId:'contact-1',startTime:start,endTime:end,appointmentStatus:'confirmed'}]}),{status:200});
+    if(String(url).includes('/opportunities/search?'))return new Response(JSON.stringify({opportunities:[{id:'opp-1',contactId:'contact-1',pipelineId:'pipe-1',name:'Existing job',status:'open',monetaryValue:900}]}),{status:200});
+    return new Response('{}',{status:200});
+  };
+  try{
+    const request=new Request('https://easygaragecleaning.com/api/highlevel',{method:'POST',headers:{Origin:'https://easygaragecleaning.com','Content-Type':'application/json'},body:JSON.stringify({tool:'schedule',event_type:'job',opportunity_id:'opp-1',start_time:start,end_time:end,client:{name:'Existing Customer',highlevel_contact_id:'contact-1'}})});
+    const response=await onRequestPost({request,env:{HIGHLEVEL_API_KEY:'test-key',HIGHLEVEL_LOCATION_ID:'location-1',HIGHLEVEL_PIPELINE_ID:'pipe-1',HIGHLEVEL_SCHEDULED_STAGE_ID:'stage-scheduled',HIGHLEVEL_JOB_CALENDAR_ID:'calendar-1'}});
+    const result=await response.json();
+    assert.equal(response.status,200);
+    assert.equal(result.appointmentId,'appt-existing');
+    assert.equal(result.reused,true);
+    assert.equal(calls.filter(x=>x.url.endsWith('/calendars/events/appointments')&&x.options.method==='POST').length,0);
+  }finally{globalThis.fetch=originalFetch}
+});
+
+test('employees can discover and safely pick up manager-opened crew shifts',()=>{
+  for(const marker of ["'open_shifts'",'Open shifts','Crew needed','openShift','crewNeeded','assignedCrew','remaining</b>','Route','Pick up shift']){
+    assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),marker+' is missing');
+  }
+  assert.match(suite,/db\.collection\('jobs'\)\.doc\(id\)/);
+  assert.match(suite,/db\.runTransaction\(async tx=>/);
+  assert.match(suite,/await tx\.get\(ref\)/);
+  assert.match(suite,/tx\.set\(ref,patch,\{merge:true\}\)/);
+  assert.match(suite,/assignedCrew=\[\.\.\.crew,identity\]/);
+  assert.match(suite,/openShift=assignedCrew\.length<needed/);
+  for(const guard of ['SHIFT_MISSING','SHIFT_CLOSED','SHIFT_DUPLICATE','SHIFT_FULL','Sign in again before claiming a shift'])assert.match(suite,new RegExp(guard));
+  assert.doesNotMatch(suite,/collection\(['"]open_shifts['"]\)/);
+});
+
+test('open-shift scheduling fields persist on the canonical job record',()=>{
+  for(const field of ['openShift','crewNeeded','assignedCrew'])assert.match(suite,new RegExp(field+','));
+  assert.match(suite,/b\.openShift=fd\.has\('openShift'\)/);
+  assert.match(suite,/openShift:b\.type==='job'/);
+  assert.match(suite,/assignedCrew\.length<crewNeeded/);
+  assert.match(employee,/employee-suite\.css\?v=20260903g/);
+  assert.match(employee,/employee-suite\.js\?v=20260903g/);
+});
+
 test('walkthrough preserves job creation time and hands off the scheduled job appointment',()=>{
   assert.match(crew,/if\(!existing\.exists\)job\.createdAt=now/);
   assert.match(crew,/highlevelAppointmentId:S\.highlevelJobAppointmentId/);
