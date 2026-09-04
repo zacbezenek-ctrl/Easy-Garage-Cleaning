@@ -21,7 +21,7 @@
  *   HIGHLEVEL_LEADS_RESET_AT
  */
 
-import { getHubSession } from '../_lib/hub-session.js';
+import { getHubSession, hasBusinessAccess } from '../_lib/hub-session.js';
 
 const API = 'https://services.leadconnectorhq.com';
 const DEFAULT_LEAD_RESET_AT = '2026-09-03T21:51:19.314Z';
@@ -473,10 +473,12 @@ export async function onRequestOptions() {
 
 export async function onRequestGet({ request, env }) {
   if (!allowed(request)) return reply(403, { ok: false, error: 'Forbidden origin' });
-  if (!await getHubSession(request, env)) return reply(401, { ok: false, code: 'HUB_AUTH_REQUIRED', error: 'Sign in to the EGC Hub' });
+  const session = await getHubSession(request, env);
+  if (!session) return reply(401, { ok: false, code: 'HUB_AUTH_REQUIRED', error: 'Sign in to the EGC Hub' });
   const c = config(env);
   if (!c.token || !c.locationId) return reply(501, { ok: false, code: 'HIGHLEVEL_NOT_CONFIGURED', error: 'HighLevel needs an API key and location ID' });
   const url = new URL(request.url), view = url.searchParams.get('view') || 'command';
+  if (view === 'walkthroughs' && !hasBusinessAccess(session)) return reply(403, { ok: false, code: 'BUSINESS_ACCESS_REQUIRED', error: 'Walkthrough access is limited to Zac, Tyler, and Alex' });
   try {
     if (view === 'contacts') {
       const q = String(url.searchParams.get('q') || '').trim();
@@ -501,7 +503,8 @@ export async function onRequestGet({ request, env }) {
 
 export async function onRequestPost({ request, env }) {
   if (!allowed(request)) return reply(403, { ok: false, error: 'Forbidden origin' });
-  if (!await getHubSession(request, env)) return reply(401, { ok: false, code: 'HUB_AUTH_REQUIRED', error: 'Sign in to the EGC Hub' });
+  const session = await getHubSession(request, env);
+  if (!session) return reply(401, { ok: false, code: 'HUB_AUTH_REQUIRED', error: 'Sign in to the EGC Hub' });
   const c = config(env);
   if (!c.token || !c.locationId) return reply(501, { ok: false, code: 'HIGHLEVEL_NOT_CONFIGURED', error: 'HighLevel needs an API key and location ID' });
   const raw = await request.text();
@@ -510,6 +513,7 @@ export async function onRequestPost({ request, env }) {
   try { payload = JSON.parse(raw); } catch { return reply(400, { ok: false, error: 'Invalid JSON' }); }
   payload.idempotency_key ||= request.headers.get('Idempotency-Key') || '';
   if (!['game_plan','post_job','schedule','lifecycle'].includes(payload.tool)) return reply(400, { ok: false, error: 'Unsupported HighLevel handoff' });
+  if (payload.tool === 'game_plan' && !hasBusinessAccess(session)) return reply(403, { ok: false, code: 'BUSINESS_ACCESS_REQUIRED', error: 'Walkthrough access is limited to Zac, Tyler, and Alex' });
   const client = payload.client || payload.job || {};
   try {
     const contactId = await ensureContact(c, { ...client, highlevel_contact_id: client.highlevel_contact_id || payload.highlevel_contact_id }, payload.tool === 'schedule' ? 'EGC Hub schedule' : payload.tool === 'lifecycle' ? 'EGC Hub lifecycle' : 'EGC walkthrough');

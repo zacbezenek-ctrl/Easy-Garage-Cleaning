@@ -1,5 +1,6 @@
 (function () {
   const KEYS = ['egc_u', 'egc_tok', 'egc_exp', 'egc_name', 'egc_role', 'egc_pay_type', 'egc_hourly_rate'];
+  const BUSINESS_USERS = new Set(['zacb', 'tylerg', 'alexk']);
 
   function remember(user, profile = {}) {
     try {
@@ -14,6 +15,9 @@
       }
       const person = document.querySelector('.crew-utility-person');
       if (person) person.textContent = profile.displayName || user;
+      const nav = document.querySelector('.crew-utility');
+      if (nav) nav.remove();
+      if (document.readyState !== 'loading') mountCrewNav();
     } catch {}
   }
 
@@ -87,6 +91,10 @@
     };
   }
 
+  function canRunBusiness(user = profile().user) {
+    return BUSINESS_USERS.has(String(user || '').trim().toLowerCase());
+  }
+
   function mountCrewNav() {
     if (document.querySelector('.crew-utility')) return;
     const host = document.getElementById('topbar') || document.querySelector('#app .top');
@@ -98,7 +106,7 @@
       ['/crew/prejob', 'Pre-job'],
       ['/crew/postjob', 'Closeout'],
       ['/employee', 'My Hub'],
-    ];
+    ].filter(([href]) => href !== '/crew/gameplan' || canRunBusiness());
     const nav = document.createElement('nav');
     nav.className = 'crew-utility';
     nav.setAttribute('aria-label', 'Crew workflow');
@@ -108,5 +116,5 @@
 
   window.addEventListener('DOMContentLoaded', mountCrewNav);
 
-  window.EGCHubAuth = { session, signIn, signOut, fetch: securedFetch, clearLocal, profile, mountCrewNav };
+  window.EGCHubAuth = { session, signIn, signOut, fetch: securedFetch, clearLocal, profile, canRunBusiness, mountCrewNav };
 })();

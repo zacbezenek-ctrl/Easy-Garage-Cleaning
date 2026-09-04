@@ -333,8 +333,8 @@ test('durable job start pre-fills elapsed closeout time without preventing corre
 test('crew tools provide a job-aware employee home and one connected workflow',()=>{
   for(const marker of ['Your workday','next-work','My upcoming work','Estimated pay','loadEmployeeData','loadAssignedJobs','workLink','Open job brief','Continue closeout','Time clock','Report issue','offline'])assert.match(crewHome,new RegExp(marker));
   for(const page of [crewHome,crew,prejob,postjob]){
-    assert.match(page,/crew-brand\.css\?v=20260904b/);
-    assert.match(page,/hub-auth\.js\?v=20260904b/);
+    assert.match(page,/crew-brand\.css\?v=20260904c/);
+    assert.match(page,/hub-auth\.js\?v=20260904c/);
   }
   const auth=read('crew/hub-auth.js');
   for(const marker of ['mountCrewNav','crew-utility','Crew home','Walkthrough','Pre-job','Closeout','My Hub'])assert.match(auth,new RegExp(marker));
@@ -343,6 +343,35 @@ test('crew tools provide a job-aware employee home and one connected workflow',(
     assert.match(page,/copyScript\(\$\{si\},this\)/);
     assert.doesNotMatch(page,/event\.target\.textContent="Copied/);
   }
+});
+
+test('walkthrough access stays limited to Zac Tyler and Alex while employees get pre-job and closeout',()=>{
+  const auth=read('crew/hub-auth.js');
+  for(const marker of ["new Set(['zacb', 'tylerg', 'alexk'])",'function canRunBusiness','href !== \'/crew/gameplan\' || canRunBusiness()'])assert.match(auth,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
+  for(const marker of ['denyWalkthrough',"location.replace('/crew/?notice=walkthrough-restricted')",'!EGCHubAuth.canRunBusiness(user)'])assert.match(crew,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
+  assert.match(crewHome,/\(business\|\|job\.type!==\'walkthrough\'\)/);
+  assert.match(crewHome,/document\.getElementById\('walkthrough-tool'\)\.hidden=!business/);
+  assert.match(crewHome,/Pre-job → closeout/);
+  for(const marker of ["view === 'walkthroughs' && !hasBusinessAccess(session)","payload.tool === 'game_plan' && !hasBusinessAccess(session)",'BUSINESS_ACCESS_REQUIRED'])assert.match(highlevel,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
+});
+
+test('walkthrough APIs reject a signed-in regular employee',async()=>{
+  const {onRequestGet,onRequestPost}=await import('../functions/api/highlevel.js');
+  const env={...TEST_HUB_ENV,HIGHLEVEL_API_KEY:'test-key',HIGHLEVEL_LOCATION_ID:'location-1'},cookie=(await createHubSessionCookie(env,'FrankJara')).split(';')[0],headers={Origin:'https://easygaragecleaning.com',Cookie:cookie};
+  const list=await onRequestGet({request:new Request('https://easygaragecleaning.com/api/highlevel?view=walkthroughs',{headers}),env});
+  assert.equal(list.status,403);
+  assert.equal((await list.json()).code,'BUSINESS_ACCESS_REQUIRED');
+  const save=await onRequestPost({request:new Request('https://easygaragecleaning.com/api/highlevel',{method:'POST',headers:{...headers,'Content-Type':'application/json'},body:JSON.stringify({tool:'game_plan'})}),env});
+  assert.equal(save.status,403);
+  assert.equal((await save.json()).code,'BUSINESS_ACCESS_REQUIRED');
+});
+
+test('pre-job and closeout share walkthrough styling and preserve important-item photos',()=>{
+  const brand=read('crew/crew-brand.css');
+  for(const page of [prejob,postjob])assert.match(page,/<body class="crew-playbook-modern">/);
+  for(const marker of ['.crew-playbook-modern .important-record','.crew-playbook-modern #sections>section','.crew-playbook-modern .item.on','.crew-playbook-modern #donebar'])assert.match(brand,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
+  for(const marker of ['Important items &amp; heirlooms','important_notes','mountImportantItems','photoAdd(jobKey(),"important"','importantItemPhotoCount','importantItemsRecordedAt'])assert.match(prejob,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
+  for(const marker of ['Important items &amp; heirlooms','important_ref','photo.tag==="important"','important_item_notes','photos:{after:AFTER_COUNT,important:IMPORTANT_COUNT}','importantItemsVerifiedAt'])assert.match(postjob,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
 });
 
 test('weekly timesheets use individual timecards with a legacy closeout fallback',()=>{

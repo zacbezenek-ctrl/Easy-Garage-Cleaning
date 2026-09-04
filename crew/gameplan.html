@@ -29,7 +29,7 @@ main{max-width:1060px;margin:auto;padding:28px 22px 118px}.screen-head{display:f
 @media(max-width:760px){main{padding:22px 14px 110px}.top-row,.steps{padding-left:14px;padding-right:14px}.screen-head{display:block}.autosave{margin-top:8px}.grid2,.grid3,.service-grid{grid-template-columns:1fr}.choices.cols4{grid-template-columns:1fr 1fr}.review{grid-template-columns:1fr}.photos{grid-template-columns:repeat(2,1fr)}.before-after img{height:170px}.sum-row{grid-template-columns:110px 1fr}.top-status span{display:none}}
 @media(max-width:420px){.panel{padding:17px}.screen-head h1{font-size:27px}.choices.cols2,.check-grid{grid-template-columns:1fr}.inline-search{flex-direction:column}.small-btn{min-height:46px}.send-grid{grid-template-columns:1fr}.next{min-width:135px}.photos{grid-template-columns:repeat(2,1fr)}}
 </style>
-<link rel="stylesheet" href="/crew/crew-brand.css?v=20260904b">
+<link rel="stylesheet" href="/crew/crew-brand.css?v=20260904c">
 </head>
 <body>
 <div id="gate"><form class="gate-card" onsubmit="login(event)"><div class="gate-mark">EGC</div><h1>Crew sign-in</h1><p>Use your employee portal login.</p><label for="user">Username</label><input id="user" autocomplete="username"><label for="pass">Password</label><input id="pass" type="password" autocomplete="current-password"><button>Unlock walkthrough</button><div class="gate-error" id="gate-error">Incorrect username or password.</div></form></div>
@@ -39,7 +39,7 @@ main{max-width:1060px;margin:auto;padding:28px 22px 118px}.screen-head{display:f
   <footer class="bottom"><div class="bottom-in"><button class="back" id="back" onclick="move(-1)">Back</button><button class="next" id="next" onclick="move(1)">Continue</button></div></footer>
 </div>
 <div id="viewer" onclick="this.classList.remove('on')"><button aria-label="Close">×</button><img id="viewer-img" alt="Walkthrough photo"></div>
-<script src="/crew/hub-auth.js?v=20260904b"></script>
+<script src="/crew/hub-auth.js?v=20260904c"></script>
 <script>
 const SAVE='egc_walkthrough_v3',FLOW='2026-09-simple',REQUESTED_WALKTHROUGH_ID=new URLSearchParams(location.search).get('walkthroughId')||'';
 const sections=['Customer','Photos','Scope','Finish','Schedule','Review'];
@@ -50,8 +50,9 @@ const $=id=>document.getElementById(id),esc=v=>String(v==null?'':v).replace(/[&<
 const money=v=>'$'+Number(v||0).toLocaleString('en-US',{maximumFractionDigits:0});
 const uid=()=>Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,8);
 const normPhone=raw=>{const d=String(raw||'').replace(/\D/g,'');return d.length===10?'+1'+d:d.length===11&&d[0]==='1'?'+'.concat(d):d};
-async function validSession(){return EGCHubAuth.session()}
-async function login(e){e.preventDefault();const button=e.submitter||e.currentTarget.querySelector('button'),error=$('gate-error');button.disabled=true;button.textContent='Signing in…';error.style.display='none';try{await EGCHubAuth.signIn($('user').value.trim(),$('pass').value);await openApp()}catch(err){error.textContent=err.message||'Unable to sign in. Try again.';error.style.display='block'}finally{button.disabled=false;button.textContent='Unlock walkthrough'}}
+function denyWalkthrough(){location.replace('/crew/?notice=walkthrough-restricted')}
+async function validSession(){const user=await EGCHubAuth.session();if(user&&!EGCHubAuth.canRunBusiness(user)){denyWalkthrough();return null}return user}
+async function login(e){e.preventDefault();const button=e.submitter||e.currentTarget.querySelector('button'),error=$('gate-error');button.disabled=true;button.textContent='Signing in…';error.style.display='none';try{const user=await EGCHubAuth.signIn($('user').value.trim(),$('pass').value);if(!EGCHubAuth.canRunBusiness(user)){denyWalkthrough();return}await openApp()}catch(err){error.textContent=err.message||'Unable to sign in. Try again.';error.style.display='block'}finally{button.disabled=false;button.textContent='Unlock walkthrough'}}
 async function logout(){await EGCHubAuth.signOut();location.reload()}
 let hubDb=null;
 try{if(window.firebase){if(!firebase.apps.length)firebase.initializeApp({apiKey:'AIzaSyA8g4UAW4P4bsCrQNZhUe81CbC7BvjJbNc',authDomain:'egcw-1ec83.firebaseapp.com',projectId:'egcw-1ec83',storageBucket:'egcw-1ec83.firebasestorage.app',messagingSenderId:'763340109795',appId:'1:763340109795:web:ac203b3eb71831fa4ed2d6'});hubDb=firebase.firestore()}}catch(e){}

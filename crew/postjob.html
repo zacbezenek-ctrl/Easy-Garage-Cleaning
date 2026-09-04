@@ -6,7 +6,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <title>EGC · Post-Job Playbook</title>
 <meta name="robots" content="noindex">
-<link href="https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@600;700&family=Oswald:wght@500;600;700&display=swap" rel="stylesheet">
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
 <style>
@@ -123,9 +123,9 @@
            border:none;border-radius:var(--r);padding:17px;background:var(--line);color:var(--khaki);min-height:56px}
   #donebtn.ready{background:var(--orange);color:#fff;cursor:pointer}
 </style>
-<link rel="stylesheet" href="/crew/crew-brand.css?v=20260904b">
+<link rel="stylesheet" href="/crew/crew-brand.css?v=20260904c">
 </head>
-<body>
+<body class="crew-playbook-modern">
 
 <!-- ═══ EGC crew gate — same credentials as /employee.html (a portal sign-in in this tab carries over) ═══ -->
 <style>
@@ -154,7 +154,7 @@
     <div class="gerr" id="gate-err">Incorrect username or password.</div>
   </div>
 </div>
-<script src="/crew/hub-auth.js?v=20260904b"></script>
+<script src="/crew/hub-auth.js?v=20260904c"></script>
 <script>
 async function gateLogin(){
   const button=document.querySelector("#egc-gate .gbtn"),error=document.getElementById("gate-err");
@@ -208,8 +208,17 @@ EGCHubAuth.session().then(user=>{if(user){document.getElementById("egc-gate").cl
 
   <div id="client-checklist"></div>
 
+  <section class="important-record important-review" aria-labelledby="important-title">
+    <div class="important-head">
+      <div><div class="when">Verify before the truck leaves</div><h2 id="important-title">Important items &amp; heirlooms</h2></div>
+      <span class="important-badge">Final protection check</span>
+    </div>
+    <p>Match the protected-items record from Pre-job. Confirm each item is still safe, in the agreed location, and never entered the haul pile.</p>
+    <div id="important_ref" aria-live="polite"></div>
+  </section>
+
   <div class="photocard" id="photocard">
-    <div class="ttl">Walkthrough reference photos</div>
+    <div class="ttl">Before-job reference photos</div>
     <div id="pb_ref"></div>
   </div>
 
@@ -234,6 +243,7 @@ const SECTIONS = [
       {t:"Walk the garage with the homeowner", s:"The final walkthrough sign-off — guarantee #2. Use the script — let them stand in the empty space and react. Don't talk first.", crit:true},
       {t:"Get their reaction on camera (ask permission)", s:"“Mind if I grab your reaction for our page?” A real ‘holy shit’ is the best ad EGC will ever run."},
       {t:"Installed upgrades demoed", s:"If racks/bins went in — show them the system. Open a bin. Point at the labels. They bought an outcome, show it working."},
+      {t:"Important items matched to the photo record", s:"Verify every heirloom, document, keepsake, valuable, and do-not-touch item with the record above before leaving.", crit:true},
       {t:"Keep-items walkthrough", s:"Show where everything they kept lives now. Zero ‘where did my…’ texts tomorrow."},
     ],
     script:{h:"The reveal — say this, then shut up", p:[
@@ -335,8 +345,8 @@ function fileToDataUrl(file,max=1600,q=0.82){return new Promise((res,rej)=>{cons
     const cv=document.createElement("canvas");cv.width=w;cv.height=h;cv.getContext("2d").drawImage(img,0,0,w,h);
     res(cv.toDataURL("image/jpeg",q));};img.onerror=rej;img.src=URL.createObjectURL(file);});}
 function viewPhoto(src){const v=document.getElementById("pviewer");document.getElementById("pviewerimg").src=src;v.classList.add("on");}
-let AFTER_COUNT=0;
-async function refreshAfterCount(){try{AFTER_COUNT=(await photoList(jobKey(),"after")).length;}catch(e){}}
+let AFTER_COUNT=0,IMPORTANT_COUNT=0;
+async function refreshPhotoCounts(){try{const all=await photoList(jobKey());AFTER_COUNT=all.filter(photo=>photo.tag==="after").length;IMPORTANT_COUNT=all.filter(photo=>photo.tag==="important").length;}catch(e){}}
 
 /* ===== HighLevel contact lookup (read-only, via /api/highlevel) ===== */
 let LOOK=[];
@@ -402,8 +412,8 @@ async function driveUploadAll(btn,doneEl){
     }catch(e){failed=true;failureDetail=String(e.message||e).slice(0,160);break;}
   }
   if(folderUrl){try{localStorage.setItem(driveKey(),folderUrl);}catch(e){}}
-  const syncStatus=failed?(sent?"partial":failureStatus):"synced",afterPhotoCount=ps.filter(p=>p.tag==="after").length,receiptPhotoCount=ps.filter(p=>p.tag==="receipt").length,syncedAt=new Date().toISOString();
-  if(HUBDB&&ACTIVE.jobId)await HUBDB.collection('jobs').doc(ACTIVE.jobId).set({photoDriveUrl:folderUrl||'',proofPhotoCount:ps.length,afterPhotoCount,receiptPhotoCount,photoSyncStatus:syncStatus,photoSyncError:failed?failureDetail:'',photoSyncedAt:!failed?syncedAt:'',updatedAt:syncedAt},{merge:true}).catch(()=>{});
+  const syncStatus=failed?(sent?"partial":failureStatus):"synced",afterPhotoCount=ps.filter(p=>p.tag==="after").length,receiptPhotoCount=ps.filter(p=>p.tag==="receipt").length,importantItemPhotoCount=ps.filter(p=>p.tag==="important").length,syncedAt=new Date().toISOString();
+  if(HUBDB&&ACTIVE.jobId)await HUBDB.collection('jobs').doc(ACTIVE.jobId).set({photoDriveUrl:folderUrl||'',proofPhotoCount:ps.length,afterPhotoCount,receiptPhotoCount,importantItemPhotoCount,photoSyncStatus:syncStatus,photoSyncError:failed?failureDetail:'',photoSyncedAt:!failed?syncedAt:'',updatedAt:syncedAt},{merge:true}).catch(()=>{});
   if(HUBDB&&ACTIVE.customerId&&folderUrl)await HUBDB.collection('customers').doc(ACTIVE.customerId).set({latestJobId:ACTIVE.jobId,latestPhotoFolderUrl:folderUrl,latestProofPhotoCount:ps.length,photoUpdatedAt:syncedAt,updatedAt:syncedAt},{merge:true}).catch(()=>{});
   btn.disabled=false;
   if(failed&&!sent){btn.textContent="⬆️ Retry Drive upload";alert("Upload didn't go through — check signal and tap again. Photos are still on this iPad.");}
@@ -423,7 +433,7 @@ async function mountActions(){
     else if(it.act.type==="drive"){const known=localStorage.getItem(driveKey())||"";
       el.innerHTML=`<button class="actbtn" onclick="event.stopPropagation();driveUploadAll(this,this.nextElementSibling)">⬆️ Upload to Drive folder</button><span>${known?`<a class="drivelink" href="${known}" target="_blank" rel="noopener">Open Drive folder ↗</a>`:""}</span>`;}
   }}
-  refreshAfterCount();
+  refreshPhotoCounts();
 }
 async function mountPhotoAct(el,act){
   let photos=[]; try{photos=await photoList(jobKey(),act.tag);}catch(e){}
@@ -435,8 +445,8 @@ async function mountPhotoAct(el,act){
 }
 async function onActPhoto(input,tag){const f=input.files&&input.files[0]; if(!f) return;
   try{const url=await fileToDataUrl(f);await photoAdd(jobKey(),tag,url);}catch(e){}
-  input.value="";mountActions();}
-async function onActPhotoDel(id){await photoDel(id);mountActions();}
+  input.value="";mountActions();mountRef();}
+async function onActPhotoDel(id){await photoDel(id);mountActions();mountRef();}
 async function shareAllPhotos(){
   const job=jobKey(); let ps=[]; try{ps=await photoList(job);}catch(e){}
   if(!ps.length){alert("No photos on this device for this job yet — capture before/after first.");return;}
@@ -453,10 +463,12 @@ async function shareAllPhotos(){
   ps.forEach(p=>{const a=document.createElement("a");a.href=p.dataUrl;a.download=(p.tag||"photo")+"-"+p.id+".jpg";document.body.appendChild(a);a.click();a.remove();});
 }
 async function mountRef(){
-  const el=document.getElementById("pb_ref"); if(!el) return;
-  let befs=[]; try{befs=await photoList(jobKey(),"before");}catch(e){}
-  if(!befs.length){el.innerHTML=`<div style="color:var(--khaki);font-size:13.5px">No walkthrough photos on this device. Use the client photo-folder link above when available.</div>`;return;}
-  el.innerHTML=`<div class="ttl" style="margin-top:10px">Before</div><div class="photostrip">${befs.map((p,i)=>`<div class="pthumb"><img src="${p.dataUrl}" alt="Before-job reference photo ${i+1}" role="button" tabindex="0" onclick="viewPhoto(this.src)" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();viewPhoto(this.src)}"></div>`).join("")}</div>`;
+  const el=document.getElementById("pb_ref"),importantEl=document.getElementById("important_ref");if(!el||!importantEl)return;
+  let befs=[],important=[];try{const all=await photoList(jobKey());befs=all.filter(photo=>photo.tag==="before");important=all.filter(photo=>photo.tag==="important")}catch(e){}
+  IMPORTANT_COUNT=important.length;
+  el.innerHTML=befs.length?`<div class="photostrip">${befs.map((p,i)=>`<div class="pthumb"><img src="${p.dataUrl}" alt="Before-job reference photo ${i+1}" role="button" tabindex="0" onclick="viewPhoto(this.src)" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();viewPhoto(this.src)}"></div>`).join("")}</div>`:`<div class="empty-photo-note">No before-job photos are saved on this device. Use the client photo-folder link above when available.</div>`;
+  const notes=ACTIVE.importantItemNotes||'';
+  importantEl.innerHTML=`${notes?`<div class="important-notes"><strong>Protection notes</strong><span>${esc(notes)}</span></div>`:`<div class="important-notes missing"><strong>No protection notes attached</strong><span>Ask the customer and document anything important before final sign-off.</span></div>`}<div class="important-count">${important.length} protected-item photo${important.length===1?'':'s'} attached</div><div class="photostrip"><label class="padd important-add"><span>+</span>Add photo<input type="file" accept="image/*" capture="environment" style="display:none" onchange="onActPhoto(this,'important')"></label>${important.map((p,i)=>`<div class="pthumb"><img src="${p.dataUrl}" alt="Important item reference photo ${i+1}" role="button" tabindex="0" onclick="viewPhoto(this.src)" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();viewPhoto(this.src)}"></div>`).join("")}</div>`;
 }
 function setGuard(v){GUARD=(GUARD===v?"":v);render();saveAll();}
 function saveAll(){
@@ -557,6 +569,7 @@ let _finishId="";
 async function finish(){
   const total=totalChecks();
   if(totalDone()<total) return;
+  await refreshPhotoCounts();
   const v=id=>document.getElementById(id).value;
   const actualLoadsRaw=v("j_loads"),hoursRaw=v("j_hours"),actualLoads=Number(actualLoadsRaw),hoursOnSite=Number(hoursRaw),quotedLoads=Number(ACTIVE.scope?.loads||0),variance=actualLoads-quotedLoads,closeoutNotes=v("j_notes").trim();
   if(CENTRAL_JOB_ID&&!ACTIVE.preJobCompletedAt&&!ACTIVE.preJobException){const reason=prompt("No completed pre-job handoff was found. Enter the manager-approved exception reason to continue.");if(!String(reason||'').trim()){alert("Closeout stopped. Complete the pre-job handoff or record a manager-approved exception.");return}ACTIVE.preJobException=String(reason).trim()}
@@ -572,9 +585,9 @@ async function finish(){
   const payload={tool:"post_job",request_id:_finishId,job_id:ACTIVE.jobId||"",opportunity_id:ACTIVE.highlevelOpportunityId||"",idempotency_key:`post-job:${ACTIVE.jobId||"manual"}:${_finishId}`,sent_at:new Date().toISOString(),
     job:{customer:v("j_name"),phone:normPhone(v("j_phone")),date:v("j_date"),quoted_loads:quotedLoads,actual_loads:actualLoads,
          hours_on_site:hoursOnSite,started_at:ACTIVE.startedAt||"",dump_fees:Number(v("j_fees")||0),notes:closeoutNotes,
-         package:ACTIVE.pkg||"",quoted_rate:ACTIVE.rate||"",locked_total:ACTIVE.total||ACTIVE.rate||"",pain:ACTIVE.pain||"",customer_goal:ACTIVE.instructions?.customerGoal||"",original_customer_notes:ACTIVE.instructions?.customerNotes||ACTIVE.customerNotesSummary||"",pre_job_completed_at:ACTIVE.preJobCompletedAt||"",pre_job_exception:ACTIVE.preJobException||""},
+         package:ACTIVE.pkg||"",quoted_rate:ACTIVE.rate||"",locked_total:ACTIVE.total||ACTIVE.rate||"",pain:ACTIVE.pain||"",customer_goal:ACTIVE.instructions?.customerGoal||"",original_customer_notes:ACTIVE.instructions?.customerNotes||ACTIVE.customerNotesSummary||"",important_item_notes:ACTIVE.importantItemNotes||"",pre_job_completed_at:ACTIVE.preJobCompletedAt||"",pre_job_exception:ACTIVE.preJobException||""},
     garage_guard:GUARD||"not recorded",
-    photos:{after:AFTER_COUNT},
+    photos:{after:AFTER_COUNT,important:IMPORTANT_COUNT},
     drive_folder:(function(){try{return localStorage.getItem(driveKey())||"";}catch(e){return "";}})(),
     highlevel_contact_id:ACTIVE.highlevelContactId||"",
      client_checklist:clientItems().map(it=>({label:it.label,detail:it.detail,completed:true})),
@@ -584,7 +597,7 @@ async function finish(){
   try{const log=JSON.parse(localStorage.getItem("egc_job_log")||"[]");log.push(payload);
     localStorage.setItem("egc_job_log",JSON.stringify(log.slice(-50)));}catch(e){}
   const completedAt=new Date().toISOString();
-  if(HUBDB&&ACTIVE.jobId){const paidNow=paymentMethod!=="unpaid"&&Boolean(paymentReference),existingPayment=ACTIVE.paymentRecord&&typeof ACTIVE.paymentRecord==='object'?ACTIVE.paymentRecord:{},paymentRecord=paidNow?{...existingPayment,amount:cumulativePaid,lastAmount:paymentAmount,lastReceivedAt:completedAt,method:paymentMethod,reference:paymentReference,verified:true,recordedBy:'crew'}:(Object.keys(existingPayment).length?existingPayment:{amount:0,method:'unpaid',verified:false}),completedBy=sessionStorage.getItem('egc_u')||localStorage.getItem('egc_u')||'';try{await HUBDB.collection('jobs').doc(ACTIVE.jobId).set({status:paidInFull?'paid':'completed',pipelineStatus:paidInFull?'paid':'completed',completedAt,actualLoads,hoursOnSite,timeTracking:{startedAt:ACTIVE.startedAt||'',completedAt,elapsedHours:hoursOnSite,recordedBy:completedBy},dumpFees:Number(v('j_fees')||0),closeoutNotes,closeoutPreJobException:ACTIVE.preJobException||'',scopeVariance:{quotedLoads,actualLoads,difference:variance,notes:closeoutNotes,recordedAt:completedAt},postJobProgress:{...progressPayload(),completedAt},postJobChecklist:{completedAt,completedBy,clientItems:clientItems().map(it=>({id:it.id,label:it.label,detail:it.detail,completed:true})),standardItems:SECTIONS.flatMap(sec=>sec.items.map(it=>it.t))},afterPhotoCount:AFTER_COUNT,photoDriveUrl:payload.drive_folder||ACTIVE.photoDriveUrl||'',payment:paymentRecord,invoice:{status:paidInFull?'paid':cumulativePaid>0?'partial':'ready',amount:totalPrice,balance:remainingBalance,updatedAt:completedAt},closeoutSyncStatus:'pending',closeoutSyncPayload:payload,closeoutIdempotencyKey:_finishId,updatedAt:completedAt},{merge:true})}catch(error){document.getElementById("donebtn").textContent="Retry → Save closeout to Hub";alert("The Hub could not record closeout. The full closeout is still saved on this device—reconnect and retry before leaving.");return}}
+  if(HUBDB&&ACTIVE.jobId){const paidNow=paymentMethod!=="unpaid"&&Boolean(paymentReference),existingPayment=ACTIVE.paymentRecord&&typeof ACTIVE.paymentRecord==='object'?ACTIVE.paymentRecord:{},paymentRecord=paidNow?{...existingPayment,amount:cumulativePaid,lastAmount:paymentAmount,lastReceivedAt:completedAt,method:paymentMethod,reference:paymentReference,verified:true,recordedBy:'crew'}:(Object.keys(existingPayment).length?existingPayment:{amount:0,method:'unpaid',verified:false}),completedBy=sessionStorage.getItem('egc_u')||localStorage.getItem('egc_u')||'';try{await HUBDB.collection('jobs').doc(ACTIVE.jobId).set({status:paidInFull?'paid':'completed',pipelineStatus:paidInFull?'paid':'completed',completedAt,actualLoads,hoursOnSite,timeTracking:{startedAt:ACTIVE.startedAt||'',completedAt,elapsedHours:hoursOnSite,recordedBy:completedBy},dumpFees:Number(v('j_fees')||0),closeoutNotes,closeoutPreJobException:ACTIVE.preJobException||'',scopeVariance:{quotedLoads,actualLoads,difference:variance,notes:closeoutNotes,recordedAt:completedAt},postJobProgress:{...progressPayload(),completedAt},postJobChecklist:{completedAt,completedBy,importantItemNotes:ACTIVE.importantItemNotes||'',importantItemPhotoCount:IMPORTANT_COUNT,clientItems:clientItems().map(it=>({id:it.id,label:it.label,detail:it.detail,completed:true})),standardItems:SECTIONS.flatMap(sec=>sec.items.map(it=>it.t))},afterPhotoCount:AFTER_COUNT,importantItemPhotoCount:IMPORTANT_COUNT,importantItemsVerifiedAt:completedAt,photoDriveUrl:payload.drive_folder||ACTIVE.photoDriveUrl||'',payment:paymentRecord,invoice:{status:paidInFull?'paid':cumulativePaid>0?'partial':'ready',amount:totalPrice,balance:remainingBalance,updatedAt:completedAt},closeoutSyncStatus:'pending',closeoutSyncPayload:payload,closeoutIdempotencyKey:_finishId,updatedAt:completedAt},{merge:true})}catch(error){document.getElementById("donebtn").textContent="Retry → Save closeout to Hub";alert("The Hub could not record closeout. The full closeout is still saved on this device—reconnect and retry before leaving.");return}}
   if(HUBDB&&ACTIVE.customerId)await HUBDB.collection('customers').doc(ACTIVE.customerId).set({latestJobId:ACTIVE.jobId,lastServiceAt:completedAt,lastCloseoutNotes:v('j_notes'),lastPaymentStatus:paidInFull?'paid':cumulativePaid>0?'partial':'unpaid',lastPaymentBalance:remainingBalance,updatedAt:completedAt},{merge:true}).catch(()=>{});
   if(HUBDB&&ACTIVE.jobId)await releaseCentralLock();
   const btn=document.getElementById("donebtn");btn.textContent="Saving to HighLevel…";
@@ -601,7 +614,7 @@ async function finish(){
   localStorage.removeItem("egc_active_job");
   document.getElementById('donebar').insertAdjacentHTML('beforebegin',`<div class="handoff" style="margin:18px"><div class="brief-head"><div><span>Shift complete</span><h2>Job closed successfully</h2></div><b>Synced</b></div><p class="brief-empty">The Hub and HighLevel are updated. Your local job handoff has been cleared.</p><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px"><a class="actbtn alt" href="/crew/">Back to crew home</a><a class="actbtn" href="/employee?view=earnings">See my time & pay</a></div></div>`);
 }
-async function loadCentralJob(){if(!HUBDB||!CENTRAL_JOB_ID)return;try{const snap=await HUBDB.collection('jobs').doc(CENTRAL_JOB_ID).get();if(!snap.exists)return;const j={id:snap.id,...snap.data()},total=Number(j.total||j.priceQuoted||0),paidToDate=Number(j.payment?.amount||0),balance=Math.max(0,total-paidToDate);ACTIVE={...ACTIVE,jobId:j.id,customerId:j.customerId||'',highlevelContactId:j.highlevelContactId||'',highlevelOpportunityId:j.highlevelOpportunityId||'',highlevelAppointmentId:j.highlevelAppointmentId||'',name:j.customer||'',phone:j.phone||'',email:j.email||'',addr:j.address||'',pkg:j.serviceType||'',total:j.total||j.priceQuoted||'',rate:j.total||j.priceQuoted||'',deposit:j.deposit?.amount||'',paidToDate,paymentRecord:j.payment||{},jobdate:j.date||'',startTime:j.time||'',endTime:j.endTime||'',pain:j.walkthroughNotes||'',customerNotesSummary:j.customerNotesSummary||j.notes||'',internalNotes:j.internalNotes||'',clientChecklists:j.clientChecklists||{},discovery:j.discovery||{},scope:j.scope||{},logistics:j.logistics||{},instructions:normalizedInstructions(j),preJobCompletedAt:j.preJobChecklist?.completedAt||'',preJobCompletedBy:j.preJobChecklist?.completedBy||'',preJobException:j.closeoutPreJobException||'',savedAt:j.updatedAt||j.createdAt||''};restoreSharedProgress(j.postJobProgress);document.getElementById('j_name').value=j.customer||'';document.getElementById('j_phone').value=j.phone||'';document.getElementById('j_date').value=j.date||'';const amount=document.getElementById('j_payment_amount'),hint=document.getElementById('payment_hint');if(amount&&!amount.value&&balance>0)amount.value=String(balance);if(hint)hint.textContent=paidToDate?`${paidToDate.toLocaleString('en-US',{style:'currency',currency:'USD'})} already recorded · ${balance.toLocaleString('en-US',{style:'currency',currency:'USD'})} remaining`:`${balance.toLocaleString('en-US',{style:'currency',currency:'USD'})} outstanding`;saveAll()}catch(e){}}
+async function loadCentralJob(){if(!HUBDB||!CENTRAL_JOB_ID)return;try{const snap=await HUBDB.collection('jobs').doc(CENTRAL_JOB_ID).get();if(!snap.exists)return;const j={id:snap.id,...snap.data()},total=Number(j.total||j.priceQuoted||0),paidToDate=Number(j.payment?.amount||0),balance=Math.max(0,total-paidToDate);ACTIVE={...ACTIVE,jobId:j.id,customerId:j.customerId||'',highlevelContactId:j.highlevelContactId||'',highlevelOpportunityId:j.highlevelOpportunityId||'',highlevelAppointmentId:j.highlevelAppointmentId||'',name:j.customer||'',phone:j.phone||'',email:j.email||'',addr:j.address||'',pkg:j.serviceType||'',total:j.total||j.priceQuoted||'',rate:j.total||j.priceQuoted||'',deposit:j.deposit?.amount||'',paidToDate,paymentRecord:j.payment||{},jobdate:j.date||'',startTime:j.time||'',endTime:j.endTime||'',pain:j.walkthroughNotes||'',customerNotesSummary:j.customerNotesSummary||j.notes||'',internalNotes:j.internalNotes||'',clientChecklists:j.clientChecklists||{},discovery:j.discovery||{},scope:j.scope||{},logistics:j.logistics||{},instructions:normalizedInstructions(j),preJobCompletedAt:j.preJobChecklist?.completedAt||'',preJobCompletedBy:j.preJobChecklist?.completedBy||'',preJobException:j.closeoutPreJobException||'',importantItemNotes:j.importantItemNotes||j.preJobChecklist?.importantItemNotes||'',importantItemPhotoCount:Number(j.importantItemPhotoCount||j.preJobChecklist?.importantItemPhotoCount||0),savedAt:j.updatedAt||j.createdAt||''};restoreSharedProgress(j.postJobProgress);document.getElementById('j_name').value=j.customer||'';document.getElementById('j_phone').value=j.phone||'';document.getElementById('j_date').value=j.date||'';const amount=document.getElementById('j_payment_amount'),hint=document.getElementById('payment_hint');if(amount&&!amount.value&&balance>0)amount.value=String(balance);if(hint)hint.textContent=paidToDate?`${paidToDate.toLocaleString('en-US',{style:'currency',currency:'USD'})} already recorded · ${balance.toLocaleString('en-US',{style:'currency',currency:'USD'})} remaining`:`${balance.toLocaleString('en-US',{style:'currency',currency:'USD'})} outstanding`;saveAll()}catch(e){}}
 async function releaseCentralLock(){try{const ref=HUBDB.collection('jobs').doc(`_egc_schedule_lock_${String(ACTIVE.jobdate||'').replace(/[^0-9-]/g,'')}`),snap=await ref.get(),entries=(Array.isArray(snap.data()?.entries)?snap.data().entries:[]).filter(x=>x.id!==ACTIVE.jobId);await ref.set({recordType:'schedule_lock',date:ACTIVE.jobdate,entries,updatedAt:new Date().toISOString()},{merge:true})}catch(e){}}
 document.addEventListener("input",saveAll);
 if(!STORAGE_OK) setTimeout(()=>alert("Heads up: this browser is blocking local storage (often Private Browsing). The job won't pre-fill from the Game Plan and progress won't save. Switch off Private Browsing for this iPad."),200);
