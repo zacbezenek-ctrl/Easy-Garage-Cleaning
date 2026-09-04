@@ -201,6 +201,12 @@ test('closeout records job-costing actuals and explains walkthrough scope varian
   for(const marker of ['Walkthrough load plan','Actual truckloads','Load variance'])assert.match(highlevel,new RegExp(marker));
 });
 
+test('closeout requires a completed pre-job handoff or a documented exception',()=>{
+  for(const marker of ['preJobCompletedAt','preJobCompletedBy','No completed pre-job handoff was found','manager-approved exception','closeoutPreJobException','pre_job_completed_at','pre_job_exception','No completed pre-job handoff is attached'])assert.match(postjob,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),marker+' is missing');
+  assert.match(highlevel,/Pre-job handoff:/);
+  assert.match(highlevel,/No completion record/);
+});
+
 test('HighLevel receives the customer promise in both the contact note and job appointment',async()=>{
   const {onRequestPost}=await import('../functions/api/highlevel.js');
   const calls=[],originalFetch=globalThis.fetch;

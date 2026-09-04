@@ -451,6 +451,7 @@ function closeoutNote(payload) {
     `Drive folder: ${payload.drive_folder || '—'}`,
     `Original customer goal: ${job.customer_goal || '—'}`,
     `Original walkthrough notes: ${job.original_customer_notes || '—'}`,
+    `Pre-job handoff: ${job.pre_job_completed_at ? `Completed ${job.pre_job_completed_at}` : job.pre_job_exception ? `Exception — ${job.pre_job_exception}` : 'No completion record'}`,
     ...(clientChecks.length ? ['', 'CLIENT PROMISE CHECKS', ...clientChecks.map(item => `✓ ${item.label}${item.detail ? ` — ${item.detail}` : ''}`)] : []),
     '',
     `Crew closeout notes: ${job.notes || 'None recorded'}`,
