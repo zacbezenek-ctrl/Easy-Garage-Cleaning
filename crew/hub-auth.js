@@ -51,5 +51,24 @@
     try { await fetch('/api/hub-auth', { method: 'DELETE', credentials: 'same-origin' }); } catch {}
   }
 
-  window.EGCHubAuth = { session, signIn, signOut, clearLocal };
+  async function securedFetch(input, init = {}) {
+    const response = await fetch(input, { ...init, credentials: 'same-origin' });
+    if (response.status !== 401) return response;
+    clearLocal();
+    const gate = document.getElementById('egc-gate') || document.getElementById('gate');
+    if (gate) {
+      gate.classList.remove('off');
+      gate.style.display = '';
+    }
+    const error = document.getElementById('gate-err') || document.getElementById('gate-error');
+    if (error) {
+      error.textContent = 'Your work is saved. Sign in again to continue.';
+      error.style.display = 'block';
+    }
+    const expired = new Error('Your Hub session expired. Sign in again to continue.');
+    expired.code = 'HUB_AUTH_REQUIRED';
+    throw expired;
+  }
+
+  window.EGCHubAuth = { session, signIn, signOut, fetch: securedFetch, clearLocal };
 })();

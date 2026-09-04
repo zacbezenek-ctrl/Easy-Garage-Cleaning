@@ -346,7 +346,7 @@ async function highlevelLookup(){
   if(q.length<2){out.innerHTML=`<div class="looknote">Type at least 2 letters of the name first, then tap 🔍.</div>`;return;}
   out.innerHTML=`<div class="looknote">Searching HighLevel…</div>`;
   try{
-    const res=await fetch("/api/highlevel?view=contacts&q="+encodeURIComponent(q));
+    const res=await EGCHubAuth.fetch("/api/highlevel?view=contacts&q="+encodeURIComponent(q));
     const j=await res.json().catch(()=>({}));
     if(res.status===501){out.innerHTML=`<div class="looknote">HighLevel needs its API key and location ID. Type the details manually for now.</div>`;return;}
     if(!res.ok||!j.ok){out.innerHTML=`<div class="looknote">Lookup failed — type it manually.</div>`;return;}
@@ -392,7 +392,7 @@ async function driveUploadAll(btn,doneEl){
     const batch=todo.slice(i,i+6);
     btn.textContent=`⬆️ Uploading ${Math.min(i+batch.length,todo.length)}/${todo.length}…`;
     try{
-      const res=await fetch("/api/drive-upload",{method:"POST",headers:{"Content-Type":"application/json"},
+      const res=await EGCHubAuth.fetch("/api/drive-upload",{method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({jobId:job,label:driveLabel(),photos:batch.map(p=>({id:p.id,tag:p.tag,dataUrl:p.dataUrl}))})});
       const j=await res.json().catch(()=>({}));
       if(res.status===501){alert("Drive upload isn't connected yet — Zac: run /api/drive-auth once.");failed=true;failureStatus="needs_setup";failureDetail="Google Drive is not connected";break;}
@@ -531,12 +531,12 @@ function copyScript(si){
 }
 async function postHook(payload){
   // Same-origin proxy → real, readable status. No opaque no-cors that "succeeds" on a dead hook.
-  const res=await fetch(WEBHOOK,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
+  const res=await EGCHubAuth.fetch(WEBHOOK,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
   let ok=res.ok; try{const j=await res.json();ok=ok&&j&&j.ok!==false;}catch(e){}
   return ok;
 }
 async function postHighLevel(payload){
-  const res=await fetch('/api/highlevel',{method:'POST',headers:{'Content-Type':'application/json','Idempotency-Key':payload.idempotency_key||payload.request_id||payload.job_id||''},body:JSON.stringify(payload)});
+  const res=await EGCHubAuth.fetch('/api/highlevel',{method:'POST',headers:{'Content-Type':'application/json','Idempotency-Key':payload.idempotency_key||payload.request_id||payload.job_id||''},body:JSON.stringify(payload)});
   let ok=res.ok;try{const j=await res.json();ok=ok&&j&&j.ok!==false;}catch(e){}
   return ok;
 }

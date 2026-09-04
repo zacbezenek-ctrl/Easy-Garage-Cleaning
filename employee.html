@@ -1379,7 +1379,6 @@ async function doLogin() {
 }
 
 async function doLogout() {
-  try { await fetch('/api/hub-auth', { method: 'DELETE', credentials: 'same-origin' }); } catch {}
   sessionStorage.removeItem('egc_u');
   sessionStorage.removeItem('egc_tok');
   me = null;
@@ -1389,6 +1388,19 @@ async function doLogout() {
   document.getElementById('dashboard').style.display     = '';
   document.getElementById('login-screen').style.display  = '';
   document.getElementById('l-pass').value = '';
+  try { await fetch('/api/hub-auth', { method: 'DELETE', credentials: 'same-origin' }); } catch {}
+}
+
+async function hubFetch(input, init = {}) {
+  const response = await fetch(input, { ...init, credentials: 'same-origin' });
+  if (response.status !== 401) return response;
+  doLogout();
+  const err = document.getElementById('login-error');
+  err.textContent = 'Your work is saved. Sign in again to continue.';
+  err.style.display = 'block';
+  const expired = new Error('Sign in required');
+  expired.code = 'HUB_AUTH_REQUIRED';
+  throw expired;
 }
 
 function bootDashboard() {
@@ -1846,7 +1858,8 @@ async function fireWebhook(url, data) {
   if (!url) return;
   try {
     const internal = url.startsWith('operations:');
-    await fetch(internal ? '/api/operations-event' : url, {
+    const sender = internal ? hubFetch : fetch;
+    await sender(internal ? '/api/operations-event' : url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(internal ? { event: url.slice(11), payload: data } : data)
@@ -2303,7 +2316,7 @@ function setStatus(id, status) {
     const job = loadJobs().find(j => j.id === id);
     if (job && job.phone) {
       const firstName = (job.customer || '').split(' ')[0] || job.customer || '';
-      fetch('/api/operations-event', {
+      hubFetch('/api/operations-event', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ event: 'review_request', payload: { phone: job.phone, firstName, jobId: job.id } })
