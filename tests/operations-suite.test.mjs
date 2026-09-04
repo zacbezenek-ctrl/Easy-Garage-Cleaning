@@ -412,6 +412,12 @@ test('weekly timesheets use individual timecards with a legacy closeout fallback
   assert.match(suite,/if\(\/\^\[=\+\\-@\]\//);
 });
 
+test('Gusto Smart Import export includes approved completed shifts only',()=>{
+  for(const marker of ['approvedGustoRows','opsDownloadGusto','Download for Gusto','Gusto Smart Import','gusto-smart-import-','Employee name','Workweeks','Hours worked',"approvalStatus==='approved'",'Boolean(entry.clockOutAt)']){
+    assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),marker+' is missing');
+  }
+});
+
 test('closeout requires a completed pre-job handoff or a documented exception',()=>{
   for(const marker of ['preJobCompletedAt','preJobCompletedBy','No completed pre-job handoff was found','manager-approved exception','closeoutPreJobException','pre_job_completed_at','pre_job_exception','No completed pre-job handoff is attached'])assert.match(postjob,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),marker+' is missing');
   assert.match(highlevel,/Pre-job handoff:/);
@@ -732,8 +738,8 @@ test('open-shift scheduling fields persist on the canonical job record',()=>{
   assert.match(suite,/if\(k==='type'\)render\(\)/);
   assert.match(suite,/b\.type==='job'\?'':'ops-hidden'/);
   assert.match(suite,/b\.type==='blocked'\?'ops-hidden':''/);
-  assert.match(employee,/employee-suite\.css\?v=20260904h/);
-  assert.match(employee,/employee-suite\.js\?v=20260904h/);
+  assert.match(employee,/employee-suite\.css\?v=20260904i/);
+  assert.match(employee,/employee-suite\.js\?v=20260904i/);
 });
 
 test('recurring visits keep the client plan but reset prior completion and payment state',()=>{
