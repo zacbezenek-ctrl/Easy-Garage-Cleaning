@@ -372,6 +372,15 @@ function noteBody(payload) {
   const p = payload || {}, q = p.quote || {}, d = p.discovery || {}, s = p.scope || {}, l = p.logistics || {};
   const list = value => Array.isArray(value) ? value.filter(Boolean).join(', ') : (value || '—');
   const finish = s.finish_details || {};
+  if (p.internal_notes) return [
+    'EGC INTERNAL JOB BRIEF',
+    `Completed: ${p.sent_at || p.completed_at || new Date().toISOString()}`,
+    `Locked total: $${Number(q.total || 0).toLocaleString('en-US')}`,
+    `Deposit: $${Number(q.deposit || 0).toLocaleString('en-US')}`,
+    `Target date: ${q.job_date || 'TBD'} · ${q.start_time || 'TBD'}–${q.end_time || 'TBD'}`,
+    '',
+    String(p.internal_notes).replace(/^EGC INTERNAL JOB BRIEF\s*/i, '').trim(),
+  ].join('\n').slice(0, 4900);
   const lines = [
     'EGC WALKTHROUGH PLAN',
     `Completed: ${p.sent_at || p.completed_at || new Date().toISOString()}`,
@@ -407,6 +416,7 @@ function noteBody(payload) {
 
 function appointmentInstructions(payload) {
   const p = payload || {}, d = p.discovery || {}, s = p.scope || {}, l = p.logistics || {};
+  if (p.internal_notes) return String(p.internal_notes).slice(0, 3000);
   const list = value => Array.isArray(value) ? value.filter(Boolean).join(', ') : (value || '—');
   return [
     `CUSTOMER GOAL: ${d.success || '—'}`,
@@ -425,6 +435,7 @@ function appointmentInstructions(payload) {
 
 function closeoutNote(payload) {
   const job = payload.job || {};
+  const clientChecks = Array.isArray(payload.client_checklist) ? payload.client_checklist : [];
   return [
     'EGC JOB CLOSEOUT',
     `Completed: ${payload.sent_at || new Date().toISOString()}`,
@@ -438,6 +449,7 @@ function closeoutNote(payload) {
     `Drive folder: ${payload.drive_folder || '—'}`,
     `Original customer goal: ${job.customer_goal || '—'}`,
     `Original walkthrough notes: ${job.original_customer_notes || '—'}`,
+    ...(clientChecks.length ? ['', 'CLIENT PROMISE CHECKS', ...clientChecks.map(item => `✓ ${item.label}${item.detail ? ` — ${item.detail}` : ''}`)] : []),
     '',
     `Crew closeout notes: ${job.notes || 'None recorded'}`,
   ].join('\n').slice(0, 4900);
@@ -511,7 +523,7 @@ export async function onRequestPost({ request, env }) {
     }
     const isCloseout = payload.tool === 'post_job';
     const note = await ghl(c, `/contacts/${encodeURIComponent(contactId)}/notes`, { method: 'POST', headers: payload.idempotency_key ? { 'Idempotency-Key': payload.idempotency_key } : {}, body: JSON.stringify({
-      userId: c.userId || undefined, title: isCloseout ? 'EGC Job Closeout' : 'EGC Walkthrough Plan',
+      userId: c.userId || undefined, title: isCloseout ? 'EGC Job Closeout' : 'EGC Internal Job Brief',
       body: isCloseout ? closeoutNote(payload) : noteBody(payload), color: '#F15A24', pinned: !isCloseout
     })});
     let taskId = '';

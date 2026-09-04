@@ -40,6 +40,7 @@
   .brief-grid article{background:rgba(255,255,255,.08);padding:11px 12px;border-radius:10px;min-width:0}
   .brief-grid article.wide{grid-column:1/-1}.brief-grid small{display:block;color:#aeb8cc;font-family:'Oswald';font-size:10px;letter-spacing:.1em;text-transform:uppercase;margin-bottom:3px}
   .brief-grid strong{display:block;font-size:14px;line-height:1.4;overflow-wrap:anywhere}.brief-grid .danger{color:#ffb4ad}.brief-empty{color:#aeb8cc;font-size:14px;line-height:1.5}
+  .client-checks{margin-top:20px}.client-checks .sechead{border-color:var(--orange)}.client-checks .item{background:#fff}.client-checks .item small{white-space:pre-line}.client-checks .client-tag{display:inline-block;background:var(--orange);color:#fff;border-radius:99px;padding:3px 8px;font-family:'Oswald';font-size:10px;letter-spacing:.08em;text-transform:uppercase;margin-left:7px;vertical-align:2px}
   @media(max-width:520px){.brief-grid{grid-template-columns:1fr}.brief-grid article.wide{grid-column:auto}}
   .jobcard .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
   label.fl{display:block;font-family:'Oswald';font-weight:600;font-size:11px;letter-spacing:.1em;
@@ -226,6 +227,8 @@ gateOk().then(u=>{
 
   <div class="handoff" id="job-brief" aria-live="polite"></div>
 
+  <div id="client-checklist"></div>
+
   <div id="sections"></div>
 </main>
 
@@ -278,7 +281,7 @@ const SECTIONS = [
 ];
 /* =================================================== */
 
-const state={};
+const state={},clientState={};
 const SAVEKEY="egc_prejob_v1",CENTRAL_JOB_ID=new URLSearchParams(location.search).get("jobId")||"";
 const FIELD_IDS=["j_name","j_date","j_addr","j_pkg","j_rate"];
 const esc=s=>String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
@@ -291,7 +294,15 @@ const saveKey=()=>SAVEKEY+":"+(CENTRAL_JOB_ID||ACTIVE.jobId||"manual");
 const STARTKEY="egc_prejob_start";
 const textList=v=>Array.isArray(v)?v.filter(Boolean).join(', '):String(v||'');
 function normalizedInstructions(job={}){const s=job.scope||{},l=job.logistics||{},d=job.discovery||{},i=job.jobInstructions||job.instructions||{};return{customerGoal:i.customerGoal||d.success||'',whyNow:i.whyNow||d.why_now||job.walkthroughNotes||job.pain||'',sortMethod:i.sortMethod||s.sort_method||'',keepItems:i.keepItems||s.keep_items||'',removeItems:i.removeItems||s.remove_items||s.keep_remove||'',exclusions:i.exclusions||s.exclusions||'',hazards:i.hazards||s.hazards||[],access:i.access||s.access||l.access||[],accessNotes:i.accessNotes||l.notes||'',truckPlacement:i.truckPlacement||l.truck_placement||s.truck_placement||'',specialItems:i.specialItems||s.special_items||[],finish:i.finish||s.finish||[],shelving:i.shelving||{type:s.finish_details?.shelf_type||'',qty:Number(s.finish_details?.shelf_qty||0)},totes:i.totes||{qty:Number(s.finish_details?.tote_qty||0)},customerNotes:i.customerNotes||job.customerNotesSummary||job.notes||'',assignedTo:i.assignedTo||job.assignedTo||'',crewSize:Number(i.crewSize||job.crewSize||0),arrivalWindow:i.arrivalWindow||[job.time,job.endTime].filter(Boolean).join('–'),photoCount:Number(i.photoCount||job.photoCount||job.photosBefore||0)}}
-function renderJobBrief(){const host=document.getElementById('job-brief');if(!host)return;const i=normalizedInstructions(ACTIVE),has=Object.values(i).some(v=>Array.isArray(v)?v.length:Boolean(v&&typeof v!=='object'));if(!has){host.innerHTML='<div class="brief-head"><div><span>Walkthrough handoff</span><h2>Job instructions</h2></div><b>Needs brief</b></div><p class="brief-empty">No walkthrough instructions are attached yet. Stop and confirm the scope with the manager before the truck rolls.</p>';return}const row=(label,value,cls='')=>value?`<article class="${cls}"><small>${esc(label)}</small><strong>${esc(textList(value))}</strong></article>`:'';const materials=[i.shelving?.qty?`${i.shelving.qty} ${i.shelving.type||''} shelf unit(s)`:'' ,i.totes?.qty?`${i.totes.qty} tote(s)`:'' ].filter(Boolean).join(' · ');host.innerHTML=`<div class="brief-head"><div><span>Synced from walkthrough</span><h2>Customer promise + job instructions</h2></div><b>Read first</b></div><div class="brief-grid">${row('Customer goal',i.customerGoal,'wide')}${row('Why now',i.whyNow,'wide')}${row('Keep — protect these',i.keepItems)}${row('Remove',i.removeItems)}${row('Do not move / exclusions',i.exclusions,'danger')}${row('Hazards / PPE',i.hazards,'danger')}${row('Access',textList(i.access)+(i.accessNotes?` — ${i.accessNotes}`:''))}${row('Truck placement',i.truckPlacement)}${row('Special handling',i.specialItems)}${row('Finish',i.finish)}${row('Materials',materials)}${row('Crew + arrival',[i.assignedTo,i.crewSize?`${i.crewSize} needed`:'',i.arrivalWindow].filter(Boolean).join(' · '))}${row('Customer notes',i.customerNotes,'wide')}${row('Walkthrough photos',i.photoCount?`${i.photoCount} captured on walkthrough device`:'Not cloud-synced','wide')}</div>`}
+function renderJobBrief(){const host=document.getElementById('job-brief');if(!host)return;const i=normalizedInstructions(ACTIVE),has=Object.values(i).some(v=>Array.isArray(v)?v.length:Boolean(v&&typeof v!=='object'));if(!has){host.innerHTML='<div class="brief-head"><div><span>Walkthrough handoff</span><h2>Internal job brief</h2></div><b>Needs brief</b></div><p class="brief-empty">No walkthrough instructions are attached yet. Stop and confirm the scope with the manager before the truck rolls.</p>';return}const row=(label,value,cls='')=>value?`<article class="${cls}"><small>${esc(label)}</small><strong>${esc(textList(value))}</strong></article>`:'';const materials=[i.shelving?.qty?`${i.shelving.qty} ${i.shelving.type||''} shelf unit(s)`:'' ,i.totes?.qty?`${i.totes.qty} tote(s)`:'' ].filter(Boolean).join(' · ');host.innerHTML=`<div class="brief-head"><div><span>One source · synced from walkthrough</span><h2>Internal job brief</h2></div><b>Read first</b></div><div class="brief-grid">${row('Customer goal',i.customerGoal,'wide')}${row('Why now',i.whyNow,'wide')}${row('Keep — protect these',i.keepItems)}${row('Remove',i.removeItems)}${row('Do not move / exclusions',i.exclusions,'danger')}${row('Hazards / PPE',i.hazards,'danger')}${row('Access',textList(i.access)+(i.accessNotes?` — ${i.accessNotes}`:''))}${row('Truck placement',i.truckPlacement)}${row('Special handling',i.specialItems)}${row('Finish',i.finish)}${row('Materials',materials)}${row('Crew + arrival',[i.assignedTo,i.crewSize?`${i.crewSize} needed`:'',i.arrivalWindow].filter(Boolean).join(' · '))}${row('Internal customer notes',i.customerNotes,'wide')}${row('Walkthrough photos',i.photoCount?`${i.photoCount} captured on walkthrough device`:'Not cloud-synced','wide')}</div>`}
+function fallbackClientItems(){const i=normalizedInstructions(ACTIVE),out=[],add=(id,label,detail,critical=false)=>{if(detail)out.push({id,label,detail:String(detail),critical})};add('goal','Repeat the promised outcome to the crew',i.customerGoal,true);add('keep','Identify and protect every keep item',i.keepItems,true);add('remove','Reconfirm the approved removal / donation scope',i.removeItems,true);add('exclusions','Mark every do-not-touch item',i.exclusions,true);add('hazards','Set the client-specific PPE and hazard plan',textList(i.hazards),true);add('access','Set access and staging exactly as planned',[textList(i.access),i.accessNotes,i.truckPlacement].filter(Boolean).join(' · '));add('special','Load equipment for special-handling items',textList(i.specialItems));add('notes','Review the internal customer notes',i.customerNotes);return out}
+function clientItems(){const saved=ACTIVE.clientChecklists?.preJob;return Array.isArray(saved)&&saved.length?saved:fallbackClientItems()}
+function clientKey(item){return'client_'+String(item.id||item.label).replace(/[^a-z0-9_-]/gi,'_')}
+function renderClientChecklist(){const host=document.getElementById('client-checklist'),items=clientItems();if(!host)return;if(!items.length){host.innerHTML='';return}const done=items.filter(it=>clientState[clientKey(it)]).length;host.innerHTML=`<section class="client-checks"><div class="when">Generated from this client’s walkthrough</div><div class="sechead ${done===items.length?'done':''}"><h2>Client-specific checks <span class="client-tag">${items.length} for this job</span></h2><span class="cnt">${done}/${items.length}</span></div>${items.map(it=>`<div class="item ${clientState[clientKey(it)]?'on':''} ${it.critical?'crit':''}" onclick="togClient('${clientKey(it)}')"><span class="bx"></span><div class="tx">${esc(it.label)}<small>${esc(it.detail||'')}</small></div></div>`).join('')}</section>`}
+function standardDone(){return SECTIONS.reduce((n,sec,si)=>n+sec.items.filter((_,ii)=>state[key(si,ii)]).length,0)}
+function totalDone(){return standardDone()+clientItems().filter(it=>clientState[clientKey(it)]).length}
+function totalChecks(){return SECTIONS.reduce((a,s)=>a+s.items.length,0)+clientItems().length}
+function togClient(k){clientState[k]=!clientState[k];render();saveAll()}
 
 /* ===== Per-job photos — on-device (IndexedDB), shared with the Game Plan/Post-Job
    tools via the egc_active_job jobId. Job-day "before" capture lives here. ===== */
@@ -383,11 +394,11 @@ function lookPick(i){
 }
 function saveAll(){
   try{const f={};FIELD_IDS.forEach(id=>{const el=document.getElementById(id);if(el)f[id]=el.value;});
-    localStorage.setItem(saveKey(),JSON.stringify({state:state,fields:f}));}catch(e){}
+    localStorage.setItem(saveKey(),JSON.stringify({state:state,clientState:clientState,fields:f}));}catch(e){}
 }
 function restoreAll(){
   try{const d=JSON.parse(localStorage.getItem(saveKey()));
-    if(d){Object.assign(state,d.state||{});
+    if(d){Object.assign(state,d.state||{});Object.assign(clientState,d.clientState||{});
       FIELD_IDS.forEach(id=>{const el=document.getElementById(id);if(el&&d.fields&&d.fields[id]!=null)el.value=d.fields[id];});}
   }catch(e){}
   // pull from Game Plan handoff if fields still empty
@@ -431,8 +442,9 @@ function render(){
     </section>`;
   }).join("");
   setTimeout(mountActions,0);
-  const total=SECTIONS.reduce((a,s)=>a+s.items.length,0);
-  const done=Object.values(state).filter(Boolean).length;
+  renderClientChecklist();
+  const total=totalChecks();
+  const done=totalDone();
   document.getElementById("pc").textContent=done;
   document.getElementById("pt").textContent="/"+total+" DONE";
   document.getElementById("barfill").style.width=(100*done/total)+"%";
@@ -455,13 +467,14 @@ function copyScript(si){
   event.target.textContent="Copied ✓";setTimeout(()=>{event.target.textContent="Copy text";},1500);
 }
 async function finish(){
-  const total=SECTIONS.reduce((a,s)=>a+s.items.length,0);
-  if(Object.values(state).filter(Boolean).length<total) return;
-  if(HUBDB&&ACTIVE.jobId)await HUBDB.collection('jobs').doc(ACTIVE.jobId).set({status:'in_progress',pipelineStatus:'in_progress',startedAt:new Date().toISOString(),updatedAt:new Date().toISOString()},{merge:true}).catch(()=>{});
+  const total=totalChecks();
+  if(totalDone()<total) return;
+  const startedAt=new Date().toISOString(),completedBy=sessionStorage.getItem('egc_u')||localStorage.getItem('egc_u')||'';
+  if(HUBDB&&ACTIVE.jobId)await HUBDB.collection('jobs').doc(ACTIVE.jobId).set({status:'in_progress',pipelineStatus:'in_progress',startedAt,preJobChecklist:{completedAt:startedAt,completedBy,clientItems:clientItems().map(it=>({id:it.id,label:it.label,detail:it.detail,completed:true})),standardItems:SECTIONS.flatMap(sec=>sec.items.map(it=>it.t))},updatedAt:startedAt},{merge:true}).catch(()=>{});
   localStorage.removeItem(saveKey());
   alert("Pre-job complete. Go make it disappear. 🛻");
 }
-async function loadCentralJob(){if(!HUBDB||!CENTRAL_JOB_ID)return;try{const snap=await HUBDB.collection('jobs').doc(CENTRAL_JOB_ID).get();if(!snap.exists)return;const j={id:snap.id,...snap.data()};ACTIVE={...ACTIVE,jobId:j.id,highlevelContactId:j.highlevelContactId||'',highlevelOpportunityId:j.highlevelOpportunityId||'',highlevelAppointmentId:j.highlevelAppointmentId||'',name:j.customer||'',phone:j.phone||'',email:j.email||'',addr:j.address||'',pkg:j.serviceType||'',total:j.total||j.priceQuoted||'',rate:j.total||j.priceQuoted||'',deposit:j.deposit?.amount||'',jobdate:j.date||'',startTime:j.time||'',endTime:j.endTime||'',assignedTo:j.assignedTo||'',crewSize:Number(j.crewSize||0),pain:j.walkthroughNotes||'',customerNotesSummary:j.customerNotesSummary||j.notes||'',discovery:j.discovery||{},scope:j.scope||{},logistics:j.logistics||{},instructions:normalizedInstructions(j),photosBefore:Number(j.photoCount||0),savedAt:j.updatedAt||j.createdAt||''};document.getElementById('j_name').value=j.customer||'';document.getElementById('j_addr').value=j.address||'';document.getElementById('j_date').value=j.date||'';document.getElementById('j_rate').value=j.total||j.priceQuoted||'';document.getElementById('j_pkg').value=j.serviceType||'Garage service';saveAll()}catch(e){}}
+async function loadCentralJob(){if(!HUBDB||!CENTRAL_JOB_ID)return;try{const snap=await HUBDB.collection('jobs').doc(CENTRAL_JOB_ID).get();if(!snap.exists)return;const j={id:snap.id,...snap.data()};ACTIVE={...ACTIVE,jobId:j.id,customerId:j.customerId||'',highlevelContactId:j.highlevelContactId||'',highlevelOpportunityId:j.highlevelOpportunityId||'',highlevelAppointmentId:j.highlevelAppointmentId||'',name:j.customer||'',phone:j.phone||'',email:j.email||'',addr:j.address||'',pkg:j.serviceType||'',total:j.total||j.priceQuoted||'',rate:j.total||j.priceQuoted||'',deposit:j.deposit?.amount||'',jobdate:j.date||'',startTime:j.time||'',endTime:j.endTime||'',assignedTo:j.assignedTo||'',crewSize:Number(j.crewSize||0),pain:j.walkthroughNotes||'',customerNotesSummary:j.customerNotesSummary||j.notes||'',internalNotes:j.internalNotes||'',clientChecklists:j.clientChecklists||{},discovery:j.discovery||{},scope:j.scope||{},logistics:j.logistics||{},instructions:normalizedInstructions(j),photosBefore:Number(j.photoCount||0),savedAt:j.updatedAt||j.createdAt||''};document.getElementById('j_name').value=j.customer||'';document.getElementById('j_addr').value=j.address||'';document.getElementById('j_date').value=j.date||'';document.getElementById('j_rate').value=j.total||j.priceQuoted||'';document.getElementById('j_pkg').value=j.serviceType||'Garage service';saveAll()}catch(e){}}
 document.addEventListener("input",saveAll);
 if(!STORAGE_OK) setTimeout(()=>alert("Heads up: this browser is blocking local storage (often Private Browsing). The job won't pre-fill from the Game Plan and progress won't save. Switch off Private Browsing for this iPad."),200);
 (async()=>{restoreAll();await loadCentralJob();render()})();

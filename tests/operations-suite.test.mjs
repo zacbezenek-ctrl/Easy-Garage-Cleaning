@@ -88,24 +88,32 @@ test('walkthrough conversion keeps canonical IDs and durable acceptance metadata
 });
 
 test('walkthrough promise syncs to the job, customer profile, crew brief, and HighLevel notes',()=>{
-  for(const marker of ['buildJobInstructions','jobInstructions:instructions','customerNotesSummary','latestJobInstructions','customerGoal','keepItems','removeItems','operationalNotes','walkthroughSyncedAt']){
+  for(const marker of ['buildJobInstructions','buildInternalNotes','buildClientChecklists','jobInstructions:instructions','internalNotes','clientChecklists:checklists','customerNotesSummary','latestJobInstructions','latestClientChecklists','customerGoal','keepItems','removeItems','operationalNotes','walkthroughSyncedAt']){
     assert.match(crew,new RegExp(marker),marker+' is missing from the walkthrough handoff');
   }
   assert.match(crew,/hubDb\.collection\('customers'\)\.doc\(customerId\)/);
   for(const page of [prejob,postjob]){
     assert.match(page,/function normalizedInstructions/);
     assert.match(page,/id="job-brief"/);
-    assert.match(page,/Customer promise|Promised outcome/);
+    assert.match(page,/Internal job brief|Promised outcome/);
     assert.match(page,/keepItems/);
     assert.match(page,/removeItems/);
     assert.match(page,/customerNotes/);
   }
   for(const marker of ['appointmentInstructions','CUSTOMER GOAL','KEEP:','REMOVE:','DO NOT MOVE / EXCLUSIONS','Original customer goal','Crew closeout notes'])assert.match(highlevel,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
-  assert.match(suite,/Latest walkthrough promise/);
+  assert.match(suite,/Latest internal job notes/);
   assert.match(suite,/hasCrewBrief/);
   assert.doesNotMatch(prejob,/status:j\.status==='scheduled'\?'arrived'/);
   assert.doesNotMatch(postjob,/collection\(['"]scheduleLocks['"]\)/);
   assert.match(postjob,/_egc_schedule_lock_/);
+  for(const page of [prejob,postjob]){
+    assert.match(page,/function renderClientChecklist/);
+    assert.match(page,/function totalChecks/);
+    assert.match(page,/clientState/);
+    assert.match(page,/Generated from this client/);
+  }
+  assert.match(prejob,/preJobChecklist:\{/);
+  assert.match(postjob,/postJobChecklist:\{/);
 });
 
 test('HighLevel receives the customer promise in both the contact note and job appointment',async()=>{
@@ -120,7 +128,8 @@ test('HighLevel receives the customer promise in both the contact note and job a
     return new Response('{}',{status:200});
   };
   try{
-    const payload={tool:'game_plan',job_id:'job-1',opportunity_id:'opp-1',sent_at:'2026-09-03T22:00:00.000Z',client:{name:'Test Customer',highlevel_contact_id:'contact-1',address:'123 Main'},quote:{title:'Test garage',total:1500,deposit:300,job_date:'2026-09-15',start_time:'09:00',end_time:'13:00',start_at:'2026-09-15T15:00:00.000Z',end_at:'2026-09-15T19:00:00.000Z'},discovery:{why_now:'Moving soon',success:'Park two cars'},scope:{loads:2,garages:2,fullness:'full',sort_method:'Customer decides',keep_items:'Tools and bikes',remove_items:'Boxes and broken furniture',exclusions:'Red cabinet',hazards:['paint'],access:['keypad'],finish:['deep clean']},logistics:{truck_placement:'left driveway',notes:'Code 1234',assigned_to:'Alex',crew_size:3},acceptance:{accepted_by:'Test Customer',accepted_at:'2026-09-03T22:00:00.000Z'},photos:{before:5},notes:'Call before arrival'};
+    const internalNotes='EGC INTERNAL JOB BRIEF\nCUSTOMER GOAL: Park two cars\nWHY NOW: Moving soon\nKEEP / PROTECT: Tools and bikes\nREMOVE / DONATE: Boxes and broken furniture\nDO NOT MOVE: Red cabinet\nACCESS: keypad — Code 1234\nINTERNAL CUSTOMER NOTES: Call before arrival';
+    const payload={tool:'game_plan',job_id:'job-1',opportunity_id:'opp-1',sent_at:'2026-09-03T22:00:00.000Z',client:{name:'Test Customer',highlevel_contact_id:'contact-1',address:'123 Main'},quote:{title:'Test garage',total:1500,deposit:300,job_date:'2026-09-15',start_time:'09:00',end_time:'13:00',start_at:'2026-09-15T15:00:00.000Z',end_at:'2026-09-15T19:00:00.000Z'},discovery:{why_now:'Moving soon',success:'Park two cars'},scope:{loads:2,garages:2,fullness:'full',sort_method:'Customer decides',keep_items:'Tools and bikes',remove_items:'Boxes and broken furniture',exclusions:'Red cabinet',hazards:['paint'],access:['keypad'],finish:['deep clean']},logistics:{truck_placement:'left driveway',notes:'Code 1234',assigned_to:'Alex',crew_size:3},internal_notes:internalNotes,acceptance:{accepted_by:'Test Customer',accepted_at:'2026-09-03T22:00:00.000Z'},photos:{before:5},notes:'Call before arrival'};
     const request=new Request('https://easygaragecleaning.com/api/highlevel',{method:'POST',headers:{Origin:'https://easygaragecleaning.com','Content-Type':'application/json'},body:JSON.stringify(payload)});
     const response=await onRequestPost({request,env:{HIGHLEVEL_API_KEY:'test-key',HIGHLEVEL_LOCATION_ID:'location-1'}});
     assert.equal(response.status,200);
@@ -129,8 +138,8 @@ test('HighLevel receives the customer promise in both the contact note and job a
     assert.ok(noteCall,'walkthrough contact note was not written');
     assert.ok(appointmentCall,'job appointment was not written');
     const note=JSON.parse(noteCall.options.body).body,appointment=JSON.parse(appointmentCall.options.body).description;
-    for(const text of ['Success looks like: Park two cars','KEEP: Tools and bikes','REMOVE: Boxes and broken furniture','Exclusions: Red cabinet','Access notes: Code 1234','Customer / crew notes: Call before arrival'])assert.match(note,new RegExp(text));
-    for(const text of ['CUSTOMER GOAL: Park two cars','KEEP: Tools and bikes','REMOVE: Boxes and broken furniture','DO NOT MOVE / EXCLUSIONS: Red cabinet','CUSTOMER NOTES: Call before arrival'])assert.match(appointment,new RegExp(text));
+    for(const text of ['CUSTOMER GOAL: Park two cars','KEEP / PROTECT: Tools and bikes','REMOVE / DONATE: Boxes and broken furniture','DO NOT MOVE: Red cabinet','ACCESS: keypad — Code 1234','INTERNAL CUSTOMER NOTES: Call before arrival'])assert.match(note,new RegExp(text));
+    assert.equal(appointment,internalNotes);
   }finally{globalThis.fetch=originalFetch}
 });
 
@@ -287,7 +296,7 @@ test('open-shift scheduling fields persist on the canonical job record',()=>{
   assert.match(suite,/openShift:b\.type==='job'/);
   assert.match(suite,/assignedCrew\.length<crewNeeded/);
   assert.match(employee,/employee-suite\.css\?v=20260903h/);
-  assert.match(employee,/employee-suite\.js\?v=20260903j/);
+  assert.match(employee,/employee-suite\.js\?v=20260903k/);
 });
 
 test('walkthrough preserves job creation time and hands off the scheduled job appointment',()=>{

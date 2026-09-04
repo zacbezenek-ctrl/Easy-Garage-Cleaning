@@ -35,6 +35,7 @@
   .brief-grid{display:grid;grid-template-columns:1fr 1fr;gap:9px}.brief-grid article{background:rgba(255,255,255,.08);padding:11px 12px;border-radius:10px;min-width:0}
   .brief-grid article.wide{grid-column:1/-1}.brief-grid small{display:block;color:#aeb8cc;font-family:'Oswald';font-size:10px;letter-spacing:.1em;text-transform:uppercase;margin-bottom:3px}
   .brief-grid strong{display:block;font-size:14px;line-height:1.4;overflow-wrap:anywhere}.brief-grid .danger{color:#ffb4ad}.brief-empty{color:#aeb8cc;font-size:14px;line-height:1.5}
+  .client-checks{margin-top:20px}.client-checks .sechead{border-color:var(--orange)}.client-checks .item{background:#fff}.client-checks .item small{white-space:pre-line}.client-checks .client-tag{display:inline-block;background:var(--orange);color:#fff;border-radius:99px;padding:3px 8px;font-family:'Oswald';font-size:10px;letter-spacing:.08em;text-transform:uppercase;margin-left:7px;vertical-align:2px}
   @media(max-width:520px){.brief-grid{grid-template-columns:1fr}.brief-grid article.wide{grid-column:auto}}
   .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
   .grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
@@ -240,6 +241,8 @@ gateOk().then(u=>{
 
   <div class="handoff" id="job-brief" aria-live="polite"></div>
 
+  <div id="client-checklist"></div>
+
   <div class="photocard" id="photocard">
     <div class="ttl">From the Game Plan — before &amp; AI preview</div>
     <div id="pb_ref"></div>
@@ -312,7 +315,7 @@ const SECTIONS = [
 ];
 /* =================================================== */
 
-const state={};
+const state={},clientState={};
 const SAVEKEY="egc_postjob_v1",CENTRAL_JOB_ID=new URLSearchParams(location.search).get("jobId")||"";
 const FIELD_IDS=["j_name","j_date","j_phone","j_loads","j_hours","j_fees","j_notes","j_payment","j_payment_ref"];
 const GUARD_OPTS=["Guard Black","Garage Guard","Guard Lite","Not today"];
@@ -322,7 +325,15 @@ let HUBDB=null;try{if(window.firebase){if(!firebase.apps.length)firebase.initial
 const saveKey=()=>SAVEKEY+":"+(CENTRAL_JOB_ID||ACTIVE.jobId||"manual");
 const textList=v=>Array.isArray(v)?v.filter(Boolean).join(', '):String(v||'');
 function normalizedInstructions(job={}){const s=job.scope||{},l=job.logistics||{},d=job.discovery||{},i=job.jobInstructions||job.instructions||{};return{customerGoal:i.customerGoal||d.success||'',whyNow:i.whyNow||d.why_now||job.walkthroughNotes||job.pain||'',keepItems:i.keepItems||s.keep_items||'',removeItems:i.removeItems||s.remove_items||s.keep_remove||'',exclusions:i.exclusions||s.exclusions||'',hazards:i.hazards||s.hazards||[],access:i.access||s.access||l.access||[],accessNotes:i.accessNotes||l.notes||'',truckPlacement:i.truckPlacement||l.truck_placement||s.truck_placement||'',specialItems:i.specialItems||s.special_items||[],finish:i.finish||s.finish||[],customerNotes:i.customerNotes||job.customerNotesSummary||job.notes||'',arrivalWindow:i.arrivalWindow||[job.time,job.endTime].filter(Boolean).join('–')}}
-function renderJobBrief(){const host=document.getElementById('job-brief');if(!host)return;const i=normalizedInstructions(ACTIVE),has=i.customerGoal||i.keepItems||i.removeItems||i.customerNotes;if(!has){host.innerHTML='<div class="brief-head"><div><span>Walkthrough handoff</span><h2>Promise check</h2></div><b>Needs brief</b></div><p class="brief-empty">No walkthrough promise is attached. Confirm the customer’s expected result before closing the job.</p>';return}const row=(label,value,cls='')=>value?`<article class="${cls}"><small>${esc(label)}</small><strong>${esc(textList(value))}</strong></article>`:'';host.innerHTML=`<div class="brief-head"><div><span>Final check against walkthrough</span><h2>Did we deliver the promise?</h2></div><b>Verify at reveal</b></div><div class="brief-grid">${row('Promised outcome',i.customerGoal,'wide')}${row('Keep items accounted for',i.keepItems)}${row('Removal scope complete',i.removeItems)}${row('Do not move / exclusions',i.exclusions,'danger')}${row('Hazards',i.hazards,'danger')}${row('Access + truck',textList(i.access)+(i.accessNotes?` — ${i.accessNotes}`:'')+(i.truckPlacement?` · ${i.truckPlacement}`:''))}${row('Special handling',i.specialItems)}${row('Finish sold',i.finish)}${row('Customer notes',i.customerNotes,'wide')}</div>`}
+function renderJobBrief(){const host=document.getElementById('job-brief');if(!host)return;const i=normalizedInstructions(ACTIVE),has=i.customerGoal||i.keepItems||i.removeItems||i.customerNotes;if(!has){host.innerHTML='<div class="brief-head"><div><span>Walkthrough handoff</span><h2>Internal job brief</h2></div><b>Needs brief</b></div><p class="brief-empty">No walkthrough promise is attached. Confirm the customer’s expected result before closing the job.</p>';return}const row=(label,value,cls='')=>value?`<article class="${cls}"><small>${esc(label)}</small><strong>${esc(textList(value))}</strong></article>`:'';host.innerHTML=`<div class="brief-head"><div><span>Final check against internal notes</span><h2>Did we deliver the promise?</h2></div><b>Verify at reveal</b></div><div class="brief-grid">${row('Promised outcome',i.customerGoal,'wide')}${row('Keep items accounted for',i.keepItems)}${row('Removal scope complete',i.removeItems)}${row('Do not move / exclusions',i.exclusions,'danger')}${row('Hazards',i.hazards,'danger')}${row('Access + truck',textList(i.access)+(i.accessNotes?` — ${i.accessNotes}`:'')+(i.truckPlacement?` · ${i.truckPlacement}`:''))}${row('Special handling',i.specialItems)}${row('Finish sold',i.finish)}${row('Internal customer notes',i.customerNotes,'wide')}</div>`}
+function fallbackClientItems(){const i=normalizedInstructions(ACTIVE),out=[],add=(id,label,detail,critical=false)=>{if(detail)out.push({id,label,detail:String(detail),critical})};add('goal','Confirm the promised outcome with the customer',i.customerGoal,true);add('keep','Show where every keep item ended up',i.keepItems,true);add('remove','Verify every approved removal is complete',i.removeItems,true);add('exclusions','Confirm do-not-touch items were left untouched',i.exclusions,true);add('finish','Demonstrate the finished setup and sold materials',textList(i.finish));add('special','Confirm special handling / disposal is documented',textList(i.specialItems));add('notes','Resolve every client-specific note before leaving',i.customerNotes,true);return out}
+function clientItems(){const saved=ACTIVE.clientChecklists?.postJob;return Array.isArray(saved)&&saved.length?saved:fallbackClientItems()}
+function clientKey(item){return'client_'+String(item.id||item.label).replace(/[^a-z0-9_-]/gi,'_')}
+function renderClientChecklist(){const host=document.getElementById('client-checklist'),items=clientItems();if(!host)return;if(!items.length){host.innerHTML='';return}const done=items.filter(it=>clientState[clientKey(it)]).length;host.innerHTML=`<section class="client-checks"><div class="when">Generated from this client’s walkthrough</div><div class="sechead ${done===items.length?'done':''}"><h2>Client promise checks <span class="client-tag">${items.length} for this job</span></h2><span class="cnt">${done}/${items.length}</span></div>${items.map(it=>`<div class="item ${clientState[clientKey(it)]?'on':''} ${it.critical?'crit':''}" onclick="togClient('${clientKey(it)}')"><span class="bx"></span><div class="tx">${esc(it.label)}<small>${esc(it.detail||'')}</small></div></div>`).join('')}</section>`}
+function standardDone(){return SECTIONS.reduce((n,sec,si)=>n+sec.items.filter((_,ii)=>state[key(si,ii)]).length,0)}
+function totalDone(){return standardDone()+clientItems().filter(it=>clientState[clientKey(it)]).length}
+function totalChecks(){return SECTIONS.reduce((a,s)=>a+s.items.length,0)+clientItems().length}
+function togClient(k){clientState[k]=!clientState[k];render();saveAll()}
 const esc=s=>String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const normPhone=raw=>{const d=String(raw||"").replace(/\D/g,"");if(d.length===10)return"+1"+d;if(d.length===11&&d[0]==="1")return"+"+d;if(d.length>10)return"+"+d;return d||"";};
 const STORAGE_OK=(()=>{try{localStorage.setItem("__egc_t","1");localStorage.removeItem("__egc_t");return true;}catch(e){return false;}})();
@@ -478,11 +489,11 @@ async function mountRef(){
 function setGuard(v){GUARD=(GUARD===v?"":v);render();saveAll();}
 function saveAll(){
   try{const f={};FIELD_IDS.forEach(id=>{const el=document.getElementById(id);if(el)f[id]=el.value;});
-    localStorage.setItem(saveKey(),JSON.stringify({state:state,fields:f,guard:GUARD}));}catch(e){}
+    localStorage.setItem(saveKey(),JSON.stringify({state:state,clientState:clientState,fields:f,guard:GUARD}));}catch(e){}
 }
 function restoreAll(){
   try{const d=JSON.parse(localStorage.getItem(saveKey()));
-    if(d){Object.assign(state,d.state||{});GUARD=d.guard||"";
+    if(d){Object.assign(state,d.state||{});Object.assign(clientState,d.clientState||{});GUARD=d.guard||"";
       FIELD_IDS.forEach(id=>{const el=document.getElementById(id);if(el&&d.fields&&d.fields[id]!=null)el.value=d.fields[id];});}
   }catch(e){}
   try{ACTIVE=JSON.parse(localStorage.getItem("egc_active_job"))||{};
@@ -527,8 +538,9 @@ function render(){
     </section>`;
   }).join("");
   setTimeout(mountActions,0);
-  const total=SECTIONS.reduce((a,s)=>a+s.items.length,0);
-  const done=Object.values(state).filter(Boolean).length;
+  renderClientChecklist();
+  const total=totalChecks();
+  const done=totalDone();
   document.getElementById("pc").textContent=done;
   document.getElementById("pt").textContent="/"+total+" DONE";
   document.getElementById("barfill").style.width=(100*done/total)+"%";
@@ -571,8 +583,8 @@ async function sendReview(btn){
 }
 let _finishId="";
 async function finish(){
-  const total=SECTIONS.reduce((a,s)=>a+s.items.length,0);
-  if(Object.values(state).filter(Boolean).length<total) return;
+  const total=totalChecks();
+  if(totalDone()<total) return;
   const v=id=>document.getElementById(id).value;
   const paymentMethod=v("j_payment")||"unpaid",paymentReference=(v("j_payment_ref")||"").trim();
   if(paymentMethod!=="unpaid"&&!paymentReference){alert("Add the processor transaction ID, check number, or receipt reference before recording payment.");return;}
@@ -585,13 +597,14 @@ async function finish(){
     photos:{after:AFTER_COUNT},
     drive_folder:(function(){try{return localStorage.getItem(driveKey())||"";}catch(e){return "";}})(),
     highlevel_contact_id:ACTIVE.highlevelContactId||"",
+     client_checklist:clientItems().map(it=>({label:it.label,detail:it.detail,completed:true})),
      payment:{method:paymentMethod,reference:paymentReference,verified:paymentMethod!=="unpaid"&&Boolean(paymentReference)},
-     checklist:SECTIONS.map(s=>s.items.map(it=>it.t)).flat().map((t,i)=>t+": done").join("\n")};
+     checklist:[...clientItems().map(it=>`CLIENT: ${it.label} — ${it.detail}: done`),...SECTIONS.flatMap(s=>s.items.map(it=>it.t+": done"))].join("\n")};
   // Local backup FIRST — job-costing data (loads/hours/fees) must survive even if HQ is down.
   try{const log=JSON.parse(localStorage.getItem("egc_job_log")||"[]");log.push(payload);
     localStorage.setItem("egc_job_log",JSON.stringify(log.slice(-50)));}catch(e){}
   const completedAt=new Date().toISOString();
-  if(HUBDB&&ACTIVE.jobId){const total=Number(ACTIVE.total||ACTIVE.rate||0),paid=paymentMethod!=="unpaid"&&paymentReference;await HUBDB.collection('jobs').doc(ACTIVE.jobId).set({status:paid?'paid':'completed',pipelineStatus:paid?'paid':'completed',completedAt,actualLoads:Number(v('j_loads')||0),hoursOnSite:Number(v('j_hours')||0),dumpFees:Number(v('j_fees')||0),closeoutNotes:v('j_notes'),payment:paid?{amount:total,lastAmount:total,lastReceivedAt:completedAt,method:paymentMethod,reference:paymentReference,verified:true,recordedBy:'crew'}:{amount:0,method:'unpaid',verified:false},invoice:{status:paid?'paid':'ready',amount:total,balance:paid?0:total,updatedAt:completedAt},closeoutSyncStatus:'pending',closeoutIdempotencyKey:_finishId,updatedAt:completedAt},{merge:true}).catch(()=>{})}
+  if(HUBDB&&ACTIVE.jobId){const total=Number(ACTIVE.total||ACTIVE.rate||0),paid=paymentMethod!=="unpaid"&&paymentReference,completedBy=sessionStorage.getItem('egc_u')||localStorage.getItem('egc_u')||'';await HUBDB.collection('jobs').doc(ACTIVE.jobId).set({status:paid?'paid':'completed',pipelineStatus:paid?'paid':'completed',completedAt,actualLoads:Number(v('j_loads')||0),hoursOnSite:Number(v('j_hours')||0),dumpFees:Number(v('j_fees')||0),closeoutNotes:v('j_notes'),postJobChecklist:{completedAt,completedBy,clientItems:clientItems().map(it=>({id:it.id,label:it.label,detail:it.detail,completed:true})),standardItems:SECTIONS.flatMap(sec=>sec.items.map(it=>it.t))},payment:paid?{amount:total,lastAmount:total,lastReceivedAt:completedAt,method:paymentMethod,reference:paymentReference,verified:true,recordedBy:'crew'}:{amount:0,method:'unpaid',verified:false},invoice:{status:paid?'paid':'ready',amount:total,balance:paid?0:total,updatedAt:completedAt},closeoutSyncStatus:'pending',closeoutIdempotencyKey:_finishId,updatedAt:completedAt},{merge:true}).catch(()=>{})}
   if(HUBDB&&ACTIVE.customerId)await HUBDB.collection('customers').doc(ACTIVE.customerId).set({latestJobId:ACTIVE.jobId,lastServiceAt:completedAt,lastCloseoutNotes:v('j_notes'),lastPaymentStatus:paymentMethod,updatedAt:completedAt},{merge:true}).catch(()=>{});
   if(HUBDB&&ACTIVE.jobId)await releaseCentralLock();
   const btn=document.getElementById("donebtn");btn.textContent="Saving to HighLevel…";
@@ -608,7 +621,7 @@ async function finish(){
   localStorage.removeItem("egc_active_job");
   alert("Job closed and the Hub record is updated. Send the review request only after confirming the customer is happy. 🧹");
 }
-async function loadCentralJob(){if(!HUBDB||!CENTRAL_JOB_ID)return;try{const snap=await HUBDB.collection('jobs').doc(CENTRAL_JOB_ID).get();if(!snap.exists)return;const j={id:snap.id,...snap.data()};ACTIVE={...ACTIVE,jobId:j.id,customerId:j.customerId||'',highlevelContactId:j.highlevelContactId||'',highlevelOpportunityId:j.highlevelOpportunityId||'',highlevelAppointmentId:j.highlevelAppointmentId||'',name:j.customer||'',phone:j.phone||'',email:j.email||'',addr:j.address||'',pkg:j.serviceType||'',total:j.total||j.priceQuoted||'',rate:j.total||j.priceQuoted||'',deposit:j.deposit?.amount||'',jobdate:j.date||'',startTime:j.time||'',endTime:j.endTime||'',pain:j.walkthroughNotes||'',customerNotesSummary:j.customerNotesSummary||j.notes||'',discovery:j.discovery||{},scope:j.scope||{},logistics:j.logistics||{},instructions:normalizedInstructions(j),savedAt:j.updatedAt||j.createdAt||''};document.getElementById('j_name').value=j.customer||'';document.getElementById('j_phone').value=j.phone||'';document.getElementById('j_date').value=j.date||'';saveAll()}catch(e){}}
+async function loadCentralJob(){if(!HUBDB||!CENTRAL_JOB_ID)return;try{const snap=await HUBDB.collection('jobs').doc(CENTRAL_JOB_ID).get();if(!snap.exists)return;const j={id:snap.id,...snap.data()};ACTIVE={...ACTIVE,jobId:j.id,customerId:j.customerId||'',highlevelContactId:j.highlevelContactId||'',highlevelOpportunityId:j.highlevelOpportunityId||'',highlevelAppointmentId:j.highlevelAppointmentId||'',name:j.customer||'',phone:j.phone||'',email:j.email||'',addr:j.address||'',pkg:j.serviceType||'',total:j.total||j.priceQuoted||'',rate:j.total||j.priceQuoted||'',deposit:j.deposit?.amount||'',jobdate:j.date||'',startTime:j.time||'',endTime:j.endTime||'',pain:j.walkthroughNotes||'',customerNotesSummary:j.customerNotesSummary||j.notes||'',internalNotes:j.internalNotes||'',clientChecklists:j.clientChecklists||{},discovery:j.discovery||{},scope:j.scope||{},logistics:j.logistics||{},instructions:normalizedInstructions(j),savedAt:j.updatedAt||j.createdAt||''};document.getElementById('j_name').value=j.customer||'';document.getElementById('j_phone').value=j.phone||'';document.getElementById('j_date').value=j.date||'';saveAll()}catch(e){}}
 async function releaseCentralLock(){try{const ref=HUBDB.collection('jobs').doc(`_egc_schedule_lock_${String(ACTIVE.jobdate||'').replace(/[^0-9-]/g,'')}`),snap=await ref.get(),entries=(Array.isArray(snap.data()?.entries)?snap.data().entries:[]).filter(x=>x.id!==ACTIVE.jobId);await ref.set({recordType:'schedule_lock',date:ACTIVE.jobdate,entries,updatedAt:new Date().toISOString()},{merge:true})}catch(e){}}
 document.addEventListener("input",saveAll);
 if(!STORAGE_OK) setTimeout(()=>alert("Heads up: this browser is blocking local storage (often Private Browsing). The job won't pre-fill from the Game Plan and progress won't save. Switch off Private Browsing for this iPad."),200);
