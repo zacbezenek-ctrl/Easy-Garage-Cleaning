@@ -582,6 +582,15 @@ test('recurring visits keep the client plan but reset prior completion and payme
   assert.match(suite,/HighLevel already has \$\{remote\.title\|\|'an appointment'\} during that time/);
   assert.match(suite,/notes:job\.internalNotes\|\|job\.notes/);
   assert.match(suite,/customerUpdate=job\.customerId&&job\.internalNotes/);
+  assert.match(suite,/function addCalendarMonths\(date,months\)/);
+  assert.match(suite,/d\.setDate\(1\);d\.setMonth\(d\.getMonth\(\)\+months\)/);
+  assert.match(suite,/Math\.min\(originalDay,lastDay\)/);
+});
+
+test('schedule stops safely when the Hub session expires during CRM collision checks',()=>{
+  assert.match(suite,/if\(error\?\.code==='HUB_AUTH_REQUIRED'\)throw error/);
+  assert.match(suite,/Sign in again to check HighLevel before saving\. Your form is still here\./);
+  assert.match(suite,/button\.textContent='Retry schedule check'/);
 });
 
 test('walkthrough preserves job creation time and hands off the scheduled job appointment',()=>{
