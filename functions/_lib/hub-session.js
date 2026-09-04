@@ -8,7 +8,7 @@ const DEFAULT_USERS = {
   AlexK: '52e2e9901adc10406ad9597084ece4770d1c9fd0e3b76e1f31abf35f8030ac50',
   FrankJara: 'ed2ed02c6f4db402e46a370902a0f19ae2539753d4c13288954ecb32b1253d70',
   JobberCrew: 'a68121119b6a72c583c366a62257cbb3652867e9b50e46bdda6fb05280dee683',
-  CrewTest: '91f1a8abcab1497d642b76cbe87fff86f538806f9b272a1527994bb502de228d',
+  Crewtest: '30fdb1804bc03b28227af1a07007b30bcb6c5207b12db6d5469fce9b9b465d4d',
 };
 
 const DEFAULT_USER_META = {
@@ -17,7 +17,7 @@ const DEFAULT_USER_META = {
   TylerG: { displayName: 'Tyler', role: 'crew_lead', payType: 'hourly', hourlyRate: 23 },
   FrankJara: { displayName: 'Frank', role: 'crew', payType: 'hourly', hourlyRate: 20 },
   JobberCrew: { displayName: 'Crew', role: 'crew', payType: 'hourly', hourlyRate: 20 },
-  CrewTest: { displayName: 'Crew Test', role: 'crew', payType: 'hourly', hourlyRate: 20 },
+  Crewtest: { displayName: 'Crew Test', role: 'crew', payType: 'hourly', hourlyRate: 20 },
 };
 
 const BUSINESS_USERS = new Set(['zacb', 'tylerg', 'alexk']);

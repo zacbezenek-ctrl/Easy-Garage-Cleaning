@@ -40,6 +40,10 @@ test('Hub authentication issues, validates, expires, and clears an HttpOnly sess
   assert.equal(tampered.status,401);
   const logout=await auth.onRequestDelete({request:new Request('https://easygaragecleaning.com/api/hub-auth',{method:'DELETE',headers:{Origin:'https://easygaragecleaning.com'}})});
   assert.match(logout.headers.get('set-cookie'),/Max-Age=0/);
+  const crewLogin=await auth.onRequestPost({request:new Request('https://easygaragecleaning.com/api/hub-auth',{method:'POST',headers:{Origin:'https://easygaragecleaning.com','Content-Type':'application/json'},body:JSON.stringify({username:'Crewtest',password:'Password123'})}),env:{HUB_SESSION_SECRET:'session-test-secret'}});
+  assert.equal(crewLogin.status,200);
+  const oldCrewLogin=await auth.onRequestPost({request:new Request('https://easygaragecleaning.com/api/hub-auth',{method:'POST',headers:{Origin:'https://easygaragecleaning.com','Content-Type':'application/json'},body:JSON.stringify({username:'CrewTest',password:'EGC-Crew-4829!'})}),env:{HUB_SESSION_SECRET:'session-test-secret'}});
+  assert.equal(oldCrewLogin.status,401);
 });
 
 test('one-time integration setup state is signed, purpose-bound, and short-lived',async()=>{
@@ -852,8 +856,8 @@ test('only Zac Tyler and Alex receive business access while new employees get on
   assert.equal(hasBusinessAccess('TylerG'),true);
   assert.equal(hasBusinessAccess('AlexK'),true);
   assert.equal(hasBusinessAccess('FrankJara'),false);
-  assert.equal(hasBusinessAccess('CrewTest'),false);
-  assert.equal(getHubUserProfile({},'CrewTest').role,'crew');
+  assert.equal(hasBusinessAccess('Crewtest'),false);
+  assert.equal(getHubUserProfile({},'Crewtest').role,'crew');
   const passwordHash=await hashHubCredential('NewHire','welcome');
   const profile=getHubUserProfile({HUB_AUTH_USERS_JSON:JSON.stringify({NewHire:passwordHash})},'NewHire');
   assert.equal(profile.role,'crew');
