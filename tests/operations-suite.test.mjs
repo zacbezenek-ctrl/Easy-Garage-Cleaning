@@ -166,7 +166,7 @@ test('dispatch and job start create explicit HighLevel lifecycle triggers',async
 });
 
 test('arrival text sends through Quo and records a silent HighLevel note',async()=>{
-  for(const marker of ['/api/quo-send','arrivalTextStatus','lastCustomerMessage','crew-on-the-way','suppress_automation:true','Open phone text instead'])assert.match(prejob,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
+  for(const marker of ['/api/quo-send','arrivalTextStatus','lastCustomerMessage','crew-on-the-way','suppress_automation:true','crmStatus','lifecycleSyncPayload:crmPayload','lifecycleSyncNextRetryAt','Open phone text instead'])assert.match(prejob,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
   const {onRequestPost}=await import('../functions/api/highlevel.js'),calls=[],originalFetch=globalThis.fetch;
   globalThis.fetch=async(url,options={})=>{calls.push({url:String(url),options});return new Response('{}',{status:200})};
   try{
