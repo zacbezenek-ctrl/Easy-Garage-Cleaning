@@ -475,6 +475,7 @@ test('walkthrough photos have a durable cross-device handoff when Drive is conne
   assert.match(postjob,/restoreWalkthroughPhotoFolder/);
   assert.match(prejob,/Open the client photo folder/);
   assert.match(postjob,/Open the client photo folder/);
+  assert.doesNotMatch(postjob,/AI preview/);
 });
 
 test('public quote progress and production links stay configured',()=>{

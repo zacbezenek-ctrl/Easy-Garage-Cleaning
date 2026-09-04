@@ -244,7 +244,7 @@ gateOk().then(u=>{
   <div id="client-checklist"></div>
 
   <div class="photocard" id="photocard">
-    <div class="ttl">From the Game Plan — before &amp; AI preview</div>
+    <div class="ttl">Walkthrough reference photos</div>
     <div id="pb_ref"></div>
   </div>
 
@@ -306,7 +306,7 @@ const SECTIONS = [
   },
   {
     when:"Same night — 10 minutes, phone on the couch", title:"Feed the Machine", items:[
-      {t:"All job photos → the job's Drive folder", s:"Before, after, receipt + the AI preview. One tap creates the job's own folder in EGC Job Photos and uploads everything new. Tonight, not ‘this weekend’.", crit:true, act:{type:"drive"}},
+      {t:"All job photos → the job's Drive folder", s:"Before, after, and receipt photos belong in this client's folder so the full record follows the job.", crit:true, act:{type:"drive"}},
       {t:"Video clips shared to Zac", s:"Reaction clip + walkthrough pans via AirDrop/album — video is too heavy to live in this tool.", act:{type:"share"}},
       {t:"Opportunity marked won in HighLevel", s:"Closes the CRM loop and starts the review, referral, and maintenance follow-up."},
       {t:"Flag the best clip for ads", s:"One message to Zac: ‘this one's the ad.’ That's the whole creative pipeline."},
@@ -349,7 +349,7 @@ function guardYearOneFree(){const p=(ACTIVE.pkg||"").toLowerCase();return p.incl
 
 /* ===== Per-job photos (on-device, IndexedDB) — keyed by the Game Plan jobId =====
    Same shared DB the Game Plan wrote to. After-photos attach to the same job so
-   before + AI preview + after live together. HighLevel receives the written closeout;
+   before + after live together. HighLevel receives the written closeout;
    action, so these stay on the iPad; the close payload carries counts only. */
 function jobKey(){return ACTIVE.jobId||"postjob_"+(document.getElementById("j_name").value||"unknown").toLowerCase().replace(/\s+/g,"_");}
 function idbOpen(){return new Promise((res,rej)=>{const r=indexedDB.open("egc_photos",1);
@@ -486,10 +486,9 @@ async function shareAllPhotos(){
 }
 async function mountRef(){
   const el=document.getElementById("pb_ref"); if(!el) return;
-  let befs=[],ai=[]; try{befs=await photoList(jobKey(),"before");ai=await photoList(jobKey(),"after_ai");}catch(e){}
-  if(!befs.length&&!ai.length){el.innerHTML=`<div style="color:var(--khaki);font-size:13.5px">No Game Plan photos on this device for this job.</div>`;return;}
-  el.innerHTML=(ai.length?`<div class="aibadge">AI preview from the Game Plan</div><div class="aiout"><img src="${ai[ai.length-1].dataUrl}" onclick="viewPhoto(this.src)"></div>`:"")+
-    (befs.length?`<div class="ttl" style="margin-top:10px">Before</div><div class="photostrip">${befs.map(p=>`<div class="pthumb"><img src="${p.dataUrl}" onclick="viewPhoto(this.src)"></div>`).join("")}</div>`:"");
+  let befs=[]; try{befs=await photoList(jobKey(),"before");}catch(e){}
+  if(!befs.length){el.innerHTML=`<div style="color:var(--khaki);font-size:13.5px">No walkthrough photos on this device. Use the client photo-folder link above when available.</div>`;return;}
+  el.innerHTML=`<div class="ttl" style="margin-top:10px">Before</div><div class="photostrip">${befs.map(p=>`<div class="pthumb"><img src="${p.dataUrl}" onclick="viewPhoto(this.src)"></div>`).join("")}</div>`;
 }
 function setGuard(v){GUARD=(GUARD===v?"":v);render();saveAll();}
 function saveAll(){
