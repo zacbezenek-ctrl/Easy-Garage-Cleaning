@@ -192,7 +192,18 @@ async function authorizeMutation(env, session, collection, id, incoming, existin
       emergencyContactPhone: text(incoming.emergencyContactPhone, 40),
       onboardingVersion: '2026-09',
       onboardingAcknowledgements: ['timekeeping', 'safety', 'customer_care'],
+      onboardingDraftAcknowledgements: [],
+      onboardingDraftAt: '',
       onboardingCompletedAt: text(incoming.onboardingCompletedAt, 40),
+    } : incoming.onboardingDraftAt ? {
+      preferredName: text(incoming.preferredName, 80),
+      phone: text(incoming.phone, 40),
+      emergencyContactName: text(incoming.emergencyContactName, 100),
+      emergencyContactPhone: text(incoming.emergencyContactPhone, 40),
+      onboardingDraftAcknowledgements: Array.isArray(incoming.onboardingDraftAcknowledgements)
+        ? incoming.onboardingDraftAcknowledgements.filter(value => ['timekeeping', 'safety', 'customerCare'].includes(value))
+        : [],
+      onboardingDraftAt: text(incoming.onboardingDraftAt, 40),
     } : {};
     return {
       ...(existing || {}), ...onboarding, id, username: session.user, displayName: session.displayName,

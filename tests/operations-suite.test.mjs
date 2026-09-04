@@ -853,7 +853,7 @@ test('only Zac Tyler and Alex receive business access while new employees get on
   assert.equal(profile.role,'crew');
   assert.equal(profile.businessAccess,false);
   for(const marker of ['BUSINESS_USERS','enterEmployeeApp','canRunBusiness','Run your business'])assert.match(employee,new RegExp(marker));
-  for(const marker of ["new Set(['zacb','tylerg','alexk'])","'onboarding'",'Finish onboarding','opsSaveOnboarding','ops-quick-clock','opsQuickClock','employeeViews'])assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
+  for(const marker of ["new Set(['zacb','tylerg','alexk'])","'onboarding'",'Finish onboarding','opsSaveOnboarding','opsOnboardingDraft','Draft saved automatically.','onboardingDraftAcknowledgements','ops-quick-clock','opsQuickClock','employeeViews'])assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
   const vault=read('functions/api/employee-hub.js');
   assert.match(vault,/hasBusinessAccess\(session\)/);
   assert.match(vault,/onboardingCompletedAt/);
@@ -887,6 +887,12 @@ test('employee pay and location records are sealed behind the Hub session',async
     assert.equal(result.collections.timeEntries.length,1);
     assert.equal(result.collections.timeEntries[0].employee,'FrankJara');
     assert.equal(result.collections.timeEntries[0].lastLocation.lat,40.5853);
+    const draft=await api.onRequestPost({request:new Request('https://easygaragecleaning.com/api/employee-hub',{method:'POST',headers:{Origin:'https://easygaragecleaning.com',Cookie:frankCookie,'Content-Type':'application/json'},body:JSON.stringify({collection:'profiles',id:'frankjara',data:{preferredName:'Frankie',phone:'970-555-0100',emergencyContactName:'Sam',emergencyContactPhone:'970-555-0199',onboardingDraftAcknowledgements:['timekeeping'],onboardingDraftAt:'2026-09-04T17:59:00.000Z'}})}),env});
+    assert.equal(draft.status,200);
+    const draftResult=await draft.json();
+    assert.equal(draftResult.record.phone,'970-555-0100');
+    assert.deepEqual(draftResult.record.onboardingDraftAcknowledgements,['timekeeping']);
+    assert.equal(draftResult.record.onboardingCompletedAt,undefined);
     const onboard=await api.onRequestPost({request:new Request('https://easygaragecleaning.com/api/employee-hub',{method:'POST',headers:{Origin:'https://easygaragecleaning.com',Cookie:frankCookie,'Content-Type':'application/json'},body:JSON.stringify({collection:'profiles',id:'frankjara',data:{preferredName:'Frankie',phone:'970-555-0100',emergencyContactName:'Sam',emergencyContactPhone:'970-555-0199',onboardingCompletedAt:'2026-09-04T18:00:00.000Z',role:'owner',hourlyRate:999}})}),env});
     assert.equal(onboard.status,200);
     const onboardResult=await onboard.json();
