@@ -22,7 +22,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,400;0,500;0,700;1,400;1,500&family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="employee-suite.css?v=20260904a">
+  <link rel="stylesheet" href="employee-suite.css?v=20260904d">
   <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
@@ -799,8 +799,8 @@ body.has-session #login-screen { display: none; }
       <div class="mode-card mode-primary" onclick="selectMode('dashboard')">
         <div class="mode-icon">Ops</div>
         <div>
-          <div class="mode-title">EGC Field Command</div>
-          <div class="mode-desc">HighLevel pipeline, walkthroughs, crew handoff &amp; growth</div>
+          <div class="mode-title">Run your business</div>
+          <div class="mode-desc">Command center, scheduling, time approvals, customers, finances &amp; growth</div>
         </div>
         <div class="mode-arrow">→</div>
       </div>
@@ -1346,8 +1346,18 @@ function updateFirebaseStatus() {
 /* ═══════════════════════════════════════════════════════
    AUTH — validated at the server; browser receives an HttpOnly session cookie
 ═══════════════════════════════════════════════════════ */
-const ADMINS = ['ZacB', 'AlexK'];
+const ADMINS = ['ZacB', 'TylerG', 'AlexK'];
+const BUSINESS_USERS = new Set(ADMINS.map(name => name.toLowerCase()));
 let me = null;
+
+function canRunBusiness() {
+  return BUSINESS_USERS.has(String(me || '').trim().toLowerCase());
+}
+
+function enterEmployeeApp() {
+  if (canRunBusiness()) showModeSelect();
+  else bootDashboard();
+}
 
 function rememberHubProfile(data) {
   const values = {
@@ -1379,7 +1389,7 @@ async function doLogin() {
     me = data.user;
     rememberHubProfile(data);
     sessionStorage.removeItem('egc_tok');
-    showModeSelect();
+    enterEmployeeApp();
   } catch (error) {
     err.textContent = error.message || 'Unable to sign in. Check the connection and try again.';
     err.style.display = 'block';
@@ -1441,7 +1451,7 @@ window.addEventListener('DOMContentLoaded', async () => {
       me = data.user;
       rememberHubProfile(data);
       sessionStorage.removeItem('egc_tok');
-      showModeSelect();
+      enterEmployeeApp();
     } else {
       sessionStorage.removeItem('egc_u');
       sessionStorage.removeItem('egc_tok');
@@ -2715,6 +2725,7 @@ function avatarBg(n) {
    MODE SELECT
 ═══════════════════════════════════════════════════════ */
 function showModeSelect() {
+  if (!canRunBusiness()) { bootDashboard(); return; }
   document.getElementById('login-screen').style.display  = 'none';
   document.getElementById('dashboard').style.display     = 'none';
   document.getElementById('oncall-overlay').classList.remove('open');
@@ -2726,6 +2737,7 @@ function showModeSelect() {
 }
 
 function selectMode(mode) {
+  if (!canRunBusiness()) { bootDashboard(); return; }
   document.getElementById('mode-screen').style.display = 'none';
   if (mode === 'call') {
     openOnCall();
@@ -3209,7 +3221,7 @@ async function ocBook() {
     document.head.appendChild(s);
   })();
 </script>
-<script src="employee-suite.js?v=20260904b"></script>
+<script src="employee-suite.js?v=20260904d"></script>
 <div class="egc-portal-foot" style="background:#0a1628;border-top:1px solid rgba(255,255,255,.08);padding:14px 18px;text-align:center;font-size:12px;color:rgba(245,241,234,.55)">
   <a href="/privacy-policy" style="color:#ff5b1f;margin:0 8px">Privacy</a> · <a href="/" style="color:#ff5b1f">Home</a> · Employee portal — internal use only
 </div>

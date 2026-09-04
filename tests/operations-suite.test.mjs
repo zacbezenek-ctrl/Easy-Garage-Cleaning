@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
-import { createHubActionState, createHubSessionCookie, hashHubCredential, verifyHubActionState, verifyHubSessionToken } from '../functions/_lib/hub-session.js';
+import { createHubActionState, createHubSessionCookie, getHubUserProfile, hasBusinessAccess, hashHubCredential, verifyHubActionState, verifyHubSessionToken } from '../functions/_lib/hub-session.js';
 
 const TEST_HUB_ENV={HIGHLEVEL_API_KEY:'test-key',HIGHLEVEL_LOCATION_ID:'location-1'};
 const TEST_HUB_COOKIE=(await createHubSessionCookie(TEST_HUB_ENV,'ZacB')).split(';')[0];
@@ -663,8 +663,8 @@ test('open-shift scheduling fields persist on the canonical job record',()=>{
   assert.match(suite,/if\(k==='type'\)render\(\)/);
   assert.match(suite,/b\.type==='job'\?'':'ops-hidden'/);
   assert.match(suite,/b\.type==='blocked'\?'ops-hidden':''/);
-  assert.match(employee,/employee-suite\.css\?v=20260904a/);
-  assert.match(employee,/employee-suite\.js\?v=20260904b/);
+  assert.match(employee,/employee-suite\.css\?v=20260904d/);
+  assert.match(employee,/employee-suite\.js\?v=20260904d/);
 });
 
 test('recurring visits keep the client plan but reset prior completion and payment state',()=>{
@@ -759,7 +759,7 @@ test('all employee and field-tool inline scripts parse',()=>{
 });
 
 test('employee hub v2 personalizes access, time, pay, communication, training, and safety',()=>{
-  for(const marker of ["'my_day'","'earnings'","'requests'","'training'","'safety'","'people'",'managerOnly','currentRole','canView','Employee Hub','My pay','Clock in + share location','Clock in without location','watchPosition','clearWatch','locationConsentAt','locationTracking:false','Estimated gross paycheck','Made this year','All-time Hub earnings','opsApproveTime','opsSubmitRequest','opsNewAnnouncement','opsCompleteTraining','opsReportIncident','Last shift location']){
+  for(const marker of ["'my_day'","'earnings'","'requests'","'training'","'safety'","'people'",'employeeViews','currentRole','canView','Employee Hub','My pay','Clock in + share location','Clock in without location','watchPosition','clearWatch','locationConsentAt','locationTracking:false','Estimated gross paycheck','Made this year','All-time Hub earnings','opsApproveTime','opsSubmitRequest','opsNewAnnouncement','opsCompleteTraining','opsReportIncident','Last shift location']){
     assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),marker+' is missing');
   }
   assert.match(read('functions/_lib/hub-session.js'),/DEFAULT_USER_META/);
@@ -770,6 +770,22 @@ test('employee hub v2 personalizes access, time, pay, communication, training, a
   for(const marker of ['getHubSession','AES-GCM','sealedPayload','opaqueId','visibleTo','authorizeMutation','EMPLOYEE_HUB_DATA_SECRET'])assert.match(vault,new RegExp(marker));
   assert.match(suite,/fetch\('\/api\/employee-hub'/);
   assert.doesNotMatch(suite,/db\.collection\(peopleCollections/);
+});
+
+test('only Zac Tyler and Alex receive business access while new employees get onboarding',async()=>{
+  assert.equal(hasBusinessAccess('ZacB'),true);
+  assert.equal(hasBusinessAccess('TylerG'),true);
+  assert.equal(hasBusinessAccess('AlexK'),true);
+  assert.equal(hasBusinessAccess('FrankJara'),false);
+  const passwordHash=await hashHubCredential('NewHire','welcome');
+  const profile=getHubUserProfile({HUB_AUTH_USERS_JSON:JSON.stringify({NewHire:passwordHash})},'NewHire');
+  assert.equal(profile.role,'crew');
+  assert.equal(profile.businessAccess,false);
+  for(const marker of ['BUSINESS_USERS','enterEmployeeApp','canRunBusiness','Run your business'])assert.match(employee,new RegExp(marker));
+  for(const marker of ["new Set(['zacb','tylerg','alexk'])","'onboarding'",'Finish onboarding','opsSaveOnboarding','ops-quick-clock','opsQuickClock','employeeViews'])assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
+  const vault=read('functions/api/employee-hub.js');
+  assert.match(vault,/hasBusinessAccess\(session\)/);
+  assert.match(vault,/onboardingCompletedAt/);
 });
 
 test('employee pay and location records are sealed behind the Hub session',async()=>{
@@ -800,5 +816,19 @@ test('employee pay and location records are sealed behind the Hub session',async
     assert.equal(result.collections.timeEntries.length,1);
     assert.equal(result.collections.timeEntries[0].employee,'FrankJara');
     assert.equal(result.collections.timeEntries[0].lastLocation.lat,40.5853);
+    const onboard=await api.onRequestPost({request:new Request('https://easygaragecleaning.com/api/employee-hub',{method:'POST',headers:{Origin:'https://easygaragecleaning.com',Cookie:frankCookie,'Content-Type':'application/json'},body:JSON.stringify({collection:'profiles',id:'frankjara',data:{preferredName:'Frankie',phone:'970-555-0100',emergencyContactName:'Sam',emergencyContactPhone:'970-555-0199',onboardingCompletedAt:'2026-09-04T18:00:00.000Z',role:'owner',hourlyRate:999}})}),env});
+    assert.equal(onboard.status,200);
+    const onboardResult=await onboard.json();
+    assert.equal(onboardResult.record.preferredName,'Frankie');
+    assert.equal(onboardResult.record.role,'crew');
+    assert.equal(onboardResult.record.hourlyRate,20);
+    assert.deepEqual(onboardResult.record.onboardingAcknowledgements,['timekeeping','safety','customer_care']);
+    const tylerCookie=(await createHubSessionCookie(env,'TylerG')).split(';')[0];
+    const tylerView=await api.onRequestGet({request:new Request('https://easygaragecleaning.com/api/employee-hub',{headers:{Cookie:tylerCookie}}),env});
+    assert.equal((await tylerView.json()).collections.timeEntries.length,2);
+    const outsiderEnv={...env,HUB_AUTH_USERS_JSON:JSON.stringify({Eve:{passwordHash:await hashHubCredential('Eve','password'),role:'manager'}})};
+    const outsiderCookie=(await createHubSessionCookie(outsiderEnv,'Eve')).split(';')[0];
+    const outsiderView=await api.onRequestGet({request:new Request('https://easygaragecleaning.com/api/employee-hub',{headers:{Cookie:outsiderCookie}}),env:outsiderEnv});
+    assert.equal((await outsiderView.json()).collections.timeEntries.length,0);
   }finally{globalThis.fetch=originalFetch}
 });

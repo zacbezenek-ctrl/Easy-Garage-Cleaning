@@ -18,6 +18,13 @@ const DEFAULT_USER_META = {
   JobberCrew: { displayName: 'Crew', role: 'crew', payType: 'hourly', hourlyRate: 20 },
 };
 
+const BUSINESS_USERS = new Set(['zacb', 'tylerg', 'alexk']);
+
+export function hasBusinessAccess(profileOrUsername) {
+  const username = typeof profileOrUsername === 'object' ? profileOrUsername?.user : profileOrUsername;
+  return BUSINESS_USERS.has(String(username || '').trim().toLowerCase());
+}
+
 const encoder = new TextEncoder();
 
 function bytesToBase64Url(bytes) {
@@ -62,7 +69,7 @@ export function getHubUserProfile(env, username) {
   const record = userRecord(env, username);
   if (!record) return null;
   const { passwordHash, ...profile } = record;
-  return { user: username, ...profile };
+  return { user: username, ...profile, businessAccess: hasBusinessAccess(username) };
 }
 
 export function listHubUserProfiles(env = {}) {

@@ -1,4 +1,4 @@
-import { getHubSession, listHubUserProfiles } from '../_lib/hub-session.js';
+import { getHubSession, hasBusinessAccess, listHubUserProfiles } from '../_lib/hub-session.js';
 
 const PROJECT_ID = 'egcw-1ec83';
 const DEFAULT_FIREBASE_API_KEY = 'AIzaSyA8g4UAW4P4bsCrQNZhUe81CbC7BvjJbNc';
@@ -150,7 +150,7 @@ async function writeOne(env, collection, id, data) {
   return { ...data, id, updatedAt: data.updatedAt || updatedAt };
 }
 
-const manager = session => ['owner', 'manager'].includes(session.role);
+const manager = session => hasBusinessAccess(session);
 const same = (left, right) => String(left || '').trim().toLowerCase() === String(right || '').trim().toLowerCase();
 const personKey = value => String(value || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'employee';
 
@@ -184,8 +184,18 @@ async function authorizeMutation(env, session, collection, id, incoming, existin
 
   if (collection === 'profiles') {
     if (id !== personKey(session.user)) throw new Error('You can only update your own employee profile');
+    const text = (value, limit) => String(value || '').trim().slice(0, limit);
+    const onboarding = incoming.onboardingCompletedAt ? {
+      preferredName: text(incoming.preferredName, 80),
+      phone: text(incoming.phone, 40),
+      emergencyContactName: text(incoming.emergencyContactName, 100),
+      emergencyContactPhone: text(incoming.emergencyContactPhone, 40),
+      onboardingVersion: '2026-09',
+      onboardingAcknowledgements: ['timekeeping', 'safety', 'customer_care'],
+      onboardingCompletedAt: text(incoming.onboardingCompletedAt, 40),
+    } : {};
     return {
-      ...(existing || {}), id, username: session.user, displayName: session.displayName,
+      ...(existing || {}), ...onboarding, id, username: session.user, displayName: session.displayName,
       role: session.role, payType: session.payType, hourlyRate: await employeeRate(env, session),
       status: 'active', lastSeenAt: now,
     };
