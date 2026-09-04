@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import test from 'node:test';
 
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
@@ -32,4 +32,23 @@ test('Cloudflare caches versioned public assets', () => {
   const headers = read('_headers');
   assert.match(headers, /\/styles\.css[\s\S]*max-age=31536000, immutable/);
   assert.match(headers, /\/images\/\*[\s\S]*max-age=31536000, immutable/);
+});
+
+test('every public lead form mirrors to HighLevel and carries its own consent disclosure', () => {
+  const root = new URL('../', import.meta.url);
+  const pages = readdirSync(root, { recursive: true, withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name.endsWith('.html'))
+    .map((entry) => ({ name: `${entry.parentPath}/${entry.name}`, html: readFileSync(`${entry.parentPath}/${entry.name}`, 'utf8') }))
+    .filter((page) => page.html.includes('lead-form-lite'));
+  assert.ok(pages.length >= 50, 'expected the full lead-form page set');
+  for (const page of pages) {
+    assert.match(page.html, /<script[^>]+src=["'](?:\/)?fb-capture\.js(?:\?[^"']*)?["'][^>]*>/, `${page.name} does not load the HighLevel mirror`);
+    const forms = [...page.html.matchAll(/<form[^>]*class=["'][^"']*lead-form-lite[^"']*["'][^>]*>([\s\S]*?)<\/form>/gi)];
+    assert.ok(forms.length, `${page.name} has no readable lead form`);
+    for (const form of forms) {
+      assert.match(form[0], /name=["']sms_consent["']/, `${page.name} lead form has no SMS consent field`);
+      assert.match(form[0], /href=["']\/privacy-policy["']/, `${page.name} lead form has no privacy link`);
+      assert.match(form[0], /href=["']\/terms-of-service["']/, `${page.name} lead form has no terms link`);
+    }
+  }
 });
