@@ -35,6 +35,28 @@
   X-Content-Type-Options: nosniff
   Referrer-Policy: strict-origin-when-cross-origin
 
+# Other private staff/customer workflow shells.
+/copilot*
+  X-Robots-Tag: noindex
+  Cache-Control: no-store
+  X-Frame-Options: DENY
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: no-referrer
+
+/quote*
+  X-Robots-Tag: noindex
+  Cache-Control: no-store
+  X-Frame-Options: DENY
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: no-referrer
+
+/tyler-contract*
+  X-Robots-Tag: noindex
+  Cache-Control: no-store
+  X-Frame-Options: DENY
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: no-referrer
+
 # Lead-attribution + relay script — must update instantly on deploy, or the
 # form silently stops mirroring leads to HighLevel/Zapier. Revalidate every load (cheap
 # ETag check) instead of the default 4h cache. Bump the ?v= tag in the <script>

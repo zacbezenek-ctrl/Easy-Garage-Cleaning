@@ -42,6 +42,16 @@ test('Cloudflare caches versioned public assets', () => {
   for (const page of pages) assert.match(page.html, /styles\.css\?v=20260903g/, `${page.name} loads a stale shared stylesheet`);
 });
 
+test('private workflow shells are never indexed, framed, or cached', () => {
+  const headers = read('_headers');
+  for (const route of ['/employee*', '/crew/*', '/copilot*', '/quote*', '/tyler-contract*']) {
+    assert.ok(headers.includes(route), `${route} is missing from Cloudflare headers`);
+  }
+  assert.match(headers, /X-Robots-Tag: noindex/);
+  assert.match(headers, /Cache-Control: no-store/);
+  assert.match(headers, /X-Frame-Options: DENY/);
+});
+
 test('every image has an explicit accessible text alternative', () => {
   const root = new URL('../', import.meta.url);
   const pages = readdirSync(root, { recursive: true, withFileTypes: true })
