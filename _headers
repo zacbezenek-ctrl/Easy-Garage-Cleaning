@@ -53,6 +53,13 @@
   X-Content-Type-Options: nosniff
   Referrer-Policy: no-referrer
 
+/customer-portal*
+  X-Robots-Tag: noindex
+  Cache-Control: no-store
+  X-Frame-Options: DENY
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: no-referrer
+
 /tyler-contract*
   X-Robots-Tag: noindex
   Cache-Control: no-store

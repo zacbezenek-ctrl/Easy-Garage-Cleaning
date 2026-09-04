@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import { createHubActionState, createHubSessionCookie, getHubUserProfile, hasBusinessAccess, hashHubCredential, verifyHubActionState, verifyHubSessionToken } from '../functions/_lib/hub-session.js';
+import { createCustomerPortalAccessToken, createCustomerPortalSessionCookie, verifyCustomerPortalAccessToken, verifyCustomerPortalSessionToken } from '../functions/_lib/customer-portal.js';
 
 const TEST_HUB_ENV={HIGHLEVEL_API_KEY:'test-key',HIGHLEVEL_LOCATION_ID:'location-1'};
 const TEST_HUB_COOKIE=(await createHubSessionCookie(TEST_HUB_ENV,'ZacB')).split(';')[0];
@@ -21,6 +22,7 @@ const webLead=read('functions/api/web-lead.js');
 const statusApi=read('functions/api/integration-status.js');
 const commercial=read('commercial-junk-removal-fort-collins-co.html');
 const employeeSignup=read('employee-signup.html');
+const customerPortal=read('customer-portal.html');
 
 test('Hub authentication issues, validates, expires, and clears an HttpOnly session',async()=>{
   const env={HUB_SESSION_SECRET:'session-test-secret',HUB_AUTH_USERS_JSON:JSON.stringify({Tester:await hashHubCredential('Tester','correct horse')})};
@@ -831,7 +833,7 @@ test('public quote progress and production links stay configured',()=>{
 });
 
 test('all employee and field-tool inline scripts parse',()=>{
-  for(const [name,html] of [['employee.html',employee],['employee-signup.html',employeeSignup],['crew/index.html',crewHome],['crew/gameplan.html',crew],['crew/prejob.html',prejob],['crew/postjob.html',postjob]]){
+  for(const [name,html] of [['employee.html',employee],['employee-signup.html',employeeSignup],['crew/index.html',crewHome],['crew/gameplan.html',crew],['crew/prejob.html',prejob],['crew/postjob.html',postjob],['customer-portal.html',customerPortal]]){
     const scripts=[...html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/gi)].map(x=>x[1]).filter(Boolean);
     scripts.forEach((code,i)=>assert.doesNotThrow(()=>new vm.Script(code,{filename:name+'#'+i})));
   }
@@ -975,4 +977,91 @@ test('employee pay and location records are sealed behind the Hub session',async
     const outsiderView=await api.onRequestGet({request:new Request('https://easygaragecleaning.com/api/employee-hub',{headers:{Cookie:outsiderCookie}}),env:outsiderEnv});
     assert.equal((await outsiderView.json()).collections.timeEntries.length,0);
   }finally{globalThis.fetch=originalFetch}
+});
+
+test('customer portal uses expiring signed access links and an HttpOnly job session',async()=>{
+  const env={HUB_SESSION_SECRET:'customer-portal-test-secret'};
+  const now=Date.now(),access=await createCustomerPortalAccessToken(env,'job-123',now);
+  assert.equal((await verifyCustomerPortalAccessToken(env,access,now+29*24*60*60*1000)).jobId,'job-123');
+  assert.equal(await verifyCustomerPortalAccessToken(env,access+'x',now),null);
+  assert.equal(await verifyCustomerPortalAccessToken(env,access,now+31*24*60*60*1000),null);
+  const cookie=await createCustomerPortalSessionCookie(env,'job-123');
+  assert.match(cookie,/egc_customer_portal=/);
+  assert.match(cookie,/HttpOnly/i);
+  assert.match(cookie,/Secure/i);
+  assert.match(cookie,/SameSite=Lax/i);
+  const token=cookie.match(/egc_customer_portal=([^;]+)/)[1];
+  assert.equal((await verifyCustomerPortalSessionToken(env,token)).jobId,'job-123');
+});
+
+test('customer portal exchanges a signed link for a private cookie and rejects disguised uploads',async()=>{
+  const sessionApi=await import('../functions/api/customer-portal-session.js');
+  const driveApi=await import('../functions/api/drive-upload.js');
+  const env={HUB_SESSION_SECRET:'customer-portal-session-secret',FIREBASE_API_KEY:'firebase-test',GOOGLE_CLIENT_ID:'client',GOOGLE_CLIENT_SECRET:'secret',GOOGLE_REFRESH_TOKEN:'refresh'};
+  const access=await createCustomerPortalAccessToken(env,'job-123');
+  const originalFetch=globalThis.fetch;
+  let upstreamCalls=0;
+  globalThis.fetch=async()=>{upstreamCalls+=1;return new Response(JSON.stringify({name:'projects/egcw-1ec83/databases/(default)/documents/jobs/job-123',fields:{customer:{stringValue:'Dana'}}}),{status:200})};
+  try{
+    const exchanged=await sessionApi.onRequestGet({request:new Request(`https://easygaragecleaning.com/api/customer-portal-session?access=${encodeURIComponent(access)}`),env});
+    assert.equal(exchanged.status,303);
+    assert.equal(exchanged.headers.get('location'),'/customer-portal');
+    assert.match(exchanged.headers.get('set-cookie'),/HttpOnly/);
+    const cookie=exchanged.headers.get('set-cookie').split(';')[0];
+    upstreamCalls=0;
+    const rejected=await driveApi.onRequestPost({request:new Request('https://easygaragecleaning.com/api/drive-upload',{method:'POST',headers:{Origin:'https://easygaragecleaning.com',Cookie:cookie,'Content-Type':'application/json'},body:JSON.stringify({jobId:'another-job',photos:[{id:'fake',tag:'important',dataUrl:'data:text/plain;base64,SGVsbG8='}]})}),env});
+    assert.equal(rejected.status,400);
+    assert.equal(upstreamCalls,0);
+    assert.match((await rejected.json()).error,/valid JPG, PNG, or WebP/);
+  }finally{globalThis.fetch=originalFetch}
+});
+
+test('business users can create a private customer portal link and customers see only their job',async()=>{
+  const linkApi=await import('../functions/api/customer-portal-link.js');
+  const portalApi=await import('../functions/api/customer-portal.js');
+  const env={HUB_SESSION_SECRET:'customer-portal-api-secret',FIREBASE_API_KEY:'firebase-test'};
+  const zacCookie=(await createHubSessionCookie(env,'ZacB')).split(';')[0];
+  const crewCookie=(await createHubSessionCookie(env,'FrankJara')).split(';')[0];
+  const customerCookie=(await createCustomerPortalSessionCookie(env,'job-123')).split(';')[0];
+  const fields={customer:{stringValue:'Dana Customer'},email:{stringValue:'dana@example.com'},phone:{stringValue:'9705550199'},date:{stringValue:'2026-09-18'},time:{stringValue:'09:00'},address:{stringValue:'123 Pine St'},serviceType:{stringValue:'Garage Turnaround'},total:{integerValue:'1400'},status:{stringValue:'scheduled'}};
+  const originalFetch=globalThis.fetch;
+  globalThis.fetch=async(url,options={})=>{
+    if((options.method||'GET')==='PATCH')return new Response(JSON.stringify({name:'projects/egcw-1ec83/databases/(default)/documents/jobs/job-123',...JSON.parse(options.body)}),{status:200});
+    return new Response(JSON.stringify({name:'projects/egcw-1ec83/databases/(default)/documents/jobs/job-123',fields}),{status:200});
+  };
+  try{
+    const forbidden=await linkApi.onRequestPost({request:new Request('https://easygaragecleaning.com/api/customer-portal-link',{method:'POST',headers:{Origin:'https://easygaragecleaning.com',Cookie:crewCookie,'Content-Type':'application/json'},body:JSON.stringify({job_id:'job-123'})}),env});
+    assert.equal(forbidden.status,403);
+    const link=await linkApi.onRequestPost({request:new Request('https://easygaragecleaning.com/api/customer-portal-link',{method:'POST',headers:{Origin:'https://easygaragecleaning.com',Cookie:zacCookie,'Content-Type':'application/json'},body:JSON.stringify({job_id:'job-123'})}),env});
+    assert.equal(link.status,200);
+    const linkBody=await link.json(),access=new URL(linkBody.url).searchParams.get('access');
+    assert.equal((await verifyCustomerPortalAccessToken(env,access)).jobId,'job-123');
+    assert.doesNotMatch(linkBody.url,/Dana|dana@example|970555/);
+    const view=await portalApi.onRequestGet({request:new Request('https://easygaragecleaning.com/api/customer-portal',{headers:{Cookie:customerCookie}}),env});
+    const viewBody=await view.json();
+    assert.equal(view.status,200);
+    assert.equal(viewBody.customer.name,'Dana Customer');
+    assert.equal(viewBody.payment.balance,1400);
+    assert.equal('email' in viewBody.customer,false);
+    assert.equal('phone' in viewBody.customer,false);
+    const approved=await portalApi.onRequestPost({request:new Request('https://easygaragecleaning.com/api/customer-portal',{method:'POST',headers:{Origin:'https://easygaragecleaning.com',Cookie:customerCookie,'Content-Type':'application/json'},body:JSON.stringify({action:'approve_estimate',signed_name:'Dana Customer',confirmed:true})}),env});
+    assert.equal(approved.status,200);
+  }finally{globalThis.fetch=originalFetch}
+});
+
+test('customer portal connects appointments estimates payments photos progress and receipts',()=>{
+  for(const marker of ['Your scheduled service','Review and approve','Pay securely with Stripe','Add project photos','Job progress','View Stripe receipt','/api/customer-portal','/api/drive-upload','approve_estimate','create_payment','verify_payment'])assert.match(customerPortal,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
+  assert.match(customerPortal,/noindex,nofollow,noarchive/);
+  assert.match(customerPortal,/no-referrer/);
+  assert.match(customerPortal,/\['localhost','127\.0\.0\.1'\]\.includes\(location\.hostname\).*preview/);
+  assert.match(suite,/Copy customer portal/);
+  assert.match(suite,/\/api\/customer-portal-link/);
+  const drive=read('functions/api/drive-upload.js');
+  assert.match(drive,/getCustomerPortalSession/);
+  assert.match(drive,/customerSession \? customerSession\.jobId/);
+  assert.match(drive,/MAX_CUSTOMER_PHOTOS = 3/);
+  assert.match(drive,/Photos must be valid JPG, PNG, or WebP/);
+  assert.match(drive,/customerSession \? 'customer'/);
+  const headers=read('_headers');
+  assert.match(headers,/\/customer-portal\*[\s\S]*X-Robots-Tag: noindex[\s\S]*Cache-Control: no-store[\s\S]*Referrer-Policy: no-referrer/);
 });
