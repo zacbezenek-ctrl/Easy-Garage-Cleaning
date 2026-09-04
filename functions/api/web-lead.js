@@ -24,7 +24,7 @@
 
 const ALLOWED_HOST_RE = /(^|\.)easygaragecleaning\.com$|(\.pages\.dev)$|^localhost(:\d+)?$|^127\.0\.0\.1(:\d+)?$/;
 const MAX_BODY = 32 * 1024;
-const FIELDS = ['name', 'phone', 'items', 'source', 'subject', 'fbc', 'fbp', 'fbclid', 'landing_url', 'referrer', 'page_url'];
+const FIELDS = ['name', 'phone', 'email', 'items', 'source', 'subject', 'city', 'serviceZip', 'preferred_date', 'preferred_timing', 'booking_slot', 'estimated_range', 'flow_type', 'sms_consent', 'fbc', 'fbp', 'fbclid', 'landing_url', 'referrer', 'page_url'];
 const HIGHLEVEL_API = 'https://services.leadconnectorhq.com';
 
 function hostOf(value) {
@@ -82,11 +82,30 @@ async function syncHighLevelLead(env, lead) {
       locationId: config.locationId,
       name: lead.name,
       phone: lead.phone,
+      ...(lead.email ? { email: lead.email } : {}),
       source: lead.source || 'EGC Website',
     }),
   });
   const contactId = contactResult.contact && contactResult.contact.id || contactResult.id || '';
   if (!contactId) throw new Error('HighLevel did not return a contact ID');
+  const detailLines = [
+    'EGC WEBSITE LEAD DETAILS',
+    `Service / items: ${lead.items || '—'}`,
+    `Email: ${lead.email || '—'}`,
+    `Location: ${[lead.city, lead.serviceZip].filter(Boolean).join(' ') || '—'}`,
+    `Preferred date / timing: ${[lead.preferred_date, lead.preferred_timing].filter(Boolean).join(' · ') || '—'}`,
+    `Requested slot: ${lead.booking_slot || '—'}`,
+    `Estimated range shown: ${lead.estimated_range || '—'}`,
+    `Form path: ${lead.flow_type || 'standard'}`,
+    `SMS consent checked: ${lead.sms_consent === 'yes' ? 'yes' : 'no'}`,
+    `Landing page: ${lead.page_url || lead.landing_url || '—'}`,
+  ];
+  try {
+    await highLevelRequest(config, `/contacts/${encodeURIComponent(contactId)}/notes`, {
+      method: 'POST', headers: { 'Idempotency-Key': `website-lead-details:${contactId}:${lead.booking_slot || lead.preferred_date || 'request'}` },
+      body: JSON.stringify({ userId: config.assignedTo || undefined, title: 'EGC Website Lead Details', body: detailLines.join('\n').slice(0, 3000), color: '#F15A24', pinned: false }),
+    });
+  } catch {}
   if (!config.pipelineId) return { configured: true, synced: true, contactId, opportunityId: '' };
 
   let stageId = config.stageId;
@@ -100,7 +119,7 @@ async function syncHighLevelLead(env, lead) {
   const body = {
     pipelineId: config.pipelineId,
     locationId: config.locationId,
-    name: `${lead.name} — Website lead`,
+    name: `${lead.name} — ${lead.items || 'Website lead'}`,
     pipelineStageId: stageId,
     status: 'open',
     contactId,
@@ -208,7 +227,7 @@ export async function onRequestPost({ request, env }) {
   }
 
   let highlevel;
-  try { highlevel = await syncHighLevelLead(env, { name, phone, source: flat.source || 'EGC Website' }); }
+  try { highlevel = await syncHighLevelLead(env, { ...flat, name, phone, source: flat.source || 'EGC Website' }); }
   catch (error) { return json(502, { ok: false, error: 'HighLevel lead sync failed', detail: String(error.message || error).slice(0, 300) }); }
 
   let relay = { configured: !!hook, sent: false };

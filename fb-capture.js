@@ -55,10 +55,17 @@
       var bot = f.querySelector('input[name="botcheck"]');
       if (bot && bot.checked) return;
       var fd = new FormData(f);
-      var payload = { page_url: location.href };
-      ['name', 'phone', 'items', 'source', 'subject', 'fbc', 'fbp', 'fbclid', 'landing_url', 'referrer'].forEach(function (k) {
-        payload[k] = String(fd.get(k) || '');
-      });
+      var pick = function () { for (var i = 0; i < arguments.length; i++) { var v = fd.get(arguments[i]); if (v != null && String(v).trim()) return String(v); } return ''; };
+      var payload = {
+        page_url: location.href,
+        name: pick('name', 'Name'), phone: pick('phone', 'Phone'), email: pick('email', 'Email'),
+        items: pick('items', 'What to remove', 'Service type', 'Job size'), source: pick('source'), subject: pick('subject'),
+        city: pick('city', 'City'), serviceZip: pick('serviceZip', 'Zip code'),
+        preferred_date: pick('preferred_date', 'Preferred date'), preferred_timing: pick('preferred_timing', 'Preferred timing'),
+        booking_slot: pick('booking_slot', 'booking_slot_choice'), estimated_range: pick('estimated_range'), flow_type: pick('flow_type'),
+        sms_consent: pick('sms_consent'), fbc: pick('fbc'), fbp: pick('fbp'), fbclid: pick('fbclid'),
+        landing_url: pick('landing_url'), referrer: pick('referrer')
+      };
       var body = JSON.stringify(payload);
       if (window.fetch) {
         fetch('/api/web-lead', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: body, keepalive: true }).catch(function () {});
