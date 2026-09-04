@@ -522,7 +522,7 @@ export async function onRequestPost({ request, env }) {
       const event = String(payload.event || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
       if (!event) return reply(400, { ok: false, error: 'Lifecycle event is required' });
       const tag = `egc-${event}`;
-      await addTags(c, contactId, [tag]);
+      if (!payload.suppress_automation) await addTags(c, contactId, [tag]);
       const appointmentStatus = ['cancelled','confirmed'].includes(String(payload.appointment_status || '').toLowerCase()) ? String(payload.appointment_status).toLowerCase() : '';
       const appointment = appointmentStatus && payload.appointment_id ? await completeAppointment(c, payload.appointment_id, appointmentStatus) : {};
       let noteId = '';
@@ -530,7 +530,7 @@ export async function onRequestPost({ request, env }) {
         const note = await ghl(c, `/contacts/${encodeURIComponent(contactId)}/notes`, { method: 'POST', headers: payload.idempotency_key ? { 'Idempotency-Key': payload.idempotency_key } : {}, body: JSON.stringify({ userId: c.userId || undefined, title: `EGC Lifecycle — ${event}`, body: String(payload.note).trim().slice(0, 3000), color: '#F15A24', pinned: false }) });
         noteId = note.note?.id || '';
       }
-      return reply(200, { ok: true, contactId, noteId, ...appointment, automation: { trigger: tag } });
+      return reply(200, { ok: true, contactId, noteId, ...appointment, automation: { trigger: payload.suppress_automation ? '' : tag, suppressed: Boolean(payload.suppress_automation) } });
     }
     const isCloseout = payload.tool === 'post_job';
     const note = await ghl(c, `/contacts/${encodeURIComponent(contactId)}/notes`, { method: 'POST', headers: payload.idempotency_key ? { 'Idempotency-Key': payload.idempotency_key } : {}, body: JSON.stringify({

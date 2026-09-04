@@ -165,6 +165,21 @@ test('dispatch and job start create explicit HighLevel lifecycle triggers',async
   }finally{globalThis.fetch=originalFetch}
 });
 
+test('arrival text sends through Quo and records a silent HighLevel note',async()=>{
+  for(const marker of ['/api/quo-send','arrivalTextStatus','lastCustomerMessage','crew-on-the-way','suppress_automation:true','Open phone text instead'])assert.match(prejob,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
+  const {onRequestPost}=await import('../functions/api/highlevel.js'),calls=[],originalFetch=globalThis.fetch;
+  globalThis.fetch=async(url,options={})=>{calls.push({url:String(url),options});return new Response('{}',{status:200})};
+  try{
+    const request=new Request('https://easygaragecleaning.com/api/highlevel',{method:'POST',headers:{Origin:'https://easygaragecleaning.com','Content-Type':'application/json'},body:JSON.stringify({tool:'lifecycle',event:'crew-on-the-way',suppress_automation:true,note:'Arrival text sent via Quo.',highlevel_contact_id:'contact-1',client:{name:'Customer'}})});
+    const response=await onRequestPost({request,env:{HIGHLEVEL_API_KEY:'test-key',HIGHLEVEL_LOCATION_ID:'location-1'}}),result=await response.json();
+    assert.equal(response.status,200);
+    assert.equal(result.automation.trigger,'');
+    assert.equal(result.automation.suppressed,true);
+    assert.equal(calls.some(x=>x.url.endsWith('/contacts/contact-1/tags')),false);
+    assert.ok(calls.find(x=>x.url.endsWith('/contacts/contact-1/notes')));
+  }finally{globalThis.fetch=originalFetch}
+});
+
 test('cancelling keeps an audit record, releases the Hub slot, and cancels the HighLevel appointment',async()=>{
   for(const marker of ['opsCancelBooking','Cancellation reason','cancellation:{reason','cancelledBy:employeeIdentity','releaseScheduleLock(job)','walkthrough-cancelled','job-cancelled','HighLevel cancellation is queued','Event type locks after the first save'])assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),marker+' is missing');
   const {onRequestPost}=await import('../functions/api/highlevel.js'),calls=[],originalFetch=globalThis.fetch;

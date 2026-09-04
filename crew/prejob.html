@@ -261,7 +261,7 @@ const SECTIONS = [
       {t:"Broom, dustpan, shop vac", s:"The swept floor IS the after photo. Never skip."},
       {t:"Shelving / bins for install loaded", s:"Only if sold on the Game Plan — check it."},
       {t:"Tripod + phone mount + charged phone", s:"Content kit. Footage is ad inventory — treat it like equipment.", crit:true},
-      {t:"Fuel + route + arrival ETA texted", s:"Text 'On our way, see you ~[TIME]' when wheels roll.", act:{type:"sms", body:"On our way to your garage now — see you shortly! — Easy Garage Cleaning"}},
+      {t:"Fuel + route + arrival ETA texted", s:"Send the customer a clean arrival message when wheels roll.", act:{type:"sms", body:"Hi [NAME] — the Easy Garage Cleaning crew is on the way to [ADDRESS]. We'll see you shortly. Reply here if anything changed."}},
     ]
   },
   {
@@ -338,7 +338,7 @@ async function mountActions(){
     const it=SECTIONS[si].items[ii]; if(!it.act) continue;
     const el=document.getElementById(actId(si,ii)); if(!el) continue;
     if(it.act.type==="photo") await mountPhotoAct(el,it.act);
-    else if(it.act.type==="sms") el.innerHTML=`<button class="actbtn alt" onclick="event.stopPropagation();smsCustomer(${si},${ii})">💬 Text the customer</button>`;
+    else if(it.act.type==="sms") el.innerHTML=`<button class="actbtn alt" onclick="event.stopPropagation();smsCustomer(${si},${ii},this)">💬 Send arrival text</button>`;
     else if(it.act.type==="call") el.innerHTML=`<button class="actbtn" onclick="event.stopPropagation();callOffice()">📞 Call office</button>`;
     else if(it.act.type==="clock"){const t=localStorage.getItem(STARTKEY);
       el.innerHTML=t?`<button class="actbtn done" onclick="event.stopPropagation();logStart()">⏱️ Started ${esc(t)} — tap to reset</button>`
@@ -358,13 +358,21 @@ async function onActPhoto(input,tag){const f=input.files&&input.files[0]; if(!f)
   input.value="";mountActions();}
 async function onActPhotoDel(id){await photoDel(id);mountActions();}
 function custPhoneDigits(){return String(ACTIVE.phone||"").replace(/\D/g,"");}
-function smsCustomer(si,ii){
+async function smsCustomer(si,ii,btn){
   const it=SECTIONS[si].items[ii];
   const name=(document.getElementById("j_name").value||"").split(" ")[0]||"there";
   const rate=document.getElementById("j_rate").value||"[RATE]";
-  const body=String(it.act.body||"").replaceAll("[NAME]",name).replaceAll("[RATE]",rate);
+  const body=String(it.act.body||"").replaceAll("[NAME]",name).replaceAll("[RATE]",rate).replaceAll("[ADDRESS]",ACTIVE.addr||"your garage");
   const num=custPhoneDigits();
-  location.href="sms:"+num+"&body="+encodeURIComponent(body);
+  if(!num){alert("Add the customer's mobile number before sending the arrival text.");return}
+  const sentAt=new Date().toISOString(),idempotency=`arrival-text:${ACTIVE.jobId||num}:${sentAt.slice(0,16)}`;btn.disabled=true;btn.textContent="Sending…";
+  try{
+    const response=await fetch('/api/quo-send',{method:'POST',headers:{'Content-Type':'application/json','Idempotency-Key':idempotency},body:JSON.stringify({to:num,message:body,idempotency_key:idempotency})}),result=await response.json().catch(()=>({}));
+    if(!response.ok||!result.ok)throw new Error(result.error||'send failed');
+    if(HUBDB&&ACTIVE.jobId)await HUBDB.collection('jobs').doc(ACTIVE.jobId).set({arrivalTextStatus:'sent',lastCustomerMessage:{type:'sms',event:'crew-on-the-way',sentAt,channel:'quo',messageId:result.id||'',sentBy:sessionStorage.getItem('egc_u')||localStorage.getItem('egc_u')||''},updatedAt:sentAt},{merge:true}).catch(()=>{});
+    fetch('/api/highlevel',{method:'POST',headers:{'Content-Type':'application/json','Idempotency-Key':idempotency+':crm'},body:JSON.stringify({tool:'lifecycle',event:'crew-on-the-way',suppress_automation:true,idempotency_key:idempotency+':crm',highlevel_contact_id:ACTIVE.highlevelContactId||'',note:`Arrival text sent via Quo at ${sentAt}.`,client:{name:ACTIVE.name||name,phone:num,email:ACTIVE.email||'',address:ACTIVE.addr||'',highlevel_contact_id:ACTIVE.highlevelContactId||''}})}).catch(()=>{});
+    state[key(si,ii)]=true;saveAll();queueProgressSave();render();
+  }catch(e){btn.disabled=false;btn.textContent="Open phone text instead";alert("Direct send did not go through. The phone message composer will open so you can review and tap Send.");location.href="sms:"+num+"&body="+encodeURIComponent(body)}
 }
 function callOffice(){location.href="tel:"+BIZPHONE;}
 function logStart(){const now=new Date().toLocaleTimeString([], {hour:"numeric",minute:"2-digit"});
