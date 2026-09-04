@@ -469,6 +469,14 @@ test('walkthrough hazard choices cannot contradict the crew brief',()=>{
   assert.match(crew,/filter\(x=>x!=='No visible hazards'\)/);
 });
 
+test('walkthrough photos have a durable cross-device handoff when Drive is connected',()=>{
+  for(const marker of ['syncWalkthroughPhotos','/api/drive-upload','photoSyncStatus','photoDriveUrl','latestPhotoFolderUrl'])assert.match(crew,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
+  assert.match(prejob,/renderWalkthroughPhotoFolder/);
+  assert.match(postjob,/restoreWalkthroughPhotoFolder/);
+  assert.match(prejob,/Open the client photo folder/);
+  assert.match(postjob,/Open the client photo folder/);
+});
+
 test('public quote progress and production links stay configured',()=>{
   assert.match(commercial,/const shell=form\.closest\('\.quote-form'\)\|\|document/);
   assert.match(commercial,/const dots=shell\.querySelectorAll\('\.form-step-dot'\)/);

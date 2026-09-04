@@ -635,7 +635,8 @@ async function loadCentralJob(){if(!HUBDB||!CENTRAL_JOB_ID)return;try{const snap
 async function releaseCentralLock(){try{const ref=HUBDB.collection('jobs').doc(`_egc_schedule_lock_${String(ACTIVE.jobdate||'').replace(/[^0-9-]/g,'')}`),snap=await ref.get(),entries=(Array.isArray(snap.data()?.entries)?snap.data().entries:[]).filter(x=>x.id!==ACTIVE.jobId);await ref.set({recordType:'schedule_lock',date:ACTIVE.jobdate,entries,updatedAt:new Date().toISOString()},{merge:true})}catch(e){}}
 document.addEventListener("input",saveAll);
 if(!STORAGE_OK) setTimeout(()=>alert("Heads up: this browser is blocking local storage (often Private Browsing). The job won't pre-fill from the Game Plan and progress won't save. Switch off Private Browsing for this iPad."),200);
-(async()=>{restoreAll();await loadCentralJob();render();mountRef()})(); // after/receipt capture is now inline on the checklist items (mountActions)
+async function restoreWalkthroughPhotoFolder(){if(!HUBDB||!CENTRAL_JOB_ID)return;try{const snap=await HUBDB.collection('jobs').doc(CENTRAL_JOB_ID).get(),url=snap.data()?.photoDriveUrl,grid=document.querySelector('#job-brief .brief-grid');if(url){localStorage.setItem(driveKey(),url);if(grid)grid.insertAdjacentHTML('beforeend',`<article class="wide"><small>Walkthrough photos</small><strong><a href="${esc(url)}" target="_blank" rel="noopener">Open the client photo folder ↗</a></strong></article>`)}}catch(e){}}
+(async()=>{restoreAll();await loadCentralJob();render();await restoreWalkthroughPhotoFolder();mountRef()})(); // after/receipt capture is now inline on the checklist items (mountActions)
 </script>
 </body>
 </html>
