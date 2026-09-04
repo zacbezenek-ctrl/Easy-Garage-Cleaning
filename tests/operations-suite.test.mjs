@@ -1023,7 +1023,7 @@ test('business users can create a private customer portal link and customers see
   const zacCookie=(await createHubSessionCookie(env,'ZacB')).split(';')[0];
   const crewCookie=(await createHubSessionCookie(env,'FrankJara')).split(';')[0];
   const customerCookie=(await createCustomerPortalSessionCookie(env,'job-123')).split(';')[0];
-  const fields={customer:{stringValue:'Dana Customer'},email:{stringValue:'dana@example.com'},phone:{stringValue:'9705550199'},date:{stringValue:'2026-09-18'},time:{stringValue:'09:00'},address:{stringValue:'123 Pine St'},serviceType:{stringValue:'Garage Turnaround'},total:{integerValue:'1400'},status:{stringValue:'scheduled'}};
+  const fields={customer:{stringValue:'Dana Customer'},email:{stringValue:'dana@example.com'},phone:{stringValue:'9705550199'},date:{stringValue:'2026-09-18'},time:{stringValue:'09:00'},address:{stringValue:'123 Pine St'},serviceType:{stringValue:'Garage Turnaround'},total:{integerValue:'1400'},status:{stringValue:'scheduled'},estimate:{mapValue:{fields:{number:{stringValue:'EST-123'},status:{stringValue:'draft'},amount:{integerValue:'1400'},scope:{stringValue:'Bundled garage turnaround'},validUntil:{stringValue:'2099-09-30'},revision:{integerValue:'2'},depositRequired:{integerValue:'350'},lineItems:{arrayValue:{values:[{mapValue:{fields:{name:{stringValue:'Complete Garage Turnaround'},description:{stringValue:'One bundled service'},quantity:{integerValue:'1'},amount:{integerValue:'1400'}}}}]}}}}},invoice:{mapValue:{fields:{number:{stringValue:'INV-123'},status:{stringValue:'issued'},amount:{integerValue:'1400'},dueDate:{stringValue:'2099-10-07'}}}}};
   const originalFetch=globalThis.fetch;
   globalThis.fetch=async(url,options={})=>{
     if((options.method||'GET')==='PATCH')return new Response(JSON.stringify({name:'projects/egcw-1ec83/databases/(default)/documents/jobs/job-123',...JSON.parse(options.body)}),{status:200});
@@ -1042,6 +1042,11 @@ test('business users can create a private customer portal link and customers see
     assert.equal(view.status,200);
     assert.equal(viewBody.customer.name,'Dana Customer');
     assert.equal(viewBody.payment.balance,1400);
+    assert.equal(viewBody.estimate.lineItems[0].name,'Complete Garage Turnaround');
+    assert.equal(viewBody.estimate.validUntil,'2099-09-30');
+    assert.equal(viewBody.estimate.depositRequired,350);
+    assert.equal(viewBody.payment.invoiceNumber,'INV-123');
+    assert.equal(viewBody.payment.dueDate,'2099-10-07');
     assert.equal('email' in viewBody.customer,false);
     assert.equal('phone' in viewBody.customer,false);
     const approved=await portalApi.onRequestPost({request:new Request('https://easygaragecleaning.com/api/customer-portal',{method:'POST',headers:{Origin:'https://easygaragecleaning.com',Cookie:customerCookie,'Content-Type':'application/json'},body:JSON.stringify({action:'approve_estimate',signed_name:'Dana Customer',confirmed:true})}),env});
@@ -1064,4 +1069,9 @@ test('customer portal connects appointments estimates payments photos progress a
   assert.match(drive,/customerSession \? 'customer'/);
   const headers=read('_headers');
   assert.match(headers,/\/customer-portal\*[\s\S]*X-Robots-Tag: noindex[\s\S]*Cache-Control: no-store[\s\S]*Referrer-Policy: no-referrer/);
+});
+
+test('professional estimate and invoice workflow tracks revisions deadlines terms and balances',()=>{
+  for(const marker of ['CUSTOMER ESTIMATE','Customer-facing scope','Deposit required','Estimate valid through','estimate_revised','superseded','CUSTOMER INVOICE','Payment due date','PO / customer reference','customerDocumentTerms','Payment terms','Estimate terms','invoiceActive','Payment cannot exceed the'])assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),marker+' is missing');
+  for(const marker of ['estimate-lines','estimate-validity','estimate-deposit','estimate-terms','invoice-meta','lineItems','validUntil','depositRequired','dueDate','Estimate expired'])assert.match(customerPortal,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),marker+' is missing from the portal');
 });

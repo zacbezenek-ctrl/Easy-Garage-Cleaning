@@ -38,7 +38,8 @@ function amount(value) {
 }
 
 function moneyState(job) {
-  const total = Math.max(0, amount(job.invoice?.amount || job.estimate?.amount || job.total || job.priceQuoted || job.lockedTotal || job.rate));
+  const invoiceActive = job.invoice?.amount && !['draft', 'superseded', 'void'].includes(String(job.invoice?.status || '').toLowerCase());
+  const total = Math.max(0, amount(invoiceActive ? job.invoice.amount : job.estimate?.amount || job.total || job.priceQuoted || job.lockedTotal || job.rate));
   const paid = Math.max(0, amount(job.payment?.amount || job.invoice?.paid || job.invoice?.amountPaid || job.deposit?.paidAmount));
   return { total, paid: Math.min(total || paid, paid), balance: Math.max(0, total - paid) };
 }
@@ -53,7 +54,10 @@ function portalStatus(job) {
 }
 
 function estimateState(job, finance) {
-  const status = String(job.customerApproval?.status || job.estimate?.status || job.quoteStatus || (finance.total ? 'ready' : 'not_ready')).toLowerCase();
+  const rawStatus = String(job.customerApproval?.status || job.estimate?.status || job.quoteStatus || (finance.total ? 'ready' : 'not_ready')).toLowerCase();
+  const validUntil = safe(job.estimate?.validUntil || '', 30);
+  const status = validUntil && validUntil < new Date().toISOString().slice(0, 10) && !['accepted', 'approved'].includes(rawStatus) ? 'expired' : rawStatus;
+  const sourceItems = Array.isArray(job.estimate?.lineItems) && job.estimate.lineItems.length ? job.estimate.lineItems : [{ name: job.serviceType || job.type || 'Garage service', description: job.estimate?.scope || job.scopeSummary || '', quantity: 1, amount: finance.total }];
   return {
     number: safe(job.estimate?.number || job.quoteId || `EST-${String(job.id || '').slice(-6).toUpperCase()}`, 80),
     status: ['accepted', 'approved'].includes(status) ? 'approved' : status,
@@ -62,6 +66,11 @@ function estimateState(job, finance) {
     scope: safe(job.estimate?.scope || job.scopeSummary || job.notes || 'Your flat-rate garage service based on the agreed walkthrough scope.', 1600),
     approvedAt: safe(job.customerApproval?.approvedAt || job.estimate?.acceptedAt || '', 50),
     approvedBy: safe(job.customerApproval?.approvedBy || '', 120),
+    validUntil,
+    revision: Math.max(1, Number(job.estimate?.revision || 1)),
+    depositRequired: Math.max(0, amount(job.estimate?.depositRequired || job.deposit?.amount)),
+    lineItems: sourceItems.slice(0, 12).map(item => ({ name: safe(item?.name || 'Garage service', 160), description: safe(item?.description || '', 600), quantity: Math.max(1, Number(item?.quantity || 1)), amount: Math.max(0, amount(item?.amount)) })),
+    terms: 'This flat-rate estimate covers the scope shown. Any material change requires your approval before additional work or charges.',
   };
 }
 
@@ -83,6 +92,9 @@ function sanitize(job) {
       status: finance.balance < .01 && finance.total ? 'paid' : finance.paid ? 'partial' : 'unpaid',
       receiptUrl: /^https:\/\/pay\.stripe\.com\/receipts\//.test(job.payment?.receiptUrl || '') ? job.payment.receiptUrl : '',
       receiptEmail: safe(job.payment?.receiptEmail || '', 180),
+      invoiceNumber: safe(job.invoice?.number || '', 80),
+      invoiceStatus: safe(job.invoice?.status || '', 30),
+      dueDate: safe(job.invoice?.dueDate || '', 30),
     },
     progress: {
       status: state,
@@ -138,6 +150,7 @@ export async function onRequestPost({ request, env }) {
     if (signedName.length < 3 || body.confirmed !== true) return reply(400, { ok: false, error: 'Enter your full name and confirm the estimate' });
     const finance = moneyState(result.job);
     if (finance.total < .01) return reply(409, { ok: false, error: 'The estimate is not ready yet' });
+    if (result.job.estimate?.validUntil && String(result.job.estimate.validUntil) < new Date().toISOString().slice(0, 10)) return reply(409, { ok: false, error: 'This estimate has expired. Ask the team for an updated estimate.' });
     const approval = { status: 'approved', approvedAt: now, approvedBy: signedName, amount: finance.total, source: 'customer_portal' };
     await patchJob(env, result.session.jobId, {
       customerApproval: approval,
