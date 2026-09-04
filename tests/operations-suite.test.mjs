@@ -1075,3 +1075,10 @@ test('professional estimate and invoice workflow tracks revisions deadlines term
   for(const marker of ['CUSTOMER ESTIMATE','Customer-facing scope','Deposit required','Estimate valid through','estimate_revised','superseded','CUSTOMER INVOICE','Payment due date','PO / customer reference','customerDocumentTerms','Payment terms','Estimate terms','invoiceActive','Payment cannot exceed the'])assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),marker+' is missing');
   for(const marker of ['estimate-lines','estimate-validity','estimate-deposit','estimate-terms','invoice-meta','lineItems','validUntil','depositRequired','dueDate','Estimate expired'])assert.match(customerPortal,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),marker+' is missing from the portal');
 });
+
+test('customer communication center triggers HighLevel once and preserves an audit trail',()=>{
+  for(const marker of ["'communications'",'Customer messages','customerCommunicationTypes','syncCustomerCommunication','communicationLog','communicationLastEvent','automationMilestones','estimate-expiring','invoice-overdue','runCustomerCommunicationMilestones','customerAutomationEnabled','opsSetCustomerAutomation','Enable automatic reminders','HighLevel owns delivery','customer automation suppressed','Trigger in HighLevel','needs_attention'])assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),marker+' is missing');
+  assert.match(suite,/candidates\.slice\(0,3\)/);
+  assert.match(suite,/suppress_automation:job\.notify===false/);
+  assert.match(read('functions/api/highlevel.js'),/if \(!payload\.suppress_automation\) await addTags/);
+});
