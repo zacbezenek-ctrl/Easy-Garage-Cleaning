@@ -1090,3 +1090,7 @@ test('manager command center surfaces the decisions that can hurt today',()=>{
 test('job costing records actual direct costs and contribution economics',()=>{
   for(const marker of ["action==='cost'",'Actual costs for','Labor cost','Dump / disposal','Materials / supplies','Fuel / mileage','Card processing fees','Other direct cost','directCost','contribution','margin','revenuePerCrewHour','Enter actual costs','recordedAt'])assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),marker+' is missing from job costing');
 });
+
+test('completed customer portal turns reviews and referrals into a simple next step',()=>{
+  for(const marker of ['review-referral','Leave a Google review','Text a referral','search.google.com/local/writereview?placeid=ChIJ17AGfBiyRIsRyJ3k4mDtX8Q',"['completed','paid'].includes(data.appointment.status)"])assert.match(customerPortal,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),marker+' is missing from review/referral flow');
+});
