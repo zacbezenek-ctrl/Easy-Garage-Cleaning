@@ -508,6 +508,7 @@ export async function onRequestPost({ request, env }) {
     if (payload.tool === 'schedule') {
       if (!payload.start_time || !payload.end_time) return reply(400, { ok: false, error: 'Schedule start and end are required' });
       const event = await createAppointment(c, payload, contactId);
+      if (payload.silent_update) return reply(200, { ok: true, contactId, ...event, pipeline: { updated: false, reason: 'silent-appointment-update' }, automation: { silent: true, notificationsRequested: false } });
       const typeTag = payload.event_type === 'job' ? 'egc-job-scheduled' : 'egc-walkthrough-scheduled';
       const reminderDays = Math.min(30, Math.max(1, Number(payload.reminder_days || 2)));
       const reminderTag = payload.notify === false ? '' : `egc-reminder-${reminderDays}d`;

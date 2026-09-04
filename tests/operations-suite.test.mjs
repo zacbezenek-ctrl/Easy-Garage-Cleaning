@@ -370,8 +370,26 @@ test('employees can discover and safely pick up manager-opened crew shifts',()=>
   assert.match(suite,/tx\.set\(ref,patch,\{merge:true\}\)/);
   assert.match(suite,/assignedCrew=\[\.\.\.crew,identity\]/);
   assert.match(suite,/openShift=assignedCrew\.length<needed/);
+  for(const marker of ['async function syncCrewAssignment','silent_update=true','crew-assignment:','latestJobInstructions:patch.jobInstructions','Shift added and crew brief synced','HighLevel update is queued'])assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
   for(const guard of ['SHIFT_MISSING','SHIFT_CLOSED','SHIFT_DUPLICATE','SHIFT_FULL','Sign in again before claiming a shift'])assert.match(suite,new RegExp(guard));
   assert.doesNotMatch(suite,/collection\(['"]open_shifts['"]\)/);
+});
+
+test('crew assignment updates the HighLevel appointment without retriggering customer automation',async()=>{
+  const {onRequestPost}=await import('../functions/api/highlevel.js'),calls=[],originalFetch=globalThis.fetch;
+  globalThis.fetch=async(url,options={})=>{calls.push({url:String(url),options});if(String(url).endsWith('/calendars/events/appointments/appt-1'))return new Response(JSON.stringify({id:'appt-1'}),{status:200});return new Response('{}',{status:200})};
+  try{
+    const request=new Request('https://easygaragecleaning.com/api/highlevel',{method:'POST',headers:{Origin:'https://easygaragecleaning.com','Content-Type':'application/json'},body:JSON.stringify({tool:'schedule',event_type:'job',silent_update:true,appointment_id:'appt-1',start_time:'2026-09-14T15:00:00.000Z',end_time:'2026-09-14T18:00:00.000Z',notes:'CREW / WINDOW: Alex + Sam',client:{name:'Customer',highlevel_contact_id:'contact-1'}})});
+    const response=await onRequestPost({request,env:{HIGHLEVEL_API_KEY:'test-key',HIGHLEVEL_LOCATION_ID:'location-1',HIGHLEVEL_JOB_CALENDAR_ID:'calendar-1'}}),result=await response.json();
+    assert.equal(response.status,200);
+    assert.equal(result.automation.silent,true);
+    assert.equal(result.automation.notificationsRequested,false);
+    assert.equal(calls.filter(x=>x.url.includes('/tags')).length,0);
+    assert.equal(calls.filter(x=>x.url.includes('/opportunities')).length,0);
+    const update=calls.find(x=>x.url.endsWith('/calendars/events/appointments/appt-1'));
+    assert.ok(update);
+    assert.equal(JSON.parse(update.options.body).description,'CREW / WINDOW: Alex + Sam');
+  }finally{globalThis.fetch=originalFetch}
 });
 
 test('open-shift scheduling fields persist on the canonical job record',()=>{
