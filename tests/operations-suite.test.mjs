@@ -293,6 +293,9 @@ test('Hub finance scaffolding and customer history work without claiming externa
   }
   assert.match(suite,/jobs\(\)\.filter\(j=>j\.type!=='blocked'\)/);
   assert.match(suite,/const customerKey=j=>j\.highlevelContactId\|\|String\(j\.phone/);
+  assert.match(suite,/function actionModal/);
+  assert.match(suite,/function askAction/);
+  assert.doesNotMatch(suite,/\b(?:prompt|confirm)\s*\(/);
   assert.doesNotMatch(suite,/Stripe payment (?:sent|completed)|QuickBooks invoice (?:sent|completed)/i);
 });
 
@@ -480,8 +483,8 @@ test('open-shift scheduling fields persist on the canonical job record',()=>{
   assert.match(suite,/if\(k==='type'\)render\(\)/);
   assert.match(suite,/b\.type==='job'\?'':'ops-hidden'/);
   assert.match(suite,/b\.type==='blocked'\?'ops-hidden':''/);
-  assert.match(employee,/employee-suite\.css\?v=20260903n/);
-  assert.match(employee,/employee-suite\.js\?v=20260903r/);
+  assert.match(employee,/employee-suite\.css\?v=20260903o/);
+  assert.match(employee,/employee-suite\.js\?v=20260903s/);
 });
 
 test('recurring visits keep the client plan but reset prior completion and payment state',()=>{
