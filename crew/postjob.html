@@ -609,18 +609,18 @@ async function finish(){
   try{const log=JSON.parse(localStorage.getItem("egc_job_log")||"[]");log.push(payload);
     localStorage.setItem("egc_job_log",JSON.stringify(log.slice(-50)));}catch(e){}
   const completedAt=new Date().toISOString();
-  if(HUBDB&&ACTIVE.jobId){const total=Number(ACTIVE.total||ACTIVE.rate||0),paid=paymentMethod!=="unpaid"&&paymentReference,completedBy=sessionStorage.getItem('egc_u')||localStorage.getItem('egc_u')||'';await HUBDB.collection('jobs').doc(ACTIVE.jobId).set({status:paid?'paid':'completed',pipelineStatus:paid?'paid':'completed',completedAt,actualLoads:Number(v('j_loads')||0),hoursOnSite:Number(v('j_hours')||0),dumpFees:Number(v('j_fees')||0),closeoutNotes:v('j_notes'),postJobProgress:{...progressPayload(),completedAt},postJobChecklist:{completedAt,completedBy,clientItems:clientItems().map(it=>({id:it.id,label:it.label,detail:it.detail,completed:true})),standardItems:SECTIONS.flatMap(sec=>sec.items.map(it=>it.t))},payment:paid?{amount:total,lastAmount:total,lastReceivedAt:completedAt,method:paymentMethod,reference:paymentReference,verified:true,recordedBy:'crew'}:{amount:0,method:'unpaid',verified:false},invoice:{status:paid?'paid':'ready',amount:total,balance:paid?0:total,updatedAt:completedAt},closeoutSyncStatus:'pending',closeoutIdempotencyKey:_finishId,updatedAt:completedAt},{merge:true}).catch(()=>{})}
+  if(HUBDB&&ACTIVE.jobId){const total=Number(ACTIVE.total||ACTIVE.rate||0),paid=paymentMethod!=="unpaid"&&paymentReference,completedBy=sessionStorage.getItem('egc_u')||localStorage.getItem('egc_u')||'';await HUBDB.collection('jobs').doc(ACTIVE.jobId).set({status:paid?'paid':'completed',pipelineStatus:paid?'paid':'completed',completedAt,actualLoads:Number(v('j_loads')||0),hoursOnSite:Number(v('j_hours')||0),dumpFees:Number(v('j_fees')||0),closeoutNotes:v('j_notes'),postJobProgress:{...progressPayload(),completedAt},postJobChecklist:{completedAt,completedBy,clientItems:clientItems().map(it=>({id:it.id,label:it.label,detail:it.detail,completed:true})),standardItems:SECTIONS.flatMap(sec=>sec.items.map(it=>it.t))},payment:paid?{amount:total,lastAmount:total,lastReceivedAt:completedAt,method:paymentMethod,reference:paymentReference,verified:true,recordedBy:'crew'}:{amount:0,method:'unpaid',verified:false},invoice:{status:paid?'paid':'ready',amount:total,balance:paid?0:total,updatedAt:completedAt},closeoutSyncStatus:'pending',closeoutSyncPayload:payload,closeoutIdempotencyKey:_finishId,updatedAt:completedAt},{merge:true}).catch(()=>{})}
   if(HUBDB&&ACTIVE.customerId)await HUBDB.collection('customers').doc(ACTIVE.customerId).set({latestJobId:ACTIVE.jobId,lastServiceAt:completedAt,lastCloseoutNotes:v('j_notes'),lastPaymentStatus:paymentMethod,updatedAt:completedAt},{merge:true}).catch(()=>{});
   if(HUBDB&&ACTIVE.jobId)await releaseCentralLock();
   const btn=document.getElementById("donebtn");btn.textContent="Saving to HighLevel…";
   let ok=false; try{ ok=await postHighLevel(payload); }catch(e){ ok=false; }
   if(!ok){
-    if(HUBDB&&ACTIVE.jobId)await HUBDB.collection('jobs').doc(ACTIVE.jobId).set({closeoutSyncStatus:'error',closeoutSyncError:'HighLevel unavailable',updatedAt:new Date().toISOString()},{merge:true}).catch(()=>{});
+    if(HUBDB&&ACTIVE.jobId)await HUBDB.collection('jobs').doc(ACTIVE.jobId).set({closeoutSyncStatus:'error',closeoutSyncError:'HighLevel unavailable',closeoutSyncNextRetryAt:new Date(Date.now()+10*60000).toISOString(),updatedAt:new Date().toISOString()},{merge:true}).catch(()=>{});
     btn.classList.remove("ready");btn.textContent="Retry → Save closeout to HighLevel";
     alert("Job not saved to HighLevel. It's still saved on this iPad — reconnect and tap again. Nothing was cleared.");
     return; // don't wipe the handoff/checklist on failure, so a retry still works
   }
-  if(HUBDB&&ACTIVE.jobId)await HUBDB.collection('jobs').doc(ACTIVE.jobId).set({closeoutSyncStatus:'synced',closeoutSyncError:'',updatedAt:new Date().toISOString()},{merge:true}).catch(()=>{});
+  if(HUBDB&&ACTIVE.jobId)await HUBDB.collection('jobs').doc(ACTIVE.jobId).set({closeoutSyncStatus:'synced',closeoutSyncError:'',closeoutSyncNextRetryAt:'',updatedAt:new Date().toISOString()},{merge:true}).catch(()=>{});
   btn.textContent="Job closed & saved to HighLevel ✓";
   localStorage.removeItem(saveKey());
   localStorage.removeItem("egc_active_job");

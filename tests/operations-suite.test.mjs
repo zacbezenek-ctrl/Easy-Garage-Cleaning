@@ -145,6 +145,29 @@ test('crew checklist progress resumes across devices and is visible to the manag
   assert.match(suite,/Closeout \$\{postProgress\.completedCount\|\|0\}\/\$\{postProgress\.totalCount\}/);
 });
 
+test('dispatch and job start create explicit HighLevel lifecycle triggers',async()=>{
+  for(const marker of ['async function syncLifecycle','job-dispatched','job-arrived','job-started','lifecycleSync','Status saved and HighLevel workflow triggered','Add the walkthrough brief before dispatching this crew'])assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
+  for(const marker of ['async function syncStartLifecycle',"event:'job-started'",'HighLevel was notified'])assert.match(prejob,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
+  assert.match(suite,/dispatchable=ready&&stage==='scheduled'/);
+  const {onRequestPost}=await import('../functions/api/highlevel.js'),calls=[],originalFetch=globalThis.fetch;
+  globalThis.fetch=async(url,options={})=>{calls.push({url:String(url),options});return new Response('{}',{status:200})};
+  try{
+    const request=new Request('https://easygaragecleaning.com/api/highlevel',{method:'POST',headers:{Origin:'https://easygaragecleaning.com','Content-Type':'application/json'},body:JSON.stringify({tool:'lifecycle',event:'job-dispatched',highlevel_contact_id:'contact-1',client:{name:'Test Customer'}})});
+    const response=await onRequestPost({request,env:{HIGHLEVEL_API_KEY:'test-key',HIGHLEVEL_LOCATION_ID:'location-1'}}),result=await response.json();
+    assert.equal(response.status,200);
+    assert.equal(result.automation.trigger,'egc-job-dispatched');
+    const tagCall=calls.find(x=>x.url.endsWith('/contacts/contact-1/tags'));
+    assert.ok(tagCall,'lifecycle tag was not sent');
+    assert.deepEqual(JSON.parse(tagCall.options.body),{tags:['egc-job-dispatched']});
+  }finally{globalThis.fetch=originalFetch}
+});
+
+test('failed HighLevel closeouts remain durable and manager-retryable',()=>{
+  for(const marker of ['closeoutSyncPayload:payload','closeoutSyncNextRetryAt','Nothing was cleared'])assert.match(postjob,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
+  for(const marker of ['async function syncCloseoutRecord','closeoutSyncPayload','closeoutSyncAttempts','closeoutSyncNextRetryAt','opsRetryCloseout','Retry closeout','closeout needs HighLevel retry','closeoutPending','Closeout remains safely queued in the Hub'])assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),marker+' is missing');
+  assert.match(suite,/Math\.min\(1440,Math\.pow\(2,Math\.min\(attempts,8\)\)\*5\)/);
+});
+
 test('HighLevel receives the customer promise in both the contact note and job appointment',async()=>{
   const {onRequestPost}=await import('../functions/api/highlevel.js');
   const calls=[],originalFetch=globalThis.fetch;

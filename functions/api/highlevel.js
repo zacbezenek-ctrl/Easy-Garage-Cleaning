@@ -501,7 +501,7 @@ export async function onRequestPost({ request, env }) {
   if (!['game_plan','post_job','schedule','lifecycle'].includes(payload.tool)) return reply(400, { ok: false, error: 'Unsupported HighLevel handoff' });
   const client = payload.client || payload.job || {};
   try {
-    const contactId = await ensureContact(c, { ...client, highlevel_contact_id: client.highlevel_contact_id || payload.highlevel_contact_id }, payload.tool === 'schedule' ? 'EGC Hub schedule' : 'EGC walkthrough');
+    const contactId = await ensureContact(c, { ...client, highlevel_contact_id: client.highlevel_contact_id || payload.highlevel_contact_id }, payload.tool === 'schedule' ? 'EGC Hub schedule' : payload.tool === 'lifecycle' ? 'EGC Hub lifecycle' : 'EGC walkthrough');
     if (!contactId) return reply(502, { ok: false, error: 'HighLevel did not return a contact ID' });
     if (payload.tool === 'schedule') {
       if (!payload.start_time || !payload.end_time) return reply(400, { ok: false, error: 'Schedule start and end are required' });
