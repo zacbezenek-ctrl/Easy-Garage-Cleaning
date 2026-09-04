@@ -32,10 +32,12 @@ function safeEqual(left, right) {
   return mismatch === 0;
 }
 
-async function createToken(env, purpose, jobId, seconds, now = Date.now()) {
+async function createToken(env, purpose, jobId, seconds, now = Date.now(), claims = {}) {
   const id = String(jobId || '').trim();
   if (!id || id.length > 120) throw new Error('A valid job is required');
-  const payload = base64Url(encoder.encode(JSON.stringify({ v: 1, j: id, exp: now + seconds * 1000 })));
+  const actorId = String(claims.actorId || '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 100);
+  const permissions = ['view', 'decide', 'pay', 'rebook'].filter(key => claims.permissions?.[key]);
+  const payload = base64Url(encoder.encode(JSON.stringify({ v: 1, j: id, exp: now + seconds * 1000, ...(actorId ? { a: actorId, p: permissions } : {}) })));
   return `${payload}.${await sign(env, payload, purpose)}`;
 }
 
@@ -48,13 +50,14 @@ async function verifyToken(env, purpose, token, now = Date.now()) {
   try {
     const value = JSON.parse(new TextDecoder().decode(fromBase64Url(payload)));
     if (value.v !== 1 || !value.j || String(value.j).length > 120 || !Number.isFinite(value.exp) || value.exp <= now) return null;
-    return { jobId: String(value.j), expiresAt: value.exp };
+    return { jobId: String(value.j), expiresAt: value.exp, actorId: String(value.a || ''), permissions: Object.fromEntries(['view', 'decide', 'pay', 'rebook'].map(key => [key, !value.a || (Array.isArray(value.p) && value.p.includes(key))])) };
   } catch { return null; }
 }
 
 export const createCustomerPortalAccessToken = (env, jobId, now) => createToken(env, 'access', jobId, ACCESS_SECONDS, now);
+export const createCustomerPortalCollaboratorAccessToken = (env, jobId, actorId, permissions, now) => createToken(env, 'access', jobId, ACCESS_SECONDS, now, { actorId, permissions });
 export const verifyCustomerPortalAccessToken = (env, token, now) => verifyToken(env, 'access', token, now);
-export const createCustomerPortalSessionToken = (env, jobId, now) => createToken(env, 'session', jobId, SESSION_SECONDS, now);
+export const createCustomerPortalSessionToken = (env, jobId, now, claims = {}) => createToken(env, 'session', jobId, SESSION_SECONDS, now, claims);
 export const verifyCustomerPortalSessionToken = (env, token, now) => verifyToken(env, 'session', token, now);
 
 export function readCookie(request, name = COOKIE_NAME) {
@@ -69,8 +72,8 @@ export async function getCustomerPortalSession(request, env) {
   return verifyCustomerPortalSessionToken(env, readCookie(request));
 }
 
-export async function createCustomerPortalSessionCookie(env, jobId) {
-  const token = await createCustomerPortalSessionToken(env, jobId);
+export async function createCustomerPortalSessionCookie(env, jobId, claims = {}) {
+  const token = await createCustomerPortalSessionToken(env, jobId, Date.now(), claims);
   return `${COOKIE_NAME}=${token}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${SESSION_SECONDS}`;
 }
 

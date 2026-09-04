@@ -9,6 +9,10 @@ function endpoint(env, jobId) {
   return `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents/jobs/${encodeURIComponent(jobId)}?key=${encodeURIComponent(firebaseKey(env))}`;
 }
 
+function documentName(jobId) {
+  return `projects/${PROJECT_ID}/databases/(default)/documents/jobs/${encodeURIComponent(jobId)}`;
+}
+
 export function decodeFirestoreValue(field) {
   if (!field || 'nullValue' in field) return null;
   if ('stringValue' in field) return field.stringValue;
@@ -44,14 +48,15 @@ export async function readJob(env, jobId) {
   if (response.status === 404) return null;
   if (!response.ok) throw new Error(`Job storage read failed (${response.status})`);
   const document = await response.json();
-  return { id: String(document.name || '').split('/').pop() || jobId, ...decodeFirestoreFields(document.fields || {}) };
+  return { id: String(document.name || '').split('/').pop() || jobId, __updateTime: document.updateTime || '', ...decodeFirestoreFields(document.fields || {}) };
 }
 
-export async function patchJob(env, jobId, patch) {
+export async function patchJob(env, jobId, patch, updateTime = '') {
   const fields = Object.keys(patch || {});
   if (!fields.length) return readJob(env, jobId);
   const url = new URL(endpoint(env, jobId));
   fields.forEach(field => url.searchParams.append('updateMask.fieldPaths', field));
+  if (updateTime) url.searchParams.set('currentDocument.updateTime', updateTime);
   const response = await fetch(url, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
@@ -60,4 +65,18 @@ export async function patchJob(env, jobId, patch) {
   if (!response.ok) throw new Error(`Job storage write failed (${response.status})`);
   const document = await response.json();
   return { id: jobId, ...decodeFirestoreFields(document.fields || {}) };
+}
+
+export async function patchJobsAtomic(env, updates = []) {
+  const valid = updates.filter(item => item?.jobId && Object.keys(item.patch || {}).length);
+  if (!valid.length) return [];
+  const url = `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents:commit?key=${encodeURIComponent(firebaseKey(env))}`;
+  const writes = valid.map(item => ({
+    update: { name: documentName(item.jobId), fields: encodeFirestoreFields(item.patch) },
+    updateMask: { fieldPaths: Object.keys(item.patch) },
+    ...(item.updateTime ? { currentDocument: { updateTime: item.updateTime } } : {}),
+  }));
+  const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ writes }) });
+  if (!response.ok) throw new Error(`Job storage transaction failed (${response.status})`);
+  return response.json();
 }

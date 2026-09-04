@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import { createHubActionState, createHubSessionCookie, getHubUserProfile, hasBusinessAccess, hashHubCredential, verifyHubActionState, verifyHubSessionToken } from '../functions/_lib/hub-session.js';
-import { createCustomerPortalAccessToken, createCustomerPortalSessionCookie, verifyCustomerPortalAccessToken, verifyCustomerPortalSessionToken } from '../functions/_lib/customer-portal.js';
+import { createCustomerPortalAccessToken, createCustomerPortalCollaboratorAccessToken, createCustomerPortalSessionCookie, verifyCustomerPortalAccessToken, verifyCustomerPortalSessionToken } from '../functions/_lib/customer-portal.js';
 
 const TEST_HUB_ENV={HIGHLEVEL_API_KEY:'test-key',HIGHLEVEL_LOCATION_ID:'location-1'};
 const TEST_HUB_COOKIE=(await createHubSessionCookie(TEST_HUB_ENV,'ZacB')).split(';')[0];
@@ -992,6 +992,8 @@ test('customer portal uses expiring signed access links and an HttpOnly job sess
   assert.match(cookie,/SameSite=Lax/i);
   const token=cookie.match(/egc_customer_portal=([^;]+)/)[1];
   assert.equal((await verifyCustomerPortalSessionToken(env,token)).jobId,'job-123');
+  const collaborator=await createCustomerPortalCollaboratorAccessToken(env,'job-123','person-1',{view:true,decide:true,pay:false,rebook:true},now),claims=await verifyCustomerPortalAccessToken(env,collaborator,now);
+  assert.equal(claims.actorId,'person-1');assert.equal(claims.permissions.decide,true);assert.equal(claims.permissions.pay,false);assert.equal(claims.permissions.rebook,true);
 });
 
 test('customer portal exchanges a signed link for a private cookie and rejects disguised uploads',async()=>{
@@ -1069,6 +1071,36 @@ test('customer portal connects appointments estimates payments photos progress a
   assert.match(drive,/customerSession \? 'customer'/);
   const headers=read('_headers');
   assert.match(headers,/\/customer-portal\*[\s\S]*X-Robots-Tag: noindex[\s\S]*Cache-Control: no-store[\s\S]*Referrer-Policy: no-referrer/);
+});
+
+test('post-booking portal saves customer memory decisions rebooking family access credits and Garage Guard',async()=>{
+  const portalApi=await import('../functions/api/customer-portal.js'),env={HUB_SESSION_SECRET:'post-booking-secret',FIREBASE_API_KEY:'firebase-test'},cookie=(await createCustomerPortalSessionCookie(env,'job-cx')).split(';')[0],patches=[];
+  const fields={customer:{stringValue:'Dana Customer'},date:{stringValue:'2026-09-18'},time:{stringValue:'09:00'},address:{stringValue:'123 Pine St'},serviceType:{stringValue:'Garage Turnaround'},total:{integerValue:'1400'},status:{stringValue:'in_progress'},customerDecisions:{arrayValue:{values:[{mapValue:{fields:{id:{stringValue:'decision-1'},title:{stringValue:'Remove cabinet?'},details:{stringValue:'Damaged and unsafe.'},priceDelta:{integerValue:'75'},timeDeltaMinutes:{integerValue:'20'},status:{stringValue:'pending'},promptedAt:{stringValue:'2026-09-04T18:00:00Z'}}}}]}},giftWallet:{mapValue:{fields:{cards:{arrayValue:{values:[{mapValue:{fields:{id:{stringValue:'credit-1'},label:{stringValue:'Garage Guard credit'},issuedAmount:{integerValue:'100'},remainingAmount:{integerValue:'100'},source:{stringValue:'Unused visit'}}}}]}}}}},garageGuard:{mapValue:{fields:{plan:{stringValue:'guard'},status:{stringValue:'active'},visitsIncluded:{integerValue:'4'},visitsRemaining:{integerValue:'3'}}}}};
+  const originalFetch=globalThis.fetch;globalThis.fetch=async(url,options={})=>{if((options.method||'GET')==='PATCH'){const body=JSON.parse(options.body);patches.push(body.fields);return new Response(JSON.stringify({name:'projects/egcw-1ec83/databases/(default)/documents/jobs/job-cx',fields:body.fields}),{status:200})}return new Response(JSON.stringify({name:'projects/egcw-1ec83/databases/(default)/documents/jobs/job-cx',fields}),{status:200})};
+  const post=body=>portalApi.onRequestPost({request:new Request('https://easygaragecleaning.com/api/customer-portal',{method:'POST',headers:{Origin:'https://easygaragecleaning.com',Cookie:cookie,'Content-Type':'application/json'},body:JSON.stringify(body)}),env});
+  try{
+    const view=await portalApi.onRequestGet({request:new Request('https://easygaragecleaning.com/api/customer-portal',{headers:{Cookie:cookie}}),env}),data=await view.json();assert.equal(data.experience.decisions[0].status,'pending');assert.equal(data.experience.giftWallet.available,100);assert.equal(data.experience.garageGuard.visitsRemaining,3);assert.equal(data.payment.completionRequiresPayment,true);
+    assert.equal((await post({action:'save_customer_memory',access_instructions:'Use east door',parking_notes:'Driveway clear',pet_notes:'Dog inside',important_items:'Blue cabinet stays',communication_preference:'text'})).status,200);
+    assert.equal((await post({action:'save_job_day_rules',away_mode:true,decision_maker:'Dana Customer',payer:'Chris Customer',approval_limit:100,no_response_action:'call_backup',remote_completion_allowed:true})).status,200);
+    assert.equal((await post({action:'save_collaborators',collaborators:[{name:'Chris Customer',email:'chris@example.com',role:'Spouse',permissions:{decide:true,pay:true}}]})).status,200);
+    assert.equal((await post({action:'respond_decision',decision_id:'decision-1',response:'approved',responded_by:'Dana Customer',note:'Please remove it'})).status,200);
+    assert.equal((await post({action:'request_rebook',kind:'touch_up',timing:'asap',preferred_crew:true,notes:'Same setup'})).status,200);
+    const credit=await post({action:'apply_gift_credit',card_id:'credit-1',amount:75,request_id:'redeem-1'}),creditBody=await credit.json();assert.equal(credit.status,200);assert.equal(creditBody.applied,75);assert.equal(creditBody.balance,1325);
+    assert.equal(patches.some(p=>p.customerMemory?.mapValue?.fields?.accessInstructions?.stringValue==='Use east door'),true);
+    assert.equal(patches.some(p=>p.customerDecisions?.arrayValue?.values?.[0]?.mapValue?.fields?.status?.stringValue==='approved'),true);
+    assert.equal(patches.some(p=>p.payment?.mapValue?.fields?.giftCreditApplied?.integerValue==='75'),true);
+    const collaboratorCookie=(await createCustomerPortalSessionCookie(env,'job-cx',{actorId:'person-1',permissions:{view:true,decide:true,pay:false,rebook:true}})).split(';')[0];
+    const denied=await portalApi.onRequestPost({request:new Request('https://easygaragecleaning.com/api/customer-portal',{method:'POST',headers:{Origin:'https://easygaragecleaning.com',Cookie:collaboratorCookie,'Content-Type':'application/json'},body:JSON.stringify({action:'apply_gift_credit',card_id:'credit-1',amount:25,request_id:'blocked'})}),env});assert.equal(denied.status,403);
+  }finally{globalThis.fetch=originalFetch}
+});
+
+test('customer experience manager flow supports remote decisions credits membership and paid closeout',()=>{
+  for(const marker of ['customerExperienceManager','opsSendCustomerDecision','opsIssueCustomerCredit','opsSetCustomerMembership','opsReviewRebooking','decision-needed','Customer portal profile','Collect the remaining'])assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),marker+' is missing from the manager flow');
+  for(const marker of ['Property memory','If you won’t be there','Bring the crew back','Your EGC wallet','Family and property team','Garage Guard','save_customer_memory','save_job_day_rules','save_collaborators','create_collaborator_invite','respond_decision','request_rebook','apply_gift_credit','request_gift_transfer','Copy invite'])assert.match(customerPortal,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),marker+' is missing from the customer portal');
+  assert.match(postjob,/Payment required before leaving/);
+  assert.match(postjob,/This job needs a locked total/);
+  assert.match(suite,/customerMemoryInheritedFrom/);
+  assert.match(suite,/customerDecisions:\[\],rebookingRequests:\[\],jobDayRules:\{\}/);
 });
 
 test('professional estimate and invoice workflow tracks revisions deadlines terms and balances',()=>{

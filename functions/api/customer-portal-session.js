@@ -9,7 +9,7 @@ export async function onRequestGet({ request, env }) {
   }
   return new Response(null, { status: 303, headers: {
     Location: '/customer-portal',
-    'Set-Cookie': await createCustomerPortalSessionCookie(env, access.jobId),
+    'Set-Cookie': await createCustomerPortalSessionCookie(env, access.jobId, { actorId: access.actorId, permissions: access.permissions }),
     'Cache-Control': 'no-store',
     'Referrer-Policy': 'no-referrer',
   } });

@@ -590,6 +590,8 @@ async function finish(){
   if(manualPayment&&paymentAmount>outstanding+.01){alert(`The amount received is greater than the ${outstanding.toLocaleString('en-US',{style:'currency',currency:'USD'})} balance. Record tips separately.`);return;}
   if(manualPayment&&!paymentReference){alert("Add the processor transaction ID, check number, or receipt reference before recording payment.");return;}
   const cumulativePaid=Math.min(totalPrice,paidToDate+paymentAmount),remainingBalance=Math.max(0,totalPrice-cumulativePaid),paidInFull=totalPrice>0&&remainingBalance<.01;
+  if(totalPrice<=0){alert("Closeout stopped. This job needs a locked total before the crew can finish.");return;}
+  if(remainingBalance>.01){alert(`Payment required before leaving. Collect the remaining ${remainingBalance.toLocaleString('en-US',{style:'currency',currency:'USD'})} by Stripe or record a verified payment.`);return;}
   _finishId=_finishId||uid();
   const payload={tool:"post_job",request_id:_finishId,job_id:ACTIVE.jobId||"",opportunity_id:ACTIVE.highlevelOpportunityId||"",idempotency_key:`post-job:${ACTIVE.jobId||"manual"}:${_finishId}`,sent_at:new Date().toISOString(),
     job:{customer:v("j_name"),phone:normPhone(v("j_phone")),date:v("j_date"),quoted_loads:quotedLoads,actual_loads:actualLoads,
