@@ -88,6 +88,14 @@ async function syncHighLevelLead(env, lead) {
   });
   const contactId = contactResult.contact && contactResult.contact.id || contactResult.id || '';
   if (!contactId) throw new Error('HighLevel did not return a contact ID');
+  const consentTag = lead.sms_consent === 'yes' ? 'egc-sms-consent' : 'egc-no-sms-consent';
+  let consentTagSynced = true;
+  try {
+    await highLevelRequest(config, `/contacts/${encodeURIComponent(contactId)}/tags`, {
+      method: 'PUT',
+      body: JSON.stringify({ tags: ['egc-website-lead', consentTag] }),
+    });
+  } catch { consentTagSynced = false; }
   const detailLines = [
     'EGC WEBSITE LEAD DETAILS',
     `Service: ${lead.service_type || lead.items || '—'}`,
@@ -111,7 +119,7 @@ async function syncHighLevelLead(env, lead) {
       body: JSON.stringify({ userId: config.assignedTo || undefined, title: 'EGC Website Lead Details', body: detailLines.join('\n').slice(0, 3000), color: '#F15A24', pinned: false }),
     });
   } catch {}
-  if (!config.pipelineId) return { configured: true, synced: true, contactId, opportunityId: '' };
+  if (!config.pipelineId) return { configured: true, synced: true, contactId, opportunityId: '', consentTag, consentTagSynced };
 
   let stageId = config.stageId;
   if (!stageId) {
@@ -139,7 +147,7 @@ async function syncHighLevelLead(env, lead) {
     headers: { 'Idempotency-Key': `website-lead:${contactId}:${config.pipelineId}` },
     body: JSON.stringify(body),
   });
-  return { configured: true, synced: true, contactId, opportunityId: result.opportunity && result.opportunity.id || result.id || '' };
+  return { configured: true, synced: true, contactId, opportunityId: result.opportunity && result.opportunity.id || result.id || '', consentTag, consentTagSynced };
 }
 
 function originAllowed(request) {
@@ -235,8 +243,9 @@ export async function onRequestPost({ request, env }) {
   try { highlevel = await syncHighLevelLead(env, { ...flat, name, phone, source: flat.source || 'EGC Website' }); }
   catch (error) { return json(502, { ok: false, error: 'HighLevel lead sync failed', detail: String(error.message || error).slice(0, 300) }); }
 
-  let relay = { configured: !!hook, sent: false };
-  if (hook) {
+  const relayAllowed = flat.sms_consent === 'yes';
+  let relay = { configured: !!hook, sent: false, skipped: hook && !relayAllowed ? 'no-sms-consent' : '' };
+  if (hook && relayAllowed) {
     try {
       const resp = await fetch(hook + (hook.includes('?') ? '&' : '?') + params.toString(), {
         method: 'POST',
@@ -247,7 +256,7 @@ export async function onRequestPost({ request, env }) {
     } catch { relay = { configured: true, sent: false }; }
   }
   if (!highlevel.configured && !relay.sent) return json(503, { ok: false, error: 'Lead destinations are not configured' });
-  return json(200, { ok: true, highlevel: { configured: highlevel.configured, synced: highlevel.synced }, relay });
+  return json(200, { ok: true, highlevel: { configured: highlevel.configured, synced: highlevel.synced, consentTag: highlevel.consentTag || '', consentTagSynced: highlevel.consentTagSynced !== false }, relay });
 }
 
 // Health/config probe — reports whether the hook is wired (boolean only).

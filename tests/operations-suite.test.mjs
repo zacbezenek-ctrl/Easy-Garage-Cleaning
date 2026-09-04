@@ -531,7 +531,26 @@ test('website leads go directly to HighLevel before the existing automation rela
     assert.ok(detailNote,'website lead details were not written to HighLevel');
     for(const value of ['Garage Cleanout','Medium garage','Boxes and furniture','Full two-car garage','Fort Collins 80525','Tomorrow AM','$400–$650','SMS consent checked: yes','facebook · paid-social · fall-garages'])assert.match(JSON.parse(detailNote.options.body).body,new RegExp(value.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
     assert.equal(calls.filter(call=>call.url.endsWith('/opportunities/upsert')).length,1);
+    const consentTags=calls.find(call=>call.url.endsWith('/contacts/contact-web/tags'));
+    assert.deepEqual(JSON.parse(consentTags.options.body).tags,['egc-website-lead','egc-sms-consent']);
     assert.equal(calls.filter(call=>call.url.startsWith('https://hooks.example.test/lead')).length,1);
+  }finally{globalThis.fetch=originalFetch}
+});
+
+test('website leads enter HighLevel but never trigger the text relay without explicit SMS consent',async()=>{
+  const {onRequestPost}=await import('../functions/api/web-lead.js');
+  const calls=[],originalFetch=globalThis.fetch;
+  globalThis.fetch=async(url,options={})=>{calls.push({url:String(url),options});if(String(url).endsWith('/contacts/upsert'))return new Response(JSON.stringify({contact:{id:'contact-no-consent'}}),{status:200});return new Response('{}',{status:200})};
+  try{
+    const request=new Request('https://easygaragecleaning.com/api/web-lead',{method:'POST',headers:{Origin:'https://easygaragecleaning.com','Content-Type':'application/json'},body:JSON.stringify({name:'Call Only',phone:'9705550198',items:'Garage cleanout',source:'Website'})});
+    const response=await onRequestPost({request,env:{HIGHLEVEL_API_KEY:'test-key',HIGHLEVEL_LOCATION_ID:'location-1',WEBSITE_LEAD_HOOK_URL:'https://hooks.example.test/lead'}}),result=await response.json();
+    assert.equal(response.status,200);
+    assert.equal(result.highlevel.synced,true);
+    assert.equal(result.relay.sent,false);
+    assert.equal(result.relay.skipped,'no-sms-consent');
+    assert.equal(calls.some(call=>call.url.startsWith('https://hooks.example.test/lead')),false);
+    const consentTags=calls.find(call=>call.url.endsWith('/contacts/contact-no-consent/tags'));
+    assert.deepEqual(JSON.parse(consentTags.options.body).tags,['egc-website-lead','egc-no-sms-consent']);
   }finally{globalThis.fetch=originalFetch}
 });
 
