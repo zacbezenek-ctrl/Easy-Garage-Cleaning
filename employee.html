@@ -22,7 +22,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,400;0,500;0,700;1,400;1,500&family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="employee-suite.css?v=20260904i">
+  <link rel="stylesheet" href="employee-suite.css?v=20260904j">
   <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
@@ -59,6 +59,8 @@ body.has-session #login-screen { display: none; }
 .fg textarea { resize: vertical; min-height: 72px; }
 .btn-main { width: 100%; background: var(--accent); color: #fff; border: none; border-radius: .6rem; font-family: 'Inter', sans-serif; font-size: .95rem; font-weight: 600; padding: .8rem 1.5rem; cursor: pointer; transition: background .2s; margin-top: .5rem; }
 .btn-main:hover { background: var(--accent-deep); }
+.employee-signup-link { display: block; margin-top: 1.15rem; color: #d7deea; font-size: .84rem; font-weight: 650; text-align: center; text-underline-offset: 3px; }
+.employee-signup-link:hover { color: #fff; }
 .topbar { background: rgba(10,22,40,.95); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border-bottom: 1px solid rgba(255,255,255,.06); height: 56px; padding: 0 1.25rem; display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; z-index: 50; gap: .5rem; }
 .topbar-left { display: flex; align-items: center; gap: .6rem; min-width: 0; }
 .topbar-left .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); flex-shrink: 0; box-shadow: 0 0 6px rgba(255,91,31,.4); }
@@ -782,6 +784,7 @@ body.has-session #login-screen { display: none; }
       <input type="password" id="l-pass" placeholder="••••••••••" autocomplete="current-password">
     </div>
     <button class="btn-main" onclick="doLogin()">Sign In</button>
+    <a class="employee-signup-link" href="/employee-signup">New employee? Create your account</a>
   </div>
 </div>
 
@@ -3221,7 +3224,7 @@ async function ocBook() {
     document.head.appendChild(s);
   })();
 </script>
-<script src="employee-suite.js?v=20260904i"></script>
+<script src="employee-suite.js?v=20260904j"></script>
 <div class="egc-portal-foot" style="background:#0a1628;border-top:1px solid rgba(255,255,255,.08);padding:14px 18px;text-align:center;font-size:12px;color:rgba(245,241,234,.55)">
   <a href="/privacy-policy" style="color:#ff5b1f;margin:0 8px">Privacy</a> · <a href="/" style="color:#ff5b1f">Home</a> · Employee portal — internal use only
 </div>

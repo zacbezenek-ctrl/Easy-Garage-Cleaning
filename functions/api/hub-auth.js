@@ -1,10 +1,9 @@
 import {
   clearHubSessionCookie,
+  authenticateHubCredential,
   createHubSessionCookie,
-  getHubUserProfile,
   getHubSession,
   hubAuthConfigured,
-  validateHubCredential,
 } from '../_lib/hub-session.js';
 
 const HOST = /(^|\.)easygaragecleaning\.com$|\.pages\.dev$|^localhost(:\d+)?$|^127\.0\.0\.1(:\d+)?$/;
@@ -34,11 +33,12 @@ export async function onRequestPost({ request, env }) {
   if (!hubAuthConfigured(env)) return reply(503, { ok: false, error: 'Hub authentication is not configured' });
   const body = await request.json().catch(() => ({}));
   const username = String(body.username || '').trim();
-  if (!await validateHubCredential(env, username, body.password)) {
+  const profile = await authenticateHubCredential(env, username, body.password);
+  if (!profile) {
     return reply(401, { ok: false, error: 'Incorrect username or password' });
   }
-  const cookie = await createHubSessionCookie(env, username);
-  return reply(200, { ok: true, ...getHubUserProfile(env, username) }, { 'Set-Cookie': cookie });
+  const cookie = await createHubSessionCookie(env, profile.user, profile);
+  return reply(200, { ok: true, ...profile }, { 'Set-Cookie': cookie });
 }
 
 export async function onRequestDelete({ request }) {

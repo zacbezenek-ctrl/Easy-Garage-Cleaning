@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="robots" content="noindex,nofollow,noarchive">
+  <meta name="theme-color" content="#071a31">
+  <title>Create Employee Account | Easy Garage Cleaning</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@700;800&family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@600;700&display=swap" rel="stylesheet">
+  <style>
+    :root{--navy:#071a31;--navy-2:#0d2645;--orange:#ff5315;--orange-dark:#c93806;--paper:#f6f4ef;--ink:#091a30;--muted:#5e6977;--line:#d9dee5;--green:#137a4b;--red:#b42318}
+    *{box-sizing:border-box}html{background:var(--navy)}body{margin:0;font-family:Inter,system-ui,sans-serif;color:var(--ink);background:var(--paper);min-height:100vh}button,input{font:inherit}a{color:inherit}
+    .shell{min-height:100vh;display:grid;grid-template-columns:minmax(300px,.8fr) minmax(520px,1.2fr)}
+    .intro{position:relative;overflow:hidden;display:flex;flex-direction:column;justify-content:space-between;padding:clamp(28px,5vw,64px);background:var(--navy);color:#fff}
+    .intro:after{content:"";position:absolute;width:430px;height:430px;border-radius:50%;right:-190px;bottom:-170px;border:80px solid rgba(255,83,21,.12)}
+    .brand,.intro-copy,.trust{position:relative;z-index:1}.brand{display:flex;align-items:center;gap:11px;font-weight:800}.brand-mark{width:13px;height:13px;border-radius:50%;background:var(--orange);box-shadow:0 0 0 6px rgba(255,83,21,.14)}
+    .eyebrow{display:inline-block;margin-bottom:16px;font:700 11px JetBrains Mono,monospace;letter-spacing:.14em;color:#ff9a73}.intro h1{margin:0;max-width:9ch;font:800 clamp(42px,6vw,76px)/.96 Fraunces,serif;letter-spacing:-.05em}.intro h1 em{font-style:normal;color:var(--orange)}.intro-copy p{max-width:43ch;margin:22px 0 0;color:rgba(255,255,255,.72);font-size:16px;line-height:1.7}
+    .trust{display:grid;gap:12px;margin-top:42px}.trust span{display:flex;align-items:center;gap:10px;color:rgba(255,255,255,.78);font-size:13px}.trust span:before{content:"✓";display:grid;place-items:center;width:22px;height:22px;border-radius:50%;background:rgba(31,194,117,.14);color:#72e0aa;font-weight:800}
+    .content{padding:clamp(24px,5vw,68px);display:flex;align-items:center;justify-content:center}.card{width:min(100%,680px);background:#fff;border:1px solid var(--line);border-radius:20px;padding:clamp(24px,5vw,48px);box-shadow:0 24px 70px rgba(9,26,48,.10)}
+    .back{display:inline-flex;align-items:center;gap:7px;margin-bottom:25px;color:var(--muted);font-size:13px;font-weight:700;text-decoration:none}.back:hover{color:var(--orange-dark)}.card h2{margin:0;font:800 clamp(29px,4vw,42px)/1.05 Fraunces,serif;letter-spacing:-.035em}.lede{margin:12px 0 28px;color:var(--muted);line-height:1.6}
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:17px}.field{display:grid;gap:7px}.field.full{grid-column:1/-1}.field label{font:700 11px JetBrains Mono,monospace;letter-spacing:.08em;text-transform:uppercase;color:#3f4b5a}.field input{width:100%;min-height:50px;padding:12px 14px;border:1.5px solid #cfd6df;border-radius:10px;background:#fbfcfd;color:var(--ink);outline:none}.field input:focus{border-color:var(--orange);box-shadow:0 0 0 4px rgba(255,83,21,.1)}.field small{color:#697483;font-size:11px;line-height:1.4}.password-wrap{position:relative}.password-wrap input{padding-right:68px}.show-password{position:absolute;right:8px;top:8px;min-height:34px;padding:0 9px;border:0;border-radius:7px;background:#eef1f5;color:#344054;font-size:11px;font-weight:800;cursor:pointer}
+    .confirm{display:flex;align-items:flex-start;gap:11px;margin:23px 0 18px;color:#4b5563;font-size:12px;line-height:1.55}.confirm input{flex:none;width:18px;height:18px;margin-top:1px;accent-color:var(--orange)}
+    .submit{width:100%;min-height:52px;border:0;border-radius:10px;background:var(--orange);color:#fff;font-weight:800;cursor:pointer;box-shadow:0 10px 25px rgba(255,83,21,.24)}.submit:hover{background:var(--orange-dark)}.submit:disabled{opacity:.65;cursor:wait}.message{display:none;margin:0 0 18px;padding:12px 14px;border-radius:9px;font-size:13px;line-height:1.5}.message.error{display:block;background:#fff0ee;border:1px solid #f1b8b2;color:var(--red)}
+    .company-field{position:absolute!important;left:-10000px!important;width:1px!important;height:1px!important;overflow:hidden!important}
+    .success{display:none;text-align:center;padding:20px 0}.success.show{display:block}.success-icon{display:grid;place-items:center;width:62px;height:62px;margin:0 auto 22px;border-radius:50%;background:#e4f6ed;color:var(--green);font-size:28px;font-weight:900}.success h2{font-size:38px}.success p{max-width:46ch;margin:14px auto;color:var(--muted);line-height:1.65}.success a{display:inline-flex;margin-top:12px;padding:13px 18px;border-radius:9px;background:var(--navy);color:#fff;text-decoration:none;font-weight:800}
+    @media(max-width:850px){.shell{grid-template-columns:1fr}.intro{min-height:auto;padding:28px 22px}.intro-copy{margin-top:54px}.intro h1{font-size:44px;max-width:12ch}.intro-copy p{margin-top:16px}.trust{grid-template-columns:1fr 1fr;margin-top:28px}.content{padding:22px 14px 42px}.card{padding:27px 20px;border-radius:15px}}
+    @media(max-width:540px){.grid{grid-template-columns:1fr}.field.full{grid-column:auto}.trust{grid-template-columns:1fr}.intro-copy{margin-top:42px}.intro h1{font-size:39px}}
+  </style>
+</head>
+<body>
+<main class="shell">
+  <section class="intro" aria-labelledby="signup-title">
+    <div class="brand"><span class="brand-mark"></span>Easy Garage Cleaning</div>
+    <div class="intro-copy">
+      <span class="eyebrow">EMPLOYEE HUB</span>
+      <h1 id="signup-title">Create your <em>crew account.</em></h1>
+      <p>Use your own login for schedules, time tracking, pay estimates, onboarding, job tools, and team updates.</p>
+    </div>
+    <div class="trust">
+      <span>Your password stays private</span>
+      <span>Zac approves every account</span>
+      <span>Employee access only by default</span>
+    </div>
+  </section>
+
+  <section class="content">
+    <div class="card">
+      <div id="form-panel">
+        <a class="back" href="/employee">← Back to employee login</a>
+        <h2>Request an account</h2>
+        <p class="lede">Fill this out once. Your account will stay locked until Zac reviews and approves it.</p>
+        <p class="message" id="message" role="alert"></p>
+        <form id="signup-form">
+          <div class="grid">
+            <div class="field"><label for="first-name">First name</label><input id="first-name" name="firstName" required maxlength="60" autocomplete="given-name"></div>
+            <div class="field"><label for="last-name">Last name</label><input id="last-name" name="lastName" required maxlength="60" autocomplete="family-name"></div>
+            <div class="field"><label for="email">Email</label><input id="email" name="email" type="email" required maxlength="160" autocomplete="email"></div>
+            <div class="field"><label for="phone">Mobile number</label><input id="phone" name="phone" type="tel" required maxlength="40" inputmode="tel" autocomplete="tel"></div>
+            <div class="field full"><label for="username">Choose a username</label><input id="username" name="username" required minlength="4" maxlength="32" pattern="[A-Za-z][A-Za-z0-9._-]{3,31}" autocomplete="username" autocapitalize="none" spellcheck="false"><small>4–32 characters. Start with a letter; numbers, dots, dashes, and underscores are okay.</small></div>
+            <div class="field"><label for="password">Create a password</label><div class="password-wrap"><input id="password" name="password" type="password" required minlength="10" autocomplete="new-password"><button class="show-password" type="button" data-password-toggle>Show</button></div><small>10+ characters with uppercase, lowercase, and a number.</small></div>
+            <div class="field"><label for="confirm-password">Confirm password</label><div class="password-wrap"><input id="confirm-password" name="confirmPassword" type="password" required minlength="10" autocomplete="new-password"><button class="show-password" type="button" data-password-toggle>Show</button></div></div>
+          </div>
+          <label class="company-field" aria-hidden="true">Company<input name="company" tabindex="-1" autocomplete="off"></label>
+          <label class="confirm"><input name="acknowledged" type="checkbox" required><span>I’m requesting an Easy Garage Cleaning employee account for myself. I understand that access begins only after owner approval.</span></label>
+          <button class="submit" id="submit-button">Send for approval</button>
+        </form>
+      </div>
+      <div class="success" id="success-panel" role="status">
+        <div class="success-icon">✓</div>
+        <h2>Request sent</h2>
+        <p>Your account is waiting for Zac’s approval. After he approves it, sign in with the username and password you just created.</p>
+        <a href="/employee">Return to employee login</a>
+      </div>
+    </div>
+  </section>
+</main>
+<script>
+document.querySelectorAll('[data-password-toggle]').forEach(button=>button.addEventListener('click',()=>{const input=button.previousElementSibling,show=input.type==='password';input.type=show?'text':'password';button.textContent=show?'Hide':'Show'}));
+document.getElementById('signup-form').addEventListener('submit',async event=>{
+  event.preventDefault();
+  const form=event.currentTarget,message=document.getElementById('message'),button=document.getElementById('submit-button'),values=Object.fromEntries(new FormData(form));
+  message.className='message';message.textContent='';
+  if(values.password!==values.confirmPassword){message.className='message error';message.textContent='Passwords do not match.';document.getElementById('confirm-password').focus();return}
+  button.disabled=true;button.textContent='Sending…';
+  try{
+    const response=await fetch('/api/employee-accounts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'register',firstName:values.firstName,lastName:values.lastName,email:values.email,phone:values.phone,username:values.username,password:values.password,company:values.company,acknowledged:values.acknowledged==='on'})});
+    const result=await response.json().catch(()=>({}));
+    if(!response.ok||!result.ok)throw new Error(result.error||'Your request could not be sent.');
+    form.reset();document.getElementById('form-panel').style.display='none';document.getElementById('success-panel').classList.add('show');
+  }catch(error){message.className='message error';message.textContent=error.message||'Your request could not be sent.';message.scrollIntoView({behavior:'smooth',block:'center'})}
+  finally{button.disabled=false;button.textContent='Send for approval'}
+});
+</script>
+</body>
+</html>

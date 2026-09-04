@@ -1,3 +1,5 @@
+import { authenticateEmployeeAccount } from './employee-accounts.js';
+
 const COOKIE_NAME = 'egc_hub_session';
 const SESSION_SECONDS = 12 * 60 * 60;
 const ACTION_STATE_SECONDS = 10 * 60;
@@ -107,14 +109,29 @@ export async function hashHubCredential(username, password) {
 
 export async function validateHubCredential(env, username, password) {
   const expected = userRecord(env, username)?.passwordHash;
-  if (!expected || typeof password !== 'string') return false;
-  return safeEqual(await hashHubCredential(username, password), expected);
+  if (expected && typeof password === 'string') return safeEqual(await hashHubCredential(username, password), expected);
+  if (Object.keys(users(env)).some(value => value.toLowerCase() === String(username || '').toLowerCase())) return false;
+  return Boolean(await authenticateEmployeeAccount(env, username, password).catch(() => null));
 }
 
-export async function createHubSessionToken(env, username, now = Date.now()) {
+export async function authenticateHubCredential(env, username, password) {
+  const expected = userRecord(env, username)?.passwordHash;
+  if (expected && typeof password === 'string' && safeEqual(await hashHubCredential(username, password), expected)) {
+    return getHubUserProfile(env, username);
+  }
+  if (Object.keys(users(env)).some(value => value.toLowerCase() === String(username || '').toLowerCase())) return null;
+  return authenticateEmployeeAccount(env, username, password).catch(() => null);
+}
+
+export async function createHubSessionToken(env, username, now = Date.now(), suppliedProfile = null) {
   const secret = sessionSecret(env);
   if (!secret) throw new Error('Hub session secret is not configured');
-  const payload = bytesToBase64Url(encoder.encode(JSON.stringify({ v: 1, u: username, exp: now + SESSION_SECONDS * 1000 })));
+  const profile = suppliedProfile || getHubUserProfile(env, username);
+  if (!profile) throw new Error('Hub user is not configured');
+  const session = suppliedProfile?.source === 'employee-account'
+    ? { v: 2, u: username, d: profile.displayName, r: 'crew', p: profile.payType || 'hourly', h: Math.max(0, Number(profile.hourlyRate || 0)), exp: now + SESSION_SECONDS * 1000 }
+    : { v: 1, u: username, exp: now + SESSION_SECONDS * 1000 };
+  const payload = bytesToBase64Url(encoder.encode(JSON.stringify(session)));
   return `${payload}.${await signature(secret, payload)}`;
 }
 
@@ -125,7 +142,18 @@ export async function verifyHubSessionToken(env, token, now = Date.now()) {
   if (!payload || !suppliedSignature || extra || !safeEqual(await signature(secret, payload), suppliedSignature)) return null;
   try {
     const session = JSON.parse(new TextDecoder().decode(base64UrlToBytes(payload)));
-    if (session.v !== 1 || !users(env)[session.u] || !Number.isFinite(session.exp) || session.exp <= now) return null;
+    if (!Number.isFinite(session.exp) || session.exp <= now) return null;
+    if (session.v === 2 && session.u && session.d) return {
+      user: String(session.u),
+      displayName: String(session.d),
+      role: 'crew',
+      payType: String(session.p || 'hourly'),
+      hourlyRate: Math.max(0, Number(session.h || 0)),
+      businessAccess: false,
+      source: 'employee-account',
+      expiresAt: session.exp,
+    };
+    if (session.v !== 1 || !users(env)[session.u]) return null;
     const profile = getHubUserProfile(env, session.u);
     return profile ? { ...profile, expiresAt: session.exp } : null;
   } catch {
@@ -168,8 +196,8 @@ export async function getHubSession(request, env) {
   return verifyHubSessionToken(env, readCookie(request));
 }
 
-export async function createHubSessionCookie(env, username) {
-  const token = await createHubSessionToken(env, username);
+export async function createHubSessionCookie(env, username, profile = null) {
+  const token = await createHubSessionToken(env, username, Date.now(), profile);
   return `${COOKIE_NAME}=${token}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=${SESSION_SECONDS}`;
 }
 

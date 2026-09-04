@@ -258,7 +258,11 @@ export async function onRequestGet({ request, env }) {
     for (const row of rows) if (visibleTo(session, row.collection, row.data)) collections[row.collection].push(row.data);
     const profiles = configuredProfiles(env).filter(profile => visibleTo(session, 'profiles', profile));
     const storedProfiles = new Map(collections.profiles.map(profile => [String(profile.username || '').toLowerCase(), profile]));
-    collections.profiles = profiles.map(profile => ({ ...profile, ...(storedProfiles.get(String(profile.username).toLowerCase()) || {}) }));
+    const configuredKeys = new Set(profiles.map(profile => String(profile.username || '').toLowerCase()));
+    collections.profiles = [
+      ...profiles.map(profile => ({ ...profile, ...(storedProfiles.get(String(profile.username).toLowerCase()) || {}) })),
+      ...[...storedProfiles.values()].filter(profile => !configuredKeys.has(String(profile.username || '').toLowerCase())),
+    ];
     return reply(200, { ok: true, collections });
   } catch (error) {
     return reply(502, { ok: false, error: String(error.message || 'Employee Hub storage failed') });

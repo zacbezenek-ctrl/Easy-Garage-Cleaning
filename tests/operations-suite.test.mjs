@@ -20,6 +20,7 @@ const highlevel=read('functions/api/highlevel.js');
 const webLead=read('functions/api/web-lead.js');
 const statusApi=read('functions/api/integration-status.js');
 const commercial=read('commercial-junk-removal-fort-collins-co.html');
+const employeeSignup=read('employee-signup.html');
 
 test('Hub authentication issues, validates, expires, and clears an HttpOnly session',async()=>{
   const env={HUB_SESSION_SECRET:'session-test-secret',HUB_AUTH_USERS_JSON:JSON.stringify({Tester:await hashHubCredential('Tester','correct horse')})};
@@ -742,8 +743,8 @@ test('open-shift scheduling fields persist on the canonical job record',()=>{
   assert.match(suite,/if\(k==='type'\)render\(\)/);
   assert.match(suite,/b\.type==='job'\?'':'ops-hidden'/);
   assert.match(suite,/b\.type==='blocked'\?'ops-hidden':''/);
-  assert.match(employee,/employee-suite\.css\?v=20260904i/);
-  assert.match(employee,/employee-suite\.js\?v=20260904i/);
+  assert.match(employee,/employee-suite\.css\?v=20260904j/);
+  assert.match(employee,/employee-suite\.js\?v=20260904j/);
 });
 
 test('recurring visits keep the client plan but reset prior completion and payment state',()=>{
@@ -830,7 +831,7 @@ test('public quote progress and production links stay configured',()=>{
 });
 
 test('all employee and field-tool inline scripts parse',()=>{
-  for(const [name,html] of [['employee.html',employee],['crew/index.html',crewHome],['crew/gameplan.html',crew],['crew/prejob.html',prejob],['crew/postjob.html',postjob]]){
+  for(const [name,html] of [['employee.html',employee],['employee-signup.html',employeeSignup],['crew/index.html',crewHome],['crew/gameplan.html',crew],['crew/prejob.html',prejob],['crew/postjob.html',postjob]]){
     const scripts=[...html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/gi)].map(x=>x[1]).filter(Boolean);
     scripts.forEach((code,i)=>assert.doesNotThrow(()=>new vm.Script(code,{filename:name+'#'+i})));
   }
@@ -867,6 +868,62 @@ test('only Zac Tyler and Alex receive business access while new employees get on
   const vault=read('functions/api/employee-hub.js');
   assert.match(vault,/hasBusinessAccess\(session\)/);
   assert.match(vault,/onboardingCompletedAt/);
+});
+
+test('employees create private accounts that stay locked until Zac approves them',async()=>{
+  const accountApi=await import('../functions/api/employee-accounts.js');
+  const authApi=await import('../functions/api/hub-auth.js');
+  const env={HUB_SESSION_SECRET:'account-test-secret',FIREBASE_API_KEY:'firebase-test-key'};
+  const stored=new Map(),originalFetch=globalThis.fetch;
+  globalThis.fetch=async(url,options={})=>{
+    const value=String(url),method=options.method||'GET';
+    if(value.includes('documents:runQuery'))return new Response(JSON.stringify([...stored.entries()].map(([id,document])=>({document:{name:`projects/egcw-1ec83/databases/(default)/documents/jobs/${id}`,...document}}))),{status:200});
+    const id=decodeURIComponent(value.match(/\/jobs\/([^?]+)/)?.[1]||'');
+    if(method==='PATCH'){
+      if(value.includes('currentDocument.exists=false')&&stored.has(id))return new Response('{}',{status:412});
+      const document=JSON.parse(options.body);stored.set(id,document);return new Response(JSON.stringify({name:`projects/egcw-1ec83/databases/(default)/documents/jobs/${id}`,...document}),{status:200});
+    }
+    if(!stored.has(id))return new Response('{}',{status:404});
+    return new Response(JSON.stringify({name:`projects/egcw-1ec83/databases/(default)/documents/jobs/${id}`,...stored.get(id)}),{status:200});
+  };
+  try{
+    const registration={action:'register',firstName:'Jamie',lastName:'Rivera',email:'jamie@example.com',phone:'970-555-0132',username:'JamieR',password:'SecureCrew123',acknowledged:true};
+    const signup=await accountApi.onRequestPost({request:new Request('https://easygaragecleaning.com/api/employee-accounts',{method:'POST',headers:{Origin:'https://easygaragecleaning.com','Content-Type':'application/json'},body:JSON.stringify(registration)}),env});
+    assert.equal(signup.status,201);
+    assert.equal((await signup.json()).status,'pending');
+    assert.doesNotMatch(JSON.stringify([...stored.values()]),/Jamie|Rivera|jamie@example|SecureCrew123/);
+
+    const pendingLogin=await authApi.onRequestPost({request:new Request('https://easygaragecleaning.com/api/hub-auth',{method:'POST',headers:{Origin:'https://easygaragecleaning.com','Content-Type':'application/json'},body:JSON.stringify({username:'JamieR',password:'SecureCrew123'})}),env});
+    assert.equal(pendingLogin.status,401);
+
+    const zacCookie=(await createHubSessionCookie(env,'ZacB')).split(';')[0];
+    const pending=await accountApi.onRequestGet({request:new Request('https://easygaragecleaning.com/api/employee-accounts',{headers:{Cookie:zacCookie}}),env});
+    const pendingBody=await pending.json();
+    assert.equal(pendingBody.accounts[0].status,'pending');
+    assert.equal(pendingBody.accounts[0].username,'JamieR');
+    assert.equal('passwordHash' in pendingBody.accounts[0],false);
+
+    const tylerCookie=(await createHubSessionCookie(env,'TylerG')).split(';')[0];
+    const forbidden=await accountApi.onRequestGet({request:new Request('https://easygaragecleaning.com/api/employee-accounts',{headers:{Cookie:tylerCookie}}),env});
+    assert.equal(forbidden.status,403);
+
+    const approved=await accountApi.onRequestPost({request:new Request('https://easygaragecleaning.com/api/employee-accounts',{method:'POST',headers:{Origin:'https://easygaragecleaning.com',Cookie:zacCookie,'Content-Type':'application/json'},body:JSON.stringify({action:'review',username:'JamieR',decision:'approved'})}),env});
+    assert.equal(approved.status,200);
+    const login=await authApi.onRequestPost({request:new Request('https://easygaragecleaning.com/api/hub-auth',{method:'POST',headers:{Origin:'https://easygaragecleaning.com','Content-Type':'application/json'},body:JSON.stringify({username:'JamieR',password:'SecureCrew123'})}),env});
+    assert.equal(login.status,200);
+    const loginBody=await login.json();
+    assert.equal(loginBody.role,'crew');
+    assert.equal(loginBody.businessAccess,false);
+    const token=login.headers.get('set-cookie').match(/egc_hub_session=([^;]+)/)[1];
+    const session=await verifyHubSessionToken(env,token);
+    assert.equal(session.user,'JamieR');
+    assert.equal(session.businessAccess,false);
+  }finally{globalThis.fetch=originalFetch}
+
+  for(const marker of ['Request an account','Send for approval','autocomplete="new-password"','Zac approves every account','/api/employee-accounts'])assert.match(employeeSignup,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
+  assert.match(employee,/href="\/employee-signup"/);
+  assert.match(crewHome,/href="\/employee-signup"/);
+  for(const marker of ['accountApprovalBoard','opsReviewEmployeeAccount','Only Zac','Open signup page'])assert.match(suite,new RegExp(marker));
 });
 
 test('employee pay and location records are sealed behind the Hub session',async()=>{

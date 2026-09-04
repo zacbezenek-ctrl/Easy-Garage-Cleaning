@@ -84,6 +84,7 @@
   #egc-gate input:focus{outline:none;border-color:#e8581c}
   #egc-gate .gbtn{width:100%;margin-top:18px;background:#e8581c;border:none;color:#fff;font-family:'Oswald',sans-serif;font-weight:600;font-size:15px;letter-spacing:.06em;text-transform:uppercase;padding:13px;border-radius:10px;cursor:pointer;min-height:48px}
   #egc-gate .gerr{display:none;background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.35);color:#fca5a5;border-radius:8px;padding:9px 12px;font-size:13px;margin-top:14px}
+  #egc-gate .gcreate{display:block;margin-top:15px;color:#d9e2f1;font-size:12px;font-weight:700;text-align:center;text-underline-offset:3px}
 </style>
 <div id="egc-gate">
   <div class="gcard">
@@ -96,6 +97,7 @@
     <input type="password" id="gate-p" autocomplete="current-password">
     <button class="gbtn" onclick="gateLogin()">Unlock</button>
     <div class="gerr" id="gate-err">Incorrect username or password.</div>
+    <a class="gcreate" href="/employee-signup">New employee? Create your account</a>
   </div>
 </div>
 <script src="/crew/hub-auth.js?v=20260904c"></script>
