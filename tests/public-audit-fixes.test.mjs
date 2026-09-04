@@ -39,7 +39,33 @@ test('Cloudflare caches versioned public assets', () => {
     .filter((entry) => entry.isFile() && entry.name.endsWith('.html'))
     .map((entry) => ({ name: `${entry.parentPath}/${entry.name}`, html: readFileSync(`${entry.parentPath}/${entry.name}`, 'utf8') }))
     .filter((page) => page.html.includes('styles.css'));
-  for (const page of pages) assert.match(page.html, /styles\.css\?v=20260903g/, `${page.name} loads a stale shared stylesheet`);
+  for (const page of pages) assert.match(page.html, /styles\.css\?v=20260904j/, `${page.name} loads a stale shared stylesheet`);
+});
+
+test('the shared visual refresh preserves readable text on light and dark surfaces', () => {
+  const styles = read('styles.css');
+  assert.match(styles, /h1\.hero-title\{[^}]*color:var\(--ink\)/);
+  assert.match(styles, /\.hero\.hero-premium h1\.hero-title\{color:#fff\}/);
+  assert.match(styles, /\.btn-secondary\[style\*="color:var\(--paper\)"\][^{]*\{background:transparent\}/);
+  assert.doesNotMatch(styles, /\.hero \.form-card \.sms-consent\{color:var\(--muted-dark\)\}/);
+
+  const estate = read('estate-cleanout-fort-collins.html');
+  assert.match(estate, /\.nav \.nav-links a \{ color: var\(--ink\); \}/);
+  assert.match(estate, /\.hero \.trust-pill \{[^}]*color: var\(--paper\);/);
+  assert.match(estate, /\.how \.step h3 \{ color: var\(--white\); \}/);
+  assert.match(estate, /\.faq button\.faq-q \{[^}]*background: transparent;[^}]*color: var\(--paper\);/);
+  assert.match(estate, /\.section-sub \{ color: var\(--muted-light\); \}/);
+  assert.match(estate, /\.how \.step \.step-num \{ color: var\(--accent\); \}/);
+
+  const crew = read('crew/index.html');
+  const legacy = read('fort-collins-junk-removal.html');
+  const ads = read('ads.html');
+  assert.match(crew, /\.next-card\.empty \.next-top>span\{color:#b63a0b\}/);
+  assert.match(legacy, /\.faq \.section-label \{[^}]*color: var\(--accent-deep\);/);
+  assert.match(ads, /\.hero \.form-card \.sms-consent \{ color: #4b5563; \}/);
+  for (const page of ['loveland-garage-cleanout.html', 'wellington-junk-removal.html', 'windsor-garage-cleanout.html']) {
+    assert.match(read(page), /\.form-card \.sms-consent \{ color: var\(--muted-dark\); \}/);
+  }
 });
 
 test('private workflow shells are never indexed, framed, or cached', () => {
