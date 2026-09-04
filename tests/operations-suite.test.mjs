@@ -732,8 +732,8 @@ test('open-shift scheduling fields persist on the canonical job record',()=>{
   assert.match(suite,/if\(k==='type'\)render\(\)/);
   assert.match(suite,/b\.type==='job'\?'':'ops-hidden'/);
   assert.match(suite,/b\.type==='blocked'\?'ops-hidden':''/);
-  assert.match(employee,/employee-suite\.css\?v=20260904g/);
-  assert.match(employee,/employee-suite\.js\?v=20260904g/);
+  assert.match(employee,/employee-suite\.css\?v=20260904h/);
+  assert.match(employee,/employee-suite\.js\?v=20260904h/);
 });
 
 test('recurring visits keep the client plan but reset prior completion and payment state',()=>{
@@ -853,7 +853,7 @@ test('only Zac Tyler and Alex receive business access while new employees get on
   assert.equal(profile.role,'crew');
   assert.equal(profile.businessAccess,false);
   for(const marker of ['BUSINESS_USERS','enterEmployeeApp','canRunBusiness','Run your business'])assert.match(employee,new RegExp(marker));
-  for(const marker of ["new Set(['zacb','tylerg','alexk'])","'onboarding'",'Finish onboarding','opsSaveOnboarding','opsOnboardingDraft','Draft saved automatically.','onboardingDraftAcknowledgements','onboardingDraftVersion','draft,false','ops-quick-clock','opsQuickClock','employeeViews'])assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
+  for(const marker of ["new Set(['zacb','tylerg','alexk'])","'onboarding'",'Finish onboarding','opsSaveOnboarding','opsOnboardingDraft','Draft saved automatically.','onboardingDraftAcknowledgements','onboardingDraftVersion','onboardingDraftUser','draft,false',"S.active==='onboarding'",'ops-quick-clock','opsQuickClock','employeeViews'])assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
   const vault=read('functions/api/employee-hub.js');
   assert.match(vault,/hasBusinessAccess\(session\)/);
   assert.match(vault,/onboardingCompletedAt/);
