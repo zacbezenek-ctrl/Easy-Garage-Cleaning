@@ -174,7 +174,7 @@ test('cancelling keeps an audit record, releases the Hub slot, and cancels the H
     return new Response('{}',{status:200});
   };
   try{
-    const request=new Request('https://easygaragecleaning.com/api/highlevel',{method:'POST',headers:{Origin:'https://easygaragecleaning.com','Content-Type':'application/json'},body:JSON.stringify({tool:'lifecycle',event:'job-cancelled',appointment_id:'appt-cancel',appointment_status:'cancelled',highlevel_contact_id:'contact-1',client:{name:'Customer'}})});
+    const request=new Request('https://easygaragecleaning.com/api/highlevel',{method:'POST',headers:{Origin:'https://easygaragecleaning.com','Content-Type':'application/json','Idempotency-Key':'lifecycle:job-1:cancelled'},body:JSON.stringify({tool:'lifecycle',event:'job-cancelled',appointment_id:'appt-cancel',appointment_status:'cancelled',note:'Cancellation reason: customer moving dates',highlevel_contact_id:'contact-1',client:{name:'Customer'}})});
     const response=await onRequestPost({request,env:{HIGHLEVEL_API_KEY:'test-key',HIGHLEVEL_LOCATION_ID:'location-1'}}),result=await response.json();
     assert.equal(response.status,200);
     assert.equal(result.appointmentStatus,'cancelled');
@@ -183,6 +183,10 @@ test('cancelling keeps an audit record, releases the Hub slot, and cancels the H
     assert.ok(update,'HighLevel appointment cancellation was not sent');
     assert.equal(JSON.parse(update.options.body).appointmentStatus,'cancelled');
     assert.equal(JSON.parse(update.options.body).toNotify,false);
+    const note=calls.find(x=>x.url.endsWith('/contacts/contact-1/notes'));
+    assert.ok(note,'cancellation reason was not added to contact history');
+    assert.equal(JSON.parse(note.options.body).body,'Cancellation reason: customer moving dates');
+    assert.equal(note.options.headers['Idempotency-Key']!==undefined,true);
   }finally{globalThis.fetch=originalFetch}
 });
 
