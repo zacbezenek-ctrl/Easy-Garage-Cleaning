@@ -543,8 +543,9 @@ export async function onRequestPost({ request, env }) {
       await addTags(c, contactId, ['egc-walkthrough-complete', ...c.quoteReadyTags]);
       const walkthrough = await completeAppointment(c, client.highlevel_appointment_id || payload.walkthrough_appointment_id || '');
       const q = payload.quote || {};
-      if (q.job_date && q.start_time && q.end_time && !client.highlevel_job_appointment_id) {
+      if (q.job_date && q.start_time && q.end_time) {
         const scheduled = await createAppointment(c, {
+          appointment_id: client.highlevel_job_appointment_id || '',
           event_type: 'job', start_time: q.start_at || `${q.job_date}T${q.start_time}:00-06:00`,
           end_time: q.end_at || `${q.job_date}T${q.end_time}:00-06:00`, title: q.title || 'EGC Garage Service',
           address: client.address, notes: appointmentInstructions(payload), notify: true, idempotency_key: payload.idempotency_key || '',

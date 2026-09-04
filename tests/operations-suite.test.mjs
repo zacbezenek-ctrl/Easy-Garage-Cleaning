@@ -72,6 +72,22 @@ test('schedule writes prevent collisions and retain retryable sync state',()=>{
   assert.doesNotMatch(crew,/collection\(['"]scheduleLocks['"]\)/);
 });
 
+test('Hub retries preserve the full walkthrough handoff instead of downgrading to a calendar-only sync',()=>{
+  assert.match(suite,/if\(job\.sourceWalkthroughId&&job\.internalNotes&&job\.acceptance\)/);
+  for(const marker of ["tool:'game_plan'",'walkthrough_id:job.sourceWalkthroughId','internal_notes:job.internalNotes','client_checklists:job.clientChecklists','discovery:job.discovery','scope:job.scope','logistics:job.logistics','accepted_at:job.acceptance.acceptedAt','photos:{before:Number(job.photoCount||0)}']){
+    assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),marker+' is missing from retry payload');
+  }
+});
+
+test('Hub rescheduling preserves and refreshes the signed walkthrough handoff',()=>{
+  for(const marker of ['function replaceBriefLine','function refreshChecklistNotes','function refreshWalkthroughHandoff','latestJobInstructions:job.jobInstructions','latestClientChecklists:job.clientChecklists','if(customerRef)tx.set(customerRef,customerUpdate','job={...previous,...derived','status:b.id?(previous.status','pipelineStatus:b.id?(previous.pipelineStatus']){
+    assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),marker+' is missing');
+  }
+  for(const field of ['CREW / WINDOW','INTERNAL CUSTOMER NOTES','customerNotes','assignedTo','crewSize','arrivalWindow'])assert.match(suite,new RegExp(field.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
+  assert.match(suite,/terminalScheduleStages=.*'invoiced'.*'review_requested'.*'closed'/);
+  assert.match(suite,/Closed work stays locked/);
+});
+
 test('walkthrough conversion keeps canonical IDs and durable acceptance metadata',()=>{
   for(const marker of ['walkthroughId','sourceWalkthroughId','convertedJobId','conversionStatus','acceptanceAt','acceptanceBy','termsVersion','signatureCaptured','in_person_signature','syncIdempotencyKey']){
     assert.match(crew,new RegExp(marker),marker+' is missing');
@@ -140,6 +156,30 @@ test('HighLevel receives the customer promise in both the contact note and job a
     const note=JSON.parse(noteCall.options.body).body,appointment=JSON.parse(appointmentCall.options.body).description;
     for(const text of ['CUSTOMER GOAL: Park two cars','KEEP / PROTECT: Tools and bikes','REMOVE / DONATE: Boxes and broken furniture','DO NOT MOVE: Red cabinet','ACCESS: keypad — Code 1234','INTERNAL CUSTOMER NOTES: Call before arrival'])assert.match(note,new RegExp(text));
     assert.equal(appointment,internalNotes);
+  }finally{globalThis.fetch=originalFetch}
+});
+
+test('resaving a walkthrough updates the existing HighLevel job appointment and keeps it scheduled',async()=>{
+  const {onRequestPost}=await import('../functions/api/highlevel.js');
+  const calls=[],originalFetch=globalThis.fetch,internalNotes='EGC INTERNAL JOB BRIEF\nCUSTOMER GOAL: Updated finished garage\nKEEP / PROTECT: Red toolbox';
+  globalThis.fetch=async(url,options={})=>{
+    calls.push({url:String(url),options});
+    if(String(url).includes('/opportunities/search?'))return new Response(JSON.stringify({opportunities:[{id:'opp-1',contactId:'contact-1',pipelineId:'anSgrMpYHtAX6YlUHnIR',name:'Customer job',status:'open'}]}),{status:200});
+    if(String(url).endsWith('/contacts/contact-1/notes'))return new Response(JSON.stringify({note:{id:'note-2'}}),{status:200});
+    if(String(url).endsWith('/calendars/events/appointments/appt-existing')&&options.method==='PUT')return new Response(JSON.stringify({id:'appt-existing'}),{status:200});
+    return new Response('{}',{status:200});
+  };
+  try{
+    const payload={tool:'game_plan',job_id:'job-1',opportunity_id:'opp-1',client:{name:'Test Customer',address:'123 Main',highlevel_contact_id:'contact-1',highlevel_job_appointment_id:'appt-existing'},quote:{title:'Test garage',total:1500,job_date:'2026-09-15',start_time:'10:00',end_time:'14:00',start_at:'2026-09-15T16:00:00.000Z',end_at:'2026-09-15T20:00:00.000Z'},internal_notes:internalNotes};
+    const request=new Request('https://easygaragecleaning.com/api/highlevel',{method:'POST',headers:{Origin:'https://easygaragecleaning.com','Content-Type':'application/json'},body:JSON.stringify(payload)});
+    const response=await onRequestPost({request,env:{HIGHLEVEL_API_KEY:'test-key',HIGHLEVEL_LOCATION_ID:'location-1'}}),result=await response.json();
+    assert.equal(response.status,200);
+    assert.equal(result.appointmentId,'appt-existing');
+    assert.equal(result.updated,true);
+    const update=calls.find(x=>x.url.endsWith('/calendars/events/appointments/appt-existing')&&x.options.method==='PUT');
+    assert.ok(update,'existing job appointment was not updated');
+    assert.equal(JSON.parse(update.options.body).description,internalNotes);
+    assert.equal(calls.filter(x=>x.url.endsWith('/calendars/events/appointments')&&x.options.method==='POST').length,0);
   }finally{globalThis.fetch=originalFetch}
 });
 
@@ -302,6 +342,16 @@ test('open-shift scheduling fields persist on the canonical job record',()=>{
 test('walkthrough preserves job creation time and hands off the scheduled job appointment',()=>{
   assert.match(crew,/if\(!existing\.exists\)job\.createdAt=now/);
   assert.match(crew,/highlevelAppointmentId:S\.highlevelJobAppointmentId/);
+});
+
+test('material walkthrough edits invalidate stale customer approval',()=>{
+  for(const marker of ['function invalidateAcceptance','function updateField','The plan changed. Review the updated brief and collect approval again.'])assert.match(crew,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
+  assert.match(crew,/oninput="updateField\('\$\{key\}',this\.value\)"/);
+  assert.match(crew,/oninput="updateField\('lockedPrice',this\.value\)"/);
+  assert.match(crew,/function pick\([^)]*\)\{invalidateAcceptance\(\)/);
+  assert.match(crew,/function qty\([^)]*\)\{invalidateAcceptance\(\)/);
+  assert.match(crew,/async function addPhotos\(input\)\{invalidateAcceptance\(\)/);
+  assert.match(crew,/async function removePhoto\(id\)\{invalidateAcceptance\(\)/);
 });
 
 test('public quote progress and production links stay configured',()=>{
