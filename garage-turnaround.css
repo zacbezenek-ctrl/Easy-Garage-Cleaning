@@ -43,11 +43,11 @@
 .turnaround-page .problem-item h3{font-size:17px}
 
 .turnaround-audience{background:var(--ta-paper)}
-.turnaround-audience .body-copy-inner{max-width:none;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;counter-reset:audience}
+.turnaround-audience .body-copy-inner{max-width:none;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
 .turnaround-audience .body-copy-inner>p{margin:0}
 .turnaround-audience .body-copy-inner>p:first-child{grid-column:1/-1;max-width:72ch;font-size:18px;line-height:1.7;margin-bottom:8px}
-.turnaround-audience .body-copy-inner>p:not(:first-child){position:relative;counter-increment:audience;padding:27px 26px 26px 72px;background:#fff;border:1px solid var(--ta-line);border-radius:18px;box-shadow:0 10px 28px rgba(7,26,49,.055);font-size:14px;line-height:1.65}
-.turnaround-audience .body-copy-inner>p:not(:first-child):before{content:"0" counter(audience);position:absolute;left:22px;top:27px;font:800 11px var(--font-mono);color:var(--accent-deep);letter-spacing:.08em}
+.turnaround-audience .body-copy-inner>p:not(:first-child){position:relative;padding:27px 26px 26px 72px;background:#fff;border:1px solid var(--ta-line);border-radius:18px;box-shadow:0 10px 28px rgba(7,26,49,.055);font-size:14px;line-height:1.65}
+.turnaround-card-index{position:absolute;left:22px;top:27px;font:800 11px var(--font-mono);color:var(--accent-deep);letter-spacing:.08em}
 .turnaround-audience .body-copy-inner strong{display:block;margin-bottom:7px;color:var(--ink);font:800 18px/1.25 var(--font-display);letter-spacing:-.025em}
 
 .turnaround-page .process .steps{gap:20px}
@@ -56,14 +56,14 @@
 .turnaround-page .process .step h3{font-size:26px;margin-bottom:12px}
 
 .turnaround-day{background:#eef3f7}
-.turnaround-day .body-copy-inner{max-width:none;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;counter-reset:timeline}
+.turnaround-day .body-copy-inner{max-width:none;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
 .turnaround-day .body-copy-inner>p{margin:0}
 .turnaround-day .body-copy-inner>p:first-child{grid-column:1/-1;max-width:68ch;font-size:18px;margin-bottom:4px}
 .turnaround-proof{grid-column:1/-1;position:relative;margin:8px 0 10px;border-radius:20px;overflow:hidden;background:var(--ta-navy);box-shadow:var(--ta-shadow)}
 .turnaround-proof img{display:block;width:100%;height:auto;aspect-ratio:2.5/1;object-fit:cover}
 .turnaround-proof figcaption{position:absolute;left:18px;bottom:16px;padding:8px 12px;border-radius:999px;background:rgba(7,26,49,.86);color:#fff;font:700 10px var(--font-mono);letter-spacing:.08em;text-transform:uppercase}
-.turnaround-day .body-copy-inner>p:not(:first-child):not(:last-child){position:relative;counter-increment:timeline;min-height:160px;padding:25px 24px 24px 68px;border:1px solid var(--ta-line);border-radius:16px;background:#fff;font-size:14px;line-height:1.62}
-.turnaround-day .body-copy-inner>p:not(:first-child):not(:last-child):before{content:counter(timeline);position:absolute;left:22px;top:23px;display:grid;place-items:center;width:28px;height:28px;border-radius:50%;background:var(--accent);color:#fff;font:800 11px var(--font-mono)}
+.turnaround-day .body-copy-inner>p:not(:first-child):not(:last-child){position:relative;min-height:160px;padding:25px 24px 24px 68px;border:1px solid var(--ta-line);border-radius:16px;background:#fff;font-size:14px;line-height:1.62}
+.turnaround-step-index{position:absolute;left:22px;top:23px;display:grid;place-items:center;width:28px;height:28px;border-radius:50%;background:var(--accent);color:#fff;font:800 11px var(--font-mono)}
 .turnaround-day .body-copy-inner>p:not(:first-child):not(:last-child) strong{display:block;margin-bottom:8px;color:var(--ink);font:800 17px/1.25 var(--font-display)}
 .turnaround-day .body-copy-inner>p:last-child{grid-column:1/-1;margin-top:7px;padding:20px 22px;border-radius:14px;background:var(--ta-navy);color:rgba(255,255,255,.78)}
 .turnaround-day .body-copy-inner>p:last-child a{color:#ff9b76;font-weight:750}
@@ -84,7 +84,7 @@
 .turnaround-included .body-copy-inner>p,.turnaround-system .body-copy-inner>p{margin:0}
 .turnaround-included .body-copy-inner>p:first-child,.turnaround-system .body-copy-inner>p:first-child{grid-column:1/-1;max-width:68ch;font-size:17px;margin-bottom:8px}
 .turnaround-included .body-copy-inner>p:not(:first-child){position:relative;min-height:170px;padding:55px 22px 23px;border:1px solid var(--ta-line);border-radius:16px;background:#fbfcfd;font-size:13px;line-height:1.58}
-.turnaround-included .body-copy-inner>p:not(:first-child):before{content:"✓";position:absolute;left:22px;top:20px;display:grid;place-items:center;width:25px;height:25px;border-radius:50%;background:rgba(22,137,82,.1);color:#168952;font-weight:900}
+.turnaround-check{position:absolute;left:22px;top:20px;display:grid;place-items:center;width:25px;height:25px;border-radius:50%;background:rgba(22,137,82,.1);color:#168952;font-weight:900}
 .turnaround-included .body-copy-inner strong,.turnaround-system .body-copy-inner strong{display:block;margin-bottom:7px;color:var(--ink);font:800 17px/1.25 var(--font-display)}
 
 .turnaround-system{background:var(--ta-paper)}
@@ -122,12 +122,13 @@
   .turnaround-page .process .step{min-height:auto}
 }
 @media(max-width:560px){
+  .turnaround-hero .hero-phone{white-space:nowrap}
   .turnaround-overview .quick-answer,.turnaround-overview .typical-job,.turnaround-definition-grid>*{padding:23px 20px;border-radius:15px}
   .turnaround-overview .typical-job-grid{grid-template-columns:1fr}
   .turnaround-audience .body-copy-inner>p:not(:first-child){padding:23px 20px 23px 59px}
-  .turnaround-audience .body-copy-inner>p:not(:first-child):before{left:18px;top:24px}
+  .turnaround-card-index{left:18px;top:24px}
   .turnaround-day .body-copy-inner>p:not(:first-child):not(:last-child){min-height:auto;padding:22px 18px 22px 58px}
-  .turnaround-day .body-copy-inner>p:not(:first-child):not(:last-child):before{left:17px;top:20px}
+  .turnaround-step-index{left:17px;top:20px}
   .turnaround-pricing-grid,.turnaround-included .body-copy-inner,.turnaround-local-notes .body-copy-inner{grid-template-columns:1fr}
   .turnaround-pricing-grid article{min-height:220px}
   .turnaround-local-notes .body-copy-inner>p:last-child{grid-column:auto}

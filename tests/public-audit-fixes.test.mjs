@@ -77,6 +77,10 @@ test('garage turnaround keeps the landing-page quality through the full page', (
     assert.match(css, new RegExp(`\\.${marker}`), `${marker} has no styling`);
   }
   assert.match(html, /One-day turnaround[\s\S]*\$1,200–\$2,200/);
+  assert.match(html, /turnaround-card-index" aria-hidden="true"/);
+  assert.match(html, /turnaround-step-index" aria-hidden="true"/);
+  assert.match(html, /turnaround-check" aria-hidden="true"/);
+  assert.doesNotMatch(css, /content:counter\(timeline\)|content:"✓"/);
   assert.match(css, /@media\(max-width:560px\)/);
   assert.doesNotMatch(html, /<section class="body-copy"><div class="wrap"><div class="body-copy-inner reveal"><(?:aside class="typical-job|div class="def-block")/);
 });
