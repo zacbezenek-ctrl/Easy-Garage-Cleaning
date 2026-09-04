@@ -414,6 +414,15 @@ test('claimed shifts stay visible and can be safely released by the claimant',()
   assert.match(suite,/shiftClaims=claims\.filter/);
 });
 
+test('employee availability prevents manager assignment and conflicting shift pickup',()=>{
+  for(const marker of ["'availability'",'My availability','crew_availability','opsSaveAvailability','opsRemoveAvailability','crewAvailabilityConflict','marked this time unavailable','overlaps time you marked unavailable'])assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
+  assert.match(suite,/const isAvailability=/);
+  assert.match(suite,/jobsCache\.filter\(j=>!isScheduleLock\(j\)&&!isAvailability\(j\)\)/);
+  assert.match(suite,/recordType:'crew_availability'/);
+  assert.match(suite,/sameEmployee\(row\.employee,identity\)/);
+  assert.match(suite,/status:'cancelled',cancelledAt/);
+});
+
 test('crew assignment updates the HighLevel appointment without retriggering customer automation',async()=>{
   const {onRequestPost}=await import('../functions/api/highlevel.js'),calls=[],originalFetch=globalThis.fetch;
   globalThis.fetch=async(url,options={})=>{calls.push({url:String(url),options});if(String(url).endsWith('/calendars/events/appointments/appt-1'))return new Response(JSON.stringify({id:'appt-1'}),{status:200});return new Response('{}',{status:200})};
@@ -442,8 +451,8 @@ test('open-shift scheduling fields persist on the canonical job record',()=>{
   assert.match(suite,/if\(k==='type'\)render\(\)/);
   assert.match(suite,/b\.type==='job'\?'':'ops-hidden'/);
   assert.match(suite,/b\.type==='blocked'\?'ops-hidden':''/);
-  assert.match(employee,/employee-suite\.css\?v=20260903k/);
-  assert.match(employee,/employee-suite\.js\?v=20260903n/);
+  assert.match(employee,/employee-suite\.css\?v=20260903l/);
+  assert.match(employee,/employee-suite\.js\?v=20260903o/);
 });
 
 test('recurring visits keep the client plan but reset prior completion and payment state',()=>{
