@@ -74,6 +74,12 @@ export async function onRequestPost({ request, env }) {
     headers: { 'Content-Type': 'application/json', ...cors },
   });
 
+  return json(410, {
+    ok: false,
+    code: 'LEGACY_FIREBASE_LEADS_RETIRED',
+    error: 'Legacy Firebase lead intake is retired. HighLevel is the CRM source of record.',
+  });
+
   const apiKey = env.FIREBASE_API_KEY;
   if (!apiKey) {
     console.error('FIREBASE_API_KEY not set');

@@ -247,30 +247,18 @@ body { margin: 0; background: var(--navy); color: #fff; font-family: 'Inter', sy
   </div>
 </div>
 
+<script src="/crew/hub-auth.js?v=20260903b"></script>
 <script>
 /* ══════════════════════════════════════════════════
-   AUTH — same SHA-256 hashes as employee.html
+   AUTH — signed server session shared with the EGC Hub
 ══════════════════════════════════════════════════ */
-const USERS = {
-  ZacB:   '6b8670f397174ff99440629b877581216a0b26b6770054be198988ff48a16861',
-  TylerG: '28b50fd5ee98af8cf015972811def03dbc2eaff52997f82ecfc4342ece6cfa36',
-  AlexK:  '52e2e9901adc10406ad9597084ece4770d1c9fd0e3b76e1f31abf35f8030ac50',
-};
 
 let me        = null;
 let db        = null;
 let todayJobs = [];
-let allLeads  = [];
 let history   = [];
 let recording = false;
 let recog     = null;
-
-async function sha256(s) {
-  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s));
-  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2,'0')).join('');
-}
-async function hashPass(u, p)  { return sha256(u + ':' + p + ':egc-salt-2026'); }
-async function sessTok(u)      { return sha256(u + ':' + USERS[u] + ':egc-session'); }
 
 document.getElementById('l-pass').addEventListener('keydown', e => {
   if (e.key === 'Enter') doLogin();
@@ -280,33 +268,28 @@ async function doLogin() {
   const u = document.getElementById('l-user').value.trim();
   const p = document.getElementById('l-pass').value;
   const err = document.getElementById('login-error');
-  if (!USERS[u]) { err.style.display = 'block'; return; }
-  const h = await hashPass(u, p);
-  if (h !== USERS[u]) { err.style.display = 'block'; return; }
-  err.style.display = 'none';
-  me = u;
-  const tok = await sessTok(u);
-  sessionStorage.setItem('egc_cp_u',   u);
-  sessionStorage.setItem('egc_cp_tok', tok);
-  boot();
+  try {
+    me = await EGCHubAuth.signIn(u, p);
+    err.style.display = 'none';
+    document.getElementById('l-pass').value = '';
+    boot();
+  } catch {
+    err.textContent = 'Wrong username or password.';
+    err.style.display = 'block';
+  }
 }
 
 async function checkSession() {
-  const u   = sessionStorage.getItem('egc_cp_u');
-  const tok = sessionStorage.getItem('egc_cp_tok');
-  if (!u || !USERS[u] || !tok) return false;
-  if (tok !== await sessTok(u)) return false;
-  me = u;
-  return true;
+  me = await EGCHubAuth.session();
+  return Boolean(me);
 }
 
-function doLogout() {
-  sessionStorage.removeItem('egc_cp_u');
-  sessionStorage.removeItem('egc_cp_tok');
-  me = null; history = []; todayJobs = []; allLeads = [];
+async function doLogout() {
+  me = null; history = []; todayJobs = [];
   document.getElementById('copilot-screen').classList.remove('active');
   document.getElementById('login-screen').style.display = '';
   document.getElementById('chat-area').innerHTML = '';
+  await EGCHubAuth.signOut();
 }
 
 /* ══════════════════════════════════════════════════
@@ -333,7 +316,6 @@ async function boot() {
   updateClock();
   setInterval(updateClock, 30000);
   loadSchedule();
-  loadLeads();
 
   document.getElementById('query-input').addEventListener('input', () => {
     document.getElementById('send-btn').disabled =
@@ -373,22 +355,6 @@ function loadSchedule() {
       console.error('[Co-Pilot] Jobs failed:', err.code, err.message);
       document.getElementById('jobs-strip').innerHTML =
         '<div class="no-jobs-msg">Jobs unavailable — check Firestore rules</div>';
-    }
-  );
-}
-
-function loadLeads() {
-  if (!db) return;
-  const onLeads = snap => {
-    allLeads = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-    console.log('[Co-Pilot] Leads loaded:', allLeads.length);
-  };
-  db.collection('leads').orderBy('createdAt', 'desc').limit(50).onSnapshot(
-    onLeads,
-    () => {
-      db.collection('leads').limit(50).get()
-        .then(onLeads)
-        .catch(e => console.warn('[Co-Pilot] Leads unavailable:', e.code));
     }
   );
 }
@@ -528,14 +494,13 @@ async function sendQuery() {
   history.push({ role: 'user', content: query });
 
   try {
-    const res = await fetch('/api/copilot', {
+    const res = await EGCHubAuth.fetch('/api/copilot', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         user:     me,
         query,
         schedule: todayJobs,
-        leads:    allLeads,
         // Prior turns only — the API appends the current query itself
         history:  history.slice(0, -1).slice(-8),
       }),
@@ -556,6 +521,12 @@ async function sendQuery() {
 
   } catch (e) {
     removeThinking();
+    if (e?.code === 'HUB_AUTH_REQUIRED') {
+      await doLogout();
+      document.getElementById('login-error').textContent = 'Your session expired. Sign in again.';
+      document.getElementById('login-error').style.display = 'block';
+      return;
+    }
     addAssistantMsg('⚠️ Network error — check your connection and try again.');
     history.pop();
   }

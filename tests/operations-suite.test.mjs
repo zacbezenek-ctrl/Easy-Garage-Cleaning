@@ -54,10 +54,23 @@ test('sensitive CRM access is rejected before any upstream request without a Hub
 });
 
 test('employee and crew pages no longer publish reusable password-derived session tokens',()=>{
-  for(const page of [employee,crew,read('crew/index.html'),read('crew/prejob.html'),read('crew/postjob.html')]){
+  for(const page of [employee,crew,prejob,postjob,copilot,read('crew/index.html')]){
     assert.doesNotMatch(page,/GATE_USERS|egc-session|const USERS\s*=/);
     assert.match(page,/hub-auth/);
   }
+});
+
+test('the billable field copilot requires the signed Hub session',async()=>{
+  const {onRequestPost}=await import('../functions/api/copilot.js');
+  const originalFetch=globalThis.fetch;
+  let called=false;
+  globalThis.fetch=async()=>{called=true;throw new Error('must not call upstream')};
+  try{
+    const response=await onRequestPost({request:new Request('https://easygaragecleaning.com/api/copilot',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query:'test'})}),env:TEST_HUB_ENV});
+    assert.equal(response.status,401);
+    assert.equal(called,false);
+  }finally{globalThis.fetch=originalFetch}
+  assert.match(copilot,/EGCHubAuth\.fetch\('\/api\/copilot'/);
 });
 
 test('employee hub loads the EGC operations suite without the duplicate CRM overlay',()=>{
@@ -447,6 +460,16 @@ test('Hub lead feed resets at the cutoff and excludes historical HighLevel oppor
     assert.equal(result.leadResetAt,'2026-09-03T21:51:19.314Z');
     assert.deepEqual(result.opportunities.map(row=>row.id),['new']);
   }finally{globalThis.fetch=originalFetch}
+});
+
+test('legacy Firebase CRM ingestion is retired in favor of HighLevel',async()=>{
+  for(const file of ['lead-intake.js','sms-event.js']){
+    const api=await import(`../functions/api/${file}`);
+    const response=await api.onRequestPost({request:new Request(`https://easygaragecleaning.com/api/${file.replace('.js','')}`,{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}),env:{FIREBASE_API_KEY:'unused'}});
+    assert.equal(response.status,410);
+    assert.match((await response.json()).error,/HighLevel/);
+  }
+  assert.doesNotMatch(copilot,/collection\('leads'\)|allLeads|leads:\s*allLeads/);
 });
 
 test('website leads go directly to HighLevel before the existing automation relay',async()=>{

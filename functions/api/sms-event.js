@@ -80,6 +80,12 @@ export async function onRequestPost({ request, env }) {
     headers: { 'Content-Type': 'application/json', ...cors },
   });
 
+  return json(410, {
+    ok: false,
+    code: 'LEGACY_FIREBASE_SMS_RETIRED',
+    error: 'Legacy Firebase SMS tracking is retired. HighLevel owns CRM communication history.',
+  });
+
   const apiKey = env.FIREBASE_API_KEY;
   if (!apiKey) return json(500, { error: 'Server misconfigured' });
 

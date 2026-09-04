@@ -1,3 +1,5 @@
+import { getHubSession } from '../_lib/hub-session.js';
+
 /**
  * EGC Field Co-Pilot — Cloudflare Pages Function
  * POST /api/copilot
@@ -416,6 +418,10 @@ export async function onRequestPost({ request, env }) {
     headers: { 'Content-Type': 'application/json', ...cors },
   });
 
+  if (!await getHubSession(request, env)) {
+    return json(401, { code: 'HUB_AUTH_REQUIRED', error: 'Sign in to the EGC Hub' });
+  }
+
   const apiKey = envVar(env, 'openaiapi');
   if (!apiKey) {
     console.error('openaiapi not set in Cloudflare Pages environment variables');
@@ -428,25 +434,12 @@ export async function onRequestPost({ request, env }) {
   } catch {
     return json(400, { error: 'Invalid JSON' });
   }
-  const { user = 'field', query, schedule = [], leads = [], history = [] } = body || {};
+  const { user = 'field', query, schedule = [], history = [] } = body || {};
   if (!query?.trim()) return json(400, { error: 'Missing query' });
 
   const mt      = getMTContext();
   const truck   = computeTruckStatus(schedule);
   const nextJob = getNextJobContext(schedule, mt.totalMins);
-
-  const leadsText = leads.length === 0
-    ? 'No leads in database.'
-    : leads.slice(0, 30).map((l, i) => {
-        const name    = l.name || l.full_name || l.customerName || 'Unknown';
-        const phone   = l.phone || l.customerPhone || '—';
-        const status  = l.status || 'new';
-        const amount  = l.quoteAmount || l.amount || '—';
-        const service = l.services || l.serviceType || '—';
-        const date    = l.scheduledDate || l.preferredDate || '—';
-        const notes   = l.notes ? ` | ${l.notes}` : '';
-        return `Lead ${i + 1}: ${name}, ${phone}, status: ${status}, quote: ${amount}, service: ${service}, date: ${date}${notes}`;
-      }).join('\n');
 
   const userLabel = {
     TylerG: 'Tyler (lead handler — office/phone)',
@@ -491,9 +484,6 @@ ${formatSchedule(schedule)}
 Capacity: ${TRUCK_CAPACITY} cubic yards (U-Haul 15ft box truck)
 Loaded today (completed + in-progress jobs): ${truck.loadedYards} cubic yards
 Remaining capacity: ${truck.remaining} cubic yards
-
-=== LEADS / PIPELINE (${leads.length} total) ===
-${leadsText}
 
 === EGC FIELD SOPs v1.0 ===
 ${EGC_SOPS}
