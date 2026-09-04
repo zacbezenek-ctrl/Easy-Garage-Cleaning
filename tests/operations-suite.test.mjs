@@ -414,7 +414,7 @@ test('website leads go directly to HighLevel before the existing automation rela
     return new Response('{}',{status:200});
   };
   try{
-    const request=new Request('https://easygaragecleaning.com/api/web-lead',{method:'POST',headers:{Origin:'https://easygaragecleaning.com','Content-Type':'application/json'},body:JSON.stringify({name:'New Customer',phone:'9705550199',email:'new@example.com',items:'Garage cleanout',source:'Website',city:'Fort Collins',serviceZip:'80525',preferred_date:'2026-09-10',preferred_timing:'Morning',booking_slot:'Tomorrow AM',estimated_range:'$400–$650',flow_type:'booking',sms_consent:'yes',page_url:'https://easygaragecleaning.com/'})});
+    const request=new Request('https://easygaragecleaning.com/api/web-lead',{method:'POST',headers:{Origin:'https://easygaragecleaning.com','Content-Type':'application/json'},body:JSON.stringify({name:'New Customer',phone:'9705550199',email:'new@example.com',items:'Garage cleanout',service_type:'Garage Cleanout',job_size:'Medium garage',what_to_remove:'Boxes and furniture',photo_description:'Full two-car garage',source:'Website',city:'Fort Collins',serviceZip:'80525',preferred_date:'2026-09-10',preferred_timing:'Morning',booking_slot:'Tomorrow AM',estimated_range:'$400–$650',flow_type:'booking',sms_consent:'yes',utm_source:'facebook',utm_medium:'paid-social',utm_campaign:'fall-garages',page_url:'https://easygaragecleaning.com/'})});
     const response=await onRequestPost({request,env:{HIGHLEVEL_API_KEY:'test-key',HIGHLEVEL_LOCATION_ID:'location-1',HIGHLEVEL_PIPELINE_ID:'pipe-1',HIGHLEVEL_USER_ID:'user-1',WEBSITE_LEAD_HOOK_URL:'https://hooks.example.test/lead'}});
     const result=await response.json();
     assert.equal(response.status,200);
@@ -424,7 +424,7 @@ test('website leads go directly to HighLevel before the existing automation rela
     assert.equal(JSON.parse(calls.find(call=>call.url.endsWith('/contacts/upsert')).options.body).email,'new@example.com');
     const detailNote=calls.find(call=>call.url.endsWith('/contacts/contact-web/notes'));
     assert.ok(detailNote,'website lead details were not written to HighLevel');
-    for(const value of ['Garage cleanout','Fort Collins 80525','Tomorrow AM','$400–$650','SMS consent checked: yes'])assert.match(JSON.parse(detailNote.options.body).body,new RegExp(value.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
+    for(const value of ['Garage Cleanout','Medium garage','Boxes and furniture','Full two-car garage','Fort Collins 80525','Tomorrow AM','$400–$650','SMS consent checked: yes','facebook · paid-social · fall-garages'])assert.match(JSON.parse(detailNote.options.body).body,new RegExp(value.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
     assert.equal(calls.filter(call=>call.url.endsWith('/opportunities/upsert')).length,1);
     assert.equal(calls.filter(call=>call.url.startsWith('https://hooks.example.test/lead')).length,1);
   }finally{globalThis.fetch=originalFetch}

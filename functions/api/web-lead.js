@@ -24,7 +24,7 @@
 
 const ALLOWED_HOST_RE = /(^|\.)easygaragecleaning\.com$|(\.pages\.dev)$|^localhost(:\d+)?$|^127\.0\.0\.1(:\d+)?$/;
 const MAX_BODY = 32 * 1024;
-const FIELDS = ['name', 'phone', 'email', 'items', 'source', 'subject', 'city', 'serviceZip', 'preferred_date', 'preferred_timing', 'booking_slot', 'estimated_range', 'flow_type', 'sms_consent', 'fbc', 'fbp', 'fbclid', 'landing_url', 'referrer', 'page_url'];
+const FIELDS = ['name', 'phone', 'email', 'items', 'service_type', 'job_size', 'what_to_remove', 'photo_description', 'source', 'subject', 'city', 'serviceZip', 'preferred_date', 'preferred_timing', 'booking_slot', 'estimated_range', 'flow_type', 'sms_consent', 'fbc', 'fbp', 'fbclid', 'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'gclid', 'msclkid', 'landing_url', 'referrer', 'page_url'];
 const HIGHLEVEL_API = 'https://services.leadconnectorhq.com';
 
 function hostOf(value) {
@@ -90,7 +90,10 @@ async function syncHighLevelLead(env, lead) {
   if (!contactId) throw new Error('HighLevel did not return a contact ID');
   const detailLines = [
     'EGC WEBSITE LEAD DETAILS',
-    `Service / items: ${lead.items || '—'}`,
+    `Service: ${lead.service_type || lead.items || '—'}`,
+    `Job size: ${lead.job_size || '—'}`,
+    `Removal request: ${lead.what_to_remove || lead.items || '—'}`,
+    `Photo description: ${lead.photo_description || '—'}`,
     `Email: ${lead.email || '—'}`,
     `Location: ${[lead.city, lead.serviceZip].filter(Boolean).join(' ') || '—'}`,
     `Preferred date / timing: ${[lead.preferred_date, lead.preferred_timing].filter(Boolean).join(' · ') || '—'}`,
@@ -98,6 +101,8 @@ async function syncHighLevelLead(env, lead) {
     `Estimated range shown: ${lead.estimated_range || '—'}`,
     `Form path: ${lead.flow_type || 'standard'}`,
     `SMS consent checked: ${lead.sms_consent === 'yes' ? 'yes' : 'no'}`,
+    `Campaign: ${[lead.utm_source, lead.utm_medium, lead.utm_campaign, lead.utm_content].filter(Boolean).join(' · ') || 'direct / unavailable'}`,
+    `Search attribution: ${[lead.utm_term, lead.gclid, lead.msclkid].filter(Boolean).join(' · ') || '—'}`,
     `Landing page: ${lead.page_url || lead.landing_url || '—'}`,
   ];
   try {

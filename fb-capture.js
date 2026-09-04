@@ -30,9 +30,14 @@
   if (!landing) { landing = location.href; store('egc_landing', landing); }
   var ref = recall('egc_referrer');
   if (!ref) { ref = document.referrer || ''; store('egc_referrer', ref); }
+  var campaign = {};
+  ['utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'gclid', 'msclkid'].forEach(function (k) {
+    campaign[k] = param(k) || recall('egc_' + k);
+    if (campaign[k]) store('egc_' + k, campaign[k]);
+  });
 
   function fill() {
-    var map = { fbc: fbc, fbp: fbp, fbclid: fbclid, landing_url: landing, referrer: ref };
+    var map = Object.assign({ fbc: fbc, fbp: fbp, fbclid: fbclid, landing_url: landing, referrer: ref }, campaign);
     document.querySelectorAll('form.lead-form-lite').forEach(function (f) {
       Object.keys(map).forEach(function (k) {
         var el = f.querySelector('input[name="' + k + '"]');
@@ -59,12 +64,14 @@
       var payload = {
         page_url: location.href,
         name: pick('name', 'Name'), phone: pick('phone', 'Phone'), email: pick('email', 'Email'),
-        items: pick('items', 'What to remove', 'Service type', 'Job size'), source: pick('source'), subject: pick('subject'),
+        items: pick('items', 'Service type', 'What to remove', 'Job size'), service_type: pick('Service type'), job_size: pick('Job size'), what_to_remove: pick('What to remove'), photo_description: pick('Photo description'), source: pick('source'), subject: pick('subject'),
         city: pick('city', 'City'), serviceZip: pick('serviceZip', 'Zip code'),
         preferred_date: pick('preferred_date', 'Preferred date'), preferred_timing: pick('preferred_timing', 'Preferred timing'),
         booking_slot: pick('booking_slot', 'booking_slot_choice'), estimated_range: pick('estimated_range'), flow_type: pick('flow_type'),
         sms_consent: pick('sms_consent'), fbc: pick('fbc'), fbp: pick('fbp'), fbclid: pick('fbclid'),
-        landing_url: pick('landing_url'), referrer: pick('referrer')
+        landing_url: pick('landing_url'), referrer: pick('referrer'),
+        utm_source: campaign.utm_source, utm_medium: campaign.utm_medium, utm_campaign: campaign.utm_campaign,
+        utm_content: campaign.utm_content, utm_term: campaign.utm_term, gclid: campaign.gclid, msclkid: campaign.msclkid
       };
       var body = JSON.stringify(payload);
       if (window.fetch) {
