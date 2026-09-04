@@ -650,6 +650,8 @@ test('schedule stops safely when the Hub session expires during CRM collision ch
   assert.match(suite,/if\(error\?\.code==='HUB_AUTH_REQUIRED'\)throw error/);
   assert.match(suite,/Sign in again to check HighLevel before saving\. Your form is still here\./);
   assert.match(suite,/button\.textContent='Retry schedule check'/);
+  assert.match(crew,/if\(error\?\.code==='HUB_AUTH_REQUIRED'\)throw error/);
+  assert.match(crew,/Your walkthrough is saved on this device\. Sign in again before scheduling it\./);
 });
 
 test('walkthrough preserves job creation time and hands off the scheduled job appointment',()=>{
