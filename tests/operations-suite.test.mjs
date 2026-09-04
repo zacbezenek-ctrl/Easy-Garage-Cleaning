@@ -208,6 +208,13 @@ test('durable job start pre-fills elapsed closeout time without preventing corre
   assert.match(postjob,/if\(ACTIVE\.startedAt&&hours&&!hours\.value\)/);
 });
 
+test('weekly timesheets derive payroll-ready employee rows from job closeouts',()=>{
+  for(const marker of ["'timesheets'",'Weekly timesheets','timesheetRows','timeTracking?.elapsedHours','timeTracking?.recordedBy','opsDownloadTimesheets','Download CSV','Closeout-backed time'])assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
+  assert.match(suite,/\(crew\.length\?crew:fallback\)\.forEach/);
+  assert.match(suite,/a\.download=`egc-timesheets-/);
+  assert.match(suite,/if\(\/\^\[=\+\\-@\]\//);
+});
+
 test('closeout requires a completed pre-job handoff or a documented exception',()=>{
   for(const marker of ['preJobCompletedAt','preJobCompletedBy','No completed pre-job handoff was found','manager-approved exception','closeoutPreJobException','pre_job_completed_at','pre_job_exception','No completed pre-job handoff is attached'])assert.match(postjob,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),marker+' is missing');
   assert.match(highlevel,/Pre-job handoff:/);
@@ -458,8 +465,8 @@ test('open-shift scheduling fields persist on the canonical job record',()=>{
   assert.match(suite,/if\(k==='type'\)render\(\)/);
   assert.match(suite,/b\.type==='job'\?'':'ops-hidden'/);
   assert.match(suite,/b\.type==='blocked'\?'ops-hidden':''/);
-  assert.match(employee,/employee-suite\.css\?v=20260903l/);
-  assert.match(employee,/employee-suite\.js\?v=20260903o/);
+  assert.match(employee,/employee-suite\.css\?v=20260903m/);
+  assert.match(employee,/employee-suite\.js\?v=20260903p/);
 });
 
 test('recurring visits keep the client plan but reset prior completion and payment state',()=>{
