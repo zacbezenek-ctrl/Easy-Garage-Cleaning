@@ -228,7 +228,7 @@ test('resaving a walkthrough updates the existing HighLevel job appointment and 
 });
 
 test('Hub finance scaffolding and customer history work without claiming external settlement',()=>{
-  for(const marker of ['function customerRows','function customerHistory','function financeState','function financeBoard','opsFinanceAction','Record approval','Record deposit','Issue invoice','Record payment','acceptanceMethod','termsVersion','verified:true','A payment reference is required for verification','Hub records only · keys needed']){
+  for(const marker of ['function customerRows','function customerHistory','function financeState','function jobEconomics','function financeSummary','function financeBoard','Known job contribution','crew-hrs','labor baseline','contribution before fuel / ads','Load variance','opsFinanceAction','Record approval','Record deposit','Issue invoice','Record payment','acceptanceMethod','termsVersion','verified:true','A payment reference is required for verification','Hub records only · keys needed']){
     assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),marker+' is missing');
   }
   assert.match(suite,/jobs\(\)\.filter\(j=>j\.type!=='blocked'\)/);
