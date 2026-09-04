@@ -459,6 +459,14 @@ test('material walkthrough edits invalidate stale customer approval',()=>{
   assert.match(crew,/function qty\([^)]*\)\{invalidateAcceptance\(\)/);
   assert.match(crew,/async function addPhotos\(input\)\{invalidateAcceptance\(\)/);
   assert.match(crew,/async function removePhoto\(id\)\{invalidateAcceptance\(\)/);
+  assert.match(crew,/priceManuallySet:false/);
+  assert.match(crew,/else if\(!S\.priceManuallySet\)S\.lockedPrice=''/);
+});
+
+test('walkthrough hazard choices cannot contradict the crew brief',()=>{
+  assert.match(crew,/key==='hazards'/);
+  assert.match(crew,/value==='No visible hazards'/);
+  assert.match(crew,/filter\(x=>x!=='No visible hazards'\)/);
 });
 
 test('public quote progress and production links stay configured',()=>{
