@@ -383,6 +383,13 @@ test('open-shift scheduling fields persist on the canonical job record',()=>{
   assert.match(employee,/employee-suite\.js\?v=20260903k/);
 });
 
+test('recurring visits keep the client plan but reset prior completion and payment state',()=>{
+  for(const marker of ['sourceTemplateJobId:j.id',"sourceWalkthroughId:''",'acceptance:null','preJobProgress:null','preJobChecklist:null','postJobProgress:null','postJobChecklist:null','actualLoads:null','hoursOnSite:null','scopeVariance:null','closeoutSyncPayload:null','reviewStatus:'])assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),marker+' is missing from recurring reset');
+  assert.match(suite,/derived=refreshWalkthroughHandoff\(j/);
+  assert.match(suite,/notes:job\.internalNotes\|\|job\.notes/);
+  assert.match(suite,/customerUpdate=job\.customerId&&job\.internalNotes/);
+});
+
 test('walkthrough preserves job creation time and hands off the scheduled job appointment',()=>{
   assert.match(crew,/if\(!existing\.exists\)job\.createdAt=now/);
   assert.match(crew,/highlevelAppointmentId:S\.highlevelJobAppointmentId/);
