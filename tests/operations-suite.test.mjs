@@ -1082,3 +1082,7 @@ test('customer communication center triggers HighLevel once and preserves an aud
   assert.match(suite,/suppress_automation:job\.notify===false/);
   assert.match(read('functions/api/highlevel.js'),/if \(!payload\.suppress_automation\) await addTags/);
 });
+
+test('manager command center surfaces the decisions that can hurt today',()=>{
+  for(const marker of ['Cash outstanding','No overdue invoices','employee account','timecard','employee request','overdue','message needs retry','more crew','operating queue is clean','x.slice(0,10)'])assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),marker+' is missing from manager command');
+});
