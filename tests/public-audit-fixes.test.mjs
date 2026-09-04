@@ -71,7 +71,7 @@ test('the shared visual refresh preserves readable text on light and dark surfac
 test('garage turnaround keeps the landing-page quality through the full page', () => {
   const html = read('garage-turnaround-fort-collins-co.html');
   const css = read('garage-turnaround.css');
-  assert.match(html, /garage-turnaround\.css\?v=20260904a/);
+  assert.match(html, /garage-turnaround\.css\?v=20260904b/);
   for (const marker of ['turnaround-overview-grid', 'turnaround-audience', 'turnaround-proof', 'turnaround-pricing-grid', 'turnaround-included', 'turnaround-system', 'turnaround-local-notes']) {
     assert.match(html, new RegExp(marker), `${marker} is missing`);
     assert.match(css, new RegExp(`\\.${marker}`), `${marker} has no styling`);
