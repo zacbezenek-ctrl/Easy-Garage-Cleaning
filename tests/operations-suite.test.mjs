@@ -201,6 +201,13 @@ test('closeout records job-costing actuals and explains walkthrough scope varian
   for(const marker of ['Walkthrough load plan','Actual truckloads','Load variance'])assert.match(highlevel,new RegExp(marker));
 });
 
+test('durable job start pre-fills elapsed closeout time without preventing correction',()=>{
+  assert.match(prejob,/const startedAt=ACTIVE\.startedAt\|\|new Date\(\)\.toISOString\(\)/);
+  for(const marker of ['hours_hint','Calculated from','adjust if needed','timeTracking:{startedAt','elapsedHours:hoursOnSite','started_at:ACTIVE.startedAt'])assert.match(postjob,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
+  assert.match(postjob,/Math\.round\(\(Date\.now\(\)-Date\.parse\(ACTIVE\.startedAt\)\)\/900000\)\/4/);
+  assert.match(postjob,/if\(ACTIVE\.startedAt&&hours&&!hours\.value\)/);
+});
+
 test('closeout requires a completed pre-job handoff or a documented exception',()=>{
   for(const marker of ['preJobCompletedAt','preJobCompletedBy','No completed pre-job handoff was found','manager-approved exception','closeoutPreJobException','pre_job_completed_at','pre_job_exception','No completed pre-job handoff is attached'])assert.match(postjob,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),marker+' is missing');
   assert.match(highlevel,/Pre-job handoff:/);
