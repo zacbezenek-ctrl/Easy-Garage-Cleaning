@@ -149,7 +149,7 @@ test('crew checklist progress resumes across devices and is visible to the manag
 });
 
 test('dispatch and job start create explicit HighLevel lifecycle triggers',async()=>{
-  for(const marker of ['async function syncLifecycle','job-dispatched','job-arrived','job-started','lifecycleSync','Status saved and HighLevel workflow triggered','Add the walkthrough brief before dispatching this crew'])assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
+  for(const marker of ['async function syncLifecycle','job-dispatched','job-arrived','job-started','lifecycleSync','lifecycleSyncPayload','lifecycleSyncNextRetryAt','opsRetryLifecycle','Workflow trigger remains safely queued','Status saved and HighLevel workflow triggered','Add the walkthrough brief before dispatching this crew'])assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
   for(const marker of ['async function syncStartLifecycle',"event:'job-started'",'HighLevel was notified'])assert.match(prejob,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
   assert.match(suite,/dispatchable=ready&&stage==='scheduled'/);
   const {onRequestPost}=await import('../functions/api/highlevel.js'),calls=[],originalFetch=globalThis.fetch;
@@ -162,6 +162,27 @@ test('dispatch and job start create explicit HighLevel lifecycle triggers',async
     const tagCall=calls.find(x=>x.url.endsWith('/contacts/contact-1/tags'));
     assert.ok(tagCall,'lifecycle tag was not sent');
     assert.deepEqual(JSON.parse(tagCall.options.body),{tags:['egc-job-dispatched']});
+  }finally{globalThis.fetch=originalFetch}
+});
+
+test('cancelling keeps an audit record, releases the Hub slot, and cancels the HighLevel appointment',async()=>{
+  for(const marker of ['opsCancelBooking','Cancellation reason','cancellation:{reason','cancelledBy:employeeIdentity','releaseScheduleLock(job)','walkthrough-cancelled','job-cancelled','HighLevel cancellation is queued','Event type locks after the first save'])assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),marker+' is missing');
+  const {onRequestPost}=await import('../functions/api/highlevel.js'),calls=[],originalFetch=globalThis.fetch;
+  globalThis.fetch=async(url,options={})=>{
+    calls.push({url:String(url),options});
+    if(String(url).endsWith('/calendars/events/appointments/appt-cancel')&&(!options.method||options.method==='GET'))return new Response(JSON.stringify({id:'appt-cancel',calendarId:'cal-1',title:'Garage job',startTime:'2026-09-16T15:00:00.000Z',endTime:'2026-09-16T18:00:00.000Z'}),{status:200});
+    return new Response('{}',{status:200});
+  };
+  try{
+    const request=new Request('https://easygaragecleaning.com/api/highlevel',{method:'POST',headers:{Origin:'https://easygaragecleaning.com','Content-Type':'application/json'},body:JSON.stringify({tool:'lifecycle',event:'job-cancelled',appointment_id:'appt-cancel',appointment_status:'cancelled',highlevel_contact_id:'contact-1',client:{name:'Customer'}})});
+    const response=await onRequestPost({request,env:{HIGHLEVEL_API_KEY:'test-key',HIGHLEVEL_LOCATION_ID:'location-1'}}),result=await response.json();
+    assert.equal(response.status,200);
+    assert.equal(result.appointmentStatus,'cancelled');
+    assert.equal(result.automation.trigger,'egc-job-cancelled');
+    const update=calls.find(x=>x.url.endsWith('/calendars/events/appointments/appt-cancel')&&x.options.method==='PUT');
+    assert.ok(update,'HighLevel appointment cancellation was not sent');
+    assert.equal(JSON.parse(update.options.body).appointmentStatus,'cancelled');
+    assert.equal(JSON.parse(update.options.body).toNotify,false);
   }finally{globalThis.fetch=originalFetch}
 });
 

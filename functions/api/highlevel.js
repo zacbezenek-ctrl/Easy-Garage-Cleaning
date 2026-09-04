@@ -308,7 +308,7 @@ async function advanceOpportunity(c, contactId, stageId, fallbackTag, opportunit
   }
 }
 
-async function completeAppointment(c, appointmentId) {
+async function completeAppointment(c, appointmentId, targetStatus = 'completed') {
   if (!appointmentId) return { updated: false, reason: 'appointment-not-linked' };
   try {
     const path = `/calendars/events/appointments/${encodeURIComponent(appointmentId)}`;
@@ -323,11 +323,11 @@ async function completeAppointment(c, appointmentId) {
         address: current.address || '',
         description: current.description || current.notes || '',
         assignedUserId: current.assignedUserId || c.userId || undefined,
-        appointmentStatus: 'completed',
+        appointmentStatus: targetStatus,
         toNotify: false,
       }),
     });
-    return { updated: true, appointmentId, appointmentStatus: 'completed' };
+    return { updated: true, appointmentId, appointmentStatus: targetStatus };
   } catch (error) {
     return { updated: false, reason: 'update-failed', detail: error.detail || error.message };
   }
@@ -522,7 +522,9 @@ export async function onRequestPost({ request, env }) {
       if (!event) return reply(400, { ok: false, error: 'Lifecycle event is required' });
       const tag = `egc-${event}`;
       await addTags(c, contactId, [tag]);
-      return reply(200, { ok: true, contactId, automation: { trigger: tag } });
+      const appointmentStatus = ['cancelled','confirmed'].includes(String(payload.appointment_status || '').toLowerCase()) ? String(payload.appointment_status).toLowerCase() : '';
+      const appointment = appointmentStatus && payload.appointment_id ? await completeAppointment(c, payload.appointment_id, appointmentStatus) : {};
+      return reply(200, { ok: true, contactId, ...appointment, automation: { trigger: tag } });
     }
     const isCloseout = payload.tool === 'post_job';
     const note = await ghl(c, `/contacts/${encodeURIComponent(contactId)}/notes`, { method: 'POST', headers: payload.idempotency_key ? { 'Idempotency-Key': payload.idempotency_key } : {}, body: JSON.stringify({
