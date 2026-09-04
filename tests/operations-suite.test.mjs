@@ -451,6 +451,9 @@ test('claimed shifts stay visible and can be safely released by the claimant',()
   assert.match(suite,/claimed&&\(claims\.some/);
   assert.match(suite,/assignedCrew=crewNames\(job\)\.filter/);
   assert.match(suite,/shiftClaims=claims\.filter/);
+  assert.match(suite,/const pickupStageOpen=/);
+  assert.match(suite,/!pickupStageOpen\(job\)/);
+  assert.match(suite,/locked because dispatch has started/);
 });
 
 test('employee availability prevents manager assignment and conflicting shift pickup',()=>{
@@ -460,6 +463,8 @@ test('employee availability prevents manager assignment and conflicting shift pi
   assert.match(suite,/recordType:'crew_availability'/);
   assert.match(suite,/sameEmployee\(row\.employee,identity\)/);
   assert.match(suite,/status:'cancelled',cancelledAt/);
+  assert.match(suite,/You are already assigned to \$\{assigned\.customer/);
+  assert.match(suite,/ask a manager to reassign it first/);
 });
 
 test('crew assignment updates the HighLevel appointment without retriggering customer automation',async()=>{
@@ -491,7 +496,7 @@ test('open-shift scheduling fields persist on the canonical job record',()=>{
   assert.match(suite,/b\.type==='job'\?'':'ops-hidden'/);
   assert.match(suite,/b\.type==='blocked'\?'ops-hidden':''/);
   assert.match(employee,/employee-suite\.css\?v=20260903o/);
-  assert.match(employee,/employee-suite\.js\?v=20260903s/);
+  assert.match(employee,/employee-suite\.js\?v=20260903t/);
 });
 
 test('recurring visits keep the client plan but reset prior completion and payment state',()=>{
