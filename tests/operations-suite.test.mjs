@@ -95,6 +95,8 @@ test('walkthrough conversion keeps canonical IDs and durable acceptance metadata
   assert.match(crew,/hubDb\.collection\('jobs'\)\.doc\(S\.jobId\)/);
   assert.match(crew,/status:'completed',pipelineStatus:'completed'/);
   assert.match(crew,/tx\.set\(sourceRef,\{status:'completed'/);
+  assert.match(crew,/j\.pipeline\?\.opportunityId\|\|S\.highlevelOpportunityId/);
+  assert.doesNotMatch(crew,/S\.highLevelOpportunityId/);
   for(const page of [prejob,postjob]){
     assert.match(page,/new URLSearchParams\(location\.search\)\.get\("jobId"\)/);
     assert.match(page,/collection\('jobs'\)\.doc\(CENTRAL_JOB_ID\)\.get\(\)/);
