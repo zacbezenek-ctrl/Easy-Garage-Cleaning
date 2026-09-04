@@ -10,6 +10,14 @@ const DEFAULT_USERS = {
   JobberCrew: 'a68121119b6a72c583c366a62257cbb3652867e9b50e46bdda6fb05280dee683',
 };
 
+const DEFAULT_USER_META = {
+  ZacB: { displayName: 'Zac', role: 'owner', payType: 'owner', hourlyRate: 0 },
+  AlexK: { displayName: 'Alex', role: 'manager', payType: 'salary', hourlyRate: 0 },
+  TylerG: { displayName: 'Tyler', role: 'crew_lead', payType: 'hourly', hourlyRate: 23 },
+  FrankJara: { displayName: 'Frank', role: 'crew', payType: 'hourly', hourlyRate: 20 },
+  JobberCrew: { displayName: 'Crew', role: 'crew', payType: 'hourly', hourlyRate: 20 },
+};
+
 const encoder = new TextEncoder();
 
 function bytesToBase64Url(bytes) {
@@ -32,6 +40,33 @@ function users(env = {}) {
   } catch {
     return DEFAULT_USERS;
   }
+}
+
+function userRecord(env, username) {
+  const configured = users(env)[username];
+  if (!configured) return null;
+  const record = typeof configured === 'string' ? { passwordHash: configured } : configured;
+  if (!record || typeof record !== 'object') return null;
+  const fallback = DEFAULT_USER_META[username] || {};
+  const role = String(record.role || fallback.role || 'crew').toLowerCase();
+  return {
+    passwordHash: String(record.passwordHash || record.hash || ''),
+    displayName: String(record.displayName || fallback.displayName || username),
+    role: ['owner', 'manager', 'sales', 'crew_lead', 'crew'].includes(role) ? role : 'crew',
+    payType: String(record.payType || fallback.payType || 'hourly'),
+    hourlyRate: Math.max(0, Number(record.hourlyRate ?? fallback.hourlyRate ?? 0)),
+  };
+}
+
+export function getHubUserProfile(env, username) {
+  const record = userRecord(env, username);
+  if (!record) return null;
+  const { passwordHash, ...profile } = record;
+  return { user: username, ...profile };
+}
+
+export function listHubUserProfiles(env = {}) {
+  return Object.keys(users(env)).map(username => getHubUserProfile(env, username)).filter(Boolean);
 }
 
 function sessionSecret(env = {}) {
@@ -62,7 +97,7 @@ export async function hashHubCredential(username, password) {
 }
 
 export async function validateHubCredential(env, username, password) {
-  const expected = users(env)[username];
+  const expected = userRecord(env, username)?.passwordHash;
   if (!expected || typeof password !== 'string') return false;
   return safeEqual(await hashHubCredential(username, password), expected);
 }
@@ -82,7 +117,8 @@ export async function verifyHubSessionToken(env, token, now = Date.now()) {
   try {
     const session = JSON.parse(new TextDecoder().decode(base64UrlToBytes(payload)));
     if (session.v !== 1 || !users(env)[session.u] || !Number.isFinite(session.exp) || session.exp <= now) return null;
-    return { user: session.u, expiresAt: session.exp };
+    const profile = getHubUserProfile(env, session.u);
+    return profile ? { ...profile, expiresAt: session.exp } : null;
   } catch {
     return null;
   }

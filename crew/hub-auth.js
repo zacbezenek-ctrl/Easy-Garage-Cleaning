@@ -1,10 +1,14 @@
 (function () {
-  const KEYS = ['egc_u', 'egc_tok', 'egc_exp'];
+  const KEYS = ['egc_u', 'egc_tok', 'egc_exp', 'egc_name', 'egc_role', 'egc_pay_type', 'egc_hourly_rate'];
 
-  function remember(user) {
+  function remember(user, profile = {}) {
     try {
       for (const storage of [sessionStorage, localStorage]) {
         storage.setItem('egc_u', user);
+        storage.setItem('egc_name', profile.displayName || user);
+        storage.setItem('egc_role', profile.role || 'crew');
+        storage.setItem('egc_pay_type', profile.payType || 'hourly');
+        storage.setItem('egc_hourly_rate', String(Number(profile.hourlyRate || 0)));
         storage.removeItem('egc_tok');
         storage.removeItem('egc_exp');
       }
@@ -25,7 +29,7 @@
         clearLocal();
         return null;
       }
-      remember(data.user);
+      remember(data.user, data);
       return data.user;
     } catch {
       clearLocal();
@@ -42,7 +46,7 @@
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok || !data.ok) throw new Error(data.error || 'Sign-in failed');
-    remember(data.user);
+    remember(data.user, data);
     return data.user;
   }
 

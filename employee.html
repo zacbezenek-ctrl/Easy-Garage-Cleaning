@@ -22,7 +22,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,400;0,500;0,700;1,400;1,500&family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="employee-suite.css?v=20260903r">
+  <link rel="stylesheet" href="employee-suite.css?v=20260904a">
   <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
@@ -1349,6 +1349,17 @@ function updateFirebaseStatus() {
 const ADMINS = ['ZacB', 'AlexK'];
 let me = null;
 
+function rememberHubProfile(data) {
+  const values = {
+    egc_u: data.user || '',
+    egc_name: data.displayName || data.user || '',
+    egc_role: data.role || 'crew',
+    egc_pay_type: data.payType || 'hourly',
+    egc_hourly_rate: String(Number(data.hourlyRate || 0)),
+  };
+  Object.entries(values).forEach(([key, value]) => sessionStorage.setItem(key, value));
+}
+
 async function doLogin() {
   const u = document.getElementById('l-user').value.trim();
   const p = document.getElementById('l-pass').value;
@@ -1366,7 +1377,7 @@ async function doLogin() {
     if (!response.ok || !data.ok) throw new Error(data.error || 'Incorrect username or password');
     err.style.display = 'none';
     me = data.user;
-    sessionStorage.setItem('egc_u', me);
+    rememberHubProfile(data);
     sessionStorage.removeItem('egc_tok');
     showModeSelect();
   } catch (error) {
@@ -1380,6 +1391,7 @@ async function doLogin() {
 
 async function doLogout() {
   sessionStorage.removeItem('egc_u');
+  ['egc_name','egc_role','egc_pay_type','egc_hourly_rate'].forEach(key => sessionStorage.removeItem(key));
   sessionStorage.removeItem('egc_tok');
   me = null;
   document.body.classList.remove('has-session');
@@ -1427,7 +1439,7 @@ window.addEventListener('DOMContentLoaded', async () => {
     const data = await response.json().catch(() => ({}));
     if (response.ok && data.ok && data.user) {
       me = data.user;
-      sessionStorage.setItem('egc_u', me);
+      rememberHubProfile(data);
       sessionStorage.removeItem('egc_tok');
       showModeSelect();
     } else {
@@ -1458,7 +1470,7 @@ function startListeners() {
 
   db.collection('jobs').onSnapshot(snap => {
     firebaseConn.jobs = 'connected';
-    jobsCache = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(j => j.recordType !== 'schedule_lock' && !String(j.id).startsWith('_egc_schedule_lock_'));
+    jobsCache = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(j => j.recordType !== 'schedule_lock' && j.recordType !== 'employee_hub_v2' && !String(j.id).startsWith('_egc_schedule_lock_') && !String(j.id).startsWith('secure_'));
     updateFirebaseStatus();
     refresh();
   }, err => {
@@ -3197,7 +3209,7 @@ async function ocBook() {
     document.head.appendChild(s);
   })();
 </script>
-<script src="employee-suite.js?v=20260903z"></script>
+<script src="employee-suite.js?v=20260904a"></script>
 <div class="egc-portal-foot" style="background:#0a1628;border-top:1px solid rgba(255,255,255,.08);padding:14px 18px;text-align:center;font-size:12px;color:rgba(245,241,234,.55)">
   <a href="/privacy-policy" style="color:#ff5b1f;margin:0 8px">Privacy</a> · <a href="/" style="color:#ff5b1f">Home</a> · Employee portal — internal use only
 </div>

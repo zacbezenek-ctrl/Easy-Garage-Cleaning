@@ -123,7 +123,7 @@ test('operations suite follows the EGC operating model instead of duplicating th
     assert.match(suite,new RegExp("'"+area+"'"),area+' is missing');
   }
   for(const marker of ['HighLevel is CRM','Walkthrough-first','Contribution / lead','The EGC playbook'])assert.match(suite,new RegExp(marker));
-  for(const duplicate of ['collection:\'invoices\'','collection:\'payments\'','crew_members','time_entries'])assert.doesNotMatch(suite,new RegExp(duplicate));
+  for(const duplicate of ['collection:\'invoices\'','collection:\'payments\'','crew_members','collection:\'time_entries\''])assert.doesNotMatch(suite,new RegExp(duplicate));
   assert.doesNotMatch(statusApi,/jobber:/);
 });
 
@@ -328,8 +328,8 @@ test('durable job start pre-fills elapsed closeout time without preventing corre
   assert.match(postjob,/if\(ACTIVE\.startedAt&&hours&&!hours\.value\)/);
 });
 
-test('weekly timesheets derive payroll-ready employee rows from job closeouts',()=>{
-  for(const marker of ["'timesheets'",'Weekly timesheets','timesheetRows','timeTracking?.elapsedHours','timeTracking?.recordedBy','opsDownloadTimesheets','Download CSV','Closeout-backed time'])assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
+test('weekly timesheets use individual timecards with a legacy closeout fallback',()=>{
+  for(const marker of ["'timesheets'",'Weekly timesheets','timesheetRows',"timeEntries:'timeEntries'",'clockInAt','clockOutAt','approvalStatus','opsApproveTime','opsDownloadTimesheets','Download CSV','Individual timecards','timeTracking?.elapsedHours'])assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
   assert.match(suite,/\(crew\.length\?crew:fallback\)\.forEach/);
   assert.match(suite,/a\.download=`egc-timesheets-/);
   assert.match(suite,/if\(\/\^\[=\+\\-@\]\//);
@@ -562,7 +562,7 @@ test('legacy Firebase leads are not loaded into the reset Hub',()=>{
   assert.doesNotMatch(employee,/db\.collection\('leads'\)\.get/);
   assert.match(employee,/leadsCache = \[\];/);
   assert.match(suite,/New HighLevel leads/);
-  assert.match(suite,/setInterval\(\(\)=>\{if\(!document\.hidden&&typeof me!=='undefined'&&me\)loadGhl\(\)\},60000\)/);
+  assert.match(suite,/setInterval\(\(\)=>\{if\(!document\.hidden&&typeof me!=='undefined'&&me&&isLead\(\)\)loadGhl\(\)\},60000\)/);
   assert.match(highlevel,/DEFAULT_LEAD_RESET_AT/);
   assert.match(webLead,/syncHighLevelLead/);
 });
@@ -610,7 +610,7 @@ test('claimed shifts stay visible and can be safely released by the claimant',()
 test('employee availability prevents manager assignment and conflicting shift pickup',()=>{
   for(const marker of ["'availability'",'My availability','crew_availability','opsSaveAvailability','opsRemoveAvailability','crewAvailabilityConflict','marked this time unavailable','overlaps time you marked unavailable'])assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
   assert.match(suite,/const isAvailability=/);
-  assert.match(suite,/jobsCache\.filter\(j=>!isScheduleLock\(j\)&&!isAvailability\(j\)\)/);
+  assert.match(suite,/jobsCache\.filter\(j=>!isScheduleLock\(j\)&&!isAvailability\(j\)&&!isPrivateHubRecord\(j\)\)/);
   assert.match(suite,/recordType:'crew_availability'/);
   assert.match(suite,/sameEmployee\(row\.employee,identity\)/);
   assert.match(suite,/status:'cancelled',cancelledAt/);
@@ -646,8 +646,8 @@ test('open-shift scheduling fields persist on the canonical job record',()=>{
   assert.match(suite,/if\(k==='type'\)render\(\)/);
   assert.match(suite,/b\.type==='job'\?'':'ops-hidden'/);
   assert.match(suite,/b\.type==='blocked'\?'ops-hidden':''/);
-  assert.match(employee,/employee-suite\.css\?v=20260903r/);
-  assert.match(employee,/employee-suite\.js\?v=20260903z/);
+  assert.match(employee,/employee-suite\.css\?v=20260904a/);
+  assert.match(employee,/employee-suite\.js\?v=20260904a/);
 });
 
 test('recurring visits keep the client plan but reset prior completion and payment state',()=>{
@@ -739,4 +739,49 @@ test('all employee and field-tool inline scripts parse',()=>{
     scripts.forEach((code,i)=>assert.doesNotThrow(()=>new vm.Script(code,{filename:name+'#'+i})));
   }
   assert.doesNotThrow(()=>new vm.Script(suite,{filename:'employee-suite.js'}));
+});
+
+test('employee hub v2 personalizes access, time, pay, communication, training, and safety',()=>{
+  for(const marker of ["'my_day'","'earnings'","'requests'","'training'","'safety'","'people'",'managerOnly','currentRole','canView','Employee Hub','My pay','Clock in + share location','Clock in without location','watchPosition','clearWatch','locationConsentAt','locationTracking:false','Estimated gross paycheck','Made this year','All-time Hub earnings','opsApproveTime','opsSubmitRequest','opsNewAnnouncement','opsCompleteTraining','opsReportIncident','Last shift location']){
+    assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),marker+' is missing');
+  }
+  assert.match(read('functions/_lib/hub-session.js'),/DEFAULT_USER_META/);
+  assert.match(read('functions/_lib/hub-session.js'),/hourlyRate/);
+  assert.match(employee,/rememberHubProfile/);
+  assert.match(read('crew/hub-auth.js'),/egc_hourly_rate/);
+  const vault=read('functions/api/employee-hub.js');
+  for(const marker of ['getHubSession','AES-GCM','sealedPayload','opaqueId','visibleTo','authorizeMutation','EMPLOYEE_HUB_DATA_SECRET'])assert.match(vault,new RegExp(marker));
+  assert.match(suite,/fetch\('\/api\/employee-hub'/);
+  assert.doesNotMatch(suite,/db\.collection\(peopleCollections/);
+});
+
+test('employee pay and location records are sealed behind the Hub session',async()=>{
+  const api=await import('../functions/api/employee-hub.js');
+  const env={...TEST_HUB_ENV,HUB_SESSION_SECRET:'employee-hub-test-secret',FIREBASE_API_KEY:'firebase-test-key'};
+  const managerCookie=(await createHubSessionCookie(env,'ZacB')).split(';')[0];
+  const stored=new Map(),originalFetch=globalThis.fetch;
+  globalThis.fetch=async(url,options={})=>{
+    const value=String(url),method=options.method||'GET';
+    if(value.includes('documents:runQuery'))return new Response(JSON.stringify([...stored.entries()].map(([id,document])=>({document:{name:`projects/egcw-1ec83/databases/(default)/documents/jobs/${id}`,...document}}))),{status:200});
+    const id=decodeURIComponent(value.match(/\/jobs\/([^?]+)/)?.[1]||'');
+    if(method==='PATCH'){const document=JSON.parse(options.body);stored.set(id,document);return new Response(JSON.stringify({name:`projects/egcw-1ec83/databases/(default)/documents/jobs/${id}`,...document}),{status:200})}
+    if(!stored.has(id))return new Response('{}',{status:404});
+    return new Response(JSON.stringify({name:`projects/egcw-1ec83/databases/(default)/documents/jobs/${id}`,...stored.get(id)}),{status:200});
+  };
+  try{
+    const managerRequest=data=>new Request('https://easygaragecleaning.com/api/employee-hub',{method:'POST',headers:{Origin:'https://easygaragecleaning.com',Cookie:managerCookie,'Content-Type':'application/json'},body:JSON.stringify(data)});
+    for(const [id,employee,lat] of [['time-frank','FrankJara',40.5853],['time-tyler','TylerG',40.61]]){
+      const response=await api.onRequestPost({request:managerRequest({collection:'timeEntries',id,data:{employee,hourlyRate:20,clockInAt:'2026-09-04T15:00:00.000Z',lastLocation:{lat,lng:-105.0844}}}),env});
+      assert.equal(response.status,200);
+    }
+    const raw=JSON.stringify([...stored.values()]);
+    assert.doesNotMatch(raw,/FrankJara|40\.5853|hourlyRate/);
+    const frankCookie=(await createHubSessionCookie(env,'FrankJara')).split(';')[0];
+    const response=await api.onRequestGet({request:new Request('https://easygaragecleaning.com/api/employee-hub',{headers:{Cookie:frankCookie}}),env});
+    assert.equal(response.status,200);
+    const result=await response.json();
+    assert.equal(result.collections.timeEntries.length,1);
+    assert.equal(result.collections.timeEntries[0].employee,'FrankJara');
+    assert.equal(result.collections.timeEntries[0].lastLocation.lat,40.5853);
+  }finally{globalThis.fetch=originalFetch}
 });

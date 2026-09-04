@@ -1,6 +1,7 @@
 import {
   clearHubSessionCookie,
   createHubSessionCookie,
+  getHubUserProfile,
   getHubSession,
   hubAuthConfigured,
   validateHubCredential,
@@ -37,7 +38,7 @@ export async function onRequestPost({ request, env }) {
     return reply(401, { ok: false, error: 'Incorrect username or password' });
   }
   const cookie = await createHubSessionCookie(env, username);
-  return reply(200, { ok: true, user: username }, { 'Set-Cookie': cookie });
+  return reply(200, { ok: true, ...getHubUserProfile(env, username) }, { 'Set-Cookie': cookie });
 }
 
 export async function onRequestDelete({ request }) {
