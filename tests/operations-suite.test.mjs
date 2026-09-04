@@ -307,6 +307,8 @@ test('Hub finance scaffolding and customer history work without claiming externa
   for(const marker of ['opsPrintDocument','Print estimate','Print invoice','Prepared for','Flat-rate service based on the approved walkthrough scope','Balance due','Print / Save PDF'])assert.ok(suite.includes(marker),marker+' is missing');
   assert.match(suite,/egc-logo-horizontal-primary\.png/);
   assert.match(suite,/if\(!win\)/);
+  for(const marker of ['opsDownloadCustomers','Export customers','HighLevel contact ID','Recorded paid','egc-customers-'])assert.ok(suite.includes(marker),marker+' is missing');
+  assert.match(suite,/data\.map\(row=>row\.map\(csvCell\)/);
 });
 
 test('HighLevel schedule handoff advances the configured pipeline stage',async()=>{
@@ -513,7 +515,7 @@ test('open-shift scheduling fields persist on the canonical job record',()=>{
   assert.match(suite,/b\.type==='job'\?'':'ops-hidden'/);
   assert.match(suite,/b\.type==='blocked'\?'ops-hidden':''/);
   assert.match(employee,/employee-suite\.css\?v=20260903q/);
-  assert.match(employee,/employee-suite\.js\?v=20260903w/);
+  assert.match(employee,/employee-suite\.js\?v=20260903x/);
 });
 
 test('recurring visits keep the client plan but reset prior completion and payment state',()=>{
