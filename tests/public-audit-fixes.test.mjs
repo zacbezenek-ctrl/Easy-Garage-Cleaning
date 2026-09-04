@@ -30,8 +30,16 @@ test('homepage exposes an accessible first-party contact widget', () => {
 
 test('Cloudflare caches versioned public assets', () => {
   const headers = read('_headers');
+  const styles = read('styles.css');
   assert.match(headers, /\/styles\.css[\s\S]*max-age=31536000, immutable/);
   assert.match(headers, /\/images\/\*[\s\S]*max-age=31536000, immutable/);
+  assert.match(styles, /body:has\(form:focus-within\) \.mobile-sticky-cta/);
+  const root = new URL('../', import.meta.url);
+  const pages = readdirSync(root, { recursive: true, withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name.endsWith('.html'))
+    .map((entry) => ({ name: `${entry.parentPath}/${entry.name}`, html: readFileSync(`${entry.parentPath}/${entry.name}`, 'utf8') }))
+    .filter((page) => page.html.includes('styles.css'));
+  for (const page of pages) assert.match(page.html, /styles\.css\?v=20260903g/, `${page.name} loads a stale shared stylesheet`);
 });
 
 test('every image has an explicit accessible text alternative', () => {

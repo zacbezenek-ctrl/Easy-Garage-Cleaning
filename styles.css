@@ -270,6 +270,8 @@ button.form-submit:hover{background:var(--accent-deep)}
    back-to-top clear of the price bar on item pages so no CTA is covered. */
 @media(max-width:1023px){
   body{padding-bottom:calc(74px + env(safe-area-inset-bottom,0px))}
+  .mobile-sticky-cta{transition:transform .2s ease,opacity .2s ease}
+  body:has(form:focus-within) .mobile-sticky-cta{transform:translateY(calc(100% + 12px));opacity:0;pointer-events:none}
   .price-sticky-mobile{bottom:calc(66px + env(safe-area-inset-bottom,0px))}
   .mobile-text-chip{bottom:calc(78px + env(safe-area-inset-bottom,0px))}
   .back-to-top{bottom:calc(78px + env(safe-area-inset-bottom,0px))}
