@@ -45,6 +45,7 @@
 /* Retry controls and actual-cost detail add one compact column on wide screens. */
 .ops-customer-list li{grid-template-columns:minmax(0,1fr) 100px 110px auto;align-items:center}
 .ops-button.danger{border-color:#efb5b8;background:#fff;color:var(--ops-red)}
+.ops-hidden{display:none!important}
 .ops-finance-list article{grid-template-columns:minmax(180px,1fr) minmax(190px,250px) 250px 280px}
 .ops-finance-list article>div:nth-child(2) small{line-height:1.35}
 @media(max-width:1100px){.ops-finance-list article{grid-template-columns:1fr 190px}}
