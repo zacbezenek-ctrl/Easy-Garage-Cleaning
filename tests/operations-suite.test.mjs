@@ -745,8 +745,8 @@ test('open-shift scheduling fields persist on the canonical job record',()=>{
   assert.match(suite,/if\(k==='type'\)render\(\)/);
   assert.match(suite,/b\.type==='job'\?'':'ops-hidden'/);
   assert.match(suite,/b\.type==='blocked'\?'ops-hidden':''/);
-  assert.match(employee,/employee-suite\.css\?v=20260904j/);
-  assert.match(employee,/employee-suite\.js\?v=20260904j/);
+  assert.match(employee,/employee-suite\.css\?v=20260904l/);
+  assert.match(employee,/employee-suite\.js\?v=20260904l/);
 });
 
 test('recurring visits keep the client plan but reset prior completion and payment state',()=>{
@@ -841,9 +841,10 @@ test('all employee and field-tool inline scripts parse',()=>{
 });
 
 test('employee hub v2 personalizes access, time, pay, communication, training, and safety',()=>{
-  for(const marker of ["'my_day'","'earnings'","'requests'","'training'","'safety'","'people'",'employeeViews','currentRole','canView','Employee Hub','My pay','Clock in + share location','Clock in without location','watchPosition','clearWatch','locationConsentAt','locationTracking:false','Estimated gross paycheck','Made this year','All-time Hub earnings','opsApproveTime','opsSubmitRequest','opsNewAnnouncement','opsCompleteTraining','opsReportIncident','Last shift location']){
+  for(const marker of ["'my_day'","'earnings'","'crew_chat'","'requests'","'training'","'safety'","'people'",'employeeViews','currentRole','canView','Employee Hub','My pay','Clock in + start shift location','watchPosition','clearWatch','locationConsentAt','locationTracking:false','Estimated gross paycheck','Made this year','All-time Hub earnings','opsApproveTime','opsSubmitRequest','opsNewAnnouncement','opsSubmitTraining','opsApproveTraining','opsSendChat','opsOpenJobRoom','opsReportIncident','Last shift location']){
     assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),marker+' is missing');
   }
+  assert.doesNotMatch(suite,/Clock in without location/);
   assert.match(read('functions/_lib/hub-session.js'),/DEFAULT_USER_META/);
   assert.match(read('functions/_lib/hub-session.js'),/hourlyRate/);
   assert.match(employee,/rememberHubProfile/);
@@ -866,7 +867,7 @@ test('only Zac Tyler and Alex receive business access while new employees get on
   assert.equal(profile.role,'crew');
   assert.equal(profile.businessAccess,false);
   for(const marker of ['BUSINESS_USERS','enterEmployeeApp','canRunBusiness','Run your business'])assert.match(employee,new RegExp(marker));
-  for(const marker of ["new Set(['zacb','tylerg','alexk'])","'onboarding'",'Finish onboarding','opsSaveOnboarding','opsOnboardingDraft','Draft saved automatically.','onboardingDraftAcknowledgements','onboardingDraftVersion','onboardingDraftUser','draft,false',"S.active==='onboarding'",'ops-quick-clock','opsQuickClock','employeeViews'])assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
+  for(const marker of ["new Set(['zacb','tylerg','alexk'])","'onboarding'",'Finish employee profile','JOB READINESS','Test location','opsSaveOnboarding','opsOnboardingDraft','Draft saved automatically.','onboardingDraftAcknowledgements','onboardingDraftVersion','onboardingDraftUser','draft,false',"S.active==='onboarding'",'ops-quick-clock','opsQuickClock','employeeViews'])assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
   const vault=read('functions/api/employee-hub.js');
   assert.match(vault,/hasBusinessAccess\(session\)/);
   assert.match(vault,/onboardingCompletedAt/);
@@ -962,13 +963,25 @@ test('employee pay and location records are sealed behind the Hub session',async
     assert.equal(draftResult.record.phone,'970-555-0100');
     assert.deepEqual(draftResult.record.onboardingDraftAcknowledgements,['timekeeping']);
     assert.equal(draftResult.record.onboardingCompletedAt,undefined);
-    const onboard=await api.onRequestPost({request:new Request('https://easygaragecleaning.com/api/employee-hub',{method:'POST',headers:{Origin:'https://easygaragecleaning.com',Cookie:frankCookie,'Content-Type':'application/json'},body:JSON.stringify({collection:'profiles',id:'frankjara',data:{preferredName:'Frankie',phone:'970-555-0100',emergencyContactName:'Sam',emergencyContactPhone:'970-555-0199',onboardingCompletedAt:'2026-09-04T18:00:00.000Z',role:'owner',hourlyRate:999}})}),env});
+    const onboard=await api.onRequestPost({request:new Request('https://easygaragecleaning.com/api/employee-hub',{method:'POST',headers:{Origin:'https://easygaragecleaning.com',Cookie:frankCookie,'Content-Type':'application/json'},body:JSON.stringify({collection:'profiles',id:'frankjara',data:{preferredName:'Frankie',phone:'970-555-0100',emergencyContactName:'Sam',emergencyContactPhone:'970-555-0199',onboardingCompletedAt:'2026-09-04T18:00:00.000Z',onboardingAcknowledgements:['timekeeping','location_policy','safety','customer_care','hub_basics'],role:'owner',hourlyRate:999}})}),env});
     assert.equal(onboard.status,200);
     const onboardResult=await onboard.json();
     assert.equal(onboardResult.record.preferredName,'Frankie');
     assert.equal(onboardResult.record.role,'crew');
     assert.equal(onboardResult.record.hourlyRate,20);
-    assert.deepEqual(onboardResult.record.onboardingAcknowledgements,['timekeeping','safety','customer_care']);
+    assert.equal(onboardResult.record.onboardingVersion,'2026-09-location-v2');
+    assert.deepEqual(onboardResult.record.onboardingAcknowledgements,['timekeeping','location_policy','safety','customer_care','hub_basics']);
+    const trainingRequest=data=>new Request('https://easygaragecleaning.com/api/employee-hub',{method:'POST',headers:{Origin:'https://easygaragecleaning.com',Cookie:frankCookie,'Content-Type':'application/json'},body:JSON.stringify({collection:'training',id:'frankjara',data})});
+    const failedCheck=await api.onRequestPost({request:trainingRequest({moduleId:'welcome',answer:0,completed:['welcome']}),env});
+    assert.equal(failedCheck.status,400);
+    const passedCheck=await api.onRequestPost({request:trainingRequest({moduleId:'welcome',answer:1,completed:[]}),env});
+    const passedRecord=(await passedCheck.json()).record;
+    assert.deepEqual(passedRecord.completed,['welcome']);
+    assert.equal(passedRecord.version,'2026-09-employee-os-v1');
+    const safetyCheck=await api.onRequestPost({request:trainingRequest({moduleId:'safety',answer:2,completed:['safety']}),env});
+    const safetyRecord=(await safetyCheck.json()).record;
+    assert.deepEqual(safetyRecord.completed,['welcome']);
+    assert.deepEqual(safetyRecord.pendingSignoffs,['safety']);
     const tylerCookie=(await createHubSessionCookie(env,'TylerG')).split(';')[0];
     const tylerView=await api.onRequestGet({request:new Request('https://easygaragecleaning.com/api/employee-hub',{headers:{Cookie:tylerCookie}}),env});
     assert.equal((await tylerView.json()).collections.timeEntries.length,2);
@@ -976,6 +989,40 @@ test('employee pay and location records are sealed behind the Hub session',async
     const outsiderCookie=(await createHubSessionCookie(outsiderEnv,'Eve')).split(';')[0];
     const outsiderView=await api.onRequestGet({request:new Request('https://easygaragecleaning.com/api/employee-hub',{headers:{Cookie:outsiderCookie}}),env:outsiderEnv});
     assert.equal((await outsiderView.json()).collections.timeEntries.length,0);
+  }finally{globalThis.fetch=originalFetch}
+});
+
+test('crew chat is encrypted and job rooms are limited to assigned crew',async()=>{
+  const api=await import('../functions/api/employee-hub.js');
+  const env={...TEST_HUB_ENV,HUB_SESSION_SECRET:'crew-chat-test-secret',FIREBASE_API_KEY:'firebase-test-key'};
+  const frankCookie=(await createHubSessionCookie(env,'FrankJara')).split(';')[0];
+  const crewCookie=(await createHubSessionCookie(env,'Crewtest')).split(';')[0];
+  const stored=new Map(),originalFetch=globalThis.fetch;
+  const jobDocument={fields:{assignedCrew:{arrayValue:{values:[{stringValue:'FrankJara'}]}},assignedTo:{stringValue:'Frank Jara'},customer:{stringValue:'Private Customer'}}};
+  globalThis.fetch=async(url,options={})=>{
+    const value=String(url),method=options.method||'GET';
+    if(value.includes('documents:runQuery'))return new Response(JSON.stringify([...stored.entries()].map(([id,document])=>({document:{name:`projects/egcw-1ec83/databases/(default)/documents/jobs/${id}`,...document}}))),{status:200});
+    const id=decodeURIComponent(value.match(/\/jobs\/([^?]+)/)?.[1]||'');
+    if(id==='job-123')return new Response(JSON.stringify({name:'projects/egcw-1ec83/databases/(default)/documents/jobs/job-123',...jobDocument}),{status:200});
+    if(method==='PATCH'){const document=JSON.parse(options.body);stored.set(id,document);return new Response(JSON.stringify({name:`projects/egcw-1ec83/databases/(default)/documents/jobs/${id}`,...document}),{status:200})}
+    if(!stored.has(id))return new Response('{}',{status:404});
+    return new Response(JSON.stringify({name:`projects/egcw-1ec83/databases/(default)/documents/jobs/${id}`,...stored.get(id)}),{status:200});
+  };
+  const post=(cookie,collection,id,data)=>api.onRequestPost({request:new Request('https://easygaragecleaning.com/api/employee-hub',{method:'POST',headers:{Origin:'https://easygaragecleaning.com',Cookie:cookie,'Content-Type':'application/json'},body:JSON.stringify({collection,id,data})}),env});
+  try{
+    assert.equal((await post(frankCookie,'teamMessages','team-frank',{body:'Morning crew'})).status,200);
+    assert.equal((await post(crewCookie,'teamMessages','team-crew',{body:'Ready to go'})).status,200);
+    assert.equal((await post(frankCookie,'jobMessages','job-frank',{jobId:'job-123',body:'Bring the long straps'})).status,200);
+    assert.equal((await post(crewCookie,'jobMessages','job-outsider',{jobId:'job-123',body:'I should not be here'})).status,403);
+    assert.doesNotMatch(JSON.stringify([...stored.values()]),/Morning crew|Bring the long straps|Private Customer/);
+    const frankView=await api.onRequestGet({request:new Request('https://easygaragecleaning.com/api/employee-hub',{headers:{Cookie:frankCookie}}),env});
+    const frankData=await frankView.json();
+    assert.equal(frankData.collections.teamMessages.length,2);
+    assert.equal(frankData.collections.jobMessages.length,1);
+    const crewView=await api.onRequestGet({request:new Request('https://easygaragecleaning.com/api/employee-hub',{headers:{Cookie:crewCookie}}),env});
+    const crewData=await crewView.json();
+    assert.equal(crewData.collections.teamMessages.length,2);
+    assert.equal(crewData.collections.jobMessages.length,0);
   }finally{globalThis.fetch=originalFetch}
 });
 
