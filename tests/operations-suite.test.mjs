@@ -578,6 +578,13 @@ test('walkthrough photos have a durable cross-device handoff when Drive is conne
   assert.match(suite,/j\.proofPhotoCount\|\|j\.photoCount/);
 });
 
+test('crew photo evidence is keyboard accessible',()=>{
+  for(const page of [crew,prejob,postjob]){
+    assert.match(page,/role="button" tabindex="0"/);
+    assert.match(page,/event\.key==='Enter'/);
+  }
+});
+
 test('public quote progress and production links stay configured',()=>{
   assert.match(commercial,/const shell=form\.closest\('\.quote-form'\)\|\|document/);
   assert.match(commercial,/const dots=shell\.querySelectorAll\('\.form-step-dot'\)/);

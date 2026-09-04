@@ -350,8 +350,8 @@ async function mountPhotoAct(el,act){
   el.innerHTML=`<div class="photostrip">
     <label class="padd"><span>+</span>${esc(act.label||"Add photo")}
       <input type="file" accept="image/*" capture="environment" style="display:none" onchange="onActPhoto(this,'${act.tag}')"></label>
-    ${photos.map(p=>`<div class="pthumb"><img src="${p.dataUrl}" onclick="viewPhoto(this.src)">
-      <button class="del" onclick="onActPhotoDel('${p.id}')">×</button></div>`).join("")}</div>`;
+    ${photos.map((p,i)=>`<div class="pthumb"><img src="${p.dataUrl}" alt="Before-job photo ${i+1}" role="button" tabindex="0" onclick="viewPhoto(this.src)" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();viewPhoto(this.src)}">
+      <button class="del" onclick="onActPhotoDel('${p.id}')" aria-label="Remove before-job photo ${i+1}">×</button></div>`).join("")}</div>`;
 }
 async function onActPhoto(input,tag){const f=input.files&&input.files[0]; if(!f) return;
   try{const url=await fileToDataUrl(f);await photoAdd(jobKey(),tag,url);}catch(e){}

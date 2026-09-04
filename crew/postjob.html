@@ -466,8 +466,8 @@ async function mountPhotoAct(el,act){
   el.innerHTML=`<div class="photostrip">
     <label class="padd"><span>+</span>${act.label||"Add photo"}
       <input type="file" accept="image/*" capture="environment" style="display:none" onchange="onActPhoto(this,'${act.tag}')"></label>
-    ${photos.map(p=>`<div class="pthumb"><img src="${p.dataUrl}" onclick="viewPhoto(this.src)">
-      <button class="del" onclick="onActPhotoDel('${p.id}')">×</button></div>`).join("")}</div>`;
+    ${photos.map((p,i)=>`<div class="pthumb"><img src="${p.dataUrl}" alt="Job proof photo ${i+1}" role="button" tabindex="0" onclick="viewPhoto(this.src)" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();viewPhoto(this.src)}">
+      <button class="del" onclick="onActPhotoDel('${p.id}')" aria-label="Remove job proof photo ${i+1}">×</button></div>`).join("")}</div>`;
 }
 async function onActPhoto(input,tag){const f=input.files&&input.files[0]; if(!f) return;
   try{const url=await fileToDataUrl(f);await photoAdd(jobKey(),tag,url);}catch(e){}
@@ -492,7 +492,7 @@ async function mountRef(){
   const el=document.getElementById("pb_ref"); if(!el) return;
   let befs=[]; try{befs=await photoList(jobKey(),"before");}catch(e){}
   if(!befs.length){el.innerHTML=`<div style="color:var(--khaki);font-size:13.5px">No walkthrough photos on this device. Use the client photo-folder link above when available.</div>`;return;}
-  el.innerHTML=`<div class="ttl" style="margin-top:10px">Before</div><div class="photostrip">${befs.map(p=>`<div class="pthumb"><img src="${p.dataUrl}" onclick="viewPhoto(this.src)"></div>`).join("")}</div>`;
+  el.innerHTML=`<div class="ttl" style="margin-top:10px">Before</div><div class="photostrip">${befs.map((p,i)=>`<div class="pthumb"><img src="${p.dataUrl}" alt="Before-job reference photo ${i+1}" role="button" tabindex="0" onclick="viewPhoto(this.src)" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();viewPhoto(this.src)}"></div>`).join("")}</div>`;
 }
 function setGuard(v){GUARD=(GUARD===v?"":v);render();saveAll();}
 function saveAll(){

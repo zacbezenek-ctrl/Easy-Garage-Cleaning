@@ -34,6 +34,18 @@ test('Cloudflare caches versioned public assets', () => {
   assert.match(headers, /\/images\/\*[\s\S]*max-age=31536000, immutable/);
 });
 
+test('every image has an explicit accessible text alternative', () => {
+  const root = new URL('../', import.meta.url);
+  const pages = readdirSync(root, { recursive: true, withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name.endsWith('.html'))
+    .map((entry) => ({ name: `${entry.parentPath}/${entry.name}`, html: readFileSync(`${entry.parentPath}/${entry.name}`, 'utf8') }));
+  for (const page of pages) {
+    for (const image of page.html.matchAll(/<img\b[^>]*>/gi)) {
+      assert.match(image[0], /\balt\s*=\s*["'][^"']*["']/i, `${page.name} has an image without alt text`);
+    }
+  }
+});
+
 test('every public lead form mirrors to HighLevel and carries its own consent disclosure', () => {
   const root = new URL('../', import.meta.url);
   const pages = readdirSync(root, { recursive: true, withFileTypes: true })
