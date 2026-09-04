@@ -68,6 +68,19 @@ test('the shared visual refresh preserves readable text on light and dark surfac
   }
 });
 
+test('garage turnaround keeps the landing-page quality through the full page', () => {
+  const html = read('garage-turnaround-fort-collins-co.html');
+  const css = read('garage-turnaround.css');
+  assert.match(html, /garage-turnaround\.css\?v=20260904a/);
+  for (const marker of ['turnaround-overview-grid', 'turnaround-audience', 'turnaround-proof', 'turnaround-pricing-grid', 'turnaround-included', 'turnaround-system', 'turnaround-local-notes']) {
+    assert.match(html, new RegExp(marker), `${marker} is missing`);
+    assert.match(css, new RegExp(`\\.${marker}`), `${marker} has no styling`);
+  }
+  assert.match(html, /One-day turnaround[\s\S]*\$1,200–\$2,200/);
+  assert.match(css, /@media\(max-width:560px\)/);
+  assert.doesNotMatch(html, /<section class="body-copy"><div class="wrap"><div class="body-copy-inner reveal"><(?:aside class="typical-job|div class="def-block")/);
+});
+
 test('private workflow shells are never indexed, framed, or cached', () => {
   const headers = read('_headers');
   for (const route of ['/employee*', '/crew/*', '/copilot*', '/quote*', '/tyler-contract*']) {

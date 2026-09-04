@@ -4,6 +4,9 @@
 /styles.css
   Cache-Control: public, max-age=31536000, immutable
 
+/garage-turnaround.css
+  Cache-Control: public, max-age=31536000, immutable
+
 /analytics-loader.js
   Cache-Control: public, max-age=31536000, immutable
 
