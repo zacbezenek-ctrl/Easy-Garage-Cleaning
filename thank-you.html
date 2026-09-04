@@ -1,27 +1,13 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<!-- Google tag (gtag.js) -->
-<script async src="https://www.googletagmanager.com/gtag/js?id=G-CV7HJ2QGHX"></script>
-<script>
-  window.dataLayer = window.dataLayer || [];
-  function gtag(){dataLayer.push(arguments);}
-  gtag('js', new Date());
 
-  gtag('config', 'G-CV7HJ2QGHX');
-  gtag('config', 'AW-18102284288');
-
-  // GA4 lead conversion — every form on the site redirects here on success.
-  // Mark generate_lead as a key event in GA4 (or import it into Google Ads)
-  // so paid campaigns can optimize on it. To track directly in Google Ads,
-  // replace CONVERSION_LABEL with the label from your Ads conversion action:
-  // gtag('event', 'conversion', { send_to: 'AW-18102284288/CONVERSION_LABEL' });
-  gtag('event', 'generate_lead', { event_category: 'lead', event_label: 'thank_you_page' });
-</script>
+<!-- Analytics events queue immediately; vendor libraries load after interaction. -->
+<script src="/analytics-loader.js?v=20260903a" defer></script>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Thanks — We'll Be In Touch Shortly | Easy Garage Cleaning</title>
-<meta name="description" content="Thanks — your garage quote request is in. We call or text back during business hours (Mon–Sat 7am–7pm). Easy Garage Cleaning, Fort Collins." />
+<meta name="description" content="Thanks — we'll call or text to confirm your free on-site walkthrough. Easy Garage Cleaning, Fort Collins." />
 <meta name="robots" content="noindex, follow" />
 
 <link rel="canonical" href="https://easygaragecleaning.com/thank-you" />
@@ -31,22 +17,12 @@
 <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
 <meta name="theme-color" content="#ff5b1f" />
 
+<link rel="preconnect" href="https://www.googletagmanager.com" crossorigin>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,700;0,9..144,900;1,9..144,400&family=Inter:wght@400;500;600;700;800;900;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 
 <!-- ============ META PIXEL ============ -->
-<script>
-!function(f,b,e,v,n,t,s){if(f.fbq)return;n=f.fbq=function(){n.callMethod?
-n.callMethod.apply(n,arguments):n.queue.push(arguments)};if(!f._fbq)f._fbq=n;
-n.push=n;n.loaded=!0;n.version='2.0';n.queue=[];t=b.createElement(e);t.async=!0;
-t.src=v;s=b.getElementsByTagName(e)[0];s.parentNode.insertBefore(t,s)}(window,
-document,'script','https://connect.facebook.net/en_US/fbevents.js');
-fbq('init', '861741726934219');
-fbq('track', 'PageView');
-// Fire Lead event on thank-you page load — this is the actual conversion confirmation
-fbq('track', 'Lead');
-</script>
 <noscript><img loading="lazy" height="1" width="1" style="display:none" src="https://www.facebook.com/tr?id=861741726934219&ev=PageView&noscript=1" alt="" aria-hidden="true"/></noscript>
 
 <link rel="stylesheet" href="/styles.css?v=20260904j">
@@ -144,6 +120,120 @@ fbq('track', 'Lead');
     letter-spacing: 0.08em;
   }
 .contact-strip a { color: var(--ink); font-weight: 600; text-decoration: none; }
+
+/* nav stack: seasonal-banner(40) < nav(50) < overlay(199) < drawer(200) */
+.seasonal-banner{position:relative;z-index:40}
+.nav{z-index:50}
+.nav-overlay{z-index:199}
+.nav-drawer{z-index:200}
+
+/* site-polish-v4 */
+:root{--space-1:4px;--space-2:8px;--space-3:16px;--space-4:24px;--space-5:32px;--space-6:48px;--space-7:64px;--radius-sm:2px;--radius-md:4px;--radius-lg:8px;--shadow-sm:0 2px 8px -2px rgba(10,22,40,.08);--shadow-md:0 8px 24px -8px rgba(10,22,40,.12);--shadow-lg:0 16px 40px -12px rgba(10,22,40,.16);--shadow-accent:0 8px 28px -6px rgba(255,91,31,.35);--text-xs:11px;--text-sm:13px;--text-base:15px;--text-md:16px;--text-lg:18px;--text-xl:22px;--text-2xl:clamp(26px,5vw,44px);--text-hero:clamp(32px,7vw,54px)}
+
+.faq-hero-actions .btn-primary,.faq-cta .cta-main{background:var(--accent,#ff5b1f);color:#fff;border:none}
+.faq-hero-actions .btn-primary:hover,.faq-cta .cta-main:hover{background:var(--accent-deep,#d94208)}
+.faq-layout{display:grid;grid-template-columns:min(220px,28%) 1fr;gap:clamp(24px,5vw,60px);padding:0 0 100px;align-items:start}
+@media(max-width:820px){.faq-layout{grid-template-columns:1fr;gap:0}.faq-nav-mobile{display:block;margin-bottom:28px}}
+.faq-nav{position:sticky;top:88px}
+.faq-nav-mobile{display:none}
+.faq-nav-mobile select{width:100%;padding:12px 14px;font:inherit;font-size:14px;border:1px solid rgba(10,22,40,.15);border-radius:var(--radius,2px);background:var(--white,#fff);min-height:48px}
+.drawer-phone-sticky{position:sticky;top:0;z-index:2;display:flex;align-items:center;justify-content:center;margin:-20px -24px var(--space-3);padding:var(--space-3) var(--space-4);background:var(--accent);color:var(--white);font-weight:700;font-size:var(--text-base);min-height:48px;box-shadow:var(--shadow-md)}.drawer-phone-sticky:hover{background:var(--accent-deep)}
+.nav-drawer{padding-top:0}.nav-drawer .nav-drawer-head{margin-top:var(--space-2)}
+.drawer-toggle,.drawer-link-row,.nav-drawer-close{min-height:44px}
+.local-trust-bar{background:var(--white);border-bottom:1px solid rgba(10,22,40,.08);padding:var(--space-4) 0}
+.local-trust-inner{display:flex;flex-wrap:wrap;gap:var(--space-2);justify-content:center}
+.trust-pill{display:inline-flex;align-items:center;padding:10px 16px;font-size:var(--text-sm);font-weight:600;background:var(--paper);border:1px solid rgba(10,22,40,.1);border-radius:999px;min-height:44px}
+.testimonial-carousel{padding:var(--space-6) 0;background:var(--paper-warm)}
+.carousel-track{display:flex;gap:var(--space-3);overflow-x:auto;scroll-snap-type:x mandatory;-webkit-overflow-scrolling:touch;padding:var(--space-2) 0 var(--space-4)}
+.carousel-slide{flex:0 0 min(88%,340px);scroll-snap-align:start;background:var(--white);border:1px solid rgba(10,22,40,.08);padding:var(--space-4);border-radius:var(--radius-md);box-shadow:var(--shadow-sm)}
+.carousel-slide .example-label{font-family:var(--font-mono);font-size:var(--text-xs);letter-spacing:.1em;text-transform:uppercase;color:var(--accent-deep);margin-bottom:var(--space-2);display:block}
+.carousel-slide blockquote{font-family:var(--font-display);font-size:var(--text-lg);line-height:1.45;margin-bottom:var(--space-3)}
+.carousel-slide cite{font-size:var(--text-sm);color:var(--muted);font-style:normal}
+.final-cta-split{position:relative;overflow:hidden}
+.final-cta-split::before{content:'';position:absolute;inset:0;background:linear-gradient(135deg,var(--navy) 55%,var(--accent-deep) 55%);z-index:0}
+.final-cta-split>.wrap{position:relative;z-index:1}
+.final-cta .btn-primary.btn-lg,.final-cta .btn-secondary.btn-lg{padding:var(--space-3) var(--space-5);font-size:var(--text-md);min-height:48px}
+.item-hero-icon{width:72px;height:72px;display:flex;align-items:center;justify-content:center;font-size:40px;background:var(--paper-warm);border:2px solid rgba(10,22,40,.08);border-radius:var(--radius-md);margin-bottom:var(--space-3)}
+.similar-items-row{display:flex;flex-wrap:wrap;gap:var(--space-2);margin:var(--space-4) 0}
+.similar-items-row a{padding:10px 16px;font-size:var(--text-sm);font-weight:600;background:var(--white);border:1px solid rgba(10,22,40,.1);border-radius:var(--radius-md);min-height:44px;display:inline-flex;align-items:center}
+.price-sticky-mobile{display:none}
+@media(max-width:1023px){.price-sticky-mobile{display:flex;position:fixed;bottom:calc(56px + env(safe-area-inset-bottom,0px));left:0;right:0;z-index:85;align-items:center;justify-content:space-between;gap:var(--space-2);padding:var(--space-2) var(--space-3);background:var(--ink);color:var(--paper);border-top:1px solid var(--navy-line)}.price-sticky-mobile .price-sticky-range{font-family:var(--font-display);font-size:var(--text-lg);font-weight:700;color:var(--accent)}.price-sticky-mobile a{padding:10px 18px;background:var(--accent);color:var(--white);font-weight:700;min-height:44px;display:inline-flex;align-items:center}}
+.book-trust-badges{display:flex;flex-wrap:wrap;gap:var(--space-2);justify-content:center;margin-top:var(--space-4);padding-top:var(--space-4);border-top:1px solid var(--navy-line)}
+.book-trust-badges span{font-size:var(--text-xs);font-weight:600;color:var(--muted-dark);padding:8px 12px;background:rgba(255,255,255,.04);border-radius:var(--radius-md);min-height:44px;display:inline-flex;align-items:center}
+.legacy-redirect-banner{background:linear-gradient(90deg,var(--accent-deep),var(--accent));color:var(--white);padding:var(--space-3) var(--space-4);text-align:center;font-weight:600}
+.legacy-redirect-banner a{color:var(--white);text-decoration:underline}
+.faq-search-wrap{margin-bottom:var(--space-5)}
+.faq-search{width:100%;padding:14px 18px;font-size:var(--text-md);border:1px solid rgba(10,22,40,.15);border-radius:var(--radius-md);min-height:48px}
+.faq-item.is-hidden,details.faq-item.is-hidden{display:none}
+.faq-nav-list a.is-active{color:var(--accent-deep);background:var(--paper-warm);font-weight:700}
+.areas-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin-top:28px}@media(min-width:640px){.areas-grid{grid-template-columns:repeat(3,1fr)}}@media(min-width:900px){.areas-grid{grid-template-columns:repeat(4,1fr)}}
+.area-card{display:flex;flex-direction:column;gap:6px;padding:18px 16px;background:var(--white);border:1px solid rgba(10,22,40,.08);border-top:3px solid var(--accent);border-radius:var(--radius-md);min-height:88px;transition:border-color .2s,box-shadow .2s,transform .2s}
+.area-card:hover{border-color:var(--accent);box-shadow:var(--shadow-md);transform:translateY(-2px)}
+.area-card strong{font-family:var(--font-display);font-size:17px;font-weight:600;color:var(--ink)}
+.area-card span{font-size:12px;color:var(--muted);line-height:1.4}
+.areas-map{margin-top:32px;border:1px solid rgba(10,22,40,.12);border-radius:var(--radius-md);overflow:hidden;background:var(--white);min-height:360px}
+.areas-map iframe{display:block;width:100%;height:380px;border:0}
+.areas-map-caption{padding:12px 16px;font-size:13px;color:var(--muted);line-height:1.5;background:var(--paper-warm)}
+.reviews-grid{display:grid;grid-template-columns:1fr;gap:16px;margin-top:28px}@media(min-width:640px){.reviews-grid{grid-template-columns:repeat(2,1fr)}}@media(min-width:900px){.reviews-grid{grid-template-columns:repeat(3,1fr)}}
+.review-card{background:var(--white);border:1px solid rgba(10,22,40,.08);border-left:3px solid var(--accent);padding:20px;border-radius:var(--radius-md);min-height:120px}
+.review-card-placeholder{font-family:var(--font-mono);font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:10px}
+.review-embed-slot{margin:32px 0;padding:24px;background:var(--paper-warm);border:2px dashed rgba(10,22,40,.12);border-radius:var(--radius-md);min-height:180px;display:flex;align-items:center;justify-content:center;text-align:center}
+.review-embed-placeholder{font-size:14px;color:var(--muted);max-width:48ch;line-height:1.55}
+.review-embed-note{margin-top:24px;padding:16px 20px;background:var(--white);border:1px solid rgba(10,22,40,.08);border-radius:var(--radius-md);font-size:14px;color:var(--text);line-height:1.6}
+.review-actions{display:flex;flex-wrap:wrap;gap:12px;justify-content:center;margin-top:24px}
+.project-card .project-card-link{font-size:13px;font-weight:600;color:var(--accent-deep);margin-top:auto}
+.project-card h3 a:hover{color:var(--accent-deep)}
+
+
+.mobile-quote-sheet{position:fixed;left:0;right:0;bottom:0;z-index:95;background:var(--ink,#0a1628);color:var(--paper,#f5f1ea);padding:14px 18px 18px;transform:translateY(110%);transition:transform .35s ease;border-top:3px solid var(--accent,#ff5b1f);box-shadow:0 -8px 32px rgba(10,22,40,.25)}.mobile-quote-sheet.visible{transform:translateY(0)}.mobile-quote-sheet p{font-size:14px;margin-bottom:10px}.mobile-quote-sheet .btn-primary{width:100%}.mobile-quote-sheet-close{position:absolute;top:8px;right:12px;background:none;border:none;color:var(--paper);font-size:22px;cursor:pointer;line-height:1;padding:4px 8px}.template-banner{background:var(--accent);color:#fff;text-align:center;padding:10px 16px;font-size:13px;font-weight:600}.template-banner a{color:#fff;text-decoration:underline}
+
+.quick-answer{background:#fff;border:1px solid rgba(10,22,40,.1);border-left:3px solid #ff5b1f;padding:18px 22px;margin:0 auto 32px;max-width:1240px;font-size:15px;line-height:1.6}.quick-answer .qa-label{font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:#d94208;margin-bottom:8px;display:block}
+.article-toc{background:#ebe4d6;border:1px solid rgba(10,22,40,.08);padding:18px 22px;margin-bottom:28px;border-radius:4px}.article-toc h2{font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:#6b7280;margin-bottom:12px}.article-toc ol{margin:0 0 0 20px;font-size:14px}
+.ba-placeholder-note{font-family:'JetBrains Mono',monospace;font-size:9px;color:#6b7280;margin-top:6px;text-align:center}
+a:focus-visible,button:focus-visible{outline:2px solid #ff5b1f;outline-offset:2px}
+
+
+.mobile-quote-sheet{position:fixed;left:0;right:0;bottom:0;z-index:95;background:var(--ink,#0a1628);color:var(--paper,#f5f1ea);padding:14px 18px 18px;transform:translateY(110%);transition:transform .35s ease;border-top:3px solid var(--accent,#ff5b1f);box-shadow:0 -8px 32px rgba(10,22,40,.25)}.mobile-quote-sheet.visible{transform:translateY(0)}.mobile-quote-sheet p{font-size:14px;margin-bottom:10px}.mobile-quote-sheet .btn-primary{width:100%}.mobile-quote-sheet-close{position:absolute;top:8px;right:12px;background:none;border:none;color:var(--paper);font-size:22px;cursor:pointer;line-height:1;padding:4px 8px}.template-banner{background:var(--accent);color:#fff;text-align:center;padding:10px 16px;font-size:13px;font-weight:600}.template-banner a{color:#fff;text-decoration:underline}
+
+
+.mobile-quote-sheet{position:fixed;left:0;right:0;bottom:0;z-index:95;background:var(--ink,#0a1628);color:var(--paper,#f5f1ea);padding:14px 18px 18px;transform:translateY(110%);transition:transform .35s ease;border-top:3px solid var(--accent,#ff5b1f);box-shadow:0 -8px 32px rgba(10,22,40,.25)}.mobile-quote-sheet.visible{transform:translateY(0)}.mobile-quote-sheet p{font-size:14px;margin-bottom:10px}.mobile-quote-sheet .btn-primary{width:100%}.mobile-quote-sheet-close{position:absolute;top:8px;right:12px;background:none;border:none;color:var(--paper);font-size:22px;cursor:pointer;line-height:1;padding:4px 8px}.template-banner{background:var(--accent);color:#fff;text-align:center;padding:10px 16px;font-size:13px;font-weight:600}.template-banner a{color:#fff;text-decoration:underline}
+
+
+.mobile-quote-sheet{position:fixed;left:0;right:0;bottom:0;z-index:95;background:var(--ink,#0a1628);color:var(--paper,#f5f1ea);padding:14px 18px 18px;transform:translateY(110%);transition:transform .35s ease;border-top:3px solid var(--accent,#ff5b1f);box-shadow:0 -8px 32px rgba(10,22,40,.25)}.mobile-quote-sheet.visible{transform:translateY(0)}.mobile-quote-sheet p{font-size:14px;margin-bottom:10px}.mobile-quote-sheet .btn-primary{width:100%}.mobile-quote-sheet-close{position:absolute;top:8px;right:12px;background:none;border:none;color:var(--paper);font-size:22px;cursor:pointer;line-height:1;padding:4px 8px}.template-banner{background:var(--accent);color:#fff;text-align:center;padding:10px 16px;font-size:13px;font-weight:600}.template-banner a{color:#fff;text-decoration:underline}
+
+
+.mobile-quote-sheet{position:fixed;left:0;right:0;bottom:0;z-index:95;background:var(--ink,#0a1628);color:var(--paper,#f5f1ea);padding:14px 18px 18px;transform:translateY(110%);transition:transform .35s ease;border-top:3px solid var(--accent,#ff5b1f);box-shadow:0 -8px 32px rgba(10,22,40,.25)}.mobile-quote-sheet.visible{transform:translateY(0)}.mobile-quote-sheet p{font-size:14px;margin-bottom:10px}.mobile-quote-sheet .btn-primary{width:100%}.mobile-quote-sheet-close{position:absolute;top:8px;right:12px;background:none;border:none;color:var(--paper);font-size:22px;cursor:pointer;line-height:1;padding:4px 8px}.template-banner{background:var(--accent);color:#fff;text-align:center;padding:10px 16px;font-size:13px;font-weight:600}.template-banner a{color:#fff;text-decoration:underline}
+
+
+.mobile-quote-sheet{position:fixed;left:0;right:0;bottom:0;z-index:95;background:var(--ink,#0a1628);color:var(--paper,#f5f1ea);padding:14px 18px 18px;transform:translateY(110%);transition:transform .35s ease;border-top:3px solid var(--accent,#ff5b1f);box-shadow:0 -8px 32px rgba(10,22,40,.25)}.mobile-quote-sheet.visible{transform:translateY(0)}.mobile-quote-sheet p{font-size:14px;margin-bottom:10px}.mobile-quote-sheet .btn-primary{width:100%}.mobile-quote-sheet-close{position:absolute;top:8px;right:12px;background:none;border:none;color:var(--paper);font-size:22px;cursor:pointer;line-height:1;padding:4px 8px}.template-banner{background:var(--accent);color:#fff;text-align:center;padding:10px 16px;font-size:13px;font-weight:600}.template-banner a{color:#fff;text-decoration:underline}
+
+
+.mobile-quote-sheet{position:fixed;left:0;right:0;bottom:0;z-index:95;background:var(--ink,#0a1628);color:var(--paper,#f5f1ea);padding:14px 18px 18px;transform:translateY(110%);transition:transform .35s ease;border-top:3px solid var(--accent,#ff5b1f);box-shadow:0 -8px 32px rgba(10,22,40,.25)}.mobile-quote-sheet.visible{transform:translateY(0)}.mobile-quote-sheet p{font-size:14px;margin-bottom:10px}.mobile-quote-sheet .btn-primary{width:100%}.mobile-quote-sheet-close{position:absolute;top:8px;right:12px;background:none;border:none;color:var(--paper);font-size:22px;cursor:pointer;line-height:1;padding:4px 8px}.template-banner{background:var(--accent);color:#fff;text-align:center;padding:10px 16px;font-size:13px;font-weight:600}.template-banner a{color:#fff;text-decoration:underline}
+
+
+.mobile-quote-sheet{position:fixed;left:0;right:0;bottom:0;z-index:95;background:var(--ink,#0a1628);color:var(--paper,#f5f1ea);padding:14px 18px 18px;transform:translateY(110%);transition:transform .35s ease;border-top:3px solid var(--accent,#ff5b1f);box-shadow:0 -8px 32px rgba(10,22,40,.25)}.mobile-quote-sheet.visible{transform:translateY(0)}.mobile-quote-sheet p{font-size:14px;margin-bottom:10px}.mobile-quote-sheet .btn-primary{width:100%}.mobile-quote-sheet-close{position:absolute;top:8px;right:12px;background:none;border:none;color:var(--paper);font-size:22px;cursor:pointer;line-height:1;padding:4px 8px}.template-banner{background:var(--accent);color:#fff;text-align:center;padding:10px 16px;font-size:13px;font-weight:600}.template-banner a{color:#fff;text-decoration:underline}
+
+
+.mobile-quote-sheet{position:fixed;left:0;right:0;bottom:0;z-index:95;background:var(--ink,#0a1628);color:var(--paper,#f5f1ea);padding:14px 18px 18px;transform:translateY(110%);transition:transform .35s ease;border-top:3px solid var(--accent,#ff5b1f);box-shadow:0 -8px 32px rgba(10,22,40,.25)}.mobile-quote-sheet.visible{transform:translateY(0)}.mobile-quote-sheet p{font-size:14px;margin-bottom:10px}.mobile-quote-sheet .btn-primary{width:100%}.mobile-quote-sheet-close{position:absolute;top:8px;right:12px;background:none;border:none;color:var(--paper);font-size:22px;cursor:pointer;line-height:1;padding:4px 8px}.template-banner{background:var(--accent);color:#fff;text-align:center;padding:10px 16px;font-size:13px;font-weight:600}.template-banner a{color:#fff;text-decoration:underline}
+
+
+.mobile-quote-sheet{position:fixed;left:0;right:0;bottom:0;z-index:95;background:var(--ink,#0a1628);color:var(--paper,#f5f1ea);padding:14px 18px 18px;transform:translateY(110%);transition:transform .35s ease;border-top:3px solid var(--accent,#ff5b1f);box-shadow:0 -8px 32px rgba(10,22,40,.25)}.mobile-quote-sheet.visible{transform:translateY(0)}.mobile-quote-sheet p{font-size:14px;margin-bottom:10px}.mobile-quote-sheet .btn-primary{width:100%}.mobile-quote-sheet-close{position:absolute;top:8px;right:12px;background:none;border:none;color:var(--paper);font-size:22px;cursor:pointer;line-height:1;padding:4px 8px}.template-banner{background:var(--accent);color:#fff;text-align:center;padding:10px 16px;font-size:13px;font-weight:600}.template-banner a{color:#fff;text-decoration:underline}
+
+
+.mobile-quote-sheet{position:fixed;left:0;right:0;bottom:0;z-index:95;background:var(--ink,#0a1628);color:var(--paper,#f5f1ea);padding:14px 18px 18px;transform:translateY(110%);transition:transform .35s ease;border-top:3px solid var(--accent,#ff5b1f);box-shadow:0 -8px 32px rgba(10,22,40,.25)}.mobile-quote-sheet.visible{transform:translateY(0)}.mobile-quote-sheet p{font-size:14px;margin-bottom:10px}.mobile-quote-sheet .btn-primary{width:100%}.mobile-quote-sheet-close{position:absolute;top:8px;right:12px;background:none;border:none;color:var(--paper);font-size:22px;cursor:pointer;line-height:1;padding:4px 8px}.template-banner{background:var(--accent);color:#fff;text-align:center;padding:10px 16px;font-size:13px;font-weight:600}.template-banner a{color:#fff;text-decoration:underline}
+
+
+.mobile-quote-sheet{position:fixed;left:0;right:0;bottom:0;z-index:95;background:var(--ink,#0a1628);color:var(--paper,#f5f1ea);padding:14px 18px 18px;transform:translateY(110%);transition:transform .35s ease;border-top:3px solid var(--accent,#ff5b1f);box-shadow:0 -8px 32px rgba(10,22,40,.25)}.mobile-quote-sheet.visible{transform:translateY(0)}.mobile-quote-sheet p{font-size:14px;margin-bottom:10px}.mobile-quote-sheet .btn-primary{width:100%}.mobile-quote-sheet-close{position:absolute;top:8px;right:12px;background:none;border:none;color:var(--paper);font-size:22px;cursor:pointer;line-height:1;padding:4px 8px}.template-banner{background:var(--accent);color:#fff;text-align:center;padding:10px 16px;font-size:13px;font-weight:600}.template-banner a{color:#fff;text-decoration:underline}
+
+
+.mobile-quote-sheet{position:fixed;left:0;right:0;bottom:0;z-index:95;background:var(--ink,#0a1628);color:var(--paper,#f5f1ea);padding:14px 18px 18px;transform:translateY(110%);transition:transform .35s ease;border-top:3px solid var(--accent,#ff5b1f);box-shadow:0 -8px 32px rgba(10,22,40,.25)}.mobile-quote-sheet.visible{transform:translateY(0)}.mobile-quote-sheet p{font-size:14px;margin-bottom:10px}.mobile-quote-sheet .btn-primary{width:100%}.mobile-quote-sheet-close{position:absolute;top:8px;right:12px;background:none;border:none;color:var(--paper);font-size:22px;cursor:pointer;line-height:1;padding:4px 8px}.template-banner{background:var(--accent);color:#fff;text-align:center;padding:10px 16px;font-size:13px;font-weight:600}.template-banner a{color:#fff;text-decoration:underline}
+
+
+.mobile-quote-sheet{position:fixed;left:0;right:0;bottom:0;z-index:95;background:var(--ink,#0a1628);color:var(--paper,#f5f1ea);padding:14px 18px 18px;transform:translateY(110%);transition:transform .35s ease;border-top:3px solid var(--accent,#ff5b1f);box-shadow:0 -8px 32px rgba(10,22,40,.25)}.mobile-quote-sheet.visible{transform:translateY(0)}.mobile-quote-sheet p{font-size:14px;margin-bottom:10px}.mobile-quote-sheet .btn-primary{width:100%}.mobile-quote-sheet-close{position:absolute;top:8px;right:12px;background:none;border:none;color:var(--paper);font-size:22px;cursor:pointer;line-height:1;padding:4px 8px}.template-banner{background:var(--accent);color:#fff;text-align:center;padding:10px 16px;font-size:13px;font-weight:600}.template-banner a{color:#fff;text-decoration:underline}
+
+
+.mobile-quote-sheet{position:fixed;left:0;right:0;bottom:0;z-index:95;background:var(--ink,#0a1628);color:var(--paper,#f5f1ea);padding:14px 18px 18px;transform:translateY(110%);transition:transform .35s ease;border-top:3px solid var(--accent,#ff5b1f);box-shadow:0 -8px 32px rgba(10,22,40,.25)}.mobile-quote-sheet.visible{transform:translateY(0)}.mobile-quote-sheet p{font-size:14px;margin-bottom:10px}.mobile-quote-sheet .btn-primary{width:100%}.mobile-quote-sheet-close{position:absolute;top:8px;right:12px;background:none;border:none;color:var(--paper);font-size:22px;cursor:pointer;line-height:1;padding:4px 8px}.template-banner{background:var(--accent);color:#fff;text-align:center;padding:10px 16px;font-size:13px;font-weight:600}.template-banner a{color:#fff;text-decoration:underline}
+
 </style>
 </head>
 <body>
@@ -161,14 +251,12 @@ fbq('track', 'Lead');
             <a href="/garage-cleanouts-fort-collins-co" role="menuitem">Garage Cleanouts</a>
             <a href="/junk-removal-fort-collins-co" role="menuitem">Junk Removal</a>
             <a href="/garage-cleaning-fort-collins-co" role="menuitem">Garage Cleaning</a>
-            <a href="/garage-turnaround-fort-collins-co" role="menuitem">Garage Turnaround</a>
             <a href="/garage-organization-fort-collins-co" role="menuitem">Garage Organization</a>
             <a href="/furniture-removal-fort-collins-co" role="menuitem">Furniture Removal</a>
             <a href="/appliance-removal-fort-collins-co" role="menuitem">Appliance Removal</a>
             <a href="/mattress-removal-fort-collins-co" role="menuitem">Mattress Removal</a>
             <a href="/storage-unit-cleanout-fort-collins-co" role="menuitem">Storage Unit Cleanout</a>
             <a href="/yard-debris-removal-fort-collins-co" role="menuitem">Yard Debris Removal</a>
-            <a href="/garage-guard" role="menuitem">Garage Guard Membership</a>
           </div>
           <div class="dropdown-col">
             <span class="dropdown-label">What we take</span>
@@ -196,7 +284,6 @@ fbq('track', 'Lead');
       </li>
       <li><a href="/#process">How It Works</a></li>
       <li><a href="/pricing">Pricing</a></li>
-        <li><a href="/garage-guard">Garage Guard</a></li>
       <li><a href="/about">About</a></li>
       <li><a href="/reviews">Reviews</a></li>
       <li><a href="/faq">FAQ</a></li>
@@ -230,7 +317,6 @@ fbq('track', 'Lead');
       <a href="/mattress-removal-fort-collins-co">Mattress Removal</a>
       <a href="/storage-unit-cleanout-fort-collins-co">Storage Unit Cleanout</a>
       <a href="/yard-debris-removal-fort-collins-co">Yard Debris Removal</a>
-      <a href="/garage-guard">Garage Guard Membership</a>
     </div>
   </div>
   <div class="drawer-section">
@@ -260,20 +346,20 @@ fbq('track', 'Lead');
   <a href="/reviews" class="drawer-link-row">Reviews</a>
   <a href="/faq" class="drawer-link-row">FAQ</a>
   <a href="/blog/" class="drawer-link-row">Blog</a>
-  <a href="/book" class="drawer-cta">Get Free Quote</a>
+  <a href="/book" class="drawer-cta">Schedule Free Walkthrough</a>
 </aside>
 <div class="trust-strip" aria-label="Trust signals">
   <div class="wrap trust-strip-inner">
-    <span>Response within 5 minutes</span><span>No hidden fees</span><span>Only pay after approving quote</span><span>We do all lifting</span><span>Text photos now</span><span>Next-day availability</span>
+    <span>Response within 5 minutes</span><span>No hidden fees</span><span>Only pay after approving quote</span><span>We do all lifting</span><span>Free on-site walkthrough</span><span>Next-day availability</span>
   </div>
 </div>
 <main id="main-content">
 <section class="thank-celebrate">
 <div class="thank-check" aria-hidden="true">✓</div>
 <h1>You're all set — we'll be in touch shortly</h1>
-<p class="section-sub" style="margin:0 auto 28px;max-width:48ch">Thanks for your quote request — it just hit our phones. We'll <strong>call or text you back as soon as we're off the current job</strong> (Mon–Sat, 7am–7pm). Want your exact number faster? Text photos now or call us directly.</p>
+<p class="section-sub" style="margin:0 auto 28px;max-width:48ch">Thanks for your quote request — it just hit our phones. We'll <strong>call or text you back as soon as we're off the current job</strong> (Mon–Sat, 7am–7pm). Want your exact number faster? Free on-site walkthrough or call us directly.</p>
 <div class="thank-steps">
-<div class="thank-step"><span class="thank-step-num">01</span><div><strong>Text more photos</strong><br>Faster than email — wide shots of the full garage work best. <a href="sms:+19709991818?body=Hi!%20I%20just%20submitted%20a%20quote%20and%20have%20more%20photos." class="content-link">Text (970) 999-1818</a></div></div>
+<div class="thank-step"><span class="thank-step-num">01</span><div><strong>Text more photos</strong><br>Faster than email — wide shots of the full garage work best. <a href="sms:+19709991818?body=Hi!%20I'd%20like%20to%20schedule%20a%20free%20on-site%20walkthrough." class="content-link">Text (970) 999-1818</a></div></div>
 <div class="thank-step"><span class="thank-step-num">02</span><div><strong>Watch for our call</strong><br>We'll reach out with a flat-rate price — you only pay after you approve.</div></div>
 <div class="thank-step"><span class="thank-step-num">03</span><div><strong>Questions?</strong><br><a href="tel:+19709991818" class="content-link">Call (970) 999-1818</a> or <a href="/faq" class="content-link">read our FAQ</a>.</div></div>
 </div>
@@ -284,7 +370,7 @@ fbq('track', 'Lead');
 </section>
 </main>
 
-<a href="sms:+19709991818?body=Hi!%20I'd%20like%20a%20quote.%20Here%20are%20photos%20of%20my%20garage:" class="mobile-text-chip" aria-label="Text us photos for a quote"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>Text us photos</a>
+<a href="sms:+19709991818?body=Hi!%20I'd%20like%20to%20schedule%20a%20free%20on-site%20walkthrough." class="mobile-text-chip" aria-label="Schedule a walkthrough for a quote"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z"/><circle cx="12" cy="13" r="4"/></svg>Schedule a walkthrough</a>
 <footer class="site-footer">
   <div class="wrap foot-grid">
     <div class="foot-brand">
@@ -337,7 +423,7 @@ fbq('track', 'Lead');
       <h3>Contact</h3>
       <p><a href="tel:+19709991818">(970) 999-1818</a></p>
       <p><a href="mailto:contact@easygaragecleaning.com">contact@easygaragecleaning.com</a></p>
-      <p><a href="sms:+19709991818?body=Hi!%20I'd%20like%20a%20quote.">Text for quote</a></p>
+      <p><a href="sms:+19709991818?body=Hi!%20I'd%20like%20to%20schedule%20a%20free%20on-site%20walkthrough.">Schedule by text</a></p>
       <p class="foot-hours">Mon–Sat · 7am–7pm<br>Fort Collins, CO</p>
     </div>
   </div>
@@ -353,11 +439,9 @@ fbq('track', 'Lead');
 
 <div class="mobile-sticky-cta" aria-label="Quick contact">
   <a href="tel:+19709991818" class="mobile-cta-btn mobile-cta-call">Call</a>
-  <a href="sms:+19709991818?body=Hi!%20I'd%20like%20a%20quote.%20I%20can%20text%20photos%20of%20my%20garage/junk." class="mobile-cta-btn mobile-cta-text">Text</a>
-  <a href="/book" class="mobile-cta-btn mobile-cta-quote">Quote</a>
+  <a href="sms:+19709991818?body=Hi!%20I'd%20like%20to%20schedule%20a%20free%20on-site%20walkthrough." class="mobile-cta-btn mobile-cta-text">Text</a>
+  <a href="/book" class="mobile-cta-btn mobile-cta-quote">Walkthrough</a>
 </div>
-
-
 <script>
 function initNavDrawer(){
   const toggle=document.querySelector('.nav-toggle');

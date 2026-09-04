@@ -840,7 +840,7 @@ PPC_LANDERS = [
     {
         "slug": "commercial-junk-removal-fort-collins-co.html",
         "noindex": True,
-        "title": "Commercial Junk Removal Fort Collins CO | Property Managers & Realtors",
+        "title": "Commercial Junk Removal Fort Collins | Easy Garage",
         "desc": "Commercial & property-management junk removal in Fort Collins — apartment turns, realtor cleanouts, construction debris. Flat-rate, insured, fast. Text photos for a quote.",
         "h1": "Commercial Junk Removal Fort Collins CO",
         "hero_em": "Built for volume & turnarounds",
@@ -870,7 +870,7 @@ PPC_LANDERS = [
     {
         "slug": "property-cleanout-fort-collins-co.html",
         "noindex": True,
-        "title": "House & Property Cleanouts Fort Collins CO | Move-Out, Estate & More",
+        "title": "Property Cleanouts Fort Collins | Easy Garage",
         "desc": "Full house & property cleanouts in Fort Collins — move-outs, estates, downsizing, foreclosures. Flat-rate, discreet, insured. Text photos for a quote in 5 minutes.",
         "h1": "House & Property Cleanouts Fort Collins CO",
         "hero_em": "Cleared, hauled & swept",
@@ -909,7 +909,7 @@ PPC_LANDERS = [
         "stype": "Same-Day Junk Removal",
         "problem_title": "When it needs to be gone <em>today</em>",
         "problem_sub": "Showings, move-outs, and last-minute messes don't wait. When you need junk gone now, we move fast.",
-        "problems": [("⏱️", "Last-minute deadlines", "Showing, guest, or inspection today? We'll get out fast."), ("📞", "5-minute response", "Call or text and hear back in minutes, not tomorrow."), ("🚛", "One-trip haul", "We come ready to load and clear it in a single visit."), ("💸", "Flat-rate on the spot", "Locked price from your photos before we roll — no surprises.")],
+        "problems": [("⏱️", "Last-minute deadlines", "Showing, guest, or inspection today? We'll get out fast."), ("📞", "5-minute response", "Call or text and hear back in minutes, not tomorrow."), ("🚛", "One-trip haul", "We come ready to load and clear it in a single visit."), ("💸", "Flat-rate on the spot", "One exact price set during the on-site walkthrough — no surprises.")],
         "yes_title": "Same-day pickups <em>we handle</em>",
         "yes": ["Single items — couch, fridge, mattress", "Garage & basement clear-outs", "Move-out & showing-day hauls", "Appliance & furniture removal", "Small loads to full truckloads", "Donation drop-offs included"],
         "ba": ("Same-day pickup — Fort Collins", "Showing-day clear — Midtown", "Rush haul — Loveland"),
@@ -920,7 +920,7 @@ PPC_LANDERS = [
         "faqs": [
             ("Can you really remove junk the same day in Fort Collins?", "Often yes — when our schedule allows. We respond within 5 minutes and prioritize same-day and rush jobs across Fort Collins and Northern Colorado."),
             ("How do I get a same-day quote?", "Text photos to (970) 999-1818 or use the form. We send a locked flat-rate quote in about 5 minutes."),
-            ("Is same-day more expensive?", "No — same flat-rate pricing from your photos. You only pay for the load, not the speed."),
+            ("Is same-day more expensive?", "No — rush timing does not change how we price. We set one flat rate during the on-site walkthrough."),
             ("What can you pick up same day?", "Single items to full truckloads — furniture, appliances, mattresses, garage and basement clear-outs, and move-out hauls."),
             ("Do you serve nearby towns same day?", "Yes — Fort Collins, Loveland, Windsor, Timnath, and Wellington, schedule permitting."),
             ("Are you insured?", "Yes. Easy Garage Cleaning LLC carries general liability and commercial auto insurance."),

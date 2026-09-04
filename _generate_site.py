@@ -38,7 +38,7 @@ KNOWS_ABOUT = [
     "Yard debris removal",
     "Northern Colorado hauling",
     "Habitat ReStore donation",
-    "Flat-rate photo quotes",
+    "Free on-site walkthroughs",
 ]
 
 SERVICE_DEFINITIONS = {
@@ -55,11 +55,11 @@ SERVICE_DEFINITIONS = {
     "Hot Tub Removal": ("What is hot tub removal?", "Hot tub removal includes on-site dismantling and haul-away of spas and hot tubs from patios or garages. We handle the weight and disposal logistics so you avoid DIY injury and dump runs — quoted flat after photos of access and size."),
     "Treadmill Removal": ("What is treadmill removal?", "Treadmill removal is heavy exercise equipment haul-away from garages or basements. We disassemble when needed, carry out safely, and recycle or dispose — flat-rate from photos without hourly surprises."),
     "Refrigerator Removal": ("What is refrigerator removal?", "Refrigerator removal is freon-safe pickup of fridges and freezers from garages or kitchens. Working units may be donated to Habitat ReStore; we handle doors, weight, and disposal rules with a flat photo quote."),
-    "Shed Cleanout": ("What is a shed cleanout?", "A shed cleanout empties a detached shed or backyard workshop — tools, lumber, old equipment, and clutter hauled in one visit. We sweep the floor and leave a usable space, with flat-rate pricing from photos."),
+    "Shed Cleanout": ("What is a shed cleanout?", "A shed cleanout empties a detached shed or backyard workshop — tools, lumber, old equipment, and clutter hauled in one visit. We inspect it during a free on-site walkthrough, set one flat rate, and leave the space swept and usable."),
 }
 
-SMS_PHOTOS_BODY = "Hi!%20I'd%20like%20a%20quote.%20I%20can%20text%20photos%20of%20my%20garage/junk."
-PRICING_DISCLAIMER = "Final price depends on volume, weight, accessibility, dump fees. Text photos for exact quote."
+SMS_PHOTOS_BODY = "Hi!%20I'd%20like%20to%20schedule%20a%20free%20on-site%20walkthrough."
+PRICING_DISCLAIMER = "Your exact flat rate is set after a free on-site walkthrough and approved before work begins."
 PRICING_DISCLAIMER_BLOCK = (
     f"All quotes are flat-rate and include labor, hauling, dump fees, and donation drop-offs. {PRICING_DISCLAIMER}"
 )
@@ -623,7 +623,7 @@ HEAD = """<!DOCTYPE html>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,700;1,9..144,400&family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
 <noscript><link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,700;1,9..144,400&family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet"></noscript>
 {schema}
-<link rel="stylesheet" href="/styles.css?v=20260903f">
+<link rel="stylesheet" href="/styles.css?v=20260904j">
 </head>
 <body>
 <a href="#main-content" class="skip-link">Skip to content</a>
@@ -798,7 +798,7 @@ FOOTER = """
       <h3>Contact</h3>
       <p><a href="tel:{phone}">{phone_display}</a></p>
       <p><a href="mailto:{email}">{email}</a></p>
-      <p><a href="sms:{phone}?body=Hi!%20I'd%20like%20a%20quote.">Text for quote</a></p>
+      <p><a href="sms:{phone}?body=Hi!%20I'd%20like%20to%20schedule%20a%20free%20on-site%20walkthrough.">Schedule by text</a></p>
       <p class="foot-hours">Mon–Sat · 7am–7pm<br>Fort Collins, CO</p>
     </div>
   </div>
@@ -816,9 +816,9 @@ FOOTER = """
   </button>
   <section class="contact-widget-panel" id="contact-widget-panel" role="dialog" aria-label="Chat with Easy Garage Cleaning" hidden>
     <div class="contact-widget-head"><div><strong>Easy Garage Cleaning</strong><span><i aria-hidden="true"></i> Usually replies in 5 minutes</span></div><button type="button" class="contact-widget-close" aria-label="Close chat">&times;</button></div>
-    <p>Hi! Send photos for a fast, flat-rate quote or choose another way to reach us.</p>
+    <p>Hi! Schedule a free on-site walkthrough, or ask us a question before you book.</p>
     <div class="contact-widget-actions">
-      <a class="contact-widget-primary" href="sms:{phone}?body=Hi!%20I'd%20like%20a%20garage%20cleanout%20quote.%20Here%20are%20photos%20of%20my%20garage:">Text photos now</a>
+      <a class="contact-widget-primary" href="sms:{phone}?body=Hi!%20I'd%20like%20to%20schedule%20a%20free%20on-site%20walkthrough.">Schedule by text</a>
       <a href="tel:{phone}">Call {phone_display}</a>
       <a href="{quote_href}">Book online</a>
     </div>
@@ -828,8 +828,8 @@ FOOTER = """
 <script src="/site-enhancements.js?v=20260903a" defer></script>
 <div class="mobile-sticky-cta" aria-label="Quick contact">
   <a href="tel:{phone}" class="mobile-cta-btn mobile-cta-call">Call</a>
-  <a href="sms:{phone}?body=Hi!%20I'd%20like%20a%20quote." class="mobile-cta-btn mobile-cta-text">Text</a>
-  <a href="{quote_href}" class="mobile-cta-btn mobile-cta-quote">Quote</a>
+  <a href="sms:{phone}?body=Hi!%20I'd%20like%20to%20schedule%20a%20free%20on-site%20walkthrough." class="mobile-cta-btn mobile-cta-text">Text</a>
+  <a href="{quote_href}" class="mobile-cta-btn mobile-cta-quote">Walkthrough</a>
 </div>
 <script>
 {nav_js_iife}
@@ -851,7 +851,7 @@ document.querySelectorAll('.multi-step-form').forEach(initMultiStepForm);
 function initMultiStepForm(form){{
   let step=1;const shell=form.closest('.quote-form')||document;const panels=form.querySelectorAll('.form-panel');const dots=shell.querySelectorAll('.form-step-dot');const total=panels.length;
   const pctEl=shell.querySelector('[data-progress-pct]');
-  const names=['What do you need?','Job size','Your estimate','Where are you located?','Upload photos','Contact & timing'];
+  const names=['What do you need?','Job size','Walkthrough timing','Where are you located?','Optional photos','Contact details'];
   const sizeSel=form.querySelector('[data-size-tier]');
   const flowInput=form.querySelector('[name="flow_type"]');
   const rangeInput=form.querySelector('[name="estimated_range"]');
@@ -859,7 +859,7 @@ function initMultiStepForm(form){{
   const submitBtn=form.querySelector('[data-submit-label]');
   function focusStep(n){{const panel=panels[n-1];if(!panel)return;const f=panel.querySelector('input:not([type=hidden]):not([type=radio]):not([type=file]),select,textarea');if(f)setTimeout(()=>f.focus(),80);}}
   function syncBookingSlot(){{const picked=form.querySelector('[name="booking_slot_choice"]:checked');if(slotInput&&picked)slotInput.value=picked.value;}}
-  function showQuoteResult(){{const opt=sizeSel?.options[sizeSel.selectedIndex];if(!opt||!opt.value)return false;const flow=opt.dataset.flow||'booking';const range=opt.dataset.range||'';if(flowInput)flowInput.value=flow;if(rangeInput)rangeInput.value=range;const callPanel=form.querySelector('[data-result-call]');const bookPanel=form.querySelector('[data-result-booking]');if(callPanel)callPanel.hidden=flow!=='call_text';if(bookPanel)bookPanel.hidden=flow==='call_text';const rangeEl=form.querySelector('[data-result-range]');if(rangeEl)rangeEl.textContent=range;if(submitBtn)submitBtn.textContent=flow==='call_text'?'Send request (optional) →':'Confirm booking request →';return true;}}
+  function showQuoteResult(){{const opt=sizeSel?.options[sizeSel.selectedIndex];if(!opt||!opt.value)return false;if(flowInput)flowInput.value='walkthrough';if(rangeInput)rangeInput.value='';const callPanel=form.querySelector('[data-result-call]');const bookPanel=form.querySelector('[data-result-booking]');if(callPanel)callPanel.hidden=true;if(bookPanel)bookPanel.hidden=false;if(submitBtn)submitBtn.textContent='Request walkthrough →';return true;}}
   const show=(n)=>{{if(n===3)showQuoteResult();panels.forEach((p,i)=>p.classList.toggle('active',i+1===n));dots.forEach((d,i)=>{{d.classList.toggle('active',i+1===n);d.classList.toggle('done',i+1<n);}});step=n;const lbl=shell.querySelector('.form-step-label');if(lbl)lbl.textContent='Step '+n+' of '+total+(names[n-1]?': '+names[n-1]:'');if(pctEl)pctEl.textContent=Math.round((n/total)*100)+'%';focusStep(n);}};
   function showErr(panel,msg){{let el=panel.querySelector('.form-error');if(!el){{el=document.createElement('p');el.className='form-error';el.setAttribute('role','alert');panel.appendChild(el);}}el.textContent=msg;el.classList.add('visible');}}
   function clearErr(panel){{const el=panel.querySelector('.form-error');if(el)el.classList.remove('visible');}}
@@ -920,7 +920,7 @@ function initMultiStepForm(form){{
     submitting=true;
     const btn=form.querySelector('[type="submit"]');
     if(btn){{btn.disabled=true;btn.classList.add('is-loading');btn.textContent='Sending…';}}
-    if(typeof gtag==='function'){{gtag('event','quote_submit',{{event_category:'lead',event_label:svc?.value||'quote',flow_type:flowInput?.value||''}});}}
+      if(typeof gtag==='function'){{gtag('event','walkthrough_request',{{event_category:'lead',event_label:svc?.value||'walkthrough',flow_type:flowInput?.value||''}});}}
   }});
   show(1);
 }}
@@ -941,8 +941,8 @@ PRICING_HTML = """
 <section class="pricing" id="pricing" aria-labelledby="pricing-heading">
   <div class="wrap">
     <div class="section-head reveal"><span class="mono section-num">Pricing</span>
-      <h2 class="section-title" id="pricing-heading">Transparent ranges. <em>Locked quotes</em> before we start.</h2>
-      <p class="section-sub">Text photos for an exact flat-rate quote. These ranges help you know what to expect — no hourly billing.</p>
+      <h2 class="section-title" id="pricing-heading">Transparent ranges. <em>One exact price</em> after we look.</h2>
+      <p class="section-sub">These ranges help you plan. We set the exact flat rate during a free on-site walkthrough—no hourly billing.</p>
     </div>
     <div class="pricing-grid reveal">
       <div class="price-card"><div class="price-tier">Pickup</div><div class="price-range">$99–150</div><div class="price-name">Single-item haul</div><p class="price-desc">One appliance, mattress, couch, or bulky item.</p></div>
@@ -950,7 +950,7 @@ PRICING_HTML = """
       <div class="price-card featured"><span class="price-badge">Most popular</span><div class="price-tier">Medium</div><div class="price-range">$400–650</div><div class="price-name">Standard garage</div><p class="price-desc">Most single-car or moderately full two-car garages.</p></div>
       <div class="price-card"><div class="price-tier">Large</div><div class="price-range">$650+</div><div class="price-name">Full garage / estate</div><p class="price-desc">Packed two-car garages or multi-space cleanouts.</p></div>
     </div>
-    <p class="pricing-disclaimer reveal">{PRICING_DISCLAIMER_BLOCK} <a href="/pricing.html" style="color:var(--accent);font-weight:600;">Full pricing guide →</a> · <a href="#quote" style="color:var(--accent);font-weight:600;">Get Free Quote →</a></p>
+    <p class="pricing-disclaimer reveal">{PRICING_DISCLAIMER_BLOCK} <a href="/pricing.html" style="color:var(--accent);font-weight:600;">Full pricing guide →</a> · <a href="#quote" style="color:var(--accent);font-weight:600;">Schedule Free Walkthrough →</a></p>
   </div>
 </section>
 """
@@ -1001,7 +1001,7 @@ VIDEO_HTML = """
 # (junk removal, single-item removal, storage unit, property cleanout) gets a
 # generic "Job size" list so visitors aren't asked about garage bays.
 GARAGE_SIZE_LABEL = "Garage size"
-GARAGE_SIZE_OPTIONS = """<option value="">Choose size for estimate…</option>
+GARAGE_SIZE_OPTIONS = """<option value="">Choose approximate size…</option>
                 <option value="single" data-flow="call_text" data-range="$99–$150">Single item / few bags ($99–$150)</option>
                 <option value="small_light" data-flow="call_text" data-range="$250–$299">Small cleanout — light partial ($250–$299)</option>
                 <option value="small_plus" data-flow="booking" data-range="$300–$400">Small cleanout — half garage+ ($300–$400)</option>
@@ -1020,22 +1020,22 @@ QUOTE_FORM = """
   <div class="wrap">
     <div class="section-head reveal"><span class="mono section-num">Ready?</span>
       <h2 class="section-title" id="cta-heading">{cta_title}</h2>
-      <p class="section-sub">Get a free flat-rate quote in 5 minutes. Text photos or complete the steps below — we'll call you right back.</p>
+      <p class="section-sub">Request a free on-site walkthrough. We look at the space with you, build the plan, and set the exact flat rate before any work begins.</p>
     </div>
     <div class="cta-layout reveal">
       <div class="cta-points">
-        <div class="cta-point">Response within 5 minutes</div>
-        <div class="cta-point">No hidden fees — only pay after approving quote</div>
+        <div class="cta-point">Fast response to schedule your walkthrough</div>
+        <div class="cta-point">Exact price set on site before work begins</div>
         <div class="cta-point">We do all lifting — you don't touch a thing</div>
         <div class="cta-point">Next-day availability when schedule allows</div>
         <div style="margin-top:12px;display:flex;flex-wrap:wrap;gap:12px;">
           <a href="tel:{phone}" class="btn-primary btn-lg">Call {phone_display}</a>
-          <a href="sms:{phone}?body={sms_body}" class="btn-secondary btn-lg" style="color:var(--paper);border-color:rgba(255,255,255,.25);">Text Photos</a>
+          <a href="sms:{phone}?body={sms_body}" class="btn-secondary btn-lg" style="color:var(--paper);border-color:rgba(255,255,255,.25);">Schedule by Text</a>
         </div>
       </div>
       <div class="quote-form">
-        <h3>Get Free Quote</h3>
-        <p class="form-note">Typical response in under 5 minutes · No spam · No obligation</p>
+        <h3>Schedule Your Free Walkthrough</h3>
+        <p class="form-note">No pressure · No obligation · Your plan is yours to keep</p>
         <div class="form-steps-wrap">
           <div class="form-progress-row"><span class="form-step-label">Step 1 of 6: What do you need?</span><span class="form-progress-pct" data-progress-pct>17%</span></div>
           <div class="form-steps" aria-hidden="true"><div class="form-step-dot active"></div><div class="form-step-dot"></div><div class="form-step-dot"></div><div class="form-step-dot"></div><div class="form-step-dot"></div><div class="form-step-dot"></div></div>
@@ -1079,29 +1079,20 @@ QUOTE_FORM = """
               </select>
               <p class="field-hint">{PRICING_DISCLAIMER}</p>
             </div></div>
-            <div class="form-nav"><button type="button" class="btn-secondary" data-prev>← Back</button><button type="button" class="btn-primary" data-next>Next: Your estimate →</button></div>
+            <div class="form-nav"><button type="button" class="btn-secondary" data-prev>← Back</button><button type="button" class="btn-primary" data-next>Next: Walkthrough timing →</button></div>
           </div>
           <div class="form-panel" data-step="3" data-quote-result-step>
-            <div class="quote-result-panel" data-result-call hidden>
-              <h4>Your job looks like a smaller pickup</h4>
-              <p class="quote-result-note">Call or text for the fastest booking — we respond in about 5 minutes with your exact flat rate.</p>
-              <div class="quote-result-actions">
-                <a href="tel:{phone}" class="btn-primary">Call {phone_display}</a>
-                <a href="sms:{phone}?body={sms_body}" class="btn-secondary" style="color:var(--paper);border-color:rgba(255,255,255,.25);">Text Photos</a>
-              </div>
-              <p class="form-note">Prefer the form? Continue below — we'll still email your request.</p>
-            </div>
+            <div class="quote-result-panel" data-result-call hidden></div>
             <div class="quote-result-panel" data-result-booking hidden>
-              <h4>Estimated price range</h4>
-              <p class="quote-result-range" data-result-range>$400–$650</p>
-              <p class="quote-result-note">Pick a preferred time — we'll confirm your exact slot within 5 minutes. {PRICING_DISCLAIMER}</p>
-              <fieldset class="booking-slots" aria-label="Preferred booking time">
-                <legend class="sr-only">Booking time options</legend>
-                <label class="booking-slot"><input type="radio" name="booking_slot_choice" value="Today PM"> Today PM</label>
-                <label class="booking-slot"><input type="radio" name="booking_slot_choice" value="Tomorrow AM"> Tomorrow AM</label>
-                <label class="booking-slot"><input type="radio" name="booking_slot_choice" value="Tomorrow PM"> Tomorrow PM</label>
-                <label class="booking-slot"><input type="radio" name="booking_slot_choice" value="This week"> This week</label>
-                <label class="booking-slot"><input type="radio" name="booking_slot_choice" value="Flexible"> Flexible — quote first</label>
+              <h4>When should we come look?</h4>
+              <p class="quote-result-note">Choose a window that usually works. We’ll confirm the actual walkthrough appointment with you.</p>
+              <fieldset class="booking-slots" aria-label="Preferred walkthrough time">
+                <legend class="sr-only">Walkthrough time options</legend>
+                <label class="booking-slot"><input type="radio" name="booking_slot_choice" value="Today PM"> Today afternoon</label>
+                <label class="booking-slot"><input type="radio" name="booking_slot_choice" value="Tomorrow AM"> Tomorrow morning</label>
+                <label class="booking-slot"><input type="radio" name="booking_slot_choice" value="Tomorrow PM"> Tomorrow afternoon</label>
+                <label class="booking-slot"><input type="radio" name="booking_slot_choice" value="This week"> Later this week</label>
+                <label class="booking-slot"><input type="radio" name="booking_slot_choice" value="Flexible"> Flexible</label>
               </fieldset>
             </div>
             <p class="form-error" role="alert" aria-live="polite"></p>
@@ -1125,10 +1116,10 @@ QUOTE_FORM = """
             <div class="form-nav"><button type="button" class="btn-secondary" data-prev>← Back</button><button type="button" class="btn-primary" data-next>Next: Photos →</button></div>
           </div>
           <div class="form-panel" data-step="5">
-            <div class="form-row"><div class="field"><label for="photos-{form_id}">Upload photos (recommended)</label><input type="file" id="photos-{form_id}" name="Photos" accept="image/*" multiple /></div></div>
+            <div class="form-row"><div class="field"><label for="photos-{form_id}">Upload photos (optional)</label><input type="file" id="photos-{form_id}" name="Photos" accept="image/*" multiple /><p class="field-hint">Photos help us prepare for the walkthrough. We do not price the job from photos.</p></div></div>
             <div class="photo-previews" data-photo-previews aria-live="polite"></div>
             <div class="form-row"><div class="field"><label for="photo-desc-{form_id}">Describe what we see (optional)</label><textarea id="photo-desc-{form_id}" name="Photo description" placeholder="Wide shot of garage, couch in corner, etc."></textarea></div></div>
-            <p class="form-note" style="margin-bottom:12px;">No photos? Text them to {phone_display} — often faster.</p>
+            <p class="form-note" style="margin-bottom:12px;">No photos? No problem. We will see the space together during the walkthrough.</p>
             <div class="form-nav"><button type="button" class="btn-secondary" data-prev>← Back</button><button type="button" class="btn-primary" data-next>Next: Contact →</button></div>
           </div>
           <div class="form-panel" data-step="6">
@@ -1144,14 +1135,14 @@ QUOTE_FORM = """
                   <option value="ASAP / Next-day">ASAP / Next-day</option>
                   <option value="This week">This week</option>
                   <option value="Next week">Next week</option>
-                  <option value="Flexible">Flexible — just getting a quote</option>
+                  <option value="Flexible">Flexible</option>
                 </select>
               </div>
             </div>
-            <p class="form-note" style="margin-top:8px">Most quotes returned in under 5 minutes during business hours.</p>
-            <p class="form-privacy">We only use your info for this quote — never sold or shared.</p>
-            <label class="sms-consent"><input type="checkbox" name="sms_consent" value="yes"><span>I agree to receive text messages from Easy Garage Cleaning about my quote and appointment at the number provided. Consent is not a condition of purchase. Message frequency varies, msg &amp; data rates may apply. Reply STOP to opt out or HELP for help. See our <a href="/privacy-policy">Privacy Policy</a> and <a href="/terms-of-service">Terms of Service</a>.</span></label>
-            <div class="form-nav"><button type="button" class="btn-secondary" data-prev>← Back</button><button type="submit" class="btn-primary form-submit" data-submit-label>Confirm booking request →</button></div>
+            <p class="form-note" style="margin-top:8px">We will contact you to confirm the walkthrough time.</p>
+            <p class="form-privacy">We only use your information to schedule and prepare for your visit—never sold or shared.</p>
+            <label class="sms-consent"><input type="checkbox" name="sms_consent" value="yes"><span>I agree to receive text messages from Easy Garage Cleaning about my walkthrough and appointment at the number provided. Consent is not a condition of purchase. Message frequency varies, msg &amp; data rates may apply. Reply STOP to opt out or HELP for help. See our <a href="/privacy-policy">Privacy Policy</a> and <a href="/terms-of-service">Terms of Service</a>.</span></label>
+            <div class="form-nav"><button type="button" class="btn-secondary" data-prev>← Back</button><button type="submit" class="btn-primary form-submit" data-submit-label>Request walkthrough →</button></div>
           </div>
         </form>
       </div>
@@ -1166,12 +1157,12 @@ PROCESS_HTML = """
   <div class="wrap">
     <div class="section-head reveal"><span class="mono section-num">How it works</span>
       <h2 class="section-title" id="process-heading">Three steps to <em>reclaim your space</em></h2>
-      <p class="section-sub">No truck visit needed for most quotes. Text us photos and we'll tell you exactly what it costs.</p>
+      <p class="section-sub">We come to you, look at the full space, and give you a practical plan with one exact price.</p>
     </div>
     <div class="steps reveal">
-      <div class="step"><div class="step-num">Step 01</div><h3>Send Photos</h3><p>Text photos to <a href="sms:{phone}">{phone_display}</a>, or upload them below. Wide shots work best.</p></div>
-      <div class="step"><div class="step-num">Step 02</div><h3>Fast Quote</h3><p>We respond within 5 minutes with a flat-rate price. Only pay after you approve — no hidden fees.</p></div>
-      <div class="step"><div class="step-num">Step 03</div><h3>We Handle It</h3><p>We do all the lifting, haul everything, donate usable items, sweep, and hand you a donation receipt.</p></div>
+      <div class="step"><div class="step-num">Step 01</div><h3>Schedule the Walkthrough</h3><p>Choose a convenient window online, call <a href="tel:{phone}">{phone_display}</a>, or schedule by text.</p></div>
+      <div class="step"><div class="step-num">Step 02</div><h3>Walk the Space Together</h3><p>You show us what stays, what goes, and what you want the garage to do better. We build the plan and set one exact price.</p></div>
+      <div class="step"><div class="step-num">Step 03</div><h3>Approve the Plan</h3><p>Keep the plan either way. If you hire us, the crew handles removal, donation, cleaning, organization, and the final reset.</p></div>
     </div>
   </div>
 </section>
@@ -1305,12 +1296,11 @@ def howto_schema():
         "@context": "https://schema.org",
         "@type": "HowTo",
         "name": "How to book a garage cleanout in Fort Collins",
-        "description": "Get a flat-rate garage cleanout quote from Easy Garage Cleaning in three simple steps.",
-        "totalTime": "PT5M",
+        "description": "Schedule a free on-site walkthrough and receive a complete Garage Turnaround Plan with an exact flat-rate price.",
         "step": [
-            {"@type": "HowToStep", "position": 1, "name": "Send photos", "text": f"Text photos of your garage or junk to {PHONE_DISPLAY}, or upload them in the quote form at easygaragecleaning.com. Wide shots work best."},
-            {"@type": "HowToStep", "position": 2, "name": "Get a flat-rate quote", "text": "We respond within 5 minutes with a firm price. No hourly billing, no truck visit required for most jobs."},
-            {"@type": "HowToStep", "position": 3, "name": "We reclaim your garage", "text": "We haul everything, donate usable items, sweep the floor, and hand you a donation receipt. You only pay after approving the quote."},
+            {"@type": "HowToStep", "position": 1, "name": "Schedule the walkthrough", "text": f"Request a convenient on-site walkthrough online, by calling {PHONE_DISPLAY}, or by text."},
+            {"@type": "HowToStep", "position": 2, "name": "Walk the space together", "text": "Show us what stays, what leaves, and what you want the garage to do better. Photos are optional and are used only to help us prepare."},
+            {"@type": "HowToStep", "position": 3, "name": "Review the plan and exact price", "text": "We provide a complete Garage Turnaround Plan and one flat-rate price before work begins. The plan is yours whether or not you hire us."},
         ],
     }, ensure_ascii=False)
 
@@ -1327,7 +1317,7 @@ def website_schema():
         "potentialAction": [
             {
                 "@type": "ContactAction",
-                "name": "Call for quote",
+                "name": "Call to schedule a walkthrough",
                 "target": f"tel:{PHONE}",
             },
             {
@@ -1396,7 +1386,7 @@ def service_schema(name, desc, slug, stype):
                     "minPrice": "99",
                     "maxPrice": "650",
                     "priceCurrency": "USD",
-                    "description": "Flat-rate photo quotes: single-item $99–$150, partial $250–$400, standard garage $400–$650, large $650+",
+                    "description": "Planning ranges only. The exact flat-rate price is set after a free on-site walkthrough.",
                 },
                 "availability": "https://schema.org/InStock",
                 "url": f"{SITE}/book.html",
@@ -1638,6 +1628,209 @@ def fmt(template, **kwargs):
     return template.format(**defaults)
 
 
+def enforce_walkthrough_first_copy(text):
+    """Keep every public page honest about how EGC prices work.
+
+    Photos are welcome as planning context, but the exact flat rate is only set
+    after an on-site walkthrough. This final-pass guard also protects manually
+    authored pages and older blog posts from reintroducing the retired
+    photo-quote promise.
+    """
+    direct = {
+        "Text photos for 5-minute quote": "Schedule a free on-site walkthrough",
+        "Text photos for a 5-minute quote": "Schedule a free on-site walkthrough",
+        "Text for a 5-minute quote": "Schedule a free on-site walkthrough",
+        "Text for 5-min quote": "Schedule a free on-site walkthrough",
+        "Get a Free Quote in 5 Minutes": "Schedule a Free On-Site Walkthrough",
+        "Free Quote — We Call in 5 Minutes": "Free On-Site Walkthrough",
+        "free 5-min quote": "free on-site walkthrough",
+        "Photo quotes in 5 minutes": "Free on-site walkthroughs with exact pricing afterward",
+        "photo quotes in 5 minutes": "free on-site walkthroughs with exact pricing afterward",
+        "walkthrough-based pricing in ~5 minutes": "walkthrough-based flat-rate pricing",
+        "No truck visit needed for most quotes": "We visit the property before setting the exact price",
+        "no truck visit needed for most quotes": "we visit the property before setting the exact price",
+        "How do I get a quote with photos?": "How do I schedule a walkthrough?",
+        "Texted photos, got a quote in minutes.": "Scheduled a walkthrough, received one clear price.",
+        "photo-quote process": "on-site walkthrough process",
+        "Photo walkthrough scheduling response": "On-site walkthrough",
+        "Flat-rate photo quotes": "Walkthrough-based flat-rate pricing",
+        "flat-rate photo quotes": "walkthrough-based flat-rate pricing",
+        "Flat photo quotes": "Walkthrough-based flat rates",
+        "flat photo quotes": "walkthrough-based flat rates",
+        "photo quotes": "walkthrough-based pricing",
+        "photo quote": "walkthrough-based price",
+        "5-min quote response": "fast walkthrough scheduling",
+        "5-minute quote response": "fast walkthrough scheduling",
+        "Get Free Quote": "Schedule Free Walkthrough",
+        "Get free quote": "Schedule free walkthrough",
+        "Get your free quote": "Schedule your free walkthrough",
+        "Text Photos for Estimate": "Schedule by Text",
+        "Text Photos": "Schedule by Text",
+        "Text photos now": "Free on-site walkthrough",
+        "Text us photos": "Schedule a walkthrough",
+        "Text for quote": "Schedule by text",
+        "Why photo quotes work": "What the walkthrough covers",
+        "Flat-rate from photos": "Flat-rate after an on-site walkthrough",
+        "Flat-rate from your photos": "Flat-rate after a free on-site walkthrough",
+        "flat-rate from photos": "flat-rate after an on-site walkthrough",
+        "flat-rate from your photos": "flat-rate after a free on-site walkthrough",
+        "flat rate from photos": "flat rate after an on-site walkthrough",
+        "quoted flat from photos": "priced after a free on-site walkthrough",
+        "quote from photos": "price after an on-site walkthrough",
+        "Quote from photos": "Price after an on-site walkthrough",
+        "quoted from photos": "priced after an on-site walkthrough",
+        "Quoted from photos": "Priced after an on-site walkthrough",
+        "quoted by photo": "priced after an on-site walkthrough",
+        "Photo quote for exact price": "On-site walkthrough for exact pricing",
+        "Photo quote includes access and volume assessment": "The on-site walkthrough includes access and volume assessment",
+        "quoted individually from photos": "priced individually after an on-site walkthrough",
+        "quote those flat-rate from photos": "price those after an on-site walkthrough",
+        "quotes in under 5 minutes": "walkthrough requests answered quickly",
+        "quotes in about 5 minutes": "walkthrough requests answered quickly",
+        "quotes in ~5 minutes": "walkthrough requests answered quickly",
+        "quote in under 5 minutes": "walkthrough request answered quickly",
+        "quote in about 5 minutes": "walkthrough request answered quickly",
+        "quote in 5 minutes": "walkthrough scheduling response",
+        "quote in ~5 minutes": "walkthrough scheduling response",
+        "5-min quote": "free on-site walkthrough",
+        "5-minute quote": "free on-site walkthrough",
+        "5-minute flat-rate response": "fast walkthrough scheduling response",
+        "5-minute flat rate": "walkthrough-based flat rate",
+        "flat rate in 5 minutes": "exact price after the walkthrough",
+        "Most quotes return in under 5 minutes": "We answer walkthrough requests quickly",
+        "most quotes return in under 5 minutes": "we answer walkthrough requests quickly",
+        "We respond to every quote within 5 minutes": "We respond to walkthrough requests quickly",
+        "we respond to every quote within 5 minutes": "we respond to walkthrough requests quickly",
+        "Quotes come from photos with a response in 5 minutes": "Exact prices come from an on-site walkthrough",
+        "Quotes are provided as flat-rate estimates based on the photos and information you supply.": "Quotes are provided as flat-rate estimates after an on-site walkthrough of the property.",
+        "If the job matches what you described in photos or on-site, your quoted price is locked.": "If the job matches the scope approved during the walkthrough, your quoted price is locked.",
+        "If the scope matches what you described in photos or on-site, your quoted price is locked.": "If the scope matches what you approved during the walkthrough, your quoted price is locked.",
+        "After a quick conversation (or a look at some photos of the garage), we give you a flat-rate quote.": "During a free on-site walkthrough, we inspect the garage and give you one exact flat-rate price.",
+        "After a quick conversation or photo review, we give you a flat-rate quote and schedule the job.": "After a free on-site walkthrough, we give you one exact flat-rate price and schedule the job.",
+        "Quotes are provided as flat-rate estimates based on the photos and information you supply.": "Quotes are provided as flat-rate estimates after an on-site walkthrough of the property.",
+        "quoted flat after photos of access and size": "priced after an on-site walkthrough of the access and size",
+        "Flat-rate quotes. Text photos for 5-minute response.": "Flat-rate pricing after a free on-site walkthrough.",
+        "We will quote a flat rate for the larger load — just text photos when you book and we will size it.": "We will set a flat rate for the larger load after an on-site walkthrough.",
+        "We'll quote a flat rate for the larger load — just text photos when you book and we'll size it.": "We'll set a flat rate for the larger load after an on-site walkthrough.",
+        "Multi-unit cleanouts get a bundled flat-rate quote — text photos of each unit.": "Multi-unit cleanouts get one bundled flat-rate price after an on-site walkthrough of the units.",
+        "Text us a photo for a fast quote — you'll have your exact price in minutes, before anyone shows up.": "Schedule a free on-site walkthrough and receive one exact price before work begins.",
+        "Text us a photo of your junk — get a quote in minutes": "Schedule a free on-site walkthrough",
+        "Text a photo for a fast quote": "Schedule a free walkthrough",
+        "Thanks — we'll call or text within 5 minutes with your flat-rate garage quote.": "Thanks — we'll call or text to confirm your free on-site walkthrough.",
+        "Text wide photos of your garage to (970) 999-1818 or call. We respond within 5 minutes with a flat-rate quote, and you only pay after approving it.": "Schedule a free on-site walkthrough online, by text, or by calling (970) 999-1818. We set one flat-rate price during the visit, and you approve it before work begins.",
+        "Quotes come from photos with a response in 5 minutes.": "Exact prices are set during a free on-site walkthrough.",
+        "The carry distance is built into your quote from the beginning, not added on later. When you text photos or we walk the property, we look at access, distance, and volume together.": "The carry distance is built into your quote from the beginning, not added later. During the on-site walkthrough, we look at access, distance, and volume together.",
+        "Wide photos of each zone are enough for a flat-rate quote": "A free on-site walkthrough of each zone gives us what we need for an exact flat-rate price",
+        "Most quotes return in under 5 minutes.": "We respond quickly to walkthrough requests.",
+        "Call (970) 999-1818 for a free flat-rate quote; photos of the garage are usually all we need to lock your number and your date.": "Call (970) 999-1818 to schedule a free on-site walkthrough; we set the exact price and job date after seeing the property.",
+        "Call (970) 999-1818 for a free flat-rate quote — or text photos of the garage and we'll tell you what the clear-out takes.": "Call (970) 999-1818 or schedule online for a free on-site walkthrough and an exact flat-rate price.",
+        "Call (970) 999-1818 and describe your garage, or text photos. Quotes are free, flat-rate, and locked before we start.": "Call (970) 999-1818 or schedule online for a free on-site walkthrough. The exact flat-rate price is set during the visit and locked before work starts.",
+        "If you already have dumpster quotes, forward them when you text photos — we are happy to help you compare apples-to-apples on total cost and timeline.": "If you already have dumpster quotes, bring them to the walkthrough—we are happy to compare the total cost and timeline with you.",
+        "The carry distance is built into your quote from the beginning, not added on later. When you text photos or we walk the property, we look at access, distance, and volume together, then give you one flat-rate number.": "The carry distance is built into your quote from the beginning, not added later. During the on-site walkthrough, we look at access, distance, and volume together, then give you one flat-rate number.",
+        "calling (970) 999-1818 or texting photos of the garage. Quotes are free either way.": "scheduling a free on-site walkthrough online or by calling (970) 999-1818.",
+        "Flat-rate junk removal quotes include labor and disposal for the volume we see in your photos.": "Flat-rate junk removal quotes include labor and disposal for the scope we confirm during the on-site walkthrough.",
+        "Get a flat-rate garage cleanout quote from Easy Garage Cleaning in three simple steps.": "Schedule a free on-site walkthrough and receive a complete Garage Turnaround Plan in three simple steps.",
+        "Text photos of your garage or junk to (970) 999-1818, or upload them in the quote form at easygaragecleaning.com. Wide shots work best.": "Request a free on-site walkthrough online, by calling (970) 999-1818, or by text. Optional photos only help us prepare.",
+        "We respond within 5 minutes with a firm price. No hourly billing, an on-site walkthrough comes before exact pricing.": "We confirm your walkthrough appointment, then set one exact flat-rate price during the visit.",
+        "Text photos of your garage or junk pile to (970) 999-1818, or upload them in our quote form. We respond within 5 minutes during business hours with a flat-rate estimate — an on-site walkthrough comes before exact pricing.": "Request a free on-site walkthrough online, by calling (970) 999-1818, or by text. Optional photos only help us prepare; the exact price is set during the visit.",
+        "Call (970) 999-1818 and tell us about your garage — or text wide photos to the same number. Either way you get a firm flat-rate quote fast.": "Call (970) 999-1818 or schedule online for a free on-site walkthrough and one exact flat-rate price.",
+        "Get a flat-rate quote": "Get one exact price after the walkthrough",
+        "Got photos? Text them to": "Optional photos can be sent to",
+        "for the fastest exact quote": "to help us prepare for the walkthrough",
+        "Bigger jobs get an exact price from your photo. You know your price before we show up.": "Larger jobs get one exact price during a free on-site walkthrough. You approve it before work begins.",
+        "Locked price from your photos before we roll — no surprises.": "One exact price set during the on-site walkthrough — no surprises.",
+        "No — same flat-rate pricing from your photos. You only pay for the load, not the speed.": "No — rush timing does not change how we price. We set one flat rate during the on-site walkthrough.",
+        "We send a locked flat-rate walkthrough request answered quickly.": "We answer quickly, schedule the walkthrough, and set the exact flat rate on site.",
+        "We plan the layout from your photos and install the shelving, hooks, and racks you purchase — labor's in the quote, and we don't markup products.": "We confirm the layout during the walkthrough and install the shelving, hooks, and racks you purchase — labor is included in the approved price, and we do not mark up products.",
+        "Every quote is flat-rate and locked before work starts — usually from photos, so nobody has to host a walkthrough before they're ready.": "Every quote is flat-rate and locked before work starts. We set it during a free on-site walkthrough when the family is ready.",
+        "Your flat-rate quote was locked in before we ever scheduled the day — usually from photos you texted over — so the morning walkthrough is about logistics, not money.": "Your flat-rate quote was set during the free on-site walkthrough before the workday was scheduled, so the morning check is about logistics, not money.",
+        "Call any Fort Collins-area roll-off company with this list — then text us the same garage photos so you can compare total cost side by side:": "Call any Fort Collins-area roll-off company with this list, then schedule our free on-site walkthrough so you can compare total cost side by side:",
+        "text us photos of the garage, driveway, and any flagged areas. You'll get a flat-rate quote and available dates — free, no obligation, usually within the hour during business hours.": "schedule a free walkthrough of the garage, driveway, and any flagged areas. We will confirm available dates and set the exact flat-rate price on site.",
+    }
+    for old, new in direct.items():
+        text = text.replace(old, new)
+    text = re.sub(r"(?i)text photos for (?:a )?(?:flat-rate )?walkthrough scheduling response", "Schedule a free on-site walkthrough", text)
+    text = re.sub(r"(?<=[.!?])\s+schedule a free", " Schedule a free", text)
+    text = text.replace('"text": "schedule a free', '"text": "Schedule a free')
+    text = re.sub(r'(?i)(>)(?:book free quote|get my flat-rate quote|text photos)(<)', r'\1Schedule walkthrough\2', text)
+    text = re.sub(
+        r"(?i)\b(?:we\s+)?quote(?:d|s)?\s+(?:a\s+)?(?:firm\s+|exact\s+|flat[- ]rate\s+|flat\s+)?(?:price\s+)?from\s+(?:your\s+)?(?:wide\s+)?photos\b",
+        "we set the exact flat rate after a free on-site walkthrough",
+        text,
+    )
+    text = re.sub(
+        r"(?i)\b(?:a\s+)?(?:firm\s+|exact\s+|flat[- ]rate\s+)?quote\s+(?:based on|from)\s+(?:your\s+)?(?:wide\s+)?photos\b",
+        "an exact flat-rate price after a free on-site walkthrough",
+        text,
+    )
+    text = re.sub(
+        r"(?i)\btext photos for (?:an?\s+|your\s+)?(?:fast(?:est)?\s+|exact\s+)?(?:flat(?:[- ]rate)?\s+)?quote(?:\s+in\s+(?:about\s+|under\s+)?5\s+minutes)?",
+        "schedule a free on-site walkthrough for an exact flat-rate price",
+        text,
+    )
+    text = re.sub(
+        r"(?i)\b(?:text|send|upload) photos(?:\s+of\s+[^.<]{0,70})?\s+for\s+(?:an?\s+|your\s+)?(?:fast(?:est)?\s+|exact\s+|accurate\s+)?(?:flat[- ]rate\s+)?(?:quote|pricing|booking|confirmation|scheduling)",
+        "schedule a free on-site walkthrough for accurate pricing and scheduling",
+        text,
+    )
+    text = re.sub(
+        r"(?i)\btext photos(?:\s+of\s+[^.<]{0,70})?\s+and\s+(?:we(?:'ll| will)\s+)?(?:price|quote)[^.<]{0,35}(?:from (?:them|those)|accurately)",
+        "schedule a free on-site walkthrough and we’ll set the exact price there",
+        text,
+    )
+    text = re.sub(
+        r"(?i)\bno (?:truck|on-site) visit (?:is )?required(?: for most (?:jobs|quotes))?",
+        "an on-site walkthrough comes before exact pricing",
+        text,
+    )
+    text = re.sub(
+        r"(?i)\btext a photo, get a firm flat price\b",
+        "schedule a walkthrough and get one firm flat price",
+        text,
+    )
+    text = re.sub(
+        r"(?i)\b(?:send|text|upload) (?:us )?(?:wide )?photos?[^.<]{0,45}\b(?:we(?:'ll| will)\s+)?(?:quote|price)[^.<]{0,45}",
+        "schedule a free on-site walkthrough so we can set the exact price",
+        text,
+    )
+    text = re.sub(
+        r"(?i)\bphotos? (?:are|is|get|gets|give|gives)[^.<]{0,45}\b(?:quote|price|pricing)[^.<]{0,35}",
+        "the on-site walkthrough gives us what we need for exact pricing",
+        text,
+    )
+    text = re.sub(
+        r"(?i)\b(?:we\s+)?(?:regularly\s+)?quote from (?:a |the )?[^.<]{0,45}photos\b",
+        "we set pricing after an on-site walkthrough",
+        text,
+    )
+    text = re.sub(
+        r"(?i)\b(?:wide\s+)?photos of [^.<]{0,55} are enough for (?:an?\s+)?flat[- ]rate quote\b",
+        "a free on-site walkthrough gives us what we need for an exact flat-rate price",
+        text,
+    )
+    text = re.sub(
+        r"(?i)\b(?:text|texting) photos?[^.<]{0,55}\b(?:quote|quoted|price|pricing)[^.<]{0,45}",
+        "schedule a free on-site walkthrough for exact pricing",
+        text,
+    )
+    text = re.sub(
+        r"(?i)\b(?:send|text) photos? to \(970\) 999-1818[^.<]{0,80}",
+        "schedule a free on-site walkthrough online or by text",
+        text,
+    )
+    text = re.sub(
+        r"(?i)\b(?:we\s+)?(?:send|return|give) (?:you\s+)?(?:a\s+)?(?:locked\s+|firm\s+|exact\s+|flat[- ]rate\s+)*quote[^.<]{0,25}\b(?:5 minutes|photos?)\b[^.<]{0,35}",
+        "we set one exact flat-rate price during the on-site walkthrough",
+        text,
+    )
+    text = re.sub(
+        r'href="sms:\+19709991818\?body=[^"]*"',
+        f'href="sms:{PHONE}?body={SMS_PHOTOS_BODY}"',
+        text,
+    )
+    return text
+
+
 def quote_form_for(stype, **kwargs):
     dg = ' checked' if 'garage' in stype.lower() and 'junk' not in stype.lower() and 'organization' not in stype.lower() else ''
     dj = ' checked' if stype.lower() == 'junk removal' else ''
@@ -1673,7 +1866,7 @@ def page_shell(title, desc, canonical, schema, body, og_type="website", quote_hr
         body = re.sub(r"<main(\s|>)", r'<main id="main-content"\1', body, count=1)
     # Page CSS is no longer inlined — every generated page links the current
     # versioned /styles.css asset from HEAD.
-    return HEAD.format(title=title, desc=desc, canonical=canonical, schema=rating_note + schema + extra, SITE=SITE, og_type=og_type, robots=robots) + fmt(NAV, **nav_opts) + body + fmt(FOOTER, **nav_opts)
+    return enforce_walkthrough_first_copy(HEAD.format(title=title, desc=desc, canonical=canonical, schema=rating_note + schema + extra, SITE=SITE, og_type=og_type, robots=robots) + fmt(NAV, **nav_opts) + body + fmt(FOOTER, **nav_opts))
 
 
 def render_service(s):
@@ -1686,21 +1879,21 @@ def render_service(s):
         f'<script type="application/ld+json">{howto_schema()}</script>\n'
         f'<script type="application/ld+json">{gallery_schema(s["ba"])}</script>'
     )
-    trust = '<span class="trust-badge">No hidden fees</span><span class="trust-badge">We do all lifting</span><span class="trust-badge">Text photos now</span>'
+    trust = '<span class="trust-badge">No hidden fees</span><span class="trust-badge">We do all lifting</span><span class="trust-badge">Free on-site walkthrough</span>'
     hero = f"""<header class="hero" id="top"><div class="wrap hero-grid"><div><div class="hero-eyebrow mono">Fort Collins &amp; Northern Colorado</div>
-<a href="tel:{PHONE}" class="hero-phone">{PHONE_DISPLAY}<span class="hero-phone-sub">· 5-min quote response</span></a>
+<a href="tel:{PHONE}" class="hero-phone">{PHONE_DISPLAY}<span class="hero-phone-sub">· schedule your free walkthrough</span></a>
 <h1 class="hero-title">{esc(s["h1"])} — <em>{esc(s["hero_em"])}</em></h1>
 <p class="hero-sub">{s["hero_sub"]}</p>
-<div class="hero-ctas"><a href="#quote" class="btn-primary">Get Free Quote</a>
-<a href="sms:{PHONE}?body={s['sms'].replace(' ', '%20')}" class="btn-secondary">Text Photos for Estimate</a></div>
-<div class="hero-trust"><span class="trust-badge">Locally owned</span><span class="trust-badge">Flat-rate pricing</span><span class="trust-badge">Next-day available</span><span class="trust-badge">5-min response</span>{trust}</div></div>
+<div class="hero-ctas"><a href="#quote" class="btn-primary">Schedule Free Walkthrough</a>
+<a href="sms:{PHONE}?body={SMS_PHOTOS_BODY}" class="btn-secondary">Schedule by Text</a></div>
+<div class="hero-trust"><span class="trust-badge">Locally owned</span><span class="trust-badge">Flat-rate pricing</span><span class="trust-badge">Next-day availability</span>{trust}</div></div>
 <div class="hero-ba"><div class="hero-ba-cell before"><span class="hero-ba-label">BEFORE</span><picture><source srcset="/images/garage-before.webp" type="image/webp"><img src="/images/garage-before.jpg" alt="Cluttered two-car garage in Fort Collins before our crew arrived" width="1200" height="1200"></picture></div>
 <div class="hero-ba-cell after"><span class="hero-ba-label">AFTER</span><picture><source srcset="/images/garage-after.webp" type="image/webp"><img src="/images/garage-after.jpg" alt="Clean swept garage after an Easy Garage Cleaning visit" width="1200" height="1200"></picture></div></div></div></header>"""
     items = items_html(s["yes_title"], s["yes"], NO_ITEMS) if s.get("show_items", True) else ""
     video = VIDEO_HTML if s.get("show_video") else ""
     def_section = f'<section class="body-copy"><div class="wrap"><div class="body-copy-inner reveal">{def_block_html(s["stype"], s["hero_sub"])}</div></div></section>'
     related = s.get("related") or NORTHERO_RELATED
-    qa = s.get("quick_answer") or f"{s['stype']} in Fort Collins starts at $99 for a single item or $400–$650 for a typical garage — flat-rate from photos, response in 5 minutes. Text {PHONE_DISPLAY} or book at easygaragecleaning.com/book.html."
+    qa = s.get("quick_answer") or f"{s['stype']} in Fort Collins is priced with one flat rate after a free on-site walkthrough. Call {PHONE_DISPLAY} or schedule at easygaragecleaning.com/book.html."
     std_links = '<p class="section-sub reveal" style="margin-top:0">See <a href="/pricing.html" class="content-link">pricing</a>, <a href="/what-we-take.html" class="content-link">what we take</a>, and <a href="/book.html" class="content-link">book online</a>.</p>'
     body = "<main>" + "\n".join([
         hero,
@@ -1746,12 +1939,12 @@ def render_city(c):
     schema = f'<script type="application/ld+json">{service_schema(c["h1"], c["desc"], slug, c["service"])}</script>\n<script type="application/ld+json">{faq_schema(c["faqs"])}</script>'
     serve_line = f'<p class="city-serve-line"><span aria-hidden="true">📍</span> We serve {esc(c["city"])} and surrounding neighborhoods.</p>'
     hero = f"""<header class="hero" id="top"><div class="wrap hero-grid"><div><div class="hero-eyebrow mono">Serving {c["city"]}, CO</div>
-<a href="tel:{PHONE}" class="hero-phone">{PHONE_DISPLAY}<span class="hero-phone-sub">· 5-min quote response</span></a>
+<a href="tel:{PHONE}" class="hero-phone">{PHONE_DISPLAY}<span class="hero-phone-sub">· schedule your free walkthrough</span></a>
 <h1 class="hero-title">{esc(c["h1"])}</h1>
 {serve_line}
 <p class="hero-sub">{c["intro"]}</p>
-<div class="hero-ctas"><a href="#quote" class="btn-primary">Get Free Quote</a>
-<a href="sms:{PHONE}?body=Hi!%20I%20need%20{c['service'].replace(' ', '%20')}%20in%20{c['city']}." class="btn-secondary">Text Photos for Estimate</a></div>
+<div class="hero-ctas"><a href="#quote" class="btn-primary">Schedule Free Walkthrough</a>
+<a href="sms:{PHONE}?body={SMS_PHOTOS_BODY}" class="btn-secondary">Schedule by Text</a></div>
 <div class="hero-trust"><span class="trust-badge">Flat-rate pricing</span><span class="trust-badge">Fully insured</span><span class="trust-badge">Next-day available</span><span class="trust-badge">No travel surcharge</span></div></div>
 {city_hero_visual(c["city"])}</div></header>"""
     local = city_neighborhood_section(c)
@@ -1763,7 +1956,7 @@ def render_city(c):
         ("/", "Home"),
     ]))
     def_section = f'<section class="body-copy"><div class="wrap"><div class="body-copy-inner reveal">{def_block_html(c["service"], c["intro"])}</div></div></section>'
-    qa = c.get("quick_answer") or f"{c['service']} in {c['city']} is flat-rate from photos — typically $400–$650 for garages, $99–$150 for single items. No travel surcharge in our core area. Call {PHONE_DISPLAY} for a 5-minute quote."
+    qa = c.get("quick_answer") or f"{c['service']} in {c['city']} is priced with one flat rate after a free on-site walkthrough. There is no travel surcharge in our core area. Call {PHONE_DISPLAY} to schedule."
     std_links = '<p>See <a href="/pricing.html" class="content-link">pricing</a>, <a href="/what-we-take.html" class="content-link">what we take</a>, and <a href="/book.html" class="content-link">book online</a>.</p>'
     body = "<main>" + "\n".join([
         hero,
@@ -1796,7 +1989,7 @@ def render_project(p):
 <section class="process"><div class="wrap">
 <div class="section-head"><span class="mono section-num">Timeline</span><h2 class="section-title">How this <em>job ran</em></h2></div>
 <div class="project-timeline reveal">
-<div class="project-timeline-step"><div class="project-timeline-num">01</div><div><h3>Quote from photos</h3><p>Customer texted wide shots; flat-rate locked in under 5 minutes — {esc(p["job_type"])} in {esc(p["city"])}.</p></div></div>
+<div class="project-timeline-step"><div class="project-timeline-num">01</div><div><h3>Free on-site walkthrough</h3><p>We walked the space with the customer, defined the finished result, and set one flat price before work began — {esc(p["job_type"])} in {esc(p["city"])}.</p></div></div>
 <div class="project-timeline-step"><div class="project-timeline-num">02</div><div><h3>On-site haul — {esc(p["neighborhood"])}</h3><p>{esc(p["time"])}. Crew marked keep vs. remove, donated usable items, loaded the rest.</p></div></div>
 <div class="project-timeline-step"><div class="project-timeline-num">03</div><div><h3>Result</h3><p>{p["result"]}</p></div></div>
 </div>
@@ -1806,7 +1999,7 @@ def render_project(p):
 <h2 class="section-title" style="margin-top:32px">What we <em>removed</em></h2><p class="section-sub">{p["removed"]}</p></div></div></section>
 {related_html(p.get("related", [("/garage-cleanouts-fort-collins-co.html", "Garage Cleanouts"), ("/junk-removal-fort-collins-co.html", "Junk Removal"), ("/", "Home")]))}
 {fmt(PRICING_HTML)}
-{quote_form_for(p["job_type"], cta_title="Get a quote like this <em>for your home</em>", form_subject=f"Project Inquiry - {p['city']}", city_default=p["city"], sms_body="Hi!%20I%20saw%20your%20project%20page%20and%20need%20a%20quote.")}
+{quote_form_for(p["job_type"], cta_title="Schedule a walkthrough <em>for your home</em>", form_subject=f"Project Walkthrough Request - {p['city']}", city_default=p["city"], sms_body=SMS_PHOTOS_BODY)}
 </main>"""
     return page_shell(p["title"], p["desc"], canonical, f'<script type="application/ld+json">{schema}</script>', content)
 
@@ -1827,11 +2020,11 @@ def render_item_page(item):
     price_sticky = f'<div class="price-sticky-mobile" aria-label="Typical price"><span class="price-sticky-range">{price_range}</span><a href="#quote">Get quote →</a></div>'
     hero = f"""<header class="hero" id="top"><div class="wrap"><div class="hero-eyebrow mono">Fort Collins, CO</div>
 <div class="item-hero-icon" aria-hidden="true">{icon}</div>
-<a href="tel:{PHONE}" class="hero-phone">{PHONE_DISPLAY}<span class="hero-phone-sub">· 5-min quote response</span></a>
+<a href="tel:{PHONE}" class="hero-phone">{PHONE_DISPLAY}<span class="hero-phone-sub">· schedule your free walkthrough</span></a>
 <h1 class="hero-title" style="max-width:none">{esc(item["h1"])}</h1>
 <p class="hero-sub">{item["hero_sub"]}</p>
-<div class="hero-ctas"><a href="#quote" class="btn-primary">Get Free Quote</a>
-<a href="sms:{PHONE}?body={sms_enc}" class="btn-secondary">Text Photos</a></div></div></header>"""
+<div class="hero-ctas"><a href="#quote" class="btn-primary">Schedule Free Walkthrough</a>
+<a href="sms:{PHONE}?body={SMS_PHOTOS_BODY}" class="btn-secondary">Schedule by Text</a></div></div></header>"""
     parent = ITEM_PARENT_CATEGORY.get(item["stype"])
     parent_html = ""
     if parent:
@@ -1839,7 +2032,7 @@ def render_item_page(item):
         parent_html = f'<p class="parent-service-link"><a href="{phref}">← {esc(pname)} in Fort Collins</a></p>'
     def_section = f'<section class="body-copy"><div class="wrap"><div class="body-copy-inner reveal">{parent_html}{def_block_html(item["stype"], item["hero_sub"])}</div></div></section>'
     related = item.get("related") or NORTHERO_RELATED
-    qa = item.get("quick_answer") or f"{item['stype']} in Fort Collins is quoted flat from photos — usually $99–$150 for one bulky item. We lift, haul, and donate when possible. Text {PHONE_DISPLAY} for a 5-minute response."
+    qa = item.get("quick_answer") or f"{item['stype']} in Fort Collins is priced after a free on-site walkthrough. We lift, haul, and donate when possible. Call {PHONE_DISPLAY} to schedule."
     std_links = '<p>See <a href="/pricing.html" class="content-link">pricing</a>, <a href="/what-we-take.html" class="content-link">all items we take</a>, and <a href="/book.html" class="content-link">book online</a>.</p>'
     body = "<main>" + "\n".join([
         hero,
@@ -1891,7 +2084,7 @@ def render_comparison(cmp):
 <header class="hero"><div class="hero-eyebrow mono">Fort Collins Guide</div>
 <h1 class="hero-title" style="max-width:none">{esc(cmp["h1"])}</h1>
 <p class="hero-sub">{cmp["intro"]}</p>
-<div class="hero-ctas" style="margin-top:20px"><a href="#quote" class="btn-primary">Get Free Quote</a></div>
+<div class="hero-ctas" style="margin-top:20px"><a href="#quote" class="btn-primary">Schedule Free Walkthrough</a></div>
 </header>
 {article_header_html(cmp["h1"], pub, read_m)}
 <div class="article-body reveal">
@@ -1908,8 +2101,8 @@ def render_comparison(cmp):
 
 
 def render_book():
-    title = "Book Garage Cleanout or Junk Removal | Fort Collins CO"
-    desc = "Book garage cleanout or junk removal in Fort Collins. Upload photos, pick your city, get a flat-rate quote in 5 minutes — pay only after you approve."
+    title = "Schedule a Garage Walkthrough | Fort Collins CO"
+    desc = "Schedule a free on-site garage walkthrough in Fort Collins. We inspect the space, build your Garage Turnaround Plan, and set one exact price before work begins."
     canonical = f"{SITE}/book.html"
     schema = f"""<script type="application/ld+json">{json.dumps(business_schema(), ensure_ascii=False)}</script>
 <script type="application/ld+json">{howto_schema()}</script>
@@ -1917,26 +2110,26 @@ def render_book():
     body = f"""<main>
 <section class="hero" id="top"><div class="wrap">
 <div class="hero-eyebrow mono">Book online</div>
-<a href="tel:{PHONE}" class="hero-phone">{PHONE_DISPLAY}<span class="hero-phone-sub">· 5-min quote response</span></a>
-<h1 class="hero-title" style="max-width:none">Get your flat-rate quote in <em>5 minutes</em></h1>
-<p class="hero-sub">Pick your service, tell us your city, upload garage photos — we call back with a locked price. No obligation, no hourly billing, no hidden fees.</p>
+<a href="tel:{PHONE}" class="hero-phone">{PHONE_DISPLAY}<span class="hero-phone-sub">· schedule your free walkthrough</span></a>
+<h1 class="hero-title" style="max-width:none">Schedule your free <em>Garage Walkthrough</em></h1>
+<p class="hero-sub">We come to the property, learn what stays and what goes, and build a complete Garage Turnaround Plan with one exact price. Photos are optional and only help us prepare.</p>
 </div></section>
 {fmt(PROCESS_HTML, process_href="#process")}
 </main>"""
-    book_sidebar = """<aside class="book-sidebar reveal" aria-label="Why photo quotes work">
-<h3>Why photo quotes work</h3>
+    book_sidebar = """<aside class="book-sidebar reveal" aria-label="What happens during the walkthrough">
+<h3>What the walkthrough covers</h3>
 <ul>
-<li>We see volume and access before we arrive — your price is locked, not hourly.</li>
-<li>Wide shots of the full garage beat close-ups of random piles.</li>
-<li>No truck visit required for most Fort Collins jobs.</li>
-<li>Text photos to (970) 999-1818 if upload is easier on your phone.</li>
-<li>Pay only after you approve the flat-rate quote.</li>
+<li>What stays, what leaves, and what matters most to protect.</li>
+<li>Removal, donation, cleaning, organization, and storage needs.</li>
+<li>Access, parking, crew, equipment, and expected job time.</li>
+<li>A complete plan you can keep even if you do not hire us.</li>
+<li>One exact flat price approved before work begins.</li>
 </ul>
 </aside>"""
     form = quote_form_for(
         "Garage Cleanout",
-        cta_title="Complete your <em>free quote</em>",
-        form_subject="Book Page Quote Request",
+        cta_title="Request your <em>free walkthrough</em>",
+        form_subject="Garage Walkthrough Request",
         sms_body=SMS_PHOTOS_BODY,
     )
     form = re.sub(r'<section class="final-cta"[^>]*>', '<section class="book-section" id="quote">', form, count=1)
@@ -1954,42 +2147,42 @@ def render_book():
 
 
 def render_pricing():
-    title = "Garage Cleanout Pricing Fort Collins | How Our Quotes Work"
-    desc = "Transparent garage cleanout and junk removal pricing in Fort Collins. Single-item pickup from $99, full garage cleanouts $400–650+. Flat-rate photo quotes — no hourly billing."
+    title = "Garage Cleanout Pricing Fort Collins | Walkthrough Pricing"
+    desc = "Transparent garage cleanout and junk removal pricing in Fort Collins. Review planning ranges, then get one exact flat rate during a free on-site walkthrough."
     canonical = f"{SITE}/pricing.html"
     schema = f'<script type="application/ld+json">{json.dumps(business_schema(), ensure_ascii=False)}</script>'
     body = f"""<main>
 <section class="hero" id="top"><div class="wrap">
 <div class="hero-eyebrow mono">Transparent pricing</div>
-<a href="tel:{PHONE}" class="hero-phone">{PHONE_DISPLAY}<span class="hero-phone-sub">· Flat-rate from photos</span></a>
+<a href="tel:{PHONE}" class="hero-phone">{PHONE_DISPLAY}<span class="hero-phone-sub">· free on-site walkthrough</span></a>
 <h1 class="hero-title" style="max-width:none">How our <em>pricing works</em></h1>
-<p class="hero-sub">No hourly billing, no truck visit required for most jobs. Text photos and get a locked flat-rate quote in 5 minutes — you only pay after approving.</p>
-<div class="hero-ctas"><a href="/book.html" class="btn-primary">Get Free Quote</a><a href="sms:{PHONE}?body=Hi!%20I'd%20like%20a%20pricing%20quote." class="btn-secondary">Text Photos</a></div>
+<p class="hero-sub">Use these ranges to plan. We visit the property, understand the full scope, and set one exact flat rate before work begins.</p>
+<div class="hero-ctas"><a href="/book.html" class="btn-primary">Schedule Free Walkthrough</a><a href="sms:{PHONE}?body={SMS_PHOTOS_BODY}" class="btn-secondary">Schedule by Text</a></div>
 </div></section>
 {fmt(PROCESS_HTML)}
 <section class="pricing-how"><div class="wrap">
 <div class="section-head reveal"><span class="mono section-num">How pricing works</span>
 <h2 class="section-title">Single item or <em>full garage</em> — we quote flat</h2>
-<p class="section-sub">Unlike volume-based haulers, we give you a firm price from photos before we arrive. These ranges help you plan; your exact quote is locked before we start.</p>
+<p class="section-sub">Unlike hourly haulers, we set one complete price after seeing the property with you. These ranges help you plan; the exact number is approved before work begins.</p>
 </div>
 <div class="pricing-how-grid reveal">
 <div class="step"><div class="step-num">Single item</div><h3>$99–150</h3><p>One couch, mattress, appliance, hot tub, treadmill, or bulky piece. Priced individually — not by the hour.</p></div>
 <div class="step"><div class="step-num">Partial load</div><h3>$250–400</h3><p>A corner of the garage, a few furniture pieces, or a small haul. Great for targeted cleanouts.</p></div>
 <div class="step"><div class="step-num">Standard garage</div><h3>$400–650</h3><p>Most single-car or moderately full two-car garages. Our most common booking in Fort Collins.</p></div>
-<div class="step"><div class="step-num">Full garage / estate</div><h3>$650+</h3><p>Packed two-car garages, multi-space cleanouts, or estate situations. Quoted from wide photos.</p></div>
+<div class="step"><div class="step-num">Full garage / estate</div><h3>$650+</h3><p>Packed two-car garages, multi-space cleanouts, or estate situations. Final pricing follows the on-site walkthrough.</p></div>
 </div>
 <p class="section-sub reveal" style="margin-top:24px;">All prices include labor, hauling, dump fees, and donation drop-offs. <a href="/blog/how-much-does-garage-cleanout-cost-fort-collins.html" class="content-link">Read our full cost guide →</a></p>
 </div></section>
 <section class="body-copy"><div class="wrap">
 <div class="section-head reveal"><span class="mono section-num">Compare</span>
 <h2 class="section-title">Easy Garage vs <em>hourly haulers</em></h2>
-<p class="section-sub">Why flat-rate photo quotes beat volume-based or hourly pricing for garage reclaiming.</p>
+<p class="section-sub">Why a walkthrough-based flat rate beats open-ended hourly pricing for garage reclaiming.</p>
 </div>
 <div class="compare-scroll reveal">
 <table class="compare-table">
 <thead><tr><th scope="col"></th><th scope="col" class="col-highlight">Easy Garage Cleaning</th><th scope="col">Typical hourly hauler</th><th scope="col">National franchise</th></tr></thead>
 <tbody>
-<tr><th scope="row">Quote method</th><td class="col-highlight">Flat rate from photos — locked before arrival</td><td>Often hourly with end-of-job total</td><td>Volume-based minimums</td></tr>
+<tr><th scope="row">Price method</th><td class="col-highlight">On-site walkthrough, then one exact flat rate</td><td>Often hourly with end-of-job total</td><td>Volume-based minimums</td></tr>
 <tr><th scope="row">Garage focus</th><td class="col-highlight">Garage reclaiming specialist</td><td>General junk</td><td>General junk</td></tr>
 <tr><th scope="row">Who shows up</th><td class="col-highlight">Owner on job (Zac Bezenek)</td><td>Varies by crew</td><td>Franchise call center + rotating crews</td></tr>
 <tr><th scope="row">Donations</th><td class="col-highlight">Habitat ReStore drop-offs included</td><td>Sometimes extra</td><td>Policy varies by location</td></tr>
@@ -2000,7 +2193,7 @@ def render_pricing():
 <p class="section-sub reveal"><a href="/blog/got-junk-vs-local-junk-removal-fort-collins.html" class="content-link">Full GOT-JUNK vs local comparison →</a></p>
 </div></section>
 {fmt(PRICING_HTML)}
-{quote_form_for("Garage Cleanout", cta_title="Get your <em>exact quote</em> today", form_subject="Pricing Page Quote", sms_body="Hi!%20I%20checked%20your%20pricing%20page%20and%20need%20a%20quote.")}
+{quote_form_for("Garage Cleanout", cta_title="Schedule your <em>free walkthrough</em>", form_subject="Pricing Page Walkthrough Request", sms_body=SMS_PHOTOS_BODY)}
 </main>"""
     return page_shell(title, desc, canonical, schema, body)
 
@@ -2134,7 +2327,7 @@ def render_projects_index():
 <h2 class="section-title">Fort Collins, Loveland &amp; <em>Windsor</em></h2>
 <p class="section-sub">Every job quoted flat from photos. Browse a case study, then text yours for the same 5-minute quote process.</p>
 </div>
-<div class="project-cards reveal">{cards}</div>
+<div class="project-cards reveal" id="dynamic-projects"><!-- DYNAMIC_PROJECTS -->{cards}</div>
 <div class="hero-ctas reveal" style="margin-top:32px"><a href="/book.html" class="btn-primary">Get Free Quote</a><a href="sms:{PHONE}?body=Hi!%20I'd%20like%20a%20quote%20like%20your%20project%20gallery." class="btn-secondary">Text Photos</a></div>
 </div></section>
 </main>"""
@@ -3162,8 +3355,6 @@ def patch_thank_you_page(text):
 
 def patch_employee_portal(text):
     """Lightweight site chrome for employee portal — home link + footer, preserve dark app UI."""
-    if 'class="egc-portal-bar"' in text:
-        return text
     bar = f"""<div class="egc-portal-bar" style="background:#14243d;border-bottom:1px solid rgba(255,255,255,.1);padding:10px 18px;display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:13px">
   <a href="/" style="color:#f5f1ea;font-weight:700;text-decoration:none"><span style="display:inline-block;width:8px;height:8px;background:#ff5b1f;border-radius:50%;margin-right:6px"></span>Easy Garage — Public site</a>
   <a href="tel:{PHONE}" style="color:#ff5b1f;font-weight:600;text-decoration:none">{PHONE_DISPLAY}</a>
@@ -3171,6 +3362,12 @@ def patch_employee_portal(text):
     foot = f"""<div class="egc-portal-foot" style="background:#0a1628;border-top:1px solid rgba(255,255,255,.08);padding:14px 18px;text-align:center;font-size:12px;color:rgba(245,241,234,.55)">
   <a href="/privacy-policy.html" style="color:#ff5b1f;margin:0 8px">Privacy</a> · <a href="/" style="color:#ff5b1f">Home</a> · Employee portal — internal use only
 </div>"""
+    text = re.sub(r'<div class="mobile-sticky-cta"[\s\S]*?</div>\s*', '', text)
+    text = re.sub(r'<div class="egc-portal-foot"[\s\S]*?Employee portal — internal use only\s*</div>\s*', '', text)
+    text = re.sub(r'/\* site-polish-v4 \*/[\s\S]*?(?=</style>)', '', text, count=1)
+    text = re.sub(r'\s*<a href="#top" id="back-to-top"[\s\S]*?</script>', '', text, count=1)
+    if 'class="egc-portal-bar"' in text:
+        return text.replace("</body>", foot + "\n</body>")
     if "<body" in text:
         text = re.sub(r"(<body[^>]*>)", r"\1\n" + bar, text, count=1)
         text = text.replace("</body>", foot + "\n</body>")
@@ -3746,15 +3943,18 @@ def patch_static_pages():
             sticky = fmt("""<div class="mobile-sticky-cta" aria-label="Quick contact">
   <a href="tel:{phone}" class="mobile-cta-btn mobile-cta-call">Call</a>
   <a href="sms:{phone}?body=""" + SMS_PHOTOS_BODY + """" class="mobile-cta-btn mobile-cta-text">Text</a>
-  <a href="/book.html" class="mobile-cta-btn mobile-cta-quote">Quote</a>
+  <a href="/book.html" class="mobile-cta-btn mobile-cta-quote">Walkthrough</a>
 </div>""")
-            if 'mobile-sticky-cta' in text:
+            if is_internal:
+                text = sticky_re.sub("", text)
+            elif 'mobile-sticky-cta' in text:
                 text = sticky_re.sub(sticky + "\n", text, count=1)
             elif '</body>' in text:
                 text = text.replace("</body>", sticky + "\n</body>")
             text = dedupe_nav_footer_css(text)
             text = patch_nav_hamburger(text)
-            text = inject_polish_css(text)
+            if not is_internal:
+                text = inject_polish_css(text)
             text = patch_a11y_shell(text)
             if not is_internal:
                 text = patch_performance_and_tracking(text, is_home)
@@ -3792,7 +3992,8 @@ def patch_static_pages():
                 css_patch += "\n.quick-answer{background:#fff;border:1px solid rgba(10,22,40,.1);border-left:3px solid #ff5b1f;padding:18px 22px;margin:0 auto 32px;max-width:1240px;font-size:15px;line-height:1.6}.quick-answer .qa-label{font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:#d94208;margin-bottom:8px;display:block}\n.article-toc{background:#ebe4d6;border:1px solid rgba(10,22,40,.08);padding:18px 22px;margin-bottom:28px;border-radius:4px}.article-toc h2{font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:#6b7280;margin-bottom:12px}.article-toc ol{margin:0 0 0 20px;font-size:14px}\n.ba-placeholder-note{font-family:'JetBrains Mono',monospace;font-size:9px;color:#6b7280;margin-top:6px;text-align:center}\na:focus-visible,button:focus-visible{outline:2px solid #ff5b1f;outline-offset:2px}\n"
             if 'id="nav-drawer"' in text and "<style>" in text and ".nav-links{display:none;align-items:center;gap:18px" not in text:
                 text = text.replace("</style>", css_patch + "\n</style>", 1)
-            text = ensure_back_to_top(text)
+            if not is_internal:
+                text = ensure_back_to_top(text)
             if path.parent.name == "blog" and path.name != "index.html":
                 text = inject_blog_related_links(text, path.name)
             if is_home and '"@type": "Organization"' not in text:
@@ -3836,8 +4037,30 @@ def patch_static_pages():
                     text = re.sub(pat, "", text, count=1)
                 block = GTAG_BLOCK if had_aw else GTAG_BLOCK.replace("  gtag('config', 'AW-18102284288');\n", "")
                 text = re.sub(r"(<head[^>]*>\s*\n)", r"\1" + block + "\n", text, count=1, flags=re.I)
+            if not is_internal:
+                text = enforce_walkthrough_first_copy(text)
             if text != orig:
                 path.write_text(text, encoding="utf-8")
+
+    # A few hand-authored landing pages sit outside the generated-page list.
+    # Run the truth guard across every public marketing page without touching
+    # authenticated crew, employee, contract, or private customer surfaces.
+    private_names = {"employee.html", "employee-signup.html", "customer-portal.html", "quote.html", "copilot.html", "sop.html", "tyler-contract.html"}
+    for path in ROOT.rglob("*.html"):
+        rel_parts = {part.lower() for part in path.relative_to(ROOT).parts}
+        if path.name.lower() in private_names or rel_parts.intersection({"crew", "contracts"}):
+            continue
+        original = path.read_text(encoding="utf-8")
+        text = original
+        text = re.sub(r'/styles\.css\?v=[^"\']+', '/styles.css?v=20260904j', text)
+        has_public_form = bool(re.search(r'<form[^>]*class=["\'][^"\']*(?:lead-form-lite|multi-step-form)', text, re.I))
+        if has_public_form and 'fb-capture.js' not in text:
+            text = text.replace('</body>', '<script src="/fb-capture.js?v=20260903c" defer></script>\n</body>', 1)
+        elif not has_public_form:
+            text = re.sub(r'\s*<script src="/fb-capture\.js\?v=20260903c" defer></script>', '', text)
+        guarded = enforce_walkthrough_first_copy(text)
+        if guarded != original:
+            path.write_text(guarded, encoding="utf-8")
 
 
 def audit_seo_meta(fix_long_titles=False):
@@ -3867,10 +4090,15 @@ def audit_seo_meta(fix_long_titles=False):
         "Wellington Junk Removal &amp; Junk Removal | Easy Garage Cleaning": "Wellington Junk Removal | Easy Garage",
         "Wellington Junk Removal &amp; Garage Cleanout | Easy Garage Cleaning": "Wellington Junk Removal | Easy Garage",
         "Windsor Garage Cleanout &amp; Junk Removal | Easy Garage Cleaning": "Windsor Garage Cleanout | Easy Garage",
+        "Commercial Junk Removal Fort Collins CO | Property Managers & Realtors": "Commercial Junk Removal Fort Collins | Easy Garage",
+        "Junk Removal Fort Collins � $139 Flat Rate, Same-Day | Easy Garage Cleaning": "$139 Junk Removal Fort Collins | Easy Garage",
+        "House & Property Cleanouts Fort Collins CO | Move-Out, Estate & More": "Property Cleanouts Fort Collins | Easy Garage",
     }
     index_title = "Easy Garage Cleaning | Fort Collins Garage Cleanouts"
+    private_names = {"employee.html", "employee-signup.html", "customer-portal.html", "quote.html", "copilot.html", "sop.html", "tyler-contract.html"}
     for path in sorted(ROOT.rglob("*.html")):
-        if "employee" in path.name.lower():
+        rel_parts = {part.lower() for part in path.relative_to(ROOT).parts}
+        if path.name.lower() in private_names or rel_parts.intersection({"crew", "contracts"}):
             continue
         rel = path.relative_to(ROOT).as_posix()
         try:
@@ -4007,12 +4235,6 @@ def main():
         (f"{SITE}/reviews.html", "0.7"),
         (f"{SITE}/privacy-policy.html", "0.3"),
         (f"{SITE}/terms-of-service.html", "0.3"),
-        (f"{SITE}/loveland-garage-cleanout.html", "0.8"),
-        (f"{SITE}/windsor-garage-cleanout.html", "0.8"),
-        (f"{SITE}/wellington-junk-removal.html", "0.8"),
-        (f"{SITE}/timnath-junk-removal.html", "0.8"),
-        (f"{SITE}/old-town-fort-collins-junk-removal.html", "0.8"),
-        (f"{SITE}/thank-you.html", "0.2"),
     ]
     write_garage_signs_blog()
     generated.append("blog/5-signs-your-fort-collins-garage-needs-a-cleanout.html")

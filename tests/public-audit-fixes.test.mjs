@@ -112,11 +112,11 @@ test('every public lead form mirrors to HighLevel and carries its own consent di
   const pages = readdirSync(root, { recursive: true, withFileTypes: true })
     .filter((entry) => entry.isFile() && entry.name.endsWith('.html'))
     .map((entry) => ({ name: `${entry.parentPath}/${entry.name}`, html: readFileSync(`${entry.parentPath}/${entry.name}`, 'utf8') }))
-    .filter((page) => page.html.includes('lead-form-lite'));
+    .filter((page) => /<form[^>]*class=["'][^"']*(?:lead-form-lite|multi-step-form)/i.test(page.html));
   assert.ok(pages.length >= 50, 'expected the full lead-form page set');
   for (const page of pages) {
     assert.match(page.html, /<script[^>]+src="\/fb-capture\.js\?v=20260903c"[^>]*>/, `${page.name} does not load the current HighLevel mirror`);
-    const forms = [...page.html.matchAll(/<form[^>]*class=["'][^"']*lead-form-lite[^"']*["'][^>]*>([\s\S]*?)<\/form>/gi)];
+    const forms = [...page.html.matchAll(/<form[^>]*class=["'][^"']*(?:lead-form-lite|multi-step-form)[^"']*["'][^>]*>([\s\S]*?)<\/form>/gi)];
     assert.ok(forms.length, `${page.name} has no readable lead form`);
     for (const form of forms) {
       assert.match(form[0], /name=["']sms_consent["']/, `${page.name} lead form has no SMS consent field`);

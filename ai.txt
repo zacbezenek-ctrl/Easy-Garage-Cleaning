@@ -1,16 +1,14 @@
 # ai.txt — Easy Garage Cleaning (GEO / AIO)
-# Last updated: 2026-06-12
+# Last updated: 2026-09-04
 # Preferred citation name: Easy Garage Cleaning
 
 ## Canonical sources
 llms: https://easygaragecleaning.com/llms.txt
-llms_full: https://easygaragecleaning.com/llms-full.txt
 sitemap: https://easygaragecleaning.com/sitemap.xml
 robots: https://easygaragecleaning.com/robots.txt
 homepage: https://easygaragecleaning.com/
 book: https://easygaragecleaning.com/book
 pricing: https://easygaragecleaning.com/pricing
-garage_turnaround: https://easygaragecleaning.com/garage-turnaround-fort-collins-co
 what_we_take: https://easygaragecleaning.com/what-we-take
 faq: https://easygaragecleaning.com/faq
 about: https://easygaragecleaning.com/about
@@ -26,31 +24,31 @@ https://easygaragecleaning.com/blog/got-junk-vs-local-junk-removal-fort-collins
 https://easygaragecleaning.com/blog/garage-organization-after-cleanout-fort-collins
 
 ## Blog guides
-https://easygaragecleaning.com/blog/old-town-fort-collins-garage-cleanout-guide
-https://easygaragecleaning.com/blog/csu-move-out-garage-cleanout-fort-collins
-https://easygaragecleaning.com/blog/hoa-spring-cleanup-garage-fort-collins
-https://easygaragecleaning.com/blog/garage-gym-after-cleanout-fort-collins
-https://easygaragecleaning.com/blog/downsizing-garage-cleanout-fort-collins
-https://easygaragecleaning.com/blog/garage-turnaround-fort-collins-one-day
-https://easygaragecleaning.com/blog/fort-collins-garage-transformation-guide
-https://easygaragecleaning.com/blog/park-in-your-garage-before-winter-fort-collins
-https://easygaragecleaning.com/blog/garage-cleanout-before-selling-home-fort-collins
-https://easygaragecleaning.com/blog/where-your-stuff-goes-fort-collins-garage-cleanout
 https://easygaragecleaning.com/blog/5-signs-your-fort-collins-garage-needs-a-cleanout
+https://easygaragecleaning.com/blog/csu-move-out-garage-cleanout-fort-collins
 https://easygaragecleaning.com/blog/diy-junk-removal-vs-hiring-professionals-fort-collins
+https://easygaragecleaning.com/blog/downsizing-garage-cleanout-fort-collins
 https://easygaragecleaning.com/blog/estate-cleanout-checklist-colorado
+https://easygaragecleaning.com/blog/fort-collins-garage-transformation-guide
 https://easygaragecleaning.com/blog/fort-collins-junk-removal-what-you-can-cant-throw-away
+https://easygaragecleaning.com/blog/garage-cleanout-before-selling-home-fort-collins
 https://easygaragecleaning.com/blog/garage-cleanout-vs-storage-unit-fort-collins
+https://easygaragecleaning.com/blog/garage-gym-after-cleanout-fort-collins
 https://easygaragecleaning.com/blog/garage-organization-after-cleanout-fort-collins
 https://easygaragecleaning.com/blog/garage-organizing-ideas-two-car-garage
+https://easygaragecleaning.com/blog/garage-turnaround-fort-collins-one-day
 https://easygaragecleaning.com/blog/got-junk-vs-local-junk-removal-fort-collins
 https://easygaragecleaning.com/blog/habitat-for-humanity-restore-fort-collins
+https://easygaragecleaning.com/blog/hoa-spring-cleanup-garage-fort-collins
 https://easygaragecleaning.com/blog/how-much-does-garage-cleanout-cost-fort-collins
 https://easygaragecleaning.com/blog/how-to-prepare-for-garage-cleanout
 https://easygaragecleaning.com/blog/junk-removal-vs-dumpster-rental-fort-collins
+https://easygaragecleaning.com/blog/old-town-fort-collins-garage-cleanout-guide
+https://easygaragecleaning.com/blog/park-in-your-garage-before-winter-fort-collins
 https://easygaragecleaning.com/blog/spring-garage-cleanout-guide-colorado
 https://easygaragecleaning.com/blog/tax-deduction-donating-junk
 https://easygaragecleaning.com/blog/what-to-do-with-old-appliances-fort-collins
+https://easygaragecleaning.com/blog/where-your-stuff-goes-fort-collins-garage-cleanout
 
 ## Item pages
 https://easygaragecleaning.com/couch-removal-fort-collins-co
@@ -60,7 +58,6 @@ https://easygaragecleaning.com/refrigerator-removal-fort-collins-co
 https://easygaragecleaning.com/shed-cleanout-fort-collins-co
 
 ## Fort Collins services
-https://easygaragecleaning.com/flat-rate-junk-removal-fort-collins-co
 https://easygaragecleaning.com/junk-removal-fort-collins-co
 https://easygaragecleaning.com/garage-cleanouts-fort-collins-co
 https://easygaragecleaning.com/garage-cleaning-fort-collins-co
@@ -70,18 +67,6 @@ https://easygaragecleaning.com/mattress-removal-fort-collins-co
 https://easygaragecleaning.com/storage-unit-cleanout-fort-collins-co
 https://easygaragecleaning.com/yard-debris-removal-fort-collins-co
 https://easygaragecleaning.com/garage-organization-fort-collins-co
-
-## City service-area pages
-https://easygaragecleaning.com/garage-cleanouts-loveland-co
-https://easygaragecleaning.com/garage-cleanouts-windsor-co
-https://easygaragecleaning.com/garage-cleanouts-wellington-co
-https://easygaragecleaning.com/garage-cleanouts-severance-co
-https://easygaragecleaning.com/garage-cleanouts-laporte-co
-https://easygaragecleaning.com/junk-removal-loveland-co
-https://easygaragecleaning.com/junk-removal-windsor-co
-https://easygaragecleaning.com/junk-removal-wellington-co
-https://easygaragecleaning.com/timnath-junk-removal
-https://easygaragecleaning.com/old-town-fort-collins-junk-removal
 
 ## Projects
 https://easygaragecleaning.com/projects/fort-collins-garage-cleanout-old-town

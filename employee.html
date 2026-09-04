@@ -762,6 +762,10 @@ body.has-session #login-screen { display: none; }
 </style>
 </head>
 <body>
+<div class="egc-portal-bar" style="background:#14243d;border-bottom:1px solid rgba(255,255,255,.1);padding:10px 18px;display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:13px">
+  <a href="/" style="color:#f5f1ea;font-weight:700;text-decoration:none"><span style="display:inline-block;width:8px;height:8px;background:#ff5b1f;border-radius:50%;margin-right:6px"></span>Easy Garage — Public site</a>
+  <a href="tel:+19709991818" style="color:#ff5b1f;font-weight:600;text-decoration:none">(970) 999-1818</a>
+</div>
 <a href="#dashboard" class="skip-link">Skip to content</a>
 
 <!-- ═══════════════════════════════════════
@@ -3224,11 +3228,10 @@ async function ocBook() {
     document.head.appendChild(s);
   })();
 </script>
-<script src="employee-suite.js?v=20260904j"></script>
+<script src="employee-suite.js?v=20260904k"></script>
+
 <div class="egc-portal-foot" style="background:#0a1628;border-top:1px solid rgba(255,255,255,.08);padding:14px 18px;text-align:center;font-size:12px;color:rgba(245,241,234,.55)">
   <a href="/privacy-policy" style="color:#ff5b1f;margin:0 8px">Privacy</a> · <a href="/" style="color:#ff5b1f">Home</a> · Employee portal — internal use only
 </div>
-<a href="#top" id="back-to-top" class="back-to-top" aria-label="Back to top" hidden>Top</a>
-<script>(function(){const btt=document.getElementById('back-to-top');if(!btt)return;const onScroll=()=>{btt.hidden=window.scrollY<420};btt.addEventListener('click',e=>{e.preventDefault();window.scrollTo({top:0,behavior:'smooth'})});window.addEventListener('scroll',onScroll,{passive:true});onScroll();})();</script>
 </body>
 </html>

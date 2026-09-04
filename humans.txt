@@ -8,5 +8,5 @@ Site: https://easygaragecleaning.com/
 Northern Colorado homeowners, Habitat ReStore Fort Collins, Fort Collins Chamber
 
 /* SITE */
-Last update: 2026-05-20
+Last update: 2026-09-04
 Standards: HTML5, CSS3, schema.org LocalBusiness
