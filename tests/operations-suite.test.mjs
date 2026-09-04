@@ -397,13 +397,15 @@ test('open-shift scheduling fields persist on the canonical job record',()=>{
   assert.match(suite,/b\.openShift=fd\.has\('openShift'\)/);
   assert.match(suite,/openShift:b\.type==='job'/);
   assert.match(suite,/assignedCrew\.length<crewNeeded/);
-  assert.match(employee,/employee-suite\.css\?v=20260903h/);
-  assert.match(employee,/employee-suite\.js\?v=20260903k/);
+  assert.match(employee,/employee-suite\.css\?v=20260903i/);
+  assert.match(employee,/employee-suite\.js\?v=20260903l/);
 });
 
 test('recurring visits keep the client plan but reset prior completion and payment state',()=>{
   for(const marker of ['sourceTemplateJobId:j.id',"sourceWalkthroughId:''",'acceptance:null','preJobProgress:null','preJobChecklist:null','postJobProgress:null','postJobChecklist:null','actualLoads:null','hoursOnSite:null','scopeVariance:null','closeoutSyncPayload:null','reviewStatus:'])assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),marker+' is missing from recurring reset');
   assert.match(suite,/derived=refreshWalkthroughHandoff\(j/);
+  assert.match(suite,/const remote=await remoteCollision\(next\)/);
+  assert.match(suite,/HighLevel already has \$\{remote\.title\|\|'an appointment'\} during that time/);
   assert.match(suite,/notes:job\.internalNotes\|\|job\.notes/);
   assert.match(suite,/customerUpdate=job\.customerId&&job\.internalNotes/);
 });
