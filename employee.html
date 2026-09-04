@@ -33,7 +33,7 @@
   </script>
   <link rel="stylesheet" href="/styles.css?v=20260903g">
 <style>
-body { background: var(--navy); color: var(--white); }
+body { background: var(--navy); color: var(--white); padding-bottom: 0 !important; }
 /* ── View-container defaults: only login visible on cold load ── */
 #login-screen { display: flex; align-items: center; justify-content: center; min-height: 100dvh; }
 #mode-screen  { display: none; align-items: center; justify-content: center; min-height: 100dvh; }
@@ -3198,12 +3198,6 @@ async function ocBook() {
   })();
 </script>
 <script src="employee-suite.js?v=20260903z"></script>
-<div class="mobile-sticky-cta" aria-label="Quick contact">
-  <a href="tel:+19709991818" class="mobile-cta-btn mobile-cta-call">Call</a>
-  <a href="sms:+19709991818?body=Hi!%20I'd%20like%20a%20quote.%20I%20can%20text%20photos%20of%20my%20garage/junk." class="mobile-cta-btn mobile-cta-text">Text</a>
-  <a href="/book" class="mobile-cta-btn mobile-cta-quote">Quote</a>
-</div>
-
 <div class="egc-portal-foot" style="background:#0a1628;border-top:1px solid rgba(255,255,255,.08);padding:14px 18px;text-align:center;font-size:12px;color:rgba(245,241,234,.55)">
   <a href="/privacy-policy" style="color:#ff5b1f;margin:0 8px">Privacy</a> · <a href="/" style="color:#ff5b1f">Home</a> · Employee portal — internal use only
 </div>

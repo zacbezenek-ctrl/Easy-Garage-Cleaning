@@ -113,6 +113,9 @@ test('employee hub loads the EGC operations suite without the duplicate CRM over
   assert.doesNotMatch(employee,/employee-crm\.(?:js|css)/);
   assert.match(employee,/employee-suite\.js/);
   assert.match(employee,/employee-suite\.css/);
+  assert.doesNotMatch(employee,/class="mobile-sticky-cta"/);
+  assert.match(employee,/padding-bottom: 0 !important/);
+  assert.match(suite,/if\(typeof me!=='undefined'&&me\)loadAll\(\)/);
 });
 
 test('operations suite follows the EGC operating model instead of duplicating the CRM',()=>{
@@ -559,7 +562,7 @@ test('legacy Firebase leads are not loaded into the reset Hub',()=>{
   assert.doesNotMatch(employee,/db\.collection\('leads'\)\.get/);
   assert.match(employee,/leadsCache = \[\];/);
   assert.match(suite,/New HighLevel leads/);
-  assert.match(suite,/setInterval\(\(\)=>\{if\(!document\.hidden\)loadGhl\(\)\},60000\)/);
+  assert.match(suite,/setInterval\(\(\)=>\{if\(!document\.hidden&&typeof me!=='undefined'&&me\)loadGhl\(\)\},60000\)/);
   assert.match(highlevel,/DEFAULT_LEAD_RESET_AT/);
   assert.match(webLead,/syncHighLevelLead/);
 });
