@@ -76,53 +76,17 @@
     <div class="gerr" id="gate-err">Incorrect username or password.</div>
   </div>
 </div>
+<script src="/crew/hub-auth.js?v=20260903"></script>
 <script>
-/* SOFT GATE — keeps customers, bots, and casual snoops out of the field tools.
-   It is NOT real authentication: the page source is public, so a determined
-   reader can forge the token. For true protection put Cloudflare Access in
-   front of /crew/* and /api/crew-hook (identity-checked at the edge).
-   Auth mirrors /employee.html: salted SHA-256, same usernames & passwords.
-   Sessions expire after GATE_TTL so a lost/left iPad re-locks itself.
-   Rotate a password by updating the hash here AND in employee.html:
-   sha256(username + ':' + newPass + ':egc-salt-2026') */
-const GATE_USERS={
-  ZacB:"6b8670f397174ff99440629b877581216a0b26b6770054be198988ff48a16861",
-  TylerG:"28b50fd5ee98af8cf015972811def03dbc2eaff52997f82ecfc4342ece6cfa36",
-  AlexK:"52e2e9901adc10406ad9597084ece4770d1c9fd0e3b76e1f31abf35f8030ac50",
-  FrankJara:"ed2ed02c6f4db402e46a370902a0f19ae2539753d4c13288954ecb32b1253d70",
-  JobberCrew:"a68121119b6a72c583c366a62257cbb3652867e9b50e46bdda6fb05280dee683"};
-const GATE_TTL=12*60*60*1000; // 12h — covers a work day, bounds a lost device
-async function gateSha(s){const b=await crypto.subtle.digest("SHA-256",new TextEncoder().encode(s));
-  return Array.from(new Uint8Array(b)).map(x=>x.toString(16).padStart(2,"0")).join("");}
-function gateTok(u){return gateSha(u+":"+GATE_USERS[u]+":egc-session");}
-function gateSet(u,t){const exp=String(Date.now()+GATE_TTL);
-  try{for(const st of[sessionStorage,localStorage]){st.setItem("egc_u",u);st.setItem("egc_tok",t);st.setItem("egc_exp",exp);}}catch(e){}}
-async function gateOk(){
-  try{
-    for(const st of[sessionStorage,localStorage]){
-      const u=st.getItem("egc_u"),t=st.getItem("egc_tok"),exp=parseInt(st.getItem("egc_exp")||"0",10);
-      if(u&&GATE_USERS[u]&&t&&t===await gateTok(u)){
-        if(exp&&Date.now()<exp){gateSet(u,t);return u;} // valid → slide the window
-        gateClear(); // token ok but expired (or pre-expiry session) → require re-login
-      }
-    }
-  }catch(e){}
-  return null;
-}
-function gateClear(){try{["egc_u","egc_tok","egc_exp"].forEach(k=>{sessionStorage.removeItem(k);localStorage.removeItem(k);});}catch(e){}}
 async function gateLogin(){
-  const u=document.getElementById("gate-u").value.trim(),p=document.getElementById("gate-p").value;
-  if(GATE_USERS[u]&&await gateSha(u+":"+p+":egc-salt-2026")===GATE_USERS[u]){
-    gateSet(u,await gateTok(u));
-    document.getElementById("egc-gate").classList.add("off");
-  }else document.getElementById("gate-err").style.display="block";
+  const button=document.querySelector("#egc-gate .gbtn"),error=document.getElementById("gate-err");
+  button.disabled=true;button.textContent="Signing in…";error.style.display="none";
+  try{await EGCHubAuth.signIn(document.getElementById("gate-u").value.trim(),document.getElementById("gate-p").value);document.getElementById("egc-gate").classList.add("off")}
+  catch(e){error.textContent=e.message||"Unable to sign in. Try again.";error.style.display="block"}
+  finally{button.disabled=false;button.textContent="Unlock"}
 }
-function gateLock(){gateClear();location.reload();}
-gateOk().then(u=>{
-  if(u){document.getElementById("egc-gate").classList.add("off");return;}
-  document.getElementById("gate-p").addEventListener("keydown",e=>{if(e.key==="Enter")gateLogin()});
-  document.getElementById("gate-u").addEventListener("keydown",e=>{if(e.key==="Enter")document.getElementById("gate-p").focus()});
-});
+async function gateLock(){await EGCHubAuth.signOut();location.reload()}
+EGCHubAuth.session().then(user=>{if(user){document.getElementById("egc-gate").classList.add("off");return}document.getElementById("gate-p").addEventListener("keydown",e=>{if(e.key==="Enter")gateLogin()});document.getElementById("gate-u").addEventListener("keydown",e=>{if(e.key==="Enter")document.getElementById("gate-p").focus()})});
 </script>
 
 <div id="topbar">

@@ -13,6 +13,8 @@
  *                moves the host (e.g. https://api.quo.com/v1) or auth changes.
  */
 
+import { getHubSession } from '../_lib/hub-session.js';
+
 const ALLOWED_HOST_RE = /(^|\.)easygaragecleaning\.com$|(\.pages\.dev)$|^localhost(:\d+)?$|^127\.0\.0\.1(:\d+)?$/;
 function hostOf(v) { try { return new URL(v).host; } catch { return ''; } }
 function originAllowed(request) {
@@ -42,6 +44,7 @@ export async function onRequestPost({ request, env }) {
     status, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-store' } });
 
   if (!originAllowed(request)) return json(403, { ok: false, error: 'Forbidden origin' });
+  if (!await getHubSession(request, env)) return json(401, { ok: false, error: 'Sign in to the EGC Hub' });
   const QUO_KEY = env.QUO_API_KEY || env.QUO; // accept either var name
   if (!QUO_KEY) return json(501, { ok: false, error: 'Quo not configured — set QUO_API_KEY' });
 

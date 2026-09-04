@@ -20,6 +20,8 @@
  * Response: { ok:true, folderId, folderUrl } | { ok:false, error }
  */
 
+import { getHubSession } from '../_lib/hub-session.js';
+
 const TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const FILES_URL = 'https://www.googleapis.com/drive/v3/files';
 const UPLOAD_URL = 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id';
@@ -98,6 +100,7 @@ export async function onRequestPost({ request, env }) {
     status, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-store' } });
 
   if (!originAllowed(request)) return json(403, { ok: false, error: 'Forbidden origin' });
+  if (!await getHubSession(request, env)) return json(401, { ok: false, error: 'Sign in to the EGC Hub' });
   if (!env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET || !env.GOOGLE_REFRESH_TOKEN) {
     return json(501, { ok: false, error: 'Drive upload not configured — run /api/drive-auth setup' });
   }

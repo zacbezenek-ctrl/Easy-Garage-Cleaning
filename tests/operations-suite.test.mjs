@@ -2,6 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
+import { createHubSessionCookie, hashHubCredential, verifyHubSessionToken } from '../functions/_lib/hub-session.js';
+
+const TEST_HUB_ENV={HIGHLEVEL_API_KEY:'test-key',HIGHLEVEL_LOCATION_ID:'location-1'};
+const TEST_HUB_COOKIE=(await createHubSessionCookie(TEST_HUB_ENV,'ZacB')).split(';')[0];
 
 const read=(p)=>fs.readFileSync(new URL('../'+p,import.meta.url),'utf8');
 const employee=read('employee.html');
@@ -15,6 +19,46 @@ const highlevel=read('functions/api/highlevel.js');
 const webLead=read('functions/api/web-lead.js');
 const statusApi=read('functions/api/integration-status.js');
 const commercial=read('commercial-junk-removal-fort-collins-co.html');
+
+test('Hub authentication issues, validates, expires, and clears an HttpOnly session',async()=>{
+  const env={HUB_SESSION_SECRET:'session-test-secret',HUB_AUTH_USERS_JSON:JSON.stringify({Tester:await hashHubCredential('Tester','correct horse')})};
+  const auth=await import('../functions/api/hub-auth.js');
+  const login=await auth.onRequestPost({request:new Request('https://easygaragecleaning.com/api/hub-auth',{method:'POST',headers:{Origin:'https://easygaragecleaning.com','Content-Type':'application/json'},body:JSON.stringify({username:'Tester',password:'correct horse'})}),env});
+  assert.equal(login.status,200);
+  const cookie=login.headers.get('set-cookie');
+  assert.match(cookie,/egc_hub_session=/);
+  assert.match(cookie,/HttpOnly/i);
+  assert.match(cookie,/SameSite=Strict/i);
+  const cookieValue=cookie.split(';')[0];
+  const check=await auth.onRequestGet({request:new Request('https://easygaragecleaning.com/api/hub-auth',{headers:{Cookie:cookieValue}}),env});
+  assert.equal(check.status,200);
+  assert.equal((await check.json()).user,'Tester');
+  const token=cookieValue.split('=')[1];
+  assert.equal(await verifyHubSessionToken(env,token,Date.now()+13*60*60*1000),null);
+  const tampered=await auth.onRequestGet({request:new Request('https://easygaragecleaning.com/api/hub-auth',{headers:{Cookie:cookieValue+'x'}}),env});
+  assert.equal(tampered.status,401);
+  const logout=await auth.onRequestDelete({request:new Request('https://easygaragecleaning.com/api/hub-auth',{method:'DELETE',headers:{Origin:'https://easygaragecleaning.com'}})});
+  assert.match(logout.headers.get('set-cookie'),/Max-Age=0/);
+});
+
+test('sensitive CRM access is rejected before any upstream request without a Hub session',async()=>{
+  const {onRequestGet}=await import('../functions/api/highlevel.js');
+  const originalFetch=globalThis.fetch;
+  let called=false;
+  globalThis.fetch=async()=>{called=true;throw new Error('must not call upstream')};
+  try{
+    const response=await onRequestGet({request:new Request('https://easygaragecleaning.com/api/highlevel?view=contacts&q=test'),env:TEST_HUB_ENV});
+    assert.equal(response.status,401);
+    assert.equal(called,false);
+  }finally{globalThis.fetch=originalFetch}
+});
+
+test('employee and crew pages no longer publish reusable password-derived session tokens',()=>{
+  for(const page of [employee,crew,read('crew/index.html'),read('crew/prejob.html'),read('crew/postjob.html')]){
+    assert.doesNotMatch(page,/GATE_USERS|egc-session|const USERS\s*=/);
+    assert.match(page,/hub-auth/);
+  }
+});
 
 test('employee hub loads the EGC operations suite without the duplicate CRM overlay',()=>{
   assert.doesNotMatch(employee,/employee-crm\.(?:js|css)/);
@@ -157,7 +201,7 @@ test('dispatch and job start create explicit HighLevel lifecycle triggers',async
   const {onRequestPost}=await import('../functions/api/highlevel.js'),calls=[],originalFetch=globalThis.fetch;
   globalThis.fetch=async(url,options={})=>{calls.push({url:String(url),options});return new Response('{}',{status:200})};
   try{
-    const request=new Request('https://easygaragecleaning.com/api/highlevel',{method:'POST',headers:{Origin:'https://easygaragecleaning.com','Content-Type':'application/json'},body:JSON.stringify({tool:'lifecycle',event:'job-dispatched',highlevel_contact_id:'contact-1',client:{name:'Test Customer'}})});
+    const request=new Request('https://easygaragecleaning.com/api/highlevel',{method:'POST',headers:{Origin:'https://easygaragecleaning.com',Cookie:TEST_HUB_COOKIE,'Content-Type':'application/json'},body:JSON.stringify({tool:'lifecycle',event:'job-dispatched',highlevel_contact_id:'contact-1',client:{name:'Test Customer'}})});
     const response=await onRequestPost({request,env:{HIGHLEVEL_API_KEY:'test-key',HIGHLEVEL_LOCATION_ID:'location-1'}}),result=await response.json();
     assert.equal(response.status,200);
     assert.equal(result.automation.trigger,'egc-job-dispatched');
@@ -172,7 +216,7 @@ test('arrival text sends through Quo and records a silent HighLevel note',async(
   const {onRequestPost}=await import('../functions/api/highlevel.js'),calls=[],originalFetch=globalThis.fetch;
   globalThis.fetch=async(url,options={})=>{calls.push({url:String(url),options});return new Response('{}',{status:200})};
   try{
-    const request=new Request('https://easygaragecleaning.com/api/highlevel',{method:'POST',headers:{Origin:'https://easygaragecleaning.com','Content-Type':'application/json'},body:JSON.stringify({tool:'lifecycle',event:'crew-on-the-way',suppress_automation:true,note:'Arrival text sent via Quo.',highlevel_contact_id:'contact-1',client:{name:'Customer'}})});
+    const request=new Request('https://easygaragecleaning.com/api/highlevel',{method:'POST',headers:{Origin:'https://easygaragecleaning.com',Cookie:TEST_HUB_COOKIE,'Content-Type':'application/json'},body:JSON.stringify({tool:'lifecycle',event:'crew-on-the-way',suppress_automation:true,note:'Arrival text sent via Quo.',highlevel_contact_id:'contact-1',client:{name:'Customer'}})});
     const response=await onRequestPost({request,env:{HIGHLEVEL_API_KEY:'test-key',HIGHLEVEL_LOCATION_ID:'location-1'}}),result=await response.json();
     assert.equal(response.status,200);
     assert.equal(result.automation.trigger,'');
@@ -191,7 +235,7 @@ test('cancelling keeps an audit record, releases the Hub slot, and cancels the H
     return new Response('{}',{status:200});
   };
   try{
-    const request=new Request('https://easygaragecleaning.com/api/highlevel',{method:'POST',headers:{Origin:'https://easygaragecleaning.com','Content-Type':'application/json','Idempotency-Key':'lifecycle:job-1:cancelled'},body:JSON.stringify({tool:'lifecycle',event:'job-cancelled',appointment_id:'appt-cancel',appointment_status:'cancelled',note:'Cancellation reason: customer moving dates',highlevel_contact_id:'contact-1',client:{name:'Customer'}})});
+    const request=new Request('https://easygaragecleaning.com/api/highlevel',{method:'POST',headers:{Origin:'https://easygaragecleaning.com',Cookie:TEST_HUB_COOKIE,'Content-Type':'application/json','Idempotency-Key':'lifecycle:job-1:cancelled'},body:JSON.stringify({tool:'lifecycle',event:'job-cancelled',appointment_id:'appt-cancel',appointment_status:'cancelled',note:'Cancellation reason: customer moving dates',highlevel_contact_id:'contact-1',client:{name:'Customer'}})});
     const response=await onRequestPost({request,env:{HIGHLEVEL_API_KEY:'test-key',HIGHLEVEL_LOCATION_ID:'location-1'}}),result=await response.json();
     assert.equal(response.status,200);
     assert.equal(result.appointmentStatus,'cancelled');
@@ -259,7 +303,7 @@ test('HighLevel receives the customer promise in both the contact note and job a
   try{
     const internalNotes='EGC INTERNAL JOB BRIEF\nCUSTOMER GOAL: Park two cars\nWHY NOW: Moving soon\nKEEP / PROTECT: Tools and bikes\nREMOVE / DONATE: Boxes and broken furniture\nDO NOT MOVE: Red cabinet\nACCESS: keypad — Code 1234\nINTERNAL CUSTOMER NOTES: Call before arrival';
     const payload={tool:'game_plan',job_id:'job-1',opportunity_id:'opp-1',sent_at:'2026-09-03T22:00:00.000Z',client:{name:'Test Customer',highlevel_contact_id:'contact-1',address:'123 Main'},quote:{title:'Test garage',total:1500,deposit:300,job_date:'2026-09-15',start_time:'09:00',end_time:'13:00',start_at:'2026-09-15T15:00:00.000Z',end_at:'2026-09-15T19:00:00.000Z'},discovery:{why_now:'Moving soon',success:'Park two cars'},scope:{loads:2,garages:2,fullness:'full',sort_method:'Customer decides',keep_items:'Tools and bikes',remove_items:'Boxes and broken furniture',exclusions:'Red cabinet',hazards:['paint'],access:['keypad'],finish:['deep clean']},logistics:{truck_placement:'left driveway',notes:'Code 1234',assigned_to:'Alex',crew_size:3},internal_notes:internalNotes,acceptance:{accepted_by:'Test Customer',accepted_at:'2026-09-03T22:00:00.000Z'},photos:{before:5},notes:'Call before arrival'};
-    const request=new Request('https://easygaragecleaning.com/api/highlevel',{method:'POST',headers:{Origin:'https://easygaragecleaning.com','Content-Type':'application/json'},body:JSON.stringify(payload)});
+    const request=new Request('https://easygaragecleaning.com/api/highlevel',{method:'POST',headers:{Origin:'https://easygaragecleaning.com',Cookie:TEST_HUB_COOKIE,'Content-Type':'application/json'},body:JSON.stringify(payload)});
     const response=await onRequestPost({request,env:{HIGHLEVEL_API_KEY:'test-key',HIGHLEVEL_LOCATION_ID:'location-1'}});
     assert.equal(response.status,200);
     const noteCall=calls.find(x=>x.url.endsWith('/contacts/contact-1/notes'));
@@ -284,7 +328,7 @@ test('resaving a walkthrough updates the existing HighLevel job appointment and 
   };
   try{
     const payload={tool:'game_plan',job_id:'job-1',opportunity_id:'opp-1',client:{name:'Test Customer',address:'123 Main',highlevel_contact_id:'contact-1',highlevel_job_appointment_id:'appt-existing'},quote:{title:'Test garage',total:1500,job_date:'2026-09-15',start_time:'10:00',end_time:'14:00',start_at:'2026-09-15T16:00:00.000Z',end_at:'2026-09-15T20:00:00.000Z'},internal_notes:internalNotes};
-    const request=new Request('https://easygaragecleaning.com/api/highlevel',{method:'POST',headers:{Origin:'https://easygaragecleaning.com','Content-Type':'application/json'},body:JSON.stringify(payload)});
+    const request=new Request('https://easygaragecleaning.com/api/highlevel',{method:'POST',headers:{Origin:'https://easygaragecleaning.com',Cookie:TEST_HUB_COOKIE,'Content-Type':'application/json'},body:JSON.stringify(payload)});
     const response=await onRequestPost({request,env:{HIGHLEVEL_API_KEY:'test-key',HIGHLEVEL_LOCATION_ID:'location-1'}}),result=await response.json();
     assert.equal(response.status,200);
     assert.equal(result.appointmentId,'appt-existing');
@@ -324,7 +368,7 @@ test('HighLevel schedule handoff advances the configured pipeline stage',async()
     return new Response('{}',{status:200});
   };
   try{
-    const request=new Request('https://easygaragecleaning.com/api/highlevel',{method:'POST',headers:{Origin:'https://easygaragecleaning.com','Content-Type':'application/json'},body:JSON.stringify({tool:'schedule',event_type:'job',opportunity_id:'opp-1',start_time:'2026-09-10T15:00:00.000Z',end_time:'2026-09-10T18:00:00.000Z',client:{name:'Test Customer',highlevel_contact_id:'contact-1'}})});
+    const request=new Request('https://easygaragecleaning.com/api/highlevel',{method:'POST',headers:{Origin:'https://easygaragecleaning.com',Cookie:TEST_HUB_COOKIE,'Content-Type':'application/json'},body:JSON.stringify({tool:'schedule',event_type:'job',opportunity_id:'opp-1',start_time:'2026-09-10T15:00:00.000Z',end_time:'2026-09-10T18:00:00.000Z',client:{name:'Test Customer',highlevel_contact_id:'contact-1'}})});
     const response=await onRequestPost({request,env:{HIGHLEVEL_API_KEY:'test-key',HIGHLEVEL_LOCATION_ID:'location-1',HIGHLEVEL_PIPELINE_ID:'pipe-1',HIGHLEVEL_SCHEDULED_STAGE_ID:'stage-scheduled',HIGHLEVEL_JOB_CALENDAR_ID:'calendar-1'}});
     const result=await response.json();
     assert.equal(response.status,200);
@@ -349,7 +393,7 @@ test('HighLevel creates one retry-safe pipeline opportunity for a brand-new cust
     return new Response('{}',{status:200});
   };
   try{
-    const request=new Request('https://easygaragecleaning.com/api/highlevel',{method:'POST',headers:{Origin:'https://easygaragecleaning.com','Content-Type':'application/json','Idempotency-Key':'schedule:job-new:1'},body:JSON.stringify({tool:'schedule',event_type:'job',opportunity_name:'New Customer — Garage transformation',monetary_value:1750,start_time:'2026-09-11T15:00:00.000Z',end_time:'2026-09-11T18:00:00.000Z',client:{name:'New Customer',phone:'9705550199'}})});
+    const request=new Request('https://easygaragecleaning.com/api/highlevel',{method:'POST',headers:{Origin:'https://easygaragecleaning.com',Cookie:TEST_HUB_COOKIE,'Content-Type':'application/json','Idempotency-Key':'schedule:job-new:1'},body:JSON.stringify({tool:'schedule',event_type:'job',opportunity_name:'New Customer — Garage transformation',monetary_value:1750,start_time:'2026-09-11T15:00:00.000Z',end_time:'2026-09-11T18:00:00.000Z',client:{name:'New Customer',phone:'9705550199'}})});
     const response=await onRequestPost({request,env:{HIGHLEVEL_API_KEY:'test-key',HIGHLEVEL_LOCATION_ID:'location-1',HIGHLEVEL_PIPELINE_ID:'pipe-1',HIGHLEVEL_SCHEDULED_STAGE_ID:'stage-scheduled',HIGHLEVEL_JOB_CALENDAR_ID:'calendar-1'}});
     const result=await response.json();
     assert.equal(response.status,200);
@@ -374,7 +418,7 @@ test('HighLevel reuses the same exact appointment after a response-lost retry',a
     return new Response('{}',{status:200});
   };
   try{
-    const request=new Request('https://easygaragecleaning.com/api/highlevel',{method:'POST',headers:{Origin:'https://easygaragecleaning.com','Content-Type':'application/json'},body:JSON.stringify({tool:'schedule',event_type:'job',opportunity_id:'opp-1',start_time:start,end_time:end,client:{name:'Existing Customer',highlevel_contact_id:'contact-1'}})});
+    const request=new Request('https://easygaragecleaning.com/api/highlevel',{method:'POST',headers:{Origin:'https://easygaragecleaning.com',Cookie:TEST_HUB_COOKIE,'Content-Type':'application/json'},body:JSON.stringify({tool:'schedule',event_type:'job',opportunity_id:'opp-1',start_time:start,end_time:end,client:{name:'Existing Customer',highlevel_contact_id:'contact-1'}})});
     const response=await onRequestPost({request,env:{HIGHLEVEL_API_KEY:'test-key',HIGHLEVEL_LOCATION_ID:'location-1',HIGHLEVEL_PIPELINE_ID:'pipe-1',HIGHLEVEL_SCHEDULED_STAGE_ID:'stage-scheduled',HIGHLEVEL_JOB_CALENDAR_ID:'calendar-1'}});
     const result=await response.json();
     assert.equal(response.status,200);
@@ -397,7 +441,7 @@ test('Hub lead feed resets at the cutoff and excludes historical HighLevel oppor
     return new Response('{}',{status:200});
   };
   try{
-    const response=await onRequestGet({request:new Request('https://easygaragecleaning.com/api/highlevel?view=command',{headers:{Origin:'https://easygaragecleaning.com'}}),env:{HIGHLEVEL_API_KEY:'test-key',HIGHLEVEL_LOCATION_ID:'location-1',HIGHLEVEL_LEADS_RESET_AT:'2026-09-03T21:51:19.314Z'}});
+    const response=await onRequestGet({request:new Request('https://easygaragecleaning.com/api/highlevel?view=command',{headers:{Origin:'https://easygaragecleaning.com',Cookie:TEST_HUB_COOKIE}}),env:{HIGHLEVEL_API_KEY:'test-key',HIGHLEVEL_LOCATION_ID:'location-1',HIGHLEVEL_LEADS_RESET_AT:'2026-09-03T21:51:19.314Z'}});
     const result=await response.json();
     assert.equal(response.status,200);
     assert.equal(result.leadResetAt,'2026-09-03T21:51:19.314Z');
@@ -416,7 +460,7 @@ test('website leads go directly to HighLevel before the existing automation rela
     return new Response('{}',{status:200});
   };
   try{
-    const request=new Request('https://easygaragecleaning.com/api/web-lead',{method:'POST',headers:{Origin:'https://easygaragecleaning.com','Content-Type':'application/json'},body:JSON.stringify({name:'New Customer',phone:'9705550199',email:'new@example.com',items:'Garage cleanout',service_type:'Garage Cleanout',job_size:'Medium garage',what_to_remove:'Boxes and furniture',photo_description:'Full two-car garage',source:'Website',city:'Fort Collins',serviceZip:'80525',preferred_date:'2026-09-10',preferred_timing:'Morning',booking_slot:'Tomorrow AM',estimated_range:'$400–$650',flow_type:'booking',sms_consent:'yes',utm_source:'facebook',utm_medium:'paid-social',utm_campaign:'fall-garages',page_url:'https://easygaragecleaning.com/'})});
+    const request=new Request('https://easygaragecleaning.com/api/web-lead',{method:'POST',headers:{Origin:'https://easygaragecleaning.com',Cookie:TEST_HUB_COOKIE,'Content-Type':'application/json'},body:JSON.stringify({name:'New Customer',phone:'9705550199',email:'new@example.com',items:'Garage cleanout',service_type:'Garage Cleanout',job_size:'Medium garage',what_to_remove:'Boxes and furniture',photo_description:'Full two-car garage',source:'Website',city:'Fort Collins',serviceZip:'80525',preferred_date:'2026-09-10',preferred_timing:'Morning',booking_slot:'Tomorrow AM',estimated_range:'$400–$650',flow_type:'booking',sms_consent:'yes',utm_source:'facebook',utm_medium:'paid-social',utm_campaign:'fall-garages',page_url:'https://easygaragecleaning.com/'})});
     const response=await onRequestPost({request,env:{HIGHLEVEL_API_KEY:'test-key',HIGHLEVEL_LOCATION_ID:'location-1',HIGHLEVEL_PIPELINE_ID:'pipe-1',HIGHLEVEL_USER_ID:'user-1',WEBSITE_LEAD_HOOK_URL:'https://hooks.example.test/lead'}});
     const result=await response.json();
     assert.equal(response.status,200);
@@ -497,7 +541,7 @@ test('crew assignment updates the HighLevel appointment without retriggering cus
   const {onRequestPost}=await import('../functions/api/highlevel.js'),calls=[],originalFetch=globalThis.fetch;
   globalThis.fetch=async(url,options={})=>{calls.push({url:String(url),options});if(String(url).endsWith('/calendars/events/appointments/appt-1'))return new Response(JSON.stringify({id:'appt-1'}),{status:200});return new Response('{}',{status:200})};
   try{
-    const request=new Request('https://easygaragecleaning.com/api/highlevel',{method:'POST',headers:{Origin:'https://easygaragecleaning.com','Content-Type':'application/json'},body:JSON.stringify({tool:'schedule',event_type:'job',silent_update:true,appointment_id:'appt-1',start_time:'2026-09-14T15:00:00.000Z',end_time:'2026-09-14T18:00:00.000Z',notes:'CREW / WINDOW: Alex + Sam',client:{name:'Customer',highlevel_contact_id:'contact-1'}})});
+    const request=new Request('https://easygaragecleaning.com/api/highlevel',{method:'POST',headers:{Origin:'https://easygaragecleaning.com',Cookie:TEST_HUB_COOKIE,'Content-Type':'application/json'},body:JSON.stringify({tool:'schedule',event_type:'job',silent_update:true,appointment_id:'appt-1',start_time:'2026-09-14T15:00:00.000Z',end_time:'2026-09-14T18:00:00.000Z',notes:'CREW / WINDOW: Alex + Sam',client:{name:'Customer',highlevel_contact_id:'contact-1'}})});
     const response=await onRequestPost({request,env:{HIGHLEVEL_API_KEY:'test-key',HIGHLEVEL_LOCATION_ID:'location-1',HIGHLEVEL_JOB_CALENDAR_ID:'calendar-1'}}),result=await response.json();
     assert.equal(response.status,200);
     assert.equal(result.automation.silent,true);

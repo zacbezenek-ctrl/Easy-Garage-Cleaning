@@ -14,6 +14,8 @@
  *   item = { id, clientId, name, phone, email, address, title, createdAt, day }
  */
 
+import { getHubSession } from '../_lib/hub-session.js';
+
 const TOKEN_URL = 'https://api.getjobber.com/api/oauth/token';
 const GQL_URL = 'https://api.getjobber.com/api/graphql';
 const GQL_VERSION = '2023-11-15'; // bump if Jobber retires this version
@@ -93,6 +95,7 @@ export async function onRequestGet({ request, env }) {
     status, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-store' } });
 
   if (!originAllowed(request)) return json(403, { ok: false, error: 'Forbidden origin' });
+  if (!await getHubSession(request, env)) return json(401, { ok: false, error: 'Sign in to the EGC Hub' });
   if (!env.JOBBER_CLIENT_ID || !env.JOBBER_CLIENT_SECRET || !env.JOBBER_REFRESH_TOKEN) {
     return json(501, { ok: false, error: 'Jobber lookup not configured — run /api/jobber-auth setup' });
   }

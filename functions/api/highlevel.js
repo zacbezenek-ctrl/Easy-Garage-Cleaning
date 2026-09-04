@@ -21,6 +21,8 @@
  *   HIGHLEVEL_LEADS_RESET_AT
  */
 
+import { getHubSession } from '../_lib/hub-session.js';
+
 const API = 'https://services.leadconnectorhq.com';
 const DEFAULT_LEAD_RESET_AT = '2026-09-03T21:51:19.314Z';
 const HOST = /(^|\.)easygaragecleaning\.com$|\.pages\.dev$|^localhost(:\d+)?$|^127\.0\.0\.1(:\d+)?$/;
@@ -471,6 +473,7 @@ export async function onRequestOptions() {
 
 export async function onRequestGet({ request, env }) {
   if (!allowed(request)) return reply(403, { ok: false, error: 'Forbidden origin' });
+  if (!await getHubSession(request, env)) return reply(401, { ok: false, code: 'HUB_AUTH_REQUIRED', error: 'Sign in to the EGC Hub' });
   const c = config(env);
   if (!c.token || !c.locationId) return reply(501, { ok: false, code: 'HIGHLEVEL_NOT_CONFIGURED', error: 'HighLevel needs an API key and location ID' });
   const url = new URL(request.url), view = url.searchParams.get('view') || 'command';
@@ -498,6 +501,7 @@ export async function onRequestGet({ request, env }) {
 
 export async function onRequestPost({ request, env }) {
   if (!allowed(request)) return reply(403, { ok: false, error: 'Forbidden origin' });
+  if (!await getHubSession(request, env)) return reply(401, { ok: false, code: 'HUB_AUTH_REQUIRED', error: 'Sign in to the EGC Hub' });
   const c = config(env);
   if (!c.token || !c.locationId) return reply(501, { ok: false, code: 'HIGHLEVEL_NOT_CONFIGURED', error: 'HighLevel needs an API key and location ID' });
   const raw = await request.text();

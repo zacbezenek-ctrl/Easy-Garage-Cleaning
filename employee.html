@@ -760,13 +760,6 @@ body.has-session #login-screen { display: none; }
 </style>
 </head>
 <body>
-<script>
-(function(){
-  if (sessionStorage.getItem('egc_u') && sessionStorage.getItem('egc_tok')) {
-    document.body.classList.add('has-session');
-  }
-})();
-</script>
 <a href="#dashboard" class="skip-link">Skip to content</a>
 
 <!-- ═══════════════════════════════════════
@@ -1351,47 +1344,42 @@ function updateFirebaseStatus() {
 }
 
 /* ═══════════════════════════════════════════════════════
-   AUTH — passwords stored as salted SHA-256 hashes only
-   To rotate a password: sha256(username + ':' + newPass + ':egc-salt-2026')
+   AUTH — validated at the server; browser receives an HttpOnly session cookie
 ═══════════════════════════════════════════════════════ */
-const USERS = {
-  ZacB:   '6b8670f397174ff99440629b877581216a0b26b6770054be198988ff48a16861',
-  TylerG: '28b50fd5ee98af8cf015972811def03dbc2eaff52997f82ecfc4342ece6cfa36',
-  AlexK:  '52e2e9901adc10406ad9597084ece4770d1c9fd0e3b76e1f31abf35f8030ac50',
-};
 const ADMINS = ['ZacB', 'AlexK'];
 let me = null;
-
-async function sha256(str) {
-  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
-  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2,'0')).join('');
-}
-async function hashPassword(username, password) {
-  return sha256(username + ':' + password + ':egc-salt-2026');
-}
-async function sessionToken(username) {
-  return sha256(username + ':' + USERS[username] + ':egc-session');
-}
 
 async function doLogin() {
   const u = document.getElementById('l-user').value.trim();
   const p = document.getElementById('l-pass').value;
   const err = document.getElementById('login-error');
-  if (!USERS[u]) { err.style.display = 'block'; return; }
-  const hashed = await hashPassword(u, p);
-  if (hashed === USERS[u]) {
+  const button = document.querySelector('#login-screen .btn-main');
+  err.style.display = 'none';
+  button.disabled = true;
+  button.textContent = 'Signing in…';
+  try {
+    const response = await fetch('/api/hub-auth', {
+      method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: u, password: p })
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.ok) throw new Error(data.error || 'Incorrect username or password');
     err.style.display = 'none';
-    me = u;
-    const tok = await sessionToken(u);
-    sessionStorage.setItem('egc_u', u);
-    sessionStorage.setItem('egc_tok', tok);
+    me = data.user;
+    sessionStorage.setItem('egc_u', me);
+    sessionStorage.removeItem('egc_tok');
     showModeSelect();
-  } else {
+  } catch (error) {
+    err.textContent = error.message || 'Unable to sign in. Check the connection and try again.';
     err.style.display = 'block';
+  } finally {
+    button.disabled = false;
+    button.textContent = 'Sign In';
   }
 }
 
-function doLogout() {
+async function doLogout() {
+  try { await fetch('/api/hub-auth', { method: 'DELETE', credentials: 'same-origin' }); } catch {}
   sessionStorage.removeItem('egc_u');
   sessionStorage.removeItem('egc_tok');
   me = null;
@@ -1422,13 +1410,20 @@ function bootDashboard() {
 }
 
 window.addEventListener('DOMContentLoaded', async () => {
-  const saved = sessionStorage.getItem('egc_u');
-  const savedTok = sessionStorage.getItem('egc_tok');
-  if (saved && USERS[saved] && savedTok) {
-    const expectedTok = await sessionToken(saved);
-    if (savedTok === expectedTok) { me = saved; showModeSelect(); }
-    else { sessionStorage.removeItem('egc_u'); sessionStorage.removeItem('egc_tok'); document.body.classList.remove('has-session'); }
-  } else {
+  try {
+    const response = await fetch('/api/hub-auth', { cache: 'no-store', credentials: 'same-origin' });
+    const data = await response.json().catch(() => ({}));
+    if (response.ok && data.ok && data.user) {
+      me = data.user;
+      sessionStorage.setItem('egc_u', me);
+      sessionStorage.removeItem('egc_tok');
+      showModeSelect();
+    } else {
+      sessionStorage.removeItem('egc_u');
+      sessionStorage.removeItem('egc_tok');
+      document.body.classList.remove('has-session');
+    }
+  } catch {
     document.body.classList.remove('has-session');
   }
   document.getElementById('l-pass').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });

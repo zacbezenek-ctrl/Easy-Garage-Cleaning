@@ -20,6 +20,8 @@
  *   CREW_WEBHOOK_URL as a Cloudflare secret instead and leave the fallback unused.
  */
 
+import { getHubSession } from '../_lib/hub-session.js';
+
 // Hosts allowed to POST here. Referer/Origin is spoofable via curl, so this is
 // a casual-abuse filter, not real auth — pair with Cloudflare Access for that.
 const ALLOWED_HOST_RE = /(^|\.)easygaragecleaning\.com$|(\.pages\.dev)$|^localhost(:\d+)?$|^127\.0\.0\.1(:\d+)?$/;
@@ -64,6 +66,7 @@ export async function onRequestPost({ request, env }) {
     });
 
   if (!originAllowed(request)) return json(403, { ok: false, error: 'Forbidden origin' });
+  if (!await getHubSession(request, env)) return json(401, { ok: false, error: 'Sign in to the EGC Hub' });
 
   const raw = await request.text();
   if (raw.length > MAX_BODY) return json(413, { ok: false, error: 'Payload too large' });
