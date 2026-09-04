@@ -132,6 +132,19 @@ test('walkthrough promise syncs to the job, customer profile, crew brief, and Hi
   assert.match(postjob,/postJobChecklist:\{/);
 });
 
+test('crew checklist progress resumes across devices and is visible to the manager',()=>{
+  for(const [page,phase] of [[prejob,'preJob'],[postjob,'postJob']]){
+    for(const marker of ['function progressPayload','function restoreSharedProgress','function queueProgressSave',`${phase}Progress:snapshot`,`restoreSharedProgress(j.${phase}Progress)`,`${phase}Progress:{...progressPayload(),completedAt`]){
+      assert.match(page,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),`${phase}: ${marker} is missing`);
+    }
+    assert.match(page,/queueProgressSave\(\)/);
+  }
+  assert.match(suite,/preProgress=j\.preJobProgress/);
+  assert.match(suite,/postProgress=j\.postJobProgress/);
+  assert.match(suite,/Pre-job \$\{preProgress\.completedCount\|\|0\}\/\$\{preProgress\.totalCount\}/);
+  assert.match(suite,/Closeout \$\{postProgress\.completedCount\|\|0\}\/\$\{postProgress\.totalCount\}/);
+});
+
 test('HighLevel receives the customer promise in both the contact note and job appointment',async()=>{
   const {onRequestPost}=await import('../functions/api/highlevel.js');
   const calls=[],originalFetch=globalThis.fetch;

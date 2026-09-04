@@ -316,6 +316,7 @@ const SECTIONS = [
 /* =================================================== */
 
 const state={},clientState={};
+let progressTimer=null;
 const SAVEKEY="egc_postjob_v1",CENTRAL_JOB_ID=new URLSearchParams(location.search).get("jobId")||"";
 const FIELD_IDS=["j_name","j_date","j_phone","j_loads","j_hours","j_fees","j_notes","j_payment","j_payment_ref"];
 const GUARD_OPTS=["Guard Black","Garage Guard","Guard Lite","Not today"];
@@ -333,7 +334,11 @@ function renderClientChecklist(){const host=document.getElementById('client-chec
 function standardDone(){return SECTIONS.reduce((n,sec,si)=>n+sec.items.filter((_,ii)=>state[key(si,ii)]).length,0)}
 function totalDone(){return standardDone()+clientItems().filter(it=>clientState[clientKey(it)]).length}
 function totalChecks(){return SECTIONS.reduce((a,s)=>a+s.items.length,0)+clientItems().length}
-function togClient(k){clientState[k]=!clientState[k];render();saveAll()}
+function progressIdentity(){return sessionStorage.getItem('egc_u')||localStorage.getItem('egc_u')||''}
+function progressPayload(){const standardItems=SECTIONS.flatMap((sec,si)=>sec.items.map((it,ii)=>({key:key(si,ii),label:it.t,completed:Boolean(state[key(si,ii)])}))),specificItems=clientItems().map(it=>({id:it.id,label:it.label,detail:it.detail||'',completed:Boolean(clientState[clientKey(it)])})),completedCount=standardItems.filter(x=>x.completed).length+specificItems.filter(x=>x.completed).length,totalCount=standardItems.length+specificItems.length;return{completedCount,totalCount,percent:totalCount?Math.round(completedCount/totalCount*100):0,updatedAt:new Date().toISOString(),updatedBy:progressIdentity(),standardItems,clientItems:specificItems}}
+function restoreSharedProgress(progress){if(!progress)return;(progress.standardItems||[]).forEach(item=>{if(item.key)state[item.key]=Boolean(item.completed)});(progress.clientItems||[]).forEach(item=>{clientState[clientKey(item)]=Boolean(item.completed)})}
+function queueProgressSave(){if(!HUBDB||!ACTIVE.jobId)return;clearTimeout(progressTimer);progressTimer=setTimeout(async()=>{const snapshot=progressPayload();await HUBDB.collection('jobs').doc(ACTIVE.jobId).set({postJobProgress:snapshot,updatedAt:snapshot.updatedAt},{merge:true}).catch(()=>{})},600)}
+function togClient(k){clientState[k]=!clientState[k];render();saveAll();queueProgressSave()}
 const esc=s=>String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const normPhone=raw=>{const d=String(raw||"").replace(/\D/g,"");if(d.length===10)return"+1"+d;if(d.length===11&&d[0]==="1")return"+"+d;if(d.length>10)return"+"+d;return d||"";};
 const STORAGE_OK=(()=>{try{localStorage.setItem("__egc_t","1");localStorage.removeItem("__egc_t");return true;}catch(e){return false;}})();
@@ -549,7 +554,7 @@ function render(){
   else{btn.classList.remove("ready");btn.textContent=`Complete all checks to close the job (${total-done} left)`;}
   renderJobBrief();
 }
-function tog(si,ii){state[key(si,ii)]=!state[key(si,ii)];render();saveAll();}
+function tog(si,ii){state[key(si,ii)]=!state[key(si,ii)];render();saveAll();queueProgressSave();}
 function copyScript(si){
   const name=document.getElementById("j_name").value||"[NAME]";
   let txt=SECTIONS[si].script.p.join("\n\n").replace(/<[^>]+>/g,"").replaceAll("[NAME]",name);
@@ -604,7 +609,7 @@ async function finish(){
   try{const log=JSON.parse(localStorage.getItem("egc_job_log")||"[]");log.push(payload);
     localStorage.setItem("egc_job_log",JSON.stringify(log.slice(-50)));}catch(e){}
   const completedAt=new Date().toISOString();
-  if(HUBDB&&ACTIVE.jobId){const total=Number(ACTIVE.total||ACTIVE.rate||0),paid=paymentMethod!=="unpaid"&&paymentReference,completedBy=sessionStorage.getItem('egc_u')||localStorage.getItem('egc_u')||'';await HUBDB.collection('jobs').doc(ACTIVE.jobId).set({status:paid?'paid':'completed',pipelineStatus:paid?'paid':'completed',completedAt,actualLoads:Number(v('j_loads')||0),hoursOnSite:Number(v('j_hours')||0),dumpFees:Number(v('j_fees')||0),closeoutNotes:v('j_notes'),postJobChecklist:{completedAt,completedBy,clientItems:clientItems().map(it=>({id:it.id,label:it.label,detail:it.detail,completed:true})),standardItems:SECTIONS.flatMap(sec=>sec.items.map(it=>it.t))},payment:paid?{amount:total,lastAmount:total,lastReceivedAt:completedAt,method:paymentMethod,reference:paymentReference,verified:true,recordedBy:'crew'}:{amount:0,method:'unpaid',verified:false},invoice:{status:paid?'paid':'ready',amount:total,balance:paid?0:total,updatedAt:completedAt},closeoutSyncStatus:'pending',closeoutIdempotencyKey:_finishId,updatedAt:completedAt},{merge:true}).catch(()=>{})}
+  if(HUBDB&&ACTIVE.jobId){const total=Number(ACTIVE.total||ACTIVE.rate||0),paid=paymentMethod!=="unpaid"&&paymentReference,completedBy=sessionStorage.getItem('egc_u')||localStorage.getItem('egc_u')||'';await HUBDB.collection('jobs').doc(ACTIVE.jobId).set({status:paid?'paid':'completed',pipelineStatus:paid?'paid':'completed',completedAt,actualLoads:Number(v('j_loads')||0),hoursOnSite:Number(v('j_hours')||0),dumpFees:Number(v('j_fees')||0),closeoutNotes:v('j_notes'),postJobProgress:{...progressPayload(),completedAt},postJobChecklist:{completedAt,completedBy,clientItems:clientItems().map(it=>({id:it.id,label:it.label,detail:it.detail,completed:true})),standardItems:SECTIONS.flatMap(sec=>sec.items.map(it=>it.t))},payment:paid?{amount:total,lastAmount:total,lastReceivedAt:completedAt,method:paymentMethod,reference:paymentReference,verified:true,recordedBy:'crew'}:{amount:0,method:'unpaid',verified:false},invoice:{status:paid?'paid':'ready',amount:total,balance:paid?0:total,updatedAt:completedAt},closeoutSyncStatus:'pending',closeoutIdempotencyKey:_finishId,updatedAt:completedAt},{merge:true}).catch(()=>{})}
   if(HUBDB&&ACTIVE.customerId)await HUBDB.collection('customers').doc(ACTIVE.customerId).set({latestJobId:ACTIVE.jobId,lastServiceAt:completedAt,lastCloseoutNotes:v('j_notes'),lastPaymentStatus:paymentMethod,updatedAt:completedAt},{merge:true}).catch(()=>{});
   if(HUBDB&&ACTIVE.jobId)await releaseCentralLock();
   const btn=document.getElementById("donebtn");btn.textContent="Saving to HighLevel…";
@@ -621,7 +626,7 @@ async function finish(){
   localStorage.removeItem("egc_active_job");
   alert("Job closed and the Hub record is updated. Send the review request only after confirming the customer is happy. 🧹");
 }
-async function loadCentralJob(){if(!HUBDB||!CENTRAL_JOB_ID)return;try{const snap=await HUBDB.collection('jobs').doc(CENTRAL_JOB_ID).get();if(!snap.exists)return;const j={id:snap.id,...snap.data()};ACTIVE={...ACTIVE,jobId:j.id,customerId:j.customerId||'',highlevelContactId:j.highlevelContactId||'',highlevelOpportunityId:j.highlevelOpportunityId||'',highlevelAppointmentId:j.highlevelAppointmentId||'',name:j.customer||'',phone:j.phone||'',email:j.email||'',addr:j.address||'',pkg:j.serviceType||'',total:j.total||j.priceQuoted||'',rate:j.total||j.priceQuoted||'',deposit:j.deposit?.amount||'',jobdate:j.date||'',startTime:j.time||'',endTime:j.endTime||'',pain:j.walkthroughNotes||'',customerNotesSummary:j.customerNotesSummary||j.notes||'',internalNotes:j.internalNotes||'',clientChecklists:j.clientChecklists||{},discovery:j.discovery||{},scope:j.scope||{},logistics:j.logistics||{},instructions:normalizedInstructions(j),savedAt:j.updatedAt||j.createdAt||''};document.getElementById('j_name').value=j.customer||'';document.getElementById('j_phone').value=j.phone||'';document.getElementById('j_date').value=j.date||'';saveAll()}catch(e){}}
+async function loadCentralJob(){if(!HUBDB||!CENTRAL_JOB_ID)return;try{const snap=await HUBDB.collection('jobs').doc(CENTRAL_JOB_ID).get();if(!snap.exists)return;const j={id:snap.id,...snap.data()};ACTIVE={...ACTIVE,jobId:j.id,customerId:j.customerId||'',highlevelContactId:j.highlevelContactId||'',highlevelOpportunityId:j.highlevelOpportunityId||'',highlevelAppointmentId:j.highlevelAppointmentId||'',name:j.customer||'',phone:j.phone||'',email:j.email||'',addr:j.address||'',pkg:j.serviceType||'',total:j.total||j.priceQuoted||'',rate:j.total||j.priceQuoted||'',deposit:j.deposit?.amount||'',jobdate:j.date||'',startTime:j.time||'',endTime:j.endTime||'',pain:j.walkthroughNotes||'',customerNotesSummary:j.customerNotesSummary||j.notes||'',internalNotes:j.internalNotes||'',clientChecklists:j.clientChecklists||{},discovery:j.discovery||{},scope:j.scope||{},logistics:j.logistics||{},instructions:normalizedInstructions(j),savedAt:j.updatedAt||j.createdAt||''};restoreSharedProgress(j.postJobProgress);document.getElementById('j_name').value=j.customer||'';document.getElementById('j_phone').value=j.phone||'';document.getElementById('j_date').value=j.date||'';saveAll()}catch(e){}}
 async function releaseCentralLock(){try{const ref=HUBDB.collection('jobs').doc(`_egc_schedule_lock_${String(ACTIVE.jobdate||'').replace(/[^0-9-]/g,'')}`),snap=await ref.get(),entries=(Array.isArray(snap.data()?.entries)?snap.data().entries:[]).filter(x=>x.id!==ACTIVE.jobId);await ref.set({recordType:'schedule_lock',date:ACTIVE.jobdate,entries,updatedAt:new Date().toISOString()},{merge:true})}catch(e){}}
 document.addEventListener("input",saveAll);
 if(!STORAGE_OK) setTimeout(()=>alert("Heads up: this browser is blocking local storage (often Private Browsing). The job won't pre-fill from the Game Plan and progress won't save. Switch off Private Browsing for this iPad."),200);
