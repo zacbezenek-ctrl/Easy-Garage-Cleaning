@@ -445,6 +445,14 @@ test('employees can discover and safely pick up manager-opened crew shifts',()=>
   assert.doesNotMatch(suite,/collection\(['"]open_shifts['"]\)/);
 });
 
+test('employees have a personal schedule for assigned and claimed work',()=>{
+  for(const marker of ["'my_shifts'",'My shifts','PERSONAL FIELD SCHEDULE','myShiftJobs','myShiftBoard','Manager-assigned and self-claimed work','Open brief'])assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),marker+' is missing');
+  assert.match(suite,/crewNames\(j\)\.some\(n=>sameEmployee\(n,identity\)\)/);
+  assert.match(suite,/String\(j\.date\|\|''\)>=day\(\)/);
+  assert.match(suite,/\/crew\/prejob\.html\?jobId=/);
+  assert.match(suite,/routeUrl\(j\.address\)/);
+});
+
 test('claimed shifts stay visible and can be safely released by the claimant',()=>{
   for(const marker of ['shiftPickupEnabled','shiftClaims','opsReleaseShift','Release shift','lastShiftRelease','crew-release:','Shift released and crew brief synced'])assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
   assert.match(suite,/const pickupEnabled=/);
@@ -495,8 +503,8 @@ test('open-shift scheduling fields persist on the canonical job record',()=>{
   assert.match(suite,/if\(k==='type'\)render\(\)/);
   assert.match(suite,/b\.type==='job'\?'':'ops-hidden'/);
   assert.match(suite,/b\.type==='blocked'\?'ops-hidden':''/);
-  assert.match(employee,/employee-suite\.css\?v=20260903o/);
-  assert.match(employee,/employee-suite\.js\?v=20260903t/);
+  assert.match(employee,/employee-suite\.css\?v=20260903p/);
+  assert.match(employee,/employee-suite\.js\?v=20260903u/);
 });
 
 test('recurring visits keep the client plan but reset prior completion and payment state',()=>{
