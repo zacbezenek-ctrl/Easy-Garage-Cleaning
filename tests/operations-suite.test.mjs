@@ -520,7 +520,7 @@ test('open-shift scheduling fields persist on the canonical job record',()=>{
   assert.match(suite,/b\.type==='job'\?'':'ops-hidden'/);
   assert.match(suite,/b\.type==='blocked'\?'ops-hidden':''/);
   assert.match(employee,/employee-suite\.css\?v=20260903r/);
-  assert.match(employee,/employee-suite\.js\?v=20260903y/);
+  assert.match(employee,/employee-suite\.js\?v=20260903z/);
 });
 
 test('recurring visits keep the client plan but reset prior completion and payment state',()=>{
@@ -572,6 +572,8 @@ test('walkthrough photos have a durable cross-device handoff when Drive is conne
   assert.match(suite,/photos are not in Drive/);
   assert.match(suite,/Drive setup needed/);
   assert.match(suite,/photoDriveUrl/);
+  for(const marker of ['proofPhotoCount','afterPhotoCount','receiptPhotoCount','latestProofPhotoCount','photoUpdatedAt','photoSyncStatus:syncStatus'])assert.ok(postjob.includes(marker),marker+' is missing from final proof handoff');
+  assert.match(suite,/j\.proofPhotoCount\|\|j\.photoCount/);
 });
 
 test('public quote progress and production links stay configured',()=>{

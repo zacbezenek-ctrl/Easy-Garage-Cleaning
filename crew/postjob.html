@@ -423,7 +423,7 @@ async function driveUploadAll(btn,doneEl){
     alert(ps.length?"All photos for this job are already in Drive.":"No photos on this job yet — capture before/after first.");return;
   }
   btn.disabled=true;
-  let folderUrl=known||"",sent=0,failed=false;
+  let folderUrl=known||"",sent=0,failed=false,failureStatus="error",failureDetail="";
   for(let i=0;i<todo.length;i+=6){
     const batch=todo.slice(i,i+6);
     btn.textContent=`⬆️ Uploading ${Math.min(i+batch.length,todo.length)}/${todo.length}…`;
@@ -431,13 +431,16 @@ async function driveUploadAll(btn,doneEl){
       const res=await fetch("/api/drive-upload",{method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({jobId:job,label:driveLabel(),photos:batch.map(p=>({id:p.id,tag:p.tag,dataUrl:p.dataUrl}))})});
       const j=await res.json().catch(()=>({}));
-      if(res.status===501){alert("Drive upload isn't connected yet — Zac: run /api/drive-auth once.");failed=true;break;}
-      if(!res.ok||!j.ok){failed=true;break;}
+      if(res.status===501){alert("Drive upload isn't connected yet — Zac: run /api/drive-auth once.");failed=true;failureStatus="needs_setup";failureDetail="Google Drive is not connected";break;}
+      if(!res.ok||!j.ok){failed=true;failureDetail=String(j.error||`Drive returned ${res.status}`).slice(0,160);break;}
       folderUrl=j.folderUrl||folderUrl;
       for(const id of (j.uploaded||[])){await photoMark(id);sent++;}
-    }catch(e){failed=true;break;}
+    }catch(e){failed=true;failureDetail=String(e.message||e).slice(0,160);break;}
   }
   if(folderUrl){try{localStorage.setItem(driveKey(),folderUrl);}catch(e){}}
+  const syncStatus=failed?(sent?"partial":failureStatus):"synced",afterPhotoCount=ps.filter(p=>p.tag==="after").length,receiptPhotoCount=ps.filter(p=>p.tag==="receipt").length,syncedAt=new Date().toISOString();
+  if(HUBDB&&ACTIVE.jobId)await HUBDB.collection('jobs').doc(ACTIVE.jobId).set({photoDriveUrl:folderUrl||'',proofPhotoCount:ps.length,afterPhotoCount,receiptPhotoCount,photoSyncStatus:syncStatus,photoSyncError:failed?failureDetail:'',photoSyncedAt:!failed?syncedAt:'',updatedAt:syncedAt},{merge:true}).catch(()=>{});
+  if(HUBDB&&ACTIVE.customerId&&folderUrl)await HUBDB.collection('customers').doc(ACTIVE.customerId).set({latestJobId:ACTIVE.jobId,latestPhotoFolderUrl:folderUrl,latestProofPhotoCount:ps.length,photoUpdatedAt:syncedAt,updatedAt:syncedAt},{merge:true}).catch(()=>{});
   btn.disabled=false;
   if(failed&&!sent){btn.textContent="⬆️ Retry Drive upload";alert("Upload didn't go through — check signal and tap again. Photos are still on this iPad.");}
   else if(failed){btn.textContent=`⬆️ ${sent} up — retry the rest`;}
@@ -617,7 +620,7 @@ async function finish(){
   try{const log=JSON.parse(localStorage.getItem("egc_job_log")||"[]");log.push(payload);
     localStorage.setItem("egc_job_log",JSON.stringify(log.slice(-50)));}catch(e){}
   const completedAt=new Date().toISOString();
-  if(HUBDB&&ACTIVE.jobId){const paidNow=paymentMethod!=="unpaid"&&Boolean(paymentReference),existingPayment=ACTIVE.paymentRecord&&typeof ACTIVE.paymentRecord==='object'?ACTIVE.paymentRecord:{},paymentRecord=paidNow?{...existingPayment,amount:cumulativePaid,lastAmount:paymentAmount,lastReceivedAt:completedAt,method:paymentMethod,reference:paymentReference,verified:true,recordedBy:'crew'}:(Object.keys(existingPayment).length?existingPayment:{amount:0,method:'unpaid',verified:false}),completedBy=sessionStorage.getItem('egc_u')||localStorage.getItem('egc_u')||'';try{await HUBDB.collection('jobs').doc(ACTIVE.jobId).set({status:paidInFull?'paid':'completed',pipelineStatus:paidInFull?'paid':'completed',completedAt,actualLoads,hoursOnSite,timeTracking:{startedAt:ACTIVE.startedAt||'',completedAt,elapsedHours:hoursOnSite,recordedBy:completedBy},dumpFees:Number(v('j_fees')||0),closeoutNotes,closeoutPreJobException:ACTIVE.preJobException||'',scopeVariance:{quotedLoads,actualLoads,difference:variance,notes:closeoutNotes,recordedAt:completedAt},postJobProgress:{...progressPayload(),completedAt},postJobChecklist:{completedAt,completedBy,clientItems:clientItems().map(it=>({id:it.id,label:it.label,detail:it.detail,completed:true})),standardItems:SECTIONS.flatMap(sec=>sec.items.map(it=>it.t))},payment:paymentRecord,invoice:{status:paidInFull?'paid':cumulativePaid>0?'partial':'ready',amount:totalPrice,balance:remainingBalance,updatedAt:completedAt},closeoutSyncStatus:'pending',closeoutSyncPayload:payload,closeoutIdempotencyKey:_finishId,updatedAt:completedAt},{merge:true})}catch(error){document.getElementById("donebtn").textContent="Retry → Save closeout to Hub";alert("The Hub could not record closeout. The full closeout is still saved on this device—reconnect and retry before leaving.");return}}
+  if(HUBDB&&ACTIVE.jobId){const paidNow=paymentMethod!=="unpaid"&&Boolean(paymentReference),existingPayment=ACTIVE.paymentRecord&&typeof ACTIVE.paymentRecord==='object'?ACTIVE.paymentRecord:{},paymentRecord=paidNow?{...existingPayment,amount:cumulativePaid,lastAmount:paymentAmount,lastReceivedAt:completedAt,method:paymentMethod,reference:paymentReference,verified:true,recordedBy:'crew'}:(Object.keys(existingPayment).length?existingPayment:{amount:0,method:'unpaid',verified:false}),completedBy=sessionStorage.getItem('egc_u')||localStorage.getItem('egc_u')||'';try{await HUBDB.collection('jobs').doc(ACTIVE.jobId).set({status:paidInFull?'paid':'completed',pipelineStatus:paidInFull?'paid':'completed',completedAt,actualLoads,hoursOnSite,timeTracking:{startedAt:ACTIVE.startedAt||'',completedAt,elapsedHours:hoursOnSite,recordedBy:completedBy},dumpFees:Number(v('j_fees')||0),closeoutNotes,closeoutPreJobException:ACTIVE.preJobException||'',scopeVariance:{quotedLoads,actualLoads,difference:variance,notes:closeoutNotes,recordedAt:completedAt},postJobProgress:{...progressPayload(),completedAt},postJobChecklist:{completedAt,completedBy,clientItems:clientItems().map(it=>({id:it.id,label:it.label,detail:it.detail,completed:true})),standardItems:SECTIONS.flatMap(sec=>sec.items.map(it=>it.t))},afterPhotoCount:AFTER_COUNT,photoDriveUrl:payload.drive_folder||ACTIVE.photoDriveUrl||'',payment:paymentRecord,invoice:{status:paidInFull?'paid':cumulativePaid>0?'partial':'ready',amount:totalPrice,balance:remainingBalance,updatedAt:completedAt},closeoutSyncStatus:'pending',closeoutSyncPayload:payload,closeoutIdempotencyKey:_finishId,updatedAt:completedAt},{merge:true})}catch(error){document.getElementById("donebtn").textContent="Retry → Save closeout to Hub";alert("The Hub could not record closeout. The full closeout is still saved on this device—reconnect and retry before leaving.");return}}
   if(HUBDB&&ACTIVE.customerId)await HUBDB.collection('customers').doc(ACTIVE.customerId).set({latestJobId:ACTIVE.jobId,lastServiceAt:completedAt,lastCloseoutNotes:v('j_notes'),lastPaymentStatus:paidInFull?'paid':cumulativePaid>0?'partial':'unpaid',lastPaymentBalance:remainingBalance,updatedAt:completedAt},{merge:true}).catch(()=>{});
   if(HUBDB&&ACTIVE.jobId)await releaseCentralLock();
   const btn=document.getElementById("donebtn");btn.textContent="Saving to HighLevel…";
