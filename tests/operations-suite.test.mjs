@@ -453,6 +453,12 @@ test('employees have a personal schedule for assigned and claimed work',()=>{
   assert.match(suite,/routeUrl\(j\.address\)/);
 });
 
+test('assigned shifts download as private calendar events',()=>{
+  for(const marker of ['Add to calendar','opsDownloadShift','text/calendar','DTSTART;TZID=America/Denver','Open crew brief:'])assert.ok(suite.includes(marker),marker+' is missing');
+  assert.match(suite,/URL\.createObjectURL\(blob\)/);
+  assert.match(suite,/egc-shift-\$\{String\(j\.date/);
+});
+
 test('claimed shifts stay visible and can be safely released by the claimant',()=>{
   for(const marker of ['shiftPickupEnabled','shiftClaims','opsReleaseShift','Release shift','lastShiftRelease','crew-release:','Shift released and crew brief synced'])assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
   assert.match(suite,/const pickupEnabled=/);
@@ -503,8 +509,8 @@ test('open-shift scheduling fields persist on the canonical job record',()=>{
   assert.match(suite,/if\(k==='type'\)render\(\)/);
   assert.match(suite,/b\.type==='job'\?'':'ops-hidden'/);
   assert.match(suite,/b\.type==='blocked'\?'ops-hidden':''/);
-  assert.match(employee,/employee-suite\.css\?v=20260903p/);
-  assert.match(employee,/employee-suite\.js\?v=20260903u/);
+  assert.match(employee,/employee-suite\.css\?v=20260903q/);
+  assert.match(employee,/employee-suite\.js\?v=20260903v/);
 });
 
 test('recurring visits keep the client plan but reset prior completion and payment state',()=>{
