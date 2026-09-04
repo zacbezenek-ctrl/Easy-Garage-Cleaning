@@ -29,7 +29,7 @@ main{max-width:1060px;margin:auto;padding:28px 22px 118px}.screen-head{display:f
 @media(max-width:760px){main{padding:22px 14px 110px}.top-row,.steps{padding-left:14px;padding-right:14px}.screen-head{display:block}.autosave{margin-top:8px}.grid2,.grid3,.service-grid{grid-template-columns:1fr}.choices.cols4{grid-template-columns:1fr 1fr}.review{grid-template-columns:1fr}.photos{grid-template-columns:repeat(2,1fr)}.before-after img{height:170px}.sum-row{grid-template-columns:110px 1fr}.top-status span{display:none}}
 @media(max-width:420px){.panel{padding:17px}.screen-head h1{font-size:27px}.choices.cols2,.check-grid{grid-template-columns:1fr}.inline-search{flex-direction:column}.small-btn{min-height:46px}.send-grid{grid-template-columns:1fr}.next{min-width:135px}.photos{grid-template-columns:repeat(2,1fr)}}
 </style>
-<link rel="stylesheet" href="/crew/crew-brand.css?v=20260903">
+<link rel="stylesheet" href="/crew/crew-brand.css?v=20260904b">
 </head>
 <body>
 <div id="gate"><form class="gate-card" onsubmit="login(event)"><div class="gate-mark">EGC</div><h1>Crew sign-in</h1><p>Use your employee portal login.</p><label for="user">Username</label><input id="user" autocomplete="username"><label for="pass">Password</label><input id="pass" type="password" autocomplete="current-password"><button>Unlock walkthrough</button><div class="gate-error" id="gate-error">Incorrect username or password.</div></form></div>
@@ -39,7 +39,7 @@ main{max-width:1060px;margin:auto;padding:28px 22px 118px}.screen-head{display:f
   <footer class="bottom"><div class="bottom-in"><button class="back" id="back" onclick="move(-1)">Back</button><button class="next" id="next" onclick="move(1)">Continue</button></div></footer>
 </div>
 <div id="viewer" onclick="this.classList.remove('on')"><button aria-label="Close">×</button><img id="viewer-img" alt="Walkthrough photo"></div>
-<script src="/crew/hub-auth.js?v=20260903"></script>
+<script src="/crew/hub-auth.js?v=20260904b"></script>
 <script>
 const SAVE='egc_walkthrough_v3',FLOW='2026-09-simple',REQUESTED_WALKTHROUGH_ID=new URLSearchParams(location.search).get('walkthroughId')||'';
 const sections=['Customer','Photos','Scope','Finish','Schedule','Review'];

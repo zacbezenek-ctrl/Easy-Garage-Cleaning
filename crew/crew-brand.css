@@ -3,3 +3,13 @@
 .brand{background:transparent url('/images/brand/egc-icon-primary.png') center/contain no-repeat!important;color:transparent!important;font-size:0!important}
 .gate-mark{background:transparent url('/images/brand/egc-icon-white.png') center/contain no-repeat!important;color:transparent!important;font-size:0!important}
 @media(max-width:480px){#brand{width:185px!important;height:35px!important}}
+
+.crew-utility{position:relative;z-index:9;background:#fff;border-bottom:1px solid #d9cdb8;font-family:Inter,system-ui,sans-serif}
+.crew-utility>div{max-width:1060px;margin:0 auto;padding:8px 18px;display:flex;align-items:center;gap:6px;overflow-x:auto;scrollbar-width:none}
+.crew-utility>div::-webkit-scrollbar{display:none}
+.crew-utility a{flex:none;color:#687386;text-decoration:none;font-size:12px;font-weight:800;line-height:1;padding:10px 11px;border-radius:999px;white-space:nowrap}
+.crew-utility a[aria-current="page"]{background:#13203a;color:#fff}
+.crew-utility a:focus-visible{outline:3px solid rgba(232,88,28,.3);outline-offset:2px}
+.crew-utility-person{margin-left:auto;flex:none;color:#e8581c;font-size:11px;font-weight:900;letter-spacing:.08em;text-transform:uppercase;padding:0 3px}
+.item[role="checkbox"]:focus-visible,.gchip[role="radio"]:focus-visible,.lkr:focus-visible{outline:3px solid rgba(232,88,28,.3);outline-offset:2px}
+@media(max-width:620px){.crew-utility>div{padding-inline:10px}.crew-utility-person{display:none}.crew-utility a{font-size:11px;padding:9px 10px}}

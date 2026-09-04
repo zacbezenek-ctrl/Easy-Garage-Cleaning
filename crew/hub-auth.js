@@ -12,6 +12,8 @@
         storage.removeItem('egc_tok');
         storage.removeItem('egc_exp');
       }
+      const person = document.querySelector('.crew-utility-person');
+      if (person) person.textContent = profile.displayName || user;
     } catch {}
   }
 
@@ -74,5 +76,37 @@
     throw expired;
   }
 
-  window.EGCHubAuth = { session, signIn, signOut, fetch: securedFetch, clearLocal };
+  function profile() {
+    const get = key => sessionStorage.getItem(key) || localStorage.getItem(key) || '';
+    return {
+      user: get('egc_u'),
+      displayName: get('egc_name') || get('egc_u'),
+      role: get('egc_role') || 'crew',
+      payType: get('egc_pay_type') || 'hourly',
+      hourlyRate: Math.max(0, Number(get('egc_hourly_rate') || 0)),
+    };
+  }
+
+  function mountCrewNav() {
+    if (document.querySelector('.crew-utility')) return;
+    const host = document.getElementById('topbar') || document.querySelector('#app .top');
+    if (!host) return;
+    const path = location.pathname.replace(/\.html$/, '').replace(/\/$/, '') || '/crew';
+    const links = [
+      ['/crew', 'Crew home'],
+      ['/crew/gameplan', 'Walkthrough'],
+      ['/crew/prejob', 'Pre-job'],
+      ['/crew/postjob', 'Closeout'],
+      ['/employee', 'My Hub'],
+    ];
+    const nav = document.createElement('nav');
+    nav.className = 'crew-utility';
+    nav.setAttribute('aria-label', 'Crew workflow');
+    nav.innerHTML = `<div>${links.map(([href, label]) => `<a href="${href}${href === '/employee' ? '?view=my_day' : ''}" ${path === href ? 'aria-current="page"' : ''}>${label}</a>`).join('')}<span class="crew-utility-person">${profile().displayName || 'Crew'}</span></div>`;
+    host.insertAdjacentElement('afterend', nav);
+  }
+
+  window.addEventListener('DOMContentLoaded', mountCrewNav);
+
+  window.EGCHubAuth = { session, signIn, signOut, fetch: securedFetch, clearLocal, profile, mountCrewNav };
 })();

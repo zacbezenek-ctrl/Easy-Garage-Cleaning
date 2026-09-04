@@ -8,6 +8,8 @@
 <title>EGC · Crew Tools</title>
 <meta name="robots" content="noindex">
 <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
 <style>
   :root{--navy:#13203a;--navy2:#1d2d4f;--orange:#e8581c;--orange2:#c4470f;--cream:#f2e9dc;
         --paper:#faf5ec;--khaki:#8a8170;--line:#d9cdb8;--r:16px}
@@ -44,8 +46,26 @@
   footer a,footer button{font-family:'Oswald';font-weight:600;font-size:12px;letter-spacing:.08em;text-transform:uppercase;
          color:var(--khaki);background:none;border:none;cursor:pointer;text-decoration:none;padding:8px 0}
   footer a:hover,footer button:hover{color:var(--orange)}
+  .crew-overview{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:0 0 18px}
+  .status-card{background:var(--paper);border:1.5px solid var(--line);border-radius:var(--r);padding:16px;min-width:0}
+  .status-card span{display:block;color:var(--khaki);font-size:11px;font-weight:800;letter-spacing:.08em;text-transform:uppercase}
+  .status-card strong{display:block;font-family:'Oswald';font-size:25px;line-height:1.15;margin:5px 0 3px;text-transform:uppercase;overflow-wrap:anywhere}
+  .status-card small{display:block;color:var(--khaki);font-size:12px;line-height:1.4}
+  .status-card.live{background:var(--navy);border-color:var(--navy);color:#fff}.status-card.live span,.status-card.live small{color:#b6c1cf}.status-card.live strong{color:#fff}
+  .next-card{background:var(--navy);color:#fff;border-radius:20px;padding:22px;margin:0 0 22px;box-shadow:0 14px 34px rgba(19,32,58,.16)}
+  .next-card.empty{background:var(--paper);color:var(--navy);border:1.5px solid var(--line);box-shadow:none}
+  .next-top{display:flex;justify-content:space-between;gap:14px;align-items:flex-start}.next-top>span{color:#ff9a73;font-family:'Oswald';font-size:12px;letter-spacing:.1em;text-transform:uppercase}.job-stage{background:var(--orange);color:#fff!important;padding:5px 9px;border-radius:99px;font-size:10px!important;white-space:nowrap}
+  .next-card h2{font-family:'Oswald';font-size:30px;line-height:1.08;text-transform:uppercase;margin:8px 0 6px}.next-card p{color:#bdc6d5;line-height:1.5;font-size:14px}.next-card.empty p{color:var(--khaki)}
+  .job-meta{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:17px 0}.job-meta div{background:rgba(255,255,255,.08);border-radius:10px;padding:10px}.job-meta span{display:block;color:#9facbf;font-size:10px;font-weight:800;text-transform:uppercase}.job-meta strong{display:block;margin-top:3px;font-size:13px;overflow-wrap:anywhere}
+  .next-actions{display:flex;gap:8px;flex-wrap:wrap}.next-actions a{display:inline-flex;align-items:center;justify-content:center;min-height:46px;padding:0 15px;border-radius:10px;background:#fff;color:var(--navy);font-size:13px;font-weight:800;text-decoration:none}.next-actions a.primary{background:var(--orange);color:#fff}.next-actions a.subtle{background:rgba(255,255,255,.1);color:#fff}
+  .section-head{display:flex;align-items:end;justify-content:space-between;gap:12px;margin:28px 0 12px}.section-head h2{font-family:'Oswald';font-size:23px;text-transform:uppercase}.section-head a{font-size:12px;color:var(--orange);font-weight:800;text-decoration:none}
+  .job-list{display:grid;gap:9px}.job-row{display:grid;grid-template-columns:78px 1fr auto;gap:12px;align-items:center;background:var(--paper);border:1.5px solid var(--line);border-radius:14px;padding:13px;text-decoration:none;color:var(--navy)}.job-row time{font-family:'Oswald';font-weight:700;color:var(--orange);text-transform:uppercase}.job-row strong,.job-row small{display:block}.job-row small{color:var(--khaki);margin-top:3px}.job-row b{color:var(--orange);font-size:20px}
+  .quick-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:9px}.quick-grid a{background:var(--paper);border:1.5px solid var(--line);border-radius:13px;padding:14px 10px;text-align:center;color:var(--navy);text-decoration:none;font-size:12px;font-weight:800;line-height:1.3}.quick-grid a span{display:block;font-size:23px;margin-bottom:6px}
+  .load-note{padding:18px;background:var(--paper);border:1.5px dashed var(--line);border-radius:14px;color:var(--khaki);font-size:14px}
+  .sync-banner{display:none;background:#fff3cd;color:#6f5300;padding:9px 14px;text-align:center;font-size:12px;font-weight:700}.sync-banner.on{display:block}
+  @media(max-width:560px){main{padding:22px 14px 34px}.crew-overview{grid-template-columns:1fr 1fr}.status-card strong{font-size:21px}.job-meta{grid-template-columns:1fr}.job-row{grid-template-columns:65px 1fr auto}.quick-grid{grid-template-columns:1fr 1fr}.next-card{padding:18px}}
 </style>
-<link rel="stylesheet" href="/crew/crew-brand.css?v=20260903">
+<link rel="stylesheet" href="/crew/crew-brand.css?v=20260904b">
 </head>
 <body>
 
@@ -76,17 +96,17 @@
     <div class="gerr" id="gate-err">Incorrect username or password.</div>
   </div>
 </div>
-<script src="/crew/hub-auth.js?v=20260903"></script>
+<script src="/crew/hub-auth.js?v=20260904b"></script>
 <script>
 async function gateLogin(){
   const button=document.querySelector("#egc-gate .gbtn"),error=document.getElementById("gate-err");
   button.disabled=true;button.textContent="Signing in…";error.style.display="none";
-  try{await EGCHubAuth.signIn(document.getElementById("gate-u").value.trim(),document.getElementById("gate-p").value);document.getElementById("egc-gate").classList.add("off")}
+  try{await EGCHubAuth.signIn(document.getElementById("gate-u").value.trim(),document.getElementById("gate-p").value);document.getElementById("egc-gate").classList.add("off");await openCrewHome()}
   catch(e){error.textContent=e.message||"Unable to sign in. Try again.";error.style.display="block"}
   finally{button.disabled=false;button.textContent="Unlock"}
 }
 async function gateLock(){await EGCHubAuth.signOut();location.reload()}
-EGCHubAuth.session().then(user=>{if(user){document.getElementById("egc-gate").classList.add("off");return}document.getElementById("gate-p").addEventListener("keydown",e=>{if(e.key==="Enter")gateLogin()});document.getElementById("gate-u").addEventListener("keydown",e=>{if(e.key==="Enter")document.getElementById("gate-p").focus()})});
+document.addEventListener('DOMContentLoaded',()=>EGCHubAuth.session().then(user=>{if(user){document.getElementById("egc-gate").classList.add("off");openCrewHome();return}document.getElementById("gate-p").addEventListener("keydown",e=>{if(e.key==="Enter")gateLogin()});document.getElementById("gate-u").addEventListener("keydown",e=>{if(e.key==="Enter")document.getElementById("gate-p").focus()})}));
 </script>
 
 <div id="topbar">
@@ -95,51 +115,63 @@ EGCHubAuth.session().then(user=>{if(user){document.getElementById("egc-gate").cl
     <div id="chip">Crew Tools</div>
   </div>
 </div>
+<div id="offline" class="sync-banner">You’re offline. Saved checklist work will sync when your connection returns.</div>
 
 <main>
-  <div class="eyebrow">Internal field tools — one job, three steps</div>
-  <h1>Crew Tools</h1>
-  <p class="sub">Run every job through all three, in order. They hand off to each other automatically on this iPad.</p>
+  <div class="eyebrow">Your workday</div>
+  <h1 id="hello">Crew home</h1>
+  <p class="sub" id="dayline">Your next job, time, pay, and field steps—without hunting through menus.</p>
 
-  <div id="activejob"></div>
+  <div class="crew-overview" id="crew-overview">
+    <article class="status-card"><span>Time clock</span><strong>Loading…</strong><small>Checking your Hub timecard</small></article>
+    <article class="status-card"><span>Estimated pay</span><strong>Loading…</strong><small>Current two-week period</small></article>
+  </div>
 
+  <section id="next-work" class="next-card empty"><div class="next-top"><span>Next assigned work</span></div><h2>Loading your schedule…</h2><p>Checking the Hub for jobs assigned to you.</p></section>
+
+  <div class="quick-grid" aria-label="Employee quick actions">
+    <a href="/employee?view=my_day"><span>⏱</span>Time clock</a>
+    <a href="/employee?view=earnings"><span>＄</span>My pay</a>
+    <a href="/employee?view=requests"><span>◫</span>Requests</a>
+    <a href="/employee?view=safety"><span>!</span>Report issue</a>
+  </div>
+
+  <div class="section-head"><h2>My upcoming work</h2><a href="/employee?view=my_shifts">Full schedule →</a></div>
+  <div id="assigned-jobs" class="job-list"><div class="load-note">Loading assigned jobs…</div></div>
+
+  <div class="section-head"><h2>All field tools</h2><span class="eyebrow">Walkthrough → work → closeout</span></div>
   <div class="tools">
-    <a class="tool hot" href="gameplan.html">
-      <span class="num">1</span>
-      <span class="tx"><h2>Game Plan</h2><p>Guided walkthrough — quote it top-down, lock the rate, close on the driveway</p></span>
-      <span class="arrow">&rarr;</span>
-    </a>
-    <a class="tool" href="prejob.html">
-      <span class="num">2</span>
-      <span class="tx"><h2>Pre-Job Playbook</h2><p>Night-before lock-in, truck load-out, arrival &amp; before-capture checks</p></span>
-      <span class="arrow">&rarr;</span>
-    </a>
-    <a class="tool" href="postjob.html">
-      <span class="num">3</span>
-      <span class="tx"><h2>Post-Job Playbook</h2><p>The reveal, cash &amp; review, Garage Guard pitch, content capture</p></span>
-      <span class="arrow">&rarr;</span>
-    </a>
+    <a class="tool hot" href="gameplan.html"><span class="num">1</span><span class="tx"><h2>Walkthrough</h2><p>Build the customer plan, price, approval, and crew handoff.</p></span><span class="arrow">&rarr;</span></a>
+    <a class="tool" href="prejob.html"><span class="num">2</span><span class="tx"><h2>Pre-job</h2><p>Review the exact promise, load out, arrive, and start the job.</p></span><span class="arrow">&rarr;</span></a>
+    <a class="tool" href="postjob.html"><span class="num">3</span><span class="tx"><h2>Closeout</h2><p>Capture proof, walk the result, log costs, payment, and review.</p></span><span class="arrow">&rarr;</span></a>
   </div>
 </main>
 
 <footer>
-  <a href="/employee.html">&larr; Employee portal</a>
+  <a href="/employee">&larr; Employee Hub</a>
   <button onclick="gateLock()">Lock tools</button>
 </footer>
 
 <script>
-  // show the active job handed off from the Game Plan, if one is in flight
-  const esc=s=>String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
-  try{
-    const a=JSON.parse(localStorage.getItem("egc_active_job"));
-    if(a&&a.name){
-      const el=document.getElementById("activejob");
-      const lockedTotal=(a.total!=null&&a.total!=="")?("$"+a.total):"";
-      el.style.display="block";
-      el.innerHTML="ACTIVE JOB: <span>"+esc(a.name.toUpperCase())+"</span>"+
-        "<small>"+[a.pkg,lockedTotal,a.jobdate].filter(Boolean).map(esc).join(" · ")+"</small>";
-    }
-  }catch(e){}
+const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const money=value=>Number(value||0).toLocaleString('en-US',{style:'currency',currency:'USD',minimumFractionDigits:2,maximumFractionDigits:2});
+const today=()=>new Intl.DateTimeFormat('en-CA',{timeZone:'America/Denver',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
+const displayDate=value=>{try{return new Date(`${value}T12:00:00`).toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'})}catch{return value||'TBD'}};
+const terminal=new Set(['cancelled','completed','invoiced','paid','review_requested','closed']);
+let crewDb=null;
+try{if(window.firebase){if(!firebase.apps.length)firebase.initializeApp({apiKey:'AIzaSyA8g4UAW4P4bsCrQNZhUe81CbC7BvjJbNc',authDomain:'egcw-1ec83.firebaseapp.com',projectId:'egcw-1ec83',storageBucket:'egcw-1ec83.firebasestorage.app',messagingSenderId:'763340109795',appId:'1:763340109795:web:ac203b3eb71831fa4ed2d6'});crewDb=firebase.firestore()}}catch(e){}
+const normalized=value=>String(value||'').trim().toLowerCase().replace(/[^a-z0-9]/g,'');
+function assigned(job,profile){const aliases=[profile.user,profile.displayName].map(normalized).filter(Boolean),crew=[...(Array.isArray(job.assignedCrew)?job.assignedCrew:[]),...String(job.assignedTo||'').split(/\s*\+\s*|\s*,\s*/)].map(normalized);return aliases.some(alias=>crew.includes(alias))}
+function workLink(job){if(job.type==='walkthrough')return`/crew/gameplan?walkthroughId=${encodeURIComponent(job.id)}`;const stage=job.pipelineStatus||job.status||'scheduled';return stage==='in_progress'?`/crew/postjob?jobId=${encodeURIComponent(job.id)}`:`/crew/prejob?jobId=${encodeURIComponent(job.id)}`}
+function workLabel(job){if(job.type==='walkthrough')return'Start walkthrough';return(job.pipelineStatus||job.status)==='in_progress'?'Continue closeout':'Open job brief'}
+function periodStart(){const anchor=new Date('2026-01-05T12:00:00-07:00'),days=Math.floor((new Date()-anchor)/86400000),start=new Date(anchor);start.setDate(anchor.getDate()+Math.floor(days/14)*14);return start}
+function hours(entry){const start=Date.parse(entry.clockInAt||''),end=Date.parse(entry.clockOutAt||'')||Date.now();if(!Number.isFinite(start)||end<start)return 0;const breaks=(entry.breaks||[]).reduce((sum,b)=>{const a=Date.parse(b.startAt||''),z=Date.parse(b.endAt||'')||Date.now();return sum+(Number.isFinite(a)?Math.max(0,z-a):0)},0);return Math.max(0,(end-start-breaks)/3600000)}
+async function loadEmployeeData(profile){try{const response=await EGCHubAuth.fetch('/api/employee-hub',{cache:'no-store'}),data=await response.json();if(!response.ok||!data.ok)throw new Error(data.error||'Hub data unavailable');const entries=(data.collections?.timeEntries||[]).filter(entry=>normalized(entry.employee)===normalized(profile.user)),active=entries.find(entry=>entry.status==='active'&&!entry.clockOutAt),start=periodStart(),end=new Date(start);end.setDate(start.getDate()+14);const current=entries.filter(entry=>{const at=Date.parse(entry.clockInAt||'');return at>=start&&at<end}),gross=current.reduce((sum,entry)=>sum+hours(entry)*Number(entry.hourlyRate||0)+Number(entry.bonus||0)+Number(entry.tips||0),0),totalHours=current.reduce((sum,entry)=>sum+hours(entry),0);document.getElementById('crew-overview').innerHTML=`<article class="status-card ${active?'live':''}"><span>Time clock</span><strong>${active?'Clocked in':'Clocked out'}</strong><small>${active?`${hours(active).toFixed(2)} hours today · ${active.locationTracking?'location on':'location off'}`:'Open My Hub when your shift starts'}</small></article><article class="status-card"><span>Estimated pay</span><strong>${money(gross)}</strong><small>${totalHours.toFixed(2)} hours · current two-week period</small></article>`}catch{document.getElementById('crew-overview').innerHTML='<article class="status-card"><span>Time clock</span><strong>Open My Hub</strong><small>Time data could not load</small></article><article class="status-card"><span>Estimated pay</span><strong>Unavailable</strong><small>Refresh when connected</small></article>'}}
+async function loadAssignedJobs(profile){if(!crewDb){showJobs([]);return}try{const snapshot=await crewDb.collection('jobs').get(),rows=snapshot.docs.map(doc=>({id:doc.id,...doc.data()})).filter(job=>job.recordType!=='schedule_lock'&&job.recordType!=='employee_hub_v2'&&job.recordType!=='crew_availability'&&job.type!=='availability'&&!terminal.has(job.pipelineStatus||job.status||'')&&String(job.date||'')>=today()&&assigned(job,profile)).sort((a,b)=>String(a.date+(a.time||'')).localeCompare(String(b.date+(b.time||''))));showJobs(rows)}catch{document.getElementById('assigned-jobs').innerHTML='<div class="load-note">Your schedule could not load. Check your connection and refresh.</div>'}}
+function showJobs(rows){const next=rows.find(job=>(job.pipelineStatus||job.status)==='in_progress')||rows[0],host=document.getElementById('next-work');if(!next){host.className='next-card empty';host.innerHTML='<div class="next-top"><span>Next assigned work</span></div><h2>No upcoming assignment</h2><p>Your manager has not assigned another job yet. Check Open shifts in My Hub.</p><div class="next-actions"><a class="primary" href="/employee?view=open_shifts">See open shifts</a></div>';document.getElementById('assigned-jobs').innerHTML='<div class="load-note">No upcoming assigned jobs. Claimed and newly assigned shifts will appear here automatically.</div>';return}const stage=(next.pipelineStatus||next.status||'scheduled').replaceAll('_',' '),route=next.address?`https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(next.address)}`:'';host.className='next-card';host.innerHTML=`<div class="next-top"><span>${(next.pipelineStatus||next.status)==='in_progress'?'Active job':'Next assigned work'}</span><span class="job-stage">${esc(stage)}</span></div><h2>${esc(next.customer||next.serviceType||'Customer job')}</h2><p>${esc(next.address||'Address pending')}</p><div class="job-meta"><div><span>Date</span><strong>${esc(displayDate(next.date))}</strong></div><div><span>Time</span><strong>${esc(next.time||'TBD')}–${esc(next.endTime||'TBD')}</strong></div><div><span>Service</span><strong>${esc(next.serviceType||next.type||'Garage service')}</strong></div></div><div class="next-actions"><a class="primary" href="${workLink(next)}">${workLabel(next)}</a>${route?`<a href="${route}" target="_blank" rel="noopener">Route</a>`:''}<a class="subtle" href="tel:9709991818">Call office</a></div>`;document.getElementById('assigned-jobs').innerHTML=rows.slice(0,6).map(job=>`<a class="job-row" href="${workLink(job)}"><time>${esc(displayDate(job.date))}<small>${esc(job.time||'')}</small></time><span><strong>${esc(job.customer||job.serviceType||'Customer job')}</strong><small>${esc(job.address||'Address pending')}</small></span><b>→</b></a>`).join('')}
+async function openCrewHome(){const profile=EGCHubAuth.profile(),name=profile.displayName||profile.user||'Crew';document.getElementById('hello').textContent=`Hi, ${name}`;document.getElementById('dayline').textContent=`${new Date().toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric'})} · Here’s what you need for work.`;EGCHubAuth.mountCrewNav();await Promise.all([loadEmployeeData(profile),loadAssignedJobs(profile)])}
+function updateOnline(){document.getElementById('offline').classList.toggle('on',!navigator.onLine)}
+addEventListener('online',()=>{updateOnline();openCrewHome()});addEventListener('offline',updateOnline);updateOnline();
 </script>
 </body>
 </html>

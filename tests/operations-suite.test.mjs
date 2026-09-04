@@ -11,6 +11,7 @@ const read=(p)=>fs.readFileSync(new URL('../'+p,import.meta.url),'utf8');
 const employee=read('employee.html');
 const suite=read('employee-suite.js');
 const crew=read('crew/gameplan.html');
+const crewHome=read('crew/index.html');
 const prejob=read('crew/prejob.html');
 const postjob=read('crew/postjob.html');
 const copilot=read('copilot.html');
@@ -322,10 +323,26 @@ test('closeout preserves deposits and records only the payment received now',()=
 });
 
 test('durable job start pre-fills elapsed closeout time without preventing correction',()=>{
-  assert.match(prejob,/const startedAt=ACTIVE\.startedAt\|\|new Date\(\)\.toISOString\(\)/);
+  assert.match(prejob,/const startedAt=ACTIVE\.startedAt\|\|localStorage\.getItem\(startKey\(\)\)\|\|new Date\(\)\.toISOString\(\)/);
+  assert.match(prejob,/ACTIVE\.startedAt=startedAt/);
   for(const marker of ['hours_hint','Calculated from','adjust if needed','timeTracking:{startedAt','elapsedHours:hoursOnSite','started_at:ACTIVE.startedAt'])assert.match(postjob,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
   assert.match(postjob,/Math\.round\(\(Date\.now\(\)-Date\.parse\(ACTIVE\.startedAt\)\)\/900000\)\/4/);
   assert.match(postjob,/if\(ACTIVE\.startedAt&&hours&&!hours\.value\)/);
+});
+
+test('crew tools provide a job-aware employee home and one connected workflow',()=>{
+  for(const marker of ['Your workday','next-work','My upcoming work','Estimated pay','loadEmployeeData','loadAssignedJobs','workLink','Open job brief','Continue closeout','Time clock','Report issue','offline'])assert.match(crewHome,new RegExp(marker));
+  for(const page of [crewHome,crew,prejob,postjob]){
+    assert.match(page,/crew-brand\.css\?v=20260904b/);
+    assert.match(page,/hub-auth\.js\?v=20260904b/);
+  }
+  const auth=read('crew/hub-auth.js');
+  for(const marker of ['mountCrewNav','crew-utility','Crew home','Walkthrough','Pre-job','Closeout','My Hub'])assert.match(auth,new RegExp(marker));
+  for(const page of [prejob,postjob]){
+    assert.match(page,/aria-checked=/);
+    assert.match(page,/copyScript\(\$\{si\},this\)/);
+    assert.doesNotMatch(page,/event\.target\.textContent="Copied/);
+  }
 });
 
 test('weekly timesheets use individual timecards with a legacy closeout fallback',()=>{
@@ -647,7 +664,7 @@ test('open-shift scheduling fields persist on the canonical job record',()=>{
   assert.match(suite,/b\.type==='job'\?'':'ops-hidden'/);
   assert.match(suite,/b\.type==='blocked'\?'ops-hidden':''/);
   assert.match(employee,/employee-suite\.css\?v=20260904a/);
-  assert.match(employee,/employee-suite\.js\?v=20260904a/);
+  assert.match(employee,/employee-suite\.js\?v=20260904b/);
 });
 
 test('recurring visits keep the client plan but reset prior completion and payment state',()=>{
@@ -734,7 +751,7 @@ test('public quote progress and production links stay configured',()=>{
 });
 
 test('all employee and field-tool inline scripts parse',()=>{
-  for(const [name,html] of [['employee.html',employee],['crew/gameplan.html',crew],['crew/prejob.html',prejob],['crew/postjob.html',postjob]]){
+  for(const [name,html] of [['employee.html',employee],['crew/index.html',crewHome],['crew/gameplan.html',crew],['crew/prejob.html',prejob],['crew/postjob.html',postjob]]){
     const scripts=[...html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/gi)].map(x=>x[1]).filter(Boolean);
     scripts.forEach((code,i)=>assert.doesNotThrow(()=>new vm.Script(code,{filename:name+'#'+i})));
   }

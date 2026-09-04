@@ -41,9 +41,9 @@
   .grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
   label.fl{display:block;font-family:'Oswald';font-weight:600;font-size:11px;letter-spacing:.1em;
            text-transform:uppercase;color:var(--khaki);margin:8px 0 5px}
-  input,textarea{width:100%;background:#fff;border:1.5px solid var(--line);border-radius:10px;
+  input,textarea,select{width:100%;background:#fff;border:1.5px solid var(--line);border-radius:10px;
     padding:12px 13px;font:inherit;font-size:16px;color:var(--navy)}
-  input:focus,textarea:focus{outline:none;border-color:var(--orange)}
+  input:focus,textarea:focus,select:focus{outline:none;border-color:var(--orange)}
   textarea{min-height:70px;resize:none}
   section{margin-top:26px}
   .sechead{display:flex;align-items:baseline;justify-content:space-between;border-bottom:2.5px solid var(--navy);padding-bottom:8px;margin-bottom:12px}
@@ -51,7 +51,7 @@
   .sechead .cnt{font-family:'Oswald';font-weight:600;font-size:13px;color:var(--khaki)}
   .sechead.done .cnt{color:var(--ok)}
   .when{font-family:'Oswald';font-size:11px;letter-spacing:.12em;color:var(--orange);text-transform:uppercase;margin-bottom:8px}
-  .item{display:flex;gap:13px;align-items:flex-start;background:var(--paper);border:1.5px solid var(--line);
+  .item{display:flex;width:100%;text-align:left;color:var(--navy);font:inherit;gap:13px;align-items:flex-start;background:var(--paper);border:1.5px solid var(--line);
         border-radius:var(--r);padding:14px 15px;margin-bottom:8px;cursor:pointer;user-select:none}
   .item .bx{width:26px;height:26px;border:2px solid var(--navy);border-radius:7px;flex-shrink:0;margin-top:1px;
             display:flex;align-items:center;justify-content:center;color:#fff;font-size:15px}
@@ -76,7 +76,7 @@
   .guardrow{margin:4px 0 16px}
   .guardlbl{font-family:'Oswald';font-weight:600;font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--khaki);margin:0 0 8px}
   .gchips{display:flex;flex-wrap:wrap;gap:8px}
-  .gchip{border:1.5px solid var(--line);background:var(--paper);border-radius:99px;padding:11px 16px;font-size:14.5px;
+  .gchip{border:1.5px solid var(--line);background:var(--paper);border-radius:99px;padding:11px 16px;font:inherit;font-size:14.5px;
          font-weight:600;color:var(--navy);cursor:pointer;user-select:none;min-height:44px;display:inline-flex;align-items:center}
   .gchip.on{background:var(--orange);border-color:var(--orange);color:#fff}
   .gchip.no.on{background:var(--navy);border-color:var(--navy)}
@@ -86,7 +86,7 @@
            font-size:12.5px;letter-spacing:.04em;text-transform:uppercase;padding:0 13px;cursor:pointer;min-height:46px;white-space:nowrap}
   #lookout{margin-top:8px}
   .lkr{display:flex;justify-content:space-between;align-items:center;gap:12px;background:#fff;
-       border:1.5px solid var(--line);border-radius:11px;padding:11px 13px;margin-bottom:7px;cursor:pointer}
+       border:1.5px solid var(--line);border-radius:11px;padding:11px 13px;margin-bottom:7px;cursor:pointer;width:100%;text-align:left;color:var(--navy);font:inherit}
   .lkr .nm{font-weight:600;font-size:14.5px}
   .lkr .nm small{display:block;font-weight:500;color:var(--khaki);font-size:12.5px}
   .lkr .go{font-family:'Oswald';font-weight:700;color:var(--orange);font-size:17px}
@@ -123,7 +123,7 @@
            border:none;border-radius:var(--r);padding:17px;background:var(--line);color:var(--khaki);min-height:56px}
   #donebtn.ready{background:var(--orange);color:#fff;cursor:pointer}
 </style>
-<link rel="stylesheet" href="/crew/crew-brand.css?v=20260903">
+<link rel="stylesheet" href="/crew/crew-brand.css?v=20260904b">
 </head>
 <body>
 
@@ -154,7 +154,7 @@
     <div class="gerr" id="gate-err">Incorrect username or password.</div>
   </div>
 </div>
-<script src="/crew/hub-auth.js?v=20260903"></script>
+<script src="/crew/hub-auth.js?v=20260904b"></script>
 <script>
 async function gateLogin(){
   const button=document.querySelector("#egc-gate .gbtn"),error=document.getElementById("gate-err");
@@ -182,25 +182,25 @@ EGCHubAuth.session().then(user=>{if(user){document.getElementById("egc-gate").cl
 
   <div class="jobcard">
     <div class="grid2">
-      <div><label class="fl">Customer</label>
+      <div><label class="fl" for="j_name">Customer</label>
         <div class="lookrow"><input type="text" id="j_name" placeholder="Name">
           <button class="lookbtn" onclick="highlevelLookup()">🔍</button></div></div>
-      <div><label class="fl">Date</label><input type="date" id="j_date"></div>
+      <div><label class="fl" for="j_date">Date</label><input type="date" id="j_date"></div>
     </div>
     <div id="lookout"></div>
-    <label class="fl">Customer mobile (for the review text)</label>
+    <label class="fl" for="j_phone">Customer mobile (for the review text)</label>
     <input type="tel" id="j_phone" placeholder="(970) 555-0123">
     <div class="grid3">
-      <div><label class="fl">Actual loads</label><input type="number" inputmode="decimal" id="j_loads" min="0" step="0.25" placeholder="Required"></div>
-      <div><label class="fl">Hours on site</label><input type="number" inputmode="decimal" id="j_hours" min="0.25" step="0.25" placeholder="Required"><small id="hours_hint" style="display:block;color:var(--khaki);font-size:11px;margin-top:5px"></small></div>
-      <div><label class="fl">Dump fees $</label><input type="number" inputmode="decimal" id="j_fees" min="0" step="0.01" placeholder="0"></div>
+      <div><label class="fl" for="j_loads">Actual loads</label><input type="number" inputmode="decimal" id="j_loads" min="0" step="0.25" placeholder="Required"></div>
+      <div><label class="fl" for="j_hours">Hours on site</label><input type="number" inputmode="decimal" id="j_hours" min="0.25" step="0.25" placeholder="Required"><small id="hours_hint" style="display:block;color:var(--khaki);font-size:11px;margin-top:5px"></small></div>
+      <div><label class="fl" for="j_fees">Dump fees $</label><input type="number" inputmode="decimal" id="j_fees" min="0" step="0.01" placeholder="0"></div>
     </div>
-    <label class="fl">Job notes / issues / damage</label>
+    <label class="fl" for="j_notes">Job notes / issues / damage</label>
     <textarea id="j_notes" placeholder="Anything off-plan, anything broken, anything to flag for Zac"></textarea>
     <div class="grid3">
-      <div><label class="fl">Payment status / method</label><select id="j_payment"><option value="unpaid">Not collected — invoice</option><option value="card">Card / processor</option><option value="cash">Cash</option><option value="check">Check</option><option value="other">Other verified payment</option></select></div>
-      <div><label class="fl">Amount received now $</label><input type="number" inputmode="decimal" id="j_payment_amount" min="0" step="0.01" placeholder="Required when collected"><small id="payment_hint" style="display:block;color:var(--khaki);font-size:11px;margin-top:5px"></small></div>
-      <div><label class="fl">Transaction / receipt reference</label><input id="j_payment_ref" placeholder="Required when payment collected"></div>
+      <div><label class="fl" for="j_payment">Payment status / method</label><select id="j_payment"><option value="unpaid">Not collected — invoice</option><option value="card">Card / processor</option><option value="cash">Cash</option><option value="check">Check</option><option value="other">Other verified payment</option></select></div>
+      <div><label class="fl" for="j_payment_amount">Amount received now $</label><input type="number" inputmode="decimal" id="j_payment_amount" min="0" step="0.01" placeholder="Required when collected"><small id="payment_hint" style="display:block;color:var(--khaki);font-size:11px;margin-top:5px"></small></div>
+      <div><label class="fl" for="j_payment_ref">Transaction / receipt reference</label><input id="j_payment_ref" placeholder="Required when payment collected"></div>
     </div>
   </div>
 
@@ -295,7 +295,7 @@ function renderJobBrief(){const host=document.getElementById('job-brief');if(!ho
 function fallbackClientItems(){const i=normalizedInstructions(ACTIVE),out=[],add=(id,label,detail,critical=false)=>{if(detail)out.push({id,label,detail:String(detail),critical})};add('goal','Confirm the promised outcome with the customer',i.customerGoal,true);add('keep','Show where every keep item ended up',i.keepItems,true);add('remove','Verify every approved removal is complete',i.removeItems,true);add('exclusions','Confirm do-not-touch items were left untouched',i.exclusions,true);add('finish','Demonstrate the finished setup and sold materials',textList(i.finish));add('special','Confirm special handling / disposal is documented',textList(i.specialItems));add('notes','Resolve every client-specific note before leaving',i.customerNotes,true);return out}
 function clientItems(){const saved=ACTIVE.clientChecklists?.postJob;return Array.isArray(saved)&&saved.length?saved:fallbackClientItems()}
 function clientKey(item){return'client_'+String(item.id||item.label).replace(/[^a-z0-9_-]/gi,'_')}
-function renderClientChecklist(){const host=document.getElementById('client-checklist'),items=clientItems();if(!host)return;if(!items.length){host.innerHTML='';return}const done=items.filter(it=>clientState[clientKey(it)]).length;host.innerHTML=`<section class="client-checks"><div class="when">Generated from this client’s walkthrough</div><div class="sechead ${done===items.length?'done':''}"><h2>Client promise checks <span class="client-tag">${items.length} for this job</span></h2><span class="cnt">${done}/${items.length}</span></div>${items.map(it=>`<div class="item ${clientState[clientKey(it)]?'on':''} ${it.critical?'crit':''}" onclick="togClient('${clientKey(it)}')"><span class="bx"></span><div class="tx">${esc(it.label)}<small>${esc(it.detail||'')}</small></div></div>`).join('')}</section>`}
+function renderClientChecklist(){const host=document.getElementById('client-checklist'),items=clientItems();if(!host)return;if(!items.length){host.innerHTML='';return}const done=items.filter(it=>clientState[clientKey(it)]).length;host.innerHTML=`<section class="client-checks"><div class="when">Generated from this client’s walkthrough</div><div class="sechead ${done===items.length?'done':''}"><h2>Client promise checks <span class="client-tag">${items.length} for this job</span></h2><span class="cnt">${done}/${items.length}</span></div>${items.map(it=>`<button type="button" class="item ${clientState[clientKey(it)]?'on':''} ${it.critical?'crit':''}" aria-pressed="${Boolean(clientState[clientKey(it)])}" onclick="togClient('${clientKey(it)}')"><span class="bx" aria-hidden="true"></span><span class="tx">${esc(it.label)}<small>${esc(it.detail||'')}</small></span></button>`).join('')}</section>`}
 function standardDone(){return SECTIONS.reduce((n,sec,si)=>n+sec.items.filter((_,ii)=>state[key(si,ii)]).length,0)}
 function totalDone(){return standardDone()+clientItems().filter(it=>clientState[clientKey(it)]).length}
 function totalChecks(){return SECTIONS.reduce((a,s)=>a+s.items.length,0)+clientItems().length}
@@ -351,9 +351,9 @@ async function highlevelLookup(){
     if(res.status===501){out.innerHTML=`<div class="looknote">HighLevel needs its API key and location ID. Type the details manually for now.</div>`;return;}
     if(!res.ok||!j.ok){out.innerHTML=`<div class="looknote">Lookup failed — type it manually.</div>`;return;}
     LOOK=j.contacts||[];
-    out.innerHTML=LOOK.length?LOOK.map((c,i)=>`<div class="lkr" onclick="lookPick(${i})">
+    out.innerHTML=LOOK.length?LOOK.map((c,i)=>`<button type="button" class="lkr" onclick="lookPick(${i})">
         <div class="nm">${esc(c.name)}<small>${esc([c.address,c.phone].filter(Boolean).join(" · "))}</small></div>
-        <span class="go">→</span></div>`).join("")
+        <span class="go">→</span></button>`).join("")
       :`<div class="looknote">No HighLevel opportunity match for “${esc(q)}”.</div>`;
   }catch(e){out.innerHTML=`<div class="looknote">Lookup unreachable — type it manually.</div>`;}
 }
@@ -494,19 +494,19 @@ function render(){
       <div class="sechead ${done===sec.items.length?'done':''}">
         <h2>${sec.title}</h2><span class="cnt">${done}/${sec.items.length}</span></div>
       ${sec.items.map((it,ii)=>`
-        <div class="item ${state[key(si,ii)]?'on':''} ${it.crit?'crit':''}" onclick="tog(${si},${ii})">
-          <span class="bx"></span>
+        <div class="item ${state[key(si,ii)]?'on':''} ${it.crit?'crit':''}" role="checkbox" tabindex="0" aria-checked="${Boolean(state[key(si,ii)])}" onclick="tog(${si},${ii})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();tog(${si},${ii})}">
+          <span class="bx" aria-hidden="true"></span>
           <div class="tx">${it.t}${it.s?`<small>${it.s}</small>`:""}</div>
-          ${it.act?`<div class="itemact" id="${actId(si,ii)}" onclick="event.stopPropagation()"></div>`:""}
+          ${it.act?`<div class="itemact" id="${actId(si,ii)}" onclick="event.stopPropagation()" onkeydown="event.stopPropagation()"></div>`:""}
         </div>`).join("")}
       ${sec.script?`<div class="script"><h4>${sec.script.h}</h4>${sec.script.p.map(p=>`<p>${p}</p>`).join("")}
-        <button class="copybtn" onclick="event.stopPropagation();copyScript(${si})">Copy text</button>
+        <button class="copybtn" onclick="event.stopPropagation();copyScript(${si},this)">Copy text</button>
         ${si===1?`<button class="copybtn" id="revbtn" style="margin-left:8px;background:#2e7d4f" onclick="event.stopPropagation();sendReview(this)">Send review link from EGC number</button>`:""}
         ${si===1?`<div class="reviewqr">${REVIEW_QR}<div class="cap"><b>Or have them scan</b><small>Point their phone camera here — it opens our Google review page.</small></div></div>`:""}
       </div>`:""}
       ${sec.script2?`<div class="script"><h4>${sec.script2.h}</h4>${guardYearOneFree()?`<p style="background:#e8581c;color:#fff;border-radius:8px;padding:8px 11px;font-size:13.5px;margin-bottom:8px"><b>This package already includes Garage Guard year one free.</b> Don't cold-sell — frame it as “here's what kicks in after your free year,” or pitch the Guard Black upgrade.</p>`:""}${sec.script2.p.map(p=>`<p>${p}</p>`).join("")}</div>`:""}
       ${sec.guard?`<div class="guardrow"><div class="guardlbl">Garage Guard result</div>
-        <div class="gchips">${GUARD_OPTS.map(g=>`<div class="gchip ${GUARD===g?'on':''} ${g==='Not today'?'no':''}" onclick="setGuard('${g}')">${g}</div>`).join("")}</div></div>`:""}
+        <div class="gchips" role="group" aria-label="Garage Guard result">${GUARD_OPTS.map(g=>`<button type="button" class="gchip ${GUARD===g?'on':''} ${g==='Not today'?'no':''}" aria-pressed="${GUARD===g}" onclick="setGuard('${g}')">${g}</button>`).join("")}</div></div>`:""}
     </section>`;
   }).join("");
   setTimeout(mountActions,0);
@@ -522,12 +522,12 @@ function render(){
   renderJobBrief();
 }
 function tog(si,ii){state[key(si,ii)]=!state[key(si,ii)];render();saveAll();queueProgressSave();}
-function copyScript(si){
+function copyScript(si,btn){
   const name=document.getElementById("j_name").value||"[NAME]";
   let txt=SECTIONS[si].script.p.join("\n\n").replace(/<[^>]+>/g,"").replaceAll("[NAME]",name);
   if(ACTIVE.pain) txt=txt.replace(/\[THEIR PAIN[^\]]*\]/g,ACTIVE.pain);
   navigator.clipboard&&navigator.clipboard.writeText(txt);
-  event.target.textContent="Copied ✓";setTimeout(()=>{event.target.textContent="Copy text";},1500);
+  btn.textContent="Copied ✓";setTimeout(()=>{btn.textContent="Copy text";},1500);
 }
 async function postHook(payload){
   // Same-origin proxy → real, readable status. No opaque no-cors that "succeeds" on a dead hook.
@@ -596,10 +596,10 @@ async function finish(){
     return; // don't wipe the handoff/checklist on failure, so a retry still works
   }
   if(HUBDB&&ACTIVE.jobId)await HUBDB.collection('jobs').doc(ACTIVE.jobId).set({closeoutSyncStatus:'synced',closeoutSyncError:'',closeoutSyncNextRetryAt:'',updatedAt:new Date().toISOString()},{merge:true}).catch(()=>{});
-  btn.textContent="Job closed & saved to HighLevel ✓";
+  btn.textContent="Job closed & saved to HighLevel ✓";btn.disabled=true;
   localStorage.removeItem(saveKey());
   localStorage.removeItem("egc_active_job");
-  alert("Job closed and the Hub record is updated. Send the review request only after confirming the customer is happy. 🧹");
+  document.getElementById('donebar').insertAdjacentHTML('beforebegin',`<div class="handoff" style="margin:18px"><div class="brief-head"><div><span>Shift complete</span><h2>Job closed successfully</h2></div><b>Synced</b></div><p class="brief-empty">The Hub and HighLevel are updated. Your local job handoff has been cleared.</p><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px"><a class="actbtn alt" href="/crew/">Back to crew home</a><a class="actbtn" href="/employee?view=earnings">See my time & pay</a></div></div>`);
 }
 async function loadCentralJob(){if(!HUBDB||!CENTRAL_JOB_ID)return;try{const snap=await HUBDB.collection('jobs').doc(CENTRAL_JOB_ID).get();if(!snap.exists)return;const j={id:snap.id,...snap.data()},total=Number(j.total||j.priceQuoted||0),paidToDate=Number(j.payment?.amount||0),balance=Math.max(0,total-paidToDate);ACTIVE={...ACTIVE,jobId:j.id,customerId:j.customerId||'',highlevelContactId:j.highlevelContactId||'',highlevelOpportunityId:j.highlevelOpportunityId||'',highlevelAppointmentId:j.highlevelAppointmentId||'',name:j.customer||'',phone:j.phone||'',email:j.email||'',addr:j.address||'',pkg:j.serviceType||'',total:j.total||j.priceQuoted||'',rate:j.total||j.priceQuoted||'',deposit:j.deposit?.amount||'',paidToDate,paymentRecord:j.payment||{},jobdate:j.date||'',startTime:j.time||'',endTime:j.endTime||'',pain:j.walkthroughNotes||'',customerNotesSummary:j.customerNotesSummary||j.notes||'',internalNotes:j.internalNotes||'',clientChecklists:j.clientChecklists||{},discovery:j.discovery||{},scope:j.scope||{},logistics:j.logistics||{},instructions:normalizedInstructions(j),preJobCompletedAt:j.preJobChecklist?.completedAt||'',preJobCompletedBy:j.preJobChecklist?.completedBy||'',preJobException:j.closeoutPreJobException||'',savedAt:j.updatedAt||j.createdAt||''};restoreSharedProgress(j.postJobProgress);document.getElementById('j_name').value=j.customer||'';document.getElementById('j_phone').value=j.phone||'';document.getElementById('j_date').value=j.date||'';const amount=document.getElementById('j_payment_amount'),hint=document.getElementById('payment_hint');if(amount&&!amount.value&&balance>0)amount.value=String(balance);if(hint)hint.textContent=paidToDate?`${paidToDate.toLocaleString('en-US',{style:'currency',currency:'USD'})} already recorded · ${balance.toLocaleString('en-US',{style:'currency',currency:'USD'})} remaining`:`${balance.toLocaleString('en-US',{style:'currency',currency:'USD'})} outstanding`;saveAll()}catch(e){}}
 async function releaseCentralLock(){try{const ref=HUBDB.collection('jobs').doc(`_egc_schedule_lock_${String(ACTIVE.jobdate||'').replace(/[^0-9-]/g,'')}`),snap=await ref.get(),entries=(Array.isArray(snap.data()?.entries)?snap.data().entries:[]).filter(x=>x.id!==ACTIVE.jobId);await ref.set({recordType:'schedule_lock',date:ACTIVE.jobdate,entries,updatedAt:new Date().toISOString()},{merge:true})}catch(e){}}

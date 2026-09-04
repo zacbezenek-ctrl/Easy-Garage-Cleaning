@@ -57,7 +57,7 @@
   .sechead.done .cnt{color:var(--ok)}
   .when{font-family:'Oswald';font-size:11px;letter-spacing:.12em;color:var(--orange);text-transform:uppercase;margin-bottom:8px}
 
-  .item{display:flex;gap:13px;align-items:flex-start;background:var(--paper);border:1.5px solid var(--line);
+  .item{display:flex;width:100%;text-align:left;color:var(--navy);font:inherit;gap:13px;align-items:flex-start;background:var(--paper);border:1.5px solid var(--line);
         border-radius:var(--r);padding:14px 15px;margin-bottom:8px;cursor:pointer;user-select:none}
   .item .bx{width:26px;height:26px;border:2px solid var(--navy);border-radius:7px;flex-shrink:0;margin-top:1px;
             display:flex;align-items:center;justify-content:center;color:#fff;font-size:15px}
@@ -83,7 +83,7 @@
            font-size:12.5px;letter-spacing:.04em;text-transform:uppercase;padding:0 13px;cursor:pointer;min-height:46px;white-space:nowrap}
   #lookout{margin-top:8px}
   .lkr{display:flex;justify-content:space-between;align-items:center;gap:12px;background:#fff;
-       border:1.5px solid var(--line);border-radius:11px;padding:11px 13px;margin-bottom:7px;cursor:pointer}
+       border:1.5px solid var(--line);border-radius:11px;padding:11px 13px;margin-bottom:7px;cursor:pointer;width:100%;text-align:left;color:var(--navy);font:inherit}
   .lkr .nm{font-weight:600;font-size:14.5px}
   .lkr .nm small{display:block;font-weight:500;color:var(--khaki);font-size:12.5px}
   .lkr .go{font-family:'Oswald';font-weight:700;color:var(--orange);font-size:17px}
@@ -117,7 +117,7 @@
            border:none;border-radius:var(--r);padding:17px;background:var(--line);color:var(--khaki);min-height:56px}
   #donebtn.ready{background:var(--orange);color:#fff;cursor:pointer}
 </style>
-<link rel="stylesheet" href="/crew/crew-brand.css?v=20260903">
+<link rel="stylesheet" href="/crew/crew-brand.css?v=20260904b">
 </head>
 <body>
 
@@ -148,7 +148,7 @@
     <div class="gerr" id="gate-err">Incorrect username or password.</div>
   </div>
 </div>
-<script src="/crew/hub-auth.js?v=20260903"></script>
+<script src="/crew/hub-auth.js?v=20260904b"></script>
 <script>
 async function gateLogin(){
   const button=document.querySelector("#egc-gate .gbtn"),error=document.getElementById("gate-err");
@@ -176,16 +176,16 @@ EGCHubAuth.session().then(user=>{if(user){document.getElementById("egc-gate").cl
 
   <div class="jobcard">
     <div class="grid2">
-      <div><label class="fl">Customer</label>
+      <div><label class="fl" for="j_name">Customer</label>
         <div class="lookrow"><input type="text" id="j_name" placeholder="Name">
           <button class="lookbtn" onclick="highlevelLookup()">🔍</button></div></div>
-      <div><label class="fl">Job date</label><input type="date" id="j_date"></div>
+      <div><label class="fl" for="j_date">Job date</label><input type="date" id="j_date"></div>
     </div>
     <div id="lookout"></div>
-    <label class="fl">Address</label><input type="text" id="j_addr" placeholder="Street address">
+    <label class="fl" for="j_addr">Address</label><input type="text" id="j_addr" placeholder="Street address">
     <div class="grid2">
-      <div><label class="fl">Package</label><input type="text" id="j_pkg" placeholder="From Game Plan"></div>
-      <div><label class="fl">Flat rate</label><input type="number" inputmode="decimal" id="j_rate" placeholder="$"></div>
+      <div><label class="fl" for="j_pkg">Package</label><input type="text" id="j_pkg" placeholder="From Game Plan"></div>
+      <div><label class="fl" for="j_rate">Flat rate</label><input type="number" inputmode="decimal" id="j_rate" placeholder="$"></div>
     </div>
   </div>
 
@@ -257,13 +257,14 @@ let ACTIVE={};
 let HUBDB=null;try{if(window.firebase){if(!firebase.apps.length)firebase.initializeApp({apiKey:'AIzaSyA8g4UAW4P4bsCrQNZhUe81CbC7BvjJbNc',authDomain:'egcw-1ec83.firebaseapp.com',projectId:'egcw-1ec83',storageBucket:'egcw-1ec83.firebasestorage.app',messagingSenderId:'763340109795',appId:'1:763340109795:web:ac203b3eb71831fa4ed2d6'});HUBDB=firebase.firestore()}}catch(e){}
 const saveKey=()=>SAVEKEY+":"+(CENTRAL_JOB_ID||ACTIVE.jobId||"manual");
 const STARTKEY="egc_prejob_start";
+const startKey=()=>STARTKEY+":"+(CENTRAL_JOB_ID||ACTIVE.jobId||"manual");
 const textList=v=>Array.isArray(v)?v.filter(Boolean).join(', '):String(v||'');
 function normalizedInstructions(job={}){const s=job.scope||{},l=job.logistics||{},d=job.discovery||{},i=job.jobInstructions||job.instructions||{};return{customerGoal:i.customerGoal||d.success||'',whyNow:i.whyNow||d.why_now||job.walkthroughNotes||job.pain||'',sortMethod:i.sortMethod||s.sort_method||'',keepItems:i.keepItems||s.keep_items||'',removeItems:i.removeItems||s.remove_items||s.keep_remove||'',exclusions:i.exclusions||s.exclusions||'',hazards:i.hazards||s.hazards||[],access:i.access||s.access||l.access||[],accessNotes:i.accessNotes||l.notes||'',truckPlacement:i.truckPlacement||l.truck_placement||s.truck_placement||'',specialItems:i.specialItems||s.special_items||[],finish:i.finish||s.finish||[],shelving:i.shelving||{type:s.finish_details?.shelf_type||'',qty:Number(s.finish_details?.shelf_qty||0)},totes:i.totes||{qty:Number(s.finish_details?.tote_qty||0)},customerNotes:i.customerNotes||job.customerNotesSummary||job.notes||'',assignedTo:i.assignedTo||job.assignedTo||'',crewSize:Number(i.crewSize||job.crewSize||0),arrivalWindow:i.arrivalWindow||[job.time,job.endTime].filter(Boolean).join('–'),photoCount:Number(i.photoCount||job.photoCount||job.photosBefore||0)}}
 function renderJobBrief(){const host=document.getElementById('job-brief');if(!host)return;const i=normalizedInstructions(ACTIVE),has=Object.values(i).some(v=>Array.isArray(v)?v.length:Boolean(v&&typeof v!=='object'));if(!has){host.innerHTML='<div class="brief-head"><div><span>Walkthrough handoff</span><h2>Internal job brief</h2></div><b>Needs brief</b></div><p class="brief-empty">No walkthrough instructions are attached yet. Stop and confirm the scope with the manager before the truck rolls.</p>';return}const row=(label,value,cls='')=>value?`<article class="${cls}"><small>${esc(label)}</small><strong>${esc(textList(value))}</strong></article>`:'';const materials=[i.shelving?.qty?`${i.shelving.qty} ${i.shelving.type||''} shelf unit(s)`:'' ,i.totes?.qty?`${i.totes.qty} tote(s)`:'' ].filter(Boolean).join(' · ');host.innerHTML=`<div class="brief-head"><div><span>One source · synced from walkthrough</span><h2>Internal job brief</h2></div><b>Read first</b></div><div class="brief-grid">${row('Customer goal',i.customerGoal,'wide')}${row('Why now',i.whyNow,'wide')}${row('Keep — protect these',i.keepItems)}${row('Remove',i.removeItems)}${row('Do not move / exclusions',i.exclusions,'danger')}${row('Hazards / PPE',i.hazards,'danger')}${row('Access',textList(i.access)+(i.accessNotes?` — ${i.accessNotes}`:''))}${row('Truck placement',i.truckPlacement)}${row('Special handling',i.specialItems)}${row('Finish',i.finish)}${row('Materials',materials)}${row('Crew + arrival',[i.assignedTo,i.crewSize?`${i.crewSize} needed`:'',i.arrivalWindow].filter(Boolean).join(' · '))}${row('Internal customer notes',i.customerNotes,'wide')}${row('Walkthrough photos',i.photoCount?`${i.photoCount} captured on walkthrough device`:'Not cloud-synced','wide')}</div>`}
 function fallbackClientItems(){const i=normalizedInstructions(ACTIVE),out=[],add=(id,label,detail,critical=false)=>{if(detail)out.push({id,label,detail:String(detail),critical})};add('goal','Repeat the promised outcome to the crew',i.customerGoal,true);add('keep','Identify and protect every keep item',i.keepItems,true);add('remove','Reconfirm the approved removal / donation scope',i.removeItems,true);add('exclusions','Mark every do-not-touch item',i.exclusions,true);add('hazards','Set the client-specific PPE and hazard plan',textList(i.hazards),true);add('access','Set access and staging exactly as planned',[textList(i.access),i.accessNotes,i.truckPlacement].filter(Boolean).join(' · '));add('special','Load equipment for special-handling items',textList(i.specialItems));add('notes','Review the internal customer notes',i.customerNotes);return out}
 function clientItems(){const saved=ACTIVE.clientChecklists?.preJob;return Array.isArray(saved)&&saved.length?saved:fallbackClientItems()}
 function clientKey(item){return'client_'+String(item.id||item.label).replace(/[^a-z0-9_-]/gi,'_')}
-function renderClientChecklist(){const host=document.getElementById('client-checklist'),items=clientItems();if(!host)return;if(!items.length){host.innerHTML='';return}const done=items.filter(it=>clientState[clientKey(it)]).length;host.innerHTML=`<section class="client-checks"><div class="when">Generated from this client’s walkthrough</div><div class="sechead ${done===items.length?'done':''}"><h2>Client-specific checks <span class="client-tag">${items.length} for this job</span></h2><span class="cnt">${done}/${items.length}</span></div>${items.map(it=>`<div class="item ${clientState[clientKey(it)]?'on':''} ${it.critical?'crit':''}" onclick="togClient('${clientKey(it)}')"><span class="bx"></span><div class="tx">${esc(it.label)}<small>${esc(it.detail||'')}</small></div></div>`).join('')}</section>`}
+function renderClientChecklist(){const host=document.getElementById('client-checklist'),items=clientItems();if(!host)return;if(!items.length){host.innerHTML='';return}const done=items.filter(it=>clientState[clientKey(it)]).length;host.innerHTML=`<section class="client-checks"><div class="when">Generated from this client’s walkthrough</div><div class="sechead ${done===items.length?'done':''}"><h2>Client-specific checks <span class="client-tag">${items.length} for this job</span></h2><span class="cnt">${done}/${items.length}</span></div>${items.map(it=>`<button type="button" class="item ${clientState[clientKey(it)]?'on':''} ${it.critical?'crit':''}" aria-pressed="${Boolean(clientState[clientKey(it)])}" onclick="togClient('${clientKey(it)}')"><span class="bx" aria-hidden="true"></span><span class="tx">${esc(it.label)}<small>${esc(it.detail||'')}</small></span></button>`).join('')}</section>`}
 function standardDone(){return SECTIONS.reduce((n,sec,si)=>n+sec.items.filter((_,ii)=>state[key(si,ii)]).length,0)}
 function totalDone(){return standardDone()+clientItems().filter(it=>clientState[clientKey(it)]).length}
 function totalChecks(){return SECTIONS.reduce((a,s)=>a+s.items.length,0)+clientItems().length}
@@ -304,9 +305,9 @@ async function mountActions(){
     if(it.act.type==="photo") await mountPhotoAct(el,it.act);
     else if(it.act.type==="sms") el.innerHTML=`<button class="actbtn alt" onclick="event.stopPropagation();smsCustomer(${si},${ii},this)">💬 Send arrival text</button>`;
     else if(it.act.type==="call") el.innerHTML=`<button class="actbtn" onclick="event.stopPropagation();callOffice()">📞 Call office</button>`;
-    else if(it.act.type==="clock"){const t=localStorage.getItem(STARTKEY);
-      el.innerHTML=t?`<button class="actbtn done" onclick="event.stopPropagation();logStart()">⏱️ Started ${esc(t)} — tap to reset</button>`
-                     :`<button class="actbtn" onclick="event.stopPropagation();logStart()">⏱️ Log start time now</button>`;}
+    else if(it.act.type==="clock"){const started=ACTIVE.startedAt||localStorage.getItem(startKey())||localStorage.getItem(STARTKEY),parsed=Date.parse(started||''),label=Number.isFinite(parsed)?new Date(parsed).toLocaleTimeString([],{hour:'numeric',minute:'2-digit'}):started;
+      el.innerHTML=started?`<button class="actbtn done" onclick="event.stopPropagation();logStart(${si},${ii})">⏱️ Started ${esc(label)} — tap to reset</button>`
+                     :`<button class="actbtn" onclick="event.stopPropagation();logStart(${si},${ii})">⏱️ Log start time now</button>`;}
   }}
 }
 async function mountPhotoAct(el,act){
@@ -340,8 +341,7 @@ async function smsCustomer(si,ii,btn){
   }catch(e){btn.disabled=false;btn.textContent="Open phone text instead";alert("Direct send did not go through. The phone message composer will open so you can review and tap Send.");location.href="sms:"+num+"&body="+encodeURIComponent(body)}
 }
 function callOffice(){location.href="tel:"+BIZPHONE;}
-function logStart(){const now=new Date().toLocaleTimeString([], {hour:"numeric",minute:"2-digit"});
-  localStorage.setItem(STARTKEY,now);mountActions();}
+function logStart(si,ii){const startedAt=new Date().toISOString();ACTIVE.startedAt=startedAt;localStorage.setItem(startKey(),startedAt);localStorage.removeItem(STARTKEY);state[key(si,ii)]=true;saveAll();queueProgressSave();render()}
 
 /* ===== HighLevel contact lookup (read-only, via /api/highlevel) ===== */
 let LOOK=[];
@@ -356,9 +356,9 @@ async function highlevelLookup(){
     if(res.status===501){out.innerHTML=`<div class="looknote">HighLevel needs its API key and location ID. Type the details manually for now.</div>`;return;}
     if(!res.ok||!j.ok){out.innerHTML=`<div class="looknote">Lookup failed — type it manually.</div>`;return;}
     LOOK=j.contacts||[];
-    out.innerHTML=LOOK.length?LOOK.map((c,i)=>`<div class="lkr" onclick="lookPick(${i})">
+    out.innerHTML=LOOK.length?LOOK.map((c,i)=>`<button type="button" class="lkr" onclick="lookPick(${i})">
         <div class="nm">${esc(c.name)}<small>${esc([c.address,c.phone].filter(Boolean).join(" · "))}</small></div>
-        <span class="go">→</span></div>`).join("")
+        <span class="go">→</span></button>`).join("")
       :`<div class="looknote">No HighLevel opportunity match for “${esc(q)}”.</div>`;
   }catch(e){out.innerHTML=`<div class="looknote">Lookup unreachable — type it manually.</div>`;}
 }
@@ -410,13 +410,13 @@ function render(){
       <div class="sechead ${done===sec.items.length?'done':''}">
         <h2>${sec.title}</h2><span class="cnt">${done}/${sec.items.length}</span></div>
       ${sec.items.map((it,ii)=>`
-        <div class="item ${state[key(si,ii)]?'on':''} ${it.crit?'crit':''}" onclick="tog(${si},${ii})">
-          <span class="bx"></span>
+        <div class="item ${state[key(si,ii)]?'on':''} ${it.crit?'crit':''}" role="checkbox" tabindex="0" aria-checked="${Boolean(state[key(si,ii)])}" onclick="tog(${si},${ii})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();tog(${si},${ii})}">
+          <span class="bx" aria-hidden="true"></span>
           <div class="tx">${it.t}${it.s?`<small>${it.s}</small>`:""}</div>
-          ${it.act?`<div class="itemact" id="${actId(si,ii)}" onclick="event.stopPropagation()"></div>`:""}
+          ${it.act?`<div class="itemact" id="${actId(si,ii)}" onclick="event.stopPropagation()" onkeydown="event.stopPropagation()"></div>`:""}
         </div>`).join("")}
       ${sec.script?`<div class="script"><h4>${sec.script.h}</h4>${sec.script.p.map(p=>`<p>${p}</p>`).join("")}
-        <button class="copybtn" onclick="event.stopPropagation();copyScript(${si})">Copy text</button></div>`:""}
+        <button class="copybtn" onclick="event.stopPropagation();copyScript(${si},this)">Copy text</button></div>`:""}
     </section>`;
   }).join("");
   setTimeout(mountActions,0);
@@ -432,7 +432,7 @@ function render(){
   renderJobBrief();
 }
 function tog(si,ii){state[key(si,ii)]=!state[key(si,ii)];render();saveAll();queueProgressSave();}
-function copyScript(si){
+function copyScript(si,btn){
   const name=document.getElementById("j_name").value||"[NAME]";
   const rate=document.getElementById("j_rate").value||"[RATE]";
   const i=normalizedInstructions(ACTIVE);
@@ -442,17 +442,19 @@ function copyScript(si){
     .replaceAll("[KEEP ITEMS]",i.keepItems||"[KEEP ITEMS]")
     .replaceAll("[TIME]",ACTIVE.endTime||"[TIME]").replaceAll("[N]",String(i.crewSize||"[N]"));
   navigator.clipboard&&navigator.clipboard.writeText(txt);
-  event.target.textContent="Copied ✓";setTimeout(()=>{event.target.textContent="Copy text";},1500);
+  btn.textContent="Copied ✓";setTimeout(()=>{btn.textContent="Copy text";},1500);
 }
 async function syncStartLifecycle(startedAt){if(!ACTIVE.jobId)return false;const key=`lifecycle:${ACTIVE.jobId}:job-started:${startedAt}`,payload={tool:'lifecycle',event:'job-started',idempotency_key:key,highlevel_contact_id:ACTIVE.highlevelContactId||'',appointment_id:ACTIVE.highlevelAppointmentId||'',client:{name:ACTIVE.name||'',phone:ACTIVE.phone||'',email:ACTIVE.email||'',address:ACTIVE.addr||'',highlevel_contact_id:ACTIVE.highlevelContactId||''}};try{const response=await EGCHubAuth.fetch('/api/highlevel',{method:'POST',headers:{'Content-Type':'application/json','Idempotency-Key':key},body:JSON.stringify(payload)}),result=await response.json();if(!response.ok||!result.ok)throw new Error(result.error||'HighLevel lifecycle sync failed');if(HUBDB)await HUBDB.collection('jobs').doc(ACTIVE.jobId).set({lifecycleSync:{event:'job-started',status:'synced',trigger:result.automation?.trigger||'',syncedAt:startedAt},lifecycleSyncPayload:payload,lifecycleSyncError:'',lifecycleSyncNextRetryAt:'',highlevelContactId:result.contactId||ACTIVE.highlevelContactId||'',updatedAt:startedAt},{merge:true});return true}catch(error){if(HUBDB)await HUBDB.collection('jobs').doc(ACTIVE.jobId).set({lifecycleSync:{event:'job-started',status:'error',error:String(error.message||error).slice(0,160),attemptedAt:startedAt},lifecycleSyncPayload:payload,lifecycleSyncAttempts:1,lifecycleSyncError:String(error.message||error).slice(0,160),lifecycleSyncNextRetryAt:new Date(Date.now()+10*60000).toISOString(),updatedAt:startedAt},{merge:true}).catch(()=>{});return false}}
 async function finish(){
   const total=totalChecks();
   if(totalDone()<total) return;
-  const startedAt=ACTIVE.startedAt||new Date().toISOString(),completedBy=sessionStorage.getItem('egc_u')||localStorage.getItem('egc_u')||'';
+  const startedAt=ACTIVE.startedAt||localStorage.getItem(startKey())||new Date().toISOString(),completedBy=sessionStorage.getItem('egc_u')||localStorage.getItem('egc_u')||'';
   if(HUBDB&&ACTIVE.jobId){try{await HUBDB.collection('jobs').doc(ACTIVE.jobId).set({status:'in_progress',pipelineStatus:'in_progress',startedAt,preJobProgress:{...progressPayload(),completedAt:startedAt},preJobChecklist:{completedAt:startedAt,completedBy,clientItems:clientItems().map(it=>({id:it.id,label:it.label,detail:it.detail,completed:true})),standardItems:SECTIONS.flatMap(sec=>sec.items.map(it=>it.t))},updatedAt:startedAt},{merge:true})}catch(error){alert("The Hub could not record job start. Your checklist is still saved on this device—reconnect and retry before starting work.");return}}
   const workflowSynced=await syncStartLifecycle(startedAt);
   localStorage.removeItem(saveKey());
-  alert(workflowSynced?"Pre-job complete. HighLevel was notified. Go make it disappear. 🛻":"Pre-job complete and saved. The HighLevel trigger needs a retry from the Hub.");
+  localStorage.removeItem(startKey());
+  const btn=document.getElementById('donebtn');btn.disabled=true;btn.classList.add('ready');btn.textContent='Job started — handoff complete ✓';
+  document.getElementById('donebar').insertAdjacentHTML('beforebegin',`<div class="handoff" style="margin:18px"><div class="brief-head"><div><span>Ready to work</span><h2>Pre-job complete</h2></div><b>${workflowSynced?'HighLevel was notified':'Hub saved'}</b></div><p class="brief-empty">The job is marked in progress. Come back here only if you need the customer promise again.</p><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px"><a class="actbtn alt" href="/crew/">Crew home</a><a class="actbtn" href="/crew/postjob?jobId=${encodeURIComponent(ACTIVE.jobId||'')}">Open closeout</a></div></div>`);
 }
 async function loadCentralJob(){if(!HUBDB||!CENTRAL_JOB_ID)return;try{const snap=await HUBDB.collection('jobs').doc(CENTRAL_JOB_ID).get();if(!snap.exists)return;const j={id:snap.id,...snap.data()};ACTIVE={...ACTIVE,jobId:j.id,customerId:j.customerId||'',highlevelContactId:j.highlevelContactId||'',highlevelOpportunityId:j.highlevelOpportunityId||'',highlevelAppointmentId:j.highlevelAppointmentId||'',name:j.customer||'',phone:j.phone||'',email:j.email||'',addr:j.address||'',pkg:j.serviceType||'',total:j.total||j.priceQuoted||'',rate:j.total||j.priceQuoted||'',deposit:j.deposit?.amount||'',jobdate:j.date||'',startTime:j.time||'',endTime:j.endTime||'',assignedTo:j.assignedTo||'',crewSize:Number(j.crewSize||0),pain:j.walkthroughNotes||'',customerNotesSummary:j.customerNotesSummary||j.notes||'',internalNotes:j.internalNotes||'',clientChecklists:j.clientChecklists||{},discovery:j.discovery||{},scope:j.scope||{},logistics:j.logistics||{},instructions:normalizedInstructions(j),photosBefore:Number(j.photoCount||0),savedAt:j.updatedAt||j.createdAt||''};restoreSharedProgress(j.preJobProgress);document.getElementById('j_name').value=j.customer||'';document.getElementById('j_addr').value=j.address||'';document.getElementById('j_date').value=j.date||'';document.getElementById('j_rate').value=j.total||j.priceQuoted||'';document.getElementById('j_pkg').value=j.serviceType||'Garage service';saveAll()}catch(e){}}
 document.addEventListener("input",saveAll);
