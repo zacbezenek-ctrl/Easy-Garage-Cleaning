@@ -614,7 +614,7 @@ test('legacy Firebase leads are not loaded into the reset Hub',()=>{
 });
 
 test('employees can discover and safely pick up manager-opened crew shifts',()=>{
-  for(const marker of ["'open_shifts'",'Open shifts','Crew needed','openShift','crewNeeded','assignedCrew','Crew full','Route','Pick up shift']){
+  for(const marker of ["'open_shifts'",'Open shifts','Crew needed','openShift','crewNeeded','assignedCrew','Crew full','Route','Pick up shift','expectedShiftHours','estimatedDurationMin','hrs expected','+ 1.5 hrs travel / dump']){
     assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),marker+' is missing');
   }
   assert.match(suite,/db\.collection\('jobs'\)\.doc\(id\)/);
@@ -654,7 +654,7 @@ test('claimed shifts stay visible and can be safely released by the claimant',()
 });
 
 test('employee availability prevents manager assignment and conflicting shift pickup',()=>{
-  for(const marker of ["'availability'",'My availability','crew_availability','opsSaveAvailability','opsRemoveAvailability','crewAvailabilityConflict','marked this time unavailable','overlaps time you marked unavailable'])assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
+  for(const marker of ["'availability'",'Time off','TIME-OFF CALENDAR','availabilityCalendar','opsSelectAvailabilityDay','opsAvailabilityMove','Block the full day','crew_availability','opsSaveAvailability','opsRemoveAvailability','crewAvailabilityConflict','marked this time unavailable','overlaps time you marked unavailable'])assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
   assert.match(suite,/const isAvailability=/);
   assert.match(suite,/jobsCache\.filter\(j=>!isScheduleLock\(j\)&&!isAvailability\(j\)&&!isPrivateHubRecord\(j\)\)/);
   assert.match(suite,/recordType:'crew_availability'/);
@@ -662,6 +662,15 @@ test('employee availability prevents manager assignment and conflicting shift pi
   assert.match(suite,/status:'cancelled',cancelledAt/);
   assert.match(suite,/You are already assigned to \$\{assigned\.customer/);
   assert.match(suite,/ask a manager to reassign it first/);
+});
+
+test('walkthrough estimates job length and offers the next three collision-free openings',()=>{
+  for(const marker of ['estimatedJobMinutes','findNearestSlots','SLOT_OPTIONS','Next 3 openings','Checking the Hub, crew time off, and HighLevel','estimatedDurationMin','estimatedDurationHours','expectedShiftHours','ESTIMATED JOB TIME','EXPECTED PAID SHIFT'])assert.match(crew,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),marker+' is missing');
+  assert.match(crew,/jobMinutes\+90/);
+  assert.match(crew,/options\.length<3/);
+  assert.match(crew,/view=schedule&start=/);
+  assert.match(crew,/recordType==='crew_availability'/);
+  assert.match(crew,/date\.getDay\(\)===0/);
 });
 
 test('crew assignment updates the HighLevel appointment without retriggering customer automation',async()=>{
@@ -692,8 +701,8 @@ test('open-shift scheduling fields persist on the canonical job record',()=>{
   assert.match(suite,/if\(k==='type'\)render\(\)/);
   assert.match(suite,/b\.type==='job'\?'':'ops-hidden'/);
   assert.match(suite,/b\.type==='blocked'\?'ops-hidden':''/);
-  assert.match(employee,/employee-suite\.css\?v=20260904d/);
-  assert.match(employee,/employee-suite\.js\?v=20260904d/);
+  assert.match(employee,/employee-suite\.css\?v=20260904e/);
+  assert.match(employee,/employee-suite\.js\?v=20260904e/);
 });
 
 test('recurring visits keep the client plan but reset prior completion and payment state',()=>{
