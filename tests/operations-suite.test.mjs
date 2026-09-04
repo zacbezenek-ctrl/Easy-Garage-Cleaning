@@ -481,12 +481,18 @@ test('open-shift scheduling fields persist on the canonical job record',()=>{
   assert.match(suite,/b\.type==='job'\?'':'ops-hidden'/);
   assert.match(suite,/b\.type==='blocked'\?'ops-hidden':''/);
   assert.match(employee,/employee-suite\.css\?v=20260903m/);
-  assert.match(employee,/employee-suite\.js\?v=20260903p/);
+  assert.match(employee,/employee-suite\.js\?v=20260903q/);
 });
 
 test('recurring visits keep the client plan but reset prior completion and payment state',()=>{
   for(const marker of ['sourceTemplateJobId:j.id',"sourceWalkthroughId:''",'acceptance:null','preJobProgress:null','preJobChecklist:null','postJobProgress:null','postJobChecklist:null','actualLoads:null','hoursOnSite:null','scopeVariance:null','closeoutSyncPayload:null','reviewStatus:'])assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),marker+' is missing from recurring reset');
   assert.match(suite,/derived=refreshWalkthroughHandoff\(j/);
+  assert.match(suite,/shiftClaims:\[\]/);
+  assert.match(suite,/lastShiftClaim:null/);
+  assert.match(suite,/lastShiftRelease:null/);
+  assert.match(suite,/openShift:shiftPickupEnabled&&assignedCrew\.length<crewNeeded/);
+  assert.match(suite,/crewAvailabilityConflict\(date,next\.time,next\.endTime,assignedCrew\)/);
+  assert.match(suite,/is unavailable during the next visit/);
   assert.match(suite,/const remote=await remoteCollision\(next\)/);
   assert.match(suite,/HighLevel already has \$\{remote\.title\|\|'an appointment'\} during that time/);
   assert.match(suite,/notes:job\.internalNotes\|\|job\.notes/);
