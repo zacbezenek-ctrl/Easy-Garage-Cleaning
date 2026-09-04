@@ -227,9 +227,9 @@ gateOk().then(u=>{
     <label class="fl">Customer mobile (for the review text)</label>
     <input type="tel" id="j_phone" placeholder="(970) 555-0123">
     <div class="grid3">
-      <div><label class="fl">Actual loads</label><input type="number" inputmode="decimal" id="j_loads" placeholder="0"></div>
-      <div><label class="fl">Hours on site</label><input type="number" inputmode="decimal" id="j_hours" placeholder="0"></div>
-      <div><label class="fl">Dump fees $</label><input type="number" inputmode="decimal" id="j_fees" placeholder="0"></div>
+      <div><label class="fl">Actual loads</label><input type="number" inputmode="decimal" id="j_loads" min="0" step="0.25" placeholder="Required"></div>
+      <div><label class="fl">Hours on site</label><input type="number" inputmode="decimal" id="j_hours" min="0.25" step="0.25" placeholder="Required"></div>
+      <div><label class="fl">Dump fees $</label><input type="number" inputmode="decimal" id="j_fees" min="0" step="0.01" placeholder="0"></div>
     </div>
     <label class="fl">Job notes / issues / damage</label>
     <textarea id="j_notes" placeholder="Anything off-plan, anything broken, anything to flag for Zac"></textarea>
@@ -591,12 +591,16 @@ async function finish(){
   const total=totalChecks();
   if(totalDone()<total) return;
   const v=id=>document.getElementById(id).value;
+  const actualLoadsRaw=v("j_loads"),hoursRaw=v("j_hours"),actualLoads=Number(actualLoadsRaw),hoursOnSite=Number(hoursRaw),quotedLoads=Number(ACTIVE.scope?.loads||0),variance=actualLoads-quotedLoads,closeoutNotes=v("j_notes").trim();
+  if(actualLoadsRaw===""||!Number.isFinite(actualLoads)||actualLoads<0){alert("Enter the actual truckloads before closing the job.");return;}
+  if(hoursRaw===""||!Number.isFinite(hoursOnSite)||hoursOnSite<=0){alert("Enter the crew hours on site before closing the job.");return;}
+  if(quotedLoads&&Math.abs(variance)>.01&&!closeoutNotes){alert(`The walkthrough planned ${quotedLoads} load${quotedLoads===1?'':'s'}, but closeout shows ${actualLoads}. Add a job note explaining the difference.`);return;}
   const paymentMethod=v("j_payment")||"unpaid",paymentReference=(v("j_payment_ref")||"").trim();
   if(paymentMethod!=="unpaid"&&!paymentReference){alert("Add the processor transaction ID, check number, or receipt reference before recording payment.");return;}
   _finishId=_finishId||uid();
   const payload={tool:"post_job",request_id:_finishId,job_id:ACTIVE.jobId||"",opportunity_id:ACTIVE.highlevelOpportunityId||"",idempotency_key:`post-job:${ACTIVE.jobId||"manual"}:${_finishId}`,sent_at:new Date().toISOString(),
-    job:{customer:v("j_name"),phone:normPhone(v("j_phone")),date:v("j_date"),actual_loads:v("j_loads"),
-         hours_on_site:v("j_hours"),dump_fees:v("j_fees"),notes:v("j_notes"),
+    job:{customer:v("j_name"),phone:normPhone(v("j_phone")),date:v("j_date"),quoted_loads:quotedLoads,actual_loads:actualLoads,
+         hours_on_site:hoursOnSite,dump_fees:Number(v("j_fees")||0),notes:closeoutNotes,
          package:ACTIVE.pkg||"",quoted_rate:ACTIVE.rate||"",locked_total:ACTIVE.total||ACTIVE.rate||"",pain:ACTIVE.pain||"",customer_goal:ACTIVE.instructions?.customerGoal||"",original_customer_notes:ACTIVE.instructions?.customerNotes||ACTIVE.customerNotesSummary||""},
     garage_guard:GUARD||"not recorded",
     photos:{after:AFTER_COUNT},
@@ -609,7 +613,7 @@ async function finish(){
   try{const log=JSON.parse(localStorage.getItem("egc_job_log")||"[]");log.push(payload);
     localStorage.setItem("egc_job_log",JSON.stringify(log.slice(-50)));}catch(e){}
   const completedAt=new Date().toISOString();
-  if(HUBDB&&ACTIVE.jobId){const total=Number(ACTIVE.total||ACTIVE.rate||0),paid=paymentMethod!=="unpaid"&&paymentReference,completedBy=sessionStorage.getItem('egc_u')||localStorage.getItem('egc_u')||'';await HUBDB.collection('jobs').doc(ACTIVE.jobId).set({status:paid?'paid':'completed',pipelineStatus:paid?'paid':'completed',completedAt,actualLoads:Number(v('j_loads')||0),hoursOnSite:Number(v('j_hours')||0),dumpFees:Number(v('j_fees')||0),closeoutNotes:v('j_notes'),postJobProgress:{...progressPayload(),completedAt},postJobChecklist:{completedAt,completedBy,clientItems:clientItems().map(it=>({id:it.id,label:it.label,detail:it.detail,completed:true})),standardItems:SECTIONS.flatMap(sec=>sec.items.map(it=>it.t))},payment:paid?{amount:total,lastAmount:total,lastReceivedAt:completedAt,method:paymentMethod,reference:paymentReference,verified:true,recordedBy:'crew'}:{amount:0,method:'unpaid',verified:false},invoice:{status:paid?'paid':'ready',amount:total,balance:paid?0:total,updatedAt:completedAt},closeoutSyncStatus:'pending',closeoutSyncPayload:payload,closeoutIdempotencyKey:_finishId,updatedAt:completedAt},{merge:true}).catch(()=>{})}
+  if(HUBDB&&ACTIVE.jobId){const total=Number(ACTIVE.total||ACTIVE.rate||0),paid=paymentMethod!=="unpaid"&&paymentReference,completedBy=sessionStorage.getItem('egc_u')||localStorage.getItem('egc_u')||'';try{await HUBDB.collection('jobs').doc(ACTIVE.jobId).set({status:paid?'paid':'completed',pipelineStatus:paid?'paid':'completed',completedAt,actualLoads,hoursOnSite,dumpFees:Number(v('j_fees')||0),closeoutNotes,scopeVariance:{quotedLoads,actualLoads,difference:variance,notes:closeoutNotes,recordedAt:completedAt},postJobProgress:{...progressPayload(),completedAt},postJobChecklist:{completedAt,completedBy,clientItems:clientItems().map(it=>({id:it.id,label:it.label,detail:it.detail,completed:true})),standardItems:SECTIONS.flatMap(sec=>sec.items.map(it=>it.t))},payment:paid?{amount:total,lastAmount:total,lastReceivedAt:completedAt,method:paymentMethod,reference:paymentReference,verified:true,recordedBy:'crew'}:{amount:0,method:'unpaid',verified:false},invoice:{status:paid?'paid':'ready',amount:total,balance:paid?0:total,updatedAt:completedAt},closeoutSyncStatus:'pending',closeoutSyncPayload:payload,closeoutIdempotencyKey:_finishId,updatedAt:completedAt},{merge:true})}catch(error){document.getElementById("donebtn").textContent="Retry → Save closeout to Hub";alert("The Hub could not record closeout. The full closeout is still saved on this device—reconnect and retry before leaving.");return}}
   if(HUBDB&&ACTIVE.customerId)await HUBDB.collection('customers').doc(ACTIVE.customerId).set({latestJobId:ACTIVE.jobId,lastServiceAt:completedAt,lastCloseoutNotes:v('j_notes'),lastPaymentStatus:paymentMethod,updatedAt:completedAt},{merge:true}).catch(()=>{});
   if(HUBDB&&ACTIVE.jobId)await releaseCentralLock();
   const btn=document.getElementById("donebtn");btn.textContent="Saving to HighLevel…";

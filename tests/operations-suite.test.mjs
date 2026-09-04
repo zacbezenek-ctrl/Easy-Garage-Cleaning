@@ -143,6 +143,9 @@ test('crew checklist progress resumes across devices and is visible to the manag
   assert.match(suite,/postProgress=j\.postJobProgress/);
   assert.match(suite,/Pre-job \$\{preProgress\.completedCount\|\|0\}\/\$\{preProgress\.totalCount\}/);
   assert.match(suite,/Closeout \$\{postProgress\.completedCount\|\|0\}\/\$\{postProgress\.totalCount\}/);
+  assert.match(prejob,/The Hub could not record job start/);
+  assert.match(postjob,/The Hub could not record closeout/);
+  assert.match(postjob,/Retry → Save closeout to Hub/);
 });
 
 test('dispatch and job start create explicit HighLevel lifecycle triggers',async()=>{
@@ -166,6 +169,11 @@ test('failed HighLevel closeouts remain durable and manager-retryable',()=>{
   for(const marker of ['closeoutSyncPayload:payload','closeoutSyncNextRetryAt','Nothing was cleared'])assert.match(postjob,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
   for(const marker of ['async function syncCloseoutRecord','closeoutSyncPayload','closeoutSyncAttempts','closeoutSyncNextRetryAt','opsRetryCloseout','Retry closeout','closeout needs HighLevel retry','closeoutPending','Closeout remains safely queued in the Hub'])assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),marker+' is missing');
   assert.match(suite,/Math\.min\(1440,Math\.pow\(2,Math\.min\(attempts,8\)\)\*5\)/);
+});
+
+test('closeout records job-costing actuals and explains walkthrough scope variance',()=>{
+  for(const marker of ['Actual loads','Hours on site','Enter the actual truckloads','Enter the crew hours on site','The walkthrough planned','quoted_loads:quotedLoads','actual_loads:actualLoads','scopeVariance:{quotedLoads,actualLoads,difference:variance'])assert.match(postjob,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),marker+' is missing');
+  for(const marker of ['Walkthrough load plan','Actual truckloads','Load variance'])assert.match(highlevel,new RegExp(marker));
 });
 
 test('HighLevel receives the customer promise in both the contact note and job appointment',async()=>{

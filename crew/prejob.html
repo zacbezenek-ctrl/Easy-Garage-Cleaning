@@ -476,7 +476,7 @@ async function finish(){
   const total=totalChecks();
   if(totalDone()<total) return;
   const startedAt=new Date().toISOString(),completedBy=sessionStorage.getItem('egc_u')||localStorage.getItem('egc_u')||'';
-  if(HUBDB&&ACTIVE.jobId)await HUBDB.collection('jobs').doc(ACTIVE.jobId).set({status:'in_progress',pipelineStatus:'in_progress',startedAt,preJobProgress:{...progressPayload(),completedAt:startedAt},preJobChecklist:{completedAt:startedAt,completedBy,clientItems:clientItems().map(it=>({id:it.id,label:it.label,detail:it.detail,completed:true})),standardItems:SECTIONS.flatMap(sec=>sec.items.map(it=>it.t))},updatedAt:startedAt},{merge:true}).catch(()=>{});
+  if(HUBDB&&ACTIVE.jobId){try{await HUBDB.collection('jobs').doc(ACTIVE.jobId).set({status:'in_progress',pipelineStatus:'in_progress',startedAt,preJobProgress:{...progressPayload(),completedAt:startedAt},preJobChecklist:{completedAt:startedAt,completedBy,clientItems:clientItems().map(it=>({id:it.id,label:it.label,detail:it.detail,completed:true})),standardItems:SECTIONS.flatMap(sec=>sec.items.map(it=>it.t))},updatedAt:startedAt},{merge:true})}catch(error){alert("The Hub could not record job start. Your checklist is still saved on this device—reconnect and retry before starting work.");return}}
   const workflowSynced=await syncStartLifecycle(startedAt);
   localStorage.removeItem(saveKey());
   alert(workflowSynced?"Pre-job complete. HighLevel was notified. Go make it disappear. 🛻":"Pre-job complete and saved. The HighLevel trigger needs a retry from the Hub.");
