@@ -1,5 +1,8 @@
+import { getHubSession } from '../_lib/hub-session.js';
+
 /** Returns configuration readiness only. Secret values never leave the server. */
-export async function onRequestGet({env}){
+export async function onRequestGet({request,env}){
+  if(!await getHubSession(request,env))return new Response(JSON.stringify({ok:false,code:'HUB_AUTH_REQUIRED',error:'Sign in to the EGC Hub'}),{status:401,headers:{'Content-Type':'application/json','Cache-Control':'no-store'}});
   const all=(...keys)=>keys.every(k=>Boolean(env[k]));
   const any=(...keys)=>keys.some(k=>Boolean(env[k]));
   const status={

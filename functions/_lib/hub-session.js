@@ -1,5 +1,6 @@
 const COOKIE_NAME = 'egc_hub_session';
 const SESSION_SECONDS = 12 * 60 * 60;
+const ACTION_STATE_SECONDS = 10 * 60;
 
 const DEFAULT_USERS = {
   ZacB: '6b8670f397174ff99440629b877581216a0b26b6770054be198988ff48a16861',
@@ -87,6 +88,27 @@ export async function verifyHubSessionToken(env, token, now = Date.now()) {
   }
 }
 
+export async function createHubActionState(env, purpose, username, now = Date.now()) {
+  const secret = sessionSecret(env);
+  if (!secret) throw new Error('Hub session secret is not configured');
+  const payload = bytesToBase64Url(encoder.encode(JSON.stringify({ v: 2, p: purpose, u: username, exp: now + ACTION_STATE_SECONDS * 1000 })));
+  return `${payload}.${await signature(secret, payload)}`;
+}
+
+export async function verifyHubActionState(env, token, purpose, now = Date.now()) {
+  const secret = sessionSecret(env);
+  if (!secret || !token || !purpose) return null;
+  const [payload, suppliedSignature, extra] = String(token).split('.');
+  if (!payload || !suppliedSignature || extra || !safeEqual(await signature(secret, payload), suppliedSignature)) return null;
+  try {
+    const state = JSON.parse(new TextDecoder().decode(base64UrlToBytes(payload)));
+    if (state.v !== 2 || state.p !== purpose || !users(env)[state.u] || !Number.isFinite(state.exp) || state.exp <= now) return null;
+    return { user: state.u, purpose: state.p, expiresAt: state.exp };
+  } catch {
+    return null;
+  }
+}
+
 export function readCookie(request, name = COOKIE_NAME) {
   const source = request.headers.get('Cookie') || '';
   for (const item of source.split(';')) {
@@ -113,4 +135,3 @@ export function clearHubSessionCookie() {
 export function hubAuthConfigured(env = {}) {
   return Boolean(sessionSecret(env));
 }
-

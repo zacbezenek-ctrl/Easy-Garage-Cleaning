@@ -1,3 +1,5 @@
+import { getHubSession } from '../_lib/hub-session.js';
+
 /**
  * EGC "Generate the After" — Cloudflare Pages Function
  * POST /api/garage-render
@@ -104,6 +106,7 @@ export async function onRequestPost({ request, env }) {
     status, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-store' } });
 
   if (!originAllowed(request)) return json(403, { ok: false, error: 'Forbidden origin' });
+  if (!await getHubSession(request, env)) return json(401, { ok: false, code: 'HUB_AUTH_REQUIRED', error: 'Sign in to the EGC Hub' });
   const apiKey = envVar(env, 'openaiapi');
   if (!apiKey) return json(500, { ok: false, error: 'Image generation not configured (openaiapi missing)' });
 

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
-import { createHubSessionCookie, hashHubCredential, verifyHubSessionToken } from '../functions/_lib/hub-session.js';
+import { createHubActionState, createHubSessionCookie, hashHubCredential, verifyHubActionState, verifyHubSessionToken } from '../functions/_lib/hub-session.js';
 
 const TEST_HUB_ENV={HIGHLEVEL_API_KEY:'test-key',HIGHLEVEL_LOCATION_ID:'location-1'};
 const TEST_HUB_COOKIE=(await createHubSessionCookie(TEST_HUB_ENV,'ZacB')).split(';')[0];
@@ -41,6 +41,23 @@ test('Hub authentication issues, validates, expires, and clears an HttpOnly sess
   assert.match(logout.headers.get('set-cookie'),/Max-Age=0/);
 });
 
+test('one-time integration setup state is signed, purpose-bound, and short-lived',async()=>{
+  const env={HUB_SESSION_SECRET:'state-test-secret',HUB_AUTH_USERS_JSON:JSON.stringify({Tester:await hashHubCredential('Tester','correct horse')})};
+  const now=Date.now(),state=await createHubActionState(env,'drive-oauth','Tester',now);
+  assert.equal((await verifyHubActionState(env,state,'drive-oauth',now+9*60*1000)).user,'Tester');
+  assert.equal(await verifyHubActionState(env,state,'jobber-oauth',now),null);
+  assert.equal(await verifyHubActionState(env,state+'x','drive-oauth',now),null);
+  assert.equal(await verifyHubActionState(env,state,'drive-oauth',now+11*60*1000),null);
+});
+
+test('OAuth setup routes reject callbacks that were not started by a Hub user',async()=>{
+  for(const [file,prefix] of [['drive-auth.js','GOOGLE'],['jobber-auth.js','JOBBER']]){
+    const api=await import(`../functions/api/${file}`),env={...TEST_HUB_ENV,[`${prefix}_CLIENT_ID`]:'client',[`${prefix}_CLIENT_SECRET`]:'secret'};
+    const response=await api.onRequestGet({request:new Request(`https://easygaragecleaning.com/api/${file.replace('.js','')}?code=untrusted`),env});
+    assert.equal(response.status,403);
+  }
+});
+
 test('sensitive CRM access is rejected before any upstream request without a Hub session',async()=>{
   const {onRequestGet}=await import('../functions/api/highlevel.js');
   const originalFetch=globalThis.fetch;
@@ -51,6 +68,13 @@ test('sensitive CRM access is rejected before any upstream request without a Hub
     assert.equal(response.status,401);
     assert.equal(called,false);
   }finally{globalThis.fetch=originalFetch}
+});
+
+test('integration readiness is private to signed-in Hub users',async()=>{
+  const {onRequestGet}=await import('../functions/api/integration-status.js');
+  const response=await onRequestGet({request:new Request('https://easygaragecleaning.com/api/integration-status'),env:TEST_HUB_ENV});
+  assert.equal(response.status,401);
+  assert.match(suite,/hubFetch\('\/api\/integration-status'/);
 });
 
 test('employee and crew pages no longer publish reusable password-derived session tokens',()=>{
@@ -71,6 +95,18 @@ test('the billable field copilot requires the signed Hub session',async()=>{
     assert.equal(called,false);
   }finally{globalThis.fetch=originalFetch}
   assert.match(copilot,/EGCHubAuth\.fetch\('\/api\/copilot'/);
+});
+
+test('the unused garage render prototype cannot spend image credits without a Hub session',async()=>{
+  const {onRequestPost}=await import('../functions/api/garage-render.js');
+  const originalFetch=globalThis.fetch;
+  let called=false;
+  globalThis.fetch=async()=>{called=true;throw new Error('must not call upstream')};
+  try{
+    const response=await onRequestPost({request:new Request('https://easygaragecleaning.com/api/garage-render',{method:'POST',headers:{Origin:'https://easygaragecleaning.com','Content-Type':'application/json'},body:'{}'}),env:TEST_HUB_ENV});
+    assert.equal(response.status,401);
+    assert.equal(called,false);
+  }finally{globalThis.fetch=originalFetch}
 });
 
 test('employee hub loads the EGC operations suite without the duplicate CRM overlay',()=>{

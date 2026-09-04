@@ -20,15 +20,17 @@
  *  5. Save as GOOGLE_REFRESH_TOKEN (secret). This endpoint then returns 404.
  */
 
+import { createHubActionState, getHubSession, verifyHubActionState } from '../_lib/hub-session.js';
+
 const SCOPE = 'https://www.googleapis.com/auth/drive.file';
 const AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
 const TOKEN_URL = 'https://oauth2.googleapis.com/token';
 
-const page = (title, body) => new Response(
+const page = (title, body, status = 200) => new Response(
   `<!doctype html><meta charset="utf-8"><meta name="robots" content="noindex"><title>${title}</title>
    <body style="font-family:system-ui;max-width:640px;margin:40px auto;padding:0 16px;line-height:1.5">
    <h2>${title}</h2>${body}</body>`,
-  { headers: { 'Content-Type': 'text/html', 'Cache-Control': 'no-store' } });
+  { status, headers: { 'Content-Type': 'text/html', 'Cache-Control': 'no-store' } });
 
 export async function onRequestGet({ request, env }) {
   if (env.GOOGLE_REFRESH_TOKEN) return new Response('Not found', { status: 404 });
@@ -42,10 +44,18 @@ export async function onRequestGet({ request, env }) {
   const redirectUri = `${url.origin}/api/drive-auth`;
 
   if (!code) {
+    const session = await getHubSession(request, env);
+    if (!session) return page('Drive setup — sign in required','<p>Sign in to the EGC Hub, then open this setup link again.</p>',401);
+    const state = await createHubActionState(env, 'drive-oauth', session.user);
     const auth = `${AUTH_URL}?client_id=${encodeURIComponent(env.GOOGLE_CLIENT_ID)}` +
       `&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code` +
-      `&scope=${encodeURIComponent(SCOPE)}&access_type=offline&prompt=consent`;
+      `&scope=${encodeURIComponent(SCOPE)}&access_type=offline&prompt=consent` +
+      `&state=${encodeURIComponent(state)}`;
     return Response.redirect(auth, 302);
+  }
+
+  if (!await verifyHubActionState(env, url.searchParams.get('state'), 'drive-oauth')) {
+    return page('Drive setup — expired or invalid','<p>Return to the EGC Hub and start the Drive connection again.</p>',403);
   }
 
   const resp = await fetch(TOKEN_URL, {
