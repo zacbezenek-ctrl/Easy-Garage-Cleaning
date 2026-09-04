@@ -392,7 +392,7 @@ test('legacy Firebase leads are not loaded into the reset Hub',()=>{
 });
 
 test('employees can discover and safely pick up manager-opened crew shifts',()=>{
-  for(const marker of ["'open_shifts'",'Open shifts','Crew needed','openShift','crewNeeded','assignedCrew','remaining</b>','Route','Pick up shift']){
+  for(const marker of ["'open_shifts'",'Open shifts','Crew needed','openShift','crewNeeded','assignedCrew','Crew full','Route','Pick up shift']){
     assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),marker+' is missing');
   }
   assert.match(suite,/db\.collection\('jobs'\)\.doc\(id\)/);
@@ -404,6 +404,14 @@ test('employees can discover and safely pick up manager-opened crew shifts',()=>
   for(const marker of ['async function syncCrewAssignment','silent_update=true','crew-assignment:','latestJobInstructions:patch.jobInstructions','Shift added and crew brief synced','HighLevel update is queued'])assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
   for(const guard of ['SHIFT_MISSING','SHIFT_CLOSED','SHIFT_DUPLICATE','SHIFT_FULL','Sign in again before claiming a shift'])assert.match(suite,new RegExp(guard));
   assert.doesNotMatch(suite,/collection\(['"]open_shifts['"]\)/);
+});
+
+test('claimed shifts stay visible and can be safely released by the claimant',()=>{
+  for(const marker of ['shiftPickupEnabled','shiftClaims','opsReleaseShift','Release shift','lastShiftRelease','crew-release:','Shift released and crew brief synced'])assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
+  assert.match(suite,/const pickupEnabled=/);
+  assert.match(suite,/claimed&&\(claims\.some/);
+  assert.match(suite,/assignedCrew=crewNames\(job\)\.filter/);
+  assert.match(suite,/shiftClaims=claims\.filter/);
 });
 
 test('crew assignment updates the HighLevel appointment without retriggering customer automation',async()=>{
@@ -426,15 +434,16 @@ test('crew assignment updates the HighLevel appointment without retriggering cus
 test('open-shift scheduling fields persist on the canonical job record',()=>{
   for(const field of ['openShift','crewNeeded','assignedCrew'])assert.match(suite,new RegExp(field+','));
   assert.match(suite,/b\.openShift=fd\.has\('openShift'\)/);
-  assert.match(suite,/openShift:b\.type==='job'/);
+  assert.match(suite,/job\.shiftPickupEnabled=b\.type==='job'/);
+  assert.match(suite,/job\.openShift=job\.shiftPickupEnabled/);
   assert.match(suite,/assignedCrew\.length<crewNeeded/);
   assert.match(suite,/crewSize:b\.type==='job'\?crewNeeded/);
   assert.match(suite,/crewSize:needed,openShift/);
   assert.match(suite,/if\(k==='type'\)render\(\)/);
   assert.match(suite,/b\.type==='job'\?'':'ops-hidden'/);
   assert.match(suite,/b\.type==='blocked'\?'ops-hidden':''/);
-  assert.match(employee,/employee-suite\.css\?v=20260903j/);
-  assert.match(employee,/employee-suite\.js\?v=20260903m/);
+  assert.match(employee,/employee-suite\.css\?v=20260903k/);
+  assert.match(employee,/employee-suite\.js\?v=20260903n/);
 });
 
 test('recurring visits keep the client plan but reset prior completion and payment state',()=>{
