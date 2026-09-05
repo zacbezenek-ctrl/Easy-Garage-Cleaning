@@ -71,6 +71,11 @@ test('homepage exposes an accessible first-party contact widget', () => {
   assert.match(html, /<script src="\/site-enhancements\.js\?v=20260903a" defer><\/script>/);
 });
 
+test('client hub empty-state logo preserves its aspect ratio', () => {
+  const html = read('customer-portal.html');
+  assert.match(html, /\.empty-state img\{height:auto\}/);
+});
+
 test('Cloudflare caches versioned public assets', () => {
   const headers = read('_headers');
   const styles = read('styles.css');
