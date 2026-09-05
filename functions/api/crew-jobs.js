@@ -1,6 +1,7 @@
 import { getHubSession, hasBusinessAccess } from '../_lib/hub-session.js';
 import { decodeFirestoreFields, patchJob, readJob } from '../_lib/firestore-job.js';
 import { firebaseServiceAccountConfigured, firestoreFetch } from '../_lib/firebase-service-account.js';
+import { appendConversationMessage, cleanMessage, cleanRequestId, conversationMessages, deliverHighLevelMessage, findConversationMessage, replaceConversationMessage } from '../_lib/customer-messaging.js';
 
 const PROJECT_ID = 'egcw-1ec83';
 
@@ -159,17 +160,46 @@ export async function onRequestPost({ request, env }) {
   if (!firebaseServiceAccountConfigured(env)) return reply(503, { ok: false, error: 'Secure data access is not configured' });
 
   const raw = await request.text();
-  if (raw.length > 4096) return reply(413, { ok: false, error: 'Payload too large' });
+  if (raw.length > 8192) return reply(413, { ok: false, error: 'Payload too large' });
   let payload;
   try { payload = JSON.parse(raw); } catch { return reply(400, { ok: false, error: 'Invalid JSON' }); }
   const action = String(payload.action || '');
   const jobId = String(payload.jobId || '');
-  if (!['claim', 'release'].includes(action) || !/^[A-Za-z0-9_-]{1,180}$/.test(jobId)) {
+  if (!['claim', 'release', 'send_customer_message'].includes(action) || !/^[A-Za-z0-9_-]{1,180}$/.test(jobId)) {
     return reply(400, { ok: false, error: 'A valid shift action and job are required' });
   }
 
   const job = await readJob(env, jobId).catch(() => null);
   if (!job) return reply(404, { ok: false, error: 'This shift no longer exists' });
+
+  if (action === 'send_customer_message') {
+    if (!hasBusinessAccess(session) && !assigned(job, session)) return reply(403, { ok: false, error: 'Only assigned crew and managers can message this customer' });
+    const body = cleanMessage(payload.body), requestId = cleanRequestId(payload.requestId);
+    if (!body) return reply(400, { ok: false, error: 'Write a message before sending' });
+    if (!requestId) return reply(400, { ok: false, error: 'A valid message request ID is required' });
+    const duplicate = findConversationMessage(job, { requestId });
+    if (duplicate) return reply(200, { ok: true, duplicate: true, message: duplicate, job: { ...job, customerConversation: conversationMessages(job) } });
+    const now = new Date().toISOString(), identity = String(session.displayName || session.user || 'Easy Garage Cleaning').trim();
+    const message = {
+      id: `crew-${requestId}`.slice(0, 140), requestId, direction: 'to_customer',
+      authorRole: hasBusinessAccess(session) ? 'manager' : 'crew', authorName: identity,
+      body, createdAt: now, delivery: { channel: 'sms', status: 'queued', attemptedAt: '' },
+    };
+    let queued;
+    try {
+      queued = await patchJob(env, jobId, { customerConversation: appendConversationMessage(job, message), customerConversationUpdatedAt: now, updatedAt: now }, job.__updateTime);
+    } catch {
+      return reply(409, { ok: false, error: 'The customer thread changed. Refresh and send again.' });
+    }
+    const delivery = await deliverHighLevelMessage(env, queued, { body, direction: 'to_customer' });
+    let updated = queued;
+    try {
+      const latest = await readJob(env, jobId);
+      updated = await patchJob(env, jobId, { customerConversation: replaceConversationMessage(latest, message.id, { delivery }), customerConversationUpdatedAt: new Date().toISOString(), updatedAt: new Date().toISOString() }, latest.__updateTime);
+    } catch { /* The queued portal message remains visible and can be retried safely. */ }
+    return reply(200, { ok: true, message: { ...message, delivery }, job: { ...updated, customerConversation: conversationMessages(updated) } });
+  }
+
   if (!pickupEnabled(job) || !pickupStageOpen(job)) return reply(409, { ok: false, error: 'This shift is no longer open' });
 
   const identity = String(session.displayName || session.user || '').trim();

@@ -77,3 +77,23 @@ export async function patchJobsAtomic(env, updates = []) {
   if (!response.ok) throw new Error(`Job storage transaction failed (${response.status})`);
   return response.json();
 }
+
+export async function queryJobsByField(env, fieldPath, value, limit = 20) {
+  if (!/^[A-Za-z][A-Za-z0-9_]{0,79}$/.test(fieldPath)) throw new Error('Invalid job query field');
+  const url = `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents:runQuery`;
+  const response = await firestoreFetch(env, url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ structuredQuery: {
+      from: [{ collectionId: 'jobs' }],
+      where: { fieldFilter: { field: { fieldPath }, op: 'EQUAL', value: encodeFirestoreValue(value) } },
+      limit: Math.max(1, Math.min(100, Number(limit) || 20)),
+    } }),
+  });
+  if (!response.ok) throw new Error(`Job storage query failed (${response.status})`);
+  return (await response.json()).filter(row => row.document?.fields).map(row => ({
+    id: String(row.document.name || '').split('/').pop() || '',
+    __updateTime: row.document.updateTime || '',
+    ...decodeFirestoreFields(row.document.fields),
+  }));
+}

@@ -1,5 +1,6 @@
 import { clearCustomerPortalSessionCookie, createCustomerPortalCollaboratorAccessToken, getCustomerPortalSession } from '../_lib/customer-portal.js';
 import { patchJob, patchJobsAtomic, readJob } from '../_lib/firestore-job.js';
+import { appendConversationMessage, cleanMessage, cleanRequestId, conversationMessages, deliverHighLevelMessage, findConversationMessage, replaceConversationMessage } from '../_lib/customer-messaging.js';
 
 const STRIPE_API = 'https://api.stripe.com/v1';
 const HOST = /^(?:easygaragecleaning\.com|www\.easygaragecleaning\.com|easy-garage-cleaning\.pages\.dev|localhost(?::\d+)?|127\.0\.0\.1(?::\d+)?)$/;
@@ -174,6 +175,12 @@ function sanitize(job, session = {}) {
       updatedAt: safe(job.updatedAt || '', 50),
     },
     photos: { customerUploadCount: Math.max(0, Number(job.customerPhotoCount || 0)), lastUploadedAt: safe(job.customerPhotoUpdatedAt || '', 50) },
+    conversation: conversationMessages(job).map(message => ({
+      id: message.id, direction: message.direction, authorRole: message.authorRole, authorName: message.authorName,
+      body: message.body, createdAt: message.createdAt,
+      delivery: { channel: message.delivery.channel, status: message.delivery.status, attemptedAt: message.delivery.attemptedAt },
+    })),
+    messaging: { highLevelLinked: Boolean(job.highlevelContactId), refreshSeconds: 20 },
     experience,
     support: { phone: '(970) 999-1818', phoneHref: 'tel:+19709991818', smsHref: 'sms:+19709991818' },
   };
@@ -228,6 +235,36 @@ export async function onRequestPost({ request, env }) {
   if (body.action === 'respond_decision' && !can('decide')) return reply(403, { ok: false, error: 'You are not authorized to answer job decisions' });
   if (body.action === 'request_rebook' && !can('rebook')) return reply(403, { ok: false, error: 'You are not authorized to rebook this property' });
   if (['create_payment', 'verify_payment', 'apply_gift_credit'].includes(body.action) && !can('pay')) return reply(403, { ok: false, error: 'You are not authorized to pay for this job' });
+
+  if (body.action === 'send_message') {
+    const messageBody = cleanMessage(body.body), requestId = cleanRequestId(body.request_id);
+    if (!messageBody) return reply(400, { ok: false, error: 'Write a message before sending' });
+    if (!requestId) return reply(400, { ok: false, error: 'A valid message request ID is required' });
+    const duplicate = findConversationMessage(result.job, { requestId });
+    if (duplicate) return reply(200, { ok: true, duplicate: true, message: duplicate, conversation: conversationMessages(result.job) });
+    const authorName = safe(result.session.actorId
+      ? customerExperience(result.job, true).collaborators.find(person => person.id === result.session.actorId)?.name
+      : result.job.customer, 120) || 'Customer';
+    const message = {
+      id: `customer-${requestId}`.slice(0, 140), requestId, direction: 'from_customer', authorRole: 'customer',
+      authorName, body: messageBody, createdAt: now,
+      delivery: { channel: 'portal', status: 'received', attemptedAt: now },
+    };
+    let queued;
+    try {
+      queued = await patchJob(env, result.session.jobId, { customerConversation: appendConversationMessage(result.job, message), customerConversationUpdatedAt: now, updatedAt: now }, result.jobUpdateTime);
+    } catch {
+      return reply(409, { ok: false, error: 'The conversation changed. Refresh and send again.' });
+    }
+    const highLevelDelivery = await deliverHighLevelMessage(env, queued, { body: messageBody, direction: 'from_customer' });
+    const delivery = highLevelDelivery.status === 'sent' ? highLevelDelivery : message.delivery;
+    let updated = queued;
+    try {
+      const latest = await readJob(env, result.session.jobId);
+      updated = await patchJob(env, result.session.jobId, { customerConversation: replaceConversationMessage(latest, message.id, { delivery }), customerConversationUpdatedAt: new Date().toISOString(), updatedAt: new Date().toISOString() }, latest.__updateTime);
+    } catch { /* The customer reply is already safely stored in the project thread. */ }
+    return reply(200, { ok: true, message: { ...message, delivery }, conversation: conversationMessages(updated) });
+  }
 
   if (body.action === 'approve_estimate') {
     const signedName = safe(body.signed_name, 120);
