@@ -14,12 +14,12 @@ function newestRelevantJob(rows = []) {
 }
 
 export async function onRequestPost({ request, env }) {
-  if (!firebaseServiceAccountConfigured(env)) return reply(503, { ok: false, error: 'Secure data access is not configured' });
   const raw = await request.text();
   if (!raw || raw.length > 64 * 1024) return reply(413, { ok: false, error: 'Invalid webhook body' });
   if (!await verifyHighLevelSignature(raw, request.headers.get('X-GHL-Signature'))) {
     return reply(401, { ok: false, error: 'Invalid webhook signature' });
   }
+  if (!firebaseServiceAccountConfigured(env)) return reply(503, { ok: false, error: 'Secure data access is not configured' });
   let event;
   try { event = JSON.parse(raw); } catch { return reply(400, { ok: false, error: 'Invalid JSON' }); }
   if (!highLevelLocationMatches(env, event)) return reply(403, { ok: false, error: 'Wrong HighLevel location' });
