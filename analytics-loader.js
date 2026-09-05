@@ -2,6 +2,10 @@
 (function () {
   'use strict';
 
+  var loaderScript = document.currentScript;
+  var requestedPixel = loaderScript && loaderScript.getAttribute('data-meta-pixel-id');
+  var metaPixelId = /^\d{8,20}$/.test(requestedPixel || '') ? requestedPixel : '970332989051988';
+
   window.dataLayer = window.dataLayer || [];
   window.gtag = window.gtag || function () { window.dataLayer.push(arguments); };
   window.gtag('js', new Date());
@@ -18,7 +22,7 @@
     fbq.version = '2.0';
     fbq.queue = [];
   }
-  window.fbq('init', '970332989051988');
+  window.fbq('init', metaPixelId);
   window.fbq('track', 'PageView');
 
   var started = false;

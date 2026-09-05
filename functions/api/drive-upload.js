@@ -32,7 +32,7 @@ const IMAGE_TYPES = new Map([
   ['image/webp', { extension: 'webp', valid: bytes => bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46 && bytes[8] === 0x57 && bytes[9] === 0x45 && bytes[10] === 0x42 && bytes[11] === 0x50 }],
 ]);
 
-const ALLOWED_HOST_RE = /(^|\.)easygaragecleaning\.com$|(\.pages\.dev)$|^localhost(:\d+)?$|^127\.0\.0\.1(:\d+)?$/;
+const ALLOWED_HOST_RE = /^(?:easygaragecleaning\.com|www\.easygaragecleaning\.com|easy-garage-cleaning\.pages\.dev|localhost(?::\d+)?|127\.0\.0\.1(?::\d+)?)$/;
 function hostOf(v) { try { return new URL(v).host; } catch { return ''; } }
 function originAllowed(request) {
   const o = request.headers.get('Origin'), r = request.headers.get('Referer');
@@ -164,7 +164,7 @@ export async function onRequestPost({ request, env }) {
     return customerSession
       ? json(200, { ok: true, uploaded })
       : json(200, { ok: true, folderId, folderUrl: `https://drive.google.com/drive/folders/${folderId}`, uploaded });
-  } catch (e) {
-    return json(502, { ok: false, error: 'Drive upload failed', detail: String(e && e.message || e).slice(0, 200) });
+  } catch {
+    return json(502, { ok: false, error: 'Drive upload failed' });
   }
 }

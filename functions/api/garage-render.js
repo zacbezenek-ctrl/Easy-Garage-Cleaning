@@ -23,7 +23,7 @@ import { getHubSession } from '../_lib/hub-session.js';
  * so it never becomes an implied guarantee against the locked-rate brand.
  */
 
-const ALLOWED_HOST_RE = /(^|\.)easygaragecleaning\.com$|(\.pages\.dev)$|^localhost(:\d+)?$|^127\.0\.0\.1(:\d+)?$/;
+const ALLOWED_HOST_RE = /^(?:easygaragecleaning\.com|www\.easygaragecleaning\.com|easy-garage-cleaning\.pages\.dev|localhost(?::\d+)?|127\.0\.0\.1(?::\d+)?)$/;
 const MAX_BODY = 12 * 1024 * 1024; // 12 MB — a downscaled garage photo is well under this
 
 // Prompt follows OpenAI's image-edit guidance: positive Scene first, then the

@@ -28,7 +28,7 @@ const UPLOAD_URL = 'https://www.googleapis.com/upload/drive/v3/files?uploadType=
 const FOLDER_NAME = 'Customer Agreements';
 const MAX_BODY = 8 * 1024 * 1024;
 
-const ALLOWED_HOST_RE = /(^|\.)easygaragecleaning\.com$|(\.pages\.dev)$|^localhost(:\d+)?$|^127\.0\.0\.1(:\d+)?$/;
+const ALLOWED_HOST_RE = /^(?:easygaragecleaning\.com|www\.easygaragecleaning\.com|easy-garage-cleaning\.pages\.dev|localhost(?::\d+)?|127\.0\.0\.1(?::\d+)?)$/;
 function hostOf(v) { try { return new URL(v).host; } catch { return ''; } }
 function originAllowed(request) {
   const o = request.headers.get('Origin'), r = request.headers.get('Referer');

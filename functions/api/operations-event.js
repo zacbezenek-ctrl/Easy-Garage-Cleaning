@@ -3,8 +3,8 @@
  * POST /api/operations-event { event, payload }
  * Webhook destinations stay in Cloudflare environment variables, never HTML.
  */
-import { getHubSession } from '../_lib/hub-session.js';
-const HOST=/^(localhost|127\.0\.0\.1)(:\d+)?$|(^|\.)easygaragecleaning\.com$|\.pages\.dev$/;
+import { getHubSession, hasBusinessAccess } from '../_lib/hub-session.js';
+const HOST=/^(?:easygaragecleaning\.com|www\.easygaragecleaning\.com|easy-garage-cleaning\.pages\.dev|localhost(?::\d+)?|127\.0\.0\.1(?::\d+)?)$/;
 const ROUTES={
   quote_followup:'QUOTE_FOLLOWUP_WEBHOOK_URL',
   booking:'BOOKING_WEBHOOK_URL',
@@ -17,7 +17,9 @@ export async function onRequestOptions(){return new Response(null,{status:204,he
 export async function onRequestGet(){return new Response('Method Not Allowed',{status:405,headers:{Allow:'POST, OPTIONS'}})}
 export async function onRequestPost({request,env}){
   if(!allowed(request))return reply(403,{ok:false,error:'Forbidden origin'});
-  if(!await getHubSession(request,env))return reply(401,{ok:false,error:'Sign in to the EGC Hub'});
+  const session=await getHubSession(request,env);
+  if(!session)return reply(401,{ok:false,error:'Sign in to the EGC Hub'});
+  if(!hasBusinessAccess(session))return reply(403,{ok:false,error:'Business access required'});
   const raw=await request.text();if(raw.length>64*1024)return reply(413,{ok:false,error:'Payload too large'});
   let body;try{body=JSON.parse(raw)}catch{return reply(400,{ok:false,error:'Invalid JSON'})}
   const event=String(body.event||''),key=ROUTES[event];if(!key)return reply(400,{ok:false,error:'Unknown event'});

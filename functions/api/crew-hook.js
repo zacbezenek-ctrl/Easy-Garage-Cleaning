@@ -20,11 +20,12 @@
  *   CREW_WEBHOOK_URL as a Cloudflare secret instead and leave the fallback unused.
  */
 
-import { getHubSession } from '../_lib/hub-session.js';
+import { getHubSession, hasBusinessAccess } from '../_lib/hub-session.js';
+import { readJob } from '../_lib/firestore-job.js';
 
 // Hosts allowed to POST here. Referer/Origin is spoofable via curl, so this is
 // a casual-abuse filter, not real auth — pair with Cloudflare Access for that.
-const ALLOWED_HOST_RE = /(^|\.)easygaragecleaning\.com$|(\.pages\.dev)$|^localhost(:\d+)?$|^127\.0\.0\.1(:\d+)?$/;
+const ALLOWED_HOST_RE = /^(?:easygaragecleaning\.com|www\.easygaragecleaning\.com|easy-garage-cleaning\.pages\.dev|localhost(?::\d+)?|127\.0\.0\.1(?::\d+)?)$/;
 
 const ALLOWED_TOOLS = new Set(['game_plan', 'review_request', 'post_job', 'plan_text']);
 const MAX_BODY = 256 * 1024; // 256 KB — generous for a signature dataURL, caps abuse
@@ -41,6 +42,18 @@ function originAllowed(request) {
   if (!origin && !referer) return true;
   const h = hostOf(origin) || hostOf(referer);
   return ALLOWED_HOST_RE.test(h);
+}
+
+const personKey = value => String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+
+function assignedToJob(job, session) {
+  const identities = [session.user, session.displayName].map(personKey).filter(Boolean);
+  const crew = [
+    ...(Array.isArray(job.assignedCrew) ? job.assignedCrew : []),
+    ...String(job.assignedTo || '').split(/\s*(?:,|\+|&|\band\b)\s*/i),
+  ].map(value => personKey(typeof value === 'string' ? value : value?.name || value?.id || '')).filter(Boolean);
+  return crew.some(name => identities.some(identity => name === identity ||
+    (Math.min(name.length, identity.length) >= 3 && (name.startsWith(identity) || identity.startsWith(name)))));
 }
 
 export async function onRequestOptions() {
@@ -66,7 +79,8 @@ export async function onRequestPost({ request, env }) {
     });
 
   if (!originAllowed(request)) return json(403, { ok: false, error: 'Forbidden origin' });
-  if (!await getHubSession(request, env)) return json(401, { ok: false, error: 'Sign in to the EGC Hub' });
+  const session = await getHubSession(request, env);
+  if (!session) return json(401, { ok: false, error: 'Sign in to the EGC Hub' });
 
   const raw = await request.text();
   if (raw.length > MAX_BODY) return json(413, { ok: false, error: 'Payload too large' });
@@ -78,9 +92,19 @@ export async function onRequestPost({ request, env }) {
   const tool = String(body.tool || '');
   if (!ALLOWED_TOOLS.has(tool)) return json(400, { ok: false, error: 'Unknown tool' });
 
+  if (!hasBusinessAccess(session)) {
+    if (!['review_request', 'post_job'].includes(tool)) {
+      return json(403, { ok: false, error: 'Business access required' });
+    }
+    const jobId = String(body.job_id || '');
+    if (!/^[A-Za-z0-9_-]{1,180}$/.test(jobId)) return json(400, { ok: false, error: 'A valid assigned job is required' });
+    const job = await readJob(env, jobId).catch(() => null);
+    if (!job || !assignedToJob(job, session)) return json(403, { ok: false, error: 'This job is not assigned to you' });
+  }
+
   // The review path actually sends an SMS downstream — never forward one
   // without both a destination and a message.
-  if (tool === 'review_request' && (!body.phone || !body.message)) {
+  if (tool === 'review_request' && (!/^\+?[1-9]\d{9,14}$/.test(String(body.phone || '').replace(/[^\d+]/g, '')) || !String(body.message || '').trim() || String(body.message).length > 800)) {
     return json(400, { ok: false, error: 'review_request requires phone and message' });
   }
 
@@ -94,8 +118,7 @@ export async function onRequestPost({ request, env }) {
       body: raw,
     });
     if (!resp.ok) {
-      const detail = (await resp.text().catch(() => '')).slice(0, 300);
-      return json(502, { ok: false, error: 'Upstream rejected', status: resp.status, detail });
+      return json(502, { ok: false, error: 'Upstream rejected', status: resp.status });
     }
     return json(200, { ok: true, tool });
   } catch (e) {

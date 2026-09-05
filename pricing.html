@@ -2,29 +2,12 @@
 <html lang="en">
 <head>
 <!-- Analytics events queue immediately; vendor libraries load after interaction. -->
-<script src="/analytics-loader.js?v=20260903a" defer></script>
+<script src="/analytics-loader.js?v=20260904b" defer></script>
 
-
-<!--
-  MERCHANT SETUP CHECKLIST — optional tags:
-  1. Microsoft Clarity analytics
-  2. Google Search Console: uncomment meta verification tag below
-  3. CallRail: see body comment block for dynamic number swap
-  4. AggregateRating: add real review count in schema when available
--->
-<!-- Google Search Console: <meta name="google-site-verification" content="YOUR_VERIFICATION_CODE" /> -->
-<!-- Microsoft Clarity is loaded by analytics-loader.js after first interaction. -->
 
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <meta name="referrer" content="strict-origin-when-cross-origin" />
-<!--
-  HOSTING CSP — configure on server (Cloudflare, Netlify, Apache), not as a blocking meta tag:
-  default-src 'self'; script-src 'self' 'unsafe-inline' https://www.googletagmanager.com https://www.clarity.ms https://connect.facebook.net;
-  style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com;
-  img-src 'self' data: blob: https:; connect-src 'self' https://api.web3forms.com https://www.google-analytics.com;
-  frame-src https://www.youtube.com; upgrade-insecure-requests
--->
 <title>Garage Cleanout Pricing Fort Collins | Walkthrough Pricing</title>
 <meta name="description" content="Transparent garage cleanout and junk removal pricing in Fort Collins. Review planning ranges, then get one exact flat rate during a free on-site walkthrough." />
 <meta name="robots" content="index, follow" />
@@ -44,28 +27,15 @@
 <link rel="dns-prefetch" href="https://fonts.googleapis.com">
 <link rel="dns-prefetch" href="https://fonts.gstatic.com">
 
-<link rel="dns-prefetch" href="https://www.googletagmanager.com">
-<link rel="dns-prefetch" href="https://www.facebook.com">
-<link rel="dns-prefetch" href="https://connect.facebook.net">
-
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,700;1,9..144,400&family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
 <noscript><link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,700;1,9..144,400&family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet"></noscript>
 
-<!-- AggregateRating: uncomment and add verified reviewCount/ratingValue to LocalBusiness when real reviews exist -->
-<script type="application/ld+json">{"@context": "https://schema.org", "@type": "LocalBusiness", "@id": "https://easygaragecleaning.com/#business", "name": "Easy Garage Cleaning", "alternateName": "Easy Garage Cleaning LLC", "slogan": "The easiest way to reclaim your garage", "description": "Garage reclaiming specialist — cleanouts, junk removal, and organization in Fort Collins and Northern Colorado.", "url": "https://easygaragecleaning.com", "telephone": "+19709991818", "email": "contact@easygaragecleaning.com", "image": "https://easygaragecleaning.com/og-image.png", "logo": "https://easygaragecleaning.com/android-chrome-512x512.png", "priceRange": "$99-$650+", "knowsAbout": ["Garage cleanout", "Junk removal", "Garage cleaning", "Garage organization", "Furniture removal", "Appliance removal", "Mattress disposal", "Storage unit cleanout", "Yard debris removal", "Northern Colorado hauling", "Habitat ReStore donation", "Free on-site walkthroughs"], "address": {"@type": "PostalAddress", "streetAddress": "Fort Collins", "addressLocality": "Fort Collins", "addressRegion": "CO", "postalCode": "80525", "addressCountry": "US"}, "geo": {"@type": "GeoCoordinates", "latitude": 40.58526, "longitude": -105.084419}, "areaServed": [{"@type": "City", "name": "Fort Collins"}, {"@type": "City", "name": "Loveland"}, {"@type": "City", "name": "Windsor"}, {"@type": "City", "name": "Timnath"}, {"@type": "City", "name": "Wellington"}, {"@type": "City", "name": "Severance"}, {"@type": "City", "name": "LaPorte"}], "openingHoursSpecification": [{"@type": "OpeningHoursSpecification", "dayOfWeek": ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"], "opens": "07:00", "closes": "19:00"}], "founder": {"@type": "Person", "name": "Zac Bezenek", "url": "https://easygaragecleaning.com/about"}, "sameAs": ["https://www.google.com/maps/place/Fort+Collins,+CO"], "hasOfferCatalog": {"@type": "OfferCatalog", "name": "Garage Reclaiming & Junk Removal Services", "itemListElement": [{"@type": "Offer", "itemOffered": {"@type": "Service", "name": "Junk Removal", "url": "https://easygaragecleaning.com/junk-removal-fort-collins-co"}}, {"@type": "Offer", "itemOffered": {"@type": "Service", "name": "Garage Cleanout", "url": "https://easygaragecleaning.com/garage-cleanouts-fort-collins-co"}}, {"@type": "Offer", "itemOffered": {"@type": "Service", "name": "Garage Cleaning", "url": "https://easygaragecleaning.com/garage-cleaning-fort-collins-co"}}, {"@type": "Offer", "itemOffered": {"@type": "Service", "name": "Furniture Removal", "url": "https://easygaragecleaning.com/furniture-removal-fort-collins-co"}}, {"@type": "Offer", "itemOffered": {"@type": "Service", "name": "Appliance Removal", "url": "https://easygaragecleaning.com/appliance-removal-fort-collins-co"}}, {"@type": "Offer", "itemOffered": {"@type": "Service", "name": "Mattress Removal", "url": "https://easygaragecleaning.com/mattress-removal-fort-collins-co"}}, {"@type": "Offer", "itemOffered": {"@type": "Service", "name": "Storage Unit Cleanout", "url": "https://easygaragecleaning.com/storage-unit-cleanout-fort-collins-co"}}, {"@type": "Offer", "itemOffered": {"@type": "Service", "name": "Yard Debris Removal", "url": "https://easygaragecleaning.com/yard-debris-removal-fort-collins-co"}}, {"@type": "Offer", "itemOffered": {"@type": "Service", "name": "Garage Organization", "url": "https://easygaragecleaning.com/garage-organization-fort-collins-co"}}]}}</script>
+<script type="application/ld+json">{"@context": "https://schema.org", "@type": "LocalBusiness", "@id": "https://easygaragecleaning.com/#business", "name": "Easy Garage Cleaning", "alternateName": "Easy Garage Cleaning LLC", "slogan": "The easiest way to reclaim your garage", "description": "Garage reclaiming specialist — cleanouts, junk removal, and organization in Fort Collins and Northern Colorado.", "url": "https://easygaragecleaning.com", "telephone": "+19709991818", "email": "contact@easygaragecleaning.com", "image": "https://easygaragecleaning.com/og-image.png", "logo": "https://easygaragecleaning.com/android-chrome-512x512.png", "priceRange": "$99-$650+", "knowsAbout": ["Garage cleanout", "Junk removal", "Garage cleaning", "Garage organization", "Furniture removal", "Appliance removal", "Mattress disposal", "Storage unit cleanout", "Yard debris removal", "Northern Colorado hauling", "Habitat ReStore donation", "Free on-site walkthroughs"], "address": {"@type": "PostalAddress", "addressLocality": "Fort Collins", "addressRegion": "CO", "postalCode": "80525", "addressCountry": "US"}, "geo": {"@type": "GeoCoordinates", "latitude": 40.58526, "longitude": -105.084419}, "areaServed": [{"@type": "City", "name": "Fort Collins"}, {"@type": "City", "name": "Loveland"}, {"@type": "City", "name": "Windsor"}, {"@type": "City", "name": "Timnath"}, {"@type": "City", "name": "Wellington"}, {"@type": "City", "name": "Severance"}, {"@type": "City", "name": "LaPorte"}], "openingHoursSpecification": [{"@type": "OpeningHoursSpecification", "dayOfWeek": ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"], "opens": "07:00", "closes": "19:00"}], "founder": {"@type": "Person", "name": "Zac Bezenek", "url": "https://easygaragecleaning.com/about"}, "sameAs": ["https://www.google.com/maps/place/Fort+Collins,+CO"], "hasOfferCatalog": {"@type": "OfferCatalog", "name": "Garage Reclaiming & Junk Removal Services", "itemListElement": [{"@type": "Offer", "itemOffered": {"@type": "Service", "name": "Junk Removal", "url": "https://easygaragecleaning.com/junk-removal-fort-collins-co"}}, {"@type": "Offer", "itemOffered": {"@type": "Service", "name": "Garage Cleanout", "url": "https://easygaragecleaning.com/garage-cleanouts-fort-collins-co"}}, {"@type": "Offer", "itemOffered": {"@type": "Service", "name": "Garage Cleaning", "url": "https://easygaragecleaning.com/garage-cleaning-fort-collins-co"}}, {"@type": "Offer", "itemOffered": {"@type": "Service", "name": "Furniture Removal", "url": "https://easygaragecleaning.com/furniture-removal-fort-collins-co"}}, {"@type": "Offer", "itemOffered": {"@type": "Service", "name": "Appliance Removal", "url": "https://easygaragecleaning.com/appliance-removal-fort-collins-co"}}, {"@type": "Offer", "itemOffered": {"@type": "Service", "name": "Mattress Removal", "url": "https://easygaragecleaning.com/mattress-removal-fort-collins-co"}}, {"@type": "Offer", "itemOffered": {"@type": "Service", "name": "Storage Unit Cleanout", "url": "https://easygaragecleaning.com/storage-unit-cleanout-fort-collins-co"}}, {"@type": "Offer", "itemOffered": {"@type": "Service", "name": "Yard Debris Removal", "url": "https://easygaragecleaning.com/yard-debris-removal-fort-collins-co"}}, {"@type": "Offer", "itemOffered": {"@type": "Service", "name": "Garage Organization", "url": "https://easygaragecleaning.com/garage-organization-fort-collins-co"}}]}}</script>
 <script type="application/ld+json">{"@context": "https://schema.org", "@type": "WebPage", "@id": "https://easygaragecleaning.com/pricing#webpage", "url": "https://easygaragecleaning.com/pricing", "name": "Garage Cleanout Pricing Fort Collins | Walkthrough Pricing", "description": "Transparent garage cleanout and junk removal pricing in Fort Collins. Review planning ranges, then get one exact flat rate during a free on-site walkthrough.", "isPartOf": {"@id": "https://easygaragecleaning.com/#website"}, "about": {"@id": "https://easygaragecleaning.com/#business"}, "speakable": {"@type": "SpeakableSpecification", "cssSelector": [".hero-sub", ".faq-q", ".faq-a", ".def-block"]}}</script>
 <link rel="stylesheet" href="/styles.css?v=20260904j">
 </head>
 <body>
 <a href="#main-content" class="skip-link">Skip to content</a>
-
-<!--
-  CALLRAIL / DYNAMIC NUMBER INSERTION
-  1. Create a CallRail account and add easygaragecleaning.com
-  2. Install their swap.js snippet OR use their GTM integration
-  3. Replace displayed (970) 999-1818 with your tracking pool number in their dashboard
-  4. Example: <script src="https://cdn.callrail.com/companies/XXXX/swap.js"></script>
--->
 
 <nav class="nav" aria-label="Primary">
   <div class="nav-inner">
@@ -119,7 +89,7 @@
     </ul>
     <div class="nav-right">
       <a href="tel:+19709991818" class="nav-phone">(970) 999-1818</a>
-      <a href="/book" class="nav-cta" data-cta="nav-book">Book Now</a>
+      <a href="/book" class="nav-cta" data-cta="nav-book">Request Walkthrough</a>
     </div>
     <button type="button" class="nav-toggle" aria-label="Open menu" aria-expanded="false" aria-controls="nav-drawer">
       <span class="nav-toggle-bar"></span><span class="nav-toggle-bar"></span><span class="nav-toggle-bar"></span>
@@ -178,7 +148,7 @@
 </aside>
 <div class="trust-strip" aria-label="Trust signals">
   <div class="wrap trust-strip-inner">
-    <span>Response within 5 minutes</span><span>No hidden fees</span><span>Only pay after approving quote</span><span>We do all lifting</span><span>Free on-site walkthrough</span><span>Next-day availability</span>
+    <span>Quick local response</span><span>No hidden fees</span><span>Only pay after approving quote</span><span>We do all lifting</span><span>Free on-site walkthrough</span><span>Next-day when available</span>
   </div>
 </div>
 <main id="main-content">
@@ -368,22 +338,14 @@
           <div class="form-panel" data-step="6">
             <div class="form-row two">
               <div class="field"><label for="name-garagecleano">Name</label><input type="text" id="name-garagecleano" name="Name" required autocomplete="name" placeholder="Your name" /></div>
-              <div class="field"><label for="phone-f-garagecleano">Phone</label><input type="tel" id="phone-f-garagecleano" name="Phone" required autocomplete="tel" inputmode="tel" placeholder="(970) 555-1234" /><p class="field-hint">10-digit US number — normalized to E.164 for Zapier/Firestore.</p></div>
+              <div class="field"><label for="phone-f-garagecleano">Phone</label><input type="tel" id="phone-f-garagecleano" name="Phone" required autocomplete="tel" inputmode="tel" placeholder="(970) 555-1234" /><p class="field-hint">We’ll use this number to confirm your walkthrough.</p></div>
             </div>
             <div class="form-row"><div class="field"><label for="email-garagecleano">Email (optional)</label><input type="email" id="email-garagecleano" name="Email" autocomplete="email" placeholder="you@email.com" /></div></div>
-            <div class="form-row two">
+            <div class="form-row">
               <div class="field"><label for="date-garagecleano">Preferred date (optional)</label><input type="date" id="date-garagecleano" name="Preferred date" /></div>
-              <div class="field"><label for="timing-garagecleano">Preferred timing</label>
-                <select id="timing-garagecleano" name="Preferred timing">
-                  <option value="ASAP / Next-day">ASAP / Next-day</option>
-                  <option value="This week">This week</option>
-                  <option value="Next week">Next week</option>
-                  <option value="Flexible">Flexible</option>
-                </select>
-              </div>
             </div>
             <p class="form-note" style="margin-top:8px">We will contact you to confirm the walkthrough time.</p>
-            <p class="form-privacy">We only use your information to schedule and prepare for your visit—never sold or shared.</p>
+            <p class="form-privacy">We use your information to respond, schedule, and provide service. See our <a href="/privacy-policy">Privacy Policy</a>.</p>
             <label class="sms-consent"><input type="checkbox" name="sms_consent" value="yes"><span>I agree to receive text messages from Easy Garage Cleaning about my walkthrough and appointment at the number provided. Consent is not a condition of purchase. Message frequency varies, msg &amp; data rates may apply. Reply STOP to opt out or HELP for help. See our <a href="/privacy-policy">Privacy Policy</a> and <a href="/terms-of-service">Terms of Service</a>.</span></label>
             <div class="form-nav"><button type="button" class="btn-secondary" data-prev>← Back</button><button type="submit" class="btn-primary form-submit" data-submit-label>Request walkthrough →</button></div>
           </div>
@@ -435,7 +397,7 @@
         <li><a href="/projects/">Projects</a></li>
         <li><a href="/faq">FAQ</a></li>
         <li><a href="/blog/">Blog</a></li>
-        <li><a href="/book">Book Online</a></li>
+        <li><a href="/book">Request a Walkthrough</a></li>
         <li><a href="/pricing">Pricing</a></li>
         <li><a href="/privacy-policy">Privacy Policy</a></li>
         <li><a href="/terms-of-service">Terms of Service</a></li>
@@ -467,7 +429,7 @@
     <div class="contact-widget-actions">
       <a class="contact-widget-primary" href="sms:+19709991818?body=Hi!%20I'd%20like%20to%20schedule%20a%20free%20on-site%20walkthrough.">Schedule by text</a>
       <a href="tel:+19709991818">Call (970) 999-1818</a>
-      <a href="/book">Book online</a>
+      <a href="/book">Request online</a>
     </div>
     <small>Mon–Sat · 7am–7pm</small>
   </section>
@@ -488,12 +450,19 @@ function initNavDrawer(){
   if(!toggle||!drawer)return;
   if(toggle.dataset.navBound)return;
   toggle.dataset.navBound='1';
+  let returnFocus=null;
+  const background=[...document.body.children].filter(el=>el!==drawer&&el!==overlay&&el.tagName!=='SCRIPT');
+  const focusable=()=>[...drawer.querySelectorAll('a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])')].filter(el=>!el.hidden&&el.offsetParent!==null);
   function setOpen(open){
+    if(open)returnFocus=document.activeElement;
     toggle.setAttribute('aria-expanded',open);
     drawer.classList.toggle('open',open);
     drawer.setAttribute('aria-hidden',String(!open));
     if(overlay){overlay.classList.toggle('open',open);overlay.setAttribute('aria-hidden',String(!open));}
     document.body.classList.toggle('nav-open',open);
+    background.forEach(el=>{el.inert=open;});
+    if(open)setTimeout(()=>{(closeBtn||focusable()[0])?.focus();},0);
+    else if(returnFocus&&typeof returnFocus.focus==='function')returnFocus.focus();
   }
   toggle.addEventListener('click',()=>setOpen(toggle.getAttribute('aria-expanded')!=='true'));
   if(closeBtn)closeBtn.addEventListener('click',()=>setOpen(false));
@@ -507,7 +476,16 @@ function initNavDrawer(){
       if(links)links.classList.toggle('open',!open);
     });
   });
-  document.addEventListener('keydown',e=>{if(e.key==='Escape')setOpen(false);});
+  document.addEventListener('keydown',e=>{
+    if(!drawer.classList.contains('open'))return;
+    if(e.key==='Escape'){e.preventDefault();setOpen(false);return;}
+    if(e.key==='Tab'){
+      const items=focusable();if(!items.length)return;
+      const first=items[0],last=items[items.length-1];
+      if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus();}
+      else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus();}
+    }
+  });
 }
 if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',initNavDrawer);}else{initNavDrawer();}
 
@@ -545,7 +523,7 @@ function initMultiStepForm(form){
     const panel=panels[n-1];clearErr(panel);
     if(n===1){const svc=form.querySelector('[name="Service type"]:checked');if(!svc){showErr(panel,'Please choose a service type to continue.');panel.querySelector('.service-picker')?.scrollIntoView({behavior:'smooth',block:'center'});return false;}}
     if(n===2){if(sizeSel&&!sizeSel.value){showErr(panel,'Please choose an approximate job size.');sizeSel.focus();return false;}}
-    if(n===3){if(!showQuoteResult())return false;if(flowInput&&flowInput.value==='booking'){syncBookingSlot();if(!form.querySelector('[name="booking_slot_choice"]:checked')){showErr(panel,'Please pick a preferred booking time.');return false;}}}
+    if(n===3){if(!showQuoteResult())return false;syncBookingSlot();if(!form.querySelector('[name="booking_slot_choice"]:checked')){showErr(panel,'Please choose a preferred walkthrough window.');return false;}}
     if(n===4){const city=form.querySelector('[name="City"]');if(city&&!city.value){showErr(panel,'Please select your city so we can confirm service area.');city.focus();return false;}}
     if(n===6){const name=form.querySelector('[name="Name"]');const phone=form.querySelector('[name="Phone"]');if(name&&!name.value.trim()){showErr(panel,'Please enter your name.');name.focus();return false;}if(phone&&!phone.value.trim()){showErr(panel,'Please enter a phone number so we can call with your quote.');phone.focus();return false;}}
     return true;

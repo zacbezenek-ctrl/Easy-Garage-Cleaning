@@ -1,5 +1,5 @@
 (function () {
-  const KEYS = ['egc_u', 'egc_tok', 'egc_exp', 'egc_name', 'egc_role', 'egc_pay_type', 'egc_hourly_rate'];
+  const KEYS = ['egc_u', 'egc_tok', 'egc_exp', 'egc_name', 'egc_role', 'egc_pay_type', 'egc_hourly_rate', 'egc_business_access'];
   const BUSINESS_USERS = new Set(['zacb', 'tylerg', 'alexk']);
 
   function remember(user, profile = {}) {
@@ -10,6 +10,7 @@
         storage.setItem('egc_role', profile.role || 'crew');
         storage.setItem('egc_pay_type', profile.payType || 'hourly');
         storage.setItem('egc_hourly_rate', String(Number(profile.hourlyRate || 0)));
+        storage.setItem('egc_business_access', profile.businessAccess === true ? 'true' : 'false');
         storage.removeItem('egc_tok');
         storage.removeItem('egc_exp');
       }
@@ -27,6 +28,14 @@
     } catch {}
   }
 
+  async function ensureFirebaseSession() {
+    if (!window.firebase?.auth) return;
+    const response = await fetch('/api/firebase-session', { cache: 'no-store', credentials: 'same-origin' });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok || !data.ok || !data.token) throw new Error(data.error || 'Secure data access is unavailable');
+    await firebase.auth().signInWithCustomToken(data.token);
+  }
+
   async function session() {
     try {
       const response = await fetch('/api/hub-auth', { cache: 'no-store', credentials: 'same-origin' });
@@ -36,6 +45,7 @@
         return null;
       }
       remember(data.user, data);
+      await ensureFirebaseSession();
       return data.user;
     } catch {
       clearLocal();
@@ -53,11 +63,13 @@
     const data = await response.json().catch(() => ({}));
     if (!response.ok || !data.ok) throw new Error(data.error || 'Sign-in failed');
     remember(data.user, data);
+    await ensureFirebaseSession();
     return data.user;
   }
 
   async function signOut() {
     clearLocal();
+    try { await firebase.auth().signOut(); } catch {}
     try { await fetch('/api/hub-auth', { method: 'DELETE', credentials: 'same-origin' }); } catch {}
   }
 
@@ -88,11 +100,12 @@
       role: get('egc_role') || 'crew',
       payType: get('egc_pay_type') || 'hourly',
       hourlyRate: Math.max(0, Number(get('egc_hourly_rate') || 0)),
+      businessAccess: get('egc_business_access') === 'true',
     };
   }
 
   function canRunBusiness(user = profile().user) {
-    return BUSINESS_USERS.has(String(user || '').trim().toLowerCase());
+    return profile().businessAccess === true && BUSINESS_USERS.has(String(user || '').trim().toLowerCase());
   }
 
   function mountCrewNav() {
@@ -116,5 +129,5 @@
 
   window.addEventListener('DOMContentLoaded', mountCrewNav);
 
-  window.EGCHubAuth = { session, signIn, signOut, fetch: securedFetch, clearLocal, profile, canRunBusiness, mountCrewNav };
+  window.EGCHubAuth = { session, signIn, signOut, fetch: securedFetch, clearLocal, profile, canRunBusiness, mountCrewNav, ensureFirebaseSession };
 })();

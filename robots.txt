@@ -6,15 +6,13 @@
 #   meta-externalagent, Amazonbot, DuckAssistBot, cohere-ai, MistralAI-User, Bytespider
 # Machine-readable business context for LLMs:
 #   https://easygaragecleaning.com/llms.txt        (summary)
-#   https://easygaragecleaning.com/llms-full.txt   (full reference)
+#   https://easygaragecleaning.com/llms.txt        (full reference)
 #   https://easygaragecleaning.com/ai.txt          (URL index)
 
 User-agent: *
 Allow: /
 Disallow: /employee.html
 Disallow: /employee
-Disallow: /employee-crm.js
-Disallow: /employee-crm.css
 Disallow: /copilot.html
 Disallow: /copilot
 Disallow: /sop.html

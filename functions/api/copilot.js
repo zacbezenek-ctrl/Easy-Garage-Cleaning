@@ -378,6 +378,22 @@ function formatSchedule(jobs) {
   }).join('\n');
 }
 
+function promptField(value, max = 240) {
+  return String(value ?? '').replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, max);
+}
+
+function safeSchedule(value) {
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, 50).map(job => ({
+    status: promptField(job?.status, 40), customerName: promptField(job?.customerName, 100), name: promptField(job?.name, 100),
+    timeWindow: promptField(job?.timeWindow, 40), scheduledTime: promptField(job?.scheduledTime, 40),
+    address: promptField(job?.address, 180), customerAddress: promptField(job?.customerAddress, 180),
+    cubicYards: Math.min(TRUCK_CAPACITY, Math.max(0, Number(job?.cubicYards) || 0)),
+    amount: promptField(job?.amount, 40), quoteAmount: promptField(job?.quoteAmount, 40),
+    customerPhone: promptField(job?.customerPhone, 40), phone: promptField(job?.phone, 40), notes: promptField(job?.notes, 500),
+  }));
+}
+
 // ─────────────────────────────────────────────────────────────
 //  CF PAGES FUNCTION HANDLER
 // ─────────────────────────────────────────────────────────────
@@ -395,9 +411,12 @@ function envVar(env, name) {
 }
 
 function corsHeaders(origin) {
-  const allowed =
-    /^https:\/\/([a-z0-9-]+\.)*easygaragecleaning\.com$/i.test(origin) ||
-    /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
+  let allowed = false;
+  try {
+    const url = new URL(origin);
+    allowed = (url.protocol === 'https:' && ['easygaragecleaning.com', 'www.easygaragecleaning.com', 'easy-garage-cleaning.pages.dev'].includes(url.hostname.toLowerCase())) ||
+      (url.protocol === 'http:' && ['localhost', '127.0.0.1'].includes(url.hostname));
+  } catch { /* invalid or absent Origin */ }
   return {
     'Access-Control-Allow-Origin':  allowed ? origin : 'https://easygaragecleaning.com',
     'Access-Control-Allow-Methods': 'POST, OPTIONS',
@@ -418,6 +437,7 @@ export async function onRequestPost({ request, env }) {
     headers: { 'Content-Type': 'application/json', ...cors },
   });
 
+  if (origin && cors['Access-Control-Allow-Origin'] !== origin) return json(403, { error: 'Forbidden origin' });
   if (!await getHubSession(request, env)) {
     return json(401, { code: 'HUB_AUTH_REQUIRED', error: 'Sign in to the EGC Hub' });
   }
@@ -428,14 +448,23 @@ export async function onRequestPost({ request, env }) {
     return json(500, { error: 'Server misconfigured — contact Zac' });
   }
 
+  const raw = await request.text();
+  if (raw.length > 128 * 1024) return json(413, { error: 'Request too large' });
   let body;
   try {
-    body = await request.json();
+    body = JSON.parse(raw);
   } catch {
     return json(400, { error: 'Invalid JSON' });
   }
-  const { user = 'field', query, schedule = [], history = [] } = body || {};
-  if (!query?.trim()) return json(400, { error: 'Missing query' });
+  const user = promptField(body?.user || 'field', 80);
+  const query = promptField(body?.query, 2000);
+  const schedule = safeSchedule(body?.schedule);
+  const history = Array.isArray(body?.history) ? body.history.slice(-8).flatMap(message => {
+    const role = message?.role === 'assistant' ? 'assistant' : message?.role === 'user' ? 'user' : '';
+    const content = promptField(message?.content, 2000);
+    return role && content ? [{ role, content }] : [];
+  }) : [];
+  if (!query) return json(400, { error: 'Missing query' });
 
   const mt      = getMTContext();
   const truck   = computeTruckStatus(schedule);
@@ -538,8 +567,8 @@ BASIS: [which SOP section OR which live context data this is based on — cite S
 
   const messages = [
     { role: 'system', content: systemPrompt },
-    ...(Array.isArray(history) ? history : []).slice(-8).filter(m => m?.role && m?.content),
-    { role: 'user', content: query.trim() },
+    ...history,
+    { role: 'user', content: query },
   ];
 
   try {

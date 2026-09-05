@@ -1,17 +1,14 @@
 import { decodeFirestoreFields } from './firestore-job.js';
+import { firestoreFetch } from './firebase-service-account.js';
 
 const PROJECT_ID = 'egcw-1ec83';
-const DEFAULT_FIREBASE_API_KEY = 'AIzaSyA8g4UAW4P4bsCrQNZhUe81CbC7BvjJbNc';
-
-function firebaseKey(env = {}) {
-  return String(env.FIREBASE_API_KEY || DEFAULT_FIREBASE_API_KEY);
-}
 
 export async function queryPublishedCaseStudies(env = {}, { slug = '', limit = 24 } = {}) {
   const fieldPath = slug ? 'caseStudy.slug' : 'caseStudy.status';
   const value = slug || 'published';
-  const response = await fetch(
-    `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents:runQuery?key=${encodeURIComponent(firebaseKey(env))}`,
+  const response = await firestoreFetch(
+    env,
+    `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents:runQuery`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

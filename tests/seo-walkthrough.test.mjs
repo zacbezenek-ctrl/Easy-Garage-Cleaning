@@ -52,7 +52,14 @@ test('sitemap excludes retired duplicates and private conversion pages', () => {
 
 test('case-study publishing is manager-only, consent-gated, and privacy checked', async () => {
   const api = await import('../functions/api/case-study.js');
-  const env = { HUB_SESSION_SECRET: 'case-study-test' };
+  const env = {
+    HUB_SESSION_SECRET: 'case-study-test',
+    FIREBASE_API_KEY: 'firebase-test-case-study',
+    HUB_AUTH_USERS_JSON: JSON.stringify({
+      ZacB: { passwordHash: 'test-zac', displayName: 'Zac', role: 'owner' },
+      Crewtest: { passwordHash: 'test-crew', displayName: 'Crew Test', role: 'crew' },
+    }),
+  };
   const managerCookie = (await createHubSessionCookie(env, 'ZacB')).split(';')[0];
   const crewCookie = (await createHubSessionCookie(env, 'Crewtest')).split(';')[0];
   const baseBody = {
@@ -91,7 +98,7 @@ test('published case-study pages are server-rendered without customer identity',
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () => new Response(JSON.stringify([{ document: { name: 'projects/x/databases/(default)/documents/jobs/private-id', fields: encodeFirestoreFields({ customer: 'Hidden Customer', address: '123 Hidden Street', caseStudy: { slug: 'garage-reset-fort-collins-abc12', title: 'Garage Reset in Fort Collins', description: 'A cluttered two-car garage became useful again.', city: 'Fort Collins', serviceType: 'Garage cleanout', customerProblem: 'Both bays were blocked.', workCompleted: 'The crew sorted, donated, hauled, and swept.', result: 'The family can park inside again.', status: 'published', consentConfirmed: true, publishedAt: '2026-09-04T12:00:00Z', updatedAt: '2026-09-04T12:00:00Z' } }) } }]), { status: 200 });
   try {
-    const response = await route.onRequestGet({ params: { slug: 'garage-reset-fort-collins-abc12' }, env: {}, next: () => new Response('fallback', { status: 404 }) });
+    const response = await route.onRequestGet({ params: { slug: 'garage-reset-fort-collins-abc12' }, env: { FIREBASE_API_KEY: 'firebase-test-case-study' }, next: () => new Response('fallback', { status: 404 }) });
     assert.equal(response.status, 200);
     const html = await response.text();
     assert.match(html, /Garage Reset in Fort Collins/);

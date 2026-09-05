@@ -12,6 +12,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
   <link rel="stylesheet" href="/styles.css?v=20260904j">
 <style>
@@ -247,7 +248,7 @@ body { margin: 0; background: var(--navy); color: #fff; font-family: 'Inter', sy
   </div>
 </div>
 
-<script src="/crew/hub-auth.js?v=20260903b"></script>
+<script src="/crew/hub-auth.js?v=20260904c"></script>
 <script>
 /* ══════════════════════════════════════════════════
    AUTH — signed server session shared with the EGC Hub
@@ -367,11 +368,12 @@ function renderStrip(jobs) {
   }
   el.innerHTML = jobs.map(j => {
     const s    = j.status || 'scheduled';
+    const statusClass = /^(scheduled|dispatched|arrived|in_progress|completed|invoiced|paid|review_requested|cancelled|closed)$/.test(s) ? s : 'scheduled';
     const name = j.customerName || j.name || 'Unknown';
     const time = j.timeWindow || j.scheduledTime || '—';
     const meta = [j.cubicYards ? j.cubicYards + ' cu yd' : '', j.amount || j.quoteAmount || '']
                    .filter(Boolean).join(' · ');
-    return `<div class="job-chip s-${s}">
+    return `<div class="job-chip s-${statusClass}">
       <div class="jc-name"><span class="status-dot"></span>${esc(name)}</div>
       <div class="jc-time">${esc(time)}</div>
       ${meta ? `<div class="jc-meta">${esc(meta)}</div>` : ''}
@@ -383,7 +385,9 @@ function renderStrip(jobs) {
    CHAT RENDERING
 ══════════════════════════════════════════════════ */
 function esc(s) {
-  return s ? String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') : '';
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
+    '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'
+  })[c]);
 }
 
 function autoResize(el) {
@@ -407,7 +411,7 @@ function renderResponse(text) {
     if (!trimmed) return;
     if (/^SEND THIS:/i.test(trimmed)) {
       const script = trimmed.replace(/^SEND THIS:\s*/i, '').trim();
-      const safeScript = script.replace(/"/g, '&quot;');
+      const safeScript = esc(script);
       html += `
         <div class="script-block">
           <div class="script-label">📱 Send This</div>${esc(script)}
@@ -417,7 +421,7 @@ function renderResponse(text) {
         </button>`;
     } else {
       // Render [SOP X] as pills
-      const withPills = trimmed
+      const withPills = esc(trimmed)
         .replace(/\[SOP ([^\]]+)\]/gi, '<span class="sop-pill">SOP $1</span>');
       html += `<span>${withPills}</span>`;
     }

@@ -1,7 +1,8 @@
-import { getHubSession } from '../_lib/hub-session.js';
+import { getHubSession, hasBusinessAccess } from '../_lib/hub-session.js';
+import { patchJob, readJob } from '../_lib/firestore-job.js';
 
 const STRIPE_API = 'https://api.stripe.com/v1';
-const HOST = /(^|\.)easygaragecleaning\.com$|\.pages\.dev$|^localhost(:\d+)?$|^127\.0\.0\.1(:\d+)?$/;
+const HOST = /^(?:easygaragecleaning\.com|www\.easygaragecleaning\.com|easy-garage-cleaning\.pages\.dev|localhost(?::\d+)?|127\.0\.0\.1(?::\d+)?)$/;
 
 function json(status, body) {
   return new Response(JSON.stringify(body), { status, headers: {
@@ -32,6 +33,64 @@ function stripeKey(env) {
 
 function safe(value, max = 160) {
   return String(value || '').replace(/[\r\n\t]/g, ' ').trim().slice(0, max);
+}
+
+const personKey = value => String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+
+function assignedToJob(job, session) {
+  if (hasBusinessAccess(session)) return true;
+  const identities = [session.user, session.displayName].map(personKey).filter(Boolean);
+  const crew = [
+    ...(Array.isArray(job.assignedCrew) ? job.assignedCrew : []),
+    ...String(job.assignedTo || '').split(/\s*(?:,|\+|&|\band\b)\s*/i),
+  ].map(value => personKey(typeof value === 'string' ? value : value?.name || value?.id || '')).filter(Boolean);
+  return crew.some(name => identities.some(identity => name === identity ||
+    (Math.min(name.length, identity.length) >= 3 && (name.startsWith(identity) || identity.startsWith(name)))));
+}
+
+async function authorizedJob(env, jobId, session) {
+  const job = await readJob(env, jobId).catch(() => null);
+  return job && assignedToJob(job, session) ? job : null;
+}
+
+async function recordStripePayment(env, job, checkout, session) {
+  const amount = Number(checkout.amount_total || 0) / 100;
+  if (!Number.isFinite(amount) || amount <= 0) throw new Error('Stripe returned an invalid amount');
+  const current = job.payment && typeof job.payment === 'object' ? job.payment : {};
+  const sessions = Array.isArray(current.stripeSessions) ? current.stripeSessions : [];
+  const known = sessions.some(item => String(item?.sessionId || item) === String(checkout.id || ''));
+  const paidBefore = Math.max(0, Number(current.amount || 0));
+  const total = Math.max(0, Number(job.total ?? job.priceQuoted ?? job.rate ?? 0));
+  if (!known && (total <= 0 || amount > Math.max(0, total - paidBefore) + 0.01)) {
+    throw new Error('Stripe payment exceeds the current job balance');
+  }
+  const now = new Date().toISOString();
+  const paidTotal = known ? paidBefore : paidBefore + amount;
+  const balance = Math.max(0, total - paidTotal);
+  const stripePayment = {
+    sessionId: String(checkout.id || ''),
+    paymentIntentId: typeof checkout.payment_intent === 'string' ? checkout.payment_intent : checkout.payment_intent?.id || '',
+    amount,
+    receiptEmail: safe(checkout.customer_details?.email || checkout.customer_email, 180),
+    verifiedAt: now,
+    recordedBy: safe(session.user, 80),
+  };
+  const payment = {
+    ...current,
+    amount: paidTotal,
+    lastAmount: known ? Number(current.lastAmount || 0) : amount,
+    lastReceivedAt: known ? current.lastReceivedAt || now : now,
+    method: 'stripe',
+    processor: 'stripe',
+    reference: stripePayment.paymentIntentId || stripePayment.sessionId,
+    verified: true,
+    recordedBy: safe(session.user, 80),
+    stripeSessions: known ? sessions : [...sessions, stripePayment].slice(-20),
+  };
+  const invoice = { ...(job.invoice || {}), status: balance < 0.01 ? 'paid' : 'partial', amount: total, balance, updatedAt: now };
+  const paymentSyncPayload = { ...stripePayment, balance, paidTotal };
+  await patchJob(env, job.id, { payment, invoice, paymentSyncStatus: 'pending', paymentSyncPayload, updatedAt: now }, job.__updateTime);
+  return { payment, invoice, paymentSyncPayload };
 }
 
 function basicAuth(secret) {
@@ -67,11 +126,21 @@ export async function onRequestPost({ request, env }) {
   if (raw.length > 16 * 1024) return json(413, { ok: false, error: 'Payload too large' });
   let body;
   try { body = JSON.parse(raw); } catch { return json(400, { ok: false, error: 'Invalid JSON' }); }
-  const jobId = safe(body.job_id, 120), customer = safe(body.customer, 120), email = safe(body.email, 180);
+  const jobId = safe(body.job_id, 120);
   const amountCents = Math.round(Number(body.amount_cents));
   const requestId = safe(body.request_id, 120);
   if (!jobId || !requestId || !Number.isInteger(amountCents) || amountCents < 50 || amountCents > 1000000) {
     return json(400, { ok: false, error: 'A valid job, request, and payment amount are required' });
+  }
+  const job = await authorizedJob(env, jobId, session);
+  if (!job) return json(403, { ok: false, error: 'This job is not assigned to you' });
+  const customer = safe(job.customer || job.customerName, 120);
+  const email = safe(job.email, 180);
+  const totalCents = Math.round(Number(job.total ?? job.priceQuoted ?? job.rate ?? 0) * 100);
+  const paidCents = Math.round(Number(job.payment?.amount || 0) * 100);
+  const balanceCents = Math.max(0, totalCents - paidCents);
+  if (!Number.isInteger(totalCents) || totalCents < 50 || amountCents > balanceCents) {
+    return json(409, { ok: false, error: 'Payment exceeds the current job balance' });
   }
   if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return json(400, { ok: false, error: 'Customer email is invalid' });
   const origin = new URL(request.url).origin;
@@ -120,6 +189,14 @@ export async function onRequestGet({ request, env }) {
   try {
     const checkout = await stripe(secret, `checkout/sessions/${encodeURIComponent(id)}`);
     const paid = checkout.payment_status === 'paid' && checkout.status === 'complete';
+    const jobId = safe(checkout.metadata?.job_id || checkout.client_reference_id, 120);
+    const job = jobId ? await authorizedJob(env, jobId, session) : null;
+    if (!job) return json(403, { ok: false, error: 'This payment is not for an assigned job' });
+    let recorded = null;
+    if (paid) {
+      try { recorded = await recordStripePayment(env, job, checkout, session); }
+      catch (error) { return json(409, { ok: false, error: error.message || 'Payment could not be recorded' }); }
+    }
     return json(200, {
       ok: true,
       paid,
@@ -129,8 +206,9 @@ export async function onRequestGet({ request, env }) {
       paymentIntentId: typeof checkout.payment_intent === 'string' ? checkout.payment_intent : checkout.payment_intent?.id || '',
       amountTotal: Number(checkout.amount_total || 0),
       currency: checkout.currency || 'usd',
-      jobId: safe(checkout.metadata?.job_id || checkout.client_reference_id, 120),
+      jobId,
       receiptEmail: safe(checkout.customer_details?.email || checkout.customer_email, 180),
+      ...(recorded || {}),
     });
   } catch (error) {
     return json(502, { ok: false, error: 'Stripe payment could not be verified', detail: error.type || '' });

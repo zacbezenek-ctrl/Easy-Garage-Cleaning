@@ -1,0 +1,4 @@
+Contact: mailto:contact@easygaragecleaning.com
+Canonical: https://easygaragecleaning.com/.well-known/security.txt
+Preferred-Languages: en
+Expires: 2027-09-04T23:59:59Z

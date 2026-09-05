@@ -6,7 +6,7 @@ import {
   hubAuthConfigured,
 } from '../_lib/hub-session.js';
 
-const HOST = /(^|\.)easygaragecleaning\.com$|\.pages\.dev$|^localhost(:\d+)?$|^127\.0\.0\.1(:\d+)?$/;
+const HOST = /^(?:easygaragecleaning\.com|www\.easygaragecleaning\.com|easy-garage-cleaning\.pages\.dev|localhost(?::\d+)?|127\.0\.0\.1(?::\d+)?)$/;
 
 function reply(status, body, extraHeaders = {}) {
   return new Response(JSON.stringify(body), {
@@ -31,7 +31,10 @@ export async function onRequestGet({ request, env }) {
 export async function onRequestPost({ request, env }) {
   if (!allowed(request)) return reply(403, { ok: false, error: 'Forbidden origin' });
   if (!hubAuthConfigured(env)) return reply(503, { ok: false, error: 'Hub authentication is not configured' });
-  const body = await request.json().catch(() => ({}));
+  const raw = await request.text();
+  if (raw.length > 8 * 1024) return reply(413, { ok: false, error: 'Request is too large' });
+  let body;
+  try { body = JSON.parse(raw); } catch { return reply(400, { ok: false, error: 'Invalid JSON' }); }
   const username = String(body.username || '').trim();
   const profile = await authenticateHubCredential(env, username, body.password);
   if (!profile) {

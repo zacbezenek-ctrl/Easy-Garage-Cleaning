@@ -2,29 +2,12 @@
 <html lang="en">
 <head>
 <!-- Analytics events queue immediately; vendor libraries load after interaction. -->
-<script src="/analytics-loader.js?v=20260903a" defer></script>
+<script src="/analytics-loader.js?v=20260904b" defer></script>
 
-
-<!--
-  MERCHANT SETUP CHECKLIST — optional tags:
-  1. Microsoft Clarity analytics
-  2. Google Search Console: uncomment meta verification tag below
-  3. CallRail: see body comment block for dynamic number swap
-  4. AggregateRating: add real review count in schema when available
--->
-<!-- Google Search Console: <meta name="google-site-verification" content="YOUR_VERIFICATION_CODE" /> -->
-<!-- Microsoft Clarity is loaded by analytics-loader.js after first interaction. -->
 
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <meta name="referrer" content="strict-origin-when-cross-origin" />
-<!--
-  HOSTING CSP — configure on server (Cloudflare, Netlify, Apache), not as a blocking meta tag:
-  default-src 'self'; script-src 'self' 'unsafe-inline' https://www.googletagmanager.com https://www.clarity.ms https://connect.facebook.net;
-  style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com;
-  img-src 'self' data: blob: https:; connect-src 'self' https://api.web3forms.com https://www.google-analytics.com;
-  frame-src https://www.youtube.com; upgrade-insecure-requests
--->
 <title>Reviews | Easy Garage Cleaning Fort Collins</title>
 <meta name="description" content="Customer reviews for Easy Garage Cleaning — garage cleanouts and junk removal in Fort Collins and Northern Colorado. Google reviews hub." />
 <meta name="robots" content="index, follow" />
@@ -44,28 +27,15 @@
 <link rel="dns-prefetch" href="https://fonts.googleapis.com">
 <link rel="dns-prefetch" href="https://fonts.gstatic.com">
 
-<link rel="dns-prefetch" href="https://www.googletagmanager.com">
-<link rel="dns-prefetch" href="https://www.facebook.com">
-<link rel="dns-prefetch" href="https://connect.facebook.net">
-
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,700;1,9..144,400&family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
 <noscript><link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,700;1,9..144,400&family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet"></noscript>
 
-<!-- AggregateRating: uncomment and add verified reviewCount/ratingValue to LocalBusiness when real reviews exist -->
-<script type="application/ld+json">[{"@context": "https://schema.org", "@type": "WebPage", "@id": "https://easygaragecleaning.com/reviews#webpage", "url": "https://easygaragecleaning.com/reviews", "name": "Reviews | Easy Garage Cleaning Fort Collins", "description": "Customer reviews for Easy Garage Cleaning — garage cleanouts and junk removal in Fort Collins and Northern Colorado. Google reviews hub.", "about": {"@id": "https://easygaragecleaning.com/#business"}, "positiveNotes": {"@type": "ItemList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Flat price, no surprises — cleared a decade of clutter in one afternoon."}, {"@type": "ListItem", "position": 2, "name": "Scheduled a walkthrough, received one clear price. Donations handled, garage usable again."}, {"@type": "ListItem", "position": 3, "name": "Local crew, showed up when promised — not a franchise call center."}]}}, {"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [{"@type": "Question", "name": "Do you have Google reviews?", "acceptedAnswer": {"@type": "Answer", "text": "We're building our Fort Collins reputation. Do not cite star counts until verified on Google Business Profile."}}, {"@type": "Question", "name": "Can I leave a review after my job?", "acceptedAnswer": {"@type": "Answer", "text": "Yes — we invite happy customers to share feedback on Google when ready."}}]}]</script>
+<script type="application/ld+json">[{"@context": "https://schema.org", "@type": "WebPage", "@id": "https://easygaragecleaning.com/reviews#webpage", "url": "https://easygaragecleaning.com/reviews", "name": "Reviews | Easy Garage Cleaning Fort Collins", "description": "Customer reviews for Easy Garage Cleaning — garage cleanouts and junk removal in Fort Collins and Northern Colorado. Google reviews hub.", "about": {"@id": "https://easygaragecleaning.com/#business"}, "positiveNotes": {"@type": "ItemList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Flat price, no surprises — cleared a decade of clutter in one afternoon."}, {"@type": "ListItem", "position": 2, "name": "Texted photos, got a quote in minutes. Donations handled, garage usable again."}, {"@type": "ListItem", "position": 3, "name": "Local crew, showed up when promised — not a franchise call center."}]}}, {"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [{"@type": "Question", "name": "Do you have Google reviews?", "acceptedAnswer": {"@type": "Answer", "text": "We're building our Fort Collins reputation. Do not cite star counts until verified on Google Business Profile."}}, {"@type": "Question", "name": "Can I leave a review after my job?", "acceptedAnswer": {"@type": "Answer", "text": "Yes — we invite happy customers to share feedback on Google when ready."}}]}]</script>
 <script type="application/ld+json">{"@context": "https://schema.org", "@type": "WebPage", "@id": "https://easygaragecleaning.com/reviews#webpage", "url": "https://easygaragecleaning.com/reviews", "name": "Reviews | Easy Garage Cleaning Fort Collins", "description": "Customer reviews for Easy Garage Cleaning — garage cleanouts and junk removal in Fort Collins and Northern Colorado. Google reviews hub.", "isPartOf": {"@id": "https://easygaragecleaning.com/#website"}, "about": {"@id": "https://easygaragecleaning.com/#business"}, "speakable": {"@type": "SpeakableSpecification", "cssSelector": [".hero-sub", ".faq-q", ".faq-a", ".def-block"]}}</script>
 <link rel="stylesheet" href="/styles.css?v=20260904j">
 </head>
 <body>
 <a href="#main-content" class="skip-link">Skip to content</a>
-
-<!--
-  CALLRAIL / DYNAMIC NUMBER INSERTION
-  1. Create a CallRail account and add easygaragecleaning.com
-  2. Install their swap.js snippet OR use their GTM integration
-  3. Replace displayed (970) 999-1818 with your tracking pool number in their dashboard
-  4. Example: <script src="https://cdn.callrail.com/companies/XXXX/swap.js"></script>
--->
 
 <nav class="nav" aria-label="Primary">
   <div class="nav-inner">
@@ -119,7 +89,7 @@
     </ul>
     <div class="nav-right">
       <a href="tel:+19709991818" class="nav-phone">(970) 999-1818</a>
-      <a href="/book" class="nav-cta" data-cta="nav-book">Book Now</a>
+      <a href="/book" class="nav-cta" data-cta="nav-book">Request Walkthrough</a>
     </div>
     <button type="button" class="nav-toggle" aria-label="Open menu" aria-expanded="false" aria-controls="nav-drawer">
       <span class="nav-toggle-bar"></span><span class="nav-toggle-bar"></span><span class="nav-toggle-bar"></span>
@@ -178,56 +148,28 @@
 </aside>
 <div class="trust-strip" aria-label="Trust signals">
   <div class="wrap trust-strip-inner">
-    <span>Response within 5 minutes</span><span>No hidden fees</span><span>Only pay after approving quote</span><span>We do all lifting</span><span>Free on-site walkthrough</span><span>Next-day availability</span>
+    <span>Quick local response</span><span>No hidden fees</span><span>Only pay after approving quote</span><span>We do all lifting</span><span>Free on-site walkthrough</span><span>Next-day when available</span>
   </div>
 </div>
 <main id="main-content">
 <section class="hero"><div class="wrap">
 <div class="hero-eyebrow mono">Social proof</div>
 <h1 class="hero-title" style="max-width:none">Customer <em>reviews</em></h1>
-<p class="hero-sub">We're building our Fort Collins reputation one reclaimed garage at a time. Verified Google reviews will appear here — and on our Business Profile.</p>
+<p class="hero-sub">Read the latest verified feedback on Google, or tell us how your own garage project went.</p>
 </div></section>
 <section class="social-proof"><div class="wrap">
 <div class="section-head reveal"><span class="mono section-num">Reviews</span>
-<h2 class="section-title">What neighbors <em>say</em></h2>
+<h2 class="section-title">Verified feedback, <em>at the source</em></h2>
 </div>
-<div class="review-embed-slot reveal" id="gbp-reviews-embed">
-<!-- GOOGLE BUSINESS PROFILE EMBED — setup steps:
-  1. business.google.com → your listing → Home
-  2. Share &amp; promote → Embed a map OR third-party widget that shows reviews
-  3. Copy the iframe/script and paste it here (replace this comment block)
-  4. Do NOT add AggregateRating schema until review count is verified in GBP
--->
-<p class="review-embed-placeholder">Google reviews widget goes here — paste your GBP embed iframe above this line in reviews.html (or update render_reviews in _generate_site.py).</p>
-</div>
-<div class="reviews-grid reveal"><div class="review-card reveal">
-<div class="review-card-placeholder">Review slot 1</div>
-<p style="color:var(--text);font-size:14px">Paste a verified Google review quote here when available from your Business Profile.</p>
-</div><div class="review-card reveal">
-<div class="review-card-placeholder">Review slot 2</div>
-<p style="color:var(--text);font-size:14px">Paste a verified Google review quote here when available from your Business Profile.</p>
-</div><div class="review-card reveal">
-<div class="review-card-placeholder">Review slot 3</div>
-<p style="color:var(--text);font-size:14px">Paste a verified Google review quote here when available from your Business Profile.</p>
-</div><div class="review-card reveal">
-<div class="review-card-placeholder">Review slot 4</div>
-<p style="color:var(--text);font-size:14px">Paste a verified Google review quote here when available from your Business Profile.</p>
-</div><div class="review-card reveal">
-<div class="review-card-placeholder">Review slot 5</div>
-<p style="color:var(--text);font-size:14px">Paste a verified Google review quote here when available from your Business Profile.</p>
-</div><div class="review-card reveal">
-<div class="review-card-placeholder">Review slot 6</div>
-<p style="color:var(--text);font-size:14px">Paste a verified Google review quote here when available from your Business Profile.</p>
-</div></div>
-<div class="review-embed-note reveal">
-<strong>Manual review cards (optional)</strong> — Until the embed is live, you can replace placeholder cards above with real quotes copied from Google Business Profile. Do not publish star counts in schema until verified.
-<!-- AggregateRating schema: add only when Google review count and rating are verified in GBP -->
+<div class="review-source-card reveal">
+  <span class="mono">Google Business Profile</span>
+  <h3>See feedback that stays current and verifiable.</h3>
+  <p>We link directly to Google so you can read reviews in their original context. We do not copy testimonials or publish an unverified star count here.</p>
+  <a href="https://www.google.com/maps/search/Easy+Garage+Cleaning+Fort+Collins" class="btn-primary" rel="noopener noreferrer">View Easy Garage Cleaning on Google</a>
 </div>
 <div class="review-actions reveal">
 <a href="https://www.google.com/maps/search/Easy+Garage+Cleaning+Fort+Collins" class="btn-secondary" rel="noopener noreferrer">Leave a review on Google</a>
-<!-- Replace YOUR_GBP_PLACE_ID in _generate_site.py GBP_REVIEW_URL with your Place ID -->
-<!-- Zap 7 sends review link via Quo SMS after job complete (GBP_REVIEW_URL) -->
-<a href="/book" class="btn-primary">Schedule Free Walkthrough</a>
+<a href="/book" class="btn-primary">Request a Free Walkthrough</a>
 </div>
 <p class="reveal" style="margin-top:16px;text-align:center"><a href="/service-areas" class="content-link">Service areas →</a></p>
 </div></section>
@@ -273,7 +215,7 @@
         <li><a href="/projects/">Projects</a></li>
         <li><a href="/faq">FAQ</a></li>
         <li><a href="/blog/">Blog</a></li>
-        <li><a href="/book">Book Online</a></li>
+        <li><a href="/book">Request a Walkthrough</a></li>
         <li><a href="/pricing">Pricing</a></li>
         <li><a href="/privacy-policy">Privacy Policy</a></li>
         <li><a href="/terms-of-service">Terms of Service</a></li>
@@ -305,7 +247,7 @@
     <div class="contact-widget-actions">
       <a class="contact-widget-primary" href="sms:+19709991818?body=Hi!%20I'd%20like%20to%20schedule%20a%20free%20on-site%20walkthrough.">Schedule by text</a>
       <a href="tel:+19709991818">Call (970) 999-1818</a>
-      <a href="/book">Book online</a>
+      <a href="/book">Request online</a>
     </div>
     <small>Mon–Sat · 7am–7pm</small>
   </section>
@@ -314,7 +256,7 @@
 <div class="mobile-sticky-cta" aria-label="Quick contact">
   <a href="tel:+19709991818" class="mobile-cta-btn mobile-cta-call">Call</a>
   <a href="sms:+19709991818?body=Hi!%20I'd%20like%20to%20schedule%20a%20free%20on-site%20walkthrough." class="mobile-cta-btn mobile-cta-text">Text</a>
-  <a href="/book" class="mobile-cta-btn mobile-cta-quote">Walkthrough</a>
+  <a href="/book#quote" class="mobile-cta-btn mobile-cta-quote">Walkthrough</a>
 </div>
 <script>
 
@@ -326,12 +268,19 @@ function initNavDrawer(){
   if(!toggle||!drawer)return;
   if(toggle.dataset.navBound)return;
   toggle.dataset.navBound='1';
+  let returnFocus=null;
+  const background=[...document.body.children].filter(el=>el!==drawer&&el!==overlay&&el.tagName!=='SCRIPT');
+  const focusable=()=>[...drawer.querySelectorAll('a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])')].filter(el=>!el.hidden&&el.offsetParent!==null);
   function setOpen(open){
+    if(open)returnFocus=document.activeElement;
     toggle.setAttribute('aria-expanded',open);
     drawer.classList.toggle('open',open);
     drawer.setAttribute('aria-hidden',String(!open));
     if(overlay){overlay.classList.toggle('open',open);overlay.setAttribute('aria-hidden',String(!open));}
     document.body.classList.toggle('nav-open',open);
+    background.forEach(el=>{el.inert=open;});
+    if(open)setTimeout(()=>{(closeBtn||focusable()[0])?.focus();},0);
+    else if(returnFocus&&typeof returnFocus.focus==='function')returnFocus.focus();
   }
   toggle.addEventListener('click',()=>setOpen(toggle.getAttribute('aria-expanded')!=='true'));
   if(closeBtn)closeBtn.addEventListener('click',()=>setOpen(false));
@@ -345,7 +294,16 @@ function initNavDrawer(){
       if(links)links.classList.toggle('open',!open);
     });
   });
-  document.addEventListener('keydown',e=>{if(e.key==='Escape')setOpen(false);});
+  document.addEventListener('keydown',e=>{
+    if(!drawer.classList.contains('open'))return;
+    if(e.key==='Escape'){e.preventDefault();setOpen(false);return;}
+    if(e.key==='Tab'){
+      const items=focusable();if(!items.length)return;
+      const first=items[0],last=items[items.length-1];
+      if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus();}
+      else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus();}
+    }
+  });
 }
 if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',initNavDrawer);}else{initNavDrawer();}
 
@@ -383,7 +341,7 @@ function initMultiStepForm(form){
     const panel=panels[n-1];clearErr(panel);
     if(n===1){const svc=form.querySelector('[name="Service type"]:checked');if(!svc){showErr(panel,'Please choose a service type to continue.');panel.querySelector('.service-picker')?.scrollIntoView({behavior:'smooth',block:'center'});return false;}}
     if(n===2){if(sizeSel&&!sizeSel.value){showErr(panel,'Please choose an approximate job size.');sizeSel.focus();return false;}}
-    if(n===3){if(!showQuoteResult())return false;if(flowInput&&flowInput.value==='booking'){syncBookingSlot();if(!form.querySelector('[name="booking_slot_choice"]:checked')){showErr(panel,'Please pick a preferred booking time.');return false;}}}
+    if(n===3){if(!showQuoteResult())return false;syncBookingSlot();if(!form.querySelector('[name="booking_slot_choice"]:checked')){showErr(panel,'Please choose a preferred walkthrough window.');return false;}}
     if(n===4){const city=form.querySelector('[name="City"]');if(city&&!city.value){showErr(panel,'Please select your city so we can confirm service area.');city.focus();return false;}}
     if(n===6){const name=form.querySelector('[name="Name"]');const phone=form.querySelector('[name="Phone"]');if(name&&!name.value.trim()){showErr(panel,'Please enter your name.');name.focus();return false;}if(phone&&!phone.value.trim()){showErr(panel,'Please enter a phone number so we can call with your quote.');phone.focus();return false;}}
     return true;

@@ -1,4 +1,4 @@
-import { getHubSession, listHubUserProfiles } from '../_lib/hub-session.js';
+import { getHubSession, hasBusinessAccess, listHubUserProfiles } from '../_lib/hub-session.js';
 import {
   createEmployeeApplication,
   employeeAccountsConfigured,
@@ -7,7 +7,7 @@ import {
   reviewEmployeeApplication,
 } from '../_lib/employee-accounts.js';
 
-const HOST = /(^|\.)easygaragecleaning\.com$|\.pages\.dev$|^localhost(:\d+)?$|^127\.0\.0\.1(:\d+)?$/;
+const HOST = /^(?:easygaragecleaning\.com|www\.easygaragecleaning\.com|easy-garage-cleaning\.pages\.dev|localhost(?::\d+)?|127\.0\.0\.1(?::\d+)?)$/;
 
 function reply(status, body) {
   return new Response(JSON.stringify(body), {
@@ -23,7 +23,7 @@ function allowed(request) {
   try { return HOST.test(new URL(raw).host); } catch { return false; }
 }
 
-const isOwner = session => normalizeEmployeeUsername(session?.user) === 'zacb';
+const isOwner = session => hasBusinessAccess(session) && normalizeEmployeeUsername(session?.user) === 'zacb';
 
 export async function onRequestGet({ request, env }) {
   const session = await getHubSession(request, env);
@@ -40,8 +40,10 @@ export async function onRequestGet({ request, env }) {
 export async function onRequestPost({ request, env }) {
   if (!allowed(request)) return reply(403, { ok: false, error: 'Forbidden origin' });
   if (!employeeAccountsConfigured(env)) return reply(503, { ok: false, error: 'Employee account signup is not configured' });
-  const body = await request.json().catch(() => ({}));
-  if (JSON.stringify(body).length > 12000) return reply(413, { ok: false, error: 'Request is too large' });
+  const raw = await request.text();
+  if (raw.length > 16 * 1024) return reply(413, { ok: false, error: 'Request is too large' });
+  let body;
+  try { body = JSON.parse(raw); } catch { return reply(400, { ok: false, error: 'Invalid JSON' }); }
   const action = String(body.action || 'register');
 
   if (action === 'register') {

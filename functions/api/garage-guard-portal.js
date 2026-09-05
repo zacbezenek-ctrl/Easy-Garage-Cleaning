@@ -32,7 +32,7 @@
  *   STRIPE_PORTAL_LOGIN_URL  — recommended. https://billing.stripe.com/p/login/...
  */
 
-const ALLOWED_HOST_RE = /(^|\.)easygaragecleaning\.com$|(\.pages\.dev)$|^localhost(:\d+)?$|^127\.0\.0\.1(:\d+)?$/;
+const ALLOWED_HOST_RE = /^(?:easygaragecleaning\.com|www\.easygaragecleaning\.com|easy-garage-cleaning\.pages\.dev|localhost(?::\d+)?|127\.0\.0\.1(?::\d+)?)$/;
 const MAX_BODY = 4 * 1024;
 const SESSION_ID_RE = /^cs_(live|test)_[A-Za-z0-9]{10,120}$/;
 

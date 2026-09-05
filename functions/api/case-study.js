@@ -1,7 +1,7 @@
 import { getHubSession, hasBusinessAccess } from '../_lib/hub-session.js';
 import { patchJob, readJob } from '../_lib/firestore-job.js';
 
-const HOST = /^(localhost|127\.0\.0\.1)(:\d+)?$|(^|\.)easygaragecleaning\.com$|\.pages\.dev$/;
+const HOST = /^(?:easygaragecleaning\.com|www\.easygaragecleaning\.com|easy-garage-cleaning\.pages\.dev|localhost(?::\d+)?|127\.0\.0\.1(?::\d+)?)$/;
 
 function reply(status, body) {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });

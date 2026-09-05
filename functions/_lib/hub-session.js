@@ -3,30 +3,18 @@ import { authenticateEmployeeAccount } from './employee-accounts.js';
 const COOKIE_NAME = 'egc_hub_session';
 const SESSION_SECONDS = 12 * 60 * 60;
 const ACTION_STATE_SECONDS = 10 * 60;
-
-const DEFAULT_USERS = {
-  ZacB: '6b8670f397174ff99440629b877581216a0b26b6770054be198988ff48a16861',
-  TylerG: '28b50fd5ee98af8cf015972811def03dbc2eaff52997f82ecfc4342ece6cfa36',
-  AlexK: '52e2e9901adc10406ad9597084ece4770d1c9fd0e3b76e1f31abf35f8030ac50',
-  FrankJara: 'ed2ed02c6f4db402e46a370902a0f19ae2539753d4c13288954ecb32b1253d70',
-  JobberCrew: 'a68121119b6a72c583c366a62257cbb3652867e9b50e46bdda6fb05280dee683',
-  Crewtest: '30fdb1804bc03b28227af1a07007b30bcb6c5207b12db6d5469fce9b9b465d4d',
-};
-
-const DEFAULT_USER_META = {
-  ZacB: { displayName: 'Zac', role: 'owner', payType: 'owner', hourlyRate: 0 },
-  AlexK: { displayName: 'Alex', role: 'manager', payType: 'salary', hourlyRate: 0 },
-  TylerG: { displayName: 'Tyler', role: 'crew_lead', payType: 'hourly', hourlyRate: 23 },
-  FrankJara: { displayName: 'Frank', role: 'crew', payType: 'hourly', hourlyRate: 20 },
-  JobberCrew: { displayName: 'Crew', role: 'crew', payType: 'hourly', hourlyRate: 20 },
-  Crewtest: { displayName: 'Crew Test', role: 'crew', payType: 'hourly', hourlyRate: 20 },
-};
+const PASSWORD_HASH_PREFIX = 'pbkdf2-sha256';
+const PASSWORD_HASH_ITERATIONS = 210000;
+const PASSWORD_HASH_BYTES = 32;
 
 const BUSINESS_USERS = new Set(['zacb', 'tylerg', 'alexk']);
 
 export function hasBusinessAccess(profileOrUsername) {
-  const username = typeof profileOrUsername === 'object' ? profileOrUsername?.user : profileOrUsername;
-  return BUSINESS_USERS.has(String(username || '').trim().toLowerCase());
+  if (profileOrUsername && typeof profileOrUsername === 'object') {
+    const username = String(profileOrUsername.user || '').trim().toLowerCase();
+    return profileOrUsername.businessAccess === true && BUSINESS_USERS.has(username);
+  }
+  return BUSINESS_USERS.has(String(profileOrUsername || '').trim().toLowerCase());
 }
 
 const encoder = new TextEncoder();
@@ -44,12 +32,12 @@ function base64UrlToBytes(value) {
 }
 
 function users(env = {}) {
-  if (!env.HUB_AUTH_USERS_JSON) return DEFAULT_USERS;
+  if (!env.HUB_AUTH_USERS_JSON) return {};
   try {
     const configured = JSON.parse(env.HUB_AUTH_USERS_JSON);
-    return configured && typeof configured === 'object' ? configured : DEFAULT_USERS;
+    return configured && typeof configured === 'object' && !Array.isArray(configured) ? configured : {};
   } catch {
-    return DEFAULT_USERS;
+    return {};
   }
 }
 
@@ -58,14 +46,13 @@ function userRecord(env, username) {
   if (!configured) return null;
   const record = typeof configured === 'string' ? { passwordHash: configured } : configured;
   if (!record || typeof record !== 'object') return null;
-  const fallback = DEFAULT_USER_META[username] || {};
-  const role = String(record.role || fallback.role || 'crew').toLowerCase();
+  const role = String(record.role || 'crew').toLowerCase();
   return {
     passwordHash: String(record.passwordHash || record.hash || ''),
-    displayName: String(record.displayName || fallback.displayName || username),
+    displayName: String(record.displayName || username),
     role: ['owner', 'manager', 'sales', 'crew_lead', 'crew'].includes(role) ? role : 'crew',
-    payType: String(record.payType || fallback.payType || 'hourly'),
-    hourlyRate: Math.max(0, Number(record.hourlyRate ?? fallback.hourlyRate ?? 0)),
+    payType: String(record.payType || 'hourly'),
+    hourlyRate: Math.max(0, Number(record.hourlyRate || 0)),
   };
 }
 
@@ -81,12 +68,22 @@ export function listHubUserProfiles(env = {}) {
 }
 
 function sessionSecret(env = {}) {
-  return env.HUB_SESSION_SECRET || env.HIGHLEVEL_API_KEY || env.GHL_API_KEY || '';
+  return env.HUB_SESSION_SECRET || '';
 }
 
 async function digestHex(value) {
   const digest = await crypto.subtle.digest('SHA-256', encoder.encode(value));
   return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
+}
+
+async function derivePasswordHash(password, salt, iterations) {
+  const key = await crypto.subtle.importKey('raw', encoder.encode(password), 'PBKDF2', false, ['deriveBits']);
+  const bits = await crypto.subtle.deriveBits(
+    { name: 'PBKDF2', hash: 'SHA-256', salt, iterations },
+    key,
+    PASSWORD_HASH_BYTES * 8
+  );
+  return new Uint8Array(bits);
 }
 
 async function signature(secret, payload) {
@@ -107,16 +104,37 @@ export async function hashHubCredential(username, password) {
   return digestHex(`${username}:${password}:egc-salt-2026`);
 }
 
+export async function createHubCredentialHash(password) {
+  if (typeof password !== 'string' || password.length < 12) throw new Error('Hub passwords must be at least 12 characters');
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const derived = await derivePasswordHash(password, salt, PASSWORD_HASH_ITERATIONS);
+  return `${PASSWORD_HASH_PREFIX}$${PASSWORD_HASH_ITERATIONS}$${bytesToBase64Url(salt)}$${bytesToBase64Url(derived)}`;
+}
+
+async function verifyPasswordHash(username, password, expected) {
+  if (typeof password !== 'string' || typeof expected !== 'string') return false;
+  const [prefix, iterationText, saltText, hashText, extra] = expected.split('$');
+  if (prefix !== PASSWORD_HASH_PREFIX) return safeEqual(await hashHubCredential(username, password), expected);
+  const iterations = Number(iterationText);
+  if (extra !== undefined || !Number.isInteger(iterations) || iterations < 100000 || iterations > 1000000 || !saltText || !hashText) return false;
+  try {
+    const derived = await derivePasswordHash(password, base64UrlToBytes(saltText), iterations);
+    return safeEqual(bytesToBase64Url(derived), hashText);
+  } catch {
+    return false;
+  }
+}
+
 export async function validateHubCredential(env, username, password) {
   const expected = userRecord(env, username)?.passwordHash;
-  if (expected && typeof password === 'string') return safeEqual(await hashHubCredential(username, password), expected);
+  if (expected) return verifyPasswordHash(username, password, expected);
   if (Object.keys(users(env)).some(value => value.toLowerCase() === String(username || '').toLowerCase())) return false;
   return Boolean(await authenticateEmployeeAccount(env, username, password).catch(() => null));
 }
 
 export async function authenticateHubCredential(env, username, password) {
   const expected = userRecord(env, username)?.passwordHash;
-  if (expected && typeof password === 'string' && safeEqual(await hashHubCredential(username, password), expected)) {
+  if (expected && await verifyPasswordHash(username, password, expected)) {
     return getHubUserProfile(env, username);
   }
   if (Object.keys(users(env)).some(value => value.toLowerCase() === String(username || '').toLowerCase())) return null;

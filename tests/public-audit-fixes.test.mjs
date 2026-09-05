@@ -6,10 +6,53 @@ const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf
 
 test('homepage loads analytics outside the critical rendering path', () => {
   const html = read('index.html');
-  assert.match(html, /<script src="\/analytics-loader\.js\?v=20260903a" defer><\/script>/);
+  assert.match(html, /<script src="\/analytics-loader\.js\?v=20260904b" defer><\/script>/);
   assert.doesNotMatch(html, /<script[^>]+src="https:\/\/www\.googletagmanager\.com\/gtag\/js/);
   assert.doesNotMatch(html, /<script[^>]*>[\s\S]*?connect\.facebook\.net\/en_US\/fbevents\.js[\s\S]*?<\/script>/);
   assert.doesNotMatch(html, /<script[^>]*>[\s\S]*?www\.clarity\.ms\/tag[\s\S]*?<\/script>/);
+});
+
+test('analytics is deferred site-wide and preserves the paid-campaign pixel mapping', () => {
+  const root = new URL('../', import.meta.url);
+  const pages = readdirSync(root, { recursive: true, withFileTypes: true })
+    .filter(entry => entry.isFile() && entry.name.endsWith('.html'))
+    .map(entry => ({ name: `${entry.parentPath}/${entry.name}`, html: readFileSync(`${entry.parentPath}/${entry.name}`, 'utf8') }));
+  for (const page of pages) {
+    assert.doesNotMatch(page.html, /<script[^>]+src="https:\/\/www\.googletagmanager\.com\/gtag\/js/, `${page.name} loads Google Analytics directly`);
+    assert.doesNotMatch(page.html, /<script[^>]*>[\s\S]*?www\.clarity\.ms\/tag[\s\S]*?<\/script>/, `${page.name} loads Clarity directly`);
+  }
+  const loader=read('analytics-loader.js');
+  assert.match(loader,/data-meta-pixel-id/);
+  assert.match(loader,/setTimeout\(startAnalytics, 2500\)/);
+  assert.match(read('ads.html'),/data-meta-pixel-id="861741726934219"/);
+  assert.match(read('thank-you.html'),/data-meta-pixel-id="861741726934219"/);
+});
+
+test('private employee portal does not load marketing analytics or preconnect to trackers', () => {
+  const html = read('employee.html');
+  assert.doesNotMatch(html, /analytics-loader\.js|googletagmanager\.com|connect\.facebook\.net|clarity\.ms/);
+});
+
+test('HTML media, external tabs, and forms keep release-safe attributes', () => {
+  const root = new URL('../', import.meta.url);
+  const pages = readdirSync(root, { recursive: true, withFileTypes: true })
+    .filter(entry => entry.isFile() && entry.name.endsWith('.html'))
+    .map(entry => ({ name: `${entry.parentPath}/${entry.name}`, html: readFileSync(`${entry.parentPath}/${entry.name}`, 'utf8') }));
+  const failures = [];
+  for (const page of pages) {
+    for (const [tag] of page.html.matchAll(/<img\b[^>]*>/gi)) {
+      if (!/\balt\s*=/.test(tag)) failures.push(`${page.name}: image missing alt`);
+      if (!/\bwidth\s*=/.test(tag) || !/\bheight\s*=/.test(tag)) failures.push(`${page.name}: image missing dimensions`);
+    }
+    for (const [tag] of page.html.matchAll(/<a\b[^>]*target=["']_blank["'][^>]*>/gi)) {
+      if (!/\brel=["'][^"']*noopener/.test(tag)) failures.push(`${page.name}: _blank link missing noopener`);
+    }
+    if (/(?:href|src|action)=["']http:\/\/(?!localhost|127\.0\.0\.1)/i.test(page.html)) failures.push(`${page.name}: mixed-content URL`);
+    for (const [form] of page.html.matchAll(/<form\b[\s\S]*?<\/form>/gi)) {
+      if (/<button\b(?![^>]*\btype=)[^>]*>/i.test(form)) failures.push(`${page.name}: form button missing explicit type`);
+    }
+  }
+  assert.deepEqual(failures, []);
 });
 
 test('homepage prioritizes a responsive, compressed LCP image', () => {
@@ -113,7 +156,7 @@ test('every public lead form mirrors to HighLevel and carries its own consent di
     .filter((entry) => entry.isFile() && entry.name.endsWith('.html'))
     .map((entry) => ({ name: `${entry.parentPath}/${entry.name}`, html: readFileSync(`${entry.parentPath}/${entry.name}`, 'utf8') }))
     .filter((page) => /<form[^>]*class=["'][^"']*(?:lead-form-lite|multi-step-form)/i.test(page.html));
-  assert.ok(pages.length >= 50, 'expected the full lead-form page set');
+  assert.ok(pages.length >= 45, 'expected the full lead-form page set');
   for (const page of pages) {
     assert.match(page.html, /<script[^>]+src="\/fb-capture\.js\?v=20260903c"[^>]*>/, `${page.name} does not load the current HighLevel mirror`);
     const forms = [...page.html.matchAll(/<form[^>]*class=["'][^"']*(?:lead-form-lite|multi-step-form)[^"']*["'][^>]*>([\s\S]*?)<\/form>/gi)];

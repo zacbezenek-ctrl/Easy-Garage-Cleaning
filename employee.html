@@ -1,30 +1,21 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<!-- Google tag (gtag.js) -->
-<script async src="https://www.googletagmanager.com/gtag/js?id=G-CV7HJ2QGHX"></script>
-<script>
-  window.dataLayer = window.dataLayer || [];
-  function gtag(){dataLayer.push(arguments);}
-  gtag('js', new Date());
-
-  gtag('config', 'G-CV7HJ2QGHX');
-</script>
-  <meta charset="UTF-8">
+<meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>Employee Portal — Easy Garage Cleaning</title>
   <meta name="robots" content="noindex, nofollow">
   <!-- Content Security Policy — restricts where scripts/connections can go -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' cdn.jsdelivr.net www.gstatic.com maps.googleapis.com; style-src 'self' 'unsafe-inline' fonts.googleapis.com; font-src fonts.gstatic.com data:; connect-src 'self' *.googleapis.com *.firebaseio.com *.firebaseapp.com firestore.googleapis.com api.emailjs.com; img-src 'self' data: maps.gstatic.com maps.googleapis.com; frame-src 'none'; object-src 'none'; base-uri 'self';">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' www.gstatic.com maps.googleapis.com; style-src 'self' 'unsafe-inline' fonts.googleapis.com; font-src fonts.gstatic.com data:; connect-src 'self' *.googleapis.com *.firebaseio.com *.firebaseapp.com firestore.googleapis.com; img-src 'self' data: maps.gstatic.com maps.googleapis.com; frame-src 'none'; object-src 'none'; base-uri 'self';">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-title" content="EGC Portal">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,400;0,500;0,700;1,400;1,500&family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="employee-suite.css?v=20260904l">
-  <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
   <script>
     // Maps API loaded after CFG is defined (see bottom of body)
@@ -1247,7 +1238,7 @@ body.has-session #login-screen { display: none; }
       <div style="font-size:.75rem;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);margin-bottom:.5rem">Contract Link</div>
       <div class="cm-link-box" id="cm-link-display"></div>
       <div class="cm-copy-row">
-        <a class="cm-sms-btn" id="cm-sms-btn" href="#" target="_blank">Open in Messages</a>
+        <a class="cm-sms-btn" id="cm-sms-btn" href="#" target="_blank" rel="noopener">Open in Messages</a>
         <button class="cm-copy-btn" id="cm-copy-btn" onclick="copyContractLink()">Copy link</button>
       </div>
     </div>
@@ -1298,12 +1289,9 @@ body.has-session #login-screen { display: none; }
    CONFIG  — paste your values here
 ═══════════════════════════════════════════════════════ */
 const CFG = {
-  EMAILJS_SERVICE_ID:   'service_ilze1lr',
-  EMAILJS_TEMPLATE_ID:  'template_m6o3bn6',
-  EMAILJS_PUBLIC_KEY:   'RyH7Kwhn5-T5ebvN9',
   GOOGLE_SHEET_CSV_URL: '',
   GOOGLE_MAPS_KEY:      'AIzaSyCxL7-EDDaQjidBnbrUAFgdODQ1S8oVuuw',
-  BASE_ADDRESS:         '746 Star Grass Ln, Fort Collins, CO',
+  BASE_ADDRESS:         'Fort Collins, CO',
   FREE_MILES:           25,
   PRICE_PER_MILE:       1,
   // ── Zapier Webhook URLs ── paste each Zap's catch-hook URL below
@@ -1358,10 +1346,18 @@ const BUSINESS_USERS = new Set(ADMINS.map(name => name.toLowerCase()));
 let me = null;
 
 function canRunBusiness() {
-  return BUSINESS_USERS.has(String(me || '').trim().toLowerCase());
+  return sessionStorage.getItem('egc_business_access') === 'true' && BUSINESS_USERS.has(String(me || '').trim().toLowerCase());
 }
 
-function enterEmployeeApp() {
+async function ensureFirebaseSession() {
+  const response = await fetch('/api/firebase-session', { cache: 'no-store', credentials: 'same-origin' });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || !data.ok || !data.token) throw new Error(data.error || 'Secure data access is unavailable');
+  await firebase.auth().signInWithCustomToken(data.token);
+}
+
+async function enterEmployeeApp() {
+  await ensureFirebaseSession();
   if (canRunBusiness()) showModeSelect();
   else bootDashboard();
 }
@@ -1373,6 +1369,7 @@ function rememberHubProfile(data) {
     egc_role: data.role || 'crew',
     egc_pay_type: data.payType || 'hourly',
     egc_hourly_rate: String(Number(data.hourlyRate || 0)),
+    egc_business_access: data.businessAccess === true ? 'true' : 'false',
   };
   Object.entries(values).forEach(([key, value]) => sessionStorage.setItem(key, value));
 }
@@ -1396,7 +1393,7 @@ async function doLogin() {
     me = data.user;
     rememberHubProfile(data);
     sessionStorage.removeItem('egc_tok');
-    enterEmployeeApp();
+    await enterEmployeeApp();
   } catch (error) {
     err.textContent = error.message || 'Unable to sign in. Check the connection and try again.';
     err.style.display = 'block';
@@ -1408,7 +1405,7 @@ async function doLogin() {
 
 async function doLogout() {
   sessionStorage.removeItem('egc_u');
-  ['egc_name','egc_role','egc_pay_type','egc_hourly_rate'].forEach(key => sessionStorage.removeItem(key));
+  ['egc_name','egc_role','egc_pay_type','egc_hourly_rate','egc_business_access'].forEach(key => sessionStorage.removeItem(key));
   sessionStorage.removeItem('egc_tok');
   me = null;
   document.body.classList.remove('has-session');
@@ -1417,6 +1414,7 @@ async function doLogout() {
   document.getElementById('dashboard').style.display     = '';
   document.getElementById('login-screen').style.display  = '';
   document.getElementById('l-pass').value = '';
+  try { await firebase.auth().signOut(); } catch {}
   try { await fetch('/api/hub-auth', { method: 'DELETE', credentials: 'same-origin' }); } catch {}
 }
 
@@ -1432,6 +1430,15 @@ async function hubFetch(input, init = {}) {
   throw expired;
 }
 
+async function sendBookingConfirmation(jobId) {
+  const response = await hubFetch('/api/email-confirmation', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ job_id: jobId })
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || !data.ok) throw new Error(data.error || 'Confirmation email could not be sent');
+  return data;
+}
+
 function bootDashboard() {
   document.getElementById('login-screen').style.display = 'none';
   document.getElementById('dashboard').style.display = 'flex';
@@ -1445,9 +1452,8 @@ function bootDashboard() {
     if (adminTabBtn) adminTabBtn.style.display = '';
   }
   addAuditLog('login', `Logged in`);
-  emailjs.init(CFG.EMAILJS_PUBLIC_KEY);
   startListeners();
-  fetchSheetCustomers();
+  if (canRunBusiness()) fetchSheetCustomers();
 }
 
 window.addEventListener('DOMContentLoaded', async () => {
@@ -1458,7 +1464,7 @@ window.addEventListener('DOMContentLoaded', async () => {
       me = data.user;
       rememberHubProfile(data);
       sessionStorage.removeItem('egc_tok');
-      enterEmployeeApp();
+      await enterEmployeeApp();
     } else {
       sessionStorage.removeItem('egc_u');
       sessionStorage.removeItem('egc_tok');
@@ -1484,6 +1490,32 @@ function startListeners() {
   if (_listenersStarted) return;
   _listenersStarted = true;
   updateFirebaseStatus();
+
+  if (!canRunBusiness()) {
+    hubFetch('/api/crew-jobs', { cache: 'no-store' })
+      .then(async response => {
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok || !data.ok) throw new Error(data.error || 'Crew schedule unavailable');
+        jobsCache = Array.isArray(data.jobs) ? data.jobs : [];
+        custsCache = [];
+        blockedDays = new Set();
+        blockedSlots = new Set();
+        leadsCache = [];
+        firebaseConn.jobs = 'connected';
+        firebaseConn.customers = 'restricted';
+        firebaseConn.leads = 'connected';
+        window._lastLeadsSync = Date.now();
+        updateFirebaseStatus();
+        refresh();
+        if (typeof window.opsRefresh === 'function') window.opsRefresh();
+      })
+      .catch(error => {
+        firebaseConn.jobs = 'error';
+        updateFirebaseStatus();
+        console.error('Crew schedule error', error);
+      });
+    return;
+  }
 
   db.collection('jobs').onSnapshot(snap => {
     firebaseConn.jobs = 'connected';
@@ -2676,17 +2708,7 @@ async function confirmBooking() {
     const es=document.getElementById('email-status');
     es.style.display='block'; es.className=''; es.classList.add('sending'); es.textContent='Sending confirmation…';
     try {
-      const dl=new Date(bk.date+'T12:00:00').toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric'});
-      await emailjs.send(CFG.EMAILJS_SERVICE_ID, CFG.EMAILJS_TEMPLATE_ID, {
-        to_email:       c.email,
-        to_name:        c.name,
-        appointment_type: typeLabel(bk.type),
-        appointment_date: dl,
-        appointment_time: bk.time?fmtTime(bk.time):'Time TBD',
-        address:        addr||'TBD',
-        employee_name:  bk.assignedTo,
-        notes:          bk.notes||''
-      });
+      await sendBookingConfirmation(jobId);
       es.className=''; es.classList.add('sent'); es.textContent='Confirmation sent to '+c.email;
       await new Promise(r=>setTimeout(r,1200));
     } catch(err) {
@@ -2738,7 +2760,6 @@ function showModeSelect() {
   document.getElementById('oncall-overlay').classList.remove('open');
   document.getElementById('mode-screen').style.display   = 'flex';
   document.getElementById('mode-user-lbl').textContent   = me;
-  emailjs.init(CFG.EMAILJS_PUBLIC_KEY);
   startListeners();
   fetchSheetCustomers();
 }
@@ -3201,16 +3222,7 @@ async function ocBook() {
   await db.collection('jobs').doc(jobId).set(job);
   if (document.getElementById('oc-email')?.checked && c.email) {
     try {
-      const dl = new Date(date+'T12:00:00').toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric'});
-      await emailjs.send(CFG.EMAILJS_SERVICE_ID, CFG.EMAILJS_TEMPLATE_ID, {
-        to_email: c.email, to_name: c.name,
-        appointment_type: typeLabel(job.type),
-        appointment_date: dl,
-        appointment_time: job.time ? fmtTime(job.time) : 'Time TBD',
-        address: job.address||'TBD',
-        employee_name: job.assignedTo,
-        notes: job.notes||''
-      });
+      await sendBookingConfirmation(jobId);
     } catch(e) { console.error('Email failed:', e); }
   }
   document.getElementById('oncall-overlay').classList.remove('open');

@@ -23,6 +23,15 @@ _REFRESH_RE = re.compile(r"(url=)(/[A-Za-z0-9\-/_]*\.html)")
 _HREF_RE = re.compile(r'(href=")([^"]+\.html(?:[?#][^"]*)?)(")')
 
 
+def _redact_private_address(text):
+    """Publish only EGC's service-area location, never the private street."""
+    return (
+        text.replace("746 Star Grass Ln, Fort Collins, CO 80525", "Fort Collins, CO 80525")
+        .replace("746 Star Grass Ln, Fort Collins, CO", "Fort Collins, CO")
+        .replace("746 Star Grass Ln", "Fort Collins")
+    )
+
+
 def _map_path(path):
     """/x.html -> /x, /blog/index.html -> /blog/, /index.html -> /"""
     if path.endswith("/index.html"):
@@ -33,6 +42,7 @@ def _map_path(path):
 
 
 def _rewrite_html(text, file_dir):
+    text = _redact_private_address(text)
     text = _ABS_RE.sub(lambda m: SITE + _map_path(m.group(1)), text)
     text = _REFRESH_RE.sub(lambda m: m.group(1) + _map_path(m.group(2)), text)
 
@@ -63,12 +73,12 @@ def finalize_site(root):
             if new != text:
                 f.write_text(new, encoding="utf-8")
                 changed.append(str(f.relative_to(root)))
-    for name in ("sitemap.xml", "llms.txt", "llms-full.txt", "ai.txt"):
+    for name in ("sitemap.xml", "llms.txt", "ai.txt"):
         f = root / name
         if not f.exists():
             continue
         text = f.read_text(encoding="utf-8")
-        new = _ABS_RE.sub(lambda m: SITE + _map_path(m.group(1)), text)
+        new = _redact_private_address(_ABS_RE.sub(lambda m: SITE + _map_path(m.group(1)), text))
         if new != text:
             f.write_text(new, encoding="utf-8")
             changed.append(name)

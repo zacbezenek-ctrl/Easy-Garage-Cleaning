@@ -2,23 +2,11 @@
 <html lang="en">
 <head>
 <!-- Analytics events queue immediately; vendor libraries load after interaction. -->
-<script src="/analytics-loader.js?v=20260903a" defer></script>
-<!--
-  Microsoft Clarity analytics
-  Google Search Console: <meta name="google-site-verification" content="YOUR_CODE" />
-  CallRail: see comment in _generate_site.py CALLRAIL_BLOCK
--->
+<script src="/analytics-loader.js?v=20260904b" defer></script>
+<!-- Microsoft Clarity and other analytics load through the first-party analytics loader. -->
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <meta name="referrer" content="strict-origin-when-cross-origin" />
-<!--
-  HOSTING CSP — configure on server (Cloudflare, Netlify, Apache), not as a blocking meta tag:
-  default-src 'self'; script-src 'self' 'unsafe-inline' https://www.googletagmanager.com https://www.clarity.ms https://connect.facebook.net;
-  style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com;
-  img-src 'self' data: blob: https:; connect-src 'self' https://api.web3forms.com https://www.google-analytics.com;
-  frame-src https://www.youtube.com; upgrade-insecure-requests
--->
-
 <title>Easy Garage Cleaning | Fort Collins Garage Cleanouts</title>
 <meta name="description" content="Fort Collins’ garage cleanout & turnaround specialists. Flat-rate $400–$3,500 — hauled, donated, organized & swept in one day. Call (970) 999-1818." />
 <meta name="keywords" content="garage cleanout Fort Collins CO, garage turnaround Fort Collins, garage transformation Northern Colorado, clean out my garage, garage organization Fort Collins, garage cleaning service" />
@@ -54,277 +42,19 @@
 <meta name="twitter:description" content="Fort Collins’ garage cleanout &amp; turnaround specialists. Flat-rate $400–$3,500. Call (970) 999-1818 for a quote." />
 <meta name="twitter:image" content="https://easygaragecleaning.com/og-image.png" />
 
-<script type="application/ld+json">
-{
-  "@context": "https://schema.org",
-  "@type": "LocalBusiness",
-  "@id": "https://easygaragecleaning.com/#business",
-  "name": "Easy Garage Cleaning",
-  "alternateName": "Easy Garage Cleaning LLC",
-  "description": "Fort Collins garage cleanout and garage turnaround specialists — full cleanouts, donation runs, organization, shelving, and sweep-out done in one day across Northern Colorado. Flat-rate quotes from $400 to $3,500. Call (970) 999-1818.",
-  "url": "https://easygaragecleaning.com",
-  "telephone": "+19709991818",
-  "email": "contact@easygaragecleaning.com",
-  "image": "https://easygaragecleaning.com/og-image.png",
-  "logo": "https://easygaragecleaning.com/android-chrome-512x512.png",
-  "priceRange": "$400-$3,500",
-  "slogan": "Done by Dinner — or It's Free",
-  "knowsAbout": ["Garage Cleanout","Garage Turnaround","Garage Transformation","Garage Organization","Garage Shelving","Donation Coordination","Estate Cleanout","Fort Collins Colorado","Northern Colorado Home Services"],
-  "address": {
-    "@type": "PostalAddress",
-    "streetAddress": "746 Star Grass Ln",
-    "addressLocality": "Fort Collins",
-    "addressRegion": "CO",
-    "postalCode": "80525",
-    "addressCountry": "US"
-  },
-  "geo": {
-    "@type": "GeoCoordinates",
-    "latitude": 40.585260,
-    "longitude": -105.084419
-  },
-  "areaServed": [
-    { "@type": "City", "name": "Fort Collins", "sameAs": "https://en.wikipedia.org/wiki/Fort_Collins,_Colorado" },
-    { "@type": "City", "name": "Loveland",     "sameAs": "https://en.wikipedia.org/wiki/Loveland,_Colorado" },
-    { "@type": "City", "name": "Windsor",      "sameAs": "https://en.wikipedia.org/wiki/Windsor,_Colorado" },
-    { "@type": "City", "name": "Timnath",      "sameAs": "https://en.wikipedia.org/wiki/Timnath,_Colorado" },
-    { "@type": "City", "name": "Wellington",   "sameAs": "https://en.wikipedia.org/wiki/Wellington,_Colorado" },
-    { "@type": "City", "name": "Severance",    "sameAs": "https://en.wikipedia.org/wiki/Severance,_Colorado" },
-    { "@type": "City", "name": "LaPorte",      "sameAs": "https://en.wikipedia.org/wiki/LaPorte,_Colorado" },
-    { "@type": "City", "name": "Johnstown",    "sameAs": "https://en.wikipedia.org/wiki/Johnstown,_Colorado" },
-    { "@type": "City", "name": "Berthoud",     "sameAs": "https://en.wikipedia.org/wiki/Berthoud,_Colorado" }
-  ],
-  "founder": {
-    "@type": "Person",
-    "name": "Zac Bezenek",
-    "description": "CSU student, founder and owner-operator of Easy Garage Cleaning LLC"
-  },
-  "openingHoursSpecification": [{
-    "@type": "OpeningHoursSpecification",
-    "dayOfWeek": ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"],
-    "opens": "07:00",
-    "closes": "19:00"
-  }],
-  "sameAs": [
-    "https://www.google.com/maps/place/Fort+Collins,+CO"
-  ],
-  "hasOfferCatalog": {"@type": "OfferCatalog", "name": "Garage Reclaiming & Junk Removal Services", "itemListElement": [{"@type": "Offer", "itemOffered": {"@type": "Service", "name": "Junk Removal", "url": "https://easygaragecleaning.com/junk-removal-fort-collins-co"}}, {"@type": "Offer", "itemOffered": {"@type": "Service", "name": "Garage Cleanout", "url": "https://easygaragecleaning.com/garage-cleanouts-fort-collins-co"}}, {"@type": "Offer", "itemOffered": {"@type": "Service", "name": "Garage Cleaning", "url": "https://easygaragecleaning.com/garage-cleaning-fort-collins-co"}}, {"@type": "Offer", "itemOffered": {"@type": "Service", "name": "Garage Turnaround", "url": "https://easygaragecleaning.com/garage-turnaround-fort-collins-co"}}, {"@type": "Offer", "itemOffered": {"@type": "Service", "name": "Furniture Removal", "url": "https://easygaragecleaning.com/furniture-removal-fort-collins-co"}}, {"@type": "Offer", "itemOffered": {"@type": "Service", "name": "Appliance Removal", "url": "https://easygaragecleaning.com/appliance-removal-fort-collins-co"}}, {"@type": "Offer", "itemOffered": {"@type": "Service", "name": "Mattress Removal", "url": "https://easygaragecleaning.com/mattress-removal-fort-collins-co"}}, {"@type": "Offer", "itemOffered": {"@type": "Service", "name": "Storage Unit Cleanout", "url": "https://easygaragecleaning.com/storage-unit-cleanout-fort-collins-co"}}, {"@type": "Offer", "itemOffered": {"@type": "Service", "name": "Yard Debris Removal", "url": "https://easygaragecleaning.com/yard-debris-removal-fort-collins-co"}}, {"@type": "Offer", "itemOffered": {"@type": "Service", "name": "Garage Organization", "url": "https://easygaragecleaning.com/garage-organization-fort-collins-co"}}]}
-}
-</script>
-<script type="application/ld+json">
-{
-  "@context": "https://schema.org",
-  "@type": "Organization",
-  "@id": "https://easygaragecleaning.com/#organization",
-  "name": "Easy Garage Cleaning",
-  "legalName": "Easy Garage Cleaning LLC",
-  "url": "https://easygaragecleaning.com",
-  "logo": "https://easygaragecleaning.com/android-chrome-512x512.png",
-  "founder": {
-    "@type": "Person",
-    "name": "Zac Bezenek"
-  },
-  "parentOrganization": {
-    "@id": "https://easygaragecleaning.com/#business"
-  }
-}
-</script>
-<script type="application/ld+json">
-{
-  "@context": "https://schema.org",
-  "@type": "WebSite",
-  "@id": "https://easygaragecleaning.com/#website",
-  "name": "Easy Garage Cleaning",
-  "url": "https://easygaragecleaning.com",
-  "publisher": { "@id": "https://easygaragecleaning.com/#business" },
-  "potentialAction": [
-    {
-      "@type": "ContactAction",
-      "name": "Call for quote",
-      "target": "tel:+19709991818"
-    },
-    {
-      "@type": "ContactAction",
-      "name": "Book online",
-      "target": "https://easygaragecleaning.com/book"
-    },
-    {
-      "@type": "SearchAction",
-      "target": { "@type": "EntryPoint", "urlTemplate": "https://easygaragecleaning.com/faq?q={search_term_string}" },
-      "query-input": "required name=search_term_string"
-    }
-  ]
-}
-</script>
-<script type="application/ld+json">
-{
-  "@context": "https://schema.org",
-  "@type": "HowTo",
-  "name": "How to book a garage cleanout in Fort Collins",
-  "description": "Schedule a free on-site walkthrough and receive a complete Garage Turnaround Plan in three simple steps.",
-  "totalTime": "PT5M",
-  "step": [
-    { "@type": "HowToStep", "position": 1, "name": "Call for a quote", "text": "Call (970) 999-1818 or schedule online for a free on-site walkthrough and one exact flat-rate price." },
-    { "@type": "HowToStep", "position": 2, "name": "Get one exact price after the walkthrough", "text": "We confirm your walkthrough appointment, then set one exact flat-rate price during the visit." },
-    { "@type": "HowToStep", "position": 3, "name": "We reclaim your garage", "text": "We haul everything, donate usable items, sweep the floor, and hand you a donation receipt. You only pay after approving the quote." }
-  ]
-}
-</script>
-<script type="application/ld+json">
-{
-  "@context": "https://schema.org",
-  "@type": "WebPage",
-  "@id": "https://easygaragecleaning.com/#webpage",
-  "url": "https://easygaragecleaning.com/",
-  "name": "Garage Cleanouts Fort Collins CO | One-Day Garage Turnarounds",
-  "description": "Fort Collins’ garage cleanout & turnaround specialists. Flat-rate cleanouts $400–$3,500 — call (970) 999-1818 for a quote.",
-  "isPartOf": { "@id": "https://easygaragecleaning.com/#website" },
-  "about": { "@id": "https://easygaragecleaning.com/#business" },
-  "speakable": {
-    "@type": "SpeakableSpecification",
-    "cssSelector": [".hero-sub", ".faq-q", ".faq-a", ".def-block"]
-  }
-}
-</script>
-<!-- AggregateRating: add to LocalBusiness schema when verified reviews available -->
-<script type="application/ld+json">
-{
-  "@context": "https://schema.org",
-  "@type": "BreadcrumbList",
-  "itemListElement": [{
-    "@type": "ListItem",
-    "position": 1,
-    "name": "Home",
-    "item": "https://easygaragecleaning.com/"
-  }]
-}
-</script>
+<script type="application/ld+json">{"@context": "https://schema.org", "@type": "LocalBusiness", "@id": "https://easygaragecleaning.com/#business", "name": "Easy Garage Cleaning", "alternateName": "Easy Garage Cleaning LLC", "description": "Fort Collins garage cleanout and garage turnaround specialists — full cleanouts, donation runs, organization, shelving, and sweep-out done in one day across Northern Colorado. Flat-rate quotes from $400 to $3,500. Call (970) 999-1818.", "url": "https://easygaragecleaning.com", "telephone": "+19709991818", "email": "contact@easygaragecleaning.com", "image": "https://easygaragecleaning.com/og-image.png", "logo": "https://easygaragecleaning.com/android-chrome-512x512.png", "priceRange": "$400-$3,500", "slogan": "Done by Dinner — or It's Free", "knowsAbout": ["Garage Cleanout", "Garage Turnaround", "Garage Transformation", "Garage Organization", "Garage Shelving", "Donation Coordination", "Estate Cleanout", "Fort Collins Colorado", "Northern Colorado Home Services"], "address": {"@type": "PostalAddress", "streetAddress": "Fort Collins", "addressLocality": "Fort Collins", "addressRegion": "CO", "postalCode": "80525", "addressCountry": "US"}, "geo": {"@type": "GeoCoordinates", "latitude": 40.58526, "longitude": -105.084419}, "areaServed": [{"@type": "City", "name": "Fort Collins", "sameAs": "https://en.wikipedia.org/wiki/Fort_Collins,_Colorado"}, {"@type": "City", "name": "Loveland", "sameAs": "https://en.wikipedia.org/wiki/Loveland,_Colorado"}, {"@type": "City", "name": "Windsor", "sameAs": "https://en.wikipedia.org/wiki/Windsor,_Colorado"}, {"@type": "City", "name": "Timnath", "sameAs": "https://en.wikipedia.org/wiki/Timnath,_Colorado"}, {"@type": "City", "name": "Wellington", "sameAs": "https://en.wikipedia.org/wiki/Wellington,_Colorado"}, {"@type": "City", "name": "Severance", "sameAs": "https://en.wikipedia.org/wiki/Severance,_Colorado"}, {"@type": "City", "name": "LaPorte", "sameAs": "https://en.wikipedia.org/wiki/LaPorte,_Colorado"}, {"@type": "City", "name": "Johnstown", "sameAs": "https://en.wikipedia.org/wiki/Johnstown,_Colorado"}, {"@type": "City", "name": "Berthoud", "sameAs": "https://en.wikipedia.org/wiki/Berthoud,_Colorado"}], "founder": {"@type": "Person", "name": "Zac Bezenek", "description": "CSU student, founder and owner-operator of Easy Garage Cleaning LLC"}, "openingHoursSpecification": [{"@type": "OpeningHoursSpecification", "dayOfWeek": ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"], "opens": "07:00", "closes": "19:00"}], "sameAs": ["https://www.google.com/maps/place/Fort+Collins,+CO"], "hasOfferCatalog": {"@type": "OfferCatalog", "name": "Garage Reclaiming & Junk Removal Services", "itemListElement": [{"@type": "Offer", "itemOffered": {"@type": "Service", "name": "Junk Removal", "url": "https://easygaragecleaning.com/junk-removal-fort-collins-co"}}, {"@type": "Offer", "itemOffered": {"@type": "Service", "name": "Garage Cleanout", "url": "https://easygaragecleaning.com/garage-cleanouts-fort-collins-co"}}, {"@type": "Offer", "itemOffered": {"@type": "Service", "name": "Garage Cleaning", "url": "https://easygaragecleaning.com/garage-cleaning-fort-collins-co"}}, {"@type": "Offer", "itemOffered": {"@type": "Service", "name": "Garage Turnaround", "url": "https://easygaragecleaning.com/garage-turnaround-fort-collins-co"}}, {"@type": "Offer", "itemOffered": {"@type": "Service", "name": "Furniture Removal", "url": "https://easygaragecleaning.com/furniture-removal-fort-collins-co"}}, {"@type": "Offer", "itemOffered": {"@type": "Service", "name": "Appliance Removal", "url": "https://easygaragecleaning.com/appliance-removal-fort-collins-co"}}, {"@type": "Offer", "itemOffered": {"@type": "Service", "name": "Mattress Removal", "url": "https://easygaragecleaning.com/mattress-removal-fort-collins-co"}}, {"@type": "Offer", "itemOffered": {"@type": "Service", "name": "Storage Unit Cleanout", "url": "https://easygaragecleaning.com/storage-unit-cleanout-fort-collins-co"}}, {"@type": "Offer", "itemOffered": {"@type": "Service", "name": "Yard Debris Removal", "url": "https://easygaragecleaning.com/yard-debris-removal-fort-collins-co"}}, {"@type": "Offer", "itemOffered": {"@type": "Service", "name": "Garage Organization", "url": "https://easygaragecleaning.com/garage-organization-fort-collins-co"}}]}}</script>
+<script type="application/ld+json">{"@context": "https://schema.org", "@type": "Organization", "@id": "https://easygaragecleaning.com/#organization", "name": "Easy Garage Cleaning", "legalName": "Easy Garage Cleaning LLC", "url": "https://easygaragecleaning.com", "logo": "https://easygaragecleaning.com/android-chrome-512x512.png", "founder": {"@type": "Person", "name": "Zac Bezenek"}, "parentOrganization": {"@id": "https://easygaragecleaning.com/#business"}}</script>
+<script type="application/ld+json">{"@context": "https://schema.org", "@type": "WebSite", "@id": "https://easygaragecleaning.com/#website", "name": "Easy Garage Cleaning", "url": "https://easygaragecleaning.com", "publisher": {"@id": "https://easygaragecleaning.com/#business"}, "potentialAction": [{"@type": "ContactAction", "name": "Call for quote", "target": "tel:+19709991818"}, {"@type": "ContactAction", "name": "Book online", "target": "https://easygaragecleaning.com/book"}, {"@type": "SearchAction", "target": {"@type": "EntryPoint", "urlTemplate": "https://easygaragecleaning.com/faq?q={search_term_string}"}, "query-input": "required name=search_term_string"}]}</script>
+<script type="application/ld+json">{"@context": "https://schema.org", "@type": "HowTo", "name": "How to book a garage cleanout in Fort Collins", "description": "Schedule a free on-site walkthrough and receive a complete Garage Turnaround Plan in three simple steps.", "totalTime": "PT5M", "step": [{"@type": "HowToStep", "position": 1, "name": "Call for a quote", "text": "Call (970) 999-1818 or schedule online for a free on-site walkthrough and one exact flat-rate price."}, {"@type": "HowToStep", "position": 2, "name": "Get one exact price after the walkthrough", "text": "We confirm your walkthrough appointment, then set one exact flat-rate price during the visit."}, {"@type": "HowToStep", "position": 3, "name": "We reclaim your garage", "text": "We haul everything, donate usable items, sweep the floor, and hand you a donation receipt. You only pay after approving the quote."}]}</script>
+<script type="application/ld+json">{"@context": "https://schema.org", "@type": "WebPage", "@id": "https://easygaragecleaning.com/#webpage", "url": "https://easygaragecleaning.com/", "name": "Garage Cleanouts Fort Collins CO | One-Day Garage Turnarounds", "description": "Fort Collins’ garage cleanout & turnaround specialists. Flat-rate cleanouts $400–$3,500 — call (970) 999-1818 for a quote.", "isPartOf": {"@id": "https://easygaragecleaning.com/#website"}, "about": {"@id": "https://easygaragecleaning.com/#business"}, "speakable": {"@type": "SpeakableSpecification", "cssSelector": [".hero-sub", ".faq-q", ".faq-a", ".def-block"]}}</script>
+<script type="application/ld+json">{"@context": "https://schema.org", "@type": "BreadcrumbList", "itemListElement": [{"@type": "ListItem", "position": 1, "name": "Home", "item": "https://easygaragecleaning.com/"}]}</script>
 
-<script type="application/ld+json">
-{
-  "@context": "https://schema.org",
-  "@type": "FAQPage",
-  "mainEntity": [
-    {
-      "@type": "Question",
-      "name": "How much does a garage cleanout cost in Fort Collins?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "Most jobs fall into four ranges: single-item pickup ($99–$150), small loads ($250–$400), medium garage cleanouts ($400–$650), and large or full garages ($650+). We quote a firm flat rate before we start — no hourly billing or surprise fees."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "How do I schedule a walkthrough?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "Request a free on-site walkthrough online, by calling (970) 999-1818, or by text. Optional photos only help us prepare; the exact price is set during the visit."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "What do you haul away?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "Furniture, appliances, mattresses, boxes, tools, yard debris, storage unit contents, and general household junk. We cannot haul hazardous materials like liquid paint, asbestos, or medical waste."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "Do you donate usable items?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "Yes. Working appliances, furniture, and household goods go to Habitat ReStore, ARC Thrift, and Goodwill. You receive a donation receipt in your name for tax purposes."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "How fast can you come out?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "We respond to walkthrough requests quickly and offer next-day service when our schedule allows. Most jobs book within 2–3 days."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "Are you insured?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "Yes. Easy Garage Cleaning LLC is a Colorado-registered LLC with general liability and commercial auto insurance."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "Do I need to be home during the cleanout?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "You need to be present for the initial 15–20 minute walkthrough so we know what's going and what's staying. After that, many clients leave us to finish the job."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "Do you charge by the hour or flat rate?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "Flat rate only. The price we quote before the job is the price you pay — no clock-watching, no line-item surprises."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "What is the No-Surprise Quote Guarantee?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "If the scope matches what you approved during the walkthrough, your quoted price is locked. We will not add fees at the end of the job. If something unexpected comes up, we discuss it with you before hauling."
-      }
-    },
-    {
-      "@type": "Question",
-      "name": "What areas of Northern Colorado do you serve?",
-      "acceptedAnswer": {
-        "@type": "Answer",
-        "text": "Fort Collins, Loveland, Windsor, Timnath, Wellington, Severance, and LaPorte — including Old Town, Fossil Creek, Centerra, and surrounding neighborhoods."
-      }
-    }
-  ]
-}
-</script>
+<script type="application/ld+json">{"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [{"@type": "Question", "name": "How much does a garage cleanout cost in Fort Collins?", "acceptedAnswer": {"@type": "Answer", "text": "Most jobs fall into four ranges: single-item pickup ($99–$150), small loads ($250–$400), medium garage cleanouts ($400–$650), and large or full garages ($650+). We quote a firm flat rate before we start — no hourly billing or surprise fees."}}, {"@type": "Question", "name": "How do I schedule a walkthrough?", "acceptedAnswer": {"@type": "Answer", "text": "Request a free on-site walkthrough online, by calling (970) 999-1818, or by text. Optional photos only help us prepare; the exact price is set during the visit."}}, {"@type": "Question", "name": "What do you haul away?", "acceptedAnswer": {"@type": "Answer", "text": "Furniture, appliances, mattresses, boxes, tools, yard debris, storage unit contents, and general household junk. We cannot haul hazardous materials like liquid paint, asbestos, or medical waste."}}, {"@type": "Question", "name": "Do you donate usable items?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. Working appliances, furniture, and household goods go to Habitat ReStore, ARC Thrift, and Goodwill. You receive a donation receipt in your name for tax purposes."}}, {"@type": "Question", "name": "How fast can you come out?", "acceptedAnswer": {"@type": "Answer", "text": "We respond to walkthrough requests quickly and offer next-day service when our schedule allows. Most jobs book within 2–3 days."}}, {"@type": "Question", "name": "Are you insured?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. Easy Garage Cleaning LLC is a Colorado-registered LLC with general liability and commercial auto insurance."}}, {"@type": "Question", "name": "Do I need to be home during the cleanout?", "acceptedAnswer": {"@type": "Answer", "text": "You need to be present for the initial 15–20 minute walkthrough so we know what's going and what's staying. After that, many clients leave us to finish the job."}}, {"@type": "Question", "name": "Do you charge by the hour or flat rate?", "acceptedAnswer": {"@type": "Answer", "text": "Flat rate only. The price we quote before the job is the price you pay — no clock-watching, no line-item surprises."}}, {"@type": "Question", "name": "What is the No-Surprise Quote Guarantee?", "acceptedAnswer": {"@type": "Answer", "text": "If the scope matches what you approved during the walkthrough, your quoted price is locked. We will not add fees at the end of the job. If something unexpected comes up, we discuss it with you before hauling."}}, {"@type": "Question", "name": "What areas of Northern Colorado do you serve?", "acceptedAnswer": {"@type": "Answer", "text": "Fort Collins, Loveland, Windsor, Timnath, Wellington, Severance, and LaPorte — including Old Town, Fossil Creek, Centerra, and surrounding neighborhoods."}}]}</script>
 
-<script type="application/ld+json">
-[
-  {
-    "@context": "https://schema.org",
-    "@type": "Service",
-    "name": "Garage Cleanouts Fort Collins",
-    "description": "Full garage cleanout — haul-out, sweep, donate usable items. Flat-rate pricing for Fort Collins and Northern Colorado.",
-    "provider": { "@type": "LocalBusiness", "@id": "https://easygaragecleaning.com/#business" },
-    "areaServed": { "@type": "City", "name": "Fort Collins", "addressRegion": "CO" },
-    "serviceType": "Garage Cleanout"
-  },
-  {
-    "@context": "https://schema.org",
-    "@type": "Service",
-    "name": "Junk Removal Fort Collins",
-    "description": "Single items to full loads — appliances, furniture, mattresses, yard debris. Free on-site walkthroughs with exact pricing afterward.",
-    "provider": { "@type": "LocalBusiness", "@id": "https://easygaragecleaning.com/#business" },
-    "areaServed": { "@type": "City", "name": "Fort Collins", "addressRegion": "CO" },
-    "serviceType": "Junk Removal"
-  },
-  {
-    "@context": "https://schema.org",
-    "@type": "Service",
-    "name": "Garage Cleaning Fort Collins",
-    "description": "Post-cleanout garage cleaning, sweep, and organization for Fort Collins homeowners.",
-    "provider": { "@type": "LocalBusiness", "@id": "https://easygaragecleaning.com/#business" },
-    "areaServed": { "@type": "City", "name": "Fort Collins", "addressRegion": "CO" },
-    "serviceType": "Garage Cleaning"
-  }
-]
-</script>
+<script type="application/ld+json">[{"@context": "https://schema.org", "@type": "Service", "name": "Garage Cleanouts Fort Collins", "description": "Full garage cleanout — haul-out, sweep, donate usable items. Flat-rate pricing for Fort Collins and Northern Colorado.", "provider": {"@type": "LocalBusiness", "@id": "https://easygaragecleaning.com/#business"}, "areaServed": {"@type": "City", "name": "Fort Collins", "addressRegion": "CO"}, "serviceType": "Garage Cleanout"}, {"@context": "https://schema.org", "@type": "Service", "name": "Junk Removal Fort Collins", "description": "Single items to full loads — appliances, furniture, mattresses, yard debris. Free on-site walkthroughs with exact pricing afterward.", "provider": {"@type": "LocalBusiness", "@id": "https://easygaragecleaning.com/#business"}, "areaServed": {"@type": "City", "name": "Fort Collins", "addressRegion": "CO"}, "serviceType": "Junk Removal"}, {"@context": "https://schema.org", "@type": "Service", "name": "Garage Cleaning Fort Collins", "description": "Post-cleanout garage cleaning, sweep, and organization for Fort Collins homeowners.", "provider": {"@type": "LocalBusiness", "@id": "https://easygaragecleaning.com/#business"}, "areaServed": {"@type": "City", "name": "Fort Collins", "addressRegion": "CO"}, "serviceType": "Garage Cleaning"}]</script>
 
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="dns-prefetch" href="https://connect.facebook.net">
-<link rel="dns-prefetch" href="https://www.googletagmanager.com">
 <link rel="preload" as="image" type="image/webp" href="/images/job-before-after-1-824.webp" imagesrcset="/images/job-before-after-1-824.webp 824w, /images/job-before-after-1.webp 1646w" imagesizes="(max-width: 899px) calc(100vw - 32px), 50vw" fetchpriority="high">
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,700;1,9..144,400&family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
 <noscript><link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,700;1,9..144,400&family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet"></noscript>
@@ -434,46 +164,90 @@
 a:focus-visible,button:focus-visible{outline:2px solid #ff5b1f;outline-offset:2px}
 
 
-.mobile-quote-sheet{position:fixed;left:0;right:0;bottom:0;z-index:95;background:var(--ink,#0a1628);color:var(--paper,#f5f1ea);padding:14px 18px 18px;transform:translateY(110%);transition:transform .35s ease;border-top:3px solid var(--accent,#ff5b1f);box-shadow:0 -8px 32px rgba(10,22,40,.25)}.mobile-quote-sheet.visible{transform:translateY(0)}.mobile-quote-sheet p{font-size:14px;margin-bottom:10px}.mobile-quote-sheet .btn-primary{width:100%}.mobile-quote-sheet-close{position:absolute;top:8px;right:12px;background:none;border:none;color:var(--paper);font-size:22px;cursor:pointer;line-height:1;padding:4px 8px}.template-banner{background:var(--accent);color:#fff;text-align:center;padding:10px 16px;font-size:13px;font-weight:600}.template-banner a{color:#fff;text-decoration:underline}
 
 
-.mobile-quote-sheet{position:fixed;left:0;right:0;bottom:0;z-index:95;background:var(--ink,#0a1628);color:var(--paper,#f5f1ea);padding:14px 18px 18px;transform:translateY(110%);transition:transform .35s ease;border-top:3px solid var(--accent,#ff5b1f);box-shadow:0 -8px 32px rgba(10,22,40,.25)}.mobile-quote-sheet.visible{transform:translateY(0)}.mobile-quote-sheet p{font-size:14px;margin-bottom:10px}.mobile-quote-sheet .btn-primary{width:100%}.mobile-quote-sheet-close{position:absolute;top:8px;right:12px;background:none;border:none;color:var(--paper);font-size:22px;cursor:pointer;line-height:1;padding:4px 8px}.template-banner{background:var(--accent);color:#fff;text-align:center;padding:10px 16px;font-size:13px;font-weight:600}.template-banner a{color:#fff;text-decoration:underline}
 
 
-.mobile-quote-sheet{position:fixed;left:0;right:0;bottom:0;z-index:95;background:var(--ink,#0a1628);color:var(--paper,#f5f1ea);padding:14px 18px 18px;transform:translateY(110%);transition:transform .35s ease;border-top:3px solid var(--accent,#ff5b1f);box-shadow:0 -8px 32px rgba(10,22,40,.25)}.mobile-quote-sheet.visible{transform:translateY(0)}.mobile-quote-sheet p{font-size:14px;margin-bottom:10px}.mobile-quote-sheet .btn-primary{width:100%}.mobile-quote-sheet-close{position:absolute;top:8px;right:12px;background:none;border:none;color:var(--paper);font-size:22px;cursor:pointer;line-height:1;padding:4px 8px}.template-banner{background:var(--accent);color:#fff;text-align:center;padding:10px 16px;font-size:13px;font-weight:600}.template-banner a{color:#fff;text-decoration:underline}
 
 
-.mobile-quote-sheet{position:fixed;left:0;right:0;bottom:0;z-index:95;background:var(--ink,#0a1628);color:var(--paper,#f5f1ea);padding:14px 18px 18px;transform:translateY(110%);transition:transform .35s ease;border-top:3px solid var(--accent,#ff5b1f);box-shadow:0 -8px 32px rgba(10,22,40,.25)}.mobile-quote-sheet.visible{transform:translateY(0)}.mobile-quote-sheet p{font-size:14px;margin-bottom:10px}.mobile-quote-sheet .btn-primary{width:100%}.mobile-quote-sheet-close{position:absolute;top:8px;right:12px;background:none;border:none;color:var(--paper);font-size:22px;cursor:pointer;line-height:1;padding:4px 8px}.template-banner{background:var(--accent);color:#fff;text-align:center;padding:10px 16px;font-size:13px;font-weight:600}.template-banner a{color:#fff;text-decoration:underline}
 
 
-.mobile-quote-sheet{position:fixed;left:0;right:0;bottom:0;z-index:95;background:var(--ink,#0a1628);color:var(--paper,#f5f1ea);padding:14px 18px 18px;transform:translateY(110%);transition:transform .35s ease;border-top:3px solid var(--accent,#ff5b1f);box-shadow:0 -8px 32px rgba(10,22,40,.25)}.mobile-quote-sheet.visible{transform:translateY(0)}.mobile-quote-sheet p{font-size:14px;margin-bottom:10px}.mobile-quote-sheet .btn-primary{width:100%}.mobile-quote-sheet-close{position:absolute;top:8px;right:12px;background:none;border:none;color:var(--paper);font-size:22px;cursor:pointer;line-height:1;padding:4px 8px}.template-banner{background:var(--accent);color:#fff;text-align:center;padding:10px 16px;font-size:13px;font-weight:600}.template-banner a{color:#fff;text-decoration:underline}
 
 
-.mobile-quote-sheet{position:fixed;left:0;right:0;bottom:0;z-index:95;background:var(--ink,#0a1628);color:var(--paper,#f5f1ea);padding:14px 18px 18px;transform:translateY(110%);transition:transform .35s ease;border-top:3px solid var(--accent,#ff5b1f);box-shadow:0 -8px 32px rgba(10,22,40,.25)}.mobile-quote-sheet.visible{transform:translateY(0)}.mobile-quote-sheet p{font-size:14px;margin-bottom:10px}.mobile-quote-sheet .btn-primary{width:100%}.mobile-quote-sheet-close{position:absolute;top:8px;right:12px;background:none;border:none;color:var(--paper);font-size:22px;cursor:pointer;line-height:1;padding:4px 8px}.template-banner{background:var(--accent);color:#fff;text-align:center;padding:10px 16px;font-size:13px;font-weight:600}.template-banner a{color:#fff;text-decoration:underline}
 
 
-.mobile-quote-sheet{position:fixed;left:0;right:0;bottom:0;z-index:95;background:var(--ink,#0a1628);color:var(--paper,#f5f1ea);padding:14px 18px 18px;transform:translateY(110%);transition:transform .35s ease;border-top:3px solid var(--accent,#ff5b1f);box-shadow:0 -8px 32px rgba(10,22,40,.25)}.mobile-quote-sheet.visible{transform:translateY(0)}.mobile-quote-sheet p{font-size:14px;margin-bottom:10px}.mobile-quote-sheet .btn-primary{width:100%}.mobile-quote-sheet-close{position:absolute;top:8px;right:12px;background:none;border:none;color:var(--paper);font-size:22px;cursor:pointer;line-height:1;padding:4px 8px}.template-banner{background:var(--accent);color:#fff;text-align:center;padding:10px 16px;font-size:13px;font-weight:600}.template-banner a{color:#fff;text-decoration:underline}
 
 
-.mobile-quote-sheet{position:fixed;left:0;right:0;bottom:0;z-index:95;background:var(--ink,#0a1628);color:var(--paper,#f5f1ea);padding:14px 18px 18px;transform:translateY(110%);transition:transform .35s ease;border-top:3px solid var(--accent,#ff5b1f);box-shadow:0 -8px 32px rgba(10,22,40,.25)}.mobile-quote-sheet.visible{transform:translateY(0)}.mobile-quote-sheet p{font-size:14px;margin-bottom:10px}.mobile-quote-sheet .btn-primary{width:100%}.mobile-quote-sheet-close{position:absolute;top:8px;right:12px;background:none;border:none;color:var(--paper);font-size:22px;cursor:pointer;line-height:1;padding:4px 8px}.template-banner{background:var(--accent);color:#fff;text-align:center;padding:10px 16px;font-size:13px;font-weight:600}.template-banner a{color:#fff;text-decoration:underline}
 
 
-.mobile-quote-sheet{position:fixed;left:0;right:0;bottom:0;z-index:95;background:var(--ink,#0a1628);color:var(--paper,#f5f1ea);padding:14px 18px 18px;transform:translateY(110%);transition:transform .35s ease;border-top:3px solid var(--accent,#ff5b1f);box-shadow:0 -8px 32px rgba(10,22,40,.25)}.mobile-quote-sheet.visible{transform:translateY(0)}.mobile-quote-sheet p{font-size:14px;margin-bottom:10px}.mobile-quote-sheet .btn-primary{width:100%}.mobile-quote-sheet-close{position:absolute;top:8px;right:12px;background:none;border:none;color:var(--paper);font-size:22px;cursor:pointer;line-height:1;padding:4px 8px}.template-banner{background:var(--accent);color:#fff;text-align:center;padding:10px 16px;font-size:13px;font-weight:600}.template-banner a{color:#fff;text-decoration:underline}
 
 
-.mobile-quote-sheet{position:fixed;left:0;right:0;bottom:0;z-index:95;background:var(--ink,#0a1628);color:var(--paper,#f5f1ea);padding:14px 18px 18px;transform:translateY(110%);transition:transform .35s ease;border-top:3px solid var(--accent,#ff5b1f);box-shadow:0 -8px 32px rgba(10,22,40,.25)}.mobile-quote-sheet.visible{transform:translateY(0)}.mobile-quote-sheet p{font-size:14px;margin-bottom:10px}.mobile-quote-sheet .btn-primary{width:100%}.mobile-quote-sheet-close{position:absolute;top:8px;right:12px;background:none;border:none;color:var(--paper);font-size:22px;cursor:pointer;line-height:1;padding:4px 8px}.template-banner{background:var(--accent);color:#fff;text-align:center;padding:10px 16px;font-size:13px;font-weight:600}.template-banner a{color:#fff;text-decoration:underline}
 
 
-.mobile-quote-sheet{position:fixed;left:0;right:0;bottom:0;z-index:95;background:var(--ink,#0a1628);color:var(--paper,#f5f1ea);padding:14px 18px 18px;transform:translateY(110%);transition:transform .35s ease;border-top:3px solid var(--accent,#ff5b1f);box-shadow:0 -8px 32px rgba(10,22,40,.25)}.mobile-quote-sheet.visible{transform:translateY(0)}.mobile-quote-sheet p{font-size:14px;margin-bottom:10px}.mobile-quote-sheet .btn-primary{width:100%}.mobile-quote-sheet-close{position:absolute;top:8px;right:12px;background:none;border:none;color:var(--paper);font-size:22px;cursor:pointer;line-height:1;padding:4px 8px}.template-banner{background:var(--accent);color:#fff;text-align:center;padding:10px 16px;font-size:13px;font-weight:600}.template-banner a{color:#fff;text-decoration:underline}
 
 
-.mobile-quote-sheet{position:fixed;left:0;right:0;bottom:0;z-index:95;background:var(--ink,#0a1628);color:var(--paper,#f5f1ea);padding:14px 18px 18px;transform:translateY(110%);transition:transform .35s ease;border-top:3px solid var(--accent,#ff5b1f);box-shadow:0 -8px 32px rgba(10,22,40,.25)}.mobile-quote-sheet.visible{transform:translateY(0)}.mobile-quote-sheet p{font-size:14px;margin-bottom:10px}.mobile-quote-sheet .btn-primary{width:100%}.mobile-quote-sheet-close{position:absolute;top:8px;right:12px;background:none;border:none;color:var(--paper);font-size:22px;cursor:pointer;line-height:1;padding:4px 8px}.template-banner{background:var(--accent);color:#fff;text-align:center;padding:10px 16px;font-size:13px;font-weight:600}.template-banner a{color:#fff;text-decoration:underline}
 
 
-.mobile-quote-sheet{position:fixed;left:0;right:0;bottom:0;z-index:95;background:var(--ink,#0a1628);color:var(--paper,#f5f1ea);padding:14px 18px 18px;transform:translateY(110%);transition:transform .35s ease;border-top:3px solid var(--accent,#ff5b1f);box-shadow:0 -8px 32px rgba(10,22,40,.25)}.mobile-quote-sheet.visible{transform:translateY(0)}.mobile-quote-sheet p{font-size:14px;margin-bottom:10px}.mobile-quote-sheet .btn-primary{width:100%}.mobile-quote-sheet-close{position:absolute;top:8px;right:12px;background:none;border:none;color:var(--paper);font-size:22px;cursor:pointer;line-height:1;padding:4px 8px}.template-banner{background:var(--accent);color:#fff;text-align:center;padding:10px 16px;font-size:13px;font-weight:600}.template-banner a{color:#fff;text-decoration:underline}
 
 
-.mobile-quote-sheet{position:fixed;left:0;right:0;bottom:0;z-index:95;background:var(--ink,#0a1628);color:var(--paper,#f5f1ea);padding:14px 18px 18px;transform:translateY(110%);transition:transform .35s ease;border-top:3px solid var(--accent,#ff5b1f);box-shadow:0 -8px 32px rgba(10,22,40,.25)}.mobile-quote-sheet.visible{transform:translateY(0)}.mobile-quote-sheet p{font-size:14px;margin-bottom:10px}.mobile-quote-sheet .btn-primary{width:100%}.mobile-quote-sheet-close{position:absolute;top:8px;right:12px;background:none;border:none;color:var(--paper);font-size:22px;cursor:pointer;line-height:1;padding:4px 8px}.template-banner{background:var(--accent);color:#fff;text-align:center;padding:10px 16px;font-size:13px;font-weight:600}.template-banner a{color:#fff;text-decoration:underline}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 </style>
 </head>
@@ -484,8 +258,8 @@ a:focus-visible,button:focus-visible{outline:2px solid #ff5b1f;outline-offset:2p
 
 <div id="seasonal-banner" class="seasonal-banner" role="region" aria-label="Seasonal promotion" hidden>
   <div class="wrap seasonal-banner-inner">
-    <span>☀️ <strong>Summer cleanout</strong> — book now and park inside before the season turns.</span>
-    <a href="/book">Book now →</a>
+    <span>☀️ <strong>Summer cleanout</strong> — request a walkthrough and make room before the season turns.</span>
+    <a href="/book">Request walkthrough →</a>
     <button type="button" class="seasonal-banner-dismiss" aria-label="Dismiss banner">×</button>
   </div>
 </div>
@@ -553,7 +327,7 @@ a:focus-visible,button:focus-visible{outline:2px solid #ff5b1f;outline-offset:2p
     </ul>
     <div class="nav-right">
       <a href="tel:+19709991818" class="nav-phone">(970) 999-1818</a>
-      <a href="/book" class="nav-cta" data-cta="nav-book">Book Now</a>
+      <a href="/book" class="nav-cta" data-cta="nav-book">Request Walkthrough</a>
     </div>
     <button type="button" class="nav-toggle" aria-label="Open menu" aria-expanded="false" aria-controls="nav-drawer">
       <span class="nav-toggle-bar"></span><span class="nav-toggle-bar"></span><span class="nav-toggle-bar"></span>
@@ -612,7 +386,7 @@ a:focus-visible,button:focus-visible{outline:2px solid #ff5b1f;outline-offset:2p
 </aside>
 <div class="trust-strip" aria-label="Trust signals">
   <div class="wrap trust-strip-inner">
-    <span>Response within 5 minutes</span><span>No hidden fees</span><span>Only pay after approving quote</span><span>We do all lifting</span><span>Free on-site walkthrough</span><span>Next-day availability</span>
+    <span>Quick local response</span><span>No hidden fees</span><span>Only pay after approving quote</span><span>We do all lifting</span><span>Free on-site walkthrough</span><span>Next-day when available</span>
   </div>
 </div>
 <main id="main-content">
@@ -801,7 +575,7 @@ a:focus-visible,button:focus-visible{outline:2px solid #ff5b1f;outline-offset:2p
       <div class="compare-mini-col highlight">
         <h3>Easy Garage Cleaning</h3>
         <ul>
-          <li>Flat-rate price after an on-site walkthrough in ~5 minutes</li>
+          <li>One exact flat-rate price approved before work begins</li>
           <li>Garage reclaiming specialist — not generic hauling</li>
           <li>Local, background-checked crew · No-Surprise Quote Guarantee</li>
           <li>Donation receipts · Next-day when available</li>
@@ -874,7 +648,7 @@ a:focus-visible,button:focus-visible{outline:2px solid #ff5b1f;outline-offset:2p
       <h2 class="section-title" id="pricing-heading">One garage. One plan. <em>One bundled price.</em></h2>
       <p class="section-sub">Simple cleanouts may start around $400. Complete turnarounds are scoped around the finished result and can run several thousand dollars. You approve one flat total before work begins—no hourly meter and no surprise add-ons.</p>
     </div>
-    
+
     <p class="pricing-disclaimer reveal">All quotes are flat-rate and include labor, hauling, dump fees, and donation drop-offs. Your exact flat rate is set after a free on-site walkthrough and approved before work begins. <a href="/pricing" style="color:var(--accent);font-weight:600;">Full pricing guide →</a> · <a href="#quote" style="color:var(--accent);font-weight:600;">Schedule Free Walkthrough →</a></p>
   </div>
 </section>
@@ -914,7 +688,7 @@ a:focus-visible,button:focus-visible{outline:2px solid #ff5b1f;outline-offset:2p
       <details class="faq-item"><summary class="faq-q"><span class="faq-q-num">Q.02</span>How do I get my free plan?</summary><p class="faq-a">Use the short form above or call <a href="tel:+19709991818">(970) 999-1818</a>. Photos help us understand the space, and the walkthrough turns them into a practical Garage Turnaround Plan that is yours to keep.</p></details>
       <details class="faq-item"><summary class="faq-q"><span class="faq-q-num">Q.03</span>What do you haul away?</summary><p class="faq-a">Furniture, appliances, mattresses, boxes, tools, yard debris, storage unit contents, and general household junk. We cannot haul hazardous materials like liquid paint, asbestos, or medical waste.</p></details>
       <details class="faq-item"><summary class="faq-q"><span class="faq-q-num">Q.04</span>Do you donate usable items?</summary><p class="faq-a">Yes. Working appliances, furniture, and household goods go to Habitat ReStore, ARC Thrift, and Goodwill. You receive a donation receipt in your name.</p></details>
-      <details class="faq-item"><summary class="faq-q"><span class="faq-q-num">Q.05</span>How fast can you come out?</summary><p class="faq-a">We respond within 5 minutes and offer next-day service when our schedule allows. Most jobs book within 2–3 days of the initial quote.</p></details>
+      <details class="faq-item"><summary class="faq-q"><span class="faq-q-num">Q.05</span>How fast can you come out?</summary><p class="faq-a">we respond as quickly as we can and offer next-day service when our schedule allows. Most jobs book within 2–3 days of the initial quote.</p></details>
       <details class="faq-item"><summary class="faq-q"><span class="faq-q-num">Q.06</span>Are you insured?</summary><p class="faq-a">Yes. Easy Garage Cleaning LLC is a Colorado-registered LLC with general liability and commercial auto insurance.</p></details>
       <details class="faq-item"><summary class="faq-q"><span class="faq-q-num">Q.07</span>Do I need to be home during the cleanout?</summary><p class="faq-a">You need to be present for the initial 15–20 minute walkthrough. After that, many clients leave us to finish the job.</p></details>
       <details class="faq-item"><summary class="faq-q"><span class="faq-q-num">Q.08</span>Do you charge by the hour or flat rate?</summary><p class="faq-a">Flat rate only. The price we quote before the job is the price you pay — no clock-watching, no line-item surprises.</p></details>
@@ -964,7 +738,7 @@ a:focus-visible,button:focus-visible{outline:2px solid #ff5b1f;outline-offset:2p
     <div class="gallery-grid gallery-polish reveal">
       <div>
         <div class="ba-pair"><div class="ba-cell before"><picture><source srcset="/images/garage-before.webp" type="image/webp"><img src="/images/garage-before.jpg" alt="Cluttered two-car garage before cleanout" loading="lazy" width="1200" height="1200"></picture><span class="ba-label">BEFORE</span></div><div class="ba-cell after"><picture><source srcset="/images/garage-after.webp" type="image/webp"><img src="/images/garage-after.jpg" alt="Clean organized garage after cleanout" loading="lazy" width="1200" height="1200"></picture><span class="ba-label">AFTER</span></div></div>
-        <div class="ba-caption"><strong>Two-car garage — Fort Collins</strong> · <a href="/projects/fort-collins-garage-cleanout-old-town" style="color:var(--accent-deep);font-weight:600;">See project →</a></div>
+        <div class="ba-caption"><strong>Two-car garage — Fort Collins</strong> · <a href="/projects/" style="color:var(--accent-deep);font-weight:600;">Customer-approved stories →</a></div>
       </div>
       <div>
         <div class="ba-pair ba-photo"><div class="ba-cell before"><img src="/images/job-before-after-2.jpg" alt="A real garage before and after an Easy Garage Cleaning cleanout" loading="lazy" width="1646" height="615"></div></div>
@@ -978,32 +752,20 @@ a:focus-visible,button:focus-visible{outline:2px solid #ff5b1f;outline-offset:2p
   </div>
 </section>
 
-<!-- RECENTLY COMPLETED -->
+<!-- CUSTOMER-APPROVED PROJECTS -->
 <section class="lazy-below-fold services" id="recent-jobs" aria-labelledby="recent-heading" style="background:var(--white);">
   <div class="wrap">
     <div class="section-head reveal">
-      <span class="mono section-num">Recent work</span>
-      <h2 class="section-title" id="recent-heading">Recently Completed in <em>Northern Colorado</em></h2>
-      <p class="section-sub">Real jobs from Fort Collins, Loveland, and Windsor — flat-rate garage reclaiming, next-day results.</p>
+      <span class="mono section-num">Project stories</span>
+      <h2 class="section-title" id="recent-heading">Results shared with <em>permission</em></h2>
+      <p class="section-sub">We publish job details only after customer approval and remove names, street addresses, and private notes.</p>
     </div>
     <div class="services-grid reveal">
-      <a href="/projects/fort-collins-garage-cleanout-old-town" class="service-card">
-        <div class="service-card-icon">🏠</div>
-        <h3>Old Town Fort Collins Garage</h3>
-        <p>Single-car garage packed 2 years — cleared in 3.5 hours. Client parked inside same evening.</p>
-        <span class="service-card-link">View project →</span>
-      </a>
-      <a href="/projects/loveland-storage-unit-cleanout" class="service-card">
-        <div class="service-card-icon">📦</div>
-        <h3>Loveland Storage Unit</h3>
-        <p>10x10 unit emptied in one trip. Client cancelled $165/month lease — saving $1,980/year.</p>
-        <span class="service-card-link">View project →</span>
-      </a>
-      <a href="/projects/windsor-garage-junk-removal" class="service-card">
-        <div class="service-card-icon">🚗</div>
-        <h3>Windsor Raindance Garage</h3>
-        <p>Two-car garage with fridge, washer, and sports gear — both bays clear same day.</p>
-        <span class="service-card-link">View project →</span>
+      <a href="/projects/" class="service-card">
+        <div class="service-card-icon">✓</div>
+        <h3>Customer-approved stories</h3>
+        <p>See project stories published from completed job records with explicit customer permission.</p>
+        <span class="service-card-link">View project gallery →</span>
       </a>
       <a href="/garage-cleanouts-fort-collins-co" class="service-card">
         <div class="service-card-icon"><svg class="service-icon-svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true"><path d="M3 10.5L12 4l9 6.5V20a1 1 0 01-1 1h-5v-6H9v6H4a1 1 0 01-1-1v-9.5z"/></svg></div>
@@ -1080,7 +842,7 @@ a:focus-visible,button:focus-visible{outline:2px solid #ff5b1f;outline-offset:2p
       <div class="logo"><span class="logo-mark"></span>Easy Garage Cleaning</div>
       <p class="community">The easiest way to reclaim your garage. Locally owned in Fort Collins — not a franchise call center.</p>
       <p class="community">Partners: <a href="https://fortcollinschamber.com/" rel="noopener">Fort Collins Chamber</a>, <a href="/blog/habitat-for-humanity-restore-fort-collins">Habitat ReStore</a>.</p>
-      <p class="foot-entity foot-nap"><strong>Easy Garage Cleaning</strong> · Easy Garage Cleaning LLC · 746 Star Grass Ln, Fort Collins, CO 80525 · <a href="tel:+19709991818">(970) 999-1818</a> · <a href="mailto:contact@easygaragecleaning.com">contact@easygaragecleaning.com</a> · <a href="https://easygaragecleaning.com/#business">Schema @id #business</a> · <a href="https://easygaragecleaning.com/llms.txt">llms.txt</a> · <a href="/humans.txt">humans.txt</a></p>
+      <p class="foot-entity foot-nap"><strong>Easy Garage Cleaning</strong> · Easy Garage Cleaning LLC · Fort Collins, CO 80525 · <a href="tel:+19709991818">(970) 999-1818</a> · <a href="mailto:contact@easygaragecleaning.com">contact@easygaragecleaning.com</a> · <a href="https://easygaragecleaning.com/#business">Schema @id #business</a> · <a href="https://easygaragecleaning.com/llms.txt">llms.txt</a> · <a href="/humans.txt">humans.txt</a></p>
     </div>
     <div class="foot-col">
       <h3>Services</h3>
@@ -1164,7 +926,7 @@ a:focus-visible,button:focus-visible{outline:2px solid #ff5b1f;outline-offset:2p
 <div class="mobile-sticky-cta" aria-label="Quick contact">
   <a href="tel:+19709991818" class="mobile-cta-btn mobile-cta-call">Call</a>
   <a href="sms:+19709991818?body=Hi!%20I'd%20like%20to%20schedule%20a%20free%20on-site%20walkthrough." class="mobile-cta-btn mobile-cta-text">Text</a>
-  <a href="/book" class="mobile-cta-btn mobile-cta-quote">Walkthrough</a>
+  <a href="/book#quote" class="mobile-cta-btn mobile-cta-quote">Walkthrough</a>
 </div>
 <script>
   function gtagSendEvent(url) {
@@ -1197,12 +959,19 @@ a:focus-visible,button:focus-visible{outline:2px solid #ff5b1f;outline-offset:2p
   if(!toggle||!drawer)return;
   if(toggle.dataset.navBound)return;
   toggle.dataset.navBound='1';
+  let returnFocus=null;
+  const background=[...document.body.children].filter(el=>el!==drawer&&el!==overlay&&el.tagName!=='SCRIPT');
+  const focusable=()=>[...drawer.querySelectorAll('a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])')].filter(el=>!el.hidden&&el.offsetParent!==null);
   function setOpen(open){
+    if(open)returnFocus=document.activeElement;
     toggle.setAttribute('aria-expanded',open);
     drawer.classList.toggle('open',open);
     drawer.setAttribute('aria-hidden',String(!open));
     if(overlay){overlay.classList.toggle('open',open);overlay.setAttribute('aria-hidden',String(!open));}
     document.body.classList.toggle('nav-open',open);
+    background.forEach(el=>{el.inert=open;});
+    if(open)setTimeout(()=>{(closeBtn||focusable()[0])?.focus();},0);
+    else if(returnFocus&&typeof returnFocus.focus==='function')returnFocus.focus();
   }
   toggle.addEventListener('click',()=>setOpen(toggle.getAttribute('aria-expanded')!=='true'));
   if(closeBtn)closeBtn.addEventListener('click',()=>setOpen(false));
@@ -1216,7 +985,16 @@ a:focus-visible,button:focus-visible{outline:2px solid #ff5b1f;outline-offset:2p
       if(links)links.classList.toggle('open',!open);
     });
   });
-  document.addEventListener('keydown',e=>{if(e.key==='Escape')setOpen(false);});
+  document.addEventListener('keydown',e=>{
+    if(!drawer.classList.contains('open'))return;
+    if(e.key==='Escape'){e.preventDefault();setOpen(false);return;}
+    if(e.key==='Tab'){
+      const items=focusable();if(!items.length)return;
+      const first=items[0],last=items[items.length-1];
+      if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus();}
+      else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus();}
+    }
+  });
 }
 if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',initNavDrawer);}else{initNavDrawer();}
   document.querySelectorAll('.multi-step-form').forEach(initMultiStepForm);

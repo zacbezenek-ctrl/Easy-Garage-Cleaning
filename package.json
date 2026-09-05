@@ -1,11 +1,9 @@
 {
   "name": "easy-garage-cleaning",
   "private": true,
+  "type": "module",
   "scripts": {
     "test": "node --test tests/*.test.mjs",
-    "check": "node --check employee-crm.js && node --check employee-suite.js"
-  },
-  "devDependencies": {
-    "firebase-admin": "^13.10.0"
+    "check": "node --check employee-suite.js"
   }
 }

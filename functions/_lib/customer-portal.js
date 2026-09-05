@@ -4,7 +4,7 @@ const COOKIE_NAME = 'egc_customer_portal';
 const encoder = new TextEncoder();
 
 function secret(env = {}) {
-  return String(env.CUSTOMER_PORTAL_SECRET || env.HUB_SESSION_SECRET || env.HIGHLEVEL_API_KEY || env.GHL_API_KEY || '');
+  return String(env.CUSTOMER_PORTAL_SECRET || env.HUB_SESSION_SECRET || '');
 }
 
 function base64Url(bytes) {

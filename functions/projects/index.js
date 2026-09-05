@@ -14,7 +14,9 @@ export async function onRequestGet({ env, next }) {
     .sort((a, b) => String(b.caseStudy.publishedAt || '').localeCompare(String(a.caseStudy.publishedAt || '')))
     .map(({ caseStudy: study }) => `<article class="project-card reveal"><p class="project-card-meta">${esc(study.city)} · ${esc(study.serviceType)} · ${esc(study.duration || 'Completed project')}</p><h3><a href="/projects/${encodeURIComponent(study.slug)}">${esc(study.title)}</a></h3><p>${esc(study.description)}</p><a href="/projects/${encodeURIComponent(study.slug)}" class="project-card-link content-link">Read case study →</a></article>`)
     .join('');
-  const html = (await response.text()).replace('<!-- DYNAMIC_PROJECTS -->', `<!-- DYNAMIC_PROJECTS -->${cards}`);
+  const html = (await response.text())
+    .replace('<!-- DYNAMIC_PROJECTS -->', `<!-- DYNAMIC_PROJECTS -->${cards}`)
+    .replace(/<article class="project-card reveal" id="projects-empty">[\s\S]*?<\/article>/, '');
   const headers = new Headers(response.headers);
   headers.set('Cache-Control', 'public, max-age=300');
   headers.delete('Content-Length');

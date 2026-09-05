@@ -1,0 +1,175 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null && request.auth.token.role != null;
+    }
+
+    function businessUser() {
+      return signedIn() && request.auth.token.business_access == true;
+    }
+
+    function assignedToUser(data) {
+      return signedIn() && (
+        data.assignedTo == request.auth.token.username ||
+        data.assignedTo == request.auth.token.display_name ||
+        (data.assignedCrew is list && request.auth.token.username in data.assignedCrew) ||
+        (data.assignedCrew is list && request.auth.token.display_name in data.assignedCrew)
+      );
+    }
+
+    function ownAvailability(data) {
+      return signedIn() && data.type == 'availability' && (
+        data.employee == request.auth.token.username ||
+        data.employee == request.auth.token.display_name
+      );
+    }
+
+    function assignedUpdateIsSafe() {
+      return assignedToUser(resource.data) && assignedToUser(request.resource.data) &&
+        request.resource.data.assignedTo == resource.data.assignedTo &&
+        request.resource.data.assignedCrew == resource.data.assignedCrew &&
+        assignedStageUpdateIsSafe() &&
+        assignedPaymentUpdateIsSafe() &&
+        assignedInvoiceUpdateIsSafe() &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'status', 'pipelineStatus', 'startedAt', 'completedAt', 'updatedAt',
+          'preJobProgress', 'preJobChecklist', 'postJobProgress', 'postJobChecklist',
+          'importantItemNotes', 'importantItemPhotoCount', 'importantItemsUpdatedAt',
+          'importantItemsRecordedAt', 'importantItemsVerifiedAt',
+          'arrivalTextStatus', 'lastCustomerMessage',
+          'lifecycleSync', 'lifecycleSyncPayload', 'lifecycleSyncAttempts',
+          'lifecycleSyncError', 'lifecycleSyncNextRetryAt', 'highlevelContactId',
+          'photoDriveUrl', 'proofPhotoCount', 'afterPhotoCount', 'receiptPhotoCount',
+          'photoSyncStatus', 'photoSyncError', 'photoSyncedAt',
+          'actualLoads', 'hoursOnSite', 'timeTracking', 'dumpFees', 'closeoutNotes',
+          'closeoutPreJobException', 'scopeVariance', 'payment', 'invoice',
+          'paymentSyncStatus', 'paymentSyncPayload', 'paymentSyncError',
+          'paymentSyncNextRetryAt', 'closeoutSyncStatus', 'closeoutSyncPayload',
+          'closeoutIdempotencyKey', 'closeoutSyncAttempts', 'closeoutSyncError',
+          'closeoutSyncNextRetryAt', 'reviewStatus', 'reviewRequestedAt',
+          'reviewRequestId'
+        ]);
+    }
+
+    function assignedStageUpdateIsSafe() {
+      let crewStages = ['scheduled', 'dispatched', 'arrived', 'in_progress', 'completed'];
+      let preservesVerifiedPaid =
+        request.resource.data.status == 'paid' &&
+        request.resource.data.pipelineStatus == 'paid' &&
+        'payment' in resource.data && resource.data.payment.verified == true &&
+        request.resource.data.payment == resource.data.payment;
+      return (request.resource.data.status in crewStages &&
+        request.resource.data.pipelineStatus in crewStages) || preservesVerifiedPaid;
+    }
+
+    function assignedPaymentUpdateIsSafe() {
+      let changed = request.resource.data.diff(resource.data).affectedKeys();
+      return !changed.hasAny(['payment']) ||
+        (('payment' in resource.data && 'verified' in resource.data.payment && resource.data.payment.verified == true)
+          ? request.resource.data.payment == resource.data.payment
+          : ('payment' in request.resource.data &&
+            (!('verified' in request.resource.data.payment) || request.resource.data.payment.verified != true)));
+    }
+
+    function assignedInvoiceUpdateIsSafe() {
+      let changed = request.resource.data.diff(resource.data).affectedKeys();
+      return !changed.hasAny(['invoice']) ||
+        ('invoice' in request.resource.data && request.resource.data.invoice.status != 'paid') ||
+        ('invoice' in request.resource.data && request.resource.data.invoice.status == 'paid' &&
+          'payment' in resource.data && resource.data.payment.verified == true &&
+          request.resource.data.payment == resource.data.payment);
+    }
+
+    function ownAvailabilityCreateIsSafe() {
+      return ownAvailability(request.resource.data) &&
+        request.resource.data.keys().hasOnly([
+          'id', 'type', 'recordType', 'employee', 'date', 'time', 'endTime',
+          'allDay', 'reason', 'status', 'createdAt', 'updatedAt'
+        ]);
+    }
+
+    function ownAvailabilityUpdateIsSafe() {
+      return ownAvailability(resource.data) && ownAvailability(request.resource.data) &&
+        request.resource.data.employee == resource.data.employee &&
+        request.resource.data.type == resource.data.type &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'status', 'cancelledAt', 'updatedAt'
+        ]);
+    }
+
+    function assignedCustomerCloseoutIsSafe() {
+      return signedIn() && resource.data.latestJobId is string &&
+        request.resource.data.latestJobId == resource.data.latestJobId &&
+        assignedToUser(get(/databases/$(database)/documents/jobs/$(resource.data.latestJobId)).data) &&
+        assignedCustomerPaymentSummaryIsSafe() &&
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+          'latestPhotoFolderUrl', 'latestProofPhotoCount', 'photoUpdatedAt',
+          'lastServiceAt', 'lastCloseoutNotes', 'lastPaymentStatus',
+          'lastPaymentBalance', 'updatedAt'
+        ]);
+    }
+
+    function assignedCustomerPaymentSummaryIsSafe() {
+      let changed = request.resource.data.diff(resource.data).affectedKeys();
+      let job = get(/databases/$(database)/documents/jobs/$(resource.data.latestJobId)).data;
+      return !changed.hasAny(['lastPaymentStatus', 'lastPaymentBalance']) ||
+        ('invoice' in job && request.resource.data.lastPaymentBalance == job.invoice.balance && (
+          (request.resource.data.lastPaymentStatus == 'paid' &&
+            job.invoice.status == 'paid' && 'payment' in job && job.payment.verified == true) ||
+          (request.resource.data.lastPaymentStatus == 'pending_verification' &&
+            job.invoice.status == 'pending_verification') ||
+          (request.resource.data.lastPaymentStatus == 'partial' && job.invoice.status == 'partial') ||
+          (request.resource.data.lastPaymentStatus == 'unpaid' && job.invoice.status == 'ready')
+        ));
+    }
+
+    // Managers can operate on the complete schedule. Crew can retrieve and
+    // update only their assigned work and manage their own availability.
+    // Open shifts are redacted and claimed through the authenticated server API.
+    match /jobs/{documentId} {
+      allow read: if businessUser() || assignedToUser(resource.data) || ownAvailability(resource.data);
+      allow create: if businessUser() || ownAvailabilityCreateIsSafe();
+      allow update: if businessUser() || assignedUpdateIsSafe() ||
+        ownAvailabilityUpdateIsSafe();
+      allow delete: if businessUser() || ownAvailability(resource.data);
+    }
+
+    match /customers/{documentId} {
+      allow read, create, delete: if businessUser();
+      allow update: if businessUser() || assignedCustomerCloseoutIsSafe();
+    }
+    match /leads/{documentId} {
+      allow read, write: if businessUser();
+    }
+    match /quotes/{documentId} {
+      allow read, write: if businessUser();
+    }
+    match /blocked_days/{documentId} {
+      allow read, write: if businessUser();
+    }
+    match /blocked_slots/{documentId} {
+      allow read, write: if businessUser();
+    }
+    match /audit_log/{documentId} {
+      allow create: if signedIn();
+      allow read, update, delete: if businessUser();
+    }
+
+    // Authentication records and retired contract records are server-only.
+    match /employee_profiles/{documentId} {
+      allow read, write: if false;
+    }
+    match /employee_accounts/{documentId} {
+      allow read, write: if false;
+    }
+    match /contracts/{documentId} {
+      allow read, write: if false;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

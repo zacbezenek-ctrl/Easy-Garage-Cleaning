@@ -14,7 +14,7 @@ SERVICES = [
         "desc": "Reclaim garage space fast — Fort Collins junk removal with photo quotes in 5 minutes. Flat-rate, no hidden fees. Text photos now for next-day availability.",
         "body_copy": """<p>When your garage becomes a junk room, <a href="/garage-cleanouts-fort-collins-co.html" class="content-link">garage cleanouts in Fort Collins</a> are the fastest path to parking inside again. We also handle single-item pickups like <a href="/couch-removal-fort-collins-co.html" class="content-link">couch removal</a>, <a href="/refrigerator-removal-fort-collins-co.html" class="content-link">refrigerator removal</a>, and <a href="/mattress-removal-fort-collins-co.html" class="content-link">mattress haul-away</a>.</p>
 <p>Serving Loveland and Windsor? See <a href="/junk-removal-loveland-co.html" class="content-link">junk removal in Loveland</a> and <a href="/junk-removal-windsor-co.html" class="content-link">junk removal in Windsor</a>. Read our guide on <a href="/blog/fort-collins-junk-removal-what-you-can-cant-throw-away.html" class="content-link">what you can and can't throw away in Fort Collins</a>, or compare options in <a href="/blog/junk-removal-vs-dumpster-rental-fort-collins.html" class="content-link">junk removal vs dumpster rental</a>.</p>
-<p>Recent job: <a href="/projects/windsor-garage-junk-removal.html" class="content-link">Windsor garage junk removal</a> — both bays cleared same day.</p>""",
+<p>See <a href="/projects/" class="content-link">customer-approved project stories</a> published with permission.</p>""",
         "h1": "Junk Removal Fort Collins CO",
         "hero_em": "Without the franchise runaround",
         "hero_sub": "That pile in the garage corner? The old couch in the basement? We haul it — flat-rate, fully insured, and usually next-day in Fort Collins. Text photos for a quote in 5 minutes.",
@@ -49,7 +49,7 @@ SERVICES = [
         "desc": "Park in your garage again — full Fort Collins cleanouts with haul-out, sweep & donations. Text photos for a flat-rate quote in 5 minutes. Next-day available.",
         "body_copy": """<p>Our Fort Collins garage cleanouts are built for reclaiming usable space — not just hauling junk. Pair with <a href="/garage-cleaning-fort-collins-co.html" class="content-link">garage cleaning in Fort Collins</a> or <a href="/garage-organization-fort-collins-co.html" class="content-link">garage organization in Fort Collins</a> to keep it organized long-term.</p>
 <p>Need help deciding? Read <a href="/blog/garage-cleanout-vs-storage-unit-fort-collins.html" class="content-link">garage cleanout vs storage unit</a> or <a href="/blog/how-to-prepare-for-garage-cleanout.html" class="content-link">how to prepare for a garage cleanout</a>. We also serve <a href="/garage-cleanouts-loveland-co.html" class="content-link">garage cleanouts in Loveland</a> and <a href="/garage-cleanouts-windsor-co.html" class="content-link">garage cleanouts in Windsor</a>.</p>
-<p>See a real result: <a href="/projects/fort-collins-garage-cleanout-old-town.html" class="content-link">Old Town Fort Collins garage cleanout</a>.</p>""",
+<p>See <a href="/projects/" class="content-link">customer-approved project stories</a> published with permission.</p>""",
         "show_video": True,
         "h1": "Garage Cleanouts Fort Collins CO",
         "hero_em": "Reclaim your garage",
@@ -104,7 +104,7 @@ SERVICES = [
         "related": [("/garage-cleanouts-fort-collins-co.html", "Garage Cleanouts"), ("/garage-organization-fort-collins-co.html", "Garage Organization"), ("/junk-removal-fort-collins-co.html", "Junk Removal"), ("/blog/garage-organization-after-cleanout-fort-collins.html", "Organization After Cleanout"), ("/projects/fort-collins-garage-cleanout-old-town.html", "Sample Project"), ("/", "Home")],
         "faqs": [
             ("Do you offer garage cleaning without a cleanout?", "Yes — if the junk is already gone, we can come sweep and reset the space. Most clients pair cleaning with our cleanout service."),
-            ("How much does garage cleaning cost in Fort Collins?", "Garage cleaning runs $300–$3,200 depending on size and condition — from a single-car reset to a full multi-bay deep clean with floor degreasing and stain treatment. Flat-rate from your photos. Bundled with a cleanout, it's discounted."),
+            ("How much does garage cleaning cost in Fort Collins?", "Garage cleaning runs $300–$3,200 depending on size and condition — from a single-car reset to a full multi-bay deep clean with floor degreasing and stain treatment. The exact flat rate is set during a free on-site walkthrough. Bundled with a cleanout, it's discounted."),
             ("Do you pressure wash garage floors?", "We focus on sweep and wipe service. Heavy oil stain removal or pressure washing can be quoted separately."),
             ("What cleaning supplies do you use?", "We bring brooms, dusters, bags, and basic cleaning supplies. No harsh chemicals unless you request them."),
             ("How long does garage cleaning take?", "Most single-car garages take 1–2 hours. Two-car garages 2–3 hours depending on condition."),
@@ -222,7 +222,7 @@ SERVICES = [
         "slug": "storage-unit-cleanout-fort-collins-co.html",
         "title": "Storage Unit Cleanout Fort Collins CO | Stop Paying Rent",
         "desc": "Empty your Fort Collins storage unit in one trip — flat-rate cleanout, donations handled. Text photos for quote in 5 minutes. Cancel that lease.",
-        "body_copy": """<p>Paying monthly for stuff you'll never use? Compare <a href="/blog/garage-cleanout-vs-storage-unit-fort-collins.html" class="content-link">garage cleanout vs storage unit</a> costs. See our <a href="/projects/loveland-storage-unit-cleanout.html" class="content-link">Loveland storage unit cleanout project</a> — client saved $1,980/year.</p>""",
+        "body_copy": """<p>Paying monthly for stuff you no longer use? Compare <a href="/blog/garage-cleanout-vs-storage-unit-fort-collins.html" class="content-link">garage cleanout vs storage unit</a> costs, then browse <a href="/projects/" class="content-link">customer-approved project stories</a>.</p>""",
         "h1": "Storage Unit Cleanout Fort Collins CO",
         "hero_em": "Stop paying for clutter",
         "hero_sub": "Done paying $150/month for a unit full of stuff you'll never use? We empty Fort Collins storage units in one trip — haul, donate, and sweep so you can cancel the lease.",
@@ -327,7 +327,7 @@ CITIES = [
         "slug": "junk-removal-loveland-co.html",
         "title": "Junk Removal Loveland CO | Fast Next-Day Service",
         "desc": "Loveland junk removal — flat-rate from Centerra to Downtown. Text photos for quote in 5 minutes. No travel surcharge. Next-day available.",
-        "body_copy": """<p>Also need the garage cleared? See <a href="/garage-cleanouts-loveland-co.html" class="content-link">garage cleanouts in Loveland</a> or our Fort Collins services: <a href="/junk-removal-fort-collins-co.html" class="content-link">junk removal in Fort Collins</a>. Sample job: <a href="/projects/loveland-storage-unit-cleanout.html" class="content-link">Loveland storage unit cleanout</a>.</p>""",
+        "body_copy": """<p>Also need the garage cleared? See <a href="/garage-cleanouts-loveland-co.html" class="content-link">garage cleanouts in Loveland</a>, our <a href="/junk-removal-fort-collins-co.html" class="content-link">Fort Collins junk removal</a>, or <a href="/projects/" class="content-link">customer-approved project stories</a>.</p>""",
         "h1": "Junk Removal Loveland CO",
         "city": "Loveland",
         "service": "junk removal",
@@ -373,7 +373,7 @@ CITIES = [
         "slug": "junk-removal-windsor-co.html",
         "title": "Junk Removal Windsor CO | Fast Next-Day Service",
         "desc": "Windsor junk removal — Raindance, Pelican Lakes & downtown. Text photos for flat-rate quote in 5 minutes. Next-day available.",
-        "body_copy": """<p>Garage packed after move-in? Try <a href="/garage-cleanouts-windsor-co.html" class="content-link">garage cleanouts in Windsor</a>. See our <a href="/projects/windsor-garage-junk-removal.html" class="content-link">Raindance garage junk removal project</a>.</p>""",
+        "body_copy": """<p>Garage packed after move-in? Try <a href="/garage-cleanouts-windsor-co.html" class="content-link">garage cleanouts in Windsor</a>, then see <a href="/projects/" class="content-link">customer-approved project stories</a>.</p>""",
         "h1": "Junk Removal Windsor CO",
         "city": "Windsor",
         "service": "junk removal",
@@ -464,7 +464,7 @@ CITIES = [
     {
         "slug": "timnath-junk-removal.html",
         "title": "Timnath Junk Removal CO | Easy Garage Cleaning",
-        "desc": "Timnath junk removal & garage cleanouts — flat-rate from photos, next-day when available. Timnath Ranch & Larimer County. 5-min quote.",
+        "desc": "Timnath junk removal and garage cleanouts with walkthrough-based flat pricing and next-day service when available. Serving Timnath Ranch and Larimer County.",
         "body_copy": """<p>Timnath is minutes from our Fort Collins base — see <a href="/junk-removal-fort-collins-co.html" class="content-link">Fort Collins junk removal</a>, <a href="/garage-cleanouts-fort-collins-co.html" class="content-link">garage cleanouts</a>, and <a href="/service-areas.html" class="content-link">all service areas</a>.</p>""",
         "h1": "Timnath Junk Removal & Garage Cleanout",
         "city": "Timnath",
@@ -488,7 +488,7 @@ CITIES = [
         "slug": "old-town-fort-collins-junk-removal.html",
         "title": "Old Town Junk Removal Fort Collins | Easy Garage",
         "desc": "Junk removal & garage cleanout in Old Town Fort Collins. Historic homes, narrow detached garages. Flat-rate, insured, 5-min quote.",
-        "body_copy": """<p>Historic detached garages and alley access are common in Old Town — see our <a href="/projects/fort-collins-garage-cleanout-old-town.html" class="content-link">Old Town garage project</a>, <a href="/garage-cleanouts-fort-collins-co.html" class="content-link">Fort Collins garage cleanouts</a>, and <a href="/junk-removal-fort-collins-co.html" class="content-link">junk removal</a>.</p>""",
+        "body_copy": """<p>Historic detached garages and alley access are common in Old Town. See <a href="/garage-cleanouts-fort-collins-co.html" class="content-link">Fort Collins garage cleanouts</a>, <a href="/junk-removal-fort-collins-co.html" class="content-link">junk removal</a>, and <a href="/projects/" class="content-link">customer-approved project stories</a>.</p>""",
         "h1": "Old Town Fort Collins Junk Removal",
         "city": "Old Town Fort Collins",
         "service": "junk removal",
@@ -706,7 +706,7 @@ COMPARISON_PAGES = [
 <h2 id="junk-removal-pricing">How junk removal pricing works here</h2>
 <p>Easy Garage Cleaning quotes <strong>flat-rate from photos</strong>. Typical Larimer County ranges: $99–150 single item, $250–400 partial garage, $400–650 standard garage, $650+ packed two-car. Includes labor, hauling, dump fees, and donations — see our <a href="/pricing.html" class="content-link">pricing guide</a>.</p>
 <h2 id="garage-cleanout">Garage cleanouts: why removal beats a bin</h2>
-<p>Garage clutter mixes heavy furniture, donation-worthy items, and awkward shapes. A dumpster forces you to sort, carry, and guess yardage while a bin sits in your driveway. Our <a href="/garage-cleanouts-fort-collins-co.html" class="content-link">Fort Collins garage cleanouts</a> sort on site, donate to <a href="/blog/habitat-for-humanity-restore-fort-collins.html" class="content-link">Habitat ReStore</a>, and sweep so you park same day. See our <a href="/projects/fort-collins-garage-cleanout-old-town.html" class="content-link">Old Town case study</a>.</p>
+<p>Garage clutter mixes heavy furniture, donation-worthy items, and awkward shapes. A dumpster forces you to sort, carry, and guess yardage while a bin sits in your driveway. Our <a href="/garage-cleanouts-fort-collins-co.html" class="content-link">Fort Collins garage cleanouts</a> sort on site, route usable items toward donation, and sweep the work area. See <a href="/projects/" class="content-link">customer-approved project stories</a>.</p>
 <h2 id="driveway-damage">Driveway and HOA considerations</h2>
 <p>Loaded roll-offs can rut asphalt or crack older concrete. HOAs in Centerra, Raindance, and Fossil Creek often limit how long a dumpster can sit curbside. Junk removal avoids container damage and street permits — the truck is only on site while we load.</p>
 <h2 id="permits">Do you need a permit for a dumpster in Fort Collins?</h2>
@@ -763,7 +763,7 @@ COMPARISON_PAGES = [
         "h1": "Garage Cleanout vs Storage Unit in Fort Collins",
         "intro": "Northern Colorado homeowners often pay $100–200/month for a storage unit while their garage still can't fit a car. Here's the math on reclaiming your garage vs renting more space.",
         "content": """<h2>The hidden cost of storage units</h2>
-<p>A $165/month unit costs <strong>$1,980 per year</strong> — every year — for stuff you rarely touch. Our <a href="/projects/loveland-storage-unit-cleanout.html" class="content-link">Loveland storage unit cleanout</a> helped a client cancel their lease and save that money going forward.</p>
+<p>A $165/month unit costs <strong>$1,980 per year</strong> — every year — for stuff you rarely touch. Compare your actual monthly rent with the one-time cost of clearing the unit.</p>
 <h2>Garage cleanout: one-time investment</h2>
 <p>Most <a href="/garage-cleanouts-fort-collins-co.html" class="content-link">Fort Collins garage cleanouts</a> fall in the $400–$650 range — less than 4 months of storage rent for a typical unit. You reclaim parking, eliminate a monthly bill, and get donation receipts on usable items.</p>
 <table class="compare-table"><thead><tr><th></th><th>Garage Cleanout</th><th>Storage Unit (10x10)</th></tr></thead><tbody>

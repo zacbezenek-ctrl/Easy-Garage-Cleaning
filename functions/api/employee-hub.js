@@ -1,12 +1,12 @@
 import { getHubSession, hasBusinessAccess, listHubUserProfiles } from '../_lib/hub-session.js';
+import { firebaseServiceAccountConfigured, firestoreFetch } from '../_lib/firebase-service-account.js';
 
 const PROJECT_ID = 'egcw-1ec83';
-const DEFAULT_FIREBASE_API_KEY = 'AIzaSyA8g4UAW4P4bsCrQNZhUe81CbC7BvjJbNc';
 const RECORD_TYPE = 'employee_hub_v2';
 const COLLECTIONS = new Set(['profiles', 'timeEntries', 'announcements', 'requests', 'incidents', 'equipment', 'training', 'teamMessages', 'jobMessages', 'messageReads']);
 const TRAINING_VERSION = '2026-09-employee-os-v1';
 const TRAINING_CHECKS = new Map([['welcome', { answer: 1 }], ['safety', { answer: 2, supervisor: true }], ['property', { answer: 1 }], ['truck', { answer: 1, supervisor: true }], ['proof', { answer: 1 }], ['closeout', { answer: 0 }]]);
-const HOST = /(^|\.)easygaragecleaning\.com$|\.pages\.dev$|^localhost(:\d+)?$|^127\.0\.0\.1(:\d+)?$/;
+const HOST = /^(?:easygaragecleaning\.com|www\.easygaragecleaning\.com|easy-garage-cleaning\.pages\.dev|localhost(?::\d+)?|127\.0\.0\.1(?::\d+)?)$/;
 const encoder = new TextEncoder();
 
 function reply(status, body) {
@@ -35,7 +35,7 @@ function fromBase64Url(value) {
 }
 
 function vaultSecret(env) {
-  return String(env.EMPLOYEE_HUB_DATA_SECRET || env.HUB_SESSION_SECRET || env.HIGHLEVEL_API_KEY || env.GHL_API_KEY || '');
+  return String(env.EMPLOYEE_HUB_DATA_SECRET || env.HUB_SESSION_SECRET || '');
 }
 
 async function encryptionKey(env) {
@@ -104,8 +104,8 @@ function decodeValue(field) {
 async function readJob(env, id) {
   const safeId = String(id || '').trim();
   if (!safeId || safeId.length > 180) return null;
-  const url = `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents/jobs/${encodeURIComponent(safeId)}?key=${encodeURIComponent(firebaseKey(env))}`;
-  const response = await fetch(url);
+  const url = `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents/jobs/${encodeURIComponent(safeId)}`;
+  const response = await firestoreFetch(env, url);
   if (response.status === 404) return null;
   if (!response.ok) throw new Error(`Job access check failed (${response.status})`);
   const document = await response.json();
@@ -122,14 +122,10 @@ function parseFirestoreDocument(document) {
   };
 }
 
-function firebaseKey(env) {
-  return String(env.FIREBASE_API_KEY || DEFAULT_FIREBASE_API_KEY);
-}
-
 async function readOne(env, collection, id) {
   const documentId = await opaqueId(env, collection, id);
-  const url = `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents/jobs/${encodeURIComponent(documentId)}?key=${encodeURIComponent(firebaseKey(env))}`;
-  const response = await fetch(url);
+  const url = `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents/jobs/${encodeURIComponent(documentId)}`;
+  const response = await firestoreFetch(env, url);
   if (response.status === 404) return { documentId, data: null };
   if (!response.ok) throw new Error(`Employee Hub storage read failed (${response.status})`);
   const stored = parseFirestoreDocument(await response.json());
@@ -139,8 +135,8 @@ async function readOne(env, collection, id) {
 }
 
 async function readAll(env) {
-  const url = `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents:runQuery?key=${encodeURIComponent(firebaseKey(env))}`;
-  const response = await fetch(url, {
+  const url = `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents:runQuery`;
+  const response = await firestoreFetch(env, url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ structuredQuery: {
@@ -166,8 +162,8 @@ async function writeOne(env, collection, id, data) {
   const documentId = await opaqueId(env, collection, id);
   const updatedAt = new Date().toISOString();
   const encrypted = await seal(env, documentId, { ...data, id, updatedAt: data.updatedAt || updatedAt });
-  const url = `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents/jobs/${encodeURIComponent(documentId)}?key=${encodeURIComponent(firebaseKey(env))}`;
-  const response = await fetch(url, {
+  const url = `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents/jobs/${encodeURIComponent(documentId)}`;
+  const response = await firestoreFetch(env, url, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(firestoreDoc(collection, documentId, encrypted, updatedAt)),
@@ -342,7 +338,7 @@ async function authorizeMutation(env, session, collection, id, incoming, existin
 export async function onRequestGet({ request, env }) {
   const session = await getHubSession(request, env);
   if (!session) return reply(401, { ok: false, error: 'Sign in required' });
-  if (!vaultSecret(env) || !firebaseKey(env)) return reply(503, { ok: false, error: 'Employee Hub storage is not configured' });
+  if (!vaultSecret(env) || !firebaseServiceAccountConfigured(env)) return reply(503, { ok: false, error: 'Employee Hub storage is not configured' });
   try {
     const rows = await readAll(env);
     const collections = Object.fromEntries([...COLLECTIONS].map(name => [name, []]));
@@ -373,8 +369,11 @@ export async function onRequestPost({ request, env }) {
   if (!allowed(request)) return reply(403, { ok: false, error: 'Forbidden origin' });
   const session = await getHubSession(request, env);
   if (!session) return reply(401, { ok: false, error: 'Sign in required' });
-  if (!vaultSecret(env) || !firebaseKey(env)) return reply(503, { ok: false, error: 'Employee Hub storage is not configured' });
-  const body = await request.json().catch(() => ({}));
+  if (!vaultSecret(env) || !firebaseServiceAccountConfigured(env)) return reply(503, { ok: false, error: 'Employee Hub storage is not configured' });
+  const raw = await request.text();
+  if (raw.length > 128 * 1024) return reply(413, { ok: false, error: 'Request is too large' });
+  let body;
+  try { body = JSON.parse(raw); } catch { return reply(400, { ok: false, error: 'Invalid JSON' }); }
   const collection = String(body.collection || '');
   const id = String(body.id || '').trim();
   if (!COLLECTIONS.has(collection) || !id || id.length > 180) return reply(400, { ok: false, error: 'Invalid employee record' });

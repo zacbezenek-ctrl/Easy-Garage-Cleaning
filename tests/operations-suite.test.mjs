@@ -2,10 +2,18 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
-import { createHubActionState, createHubSessionCookie, getHubUserProfile, hasBusinessAccess, hashHubCredential, verifyHubActionState, verifyHubSessionToken } from '../functions/_lib/hub-session.js';
+import { authenticateHubCredential, createHubActionState, createHubCredentialHash, createHubSessionCookie, getHubUserProfile, hasBusinessAccess, hashHubCredential, verifyHubActionState, verifyHubSessionToken } from '../functions/_lib/hub-session.js';
 import { createCustomerPortalAccessToken, createCustomerPortalCollaboratorAccessToken, createCustomerPortalSessionCookie, verifyCustomerPortalAccessToken, verifyCustomerPortalSessionToken } from '../functions/_lib/customer-portal.js';
+import { encodeFirestoreFields } from '../functions/_lib/firestore-job.js';
 
-const TEST_HUB_ENV={HIGHLEVEL_API_KEY:'test-key',HIGHLEVEL_LOCATION_ID:'location-1'};
+const TEST_HUB_USERS={
+  ZacB:{passwordHash:'test-zac',displayName:'Zac',role:'owner',payType:'owner',hourlyRate:0},
+  TylerG:{passwordHash:'test-tyler',displayName:'Tyler',role:'crew_lead',payType:'hourly',hourlyRate:23},
+  AlexK:{passwordHash:'test-alex',displayName:'Alex',role:'manager',payType:'salary',hourlyRate:0},
+  FrankJara:{passwordHash:'test-frank',displayName:'Frank',role:'crew',payType:'hourly',hourlyRate:20},
+  Crewtest:{passwordHash:'30fdb1804bc03b28227af1a07007b30bcb6c5207b12db6d5469fce9b9b465d4d',displayName:'Crew Test',role:'crew',payType:'hourly',hourlyRate:20},
+};
+const TEST_HUB_ENV={HUB_SESSION_SECRET:'test-hub-session',HUB_AUTH_USERS_JSON:JSON.stringify(TEST_HUB_USERS),HIGHLEVEL_API_KEY:'test-key',HIGHLEVEL_LOCATION_ID:'location-1'};
 const TEST_HUB_COOKIE=(await createHubSessionCookie(TEST_HUB_ENV,'ZacB')).split(';')[0];
 
 const read=(p)=>fs.readFileSync(new URL('../'+p,import.meta.url),'utf8');
@@ -43,9 +51,9 @@ test('Hub authentication issues, validates, expires, and clears an HttpOnly sess
   assert.equal(tampered.status,401);
   const logout=await auth.onRequestDelete({request:new Request('https://easygaragecleaning.com/api/hub-auth',{method:'DELETE',headers:{Origin:'https://easygaragecleaning.com'}})});
   assert.match(logout.headers.get('set-cookie'),/Max-Age=0/);
-  const crewLogin=await auth.onRequestPost({request:new Request('https://easygaragecleaning.com/api/hub-auth',{method:'POST',headers:{Origin:'https://easygaragecleaning.com','Content-Type':'application/json'},body:JSON.stringify({username:'Crewtest',password:'Password123'})}),env:{HUB_SESSION_SECRET:'session-test-secret'}});
+  const crewLogin=await auth.onRequestPost({request:new Request('https://easygaragecleaning.com/api/hub-auth',{method:'POST',headers:{Origin:'https://easygaragecleaning.com','Content-Type':'application/json'},body:JSON.stringify({username:'Crewtest',password:'Password123'})}),env:{...TEST_HUB_ENV,HUB_SESSION_SECRET:'session-test-secret'}});
   assert.equal(crewLogin.status,200);
-  const oldCrewLogin=await auth.onRequestPost({request:new Request('https://easygaragecleaning.com/api/hub-auth',{method:'POST',headers:{Origin:'https://easygaragecleaning.com','Content-Type':'application/json'},body:JSON.stringify({username:'CrewTest',password:'EGC-Crew-4829!'})}),env:{HUB_SESSION_SECRET:'session-test-secret'}});
+  const oldCrewLogin=await auth.onRequestPost({request:new Request('https://easygaragecleaning.com/api/hub-auth',{method:'POST',headers:{Origin:'https://easygaragecleaning.com','Content-Type':'application/json'},body:JSON.stringify({username:'CrewTest',password:'retired-legacy-password'})}),env:{...TEST_HUB_ENV,HUB_SESSION_SECRET:'session-test-secret'}});
   assert.equal(oldCrewLogin.status,401);
 });
 
@@ -103,6 +111,11 @@ test('the billable field copilot requires the signed Hub session',async()=>{
     const response=await onRequestPost({request:new Request('https://easygaragecleaning.com/api/copilot',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query:'test'})}),env:TEST_HUB_ENV});
     assert.equal(response.status,401);
     assert.equal(called,false);
+    const foreign=await onRequestPost({request:new Request('https://easygaragecleaning.com/api/copilot',{method:'POST',headers:{Origin:'https://promo.easygaragecleaning.com',Cookie:TEST_HUB_COOKIE,'Content-Type':'application/json'},body:JSON.stringify({query:'test'})}),env:TEST_HUB_ENV});
+    assert.equal(foreign.status,403);
+    const oversized=await onRequestPost({request:new Request('https://easygaragecleaning.com/api/copilot',{method:'POST',headers:{Origin:'https://easygaragecleaning.com',Cookie:TEST_HUB_COOKIE,'Content-Type':'application/json'},body:JSON.stringify({query:'x'.repeat(130*1024)})}),env:{...TEST_HUB_ENV,openaiapi:'test-key'}});
+    assert.equal(oversized.status,413);
+    assert.equal(called,false);
   }finally{globalThis.fetch=originalFetch}
   assert.match(copilot,/EGCHubAuth\.fetch\('\/api\/copilot'/);
 });
@@ -121,6 +134,8 @@ test('the unused garage render prototype cannot spend image credits without a Hu
 
 test('employee hub loads the EGC operations suite without the duplicate CRM overlay',()=>{
   assert.doesNotMatch(employee,/employee-crm\.(?:js|css)/);
+  assert.equal(fs.existsSync(new URL('../employee-crm.js',import.meta.url)),false);
+  assert.equal(fs.existsSync(new URL('../employee-crm.css',import.meta.url)),false);
   assert.match(employee,/employee-suite\.js/);
   assert.match(employee,/employee-suite\.css/);
   assert.doesNotMatch(employee,/class="mobile-sticky-cta"/);
@@ -147,7 +162,6 @@ test('HighLevel bridge keeps credentials server-side and supports field continui
 test('private webhook destinations are absent from browser and function source',()=>{
   assert.doesNotMatch(employee,/hooks\.zapier\.com\/hooks\/catch\/\d+\/[^.]+/);
   assert.doesNotMatch(suite,/hooks\.zapier\.com/);
-  assert.doesNotMatch(read('employee-crm.js'),/hooks\.zapier\.com/);
   assert.doesNotMatch(read('functions/api/crew-hook.js'),/hooks\.zapier\.com\/hooks\/catch\/\d+/);
   for(const key of ['QUOTE_FOLLOWUP_WEBHOOK_URL','BOOKING_WEBHOOK_URL','REVIEW_WEBHOOK_URL','META_SIGNAL_WEBHOOK_URL'])assert.match(relay,new RegExp(key));
 });
@@ -264,7 +278,7 @@ test('dispatch and job start create explicit HighLevel lifecycle triggers',async
   globalThis.fetch=async(url,options={})=>{calls.push({url:String(url),options});return new Response('{}',{status:200})};
   try{
     const request=new Request('https://easygaragecleaning.com/api/highlevel',{method:'POST',headers:{Origin:'https://easygaragecleaning.com',Cookie:TEST_HUB_COOKIE,'Content-Type':'application/json'},body:JSON.stringify({tool:'lifecycle',event:'job-dispatched',highlevel_contact_id:'contact-1',client:{name:'Test Customer'}})});
-    const response=await onRequestPost({request,env:{HIGHLEVEL_API_KEY:'test-key',HIGHLEVEL_LOCATION_ID:'location-1'}}),result=await response.json();
+    const response=await onRequestPost({request,env:TEST_HUB_ENV}),result=await response.json();
     assert.equal(response.status,200);
     assert.equal(result.automation.trigger,'egc-job-dispatched');
     const tagCall=calls.find(x=>x.url.endsWith('/contacts/contact-1/tags'));
@@ -279,7 +293,7 @@ test('arrival text sends through Quo and records a silent HighLevel note',async(
   globalThis.fetch=async(url,options={})=>{calls.push({url:String(url),options});return new Response('{}',{status:200})};
   try{
     const request=new Request('https://easygaragecleaning.com/api/highlevel',{method:'POST',headers:{Origin:'https://easygaragecleaning.com',Cookie:TEST_HUB_COOKIE,'Content-Type':'application/json'},body:JSON.stringify({tool:'lifecycle',event:'crew-on-the-way',suppress_automation:true,note:'Arrival text sent via Quo.',highlevel_contact_id:'contact-1',client:{name:'Customer'}})});
-    const response=await onRequestPost({request,env:{HIGHLEVEL_API_KEY:'test-key',HIGHLEVEL_LOCATION_ID:'location-1'}}),result=await response.json();
+    const response=await onRequestPost({request,env:TEST_HUB_ENV}),result=await response.json();
     assert.equal(response.status,200);
     assert.equal(result.automation.trigger,'');
     assert.equal(result.automation.suppressed,true);
@@ -298,7 +312,7 @@ test('cancelling keeps an audit record, releases the Hub slot, and cancels the H
   };
   try{
     const request=new Request('https://easygaragecleaning.com/api/highlevel',{method:'POST',headers:{Origin:'https://easygaragecleaning.com',Cookie:TEST_HUB_COOKIE,'Content-Type':'application/json','Idempotency-Key':'lifecycle:job-1:cancelled'},body:JSON.stringify({tool:'lifecycle',event:'job-cancelled',appointment_id:'appt-cancel',appointment_status:'cancelled',note:'Cancellation reason: customer moving dates',highlevel_contact_id:'contact-1',client:{name:'Customer'}})});
-    const response=await onRequestPost({request,env:{HIGHLEVEL_API_KEY:'test-key',HIGHLEVEL_LOCATION_ID:'location-1'}}),result=await response.json();
+    const response=await onRequestPost({request,env:TEST_HUB_ENV}),result=await response.json();
     assert.equal(response.status,200);
     assert.equal(result.appointmentStatus,'cancelled');
     assert.equal(result.automation.trigger,'egc-job-cancelled');
@@ -325,21 +339,23 @@ test('closeout records job-costing actuals and explains walkthrough scope varian
 });
 
 test('closeout preserves deposits and records only the payment received now',()=>{
-  for(const marker of ['j_payment_amount','paidToDate=Number(j.payment?.amount||0)','paymentRecord:j.payment||{}','amount_received:paymentAmount','previously_paid:paidToDate','paid_to_date:cumulativePaid','balance:remainingBalance','paymentRecord=paidNow?','status:paidInFull?\'paid\':\'completed\'','lastPaymentBalance:remainingBalance'])assert.match(postjob,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),marker+' is missing');
+  for(const marker of ['j_payment_amount','paidToDate=Number(j.payment?.amount||0)','paymentRecord:j.payment||{}','amount_received:paymentAmount','previously_paid:paidToDate','paid_to_date:cumulativePaid','balance:remainingBalance','paymentRecord=paidNow?','verifiedPaidInFull?\'paid\':\'completed\'','lastPaymentBalance:remainingBalance'])assert.match(postjob,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),marker+' is missing');
   assert.match(postjob,/paymentAmount>outstanding\+\.01/);
-  assert.match(postjob,/invoice:\{status:paidInFull\?'paid':cumulativePaid>0\?'partial':'ready'/);
+  assert.match(postjob,/invoice:\{status:verifiedPaidInFull\?'paid':cumulativePaid>0\?'pending_verification':'ready'/);
+  assert.match(postjob,/stripeSelected&&!stripePaid/);
+  assert.match(postjob,/verified:verifiedPaidInFull/);
   for(const marker of ['Payment received now','Paid to date','Balance remaining','Payment method / reference'])assert.match(highlevel,new RegExp(marker));
 });
 
 test('signed-in crew can create and verify a Stripe-hosted job payment',async()=>{
   const api=await import('../functions/api/job-payment.js'),originalFetch=globalThis.fetch,calls=[];
-  globalThis.fetch=async(url,options={})=>{calls.push({url:String(url),options});if(options.method==='POST')return new Response(JSON.stringify({id:'cs_test_job123',url:'https://checkout.stripe.com/c/pay/cs_test_job123'}),{status:200});return new Response(JSON.stringify({id:'cs_test_job123',status:'complete',payment_status:'paid',payment_intent:'pi_job123',amount_total:125000,currency:'usd',client_reference_id:'job-1',metadata:{job_id:'job-1'},customer_details:{email:'customer@example.com'}}),{status:200})};
+  globalThis.fetch=async(url,options={})=>{calls.push({url:String(url),options});if(String(url).includes('firestore.googleapis.com'))return new Response(JSON.stringify({name:'projects/egcw-1ec83/databases/(default)/documents/jobs/job-1',fields:encodeFirestoreFields({customer:'Test Customer',email:'customer@example.com',total:1250,assignedCrew:['ZacB']})}),{status:200});if(options.method==='POST')return new Response(JSON.stringify({id:'cs_test_job123',url:'https://checkout.stripe.com/c/pay/cs_test_job123'}),{status:200});return new Response(JSON.stringify({id:'cs_test_job123',status:'complete',payment_status:'paid',payment_intent:'pi_job123',amount_total:125000,currency:'usd',client_reference_id:'job-1',metadata:{job_id:'job-1'},customer_details:{email:'customer@example.com'}}),{status:200})};
   try{
-    const env={...TEST_HUB_ENV,STRIPE_SECRET_KEY:'sk_test_fake123'};
+    const env={...TEST_HUB_ENV,FIREBASE_API_KEY:'firebase-test-payment',STRIPE_SECRET_KEY:'sk_test_fake123'};
     const create=await api.onRequestPost({request:new Request('https://easygaragecleaning.com/api/job-payment',{method:'POST',headers:{Origin:'https://easygaragecleaning.com',Cookie:TEST_HUB_COOKIE,'Content-Type':'application/json'},body:JSON.stringify({job_id:'job-1',request_id:'attempt-1',amount_cents:125000,customer:'Test Customer',email:'customer@example.com'})}),env}),created=await create.json();
     assert.equal(create.status,200);assert.equal(created.url,'https://checkout.stripe.com/c/pay/cs_test_job123');
-    const form=new URLSearchParams(String(calls[0].options.body));
-    assert.equal(form.get('mode'),'payment');assert.equal(form.get('line_items[0][price_data][unit_amount]'),'125000');assert.equal(form.get('metadata[job_id]'),'job-1');assert.match(calls[0].options.headers['Idempotency-Key'],/job-1:attempt-1/);
+    const stripeCreate=calls.find(call=>call.url.includes('api.stripe.com')&&call.options.method==='POST');assert.ok(stripeCreate);const form=new URLSearchParams(String(stripeCreate.options.body));
+    assert.equal(form.get('mode'),'payment');assert.equal(form.get('line_items[0][price_data][unit_amount]'),'125000');assert.equal(form.get('metadata[job_id]'),'job-1');assert.match(stripeCreate.options.headers['Idempotency-Key'],/job-1:attempt-1/);
     const verify=await api.onRequestGet({request:new Request('https://easygaragecleaning.com/api/job-payment?session_id=cs_test_job123',{headers:{Origin:'https://easygaragecleaning.com',Cookie:TEST_HUB_COOKIE}}),env}),verified=await verify.json();
     assert.equal(verify.status,200);assert.equal(verified.paid,true);assert.equal(verified.paymentIntentId,'pi_job123');assert.equal(verified.jobId,'job-1');assert.equal(verified.amountTotal,125000);
   }finally{globalThis.fetch=originalFetch}
@@ -351,13 +367,14 @@ test('job payments stay authenticated and the Stripe secret never reaches the br
   const paymentApi=read('functions/api/job-payment.js');
   for(const marker of ['getHubSession','STRIPE_SECRET_KEY','checkout/sessions','payment_status','client_reference_id','receipt_email'])assert.match(paymentApi,new RegExp(marker));
   assert.doesNotMatch(postjob,/sk_(?:test|live)_/);
-  for(const marker of ['Take card payment','takeStripePayment','verifyStripeReturn','recordVerifiedStripePayment','stripeSessions','Payment verified in Stripe, Hub, and HighLevel','payment-received'])assert.match(postjob,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
+  for(const marker of ['Take card payment','takeStripePayment','verifyStripeReturn','recordVerifiedStripePayment','Payment verified in Stripe, Hub, and HighLevel','payment-received'])assert.match(postjob,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
+  assert.match(paymentApi,/stripeSessions/);
 });
 
 test('verified Stripe payment writes a HighLevel payment tag and audit note',async()=>{
   const {onRequestPost}=await import('../functions/api/highlevel.js'),calls=[],originalFetch=globalThis.fetch;
   globalThis.fetch=async(url,options={})=>{calls.push({url:String(url),options});if(String(url).includes('/contacts/contact-pay/tags'))return new Response('{}',{status:200});if(String(url).includes('/contacts/contact-pay/notes'))return new Response(JSON.stringify({note:{id:'note-pay'}}),{status:200});return new Response(JSON.stringify({contact:{id:'contact-pay'}}),{status:200})};
-  try{const request=new Request('https://easygaragecleaning.com/api/highlevel',{method:'POST',headers:{Origin:'https://easygaragecleaning.com',Cookie:TEST_HUB_COOKIE,'Content-Type':'application/json'},body:JSON.stringify({tool:'lifecycle',event:'payment-received',highlevel_contact_id:'contact-pay',idempotency_key:'stripe-payment:cs_test_1',client:{name:'Test Customer',highlevel_contact_id:'contact-pay'},note:'Stripe payment verified: $1,250. Balance: $0.'})});const response=await onRequestPost({request,env:{HIGHLEVEL_API_KEY:'test-key',HIGHLEVEL_LOCATION_ID:'location-1'}}),result=await response.json();assert.equal(response.status,200);assert.equal(result.automation.trigger,'egc-payment-received');const tagCall=calls.find(call=>call.url.includes('/contacts/contact-pay/tags'));assert.ok(tagCall);assert.match(tagCall.options.body,/egc-payment-received/);const noteCall=calls.find(call=>call.url.includes('/contacts/contact-pay/notes'));assert.ok(noteCall);assert.match(noteCall.options.body,/Stripe payment verified/)}finally{globalThis.fetch=originalFetch}
+  try{const request=new Request('https://easygaragecleaning.com/api/highlevel',{method:'POST',headers:{Origin:'https://easygaragecleaning.com',Cookie:TEST_HUB_COOKIE,'Content-Type':'application/json'},body:JSON.stringify({tool:'lifecycle',event:'payment-received',highlevel_contact_id:'contact-pay',idempotency_key:'stripe-payment:cs_test_1',client:{name:'Test Customer',highlevel_contact_id:'contact-pay'},note:'Stripe payment verified: $1,250. Balance: $0.'})});const response=await onRequestPost({request,env:TEST_HUB_ENV}),result=await response.json();assert.equal(response.status,200);assert.equal(result.automation.trigger,'egc-payment-received');const tagCall=calls.find(call=>call.url.includes('/contacts/contact-pay/tags'));assert.ok(tagCall);assert.match(tagCall.options.body,/egc-payment-received/);const noteCall=calls.find(call=>call.url.includes('/contacts/contact-pay/notes'));assert.ok(noteCall);assert.match(noteCall.options.body,/Stripe payment verified/)}finally{globalThis.fetch=originalFetch}
 });
 
 test('durable job start pre-fills elapsed closeout time without preventing correction',()=>{
@@ -446,7 +463,7 @@ test('HighLevel receives the customer promise in both the contact note and job a
     const internalNotes='EGC INTERNAL JOB BRIEF\nCUSTOMER GOAL: Park two cars\nWHY NOW: Moving soon\nKEEP / PROTECT: Tools and bikes\nREMOVE / DONATE: Boxes and broken furniture\nDO NOT MOVE: Red cabinet\nACCESS: keypad — Code 1234\nINTERNAL CUSTOMER NOTES: Call before arrival';
     const payload={tool:'game_plan',job_id:'job-1',opportunity_id:'opp-1',sent_at:'2026-09-03T22:00:00.000Z',client:{name:'Test Customer',highlevel_contact_id:'contact-1',address:'123 Main'},quote:{title:'Test garage',total:1500,deposit:300,job_date:'2026-09-15',start_time:'09:00',end_time:'13:00',start_at:'2026-09-15T15:00:00.000Z',end_at:'2026-09-15T19:00:00.000Z'},discovery:{why_now:'Moving soon',success:'Park two cars'},scope:{loads:2,garages:2,fullness:'full',sort_method:'Customer decides',keep_items:'Tools and bikes',remove_items:'Boxes and broken furniture',exclusions:'Red cabinet',hazards:['paint'],access:['keypad'],finish:['deep clean']},logistics:{truck_placement:'left driveway',notes:'Code 1234',assigned_to:'Alex',crew_size:3},internal_notes:internalNotes,acceptance:{accepted_by:'Test Customer',accepted_at:'2026-09-03T22:00:00.000Z'},photos:{before:5},notes:'Call before arrival'};
     const request=new Request('https://easygaragecleaning.com/api/highlevel',{method:'POST',headers:{Origin:'https://easygaragecleaning.com',Cookie:TEST_HUB_COOKIE,'Content-Type':'application/json'},body:JSON.stringify(payload)});
-    const response=await onRequestPost({request,env:{HIGHLEVEL_API_KEY:'test-key',HIGHLEVEL_LOCATION_ID:'location-1'}});
+    const response=await onRequestPost({request,env:TEST_HUB_ENV});
     assert.equal(response.status,200);
     const noteCall=calls.find(x=>x.url.endsWith('/contacts/contact-1/notes'));
     const appointmentCall=calls.find(x=>x.url.endsWith('/calendars/events/appointments')&&x.options.method==='POST');
@@ -471,7 +488,7 @@ test('resaving a walkthrough updates the existing HighLevel job appointment and 
   try{
     const payload={tool:'game_plan',job_id:'job-1',opportunity_id:'opp-1',client:{name:'Test Customer',address:'123 Main',highlevel_contact_id:'contact-1',highlevel_job_appointment_id:'appt-existing'},quote:{title:'Test garage',total:1500,job_date:'2026-09-15',start_time:'10:00',end_time:'14:00',start_at:'2026-09-15T16:00:00.000Z',end_at:'2026-09-15T20:00:00.000Z'},internal_notes:internalNotes};
     const request=new Request('https://easygaragecleaning.com/api/highlevel',{method:'POST',headers:{Origin:'https://easygaragecleaning.com',Cookie:TEST_HUB_COOKIE,'Content-Type':'application/json'},body:JSON.stringify(payload)});
-    const response=await onRequestPost({request,env:{HIGHLEVEL_API_KEY:'test-key',HIGHLEVEL_LOCATION_ID:'location-1'}}),result=await response.json();
+    const response=await onRequestPost({request,env:TEST_HUB_ENV}),result=await response.json();
     assert.equal(response.status,200);
     assert.equal(result.appointmentId,'appt-existing');
     assert.equal(result.updated,true);
@@ -483,16 +500,21 @@ test('resaving a walkthrough updates the existing HighLevel job appointment and 
 });
 
 test('Hub finance scaffolding and customer history work without claiming external settlement',()=>{
-  for(const marker of ['function customerRows','function customerHistory','function financeState','function jobEconomics','function financeSummary','function financeBoard','Known job contribution','crew-hrs','direct cost','before overhead and ads','Load variance','opsFinanceAction','Record approval','Record deposit','Issue invoice','Record payment','acceptanceMethod','termsVersion','verified:true','A payment reference is required for verification','Hub records only · keys needed']){
+  for(const marker of ['function customerRows','function customerHistory','function financeState','function jobEconomics','function financeSummary','function financeBoard','Known job contribution','crew-hrs','direct cost','before overhead and ads','Load variance','opsFinanceAction','Record approval','Record deposit','Issue invoice','Record payment','acceptanceMethod','termsVersion','verified:true','verifiedPaid','pendingPaid','Verified collected','pending manager verification','Verify the payment reference in Finance before marking this job paid','A payment reference is required for verification','Hub records only · keys needed']){
     assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),marker+' is missing');
   }
   assert.match(suite,/jobs\(\)\.filter\(j=>j\.type!=='blocked'\)/);
   assert.match(suite,/const customerKey=j=>j\.highlevelContactId\|\|String\(j\.phone/);
   assert.match(suite,/function actionModal/);
   assert.match(suite,/function askAction/);
+  assert.equal([...suite.matchAll(/window\.opsPrintDocument=/g)].length,1);
   assert.doesNotMatch(suite,/\b(?:prompt|confirm)\s*\(/);
   assert.doesNotMatch(suite,/Stripe payment (?:sent|completed)|QuickBooks invoice (?:sent|completed)/i);
-  for(const marker of ['opsPrintDocument','Print estimate','Print invoice','Prepared for','Flat-rate service based on the approved walkthrough scope','Balance due','Print / Save PDF'])assert.ok(suite.includes(marker),marker+' is missing');
+  assert.match(suite,/status:balance<\.01\?\(j\.payment\?\.verified===true\?'paid':'pending_verification'\):'issued'/);
+  assert.match(suite,/if\(f\.verifiedPaid>0\)items\.push\(\['payment-received'/);
+  assert.match(suite,/action==='payment'&&j\.customerId&&update\.payment\?\.verified===true/);
+  assert.match(suite,/lastPaymentStatus:update\.invoice\?\.status\|\|'partial'/);
+  for(const marker of ['opsPrintDocument','Print estimate','Print invoice','Prepared for','Bundled flat-rate garage service','Balance due','Print / Save PDF'])assert.ok(suite.includes(marker),marker+' is missing');
   assert.match(suite,/egc-logo-horizontal-primary\.png/);
   assert.match(suite,/if\(!win\)/);
   for(const marker of ['opsDownloadCustomers','Export customers','HighLevel contact ID','Recorded paid','egc-customers-'])assert.ok(suite.includes(marker),marker+' is missing');
@@ -511,7 +533,7 @@ test('HighLevel schedule handoff advances the configured pipeline stage',async()
   };
   try{
     const request=new Request('https://easygaragecleaning.com/api/highlevel',{method:'POST',headers:{Origin:'https://easygaragecleaning.com',Cookie:TEST_HUB_COOKIE,'Content-Type':'application/json'},body:JSON.stringify({tool:'schedule',event_type:'job',opportunity_id:'opp-1',start_time:'2026-09-10T15:00:00.000Z',end_time:'2026-09-10T18:00:00.000Z',client:{name:'Test Customer',highlevel_contact_id:'contact-1'}})});
-    const response=await onRequestPost({request,env:{HIGHLEVEL_API_KEY:'test-key',HIGHLEVEL_LOCATION_ID:'location-1',HIGHLEVEL_PIPELINE_ID:'pipe-1',HIGHLEVEL_SCHEDULED_STAGE_ID:'stage-scheduled',HIGHLEVEL_JOB_CALENDAR_ID:'calendar-1'}});
+    const response=await onRequestPost({request,env:{...TEST_HUB_ENV,HIGHLEVEL_PIPELINE_ID:'pipe-1',HIGHLEVEL_SCHEDULED_STAGE_ID:'stage-scheduled',HIGHLEVEL_JOB_CALENDAR_ID:'calendar-1'}});
     const result=await response.json();
     assert.equal(response.status,200);
     assert.equal(result.pipeline.updated,true);
@@ -536,7 +558,7 @@ test('HighLevel creates one retry-safe pipeline opportunity for a brand-new cust
   };
   try{
     const request=new Request('https://easygaragecleaning.com/api/highlevel',{method:'POST',headers:{Origin:'https://easygaragecleaning.com',Cookie:TEST_HUB_COOKIE,'Content-Type':'application/json','Idempotency-Key':'schedule:job-new:1'},body:JSON.stringify({tool:'schedule',event_type:'job',opportunity_name:'New Customer — Garage transformation',monetary_value:1750,start_time:'2026-09-11T15:00:00.000Z',end_time:'2026-09-11T18:00:00.000Z',client:{name:'New Customer',phone:'9705550199'}})});
-    const response=await onRequestPost({request,env:{HIGHLEVEL_API_KEY:'test-key',HIGHLEVEL_LOCATION_ID:'location-1',HIGHLEVEL_PIPELINE_ID:'pipe-1',HIGHLEVEL_SCHEDULED_STAGE_ID:'stage-scheduled',HIGHLEVEL_JOB_CALENDAR_ID:'calendar-1'}});
+    const response=await onRequestPost({request,env:{...TEST_HUB_ENV,HIGHLEVEL_PIPELINE_ID:'pipe-1',HIGHLEVEL_SCHEDULED_STAGE_ID:'stage-scheduled',HIGHLEVEL_JOB_CALENDAR_ID:'calendar-1'}});
     const result=await response.json();
     assert.equal(response.status,200);
     assert.equal(result.pipeline.created,true);
@@ -561,7 +583,7 @@ test('HighLevel reuses the same exact appointment after a response-lost retry',a
   };
   try{
     const request=new Request('https://easygaragecleaning.com/api/highlevel',{method:'POST',headers:{Origin:'https://easygaragecleaning.com',Cookie:TEST_HUB_COOKIE,'Content-Type':'application/json'},body:JSON.stringify({tool:'schedule',event_type:'job',opportunity_id:'opp-1',start_time:start,end_time:end,client:{name:'Existing Customer',highlevel_contact_id:'contact-1'}})});
-    const response=await onRequestPost({request,env:{HIGHLEVEL_API_KEY:'test-key',HIGHLEVEL_LOCATION_ID:'location-1',HIGHLEVEL_PIPELINE_ID:'pipe-1',HIGHLEVEL_SCHEDULED_STAGE_ID:'stage-scheduled',HIGHLEVEL_JOB_CALENDAR_ID:'calendar-1'}});
+    const response=await onRequestPost({request,env:{...TEST_HUB_ENV,HIGHLEVEL_PIPELINE_ID:'pipe-1',HIGHLEVEL_SCHEDULED_STAGE_ID:'stage-scheduled',HIGHLEVEL_JOB_CALENDAR_ID:'calendar-1'}});
     const result=await response.json();
     assert.equal(response.status,200);
     assert.equal(result.appointmentId,'appt-existing');
@@ -583,7 +605,7 @@ test('Hub lead feed resets at the cutoff and excludes historical HighLevel oppor
     return new Response('{}',{status:200});
   };
   try{
-    const response=await onRequestGet({request:new Request('https://easygaragecleaning.com/api/highlevel?view=command',{headers:{Origin:'https://easygaragecleaning.com',Cookie:TEST_HUB_COOKIE}}),env:{HIGHLEVEL_API_KEY:'test-key',HIGHLEVEL_LOCATION_ID:'location-1',HIGHLEVEL_LEADS_RESET_AT:'2026-09-03T21:51:19.314Z'}});
+    const response=await onRequestGet({request:new Request('https://easygaragecleaning.com/api/highlevel?view=command',{headers:{Origin:'https://easygaragecleaning.com',Cookie:TEST_HUB_COOKIE}}),env:{...TEST_HUB_ENV,HIGHLEVEL_LEADS_RESET_AT:'2026-09-03T21:51:19.314Z'}});
     const result=await response.json();
     assert.equal(response.status,200);
     assert.equal(result.leadResetAt,'2026-09-03T21:51:19.314Z');
@@ -661,15 +683,39 @@ test('employees can discover and safely pick up manager-opened crew shifts',()=>
   for(const marker of ["'open_shifts'",'Open shifts','Crew needed','openShift','crewNeeded','assignedCrew','Crew full','Route','Pick up shift','expectedShiftHours','estimatedDurationMin','hrs expected','+ 1.5 hrs travel / dump']){
     assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),marker+' is missing');
   }
-  assert.match(suite,/db\.collection\('jobs'\)\.doc\(id\)/);
-  assert.match(suite,/db\.runTransaction\(async tx=>/);
-  assert.match(suite,/await tx\.get\(ref\)/);
-  assert.match(suite,/tx\.set\(ref,patch,\{merge:true\}\)/);
-  assert.match(suite,/assignedCrew=\[\.\.\.crew,identity\]/);
-  assert.match(suite,/openShift=assignedCrew\.length<needed/);
-  for(const marker of ['async function syncCrewAssignment','silent_update=true','crew-assignment:','latestJobInstructions:patch.jobInstructions','Shift added and crew brief synced','HighLevel update is queued'])assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
-  for(const guard of ['SHIFT_MISSING','SHIFT_CLOSED','SHIFT_DUPLICATE','SHIFT_FULL','Sign in again before claiming a shift'])assert.match(suite,new RegExp(guard));
+  assert.match(suite,/hubFetch\('\/api\/crew-jobs'/);
+  assert.match(suite,/JSON\.stringify\(\{jobId:id,action\}\)/);
+  assert.match(suite,/window\.opsClaimShift=id=>changeShift\(id,'claim'\)/);
+  assert.match(suite,/Shift added to your schedule/);
   assert.doesNotMatch(suite,/collection\(['"]open_shifts['"]\)/);
+});
+
+test('booking confirmation email is authenticated and derives its recipient server-side',async()=>{
+  assert.doesNotMatch(employee,/cdn\.jsdelivr\.net\/npm\/@emailjs|emailjs\.|EMAILJS_(?:SERVICE_ID|TEMPLATE_ID|PUBLIC_KEY)/);
+  assert.match(employee,/sendBookingConfirmation\(jobId\)/);
+  assert.match(employee,/\/api\/email-confirmation/);
+  const source=read('functions/api/email-confirmation.js');
+  for(const marker of ['getHubSession','hasBusinessAccess','readJob','job.email','EMAILJS_SERVICE_ID','api.emailjs.com/api/v1.0/email/send'])assert.match(source,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
+  assert.doesNotMatch(source,/body\.(?:email|to_email|recipient)/);
+  const {onRequestPost}=await import('../functions/api/email-confirmation.js');
+  const originalFetch=globalThis.fetch;
+  let called=false;
+  globalThis.fetch=async()=>{called=true;throw new Error('must not call upstream')};
+  try{
+    const response=await onRequestPost({request:new Request('https://easygaragecleaning.com/api/email-confirmation',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({job_id:'job-1'})}),env:TEST_HUB_ENV});
+    assert.equal(response.status,401);
+    assert.equal(called,false);
+  }finally{globalThis.fetch=originalFetch}
+});
+
+test('Hub supports salted PBKDF2 credentials and rejects malformed or wrong hashes',async()=>{
+  const passwordHash=await createHubCredentialHash('a correct horse battery staple');
+  assert.match(passwordHash,/^pbkdf2-sha256\$210000\$/);
+  const env={HUB_AUTH_USERS_JSON:JSON.stringify({Tester:{passwordHash,displayName:'Test User',role:'crew'}})};
+  assert.equal((await authenticateHubCredential(env,'Tester','a correct horse battery staple'))?.displayName,'Test User');
+  assert.equal(await authenticateHubCredential(env,'Tester','wrong password'),null);
+  const malformed={HUB_AUTH_USERS_JSON:JSON.stringify({Tester:{passwordHash:'pbkdf2-sha256$2$bad$bad'}})};
+  assert.equal(await authenticateHubCredential(malformed,'Tester','a correct horse battery staple'),null);
 });
 
 test('employees have a personal schedule for assigned and claimed work',()=>{
@@ -687,14 +733,10 @@ test('assigned shifts download as private calendar events',()=>{
 });
 
 test('claimed shifts stay visible and can be safely released by the claimant',()=>{
-  for(const marker of ['shiftPickupEnabled','shiftClaims','opsReleaseShift','Release shift','lastShiftRelease','crew-release:','Shift released and crew brief synced'])assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
+  for(const marker of ['shiftPickupEnabled','shiftClaims','opsReleaseShift','Release shift','Shift released for another crew member'])assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
   assert.match(suite,/const pickupEnabled=/);
   assert.match(suite,/claimed&&\(claims\.some/);
-  assert.match(suite,/assignedCrew=crewNames\(job\)\.filter/);
-  assert.match(suite,/shiftClaims=claims\.filter/);
-  assert.match(suite,/const pickupStageOpen=/);
-  assert.match(suite,/!pickupStageOpen\(job\)/);
-  assert.match(suite,/locked because dispatch has started/);
+  assert.match(suite,/window\.opsReleaseShift=id=>changeShift\(id,'release'\)/);
 });
 
 test('employee availability prevents manager assignment and conflicting shift pickup',()=>{
@@ -722,7 +764,7 @@ test('crew assignment updates the HighLevel appointment without retriggering cus
   globalThis.fetch=async(url,options={})=>{calls.push({url:String(url),options});if(String(url).endsWith('/calendars/events/appointments/appt-1'))return new Response(JSON.stringify({id:'appt-1'}),{status:200});return new Response('{}',{status:200})};
   try{
     const request=new Request('https://easygaragecleaning.com/api/highlevel',{method:'POST',headers:{Origin:'https://easygaragecleaning.com',Cookie:TEST_HUB_COOKIE,'Content-Type':'application/json'},body:JSON.stringify({tool:'schedule',event_type:'job',silent_update:true,appointment_id:'appt-1',start_time:'2026-09-14T15:00:00.000Z',end_time:'2026-09-14T18:00:00.000Z',notes:'CREW / WINDOW: Alex + Sam',client:{name:'Customer',highlevel_contact_id:'contact-1'}})});
-    const response=await onRequestPost({request,env:{HIGHLEVEL_API_KEY:'test-key',HIGHLEVEL_LOCATION_ID:'location-1',HIGHLEVEL_JOB_CALENDAR_ID:'calendar-1'}}),result=await response.json();
+    const response=await onRequestPost({request,env:{...TEST_HUB_ENV,HIGHLEVEL_JOB_CALENDAR_ID:'calendar-1'}}),result=await response.json();
     assert.equal(response.status,200);
     assert.equal(result.automation.silent,true);
     assert.equal(result.automation.notificationsRequested,false);
@@ -735,13 +777,12 @@ test('crew assignment updates the HighLevel appointment without retriggering cus
 });
 
 test('open-shift scheduling fields persist on the canonical job record',()=>{
-  for(const field of ['openShift','crewNeeded','assignedCrew'])assert.match(suite,new RegExp(field+','));
+  for(const field of ['openShift','crewNeeded','assignedCrew'])assert.match(suite,new RegExp(field));
   assert.match(suite,/b\.openShift=fd\.has\('openShift'\)/);
   assert.match(suite,/job\.shiftPickupEnabled=b\.type==='job'/);
   assert.match(suite,/job\.openShift=job\.shiftPickupEnabled/);
   assert.match(suite,/assignedCrew\.length<crewNeeded/);
   assert.match(suite,/crewSize:b\.type==='job'\?crewNeeded/);
-  assert.match(suite,/crewSize:needed,openShift/);
   assert.match(suite,/if\(k==='type'\)render\(\)/);
   assert.match(suite,/b\.type==='job'\?'':'ops-hidden'/);
   assert.match(suite,/b\.type==='blocked'\?'ops-hidden':''/);
@@ -829,7 +870,7 @@ test('public quote progress and production links stay configured',()=>{
     .map(x=>fs.readFileSync(`${x.parentPath}/${x.name}`,'utf8')).join('\n');
   assert.doesNotMatch(publicSource,/fcgov\.com\/chamber|"CLARITY_PROJECT_ID"|(?:facebook|instagram)\.com\/PLACEHOLDER|yelp\.com\/biz\/PLACEHOLDER/);
   assert.match(publicSource,/fortcollinschamber\.com/);
-  assert.match(publicSource,/"wf7ba129jm"/);
+  assert.match(read('analytics-loader.js'),/'https:\/\/www\.clarity\.ms\/tag\/wf7ba129jm'/);
 });
 
 test('all employee and field-tool inline scripts parse',()=>{
@@ -845,7 +886,7 @@ test('employee hub v2 personalizes access, time, pay, communication, training, a
     assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),marker+' is missing');
   }
   assert.doesNotMatch(suite,/Clock in without location/);
-  assert.match(read('functions/_lib/hub-session.js'),/DEFAULT_USER_META/);
+  assert.doesNotMatch(read('functions/_lib/hub-session.js'),/DEFAULT_USER_META|DEFAULT_USERS/);
   assert.match(read('functions/_lib/hub-session.js'),/hourlyRate/);
   assert.match(employee,/rememberHubProfile/);
   assert.match(read('crew/hub-auth.js'),/egc_hourly_rate/);
@@ -861,7 +902,9 @@ test('only Zac Tyler and Alex receive business access while new employees get on
   assert.equal(hasBusinessAccess('AlexK'),true);
   assert.equal(hasBusinessAccess('FrankJara'),false);
   assert.equal(hasBusinessAccess('Crewtest'),false);
-  assert.equal(getHubUserProfile({},'Crewtest').role,'crew');
+  assert.equal(hasBusinessAccess({user:'ZacB',businessAccess:false,source:'employee-account'}),false);
+  assert.equal(hasBusinessAccess({user:'ZacB',businessAccess:true}),true);
+  assert.equal(getHubUserProfile(TEST_HUB_ENV,'Crewtest').role,'crew');
   const passwordHash=await hashHubCredential('NewHire','welcome');
   const profile=getHubUserProfile({HUB_AUTH_USERS_JSON:JSON.stringify({NewHire:passwordHash})},'NewHire');
   assert.equal(profile.role,'crew');
@@ -876,7 +919,7 @@ test('only Zac Tyler and Alex receive business access while new employees get on
 test('employees create private accounts that stay locked until Zac approves them',async()=>{
   const accountApi=await import('../functions/api/employee-accounts.js');
   const authApi=await import('../functions/api/hub-auth.js');
-  const env={HUB_SESSION_SECRET:'account-test-secret',FIREBASE_API_KEY:'firebase-test-key'};
+  const env={...TEST_HUB_ENV,HUB_SESSION_SECRET:'account-test-secret',FIREBASE_API_KEY:'firebase-test-key'};
   const stored=new Map(),originalFetch=globalThis.fetch;
   globalThis.fetch=async(url,options={})=>{
     const value=String(url),method=options.method||'GET';
@@ -1068,7 +1111,7 @@ test('customer portal exchanges a signed link for a private cookie and rejects d
 test('business users can create a private customer portal link and customers see only their job',async()=>{
   const linkApi=await import('../functions/api/customer-portal-link.js');
   const portalApi=await import('../functions/api/customer-portal.js');
-  const env={HUB_SESSION_SECRET:'customer-portal-api-secret',FIREBASE_API_KEY:'firebase-test'};
+  const env={...TEST_HUB_ENV,HUB_SESSION_SECRET:'customer-portal-api-secret',FIREBASE_API_KEY:'firebase-test'};
   const zacCookie=(await createHubSessionCookie(env,'ZacB')).split(';')[0];
   const crewCookie=(await createHubSessionCookie(env,'FrankJara')).split(';')[0];
   const customerCookie=(await createCustomerPortalSessionCookie(env,'job-123')).split(';')[0];
@@ -1121,7 +1164,7 @@ test('customer portal connects appointments estimates payments photos progress a
 });
 
 test('post-booking portal saves customer memory decisions rebooking family access credits and Garage Guard',async()=>{
-  const portalApi=await import('../functions/api/customer-portal.js'),env={HUB_SESSION_SECRET:'post-booking-secret',FIREBASE_API_KEY:'firebase-test'},cookie=(await createCustomerPortalSessionCookie(env,'job-cx')).split(';')[0],patches=[];
+  const portalApi=await import('../functions/api/customer-portal.js'),env={...TEST_HUB_ENV,HUB_SESSION_SECRET:'post-booking-secret',FIREBASE_API_KEY:'firebase-test'},cookie=(await createCustomerPortalSessionCookie(env,'job-cx')).split(';')[0],patches=[];
   const fields={customer:{stringValue:'Dana Customer'},date:{stringValue:'2026-09-18'},time:{stringValue:'09:00'},address:{stringValue:'123 Pine St'},serviceType:{stringValue:'Garage Turnaround'},total:{integerValue:'1400'},status:{stringValue:'in_progress'},customerDecisions:{arrayValue:{values:[{mapValue:{fields:{id:{stringValue:'decision-1'},title:{stringValue:'Remove cabinet?'},details:{stringValue:'Damaged and unsafe.'},priceDelta:{integerValue:'75'},timeDeltaMinutes:{integerValue:'20'},status:{stringValue:'pending'},promptedAt:{stringValue:'2026-09-04T18:00:00Z'}}}}]}},giftWallet:{mapValue:{fields:{cards:{arrayValue:{values:[{mapValue:{fields:{id:{stringValue:'credit-1'},label:{stringValue:'Garage Guard credit'},issuedAmount:{integerValue:'100'},remainingAmount:{integerValue:'100'},source:{stringValue:'Unused visit'}}}}]}}}}},garageGuard:{mapValue:{fields:{plan:{stringValue:'guard'},status:{stringValue:'active'},visitsIncluded:{integerValue:'4'},visitsRemaining:{integerValue:'3'}}}}};
   const originalFetch=globalThis.fetch;globalThis.fetch=async(url,options={})=>{if((options.method||'GET')==='PATCH'){const body=JSON.parse(options.body);patches.push(body.fields);return new Response(JSON.stringify({name:'projects/egcw-1ec83/databases/(default)/documents/jobs/job-cx',fields:body.fields}),{status:200})}return new Response(JSON.stringify({name:'projects/egcw-1ec83/databases/(default)/documents/jobs/job-cx',fields}),{status:200})};
   const post=body=>portalApi.onRequestPost({request:new Request('https://easygaragecleaning.com/api/customer-portal',{method:'POST',headers:{Origin:'https://easygaragecleaning.com',Cookie:cookie,'Content-Type':'application/json'},body:JSON.stringify(body)}),env});

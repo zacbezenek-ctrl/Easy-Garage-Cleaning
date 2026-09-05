@@ -2,7 +2,7 @@ import { clearCustomerPortalSessionCookie, createCustomerPortalCollaboratorAcces
 import { patchJob, patchJobsAtomic, readJob } from '../_lib/firestore-job.js';
 
 const STRIPE_API = 'https://api.stripe.com/v1';
-const HOST = /(^|\.)easygaragecleaning\.com$|\.pages\.dev$|^localhost(:\d+)?$|^127\.0\.0\.1(:\d+)?$/;
+const HOST = /^(?:easygaragecleaning\.com|www\.easygaragecleaning\.com|easy-garage-cleaning\.pages\.dev|localhost(?::\d+)?|127\.0\.0\.1(?::\d+)?)$/;
 
 function reply(status, body, headers = {}) {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', ...headers } });
@@ -236,12 +236,14 @@ export async function onRequestPost({ request, env }) {
     if (finance.total < .01) return reply(409, { ok: false, error: 'The estimate is not ready yet' });
     if (result.job.estimate?.validUntil && String(result.job.estimate.validUntil) < new Date().toISOString().slice(0, 10)) return reply(409, { ok: false, error: 'This estimate has expired. Ask the team for an updated estimate.' });
     const approval = { status: 'approved', approvedAt: now, approvedBy: signedName, amount: finance.total, source: 'customer_portal' };
-    await patchJob(env, result.session.jobId, {
-      customerApproval: approval,
-      estimate: { ...(result.job.estimate || {}), status: 'approved', acceptedAt: now, acceptedBy: signedName, amount: finance.total },
-      quoteStatus: 'approved',
-      updatedAt: now,
-    });
+    try {
+      await patchJob(env, result.session.jobId, {
+        customerApproval: approval,
+        estimate: { ...(result.job.estimate || {}), status: 'approved', acceptedAt: now, acceptedBy: signedName, amount: finance.total },
+        quoteStatus: 'approved',
+        updatedAt: now,
+      }, result.jobUpdateTime);
+    } catch { return reply(409, { ok: false, error: 'The estimate changed. Refresh before approving it.' }); }
     return reply(200, { ok: true, approval });
   }
 
@@ -298,12 +300,14 @@ export async function onRequestPost({ request, env }) {
       const charge = checkout.payment_intent?.latest_charge || {};
       const receiptUrl = /^https:\/\/pay\.stripe\.com\/receipts\//.test(charge.receipt_url || '') ? charge.receipt_url : '';
       const paymentItem = { sessionId, paymentIntentId: checkout.payment_intent?.id || checkout.payment_intent || '', amount: amountPaid, verifiedAt: now };
-      await patchJob(env, result.session.jobId, {
-        payment: { ...(result.job.payment || {}), amount: paidTotal, lastAmount: amountPaid, method: 'stripe', verified: true, receiptUrl, receiptEmail: safe(checkout.customer_details?.email || checkout.customer_email, 180), stripeSessions: known ? previousSessions : [...previousSessions, paymentItem].slice(-20) },
-        invoice: { ...(result.job.invoice || {}), amount: current.total, paid: paidTotal, balance, status: balance < .01 ? 'paid' : 'partial', updatedAt: now },
-        paymentSyncStatus: 'pending',
-        updatedAt: now,
-      });
+      try {
+        await patchJob(env, result.session.jobId, {
+          payment: { ...(result.job.payment || {}), amount: paidTotal, lastAmount: amountPaid, method: 'stripe', verified: true, receiptUrl, receiptEmail: safe(checkout.customer_details?.email || checkout.customer_email, 180), stripeSessions: known ? previousSessions : [...previousSessions, paymentItem].slice(-20) },
+          invoice: { ...(result.job.invoice || {}), amount: current.total, paid: paidTotal, balance, status: balance < .01 ? 'paid' : 'partial', updatedAt: now },
+          paymentSyncStatus: 'pending',
+          updatedAt: now,
+        }, result.jobUpdateTime);
+      } catch { return reply(409, { ok: false, error: 'The payment record changed. Refresh to confirm the latest balance.' }); }
       return reply(200, { ok: true, paid: true, amountPaid, balance, receiptUrl });
     } catch { return reply(502, { ok: false, error: 'Stripe payment could not be verified' }); }
   }
@@ -364,7 +368,9 @@ export async function onRequestPost({ request, env }) {
     if (current.status !== 'pending') return reply(409, { ok: false, error: 'This decision has already been answered' });
     const updated = decisions.map(item => item.id === decisionId ? { ...item, status: response, respondedAt: now, responseBy: signedName, responseNote: safe(body.note, 600), responseSource: 'customer_portal' } : item);
     const approvedTotal = updated.filter(item => item.status === 'approved').reduce((sum, item) => sum + Math.max(0, amount(item.priceDelta)), 0);
-    await patchJob(env, result.session.jobId, { customerDecisions: updated, approvedChangeTotal: approvedTotal, customerDecisionUpdatedAt: now, updatedAt: now });
+    try {
+      await patchJob(env, result.session.jobId, { customerDecisions: updated, approvedChangeTotal: approvedTotal, customerDecisionUpdatedAt: now, updatedAt: now }, result.jobUpdateTime);
+    } catch { return reply(409, { ok: false, error: 'That decision changed. Refresh before answering it.' }); }
     return reply(200, { ok: true, decision: updated.find(item => item.id === decisionId), approvedChangeTotal: approvedTotal });
   }
 
@@ -374,9 +380,13 @@ export async function onRequestPost({ request, env }) {
     const preferredDate = timing === 'choose_date' ? isoDate(body.preferred_date) : '';
     if (timing === 'choose_date' && (!preferredDate || preferredDate < new Date().toISOString().slice(0, 10))) return reply(400, { ok: false, error: 'Choose a future preferred date' });
     const requests = Array.isArray(result.job.rebookingRequests) ? result.job.rebookingRequests : [];
+    const duplicate = requests.find(request => request.status === 'pending' && request.kind === kind && request.timing === timing && (request.preferredDate || '') === preferredDate && safe(request.notes, 600) === safe(body.notes, 600));
+    if (duplicate) return reply(200, { ok: true, request: duplicate });
     if (requests.filter(request => request.status === 'pending').length >= 3) return reply(409, { ok: false, error: 'The team already has your rebooking request' });
     const request = { id: id('', 'rebook'), kind, timing, preferredDate, preferredCrew: Boolean(body.preferred_crew), notes: safe(body.notes, 600), status: 'pending', requestedAt: now, sourceJobId: result.session.jobId };
-    await patchJob(env, result.session.jobId, { rebookingRequests: [...requests, request].slice(-10), rebookingStatus: 'pending', rebookingUpdatedAt: now, updatedAt: now });
+    try {
+      await patchJob(env, result.session.jobId, { rebookingRequests: [...requests, request].slice(-10), rebookingStatus: 'pending', rebookingUpdatedAt: now, updatedAt: now }, result.jobUpdateTime);
+    } catch { return reply(409, { ok: false, error: 'Your project changed. Refresh before requesting another visit.' }); }
     return reply(200, { ok: true, request });
   }
 
@@ -418,14 +428,20 @@ export async function onRequestPost({ request, env }) {
     const recipientName = safe(body.recipient_name, 120), recipientEmail = email(body.recipient_email);
     if (!card || !recipientName || !recipientEmail) return reply(400, { ok: false, error: 'Choose an available credit and enter the recipient’s name and email' });
     const requests = Array.isArray(wallet.transferRequests) ? wallet.transferRequests : [];
+    const duplicate = requests.find(request => request.status === 'pending' && request.cardId === cardId && email(request.recipientEmail) === recipientEmail);
+    if (duplicate) return reply(200, { ok: true, transfer: duplicate });
     const transfer = { id: id('', 'transfer'), cardId, recipientName, recipientEmail, amount: amount(card.remainingAmount), status: 'pending', requestedAt: now };
-    await patchJob(env, result.accountJobId, { giftWallet: { ...wallet, transferRequests: [...requests, transfer].slice(-20), updatedAt: now }, giftTransferStatus: 'pending', updatedAt: now });
+    try {
+      await patchJob(env, result.accountJobId, { giftWallet: { ...wallet, transferRequests: [...requests, transfer].slice(-20), updatedAt: now }, giftTransferStatus: 'pending', updatedAt: now }, result.accountUpdateTime);
+    } catch { return reply(409, { ok: false, error: 'The gift-card balance changed. Refresh before transferring it.' }); }
     return reply(200, { ok: true, transfer });
   }
 
   if (body.action === 'record_photo_upload') {
     const count = Math.min(3, Math.max(1, Number(body.count || 1)));
-    await patchJob(env, result.session.jobId, { customerPhotoCount: Number(result.job.customerPhotoCount || 0) + count, customerPhotoUpdatedAt: now, updatedAt: now });
+    try {
+      await patchJob(env, result.session.jobId, { customerPhotoCount: Number(result.job.customerPhotoCount || 0) + count, customerPhotoUpdatedAt: now, updatedAt: now }, result.jobUpdateTime);
+    } catch { return reply(409, { ok: false, error: 'The photo count changed. Refresh to see the latest uploads.' }); }
     return reply(200, { ok: true, count });
   }
 

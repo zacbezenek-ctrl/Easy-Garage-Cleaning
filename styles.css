@@ -388,3 +388,8 @@ h1.hero-title{font-size:clamp(42px,4.5vw,66px);line-height:1;max-width:16ch;colo
 body:has(.contact-widget) .back-to-top{right:112px}
 @media(max-width:1023px){.contact-widget{right:14px;bottom:calc(88px + env(safe-area-inset-bottom,0px))}.contact-widget-toggle{min-height:48px;padding:0 15px}.contact-widget-panel{bottom:60px}.contact-widget-toggle span{display:none}}
 @media print{.contact-widget{display:none!important}}
+.book-page .contact-widget{display:none!important}
+
+/* WCAG contrast: bright brand orange needs dark text; the darker hover can use white. */
+.btn-primary,.nav-cta,.drawer-cta,.mobile-cta-quote,.contact-widget-toggle,.contact-widget-actions .contact-widget-primary,button.form-submit,.seasonal-banner,.seasonal-banner a,.template-banner,.template-banner a,.hero-result figcaption strong,.hero-ba-cell.after .hero-ba-label,.ba-cell.after .ba-label,.price-sticky-mobile a,.faq-hero-actions .btn-primary,.faq-cta .cta-main{color:var(--ink,#0a1628)!important;font-weight:800}
+.btn-primary:hover,.nav-cta:hover,.drawer-cta:hover,.mobile-cta-quote:hover,.contact-widget-actions .contact-widget-primary:hover,button.form-submit:hover,.seasonal-banner a:hover,.template-banner a:hover,.price-sticky-mobile a:hover,.faq-hero-actions .btn-primary:hover,.faq-cta .cta-main:hover{background:#c43500!important;color:#fff!important}

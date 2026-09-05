@@ -8,6 +8,7 @@
 <meta name="robots" content="noindex">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@600;700&family=Oswald:wght@500;600;700&display=swap" rel="stylesheet">
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
 <style>
   :root{--navy:#13203a;--navy2:#1d2d4f;--orange:#e8581c;--orange2:#c4470f;--cream:#f2e9dc;
@@ -207,7 +208,7 @@ EGCHubAuth.session().then(user=>{if(user){document.getElementById("egc-gate").cl
   <div id="sections"></div>
 </main>
 
-<div id="pviewer" onclick="this.classList.remove('on')"><button class="x" aria-label="Close">×</button><img id="pviewerimg" alt="photo"></div>
+<div id="pviewer" onclick="this.classList.remove('on')"><button type="button" class="x" aria-label="Close">×</button><img id="pviewerimg" alt="photo" width="1200" height="900"></div>
 
 <div id="donebar"><div class="inner">
   <button id="donebtn" onclick="finish()">Complete all checks to start the job</button>
@@ -328,7 +329,7 @@ async function mountPhotoAct(el,act){
   el.innerHTML=`<div class="photostrip">
     <label class="padd"><span>+</span>${esc(act.label||"Add photo")}
       <input type="file" accept="image/*" capture="environment" style="display:none" onchange="onActPhoto(this,'${act.tag}')"></label>
-    ${photos.map((p,i)=>`<div class="pthumb"><img src="${p.dataUrl}" alt="Before-job photo ${i+1}" role="button" tabindex="0" onclick="viewPhoto(this.src)" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();viewPhoto(this.src)}">
+    ${photos.map((p,i)=>`<div class="pthumb"><img src="${p.dataUrl}" alt="Before-job photo ${i+1}" width="1200" height="900" role="button" tabindex="0" onclick="viewPhoto(this.src)" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();viewPhoto(this.src)}">
       <button class="del" onclick="onActPhotoDel('${p.id}')" aria-label="Remove before-job photo ${i+1}">×</button></div>`).join("")}</div>`;
 }
 async function onActPhoto(input,tag){const f=input.files&&input.files[0]; if(!f) return;
@@ -338,7 +339,7 @@ async function onActPhotoDel(id){await photoDel(id);mountActions();}
 async function mountImportantItems(){
   const host=document.getElementById("important_photos");if(!host)return;
   let photos=[];try{photos=await photoList(jobKey(),"important");}catch(e){}
-  host.innerHTML=`<div class="important-count">${photos.length} protected-item photo${photos.length===1?'':'s'} attached</div><div class="photostrip"><label class="padd important-add"><span>+</span>Add important photo<input type="file" accept="image/*" capture="environment" style="display:none" onchange="onImportantPhoto(this)"></label>${photos.map((p,i)=>`<div class="pthumb"><img src="${p.dataUrl}" alt="Important item photo ${i+1}" role="button" tabindex="0" onclick="viewPhoto(this.src)" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();viewPhoto(this.src)}"><button class="del" onclick="onImportantPhotoDel('${p.id}')" aria-label="Remove important item photo ${i+1}">×</button></div>`).join("")}</div>`;
+  host.innerHTML=`<div class="important-count">${photos.length} protected-item photo${photos.length===1?'':'s'} attached</div><div class="photostrip"><label class="padd important-add"><span>+</span>Add important photo<input type="file" accept="image/*" capture="environment" style="display:none" onchange="onImportantPhoto(this)"></label>${photos.map((p,i)=>`<div class="pthumb"><img src="${p.dataUrl}" alt="Important item photo ${i+1}" width="1200" height="900" role="button" tabindex="0" onclick="viewPhoto(this.src)" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();viewPhoto(this.src)}"><button type="button" class="del" onclick="onImportantPhotoDel('${p.id}')" aria-label="Remove important item photo ${i+1}">×</button></div>`).join("")}</div>`;
 }
 async function persistImportantItems(){
   let photos=[];try{photos=await photoList(jobKey(),"important");}catch(e){}
@@ -360,7 +361,7 @@ async function smsCustomer(si,ii,btn){
   if(!num){alert("Add the customer's mobile number before sending the arrival text.");return}
   const sentAt=new Date().toISOString(),idempotency=`arrival-text:${ACTIVE.jobId||num}:${sentAt.slice(0,16)}`;btn.disabled=true;btn.textContent="Sending…";
   try{
-    const response=await EGCHubAuth.fetch('/api/quo-send',{method:'POST',headers:{'Content-Type':'application/json','Idempotency-Key':idempotency},body:JSON.stringify({to:num,message:body,idempotency_key:idempotency})}),result=await response.json().catch(()=>({}));
+    const response=await EGCHubAuth.fetch('/api/quo-send',{method:'POST',headers:{'Content-Type':'application/json','Idempotency-Key':idempotency},body:JSON.stringify({job_id:ACTIVE.jobId,to:num,message:body,idempotency_key:idempotency})}),result=await response.json().catch(()=>({}));
     if(!response.ok||!result.ok)throw new Error(result.error||'send failed');
     const crmPayload={tool:'lifecycle',event:'crew-on-the-way',suppress_automation:true,idempotency_key:idempotency+':crm',highlevel_contact_id:ACTIVE.highlevelContactId||'',appointment_id:ACTIVE.highlevelAppointmentId||'',note:`Arrival text sent via Quo at ${sentAt}.`,client:{name:ACTIVE.name||name,phone:num,email:ACTIVE.email||'',address:ACTIVE.addr||'',highlevel_contact_id:ACTIVE.highlevelContactId||''}};
     let crmSynced=false,crmError='';try{const crmResponse=await EGCHubAuth.fetch('/api/highlevel',{method:'POST',headers:{'Content-Type':'application/json','Idempotency-Key':crmPayload.idempotency_key},body:JSON.stringify(crmPayload)}),crmResult=await crmResponse.json().catch(()=>({}));if(!crmResponse.ok||!crmResult.ok)throw new Error(crmResult.error||'HighLevel arrival note failed');crmSynced=true}catch(error){crmError=String(error.message||error).slice(0,160)}

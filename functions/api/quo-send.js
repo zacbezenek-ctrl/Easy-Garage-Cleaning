@@ -13,9 +13,10 @@
  *                moves the host (e.g. https://api.quo.com/v1) or auth changes.
  */
 
-import { getHubSession } from '../_lib/hub-session.js';
+import { getHubSession, hasBusinessAccess } from '../_lib/hub-session.js';
+import { readJob } from '../_lib/firestore-job.js';
 
-const ALLOWED_HOST_RE = /(^|\.)easygaragecleaning\.com$|(\.pages\.dev)$|^localhost(:\d+)?$|^127\.0\.0\.1(:\d+)?$/;
+const ALLOWED_HOST_RE = /^(?:easygaragecleaning\.com|www\.easygaragecleaning\.com|easy-garage-cleaning\.pages\.dev|localhost(?::\d+)?|127\.0\.0\.1(?::\d+)?)$/;
 function hostOf(v) { try { return new URL(v).host; } catch { return ''; } }
 function originAllowed(request) {
   const o = request.headers.get('Origin'), r = request.headers.get('Referer');
@@ -29,6 +30,15 @@ function normPhone(raw) {
   if (d.length === 11 && d[0] === '1') return '+' + d;
   if (d.length > 10) return '+' + d;
   return '';
+}
+const personKey = value => String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+function assignedToJob(job, session) {
+  if (hasBusinessAccess(session)) return true;
+  const identities = [session.user, session.displayName].map(personKey).filter(Boolean);
+  const crew = [...(Array.isArray(job.assignedCrew) ? job.assignedCrew : []), ...String(job.assignedTo || '').split(/\s*(?:,|\+|&|\band\b)\s*/i)]
+    .map(value => personKey(typeof value === 'string' ? value : value?.name || value?.id || '')).filter(Boolean);
+  return crew.some(name => identities.some(identity => name === identity ||
+    (Math.min(name.length, identity.length) >= 3 && (name.startsWith(identity) || identity.startsWith(name)))));
 }
 
 export async function onRequestOptions() {
@@ -44,14 +54,21 @@ export async function onRequestPost({ request, env }) {
     status, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-store' } });
 
   if (!originAllowed(request)) return json(403, { ok: false, error: 'Forbidden origin' });
-  if (!await getHubSession(request, env)) return json(401, { ok: false, error: 'Sign in to the EGC Hub' });
+  const session = await getHubSession(request, env);
+  if (!session) return json(401, { ok: false, error: 'Sign in to the EGC Hub' });
   const QUO_KEY = env.QUO_API_KEY || env.QUO; // accept either var name
   if (!QUO_KEY) return json(501, { ok: false, error: 'Quo not configured — set QUO_API_KEY' });
 
+  const raw = await request.text();
+  if (raw.length > 8 * 1024) return json(413, { ok: false, error: 'Request too large' });
   let body;
-  try { body = JSON.parse(await request.text()); } catch { return json(400, { ok: false, error: 'Invalid JSON' }); }
+  try { body = JSON.parse(raw); } catch { return json(400, { ok: false, error: 'Invalid JSON' }); }
 
-  const to = normPhone(body.to);
+  const jobId = String(body.job_id || '');
+  if (!/^[A-Za-z0-9_-]{1,180}$/.test(jobId)) return json(400, { ok: false, error: 'A valid assigned job is required' });
+  const job = await readJob(env, jobId).catch(() => null);
+  if (!job || !assignedToJob(job, session)) return json(403, { ok: false, error: 'This job is not assigned to you' });
+  const to = normPhone(job.phone);
   const message = String(body.message || '').slice(0, 1500);
   if (!to || !message) return json(400, { ok: false, error: 'to and message are required' });
 
@@ -66,8 +83,7 @@ export async function onRequestPost({ request, env }) {
     });
     const data = await r.json().catch(() => ({}));
     if (!r.ok) {
-      const detail = JSON.stringify(data).slice(0, 300);
-      return json(502, { ok: false, error: 'Quo rejected the message', status: r.status, detail });
+      return json(502, { ok: false, error: 'Quo rejected the message', status: r.status });
     }
     return json(200, { ok: true, id: (data && data.data && data.data.id) || '' });
   } catch (e) {

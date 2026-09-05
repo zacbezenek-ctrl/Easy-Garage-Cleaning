@@ -22,7 +22,7 @@
  *   WEBSITE_LEAD_HOOK_URL — Zapier Catch Hook URL. That's the only var needed.
  */
 
-const ALLOWED_HOST_RE = /(^|\.)easygaragecleaning\.com$|(\.pages\.dev)$|^localhost(:\d+)?$|^127\.0\.0\.1(:\d+)?$/;
+const ALLOWED_HOST_RE = /^(?:easygaragecleaning\.com|www\.easygaragecleaning\.com|easy-garage-cleaning\.pages\.dev|localhost(?::\d+)?|127\.0\.0\.1(?::\d+)?)$/;
 const MAX_BODY = 32 * 1024;
 const FIELDS = ['name', 'phone', 'email', 'items', 'service_type', 'job_size', 'what_to_remove', 'photo_description', 'source', 'subject', 'city', 'serviceZip', 'preferred_date', 'preferred_timing', 'booking_slot', 'estimated_range', 'flow_type', 'sms_consent', 'fbc', 'fbp', 'fbclid', 'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'gclid', 'msclkid', 'landing_url', 'referrer', 'page_url'];
 const HIGHLEVEL_API = 'https://services.leadconnectorhq.com';
@@ -241,7 +241,7 @@ export async function onRequestPost({ request, env }) {
 
   let highlevel;
   try { highlevel = await syncHighLevelLead(env, { ...flat, name, phone, source: flat.source || 'EGC Website' }); }
-  catch (error) { return json(502, { ok: false, error: 'HighLevel lead sync failed', detail: String(error.message || error).slice(0, 300) }); }
+  catch { return json(502, { ok: false, error: 'HighLevel lead sync failed' }); }
 
   const relayAllowed = flat.sms_consent === 'yes';
   let relay = { configured: !!hook, sent: false, skipped: hook && !relayAllowed ? 'no-sms-consent' : '' };

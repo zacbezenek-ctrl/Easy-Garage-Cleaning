@@ -20,7 +20,7 @@ const TOKEN_URL = 'https://api.getjobber.com/api/oauth/token';
 const GQL_URL = 'https://api.getjobber.com/api/graphql';
 const GQL_VERSION = '2023-11-15'; // bump if Jobber retires this version
 
-const ALLOWED_HOST_RE = /(^|\.)easygaragecleaning\.com$|(\.pages\.dev)$|^localhost(:\d+)?$|^127\.0\.0\.1(:\d+)?$/;
+const ALLOWED_HOST_RE = /^(?:easygaragecleaning\.com|www\.easygaragecleaning\.com|easy-garage-cleaning\.pages\.dev|localhost(?::\d+)?|127\.0\.0\.1(?::\d+)?)$/;
 function hostOf(v) { try { return new URL(v).host; } catch { return ''; } }
 function originAllowed(request) {
   const o = request.headers.get('Origin'), r = request.headers.get('Referer');

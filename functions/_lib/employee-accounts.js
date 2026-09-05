@@ -1,5 +1,6 @@
+import { firestoreFetch, firebaseServiceAccountConfigured } from './firebase-service-account.js';
+
 const PROJECT_ID = 'egcw-1ec83';
-const DEFAULT_FIREBASE_API_KEY = 'AIzaSyA8g4UAW4P4bsCrQNZhUe81CbC7BvjJbNc';
 const RECORD_TYPE = 'employee_account_v1';
 const encoder = new TextEncoder();
 
@@ -10,15 +11,11 @@ export function normalizeEmployeeUsername(value) {
 }
 
 function accountSecret(env = {}) {
-  return String(env.EMPLOYEE_HUB_DATA_SECRET || env.HUB_SESSION_SECRET || env.HIGHLEVEL_API_KEY || env.GHL_API_KEY || '');
-}
-
-function firebaseKey(env = {}) {
-  return String(env.FIREBASE_API_KEY || DEFAULT_FIREBASE_API_KEY);
+  return String(env.EMPLOYEE_HUB_DATA_SECRET || env.HUB_SESSION_SECRET || '');
 }
 
 export function employeeAccountsConfigured(env = {}) {
-  return Boolean(accountSecret(env) && firebaseKey(env));
+  return Boolean(accountSecret(env) && firebaseServiceAccountConfigured(env));
 }
 
 function base64Url(bytes) {
@@ -96,8 +93,8 @@ function parseDocument(document) {
 
 async function readAccount(env, username) {
   const id = await documentId(env, username);
-  const url = `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents/jobs/${encodeURIComponent(id)}?key=${encodeURIComponent(firebaseKey(env))}`;
-  const response = await fetch(url);
+  const url = `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents/jobs/${encodeURIComponent(id)}`;
+  const response = await firestoreFetch(env, url);
   if (response.status === 404) return null;
   if (!response.ok) throw new Error(`Employee account storage read failed (${response.status})`);
   const stored = parseDocument(await response.json());
@@ -109,9 +106,9 @@ async function readAccount(env, username) {
 async function writeAccount(env, account, createOnly = false) {
   const id = await documentId(env, account.username);
   const encrypted = await seal(env, id, account);
-  const precondition = createOnly ? '&currentDocument.exists=false' : '';
-  const url = `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents/jobs/${encodeURIComponent(id)}?key=${encodeURIComponent(firebaseKey(env))}${precondition}`;
-  const response = await fetch(url, {
+  const url = new URL(`https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents/jobs/${encodeURIComponent(id)}`);
+  if (createOnly) url.searchParams.set('currentDocument.exists', 'false');
+  const response = await firestoreFetch(env, url, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(firestoreDocument(id, account, encrypted)),
@@ -203,8 +200,8 @@ export async function authenticateEmployeeAccount(env, username, password) {
 
 export async function listEmployeeApplications(env) {
   if (!employeeAccountsConfigured(env)) throw new Error('Employee account signup is not configured');
-  const url = `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents:runQuery?key=${encodeURIComponent(firebaseKey(env))}`;
-  const response = await fetch(url, {
+  const url = `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents:runQuery`;
+  const response = await firestoreFetch(env, url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ structuredQuery: {

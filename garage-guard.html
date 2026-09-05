@@ -1,22 +1,15 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<!-- Google tag (gtag.js) -->
-<script async src="https://www.googletagmanager.com/gtag/js?id=G-CV7HJ2QGHX"></script>
+<!-- Stripe Checkout session IDs are bearer credentials. Capture and scrub the
+     return URL before analytics code can observe the query string. -->
 <script>
-  window.dataLayer = window.dataLayer || [];
-  function gtag(){dataLayer.push(arguments);}
-  gtag('js', new Date());
-
-  gtag('config', 'G-CV7HJ2QGHX');
-  gtag('config', 'AW-18102284288');
+(()=>{const q=new URLSearchParams(location.search),checkout=q.get('checkout')||'',sid=q.get('session_id')||'';window.__egcGarageGuardReturn=checkout;if(/^(?:success|cancelled)$/.test(checkout)){if(/^cs_(?:live|test)_[A-Za-z0-9]{10,120}$/.test(sid)){try{sessionStorage.setItem('egc_gg_checkout_session',sid)}catch(e){}}try{history.replaceState(null,'',location.pathname+(checkout==='cancelled'?'#plans':''))}catch(e){}}})();
 </script>
 
+<!-- Analytics events queue immediately; vendor libraries load after interaction. -->
+<script src="/analytics-loader.js?v=20260904b" defer></script>
 <!-- Microsoft Clarity analytics -->
-<script type="text/javascript" defer>
-(function(c,l,a,r,i,t,y){c[a]=c[a]||function(){(c[a].q=c[a].q||[]).push(arguments)};t=l.createElement(r);t.async=1;t.defer=1;t.src="https://www.clarity.ms/tag/"+i;y=l.getElementsByTagName(r)[0];y.parentNode.insertBefore(t,y);})(window,document,"clarity","script","wf7ba129jm");
-</script>
-
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <meta name="referrer" content="strict-origin-when-cross-origin" />
@@ -35,7 +28,6 @@
 <meta property="og:image:height" content="630" />
 <link rel="alternate" type="text/plain" href="https://easygaragecleaning.com/llms.txt" title="LLM site summary" />
 <link rel="author" type="text/plain" href="https://easygaragecleaning.com/humans.txt" />
-<link rel="preconnect" href="https://www.googletagmanager.com" crossorigin>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 
@@ -340,7 +332,7 @@
       <div class="logo"><span class="logo-mark"></span>Easy Garage Cleaning</div>
       <p class="community">The easiest way to reclaim your garage. Locally owned in Fort Collins — not a franchise call center.</p>
       <p class="community">Partners: <a href="https://fortcollinschamber.com/" rel="noopener">Fort Collins Chamber</a>, <a href="/blog/habitat-for-humanity-restore-fort-collins">Habitat ReStore</a>.</p>
-      <p class="foot-entity foot-nap"><strong>Easy Garage Cleaning</strong> · Easy Garage Cleaning LLC · 746 Star Grass Ln, Fort Collins, CO 80525 · <a href="tel:+19709991818">(970) 999-1818</a> · <a href="mailto:contact@easygaragecleaning.com">contact@easygaragecleaning.com</a> · <a href="https://easygaragecleaning.com/#business">Schema @id #business</a> · <a href="https://easygaragecleaning.com/llms.txt">llms.txt</a></p>
+      <p class="foot-entity foot-nap"><strong>Easy Garage Cleaning</strong> · Easy Garage Cleaning LLC · Fort Collins, CO 80525 · <a href="tel:+19709991818">(970) 999-1818</a> · <a href="mailto:contact@easygaragecleaning.com">contact@easygaragecleaning.com</a> · <a href="https://easygaragecleaning.com/#business">Schema @id #business</a> · <a href="https://easygaragecleaning.com/llms.txt">llms.txt</a></p>
     </div>
     <div class="foot-col">
       <h3>Services</h3>
@@ -504,15 +496,7 @@ if(btt){const onScroll=()=>{btt.hidden=window.scrollY<420};btt.addEventListener(
   });
 
   /* --- Returning from Stripe: verify with the server before celebrating --- */
-  const qp=new URLSearchParams(location.search);
-  const checkout=qp.get('checkout');
-  const sid=qp.get('session_id')||'';
-  if(checkout){
-    // Scrub the session id (a bearer credential) out of the URL/history
-    // immediately; keep it in sessionStorage for the billing-portal button.
-    if(SESSION_ID_RE.test(sid)){try{sessionStorage.setItem(SESSION_KEY,sid);}catch(e){}}
-    try{history.replaceState(null,'',location.pathname+(checkout==='cancelled'?'#plans':''));}catch(e){}
-  }
+  const checkout=window.__egcGarageGuardReturn||'';
 
   async function verifySuccess(){
     const stored=(()=>{try{return sessionStorage.getItem(SESSION_KEY)||'';}catch(e){return '';}})();
