@@ -24,7 +24,7 @@
 
 const ALLOWED_HOST_RE = /^(?:easygaragecleaning\.com|www\.easygaragecleaning\.com|easy-garage-cleaning\.pages\.dev|localhost(?::\d+)?|127\.0\.0\.1(?::\d+)?)$/;
 const MAX_BODY = 32 * 1024;
-const FIELDS = ['name', 'phone', 'email', 'items', 'service_type', 'job_size', 'what_to_remove', 'photo_description', 'source', 'subject', 'city', 'serviceZip', 'preferred_date', 'preferred_timing', 'booking_slot', 'estimated_range', 'flow_type', 'sms_consent', 'fbc', 'fbp', 'fbclid', 'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'gclid', 'msclkid', 'landing_url', 'referrer', 'page_url'];
+const FIELDS = ['name', 'phone', 'email', 'items', 'service_type', 'job_size', 'what_to_remove', 'photo_description', 'source', 'subject', 'city', 'serviceZip', 'preferred_date', 'preferred_timing', 'booking_slot', 'estimated_range', 'flow_type', 'sms_consent', 'request_id', 'fbc', 'fbp', 'fbclid', 'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'gclid', 'msclkid', 'landing_url', 'referrer', 'page_url'];
 const HIGHLEVEL_API = 'https://services.leadconnectorhq.com';
 
 function hostOf(value) {
@@ -75,6 +75,7 @@ async function highLevelRequest(config, path, options = {}) {
 async function syncHighLevelLead(env, lead) {
   const config = highLevelConfig(env);
   if (!config.token || !config.locationId) return { configured: false, synced: false };
+  const isClientHubHelp = lead.flow_type === 'client_hub_help';
 
   const contactResult = await highLevelRequest(config, '/contacts/upsert', {
     method: 'POST',
@@ -89,18 +90,19 @@ async function syncHighLevelLead(env, lead) {
   const contactId = contactResult.contact && contactResult.contact.id || contactResult.id || '';
   if (!contactId) throw new Error('HighLevel did not return a contact ID');
   const consentTag = lead.sms_consent === 'yes' ? 'egc-sms-consent' : 'egc-no-sms-consent';
+  const sourceTag = isClientHubHelp ? 'egc-client-hub-help' : 'egc-website-lead';
   let consentTagSynced = true;
   try {
     await highLevelRequest(config, `/contacts/${encodeURIComponent(contactId)}/tags`, {
       method: 'PUT',
-      body: JSON.stringify({ tags: ['egc-website-lead', consentTag] }),
+      body: JSON.stringify({ tags: [sourceTag, consentTag] }),
     });
   } catch { consentTagSynced = false; }
   const detailLines = [
-    'EGC WEBSITE LEAD DETAILS',
+    isClientHubHelp ? 'EGC CLIENT HUB HELP REQUEST' : 'EGC WEBSITE LEAD DETAILS',
     `Service: ${lead.service_type || lead.items || '—'}`,
     `Job size: ${lead.job_size || '—'}`,
-    `Removal request: ${lead.what_to_remove || lead.items || '—'}`,
+    `${isClientHubHelp ? 'Message' : 'Removal request'}: ${lead.what_to_remove || lead.items || '—'}`,
     `Photo description: ${lead.photo_description || '—'}`,
     `Email: ${lead.email || '—'}`,
     `Location: ${[lead.city, lead.serviceZip].filter(Boolean).join(' ') || '—'}`,
@@ -113,12 +115,32 @@ async function syncHighLevelLead(env, lead) {
     `Search attribution: ${[lead.utm_term, lead.gclid, lead.msclkid].filter(Boolean).join(' · ') || '—'}`,
     `Landing page: ${lead.page_url || lead.landing_url || '—'}`,
   ];
+  let noteSynced = false;
   try {
     await highLevelRequest(config, `/contacts/${encodeURIComponent(contactId)}/notes`, {
-      method: 'POST', headers: { 'Idempotency-Key': `website-lead-details:${contactId}:${lead.booking_slot || lead.preferred_date || 'request'}` },
-      body: JSON.stringify({ userId: config.assignedTo || undefined, title: 'EGC Website Lead Details', body: detailLines.join('\n').slice(0, 3000), color: '#F15A24', pinned: false }),
+      method: 'POST', headers: { 'Idempotency-Key': `${isClientHubHelp ? 'client-hub-help-note' : 'website-lead-details'}:${contactId}:${lead.request_id || lead.booking_slot || lead.preferred_date || 'request'}` },
+      body: JSON.stringify({ userId: config.assignedTo || undefined, title: isClientHubHelp ? 'EGC Client Hub Help' : 'EGC Website Lead Details', body: detailLines.join('\n').slice(0, 3000), color: '#F15A24', pinned: isClientHubHelp }),
     });
+    noteSynced = true;
   } catch {}
+  let internalCommentSynced = false;
+  if (isClientHubHelp) {
+    try {
+      await highLevelRequest(config, '/conversations/messages', {
+        method: 'POST',
+        headers: { 'Idempotency-Key': `client-hub-help:${contactId}:${lead.request_id || 'request'}` },
+        body: JSON.stringify({
+          type: 'InternalComment',
+          contactId,
+          message: `Client hub help request from ${lead.name}: ${lead.what_to_remove || lead.items || '—'}${lead.phone ? `\nPhone: ${lead.phone}` : ''}${lead.email ? `\nEmail: ${lead.email}` : ''}`.slice(0, 1200),
+          ...(config.assignedTo ? { userId: config.assignedTo } : {}),
+        }),
+      });
+      internalCommentSynced = true;
+    } catch {}
+    if (!noteSynced && !internalCommentSynced) throw new Error('HighLevel could not store the client hub request');
+    return { configured: true, synced: true, contactId, opportunityId: '', consentTag, consentTagSynced, internalCommentSynced };
+  }
   if (!config.pipelineId) return { configured: true, synced: true, contactId, opportunityId: '', consentTag, consentTagSynced };
 
   let stageId = config.stageId;

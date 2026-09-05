@@ -708,6 +708,33 @@ test('booking confirmation email is authenticated and derives its recipient serv
   }finally{globalThis.fetch=originalFetch}
 });
 
+test('client hub help becomes a HighLevel conversation comment without creating a sales opportunity',async()=>{
+  const {onRequestPost}=await import('../functions/api/web-lead.js');
+  const calls=[],originalFetch=globalThis.fetch;
+  globalThis.fetch=async(url,options={})=>{
+    calls.push({url:String(url),options});
+    if(String(url).endsWith('/contacts/upsert'))return new Response(JSON.stringify({contact:{id:'contact-hub-help'}}),{status:200});
+    if(String(url).endsWith('/conversations/messages'))return new Response(JSON.stringify({messageId:'message-help'}),{status:200});
+    return new Response('{}',{status:200});
+  };
+  try{
+    const request=new Request('https://easygaragecleaning.com/api/web-lead',{method:'POST',headers:{Origin:'https://easygaragecleaning.com','Content-Type':'application/json'},body:JSON.stringify({name:'Dana Customer',phone:'9705550142',email:'dana@example.com',items:'Please send me a fresh project link.',what_to_remove:'Please send me a fresh project link.',service_type:'Client hub help',source:'Client Hub Help',flow_type:'client_hub_help',sms_consent:'yes',page_url:'https://easygaragecleaning.com/customer-portal'})});
+    const response=await onRequestPost({request,env:{HIGHLEVEL_API_KEY:'test-key',HIGHLEVEL_LOCATION_ID:'location-1',HIGHLEVEL_PIPELINE_ID:'pipe-1',HIGHLEVEL_USER_ID:'user-1'}}),result=await response.json();
+    assert.equal(response.status,200);
+    assert.equal(result.highlevel.synced,true);
+    const tags=calls.find(call=>call.url.endsWith('/contacts/contact-hub-help/tags'));
+    assert.deepEqual(JSON.parse(tags.options.body).tags,['egc-client-hub-help','egc-sms-consent']);
+    const note=calls.find(call=>call.url.endsWith('/contacts/contact-hub-help/notes'));
+    assert.equal(JSON.parse(note.options.body).title,'EGC Client Hub Help');
+    assert.equal(JSON.parse(note.options.body).pinned,true);
+    assert.match(JSON.parse(note.options.body).body,/Message: Please send me a fresh project link\./);
+    const comment=calls.find(call=>call.url.endsWith('/conversations/messages'));
+    assert.deepEqual(JSON.parse(comment.options.body),{type:'InternalComment',contactId:'contact-hub-help',message:'Client hub help request from Dana Customer: Please send me a fresh project link.\nPhone: 9705550142\nEmail: dana@example.com',userId:'user-1'});
+    assert.equal(calls.some(call=>call.url.endsWith('/opportunities/upsert')),false);
+    assert.equal(calls.some(call=>call.url.includes('/opportunities/pipelines?')),false);
+  }finally{globalThis.fetch=originalFetch}
+});
+
 test('Hub supports salted PBKDF2 credentials and rejects malformed or wrong hashes',async()=>{
   const passwordHash=await createHubCredentialHash('a correct horse battery staple');
   assert.match(passwordHash,/^pbkdf2-sha256\$210000\$/);
