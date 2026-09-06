@@ -168,6 +168,12 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // Invitation claims and delivery status are authoritative server records.
+    // The job holds only a display copy, so stale schedule saves cannot resend.
+    match /portal_invitations/{documentId} {
+      allow read, write: if false;
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }

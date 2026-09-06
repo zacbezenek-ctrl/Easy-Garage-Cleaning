@@ -22,6 +22,7 @@
  */
 
 import { getHubSession, hasBusinessAccess } from '../_lib/hub-session.js';
+import { sendAcceptedQuotePortal } from '../_lib/portal-invitation.js';
 
 const API = 'https://services.leadconnectorhq.com';
 const DEFAULT_LEAD_RESET_AT = '2026-09-03T21:51:19.314Z';
@@ -515,6 +516,11 @@ export async function onRequestPost({ request, env }) {
   if (!['game_plan','post_job','schedule','lifecycle'].includes(payload.tool)) return reply(400, { ok: false, error: 'Unsupported HighLevel handoff' });
   if (payload.tool === 'game_plan' && !hasBusinessAccess(session)) return reply(403, { ok: false, code: 'BUSINESS_ACCESS_REQUIRED', error: 'Walkthrough access is limited to Zac, Tyler, and Alex' });
   if (payload.tool === 'schedule' && !hasBusinessAccess(session)) return reply(403, { ok: false, code: 'BUSINESS_ACCESS_REQUIRED', error: 'Schedule changes are limited to managers' });
+  const inviteRequested = payload.tool === 'game_plan' || (payload.tool === 'lifecycle' && payload.event === 'estimate-approved');
+  if (inviteRequested && !hasBusinessAccess(session)) return reply(403, { ok: false, error: 'Business access required for quote approvals' });
+  // This runs independently of notes/calendar writes, and validates approval and
+  // recipient from storage. Repeating the handoff cannot send another invitation.
+  const portalInvitation = inviteRequested ? await sendAcceptedQuotePortal(env, payload.job_id, { requireRequested: true }) : undefined;
   const client = payload.client || payload.job || {};
   try {
     const contactId = await ensureContact(c, { ...client, highlevel_contact_id: client.highlevel_contact_id || payload.highlevel_contact_id }, payload.tool === 'schedule' ? 'EGC Hub schedule' : payload.tool === 'lifecycle' ? 'EGC Hub lifecycle' : 'EGC walkthrough');
@@ -543,7 +549,7 @@ export async function onRequestPost({ request, env }) {
         const note = await ghl(c, `/contacts/${encodeURIComponent(contactId)}/notes`, { method: 'POST', headers: payload.idempotency_key ? { 'Idempotency-Key': payload.idempotency_key } : {}, body: JSON.stringify({ userId: c.userId || undefined, title: `EGC Lifecycle — ${event}`, body: String(payload.note).trim().slice(0, 3000), color: '#F15A24', pinned: false }) });
         noteId = note.note?.id || '';
       }
-      return reply(200, { ok: true, contactId, noteId, ...appointment, automation: { trigger: payload.suppress_automation ? '' : tag, suppressed: Boolean(payload.suppress_automation) } });
+      return reply(200, { ok: true, contactId, noteId, ...appointment, portalInvitation, automation: { trigger: payload.suppress_automation ? '' : tag, suppressed: Boolean(payload.suppress_automation) } });
     }
     const isCloseout = payload.tool === 'post_job';
     const note = await ghl(c, `/contacts/${encodeURIComponent(contactId)}/notes`, { method: 'POST', headers: payload.idempotency_key ? { 'Idempotency-Key': payload.idempotency_key } : {}, body: JSON.stringify({
@@ -577,13 +583,13 @@ export async function onRequestPost({ request, env }) {
         let tagSynced = true;
         try { await addTags(c, contactId, ['egc-hub-scheduled', 'egc-job-scheduled']); } catch { tagSynced = false; }
         const stage = await advanceOpportunity(c, contactId, c.scheduledStageId, 'egc-job-scheduled', payload.opportunity_id || '', opportunityInput(payload, client));
-        return reply(200, { ok: true, contactId, noteId: note.note?.id || '', taskId, ...scheduled, walkthrough, pipeline: stage, automation: { trigger: 'egc-job-scheduled', tagSynced } });
+        return reply(200, { ok: true, contactId, noteId: note.note?.id || '', taskId, ...scheduled, walkthrough, pipeline: stage, portalInvitation, automation: { trigger: 'egc-job-scheduled', tagSynced } });
       }
       const stage = await advanceOpportunity(c, contactId, c.walkthroughCompleteStageId, 'egc-walkthrough-complete', payload.opportunity_id || '', opportunityInput(payload, client));
-      return reply(200, { ok: true, contactId, noteId: note.note && note.note.id || '', taskId, walkthrough, pipeline: stage, automation: { trigger: 'egc-walkthrough-complete' } });
+      return reply(200, { ok: true, contactId, noteId: note.note && note.note.id || '', taskId, walkthrough, pipeline: stage, portalInvitation, automation: { trigger: 'egc-walkthrough-complete' } });
     }
     return reply(200, { ok: true, contactId, noteId: note.note && note.note.id || '', taskId, automation: { trigger: 'egc-walkthrough-complete' } });
   } catch (error) {
-    return reply(502, { ok: false, error: 'HighLevel rejected the field handoff', detail: error.detail || error.message });
+    return reply(502, { ok: false, error: 'HighLevel rejected the field handoff', detail: error.detail || error.message, portalInvitation });
   }
 }

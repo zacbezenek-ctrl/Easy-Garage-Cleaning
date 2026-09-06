@@ -814,7 +814,7 @@ test('open-shift scheduling fields persist on the canonical job record',()=>{
   assert.match(suite,/b\.type==='job'\?'':'ops-hidden'/);
   assert.match(suite,/b\.type==='blocked'\?'ops-hidden':''/);
   assert.match(employee,/employee-suite\.css\?v=20260904l/);
-  assert.match(employee,/employee-suite\.js\?v=20260904l/);
+  assert.match(employee,/employee-suite\.js\?v=20260906portal/);
 });
 
 test('recurring visits keep the client plan but reset prior completion and payment state',()=>{

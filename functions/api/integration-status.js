@@ -1,4 +1,6 @@
 import { getHubSession } from '../_lib/hub-session.js';
+import { firebaseServiceAccountConfigured } from '../_lib/firebase-service-account.js';
+import { customerPortalConfigured } from '../_lib/customer-portal.js';
 
 /** Returns configuration readiness only. Secret values never leave the server. */
 export async function onRequestGet({request,env}){
@@ -8,6 +10,7 @@ export async function onRequestGet({request,env}){
   const normalized=(...keys)=>{const wanted=keys.map(key=>key.toLowerCase().replace(/[^a-z0-9]/g,''));return Object.entries(env||{}).some(([key,value])=>Boolean(value)&&wanted.includes(key.toLowerCase().replace(/[^a-z0-9]/g,'')))};
   const status={
     firebase:any('FIREBASE_API_KEY','FIREBASE_SERVICE_ACCOUNT_JSON'),
+    customerPortal:firebaseServiceAccountConfigured(env)&&customerPortalConfigured(env),
     highlevel:any('HIGHLEVEL_API_KEY','GHL_API_KEY')&&any('HIGHLEVEL_LOCATION_ID','GHL_LOCATION_ID'),
     quo:any('QUO_API_KEY','QUO'),
     google:all('GOOGLE_CLIENT_ID','GOOGLE_CLIENT_SECRET','GOOGLE_REFRESH_TOKEN'),
