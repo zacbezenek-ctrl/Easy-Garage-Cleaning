@@ -46,6 +46,21 @@ function storage(t) {
   return { documents, requests };
 }
 
+test('explicit legacy vault reads saved Hub history with an independent session but blocks writes until verified', async t => {
+  const store = storage(t);
+  await seed();
+  const legacy = { ...env, EMPLOYEE_HUB_DATA_SECRET: '', HIGHLEVEL_API_KEY: env.EMPLOYEE_HUB_DATA_SECRET, EMPLOYEE_HUB_LEGACY_KEY_SOURCE: 'HIGHLEVEL_API_KEY', HUB_SESSION_SECRET: 'independent-new-hub-session' };
+  const newCookie = (await createHubSessionCookie(legacy, 'ZacB')).split(';')[0];
+  const read = await onRequestGet({ request: new Request(endpoint, { headers: { Cookie: newCookie } }), env: legacy });
+  assert.equal(read.status, 200);
+  assert.equal((await read.json()).collections.training.length, 1);
+  const before = store.requests.filter(item => item.method === 'PATCH').length;
+  const blocked = await onRequestPost({ request: new Request(endpoint, { method: 'POST', headers: { Cookie: newCookie }, body: JSON.stringify({ collection: 'training', id: 'saved-training', data: { completed: ['welcome', 'safety'] } }) }), env: legacy });
+  assert.equal(blocked.status, 503);
+  assert.equal((await blocked.json()).code, 'EMPLOYEE_HUB_RECOVERY_READ_ONLY');
+  assert.equal(store.requests.filter(item => item.method === 'PATCH').length, before);
+});
+
 async function seed() {
   const response = await post({ collection: 'training', id: 'saved-training', data: { employee: 'Crewtest', completed: ['welcome'] } });
   assert.equal(response.status, 200);

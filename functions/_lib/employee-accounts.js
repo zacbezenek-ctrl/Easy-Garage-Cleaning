@@ -1,4 +1,5 @@
 import { firestoreFetch, firebaseServiceAccountConfigured } from './firebase-service-account.js';
+import { employeeVaultSecret, employeeVaultReadOnly } from './employee-vault-key.js';
 
 const PROJECT_ID = 'egcw-1ec83';
 const RECORD_TYPE = 'employee_account_v1';
@@ -28,7 +29,7 @@ export function isReservedEmployeeUsername(value) {
 }
 
 function accountSecret(env = {}) {
-  return String(env.EMPLOYEE_HUB_DATA_SECRET || env.HUB_SESSION_SECRET || '');
+  return employeeVaultSecret(env);
 }
 
 export function employeeAccountsConfigured(env = {}) {
@@ -124,6 +125,7 @@ async function readAccount(env, username) {
 }
 
 async function writeAccount(env, account, createOnly = false) {
+  if (employeeVaultReadOnly(env)) throw accountError('EMPLOYEE_ACCOUNT_RECOVERY_READ_ONLY', 'Employee setup is being verified. Existing accounts are preserved and cannot be changed yet.');
   const id = await documentId(env, account.username);
   const encrypted = await seal(env, id, account);
   const url = new URL(`https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents/jobs/${encodeURIComponent(id)}`);

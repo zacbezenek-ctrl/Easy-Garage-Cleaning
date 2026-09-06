@@ -919,7 +919,7 @@ test('employee hub v2 personalizes access, time, pay, communication, training, a
   assert.match(employee,/rememberHubProfile/);
   assert.match(read('crew/hub-auth.js'),/egc_hourly_rate/);
   const vault=read('functions/api/employee-hub.js');
-  for(const marker of ['getHubSession','AES-GCM','sealedPayload','opaqueId','visibleTo','authorizeMutation','EMPLOYEE_HUB_DATA_SECRET'])assert.match(vault,new RegExp(marker));
+  for(const marker of ['getHubSession','AES-GCM','sealedPayload','opaqueId','visibleTo','authorizeMutation','employeeVaultSecret'])assert.match(vault,new RegExp(marker));
   assert.match(suite,/hubFetch\('\/api\/employee-hub'/);
   assert.doesNotMatch(suite,/db\.collection\(peopleCollections/);
 });

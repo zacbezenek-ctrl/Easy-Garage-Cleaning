@@ -1,5 +1,6 @@
 import { getHubSession, hasBusinessAccess, listHubUserProfiles } from '../_lib/hub-session.js';
 import { firebaseServiceAccountConfigured, firestoreFetch } from '../_lib/firebase-service-account.js';
+import { employeeVaultSecret, employeeVaultReadOnly } from '../_lib/employee-vault-key.js';
 
 const PROJECT_ID = 'egcw-1ec83';
 const RECORD_TYPE = 'employee_hub_v2';
@@ -42,7 +43,7 @@ function fromBase64Url(value) {
 }
 
 function vaultSecret(env) {
-  return String(env.EMPLOYEE_HUB_DATA_SECRET || env.HUB_SESSION_SECRET || '');
+  return employeeVaultSecret(env);
 }
 
 async function encryptionKey(env) {
@@ -395,6 +396,7 @@ export async function onRequestPost({ request, env }) {
   if (!allowed(request)) return reply(403, { ok: false, error: 'Forbidden origin' });
   const session = await getHubSession(request, env);
   if (!session) return reply(401, { ok: false, error: 'Sign in required' });
+  if (employeeVaultReadOnly(env)) return reply(503, { ok: false, code: 'EMPLOYEE_HUB_RECOVERY_READ_ONLY', error: 'Employee setup is being verified. Existing records are preserved and cannot be changed yet.' });
   if (!vaultSecret(env) || !firebaseServiceAccountConfigured(env)) return reply(503, { ok: false, error: 'Employee Hub storage is not configured' });
   const raw = await request.text();
   if (raw.length > 128 * 1024) return reply(413, { ok: false, error: 'Request is too large' });

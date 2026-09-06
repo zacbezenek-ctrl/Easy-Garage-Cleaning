@@ -14,6 +14,21 @@ const request = (path, body, cookie) => new Request(origin + path, {
 const application = (username = 'JamieR') => ({ action: 'register', acknowledged: true, firstName: 'Jamie', lastName: 'Rivera', username, email: 'test@example.invalid', phone: '9705550100', password: 'ExamplePassword123' });
 const env = () => ({ HUB_SESSION_SECRET: 'test-session-only', EMPLOYEE_HUB_DATA_SECRET: 'test-original-vault-key', FIREBASE_API_KEY: 'firebase-test-account-recovery', HUB_AUTH_USERS_JSON: JSON.stringify({ ZacB: { passwordHash: 'not-used', displayName: 'Zac', role: 'owner' } }) });
 
+test('explicit legacy vault preserves employee accounts while recovery blocks registration and review', async t => {
+  const storage = useStorage(t), original = env();
+  await createEmployeeApplication(original, application());
+  const legacy = { ...original, EMPLOYEE_HUB_DATA_SECRET: '', HIGHLEVEL_API_KEY: original.EMPLOYEE_HUB_DATA_SECRET, EMPLOYEE_HUB_LEGACY_KEY_SOURCE: 'HIGHLEVEL_API_KEY', HUB_SESSION_SECRET: 'different-new-session' };
+  const existing = await listEmployeeApplications(legacy);
+  assert.equal(existing.length, 1);
+  const before = storage.writes;
+  await assert.rejects(createEmployeeApplication(legacy, application('AnotherTest')), { code: 'EMPLOYEE_ACCOUNT_RECOVERY_READ_ONLY' });
+  await assert.rejects(reviewEmployeeApplication(legacy, 'JamieR', 'approved', 'ZacB'), { code: 'EMPLOYEE_ACCOUNT_RECOVERY_READ_ONLY' });
+  assert.equal(storage.writes, before);
+  assert.equal(storage.saved.size, 1);
+  await reviewEmployeeApplication({ ...legacy, EMPLOYEE_HUB_LEGACY_WRITES_VERIFIED: 'true' }, 'JamieR', 'approved', 'ZacB');
+  assert.equal(storage.saved.size, 1, 'the original opaque document ID remains unchanged');
+});
+
 function useStorage(t) {
   const saved = new Map();
   let writes = 0;
