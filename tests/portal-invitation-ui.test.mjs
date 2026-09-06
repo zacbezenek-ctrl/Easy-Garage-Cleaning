@@ -79,7 +79,7 @@ function approvalFixture({ failFirstRequest = false } = {}) {
   vm.createContext(context);
   vm.runInContext([
     'function jobs(){return jobsCache}',
-    ...['async function patchJob(', 'function cachePortalInvitation(', 'function portalInvitationState(', 'function portalInvitationLabel(', 'async function syncLifecycle(', 'async function syncCustomerCommunication('].map(prefix => sourceLine(suite, prefix)),
+    ...['async function patchJob(', 'function cachePortalInvitation(', 'function cacheSalesExit(', 'function portalInvitationState(', 'function portalInvitationLabel(', 'async function syncLifecycle(', 'async function syncCustomerCommunication('].map(prefix => sourceLine(suite, prefix)),
     sourceBetween(suite, 'window.opsFinanceAction=', 'function addCalendarMonths'),
   ].join('\n'), context, { filename: 'employee-suite.js#approval-workflow' });
   return { context, requests, store, time };

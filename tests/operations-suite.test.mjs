@@ -13,7 +13,7 @@ const TEST_HUB_USERS={
   FrankJara:{passwordHash:'test-frank',displayName:'Frank',role:'crew',payType:'hourly',hourlyRate:20},
   Crewtest:{passwordHash:'30fdb1804bc03b28227af1a07007b30bcb6c5207b12db6d5469fce9b9b465d4d',displayName:'Crew Test',role:'crew',payType:'hourly',hourlyRate:20},
 };
-const TEST_HUB_ENV={HUB_SESSION_SECRET:'test-hub-session',HUB_AUTH_USERS_JSON:JSON.stringify(TEST_HUB_USERS),HIGHLEVEL_API_KEY:'test-key',HIGHLEVEL_LOCATION_ID:'location-1'};
+const TEST_HUB_ENV={HUB_SESSION_SECRET:'test-hub-session',HUB_AUTH_USERS_JSON:JSON.stringify(TEST_HUB_USERS),HIGHLEVEL_API_KEY:'test-key',HIGHLEVEL_LOCATION_ID:'location-1',HIGHLEVEL_JOB_CALENDAR_ID:'customer-jobs',HIGHLEVEL_WALKTHROUGH_CALENDAR_ID:'customer-walkthroughs'};
 const TEST_HUB_COOKIE=(await createHubSessionCookie(TEST_HUB_ENV,'ZacB')).split(';')[0];
 
 const read=(p)=>fs.readFileSync(new URL('../'+p,import.meta.url),'utf8');
@@ -527,6 +527,7 @@ test('HighLevel schedule handoff advances the configured pipeline stage',async()
   const calls=[],originalFetch=globalThis.fetch;
   globalThis.fetch=async(url,options={})=>{
     calls.push({url:String(url),options});
+    if(String(url).endsWith('/opportunities/opp-1')&&!options.method)return new Response(JSON.stringify({opportunity:{id:'opp-1',contactId:'contact-1',pipelineId:'pipe-1',name:'Test garage',status:'open',monetaryValue:1400}}),{status:200});
     if(String(url).includes('/opportunities/search?'))return new Response(JSON.stringify({opportunities:[{id:'opp-1',contactId:'contact-1',pipelineId:'pipe-1',name:'Test garage',status:'open',monetaryValue:1400}]}),{status:200});
     if(String(url).endsWith('/calendars/events/appointments'))return new Response(JSON.stringify({id:'appt-1'}),{status:200});
     return new Response('{}',{status:200});

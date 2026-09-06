@@ -23,6 +23,9 @@
 
 import { getHubSession, hasBusinessAccess } from '../_lib/hub-session.js';
 import { sendAcceptedQuotePortal } from '../_lib/portal-invitation.js';
+import { syncSalesFollowupExit, salesExitMilestone } from '../_lib/sales-followup-exit.js';
+import { readJob, patchJob } from '../_lib/firestore-job.js';
+import { customerCalendars, isStaffScheduledCalendar } from '../_lib/highlevel-calendars.js';
 
 const API = 'https://services.leadconnectorhq.com';
 const DEFAULT_LEAD_RESET_AT = '2026-09-03T21:51:19.314Z';
@@ -42,12 +45,20 @@ function allowed(request) {
   try { return HOST.test(new URL(raw).host); } catch { return false; }
 }
 
+function mayChangeJob(session, job) {
+  if (hasBusinessAccess(session)) return true;
+  if (!job) return false;
+  const key = value => String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const identities = [session.user, session.displayName].map(key).filter(Boolean);
+  const crew = [...(Array.isArray(job.assignedCrew) ? job.assignedCrew : []), ...String(job.assignedTo || '').split(/\s*(?:,|\+|&|\band\b)\s*/i)];
+  return crew.some(value => identities.includes(key(typeof value === 'string' ? value : value?.id || value?.name)));
+}
+
 function config(env) {
   return {
     token: env.HIGHLEVEL_API_KEY || env.GHL_API_KEY || '',
     locationId: env.HIGHLEVEL_LOCATION_ID || env.GHL_LOCATION_ID || '',
-    walkthroughCalendarId: env.HIGHLEVEL_WALKTHROUGH_CALENDAR_ID || env.GHL_WALKTHROUGH_CALENDAR_ID || '2yYX63nHYvUsL6KKhAc0',
-    jobCalendarId: env.HIGHLEVEL_JOB_CALENDAR_ID || env.GHL_JOB_CALENDAR_ID || '2yYX63nHYvUsL6KKhAc0',
+    ...customerCalendars(env),
     pipelineId: env.HIGHLEVEL_PIPELINE_ID || env.GHL_PIPELINE_ID || 'anSgrMpYHtAX6YlUHnIR',
     scheduledStageId: env.HIGHLEVEL_SCHEDULED_STAGE_ID || env.GHL_SCHEDULED_STAGE_ID || env.HIGHLEVEL_PIPELINE_STAGE_SCHEDULED_ID || env.GHL_PIPELINE_STAGE_SCHEDULED_ID || '06b78f36-b53d-4028-9e36-b41ac4d2da09',
     walkthroughCompleteStageId: env.HIGHLEVEL_QUOTED_STAGE_ID || env.GHL_QUOTED_STAGE_ID || env.HIGHLEVEL_PIPELINE_STAGE_WALKTHROUGH_COMPLETE_ID || env.GHL_PIPELINE_STAGE_WALKTHROUGH_COMPLETE_ID || '85c56b3e-4886-4fc1-be95-87ad0b0d2bcc',
@@ -151,11 +162,9 @@ async function calendarList(c) {
 
 async function findCalendar(c, type = 'walkthrough') {
   const configured = type === 'job' ? c.jobCalendarId : c.walkthroughCalendarId;
+  if (configured === '2yYX63nHYvUsL6KKhAc0') throw new Error('The Employee hiring calendar cannot be used for customer appointments');
   if (configured) return configured;
-  const list = await calendarList(c);
-  const matcher = type === 'job' ? /job|service|clean|delivery/i : /walk|consult|estimate|quote/i;
-  const preferred = list.find(x => matcher.test(x.name || '')) || list[0];
-  return preferred?.id || '';
+  return '';
 }
 
 function localBounds(day) {
@@ -269,32 +278,28 @@ async function advanceOpportunity(c, contactId, stageId, fallbackTag, opportunit
   if (!stageId) return { updated: false, reason: 'stage-not-configured', fallbackTag };
   if (!c.pipelineId) return { updated: false, reason: 'pipeline-not-configured', fallbackTag };
   try {
-    let opportunity = null, rows = [];
     if (!opportunityId) {
-      rows = await opportunities(c);
-      opportunity = opportunityForContact(rows, contactId, c.pipelineId);
-    } else {
-      try { rows = await opportunities(c); opportunity = rows.find(row => row.id === opportunityId) || null; } catch {}
+      const params = new URLSearchParams({ locationId: c.locationId, contactId, status: 'open', limit: '100', page: '1' });
+      const found = await ghl(c, `/opportunities/search?${params}`);
+      if (!Array.isArray(found.opportunities) || found.opportunities.length || Number(found.meta?.total || 0)) return { updated: false, reason: 'existing-opportunity-needs-link', fallbackTag };
+      const amount = Number(details.monetaryValue);
+      const created = await ghl(c, '/opportunities/upsert', { method: 'POST', headers: { 'Idempotency-Key': details.idempotencyKey || `opportunity:${contactId}:${c.pipelineId}` }, body: JSON.stringify({
+        pipelineId: c.pipelineId, locationId: c.locationId, name: details.name || 'EGC Garage Service', pipelineStageId: stageId,
+        status: 'open', contactId, monetaryValue: Number.isFinite(amount) ? amount : 0, assignedTo: c.userId || undefined,
+        followers: c.userId ? [c.userId] : [], isRemoveAllFollowers: false, followersActionType: 'add',
+      }) });
+      const createdId = created.opportunity?.id || created.id || '';
+      return { updated: Boolean(createdId), created: Boolean(createdId), opportunityId: createdId, pipelineStageId: stageId, fallbackTag };
     }
+    const data = await ghl(c, `/opportunities/${encodeURIComponent(opportunityId)}`);
+    const opportunity = data.opportunity || data;
+    if (opportunity.id !== opportunityId || (opportunity.contactId || opportunity.contact?.id) !== contactId || opportunity.pipelineId !== c.pipelineId) return { updated: false, reason: 'opportunity-contact-mismatch', fallbackTag };
     const id = opportunityId || opportunity?.id || '';
     const pipelineId = opportunity?.pipelineId || c.pipelineId;
     const name = opportunity?.name || opportunity?.contact?.name || details.name || 'EGC Garage Service';
     const suppliedValue = Number(details.monetaryValue);
     const monetaryValue = details.monetaryValue !== undefined && Number.isFinite(suppliedValue)
       ? suppliedValue : Number(opportunity?.monetaryValue || 0);
-    if (!id) {
-      const created = await ghl(c, '/opportunities/upsert', {
-        method: 'POST',
-        headers: { 'Idempotency-Key': details.idempotencyKey || `opportunity:${contactId}:${pipelineId}` },
-        body: JSON.stringify({
-          pipelineId, locationId: c.locationId, name, pipelineStageId: stageId,
-          status: 'open', contactId, monetaryValue, assignedTo: c.userId || undefined,
-          followers: c.userId ? [c.userId] : [], isRemoveAllFollowers: false, followersActionType: 'add',
-        }),
-      });
-      const createdId = created.opportunity?.id || created.id || '';
-      return { updated: true, created: true, opportunityId: createdId, pipelineStageId: stageId, fallbackTag };
-    }
     await ghl(c, `/opportunities/${encodeURIComponent(id)}`, {
       method: 'PUT',
       body: JSON.stringify({
@@ -328,6 +333,7 @@ async function completeAppointment(c, appointmentId, targetStatus = 'completed')
         assignedUserId: current.assignedUserId || c.userId || undefined,
         appointmentStatus: targetStatus,
         toNotify: false,
+        ...(isStaffScheduledCalendar(current.calendarId) ? { ignoreFreeSlotValidation: true } : {}),
       }),
     });
     return { updated: true, appointmentId, appointmentStatus: targetStatus };
@@ -339,6 +345,7 @@ async function completeAppointment(c, appointmentId, targetStatus = 'completed')
 async function createAppointment(c, payload, contactId) {
   const type = payload.event_type === 'job' ? 'job' : 'walkthrough';
   const calendarId = payload.calendar_id || await findCalendar(c, type);
+  if (calendarId === '2yYX63nHYvUsL6KKhAc0') throw new Error('The Employee hiring calendar cannot be used for customer appointments');
   if (!calendarId) throw new Error('No HighLevel calendar is available');
   const body = {
     calendarId,
@@ -347,6 +354,7 @@ async function createAppointment(c, payload, contactId) {
     appointmentStatus: payload.status || 'confirmed', assignedUserId: payload.assigned_user_id || c.userId || undefined,
     description: payload.notes || '', address: payload.address || payload.client?.address || '',
     toNotify: payload.notify !== false,
+    ...(isStaffScheduledCalendar(calendarId) ? { ignoreFreeSlotValidation: true } : {}),
   };
   if (payload.appointment_id) {
     const appointment = await ghl(c, `/calendars/events/appointments/${encodeURIComponent(payload.appointment_id)}`, { method: 'PUT', headers: payload.idempotency_key ? { 'Idempotency-Key': payload.idempotency_key } : {}, body: JSON.stringify(body) });
@@ -513,15 +521,54 @@ export async function onRequestPost({ request, env }) {
   let payload;
   try { payload = JSON.parse(raw); } catch { return reply(400, { ok: false, error: 'Invalid JSON' }); }
   payload.idempotency_key ||= request.headers.get('Idempotency-Key') || '';
-  if (!['game_plan','post_job','schedule','lifecycle'].includes(payload.tool)) return reply(400, { ok: false, error: 'Unsupported HighLevel handoff' });
+  if (!['game_plan','post_job','schedule','lifecycle','sales_exit'].includes(payload.tool)) return reply(400, { ok: false, error: 'Unsupported HighLevel handoff' });
+  if (payload.tool === 'lifecycle') {
+    payload.event = String(payload.event || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+    if (['garage-sales-exit', 'junk-sales-exit'].includes(payload.event)) return reply(400, { ok: false, error: 'Sales exits require a verified saved job' });
+  }
+  if (payload.tool === 'sales_exit') {
+    if (!hasBusinessAccess(session)) return reply(403, { ok: false, error: 'Business access required' });
+    return reply(200, { ok: true, salesFollowupExit: await syncSalesFollowupExit(env, payload.job_id) });
+  }
+  const inviteRequested = payload.tool === 'game_plan' || (payload.tool === 'lifecycle' && payload.event === 'estimate-approved');
+  if (inviteRequested && !hasBusinessAccess(session)) return reply(403, { ok: false, code: 'BUSINESS_ACCESS_REQUIRED', error: 'Business access required for quote approvals' });
+  if (payload.job_id && !hasBusinessAccess(session)) {
+    const savedJob = await readJob(env, payload.job_id).catch(() => null);
+    if (!mayChangeJob(session, savedJob)) return reply(403, { ok: false, error: 'This job is not assigned to you' });
+  }
   if (payload.tool === 'game_plan' && !hasBusinessAccess(session)) return reply(403, { ok: false, code: 'BUSINESS_ACCESS_REQUIRED', error: 'Walkthrough access is limited to Zac, Tyler, and Alex' });
   if (payload.tool === 'schedule' && !hasBusinessAccess(session)) return reply(403, { ok: false, code: 'BUSINESS_ACCESS_REQUIRED', error: 'Schedule changes are limited to managers' });
-  const inviteRequested = payload.tool === 'game_plan' || (payload.tool === 'lifecycle' && payload.event === 'estimate-approved');
-  if (inviteRequested && !hasBusinessAccess(session)) return reply(403, { ok: false, error: 'Business access required for quote approvals' });
   // This runs independently of notes/calendar writes, and validates approval and
   // recipient from storage. Repeating the handoff cannot send another invitation.
   const portalInvitation = inviteRequested ? await sendAcceptedQuotePortal(env, payload.job_id, { requireRequested: true }) : undefined;
   const client = payload.client || payload.job || {};
+  const exitForJob = async () => {
+    if (!hasBusinessAccess(session)) {
+      const current = payload.job_id ? await readJob(env, payload.job_id).catch(() => null) : null;
+      if (!mayChangeJob(session, current)) return { status: 'not_authorized' };
+    }
+    return syncSalesFollowupExit(env, payload.job_id);
+  };
+  const finish = async (contactId, result) => {
+    // Preserve durable links before evaluating the saved job. Never trust an
+    // incoming contact ID as authority to stop that person's sales workflows.
+    try {
+      const job = payload.job_id ? await readJob(env, payload.job_id) : null;
+      if (job?.__updateTime && mayChangeJob(session, job) && (!job.highlevelContactId || job.highlevelContactId === contactId)) {
+        const contact = await contactById(c, contactId);
+        const digits = value => String(value || '').replace(/\D/g, '').replace(/^1(?=\d{10}$)/, '');
+        const samePhone = digits(job.phone) && digits(job.phone) === digits(contact.phone);
+        const sameEmail = job.email && String(job.email).trim().toLowerCase() === String(contact.email || '').trim().toLowerCase();
+        if (contact.id === contactId && contact.locationId === c.locationId && (samePhone || sameEmail)) {
+          const patch = { highlevelContactId: contactId };
+          if (result.pipeline?.updated && result.pipeline.opportunityId) patch.highlevelOpportunityId = result.pipeline.opportunityId;
+          if (result.appointmentId) patch.highlevelAppointmentId = result.appointmentId;
+          await patchJob(env, payload.job_id, patch, job.__updateTime);
+        }
+      }
+    } catch { /* Missing/ambiguous storage is handled by the verification below. */ }
+    return reply(200, { ...result, salesFollowupExit: await exitForJob() });
+  };
   try {
     const contactId = await ensureContact(c, { ...client, highlevel_contact_id: client.highlevel_contact_id || payload.highlevel_contact_id }, payload.tool === 'schedule' ? 'EGC Hub schedule' : payload.tool === 'lifecycle' ? 'EGC Hub lifecycle' : 'EGC walkthrough');
     if (!contactId) return reply(502, { ok: false, error: 'HighLevel did not return a contact ID' });
@@ -534,8 +581,8 @@ export async function onRequestPost({ request, env }) {
       const reminderTag = payload.notify === false ? '' : `egc-reminder-${reminderDays}d`;
       let tagSynced = true;
       try { await addTags(c, contactId, ['egc-hub-scheduled', typeTag, reminderTag]); } catch { tagSynced = false; }
-      const stage = await advanceOpportunity(c, contactId, c.scheduledStageId, typeTag, payload.opportunity_id || '', opportunityInput(payload, client));
-      return reply(200, { ok: true, contactId, ...event, pipeline: stage, automation: { trigger: typeTag, reminderTrigger: reminderTag, tagSynced, notificationsRequested: payload.notify !== false } });
+      const stage = payload.event_type === 'job' ? await advanceOpportunity(c, contactId, c.scheduledStageId, typeTag, payload.opportunity_id || '', opportunityInput(payload, client)) : { updated: false, reason: 'walkthrough-is-not-a-booked-job' };
+      return finish(contactId, { ok: true, contactId, ...event, pipeline: stage, automation: { trigger: typeTag, reminderTrigger: reminderTag, tagSynced, notificationsRequested: payload.notify !== false } });
     }
     if (payload.tool === 'lifecycle') {
       const event = String(payload.event || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
@@ -549,7 +596,7 @@ export async function onRequestPost({ request, env }) {
         const note = await ghl(c, `/contacts/${encodeURIComponent(contactId)}/notes`, { method: 'POST', headers: payload.idempotency_key ? { 'Idempotency-Key': payload.idempotency_key } : {}, body: JSON.stringify({ userId: c.userId || undefined, title: `EGC Lifecycle — ${event}`, body: String(payload.note).trim().slice(0, 3000), color: '#F15A24', pinned: false }) });
         noteId = note.note?.id || '';
       }
-      return reply(200, { ok: true, contactId, noteId, ...appointment, portalInvitation, automation: { trigger: payload.suppress_automation ? '' : tag, suppressed: Boolean(payload.suppress_automation) } });
+      return finish(contactId, { ok: true, contactId, noteId, ...appointment, portalInvitation, automation: { trigger: payload.suppress_automation ? '' : tag, suppressed: Boolean(payload.suppress_automation) } });
     }
     const isCloseout = payload.tool === 'post_job';
     const note = await ghl(c, `/contacts/${encodeURIComponent(contactId)}/notes`, { method: 'POST', headers: payload.idempotency_key ? { 'Idempotency-Key': payload.idempotency_key } : {}, body: JSON.stringify({
@@ -568,9 +615,13 @@ export async function onRequestPost({ request, env }) {
         taskId = task.task && task.task.id || '';
       } catch {}
       const stage = await advanceOpportunity(c, contactId, c.jobCompleteStageId, 'egc-job-complete', payload.opportunity_id || '', opportunityInput(payload, client));
-      return reply(200, { ok: true, contactId, noteId: note.note && note.note.id || '', taskId, pipeline: stage, automation: { trigger: 'egc-job-complete' } });
+      return finish(contactId, { ok: true, contactId, noteId: note.note && note.note.id || '', taskId, pipeline: stage, automation: { trigger: 'egc-job-complete' } });
     } else {
-      await addTags(c, contactId, ['egc-walkthrough-complete', ...c.quoteReadyTags]);
+      const savedJob = payload.job_id ? await readJob(env, payload.job_id).catch(() => null) : null;
+      // Never re-enrol an accepted job when staff resave its Game Plan. Quote
+      // persuasion requires the current saved estimate to still be open.
+      const quoteIsOpen = savedJob && !salesExitMilestone(savedJob) && ['sent', 'open'].includes(String(savedJob.estimate?.status || '').toLowerCase());
+      await addTags(c, contactId, ['egc-walkthrough-complete', ...(quoteIsOpen ? c.quoteReadyTags : [])]);
       const walkthrough = await completeAppointment(c, client.highlevel_appointment_id || payload.walkthrough_appointment_id || '');
       const q = payload.quote || {};
       if (q.job_date && q.start_time && q.end_time) {
@@ -583,13 +634,13 @@ export async function onRequestPost({ request, env }) {
         let tagSynced = true;
         try { await addTags(c, contactId, ['egc-hub-scheduled', 'egc-job-scheduled']); } catch { tagSynced = false; }
         const stage = await advanceOpportunity(c, contactId, c.scheduledStageId, 'egc-job-scheduled', payload.opportunity_id || '', opportunityInput(payload, client));
-        return reply(200, { ok: true, contactId, noteId: note.note?.id || '', taskId, ...scheduled, walkthrough, pipeline: stage, portalInvitation, automation: { trigger: 'egc-job-scheduled', tagSynced } });
+        return finish(contactId, { ok: true, contactId, noteId: note.note?.id || '', taskId, ...scheduled, walkthrough, pipeline: stage, portalInvitation, automation: { trigger: 'egc-job-scheduled', tagSynced } });
       }
       const stage = await advanceOpportunity(c, contactId, c.walkthroughCompleteStageId, 'egc-walkthrough-complete', payload.opportunity_id || '', opportunityInput(payload, client));
-      return reply(200, { ok: true, contactId, noteId: note.note && note.note.id || '', taskId, walkthrough, pipeline: stage, portalInvitation, automation: { trigger: 'egc-walkthrough-complete' } });
+      return finish(contactId, { ok: true, contactId, noteId: note.note && note.note.id || '', taskId, walkthrough, pipeline: stage, portalInvitation, automation: { trigger: 'egc-walkthrough-complete' } });
     }
     return reply(200, { ok: true, contactId, noteId: note.note && note.note.id || '', taskId, automation: { trigger: 'egc-walkthrough-complete' } });
   } catch (error) {
-    return reply(502, { ok: false, error: 'HighLevel rejected the field handoff', detail: error.detail || error.message, portalInvitation });
+    return reply(502, { ok: false, error: 'HighLevel rejected the field handoff', detail: error.detail || error.message, portalInvitation, salesFollowupExit: await exitForJob() });
   }
 }

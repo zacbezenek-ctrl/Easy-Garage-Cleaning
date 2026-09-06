@@ -1,3 +1,4 @@
+import { syncSalesFollowupExit } from '../_lib/sales-followup-exit.js';
 import { clearCustomerPortalSessionCookie, createCustomerPortalCollaboratorAccessToken, getCustomerPortalSession } from '../_lib/customer-portal.js';
 import { patchJob, patchJobsAtomic, readJob } from '../_lib/firestore-job.js';
 import { appendConversationMessage, cleanMessage, cleanRequestId, conversationMessages, deliverHighLevelMessage, findConversationMessage, replaceConversationMessage } from '../_lib/customer-messaging.js';
@@ -281,7 +282,8 @@ export async function onRequestPost({ request, env }) {
         updatedAt: now,
       }, result.jobUpdateTime);
     } catch { return reply(409, { ok: false, error: 'The estimate changed. Refresh before approving it.' }); }
-    return reply(200, { ok: true, approval });
+    const salesFollowupExit = await syncSalesFollowupExit(env, result.session.jobId);
+    return reply(200, { ok: true, approval, salesFollowupExit });
   }
 
   if (body.action === 'create_payment') {
