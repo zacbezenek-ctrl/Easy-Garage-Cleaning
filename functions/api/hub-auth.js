@@ -30,13 +30,25 @@ export async function onRequestGet({ request, env }) {
 
 export async function onRequestPost({ request, env }) {
   if (!allowed(request)) return reply(403, { ok: false, error: 'Forbidden origin' });
-  if (!hubAuthConfigured(env)) return reply(503, { ok: false, error: 'Hub authentication is not configured' });
+  if (!hubAuthConfigured(env)) return reply(503, { ok: false, code: 'HUB_AUTH_CONFIGURATION', error: 'Employee sign-in is unavailable while Zac completes secure Hub setup. Existing account requests are saved; you do not need to register again.' });
   const raw = await request.text();
   if (raw.length > 8 * 1024) return reply(413, { ok: false, error: 'Request is too large' });
   let body;
   try { body = JSON.parse(raw); } catch { return reply(400, { ok: false, error: 'Invalid JSON' }); }
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return reply(400, { ok: false, error: 'Enter your username and password' });
   const username = String(body.username || '').trim();
-  const profile = await authenticateHubCredential(env, username, body.password);
+  if (!username || username.length > 80 || typeof body.password !== 'string' || !body.password) return reply(400, { ok: false, error: 'Enter your username and password' });
+  let profile;
+  try {
+    profile = await authenticateHubCredential(env, username, body.password);
+  } catch (error) {
+    const known = /^EMPLOYEE_ACCOUNT|^HUB_AUTH_CONFIGURATION$/.test(error?.code || '');
+    return reply(known ? (error.status || 503) : 502, {
+      ok: false,
+      code: known ? error.code : 'HUB_AUTH_UNAVAILABLE',
+      error: known ? error.message : 'Sign-in is temporarily unavailable. Try again later.',
+    });
+  }
   if (!profile) {
     return reply(401, { ok: false, error: 'Incorrect username or password' });
   }

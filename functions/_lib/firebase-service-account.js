@@ -27,10 +27,15 @@ function serviceAccount(env = {}) {
   let account;
   try { account = JSON.parse(raw); }
   catch { throw new Error('Firebase service account is invalid'); }
-  const privateKey = String(account.private_key || '').replace(/\\n/g, '\n');
-  const clientEmail = String(account.client_email || '');
-  const projectId = String(account.project_id || PROJECT_ID);
-  if (!privateKey || !clientEmail || projectId !== PROJECT_ID) {
+  if (!account || typeof account !== 'object' || Array.isArray(account)) {
+    throw new Error('Firebase service account is invalid');
+  }
+  const privateKey = String(account.private_key || '').replace(/\\n/g, '\n').trim();
+  const clientEmail = String(account.client_email || '').trim();
+  const projectId = String(account.project_id || '');
+  if (account.type !== 'service_account' ||
+      !/^-----BEGIN PRIVATE KEY-----\s+[A-Za-z0-9+/=\s]+\s+-----END PRIVATE KEY-----$/.test(privateKey) ||
+      !/^[^\s@]+@[^\s@]+\.iam\.gserviceaccount\.com$/.test(clientEmail) || projectId !== PROJECT_ID) {
     throw new Error('Firebase service account does not match this project');
   }
   return { ...account, private_key: privateKey, client_email: clientEmail, project_id: projectId };
@@ -82,7 +87,10 @@ export async function createFirebaseCustomToken(env, uid, claims = {}) {
 export async function getFirestoreAccessToken(env) {
   const account = serviceAccount(env);
   const now = Math.floor(Date.now() / 1000);
-  if (cachedAccessToken?.email === account.client_email && cachedAccessToken.expiresAt > now + 60) {
+  const credentialId = base64Url(new Uint8Array(await crypto.subtle.digest(
+    'SHA-256', encoder.encode(`${account.client_email}\n${account.private_key}`),
+  )));
+  if (cachedAccessToken?.credentialId === credentialId && cachedAccessToken.expiresAt > now + 60) {
     return cachedAccessToken.token;
   }
   const assertion = await signedJwt(account, {
@@ -100,7 +108,7 @@ export async function getFirestoreAccessToken(env) {
   const result = await response.json().catch(() => ({}));
   if (!response.ok || !result.access_token) throw new Error(`Firebase service authentication failed (${response.status})`);
   cachedAccessToken = {
-    email: account.client_email,
+    credentialId,
     token: result.access_token,
     expiresAt: now + Math.max(300, Number(result.expires_in || 3600)),
   };

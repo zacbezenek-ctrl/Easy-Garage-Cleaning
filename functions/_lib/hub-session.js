@@ -35,21 +35,41 @@ function users(env = {}) {
   if (!env.HUB_AUTH_USERS_JSON) return {};
   try {
     const configured = JSON.parse(env.HUB_AUTH_USERS_JSON);
-    return configured && typeof configured === 'object' && !Array.isArray(configured) ? configured : {};
+    if (configured && typeof configured === 'object' && !Array.isArray(configured)) return configured;
   } catch {
-    return {};
+    // A broken staff configuration must not fall through to another account.
   }
+  const error = new Error('Staff sign-in configuration needs administrator attention');
+  error.code = 'HUB_AUTH_CONFIGURATION';
+  throw error;
+}
+
+function configuredUsername(env, username) {
+  const requested = String(username || '').trim().toLowerCase();
+  const matches = Object.keys(users(env)).filter(key => key.trim().toLowerCase() === requested);
+  if (matches.length > 1) {
+    const error = new Error('Staff sign-in configuration needs administrator attention');
+    error.code = 'HUB_AUTH_CONFIGURATION';
+    throw error;
+  }
+  return matches[0] || '';
 }
 
 function userRecord(env, username) {
-  const configured = users(env)[username];
-  if (!configured) return null;
+  const canonical = configuredUsername(env, username);
+  if (!canonical) return null;
+  const configured = users(env)[canonical];
   const record = typeof configured === 'string' ? { passwordHash: configured } : configured;
-  if (!record || typeof record !== 'object') return null;
+  if (!record || typeof record !== 'object' || Array.isArray(record) || !String(record.passwordHash || record.hash || '').trim()) {
+    const error = new Error('Staff sign-in configuration needs administrator attention');
+    error.code = 'HUB_AUTH_CONFIGURATION';
+    throw error;
+  }
   const role = String(record.role || 'crew').toLowerCase();
   return {
+    username: canonical,
     passwordHash: String(record.passwordHash || record.hash || ''),
-    displayName: String(record.displayName || username),
+    displayName: String(record.displayName || canonical),
     role: ['owner', 'manager', 'sales', 'crew_lead', 'crew'].includes(role) ? role : 'crew',
     payType: String(record.payType || 'hourly'),
     hourlyRate: Math.max(0, Number(record.hourlyRate || 0)),
@@ -59,8 +79,8 @@ function userRecord(env, username) {
 export function getHubUserProfile(env, username) {
   const record = userRecord(env, username);
   if (!record) return null;
-  const { passwordHash, ...profile } = record;
-  return { user: username, ...profile, businessAccess: hasBusinessAccess(username) };
+  const { passwordHash, username: canonical, ...profile } = record;
+  return { user: canonical, ...profile, businessAccess: hasBusinessAccess(canonical) };
 }
 
 export function listHubUserProfiles(env = {}) {
@@ -126,19 +146,21 @@ async function verifyPasswordHash(username, password, expected) {
 }
 
 export async function validateHubCredential(env, username, password) {
-  const expected = userRecord(env, username)?.passwordHash;
-  if (expected) return verifyPasswordHash(username, password, expected);
-  if (Object.keys(users(env)).some(value => value.toLowerCase() === String(username || '').toLowerCase())) return false;
-  return Boolean(await authenticateEmployeeAccount(env, username, password).catch(() => null));
+  return Boolean(await authenticateHubCredential(env, username, password));
 }
 
 export async function authenticateHubCredential(env, username, password) {
-  const expected = userRecord(env, username)?.passwordHash;
-  if (expected && await verifyPasswordHash(username, password, expected)) {
-    return getHubUserProfile(env, username);
+  const record = userRecord(env, username);
+  if (record?.passwordHash && await verifyPasswordHash(record.username, password, record.passwordHash)) {
+    return getHubUserProfile(env, record.username);
   }
-  if (Object.keys(users(env)).some(value => value.toLowerCase() === String(username || '').toLowerCase())) return null;
-  return authenticateEmployeeAccount(env, username, password).catch(() => null);
+  if (configuredUsername(env, username)) return null;
+  if (hasBusinessAccess(username)) {
+    const error = new Error('This staff account has not been configured. Ask the owner to complete secure staff sign-in setup.');
+    error.code = 'HUB_AUTH_CONFIGURATION';
+    throw error;
+  }
+  return authenticateEmployeeAccount(env, username, password);
 }
 
 export async function createHubSessionToken(env, username, now = Date.now(), suppliedProfile = null) {
@@ -148,7 +170,7 @@ export async function createHubSessionToken(env, username, now = Date.now(), sup
   if (!profile) throw new Error('Hub user is not configured');
   const session = suppliedProfile?.source === 'employee-account'
     ? { v: 2, u: username, d: profile.displayName, r: 'crew', p: profile.payType || 'hourly', h: Math.max(0, Number(profile.hourlyRate || 0)), exp: now + SESSION_SECONDS * 1000 }
-    : { v: 1, u: username, exp: now + SESSION_SECONDS * 1000 };
+    : { v: 1, u: profile.user || configuredUsername(env, username), exp: now + SESSION_SECONDS * 1000 };
   const payload = bytesToBase64Url(encoder.encode(JSON.stringify(session)));
   return `${payload}.${await signature(secret, payload)}`;
 }
@@ -171,7 +193,7 @@ export async function verifyHubSessionToken(env, token, now = Date.now()) {
       source: 'employee-account',
       expiresAt: session.exp,
     };
-    if (session.v !== 1 || !users(env)[session.u]) return null;
+    if (session.v !== 1 || !Object.hasOwn(users(env), session.u)) return null;
     const profile = getHubUserProfile(env, session.u);
     return profile ? { ...profile, expiresAt: session.exp } : null;
   } catch {

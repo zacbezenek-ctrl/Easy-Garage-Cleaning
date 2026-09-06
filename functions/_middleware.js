@@ -38,13 +38,22 @@ export async function onRequest(context) {
     statusText: explicit404 ? 'Not Found' : upstream.statusText,
     headers: upstream.headers,
   });
-  response.headers.set('Content-Security-Policy', CSP);
+  const ownerSetup = /^\/hub-login-setup(?:\.html|\.js)?$/.test(pathname);
+  response.headers.set('Content-Security-Policy', ownerSetup
+    ? "default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; connect-src 'none'; form-action 'none'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'"
+    : CSP);
   response.headers.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
   response.headers.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=(self), payment=(), usb=()');
   response.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
   response.headers.set('X-Content-Type-Options', 'nosniff');
   response.headers.set('X-Frame-Options', pathname.startsWith('/employee') || pathname.startsWith('/crew/') || pathname.startsWith('/copilot') ? 'DENY' : 'SAMEORIGIN');
   response.headers.delete('Access-Control-Allow-Origin');
+  if (ownerSetup) {
+    response.headers.set('Cache-Control', 'no-store');
+    response.headers.set('X-Robots-Tag', 'noindex, nofollow');
+    response.headers.set('Referrer-Policy', 'no-referrer');
+    response.headers.set('X-Frame-Options', 'DENY');
+  }
   if (pathname.startsWith('/api/')) {
     response.headers.set('Cache-Control', 'no-store');
     response.headers.set('X-Robots-Tag', 'noindex, nofollow');

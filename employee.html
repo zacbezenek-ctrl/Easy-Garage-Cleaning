@@ -769,16 +769,17 @@ body.has-session #login-screen { display: none; }
       <h1>Easy Garage<br><em>Cleaning</em></h1>
       <p>Sign in to access the team dashboard</p>
     </div>
-    <div class="login-error" id="login-error">Incorrect username or password.</div>
+    <div class="login-error" id="login-error" role="alert" aria-live="polite"></div>
     <div class="fg">
-      <label>Username</label>
-      <input type="text" id="l-user" placeholder="e.g. ZacB" autocomplete="username">
+      <label for="l-user">Username</label>
+      <input type="text" id="l-user" placeholder="e.g. ZacB" autocomplete="username" autocapitalize="none" spellcheck="false">
     </div>
     <div class="fg">
-      <label>Password</label>
+      <label for="l-pass">Password</label>
       <input type="password" id="l-pass" placeholder="••••••••••" autocomplete="current-password">
     </div>
-    <button class="btn-main" onclick="doLogin()">Sign In</button>
+    <button class="btn-main" type="button" onclick="doLogin()">Sign In</button>
+    <p style="font-size:.8rem;color:var(--muted);line-height:1.5;margin-top:.9rem">New accounts stay locked until Zac approves them. Use the username you created.</p>
     <a class="employee-signup-link" href="/employee-signup">New employee? Create your account</a>
   </div>
 </div>
@@ -1300,6 +1301,9 @@ const CFG = {
   ZAP7_REVIEW_WEBHOOK:  'operations:review_request',
 };
 
+let db = null;
+try {
+if (window.firebase) {
 firebase.initializeApp({
   apiKey:            "AIzaSyA8g4UAW4P4bsCrQNZhUe81CbC7BvjJbNc",
   authDomain:        "egcw-1ec83.firebaseapp.com",
@@ -1308,7 +1312,9 @@ firebase.initializeApp({
   messagingSenderId: "763340109795",
   appId:             "1:763340109795:web:ac203b3eb71831fa4ed2d6"
 });
-const db = firebase.firestore();
+db = firebase.firestore();
+}
+} catch { /* Login reports unavailable secure data without losing the sign-in form. */ }
 let jobsCache = [];
 let custsCache = [];
 let leadsCache = [];
@@ -1316,6 +1322,8 @@ let blockedDays  = new Set();
 let blockedSlots = new Set(); // keys: "YYYY-MM-DD_H"
 let _leadsTimer = null;
 let _listenersStarted = false;
+let _dataGeneration = 0;
+let _dataUnsubscribers = [];
 const firebaseConn = { leads: 'connecting', jobs: 'connecting', customers: 'connecting' };
 
 function scheduleTabActive() {
@@ -1350,16 +1358,32 @@ function canRunBusiness() {
 }
 
 async function ensureFirebaseSession() {
+  if (!window.firebase?.auth) throw new Error('Secure employee data could not start. Reload the page and try again.');
   const response = await fetch('/api/firebase-session', { cache: 'no-store', credentials: 'same-origin' });
   const data = await response.json().catch(() => ({}));
-  if (!response.ok || !data.ok || !data.token) throw new Error(data.error || 'Secure data access is unavailable');
-  await firebase.auth().signInWithCustomToken(data.token);
+  if (!response.ok || !data.ok || !data.token) {
+    const error = new Error(data.error || 'Secure employee data is unavailable. Ask Zac to finish the Hub setup, then retry.');
+    error.code = data.code || 'FIREBASE_AUTH_UNAVAILABLE';
+    throw error;
+  }
+  try { await firebase.auth().signInWithCustomToken(data.token); }
+  catch { throw new Error('Your login was accepted, but secure employee data could not connect. Reload and retry; if it continues, ask Zac to check the Firebase setup.'); }
 }
 
-async function enterEmployeeApp() {
+async function enterEmployeeApp(data) {
   await ensureFirebaseSession();
+  me = data.user;
+  rememberHubProfile(data);
+  document.getElementById('l-pass').value = '';
   if (canRunBusiness()) showModeSelect();
   else bootDashboard();
+}
+
+function clearHubProfile() {
+  me = null;
+  for (const storage of [sessionStorage, localStorage]) {
+    ['egc_u','egc_name','egc_role','egc_pay_type','egc_hourly_rate','egc_business_access','egc_tok','egc_exp'].forEach(key => storage.removeItem(key));
+  }
 }
 
 function rememberHubProfile(data) {
@@ -1379,6 +1403,8 @@ async function doLogin() {
   const p = document.getElementById('l-pass').value;
   const err = document.getElementById('login-error');
   const button = document.querySelector('#login-screen .btn-main');
+  if (button.disabled) return;
+  if (!u || !p) { err.textContent = 'Enter your username and password.'; err.style.display = 'block'; return; }
   err.style.display = 'none';
   button.disabled = true;
   button.textContent = 'Signing in…';
@@ -1388,13 +1414,12 @@ async function doLogin() {
       body: JSON.stringify({ username: u, password: p })
     });
     const data = await response.json().catch(() => ({}));
-    if (!response.ok || !data.ok) throw new Error(data.error || 'Incorrect username or password');
+    if (!response.ok || !data.ok || !data.user) throw new Error(data.error || (response.status === 401 ? 'Incorrect username or password' : 'The sign-in service is unavailable. Try again shortly.'));
     err.style.display = 'none';
-    me = data.user;
-    rememberHubProfile(data);
-    sessionStorage.removeItem('egc_tok');
-    await enterEmployeeApp();
+    await enterEmployeeApp(data);
   } catch (error) {
+    clearHubProfile();
+    document.body.classList.remove('has-session');
     err.textContent = error.message || 'Unable to sign in. Check the connection and try again.';
     err.style.display = 'block';
   } finally {
@@ -1404,10 +1429,15 @@ async function doLogin() {
 }
 
 async function doLogout() {
-  sessionStorage.removeItem('egc_u');
-  ['egc_name','egc_role','egc_pay_type','egc_hourly_rate','egc_business_access'].forEach(key => sessionStorage.removeItem(key));
-  sessionStorage.removeItem('egc_tok');
-  me = null;
+  clearHubProfile();
+  _dataGeneration++;
+  _dataUnsubscribers.forEach(unsubscribe => unsubscribe());
+  _dataUnsubscribers = [];
+  _listenersStarted = false;
+  clearInterval(_leadsTimer);
+  jobsCache = []; custsCache = []; leadsCache = [];
+  blockedDays = new Set(); blockedSlots = new Set();
+  window.dispatchEvent(new Event('egc:signout'));
   document.body.classList.remove('has-session');
   document.getElementById('oncall-overlay').classList.remove('open');
   document.getElementById('mode-screen').style.display   = '';
@@ -1461,17 +1491,18 @@ window.addEventListener('DOMContentLoaded', async () => {
     const response = await fetch('/api/hub-auth', { cache: 'no-store', credentials: 'same-origin' });
     const data = await response.json().catch(() => ({}));
     if (response.ok && data.ok && data.user) {
-      me = data.user;
-      rememberHubProfile(data);
-      sessionStorage.removeItem('egc_tok');
-      await enterEmployeeApp();
+      await enterEmployeeApp(data);
     } else {
-      sessionStorage.removeItem('egc_u');
-      sessionStorage.removeItem('egc_tok');
+      clearHubProfile();
       document.body.classList.remove('has-session');
+      if (response.status !== 401) throw new Error(data.error || 'The sign-in service is unavailable. Try again shortly.');
     }
-  } catch {
+  } catch (error) {
+    clearHubProfile();
     document.body.classList.remove('has-session');
+    const err = document.getElementById('login-error');
+    err.textContent = error.message || 'Your session could not be checked. Check the connection and retry.';
+    err.style.display = 'block';
   }
   document.getElementById('l-pass').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
   document.getElementById('l-user').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('l-pass').focus(); });
@@ -1489,12 +1520,21 @@ function uid() { return Date.now().toString(36) + Math.random().toString(36).sli
 function startListeners() {
   if (_listenersStarted) return;
   _listenersStarted = true;
+  const generation = _dataGeneration;
+  const listen = (collection, onNext, onError) => {
+    const unsubscribe = db.collection(collection).onSnapshot(
+      snapshot => { if (generation === _dataGeneration) onNext(snapshot); },
+      error => { if (generation === _dataGeneration) onError(error); }
+    );
+    _dataUnsubscribers.push(unsubscribe);
+  };
   updateFirebaseStatus();
 
   if (!canRunBusiness()) {
     hubFetch('/api/crew-jobs', { cache: 'no-store' })
       .then(async response => {
         const data = await response.json().catch(() => ({}));
+        if (generation !== _dataGeneration) return;
         if (!response.ok || !data.ok) throw new Error(data.error || 'Crew schedule unavailable');
         jobsCache = Array.isArray(data.jobs) ? data.jobs : [];
         custsCache = [];
@@ -1510,6 +1550,7 @@ function startListeners() {
         if (typeof window.opsRefresh === 'function') window.opsRefresh();
       })
       .catch(error => {
+        if (generation !== _dataGeneration) return;
         firebaseConn.jobs = 'error';
         updateFirebaseStatus();
         console.error('Crew schedule error', error);
@@ -1517,7 +1558,7 @@ function startListeners() {
     return;
   }
 
-  db.collection('jobs').onSnapshot(snap => {
+  listen('jobs', snap => {
     firebaseConn.jobs = 'connected';
     jobsCache = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(j => j.recordType !== 'schedule_lock' && j.recordType !== 'employee_hub_v2' && !String(j.id).startsWith('_egc_schedule_lock_') && !String(j.id).startsWith('secure_'));
     updateFirebaseStatus();
@@ -1528,7 +1569,7 @@ function startListeners() {
     console.error('Jobs listener error', err);
   });
 
-  db.collection('customers').onSnapshot(snap => {
+  listen('customers', snap => {
     firebaseConn.customers = 'connected';
     custsCache = snap.docs.map(d => ({ id: d.id, ...d.data() }));
     updateFirebaseStatus();
@@ -1542,12 +1583,12 @@ function startListeners() {
     console.error('Customers listener error', err);
   });
 
-  db.collection('blocked_days').onSnapshot(snap => {
+  listen('blocked_days', snap => {
     blockedDays = new Set(snap.docs.map(d => d.id));
     if (scheduleTabActive()) renderCal();
   }, err => console.error('blocked_days listener error', err));
 
-  db.collection('blocked_slots').onSnapshot(snap => {
+  listen('blocked_slots', snap => {
     blockedSlots = new Set(snap.docs.map(d => d.id));
     if (scheduleTabActive()) renderCal();
   }, err => console.error('blocked_slots listener error', err));

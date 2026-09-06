@@ -4,6 +4,7 @@ import {
   employeeAccountsConfigured,
   listEmployeeApplications,
   normalizeEmployeeUsername,
+  isReservedEmployeeUsername,
   reviewEmployeeApplication,
 } from '../_lib/employee-accounts.js';
 
@@ -25,39 +26,47 @@ function allowed(request) {
 
 const isOwner = session => hasBusinessAccess(session) && normalizeEmployeeUsername(session?.user) === 'zacb';
 
+function accountFailure(error, fallbackStatus, fallbackMessage) {
+  if (error?.code?.startsWith('EMPLOYEE_ACCOUNT')) return reply(error.status || 503, { ok: false, code: error.code, error: error.message });
+  if (error?.code === 'HUB_AUTH_CONFIGURATION') return reply(503, { ok: false, code: error.code, error: error.message });
+  if (/already registered/i.test(error?.message || '')) return reply(409, { ok: false, error: 'That username is already registered' });
+  return reply(fallbackStatus, { ok: false, error: fallbackMessage });
+}
+
 export async function onRequestGet({ request, env }) {
   const session = await getHubSession(request, env);
   if (!session) return reply(401, { ok: false, error: 'Sign in required' });
   if (!isOwner(session)) return reply(403, { ok: false, error: 'Only Zac can approve employee accounts' });
-  if (!employeeAccountsConfigured(env)) return reply(503, { ok: false, error: 'Employee account signup is not configured' });
+  if (!employeeAccountsConfigured(env)) return reply(503, { ok: false, code: 'EMPLOYEE_ACCOUNTS_NOT_CONFIGURED', error: 'Employee accounts are unavailable while Zac completes secure Hub setup. Existing applications are preserved.' });
   try {
     return reply(200, { ok: true, accounts: await listEmployeeApplications(env) });
   } catch (error) {
-    return reply(502, { ok: false, error: String(error.message || 'Employee applications could not be loaded') });
+    return accountFailure(error, 502, 'Employee applications could not be loaded. Try again later.');
   }
 }
 
 export async function onRequestPost({ request, env }) {
   if (!allowed(request)) return reply(403, { ok: false, error: 'Forbidden origin' });
-  if (!employeeAccountsConfigured(env)) return reply(503, { ok: false, error: 'Employee account signup is not configured' });
+  if (!employeeAccountsConfigured(env)) return reply(503, { ok: false, code: 'EMPLOYEE_ACCOUNTS_NOT_CONFIGURED', error: 'Employee accounts are unavailable while Zac completes secure Hub setup. This request was not saved; keep your details and retry after setup.' });
   const raw = await request.text();
   if (raw.length > 16 * 1024) return reply(413, { ok: false, error: 'Request is too large' });
   let body;
   try { body = JSON.parse(raw); } catch { return reply(400, { ok: false, error: 'Invalid JSON' }); }
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return reply(400, { ok: false, error: 'Enter your employee account details' });
   const action = String(body.action || 'register');
 
   if (action === 'register') {
     if (body.company) return reply(201, { ok: true, status: 'pending' });
     if (body.acknowledged !== true) return reply(400, { ok: false, error: 'Confirm that this is your employee account request' });
     const usernameKey = normalizeEmployeeUsername(body.username);
-    const reserved = listHubUserProfiles(env).some(profile => normalizeEmployeeUsername(profile.user) === usernameKey);
-    if (reserved) return reply(409, { ok: false, error: 'That username is already registered' });
     try {
+      const reserved = isReservedEmployeeUsername(usernameKey) || listHubUserProfiles(env).some(profile => normalizeEmployeeUsername(profile.user) === usernameKey);
+      if (reserved) return reply(409, { ok: false, error: 'That username is already registered' });
       const account = await createEmployeeApplication(env, body);
       return reply(201, { ok: true, status: account.status, displayName: account.displayName });
     } catch (error) {
-      const message = String(error.message || 'Employee account request could not be submitted');
-      return reply(/already registered/i.test(message) ? 409 : 400, { ok: false, error: message });
+      const validation = /^(Enter |Username must |Password must )/.test(error?.message || '');
+      return accountFailure(error, validation ? 400 : 502, validation ? error.message : 'Employee account request could not be submitted. Try again later.');
     }
   }
 
@@ -74,7 +83,8 @@ export async function onRequestPost({ request, env }) {
       );
       return reply(200, { ok: true, account });
     } catch (error) {
-      return reply(400, { ok: false, error: String(error.message || 'Employee application could not be reviewed') });
+      const validation = /^(Choose approve|Employee application not found|Business accounts are managed)/.test(error?.message || '');
+      return accountFailure(error, validation ? 400 : 502, validation ? error.message : 'Employee application could not be reviewed. Try again later.');
     }
   }
 

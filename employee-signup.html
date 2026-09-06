@@ -71,25 +71,30 @@
         <div class="success-icon">✓</div>
         <h2>Request sent</h2>
         <p>Your account is waiting for Zac’s approval. After he approves it, sign in with the username and password you just created.</p>
+        <p id="submitted-username"></p>
         <a href="/employee">Return to employee login</a>
       </div>
     </div>
   </section>
 </main>
 <script>
-document.querySelectorAll('[data-password-toggle]').forEach(button=>button.addEventListener('click',()=>{const input=button.previousElementSibling,show=input.type==='password';input.type=show?'text':'password';button.textContent=show?'Hide':'Show'}));
+document.querySelectorAll('[data-password-toggle]').forEach(button=>button.addEventListener('click',()=>{const input=button.previousElementSibling,show=input.type==='password';input.type=show?'text':'password';button.textContent=show?'Hide':'Show';button.setAttribute('aria-pressed',String(show))}));
 document.getElementById('signup-form').addEventListener('submit',async event=>{
   event.preventDefault();
   const form=event.currentTarget,message=document.getElementById('message'),button=document.getElementById('submit-button'),values=Object.fromEntries(new FormData(form));
+  if(button.disabled)return;
   message.className='message';message.textContent='';
   if(values.password!==values.confirmPassword){message.className='message error';message.textContent='Passwords do not match.';document.getElementById('confirm-password').focus();return}
+  if(String(values.password||'').length<10||!/[a-z]/.test(values.password)||!/[A-Z]/.test(values.password)||!/\d/.test(values.password)){message.className='message error';message.textContent='Use at least 10 characters with uppercase, lowercase, and a number.';document.getElementById('password').focus();return}
   button.disabled=true;button.textContent='Sending…';
   try{
-    const response=await fetch('/api/employee-accounts',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'register',firstName:values.firstName,lastName:values.lastName,email:values.email,phone:values.phone,username:values.username,password:values.password,company:values.company,acknowledged:values.acknowledged==='on'})});
+    const response=await fetch('/api/employee-accounts',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'register',firstName:values.firstName,lastName:values.lastName,email:values.email,phone:values.phone,username:values.username,password:values.password,company:values.company,acknowledged:values.acknowledged==='on'})});
     const result=await response.json().catch(()=>({}));
-    if(!response.ok||!result.ok)throw new Error(result.error||'Your request could not be sent.');
-    form.reset();document.getElementById('form-panel').style.display='none';document.getElementById('success-panel').classList.add('show');
-  }catch(error){message.className='message error';message.textContent=error.message||'Your request could not be sent.';message.scrollIntoView({behavior:'smooth',block:'center'})}
+    if(!response.ok||!result.ok){const error=new Error(result.error||(response.status>=500?'Account requests are temporarily unavailable. Ask Zac to restore signup, then retry.':'Your request could not be sent.'));error.confirmed=true;throw error}
+    if(result.status!=='pending')throw new Error('The server did not confirm your account request. Ask Zac to check whether it arrived before submitting again.');
+    document.getElementById('submitted-username').textContent='Your username: '+String(values.username||'').trim();
+    form.reset();document.querySelectorAll('[data-password-toggle]').forEach(toggle=>{toggle.previousElementSibling.type='password';toggle.textContent='Show';toggle.setAttribute('aria-pressed','false')});document.getElementById('form-panel').style.display='none';document.getElementById('success-panel').classList.add('show');
+  }catch(error){message.className='message error';message.textContent=error.confirmed?error.message:'We could not confirm that your request was received. Your form is still here. Check with Zac before submitting again.';message.scrollIntoView({behavior:'smooth',block:'center'})}
   finally{button.disabled=false;button.textContent='Send for approval'}
 });
 </script>

@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; connect-src 'none'; form-action 'none'; base-uri 'none'; object-src 'none'">
+  <meta name="referrer" content="no-referrer"><meta name="robots" content="noindex,nofollow">
+  <title>Set up your Hub login · Easy Garage Cleaning</title>
+  <style>
+    :root{color-scheme:light;--navy:#0c223d;--orange:#c84310;--paper:#f5f3ee;--muted:#526174;--line:#d9dfe5}
+    *{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--navy);font:16px/1.55 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+    header{background:var(--navy);color:#fff;padding:22px max(24px,calc((100vw - 820px)/2));border-bottom:5px solid #f15b25}
+    .brand{font-weight:800;letter-spacing:.05em;font-size:15px}.brand span{font-weight:500;color:#d0d9e5;letter-spacing:0;margin-left:10px}
+    main{max-width:868px;margin:auto;padding:40px 24px 60px}.eyebrow{font-size:12px;font-weight:800;letter-spacing:.12em;color:var(--orange);text-transform:uppercase}
+    h1{font-size:clamp(30px,5vw,44px);line-height:1.13;letter-spacing:-.04em;margin:10px 0 16px}h2{font-size:21px;line-height:1.3;margin:0 0 14px}p{margin:0 0 16px}.intro{max-width:660px;color:var(--muted)}
+    .card{background:#fff;border:1px solid var(--line);border-radius:18px;padding:28px;margin-top:24px}.identity{display:flex;gap:32px;flex-wrap:wrap;padding-bottom:20px;border-bottom:1px solid var(--line);margin-bottom:20px}.identity small{display:block;color:var(--muted);font-size:12px}.identity strong{font-size:18px}
+    .fields{display:grid;grid-template-columns:1fr 1fr;gap:18px}label{display:block;font-size:14px;font-weight:650}input,textarea{display:block;width:100%;border:1px solid #a9b4c2;border-radius:9px;padding:12px;color:var(--navy);background:#fff;font:inherit;margin-top:7px}input{min-height:48px}textarea{font:13px/1.6 ui-monospace,SFMono-Regular,Consolas,monospace;resize:vertical;overflow-wrap:anywhere}
+    input:focus,textarea:focus,button:focus-visible{outline:3px solid #f6b69c;outline-offset:3px}input[aria-invalid="true"]{border-color:#b02b16}.help{font-size:13px;color:var(--muted);margin-top:12px}
+    .actions{display:flex;gap:12px;flex-wrap:wrap;margin-top:20px}button{border:1px solid var(--navy);border-radius:9px;min-height:46px;padding:10px 18px;font:650 14px/1.3 system-ui,sans-serif;background:#fff;color:var(--navy);cursor:pointer}button.primary{background:var(--orange);border-color:var(--orange);color:#fff}button:disabled{cursor:wait;opacity:.6}
+    .status{min-height:24px;margin-top:15px;font-size:14px}.status.error{color:#a72412}.status.success{color:#18583f}.output{margin-top:24px}.output-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:4px}.output-head label{font:700 13px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace;overflow-wrap:anywhere}.output-head button{flex-shrink:0;min-height:38px;padding:7px 13px}
+    .next{background:#fff3e8;border:1px solid #efc7a8;border-left:4px solid var(--orange);border-radius:12px;padding:21px 23px;margin-top:24px}.next h2{font-size:18px}.next p{font-size:14px;margin:0 0 10px}.next p:last-child{margin:0}.next a{color:var(--navy);font-weight:700;text-underline-offset:3px}code{font-size:.9em;overflow-wrap:anywhere}.privacy{color:var(--muted);font-size:13px;margin-top:22px}[hidden]{display:none!important}
+    @media(max-width:580px){main{padding:28px 16px 40px}.card{padding:22px 18px}.fields{grid-template-columns:1fr;gap:16px}.brand span{display:block;margin:2px 0 0}.identity{gap:20px}.output-head{align-items:flex-start}}
+  </style>
+  <script src="./hub-login-setup.js" defer></script>
+</head>
+<body>
+  <header><div class="brand">EASY GARAGE CLEANING <span>Employee Hub setup</span></div></header>
+  <main>
+    <div class="eyebrow">Administrator setup helper</div>
+    <h1>Set up your owner login.</h1>
+    <p class="intro">Choose your password here. This page prepares two values for Cloudflare using your browser. Generating them does not activate your login or configure the website.</p>
+
+    <section class="card" aria-labelledby="password-title">
+      <h2 id="password-title">Choose a password</h2>
+      <div class="identity"><div><small>Owner username</small><strong>ZacB</strong></div><div><small>Display name</small><strong>Zac</strong></div><div><small>Access</small><strong>Owner</strong></div></div>
+      <div class="fields">
+        <label for="password">New password<input id="password" type="password" minlength="12" autocomplete="off" autocapitalize="none" spellcheck="false" aria-describedby="password-help"></label>
+        <label for="confirmation">Confirm password<input id="confirmation" type="password" minlength="12" autocomplete="off" autocapitalize="none" spellcheck="false" aria-describedby="password-help"></label>
+      </div>
+      <p class="help" id="password-help">Use at least 12 characters. Remember this password for signing in as ZacB; the generated values will not reveal it.</p>
+      <div class="actions"><button class="primary" type="button" id="generate">Generate setup values</button><button type="button" id="clear">Clear this page</button></div>
+      <div id="status" class="status" role="status" aria-live="polite"></div>
+    </section>
+
+    <section class="card" id="results" aria-labelledby="results-title" hidden>
+      <h2 id="results-title">Your Cloudflare secret values</h2>
+      <p class="intro">Copy each value into the secret with the matching name. Keep these values private. They remain on this page until you clear or close it.</p>
+      <div class="output"><div class="output-head"><label for="session-value">HUB_SESSION_SECRET</label><button type="button" id="copy-session">Copy value</button></div><textarea id="session-value" rows="2" readonly spellcheck="false" autocapitalize="none" autocomplete="off"></textarea></div>
+      <div class="output"><div class="output-head"><label for="users-value">HUB_AUTH_USERS_JSON</label><button type="button" id="copy-users">Copy value</button></div><textarea id="users-value" rows="10" readonly spellcheck="false" autocapitalize="none" autocomplete="off"></textarea></div>
+      <p class="help">Each Generate action creates fresh values. Copy only the pair you intend to configure. Clear this page when finished; clearing the page does not clear your clipboard.</p>
+    </section>
+
+    <aside class="next" aria-labelledby="next-title">
+      <h2 id="next-title">Before activating the login</h2>
+      <p>Before saving or activating anything, identify and preserve the exact key that encrypted existing employee records: an earlier dedicated employee/session key, or the unchanged legacy <code>HIGHLEVEL_API_KEY</code>. Keep that exact historical key as <code>EMPLOYEE_HUB_DATA_SECRET</code>. Never use a new random key for old employee data; resolve the original key first so those records remain readable.</p>
+      <p>Enter the two generated values as Cloudflare secrets yourself. Configure the Firebase service account as <code>FIREBASE_SERVICE_ACCOUNT_JSON</code> and publish the required Firestore access rules before activating login. This page does not create that account, change Cloudflare, publish rules, or deploy anything.</p>
+      <p>If <code>HUB_AUTH_USERS_JSON</code> already contains other accounts, preserve them when adding this owner entry.</p>
+      <p><a href="https://dash.cloudflare.com/415ce9b83bc2f8361f23ab2f0f34699e/pages/view/easy-garage-cleaning/settings/environment-variables" target="_blank" rel="noopener noreferrer">Open Cloudflare production settings ↗</a></p>
+      <p><a href="https://console.firebase.google.com/project/egcw-1ec83/settings/serviceaccounts/adminsdk" target="_blank" rel="noopener noreferrer">Open Firebase service accounts ↗</a></p>
+    </aside>
+    <p class="privacy">Processing stays in this browser. After loading, this helper makes no network requests and has no saved browser storage, downloads, analytics, or automatic submission. Copy buttons use your clipboard only when clicked. The setup links open the respective service only when clicked.</p>
+    <noscript><p class="next">Enable JavaScript to generate these values locally in your browser.</p></noscript>
+  </main>
+</body>
+</html>

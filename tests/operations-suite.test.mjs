@@ -919,7 +919,7 @@ test('employee hub v2 personalizes access, time, pay, communication, training, a
   assert.match(read('crew/hub-auth.js'),/egc_hourly_rate/);
   const vault=read('functions/api/employee-hub.js');
   for(const marker of ['getHubSession','AES-GCM','sealedPayload','opaqueId','visibleTo','authorizeMutation','EMPLOYEE_HUB_DATA_SECRET'])assert.match(vault,new RegExp(marker));
-  assert.match(suite,/fetch\('\/api\/employee-hub'/);
+  assert.match(suite,/hubFetch\('\/api\/employee-hub'/);
   assert.doesNotMatch(suite,/db\.collection\(peopleCollections/);
 });
 
@@ -937,7 +937,7 @@ test('only Zac Tyler and Alex receive business access while new employees get on
   assert.equal(profile.role,'crew');
   assert.equal(profile.businessAccess,false);
   for(const marker of ['BUSINESS_USERS','enterEmployeeApp','canRunBusiness','Run your business'])assert.match(employee,new RegExp(marker));
-  for(const marker of ["new Set(['zacb','tylerg','alexk'])","'onboarding'",'Finish employee profile','JOB READINESS','Test location','opsSaveOnboarding','opsOnboardingDraft','Draft saved automatically.','onboardingDraftAcknowledgements','onboardingDraftVersion','onboardingDraftUser','draft,false',"S.active==='onboarding'",'ops-quick-clock','opsQuickClock','employeeViews'])assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
+  for(const marker of ["new Set(['zacb','tylerg','alexk'])","'onboarding'",'Finish employee profile','JOB READINESS','Test location','opsSaveOnboarding','opsOnboardingDraft','Draft saved automatically.','onboardingDraftAcknowledgements','onboardingDraftVersion','onboardingDraftUser','draft,false','onboardingComplete(ownProfile())','ops-quick-clock','opsQuickClock','employeeViews'])assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
   const vault=read('functions/api/employee-hub.js');
   assert.match(vault,/hasBusinessAccess\(session\)/);
   assert.match(vault,/onboardingCompletedAt/);

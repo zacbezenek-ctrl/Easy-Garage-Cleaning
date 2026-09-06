@@ -8,6 +8,13 @@ const TRAINING_VERSION = '2026-09-employee-os-v1';
 const TRAINING_CHECKS = new Map([['welcome', { answer: 1 }], ['safety', { answer: 2, supervisor: true }], ['property', { answer: 1 }], ['truck', { answer: 1, supervisor: true }], ['proof', { answer: 1 }], ['closeout', { answer: 0 }]]);
 const HOST = /^(?:easygaragecleaning\.com|www\.easygaragecleaning\.com|easy-garage-cleaning\.pages\.dev|localhost(?::\d+)?|127\.0\.0\.1(?::\d+)?)$/;
 const encoder = new TextEncoder();
+const isRecord = value => value !== null && typeof value === 'object' && !Array.isArray(value);
+
+function unreadableStorage() {
+  const error = new Error('Employee records could not be read safely. Please contact the Hub administrator.');
+  error.code = 'EMPLOYEE_HUB_STORAGE_UNREADABLE';
+  return error;
+}
 
 function reply(status, body) {
   return new Response(JSON.stringify(body), {
@@ -114,12 +121,30 @@ async function readJob(env, id) {
 
 function parseFirestoreDocument(document) {
   const fields = document?.fields || {};
-  return {
+  const stored = {
     documentId: String(document?.name || '').split('/').pop(),
     collection: valueOf(fields.employeeHubType),
     payload: valueOf(fields.sealedPayload),
     iv: valueOf(fields.sealedIv),
   };
+  if (!stored.documentId || !COLLECTIONS.has(stored.collection) ||
+      valueOf(fields.recordType) !== RECORD_TYPE ||
+      valueOf(fields.vaultId) !== stored.documentId ||
+      valueOf(fields.schemaVersion) !== 2 ||
+      typeof stored.payload !== 'string' || !stored.payload ||
+      typeof stored.iv !== 'string' || !stored.iv) throw unreadableStorage();
+  return stored;
+}
+
+async function openStored(env, stored) {
+  try {
+    const data = await open(env, stored.documentId, stored.iv, stored.payload);
+    if (!isRecord(data) || typeof data.id !== 'string' || !data.id ||
+        await opaqueId(env, stored.collection, data.id) !== stored.documentId) throw unreadableStorage();
+    return data;
+  } catch {
+    throw unreadableStorage();
+  }
 }
 
 async function readOne(env, collection, id) {
@@ -128,10 +153,9 @@ async function readOne(env, collection, id) {
   const response = await firestoreFetch(env, url);
   if (response.status === 404) return { documentId, data: null };
   if (!response.ok) throw new Error(`Employee Hub storage read failed (${response.status})`);
-  const stored = parseFirestoreDocument(await response.json());
-  if (stored.collection !== collection || !stored.payload || !stored.iv) return { documentId, data: null };
-  try { return { documentId, data: await open(env, documentId, stored.iv, stored.payload) }; }
-  catch { return { documentId, data: null }; }
+  const stored = parseFirestoreDocument(await response.json().catch(() => { throw unreadableStorage(); }));
+  if (stored.documentId !== documentId || stored.collection !== collection) throw unreadableStorage();
+  return { documentId, data: await openStored(env, stored) };
 }
 
 async function readAll(env) {
@@ -142,18 +166,20 @@ async function readAll(env) {
     body: JSON.stringify({ structuredQuery: {
       from: [{ collectionId: 'jobs' }],
       where: { fieldFilter: { field: { fieldPath: 'recordType' }, op: 'EQUAL', value: stringField(RECORD_TYPE) } },
-      limit: 500,
     } }),
   });
   if (!response.ok) throw new Error(`Employee Hub storage query failed (${response.status})`);
-  const rows = await response.json();
+  const rows = await response.json().catch(() => { throw unreadableStorage(); });
+  if (!Array.isArray(rows)) throw unreadableStorage();
   const decoded = [];
   for (const row of rows) {
-    if (!row.document) continue;
+    if (!isRecord(row) || row.error) throw unreadableStorage();
+    if (!row.document) {
+      if (typeof row.readTime !== 'string') throw unreadableStorage();
+      continue;
+    }
     const stored = parseFirestoreDocument(row.document);
-    if (!COLLECTIONS.has(stored.collection) || !stored.payload || !stored.iv) continue;
-    try { decoded.push({ collection: stored.collection, data: await open(env, stored.documentId, stored.iv, stored.payload) }); }
-    catch { /* Ignore deleted or tampered public envelopes. */ }
+    decoded.push({ collection: stored.collection, data: await openStored(env, stored) });
   }
   return decoded;
 }
@@ -349,7 +375,7 @@ export async function onRequestGet({ request, env }) {
         continue;
       }
       const jobId = String(row.data?.jobId || '');
-      if (!jobAccess.has(jobId)) jobAccess.set(jobId, await readJob(env, jobId).then(job => jobMember(session, job)).catch(() => false));
+      if (!jobAccess.has(jobId)) jobAccess.set(jobId, await readJob(env, jobId).then(job => jobMember(session, job)));
       if (jobAccess.get(jobId)) collections.jobMessages.push(row.data);
     }
     const profiles = configuredProfiles(env).filter(profile => visibleTo(session, 'profiles', profile));
@@ -361,7 +387,7 @@ export async function onRequestGet({ request, env }) {
     ];
     return reply(200, { ok: true, collections });
   } catch (error) {
-    return reply(502, { ok: false, error: String(error.message || 'Employee Hub storage failed') });
+    return reply(502, { ok: false, ...(error.code ? { code: error.code } : {}), error: String(error.message || 'Employee Hub storage failed') });
   }
 }
 
@@ -374,9 +400,12 @@ export async function onRequestPost({ request, env }) {
   if (raw.length > 128 * 1024) return reply(413, { ok: false, error: 'Request is too large' });
   let body;
   try { body = JSON.parse(raw); } catch { return reply(400, { ok: false, error: 'Invalid JSON' }); }
+  if (!isRecord(body)) return reply(400, { ok: false, error: 'Invalid employee record' });
+  if (typeof body.collection !== 'string' || typeof body.id !== 'string') return reply(400, { ok: false, error: 'Invalid employee record' });
   const collection = String(body.collection || '');
   const id = String(body.id || '').trim();
   if (!COLLECTIONS.has(collection) || !id || id.length > 180) return reply(400, { ok: false, error: 'Invalid employee record' });
+  if (body.data !== undefined && !isRecord(body.data)) return reply(400, { ok: false, error: 'Invalid employee record data' });
   let incoming;
   try {
     const serialized = JSON.stringify(body.data || {});
@@ -385,13 +414,16 @@ export async function onRequestPost({ request, env }) {
   } catch { return reply(400, { ok: false, error: 'Invalid employee record data' }); }
   try {
     const current = await readOne(env, collection, id);
+    // A different vault key produces a different ID, so a 404 alone cannot
+    // prove this is a new record. Verify existing history before creating it.
+    if (!current.data) await readAll(env);
     const data = await authorizeMutation(env, session, collection, id, incoming, current.data);
     return reply(200, { ok: true, record: await writeOne(env, collection, id, data) });
   } catch (error) {
     const message = String(error.message || 'Employee record could not be saved');
     const forbidden = /only|belongs|limited|own/i.test(message);
     const invalid = /required|not passed|invalid/i.test(message);
-    return reply(forbidden ? 403 : invalid ? 400 : 502, { ok: false, error: message });
+    return reply(forbidden ? 403 : invalid ? 400 : 502, { ok: false, ...(error.code ? { code: error.code } : {}), error: message });
   }
 }
 

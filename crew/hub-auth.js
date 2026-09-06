@@ -28,12 +28,27 @@
     } catch {}
   }
 
+  function showGateError(message) {
+    const error = document.getElementById('gate-err') || document.getElementById('gate-error');
+    if (!error) return;
+    error.textContent = message;
+    error.style.display = 'block';
+    error.setAttribute('role', 'alert');
+  }
+
+  function responseError(data, fallback) {
+    const error = new Error(data.error || fallback);
+    error.code = data.code || '';
+    return error;
+  }
+
   async function ensureFirebaseSession() {
-    if (!window.firebase?.auth) return;
+    if (!window.firebase?.auth) throw new Error('Secure employee data could not start. Reload the page and try again.');
     const response = await fetch('/api/firebase-session', { cache: 'no-store', credentials: 'same-origin' });
     const data = await response.json().catch(() => ({}));
-    if (!response.ok || !data.ok || !data.token) throw new Error(data.error || 'Secure data access is unavailable');
-    await firebase.auth().signInWithCustomToken(data.token);
+    if (!response.ok || !data.ok || !data.token) throw responseError(data, 'Secure employee data is unavailable. Ask Zac to finish the Hub setup, then retry.');
+    try { await firebase.auth().signInWithCustomToken(data.token); }
+    catch { throw new Error('Your login was accepted, but secure employee data could not connect. Reload and retry; if it continues, ask Zac to check the Firebase setup.'); }
   }
 
   async function session() {
@@ -42,18 +57,21 @@
       const data = await response.json().catch(() => ({}));
       if (!response.ok || !data.ok || !data.user) {
         clearLocal();
+        if (response.status !== 401) showGateError(data.error || 'The sign-in service is unavailable. Try again shortly.');
         return null;
       }
-      remember(data.user, data);
       await ensureFirebaseSession();
+      remember(data.user, data);
       return data.user;
-    } catch {
+    } catch (error) {
       clearLocal();
+      showGateError(error.message || 'Your session could not be checked. Check the connection and retry.');
       return null;
     }
   }
 
   async function signIn(username, password) {
+    if (!String(username || '').trim() || !password) throw new Error('Enter your username and password.');
     const response = await fetch('/api/hub-auth', {
       method: 'POST',
       credentials: 'same-origin',
@@ -61,9 +79,11 @@
       body: JSON.stringify({ username, password }),
     });
     const data = await response.json().catch(() => ({}));
-    if (!response.ok || !data.ok) throw new Error(data.error || 'Sign-in failed');
+    if (!response.ok || !data.ok || !data.user) throw responseError(data, response.status === 401 ? 'Incorrect username or password' : 'The sign-in service is unavailable. Try again shortly.');
+    try { await ensureFirebaseSession(); }
+    catch (error) { clearLocal(); throw error; }
     remember(data.user, data);
-    await ensureFirebaseSession();
+    for (const id of ['gate-p', 'pass']) { const input = document.getElementById(id); if (input) input.value = ''; }
     return data.user;
   }
 
@@ -123,7 +143,8 @@
     const nav = document.createElement('nav');
     nav.className = 'crew-utility';
     nav.setAttribute('aria-label', 'Crew workflow');
-    nav.innerHTML = `<div>${links.map(([href, label]) => `<a href="${href}${href === '/employee' ? '?view=my_day' : ''}" ${path === href ? 'aria-current="page"' : ''}>${label}</a>`).join('')}<span class="crew-utility-person">${profile().displayName || 'Crew'}</span></div>`;
+    nav.innerHTML = `<div>${links.map(([href, label]) => `<a href="${href}${href === '/employee' ? '?view=my_day' : ''}" ${path === href ? 'aria-current="page"' : ''}>${label}</a>`).join('')}<span class="crew-utility-person"></span></div>`;
+    nav.querySelector('.crew-utility-person').textContent = profile().displayName || 'Crew';
     host.insertAdjacentElement('afterend', nav);
   }
 
