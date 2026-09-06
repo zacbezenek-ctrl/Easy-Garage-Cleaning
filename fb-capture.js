@@ -38,7 +38,7 @@
 
   function fill() {
     var map = Object.assign({ fbc: fbc, fbp: fbp, fbclid: fbclid, landing_url: landing, referrer: ref }, campaign);
-    document.querySelectorAll('form.lead-form-lite').forEach(function (f) {
+    document.querySelectorAll('form.lead-form-lite, form.multi-step-form').forEach(function (f) {
       Object.keys(map).forEach(function (k) {
         var el = f.querySelector('input[name="' + k + '"]');
         if (el && !el.value) el.value = map[k];
@@ -55,7 +55,8 @@
      the relay powers HighLevel plus the instant-text/CAPI leg. */
   document.addEventListener('submit', function (e) {
     var f = e.target;
-    if (!f || !f.classList || !f.classList.contains('lead-form-lite')) return;
+    if (e.defaultPrevented || !f || !f.classList ||
+        (!f.classList.contains('lead-form-lite') && !f.classList.contains('multi-step-form'))) return;
     try {
       var bot = f.querySelector('input[name="botcheck"]');
       if (bot && bot.checked) return;
@@ -68,8 +69,8 @@
         city: pick('city', 'City'), serviceZip: pick('serviceZip', 'Zip code'),
         preferred_date: pick('preferred_date', 'Preferred date'), preferred_timing: pick('preferred_timing', 'Preferred timing'),
         booking_slot: pick('booking_slot', 'booking_slot_choice'), estimated_range: pick('estimated_range'), flow_type: pick('flow_type'),
-        sms_consent: pick('sms_consent'), fbc: pick('fbc'), fbp: pick('fbp'), fbclid: pick('fbclid'),
-        landing_url: pick('landing_url'), referrer: pick('referrer'),
+        sms_consent: pick('sms_consent'), fbc: pick('fbc') || fbc, fbp: pick('fbp') || fbp, fbclid: pick('fbclid') || fbclid,
+        landing_url: pick('landing_url') || landing, referrer: pick('referrer') || ref,
         utm_source: campaign.utm_source, utm_medium: campaign.utm_medium, utm_campaign: campaign.utm_campaign,
         utm_content: campaign.utm_content, utm_term: campaign.utm_term, gclid: campaign.gclid, msclkid: campaign.msclkid
       };
@@ -80,5 +81,5 @@
         navigator.sendBeacon('/api/web-lead', body);
       }
     } catch (err) {}
-  }, true);
+  });
 })();

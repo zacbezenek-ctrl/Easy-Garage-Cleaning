@@ -39,6 +39,6 @@ Each modified/published workflow was saved and reloaded with zero validation err
 
 ## Activation and verification
 
-The mocked regression suite passes 204 tests. Production handoffs additionally require working HighLevel credentials, secure Hub login and Firebase server access. See [Employee Hub recovery](employee-hub-recovery.md) for exact settings and historical encryption-key preservation. Publishing code alone does not activate missing credentials.
+The regression suite covers the saved-job handoff and employee recovery checks. Production handoffs additionally require working HighLevel credentials, secure Hub login and Firebase server access. See [Employee Hub recovery](employee-hub-recovery.md) for exact settings and historical encryption-key preservation. Publishing code alone does not activate missing credentials.
 
 After secure setup, verify using an explicitly approved internal test contact: acquisition reply cleanup; repeated missed calls within and after 24 hours; accepted Garage and Junk jobs; booked customer job; closeout; ambiguous multi-job hold; hiring unaffected. Avoid adding milestone tags to historical contacts to test. Confirm the existing paused/draft workflows separately before any reactivation.
