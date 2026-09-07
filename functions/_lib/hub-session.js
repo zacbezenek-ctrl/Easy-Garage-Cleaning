@@ -1,4 +1,6 @@
 import { authenticateEmployeeAccount, getEmployeeSessionProfile } from './employee-accounts.js';
+import { pbkdf2 } from '@noble/hashes/pbkdf2.js';
+import { sha256 } from '@noble/hashes/sha2.js';
 
 const COOKIE_NAME = 'egc_hub_session';
 const SESSION_SECONDS = 12 * 60 * 60;
@@ -96,14 +98,27 @@ async function digestHex(value) {
   return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
 }
 
-async function derivePasswordHash(password, salt, iterations) {
+async function derivePasswordHash(password, salt, iterations, env = {}) {
   const key = await crypto.subtle.importKey('raw', encoder.encode(password), 'PBKDF2', false, ['deriveBits']);
-  const bits = await crypto.subtle.deriveBits(
-    { name: 'PBKDF2', hash: 'SHA-256', salt, iterations },
-    key,
-    PASSWORD_HASH_BYTES * 8
-  );
-  return new Uint8Array(bits);
+  try {
+    const bits = await crypto.subtle.deriveBits(
+      { name: 'PBKDF2', hash: 'SHA-256', salt, iterations },
+      key,
+      PASSWORD_HASH_BYTES * 8
+    );
+    return new Uint8Array(bits);
+  } catch (error) {
+    // Cloudflare's native PBKDF2 caps iterations at 100000, including on paid
+    // plans. The exact same derivation can run in JS with a sufficient CPU
+    // allowance; never lower the stored work factor or reset existing hashes.
+    // Enable only after provisioning a hosting plan with adequate CPU time.
+    if (env.HUB_PASSWORD_HASH_FALLBACK === 'enabled' && error?.name === 'NotSupportedError' && /iteration counts above \d+.*not supported/i.test(error?.message || '')) {
+      const passwordBytes = encoder.encode(password);
+      try { return pbkdf2(sha256, passwordBytes, salt, { c: iterations, dkLen: PASSWORD_HASH_BYTES }); }
+      finally { passwordBytes.fill(0); }
+    }
+    throw error;
+  }
 }
 
 async function signature(secret, payload) {
@@ -124,10 +139,10 @@ export async function hashHubCredential(username, password) {
   return digestHex(`${username}:${password}:egc-salt-2026`);
 }
 
-export async function createHubCredentialHash(password) {
+export async function createHubCredentialHash(password, env = {}) {
   if (typeof password !== 'string' || password.length < 12) throw new Error('Hub passwords must be at least 12 characters');
   const salt = crypto.getRandomValues(new Uint8Array(16));
-  const derived = await derivePasswordHash(password, salt, PASSWORD_HASH_ITERATIONS);
+  const derived = await derivePasswordHash(password, salt, PASSWORD_HASH_ITERATIONS, env);
   return `${PASSWORD_HASH_PREFIX}$${PASSWORD_HASH_ITERATIONS}$${bytesToBase64Url(salt)}$${bytesToBase64Url(derived)}`;
 }
 
@@ -135,7 +150,7 @@ function passwordConfigurationError(message) {
   return Object.assign(new Error(message), { code: 'HUB_AUTH_CONFIGURATION', status: 503 });
 }
 
-async function verifyPasswordHash(username, password, expected) {
+async function verifyPasswordHash(username, password, expected, env = {}) {
   if (typeof password !== 'string') return false;
   const invalidHash = () => passwordConfigurationError('Staff sign-in password configuration needs administrator attention. Your account has not been changed.');
   if (typeof expected !== 'string') throw invalidHash();
@@ -154,7 +169,7 @@ async function verifyPasswordHash(username, password, expected) {
   } catch { throw invalidHash(); }
   let derived;
   try {
-    derived = await derivePasswordHash(password, salt, iterations);
+    derived = await derivePasswordHash(password, salt, iterations, env);
   } catch (error) {
     if (error?.name === 'NotSupportedError' && /iteration counts above \d+.*not supported/i.test(error?.message || '')) {
       throw passwordConfigurationError('The sign-in host cannot process the configured password iteration count. Ask Zac to update Hub hosting support; your account has not been changed.');
@@ -170,7 +185,7 @@ export async function validateHubCredential(env, username, password) {
 
 export async function authenticateHubCredential(env, username, password) {
   const record = userRecord(env, username);
-  if (record?.passwordHash && await verifyPasswordHash(record.username, password, record.passwordHash)) {
+  if (record?.passwordHash && await verifyPasswordHash(record.username, password, record.passwordHash, env)) {
     return getHubUserProfile(env, record.username);
   }
   if (configuredUsername(env, username)) return null;

@@ -22,13 +22,18 @@ const get = user => onRequestGet({ env, request: new Request(endpoint, { headers
 
 function storage(t) {
   const documents = new Map();
+  let revision = 0;
   t.mock.method(globalThis, 'fetch', async (input, options = {}) => {
     const url = new URL(input), method = options.method || 'GET';
     if (url.pathname.endsWith('/documents:runQuery')) return Response.json([...documents].map(([id, document]) => ({ document: {
       name: `projects/egcw-1ec83/databases/(default)/documents/jobs/${id}`, ...document,
     } })));
     const id = decodeURIComponent(url.pathname.split('/').pop());
-    if (method === 'PATCH') documents.set(id, JSON.parse(options.body));
+    if (method === 'PATCH') {
+      const expected = url.searchParams.get('currentDocument.updateTime');
+      if ((url.searchParams.get('currentDocument.exists') === 'false' && documents.has(id)) || (expected && documents.get(id)?.updateTime !== expected)) return Response.json({}, { status: 412 });
+      documents.set(id, { ...JSON.parse(options.body), updateTime: `2026-09-07T00:00:00.${String(++revision).padStart(9, '0')}Z` });
+    }
     if (!documents.has(id)) return Response.json({}, { status: 404 });
     return Response.json({ name: `projects/egcw-1ec83/databases/(default)/documents/jobs/${id}`, ...documents.get(id) });
   });

@@ -7,6 +7,7 @@ import { createHubCredentialHash, createHubSessionCookie } from '../functions/_l
 
 test('new punctuated username completes signup, owner approval, login, onboarding, and returning login', async t => {
   const saved=new Map();
+  let revision=0;
   t.mock.method(globalThis,'fetch',async(input,init={})=>{
     const url=new URL(input);
     assert.equal(url.hostname,'firestore.googleapis.com','all external transport is isolated to fake storage');
@@ -18,7 +19,9 @@ test('new punctuated username completes signup, owner approval, login, onboardin
     const id=decodeURIComponent(url.pathname.split('/').pop());
     if(init.method==='PATCH'){
       if(url.searchParams.get('currentDocument.exists')==='false'&&saved.has(id))return Response.json({}, {status:412});
-      saved.set(id,JSON.parse(init.body));
+      const expected=url.searchParams.get('currentDocument.updateTime');
+      if(expected&&saved.get(id)?.updateTime!==expected)return Response.json({}, {status:412});
+      saved.set(id,{...JSON.parse(init.body),updateTime:`2026-09-07T00:00:00.${String(++revision).padStart(9,'0')}Z`});
     }
     return saved.has(id)?Response.json({name:'projects/egcw-1ec83/databases/(default)/documents/jobs/'+id,...saved.get(id)}):Response.json({}, {status:404});
   });

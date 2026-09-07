@@ -24,10 +24,13 @@ Use the existing Cloudflare Pages project `easy-garage-cleaning`, Production env
 | `HUB_SESSION_SECRET` | Independent randomly generated session-signing secret, at least 32 random bytes. |
 | `HUB_AUTH_USERS_JSON` | Existing static users, including the `ZacB` owner, with securely generated password hashes. Preserve other existing entries. |
 | `FIREBASE_SERVICE_ACCOUNT_JSON` | A complete service-account JSON key for project `egcw-1ec83`, with the required Firestore data permissions. |
+| `HUB_PASSWORD_HASH_FALLBACK` | Set to exactly `enabled` only after providing adequate CPU time, such as Workers Paid. Leave unset on Workers Free. |
 
 The owner entry is `ZacB`, not `Owner`. Public employee signup never creates an owner or manager account. Hash new owner passwords with the repository's `createHubCredentialHash` helper (PBKDF2-SHA256); do not put a plaintext password into the configured user map.
 
-Store credential values as encrypted production secrets; the two recovery controls are non-secret configuration. Never commit credentials, place them in public assets, or send them in chat. The local `.env` file does not configure Cloudflare production. Existing encrypted Cloudflare values cannot be recovered from the dashboard.
+Cloudflare's native PBKDF2 rejects iteration counts above 100,000. Existing owner hashes created by this repository use 210,000 rounds. A paid plan alone does not remove that native cap. With `HUB_PASSWORD_HASH_FALLBACK=enabled`, a pinned `@noble/hashes` implementation performs the same PBKDF2-SHA256 calculation after that specific native error. It preserves passwords, salts, iteration counts, and hashes. Other crypto failures still fail closed. This calculation needs substantially more than the Free plan's 10 ms CPU allowance; provision sufficient CPU before enabling it and verify on the deployed host. Never lower an existing hash's iteration field or reset the owner's password to work around this issue.
+
+Store credential values as encrypted production secrets; the recovery controls and password fallback flag are non-secret configuration. Never commit credentials, place them in public assets, or send them in chat. The local `.env` file does not configure Cloudflare production. Existing encrypted Cloudflare values cannot be recovered from the dashboard.
 
 Use a dedicated service account with `roles/datastore.user` or a reviewed narrower role sufficient for the application's database operations. Do not grant Project Owner/Editor to make the application work. The application signs custom Firebase tokens locally using this key.
 
@@ -35,8 +38,8 @@ After preserving the vault key and saving all credentials, publish the reviewed 
 
 ## Verify recovery
 
-1. Sign in as the configured owner; confirm the secure Hub cookie and Firebase custom-token exchange both succeed.
-2. Open Team and verify the pending application count and existing employee records. An unavailable-data message is a failed check, not an empty queue.
+1. With adequate hosting CPU, enable the password fallback and redeploy. Confirm a deliberate wrong password returns 401 without a session, then sign in as the configured owner with the existing password; confirm the secure Hub cookie and Firebase custom-token exchange both succeed.
+2. First verify both `/api/employee-accounts` and `/api/employee-hub` as the authenticated owner, reporting only aggregate read results. An unavailable-data message is a failed check, not an empty queue. Avoid opening the full owner dashboard during this first check because it may retry previously queued customer invitations.
 3. Confirm an existing approved employee can sign in with their existing credentials and can see only their permitted work.
 4. Confirm existing profiles, timecards, training, and messages remain readable before saving new activity. With the legacy selector, account and Hub mutations must still return the recovery read-only error during these checks.
 5. Only after both record families pass, set `EMPLOYEE_HUB_LEGACY_WRITES_VERIFIED=true` and deploy again. RETAIN `EMPLOYEE_HUB_LEGACY_KEY_SOURCE=HIGHLEVEL_API_KEY` and the original CRM key. Removing the selector would select the new session key and make historical records unreadable. Any later CRM-key rotation requires a separate, verified employee-vault migration first.
@@ -45,8 +48,12 @@ After preserving the vault key and saving all credentials, publish the reviewed 
 
 Do not approve a real applicant, send a customer message, or create live payroll/timecard data merely to test recovery.
 
+Status changes invalidate employee Hub cookies and prevent new custom-token issuance for inactive accounts. Firebase tokens already issued are a separate session lifecycle: the Hub-cookie check does not revoke an existing Firebase refresh token. Do not claim immediate revocation of all direct Firebase access without implementing and verifying Firebase-side session revocation and applicable database rules.
+
 ## References
 
 - [Cloudflare Pages secret configuration](https://developers.cloudflare.com/pages/functions/bindings/#secrets)
 - [Firebase service-account custom tokens](https://firebase.google.com/docs/auth/admin/create-custom-tokens)
 - [Firestore IAM roles](https://firebase.google.com/docs/firestore/security/iam)
+- [Cloudflare CPU limits](https://developers.cloudflare.com/workers/platform/limits/)
+- [Pinned password derivation implementation](https://github.com/paulmillr/noble-hashes/blob/2.0.1/src/pbkdf2.ts)

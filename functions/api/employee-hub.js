@@ -125,6 +125,7 @@ function parseFirestoreDocument(document) {
   const stored = {
     documentId: String(document?.name || '').split('/').pop(),
     collection: valueOf(fields.employeeHubType),
+    updateTime: typeof document?.updateTime === 'string' ? document.updateTime : '',
     payload: valueOf(fields.sealedPayload),
     iv: valueOf(fields.sealedIv),
   };
@@ -156,7 +157,7 @@ async function readOne(env, collection, id) {
   if (!response.ok) throw new Error(`Employee Hub storage read failed (${response.status})`);
   const stored = parseFirestoreDocument(await response.json().catch(() => { throw unreadableStorage(); }));
   if (stored.documentId !== documentId || stored.collection !== collection) throw unreadableStorage();
-  return { documentId, data: await openStored(env, stored) };
+  return { documentId, updateTime: stored.updateTime, data: await openStored(env, stored) };
 }
 
 async function readAll(env) {
@@ -185,17 +186,32 @@ async function readAll(env) {
   return decoded;
 }
 
-async function writeOne(env, collection, id, data) {
+async function writeOne(env, collection, id, data, expected = null) {
   const documentId = await opaqueId(env, collection, id);
   const updatedAt = new Date().toISOString();
   const encrypted = await seal(env, documentId, { ...data, id, updatedAt: data.updatedAt || updatedAt });
   const url = `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents/jobs/${encodeURIComponent(documentId)}`;
-  const response = await firestoreFetch(env, url, {
+  const guardedUrl = new URL(url);
+  if (expected) {
+    if (!expected.data) guardedUrl.searchParams.set('currentDocument.exists', 'false');
+    else if (expected.updateTime) guardedUrl.searchParams.set('currentDocument.updateTime', expected.updateTime);
+    else throw unreadableStorage();
+  }
+  const response = await firestoreFetch(env, guardedUrl, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(firestoreDoc(collection, documentId, encrypted, updatedAt)),
   });
-  if (!response.ok) throw new Error(`Employee Hub storage write failed (${response.status})`);
+  if (!response.ok) {
+    const failure = await response.json().catch(() => ({}));
+    if (expected && ([409, 412].includes(response.status) ||
+        ['FAILED_PRECONDITION', 'ABORTED', 'ALREADY_EXISTS', 'NOT_FOUND'].includes(failure.error?.status))) {
+      const conflict = new Error('Employee profile changed while saving. Please retry.');
+      conflict.code = 'EMPLOYEE_HUB_WRITE_CONFLICT';
+      throw conflict;
+    }
+    throw new Error(`Employee Hub storage write failed (${response.status})`);
+  }
   return { ...data, id, updatedAt: data.updatedAt || updatedAt };
 }
 
@@ -268,7 +284,13 @@ async function authorizeMutation(env, session, collection, id, incoming, existin
     const text = (value, limit) => String(value || '').trim().slice(0, limit);
     const requiredAcknowledgements = ['timekeeping', 'location_policy', 'safety', 'customer_care', 'hub_basics'];
     if (incoming.onboardingCompletedAt && !requiredAcknowledgements.every(value => incoming.onboardingAcknowledgements?.includes(value))) throw new Error('All onboarding acknowledgements are required');
-    const onboarding = incoming.onboardingCompletedAt ? {
+    const completedAt = Date.parse(existing?.onboardingCompletedAt || '');
+    const incomingAt = Date.parse(incoming.onboardingCompletedAt || incoming.onboardingDraftAt || '');
+    // A request captured before a completed submission cannot restore stale contact details.
+    const staleOnboarding = Number.isFinite(completedAt) &&
+      Boolean(incoming.onboardingCompletedAt || incoming.onboardingDraftAt) &&
+      (!Number.isFinite(incomingAt) || incomingAt <= completedAt);
+    const onboarding = staleOnboarding ? {} : incoming.onboardingCompletedAt ? {
       preferredName: text(incoming.preferredName, 80),
       phone: text(incoming.phone, 40),
       emergencyContactName: text(incoming.emergencyContactName, 100),
@@ -433,27 +455,35 @@ export async function onRequestPost({ request, env }) {
     incoming = JSON.parse(serialized);
   } catch { return reply(400, { ok: false, error: 'Invalid employee record data' }); }
   try {
-    let current = await readOne(env, collection, id);
-    if (collection === 'profiles') {
-      const username = manager(session) ? String(incoming.username || current.data?.username || '') : session.user;
-      if (current.data && username && !same(current.data.username, username)) {
-        throw new Error('This profile belongs to another employee; ask the owner to resolve the legacy profile ID conflict');
+    const attempts = collection === 'profiles' ? 4 : 1;
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      // Keep the target version separate from any legacy data used to seed it.
+      const target = await readOne(env, collection, id);
+      let current = target;
+      if (collection === 'profiles') {
+        const username = manager(session) ? String(incoming.username || current.data?.username || '') : session.user;
+        if (current.data && username && !same(current.data.username, username)) {
+          throw new Error('This profile belongs to another employee; ask the owner to resolve the legacy profile ID conflict');
+        }
+        if (!current.data && username && id === personKey(username)) {
+          const legacy = await readEmployeeProfile(env, username);
+          if (legacy.data) current = legacy;
+        }
       }
-      if (!current.data && username && id === personKey(username)) {
-        const legacy = await readEmployeeProfile(env, username);
-        if (legacy.data) current = legacy;
+      // A different vault key changes IDs; a 404 alone cannot prove this is new.
+      if (!current.data) await readAll(env);
+      const data = await authorizeMutation(env, session, collection, id, incoming, current.data);
+      try {
+        return reply(200, { ok: true, record: await writeOne(env, collection, id, data, collection === 'profiles' ? target : null) });
+      } catch (error) {
+        if (error.code !== 'EMPLOYEE_HUB_WRITE_CONFLICT' || attempt + 1 === attempts) throw error;
       }
     }
-    // A different vault key produces a different ID, so a 404 alone cannot
-    // prove this is a new record. Verify existing history before creating it.
-    if (!current.data) await readAll(env);
-    const data = await authorizeMutation(env, session, collection, id, incoming, current.data);
-    return reply(200, { ok: true, record: await writeOne(env, collection, id, data) });
   } catch (error) {
     const message = String(error.message || 'Employee record could not be saved');
     const forbidden = /only|belongs|limited|own/i.test(message);
     const invalid = /required|not passed|invalid/i.test(message);
-    return reply(forbidden ? 403 : invalid ? 400 : 502, { ok: false, ...(error.code ? { code: error.code } : {}), error: message });
+    return reply(error.code === 'EMPLOYEE_HUB_WRITE_CONFLICT' ? 409 : forbidden ? 403 : invalid ? 400 : 502, { ok: false, ...(error.code ? { code: error.code } : {}), error: message });
   }
 }
 

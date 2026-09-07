@@ -1005,11 +1005,12 @@ test('employee pay and location records are sealed behind the Hub session',async
   const env={...TEST_HUB_ENV,HUB_SESSION_SECRET:'employee-hub-test-secret',FIREBASE_API_KEY:'firebase-test-key'};
   const managerCookie=(await createHubSessionCookie(env,'ZacB')).split(';')[0];
   const stored=new Map(),originalFetch=globalThis.fetch;
+  let revision=0;
   globalThis.fetch=async(url,options={})=>{
     const value=String(url),method=options.method||'GET';
     if(value.includes('documents:runQuery'))return new Response(JSON.stringify([...stored.entries()].map(([id,document])=>({document:{name:`projects/egcw-1ec83/databases/(default)/documents/jobs/${id}`,...document}}))),{status:200});
     const id=decodeURIComponent(value.match(/\/jobs\/([^?]+)/)?.[1]||'');
-    if(method==='PATCH'){const document=JSON.parse(options.body);stored.set(id,document);return new Response(JSON.stringify({name:`projects/egcw-1ec83/databases/(default)/documents/jobs/${id}`,...document}),{status:200})}
+    if(method==='PATCH'){const parsed=new URL(value),expected=parsed.searchParams.get('currentDocument.updateTime');if((parsed.searchParams.get('currentDocument.exists')==='false'&&stored.has(id))||(expected&&stored.get(id)?.updateTime!==expected))return Response.json({}, {status:412});const document={...JSON.parse(options.body),updateTime:`2026-09-07T00:00:00.${String(++revision).padStart(9,'0')}Z`};stored.set(id,document);return new Response(JSON.stringify({name:`projects/egcw-1ec83/databases/(default)/documents/jobs/${id}`,...document}),{status:200})}
     if(!stored.has(id))return new Response('{}',{status:404});
     return new Response(JSON.stringify({name:`projects/egcw-1ec83/databases/(default)/documents/jobs/${id}`,...stored.get(id)}),{status:200});
   };
