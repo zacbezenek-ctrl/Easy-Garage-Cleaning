@@ -140,14 +140,14 @@ test('privileged actions honor signed session claims instead of a lookalike user
     request: new Request('https://easygaragecleaning.com/api/operations-event', { method: 'POST', headers, body: JSON.stringify({ event: 'booking', payload: {} }) }),
     env,
   });
-  assert.equal(relayResponse.status, 403);
+  assert.equal(relayResponse.status, 401);
 
   const accounts = await import('../functions/api/employee-accounts.js');
   const reviewResponse = await accounts.onRequestPost({
     request: new Request('https://easygaragecleaning.com/api/employee-accounts', { method: 'POST', headers, body: JSON.stringify({ action: 'review', username: 'someone', decision: 'approved' }) }),
     env,
   });
-  assert.equal(reviewResponse.status, 403);
+  assert.equal(reviewResponse.status, 401);
 });
 
 test('crew schedule API excludes unassigned customer jobs and redacts open shifts', async () => {

@@ -743,7 +743,7 @@ test('Hub supports salted PBKDF2 credentials and rejects malformed or wrong hash
   assert.equal((await authenticateHubCredential(env,'Tester','a correct horse battery staple'))?.displayName,'Test User');
   assert.equal(await authenticateHubCredential(env,'Tester','wrong password'),null);
   const malformed={HUB_AUTH_USERS_JSON:JSON.stringify({Tester:{passwordHash:'pbkdf2-sha256$2$bad$bad'}})};
-  assert.equal(await authenticateHubCredential(malformed,'Tester','a correct horse battery staple'),null);
+  await assert.rejects(authenticateHubCredential(malformed,'Tester','a correct horse battery staple'),{code:'HUB_AUTH_CONFIGURATION'});
 });
 
 test('employees have a personal schedule for assigned and claimed work',()=>{

@@ -1,4 +1,4 @@
-import { authenticateEmployeeAccount } from './employee-accounts.js';
+import { authenticateEmployeeAccount, getEmployeeSessionProfile } from './employee-accounts.js';
 
 const COOKIE_NAME = 'egc_hub_session';
 const SESSION_SECONDS = 12 * 60 * 60;
@@ -131,18 +131,37 @@ export async function createHubCredentialHash(password) {
   return `${PASSWORD_HASH_PREFIX}$${PASSWORD_HASH_ITERATIONS}$${bytesToBase64Url(salt)}$${bytesToBase64Url(derived)}`;
 }
 
+function passwordConfigurationError(message) {
+  return Object.assign(new Error(message), { code: 'HUB_AUTH_CONFIGURATION', status: 503 });
+}
+
 async function verifyPasswordHash(username, password, expected) {
-  if (typeof password !== 'string' || typeof expected !== 'string') return false;
+  if (typeof password !== 'string') return false;
+  const invalidHash = () => passwordConfigurationError('Staff sign-in password configuration needs administrator attention. Your account has not been changed.');
+  if (typeof expected !== 'string') throw invalidHash();
   const [prefix, iterationText, saltText, hashText, extra] = expected.split('$');
-  if (prefix !== PASSWORD_HASH_PREFIX) return safeEqual(await hashHubCredential(username, password), expected);
-  const iterations = Number(iterationText);
-  if (extra !== undefined || !Number.isInteger(iterations) || iterations < 100000 || iterations > 1000000 || !saltText || !hashText) return false;
-  try {
-    const derived = await derivePasswordHash(password, base64UrlToBytes(saltText), iterations);
-    return safeEqual(bytesToBase64Url(derived), hashText);
-  } catch {
-    return false;
+  if (prefix !== PASSWORD_HASH_PREFIX) {
+    if (!/^[a-f0-9]{64}$/i.test(expected)) throw invalidHash();
+    return safeEqual(await hashHubCredential(username, password), expected.toLowerCase());
   }
+  const iterations = Number(iterationText);
+  if (extra !== undefined || !/^\d+$/.test(iterationText || '') || !Number.isInteger(iterations) || iterations < 100000 || iterations > 1000000 || !/^[A-Za-z0-9_-]+$/.test(saltText || '') || !/^[A-Za-z0-9_-]+$/.test(hashText || '')) throw invalidHash();
+  let salt, storedHash;
+  try {
+    salt = base64UrlToBytes(saltText);
+    storedHash = base64UrlToBytes(hashText);
+    if (!salt.length || storedHash.length !== PASSWORD_HASH_BYTES || bytesToBase64Url(salt) !== saltText || bytesToBase64Url(storedHash) !== hashText) throw invalidHash();
+  } catch { throw invalidHash(); }
+  let derived;
+  try {
+    derived = await derivePasswordHash(password, salt, iterations);
+  } catch (error) {
+    if (error?.name === 'NotSupportedError' && /iteration counts above \d+.*not supported/i.test(error?.message || '')) {
+      throw passwordConfigurationError('The sign-in host cannot process the configured password iteration count. Ask Zac to update Hub hosting support; your account has not been changed.');
+    }
+    throw passwordConfigurationError('Staff sign-in password verification is unavailable. Ask Zac to check the Hub hosting setup. Your account has not been changed.');
+  }
+  return safeEqual(bytesToBase64Url(derived), hashText);
 }
 
 export async function validateHubCredential(env, username, password) {
@@ -169,7 +188,7 @@ export async function createHubSessionToken(env, username, now = Date.now(), sup
   const profile = suppliedProfile || getHubUserProfile(env, username);
   if (!profile) throw new Error('Hub user is not configured');
   const session = suppliedProfile?.source === 'employee-account'
-    ? { v: 2, u: username, d: profile.displayName, r: 'crew', p: profile.payType || 'hourly', h: Math.max(0, Number(profile.hourlyRate || 0)), exp: now + SESSION_SECONDS * 1000 }
+    ? { v: 2, u: username, av: profile.sessionVersion || '', d: profile.displayName, r: 'crew', p: profile.payType || 'hourly', h: Math.max(0, Number(profile.hourlyRate || 0)), exp: now + SESSION_SECONDS * 1000 }
     : { v: 1, u: profile.user || configuredUsername(env, username), exp: now + SESSION_SECONDS * 1000 };
   const payload = bytesToBase64Url(encoder.encode(JSON.stringify(session)));
   return `${payload}.${await signature(secret, payload)}`;
@@ -183,16 +202,10 @@ export async function verifyHubSessionToken(env, token, now = Date.now()) {
   try {
     const session = JSON.parse(new TextDecoder().decode(base64UrlToBytes(payload)));
     if (!Number.isFinite(session.exp) || session.exp <= now) return null;
-    if (session.v === 2 && session.u && session.d) return {
-      user: String(session.u),
-      displayName: String(session.d),
-      role: 'crew',
-      payType: String(session.p || 'hourly'),
-      hourlyRate: Math.max(0, Number(session.h || 0)),
-      businessAccess: false,
-      source: 'employee-account',
-      expiresAt: session.exp,
-    };
+    if (session.v === 2 && session.u && session.d) {
+      const profile = await getEmployeeSessionProfile(env, String(session.u), session.av);
+      return profile ? { ...profile, expiresAt: session.exp } : null;
+    }
     if (session.v !== 1 || !Object.hasOwn(users(env), session.u)) return null;
     const profile = getHubUserProfile(env, session.u);
     return profile ? { ...profile, expiresAt: session.exp } : null;

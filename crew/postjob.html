@@ -159,15 +159,17 @@
 </div>
 <script src="/crew/hub-auth.js?v=20260904c"></script>
 <script>
+let resolveCrewAuthentication;
+const crewAuthenticationReady = new Promise(resolve => { resolveCrewAuthentication = resolve; });
 async function gateLogin(){
   const button=document.querySelector("#egc-gate .gbtn"),error=document.getElementById("gate-err");
   button.disabled=true;button.textContent="Signing in…";error.style.display="none";
-  try{await EGCHubAuth.signIn(document.getElementById("gate-u").value.trim(),document.getElementById("gate-p").value);document.getElementById("egc-gate").classList.add("off")}
+  try{await EGCHubAuth.signIn(document.getElementById("gate-u").value.trim(),document.getElementById("gate-p").value);resolveCrewAuthentication();document.getElementById("egc-gate").classList.add("off")}
   catch(e){error.textContent=e.message||"Unable to sign in. Try again.";error.style.display="block"}
   finally{button.disabled=false;button.textContent="Unlock"}
 }
 async function gateLock(){await EGCHubAuth.signOut();location.reload()}
-EGCHubAuth.session().then(user=>{if(user){document.getElementById("egc-gate").classList.add("off");return}document.getElementById("gate-p").addEventListener("keydown",e=>{if(e.key==="Enter")gateLogin()});document.getElementById("gate-u").addEventListener("keydown",e=>{if(e.key==="Enter")document.getElementById("gate-p").focus()})});
+EGCHubAuth.session().then(user=>{if(user){resolveCrewAuthentication();document.getElementById("egc-gate").classList.add("off");return}document.getElementById("gate-p").addEventListener("keydown",e=>{if(e.key==="Enter")gateLogin()});document.getElementById("gate-u").addEventListener("keydown",e=>{if(e.key==="Enter")document.getElementById("gate-p").focus()})});
 </script>
 
 
@@ -632,7 +634,7 @@ async function releaseCentralLock(){try{const ref=HUBDB.collection('jobs').doc(`
 document.addEventListener("input",saveAll);
 if(!STORAGE_OK) setTimeout(()=>alert("Heads up: this browser is blocking local storage (often Private Browsing). The job won't pre-fill from the Game Plan and progress won't save. Switch off Private Browsing for this iPad."),200);
 async function restoreWalkthroughPhotoFolder(){if(!HUBDB||!CENTRAL_JOB_ID)return;try{const snap=await HUBDB.collection('jobs').doc(CENTRAL_JOB_ID).get(),data=snap.data()||{},url=data.photoDriveUrl,grid=document.querySelector('#job-brief .brief-grid'),hours=document.getElementById('j_hours'),hint=document.getElementById('hours_hint');ACTIVE.startedAt=data.startedAt||data.timeTracking?.startedAt||'';if(ACTIVE.startedAt&&hours&&!hours.value){const elapsed=Math.max(.25,Math.round((Date.now()-Date.parse(ACTIVE.startedAt))/900000)/4);if(Number.isFinite(elapsed)){hours.value=String(elapsed);if(hint)hint.textContent=`Calculated from ${new Date(ACTIVE.startedAt).toLocaleTimeString([],{hour:'numeric',minute:'2-digit'})}; adjust if needed.`;saveAll()}}if(url){localStorage.setItem(driveKey(),url);if(grid)grid.insertAdjacentHTML('beforeend',`<article class="wide"><small>Walkthrough photos</small><strong><a href="${esc(url)}" target="_blank" rel="noopener">Open the client photo folder ↗</a></strong></article>`)}}catch(e){}}
-(async()=>{restoreAll();await loadCentralJob();render();updateStripePanel();const stripeReturn=new URLSearchParams(location.search).get('session_id');await verifyStripeReturn();if(!stripeReturn&&ACTIVE.paymentSyncStatus==='error'&&ACTIVE.paymentSyncPayload)syncStripePaymentToHighLevel(ACTIVE.paymentSyncPayload);await restoreWalkthroughPhotoFolder();mountRef()})(); // after/receipt capture is now inline on the checklist items (mountActions)
+(async()=>{await crewAuthenticationReady;restoreAll();await loadCentralJob();render();updateStripePanel();const stripeReturn=new URLSearchParams(location.search).get('session_id');await verifyStripeReturn();if(!stripeReturn&&ACTIVE.paymentSyncStatus==='error'&&ACTIVE.paymentSyncPayload)syncStripePaymentToHighLevel(ACTIVE.paymentSyncPayload);await restoreWalkthroughPhotoFolder();mountRef()})(); // after/receipt capture is now inline on the checklist items (mountActions)
 </script>
 </body>
 </html>

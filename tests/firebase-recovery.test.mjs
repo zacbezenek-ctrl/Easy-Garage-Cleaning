@@ -51,15 +51,16 @@ test('Firebase session errors stay JSON, actionable, and free of credential cont
 
 test('Firebase token signature and claims preserve owner and employee access separation', async () => {
   const testEnv = withAccount(first.account);
-  const crewCookie = (await createHubSessionCookie(testEnv, 'ZacB', { source: 'employee-account', displayName: 'Crew test', role: 'owner', businessAccess: true })).split(';')[0];
-  for (const [testCookie, businessAccess, role] of [[cookie, true, 'owner'], [crewCookie, false, 'crew']]) {
+  testEnv.HUB_AUTH_USERS_JSON = JSON.stringify({ ...JSON.parse(env.HUB_AUTH_USERS_JSON), SyntheticCrew: { passwordHash: 'unused-fixture-hash', role: 'crew' } });
+  const crewCookie = (await createHubSessionCookie(testEnv, 'SyntheticCrew')).split(';')[0];
+  for (const [testCookie, businessAccess, role, username] of [[cookie, true, 'owner', 'zacb'], [crewCookie, false, 'crew', 'syntheticcrew']]) {
     const response = await firebaseSession({ request: new Request('https://easygaragecleaning.com/api/firebase-session', { headers: { Cookie: testCookie } }), env: testEnv });
     assert.equal(response.status, 200);
     const { token } = await response.json();
     const [header, payload, signature] = token.split('.');
     assert.equal(verify('RSA-SHA256', Buffer.from(`${header}.${payload}`), first.keys.publicKey, Buffer.from(signature, 'base64url')), true);
     const claims = JSON.parse(Buffer.from(payload, 'base64url'));
-    assert.equal(claims.uid, 'hub:zacb');
+    assert.equal(claims.uid, 'hub:' + username);
     assert.equal(claims.claims.business_access, businessAccess);
     assert.equal(claims.claims.role, role);
     assert.equal(claims.exp - claims.iat, 3600);

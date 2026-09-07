@@ -201,7 +201,19 @@ async function writeOne(env, collection, id, data) {
 
 const manager = session => hasBusinessAccess(session);
 const same = (left, right) => String(left || '').trim().toLowerCase() === String(right || '').trim().toLowerCase();
-const personKey = value => String(value || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'employee';
+const personKey = value => String(value || '').trim().toLowerCase();
+const legacyPersonKeys = value => [...new Set([
+  personKey(value).replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'employee',
+  personKey(value).replace(/[^a-z0-9]/g, ''),
+])].filter(key => key && key !== personKey(value));
+
+async function readEmployeeProfile(env, username) {
+  for (const id of [personKey(username), ...legacyPersonKeys(username)]) {
+    const current = await readOne(env, 'profiles', id);
+    if (current.data && same(current.data.username, username)) return current;
+  }
+  return { data: null };
+}
 
 function assignedNames(job) {
   const explicit = Array.isArray(job?.assignedCrew) ? job.assignedCrew : [];
@@ -241,7 +253,7 @@ function configuredProfiles(env) {
 }
 
 async function employeeRate(env, session) {
-  const profile = await readOne(env, 'profiles', personKey(session.user));
+  const profile = await readEmployeeProfile(env, session.user);
   const rate = Number(profile.data?.hourlyRate);
   return Number.isFinite(rate) && rate >= 0 ? rate : Math.max(0, Number(session.hourlyRate || 0));
 }
@@ -252,6 +264,7 @@ async function authorizeMutation(env, session, collection, id, incoming, existin
 
   if (collection === 'profiles') {
     if (id !== personKey(session.user)) throw new Error('You can only update your own employee profile');
+    if (existing && !same(existing.username, session.user)) throw new Error('This profile belongs to another employee; ask the owner to resolve the legacy profile ID conflict');
     const text = (value, limit) => String(value || '').trim().slice(0, limit);
     const requiredAcknowledgements = ['timekeeping', 'location_policy', 'safety', 'customer_care', 'hub_basics'];
     if (incoming.onboardingCompletedAt && !requiredAcknowledgements.every(value => incoming.onboardingAcknowledgements?.includes(value))) throw new Error('All onboarding acknowledgements are required');
@@ -380,7 +393,12 @@ export async function onRequestGet({ request, env }) {
       if (jobAccess.get(jobId)) collections.jobMessages.push(row.data);
     }
     const profiles = configuredProfiles(env).filter(profile => visibleTo(session, 'profiles', profile));
-    const storedProfiles = new Map(collections.profiles.map(profile => [String(profile.username || '').toLowerCase(), profile]));
+    const storedProfiles = new Map();
+    for (const profile of collections.profiles) {
+      const key = personKey(profile.username);
+      const previous = storedProfiles.get(key);
+      if (!previous || profile.id === key || previous.id !== key) storedProfiles.set(key, profile);
+    }
     const configuredKeys = new Set(profiles.map(profile => String(profile.username || '').toLowerCase()));
     collections.profiles = [
       ...profiles.map(profile => ({ ...profile, ...(storedProfiles.get(String(profile.username).toLowerCase()) || {}) })),
@@ -415,7 +433,17 @@ export async function onRequestPost({ request, env }) {
     incoming = JSON.parse(serialized);
   } catch { return reply(400, { ok: false, error: 'Invalid employee record data' }); }
   try {
-    const current = await readOne(env, collection, id);
+    let current = await readOne(env, collection, id);
+    if (collection === 'profiles') {
+      const username = manager(session) ? String(incoming.username || current.data?.username || '') : session.user;
+      if (current.data && username && !same(current.data.username, username)) {
+        throw new Error('This profile belongs to another employee; ask the owner to resolve the legacy profile ID conflict');
+      }
+      if (!current.data && username && id === personKey(username)) {
+        const legacy = await readEmployeeProfile(env, username);
+        if (legacy.data) current = legacy;
+      }
+    }
     // A different vault key produces a different ID, so a 404 alone cannot
     // prove this is a new record. Verify existing history before creating it.
     if (!current.data) await readAll(env);

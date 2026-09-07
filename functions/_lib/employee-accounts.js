@@ -225,6 +225,10 @@ export async function authenticateEmployeeAccount(env, username, password) {
   if (account.status === 'pending') throw accountError('EMPLOYEE_ACCOUNT_PENDING', 'Your account is waiting for Zac to approve it. You do not need to register again.', 401);
   if (account.status === 'rejected') throw accountError('EMPLOYEE_ACCOUNT_REJECTED', 'Your account request was not approved. Contact Zac before registering again.', 401);
   if (account.status !== 'approved') return null;
+  return employeeSessionProfile(account);
+}
+
+function employeeSessionProfile(account) {
   return {
     user: account.username,
     displayName: account.displayName || account.username,
@@ -233,7 +237,17 @@ export async function authenticateEmployeeAccount(env, username, password) {
     hourlyRate: Math.max(0, Number(account.hourlyRate || 0)),
     businessAccess: false,
     source: 'employee-account',
+    sessionVersion: String(account.sessionVersion || ''),
   };
+}
+
+export async function getEmployeeSessionProfile(env, username, sessionVersion) {
+  if (isReservedEmployeeUsername(username) || !employeeAccountsConfigured(env)) return null;
+  const account = await readAccount(env, username);
+  if (!account || account.status !== 'approved') return null;
+  const profile = employeeSessionProfile(account);
+  // Legacy sessions remain usable only until the first account status change.
+  return safeEqual(profile.sessionVersion, String(sessionVersion || '')) ? profile : null;
 }
 
 export async function listEmployeeApplications(env) {
@@ -279,6 +293,8 @@ export async function reviewEmployeeApplication(env, username, decision, reviewe
   const updated = {
     ...account,
     status: decision,
+    // Repeating the same review is safe, but a changed decision revokes old sessions.
+    sessionVersion: account.status === decision ? String(account.sessionVersion || '') : crypto.randomUUID(),
     role: 'crew',
     businessAccess: false,
     reviewedAt: now,
