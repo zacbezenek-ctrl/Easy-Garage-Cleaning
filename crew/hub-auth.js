@@ -1,6 +1,21 @@
 (function () {
   const KEYS = ['egc_u', 'egc_tok', 'egc_exp', 'egc_name', 'egc_role', 'egc_pay_type', 'egc_hourly_rate', 'egc_business_access'];
   const BUSINESS_USERS = new Set(['zacb', 'tylerg', 'alexk']);
+  let authVersion = 0;
+  let authQueue = Promise.resolve();
+  let firebaseQueue = Promise.resolve();
+
+  function interrupted() {
+    const error = new Error('Sign-in changed. Please try again.');
+    error.code = 'HUB_AUTH_INTERRUPTED';
+    return error;
+  }
+
+  function serializeAuth(action) {
+    const pending = authQueue.then(action);
+    authQueue = pending.catch(() => {});
+    return pending;
+  }
 
   function remember(user, profile = {}) {
     try {
@@ -29,7 +44,7 @@
   }
 
   function showGateError(message) {
-    const error = document.getElementById('gate-err') || document.getElementById('gate-error');
+    const error = document.getElementById('gate-err') || document.getElementById('gate-error') || document.getElementById('login-error');
     if (!error) return;
     error.textContent = message;
     error.style.display = 'block';
@@ -42,28 +57,41 @@
     return error;
   }
 
-  async function ensureFirebaseSession() {
+  async function ensureFirebaseSession(version = authVersion) {
     if (!window.firebase?.auth) throw new Error('Secure employee data could not start. Reload the page and try again.');
     const response = await fetch('/api/firebase-session', { cache: 'no-store', credentials: 'same-origin' });
     const data = await response.json().catch(() => ({}));
+    if (version !== authVersion) throw interrupted();
     if (!response.ok || !data.ok || !data.token) throw responseError(data, 'Secure employee data is unavailable. Ask Zac to finish the Hub setup, then retry.');
-    try { await firebase.auth().signInWithCustomToken(data.token); }
-    catch { throw new Error('Your login was accepted, but secure employee data could not connect. Reload and retry; if it continues, ask Zac to check the Firebase setup.'); }
+    const pending = firebaseQueue.then(async () => {
+      if (version !== authVersion) throw interrupted();
+      try { await firebase.auth().signInWithCustomToken(data.token); }
+      catch { throw new Error('Your login was accepted, but secure employee data could not connect. Reload and retry; if it continues, ask Zac to check the Firebase setup.'); }
+      if (version !== authVersion) throw interrupted();
+    });
+    firebaseQueue = pending.catch(() => {});
+    await pending;
   }
 
   async function session() {
+    const version = authVersion;
     try {
+      await authQueue;
+      if (version !== authVersion) return null;
       const response = await fetch('/api/hub-auth', { cache: 'no-store', credentials: 'same-origin' });
       const data = await response.json().catch(() => ({}));
+      if (version !== authVersion) return null;
       if (!response.ok || !data.ok || !data.user) {
         clearLocal();
         if (response.status !== 401) showGateError(data.error || 'The sign-in service is unavailable. Try again shortly.');
         return null;
       }
-      await ensureFirebaseSession();
+      await ensureFirebaseSession(version);
+      if (version !== authVersion) return null;
       remember(data.user, data);
       return data.user;
     } catch (error) {
+      if (version !== authVersion) return null;
       clearLocal();
       showGateError(error.message || 'Your session could not be checked. Check the connection and retry.');
       return null;
@@ -72,6 +100,9 @@
 
   async function signIn(username, password) {
     if (!String(username || '').trim() || !password) throw new Error('Enter your username and password.');
+    const version = ++authVersion;
+    return serializeAuth(async () => {
+    if (version !== authVersion) throw interrupted();
     const response = await fetch('/api/hub-auth', {
       method: 'POST',
       credentials: 'same-origin',
@@ -79,34 +110,42 @@
       body: JSON.stringify({ username, password }),
     });
     const data = await response.json().catch(() => ({}));
+    if (version !== authVersion) throw interrupted();
     if (!response.ok || !data.ok || !data.user) throw responseError(data, response.status === 401 ? 'Incorrect username or password' : 'The sign-in service is unavailable. Try again shortly.');
-    try { await ensureFirebaseSession(); }
-    catch (error) { clearLocal(); throw error; }
+    try { await ensureFirebaseSession(version); }
+    catch (error) { if (version === authVersion) clearLocal(); throw error; }
+    if (version !== authVersion) throw interrupted();
     remember(data.user, data);
     for (const id of ['gate-p', 'pass']) { const input = document.getElementById(id); if (input) input.value = ''; }
     return data.user;
+    });
   }
 
   async function signOut() {
+    ++authVersion;
     clearLocal();
-    try { await firebase.auth().signOut(); } catch {}
-    try { await fetch('/api/hub-auth', { method: 'DELETE', credentials: 'same-origin' }); } catch {}
+    return serializeAuth(async () => {
+      const pending = firebaseQueue.then(async () => { try { await firebase.auth().signOut(); } catch {} });
+      firebaseQueue = pending.catch(() => {});
+      await pending;
+      try { await fetch('/api/hub-auth', { method: 'DELETE', credentials: 'same-origin' }); } catch {}
+    });
   }
 
   async function securedFetch(input, init = {}) {
+    const version = authVersion;
     const response = await fetch(input, { ...init, credentials: 'same-origin' });
     if (response.status !== 401) return response;
+    if (version !== authVersion) throw interrupted();
+    ++authVersion;
     clearLocal();
-    const gate = document.getElementById('egc-gate') || document.getElementById('gate');
+    const gate = document.getElementById('egc-gate') || document.getElementById('gate') || document.getElementById('login-screen');
     if (gate) {
       gate.classList.remove('off');
       gate.style.display = '';
     }
-    const error = document.getElementById('gate-err') || document.getElementById('gate-error');
-    if (error) {
-      error.textContent = 'Your work is saved. Sign in again to continue.';
-      error.style.display = 'block';
-    }
+    showGateError('Your session expired. Sign in again to continue.');
+    window.dispatchEvent(new Event('egc:session-expired'));
     const expired = new Error('Your Hub session expired. Sign in again to continue.');
     expired.code = 'HUB_AUTH_REQUIRED';
     throw expired;

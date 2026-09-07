@@ -1,5 +1,6 @@
 import { getHubSession, hasBusinessAccess } from '../_lib/hub-session.js';
 import { patchJob, readJob } from '../_lib/firestore-job.js';
+import { createJobAssignmentAccess } from '../_lib/job-assignment.js';
 
 const STRIPE_API = 'https://api.stripe.com/v1';
 const HOST = /^(?:easygaragecleaning\.com|www\.easygaragecleaning\.com|easy-garage-cleaning\.pages\.dev|localhost(?::\d+)?|127\.0\.0\.1(?::\d+)?)$/;
@@ -35,22 +36,9 @@ function safe(value, max = 160) {
   return String(value || '').replace(/[\r\n\t]/g, ' ').trim().slice(0, max);
 }
 
-const personKey = value => String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-
-function assignedToJob(job, session) {
-  if (hasBusinessAccess(session)) return true;
-  const identities = [session.user, session.displayName].map(personKey).filter(Boolean);
-  const crew = [
-    ...(Array.isArray(job.assignedCrew) ? job.assignedCrew : []),
-    ...String(job.assignedTo || '').split(/\s*(?:,|\+|&|\band\b)\s*/i),
-  ].map(value => personKey(typeof value === 'string' ? value : value?.name || value?.id || '')).filter(Boolean);
-  return crew.some(name => identities.some(identity => name === identity ||
-    (Math.min(name.length, identity.length) >= 3 && (name.startsWith(identity) || identity.startsWith(name)))));
-}
-
 async function authorizedJob(env, jobId, session) {
   const job = await readJob(env, jobId).catch(() => null);
-  return job && assignedToJob(job, session) ? job : null;
+  return job && (hasBusinessAccess(session) || await createJobAssignmentAccess(env, session).assigned(job)) ? job : null;
 }
 
 async function recordStripePayment(env, job, checkout, session) {

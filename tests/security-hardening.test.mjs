@@ -241,7 +241,7 @@ test('crew job rules limit assigned staff to operational fields', () => {
   assert.match(read('crew/postjob.html'), /pending_verification/);
   assert.match(read('crew/postjob.html'), /verifiedPaidInFull/);
   assert.match(read('functions/api/quo-send.js'), /readJob\(env, jobId\)/);
-  assert.match(read('functions/api/quo-send.js'), /assignedToJob\(job, session\)/);
+  assert.match(read('functions/api/quo-send.js'), /await assignedToJob\(job, session, env\)/);
   assert.match(read('crew/prejob.html'), /job_id:ACTIVE\.jobId/);
 });
 

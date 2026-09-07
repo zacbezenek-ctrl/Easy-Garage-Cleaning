@@ -147,7 +147,7 @@ function employeeAuth(fetcher) {
   });
   const page = read('employee.html');
   const source = page.slice(page.indexOf("const ADMINS ="), page.indexOf('async function sendBookingConfirmation'));
-  vm.runInNewContext(source + '\nglobalThis.ui={doLogin,doLogout,enterEmployeeApp,getUser:()=>me};', env.context);
+  vm.runInNewContext(source + '\nglobalThis.ui={doLogin,doLogout,enterEmployeeApp,restoreHubSession,hubFetch,getUser:()=>me};', env.context);
   return { ...env, api: env.context.ui };
 }
 
@@ -176,6 +176,95 @@ test('a successful login clears its password and logout clears both old profile 
   await env.api.doLogout();
   assert.equal(env.context.localStorage.getItem('egc_business_access'), null);
   assert.equal(env.context.sessionStorage.getItem('egc_u'), null);
+});
+
+const authFlush = async () => { for (let index = 0; index < 30; index++) await Promise.resolve(); };
+function authDeferred() {
+  let resolve;
+  const promise = new Promise(yes => { resolve = yes; });
+  return { promise, resolve };
+}
+const signedInProfile = { ok: true, user: 'ZacB', displayName: 'Zac', businessAccess: true, role: 'owner' };
+function fillEmployeeLogin(env) {
+  env.node('l-user').value = 'ZacB';
+  env.node('l-pass').value = 'SyntheticPassword1';
+}
+
+test('a slow initial employee restore cannot clear a newer successful login', async () => {
+  const oldRestore = authDeferred();
+  const env = employeeAuth(async (url, init = {}) => {
+    if (url.includes('firebase-session')) return response({ ok: true, token: 'synthetic-token' });
+    return init.method === 'POST' ? response(signedInProfile) : oldRestore.promise;
+  });
+  const restoring = env.api.restoreHubSession(); await authFlush();
+  fillEmployeeLogin(env); await env.api.doLogin();
+  oldRestore.resolve(response({ ok: false }, 401)); await restoring;
+  assert.equal(env.api.getUser(), 'ZacB');
+  assert.equal(env.context.sessionStorage.getItem('egc_u'), 'ZacB');
+  assert.equal(env.context.entered, true);
+});
+
+test('a previous employee request returning unauthorized cannot sign out the next login', async () => {
+  const oldRequest = authDeferred();
+  const env = employeeAuth(async (url, init = {}) => url === '/api/old-request' ? oldRequest.promise : response(url.includes('firebase-session') ? { ok: true, token: 'synthetic-token' } : signedInProfile));
+  fillEmployeeLogin(env); await env.api.doLogin();
+  const request = env.api.hubFetch('/api/old-request').catch(error => error.code);
+  await env.api.doLogout(); fillEmployeeLogin(env); await env.api.doLogin();
+  oldRequest.resolve(response({ ok: false }, 401));
+  assert.equal(await request, 'HUB_AUTH_INTERRUPTED');
+  assert.equal(env.api.getUser(), 'ZacB');
+  assert.equal(env.context.sessionStorage.getItem('egc_u'), 'ZacB');
+});
+
+test('employee logout waits for an in-flight Firebase sign-in and cannot be repopulated', async () => {
+  const tokenExchange = authDeferred(), actions = [];
+  const env = employeeAuth(async url => response(url.includes('firebase-session') ? { ok: true, token: 'synthetic-token' } : signedInProfile));
+  env.context.firebase.auth = () => ({
+    signInWithCustomToken: async () => { actions.push('signing-in'); await tokenExchange.promise; actions.push('signed-in'); },
+    signOut: async () => { actions.push('signed-out'); },
+  });
+  fillEmployeeLogin(env); const login = env.api.doLogin(); await authFlush();
+  const logout = env.api.doLogout(); await authFlush();
+  assert.deepEqual(actions, ['signing-in']);
+  tokenExchange.resolve(); await login; await logout;
+  assert.deepEqual(actions, ['signing-in', 'signed-in', 'signed-out']);
+  assert.equal(env.api.getUser(), null);
+  assert.equal(env.context.entered, undefined);
+  assert.equal(env.context.sessionStorage.getItem('egc_business_access'), null);
+});
+
+test('an employee restore started during sign-out waits for the cleared Hub cookie', async () => {
+  const deleting = authDeferred();
+  let signedIn = true, reads = 0;
+  const env = employeeAuth(async (url, init = {}) => {
+    if (url.includes('firebase-session')) return response({ ok: true, token: 'synthetic-token' });
+    if (init.method === 'DELETE') { await deleting.promise; signedIn = false; return response({ ok: true }); }
+    reads++;
+    return signedIn ? response(signedInProfile) : response({ ok: false }, 401);
+  });
+  const logout = env.api.doLogout(); await authFlush();
+  const restoring = env.api.restoreHubSession(); await authFlush();
+  assert.equal(reads, 0, 'restore cannot use a cookie that is being deleted');
+  deleting.resolve(); await logout; await restoring;
+  assert.equal(reads, 1);
+  assert.equal(env.api.getUser(), null);
+  assert.equal(env.context.entered, undefined);
+});
+
+test('a slow employee login cookie is cleared by the later sign-out request', async () => {
+  const loggingIn = authDeferred(), actions = [];
+  const env = employeeAuth(async (url, init = {}) => {
+    assert.equal(url, '/api/hub-auth');
+    if (init.method === 'POST') { actions.push('login-request'); await loggingIn.promise; actions.push('login-cookie'); return response(signedInProfile); }
+    assert.equal(init.method, 'DELETE'); actions.push('clear-cookie'); return response({ ok: true });
+  });
+  fillEmployeeLogin(env); const login = env.api.doLogin(); await authFlush();
+  const logout = env.api.doLogout(); await authFlush();
+  assert.deepEqual(actions, ['login-request']);
+  loggingIn.resolve(); await login; await logout;
+  assert.deepEqual(actions, ['login-request', 'login-cookie', 'clear-cookie']);
+  assert.equal(env.api.getUser(), null);
+  assert.equal(env.context.entered, undefined);
 });
 
 test('crew session restore surfaces secure-data failure instead of silently showing a fresh login', async () => {

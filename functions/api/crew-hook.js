@@ -22,6 +22,7 @@
 
 import { getHubSession, hasBusinessAccess } from '../_lib/hub-session.js';
 import { readJob } from '../_lib/firestore-job.js';
+import { createJobAssignmentAccess } from '../_lib/job-assignment.js';
 
 // Hosts allowed to POST here. Referer/Origin is spoofable via curl, so this is
 // a casual-abuse filter, not real auth — pair with Cloudflare Access for that.
@@ -42,18 +43,6 @@ function originAllowed(request) {
   if (!origin && !referer) return true;
   const h = hostOf(origin) || hostOf(referer);
   return ALLOWED_HOST_RE.test(h);
-}
-
-const personKey = value => String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-
-function assignedToJob(job, session) {
-  const identities = [session.user, session.displayName].map(personKey).filter(Boolean);
-  const crew = [
-    ...(Array.isArray(job.assignedCrew) ? job.assignedCrew : []),
-    ...String(job.assignedTo || '').split(/\s*(?:,|\+|&|\band\b)\s*/i),
-  ].map(value => personKey(typeof value === 'string' ? value : value?.name || value?.id || '')).filter(Boolean);
-  return crew.some(name => identities.some(identity => name === identity ||
-    (Math.min(name.length, identity.length) >= 3 && (name.startsWith(identity) || identity.startsWith(name)))));
 }
 
 export async function onRequestOptions() {
@@ -99,7 +88,7 @@ export async function onRequestPost({ request, env }) {
     const jobId = String(body.job_id || '');
     if (!/^[A-Za-z0-9_-]{1,180}$/.test(jobId)) return json(400, { ok: false, error: 'A valid assigned job is required' });
     const job = await readJob(env, jobId).catch(() => null);
-    if (!job || !assignedToJob(job, session)) return json(403, { ok: false, error: 'This job is not assigned to you' });
+    if (!job || !await createJobAssignmentAccess(env, session).assigned(job)) return json(403, { ok: false, error: 'This job is not assigned to you' });
   }
 
   // The review path actually sends an SMS downstream — never forward one

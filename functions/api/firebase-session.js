@@ -1,5 +1,6 @@
 import { getHubSession, hasBusinessAccess } from '../_lib/hub-session.js';
 import { createFirebaseCustomToken, firebaseServiceAccountConfigured } from '../_lib/firebase-service-account.js';
+import { assignmentKey, createJobAssignmentAccess } from '../_lib/job-assignment.js';
 
 const json = (status, body) => new Response(JSON.stringify(body), {
   status,
@@ -12,11 +13,17 @@ export async function onRequestGet({ request, env }) {
   if (!firebaseServiceAccountConfigured(env)) return json(503, { ok: false, code: 'FIREBASE_NOT_CONFIGURED', error: 'Secure employee data access needs administrator setup. Your account has not been changed.' });
   const businessAccess = hasBusinessAccess(session);
   try {
+    // Resolve legacy aliases on the server; display_name remains presentation.
+    // Business users do not need an alias lookup to retain their existing access.
+    const identities = businessAccess ? [String(session.user).trim()] : await createJobAssignmentAccess(env, session).identities();
     const token = await createFirebaseCustomToken(env, `hub:${String(session.user).toLowerCase()}`, {
       role: session.role || 'crew',
       business_access: businessAccess,
       username: String(session.user || '').slice(0, 80),
       display_name: String(session.displayName || session.user || '').slice(0, 80),
+      assignment_identities: identities,
+      assignment_keys: identities.map(assignmentKey),
+      assignment_version: 1,
     });
     return json(200, { ok: true, token });
   } catch {

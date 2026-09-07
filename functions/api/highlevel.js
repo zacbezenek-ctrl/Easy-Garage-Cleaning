@@ -26,6 +26,7 @@ import { sendAcceptedQuotePortal } from '../_lib/portal-invitation.js';
 import { syncSalesFollowupExit, salesExitMilestone } from '../_lib/sales-followup-exit.js';
 import { readJob, patchJob } from '../_lib/firestore-job.js';
 import { customerCalendars, isStaffScheduledCalendar } from '../_lib/highlevel-calendars.js';
+import { createJobAssignmentAccess } from '../_lib/job-assignment.js';
 
 const API = 'https://services.leadconnectorhq.com';
 const DEFAULT_LEAD_RESET_AT = '2026-09-03T21:51:19.314Z';
@@ -45,13 +46,9 @@ function allowed(request) {
   try { return HOST.test(new URL(raw).host); } catch { return false; }
 }
 
-function mayChangeJob(session, job) {
+async function mayChangeJob(session, job, access) {
   if (hasBusinessAccess(session)) return true;
-  if (!job) return false;
-  const key = value => String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-  const identities = [session.user, session.displayName].map(key).filter(Boolean);
-  const crew = [...(Array.isArray(job.assignedCrew) ? job.assignedCrew : []), ...String(job.assignedTo || '').split(/\s*(?:,|\+|&|\band\b)\s*/i)];
-  return crew.some(value => identities.includes(key(typeof value === 'string' ? value : value?.id || value?.name)));
+  return access.assigned(job);
 }
 
 function config(env) {
@@ -514,6 +511,7 @@ export async function onRequestPost({ request, env }) {
   if (!allowed(request)) return reply(403, { ok: false, error: 'Forbidden origin' });
   const session = await getHubSession(request, env);
   if (!session) return reply(401, { ok: false, code: 'HUB_AUTH_REQUIRED', error: 'Sign in to the EGC Hub' });
+  const assignments = createJobAssignmentAccess(env, session);
   const c = config(env);
   if (!c.token || !c.locationId) return reply(501, { ok: false, code: 'HIGHLEVEL_NOT_CONFIGURED', error: 'HighLevel needs an API key and location ID' });
   const raw = await request.text();
@@ -534,7 +532,7 @@ export async function onRequestPost({ request, env }) {
   if (inviteRequested && !hasBusinessAccess(session)) return reply(403, { ok: false, code: 'BUSINESS_ACCESS_REQUIRED', error: 'Business access required for quote approvals' });
   if (payload.job_id && !hasBusinessAccess(session)) {
     const savedJob = await readJob(env, payload.job_id).catch(() => null);
-    if (!mayChangeJob(session, savedJob)) return reply(403, { ok: false, error: 'This job is not assigned to you' });
+    if (!await mayChangeJob(session, savedJob, assignments)) return reply(403, { ok: false, error: 'This job is not assigned to you' });
   }
   if (payload.tool === 'game_plan' && !hasBusinessAccess(session)) return reply(403, { ok: false, code: 'BUSINESS_ACCESS_REQUIRED', error: 'Walkthrough access is limited to Zac, Tyler, and Alex' });
   if (payload.tool === 'schedule' && !hasBusinessAccess(session)) return reply(403, { ok: false, code: 'BUSINESS_ACCESS_REQUIRED', error: 'Schedule changes are limited to managers' });
@@ -545,7 +543,7 @@ export async function onRequestPost({ request, env }) {
   const exitForJob = async () => {
     if (!hasBusinessAccess(session)) {
       const current = payload.job_id ? await readJob(env, payload.job_id).catch(() => null) : null;
-      if (!mayChangeJob(session, current)) return { status: 'not_authorized' };
+      if (!await mayChangeJob(session, current, assignments)) return { status: 'not_authorized' };
     }
     return syncSalesFollowupExit(env, payload.job_id);
   };
@@ -554,7 +552,7 @@ export async function onRequestPost({ request, env }) {
     // incoming contact ID as authority to stop that person's sales workflows.
     try {
       const job = payload.job_id ? await readJob(env, payload.job_id) : null;
-      if (job?.__updateTime && mayChangeJob(session, job) && (!job.highlevelContactId || job.highlevelContactId === contactId)) {
+      if (job?.__updateTime && await mayChangeJob(session, job, assignments) && (!job.highlevelContactId || job.highlevelContactId === contactId)) {
         const contact = await contactById(c, contactId);
         const digits = value => String(value || '').replace(/\D/g, '').replace(/^1(?=\d{10}$)/, '');
         const samePhone = digits(job.phone) && digits(job.phone) === digits(contact.phone);

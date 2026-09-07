@@ -15,8 +15,11 @@
  * Response: { ok:true, folderId, folderUrl, uploaded:[ids] } | { ok:false, error }
  */
 
-import { getHubSession } from '../_lib/hub-session.js';
+import { getHubSession, hasBusinessAccess } from '../_lib/hub-session.js';
 import { getCustomerPortalSession } from '../_lib/customer-portal.js';
+import { readCustomerPortalContext } from '../_lib/customer-portal-access.js';
+import { readJob } from '../_lib/firestore-job.js';
+import { createJobAssignmentAccess } from '../_lib/job-assignment.js';
 
 const TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const FILES_URL = 'https://www.googleapis.com/drive/v3/files';
@@ -128,8 +131,8 @@ export async function onRequestPost({ request, env }) {
 
   if (!originAllowed(request)) return json(403, { ok: false, error: 'Forbidden origin' });
   const hubSession = await getHubSession(request, env);
-  const customerSession = hubSession ? null : await getCustomerPortalSession(request, env);
-  if (!hubSession && !customerSession) return json(401, { ok: false, error: 'Sign in to the EGC Hub or open a private customer link' });
+  const portalSession = await getCustomerPortalSession(request, env);
+  if (!hubSession && !portalSession) return json(401, { ok: false, error: 'Sign in to the EGC Hub or open a private customer link' });
   if (!env.GOOGLE_CLIENT_ID || !env.GOOGLE_CLIENT_SECRET || !env.GOOGLE_REFRESH_TOKEN) {
     return json(501, { ok: false, error: 'Drive upload not configured — run /api/drive-auth setup' });
   }
@@ -138,6 +141,14 @@ export async function onRequestPost({ request, env }) {
   if (raw.length > MAX_BODY) return json(413, { ok: false, error: 'Batch too large' });
   let body;
   try { body = JSON.parse(raw); } catch { return json(400, { ok: false, error: 'Invalid JSON' }); }
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return json(400, { ok: false, error: 'Invalid photo request' });
+
+  // Select the caller's workflow explicitly when both cookies are present.
+  // Older portal pages omit jobId; retain that routing during deployments.
+  const customerUpload = body.uploadContext === 'customer_portal' || (!body.jobId && Boolean(portalSession)) || !hubSession;
+  const customerSession = customerUpload ? portalSession : null;
+  if (customerUpload && !customerSession) return json(401, { ok: false, code: 'CUSTOMER_PORTAL_AUTH_REQUIRED', error: 'Open your private customer link before uploading photos' });
+  if (customerSession?.actorId) return json(403, { ok: false, error: 'Only the primary customer can upload project photos' });
 
   const jobId = customerSession ? customerSession.jobId : String(body.jobId || '').trim().slice(0, 60);
   const label = customerSession ? 'Customer uploads' : (String(body.label || 'EGC job').trim().slice(0, 120) || 'EGC job');
@@ -147,6 +158,21 @@ export async function onRequestPost({ request, env }) {
   const preparedPhotos = photos.map(photo => ({ photo, pic: dataUrlToBytes(photo.dataUrl) }));
   if (preparedPhotos.some(item => !item.pic)) {
     return json(400, { ok: false, error: 'Photos must be valid JPG, PNG, or WebP files no larger than 6 MB' });
+  }
+  if (customerSession) {
+    try { await readCustomerPortalContext(env, customerSession); }
+    catch (error) { return json(error.status || 503, { ok: false, code: error.code, error: error.message }); }
+  } else if (!hasBusinessAccess(hubSession)) {
+    // Business walkthroughs can upload before the job is saved. Crew tools
+    // must attach evidence only to an existing job assigned to this account.
+    try {
+      const job = await readJob(env, jobId);
+      if (!job || !await createJobAssignmentAccess(env, hubSession).assigned(job)) {
+        return json(403, { ok: false, error: 'Only assigned crew can upload photos for this job' });
+      }
+    } catch {
+      return json(503, { ok: false, error: 'Your job assignment could not be checked. Please retry shortly.' });
+    }
   }
 
   try {

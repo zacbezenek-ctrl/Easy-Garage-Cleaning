@@ -208,7 +208,7 @@ body { margin: 0; background: var(--navy); color: #fff; font-family: 'Inter', sy
            autocapitalize="off" spellcheck="false" placeholder="AlexK" />
     <label>Password</label>
     <input type="password" id="l-pass" autocomplete="current-password" placeholder="••••••••" />
-    <button class="login-btn" onclick="doLogin()">Sign In</button>
+    <button id="login-button" class="login-btn" onclick="doLogin()">Sign In</button>
   </div>
 </div>
 
@@ -248,60 +248,25 @@ body { margin: 0; background: var(--navy); color: #fff; font-family: 'Inter', sy
   </div>
 </div>
 
-<script src="/crew/hub-auth.js?v=20260904c"></script>
+<script src="/crew/hub-auth.js?v=20260907a"></script>
 <script>
 /* ══════════════════════════════════════════════════
    AUTH — signed server session shared with the EGC Hub
 ══════════════════════════════════════════════════ */
 
 let me        = null;
-let db        = null;
 let todayJobs = [];
 let history   = [];
 let recording = false;
 let recog     = null;
+let sessionVersion = 0;
+let clockTimer = null;
+let scheduleTimer = null;
+let scheduleLoading = false;
+let sending = false;
+let signingIn = false;
 
-document.getElementById('l-pass').addEventListener('keydown', e => {
-  if (e.key === 'Enter') doLogin();
-});
-
-async function doLogin() {
-  const u = document.getElementById('l-user').value.trim();
-  const p = document.getElementById('l-pass').value;
-  const err = document.getElementById('login-error');
-  try {
-    me = await EGCHubAuth.signIn(u, p);
-    err.style.display = 'none';
-    document.getElementById('l-pass').value = '';
-    boot();
-  } catch {
-    err.textContent = 'Wrong username or password.';
-    err.style.display = 'block';
-  }
-}
-
-async function checkSession() {
-  me = await EGCHubAuth.session();
-  return Boolean(me);
-}
-
-async function doLogout() {
-  me = null; history = []; todayJobs = [];
-  document.getElementById('copilot-screen').classList.remove('active');
-  document.getElementById('login-screen').style.display = '';
-  document.getElementById('chat-area').innerHTML = '';
-  await EGCHubAuth.signOut();
-}
-
-/* ══════════════════════════════════════════════════
-   BOOT
-══════════════════════════════════════════════════ */
-async function boot() {
-  document.getElementById('login-screen').style.display = 'none';
-  document.getElementById('copilot-screen').classList.add('active');
-  document.getElementById('topbar-user').textContent = me;
-
-  // Firebase — same project as employee.html
+function initializeData() {
   if (!firebase.apps.length) {
     firebase.initializeApp({
       apiKey:            "AIzaSyA8g4UAW4P4bsCrQNZhUe81CbC7BvjJbNc",
@@ -312,19 +277,98 @@ async function boot() {
       appId:             "1:763340109795:web:ac203b3eb71831fa4ed2d6"
     });
   }
-  db = firebase.firestore();
+}
+
+function endSession() {
+  sessionVersion++;
+  clearInterval(clockTimer); clearInterval(scheduleTimer);
+  clockTimer = scheduleTimer = null;
+  if (recog) { recog.onresult = null; try { recog.abort(); } catch {} }
+  recording = false; sending = false; scheduleLoading = false;
+  me = null; history = []; todayJobs = [];
+  document.getElementById('copilot-screen').classList.remove('active');
+  document.getElementById('login-screen').style.display = '';
+  document.getElementById('chat-area').innerHTML = '';
+  document.getElementById('jobs-strip').innerHTML = '';
+  document.getElementById('query-input').value = '';
+  document.getElementById('send-btn').disabled = true;
+}
+
+window.addEventListener('egc:session-expired', endSession);
+
+document.getElementById('l-pass').addEventListener('keydown', e => {
+  if (e.key === 'Enter') doLogin();
+});
+document.getElementById('query-input').addEventListener('input', () => {
+  document.getElementById('send-btn').disabled = sending || !document.getElementById('query-input').value.trim();
+});
+
+async function doLogin() {
+  if (signingIn) return;
+  signingIn = true;
+  const button = document.getElementById('login-button');
+  button.disabled = true;
+  const version = ++sessionVersion;
+  const u = document.getElementById('l-user').value.trim();
+  const p = document.getElementById('l-pass').value;
+  const err = document.getElementById('login-error');
+  try {
+    initializeData();
+    const user = await EGCHubAuth.signIn(u, p);
+    if (version !== sessionVersion) return;
+    me = user;
+    err.style.display = 'none';
+    document.getElementById('l-pass').value = '';
+    boot();
+  } catch (error) {
+    if (version !== sessionVersion) return;
+    err.textContent = error.message || 'Sign-in is unavailable. Check your connection and retry.';
+    err.style.display = 'block';
+  } finally {
+    signingIn = false;
+    button.disabled = false;
+  }
+}
+
+async function checkSession() {
+  const version = sessionVersion;
+  try {
+    initializeData();
+    const user = await EGCHubAuth.session();
+    if (version !== sessionVersion) return false;
+    me = user;
+    return Boolean(me);
+  } catch (error) {
+    if (version !== sessionVersion) return false;
+    const err = document.getElementById('login-error');
+    err.textContent = error.message || 'Your session could not be checked. Reload and retry.';
+    err.style.display = 'block';
+    return false;
+  }
+}
+
+async function doLogout() {
+  endSession();
+  await EGCHubAuth.signOut();
+}
+
+/* ══════════════════════════════════════════════════
+   BOOT
+══════════════════════════════════════════════════ */
+async function boot() {
+  if (!me) return;
+  document.getElementById('login-screen').style.display = 'none';
+  document.getElementById('copilot-screen').classList.add('active');
+  document.getElementById('topbar-user').textContent = EGCHubAuth.profile().displayName || me;
 
   updateClock();
-  setInterval(updateClock, 30000);
+  clearInterval(clockTimer); clearInterval(scheduleTimer);
+  clockTimer = setInterval(updateClock, 30000);
   loadSchedule();
-
-  document.getElementById('query-input').addEventListener('input', () => {
-    document.getElementById('send-btn').disabled =
-      !document.getElementById('query-input').value.trim();
-  });
+  scheduleTimer = setInterval(loadSchedule, 30000);
 
   addAssistantMsg(
-    `Ready. I have today's schedule and the EGC SOPs loaded.\n\nAsk me anything — overage situation, running late, what text to send a customer, truck capacity, payment issue. I'll give you the exact action and the ready-to-send script.`
+    `Ready. Ask about a job, a scope change, running late, or a customer message. Your permitted jobs will appear above when the schedule connects.`
   );
 }
 
@@ -338,26 +382,34 @@ function updateClock() {
 /* ══════════════════════════════════════════════════
    SCHEDULE
 ══════════════════════════════════════════════════ */
-function loadSchedule() {
-  if (!db) return;
-  db.collection('jobs').onSnapshot(
-    snap => {
+async function loadSchedule() {
+  if (!me || scheduleLoading) return;
+  const version = sessionVersion;
+  scheduleLoading = true;
+  try {
+      const response = await EGCHubAuth.fetch('/api/crew-jobs', { cache: 'no-store' });
+      const data = await response.json();
+      if (version !== sessionVersion) return;
+      if (!response.ok || !data.ok || !Array.isArray(data.jobs)) throw new Error(data.error || 'Your schedule could not load.');
       // Only today's jobs (Denver time) — the API treats this list as
       // "today's schedule" for truck capacity and next-job math, so
       // sending the full history poisons those answers.
       const today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Denver' });
-      todayJobs = snap.docs
-        .map(d => ({ id: d.id, ...d.data() }))
-        .filter(j => j.recordType !== 'schedule_lock' && !String(j.id).startsWith('_egc_schedule_lock_') && j.date === today);
+      todayJobs = data.jobs
+        .filter(j => j.type !== 'availability' && j.recordType !== 'schedule_lock' && !String(j.id).startsWith('_egc_schedule_lock_') && j.date === today)
+        .map(j => ({ ...j, customerName: j.customerName || j.customer || j.name || 'Unknown',
+          timeWindow: j.timeWindow || j.scheduledTime || [j.time, j.endTime].filter(Boolean).join('–'),
+          quoteAmount: j.quoteAmount ?? j.total ?? j.priceQuoted ?? j.amount ?? '' }));
       renderStrip(todayJobs);
       console.log('[Co-Pilot] Jobs loaded for today:', todayJobs.length);
-    },
-    err => {
-      console.error('[Co-Pilot] Jobs failed:', err.code, err.message);
+  } catch (error) {
+      if (version !== sessionVersion) return;
+      todayJobs = [];
       document.getElementById('jobs-strip').innerHTML =
-        '<div class="no-jobs-msg">Jobs unavailable — check Firestore rules</div>';
-    }
-  );
+        `<div class="no-jobs-msg">${esc(error.message || 'Jobs are temporarily unavailable. Retrying shortly.')}</div>`;
+  } finally {
+    if (version === sessionVersion) scheduleLoading = false;
+  }
 }
 
 function renderStrip(jobs) {
@@ -488,7 +540,9 @@ function copyScript(btn) {
 async function sendQuery() {
   const input = document.getElementById('query-input');
   const query = input.value.trim();
-  if (!query) return;
+  if (!query || !me || sending) return;
+  const version = sessionVersion;
+  sending = true;
 
   input.value = ''; input.style.height = 'auto';
   document.getElementById('send-btn').disabled = true;
@@ -511,6 +565,7 @@ async function sendQuery() {
     });
 
     const data = await res.json();
+    if (version !== sessionVersion) return;
     removeThinking();
 
     if (!res.ok || data.error) {
@@ -524,6 +579,7 @@ async function sendQuery() {
     if (history.length > 20) history = history.slice(-20);
 
   } catch (e) {
+    if (version !== sessionVersion) return;
     removeThinking();
     if (e?.code === 'HUB_AUTH_REQUIRED') {
       await doLogout();
@@ -533,6 +589,11 @@ async function sendQuery() {
     }
     addAssistantMsg('⚠️ Network error — check your connection and try again.');
     history.pop();
+  } finally {
+    if (version === sessionVersion) {
+      sending = false;
+      document.getElementById('send-btn').disabled = !input.value.trim();
+    }
   }
 }
 
@@ -540,6 +601,8 @@ async function sendQuery() {
    VOICE INPUT
 ══════════════════════════════════════════════════ */
 function toggleVoice() {
+  if (!me || sending) return;
+  const version = sessionVersion;
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SR) { alert('Voice input not supported. Use Chrome or Safari.'); return; }
 
@@ -556,12 +619,13 @@ function toggleVoice() {
   recog.onerror = () => { recording = false; btn.classList.remove('recording'); btn.title = 'Voice input'; };
 
   recog.onresult = e => {
+    if (version !== sessionVersion || !me) return;
     const t = e.results[0][0].transcript;
     const input = document.getElementById('query-input');
     input.value = t;
     autoResize(input);
     document.getElementById('send-btn').disabled = false;
-    setTimeout(sendQuery, 350);
+    setTimeout(() => { if (version === sessionVersion && me) sendQuery(); }, 350);
   };
 
   recog.start();

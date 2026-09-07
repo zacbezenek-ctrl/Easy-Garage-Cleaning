@@ -1,6 +1,7 @@
 import { getHubSession, hasBusinessAccess, listHubUserProfiles } from '../_lib/hub-session.js';
 import { firebaseServiceAccountConfigured, firestoreFetch } from '../_lib/firebase-service-account.js';
 import { employeeVaultSecret, employeeVaultReadOnly } from '../_lib/employee-vault-key.js';
+import { createJobAssignmentAccess } from '../_lib/job-assignment.js';
 
 const PROJECT_ID = 'egcw-1ec83';
 const RECORD_TYPE = 'employee_hub_v2';
@@ -231,21 +232,9 @@ async function readEmployeeProfile(env, username) {
   return { data: null };
 }
 
-function assignedNames(job) {
-  const explicit = Array.isArray(job?.assignedCrew) ? job.assignedCrew : [];
-  const parsed = String(job?.assignedTo || '').split(/\s*(?:,|\+|&|\band\b)\s*/i).filter(Boolean);
-  return [...new Set([...explicit, ...parsed].map(value => typeof value === 'string' ? value : value?.name || value?.id || '').filter(Boolean))];
-}
-
-function samePerson(left, right) {
-  const clean = value => String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-  const a = clean(left), b = clean(right);
-  return Boolean(a && b && (a === b || (Math.min(a.length, b.length) >= 3 && (a.startsWith(b) || b.startsWith(a)))));
-}
-
-function jobMember(session, job) {
+async function jobMember(session, job, access) {
   if (manager(session)) return true;
-  return assignedNames(job).some(name => samePerson(name, session.user) || samePerson(name, session.displayName));
+  return access.assigned(job);
 }
 
 function visibleTo(session, collection, data) {
@@ -377,7 +366,7 @@ async function authorizeMutation(env, session, collection, id, incoming, existin
     if (existing) throw new Error('Only a manager can change an existing job message');
     const jobId = String(incoming.jobId || '').trim();
     const job = await readJob(env, jobId);
-    if (!job || !jobMember(session, job)) throw new Error('This job room is limited to assigned crew');
+    if (!job || !await jobMember(session, job, createJobAssignmentAccess(env, session))) throw new Error('This job room is limited to assigned crew');
     const body = String(incoming.body || '').trim().slice(0, 1200);
     if (!body) throw new Error('Message text is required');
     return { id, jobId, body, sender: session.user, senderName: session.displayName, createdAt: now, updatedAt: now, status: 'active' };
@@ -405,13 +394,14 @@ export async function onRequestGet({ request, env }) {
     const rows = await readAll(env);
     const collections = Object.fromEntries([...COLLECTIONS].map(name => [name, []]));
     const jobAccess = new Map();
+    const assignments = createJobAssignmentAccess(env, session);
     for (const row of rows) {
       if (row.collection !== 'jobMessages') {
         if (visibleTo(session, row.collection, row.data)) collections[row.collection].push(row.data);
         continue;
       }
       const jobId = String(row.data?.jobId || '');
-      if (!jobAccess.has(jobId)) jobAccess.set(jobId, await readJob(env, jobId).then(job => jobMember(session, job)));
+      if (!jobAccess.has(jobId)) jobAccess.set(jobId, await readJob(env, jobId).then(job => jobMember(session, job, assignments)));
       if (jobAccess.get(jobId)) collections.jobMessages.push(row.data);
     }
     const profiles = configuredProfiles(env).filter(profile => visibleTo(session, 'profiles', profile));

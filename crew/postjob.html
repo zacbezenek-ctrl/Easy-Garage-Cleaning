@@ -101,6 +101,7 @@
   .actbtn{background:var(--navy);color:#fff;border:none;border-radius:11px;font-family:'Oswald';font-weight:600;
           font-size:13.5px;letter-spacing:.04em;text-transform:uppercase;padding:12px 16px;cursor:pointer;
           min-height:46px;display:inline-flex;align-items:center;gap:8px}
+  #crew-job-standalone[hidden]{display:none}
   .actbtn.alt{background:var(--orange)}
   .photostrip{display:flex;gap:10px;flex-wrap:wrap;margin-top:6px}
   .pthumb{position:relative;width:96px;height:96px;border-radius:12px;overflow:hidden;border:1.5px solid var(--line);background:var(--paper)}
@@ -181,7 +182,17 @@ EGCHubAuth.session().then(user=>{if(user){resolveCrewAuthentication();document.g
   <div id="bar"><i id="barfill"></i></div>
 </div>
 
-<main>
+<section class="handoff" id="crew-job-access" style="margin:24px auto;padding:24px;max-width:720px" aria-live="polite">
+  <h2>Opening your job</h2>
+  <p id="crew-job-message">Sign in to load the job and your saved checklist.</p>
+  <div style="display:flex;gap:12px;flex-wrap:wrap">
+    <button class="actbtn" type="button" id="crew-job-retry" onclick="openCrewWorkflow()" disabled>Retry loading job</button>
+    <a class="actbtn alt" href="/crew/">Crew home</a>
+    <button class="actbtn alt" type="button" id="crew-job-standalone" onclick="openCrewWorkflow(true)" hidden>Open my standalone checklist</button>
+    <button class="actbtn alt" type="button" onclick="gateLock()">Use another login</button>
+  </div>
+</section>
+<main id="crew-workflow" style="display:none">
   <div class="eyebrow">Run before the truck leaves the driveway</div>
   <h1>Post-Job Playbook</h1>
 
@@ -233,7 +244,7 @@ EGCHubAuth.session().then(user=>{if(user){resolveCrewAuthentication();document.g
 
 <div id="pviewer" onclick="this.classList.remove('on')"><button type="button" class="x" aria-label="Close">×</button><img id="pviewerimg" alt="photo" width="1200" height="900"></div>
 
-<div id="donebar"><div class="inner">
+<div id="donebar" style="display:none"><div class="inner">
   <button id="donebtn" onclick="finish()">Complete all checks to close the job</button>
 </div></div>
 
@@ -298,13 +309,16 @@ const SECTIONS = [
 
 const state={},clientState={};
 let progressTimer=null;
-const SAVEKEY="egc_postjob_v1",CENTRAL_JOB_ID=new URLSearchParams(location.search).get("jobId")||"";
+const SAVEKEY="egc_postjob_v1";
+let CENTRAL_JOB_ID=new URLSearchParams(location.search).get("jobId")||"";
+const REQUESTED_JOB_ID=CENTRAL_JOB_ID;
 const FIELD_IDS=["j_name","j_date","j_phone","j_loads","j_hours","j_fees","j_notes","j_payment","j_payment_amount","j_payment_ref"];
 const GUARD_OPTS=["Guard Black","Garage Guard","Guard Lite","Not today"];
 let GUARD="";
 let ACTIVE={};
 let HUBDB=null;try{if(window.firebase){if(!firebase.apps.length)firebase.initializeApp({apiKey:'AIzaSyA8g4UAW4P4bsCrQNZhUe81CbC7BvjJbNc',authDomain:'egcw-1ec83.firebaseapp.com',projectId:'egcw-1ec83',storageBucket:'egcw-1ec83.firebasestorage.app',messagingSenderId:'763340109795',appId:'1:763340109795:web:ac203b3eb71831fa4ed2d6'});HUBDB=firebase.firestore()}}catch(e){}
-const saveKey=()=>SAVEKEY+":"+(CENTRAL_JOB_ID||ACTIVE.jobId||"manual");
+const storageOwner=()=>progressIdentity().trim().toLowerCase();
+const saveKey=()=>SAVEKEY+":"+storageOwner()+":"+(CENTRAL_JOB_ID||ACTIVE.jobId||"manual");
 const textList=v=>Array.isArray(v)?v.filter(Boolean).join(', '):String(v||'');
 function normalizedInstructions(job={}){const s=job.scope||{},l=job.logistics||{},d=job.discovery||{},i=job.jobInstructions||job.instructions||{};return{customerGoal:i.customerGoal||d.success||'',whyNow:i.whyNow||d.why_now||job.walkthroughNotes||job.pain||'',keepItems:i.keepItems||s.keep_items||'',removeItems:i.removeItems||s.remove_items||s.keep_remove||'',exclusions:i.exclusions||s.exclusions||'',hazards:i.hazards||s.hazards||[],access:i.access||s.access||l.access||[],accessNotes:i.accessNotes||l.notes||'',truckPlacement:i.truckPlacement||l.truck_placement||s.truck_placement||'',specialItems:i.specialItems||s.special_items||[],finish:i.finish||s.finish||[],customerNotes:i.customerNotes||job.customerNotesSummary||job.notes||'',arrivalWindow:i.arrivalWindow||[job.time,job.endTime].filter(Boolean).join('–')}}
 function renderJobBrief(){const host=document.getElementById('job-brief');if(!host)return;const i=normalizedInstructions(ACTIVE),has=i.customerGoal||i.keepItems||i.removeItems||i.customerNotes,preState=ACTIVE.preJobCompletedAt?`<p class="brief-empty">✓ Pre-job handoff completed ${esc(new Date(ACTIVE.preJobCompletedAt).toLocaleString())}${ACTIVE.preJobCompletedBy?` by ${esc(ACTIVE.preJobCompletedBy)}`:''}.</p>`:`<p class="brief-empty">⚠ No completed pre-job handoff is attached. Closing requires an exception reason.</p>`;if(!has){host.innerHTML='<div class="brief-head"><div><span>Walkthrough handoff</span><h2>Internal job brief</h2></div><b>Needs brief</b></div><p class="brief-empty">No walkthrough promise is attached. Confirm the customer’s expected result before closing the job.</p>'+preState;return}const row=(label,value,cls='')=>value?`<article class="${cls}"><small>${esc(label)}</small><strong>${esc(textList(value))}</strong></article>`:'';host.innerHTML=`<div class="brief-head"><div><span>Final check against internal notes</span><h2>Did we deliver the promise?</h2></div><b>Verify at reveal</b></div>${preState}<div class="brief-grid">${row('Promised outcome',i.customerGoal,'wide')}${row('Keep items accounted for',i.keepItems)}${row('Removal scope complete',i.removeItems)}${row('Do not move / exclusions',i.exclusions,'danger')}${row('Hazards',i.hazards,'danger')}${row('Access + truck',textList(i.access)+(i.accessNotes?` — ${i.accessNotes}`:'')+(i.truckPlacement?` · ${i.truckPlacement}`:''))}${row('Special handling',i.specialItems)}${row('Finish sold',i.finish)}${row('Internal customer notes',i.customerNotes,'wide')}</div>`}
@@ -332,7 +346,7 @@ function guardYearOneFree(){const p=(ACTIVE.pkg||"").toLowerCase();return p.incl
    Same shared DB the Game Plan wrote to. After-photos attach to the same job so
    before + after live together. HighLevel receives the written closeout;
    action, so these stay on the iPad; the close payload carries counts only. */
-function jobKey(){return ACTIVE.jobId||"postjob_"+(document.getElementById("j_name").value||"unknown").toLowerCase().replace(/\s+/g,"_");}
+function jobKey(){return ACTIVE.jobId||"postjob_"+storageOwner()+"_"+(document.getElementById("j_name").value||"unknown").toLowerCase().replace(/\s+/g,"_");}
 function idbOpen(){return new Promise((res,rej)=>{const r=indexedDB.open("egc_photos",1);
   r.onupgradeneeded=e=>{const db=e.target.result;if(!db.objectStoreNames.contains("p")){
     const s=db.createObjectStore("p",{keyPath:"id"});s.createIndex("job","job",{unique:false});}};
@@ -482,26 +496,10 @@ function saveAll(){
     localStorage.setItem(saveKey(),JSON.stringify({state:state,clientState:clientState,fields:f,guard:GUARD}));}catch(e){}
 }
 function restoreAll(){
-  try{const d=JSON.parse(localStorage.getItem(saveKey()));
+  try{const scoped=localStorage.getItem(saveKey()),legacy=CENTRAL_JOB_ID?localStorage.getItem(SAVEKEY+":"+CENTRAL_JOB_ID):null,d=JSON.parse(scoped||legacy||'null');
     if(d){Object.assign(state,d.state||{});Object.assign(clientState,d.clientState||{});GUARD=d.guard||"";
       FIELD_IDS.forEach(id=>{const el=document.getElementById(id);if(el&&d.fields&&d.fields[id]!=null)el.value=d.fields[id];});}
   }catch(e){}
-  try{ACTIVE=JSON.parse(localStorage.getItem("egc_active_job"))||{};
-    if(ACTIVE.name&&!document.getElementById("j_name").value){
-      document.getElementById("j_name").value=ACTIVE.name||"";
-      document.getElementById("j_phone").value=ACTIVE.phone||"";
-      document.getElementById("j_date").value=ACTIVE.jobdate||"";
-      const b=document.createElement("div");
-      b.style.cssText="background:#13203a;color:#fff;border-radius:14px;padding:12px 16px;margin-bottom:14px;font-family:Oswald;font-weight:600;font-size:14px;letter-spacing:.03em";
-      const lockedTotal=(ACTIVE.total!=null&&ACTIVE.total!=="")?ACTIVE.total:ACTIVE.rate;
-      const stale=ACTIVE.savedAt&&(Date.now()-new Date(ACTIVE.savedAt).getTime())>14*864e5;
-      b.innerHTML="LOADED FROM GAME PLAN: <span style='color:#e8581c'>"+esc((ACTIVE.name||"").toUpperCase())+"</span>"+
-        (lockedTotal?"<div style='font-family:Inter;font-weight:500;font-size:13px;margin-top:4px;color:#aeb8cc'>Locked total: $"+esc(lockedTotal)+(ACTIVE.pkg?" · "+esc(ACTIVE.pkg):"")+"</div>":"")+
-        (ACTIVE.pain?"<div style='font-family:Inter;font-weight:500;font-size:13px;margin-top:4px;color:#aeb8cc'>Their pain: “"+esc(ACTIVE.pain)+"”</div>":"")+
-        (stale?"<div style='font-family:Inter;font-weight:600;font-size:12px;margin-top:6px;color:#fca5a5'>⚠ This handoff is over 2 weeks old — confirm it's the right job.</div>":"");
-      const card=document.querySelector(".jobcard");card.parentNode.insertBefore(b,card);
-      saveAll();
-    }}catch(e){}
 }
 function key(si,ii){return si+"_"+ii;}
 function render(){
@@ -626,15 +624,34 @@ async function finish(){
   if(HUBDB&&ACTIVE.jobId)await HUBDB.collection('jobs').doc(ACTIVE.jobId).set({closeoutSyncStatus:'synced',closeoutSyncError:'',closeoutSyncNextRetryAt:'',updatedAt:new Date().toISOString()},{merge:true}).catch(()=>{});
   btn.textContent="Job closed & saved to HighLevel ✓";btn.disabled=true;
   localStorage.removeItem(saveKey());
-  localStorage.removeItem("egc_active_job");
+  try{const handoff=JSON.parse(localStorage.getItem("egc_active_job")||"null");if(ACTIVE.jobId&&handoff?.jobId===ACTIVE.jobId)localStorage.removeItem("egc_active_job")}catch{}
   document.getElementById('donebar').insertAdjacentHTML('beforebegin',`<div class="handoff" style="margin:18px"><div class="brief-head"><div><span>Shift complete</span><h2>Job closed successfully</h2></div><b>Synced</b></div><p class="brief-empty">The Hub and HighLevel are updated. Your local job handoff has been cleared.</p><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px"><a class="actbtn alt" href="/crew/">Back to crew home</a><a class="actbtn" href="/employee?view=earnings">See my time & pay</a></div></div>`);
 }
-async function loadCentralJob(){if(!HUBDB||!CENTRAL_JOB_ID)return;try{const snap=await HUBDB.collection('jobs').doc(CENTRAL_JOB_ID).get();if(!snap.exists)return;const j={id:snap.id,...snap.data()},total=Number(j.total||j.priceQuoted||0),paidToDate=Number(j.payment?.amount||0),balance=Math.max(0,total-paidToDate);ACTIVE={...ACTIVE,jobId:j.id,customerId:j.customerId||'',highlevelContactId:j.highlevelContactId||'',highlevelOpportunityId:j.highlevelOpportunityId||'',highlevelAppointmentId:j.highlevelAppointmentId||'',name:j.customer||'',phone:j.phone||'',email:j.email||'',addr:j.address||'',pkg:j.serviceType||'',total:j.total||j.priceQuoted||'',rate:j.total||j.priceQuoted||'',deposit:j.deposit?.amount||'',paidToDate,paymentRecord:j.payment||{},paymentSyncStatus:j.paymentSyncStatus||'',paymentSyncPayload:j.paymentSyncPayload||null,jobdate:j.date||'',startTime:j.time||'',endTime:j.endTime||'',pain:j.walkthroughNotes||'',customerNotesSummary:j.customerNotesSummary||j.notes||'',internalNotes:j.internalNotes||'',clientChecklists:j.clientChecklists||{},discovery:j.discovery||{},scope:j.scope||{},logistics:j.logistics||{},instructions:normalizedInstructions(j),preJobCompletedAt:j.preJobChecklist?.completedAt||'',preJobCompletedBy:j.preJobChecklist?.completedBy||'',preJobException:j.closeoutPreJobException||'',importantItemNotes:j.importantItemNotes||j.preJobChecklist?.importantItemNotes||'',importantItemPhotoCount:Number(j.importantItemPhotoCount||j.preJobChecklist?.importantItemPhotoCount||0),savedAt:j.updatedAt||j.createdAt||''};restoreSharedProgress(j.postJobProgress);document.getElementById('j_name').value=j.customer||'';document.getElementById('j_phone').value=j.phone||'';document.getElementById('j_date').value=j.date||'';const amount=document.getElementById('j_payment_amount'),hint=document.getElementById('payment_hint');if(amount&&!amount.value&&balance>0)amount.value=String(balance);if(hint)hint.textContent=paidToDate?`${paidToDate.toLocaleString('en-US',{style:'currency',currency:'USD'})} already recorded · ${balance.toLocaleString('en-US',{style:'currency',currency:'USD'})} remaining`:`${balance.toLocaleString('en-US',{style:'currency',currency:'USD'})} outstanding`;saveAll()}catch(e){}}
+async function loadCentralJob(){if(!CENTRAL_JOB_ID)return;if(!HUBDB)throw new Error('The job connection is unavailable.');const snap=await HUBDB.collection('jobs').doc(CENTRAL_JOB_ID).get({source:'server'});if(!snap.exists){const error=new Error('This job could not be found.');error.code='CREW_JOB_NOT_FOUND';throw error;}restoreAll();const j={id:snap.id,...snap.data()},total=Number(j.total||j.priceQuoted||0),paidToDate=Number(j.payment?.amount||0),balance=Math.max(0,total-paidToDate);ACTIVE={...ACTIVE,jobId:j.id,customerId:j.customerId||'',highlevelContactId:j.highlevelContactId||'',highlevelOpportunityId:j.highlevelOpportunityId||'',highlevelAppointmentId:j.highlevelAppointmentId||'',name:j.customer||'',phone:j.phone||'',email:j.email||'',addr:j.address||'',pkg:j.serviceType||'',total:j.total||j.priceQuoted||'',rate:j.total||j.priceQuoted||'',deposit:j.deposit?.amount||'',paidToDate,paymentRecord:j.payment||{},paymentSyncStatus:j.paymentSyncStatus||'',paymentSyncPayload:j.paymentSyncPayload||null,jobdate:j.date||'',startTime:j.time||'',endTime:j.endTime||'',pain:j.walkthroughNotes||'',customerNotesSummary:j.customerNotesSummary||j.notes||'',internalNotes:j.internalNotes||'',clientChecklists:j.clientChecklists||{},discovery:j.discovery||{},scope:j.scope||{},logistics:j.logistics||{},instructions:normalizedInstructions(j),preJobCompletedAt:j.preJobChecklist?.completedAt||'',preJobCompletedBy:j.preJobChecklist?.completedBy||'',preJobException:j.closeoutPreJobException||'',importantItemNotes:j.importantItemNotes||j.preJobChecklist?.importantItemNotes||'',importantItemPhotoCount:Number(j.importantItemPhotoCount||j.preJobChecklist?.importantItemPhotoCount||0),savedAt:j.updatedAt||j.createdAt||''};restoreSharedProgress(j.postJobProgress);document.getElementById('j_name').value=j.customer||'';document.getElementById('j_phone').value=j.phone||'';document.getElementById('j_date').value=j.date||'';const amount=document.getElementById('j_payment_amount'),hint=document.getElementById('payment_hint');if(amount&&!amount.value&&balance>0)amount.value=String(balance);if(hint)hint.textContent=paidToDate?`${paidToDate.toLocaleString('en-US',{style:'currency',currency:'USD'})} already recorded · ${balance.toLocaleString('en-US',{style:'currency',currency:'USD'})} remaining`:`${balance.toLocaleString('en-US',{style:'currency',currency:'USD'})} outstanding`;saveAll()}
 async function releaseCentralLock(){try{const ref=HUBDB.collection('jobs').doc(`_egc_schedule_lock_${String(ACTIVE.jobdate||'').replace(/[^0-9-]/g,'')}`),snap=await ref.get(),entries=(Array.isArray(snap.data()?.entries)?snap.data().entries:[]).filter(x=>x.id!==ACTIVE.jobId);await ref.set({recordType:'schedule_lock',date:ACTIVE.jobdate,entries,updatedAt:new Date().toISOString()},{merge:true})}catch(e){}}
-document.addEventListener("input",saveAll);
+document.addEventListener("input",()=>{if(crewWorkflowReady)saveAll()});
 if(!STORAGE_OK) setTimeout(()=>alert("Heads up: this browser is blocking local storage (often Private Browsing). The job won't pre-fill from the Game Plan and progress won't save. Switch off Private Browsing for this iPad."),200);
 async function restoreWalkthroughPhotoFolder(){if(!HUBDB||!CENTRAL_JOB_ID)return;try{const snap=await HUBDB.collection('jobs').doc(CENTRAL_JOB_ID).get(),data=snap.data()||{},url=data.photoDriveUrl,grid=document.querySelector('#job-brief .brief-grid'),hours=document.getElementById('j_hours'),hint=document.getElementById('hours_hint');ACTIVE.startedAt=data.startedAt||data.timeTracking?.startedAt||'';if(ACTIVE.startedAt&&hours&&!hours.value){const elapsed=Math.max(.25,Math.round((Date.now()-Date.parse(ACTIVE.startedAt))/900000)/4);if(Number.isFinite(elapsed)){hours.value=String(elapsed);if(hint)hint.textContent=`Calculated from ${new Date(ACTIVE.startedAt).toLocaleTimeString([],{hour:'numeric',minute:'2-digit'})}; adjust if needed.`;saveAll()}}if(url){localStorage.setItem(driveKey(),url);if(grid)grid.insertAdjacentHTML('beforeend',`<article class="wide"><small>Walkthrough photos</small><strong><a href="${esc(url)}" target="_blank" rel="noopener">Open the client photo folder ↗</a></strong></article>`)}}catch(e){}}
-(async()=>{await crewAuthenticationReady;restoreAll();await loadCentralJob();render();updateStripePanel();const stripeReturn=new URLSearchParams(location.search).get('session_id');await verifyStripeReturn();if(!stripeReturn&&ACTIVE.paymentSyncStatus==='error'&&ACTIVE.paymentSyncPayload)syncStripePaymentToHighLevel(ACTIVE.paymentSyncPayload);await restoreWalkthroughPhotoFolder();mountRef()})(); // after/receipt capture is now inline on the checklist items (mountActions)
+let crewWorkflowReady=false,crewWorkflowLoading=false;
+async function openCrewWorkflow(standalone=false){
+  if(crewWorkflowReady||crewWorkflowLoading)return;
+  crewWorkflowLoading=true;
+  document.getElementById('crew-job-standalone').hidden=Boolean(REQUESTED_JOB_ID);
+  if(standalone&&!REQUESTED_JOB_ID){CENTRAL_JOB_ID='';ACTIVE={}}
+  else if(!CENTRAL_JOB_ID){try{const handoff=JSON.parse(localStorage.getItem('egc_active_job')||'null');if(typeof handoff?.jobId==='string'&&handoff.jobId.trim())CENTRAL_JOB_ID=handoff.jobId.trim()}catch{}}
+  const panel=document.getElementById('crew-job-access'),message=document.getElementById('crew-job-message'),retry=document.getElementById('crew-job-retry');
+  message.textContent='Loading the current job and your saved checklist…';retry.disabled=true;
+  try{if(CENTRAL_JOB_ID)await loadCentralJob();else restoreAll()}
+  catch(error){
+    ACTIVE={};FIELD_IDS.forEach(id=>{const field=document.getElementById(id);if(field)field.value=''});
+    Object.keys(state).forEach(key=>delete state[key]);Object.keys(clientState).forEach(key=>delete clientState[key]);
+    message.textContent=error.code==='CREW_JOB_NOT_FOUND'?'This job is no longer available. Open Crew home for your current assignments.':/permission-denied|unauthenticated/.test(error.code||'')?'This login cannot open this job. Check your assignment with the office or use the assigned employee’s login.':'The job could not load. Check your connection and retry. Your saved checklist is still on this device.';
+    return;
+  }finally{crewWorkflowLoading=false;retry.disabled=false}
+  render();crewWorkflowReady=true;panel.style.display='none';document.getElementById('crew-workflow').style.display='';document.getElementById('donebar').style.display='';
+  updateStripePanel();const stripeReturn=new URLSearchParams(location.search).get('session_id');await verifyStripeReturn();if(!stripeReturn&&ACTIVE.paymentSyncStatus==='error'&&ACTIVE.paymentSyncPayload)syncStripePaymentToHighLevel(ACTIVE.paymentSyncPayload);await restoreWalkthroughPhotoFolder();mountRef();
+}
+(async()=>{await crewAuthenticationReady;await openCrewWorkflow()})();
 </script>
 </body>
 </html>

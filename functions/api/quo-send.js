@@ -15,6 +15,7 @@
 
 import { getHubSession, hasBusinessAccess } from '../_lib/hub-session.js';
 import { readJob } from '../_lib/firestore-job.js';
+import { createJobAssignmentAccess } from '../_lib/job-assignment.js';
 
 const ALLOWED_HOST_RE = /^(?:easygaragecleaning\.com|www\.easygaragecleaning\.com|easy-garage-cleaning\.pages\.dev|localhost(?::\d+)?|127\.0\.0\.1(?::\d+)?)$/;
 function hostOf(v) { try { return new URL(v).host; } catch { return ''; } }
@@ -31,14 +32,9 @@ function normPhone(raw) {
   if (d.length > 10) return '+' + d;
   return '';
 }
-const personKey = value => String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-function assignedToJob(job, session) {
+async function assignedToJob(job, session, env) {
   if (hasBusinessAccess(session)) return true;
-  const identities = [session.user, session.displayName].map(personKey).filter(Boolean);
-  const crew = [...(Array.isArray(job.assignedCrew) ? job.assignedCrew : []), ...String(job.assignedTo || '').split(/\s*(?:,|\+|&|\band\b)\s*/i)]
-    .map(value => personKey(typeof value === 'string' ? value : value?.name || value?.id || '')).filter(Boolean);
-  return crew.some(name => identities.some(identity => name === identity ||
-    (Math.min(name.length, identity.length) >= 3 && (name.startsWith(identity) || identity.startsWith(name)))));
+  return createJobAssignmentAccess(env, session).assigned(job);
 }
 
 export async function onRequestOptions() {
@@ -67,7 +63,7 @@ export async function onRequestPost({ request, env }) {
   const jobId = String(body.job_id || '');
   if (!/^[A-Za-z0-9_-]{1,180}$/.test(jobId)) return json(400, { ok: false, error: 'A valid assigned job is required' });
   const job = await readJob(env, jobId).catch(() => null);
-  if (!job || !assignedToJob(job, session)) return json(403, { ok: false, error: 'This job is not assigned to you' });
+  if (!job || !await assignedToJob(job, session, env)) return json(403, { ok: false, error: 'This job is not assigned to you' });
   const to = normPhone(job.phone);
   const message = String(body.message || '').slice(0, 1500);
   if (!to || !message) return json(400, { ok: false, error: 'to and message are required' });

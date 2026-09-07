@@ -1352,26 +1352,47 @@ function updateFirebaseStatus() {
 const ADMINS = ['ZacB', 'TylerG', 'AlexK'];
 const BUSINESS_USERS = new Set(ADMINS.map(name => name.toLowerCase()));
 let me = null;
+let hubAuthVersion = 0;
+let hubAuthQueue = Promise.resolve();
+let hubFirebaseQueue = Promise.resolve();
+
+function hubAuthInterrupted() {
+  return Object.assign(new Error('Sign-in changed. Please try again.'), { code: 'HUB_AUTH_INTERRUPTED' });
+}
+
+function serializeHubAuth(action) {
+  const pending = hubAuthQueue.then(action);
+  hubAuthQueue = pending.catch(() => {});
+  return pending;
+}
 
 function canRunBusiness() {
   return sessionStorage.getItem('egc_business_access') === 'true' && BUSINESS_USERS.has(String(me || '').trim().toLowerCase());
 }
 
-async function ensureFirebaseSession() {
+async function ensureFirebaseSession(version = hubAuthVersion) {
   if (!window.firebase?.auth) throw new Error('Secure employee data could not start. Reload the page and try again.');
   const response = await fetch('/api/firebase-session', { cache: 'no-store', credentials: 'same-origin' });
   const data = await response.json().catch(() => ({}));
+  if (version !== hubAuthVersion) throw hubAuthInterrupted();
   if (!response.ok || !data.ok || !data.token) {
     const error = new Error(data.error || 'Secure employee data is unavailable. Ask Zac to finish the Hub setup, then retry.');
     error.code = data.code || 'FIREBASE_AUTH_UNAVAILABLE';
     throw error;
   }
-  try { await firebase.auth().signInWithCustomToken(data.token); }
-  catch { throw new Error('Your login was accepted, but secure employee data could not connect. Reload and retry; if it continues, ask Zac to check the Firebase setup.'); }
+  const pending = hubFirebaseQueue.then(async () => {
+    if (version !== hubAuthVersion) throw hubAuthInterrupted();
+    try { await firebase.auth().signInWithCustomToken(data.token); }
+    catch { throw new Error('Your login was accepted, but secure employee data could not connect. Reload and retry; if it continues, ask Zac to check the Firebase setup.'); }
+    if (version !== hubAuthVersion) throw hubAuthInterrupted();
+  });
+  hubFirebaseQueue = pending.catch(() => {});
+  await pending;
 }
 
-async function enterEmployeeApp(data) {
-  await ensureFirebaseSession();
+async function enterEmployeeApp(data, version = hubAuthVersion) {
+  await ensureFirebaseSession(version);
+  if (version !== hubAuthVersion) throw hubAuthInterrupted();
   me = data.user;
   rememberHubProfile(data);
   document.getElementById('l-pass').value = '';
@@ -1405,19 +1426,25 @@ async function doLogin() {
   const button = document.querySelector('#login-screen .btn-main');
   if (button.disabled) return;
   if (!u || !p) { err.textContent = 'Enter your username and password.'; err.style.display = 'block'; return; }
+  const version = ++hubAuthVersion;
   err.style.display = 'none';
   button.disabled = true;
   button.textContent = 'Signing in…';
   try {
+    await serializeHubAuth(async () => {
+    if (version !== hubAuthVersion) throw hubAuthInterrupted();
     const response = await fetch('/api/hub-auth', {
       method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username: u, password: p })
     });
     const data = await response.json().catch(() => ({}));
+    if (version !== hubAuthVersion) throw hubAuthInterrupted();
     if (!response.ok || !data.ok || !data.user) throw new Error(data.error || (response.status === 401 ? 'Incorrect username or password' : 'The sign-in service is unavailable. Try again shortly.'));
     err.style.display = 'none';
-    await enterEmployeeApp(data);
+    await enterEmployeeApp(data, version);
+    });
   } catch (error) {
+    if (version !== hubAuthVersion) return;
     clearHubProfile();
     document.body.classList.remove('has-session');
     err.textContent = error.message || 'Unable to sign in. Check the connection and try again.';
@@ -1429,6 +1456,7 @@ async function doLogin() {
 }
 
 async function doLogout() {
+  ++hubAuthVersion;
   clearHubProfile();
   _dataGeneration++;
   _dataUnsubscribers.forEach(unsubscribe => unsubscribe());
@@ -1444,20 +1472,54 @@ async function doLogout() {
   document.getElementById('dashboard').style.display     = '';
   document.getElementById('login-screen').style.display  = '';
   document.getElementById('l-pass').value = '';
-  try { await firebase.auth().signOut(); } catch {}
-  try { await fetch('/api/hub-auth', { method: 'DELETE', credentials: 'same-origin' }); } catch {}
+  return serializeHubAuth(async () => {
+    const pending = hubFirebaseQueue.then(async () => { try { await firebase.auth().signOut(); } catch {} });
+    hubFirebaseQueue = pending.catch(() => {});
+    await pending;
+    try { await fetch('/api/hub-auth', { method: 'DELETE', credentials: 'same-origin' }); } catch {}
+  });
 }
 
 async function hubFetch(input, init = {}) {
+  const version = hubAuthVersion;
   const response = await fetch(input, { ...init, credentials: 'same-origin' });
   if (response.status !== 401) return response;
-  doLogout();
+  if (version !== hubAuthVersion) throw hubAuthInterrupted();
+  const logout = doLogout(), logoutVersion = hubAuthVersion;
+  await logout;
+  if (logoutVersion !== hubAuthVersion) throw hubAuthInterrupted();
   const err = document.getElementById('login-error');
   err.textContent = 'Your work is saved. Sign in again to continue.';
   err.style.display = 'block';
   const expired = new Error('Sign in required');
   expired.code = 'HUB_AUTH_REQUIRED';
   throw expired;
+}
+
+async function restoreHubSession() {
+  const version = hubAuthVersion;
+  try {
+    // A restore that starts during sign-out must wait for the cookie to clear.
+    await hubAuthQueue;
+    if (version !== hubAuthVersion) return;
+    const response = await fetch('/api/hub-auth', { cache: 'no-store', credentials: 'same-origin' });
+    const data = await response.json().catch(() => ({}));
+    if (version !== hubAuthVersion) return;
+    if (response.ok && data.ok && data.user) {
+      await enterEmployeeApp(data, version);
+    } else {
+      clearHubProfile();
+      document.body.classList.remove('has-session');
+      if (response.status !== 401) throw new Error(data.error || 'The sign-in service is unavailable. Try again shortly.');
+    }
+  } catch (error) {
+    if (version !== hubAuthVersion) return;
+    clearHubProfile();
+    document.body.classList.remove('has-session');
+    const err = document.getElementById('login-error');
+    err.textContent = error.message || 'Your session could not be checked. Check the connection and retry.';
+    err.style.display = 'block';
+  }
 }
 
 async function sendBookingConfirmation(jobId) {
@@ -1487,23 +1549,7 @@ function bootDashboard() {
 }
 
 window.addEventListener('DOMContentLoaded', async () => {
-  try {
-    const response = await fetch('/api/hub-auth', { cache: 'no-store', credentials: 'same-origin' });
-    const data = await response.json().catch(() => ({}));
-    if (response.ok && data.ok && data.user) {
-      await enterEmployeeApp(data);
-    } else {
-      clearHubProfile();
-      document.body.classList.remove('has-session');
-      if (response.status !== 401) throw new Error(data.error || 'The sign-in service is unavailable. Try again shortly.');
-    }
-  } catch (error) {
-    clearHubProfile();
-    document.body.classList.remove('has-session');
-    const err = document.getElementById('login-error');
-    err.textContent = error.message || 'Your session could not be checked. Check the connection and retry.';
-    err.style.display = 'block';
-  }
+  await restoreHubSession();
   document.getElementById('l-pass').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
   document.getElementById('l-user').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('l-pass').focus(); });
   document.getElementById('lqm-amount').addEventListener('keydown', e => { if (e.key === 'Enter') submitLeadQuote(); if (e.key === 'Escape') closeLeadQuoteModal(); });

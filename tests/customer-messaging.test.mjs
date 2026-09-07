@@ -33,6 +33,7 @@ test('assigned crew can message only the job contact and HighLevel receives an S
   let update = 0, highLevelPayload = null;
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (url, options = {}) => {
+    if (String(url).includes('/documents:runQuery')) return Response.json([{ readTime: '2026-09-07T00:00:00Z' }]);
     if (String(url).includes('services.leadconnectorhq.com')) {
       highLevelPayload = JSON.parse(options.body);
       return new Response(JSON.stringify({ messageId: 'ghl-message', conversationId: 'ghl-conversation' }), { status: 200 });

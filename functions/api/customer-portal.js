@@ -1,5 +1,6 @@
 import { syncSalesFollowupExit } from '../_lib/sales-followup-exit.js';
 import { clearCustomerPortalSessionCookie, createCustomerPortalCollaboratorAccessToken, getCustomerPortalSession } from '../_lib/customer-portal.js';
+import { readCustomerPortalContext } from '../_lib/customer-portal-access.js';
 import { patchJob, patchJobsAtomic, readJob } from '../_lib/firestore-job.js';
 import { appendConversationMessage, cleanMessage, cleanRequestId, conversationMessages, deliverHighLevelMessage, findConversationMessage, replaceConversationMessage } from '../_lib/customer-messaging.js';
 
@@ -200,17 +201,10 @@ async function stripe(secret, path, options = {}) {
 }
 
 async function requirePortal(request, env) {
-  const session = await getCustomerPortalSession(request, env);
-  if (!session) return { error: reply(401, { ok: false, code: 'CUSTOMER_PORTAL_AUTH_REQUIRED', error: 'Open the private link from Easy Garage Cleaning' }) };
-  const job = await readJob(env, session.jobId).catch(() => null);
-  if (!job) return { error: reply(404, { ok: false, error: 'This job is no longer available' }) };
-  const accountJobId = safe(job.customerAccountOwnerJobId || job.id, 120);
-  const accountJob = accountJobId && accountJobId !== job.id ? await readJob(env, accountJobId).catch(() => null) : job;
-  const source = accountJob || job;
-  return {
-    session, accountJobId: source.id || job.id, jobUpdateTime: job.__updateTime || '', accountUpdateTime: source.__updateTime || '',
-    job: { ...job, customerMemory: source.customerMemory || job.customerMemory, customerCollaborators: source.customerCollaborators || job.customerCollaborators, giftWallet: source.giftWallet || job.giftWallet, garageGuard: source.garageGuard || job.garageGuard },
-  };
+  try { return await readCustomerPortalContext(env, await getCustomerPortalSession(request, env)); }
+  catch (error) {
+    return { error: reply(error.status || 503, { ok: false, code: error.code || 'CUSTOMER_PORTAL_STORAGE_UNAVAILABLE', error: error.message }) };
+  }
 }
 
 export async function onRequestGet({ request, env }) {
