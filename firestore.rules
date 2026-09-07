@@ -10,30 +10,111 @@ service cloud.firestore {
       return signedIn() && request.auth.token.business_access == true;
     }
 
+    function assignmentIdentities() {
+      // Older valid sessions keep canonical username access, never unchecked labels.
+      return request.auth.token.get('assignment_version', 0) == 1 &&
+        request.auth.token.get('assignment_identities', []) is list
+        ? request.auth.token.assignment_identities : [request.auth.token.username];
+    }
+
+    function assignmentKeys() {
+      return request.auth.token.get('assignment_version', 0) == 1 &&
+        request.auth.token.get('assignment_keys', []) is list
+        ? request.auth.token.assignment_keys : [request.auth.token.username.trim().lower()];
+    }
+
+    function assignedCrewMemberMatches(value, keys, username) {
+      // A supplied account ID always wins over a display label on that object.
+      // Existence checks avoid resolving absent fields for every crew member.
+      return value is string ? value.trim().lower() in keys
+        : 'username' in value ? (value.username in ['', null]
+          ? assignedUserOrIdMatches(value, keys, username) : value.username.trim().lower() == username)
+        : 'user' in value ? (value.user in ['', null]
+          ? assignedIdOrNameMatches(value, keys, username) : value.user.trim().lower() == username)
+        : 'id' in value ? (value.id in ['', null]
+          ? 'name' in value && value.name.trim().lower() in keys : value.id.trim().lower() == username)
+        : 'name' in value && value.name.trim().lower() in keys;
+    }
+
+    function assignedUserOrIdMatches(value, keys, username) {
+      return 'user' in value && !(value.user in ['', null])
+        ? value.user.trim().lower() == username : assignedIdOrNameMatches(value, keys, username);
+    }
+
+    function assignedIdOrNameMatches(value, keys, username) {
+      return 'id' in value && !(value.id in ['', null])
+        ? value.id.trim().lower() == username : 'name' in value && value.name.trim().lower() in keys;
+    }
+
+    function assignedCrewMatches(crew, keys, username) {
+      // Rules have no list mapping/iteration. The scheduling API caps crews at
+      // 20; check each entry independently so malformed neighbors cannot block
+      // legitimate identities or turn an object's label into an account ID.
+      return assignedCompactCrewListMatches(crew, keys, username) ||
+        assignedCrewMemberMatches(crew[0], keys, username) ||
+        assignedCrewMemberMatches(crew[1], keys, username) ||
+        assignedCrewMemberMatches(crew[2], keys, username) ||
+        assignedCrewMemberMatches(crew[3], keys, username) ||
+        assignedCrewMemberMatches(crew[4], keys, username) ||
+        assignedCrewMemberMatches(crew[5], keys, username) ||
+        assignedCrewMemberMatches(crew[6], keys, username) ||
+        assignedCrewMemberMatches(crew[7], keys, username) ||
+        assignedCrewMemberMatches(crew[8], keys, username) ||
+        assignedCrewMemberMatches(crew[9], keys, username) ||
+        assignedCrewMemberMatches(crew[10], keys, username) ||
+        assignedCrewMemberMatches(crew[11], keys, username) ||
+        assignedCrewMemberMatches(crew[12], keys, username) ||
+        assignedCrewMemberMatches(crew[13], keys, username) ||
+        assignedCrewMemberMatches(crew[14], keys, username) ||
+        assignedCrewMemberMatches(crew[15], keys, username) ||
+        assignedCrewMemberMatches(crew[16], keys, username) ||
+        assignedCrewMemberMatches(crew[17], keys, username) ||
+        assignedCrewMemberMatches(crew[18], keys, username) ||
+        assignedCrewMemberMatches(crew[19], keys, username);
+    }
+
+    function assignedCompactCrewListMatches(crew, keys, username) {
+      // Native whole-map equality keeps common one-field crew lists within the
+      // Rules expression budget. Richer maps still use account-first matching.
+      let identities = assignmentIdentities();
+      return crew.hasAny([
+        {'username': identities[0]}, {'username': username},
+        {'user': identities[0]}, {'user': username},
+        {'id': identities[0]}, {'id': username},
+        {'name': identities[0]}, {'name': username}
+      ]) || (identities.size() > 1 && crew.hasAny([
+        {'name': identities[1]}, {'name': keys[1]}
+      ]));
+    }
+
     function assignedToUser(data) {
-      return signedIn() && (
-        data.assignedTo == request.auth.token.username ||
-        data.assignedTo == request.auth.token.display_name ||
-        (data.assignedCrew is list && request.auth.token.username in data.assignedCrew) ||
-        (data.assignedCrew is list && request.auth.token.display_name in data.assignedCrew)
-      );
+      return signedIn() && (request.auth.token.get('assignment_version', 0) == 1 &&
+        request.auth.token.get('assignment_keys', []) is list
+        ? assignedDataMatches(data, request.auth.token.assignment_keys, request.auth.token.assignment_keys[0])
+        : assignedDataMatches(data, [request.auth.token.username.trim().lower()], request.auth.token.username.trim().lower()));
+    }
+
+    function assignedDataMatches(data, keys, username) {
+      return 'assignedCrew' in data && data.assignedCrew is list && data.assignedCrew.size() > 0
+        ? assignedCrewMatches(data.assignedCrew, keys, username)
+        : 'assignedTo' in data && data.assignedTo is string &&
+          data.assignedTo.trim().lower().split('\\s*(?:,|\\+|&|\\band\\b)\\s*').hasAny(keys);
     }
 
     function ownAvailability(data) {
-      return signedIn() && data.type == 'availability' && (
-        data.employee == request.auth.token.username ||
-        data.employee == request.auth.token.display_name
-      );
+      return signedIn() && data.type == 'availability' &&
+        data.employee is string && data.employee.trim().lower() in assignmentKeys();
     }
 
     function assignedUpdateIsSafe() {
-      return assignedToUser(resource.data) && assignedToUser(request.resource.data) &&
-        request.resource.data.assignedTo == resource.data.assignedTo &&
-        request.resource.data.assignedCrew == resource.data.assignedCrew &&
-        assignedStageUpdateIsSafe() &&
-        assignedPaymentUpdateIsSafe() &&
-        assignedInvoiceUpdateIsSafe() &&
-        request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+      // Unchanged assignment fields make a second assignment evaluation redundant.
+      let changed = request.resource.data.diff(resource.data).affectedKeys();
+      return request.resource.data.get('assignedTo', '') == resource.data.get('assignedTo', '') &&
+        request.resource.data.get('assignedCrew', []) == resource.data.get('assignedCrew', []) &&
+        assignedToUser(resource.data) &&
+        (!changed.hasAny(['status', 'pipelineStatus', 'payment', 'invoice']) || (
+          assignedStageUpdateIsSafe() && assignedPaymentUpdateIsSafe() && assignedInvoiceUpdateIsSafe())) &&
+        changed.hasOnly([
           'status', 'pipelineStatus', 'startedAt', 'completedAt', 'updatedAt',
           'preJobProgress', 'preJobChecklist', 'postJobProgress', 'postJobChecklist',
           'importantItemNotes', 'importantItemPhotoCount', 'importantItemsUpdatedAt',
@@ -54,14 +135,37 @@ service cloud.firestore {
     }
 
     function assignedStageUpdateIsSafe() {
+      return !request.resource.data.diff(resource.data).affectedKeys().hasAny(['status', 'pipelineStatus']) ||
+        changedAssignedStageIsSafe();
+    }
+
+    function changedAssignedStageIsSafe() {
       let crewStages = ['scheduled', 'dispatched', 'arrived', 'in_progress', 'completed'];
+      let currentStatus = resource.data.get('status', '');
+      let currentPipeline = resource.data.get('pipelineStatus', '');
+      let nextStatus = request.resource.data.get('status', '');
+      let nextPipeline = request.resource.data.get('pipelineStatus', '');
       let preservesVerifiedPaid =
-        request.resource.data.status == 'paid' &&
-        request.resource.data.pipelineStatus == 'paid' &&
+        currentStatus == 'paid' && currentPipeline == 'paid' &&
+        nextStatus == 'paid' && nextPipeline == 'paid' &&
         'payment' in resource.data && resource.data.payment.verified == true &&
         request.resource.data.payment == resource.data.payment;
-      return (request.resource.data.status in crewStages &&
-        request.resource.data.pipelineStatus in crewStages) || preservesVerifiedPaid;
+      return preservesVerifiedPaid || (nextStatus == 'paid' && nextPipeline == 'paid'
+        ? savedPaymentIsSettled()
+        : currentStatus != 'paid' && currentPipeline != 'paid' &&
+          nextStatus in crewStages && nextPipeline in crewStages);
+    }
+
+    function savedPaymentIsSettled() {
+      // Stripe saves these facts before crew closeout advances the job stage.
+      // A verified partial payment alone must never authorize a paid closeout.
+      let payment = resource.data.get('payment', {});
+      let invoice = resource.data.get('invoice', {});
+      return payment is map && invoice is map && payment.get('verified', false) == true &&
+        invoice.get('status', '') == 'paid' && invoice.get('amount', 0) > 0 &&
+        invoice.get('balance', 1) >= 0 && invoice.get('balance', 1) < 0.01 &&
+        payment.get('amount', 0) >= invoice.amount - 0.01 &&
+        request.resource.data.get('payment', {}) == payment;
     }
 
     function assignedPaymentUpdateIsSafe() {
@@ -75,11 +179,11 @@ service cloud.firestore {
 
     function assignedInvoiceUpdateIsSafe() {
       let changed = request.resource.data.diff(resource.data).affectedKeys();
+      let currentInvoice = resource.data.get('invoice', {});
       return !changed.hasAny(['invoice']) ||
-        ('invoice' in request.resource.data && request.resource.data.invoice.status != 'paid') ||
-        ('invoice' in request.resource.data && request.resource.data.invoice.status == 'paid' &&
-          'payment' in resource.data && resource.data.payment.verified == true &&
-          request.resource.data.payment == resource.data.payment);
+        (currentInvoice is map && currentInvoice.get('status', '') == 'paid'
+          ? savedPaymentIsSettled() && request.resource.data.invoice.diff(resource.data.invoice).affectedKeys().hasOnly(['updatedAt'])
+          : 'invoice' in request.resource.data && request.resource.data.invoice.status != 'paid');
     }
 
     function ownAvailabilityCreateIsSafe() {
