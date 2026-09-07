@@ -98,6 +98,41 @@ async function digestHex(value) {
   return Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
 }
 
+async function deriveWithPrivateVerifier(namespace, password, salt, iterations) {
+  let reader;
+  try {
+    const stub = namespace.get(namespace.idFromName('hub-password-verifier-v1'));
+    const response = await stub.fetch('https://hub-password-verifier.internal/derive', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ algorithm: PASSWORD_HASH_PREFIX, password, salt: bytesToBase64Url(salt), iterations, length: PASSWORD_HASH_BYTES }),
+    });
+    const contentLength = response.headers.get('Content-Length');
+    if (response.status !== 200 || response.headers.get('Content-Type')?.split(';')[0].trim().toLowerCase() !== 'application/octet-stream' ||
+        (contentLength !== null && contentLength !== String(PASSWORD_HASH_BYTES)) || !response.body) {
+      await response.body?.cancel();
+      throw new Error('Invalid private verifier response');
+    }
+    reader = response.body.getReader();
+    const derived = new Uint8Array(PASSWORD_HASH_BYTES);
+    let offset = 0;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!(value instanceof Uint8Array) || offset + value.byteLength > derived.length) throw new Error('Invalid private verifier response');
+      derived.set(value, offset);
+      offset += value.byteLength;
+    }
+    if (offset !== derived.length) throw new Error('Invalid private verifier response');
+    return derived;
+  } catch {
+    try { await reader?.cancel(); } catch {}
+    throw passwordConfigurationError('Staff sign-in password verification is unavailable. Ask Zac to check the Hub hosting setup. Your account has not been changed.');
+  } finally {
+    reader?.releaseLock();
+  }
+}
+
 async function derivePasswordHash(password, salt, iterations, env = {}) {
   const key = await crypto.subtle.importKey('raw', encoder.encode(password), 'PBKDF2', false, ['deriveBits']);
   try {
@@ -108,14 +143,18 @@ async function derivePasswordHash(password, salt, iterations, env = {}) {
     );
     return new Uint8Array(bits);
   } catch (error) {
-    // Cloudflare's native PBKDF2 caps iterations at 100000, including on paid
-    // plans. The exact same derivation can run in JS with a sufficient CPU
-    // allowance; never lower the stored work factor or reset existing hashes.
-    // Enable only after provisioning a hosting plan with adequate CPU time.
-    if (env.HUB_PASSWORD_HASH_FALLBACK === 'enabled' && error?.name === 'NotSupportedError' && /iteration counts above \d+.*not supported/i.test(error?.message || '')) {
-      const passwordBytes = encoder.encode(password);
-      try { return pbkdf2(sha256, passwordBytes, salt, { c: iterations, dkLen: PASSWORD_HASH_BYTES }); }
-      finally { passwordBytes.fill(0); }
+    // Keep the original derivation when the native runtime caps iterations.
+    // The private Durable Object binding does not expose a public hash service.
+    if (error?.name === 'NotSupportedError' && /iteration counts above \d+.*not supported/i.test(error?.message || '')) {
+      if (env.HUB_PASSWORD_VERIFIER !== undefined && env.HUB_PASSWORD_VERIFIER !== null) {
+        return deriveWithPrivateVerifier(env.HUB_PASSWORD_VERIFIER, password, salt, iterations);
+      }
+      // Retained for existing explicitly configured runtimes without a binding.
+      if (env.HUB_PASSWORD_HASH_FALLBACK === 'enabled') {
+        const passwordBytes = encoder.encode(password);
+        try { return pbkdf2(sha256, passwordBytes, salt, { c: iterations, dkLen: PASSWORD_HASH_BYTES }); }
+        finally { passwordBytes.fill(0); }
+      }
     }
     throw error;
   }

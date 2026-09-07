@@ -1,4 +1,4 @@
-const PRIVATE_PATH = /^(?:\/(?:contracts|docs|scripts|tests)(?:\/|$)|\/(?:sop|tyler-contract)(?:\.html)?\/?$|\/EGC-Lead-System-SOP\.pdf$|\/(?:package(?:-lock)?\.json|README\.md|firebase\.json|firestore\.rules|\.firebaserc|\.env(?:\.example)?|_[^/]+)(?:$|\/))/i;
+const PRIVATE_PATH = /^(?:\/(?:auth-verifier|contracts|docs|scripts|tests)(?:\/|$)|\/(?:sop|tyler-contract)(?:\.html)?\/?$|\/EGC-Lead-System-SOP\.pdf$|\/(?:package(?:-lock)?\.json|README\.md|firebase\.json|firestore\.rules|\.firebaserc|\.env(?:\.example)?|_[^/]+)(?:$|\/))/i;
 
 const CSP = [
   "default-src 'self'",

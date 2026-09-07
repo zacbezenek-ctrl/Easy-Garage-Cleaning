@@ -24,11 +24,13 @@ Use the existing Cloudflare Pages project `easy-garage-cleaning`, Production env
 | `HUB_SESSION_SECRET` | Independent randomly generated session-signing secret, at least 32 random bytes. |
 | `HUB_AUTH_USERS_JSON` | Existing static users, including the `ZacB` owner, with securely generated password hashes. Preserve other existing entries. |
 | `FIREBASE_SERVICE_ACCOUNT_JSON` | A complete service-account JSON key for project `egcw-1ec83`, with the required Firestore data permissions. |
-| `HUB_PASSWORD_HASH_FALLBACK` | Set to exactly `enabled` only after providing adequate CPU time, such as Workers Paid. Leave unset on Workers Free. |
+| `HUB_PASSWORD_VERIFIER` | Private Durable Object binding to `PasswordVerifier` in the separately deployed `egc-password-verifier` Worker. Supported on Workers Free using its SQLite namespace. |
 
 The owner entry is `ZacB`, not `Owner`. Public employee signup never creates an owner or manager account. Hash new owner passwords with the repository's `createHubCredentialHash` helper (PBKDF2-SHA256); do not put a plaintext password into the configured user map.
 
-Cloudflare's native PBKDF2 rejects iteration counts above 100,000. Existing owner hashes created by this repository use 210,000 rounds. A paid plan alone does not remove that native cap. With `HUB_PASSWORD_HASH_FALLBACK=enabled`, a pinned `@noble/hashes` implementation performs the same PBKDF2-SHA256 calculation after that specific native error. It preserves passwords, salts, iteration counts, and hashes. Other crypto failures still fail closed. This calculation needs substantially more than the Free plan's 10 ms CPU allowance; provision sufficient CPU before enabling it and verify on the deployed host. Never lower an existing hash's iteration field or reset the owner's password to work around this issue.
+Cloudflare's native PBKDF2 rejects iteration counts above 100,000. The recent staff-password generator uses 210,000 rounds, introducing an incompatibility with native verification. Deploy the private Worker in `auth-verifier/` and bind its SQLite Durable Object to Pages as `HUB_PASSWORD_VERIFIER`. Durable Objects are available on Workers Free with a 30-second default CPU allowance. A hosting upgrade is not required for this repair.
+
+Only the specific native iteration-cap error uses this binding. The private verifier performs the same PBKDF2-SHA256 calculation using pinned `@noble/hashes`, preserving passwords, salts, rounds, and hashes. It exposes no public endpoint and stores no credential data. Binding errors fail closed. Verify the deployed connection before declaring login restored. Never lower an existing hash's iteration field or reset the owner's password to work around this issue. The old `HUB_PASSWORD_HASH_FALLBACK=enabled` software path remains compatible for already configured runtimes without a binding; leave it unset on this Free Pages deployment.
 
 Store credential values as encrypted production secrets; the recovery controls and password fallback flag are non-secret configuration. Never commit credentials, place them in public assets, or send them in chat. The local `.env` file does not configure Cloudflare production. Existing encrypted Cloudflare values cannot be recovered from the dashboard.
 
@@ -38,7 +40,7 @@ After preserving the vault key and saving all credentials, publish the reviewed 
 
 ## Verify recovery
 
-1. With adequate hosting CPU, enable the password fallback and redeploy. Confirm a deliberate wrong password returns 401 without a session, then sign in as the configured owner with the existing password; confirm the secure Hub cookie and Firebase custom-token exchange both succeed.
+1. Deploy the private verifier, add the Pages Durable Object binding, and redeploy Pages. Confirm a deliberate wrong password returns 401 without a session, then sign in as the configured owner with the existing password; confirm the secure Hub cookie and Firebase custom-token exchange both succeed.
 2. First verify both `/api/employee-accounts` and `/api/employee-hub` as the authenticated owner, reporting only aggregate read results. An unavailable-data message is a failed check, not an empty queue. Avoid opening the full owner dashboard during this first check because it may retry previously queued customer invitations.
 3. Confirm an existing approved employee can sign in with their existing credentials and can see only their permitted work.
 4. Confirm existing profiles, timecards, training, and messages remain readable before saving new activity. With the legacy selector, account and Hub mutations must still return the recovery read-only error during these checks.
@@ -56,4 +58,7 @@ Status changes invalidate employee Hub cookies and prevent new custom-token issu
 - [Firebase service-account custom tokens](https://firebase.google.com/docs/auth/admin/create-custom-tokens)
 - [Firestore IAM roles](https://firebase.google.com/docs/firestore/security/iam)
 - [Cloudflare CPU limits](https://developers.cloudflare.com/workers/platform/limits/)
+- [Durable Objects Free plan](https://developers.cloudflare.com/durable-objects/platform/pricing/)
+- [Durable Object CPU limits](https://developers.cloudflare.com/durable-objects/platform/limits/)
+- [Pages Durable Object bindings](https://developers.cloudflare.com/pages/functions/bindings/#durable-objects)
 - [Pinned password derivation implementation](https://github.com/paulmillr/noble-hashes/blob/2.0.1/src/pbkdf2.ts)

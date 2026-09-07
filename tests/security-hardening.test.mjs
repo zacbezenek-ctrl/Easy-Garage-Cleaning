@@ -63,7 +63,7 @@ test('confidential artifacts are removed and source paths are denied at the edge
     assert.equal(existsSync(join(root, path)), false, `${path} must not ship`);
   }
   const { onRequest } = await import('../functions/_middleware.js');
-  for (const path of ['/_generate_site.py', '/docs/EGC-OPERATIONS-AUDIT.md', '/tests/operations-suite.test.mjs', '/package.json', '/firestore.rules', '/contracts/old.html']) {
+  for (const path of ['/_generate_site.py', '/docs/EGC-OPERATIONS-AUDIT.md', '/tests/operations-suite.test.mjs', '/package.json', '/firestore.rules', '/contracts/old.html', '/auth-verifier', '/auth-verifier/src/index.js', '/auth-verifier/wrangler.jsonc']) {
     let continued = false;
     const response = await onRequest({ request: new Request(`https://easygaragecleaning.com${path}`), next: async () => { continued = true; return new Response('leak'); } });
     assert.equal(response.status, 404, path);
