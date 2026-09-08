@@ -1,5 +1,5 @@
 /**
- * Stripe webhook receiver — Garage Guard memberships (Cloudflare Pages Function)
+ * Stripe webhook receiver — customer payments and Garage Guard memberships
  * POST /api/stripe-webhook
  *
  * Tells the team (via the Zapier hook → team SMS, same rail as website leads)
@@ -17,7 +17,7 @@
  * Setup:
  *   1. Stripe Dashboard → Developers → Webhooks → Add endpoint:
  *        https://easygaragecleaning.com/api/stripe-webhook
- *      Events: checkout.session.completed, invoice.payment_failed,
+ *      Events: checkout.session.completed, checkout.session.async_payment_succeeded, invoice.payment_failed,
  *              customer.subscription.deleted
  *   2. Copy the endpoint's signing secret (whsec_...) into Cloudflare Pages
  *      env var STRIPE_WEBHOOK_SECRET.
@@ -26,11 +26,14 @@
  *      forwarded (Stripe Dashboard remains the record).
  */
 
+import { recordCustomerStripePayment } from '../_lib/customer-payments.js';
+
 const MAX_BODY = 256 * 1024;
 const TOLERANCE_SECONDS = 300;
 
 const HANDLED = new Set([
   'checkout.session.completed',
+  'checkout.session.async_payment_succeeded',
   'invoice.payment_failed',
   'customer.subscription.deleted',
 ]);
@@ -141,6 +144,22 @@ export async function onRequestPost({ request, env }) {
   catch { return json(400, { ok: false, error: 'Invalid JSON' }); }
 
   if (!HANDLED.has(event.type)) return json(200, { ok: true, received: true, ignored: true });
+
+  const checkout = event.data?.object || {};
+  if (event.type.startsWith('checkout.session.')) {
+    if (checkout.metadata?.kind === 'egc_customer_portal_payment') {
+      if (checkout.payment_status !== 'paid') return json(200, { ok: true, received: true, processing: true });
+      try {
+        const payment = await recordCustomerStripePayment(env, checkout);
+        return json(200, { ok: true, received: true, recorded: true, duplicate: payment.duplicate });
+      } catch {
+        // Stripe must retry a verified payment until its durable job record succeeds.
+        return json(503, { ok: false, error: 'Payment recording needs retry' });
+      }
+    }
+    // One-time job payments must never be announced as new memberships.
+    if (checkout.mode !== 'subscription') return json(200, { ok: true, received: true, ignored: true });
+  }
 
   const hook = envVar(env, 'GARAGE_GUARD_HOOK_URL');
   if (hook) {

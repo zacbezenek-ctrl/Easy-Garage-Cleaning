@@ -68,7 +68,7 @@ function harness({ requestedId = 'walkthrough-1', draft = null, manualDraft = nu
   return { context, state, requested, rows, element, storage, writes };
 }
 
-const saved = (sourceWalkthroughId, name = 'Saved customer') => ({ flow: '2026-09-simple', index: 2, S: { sourceWalkthroughId, name, notes: 'Keep these field notes', signature: 'saved-signature', approved: true, jobId: 'prepared-job' } });
+const saved = (sourceWalkthroughId, name = 'Saved customer') => ({ flow: '2026-09-simple', index: 2, S: { sourceWalkthroughId, name, notes: 'Keep these field notes', signature: 'saved-signature', approved: true, termsVersion: '2026-09-deposit50', jobId: 'prepared-job' } });
 
 test('requested walkthrough stays blocked while loading and a failed read preserves the complete saved draft', async () => {
   const draft = saved('walkthrough-1'), h = harness({ draft });
@@ -176,4 +176,19 @@ test('login input cannot save over a requested walkthrough before it has loaded'
   h.context.save();
   assert.deepEqual(h.writes, []);
   assert.deepEqual(JSON.parse(h.storage.get('egc_walkthrough_v3:walkthrough-1')), draft);
+});
+
+test('a saved draft under earlier deposit terms preserves its work but requires fresh customer approval', async () => {
+  const draft=saved('walkthrough-1');
+  draft.S.termsVersion='2026-09-simple';
+  draft.S.lockedPrice='1425';
+  draft.S.priceManuallySet=true;
+  const h=harness({draft});
+  await h.context.openApp();
+  assert.equal(h.context.S.notes,'Keep these field notes');
+  assert.equal(h.context.S.lockedPrice,'1425');
+  assert.equal(h.context.S.jobId,'prepared-job');
+  assert.equal(h.context.S.approved,false);
+  assert.equal(h.context.S.signature,'');
+  assert.equal(h.context.S.termsVersion,'2026-09-deposit50');
 });

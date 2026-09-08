@@ -142,7 +142,7 @@ for (const transactional of [false, true]) {
       } },
     };
     vm.createContext(context);
-    vm.runInContext(['function payload(', 'async function saveHubJob(', 'async function sendHighLevel('].map(prefix => sourceLine(walkthrough, prefix)).join('\n'), context, { filename: 'crew/gameplan.html#signed-handoff' });
+    vm.runInContext(['function walkthroughDeposit(', 'function applyWalkthroughFinance(', 'function payload(', 'async function saveHubJob(', 'async function sendHighLevel('].map(prefix => sourceLine(walkthrough, prefix)).join('\n'), context, { filename: 'crew/gameplan.html#signed-handoff' });
 
     await context.sendHighLevel({});
     assert.equal(requests.length, 1);
@@ -153,6 +153,10 @@ for (const transactional of [false, true]) {
     assert.equal(payload.tool, 'game_plan');
     assert.equal(payload.job_id, persistedAtDispatch.id);
     assert.equal(payload.terms_accepted, true);
+    assert.equal(payload.quote.deposit, 500);
+    assert.equal(persistedAtDispatch.estimate.depositRequired, 500);
+    assert.equal(persistedAtDispatch.deposit.amount, 500);
+    store.records.get('jobs/job-1').deposit = { amount: 500, paidAmount: 500, status: 'paid', verified: true, reference: 'stripe-paid' };
 
     time.advance();
     await context.sendHighLevel({});
@@ -160,5 +164,9 @@ for (const transactional of [false, true]) {
     assert.equal(store.records.get('jobs/job-1').updatedAt, '2026-09-06T12:01:00.000Z');
     assert.equal(requests[1].persistedAtDispatch.customerPortalInvitationRequestedAt, persistedAtDispatch.customerPortalInvitationRequestedAt);
     assert.equal(store.records.get('jobs/job-1').customerPortalInvitationRequestedAt, persistedAtDispatch.customerPortalInvitationRequestedAt);
+    assert.equal(store.records.get('jobs/job-1').deposit.paidAmount, 500);
+    assert.equal(store.records.get('jobs/job-1').deposit.status, 'paid');
+    assert.equal(store.records.get('jobs/job-1').deposit.reference, 'stripe-paid');
+    assert.equal(store.records.get('jobs/job-1').deposit.verified, true);
   });
 }

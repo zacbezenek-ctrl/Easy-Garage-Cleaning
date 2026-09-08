@@ -3,8 +3,8 @@ import { clearCustomerPortalSessionCookie, createCustomerPortalCollaboratorAcces
 import { readCustomerPortalContext } from '../_lib/customer-portal-access.js';
 import { patchJob, patchJobsAtomic, readJob } from '../_lib/firestore-job.js';
 import { appendConversationMessage, cleanMessage, cleanRequestId, conversationMessages, deliverHighLevelMessage, findConversationMessage, replaceConversationMessage } from '../_lib/customer-messaging.js';
+import { customerMoneyState as moneyState, customerDepositState, customerPaymentNeedsReview, createCustomerStripeCheckout, recordCustomerStripePayment, stripeRequest as stripe } from '../_lib/customer-payments.js';
 
-const STRIPE_API = 'https://api.stripe.com/v1';
 const HOST = /^(?:easygaragecleaning\.com|www\.easygaragecleaning\.com|easy-garage-cleaning\.pages\.dev|localhost(?::\d+)?|127\.0\.0\.1(?::\d+)?)$/;
 
 function reply(status, body, headers = {}) {
@@ -40,13 +40,6 @@ function amount(value) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-function moneyState(job) {
-  const invoiceActive = job.invoice?.amount && !['draft', 'superseded', 'void'].includes(String(job.invoice?.status || '').toLowerCase());
-  const total = Math.max(0, amount(invoiceActive ? job.invoice.amount : job.estimate?.amount || job.total || job.priceQuoted || job.lockedTotal || job.rate));
-  const paid = Math.max(0, amount(job.payment?.amount || job.invoice?.paid || job.invoice?.amountPaid || job.deposit?.paidAmount));
-  return { total, paid: Math.min(total || paid, paid), balance: Math.max(0, total - paid) };
-}
-
 function portalStatus(job) {
   const raw = String(job.pipelineStatus || job.status || 'scheduled').toLowerCase();
   if (raw === 'paid') return 'paid';
@@ -71,9 +64,9 @@ function estimateState(job, finance) {
     approvedBy: safe(job.customerApproval?.approvedBy || '', 120),
     validUntil,
     revision: Math.max(1, Number(job.estimate?.revision || 1)),
-    depositRequired: Math.max(0, amount(job.estimate?.depositRequired || job.deposit?.amount)),
+    depositRequired: customerDepositState(job, finance).required,
     lineItems: sourceItems.slice(0, 12).map(item => ({ name: safe(item?.name || 'Garage service', 160), description: safe(item?.description || '', 600), quantity: Math.max(1, Number(item?.quantity || 1)), amount: Math.max(0, amount(item?.amount)) })),
-    terms: 'This flat-rate estimate covers the scope shown. Any material change requires your approval before additional work or charges.',
+    terms: 'This flat-rate estimate covers the scope shown. The displayed deposit is due upfront after approval and is applied to your total. The remaining balance is due on completion. Any material change requires your approval before additional work or charges.',
   };
 }
 
@@ -161,7 +154,11 @@ function sanitize(job, session = {}) {
     estimate,
     payment: {
       total: finance.total, paid: finance.paid, balance: finance.balance,
-      status: finance.balance < .01 && finance.total ? 'paid' : finance.paid ? 'partial' : 'unpaid',
+      dueNow: customerPaymentNeedsReview(job) ? 0 : customerDepositState(job, finance).dueNow,
+      purpose: customerDepositState(job, finance).purpose,
+      deposit: customerDepositState(job, finance),
+      needsReview: customerPaymentNeedsReview(job),
+      status: customerPaymentNeedsReview(job) ? 'pending_verification' : finance.balance < .01 && finance.total ? 'paid' : finance.paid ? 'partial' : 'unpaid',
       receiptUrl: /^https:\/\/pay\.stripe\.com\/receipts\//.test(job.payment?.receiptUrl || '') ? job.payment.receiptUrl : '',
       receiptEmail: safe(job.payment?.receiptEmail || '', 180),
       invoiceNumber: safe(job.invoice?.number || '', 80),
@@ -186,18 +183,6 @@ function sanitize(job, session = {}) {
     experience,
     support: { phone: '(970) 999-1818', phoneHref: 'tel:+19709991818', smsHref: 'sms:+19709991818' },
   };
-}
-
-function basicAuth(secret) { return `Basic ${btoa(`${secret}:`)}`; }
-
-async function stripe(secret, path, options = {}) {
-  const response = await fetch(`${STRIPE_API}/${path}`, {
-    ...options,
-    headers: { Authorization: basicAuth(secret), ...(options.body ? { 'Content-Type': 'application/x-www-form-urlencoded' } : {}), ...(options.headers || {}) },
-  });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.error?.type || `Stripe request failed (${response.status})`);
-  return data;
 }
 
 async function requirePortal(request, env) {
@@ -268,10 +253,12 @@ export async function onRequestPost({ request, env }) {
     if (finance.total < .01) return reply(409, { ok: false, error: 'The estimate is not ready yet' });
     if (result.job.estimate?.validUntil && String(result.job.estimate.validUntil) < new Date().toISOString().slice(0, 10)) return reply(409, { ok: false, error: 'This estimate has expired. Ask the team for an updated estimate.' });
     const approval = { status: 'approved', approvedAt: now, approvedBy: signedName, amount: finance.total, source: 'customer_portal' };
+    const deposit = customerDepositState(result.job, finance);
     try {
       await patchJob(env, result.session.jobId, {
         customerApproval: approval,
-        estimate: { ...(result.job.estimate || {}), status: 'approved', acceptedAt: now, acceptedBy: signedName, amount: finance.total },
+        estimate: { ...(result.job.estimate || {}), status: 'approved', acceptedAt: now, acceptedBy: signedName, amount: finance.total, depositRequired: deposit.required },
+        deposit: { ...(result.job.deposit || {}), amount: deposit.required, paidAmount: deposit.paid, status: deposit.due < .01 ? 'paid' : deposit.paid ? 'partial' : 'due' },
         quoteStatus: 'approved',
         updatedAt: now,
       }, result.jobUpdateTime);
@@ -283,35 +270,11 @@ export async function onRequestPost({ request, env }) {
   if (body.action === 'create_payment') {
     const secret = stripeKey(env);
     if (!secret) return reply(501, { ok: false, error: 'Online payments are not configured' });
-    const finance = moneyState(result.job);
-    if (finance.balance < .5) return reply(409, { ok: false, error: 'There is no outstanding balance' });
-    const estimate = estimateState(result.job, finance);
-    if (!['approved', 'accepted'].includes(estimate.status) && portalStatus(result.job) !== 'completed') return reply(409, { ok: false, error: 'Approve the estimate before paying' });
     const requestId = safe(body.request_id, 120);
     if (!requestId) return reply(400, { ok: false, error: 'Payment request ID required' });
-    const origin = new URL(request.url).origin;
-    const params = new URLSearchParams({
-      mode: 'payment', submit_type: 'pay', client_reference_id: result.session.jobId,
-      success_url: `${origin}/customer-portal?payment=stripe-success&session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${origin}/customer-portal?payment=stripe-cancelled`,
-      'line_items[0][quantity]': '1',
-      'line_items[0][price_data][currency]': 'usd',
-      'line_items[0][price_data][unit_amount]': String(Math.round(finance.balance * 100)),
-      'line_items[0][price_data][product_data][name]': `Easy Garage Cleaning — ${safe(result.job.serviceType || 'job balance', 100)}`,
-      'metadata[kind]': 'egc_customer_portal_payment',
-      'metadata[job_id]': result.session.jobId,
-      'payment_intent_data[metadata][kind]': 'egc_customer_portal_payment',
-      'payment_intent_data[metadata][job_id]': result.session.jobId,
-    });
-    if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(result.job.email || '')) {
-      params.set('customer_email', result.job.email);
-      params.set('payment_intent_data[receipt_email]', result.job.email);
-    }
     try {
-      const checkout = await stripe(secret, 'checkout/sessions', { method: 'POST', headers: { 'Idempotency-Key': `egc-portal:${result.session.jobId}:${requestId}`.slice(0, 255) }, body: params });
-      if (!/^https:\/\/checkout\.stripe\.com\//.test(checkout.url || '')) throw new Error('unsafe_checkout_url');
-      return reply(200, { ok: true, url: checkout.url });
-    } catch { return reply(502, { ok: false, error: 'Secure checkout could not be created' }); }
+      return reply(200, await createCustomerStripeCheckout(env, secret, result.session.jobId, new URL(request.url).origin));
+    } catch (error) { return reply(error.status || 502, { ok: false, error: error.message || 'Secure checkout could not be created' }); }
   }
 
   if (body.action === 'verify_payment') {
@@ -321,28 +284,8 @@ export async function onRequestPost({ request, env }) {
     if (!/^cs_(?:test_|live_)?[A-Za-z0-9_]+$/.test(sessionId)) return reply(400, { ok: false, error: 'Invalid Checkout session' });
     try {
       const checkout = await stripe(secret, `checkout/sessions/${encodeURIComponent(sessionId)}?expand[]=payment_intent.latest_charge`);
-      const paid = checkout.payment_status === 'paid' && checkout.status === 'complete';
-      const checkoutJob = safe(checkout.metadata?.job_id || checkout.client_reference_id, 120);
-      if (!paid || checkoutJob !== result.session.jobId) return reply(409, { ok: false, error: 'Stripe has not verified this job payment' });
-      const current = moneyState(result.job);
-      const amountPaid = Math.max(0, Number(checkout.amount_total || 0) / 100);
-      const previousSessions = Array.isArray(result.job.payment?.stripeSessions) ? result.job.payment.stripeSessions : [];
-      const known = previousSessions.some(item => String(item.sessionId || item) === sessionId);
-      const paidTotal = known ? current.paid : Math.min(current.total || current.paid + amountPaid, current.paid + amountPaid);
-      const balance = Math.max(0, current.total - paidTotal);
-      const charge = checkout.payment_intent?.latest_charge || {};
-      const receiptUrl = /^https:\/\/pay\.stripe\.com\/receipts\//.test(charge.receipt_url || '') ? charge.receipt_url : '';
-      const paymentItem = { sessionId, paymentIntentId: checkout.payment_intent?.id || checkout.payment_intent || '', amount: amountPaid, verifiedAt: now };
-      try {
-        await patchJob(env, result.session.jobId, {
-          payment: { ...(result.job.payment || {}), amount: paidTotal, lastAmount: amountPaid, method: 'stripe', verified: true, receiptUrl, receiptEmail: safe(checkout.customer_details?.email || checkout.customer_email, 180), stripeSessions: known ? previousSessions : [...previousSessions, paymentItem].slice(-20) },
-          invoice: { ...(result.job.invoice || {}), amount: current.total, paid: paidTotal, balance, status: balance < .01 ? 'paid' : 'partial', updatedAt: now },
-          paymentSyncStatus: 'pending',
-          updatedAt: now,
-        }, result.jobUpdateTime);
-      } catch { return reply(409, { ok: false, error: 'The payment record changed. Refresh to confirm the latest balance.' }); }
-      return reply(200, { ok: true, paid: true, amountPaid, balance, receiptUrl });
-    } catch { return reply(502, { ok: false, error: 'Stripe payment could not be verified' }); }
+      return reply(200, { ok: true, ...await recordCustomerStripePayment(env, checkout, result.session.jobId) });
+    } catch (error) { return reply(error.status || 502, { ok: false, error: error.message || 'Stripe payment could not be verified' }); }
   }
 
   if (body.action === 'save_customer_memory') {
@@ -424,6 +367,7 @@ export async function onRequestPost({ request, env }) {
   }
 
   if (body.action === 'apply_gift_credit') {
+    if (customerPaymentNeedsReview(result.job)) return reply(409, { ok: false, error: 'A recorded payment needs team verification before applying another payment or credit' });
     const finance = moneyState(result.job);
     if (finance.balance < .01) return reply(409, { ok: false, error: 'This job is already paid in full' });
     const requestId = id(body.request_id, 'redeem');

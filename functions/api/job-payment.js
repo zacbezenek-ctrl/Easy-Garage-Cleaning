@@ -1,6 +1,7 @@
 import { getHubSession, hasBusinessAccess } from '../_lib/hub-session.js';
 import { patchJob, readJob } from '../_lib/firestore-job.js';
 import { createJobAssignmentAccess } from '../_lib/job-assignment.js';
+import { customerMoneyState, customerPaymentNeedsReview } from '../_lib/customer-payments.js';
 
 const STRIPE_API = 'https://api.stripe.com/v1';
 const HOST = /^(?:easygaragecleaning\.com|www\.easygaragecleaning\.com|easy-garage-cleaning\.pages\.dev|localhost(?::\d+)?|127\.0\.0\.1(?::\d+)?)$/;
@@ -42,13 +43,13 @@ async function authorizedJob(env, jobId, session) {
 }
 
 async function recordStripePayment(env, job, checkout, session) {
+  if (customerPaymentNeedsReview(job)) throw new Error('An earlier recorded payment needs manager verification. Do not charge again.');
   const amount = Number(checkout.amount_total || 0) / 100;
   if (!Number.isFinite(amount) || amount <= 0) throw new Error('Stripe returned an invalid amount');
   const current = job.payment && typeof job.payment === 'object' ? job.payment : {};
-  const sessions = Array.isArray(current.stripeSessions) ? current.stripeSessions : [];
+  const sessions = current.verified === true && Array.isArray(current.stripeSessions) ? current.stripeSessions : [];
   const known = sessions.some(item => String(item?.sessionId || item) === String(checkout.id || ''));
-  const paidBefore = Math.max(0, Number(current.amount || 0));
-  const total = Math.max(0, Number(job.total ?? job.priceQuoted ?? job.rate ?? 0));
+  const { paid: paidBefore, total } = customerMoneyState(job);
   if (!known && (total <= 0 || amount > Math.max(0, total - paidBefore) + 0.01)) {
     throw new Error('Stripe payment exceeds the current job balance');
   }
@@ -73,7 +74,7 @@ async function recordStripePayment(env, job, checkout, session) {
     reference: stripePayment.paymentIntentId || stripePayment.sessionId,
     verified: true,
     recordedBy: safe(session.user, 80),
-    stripeSessions: known ? sessions : [...sessions, stripePayment].slice(-20),
+    stripeSessions: known ? sessions : [...sessions, stripePayment],
   };
   const invoice = { ...(job.invoice || {}), status: balance < 0.01 ? 'paid' : 'partial', amount: total, balance, updatedAt: now };
   const paymentSyncPayload = { ...stripePayment, balance, paidTotal };
@@ -122,10 +123,12 @@ export async function onRequestPost({ request, env }) {
   }
   const job = await authorizedJob(env, jobId, session);
   if (!job) return json(403, { ok: false, error: 'This job is not assigned to you' });
+  if (customerPaymentNeedsReview(job)) return json(409, { ok: false, error: 'An earlier recorded payment needs manager verification before taking another payment' });
   const customer = safe(job.customer || job.customerName, 120);
   const email = safe(job.email, 180);
-  const totalCents = Math.round(Number(job.total ?? job.priceQuoted ?? job.rate ?? 0) * 100);
-  const paidCents = Math.round(Number(job.payment?.amount || 0) * 100);
+  const finance = customerMoneyState(job);
+  const totalCents = Math.round(finance.total * 100);
+  const paidCents = Math.round(finance.paid * 100);
   const balanceCents = Math.max(0, totalCents - paidCents);
   if (!Number.isInteger(totalCents) || totalCents < 50 || amountCents > balanceCents) {
     return json(409, { ok: false, error: 'Payment exceeds the current job balance' });
