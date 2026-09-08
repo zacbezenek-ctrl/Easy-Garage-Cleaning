@@ -33,17 +33,38 @@ function base64UrlToBytes(value) {
   return Uint8Array.from(binary, char => char.charCodeAt(0));
 }
 
-function users(env = {}) {
-  if (!env.HUB_AUTH_USERS_JSON) return {};
+function staffConfigurationError() {
+  const error = new Error('Staff sign-in configuration needs administrator attention');
+  error.code = 'HUB_AUTH_CONFIGURATION';
+  return error;
+}
+
+function parseUsers(value) {
+  if (!value) return {};
   try {
-    const configured = JSON.parse(env.HUB_AUTH_USERS_JSON);
+    const configured = JSON.parse(value);
     if (configured && typeof configured === 'object' && !Array.isArray(configured)) return configured;
   } catch {
     // A broken staff configuration must not fall through to another account.
   }
-  const error = new Error('Staff sign-in configuration needs administrator attention');
-  error.code = 'HUB_AUTH_CONFIGURATION';
-  throw error;
+  throw staffConfigurationError();
+}
+
+function users(env = {}) {
+  // Append new staff without exporting or replacing the existing sealed secret.
+  // Never let a supplemental entry replace an existing account, even by casing.
+  const maps = [parseUsers(env.HUB_AUTH_USERS_JSON), parseUsers(env.HUB_AUTH_ADDITIONAL_USERS_JSON)];
+  const configured = Object.create(null);
+  const usernames = new Set();
+  for (const entries of maps) {
+    for (const [username, record] of Object.entries(entries)) {
+      const normalized = username.trim().toLowerCase();
+      if (usernames.has(normalized)) throw staffConfigurationError();
+      usernames.add(normalized);
+      configured[username] = record;
+    }
+  }
+  return configured;
 }
 
 function configuredUsername(env, username) {
