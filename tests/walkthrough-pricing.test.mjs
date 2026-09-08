@@ -76,3 +76,65 @@ test('pressure-wash scheduling includes the additional work estimate', () => {
   const washed = harness({ finish: ['cleanout', 'pressure_wash'] }).estimatedJobMinutes();
   assert.equal(washed - base, 60);
 });
+
+test('pest waste adds $200 once while other hazards retain their existing pricing', () => {
+  assert.equal(harness({ hazards: ['Mold / moisture', 'Sharp material'] }).recommend(), 1000);
+  assert.equal(harness({ hazards: ['Pest waste', 'Mold / moisture'] }).recommend(), 1200);
+  assert.equal(harness({ hazards: ['Pest waste', 'Pest waste'] }).recommend(), 1200);
+});
+
+test('the small-job minimum cannot absorb part of the selected fixed pest charges', () => {
+  const small = { fill: 'light', loads: '0.25' };
+  assert.equal(harness(small).recommend(), 450);
+  assert.equal(harness({ ...small, hazards: ['Pest waste'] }).recommend(), 650);
+  assert.equal(harness({ ...small, finish: ['cleanout', 'mouse_trapping'] }).recommend(), 700);
+  assert.equal(harness({ ...small, hazards: ['Pest waste'], finish: ['cleanout', 'mouse_trapping'] }).recommend(), 900);
+});
+
+test('non-toxic mouse trapping is a separate $250 selection for every garage size', () => {
+  for (const garageSize of ['1', '2', '3', 'other']) {
+    const baseline = harness({ garageSize }).recommend();
+    const trapping = harness({ garageSize, finish: ['cleanout', 'mouse_trapping'] });
+    assert.equal(trapping.recommend(), baseline + 250);
+    assert.equal(trapping.S.hazards.includes('Pest waste'), false);
+  }
+});
+
+test('pest waste and non-toxic trapping combine with pressure washing and retain a 50% deposit', () => {
+  const h = harness({ hazards: ['Pest waste'], finish: ['cleanout', 'pressure_wash', 'mouse_trapping'] });
+  const plan = h.payload();
+  assert.equal(plan.quote.total, 1850);
+  assert.equal(plan.quote.deposit, 925);
+  assert.equal(plan.scope.hazard_details.pest_waste.amount, 200);
+  assert.equal(plan.scope.finish_details.mouse_trapping.amount, 250);
+  assert.equal(plan.scope.finish_details.mouse_trapping.non_toxic, true);
+  assert.equal(h.buildJobInstructions({}).pestWaste.included, true);
+  assert.equal(h.buildJobInstructions({}).mouseTrapping.nonToxic, true);
+});
+
+test('removing a charged selection removes its fee and invalidates the old acceptance', () => {
+  const h = harness();
+  h.pick('hazards', 'Pest waste', true);
+  assert.equal(h.recommend(), 1200);
+  h.pick('hazards', 'No visible hazards', true);
+  assert.equal(h.recommend(), 1000);
+  assert.equal(h.payload().scope.hazard_details.pest_waste, null);
+  h.pick('finish', 'mouse_trapping', true);
+  assert.equal(h.recommend(), 1250);
+  h.pick('finish', 'mouse_trapping', true);
+  assert.equal(h.recommend(), 1000);
+  assert.equal(h.payload().scope.finish_details.mouse_trapping, null);
+  assert.equal(h.invalidated, true);
+});
+
+test('new trapping scope is readable in the brief and gets one pre-job and one completion check', () => {
+  const h = harness({ hazards: ['Pest waste'], finish: ['cleanout', 'mouse_trapping'] });
+  for (const prefix of ['function durationText(', 'function buildInternalNotes(', 'function buildClientChecklists(']) vm.runInContext(line(prefix), h);
+  const instructions = h.buildJobInstructions({}), brief = h.buildInternalNotes(instructions), checks = h.buildClientChecklists(instructions);
+  assert.match(brief, /Pest waste \(\+\$200\)/);
+  assert.match(brief, /Non-toxic mouse trapping \(\+\$250\)/);
+  for (const key of ['preJob', 'postJob']) {
+    assert.equal(checks[key].filter(item => item.id === 'mouse-trapping').length, 1);
+    assert.equal(checks[key].find(item => item.id === 'mouse-trapping').critical, true);
+  }
+});

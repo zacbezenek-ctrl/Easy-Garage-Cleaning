@@ -377,7 +377,7 @@ async function createAppointment(c, payload, contactId) {
 }
 
 function finishSummary(value) {
-  const labels = { pressure_wash: 'One-car garage pressure wash', deep_clean: 'Deep clean' };
+  const labels = { pressure_wash: 'One-car garage pressure wash', deep_clean: 'Deep clean', mouse_trapping: 'Non-toxic mouse trapping' };
   return (Array.isArray(value) ? value : [value]).filter(Boolean).map(item => labels[item] || item).join(', ') || '—';
 }
 

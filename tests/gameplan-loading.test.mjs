@@ -200,17 +200,27 @@ test('an unsigned automatic draft discards its old-rate total while preserving f
   await h.context.openApp();
   assert.equal(h.context.S.lockedPrice, '');
   assert.equal(h.context.S.notes, 'Keep these field notes');
-  assert.equal(h.context.S.pricingVersion, '2026-09-load1000-pressure400');
+  assert.equal(h.context.S.pricingVersion, '2026-09-pest200-traps250');
 });
 
 test('a pricing update preserves both manually quoted totals and already signed totals', async () => {
   for (const manual of [false, true]) {
     const draft = saved('walkthrough-1');
-    Object.assign(draft.S, { approved: !manual, signature: manual ? '' : 'saved-signature', lockedPrice: '1550', priceManuallySet: manual });
+    Object.assign(draft.S, { approved: !manual, signature: manual ? '' : 'saved-signature', lockedPrice: '1550', priceManuallySet: manual, pricingVersion: '2026-09-load1000-pressure400', hazards: ['Pest waste'] });
     const h = harness({ draft });
     await h.context.openApp();
     assert.equal(h.context.S.lockedPrice, '1550');
     assert.equal(h.context.S.approved, !manual);
     assert.equal(h.context.S.signature, manual ? '' : 'saved-signature');
   }
+});
+
+test('an unsigned draft under the previous truck rates recalculates a newly chargeable pest hazard', async () => {
+  const draft = saved('walkthrough-1');
+  Object.assign(draft.S, { approved: false, signature: '', lockedPrice: '1000', priceManuallySet: false, pricingVersion: '2026-09-load1000-pressure400', hazards: ['Pest waste'] });
+  const h = harness({ draft });
+  await h.context.openApp();
+  assert.equal(h.context.S.lockedPrice, '');
+  assert.equal(h.context.S.hazards[0], 'Pest waste');
+  assert.equal(h.context.S.pricingVersion, '2026-09-pest200-traps250');
 });
