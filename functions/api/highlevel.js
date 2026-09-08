@@ -376,6 +376,11 @@ async function createAppointment(c, payload, contactId) {
   return { appointmentId: appointment.id || appointment.event?.id || appointment.appointment?.id || '', calendarId, updated: false };
 }
 
+function finishSummary(value) {
+  const labels = { pressure_wash: 'One-car garage pressure wash', deep_clean: 'Deep clean' };
+  return (Array.isArray(value) ? value : [value]).filter(Boolean).map(item => labels[item] || item).join(', ') || '—';
+}
+
 function noteBody(payload) {
   const p = payload || {}, q = p.quote || {}, d = p.discovery || {}, s = p.scope || {}, l = p.logistics || {};
   const list = value => Array.isArray(value) ? value.filter(Boolean).join(', ') : (value || '—');
@@ -412,7 +417,7 @@ function noteBody(payload) {
     `Access notes: ${l.notes || '—'}`,
     `Truck placement: ${l.truck_placement || s.truck_placement || '—'}`,
     `Special handling: ${list(s.special_items)}`,
-    `Finish: ${list(s.finish)}`,
+    `Finish: ${finishSummary(s.finish)}`,
     `Materials: ${finish.shelf_qty || 0} ${finish.shelf_type || ''} shelf unit(s); ${finish.tote_qty || 0} tote(s)`,
     `Before photos captured: ${Number(p.photos?.before || 0)}`,
     `Scope accepted by: ${p.acceptance?.accepted_by || '—'} at ${p.acceptance?.accepted_at || '—'}`,
@@ -436,7 +441,7 @@ function appointmentInstructions(payload) {
     `ACCESS: ${list(s.access)}${l.notes ? ` — ${l.notes}` : ''}`,
     `TRUCK: ${l.truck_placement || s.truck_placement || '—'}`,
     `SPECIAL HANDLING: ${list(s.special_items)}`,
-    `FINISH: ${list(s.finish)}`,
+    `FINISH: ${finishSummary(s.finish)}`,
     `CUSTOMER NOTES: ${p.notes || 'None recorded'}`,
   ].join('\n').slice(0, 3000);
 }

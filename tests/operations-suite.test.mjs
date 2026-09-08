@@ -853,7 +853,7 @@ test('material walkthrough edits invalidate stale customer approval',()=>{
   for(const marker of ['function invalidateAcceptance','function updateField','The plan changed. Review the updated brief and collect approval again.'])assert.match(crew,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
   assert.match(crew,/oninput="updateField\('\$\{key\}',this\.value\)"/);
   assert.match(crew,/oninput="updateField\('lockedPrice',this\.value\)"/);
-  assert.match(crew,/function pick\([^)]*\)\{invalidateAcceptance\(\)/);
+  assert.match(crew,/function pick\([^)]*\)\{[^}]*invalidateAcceptance\(\)/);
   assert.match(crew,/function qty\([^)]*\)\{invalidateAcceptance\(\)/);
   assert.match(crew,/async function addPhotos\(input\)\{invalidateAcceptance\(\)/);
   assert.match(crew,/async function removePhoto\(id\)\{invalidateAcceptance\(\)/);

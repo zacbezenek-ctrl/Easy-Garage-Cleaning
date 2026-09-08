@@ -192,3 +192,25 @@ test('a saved draft under earlier deposit terms preserves its work but requires 
   assert.equal(h.context.S.signature,'');
   assert.equal(h.context.S.termsVersion,'2026-09-deposit50');
 });
+
+test('an unsigned automatic draft discards its old-rate total while preserving field work', async () => {
+  const draft = saved('walkthrough-1');
+  Object.assign(draft.S, { approved: false, signature: '', lockedPrice: '1550', priceManuallySet: false });
+  const h = harness({ draft });
+  await h.context.openApp();
+  assert.equal(h.context.S.lockedPrice, '');
+  assert.equal(h.context.S.notes, 'Keep these field notes');
+  assert.equal(h.context.S.pricingVersion, '2026-09-load1000-pressure400');
+});
+
+test('a pricing update preserves both manually quoted totals and already signed totals', async () => {
+  for (const manual of [false, true]) {
+    const draft = saved('walkthrough-1');
+    Object.assign(draft.S, { approved: !manual, signature: manual ? '' : 'saved-signature', lockedPrice: '1550', priceManuallySet: manual });
+    const h = harness({ draft });
+    await h.context.openApp();
+    assert.equal(h.context.S.lockedPrice, '1550');
+    assert.equal(h.context.S.approved, !manual);
+    assert.equal(h.context.S.signature, manual ? '' : 'saved-signature');
+  }
+});
