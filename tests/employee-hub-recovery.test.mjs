@@ -33,7 +33,9 @@ function storage(t) {
     requests.push({ url, method, body: options.body });
     if (url.pathname.endsWith('/documents:runQuery')) {
       const query = JSON.parse(options.body).structuredQuery;
-      const entries = [...documents.entries()].slice(0, query.limit ?? documents.size);
+      const entries = [...documents.entries()]
+        .filter(([, document]) => document.fields.recordType.stringValue === query.where.fieldFilter.value.stringValue)
+        .slice(0, query.limit ?? documents.size);
       return Response.json(entries.map(([id, document]) => ({ document: {
         name: `projects/egcw-1ec83/databases/(default)/documents/jobs/${id}`, ...document,
       } })));

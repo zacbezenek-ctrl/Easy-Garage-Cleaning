@@ -815,7 +815,7 @@ test('open-shift scheduling fields persist on the canonical job record',()=>{
   assert.match(suite,/b\.type==='job'\?'':'ops-hidden'/);
   assert.match(suite,/b\.type==='blocked'\?'ops-hidden':''/);
   assert.match(employee,/employee-suite\.css\?v=20260904l/);
-  assert.match(employee,/employee-suite\.js\?v=20260906portal/);
+  assert.match(employee,/employee-suite\.js\?v=20260909team/);
 });
 
 test('recurring visits keep the client plan but reset prior completion and payment state',()=>{
@@ -951,7 +951,7 @@ test('employees create private accounts that stay locked until Zac approves them
   const stored=new Map(),originalFetch=globalThis.fetch;
   globalThis.fetch=async(url,options={})=>{
     const value=String(url),method=options.method||'GET';
-    if(value.includes('documents:runQuery'))return new Response(JSON.stringify([...stored.entries()].map(([id,document])=>({document:{name:`projects/egcw-1ec83/databases/(default)/documents/jobs/${id}`,...document}}))),{status:200});
+    if(value.includes('documents:runQuery'))return new Response(JSON.stringify([...stored.entries()].filter(([,document])=>document.fields.recordType.stringValue===JSON.parse(options.body).structuredQuery.where.fieldFilter.value.stringValue).map(([id,document])=>({document:{name:`projects/egcw-1ec83/databases/(default)/documents/jobs/${id}`,...document}}))),{status:200});
     const id=decodeURIComponent(value.match(/\/jobs\/([^?]+)/)?.[1]||'');
     if(method==='PATCH'){
       if(value.includes('currentDocument.exists=false')&&stored.has(id))return new Response('{}',{status:412});
@@ -1008,7 +1008,7 @@ test('employee pay and location records are sealed behind the Hub session',async
   let revision=0;
   globalThis.fetch=async(url,options={})=>{
     const value=String(url),method=options.method||'GET';
-    if(value.includes('documents:runQuery'))return new Response(JSON.stringify([...stored.entries()].map(([id,document])=>({document:{name:`projects/egcw-1ec83/databases/(default)/documents/jobs/${id}`,...document}}))),{status:200});
+    if(value.includes('documents:runQuery'))return new Response(JSON.stringify([...stored.entries()].filter(([,document])=>document.fields.recordType.stringValue===JSON.parse(options.body).structuredQuery.where.fieldFilter.value.stringValue).map(([id,document])=>({document:{name:`projects/egcw-1ec83/databases/(default)/documents/jobs/${id}`,...document}}))),{status:200});
     const id=decodeURIComponent(value.match(/\/jobs\/([^?]+)/)?.[1]||'');
     if(method==='PATCH'){const parsed=new URL(value),expected=parsed.searchParams.get('currentDocument.updateTime');if((parsed.searchParams.get('currentDocument.exists')==='false'&&stored.has(id))||(expected&&stored.get(id)?.updateTime!==expected))return Response.json({}, {status:412});const document={...JSON.parse(options.body),updateTime:`2026-09-07T00:00:00.${String(++revision).padStart(9,'0')}Z`};stored.set(id,document);return new Response(JSON.stringify({name:`projects/egcw-1ec83/databases/(default)/documents/jobs/${id}`,...document}),{status:200})}
     if(!stored.has(id))return new Response('{}',{status:404});
@@ -1073,7 +1073,7 @@ test('crew chat is encrypted and job rooms are limited to assigned crew',async()
   const jobDocument={fields:{assignedCrew:{arrayValue:{values:[{stringValue:'FrankJara'}]}},assignedTo:{stringValue:'Frank Jara'},customer:{stringValue:'Private Customer'}}};
   globalThis.fetch=async(url,options={})=>{
     const value=String(url),method=options.method||'GET';
-    if(value.includes('documents:runQuery'))return new Response(JSON.stringify([...stored.entries()].map(([id,document])=>({document:{name:`projects/egcw-1ec83/databases/(default)/documents/jobs/${id}`,...document}}))),{status:200});
+    if(value.includes('documents:runQuery'))return new Response(JSON.stringify([...stored.entries()].filter(([,document])=>document.fields.recordType.stringValue===JSON.parse(options.body).structuredQuery.where.fieldFilter.value.stringValue).map(([id,document])=>({document:{name:`projects/egcw-1ec83/databases/(default)/documents/jobs/${id}`,...document}}))),{status:200});
     const id=decodeURIComponent(value.match(/\/jobs\/([^?]+)/)?.[1]||'');
     if(id==='job-123')return new Response(JSON.stringify({name:'projects/egcw-1ec83/databases/(default)/documents/jobs/job-123',...jobDocument}),{status:200});
     if(method==='PATCH'){const document=JSON.parse(options.body);stored.set(id,document);return new Response(JSON.stringify({name:`projects/egcw-1ec83/databases/(default)/documents/jobs/${id}`,...document}),{status:200})}

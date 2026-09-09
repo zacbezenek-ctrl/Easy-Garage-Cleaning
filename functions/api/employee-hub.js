@@ -2,6 +2,7 @@ import { getHubSession, hasBusinessAccess, listHubUserProfiles } from '../_lib/h
 import { firebaseServiceAccountConfigured, firestoreFetch } from '../_lib/firebase-service-account.js';
 import { employeeVaultSecret, employeeVaultReadOnly } from '../_lib/employee-vault-key.js';
 import { createJobAssignmentAccess } from '../_lib/job-assignment.js';
+import { listEmployeeApplications } from '../_lib/employee-accounts.js';
 
 const PROJECT_ID = 'egcw-1ec83';
 const RECORD_TYPE = 'employee_hub_v2';
@@ -404,18 +405,39 @@ export async function onRequestGet({ request, env }) {
       if (!jobAccess.has(jobId)) jobAccess.set(jobId, await readJob(env, jobId).then(job => jobMember(session, job, assignments)));
       if (jobAccess.get(jobId)) collections.jobMessages.push(row.data);
     }
+    // Approval establishes team membership before the employee creates a profile.
+    // Project only roster fields; application credentials and review data stay private.
+    const accounts = manager(session) ? await listEmployeeApplications(env) : [];
+    const accountsByUsername = new Map(accounts.map(account => [personKey(account.username), account]));
     const profiles = configuredProfiles(env).filter(profile => visibleTo(session, 'profiles', profile));
+    const profileKeys = new Set(profiles.map(profile => personKey(profile.username)));
+    for (const account of accounts) {
+      const key = personKey(account.username);
+      if (account.status !== 'approved' || profileKeys.has(key)) continue;
+      profiles.push({
+        id: key, username: account.username, displayName: account.displayName || account.username,
+        role: 'crew', payType: account.payType || 'hourly',
+        hourlyRate: Math.max(0, Number(account.hourlyRate || 0)), status: 'active',
+      });
+      profileKeys.add(key);
+    }
     const storedProfiles = new Map();
     for (const profile of collections.profiles) {
       const key = personKey(profile.username);
       const previous = storedProfiles.get(key);
       if (!previous || profile.id === key || previous.id !== key) storedProfiles.set(key, profile);
     }
-    const configuredKeys = new Set(profiles.map(profile => String(profile.username || '').toLowerCase()));
     collections.profiles = [
-      ...profiles.map(profile => ({ ...profile, ...(storedProfiles.get(String(profile.username).toLowerCase()) || {}) })),
-      ...[...storedProfiles.values()].filter(profile => !configuredKeys.has(String(profile.username || '').toLowerCase())),
-    ];
+      ...profiles.map(profile => ({ ...profile, ...(storedProfiles.get(personKey(profile.username)) || {}) })),
+      ...[...storedProfiles.values()].filter(profile => !profileKeys.has(personKey(profile.username))),
+    ].map(profile => {
+      const account = accountsByUsername.get(personKey(profile.username));
+      return account ? {
+        ...profile, accountStatus: account.status,
+        status: account.status === 'approved' ? profile.status : 'inactive',
+        awaitingFirstSignIn: account.status === 'approved' && !profile.lastSeenAt && !profile.onboardingCompletedAt,
+      } : profile;
+    });
     return reply(200, { ok: true, collections });
   } catch (error) {
     return reply(502, { ok: false, ...(error.code ? { code: error.code } : {}), error: String(error.message || 'Employee Hub storage failed') });
