@@ -188,6 +188,11 @@ async function readAll(env) {
   return decoded;
 }
 
+// Server integrations read authoritative approved timecards through the same vault.
+export async function readEmployeeTimecards(env) {
+  return (await readAll(env)).filter(row => row.collection === 'timeEntries').map(row => row.data);
+}
+
 async function writeOne(env, collection, id, data, expected = null) {
   const documentId = await opaqueId(env, collection, id);
   const updatedAt = new Date().toISOString();

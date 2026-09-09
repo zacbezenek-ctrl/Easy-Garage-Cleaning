@@ -2,6 +2,7 @@ import { getHubSession } from '../_lib/hub-session.js';
 import { firebaseServiceAccountConfigured } from '../_lib/firebase-service-account.js';
 import { customerPortalConfigured } from '../_lib/customer-portal.js';
 import { employeeAccountsConfigured } from '../_lib/employee-accounts.js';
+import { gustoConfiguration } from '../_lib/gusto-client.js';
 
 /** Returns configuration readiness only. Secret values never leave the server. */
 export async function onRequestGet({request,env}){
@@ -20,6 +21,7 @@ export async function onRequestGet({request,env}){
     stripe:normalized('STRIPE_SECRET_KEY','STRIPE_SECRET','STRIPE_KEY'),
     stripeWebhook:normalized('STRIPE_WEBHOOK_SECRET','STRIPE_WEBHOOK','STRIPE_WEBHOOK_KEY','STRIPE_SIGNING_SECRET'),
     quickbooks:any('QUICKBOOKS_CLIENT_ID','QBO_CLIENT_ID')&&any('QUICKBOOKS_CLIENT_SECRET','QBO_CLIENT_SECRET'),
+    gusto:gustoConfiguration(env).configured,
     highlevelPipeline:any('HIGHLEVEL_SCHEDULED_STAGE_ID','GHL_SCHEDULED_STAGE_ID','HIGHLEVEL_PIPELINE_STAGE_SCHEDULED_ID','GHL_PIPELINE_STAGE_SCHEDULED_ID'),
     automations:all('WEBSITE_LEAD_HOOK_URL','QUOTE_FOLLOWUP_WEBHOOK_URL','BOOKING_WEBHOOK_URL','REVIEW_WEBHOOK_URL','META_SIGNAL_WEBHOOK_URL')
   };

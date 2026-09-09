@@ -39,7 +39,8 @@ export async function onRequest(context) {
     headers: upstream.headers,
   });
   const ownerSetup = /^\/hub-login-setup(?:\.html|\.js)?$/.test(pathname);
-  response.headers.set('Content-Security-Policy', ownerSetup
+  const gustoAuth = pathname === '/api/gusto-auth';
+  if (!gustoAuth || !response.headers.has('Content-Security-Policy')) response.headers.set('Content-Security-Policy', ownerSetup
     ? "default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; connect-src 'none'; form-action 'none'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'"
     : CSP);
   response.headers.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
@@ -58,6 +59,10 @@ export async function onRequest(context) {
   if (pathname.startsWith('/api/')) {
     response.headers.set('Cache-Control', 'no-store');
     response.headers.set('X-Robots-Tag', 'noindex, nofollow');
+  }
+  if (gustoAuth) {
+    response.headers.set('Referrer-Policy', 'no-referrer');
+    response.headers.set('X-Frame-Options', 'DENY');
   }
   if (upstream.status === 404 || explicit404) {
     response.headers.set('X-Robots-Tag', 'noindex, nofollow');
