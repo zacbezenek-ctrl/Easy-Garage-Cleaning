@@ -190,6 +190,25 @@ test('storage failure is not reported as incorrect credentials', async t => {
   assert.equal((await response.json()).code, 'EMPLOYEE_ACCOUNT_STORAGE_UNAVAILABLE');
 });
 
+test('database quota exhaustion reports a service limit without verifying passwords or issuing sessions', async t => {
+  let reads = 0;
+  t.mock.method(globalThis, 'fetch', async (_input, init = {}) => {
+    assert.notEqual(init.method, 'PATCH', 'quota diagnosis must not change an account');
+    reads++;
+    return Response.json({ error: { status: 'RESOURCE_EXHAUSTED', message: 'private provider details' } }, { status: 429 });
+  });
+  t.mock.method(crypto.subtle, 'deriveBits', () => { throw new Error('must not verify an unreadable account'); });
+  const response = await auth.onRequestPost({ request: request('/api/hub-auth', { username: 'JamieR', password: 'example' }), env: env() });
+  assert.equal(response.status, 503);
+  assert.equal(response.headers.has('set-cookie'), false);
+  const result = await response.json();
+  assert.equal(result.code, 'EMPLOYEE_ACCOUNT_QUOTA_EXCEEDED');
+  assert.match(result.error, /database usage limit/);
+  assert.doesNotMatch(JSON.stringify(result), /private provider|Incorrect username/);
+  await assert.rejects(listEmployeeApplications(env()), { code: 'EMPLOYEE_ACCOUNT_QUOTA_EXCEEDED', status: 503 });
+  assert.equal(reads, 2);
+});
+
 test('pending and rejected account feedback is shown only after the password is verified', async t => {
   useStorage(t);
   const configured = env();

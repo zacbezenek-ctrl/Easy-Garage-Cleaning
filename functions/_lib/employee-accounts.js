@@ -14,7 +14,10 @@ function unreadableAccount() {
   return accountError('EMPLOYEE_ACCOUNT_DATA_UNREADABLE', 'Employee accounts could not be unlocked. Ask the owner to restore the existing employee data key; do not register replacement accounts.');
 }
 
-function storageError() {
+function storageError(response) {
+  if (response?.status === 429) {
+    return accountError('EMPLOYEE_ACCOUNT_QUOTA_EXCEEDED', 'The employee portal has reached its database usage limit. Ask Zac to restore service. Your account and password have not changed.', 503);
+  }
   return accountError('EMPLOYEE_ACCOUNT_STORAGE_UNAVAILABLE', 'Employee account storage is temporarily unavailable. Try again later.', 502);
 }
 
@@ -114,7 +117,7 @@ async function readAccount(env, username) {
   const url = `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents/jobs/${encodeURIComponent(id)}`;
   const response = await firestoreFetch(env, url);
   if (response.status === 404) return null;
-  if (!response.ok) throw storageError();
+  if (!response.ok) throw storageError(response);
   const stored = parseDocument(await response.json());
   if (!stored.payload || !stored.iv) throw unreadableAccount();
   try {
@@ -136,7 +139,7 @@ async function writeAccount(env, account, createOnly = false) {
     body: JSON.stringify(firestoreDocument(id, account, encrypted)),
   });
   if (response.status === 409 || response.status === 412) throw new Error('That username is already registered');
-  if (!response.ok) throw storageError();
+  if (!response.ok) throw storageError(response);
   return account;
 }
 
@@ -261,7 +264,7 @@ export async function listEmployeeApplications(env) {
       where: { fieldFilter: { field: { fieldPath: 'recordType' }, op: 'EQUAL', value: stringField(RECORD_TYPE) } },
     } }),
   });
-  if (!response.ok) throw storageError();
+  if (!response.ok) throw storageError(response);
   const rows = await response.json().catch(() => { throw storageError(); });
   if (!Array.isArray(rows)) throw storageError();
   const accounts = [];

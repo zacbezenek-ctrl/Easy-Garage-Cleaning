@@ -4,7 +4,7 @@
 const employeeLoadState=()=>({loading:false,loaded:false,error:''});
 const S={active:'my_day',installed:false,integrations:{},ghl:{loading:true,error:'',pipelines:[],opportunities:[],leadResetAt:''},ghlTimer:null,walks:{loading:true,error:'',events:[]},weekAnchor:'',timesheetAnchor:'',availabilityAnchor:'',availabilitySelected:'',availabilityAllDay:true,booking:null,actionDialog:null,contactResults:[],trainingModule:'',chatChannel:'team',people:{profiles:[],timeEntries:[],announcements:[],requests:[],incidents:[],equipment:[],training:[],teamMessages:[],jobMessages:[],messageReads:[],accounts:[],listeners:false},locationWatch:null,locationEntryId:'',lastLocationSave:0,onboardingPrompted:false};
 const $=s=>document.querySelector(s),all=s=>Array.from(document.querySelectorAll(s));
-S.peopleState=employeeLoadState();S.accountState=employeeLoadState();S.integrationState=employeeLoadState();S.peopleTimer=null;S.peopleRequest=null;S.peopleGeneration=0;
+S.peopleState=employeeLoadState();S.accountState=employeeLoadState();S.integrationState=employeeLoadState();S.peopleTimer=null;S.peopleRequest=null;S.peopleGeneration=0;S.peopleLastRefreshAt=0;
 const esc=v=>String(v==null?'':v).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const money=v=>Number(v||0).toLocaleString('en-US',{style:'currency',currency:'USD',maximumFractionDigits:0});
 const payMoney=v=>Number(v||0).toLocaleString('en-US',{style:'currency',currency:'USD',minimumFractionDigits:2,maximumFractionDigits:2});
@@ -312,6 +312,7 @@ async function refreshPeople(){
   if(S.peopleRequest)return S.peopleRequest;
   if(!employeeIdentity())return false;
   const generation=S.peopleGeneration;
+  S.peopleLastRefreshAt=Date.now();
   S.peopleState.loading=true;
   S.peopleRequest=(async()=>{
     const accounts=isOwnerAccount()?refreshAccountApplications():Promise.resolve();
@@ -351,7 +352,16 @@ async function refreshAccountApplications(){
 }
 window.opsReviewEmployeeAccount=async(username,decision)=>{if(!isOwnerAccount()||!['approved','rejected'].includes(decision))return;if(!S.accountState.loaded||S.accountState.error){if(typeof showToast==='function')showToast('Reload account requests before reviewing an employee');return;}const verb=decision==='approved'?'approve':'reject',account=S.people.accounts.find(row=>sameAccount(row.username,username)),approval=await askAction({kicker:'EMPLOYEE ACCOUNT',title:`${verb==='approve'?'Approve':'Reject'} ${account?.displayName||username}?`,copy:decision==='approved'?'This unlocks Employee Hub access using the password they created.':'This keeps the account locked and records the rejection.',confirmLabel:verb==='approve'?'Approve account':'Reject request',danger:verb!=='approve',fields:[]});if(!approval)return;try{const response=await hubFetch('/api/employee-accounts',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'review',username,decision})}),result=await response.json().catch(()=>({}));if(!response.ok||!result.ok)throw new Error(result.error||'Account review failed');if(S.peopleRequest)await S.peopleRequest;const refreshed=await refreshPeople();render();if(!refreshed||S.accountState.error){if(typeof showToast==='function')showToast('Review saved, but team records could not refresh. Retry employee records.');return;}if(typeof showToast==='function')showToast(decision==='approved'?`${account?.displayName||username} is on the team and can now sign in`:'Account request rejected')}catch(error){if(typeof showToast==='function')showToast(error.message||'Account review failed')}};
 async function peopleSet(collection,id,data,refresh=true){const generation=S.peopleGeneration;const response=await hubFetch('/api/employee-hub',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({collection,id,data})});const result=await response.json().catch(()=>({}));if(!response.ok||!result.ok)throw new Error(result.error||'Employee Hub record could not be saved');if(generation!==S.peopleGeneration)return result.record;if(refresh)await refreshPeople();else if(result.record&&Array.isArray(S.people[collection]))S.people[collection]=[...S.people[collection].filter(row=>row.id!==id),result.record];return result.record}
-function startPeopleListeners(){if(!employeeIdentity())return Promise.resolve(false);const first=!S.people.listeners;S.people.listeners=true;if(!S.peopleTimer)S.peopleTimer=setInterval(refreshPeople,15000);return refreshPeople().then(loaded=>{if(first&&loaded)return ensureOwnProfile();return loaded})}
+function pollPeople(){
+  if(document.hidden||!S.people.listeners||!employeeIdentity())return false;
+  const interval=S.active==='crew_chat'?15000:60000;
+  if(Date.now()-S.peopleLastRefreshAt<interval)return false;
+  return refreshPeople();
+}
+document.addEventListener('visibilitychange',()=>{
+  if(!document.hidden&&S.people.listeners&&employeeIdentity())return refreshPeople();
+});
+function startPeopleListeners(){if(!employeeIdentity())return Promise.resolve(false);const first=!S.people.listeners;S.people.listeners=true;if(!S.peopleTimer)S.peopleTimer=setInterval(pollPeople,15000);return refreshPeople().then(loaded=>{if(first&&loaded)return ensureOwnProfile();return loaded})}
 async function ensureOwnProfile(){const p=sessionProfile();if(!p.id)return;await peopleSet(peopleCollections.profiles,employeeKey(p.id),{username:p.id,displayName:p.displayName,role:p.role,payType:p.payType,hourlyRate:p.hourlyRate,lastSeenAt:new Date().toISOString(),status:'active'}).catch(()=>{})}
 const activeTimeEntry=()=>S.people.timeEntries.find(x=>owned(x)&&x.status==='active'&&!x.clockOutAt)||null;
 function updateQuickClock(){const button=$('#ops-quick-clock'),entry=activeTimeEntry();if(!button)return;button.disabled=!S.peopleState.loaded||Boolean(S.peopleState.error);button.textContent=button.disabled?'Time clock unavailable':entry?'Clock out':'Clock in';button.classList.toggle('clocked-in',Boolean(entry));button.setAttribute('aria-label',button.disabled?'Load employee records before using the time clock':entry?'Clock out of your current shift':'Open clock-in options')}
