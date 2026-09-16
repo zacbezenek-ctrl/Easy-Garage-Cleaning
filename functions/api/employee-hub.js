@@ -2,7 +2,7 @@ import { getHubSession, hasBusinessAccess, listHubUserProfiles } from '../_lib/h
 import { firebaseServiceAccountConfigured, firestoreFetch } from '../_lib/firebase-service-account.js';
 import { employeeVaultSecret, employeeVaultReadOnly } from '../_lib/employee-vault-key.js';
 import { createJobAssignmentAccess } from '../_lib/job-assignment.js';
-import { listEmployeeApplications } from '../_lib/employee-accounts.js';
+import { listEmployeeApplications, normalizeEmployeeUsername } from '../_lib/employee-accounts.js';
 
 const PROJECT_ID = 'egcw-1ec83';
 const RECORD_TYPE = 'employee_hub_v2';
@@ -395,6 +395,10 @@ async function authorizeMutation(env, session, collection, id, incoming, existin
 export async function onRequestGet({ request, env }) {
   const session = await getHubSession(request, env);
   if (!session) return reply(401, { ok: false, error: 'Sign in required' });
+  const includeAccounts = new URL(request.url).searchParams.get('include') === 'accounts';
+  if (includeAccounts && (!manager(session) || normalizeEmployeeUsername(session.user) !== 'zacb')) {
+    return reply(403, { ok: false, error: 'Only Zac can approve employee accounts' });
+  }
   if (!vaultSecret(env) || !firebaseServiceAccountConfigured(env)) return reply(503, { ok: false, error: 'Employee Hub storage is not configured' });
   try {
     const rows = await readAll(env);
@@ -407,7 +411,7 @@ export async function onRequestGet({ request, env }) {
         continue;
       }
       const jobId = String(row.data?.jobId || '');
-      if (!jobAccess.has(jobId)) jobAccess.set(jobId, await readJob(env, jobId).then(job => jobMember(session, job, assignments)));
+      if (!jobAccess.has(jobId)) jobAccess.set(jobId, manager(session) || await readJob(env, jobId).then(job => jobMember(session, job, assignments)));
       if (jobAccess.get(jobId)) collections.jobMessages.push(row.data);
     }
     // Approval establishes team membership before the employee creates a profile.
@@ -443,7 +447,7 @@ export async function onRequestGet({ request, env }) {
         awaitingFirstSignIn: account.status === 'approved' && !profile.lastSeenAt && !profile.onboardingCompletedAt,
       } : profile;
     });
-    return reply(200, { ok: true, collections });
+    return reply(200, { ok: true, collections, ...(includeAccounts ? { accounts } : {}) });
   } catch (error) {
     return reply(502, { ok: false, ...(error.code ? { code: error.code } : {}), error: String(error.message || 'Employee Hub storage failed') });
   }

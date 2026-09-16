@@ -80,8 +80,8 @@ function suite() {
         return response({ ok: true, record: body.data });
       }
       if (url.includes('employee-accounts')) return response({ ok: true, accounts: [] });
-      assert.equal(url, '/api/employee-hub');
-      return response({ ok: true, collections: structuredClone(server) });
+      assert.equal(url, '/api/employee-hub?include=accounts');
+      return response({ ok: true, collections: structuredClone(server), accounts: [] });
     },
   };
   context.window = context;

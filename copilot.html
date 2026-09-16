@@ -365,12 +365,18 @@ async function boot() {
   clearInterval(clockTimer); clearInterval(scheduleTimer);
   clockTimer = setInterval(updateClock, 30000);
   loadSchedule();
-  scheduleTimer = setInterval(loadSchedule, 30000);
+  scheduleTimer = setInterval(refreshVisibleSchedule, 60000);
 
   addAssistantMsg(
     `Ready. Ask about a job, a scope change, running late, or a customer message. Your permitted jobs will appear above when the schedule connects.`
   );
 }
+
+function refreshVisibleSchedule() {
+  if (!document.hidden) return loadSchedule();
+}
+
+document.addEventListener('visibilitychange', refreshVisibleSchedule);
 
 function updateClock() {
   document.getElementById('topbar-time').textContent =

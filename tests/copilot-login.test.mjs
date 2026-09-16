@@ -21,7 +21,7 @@ function deferred() {
   return { promise, resolve, reject };
 }
 function harness({ restored = false, firebaseError = '', schedule, sessionResponse } = {}) {
-  const nodes = new Map(), events = new Map(), timers = new Map(), requests = [], firebaseEvents = [];
+  const nodes = new Map(), events = new Map(), documentEvents = new Map(), timers = new Map(), timerDelays = new Map(), requests = [], firebaseEvents = [];
   let timerId = 0, loggedIn = restored;
   function element(id = '') {
     if (id && nodes.has(id)) return nodes.get(id);
@@ -37,9 +37,9 @@ function harness({ restored = false, firebaseError = '', schedule, sessionRespon
   const storage = () => { const values = new Map(); return { getItem: k => values.get(k), setItem: (k, v) => values.set(k, v), removeItem: k => values.delete(k) }; };
   const context = vm.createContext({
     console: { log() {} }, Event, Date, Intl, Error,
-    document: { readyState: 'loading', getElementById: id => /^gate/.test(id) || id === 'egc-gate' ? null : element(id), querySelector: () => null, createElement: () => element() },
+    document: { readyState: 'loading', hidden: false, addEventListener: (name, fn) => documentEvents.set(name, fn), getElementById: id => /^gate/.test(id) || id === 'egc-gate' ? null : element(id), querySelector: () => null, createElement: () => element() },
     location: { pathname: '/copilot' }, sessionStorage: storage(), localStorage: storage(),
-    setInterval: fn => { timers.set(++timerId, fn); return timerId; }, clearInterval: id => timers.delete(id), setTimeout: () => 0,
+    setInterval: (fn, delay) => { timers.set(++timerId, fn); timerDelays.set(timerId, delay); return timerId; }, clearInterval: id => { timers.delete(id); timerDelays.delete(id); }, setTimeout: () => 0,
     addEventListener: (name, fn) => events.set(name, fn), dispatchEvent: event => events.get(event.type)?.(event),
     firebase: { apps: [], initializeApp() { this.apps.push({}); firebaseEvents.push('initialize'); }, auth() {
       assert.equal(this.apps.length, 1, 'Firebase app must exist before authentication');
@@ -63,7 +63,7 @@ function harness({ restored = false, firebaseError = '', schedule, sessionRespon
   vm.runInContext(read('crew/hub-auth.js'), context);
   vm.runInContext(script + '\n;globalThis.state = () => ({ me, todayJobs, history, sessionVersion });', context);
   element('l-user').value = 'SyntheticCrew'; element('l-pass').value = 'Synthetic password';
-  return { context, element, timers, requests, firebaseEvents };
+  return { context, element, timers, timerDelays, documentEvents, requests, firebaseEvents };
 }
 
 test('Co-Pilot cold sign-in initializes Firebase before token exchange and loads permitted schedule', async () => {
@@ -82,6 +82,39 @@ test('Co-Pilot restored login completes the same Firebase initialization', async
   const h = harness({ restored: true }); await flush();
   assert.deepEqual(h.firebaseEvents, ['initialize', 'authenticate']);
   assert.equal(h.element('copilot-screen').classList.contains('active'), true);
+});
+
+test('Co-Pilot polls schedules once a minute only while visible and refreshes when returning', async () => {
+  const h = harness({ restored: true }); await flush();
+  const reads = () => h.requests.filter(request => request.url === '/api/crew-jobs').length;
+  const scheduleTimer = [...h.timerDelays].find(([, delay]) => delay === 60000)?.[0];
+  assert.ok(scheduleTimer, 'schedule polling must use a one-minute interval');
+  const tick = h.timers.get(scheduleTimer);
+  assert.equal(reads(), 1);
+  await tick();
+  assert.equal(reads(), 2);
+  h.context.document.hidden = true;
+  await h.documentEvents.get('visibilitychange')();
+  for (let minute = 0; minute < 10; minute++) await tick();
+  assert.equal(reads(), 2, 'an abandoned background tab must not reread all jobs');
+  h.context.document.hidden = false;
+  await h.documentEvents.get('visibilitychange')();
+  assert.equal(reads(), 3, 'returning to the tab fetches the current schedule immediately');
+  await h.context.doLogout();
+  await h.documentEvents.get('visibilitychange')();
+  await tick();
+  assert.equal(reads(), 3, 'visibility changes and stale timer callbacks cannot fetch after logout');
+});
+
+test('Co-Pilot visibility and polling share one pending schedule request', async () => {
+  const pending = deferred();
+  const h = harness({ restored: true, schedule: () => pending.promise }); await flush();
+  const scheduleTimer = [...h.timerDelays].find(([, delay]) => delay === 60000)?.[0];
+  await h.timers.get(scheduleTimer)();
+  await h.documentEvents.get('visibilitychange')();
+  assert.equal(h.requests.filter(request => request.url === '/api/crew-jobs').length, 1);
+  pending.resolve(response({ ok: true, jobs: [] }));
+  await flush();
 });
 
 test('Co-Pilot displays configuration failure accurately on sign-in and restored session', async () => {

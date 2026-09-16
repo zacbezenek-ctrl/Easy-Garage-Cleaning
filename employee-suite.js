@@ -314,22 +314,29 @@ async function refreshPeople(){
   const generation=S.peopleGeneration;
   S.peopleLastRefreshAt=Date.now();
   S.peopleState.loading=true;
+  const includeAccounts=isOwnerAccount();
+  if(includeAccounts)S.accountState.loading=true;
   S.peopleRequest=(async()=>{
-    const accounts=isOwnerAccount()?refreshAccountApplications():Promise.resolve();
     try{
-      const response=await hubFetch('/api/employee-hub',{cache:'no-store'}),data=await response.json().catch(()=>({}));
+      const response=await hubFetch('/api/employee-hub'+(includeAccounts?'?include=accounts':''),{cache:'no-store'}),data=await response.json().catch(()=>({}));
       if(!response.ok||!data.ok)throw new Error(data.error||'Employee records could not be loaded. Check the connection and retry.');
       if(!data.collections||typeof data.collections!=='object'||Object.keys(peopleCollections).some(key=>!Array.isArray(data.collections[key])))throw new Error('The employee records response was incomplete. Retry before making changes.');
       if(generation!==S.peopleGeneration)return false;
+      if(includeAccounts){
+        if(data.accounts===undefined)await refreshAccountApplications();
+        else if(Array.isArray(data.accounts)){S.people.accounts=data.accounts;S.accountState.loaded=true;S.accountState.error='';}
+        else{S.accountState.error='The account request list was incomplete. Retry before reviewing accounts.';}
+        if(generation!==S.peopleGeneration)return false;
+      }
       Object.keys(peopleCollections).forEach(key=>{S.people[key]=Array.isArray(data.collections[key])?data.collections[key]:[]});
       S.peopleState.loaded=true;S.peopleState.error='';
       const active=activeTimeEntry();if(active?.locationTracking&&!S.locationWatch)startLocationWatch(active.id);
       notifyAnnouncements(S.people.announcements);notifyChatMessages();
       return true;
-    }catch(error){if(generation===S.peopleGeneration)S.peopleState.error=error.message||'Employee records are unavailable. Check the connection and retry.';return false}
+    }catch(error){if(generation===S.peopleGeneration){S.peopleState.error=error.message||'Employee records are unavailable. Check the connection and retry.';if(includeAccounts)S.accountState.error=S.peopleState.error;}return false}
     finally{
-      await accounts;
       if(generation===S.peopleGeneration){
+        if(includeAccounts)S.accountState.loading=false;
         S.peopleState.loading=false;S.peopleRequest=null;
         if(S.peopleState.loaded&&!S.peopleState.error&&!S.onboardingPrompted&&!isManager()&&!onboardingComplete(ownProfile())){S.onboardingPrompted=true;go('onboarding')}
         else if(!document.activeElement?.closest?.('.ops-onboarding,.ops-chat-compose,.ops-customer-thread form'))render();
@@ -374,7 +381,7 @@ function personalEntries(){return S.people.timeEntries.filter(row=>owned(row)).s
 function paySummary(){const entries=personalEntries(),period=payPeriod(),inPeriod=entries.filter(e=>{const d=Date.parse(e.clockInAt||'');return d>=period.start&&d<=period.end}),year=String(new Date().getFullYear()),ytd=entries.filter(e=>String(e.clockInAt||'').startsWith(year));return{entries,period,inPeriod,hours:inPeriod.reduce((n,e)=>n+entryHours(e),0),gross:inPeriod.reduce((n,e)=>n+entryGross(e),0),approved:inPeriod.filter(e=>e.approvalStatus==='approved').reduce((n,e)=>n+entryGross(e),0),pending:inPeriod.filter(e=>e.approvalStatus!=='approved').reduce((n,e)=>n+entryGross(e),0),ytd:ytd.reduce((n,e)=>n+entryGross(e),0),lifetime:entries.reduce((n,e)=>n+entryGross(e),0)}}
 function stopLocationWatch(){if(S.locationWatch!=null&&navigator.geolocation)navigator.geolocation.clearWatch(S.locationWatch);S.locationWatch=null;S.locationEntryId=''}
 function currentPosition(){return new Promise((resolve,reject)=>{if(!navigator.geolocation)return reject(new Error('Location is not supported on this device'));navigator.geolocation.getCurrentPosition(resolve,reject,{enableHighAccuracy:true,maximumAge:15000,timeout:20000})})}
-function startLocationWatch(entryId){if(!navigator.geolocation||S.locationWatch!=null)return;S.locationEntryId=entryId;S.locationWatch=navigator.geolocation.watchPosition(async position=>{if(Date.now()-S.lastLocationSave<60000)return;S.lastLocationSave=Date.now();const point={lat:Number(position.coords.latitude.toFixed(6)),lng:Number(position.coords.longitude.toFixed(6)),accuracy:Math.round(position.coords.accuracy||0),capturedAt:new Date().toISOString()};const current=S.people.timeEntries.find(x=>x.id===entryId),trail=[...(Array.isArray(current?.locationTrail)?current.locationTrail:[]),point].slice(-120);await peopleSet(peopleCollections.timeEntries,entryId,{lastLocation:point,locationTrail:trail,locationStatus:'tracking',locationUpdatedAt:point.capturedAt}).catch(()=>{})},async error=>{await peopleSet(peopleCollections.timeEntries,entryId,{locationStatus:'unavailable',locationError:String(error.message||'Location unavailable').slice(0,120),locationUpdatedAt:new Date().toISOString()}).catch(()=>{});stopLocationWatch()},{enableHighAccuracy:true,maximumAge:30000,timeout:20000})}
+function startLocationWatch(entryId){if(!navigator.geolocation||S.locationWatch!=null)return;S.locationEntryId=entryId;S.locationWatch=navigator.geolocation.watchPosition(async position=>{if(Date.now()-S.lastLocationSave<60000)return;S.lastLocationSave=Date.now();const point={lat:Number(position.coords.latitude.toFixed(6)),lng:Number(position.coords.longitude.toFixed(6)),accuracy:Math.round(position.coords.accuracy||0),capturedAt:new Date().toISOString()};const current=S.people.timeEntries.find(x=>x.id===entryId),trail=[...(Array.isArray(current?.locationTrail)?current.locationTrail:[]),point].slice(-120);await peopleSet(peopleCollections.timeEntries,entryId,{lastLocation:point,locationTrail:trail,locationStatus:'tracking',locationUpdatedAt:point.capturedAt},false).catch(()=>{})},async error=>{await peopleSet(peopleCollections.timeEntries,entryId,{locationStatus:'unavailable',locationError:String(error.message||'Location unavailable').slice(0,120),locationUpdatedAt:new Date().toISOString()},false).catch(()=>{});stopLocationWatch()},{enableHighAccuracy:true,maximumAge:30000,timeout:20000})}
 window.opsClockIn=async()=>{if(activeTimeEntry())return;let position;try{position=await currentPosition()}catch(error){if(typeof showToast==='function')showToast('Clock-in needs location access. Enable location, then try again.');return}const p=ownProfile(),now=new Date().toISOString(),job=myShiftJobs().find(j=>String(j.date||'')===day())||myShiftJobs()[0]||null,id=`time-${personKey(p.id)}-${Date.now().toString(36)}`,point={lat:Number(position.coords.latitude.toFixed(6)),lng:Number(position.coords.longitude.toFixed(6)),accuracy:Math.round(position.coords.accuracy||0),capturedAt:now},entry={id,employee:p.id,employeeName:p.displayName,role:p.role,payType:p.payType,hourlyRate:Number(p.hourlyRate||0),clockInAt:now,clockOutAt:'',status:'active',approvalStatus:'open',jobId:job?.id||'',jobLabel:job?.customer||job?.serviceType||'',locationTracking:true,locationConsentAt:now,locationStatus:'tracking',lastLocation:point,locationTrail:[point],locationUpdatedAt:now,breaks:[],createdAt:now,updatedAt:now};await peopleSet(peopleCollections.timeEntries,id,entry);startLocationWatch(id);render();if(typeof showToast==='function')showToast('Clocked in · shift location is on')};
 window.opsClockOut=async()=>{const entry=activeTimeEntry();if(!entry)return;const now=new Date().toISOString(),hours=entryHours({...entry,clockOutAt:now});stopLocationWatch();await peopleSet(peopleCollections.timeEntries,entry.id,{clockOutAt:now,status:'submitted',approvalStatus:'pending',hours:Number(hours.toFixed(3)),grossEstimate:Number((hours*Number(entry.hourlyRate||0)).toFixed(2)),locationTracking:false,locationStatus:'stopped',updatedAt:now});render();if(typeof showToast==='function')showToast(`Clocked out · ${hours.toFixed(2)} hours submitted`)};
 window.opsStartBreak=async()=>{const entry=activeTimeEntry();if(!entry||entry.breaks?.some(b=>!b.endAt))return;const breaks=[...(entry.breaks||[]),{startAt:new Date().toISOString(),endAt:''}];await peopleSet(peopleCollections.timeEntries,entry.id,{breaks,updatedAt:new Date().toISOString()})};

@@ -29,7 +29,7 @@ const request = (route, user, data) => new Request(`https://easygaragecleaning.c
 
 function storage(t) {
   const documents = new Map();
-  const calls = { writes: 0, upstream: 0, accountQueries: 0 };
+  const calls = { writes: 0, upstream: 0, accountQueries: 0, documentReads: [] };
   let revision = 0;
   const document = (id, data) => ({ name: `projects/egcw-1ec83/databases/(default)/documents/jobs/${id}`, fields: encodeFirestoreFields(data), updateTime: `2026-09-07T00:00:00.${String(++revision).padStart(9, '0')}Z` });
   t.mock.method(globalThis, 'fetch', async (input, options = {}) => {
@@ -47,6 +47,7 @@ function storage(t) {
       return Response.json(rows.length ? rows : [{ readTime: '2026-09-07T00:00:00Z' }]);
     }
     const id = decodeURIComponent(url.pathname.split('/').pop());
+    if (method === 'GET') calls.documentReads.push(id);
     if (method === 'PATCH') {
       const existing = documents.get(id);
       if (url.searchParams.get('currentDocument.exists') === 'false' && existing) return Response.json({}, { status: 412 });
@@ -119,6 +120,41 @@ test('crew schedule and encrypted job rooms show only the exact employee work', 
     const checkout = await payment.onRequestPost({ env, request: request('job-payment', user, { job_id: `job-${index}`, amount_cents: 1000, request_id: `synthetic-${index}` }) });
     assert.equal(checkout.status, 409, 'the assigned user reaches balance validation');
   }
+});
+
+test('business room reads skip job lookups while crew still recheck every distinct room assignment', async t => {
+  const store = storage(t);
+  const own = variants[0], other = variants[1];
+  store.put('job-owned', { type: 'job', assignedCrew: [own] });
+  store.put('job-other', { type: 'job', assignedCrew: [other] });
+  store.put('job-deleted', { type: 'job', assignedCrew: [own] });
+  const messages = [['owned-1', 'job-owned'], ['owned-2', 'job-owned'], ['other-1', 'job-other'], ['deleted-1', 'job-deleted']];
+  for (const [id, jobId] of messages) {
+    const response = await hub.onRequestPost({ env, request: request('employee-hub', 'ZacB', { collection: 'jobMessages', id, data: { jobId, body: `Private ${id}` } }) });
+    assert.equal(response.status, 200);
+  }
+  store.documents.delete('job-deleted');
+  const managerEnv = { ...env, HUB_AUTH_USERS_JSON: JSON.stringify({ ...users, AlexK: { passwordHash: 'synthetic', displayName: 'Business Manager', role: 'manager' } }) };
+  const managerCookie = (await createHubSessionCookie(managerEnv, 'AlexK')).split(';')[0];
+  const managerRequest = new Request('https://easygaragecleaning.com/api/employee-hub', { headers: { Cookie: managerCookie } });
+  for (const [environment, read] of [[env, request('employee-hub', 'ZacB')], [managerEnv, managerRequest]]) {
+    const before = store.calls.documentReads.length;
+    const response = await hub.onRequestGet({ env: environment, request: read });
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).collections.jobMessages.length, messages.length, 'business access must retain all room history including deleted jobs');
+    assert.deepEqual(store.calls.documentReads.slice(before), [], 'business access must not spend reads on per-room assignments');
+  }
+  let before = store.calls.documentReads.length;
+  let response = await hub.onRequestGet({ env, request: request('employee-hub', own) });
+  assert.equal(response.status, 200);
+  assert.deepEqual((await response.json()).collections.jobMessages.map(row => row.id).sort(), ['owned-1', 'owned-2']);
+  assert.deepEqual(store.calls.documentReads.slice(before).sort(), ['job-deleted', 'job-other', 'job-owned'], 'crew must check each distinct room once, including missing jobs');
+  store.put('job-owned', { type: 'job', assignedCrew: [other] });
+  before = store.calls.documentReads.length;
+  response = await hub.onRequestGet({ env, request: request('employee-hub', own) });
+  assert.equal(response.status, 200);
+  assert.deepEqual((await response.json()).collections.jobMessages, [], 'room access must disappear immediately when the employee is reassigned');
+  assert.deepEqual(store.calls.documentReads.slice(before).sort(), ['job-deleted', 'job-other', 'job-owned']);
 });
 
 test('legacy display names require a unique approved account and share one roster read per request', async t => {

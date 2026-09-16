@@ -76,7 +76,7 @@ async function setup(t) {
     assert.equal(response.status, 200);
     return (await response.json()).record;
   };
-  const get = (cookie = owner) => hub.onRequestGet({ env, request: request('/api/employee-hub', undefined, cookie) });
+  const get = (cookie = owner, query = '') => hub.onRequestGet({ env, request: request('/api/employee-hub' + query, undefined, cookie) });
   const roster = async (cookie = owner) => {
     const response = await get(cookie);
     assert.equal(response.status, 200);
@@ -107,6 +107,49 @@ test('owner approval immediately adds a crew member to owner and manager rosters
   assert.equal(JSON.stringify([...store.documents]), snapshot);
   assert.ok(store.queries.includes(accountType));
   assert.ok(store.queries.includes(hubType));
+});
+
+test('owner can include public account applications with the existing roster query exactly once', async t => {
+  const store = await setup(t);
+  await store.register('Pending.Crew');
+  await store.register('Approved.Crew');
+  await store.review('Approved.Crew');
+  const queryCount = store.queries.length;
+  const response = await store.get(store.owner, '?include=accounts');
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.ok, true);
+  assert.deepEqual(store.queries.slice(queryCount), [hubType, accountType], 'including applications must reuse the one account query already required for the roster');
+  assert.equal(body.accounts.length, 2);
+  assert.equal(body.accounts.find(account => account.username === 'Pending.Crew').status, 'pending');
+  assert.equal(body.accounts.find(account => account.username === 'Approved.Crew').status, 'approved');
+  assert.ok(body.accounts.every(account => account.email === 'private-application@example.invalid'));
+  assert.doesNotMatch(JSON.stringify(body.accounts), /passwordHash|passwordSalt|sealedPayload|sealedIv|SyntheticRoster904/);
+  assert.doesNotMatch(JSON.stringify(body.collections.profiles), /private-application|9705550199|passwordHash|passwordSalt/);
+});
+
+test('default owner and manager responses omit applications and only the owner may opt in', async t => {
+  const store = await setup(t);
+  await store.register('Own.Crew');
+  await store.review('Own.Crew');
+  for (const cookie of [store.owner, store.manager]) {
+    const response = await store.get(cookie);
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.equal(Object.hasOwn(body, 'accounts'), false);
+    assert.doesNotMatch(JSON.stringify(body), /private-application|9705550199|passwordHash|passwordSalt/);
+  }
+  const crew = await store.login('Own.Crew');
+  for (const cookie of [store.manager, crew]) {
+    const queryCount = store.queries.length;
+    const response = await store.get(cookie, '?include=accounts');
+    assert.equal(response.status, 403);
+    const body = await response.json();
+    assert.equal(body.ok, false);
+    assert.equal(body.collections, undefined);
+    assert.equal(body.accounts, undefined);
+    assert.equal(store.queries.length, queryCount, 'denied account inclusion must not query either collection');
+  }
 });
 
 test('a manager can set pay before first login and employee initialization preserves it without duplicate profiles', async t => {
