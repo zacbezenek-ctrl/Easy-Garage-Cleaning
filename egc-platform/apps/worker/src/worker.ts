@@ -402,6 +402,56 @@ async function syncOpportunities() {
   }
 }
 
+async function upsertAppointment(rawValue: unknown, calendarIdOverride?: string) {
+  const raw = asRecord(rawValue);
+  const providerId = asString(raw.id);
+  const ghlContactId = asString(raw.contactId);
+  const startAt = asDate(raw.startTime);
+  if (!providerId || !ghlContactId || !startAt) return null;
+
+  const contact = await ensureContactByProviderId(ghlContactId);
+  if (!contact) return null;
+
+  const [existingAppointment] = await db.select({
+    appointmentCreatedAt: schema.appointments.appointmentCreatedAt
+  }).from(schema.appointments)
+    .where(eq(schema.appointments.providerId, providerId))
+    .limit(1);
+
+  // Booking creation time and appointment start time are different facts.
+  // Never substitute startAt when GHL omits the creation timestamp.
+  const appointmentCreatedAt =
+    asDate(raw.dateAdded) ??
+    asDate(raw.createdAt) ??
+    asDate(raw.appointmentCreatedAt) ??
+    existingAppointment?.appointmentCreatedAt ??
+    null;
+
+  const values = {
+    providerId,
+    contactId: contact.id,
+    calendarId: calendarIdOverride ?? asString(raw.calendarId) ?? null,
+    assignedUserId: asString(raw.assignedUserId) ?? asString(raw.userId) ?? null,
+    title: asString(raw.title) ?? null,
+    status: normalizeAppointmentStatus(raw.appointmentStatus ?? raw.status),
+    appointmentCreatedAt,
+    appointmentStartAt: startAt,
+    appointmentEndAt: asDate(raw.endTime) ?? null,
+    notes: asString(raw.notes) ?? null,
+    raw,
+    updatedAt: new Date()
+  };
+
+  await db.insert(schema.appointments).values(values)
+    .onConflictDoUpdate({
+      target: schema.appointments.providerId,
+      set: values
+    });
+
+  await recomputeLeadState(contact.id);
+  return contact.id;
+}
+
 async function syncAppointments() {
   const calendarsPayload = await ghl.getCalendars();
   const calendars = findArray(calendarsPayload, "calendars");
@@ -421,53 +471,17 @@ async function syncAppointments() {
     const events = findArray(eventPayload, "events");
 
     for (const eventValue of events) {
-      const raw = asRecord(eventValue);
-      const providerId = asString(raw.id);
-      const ghlContactId = asString(raw.contactId);
-      const startAt = asDate(raw.startTime);
-      if (!providerId || !ghlContactId || !startAt) continue;
+      await upsertAppointment(eventValue, calendarId);
+    }
+  }
+}
 
-      const contact = await localContactByProviderId(ghlContactId);
-      if (!contact) continue;
-
-      // Booking creation time and appointment start time are different facts.
-      // Never substitute startAt when GHL omits the creation timestamp; doing so
-      // would make recent-booking queries return false positives.
-      const [existingAppointment] = await db.select({
-        appointmentCreatedAt: schema.appointments.appointmentCreatedAt
-      }).from(schema.appointments)
-        .where(eq(schema.appointments.providerId, providerId))
-        .limit(1);
-
-      const appointmentCreatedAt =
-        asDate(raw.dateAdded) ??
-        asDate(raw.createdAt) ??
-        asDate(raw.appointmentCreatedAt) ??
-        existingAppointment?.appointmentCreatedAt ??
-        null;
-
-      const values = {
-        providerId,
-        contactId: contact.id,
-        calendarId,
-        assignedUserId: asString(raw.assignedUserId) ?? asString(raw.userId) ?? null,
-        title: asString(raw.title) ?? null,
-        status: normalizeAppointmentStatus(raw.appointmentStatus ?? raw.status),
-        appointmentCreatedAt,
-        appointmentStartAt: startAt,
-        appointmentEndAt: asDate(raw.endTime) ?? null,
-        notes: asString(raw.notes) ?? null,
-        raw,
-        updatedAt: new Date()
-      };
-
-      await db.insert(schema.appointments).values(values)
-        .onConflictDoUpdate({
-          target: schema.appointments.providerId,
-          set: values
-        });
-
-      await recomputeLeadState(contact.id);
+async function ingestKnownWebhook(payload: Record<string, unknown>) {
+  const eventType = asString(payload.type) ?? asString(payload.eventType);
+  if (eventType === "AppointmentCreate" || eventType === "AppointmentUpdate") {
+    const appointment = asRecord(payload.appointment);
+    if (Object.keys(appointment).length > 0) {
+      await upsertAppointment(appointment, asString(appointment.calendarId));
     }
   }
 }
@@ -485,6 +499,7 @@ async function processWebhookEvents() {
         retryCount: event.retryCount + 1
       }).where(eq(schema.webhookEvents.id, event.id));
 
+      await ingestKnownWebhook(event.payload);
       await reconcile();
 
       await db.update(schema.webhookEvents).set({
