@@ -123,10 +123,7 @@ async function syncReferenceMappings() {
     });
   }
 
-  const [pipelinesPayload, calendarsPayload] = await Promise.all([
-    ghl.getPipelines(),
-    ghl.getCalendars()
-  ]);
+  const pipelinesPayload = await ghl.getPipelines();
 
   for (const value of findArray(pipelinesPayload, "pipelines")) {
     const pipeline = asRecord(value);
@@ -153,18 +150,6 @@ async function syncReferenceMappings() {
         raw: { ...stage, pipelineId }
       });
     }
-  }
-
-  for (const value of findArray(calendarsPayload, "calendars")) {
-    const calendar = asRecord(value);
-    const calendarId = asString(calendar.id);
-    if (!calendarId) continue;
-    await upsertProviderMapping({
-      resourceType: "calendar",
-      providerId: calendarId,
-      displayName: asString(calendar.name) ?? calendarId,
-      raw: calendar
-    });
   }
 
   if (!companyId) return;
@@ -635,6 +620,13 @@ async function syncAppointments() {
     const calendar = asRecord(calendarValue);
     const calendarId = asString(calendar.id);
     if (!calendarId) continue;
+
+    await upsertProviderMapping({
+      resourceType: "calendar",
+      providerId: calendarId,
+      displayName: asString(calendar.name) ?? calendarId,
+      raw: calendar
+    });
 
     const eventPayload = await ghl.getCalendarEvents({
       calendarId,
