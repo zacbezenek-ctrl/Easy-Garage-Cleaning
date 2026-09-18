@@ -117,96 +117,210 @@ async function persistTranscript(callId: string, payload: unknown) {
   });
 }
 
-async function syncConversationsAndCalls() {
-  const payload = await ghl.searchConversations();
-  const conversations = findArray(payload, "conversations");
+async function getSyncCursor(key: string) {
+  const [row] = await db.select().from(schema.syncCursors)
+    .where(eq(schema.syncCursors.key, key))
+    .limit(1);
+  return row?.cursor ?? null;
+}
 
-  for (const value of conversations) {
-    const raw = asRecord(value);
-    const providerId = asString(raw.id);
-    const ghlContactId = asString(raw.contactId);
-    if (!providerId || !ghlContactId) continue;
+async function setSyncCursor(key: string, cursor: string) {
+  await db.insert(schema.syncCursors).values({
+    key,
+    cursor,
+    updatedAt: new Date()
+  }).onConflictDoUpdate({
+    target: schema.syncCursors.key,
+    set: { cursor, updatedAt: new Date() }
+  });
+}
 
-    const contact = await localContactByProviderId(ghlContactId);
-    if (!contact) continue;
+async function ensureContactByProviderId(providerId: string) {
+  const local = await localContactByProviderId(providerId);
+  if (local) return local;
 
+  const remotePayload = await ghl.getContact(providerId).catch(() => null);
+  if (!remotePayload) return null;
+  const remote = asRecord(remotePayload);
+  const candidate = Object.keys(asRecord(remote.contact)).length
+    ? asRecord(remote.contact)
+    : remote;
+  return upsertContact(candidate);
+}
+
+function classifyOutboundActor(message: Record<string, unknown>) {
+  const source = asString(message.source)?.toLowerCase();
+  if (source === "workflow" || source === "bulk_actions" || source === "campaign" || source === "api") {
+    return "automation" as const;
+  }
+  return Boolean(message.userId) ? "human" as const : "automation" as const;
+}
+
+async function persistMessage(rawValue: unknown): Promise<string | null> {
+  const msg = asRecord(rawValue);
+  const messageId = asString(msg.id);
+  const ghlContactId = asString(msg.contactId);
+  const conversationProviderId = asString(msg.conversationId);
+  const occurredAt = asDate(msg.dateAdded) ?? asDate(msg.createdAt);
+
+  if (!messageId || !ghlContactId || !occurredAt) return null;
+
+  const contact = await ensureContactByProviderId(ghlContactId);
+  if (!contact) return null;
+
+  let conversationId: string | null = null;
+  if (conversationProviderId) {
     const [conversation] = await db.insert(schema.conversations).values({
-      providerId,
+      providerId: conversationProviderId,
       contactId: contact.id,
-      raw
+      raw: {
+        id: conversationProviderId,
+        contactId: ghlContactId,
+        locationId: asString(msg.locationId) ?? ghl.locationId
+      }
     }).onConflictDoUpdate({
       target: schema.conversations.providerId,
-      set: { raw, updatedAt: new Date() }
+      set: {
+        raw: {
+          id: conversationProviderId,
+          contactId: ghlContactId,
+          locationId: asString(msg.locationId) ?? ghl.locationId
+        },
+        updatedAt: new Date()
+      }
+    }).returning();
+    conversationId = conversation?.id ?? null;
+  }
+
+  const messageType =
+    asString(msg.messageType) ??
+    (typeof msg.type === "number" ? String(msg.type) : "unknown");
+  const messageDirection = asString(msg.direction) === "inbound" ? "inbound" : "outbound";
+  const actor = messageDirection === "inbound"
+    ? "customer"
+    : classifyOutboundActor(msg);
+
+  await db.insert(schema.messages).values({
+    providerId: messageId,
+    conversationId,
+    contactId: contact.id,
+    type: messageType,
+    direction: messageDirection,
+    actorType: actor,
+    body: asString(msg.body) ?? asString(msg.message) ?? null,
+    occurredAt,
+    raw: msg
+  }).onConflictDoUpdate({
+    target: schema.messages.providerId,
+    set: {
+      conversationId,
+      body: asString(msg.body) ?? asString(msg.message) ?? null,
+      direction: messageDirection,
+      actorType: actor,
+      raw: msg,
+      updatedAt: new Date()
+    }
+  });
+
+  if (messageType.toLowerCase().includes("call")) {
+    const meta = asRecord(msg.meta);
+    const durationRaw = msg.duration ?? meta.callDuration;
+    const duration = typeof durationRaw === "number" ? durationRaw : Number(durationRaw);
+    const callStatus = asString(meta.callStatus) ?? asString(msg.status) ?? null;
+    const normalizedCallStatus = callStatus?.toLowerCase() ?? "";
+
+    const [call] = await db.insert(schema.calls).values({
+      providerMessageId: messageId,
+      contactId: contact.id,
+      direction: messageDirection,
+      actorType: actor,
+      startedAt: occurredAt,
+      durationSeconds: Number.isFinite(duration) ? Math.round(duration) : null,
+      status: callStatus,
+      answered: ["completed", "connected", "answered"].includes(normalizedCallStatus),
+      raw: msg
+    }).onConflictDoUpdate({
+      target: schema.calls.providerMessageId,
+      set: {
+        direction: messageDirection,
+        actorType: actor,
+        durationSeconds: Number.isFinite(duration) ? Math.round(duration) : null,
+        status: callStatus,
+        answered: ["completed", "connected", "answered"].includes(normalizedCallStatus),
+        raw: msg,
+        updatedAt: new Date()
+      }
     }).returning();
 
-    if (!conversation) continue;
+    if (call) {
+      const [existingTranscript] = await db.select({ id: schema.callTranscripts.id })
+        .from(schema.callTranscripts)
+        .where(eq(schema.callTranscripts.callId, call.id))
+        .limit(1);
 
-    const messagePayload = await ghl.getConversationMessages(providerId);
-    const messages = findArray(messagePayload, "messages");
-
-    for (const item of messages) {
-      const msg = asRecord(item);
-      const messageId = asString(msg.id);
-      if (!messageId) continue;
-
-      const messageType = asString(msg.messageType) ?? asString(msg.type) ?? "unknown";
-      const direction = asString(msg.direction) === "inbound" ? "inbound" : "outbound";
-      const occurredAt = asDate(msg.dateAdded) ?? asDate(msg.createdAt) ?? new Date();
-
-      // Outbound messages with a user id are treated as human. Other outbound
-      // messages stay classified as automation so an autoresponder cannot make
-      // a lead count as "human contacted".
-      const actor = direction === "inbound"
-        ? "customer"
-        : (Boolean(msg.userId) ? "human" : "automation");
-
-      await db.insert(schema.messages).values({
-        providerId: messageId,
-        conversationId: conversation.id,
-        contactId: contact.id,
-        type: messageType,
-        direction,
-        actorType: actor,
-        body: asString(msg.body) ?? asString(msg.message) ?? null,
-        occurredAt,
-        raw: msg
-      }).onConflictDoUpdate({
-        target: schema.messages.providerId,
-        set: {
-          body: asString(msg.body) ?? asString(msg.message) ?? null,
-          raw: msg,
-          updatedAt: new Date()
-        }
-      });
-
-      if (messageType.toLowerCase().includes("call")) {
-        const [call] = await db.insert(schema.calls).values({
-          providerMessageId: messageId,
-          contactId: contact.id,
-          direction,
-          actorType: actor,
-          startedAt: occurredAt,
-          durationSeconds: typeof msg.duration === "number" ? msg.duration : null,
-          status: asString(msg.status) ?? null,
-          answered: asString(msg.status)?.toLowerCase() === "completed",
-          raw: msg
-        }).onConflictDoUpdate({
-          target: schema.calls.providerMessageId,
-          set: {
-            status: asString(msg.status) ?? null,
-            raw: msg,
-            updatedAt: new Date()
-          }
-        }).returning();
-
-        if (call) {
-          const transcript = await ghl.getCallTranscript(messageId).catch(() => null);
-          if (transcript) await persistTranscript(call.id, transcript);
-        }
+      if (!existingTranscript) {
+        const transcript = await ghl.getCallTranscript(messageId).catch(() => null);
+        if (transcript) await persistTranscript(call.id, transcript);
       }
     }
+  }
 
-    await recomputeLeadState(contact.id);
+  return contact.id;
+}
+
+async function syncMessageChannel(channel?: "Email") {
+  const cursorKey = channel
+    ? "ghl.messages.email.last_seen_at"
+    : "ghl.messages.non_email.last_seen_at";
+  const stored = await getSyncCursor(cursorKey);
+  const storedDate = stored ? asDate(stored) : undefined;
+  const overlapStart = storedDate
+    ? new Date(storedDate.valueOf() - 5 * 60_000).toISOString()
+    : undefined;
+
+  let cursor: string | undefined;
+  let maxSeen = storedDate;
+  const touchedContacts = new Set<string>();
+
+  for (let page = 0; page < 500; page++) {
+    const payload = await ghl.exportMessages({
+      ...(channel ? { channel } : {}),
+      ...(overlapStart ? { startDate: overlapStart } : {}),
+      ...(cursor ? { cursor } : {})
+    });
+    const rows = findArray(payload, "messages");
+
+    for (const row of rows) {
+      const record = asRecord(row);
+      const occurredAt = asDate(record.dateAdded) ?? asDate(record.createdAt);
+      if (occurredAt && (!maxSeen || occurredAt > maxSeen)) maxSeen = occurredAt;
+
+      const contactId = await persistMessage(row);
+      if (contactId) touchedContacts.add(contactId);
+    }
+
+    const nextCursor = asString(payload.nextCursor);
+    if (!nextCursor || nextCursor === cursor) break;
+    cursor = nextCursor;
+  }
+
+  if (maxSeen) await setSyncCursor(cursorKey, maxSeen.toISOString());
+  return touchedContacts;
+}
+
+async function syncConversationsAndCalls() {
+  const [nonEmailContacts, emailContacts] = await Promise.all([
+    syncMessageChannel(),
+    syncMessageChannel("Email")
+  ]);
+
+  const touchedContacts = new Set<string>([
+    ...nonEmailContacts,
+    ...emailContacts
+  ]);
+
+  for (const contactId of touchedContacts) {
+    await recomputeLeadState(contactId);
   }
 }
 
@@ -290,14 +404,21 @@ async function syncAppointments() {
       const contact = await localContactByProviderId(ghlContactId);
       if (!contact) continue;
 
-      // Actual GHL payloads commonly include dateAdded/createdAt even though the
-      // short docs example omits them. If absent, preserve the uncertainty by
-      // using the start timestamp and retaining the raw payload for later repair.
+      // Booking creation time and appointment start time are different facts.
+      // Never substitute startAt when GHL omits the creation timestamp; doing so
+      // would make recent-booking queries return false positives.
+      const [existingAppointment] = await db.select({
+        appointmentCreatedAt: schema.appointments.appointmentCreatedAt
+      }).from(schema.appointments)
+        .where(eq(schema.appointments.providerId, providerId))
+        .limit(1);
+
       const appointmentCreatedAt =
         asDate(raw.dateAdded) ??
         asDate(raw.createdAt) ??
         asDate(raw.appointmentCreatedAt) ??
-        startAt;
+        existingAppointment?.appointmentCreatedAt ??
+        null;
 
       const values = {
         providerId,
@@ -346,8 +467,9 @@ async function processWebhookEvents() {
       }).where(eq(schema.webhookEvents.id, event.id));
     } catch (error) {
       console.error("webhook processing failed", event.id, error);
+      const attempts = event.retryCount + 1;
       await db.update(schema.webhookEvents).set({
-        processingStatus: "failed"
+        processingStatus: attempts < 5 ? "pending" : "failed"
       }).where(eq(schema.webhookEvents.id, event.id));
     }
   }
