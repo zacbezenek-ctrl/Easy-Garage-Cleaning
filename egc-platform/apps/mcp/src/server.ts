@@ -2,7 +2,7 @@ import { createMcpExpressApp } from "@modelcontextprotocol/express";
 import { toNodeHandler } from "@modelcontextprotocol/node";
 import { createMcpHandler, McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod/v4";
-import { eq, desc } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, lt, sql } from "drizzle-orm";
 import { getDb, schema } from "@egc/database";
 import {
   callTranscriptsForContact,
@@ -15,6 +15,64 @@ function textResult(value: unknown) {
   return {
     content: [{ type: "text" as const, text: JSON.stringify(value, null, 2) }],
     structuredContent: { result: value }
+  };
+}
+
+function timeZoneDateParts(date: Date, timeZone: string) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23"
+  }).formatToParts(date);
+
+  const value = (type: Intl.DateTimeFormatPartTypes) =>
+    Number(parts.find((part) => part.type === type)?.value);
+
+  return {
+    year: value("year"),
+    month: value("month"),
+    day: value("day"),
+    hour: value("hour"),
+    minute: value("minute"),
+    second: value("second")
+  };
+}
+
+function offsetMs(date: Date, timeZone: string) {
+  const p = timeZoneDateParts(date, timeZone);
+  return Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second) - date.valueOf();
+}
+
+function zonedMidnight(year: number, month: number, day: number, timeZone: string) {
+  const wallClockAsUtc = Date.UTC(year, month - 1, day, 0, 0, 0);
+  let guess = new Date(wallClockAsUtc);
+  for (let attempt = 0; attempt < 2; attempt++) {
+    guess = new Date(wallClockAsUtc - offsetMs(guess, timeZone));
+  }
+  return guess;
+}
+
+function tomorrowBounds(timeZone = "America/Denver") {
+  const now = timeZoneDateParts(new Date(), timeZone);
+  const calendarTomorrow = new Date(Date.UTC(now.year, now.month - 1, now.day + 1));
+  const year = calendarTomorrow.getUTCFullYear();
+  const month = calendarTomorrow.getUTCMonth() + 1;
+  const day = calendarTomorrow.getUTCDate();
+  const nextCalendarDay = new Date(Date.UTC(year, month - 1, day + 1));
+
+  return {
+    start: zonedMidnight(year, month, day, timeZone),
+    end: zonedMidnight(
+      nextCalendarDay.getUTCFullYear(),
+      nextCalendarDay.getUTCMonth() + 1,
+      nextCalendarDay.getUTCDate(),
+      timeZone
+    )
   };
 }
 
@@ -127,6 +185,351 @@ function buildServer() {
     const [contact] = await db.select().from(schema.contacts).where(eq(schema.contacts.id, job.contactId)).limit(1);
     const notes = await db.select().from(schema.jobNotes).where(eq(schema.jobNotes.jobId, jobId)).orderBy(schema.jobNotes.createdAt);
     return textResult({ job, customer: contact ?? null, notes });
+  });
+
+
+  server.registerTool("egc.tomorrows_jobs", {
+    description: "Return tomorrow's scheduled appointments enriched with the latest EGC job scope for each customer.",
+    inputSchema: z.object({
+      timeZone: z.string().min(1).default("America/Denver")
+    }),
+    annotations: { readOnlyHint: true, destructiveHint: false }
+  }, async ({ timeZone }) => {
+    const db = getDb();
+    const { start, end } = tomorrowBounds(timeZone);
+    const appointments = await db.select({
+      appointmentId: schema.appointments.id,
+      providerId: schema.appointments.providerId,
+      contactId: schema.contacts.id,
+      customerName: schema.contacts.name,
+      phone: schema.contacts.phone,
+      email: schema.contacts.email,
+      startAt: schema.appointments.appointmentStartAt,
+      endAt: schema.appointments.appointmentEndAt,
+      status: schema.appointments.status,
+      title: schema.appointments.title,
+      notes: schema.appointments.notes,
+      assignedUserId: schema.appointments.assignedUserId
+    })
+      .from(schema.appointments)
+      .innerJoin(schema.contacts, eq(schema.appointments.contactId, schema.contacts.id))
+      .where(and(
+        gte(schema.appointments.appointmentStartAt, start),
+        lt(schema.appointments.appointmentStartAt, end),
+        inArray(schema.appointments.status, ["new", "confirmed", "showed"])
+      ))
+      .orderBy(schema.appointments.appointmentStartAt);
+
+    const rows = await Promise.all(appointments.map(async (appointment) => {
+      const [job] = await db.select().from(schema.jobs)
+        .where(eq(schema.jobs.contactId, appointment.contactId))
+        .orderBy(desc(schema.jobs.updatedAt))
+        .limit(1);
+      const notes = job
+        ? await db.select().from(schema.jobNotes)
+            .where(eq(schema.jobNotes.jobId, job.id))
+            .orderBy(schema.jobNotes.createdAt)
+        : [];
+      return { ...appointment, job: job ?? null, jobNotes: notes };
+    }));
+
+    return textResult({ timeZone, start, end, appointments: rows });
+  });
+
+  server.registerTool("egc.unanswered_calls", {
+    description: "Return recent inbound calls that were not answered, with customer identity.",
+    inputSchema: z.object({
+      days: z.number().int().min(1).max(90).default(7)
+    }),
+    annotations: { readOnlyHint: true, destructiveHint: false }
+  }, async ({ days }) => {
+    const db = getDb();
+    const since = new Date(Date.now() - days * 86_400_000);
+    const rows = await db.select({
+      callId: schema.calls.id,
+      providerMessageId: schema.calls.providerMessageId,
+      customerName: schema.contacts.name,
+      contactId: schema.contacts.id,
+      phone: schema.contacts.phone,
+      startedAt: schema.calls.startedAt,
+      durationSeconds: schema.calls.durationSeconds,
+      status: schema.calls.status,
+      answered: schema.calls.answered
+    })
+      .from(schema.calls)
+      .innerJoin(schema.contacts, eq(schema.calls.contactId, schema.contacts.id))
+      .where(and(
+        eq(schema.calls.direction, "inbound"),
+        eq(schema.calls.answered, false),
+        gte(schema.calls.startedAt, since)
+      ))
+      .orderBy(desc(schema.calls.startedAt));
+    return textResult(rows);
+  });
+
+  server.registerTool("egc.stale_opportunities", {
+    description: "Return open opportunities that have not been updated in the requested number of days.",
+    inputSchema: z.object({
+      staleDays: z.number().int().min(1).max(365).default(7)
+    }),
+    annotations: { readOnlyHint: true, destructiveHint: false }
+  }, async ({ staleDays }) => {
+    const db = getDb();
+    const cutoff = new Date(Date.now() - staleDays * 86_400_000);
+    const rows = await db.select({
+      opportunityId: schema.opportunities.id,
+      providerId: schema.opportunities.providerId,
+      customerName: schema.contacts.name,
+      contactId: schema.contacts.id,
+      phone: schema.contacts.phone,
+      email: schema.contacts.email,
+      pipelineId: schema.opportunities.pipelineId,
+      pipelineStageId: schema.opportunities.pipelineStageId,
+      monetaryValueCents: schema.opportunities.monetaryValueCents,
+      assignedUserId: schema.opportunities.assignedUserId,
+      source: schema.opportunities.source,
+      providerUpdatedAt: schema.opportunities.providerUpdatedAt,
+      updatedAt: schema.opportunities.updatedAt
+    })
+      .from(schema.opportunities)
+      .innerJoin(schema.contacts, eq(schema.opportunities.contactId, schema.contacts.id))
+      .where(and(
+        eq(schema.opportunities.status, "open"),
+        lt(schema.opportunities.updatedAt, cutoff)
+      ))
+      .orderBy(schema.opportunities.updatedAt);
+    return textResult(rows);
+  });
+
+  server.registerTool("egc.sales_pipeline", {
+    description: "Return the current opportunity pipeline with customer identity and assignment.",
+    inputSchema: z.object({
+      status: z.enum(["open", "won", "lost", "abandoned", "all"]).default("open"),
+      limit: z.number().int().min(1).max(500).default(200)
+    }),
+    annotations: { readOnlyHint: true, destructiveHint: false }
+  }, async ({ status, limit }) => {
+    const db = getDb();
+    const base = db.select({
+      opportunityId: schema.opportunities.id,
+      providerId: schema.opportunities.providerId,
+      customerName: schema.contacts.name,
+      contactId: schema.contacts.id,
+      phone: schema.contacts.phone,
+      email: schema.contacts.email,
+      status: schema.opportunities.status,
+      pipelineId: schema.opportunities.pipelineId,
+      pipelineStageId: schema.opportunities.pipelineStageId,
+      monetaryValueCents: schema.opportunities.monetaryValueCents,
+      assignedUserId: schema.opportunities.assignedUserId,
+      source: schema.opportunities.source,
+      updatedAt: schema.opportunities.updatedAt
+    })
+      .from(schema.opportunities)
+      .innerJoin(schema.contacts, eq(schema.opportunities.contactId, schema.contacts.id));
+
+    const rows = status === "all"
+      ? await base.orderBy(desc(schema.opportunities.updatedAt)).limit(limit)
+      : await base.where(eq(schema.opportunities.status, status))
+          .orderBy(desc(schema.opportunities.updatedAt))
+          .limit(limit);
+
+    return textResult(rows);
+  });
+
+  server.registerTool("egc.jobs_by_status", {
+    description: "Return job counts grouped by EGC job status.",
+    inputSchema: z.object({}),
+    annotations: { readOnlyHint: true, destructiveHint: false }
+  }, async () => {
+    const db = getDb();
+    const rows = await db.select({
+      status: schema.jobs.status,
+      count: sql<number>`count(*)::int`
+    }).from(schema.jobs).groupBy(schema.jobs.status).orderBy(schema.jobs.status);
+    return textResult(rows);
+  });
+
+  server.registerTool("egc.lead_conversion_funnel", {
+    description: "Return current lead counts by canonical EGC lead state.",
+    inputSchema: z.object({
+      days: z.number().int().min(1).max(365).default(30)
+    }),
+    annotations: { readOnlyHint: true, destructiveHint: false }
+  }, async ({ days }) => {
+    const db = getDb();
+    const since = new Date(Date.now() - days * 86_400_000);
+    const rows = await db.select({
+      state: schema.leads.currentState,
+      count: sql<number>`count(*)::int`
+    })
+      .from(schema.leads)
+      .where(gte(schema.leads.createdAt, since))
+      .groupBy(schema.leads.currentState);
+
+    const total = rows.reduce((sum, row) => sum + Number(row.count), 0);
+    return textResult({
+      days,
+      total,
+      states: rows,
+      bookedRate: total
+        ? Number(rows.find((row) => row.state === "BOOKED")?.count ?? 0) / total
+        : 0
+    });
+  });
+
+  server.registerTool("egc.revenue_summary", {
+    description: "Return won-opportunity value and locally priced job value for the requested lookback window.",
+    inputSchema: z.object({
+      days: z.number().int().min(1).max(365).default(30)
+    }),
+    annotations: { readOnlyHint: true, destructiveHint: false }
+  }, async ({ days }) => {
+    const db = getDb();
+    const since = new Date(Date.now() - days * 86_400_000);
+    const [wonRows, jobRows] = await Promise.all([
+      db.select({
+        monetaryValueCents: schema.opportunities.monetaryValueCents
+      }).from(schema.opportunities).where(and(
+        eq(schema.opportunities.status, "won"),
+        gte(schema.opportunities.updatedAt, since)
+      )),
+      db.select({
+        priceCents: schema.jobs.priceCents,
+        status: schema.jobs.status
+      }).from(schema.jobs).where(gte(schema.jobs.updatedAt, since))
+    ]);
+
+    const wonOpportunityValueCents = wonRows.reduce(
+      (sum, row) => sum + (row.monetaryValueCents ?? 0),
+      0
+    );
+    const locallyPricedJobValueCents = jobRows.reduce(
+      (sum, row) => sum + (row.priceCents ?? 0),
+      0
+    );
+
+    return textResult({
+      days,
+      wonOpportunityCount: wonRows.length,
+      wonOpportunityValueCents,
+      locallyPricedJobCount: jobRows.filter((row) => row.priceCents !== null).length,
+      locallyPricedJobValueCents,
+      note: "Opportunity value comes from GHL. Local job pricing is only complete for jobs whose price has been populated."
+    });
+  });
+
+  server.registerTool("egc.sales_rep_performance", {
+    description: "Return lead assignment and booking counts by GHL user ID. This reports observed operational counts, not a subjective ranking.",
+    inputSchema: z.object({
+      days: z.number().int().min(1).max(365).default(30)
+    }),
+    annotations: { readOnlyHint: true, destructiveHint: false }
+  }, async ({ days }) => {
+    const db = getDb();
+    const since = new Date(Date.now() - days * 86_400_000);
+    const [leadRows, bookingRows, wonRows] = await Promise.all([
+      db.select({ assignedUserId: schema.leads.assignedUserId })
+        .from(schema.leads)
+        .where(gte(schema.leads.createdAt, since)),
+      db.select({ assignedUserId: schema.appointments.assignedUserId })
+        .from(schema.appointments)
+        .where(and(
+          gte(schema.appointments.appointmentCreatedAt, since),
+          inArray(schema.appointments.status, ["new", "confirmed", "showed"])
+        )),
+      db.select({ assignedUserId: schema.opportunities.assignedUserId })
+        .from(schema.opportunities)
+        .where(and(
+          eq(schema.opportunities.status, "won"),
+          gte(schema.opportunities.updatedAt, since)
+        ))
+    ]);
+
+    const metrics = new Map<string, { assignedLeads: number; bookings: number; wonOpportunities: number }>();
+    const ensure = (id: string | null) => {
+      const key = id ?? "unassigned";
+      const current = metrics.get(key) ?? { assignedLeads: 0, bookings: 0, wonOpportunities: 0 };
+      metrics.set(key, current);
+      return current;
+    };
+    for (const row of leadRows) ensure(row.assignedUserId).assignedLeads += 1;
+    for (const row of bookingRows) ensure(row.assignedUserId).bookings += 1;
+    for (const row of wonRows) ensure(row.assignedUserId).wonOpportunities += 1;
+
+    return textResult({
+      days,
+      reps: [...metrics.entries()].map(([assignedUserId, values]) => ({
+        assignedUserId,
+        ...values,
+        bookingRate: values.assignedLeads ? values.bookings / values.assignedLeads : null,
+        wonOpportunityRate: values.assignedLeads ? values.wonOpportunities / values.assignedLeads : null
+      }))
+    });
+  });
+
+  server.registerTool("egc.addon_attach_rates", {
+    description: "Return observed add-on counts and attachment rates across locally stored jobs.",
+    inputSchema: z.object({
+      days: z.number().int().min(1).max(365).default(90)
+    }),
+    annotations: { readOnlyHint: true, destructiveHint: false }
+  }, async ({ days }) => {
+    const db = getDb();
+    const since = new Date(Date.now() - days * 86_400_000);
+    const jobs = await db.select({
+      id: schema.jobs.id,
+      addOns: schema.jobs.addOns
+    }).from(schema.jobs).where(gte(schema.jobs.createdAt, since));
+
+    const counts = new Map<string, number>();
+    let jobsWithAddOn = 0;
+    for (const job of jobs) {
+      const unique = [...new Set(job.addOns.map((value) => value.trim()).filter(Boolean))];
+      if (unique.length) jobsWithAddOn += 1;
+      for (const addOn of unique) counts.set(addOn, (counts.get(addOn) ?? 0) + 1);
+    }
+
+    return textResult({
+      days,
+      jobs: jobs.length,
+      jobsWithAddOn,
+      anyAddOnAttachRate: jobs.length ? jobsWithAddOn / jobs.length : 0,
+      addOns: [...counts.entries()]
+        .map(([addOn, count]) => ({
+          addOn,
+          count,
+          attachRate: jobs.length ? count / jobs.length : 0
+        }))
+        .sort((a, b) => b.count - a.count)
+    });
+  });
+
+  server.registerTool("egc.walkthrough_conversion", {
+    description: "Return current walkthrough approval/job-creation completion metrics. This is not yet a sales close-rate metric.",
+    inputSchema: z.object({
+      days: z.number().int().min(1).max(365).default(90)
+    }),
+    annotations: { readOnlyHint: true, destructiveHint: false }
+  }, async ({ days }) => {
+    const db = getDb();
+    const since = new Date(Date.now() - days * 86_400_000);
+    const rows = await db.select({
+      status: schema.walkthroughs.status,
+      jobId: schema.walkthroughs.jobId
+    }).from(schema.walkthroughs).where(gte(schema.walkthroughs.createdAt, since));
+
+    const approved = rows.filter((row) => row.status === "approved").length;
+    const withJob = rows.filter((row) => row.jobId !== null).length;
+    return textResult({
+      days,
+      walkthroughs: rows.length,
+      approved,
+      withJob,
+      approvalRate: rows.length ? approved / rows.length : 0,
+      jobCreationRate: rows.length ? withJob / rows.length : 0,
+      note: "This measures the voice-walkthrough workflow. Sales walkthrough-to-job close rate requires mapped sales appointment types."
+    });
   });
 
   return server;
