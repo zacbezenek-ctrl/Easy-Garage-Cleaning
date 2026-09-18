@@ -152,6 +152,31 @@ export class GhlClient {
     );
   }
 
+  sendMessage(input: {
+    type: "SMS" | "Email";
+    contactId: string;
+    message?: string;
+    html?: string;
+    subject?: string;
+    fromNumber?: string;
+    toNumber?: string;
+    emailFrom?: string;
+    emailTo?: string;
+    replyMessageId?: string;
+  }) {
+    return this.request<Record<string, unknown>>(
+      "/conversations/messages",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...input,
+          status: "pending"
+        })
+      }
+    );
+  }
+
   exportMessages(params: Query = {}) {
     return this.request<Record<string, unknown>>(
       "/conversations/messages/export",
@@ -264,6 +289,17 @@ export class GhlClient {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(input)
+      }
+    );
+  }
+
+  deleteCalendarEvent(eventId: string) {
+    return this.request<Record<string, unknown>>(
+      `/calendars/events/${eventId}`,
+      {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({})
       }
     );
   }
