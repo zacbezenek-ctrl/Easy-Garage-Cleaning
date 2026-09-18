@@ -893,11 +893,14 @@ const app = createMcpExpressApp({
 const handler = toNodeHandler(createMcpHandler(buildServer));
 const oauth = registerOauthRoutes(app);
 
-app.get("/health", (_req, res) => res.json({
-  ok: true,
-  service: "egc-mcp",
-  oauth: true
-}));
+app.get("/health", async (_req, res) => {
+  try {
+    await getDb().select({ id: schema.contacts.id }).from(schema.contacts).limit(1);
+    res.json({ ok: true, service: "egc-mcp", oauth: true, database: "ready" });
+  } catch {
+    res.status(503).json({ ok: false, service: "egc-mcp", oauth: true, database: "not_ready" });
+  }
+});
 
 app.all(
   "/mcp",
