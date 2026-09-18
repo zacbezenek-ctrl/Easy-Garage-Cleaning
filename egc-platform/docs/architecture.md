@@ -2,14 +2,13 @@
 
 ```
 GoHighLevel
-   |
-   | signed webhooks + reconciliation
+   ^
+   | v3 reads/writes + signed webhooks + reconciliation
    v
 EGC API / workers
    |
    +--> Postgres (canonical normalized data)
-   +--> object storage (audio / images)
-   +--> Redis (queue / locks)
+   +--> persistent audio storage
    |
    +--> EGC Portal
    +--> EGC MCP
@@ -17,18 +16,22 @@ EGC API / workers
 
 ## Design rules
 
-1. Postgres is the operational system of record. GHL remains the CRM and communications provider.
+1. Postgres is the canonical EGC operational layer. GHL remains the CRM and communications provider.
 2. Webhooks provide low-latency updates; reconciliation repairs missed events.
 3. Every provider object keeps its provider ID and raw payload for debugging.
 4. Booking queries use `appointment_created_at`, not appointment start time.
 5. Automated outreach and human outreach are stored separately.
 6. Call transcripts are persisted locally so analytical queries never depend on a live GHL call.
-7. Voice walkthrough extraction is a draft until a human approves it.
-8. MCP is read-only in V1.
+7. Voice walkthrough extraction remains a draft until approved.
+8. MCP permissions are split into `egc:read` and `egc:write`.
+9. MCP writes are limited to operational CRM/job actions; payment/refund/delete/send-message actions are intentionally excluded.
+10. GHL mutations are mirrored into Postgres immediately and audited. Periodic reconciliation remains the repair path.
 
 ## HighLevel API
 
-The client uses `https://services.leadconnectorhq.com` with HighLevel's current `Version: v3` API header. Recording retrieval returns WAV bytes; transcription uses the separate v3 transcription route.
+The client uses `https://services.leadconnectorhq.com` with HighLevel's current `Version: v3` header.
+
+The GHL client supports current contact upsert/update/tag operations, opportunity create/update and pipeline discovery, appointment create/update/calendar discovery, call recording/transcription, notes, and synchronization reads.
 
 ## Webhook verification
 
