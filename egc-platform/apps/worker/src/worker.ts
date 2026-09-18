@@ -532,14 +532,16 @@ async function syncAppointments() {
   }
 }
 
-async function ingestKnownWebhook(payload: Record<string, unknown>) {
+async function ingestKnownWebhook(payload: Record<string, unknown>): Promise<boolean> {
   const eventType = asString(payload.type) ?? asString(payload.eventType);
   if (eventType === "AppointmentCreate" || eventType === "AppointmentUpdate") {
     const appointment = asRecord(payload.appointment);
     if (Object.keys(appointment).length > 0) {
       await upsertAppointment(appointment, asString(appointment.calendarId));
+      return true;
     }
   }
+  return false;
 }
 
 async function processWebhookEvents() {
@@ -548,6 +550,8 @@ async function processWebhookEvents() {
     .orderBy(asc(schema.webhookEvents.receivedAt))
     .limit(50);
 
+  const repairEvents: typeof events = [];
+
   for (const event of events) {
     try {
       await db.update(schema.webhookEvents).set({
@@ -555,8 +559,11 @@ async function processWebhookEvents() {
         retryCount: event.retryCount + 1
       }).where(eq(schema.webhookEvents.id, event.id));
 
-      await ingestKnownWebhook(event.payload);
-      await reconcile();
+      const handledDirectly = await ingestKnownWebhook(event.payload);
+      if (!handledDirectly) {
+        repairEvents.push(event);
+        continue;
+      }
 
       await db.update(schema.webhookEvents).set({
         processingStatus: "processed",
@@ -564,6 +571,28 @@ async function processWebhookEvents() {
       }).where(eq(schema.webhookEvents.id, event.id));
     } catch (error) {
       console.error("webhook processing failed", event.id, error);
+      const attempts = event.retryCount + 1;
+      await db.update(schema.webhookEvents).set({
+        processingStatus: attempts < 5 ? "pending" : "failed"
+      }).where(eq(schema.webhookEvents.id, event.id));
+    }
+  }
+
+  if (!repairEvents.length) return;
+
+  try {
+    // Unknown or not-yet-specialized webhook types share one reconciliation pass
+    // instead of triggering a complete GHL crawl per delivery.
+    await reconcile();
+    for (const event of repairEvents) {
+      await db.update(schema.webhookEvents).set({
+        processingStatus: "processed",
+        processedAt: new Date()
+      }).where(eq(schema.webhookEvents.id, event.id));
+    }
+  } catch (error) {
+    console.error("batched webhook reconciliation failed", error);
+    for (const event of repairEvents) {
       const attempts = event.retryCount + 1;
       await db.update(schema.webhookEvents).set({
         processingStatus: attempts < 5 ? "pending" : "failed"
