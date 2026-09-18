@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import multipart from "@fastify/multipart";
 import rawBody from "fastify-raw-body";
@@ -83,25 +83,11 @@ app.post("/webhooks/ghl", {
 
   const payload = (request.body ?? {}) as Record<string, unknown>;
   const eventType = String(payload.type ?? payload.eventType ?? "unknown");
-  const appointmentPayload =
-    payload.appointment && typeof payload.appointment === "object" && !Array.isArray(payload.appointment)
-      ? payload.appointment as Record<string, unknown>
-      : null;
-  const appointmentId =
-    appointmentPayload && typeof appointmentPayload.id === "string"
-      ? appointmentPayload.id
-      : null;
-  const appointmentVersion =
-    appointmentPayload && typeof appointmentPayload.dateUpdated === "string"
-      ? appointmentPayload.dateUpdated
-      : appointmentPayload && typeof appointmentPayload.dateAdded === "string"
-        ? appointmentPayload.dateAdded
-        : null;
+  const bodyDigest = createHash("sha256").update(raw).digest("hex");
   const providerEventId =
-    typeof payload.webhookId === "string" ? payload.webhookId :
-    typeof payload.id === "string" ? payload.id :
-    appointmentId ? `${eventType}:${appointmentId}:${appointmentVersion ?? "unknown"}` :
-    null;
+    typeof payload.webhookId === "string" && payload.webhookId.length > 0
+      ? payload.webhookId
+      : `sha256:${bodyDigest}`;
 
   const db = getDb();
 
