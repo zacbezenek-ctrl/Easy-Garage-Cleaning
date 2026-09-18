@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { computeLeadState } from "./index.js";
+import { computeLeadState, dedupeBookingsByContactAndStart } from "./index.js";
 
 describe("computeLeadState", () => {
   it("keeps do-not-contact as the highest-precedence state", () => {
@@ -72,5 +72,24 @@ describe("computeLeadState", () => {
       hasCustomerResponse: false,
       hasHumanOutreach: false
     })).toBe("NEVER_CONTACTED");
+  });
+});
+
+
+describe("dedupeBookingsByContactAndStart", () => {
+  it("collapses duplicate appointment records for the same contact and start minute", () => {
+    const start = new Date("2026-09-22T22:30:00.000Z");
+    const rows = [
+      { id: "newer", contactId: "contact-1", appointmentStartAt: start },
+      { id: "duplicate", contactId: "contact-1", appointmentStartAt: new Date(start.valueOf() + 20_000) },
+      { id: "different-contact", contactId: "contact-2", appointmentStartAt: start },
+      { id: "different-minute", contactId: "contact-1", appointmentStartAt: new Date(start.valueOf() + 61_000) }
+    ];
+
+    expect(dedupeBookingsByContactAndStart(rows).map((row) => row.id)).toEqual([
+      "newer",
+      "different-contact",
+      "different-minute"
+    ]);
   });
 });
