@@ -94,16 +94,25 @@ export async function recomputeLeadState(contactId: string): Promise<LeadState> 
     .sort((a, b) => b.valueOf() - a.valueOf())[0] ?? null;
   const lastCustomerResponseAt = customerReply?.at ?? null;
 
+  const customerRepliedAfterLatestOutreach = Boolean(
+    lastCustomerResponseAt &&
+    (
+      !lastHumanOutreachAt ||
+      lastCustomerResponseAt.valueOf() >= lastHumanOutreachAt.valueOf()
+    )
+  );
+
   const state = computeLeadState({
     doNotContact: lead.doNotContact,
     lost: Boolean(lostOpportunity),
     booked: Boolean(booking),
-    hasCustomerResponse: Boolean(lastCustomerResponseAt),
+    hasCustomerResponse: customerRepliedAfterLatestOutreach,
     hasHumanOutreach: Boolean(lastHumanOutreachAt),
     conversationActive: Boolean(
+      customerRepliedAfterLatestOutreach &&
       lastCustomerResponseAt &&
       lastHumanOutreachAt &&
-      Math.abs(lastCustomerResponseAt.valueOf() - lastHumanOutreachAt.valueOf()) < 72 * 60 * 60 * 1000
+      lastCustomerResponseAt.valueOf() - lastHumanOutreachAt.valueOf() < 72 * 60 * 60 * 1000
     )
   });
 
