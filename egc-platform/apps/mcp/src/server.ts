@@ -4,6 +4,7 @@ import { createMcpHandler, McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod/v4";
 import { and, desc, eq, gte, ilike, inArray, lt, or, sql } from "drizzle-orm";
 import { getDb, schema } from "@egc/database";
+import { oauthSecurityMetadata, registerOauthRoutes, requireMcpAuth } from "./oauth.js";
 import {
   callTranscriptsForContact,
   leadsNeedingContact,
@@ -17,6 +18,11 @@ function textResult(value: unknown) {
     structuredContent: { result: value }
   };
 }
+
+const protectedToolMetadata = {
+  ...protectedToolMetadata,
+  ...oauthSecurityMetadata()
+};
 
 function timeZoneDateParts(date: Date, timeZone: string) {
   const parts = new Intl.DateTimeFormat("en-US", {
@@ -88,7 +94,7 @@ function buildServer() {
       query: z.string().trim().max(200).default(""),
       limit: z.number().int().min(1).max(200).default(50)
     }),
-    annotations: { readOnlyHint: true, destructiveHint: false }
+    ...protectedToolMetadata
   }, async ({ query, limit }) => {
     const db = getDb();
     const base = db.select().from(schema.contacts);
@@ -105,7 +111,7 @@ function buildServer() {
   server.registerTool("contacts.get", {
     description: "Get one normalized EGC contact by internal contact ID.",
     inputSchema: z.object({ contactId: z.string().uuid() }),
-    annotations: { readOnlyHint: true, destructiveHint: false }
+    ...protectedToolMetadata
   }, async ({ contactId }) => {
     const db = getDb();
     const [row] = await db.select().from(schema.contacts)
@@ -129,7 +135,7 @@ function buildServer() {
       days: z.number().int().min(1).max(365).default(30),
       limit: z.number().int().min(1).max(500).default(100)
     }),
-    annotations: { readOnlyHint: true, destructiveHint: false }
+    ...protectedToolMetadata
   }, async ({ state, days, limit }) => {
     const db = getDb();
     const since = new Date(Date.now() - days * 86_400_000);
@@ -154,7 +160,7 @@ function buildServer() {
   server.registerTool("leads.get", {
     description: "Get one lead with its contact by internal lead ID.",
     inputSchema: z.object({ leadId: z.string().uuid() }),
-    annotations: { readOnlyHint: true, destructiveHint: false }
+    ...protectedToolMetadata
   }, async ({ leadId }) => {
     const db = getDb();
     const [row] = await db.select({
@@ -174,7 +180,7 @@ function buildServer() {
       contactId: z.string().uuid(),
       limit: z.number().int().min(1).max(200).default(50)
     }),
-    annotations: { readOnlyHint: true, destructiveHint: false }
+    ...protectedToolMetadata
   }, async ({ contactId, limit }) => {
     const db = getDb();
     return textResult(await db.select().from(schema.conversations)
@@ -189,7 +195,7 @@ function buildServer() {
       conversationId: z.string().uuid(),
       messageLimit: z.number().int().min(1).max(500).default(100)
     }),
-    annotations: { readOnlyHint: true, destructiveHint: false }
+    ...protectedToolMetadata
   }, async ({ conversationId, messageLimit }) => {
     const db = getDb();
     const [conversation] = await db.select().from(schema.conversations)
@@ -211,7 +217,7 @@ function buildServer() {
       days: z.number().int().min(1).max(365).default(30),
       limit: z.number().int().min(1).max(500).default(100)
     }),
-    annotations: { readOnlyHint: true, destructiveHint: false }
+    ...protectedToolMetadata
   }, async ({ contactId, days, limit }) => {
     const db = getDb();
     const since = new Date(Date.now() - days * 86_400_000);
@@ -236,7 +242,7 @@ function buildServer() {
   server.registerTool("calls.get", {
     description: "Get one call and its persisted transcript.",
     inputSchema: z.object({ callId: z.string().uuid() }),
-    annotations: { readOnlyHint: true, destructiveHint: false }
+    ...protectedToolMetadata
   }, async ({ callId }) => {
     const db = getDb();
     const [call] = await db.select().from(schema.calls)
@@ -256,7 +262,7 @@ function buildServer() {
       status: z.string().max(50).optional(),
       limit: z.number().int().min(1).max(500).default(100)
     }),
-    annotations: { readOnlyHint: true, destructiveHint: false }
+    ...protectedToolMetadata
   }, async ({ contactId, status, limit }) => {
     const db = getDb();
     const conditions = [
@@ -277,7 +283,7 @@ function buildServer() {
   server.registerTool("opportunities.get", {
     description: "Get one normalized opportunity by internal ID.",
     inputSchema: z.object({ opportunityId: z.string().uuid() }),
-    annotations: { readOnlyHint: true, destructiveHint: false }
+    ...protectedToolMetadata
   }, async ({ opportunityId }) => {
     const db = getDb();
     const [row] = await db.select().from(schema.opportunities)
@@ -294,7 +300,7 @@ function buildServer() {
       daysFuture: z.number().int().min(0).max(730).default(90),
       limit: z.number().int().min(1).max(500).default(200)
     }),
-    annotations: { readOnlyHint: true, destructiveHint: false }
+    ...protectedToolMetadata
   }, async ({ contactId, daysPast, daysFuture, limit }) => {
     const db = getDb();
     const start = new Date(Date.now() - daysPast * 86_400_000);
@@ -321,7 +327,7 @@ function buildServer() {
       status: z.string().max(80).optional(),
       limit: z.number().int().min(1).max(500).default(100)
     }),
-    annotations: { readOnlyHint: true, destructiveHint: false }
+    ...protectedToolMetadata
   }, async ({ contactId, status, limit }) => {
     const db = getDb();
     const conditions = [
@@ -342,7 +348,7 @@ function buildServer() {
   server.registerTool("jobs.get", {
     description: "Get one raw normalized EGC job by internal ID.",
     inputSchema: z.object({ jobId: z.string().uuid() }),
-    annotations: { readOnlyHint: true, destructiveHint: false }
+    ...protectedToolMetadata
   }, async ({ jobId }) => {
     const db = getDb();
     const [row] = await db.select().from(schema.jobs)
@@ -358,7 +364,7 @@ function buildServer() {
       status: z.string().max(80).optional(),
       limit: z.number().int().min(1).max(500).default(100)
     }),
-    annotations: { readOnlyHint: true, destructiveHint: false }
+    ...protectedToolMetadata
   }, async ({ contactId, status, limit }) => {
     const db = getDb();
     const conditions = [
@@ -379,7 +385,7 @@ function buildServer() {
   server.registerTool("walkthroughs.get", {
     description: "Get one voice walkthrough, including reviewed extraction.",
     inputSchema: z.object({ walkthroughId: z.string().uuid() }),
-    annotations: { readOnlyHint: true, destructiveHint: false }
+    ...protectedToolMetadata
   }, async ({ walkthroughId }) => {
     const db = getDb();
     const [row] = await db.select().from(schema.walkthroughs)
@@ -391,7 +397,7 @@ function buildServer() {
   server.registerTool("walkthroughs.transcript", {
     description: "Return the transcript for one voice walkthrough.",
     inputSchema: z.object({ walkthroughId: z.string().uuid() }),
-    annotations: { readOnlyHint: true, destructiveHint: false }
+    ...protectedToolMetadata
   }, async ({ walkthroughId }) => {
     const db = getDb();
     const [row] = await db.select({
@@ -407,13 +413,13 @@ function buildServer() {
   server.registerTool("egc.leads_needing_contact", {
     description: "Return recent leads that still need human contact or human follow-up.",
     inputSchema: z.object({ days: z.number().int().min(1).max(90).default(3) }),
-    annotations: { readOnlyHint: true, destructiveHint: false }
+    ...protectedToolMetadata
   }, async ({ days }) => textResult(await leadsNeedingContact(days)));
 
   server.registerTool("egc.followups_due", {
     description: "Return recent leads that currently require human follow-up, with an explicit reason.",
     inputSchema: z.object({ days: z.number().int().min(1).max(90).default(3) }),
-    annotations: { readOnlyHint: true, destructiveHint: false }
+    ...protectedToolMetadata
   }, async ({ days }) => {
     const rows = await leadsNeedingContact(days);
     return textResult(rows.map((row) => ({
@@ -427,13 +433,13 @@ function buildServer() {
   server.registerTool("egc.leads_not_responding", {
     description: "Return recent leads that received human outreach but have never replied.",
     inputSchema: z.object({ days: z.number().int().min(1).max(90).default(3) }),
-    annotations: { readOnlyHint: true, destructiveHint: false }
+    ...protectedToolMetadata
   }, async ({ days }) => textResult(await leadsNotResponding(days)));
 
   server.registerTool("egc.recent_bookings", {
     description: "Return bookings created in the requested lookback window, enriched with job scope, opportunity context, recent messages, and call transcripts. Filters on booking creation time, not appointment time.",
     inputSchema: z.object({ days: z.number().int().min(1).max(90).default(3) }),
-    annotations: { readOnlyHint: true, destructiveHint: false }
+    ...protectedToolMetadata
   }, async ({ days }) => {
     const db = getDb();
     const bookings = await recentBookings(days);
@@ -489,13 +495,13 @@ function buildServer() {
       contactId: z.string().uuid(),
       days: z.number().int().min(1).max(365).default(30)
     }),
-    annotations: { readOnlyHint: true, destructiveHint: false }
+    ...protectedToolMetadata
   }, async ({ contactId, days }) => textResult(await callTranscriptsForContact(contactId, days)));
 
   server.registerTool("egc.customer_history", {
     description: "Return a unified read-only history for one customer/contact.",
     inputSchema: z.object({ contactId: z.string().uuid() }),
-    annotations: { readOnlyHint: true, destructiveHint: false }
+    ...protectedToolMetadata
   }, async ({ contactId }) => {
     const db = getDb();
     const [contact] = await db.select().from(schema.contacts).where(eq(schema.contacts.id, contactId)).limit(1);
@@ -513,7 +519,7 @@ function buildServer() {
   server.registerTool("egc.job_brief", {
     description: "Return job scope and notes required by a crew.",
     inputSchema: z.object({ jobId: z.string().uuid() }),
-    annotations: { readOnlyHint: true, destructiveHint: false }
+    ...protectedToolMetadata
   }, async ({ jobId }) => {
     const db = getDb();
     const [job] = await db.select().from(schema.jobs).where(eq(schema.jobs.id, jobId)).limit(1);
@@ -529,7 +535,7 @@ function buildServer() {
     inputSchema: z.object({
       timeZone: z.string().min(1).default("America/Denver")
     }),
-    annotations: { readOnlyHint: true, destructiveHint: false }
+    ...protectedToolMetadata
   }, async ({ timeZone }) => {
     const db = getDb();
     const { start, end } = tomorrowBounds(timeZone);
@@ -577,7 +583,7 @@ function buildServer() {
     inputSchema: z.object({
       days: z.number().int().min(1).max(90).default(7)
     }),
-    annotations: { readOnlyHint: true, destructiveHint: false }
+    ...protectedToolMetadata
   }, async ({ days }) => {
     const db = getDb();
     const since = new Date(Date.now() - days * 86_400_000);
@@ -608,7 +614,7 @@ function buildServer() {
     inputSchema: z.object({
       staleDays: z.number().int().min(1).max(365).default(7)
     }),
-    annotations: { readOnlyHint: true, destructiveHint: false }
+    ...protectedToolMetadata
   }, async ({ staleDays }) => {
     const db = getDb();
     const cutoff = new Date(Date.now() - staleDays * 86_400_000);
@@ -643,7 +649,7 @@ function buildServer() {
       status: z.enum(["open", "won", "lost", "abandoned", "all"]).default("open"),
       limit: z.number().int().min(1).max(500).default(200)
     }),
-    annotations: { readOnlyHint: true, destructiveHint: false }
+    ...protectedToolMetadata
   }, async ({ status, limit }) => {
     const db = getDb();
     const base = db.select({
@@ -676,7 +682,7 @@ function buildServer() {
   server.registerTool("egc.jobs_by_status", {
     description: "Return job counts grouped by EGC job status.",
     inputSchema: z.object({}),
-    annotations: { readOnlyHint: true, destructiveHint: false }
+    ...protectedToolMetadata
   }, async () => {
     const db = getDb();
     const rows = await db.select({
@@ -691,7 +697,7 @@ function buildServer() {
     inputSchema: z.object({
       days: z.number().int().min(1).max(365).default(30)
     }),
-    annotations: { readOnlyHint: true, destructiveHint: false }
+    ...protectedToolMetadata
   }, async ({ days }) => {
     const db = getDb();
     const since = new Date(Date.now() - days * 86_400_000);
@@ -719,7 +725,7 @@ function buildServer() {
     inputSchema: z.object({
       days: z.number().int().min(1).max(365).default(30)
     }),
-    annotations: { readOnlyHint: true, destructiveHint: false }
+    ...protectedToolMetadata
   }, async ({ days }) => {
     const db = getDb();
     const since = new Date(Date.now() - days * 86_400_000);
@@ -760,7 +766,7 @@ function buildServer() {
     inputSchema: z.object({
       days: z.number().int().min(1).max(365).default(30)
     }),
-    annotations: { readOnlyHint: true, destructiveHint: false }
+    ...protectedToolMetadata
   }, async ({ days }) => {
     const db = getDb();
     const since = new Date(Date.now() - days * 86_400_000);
@@ -809,7 +815,7 @@ function buildServer() {
     inputSchema: z.object({
       days: z.number().int().min(1).max(365).default(90)
     }),
-    annotations: { readOnlyHint: true, destructiveHint: false }
+    ...protectedToolMetadata
   }, async ({ days }) => {
     const db = getDb();
     const since = new Date(Date.now() - days * 86_400_000);
@@ -846,7 +852,7 @@ function buildServer() {
     inputSchema: z.object({
       days: z.number().int().min(1).max(365).default(90)
     }),
-    annotations: { readOnlyHint: true, destructiveHint: false }
+    ...protectedToolMetadata
   }, async ({ days }) => {
     const db = getDb();
     const since = new Date(Date.now() - days * 86_400_000);
@@ -871,11 +877,6 @@ function buildServer() {
   return server;
 }
 
-const token = process.env.MCP_BEARER_TOKEN;
-if (!token || token.length < 32) {
-  throw new Error("MCP_BEARER_TOKEN must be configured with at least 32 characters");
-}
-
 const allowedHosts = (process.env.MCP_ALLOWED_HOSTS ?? "")
   .split(",")
   .map((host) => host.trim())
@@ -890,19 +891,21 @@ const app = createMcpExpressApp({
   ...(allowedHosts.length > 0 ? { allowedHosts } : {})
 });
 const handler = toNodeHandler(createMcpHandler(buildServer));
+const oauth = registerOauthRoutes(app);
 
-app.get("/health", (_req, res) => res.json({ ok: true, service: "egc-mcp" }));
+app.get("/health", (_req, res) => res.json({
+  ok: true,
+  service: "egc-mcp",
+  oauth: true
+}));
 
-app.all("/mcp", (req, res, next) => {
-  const auth = req.header("authorization");
-  if (auth !== `Bearer ${token}`) {
-    res.status(401).json({ error: "unauthorized" });
-    return;
-  }
-  next();
-}, (req, res) => void handler(req, res, req.body));
+app.all(
+  "/mcp",
+  requireMcpAuth(oauth.resourceMetadataUrl),
+  (req, res) => void handler(req, res, req.body)
+);
 
 const port = Number(process.env.MCP_PORT ?? 4200);
 app.listen(port, "0.0.0.0", () => {
-  console.log(`EGC MCP listening on :${port}/mcp`);
+  console.log(`EGC MCP listening on :${port}/mcp with OAuth resource ${oauth.origin}`);
 });
