@@ -410,6 +410,20 @@ function buildServer() {
     annotations: { readOnlyHint: true, destructiveHint: false }
   }, async ({ days }) => textResult(await leadsNeedingContact(days)));
 
+  server.registerTool("egc.followups_due", {
+    description: "Return recent leads that currently require human follow-up, with an explicit reason.",
+    inputSchema: z.object({ days: z.number().int().min(1).max(90).default(3) }),
+    annotations: { readOnlyHint: true, destructiveHint: false }
+  }, async ({ days }) => {
+    const rows = await leadsNeedingContact(days);
+    return textResult(rows.map((row) => ({
+      ...row,
+      reason: row.state === "NEVER_CONTACTED"
+        ? "No human outreach recorded"
+        : "Human outreach recorded; no customer reply after the latest outreach"
+    })));
+  });
+
   server.registerTool("egc.leads_not_responding", {
     description: "Return recent leads that received human outreach but have never replied.",
     inputSchema: z.object({ days: z.number().int().min(1).max(90).default(3) }),
