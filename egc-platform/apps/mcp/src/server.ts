@@ -1685,7 +1685,7 @@ function buildServer() {
     ...writeToolMetadata
   }, async ({ contact: input }) => {
     const db = getDb();
-    const remote = await ghlClient().createContact(input);
+    const remote = await ghlClient().upsertContact(input);
     const contact = await syncContactFromGhl(remote);
 
     if (input.assignedTo !== undefined) {
@@ -1993,6 +1993,29 @@ function buildServer() {
         .where(and(eq(schema.jobs.id, jobId), eq(schema.jobs.contactId, contactId)))
         .limit(1);
       if (!job) return textResult({ error: "job_not_found_for_contact" });
+    }
+
+    const [existingAtSameTime] = await db.select().from(schema.appointments)
+      .where(and(
+        eq(schema.appointments.contactId, contactId),
+        eq(schema.appointments.calendarId, calendarId),
+        eq(schema.appointments.appointmentStartAt, startTime)
+      ))
+      .limit(1);
+
+    if (existingAtSameTime) {
+      if (jobId) {
+        await db.update(schema.jobs).set({
+          appointmentId: existingAtSameTime.id,
+          scheduledAt: existingAtSameTime.appointmentStartAt,
+          updatedAt: new Date()
+        }).where(eq(schema.jobs.id, jobId));
+      }
+      return textResult({
+        ok: true,
+        duplicatePrevented: true,
+        appointment: existingAtSameTime
+      });
     }
 
     const body: Record<string, unknown> = {
