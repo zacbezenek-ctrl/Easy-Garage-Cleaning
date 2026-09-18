@@ -56,12 +56,19 @@ export class GhlClient {
     return response.json() as Promise<T>;
   }
 
-  searchContacts(params: Query = {}) {
-    return this.request<Record<string, unknown>>("/contacts/", {}, {
-      locationId: this.locationId,
-      limit: 100,
-      ...params
-    });
+  searchContacts(params: Record<string, unknown> = {}) {
+    return this.request<Record<string, unknown>>(
+      "/contacts/search",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          locationId: this.locationId,
+          pageLimit: 500,
+          ...params
+        })
+      }
+    );
   }
 
   getContact(contactId: string) {
