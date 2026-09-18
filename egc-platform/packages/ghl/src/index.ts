@@ -100,8 +100,9 @@ export class GhlClient {
 
   searchOpportunities(params: Query = {}) {
     return this.request<Record<string, unknown>>("/opportunities/search", {}, {
-      location_id: this.locationId,
+      locationId: this.locationId,
       limit: 100,
+      status: "all",
       ...params
     });
   }
