@@ -1,4 +1,4 @@
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, lte } from "drizzle-orm";
 import { getDb, schema } from "@egc/database";
 import { GhlClient, asDate, asRecord, asString, findArray } from "@egc/ghl";
 import { recomputeLeadState } from "@egc/lead-audit";
@@ -525,11 +525,80 @@ async function reconcile() {
   ]);
 }
 
+async function processOutboxEvents() {
+  const events = await db.select().from(schema.outboxEvents)
+    .where(and(
+      eq(schema.outboxEvents.processingStatus, "pending"),
+      lte(schema.outboxEvents.availableAt, new Date())
+    ))
+    .orderBy(asc(schema.outboxEvents.availableAt))
+    .limit(25);
+
+  for (const event of events) {
+    await db.update(schema.outboxEvents).set({
+      processingStatus: "processing",
+      updatedAt: new Date()
+    }).where(eq(schema.outboxEvents.id, event.id));
+
+    try {
+      if (event.type !== "ghl.walkthrough_note.sync") {
+        throw new Error(`Unsupported outbox event type: ${event.type}`);
+      }
+
+      const payload = asRecord(event.payload);
+      const ghlContactId = asString(payload.ghlContactId);
+      const noteBody = asString(payload.noteBody);
+      if (!ghlContactId || !noteBody) {
+        throw new Error("GHL walkthrough writeback payload is incomplete");
+      }
+
+      const response = await ghl.createContactNote(
+        ghlContactId,
+        noteBody,
+        "EGC Walkthrough — Approved Scope"
+      );
+      const noteId = asString(asRecord(response.note).id) ?? null;
+
+      await db.transaction(async (tx) => {
+        await tx.update(schema.outboxEvents).set({
+          processingStatus: "processed",
+          processedAt: new Date(),
+          lastError: null,
+          updatedAt: new Date()
+        }).where(eq(schema.outboxEvents.id, event.id));
+
+        await tx.insert(schema.auditLogs).values({
+          actor: "worker",
+          action: "walkthrough.ghl_sync",
+          entity: "walkthrough",
+          entityId: event.entityId,
+          newValue: { noteId },
+          source: "sync"
+        });
+      });
+    } catch (error) {
+      const attempts = event.retryCount + 1;
+      const delayMs = Math.min(15 * 60_000, 15_000 * 2 ** Math.min(attempts, 6));
+      const lastError = error instanceof Error ? error.message.slice(0, 500) : "unknown_error";
+
+      await db.update(schema.outboxEvents).set({
+        processingStatus: attempts < 8 ? "pending" : "failed",
+        retryCount: attempts,
+        availableAt: new Date(Date.now() + delayMs),
+        lastError,
+        updatedAt: new Date()
+      }).where(eq(schema.outboxEvents.id, event.id));
+    }
+  }
+}
+
 async function main() {
   console.log("EGC worker started");
   await reconcile();
+  await processOutboxEvents();
   setInterval(() => void reconcile().catch(console.error), 5 * 60_000);
   setInterval(() => void processWebhookEvents().catch(console.error), 15_000);
+  setInterval(() => void processOutboxEvents().catch(console.error), 15_000);
 }
 
 await main();
