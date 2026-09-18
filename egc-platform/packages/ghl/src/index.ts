@@ -1,4 +1,5 @@
 const GHL_BASE_URL = "https://services.leadconnectorhq.com";
+const GHL_API_VERSION = "v3";
 
 export class GhlError extends Error {
   constructor(
@@ -28,7 +29,7 @@ export class GhlClient {
     );
   }
 
-  private async request<T>(path: string, init: RequestInit = {}, query?: Query): Promise<T> {
+  private async fetchResponse(path: string, init: RequestInit = {}, query?: Query): Promise<Response> {
     const url = new URL(path, GHL_BASE_URL);
     for (const [key, value] of Object.entries(query ?? {})) {
       if (value !== undefined && value !== null) url.searchParams.set(key, String(value));
@@ -38,8 +39,7 @@ export class GhlClient {
       headers: {
         Authorization: `Bearer ${this.token}`,
         Accept: "application/json",
-        "Content-Type": "application/json",
-        Version: "2021-07-28",
+        Version: GHL_API_VERSION,
         ...init.headers
       }
     });
@@ -47,6 +47,11 @@ export class GhlClient {
       const body = await response.text();
       throw new GhlError(`GHL request failed: ${response.status} ${path}`, response.status, body);
     }
+    return response;
+  }
+
+  private async request<T>(path: string, init: RequestInit = {}, query?: Query): Promise<T> {
+    const response = await this.fetchResponse(path, init, query);
     if (response.status === 204) return undefined as T;
     return response.json() as Promise<T>;
   }
@@ -79,15 +84,17 @@ export class GhlClient {
     );
   }
 
-  getCallRecording(messageId: string) {
-    return this.request<Record<string, unknown>>(
-      `/conversations/messages/${messageId}/locations/${this.locationId}/recording`
+  async getCallRecording(messageId: string): Promise<Buffer> {
+    const response = await this.fetchResponse(
+      `/conversations/messages/${messageId}/locations/${this.locationId}/recording`,
+      { headers: { Accept: "audio/x-wav" } }
     );
+    return Buffer.from(await response.arrayBuffer());
   }
 
   getCallTranscript(messageId: string) {
-    return this.request<Record<string, unknown>>(
-      `/conversations/messages/${messageId}/locations/${this.locationId}/transcription`
+    return this.request<unknown>(
+      `/conversations/locations/${this.locationId}/messages/${messageId}/transcription`
     );
   }
 
