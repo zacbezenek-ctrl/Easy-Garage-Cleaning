@@ -67,7 +67,14 @@ function formatWalkthroughNote(
   return lines.join("\n").slice(0, 4500);
 }
 
-app.get("/health", async () => ({ ok: true, service: "egc-api" }));
+app.get("/health", async (_request, reply) => {
+  try {
+    await getDb().select({ id: schema.contacts.id }).from(schema.contacts).limit(1);
+    return { ok: true, service: "egc-api", database: "ready" };
+  } catch {
+    return reply.code(503).send({ ok: false, service: "egc-api", database: "not_ready" });
+  }
+});
 
 app.post("/webhooks/ghl", {
   config: { rawBody: true }
