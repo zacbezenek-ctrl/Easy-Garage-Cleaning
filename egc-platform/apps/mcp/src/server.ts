@@ -54,6 +54,9 @@ const WRITE_TOOLS = new Set([
   "appointments.update",
   "appointments.cancel",
   "appointments.delete",
+  "tasks.create",
+  "tasks.update",
+  "tasks.complete",
   "conversations.send_message",
   "send_sms",
   "egc.ensure_booking",
@@ -166,6 +169,21 @@ const opportunityMutationSchema = z.object({
   forecastExpectedCloseDate: z.string().max(100).nullable().optional(),
   forecastProbability: z.number().min(0).max(100).nullable().optional(),
   customFields: z.array(z.record(z.string(), z.unknown())).optional()
+});
+
+const taskPrioritySchema = z.enum(["low", "medium", "high", "urgent"]);
+const taskStatusSchema = z.enum(["open", "in_progress", "blocked", "completed", "cancelled"]);
+
+const taskMutationSchema = z.object({
+  title: z.string().min(1).max(500).optional(),
+  description: z.string().max(10_000).nullable().optional(),
+  priority: taskPrioritySchema.optional(),
+  status: taskStatusSchema.optional(),
+  dueAt: isoDateTimeSchema.nullable().optional(),
+  assignedUserId: z.string().max(200).nullable().optional(),
+  contactId: z.string().uuid().nullable().optional(),
+  jobId: z.string().uuid().nullable().optional(),
+  opportunityId: z.string().uuid().nullable().optional()
 });
 
 const appointmentMutationSchema = z.object({
@@ -834,6 +852,37 @@ async function resolveBookingCalendar(type: "walkthrough" | "job") {
       : "EGC Customer Jobs (fallback)",
     score: 0
   };
+}
+
+async function validateTaskRelations(input: {
+  contactId?: string | null | undefined;
+  jobId?: string | null | undefined;
+  opportunityId?: string | null | undefined;
+}) {
+  const db = getDb();
+
+  if (input.contactId) {
+    const [row] = await db.select({ id: schema.contacts.id }).from(schema.contacts)
+      .where(eq(schema.contacts.id, input.contactId))
+      .limit(1);
+    if (!row) return "contact_not_found";
+  }
+
+  if (input.jobId) {
+    const [row] = await db.select({ id: schema.jobs.id }).from(schema.jobs)
+      .where(eq(schema.jobs.id, input.jobId))
+      .limit(1);
+    if (!row) return "job_not_found";
+  }
+
+  if (input.opportunityId) {
+    const [row] = await db.select({ id: schema.opportunities.id }).from(schema.opportunities)
+      .where(eq(schema.opportunities.id, input.opportunityId))
+      .limit(1);
+    if (!row) return "opportunity_not_found";
+  }
+
+  return null;
 }
 
 function formatApprovedWalkthroughNote(
@@ -2742,6 +2791,208 @@ function buildServer() {
       body,
       duplicateWindowMinutes
     }));
+  });
+
+  server.registerTool("tasks.search", {
+    description: "Search persistent EGC operational tasks by status, priority, assignee, or linked customer/job/opportunity.",
+    inputSchema: z.object({
+      status: taskStatusSchema.optional(),
+      priority: taskPrioritySchema.optional(),
+      assignedUserId: z.string().max(200).optional(),
+      contactId: z.string().uuid().optional(),
+      jobId: z.string().uuid().optional(),
+      opportunityId: z.string().uuid().optional(),
+      dueBefore: isoDateTimeSchema.optional(),
+      dueAfter: isoDateTimeSchema.optional(),
+      limit: z.number().int().min(1).max(500).default(100)
+    }),
+    ...protectedToolMetadata
+  }, async ({
+    status,
+    priority,
+    assignedUserId,
+    contactId,
+    jobId,
+    opportunityId,
+    dueBefore,
+    dueAfter,
+    limit
+  }) => {
+    const db = getDb();
+    const conditions = [
+      status ? eq(schema.tasks.status, status) : undefined,
+      priority ? eq(schema.tasks.priority, priority) : undefined,
+      assignedUserId ? eq(schema.tasks.assignedUserId, assignedUserId) : undefined,
+      contactId ? eq(schema.tasks.contactId, contactId) : undefined,
+      jobId ? eq(schema.tasks.jobId, jobId) : undefined,
+      opportunityId ? eq(schema.tasks.opportunityId, opportunityId) : undefined,
+      dueBefore ? lte(schema.tasks.dueAt, new Date(dueBefore)) : undefined,
+      dueAfter ? gte(schema.tasks.dueAt, new Date(dueAfter)) : undefined
+    ].filter((condition): condition is Exclude<typeof condition, undefined> => Boolean(condition));
+
+    const base = db.select().from(schema.tasks);
+    const rows = conditions.length
+      ? await base.where(and(...conditions))
+          .orderBy(sql`${schema.tasks.dueAt} asc nulls last, ${schema.tasks.createdAt} desc`)
+          .limit(limit)
+      : await base.orderBy(sql`${schema.tasks.dueAt} asc nulls last, ${schema.tasks.createdAt} desc`)
+          .limit(limit);
+
+    return textResult(rows);
+  });
+
+  server.registerTool("tasks.create", {
+    description: "Create a persistent EGC operational task with priority, due date, assignee, and optional customer/job/opportunity links.",
+    inputSchema: z.object({
+      title: z.string().min(1).max(500),
+      description: z.string().max(10_000).optional(),
+      priority: taskPrioritySchema.default("medium"),
+      dueAt: isoDateTimeSchema.optional(),
+      assignedUserId: z.string().max(200).optional(),
+      contactId: z.string().uuid().optional(),
+      jobId: z.string().uuid().optional(),
+      opportunityId: z.string().uuid().optional(),
+      source: z.string().min(1).max(100).default("mcp")
+    }),
+    ...writeToolMetadata
+  }, async ({
+    title,
+    description,
+    priority,
+    dueAt,
+    assignedUserId,
+    contactId,
+    jobId,
+    opportunityId,
+    source
+  }) => {
+    const relationError = await validateTaskRelations({ contactId, jobId, opportunityId });
+    if (relationError) return textResult({ error: relationError });
+
+    const db = getDb();
+    const [task] = await db.insert(schema.tasks).values({
+      title,
+      description: description ?? null,
+      priority,
+      status: "open",
+      dueAt: dueAt ? new Date(dueAt) : null,
+      assignedUserId: assignedUserId ?? null,
+      contactId: contactId ?? null,
+      jobId: jobId ?? null,
+      opportunityId: opportunityId ?? null,
+      source,
+      createdBy: "chatgpt-mcp"
+    }).returning();
+
+    if (!task) throw new Error("task_create_failed");
+
+    await db.insert(schema.auditLogs).values({
+      actor: "chatgpt-mcp",
+      action: "task.create",
+      entity: "task",
+      entityId: task.id,
+      newValue: task,
+      source: "mcp"
+    });
+
+    return textResult({ ok: true, task });
+  });
+
+  server.registerTool("tasks.update", {
+    description: "Update an existing EGC operational task, including priority, status, due date, assignee, and entity links.",
+    inputSchema: z.object({
+      taskId: z.string().uuid(),
+      changes: taskMutationSchema
+    }),
+    ...writeToolMetadata
+  }, async ({ taskId, changes }) => {
+    const db = getDb();
+    const [existing] = await db.select().from(schema.tasks)
+      .where(eq(schema.tasks.id, taskId))
+      .limit(1);
+    if (!existing) return textResult({ error: "task_not_found" });
+
+    const relationError = await validateTaskRelations({
+      contactId: changes.contactId,
+      jobId: changes.jobId,
+      opportunityId: changes.opportunityId
+    });
+    if (relationError) return textResult({ error: relationError });
+
+    const completedAt =
+      changes.status === "completed"
+        ? existing.completedAt ?? new Date()
+        : changes.status
+          ? null
+          : existing.completedAt;
+
+    const [updated] = await db.update(schema.tasks).set({
+      ...(changes.title !== undefined ? { title: changes.title } : {}),
+      ...(changes.description !== undefined ? { description: changes.description } : {}),
+      ...(changes.priority !== undefined ? { priority: changes.priority } : {}),
+      ...(changes.status !== undefined ? { status: changes.status } : {}),
+      ...(changes.dueAt !== undefined
+        ? { dueAt: changes.dueAt === null ? null : new Date(changes.dueAt) }
+        : {}),
+      ...(changes.assignedUserId !== undefined ? { assignedUserId: changes.assignedUserId } : {}),
+      ...(changes.contactId !== undefined ? { contactId: changes.contactId } : {}),
+      ...(changes.jobId !== undefined ? { jobId: changes.jobId } : {}),
+      ...(changes.opportunityId !== undefined ? { opportunityId: changes.opportunityId } : {}),
+      ...(changes.status !== undefined ? { completedAt } : {}),
+      updatedAt: new Date()
+    }).where(eq(schema.tasks.id, taskId)).returning();
+
+    if (!updated) throw new Error("task_update_failed");
+
+    await db.insert(schema.auditLogs).values({
+      actor: "chatgpt-mcp",
+      action: "task.update",
+      entity: "task",
+      entityId: taskId,
+      oldValue: existing,
+      newValue: updated,
+      source: "mcp"
+    });
+
+    return textResult({ ok: true, task: updated });
+  });
+
+  server.registerTool("tasks.complete", {
+    description: "Mark an EGC operational task complete and preserve a full audit record.",
+    inputSchema: z.object({
+      taskId: z.string().uuid()
+    }),
+    ...writeToolMetadata
+  }, async ({ taskId }) => {
+    const db = getDb();
+    const [existing] = await db.select().from(schema.tasks)
+      .where(eq(schema.tasks.id, taskId))
+      .limit(1);
+    if (!existing) return textResult({ error: "task_not_found" });
+
+    if (existing.status === "completed") {
+      return textResult({ ok: true, alreadyCompleted: true, task: existing });
+    }
+
+    const [updated] = await db.update(schema.tasks).set({
+      status: "completed",
+      completedAt: new Date(),
+      updatedAt: new Date()
+    }).where(eq(schema.tasks.id, taskId)).returning();
+
+    if (!updated) throw new Error("task_complete_failed");
+
+    await db.insert(schema.auditLogs).values({
+      actor: "chatgpt-mcp",
+      action: "task.complete",
+      entity: "task",
+      entityId: taskId,
+      oldValue: existing,
+      newValue: updated,
+      source: "mcp"
+    });
+
+    return textResult({ ok: true, task: updated });
   });
 
   return server;
