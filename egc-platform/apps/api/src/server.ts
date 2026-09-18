@@ -279,5 +279,5 @@ app.post("/walkthroughs/:walkthroughId/approve", {
   return reply.send({ ok: true, ...result, extraction });
 });
 
-const port = Number(process.env.API_PORT ?? 4100);
+const port = Number(process.env.PORT ?? process.env.API_PORT ?? 4100);
 await app.listen({ host: "0.0.0.0", port });
