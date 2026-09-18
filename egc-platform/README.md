@@ -5,7 +5,7 @@ Canonical operational backend for Easy Garage Cleaning.
 ## Workspace
 
 - `apps/api` — GHL webhook receiver + voice walkthrough API
-- `apps/mcp` — read-only OAuth-protected EGC MCP for ChatGPT
+- `apps/mcp` — OAuth-protected EGC MCP for ChatGPT with scoped read/write operations
 - `apps/portal` — authenticated internal operations portal
 - `apps/worker` — GHL reconciliation, transcript sync, webhook repair, write-back outbox
 - `packages/database` — Postgres schema, migrations, runtime migration runner
@@ -20,7 +20,7 @@ The marketing website at the repository root remains independent.
 
 Credentials are never committed to Git. Put GHL credentials, OpenAI keys, database URLs, OAuth credentials, and internal service passwords only in the deployment secret/variable store.
 
-The ChatGPT MCP is read-only and uses OAuth 2.1 + PKCE. The optional `MCP_BEARER_TOKEN` is only for internal diagnostics.
+The ChatGPT MCP uses OAuth 2.1 + PKCE with separate `egc:read` and `egc:write` scopes. Write access is intentionally limited to EGC operations: contacts/tags/assignment, opportunities, appointments, internal jobs/notes, and walkthroughs. It does not expose payment/refund/delete/send-message tools.
 
 ## Local startup
 
@@ -41,13 +41,15 @@ See:
 
 ## V1 acceptance target
 
-From ChatGPT, the MCP must answer:
+From ChatGPT, the MCP must be able to:
 
-- who needs human contact from the last N days;
-- who received human outreach but has not replied since the latest outreach;
-- who booked in the last N days using booking creation time;
-- what each booked customer wants;
-- call transcripts and job briefs;
-- tomorrow's jobs, unanswered calls, stale opportunities, pipeline and operating metrics.
+- identify who needs human contact and who has not replied since the latest human outreach;
+- read calls/transcripts, bookings, job briefs, customer history, pipeline, and operating metrics;
+- create/update contacts and tags/assignment in GHL;
+- create/update opportunities including stage, status, owner, and value;
+- create/update/reschedule appointments and link them to jobs;
+- create/update EGC jobs, pricing/schedule/scope, and job notes;
+- create/edit/approve walkthrough drafts and turn approved scope into a job;
+- mirror approved operational notes back to GHL.
 
-The voice walkthrough saves a draft structured scope first. A human reviews/edits it before approval and optional GHL note write-back.
+The voice walkthrough saves a draft structured scope first. A human can review/edit it in the portal, or ChatGPT can edit/approve it with `egc:write`.
