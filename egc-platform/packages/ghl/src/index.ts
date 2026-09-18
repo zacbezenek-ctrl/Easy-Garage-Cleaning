@@ -75,6 +75,53 @@ export class GhlClient {
     return this.request<Record<string, unknown>>(`/contacts/${contactId}`);
   }
 
+  createContact(input: Record<string, unknown>) {
+    return this.request<Record<string, unknown>>(
+      "/contacts/",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...input,
+          locationId: this.locationId
+        })
+      }
+    );
+  }
+
+  updateContact(contactId: string, input: Record<string, unknown>) {
+    return this.request<Record<string, unknown>>(
+      `/contacts/${contactId}`,
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input)
+      }
+    );
+  }
+
+  addContactTags(contactId: string, tags: string[]) {
+    return this.request<Record<string, unknown>>(
+      `/contacts/${contactId}/tags`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tags })
+      }
+    );
+  }
+
+  removeContactTags(contactId: string, tags: string[]) {
+    return this.request<Record<string, unknown>>(
+      `/contacts/${contactId}/tags`,
+      {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tags })
+      }
+    );
+  }
+
   searchConversations(params: Query = {}) {
     return this.request<Record<string, unknown>>("/conversations/search", {}, {
       locationId: this.locationId,
@@ -136,6 +183,35 @@ export class GhlClient {
     });
   }
 
+  getOpportunity(opportunityId: string) {
+    return this.request<Record<string, unknown>>(`/opportunities/${opportunityId}`);
+  }
+
+  createOpportunity(input: Record<string, unknown>) {
+    return this.request<Record<string, unknown>>(
+      "/opportunities/",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...input,
+          locationId: this.locationId
+        })
+      }
+    );
+  }
+
+  updateOpportunity(opportunityId: string, input: Record<string, unknown>) {
+    return this.request<Record<string, unknown>>(
+      `/opportunities/${opportunityId}`,
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input)
+      }
+    );
+  }
+
   getCalendars() {
     return this.request<Record<string, unknown>>("/calendars/", {}, { locationId: this.locationId });
   }
@@ -145,6 +221,37 @@ export class GhlClient {
       locationId: this.locationId,
       ...params
     });
+  }
+
+  getAppointment(eventId: string) {
+    return this.request<Record<string, unknown>>(
+      `/calendars/events/appointments/${eventId}`
+    );
+  }
+
+  createAppointment(input: Record<string, unknown>) {
+    return this.request<Record<string, unknown>>(
+      "/calendars/events/appointments",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...input,
+          locationId: this.locationId
+        })
+      }
+    );
+  }
+
+  updateAppointment(eventId: string, input: Record<string, unknown>) {
+    return this.request<Record<string, unknown>>(
+      `/calendars/events/appointments/${eventId}`,
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input)
+      }
+    );
   }
 
   getCustomFields() {
