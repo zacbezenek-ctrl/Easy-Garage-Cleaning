@@ -3,9 +3,11 @@ ENV NODE_ENV=production
 WORKDIR /app
 RUN corepack enable
 COPY . .
+WORKDIR /app/egc-platform
 RUN pnpm install --no-frozen-lockfile
 RUN pnpm --filter @egc/schemas build \
  && pnpm --filter @egc/database build \
+ && pnpm --filter @egc/ghl build \
  && pnpm --filter @egc/lead-audit build \
  && pnpm --filter @egc/mcp build
 CMD ["node", "apps/mcp/dist/server.js"]
