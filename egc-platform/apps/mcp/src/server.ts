@@ -146,6 +146,32 @@ function formatApprovedWalkthroughNote(
   ].join("\n").slice(0, 4500);
 }
 
+async function referenceMap(resourceTypes: string[]) {
+  const db = getDb();
+  const rows = await db.select({
+    resourceType: schema.providerMappings.resourceType,
+    providerId: schema.providerMappings.providerId,
+    displayName: schema.providerMappings.displayName
+  }).from(schema.providerMappings)
+    .where(inArray(schema.providerMappings.resourceType, resourceTypes));
+
+  return new Map(
+    rows.map((row) => [
+      `${row.resourceType}:${row.providerId}`,
+      row.displayName ?? row.providerId
+    ])
+  );
+}
+
+function mappedName(
+  mappings: Map<string, string>,
+  resourceType: string,
+  providerId: string | null | undefined
+) {
+  if (!providerId) return null;
+  return mappings.get(`${resourceType}:${providerId}`) ?? providerId;
+}
+
 function buildServer() {
   const server = new McpServer(
     { name: "easy-garage-cleaning", version: "0.1.0" },
@@ -541,10 +567,18 @@ function buildServer() {
         callTranscriptsForContact(booking.contactId, 30)
       ]);
 
+      const opportunity = opportunityRows[0] ?? null;
+      const mappings = await referenceMap(["pipeline", "pipeline_stage", "user"]);
       return {
         ...booking,
+        assignedUserName: mappedName(mappings, "user", booking.assignedUserId),
         job: jobRows[0] ?? null,
-        opportunity: opportunityRows[0] ?? null,
+        opportunity: opportunity ? {
+          ...opportunity,
+          pipelineName: mappedName(mappings, "pipeline", opportunity.pipelineId),
+          pipelineStageName: mappedName(mappings, "pipeline_stage", opportunity.pipelineStageId),
+          assignedUserName: mappedName(mappings, "user", opportunity.assignedUserId)
+        } : null,
         recentMessages,
         callTranscripts
       };
@@ -615,7 +649,8 @@ function buildServer() {
       status: schema.appointments.status,
       title: schema.appointments.title,
       notes: schema.appointments.notes,
-      assignedUserId: schema.appointments.assignedUserId
+      assignedUserId: schema.appointments.assignedUserId,
+      calendarId: schema.appointments.calendarId
     })
       .from(schema.appointments)
       .innerJoin(schema.contacts, eq(schema.appointments.contactId, schema.contacts.id))
@@ -639,7 +674,17 @@ function buildServer() {
       return { ...appointment, job: job ?? null, jobNotes: notes };
     }));
 
-    return textResult({ timeZone, start, end, appointments: rows });
+    const mappings = await referenceMap(["user", "calendar"]);
+    return textResult({
+      timeZone,
+      start,
+      end,
+      appointments: rows.map((row) => ({
+        ...row,
+        assignedUserName: mappedName(mappings, "user", row.assignedUserId),
+        calendarName: mappedName(mappings, "calendar", row.calendarId)
+      }))
+    });
   });
 
   server.registerTool("egc.unanswered_calls", {
@@ -704,7 +749,13 @@ function buildServer() {
         lt(schema.opportunities.updatedAt, cutoff)
       ))
       .orderBy(schema.opportunities.updatedAt);
-    return textResult(rows);
+    const mappings = await referenceMap(["pipeline", "pipeline_stage", "user"]);
+    return textResult(rows.map((row) => ({
+      ...row,
+      pipelineName: mappedName(mappings, "pipeline", row.pipelineId),
+      pipelineStageName: mappedName(mappings, "pipeline_stage", row.pipelineStageId),
+      assignedUserName: mappedName(mappings, "user", row.assignedUserId)
+    })));
   });
 
   server.registerTool("egc.sales_pipeline", {
@@ -740,7 +791,13 @@ function buildServer() {
           .orderBy(desc(schema.opportunities.updatedAt))
           .limit(limit);
 
-    return textResult(rows);
+    const mappings = await referenceMap(["pipeline", "pipeline_stage", "user"]);
+    return textResult(rows.map((row) => ({
+      ...row,
+      pipelineName: mappedName(mappings, "pipeline", row.pipelineId),
+      pipelineStageName: mappedName(mappings, "pipeline_stage", row.pipelineStageId),
+      assignedUserName: mappedName(mappings, "user", row.assignedUserId)
+    })));
   });
 
   server.registerTool("egc.jobs_by_status", {
@@ -863,10 +920,14 @@ function buildServer() {
     for (const row of bookingRows) ensure(row.assignedUserId).bookings += 1;
     for (const row of wonRows) ensure(row.assignedUserId).wonOpportunities += 1;
 
+    const mappings = await referenceMap(["user"]);
     return textResult({
       days,
       reps: [...metrics.entries()].map(([assignedUserId, values]) => ({
         assignedUserId,
+        assignedUserName: assignedUserId === "unassigned"
+          ? "Unassigned"
+          : mappedName(mappings, "user", assignedUserId),
         ...values,
         bookingRate: values.assignedLeads ? values.bookings / values.assignedLeads : null,
         wonOpportunityRate: values.assignedLeads ? values.wonOpportunities / values.assignedLeads : null
