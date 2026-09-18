@@ -25,6 +25,15 @@ jobs:
         with:
           node-version: 22
       - run: pnpm install --no-frozen-lockfile
+      - name: Generate database migrations
+        env:
+          DATABASE_URL: postgres://egc:egc@localhost:5432/egc
+        run: pnpm db:generate
+      - uses: actions/upload-artifact@v4
+        with:
+          name: egc-db-migrations-${{ github.sha }}
+          path: egc-platform/packages/database/migrations
+          if-no-files-found: error
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm build
