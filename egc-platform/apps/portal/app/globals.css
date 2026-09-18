@@ -61,3 +61,17 @@ pre {
   .topbar { padding: 0 16px; }
   .button { width: 100%; min-height: 54px; }
 }
+
+
+.review textarea {
+  width: 100%;
+  min-height: 28rem;
+  resize: vertical;
+  border: 1px solid #d0d5dd;
+  border-radius: 12px;
+  padding: 14px;
+  margin: 0 0 16px;
+  font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  background: #fff;
+  color: #111827;
+}
