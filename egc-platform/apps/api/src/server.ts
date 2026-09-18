@@ -34,6 +34,39 @@ async function requireInternalAuth(request: FastifyRequest, reply: FastifyReply)
   }
 }
 
+function formatWalkthroughNote(
+  extraction: ReturnType<typeof walkthroughExtractionSchema.parse>,
+  jobId: string
+) {
+  const lines = [
+    "EGC WALKTHROUGH — APPROVED",
+    `Job ID: ${jobId}`,
+    `Garage size: ${extraction.garageSize}`,
+    `Estimated junk: ${extraction.junkVolumeYards ?? "unknown"} yd³`,
+    `Estimated labor: ${extraction.estimatedLaborHours ?? "unknown"} hours`,
+    "",
+    `REMOVE: ${extraction.itemsRemove.length ? extraction.itemsRemove.join("; ") : "None noted"}`,
+    `KEEP: ${extraction.itemsKeep.length ? extraction.itemsKeep.join("; ") : "None noted"}`,
+    `RELOCATE: ${extraction.itemsRelocate.length ? extraction.itemsRelocate.join("; ") : "None noted"}`,
+    `STORAGE: ${extraction.storageRequirements.length ? extraction.storageRequirements.join("; ") : "None noted"}`,
+    `BIKE RACKS: ${extraction.bikeRacks}`,
+    `TOOL RACKS: ${extraction.toolRacks}`,
+    `SHELVING: ${extraction.shelving.length ? extraction.shelving.join("; ") : "None noted"}`,
+    `PRESSURE WASHING: ${extraction.pressureWashing ? "Yes" : "No"}`,
+    `PEST OBSERVATIONS: ${extraction.pestObservations.length ? extraction.pestObservations.join("; ") : "None noted"}`,
+    `ACTIVE INFESTATION KNOWN: ${extraction.activeInfestation === null ? "Unknown" : extraction.activeInfestation ? "Yes" : "No"}`,
+    `ACCESS: ${extraction.accessNotes ?? "None noted"}`,
+    "",
+    `CUSTOMER PREFERENCES: ${extraction.customerPreferences.length ? extraction.customerPreferences.join("; ") : "None noted"}`,
+    `CUSTOMER OBJECTIONS: ${extraction.customerObjections.length ? extraction.customerObjections.join("; ") : "None noted"}`,
+    `SALES NOTES: ${extraction.salesNotes.length ? extraction.salesNotes.join("; ") : "None noted"}`,
+    `CREW NOTES: ${extraction.crewNotes.length ? extraction.crewNotes.join("; ") : "None noted"}`,
+    `PRICING NOTES: ${extraction.pricingNotes.length ? extraction.pricingNotes.join("; ") : "None noted"}`
+  ];
+
+  return lines.join("\n").slice(0, 4500);
+}
+
 app.get("/health", async () => ({ ok: true, service: "egc-api" }));
 
 app.post("/webhooks/ghl", {
@@ -152,6 +185,9 @@ app.post("/walkthroughs/:walkthroughId/approve", {
     .where(eq(schema.walkthroughs.id, walkthroughId))
     .limit(1);
   if (!walkthrough) return reply.code(404).send({ error: "walkthrough_not_found" });
+  if (walkthrough.status === "approved") {
+    return reply.code(409).send({ error: "walkthrough_already_approved", jobId: walkthrough.jobId });
+  }
 
   const extraction = walkthroughExtractionSchema.parse(body.extraction ?? walkthrough.extraction);
   const addOns = [
@@ -215,7 +251,43 @@ app.post("/walkthroughs/:walkthroughId/approve", {
       source: "portal"
     });
 
-    return { jobId };
+    let ghlWritebackQueued = false;
+    if (process.env.GHL_WRITEBACK_ENABLED === "true") {
+      const [contact] = await tx.select({
+        providerId: schema.contacts.providerId
+      }).from(schema.contacts)
+        .where(eq(schema.contacts.id, walkthrough.contactId))
+        .limit(1);
+
+      if (contact?.providerId) {
+        await tx.insert(schema.outboxEvents).values({
+          type: "ghl.walkthrough_note.sync",
+          entityId: walkthroughId,
+          payload: {
+            ghlContactId: contact.providerId,
+            walkthroughId,
+            jobId,
+            noteBody: formatWalkthroughNote(extraction, jobId)
+          },
+          processingStatus: "pending"
+        }).onConflictDoNothing({
+          target: [schema.outboxEvents.type, schema.outboxEvents.entityId]
+        });
+
+        await tx.insert(schema.auditLogs).values({
+          actor: body.approvedBy ?? "portal",
+          action: "walkthrough.ghl_sync_queued",
+          entity: "walkthrough",
+          entityId: walkthroughId,
+          newValue: { jobId },
+          source: "portal"
+        });
+
+        ghlWritebackQueued = true;
+      }
+    }
+
+    return { jobId, ghlWritebackQueued };
   });
 
   return reply.send({ ok: true, ...result, extraction });
