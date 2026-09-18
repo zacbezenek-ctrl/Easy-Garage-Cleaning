@@ -2,38 +2,52 @@
 
 Canonical operational backend for Easy Garage Cleaning.
 
-## What this workspace contains
+## Workspace
 
-- `apps/api` — internal HTTP API + verified GHL webhook receiver
-- `apps/mcp` — read-only EGC MCP for ChatGPT and other MCP clients
-- `apps/worker` — reconciliation and transcript sync worker
-- `packages/database` — normalized Postgres schema and DB connection
+- `apps/api` — GHL webhook receiver + voice walkthrough API
+- `apps/mcp` — read-only OAuth-protected EGC MCP for ChatGPT
+- `apps/portal` — authenticated internal operations portal
+- `apps/worker` — GHL reconciliation, transcript sync, webhook repair, write-back outbox
+- `packages/database` — Postgres schema, migrations, runtime migration runner
 - `packages/ghl` — typed GoHighLevel v3 client
-- `packages/schemas` — shared job / walkthrough contracts
-- `services/lead-audit` — business-level lead state and booking logic
+- `packages/schemas` — shared job/walkthrough contracts
+- `packages/storage` — filesystem or S3-compatible walkthrough audio storage
+- `services/lead-audit` — canonical lead state and booking logic
 
-The marketing website at the repository root is intentionally independent from this workspace.
+The marketing website at the repository root remains independent.
 
 ## Security
 
-Do not reuse credentials that were pasted into chat or committed anywhere. Rotate the GHL private integration token and OAuth client secret before deployment, then place replacement values only in deployment secrets.
+Credentials are never committed to Git. Put GHL credentials, OpenAI keys, database URLs, OAuth credentials, and internal service passwords only in the deployment secret/variable store.
+
+The ChatGPT MCP is read-only and uses OAuth 2.1 + PKCE. The optional `MCP_BEARER_TOKEN` is only for internal diagnostics.
 
 ## Local startup
 
 1. Copy `.env.example` to `.env`.
-2. Start Postgres + Redis with `docker compose up -d`.
+2. Start Postgres with `docker compose up -d`.
 3. Install dependencies with `pnpm install`.
-4. Run migrations with `pnpm db:generate && pnpm db:migrate`.
-5. Start API, MCP and worker with `pnpm dev`.
+4. Run `pnpm db:migrate`.
+5. Run `pnpm dev`.
+
+## Production
+
+See:
+
+- `docs/railway-deployment.md`
+- `docs/chatgpt-connection.md`
+- `docs/mcp-tools.md`
+- `docs/walkthrough-system.md`
 
 ## V1 acceptance target
 
-The MCP should answer, from the normalized database:
+From ChatGPT, the MCP must answer:
 
 - who needs human contact from the last N days;
-- who received outreach but never responded;
-- who booked in the last N days, based on booking creation time;
+- who received human outreach but has not replied since the latest outreach;
+- who booked in the last N days using booking creation time;
 - what each booked customer wants;
-- call transcripts and job briefs.
+- call transcripts and job briefs;
+- tomorrow's jobs, unanswered calls, stale opportunities, pipeline and operating metrics.
 
-The voice walkthrough writes a draft structured scope first. A human must approve before GHL write-back is enabled.
+The voice walkthrough saves a draft structured scope first. A human reviews/edits it before approval and optional GHL note write-back.
