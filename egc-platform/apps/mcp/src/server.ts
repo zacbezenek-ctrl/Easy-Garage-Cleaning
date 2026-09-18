@@ -5,12 +5,14 @@ import * as z from "zod/v4";
 import { and, desc, eq, gte, ilike, inArray, lt, or, sql } from "drizzle-orm";
 import { getDb, schema } from "@egc/database";
 import { walkthroughExtractionSchema } from "@egc/schemas";
+import { GhlClient, asDate, asRecord, asString, findArray } from "@egc/ghl";
 import { authorizeMcpRequest, mcpAuthenticateChallenge, oauthSecurityMetadata, READ_SCOPE, registerOauthRoutes, WRITE_SCOPE } from "./oauth.js";
 import {
   callTranscriptsForContact,
   leadsNeedingContact,
   leadsNotResponding,
-  recentBookings
+  recentBookings,
+  recomputeLeadState
 } from "@egc/lead-audit";
 
 function textResult(value: unknown) {
@@ -36,7 +38,15 @@ const WRITE_TOOLS = new Set([
   "jobs.add_note",
   "walkthroughs.create_draft",
   "walkthroughs.update_draft",
-  "walkthroughs.approve"
+  "walkthroughs.approve",
+  "contacts.create",
+  "contacts.update",
+  "contacts.add_tags",
+  "contacts.remove_tags",
+  "opportunities.create",
+  "opportunities.update",
+  "appointments.create",
+  "appointments.update"
 ]);
 
 function timeZoneDateParts(date: Date, timeZone: string) {
