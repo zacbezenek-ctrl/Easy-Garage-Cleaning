@@ -112,6 +112,14 @@ export class GhlClient {
     );
   }
 
+  async downloadCallTranscript(messageId: string): Promise<string> {
+    const response = await this.fetchResponse(
+      `/conversations/locations/${this.locationId}/messages/${messageId}/transcription/download`,
+      { headers: { Accept: "text/plain" } }
+    );
+    return response.text();
+  }
+
   searchOpportunities(params: Query = {}) {
     return this.request<Record<string, unknown>>("/opportunities/search", {}, {
       locationId: this.locationId,
