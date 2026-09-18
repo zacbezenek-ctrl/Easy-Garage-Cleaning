@@ -55,7 +55,9 @@ const WRITE_TOOLS = new Set([
   "appointments.cancel",
   "appointments.delete",
   "conversations.send_message",
-  "send_sms"
+  "send_sms",
+  "egc.ensure_booking",
+  "egc.send_followup"
 ]);
 
 function timeZoneDateParts(date: Date, timeZone: string) {
@@ -785,6 +787,52 @@ async function ensureAppointment(input: {
     recoveredFromAmbiguousProviderError: source === "provider-recovery",
     source,
     appointment
+  };
+}
+
+async function resolveBookingCalendar(type: "walkthrough" | "job") {
+  const payload = await ghlClient().getCalendars();
+  const calendars = findArray(payload, "calendars").map(asRecord);
+
+  const scored = calendars
+    .map((calendar) => {
+      const id = asString(calendar.id);
+      const name = asString(calendar.name) ?? "";
+      const normalized = normalizedComparableText(name);
+      if (!id) return null;
+
+      let score = 0;
+      if (normalized.includes("egc")) score += 2;
+      if (normalized.includes("customer")) score += 1;
+
+      if (type === "walkthrough") {
+        if (normalized.includes("walkthrough")) score += 10;
+        if (normalized.includes("free")) score += 2;
+        if (normalized.includes("job")) score -= 8;
+      } else {
+        if (normalized.includes("customer jobs")) score += 12;
+        else if (normalized.includes("job")) score += 8;
+        if (normalized.includes("walkthrough")) score -= 10;
+      }
+
+      return { id, name, score };
+    })
+    .filter((row): row is { id: string; name: string; score: number } => Boolean(row))
+    .sort((a, b) => b.score - a.score);
+
+  const best = scored[0];
+  if (best && best.score >= 8) return best;
+
+  const fallbackId = type === "walkthrough"
+    ? (process.env.GHL_WALKTHROUGH_CALENDAR_ID ?? "qsibYaxFPm16uyovdIc5")
+    : (process.env.GHL_JOBS_CALENDAR_ID ?? "KuLHTd1509oEl3KntLmF");
+
+  return {
+    id: fallbackId,
+    name: type === "walkthrough"
+      ? "EGC Customer Walkthroughs (fallback)"
+      : "EGC Customer Jobs (fallback)",
+    score: 0
   };
 }
 
@@ -2624,6 +2672,76 @@ function buildServer() {
       providerId: existing.providerId,
       clearedJobLinks: linkedJobs.map((job) => job.id)
     });
+  });
+
+  server.registerTool("egc.ensure_booking", {
+    description: "Safely ensure exactly one EGC booking exists. Resolves the correct live GHL calendar for walkthrough vs paid job, checks local and provider calendars for an equivalent event, updates the normalized layer, links the job when supplied, and recovers from ambiguous provider errors instead of retrying blindly.",
+    inputSchema: z.object({
+      contactId: z.string().uuid(),
+      type: z.enum(["walkthrough", "job"]),
+      startTime: isoDateTimeSchema,
+      endTime: isoDateTimeSchema.nullable().optional(),
+      assignedUserId: z.string().min(1).optional(),
+      address: z.string().max(1000).optional(),
+      description: z.string().max(5000).optional(),
+      title: z.string().max(500).optional(),
+      jobId: z.string().uuid().optional(),
+      runAutomations: z.boolean().default(false)
+    }),
+    ...writeToolMetadata
+  }, async ({
+    contactId,
+    type,
+    startTime,
+    endTime,
+    assignedUserId,
+    address,
+    description,
+    title,
+    jobId,
+    runAutomations
+  }) => {
+    const calendar = await resolveBookingCalendar(type);
+
+    const result = await ensureAppointment({
+      contactId,
+      calendarId: calendar.id,
+      startAt: new Date(startTime),
+      endAt: endTime ? new Date(endTime) : null,
+      title: title ?? (type === "walkthrough" ? "Free Garage Walkthrough" : "EGC Customer Job"),
+      appointmentStatus: "confirmed",
+      assignedUserId,
+      description,
+      address,
+      runAutomations,
+      ignoreDateRange: false,
+      ignoreFreeSlotValidation: false,
+      jobId
+    });
+
+    return textResult({
+      ...result,
+      bookingType: type,
+      resolvedCalendar: calendar
+    });
+  });
+
+  server.registerTool("egc.send_followup", {
+    description: "Send one context-aware SMS follow-up after the model has reviewed the customer's history/calls and determined a follow-up is appropriate. Uses duplicate suppression, ambiguous-send recovery, immediate local mirroring, audit logging, and lead-state recomputation.",
+    inputSchema: z.object({
+      contactId: z.string().uuid(),
+      body: z.string().min(1).max(1600),
+      contextReviewed: z.literal(true),
+      duplicateWindowMinutes: z.number().int().min(1).max(120).default(10)
+    }),
+    ...writeToolMetadata
+  }, async ({ contactId, body, duplicateWindowMinutes }) => {
+    return textResult(await sendConversationMessage({
+      contactId,
+      channel: "SMS",
+      body,
+      duplicateWindowMinutes
+    }));
   });
 
   return server;
