@@ -71,15 +71,32 @@ async function upsertContact(rawValue: unknown) {
 }
 
 async function syncContacts() {
-  let startAfterId: string | undefined;
-  for (let page = 0; page < 100; page++) {
-    const payload = await ghl.searchContacts(startAfterId ? { startAfterId } : {});
+  let page = 1;
+
+  for (let requestCount = 0; requestCount < 100; requestCount++) {
+    const payload = await ghl.searchContacts({
+      page,
+      pageLimit: 500,
+      sort: [{ field: "dateAdded", direction: "asc" }]
+    });
     const rows = findArray(payload, "contacts");
     if (!rows.length) break;
+
     for (const row of rows) await upsertContact(row);
-    const last = asRecord(rows.at(-1));
-    startAfterId = asString(last.id);
-    if (rows.length < 100 || !startAfterId) break;
+
+    const meta = asRecord(payload.meta);
+    const nextPageRaw = meta.nextPage;
+    const nextPage = typeof nextPageRaw === "number"
+      ? nextPageRaw
+      : Number(nextPageRaw);
+
+    if (Number.isFinite(nextPage) && nextPage > page) {
+      page = nextPage;
+      continue;
+    }
+
+    if (rows.length < 500) break;
+    page += 1;
   }
 }
 
