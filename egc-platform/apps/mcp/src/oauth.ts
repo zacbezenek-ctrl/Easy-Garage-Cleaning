@@ -399,6 +399,26 @@ export function registerOauthRoutes(app: Express) {
           return;
         }
 
+        // Claim the presented refresh token atomically before issuing its
+        // replacement. Concurrent reuse of the same refresh token must fail.
+        const claimedRefreshHash = hash(`claimed:${randomToken(24)}`);
+        const [claimed] = await db.update(schema.oauthTokens)
+          .set({
+            refreshTokenHash: claimedRefreshHash,
+            updatedAt: new Date()
+          })
+          .where(and(
+            eq(schema.oauthTokens.id, record.id),
+            eq(schema.oauthTokens.refreshTokenHash, hash(refreshToken)),
+            isNull(schema.oauthTokens.revokedAt)
+          ))
+          .returning({ id: schema.oauthTokens.id });
+
+        if (!claimed) {
+          oauthError(res, 400, "invalid_grant", "Refresh token was already used.");
+          return;
+        }
+
         res.json(await issueTokens({
           existingTokenId: record.id,
           clientId,
