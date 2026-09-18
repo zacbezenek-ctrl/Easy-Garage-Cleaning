@@ -12,6 +12,7 @@
     "@egc/schemas": "workspace:*",
     "drizzle-orm": "0.44.5",
     "fastify": "^5.6.1",
+    "fastify-raw-body": "^5.0.0",
     "zod": "4.6.4"
   },
   "devDependencies": {
