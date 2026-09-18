@@ -1,0 +1,25 @@
+{
+  "name": "@egc/api",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@egc/ai": "workspace:*",
+    "@egc/database": "workspace:*",
+    "@egc/schemas": "workspace:*",
+    "@egc/storage": "workspace:*",
+    "@fastify/multipart": "^9.2.1",
+    "drizzle-orm": "0.44.5",
+    "fastify": "^5.6.1",
+    "fastify-raw-body": "^5.0.0",
+    "zod": "4.6.4"
+  },
+  "devDependencies": {
+    "@types/node": "^24.5.2",
+    "typescript": "^6.0.2"
+  }
+}

@@ -1,0 +1,39 @@
+name: EGC Platform CI
+
+on:
+  pull_request:
+    paths:
+      - "egc-platform/**"
+      - ".github/workflows/egc-platform-ci.yml"
+
+concurrency:
+  group: egc-platform-ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  typecheck-and-build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: egc-platform
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: pnpm install --no-frozen-lockfile
+      - name: Generate database migrations
+        env:
+          DATABASE_URL: postgres://egc:egc@localhost:5432/egc
+        run: pnpm db:generate
+      - uses: actions/upload-artifact@v4
+        with:
+          name: egc-db-migrations-${{ github.sha }}
+          path: egc-platform/packages/database/migrations
+          if-no-files-found: error
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm build

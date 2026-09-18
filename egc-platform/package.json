@@ -1,0 +1,26 @@
+{
+  "name": "egc-platform",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "pnpm build:packages && turbo dev",
+    "build": "turbo build",
+    "typecheck": "turbo typecheck",
+    "dev:api": "pnpm build:packages && pnpm --filter @egc/api dev",
+    "dev:mcp": "pnpm build:packages && pnpm --filter @egc/mcp dev",
+    "dev:worker": "pnpm build:packages && pnpm --filter @egc/worker dev",
+    "db:generate": "pnpm --filter @egc/database db:generate",
+    "db:migrate": "pnpm --filter @egc/database db:migrate",
+    "test": "turbo test",
+    "build:packages": "pnpm --filter './packages/**' --filter './services/**' build",
+    "db:push": "pnpm --filter @egc/database db:push"
+  },
+  "devDependencies": {
+    "@types/node": "^24.5.2",
+    "tsx": "4.23.13",
+    "turbo": "^2.5.6",
+    "typescript": "^6.0.2",
+    "vitest": "^3.2.4"
+  },
+  "packageManager": "pnpm@10.34.5"
+}

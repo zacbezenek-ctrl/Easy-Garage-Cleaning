@@ -1,0 +1,333 @@
+const GHL_BASE_URL = "https://services.leadconnectorhq.com";
+const GHL_API_VERSION = "v3";
+
+export class GhlError extends Error {
+  constructor(
+    message: string,
+    public readonly status: number,
+    public readonly body: string
+  ) {
+    super(message);
+  }
+}
+
+export type Query = Record<string, string | number | boolean | undefined | null>;
+
+export class GhlClient {
+  constructor(
+    private readonly token: string,
+    readonly locationId: string
+  ) {
+    if (!token) throw new Error("GHL token is required");
+    if (!locationId) throw new Error("GHL location ID is required");
+  }
+
+  static fromEnv() {
+    return new GhlClient(
+      process.env.GHL_PRIVATE_INTEGRATION_TOKEN ?? "",
+      process.env.GHL_LOCATION_ID ?? ""
+    );
+  }
+
+  private async fetchResponse(path: string, init: RequestInit = {}, query?: Query): Promise<Response> {
+    const url = new URL(path, GHL_BASE_URL);
+    for (const [key, value] of Object.entries(query ?? {})) {
+      if (value !== undefined && value !== null) url.searchParams.set(key, String(value));
+    }
+    const response = await fetch(url, {
+      ...init,
+      headers: {
+        Authorization: `Bearer ${this.token}`,
+        Accept: "application/json",
+        Version: GHL_API_VERSION,
+        ...init.headers
+      }
+    });
+    if (!response.ok) {
+      const body = await response.text();
+      throw new GhlError(`GHL request failed: ${response.status} ${path}`, response.status, body);
+    }
+    return response;
+  }
+
+  private async request<T>(path: string, init: RequestInit = {}, query?: Query): Promise<T> {
+    const response = await this.fetchResponse(path, init, query);
+    if (response.status === 204) return undefined as T;
+    return response.json() as Promise<T>;
+  }
+
+  searchContacts(params: Record<string, unknown> = {}) {
+    return this.request<Record<string, unknown>>(
+      "/contacts/search",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          locationId: this.locationId,
+          pageLimit: 500,
+          ...params
+        })
+      }
+    );
+  }
+
+  getContact(contactId: string) {
+    return this.request<Record<string, unknown>>(`/contacts/${contactId}`);
+  }
+
+  createContact(input: Record<string, unknown>) {
+    return this.request<Record<string, unknown>>(
+      "/contacts/",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...input,
+          locationId: this.locationId
+        })
+      }
+    );
+  }
+
+  upsertContact(input: Record<string, unknown>) {
+    return this.request<Record<string, unknown>>(
+      "/contacts/upsert",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...input,
+          locationId: this.locationId
+        })
+      }
+    );
+  }
+
+  updateContact(contactId: string, input: Record<string, unknown>) {
+    return this.request<Record<string, unknown>>(
+      `/contacts/${contactId}`,
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input)
+      }
+    );
+  }
+
+  addContactTags(contactId: string, tags: string[]) {
+    return this.request<Record<string, unknown>>(
+      `/contacts/${contactId}/tags`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tags })
+      }
+    );
+  }
+
+  removeContactTags(contactId: string, tags: string[]) {
+    return this.request<Record<string, unknown>>(
+      `/contacts/${contactId}/tags`,
+      {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ tags })
+      }
+    );
+  }
+
+  searchConversations(params: Query = {}) {
+    return this.request<Record<string, unknown>>("/conversations/search", {}, {
+      locationId: this.locationId,
+      limit: 100,
+      ...params
+    });
+  }
+
+  getConversationMessages(conversationId: string, params: Query = {}) {
+    return this.request<Record<string, unknown>>(
+      `/conversations/${conversationId}/messages`,
+      {},
+      { limit: 100, ...params }
+    );
+  }
+
+  exportMessages(params: Query = {}) {
+    return this.request<Record<string, unknown>>(
+      "/conversations/messages/export",
+      {},
+      {
+        locationId: this.locationId,
+        limit: 1000,
+        sortBy: "createdAt",
+        sortOrder: "asc",
+        ...params
+      }
+    );
+  }
+
+  async getCallRecording(messageId: string): Promise<Buffer> {
+    const response = await this.fetchResponse(
+      `/conversations/messages/${messageId}/locations/${this.locationId}/recording`,
+      { headers: { Accept: "audio/x-wav" } }
+    );
+    return Buffer.from(await response.arrayBuffer());
+  }
+
+  getCallTranscript(messageId: string) {
+    return this.request<unknown>(
+      `/conversations/locations/${this.locationId}/messages/${messageId}/transcription`
+    );
+  }
+
+  async downloadCallTranscript(messageId: string): Promise<string> {
+    const response = await this.fetchResponse(
+      `/conversations/locations/${this.locationId}/messages/${messageId}/transcription/download`,
+      { headers: { Accept: "text/plain" } }
+    );
+    return response.text();
+  }
+
+  searchOpportunities(params: Query = {}) {
+    return this.request<Record<string, unknown>>("/opportunities/search", {}, {
+      locationId: this.locationId,
+      limit: 100,
+      status: "all",
+      ...params
+    });
+  }
+
+  getOpportunity(opportunityId: string) {
+    return this.request<Record<string, unknown>>(`/opportunities/${opportunityId}`);
+  }
+
+  createOpportunity(input: Record<string, unknown>) {
+    return this.request<Record<string, unknown>>(
+      "/opportunities/",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...input,
+          locationId: this.locationId
+        })
+      }
+    );
+  }
+
+  updateOpportunity(opportunityId: string, input: Record<string, unknown>) {
+    return this.request<Record<string, unknown>>(
+      `/opportunities/${opportunityId}`,
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input)
+      }
+    );
+  }
+
+  getCalendars() {
+    return this.request<Record<string, unknown>>("/calendars/", {}, { locationId: this.locationId });
+  }
+
+  getCalendarEvents(params: Query) {
+    return this.request<Record<string, unknown>>("/calendars/events", {}, {
+      locationId: this.locationId,
+      ...params
+    });
+  }
+
+  getAppointment(eventId: string) {
+    return this.request<Record<string, unknown>>(
+      `/calendars/events/appointments/${eventId}`
+    );
+  }
+
+  createAppointment(input: Record<string, unknown>) {
+    return this.request<Record<string, unknown>>(
+      "/calendars/events/appointments",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...input,
+          locationId: this.locationId
+        })
+      }
+    );
+  }
+
+  updateAppointment(eventId: string, input: Record<string, unknown>) {
+    return this.request<Record<string, unknown>>(
+      `/calendars/events/appointments/${eventId}`,
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input)
+      }
+    );
+  }
+
+  getCustomFields() {
+    return this.request<Record<string, unknown>>(`/locations/${this.locationId}/customFields`);
+  }
+
+  getLocation() {
+    return this.request<Record<string, unknown>>(`/locations/${this.locationId}`);
+  }
+
+  getPipelines() {
+    return this.request<Record<string, unknown>>("/opportunities/pipelines", {}, {
+      locationId: this.locationId
+    });
+  }
+
+  searchUsers(companyId: string, params: Query = {}) {
+    return this.request<Record<string, unknown>>("/users/search", {}, {
+      companyId,
+      locationId: this.locationId,
+      limit: 100,
+      skip: 0,
+      ...params
+    });
+  }
+
+  createContactNote(contactId: string, body: string, title = "EGC Walkthrough") {
+    return this.request<Record<string, unknown>>(
+      `/contacts/${contactId}/notes`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ body, title, pinned: false })
+      }
+    );
+  }
+}
+
+export function findArray(payload: Record<string, unknown>, ...keys: string[]): unknown[] {
+  for (const key of keys) {
+    const value = payload[key];
+    if (Array.isArray(value)) return value;
+  }
+  return [];
+}
+
+export function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+export function asString(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+export function asDate(value: unknown): Date | undefined {
+  if (typeof value !== "string" && typeof value !== "number") return undefined;
+  const normalized =
+    typeof value === "string" && /^\d+$/.test(value)
+      ? Number(value)
+      : value;
+  const date = new Date(normalized);
+  return Number.isNaN(date.valueOf()) ? undefined : date;
+}

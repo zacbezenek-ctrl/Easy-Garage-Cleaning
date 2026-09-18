@@ -1,0 +1,14 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: egc
+      POSTGRES_PASSWORD: egc
+      POSTGRES_DB: egc
+    ports:
+      - "5432:5432"
+    volumes:
+      - egc_postgres:/var/lib/postgresql/data
+
+volumes:
+  egc_postgres:
