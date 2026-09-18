@@ -4,7 +4,8 @@ import { createMcpHandler, McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod/v4";
 import { and, desc, eq, gte, ilike, inArray, lt, or, sql } from "drizzle-orm";
 import { getDb, schema } from "@egc/database";
-import { authorizeMcpRequest, mcpAuthenticateChallenge, oauthSecurityMetadata, registerOauthRoutes } from "./oauth.js";
+import { walkthroughExtractionSchema } from "@egc/schemas";
+import { authorizeMcpRequest, mcpAuthenticateChallenge, oauthSecurityMetadata, READ_SCOPE, registerOauthRoutes, WRITE_SCOPE } from "./oauth.js";
 import {
   callTranscriptsForContact,
   leadsNeedingContact,
@@ -21,8 +22,22 @@ function textResult(value: unknown) {
 
 const protectedToolMetadata = {
   annotations: { readOnlyHint: true, destructiveHint: false },
-  ...oauthSecurityMetadata()
+  ...oauthSecurityMetadata([READ_SCOPE])
 };
+
+const writeToolMetadata = {
+  annotations: { readOnlyHint: false, destructiveHint: false },
+  ...oauthSecurityMetadata([READ_SCOPE, WRITE_SCOPE])
+};
+
+const WRITE_TOOLS = new Set([
+  "jobs.create",
+  "jobs.update",
+  "jobs.add_note",
+  "walkthroughs.create_draft",
+  "walkthroughs.update_draft",
+  "walkthroughs.approve"
+]);
 
 function timeZoneDateParts(date: Date, timeZone: string) {
   const parts = new Intl.DateTimeFormat("en-US", {
@@ -914,13 +929,24 @@ app.all(
       return;
     }
 
-    if (await authorizeMcpRequest(req.header("authorization"))) {
+    const toolName =
+      body &&
+      typeof (body as { params?: unknown }).params === "object" &&
+      (body as { params?: { name?: unknown } }).params !== null &&
+      typeof (body as { params?: { name?: unknown } }).params?.name === "string"
+        ? (body as { params: { name: string } }).params.name
+        : "";
+
+    const requiredScope = WRITE_TOOLS.has(toolName) ? WRITE_SCOPE : READ_SCOPE;
+
+    if (await authorizeMcpRequest(req.header("authorization"), requiredScope)) {
       next();
       return;
     }
 
     const challenge = mcpAuthenticateChallenge(
       oauth.resourceMetadataUrl,
+      requiredScope,
       req.header("authorization") ? "invalid_token" : "insufficient_scope"
     );
 
