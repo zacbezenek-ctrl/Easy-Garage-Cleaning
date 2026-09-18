@@ -125,6 +125,236 @@ const jobMutationSchema = z.object({
   depositCents: z.number().int().min(0).nullable().optional()
 });
 
+const contactMutationSchema = z.object({
+  firstName: z.string().max(200).nullable().optional(),
+  lastName: z.string().max(200).nullable().optional(),
+  name: z.string().max(300).nullable().optional(),
+  email: z.string().email().nullable().optional(),
+  phone: z.string().max(80).nullable().optional(),
+  address1: z.string().max(500).nullable().optional(),
+  city: z.string().max(200).nullable().optional(),
+  state: z.string().max(100).nullable().optional(),
+  postalCode: z.string().max(30).optional(),
+  timezone: z.string().max(120).nullable().optional(),
+  source: z.string().max(200).nullable().optional(),
+  country: z.string().max(2).optional(),
+  assignedTo: z.string().max(100).nullable().optional(),
+  tags: z.array(z.string().max(200)).optional(),
+  customFields: z.array(z.record(z.string(), z.unknown())).optional()
+});
+
+const opportunityMutationSchema = z.object({
+  name: z.string().min(1).max(500).optional(),
+  pipelineId: z.string().min(1).max(200).optional(),
+  pipelineStageId: z.string().min(1).max(200).optional(),
+  status: z.enum(["open", "won", "lost", "abandoned"]).optional(),
+  monetaryValueCents: z.number().int().min(0).nullable().optional(),
+  assignedTo: z.string().max(200).nullable().optional(),
+  forecastExpectedCloseDate: z.string().max(100).nullable().optional(),
+  forecastProbability: z.number().min(0).max(100).nullable().optional(),
+  customFields: z.array(z.record(z.string(), z.unknown())).optional()
+});
+
+const appointmentMutationSchema = z.object({
+  title: z.string().max(500).optional(),
+  calendarId: z.string().min(1).max(200).optional(),
+  assignedUserId: z.string().max(200).nullable().optional(),
+  appointmentStatus: z.enum([
+    "new", "confirmed", "cancelled", "showed", "noshow", "invalid", "completed", "active"
+  ]).optional(),
+  description: z.string().max(5000).nullable().optional(),
+  address: z.string().max(1000).nullable().optional(),
+  startTime: z.coerce.date().optional(),
+  endTime: z.coerce.date().nullable().optional(),
+  runAutomations: z.boolean().default(false),
+  ignoreDateRange: z.boolean().default(false),
+  ignoreFreeSlotValidation: z.boolean().default(false)
+});
+
+function ghlClient() {
+  return GhlClient.fromEnv();
+}
+
+function unwrapRecord(payload: Record<string, unknown>, key: string) {
+  const nested = asRecord(payload[key]);
+  return Object.keys(nested).length ? nested : payload;
+}
+
+function normalizeLocalAppointmentStatus(value: unknown):
+  "new" | "confirmed" | "cancelled" | "showed" | "noshow" | "invalid" {
+  const s = asString(value)?.toLowerCase();
+  if (s === "confirmed" || s === "active") return "confirmed";
+  if (s === "cancelled" || s === "canceled") return "cancelled";
+  if (s === "showed" || s === "completed") return "showed";
+  if (s === "noshow" || s === "no_show" || s === "no-show") return "noshow";
+  if (s === "invalid") return "invalid";
+  return "new";
+}
+
+async function syncContactFromGhl(
+  payload: Record<string, unknown>,
+  localId?: string
+) {
+  const db = getDb();
+  const raw = unwrapRecord(payload, "contact");
+  const providerId = asString(raw.id);
+  if (!providerId) throw new Error("ghl_contact_missing_id");
+
+  const composedName = [asString(raw.firstName), asString(raw.lastName)]
+    .filter(Boolean)
+    .join(" ");
+
+  const values = {
+    provider: "ghl",
+    providerId,
+    locationId: asString(raw.locationId) ?? ghlClient().locationId,
+    firstName: asString(raw.firstName) ?? null,
+    lastName: asString(raw.lastName) ?? null,
+    name: asString(raw.contactName) ?? asString(raw.name) ?? (composedName || null),
+    email: asString(raw.email) ?? null,
+    phone: asString(raw.phone) ?? null,
+    source: asString(raw.source) ?? null,
+    tags: Array.isArray(raw.tags)
+      ? raw.tags.filter((value): value is string => typeof value === "string")
+      : [],
+    customFields: Array.isArray(raw.customFields) ? raw.customFields : [],
+    raw,
+    providerCreatedAt: asDate(raw.dateAdded) ?? asDate(raw.createdAt) ?? null,
+    providerUpdatedAt: asDate(raw.dateUpdated) ?? asDate(raw.updatedAt) ?? null,
+    updatedAt: new Date()
+  };
+
+  let contact;
+  if (localId) {
+    [contact] = await db.update(schema.contacts)
+      .set(values)
+      .where(eq(schema.contacts.id, localId))
+      .returning();
+  } else {
+    [contact] = await db.insert(schema.contacts).values(values)
+      .onConflictDoUpdate({
+        target: [schema.contacts.provider, schema.contacts.providerId],
+        set: values
+      })
+      .returning();
+  }
+
+  if (!contact) throw new Error("local_contact_sync_failed");
+
+  await db.insert(schema.leads).values({
+    contactId: contact.id,
+    source: contact.source,
+    createdAt: contact.providerCreatedAt ?? new Date()
+  }).onConflictDoNothing({ target: schema.leads.contactId });
+
+  return contact;
+}
+
+async function syncOpportunityFromGhl(
+  payload: Record<string, unknown>,
+  contactId: string,
+  existingLocalId?: string
+) {
+  const db = getDb();
+  const raw = unwrapRecord(payload, "opportunity");
+  const providerId = asString(raw.id);
+  if (!providerId) throw new Error("ghl_opportunity_missing_id");
+
+  const money = typeof raw.monetaryValue === "number"
+    ? raw.monetaryValue
+    : Number(raw.monetaryValue);
+
+  const values = {
+    providerId,
+    contactId,
+    pipelineId: asString(raw.pipelineId) ?? null,
+    pipelineStageId: asString(raw.pipelineStageId) ?? null,
+    status: asString(raw.status) ?? null,
+    monetaryValueCents: Number.isFinite(money) ? Math.round(money * 100) : null,
+    assignedUserId: asString(raw.assignedTo) ?? asString(raw.assignedUserId) ?? null,
+    source: asString(raw.source) ?? null,
+    raw,
+    providerCreatedAt: asDate(raw.dateAdded) ?? asDate(raw.createdAt) ?? null,
+    providerUpdatedAt: asDate(raw.dateUpdated) ?? asDate(raw.updatedAt) ?? null,
+    updatedAt: new Date()
+  };
+
+  let opportunity;
+  if (existingLocalId) {
+    [opportunity] = await db.update(schema.opportunities)
+      .set(values)
+      .where(eq(schema.opportunities.id, existingLocalId))
+      .returning();
+  } else {
+    [opportunity] = await db.insert(schema.opportunities).values(values)
+      .onConflictDoUpdate({
+        target: schema.opportunities.providerId,
+        set: values
+      })
+      .returning();
+  }
+
+  if (!opportunity) throw new Error("local_opportunity_sync_failed");
+  await recomputeLeadState(contactId);
+  return opportunity;
+}
+
+async function syncAppointmentFromGhl(
+  payload: Record<string, unknown>,
+  contactId: string,
+  existingLocalId?: string
+) {
+  const db = getDb();
+  const raw = unwrapRecord(payload, "event");
+  const providerId = asString(raw.id);
+  const startAt = asDate(raw.startTime);
+  if (!providerId || !startAt) throw new Error("ghl_appointment_missing_required_fields");
+
+  const existing = existingLocalId
+    ? (await db.select().from(schema.appointments)
+        .where(eq(schema.appointments.id, existingLocalId))
+        .limit(1))[0]
+    : undefined;
+
+  const values = {
+    providerId,
+    contactId,
+    calendarId: asString(raw.calendarId) ?? existing?.calendarId ?? null,
+    assignedUserId: asString(raw.assignedUserId) ?? existing?.assignedUserId ?? null,
+    title: asString(raw.title) ?? existing?.title ?? null,
+    status: normalizeLocalAppointmentStatus(raw.appointmentStatus ?? raw.status),
+    appointmentCreatedAt:
+      asDate(raw.dateAdded) ??
+      asDate(raw.createdAt) ??
+      existing?.appointmentCreatedAt ??
+      null,
+    appointmentStartAt: startAt,
+    appointmentEndAt: asDate(raw.endTime) ?? null,
+    notes: asString(raw.notes) ?? asString(raw.description) ?? null,
+    raw,
+    updatedAt: new Date()
+  };
+
+  let appointment;
+  if (existingLocalId) {
+    [appointment] = await db.update(schema.appointments)
+      .set(values)
+      .where(eq(schema.appointments.id, existingLocalId))
+      .returning();
+  } else {
+    [appointment] = await db.insert(schema.appointments).values(values)
+      .onConflictDoUpdate({
+        target: schema.appointments.providerId,
+        set: values
+      })
+      .returning();
+  }
+
+  if (!appointment) throw new Error("local_appointment_sync_failed");
+  await recomputeLeadState(contactId);
+  return appointment;
+}
+
 function formatApprovedWalkthroughNote(
   extraction: ReturnType<typeof walkthroughExtractionSchema.parse>,
   jobId: string
