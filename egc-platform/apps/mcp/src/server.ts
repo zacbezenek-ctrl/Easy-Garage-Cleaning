@@ -2,10 +2,10 @@ import express from "express";
 import { toNodeHandler } from "@modelcontextprotocol/node";
 import { createMcpHandler, McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod/v4";
-import { and, desc, eq, gte, ilike, inArray, lt, or, sql } from "drizzle-orm";
+import { and, desc, eq, gte, ilike, inArray, lt, lte, or, sql } from "drizzle-orm";
 import { getDb, schema } from "@egc/database";
 import { walkthroughExtractionSchema } from "@egc/schemas";
-import { GhlClient, asDate, asRecord, asString, findArray } from "@egc/ghl";
+import { GhlClient, GhlError, asDate, asRecord, asString, findArray } from "@egc/ghl";
 import { authorizeMcpRequest, mcpAuthenticateChallenge, oauthSecurityMetadata, READ_SCOPE, registerOauthRoutes, WRITE_SCOPE } from "./oauth.js";
 import {
   callTranscriptsForContact,
@@ -46,7 +46,11 @@ const WRITE_TOOLS = new Set([
   "opportunities.create",
   "opportunities.update",
   "appointments.create",
-  "appointments.update"
+  "appointments.update",
+  "appointments.cancel",
+  "appointments.delete",
+  "conversations.send_message",
+  "send_sms"
 ]);
 
 function timeZoneDateParts(date: Date, timeZone: string) {
@@ -355,6 +359,428 @@ async function syncAppointmentFromGhl(
   if (!appointment) throw new Error("local_appointment_sync_failed");
   await recomputeLeadState(contactId);
   return appointment;
+}
+
+function normalizedComparableText(value: string | null | undefined) {
+  return (value ?? "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+    .replace(/\s+/g, " ");
+}
+
+function titlesEquivalent(a: string | null | undefined, b: string | null | undefined) {
+  const left = normalizedComparableText(a);
+  const right = normalizedComparableText(b);
+  if (!left || !right) return true;
+  return left === right || left.includes(right) || right.includes(left);
+}
+
+async function findEquivalentLocalAppointment(input: {
+  contactId: string;
+  calendarId: string;
+  startAt: Date;
+  title?: string;
+}) {
+  const db = getDb();
+  const toleranceMs = 90_000;
+  const rows = await db.select().from(schema.appointments)
+    .where(and(
+      eq(schema.appointments.contactId, input.contactId),
+      eq(schema.appointments.calendarId, input.calendarId),
+      gte(schema.appointments.appointmentStartAt, new Date(input.startAt.valueOf() - toleranceMs)),
+      lte(schema.appointments.appointmentStartAt, new Date(input.startAt.valueOf() + toleranceMs))
+    ))
+    .orderBy(desc(schema.appointments.updatedAt))
+    .limit(10);
+
+  return rows.find((row) => titlesEquivalent(row.title, input.title)) ?? null;
+}
+
+async function findEquivalentRemoteAppointment(input: {
+  contactProviderId: string;
+  calendarId: string;
+  startAt: Date;
+  title?: string;
+}) {
+  const toleranceMs = 5 * 60_000;
+  const payload = await ghlClient().getCalendarEvents({
+    calendarId: input.calendarId,
+    startTime: input.startAt.valueOf() - toleranceMs,
+    endTime: input.startAt.valueOf() + toleranceMs
+  });
+  const events = findArray(payload, "events");
+
+  for (const value of events) {
+    const event = asRecord(value);
+    const eventStart = asDate(event.startTime);
+    const eventContactId = asString(event.contactId);
+    const eventCalendarId = asString(event.calendarId) ?? input.calendarId;
+    if (!eventStart || !eventContactId) continue;
+    if (eventContactId !== input.contactProviderId) continue;
+    if (eventCalendarId !== input.calendarId) continue;
+    if (Math.abs(eventStart.valueOf() - input.startAt.valueOf()) > 90_000) continue;
+    if (!titlesEquivalent(asString(event.title), input.title)) continue;
+    return event;
+  }
+
+  return null;
+}
+
+async function persistOutboundMessage(input: {
+  contactId: string;
+  contactProviderId: string;
+  channel: "SMS" | "Email";
+  body: string;
+  providerMessageId: string;
+  conversationProviderId: string;
+  providerPayload: Record<string, unknown>;
+  occurredAt?: Date;
+}) {
+  const db = getDb();
+  const occurredAt = input.occurredAt ?? new Date();
+
+  const [conversation] = await db.insert(schema.conversations).values({
+    providerId: input.conversationProviderId,
+    contactId: input.contactId,
+    raw: {
+      id: input.conversationProviderId,
+      contactId: input.contactProviderId,
+      locationId: ghlClient().locationId
+    }
+  }).onConflictDoUpdate({
+    target: schema.conversations.providerId,
+    set: {
+      contactId: input.contactId,
+      raw: {
+        id: input.conversationProviderId,
+        contactId: input.contactProviderId,
+        locationId: ghlClient().locationId
+      },
+      updatedAt: new Date()
+    }
+  }).returning();
+
+  await db.insert(schema.messages).values({
+    providerId: input.providerMessageId,
+    conversationId: conversation?.id ?? null,
+    contactId: input.contactId,
+    type: input.channel === "SMS" ? "TYPE_SMS" : "TYPE_EMAIL",
+    direction: "outbound",
+    actorType: "human",
+    body: input.body,
+    occurredAt,
+    raw: input.providerPayload
+  }).onConflictDoUpdate({
+    target: schema.messages.providerId,
+    set: {
+      conversationId: conversation?.id ?? null,
+      contactId: input.contactId,
+      type: input.channel === "SMS" ? "TYPE_SMS" : "TYPE_EMAIL",
+      direction: "outbound",
+      actorType: "human",
+      body: input.body,
+      occurredAt,
+      raw: input.providerPayload,
+      updatedAt: new Date()
+    }
+  });
+
+  await recomputeLeadState(input.contactId);
+}
+
+async function findRecentDuplicateOutbound(input: {
+  contactId: string;
+  body: string;
+  channel: "SMS" | "Email";
+  withinMinutes: number;
+}) {
+  const db = getDb();
+  const since = new Date(Date.now() - input.withinMinutes * 60_000);
+  const rows = await db.select().from(schema.messages)
+    .where(and(
+      eq(schema.messages.contactId, input.contactId),
+      eq(schema.messages.direction, "outbound"),
+      eq(schema.messages.actorType, "human"),
+      gte(schema.messages.occurredAt, since)
+    ))
+    .orderBy(desc(schema.messages.occurredAt))
+    .limit(30);
+
+  const expectedType = input.channel === "SMS" ? "sms" : "email";
+  return rows.find((row) =>
+    normalizedComparableText(row.body) === normalizedComparableText(input.body) &&
+    row.type.toLowerCase().includes(expectedType)
+  ) ?? null;
+}
+
+async function recoverRecentProviderMessage(input: {
+  contactProviderId: string;
+  body: string;
+  channel: "SMS" | "Email";
+}) {
+  const conversationsPayload = await ghlClient().searchConversations({
+    contactId: input.contactProviderId
+  });
+  const conversations = findArray(conversationsPayload, "conversations");
+  const since = Date.now() - 10 * 60_000;
+
+  for (const rawConversation of conversations.slice(0, 5)) {
+    const conversation = asRecord(rawConversation);
+    const conversationId = asString(conversation.id);
+    if (!conversationId) continue;
+
+    const messagesPayload = await ghlClient().getConversationMessages(conversationId, { limit: 50 });
+    const messages = findArray(messagesPayload, "messages");
+
+    for (const rawMessage of messages) {
+      const message = asRecord(rawMessage);
+      const id = asString(message.id);
+      const occurredAt = asDate(message.dateAdded) ?? asDate(message.createdAt);
+      const direction = asString(message.direction)?.toLowerCase();
+      const body = asString(message.body) ?? asString(message.message) ?? "";
+      const messageType =
+        (asString(message.messageType) ?? asString(message.type) ?? "").toLowerCase();
+
+      if (!id || !occurredAt || occurredAt.valueOf() < since) continue;
+      if (direction !== "outbound") continue;
+      if (normalizedComparableText(body) !== normalizedComparableText(input.body)) continue;
+      if (!messageType.includes(input.channel.toLowerCase())) continue;
+
+      return {
+        messageId: id,
+        conversationId,
+        occurredAt,
+        message
+      };
+    }
+  }
+
+  return null;
+}
+
+async function sendConversationMessage(input: {
+  contactId: string;
+  channel: "SMS" | "Email";
+  body: string;
+  subject?: string;
+  emailFrom?: string;
+  emailTo?: string;
+  fromNumber?: string;
+  toNumber?: string;
+  duplicateWindowMinutes?: number;
+}) {
+  const db = getDb();
+  const [contact] = await db.select().from(schema.contacts)
+    .where(eq(schema.contacts.id, input.contactId))
+    .limit(1);
+  if (!contact) return { ok: false as const, error: "contact_not_found" };
+
+  const duplicate = await findRecentDuplicateOutbound({
+    contactId: input.contactId,
+    body: input.body,
+    channel: input.channel,
+    withinMinutes: input.duplicateWindowMinutes ?? 10
+  });
+  if (duplicate) {
+    return {
+      ok: true as const,
+      duplicatePrevented: true,
+      message: duplicate
+    };
+  }
+
+  let response: Record<string, unknown> | null = null;
+  let recovered = null as Awaited<ReturnType<typeof recoverRecentProviderMessage>>;
+
+  try {
+    response = await ghlClient().sendMessage({
+      type: input.channel,
+      contactId: contact.providerId,
+      message: input.body,
+      ...(input.channel === "Email" ? {
+        subject: input.subject,
+        emailFrom: input.emailFrom,
+        emailTo: input.emailTo
+      } : {
+        fromNumber: input.fromNumber,
+        toNumber: input.toNumber
+      })
+    });
+  } catch (error) {
+    recovered = await recoverRecentProviderMessage({
+      contactProviderId: contact.providerId,
+      body: input.body,
+      channel: input.channel
+    }).catch(() => null);
+
+    if (!recovered) throw error;
+  }
+
+  const providerMessageId =
+    asString(response?.messageId) ??
+    recovered?.messageId;
+  const conversationProviderId =
+    asString(response?.conversationId) ??
+    recovered?.conversationId;
+
+  if (!providerMessageId || !conversationProviderId) {
+    throw new Error("ghl_message_missing_required_fields");
+  }
+
+  const occurredAt = recovered?.occurredAt ?? new Date();
+  const providerPayload = response ?? recovered?.message ?? {};
+
+  await persistOutboundMessage({
+    contactId: input.contactId,
+    contactProviderId: contact.providerId,
+    channel: input.channel,
+    body: input.body,
+    providerMessageId,
+    conversationProviderId,
+    providerPayload,
+    occurredAt
+  });
+
+  await db.insert(schema.auditLogs).values({
+    actor: "chatgpt-mcp",
+    action: input.channel === "SMS" ? "ghl.message.sms.send" : "ghl.message.email.send",
+    entity: "message",
+    entityId: providerMessageId,
+    newValue: {
+      contactId: input.contactId,
+      conversationProviderId,
+      body: input.body,
+      recoveredFromAmbiguousProviderError: Boolean(recovered)
+    },
+    source: "mcp"
+  });
+
+  return {
+    ok: true as const,
+    duplicatePrevented: false,
+    recoveredFromAmbiguousProviderError: Boolean(recovered),
+    messageId: providerMessageId,
+    conversationId: conversationProviderId,
+    contactId: input.contactId,
+    timestamp: occurredAt.toISOString(),
+    status: asString(response?.msg) ?? "queued"
+  };
+}
+
+async function ensureAppointment(input: {
+  contactId: string;
+  calendarId: string;
+  startAt: Date;
+  endAt: Date | null;
+  title?: string;
+  appointmentStatus: "new" | "confirmed" | "cancelled" | "showed" | "noshow" | "invalid" | "completed" | "active";
+  assignedUserId?: string;
+  description?: string;
+  address?: string;
+  runAutomations: boolean;
+  ignoreDateRange: boolean;
+  ignoreFreeSlotValidation: boolean;
+  jobId?: string;
+}) {
+  const db = getDb();
+  const [contact] = await db.select().from(schema.contacts)
+    .where(eq(schema.contacts.id, input.contactId))
+    .limit(1);
+  if (!contact) return { ok: false as const, error: "contact_not_found" };
+
+  if (input.jobId) {
+    const [job] = await db.select().from(schema.jobs)
+      .where(and(eq(schema.jobs.id, input.jobId), eq(schema.jobs.contactId, input.contactId)))
+      .limit(1);
+    if (!job) return { ok: false as const, error: "job_not_found_for_contact" };
+  }
+
+  let appointment = await findEquivalentLocalAppointment({
+    contactId: input.contactId,
+    calendarId: input.calendarId,
+    startAt: input.startAt,
+    title: input.title
+  });
+  let source: "local" | "provider-preflight" | "created" | "provider-recovery" = "local";
+
+  if (!appointment) {
+    const remoteExisting = await findEquivalentRemoteAppointment({
+      contactProviderId: contact.providerId,
+      calendarId: input.calendarId,
+      startAt: input.startAt,
+      title: input.title
+    }).catch(() => null);
+
+    if (remoteExisting) {
+      appointment = await syncAppointmentFromGhl(remoteExisting, input.contactId);
+      source = "provider-preflight";
+    }
+  }
+
+  if (!appointment) {
+    const body: Record<string, unknown> = {
+      title: input.title ?? contact.name ?? "EGC Appointment",
+      calendarId: input.calendarId,
+      contactId: contact.providerId,
+      startTime: input.startAt.toISOString(),
+      appointmentStatus: input.appointmentStatus,
+      toNotify: input.runAutomations,
+      ignoreDateRange: input.ignoreDateRange,
+      ignoreFreeSlotValidation: input.ignoreFreeSlotValidation
+    };
+    if (input.endAt) body.endTime = input.endAt.toISOString();
+    if (input.assignedUserId) body.assignedUserId = input.assignedUserId;
+    if (input.description) body.description = input.description;
+    if (input.address) body.address = input.address;
+
+    try {
+      const remote = await ghlClient().createAppointment(body);
+      appointment = await syncAppointmentFromGhl(remote, input.contactId);
+      source = "created";
+    } catch (error) {
+      const remoteRecovered = await findEquivalentRemoteAppointment({
+        contactProviderId: contact.providerId,
+        calendarId: input.calendarId,
+        startAt: input.startAt,
+        title: input.title
+      }).catch(() => null);
+
+      if (!remoteRecovered) throw error;
+      appointment = await syncAppointmentFromGhl(remoteRecovered, input.contactId);
+      source = "provider-recovery";
+    }
+  }
+
+  if (input.jobId) {
+    await db.update(schema.jobs).set({
+      appointmentId: appointment.id,
+      scheduledAt: appointment.appointmentStartAt,
+      updatedAt: new Date()
+    }).where(eq(schema.jobs.id, input.jobId));
+  }
+
+  await db.insert(schema.auditLogs).values({
+    actor: "chatgpt-mcp",
+    action: source === "created" ? "ghl.appointment.create" : "ghl.appointment.ensure",
+    entity: "appointment",
+    entityId: appointment.id,
+    newValue: {
+      appointment,
+      source,
+      duplicatePrevented: source !== "created",
+      recoveredFromAmbiguousProviderError: source === "provider-recovery"
+    },
+    source: "mcp"
+  });
+
+  return {
+    ok: true as const,
+    duplicatePrevented: source !== "created",
+    recoveredFromAmbiguousProviderError: source === "provider-recovery",
+    source,
+    appointment
+  };
 }
 
 function formatApprovedWalkthroughNote(
