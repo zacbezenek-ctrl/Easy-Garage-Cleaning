@@ -154,7 +154,7 @@ export const appointments = pgTable("appointments", {
   assignedUserId: text("assigned_user_id"),
   title: text("title"),
   status: appointmentStatus("status").default("new").notNull(),
-  appointmentCreatedAt: timestamp("appointment_created_at", { withTimezone: true }).notNull(),
+  appointmentCreatedAt: timestamp("appointment_created_at", { withTimezone: true }),
   appointmentStartAt: timestamp("appointment_start_at", { withTimezone: true }).notNull(),
   appointmentEndAt: timestamp("appointment_end_at", { withTimezone: true }),
   notes: text("notes"),
