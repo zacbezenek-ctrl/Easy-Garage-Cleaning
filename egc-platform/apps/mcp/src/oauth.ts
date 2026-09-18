@@ -1,5 +1,5 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
-import type { Express, NextFunction, Request, Response } from "express";
+import type { Express, Response } from "express";
 import express from "express";
 import { and, eq, isNull } from "drizzle-orm";
 import { getDb, schema } from "@egc/database";
@@ -413,43 +413,36 @@ export function registerOauthRoutes(app: Express) {
   };
 }
 
-export function requireMcpAuth(resourceMetadataUrl: string) {
-  return async function mcpAuth(req: Request, res: Response, next: NextFunction) {
-    const authorization = req.header("authorization");
-    const token = authorization?.startsWith("Bearer ")
-      ? authorization.slice("Bearer ".length)
-      : "";
+export function mcpAuthenticateChallenge(resourceMetadataUrl: string, error = "invalid_token") {
+  return `Bearer resource_metadata="${resourceMetadataUrl}", scope="${READ_SCOPE}", error="${error}", error_description="Connect your Easy Garage Cleaning account to continue"`;
+}
 
-    const serviceToken = process.env.MCP_BEARER_TOKEN ?? "";
-    if (
-      token &&
-      serviceToken.length >= 32 &&
-      secureEqual(token, serviceToken)
-    ) {
-      next();
-      return;
-    }
+export async function authorizeMcpRequest(authorization: string | undefined) {
+  const token = authorization?.startsWith("Bearer ")
+    ? authorization.slice("Bearer ".length)
+    : "";
 
-    if (token) {
-      const db = getDb();
-      const [record] = await db.select().from(schema.oauthTokens)
-        .where(eq(schema.oauthTokens.accessTokenHash, hash(token)))
-        .limit(1);
+  const serviceToken = process.env.MCP_BEARER_TOKEN ?? "";
+  if (
+    token &&
+    serviceToken.length >= 32 &&
+    secureEqual(token, serviceToken)
+  ) {
+    return true;
+  }
 
-      if (
-        record &&
-        !record.revokedAt &&
-        record.accessExpiresAt.valueOf() > Date.now() &&
-        record.scopes.includes(READ_SCOPE)
-      ) {
-        next();
-        return;
-      }
-    }
+  if (!token) return false;
 
-    res.status(401)
-      .set("WWW-Authenticate", `Bearer resource_metadata="${resourceMetadataUrl}", scope="${READ_SCOPE}"`)
-      .set("Cache-Control", "no-store")
-      .json({ error: "unauthorized" });
-  };
+  const db = getDb();
+  const [record] = await db.select().from(schema.oauthTokens)
+    .where(eq(schema.oauthTokens.accessTokenHash, hash(token)))
+    .limit(1);
+
+  return Boolean(
+    record &&
+    !record.revokedAt &&
+    record.accessExpiresAt.valueOf() > Date.now() &&
+    record.resource === publicOrigin() &&
+    record.scopes.includes(READ_SCOPE)
+  );
 }
