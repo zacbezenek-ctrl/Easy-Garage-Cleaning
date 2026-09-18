@@ -37,10 +37,57 @@ function buildServer() {
   }, async ({ days }) => textResult(await leadsNotResponding(days)));
 
   server.registerTool("egc.recent_bookings", {
-    description: "Return bookings created in the requested lookback window. Filters on booking creation time, not appointment time.",
+    description: "Return bookings created in the requested lookback window, enriched with job scope, opportunity context, recent messages, and call transcripts. Filters on booking creation time, not appointment time.",
     inputSchema: z.object({ days: z.number().int().min(1).max(90).default(3) }),
     annotations: { readOnlyHint: true, destructiveHint: false }
-  }, async ({ days }) => textResult(await recentBookings(days)));
+  }, async ({ days }) => {
+    const db = getDb();
+    const bookings = await recentBookings(days);
+    const enriched = await Promise.all(bookings.map(async (booking) => {
+      const [jobRows, opportunityRows, recentMessages, callTranscripts] = await Promise.all([
+        db.select().from(schema.jobs)
+          .where(eq(schema.jobs.contactId, booking.contactId))
+          .orderBy(desc(schema.jobs.updatedAt))
+          .limit(1),
+        db.select({
+          id: schema.opportunities.id,
+          providerId: schema.opportunities.providerId,
+          status: schema.opportunities.status,
+          monetaryValueCents: schema.opportunities.monetaryValueCents,
+          pipelineId: schema.opportunities.pipelineId,
+          pipelineStageId: schema.opportunities.pipelineStageId,
+          source: schema.opportunities.source,
+          assignedUserId: schema.opportunities.assignedUserId,
+          providerCreatedAt: schema.opportunities.providerCreatedAt,
+          providerUpdatedAt: schema.opportunities.providerUpdatedAt
+        }).from(schema.opportunities)
+          .where(eq(schema.opportunities.contactId, booking.contactId))
+          .orderBy(desc(schema.opportunities.updatedAt))
+          .limit(1),
+        db.select({
+          type: schema.messages.type,
+          direction: schema.messages.direction,
+          actorType: schema.messages.actorType,
+          body: schema.messages.body,
+          occurredAt: schema.messages.occurredAt
+        }).from(schema.messages)
+          .where(eq(schema.messages.contactId, booking.contactId))
+          .orderBy(desc(schema.messages.occurredAt))
+          .limit(20),
+        callTranscriptsForContact(booking.contactId, 30)
+      ]);
+
+      return {
+        ...booking,
+        job: jobRows[0] ?? null,
+        opportunity: opportunityRows[0] ?? null,
+        recentMessages,
+        callTranscripts
+      };
+    }));
+
+    return textResult(enriched);
+  });
 
   server.registerTool("calls.transcript", {
     description: "Return persisted call transcripts for one EGC contact.",
