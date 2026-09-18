@@ -151,6 +151,26 @@ export class GhlClient {
     return this.request<Record<string, unknown>>(`/locations/${this.locationId}/customFields`);
   }
 
+  getLocation() {
+    return this.request<Record<string, unknown>>(`/locations/${this.locationId}`);
+  }
+
+  getPipelines() {
+    return this.request<Record<string, unknown>>("/opportunities/pipelines", {}, {
+      locationId: this.locationId
+    });
+  }
+
+  searchUsers(companyId: string, params: Query = {}) {
+    return this.request<Record<string, unknown>>("/users/search", {}, {
+      companyId,
+      locationId: this.locationId,
+      limit: 100,
+      skip: 0,
+      ...params
+    });
+  }
+
   createContactNote(contactId: string, body: string, title = "EGC Walkthrough") {
     return this.request<Record<string, unknown>>(
       `/contacts/${contactId}/notes`,
