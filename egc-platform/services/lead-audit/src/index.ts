@@ -175,10 +175,28 @@ export async function leadsNotResponding(days = 3): Promise<LeadAuditRow[]> {
   .orderBy(schema.leads.createdAt) as Promise<LeadAuditRow[]>;
 }
 
+export function dedupeBookingsByContactAndStart<T extends {
+  contactId: string;
+  appointmentStartAt: Date;
+}>(rows: T[]): T[] {
+  const seen = new Set<string>();
+  const deduped: T[] = [];
+
+  for (const row of rows) {
+    const startMinute = Math.floor(row.appointmentStartAt.valueOf() / 60_000);
+    const key = `${row.contactId}:${startMinute}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push(row);
+  }
+
+  return deduped;
+}
+
 export async function recentBookings(days = 3) {
   const db = getDb();
   const since = new Date(Date.now() - days * 86_400_000);
-  return db.select({
+  const rows = await db.select({
     appointmentId: schema.appointments.id,
     bookingCreatedAt: schema.appointments.appointmentCreatedAt,
     appointmentStartAt: schema.appointments.appointmentStartAt,
@@ -200,6 +218,8 @@ export async function recentBookings(days = 3) {
     inArray(schema.appointments.status, ["new", "confirmed", "showed"])
   ))
   .orderBy(desc(schema.appointments.appointmentCreatedAt));
+
+  return dedupeBookingsByContactAndStart(rows);
 }
 
 export async function callTranscriptsForContact(contactId: string, days = 30) {
