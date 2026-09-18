@@ -1,13 +1,18 @@
-import { createPublicKey, verify } from "node:crypto";
+import { verify } from "node:crypto";
+
+const GHL_ED25519_PUBLIC_KEY = `-----BEGIN PUBLIC KEY-----
+MCowBQYDK2VwAyEAi2HR1srL4o18O8BRa7gVJY7G7bupbN3H9AwJrHCDiOg=
+-----END PUBLIC KEY-----`;
 
 export function verifyGhlWebhook(rawBody: Buffer, signature: string | undefined): boolean {
-  const publicKey = process.env.GHL_WEBHOOK_PUBLIC_KEY;
-  if (!publicKey) throw new Error("GHL_WEBHOOK_PUBLIC_KEY is required");
-  if (!signature) return false;
-
+  if (!signature || signature === "N/A") return false;
   try {
-    const key = createPublicKey(publicKey.replace(/\\n/g, "\n"));
-    return verify(null, rawBody, key, Buffer.from(signature, "base64"));
+    return verify(
+      null,
+      rawBody,
+      GHL_ED25519_PUBLIC_KEY,
+      Buffer.from(signature, "base64")
+    );
   } catch {
     return false;
   }
