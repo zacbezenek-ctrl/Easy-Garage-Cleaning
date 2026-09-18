@@ -1,4 +1,4 @@
-import { createMcpExpressApp } from "@modelcontextprotocol/express";
+import express from "express";
 import { toNodeHandler } from "@modelcontextprotocol/node";
 import { createMcpHandler, McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod/v4";
@@ -2123,13 +2123,12 @@ if (process.env.NODE_ENV === "production" && allowedHosts.length === 0) {
   throw new Error("MCP_ALLOWED_HOSTS is required in production");
 }
 
-const app = createMcpExpressApp({
-  host: "0.0.0.0",
-  ...(allowedHosts.length > 0 ? { allowedHosts } : {})
-});
-const handler = toNodeHandler(createMcpHandler(buildServer));
-const oauth = registerOauthRoutes(app);
+const app = express();
+app.disable("x-powered-by");
+app.use(express.json({ limit: "2mb" }));
 
+// Railway's internal healthcheck hostname is not the public MCP hostname.
+// Keep /health outside host validation while validating every OAuth/MCP route.
 app.get("/health", async (_req, res) => {
   try {
     await getDb().select({ id: schema.contacts.id }).from(schema.contacts).limit(1);
@@ -2138,6 +2137,18 @@ app.get("/health", async (_req, res) => {
     res.status(503).json({ ok: false, service: "egc-mcp", oauth: true, database: "not_ready" });
   }
 });
+
+app.use((req, res, next) => {
+  if (allowedHosts.length === 0 || allowedHosts.includes(req.hostname)) {
+    next();
+    return;
+  }
+
+  res.status(403).json({ error: "invalid_host" });
+});
+
+const handler = toNodeHandler(createMcpHandler(buildServer));
+const oauth = registerOauthRoutes(app);
 
 app.all(
   "/mcp",
