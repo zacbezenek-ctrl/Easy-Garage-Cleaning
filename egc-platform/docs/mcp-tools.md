@@ -1,10 +1,24 @@
 # MCP Tools
 
-V1 is intentionally read-only. The MCP reads the normalized EGC Postgres layer rather than querying GoHighLevel live for every question.
+The EGC MCP has two OAuth scopes:
 
-## Business tools
+- `egc:read` — query EGC/GHL operational data.
+- `egc:write` — perform bounded operational mutations.
+
+No payment, refund, delete, or direct customer-message tools are exposed.
+
+## Live GHL reference tools
+
+Use these before writes when provider IDs are unknown:
+
+- `ghl.pipelines()`
+- `ghl.calendars()`
+- `ghl.users()`
+
+## Business read tools
 
 - `egc.leads_needing_contact(days=3)`
+- `egc.followups_due(days=3)`
 - `egc.leads_not_responding(days=3)`
 - `egc.recent_bookings(days=3)`
 - `egc.customer_history(contactId)`
@@ -19,10 +33,6 @@ V1 is intentionally read-only. The MCP reads the normalized EGC Postgres layer r
 - `egc.sales_rep_performance(days=30)`
 - `egc.addon_attach_rates(days=90)`
 - `egc.walkthrough_conversion(days=90)`
-
-`egc.recent_bookings` is enriched with the latest local job scope, opportunity context, recent messages, and persisted call transcripts so the normal booking question can be answered in one tool call.
-
-`egc.sales_rep_performance` returns observed counts by GHL user ID. It does not rank reps. `egc.walkthrough_conversion` currently measures the voice-walkthrough workflow; a true sales walkthrough-to-job close rate requires mapping the relevant sales appointment type.
 
 ## Raw normalized read tools
 
@@ -44,18 +54,57 @@ V1 is intentionally read-only. The MCP reads the normalized EGC Postgres layer r
 - `walkthroughs.get(walkthroughId)`
 - `walkthroughs.transcript(walkthroughId)`
 
-## Acceptance query
+## Write tools
 
-The first end-to-end acceptance test is:
+### Contacts / CRM identity
+
+- `contacts.create(contact)` — GHL upsert + local contact/lead normalization.
+- `contacts.update(contactId, changes)` — update GHL and local normalized record.
+- `contacts.add_tags(contactId, tags)`
+- `contacts.remove_tags(contactId, tags)`
+
+Contact assignment through `assignedTo` also updates the local lead assignment.
+
+### Opportunities
+
+- `opportunities.create(...)`
+- `opportunities.update(opportunityId, changes)`
+
+Writes support pipeline/stage, status, value, owner, forecast fields, and custom fields. A newly created opportunity can optionally be linked to an EGC job.
+
+### Appointments
+
+- `appointments.create(...)`
+- `appointments.update(appointmentId, changes)`
+
+Writes support calendar, start/end time, status, assigned user, description/address, and optional EGC job linking. Exact duplicate contact/calendar/start-time creates are blocked locally. GHL automations are disabled by default unless `runAutomations=true`.
+
+### EGC jobs
+
+- `jobs.create(contactId, ...)`
+- `jobs.update(jobId, changes)`
+- `jobs.add_note(jobId, type, body)`
+
+Job updates support status, address, scope, add-ons, access, labor, schedule, price, and deposit values.
+
+### Walkthroughs
+
+- `walkthroughs.create_draft(contactId, extraction, ...)`
+- `walkthroughs.update_draft(walkthroughId, ...)`
+- `walkthroughs.approve(walkthroughId, extraction?)`
+
+Approval creates a job when needed or updates the linked job scope and can queue GHL note write-back.
+
+## Acceptance query
 
 > How many leads still need to be contacted from the last three days? Give me everyone who hasn't responded. Read their call transcripts. Tell me everyone who booked in the last three days and exactly what each job is.
 
-Booking tools filter by the booking creation timestamp. The appointment start timestamp is stored and returned separately. If the provider does not supply a trustworthy booking creation timestamp, the system leaves it unknown rather than substituting the appointment start time.
+Booking tools filter by booking creation timestamp. Appointment start time is stored separately. Missing creation time is left unknown rather than fabricated from appointment start time.
 
-Lead follow-up state distinguishes human outreach from automation. A customer counts as having replied to the current follow-up only when a response occurred after the latest human outreach.
+## Acceptance write workflow
 
-## Security
+A connected `egc:write` client should be able to execute:
 
-The HTTP endpoint requires `Authorization: Bearer <MCP_BEARER_TOKEN>`. Production also requires `MCP_ALLOWED_HOSTS`.
+> Pull up Peggy, move the opportunity to won at $2,800, book the correct calendar for Tuesday at 9, create/link the EGC job using the walkthrough scope, and add the crew note.
 
-V1 deliberately exposes no send-message, contact deletion, refund, invoice, appointment-cancel, pricing, or other mutation tools.
+The model should use reference tools to resolve pipeline/calendar/user IDs, then call bounded write tools. Every write is audited.
