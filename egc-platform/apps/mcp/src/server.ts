@@ -385,7 +385,7 @@ async function findEquivalentLocalAppointment(input: {
   contactId: string;
   calendarId: string;
   startAt: Date;
-  title?: string;
+  title?: string | undefined;
 }) {
   const db = getDb();
   const toleranceMs = 90_000;
@@ -406,7 +406,7 @@ async function findEquivalentRemoteAppointment(input: {
   contactProviderId: string;
   calendarId: string;
   startAt: Date;
-  title?: string;
+  title?: string | undefined;
 }) {
   const toleranceMs = 5 * 60_000;
   const payload = await ghlClient().getCalendarEvents({
@@ -568,11 +568,11 @@ async function sendConversationMessage(input: {
   contactId: string;
   channel: "SMS" | "Email";
   body: string;
-  subject?: string;
-  emailFrom?: string;
-  emailTo?: string;
-  fromNumber?: string;
-  toNumber?: string;
+  subject?: string | undefined;
+  emailFrom?: string | undefined;
+  emailTo?: string | undefined;
+  fromNumber?: string | undefined;
+  toNumber?: string | undefined;
   duplicateWindowMinutes?: number;
 }) {
   const db = getDb();
@@ -678,15 +678,15 @@ async function ensureAppointment(input: {
   calendarId: string;
   startAt: Date;
   endAt: Date | null;
-  title?: string;
+  title?: string | undefined;
   appointmentStatus: "new" | "confirmed" | "cancelled" | "showed" | "noshow" | "invalid" | "completed" | "active";
-  assignedUserId?: string;
-  description?: string;
-  address?: string;
+  assignedUserId?: string | undefined;
+  description?: string | undefined;
+  address?: string | undefined;
   runAutomations: boolean;
   ignoreDateRange: boolean;
   ignoreFreeSlotValidation: boolean;
-  jobId?: string;
+  jobId?: string | undefined;
 }) {
   const db = getDb();
   const [contact] = await db.select().from(schema.contacts)
