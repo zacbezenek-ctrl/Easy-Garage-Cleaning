@@ -6,7 +6,8 @@ import { getDb, schema } from "@egc/database";
 
 const CHATGPT_CLIENT_ID = "https://chatgpt.com/oauth/client.json";
 const CHATGPT_REDIRECT_URI = "https://chatgpt.com/connector_platform_oauth_redirect";
-const READ_SCOPE = "egc:read";
+export const READ_SCOPE = "egc:read";
+export const WRITE_SCOPE = "egc:write";
 const ACCESS_TOKEN_TTL_MS = 60 * 60_000;
 const REFRESH_TOKEN_TTL_MS = 30 * 24 * 60 * 60_000;
 const AUTH_CODE_TTL_MS = 5 * 60_000;
@@ -47,8 +48,13 @@ function requestedScopes(value: unknown) {
     .map((scope) => scope.trim())
     .filter(Boolean);
 
+  if (scopes.includes(WRITE_SCOPE) && !scopes.includes(READ_SCOPE)) scopes.push(READ_SCOPE);
   if (!scopes.includes(READ_SCOPE)) scopes.push(READ_SCOPE);
-  return [...new Set(scopes.filter((scope) => scope === READ_SCOPE || scope === "offline_access"))];
+  return [...new Set(scopes.filter((scope) =>
+    scope === READ_SCOPE ||
+    scope === WRITE_SCOPE ||
+    scope === "offline_access"
+  ))];
 }
 
 function oauthError(res: Response, status: number, error: string, description: string) {
@@ -119,7 +125,7 @@ small{display:block;color:#777;margin-top:14px}
 <body>
 <main>
 <h1>Connect EGC Ops</h1>
-<p>Authorize ChatGPT to use the read-only Easy Garage Cleaning MCP. This connection can read synchronized EGC operational data but cannot send messages, alter pricing, issue refunds, or delete records.</p>
+<p>Authorize ChatGPT to use the Easy Garage Cleaning operations MCP. Depending on the requested scope, it can read EGC data and create or update internal jobs, notes, and walkthroughs. It cannot send customer messages, issue refunds, charge cards, or delete records.</p>
 ${error ? `<p class="error">${htmlEscape(error)}</p>` : ""}
 <form method="post" action="/oauth/authorize">
 ${hidden}
@@ -180,8 +186,8 @@ async function issueTokens(input: {
   };
 }
 
-export function oauthSecurityMetadata() {
-  const schemes = [{ type: "oauth2" as const, scopes: [READ_SCOPE] }];
+export function oauthSecurityMetadata(scopes: string[] = [READ_SCOPE]) {
+  const schemes = [{ type: "oauth2" as const, scopes }];
   return {
     securitySchemes: schemes,
     _meta: { securitySchemes: schemes }
@@ -196,7 +202,7 @@ export function registerOauthRoutes(app: Express) {
     res.set("Cache-Control", "public, max-age=300").json({
       resource: origin,
       authorization_servers: [origin],
-      scopes_supported: [READ_SCOPE, "offline_access"],
+      scopes_supported: [READ_SCOPE, WRITE_SCOPE, "offline_access"],
       resource_documentation: `${origin}/mcp-info`
     });
   });
@@ -212,7 +218,7 @@ export function registerOauthRoutes(app: Express) {
       grant_types_supported: ["authorization_code", "refresh_token"],
       token_endpoint_auth_methods_supported: ["none"],
       code_challenge_methods_supported: ["S256"],
-      scopes_supported: [READ_SCOPE, "offline_access"]
+      scopes_supported: [READ_SCOPE, WRITE_SCOPE, "offline_access"]
     });
   });
 
@@ -413,11 +419,18 @@ export function registerOauthRoutes(app: Express) {
   };
 }
 
-export function mcpAuthenticateChallenge(resourceMetadataUrl: string, error = "invalid_token") {
-  return `Bearer resource_metadata="${resourceMetadataUrl}", scope="${READ_SCOPE}", error="${error}", error_description="Connect your Easy Garage Cleaning account to continue"`;
+export function mcpAuthenticateChallenge(
+  resourceMetadataUrl: string,
+  requiredScope = READ_SCOPE,
+  error = "invalid_token"
+) {
+  return `Bearer resource_metadata="${resourceMetadataUrl}", scope="${requiredScope}", error="${error}", error_description="Connect your Easy Garage Cleaning account to continue"`;
 }
 
-export async function authorizeMcpRequest(authorization: string | undefined) {
+export async function authorizeMcpRequest(
+  authorization: string | undefined,
+  requiredScope = READ_SCOPE
+) {
   const token = authorization?.startsWith("Bearer ")
     ? authorization.slice("Bearer ".length)
     : "";
@@ -443,6 +456,6 @@ export async function authorizeMcpRequest(authorization: string | undefined) {
     !record.revokedAt &&
     record.accessExpiresAt.valueOf() > Date.now() &&
     record.resource === publicOrigin() &&
-    record.scopes.includes(READ_SCOPE)
+    record.scopes.includes(requiredScope)
   );
 }
