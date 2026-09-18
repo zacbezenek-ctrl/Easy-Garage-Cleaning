@@ -84,6 +84,20 @@ export class GhlClient {
     );
   }
 
+  exportMessages(params: Query = {}) {
+    return this.request<Record<string, unknown>>(
+      "/conversations/messages/export",
+      {},
+      {
+        locationId: this.locationId,
+        limit: 1000,
+        sortBy: "createdAt",
+        sortOrder: "asc",
+        ...params
+      }
+    );
+  }
+
   async getCallRecording(messageId: string): Promise<Buffer> {
     const response = await this.fetchResponse(
       `/conversations/messages/${messageId}/locations/${this.locationId}/recording`,
@@ -143,6 +157,10 @@ export function asString(value: unknown): string | undefined {
 
 export function asDate(value: unknown): Date | undefined {
   if (typeof value !== "string" && typeof value !== "number") return undefined;
-  const date = new Date(value);
+  const normalized =
+    typeof value === "string" && /^\d+$/.test(value)
+      ? Number(value)
+      : value;
+  const date = new Date(normalized);
   return Number.isNaN(date.valueOf()) ? undefined : date;
 }
