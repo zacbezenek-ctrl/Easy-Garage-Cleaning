@@ -629,21 +629,30 @@ async function processOutboxEvents() {
     }).where(eq(schema.outboxEvents.id, event.id));
 
     try {
-      if (event.type !== "ghl.walkthrough_note.sync") {
+      if (
+        event.type !== "ghl.walkthrough_note.sync" &&
+        event.type !== "ghl.contact_note.sync"
+      ) {
         throw new Error(`Unsupported outbox event type: ${event.type}`);
       }
 
       const payload = asRecord(event.payload);
       const ghlContactId = asString(payload.ghlContactId);
       const noteBody = asString(payload.noteBody);
+      const title =
+        asString(payload.title) ??
+        (event.type === "ghl.walkthrough_note.sync"
+          ? "EGC Walkthrough — Approved Scope"
+          : "EGC Operations Note");
+
       if (!ghlContactId || !noteBody) {
-        throw new Error("GHL walkthrough writeback payload is incomplete");
+        throw new Error("GHL contact note writeback payload is incomplete");
       }
 
       const response = await ghl.createContactNote(
         ghlContactId,
         noteBody,
-        "EGC Walkthrough — Approved Scope"
+        title
       );
       const noteId = asString(asRecord(response.note).id) ?? null;
 
@@ -657,10 +666,10 @@ async function processOutboxEvents() {
 
         await tx.insert(schema.auditLogs).values({
           actor: "worker",
-          action: "walkthrough.ghl_sync",
-          entity: "walkthrough",
+          action: "ghl.contact_note.sync",
+          entity: event.type === "ghl.walkthrough_note.sync" ? "walkthrough" : "operation",
           entityId: event.entityId,
-          newValue: { noteId },
+          newValue: { noteId, title },
           source: "sync"
         });
       });
