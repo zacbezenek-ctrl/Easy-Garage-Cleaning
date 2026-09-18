@@ -28,8 +28,8 @@ EGC API / workers
 
 ## HighLevel API
 
-The client uses `https://services.leadconnectorhq.com` and the current `Version: v3` request header. The call recording and transcription endpoints are represented explicitly in `packages/ghl`.
+The client uses `https://services.leadconnectorhq.com` with HighLevel's current `Version: v3` API header. Recording retrieval returns WAV bytes; transcription uses the separate v3 transcription route.
 
 ## Webhook verification
 
-GHL's current webhook signature is `X-GHL-Signature` using Ed25519. The API verifies the raw body before parsing it. Do not downgrade this to a shared query-string secret.
+GHL's current webhook signature is `X-GHL-Signature` using Ed25519. The API verifies the exact raw request bytes before processing the parsed JSON body.
