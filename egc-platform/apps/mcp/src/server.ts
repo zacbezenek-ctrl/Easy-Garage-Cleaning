@@ -386,6 +386,90 @@ async function syncAppointmentFromGhl(
   return appointment;
 }
 
+function appointmentPayloadMatchesChanges(
+  payload: Record<string, unknown>,
+  changes: Record<string, unknown>
+) {
+  const raw = unwrapRecord(payload, "event");
+
+  if (changes.appointmentStatus !== undefined) {
+    const actual = normalizeLocalAppointmentStatus(
+      raw.appointmentStatus ?? raw.appoinmentStatus ?? raw.status
+    );
+    const expected = normalizeLocalAppointmentStatus(changes.appointmentStatus);
+    if (actual !== expected) return false;
+  }
+
+  if (changes.calendarId !== undefined && asString(raw.calendarId) !== changes.calendarId) {
+    return false;
+  }
+
+  if (changes.assignedUserId !== undefined && changes.assignedUserId !== null) {
+    const assigned = asString(raw.assignedUserId);
+    if (assigned !== changes.assignedUserId) return false;
+  }
+
+  if (changes.title !== undefined && asString(raw.title) !== changes.title) {
+    return false;
+  }
+
+  if (changes.startTime !== undefined) {
+    const actualStart = asDate(raw.startTime);
+    const expectedStart = asDate(changes.startTime);
+    if (!actualStart || !expectedStart || Math.abs(actualStart.valueOf() - expectedStart.valueOf()) > 1000) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+async function updateAppointmentAndSync(
+  existing: typeof schema.appointments.$inferSelect,
+  changes: Record<string, unknown>
+) {
+  let providerResponse: Record<string, unknown> | null = null;
+  let providerError: unknown = null;
+
+  try {
+    providerResponse = await ghlClient().updateAppointment(existing.providerId, changes);
+  } catch (error) {
+    providerError = error;
+  }
+
+  const responseRaw = providerResponse ? unwrapRecord(providerResponse, "event") : {};
+  const responseComplete = Boolean(asString(responseRaw.id) && asDate(responseRaw.startTime));
+  const responseVerified = Boolean(
+    providerResponse &&
+    responseComplete &&
+    appointmentPayloadMatchesChanges(providerResponse, changes)
+  );
+
+  let canonical = responseVerified ? providerResponse : null;
+
+  if (!canonical) {
+    const fetched = await ghlClient().getAppointment(existing.providerId).catch(() => null);
+    if (fetched && appointmentPayloadMatchesChanges(fetched, changes)) {
+      const fetchedRaw = unwrapRecord(fetched, "event");
+      if (asString(fetchedRaw.id) && asDate(fetchedRaw.startTime)) {
+        canonical = fetched;
+      }
+    }
+  }
+
+  if (!canonical) {
+    if (providerError) throw providerError;
+    throw new Error("ghl_appointment_update_verification_failed");
+  }
+
+  const updated = await syncAppointmentFromGhl(canonical, existing.contactId, existing.id);
+  return {
+    appointment: updated,
+    recoveredFromAmbiguousProviderError: Boolean(providerError),
+    recoveredFromIncompleteProviderResponse: !responseVerified
+  };
+}
+
 function normalizedComparableText(value: string | null | undefined) {
   return (value ?? "")
     .toLowerCase()
@@ -2925,8 +3009,8 @@ function buildServer() {
       body.endTime = new Date(changes.endTime).toISOString();
     }
 
-    const remote = await ghlClient().updateAppointment(existing.providerId, body);
-    const updated = await syncAppointmentFromGhl(remote, existing.contactId, appointmentId);
+    const verified = await updateAppointmentAndSync(existing, body);
+    const updated = verified.appointment;
 
     if (changes.startTime !== undefined) {
       await db.update(schema.jobs).set({
@@ -2941,11 +3025,20 @@ function buildServer() {
       entity: "appointment",
       entityId: appointmentId,
       oldValue: existing,
-      newValue: updated,
+      newValue: {
+        appointment: updated,
+        recoveredFromAmbiguousProviderError: verified.recoveredFromAmbiguousProviderError,
+        recoveredFromIncompleteProviderResponse: verified.recoveredFromIncompleteProviderResponse
+      },
       source: "mcp"
     });
 
-    return textResult({ ok: true, appointment: updated });
+    return textResult({
+      ok: true,
+      appointment: updated,
+      recoveredFromAmbiguousProviderError: verified.recoveredFromAmbiguousProviderError,
+      recoveredFromIncompleteProviderResponse: verified.recoveredFromIncompleteProviderResponse
+    });
   });
 
   server.registerTool("appointments.cancel", {
@@ -2963,12 +3056,12 @@ function buildServer() {
       .limit(1);
     if (!existing) return textResult({ error: "appointment_not_found" });
 
-    const remote = await ghlClient().updateAppointment(existing.providerId, {
+    const verified = await updateAppointmentAndSync(existing, {
       appointmentStatus: "cancelled",
       toNotify: runAutomations,
       ...(reason ? { description: reason } : {})
     });
-    const updated = await syncAppointmentFromGhl(remote, existing.contactId, appointmentId);
+    const updated = verified.appointment;
 
     await db.insert(schema.auditLogs).values({
       actor: "chatgpt-mcp",
@@ -2976,11 +3069,20 @@ function buildServer() {
       entity: "appointment",
       entityId: appointmentId,
       oldValue: existing,
-      newValue: updated,
+      newValue: {
+        appointment: updated,
+        recoveredFromAmbiguousProviderError: verified.recoveredFromAmbiguousProviderError,
+        recoveredFromIncompleteProviderResponse: verified.recoveredFromIncompleteProviderResponse
+      },
       source: "mcp"
     });
 
-    return textResult({ ok: true, appointment: updated });
+    return textResult({
+      ok: true,
+      appointment: updated,
+      recoveredFromAmbiguousProviderError: verified.recoveredFromAmbiguousProviderError,
+      recoveredFromIncompleteProviderResponse: verified.recoveredFromIncompleteProviderResponse
+    });
   });
 
   server.registerTool("appointments.delete", {
