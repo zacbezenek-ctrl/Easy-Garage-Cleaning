@@ -16,6 +16,7 @@ Set these only in the deployment secret store:
 - `GHL_LOCATION_ID`
 - `GHL_PRIVATE_INTEGRATION_TOKEN` (new, rotated)
 - `GHL_CLIENT_SECRET` (new, rotated)
+- `GHL_WRITEBACK_ENABLED=true` after the replacement token has contact-note write scope
 - `API_BEARER_TOKEN`
 - `MCP_BEARER_TOKEN`
 - `MCP_ALLOWED_HOSTS` (comma-separated public MCP hostnames)
@@ -45,3 +46,7 @@ Do not deploy with the GHL token or client secret previously pasted into ChatGPT
 ## Portal access
 
 The portal is protected by HTTP Basic authentication at the Next.js request boundary. Configure `PORTAL_BASIC_USER` and a strong `PORTAL_BASIC_PASSWORD` before deployment. The service-to-service API bearer token is separate and must not be exposed to browser code. Replace Basic Auth with identity-based application auth before adding multiple staff roles or granular permissions.
+
+## GHL walkthrough write-back
+
+When `GHL_WRITEBACK_ENABLED=true`, approving a walkthrough commits the reviewed scope locally and queues a durable `ghl.walkthrough_note.sync` outbox event. The worker writes the approved scope to the GHL contact as a note and retries transient failures. The ChatGPT MCP remains read-only.
