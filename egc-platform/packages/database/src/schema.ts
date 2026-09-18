@@ -226,6 +226,22 @@ export const webhookEvents = pgTable("webhook_events", {
   index("webhook_status_idx").on(t.processingStatus)
 ]);
 
+export const providerMappings = pgTable("provider_mappings", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  provider: text("provider").notNull(),
+  resourceType: text("resource_type").notNull(),
+  providerId: text("provider_id").notNull(),
+  canonicalField: text("canonical_field"),
+  displayName: text("display_name"),
+  fieldType: text("field_type"),
+  raw: jsonb("raw").$type<Record<string, unknown>>().default({}).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull()
+}, (t) => [
+  uniqueIndex("provider_mappings_provider_resource_id_uq")
+    .on(t.provider, t.resourceType, t.providerId)
+]);
+
 export const syncCursors = pgTable("sync_cursors", {
   key: text("key").primaryKey(),
   cursor: text("cursor"),
