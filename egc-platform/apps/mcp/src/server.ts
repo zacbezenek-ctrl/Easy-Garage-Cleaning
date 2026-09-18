@@ -107,6 +107,8 @@ function tomorrowBounds(timeZone = "America/Denver") {
   };
 }
 
+const isoDateTimeSchema = z.string().datetime({ offset: true });
+
 const jobMutationSchema = z.object({
   status: z.string().min(1).max(80).optional(),
   serviceAddress: z.string().max(500).nullable().optional(),
@@ -120,7 +122,7 @@ const jobMutationSchema = z.object({
   addOns: z.array(z.string().max(500)).optional(),
   accessNotes: z.string().max(5000).nullable().optional(),
   estimatedLaborHours: z.number().min(0).nullable().optional(),
-  scheduledAt: z.coerce.date().nullable().optional(),
+  scheduledAt: isoDateTimeSchema.nullable().optional(),
   priceCents: z.number().int().min(0).nullable().optional(),
   depositCents: z.number().int().min(0).nullable().optional()
 });
@@ -164,8 +166,8 @@ const appointmentMutationSchema = z.object({
   ]).optional(),
   description: z.string().max(5000).nullable().optional(),
   address: z.string().max(1000).nullable().optional(),
-  startTime: z.coerce.date().optional(),
-  endTime: z.coerce.date().nullable().optional(),
+  startTime: isoDateTimeSchema.optional(),
+  endTime: isoDateTimeSchema.nullable().optional(),
   runAutomations: z.boolean().default(false),
   ignoreDateRange: z.boolean().default(false),
   ignoreFreeSlotValidation: z.boolean().default(false)
@@ -1302,7 +1304,7 @@ function buildServer() {
         estimatedLaborHours: job.estimatedLaborHours === undefined || job.estimatedLaborHours === null
           ? null
           : String(job.estimatedLaborHours),
-        scheduledAt: job.scheduledAt ?? null,
+        scheduledAt: job.scheduledAt ? new Date(job.scheduledAt) : null,
         priceCents: job.priceCents ?? null,
         depositCents: job.depositCents ?? null
       }).returning();
@@ -1375,7 +1377,9 @@ function buildServer() {
       ...(changes.estimatedLaborHours !== undefined
         ? { estimatedLaborHours: changes.estimatedLaborHours === null ? null : String(changes.estimatedLaborHours) }
         : {}),
-      ...(changes.scheduledAt !== undefined ? { scheduledAt: changes.scheduledAt } : {}),
+      ...(changes.scheduledAt !== undefined
+        ? { scheduledAt: changes.scheduledAt === null ? null : new Date(changes.scheduledAt) }
+        : {}),
       ...(changes.priceCents !== undefined ? { priceCents: changes.priceCents } : {}),
       ...(changes.depositCents !== undefined ? { depositCents: changes.depositCents } : {}),
       updatedAt: new Date()
@@ -1952,8 +1956,8 @@ function buildServer() {
     inputSchema: z.object({
       contactId: z.string().uuid(),
       calendarId: z.string().min(1),
-      startTime: z.coerce.date(),
-      endTime: z.coerce.date().nullable().optional(),
+      startTime: isoDateTimeSchema,
+      endTime: isoDateTimeSchema.nullable().optional(),
       title: z.string().max(500).optional(),
       appointmentStatus: z.enum([
         "new", "confirmed", "cancelled", "showed", "noshow", "invalid", "completed", "active"
@@ -1995,11 +1999,14 @@ function buildServer() {
       if (!job) return textResult({ error: "job_not_found_for_contact" });
     }
 
+    const startAt = new Date(startTime);
+    const endAt = endTime ? new Date(endTime) : null;
+
     const [existingAtSameTime] = await db.select().from(schema.appointments)
       .where(and(
         eq(schema.appointments.contactId, contactId),
         eq(schema.appointments.calendarId, calendarId),
-        eq(schema.appointments.appointmentStartAt, startTime)
+        eq(schema.appointments.appointmentStartAt, startAt)
       ))
       .limit(1);
 
@@ -2022,13 +2029,13 @@ function buildServer() {
       title: title ?? contact.name ?? "EGC Appointment",
       calendarId,
       contactId: contact.providerId,
-      startTime: startTime.toISOString(),
+      startTime: startAt.toISOString(),
       appointmentStatus,
       toNotify: runAutomations,
       ignoreDateRange,
       ignoreFreeSlotValidation
     };
-    if (endTime) body.endTime = endTime.toISOString();
+    if (endAt) body.endTime = endAt.toISOString();
     if (assignedUserId) body.assignedUserId = assignedUserId;
     if (description) body.description = description;
     if (address) body.address = address;
@@ -2083,9 +2090,11 @@ function buildServer() {
     if (changes.appointmentStatus !== undefined) body.appointmentStatus = changes.appointmentStatus;
     if (changes.description !== undefined) body.description = changes.description;
     if (changes.address !== undefined) body.address = changes.address;
-    if (changes.startTime !== undefined) body.startTime = changes.startTime.toISOString();
+    if (changes.startTime !== undefined) {
+      body.startTime = new Date(changes.startTime).toISOString();
+    }
     if (changes.endTime !== undefined && changes.endTime !== null) {
-      body.endTime = changes.endTime.toISOString();
+      body.endTime = new Date(changes.endTime).toISOString();
     }
 
     const remote = await ghlClient().updateAppointment(existing.providerId, body);
