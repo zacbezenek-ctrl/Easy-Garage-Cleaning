@@ -2,7 +2,7 @@ import express from "express";
 import { toNodeHandler } from "@modelcontextprotocol/node";
 import { createMcpHandler, McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod/v4";
-import { and, desc, eq, gte, ilike, inArray, lt, lte, or, sql } from "drizzle-orm";
+import { and, desc, eq, gte, ilike, inArray, isNull, lt, lte, or, sql } from "drizzle-orm";
 import { getDb, schema } from "@egc/database";
 import { walkthroughExtractionSchema } from "@egc/schemas";
 import { GhlClient, asDate, asRecord, asString, findArray } from "@egc/ghl";
@@ -935,6 +935,283 @@ async function resolveBookingCalendar(type: "walkthrough" | "job") {
       ? "EGC Customer Walkthroughs (fallback)"
       : "EGC Customer Jobs (fallback)",
     score: 0
+  };
+}
+
+type LeadRouteKind =
+  | "full_transformation"
+  | "removal_organization"
+  | "removal_only"
+  | "unknown";
+
+function routeSelectionFromCustomFields(customFields: unknown[]): string | null {
+  for (const raw of customFields) {
+    const field = asRecord(raw);
+    const id = asString(field.id);
+    const value = asString(field.value);
+    if (id === "eeVNj4ay4uwJGgP6pzrq" && value) return value;
+    if (value && /full garage transformation|item removal/i.test(value)) return value;
+  }
+
+  for (const raw of customFields) {
+    const field = asRecord(raw);
+    const value = asString(field.value);
+    if (value && /clear out unwanted stuff|junk removal/i.test(value)) return value;
+  }
+
+  return null;
+}
+
+function classifyLeadRoute(selection: string | null): LeadRouteKind {
+  const value = normalizedComparableText(selection);
+  if (value.includes("full garage transformation")) return "full_transformation";
+  if (
+    value.includes("item removal") &&
+    (value.includes("organization") || value.includes("orginization"))
+  ) return "removal_organization";
+  if (
+    value.includes("item removal only") ||
+    value.includes("clear out unwanted stuff") ||
+    value.includes("junk removal")
+  ) return "removal_only";
+  return "unknown";
+}
+
+function looksLikeJunkRemovalAutomation(body: string | null) {
+  const text = normalizedComparableText(body);
+  return [
+    "junk removal",
+    "send a photo",
+    "send photos",
+    "photo of what needs to go",
+    "pickup",
+    "pick up"
+  ].some((phrase) => text.includes(phrase));
+}
+
+async function auditLeadRouting(days = 14) {
+  const db = getDb();
+  const since = new Date(Date.now() - days * 86_400_000);
+
+  const contacts = await db.select({
+    id: schema.contacts.id,
+    providerId: schema.contacts.providerId,
+    name: schema.contacts.name,
+    phone: schema.contacts.phone,
+    tags: schema.contacts.tags,
+    customFields: schema.contacts.customFields,
+    providerCreatedAt: schema.contacts.providerCreatedAt,
+    createdAt: schema.contacts.createdAt
+  }).from(schema.contacts)
+    .where(or(
+      gte(schema.contacts.providerCreatedAt, since),
+      and(
+        isNull(schema.contacts.providerCreatedAt),
+        gte(schema.contacts.createdAt, since)
+      )
+    ))
+    .limit(1000);
+
+  const classified = contacts.map((contact) => {
+    const selection = routeSelectionFromCustomFields(contact.customFields);
+    const route = classifyLeadRoute(selection);
+    return { ...contact, selection, route };
+  });
+
+  const routeCounts = {
+    fullTransformation: classified.filter((row) => row.route === "full_transformation").length,
+    removalOrganization: classified.filter((row) => row.route === "removal_organization").length,
+    removalOnly: classified.filter((row) => row.route === "removal_only").length,
+    unknown: classified.filter((row) => row.route === "unknown").length
+  };
+
+  const transformationContacts = classified.filter(
+    (row) => row.route === "full_transformation"
+  );
+  const contactIds = transformationContacts.map((row) => row.id);
+
+  const messages = contactIds.length
+    ? await db.select({
+        contactId: schema.messages.contactId,
+        providerId: schema.messages.providerId,
+        actorType: schema.messages.actorType,
+        direction: schema.messages.direction,
+        body: schema.messages.body,
+        occurredAt: schema.messages.occurredAt
+      }).from(schema.messages)
+        .where(and(
+          inArray(schema.messages.contactId, contactIds),
+          gte(schema.messages.occurredAt, since)
+        ))
+        .orderBy(desc(schema.messages.occurredAt))
+    : [];
+
+  const messagesByContact = new Map<string, typeof messages>();
+  for (const message of messages) {
+    const rows = messagesByContact.get(message.contactId) ?? [];
+    rows.push(message);
+    messagesByContact.set(message.contactId, rows);
+  }
+
+  const issues = transformationContacts.flatMap((contact) => {
+    const wrongTags = contact.tags.filter((tag) =>
+      ["jr", "junk-removal", "junk removal", "pickup"].includes(tag.toLowerCase())
+    );
+    const wrongMessages = (messagesByContact.get(contact.id) ?? []).filter((message) =>
+      message.direction === "outbound" &&
+      message.actorType === "automation" &&
+      looksLikeJunkRemovalAutomation(message.body)
+    );
+
+    if (!wrongTags.length && !wrongMessages.length) return [];
+
+    return [{
+      type: "full_transformation_misrouted" as const,
+      severity: wrongMessages.length ? "high" as const : "medium" as const,
+      contactId: contact.id,
+      providerContactId: contact.providerId,
+      customerName: contact.name,
+      phone: contact.phone,
+      selectedRoute: contact.selection,
+      wrongTags,
+      wrongMessages: wrongMessages.slice(0, 5).map((message) => ({
+        providerMessageId: message.providerId,
+        body: message.body,
+        occurredAt: message.occurredAt
+      })),
+      expectedBehavior: "Free walkthrough / consultative full-garage transformation flow"
+    }];
+  });
+
+  return {
+    days,
+    customFieldId: "eeVNj4ay4uwJGgP6pzrq",
+    routeCounts,
+    issueCount: issues.length,
+    issues
+  };
+}
+
+async function collectSystemAlerts(days = 14, futureDays = 30) {
+  const db = getDb();
+  const now = new Date();
+  const start = new Date(now.valueOf() - days * 86_400_000);
+  const end = new Date(now.valueOf() + futureDays * 86_400_000);
+
+  const [routing, appointments, jobs, calendarMappings] = await Promise.all([
+    auditLeadRouting(days),
+    db.select().from(schema.appointments)
+      .where(and(
+        gte(schema.appointments.appointmentStartAt, start),
+        lte(schema.appointments.appointmentStartAt, end)
+      ))
+      .orderBy(schema.appointments.appointmentStartAt),
+    db.select().from(schema.jobs)
+      .where(and(
+        gte(schema.jobs.scheduledAt, start),
+        lte(schema.jobs.scheduledAt, end)
+      )),
+    db.select().from(schema.providerMappings)
+      .where(eq(schema.providerMappings.resourceType, "calendar"))
+  ]);
+
+  const activeAppointments = appointments.filter(
+    (row) => !["cancelled", "invalid"].includes(row.status)
+  );
+
+  const grouped = new Map<string, typeof activeAppointments>();
+  for (const appointment of activeAppointments) {
+    const minute = Math.floor(appointment.appointmentStartAt.valueOf() / 60_000);
+    const key = `${appointment.contactId}:${minute}`;
+    const rows = grouped.get(key) ?? [];
+    rows.push(appointment);
+    grouped.set(key, rows);
+  }
+
+  const duplicateAppointments = [...grouped.values()]
+    .filter((rows) => rows.length > 1)
+    .map((rows) => ({
+      type: "duplicate_appointment" as const,
+      severity: "high" as const,
+      contactId: rows[0]!.contactId,
+      startTime: rows[0]!.appointmentStartAt,
+      appointments: rows.map((row) => ({
+        appointmentId: row.id,
+        providerId: row.providerId,
+        calendarId: row.calendarId,
+        title: row.title,
+        status: row.status
+      }))
+    }));
+
+  const jobsMissingAppointment = jobs
+    .filter((job) =>
+      job.scheduledAt &&
+      !job.appointmentId &&
+      !["completed", "cancelled", "canceled", "lost"].includes(job.status.toLowerCase())
+    )
+    .map((job) => ({
+      type: "scheduled_job_missing_appointment" as const,
+      severity: "high" as const,
+      jobId: job.id,
+      contactId: job.contactId,
+      status: job.status,
+      scheduledAt: job.scheduledAt,
+      serviceType: job.serviceType
+    }));
+
+  const jobCalendarIds = new Set(
+    calendarMappings
+      .filter((mapping) => {
+        const name = normalizedComparableText(mapping.displayName);
+        return name.includes("customer jobs") || (
+          name.includes("egc") &&
+          name.includes("job") &&
+          !name.includes("walkthrough")
+        );
+      })
+      .map((mapping) => mapping.providerId)
+  );
+  const linkedAppointmentIds = new Set(
+    jobs.map((job) => job.appointmentId).filter((id): id is string => Boolean(id))
+  );
+
+  const jobAppointmentsMissingJob = activeAppointments
+    .filter((appointment) =>
+      Boolean(appointment.calendarId) &&
+      jobCalendarIds.has(appointment.calendarId!) &&
+      !linkedAppointmentIds.has(appointment.id)
+    )
+    .map((appointment) => ({
+      type: "job_appointment_missing_job" as const,
+      severity: "medium" as const,
+      appointmentId: appointment.id,
+      providerId: appointment.providerId,
+      contactId: appointment.contactId,
+      calendarId: appointment.calendarId,
+      title: appointment.title,
+      startTime: appointment.appointmentStartAt
+    }));
+
+  const alerts = [
+    ...duplicateAppointments,
+    ...jobsMissingAppointment,
+    ...jobAppointmentsMissingJob,
+    ...routing.issues
+  ];
+
+  return {
+    generatedAt: new Date().toISOString(),
+    daysBack: days,
+    futureDays,
+    counts: {
+      duplicates: duplicateAppointments.length,
+      scheduledJobsMissingAppointment: jobsMissingAppointment.length,
+      jobAppointmentsMissingJob: jobAppointmentsMissingJob.length,
+      routingIssues: routing.issueCount,
+      total: alerts.length
+    },
+    alerts
   };
 }
 
@@ -3219,6 +3496,25 @@ function buildServer() {
       duplicateWindowMinutes
     }));
   });
+
+  server.registerTool("egc.routing_audit", {
+    description: "Audit recent Facebook/lead-form contacts for routing mismatches, especially Full Garage Transformation leads sent into junk-removal tags or messaging.",
+    inputSchema: z.object({
+      days: z.number().int().min(1).max(90).default(14)
+    }),
+    ...protectedToolMetadata
+  }, async ({ days }) => textResult(await auditLeadRouting(days)));
+
+  server.registerTool("egc.system_alerts", {
+    description: "Detect operational consistency problems: duplicate appointments, scheduled jobs missing appointments, job-calendar appointments missing linked jobs, and lead-routing mismatches.",
+    inputSchema: z.object({
+      days: z.number().int().min(1).max(90).default(14),
+      futureDays: z.number().int().min(1).max(365).default(30)
+    }),
+    ...protectedToolMetadata
+  }, async ({ days, futureDays }) =>
+    textResult(await collectSystemAlerts(days, futureDays))
+  );
 
   return server;
 }
