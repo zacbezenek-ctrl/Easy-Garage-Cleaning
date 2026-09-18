@@ -1,21 +1,46 @@
-export default function Dashboard() {
+import { getDashboardData } from "../lib/data";
+
+export const dynamic = "force-dynamic";
+
+export default async function Dashboard() {
+  const data = await getDashboardData();
   return (
     <>
-      <h1>Easy Garage Cleaning Ops</h1>
-      <p className="muted">Internal operating layer for leads, jobs, walkthroughs, and MCP data.</p>
+      <div className="pagehead">
+        <div>
+          <h1>Easy Garage Cleaning Ops</h1>
+          <p className="muted">Canonical operating layer for leads, jobs, walkthroughs, and ChatGPT MCP data.</p>
+        </div>
+        <a className="button compact" href="/followups">Open follow-ups</a>
+      </div>
+
+      <div className="stats">
+        <a className="stat cardlink" href="/leads"><span>30d leads</span><strong>{data.totalLeads}</strong></a>
+        <a className="stat cardlink" href="/followups"><span>Need follow-up</span><strong>{data.followups}</strong></a>
+        <a className="stat cardlink" href="/leads"><span>Booked leads</span><strong>{data.booked}</strong></a>
+        <a className="stat cardlink" href="/pipeline"><span>Next 7d appointments</span><strong>{data.upcomingAppointments}</strong></a>
+        <a className="stat cardlink" href="/jobs"><span>Jobs</span><strong>{data.jobs}</strong></a>
+        <a className="stat cardlink" href="/walkthroughs"><span>Walkthroughs</span><strong>{data.walkthroughs}</strong></a>
+      </div>
+
       <div className="grid">
         <section className="card">
+          <h2>Lead state</h2>
+          {data.leadStates.map((row) => (
+            <div className="metricrow" key={row.state}>
+              <span>{row.state}</span><strong>{row.count}</strong>
+            </div>
+          ))}
+        </section>
+        <section className="card">
           <h2>Voice walkthrough</h2>
-          <p>Open a customer-specific walkthrough URL to record, transcribe, review, and approve job scope.</p>
-          <p className="muted"><code>/walkthroughs/&lt;contact-id&gt;</code></p>
+          <p>Open a customer record, start a mobile recording, review the extracted scope, and approve it before it becomes an EGC job record.</p>
+          <a className="tablelink" href="/customers">Choose customer →</a>
         </section>
         <section className="card">
-          <h2>MCP</h2>
-          <p>Read-only tools cover lead follow-up, no-response leads, recent bookings, customer history, transcripts, and job briefs.</p>
-        </section>
-        <section className="card">
-          <h2>Sync</h2>
-          <p>GHL contacts, conversations, calls, transcripts, opportunities, and appointments reconcile into Postgres.</p>
+          <h2>ChatGPT MCP</h2>
+          <p>The read-only MCP can audit leads, bookings, transcripts, jobs, pipeline, unanswered calls, stale opportunities, and operating metrics from this same database.</p>
+          <a className="tablelink" href="/analytics">View analytics →</a>
         </section>
       </div>
     </>
