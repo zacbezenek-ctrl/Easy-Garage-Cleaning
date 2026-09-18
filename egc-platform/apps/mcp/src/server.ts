@@ -20,7 +20,7 @@ function textResult(value: unknown) {
 }
 
 const protectedToolMetadata = {
-  ...protectedToolMetadata,
+  annotations: { readOnlyHint: true, destructiveHint: false },
   ...oauthSecurityMetadata()
 };
 
