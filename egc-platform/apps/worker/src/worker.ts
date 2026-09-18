@@ -61,13 +61,142 @@ async function upsertContact(rawValue: unknown) {
     .returning();
 
   if (contact) {
+    const assignedUserId = asString(raw.assignedTo) ?? asString(raw.assignedUserId) ?? null;
     await db.insert(schema.leads).values({
       contactId: contact.id,
       source: contact.source,
+      assignedUserId,
       createdAt: contact.providerCreatedAt ?? new Date()
-    }).onConflictDoNothing({ target: schema.leads.contactId });
+    }).onConflictDoUpdate({
+      target: schema.leads.contactId,
+      set: {
+        source: contact.source,
+        assignedUserId,
+        updatedAt: new Date()
+      }
+    });
   }
   return contact ?? null;
+}
+
+async function upsertProviderMapping(input: {
+  resourceType: string;
+  providerId: string;
+  displayName?: string | null;
+  fieldType?: string | null;
+  canonicalField?: string | null;
+  raw: Record<string, unknown>;
+}) {
+  const values = {
+    provider: "ghl",
+    resourceType: input.resourceType,
+    providerId: input.providerId,
+    displayName: input.displayName ?? null,
+    fieldType: input.fieldType ?? null,
+    canonicalField: input.canonicalField ?? null,
+    raw: input.raw,
+    updatedAt: new Date()
+  };
+
+  await db.insert(schema.providerMappings).values(values)
+    .onConflictDoUpdate({
+      target: [
+        schema.providerMappings.provider,
+        schema.providerMappings.resourceType,
+        schema.providerMappings.providerId
+      ],
+      set: values
+    });
+}
+
+async function syncReferenceMappings() {
+  const locationPayload = await ghl.getLocation();
+  const location = asRecord(locationPayload.location);
+  const companyId = asString(location.companyId);
+
+  if (Object.keys(location).length > 0) {
+    await upsertProviderMapping({
+      resourceType: "location",
+      providerId: ghl.locationId,
+      displayName: asString(location.name) ?? "EGC Location",
+      raw: location
+    });
+  }
+
+  const [pipelinesPayload, calendarsPayload] = await Promise.all([
+    ghl.getPipelines(),
+    ghl.getCalendars()
+  ]);
+
+  for (const value of findArray(pipelinesPayload, "pipelines")) {
+    const pipeline = asRecord(value);
+    const pipelineId = asString(pipeline.id);
+    if (!pipelineId) continue;
+
+    await upsertProviderMapping({
+      resourceType: "pipeline",
+      providerId: pipelineId,
+      displayName: asString(pipeline.name) ?? pipelineId,
+      raw: pipeline
+    });
+
+    const stages = Array.isArray(pipeline.stages) ? pipeline.stages : [];
+    for (const stageValue of stages) {
+      const stage = asRecord(stageValue);
+      const stageId = asString(stage.id);
+      if (!stageId) continue;
+      await upsertProviderMapping({
+        resourceType: "pipeline_stage",
+        providerId: stageId,
+        displayName: asString(stage.name) ?? stageId,
+        canonicalField: pipelineId,
+        raw: { ...stage, pipelineId }
+      });
+    }
+  }
+
+  for (const value of findArray(calendarsPayload, "calendars")) {
+    const calendar = asRecord(value);
+    const calendarId = asString(calendar.id);
+    if (!calendarId) continue;
+    await upsertProviderMapping({
+      resourceType: "calendar",
+      providerId: calendarId,
+      displayName: asString(calendar.name) ?? calendarId,
+      raw: calendar
+    });
+  }
+
+  if (!companyId) return;
+
+  let skip = 0;
+  for (let page = 0; page < 100; page++) {
+    const payload = await ghl.searchUsers(companyId, { skip, limit: 100 });
+    const users = findArray(payload, "users");
+    if (!users.length) break;
+
+    for (const value of users) {
+      const user = asRecord(value);
+      const userId = asString(user.id);
+      if (!userId) continue;
+      const displayName = [
+        asString(user.firstName),
+        asString(user.lastName)
+      ].filter(Boolean).join(" ") || asString(user.name) || asString(user.email) || userId;
+
+      await upsertProviderMapping({
+        resourceType: "user",
+        providerId: userId,
+        displayName,
+        raw: user
+      });
+    }
+
+    const countRaw = payload.count;
+    const total = typeof countRaw === "number" ? countRaw : Number(countRaw);
+    skip += users.length;
+    if (users.length < 100 || (Number.isFinite(total) && skip >= total)) break;
+  }
 }
 
 async function syncCustomFieldDefinitions() {
@@ -79,33 +208,21 @@ async function syncCustomFieldDefinitions() {
     const providerId = asString(raw.id);
     if (!providerId) continue;
 
-    const values = {
-      provider: "ghl",
+    await upsertProviderMapping({
       resourceType: "contact_custom_field",
       providerId,
       displayName:
         asString(raw.name) ??
         asString(raw.fieldKey) ??
         asString(raw.placeholder) ??
-        null,
+        providerId,
       fieldType:
         asString(raw.dataType) ??
         asString(raw.fieldType) ??
         asString(raw.type) ??
         null,
-      raw,
-      updatedAt: new Date()
-    };
-
-    await db.insert(schema.providerMappings).values(values)
-      .onConflictDoUpdate({
-        target: [
-          schema.providerMappings.provider,
-          schema.providerMappings.resourceType,
-          schema.providerMappings.providerId
-        ],
-        set: values
-      });
+      raw
+    });
   }
 }
 
@@ -603,6 +720,7 @@ async function processWebhookEvents() {
 
 async function reconcile() {
   await Promise.all([
+    syncReferenceMappings(),
     syncCustomFieldDefinitions(),
     syncContacts()
   ]);
