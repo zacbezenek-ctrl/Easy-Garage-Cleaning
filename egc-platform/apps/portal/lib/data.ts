@@ -1,6 +1,32 @@
 import { and, desc, eq, gte, inArray, lt, sql } from "drizzle-orm";
 import { getDb, schema } from "@egc/database";
 
+async function providerNames(resourceTypes: string[]) {
+  const db = getDb();
+  const rows = await db.select({
+    resourceType: schema.providerMappings.resourceType,
+    providerId: schema.providerMappings.providerId,
+    displayName: schema.providerMappings.displayName
+  }).from(schema.providerMappings)
+    .where(inArray(schema.providerMappings.resourceType, resourceTypes));
+
+  return new Map(
+    rows.map((row) => [
+      `${row.resourceType}:${row.providerId}`,
+      row.displayName ?? row.providerId
+    ])
+  );
+}
+
+function providerName(
+  mappings: Map<string, string>,
+  resourceType: string,
+  providerId: string | null | undefined
+) {
+  if (!providerId) return null;
+  return mappings.get(`${resourceType}:${providerId}`) ?? providerId;
+}
+
 export async function getDashboardData() {
   const db = getDb();
   const since = new Date(Date.now() - 30 * 86_400_000);
@@ -88,13 +114,23 @@ export async function getJobs(limit = 200) {
 
 export async function getPipeline(limit = 250) {
   const db = getDb();
-  return db.select({
-    opportunity: schema.opportunities,
-    contact: schema.contacts
-  }).from(schema.opportunities)
-    .innerJoin(schema.contacts, eq(schema.opportunities.contactId, schema.contacts.id))
-    .orderBy(desc(schema.opportunities.updatedAt))
-    .limit(limit);
+  const [rows, mappings] = await Promise.all([
+    db.select({
+      opportunity: schema.opportunities,
+      contact: schema.contacts
+    }).from(schema.opportunities)
+      .innerJoin(schema.contacts, eq(schema.opportunities.contactId, schema.contacts.id))
+      .orderBy(desc(schema.opportunities.updatedAt))
+      .limit(limit),
+    providerNames(["pipeline", "pipeline_stage", "user"])
+  ]);
+
+  return rows.map((row) => ({
+    ...row,
+    pipelineName: providerName(mappings, "pipeline", row.opportunity.pipelineId),
+    pipelineStageName: providerName(mappings, "pipeline_stage", row.opportunity.pipelineStageId),
+    assignedUserName: providerName(mappings, "user", row.opportunity.assignedUserId)
+  }));
 }
 
 export async function getWalkthroughs(limit = 200) {
