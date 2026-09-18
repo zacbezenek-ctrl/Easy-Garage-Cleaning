@@ -1,0 +1,66 @@
+name: Deploy exact EGC MCP commit
+
+on:
+  push:
+    branches:
+      - ops/deploy-egc-mcp-21337fa
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      RAILWAY_PROJECT_TOKEN_CANDIDATE: ${{ secrets.RAILWAY_PROJECT_TOKEN }}
+      RAILWAY_TOKEN_CANDIDATE: ${{ secrets.RAILWAY_TOKEN }}
+      RAILWAY_API_TOKEN_CANDIDATE: ${{ secrets.RAILWAY_API_TOKEN }}
+      RAILWAY_API_KEY_CANDIDATE: ${{ secrets.RAILWAY_API_KEY }}
+    steps:
+      - name: Deploy exact reviewed commit to existing egc-mcp service
+        shell: bash
+        run: |
+          set -euo pipefail
+          TOKEN=""
+          for candidate in "$RAILWAY_PROJECT_TOKEN_CANDIDATE" "$RAILWAY_TOKEN_CANDIDATE" "$RAILWAY_API_TOKEN_CANDIDATE" "$RAILWAY_API_KEY_CANDIDATE"; do
+            if [ -n "$candidate" ]; then TOKEN="$candidate"; break; fi
+          done
+          if [ -z "$TOKEN" ]; then
+            echo "::error::No Railway API/project token secret is configured in this GitHub repository."
+            exit 2
+          fi
+
+          QUERY='mutation Deploy($serviceId: String!, $environmentId: String!, $commitSha: String!) { serviceInstanceDeployV2(serviceId: $serviceId, environmentId: $environmentId, commitSha: $commitSha) }'
+          PAYLOAD=$(jq -nc \
+            --arg q "$QUERY" \
+            --arg serviceId "be952225-3d10-438f-9249-9287c4006050" \
+            --arg environmentId "1cf3c7a4-cdb7-4a9e-b76c-d35032504b7f" \
+            --arg commitSha "21337fac2e19a3545a010badb10dd80b35afe592" \
+            '{query:$q,variables:{serviceId:$serviceId,environmentId:$environmentId,commitSha:$commitSha}}')
+
+          request() {
+            local header_name="$1"
+            curl --fail-with-body -sS \
+              -X POST "https://backboard.railway.com/graphql/v2" \
+              -H "Content-Type: application/json" \
+              -H "$header_name: $TOKEN" \
+              --data "$PAYLOAD"
+          }
+
+          RESPONSE=$(request "Project-Access-Token" || true)
+          if ! echo "$RESPONSE" | jq -e '.data.serviceInstanceDeployV2 // empty' >/dev/null 2>&1; then
+            RESPONSE=$(request "Authorization" | cat)
+          fi
+
+          if echo "$RESPONSE" | jq -e '.errors | length > 0' >/dev/null 2>&1; then
+            echo "$RESPONSE" | jq '{errors}'
+            exit 1
+          fi
+
+          DEPLOYMENT_ID=$(echo "$RESPONSE" | jq -r '.data.serviceInstanceDeployV2 // empty')
+          if [ -z "$DEPLOYMENT_ID" ]; then
+            echo "::error::Railway returned no deployment id."
+            echo "$RESPONSE" | jq .
+            exit 1
+          fi
+          echo "Deployment created: $DEPLOYMENT_ID"
