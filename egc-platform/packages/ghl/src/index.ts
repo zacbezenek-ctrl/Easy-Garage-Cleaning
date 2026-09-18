@@ -89,6 +89,20 @@ export class GhlClient {
     );
   }
 
+  upsertContact(input: Record<string, unknown>) {
+    return this.request<Record<string, unknown>>(
+      "/contacts/upsert",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...input,
+          locationId: this.locationId
+        })
+      }
+    );
+  }
+
   updateContact(contactId: string, input: Record<string, unknown>) {
     return this.request<Record<string, unknown>>(
       `/contacts/${contactId}`,
