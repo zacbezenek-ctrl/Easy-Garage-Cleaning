@@ -199,6 +199,29 @@ export const jobNotes = pgTable("job_notes", {
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull()
 });
 
+export const tasks = pgTable("tasks", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  title: text("title").notNull(),
+  description: text("description"),
+  priority: text("priority").default("medium").notNull(),
+  status: text("status").default("open").notNull(),
+  dueAt: timestamp("due_at", { withTimezone: true }),
+  assignedUserId: text("assigned_user_id"),
+  contactId: uuid("contact_id").references(() => contacts.id, { onDelete: "set null" }),
+  jobId: uuid("job_id").references(() => jobs.id, { onDelete: "set null" }),
+  opportunityId: uuid("opportunity_id").references(() => opportunities.id, { onDelete: "set null" }),
+  source: text("source").default("mcp").notNull(),
+  createdBy: text("created_by"),
+  completedAt: timestamp("completed_at", { withTimezone: true }),
+  ...timestamps
+}, (t) => [
+  index("tasks_status_due_idx").on(t.status, t.dueAt),
+  index("tasks_contact_idx").on(t.contactId),
+  index("tasks_job_idx").on(t.jobId),
+  index("tasks_opportunity_idx").on(t.opportunityId),
+  index("tasks_assigned_user_idx").on(t.assignedUserId)
+]);
+
 export const walkthroughs = pgTable("walkthroughs", {
   id: uuid("id").defaultRandom().primaryKey(),
   jobId: uuid("job_id").references(() => jobs.id, { onDelete: "cascade" }),
