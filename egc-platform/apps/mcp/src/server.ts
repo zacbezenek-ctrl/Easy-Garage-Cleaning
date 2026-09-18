@@ -418,6 +418,31 @@ function buildServer() {
     { capabilities: { tools: { listChanged: false } } }
   );
 
+  server.registerTool("ghl.pipelines", {
+    description: "Return live GHL opportunity pipelines and stages for the EGC location. Use this to resolve pipeline and stage IDs before opportunity writes.",
+    inputSchema: z.object({}),
+    ...protectedToolMetadata
+  }, async () => textResult(await ghlClient().getPipelines()));
+
+  server.registerTool("ghl.calendars", {
+    description: "Return live GHL calendars for the EGC location. Use this to resolve calendar IDs before appointment writes.",
+    inputSchema: z.object({}),
+    ...protectedToolMetadata
+  }, async () => textResult(await ghlClient().getCalendars()));
+
+  server.registerTool("ghl.users", {
+    description: "Return live GHL users for the EGC location so assignments can be made by user ID.",
+    inputSchema: z.object({}),
+    ...protectedToolMetadata
+  }, async () => {
+    const ghl = ghlClient();
+    const locationPayload = await ghl.getLocation();
+    const location = unwrapRecord(locationPayload, "location");
+    const companyId = asString(location.companyId);
+    if (!companyId) return textResult({ error: "ghl_company_id_not_found" });
+    return textResult(await ghl.searchUsers(companyId));
+  });
+
   server.registerTool("contacts.search", {
     description: "Search normalized EGC contacts by name, phone, or email.",
     inputSchema: z.object({
@@ -1649,6 +1674,418 @@ function buildServer() {
       extraction,
       job: job ?? null
     });
+  });
+
+
+  server.registerTool("contacts.create", {
+    description: "Create a contact in GHL and immediately create the normalized EGC contact/lead record.",
+    inputSchema: z.object({
+      contact: contactMutationSchema
+    }),
+    ...writeToolMetadata
+  }, async ({ contact: input }) => {
+    const db = getDb();
+    const remote = await ghlClient().createContact(input);
+    const contact = await syncContactFromGhl(remote);
+
+    if (input.assignedTo !== undefined) {
+      await db.update(schema.leads).set({
+        assignedUserId: input.assignedTo,
+        updatedAt: new Date()
+      }).where(eq(schema.leads.contactId, contact.id));
+    }
+
+    await db.insert(schema.auditLogs).values({
+      actor: "chatgpt-mcp",
+      action: "ghl.contact.create",
+      entity: "contact",
+      entityId: contact.id,
+      newValue: contact,
+      source: "mcp"
+    });
+
+    return textResult({ ok: true, contact });
+  });
+
+  server.registerTool("contacts.update", {
+    description: "Update an existing EGC contact in GHL and immediately mirror the result locally. Supplying tags here replaces the full GHL tag set; use add/remove tag tools for incremental changes.",
+    inputSchema: z.object({
+      contactId: z.string().uuid(),
+      changes: contactMutationSchema
+    }),
+    ...writeToolMetadata
+  }, async ({ contactId, changes }) => {
+    const db = getDb();
+    const [existing] = await db.select().from(schema.contacts)
+      .where(eq(schema.contacts.id, contactId))
+      .limit(1);
+    if (!existing) return textResult({ error: "contact_not_found" });
+
+    const remote = await ghlClient().updateContact(existing.providerId, changes);
+    const updated = await syncContactFromGhl(remote, contactId);
+
+    if (changes.assignedTo !== undefined) {
+      await db.update(schema.leads).set({
+        assignedUserId: changes.assignedTo,
+        updatedAt: new Date()
+      }).where(eq(schema.leads.contactId, contactId));
+    }
+
+    await db.insert(schema.auditLogs).values({
+      actor: "chatgpt-mcp",
+      action: "ghl.contact.update",
+      entity: "contact",
+      entityId: contactId,
+      oldValue: existing,
+      newValue: updated,
+      source: "mcp"
+    });
+
+    return textResult({ ok: true, contact: updated });
+  });
+
+  server.registerTool("contacts.add_tags", {
+    description: "Add one or more tags to a GHL contact without replacing existing tags.",
+    inputSchema: z.object({
+      contactId: z.string().uuid(),
+      tags: z.array(z.string().min(1).max(200)).min(1)
+    }),
+    ...writeToolMetadata
+  }, async ({ contactId, tags }) => {
+    const db = getDb();
+    const [existing] = await db.select().from(schema.contacts)
+      .where(eq(schema.contacts.id, contactId))
+      .limit(1);
+    if (!existing) return textResult({ error: "contact_not_found" });
+
+    const remote = await ghlClient().addContactTags(existing.providerId, tags);
+    const currentTags = findArray(remote, "tags")
+      .filter((value): value is string => typeof value === "string");
+    const nextTags = currentTags.length
+      ? currentTags
+      : [...new Set([...existing.tags, ...tags])];
+
+    const [updated] = await db.update(schema.contacts).set({
+      tags: nextTags,
+      updatedAt: new Date()
+    }).where(eq(schema.contacts.id, contactId)).returning();
+
+    await db.insert(schema.auditLogs).values({
+      actor: "chatgpt-mcp",
+      action: "ghl.contact.tags.add",
+      entity: "contact",
+      entityId: contactId,
+      oldValue: { tags: existing.tags },
+      newValue: { tags: updated?.tags ?? nextTags },
+      source: "mcp"
+    });
+
+    return textResult({ ok: true, tags: updated?.tags ?? nextTags });
+  });
+
+  server.registerTool("contacts.remove_tags", {
+    description: "Remove one or more tags from a GHL contact without changing unrelated tags.",
+    inputSchema: z.object({
+      contactId: z.string().uuid(),
+      tags: z.array(z.string().min(1).max(200)).min(1)
+    }),
+    ...writeToolMetadata
+  }, async ({ contactId, tags }) => {
+    const db = getDb();
+    const [existing] = await db.select().from(schema.contacts)
+      .where(eq(schema.contacts.id, contactId))
+      .limit(1);
+    if (!existing) return textResult({ error: "contact_not_found" });
+
+    const remote = await ghlClient().removeContactTags(existing.providerId, tags);
+    const remoteTags = findArray(remote, "tags")
+      .filter((value): value is string => typeof value === "string");
+    const nextTags = remoteTags.length || existing.tags.length === tags.length
+      ? remoteTags
+      : existing.tags.filter((tag) => !tags.includes(tag));
+
+    const [updated] = await db.update(schema.contacts).set({
+      tags: nextTags,
+      updatedAt: new Date()
+    }).where(eq(schema.contacts.id, contactId)).returning();
+
+    await db.insert(schema.auditLogs).values({
+      actor: "chatgpt-mcp",
+      action: "ghl.contact.tags.remove",
+      entity: "contact",
+      entityId: contactId,
+      oldValue: { tags: existing.tags },
+      newValue: { tags: updated?.tags ?? nextTags },
+      source: "mcp"
+    });
+
+    return textResult({ ok: true, tags: updated?.tags ?? nextTags });
+  });
+
+  server.registerTool("opportunities.create", {
+    description: "Create a GHL opportunity for an EGC contact and immediately normalize it locally. Use ghl.pipelines first when pipeline/stage IDs are unknown.",
+    inputSchema: z.object({
+      contactId: z.string().uuid(),
+      pipelineId: z.string().min(1),
+      pipelineStageId: z.string().min(1).optional(),
+      name: z.string().min(1).max(500).optional(),
+      status: z.enum(["open", "won", "lost", "abandoned"]).default("open"),
+      monetaryValueCents: z.number().int().min(0).nullable().optional(),
+      assignedTo: z.string().min(1).optional(),
+      forecastExpectedCloseDate: z.string().max(100).optional(),
+      forecastProbability: z.number().min(0).max(100).optional(),
+      jobId: z.string().uuid().optional()
+    }),
+    ...writeToolMetadata
+  }, async ({
+    contactId,
+    pipelineId,
+    pipelineStageId,
+    name,
+    status,
+    monetaryValueCents,
+    assignedTo,
+    forecastExpectedCloseDate,
+    forecastProbability,
+    jobId
+  }) => {
+    const db = getDb();
+    const [contact] = await db.select().from(schema.contacts)
+      .where(eq(schema.contacts.id, contactId))
+      .limit(1);
+    if (!contact) return textResult({ error: "contact_not_found" });
+
+    if (jobId) {
+      const [job] = await db.select().from(schema.jobs)
+        .where(and(eq(schema.jobs.id, jobId), eq(schema.jobs.contactId, contactId)))
+        .limit(1);
+      if (!job) return textResult({ error: "job_not_found_for_contact" });
+    }
+
+    const body: Record<string, unknown> = {
+      pipelineId,
+      name: name ?? contact.name ?? "EGC Opportunity",
+      status,
+      contactId: contact.providerId
+    };
+    if (pipelineStageId) body.pipelineStageId = pipelineStageId;
+    if (monetaryValueCents !== undefined && monetaryValueCents !== null) {
+      body.monetaryValue = monetaryValueCents / 100;
+    }
+    if (assignedTo) body.assignedTo = assignedTo;
+    if (forecastExpectedCloseDate) body.forecastExpectedCloseDate = forecastExpectedCloseDate;
+    if (forecastProbability !== undefined) body.forecastProbability = forecastProbability;
+
+    const remote = await ghlClient().createOpportunity(body);
+    const opportunity = await syncOpportunityFromGhl(remote, contactId);
+
+    if (jobId) {
+      await db.update(schema.jobs).set({
+        opportunityId: opportunity.id,
+        updatedAt: new Date()
+      }).where(eq(schema.jobs.id, jobId));
+    }
+
+    await db.insert(schema.auditLogs).values({
+      actor: "chatgpt-mcp",
+      action: "ghl.opportunity.create",
+      entity: "opportunity",
+      entityId: opportunity.id,
+      newValue: opportunity,
+      source: "mcp"
+    });
+
+    return textResult({ ok: true, opportunity });
+  });
+
+  server.registerTool("opportunities.update", {
+    description: "Update GHL opportunity pipeline stage, status, value, owner, name, or forecast fields and immediately mirror the change locally.",
+    inputSchema: z.object({
+      opportunityId: z.string().uuid(),
+      changes: opportunityMutationSchema
+    }),
+    ...writeToolMetadata
+  }, async ({ opportunityId, changes }) => {
+    const db = getDb();
+    const [existing] = await db.select().from(schema.opportunities)
+      .where(eq(schema.opportunities.id, opportunityId))
+      .limit(1);
+    if (!existing) return textResult({ error: "opportunity_not_found" });
+
+    const body: Record<string, unknown> = {};
+    if (changes.name !== undefined) body.name = changes.name;
+    if (changes.pipelineId !== undefined) body.pipelineId = changes.pipelineId;
+    if (changes.pipelineStageId !== undefined) body.pipelineStageId = changes.pipelineStageId;
+    if (changes.status !== undefined) body.status = changes.status;
+    if (changes.monetaryValueCents !== undefined) {
+      body.monetaryValue = changes.monetaryValueCents === null
+        ? 0
+        : changes.monetaryValueCents / 100;
+    }
+    if (changes.assignedTo !== undefined) body.assignedTo = changes.assignedTo;
+    if (changes.forecastExpectedCloseDate !== undefined) {
+      body.forecastExpectedCloseDate = changes.forecastExpectedCloseDate;
+    }
+    if (changes.forecastProbability !== undefined) {
+      body.forecastProbability = changes.forecastProbability;
+    }
+    if (changes.customFields !== undefined) body.customFields = changes.customFields;
+
+    const remote = await ghlClient().updateOpportunity(existing.providerId, body);
+    const updated = await syncOpportunityFromGhl(remote, existing.contactId, opportunityId);
+
+    await db.insert(schema.auditLogs).values({
+      actor: "chatgpt-mcp",
+      action: "ghl.opportunity.update",
+      entity: "opportunity",
+      entityId: opportunityId,
+      oldValue: existing,
+      newValue: updated,
+      source: "mcp"
+    });
+
+    return textResult({ ok: true, opportunity: updated });
+  });
+
+  server.registerTool("appointments.create", {
+    description: "Create a GHL appointment for an EGC contact, immediately mirror it locally, and optionally link/schedule an EGC job. GHL automations are disabled by default unless runAutomations=true.",
+    inputSchema: z.object({
+      contactId: z.string().uuid(),
+      calendarId: z.string().min(1),
+      startTime: z.coerce.date(),
+      endTime: z.coerce.date().nullable().optional(),
+      title: z.string().max(500).optional(),
+      appointmentStatus: z.enum([
+        "new", "confirmed", "cancelled", "showed", "noshow", "invalid", "completed", "active"
+      ]).default("confirmed"),
+      assignedUserId: z.string().min(1).optional(),
+      description: z.string().max(5000).optional(),
+      address: z.string().max(1000).optional(),
+      runAutomations: z.boolean().default(false),
+      ignoreDateRange: z.boolean().default(false),
+      ignoreFreeSlotValidation: z.boolean().default(false),
+      jobId: z.string().uuid().optional()
+    }),
+    ...writeToolMetadata
+  }, async ({
+    contactId,
+    calendarId,
+    startTime,
+    endTime,
+    title,
+    appointmentStatus,
+    assignedUserId,
+    description,
+    address,
+    runAutomations,
+    ignoreDateRange,
+    ignoreFreeSlotValidation,
+    jobId
+  }) => {
+    const db = getDb();
+    const [contact] = await db.select().from(schema.contacts)
+      .where(eq(schema.contacts.id, contactId))
+      .limit(1);
+    if (!contact) return textResult({ error: "contact_not_found" });
+
+    if (jobId) {
+      const [job] = await db.select().from(schema.jobs)
+        .where(and(eq(schema.jobs.id, jobId), eq(schema.jobs.contactId, contactId)))
+        .limit(1);
+      if (!job) return textResult({ error: "job_not_found_for_contact" });
+    }
+
+    const body: Record<string, unknown> = {
+      title: title ?? contact.name ?? "EGC Appointment",
+      calendarId,
+      contactId: contact.providerId,
+      startTime: startTime.toISOString(),
+      appointmentStatus,
+      toNotify: runAutomations,
+      ignoreDateRange,
+      ignoreFreeSlotValidation
+    };
+    if (endTime) body.endTime = endTime.toISOString();
+    if (assignedUserId) body.assignedUserId = assignedUserId;
+    if (description) body.description = description;
+    if (address) body.address = address;
+
+    const remote = await ghlClient().createAppointment(body);
+    const appointment = await syncAppointmentFromGhl(remote, contactId);
+
+    if (jobId) {
+      await db.update(schema.jobs).set({
+        appointmentId: appointment.id,
+        scheduledAt: appointment.appointmentStartAt,
+        updatedAt: new Date()
+      }).where(eq(schema.jobs.id, jobId));
+    }
+
+    await db.insert(schema.auditLogs).values({
+      actor: "chatgpt-mcp",
+      action: "ghl.appointment.create",
+      entity: "appointment",
+      entityId: appointment.id,
+      newValue: appointment,
+      source: "mcp"
+    });
+
+    return textResult({ ok: true, appointment });
+  });
+
+  server.registerTool("appointments.update", {
+    description: "Reschedule, reassign, rename, or change status/details of an existing GHL appointment and immediately mirror it locally. GHL automations are disabled by default unless runAutomations=true.",
+    inputSchema: z.object({
+      appointmentId: z.string().uuid(),
+      changes: appointmentMutationSchema
+    }),
+    ...writeToolMetadata
+  }, async ({ appointmentId, changes }) => {
+    const db = getDb();
+    const [existing] = await db.select().from(schema.appointments)
+      .where(eq(schema.appointments.id, appointmentId))
+      .limit(1);
+    if (!existing) return textResult({ error: "appointment_not_found" });
+
+    const body: Record<string, unknown> = {
+      toNotify: changes.runAutomations,
+      ignoreDateRange: changes.ignoreDateRange,
+      ignoreFreeSlotValidation: changes.ignoreFreeSlotValidation
+    };
+    if (changes.title !== undefined) body.title = changes.title;
+    if (changes.calendarId !== undefined) body.calendarId = changes.calendarId;
+    if (changes.assignedUserId !== undefined && changes.assignedUserId !== null) {
+      body.assignedUserId = changes.assignedUserId;
+    }
+    if (changes.appointmentStatus !== undefined) body.appointmentStatus = changes.appointmentStatus;
+    if (changes.description !== undefined) body.description = changes.description;
+    if (changes.address !== undefined) body.address = changes.address;
+    if (changes.startTime !== undefined) body.startTime = changes.startTime.toISOString();
+    if (changes.endTime !== undefined && changes.endTime !== null) {
+      body.endTime = changes.endTime.toISOString();
+    }
+
+    const remote = await ghlClient().updateAppointment(existing.providerId, body);
+    const updated = await syncAppointmentFromGhl(remote, existing.contactId, appointmentId);
+
+    if (changes.startTime !== undefined) {
+      await db.update(schema.jobs).set({
+        scheduledAt: updated.appointmentStartAt,
+        updatedAt: new Date()
+      }).where(eq(schema.jobs.appointmentId, appointmentId));
+    }
+
+    await db.insert(schema.auditLogs).values({
+      actor: "chatgpt-mcp",
+      action: "ghl.appointment.update",
+      entity: "appointment",
+      entityId: appointmentId,
+      oldValue: existing,
+      newValue: updated,
+      source: "mcp"
+    });
+
+    return textResult({ ok: true, appointment: updated });
   });
 
   return server;
