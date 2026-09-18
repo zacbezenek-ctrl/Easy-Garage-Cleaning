@@ -143,6 +143,17 @@ export class GhlClient {
   getCustomFields() {
     return this.request<Record<string, unknown>>(`/locations/${this.locationId}/customFields`);
   }
+
+  createContactNote(contactId: string, body: string, title = "EGC Walkthrough") {
+    return this.request<Record<string, unknown>>(
+      `/contacts/${contactId}/notes`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ body, title, pinned: false })
+      }
+    );
+  }
 }
 
 export function findArray(payload: Record<string, unknown>, ...keys: string[]): unknown[] {
