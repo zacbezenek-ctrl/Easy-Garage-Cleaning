@@ -155,14 +155,14 @@ export class GhlClient {
   sendMessage(input: {
     type: "SMS" | "Email";
     contactId: string;
-    message?: string;
-    html?: string;
-    subject?: string;
-    fromNumber?: string;
-    toNumber?: string;
-    emailFrom?: string;
-    emailTo?: string;
-    replyMessageId?: string;
+    message?: string | undefined;
+    html?: string | undefined;
+    subject?: string | undefined;
+    fromNumber?: string | undefined;
+    toNumber?: string | undefined;
+    emailFrom?: string | undefined;
+    emailTo?: string | undefined;
+    replyMessageId?: string | undefined;
   }) {
     return this.request<Record<string, unknown>>(
       "/conversations/messages",
