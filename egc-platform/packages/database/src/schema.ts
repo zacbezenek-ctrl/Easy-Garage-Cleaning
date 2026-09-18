@@ -186,6 +186,14 @@ export const jobs = pgTable("jobs", {
   scheduledAt: timestamp("scheduled_at", { withTimezone: true }),
   priceCents: integer("price_cents"),
   depositCents: integer("deposit_cents"),
+  quotedValueCents: integer("quoted_value_cents"),
+  soldValueCents: integer("sold_value_cents"),
+  amountCollectedCents: integer("amount_collected_cents"),
+  directCostCents: integer("direct_cost_cents"),
+  grossProfitCents: integer("gross_profit_cents"),
+  quotedAt: timestamp("quoted_at", { withTimezone: true }),
+  soldAt: timestamp("sold_at", { withTimezone: true }),
+  completedAt: timestamp("completed_at", { withTimezone: true }),
   ...timestamps
 }, (t) => [index("jobs_scheduled_idx").on(t.scheduledAt)]);
 
@@ -198,6 +206,23 @@ export const jobNotes = pgTable("job_notes", {
   createdBy: text("created_by"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull()
 });
+
+export const jobFinancialEvents = pgTable("job_financial_events", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  jobId: uuid("job_id").references(() => jobs.id, { onDelete: "cascade" }).notNull(),
+  eventType: text("event_type").notNull(),
+  amountCents: integer("amount_cents"),
+  occurredAt: timestamp("occurred_at", { withTimezone: true }).defaultNow().notNull(),
+  note: text("note"),
+  idempotencyKey: text("idempotency_key"),
+  source: text("source").default("mcp").notNull(),
+  createdBy: text("created_by"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull()
+}, (t) => [
+  uniqueIndex("job_financial_events_idempotency_uq").on(t.idempotencyKey),
+  index("job_financial_events_job_time_idx").on(t.jobId, t.occurredAt),
+  index("job_financial_events_type_time_idx").on(t.eventType, t.occurredAt)
+]);
 
 export const tasks = pgTable("tasks", {
   id: uuid("id").defaultRandom().primaryKey(),
