@@ -10,13 +10,15 @@
     "dev:mcp": "pnpm --filter @egc/mcp dev",
     "dev:worker": "pnpm --filter @egc/worker dev",
     "db:generate": "pnpm --filter @egc/database db:generate",
-    "db:migrate": "pnpm --filter @egc/database db:migrate"
+    "db:migrate": "pnpm --filter @egc/database db:migrate",
+    "test": "turbo test"
   },
   "devDependencies": {
     "@types/node": "^24.5.2",
     "tsx": "4.23.13",
     "turbo": "^2.5.6",
-    "typescript": "^6.0.2"
+    "typescript": "^6.0.2",
+    "vitest": "^3.2.4"
   },
   "packageManager": "pnpm@10.34.5"
 }
