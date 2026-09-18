@@ -905,7 +905,7 @@ app.all(
   (req, res) => void handler(req, res, req.body)
 );
 
-const port = Number(process.env.MCP_PORT ?? 4200);
+const port = Number(process.env.PORT ?? process.env.MCP_PORT ?? 4200);
 app.listen(port, "0.0.0.0", () => {
   console.log(`EGC MCP listening on :${port}/mcp with OAuth resource ${oauth.origin}`);
 });
