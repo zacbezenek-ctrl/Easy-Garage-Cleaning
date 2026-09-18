@@ -90,7 +90,19 @@ if (!token || token.length < 32) {
   throw new Error("MCP_BEARER_TOKEN must be configured with at least 32 characters");
 }
 
-const app = createMcpExpressApp({ host: "0.0.0.0" });
+const allowedHosts = (process.env.MCP_ALLOWED_HOSTS ?? "")
+  .split(",")
+  .map((host) => host.trim())
+  .filter(Boolean);
+
+if (process.env.NODE_ENV === "production" && allowedHosts.length === 0) {
+  throw new Error("MCP_ALLOWED_HOSTS is required in production");
+}
+
+const app = createMcpExpressApp({
+  host: "0.0.0.0",
+  ...(allowedHosts.length > 0 ? { allowedHosts } : {})
+});
 const handler = toNodeHandler(createMcpHandler(buildServer));
 
 app.get("/health", (_req, res) => res.json({ ok: true, service: "egc-mcp" }));
