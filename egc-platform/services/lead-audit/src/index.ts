@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, inArray, lt, or, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray } from "drizzle-orm";
 import { getDb, schema } from "@egc/database";
 import type { LeadState } from "@egc/schemas";
 
@@ -13,7 +13,25 @@ export type LeadAuditRow = {
   createdAt: Date;
   lastHumanOutreachAt: Date | null;
   lastCustomerResponseAt: Date | null;
+  hasEverResponded: boolean;
+  hasHumanOutreach: boolean;
+  humanContactEstablished: boolean;
+  twoWayConversationEstablished: boolean;
+  lastInteractionDirection: "customer" | "human" | null;
+  needsFollowUp: boolean;
+  followUpReason: string | null;
 };
+
+type BaseLeadAuditRow = Omit<
+  LeadAuditRow,
+  | "hasEverResponded"
+  | "hasHumanOutreach"
+  | "humanContactEstablished"
+  | "twoWayConversationEstablished"
+  | "lastInteractionDirection"
+  | "needsFollowUp"
+  | "followUpReason"
+>;
 
 export function computeLeadState(input: {
   doNotContact: boolean;
@@ -32,9 +50,62 @@ export function computeLeadState(input: {
   return "NEVER_CONTACTED";
 }
 
+function latestDate(...values: Array<Date | null | undefined>) {
+  return values
+    .filter((value): value is Date => Boolean(value))
+    .sort((a, b) => b.valueOf() - a.valueOf())[0] ?? null;
+}
+
+function enrichLeadAuditRow(row: BaseLeadAuditRow): LeadAuditRow {
+  const terminal = row.state === "BOOKED" || row.state === "LOST" || row.state === "DO_NOT_CONTACT";
+  const hasHumanOutreach = Boolean(row.lastHumanOutreachAt);
+  const hasEverResponded = Boolean(row.lastCustomerResponseAt);
+  const twoWayConversationEstablished = hasHumanOutreach && hasEverResponded;
+
+  let lastInteractionDirection: "customer" | "human" | null = null;
+  if (row.lastCustomerResponseAt || row.lastHumanOutreachAt) {
+    lastInteractionDirection =
+      (row.lastCustomerResponseAt?.valueOf() ?? -1) >=
+      (row.lastHumanOutreachAt?.valueOf() ?? -1)
+        ? "customer"
+        : "human";
+  }
+
+  const needsFollowUp = !terminal && (
+    !row.lastHumanOutreachAt ||
+    !row.lastCustomerResponseAt ||
+    row.lastHumanOutreachAt.valueOf() > row.lastCustomerResponseAt.valueOf()
+  );
+
+  let followUpReason: string | null = null;
+  if (needsFollowUp) {
+    if (!row.lastHumanOutreachAt && row.lastCustomerResponseAt) {
+      followUpReason = "Customer reached out; no human outreach recorded";
+    } else if (!row.lastHumanOutreachAt) {
+      followUpReason = "No human outreach recorded";
+    } else if (!row.lastCustomerResponseAt) {
+      followUpReason = "Human outreach recorded; customer has never responded";
+    } else {
+      followUpReason = "Customer previously responded, but the latest human outreach is awaiting a reply";
+    }
+  }
+
+  return {
+    ...row,
+    hasEverResponded,
+    hasHumanOutreach,
+    humanContactEstablished: twoWayConversationEstablished,
+    twoWayConversationEstablished,
+    lastInteractionDirection,
+    needsFollowUp,
+    followUpReason
+  };
+}
+
 export async function recomputeLeadState(contactId: string): Promise<LeadState> {
   const db = getDb();
-  const [lead] = await db.select().from(schema.leads).where(eq(schema.leads.contactId, contactId)).limit(1);
+  const [lead] = await db.select().from(schema.leads)
+    .where(eq(schema.leads.contactId, contactId)).limit(1);
   if (!lead) throw new Error(`Lead not found for contact ${contactId}`);
 
   const [humanOutreach] = await db
@@ -70,6 +141,17 @@ export async function recomputeLeadState(contactId: string): Promise<LeadState> 
     .orderBy(desc(schema.messages.occurredAt))
     .limit(1);
 
+  const [customerCall] = await db
+    .select({ at: schema.calls.startedAt })
+    .from(schema.calls)
+    .where(and(
+      eq(schema.calls.contactId, contactId),
+      eq(schema.calls.direction, "inbound"),
+      eq(schema.calls.actorType, "customer")
+    ))
+    .orderBy(desc(schema.calls.startedAt))
+    .limit(1);
+
   const [booking] = await db
     .select({ at: schema.appointments.appointmentCreatedAt })
     .from(schema.appointments)
@@ -89,31 +171,23 @@ export async function recomputeLeadState(contactId: string): Promise<LeadState> 
     ))
     .limit(1);
 
-  const lastHumanOutreachAt = [humanOutreach?.at, humanCall?.at]
-    .filter((d): d is Date => Boolean(d))
-    .sort((a, b) => b.valueOf() - a.valueOf())[0] ?? null;
-  const lastCustomerResponseAt = customerReply?.at ?? null;
-
-  const customerRepliedAfterLatestOutreach = Boolean(
+  const lastHumanOutreachAt = latestDate(humanOutreach?.at, humanCall?.at);
+  const lastCustomerResponseAt = latestDate(customerReply?.at, customerCall?.at);
+  const now = Date.now();
+  const conversationActive = Boolean(
     lastCustomerResponseAt &&
-    (
-      !lastHumanOutreachAt ||
-      lastCustomerResponseAt.valueOf() >= lastHumanOutreachAt.valueOf()
-    )
+    lastHumanOutreachAt &&
+    Math.abs(lastCustomerResponseAt.valueOf() - lastHumanOutreachAt.valueOf()) < 72 * 60 * 60 * 1000 &&
+    Math.max(lastCustomerResponseAt.valueOf(), lastHumanOutreachAt.valueOf()) > now - 72 * 60 * 60 * 1000
   );
 
   const state = computeLeadState({
     doNotContact: lead.doNotContact,
     lost: Boolean(lostOpportunity),
     booked: Boolean(booking),
-    hasCustomerResponse: customerRepliedAfterLatestOutreach,
+    hasCustomerResponse: Boolean(lastCustomerResponseAt),
     hasHumanOutreach: Boolean(lastHumanOutreachAt),
-    conversationActive: Boolean(
-      customerRepliedAfterLatestOutreach &&
-      lastCustomerResponseAt &&
-      lastHumanOutreachAt &&
-      lastCustomerResponseAt.valueOf() - lastHumanOutreachAt.valueOf() < 72 * 60 * 60 * 1000
-    )
+    conversationActive
   });
 
   await db.update(schema.leads).set({
@@ -127,10 +201,10 @@ export async function recomputeLeadState(contactId: string): Promise<LeadState> 
   return state;
 }
 
-export async function leadsNeedingContact(days = 3): Promise<LeadAuditRow[]> {
+async function recentLeadRows(days: number): Promise<LeadAuditRow[]> {
   const db = getDb();
   const since = new Date(Date.now() - days * 86_400_000);
-  return db.select({
+  const rows = await db.select({
     leadId: schema.leads.id,
     contactId: schema.contacts.id,
     name: schema.contacts.name,
@@ -144,35 +218,26 @@ export async function leadsNeedingContact(days = 3): Promise<LeadAuditRow[]> {
   })
   .from(schema.leads)
   .innerJoin(schema.contacts, eq(schema.leads.contactId, schema.contacts.id))
-  .where(and(
-    gte(schema.leads.createdAt, since),
-    inArray(schema.leads.currentState, ["NEVER_CONTACTED", "OUTREACH_ATTEMPTED_NO_REPLY"])
-  ))
-  .orderBy(schema.leads.createdAt) as Promise<LeadAuditRow[]>;
+  .where(gte(schema.leads.createdAt, since))
+  .orderBy(schema.leads.createdAt) as BaseLeadAuditRow[];
+
+  return rows.map(enrichLeadAuditRow);
+}
+
+export async function leadsNeedingContact(days = 3): Promise<LeadAuditRow[]> {
+  const rows = await recentLeadRows(days);
+  return rows.filter((row) => row.needsFollowUp);
 }
 
 export async function leadsNotResponding(days = 3): Promise<LeadAuditRow[]> {
-  const db = getDb();
-  const since = new Date(Date.now() - days * 86_400_000);
-  return db.select({
-    leadId: schema.leads.id,
-    contactId: schema.contacts.id,
-    name: schema.contacts.name,
-    phone: schema.contacts.phone,
-    email: schema.contacts.email,
-    source: schema.leads.source,
-    state: schema.leads.currentState,
-    createdAt: schema.leads.createdAt,
-    lastHumanOutreachAt: schema.leads.lastHumanOutreachAt,
-    lastCustomerResponseAt: schema.leads.lastCustomerResponseAt
-  })
-  .from(schema.leads)
-  .innerJoin(schema.contacts, eq(schema.leads.contactId, schema.contacts.id))
-  .where(and(
-    gte(schema.leads.createdAt, since),
-    eq(schema.leads.currentState, "OUTREACH_ATTEMPTED_NO_REPLY")
-  ))
-  .orderBy(schema.leads.createdAt) as Promise<LeadAuditRow[]>;
+  const rows = await recentLeadRows(days);
+  return rows.filter((row) =>
+    row.state !== "BOOKED" &&
+    row.state !== "LOST" &&
+    row.state !== "DO_NOT_CONTACT" &&
+    Boolean(row.lastHumanOutreachAt) &&
+    !row.lastCustomerResponseAt
+  );
 }
 
 export function dedupeBookingsByContactAndStart<T extends {

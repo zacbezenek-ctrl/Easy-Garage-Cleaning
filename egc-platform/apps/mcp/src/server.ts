@@ -57,7 +57,10 @@ const WRITE_TOOLS = new Set([
   "conversations.send_message",
   "send_sms",
   "egc.ensure_booking",
-  "egc.send_followup"
+  "egc.send_followup",
+  "tasks.create",
+  "tasks.update",
+  "tasks.complete"
 ]);
 
 function timeZoneDateParts(date: Date, timeZone: string) {
@@ -182,6 +185,21 @@ const appointmentMutationSchema = z.object({
   runAutomations: z.boolean().default(false),
   ignoreDateRange: z.boolean().default(false),
   ignoreFreeSlotValidation: z.boolean().default(false)
+});
+
+const taskPrioritySchema = z.enum(["low", "medium", "high", "urgent"]);
+const taskStatusSchema = z.enum(["open", "in_progress", "blocked", "completed", "cancelled"]);
+const taskMutationSchema = z.object({
+  title: z.string().min(1).max(500).optional(),
+  description: z.string().max(5000).nullable().optional(),
+  priority: taskPrioritySchema.optional(),
+  status: taskStatusSchema.optional(),
+  dueAt: isoDateTimeSchema.nullable().optional(),
+  assignedUserId: z.string().max(200).nullable().optional(),
+  contactId: z.string().uuid().nullable().optional(),
+  jobId: z.string().uuid().nullable().optional(),
+  opportunityId: z.string().uuid().nullable().optional(),
+  source: z.string().min(1).max(200).optional()
 });
 
 function ghlClient() {
@@ -1193,6 +1211,43 @@ function buildServer() {
     return textResult(row ?? { error: "job_not_found" });
   });
 
+  server.registerTool("tasks.search", {
+    description: "Search EGC operational tasks/todos by status, priority, assignment, linked entity, or due date.",
+    inputSchema: z.object({
+      status: taskStatusSchema.optional(),
+      priority: taskPrioritySchema.optional(),
+      assignedUserId: z.string().max(200).optional(),
+      contactId: z.string().uuid().optional(),
+      jobId: z.string().uuid().optional(),
+      opportunityId: z.string().uuid().optional(),
+      dueBefore: isoDateTimeSchema.optional(),
+      dueAfter: isoDateTimeSchema.optional(),
+      limit: z.number().int().min(1).max(200).default(100)
+    }),
+    ...protectedToolMetadata
+  }, async ({ status, priority, assignedUserId, contactId, jobId, opportunityId, dueBefore, dueAfter, limit }) => {
+    const db = getDb();
+    const rows = await db.select().from(schema.tasks)
+      .orderBy(desc(schema.tasks.updatedAt))
+      .limit(500);
+
+    const before = dueBefore ? new Date(dueBefore).valueOf() : null;
+    const after = dueAfter ? new Date(dueAfter).valueOf() : null;
+    const filtered = rows.filter((task) => {
+      if (status && task.status !== status) return false;
+      if (priority && task.priority !== priority) return false;
+      if (assignedUserId && task.assignedUserId !== assignedUserId) return false;
+      if (contactId && task.contactId !== contactId) return false;
+      if (jobId && task.jobId !== jobId) return false;
+      if (opportunityId && task.opportunityId !== opportunityId) return false;
+      if (before !== null && (!task.dueAt || task.dueAt.valueOf() > before)) return false;
+      if (after !== null && (!task.dueAt || task.dueAt.valueOf() < after)) return false;
+      return true;
+    }).slice(0, limit);
+
+    return textResult(filtered);
+  });
+
   server.registerTool("walkthroughs.search", {
     description: "Search voice walkthroughs by contact or workflow status.",
     inputSchema: z.object({
@@ -1260,9 +1315,7 @@ function buildServer() {
     const rows = await leadsNeedingContact(days);
     return textResult(rows.map((row) => ({
       ...row,
-      reason: row.state === "NEVER_CONTACTED"
-        ? "No human outreach recorded"
-        : "Human outreach recorded; no customer reply after the latest outreach"
+      reason: row.followUpReason ?? "Human follow-up required"
     })));
   });
 
@@ -1560,7 +1613,7 @@ function buildServer() {
   });
 
   server.registerTool("egc.lead_conversion_funnel", {
-    description: "Return current lead counts by canonical EGC lead state.",
+    description: "Return lead lifecycle counts plus separate human outreach, customer response, two-way contact, lead-to-booked, and contact-to-booked metrics for the requested cohort.",
     inputSchema: z.object({
       days: z.number().int().min(1).max(365).default(30)
     }),
@@ -1568,22 +1621,154 @@ function buildServer() {
   }, async ({ days }) => {
     const db = getDb();
     const since = new Date(Date.now() - days * 86_400_000);
-    const rows = await db.select({
+    const cohort = await db.select({
+      contactId: schema.leads.contactId,
       state: schema.leads.currentState,
-      count: sql<number>`count(*)::int`
-    })
-      .from(schema.leads)
-      .where(gte(schema.leads.createdAt, since))
-      .groupBy(schema.leads.currentState);
+      createdAt: schema.leads.createdAt,
+      firstBookedAt: schema.leads.firstBookedAt
+    }).from(schema.leads)
+      .where(gte(schema.leads.createdAt, since));
 
-    const total = rows.reduce((sum, row) => sum + Number(row.count), 0);
+    const total = cohort.length;
+    if (!total) {
+      return textResult({
+        days,
+        total: 0,
+        states: [],
+        counts: {
+          humanOutreach: 0,
+          customerResponse: 0,
+          twoWayContact: 0,
+          booked: 0,
+          bookedAfterTwoWayContact: 0
+        },
+        humanOutreachRate: 0,
+        customerResponseRate: 0,
+        twoWayContactRate: 0,
+        leadToBookedRate: 0,
+        contactToBookedRate: 0,
+        bookedRate: 0
+      });
+    }
+
+    const contactIds = cohort.map((row) => row.contactId);
+    const createdAtByContact = new Map(cohort.map((row) => [row.contactId, row.createdAt.valueOf()]));
+
+    const [messages, calls, appointments] = await Promise.all([
+      db.select({
+        contactId: schema.messages.contactId,
+        direction: schema.messages.direction,
+        actorType: schema.messages.actorType,
+        occurredAt: schema.messages.occurredAt
+      }).from(schema.messages)
+        .where(inArray(schema.messages.contactId, contactIds)),
+      db.select({
+        contactId: schema.calls.contactId,
+        direction: schema.calls.direction,
+        actorType: schema.calls.actorType,
+        answered: schema.calls.answered,
+        startedAt: schema.calls.startedAt
+      }).from(schema.calls)
+        .where(inArray(schema.calls.contactId, contactIds)),
+      db.select({
+        contactId: schema.appointments.contactId,
+        appointmentCreatedAt: schema.appointments.appointmentCreatedAt,
+        status: schema.appointments.status
+      }).from(schema.appointments)
+        .where(and(
+          inArray(schema.appointments.contactId, contactIds),
+          inArray(schema.appointments.status, ["new", "confirmed", "showed"])
+        ))
+    ]);
+
+    const humanOutreach = new Set<string>();
+    const customerResponse = new Set<string>();
+    const answeredContact = new Set<string>();
+    const booked = new Set<string>(
+      cohort.filter((row) => Boolean(row.firstBookedAt)).map((row) => row.contactId)
+    );
+
+    for (const message of messages) {
+      const leadCreated = createdAtByContact.get(message.contactId) ?? 0;
+      if (message.occurredAt.valueOf() < leadCreated) continue;
+      if (message.direction === "outbound" && message.actorType === "human") {
+        humanOutreach.add(message.contactId);
+      }
+      if (message.direction === "inbound" && message.actorType === "customer") {
+        customerResponse.add(message.contactId);
+      }
+    }
+
+    for (const call of calls) {
+      const leadCreated = createdAtByContact.get(call.contactId) ?? 0;
+      if (call.startedAt.valueOf() < leadCreated) continue;
+      if (call.direction === "outbound" && call.actorType === "human") {
+        humanOutreach.add(call.contactId);
+      }
+      if (call.direction === "inbound" && call.actorType === "customer") {
+        customerResponse.add(call.contactId);
+      }
+      if (call.answered) answeredContact.add(call.contactId);
+    }
+
+    for (const appointment of appointments) {
+      const leadCreated = createdAtByContact.get(appointment.contactId) ?? 0;
+      if (!appointment.appointmentCreatedAt || appointment.appointmentCreatedAt.valueOf() >= leadCreated) {
+        booked.add(appointment.contactId);
+      }
+    }
+
+    const twoWayContact = new Set<string>();
+    for (const contactId of contactIds) {
+      if (
+        answeredContact.has(contactId) ||
+        (humanOutreach.has(contactId) && customerResponse.has(contactId))
+      ) {
+        twoWayContact.add(contactId);
+      }
+    }
+
+    const bookedAfterTwoWayContact = [...booked]
+      .filter((contactId) => twoWayContact.has(contactId)).length;
+
+    const stateCounts = new Map<string, number>();
+    for (const row of cohort) {
+      stateCounts.set(row.state, (stateCounts.get(row.state) ?? 0) + 1);
+    }
+    const states = [...stateCounts.entries()].map(([state, count]) => ({ state, count }));
+
+    const humanOutreachRate = humanOutreach.size / total;
+    const customerResponseRate = customerResponse.size / total;
+    const twoWayContactRate = twoWayContact.size / total;
+    const leadToBookedRate = booked.size / total;
+    const contactToBookedRate = twoWayContact.size
+      ? bookedAfterTwoWayContact / twoWayContact.size
+      : 0;
+
     return textResult({
       days,
       total,
-      states: rows,
-      bookedRate: total
-        ? Number(rows.find((row) => row.state === "BOOKED")?.count ?? 0) / total
-        : 0
+      states,
+      counts: {
+        humanOutreach: humanOutreach.size,
+        customerResponse: customerResponse.size,
+        twoWayContact: twoWayContact.size,
+        booked: booked.size,
+        bookedAfterTwoWayContact
+      },
+      humanOutreachRate,
+      customerResponseRate,
+      twoWayContactRate,
+      leadToBookedRate,
+      contactToBookedRate,
+      bookedRate: leadToBookedRate,
+      definitions: {
+        humanOutreachRate: "Leads with at least one human outbound call or message / leads",
+        customerResponseRate: "Leads with at least one inbound customer call or message / leads",
+        twoWayContactRate: "Leads with an answered call or both human outreach and customer response / leads",
+        leadToBookedRate: "Leads with at least one booking / leads",
+        contactToBookedRate: "Booked leads with two-way contact / leads with two-way contact"
+      }
     });
   });
 
@@ -2196,6 +2381,195 @@ function buildServer() {
       duplicateWindowMinutes
     }))
   );
+
+  server.registerTool("tasks.create", {
+    description: "Create an actionable EGC operational task/todo, optionally linked to a contact, job, or opportunity.",
+    inputSchema: z.object({
+      title: z.string().min(1).max(500),
+      description: z.string().max(5000).optional(),
+      priority: taskPrioritySchema.default("medium"),
+      dueAt: isoDateTimeSchema.optional(),
+      assignedUserId: z.string().max(200).optional(),
+      contactId: z.string().uuid().optional(),
+      jobId: z.string().uuid().optional(),
+      opportunityId: z.string().uuid().optional(),
+      source: z.string().min(1).max(200).default("mcp")
+    }),
+    ...writeToolMetadata
+  }, async ({ title, description, priority, dueAt, assignedUserId, contactId, jobId, opportunityId, source }) => {
+    const db = getDb();
+    let resolvedContactId = contactId ?? null;
+
+    if (contactId) {
+      const [contact] = await db.select({ id: schema.contacts.id }).from(schema.contacts)
+        .where(eq(schema.contacts.id, contactId)).limit(1);
+      if (!contact) return textResult({ error: "contact_not_found" });
+    }
+
+    if (jobId) {
+      const [job] = await db.select({ id: schema.jobs.id, contactId: schema.jobs.contactId }).from(schema.jobs)
+        .where(eq(schema.jobs.id, jobId)).limit(1);
+      if (!job) return textResult({ error: "job_not_found" });
+      if (resolvedContactId && resolvedContactId !== job.contactId) {
+        return textResult({ error: "task_job_contact_mismatch" });
+      }
+      resolvedContactId = resolvedContactId ?? job.contactId;
+    }
+
+    if (opportunityId) {
+      const [opportunity] = await db.select({
+        id: schema.opportunities.id,
+        contactId: schema.opportunities.contactId
+      }).from(schema.opportunities)
+        .where(eq(schema.opportunities.id, opportunityId)).limit(1);
+      if (!opportunity) return textResult({ error: "opportunity_not_found" });
+      if (resolvedContactId && resolvedContactId !== opportunity.contactId) {
+        return textResult({ error: "task_opportunity_contact_mismatch" });
+      }
+      resolvedContactId = resolvedContactId ?? opportunity.contactId;
+    }
+
+    const [task] = await db.insert(schema.tasks).values({
+      title,
+      description: description ?? null,
+      priority,
+      status: "open",
+      dueAt: dueAt ? new Date(dueAt) : null,
+      assignedUserId: assignedUserId ?? null,
+      contactId: resolvedContactId,
+      jobId: jobId ?? null,
+      opportunityId: opportunityId ?? null,
+      source
+    }).returning();
+
+    if (!task) throw new Error("task_create_failed");
+
+    await db.insert(schema.auditLogs).values({
+      actor: "chatgpt-mcp",
+      action: "task.create",
+      entity: "task",
+      entityId: task.id,
+      newValue: task,
+      source: "mcp"
+    });
+
+    return textResult({ ok: true, task });
+  });
+
+  server.registerTool("tasks.update", {
+    description: "Update an EGC operational task/todo, including priority, due date, assignment, links, or workflow status.",
+    inputSchema: z.object({
+      taskId: z.string().uuid(),
+      changes: taskMutationSchema
+    }),
+    ...writeToolMetadata
+  }, async ({ taskId, changes }) => {
+    const db = getDb();
+    const [existing] = await db.select().from(schema.tasks)
+      .where(eq(schema.tasks.id, taskId)).limit(1);
+    if (!existing) return textResult({ error: "task_not_found" });
+
+    const targetContactId = changes.contactId !== undefined
+      ? changes.contactId
+      : existing.contactId;
+
+    if (changes.contactId) {
+      const [contact] = await db.select({ id: schema.contacts.id }).from(schema.contacts)
+        .where(eq(schema.contacts.id, changes.contactId)).limit(1);
+      if (!contact) return textResult({ error: "contact_not_found" });
+    }
+
+    if (changes.jobId) {
+      const [job] = await db.select({ id: schema.jobs.id, contactId: schema.jobs.contactId }).from(schema.jobs)
+        .where(eq(schema.jobs.id, changes.jobId)).limit(1);
+      if (!job) return textResult({ error: "job_not_found" });
+      if (targetContactId && targetContactId !== job.contactId) {
+        return textResult({ error: "task_job_contact_mismatch" });
+      }
+    }
+
+    if (changes.opportunityId) {
+      const [opportunity] = await db.select({
+        id: schema.opportunities.id,
+        contactId: schema.opportunities.contactId
+      }).from(schema.opportunities)
+        .where(eq(schema.opportunities.id, changes.opportunityId)).limit(1);
+      if (!opportunity) return textResult({ error: "opportunity_not_found" });
+      if (targetContactId && targetContactId !== opportunity.contactId) {
+        return textResult({ error: "task_opportunity_contact_mismatch" });
+      }
+    }
+
+    const [updated] = await db.update(schema.tasks).set({
+      title: changes.title,
+      description: changes.description,
+      priority: changes.priority,
+      status: changes.status,
+      dueAt: changes.dueAt === undefined
+        ? undefined
+        : (changes.dueAt === null ? null : new Date(changes.dueAt)),
+      assignedUserId: changes.assignedUserId,
+      contactId: changes.contactId,
+      jobId: changes.jobId,
+      opportunityId: changes.opportunityId,
+      source: changes.source,
+      completedAt: changes.status === "completed"
+        ? (existing.completedAt ?? new Date())
+        : (changes.status !== undefined ? null : undefined),
+      updatedAt: new Date()
+    }).where(eq(schema.tasks.id, taskId)).returning();
+
+    if (!updated) throw new Error("task_update_failed");
+
+    await db.insert(schema.auditLogs).values({
+      actor: "chatgpt-mcp",
+      action: "task.update",
+      entity: "task",
+      entityId: taskId,
+      oldValue: existing,
+      newValue: updated,
+      source: "mcp"
+    });
+
+    return textResult({ ok: true, task: updated });
+  });
+
+  server.registerTool("tasks.complete", {
+    description: "Mark an EGC operational task/todo complete while preserving its audit history.",
+    inputSchema: z.object({
+      taskId: z.string().uuid()
+    }),
+    ...writeToolMetadata
+  }, async ({ taskId }) => {
+    const db = getDb();
+    const [existing] = await db.select().from(schema.tasks)
+      .where(eq(schema.tasks.id, taskId)).limit(1);
+    if (!existing) return textResult({ error: "task_not_found" });
+
+    if (existing.status === "completed") {
+      return textResult({ ok: true, alreadyCompleted: true, task: existing });
+    }
+
+    const [updated] = await db.update(schema.tasks).set({
+      status: "completed",
+      completedAt: new Date(),
+      updatedAt: new Date()
+    }).where(eq(schema.tasks.id, taskId)).returning();
+
+    if (!updated) throw new Error("task_complete_failed");
+
+    await db.insert(schema.auditLogs).values({
+      actor: "chatgpt-mcp",
+      action: "task.complete",
+      entity: "task",
+      entityId: taskId,
+      oldValue: existing,
+      newValue: updated,
+      source: "mcp"
+    });
+
+    return textResult({ ok: true, task: updated });
+  });
 
   server.registerTool("contacts.create", {
     description: "Create a contact in GHL and immediately create the normalized EGC contact/lead record.",
