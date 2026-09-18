@@ -1,0 +1,53 @@
+name: Repair task migration metadata
+
+on:
+  push:
+    branches:
+      - fix/task-migration-metadata
+
+permissions:
+  contents: write
+
+jobs:
+  regenerate:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: egc-platform
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/task-migration-metadata
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: pnpm install --no-frozen-lockfile
+      - name: Remove incomplete handwritten task migration metadata
+        run: |
+          rm -f packages/database/migrations/0001_operational_tasks.sql
+          node <<'NODE'
+          const fs = require("fs");
+          const path = "packages/database/migrations/meta/_journal.json";
+          const journal = JSON.parse(fs.readFileSync(path, "utf8"));
+          journal.entries = journal.entries
+            .filter((entry) => entry.tag !== "0001_operational_tasks")
+            .map((entry, idx) => ({ ...entry, idx }));
+          fs.writeFileSync(path, JSON.stringify(journal, null, 2) + "\n");
+          NODE
+      - name: Generate canonical Drizzle migration and snapshot
+        env:
+          DATABASE_URL: postgres://egc:egc@localhost:5432/egc
+        run: pnpm db:generate
+      - name: Commit generated migration metadata
+        working-directory: .
+        run: |
+          rm -f .github/workflows/repair-task-migration.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add egc-platform/packages/database/migrations .github/workflows/repair-task-migration.yml
+          git commit -m "Generate canonical task migration metadata"
+          git push origin HEAD:fix/task-migration-metadata
