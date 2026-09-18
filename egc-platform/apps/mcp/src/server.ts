@@ -2,7 +2,7 @@ import { createMcpExpressApp } from "@modelcontextprotocol/express";
 import { toNodeHandler } from "@modelcontextprotocol/node";
 import { createMcpHandler, McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod/v4";
-import { and, desc, eq, gte, inArray, lt, sql } from "drizzle-orm";
+import { and, desc, eq, gte, ilike, inArray, lt, or, sql } from "drizzle-orm";
 import { getDb, schema } from "@egc/database";
 import {
   callTranscriptsForContact,
@@ -81,6 +81,328 @@ function buildServer() {
     { name: "easy-garage-cleaning", version: "0.1.0" },
     { capabilities: { tools: { listChanged: false } } }
   );
+
+  server.registerTool("contacts.search", {
+    description: "Search normalized EGC contacts by name, phone, or email.",
+    inputSchema: z.object({
+      query: z.string().trim().max(200).default(""),
+      limit: z.number().int().min(1).max(200).default(50)
+    }),
+    annotations: { readOnlyHint: true, destructiveHint: false }
+  }, async ({ query, limit }) => {
+    const db = getDb();
+    const base = db.select().from(schema.contacts);
+    const rows = query
+      ? await base.where(or(
+          ilike(schema.contacts.name, `%${query}%`),
+          ilike(schema.contacts.phone, `%${query}%`),
+          ilike(schema.contacts.email, `%${query}%`)
+        )).orderBy(desc(schema.contacts.updatedAt)).limit(limit)
+      : await base.orderBy(desc(schema.contacts.updatedAt)).limit(limit);
+    return textResult(rows);
+  });
+
+  server.registerTool("contacts.get", {
+    description: "Get one normalized EGC contact by internal contact ID.",
+    inputSchema: z.object({ contactId: z.string().uuid() }),
+    annotations: { readOnlyHint: true, destructiveHint: false }
+  }, async ({ contactId }) => {
+    const db = getDb();
+    const [row] = await db.select().from(schema.contacts)
+      .where(eq(schema.contacts.id, contactId))
+      .limit(1);
+    return textResult(row ?? { error: "contact_not_found" });
+  });
+
+  server.registerTool("leads.search", {
+    description: "Search recent leads, optionally filtered by canonical lead state.",
+    inputSchema: z.object({
+      state: z.enum([
+        "NEVER_CONTACTED",
+        "OUTREACH_ATTEMPTED_NO_REPLY",
+        "CUSTOMER_RESPONDED",
+        "ACTIVE_CONVERSATION",
+        "BOOKED",
+        "LOST",
+        "DO_NOT_CONTACT"
+      ]).optional(),
+      days: z.number().int().min(1).max(365).default(30),
+      limit: z.number().int().min(1).max(500).default(100)
+    }),
+    annotations: { readOnlyHint: true, destructiveHint: false }
+  }, async ({ state, days, limit }) => {
+    const db = getDb();
+    const since = new Date(Date.now() - days * 86_400_000);
+    const base = db.select({
+      lead: schema.leads,
+      contact: schema.contacts
+    })
+      .from(schema.leads)
+      .innerJoin(schema.contacts, eq(schema.leads.contactId, schema.contacts.id));
+
+    const rows = state
+      ? await base.where(and(
+          gte(schema.leads.createdAt, since),
+          eq(schema.leads.currentState, state)
+        )).orderBy(desc(schema.leads.createdAt)).limit(limit)
+      : await base.where(gte(schema.leads.createdAt, since))
+          .orderBy(desc(schema.leads.createdAt))
+          .limit(limit);
+    return textResult(rows);
+  });
+
+  server.registerTool("leads.get", {
+    description: "Get one lead with its contact by internal lead ID.",
+    inputSchema: z.object({ leadId: z.string().uuid() }),
+    annotations: { readOnlyHint: true, destructiveHint: false }
+  }, async ({ leadId }) => {
+    const db = getDb();
+    const [row] = await db.select({
+      lead: schema.leads,
+      contact: schema.contacts
+    })
+      .from(schema.leads)
+      .innerJoin(schema.contacts, eq(schema.leads.contactId, schema.contacts.id))
+      .where(eq(schema.leads.id, leadId))
+      .limit(1);
+    return textResult(row ?? { error: "lead_not_found" });
+  });
+
+  server.registerTool("conversations.search", {
+    description: "Return conversations for a contact.",
+    inputSchema: z.object({
+      contactId: z.string().uuid(),
+      limit: z.number().int().min(1).max(200).default(50)
+    }),
+    annotations: { readOnlyHint: true, destructiveHint: false }
+  }, async ({ contactId, limit }) => {
+    const db = getDb();
+    return textResult(await db.select().from(schema.conversations)
+      .where(eq(schema.conversations.contactId, contactId))
+      .orderBy(desc(schema.conversations.updatedAt))
+      .limit(limit));
+  });
+
+  server.registerTool("conversations.get", {
+    description: "Get one conversation and its normalized messages.",
+    inputSchema: z.object({
+      conversationId: z.string().uuid(),
+      messageLimit: z.number().int().min(1).max(500).default(100)
+    }),
+    annotations: { readOnlyHint: true, destructiveHint: false }
+  }, async ({ conversationId, messageLimit }) => {
+    const db = getDb();
+    const [conversation] = await db.select().from(schema.conversations)
+      .where(eq(schema.conversations.id, conversationId))
+      .limit(1);
+    if (!conversation) return textResult({ error: "conversation_not_found" });
+
+    const messages = await db.select().from(schema.messages)
+      .where(eq(schema.messages.conversationId, conversationId))
+      .orderBy(desc(schema.messages.occurredAt))
+      .limit(messageLimit);
+    return textResult({ conversation, messages });
+  });
+
+  server.registerTool("calls.search", {
+    description: "Search recent normalized calls, optionally for one contact.",
+    inputSchema: z.object({
+      contactId: z.string().uuid().optional(),
+      days: z.number().int().min(1).max(365).default(30),
+      limit: z.number().int().min(1).max(500).default(100)
+    }),
+    annotations: { readOnlyHint: true, destructiveHint: false }
+  }, async ({ contactId, days, limit }) => {
+    const db = getDb();
+    const since = new Date(Date.now() - days * 86_400_000);
+    const base = db.select({
+      call: schema.calls,
+      customerName: schema.contacts.name,
+      phone: schema.contacts.phone
+    })
+      .from(schema.calls)
+      .innerJoin(schema.contacts, eq(schema.calls.contactId, schema.contacts.id));
+    const rows = contactId
+      ? await base.where(and(
+          eq(schema.calls.contactId, contactId),
+          gte(schema.calls.startedAt, since)
+        )).orderBy(desc(schema.calls.startedAt)).limit(limit)
+      : await base.where(gte(schema.calls.startedAt, since))
+          .orderBy(desc(schema.calls.startedAt))
+          .limit(limit);
+    return textResult(rows);
+  });
+
+  server.registerTool("calls.get", {
+    description: "Get one call and its persisted transcript.",
+    inputSchema: z.object({ callId: z.string().uuid() }),
+    annotations: { readOnlyHint: true, destructiveHint: false }
+  }, async ({ callId }) => {
+    const db = getDb();
+    const [call] = await db.select().from(schema.calls)
+      .where(eq(schema.calls.id, callId))
+      .limit(1);
+    if (!call) return textResult({ error: "call_not_found" });
+    const [transcript] = await db.select().from(schema.callTranscripts)
+      .where(eq(schema.callTranscripts.callId, callId))
+      .limit(1);
+    return textResult({ call, transcript: transcript ?? null });
+  });
+
+  server.registerTool("opportunities.search", {
+    description: "Search normalized GHL opportunities by contact or status.",
+    inputSchema: z.object({
+      contactId: z.string().uuid().optional(),
+      status: z.string().max(50).optional(),
+      limit: z.number().int().min(1).max(500).default(100)
+    }),
+    annotations: { readOnlyHint: true, destructiveHint: false }
+  }, async ({ contactId, status, limit }) => {
+    const db = getDb();
+    const conditions = [
+      ...(contactId ? [eq(schema.opportunities.contactId, contactId)] : []),
+      ...(status ? [eq(schema.opportunities.status, status)] : [])
+    ];
+    const rows = conditions.length
+      ? await db.select().from(schema.opportunities)
+          .where(and(...conditions))
+          .orderBy(desc(schema.opportunities.updatedAt))
+          .limit(limit)
+      : await db.select().from(schema.opportunities)
+          .orderBy(desc(schema.opportunities.updatedAt))
+          .limit(limit);
+    return textResult(rows);
+  });
+
+  server.registerTool("opportunities.get", {
+    description: "Get one normalized opportunity by internal ID.",
+    inputSchema: z.object({ opportunityId: z.string().uuid() }),
+    annotations: { readOnlyHint: true, destructiveHint: false }
+  }, async ({ opportunityId }) => {
+    const db = getDb();
+    const [row] = await db.select().from(schema.opportunities)
+      .where(eq(schema.opportunities.id, opportunityId))
+      .limit(1);
+    return textResult(row ?? { error: "opportunity_not_found" });
+  });
+
+  server.registerTool("appointments.search", {
+    description: "Search appointments in a relative time window, optionally for one contact.",
+    inputSchema: z.object({
+      contactId: z.string().uuid().optional(),
+      daysPast: z.number().int().min(0).max(365).default(30),
+      daysFuture: z.number().int().min(0).max(730).default(90),
+      limit: z.number().int().min(1).max(500).default(200)
+    }),
+    annotations: { readOnlyHint: true, destructiveHint: false }
+  }, async ({ contactId, daysPast, daysFuture, limit }) => {
+    const db = getDb();
+    const start = new Date(Date.now() - daysPast * 86_400_000);
+    const end = new Date(Date.now() + daysFuture * 86_400_000);
+    const timeConditions = [
+      gte(schema.appointments.appointmentStartAt, start),
+      lt(schema.appointments.appointmentStartAt, end)
+    ];
+    const rows = contactId
+      ? await db.select().from(schema.appointments).where(and(
+          ...timeConditions,
+          eq(schema.appointments.contactId, contactId)
+        )).orderBy(schema.appointments.appointmentStartAt).limit(limit)
+      : await db.select().from(schema.appointments).where(and(...timeConditions))
+          .orderBy(schema.appointments.appointmentStartAt)
+          .limit(limit);
+    return textResult(rows);
+  });
+
+  server.registerTool("jobs.search", {
+    description: "Search EGC jobs by contact or status.",
+    inputSchema: z.object({
+      contactId: z.string().uuid().optional(),
+      status: z.string().max(80).optional(),
+      limit: z.number().int().min(1).max(500).default(100)
+    }),
+    annotations: { readOnlyHint: true, destructiveHint: false }
+  }, async ({ contactId, status, limit }) => {
+    const db = getDb();
+    const conditions = [
+      ...(contactId ? [eq(schema.jobs.contactId, contactId)] : []),
+      ...(status ? [eq(schema.jobs.status, status)] : [])
+    ];
+    const rows = conditions.length
+      ? await db.select().from(schema.jobs)
+          .where(and(...conditions))
+          .orderBy(desc(schema.jobs.updatedAt))
+          .limit(limit)
+      : await db.select().from(schema.jobs)
+          .orderBy(desc(schema.jobs.updatedAt))
+          .limit(limit);
+    return textResult(rows);
+  });
+
+  server.registerTool("jobs.get", {
+    description: "Get one raw normalized EGC job by internal ID.",
+    inputSchema: z.object({ jobId: z.string().uuid() }),
+    annotations: { readOnlyHint: true, destructiveHint: false }
+  }, async ({ jobId }) => {
+    const db = getDb();
+    const [row] = await db.select().from(schema.jobs)
+      .where(eq(schema.jobs.id, jobId))
+      .limit(1);
+    return textResult(row ?? { error: "job_not_found" });
+  });
+
+  server.registerTool("walkthroughs.search", {
+    description: "Search voice walkthroughs by contact or workflow status.",
+    inputSchema: z.object({
+      contactId: z.string().uuid().optional(),
+      status: z.string().max(80).optional(),
+      limit: z.number().int().min(1).max(500).default(100)
+    }),
+    annotations: { readOnlyHint: true, destructiveHint: false }
+  }, async ({ contactId, status, limit }) => {
+    const db = getDb();
+    const conditions = [
+      ...(contactId ? [eq(schema.walkthroughs.contactId, contactId)] : []),
+      ...(status ? [eq(schema.walkthroughs.status, status)] : [])
+    ];
+    const rows = conditions.length
+      ? await db.select().from(schema.walkthroughs)
+          .where(and(...conditions))
+          .orderBy(desc(schema.walkthroughs.createdAt))
+          .limit(limit)
+      : await db.select().from(schema.walkthroughs)
+          .orderBy(desc(schema.walkthroughs.createdAt))
+          .limit(limit);
+    return textResult(rows);
+  });
+
+  server.registerTool("walkthroughs.get", {
+    description: "Get one voice walkthrough, including reviewed extraction.",
+    inputSchema: z.object({ walkthroughId: z.string().uuid() }),
+    annotations: { readOnlyHint: true, destructiveHint: false }
+  }, async ({ walkthroughId }) => {
+    const db = getDb();
+    const [row] = await db.select().from(schema.walkthroughs)
+      .where(eq(schema.walkthroughs.id, walkthroughId))
+      .limit(1);
+    return textResult(row ?? { error: "walkthrough_not_found" });
+  });
+
+  server.registerTool("walkthroughs.transcript", {
+    description: "Return the transcript for one voice walkthrough.",
+    inputSchema: z.object({ walkthroughId: z.string().uuid() }),
+    annotations: { readOnlyHint: true, destructiveHint: false }
+  }, async ({ walkthroughId }) => {
+    const db = getDb();
+    const [row] = await db.select({
+      id: schema.walkthroughs.id,
+      status: schema.walkthroughs.status,
+      transcript: schema.walkthroughs.transcript
+    }).from(schema.walkthroughs)
+      .where(eq(schema.walkthroughs.id, walkthroughId))
+      .limit(1);
+    return textResult(row ?? { error: "walkthrough_not_found" });
+  });
 
   server.registerTool("egc.leads_needing_contact", {
     description: "Return recent leads that still need human contact or human follow-up.",
