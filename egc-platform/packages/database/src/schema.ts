@@ -248,6 +248,40 @@ export const syncCursors = pgTable("sync_cursors", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull()
 });
 
+export const oauthAuthorizationCodes = pgTable("oauth_authorization_codes", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  codeHash: text("code_hash").notNull(),
+  clientId: text("client_id").notNull(),
+  redirectUri: text("redirect_uri").notNull(),
+  codeChallenge: text("code_challenge").notNull(),
+  resource: text("resource").notNull(),
+  scopes: jsonb("scopes").$type<string[]>().default([]).notNull(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  usedAt: timestamp("used_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull()
+}, (t) => [
+  uniqueIndex("oauth_authorization_codes_hash_uq").on(t.codeHash),
+  index("oauth_authorization_codes_expires_idx").on(t.expiresAt)
+]);
+
+export const oauthTokens = pgTable("oauth_tokens", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  accessTokenHash: text("access_token_hash").notNull(),
+  refreshTokenHash: text("refresh_token_hash").notNull(),
+  clientId: text("client_id").notNull(),
+  resource: text("resource").notNull(),
+  scopes: jsonb("scopes").$type<string[]>().default([]).notNull(),
+  accessExpiresAt: timestamp("access_expires_at", { withTimezone: true }).notNull(),
+  refreshExpiresAt: timestamp("refresh_expires_at", { withTimezone: true }).notNull(),
+  revokedAt: timestamp("revoked_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull()
+}, (t) => [
+  uniqueIndex("oauth_tokens_access_hash_uq").on(t.accessTokenHash),
+  uniqueIndex("oauth_tokens_refresh_hash_uq").on(t.refreshTokenHash),
+  index("oauth_tokens_access_expires_idx").on(t.accessExpiresAt)
+]);
+
 export const outboxEvents = pgTable("outbox_events", {
   id: uuid("id").defaultRandom().primaryKey(),
   type: text("type").notNull(),
