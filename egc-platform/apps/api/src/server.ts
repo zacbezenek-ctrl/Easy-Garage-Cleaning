@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import Fastify from "fastify";
+import Fastify, { type FastifyReply, type FastifyRequest } from "fastify";
 import multipart from "@fastify/multipart";
 import rawBody from "fastify-raw-body";
 import { eq } from "drizzle-orm";
@@ -22,14 +22,15 @@ await app.register(rawBody, {
   runFirst: true
 });
 
-function requireInternalAuth(request: { headers: Record<string, unknown> }, reply: { code: (n: number) => { send: (v: unknown) => unknown } }) {
+async function requireInternalAuth(request: FastifyRequest, reply: FastifyReply): Promise<void> {
   const expected = process.env.API_BEARER_TOKEN;
   if (!expected || expected.length < 32) {
-    return reply.code(500).send({ error: "api_auth_not_configured" });
+    await reply.code(500).send({ error: "api_auth_not_configured" });
+    return;
   }
   const authorization = request.headers.authorization;
   if (authorization !== `Bearer ${expected}`) {
-    return reply.code(401).send({ error: "unauthorized" });
+    await reply.code(401).send({ error: "unauthorized" });
   }
 }
 
