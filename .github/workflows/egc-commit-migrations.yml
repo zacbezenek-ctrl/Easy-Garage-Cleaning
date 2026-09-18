@@ -1,0 +1,50 @@
+name: EGC One-Time Migration Commit
+
+on:
+  push:
+    branches:
+      - "feature/egc-platform-foundation"
+    paths:
+      - ".github/workflows/egc-commit-migrations.yml"
+      - "egc-platform/packages/database/src/schema.ts"
+
+permissions:
+  contents: write
+
+jobs:
+  generate-and-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/egc-platform-foundation
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.34.5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install workspace
+        working-directory: egc-platform
+        run: pnpm install --no-frozen-lockfile
+      - name: Generate migration
+        working-directory: egc-platform
+        env:
+          DATABASE_URL: postgres://egc:egc@localhost:5432/egc
+        run: pnpm db:generate
+      - name: Commit generated migration
+        run: |
+          if git diff --quiet -- egc-platform/packages/database/migrations && [ -d egc-platform/packages/database/migrations ]; then
+            git add egc-platform/packages/database/migrations
+          else
+            git add egc-platform/packages/database/migrations
+          fi
+          if git diff --cached --quiet; then
+            echo "No migration changes to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Database: commit generated Drizzle migration"
+          git push origin HEAD:feature/egc-platform-foundation
