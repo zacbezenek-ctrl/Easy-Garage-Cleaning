@@ -232,6 +232,23 @@ export const syncCursors = pgTable("sync_cursors", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull()
 });
 
+export const outboxEvents = pgTable("outbox_events", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  type: text("type").notNull(),
+  entityId: text("entity_id").notNull(),
+  payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
+  processingStatus: text("processing_status").default("pending").notNull(),
+  retryCount: integer("retry_count").default(0).notNull(),
+  availableAt: timestamp("available_at", { withTimezone: true }).defaultNow().notNull(),
+  processedAt: timestamp("processed_at", { withTimezone: true }),
+  lastError: text("last_error"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull()
+}, (t) => [
+  uniqueIndex("outbox_type_entity_uq").on(t.type, t.entityId),
+  index("outbox_status_available_idx").on(t.processingStatus, t.availableAt)
+]);
+
 export const auditLogs = pgTable("audit_logs", {
   id: uuid("id").defaultRandom().primaryKey(),
   actor: text("actor").notNull(),
