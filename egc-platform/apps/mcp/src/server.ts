@@ -5,7 +5,7 @@ import * as z from "zod/v4";
 import { and, desc, eq, gte, ilike, inArray, lt, lte, or, sql } from "drizzle-orm";
 import { getDb, schema } from "@egc/database";
 import { walkthroughExtractionSchema } from "@egc/schemas";
-import { GhlClient, GhlError, asDate, asRecord, asString, findArray } from "@egc/ghl";
+import { GhlClient, asDate, asRecord, asString, findArray } from "@egc/ghl";
 import { authorizeMcpRequest, mcpAuthenticateChallenge, oauthSecurityMetadata, READ_SCOPE, registerOauthRoutes, WRITE_SCOPE } from "./oauth.js";
 import {
   callTranscriptsForContact,
@@ -29,6 +29,11 @@ const protectedToolMetadata = {
 
 const writeToolMetadata = {
   annotations: { readOnlyHint: false, destructiveHint: false },
+  ...oauthSecurityMetadata([READ_SCOPE, WRITE_SCOPE])
+};
+
+const destructiveWriteToolMetadata = {
+  annotations: { readOnlyHint: false, destructiveHint: true },
   ...oauthSecurityMetadata([READ_SCOPE, WRITE_SCOPE])
 };
 
@@ -2107,6 +2112,43 @@ function buildServer() {
   });
 
 
+  server.registerTool("conversations.send_message", {
+    description: "Send a context-aware SMS or email to an existing EGC contact through GHL. Prevents identical recent duplicate sends, mirrors the outbound message locally immediately, updates lead state, and recovers from ambiguous provider errors when the message was actually sent.",
+    inputSchema: z.object({
+      contactId: z.string().uuid(),
+      channel: z.enum(["SMS", "Email"]),
+      body: z.string().min(1).max(5000),
+      subject: z.string().max(500).optional(),
+      emailFrom: z.string().email().optional(),
+      emailTo: z.string().email().optional(),
+      fromNumber: z.string().max(80).optional(),
+      toNumber: z.string().max(80).optional(),
+      duplicateWindowMinutes: z.number().int().min(1).max(120).default(10)
+    }),
+    ...writeToolMetadata
+  }, async (input) => textResult(await sendConversationMessage(input)));
+
+  server.registerTool("send_sms", {
+    description: "Send an SMS to an existing EGC contact through GHL with duplicate suppression, immediate local mirroring, lead-state update, and ambiguous-provider-error recovery.",
+    inputSchema: z.object({
+      contactId: z.string().uuid(),
+      body: z.string().min(1).max(1600),
+      fromNumber: z.string().max(80).optional(),
+      toNumber: z.string().max(80).optional(),
+      duplicateWindowMinutes: z.number().int().min(1).max(120).default(10)
+    }),
+    ...writeToolMetadata
+  }, async ({ contactId, body, fromNumber, toNumber, duplicateWindowMinutes }) =>
+    textResult(await sendConversationMessage({
+      contactId,
+      channel: "SMS",
+      body,
+      fromNumber,
+      toNumber,
+      duplicateWindowMinutes
+    }))
+  );
+
   server.registerTool("contacts.create", {
     description: "Create a contact in GHL and immediately create the normalized EGC contact/lead record.",
     inputSchema: z.object({
@@ -2378,7 +2420,7 @@ function buildServer() {
   });
 
   server.registerTool("appointments.create", {
-    description: "Create a GHL appointment for an EGC contact, immediately mirror it locally, and optionally link/schedule an EGC job. GHL automations are disabled by default unless runAutomations=true.",
+    description: "Idempotently ensure a GHL appointment exists for an EGC contact. Checks local and live GHL calendars first, recovers after ambiguous provider errors, mirrors the canonical appointment locally, and optionally links/schedules an EGC job.",
     inputSchema: z.object({
       contactId: z.string().uuid(),
       calendarId: z.string().min(1),
@@ -2411,83 +2453,21 @@ function buildServer() {
     ignoreDateRange,
     ignoreFreeSlotValidation,
     jobId
-  }) => {
-    const db = getDb();
-    const [contact] = await db.select().from(schema.contacts)
-      .where(eq(schema.contacts.id, contactId))
-      .limit(1);
-    if (!contact) return textResult({ error: "contact_not_found" });
-
-    if (jobId) {
-      const [job] = await db.select().from(schema.jobs)
-        .where(and(eq(schema.jobs.id, jobId), eq(schema.jobs.contactId, contactId)))
-        .limit(1);
-      if (!job) return textResult({ error: "job_not_found_for_contact" });
-    }
-
-    const startAt = new Date(startTime);
-    const endAt = endTime ? new Date(endTime) : null;
-
-    const [existingAtSameTime] = await db.select().from(schema.appointments)
-      .where(and(
-        eq(schema.appointments.contactId, contactId),
-        eq(schema.appointments.calendarId, calendarId),
-        eq(schema.appointments.appointmentStartAt, startAt)
-      ))
-      .limit(1);
-
-    if (existingAtSameTime) {
-      if (jobId) {
-        await db.update(schema.jobs).set({
-          appointmentId: existingAtSameTime.id,
-          scheduledAt: existingAtSameTime.appointmentStartAt,
-          updatedAt: new Date()
-        }).where(eq(schema.jobs.id, jobId));
-      }
-      return textResult({
-        ok: true,
-        duplicatePrevented: true,
-        appointment: existingAtSameTime
-      });
-    }
-
-    const body: Record<string, unknown> = {
-      title: title ?? contact.name ?? "EGC Appointment",
-      calendarId,
-      contactId: contact.providerId,
-      startTime: startAt.toISOString(),
-      appointmentStatus,
-      toNotify: runAutomations,
-      ignoreDateRange,
-      ignoreFreeSlotValidation
-    };
-    if (endAt) body.endTime = endAt.toISOString();
-    if (assignedUserId) body.assignedUserId = assignedUserId;
-    if (description) body.description = description;
-    if (address) body.address = address;
-
-    const remote = await ghlClient().createAppointment(body);
-    const appointment = await syncAppointmentFromGhl(remote, contactId);
-
-    if (jobId) {
-      await db.update(schema.jobs).set({
-        appointmentId: appointment.id,
-        scheduledAt: appointment.appointmentStartAt,
-        updatedAt: new Date()
-      }).where(eq(schema.jobs.id, jobId));
-    }
-
-    await db.insert(schema.auditLogs).values({
-      actor: "chatgpt-mcp",
-      action: "ghl.appointment.create",
-      entity: "appointment",
-      entityId: appointment.id,
-      newValue: appointment,
-      source: "mcp"
-    });
-
-    return textResult({ ok: true, appointment });
-  });
+  }) => textResult(await ensureAppointment({
+    contactId,
+    calendarId,
+    startAt: new Date(startTime),
+    endAt: endTime ? new Date(endTime) : null,
+    title,
+    appointmentStatus,
+    assignedUserId,
+    description,
+    address,
+    runAutomations,
+    ignoreDateRange,
+    ignoreFreeSlotValidation,
+    jobId
+  })));
 
   server.registerTool("appointments.update", {
     description: "Reschedule, reassign, rename, or change status/details of an existing GHL appointment and immediately mirror it locally. GHL automations are disabled by default unless runAutomations=true.",
@@ -2544,6 +2524,106 @@ function buildServer() {
     });
 
     return textResult({ ok: true, appointment: updated });
+  });
+
+  server.registerTool("appointments.cancel", {
+    description: "Cancel an existing GHL appointment without deleting its audit/history record. Mirrors cancelled status locally and preserves any linked EGC job.",
+    inputSchema: z.object({
+      appointmentId: z.string().uuid(),
+      reason: z.string().max(1000).optional(),
+      runAutomations: z.boolean().default(false)
+    }),
+    ...writeToolMetadata
+  }, async ({ appointmentId, reason, runAutomations }) => {
+    const db = getDb();
+    const [existing] = await db.select().from(schema.appointments)
+      .where(eq(schema.appointments.id, appointmentId))
+      .limit(1);
+    if (!existing) return textResult({ error: "appointment_not_found" });
+
+    const remote = await ghlClient().updateAppointment(existing.providerId, {
+      appointmentStatus: "cancelled",
+      toNotify: runAutomations,
+      ...(reason ? { description: reason } : {})
+    });
+    const updated = await syncAppointmentFromGhl(remote, existing.contactId, appointmentId);
+
+    await db.insert(schema.auditLogs).values({
+      actor: "chatgpt-mcp",
+      action: "ghl.appointment.cancel",
+      entity: "appointment",
+      entityId: appointmentId,
+      oldValue: existing,
+      newValue: updated,
+      source: "mcp"
+    });
+
+    return textResult({ ok: true, appointment: updated });
+  });
+
+  server.registerTool("appointments.delete", {
+    description: "Delete a GHL calendar event and remove the normalized appointment. Refuses to delete an appointment linked to an EGC job unless force=true.",
+    inputSchema: z.object({
+      appointmentId: z.string().uuid(),
+      force: z.boolean().default(false)
+    }),
+    ...destructiveWriteToolMetadata
+  }, async ({ appointmentId, force }) => {
+    const db = getDb();
+    const [existing] = await db.select().from(schema.appointments)
+      .where(eq(schema.appointments.id, appointmentId))
+      .limit(1);
+    if (!existing) return textResult({ error: "appointment_not_found" });
+
+    const linkedJobs = await db.select({ id: schema.jobs.id }).from(schema.jobs)
+      .where(eq(schema.jobs.appointmentId, appointmentId))
+      .limit(10);
+
+    if (linkedJobs.length && !force) {
+      return textResult({
+        error: "appointment_linked_to_job",
+        linkedJobIds: linkedJobs.map((job) => job.id),
+        guidance: "Cancel instead, or pass force=true only after confirming the canonical replacement appointment."
+      });
+    }
+
+    const providerResult = await ghlClient().deleteCalendarEvent(existing.providerId);
+
+    await db.transaction(async (tx) => {
+      if (linkedJobs.length) {
+        await tx.update(schema.jobs).set({
+          appointmentId: null,
+          updatedAt: new Date()
+        }).where(eq(schema.jobs.appointmentId, appointmentId));
+      }
+
+      await tx.delete(schema.appointments)
+        .where(eq(schema.appointments.id, appointmentId));
+
+      await tx.insert(schema.auditLogs).values({
+        actor: "chatgpt-mcp",
+        action: "ghl.appointment.delete",
+        entity: "appointment",
+        entityId: appointmentId,
+        oldValue: existing,
+        newValue: {
+          deleted: true,
+          providerResult,
+          clearedJobLinks: linkedJobs.map((job) => job.id)
+        },
+        source: "mcp"
+      });
+    });
+
+    await recomputeLeadState(existing.contactId);
+
+    return textResult({
+      ok: true,
+      deleted: true,
+      appointmentId,
+      providerId: existing.providerId,
+      clearedJobLinks: linkedJobs.map((job) => job.id)
+    });
   });
 
   return server;
