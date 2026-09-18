@@ -97,6 +97,55 @@ function tomorrowBounds(timeZone = "America/Denver") {
   };
 }
 
+const jobMutationSchema = z.object({
+  status: z.string().min(1).max(80).optional(),
+  serviceAddress: z.string().max(500).nullable().optional(),
+  garageSize: z.string().max(80).nullable().optional(),
+  serviceType: z.string().max(120).nullable().optional(),
+  junkVolumeYards: z.number().min(0).nullable().optional(),
+  itemsRemove: z.array(z.string().max(500)).optional(),
+  itemsKeep: z.array(z.string().max(500)).optional(),
+  itemsRelocate: z.array(z.string().max(500)).optional(),
+  organizationRequirements: z.array(z.string().max(500)).optional(),
+  addOns: z.array(z.string().max(500)).optional(),
+  accessNotes: z.string().max(5000).nullable().optional(),
+  estimatedLaborHours: z.number().min(0).nullable().optional(),
+  scheduledAt: z.coerce.date().nullable().optional(),
+  priceCents: z.number().int().min(0).nullable().optional(),
+  depositCents: z.number().int().min(0).nullable().optional()
+});
+
+function formatApprovedWalkthroughNote(
+  extraction: ReturnType<typeof walkthroughExtractionSchema.parse>,
+  jobId: string
+) {
+  return [
+    "EGC WALKTHROUGH — APPROVED",
+    `Job ID: ${jobId}`,
+    `Garage size: ${extraction.garageSize}`,
+    `Estimated junk: ${extraction.junkVolumeYards ?? "unknown"} yd³`,
+    `Estimated labor: ${extraction.estimatedLaborHours ?? "unknown"} hours`,
+    "",
+    `REMOVE: ${extraction.itemsRemove.length ? extraction.itemsRemove.join("; ") : "None noted"}`,
+    `KEEP: ${extraction.itemsKeep.length ? extraction.itemsKeep.join("; ") : "None noted"}`,
+    `RELOCATE: ${extraction.itemsRelocate.length ? extraction.itemsRelocate.join("; ") : "None noted"}`,
+    `STORAGE: ${extraction.storageRequirements.length ? extraction.storageRequirements.join("; ") : "None noted"}`,
+    `BIKE RACKS: ${extraction.bikeRacks}`,
+    `TOOL RACKS: ${extraction.toolRacks}`,
+    `SHELVING: ${extraction.shelving.length ? extraction.shelving.join("; ") : "None noted"}`,
+    `PRESSURE WASHING: ${extraction.pressureWashing ? "Yes" : "No"}`,
+    `PEST OBSERVATIONS: ${extraction.pestObservations.length ? extraction.pestObservations.join("; ") : "None noted"}`,
+    `ACTIVE INFESTATION KNOWN: ${extraction.activeInfestation === null ? "Unknown" : extraction.activeInfestation ? "Yes" : "No"}`,
+    `ACCESS: ${extraction.accessNotes ?? "None noted"}`,
+    "",
+    `CUSTOMER PREFERENCES: ${extraction.customerPreferences.length ? extraction.customerPreferences.join("; ") : "None noted"}`,
+    `CUSTOMER OBJECTIONS: ${extraction.customerObjections.length ? extraction.customerObjections.join("; ") : "None noted"}`,
+    `SALES NOTES: ${extraction.salesNotes.length ? extraction.salesNotes.join("; ") : "None noted"}`,
+    `CREW NOTES: ${extraction.crewNotes.length ? extraction.crewNotes.join("; ") : "None noted"}`,
+    `PRICING NOTES: ${extraction.pricingNotes.length ? extraction.pricingNotes.join("; ") : "None noted"}`
+  ].join("\n").slice(0, 4500);
+}
+
 function buildServer() {
   const server = new McpServer(
     { name: "easy-garage-cleaning", version: "0.1.0" },
@@ -886,6 +935,418 @@ function buildServer() {
       approvalRate: rows.length ? approved / rows.length : 0,
       jobCreationRate: rows.length ? withJob / rows.length : 0,
       note: "This measures the voice-walkthrough workflow. Sales walkthrough-to-job close rate requires mapped sales appointment types."
+    });
+  });
+
+
+  server.registerTool("jobs.create", {
+    description: "Create a new internal EGC job for an existing normalized contact.",
+    inputSchema: z.object({
+      contactId: z.string().uuid(),
+      opportunityId: z.string().uuid().nullable().optional(),
+      appointmentId: z.string().uuid().nullable().optional(),
+      job: jobMutationSchema.default({})
+    }),
+    ...writeToolMetadata
+  }, async ({ contactId, opportunityId, appointmentId, job }) => {
+    const db = getDb();
+    const [contact] = await db.select().from(schema.contacts)
+      .where(eq(schema.contacts.id, contactId))
+      .limit(1);
+    if (!contact) return textResult({ error: "contact_not_found" });
+
+    const [created] = await db.transaction(async (tx) => {
+      const [row] = await tx.insert(schema.jobs).values({
+        contactId,
+        opportunityId: opportunityId ?? null,
+        appointmentId: appointmentId ?? null,
+        status: job.status ?? "draft",
+        serviceAddress: job.serviceAddress ?? null,
+        garageSize: job.garageSize ?? null,
+        serviceType: job.serviceType ?? null,
+        junkVolumeYards: job.junkVolumeYards === undefined || job.junkVolumeYards === null
+          ? null
+          : String(job.junkVolumeYards),
+        itemsRemove: job.itemsRemove ?? [],
+        itemsKeep: job.itemsKeep ?? [],
+        itemsRelocate: job.itemsRelocate ?? [],
+        organizationRequirements: job.organizationRequirements ?? [],
+        addOns: job.addOns ?? [],
+        accessNotes: job.accessNotes ?? null,
+        estimatedLaborHours: job.estimatedLaborHours === undefined || job.estimatedLaborHours === null
+          ? null
+          : String(job.estimatedLaborHours),
+        scheduledAt: job.scheduledAt ?? null,
+        priceCents: job.priceCents ?? null,
+        depositCents: job.depositCents ?? null
+      }).returning();
+
+      if (!row) throw new Error("job_create_failed");
+
+      await tx.insert(schema.auditLogs).values({
+        actor: "chatgpt-mcp",
+        action: "job.create",
+        entity: "job",
+        entityId: row.id,
+        newValue: row,
+        source: "mcp"
+      });
+
+      if (process.env.GHL_WRITEBACK_ENABLED === "true" && contact.providerId) {
+        await tx.insert(schema.outboxEvents).values({
+          type: "ghl.contact_note.sync",
+          entityId: `${row.id}:create`,
+          payload: {
+            ghlContactId: contact.providerId,
+            title: "EGC Job Created",
+            noteBody: [
+              "EGC JOB CREATED VIA CHATGPT",
+              `Job ID: ${row.id}`,
+              `Status: ${row.status}`,
+              `Service: ${row.serviceType ?? "Not set"}`,
+              `Scheduled: ${row.scheduledAt?.toISOString() ?? "Not scheduled"}`
+            ].join("\n")
+          }
+        }).onConflictDoNothing({
+          target: [schema.outboxEvents.type, schema.outboxEvents.entityId]
+        });
+      }
+
+      return [row];
+    });
+
+    return textResult({ ok: true, job: created });
+  });
+
+  server.registerTool("jobs.update", {
+    description: "Update operational fields on an existing EGC job, including scope, schedule, status, pricing, and access notes.",
+    inputSchema: z.object({
+      jobId: z.string().uuid(),
+      changes: jobMutationSchema
+    }),
+    ...writeToolMetadata
+  }, async ({ jobId, changes }) => {
+    const db = getDb();
+    const [existing] = await db.select().from(schema.jobs)
+      .where(eq(schema.jobs.id, jobId))
+      .limit(1);
+    if (!existing) return textResult({ error: "job_not_found" });
+
+    const updateValues = {
+      ...(changes.status !== undefined ? { status: changes.status } : {}),
+      ...(changes.serviceAddress !== undefined ? { serviceAddress: changes.serviceAddress } : {}),
+      ...(changes.garageSize !== undefined ? { garageSize: changes.garageSize } : {}),
+      ...(changes.serviceType !== undefined ? { serviceType: changes.serviceType } : {}),
+      ...(changes.junkVolumeYards !== undefined
+        ? { junkVolumeYards: changes.junkVolumeYards === null ? null : String(changes.junkVolumeYards) }
+        : {}),
+      ...(changes.itemsRemove !== undefined ? { itemsRemove: changes.itemsRemove } : {}),
+      ...(changes.itemsKeep !== undefined ? { itemsKeep: changes.itemsKeep } : {}),
+      ...(changes.itemsRelocate !== undefined ? { itemsRelocate: changes.itemsRelocate } : {}),
+      ...(changes.organizationRequirements !== undefined ? { organizationRequirements: changes.organizationRequirements } : {}),
+      ...(changes.addOns !== undefined ? { addOns: changes.addOns } : {}),
+      ...(changes.accessNotes !== undefined ? { accessNotes: changes.accessNotes } : {}),
+      ...(changes.estimatedLaborHours !== undefined
+        ? { estimatedLaborHours: changes.estimatedLaborHours === null ? null : String(changes.estimatedLaborHours) }
+        : {}),
+      ...(changes.scheduledAt !== undefined ? { scheduledAt: changes.scheduledAt } : {}),
+      ...(changes.priceCents !== undefined ? { priceCents: changes.priceCents } : {}),
+      ...(changes.depositCents !== undefined ? { depositCents: changes.depositCents } : {}),
+      updatedAt: new Date()
+    };
+
+    const [updated] = await db.transaction(async (tx) => {
+      const [row] = await tx.update(schema.jobs)
+        .set(updateValues)
+        .where(eq(schema.jobs.id, jobId))
+        .returning();
+
+      if (!row) throw new Error("job_update_failed");
+
+      await tx.insert(schema.auditLogs).values({
+        actor: "chatgpt-mcp",
+        action: "job.update",
+        entity: "job",
+        entityId: jobId,
+        oldValue: existing,
+        newValue: row,
+        source: "mcp"
+      });
+
+      return [row];
+    });
+
+    return textResult({ ok: true, job: updated });
+  });
+
+  server.registerTool("jobs.add_note", {
+    description: "Add an internal operational note to an EGC job and optionally mirror it into GHL as a contact note.",
+    inputSchema: z.object({
+      jobId: z.string().uuid(),
+      type: z.enum(["general", "crew", "sales", "pricing", "customer", "operations"]).default("general"),
+      body: z.string().min(1).max(10000)
+    }),
+    ...writeToolMetadata
+  }, async ({ jobId, type, body }) => {
+    const db = getDb();
+    const [job] = await db.select().from(schema.jobs)
+      .where(eq(schema.jobs.id, jobId))
+      .limit(1);
+    if (!job) return textResult({ error: "job_not_found" });
+
+    const [contact] = await db.select().from(schema.contacts)
+      .where(eq(schema.contacts.id, job.contactId))
+      .limit(1);
+
+    const [note] = await db.transaction(async (tx) => {
+      const [created] = await tx.insert(schema.jobNotes).values({
+        jobId,
+        type,
+        body,
+        source: "mcp",
+        createdBy: "chatgpt-mcp"
+      }).returning();
+
+      if (!created) throw new Error("job_note_create_failed");
+
+      await tx.insert(schema.auditLogs).values({
+        actor: "chatgpt-mcp",
+        action: "job.note.create",
+        entity: "job",
+        entityId: jobId,
+        newValue: created,
+        source: "mcp"
+      });
+
+      if (process.env.GHL_WRITEBACK_ENABLED === "true" && contact?.providerId) {
+        await tx.insert(schema.outboxEvents).values({
+          type: "ghl.contact_note.sync",
+          entityId: `${jobId}:note:${created.id}`,
+          payload: {
+            ghlContactId: contact.providerId,
+            title: `EGC Job Note — ${type}`,
+            noteBody: body
+          }
+        }).onConflictDoNothing({
+          target: [schema.outboxEvents.type, schema.outboxEvents.entityId]
+        });
+      }
+
+      return [created];
+    });
+
+    return textResult({ ok: true, note });
+  });
+
+  server.registerTool("walkthroughs.create_draft", {
+    description: "Create a structured walkthrough draft from ChatGPT-supplied scope data, optionally attaching a transcript and an existing job.",
+    inputSchema: z.object({
+      contactId: z.string().uuid(),
+      jobId: z.string().uuid().nullable().optional(),
+      transcript: z.string().max(100000).nullable().optional(),
+      extraction: walkthroughExtractionSchema
+    }),
+    ...writeToolMetadata
+  }, async ({ contactId, jobId, transcript, extraction }) => {
+    const db = getDb();
+    const [contact] = await db.select().from(schema.contacts)
+      .where(eq(schema.contacts.id, contactId))
+      .limit(1);
+    if (!contact) return textResult({ error: "contact_not_found" });
+
+    if (jobId) {
+      const [job] = await db.select().from(schema.jobs)
+        .where(and(eq(schema.jobs.id, jobId), eq(schema.jobs.contactId, contactId)))
+        .limit(1);
+      if (!job) return textResult({ error: "job_not_found_for_contact" });
+    }
+
+    const [walkthrough] = await db.transaction(async (tx) => {
+      const [created] = await tx.insert(schema.walkthroughs).values({
+        contactId,
+        jobId: jobId ?? null,
+        status: "draft",
+        transcript: transcript ?? null,
+        extraction
+      }).returning();
+
+      if (!created) throw new Error("walkthrough_create_failed");
+
+      await tx.insert(schema.auditLogs).values({
+        actor: "chatgpt-mcp",
+        action: "walkthrough.create",
+        entity: "walkthrough",
+        entityId: created.id,
+        newValue: created,
+        source: "mcp"
+      });
+
+      return [created];
+    });
+
+    return textResult({ ok: true, walkthrough });
+  });
+
+  server.registerTool("walkthroughs.update_draft", {
+    description: "Edit the transcript and/or structured scope of a draft walkthrough before approval.",
+    inputSchema: z.object({
+      walkthroughId: z.string().uuid(),
+      transcript: z.string().max(100000).nullable().optional(),
+      extraction: walkthroughExtractionSchema.optional()
+    }),
+    ...writeToolMetadata
+  }, async ({ walkthroughId, transcript, extraction }) => {
+    const db = getDb();
+    const [existing] = await db.select().from(schema.walkthroughs)
+      .where(eq(schema.walkthroughs.id, walkthroughId))
+      .limit(1);
+    if (!existing) return textResult({ error: "walkthrough_not_found" });
+    if (existing.status !== "draft") return textResult({ error: "walkthrough_not_editable", status: existing.status });
+
+    const [updated] = await db.transaction(async (tx) => {
+      const [row] = await tx.update(schema.walkthroughs).set({
+        ...(transcript !== undefined ? { transcript } : {}),
+        ...(extraction !== undefined ? { extraction } : {}),
+        updatedAt: new Date()
+      }).where(eq(schema.walkthroughs.id, walkthroughId)).returning();
+
+      if (!row) throw new Error("walkthrough_update_failed");
+
+      await tx.insert(schema.auditLogs).values({
+        actor: "chatgpt-mcp",
+        action: "walkthrough.update",
+        entity: "walkthrough",
+        entityId: walkthroughId,
+        oldValue: existing,
+        newValue: row,
+        source: "mcp"
+      });
+
+      return [row];
+    });
+
+    return textResult({ ok: true, walkthrough: updated });
+  });
+
+  server.registerTool("walkthroughs.approve", {
+    description: "Approve a reviewed walkthrough. This creates a job when needed or updates the linked job scope, then queues GHL note write-back when enabled.",
+    inputSchema: z.object({
+      walkthroughId: z.string().uuid(),
+      extraction: walkthroughExtractionSchema.optional()
+    }),
+    ...writeToolMetadata
+  }, async ({ walkthroughId, extraction: extractionOverride }) => {
+    const db = getDb();
+    const [walkthrough] = await db.select().from(schema.walkthroughs)
+      .where(eq(schema.walkthroughs.id, walkthroughId))
+      .limit(1);
+
+    if (!walkthrough) return textResult({ error: "walkthrough_not_found" });
+    if (walkthrough.status === "approved") {
+      return textResult({ error: "walkthrough_already_approved", jobId: walkthrough.jobId });
+    }
+
+    const extraction = walkthroughExtractionSchema.parse(
+      extractionOverride ?? walkthrough.extraction
+    );
+    const addOns = [
+      ...(extraction.bikeRacks > 0 ? [`${extraction.bikeRacks} bike rack(s)`] : []),
+      ...(extraction.toolRacks > 0 ? [`${extraction.toolRacks} tool rack(s)`] : []),
+      ...(extraction.shelving.length > 0 ? ["shelving"] : []),
+      ...(extraction.pressureWashing ? ["pressure washing"] : [])
+    ];
+
+    const result = await db.transaction(async (tx) => {
+      let jobId = walkthrough.jobId;
+
+      if (!jobId) {
+        const [job] = await tx.insert(schema.jobs).values({
+          contactId: walkthrough.contactId,
+          status: "scope_approved",
+          garageSize: extraction.garageSize,
+          junkVolumeYards: extraction.junkVolumeYards === null ? null : String(extraction.junkVolumeYards),
+          itemsRemove: extraction.itemsRemove,
+          itemsKeep: extraction.itemsKeep,
+          itemsRelocate: extraction.itemsRelocate,
+          organizationRequirements: extraction.storageRequirements,
+          addOns,
+          accessNotes: extraction.accessNotes,
+          estimatedLaborHours: extraction.estimatedLaborHours === null ? null : String(extraction.estimatedLaborHours)
+        }).returning();
+
+        if (!job) throw new Error("job_create_failed");
+        jobId = job.id;
+      } else {
+        await tx.update(schema.jobs).set({
+          status: "scope_approved",
+          garageSize: extraction.garageSize,
+          junkVolumeYards: extraction.junkVolumeYards === null ? null : String(extraction.junkVolumeYards),
+          itemsRemove: extraction.itemsRemove,
+          itemsKeep: extraction.itemsKeep,
+          itemsRelocate: extraction.itemsRelocate,
+          organizationRequirements: extraction.storageRequirements,
+          addOns,
+          accessNotes: extraction.accessNotes,
+          estimatedLaborHours: extraction.estimatedLaborHours === null ? null : String(extraction.estimatedLaborHours),
+          updatedAt: new Date()
+        }).where(eq(schema.jobs.id, jobId));
+      }
+
+      await tx.update(schema.walkthroughs).set({
+        jobId,
+        status: "approved",
+        extraction,
+        approvedAt: new Date(),
+        approvedBy: "chatgpt-mcp",
+        updatedAt: new Date()
+      }).where(eq(schema.walkthroughs.id, walkthroughId));
+
+      await tx.insert(schema.auditLogs).values({
+        actor: "chatgpt-mcp",
+        action: "walkthrough.approve",
+        entity: "walkthrough",
+        entityId: walkthroughId,
+        oldValue: walkthrough.extraction,
+        newValue: extraction,
+        source: "mcp"
+      });
+
+      let ghlWritebackQueued = false;
+      if (process.env.GHL_WRITEBACK_ENABLED === "true") {
+        const [contact] = await tx.select({
+          providerId: schema.contacts.providerId
+        }).from(schema.contacts)
+          .where(eq(schema.contacts.id, walkthrough.contactId))
+          .limit(1);
+
+        if (contact?.providerId) {
+          await tx.insert(schema.outboxEvents).values({
+            type: "ghl.contact_note.sync",
+            entityId: `${walkthroughId}:approved`,
+            payload: {
+              ghlContactId: contact.providerId,
+              title: "EGC Walkthrough — Approved Scope",
+              noteBody: formatApprovedWalkthroughNote(extraction, jobId)
+            }
+          }).onConflictDoNothing({
+            target: [schema.outboxEvents.type, schema.outboxEvents.entityId]
+          });
+          ghlWritebackQueued = true;
+        }
+      }
+
+      return { jobId, ghlWritebackQueued };
+    });
+
+    const [job] = await db.select().from(schema.jobs)
+      .where(eq(schema.jobs.id, result.jobId))
+      .limit(1);
+
+    return textResult({
+      ok: true,
+      ...result,
+      extraction,
+      job: job ?? null
     });
   });
 
