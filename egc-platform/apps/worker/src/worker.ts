@@ -84,6 +84,27 @@ async function syncContacts() {
 }
 
 async function persistTranscript(callId: string, payload: unknown) {
+  if (typeof payload === "string") {
+    const text = payload.trim();
+    if (!text) return;
+
+    await db.insert(schema.callTranscripts).values({
+      callId,
+      text,
+      segments: [],
+      providerPayload: { source: "ghl_transcript_download" }
+    }).onConflictDoUpdate({
+      target: schema.callTranscripts.callId,
+      set: {
+        text,
+        segments: [],
+        providerPayload: { source: "ghl_transcript_download" },
+        updatedAt: new Date()
+      }
+    });
+    return;
+  }
+
   const segments = Array.isArray(payload) ? payload : [payload];
   const cleanSegments = segments
     .map(asRecord)
@@ -259,8 +280,13 @@ async function persistMessage(rawValue: unknown): Promise<string | null> {
         .limit(1);
 
       if (!existingTranscript) {
-        const transcript = await ghl.getCallTranscript(messageId).catch(() => null);
-        if (transcript) await persistTranscript(call.id, transcript);
+        const downloaded = await ghl.downloadCallTranscript(messageId).catch(() => null);
+        if (downloaded?.trim()) {
+          await persistTranscript(call.id, downloaded);
+        } else {
+          const transcript = await ghl.getCallTranscript(messageId).catch(() => null);
+          if (transcript) await persistTranscript(call.id, transcript);
+        }
       }
     }
   }
