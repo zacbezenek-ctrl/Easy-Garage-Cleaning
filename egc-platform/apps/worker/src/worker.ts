@@ -70,6 +70,45 @@ async function upsertContact(rawValue: unknown) {
   return contact ?? null;
 }
 
+async function syncCustomFieldDefinitions() {
+  const payload = await ghl.getCustomFields();
+  const rows = findArray(payload, "customFields", "fields");
+
+  for (const value of rows) {
+    const raw = asRecord(value);
+    const providerId = asString(raw.id);
+    if (!providerId) continue;
+
+    const values = {
+      provider: "ghl",
+      resourceType: "contact_custom_field",
+      providerId,
+      displayName:
+        asString(raw.name) ??
+        asString(raw.fieldKey) ??
+        asString(raw.placeholder) ??
+        null,
+      fieldType:
+        asString(raw.dataType) ??
+        asString(raw.fieldType) ??
+        asString(raw.type) ??
+        null,
+      raw,
+      updatedAt: new Date()
+    };
+
+    await db.insert(schema.providerMappings).values(values)
+      .onConflictDoUpdate({
+        target: [
+          schema.providerMappings.provider,
+          schema.providerMappings.resourceType,
+          schema.providerMappings.providerId
+        ],
+        set: values
+      });
+  }
+}
+
 async function syncContacts() {
   let page = 1;
 
@@ -534,7 +573,10 @@ async function processWebhookEvents() {
 }
 
 async function reconcile() {
-  await syncContacts();
+  await Promise.all([
+    syncCustomFieldDefinitions(),
+    syncContacts()
+  ]);
   await Promise.all([
     syncConversationsAndCalls(),
     syncOpportunities(),
