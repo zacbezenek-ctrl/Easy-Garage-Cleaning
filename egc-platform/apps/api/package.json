@@ -8,8 +8,11 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@egc/ai": "workspace:*",
     "@egc/database": "workspace:*",
     "@egc/schemas": "workspace:*",
+    "@egc/storage": "workspace:*",
+    "@fastify/multipart": "^9.2.1",
     "drizzle-orm": "0.44.5",
     "fastify": "^5.6.1",
     "fastify-raw-body": "^5.0.0",
