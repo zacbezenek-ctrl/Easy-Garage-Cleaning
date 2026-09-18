@@ -41,7 +41,7 @@ async function upsertContact(rawValue: unknown) {
     locationId: asString(raw.locationId) ?? ghl.locationId,
     firstName: asString(raw.firstName) ?? null,
     lastName: asString(raw.lastName) ?? null,
-    name: asString(raw.contactName) ?? asString(raw.name) ?? composedName || null,
+    name: asString(raw.contactName) ?? asString(raw.name) ?? (composedName || null),
     email: asString(raw.email) ?? null,
     phone: asString(raw.phone) ?? null,
     source: asString(raw.source) ?? null,
