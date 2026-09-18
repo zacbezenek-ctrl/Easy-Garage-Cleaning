@@ -1,0 +1,32 @@
+name: EGC Platform CI
+
+on:
+  pull_request:
+    paths:
+      - "egc-platform/**"
+      - ".github/workflows/egc-platform-ci.yml"
+  push:
+    branches:
+      - "feature/egc-platform-foundation"
+    paths:
+      - "egc-platform/**"
+      - ".github/workflows/egc-platform-ci.yml"
+
+jobs:
+  typecheck:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: egc-platform
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: egc-platform/pnpm-lock.yaml
+      - run: pnpm install --no-frozen-lockfile
+      - run: pnpm typecheck
