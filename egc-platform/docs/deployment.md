@@ -1,52 +1,70 @@
 # Deployment checklist
 
-## Required managed services
+The canonical production runbook is `railway-deployment.md`.
+
+## Required infrastructure
 
 - PostgreSQL
-- Redis (for the next queue iteration)
-- Node 20+ runtime for API, MCP and worker
-- Object storage before enabling voice audio upload
+- Node.js 22-compatible runtimes for API, MCP, worker and portal
+- Persistent filesystem volume on the API service for V1 walkthrough audio, or S3/R2
 
-## Secrets
+Redis is not required by the current V1 worker.
 
-Set these only in the deployment secret store:
+## Secret handling
+
+Store values only in Railway variables/secrets. Never commit values to Git.
+
+Required or conditionally required variables include:
 
 - `DATABASE_URL`
-- `REDIS_URL`
 - `GHL_LOCATION_ID`
-- `GHL_PRIVATE_INTEGRATION_TOKEN` (new, rotated)
-- `GHL_CLIENT_SECRET` (new, rotated)
-- `GHL_WRITEBACK_ENABLED=true` after the replacement token has contact-note write scope
+- `GHL_PRIVATE_INTEGRATION_TOKEN`
+- `GHL_WRITEBACK_ENABLED`
 - `API_BEARER_TOKEN`
-- `MCP_BEARER_TOKEN`
-- `MCP_ALLOWED_HOSTS` (comma-separated public MCP hostnames)
-- `PORTAL_BASIC_USER`
-- `PORTAL_BASIC_PASSWORD` (random, strong value)
 - `OPENAI_API_KEY`
-- storage credentials
+- `MCP_PUBLIC_ORIGIN`
+- `MCP_ALLOWED_HOSTS`
+- `MCP_OAUTH_USER`
+- `MCP_OAUTH_PASSWORD`
+- `PORTAL_BASIC_USER`
+- `PORTAL_BASIC_PASSWORD`
+- `STORAGE_DRIVER`
+- `STORAGE_PATH`
 
-Do not deploy with the GHL token or client secret previously pasted into ChatGPT.
+`MCP_BEARER_TOKEN` is optional and is not used by ChatGPT OAuth.
 
-## Processes
+## Database
 
-- API: `pnpm --filter @egc/api build && node apps/api/dist/server.js`
-- MCP: `pnpm --filter @egc/mcp build && node apps/mcp/dist/server.js`
-- Worker: `pnpm --filter @egc/worker build && node apps/worker/dist/worker.js`
+Initial migration files are checked into:
 
-## First production validation
+`packages/database/migrations/`
 
-1. Run database migrations.
-2. Start worker with a read-capable replacement GHL private integration token.
-3. Confirm at least one real contact syncs.
-4. Confirm a conversation and its messages sync.
-5. Confirm a call transcript is persisted for a recent call. Recording object storage is a follow-up milestone.
-6. Connect ChatGPT to the deployed `/mcp` endpoint.
-7. Run the 3-day lead audit acceptance query.
+The worker executes the deterministic runtime migrator before starting reconciliation. API/MCP/portal health checks remain HTTP 503 until the migrated database is available.
 
-## Portal access
+## GHL
 
-The portal is protected by HTTP Basic authentication at the Next.js request boundary. Configure `PORTAL_BASIC_USER` and a strong `PORTAL_BASIC_PASSWORD` before deployment. The service-to-service API bearer token is separate and must not be exposed to browser code. Replace Basic Auth with identity-based application auth before adding multiple staff roles or granular permissions.
+The worker uses the configured private integration token for read synchronization. When `GHL_WRITEBACK_ENABLED=true`, approved walkthroughs queue durable contact-note write-back through the outbox.
 
-## GHL walkthrough write-back
+The API verifies GHL webhook signatures. Webhooks provide low latency and the worker's periodic reconciliation repairs missed events.
 
-When `GHL_WRITEBACK_ENABLED=true`, approving a walkthrough commits the reviewed scope locally and queues a durable `ghl.walkthrough_note.sync` outbox event. The worker writes the approved scope to the GHL contact as a note and retries transient failures. The ChatGPT MCP remains read-only.
+## Portal
+
+The internal portal is protected by Basic Auth for V1. The service-to-service `API_BEARER_TOKEN` never appears in browser code.
+
+## MCP
+
+The MCP exposes Streamable HTTP at `/mcp` and OAuth discovery/authorization endpoints on the same HTTPS origin. All EGC MCP tools are read-only.
+
+See `chatgpt-connection.md` for the exact ChatGPT connection flow.
+
+## Production validation
+
+1. Confirm the worker migrates the database and stays running.
+2. Confirm real GHL contacts synchronize.
+3. Confirm messages, opportunities, appointments and calls synchronize.
+4. Confirm at least one recent call transcript is persisted.
+5. Confirm portal pages load real records.
+6. Confirm MCP OAuth metadata endpoints return valid JSON.
+7. Confirm MCP `/health` returns HTTP 200.
+8. Connect the MCP in ChatGPT and complete OAuth.
+9. Run the three-day EGC lead-audit acceptance prompt.
