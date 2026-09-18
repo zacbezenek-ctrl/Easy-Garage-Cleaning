@@ -23,6 +23,7 @@ export default function Recorder({ contactId }: { contactId: string }) {
   const [status, setStatus] = useState<"idle" | "recording" | "processing" | "review" | "approved">("idle");
   const [seconds, setSeconds] = useState(0);
   const [result, setResult] = useState<WalkthroughResponse["walkthrough"] | null>(null);
+  const [draftJson, setDraftJson] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -59,6 +60,7 @@ export default function Recorder({ contactId }: { contactId: string }) {
         return;
       }
       setResult(json.walkthrough);
+      setDraftJson(JSON.stringify(json.walkthrough.extraction, null, 2));
       setStatus("review");
     };
 
@@ -72,12 +74,22 @@ export default function Recorder({ contactId }: { contactId: string }) {
 
   async function approve() {
     if (!result) return;
+
+    let extraction: unknown;
+    try {
+      extraction = JSON.parse(draftJson);
+    } catch {
+      setError("Structured scope is not valid JSON. Fix it before approving.");
+      return;
+    }
+
+    setError(null);
     const response = await fetch("/api/walkthrough/approve", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         walkthroughId: result.id,
-        extraction: result.extraction
+        extraction
       })
     });
     const json = await response.json();
@@ -119,7 +131,14 @@ export default function Recorder({ contactId }: { contactId: string }) {
           <h3>Transcript</h3>
           <pre>{result.transcript}</pre>
           <h3>Structured scope</h3>
-          <pre>{JSON.stringify(result.extraction, null, 2)}</pre>
+          <p className="muted">Review and edit any extracted field before approval.</p>
+          <textarea
+            aria-label="Structured walkthrough scope"
+            value={draftJson}
+            onChange={(event) => setDraftJson(event.target.value)}
+            rows={24}
+            spellCheck={false}
+          />
           <button className="button" onClick={approve}>APPROVE & SAVE</button>
         </div>
       )}
