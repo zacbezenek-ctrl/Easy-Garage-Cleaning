@@ -50,9 +50,24 @@ app.post("/webhooks/ghl", {
 
   const payload = (request.body ?? {}) as Record<string, unknown>;
   const eventType = String(payload.type ?? payload.eventType ?? "unknown");
+  const appointmentPayload =
+    payload.appointment && typeof payload.appointment === "object" && !Array.isArray(payload.appointment)
+      ? payload.appointment as Record<string, unknown>
+      : null;
+  const appointmentId =
+    appointmentPayload && typeof appointmentPayload.id === "string"
+      ? appointmentPayload.id
+      : null;
+  const appointmentVersion =
+    appointmentPayload && typeof appointmentPayload.dateUpdated === "string"
+      ? appointmentPayload.dateUpdated
+      : appointmentPayload && typeof appointmentPayload.dateAdded === "string"
+        ? appointmentPayload.dateAdded
+        : null;
   const providerEventId =
     typeof payload.webhookId === "string" ? payload.webhookId :
     typeof payload.id === "string" ? payload.id :
+    appointmentId ? `${eventType}:${appointmentId}:${appointmentVersion ?? "unknown"}` :
     null;
 
   const db = getDb();
