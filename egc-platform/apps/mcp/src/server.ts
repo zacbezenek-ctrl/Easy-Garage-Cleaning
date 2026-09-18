@@ -4,7 +4,7 @@ import { createMcpHandler, McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod/v4";
 import { and, desc, eq, gte, ilike, inArray, lt, or, sql } from "drizzle-orm";
 import { getDb, schema } from "@egc/database";
-import { oauthSecurityMetadata, registerOauthRoutes, requireMcpAuth } from "./oauth.js";
+import { authorizeMcpRequest, mcpAuthenticateChallenge, oauthSecurityMetadata, registerOauthRoutes } from "./oauth.js";
 import {
   callTranscriptsForContact,
   leadsNeedingContact,
@@ -901,7 +901,41 @@ app.get("/health", (_req, res) => res.json({
 
 app.all(
   "/mcp",
-  requireMcpAuth(oauth.resourceMetadataUrl),
+  async (req, res, next) => {
+    const body = req.body as { id?: string | number | null; method?: string } | undefined;
+
+    // Keep MCP discovery unauthenticated so ChatGPT can initialize and list
+    // protected tools. Authentication is enforced when a tool is invoked.
+    if (body?.method !== "tools/call") {
+      next();
+      return;
+    }
+
+    if (await authorizeMcpRequest(req.header("authorization"))) {
+      next();
+      return;
+    }
+
+    const challenge = mcpAuthenticateChallenge(
+      oauth.resourceMetadataUrl,
+      req.header("authorization") ? "invalid_token" : "insufficient_scope"
+    );
+
+    res.status(200).json({
+      jsonrpc: "2.0",
+      id: body.id ?? null,
+      result: {
+        content: [{
+          type: "text",
+          text: "Authentication required: connect your Easy Garage Cleaning account to continue."
+        }],
+        isError: true,
+        _meta: {
+          "mcp/www_authenticate": [challenge]
+        }
+      }
+    });
+  },
   (req, res) => void handler(req, res, req.body)
 );
 
