@@ -19,6 +19,8 @@ Set these only in the deployment secret store:
 - `API_BEARER_TOKEN`
 - `MCP_BEARER_TOKEN`
 - `MCP_ALLOWED_HOSTS` (comma-separated public MCP hostnames)
+- `PORTAL_BASIC_USER`
+- `PORTAL_BASIC_PASSWORD` (random, strong value)
 - `OPENAI_API_KEY`
 - storage credentials
 
@@ -42,4 +44,4 @@ Do not deploy with the GHL token or client secret previously pasted into ChatGPT
 
 ## Portal access
 
-The current portal is an internal MVP and must not be exposed publicly without an authentication layer (for example, deployment-provider access control or application auth). The service-to-service API bearer token does not authenticate browser users.
+The portal is protected by HTTP Basic authentication at the Next.js request boundary. Configure `PORTAL_BASIC_USER` and a strong `PORTAL_BASIC_PASSWORD` before deployment. The service-to-service API bearer token is separate and must not be exposed to browser code. Replace Basic Auth with identity-based application auth before adding multiple staff roles or granular permissions.
