@@ -46,7 +46,7 @@ async function upsertContact(rawValue: unknown) {
     phone: asString(raw.phone) ?? null,
     source: asString(raw.source) ?? null,
     tags: Array.isArray(raw.tags) ? raw.tags.filter((v): v is string => typeof v === "string") : [],
-    customFields: asRecord(raw.customFields),
+    customFields: Array.isArray(raw.customFields) ? raw.customFields : [],
     raw,
     providerCreatedAt: asDate(raw.dateAdded) ?? asDate(raw.createdAt) ?? null,
     providerUpdatedAt: asDate(raw.dateUpdated) ?? asDate(raw.updatedAt) ?? null,
