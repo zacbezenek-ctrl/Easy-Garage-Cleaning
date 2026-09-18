@@ -45,7 +45,7 @@ export const contacts = pgTable("contacts", {
   phone: text("phone"),
   source: text("source"),
   tags: jsonb("tags").$type<string[]>().default([]).notNull(),
-  customFields: jsonb("custom_fields").$type<Record<string, unknown>>().default({}).notNull(),
+  customFields: jsonb("custom_fields").$type<unknown[]>().default([]).notNull(),
   raw: jsonb("raw").$type<Record<string, unknown>>().default({}).notNull(),
   providerCreatedAt: timestamp("provider_created_at", { withTimezone: true }),
   providerUpdatedAt: timestamp("provider_updated_at", { withTimezone: true }),
