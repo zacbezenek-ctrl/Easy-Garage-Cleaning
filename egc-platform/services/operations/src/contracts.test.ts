@@ -1,0 +1,36 @@
+import {describe,it,expect} from "vitest";
+import {randomUUID,createHmac} from "node:crypto";
+import {authorize,commandSchema,createTaskSchema,OperationsError,type Actor,type SignedClaims} from "./contracts.js";
+import {signRequest,verifyRequest} from "./auth.js";
+import {assertCompletion,digest} from "./policy.js";
+const key="isolated-test-signing-key-not-production-0123456789";
+const owner:Actor={id:"owner-test",role:"owner",kind:"human",workspace:"egc"};
+const claims=():SignedClaims=>({v:1,iss:"portal",aud:"egc-operations",iat:Math.floor(Date.now()/1000),nonce:randomUUID(),actor:owner,request:{requestId:randomUUID(),body:{command:"status"}}});
+const task={title:"Call synthetic customer",assignedUserId:"owner-test",dueAt:"2026-09-20T10:00:00-06:00",completionCondition:"Record attempt and result"};
+const draft={channel:"sms" as const,recipient:"+15555550100",subject:"",body:"Synthetic message",sendWindowStart:"2026-09-20T08:00:00-06:00",sendWindowEnd:"2026-09-20T18:00:00-06:00"};
+const errorCode=(fn:()=>unknown,code:string)=>{try{fn();throw new Error("Expected denial");}catch(e){expect(e).toBeInstanceOf(OperationsError);expect((e as OperationsError).code).toBe(code);}};
+describe("signed principal and authorization",()=>{
+ it("round trips exact server-authenticated claims",()=>{const c=claims();expect(verifyRequest(signRequest(c,key),{portal:key})).toEqual(c);});
+ it("rejects body or identity tampering",()=>{const t=signRequest(claims(),key).split('.');const p=JSON.parse(Buffer.from(t[0]!,"base64url").toString());p.actor.id="forged";errorCode(()=>verifyRequest(Buffer.from(JSON.stringify(p)).toString("base64url")+'.'+t[1],{portal:key}),"invalid_operations_signature");});
+ it("rejects missing, invalid and huge signatures",()=>{for(const t of [undefined,{},"a","a.b.c","a.!","x".repeat(200001)])expect(()=>verifyRequest(t,{portal:key})).toThrow();});
+ it("never accepts the MCP key for portal claims",()=>{errorCode(()=>verifyRequest(signRequest(claims(),key),{mcp:key}),"issuer_not_configured");});
+ it("rejects expired and future envelopes",()=>{for(const delta of [-120,120]){const c=claims();c.iat+=delta;errorCode(()=>verifyRequest(signRequest(c,key),{portal:key}),"operations_signature_expired");}});
+ it("rejects wrong audience",()=>{const c=claims();c.aud="egc-portal";errorCode(()=>verifyRequest(signRequest(c,key),{portal:key}),"invalid_operations_audience");});
+ it("rejects extra identity fields even under a valid MAC",()=>{const c={...claims(),approver:"forged"};const p=Buffer.from(JSON.stringify(c)).toString("base64url"),t=p+'.'+createHmac('sha256',key).update(p).digest('base64url');errorCode(()=>verifyRequest(t,{portal:key}),"invalid_operations_request");});
+ it("blocks crew and wrong workspace",()=>{errorCode(()=>authorize({...owner,role:"crew"},{command:"status"},"egc"),"role_forbidden");errorCode(()=>authorize({...owner,workspace:"other"},{command:"status"},"egc"),"workspace_forbidden");});
+ it("integrations can modify internal tasks, never pretend to approve as human",()=>{const actor:Actor={id:"grant-1",kind:"integration",role:"integration",workspace:"egc"};const command={command:"task.complete" as const,taskId:randomUUID(),revision:1,outcome:"Recorded actual outcome"};expect(()=>authorize(actor,command,"egc")).not.toThrow();errorCode(()=>authorize(actor,{command:"task.reject",taskId:randomUUID(),revision:1,reason:"No"},"egc"),"human_manager_approval_required");});
+ it("disallows inconsistent role/kind claims",()=>{errorCode(()=>authorize({...owner,kind:"integration"},{command:"status"},"egc"),"invalid_actor");});
+ it("requires strong configured keys",()=>{errorCode(()=>signRequest(claims(),"short"),"signing_key_not_configured");});
+});
+describe("strict action contracts",()=>{
+ it("requires an owner, due time and completion evidence definition",()=>{for(const k of ['assignedUserId','dueAt','completionCondition']){const copy={...task} as Record<string,unknown>;delete copy[k];expect(createTaskSchema.safeParse(copy).success).toBe(false);}});
+ it("accepts a dated callback without lead age or booked filters",()=>{expect(createTaskSchema.parse({...task,kind:"callback"}).kind).toBe("callback");});
+ it("requires review time for external waits",()=>{expect(createTaskSchema.safeParse({...task,waitingOn:"customer"}).success).toBe(false);expect(createTaskSchema.safeParse({...task,waitingOn:"provider",reviewAt:task.dueAt}).success).toBe(true);});
+ it("does not accept naive times, invalid timezone or fabricated portal identities",()=>{for(const c of [{dueAt:"2026-09-20T10:00:00"},{timeZone:"Not/AZone"},{portalJobId:"../secret"},{portalVisitId:"visit-without-record"}])expect(createTaskSchema.safeParse({...task,...c}).success).toBe(false);});
+ it("requires a complete exact draft only for message actions",()=>{expect(createTaskSchema.safeParse({...task,kind:"followup_message"}).success).toBe(false);expect(createTaskSchema.safeParse({...task,draft}).success).toBe(false);expect(createTaskSchema.safeParse({...task,kind:"followup_message",draft}).success).toBe(true);});
+ it("rejects invalid recipients and nonpositive send windows",()=>{for(const c of [{recipient:"555 invalid"},{sendWindowEnd:draft.sendWindowStart},{channel:"email",recipient:"not mail"}])expect(createTaskSchema.safeParse({...task,kind:"followup_message",draft:{...draft,...c}}).success).toBe(false);});
+ it("rejects raw approval/completion fields on edits and creates",()=>{expect(createTaskSchema.safeParse({...task,approvalStatus:"approved"}).success).toBe(false);expect(commandSchema.safeParse({command:"task.edit",taskId:randomUUID(),revision:1,changes:{status:"completed"}}).success).toBe(false);});
+ it("requires revision and stable request command boundaries",()=>{expect(commandSchema.safeParse({command:"task.complete",taskId:randomUUID(),outcome:"done"}).success).toBe(false);expect(commandSchema.safeParse({command:"send_sms",recipient:draft.recipient,body:"test"}).success).toBe(false);});
+ it("cannot call internal completion proof a payment or delivery",()=>{expect(()=>assertCompletion("callback")).not.toThrow();errorCode(()=>assertCompletion("followup_message"),"message_completion_requires_provider_evidence");errorCode(()=>assertCompletion("verify_deposit"),"deposit_completion_requires_verified_payment");});
+ it("fingerprints exact payload values but not key order",()=>{expect(digest({a:1,b:2})).toBe(digest({b:2,a:1}));expect(digest({price:72500})).not.toBe(digest({price:75000}));});
+});

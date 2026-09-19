@@ -8,6 +8,7 @@ import { extractWalkthrough, transcribeWalkthrough } from "@egc/ai";
 import { walkthroughExtractionSchema } from "@egc/schemas";
 import { putObject } from "@egc/storage";
 import { verifyGhlWebhook } from "./webhook-signature.js";
+import { registerOperationsRoutes } from "./operations.js";
 
 const app = Fastify({ logger: true });
 
@@ -285,6 +286,8 @@ app.post("/walkthroughs/:walkthroughId/approve", {
 
   return reply.send({ ok: true, ...result, extraction });
 });
+
+await registerOperationsRoutes(app);
 
 const port = Number(process.env.PORT ?? process.env.API_PORT ?? 4100);
 await app.listen({ host: "0.0.0.0", port });

@@ -447,7 +447,7 @@ export function mcpAuthenticateChallenge(
   return `Bearer resource_metadata="${resourceMetadataUrl}", scope="${requiredScope}", error="${error}", error_description="Connect your Easy Garage Cleaning account to continue"`;
 }
 
-export async function authorizeMcpRequest(
+export async function authenticatedMcpPrincipal(
   authorization: string | undefined,
   requiredScope = READ_SCOPE
 ) {
@@ -461,21 +461,25 @@ export async function authorizeMcpRequest(
     serviceToken.length >= 32 &&
     secureEqual(token, serviceToken)
   ) {
-    return true;
+    return "mcp-service-grant";
   }
 
-  if (!token) return false;
+  if (!token) return null;
 
   const db = getDb();
   const [record] = await db.select().from(schema.oauthTokens)
     .where(eq(schema.oauthTokens.accessTokenHash, hash(token)))
     .limit(1);
 
-  return Boolean(
+  return (
     record &&
     !record.revokedAt &&
     record.accessExpiresAt.valueOf() > Date.now() &&
     record.resource === publicOrigin() &&
     record.scopes.includes(requiredScope)
-  );
+  ) ? `mcp-oauth-grant:${record.id}` : null;
+}
+
+export async function authorizeMcpRequest(authorization:string|undefined,requiredScope=READ_SCOPE) {
+  return Boolean(await authenticatedMcpPrincipal(authorization,requiredScope));
 }
