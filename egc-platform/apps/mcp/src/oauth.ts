@@ -125,7 +125,7 @@ small{display:block;color:#777;margin-top:14px}
 <body>
 <main>
 <h1>Connect EGC Ops</h1>
-<p>Authorize ChatGPT to use the Easy Garage Cleaning operations MCP. Depending on the requested scope, it can read EGC data and create or update internal jobs, notes, and walkthroughs. It cannot send customer messages, issue refunds, charge cards, or delete records.</p>
+<p>Connect this client to EGC with the scope shown below. Read access can retrieve business records. Write access can change records and, in legacy mode, send customer communications and create, reschedule, cancel, or delete provider appointments. In Action Center mode, legacy sends and booking writes are blocked; internal action changes remain available. Exact draft approvals require a signed-in Hub manager and do not authorize delivery. No payment or refund tool is provided.</p>
 ${error ? `<p class="error">${htmlEscape(error)}</p>` : ""}
 <form method="post" action="/oauth/authorize">
 ${hidden}

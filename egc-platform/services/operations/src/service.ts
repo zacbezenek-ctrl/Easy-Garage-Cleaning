@@ -245,13 +245,13 @@ export class OperationsService {
       });
       if(rows.length>50000)throw new OperationsError("brief_capacity_requires_partitioning",503);
       const snapshot=buildDueWorkSnapshot({id:randomUUID(),generatedAt:now,dueBefore:command.dueBefore,timeZone:command.timeZone,
-        tasks:rows.map(t=>({...t,waitingOn:(t as Task).waitingOn as WaitingOn,reviewAt:(t as Task).reviewAt})),
+        tasks:rows.map(t=>({...t,waitingOn:t.waitingOn as WaitingOn})),
         requiredSources:["canonical_tasks","portal_project_coverage","communication_obligations"],coverage:[
           {source:"canonical_tasks",status:"fresh",complete:true,asOf:now},
           {source:"portal_project_coverage",status:"unknown",complete:false,asOf:null},
           {source:"communication_obligations",status:"unknown",complete:false,asOf:null}
         ]});
-      await tx.insert(schema.operationBriefs).values({id:snapshot.id,workspaceId:actor.workspace,generatedBy:actor.id,generatedAt:now,timeZone:command.timeZone,snapshot:jsonRecord({...snapshot,approvalStates:Object.fromEntries(rows.map(t=>[t.id,(t as Task).approvalStatus]))})});
+      await tx.insert(schema.operationBriefs).values({id:snapshot.id,workspaceId:actor.workspace,generatedBy:actor.id,generatedAt:now,timeZone:command.timeZone,snapshot:jsonRecord({...snapshot,approvalStates:Object.fromEntries(rows.map(t=>[t.id,t.approvalStatus]))})});
       await this.event(tx,actor,null,"brief.created",{briefId:snapshot.id,counts:snapshot.counts});
       return {ok:true,briefId:snapshot.id,generatedAt:now,counts:snapshot.counts,coverage:snapshot.coverage};
     }
@@ -264,7 +264,11 @@ export class OperationsService {
     if(command.command==="task.edit") {
       const c=command.changes;
       const {dueAt,reviewAt,draft,...simple}=c;
-      patch={...patch,...simple};
+      // Optional Zod fields may be explicitly undefined in internal TypeScript calls.
+      // Omit them instead of replacing a required persisted field with undefined.
+      for (const [key,value] of Object.entries(simple)) {
+        if(value !== undefined) Object.assign(patch,{[key]:value});
+      }
       if(dueAt!==undefined)patch.dueAt=new Date(dueAt);
       if(reviewAt!==undefined)patch.reviewAt=reviewAt?new Date(reviewAt):null;
       if(draft!==undefined)patch.draftPayload=draft?jsonRecord(draft):null;

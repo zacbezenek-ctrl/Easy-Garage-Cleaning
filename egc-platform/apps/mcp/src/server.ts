@@ -1,5 +1,6 @@
 import {registerOperationsTools,operationsPrincipal,operationsEnabled,OPERATIONS_WRITE_TOOLS,LEGACY_MUTATIONS_DISABLED,callOperations} from "./operations.js";
 import express from "express";
+import {pathToFileURL} from "node:url";
 import { toNodeHandler } from "@modelcontextprotocol/node";
 import { createMcpHandler, McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod/v4";
@@ -1273,13 +1274,13 @@ function mappedName(
   return mappings.get(`${resourceType}:${providerId}`) ?? providerId;
 }
 
-function buildServer() {
+export function buildServer() {
   const server = new McpServer(
     { name: "easy-garage-cleaning", version: "0.1.0" },
     { capabilities: { tools: { listChanged: false } } }
   );
 
-  registerOperationsTools(server);
+  registerOperationsTools(server,{includeAuthorityOverrides:operationsEnabled()});
 
   server.registerTool("ghl.pipelines", {
     description: "Return live GHL opportunity pipelines and stages for the EGC location. Use this to resolve pipeline and stage IDs before opportunity writes.",
@@ -1760,7 +1761,7 @@ function buildServer() {
     ...protectedToolMetadata
   }, async ({ contactId, days }) => textResult(await callTranscriptsForContact(contactId, days)));
 
-  server.registerTool("egc.customer_history", {
+  if(!operationsEnabled())server.registerTool("egc.customer_history", {
     description: "Return a unified read-only history for one customer/contact.",
     inputSchema: z.object({ contactId: z.string().uuid() }),
     ...protectedToolMetadata
@@ -1778,8 +1779,8 @@ function buildServer() {
     return textResult({ contact, messages, calls, appointments, opportunities, jobs });
   });
 
-  server.registerTool("egc.job_brief", {
-    description: "Return job scope and notes required by a crew.",
+  if(!operationsEnabled())server.registerTool("egc.job_brief", {
+    description: "LEGACY: Read a PostgreSQL platform job and its stored notes by UUID. This is not a portal-authoritative Employee Hub job read and does not establish reviewed crew-scope approval.",
     inputSchema: z.object({ jobId: z.string().uuid() }),
     ...protectedToolMetadata
   }, async ({ jobId }) => {
@@ -3617,6 +3618,8 @@ app.all(
 );
 
 const port = Number(process.env.PORT ?? process.env.MCP_PORT ?? 4200);
-app.listen(port, "0.0.0.0", () => {
-  console.log(`EGC MCP listening on :${port}/mcp with OAuth resource ${oauth.origin}`);
-});
+if(process.argv[1] && pathToFileURL(process.argv[1]).href===import.meta.url) {
+  app.listen(port, "0.0.0.0", () => {
+    console.log(`EGC MCP listening on :${port}/mcp with OAuth resource ${oauth.origin}`);
+  });
+}

@@ -6,7 +6,8 @@
     "dev": "tsx watch src/server.ts",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run src"
+    "test": "vitest run src && tsc -p tsconfig.json && node --test test/operations-http.check.mjs",
+    "test:operations:http": "node --test test/operations-http.check.mjs"
   },
   "dependencies": {
     "@egc/database": "workspace:*",

@@ -1,5 +1,5 @@
 """Actual Action Center browser tests with isolated HTTP fixtures; no customer/provider access."""
-import json, pathlib, threading, unittest, uuid, datetime
+import json, pathlib, threading, unittest, uuid, datetime, os
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse
@@ -22,7 +22,7 @@ class BrowserTests(unittest.TestCase):
         cls.server=ThreadingHTTPServer(('127.0.0.1',0),partial(QuietHandler,directory=str(ROOT)))
         threading.Thread(target=cls.server.serve_forever,daemon=True).start()
         cls.url=f'http://127.0.0.1:{cls.server.server_port}'
-        cls.pw=sync_playwright().start();cls.browser=cls.pw.chromium.launch(headless=True,args=['--no-sandbox'])
+        cls.pw=sync_playwright().start();cls.browser=cls.pw.chromium.launch(headless=True,args=['--no-sandbox'],**({'executable_path':os.environ['PLAYWRIGHT_CHROMIUM_EXECUTABLE']} if os.environ.get('PLAYWRIGHT_CHROMIUM_EXECUTABLE') else {}))
     @classmethod
     def tearDownClass(cls): cls.browser.close();cls.pw.stop();cls.server.shutdown();cls.server.server_close()
     def setUp(self):

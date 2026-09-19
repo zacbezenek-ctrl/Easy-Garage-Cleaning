@@ -287,12 +287,12 @@ export function evaluateDispatchPreconditions(input: {
 }
 
 /** Source adapter must provide strictly ascending IDs inside ONE read snapshot. */
-export async function collectTaskPages(
-  fetchPage: (afterId: string | null, pageSize: number) => Promise<readonly TaskInput[]>,
+export async function collectTaskPages<T extends {id: string}>(
+  fetchPage: (afterId: string | null, pageSize: number) => Promise<readonly T[]>,
   pageSize = 250
-): Promise<TaskInput[]> {
+): Promise<T[]> {
   if (!Number.isSafeInteger(pageSize) || pageSize < 1 || pageSize > 500) throw new Error("Invalid source page size");
-  const rows: TaskInput[] = [];
+  const rows: T[] = [];
   let cursor: string | null = null;
   for (;;) {
     const page = await fetchPage(cursor, pageSize);
