@@ -213,7 +213,11 @@ export function canonicalJson(value: Json): string {
     return JSON.stringify(value);
   }
   if (Array.isArray(value)) {
-    if (Object.keys(value).length !== value.length) throw new Error("Sparse or decorated payload array");
+    if (Object.keys(value).length !== value.length || Object.getOwnPropertySymbols(value).length)
+      throw new Error("Sparse or decorated payload array");
+    for (let i = 0; i < value.length; i++) {
+      if (!Object.prototype.hasOwnProperty.call(value, i)) throw new Error("Sparse or decorated payload array");
+    }
     return `[${value.map(canonicalJson).join(",")}]`;
   }
   if (typeof value !== "object" || (Object.getPrototypeOf(value) !== Object.prototype && Object.getPrototypeOf(value) !== null))
@@ -231,6 +235,9 @@ export async function approvalFingerprint(subject: ApprovalSubject): Promise<str
   if (!revision(subject.revision) || !nonempty(subject.actionId) || !nonempty(subject.recipient) ||
       !nonempty(subject.conversationWatermark) || !nonempty(subject.policyRevision) || !["sms", "email"].includes(subject.channel))
     throw new Error("Incomplete approval subject");
+  const windowStart = milliseconds(subject.sendWindowStart, "sendWindowStart");
+  const windowEnd = milliseconds(subject.sendWindowEnd, "sendWindowEnd");
+  if (windowEnd <= windowStart) throw new Error("Approval send window must have positive duration");
   const encoded = canonicalJson({ actionId: subject.actionId, revision: subject.revision,
     recipient: subject.recipient, channel: subject.channel, payload: subject.payload,
     quoteRevision: subject.quoteRevision, jobRevision: subject.jobRevision,
