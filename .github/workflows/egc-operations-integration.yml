@@ -1,0 +1,62 @@
+name: EGC Operations Integration
+
+on:
+  pull_request:
+    paths:
+      - "egc-platform/**"
+      - ".github/workflows/egc-operations-integration.yml"
+  push:
+    branches: [main]
+    paths:
+      - "egc-platform/**"
+      - ".github/workflows/egc-operations-integration.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: egc-operations-integration-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  postgres-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: egc_test
+          POSTGRES_PASSWORD: isolated_ci_only
+          POSTGRES_DB: egc_operations_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U egc_test -d egc_operations_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    defaults:
+      run:
+        working-directory: egc-platform
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: pnpm install --no-frozen-lockfile
+      - run: pnpm build:packages
+      - name: Migrate isolated database and verify idempotent rerun
+        env:
+          DATABASE_URL: postgres://egc_test:isolated_ci_only@localhost:5432/egc_operations_test
+        run: |
+          pnpm --filter @egc/database migrate:runtime
+          pnpm --filter @egc/database migrate:runtime
+      - name: Exercise actual PostgreSQL task adapter with synthetic fixtures
+        env:
+          DATABASE_URL: postgres://egc_test:isolated_ci_only@localhost:5432/egc_operations_test
+          EGC_OPERATIONS_TEST: isolated
+        run: pnpm --filter @egc/lead-audit test:operations:integration

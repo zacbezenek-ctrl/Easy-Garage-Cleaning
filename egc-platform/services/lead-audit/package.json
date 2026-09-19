@@ -7,12 +7,24 @@
       "types": "./src/index.ts",
       "import": "./dist/index.js",
       "default": "./dist/index.js"
+    },
+    "./operations-core": {
+      "types": "./src/operations-core.ts",
+      "import": "./dist/operations-core.js",
+      "default": "./dist/operations-core.js"
+    },
+    "./operations-read": {
+      "types": "./src/operations-read.ts",
+      "import": "./dist/operations-read.js",
+      "default": "./dist/operations-read.js"
     }
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run"
+    "test": "vitest run && npm run test:operations",
+    "test:operations": "tsc -p tsconfig.operations-tests.json && node --test test/operations.check.mjs test/operations-boundaries.check.mjs",
+    "test:operations:integration": "node --test test/operations-postgres.check.mjs"
   },
   "dependencies": {
     "@egc/database": "workspace:*",
