@@ -1,0 +1,38 @@
+name: EGC Operations Review
+on:
+  push:
+    branches: [feature/operations-action-center]
+permissions:
+  contents: read
+jobs:
+  source-review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Package tracked source for isolated offline review
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import pathlib, subprocess, tarfile
+          paths = subprocess.check_output(['git','ls-files','-z','employee-suite.js','employee.html','functions','egc-platform','.github/workflows','tests','scripts','package.json']).decode().split('\0')
+          allowed = {'.js','.mjs','.cjs','.ts','.tsx','.json','.yml','.yaml','.sql','.html','.css','.md','.toml','.sh'}
+          with tarfile.open('egc-reviewed-source.tar.gz','w:gz') as out:
+              for name in paths:
+                  p = pathlib.Path(name)
+                  if not name or not p.is_file() or p.suffix not in allowed:
+                      continue
+                  if any(part.startswith('.env') or part in {'node_modules','.git'} for part in p.parts):
+                      continue
+                  out.add(p, arcname=name, recursive=False)
+          PY
+          git rev-parse HEAD > source-commit.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: egc-reviewed-source-${{ github.sha }}
+          path: |
+            egc-reviewed-source.tar.gz
+            source-commit.txt
+          retention-days: 1
+          if-no-files-found: error

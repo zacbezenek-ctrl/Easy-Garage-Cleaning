@@ -1,4 +1,6 @@
+import {registerOperationsTools,operationsPrincipal,operationsEnabled,OPERATIONS_WRITE_TOOLS,LEGACY_MUTATIONS_DISABLED,callOperations} from "./operations.js";
 import express from "express";
+import {pathToFileURL} from "node:url";
 import { toNodeHandler } from "@modelcontextprotocol/node";
 import { createMcpHandler, McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod/v4";
@@ -6,7 +8,7 @@ import { and, desc, eq, gte, ilike, inArray, isNull, lt, lte, or, sql } from "dr
 import { getDb, schema } from "@egc/database";
 import { walkthroughExtractionSchema } from "@egc/schemas";
 import { GhlClient, asDate, asRecord, asString, findArray } from "@egc/ghl";
-import { authorizeMcpRequest, mcpAuthenticateChallenge, oauthSecurityMetadata, READ_SCOPE, registerOauthRoutes, WRITE_SCOPE } from "./oauth.js";
+import { authenticatedMcpPrincipal, authorizeMcpRequest, mcpAuthenticateChallenge, oauthSecurityMetadata, READ_SCOPE, registerOauthRoutes, WRITE_SCOPE } from "./oauth.js";
 import {
   callTranscriptsForContact,
   leadsNeedingContact,
@@ -1272,11 +1274,13 @@ function mappedName(
   return mappings.get(`${resourceType}:${providerId}`) ?? providerId;
 }
 
-function buildServer() {
+export function buildServer() {
   const server = new McpServer(
     { name: "easy-garage-cleaning", version: "0.1.0" },
     { capabilities: { tools: { listChanged: false } } }
   );
+
+  registerOperationsTools(server,{includeAuthorityOverrides:operationsEnabled()});
 
   server.registerTool("ghl.pipelines", {
     description: "Return live GHL opportunity pipelines and stages for the EGC location. Use this to resolve pipeline and stage IDs before opportunity writes.",
@@ -1669,10 +1673,11 @@ function buildServer() {
   }, async ({ days }) => textResult(await leadsNeedingContact(days)));
 
   server.registerTool("egc.followups_due", {
-    description: "Return recent leads that currently require human follow-up, with an explicit reason.",
-    inputSchema: z.object({ days: z.number().int().min(1).max(90).default(3) }),
+    description: "When unified operations is enabled, read the canonical due-task queue across ALL lead ages and booked stages. days is legacy-only and ignored in unified mode. Returns coverage and pagination; never sends. When disabled this remains the explicitly limited legacy recent-lead heuristic.",
+    inputSchema: z.object({ days: z.number().int().min(1).max(90).default(3),dueBefore:isoDateTimeSchema.optional(),offset:z.number().int().min(0).default(0),limit:z.number().int().min(1).max(200).default(50) }),
     ...protectedToolMetadata
-  }, async ({ days }) => {
+  }, async ({ days,dueBefore,offset,limit }) => {
+    if(operationsEnabled())return textResult(await callOperations({command:"queue",view:"due",dueBefore:dueBefore??tomorrowBounds("America/Denver").start.toISOString(),offset,limit}));
     const rows = await leadsNeedingContact(days);
     return textResult(rows.map((row) => ({
       ...row,
@@ -1756,7 +1761,7 @@ function buildServer() {
     ...protectedToolMetadata
   }, async ({ contactId, days }) => textResult(await callTranscriptsForContact(contactId, days)));
 
-  server.registerTool("egc.customer_history", {
+  if(!operationsEnabled())server.registerTool("egc.customer_history", {
     description: "Return a unified read-only history for one customer/contact.",
     inputSchema: z.object({ contactId: z.string().uuid() }),
     ...protectedToolMetadata
@@ -1774,8 +1779,8 @@ function buildServer() {
     return textResult({ contact, messages, calls, appointments, opportunities, jobs });
   });
 
-  server.registerTool("egc.job_brief", {
-    description: "Return job scope and notes required by a crew.",
+  if(!operationsEnabled())server.registerTool("egc.job_brief", {
+    description: "LEGACY: Read a PostgreSQL platform job and its stored notes by UUID. This is not a portal-authoritative Employee Hub job read and does not establish reviewed crew-scope approval.",
     inputSchema: z.object({ jobId: z.string().uuid() }),
     ...protectedToolMetadata
   }, async ({ jobId }) => {
@@ -3558,6 +3563,7 @@ const oauth = registerOauthRoutes(app);
 app.all(
   "/mcp",
   async (req, res, next) => {
+    if(Array.isArray(req.body)){res.status(400).json({jsonrpc:"2.0",id:null,error:{code:-32600,message:"Batch requests are not supported"}});return;}
     const body = req.body as { id?: string | number | null; method?: string } | undefined;
 
     // Keep MCP discovery unauthenticated so ChatGPT can initialize and list
@@ -3575,10 +3581,15 @@ app.all(
         ? (body as { params: { name: string } }).params.name
         : "";
 
-    const requiredScope = WRITE_TOOLS.has(toolName) ? WRITE_SCOPE : READ_SCOPE;
+    const requiredScope = WRITE_TOOLS.has(toolName)||OPERATIONS_WRITE_TOOLS.has(toolName) ? WRITE_SCOPE : READ_SCOPE;
 
-    if (await authorizeMcpRequest(req.header("authorization"), requiredScope)) {
-      next();
+    const principal=await authenticatedMcpPrincipal(req.header("authorization"),requiredScope);
+    if (principal) {
+      if(operationsEnabled() && LEGACY_MUTATIONS_DISABLED.has(toolName)) {
+        res.status(200).json({jsonrpc:"2.0",id:body.id??null,result:{content:[{type:"text",text:JSON.stringify({error:"legacy_mutation_disabled_in_operations_mode",instruction:"Use canonical actions tools for internal work. External sends, scope promotion and booking writes remain disabled until the controlled portal services are activated."})}],isError:true}});
+        return;
+      }
+      operationsPrincipal.run({id:principal,role:"integration",kind:"integration",workspace:process.env.EGC_OPERATIONS_WORKSPACE??"egc"},()=>next());
       return;
     }
 
@@ -3607,6 +3618,8 @@ app.all(
 );
 
 const port = Number(process.env.PORT ?? process.env.MCP_PORT ?? 4200);
-app.listen(port, "0.0.0.0", () => {
-  console.log(`EGC MCP listening on :${port}/mcp with OAuth resource ${oauth.origin}`);
-});
+if(process.argv[1] && pathToFileURL(process.argv[1]).href===import.meta.url) {
+  app.listen(port, "0.0.0.0", () => {
+    console.log(`EGC MCP listening on :${port}/mcp with OAuth resource ${oauth.origin}`);
+  });
+}

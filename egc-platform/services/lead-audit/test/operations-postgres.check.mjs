@@ -20,6 +20,10 @@ const id = n => `${n.toString(16).padStart(8,'0')}-0000-4000-8000-000000000000`;
 const fixture = (n, extra={}) => ({id:id(n),title:`Synthetic task ${n}`,status:'open',priority:'medium',assignedUserId:'test-owner',dueAt:new Date(Date.now()-86400000),...extra});
 
 beforeEach(async()=>{
+  await db.delete(schema.operationEvents);
+  await db.delete(schema.operationApprovals);
+  await db.delete(schema.operationRequests);
+  await db.delete(schema.operationBriefs);
   await db.delete(schema.tasks);
   await db.delete(schema.contacts);
 });
