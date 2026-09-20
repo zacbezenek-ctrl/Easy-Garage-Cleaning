@@ -7,6 +7,9 @@ import { getDb, schema } from "@egc/database";
 import { walkthroughExtractionSchema } from "@egc/schemas";
 import { GhlClient, asDate, asRecord, asString, findArray } from "@egc/ghl";
 import { authorizeMcpRequest, mcpAuthenticateChallenge, oauthSecurityMetadata, READ_SCOPE, registerOauthRoutes, WRITE_SCOPE } from "./oauth.js";
+import { registerMetaConversionTools } from "./meta-conversion-tools.js";
+import { requiredToolScope } from "./tool-access.js";
+import { verifyMetaConversionsOnStart } from "./meta-conversion-smoke.js";
 import {
   callTranscriptsForContact,
   leadsNeedingContact,
@@ -36,32 +39,6 @@ const destructiveWriteToolMetadata = {
   annotations: { readOnlyHint: false, destructiveHint: true },
   ...oauthSecurityMetadata([READ_SCOPE, WRITE_SCOPE])
 };
-
-const WRITE_TOOLS = new Set([
-  "jobs.create",
-  "jobs.update",
-  "jobs.add_note",
-  "walkthroughs.create_draft",
-  "walkthroughs.update_draft",
-  "walkthroughs.approve",
-  "contacts.create",
-  "contacts.update",
-  "contacts.add_tags",
-  "contacts.remove_tags",
-  "opportunities.create",
-  "opportunities.update",
-  "appointments.create",
-  "appointments.update",
-  "appointments.cancel",
-  "appointments.delete",
-  "conversations.send_message",
-  "send_sms",
-  "egc.ensure_booking",
-  "egc.send_followup",
-  "tasks.create",
-  "tasks.update",
-  "tasks.complete"
-]);
 
 function timeZoneDateParts(date: Date, timeZone: string) {
   const parts = new Intl.DateTimeFormat("en-US", {
@@ -284,7 +261,8 @@ async function syncContactFromGhl(
 async function syncOpportunityFromGhl(
   payload: Record<string, unknown>,
   contactId: string,
-  existingLocalId?: string
+  existingLocalId?: string,
+  directlyObservedWonAt?: Date
 ) {
   const db = getDb();
   const raw = unwrapRecord(payload, "opportunity");
@@ -298,6 +276,7 @@ async function syncOpportunityFromGhl(
   const values = {
     providerId,
     contactId,
+    ...(directlyObservedWonAt && asString(raw.status) === "won" ? { wonAt: directlyObservedWonAt } : {}),
     pipelineId: asString(raw.pipelineId) ?? null,
     pipelineStageId: asString(raw.pipelineStageId) ?? null,
     status: asString(raw.status) ?? null,
@@ -1277,6 +1256,8 @@ function buildServer() {
     { name: "easy-garage-cleaning", version: "0.1.0" },
     { capabilities: { tools: { listChanged: false } } }
   );
+
+  registerMetaConversionTools(server);
 
   server.registerTool("ghl.pipelines", {
     description: "Return live GHL opportunity pipelines and stages for the EGC location. Use this to resolve pipeline and stage IDs before opportunity writes.",
@@ -3132,7 +3113,7 @@ function buildServer() {
     if (forecastProbability !== undefined) body.forecastProbability = forecastProbability;
 
     const remote = await ghlClient().createOpportunity(body);
-    const opportunity = await syncOpportunityFromGhl(remote, contactId);
+    const opportunity = await syncOpportunityFromGhl(remote, contactId, undefined, status === "won" ? new Date() : undefined);
 
     if (jobId) {
       await db.update(schema.jobs).set({
@@ -3575,7 +3556,7 @@ app.all(
         ? (body as { params: { name: string } }).params.name
         : "";
 
-    const requiredScope = WRITE_TOOLS.has(toolName) ? WRITE_SCOPE : READ_SCOPE;
+    const requiredScope = requiredToolScope(toolName);
 
     if (await authorizeMcpRequest(req.header("authorization"), requiredScope)) {
       next();
@@ -3609,4 +3590,5 @@ app.all(
 const port = Number(process.env.PORT ?? process.env.MCP_PORT ?? 4200);
 app.listen(port, "0.0.0.0", () => {
   console.log(`EGC MCP listening on :${port}/mcp with OAuth resource ${oauth.origin}`);
+  void verifyMetaConversionsOnStart({ port });
 });

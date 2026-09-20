@@ -2,6 +2,7 @@ import { and, asc, eq, lte } from "drizzle-orm";
 import { getDb, schema } from "@egc/database";
 import { GhlClient, asDate, asRecord, asString, findArray } from "@egc/ghl";
 import { recomputeLeadState } from "@egc/lead-audit";
+import { startMetaConversionWorker } from "./meta-conversion-worker.js";
 
 const db = getDb();
 const ghl = GhlClient.fromEnv();
@@ -801,8 +802,11 @@ async function processOutboxEvents() {
 
 async function main() {
   console.log("EGC worker started");
-  await reconcile();
-  await processOutboxEvents();
+  startMetaConversionWorker();
+  // A transient GHL startup failure must not stop Meta synchronization or the
+  // existing webhook/outbox polling loops from being scheduled.
+  await reconcile().catch(() => console.error("Initial GHL reconciliation failed; scheduled reconciliation will retry."));
+  await processOutboxEvents().catch(() => console.error("Initial outbox processing failed; scheduled processing will retry."));
   setInterval(() => void reconcile().catch(console.error), 5 * 60_000);
   setInterval(() => void processWebhookEvents().catch(console.error), 15_000);
   setInterval(() => void processOutboxEvents().catch(console.error), 15_000);

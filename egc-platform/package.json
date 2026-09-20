@@ -12,7 +12,7 @@
     "db:generate": "pnpm --filter @egc/database db:generate",
     "db:migrate": "pnpm --filter @egc/database db:migrate",
     "test": "turbo test",
-    "build:packages": "pnpm --filter './packages/**' --filter './services/**' build",
+    "build:packages": "pnpm --filter \"./packages/**\" --filter \"./services/**\" build",
     "db:push": "pnpm --filter @egc/database db:push"
   },
   "devDependencies": {

@@ -137,6 +137,7 @@ export const opportunities = pgTable("opportunities", {
   monetaryValueCents: integer("monetary_value_cents"),
   assignedUserId: text("assigned_user_id"),
   source: text("source"),
+  wonAt: timestamp("won_at", { withTimezone: true }),
   raw: jsonb("raw").$type<Record<string, unknown>>().default({}).notNull(),
   providerCreatedAt: timestamp("provider_created_at", { withTimezone: true }),
   providerUpdatedAt: timestamp("provider_updated_at", { withTimezone: true }),
@@ -172,6 +173,7 @@ export const jobs = pgTable("jobs", {
   opportunityId: uuid("opportunity_id").references(() => opportunities.id),
   appointmentId: uuid("appointment_id").references(() => appointments.id),
   status: text("status").default("draft").notNull(),
+  wonAt: timestamp("won_at", { withTimezone: true }),
   serviceAddress: text("service_address"),
   garageSize: text("garage_size"),
   serviceType: text("service_type"),
@@ -329,5 +331,64 @@ export const auditLogs = pgTable("audit_logs", {
   oldValue: jsonb("old_value"),
   newValue: jsonb("new_value"),
   source: text("source").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull()
+});
+
+// Only normalized attribution and hashed matching payloads belong here. Never tokens,
+// raw contact snapshots, HTTP headers, or unfiltered provider error messages.
+export const metaConversionEvents = pgTable("meta_conversion_events", {
+  id: text("id").primaryKey(),
+  contactId: uuid("contact_id").notNull(),
+  leadId: uuid("lead_id").notNull(),
+  appointmentId: uuid("appointment_id"),
+  jobId: uuid("job_id"),
+  opportunityId: uuid("opportunity_id"),
+  eventType: text("event_type").notNull(),
+  eventTime: timestamp("event_time", { withTimezone: true }),
+  datasetId: text("dataset_id").notNull(),
+  attribution: jsonb("attribution").$type<Record<string, unknown>>().notNull(),
+  valueCents: integer("value_cents"),
+  currency: text("currency"),
+  payloadVersion: text("payload_version").notNull(),
+  payload: jsonb("payload").$type<Record<string, unknown>>(),
+  status: text("status").default("pending").notNull(),
+  attemptCount: integer("attempt_count").default(0).notNull(),
+  firstAttemptAt: timestamp("first_attempt_at", { withTimezone: true }),
+  lastAttemptAt: timestamp("last_attempt_at", { withTimezone: true }),
+  nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }),
+  leaseUntil: timestamp("lease_until", { withTimezone: true }),
+  leaseToken: text("lease_token"),
+  response: jsonb("response").$type<Record<string, unknown>>(),
+  error: text("error"),
+  retryable: boolean("retryable").default(true).notNull(),
+  acceptedAt: timestamp("accepted_at", { withTimezone: true }),
+  ...timestamps
+}, (t) => [index("meta_conversion_events_status_idx").on(t.status, t.nextAttemptAt)]);
+
+export const metaConversionAttempts = pgTable("meta_conversion_attempts", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  eventId: text("event_id").references(() => metaConversionEvents.id).notNull(),
+  attemptNumber: integer("attempt_number").notNull(),
+  startedAt: timestamp("started_at", { withTimezone: true }).defaultNow().notNull(),
+  finishedAt: timestamp("finished_at", { withTimezone: true }),
+  outcome: text("outcome").default("unknown").notNull(),
+  response: jsonb("response").$type<Record<string, unknown>>(),
+  error: text("error")
+}, (t) => [uniqueIndex("meta_conversion_attempt_number_uq").on(t.eventId, t.attemptNumber)]);
+
+export const metaConversionRuns = pgTable("meta_conversion_runs", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  mode: text("mode").notNull(),
+  startedAt: timestamp("started_at", { withTimezone: true }).defaultNow().notNull(),
+  finishedAt: timestamp("finished_at", { withTimezone: true }),
+  summary: jsonb("summary").$type<Record<string, unknown>>()
+});
+
+export const metaConversionTests = pgTable("meta_conversion_tests", {
+  id: text("id").primaryKey(),
+  datasetId: text("dataset_id").notNull(),
+  accepted: boolean("accepted").notNull(),
+  response: jsonb("response").$type<Record<string, unknown>>().notNull(),
+  error: text("error"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull()
 });

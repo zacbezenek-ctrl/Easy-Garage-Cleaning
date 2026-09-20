@@ -7,6 +7,18 @@ The EGC MCP has two OAuth scopes:
 
 No payment, refund, delete, or direct customer-message tools are exposed.
 
+## Meta conversion feedback
+
+- `meta.conversions.preview(days=7, from?, to?, limit=100)` — read-only downstream event candidates, eligibility reasons, matching quality, and send/skip explanations. No ledger writes or transmissions.
+- `meta.conversions.status(days=30, from?, to?, limit=100)` — configuration readiness, last sync, pending/failures/recent accepted events, matching and attribution health, and conversion rates for morning-brief reporting.
+- `meta.conversions.sync(days=7, from?, to?, limit=100, dryRun=true)` — `egc:write`; reconcile and send eligible unsynced conversions with durable idempotency. Explicitly set `dryRun=false` to request transmission; server configuration, activation, and event-age gates still apply.
+- `meta.conversions.retry(days=7, from?, to?, limit=100, eventIds?, dryRun=true)` — `egc:write`; retry failed events using their original IDs. Accepted events remain protected. Event IDs are optional and limited to 100.
+- `meta.conversions.test()` — `egc:write`; send a synthetic diagnostic using the server's `META_CAPI_TEST_EVENT_CODE`, with no customer data or user-supplied payload.
+
+Date filters accept ISO 8601 timestamps with an explicit UTC offset. Preview/status allow a 1–90 day lookback; sync/retry allow 1–7 days. These tools cannot enable production mode, change the destination, change ad optimization, or authorize historical backfill. Public results omit matching values and credentials. The backend worker independently reconciles every minute, so delivery does not depend on the morning brief or an MCP call. See [Meta conversions deployment and operations](meta-conversions.md) for configuration and activation.
+
+For deployment verification, temporarily set `META_CAPI_VERIFY_ON_START=true` on the MCP service. After listening, it uses the existing server-side `MCP_BEARER_TOKEN` against its own loopback MCP endpoint to verify discovery, preview, dry-run sync, status, and the existing lead-conversion funnel. Logs contain only tool names and allowlisted aggregate counts. The diagnostic does not send Meta events or expose an additional HTTP endpoint.
+
 ## Live GHL reference tools
 
 Use these before writes when provider IDs are unknown:
