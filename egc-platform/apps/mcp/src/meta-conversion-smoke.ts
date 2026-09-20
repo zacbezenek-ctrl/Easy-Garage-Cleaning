@@ -46,6 +46,28 @@ function numbers(value: unknown, keys: string[]) {
     .map(key => [key, input[key]]));
 }
 
+function timestamp(value: unknown) {
+  return typeof value === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/.test(value) && Number.isFinite(Date.parse(value))
+    ? new Date(value).toISOString() : null;
+}
+
+function testSummary(value: Record<string, unknown>) {
+  const id = typeof value.id === "string" && /^egc_test_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(value.id) ? value.id : null;
+  const datasetId = typeof value.datasetId === "string" && /^\d{1,30}$/.test(value.datasetId) ? value.datasetId : null;
+  const response = record(value.response);
+  const events = (Array.isArray(response.events) ? response.events : []).slice(0, 2).map(record)
+    .filter(event => event.stage === "WALKTHROUGH_BOOKED" || event.stage === "JOB_WON")
+    .map(event => ({ stage: event.stage, ...numbers(event, ["httpStatus", "eventsReceived", "code", "subcode", "messageCount"]) }));
+  const bothReceived = ["WALKTHROUGH_BOOKED", "JOB_WON"].every(stage => events.some(event => {
+    const result = record(event);
+    return result.stage === stage && result.eventsReceived === 1 && typeof result.httpStatus === "number" && result.httpStatus >= 200 && result.httpStatus < 300;
+  }));
+  const accepted = value.accepted === true && id !== null && datasetId !== null && bothReceived;
+  const error = accepted ? null : ["test_configuration_incomplete", "test_event_rejected"].includes(String(value.error))
+    ? value.error : "unexpected_test_response";
+  return { accepted, id, datasetId, error, events };
+}
+
 function parseResponse(body: string, id: number) {
   const messages = body.trim().startsWith("{")
     ? [JSON.parse(body)]
@@ -89,7 +111,7 @@ export async function verifyMetaConversionsOnStart({
     const host = env.MCP_PUBLIC_ORIGIN ? new URL(env.MCP_PUBLIC_ORIGIN).host : "localhost";
     let id = 0;
     let session: string | null = null;
-    async function request(method: string, params: Record<string, unknown>, notification = false) {
+    async function request(method: string, params: Record<string, unknown>, notification = false, timeoutMs = 20_000) {
       const requestId = ++id;
       const response = await fetcher(`http://127.0.0.1:${port}/mcp`, {
         method: "POST",
@@ -99,7 +121,7 @@ export async function verifyMetaConversionsOnStart({
           ...(session ? { "Mcp-Session-Id": session } : {})
         },
         body: JSON.stringify({ jsonrpc: "2.0", ...(notification ? {} : { id: requestId }), method, params }),
-        signal: AbortSignal.timeout(20_000), redirect: "error"
+        signal: AbortSignal.timeout(timeoutMs), redirect: "error"
       });
       if (!response.ok) throw new Error("mcp_http_failed");
       session = response.headers.get("mcp-session-id") ?? session;
@@ -114,6 +136,26 @@ export async function verifyMetaConversionsOnStart({
     const names = Array.isArray(listing.tools) ? listing.tools.map(record).map(tool => tool.name) : [];
     if (!META_TOOLS.every(name => names.includes(name)) || !names.includes("egc.lead_conversion_funnel")) throw new Error("tools_missing");
     const summary: Record<string, unknown> = { tools: META_TOOLS, existingToolExposed: true };
+
+    // A temporary deployment diagnostic, separately opted in. Never attempt a
+    // test in production mode, and never retry automatically within this run.
+    if (env.META_CAPI_TEST_ON_START === "true") {
+      if (env.META_CAPI_MODE !== "shadow") {
+        logger.error("Meta startup synthetic test refused: explicit shadow mode required.");
+        summary.syntheticTest = { accepted: false, error: "shadow_mode_required" };
+      } else {
+        check = "meta.conversions.test";
+        try {
+          const value = toolResult(await request("tools/call", { name: check, arguments: {} }, false, 45_000));
+          const diagnostic = testSummary(value);
+          summary.syntheticTest = diagnostic;
+          logger.log("Meta startup synthetic test result", JSON.stringify(diagnostic));
+        } catch {
+          summary.syntheticTest = { accepted: false, error: "test_operation_failed" };
+          logger.error("Meta startup synthetic test failed; inspect test status.");
+        }
+      }
+    }
 
     for (const [name, args] of [
       ["meta.conversions.preview", { days: 7, limit: 100 }],
@@ -140,6 +182,12 @@ export async function verifyMetaConversionsOnStart({
           tokenConfigured: configuration.tokenConfigured === true,
           productionBlockerCount: Array.isArray(value.productionBlockers) ? value.productionBlockers.length : 0
         };
+        const lastSync = record(value.lastSync), lastTest = record(value.lastTest);
+        summary.lastSync = {
+          startedAt: timestamp(lastSync.startedAt), finishedAt: timestamp(lastSync.finishedAt),
+          mode: ["shadow", "production", "retry"].includes(String(lastSync.mode)) ? lastSync.mode : null
+        };
+        summary.lastTest = { createdAt: timestamp(lastTest.createdAt), accepted: typeof lastTest.accepted === "boolean" ? lastTest.accepted : null };
       } else {
         summary.existingFunnel = numbers(value, ["total", "leadToBookedRate"]);
       }

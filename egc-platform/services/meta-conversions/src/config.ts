@@ -6,7 +6,9 @@ export function conversionConfig(env: NodeJS.ProcessEnv = process.env) {
     mode: env.META_CAPI_MODE === "production" ? "production" as const : "shadow" as const,
     datasetId,
     verified: /^\d+$/.test(datasetId) && env.META_CAPI_DATASET_VERIFIED_ID === datasetId,
-    funnelVerified: env.META_CAPI_FUNNEL_VERIFIED === "true",
+    // Keep the deployed variable name for compatibility. This attests reviewed
+    // custom-stage collection and visual test receipt, not campaign optimization.
+    stageCollectionVerified: env.META_CAPI_FUNNEL_VERIFIED === "true",
     accessToken: env.META_CAPI_ACCESS_TOKEN ?? "",
     testEventCode: env.META_CAPI_TEST_EVENT_CODE ?? "",
     apiVersion: /^v\d+\.0$/.test(env.META_CAPI_API_VERSION ?? "") ? env.META_CAPI_API_VERSION! : "v25.0",
@@ -22,7 +24,8 @@ export type ConversionConfig = ReturnType<typeof conversionConfig>;
 export function configurationHealth(config: ConversionConfig) {
   return {
     mode: config.mode, datasetId: config.datasetId || null,
-    destinationVerified: config.verified, funnelVerified: config.funnelVerified,
+    destinationVerified: config.verified, stageCollectionVerified: config.stageCollectionVerified,
+    optimizationMapping: "not_verified_by_this_integration",
     tokenConfigured: Boolean(config.accessToken), testCodeConfigured: Boolean(config.testEventCode),
     startAt: config.startAt?.toISOString() ?? null,
     walkthroughCalendarCount: config.walkthroughCalendarIds.length,
@@ -36,7 +39,7 @@ export function productionBlockers(config: ConversionConfig, testAccepted: boole
     ...(config.mode !== "production" ? ["shadow_mode"] : []),
     ...(!config.verified ? ["destination_not_verified"] : []),
     ...(!config.accessToken ? ["access_token_missing"] : []),
-    ...(!config.funnelVerified ? ["crm_funnel_and_existing_sender_not_verified"] : []),
+    ...(!config.stageCollectionVerified ? ["crm_stage_collection_not_verified"] : []),
     ...(!config.startAt ? ["production_start_time_missing"] : []),
     ...(!config.walkthroughCalendarIds.length ? ["walkthrough_calendars_missing"] : []),
     ...(!testAccepted ? ["accepted_test_event_required"] : [])

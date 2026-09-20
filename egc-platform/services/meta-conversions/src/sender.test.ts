@@ -59,11 +59,13 @@ describe("Meta transport", () => {
 });
 
 describe("production guard and retry horizon", () => {
-  it("defaults to shadow and requires explicit start, funnel, destination, token and a successful test", () => {
+  it("defaults to shadow and requires explicit start, stage collection review, destination, token and a successful test", () => {
     expect(productionBlockers(conversionConfig({}), false)).toContain("shadow_mode");
+    expect(productionBlockers(conversionConfig({}), false)).toContain("crm_stage_collection_not_verified");
     const enabled = conversionConfig({ ...env, META_CAPI_MODE: "production", META_CAPI_START_AT: "2026-09-20T00:00:00Z", META_CAPI_FUNNEL_VERIFIED: "true", META_CAPI_WALKTHROUGH_CALENDAR_IDS: "walk" });
     expect(productionBlockers(enabled, true)).toEqual([]);
     expect(productionBlockers(enabled, false)).toEqual(["accepted_test_event_required"]);
+    expect(configurationHealth(enabled)).toMatchObject({ stageCollectionVerified: true, optimizationMapping: "not_verified_by_this_integration" });
     expect(JSON.stringify(configurationHealth(enabled))).not.toContain("SECRET_CANARY");
   });
   it("will not refresh timestamps or retry past dedupe/age windows", () => {
