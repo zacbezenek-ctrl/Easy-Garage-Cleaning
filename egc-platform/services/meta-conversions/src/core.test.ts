@@ -109,6 +109,32 @@ describe("deterministic Meta attribution", () => {
     const input = lead({ raw: { attributionSource: { adId: 120253868777650385 } } });
     expect(classifyAttribution(input).classification).toBe("ambiguous");
   });
+  it.each(["isTest", "is_test", "isTestLead", "is_test_lead"])("excludes explicit provider %s test markers even after a legitimate-looking stage", (key) => {
+    const input = lead();
+    input.raw![key] = true;
+    const events = detectConversions({ lead: input, appointments: [appointment()], opportunities: [opportunity()] }, options);
+    expect(events).toHaveLength(2);
+    for (const event of events) {
+      expect(event.eligible).toBe(false);
+      expect(event.reasons).toContain("explicit_test_record");
+      expect(event.payload).toBeUndefined();
+    }
+  });
+  it("honors explicit nested attribution test markers without treating false as test", () => {
+    const marked = lead();
+    (marked.raw!.attributionSource as Record<string, unknown>).isTest = true;
+    expect(classifyAttribution(marked).reasons).toContain("explicit_test_record");
+    (marked.raw!.attributionSource as Record<string, unknown>).isTest = false;
+    expect(classifyAttribution(marked).classification).toBe("eligible_meta_paid");
+  });
+  it("cannot turn an ordinary-looking Meta verification lead ID into a conversion without a downstream stage", () => {
+    const input = lead();
+    input.raw!.facebookLeadId = "987654321098765";
+    expect(detectConversions({ lead: input }, options)).toEqual([]);
+    // No ad origin is inferred from the identifier itself.
+    input.raw!.attributionSource = {};
+    expect(classifyAttribution(input).classification).toBe("ambiguous");
+  });
   it("does not return free-form source text, raw fields, email or phone in a preview", () => {
     const candidate = booking();
     const preview = JSON.stringify(toConversionPreview(candidate));

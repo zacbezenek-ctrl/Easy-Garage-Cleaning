@@ -241,7 +241,15 @@ export function classifyAttribution(lead: ConversionLead): AttributionResult {
 
   let classification: AttributionClassification;
   const reasons: string[] = [];
-  if ((hasMeta && hasOther) || ad.conflict || campaign.conflict || adSet.conflict || leadIdConflict) {
+  // Explicit provider test markers override otherwise valid attribution. Do not
+  // guess from names, email addresses, or a numeric Meta lead ID: real customers
+  // can resemble test data, and verification leads use ordinary-looking IDs.
+  const explicitTest = [raw, initial, last].some((source) =>
+    ["isTest", "is_test", "isTestLead", "is_test_lead"].some((key) => source[key] === true));
+  if (explicitTest) {
+    classification = "ambiguous";
+    reasons.push("explicit_test_record");
+  } else if ((hasMeta && hasOther) || ad.conflict || campaign.conflict || adSet.conflict || leadIdConflict) {
     classification = "ambiguous";
     reasons.push(hasMeta && hasOther ? "conflicting_origin_evidence" : "conflicting_meta_identifiers");
   } else if (hasMeta && paidEvidence) {
