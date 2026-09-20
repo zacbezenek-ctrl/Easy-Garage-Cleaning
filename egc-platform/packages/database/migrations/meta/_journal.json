@@ -15,6 +15,13 @@
       "when": 1789760970373,
       "tag": "0001_futuristic_hellcat",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1789936341102,
+      "tag": "0002_flimsy_butterfly",
+      "breakpoints": true
     }
   ]
 }

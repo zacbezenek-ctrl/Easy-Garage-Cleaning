@@ -1,0 +1,14 @@
+{
+  "name": "@egc/meta-conversions",
+  "private": true,
+  "type": "module",
+  "exports": { ".": { "types": "./src/index.ts", "import": "./dist/index.js", "default": "./dist/index.js" } },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:integration": "node --test test/postgres.check.mjs"
+  },
+  "dependencies": { "@egc/database": "workspace:*", "drizzle-orm": "0.44.5" },
+  "devDependencies": { "typescript": "^6.0.2", "vitest": "^3.2.4", "postgres": "3.4.7" }
+}

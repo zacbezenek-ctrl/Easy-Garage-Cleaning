@@ -9,5 +9,6 @@ RUN pnpm --filter @egc/schemas build \
  && pnpm --filter @egc/database build \
  && pnpm --filter @egc/ghl build \
  && pnpm --filter @egc/lead-audit build \
+ && pnpm --filter @egc/meta-conversions build \
  && pnpm --filter @egc/worker build
 CMD ["sh", "-c", "pnpm --filter @egc/database migrate:runtime && node apps/worker/dist/worker.js"]

@@ -22,7 +22,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run && npm run test:operations",
+    "test": "vitest run && pnpm run test:operations",
     "test:operations": "tsc -p tsconfig.operations-tests.json && node --test test/operations.check.mjs test/operations-boundaries.check.mjs",
     "test:operations:integration": "node --test test/operations-postgres.check.mjs"
   },
