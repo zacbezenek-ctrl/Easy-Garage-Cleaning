@@ -11,6 +11,11 @@ describe("communication evidence",()=>{
     expect(callContactEvidence(raw).twoWay).toBe(true);
     expect(callContactEvidence({...raw,disposition:"voicemail"}).twoWay).toBe(false);
   });
+  it("accepts HighLevel live GET nested call evidence for an outbound human connection",()=>{
+    const raw={direction:"outbound",status:"completed",userId:"staff-1",meta:{call:{status:"completed",duration:192}}};
+    expect(callContactEvidence(raw).twoWay).toBe(true);
+    expect(callContactEvidence({...raw,meta:{call:{status:"voicemail",duration:192}}}).twoWay).toBe(false);
+  });
   it("keeps a human attempt plus missed inbound out of two-way and response counts",()=>{
     const result=communicationSummary([], [call({status:"no-answer"}),call({direction:"inbound",status:"missed"})]);
     expect(result.hasHumanOutreach).toBe(true);expect(result.hasCustomerResponse).toBe(false);expect(result.twoWayContactAt).toBeNull();
