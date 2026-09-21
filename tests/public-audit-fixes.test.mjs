@@ -1,3 +1,4 @@
+import {sourceFiles} from './source-files.mjs';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import test from 'node:test';
@@ -14,7 +15,7 @@ test('homepage loads analytics outside the critical rendering path', () => {
 
 test('analytics is deferred site-wide and preserves the paid-campaign pixel mapping', () => {
   const root = new URL('../', import.meta.url);
-  const pages = readdirSync(root, { recursive: true, withFileTypes: true })
+  const pages = sourceFiles(root)
     .filter(entry => entry.isFile() && entry.name.endsWith('.html'))
     .map(entry => ({ name: `${entry.parentPath}/${entry.name}`, html: readFileSync(`${entry.parentPath}/${entry.name}`, 'utf8') }));
   for (const page of pages) {
@@ -35,7 +36,7 @@ test('private employee portal does not load marketing analytics or preconnect to
 
 test('HTML media, external tabs, and forms keep release-safe attributes', () => {
   const root = new URL('../', import.meta.url);
-  const pages = readdirSync(root, { recursive: true, withFileTypes: true })
+  const pages = sourceFiles(root)
     .filter(entry => entry.isFile() && entry.name.endsWith('.html'))
     .map(entry => ({ name: `${entry.parentPath}/${entry.name}`, html: readFileSync(`${entry.parentPath}/${entry.name}`, 'utf8') }));
   const failures = [];
@@ -83,7 +84,7 @@ test('Cloudflare caches versioned public assets', () => {
   assert.match(headers, /\/images\/\*[\s\S]*max-age=31536000, immutable/);
   assert.match(styles, /body:has\(form:focus-within\) \.mobile-sticky-cta/);
   const root = new URL('../', import.meta.url);
-  const pages = readdirSync(root, { recursive: true, withFileTypes: true })
+  const pages = sourceFiles(root)
     .filter((entry) => entry.isFile() && entry.name.endsWith('.html'))
     .map((entry) => ({ name: `${entry.parentPath}/${entry.name}`, html: readFileSync(`${entry.parentPath}/${entry.name}`, 'utf8') }))
     .filter((page) => page.html.includes('styles.css'));
@@ -145,7 +146,7 @@ test('private workflow shells are never indexed, framed, or cached', () => {
 
 test('every image has an explicit accessible text alternative', () => {
   const root = new URL('../', import.meta.url);
-  const pages = readdirSync(root, { recursive: true, withFileTypes: true })
+  const pages = sourceFiles(root)
     .filter((entry) => entry.isFile() && entry.name.endsWith('.html'))
     .map((entry) => ({ name: `${entry.parentPath}/${entry.name}`, html: readFileSync(`${entry.parentPath}/${entry.name}`, 'utf8') }));
   for (const page of pages) {
@@ -157,7 +158,7 @@ test('every image has an explicit accessible text alternative', () => {
 
 test('every public lead form mirrors to HighLevel and carries its own consent disclosure', () => {
   const root = new URL('../', import.meta.url);
-  const pages = readdirSync(root, { recursive: true, withFileTypes: true })
+  const pages = sourceFiles(root)
     .filter((entry) => entry.isFile() && entry.name.endsWith('.html'))
     .map((entry) => ({ name: `${entry.parentPath}/${entry.name}`, html: readFileSync(`${entry.parentPath}/${entry.name}`, 'utf8') }))
     .filter((page) => /<form[^>]*class=["'][^"']*(?:lead-form-lite|multi-step-form)/i.test(page.html));

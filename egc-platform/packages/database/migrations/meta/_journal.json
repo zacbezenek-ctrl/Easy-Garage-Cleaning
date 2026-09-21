@@ -22,6 +22,55 @@
       "when": 1789936341102,
       "tag": "0002_flimsy_butterfly",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1789947000000,
+      "tag": "0003_operations_actions",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1789947000001,
+      "tag": "0004_operations_guards",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1789947424795,
+      "tag": "0005_bizarre_frog_thor",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1789947710626,
+      "tag": "0006_sweet_nightmare",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1789948326474,
+      "tag": "0007_many_black_bolt",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1789948675654,
+      "tag": "0008_steady_true_believers",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1789950429801,
+      "tag": "0009_verified_message_completion",
+      "breakpoints": true
     }
   ]
 }

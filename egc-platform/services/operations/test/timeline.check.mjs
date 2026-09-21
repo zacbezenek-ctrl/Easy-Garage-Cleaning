@@ -1,0 +1,50 @@
+import test,{beforeEach,after} from 'node:test';
+import assert from 'node:assert/strict';
+import {randomUUID} from 'node:crypto';
+import {getDb,schema} from '@egc/database';
+import {sql} from 'drizzle-orm';
+import {OperationsService} from '../dist/index.js';
+const url=new URL(process.env.DATABASE_URL||'http://invalid');
+if(process.env.EGC_OPERATIONS_TEST!=='isolated'||!['127.0.0.1','localhost'].includes(url.hostname)||url.pathname!=='/egc_operations_test')throw new Error('Only isolated loopback egc_operations_test is allowed');
+globalThis.fetch=async()=>{throw new Error('External HTTP forbidden');};
+const db=getDb(),actor={id:'owner',role:'owner',kind:'human',workspace:'egc'};let contact,other,service;
+beforeEach(async()=>{
+ await db.execute(sql`truncate contacts cascade`);
+ [contact,other]=await db.insert(schema.contacts).values([{providerId:'timeline-a'},{providerId:'timeline-b'}]).returning();
+ service=new OperationsService(db,{workspace:'egc',resolveOwner:async()=>true,resolvePortalJob:async id=>({id,type:'job',revision:'v1',highlevelContactId:'timeline-a',sourceWalkthroughId:'visit-a',customer:'Synthetic',status:'scheduled'})});
+});
+after(async()=>db.$client.end({timeout:5}));
+const read=(extra={})=>service.execute(actor,{command:'history',contactId:contact.id,offset:0,limit:100,...extra},randomUUID());
+test('one chronology includes SMS, call/transcript, visit, recording, note and action without CALL duplication',async()=>{
+ const at=new Date('2026-09-20T12:00:00Z');
+ await db.insert(schema.messages).values([{providerId:'sms',contactId:contact.id,type:'SMS',direction:'inbound',actorType:'customer',body:'Synthetic reply',occurredAt:at},{providerId:'call',contactId:contact.id,type:'TYPE_CALL',direction:'outbound',actorType:'human',occurredAt:at},{providerId:'other',contactId:other.id,type:'SMS',direction:'inbound',actorType:'customer',body:'Other customer',occurredAt:at}]);
+ const [call]=await db.insert(schema.calls).values({providerMessageId:'call',contactId:contact.id,direction:'outbound',actorType:'human',startedAt:at,status:'completed',raw:{status:'completed',secret:'never_return_raw'}}).returning();
+ await db.insert(schema.callTranscripts).values({callId:call.id,text:'Synthetic transcript'});
+ await db.insert(schema.appointments).values({providerId:'appointment',contactId:contact.id,appointmentStartAt:at,appointmentCreatedAt:at});
+ await db.insert(schema.walkthroughs).values({contactId:contact.id,workspaceId:'egc',portalJobId:'job-a',portalVisitId:'visit-a',status:'draft',transcript:'Synthetic recording'});
+ const [job]=await db.insert(schema.jobs).values({contactId:contact.id}).returning();
+ await db.insert(schema.jobNotes).values({jobId:job.id,type:'note',source:'staff',body:'Exact job note'});
+ await service.execute(actor,{command:'task.create',task:{title:'Respond',assignedUserId:'owner',dueAt:at.toISOString(),completionCondition:'Record the reply',contactId:contact.id}},randomUUID());
+ const history=await read();assert.equal(history.ok,true);const kinds=history.items.map(x=>x.kind);
+ for(const kind of ['message','call','provider_appointment','recording','job_note','action'])assert.ok(kinds.includes(kind),kind);
+ assert.equal(kinds.filter(x=>x==='message').length,1);assert.ok(!JSON.stringify(history).includes('never_return_raw'));assert.ok(!JSON.stringify(history).includes('Other customer'));
+ const c=history.items.find(x=>x.kind==='call');assert.equal(c.data.transcript,'Synthetic transcript');assert.notEqual(c.data.twoWayContact,true);
+ const a=history.items.find(x=>x.kind==='recording');assert.equal(a.data.association,'exact_visit');
+});
+test('stable pagination spans sources and exact portal linkage never selects latest customer by name',async()=>{
+ for(let i=0;i<6;i++)await db.insert(schema.messages).values({providerId:'m'+i,contactId:contact.id,type:'SMS',direction:'inbound',actorType:'customer',occurredAt:new Date('2026-09-20T12:00:00Z')});
+ const a=await read({limit:3}),b=await read({offset:3,limit:3});assert.equal(a.total,6);assert.equal(a.nextOffset,3);assert.equal(b.nextOffset,null);assert.equal(new Set([...a.items,...b.items].map(x=>x.id)).size,6);
+ const byPortal=await read({contactId:undefined,portalJobId:'job-a'});assert.equal(byPortal.contact.id,contact.id);
+ await assert.rejects(read({contactId:other.id,portalJobId:'job-a'}),e=>e.code==='portal_contact_mismatch');
+});
+test('exact Hub financial and note evidence shares pagination without inventing customer-wide financial coverage',async()=>{
+ const config={workspace:'egc',resolvePortalJob:async id=>({id,type:'job',revision:'v1',highlevelContactId:'timeline-a',sourceWalkthroughId:'visit-a',customer:'Synthetic',status:'completed'}),portalRead:async()=>({job:{id:'job-a',highlevelContactId:'timeline-a',projectId:'project-a',operationNotes:[{id:'note-a',body:'Keep blue bicycle',createdAt:'2026-09-20T14:00:00Z',actorId:'owner'}]},financials:{timeline:[{id:'job-a:quote',kind:'quote_approved',at:'2026-09-19T12:00:00Z',data:{amountCents:null,currency:'USD'}},{id:'payment-a',kind:'payment_verified',at:'2026-09-20T13:00:00Z',data:{amountCents:50000,currency:'USD'}}]}})};
+ service=new OperationsService(db,config);
+ await db.insert(schema.messages).values({providerId:'latest',contactId:contact.id,type:'SMS',direction:'inbound',actorType:'customer',body:'Reply',occurredAt:new Date('2026-09-20T15:00:00Z')});
+ const first=await read({portalJobId:'job-a',limit:2}),second=await read({portalJobId:'job-a',offset:2,limit:2});
+ assert.deepEqual(first.items.map(x=>x.kind),['message','job_note']);assert.deepEqual(second.items.map(x=>x.kind),['payment_verified','quote_approved']);assert.equal(first.total,4);assert.equal(second.nextOffset,null);
+ assert.equal(second.items[1].data.amountCents,null);assert.equal(second.items[0].data.authority,'employee_hub');assert.equal(first.coverage.portalEvents,3);
+ const customerOnly=await read();assert.equal(customerOnly.total,1);assert.equal(customerOnly.coverage.portalEvents,0);
+ service=new OperationsService(db,{...config,portalRead:async()=>({job:{id:'job-a',highlevelContactId:'timeline-b'}})});
+ await assert.rejects(read({portalJobId:'job-a'}),error=>error.code==='portal_identity_changed');
+});

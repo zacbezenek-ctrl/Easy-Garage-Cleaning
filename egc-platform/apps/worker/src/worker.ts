@@ -1,13 +1,16 @@
-import { and, asc, eq, lte } from "drizzle-orm";
+import {processNoteOutbox} from "./note-outbox.js";
+import {processWebhookQueue,UnsupportedWebhook} from "./webhook-queue.js";
+import { and, asc, eq, lte,sql } from "drizzle-orm";
 import { getDb, schema } from "@egc/database";
 import { GhlClient, asDate, asRecord, asString, findArray } from "@egc/ghl";
-import { recomputeLeadState } from "@egc/lead-audit";
+import { recomputeLeadState, callContactEvidence, isCallMessage } from "@egc/lead-audit";
 import { startMetaConversionWorker } from "./meta-conversion-worker.js";
 
 const db = getDb();
 const ghl = GhlClient.fromEnv();
 
 function ghlMoneyToCents(value: unknown): number | null {
+  if(value===null||value===undefined||value==="")return null;
   const n = typeof value === "number" ? value : Number(value);
   return Number.isFinite(n) ? Math.round(n * 100) : null;
 }
@@ -57,7 +60,8 @@ async function upsertContact(rawValue: unknown) {
   const [contact] = await db.insert(schema.contacts).values(values)
     .onConflictDoUpdate({
       target: [schema.contacts.provider, schema.contacts.providerId],
-      set: values
+      set: values,
+      setWhere:sql`${schema.contacts.providerUpdatedAt} is null or excluded.provider_updated_at >= ${schema.contacts.providerUpdatedAt}`
     })
     .returning();
 
@@ -77,7 +81,7 @@ async function upsertContact(rawValue: unknown) {
       }
     });
   }
-  return contact ?? null;
+  return contact ?? await localContactByProviderId(providerId);
 }
 
 async function upsertProviderMapping(input: {
@@ -338,7 +342,7 @@ function classifyOutboundActor(message: Record<string, unknown>) {
 
 async function persistMessage(rawValue: unknown): Promise<string | null> {
   const msg = asRecord(rawValue);
-  const messageId = asString(msg.id);
+  const messageId = asString(msg.id) ?? asString(msg.messageId);
   const ghlContactId = asString(msg.contactId);
   const conversationProviderId = asString(msg.conversationId);
   const occurredAt = asDate(msg.dateAdded) ?? asDate(msg.createdAt);
@@ -402,11 +406,11 @@ async function persistMessage(rawValue: unknown): Promise<string | null> {
     }
   });
 
-  if (messageType.toLowerCase().includes("call")) {
+  if (isCallMessage(messageType)) {
     const meta = asRecord(msg.meta);
-    const durationRaw = msg.duration ?? meta.callDuration;
+    const durationRaw = msg.callDuration ?? msg.duration ?? meta.callDuration;
     const duration = typeof durationRaw === "number" ? durationRaw : Number(durationRaw);
-    const callStatus = asString(meta.callStatus) ?? asString(msg.status) ?? null;
+    const callStatus = asString(msg.callStatus) ?? asString(meta.callStatus) ?? asString(msg.status) ?? null;
     const normalizedCallStatus = callStatus?.toLowerCase() ?? "";
 
     const [call] = await db.insert(schema.calls).values({
@@ -417,7 +421,7 @@ async function persistMessage(rawValue: unknown): Promise<string | null> {
       startedAt: occurredAt,
       durationSeconds: Number.isFinite(duration) ? Math.round(duration) : null,
       status: callStatus,
-      answered: ["completed", "connected", "answered"].includes(normalizedCallStatus),
+      answered: callContactEvidence(msg).answered,
       raw: msg
     }).onConflictDoUpdate({
       target: schema.calls.providerMessageId,
@@ -426,7 +430,7 @@ async function persistMessage(rawValue: unknown): Promise<string | null> {
         actorType: actor,
         durationSeconds: Number.isFinite(duration) ? Math.round(duration) : null,
         status: callStatus,
-        answered: ["completed", "connected", "answered"].includes(normalizedCallStatus),
+        answered: callContactEvidence(msg).answered,
         raw: msg,
         updatedAt: new Date()
       }
@@ -642,162 +646,60 @@ async function syncAppointments() {
   }
 }
 
-async function ingestKnownWebhook(payload: Record<string, unknown>): Promise<boolean> {
-  const eventType = asString(payload.type) ?? asString(payload.eventType);
-  if (eventType === "AppointmentCreate" || eventType === "AppointmentUpdate") {
-    const appointment = asRecord(payload.appointment);
-    if (Object.keys(appointment).length > 0) {
-      await upsertAppointment(appointment, asString(appointment.calendarId));
-      return true;
-    }
+async function ingestKnownWebhook(payload: Record<string, unknown>): Promise<string> {
+  const type=asString(payload.type)??asString(payload.eventType)??"";
+  if(payload.locationId!==ghl.locationId)throw new UnsupportedWebhook("location_mismatch");
+  if(type==="AppointmentCreate"||type==="AppointmentUpdate") {
+    const nested=asRecord(payload.appointment),id=asString(nested.id)??asString(payload.id);
+    if(!id)throw new UnsupportedWebhook("event_identity_missing");
+    // Fetch current provider state: a delayed webhook may describe an older version.
+    const response=await ghl.getAppointment(id),row=asRecord(response.appointment??response.event??response);
+    if(!await upsertAppointment(row))throw new Error("appointment_not_reconciled");
+    return "current_provider_appointment";
   }
-  return false;
+  if(["ContactCreate","ContactUpdate","ContactDndUpdate","ContactTagUpdate"].includes(type)) {
+    const id=asString(payload.id)??asString(payload.contactId);
+    if(!id)throw new UnsupportedWebhook("event_identity_missing");
+    const response=await ghl.getContact(id),contact=await upsertContact(response.contact??response);
+    if(!contact)throw new Error("contact_not_reconciled");
+    await recomputeLeadState(contact.id);return "current_provider_contact";
+  }
+  if(type==="InboundMessage"||type==="OutboundMessage") {
+    const id=asString(payload.messageId)??asString(payload.id);
+    if(!id)throw new UnsupportedWebhook("event_identity_missing");
+    const response=await ghl.getMessage(id);
+    const contactId=await persistMessage(response.message??response);
+    if(!contactId)throw new Error("message_not_reconciled");
+    await recomputeLeadState(contactId);return "current_provider_message";
+  }
+  if(type.startsWith("Opportunity")) {await syncOpportunities();return "provider_opportunity_reconciliation";}
+  // Deletes and unrelated provider payment objects require explicit review. Never
+  // delete authoritative Hub records or claim a full sync applied an unsupported event.
+  throw new UnsupportedWebhook("unsupported_event");
 }
-
+let webhookBusy=false;
 async function processWebhookEvents() {
-  const events = await db.select().from(schema.webhookEvents)
-    .where(eq(schema.webhookEvents.processingStatus, "pending"))
-    .orderBy(asc(schema.webhookEvents.receivedAt))
-    .limit(50);
-
-  const repairEvents: typeof events = [];
-
-  for (const event of events) {
-    try {
-      await db.update(schema.webhookEvents).set({
-        processingStatus: "processing",
-        retryCount: event.retryCount + 1
-      }).where(eq(schema.webhookEvents.id, event.id));
-
-      const handledDirectly = await ingestKnownWebhook(event.payload);
-      if (!handledDirectly) {
-        repairEvents.push(event);
-        continue;
-      }
-
-      await db.update(schema.webhookEvents).set({
-        processingStatus: "processed",
-        processedAt: new Date()
-      }).where(eq(schema.webhookEvents.id, event.id));
-    } catch (error) {
-      console.error("webhook processing failed", event.id, error);
-      const attempts = event.retryCount + 1;
-      await db.update(schema.webhookEvents).set({
-        processingStatus: attempts < 5 ? "pending" : "failed"
-      }).where(eq(schema.webhookEvents.id, event.id));
-    }
-  }
-
-  if (!repairEvents.length) return;
-
-  try {
-    // Unknown or not-yet-specialized webhook types share one reconciliation pass
-    // instead of triggering a complete GHL crawl per delivery.
-    await reconcile();
-    for (const event of repairEvents) {
-      await db.update(schema.webhookEvents).set({
-        processingStatus: "processed",
-        processedAt: new Date()
-      }).where(eq(schema.webhookEvents.id, event.id));
-    }
-  } catch (error) {
-    console.error("batched webhook reconciliation failed", error);
-    for (const event of repairEvents) {
-      const attempts = event.retryCount + 1;
-      await db.update(schema.webhookEvents).set({
-        processingStatus: attempts < 5 ? "pending" : "failed"
-      }).where(eq(schema.webhookEvents.id, event.id));
-    }
-  }
+  if(webhookBusy)return;webhookBusy=true;
+  try {await processWebhookQueue(ingestKnownWebhook);}finally{webhookBusy=false;}
 }
 
+let reconcileBusy=false;
 async function reconcile() {
-  await Promise.all([
-    syncReferenceMappings(),
-    syncCustomFieldDefinitions(),
-    syncContacts()
-  ]);
-  await Promise.all([
-    syncConversationsAndCalls(),
-    syncOpportunities(),
-    syncAppointments()
-  ]);
+  if(reconcileBusy)return;reconcileBusy=true;
+  try {
+    await setSyncCursor("operations:ghl:last_attempt",new Date().toISOString());
+    const group=async(tasks:Promise<unknown>[])=>{const outcomes=await Promise.allSettled(tasks);if(outcomes.some(r=>r.status==="rejected"))throw new Error("provider_reconciliation_incomplete");};
+    await group([syncReferenceMappings(),syncCustomFieldDefinitions(),syncContacts()]);
+    await group([syncConversationsAndCalls(),syncOpportunities(),syncAppointments()]);
+    await setSyncCursor("operations:ghl:last_success",new Date().toISOString());
+  }catch {await setSyncCursor("operations:ghl:last_failure",new Date().toISOString()).catch(()=>{});throw new Error("provider_reconciliation_incomplete");}
+  finally {reconcileBusy=false;}
 }
 
+let outboxBusy=false;
 async function processOutboxEvents() {
-  const events = await db.select().from(schema.outboxEvents)
-    .where(and(
-      eq(schema.outboxEvents.processingStatus, "pending"),
-      lte(schema.outboxEvents.availableAt, new Date())
-    ))
-    .orderBy(asc(schema.outboxEvents.availableAt))
-    .limit(25);
-
-  for (const event of events) {
-    await db.update(schema.outboxEvents).set({
-      processingStatus: "processing",
-      updatedAt: new Date()
-    }).where(eq(schema.outboxEvents.id, event.id));
-
-    try {
-      if (
-        event.type !== "ghl.walkthrough_note.sync" &&
-        event.type !== "ghl.contact_note.sync"
-      ) {
-        throw new Error(`Unsupported outbox event type: ${event.type}`);
-      }
-
-      const payload = asRecord(event.payload);
-      const ghlContactId = asString(payload.ghlContactId);
-      const noteBody = asString(payload.noteBody);
-      const title =
-        asString(payload.title) ??
-        (event.type === "ghl.walkthrough_note.sync"
-          ? "EGC Walkthrough — Approved Scope"
-          : "EGC Operations Note");
-
-      if (!ghlContactId || !noteBody) {
-        throw new Error("GHL contact note writeback payload is incomplete");
-      }
-
-      const response = await ghl.createContactNote(
-        ghlContactId,
-        noteBody,
-        title
-      );
-      const noteId = asString(asRecord(response.note).id) ?? null;
-
-      await db.transaction(async (tx) => {
-        await tx.update(schema.outboxEvents).set({
-          processingStatus: "processed",
-          processedAt: new Date(),
-          lastError: null,
-          updatedAt: new Date()
-        }).where(eq(schema.outboxEvents.id, event.id));
-
-        await tx.insert(schema.auditLogs).values({
-          actor: "worker",
-          action: "ghl.contact_note.sync",
-          entity: event.type === "ghl.walkthrough_note.sync" ? "walkthrough" : "operation",
-          entityId: event.entityId,
-          newValue: { noteId, title },
-          source: "sync"
-        });
-      });
-    } catch (error) {
-      const attempts = event.retryCount + 1;
-      const delayMs = Math.min(15 * 60_000, 15_000 * 2 ** Math.min(attempts, 6));
-      const lastError = error instanceof Error ? error.message.slice(0, 500) : "unknown_error";
-
-      await db.update(schema.outboxEvents).set({
-        processingStatus: attempts < 8 ? "pending" : "failed",
-        retryCount: attempts,
-        availableAt: new Date(Date.now() + delayMs),
-        lastError,
-        updatedAt: new Date()
-      }).where(eq(schema.outboxEvents.id, event.id));
-    }
-  }
+  if(outboxBusy)return;outboxBusy=true;
+  try {await processNoteOutbox(ghl,db);}finally{outboxBusy=false;}
 }
 
 async function main() {
@@ -805,11 +707,12 @@ async function main() {
   startMetaConversionWorker();
   // A transient GHL startup failure must not stop Meta synchronization or the
   // existing webhook/outbox polling loops from being scheduled.
-  await reconcile().catch(() => console.error("Initial GHL reconciliation failed; scheduled reconciliation will retry."));
-  await processOutboxEvents().catch(() => console.error("Initial outbox processing failed; scheduled processing will retry."));
-  setInterval(() => void reconcile().catch(console.error), 5 * 60_000);
-  setInterval(() => void processWebhookEvents().catch(console.error), 15_000);
-  setInterval(() => void processOutboxEvents().catch(console.error), 15_000);
+  setInterval(() => void reconcile().catch(() => console.error("GHL background operation failed; inspect synchronization health")), 5 * 60_000);
+  setInterval(() => void processWebhookEvents().catch(() => console.error("GHL background operation failed; inspect synchronization health")), 15_000);
+  setInterval(() => void processOutboxEvents().catch(() => console.error("GHL background operation failed; inspect synchronization health")), 15_000);
+  void reconcile().catch(() => console.error("Initial GHL reconciliation failed; scheduled reconciliation will retry."));
+  void processWebhookEvents().catch(() => console.error("Initial webhook processing failed; scheduled processing will retry."));
+  void processOutboxEvents().catch(() => console.error("Initial outbox processing failed; scheduled processing will retry."));
 }
 
 await main();

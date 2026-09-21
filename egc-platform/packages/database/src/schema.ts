@@ -64,6 +64,7 @@ export const leads = pgTable("leads", {
   assignedUserId: text("assigned_user_id"),
   lastHumanOutreachAt: timestamp("last_human_outreach_at", { withTimezone: true }),
   lastCustomerResponseAt: timestamp("last_customer_response_at", { withTimezone: true }),
+  twoWayContactAt: timestamp("two_way_contact_at", { withTimezone: true }),
   firstBookedAt: timestamp("first_booked_at", { withTimezone: true }),
   lostAt: timestamp("lost_at", { withTimezone: true }),
   doNotContact: boolean("do_not_contact").default(false).notNull(),
@@ -203,6 +204,23 @@ export const jobNotes = pgTable("job_notes", {
 
 export const tasks = pgTable("tasks", {
   id: uuid("id").defaultRandom().primaryKey(),
+  workspaceId: text("workspace_id").default("egc").notNull(),
+  revision: integer("revision").default(1).notNull(),
+  kind: text("kind").default("manual").notNull(),
+  portalJobId: text("portal_job_id"),
+  portalVisitId: text("portal_visit_id"),
+  portalRevision: text("portal_revision"),
+  timeZone: text("time_zone").default("America/Denver").notNull(),
+  waitingOn: text("waiting_on").default("none").notNull(),
+  reviewAt: timestamp("review_at", { withTimezone: true }),
+  completionCondition: text("completion_condition"),
+  completionEvidence: jsonb("completion_evidence").$type<Record<string, unknown>[]>().default([]).notNull(),
+  sourceEvidence: jsonb("source_evidence").$type<Record<string, unknown>[]>().default([]).notNull(),
+  dependencies: jsonb("dependencies").$type<string[]>().default([]).notNull(),
+  draftPayload: jsonb("draft_payload").$type<Record<string, unknown> | null>(),
+  dedupeKey: text("dedupe_key"),
+  approvalStatus: text("approval_status").default("not_required").notNull(),
+
   title: text("title").notNull(),
   description: text("description"),
   priority: text("priority").default("medium").notNull(),
@@ -216,6 +234,9 @@ export const tasks = pgTable("tasks", {
   completedAt: timestamp("completed_at", { withTimezone: true }),
   ...timestamps
 }, (t) => [
+  uniqueIndex("tasks_workspace_dedupe_uq").on(t.workspaceId, t.dedupeKey),
+  index("tasks_workspace_due_idx").on(t.workspaceId, t.status, t.dueAt),
+  index("tasks_portal_job_idx").on(t.workspaceId, t.portalJobId),
   index("tasks_status_due_idx").on(t.status, t.dueAt),
   index("tasks_contact_idx").on(t.contactId),
   index("tasks_job_idx").on(t.jobId),
@@ -224,8 +245,28 @@ export const tasks = pgTable("tasks", {
 
 export const walkthroughs = pgTable("walkthroughs", {
   id: uuid("id").defaultRandom().primaryKey(),
+  workspaceId: text("workspace_id").default("egc").notNull(),
+  portalJobId: text("portal_job_id"),
+  portalVisitId: text("portal_visit_id"),
+  portalCustomerId: text("portal_customer_id"),
+  portalProjectId: text("portal_project_id"),
+  portalRevision: text("portal_revision"),
+  uploadRequestId: text("upload_request_id"),
+  audioContentType: text("audio_content_type"),
+  audioFilename: text("audio_filename"),
+  audioBytes: integer("audio_bytes"),
+  audioSha256: text("audio_sha256"),
+  attemptCount: integer("attempt_count").default(0).notNull(),
+  processingLeaseUntil: timestamp("processing_lease_until", { withTimezone: true }),
+  lastErrorCode: text("last_error_code"),
+  uploadedBy: text("uploaded_by"),
+  approvalRequestId: text("approval_request_id"),
+  approvedRevision: text("approved_revision"),
+  approvalPayload: jsonb("approval_payload").$type<Record<string, unknown>>(),
+  approvalFingerprint: text("approval_fingerprint"),
+  extractionVersion: integer("extraction_version").default(1).notNull(),
   jobId: uuid("job_id").references(() => jobs.id, { onDelete: "cascade" }),
-  contactId: uuid("contact_id").references(() => contacts.id, { onDelete: "cascade" }).notNull(),
+  contactId: uuid("contact_id").references(() => contacts.id, { onDelete: "cascade" }),
   status: text("status").default("draft").notNull(),
   audioObjectKey: text("audio_object_key"),
   transcript: text("transcript"),
@@ -233,7 +274,42 @@ export const walkthroughs = pgTable("walkthroughs", {
   approvedAt: timestamp("approved_at", { withTimezone: true }),
   approvedBy: text("approved_by"),
   ...timestamps
-});
+}, t => [uniqueIndex("walkthroughs_upload_request_uq").on(t.workspaceId, t.uploadRequestId), index("walkthroughs_processing_idx").on(t.status, t.processingLeaseUntil)]);
+
+// Provider mutations are claimed durably before HTTP. An uncertain write can only
+// reconcile its outcome; a retry must never turn uncertainty into a second create.
+export const appointmentOperations = pgTable("appointment_operations", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  operationKey: text("operation_key").notNull(),
+  resourceKey: text("resource_key").notNull(),
+  kind: text("kind").notNull(),
+  payloadHash: text("payload_hash").notNull(),
+  request: jsonb("request").$type<Record<string, unknown>>().notNull(),
+  status: text("status").default("pending").notNull(),
+  providerAppointmentId: text("provider_appointment_id"),
+  response: jsonb("response").$type<Record<string, unknown>>(),
+  lastError: text("last_error"),
+  attemptCount: integer("attempt_count").default(0).notNull(),
+  leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+  lastAttemptAt: timestamp("last_attempt_at", { withTimezone: true }),
+  ...timestamps
+}, t => [uniqueIndex("appointment_operations_key_uq").on(t.operationKey), index("appointment_operations_resource_idx").on(t.resourceKey, t.status)]);
+
+export const communicationExecutions = pgTable("communication_executions", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  requestId: uuid("request_id").notNull(),
+  actorId: text("actor_id").notNull(),
+  contactId: uuid("contact_id").references(() => contacts.id).notNull(),
+  channel: text("channel").notNull(),
+  payloadHash: text("payload_hash").notNull(),
+  payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
+  status: text("status").default("in_flight").notNull(),
+  providerMessageId: text("provider_message_id"),
+  response: jsonb("response").$type<Record<string, unknown>>(),
+  lastError: text("last_error"),
+  verifiedAt: timestamp("verified_at", { withTimezone: true }),
+  ...timestamps
+}, t => [uniqueIndex("communication_executions_request_uq").on(t.actorId,t.requestId),index("communication_executions_contact_idx").on(t.contactId,t.createdAt)]);
 
 export const webhookEvents = pgTable("webhook_events", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -243,7 +319,11 @@ export const webhookEvents = pgTable("webhook_events", {
   receivedAt: timestamp("received_at", { withTimezone: true }).defaultNow().notNull(),
   processedAt: timestamp("processed_at", { withTimezone: true }),
   processingStatus: text("processing_status").default("pending").notNull(),
-  retryCount: integer("retry_count").default(0).notNull()
+  retryCount: integer("retry_count").default(0).notNull(),
+  processingStartedAt: timestamp("processing_started_at", { withTimezone: true }),
+  availableAt: timestamp("available_at", { withTimezone: true }).defaultNow().notNull(),
+  lastError: text("last_error"),
+  resolution: text("resolution")
 }, (t) => [
   uniqueIndex("webhook_provider_event_uq").on(t.providerEventId),
   index("webhook_status_idx").on(t.processingStatus)
@@ -334,6 +414,51 @@ export const auditLogs = pgTable("audit_logs", {
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull()
 });
 
+
+// Operations records extend the canonical tasks table; there is no second task store.
+export const operationEvents = pgTable("operation_events", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  workspaceId: text("workspace_id").notNull(),
+  taskId: uuid("task_id").references(() => tasks.id, { onDelete: "restrict" }),
+  revision: integer("revision"),
+  type: text("type").notNull(),
+  actorId: text("actor_id").notNull(),
+  actorKind: text("actor_kind").notNull(),
+  source: text("source").notNull(),
+  evidence: jsonb("evidence").$type<Record<string, unknown>>().default({}).notNull(),
+  occurredAt: timestamp("occurred_at", { withTimezone: true }).defaultNow().notNull()
+}, t => [index("operation_events_task_idx").on(t.workspaceId, t.taskId, t.occurredAt)]);
+
+export const operationApprovals = pgTable("operation_approvals", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  workspaceId: text("workspace_id").notNull(),
+  taskId: uuid("task_id").references(() => tasks.id, { onDelete: "restrict" }).notNull(),
+  taskRevision: integer("task_revision").notNull(),
+  fingerprint: text("fingerprint").notNull(),
+  snapshot: jsonb("snapshot").$type<Record<string, unknown>>().notNull(),
+  actorId: text("actor_id").notNull(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull()
+}, t => [index("operation_approvals_exact_idx").on(t.workspaceId, t.taskId, t.taskRevision, t.fingerprint)]);
+
+export const operationRequests = pgTable("operation_requests", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  workspaceId: text("workspace_id").notNull(),
+  actorId: text("actor_id").notNull(),
+  requestId: uuid("request_id").notNull(),
+  digest: text("digest").notNull(),
+  response: jsonb("response").$type<Record<string, unknown>>().notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull()
+}, t => [uniqueIndex("operation_requests_key_uq").on(t.workspaceId, t.actorId, t.requestId)]);
+
+export const operationBriefs = pgTable("operation_briefs", {
+  id: uuid("id").primaryKey(),
+  workspaceId: text("workspace_id").notNull(),
+  generatedBy: text("generated_by").notNull(),
+  generatedAt: timestamp("generated_at", { withTimezone: true }).notNull(),
+  timeZone: text("time_zone").notNull(),
+  snapshot: jsonb("snapshot").$type<Record<string, unknown>>().notNull()
+}, t => [index("operation_briefs_workspace_time_idx").on(t.workspaceId, t.generatedAt)]);
 // Only normalized attribution and hashed matching payloads belong here. Never tokens,
 // raw contact snapshots, HTTP headers, or unfiltered provider error messages.
 export const metaConversionEvents = pgTable("meta_conversion_events", {

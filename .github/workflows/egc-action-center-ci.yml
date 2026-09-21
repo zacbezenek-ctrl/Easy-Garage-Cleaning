@@ -1,0 +1,125 @@
+name: EGC Action Center CI
+on:
+  workflow_call:
+    inputs:
+      ref:
+        type: string
+        required: false
+        default: ''
+  pull_request:
+    paths: ['egc-platform/**','functions/**','employee*','tests/**','.github/workflows/egc-action-center-ci.yml']
+  push:
+    branches: [main]
+    paths: ['egc-platform/**','functions/**','employee*','tests/**','.github/workflows/egc-action-center-ci.yml']
+permissions:
+  contents: read
+jobs:
+  database-and-platform:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: egc_test
+          POSTGRES_PASSWORD: isolated_ci_only
+          POSTGRES_DB: egc_operations_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U egc_test -d egc_operations_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgres://egc_test:isolated_ci_only@localhost:5432/egc_operations_test
+      EGC_OPERATIONS_TEST: isolated
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --ignore-scripts
+      - run: pnpm install --no-frozen-lockfile
+        working-directory: egc-platform
+      - name: Existing Hub and portal contract regression tests
+        run: npm test
+      - name: Build shared packages
+        run: pnpm build:packages
+        working-directory: egc-platform
+      - name: Typecheck platform
+        run: pnpm typecheck
+        working-directory: egc-platform
+      - name: All platform unit tests
+        run: pnpm test
+        working-directory: egc-platform
+      - name: Build all applications
+        run: pnpm build
+        working-directory: egc-platform
+      - name: Apply checked-in migrations twice
+        run: |
+          pnpm --filter @egc/database migrate:runtime
+          pnpm --filter @egc/database migrate:runtime
+        working-directory: egc-platform
+      - name: Existing task adapter database regression tests
+        run: pnpm --filter @egc/lead-audit test:operations:integration
+        working-directory: egc-platform
+      - name: Durable actions, approvals, idempotency and source invalidation
+        run: |
+          pnpm --filter @egc/operations test:integration
+          node --test services/operations/test/timeline.check.mjs
+          node --test services/operations/test/message-completion.check.mjs
+          node --test services/operations/test/legacy-walkthrough.check.mjs
+        working-directory: egc-platform
+      - name: Durable appointment claims and unknown-outcome reconciliation
+        run: |
+          node --test apps/mcp/test/appointments-postgres.check.mjs
+          node --test apps/api/test/scheduling-postgres.check.mjs
+        working-directory: egc-platform
+      - name: Durable recording intake, retries and authoritative review
+        run: pnpm --filter @egc/api test:recordings:integration
+        working-directory: egc-platform
+      - name: Unanswered customer replies and protected reconciliation health
+        run: pnpm --filter @egc/api test:inbound:integration
+        working-directory: egc-platform
+      - name: Webhook lease takeover and terminal outcome fencing
+        run: node --test apps/worker/test/webhooks-postgres.check.mjs
+        working-directory: egc-platform
+      - name: Authorized customer communications and provider note write recovery
+        run: |
+          node --test apps/mcp/test/communications-postgres.check.mjs
+          node --test apps/worker/test/notes-postgres.check.mjs
+          pnpm --filter @egc/api test:provider-notes:integration
+        working-directory: egc-platform
+      - name: Verify schema has no uncommitted migration drift
+        run: |
+          pnpm db:generate
+          test -z "$(git status --porcelain packages/database/migrations)"
+        working-directory: egc-platform
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install playwright==1.57.0
+      - run: python -m playwright install --with-deps chromium
+      - name: Isolated real-browser Action Center tests
+        run: python tests/browser/test_operations_ui.py
+      - name: Isolated real-browser recording review tests
+        run: python tests/browser/test_recordings_ui.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: egc-action-center-browser-${{ github.run_id }}
+          path: test-results/
+          if-no-files-found: ignore
+          retention-days: 3

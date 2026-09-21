@@ -4,7 +4,7 @@ import { walkthroughExtractionSchema, type WalkthroughExtraction } from "@egc/sc
 
 function client() {
   if (!process.env.OPENAI_API_KEY) throw new Error("OPENAI_API_KEY is required");
-  return new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  return new OpenAI({ apiKey: process.env.OPENAI_API_KEY, timeout: 120_000, maxRetries: 1 });
 }
 
 export async function transcribeWalkthrough(
@@ -36,6 +36,8 @@ export async function extractWalkthrough(transcript: string): Promise<Walkthroug
               "If a field is unknown, use null/unknown/empty values allowed by the schema.",
               "Preserve customer distinctions between remove, keep, and relocate.",
               "Pest observations are observations only; do not infer an active infestation.",
+              "Proposed actions are drafts, never completed work. Extract explicit promises and follow-ups with an exact source quote.",
+              "Never invent an owner, deadline, price, payment, customer approval, or a promise. Leave unknown ownerMention and dueMention null.",
               "Return structured data only."
             ].join(" ")
           }

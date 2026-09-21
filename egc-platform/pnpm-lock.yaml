@@ -35,6 +35,15 @@ importers:
       '@egc/database':
         specifier: workspace:*
         version: link:../../packages/database
+      '@egc/ghl':
+        specifier: workspace:*
+        version: link:../../packages/ghl
+      '@egc/lead-audit':
+        specifier: workspace:*
+        version: link:../../services/lead-audit
+      '@egc/operations':
+        specifier: workspace:*
+        version: link:../../services/operations
       '@egc/schemas':
         specifier: workspace:*
         version: link:../../packages/schemas
@@ -63,6 +72,9 @@ importers:
       typescript:
         specifier: ^6.0.2
         version: 6.0.3
+      vitest:
+        specifier: ^3.2.4
+        version: 3.2.7(@types/node@24.13.6)(tsx@4.23.13)
 
   apps/mcp:
     dependencies:
@@ -78,6 +90,9 @@ importers:
       '@egc/meta-conversions':
         specifier: workspace:*
         version: link:../../services/meta-conversions
+      '@egc/operations':
+        specifier: workspace:*
+        version: link:../../services/operations
       '@egc/schemas':
         specifier: workspace:*
         version: link:../../packages/schemas
@@ -158,6 +173,9 @@ importers:
       '@egc/meta-conversions':
         specifier: workspace:*
         version: link:../../services/meta-conversions
+      '@egc/operations':
+        specifier: workspace:*
+        version: link:../../services/operations
       drizzle-orm:
         specifier: 0.44.5
         version: 0.44.5(postgres@3.4.7)
@@ -274,6 +292,34 @@ importers:
       postgres:
         specifier: 3.4.7
         version: 3.4.7
+      typescript:
+        specifier: ^6.0.2
+        version: 6.0.3
+      vitest:
+        specifier: ^3.2.4
+        version: 3.2.7(@types/node@24.13.6)(tsx@4.23.13)
+
+  services/operations:
+    dependencies:
+      '@egc/database':
+        specifier: workspace:*
+        version: link:../../packages/database
+      '@egc/lead-audit':
+        specifier: workspace:*
+        version: link:../lead-audit
+      '@egc/schemas':
+        specifier: workspace:*
+        version: link:../../packages/schemas
+      drizzle-orm:
+        specifier: 0.44.5
+        version: 0.44.5(postgres@3.4.7)
+      zod:
+        specifier: 4.6.4
+        version: 4.6.4
+    devDependencies:
+      '@types/node':
+        specifier: ^24.5.2
+        version: 24.13.6
       typescript:
         specifier: ^6.0.2
         version: 6.0.3

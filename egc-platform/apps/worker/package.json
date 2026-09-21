@@ -12,6 +12,7 @@
     "@egc/database": "workspace:*",
     "@egc/ghl": "workspace:*",
     "@egc/lead-audit": "workspace:*",
+    "@egc/operations": "workspace:*",
     "@egc/meta-conversions": "workspace:*",
     "drizzle-orm": "0.44.5"
   },

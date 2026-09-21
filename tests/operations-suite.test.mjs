@@ -1,3 +1,4 @@
+import {sourceFiles} from './source-files.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -893,7 +894,7 @@ test('public quote progress and production links stay configured',()=>{
   assert.match(commercial,/const shell=form\.closest\('\.quote-form'\)\|\|document/);
   assert.match(commercial,/const dots=shell\.querySelectorAll\('\.form-step-dot'\)/);
   assert.match(commercial,/const lbl=shell\.querySelector\('\.form-step-label'\)/);
-  const publicSource=fs.readdirSync(new URL('..',import.meta.url),{recursive:true,withFileTypes:true})
+  const publicSource=sourceFiles(new URL('..',import.meta.url))
     .filter(x=>x.isFile()&&/\.(?:html|py)$/.test(x.name))
     .map(x=>fs.readFileSync(`${x.parentPath}/${x.name}`,'utf8')).join('\n');
   assert.doesNotMatch(publicSource,/fcgov\.com\/chamber|"CLARITY_PROJECT_ID"|(?:facebook|instagram)\.com\/PLACEHOLDER|yelp\.com\/biz\/PLACEHOLDER/);

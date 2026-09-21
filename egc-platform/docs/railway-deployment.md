@@ -8,9 +8,9 @@ Create one Railway project with:
 
 - `egc-postgres` — managed PostgreSQL.
 - `egc-worker` — background GHL reconciliation, transcript synchronization, webhook repair, outbox write-back, and database migrations.
-- `egc-api` — verified GHL webhook receiver and voice walkthrough API.
-- `egc-mcp` — read-only, OAuth-protected MCP server for ChatGPT.
-- `egc-portal` — authenticated internal operations portal.
+- `egc-api` — verified GHL webhook receiver, canonical operations service, recording processor and inbound-reply reconciliation.
+- `egc-mcp` — OAuth-protected, scoped and audited read/write tools for ChatGPT.
+- `egc-portal` — legacy authenticated platform views. The existing Cloudflare Employee Hub remains the operational schedule, customer, project and job authority.
 
 Redis is not required by the current V1 worker.
 
@@ -20,18 +20,18 @@ Use the GitHub repository:
 
 `zacbezenek-ctrl/Easy-Garage-Cleaning`
 
-Deploy the branch containing the platform until PR #40 is merged, then switch production to `main`.
+Deploy the reviewed and merged `main` commit. Verify the actual deployment's commit hash; a redeploy of an old deployment can reuse its old source snapshot.
 
-All application services use repository root `/egc-platform` as the build context.
+All application services use repository root `/` as the build context, with watch path `/egc-platform/**`.
 
 Set the custom Dockerfile paths:
 
 | Service | Dockerfile |
 | --- | --- |
-| egc-api | `/infra/docker/Dockerfile.api` |
-| egc-mcp | `/infra/docker/Dockerfile.mcp` |
-| egc-worker | `/infra/docker/Dockerfile.worker` |
-| egc-portal | `/infra/docker/Dockerfile.portal` |
+| egc-api | `/egc-platform/infra/docker/Dockerfile.api` |
+| egc-mcp | `/egc-platform/infra/docker/Dockerfile.mcp` |
+| egc-worker | `/egc-platform/infra/docker/Dockerfile.worker` |
+| egc-portal | `/egc-platform/infra/docker/Dockerfile.portal` |
 
 Railway injects `PORT`; the API, MCP, and portal honor it automatically.
 
@@ -51,7 +51,7 @@ Use private networking from portal to API when possible. Set `API_URL` to the AP
 
 Attach the managed Postgres `DATABASE_URL` to all four application services.
 
-The worker runs checked-in Drizzle migrations before starting. API, MCP, and portal health endpoints return HTTP 503 until the migrated `contacts` table is available, preventing premature traffic activation.
+The worker runs checked-in Drizzle migrations before starting. API and MCP use pre-deploy command `pnpm --filter @egc/database migrate:runtime`. The migrator serializes concurrent migration runners with a PostgreSQL advisory lock. API and MCP readiness checks also verify the communication ledger; HTTP 200 alone is not functional acceptance.
 
 ## Persistent audio
 
@@ -94,6 +94,8 @@ The OAuth client secret is not required for the private-integration-token sync p
 ```
 API_BEARER_TOKEN=<random 32+ byte value>
 OPENAI_API_KEY=<OpenAI API key>
+GHL_LOCATION_ID=<EGC location>
+GHL_PRIVATE_INTEGRATION_TOKEN=<existing private integration token>
 STORAGE_DRIVER=filesystem
 STORAGE_PATH=/data/egc
 ```
@@ -150,3 +152,27 @@ Configure GHL to send supported webhook events to:
 `https://<egc-api-host>/webhooks/ghl`
 
 The receiver verifies the GHL Ed25519 signature. Webhooks provide low latency; the five-minute worker reconciliation remains the repair/fallback path.
+
+Register subscriptions in the authenticated HighLevel Marketplace app configuration. A private integration token alone does not register webhooks. The receiver rejects missing/invalid signatures and other locations before queuing, persists duplicate-safe receipts, and returns a retryable failure if persistence fails. Unsupported/deletion payloads remain visible for review instead of silently deleting operational history.
+
+## Employee Hub activation
+
+Deploy the root site and Pages Functions to the existing Cloudflare Pages project. Keep `EGC_OPERATIONS_ENABLED=false` until both sides of the signed bridge are deployed and verified. Existing Meta variables and behavior are independent; do not alter them as part of this release.
+
+| Variable | Services |
+| --- | --- |
+| `EGC_OPERATIONS_WORKSPACE=egc` | API, MCP, Cloudflare |
+| `EGC_OPERATIONS_ENABLED=true` | API, MCP, Cloudflare and legacy Railway portal, after bridge verification |
+| `EGC_OPERATIONS_API_ORIGIN` | MCP and Cloudflare; existing API HTTPS origin |
+| `EGC_PORTAL_ORIGIN` | API; existing Employee Hub HTTPS origin |
+| `EGC_OPERATIONS_MCP_SIGNING_SECRET` | Identical strong server-only secret on API and MCP |
+| `EGC_OPERATIONS_PORTAL_SIGNING_SECRET` | Identical strong server-only secret on API and Cloudflare |
+| `GHL_WALKTHROUGH_CALENDAR_ID`, `GHL_JOBS_CALENDAR_ID` | API; verified existing provider calendars |
+
+Use distinct cryptographically random signing keys. Never put keys in browser code, requests shown to users, logs or Git. Hub requests carry the authenticated user's actual role; MCP requests carry the verified integration principal. Human recording/draft approvals require a real signed-in Hub owner or manager.
+
+After activation, the API independently processes unanswered replies every minute. It uses an explicitly configured verified owner or the sole authoritative Hub owner; unresolved ownership remains an exception. Automatic reconciliation begins at durable activation, with explicit bounded historical reconciliation available through MCP. Shared appointment and note ledgers protect native Hub and MCP retries. Unknown provider outcomes require verification, never a blind replacement.
+
+Temporarily set `EGC_OPERATIONS_VERIFY_ON_START=true` on MCP to verify authenticated loopback discovery and an existing read without exposing tokens. With the bridge enabled, `EGC_OPERATIONS_CANARY_ON_START=true` additionally creates and completes one clearly labeled, unlinked internal task per release. It sends no customer communication and makes no provider booking. Inspect the allowlisted `operations_startup_verification` log, then remove the temporary flags.
+
+Complete the [production acceptance matrix](../../docs/operations-production-acceptance.md). Keep blocked live scenarios explicit; isolated tests do not certify live recordings, webhook subscriptions, payment evidence or Hub deployment.

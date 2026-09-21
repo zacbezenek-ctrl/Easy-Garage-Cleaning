@@ -1,6 +1,11 @@
-import { and, desc, eq, gte, inArray } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, sql } from "drizzle-orm";
 import { getDb, schema } from "@egc/database";
+import { communicationSummary } from "./communications.js";
+export { communicationSummary, callContactEvidence, isCallMessage } from "./communications.js";
 import type { LeadState } from "@egc/schemas";
+
+/** Explicit EGC validation markers only. A name containing "test" is not evidence. */
+export const businessContactPredicate=()=>sql`not (${schema.contacts.tags} @> '["egc-test"]'::jsonb or lower(coalesce(${schema.contacts.source},'')) = 'egc synthetic routing validation')`;
 
 export type LeadAuditRow = {
   leadId: string;
@@ -13,6 +18,7 @@ export type LeadAuditRow = {
   createdAt: Date;
   lastHumanOutreachAt: Date | null;
   lastCustomerResponseAt: Date | null;
+  twoWayContactAt: Date | null;
   hasEverResponded: boolean;
   hasHumanOutreach: boolean;
   humanContactEstablished: boolean;
@@ -60,7 +66,7 @@ function enrichLeadAuditRow(row: BaseLeadAuditRow): LeadAuditRow {
   const terminal = row.state === "BOOKED" || row.state === "LOST" || row.state === "DO_NOT_CONTACT";
   const hasHumanOutreach = Boolean(row.lastHumanOutreachAt);
   const hasEverResponded = Boolean(row.lastCustomerResponseAt);
-  const twoWayConversationEstablished = hasHumanOutreach && hasEverResponded;
+  const twoWayConversationEstablished = Boolean(row.twoWayContactAt);
 
   let lastInteractionDirection: "customer" | "human" | null = null;
   if (row.lastCustomerResponseAt || row.lastHumanOutreachAt) {
@@ -74,7 +80,7 @@ function enrichLeadAuditRow(row: BaseLeadAuditRow): LeadAuditRow {
   const needsFollowUp = !terminal && (
     !row.lastHumanOutreachAt ||
     !row.lastCustomerResponseAt ||
-    row.lastHumanOutreachAt.valueOf() > row.lastCustomerResponseAt.valueOf()
+    row.lastHumanOutreachAt.valueOf() !== row.lastCustomerResponseAt.valueOf()
   );
 
   let followUpReason: string | null = null;
@@ -85,6 +91,8 @@ function enrichLeadAuditRow(row: BaseLeadAuditRow): LeadAuditRow {
       followUpReason = "No human outreach recorded";
     } else if (!row.lastCustomerResponseAt) {
       followUpReason = "Human outreach recorded; customer has never responded";
+    } else if (lastInteractionDirection === "customer") {
+      followUpReason = "Latest customer reply awaits EGC review";
     } else {
       followUpReason = "Customer previously responded, but the latest human outreach is awaiting a reply";
     }
@@ -108,50 +116,13 @@ export async function recomputeLeadState(contactId: string): Promise<LeadState> 
     .where(eq(schema.leads.contactId, contactId)).limit(1);
   if (!lead) throw new Error(`Lead not found for contact ${contactId}`);
 
-  const [humanOutreach] = await db
-    .select({ at: schema.messages.occurredAt })
-    .from(schema.messages)
-    .where(and(
-      eq(schema.messages.contactId, contactId),
-      eq(schema.messages.direction, "outbound"),
-      eq(schema.messages.actorType, "human")
-    ))
-    .orderBy(desc(schema.messages.occurredAt))
-    .limit(1);
-
-  const [humanCall] = await db
-    .select({ at: schema.calls.startedAt })
-    .from(schema.calls)
-    .where(and(
-      eq(schema.calls.contactId, contactId),
-      eq(schema.calls.direction, "outbound"),
-      eq(schema.calls.actorType, "human")
-    ))
-    .orderBy(desc(schema.calls.startedAt))
-    .limit(1);
-
-  const [customerReply] = await db
-    .select({ at: schema.messages.occurredAt })
-    .from(schema.messages)
-    .where(and(
-      eq(schema.messages.contactId, contactId),
-      eq(schema.messages.direction, "inbound"),
-      eq(schema.messages.actorType, "customer")
-    ))
-    .orderBy(desc(schema.messages.occurredAt))
-    .limit(1);
-
-  const [customerCall] = await db
-    .select({ at: schema.calls.startedAt })
-    .from(schema.calls)
-    .where(and(
-      eq(schema.calls.contactId, contactId),
-      eq(schema.calls.direction, "inbound"),
-      eq(schema.calls.actorType, "customer")
-    ))
-    .orderBy(desc(schema.calls.startedAt))
-    .limit(1);
-
+  const [messages, calls] = await Promise.all([
+    db.select().from(schema.messages).where(eq(schema.messages.contactId, contactId)),
+    db.select().from(schema.calls).where(eq(schema.calls.contactId, contactId))
+  ]);
+  const evidence = communicationSummary(
+    messages.map(m => ({...m, at:m.occurredAt})), calls.map(c => ({...c, at:c.startedAt}))
+  );
   const [booking] = await db
     .select({ at: schema.appointments.appointmentCreatedAt })
     .from(schema.appointments)
@@ -171,10 +142,10 @@ export async function recomputeLeadState(contactId: string): Promise<LeadState> 
     ))
     .limit(1);
 
-  const lastHumanOutreachAt = latestDate(humanOutreach?.at, humanCall?.at);
-  const lastCustomerResponseAt = latestDate(customerReply?.at, customerCall?.at);
+  const {lastHumanOutreachAt, lastCustomerResponseAt, twoWayContactAt} = evidence;
   const now = Date.now();
   const conversationActive = Boolean(
+    twoWayContactAt &&
     lastCustomerResponseAt &&
     lastHumanOutreachAt &&
     Math.abs(lastCustomerResponseAt.valueOf() - lastHumanOutreachAt.valueOf()) < 72 * 60 * 60 * 1000 &&
@@ -194,6 +165,7 @@ export async function recomputeLeadState(contactId: string): Promise<LeadState> 
     currentState: state,
     lastHumanOutreachAt,
     lastCustomerResponseAt,
+    twoWayContactAt,
     firstBookedAt: booking?.at ?? lead.firstBookedAt,
     updatedAt: new Date()
   }).where(eq(schema.leads.id, lead.id));
@@ -214,11 +186,12 @@ async function recentLeadRows(days: number): Promise<LeadAuditRow[]> {
     state: schema.leads.currentState,
     createdAt: schema.leads.createdAt,
     lastHumanOutreachAt: schema.leads.lastHumanOutreachAt,
-    lastCustomerResponseAt: schema.leads.lastCustomerResponseAt
+    lastCustomerResponseAt: schema.leads.lastCustomerResponseAt,
+    twoWayContactAt: schema.leads.twoWayContactAt
   })
   .from(schema.leads)
   .innerJoin(schema.contacts, eq(schema.leads.contactId, schema.contacts.id))
-  .where(gte(schema.leads.createdAt, since))
+  .where(and(gte(schema.leads.createdAt, since),businessContactPredicate()))
   .orderBy(schema.leads.createdAt) as BaseLeadAuditRow[];
 
   return rows.map(enrichLeadAuditRow);

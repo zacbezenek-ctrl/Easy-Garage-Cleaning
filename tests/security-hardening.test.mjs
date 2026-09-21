@@ -5,16 +5,13 @@ import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHubSessionCookie } from '../functions/_lib/hub-session.js';
 import { encodeFirestoreFields } from '../functions/_lib/firestore-job.js';
+import {sourceFiles} from './source-files.mjs';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const read = path => readFileSync(join(root, path), 'utf8');
 
 function files(dir = root) {
-  return readdirSync(dir, { withFileTypes: true }).flatMap(entry => {
-    const path = join(dir, entry.name);
-    if (entry.name === '.git' || entry.name === 'node_modules') return [];
-    return entry.isDirectory() ? files(path) : [path];
-  });
+  return sourceFiles(dir).map(entry=>join(entry.parentPath,entry.name));
 }
 
 test('all generated JSON-LD remains valid JSON', () => {
