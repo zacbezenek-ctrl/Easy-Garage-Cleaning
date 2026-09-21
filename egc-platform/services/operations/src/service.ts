@@ -1,5 +1,7 @@
-import {randomUUID} from "node:crypto";
-import {and,asc,desc,eq,gt,gte,inArray,isNull,lt,notInArray,or,sql} from "drizzle-orm";
+import {customerTimeline,type PortalTimelineEvent} from "./timeline.js";
+import {operationalHealth} from "./health.js";
+import {createHash,randomUUID} from "node:crypto";
+import {and,asc,desc,eq,gt,gte,inArray,isNull,lt,ne,notInArray,or,sql} from "drizzle-orm";
 import {getDb,schema} from "@egc/database";
 import {buildDueWorkSnapshot,collectTaskPages,pageDueWork,type QueueSnapshot,type SourceCoverage,type WaitingOn} from "@egc/lead-audit/operations-core";
 import {authorize,commandSchema,OperationsError,WRITE_COMMANDS,type Actor,type Command} from "./contracts.js";
@@ -19,6 +21,8 @@ export interface OperationsConfiguration {
   resolvePortalJob?:(id:string)=>Promise<PortalJobReference>;
   resolveOwner?:(id:string)=>Promise<boolean>;
   portalRead?:(actor:Actor,command:Command)=>Promise<Record<string,unknown>>;
+  syncSchedule?:(actor:Actor,command:Extract<Command,{command:"schedule.sync_provider"}>)=>Promise<Record<string,unknown>>;
+  ensureProviderNote?:(actor:Actor,command:Extract<Command,{command:"provider.note.ensure"}>)=>Promise<Record<string,unknown>>;
 }
 
 /** One service over the existing task records. All public adapters must authenticate
@@ -33,8 +37,34 @@ export class OperationsService {
     if (!parsed.success) throw new OperationsError("invalid_command",400,{issues:parsed.error.issues.map(i=>({path:i.path,message:i.message}))});
     const command=parsed.data;
     authorize(actor,command,this.config.workspace);
+    if(command.command==="provider.note.ensure"){
+      if(!this.config.ensureProviderNote)throw new OperationsError("provider_note_bridge_unavailable",503);
+      return this.config.ensureProviderNote(actor,command);
+    }
+    const portalEvents:PortalTimelineEvent[]=[];
+    if(command.command==="schedule.sync_provider"){
+      if(!this.config.syncSchedule)throw new OperationsError("schedule_provider_sync_unavailable",503);
+      return this.config.syncSchedule(actor,command);
+    }
+    if(command.command==="history" && command.portalJobId) {
+      if(!this.config.resolvePortalJob)throw new OperationsError("portal_authority_unavailable",503);
+      const record=await this.config.resolvePortalJob(command.portalJobId);
+      if(!record.highlevelContactId)throw new OperationsError("portal_customer_link_unresolved",409);
+      const [contact]=await this.db.select({id:schema.contacts.id}).from(schema.contacts).where(and(eq(schema.contacts.provider,"ghl"),eq(schema.contacts.providerId,record.highlevelContactId))).limit(1);
+      if(!contact)throw new OperationsError("portal_customer_not_reconciled",409);
+      if(command.contactId && command.contactId!==contact.id)throw new OperationsError("portal_contact_mismatch",409);
+      command.contactId=contact.id;
+      if(this.config.portalRead){
+        const detail=await this.config.portalRead(actor,{command:"portal.job",jobId:command.portalJobId});
+        const job=detail.job as Record<string,unknown>|undefined,finance=detail.financials as Record<string,unknown>|undefined;
+        if(!job||job.id!==command.portalJobId||job.highlevelContactId!==record.highlevelContactId)throw new OperationsError("portal_identity_changed",409);
+        for(const value of Array.isArray(finance?.timeline)?finance.timeline:[]){const e=value as PortalTimelineEvent;if(e&&typeof e.id==="string"&&typeof e.kind==="string"&&typeof e.at==="string"&&Number.isFinite(Date.parse(e.at)))portalEvents.push({...e,id:"hub:"+e.id,data:{...e.data,authority:"employee_hub",association:"exact_portal_record"}});}
+        for(const value of Array.isArray(job.operationNotes)?job.operationNotes:[]){const n=value as Record<string,unknown>;if(typeof n.createdAt==="string"&&Number.isFinite(Date.parse(n.createdAt)))portalEvents.push({id:"hub-note:"+String(n.id),kind:"job_note",at:n.createdAt,data:{body:n.body,actor:n.actorId,portalJobId:job.id,projectId:job.projectId,supersedes:n.supersedes,authority:"employee_hub",association:"exact_portal_record"}});}
+        if(job.type==="walkthrough"&&typeof job.completedAt==="string"&&Number.isFinite(Date.parse(job.completedAt)))portalEvents.push({id:"hub-walkthrough:"+String(job.id),kind:"walkthrough_completed",at:job.completedAt,data:{portalVisitId:job.id,authority:"employee_hub",association:"exact_visit"}});
+      }
+    }
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestId)) throw new OperationsError("request_id_required",400);
-    if (["calendar","portal.job","portal.members"].includes(command.command)) {
+    if (["portal.note.add","portal.job.edit","portal.project.ensure","calendar","portal.job","portal.members","portal.revenue","portal.rules","schedule.resolve","schedule.mutate","schedule.bind_provider","schedule.link_customer"].includes(command.command)) {
       if (!this.config.portalRead) throw new OperationsError("portal_authority_unavailable",503);
       return this.config.portalRead(actor,command);
     }
@@ -56,7 +86,7 @@ export class OperationsService {
         throw new OperationsError("portal_visit_job_mismatch",409);
     }
     if (!WRITE_COMMANDS.has(command.command)) {
-      return this.db.transaction(tx=>this.read(tx,actor,command),{isolationLevel:"repeatable read",accessMode:"read only"});
+      return this.db.transaction(tx=>this.read(tx,actor,command,portalEvents),{isolationLevel:"repeatable read",accessMode:"read only"});
     }
     return this.db.transaction(async tx=>{
       // Serialize retries of one authenticated logical request. Different request IDs
@@ -85,37 +115,39 @@ export class OperationsService {
   private assertRevision(task:Task,revision:number) {
     if (task.revision!==revision) throw new OperationsError("task_revision_conflict",409,{taskId:task.id,currentRevision:task.revision});
   }
-  private async context(tx:Tx,task:Task) {
+  private async context(tx:Tx,task:Task,ignoreProviderMessageId?:string) {
     if (!task.contactId) return {contactId:null,lastMessage:null,lastCall:null,contactRestricted:null};
     const [message]=await tx.select({id:schema.messages.id,at:schema.messages.updatedAt,body:schema.messages.body,direction:schema.messages.direction})
-      .from(schema.messages).where(eq(schema.messages.contactId,task.contactId)).orderBy(desc(schema.messages.updatedAt),desc(schema.messages.id)).limit(1);
+      .from(schema.messages).where(and(eq(schema.messages.contactId,task.contactId),ignoreProviderMessageId?ne(schema.messages.providerId,ignoreProviderMessageId):undefined)).orderBy(desc(schema.messages.updatedAt),desc(schema.messages.id)).limit(1);
     const [call]=await tx.select({id:schema.calls.id,at:schema.calls.updatedAt,status:schema.calls.status})
       .from(schema.calls).where(eq(schema.calls.contactId,task.contactId)).orderBy(desc(schema.calls.updatedAt),desc(schema.calls.id)).limit(1);
     const [lead]=await tx.select({restricted:schema.leads.doNotContact}).from(schema.leads).where(eq(schema.leads.contactId,task.contactId)).limit(1);
     return jsonRecord({contactId:task.contactId,lastMessage:message??null,lastCall:call??null,contactRestricted:lead?.restricted??null});
   }
-  private async preview(tx:Tx,task:Task) {
+  private async preview(tx:Tx,task:Task,ignoreProviderMessageId?:string) {
     const {updatedAt:_,approvalStatus:__,...content}=task;
-    const subject=jsonRecord({task:content,conversation:await this.context(tx,task),scope:"draft_review",policy:"operations-draft-review-v1"});
+    const subject=jsonRecord({task:content,conversation:await this.context(tx,task,ignoreProviderMessageId),scope:"draft_review",policy:"operations-draft-review-v1"});
     return {subject,hash:digest(subject)};
   }
   private async event(tx:Tx,actor:Actor,task:Task|null,type:string,evidence:Record<string,unknown>={}) {
     await tx.insert(schema.operationEvents).values({workspaceId:actor.workspace,taskId:task?.id??null,revision:task?.revision??null,
       type,actorId:actor.id,actorKind:actor.kind,source:"operations",evidence:jsonRecord(evidence),occurredAt:this.now()});
   }
-  private async read(tx:Tx,actor:Actor,command:Command):Promise<Record<string,unknown>> {
+  private async read(tx:Tx,actor:Actor,command:Command,portalEvents:PortalTimelineEvent[]=[]):Promise<Record<string,unknown>> {
     switch(command.command) {
-      case "status": return {ok:true,contractVersion:1,workspace:actor.workspace,actor,
+      case "status": return {ok:true,contractVersion:1,workspace:actor.workspace,actor,health:await operationalHealth(tx,actor.workspace),
         capabilities:{tasks:true,exactDraftApprovals:true,persistedBriefs:true,externalExecution:false,portalIdentity:Boolean(this.config.resolvePortalJob)},
-        tenancy:"single-workspace-deployment",release:process.env.RAILWAY_GIT_COMMIT_SHA??process.env.EGC_RELEASE_SHA??null,externalExecutionReason:"Production send policy and legacy sender ownership are not activated."};
+        tenancy:"single-workspace-deployment",release:process.env.RAILWAY_GIT_COMMIT_SHA??process.env.EGC_RELEASE_SHA??null,externalExecutionReason:"Action draft review never sends. Explicitly authorized messaging and scheduling use separate durable execution tools."};
       case "queue": {
         const now=this.now();
         const attention=sql<Date>`case when ${schema.tasks.waitingOn} in ('customer','provider') then ${schema.tasks.reviewAt} else ${schema.tasks.dueAt} end`;
         const conditions=[eq(schema.tasks.workspaceId,actor.workspace),inArray(schema.tasks.status,active)];
         if (command.owner) conditions.push(eq(schema.tasks.assignedUserId,command.owner));
-        if (command.view==="due") conditions.push(or(lt(attention,new Date(command.dueBefore)),isNull(attention))!);
-        if (command.view==="overdue") conditions.push(lt(attention,now));
-        if (command.view==="approvals") conditions.push(or(inArray(schema.tasks.approvalStatus,["pending","invalidated"]),and(eq(schema.tasks.approvalStatus,"approved"),sql`not exists(select 1 from ${schema.operationApprovals} where ${schema.operationApprovals.taskId}=${schema.tasks.id} and ${schema.operationApprovals.taskRevision}=${schema.tasks.revision} and ${schema.operationApprovals.expiresAt}>${now})`))!);
+        // SQL expressions lack a column's Date encoder; bind ISO strings so the
+        // postgres driver receives valid timestamp parameters in every queue view.
+        if (command.view==="due") conditions.push(or(lt(attention,command.dueBefore),isNull(attention))!);
+        if (command.view==="overdue") conditions.push(lt(attention,now.toISOString()));
+        if (command.view==="approvals") conditions.push(or(inArray(schema.tasks.approvalStatus,["pending","invalidated"]),and(eq(schema.tasks.approvalStatus,"approved"),sql`not exists(select 1 from ${schema.operationApprovals} where ${schema.operationApprovals.taskId}=${schema.tasks.id} and ${schema.operationApprovals.taskRevision}=${schema.tasks.revision} and ${schema.operationApprovals.expiresAt}>${now.toISOString()})`))!);
         if (command.view==="blocked") conditions.push(eq(schema.tasks.status,"blocked"));
         if (command.view==="waiting") conditions.push(inArray(schema.tasks.waitingOn,["customer","provider"]));
         if (command.view==="ownerless") conditions.push(or(isNull(schema.tasks.assignedUserId),eq(schema.tasks.assignedUserId,""))!);
@@ -153,13 +185,10 @@ export class OperationsService {
         }),note:"Snapshot membership does not change. Review current task details before approving."};
       }
       case "history": {
+        if(!command.contactId)throw new OperationsError("contact_link_required",409);
         const [contact]=await tx.select({id:schema.contacts.id,name:schema.contacts.name}).from(schema.contacts).where(eq(schema.contacts.id,command.contactId)).limit(1);
         if (!contact) throw new OperationsError("contact_not_found",404);
-        // Communications remain customer-level evidence; no implicit latest-job association.
-        const messages=await tx.select({id:schema.messages.id,providerId:schema.messages.providerId,type:schema.messages.type,direction:schema.messages.direction,body:schema.messages.body,occurredAt:schema.messages.occurredAt,ingestedAt:schema.messages.createdAt})
-          .from(schema.messages).where(eq(schema.messages.contactId,contact.id)).orderBy(desc(schema.messages.occurredAt),desc(schema.messages.id)).limit(command.limit).offset(command.offset);
-        const [count]=await tx.select({n:sql<number>`count(*)::int`}).from(schema.messages).where(eq(schema.messages.contactId,contact.id));
-        return {ok:true,contact,association:"customer-level-not-project-assigned",messages,total:count?.n??0,nextOffset:command.offset+messages.length<(count?.n??0)?command.offset+messages.length:null,coverage:"imported_messages_only"};
+        return {ok:true,contact,...await customerTimeline(tx,command.contactId,actor.workspace,command.offset,command.limit,portalEvents)};
       }
       default:throw new OperationsError("unsupported_read",400);
     }
@@ -283,6 +312,33 @@ export class OperationsService {
       if(until<=now)throw new OperationsError("snooze_must_be_future",400);
       patch= {...patch,...(["customer","provider"].includes(task.waitingOn)?{reviewAt:until}:{dueAt:until})};
       note={reason:command.reason,until};
+    } else if(command.command==="task.complete_from_message") {
+      if(task.kind!=="followup_message"||!task.draftPayload||!task.contactId||task.status==="blocked"||!["approved","invalidated"].includes(task.approvalStatus))throw new OperationsError("message_task_not_ready_for_completion",409);
+      const [execution]=await tx.select().from(schema.communicationExecutions).where(and(eq(schema.communicationExecutions.id,command.executionId),eq(schema.communicationExecutions.contactId,task.contactId))).for("update");
+      if(!execution||execution.status!=="accepted"||!execution.providerMessageId||execution.response?.delivered!==true||!execution.verifiedAt||execution.verifiedAt.valueOf()<now.valueOf()-300000||execution.verifiedAt>now)throw new OperationsError("message_delivery_not_freshly_verified",409);
+      const [used]=await tx.select({id:schema.operationEvents.id}).from(schema.operationEvents).where(and(eq(schema.operationEvents.type,"task.complete_from_message"),sql`${schema.operationEvents.evidence}->>'executionId'=${execution.id}`)).limit(1);
+      if(used)throw new OperationsError("message_execution_already_completed_task",409);
+      const evidence=execution.response.matchEvidence as Record<string,unknown>|undefined,draft=task.draftPayload;
+      const occurredAt=typeof evidence?.occurredAt==="string"?new Date(evidence.occurredAt):null;
+      const bodyHash=createHash("sha256").update(String(draft.body)).digest("hex");
+      if(!evidence||evidence.version!==1||evidence.payloadHash!==execution.payloadHash||evidence.bodyHash!==bodyHash||evidence.channel!==draft.channel||evidence.recipient!==draft.recipient||(draft.channel==="email"&&evidence.subject!==draft.subject)||!occurredAt||!Number.isFinite(occurredAt.valueOf())||occurredAt>now||occurredAt<new Date(String(draft.sendWindowStart))||occurredAt>new Date(String(draft.sendWindowEnd)))throw new OperationsError("message_draft_delivery_mismatch",409);
+      const [contact]=await tx.select().from(schema.contacts).where(eq(schema.contacts.id,task.contactId)).limit(1);
+      if(!contact||contact.provider!=="ghl"||contact.providerId!==execution.payload.contactId)throw new OperationsError("message_contact_evidence_mismatch",409);
+      // The matching sent message itself legitimately invalidated the draft. Its
+      // exclusion reconstructs the reviewed context; any OTHER message, call,
+      // restriction or task edit still changes the exact approval fingerprint.
+      const preview=await this.preview(tx,task,execution.providerMessageId);
+      const [approval]=await tx.select().from(schema.operationApprovals).where(and(eq(schema.operationApprovals.workspaceId,actor.workspace),eq(schema.operationApprovals.taskId,task.id),eq(schema.operationApprovals.taskRevision,task.revision),eq(schema.operationApprovals.fingerprint,preview.hash),gt(schema.operationApprovals.expiresAt,now))).orderBy(desc(schema.operationApprovals.createdAt)).limit(1);
+      if(!approval||execution.createdAt<approval.createdAt||occurredAt<approval.createdAt)throw new OperationsError("message_approval_context_changed_or_expired",409);
+      if(task.portalJobId){
+        if(!this.config.resolvePortalJob)throw new OperationsError("portal_identity_adapter_unavailable",503);
+        const source=await this.config.resolvePortalJob(task.portalJobId);
+        if(source.id!==task.portalJobId||source.revision!==task.portalRevision||source.highlevelContactId!==contact.providerId)throw new OperationsError("message_portal_source_changed",409);
+      }
+      if(task.dependencies.length){const dependencies=await tx.select({status:schema.tasks.status}).from(schema.tasks).where(and(eq(schema.tasks.workspaceId,actor.workspace),inArray(schema.tasks.id,task.dependencies)));if(dependencies.length!==task.dependencies.length||dependencies.some(d=>d.status!=="completed"))throw new OperationsError("dependencies_unresolved",409);}
+      const proof={kind:"verified_communication",executionId:execution.id,taskId:task.id,approvedRevision:task.revision,approvalId:approval.id,providerMessageId:execution.providerMessageId,delivered:true,occurredAt:occurredAt.toISOString(),verifiedAt:execution.verifiedAt.toISOString(),actorId:actor.id};
+      await tx.execute(sql`select set_config('egc.communication_completion',${task.id},true)`);
+      patch={...patch,status:"completed",completedAt:now,completionEvidence:[...task.completionEvidence,proof]};note={...proof,externalExecution:false};
     } else if(command.command==="task.complete") {
       assertCompletion(task.kind);
       if(task.dependencies.length) {

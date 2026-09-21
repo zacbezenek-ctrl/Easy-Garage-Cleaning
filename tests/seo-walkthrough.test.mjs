@@ -12,7 +12,7 @@ function publicHtml(dir = root) {
   return fs.readdirSync(dir, { withFileTypes: true }).flatMap(entry => {
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) {
-      if (['.git', 'node_modules', 'crew', 'contracts'].includes(entry.name)) return [];
+      if (entry.isSymbolicLink()||['.git', 'node_modules', '.pnpm-store', '.next', '.turbo', 'dist', 'test-results', 'crew', 'contracts'].includes(entry.name)) return [];
       return publicHtml(full);
     }
     return entry.name.endsWith('.html') && !privateNames.has(entry.name) ? [full] : [];

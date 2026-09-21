@@ -5,16 +5,20 @@
   "scripts": {
     "dev": "tsx watch src/worker.ts",
     "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
     "@egc/database": "workspace:*",
     "@egc/ghl": "workspace:*",
     "@egc/lead-audit": "workspace:*",
+    "@egc/operations": "workspace:*",
+    "@egc/meta-conversions": "workspace:*",
     "drizzle-orm": "0.44.5"
   },
   "devDependencies": {
     "@types/node": "^24.5.2",
+    "vitest": "^3.2.4",
     "typescript": "^6.0.2"
   }
 }

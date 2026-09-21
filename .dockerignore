@@ -1,0 +1,12 @@
+.git
+**/node_modules
+.pnpm-store
+**/.next
+**/.turbo
+**/dist
+test-results
+.env
+.env.*
+**/.env
+**/.env.*
+.dev.vars*

@@ -9,3 +9,5 @@
 @media(max-width:560px){.ac-form-grid,.ac-detail-grid{grid-template-columns:1fr}.ac-head h1{font-size:27px}.ac-row{padding:14px 12px;gap:8px;grid-template-columns:1fr 110px}.ac-stats{gap:8px}.ac-stat{padding:12px}.ac-dialog-header,.ac-dialog-body,.ac-dialog-footer{padding:16px}.ac-toolbar{align-items:stretch}.ac-filter select{width:100%;max-width:none}.ac-pager{font-size:12px}}
 
 .ac-root [hidden],.ac-dialog [hidden]{display:none!important}
+/* Visit recording review shares the existing accessible dialog shell. */
+.ac-recording-field{display:flex;flex-direction:column;gap:6px;margin:14px 0}.ac-recording-field textarea,.ac-recording-field input,.ac-recording-field select{max-width:100%;padding:9px;border:1px solid #b6c4d1;border-radius:8px;font:inherit}.ac-recording-field input[type=checkbox]{width:22px;height:22px}.ac-recording-item{padding:16px 0;border-bottom:1px solid #d9e1e8}.ac-recording-transcript{white-space:pre-wrap;line-height:1.6}.ac-dialog fieldset{margin:16px 0;padding:16px;border:1px solid #b6c4d1;border-radius:10px}.ac-dialog blockquote{white-space:pre-wrap;border-left:3px solid #3376b8;margin:12px 0;padding-left:12px}

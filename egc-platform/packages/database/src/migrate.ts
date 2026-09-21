@@ -14,8 +14,11 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const migrationsFolder = path.resolve(here, "../migrations");
 
 try {
+  // MCP pre-deploy and worker startup may migrate the same database concurrently.
+  await client`SELECT pg_advisory_lock(173540101)`;
   await migrate(db, { migrationsFolder });
   console.log("EGC database migrations complete");
 } finally {
+  await client`SELECT pg_advisory_unlock(173540101)`;
   await client.end();
 }

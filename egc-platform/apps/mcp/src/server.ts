@@ -1,15 +1,28 @@
+import {registerPortalRecordTools} from "./portal-record-tools.js";
+import {verifyOperationsOnStart} from "./operations-smoke.js";
+import {executeCommunication,reconcileCommunication} from "./communication-execution.js";
 import {registerOperationsTools,operationsPrincipal,operationsEnabled,OPERATIONS_WRITE_TOOLS,LEGACY_MUTATIONS_DISABLED,callOperations} from "./operations.js";
+import {registerRecordingTools} from "./recording-tools.js";
 import express from "express";
+import {ReliableAppointments,AppointmentOperationError} from "./appointment-reliability.js";
+import {postgresAppointmentStore} from "./appointment-store.js";
+import {registerSchedulingTools,readHubVisit,assertHubSchedule,bindHubProvider} from "./scheduling-tools.js";
 import {pathToFileURL} from "node:url";
 import { toNodeHandler } from "@modelcontextprotocol/node";
 import { createMcpHandler, McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod/v4";
 import { and, desc, eq, gte, ilike, inArray, isNull, lt, lte, or, sql } from "drizzle-orm";
 import { getDb, schema } from "@egc/database";
+import { approveLegacyWalkthrough, isManagedWalkthrough, LegacyWalkthroughError } from "@egc/operations";
 import { walkthroughExtractionSchema } from "@egc/schemas";
 import { GhlClient, asDate, asRecord, asString, findArray } from "@egc/ghl";
 import { authenticatedMcpPrincipal, authorizeMcpRequest, mcpAuthenticateChallenge, oauthSecurityMetadata, READ_SCOPE, registerOauthRoutes, WRITE_SCOPE } from "./oauth.js";
+import { registerMetaConversionTools } from "./meta-conversion-tools.js";
+import { requiredToolScope } from "./tool-access.js";
+import { verifyMetaConversionsOnStart } from "./meta-conversion-smoke.js";
 import {
+  communicationSummary,
+  businessContactPredicate,
   callTranscriptsForContact,
   leadsNeedingContact,
   leadsNotResponding,
@@ -38,32 +51,6 @@ const destructiveWriteToolMetadata = {
   annotations: { readOnlyHint: false, destructiveHint: true },
   ...oauthSecurityMetadata([READ_SCOPE, WRITE_SCOPE])
 };
-
-const WRITE_TOOLS = new Set([
-  "jobs.create",
-  "jobs.update",
-  "jobs.add_note",
-  "walkthroughs.create_draft",
-  "walkthroughs.update_draft",
-  "walkthroughs.approve",
-  "contacts.create",
-  "contacts.update",
-  "contacts.add_tags",
-  "contacts.remove_tags",
-  "opportunities.create",
-  "opportunities.update",
-  "appointments.create",
-  "appointments.update",
-  "appointments.cancel",
-  "appointments.delete",
-  "conversations.send_message",
-  "send_sms",
-  "egc.ensure_booking",
-  "egc.send_followup",
-  "tasks.create",
-  "tasks.update",
-  "tasks.complete"
-]);
 
 function timeZoneDateParts(date: Date, timeZone: string) {
   const parts = new Intl.DateTimeFormat("en-US", {
@@ -286,7 +273,8 @@ async function syncContactFromGhl(
 async function syncOpportunityFromGhl(
   payload: Record<string, unknown>,
   contactId: string,
-  existingLocalId?: string
+  existingLocalId?: string,
+  directlyObservedWonAt?: Date
 ) {
   const db = getDb();
   const raw = unwrapRecord(payload, "opportunity");
@@ -300,6 +288,7 @@ async function syncOpportunityFromGhl(
   const values = {
     providerId,
     contactId,
+    ...(directlyObservedWonAt && asString(raw.status) === "won" ? { wonAt: directlyObservedWonAt } : {}),
     pipelineId: asString(raw.pipelineId) ?? null,
     pipelineStageId: asString(raw.pipelineStageId) ?? null,
     status: asString(raw.status) ?? null,
@@ -347,7 +336,7 @@ async function syncAppointmentFromGhl(
     ? (await db.select().from(schema.appointments)
         .where(eq(schema.appointments.id, existingLocalId))
         .limit(1))[0]
-    : undefined;
+    : (await db.select().from(schema.appointments).where(eq(schema.appointments.providerId,providerId)).limit(1))[0];
 
   const values = {
     providerId,
@@ -355,7 +344,7 @@ async function syncAppointmentFromGhl(
     calendarId: asString(raw.calendarId) ?? existing?.calendarId ?? null,
     assignedUserId: asString(raw.assignedUserId) ?? existing?.assignedUserId ?? null,
     title: asString(raw.title) ?? existing?.title ?? null,
-    status: normalizeLocalAppointmentStatus(raw.appointmentStatus ?? raw.status),
+    status: normalizeLocalAppointmentStatus(raw.appointmentStatus ?? raw.appoinmentStatus ?? raw.status),
     appointmentCreatedAt:
       asDate(raw.dateAdded) ??
       asDate(raw.createdAt) ??
@@ -388,154 +377,32 @@ async function syncAppointmentFromGhl(
   return appointment;
 }
 
-function appointmentPayloadMatchesChanges(
-  payload: Record<string, unknown>,
-  changes: Record<string, unknown>
-) {
-  const raw = unwrapRecord(payload, "event");
-
-  if (changes.appointmentStatus !== undefined) {
-    const actual = normalizeLocalAppointmentStatus(
-      raw.appointmentStatus ?? raw.appoinmentStatus ?? raw.status
-    );
-    const expected = normalizeLocalAppointmentStatus(changes.appointmentStatus);
-    if (actual !== expected) return false;
-  }
-
-  if (changes.calendarId !== undefined && asString(raw.calendarId) !== changes.calendarId) {
-    return false;
-  }
-
-  if (changes.assignedUserId !== undefined && changes.assignedUserId !== null) {
-    const assigned = asString(raw.assignedUserId);
-    if (assigned !== changes.assignedUserId) return false;
-  }
-
-  if (changes.title !== undefined && asString(raw.title) !== changes.title) {
-    return false;
-  }
-
-  if (changes.startTime !== undefined) {
-    const actualStart = asDate(raw.startTime);
-    const expectedStart = asDate(changes.startTime);
-    if (!actualStart || !expectedStart || Math.abs(actualStart.valueOf() - expectedStart.valueOf()) > 1000) {
-      return false;
-    }
-  }
-
-  return true;
-}
+function reliableAppointments() {return new ReliableAppointments(postgresAppointmentStore(),ghlClient());}
 
 async function updateAppointmentAndSync(
   existing: typeof schema.appointments.$inferSelect,
-  changes: Record<string, unknown>
+  changes: Record<string, unknown>,
+  requestId?:string,
+  portalVisitId?:string
 ) {
-  let providerResponse: Record<string, unknown> | null = null;
-  let providerError: unknown = null;
-
-  try {
-    providerResponse = await ghlClient().updateAppointment(existing.providerId, changes);
-  } catch (error) {
-    providerError = error;
+  const [contact]=await getDb().select({providerId:schema.contacts.providerId}).from(schema.contacts).where(eq(schema.contacts.id,existing.contactId)).limit(1);
+  if(!contact)throw new AppointmentOperationError("contact_not_found");
+  if(operationsEnabled()){
+    if(!portalVisitId)throw new AppointmentOperationError("schedule_portal_visit_required");
+    const visit=await readHubVisit(portalVisitId);
+    assertHubSchedule(visit,{...existing.raw,appointmentStatus:existing.status,...changes,contactId:contact.providerId},existing.providerId);
   }
-
-  const responseRaw = providerResponse ? unwrapRecord(providerResponse, "event") : {};
-  const responseComplete = Boolean(asString(responseRaw.id) && asDate(responseRaw.startTime));
-  const responseVerified = Boolean(
-    providerResponse &&
-    responseComplete &&
-    appointmentPayloadMatchesChanges(providerResponse, changes)
-  );
-
-  let canonical = responseVerified ? providerResponse : null;
-
-  if (!canonical) {
-    const fetched = await ghlClient().getAppointment(existing.providerId).catch(() => null);
-    if (fetched && appointmentPayloadMatchesChanges(fetched, changes)) {
-      const fetchedRaw = unwrapRecord(fetched, "event");
-      if (asString(fetchedRaw.id) && asDate(fetchedRaw.startTime)) {
-        canonical = fetched;
-      }
-    }
-  }
-
-  if (!canonical) {
-    if (providerError) throw providerError;
-    throw new Error("ghl_appointment_update_verification_failed");
-  }
-
-  const updated = await syncAppointmentFromGhl(canonical, existing.contactId, existing.id);
-  return {
-    appointment: updated,
-    recoveredFromAmbiguousProviderError: Boolean(providerError),
-    recoveredFromIncompleteProviderResponse: !responseVerified
-  };
+  const verified=await reliableAppointments().update(existing.providerId,changes,{contactId:existing.contactId,contactProviderId:contact.providerId,localAppointmentId:existing.id,...(portalVisitId?{portalVisitId}:{})},requestId);
+  const updated=await syncAppointmentFromGhl(verified.event,existing.contactId,existing.id);
+  if(portalVisitId)await bindHubProvider(portalVisitId,verified.operationId,verified.event);
+  return {appointment:updated,operationId:verified.operationId,recoveredFromAmbiguousProviderError:verified.source==="provider-recovery",recoveredFromIncompleteProviderResponse:verified.source==="provider-recovery"};
 }
-
 function normalizedComparableText(value: string | null | undefined) {
   return (value ?? "")
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, " ")
     .trim()
     .replace(/\s+/g, " ");
-}
-
-function titlesEquivalent(a: string | null | undefined, b: string | null | undefined) {
-  const left = normalizedComparableText(a);
-  const right = normalizedComparableText(b);
-  if (!left || !right) return true;
-  return left === right || left.includes(right) || right.includes(left);
-}
-
-async function findEquivalentLocalAppointment(input: {
-  contactId: string;
-  calendarId: string;
-  startAt: Date;
-  title?: string | undefined;
-}) {
-  const db = getDb();
-  const toleranceMs = 90_000;
-  const rows = await db.select().from(schema.appointments)
-    .where(and(
-      eq(schema.appointments.contactId, input.contactId),
-      eq(schema.appointments.calendarId, input.calendarId),
-      gte(schema.appointments.appointmentStartAt, new Date(input.startAt.valueOf() - toleranceMs)),
-      lte(schema.appointments.appointmentStartAt, new Date(input.startAt.valueOf() + toleranceMs))
-    ))
-    .orderBy(desc(schema.appointments.updatedAt))
-    .limit(10);
-
-  return rows.find((row) => titlesEquivalent(row.title, input.title)) ?? null;
-}
-
-async function findEquivalentRemoteAppointment(input: {
-  contactProviderId: string;
-  calendarId: string;
-  startAt: Date;
-  title?: string | undefined;
-}) {
-  const toleranceMs = 5 * 60_000;
-  const payload = await ghlClient().getCalendarEvents({
-    calendarId: input.calendarId,
-    startTime: input.startAt.valueOf() - toleranceMs,
-    endTime: input.startAt.valueOf() + toleranceMs
-  });
-  const events = findArray(payload, "events");
-
-  for (const value of events) {
-    const event = asRecord(value);
-    const eventStart = asDate(event.startTime);
-    const eventContactId = asString(event.contactId);
-    const eventCalendarId = asString(event.calendarId) ?? input.calendarId;
-    if (!eventStart || !eventContactId) continue;
-    if (eventContactId !== input.contactProviderId) continue;
-    if (eventCalendarId !== input.calendarId) continue;
-    if (Math.abs(eventStart.valueOf() - input.startAt.valueOf()) > 90_000) continue;
-    if (!titlesEquivalent(asString(event.title), input.title)) continue;
-    return event;
-  }
-
-  return null;
 }
 
 async function persistOutboundMessage(input: {
@@ -578,7 +445,7 @@ async function persistOutboundMessage(input: {
     contactId: input.contactId,
     type: input.channel === "SMS" ? "TYPE_SMS" : "TYPE_EMAIL",
     direction: "outbound",
-    actorType: "human",
+    actorType: "automation",
     body: input.body,
     occurredAt,
     raw: input.providerPayload
@@ -589,7 +456,7 @@ async function persistOutboundMessage(input: {
       contactId: input.contactId,
       type: input.channel === "SMS" ? "TYPE_SMS" : "TYPE_EMAIL",
       direction: "outbound",
-      actorType: "human",
+      actorType: "automation",
       body: input.body,
       occurredAt,
       raw: input.providerPayload,
@@ -671,112 +538,29 @@ async function recoverRecentProviderMessage(input: {
 }
 
 async function sendConversationMessage(input: {
-  contactId: string;
-  channel: "SMS" | "Email";
-  body: string;
-  subject?: string | undefined;
-  emailFrom?: string | undefined;
-  emailTo?: string | undefined;
-  fromNumber?: string | undefined;
-  toNumber?: string | undefined;
-  duplicateWindowMinutes?: number;
+  requestId:string;contactId:string;channel:"SMS"|"Email";body:string;subject?:string|undefined;
+  emailFrom?:string|undefined;emailTo?:string|undefined;fromNumber?:string|undefined;toNumber?:string|undefined;duplicateWindowMinutes?:number;
 }) {
-  const db = getDb();
-  const [contact] = await db.select().from(schema.contacts)
-    .where(eq(schema.contacts.id, input.contactId))
-    .limit(1);
-  if (!contact) return { ok: false as const, error: "contact_not_found" };
-
-  const duplicate = await findRecentDuplicateOutbound({
-    contactId: input.contactId,
-    body: input.body,
-    channel: input.channel,
-    withinMinutes: input.duplicateWindowMinutes ?? 10
-  });
-  if (duplicate) {
-    return {
-      ok: true as const,
-      duplicatePrevented: true,
-      message: duplicate
-    };
+  const db=getDb(),actor=operationsPrincipal.getStore();
+  if(!actor)return {ok:false,error:"verified_principal_required"};
+  const [contact]=await db.select().from(schema.contacts).where(eq(schema.contacts.id,input.contactId)).limit(1);
+  if(!contact)return {ok:false,error:"contact_not_found"};
+  const [lead]=await db.select({dnd:schema.leads.doNotContact}).from(schema.leads).where(eq(schema.leads.contactId,input.contactId)).limit(1);
+  const provider=ghlClient();
+  let live:Record<string,unknown>;
+  try{const response=await provider.getContact(contact.providerId);live=asRecord(response.contact??response);}catch{return {ok:false,error:"contact_preflight_unavailable"};}
+  const restriction=asRecord(asRecord(live.dndSettings)[input.channel]);
+  if(lead?.dnd||live.dnd===true||restriction.status==="active")return {ok:false,error:"contact_do_not_contact"};
+  const phone=asString(live.phone),email=asString(live.email);
+  if(input.channel==="SMS" && (!phone || (input.toNumber && input.toNumber.replace(/\D/g,"")!==phone.replace(/\D/g,""))))return {ok:false,error:"verified_contact_phone_required"};
+  if(input.channel==="Email" && (!email || (input.emailTo && input.emailTo.toLowerCase()!==email.toLowerCase())))return {ok:false,error:"verified_contact_email_required"};
+  const payload={type:input.channel,contactId:contact.providerId,message:input.body,...(input.channel==="SMS"?{toNumber:phone,fromNumber:input.fromNumber}:{emailTo:email,emailFrom:input.emailFrom,subject:input.subject})};
+  const result=await executeCommunication({requestId:input.requestId,actorId:actor.id,contactId:input.contactId,payload,...(input.duplicateWindowMinutes?{duplicateWindowMinutes:input.duplicateWindowMinutes}:{})},provider,db);
+  if("providerMessage" in result && result.providerMessage && result.messageId && result.conversationId) {
+    await persistOutboundMessage({contactId:input.contactId,contactProviderId:contact.providerId,channel:input.channel,body:input.body,providerMessageId:result.messageId,conversationProviderId:result.conversationId,providerPayload:result.providerMessage,occurredAt:asDate(result.providerMessage.dateAdded)??new Date()});
+    const {providerMessage:_,...receipt}=result;return receipt;
   }
-
-  let response: Record<string, unknown> | null = null;
-  let recovered = null as Awaited<ReturnType<typeof recoverRecentProviderMessage>>;
-
-  try {
-    response = await ghlClient().sendMessage({
-      type: input.channel,
-      contactId: contact.providerId,
-      message: input.body,
-      ...(input.channel === "Email" ? {
-        subject: input.subject,
-        emailFrom: input.emailFrom,
-        emailTo: input.emailTo
-      } : {
-        fromNumber: input.fromNumber,
-        toNumber: input.toNumber
-      })
-    });
-  } catch (error) {
-    recovered = await recoverRecentProviderMessage({
-      contactProviderId: contact.providerId,
-      body: input.body,
-      channel: input.channel
-    }).catch(() => null);
-
-    if (!recovered) throw error;
-  }
-
-  const providerMessageId =
-    asString(response?.messageId) ??
-    recovered?.messageId;
-  const conversationProviderId =
-    asString(response?.conversationId) ??
-    recovered?.conversationId;
-
-  if (!providerMessageId || !conversationProviderId) {
-    throw new Error("ghl_message_missing_required_fields");
-  }
-
-  const occurredAt = recovered?.occurredAt ?? new Date();
-  const providerPayload = response ?? recovered?.message ?? {};
-
-  await persistOutboundMessage({
-    contactId: input.contactId,
-    contactProviderId: contact.providerId,
-    channel: input.channel,
-    body: input.body,
-    providerMessageId,
-    conversationProviderId,
-    providerPayload,
-    occurredAt
-  });
-
-  await db.insert(schema.auditLogs).values({
-    actor: "chatgpt-mcp",
-    action: input.channel === "SMS" ? "ghl.message.sms.send" : "ghl.message.email.send",
-    entity: "message",
-    entityId: providerMessageId,
-    newValue: {
-      contactId: input.contactId,
-      conversationProviderId,
-      body: input.body,
-      recoveredFromAmbiguousProviderError: Boolean(recovered)
-    },
-    source: "mcp"
-  });
-
-  return {
-    ok: true as const,
-    duplicatePrevented: false,
-    recoveredFromAmbiguousProviderError: Boolean(recovered),
-    messageId: providerMessageId,
-    conversationId: conversationProviderId,
-    contactId: input.contactId,
-    timestamp: occurredAt.toISOString(),
-    status: asString(response?.msg) ?? "queued"
-  };
+  return result;
 }
 
 async function ensureAppointment(input: {
@@ -793,6 +577,8 @@ async function ensureAppointment(input: {
   ignoreDateRange: boolean;
   ignoreFreeSlotValidation: boolean;
   jobId?: string | undefined;
+  portalVisitId?:string|undefined;
+  requestId?:string|undefined;
 }) {
   const db = getDb();
   const [contact] = await db.select().from(schema.contacts)
@@ -807,29 +593,6 @@ async function ensureAppointment(input: {
     if (!job) return { ok: false as const, error: "job_not_found_for_contact" };
   }
 
-  let appointment = await findEquivalentLocalAppointment({
-    contactId: input.contactId,
-    calendarId: input.calendarId,
-    startAt: input.startAt,
-    title: input.title
-  });
-  let source: "local" | "provider-preflight" | "created" | "provider-recovery" = "local";
-
-  if (!appointment) {
-    const remoteExisting = await findEquivalentRemoteAppointment({
-      contactProviderId: contact.providerId,
-      calendarId: input.calendarId,
-      startAt: input.startAt,
-      title: input.title
-    }).catch(() => null);
-
-    if (remoteExisting) {
-      appointment = await syncAppointmentFromGhl(remoteExisting, input.contactId);
-      source = "provider-preflight";
-    }
-  }
-
-  if (!appointment) {
     const body: Record<string, unknown> = {
       title: input.title ?? contact.name ?? "EGC Appointment",
       calendarId: input.calendarId,
@@ -845,23 +608,23 @@ async function ensureAppointment(input: {
     if (input.description) body.description = input.description;
     if (input.address) body.address = input.address;
 
-    try {
-      const remote = await ghlClient().createAppointment(body);
-      appointment = await syncAppointmentFromGhl(remote, input.contactId);
-      source = "created";
-    } catch (error) {
-      const remoteRecovered = await findEquivalentRemoteAppointment({
-        contactProviderId: contact.providerId,
-        calendarId: input.calendarId,
-        startAt: input.startAt,
-        title: input.title
-      }).catch(() => null);
-
-      if (!remoteRecovered) throw error;
-      appointment = await syncAppointmentFromGhl(remoteRecovered, input.contactId);
-      source = "provider-recovery";
+  let verified;
+  try {
+    let linkedProviderId:string|null=null;
+    if(operationsEnabled()){
+      if(!input.portalVisitId)throw new AppointmentOperationError("schedule_portal_visit_required");
+      const visit=await readHubVisit(input.portalVisitId);
+      assertHubSchedule(visit,body);
+      const calendar=await resolveBookingCalendar(visit.type as "walkthrough"|"job");
+      if(calendar.id!==input.calendarId)throw new AppointmentOperationError("schedule_calendar_kind_conflict");
+      linkedProviderId=asString(visit.highlevelAppointmentId)??null;
     }
+    verified=await reliableAppointments().create(body,{contactId:input.contactId,contactProviderId:contact.providerId,jobId:input.jobId??null,...(input.portalVisitId?{portalVisitId:input.portalVisitId}:{})},linkedProviderId,input.requestId);
   }
+  catch(error) {if(error instanceof AppointmentOperationError)return {ok:false as const,error:error.code,operationId:error.operationId};throw error;}
+  const source=verified.source;
+  const appointment=await syncAppointmentFromGhl(verified.event,input.contactId);
+  if(input.portalVisitId){try{await bindHubProvider(input.portalVisitId,verified.operationId,verified.event);}catch(error){return {ok:false as const,providerAccepted:true,operationId:verified.operationId,error:error instanceof AppointmentOperationError?error.code:"schedule_provider_binding_unavailable",appointment};}}
 
   if (input.jobId) {
     await db.update(schema.jobs).set({
@@ -872,12 +635,13 @@ async function ensureAppointment(input: {
   }
 
   await db.insert(schema.auditLogs).values({
-    actor: "chatgpt-mcp",
+    actor: operationsPrincipal.getStore()?.id??"chatgpt-mcp",
     action: source === "created" ? "ghl.appointment.create" : "ghl.appointment.ensure",
     entity: "appointment",
     entityId: appointment.id,
     newValue: {
       appointment,
+      operationId:verified.operationId,
       source,
       duplicatePrevented: source !== "created",
       recoveredFromAmbiguousProviderError: source === "provider-recovery"
@@ -887,6 +651,7 @@ async function ensureAppointment(input: {
 
   return {
     ok: true as const,
+    operationId:verified.operationId,
     duplicatePrevented: source !== "created",
     recoveredFromAmbiguousProviderError: source === "provider-recovery",
     source,
@@ -925,19 +690,18 @@ async function resolveBookingCalendar(type: "walkthrough" | "job") {
     .sort((a, b) => b.score - a.score);
 
   const best = scored[0];
-  if (best && best.score >= 8) return best;
+  const configuredId=type==="walkthrough"?process.env.GHL_WALKTHROUGH_CALENDAR_ID:process.env.GHL_JOBS_CALENDAR_ID;
+  if(configuredId){const configured=scored.find(c=>c.id===configuredId);if(configured&&configured.score>=8)return configured;throw new AppointmentOperationError("schedule_configured_calendar_unverified");}
+  if(best&&best.score>=8&&(!scored[1]||scored[1].score<best.score))return best;
+  throw new AppointmentOperationError("schedule_calendar_ambiguous_or_unavailable");
+}
 
-  const fallbackId = type === "walkthrough"
-    ? (process.env.GHL_WALKTHROUGH_CALENDAR_ID ?? "qsibYaxFPm16uyovdIc5")
-    : (process.env.GHL_JOBS_CALENDAR_ID ?? "KuLHTd1509oEl3KntLmF");
-
-  return {
-    id: fallbackId,
-    name: type === "walkthrough"
-      ? "EGC Customer Walkthroughs (fallback)"
-      : "EGC Customer Jobs (fallback)",
-    score: 0
-  };
+async function synchronizeHubVisit(visit:Record<string,unknown>,input:{requestId:string;runAutomations:boolean}):Promise<Record<string,unknown>>{
+  const portalVisitId=asString(visit.portalVisitId);
+  if(!portalVisitId)throw new AppointmentOperationError("schedule_identity_unverified");
+  const result=await callOperations({command:"schedule.sync_provider",portalVisitId,requestId:input.requestId,runAutomations:input.runAutomations},input.requestId);
+  if(result.error)throw new AppointmentOperationError(String(result.error),"operationId" in result&&typeof result.operationId==="string"?result.operationId:null);
+  return result;
 }
 
 type LeadRouteKind =
@@ -1039,7 +803,8 @@ async function auditLeadRouting(days = 14) {
         actorType: schema.messages.actorType,
         direction: schema.messages.direction,
         body: schema.messages.body,
-        occurredAt: schema.messages.occurredAt
+        occurredAt: schema.messages.occurredAt,
+        type: schema.messages.type, raw: schema.messages.raw
       }).from(schema.messages)
         .where(and(
           inArray(schema.messages.contactId, contactIds),
@@ -1280,7 +1045,11 @@ export function buildServer() {
     { capabilities: { tools: { listChanged: false } } }
   );
 
+  registerPortalRecordTools(server);
   registerOperationsTools(server,{includeAuthorityOverrides:operationsEnabled()});
+  registerRecordingTools(server);
+  registerSchedulingTools(server,synchronizeHubVisit);
+  registerMetaConversionTools(server);
 
   server.registerTool("ghl.pipelines", {
     description: "Return live GHL opportunity pipelines and stages for the EGC location. Use this to resolve pipeline and stage IDs before opportunity writes.",
@@ -1993,7 +1762,8 @@ export function buildServer() {
       createdAt: schema.leads.createdAt,
       firstBookedAt: schema.leads.firstBookedAt
     }).from(schema.leads)
-      .where(gte(schema.leads.createdAt, since));
+      .innerJoin(schema.contacts,eq(schema.contacts.id,schema.leads.contactId))
+      .where(and(gte(schema.leads.createdAt, since),businessContactPredicate()));
 
     const total = cohort.length;
     if (!total) {
@@ -2025,7 +1795,9 @@ export function buildServer() {
         contactId: schema.messages.contactId,
         direction: schema.messages.direction,
         actorType: schema.messages.actorType,
-        occurredAt: schema.messages.occurredAt
+        occurredAt: schema.messages.occurredAt,
+        type: schema.messages.type,
+        raw: schema.messages.raw
       }).from(schema.messages)
         .where(inArray(schema.messages.contactId, contactIds)),
       db.select({
@@ -2033,6 +1805,7 @@ export function buildServer() {
         direction: schema.calls.direction,
         actorType: schema.calls.actorType,
         answered: schema.calls.answered,
+        raw: schema.calls.raw,
         startedAt: schema.calls.startedAt
       }).from(schema.calls)
         .where(inArray(schema.calls.contactId, contactIds)),
@@ -2054,27 +1827,15 @@ export function buildServer() {
       cohort.filter((row) => Boolean(row.firstBookedAt)).map((row) => row.contactId)
     );
 
-    for (const message of messages) {
-      const leadCreated = createdAtByContact.get(message.contactId) ?? 0;
-      if (message.occurredAt.valueOf() < leadCreated) continue;
-      if (message.direction === "outbound" && message.actorType === "human") {
-        humanOutreach.add(message.contactId);
-      }
-      if (message.direction === "inbound" && message.actorType === "customer") {
-        customerResponse.add(message.contactId);
-      }
-    }
-
-    for (const call of calls) {
-      const leadCreated = createdAtByContact.get(call.contactId) ?? 0;
-      if (call.startedAt.valueOf() < leadCreated) continue;
-      if (call.direction === "outbound" && call.actorType === "human") {
-        humanOutreach.add(call.contactId);
-      }
-      if (call.direction === "inbound" && call.actorType === "customer") {
-        customerResponse.add(call.contactId);
-      }
-      if (call.answered) answeredContact.add(call.contactId);
+    for (const contactId of contactIds) {
+      const leadCreated=createdAtByContact.get(contactId)??0;
+      const evidence=communicationSummary(
+        messages.filter(m=>m.contactId===contactId && m.occurredAt.valueOf()>=leadCreated).map(m=>({...m,at:m.occurredAt})),
+        calls.filter(c=>c.contactId===contactId && c.startedAt.valueOf()>=leadCreated).map(c=>({...c,at:c.startedAt}))
+      );
+      if(evidence.hasHumanOutreach)humanOutreach.add(contactId);
+      if(evidence.hasCustomerResponse)customerResponse.add(contactId);
+      if(evidence.twoWayContactAt)answeredContact.add(contactId);
     }
 
     for (const appointment of appointments) {
@@ -2087,8 +1848,7 @@ export function buildServer() {
     const twoWayContact = new Set<string>();
     for (const contactId of contactIds) {
       if (
-        answeredContact.has(contactId) ||
-        (humanOutreach.has(contactId) && customerResponse.has(contactId))
+        answeredContact.has(contactId)
       ) {
         twoWayContact.add(contactId);
       }
@@ -2130,8 +1890,8 @@ export function buildServer() {
       bookedRate: leadToBookedRate,
       definitions: {
         humanOutreachRate: "Leads with at least one human outbound call or message / leads",
-        customerResponseRate: "Leads with at least one inbound customer call or message / leads",
-        twoWayContactRate: "Leads with an answered call or both human outreach and customer response / leads",
+        customerResponseRate: "Leads with a customer message or verified human call / leads",
+        twoWayContactRate: "Leads with verified human call evidence or exchanged customer and human messages / leads",
         leadToBookedRate: "Leads with at least one booking / leads",
         contactToBookedRate: "Booked leads with two-way contact / leads with two-way contact"
       }
@@ -2139,44 +1899,20 @@ export function buildServer() {
   });
 
   server.registerTool("egc.revenue_summary", {
-    description: "Return won-opportunity value and locally priced job value for the requested lookback window.",
-    inputSchema: z.object({
-      days: z.number().int().min(1).max(365).default(30)
-    }),
+    description: "Report observed sale timestamps and unverified CRM values separately from verified revenue. Missing payment or quote evidence remains unknown.",
+    inputSchema: z.object({days:z.number().int().min(1).max(365).default(30)}),
     ...protectedToolMetadata
-  }, async ({ days }) => {
-    const db = getDb();
-    const since = new Date(Date.now() - days * 86_400_000);
-    const [wonRows, jobRows] = await Promise.all([
-      db.select({
-        monetaryValueCents: schema.opportunities.monetaryValueCents
-      }).from(schema.opportunities).where(and(
-        eq(schema.opportunities.status, "won"),
-        gte(schema.opportunities.updatedAt, since)
-      )),
-      db.select({
-        priceCents: schema.jobs.priceCents,
-        status: schema.jobs.status
-      }).from(schema.jobs).where(gte(schema.jobs.updatedAt, since))
-    ]);
-
-    const wonOpportunityValueCents = wonRows.reduce(
-      (sum, row) => sum + (row.monetaryValueCents ?? 0),
-      0
-    );
-    const locallyPricedJobValueCents = jobRows.reduce(
-      (sum, row) => sum + (row.priceCents ?? 0),
-      0
-    );
-
-    return textResult({
-      days,
-      wonOpportunityCount: wonRows.length,
-      wonOpportunityValueCents,
-      locallyPricedJobCount: jobRows.filter((row) => row.priceCents !== null).length,
-      locallyPricedJobValueCents,
-      note: "Opportunity value comes from GHL. Local job pricing is only complete for jobs whose price has been populated."
-    });
+  }, async ({days}) => {
+    if(operationsEnabled())return textResult(await callOperations({command:"portal.revenue",from:new Date(Date.now()-days*86400000).toISOString(),to:new Date().toISOString()}));
+    const db=getDb(),since=new Date(Date.now()-days*86400000);
+    const wonRows=await db.select({value:schema.opportunities.monetaryValueCents}).from(schema.opportunities).where(and(eq(schema.opportunities.status,"won"),gte(schema.opportunities.wonAt,since)));
+    const undated=await db.select({count:sql<number>`count(*)::int`}).from(schema.opportunities).where(and(eq(schema.opportunities.status,"won"),isNull(schema.opportunities.wonAt)));
+    const known=wonRows.filter((r):r is {value:number}=>r.value!==null);
+    return textResult({days,windowStart:since,observedWonCount:wonRows.length,undatedWonCount:undated[0]?.count??0,
+      unverifiedCrmValue:{knownSubtotalCents:known.reduce((n,r)=>n+r.value,0),missingValueCount:wonRows.length-known.length,totalCents:known.length===wonRows.length?known.reduce((n,r)=>n+r.value,0):null},
+      revenueSoldCents:null,revenueCompletedCents:null,cashCollectedCents:null,currency:"USD",
+      coverage:{verifiedQuotes:"requires_employee_hub",payments:"not_imported",saleDate:"explicit_won_at_only"},
+      note:"CRM opportunity amounts are not verified quotes. Record refresh timestamps are never sale dates; appointments and draft job prices are not revenue."});
   });
 
   server.registerTool("egc.sales_rep_performance", {
@@ -2202,7 +1938,7 @@ export function buildServer() {
         .from(schema.opportunities)
         .where(and(
           eq(schema.opportunities.status, "won"),
-          gte(schema.opportunities.updatedAt, since)
+          gte(schema.opportunities.wonAt, since)
         ))
     ]);
 
@@ -2561,6 +2297,7 @@ export function buildServer() {
       .where(eq(schema.walkthroughs.id, walkthroughId))
       .limit(1);
     if (!existing) return textResult({ error: "walkthrough_not_found" });
+    if(isManagedWalkthrough(existing))return textResult({error:"use_employee_hub_recording_review",authority:"employee_hub"});
     if (existing.status !== "draft") return textResult({ error: "walkthrough_not_editable", status: existing.status });
 
     const [updated] = await db.transaction(async (tx) => {
@@ -2589,131 +2326,21 @@ export function buildServer() {
   });
 
   server.registerTool("walkthroughs.approve", {
-    description: "Approve a reviewed walkthrough. This creates a job when needed or updates the linked job scope, then queues GHL note write-back when enabled.",
-    inputSchema: z.object({
-      walkthroughId: z.string().uuid(),
-      extraction: walkthroughExtractionSchema.optional()
-    }),
+    description: "Approve a legacy walkthrough only while unified operations is disabled. Managed Hub recordings always require their signed-in human review flow.",
+    inputSchema: z.object({walkthroughId:z.string().uuid(),extraction:walkthroughExtractionSchema.optional()}),
     ...writeToolMetadata
-  }, async ({ walkthroughId, extraction: extractionOverride }) => {
-    const db = getDb();
-    const [walkthrough] = await db.select().from(schema.walkthroughs)
-      .where(eq(schema.walkthroughs.id, walkthroughId))
-      .limit(1);
-
-    if (!walkthrough) return textResult({ error: "walkthrough_not_found" });
-    if (walkthrough.status === "approved") {
-      return textResult({ error: "walkthrough_already_approved", jobId: walkthrough.jobId });
+  }, async ({walkthroughId, extraction}) => {
+    try {
+      return textResult(await approveLegacyWalkthrough({walkthroughId, extraction, actor: operationsPrincipal.getStore()?.id ?? "chatgpt-mcp", source: "mcp"}));
+    } catch (error) {
+      return textResult({error: error instanceof LegacyWalkthroughError ? error.code : "legacy_walkthrough_approval_failed"});
     }
-
-    const extraction = walkthroughExtractionSchema.parse(
-      extractionOverride ?? walkthrough.extraction
-    );
-    const addOns = [
-      ...(extraction.bikeRacks > 0 ? [`${extraction.bikeRacks} bike rack(s)`] : []),
-      ...(extraction.toolRacks > 0 ? [`${extraction.toolRacks} tool rack(s)`] : []),
-      ...(extraction.shelving.length > 0 ? ["shelving"] : []),
-      ...(extraction.pressureWashing ? ["pressure washing"] : [])
-    ];
-
-    const result = await db.transaction(async (tx) => {
-      let jobId = walkthrough.jobId;
-
-      if (!jobId) {
-        const [job] = await tx.insert(schema.jobs).values({
-          contactId: walkthrough.contactId,
-          status: "scope_approved",
-          garageSize: extraction.garageSize,
-          junkVolumeYards: extraction.junkVolumeYards === null ? null : String(extraction.junkVolumeYards),
-          itemsRemove: extraction.itemsRemove,
-          itemsKeep: extraction.itemsKeep,
-          itemsRelocate: extraction.itemsRelocate,
-          organizationRequirements: extraction.storageRequirements,
-          addOns,
-          accessNotes: extraction.accessNotes,
-          estimatedLaborHours: extraction.estimatedLaborHours === null ? null : String(extraction.estimatedLaborHours)
-        }).returning();
-
-        if (!job) throw new Error("job_create_failed");
-        jobId = job.id;
-      } else {
-        await tx.update(schema.jobs).set({
-          status: "scope_approved",
-          garageSize: extraction.garageSize,
-          junkVolumeYards: extraction.junkVolumeYards === null ? null : String(extraction.junkVolumeYards),
-          itemsRemove: extraction.itemsRemove,
-          itemsKeep: extraction.itemsKeep,
-          itemsRelocate: extraction.itemsRelocate,
-          organizationRequirements: extraction.storageRequirements,
-          addOns,
-          accessNotes: extraction.accessNotes,
-          estimatedLaborHours: extraction.estimatedLaborHours === null ? null : String(extraction.estimatedLaborHours),
-          updatedAt: new Date()
-        }).where(eq(schema.jobs.id, jobId));
-      }
-
-      await tx.update(schema.walkthroughs).set({
-        jobId,
-        status: "approved",
-        extraction,
-        approvedAt: new Date(),
-        approvedBy: "chatgpt-mcp",
-        updatedAt: new Date()
-      }).where(eq(schema.walkthroughs.id, walkthroughId));
-
-      await tx.insert(schema.auditLogs).values({
-        actor: "chatgpt-mcp",
-        action: "walkthrough.approve",
-        entity: "walkthrough",
-        entityId: walkthroughId,
-        oldValue: walkthrough.extraction,
-        newValue: extraction,
-        source: "mcp"
-      });
-
-      let ghlWritebackQueued = false;
-      if (process.env.GHL_WRITEBACK_ENABLED === "true") {
-        const [contact] = await tx.select({
-          providerId: schema.contacts.providerId
-        }).from(schema.contacts)
-          .where(eq(schema.contacts.id, walkthrough.contactId))
-          .limit(1);
-
-        if (contact?.providerId) {
-          await tx.insert(schema.outboxEvents).values({
-            type: "ghl.contact_note.sync",
-            entityId: `${walkthroughId}:approved`,
-            payload: {
-              ghlContactId: contact.providerId,
-              title: "EGC Walkthrough — Approved Scope",
-              noteBody: formatApprovedWalkthroughNote(extraction, jobId)
-            }
-          }).onConflictDoNothing({
-            target: [schema.outboxEvents.type, schema.outboxEvents.entityId]
-          });
-          ghlWritebackQueued = true;
-        }
-      }
-
-      return { jobId, ghlWritebackQueued };
-    });
-
-    const [job] = await db.select().from(schema.jobs)
-      .where(eq(schema.jobs.id, result.jobId))
-      .limit(1);
-
-    return textResult({
-      ok: true,
-      ...result,
-      extraction,
-      job: job ?? null
-    });
   });
 
-
   server.registerTool("conversations.send_message", {
-    description: "Send a context-aware SMS or email to an existing EGC contact through GHL. Prevents identical recent duplicate sends, mirrors the outbound message locally immediately, updates lead state, and recovers from ambiguous provider errors when the message was actually sent.",
+    description: "Send an explicitly user-authorized SMS or email to a verified EGC contact. Durable request IDs and content deduplication prevent resend; provider read-back distinguishes accepted from delivered. Unknown outcomes require read-only reconciliation.",
     inputSchema: z.object({
+      requestId:z.string().uuid().describe("Stable ID for this explicitly authorized customer message. Reuse on every retry; unknown outcomes never resend."),
       contactId: z.string().uuid(),
       channel: z.enum(["SMS", "Email"]),
       body: z.string().min(1).max(5000),
@@ -2728,8 +2355,9 @@ export function buildServer() {
   }, async (input) => textResult(await sendConversationMessage(input)));
 
   server.registerTool("send_sms", {
-    description: "Send an SMS to an existing EGC contact through GHL with duplicate suppression, immediate local mirroring, lead-state update, and ambiguous-provider-error recovery.",
+    description: "Send one explicitly user-authorized SMS to a verified EGC contact. Reuse requestId on retries. Returns durable provider verification; an unknown outcome never automatically resends.",
     inputSchema: z.object({
+      requestId:z.string().uuid().describe("Stable ID for this explicitly authorized customer message. Reuse on every retry; unknown outcomes never resend."),
       contactId: z.string().uuid(),
       body: z.string().min(1).max(1600),
       fromNumber: z.string().max(80).optional(),
@@ -2737,8 +2365,9 @@ export function buildServer() {
       duplicateWindowMinutes: z.number().int().min(1).max(120).default(10)
     }),
     ...writeToolMetadata
-  }, async ({ contactId, body, fromNumber, toNumber, duplicateWindowMinutes }) =>
+  }, async ({ requestId, contactId, body, fromNumber, toNumber, duplicateWindowMinutes }) =>
     textResult(await sendConversationMessage({
+      requestId,
       contactId,
       channel: "SMS",
       body,
@@ -2747,6 +2376,25 @@ export function buildServer() {
       duplicateWindowMinutes
     }))
   );
+
+  server.registerTool("communications.executions", {
+    description:"Read durable authorization, transmission, verification and unknown outcomes for customer messages. Contains no credentials.",
+    inputSchema:z.object({contactId:z.string().uuid().optional(),limit:z.number().int().min(1).max(100).default(30)}),...protectedToolMetadata
+  },async({contactId,limit})=>{const db=getDb();return textResult(await db.select().from(schema.communicationExecutions).where(contactId?eq(schema.communicationExecutions.contactId,contactId):undefined).orderBy(desc(schema.communicationExecutions.createdAt)).limit(limit));});
+  server.registerTool("actions.complete_from_message",{
+    description:"Complete one reviewed message action using fresh provider-verified delivery of the exact approved recipient, body, channel, subject and send window. Requires the current task revision, still-valid approval and execution ID. Reads provider evidence but sends nothing; changed context or merely sent/queued messages cannot complete the task.",
+    inputSchema:z.object({requestId:z.string().uuid(),taskId:z.string().uuid(),revision:z.number().int().positive(),executionId:z.string().uuid()}),...writeToolMetadata
+  },async({requestId,...command})=>{
+    const actor=operationsPrincipal.getStore();if(!actor)return textResult({error:"verified_principal_required"});
+    const proof=await reconcileCommunication(command.executionId,undefined,actor.id,ghlClient());
+    if(!proof.ok||!("delivered" in proof)||proof.delivered!==true||"verificationFresh" in proof&&proof.verificationFresh===false)return textResult({error:"message_delivery_not_freshly_verified",executionId:command.executionId});
+    return textResult(await callOperations({command:"task.complete_from_message",...command},requestId));
+  });
+
+  server.registerTool("communications.reconcile", {
+    description:"Read the provider to resolve a previous message execution. Never sends. For unknown writes without an ID, supply the exact observed provider message ID; contact, body, direction, channel and occurrence time must match.",
+    inputSchema:z.object({executionId:z.string().uuid(),providerMessageId:z.string().optional()}),...writeToolMetadata
+  },async({executionId,providerMessageId})=>textResult(await reconcileCommunication(executionId,providerMessageId,operationsPrincipal.getStore()?.id??"unverified",ghlClient())));
 
   server.registerTool("tasks.create", {
     description: "Create an actionable EGC operational task/todo, optionally linked to a contact, job, or opportunity.",
@@ -3137,7 +2785,7 @@ export function buildServer() {
     if (forecastProbability !== undefined) body.forecastProbability = forecastProbability;
 
     const remote = await ghlClient().createOpportunity(body);
-    const opportunity = await syncOpportunityFromGhl(remote, contactId);
+    const opportunity = await syncOpportunityFromGhl(remote, contactId, undefined, status === "won" ? new Date() : undefined);
 
     if (jobId) {
       await db.update(schema.jobs).set({
@@ -3208,9 +2856,11 @@ export function buildServer() {
   });
 
   server.registerTool("appointments.create", {
-    description: "Idempotently ensure a GHL appointment exists for an EGC contact. Checks local and live GHL calendars first, recovers after ambiguous provider errors, mirrors the canonical appointment locally, and optionally links/schedules an EGC job.",
+    description: "Durably ensure a provider appointment for an exact saved Hub visit. In operations mode portalVisitId and times matching the authoritative Hub schedule are required; use egc.schedule_visit to create or change that schedule. Unknown writes reconcile without resend; cancelled or ambiguous records are not reused.",
     inputSchema: z.object({
       contactId: z.string().uuid(),
+      portalVisitId:z.string().min(1).max(180).optional(),
+      requestId:z.string().uuid().optional(),
       calendarId: z.string().min(1),
       startTime: isoDateTimeSchema,
       endTime: isoDateTimeSchema.nullable().optional(),
@@ -3229,6 +2879,8 @@ export function buildServer() {
     ...writeToolMetadata
   }, async ({
     contactId,
+    portalVisitId,
+    requestId,
     calendarId,
     startTime,
     endTime,
@@ -3243,6 +2895,8 @@ export function buildServer() {
     jobId
   }) => textResult(await ensureAppointment({
     contactId,
+    portalVisitId,
+    requestId,
     calendarId,
     startAt: new Date(startTime),
     endAt: endTime ? new Date(endTime) : null,
@@ -3258,13 +2912,15 @@ export function buildServer() {
   })));
 
   server.registerTool("appointments.update", {
-    description: "Reschedule, reassign, rename, or change status/details of an existing GHL appointment and immediately mirror it locally. GHL automations are disabled by default unless runAutomations=true.",
+    description: "Synchronize an existing GHL appointment to its exact authoritative Hub visit. In operations mode portalVisitId is required and the saved Hub schedule must already match; use egc.schedule_visit for rescheduling. Reuse requestId on retry; notifications default off.",
     inputSchema: z.object({
       appointmentId: z.string().uuid(),
+      portalVisitId:z.string().min(1).max(180).optional(),
+      requestId:z.string().uuid().optional().describe("Reuse this logical request ID and exact payload after any timeout. Use a new ID for an intentional later edit."),
       changes: appointmentMutationSchema
     }),
     ...writeToolMetadata
-  }, async ({ appointmentId, changes }) => {
+  }, async ({ appointmentId, changes, requestId, portalVisitId }) => {
     const db = getDb();
     const [existing] = await db.select().from(schema.appointments)
       .where(eq(schema.appointments.id, appointmentId))
@@ -3278,7 +2934,7 @@ export function buildServer() {
     };
     if (changes.title !== undefined) body.title = changes.title;
     if (changes.calendarId !== undefined) body.calendarId = changes.calendarId;
-    if (changes.assignedUserId !== undefined && changes.assignedUserId !== null) {
+    if (changes.assignedUserId !== undefined) {
       body.assignedUserId = changes.assignedUserId;
     }
     if (changes.appointmentStatus !== undefined) body.appointmentStatus = changes.appointmentStatus;
@@ -3287,11 +2943,13 @@ export function buildServer() {
     if (changes.startTime !== undefined) {
       body.startTime = new Date(changes.startTime).toISOString();
     }
-    if (changes.endTime !== undefined && changes.endTime !== null) {
-      body.endTime = new Date(changes.endTime).toISOString();
+    if (changes.endTime !== undefined) {
+      body.endTime = changes.endTime===null?null:new Date(changes.endTime).toISOString();
     }
 
-    const verified = await updateAppointmentAndSync(existing, body);
+    let verified;
+    try {verified=await updateAppointmentAndSync(existing,body,requestId,portalVisitId);}
+    catch(error) {if(error instanceof AppointmentOperationError)return textResult({ok:false,error:error.code,operationId:error.operationId});throw error;}
     const updated = verified.appointment;
 
     if (changes.startTime !== undefined) {
@@ -3318,6 +2976,7 @@ export function buildServer() {
     return textResult({
       ok: true,
       appointment: updated,
+      operationId:verified.operationId,
       recoveredFromAmbiguousProviderError: verified.recoveredFromAmbiguousProviderError,
       recoveredFromIncompleteProviderResponse: verified.recoveredFromIncompleteProviderResponse
     });
@@ -3327,22 +2986,26 @@ export function buildServer() {
     description: "Cancel an existing GHL appointment without deleting its audit/history record. Mirrors cancelled status locally and preserves any linked EGC job.",
     inputSchema: z.object({
       appointmentId: z.string().uuid(),
+      portalVisitId:z.string().min(1).max(180).optional(),
+      requestId:z.string().uuid().optional(),
       reason: z.string().max(1000).optional(),
       runAutomations: z.boolean().default(false)
     }),
     ...writeToolMetadata
-  }, async ({ appointmentId, reason, runAutomations }) => {
+  }, async ({ appointmentId, reason, runAutomations, requestId, portalVisitId }) => {
     const db = getDb();
     const [existing] = await db.select().from(schema.appointments)
       .where(eq(schema.appointments.id, appointmentId))
       .limit(1);
     if (!existing) return textResult({ error: "appointment_not_found" });
 
-    const verified = await updateAppointmentAndSync(existing, {
+    let verified;
+    try {verified = await updateAppointmentAndSync(existing, {
       appointmentStatus: "cancelled",
       toNotify: runAutomations,
       ...(reason ? { description: reason } : {})
-    });
+    },requestId,portalVisitId);}
+    catch(error) {if(error instanceof AppointmentOperationError)return textResult({ok:false,error:error.code,operationId:error.operationId});throw error;}
     const updated = verified.appointment;
 
     await db.insert(schema.auditLogs).values({
@@ -3362,9 +3025,42 @@ export function buildServer() {
     return textResult({
       ok: true,
       appointment: updated,
+      operationId:verified.operationId,
       recoveredFromAmbiguousProviderError: verified.recoveredFromAmbiguousProviderError,
       recoveredFromIncompleteProviderResponse: verified.recoveredFromIncompleteProviderResponse
     });
+  });
+
+  server.registerTool("appointments.operation_status", {
+    description:"Read the durable outcome of one booking operation. Unknown means a provider write may have succeeded; use appointments.reconcile and never create a replacement blindly.",
+    inputSchema:z.object({operationId:z.string().uuid()}),...protectedToolMetadata
+  },async({operationId})=>{
+    const row=await postgresAppointmentStore().get(operationId);
+    if(!row)return textResult({error:"appointment_operation_not_found"});
+    return textResult({operationId:row.id,kind:row.kind,status:row.status,providerAppointmentId:row.providerAppointmentId,
+      attemptCount:row.attemptCount,lastError:row.lastError,leaseExpiresAt:row.leaseExpiresAt,context:asRecord(row.request.context),
+      guidance:row.status==="unknown"?"Reconcile this operation. No provider write will be repeated.":null});
+  });
+  server.registerTool("appointments.reconcile", {
+    description:"Reconcile one durable booking operation using provider READS only. Verifies exact fields and mirrors confirmed state locally; never creates, updates, cancels, deletes or sends notifications in GHL.",
+    inputSchema:z.object({operationId:z.string().uuid()}),...writeToolMetadata
+  },async({operationId})=>{
+    try {
+      const store=postgresAppointmentStore(),op=await store.get(operationId);
+      if(!op)return textResult({error:"appointment_operation_not_found"});
+      const verified=await reliableAppointments().reconcile(operationId),context=asRecord(op.request.context);
+      const contactId=asString(context.contactId),localId=asString(context.localAppointmentId);
+      if(!contactId)return textResult({error:"appointment_operation_contact_missing",operationId});
+      const appointment=await syncAppointmentFromGhl(verified.event,contactId,localId??undefined);
+      const portalVisitId=asString(context.portalVisitId);
+      if(portalVisitId)await bindHubProvider(portalVisitId,operationId,verified.event);
+      const jobId=asString(context.jobId);
+      if(jobId)await getDb().update(schema.jobs).set({appointmentId:appointment.id,scheduledAt:appointment.appointmentStartAt,updatedAt:new Date()})
+        .where(and(eq(schema.jobs.id,jobId),eq(schema.jobs.contactId,contactId)));
+      if(op.kind!=="create")await getDb().update(schema.jobs).set({scheduledAt:appointment.appointmentStartAt,updatedAt:new Date()}).where(eq(schema.jobs.appointmentId,appointment.id));
+      await getDb().insert(schema.auditLogs).values({actor:operationsPrincipal.getStore()?.id??"chatgpt-mcp",action:"ghl.appointment.reconcile",entity:"appointment",entityId:appointment.id,newValue:{operationId,providerAppointmentId:appointment.providerId,status:appointment.status},source:"mcp"});
+      return textResult({ok:true,operationId,appointment,providerWrite:false});
+    }catch(error) {if(error instanceof AppointmentOperationError)return textResult({ok:false,error:error.code,operationId:error.operationId});throw error;}
   });
 
   server.registerTool("appointments.delete", {
@@ -3433,9 +3129,11 @@ export function buildServer() {
   });
 
   server.registerTool("egc.ensure_booking", {
-    description: "Safely ensure exactly one EGC booking exists. Resolves the correct live GHL calendar for walkthrough vs paid job, checks local and provider calendars for an equivalent event, updates the normalized layer, links the job when supplied, and recovers from ambiguous provider errors instead of retrying blindly.",
+    description: "Ensure the provider mirror of one exact saved Hub visit. In operations mode portalVisitId is required; use egc.schedule_visit to create/reschedule the authoritative visit. Verifies the live calendar, preserves durable request outcomes and reconciles uncertain writes without creating replacements.",
     inputSchema: z.object({
       contactId: z.string().uuid(),
+      portalVisitId:z.string().min(1).max(180).optional(),
+      requestId:z.string().uuid().optional(),
       type: z.enum(["walkthrough", "job"]),
       startTime: isoDateTimeSchema,
       endTime: isoDateTimeSchema.nullable().optional(),
@@ -3449,6 +3147,8 @@ export function buildServer() {
     ...writeToolMetadata
   }, async ({
     contactId,
+    portalVisitId,
+    requestId,
     type,
     startTime,
     endTime,
@@ -3463,6 +3163,8 @@ export function buildServer() {
 
     const result = await ensureAppointment({
       contactId,
+      portalVisitId,
+      requestId,
       calendarId: calendar.id,
       startAt: new Date(startTime),
       endAt: endTime ? new Date(endTime) : null,
@@ -3485,16 +3187,18 @@ export function buildServer() {
   });
 
   server.registerTool("egc.send_followup", {
-    description: "Send one context-aware SMS follow-up after the model has reviewed the customer's history/calls and determined a follow-up is appropriate. Uses duplicate suppression, ambiguous-send recovery, immediate local mirroring, audit logging, and lead-state recomputation.",
+    description: "Send one explicitly user-authorized SMS follow-up after reviewing the customer's history. Durable idempotency, live recipient and DND checks, provider read-back and audit records apply. An unknown outcome never resends.",
     inputSchema: z.object({
+      requestId:z.string().uuid().describe("Stable ID for this explicitly authorized customer message. Reuse on every retry; unknown outcomes never resend."),
       contactId: z.string().uuid(),
       body: z.string().min(1).max(1600),
       contextReviewed: z.literal(true),
       duplicateWindowMinutes: z.number().int().min(1).max(120).default(10)
     }),
     ...writeToolMetadata
-  }, async ({ contactId, body, duplicateWindowMinutes }) => {
+  }, async ({ requestId, contactId, body, duplicateWindowMinutes }) => {
     return textResult(await sendConversationMessage({
+      requestId,
       contactId,
       channel: "SMS",
       body,
@@ -3541,8 +3245,8 @@ app.use(express.json({ limit: "2mb" }));
 // Keep /health outside host validation while validating every OAuth/MCP route.
 app.get("/health", async (_req, res) => {
   try {
-    await getDb().select({ id: schema.contacts.id }).from(schema.contacts).limit(1);
-    res.json({ ok: true, service: "egc-mcp", oauth: true, database: "ready" });
+    await getDb().select({ id: schema.communicationExecutions.id }).from(schema.communicationExecutions).limit(1);
+    res.json({ ok: true, service: "egc-mcp", oauth: true, database: "ready",release:process.env.RAILWAY_GIT_COMMIT_SHA??process.env.EGC_RELEASE_SHA??null,operationsEnabled:operationsEnabled() });
   } catch {
     res.status(503).json({ ok: false, service: "egc-mcp", oauth: true, database: "not_ready" });
   }
@@ -3581,12 +3285,12 @@ app.all(
         ? (body as { params: { name: string } }).params.name
         : "";
 
-    const requiredScope = WRITE_TOOLS.has(toolName)||OPERATIONS_WRITE_TOOLS.has(toolName) ? WRITE_SCOPE : READ_SCOPE;
+    const requiredScope = OPERATIONS_WRITE_TOOLS.has(toolName) ? WRITE_SCOPE : requiredToolScope(toolName);
 
     const principal=await authenticatedMcpPrincipal(req.header("authorization"),requiredScope);
     if (principal) {
       if(operationsEnabled() && LEGACY_MUTATIONS_DISABLED.has(toolName)) {
-        res.status(200).json({jsonrpc:"2.0",id:body.id??null,result:{content:[{type:"text",text:JSON.stringify({error:"legacy_mutation_disabled_in_operations_mode",instruction:"Use canonical actions tools for internal work. External sends, scope promotion and booking writes remain disabled until the controlled portal services are activated."})}],isError:true}});
+        res.status(200).json({jsonrpc:"2.0",id:body.id??null,result:{content:[{type:"text",text:JSON.stringify({error:"legacy_mutation_disabled_in_operations_mode",instruction:"Use canonical actions for internal work, egc.add_job_note for exact Hub notes, recording review for managed walkthroughs, and durable scheduling tools. Legacy parallel job/draft writes and destructive booking deletion remain disabled."})}],isError:true}});
         return;
       }
       operationsPrincipal.run({id:principal,role:"integration",kind:"integration",workspace:process.env.EGC_OPERATIONS_WORKSPACE??"egc"},()=>next());
@@ -3621,5 +3325,7 @@ const port = Number(process.env.PORT ?? process.env.MCP_PORT ?? 4200);
 if(process.argv[1] && pathToFileURL(process.argv[1]).href===import.meta.url) {
   app.listen(port, "0.0.0.0", () => {
     console.log(`EGC MCP listening on :${port}/mcp with OAuth resource ${oauth.origin}`);
+    void verifyOperationsOnStart(port);
+    void verifyMetaConversionsOnStart({ port });
   });
 }

@@ -36,6 +36,7 @@ export class GhlClient {
     }
     const response = await fetch(url, {
       ...init,
+      signal: init.signal ?? AbortSignal.timeout(30000),
       headers: {
         Authorization: `Bearer ${this.token}`,
         Accept: "application/json",
@@ -73,6 +74,14 @@ export class GhlClient {
 
   getContact(contactId: string) {
     return this.request<Record<string, unknown>>(`/contacts/${contactId}`);
+  }
+
+  getMessage(messageId: string) {
+    return this.request<Record<string, unknown>>(`/conversations/messages/${encodeURIComponent(messageId)}`);
+  }
+
+  getEmailMessage(emailId: string) {
+    return this.request<Record<string, unknown>>(`/conversations/messages/email/${encodeURIComponent(emailId)}`);
   }
 
   createContact(input: Record<string, unknown>) {
@@ -256,7 +265,7 @@ export class GhlClient {
   }
 
   getCalendarEvents(params: Query) {
-    return this.request<Record<string, unknown>>("/calendars/events", {}, {
+    return this.request<Record<string, unknown>>("/calendars/events", {signal:AbortSignal.timeout(30000)}, {
       locationId: this.locationId,
       ...params
     });
@@ -264,7 +273,7 @@ export class GhlClient {
 
   getAppointment(eventId: string) {
     return this.request<Record<string, unknown>>(
-      `/calendars/events/appointments/${eventId}`
+      `/calendars/events/appointments/${eventId}`,{signal:AbortSignal.timeout(30000)}
     );
   }
 
@@ -273,6 +282,7 @@ export class GhlClient {
       "/calendars/events/appointments",
       {
         method: "POST",
+        signal: AbortSignal.timeout(30000),
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           ...input,
@@ -287,6 +297,7 @@ export class GhlClient {
       `/calendars/events/appointments/${eventId}`,
       {
         method: "PUT",
+        signal: AbortSignal.timeout(30000),
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(input)
       }
@@ -326,6 +337,10 @@ export class GhlClient {
       skip: 0,
       ...params
     });
+  }
+
+  getContactNotes(contactId: string) {
+    return this.request<Record<string, unknown>>(`/contacts/${encodeURIComponent(contactId)}/notes`);
   }
 
   createContactNote(contactId: string, body: string, title = "EGC Walkthrough") {

@@ -7,6 +7,9 @@ WORKDIR /app/egc-platform
 RUN pnpm install --no-frozen-lockfile
 RUN pnpm --filter @egc/schemas build \
  && pnpm --filter @egc/database build \
+ && pnpm --filter @egc/ghl build \
+ && pnpm --filter @egc/lead-audit build \
+ && pnpm --filter @egc/operations build \
  && pnpm --filter @egc/storage build \
  && pnpm --filter @egc/ai build \
  && pnpm --filter @egc/api build

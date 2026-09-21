@@ -64,6 +64,7 @@ export const leads = pgTable("leads", {
   assignedUserId: text("assigned_user_id"),
   lastHumanOutreachAt: timestamp("last_human_outreach_at", { withTimezone: true }),
   lastCustomerResponseAt: timestamp("last_customer_response_at", { withTimezone: true }),
+  twoWayContactAt: timestamp("two_way_contact_at", { withTimezone: true }),
   firstBookedAt: timestamp("first_booked_at", { withTimezone: true }),
   lostAt: timestamp("lost_at", { withTimezone: true }),
   doNotContact: boolean("do_not_contact").default(false).notNull(),
@@ -137,6 +138,7 @@ export const opportunities = pgTable("opportunities", {
   monetaryValueCents: integer("monetary_value_cents"),
   assignedUserId: text("assigned_user_id"),
   source: text("source"),
+  wonAt: timestamp("won_at", { withTimezone: true }),
   raw: jsonb("raw").$type<Record<string, unknown>>().default({}).notNull(),
   providerCreatedAt: timestamp("provider_created_at", { withTimezone: true }),
   providerUpdatedAt: timestamp("provider_updated_at", { withTimezone: true }),
@@ -172,6 +174,7 @@ export const jobs = pgTable("jobs", {
   opportunityId: uuid("opportunity_id").references(() => opportunities.id),
   appointmentId: uuid("appointment_id").references(() => appointments.id),
   status: text("status").default("draft").notNull(),
+  wonAt: timestamp("won_at", { withTimezone: true }),
   serviceAddress: text("service_address"),
   garageSize: text("garage_size"),
   serviceType: text("service_type"),
@@ -242,8 +245,28 @@ export const tasks = pgTable("tasks", {
 
 export const walkthroughs = pgTable("walkthroughs", {
   id: uuid("id").defaultRandom().primaryKey(),
+  workspaceId: text("workspace_id").default("egc").notNull(),
+  portalJobId: text("portal_job_id"),
+  portalVisitId: text("portal_visit_id"),
+  portalCustomerId: text("portal_customer_id"),
+  portalProjectId: text("portal_project_id"),
+  portalRevision: text("portal_revision"),
+  uploadRequestId: text("upload_request_id"),
+  audioContentType: text("audio_content_type"),
+  audioFilename: text("audio_filename"),
+  audioBytes: integer("audio_bytes"),
+  audioSha256: text("audio_sha256"),
+  attemptCount: integer("attempt_count").default(0).notNull(),
+  processingLeaseUntil: timestamp("processing_lease_until", { withTimezone: true }),
+  lastErrorCode: text("last_error_code"),
+  uploadedBy: text("uploaded_by"),
+  approvalRequestId: text("approval_request_id"),
+  approvedRevision: text("approved_revision"),
+  approvalPayload: jsonb("approval_payload").$type<Record<string, unknown>>(),
+  approvalFingerprint: text("approval_fingerprint"),
+  extractionVersion: integer("extraction_version").default(1).notNull(),
   jobId: uuid("job_id").references(() => jobs.id, { onDelete: "cascade" }),
-  contactId: uuid("contact_id").references(() => contacts.id, { onDelete: "cascade" }).notNull(),
+  contactId: uuid("contact_id").references(() => contacts.id, { onDelete: "cascade" }),
   status: text("status").default("draft").notNull(),
   audioObjectKey: text("audio_object_key"),
   transcript: text("transcript"),
@@ -251,7 +274,42 @@ export const walkthroughs = pgTable("walkthroughs", {
   approvedAt: timestamp("approved_at", { withTimezone: true }),
   approvedBy: text("approved_by"),
   ...timestamps
-});
+}, t => [uniqueIndex("walkthroughs_upload_request_uq").on(t.workspaceId, t.uploadRequestId), index("walkthroughs_processing_idx").on(t.status, t.processingLeaseUntil)]);
+
+// Provider mutations are claimed durably before HTTP. An uncertain write can only
+// reconcile its outcome; a retry must never turn uncertainty into a second create.
+export const appointmentOperations = pgTable("appointment_operations", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  operationKey: text("operation_key").notNull(),
+  resourceKey: text("resource_key").notNull(),
+  kind: text("kind").notNull(),
+  payloadHash: text("payload_hash").notNull(),
+  request: jsonb("request").$type<Record<string, unknown>>().notNull(),
+  status: text("status").default("pending").notNull(),
+  providerAppointmentId: text("provider_appointment_id"),
+  response: jsonb("response").$type<Record<string, unknown>>(),
+  lastError: text("last_error"),
+  attemptCount: integer("attempt_count").default(0).notNull(),
+  leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+  lastAttemptAt: timestamp("last_attempt_at", { withTimezone: true }),
+  ...timestamps
+}, t => [uniqueIndex("appointment_operations_key_uq").on(t.operationKey), index("appointment_operations_resource_idx").on(t.resourceKey, t.status)]);
+
+export const communicationExecutions = pgTable("communication_executions", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  requestId: uuid("request_id").notNull(),
+  actorId: text("actor_id").notNull(),
+  contactId: uuid("contact_id").references(() => contacts.id).notNull(),
+  channel: text("channel").notNull(),
+  payloadHash: text("payload_hash").notNull(),
+  payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
+  status: text("status").default("in_flight").notNull(),
+  providerMessageId: text("provider_message_id"),
+  response: jsonb("response").$type<Record<string, unknown>>(),
+  lastError: text("last_error"),
+  verifiedAt: timestamp("verified_at", { withTimezone: true }),
+  ...timestamps
+}, t => [uniqueIndex("communication_executions_request_uq").on(t.actorId,t.requestId),index("communication_executions_contact_idx").on(t.contactId,t.createdAt)]);
 
 export const webhookEvents = pgTable("webhook_events", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -261,7 +319,11 @@ export const webhookEvents = pgTable("webhook_events", {
   receivedAt: timestamp("received_at", { withTimezone: true }).defaultNow().notNull(),
   processedAt: timestamp("processed_at", { withTimezone: true }),
   processingStatus: text("processing_status").default("pending").notNull(),
-  retryCount: integer("retry_count").default(0).notNull()
+  retryCount: integer("retry_count").default(0).notNull(),
+  processingStartedAt: timestamp("processing_started_at", { withTimezone: true }),
+  availableAt: timestamp("available_at", { withTimezone: true }).defaultNow().notNull(),
+  lastError: text("last_error"),
+  resolution: text("resolution")
 }, (t) => [
   uniqueIndex("webhook_provider_event_uq").on(t.providerEventId),
   index("webhook_status_idx").on(t.processingStatus)
@@ -397,3 +459,61 @@ export const operationBriefs = pgTable("operation_briefs", {
   timeZone: text("time_zone").notNull(),
   snapshot: jsonb("snapshot").$type<Record<string, unknown>>().notNull()
 }, t => [index("operation_briefs_workspace_time_idx").on(t.workspaceId, t.generatedAt)]);
+// Only normalized attribution and hashed matching payloads belong here. Never tokens,
+// raw contact snapshots, HTTP headers, or unfiltered provider error messages.
+export const metaConversionEvents = pgTable("meta_conversion_events", {
+  id: text("id").primaryKey(),
+  contactId: uuid("contact_id").notNull(),
+  leadId: uuid("lead_id").notNull(),
+  appointmentId: uuid("appointment_id"),
+  jobId: uuid("job_id"),
+  opportunityId: uuid("opportunity_id"),
+  eventType: text("event_type").notNull(),
+  eventTime: timestamp("event_time", { withTimezone: true }),
+  datasetId: text("dataset_id").notNull(),
+  attribution: jsonb("attribution").$type<Record<string, unknown>>().notNull(),
+  valueCents: integer("value_cents"),
+  currency: text("currency"),
+  payloadVersion: text("payload_version").notNull(),
+  payload: jsonb("payload").$type<Record<string, unknown>>(),
+  status: text("status").default("pending").notNull(),
+  attemptCount: integer("attempt_count").default(0).notNull(),
+  firstAttemptAt: timestamp("first_attempt_at", { withTimezone: true }),
+  lastAttemptAt: timestamp("last_attempt_at", { withTimezone: true }),
+  nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }),
+  leaseUntil: timestamp("lease_until", { withTimezone: true }),
+  leaseToken: text("lease_token"),
+  response: jsonb("response").$type<Record<string, unknown>>(),
+  error: text("error"),
+  retryable: boolean("retryable").default(true).notNull(),
+  acceptedAt: timestamp("accepted_at", { withTimezone: true }),
+  ...timestamps
+}, (t) => [index("meta_conversion_events_status_idx").on(t.status, t.nextAttemptAt)]);
+
+export const metaConversionAttempts = pgTable("meta_conversion_attempts", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  eventId: text("event_id").references(() => metaConversionEvents.id).notNull(),
+  attemptNumber: integer("attempt_number").notNull(),
+  startedAt: timestamp("started_at", { withTimezone: true }).defaultNow().notNull(),
+  finishedAt: timestamp("finished_at", { withTimezone: true }),
+  outcome: text("outcome").default("unknown").notNull(),
+  response: jsonb("response").$type<Record<string, unknown>>(),
+  error: text("error")
+}, (t) => [uniqueIndex("meta_conversion_attempt_number_uq").on(t.eventId, t.attemptNumber)]);
+
+export const metaConversionRuns = pgTable("meta_conversion_runs", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  mode: text("mode").notNull(),
+  startedAt: timestamp("started_at", { withTimezone: true }).defaultNow().notNull(),
+  finishedAt: timestamp("finished_at", { withTimezone: true }),
+  summary: jsonb("summary").$type<Record<string, unknown>>()
+});
+
+export const metaConversionTests = pgTable("meta_conversion_tests", {
+  id: text("id").primaryKey(),
+  datasetId: text("dataset_id").notNull(),
+  accepted: boolean("accepted").notNull(),
+  response: jsonb("response").$type<Record<string, unknown>>().notNull(),
+  error: text("error"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull()
+});

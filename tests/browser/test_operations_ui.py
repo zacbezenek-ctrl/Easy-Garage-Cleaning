@@ -27,7 +27,7 @@ class BrowserTests(unittest.TestCase):
     def tearDownClass(cls): cls.browser.close();cls.pw.stop();cls.server.shutdown();cls.server.server_close()
     def setUp(self):
         self.context=self.browser.new_context(viewport={'width':1360,'height':1000});self.page=self.context.new_page()
-        self.items=[task()];self.calls=[];self.enabled=True;self.fail_once=False;self.stale=False;self.errors=[]
+        self.items=[task()];self.calls=[];self.enabled=True;self.fail_once=False;self.stale=False;self.errors=[];self.calendar_available=False
         self.page.on('pageerror',lambda e:self.errors.append(str(e)))
         self.page.route('**/*',self.route)
     def tearDown(self):
@@ -59,7 +59,10 @@ class BrowserTests(unittest.TestCase):
             for a in c['items']:next(t for t in self.items if t['id']==a['taskId'])['approvalStatus']='approved'
             send({'ok':True,'externalExecution':False,'scope':'draft_review'})
         elif name=='brief.latest':send({'ok':True,'brief':None})
-        elif name=='calendar':send({'error':'portal_authority_unavailable'},503)
+        elif name=='calendar':
+            if self.calendar_available:send({'items':[{'id':'exact-fixture-visit','customer':'Synthetic visit','kind':'walkthrough','localDate':'2026-09-20','localStart':'09:00','status':'scheduled'}],'total':1,'nextOffset':None})
+            else:send({'error':'portal_authority_unavailable'},503)
+        elif name=='portal.job':send({'authority':'employee_hub','job':{'id':'exact-fixture-visit','projectId':'project-fixture','operationalScope':{'text':'Protect shelving <img src=x onerror="window.injected=true">','updatedAt':at(),'updatedBy':'test-owner'},'operationNotes':[{'id':'old','body':'Old note'},{'id':'current','body':'Reviewed note','supersedes':'old','createdAt':at(),'actorId':'test-owner'}]}})
         else:send({'ok':True})
     def open(self):
         self.page.goto(self.url);expect(self.page.locator('[data-ac-content]')).not_to_contain_text('Checking your signed-in account')
@@ -91,4 +94,6 @@ class BrowserTests(unittest.TestCase):
         self.open();self.page.evaluate("window.dispatchEvent(new Event('egc:signout'))");expect(self.page.locator('#host')).to_be_empty()
     def test_no_fake_portal_calendar_on_source_outage(self):
         self.open();self.page.get_by_role('tab',name='Portal schedule',exact=True).click();expect(self.page.locator('[data-ac-content]')).to_contain_text('No other calendar was substituted')
+    def test_authoritative_instructions_show_current_notes_and_escape_untrusted_content(self):
+        self.calendar_available=True;self.open();self.page.get_by_role('tab',name='Portal schedule',exact=True).click();self.page.get_by_role('button',name='Instructions',exact=True).click();dialog=self.page.get_by_role('dialog');expect(dialog).to_contain_text('Protect shelving <img');expect(dialog).to_contain_text('Reviewed note');expect(dialog).not_to_contain_text('Old note');self.assertEqual(dialog.locator('img').count(),0);self.assertIsNone(self.page.evaluate('window.injected'));reads=[r['body'] for r in self.calls if r['body']['command']=='portal.job'];self.assertEqual(reads,[{'command':'portal.job','jobId':'exact-fixture-visit'}])
 if __name__=='__main__':unittest.main(verbosity=2)

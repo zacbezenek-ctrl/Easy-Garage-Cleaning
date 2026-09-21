@@ -6,11 +6,16 @@
     "dev": "tsx watch src/server.ts",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run src"
+    "test": "vitest run src",
+    "test:recordings:integration": "node --test test/recordings-postgres.check.mjs",
+    "test:inbound:integration": "node --test test/inbound-postgres.check.mjs",
+    "test:provider-notes:integration": "node --test test/provider-notes-postgres.check.mjs"
   },
   "dependencies": {
     "@egc/ai": "workspace:*",
     "@egc/database": "workspace:*",
+    "@egc/ghl": "workspace:*",
+    "@egc/lead-audit": "workspace:*",
     "@egc/schemas": "workspace:*",
     "@egc/storage": "workspace:*",
     "@fastify/multipart": "^9.2.1",

@@ -36,6 +36,15 @@ export const walkthroughExtractionSchema = z.object({
   salesNotes: z.array(z.string()).default([]),
   crewNotes: z.array(z.string()).default([]),
   pricingNotes: z.array(z.string()).default([]),
+  proposedActions: z.array(z.object({
+    title: z.string().min(1).max(500),
+    kind: z.enum(["callback", "prepare_quote", "followup_message", "review_notes", "verify_deposit", "job_readiness", "manual"]),
+    commitment: z.string().max(2000),
+    sourceQuote: z.string().min(1).max(2000),
+    ownerMention: z.string().nullable(),
+    dueMention: z.string().nullable(),
+    confidence: z.number().min(0).max(1)
+  })).max(30).default([]),
   evidence: z.record(z.string(), evidenceSchema).default({})
 });
 export type WalkthroughExtraction = z.infer<typeof walkthroughExtractionSchema>;

@@ -56,10 +56,11 @@ for(const enabled of [false,true]) {
       const tools=listed.data.result.tools,names=tools.map(tool=>tool.name);
       assert.ok(tools.length>50);assert.equal(new Set(names).size,names.length,'Each tool must be registered exactly once');
       for(const name of ['egc.job_brief','egc.customer_history'])assert.equal(names.filter(n=>n===name).length,1);
+      for(const name of ['actions.complete_from_message','egc.visit_get','egc.schedule_visit','appointments.operation_status','appointments.reconcile'])assert.equal(names.filter(n=>n===name).length,1);
       const job=tools.find(t=>t.name==='egc.job_brief');
       assert.match(job.description,enabled?/Employee Hub/:/PostgreSQL/);
       for(const t of tools){assert.equal(t.inputSchema.type,'object');assert.doesNotThrow(()=>JSON.stringify(t.inputSchema));}
-      for(const name of ['actions.propose','actions.edit','actions.complete','actions.cancel','egc.generate_brief']){
+      for(const name of ['actions.propose','actions.edit','actions.complete','actions.complete_from_message','actions.cancel','egc.generate_brief','egc.schedule_visit','appointments.reconcile']){
         const tool=tools.find(t=>t.name===name);assert.equal(tool.annotations.readOnlyHint,false);
         assert.ok(tool._meta.securitySchemes.some(s=>s.scopes.includes('egc:write')));
       }
@@ -71,7 +72,7 @@ for(const enabled of [false,true]) {
       const payload=JSON.parse(status.data.result.content[0].text);
       assert.equal(payload.error,enabled?'operations_bridge_not_configured':'operations_not_enabled');
       if(enabled){
-        for(const name of ['send_sms','conversations.send_message','egc.ensure_booking','appointments.delete','tasks.update','walkthroughs.approve']){
+        for(const name of ['appointments.delete','tasks.update','jobs.add_note','walkthroughs.create_draft','walkthroughs.update_draft','walkthroughs.approve']){
           const denied=await server.rpc('tools/call',{name,arguments:{}},true);
           assert.equal(denied.status,200);assert.equal(denied.data.result.isError,true);
           assert.equal(JSON.parse(denied.data.result.content[0].text).error,'legacy_mutation_disabled_in_operations_mode');

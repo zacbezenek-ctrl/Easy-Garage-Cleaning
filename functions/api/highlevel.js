@@ -27,6 +27,8 @@ import { syncSalesFollowupExit, salesExitMilestone } from '../_lib/sales-followu
 import { readJob, patchJob } from '../_lib/firestore-job.js';
 import { customerCalendars, isStaffScheduledCalendar } from '../_lib/highlevel-calendars.js';
 import { createJobAssignmentAccess } from '../_lib/job-assignment.js';
+import { syncNativeSchedule } from '../_lib/operations-schedule-sync.js';
+import { syncNativeNote } from '../_lib/operations-note-sync.js';
 
 const API = 'https://services.leadconnectorhq.com';
 const DEFAULT_LEAD_RESET_AT = '2026-09-03T21:51:19.314Z';
@@ -340,6 +342,7 @@ async function completeAppointment(c, appointmentId, targetStatus = 'completed')
 }
 
 async function createAppointment(c, payload, contactId) {
+  if(c.operationsEnv?.EGC_OPERATIONS_ENABLED==='true')return syncNativeSchedule(c.operationsEnv,c.operationsSession,{portalVisitId:payload.job_id,requestId:payload.idempotency_key,contactProviderId:contactId,runAutomations:payload.notify!==false});
   const type = payload.event_type === 'job' ? 'job' : 'walkthrough';
   const calendarId = payload.calendar_id || await findCalendar(c, type);
   if (calendarId === '2yYX63nHYvUsL6KKhAc0') throw new Error('The Employee hiring calendar cannot be used for customer appointments');
@@ -541,6 +544,8 @@ export async function onRequestPost({ request, env }) {
   }
   if (payload.tool === 'game_plan' && !hasBusinessAccess(session)) return reply(403, { ok: false, code: 'BUSINESS_ACCESS_REQUIRED', error: 'Walkthrough access is limited to Zac, Tyler, and Alex' });
   if (payload.tool === 'schedule' && !hasBusinessAccess(session)) return reply(403, { ok: false, code: 'BUSINESS_ACCESS_REQUIRED', error: 'Schedule changes are limited to managers' });
+  c.operationsEnv=env;c.operationsSession=session;
+  if(env.EGC_OPERATIONS_ENABLED==='true'&&['schedule','game_plan'].includes(payload.tool)&&!payload.job_id)return reply(409,{ok:false,code:'SCHEDULE_STABLE_IDENTITY_REQUIRED',error:'Save the exact Hub visit before synchronizing its provider appointment.'});
   // This runs independently of notes/calendar writes, and validates approval and
   // recipient from storage. Repeating the handoff cannot send another invitation.
   const portalInvitation = inviteRequested ? await sendAcceptedQuotePortal(env, payload.job_id, { requireRequested: true }) : undefined;
@@ -593,30 +598,37 @@ export async function onRequestPost({ request, env }) {
       const tag = `egc-${event}`;
       if (!payload.suppress_automation) await addTags(c, contactId, [tag]);
       const appointmentStatus = ['cancelled','confirmed'].includes(String(payload.appointment_status || '').toLowerCase()) ? String(payload.appointment_status).toLowerCase() : '';
-      const appointment = appointmentStatus && payload.appointment_id ? await completeAppointment(c, payload.appointment_id, appointmentStatus) : {};
+      const appointment = appointmentStatus && (payload.appointment_id||env.EGC_OPERATIONS_ENABLED==='true'&&payload.job_id) ? env.EGC_OPERATIONS_ENABLED==='true'
+        ? await syncNativeSchedule(env,session,{portalVisitId:payload.job_id,requestId:payload.idempotency_key,contactProviderId:contactId,runAutomations:false})
+        : await completeAppointment(c, payload.appointment_id, appointmentStatus) : {};
       let noteId = '';
       if (String(payload.note || '').trim()) {
-        const note = await ghl(c, `/contacts/${encodeURIComponent(contactId)}/notes`, { method: 'POST', headers: payload.idempotency_key ? { 'Idempotency-Key': payload.idempotency_key } : {}, body: JSON.stringify({ userId: c.userId || undefined, title: `EGC Lifecycle — ${event}`, body: String(payload.note).trim().slice(0, 3000), color: '#F15A24', pinned: false }) });
+        const note = env.EGC_OPERATIONS_ENABLED==='true'
+          ? await syncNativeNote(env,session,{portalJobId:payload.job_id,requestId:payload.idempotency_key||payload.request_id,contactId,scope:'lifecycle_'+event.slice(0,80),title:`EGC Lifecycle — ${event}`,body:String(payload.note).trim().slice(0,3000)})
+          : await ghl(c, `/contacts/${encodeURIComponent(contactId)}/notes`, { method: 'POST', headers: payload.idempotency_key ? { 'Idempotency-Key': payload.idempotency_key } : {}, body: JSON.stringify({ userId: c.userId || undefined, title: `EGC Lifecycle — ${event}`, body: String(payload.note).trim().slice(0, 3000), color: '#F15A24', pinned: false }) });
         noteId = note.note?.id || '';
       }
       return finish(contactId, { ok: true, contactId, noteId, ...appointment, portalInvitation, automation: { trigger: payload.suppress_automation ? '' : tag, suppressed: Boolean(payload.suppress_automation) } });
     }
     const isCloseout = payload.tool === 'post_job';
-    const note = await ghl(c, `/contacts/${encodeURIComponent(contactId)}/notes`, { method: 'POST', headers: payload.idempotency_key ? { 'Idempotency-Key': payload.idempotency_key } : {}, body: JSON.stringify({
+    const note = env.EGC_OPERATIONS_ENABLED==='true'
+      ? await syncNativeNote(env,session,{portalJobId:payload.job_id,requestId:payload.idempotency_key||payload.request_id,contactId,scope:isCloseout?'post_job':'game_plan',title:isCloseout?'EGC Job Closeout':'EGC Internal Job Brief',body:isCloseout?closeoutNote(payload):noteBody(payload)})
+      : await ghl(c, `/contacts/${encodeURIComponent(contactId)}/notes`, { method: 'POST', headers: payload.idempotency_key ? { 'Idempotency-Key': payload.idempotency_key } : {}, body: JSON.stringify({
       userId: c.userId || undefined, title: isCloseout ? 'EGC Job Closeout' : 'EGC Internal Job Brief',
       body: isCloseout ? closeoutNote(payload) : noteBody(payload), color: '#F15A24', pinned: !isCloseout
     })});
     let taskId = '';
     if (isCloseout) {
       await addTags(c, contactId, ['egc-job-complete', 'egc-review-ready']);
-      const due = new Date(); due.setMonth(due.getMonth() + 6);
+      if(env.EGC_OPERATIONS_ENABLED==='true')taskId=note.followupTaskId||'';
+      else {const due = new Date(); due.setMonth(due.getMonth() + 6);
       try {
         const task = await ghl(c, `/contacts/${encodeURIComponent(contactId)}/tasks`, { method: 'POST', body: JSON.stringify({
           title: '6-month garage check-in', body: 'Ask how the system is holding up and offer maintenance / Garage Guard if useful.',
           dueDate: due.toISOString(), completed: false, assignedTo: c.userId || undefined
         })});
         taskId = task.task && task.task.id || '';
-      } catch {}
+      } catch {}}
       const stage = await advanceOpportunity(c, contactId, c.jobCompleteStageId, 'egc-job-complete', payload.opportunity_id || '', opportunityInput(payload, client));
       return finish(contactId, { ok: true, contactId, noteId: note.note && note.note.id || '', taskId, pipeline: stage, automation: { trigger: 'egc-job-complete' } });
     } else {
@@ -625,11 +637,13 @@ export async function onRequestPost({ request, env }) {
       // persuasion requires the current saved estimate to still be open.
       const quoteIsOpen = savedJob && !salesExitMilestone(savedJob) && ['sent', 'open'].includes(String(savedJob.estimate?.status || '').toLowerCase());
       await addTags(c, contactId, ['egc-walkthrough-complete', ...(quoteIsOpen ? c.quoteReadyTags : [])]);
-      const walkthrough = await completeAppointment(c, client.highlevel_appointment_id || payload.walkthrough_appointment_id || '');
+      const walkthrough = env.EGC_OPERATIONS_ENABLED==='true'
+        ? savedJob?.sourceWalkthroughId ? await syncNativeSchedule(env,session,{portalVisitId:savedJob.sourceWalkthroughId,requestId:(payload.idempotency_key||'')+':walkthrough',contactProviderId:contactId,runAutomations:false}) : {updated:false,reason:'exact-source-walkthrough-not-linked'}
+        : await completeAppointment(c, client.highlevel_appointment_id || payload.walkthrough_appointment_id || '');
       const q = payload.quote || {};
       if (q.job_date && q.start_time && q.end_time) {
         const scheduled = await createAppointment(c, {
-          appointment_id: client.highlevel_job_appointment_id || '',
+          job_id:payload.job_id,appointment_id: client.highlevel_job_appointment_id || '',
           event_type: 'job', start_time: q.start_at || `${q.job_date}T${q.start_time}:00-06:00`,
           end_time: q.end_at || `${q.job_date}T${q.end_time}:00-06:00`, title: q.title || 'EGC Garage Service',
           address: client.address, notes: appointmentInstructions(payload), notify: true, idempotency_key: payload.idempotency_key || '',
@@ -644,6 +658,6 @@ export async function onRequestPost({ request, env }) {
     }
     return reply(200, { ok: true, contactId, noteId: note.note && note.note.id || '', taskId, automation: { trigger: 'egc-walkthrough-complete' } });
   } catch (error) {
-    return reply(502, { ok: false, error: 'HighLevel rejected the field handoff', detail: error.detail || error.message, portalInvitation, salesFollowupExit: await exitForJob() });
+    return reply(502, { ok: false, error: 'HighLevel rejected the field handoff', detail: error.code||error.detail || error.message,...(error.operationId?{operationId:error.operationId}:{}), portalInvitation, salesFollowupExit: await exitForJob() });
   }
 }

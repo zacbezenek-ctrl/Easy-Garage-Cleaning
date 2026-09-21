@@ -1,0 +1,1 @@
+ALTER TABLE "walkthroughs" ADD COLUMN "audio_sha256" text;

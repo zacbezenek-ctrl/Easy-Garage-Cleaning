@@ -1,5 +1,5 @@
 -- Additive guards for the existing task table. Installed via a checked-in migration.
--- No sender is enabled by this migration. Delivery/payment completion remains closed.
+-- Message completion requires an accepted, verified delivered execution and exact approval.
 CREATE OR REPLACE FUNCTION egc_task_revision_guard() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE content_changed boolean; actor text; system_actor text;
 BEGIN
@@ -32,8 +32,32 @@ BEGIN
     IF (NEW.kind='followup_message') IS DISTINCT FROM (NEW.draft_payload IS NOT NULL) THEN
       RAISE EXCEPTION 'managed_action_draft_type_mismatch' USING ERRCODE='23514';
     END IF;
-    IF NEW.status='completed' AND NEW.kind IN ('followup_message','verify_deposit') THEN
+    IF NEW.status='completed' AND NEW.kind='verify_deposit' THEN
       RAISE EXCEPTION 'provider_evidence_completion_not_activated' USING ERRCODE='23514';
+    END IF;
+    IF NEW.status='completed' AND NEW.kind='followup_message' AND (TG_OP='INSERT' OR OLD.status IS DISTINCT FROM 'completed') THEN
+      IF TG_OP='INSERT' OR current_setting('egc.communication_completion',true) IS DISTINCT FROM NEW.id::text OR NEW.completed_at IS NULL OR NOT EXISTS (
+        SELECT 1 FROM jsonb_array_elements(NEW.completion_evidence) proof
+        JOIN communication_executions execution ON execution.id::text=proof->>'executionId'
+        JOIN operation_approvals approval ON approval.id::text=proof->>'approvalId' AND approval.task_id=NEW.id AND approval.task_revision=OLD.revision AND approval.workspace_id=NEW.workspace_id
+        WHERE proof->>'kind'='verified_communication' AND proof->>'taskId'=NEW.id::text
+          AND proof->>'approvedRevision'=OLD.revision::text
+          AND execution.contact_id=NEW.contact_id AND execution.status='accepted'
+          AND execution.provider_message_id IS NOT NULL AND execution.verified_at IS NOT NULL
+          AND execution.response->'delivered'='true'::jsonb
+          AND proof->>'providerMessageId'=execution.provider_message_id
+          AND execution.response->>'messageId'=execution.provider_message_id
+          AND approval.snapshot->'task'->'draftPayload'=NEW.draft_payload
+          AND CASE WHEN lower(execution.channel)='sms'
+            THEN execution.payload->>'toNumber'=NEW.draft_payload->>'recipient'
+            ELSE execution.payload->>'emailTo'=NEW.draft_payload->>'recipient'
+              AND coalesce(execution.payload->>'subject','')=coalesce(NEW.draft_payload->>'subject','') END
+          AND execution.payload->>'message'=NEW.draft_payload->>'body'
+          AND lower(execution.channel)=lower(NEW.draft_payload->>'channel')
+          AND approval.created_at <= execution.created_at AND approval.expires_at >= execution.created_at
+      ) THEN
+        RAISE EXCEPTION 'provider_evidence_completion_not_activated' USING ERRCODE='23514';
+      END IF;
     END IF;
   END IF;
   RETURN NEW;

@@ -1,0 +1,8 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {collectAcceptance,parseRpc} from '../scripts/operations-acceptance.mjs';
+test('read-only acceptance never invokes a mutation and emits no raw private tool data',async()=>{
+  const calls=[];const fetcher=async(url,options)=>{const rpc=JSON.parse(options.body);calls.push(rpc);let result={};if(rpc.method==='tools/list')result={tools:['egc.operations_status','egc.operations_owners'].map(name=>({name}))};if(rpc.method==='tools/call')result={structuredContent:{result:rpc.params.name==='egc.operations_status'?{ok:true,health:{queues:[],inboundActions:{raw:'private-secret'}},release:'a'.repeat(40)}:{authority:'employee_hub',members:[{id:'private-member',name:'Private customer text'}]}}};return Response.json({jsonrpc:'2.0',id:rpc.id,result});};
+  const report=await collectAcceptance({url:'https://synthetic.invalid/mcp',token:'synthetic-secret-token',fetcher});assert.equal(report.mode,'read_only');assert.equal(report.allReadChecksPassed,false);assert.ok(report.productionAcceptance.startsWith('incomplete'));assert.deepEqual(calls.filter(c=>c.method==='tools/call').map(c=>c.params.name),['egc.operations_status','egc.operations_owners']);for(const value of ['private-secret','private-member','Private customer text','synthetic-secret-token'])assert.ok(!JSON.stringify(report).includes(value));
+});
+test('JSON and SSE replies parse without accepting malformed data',()=>{assert.deepEqual(parseRpc('{"result":{"ok":true}}'),{result:{ok:true}});assert.deepEqual(parseRpc('event: message\ndata: {"result":{"ok":true}}\n\n'),{result:{ok:true}});assert.throws(()=>parseRpc('private invalid response'),/invalid_mcp_response/);});

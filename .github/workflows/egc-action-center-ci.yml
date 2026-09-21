@@ -68,7 +68,31 @@ jobs:
         run: pnpm --filter @egc/lead-audit test:operations:integration
         working-directory: egc-platform
       - name: Durable actions, approvals, idempotency and source invalidation
-        run: pnpm --filter @egc/operations test:integration
+        run: |
+          pnpm --filter @egc/operations test:integration
+          node --test services/operations/test/timeline.check.mjs
+          node --test services/operations/test/message-completion.check.mjs
+          node --test services/operations/test/legacy-walkthrough.check.mjs
+        working-directory: egc-platform
+      - name: Durable appointment claims and unknown-outcome reconciliation
+        run: |
+          node --test apps/mcp/test/appointments-postgres.check.mjs
+          node --test apps/api/test/scheduling-postgres.check.mjs
+        working-directory: egc-platform
+      - name: Durable recording intake, retries and authoritative review
+        run: pnpm --filter @egc/api test:recordings:integration
+        working-directory: egc-platform
+      - name: Unanswered customer replies and protected reconciliation health
+        run: pnpm --filter @egc/api test:inbound:integration
+        working-directory: egc-platform
+      - name: Webhook lease takeover and terminal outcome fencing
+        run: node --test apps/worker/test/webhooks-postgres.check.mjs
+        working-directory: egc-platform
+      - name: Authorized customer communications and provider note write recovery
+        run: |
+          node --test apps/mcp/test/communications-postgres.check.mjs
+          node --test apps/worker/test/notes-postgres.check.mjs
+          pnpm --filter @egc/api test:provider-notes:integration
         working-directory: egc-platform
       - name: Verify schema has no uncommitted migration drift
         run: |
@@ -90,6 +114,8 @@ jobs:
       - run: python -m playwright install --with-deps chromium
       - name: Isolated real-browser Action Center tests
         run: python tests/browser/test_operations_ui.py
+      - name: Isolated real-browser recording review tests
+        run: python tests/browser/test_recordings_ui.py
       - uses: actions/upload-artifact@v4
         if: always()
         with:

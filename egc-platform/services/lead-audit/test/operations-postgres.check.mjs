@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import {getDb, schema} from '@egc/database';
 import {eq, sql} from 'drizzle-orm';
 import {readExistingTaskQueue} from '../dist/operations-read.js';
+import {businessContactPredicate,leadsNeedingContact} from '../dist/index.js';
 
 const url = new URL(process.env.DATABASE_URL ?? 'http://invalid');
 if (process.env.EGC_OPERATIONS_TEST !== 'isolated' ||
@@ -133,4 +134,18 @@ test('database failure propagates instead of becoming a successful empty queue',
   try { await assert.rejects(readExistingTaskQueue(options())); }
   finally { await db.execute(sql`ALTER TABLE public.tasks_temporarily_unavailable RENAME TO tasks`); }
   assert.equal((await readExistingTaskQueue(options())).snapshot.counts.observedDue,0);
+});
+
+test('explicit retained routing canaries are excluded from business cohorts without guessing from customer names',async()=>{
+ const rows=await db.insert(schema.contacts).values([
+  {providerId:'real-test-name',name:'Test Garage Services',source:'Referral'},
+  {providerId:'real-unknown-source',source:null},
+  {providerId:'fixture-tag',source:'Referral',tags:['egc-test']},
+  {providerId:'fixture-source',source:'EGC synthetic routing validation'}
+ ]).returning();
+ await db.insert(schema.leads).values(rows.map(row=>({contactId:row.id,currentState:'NEVER_CONTACTED'})));
+ const business=await db.select({providerId:schema.contacts.providerId}).from(schema.contacts).where(businessContactPredicate());
+ assert.deepEqual(business.map(x=>x.providerId).sort(),['real-test-name','real-unknown-source']);
+ const needing=await leadsNeedingContact(3);assert.equal(needing.length,2);
+ assert.equal((await db.select().from(schema.contacts)).length,4,'synthetic audit history remains stored');
 });

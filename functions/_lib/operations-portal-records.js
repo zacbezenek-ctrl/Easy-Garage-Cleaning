@@ -1,4 +1,5 @@
 import {firestoreFetch} from './firebase-service-account.js';
+import {financialFacts} from './operations-financials.js';
 const PROJECT='egcw-1ec83';
 const BASE=`https://firestore.googleapis.com/v1/projects/${PROJECT}/databases/(default)/documents/jobs`;
 const SAFE_ID=/^[A-Za-z0-9_-]{1,180}$/;
@@ -73,8 +74,9 @@ export async function portalJob(env,id,fetcher=firestoreFetch) {
   const r=decodeDoc(await response.json());
   if(excluded(r)||r.id!==id)throw error('portal_job_not_found',404);
   return {ok:true,authority:'employee_hub',job:{id:r.id,revision:r.sourceRevision,type:r.type||'job',status:r.pipelineStatus||r.status||'unknown',
-    sourceWalkthroughId:r.sourceWalkthroughId||null,highlevelContactId:r.highlevelContactId||null,customer:r.customer||null,address:r.address||null,
+    customerId:r.customerId||null,projectId:r.projectId||null,sourceWalkthroughId:r.sourceWalkthroughId||null,highlevelContactId:r.highlevelContactId||null,customer:r.customer||null,address:r.address||null,
     date:r.date||null,time:r.time||null,endTime:r.endTime||null,scope:r.jobInstructions||r.scope||null,
-    scopeApproval:r.acceptance?.acceptedAt?'customer_acceptance_recorded':'not_explicit_in_source',notes:r.notes||null},
+    scopeApproval:r.acceptance?.acceptedAt?'customer_acceptance_recorded':'not_explicit_in_source',notes:r.notes||null,operationNotes:r.operationNotes||[],operationalScope:r.operationalScope||null,completedAt:r.completedAt||null},
+    financials:financialFacts(r),reviewedWalkthroughScope:r.reviewedWalkthroughScope||null,
     coverage:{complete:true,asOf:new Date().toISOString()}};
 }

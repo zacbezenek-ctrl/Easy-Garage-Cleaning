@@ -9,5 +9,7 @@ RUN pnpm --filter @egc/schemas build \
  && pnpm --filter @egc/database build \
  && pnpm --filter @egc/ghl build \
  && pnpm --filter @egc/lead-audit build \
+ && pnpm --filter @egc/operations build \
+ && pnpm --filter @egc/meta-conversions build \
  && pnpm --filter @egc/mcp build
 CMD ["node", "apps/mcp/dist/server.js"]

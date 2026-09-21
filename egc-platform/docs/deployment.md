@@ -43,17 +43,17 @@ The worker executes the deterministic runtime migrator before starting reconcili
 
 ## GHL
 
-The worker uses the configured private integration token for read synchronization. When `GHL_WRITEBACK_ENABLED=true`, approved walkthroughs queue durable contact-note write-back through the outbox.
+The worker uses the configured private integration token for read synchronization. When `GHL_WRITEBACK_ENABLED=true`, durable contact-note writes use the shared outbox with provider read-back, lease fencing and explicit unknown-outcome recovery.
 
 The API verifies GHL webhook signatures. Webhooks provide low latency and the worker's periodic reconciliation repairs missed events.
 
 ## Portal
 
-The internal portal is protected by Basic Auth for V1. The service-to-service `API_BEARER_TOKEN` never appears in browser code.
+The existing Cloudflare Employee Hub is authoritative for operational jobs, visits, customers, scope and financial evidence. While `EGC_OPERATIONS_ENABLED=false`, the Railway portal retains its existing legacy recording upload and approval workflow. Only records without managed Hub linkage can use legacy approval, even during rollback. Once enabled, the Railway recording page directs work to the Hub and the API/MCP reject legacy recording mutations. Deploy and verify both the Cloudflare signed bridge and Railway API before enabling unified operations; set the flag consistently on API, MCP, worker and portal. Service credentials never appear in browser code.
 
 ## MCP
 
-The MCP exposes Streamable HTTP at `/mcp` and OAuth discovery/authorization endpoints on the same HTTPS origin. All EGC MCP tools are read-only.
+The MCP exposes Streamable HTTP at `/mcp` and OAuth discovery/authorization endpoints on the same HTTPS origin. Read tools require `egc:read`; bounded audited writes require `egc:write`. Durable requests use stable request IDs. Approving a draft never sends a message, collects a payment or changes a booking by itself.
 
 See `chatgpt-connection.md` for the exact ChatGPT connection flow.
 
