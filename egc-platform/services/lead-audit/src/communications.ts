@@ -13,14 +13,14 @@ export function isCallMessage(type: string) {
 export function callContactEvidence(raw: Raw) {
   const meta = record(raw.meta);
   const status = lower(raw.status);
-  const callStatus = lower(raw.callStatus ?? meta.callStatus);
+  const call = record(meta.call);\n  const callStatus = lower(raw.callStatus ?? meta.callStatus ?? call.status);
   const answeredBy = lower(raw.answeredBy ?? meta.answeredBy);
   const disposition = lower(raw.disposition ?? meta.disposition);
   const combined = [status, callStatus, answeredBy, disposition, lower(raw.messageTypeString)].join(" ");
   if (/screen/.test(combined)) return { outcome: "screened", answered: false, twoWay: false } as const;
   if (/voicemail|machine|answering.machine/.test(combined)) return { outcome: "voicemail", answered: false, twoWay: false } as const;
   if (/no.?answer|missed|busy|failed|cancel/.test(combined)) return { outcome: "unanswered", answered: false, twoWay: false } as const;
-  const duration = Number(raw.callDuration ?? raw.duration ?? meta.callDuration);
+  const duration = Number(raw.callDuration ?? raw.duration ?? meta.callDuration ?? call.duration);
   const human = answeredBy === "human" && duration > 0;
   const documentedInbound = lower(raw.direction) === "inbound" && status === "completed" && callStatus === "completed" && typeof raw.userId === "string" && raw.userId.length > 0 && duration > 0;
   if (human || documentedInbound) return { outcome: "human_connected", answered: true, twoWay: true } as const;
