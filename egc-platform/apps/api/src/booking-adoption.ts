@@ -23,9 +23,24 @@ type Provider=Pick<GhlClient,'locationId'|'getContact'|'getAppointment'|'getCale
 type Store={load:(since:Date,until:Date)=>Promise<{candidates:AdoptionCandidate[];complete:boolean}>;get:(key:string)=>Promise<Json|null>;save:(key:string,value:Json)=>Promise<void>};
 type Proof=Extract<Command,{command:'schedule.adopt'}>['proof'];
 type Plan={source:string;sourceId:string;contactId:string|null;contactProviderId:string|null;status:'ready'|'blocked'|'already_in_hub'|'adopted'|'failed';reasons:string[];requestId?:string;proof?:Proof;portalVisitId?:string};
-const adoptionErrors=new Set(['adoption_source_changed','adoption_receipt_invalid','adoption_receipt_conflict','adoption_receipt_identity_mismatch','adoption_readback_mismatch',
+const adoptionErrors=new Set(['adoption_source_changed','adoption_receipt_invalid','adoption_receipt_conflict','adoption_receipt_identity_mismatch','adoption_readback_mismatch','schedule_adoption_operational_scope_invalid',
  'schedule_adoption_customer_identity_requires_manager','schedule_adoption_customer_scan_unavailable','schedule_adoption_customer_scan_incomplete','schedule_adoption_changed_since_operation','schedule_adoption_conflict_time_unresolved','schedule_adoption_contact_invalid','schedule_adoption_customer_ambiguous','schedule_adoption_customer_conflict','schedule_adoption_day_lock_invalid','schedule_adoption_duplicate_suspected','schedule_adoption_existing_source_conflict','schedule_adoption_existing_visit_conflict','schedule_adoption_idempotency_conflict','schedule_adoption_internal_only','schedule_adoption_multiday_or_ambiguous_time','schedule_adoption_original_time_invalid','schedule_adoption_project_conflict','schedule_adoption_proof_expired','schedule_adoption_proof_invalid','schedule_adoption_slot_conflict','schedule_adoption_source_changed','schedule_adoption_source_identity_invalid','schedule_adoption_source_incomplete','schedule_adoption_source_unavailable','schedule_adoption_terminal_tombstone','schedule_adoption_time_out_of_scope']);
-function matchesReadback(job:Json,proof:Proof,id:string){return job.id===id&&job.highlevelContactId===proof.contactProviderId&&job.kind===proof.kind&&active(job.status)&&date(job.startAt)===proof.startAt&&date(job.endAt)===proof.endAt&&str(job.address)?.replace(/\s+/g,' ').toLowerCase()===proof.address.replace(/\s+/g,' ').toLowerCase()&&(!proof.localJobId||job.normalizedLocalJobId===proof.localJobId)&&(!proof.normalizedLocalAppointmentId||job.normalizedLocalAppointmentId===proof.normalizedLocalAppointmentId)&&(!proof.providerAppointmentId||job.highlevelAppointmentId===proof.providerAppointmentId)&&(!proof.providerCalendarId||job.highlevelCalendarId===proof.providerCalendarId);}
+function matchesReadback(job:Json,proof:Proof,id:string,requireScope=false){return job.id===id&&job.highlevelContactId===proof.contactProviderId&&job.kind===proof.kind&&active(job.status)&&date(job.startAt)===proof.startAt&&date(job.endAt)===proof.endAt&&str(job.address)?.replace(/\s+/g,' ').toLowerCase()===proof.address.replace(/\s+/g,' ').toLowerCase()&&(!proof.localJobId||job.normalizedLocalJobId===proof.localJobId)&&(!proof.normalizedLocalAppointmentId||job.normalizedLocalAppointmentId===proof.normalizedLocalAppointmentId)&&(!proof.providerAppointmentId||job.highlevelAppointmentId===proof.providerAppointmentId)&&(!proof.providerCalendarId||job.highlevelCalendarId===proof.providerCalendarId)&&(!requireScope||!proof.operationalScope||job.adoptionOperationalScope!==undefined&&digest(job.adoptionOperationalScope)===digest(proof.operationalScope)&&job.originalServiceType===proof.operationalScope.serviceType);}
+
+// Copy only the exact normalized job's operational fields. Free-text notes stay
+// source narrative; they never become a financial amount or customer approval.
+function sourceOperationalScope(job:Json,contactId:string):Proof['operationalScope']|undefined{
+ if(job.contactId!==contactId||!str(job.id))return undefined;
+ const text=(value:unknown,max:number)=>value==null?null:typeof value==='string'&&value.length<=max?value:undefined;
+ const list=(value:unknown)=>value==null?[]:Array.isArray(value)&&value.length<=100&&value.every(item=>typeof item==='string'&&item.length<=1000)?value as string[]:undefined;
+ const serviceType=text(job.serviceType,500),accessNotes=text(job.accessNotes,10000),itemsKeep=list(job.itemsKeep),itemsRelocate=list(job.itemsRelocate),itemsRemove=list(job.itemsRemove);
+ const numeric=job.estimatedLaborHours;
+ const estimatedLaborHours=numeric==null?null:typeof numeric==='number'?numeric:typeof numeric==='string'&&/^\d+(?:\.\d{1,2})?$/.test(numeric)?Number(numeric):NaN;
+ const sourceCreatedAt=job.createdAt==null?null:date(job.createdAt),sourceUpdatedAt=job.updatedAt==null?null:date(job.updatedAt);
+ if(serviceType===undefined||accessNotes===undefined||!itemsKeep||!itemsRelocate||!itemsRemove||estimatedLaborHours!==null&&(!Number.isFinite(estimatedLaborHours)||estimatedLaborHours<0||estimatedLaborHours>9999.99)||job.createdAt!=null&&!sourceCreatedAt||job.updatedAt!=null&&!sourceUpdatedAt)return undefined;
+ if([serviceType??'',accessNotes??'',...itemsKeep,...itemsRelocate,...itemsRemove].reduce((total,value)=>total+value.length,0)>18000)return undefined;
+ return{sourceType:'local_job',sourceId:String(job.id),sourceCreatedAt,sourceUpdatedAt,serviceType,accessNotes,itemsKeep:[...itemsKeep],itemsRelocate:[...itemsRelocate],itemsRemove:[...itemsRemove],estimatedLaborHours};
+}
 
 function defaultStore():Store{
  const db=getDb();
@@ -114,8 +129,11 @@ export async function verifyBookingAdoption(c:AdoptionCandidate,options:{provide
  const existing=sameSource[0]??sameTime[0];
  if(existing&&(existing.highlevelContactId!==contactProviderId||existing.kind!==kind||date(existing.startAt)!==startAt||date(existing.endAt)!==endAt||str(existing.address)?.replace(/\s+/g,' ').toLowerCase()!==address.replace(/\s+/g,' ').toLowerCase()||!active(existing.status)||existing.highlevelAppointmentId&&existing.highlevelAppointmentId!==providerAppointmentId||existing.highlevelCalendarId&&existing.highlevelCalendarId!==providerCalendarId))return blocked(c,'hub_source_binding_conflict');
  if(existing&&providerAppointmentId&&existing.highlevelAppointmentId===providerAppointmentId)return {...blocked(c,'already_in_hub'),status:'already_in_hub',portalVisitId:existing.id};
+ const sourceJob=localJobId?c.jobs.find(job=>job.id===localJobId):null;
+ const operationalScope=sourceJob?sourceOperationalScope(sourceJob,String(c.contact.id)):null;
+ if(localJobId&&(!sourceJob||operationalScope===undefined))return blocked(c,'source_operational_scope_invalid');
  const providerContact={id:contactProviderId,...Object.fromEntries(['locationId','name','firstName','lastName','phone','email','address1'].flatMap(key=>str(contact[key])?[[key,contact[key]]]:[]))};
- const proof:Proof={source:c.source,sourceId:c.sourceId,contactProviderId,providerContact,kind,startAt,endAt,address,title,originalBookingAt,sourceCreatedAt,verifiedAt:now.toISOString(),providerAppointmentId,providerCalendarId,providerStatus,evidenceIds:[...new Set(evidenceIds)].sort(),sourceRevision:'',localJobId,normalizedLocalAppointmentId};
+ const proof:Proof={source:c.source,sourceId:c.sourceId,contactProviderId,providerContact,kind,startAt,endAt,address,title,originalBookingAt,sourceCreatedAt,verifiedAt:now.toISOString(),providerAppointmentId,providerCalendarId,providerStatus,evidenceIds:[...new Set(evidenceIds)].sort(),sourceRevision:'',localJobId,normalizedLocalAppointmentId,operationalScope};
  proof.sourceRevision=digest({...proof,verifiedAt:undefined,sourceRevision:undefined});
  if(!commandSchema.safeParse({command:'schedule.adopt',requestId:requestIdentity(proof),proof}).success)return blocked(c,'source_proof_malformed');
  if(c.source==='local_job'&&!ids(env.EGC_BOOKING_ADOPT_LOCAL_JOB_IDS).has(c.sourceId))return {...blocked(c,'local_job_requires_reviewed_allowlist'),requestId:requestIdentity(proof),proof};
@@ -146,15 +164,15 @@ export async function reconcileExistingBookingAdoption(portal:Portal,options:{en
      const priorReceipt=rec(prior.receipt),priorId=str(priorReceipt.portalVisitId);
      if(!priorId)throw new Error('adoption_receipt_invalid');
      const detail=await portal(actor,{command:'portal.job',jobId:priorId}),job=rec(detail.job);
-     if(detail.authority!=='employee_hub'||!matchesReadback(job,verified.proof,priorId))throw new Error('adoption_readback_mismatch');
+     if(detail.authority!=='employee_hub'||!matchesReadback(job,verified.proof,priorId,priorReceipt.adopted===true))throw new Error('adoption_readback_mismatch');
      plans.push({...plan,status:'already_in_hub',portalVisitId:priorId});continue;
     }
     await store.save(key,{phase:'pending',requestId:plan.requestId,fingerprint,source:candidate.source,sourceId:candidate.sourceId});
     const receipt=await portal(actor,{command:'schedule.adopt',requestId:plan.requestId,proof:verified.proof});
     const source=rec(receipt.source);
-    if(receipt.ok!==true||receipt.authority!=='employee_hub'||!str(receipt.portalVisitId)||receipt.jobId!==receipt.portalVisitId||receipt.contactProviderId!==verified.proof.contactProviderId||receipt.kind!==verified.proof.kind||date(receipt.startAt)!==verified.proof.startAt||date(receipt.endAt)!==verified.proof.endAt||source.type!==verified.proof.source||source.id!==verified.proof.sourceId||source.revision!==verified.proof.sourceRevision||receipt.duplicate!==false)throw new Error('adoption_receipt_identity_mismatch');
+    if(receipt.ok!==true||receipt.authority!=='employee_hub'||!str(receipt.portalVisitId)||receipt.jobId!==receipt.portalVisitId||receipt.contactProviderId!==verified.proof.contactProviderId||receipt.kind!==verified.proof.kind||date(receipt.startAt)!==verified.proof.startAt||date(receipt.endAt)!==verified.proof.endAt||source.type!==verified.proof.source||source.id!==verified.proof.sourceId||source.revision!==verified.proof.sourceRevision||receipt.duplicate!==false||typeof receipt.adopted!=='boolean'||typeof receipt.replayed!=='boolean')throw new Error('adoption_receipt_identity_mismatch');
     const detail=await portal(actor,{command:'portal.job',jobId:String(receipt.portalVisitId)}),job=rec(detail.job);
-    if(detail.authority!=='employee_hub'||!matchesReadback(job,verified.proof,String(receipt.portalVisitId)))throw new Error('adoption_readback_mismatch');
+    if(detail.authority!=='employee_hub'||!matchesReadback(job,verified.proof,String(receipt.portalVisitId),receipt.adopted===true))throw new Error('adoption_readback_mismatch');
     await store.save(key,{phase:'adopted',requestId:plan.requestId,fingerprint,source:candidate.source,sourceId:candidate.sourceId,localJobId:verified.proof.localJobId,normalizedLocalAppointmentId:verified.proof.normalizedLocalAppointmentId,receipt,verifiedAt:new Date().toISOString()});
     plan={...plan,status:'adopted',portalVisitId:String(receipt.portalVisitId)};
    }
