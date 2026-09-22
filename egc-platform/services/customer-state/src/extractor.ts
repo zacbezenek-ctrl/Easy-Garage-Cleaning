@@ -60,7 +60,7 @@ export async function extractStructuredEvidence(records:SourceRecord[], context:
     const reviewed=new Set(parsed.reviewedSourceIds),safeLocal=new Set(["human_outreach","customer_response","two_way_contact","video_quote_received","address_supplied"]);
     const invalidSources=new Set(semantic.filter(s=>!reviewed.has(s.sourceRecordId)).map(s=>s.sourceRecordId));let invalid=invalidSources.size,unknownSource=false;
     for(const target of local)if(semantic.some(s=>s.sourceRecordId===target.sourceRecordId)&&reviewed.has(target.sourceRecordId))target.events=target.events.filter(e=>safeLocal.has(e.eventType)||(e.eventType==='quote_delivered'&&(e.valueVerified===true||e.details?.verifiedScopedQuote===true)&&target.sourceType==='message'&&target.actorType==='human'&&target.direction==='outbound'));
-    for(const proposed of parsed.events){const id=asRecord(proposed).sourceRecordId;const target=local.find(r=>r.sourceRecordId===id);if(!target){invalid++;unknownSource=true;continue;}
+    for(const proposed of parsed.events){const id=asRecord(proposed).sourceRecordId;const target=semantic.some(r=>r.sourceRecordId===id)?local.find(r=>r.sourceRecordId===id):undefined;if(!target){invalid++;unknownSource=true;continue;}
       const event=validateExtractedEvent(proposed,target);if(!event){invalid++;invalidSources.add(target.sourceRecordId);continue;}
       const existing=target.events.findIndex(e=>e.eventType===event.eventType&&e.details?.commitmentSpanKey===event.details?.commitmentSpanKey);
       if(existing<0)target.events.push(event);else if(!event.humanReviewNeeded && target.events[existing]!.humanReviewNeeded)target.events[existing]=event;

@@ -10,6 +10,14 @@ describe('semantic extraction provider contract',()=>{
     expect(semanticProviderDiagnostic({status:400,code:'invalid_json_schema',param:'text.format.schema',type:'invalid_request_error',request_id:'req_synthetic123'})).toBe('semantic_provider_http_400;code=invalid_json_schema;type=invalid_request_error;param=text.format.schema;request_id=req_synthetic123');
     expect(semanticProviderDiagnostic({status:401,code:'sk-sensitive-token',param:'private@example.invalid',type:'Authorization: Bearer secret',request_id:'sk-private'})).toBe('semantic_provider_http_401');
   });
+  it('rejects model business events attributed to automation or context-only source records',async()=>{
+    process.env.OPENAI_API_KEY='synthetic-not-a-real-key';
+    const inbound:SourceRecord={sourceType:'message',sourceRecordId:'customer',contactId:'contact',occurredAt:'2026-09-21T12:00:00Z',actorType:'customer',direction:'inbound',text:'Can you call me?'};
+    const automated:SourceRecord={...inbound,sourceRecordId:'automation',actorType:'automation',direction:'outbound',text:'Our quote is $250 for the service.'};
+    const context:SourceRecord={...automated,sourceRecordId:'context-only',actorType:'human'};
+    create.mockResolvedValue({output_text:JSON.stringify({reviewedSourceIds:['customer'],events:['automation','context-only'].map(sourceRecordId=>({sourceRecordId,eventType:'quote_delivered',supportingText:automated.text,confidence:1,customerCommitmentVerified:true,humanReviewNeeded:false}))})});
+    const result=await extractStructuredEvidence([inbound,automated],[context]);expect(result.status).toBe('partial');expect(result.records.flatMap(r=>r.events??[]).some(e=>e.eventType==='quote_delivered')).toBe(false);expect(result.records.find(r=>r.sourceRecordId==='automation')?.extractionStatus).toBe('complete');
+  });
   it('retries only the invalid excerpt source, preserving reviewed ambiguous evidence and automation',async()=>{
     process.env.OPENAI_API_KEY='synthetic-not-a-real-key';
     const base={sourceType:'message' as const,contactId:'contact',occurredAt:'2026-09-21T12:00:00Z',direction:'inbound',actorType:'customer'};
