@@ -1,5 +1,10 @@
 const fail = (message, status = 400) => Object.assign(new Error(message), { code: 'EMPLOYEE_JOB_TIME_INVALID', status });
-const instant = value => typeof value === 'string' && /^\d{4}-\d\d-\d\dT\d\d:\d\d(?::\d\d(?:\.\d{1,9})?)?(?:Z|[+-]\d\d:\d\d)$/.test(value) ? Date.parse(value) : NaN;
+const instant = value => {
+  if (typeof value !== 'string' || !/^\d{4}-\d\d-\d\dT\d\d:\d\d(?::\d\d(?:\.\d{1,9})?)?(?:Z|[+-]\d\d:\d\d)$/.test(value)) return NaN;
+  const date = value.slice(0, 10), calendar = Date.parse(`${date}T12:00:00Z`);
+  if (!Number.isFinite(calendar) || new Date(calendar).toISOString().slice(0, 10) !== date || Number(value.slice(11, 13)) > 23 || Number(value.slice(14, 16)) > 59) return NaN;
+  return Date.parse(value);
+};
 const same = (a, b) => String(a || '').toLowerCase() === String(b || '').toLowerCase();
 const jobId = value => typeof value === 'string' && /^[A-Za-z0-9_-]{1,180}$/.test(value) && !/^(?:_egc_|secure_)/.test(value);
 const uuid = value => typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
@@ -43,13 +48,13 @@ export function finishEmployeeJobTime(entry, session, now) {
 export function employeeJobTime(entry, now = new Date().toISOString()) {
   const shiftStart = instant(entry.clockInAt), shiftEnd = instant(entry.clockOutAt || now), rows = segments(entry);
   const result = { recorded: entry.jobTracking?.version === 1, partialHistory: entry.jobTracking?.partialHistory === true, needsReview: false, asOf: now, jobs: [], generalMs: 0, untrackedMs: 0, totalRecordedMs: 0 };
-  if (entry.jobTracking && (entry.jobTracking.version !== 1 || !Array.isArray(entry.jobTracking.segments))) return { ...result, needsReview: true };
+  if (entry.jobTracking && (entry.jobTracking.version !== 1 || !Array.isArray(entry.jobTracking.segments) || rows.length > 200)) return { ...result, needsReview: true };
   if (entry.breaks !== undefined && !Array.isArray(entry.breaks)) return { ...result, needsReview: true };
   if (!Number.isFinite(shiftStart) || !Number.isFinite(shiftEnd) || shiftEnd < shiftStart || shiftEnd - shiftStart > 31 * 86400000) return { ...result, needsReview: true };
   const breaks = []; let previousBreak = shiftStart;
   for (const item of entry.breaks || []) {
     const start = instant(item?.startAt), end = instant(item?.endAt || entry.clockOutAt || now);
-    if (!Number.isFinite(start) || !Number.isFinite(end) || end < start || start < previousBreak || start < shiftStart || end > shiftEnd) return { ...result, needsReview: true };
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end < start || start < previousBreak || start < shiftStart || end > shiftEnd || entry.clockOutAt && !item?.endAt) return { ...result, needsReview: true };
     breaks.push({ start, end }); previousBreak = end;
   }
   const net = (start, end) => Math.max(0, end - start - breaks.reduce((total, pause) => total + Math.max(0, Math.min(end, pause.end) - Math.max(start, pause.start)), 0));
@@ -58,7 +63,7 @@ export function employeeJobTime(entry, now = new Date().toISOString()) {
   const jobs = new Map(), used = new Set(); let previousEnd = shiftStart;
   for (let index = 0; index < rows.length; index++) {
     const segment = rows[index], rawStart = instant(segment?.startedAt), rawEnd = instant(segment?.endedAt || entry.clockOutAt || now);
-    if (!segment || !['general', 'work', 'travel'].includes(segment.kind) || used.has(segment.id) || !Number.isFinite(rawStart) || !Number.isFinite(rawEnd) || rawStart < previousEnd || rawEnd < rawStart || !segment.endedAt && index !== rows.length - 1 || segment.kind !== 'general' && !jobId(segment.jobId)) return { ...result, jobs: [], generalMs: 0, totalRecordedMs: 0, untrackedMs: totalShiftMs, needsReview: true };
+    if (!segment || typeof segment.id !== 'string' || !segment.id || segment.id.length > 250 || !['general', 'work', 'travel'].includes(segment.kind) || used.has(segment.id) || !Number.isFinite(rawStart) || !Number.isFinite(rawEnd) || rawStart < previousEnd || rawEnd < rawStart || !segment.endedAt && (index !== rows.length - 1 || entry.clockOutAt) || segment.kind !== 'general' && !jobId(segment.jobId)) return { ...result, jobs: [], generalMs: 0, totalRecordedMs: 0, untrackedMs: totalShiftMs, needsReview: true };
     used.add(segment.id); previousEnd = rawEnd;
     if (rawStart < shiftStart || rawEnd > shiftEnd) result.needsReview = true;
     const start = Math.max(rawStart, shiftStart), end = Math.min(rawEnd, shiftEnd), duration = end >= start ? net(start, end) : 0;
@@ -75,6 +80,6 @@ export function employeeJobTime(entry, now = new Date().toISOString()) {
 
 export function ownJobTimeProjection(entry, now = new Date().toISOString()) {
   if (!entry) return null;
-  const current = activeJobSegment(entry);
-  return { id: entry.id, employee: entry.employee, clockInAt: entry.clockInAt, onBreak: Boolean(entry.breaks?.some(item => !item.endAt)), currentSegmentId: current?.id || '', current: current ? { id: current.id, kind: current.kind, jobId: current.jobId, jobLabel: current.jobLabel, startedAt: current.startedAt } : null, summary: employeeJobTime(entry, now) };
+  const summary = employeeJobTime(entry, now), current = summary.needsReview ? null : activeJobSegment(entry);
+  return { id: entry.id, employee: entry.employee, clockInAt: entry.clockInAt, onBreak: Array.isArray(entry.breaks) && entry.breaks.some(item => item && !item.endAt), currentSegmentId: current?.id || '', current: current ? { id: current.id, kind: current.kind, jobId: current.jobId, jobLabel: current.jobLabel, startedAt: current.startedAt } : null, summary };
 }

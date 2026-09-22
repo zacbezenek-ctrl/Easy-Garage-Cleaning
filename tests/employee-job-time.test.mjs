@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { activeJobSegment, employeeJobTime } from '../functions/_lib/employee-job-time.js';
+import { activeJobSegment, employeeJobTime, ownJobTimeProjection } from '../functions/_lib/employee-job-time.js';
 import { authorizeTimecard } from '../functions/_lib/employee-timecards.js';
 const session = { user: 'Crew.One', displayName: 'Crew One' }, minute = 60000;
 const at = hour => `2026-09-22T${hour}:00.000Z`;
@@ -68,4 +68,30 @@ test('net work uses UTC elapsed time through DST and malformed records require r
   assert.equal(employeeJobTime({ ...entry, breaks: {} }).needsReview, true);
   assert.equal(employeeJobTime({ ...entry, jobTracking: { version: 1, segments: [null] } }).needsReview, true);
   assert.equal(employeeJobTime({ ...entry, jobTracking: { version: 1, segments: [...entry.jobTracking.segments, ...entry.jobTracking.segments] } }).needsReview, true);
+});
+
+test('malformed imported time records show review state instead of breaking the field page', () => {
+  const entry = open();
+  for (const breaks of [{}, [null], ['invalid']]) {
+    const projected = ownJobTimeProjection({ ...entry, breaks }, at('16:00'));
+    assert.equal(projected.summary.needsReview, true);
+    assert.equal(projected.current, null);
+    assert.equal(projected.currentSegmentId, '');
+  }
+  for (const startedAt of ['2026-02-30T14:00:00Z', '2026-09-22T24:00:00Z']) {
+    assert.equal(employeeJobTime({ ...entry, clockInAt: startedAt }, at('16:00')).needsReview, true);
+  }
+  const missingId = { ...entry, jobTracking: { version: 1, segments: [{ kind: 'work', jobId: 'job-a', startedAt: at('14:00') }] } };
+  assert.equal(ownJobTimeProjection(missingId, at('16:00')).summary.needsReview, true);
+  assert.throws(() => update(missingId, action(missingId, 'job-b'), at('16:00')), /manager review/);
+});
+
+test('closed shifts with unfinished segments or breaks are excluded rather than assuming an end', () => {
+  let entry = open();
+  entry = update(entry, action(entry, 'job-a'), at('14:30'));
+  const unfinished = { ...entry, clockOutAt: at('16:00'), status: 'submitted' };
+  assert.equal(employeeJobTime(unfinished).needsReview, true);
+  const finished = update(entry, { clockOutAt: 'browser-time', status: 'submitted' }, at('16:00'));
+  assert.equal(employeeJobTime(finished).needsReview, false);
+  assert.equal(employeeJobTime({ ...finished, breaks: [{ startAt: at('15:00') }] }).needsReview, true);
 });
