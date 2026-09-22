@@ -98,6 +98,38 @@ test('private and unclassified issues and their resolutions remain management-on
   assert.equal(fieldJobProjection(legacy, [], { manager: true }).attention.canResolve, true);
 });
 
+test('signed job timer uses server time and receipt retries cannot double-count a paused segment', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-09-22T14:00:00Z') });
+  const store = storage(t), job = baseline();
+  job.fieldExecution = { checks: Object.fromEntries(fieldChecklist(job).map(item => [item.id, { completed: true }])), photos: ['before', 'after'].map(category => ({ id: uuid(), fileId: `image-${category}`, category, verified: true })) };
+  store.put('jobs/job-1', job);
+  assert.equal((await post(store, { action: 'status', status: 'dispatched' })).status, 200);
+  t.mock.timers.tick(30 * 60000);
+  assert.equal((await post(store, { action: 'status', status: 'arrived' })).status, 200);
+  t.mock.timers.tick(15 * 60000);
+  assert.equal((await post(store, { action: 'status', status: 'in_progress' })).status, 200);
+  t.mock.timers.tick(90 * 60000);
+  const paused = { action: 'status', status: 'paused', reason: 'Customer needs time to review', requestId: uuid(), expectedRevision: store.revision('job-1') };
+  assert.equal((await post(store, paused)).status, 200);
+  t.mock.timers.tick(10 * 60000);
+  assert.equal((await (await post(store, paused)).json()).alreadyApplied, true);
+  const timerRequest = '?jobId=job-1&view=timer';
+  const timer = await (await route.onRequestGet({ env, request: req('Crew.One', undefined, timerRequest) })).json();
+  assert.equal(timer.jobTime.workMs, 90 * 60000);
+  assert.equal(timer.jobTime.pausedMs, 10 * 60000);
+  assert.equal(timer.jobTime.travelMs, 30 * 60000);
+  assert.equal(timer.jobTime.arrivalMs, 15 * 60000);
+  assert.equal(timer.jobTime.runningKind, 'paused');
+  assert.equal(timer.job, undefined, 'timer refresh must avoid resending scope, photos, roster and history');
+  assert.equal((await route.onRequestGet({ env, request: req('Crew-One', undefined, timerRequest) })).status, 403);
+  assert.equal((await post(store, { action: 'complete', notes: 'All agreed services were completed and reviewed.', hasIssues: false })).status, 200);
+  t.mock.timers.tick(60 * 60000);
+  const completed = await (await route.onRequestGet({ env, request: req('Crew.One', undefined, timerRequest) })).json();
+  assert.equal(completed.jobTime.workMs, 90 * 60000);
+  assert.equal(completed.jobTime.pausedMs, 10 * 60000);
+  assert.equal(completed.jobTime.runningKind, null);
+});
+
 test('today uses Mountain calendar days through UTC midnight and daylight saving transitions', () => {
   assert.equal(route.fieldToday(new Date('2026-09-22T05:59:59Z')), '2026-09-21');
   assert.equal(route.fieldToday(new Date('2026-09-22T06:00:00Z')), '2026-09-22');

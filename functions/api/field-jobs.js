@@ -6,6 +6,7 @@ import { fieldCommand, fieldFailure, fieldFingerprint, fieldId, fieldJobProjecti
 import { createFieldStore } from '../_lib/field-execution-store.js';
 import { createFieldPhotoClient, decodeFieldPhoto, fieldPhotosConfigured, verifyFieldPhotoMetadata } from '../_lib/field-execution-photos.js';
 import { syncFieldCompletion } from '../_lib/field-execution-sync.js';
+import { fieldJobTime } from '../_lib/field-execution-time.js';
 
 const reply = (status, body) => Response.json(body, { status, headers: { 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' } });
 const mutationOriginAllowed = request => {
@@ -61,6 +62,10 @@ export async function onRequestGet({ request, env }) {
   try {
     const ctx = await context(request, env), params = new URL(request.url).searchParams, jobId = params.get('jobId');
     if (jobId) {
+      if (params.get('view') === 'timer') {
+        const job = await authorizedJob(ctx, jobId);
+        return reply(200, { ok: true, jobTime: fieldJobTime(job), expectedRevision: job.__updateTime });
+      }
       const photoId = params.get('photoId');
       if (photoId) {
         const job = await authorizedJob(ctx, jobId), photo = fieldPhotos(job).find(photo => photo.id === photoId);

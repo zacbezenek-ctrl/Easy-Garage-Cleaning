@@ -68,12 +68,26 @@ try {
   await page.getByRole('button', { name: 'Upload photo', exact: true }).click();
   await page.getByText('1 verified', { exact: true }).waitFor();
   await page.getByRole('button', { name: 'Start work', exact: true }).click(); await settled();
+  const timingJob = store.get('jobs/browser-job'), timingClock = timingJob.fieldExecution.jobTime;
+  timingClock.trackingStartedAt = new Date(Date.now() - 120000).toISOString();
+  timingClock.current.startedAt = new Date(Date.now() - 90000).toISOString();
+  store.put('jobs/browser-job', timingJob);
+  await page.reload();
+  await page.locator('#job-time [data-time="work"]').getByText('1 min', { exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Pause work', exact: true }).click();
+  await page.getByLabel('Reason for paused', { exact: true }).fill('Customer is reviewing items to keep.');
+  await page.getByRole('button', { name: 'Save paused', exact: true }).click(); await settled();
+  await page.waitForFunction(() => parseInt(document.querySelector('#job-time [data-time="paused"]')?.textContent || '0', 10) >= 1);
+  assert.equal(await page.locator('#job-time [data-time="work"]').textContent(), '1 min');
+  assert.equal(store.get('jobs/browser-job').fieldExecution.jobTime.current.kind, 'paused');
+  await page.getByRole('button', { name: 'Resume work', exact: true }).click(); await settled();
+  assert.equal(store.get('jobs/browser-job').fieldExecution.jobTime.current.kind, 'work');
   await page.getByLabel('Add a note', { exact: true }).fill('Customer confirmed the green cabinet is staying.');
   await page.getByRole('button', { name: 'Save note', exact: true }).click(); await settled();
   await page.getByText('Customer confirmed the green cabinet is staying.', { exact: true }).waitFor();
   await page.getByLabel('Photo category').selectOption('after');
   await page.getByLabel('Choose photos from library').setInputFiles([{ name: 'after.png', mimeType: 'image/png', buffer: png }, { name: 'after-two.png', mimeType: 'image/png', buffer: png }]);
-  await page.waitForFunction(() => document.querySelectorAll('.queue-item').length >= 3);
+  await page.waitForFunction(() => document.querySelectorAll('.queue-item').length >= 2);
   await page.getByRole('button', { name: 'Upload all ready photos', exact: true }).click();
   await page.getByText('3 verified', { exact: true }).waitFor();
   await page.getByLabel('Completion notes', { exact: true }).fill('Garage cleaned, rack installed, and customer walkthrough completed.');
@@ -162,5 +176,5 @@ try {
   assert.equal(store.get('jobs/browser-job').status, 'completed');
   await managerContext.close(); await Promise.all(background);
   assert.deepEqual(errors, [], 'no browser JavaScript errors after recovery');
-  console.log(JSON.stringify({ ok: true, browser: browser.version(), viewport: '390x844 touch, Pacific device timezone with Mountain job dates', checks: ['login', 'personal day', 'navigate job', 'en route', 'arrived', 'start validation', 'checklists', 'materials', 'library upload', 'draft refresh persistence', 'multiple photos', 'notes', 'completion', 'server refresh persistence', 'next job preserved', 'private photo viewer', 'reassignment revokes detail', 'mobile overflow', 'desktop render', 'offline retry', 'lost response idempotency', 'stale job review', 'auth expiry', 'draft isolation between accounts', 'manager checklist configuration', 'manager private note', 'audited issue resolution after completion', 'durable failed CRM handoff', 'no browser errors'], artifacts: artifactDir }));
+  console.log(JSON.stringify({ ok: true, browser: browser.version(), viewport: '390x844 touch, Pacific device timezone with Mountain job dates', checks: ['login', 'personal day', 'navigate job', 'en route', 'arrived', 'start validation', 'checklists', 'materials', 'live elapsed work', 'pause and resume segment timing', 'library upload', 'draft refresh persistence', 'multiple photos', 'notes', 'completion', 'server refresh persistence', 'next job preserved', 'private photo viewer', 'reassignment revokes detail', 'mobile overflow', 'desktop render', 'offline retry', 'lost response idempotency', 'stale job review', 'auth expiry', 'draft isolation between accounts', 'manager checklist configuration', 'manager private note', 'audited issue resolution after completion', 'durable failed CRM handoff', 'no browser errors'], artifacts: artifactDir }));
 } finally { await context.close(); await browser.close(); await new Promise(resolve => server.close(resolve)); globalThis.fetch = originalFetch; }

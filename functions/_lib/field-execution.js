@@ -1,4 +1,5 @@
 import { jobCrewNames } from './job-assignment.js';
+import { advanceFieldTime, fieldJobTime } from './field-execution-time.js';
 
 export const fieldFailure = (message, status = 400, code = 'FIELD_REQUEST_INVALID', details = {}) => Object.assign(new Error(message), { status, code, ...details });
 export const fieldId = value => typeof value === 'string' && /^[A-Za-z0-9_-]{1,180}$/.test(value) && !/^(_egc_|secure_)/.test(value);
@@ -114,6 +115,7 @@ export function fieldJobProjection(job, events = [], options = {}) {
     photos: fieldPhotos(job).map(photo => ({ id: photo.id, category: photo.category, caption: fieldText(photo.caption, 500), createdAt: photo.createdAt, actorName: photo.actorName, bytes: photo.bytes, url: `/api/field-jobs?jobId=${encodeURIComponent(job.id)}&photoId=${encodeURIComponent(photo.id)}` })),
     history: events.map(event => fieldEventProjection(event, options.manager)).filter(Boolean),
     attention: fieldAttention(job, options.manager === true), canAddManagementNote: options.manager === true,
+    jobTime: fieldJobTime(job, options.now),
     completion: state.completion ? { completedAt: state.completion.completedAt, completedBy: state.completion.actorName || state.completion.actorId, notes: fieldText(state.completion.notes), hasIssues: state.completion.hasIssues === true, issueNotes: fieldText(state.completion.issueNotes) } : null,
     completionSync: job.fieldCompletionSync ? { status: job.fieldCompletionSync.status, message: fieldText(job.fieldCompletionSync.message, 600), attemptedAt: job.fieldCompletionSync.attemptedAt || null, syncedAt: job.fieldCompletionSync.syncedAt || null, canRetry: options.manager === true && job.fieldCompletionSync.status !== 'synced' } : null,
     startedAt: job.startedAt || null, completedAt: job.completedAt || null,
@@ -213,6 +215,11 @@ export function fieldCommand(job, actor, input, now = new Date().toISOString()) 
       break;
     }
     default: throw fieldFailure('Choose a supported job action.');
+  }
+  if (['status', 'complete'].includes(input.action)) {
+    const time = advanceFieldTime(job, input.action === 'complete' ? null : input.status, actor, input.requestId, now);
+    if (time.clock) patch.fieldExecution = { ...(patch.fieldExecution || state), jobTime: time.clock };
+    if (time.segment) event.timeSegment = time.segment;
   }
   return { patch: { ...patch, updatedAt: now, fieldLastActionAt: now }, event };
 }

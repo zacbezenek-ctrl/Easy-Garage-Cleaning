@@ -13,6 +13,27 @@
   function mountainDate(now = new Date()) { return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Denver', year: 'numeric', month: '2-digit', day: '2-digit' }).format(now); }
   function getDraft(suffix, fallback = '') { try { return sessionStorage.getItem(key(suffix)) || fallback; } catch { return fallback; } }
   function setDraft(suffix, value) { try { value ? sessionStorage.setItem(key(suffix), value) : sessionStorage.removeItem(key(suffix)); } catch { /* The visible draft remains editable if browser storage is unavailable. */ } }
+  function acceptJob(job) { S.job = job; S.timeSnapshot = job.jobTime; S.timeObservedAt = performance.now(); S.timeChanged = false; S.timeError = false; }
+  const durationLabel = milliseconds => {
+    if (milliseconds == null || !Number.isFinite(milliseconds)) return 'Not recorded';
+    const seconds = Math.max(0, Math.floor(milliseconds / 1000)), hours = Math.floor(seconds / 3600), minutes = Math.floor(seconds % 3600 / 60);
+    return hours ? `${hours} hr ${minutes} min` : minutes ? `${minutes} min` : `${seconds} sec`;
+  };
+  function renderJobTime() {
+    const host = document.getElementById('job-time'), snapshot = S.timeSnapshot || S.job?.jobTime;
+    if (!host || !snapshot) return;
+    const elapsed = Math.max(0, performance.now() - (S.timeObservedAt ?? performance.now())), stale = elapsed >= 60000 || S.timeError;
+    const totals = { ...snapshot };
+    if (snapshot.recorded && snapshot.runningKind) totals[`${snapshot.runningKind}Ms`] += Math.min(elapsed, 60000);
+    host.innerHTML = `<div class="section-heading"><h2>Job elapsed work</h2><span class="badge">${snapshot.runningKind ? `${esc(label(snapshot.runningKind))} ${stale ? 'last confirmed' : 'running'}` : snapshot.recorded ? 'Stopped' : 'Not started'}</span></div><p class="muted">This is time for the job. Employee shift and payroll hours remain in the time clock.</p><dl class="detail-grid"><div><dt>Recorded active work</dt><dd data-time="work">${snapshot.recorded ? durationLabel(totals.workMs) : 'Not recorded'}</dd></div><div><dt>Scheduled duration</dt><dd>${durationLabel(snapshot.estimatedMs)}</dd></div>${snapshot.recorded ? [['paused', 'Paused'], ['waiting', 'Waiting'], ['delayed', 'Delayed'], ['travel', 'Travel'], ['arrival', 'Arrival preparation']].map(([kind, name]) => `<div><dt>${name}</dt><dd data-time="${kind}">${durationLabel(totals[`${kind}Ms`])}</dd></div>`).join('') : ''}</dl>${snapshot.recorded && snapshot.estimatedMs != null ? `<p>${totals.workMs > snapshot.estimatedMs ? `${durationLabel(totals.workMs - snapshot.estimatedMs)} active work over the scheduled duration.` : `${durationLabel(snapshot.estimatedMs - totals.workMs)} between recorded active work and the scheduled duration.`}</p>` : ''}${snapshot.partialHistory ? '<p class="notice">Timing began after this job already had activity. Earlier work is not included.</p>' : ''}${snapshot.needsReview ? '<p class="notice">The timer needs manager review because a status, duration, or stored record is inconsistent.</p>' : ''}${!snapshot.recorded ? `<p>${esc(snapshot.message || 'Start the field workflow to record job time.')}</p>` : ''}${S.timeChanged ? '<p class="notice">Job details changed. Refresh the job before the next action.</p>' : ''}<small>${stale ? 'Timer could not be confirmed recently. Refresh when connected.' : `Live estimate from the last confirmed status · ${esc(stamp(snapshot.asOf))}`}</small><p><a href="/employee?view=my_day">Open employee time clock</a></p>`;
+  }
+  async function refreshJobTime() {
+    if (!S.job || document.visibilityState !== 'visible' || S.busy || S.uploadBusy || S.pending || S.timeRefreshing) return;
+    S.timeRefreshing = true;
+    try { const data = await api(`/api/field-jobs?jobId=${encodeURIComponent(jobId)}&view=timer`); S.timeSnapshot = data.jobTime; S.timeObservedAt = performance.now(); S.timeChanged = data.expectedRevision !== S.job?.expectedRevision; S.timeError = false; }
+    catch (error) { S.timeError = true; if ([403, 404].includes(error.status)) { S.job = null; renderError(error.message); } }
+    finally { S.timeRefreshing = false; renderJobTime(); }
+  }
   function message(text, isError = false) {
     const feedback = document.getElementById('feedback'); clearTimeout(S.feedbackTimer); feedback.textContent = text; feedback.hidden = false; feedback.style.background = isError ? '#842b20' : '#163e2c';
     S.feedbackTimer = setTimeout(() => { feedback.hidden = true; }, isError ? 12000 : 5500);
@@ -39,14 +60,14 @@
     if (!jobId) return loadDay();
     try {
       const data = await api(`/api/field-jobs?jobId=${encodeURIComponent(jobId)}`);
-      S.job = data.job; S.historyCursor = data.historyCursor; S.photosAvailable = data.photosAvailable;
+      acceptJob(data.job); S.historyCursor = data.historyCursor; S.photosAvailable = data.photosAvailable;
       try { S.pending = JSON.parse(getDraft('pending', 'null')); } catch { S.pending = null; }
       await loadPhotoQueue(); renderJob();
     } catch (error) { if (error.status !== 401) renderError(error.message); throw error; }
   }
   async function refreshJob() {
     const data = await api(`/api/field-jobs?jobId=${encodeURIComponent(jobId)}`);
-    S.job = data.job; S.historyCursor = data.historyCursor; S.photosAvailable = data.photosAvailable; return data;
+    acceptJob(data.job); S.historyCursor = data.historyCursor; S.photosAvailable = data.photosAvailable; return data;
   }
   async function loadDay() {
     try {
@@ -67,6 +88,7 @@
     mountJobSections();
   }
   function mountJobSections() {
+    const timeCard = document.createElement('section'); timeCard.className = 'card'; timeCard.id = 'job-time'; main.querySelector('.grid').insertAdjacentElement('beforebegin', timeCard); renderJobTime();
     const scope = [...main.querySelectorAll('h2')].find(heading => heading.textContent === 'Scope & instructions'); if (scope) scope.closest('.card').id = 'scope-card';
     const notes = [...main.querySelectorAll('h2')].find(heading => heading.textContent === 'Crew notes & issues'); if (notes) notes.closest('.card').id = 'notes-card';
     const nav = document.createElement('nav'); nav.className = 'job-sections'; nav.setAttribute('aria-label', 'Job sections'); nav.innerHTML = [['scope-card', 'Scope'], ['checklist-card', 'Checklist'], ['photos-card', 'Photos'], ['notes-card', 'Notes'], ['complete-card', 'Complete']].map(([id, text]) => `<a href="#${id}">${text}</a>`).join(''); main.querySelector('h1').insertAdjacentElement('afterend', nav);
@@ -101,7 +123,7 @@
     const input = fromRetry ? { ...S.pending, expectedRevision: S.job.expectedRevision } : { ...payload, jobId, requestId: crypto.randomUUID(), expectedRevision: S.job.expectedRevision, expectedUser: S.user.user };
     S.pending = input; setDraft('pending', JSON.stringify(input)); renderJob();
     try {
-      const data = await api('/api/field-jobs', input); S.pending = null; setDraft('pending', ''); S.job = data.job; S.historyCursor = data.historyCursor;
+      const data = await api('/api/field-jobs', input); S.pending = null; setDraft('pending', ''); acceptJob(data.job); S.historyCursor = data.historyCursor;
       if (input.action === 'note') setDraft('note', '');
       if (input.action === 'resolve_issue') setDraft('resolution', '');
       if (input.action === 'complete') ['completion', 'issueNotes', 'hasIssues'].forEach(suffix => setDraft(suffix, ''));
@@ -165,7 +187,7 @@
         try {
           await refreshJob();
           const data = await api('/api/field-jobs', { jobId, requestId: photo.id, expectedRevision: S.job.expectedRevision, expectedUser: photo.user, action: 'photo', category: photo.category, caption: photo.caption, dataUrl: photo.dataUrl });
-          S.job = data.job; S.historyCursor = data.historyCursor; photo.state = 'saved';
+          acceptJob(data.job); S.historyCursor = data.historyCursor; photo.state = 'saved';
           try { await photoStore('delete', photo.id); } catch { /* Server verification is authoritative; reusing this ID remains safe. */ }
           message('Photo verified and saved to the job.');
         } catch (error) {
@@ -223,7 +245,7 @@
         const photo = S.job.photos.find(photo => photo.id === button.dataset.photo); if (!photo) return;
         const viewer = document.getElementById('photo-viewer'); viewer.querySelector('img').src = photo.url; viewer.querySelector('img').alt = photo.caption || `${photo.category} photo`; viewer.querySelector('p').textContent = `${label(photo.category)} · ${photo.caption || ''} · ${photo.actorName || 'Crew'} · ${stamp(photo.createdAt)}`; viewer.showModal();
       } else if (action === 'history-more') {
-        button.disabled = true; const data = await api(`/api/field-jobs?jobId=${encodeURIComponent(jobId)}&historyCursor=${encodeURIComponent(S.historyCursor)}`); const old = S.job.history; S.job = data.job; S.job.history = [...new Map([...old, ...data.job.history].map(event => [event.id, event])).values()]; S.historyCursor = data.historyCursor; renderJob();
+        button.disabled = true; const data = await api(`/api/field-jobs?jobId=${encodeURIComponent(jobId)}&historyCursor=${encodeURIComponent(S.historyCursor)}`); const old = S.job.history; acceptJob(data.job); S.job.history = [...new Map([...old, ...data.job.history].map(event => [event.id, event])).values()]; S.historyCursor = data.historyCursor; renderJob();
       } else if (action === 'retry-photo') await uploadPhotos([button.dataset.photo]);
       else if (action === 'upload-all') await uploadPhotos(S.queue.map(photo => photo.id));
       else if (action === 'remove-photo') { const id = button.dataset.photo; try { await photoStore('delete', id); } catch (error) { message(error.message, true); return; } S.queue = S.queue.filter(photo => photo.id !== id); renderQueue(); }
@@ -231,6 +253,7 @@
   });
   document.getElementById('photo-viewer').querySelector('.viewer-close').addEventListener('click', () => document.getElementById('photo-viewer').close());
   window.addEventListener('online', connection); window.addEventListener('offline', connection);
+  setInterval(renderJobTime, 1000); setInterval(refreshJobTime, 30000);
   window.addEventListener('beforeunload', event => { if (S.busy || S.uploadBusy || S.queue.some(photo => !photo.persisted && photo.state !== 'saved')) { event.preventDefault(); event.returnValue = ''; } });
   initialize();
 })();
