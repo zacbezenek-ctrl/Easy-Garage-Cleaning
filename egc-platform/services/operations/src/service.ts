@@ -38,6 +38,9 @@ export class OperationsService {
     if (!parsed.success) throw new OperationsError("invalid_command",400,{issues:parsed.error.issues.map(i=>({path:i.path,message:i.message}))});
     const command=parsed.data;
     authorize(actor,command,this.config.workspace);
+    // Adoption proof is produced by the backend's exact-source verifier. Public
+    // RPC/MCP callers cannot supply proof or bypass that verifier via this service.
+    if(command.command==='schedule.adopt')throw new OperationsError('schedule_adoption_internal_only',403);
     if(command.command==="intelligence.report"||command.command==="intelligence.diagnostics"||command.command==="intelligence.customer"){
       if(!this.config.canonicalRead)throw new OperationsError("canonical_customer_state_unavailable",503);
       return this.config.canonicalRead(actor,command);

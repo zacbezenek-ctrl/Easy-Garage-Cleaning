@@ -45,6 +45,7 @@ export function calendarItem(r,timeZone) {
     jobId:r.type==='walkthrough'?null:r.id,sourceWalkthroughId:r.sourceWalkthroughId||null,highlevelContactId:r.highlevelContactId||null,
     portalCustomerId:r.customerId||null,portalProjectId:r.projectId||null,highlevelAppointmentId:r.highlevelAppointmentId||null,
     highlevelCalendarId:r.highlevelCalendarId||null,providerAppointmentStatus:r.providerAppointmentStatus||null,
+    normalizedLocalJobId:r.normalizedLocalJobId||null,normalizedLocalAppointmentId:r.normalizedLocalAppointmentId||null,adoptionSource:r.adoptionSource||null,
     syncStatus:r.syncStatus||'unknown',syncedAt:r.syncedAt||null,createdAt:r.createdAt||null,updatedAt:r.updatedAt||null,completedAt:r.completedAt||null};
 }
 export async function portalCalendar(env,command,fetcher=firestoreFetch) {
@@ -55,7 +56,7 @@ export async function portalCalendar(env,command,fetcher=firestoreFetch) {
   if(Date.parse(endDate)-Date.parse(startDate)>366*86400000)throw error('calendar_range_too_large',400);
   const docs=[],exceptions=[],ids=new Set();let token='',pages=0;const tokens=new Set();
   const fields=['recordType','type','date','endDate','time','endTime','customer','address','status','pipelineStatus','sourceWalkthroughId','highlevelContactId',
-    'customerId','projectId','highlevelAppointmentId','highlevelCalendarId','providerAppointmentStatus','syncStatus','syncedAt','createdAt','updatedAt','completedAt'];
+    'customerId','projectId','highlevelAppointmentId','highlevelCalendarId','providerAppointmentStatus','syncStatus','syncedAt','createdAt','updatedAt','completedAt','normalizedLocalJobId','normalizedLocalAppointmentId','adoptionSource'];
   do {
     if(++pages>200)throw error('portal_calendar_scan_incomplete');
     const url=new URL(BASE);url.searchParams.set('pageSize','500');if(token)url.searchParams.set('pageToken',token);
@@ -80,10 +81,12 @@ export async function portalJob(env,id,fetcher=firestoreFetch) {
   if(excluded(r)||r.id!==id)throw error('portal_job_not_found',404);
   const financials=financialFacts(r);
   return {ok:true,authority:'employee_hub',job:{id:r.id,revision:r.sourceRevision,type:['cleanout','reorg'].includes(r.type)?'job':r.type||'job',sourceType:r.type||'job',status:r.pipelineStatus||r.status||'unknown',
+    kind:r.type==='walkthrough'?'walkthrough':'job',startAt:localInstant(r.date,r.time),endAt:localInstant(r.endDate||r.date,r.endTime),
     customerId:r.customerId||null,projectId:r.projectId||null,sourceWalkthroughId:r.sourceWalkthroughId||null,highlevelContactId:r.highlevelContactId||null,customer:r.customer||null,address:r.address||null,
     date:r.date||null,endDate:r.endDate||r.date||null,time:r.time||null,endTime:r.endTime||null,scope:r.jobInstructions||r.scope||null,
     scopeApproval:r.acceptance?.acceptedAt?'customer_acceptance_recorded':'not_explicit_in_source',notes:r.notes||null,operationNotes:r.operationNotes||[],operationalScope:r.operationalScope||null,completedAt:r.completedAt||financials.completion?.at||null,soldAt:financials.quote?.at||null,
     highlevelAppointmentId:r.highlevelAppointmentId||null,highlevelCalendarId:r.highlevelCalendarId||null,providerAppointmentStatus:r.providerAppointmentStatus||null,
+    normalizedLocalJobId:r.normalizedLocalJobId||null,normalizedLocalAppointmentId:r.normalizedLocalAppointmentId||null,adoptionSource:r.adoptionSource||null,
     syncStatus:r.syncStatus||'unknown',syncedAt:r.syncedAt||null,createdAt:r.createdAt||null,updatedAt:r.updatedAt||null},
     financials,reviewedWalkthroughScope:r.reviewedWalkthroughScope||null,
     coverage:{complete:true,asOf:new Date().toISOString()}};
@@ -95,7 +98,7 @@ export async function portalEvidence(env,command,fetcher=firestoreFetch){
   const requested=command.contactProviderIds;
   if(!Array.isArray(requested)||!requested.length||requested.length>500||requested.some(id=>typeof id!=='string'||!SAFE_ID.test(id)))throw error('invalid_portal_evidence_contacts',400);
   const contactIds=new Set(requested),records=[],seen=new Set(),tokens=new Set();let token='',pages=0;
-  const fields=['recordType','type','highlevelContactId','customerId','projectId','sourceWalkthroughId','date','time','endTime','status','pipelineStatus','createdAt','updatedAt','completedAt','soldAt','highlevelAppointmentId','address','isTest','test','estimate','customerApproval','payment','invoice','postJobChecklist','refunds'];
+  const fields=['recordType','type','highlevelContactId','customerId','projectId','sourceWalkthroughId','date','time','endTime','status','pipelineStatus','createdAt','updatedAt','completedAt','soldAt','highlevelAppointmentId','address','isTest','test','estimate','customerApproval','payment','invoice','postJobChecklist','refunds','normalizedLocalJobId','normalizedLocalAppointmentId','adoptionSource'];
   do{
     if(++pages>200)throw error('portal_evidence_scan_incomplete');
     const url=new URL(BASE);url.searchParams.set('pageSize','500');if(token)url.searchParams.set('pageToken',token);for(const field of fields)url.searchParams.append('mask.fieldPaths',field);
@@ -107,7 +110,7 @@ export async function portalEvidence(env,command,fetcher=firestoreFetch){
       if(!['job','walkthrough','cleanout','reorg'].includes(r.type))continue;
       const financials=financialFacts(r);records.push({id:r.id,highlevelContactId:r.highlevelContactId,kind:r.type==='walkthrough'?'walkthrough':'job',status:r.pipelineStatus||r.status||'unknown',
         createdAt:r.createdAt||null,updatedAt:r.updatedAt||null,completedAt:r.completedAt||financials.completion?.at||null,soldAt:financials.quote?.at||null,
-        startAt:localInstant(String(r.date||''),String(r.time||'')),sourceRevision:r.sourceRevision,highlevelAppointmentId:r.highlevelAppointmentId||null,jobId:r.type==='walkthrough'?null:r.id,sourceWalkthroughId:r.sourceWalkthroughId||null,address:r.address||null,financials});
+        startAt:localInstant(String(r.date||''),String(r.time||'')),sourceRevision:r.sourceRevision,highlevelAppointmentId:r.highlevelAppointmentId||null,jobId:r.type==='walkthrough'?null:r.id,sourceWalkthroughId:r.sourceWalkthroughId||null,address:r.address||null,normalizedLocalJobId:r.normalizedLocalJobId||null,normalizedLocalAppointmentId:r.normalizedLocalAppointmentId||null,adoptionSource:r.adoptionSource||null,financials});
     }
     token=page.nextPageToken||'';if(token&&tokens.has(token))throw error('portal_evidence_pagination_stalled');tokens.add(token);
   }while(token);

@@ -5,6 +5,7 @@ import {portalRevenue} from '../_lib/operations-financials.js';
 import {mutatePortalRecord} from '../_lib/operations-job-records.js';
 import {inboundResponsePolicy} from '../_lib/operations-rules.js';
 import {schedulingStorage,resolveScheduledVisit,mutateScheduledVisit,bindScheduledProvider,linkScheduledCustomer} from '../_lib/operations-scheduling.js';
+import {adoptionStorage,adoptScheduledVisit} from '../_lib/operations-adoption.js';
 const reply=(status,body)=>new Response(JSON.stringify(body),{status,headers:{'Content-Type':'application/json','Cache-Control':'no-store'}});
 export async function onRequestPost({request,env}) {
   if(!operationsEnabled(env))return reply(503,{error:'operations_not_enabled'});
@@ -13,6 +14,7 @@ export async function onRequestPost({request,env}) {
     const c=await verifyApiServiceEnvelope(env,JSON.parse(content).envelope,'/api/operations-portal');
     if(c.actor.workspace!==(env.EGC_OPERATIONS_WORKSPACE||'egc'))return reply(403,{error:'workspace_forbidden'});
     const command=c.request.body;
+    if(command.command==='schedule.adopt')return reply(200,await adoptScheduledVisit(adoptionStorage(env),c.actor,command));
     if(['portal.note.add','portal.job.edit','portal.project.ensure'].includes(command.command))return reply(200,await mutatePortalRecord(schedulingStorage(env),c.actor,command));
     if(command.command==='schedule.link_customer')return reply(200,await linkScheduledCustomer(schedulingStorage(env),c.actor,command));
     if(command.command==='schedule.resolve')return reply(200,await resolveScheduledVisit(schedulingStorage(env),command.portalVisitId));
