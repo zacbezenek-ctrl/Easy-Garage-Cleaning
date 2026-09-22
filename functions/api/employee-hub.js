@@ -459,7 +459,7 @@ export async function onRequestGet({ request, env }) {
         if (candidates.length > 1) return reply(409, { ok: false, error: 'More than one active shift needs manager review before job time can be started.' });
         active = candidates[0] || null;
       }
-      return reply(200, { ok: true, entry: ownJobTimeProjection(active) });
+      return reply(200, { ok: true, user: session.user, entry: ownJobTimeProjection(active) });
     }
     if (params.get('view') === 'job-labor') {
       if (!manager(session)) return reply(403, { ok: false, error: 'Only operations managers can view employee time for a job.' });

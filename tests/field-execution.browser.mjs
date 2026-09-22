@@ -9,6 +9,7 @@ import { hashHubCredential } from '../functions/_lib/hub-session.js';
 import { storage } from './helpers/field-fixture.mjs';
 import * as field from '../functions/api/field-jobs.js';
 import * as auth from '../functions/api/hub-auth.js';
+import * as employee from '../functions/api/employee-hub.js';
 
 const modulePath = process.env.FIELD_PLAYWRIGHT_MODULE;
 if (!modulePath) throw new Error('Set FIELD_PLAYWRIGHT_MODULE to the Playwright index.mjs path.');
@@ -16,7 +17,7 @@ const playwright = await import(pathToFileURL(modulePath).href), engine = proces
 const root = fileURLToPath(new URL('../', import.meta.url));
 const password = 'Synthetic browser test only!';
 const users = Object.fromEntries(await Promise.all(['ZacB', 'Crew.One', 'Crew-One'].map(async user => [user, { passwordHash: await hashHubCredential(user, password), role: user === 'ZacB' ? 'owner' : 'crew', displayName: user === 'Crew.One' ? 'Crew One' : user }])));
-const env = { HUB_SESSION_SECRET: 'field-browser-synthetic', FIREBASE_API_KEY: 'firebase-test-field-browser', HUB_AUTH_USERS_JSON: JSON.stringify(users), GOOGLE_CLIENT_ID: 'test', GOOGLE_CLIENT_SECRET: 'test', GOOGLE_REFRESH_TOKEN: 'test' };
+const env = { HUB_SESSION_SECRET: 'field-browser-synthetic', EMPLOYEE_HUB_DATA_SECRET: 'field-browser-synthetic-vault', FIREBASE_API_KEY: 'firebase-test-field-browser', HUB_AUTH_USERS_JSON: JSON.stringify(users), GOOGLE_CLIENT_ID: 'test', GOOGLE_CLIENT_SECRET: 'test', GOOGLE_REFRESH_TOKEN: 'test' };
 const originalFetch = globalThis.fetch;
 const store = storage({ mock: { method(object, key, implementation) { object[key] = implementation; } } });
 const background = [];
@@ -30,7 +31,7 @@ const server = createServer(async (incoming, outgoing) => {
     if (url.pathname.startsWith('/api/')) {
       const parts = []; for await (const part of incoming) parts.push(part);
       const bytes = Buffer.concat(parts), request = new Request(url, { method: incoming.method, headers: incoming.headers, ...(bytes.length ? { body: bytes } : {}) });
-      const route = url.pathname === '/api/field-jobs' ? field : auth;
+      const route = url.pathname === '/api/field-jobs' ? field : url.pathname === '/api/employee-hub' ? employee : auth;
       const response = await route[incoming.method === 'POST' ? 'onRequestPost' : 'onRequestGet']({ request, env, waitUntil: promise => background.push(promise) });
       outgoing.writeHead(response.status, Object.fromEntries(response.headers)); outgoing.end(Buffer.from(await response.arrayBuffer())); return;
     }
@@ -54,6 +55,12 @@ try {
   assert.equal(await page.locator('body').evaluate(body => body.scrollWidth <= innerWidth), true, 'mobile Today must not overflow');
   await page.screenshot({ path: resolve(artifactDir, 'today-mobile.png'), fullPage: true });
   await page.getByRole('heading', { name: 'Synthetic Garage', exact: true }).click();
+  await page.getByText('You are not clocked in.', { exact: false }).waitFor();
+  const clockedIn = await page.evaluate(async () => (await fetch('/api/employee-hub', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ collection: 'timeEntries', id: 'browser-personal-shift', data: { locationTracking: true, lastLocation: { lat: 40.58, lng: -105.08, accuracy: 5 } } }) })).json());
+  assert.equal(clockedIn.ok, true);
+  await page.getByRole('button', { name: 'Refresh my shift', exact: true }).click();
+  await page.getByRole('button', { name: 'Start my travel time here', exact: true }).click();
+  await page.getByRole('button', { name: 'Recording travel here', exact: true }).waitFor();
   await page.getByRole('button', { name: 'Mark en route', exact: true }).click(); await settled();
   await page.getByRole('button', { name: 'Mark arrived', exact: true }).click(); await settled();
   await page.getByRole('button', { name: 'Start work', exact: true }).click(); await settled();
@@ -82,6 +89,18 @@ try {
   assert.equal(store.get('jobs/browser-job').fieldExecution.jobTime.current.kind, 'paused');
   await page.getByRole('button', { name: 'Resume work', exact: true }).click(); await settled();
   assert.equal(store.get('jobs/browser-job').fieldExecution.jobTime.current.kind, 'work');
+  let loseTimeReply = true;
+  await page.route('**/api/employee-hub', async intercepted => {
+    if (loseTimeReply && intercepted.request().method() === 'POST' && intercepted.request().postDataJSON().data.jobAction) { loseTimeReply = false; await intercepted.fetch(); await intercepted.abort('failed'); }
+    else await intercepted.continue();
+  });
+  await page.getByRole('button', { name: 'Start my work time here', exact: true }).click();
+  await page.getByText('Job time awaiting confirmation', { exact: true }).waitFor();
+  await page.unroute('**/api/employee-hub'); await page.reload();
+  await page.getByRole('button', { name: 'Retry job time', exact: true }).click();
+  await page.getByRole('button', { name: 'Recording work here', exact: true }).waitFor();
+  const personalShift = await page.evaluate(async () => (await (await fetch('/api/employee-hub')).json()).collections.timeEntries.find(entry => entry.id === 'browser-personal-shift'));
+  assert.equal(personalShift.jobTracking.segments.length, 3, 'lost response must not duplicate employee segments');
   await page.getByLabel('Add a note', { exact: true }).fill('Customer confirmed the green cabinet is staying.');
   await page.getByRole('button', { name: 'Save note', exact: true }).click(); await settled();
   await page.getByText('Customer confirmed the green cabinet is staying.', { exact: true }).waitFor();
@@ -98,6 +117,8 @@ try {
   assert.equal(store.get('jobs/browser-job').status, 'completed');
   assert.equal(store.get('jobs/browser-job').fieldExecution.photos.length, 3);
   assert.equal(store.get('jobs/browser-next').status, 'scheduled');
+  await page.getByRole('button', { name: 'End my job time', exact: true }).click();
+  await page.getByText('General shift time', { exact: true }).waitFor();
   assert.equal(await page.locator('body').evaluate(body => body.scrollWidth <= innerWidth), true, 'mobile job detail must not overflow');
   assert.deepEqual(errors, [], 'no browser JavaScript errors');
   await page.screenshot({ path: resolve(artifactDir, 'completed-mobile.png'), fullPage: true });
@@ -179,5 +200,5 @@ try {
   assert.equal(store.get('jobs/browser-job').status, 'completed');
   await managerContext.close(); await Promise.all(background);
   assert.deepEqual(errors, [], 'no browser JavaScript errors after recovery');
-  console.log(JSON.stringify({ ok: true, browser: browser.version(), viewport: '390x844 touch, Pacific device timezone with Mountain job dates', checks: ['login', 'personal day', 'navigate job', 'en route', 'arrived', 'start validation', 'checklists', 'materials', 'live elapsed work', 'pause and resume segment timing', 'library upload', 'draft refresh persistence', 'multiple photos', 'notes', 'completion', 'server refresh persistence', 'next job preserved', 'private photo viewer', 'reassignment revokes detail', 'mobile overflow', 'desktop render', 'offline retry', 'lost response idempotency', 'stale job review', 'auth expiry', 'draft isolation between accounts', 'manager checklist configuration', 'manager private note', 'audited issue resolution after completion', 'durable failed CRM handoff', 'no browser errors'], artifacts: artifactDir }));
+  console.log(JSON.stringify({ ok: true, browser: browser.version(), viewport: '390x844 touch, Pacific device timezone with Mountain job dates', checks: ['login', 'personal day', 'navigate job', 'en route', 'arrived', 'start validation', 'checklists', 'materials', 'live elapsed work', 'pause and resume segment timing', 'employee work and travel segments', 'employee lost response retry', 'end employee job time after completion', 'library upload', 'draft refresh persistence', 'multiple photos', 'notes', 'completion', 'server refresh persistence', 'next job preserved', 'private photo viewer', 'reassignment revokes detail', 'mobile overflow', 'desktop render', 'offline retry', 'lost response idempotency', 'stale job review', 'auth expiry', 'draft isolation between accounts', 'manager checklist configuration', 'manager private note', 'audited issue resolution after completion', 'durable failed CRM handoff', 'no browser errors'], artifacts: artifactDir }));
 } finally { await context.close(); await browser.close(); await new Promise(resolve => server.close(resolve)); globalThis.fetch = originalFetch; }

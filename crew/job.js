@@ -32,7 +32,38 @@
     S.timeRefreshing = true;
     try { const data = await api(`/api/field-jobs?jobId=${encodeURIComponent(jobId)}&view=timer`); S.timeSnapshot = data.jobTime; S.timeObservedAt = performance.now(); S.timeChanged = data.expectedRevision !== S.job?.expectedRevision; S.timeError = false; }
     catch (error) { S.timeError = true; if ([403, 404].includes(error.status)) { S.job = null; renderError(error.message); } }
-    finally { S.timeRefreshing = false; renderJobTime(); }
+    finally { S.timeRefreshing = false; renderJobTime(); if (S.shiftEntry && !S.shiftPending) await loadEmployeeJobTime(); }
+  }
+  function renderEmployeeJobTime() {
+    const host = document.getElementById('employee-job-time'); if (!host || !S.job) return;
+    const entry = S.shiftEntry, current = entry?.current, thisJob = current?.jobId === jobId, recorded = entry?.summary.jobs.find(item => item.jobId === jobId), disabled = S.busy || S.uploadBusy || S.pending || S.shiftPending || S.shiftLoading;
+    host.innerHTML = `<h2>Your time on this job</h2><p>This records your own work and travel within your active employee shift. Earlier job segments keep their original job.</p>${S.shiftError ? `<p class="notice error">${esc(S.shiftError)}</p>` : ''}${S.shiftPending ? '<div class="notice"><strong>Job time awaiting confirmation</strong><p>The switch may already be saved. Retry checks the same request ID.</p><div class="actions"><button data-action="retry-shift-time">Retry job time</button><button data-action="clear-shift-time">Check shift and clear retry</button></div></div>' : ''}${S.shiftLoaded && !entry ? '<p>You are not clocked in. Open the employee time clock before recording personal job time.</p>' : entry ? `<p><strong>${entry.onBreak ? 'On break — job minutes are excluded' : current?.kind === 'general' || !current ? 'General shift time' : `${esc(label(current.kind))}: ${esc(current.jobLabel || current.jobId)}`}</strong></p><dl class="detail-grid"><div><dt>Your recorded work here</dt><dd>${durationLabel(recorded?.workMs || 0)}</dd></div><div><dt>Your recorded travel here</dt><dd>${durationLabel(recorded?.travelMs || 0)}</dd></div></dl>${entry.summary.partialHistory ? '<p class="notice">Earlier shift time has no verified job segments and is not assigned to this job.</p>' : ''}${entry.summary.needsReview ? '<p class="notice error">Your job segments need manager review before more time can be assigned.</p>' : ''}<div class="actions">${S.job.canEdit ? [['work', thisJob && current.kind === 'work' ? 'Recording work here' : 'Start my work time here'], ['travel', thisJob && current.kind === 'travel' ? 'Recording travel here' : 'Start my travel time here']].map(([kind, text]) => `<button class="${kind === 'work' ? 'primary' : ''}" data-action="shift-time" data-kind="${kind}" ${disabled || entry.summary.needsReview || thisJob && current.kind === kind ? 'disabled' : ''}>${text}</button>`).join('') : ''}${current?.kind !== 'general' && current ? `<button data-action="shift-time" data-kind="general" ${disabled ? 'disabled' : ''}>End my job time</button>` : ''}</div>${!S.job.canEdit && thisJob ? '<p class="notice">This job is closed. End your personal job time when your work and travel are finished.</p>' : ''}` : '<p>Checking your active shift…</p>'}<div class="actions"><button data-action="refresh-shift-time" ${S.busy || S.shiftLoading ? 'disabled' : ''}>Refresh my shift</button><a class="button" href="/employee?view=my_day">Employee time clock</a></div>`;
+  }
+  async function loadEmployeeJobTime() {
+    if (!S.job || S.shiftLoading) return;
+    S.shiftLoading = true; const user = S.user.user;
+    try {
+      const data = await api('/api/employee-hub?view=own-job-time');
+      if (S.user?.user !== user) return;
+      if (data.user?.toLowerCase() !== user.toLowerCase()) { S.job = null; renderLogin('Your account changed. Sign in again to open your work.'); return; }
+      S.shiftEntry = data.entry; S.shiftLoaded = true; S.shiftError = '';
+    } catch (error) { S.shiftError = error.message; }
+    finally { S.shiftLoading = false; renderEmployeeJobTime(); }
+  }
+  async function submitEmployeeJobTime(kind, retry = false) {
+    if (S.busy || S.uploadBusy || S.pending || !retry && (S.shiftPending || !S.shiftEntry)) return;
+    const payload = retry ? S.shiftPending : { collection: 'timeEntries', id: S.shiftEntry.id, data: { jobAction: { requestId: crypto.randomUUID(), expectedSegmentId: S.shiftEntry.currentSegmentId, jobId: kind === 'general' ? '' : jobId, kind } } };
+    if (!payload) return;
+    S.shiftPending = payload; setDraft('shiftAction', JSON.stringify(payload)); S.busy = true; S.shiftError = ''; renderJob();
+    try {
+      await api('/api/employee-hub', payload);
+      S.shiftPending = null; setDraft('shiftAction', '');
+      await loadEmployeeJobTime(); await refreshJob(); message('Your job time is saved. Previous segments and your shift remain intact.');
+    } catch (error) {
+      S.shiftError = error.message;
+      if ([400, 403, 404].includes(error.status)) { S.shiftPending = null; setDraft('shiftAction', ''); }
+      message(error.message, true);
+    } finally { S.busy = false; if (S.job) renderJob(); }
   }
   function message(text, isError = false) {
     const feedback = document.getElementById('feedback'); clearTimeout(S.feedbackTimer); feedback.textContent = text; feedback.hidden = false; feedback.style.background = isError ? '#842b20' : '#163e2c';
@@ -58,11 +89,13 @@
   function renderError(text) { main.innerHTML = `<section class="card"><h1>We could not open this work</h1><p class="notice error" role="alert">${esc(text)}</p><div class="actions"><button data-action="reload">Retry</button><a class="button" href="/crew/job.html">My assignments</a><a class="button" href="/employee?view=my_day">Employee Hub</a></div></section>`; }
   async function load() {
     if (!jobId) return loadDay();
+    if (S.shiftOwner !== S.user?.user) { S.shiftEntry = null; S.shiftLoaded = false; S.shiftError = ''; S.shiftOwner = S.user?.user; }
+    try { S.shiftPending = JSON.parse(getDraft('shiftAction', 'null')); } catch { S.shiftPending = null; }
     try {
       const data = await api(`/api/field-jobs?jobId=${encodeURIComponent(jobId)}`);
       acceptJob(data.job); S.historyCursor = data.historyCursor; S.photosAvailable = data.photosAvailable;
       try { S.pending = JSON.parse(getDraft('pending', 'null')); } catch { S.pending = null; }
-      await loadPhotoQueue(); renderJob();
+      await loadPhotoQueue(); renderJob(); await loadEmployeeJobTime();
     } catch (error) { if (error.status !== 401) renderError(error.message); throw error; }
   }
   async function refreshJob() {
@@ -89,6 +122,7 @@
   }
   function mountJobSections() {
     const timeCard = document.createElement('section'); timeCard.className = 'card'; timeCard.id = 'job-time'; main.querySelector('.grid').insertAdjacentElement('beforebegin', timeCard); renderJobTime();
+    const employeeTime = document.createElement('section'); employeeTime.className = 'card'; employeeTime.id = 'employee-job-time'; timeCard.insertAdjacentElement('afterend', employeeTime); renderEmployeeJobTime();
     const scope = [...main.querySelectorAll('h2')].find(heading => heading.textContent === 'Scope & instructions'); if (scope) scope.closest('.card').id = 'scope-card';
     const notes = [...main.querySelectorAll('h2')].find(heading => heading.textContent === 'Crew notes & issues'); if (notes) notes.closest('.card').id = 'notes-card';
     const nav = document.createElement('nav'); nav.className = 'job-sections'; nav.setAttribute('aria-label', 'Job sections'); nav.innerHTML = [['scope-card', 'Scope'], ['checklist-card', 'Checklist'], ['photos-card', 'Photos'], ['notes-card', 'Notes'], ['complete-card', 'Complete']].map(([id, text]) => `<a href="#${id}">${text}</a>`).join(''); main.querySelector('h1').insertAdjacentElement('afterend', nav);
@@ -238,6 +272,10 @@
     const action = button.dataset.action;
     try {
       if (action === 'reload') { button.disabled = true; await (S.user ? load() : initialize()); }
+      else if (action === 'shift-time') await submitEmployeeJobTime(button.dataset.kind);
+      else if (action === 'retry-shift-time') await submitEmployeeJobTime('', true);
+      else if (action === 'refresh-shift-time') await loadEmployeeJobTime();
+      else if (action === 'clear-shift-time') { await loadEmployeeJobTime(); if (!S.shiftError) { S.shiftPending = null; setDraft('shiftAction', ''); renderEmployeeJobTime(); } }
       else if (action === 'today' || action === 'tomorrow') { const date = new Date(`${mountainDate()}T12:00:00Z`); if (action === 'tomorrow') date.setUTCDate(date.getUTCDate() + 1); S.date = date.toISOString().slice(0, 10); await loadDay(); }
       else if (action === 'retry-pending') { await refreshJob(); await submitAction(S.pending, true); }
       else if (action === 'retry-completion-sync') await submitAction({ action: 'retry_completion_sync' });
