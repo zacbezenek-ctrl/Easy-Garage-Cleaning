@@ -224,3 +224,21 @@ test('canonical usernames containing punctuation remain valid leads and explicit
   f.rows.set('jobs/explicit',{id:'explicit',type:'job',date:'2026-09-24',time:'08:00',endTime:'10:00',assignedCrew:[{id:'Crew One',name:'Someone'}],status:'scheduled'});
   const scheduled=await f.mutate(f.create({date:'2026-09-24'}));assert.equal(scheduled.ok,true);
 });
+
+test('dispatch reflects field delays and retains completion follow-up without stale activities',async()=>{
+  const f=fixture(),created=await f.mutate(f.create()),job=f.rows.get('jobs/'+created.job.id);
+  Object.assign(job,{status:'in_progress',pipelineStatus:'in_progress',fieldExecution:{activity:'delayed',activityReason:'Replacement tool needed',attention:{status:'open',reason:'Customer requested return visit',actorName:'Crew One',at:NOW}}});
+  let overview=await dispatchOverview(f.store,manager,{startDate:'2026-09-23',endDate:'2026-09-24'});
+  assert.equal(overview.jobs[0].activity,'delayed');assert.ok(overview.warnings.some(warning=>warning.code==='job_delayed'));
+  Object.assign(job,{status:'completed',pipelineStatus:'completed'});
+  overview=await dispatchOverview(f.store,manager,{startDate:'2026-09-23',endDate:'2026-09-24'});
+  assert.equal(overview.jobs[0].activity,'completed');assert.ok(!overview.warnings.some(warning=>warning.code==='job_delayed'));assert.ok(overview.warnings.some(warning=>warning.code==='needs_follow_up'));
+});
+
+test('an undated job for a CRM-linked customer does not enqueue an invalid appointment sync',async()=>{
+  const f=fixture();f.rows.get('customers/c1').highlevelContactId='contact';
+  const created=await f.mutate(f.create({date:'',time:'',endTime:''}));
+  assert.equal(created.job.syncStatus,'not_needed');assert.equal(created.providerSync,'not_needed');
+  const scheduled=await f.mutate(f.edit(created.job,{date:'2026-09-23',time:'08:00',endTime:'10:00'}));
+  assert.equal(scheduled.job.syncStatus,'pending');assert.equal(scheduled.providerSync,'pending');
+});

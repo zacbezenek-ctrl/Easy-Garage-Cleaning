@@ -1,5 +1,6 @@
 import { hasBusinessAccess } from './hub-session.js';
 import { jobCrewNames, assignmentKey } from './job-assignment.js';
+import { fieldActivity } from './field-execution.js';
 import { DISPATCH_ACTIONS, DISPATCH_TIME_ZONE } from './dispatch-contract.js';
 import { validDate, addDays, denverToday, scheduleInterval, availabilityInterval, occupiedDays, overlaps } from './dispatch-time.js';
 
@@ -64,12 +65,16 @@ export function projectDispatchJob(job, roster = []) {
   const interval = scheduleInterval(job);
   return { ...output, assignedCrew: roster.length ? legacyMembers(job,roster) : jobCrewNames(job), crewLead: job.crewLead ? resolveMember(job.crewLead,roster,true) || job.crewLead : null, status: state(job), endDate: job.endDate || job.date || '',
     crewNeeded: job.crewNeeded || job.requiredCrewSize || 1, startAt: interval?.startAt || null, endAt: interval?.endAt || null,
+    activity:fieldActivity(job),activityReason:job.fieldExecution?.activityReason || '',activityAt:job.fieldExecution?.activityAt || null,
+    attention:job.fieldExecution?.attention?.status === 'open' ? {status:'open',reason:job.fieldExecution.attention.reason || '',at:job.fieldExecution.attention.at || null,actorName:job.fieldExecution.attention.actorName || ''} : null,
     timeZone: DISPATCH_TIME_ZONE, timeNeedsReview: Boolean(job.date) && !interval };
 }
 
 function jobWarnings(job, jobs, resources, roster) {
-  if (!activeJob(job)) return [];
   const warnings = [], add = (code, message, extra = {}) => warnings.push({ code, jobId: job.id, message, ...extra });
+  if (job.fieldExecution?.attention?.status === 'open') add('needs_follow_up',job.fieldExecution.attention.reason || 'The crew flagged this job for management follow-up.');
+  if (!activeJob(job)) return warnings;
+  if (['paused','waiting','delayed'].includes(fieldActivity(job))) add(`job_${fieldActivity(job)}`,job.fieldExecution.activityReason || `The crew reported this job as ${fieldActivity(job)}.`);
   const interval = scheduleInterval(job), crew = legacyMembers(job, roster);
   if (!String(job.address || '').trim()) add('missing_address', 'Add the job address before dispatching the crew.');
   if (!job.customerId) add('missing_customer_link', 'This legacy job needs its canonical customer link reviewed.');
@@ -281,7 +286,7 @@ async function executeDispatch(store, session, input, now) {
     Object.assign(patch,{updatedAt:now,updatedBy:session.user,dispatchUpdatedAt:now,dispatchRequestId:input.requestId,...(!cancel ? { startAt:interval?.startAt || null,endAt:interval?.endAt || null,timeZone:DISPATCH_TIME_ZONE } : {})});
     next = { ...current, ...patch };
     const scheduleChanged = create || cancel || restore || ['date','time','endDate','endTime','title','address'].some(key => key in patch && patch[key] !== current?.[key]);
-    if (scheduleChanged && (next.highlevelContactId || next.highlevelAppointmentId)) {
+    if (scheduleChanged && (next.highlevelContactId || next.highlevelAppointmentId) && (interval || next.highlevelAppointmentId)) {
       Object.assign(patch,{syncStatus:'pending',syncIdempotencyKey:input.requestId,providerSyncOwner:'operations'}); providerSync = 'pending';
     } else if (create) patch.syncStatus = 'not_needed';
     next = { ...current, ...patch };
