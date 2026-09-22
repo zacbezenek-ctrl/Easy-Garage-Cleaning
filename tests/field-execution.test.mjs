@@ -26,6 +26,7 @@ test('field detail is an allowlist: no money, provider linkage, credentials or p
   assert.equal(projected.scope, 'Clean out garage'); assert.deepEqual(projected.assignedCrew, ['Crew.One']); assert.equal(projected.vehicleId, 'truck-1');
   assert.equal(fieldJobProjection({ ...j, jobInstructions: 'Dispatch-created scope' }).scope, 'Dispatch-created scope');
   assert.equal(fieldJobProjection({ ...j, jobInstructions: 'Previous scope', operationalScope: { text: 'Canonical scope' } }).scope, 'Canonical scope');
+  assert.equal(fieldJobProjection({ ...j, operationalScope: { text: '' } }).scope, '', 'cleared canonical scope must not resurrect older instructions');
 });
 
 test('authentication and exact assigned identity are enforced before reads, writes and photos', async t => {

@@ -86,7 +86,7 @@ export function fieldJobProjection(job, events = [], options = {}) {
     crewLead: fieldText(job.crewLead, 120), crewId: fieldText(job.crewId, 180), crewName: fieldText(options.crewName || job.crewName, 150),
     vehicleId: fieldText(job.vehicleId, 180), vehicleName: fieldText(options.vehicleName || job.vehicleName, 150),
     crewNeeded: Number(job.crewNeeded || job.requiredCrewSize || job.crewSize || 1),
-    scope: fieldText(job.operationalScope?.text || instructionText || instructions.operationalScope || (typeof job.scope === 'string' ? job.scope : '') || job.scopeOfWork, 20000),
+    scope: fieldText(typeof job.operationalScope?.text === 'string' ? job.operationalScope.text : instructionText || instructions.operationalScope || (typeof job.scope === 'string' ? job.scope : '') || job.scopeOfWork, 20000),
     customerGoal: fieldText(instructions.customerGoal || job.discovery?.success, 4000),
     keepItems: fieldText(instructions.keepItems || scope.keep_items), removeItems: fieldText(instructions.removeItems || scope.remove_items || scope.keep_remove),
     exclusions: fieldText(instructions.exclusions || scope.exclusions), hazards: textList(instructions.hazards || scope.hazards),

@@ -243,9 +243,9 @@ test('crew job rules limit assigned staff to operational fields', () => {
   assert.match(rules, /lastPaymentStatus == 'paid'[\s\S]*?job\.payment\.verified == true/);
   assert.match(read('functions/api/job-payment.js'), /recordStripePayment/);
   assert.match(read('functions/api/job-payment.js'), /Payment exceeds the current job balance/);
-  assert.match(read('crew/postjob.html'), /verificationSource:'crew_attestation'/);
-  assert.match(read('crew/postjob.html'), /pending_verification/);
-  assert.match(read('crew/postjob.html'), /verifiedPaidInFull/);
+  assert.doesNotMatch(read('crew/postjob.html'), /verificationSource:'crew_attestation'|verifiedPaidInFull/);
+  assert.match(read('crew/postjob.html'), /Completing job work never records a payment/);
+  assert.match(read('crew/postjob.html'), /result\.jobId!==ACTIVE\.jobId/);
   assert.match(read('functions/api/quo-send.js'), /readJob\(env, jobId\)/);
   assert.match(read('functions/api/quo-send.js'), /await assignedToJob\(job, session, env\)/);
   assert.match(read('crew/prejob.html'), /job_id:ACTIVE\.jobId/);

@@ -1,8 +1,21 @@
+import {fieldCompletionMissing} from './field-execution.js';
 const safe=id=>typeof id==='string'&&/^[A-Za-z0-9_-]{1,180}$/.test(id)&&!/^(_egc_|secure_)/.test(id);
 const fail=(code,status=409)=>Object.assign(new Error(code),{status});
 const canonical=v=>Array.isArray(v)?v.map(canonical):v&&typeof v==='object'?Object.fromEntries(Object.entries(v).sort(([a],[b])=>a.localeCompare(b)).map(([k,v])=>[k,canonical(v)])):v;
 const digest=async v=>[...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify(canonical(v)))))].map(x=>x.toString(16).padStart(2,'0')).join('');
 const output=r=>({id:r.id,revision:r.revision,type:r.type,customerId:r.customerId,projectId:r.projectId||null,sourceWalkthroughId:r.sourceWalkthroughId||null,status:r.pipelineStatus||r.status,notes:r.operationNotes||[],operationalScope:r.operationalScope||null,completedAt:r.completedAt||null});
+const mountainDay=value=>new Intl.DateTimeFormat('en-CA',{timeZone:'America/Denver',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(value));
+
+/** Historical imports retain an explicit, attributed repair path. Live work
+ * closes through the verified field flow; a free-text attestation cannot waive
+ * today's crew checklist and image evidence through another API. */
+export function historicalCompletionRepair(record,command,now) {
+  if(record.type!=='job'||record.fieldLastActionAt||record.fieldExecution&&Object.keys(record.fieldExecution).length)return false;
+  if(typeof command.reason!=='string'||command.reason.trim().length<15||typeof command.completionEvidence!=='string'||command.completionEvidence.trim().length<30)return false;
+  const occurred=Date.parse(command.occurredAt||'');if(!Number.isFinite(occurred))return false;
+  const day=mountainDay(occurred);
+  return day<mountainDay(now)&&(!record.date||/^\d{4}-\d{2}-\d{2}$/.test(record.date)&&record.date<=day);
+}
 
 /** Narrow, audited writes to the existing Hub records. Financial evidence,
  * signatures, provider linkage and scheduling are owned by their separate flows. */
@@ -59,7 +72,8 @@ export async function mutatePortalRecord(store,actor,command,now=new Date().toIS
       if(changes.status==='completed'){
         const occurred=Date.parse(command.occurredAt||'');
         if(!Number.isFinite(occurred)||occurred>Date.parse(now)+300000||occurred<Date.parse(record.createdAt||'1970-01-01')||typeof command.completionEvidence!=='string'||command.completionEvidence.trim().length<10)throw fail('completion_evidence_required',400);
-        patch.completedAt=new Date(occurred).toISOString();patch.completionEvidence={kind:'authorized_staff_attestation',text:command.completionEvidence,actorId:actor.id,actorKind:actor.kind,recordedAt:now};
+        if(record.type==='job'&&!historicalCompletionRepair(record,command,now))throw Object.assign(fail('job_completion_requires_field_workflow'),{fieldJobUrl:`/crew/job.html?jobId=${encodeURIComponent(record.id)}`,missing:fieldCompletionMissing(record,{notes:command.completionEvidence,hasIssues:false})});
+        patch.completedAt=new Date(occurred).toISOString();patch.completionEvidence={kind:record.type==='job'?'historical_staff_attestation':'authorized_staff_attestation',text:command.completionEvidence,actorId:actor.id,actorKind:actor.kind,recordedAt:now,...(record.type==='job'?{reason:command.reason,fieldRequirementsWaived:fieldCompletionMissing(record,{notes:command.completionEvidence,hasIssues:false}),waiverKind:'historical_record_repair'}:{})};
         if(record.type==='walkthrough')patch.walkthroughCompletedAt=patch.completedAt;
       }
     }
