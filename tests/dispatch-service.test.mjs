@@ -6,6 +6,7 @@ import { dispatchHandlers } from '../functions/api/dispatch.js';
 import { denverToday, addDays, scheduleInterval, occupiedDays, availabilityInterval } from '../functions/_lib/dispatch-time.js';
 import { mutateScheduledVisit } from '../functions/_lib/operations-scheduling.js';
 import { sharedScheduleResources, scheduleDayEntry, scheduleLockConflict } from '../functions/_lib/dispatch-conflicts.js';
+import { advanceFieldTime } from '../functions/_lib/field-execution-time.js';
 
 const manager = {user:'zacb',displayName:'Owner',role:'owner',businessAccess:true};
 const NOW = '2026-09-22T12:00:00.000Z';
@@ -358,4 +359,27 @@ test('exact dispatch lookup survives date changes and completion handoff remains
   raw.fieldCompletionSync.status='pending';assert.ok((await dispatchOverview(f.store,manager,{view:'job',jobId:created.job.id})).warnings.some(w=>w.code==='completion_sync_pending'));
   await assert.rejects(dispatchOverview(f.store,{user:'crew1',role:'crew'},{view:'job',jobId:created.job.id}),e=>e.status===403);
   await assert.rejects(dispatchOverview(f.store,manager,{view:'job',jobId:'secure_account'}),e=>e.status===404);
+});
+
+test('manager cancellation closes job time atomically and restoration cannot count the cancelled interval',async()=>{
+  const f=fixture(),created=await f.mutate(f.create()),raw=f.rows.get('jobs/'+created.job.id);
+  const started='2026-09-22T11:00:00.000Z',clock=advanceFieldTime(raw,'in_progress',manager,'start',started).clock;
+  raw.fieldExecution={activity:'in_progress',jobTime:clock,checklist:{kept:true}};raw.status=raw.pipelineStatus='in_progress';
+  const cancelled=await f.mutate(f.edit(created.job,{},'schedule.cancel')),saved=f.rows.get('jobs/'+created.job.id);
+  assert.equal(saved.fieldExecution.jobTime.current,null);assert.equal(saved.fieldExecution.jobTime.totalsMs.work,3600000);assert.equal(saved.fieldExecution.checklist.kept,true);
+  assert.equal(f.rows.get('dispatchOperations/'+cancelled.requestId).metadata.fieldTimeSegment.durationMs,3600000);
+  const restored=await mutateDispatch(f.store,manager,f.edit(cancelled.job,{},'schedule.restore'),'2026-09-23T12:00:00.000Z');
+  assert.equal(restored.job.jobTime.workMs,3600000);assert.equal(restored.job.jobTime.runningKind,null);
+  // Simulate a legacy cancelled job whose timer never received the close event.
+  const legacy=f.rows.get('jobs/'+created.job.id);legacy.status=legacy.pipelineStatus='cancelled';legacy.cancelledAt=NOW;legacy.fieldExecution.jobTime=clock;
+  const repaired=await mutateDispatch(f.store,manager,f.edit(restored.job,{},'schedule.restore'),'2026-09-24T12:00:00.000Z');
+  assert.equal(repaired.job.jobTime.workMs,3600000);assert.equal(repaired.job.jobTime.runningKind,null);
+});
+
+test('dispatch viewer identity is verified by the session for each GET shape',async()=>{
+  const f=fixture(),created=await f.mutate(f.create()),handlers=dispatchHandlers({session:async()=>manager,storage:()=>f.store});
+  for (const query of ['', '?view=customers&q=Test', '?view=job&jobId='+created.job.id]) {
+    const response=await handlers.get({request:new Request('https://egc.test/api/dispatch'+query),env:{}});
+    assert.equal(response.status,200);assert.deepEqual((await response.json()).viewer,{id:'zacb'});
+  }
 });

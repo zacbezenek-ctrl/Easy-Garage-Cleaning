@@ -1,6 +1,7 @@
 import { hasBusinessAccess } from './hub-session.js';
 import { jobCrewNames, assignmentKey } from './job-assignment.js';
 import { fieldActivity } from './field-execution.js';
+import { advanceFieldTime, fieldJobTime } from './field-execution-time.js';
 import { sharedScheduleResources, scheduleRowsConflict, scheduleDayEntry } from './dispatch-conflicts.js';
 import { DISPATCH_ACTIONS, DISPATCH_TIME_ZONE } from './dispatch-contract.js';
 import { validDate, addDays, denverToday, scheduleInterval, availabilityInterval, occupiedDays, overlaps } from './dispatch-time.js';
@@ -83,6 +84,7 @@ export function projectDispatchJob(job, roster = []) {
     activity:fieldActivity(job),activityReason:job.fieldExecution?.activityReason || '',activityAt:job.fieldExecution?.activityAt || null,
     attention:job.fieldExecution?.attention?.status === 'open' ? {status:'open',reason:job.fieldExecution.attention.reason || '',at:job.fieldExecution.attention.at || null,actorName:job.fieldExecution.attention.actorName || ''} : null,
     completionSync:job.fieldCompletionSync ? {status:job.fieldCompletionSync.status,message:String(job.fieldCompletionSync.message || '').slice(0,600),attemptedAt:job.fieldCompletionSync.attemptedAt || null,syncedAt:job.fieldCompletionSync.syncedAt || null} : null,
+    jobTime:fieldJobTime(job),
     timeZone: DISPATCH_TIME_ZONE, timeNeedsReview: Boolean(job.date) && !interval };
 }
 
@@ -115,7 +117,7 @@ function jobWarnings(job, jobs, resources, roster) {
     if (!otherInterval) {
       // An existing dated assignment with malformed times cannot be treated as
       // free capacity. Undated work is intentionally a schedulable backlog.
-      if (other.date && (!validDate(other.date) || other.date <= interval.endDate && (!validDate(other.endDate || other.date) || (other.endDate || other.date) >= interval.date))) add('unverifiable_assignment','Another assignment for this employee or vehicle has invalid times. Repair that schedule before assigning overlapping dates.',{otherJobId:other.id,employeeIds:shared,vehicleId:vehicle ? job.vehicleId : null});
+      if (scheduleRowsConflict(job,other,roster)) add('unverifiable_assignment','Another assignment for this employee or vehicle has invalid times. Repair that schedule before assigning overlapping dates.',{otherJobId:other.id,employeeIds:shared,vehicleId:vehicle ? job.vehicleId : null});
       continue;
     }
     if (overlaps(interval, otherInterval)) add('schedule_overlap', 'This job overlaps another assignment.', { otherJobId: other.id, employeeIds: shared, vehicleId: vehicle ? job.vehicleId : null });
@@ -266,7 +268,7 @@ async function executeDispatch(store, session, input, now) {
   // reads. It serializes assignment checks with resource/availability changes.
   const guard = await store.read('dispatchState','revision');
   const [jobs,resources,roster] = await Promise.all([store.jobs(),store.resources(),store.roster()]);
-  let collection, id, current, patch, warnings = [], writes = [], providerSync = 'not_needed';
+  let collection, id, current, patch, warnings = [], writes = [], providerSync = 'not_needed', fieldTimeSegment = null;
   if (input.action.startsWith('schedule.')) {
     collection = 'jobs';
     const create = input.action === 'schedule.create', cancel = input.action === 'schedule.cancel', restore = input.action === 'schedule.restore';
@@ -343,6 +345,17 @@ async function executeDispatch(store, session, input, now) {
     if (!cancel && !interval && !create && state(current) === 'scheduled') Object.assign(patch,{status:'unscheduled',pipelineStatus:'unscheduled'});
     if (cancel) Object.assign(patch,{status:'cancelled',pipelineStatus:'cancelled',cancelledAt:now,cancelledBy:session.user,cancellationReason:text(input.cancellationReason || '','Cancellation reason',240)});
     if (restore) Object.assign(patch,{cancelledAt:null,cancelledBy:null,restoredAt:now,restoredBy:session.user});
+    if ((cancel || restore) && current?.fieldExecution?.jobTime) {
+      const safeInstant=value=>typeof value==='string'&&/^\d{4}-\d\d-\d\dT/.test(value)&&Number.isFinite(Date.parse(value));
+      const hasCancellationTime=safeInstant(current.cancelledAt);
+      // Old cancelled records may predate the timer hook. Never count their
+      // cancelled gap as work just because a manager restores them today.
+      const stoppedAt=restore ? hasCancellationTime ? current.cancelledAt : safeInstant(current.fieldExecution.jobTime.current?.startedAt) ? current.fieldExecution.jobTime.current.startedAt : now : now;
+      const stopped=advanceFieldTime(current,null,session,input.requestId,stoppedAt);
+      if(restore&&!hasCancellationTime&&stopped.clock)stopped.clock={...stopped.clock,needsReview:true};
+      if(stopped.clock)patch.fieldExecution={...current.fieldExecution,jobTime:stopped.clock};
+      fieldTimeSegment=stopped.segment;
+    }
     Object.assign(patch,{updatedAt:now,updatedBy:session.user,dispatchUpdatedAt:now,dispatchRequestId:input.requestId,...(!cancel ? { startAt:interval?.startAt || null,endAt:interval?.endAt || null,timeZone:DISPATCH_TIME_ZONE } : {})});
     next = { ...current, ...patch };
     if (next.type !== 'blocked' && (create || cancel || restore || ['assignedCrew','crewNeeded','crewId','shiftPickupEnabled','date','time','endDate','endTime'].some(key=>key in patch))) {
@@ -395,7 +408,7 @@ async function executeDispatch(store, session, input, now) {
   }
   writes.push({collection,id,revision:current?.revision,patch});
   writes.push({collection:'dispatchState',id:'revision',revision:guard?.revision,patch:{updatedAt:now,lastRequestId:input.requestId}});
-  writes.push({collection:'dispatchOperations',id:receiptId,patch:{fingerprint,actorId:session.user,action:input.action,collection,targetId:id,requestId:input.requestId,createdAt:now,before:current ? auditState(current) : null,after:auditState({...current,...patch}),warnings}});
+  writes.push({collection:'dispatchOperations',id:receiptId,patch:{fingerprint,actorId:session.user,action:input.action,collection,targetId:id,requestId:input.requestId,createdAt:now,before:current ? auditState(current) : null,after:auditState({...current,...patch}),warnings,...(fieldTimeSegment ? {metadata:{fieldTimeSegment}} : {})}});
   try { await store.commit(writes); }
   catch (error) {
     const receipt = await store.read('dispatchOperations',receiptId).catch(() => null);
