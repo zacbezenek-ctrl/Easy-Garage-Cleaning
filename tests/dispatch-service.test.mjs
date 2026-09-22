@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { dispatchOverview, mutateDispatch, mutateDispatchSelfAssignment, projectDispatchJob } from '../functions/_lib/dispatch-service.js';
 import { dispatchHandlers } from '../functions/api/dispatch.js';
 import { denverToday, addDays, scheduleInterval, occupiedDays, availabilityInterval } from '../functions/_lib/dispatch-time.js';
+import { mutateScheduledVisit } from '../functions/_lib/operations-scheduling.js';
 
 const manager = {user:'zacb',displayName:'Owner',role:'owner',businessAccess:true};
 const NOW = '2026-09-22T12:00:00.000Z';
@@ -241,4 +242,38 @@ test('an undated job for a CRM-linked customer does not enqueue an invalid appoi
   assert.equal(created.job.syncStatus,'not_needed');assert.equal(created.providerSync,'not_needed');
   const scheduled=await f.mutate(f.edit(created.job,{date:'2026-09-23',time:'08:00',endTime:'10:00'}));
   assert.equal(scheduled.job.syncStatus,'pending');assert.equal(scheduled.providerSync,'pending');
+});
+
+test('walkthrough handoff preserves authoritative project and scope while refusing duplicate or crossed contact links',async()=>{
+  const f=fixture();f.rows.get('customers/c1').highlevelContactId='contact-one';
+  f.rows.set('jobs/source',{id:'source',type:'walkthrough',customerId:'c1',highlevelContactId:'wrong-contact',projectId:'project-source',jobInstructions:'Approved scope',estimate:{total:500},revision:'source-r1'});
+  f.rows.set('projects/project-source',{id:'project-source',customerId:'c1',sourceRecordId:'source',revision:'project-r1'});
+  await assert.rejects(f.mutate(f.create({}, {sourceWalkthroughId:'source'})),error=>error.code==='dispatch_contact_link_conflict');
+  f.rows.get('jobs/source').highlevelContactId='contact-one';
+  const input=f.create({}, {sourceWalkthroughId:'source'});delete input.changes.jobInstructions;
+  const created=await f.mutate(input),saved=f.rows.get('jobs/'+created.job.id);
+  assert.equal(saved.projectId,'project-source');assert.equal(saved.jobInstructions,'Approved scope');assert.equal(saved.estimate.total,500);
+  await assert.rejects(f.mutate(f.create({date:'2026-09-24'}, {sourceWalkthroughId:'source'})),error=>error.code==='dispatch_handoff_exists');
+  f.rows.get('customers/c1').highlevelContactId='wrong-new-contact';
+  await assert.rejects(f.mutate(f.edit(created.job,{time:'12:00',endTime:'14:00'})),error=>error.code==='dispatch_contact_link_conflict');
+});
+
+test('legacy schedule sender committing after the first scan cannot slip past shared day locks',async()=>{
+  const f=fixture(),read=f.store.read;let injected=false;
+  f.store.day=async date=>(await f.store.jobs()).filter(job=>job.date===date);
+  f.store.read=async(collection,id)=>{
+    if(collection==='jobs'&&id==='_egc_schedule_lock_2026-09-23'&&!injected){
+      injected=true;
+      await mutateScheduledVisit(f.store,{id:'legacy-sender',kind:'integration',role:'integration'},{requestId:randomUUID(),mode:'create',portalCustomerId:'c2',kind:'job',changes:{date:'2026-09-23',time:'09:00',endTime:'11:00',assignedTo:'crew1'}},NOW);
+    }
+    return read(collection,id);
+  };
+  await assert.rejects(f.mutate(f.create()),error=>error.code==='dispatch_conflict');
+  assert.equal([...f.rows.values()].filter(job=>job.type==='job').length,1);
+});
+
+test('malformed scheduling locks are preserved for review rather than overwritten',async()=>{
+  const f=fixture();f.rows.set('jobs/_egc_schedule_lock_2026-09-23',{id:'_egc_schedule_lock_2026-09-23',recordType:'schedule_lock',entries:'malformed',revision:'bad-lock'});
+  await assert.rejects(f.mutate(f.create()),error=>error.code==='dispatch_lock_unavailable');
+  assert.equal(f.rows.get('jobs/_egc_schedule_lock_2026-09-23').entries,'malformed');
 });

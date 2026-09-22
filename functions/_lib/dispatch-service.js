@@ -245,6 +245,7 @@ async function executeDispatch(store, session, input, now) {
         if (!safeId(input.sourceWalkthroughId) || input.kind !== 'job') throw fail('dispatch_handoff_invalid','Select a valid source walkthrough for this job.');
         source = await store.read('jobs',input.sourceWalkthroughId);
         if (!source || source.type !== 'walkthrough' || source.customerId !== customer.id) throw fail('dispatch_handoff_invalid','The source walkthrough must belong to this customer.',409);
+        if (source.highlevelContactId && customer.highlevelContactId && source.highlevelContactId !== customer.highlevelContactId) throw fail('dispatch_contact_link_conflict','The source walkthrough and customer point to different CRM contacts. Correct that link before creating an operational job.',409);
         if (jobs.some(job => visibleJob(job) && job.sourceWalkthroughId === source.id)) throw fail('dispatch_handoff_exists','This walkthrough already has an operational job. Open that job instead.',409);
       }
       const sourceFields = ['jobInstructions','accessInstructions','customerInstructions','requiredEquipment','materials','serviceType','reviewedWalkthroughScope','salesNotes','customerNotes','estimate'];
@@ -286,19 +287,29 @@ async function executeDispatch(store, session, input, now) {
     Object.assign(patch,{updatedAt:now,updatedBy:session.user,dispatchUpdatedAt:now,dispatchRequestId:input.requestId,...(!cancel ? { startAt:interval?.startAt || null,endAt:interval?.endAt || null,timeZone:DISPATCH_TIME_ZONE } : {})});
     next = { ...current, ...patch };
     const scheduleChanged = create || cancel || restore || ['date','time','endDate','endTime','title','address'].some(key => key in patch && patch[key] !== current?.[key]);
+    if (scheduleChanged && current && (current.highlevelContactId || current.highlevelAppointmentId)) {
+      const customer = current.customerId ? await store.read('customers',current.customerId) : null;
+      if (!customer) throw fail('dispatch_customer_link_required','This provider-linked job needs its canonical customer linked before its appointment can be changed.',409);
+      if (current.highlevelContactId && customer.highlevelContactId && current.highlevelContactId !== customer.highlevelContactId) throw fail('dispatch_contact_link_conflict','This job and customer point to different CRM contacts. Correct the link before changing its appointment.',409);
+    }
     if (scheduleChanged && (next.highlevelContactId || next.highlevelAppointmentId) && (interval || next.highlevelAppointmentId)) {
       Object.assign(patch,{syncStatus:'pending',syncIdempotencyKey:input.requestId,providerSyncOwner:'operations'}); providerSync = 'pending';
     } else if (create) patch.syncStatus = 'not_needed';
     next = { ...current, ...patch };
-    conflictCheck(next,jobs,resources,roster);
-    warnings = jobWarnings(next,jobs,resources,roster);
     const days = [...new Set([...occupiedDays(current),...occupiedDays(next)])].sort();
     for (const date of days) {
       const lockId = `_egc_schedule_lock_${date}`, lock = await store.read('jobs',lockId);
+      if (lock && (lock.recordType !== 'schedule_lock' || !Array.isArray(lock.entries))) throw fail('dispatch_lock_unavailable','A scheduling guard needs review before this date can be changed.',503);
       const entries = (Array.isArray(lock?.entries) ? lock.entries : []).filter(entry => entry.id !== id && !TERMINAL.has(entry.status));
       if (activeJob(next) && occupiedDays(next).includes(date)) entries.push({id,start:date === next.date ? next.time : '00:00',end:date === (next.endDate || next.date) ? next.endTime : '24:00',label:next.customer || next.title || '',status:state(next),assignedCrew:legacyMembers(next,roster),vehicleId:next.vehicleId || null,updatedAt:now});
       writes.push({collection:'jobs',id:lockId,revision:lock?.revision,patch:{recordType:'schedule_lock',date,entries,updatedAt:now}});
     }
+    // The older operations scheduler shares day locks but not dispatchState.
+    // Read final conflict evidence AFTER acquiring each affected day revision;
+    // either we see an older sender's job or its commit invalidates our lock.
+    const finalJobs = days.length ? await store.jobs() : jobs;
+    conflictCheck(next,finalJobs,resources,roster);
+    warnings = jobWarnings(next,finalJobs,resources,roster);
   } else {
     collection = 'dispatchResources';
     id = input.id || `${input.action.split('.')[0]}_${receiptId.replaceAll('-','')}`;
@@ -408,20 +419,22 @@ export async function mutateDispatchSelfAssignment(store,session,input,now = new
       ...(input.action === 'claim' ? {lastShiftClaim:{employee:identity,claimedAt:now}} : {lastShiftRelease:{employee:identity,releasedAt:now},...(resolveMember(job.crewLead,roster,true) === identity ? {crewLead:null} : {})}),
       dispatchRequestId:input.requestId,dispatchUpdatedAt:now,updatedAt:now,updatedBy:identity};
     const next = {...job,...patch};
-    if (input.action === 'claim') conflictCheck(next,jobs,resources,roster);
     const writes = [{collection:'jobs',id:job.id,revision:job.revision,patch}];
     for (const date of occupiedDays(job)) {
       const id = `_egc_schedule_lock_${date}`,lock = await store.read('jobs',id);
+      if (lock && (lock.recordType !== 'schedule_lock' || !Array.isArray(lock.entries))) throw fail('dispatch_lock_unavailable','A scheduling guard needs review before this shift can be changed.',503);
       const entries = (Array.isArray(lock?.entries) ? lock.entries : []).filter(entry=>entry.id!==job.id && !TERMINAL.has(entry.status));
       entries.push({id:job.id,start:date===job.date ? job.time : '00:00',end:date===(job.endDate || job.date) ? job.endTime : '24:00',label:job.customer || job.title || '',status:state(job),assignedCrew,vehicleId:job.vehicleId || null,updatedAt:now});
       writes.push({collection:'jobs',id,revision:lock?.revision,patch:{recordType:'schedule_lock',date,entries,updatedAt:now}});
     }
+    const finalJobs = input.action === 'claim' ? await store.jobs() : jobs;
+    if (input.action === 'claim') conflictCheck(next,finalJobs,resources,roster);
     writes.push({collection:'dispatchState',id:'revision',revision:guard?.revision,patch:{updatedAt:now,lastRequestId:input.requestId}});
     writes.push({collection:'dispatchOperations',id:receiptId,patch:{fingerprint,actorId:identity,action:`shift.${input.action}`,collection:'jobs',targetId:job.id,requestId:input.requestId,createdAt:now,before:auditState(job),after:auditState(next)}});
     await store.commit(writes);
     const saved = await store.read('jobs',job.id);
     if (!saved || saved.dispatchRequestId !== input.requestId) throw fail('dispatch_changed_since_operation','Your assignment saved, but dispatch has changed it again. Refresh your schedule.',409);
-    return {ok:true,action:input.action,requestId:input.requestId,job:saved,warnings:jobWarnings(saved,jobs,resources,roster).filter(warning=>warning.code==='travel_buffer_short')};
+    return {ok:true,action:input.action,requestId:input.requestId,job:saved,warnings:jobWarnings(saved,finalJobs,resources,roster).filter(warning=>warning.code==='travel_buffer_short')};
   } catch(error) {
     const recovered = await replay().catch(replayError => { if (['dispatch_changed_since_operation','dispatch_idempotency_conflict'].includes(replayError.code)) throw replayError; return null; });
     if (recovered) return recovered;
