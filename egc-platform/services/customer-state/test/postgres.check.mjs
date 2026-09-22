@@ -169,6 +169,23 @@ test('an explicit empty contact scope never expands to a global Portal retiremen
   assert.equal(result.inspected,0);assert.deepEqual(result.results,[]);
 });
 
+test('report coverage excludes cold history while retaining older active work, period events, and explicit cohorts',async()=>{
+  const old=new Date(Date.now()-90*86400000),ids=[];
+  for(let i=0;i<3;i++){
+    const [c]=await db.insert(schema.contacts).values({providerId:`scope-${randomUUID()}`,name:'Synthetic historical scope',source:'Facebook'}).returning();created.push(c.id);ids.push(c.id);
+    await db.insert(schema.leads).values({contactId:c.id,source:'Facebook',createdAt:old});
+    await reconcileCustomerState({contactIds:[c.id],useAI:false,portalRecords:i===2?[{id:`scope-quote-${c.id}`,highlevelContactId:c.providerId,kind:'job',status:'quote_sent',createdAt:old.toISOString(),financials:{quote:{at:at.toISOString(),amountCents:13900,source:'customer_approval'}}}]:[]});
+  }
+  const active=(await getCustomerTimeline({contactId:ids[1]})).customer;
+  await db.update(schema.customerStateSnapshots).set({state:'VIDEO_QUOTE_PENDING_CUSTOMER',snapshot:{...active,state:'VIDEO_QUOTE_PENDING_CUSTOMER',pipeline:'video_quote',pipelineDisposition:'active'}}).where(eq(schema.customerStateSnapshots.contactId,ids[1]));
+  const report=await getCanonicalReport({since:prior,until:new Date()});
+  assert.ok(!report.customers.some(c=>c.contactId===ids[0]));assert.ok(!report.coverage.customers.some(c=>c.contactId===ids[0]));
+  assert.ok(report.customers.some(c=>c.contactId===ids[1]));assert.ok(report.periodActivity.jobsSold.contactIds.includes(ids[2]));
+  assert.equal(report.coverage.scope,'report_cohort_period_activity_and_active_opportunities');assert.ok(report.coverage.historicalInventory.outsideReportScope>=1);
+  const cohort=await getCanonicalReport({since:prior,until:new Date(),cohortSince:new Date(old.valueOf()-1000),cohortUntil:new Date(old.valueOf()+1000)});
+  assert.ok(cohort.coverage.customers.some(c=>c.contactId===ids[0]));assert.ok(cohort.cohort.metrics.leads.contactIds.includes(ids[0]));
+});
+
 test('report evidence pages preserve all counted event identities and original source references',async()=>{
   const sourceIds=[];for(let i=0;i<7;i++){const providerId=`pagination-outreach-${randomUUID()}`;sourceIds.push(providerId);await db.insert(schema.messages).values({providerId,contactId:contact.id,type:'SMS',direction:'outbound',actorType:'human',body:`Scheduling follow-up ${i}.`,occurredAt:at});}
   await refresh();const timeline=await getCustomerTimeline({contactId:contact.id}),eventIds=timeline.events.filter(e=>e.eventType==='human_outreach').map(e=>e.eventId),seen=[];

@@ -52,7 +52,7 @@ const walkthroughContext = /walk\s*through|walkthrough|in.person (?:quote|estima
 const videoContext = /video|photos?|pictures?/i;
 const priceContext = /(?:\$\s*\d|\b\d[\d,]*\s*dollars?\b|\bprice range\b|\bquoted?\b|\bestimate\b|\bcost\b)/i;
 function explicitQuoteCents(text:string):number|null {
-  if(/(?:starts? at|typically|usually|between|range|rough|ballpark|around|\bper\b|\/hr|\/hour|plus|additional|tax|discount|\d\s*[-–]\s*\$?\d)/i.test(text))return null;
+  if(/(?:starts? at|typically|usually|normally|between|range|rough|ballpark|around|\bper\b|\/hr|\/hour|plus|additional|tax|discount|\d\s*[-–]\s*\$?\d)/i.test(text))return null;
   const monetary=[...text.matchAll(/(?:\$\s*(\d[\d,]*(?:\.\d{1,2})?)|(\d[\d,]*(?:\.\d{1,2})?)\s*\$)/g)].map(m=>Math.round(Number((m[1]??m[2])!.replace(/,/g,""))*100));
   // Spoken-style written revision: "I can come down to 139" has an explicit
   // monetary predicate. Dates and addresses alone never match this branch.
@@ -118,6 +118,10 @@ export function extractEvidence(record: SourceRecord, history: SourceRecord[] = 
   }
   if(human && /(?:got you|have you|you're|you are) (?:all )?(?:booked|scheduled|on (?:the|our) calendar)/i.test(text) && walkthroughContext.test(context) && !negative.test(text)) add("walkthrough_verbally_booked",record.text,.96,"Verify EGC Portal appointment and provider sync");
   if(human && /(?:send|text|upload).{0,45}(?:video|photos?|pictures?)/i.test(text)) add("video_quote_requested",record.text,.98,"Await customer media for the quote");
+  // A scoped pickup request followed by two explicit scheduling prices is a
+  // delivered quote, but neither option is a verified accepted sale value.
+  const scopedPickup=before.filter(r=>r.sourceType==='message'&&r.direction==='inbound'&&r.actorType==='customer'&&/(?:pick\s*up|pickup|remove|haul|take away|charge to take)/i.test(r.text)&&/(?:bed|frame|mattress|couch|sofa|dresser|refrigerator|fridge|appliance|table|chairs?|piano|treadmill|furniture)/i.test(r.text)).at(-1);
+  if(human&&scopedPickup&&/normally.{0,25}(?:at|charge|cost).{0,8}\$?\s*\d[\d,]*(?:\.\d{1,2})?\s+for that.{0,25}but if you book.{0,100}(?:at|charge|cost).{0,8}\$\s*\d/i.test(text))add('quote_delivered',record.text,.98,'Ask which scheduling price option the customer wants',{verifiedScopedQuote:true,conditionalPriceOptions:true,scopeSourceRecordId:scopedPickup.sourceRecordId});
   if(human && /(?:quote|estimate|total|price).{0,35}\$\s*\d|\$\s*\d[\d,.]*.{0,50}(?:for (?:the|your)|all.in|total)|\d\s*\$.{0,30}(?:for|pickup)|come down to\s*\d/i.test(text) && !/(?:starts? at|typically|usually|between|range|rough|ballpark)/i.test(text)) {
     add("quote_delivered",record.text,.95,"Confirm the customer's decision on the delivered quote");
     const cents=explicitQuoteCents(text);

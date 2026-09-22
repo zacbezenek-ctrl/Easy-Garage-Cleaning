@@ -38,7 +38,7 @@ export interface SourceRecord {
   sourceType: SourceType; sourceRecordId: string; contactId: string; leadId?: string | null;
   occurredAt: string; text: string; direction?: string; actorType?: string; raw?: Json;
   opportunityId?: string | null; appointmentId?: string | null; jobId?: string | null;
-  events?: EvidenceEvent[]; extractionStatus?: string; extractionError?: string | null; sourcePointer?: string;
+  events?: EvidenceEvent[]; extractionStatus?: string; extractionError?: string | null; extractionAttempted?: boolean; sourcePointer?: string;
 }
 export interface CanonicalEvent {
   eventId: string; eventType: CustomerEventType; contactId: string; leadId: string | null;
@@ -80,6 +80,7 @@ export interface PortalEvidenceRecord {
 }
 export interface ReconcileOptions {
   occurrenceMode?: 'off' | 'shadow' | 'enabled';
+  semanticMaxBatches?: number; semanticTimeoutMs?: number;
   contactIds?: string[]; since?: Date | string; until?: Date | string; useAI?: boolean; maxContacts?: number;
   portalRecords?: PortalEvidenceRecord[]; portalCoverage?: { complete: boolean; asOf: string; error?: string; window?: { start: string; end: string } };
 }

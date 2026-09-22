@@ -32,6 +32,6 @@ export function formatOperationalBriefing<T extends ReturnType<typeof buildRepor
     pipelines:{walkthrough:pipeline('walkthrough'),videoQuote:pipeline('videoQuote'),directJob:pipeline('directJob')},
     countedEvents:shown.map(eventSummary),countedEventsPage:{...page,offset,limit,total,nextOffset:offset+shown.length<total?offset+shown.length:null},
     confirmedOutcomesWithUnknownTime:report.confirmedOutcomesWithUnknownTime.map(eventSummary),reviewRequiredEvents:report.reviewRequiredEvents.map(eventSummary),
-    ...(extra.coverage?{coverage:{complete:coverage.complete,missingCustomers:coverage.missingCustomers,source:coverage.source,customers:sourceCoverage,diagnosticsTool:'egc.customer_state_diagnostics'}}:{}),
+    ...(extra.coverage?{coverage:{scope:coverage.scope,complete:coverage.complete,missingCustomers:coverage.missingCustomers,source:coverage.source,customers:sourceCoverage,historicalInventory:coverage.historicalInventory,diagnosticsTool:'egc.customer_state_diagnostics'}}:{}),
     evidenceRetrieval:{tool:'egc.operational_event_evidence',since:report.period.since,until:report.period.until,nextOffset:offset+shown.length<total?offset+shown.length:null,limit,identityPolicy:'Original event and source IDs are returned unchanged by evidence pages and customer timelines.'}};
 }
