@@ -61,7 +61,7 @@ jobs:
               if item.get('appendFile'):
                   appendix=(root/item['appendFile']).resolve()
                   assert appendix.is_relative_to(root)
-                  extra=appendix.read_text()
+                  extra='\n'+appendix.read_text().lstrip('\n')
                   assert blob(extra)==item['appendHash'], 'appendix changed'
                   text+=extra
               assert blob(text)==item['after'], 'result hash mismatch: '+name
