@@ -10,7 +10,10 @@ globalThis.fetch=async()=>{throw new Error('External HTTP forbidden');};
 const db=getDb();let writes,notes,provider,event;
 beforeEach(async()=>{
   await db.execute(sql`truncate outbox_events,audit_logs`);writes=0;notes=[];
-  [event]=await db.insert(schema.outboxEvents).values({type:'ghl.contact_note.sync',entityId:randomUUID(),payload:{ghlContactId:'fixture',noteBody:'Synthetic internal note'}}).returning();
+  // PostgreSQL retains microseconds while the worker clock has milliseconds.
+  // Explicitly make the fixture due; an immediate database default can still
+  // be fractionally ahead of the first worker tick on a fast CI runner.
+  [event]=await db.insert(schema.outboxEvents).values({type:'ghl.contact_note.sync',entityId:randomUUID(),availableAt:new Date(Date.now()-1000),payload:{ghlContactId:'fixture',noteBody:'Synthetic internal note'}}).returning();
   provider={getContactNotes:async()=>({notes}),createContactNote:async(id,body)=>{writes++;notes.push({id:'note-1',body});return {note:{id:'note-1'}};}};
 });
 after(async()=>db.$client.end({timeout:5}));
@@ -44,18 +47,18 @@ test('marker collision or malformed provider response never claims success',asyn
 test('a reclaimed claim fences the original slow worker before external creation',async()=>{
   let resumeFirst,notifyStarted;const started=new Promise(r=>{notifyStarted=r;});const gate=new Promise(r=>{resumeFirst=r;});let reads=0;
   provider.getContactNotes=async()=>{if(++reads===1){notifyStarted();await gate;return {notes:[]};}return {notes};};
-  const original=processNoteOutbox(provider,db);await started;
+  const original=processNoteOutbox(provider,db);await Promise.race([started,original.then(result=>{throw new Error(`Worker exited before reaching the read gate: ${JSON.stringify(result)}`);})]);
   await db.update(schema.outboxEvents).set({updatedAt:new Date(Date.now()-360000)}).where(eq(schema.outboxEvents.id,event.id));
-  const recovered=await processNoteOutbox(provider,db);assert.equal(recovered.processed,1);resumeFirst();
+  let recovered;try{recovered=await processNoteOutbox(provider,db);assert.equal(recovered.processed,1);}finally{resumeFirst();}
   const stale=await original;assert.equal(stale.leaseLost,1);assert.equal(writes,1);assert.equal((await row()).processingStatus,'processed');
   assert.equal((await db.select().from(schema.auditLogs)).filter(a=>a.action==='ghl.contact_note.verified').length,1);
 });
 test('reclaim after durable intent never sends again and stale completion cannot overwrite recovery',async()=>{
   let resumeWrite,notifyWrite;const started=new Promise(r=>{notifyWrite=r;});const gate=new Promise(r=>{resumeWrite=r;});
   provider.createContactNote=async(id,body)=>{writes++;notes.push({id:'slow-note',body});notifyWrite();await gate;throw new Error('Provider timed out after commit');};
-  const original=processNoteOutbox(provider,db);await started;
+  const original=processNoteOutbox(provider,db);await Promise.race([started,original.then(result=>{throw new Error(`Worker exited before reaching the write gate: ${JSON.stringify(result)}`);})]);
   await db.update(schema.outboxEvents).set({updatedAt:new Date(Date.now()-360000)}).where(eq(schema.outboxEvents.id,event.id));
-  const recovered=await processNoteOutbox(provider,db);assert.equal(recovered.processed,1);resumeWrite();
+  let recovered;try{recovered=await processNoteOutbox(provider,db);assert.equal(recovered.processed,1);}finally{resumeWrite();}
   const stale=await original;assert.equal(stale.leaseLost,1);assert.equal(writes,1);assert.equal((await row()).processingStatus,'processed');
   assert.equal((await db.select().from(schema.auditLogs)).filter(a=>a.action==='ghl.contact_note.verified').length,1);
 });
