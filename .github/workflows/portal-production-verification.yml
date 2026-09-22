@@ -1,0 +1,65 @@
+name: Portal production verification
+on:
+  push:
+    branches: [ops/portal-production-verification-20260922]
+    paths: [.github/workflows/portal-production-verification.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 03b329cb4e7e86659f17429e1d6eabf37a397f5a
+          persist-credentials: false
+      - name: Report existing deployment credential presence only
+        env:
+          FIREBASE_JSON_PRESENT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON != '' }}
+          FIREBASE_PROJECT_JSON_PRESENT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_EGCW_1EC83 != '' }}
+          FIREBASE_TOKEN_PRESENT: ${{ secrets.FIREBASE_TOKEN != '' }}
+          CLOUDFLARE_TOKEN_PRESENT: ${{ secrets.CLOUDFLARE_API_TOKEN != '' }}
+        run: |
+          mkdir -p verification
+          python - <<'PY'
+          import os,json
+          result={k:os.environ[k]=='true' for k in ['FIREBASE_JSON_PRESENT','FIREBASE_PROJECT_JSON_PRESENT','FIREBASE_TOKEN_PRESENT','CLOUDFLARE_TOKEN_PRESENT']}
+          print(json.dumps({'check':'existing_github_deployment_credential_presence','configured':result,'note':'Presence only; does not attest permissions. No credentials accessed or printed.'}))
+          open('verification/credential-presence.json','w').write(json.dumps(result))
+          PY
+      - name: Compare real deployed public assets and protected route responses
+        run: |
+          python - <<'PY'
+          import urllib.request,urllib.error,pathlib,hashlib,json,datetime
+          origins=['https://easygaragecleaning.com','https://13093894.easy-garage-cleaning.pages.dev']
+          assets=['employee.html','employee-dispatch.js','employee-field-today.js','crew/gameplan.html','crew/gameplan-handoff.js','crew/job.js']
+          routes=['api/dispatch','api/field-jobs','api/walkthrough-handoff','api/operations-service-keys']
+          output={'checkedAt':datetime.datetime.now(datetime.timezone.utc).isoformat(),'expectedSource':'03b329cb4e7e86659f17429e1d6eabf37a397f5a','mode':'read_only_unauthenticated','checks':[]}
+          for origin in origins:
+              for path in assets+routes:
+                  row={'origin':origin,'path':path}
+                  try:
+                      request=urllib.request.Request(origin+'/'+path,headers={'Cache-Control':'no-cache','User-Agent':'EGC-Authorized-Release-Verification/1.0'})
+                      try: response=urllib.request.urlopen(request,timeout=20)
+                      except urllib.error.HTTPError as e: response=e
+                      raw=response.read(2000000)
+                      row.update(status=response.status,cacheControl=response.headers.get('Cache-Control'),contentType=response.headers.get('Content-Type'))
+                      if path in assets:
+                          local=pathlib.Path(path).read_bytes()
+                          row.update(expectedHash=hashlib.sha256(local).hexdigest(),deployedHash=hashlib.sha256(raw).hexdigest(),exactMatch=raw==local)
+                      else: row['authDenied']=response.status in [401,403]
+                  except Exception as e: row.update(error=type(e).__name__)
+                  output['checks'].append(row)
+          print(json.dumps(output))
+          pathlib.Path('verification/public-deployment.json').write_text(json.dumps(output,indent=2))
+          PY
+      - name: Save exact inspected source for offline review
+        run: git archive --format=tar.gz -o verification/release-source.tar.gz HEAD
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: portal-production-verification
+          path: verification/
+          retention-days: 1
