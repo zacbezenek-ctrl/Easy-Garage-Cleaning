@@ -1,0 +1,42 @@
+name: Portal integration inspection
+on:
+  push:
+    branches: [fix/portal-scheduling-lineage-20260922]
+    paths: [.github/workflows/portal-integration-inspection.yml]
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Save tracked source for reproducible offline release inspection
+        run: |
+          mkdir -p release-inspection
+          git bundle create release-inspection/source.bundle HEAD refs/remotes/origin/main
+          git rev-parse HEAD refs/remotes/origin/main > release-inspection/revisions.txt
+      - name: Inspect integration without changing repository refs or production
+        shell: bash
+        run: |
+          git config user.name 'EGC release inspection'
+          git config user.email 'release-inspection@users.noreply.github.com'
+          set +e
+          git merge --no-commit --no-ff refs/remotes/origin/main > release-inspection/merge.txt 2>&1
+          result=$?
+          git diff --name-only --diff-filter=U > release-inspection/conflicts.txt
+          git diff --cc > release-inspection/conflicts.diff
+          cat release-inspection/revisions.txt release-inspection/merge.txt release-inspection/conflicts.txt
+          if [ "$result" -eq 0 ]; then
+            node --test tests/*.test.mjs > release-inspection/tests.txt 2>&1
+            tail -20 release-inspection/tests.txt
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: portal-release-inspection
+          path: release-inspection/
+          retention-days: 1
