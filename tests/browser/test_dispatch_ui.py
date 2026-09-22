@@ -43,6 +43,7 @@ class DispatchBrowserTests(unittest.TestCase):
         self.crews = [{'id': 'crew-main', 'revision': 'crew-rev-1', 'name': 'North Crew', 'memberIds': ['crew.one', 'lead.one'], 'leadId': 'lead.one', 'status': 'active'}]
         self.vehicles = [{'id': 'truck-1', 'revision': 'truck-rev-1', 'name': 'Box Truck', 'status': 'available', 'notes': 'Check straps'}, {'id': 'truck-2', 'revision': 'truck-rev-2', 'name': 'Spare Truck', 'status': 'out_of_service', 'notes': 'Repair pending'}]
         self.availability = []; self.fail_once = None; self.read_status = 200; self.completed = {}; self.lost_once = False; self.malformed_once = False; self.viewer = 'manager.one'; self.bad_read = False
+        self.opening_queries = []; self.opening_failure = None; self.opening_candidates = [{'date': DAY, 'time': '13:00', 'endDate': DAY, 'endTime': '15:00', 'startAt': DAY+'T19:00:00Z', 'endAt': DAY+'T21:00:00Z', 'gapMinutes': 240}]
         self.page.on('pageerror', lambda e: self.errors.append(str(e)))
         self.page.on('dialog', lambda dialog: dialog.accept())
         self.page.route('**/*', self.route)
@@ -52,6 +53,10 @@ class DispatchBrowserTests(unittest.TestCase):
     def route(self, route):
         req = route.request; parsed = urlparse(req.url)
         if parsed.hostname != '127.0.0.1': route.abort(); return
+        if parsed.path == '/api/dispatch-openings':
+            self.opening_queries.append(parse_qs(parsed.query))
+            if self.opening_failure: route.fulfill(status=503, content_type='application/json', body=json.dumps({'ok': False, 'error': self.opening_failure})); return
+            route.fulfill(status=200, content_type='application/json', body=json.dumps({'ok': True, 'coverage': {'complete': True, 'consistent': True}, 'candidates': self.opening_candidates, 'warnings': [{'code': 'working_availability_unconfirmed', 'message': 'Confirm these employees are working before booking.'}], 'total': len(self.opening_candidates), 'truncated': False})); return
         if parsed.path != '/api/dispatch': route.continue_(); return
         def send(data, status=200): route.fulfill(status=status, content_type='application/json', body=json.dumps(data))
         if req.method == 'GET':
@@ -111,7 +116,7 @@ class DispatchBrowserTests(unittest.TestCase):
         self.open(); card = self.card(); expect(card).to_contain_text('8:00 AM – 10:00 AM'); expect(card).to_contain_text('North Crew'); expect(card).to_contain_text('Lead One'); expect(card).to_contain_text('Box Truck')
         expect(card.get_by_role('link', name='Open job', exact=True)).to_have_attribute('href', '/crew/job.html?jobId=job-1')
         expect(card.get_by_role('link', name=CUSTOMER['address'], exact=True)).to_have_attribute('href', 'https://www.google.com/maps/dir/?api=1&destination=123%20Synthetic%20Way%2C%20Fort%20Collins%2C%20CO')
-        self.page.get_by_role('button', name='Crew', exact=True).click(); expect(self.page.locator('.dp-crew-group')).to_contain_text('1 jobs · 2.0 scheduled hours')
+        self.page.get_by_role('button', name='Crew', exact=True).click(); expect(self.page.locator('.dp-crew-group')).to_contain_text('1 jobs · 2.0 reserved hours')
         self.assertEqual(self.gets[-1]['startDate'], [DAY]); self.assertEqual(self.gets[-1]['endDate'], ['2026-09-29'])
     def test_create_assign_lead_truck_duration_scope_and_reload(self):
         self.open(); self.create(); self.page.get_by_role('combobox', name='Saved crew', exact=True).select_option('crew-main'); self.page.get_by_role('combobox', name='Vehicle / truck', exact=True).select_option('truck-1')
@@ -165,6 +170,33 @@ class DispatchBrowserTests(unittest.TestCase):
         self.page.evaluate("window.dispatchEvent(new Event('egc:signout'))"); self.assertEqual(self.page.evaluate("Object.keys(sessionStorage).filter(key=>key.startsWith('egc.dispatch.pending.')).length"), 0)
     def test_incomplete_read_does_not_present_fake_empty_schedule(self):
         self.bad_read = True; self.page.goto(self.url); expect(self.page.get_by_role('alert')).to_contain_text('incomplete'); expect(self.page.get_by_role('heading', name='No jobs match these filters.', exact=True)).to_have_count(0)
+    def test_openings_require_explicit_employees_and_seed_a_reviewable_booking(self):
+        self.open(); self.page.get_by_role('button', name='Find opening', exact=True).click(); self.submit('Check openings'); expect(self.page.get_by_role('alert')).to_contain_text('Choose the employees'); self.assertEqual(self.opening_queries, [])
+        self.page.get_by_role('combobox', name='Saved crew to check', exact=True).select_option('crew-main'); self.page.get_by_role('combobox', name='Vehicle to check', exact=True).select_option('truck-1'); self.submit('Check openings')
+        expect(self.page.get_by_role('dialog')).to_contain_text('Confirm these employees are working'); query = self.opening_queries[-1]; self.assertEqual(query['employeeIds'], ['crew.one,lead.one']); self.assertEqual(query['vehicleId'], ['truck-1']); self.assertEqual(query['endDate'], ['2026-09-29'])
+        self.page.get_by_role('button', name='Use this opening', exact=True).click(); expect(self.page.get_by_role('dialog')).to_have_attribute('aria-label', 'Create job')
+        expect(self.page.get_by_label('Start time', exact=True)).to_have_value('13:00'); expect(self.page.get_by_label('End time', exact=True)).to_have_value('15:00'); expect(self.page.get_by_role('combobox', name='Crew lead', exact=True)).to_have_value('lead.one'); expect(self.page.get_by_role('combobox', name='Vehicle / truck', exact=True)).to_have_value('truck-1'); expect(self.page.get_by_label('Required crew size', exact=True)).to_have_value('2'); self.assertEqual(self.calls, [])
+        self.page.locator('input[name=customerSearch]').fill('Johnson'); self.page.get_by_role('button', name=CUSTOMER['name']+' · '+CUSTOMER['phone'], exact=True).click(); self.page.get_by_label('Service', exact=True).fill('From verified opening'); self.submit('Create job'); self.closed(); self.assertEqual(self.calls[-1]['changes']['time'], '13:00')
+    def test_openings_clear_stale_suggestions_and_report_backend_failure(self):
+        self.open(); self.page.get_by_role('button', name='Find opening', exact=True).click(); self.page.get_by_label('Crew One', exact=True).check(); self.submit('Check openings'); expect(self.page.get_by_role('button', name='Use this opening', exact=True)).to_be_visible()
+        self.page.get_by_label('Job duration (minutes)', exact=True).fill('180'); expect(self.page.get_by_role('button', name='Use this opening', exact=True)).to_have_count(0)
+        self.opening_failure = 'The schedule changed while checking. Retry the search.'; self.submit('Check openings'); expect(self.page.get_by_role('alert')).to_contain_text('schedule changed'); expect(self.page.get_by_role('heading', name='No matching openings', exact=True)).to_have_count(0)
+    def test_openings_empty_and_mobile_layout(self):
+        self.open(); self.page.set_viewport_size({'width': 320, 'height': 850}); self.page.get_by_role('button', name='Find opening', exact=True).click(); self.page.get_by_label('Crew Two', exact=True).check(); self.opening_candidates = []; self.submit('Check openings'); expect(self.page.get_by_role('heading', name='No matching openings', exact=True)).to_be_visible()
+        self.assertLessEqual(self.page.evaluate('document.documentElement.scrollWidth'), 321); self.assertLessEqual(self.page.get_by_role('dialog').evaluate('(el)=>el.scrollWidth'), self.page.get_by_role('dialog').evaluate('(el)=>el.clientWidth')+1)
+    def test_attention_counts_jobs_and_includes_completed_handoff_failures(self):
+        self.jobs[0].update({'activity': 'delayed', 'activityReason': 'Truck repair is delaying departure.', 'attention': {'status': 'open', 'reason': 'Customer requested a manager callback.'}})
+        self.jobs.append(job(id='done-job', customer='Completed customer', status='completed', activity='completed', completionSync={'status': 'blocked', 'message': 'CRM completion configuration needs review.'}))
+        self.jobs.append(job(id='cancelled-job', customer='Cancelled customer', status='cancelled'))
+        self.open(); expect(self.card()).to_contain_text('Delayed'); expect(self.card().get_by_role('link', name='Review job issue', exact=True)).to_have_attribute('href', '/crew/job.html?jobId=job-1')
+        expect(self.page.locator('.dp-stats article').filter(has_text='Needs attention').locator('strong')).to_have_text('2'); expect(self.page.locator('.dp-stats article').filter(has_text='Scheduled').locator('strong')).to_have_text('2')
+        self.page.get_by_role('button', name='Review jobs needing attention', exact=True).click(); expect(self.page.get_by_label('Filter by status', exact=True)).to_have_value('attention'); expect(self.page.locator('.dp-job')).to_have_count(2); expect(self.page.locator('.dp-job').filter(has_text='Completed customer')).to_contain_text('configuration needs review')
+    def test_company_time_block_has_a_real_editor_and_no_field_job_dead_link(self):
+        self.open(); self.page.get_by_role('button', name='Block time', exact=True).click(); self.page.get_by_label('Reason / title', exact=True).fill('Company safety training'); self.page.get_by_label('Start time', exact=True).fill('16:00'); self.page.get_by_label('End time', exact=True).fill('17:00'); self.submit('Save time block'); self.closed()
+        write = self.calls[-1]; self.assertEqual(write['kind'], 'blocked'); self.assertNotIn('customerId', write); block = self.page.locator('.dp-job').filter(has_text='Company safety training'); expect(block.get_by_role('link', name='Open job', exact=True)).to_have_count(0); expect(block).not_to_contain_text('Address needed')
+        block.get_by_role('button', name='Edit / assign', exact=True).click(); expect(self.page.get_by_role('dialog')).to_have_attribute('aria-label', 'Edit company time block'); self.page.get_by_label('Internal notes', exact=True).fill('Bring gloves'); self.submit('Save time block'); self.closed(); self.assertEqual(self.calls[-1]['changes']['opsNotes'], 'Bring gloves')
+    def test_midnight_ending_assignment_is_not_shown_on_the_next_day(self):
+        self.jobs[0].update({'endDate': '2026-09-23', 'endTime': '00:00', 'endAt': '2026-09-23T00:00:00-06:00'}); self.open(); self.page.get_by_role('button', name='Tomorrow', exact=True).click(); expect(self.page.locator('.dp-job')).to_have_count(0); expect(self.page.locator('.dp-stats article').filter(has_text='Scheduled').locator('strong')).to_have_text('0')
     def test_revision_conflict_preserves_text_until_explicit_draft_discard(self):
         self.open(); self.card().get_by_role('button', name='Edit / assign', exact=True).click(); self.page.get_by_label('Scope of work', exact=True).fill('My retained draft')
         self.jobs[0]['revision'] = 'changed-on-server'; self.submit('Save changes'); expect(self.page.get_by_label('Scope of work', exact=True)).to_have_value('My retained draft')

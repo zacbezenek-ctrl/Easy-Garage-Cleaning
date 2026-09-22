@@ -4,6 +4,8 @@
 let host=null,controller=null,timer=null,generation=0;
 const TZ='America/Denver',closed=new Set(['completed','paid','invoiced','review_requested','cancelled','canceled','closed','noshow','no_show','no-show']);
 const today=()=>new Intl.DateTimeFormat('en-CA',{timeZone:TZ,year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
+const addDays=(date,count)=>new Date(Date.parse(date+'T12:00:00Z')+count*86400000).toISOString().slice(0,10);
+const onDate=(job,date)=>{const end=job.endDate&&job.endDate>job.date&&job.endTime==='00:00'?addDays(job.endDate,-1):job.endDate||job.date;return job.date<=date&&end>=date;};
 function h(tag,props,...children){const el=document.createElement(tag);for(const[k,v]of Object.entries(props||{})){if(v==null)continue;if(k==='class')el.className=v;else if(k.startsWith('on'))el.addEventListener(k.slice(2),v);else el.setAttribute(k,v);}for(const child of children.flat(Infinity))if(child!=null)el.append(child instanceof Node?child:document.createTextNode(String(child)));return el;}
 const words=value=>String(value||'scheduled').replaceAll('_',' ');
 const time=value=>{const m=/^(\d\d):(\d\d)$/.exec(value||'');if(!m)return'Time needed';const hour=+m[1];return(hour%12||12)+':'+m[2]+(hour<12?' AM':' PM');};
@@ -27,7 +29,7 @@ function card(job,label){
 }
 function render(data){
  if(!host?.isConnected)return;
- const date=today(),jobs=data.jobs||[],dayJobs=jobs.filter(j=>j.date<=date&&(j.endDate||j.date)>=date),open=dayJobs.filter(j=>!closed.has(j.status)),current=open.find(j=>['dispatched','arrived','in_progress'].includes(j.status))||open[0],next=open.find(j=>j.id!==current?.id)||jobs.find(j=>j.date>date&&!closed.has(j.status));
+ const date=today(),jobs=data.jobs||[],dayJobs=jobs.filter(j=>onDate(j,date)),open=dayJobs.filter(j=>!closed.has(j.status)),current=open.find(j=>['dispatched','arrived','in_progress'].includes(j.status))||open[0],next=open.find(j=>j.id!==current?.id)||jobs.find(j=>j.date>date&&!closed.has(j.status));
  host.replaceChildren(h('header',{class:'ft-head'},h('div',{},h('span',{class:'ft-eyebrow'},'YOUR FIELD DAY'),h('h2',{},'Today’s jobs')),h('button',{class:'ft-button',type:'button',onclick:()=>load()},'Refresh')));
  if(dayJobs.some(j=>['cancelled','canceled'].includes(j.status)))host.append(h('p',{class:'ft-warning'},dayJobs.filter(j=>['cancelled','canceled'].includes(j.status)).map(j=>j.customer||'Job').join(', ')+': cancelled. Check your remaining assignments.'));
  if(current)host.append(card(current,'CURRENT JOB'));
@@ -43,7 +45,7 @@ async function load(){
  if(!host?.isConnected)return;
  const mine=++generation;controller?.abort();controller=new AbortController();
  if(!host.childNodes.length)host.append(h('p',{role:'status'},'Loading your assigned jobs…'));
- try{const response=await fetch('/api/field-jobs?'+new URLSearchParams({date:today(),days:'2',status:'all'}),{credentials:'same-origin',cache:'no-store',signal:controller.signal}),data=await response.json().catch(()=>({}));if(mine!==generation||!host?.isConnected)return;if(!response.ok||!data.ok)throw Object.assign(new Error(data.error||'Your schedule could not load.'),{status:response.status});render(data);}
+ try{const response=await fetch('/api/field-jobs?'+new URLSearchParams({date:today(),days:'2',status:'all'}),{credentials:'same-origin',cache:'no-store',signal:controller.signal}),data=await response.json().catch(()=>({}));if(mine!==generation||!host?.isConnected)return;if(!response.ok||data.ok!==true||!Array.isArray(data.jobs)||data.jobs.some(job=>!job||typeof job.id!=='string'))throw Object.assign(new Error(data.error||'Your current schedule could not be verified. Retry before dispatching.'),{status:response.ok?503:response.status});render(data);}
  catch(error){if(error.name==='AbortError'||mine!==generation||!host?.isConnected)return;host.replaceChildren(...[h('h2',{},'Today’s jobs'),h('p',{class:'ft-warning',role:'alert'},error.message),h('button',{class:'ft-button',type:'button',onclick:()=>load()},'Retry'),error.status===401?h('a',{class:'ft-button',href:'/crew/job.html'},'Sign in again'):null].filter(Boolean));}
 }
 function unmount(){host?.replaceChildren();controller?.abort();generation++;if(timer)clearInterval(timer);timer=null;host=null;}

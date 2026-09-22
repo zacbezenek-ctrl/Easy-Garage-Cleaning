@@ -10,6 +10,7 @@ import {hashHubCredential} from '../functions/_lib/hub-session.js';
 import {storage as driveFixture} from './helpers/field-fixture.mjs';
 import * as auth from '../functions/api/hub-auth.js';
 import * as dispatch from '../functions/api/dispatch.js';
+import * as openings from '../functions/api/dispatch-openings.js';
 import * as field from '../functions/api/field-jobs.js';
 import * as availability from '../functions/api/crew-availability.js';
 
@@ -44,7 +45,7 @@ globalThis.fetch=async(input,options={})=>{
  if(['localhost','127.0.0.1'].includes(url.hostname))return originalFetch(input,options);
  throw new Error('External network refused by isolated acceptance test: '+url.hostname);
 };
-const routes={'/api/hub-auth':auth,'/api/dispatch':dispatch,'/api/field-jobs':field,'/api/crew-availability':availability};
+const routes={'/api/hub-auth':auth,'/api/dispatch':dispatch,'/api/dispatch-openings':openings,'/api/field-jobs':field,'/api/crew-availability':availability};
 const background=[],serverErrors=[],apiErrors=[];
 const server=createServer(async(incoming,outgoing)=>{
  try{
@@ -98,6 +99,12 @@ try{
  await managerPage.getByRole('dialog').getByRole('button',{name:'Create job',exact:true}).click();await managerPage.getByRole('dialog').waitFor({state:'detached'});
  const nextCard=managerPage.locator('.dp-job').filter({hasText:'Second garage service'});
  const nextId=new URL(await nextCard.getByRole('link',{name:'Open job',exact:true}).getAttribute('href'),base).searchParams.get('jobId');
+ await managerPage.getByRole('button',{name:'Find opening',exact:true}).click();
+ await managerPage.getByLabel('Search from',{exact:true}).fill(tomorrow);await managerPage.getByLabel('Search through',{exact:true}).fill(tomorrow);
+ await managerPage.getByRole('combobox',{name:'Saved crew to check',exact:true}).selectOption('day-crew');await managerPage.getByRole('combobox',{name:'Vehicle to check',exact:true}).selectOption('day-truck');
+ await managerPage.getByRole('button',{name:'Check openings',exact:true}).click();await managerPage.getByRole('button',{name:'Use this opening',exact:true}).first().click();
+ assert.equal(await managerPage.getByLabel('Start date',{exact:true}).inputValue(),tomorrow);assert.equal(await managerPage.getByLabel('Start time',{exact:true}).inputValue(),'08:00');assert.equal(await managerPage.getByRole('combobox',{name:'Crew lead',exact:true}).inputValue(),'lead.one');
+ await managerPage.getByRole('button',{name:'Back',exact:true}).click();await managerPage.getByRole('dialog').waitFor({state:'detached'});
  await login(crewPage,'Crew.One');assert.equal(await crewPage.locator('.day-job').count(),2);
  await crewPage.goto(base+'/crew/job.html?jobId='+id);await crewPage.getByRole('heading',{name:'Synthetic Day Customer',exact:true}).waitFor();
  await crewPage.getByText('Install shelving and preserve the heirloom cabinet.',{exact:true}).waitFor();await crewPage.getByText('Day Truck',{exact:true}).waitFor();
@@ -131,6 +138,6 @@ try{
  assert.equal(await crewPage.locator('body').evaluate(body=>body.scrollWidth<=innerWidth),true);
  const out=resolve(root,'test-results');await mkdir(out,{recursive:true});await crewPage.screenshot({path:resolve(out,'actual-field-day-mobile.png'),fullPage:true});
  assert.deepEqual(pageErrors,[]);assert.deepEqual(serverErrors,[]);
- console.log('PASS: actual manager login/create/assign/vehicle/conflict -> crew login/route/status/checklist/materials/photos/notes/completion -> manager visibility/reschedule/cancel/restore, persisted by Firestore emulator.');
+ console.log('PASS: actual manager login/create/assign/vehicle/conflict/openings -> crew login/route/status/checklist/materials/photos/notes/completion -> manager visibility/reschedule/cancel/restore, persisted by Firestore emulator.');
 }catch(error){console.error('Acceptance failure context:',JSON.stringify({apiErrors,pageErrors,serverErrors}));await managerPage.screenshot({path:resolve(root,'test-results/actual-day-manager-failure.png'),fullPage:true});await crewPage.screenshot({path:resolve(root,'test-results/actual-day-crew-failure.png'),fullPage:true});throw error;}
 finally{await Promise.allSettled(background);await browser.close();await new Promise(resolve=>server.close(resolve));globalThis.fetch=originalFetch;await environment.cleanup();}

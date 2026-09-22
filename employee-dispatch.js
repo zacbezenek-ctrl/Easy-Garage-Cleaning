@@ -2,7 +2,7 @@
 (function () {
 'use strict';
 const TZ = 'America/Denver';
-const terminal = new Set(['completed', 'cancelled', 'canceled', 'paid', 'invoiced', 'review_requested', 'closed']);
+const terminal = new Set(['completed', 'cancelled', 'canceled', 'paid', 'invoiced', 'review_requested', 'closed','noshow','no_show','no-show']);
 const active = job => !terminal.has(job.status || job.pipelineStatus);
 const S = { host:null, root:null, date:today(), view:'day', query:'', status:'active', employee:'', type:'', data:null, loading:false, generation:0, modal:null, refreshTimer:null, pending:false, error:'', notice:'', controller:null, viewer:null, recovery:null };
 const recoveryPrefix='egc.dispatch.pending.v1.';
@@ -91,20 +91,32 @@ function setDate(date) { if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return; S.date=d
 function filtered() {
   const q=S.query.toLowerCase().trim(), phone=q.replace(/\D/g,'');
   return (S.data?.jobs||[]).filter(j => (!S.employee || j.assignedCrew?.includes(S.employee)) &&
-    (!S.type || j.type===S.type) && (S.status==='all' || (S.status==='active'?active(j):S.status==='unassigned'?active(j)&&!j.assignedCrew?.length:S.status==='unscheduled'?!j.date:j.status===S.status)) &&
+    (!S.type || j.type===S.type) && (S.status==='all' || (S.status==='active'?active(j):S.status==='attention'?warningsFor(j).length:S.status==='unassigned'?active(j)&&j.type!=='blocked'&&!j.assignedCrew?.length:S.status==='unscheduled'?!j.date:j.status===S.status)) &&
     (!q || [j.customer,j.address,j.phone,j.id,j.date,j.serviceType,crewName(j)].some(v=>String(v||'').toLowerCase().includes(q)) || phone.length>2&&String(j.phone||'').replace(/\D/g,'').includes(phone)))
     .sort((a,b)=>String(a.date||'9999').localeCompare(String(b.date||'9999'))||String(a.time||'').localeCompare(String(b.time||''))||String(a.customer||'').localeCompare(String(b.customer||'')));
 }
-function onDate(job,date) { return Boolean(job.date && job.date<=date && (job.endDate||job.date)>=date); }
+function onDate(job,date) { const last=job.endDate&&job.endDate>job.date&&job.endTime==='00:00'?addDays(job.endDate,-1):job.endDate||job.date;return Boolean(job.date && job.date<=date && last>=date); }
+function warningsFor(job) {
+  const warnings=(S.data?.warnings||[]).filter(w=>w.jobId===job.id),codes=new Set(warnings.map(w=>w.code));
+  const add=(code,message)=>{if(!codes.has(code)){warnings.push({code,message,jobId:job.id});codes.add(code);}};
+  if(job.attention?.status==='open')add('needs_follow_up',job.attention.reason||'The crew requested management follow-up.');
+  if(['pending','error','blocked'].includes(job.completionSync?.status))add('completion_sync_'+job.completionSync.status,job.completionSync.message||'Completion is saved; the CRM handoff needs verification.');
+  if(active(job)&&job.type!=='blocked'){
+    if(['paused','waiting','delayed'].includes(job.activity))add('job_'+job.activity,job.activityReason||'The crew reported this job as '+job.activity+'.');
+    if(job.endAt&&Number.isFinite(Date.parse(job.endAt))&&Date.parse(job.endAt)<Date.now())add('scheduled_finish_passed','Scheduled finish has passed; verify the current job status.');
+  }
+  return warnings;
+}
 function jobCard(job, {compact=false}={}) {
-  const warnings=(S.data?.warnings||[]).filter(w=>w.jobId===job.id);
+  const warnings=warningsFor(job),blocked=job.type==='blocked';
   const card=h('article',{class:'dp-job '+(active(job)?'':'dp-terminal'),draggable:active(job),
     ondragstart:e=>{e.dataTransfer.setData('text/plain',job.id);e.dataTransfer.effectAllowed='move';card.classList.add('dp-dragging');},
     ondragend:()=>card.classList.remove('dp-dragging')});
-  const title=job.customer||job.title||'Customer needs attention';
-  card.append(h('div',{class:'dp-job-top'},h('span',{class:'dp-time'},job.date?clock(job.time)+' – '+clock(job.endTime):'Unscheduled'),pill(words(job.status||'scheduled'),active(job)?'':'muted')));
+  const title=blocked?(job.title||'Company time block'):(job.customer||job.title||'Customer needs attention');
+  card.append(h('div',{class:'dp-job-top'},h('span',{class:'dp-time'},job.date?clock(job.time)+' – '+clock(job.endTime):'Unscheduled'),pill(words(job.activity||job.status||'scheduled'),active(job)?'':'muted')));
   if (job.endDate&&job.endDate!==job.date) card.append(h('small',{class:'dp-muted'},dateText(job.date,true)+' → '+dateText(job.endDate,true)));
-  card.append(h('h3',{},title),h('p',{class:'dp-service'},job.serviceType||words(job.type||'job')));
+  card.append(h('h3',{},title),h('p',{class:'dp-service'},blocked?'Company-wide blocked time':job.serviceType||words(job.type||'job')));
+  if(!blocked){
   if (job.address) card.append(h('a',{class:'dp-address',href:directions(job.address),target:'_blank',rel:'noopener'},job.address));
   else card.append(h('p',{class:'dp-missing'},'Address needed'));
   card.append(h('dl',{class:'dp-job-facts'},
@@ -113,9 +125,12 @@ function jobCard(job, {compact=false}={}) {
     h('div',{},h('dt',{},'Vehicle'),h('dd',{},vehicle(job.vehicleId)))));
   if (!compact&&scope(job)) card.append(h('p',{class:'dp-scope'},scope(job)));
   if (!compact&&job.requiredEquipment?.length) card.append(h('p',{class:'dp-equipment'},'Equipment: '+job.requiredEquipment.join(', ')));
+  if(!compact&&job.jobTime?.recorded)card.append(h('p',{class:'dp-equipment'},'Recorded job work: '+(job.jobTime.workMs/3600000).toFixed(1)+' hr'+(job.jobTime.estimatedMs?' · scheduled '+(job.jobTime.estimatedMs/3600000).toFixed(1)+' hr':'')+(job.jobTime.partialHistory?' · partial history':'')));
+  }else if(job.opsNotes||job.notes)card.append(h('p',{class:'dp-scope'},job.opsNotes||job.notes));
   for (const warning of warnings.slice(0,3)) card.append(h('p',{class:'dp-warning'},warning.message||words(warning.code)));
-  if (job.syncStatus==='pending'||job.syncStatus==='error') card.append(h('p',{class:'dp-warning'},'Customer calendar sync '+(job.syncStatus==='error'?'needs retry':'pending')));
-  const actions=h('div',{class:'dp-card-actions'},h('a',{class:'dp-btn primary',href:job.type==='walkthrough'?'/crew/gameplan.html?walkthroughId='+encodeURIComponent(job.id):'/crew/job.html?jobId='+encodeURIComponent(job.id)},job.type==='walkthrough'?'Open walkthrough':'Open job'));
+  if(warnings.length>3)card.append(h('p',{class:'dp-muted'},(warnings.length-3)+' more items to review'));
+  const actions=h('div',{class:'dp-card-actions'});
+  if(!blocked)actions.append(h('a',{class:'dp-btn primary',href:job.type==='walkthrough'?'/crew/gameplan.html?walkthroughId='+encodeURIComponent(job.id):'/crew/job.html?jobId='+encodeURIComponent(job.id)},job.type==='walkthrough'?'Open walkthrough':job.attention?.status==='open'?'Review job issue':'Open job'));
   if (active(job)) actions.append(btn('Edit / assign',()=>openJob(job)),btn('Cancel',()=>openStatus(job,'schedule.cancel'),'subtle'));
   if (['cancelled','canceled'].includes(job.status)) actions.append(btn('Restore',()=>openStatus(job,'schedule.restore')));
   card.append(actions);
@@ -141,9 +156,9 @@ function renderBody() {
   if(S.recovery){target.append(notice(S.recovery.invalid?'A saved request could not be read. Reopen this browser session before making another dispatch change.':'A previous dispatch save has not been verified. Review and retry its original request before making another change.','error'));if(!S.recovery.invalid)target.append(btn('Review unverified save',openRecovery,'primary'));}
   if(S.data.coverage?.complete===false)target.append(notice('Some records could not be loaded. This schedule is incomplete; verify missing work before dispatching.','error'));
   if(S.notice)target.append(notice(S.notice));
-  const all=S.data.jobs||[], dateJobs=all.filter(j=>onDate(j,S.date)), running=dateJobs.filter(j=>['dispatched','arrived','in_progress'].includes(j.status)), due=dateJobs.filter(active);
+  const all=S.data.jobs||[], dateJobs=all.filter(j=>onDate(j,S.date)&&j.type!=='blocked'), running=dateJobs.filter(j=>active(j)&&['dispatched','arrived','in_progress','paused','waiting','delayed'].includes(j.activity||j.status)), due=dateJobs.filter(active),attention=dateJobs.filter(j=>warningsFor(j).length);
   const stats=h('div',{class:'dp-stats'});
-  for(const [label,count]of [['Scheduled',dateJobs.length],['In progress',running.length],['Remaining',due.length],['Unassigned',due.filter(j=>!j.assignedCrew?.length).length],['Needs attention',(S.data.warnings||[]).filter(w=>all.some(j=>j.id===w.jobId&&onDate(j,S.date))).length]])stats.append(h('article',{},h('span',{},label),h('strong',{},count)));
+  for(const [label,count]of [['Scheduled',dateJobs.filter(j=>!['cancelled','canceled','noshow','no_show','no-show'].includes(j.status)).length],['In progress',running.length],['Remaining',due.length],['Unassigned',due.filter(j=>!j.assignedCrew?.length).length],['Needs attention',attention.length]])stats.append(h('article',{},h('span',{},label),h('strong',{},count),label==='Needs attention'&&count?btn('Review',()=>{S.status='attention';render();},'subtle',{'aria-label':'Review jobs needing attention'}):null));
   target.append(stats);
   const jobs=filtered();
   if(!jobs.length){target.append(empty());return;}
@@ -155,7 +170,7 @@ function renderBody() {
     for(const job of jobs.filter(j=>j.date)){const id=job.crewId||job.assignedCrew?.slice().sort().join('|')||'unassigned';if(!groups.has(id))groups.set(id,[]);groups.get(id).push(job);}
     for(const rows of groups.values()) {
       const minutes=rows.reduce((n,j)=>n+Math.max(0,(Date.parse(j.endAt)-Date.parse(j.startAt))/60000||0),0);
-      target.append(h('section',{class:'dp-crew-group'},h('header',{},h('h2',{},crewName(rows[0])),h('p',{class:'dp-muted'},rows.length+' jobs · '+(minutes/60).toFixed(1)+' scheduled hours')),h('div',{class:'dp-job-grid'},rows.map(j=>h('div',{},h('p',{class:'dp-date-label'},dateText(j.date,true)),jobCard(j))))));
+      target.append(h('section',{class:'dp-crew-group'},h('header',{},h('h2',{},crewName(rows[0])),h('p',{class:'dp-muted'},rows.length+' jobs · '+(minutes/60).toFixed(1)+' reserved hours'),h('small',{class:'dp-muted'},'Reserved time includes overnight spans; it is not employee labor time.')),h('div',{class:'dp-job-grid'},rows.map(j=>h('div',{},h('p',{class:'dp-date-label'},dateText(j.date,true)),jobCard(j))))));
     }
   } else {
     target.append(h('div',{class:S.view==='week'?'dp-week':'dp-day-board'},Array.from({length:S.view==='week'?7:1},(_,i)=>dayColumn(addDays(S.date,i),jobs))));
@@ -168,14 +183,14 @@ function select(options,value,onChange,props={}) {return h('select',{onchange:e=
 function render() {
   if(!S.root||S.modal)return;
   const search=h('input',{type:'search',value:S.query,placeholder:'Customer, address, phone, job or date',oninput:e=>setFilter('query',e.target.value),'aria-label':'Search jobs'});
-  S.root.replaceChildren(h('header',{class:'dp-header'},h('div',{},h('span',{class:'dp-eyebrow'},'EGC OPERATIONS'),h('h1',{},'Dispatch'),h('p',{},'Schedule, assign and run the day.')),h('div',{class:'dp-header-actions'},btn('Crews & vehicles',()=>openResources()),btn('Refresh',()=>load(),'',{disabled:S.loading}),btn('Create job',()=>openJob(),'primary',{disabled:!S.data}))));
+  S.root.replaceChildren(h('header',{class:'dp-header'},h('div',{},h('span',{class:'dp-eyebrow'},'EGC OPERATIONS'),h('h1',{},'Dispatch'),h('p',{},'Schedule, assign and run the day.')),h('div',{class:'dp-header-actions'},btn('Find opening',openOpenings,'',{disabled:!S.data}),btn('Block time',()=>openBlock(),'',{disabled:!S.data}),btn('Crews & vehicles',()=>openResources()),btn('Refresh',()=>load(),'',{disabled:S.loading}),btn('Create job',()=>openJob(),'primary',{disabled:!S.data}))));
   const modes=h('div',{class:'dp-modes',role:'group','aria-label':'Calendar view'});
   for(const [id,label]of [['day','Day'],['week','Week'],['crew','Crew'],['jobs','Jobs']])modes.append(btn(label,()=>{S.view=id;void load();},S.view===id?'selected':'',{'aria-pressed':S.view===id?'true':'false'}));
   S.root.append(h('div',{class:'dp-controls'},h('div',{class:'dp-date-controls'},btn('←',()=>move(-1),'',{'aria-label':'Previous period'}),labeled('Schedule date',h('input',{type:'date',value:S.date,onchange:e=>setDate(e.target.value)})),btn('→',()=>move(1),'',{'aria-label':'Next period'}),h('div',{class:'dp-date-shortcuts'},btn('Today',()=>setDate(today())),btn('Tomorrow',()=>setDate(addDays(today(),1))))),modes));
   S.root.append(h('div',{class:'dp-filters'},search,
-    select([['active','Active work'],['all','All statuses'],['unassigned','Unassigned'],['unscheduled','Unscheduled'],['completed','Completed'],['cancelled','Cancelled']],S.status,v=>setFilter('status',v),{'aria-label':'Filter by status'}),
+    select([['active','Active work'],['all','All statuses'],['attention','Needs attention'],['unassigned','Unassigned'],['unscheduled','Unscheduled'],['completed','Completed'],['cancelled','Cancelled']],S.status,v=>setFilter('status',v),{'aria-label':'Filter by status'}),
     select([['','All employees'],...(S.data?.roster||[]).map(p=>[p.id,p.name])],S.employee,v=>setFilter('employee',v),{'aria-label':'Filter by employee'}),
-    select([['','All work types'],['job','Jobs'],['walkthrough','Walkthroughs']],S.type,v=>setFilter('type',v),{'aria-label':'Filter by work type'})));
+    select([['','All work types'],['job','Jobs'],['walkthrough','Walkthroughs'],['blocked','Blocked time']],S.type,v=>setFilter('type',v),{'aria-label':'Filter by work type'})));
   S.root.append(h('div',{'data-dp-body':''}));renderBody();
 }
 function modal(title,description,{recovery=false}={}) {
@@ -237,8 +252,62 @@ function openRecovery() {
   model.footer.append(btn('Retry original save',()=>save(model,saved.request,saved.success),'primary'));
   model.form.addEventListener('submit',event=>{event.preventDefault();void save(model,saved.request,saved.success);});
 }
+function openOpenings() {
+  if(!S.data)return;
+  const model=modal('Find a scheduling opening','Checks recorded jobs, time off and vehicle reservations. Confirm employees are working before booking.');if(!model)return;
+  const start=field(model,'startDate','Search from',S.date,'date',{required:true});
+  const last=field(model,'lastDate','Search through',addDays(S.date,6),'date',{required:true});
+  const duration=field(model,'durationMinutes','Job duration (minutes)',120,'number',{min:15,max:1440,step:15,required:true});
+  const buffer=field(model,'travelBufferMinutes','Travel buffer (minutes)',20,'number',{min:0,max:180,step:5,required:true});
+  const begins=field(model,'workdayStart','Workday starts','08:00','time',{required:true});
+  const ends=field(model,'workdayEnd','Workday ends','17:00','time',{required:true});
+  const checks=new Map(),members=h('fieldset',{class:'dp-wide'},h('legend',{},'Employees needed together'));
+  for(const person of S.data.roster){const input=h('input',{type:'checkbox',value:person.id,checked:S.employee===person.id});checks.set(person.id,input);members.append(h('label',{class:'dp-check'},input,person.name));}
+  const crew=select([['','Choose employees individually'],...S.data.crews.filter(row=>row.status==='active').map(row=>[row.id,row.name])],'',id=>{const selected=S.data.crews.find(row=>row.id===id);if(selected)for(const[id,input]of checks)input.checked=selected.memberIds.includes(id);});
+  const truck=select([['','No vehicle required'],...S.data.vehicles.filter(row=>row.status==='available').map(row=>[row.id,row.name])],'',()=>{});
+  model.fields.append(labeled('Saved crew to check',crew),labeled('Vehicle to check',truck),members);
+  const results=h('div',{class:'dp-openings-results dp-wide','aria-live':'polite'});model.fields.append(results);
+  model.footer.append(btn('Back',model.close),h('button',{type:'submit',class:'dp-btn primary'},'Check openings'));
+  const clearResults=()=>results.replaceChildren();for(const input of model.fields.querySelectorAll('input,select'))input.addEventListener('input',clearResults);
+  model.form.addEventListener('submit',async event=>{
+    event.preventDefault();if(S.pending)return;
+    const employeeIds=[...checks].filter(([,input])=>input.checked).map(([id])=>id);
+    if(!employeeIds.length){model.status.replaceChildren(notice('Choose the employees who need an opening together.','error'));return;}
+    const query={startDate:start.value,endDate:addDays(last.value,1),durationMinutes:duration.value,workdayStart:begins.value,workdayEnd:ends.value,employeeIds:employeeIds.join(','),travelBufferMinutes:buffer.value,...(truck.value?{vehicleId:truck.value}:{})};
+    formBusy(model,true);results.replaceChildren();model.status.replaceChildren(notice('Checking recorded capacity…'));
+    try{
+      const response=await fetch('/api/dispatch-openings?'+new URLSearchParams(query),{credentials:'same-origin',cache:'no-store'}),data=await response.json().catch(()=>({}));
+      if(!response.ok||data.ok!==true)throw Object.assign(new Error(data.error||'Openings could not be verified. Retry the search.'),{status:response.ok?503:response.status,code:data.code,details:data.details});
+      if(data.coverage?.complete!==true||data.coverage?.consistent!==true||!Array.isArray(data.candidates)||!Array.isArray(data.warnings))throw new Error('The openings response was incomplete. Retry before booking.');
+      if(S.modal!==model)return;
+      model.status.replaceChildren(...data.warnings.map(warning=>notice(warning.message||words(warning.code))));
+      results.append(h('h3',{},data.candidates.length?'Recorded openings':'No matching openings'),h('p',{},data.candidates.length?'Each suggestion is rechecked when you save the job.': 'Try different dates, employees, duration or vehicle.'));
+      for(const candidate of data.candidates){
+        if(!/^\d{4}-\d{2}-\d{2}$/.test(candidate.date||'')||!/^\d{2}:\d{2}$/.test(candidate.time||'')||!/^\d{4}-\d{2}-\d{2}$/.test(candidate.endDate||'')||!/^\d{2}:\d{2}$/.test(candidate.endTime||''))throw new Error('An opening had invalid dates. Retry before booking.');
+        results.append(h('article',{},h('div',{},h('strong',{},dateText(candidate.date,true)),h('p',{},clock(candidate.time)+' – '+clock(candidate.endTime)+(candidate.endDate!==candidate.date?' · ends '+dateText(candidate.endDate,true):'')),h('small',{},employeeIds.map(person).join(', ')+(truck.value?' · '+vehicle(truck.value):''))),btn('Use this opening',()=>{
+          const selectedCrew=S.data.crews.find(row=>row.id===crew.value&&row.memberIds.length===employeeIds.length&&row.memberIds.every(id=>employeeIds.includes(id)));
+          model.close();openJob(null,{...candidate,assignedCrew:employeeIds,vehicleId:query.vehicleId||'',crewId:selectedCrew?.id,crewLead:selectedCrew?.leadId,travelBufferMinutes:Number(query.travelBufferMinutes)});
+        },'primary')));
+      }
+      if(data.truncated)results.append(h('p',{},'Showing the first 20 openings. Narrow the search for later dates.'));
+    }catch(error){if(S.modal===model){results.replaceChildren();model.status.replaceChildren(notice(errorText(error),'error'));if(error.status===401)model.status.append(signInLink());}}
+    finally{if(S.modal===model)formBusy(model,false);}
+  });
+}
+function openBlock(job=null,options={}) {
+  if(!S.data)return;
+  const model=modal(job?'Edit company time block':'Block company time','Blocks all crews from receiving overlapping work. Existing assignments are checked before saving.');if(!model)return;
+  const date=options.moveTo||job?.date||S.date,offset=job?.endDate&&job?.date?Math.round((Date.parse(job.endDate+'T12:00Z')-Date.parse(job.date+'T12:00Z'))/86400000):0;
+  const title=field(model,'title','Reason / title',job?.title||'','text',{required:true,maxLength:200,placeholder:'Training, holiday, company meeting…'});
+  const startDate=field(model,'date','Start date',date,'date',{required:true}),startTime=field(model,'time','Start time',job?.time||'08:00','time',{required:true});
+  const endDate=field(model,'endDate','End date',options.moveTo?addDays(date,offset):job?.endDate||date,'date',{required:true}),endTime=field(model,'endTime','End time',job?.endTime||'17:00','time',{required:true});
+  const notes=field(model,'opsNotes','Internal notes',job?.opsNotes||job?.notes||'','textarea',{maxLength:5000});
+  model.footer.append(btn('Back',model.close),h('button',{type:'submit',class:'dp-btn primary'},'Save time block'));
+  model.form.addEventListener('submit',event=>{event.preventDefault();const changes={title:title.value.trim(),date:startDate.value,time:startTime.value,endDate:endDate.value,endTime:endTime.value,opsNotes:notes.value.trim()};void save(model,job?{action:'schedule.update',requestId:key(),jobId:job.id,expectedRevision:job.revision,changes}:{action:'schedule.create',requestId:key(),kind:'blocked',changes},'Company time block saved.');});
+}
 function openJob(job=null,options={}) {
   if(!S.data)return;
+  if(job?.type==='blocked')return openBlock(job,options);
   const model=modal(job?'Edit / assign job':'Create job','Times are Mountain Time. Conflicting employee and vehicle assignments are blocked.');if(!model)return;
   let selectedCustomer=job?.customerId?{id:job.customerId,name:job.customer,address:job.address,phone:job.phone}:null;
   const search=field(model,'customerSearch','Customer',job?.customer||'','search',{required:!job,readOnly:!!job,autocomplete:'off',placeholder:'Search existing customers'});
@@ -258,9 +327,9 @@ function openJob(job=null,options={}) {
   const unscheduled=h('input',{type:'checkbox',checked:job?!job.date:false,name:'unscheduled'});
   model.fields.append(h('label',{class:'dp-check dp-wide'},unscheduled,h('span',{},'Keep unscheduled')));
   const startDate=field(model,'date','Start date',date,'date',{required:true});
-  const startTime=field(model,'time','Start time',job?.time||'08:00','time',{required:true});
-  const endDate=field(model,'endDate','End date',options.moveTo?addDays(date,dayOffset):(job?.endDate||date),'date',{required:true});
-  const endTime=field(model,'endTime','End time',job?.endTime||'10:00','time',{required:true});
+  const startTime=field(model,'time','Start time',options.time||job?.time||'08:00','time',{required:true});
+  const endDate=field(model,'endDate','End date',options.moveTo?addDays(date,dayOffset):(options.endDate||job?.endDate||date),'date',{required:true});
+  const endTime=field(model,'endTime','End time',options.endTime||job?.endTime||'10:00','time',{required:true});
   const timing=[startDate,startTime,endDate,endTime];
   const toggle=()=>{for(const input of timing){input.disabled=unscheduled.checked;input.required=!unscheduled.checked;}};unscheduled.addEventListener('change',toggle);toggle();
   const duration=select([['','Set duration…'],['30','30 minutes'],['60','1 hour'],['90','90 minutes'],['120','2 hours'],['180','3 hours'],['240','4 hours'],['360','6 hours'],['480','8 hours']], '',value=>{
@@ -268,21 +337,21 @@ function openJob(job=null,options={}) {
   });model.fields.append(labeled('Expected duration',duration));
   const address=field(model,'address','Job address',job?.address||'','textarea',{maxLength:1000,rows:2});
   const assignments=h('fieldset',{class:'dp-assignment dp-wide'},h('legend',{},'Assigned employees'));
-  const selected=new Set(job?.assignedCrew||[]);
+  const selected=new Set(options.assignedCrew||job?.assignedCrew||[]);
   const checks=new Map();
   for(const member of S.data.roster||[]){const input=h('input',{type:'checkbox',value:member.id,checked:selected.has(member.id)});checks.set(member.id,input);assignments.append(h('label',{class:'dp-check'},input,h('span',{},member.name),h('small',{},words(member.role))));}
   for(const member of selected)if(!checks.has(member)){const input=h('input',{type:'checkbox',value:member,checked:true});checks.set(member,input);assignments.append(h('label',{class:'dp-check'},input,h('span',{},member),h('small',{},'Unavailable employee — reassign before saving')));}
   if(!checks.size)assignments.append(h('p',{},'No active employees available. Review approved employee accounts.'));
-  const crewSelect=select([['','Temporary / individual assignment'],...(S.data.crews||[]).filter(c=>c.status==='active'||c.id===job?.crewId).map(c=>[c.id,c.name])],job?.crewId||'',id=>{
+  const crewSelect=select([['','Temporary / individual assignment'],...(S.data.crews||[]).filter(c=>c.status==='active'||c.id===job?.crewId).map(c=>[c.id,c.name])],options.crewId||job?.crewId||'',id=>{
     const crew=S.data.crews.find(c=>c.id===id);if(!crew)return;
     for(const [member,input]of checks)input.checked=crew.memberIds.includes(member);lead.value=crew.leadId||'';
   },{name:'crewId'});
   model.fields.append(labeled('Saved crew',crewSelect),assignments);
-  const lead=select([['','No lead assigned'],...(S.data.roster||[]).map(p=>[p.id,p.name])],job?.crewLead||'',()=>{}, {name:'crewLead'});
-  const truck=select([['','No vehicle assigned'],...(S.data.vehicles||[]).filter(v=>v.status==='available'||v.id===job?.vehicleId).map(v=>[v.id,v.name+(v.status==='available'?'':' · '+words(v.status))])],job?.vehicleId||'',()=>{},{name:'vehicleId'});
+  const lead=select([['','No lead assigned'],...(S.data.roster||[]).map(p=>[p.id,p.name])],options.crewLead||job?.crewLead||'',()=>{}, {name:'crewLead'});
+  const truck=select([['','No vehicle assigned'],...(S.data.vehicles||[]).filter(v=>v.status==='available'||v.id===job?.vehicleId).map(v=>[v.id,v.name+(v.status==='available'?'':' · '+words(v.status))])],options.vehicleId||job?.vehicleId||'',()=>{},{name:'vehicleId'});
   model.fields.append(labeled('Crew lead',lead),labeled('Vehicle / truck',truck));
-  field(model,'crewNeeded','Required crew size',job?.crewNeeded||1,'number',{min:1,max:20,step:1,required:true});
-  field(model,'travelBufferMinutes','Travel buffer (minutes)',job?.travelBufferMinutes??20,'number',{min:0,max:180,step:5});
+  field(model,'crewNeeded','Required crew size',job?.crewNeeded||options.assignedCrew?.length||1,'number',{min:1,max:20,step:1,required:true});
+  field(model,'travelBufferMinutes','Travel buffer (minutes)',job?.travelBufferMinutes??options.travelBufferMinutes??20,'number',{min:0,max:180,step:5});
   const instructions=field(model,'scope','Scope of work',scope(job||{}),'textarea',{rows:4,maxLength:20000,placeholder:'What the customer bought and what the crew must complete.'});instructions.parentElement.classList.add('dp-wide');
   field(model,'accessInstructions','Access instructions',job?.accessInstructions||'','textarea',{rows:2,maxLength:5000});
   field(model,'customerInstructions','Customer instructions',job?.customerInstructions||'','textarea',{rows:2,maxLength:5000});

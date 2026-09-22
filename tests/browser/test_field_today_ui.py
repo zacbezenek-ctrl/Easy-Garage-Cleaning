@@ -42,7 +42,7 @@ class FieldTodayBrowserTests(unittest.TestCase):
         self.page=self.context.new_page();self.page.set_default_timeout(5000)
         self.page.clock.install(time=datetime.datetime(2026,9,22,15,tzinfo=datetime.timezone.utc))
         self.jobs=[job(),job('job-2',customer='Synthetic Next Job',time='11:00',endTime='13:00')]
-        self.status=200;self.calls=[];self.errors=[]
+        self.status=200;self.calls=[];self.errors=[];self.malformed=False
         self.page.on('pageerror',lambda error:self.errors.append(str(error)))
         self.page.route('**/api/field-jobs?**',self.route)
     def tearDown(self):
@@ -50,6 +50,7 @@ class FieldTodayBrowserTests(unittest.TestCase):
     def route(self,route):
         self.calls.append(parse_qs(urlparse(route.request.url).query))
         body={'ok':True,'jobs':self.jobs,'generatedAt':DAY+'T15:00:00Z'} if self.status==200 else {'ok':False,'error':'Sign in again.' if self.status==401 else 'Current schedule could not be verified.'}
+        if self.malformed: body={'ok':True}
         route.fulfill(status=self.status,content_type='application/json',body=json.dumps(body))
     def open(self):
         self.page.goto(self.url);expect(self.page.get_by_role('heading',name='Today’s jobs')).to_be_visible()
@@ -72,6 +73,10 @@ class FieldTodayBrowserTests(unittest.TestCase):
         self.jobs=[job(date='2026-09-21'),job('tomorrow',date='2026-09-23',endDate='2026-09-23',customer='Tomorrow Garage')]
         self.open();expect(self.page.locator('.ft-current')).to_contain_text('Synthetic Garage')
         expect(self.page.locator('.ft-job').nth(1)).to_contain_text('NEXT JOB · TOMORROW')
+    def test_job_ending_at_midnight_is_not_a_current_day_assignment(self):
+        self.jobs=[job(date='2026-09-21',endTime='00:00')];self.open();expect(self.page.locator('.ft-job')).to_have_count(0);expect(self.page.get_by_role('heading',name='No jobs assigned today')).to_be_visible()
+    def test_incomplete_success_is_an_error_and_not_an_empty_schedule(self):
+        self.malformed=True;self.open();expect(self.page.get_by_role('alert')).to_contain_text('could not be verified');expect(self.page.get_by_role('heading',name='No jobs assigned today')).to_have_count(0)
     def test_completion_moves_next_job_to_current_after_refresh(self):
         self.open();self.jobs[0].update(status='completed',fieldStatus='completed')
         self.page.get_by_role('button',name='Refresh',exact=True).click()
