@@ -14,9 +14,14 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - name: Save tracked source for reproducible offline release inspection
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Save tracked source and pinned dependencies for offline verification
         run: |
           mkdir -p release-inspection
+          npm install --ignore-scripts --no-audit --no-fund
+          tar -czf release-inspection/hub-dependencies.tgz node_modules
           git bundle create release-inspection/source.bundle HEAD refs/remotes/origin/main
           git rev-parse HEAD refs/remotes/origin/main > release-inspection/revisions.txt
       - name: Inspect integration without changing repository refs or production
@@ -32,8 +37,11 @@ jobs:
           cat release-inspection/revisions.txt release-inspection/merge.txt release-inspection/conflicts.txt
           if [ "$result" -eq 0 ]; then
             node --test tests/*.test.mjs > release-inspection/tests.txt 2>&1
+            test_result=$?
             tail -20 release-inspection/tests.txt
+            exit "$test_result"
           fi
+          echo 'Merge conflicts remain; this inspection is not a passing release test.'
       - uses: actions/upload-artifact@v4
         if: always()
         with:
