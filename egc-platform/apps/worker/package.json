@@ -9,6 +9,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@egc/customer-state": "workspace:*",
     "@egc/database": "workspace:*",
     "@egc/ghl": "workspace:*",
     "@egc/lead-audit": "workspace:*",

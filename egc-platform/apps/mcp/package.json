@@ -10,6 +10,7 @@
     "test:operations:http": "node --test test/operations-http.check.mjs"
   },
   "dependencies": {
+    "@egc/customer-state": "workspace:*",
     "@egc/database": "workspace:*",
     "@egc/lead-audit": "workspace:*",
     "@egc/meta-conversions": "workspace:*",

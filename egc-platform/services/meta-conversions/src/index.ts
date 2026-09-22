@@ -2,7 +2,8 @@ import { randomUUID } from "node:crypto";
 import { and, asc, desc, eq, gte, inArray, isNull, lt, lte, or, sql } from "drizzle-orm";
 import { getDb, schema } from "@egc/database";
 import { classifyAttribution, detectConversions, sha256, toConversionPreview, type ConversionCandidate, type ConversionLead } from "./core.js";
-import { configurationHealth, conversionConfig, productionBlockers, type ConversionConfig } from "./config.js";
+import { configurationHealth, conversionConfig, conversionStart, productionBlockers, type ConversionConfig } from "./config.js";
+import { canonicalExclusionReasons, canonicalStageAliases, detectCanonicalConversions, holdForCanonicalState, type CanonicalCustomerGate } from './canonical.js';
 import { retrySafety, sendToMeta } from "./sender.js";
 
 export interface ConversionOptions {
@@ -34,30 +35,51 @@ async function discover(options: ConversionOptions, config: ConversionConfig, no
   const db = getDb();
   const range = bounds(options, now);
   // Do not restrict by lead creation: a months-old lead can legitimately book today.
-  const [rows, appointments, opportunities, jobs] = await Promise.all([
+  const [rows, appointments, opportunities, jobs, canonicalEvents, originalAttribution, snapshots, sourceStates] = await Promise.all([
     db.select({ lead: schema.leads, contact: schema.contacts }).from(schema.leads)
       .innerJoin(schema.contacts, eq(schema.contacts.id, schema.leads.contactId)),
-    db.select().from(schema.appointments), db.select().from(schema.opportunities), db.select().from(schema.jobs)
+    db.select().from(schema.appointments), db.select().from(schema.opportunities), db.select().from(schema.jobs),
+    db.select().from(schema.customerEvents), db.select().from(schema.leadOriginalAttribution),
+    db.select({contactId:schema.customerStateSnapshots.contactId,state:schema.customerStateSnapshots.state,snapshot:schema.customerStateSnapshots.snapshot}).from(schema.customerStateSnapshots),
+    db.select({contactId:schema.customerEvidence.contactId,sourceType:schema.customerEvidence.sourceType,sourceRecordId:schema.customerEvidence.sourceRecordId,status:schema.customerEvidence.status}).from(schema.customerEvidence)
   ]);
   const appointmentsByContact = grouped(appointments), opportunitiesByContact = grouped(opportunities), jobsByContact = grouped(jobs);
+  const canonicalByContact = grouped(canonicalEvents), snapshotByContact = new Map(snapshots.map(s=>[s.contactId,s]));
+  const sourceStatesByContact=grouped(sourceStates);
+  const originalByLead = new Map(originalAttribution.map(a=>[a.leadId,a.attribution]));
   const leads: ConversionLead[] = rows.map(({ lead, contact }) => ({
     leadId: lead.id, contactId: contact.id, source: lead.source, contactSource: contact.source,
-    email: contact.email, phone: contact.phone, raw: contact.raw,
+    email: contact.email, phone: contact.phone, raw: {...contact.raw, tags:contact.tags, doNotContact:lead.doNotContact,
+      ...(originalByLead.has(lead.id) ? {attributionSource:originalByLead.get(lead.id),lastAttributionSource:{}} : {})},
     country: typeof contact.raw.country === "string" ? contact.raw.country : "US",
     createdAt: lead.createdAt, providerCreatedAt: contact.providerCreatedAt, firstBookedAt: lead.firstBookedAt
   }));
-  const allCandidates = leads.flatMap(lead => detectConversions({
+  const detectionOptions = {now,walkthroughCalendarIds:config.walkthroughCalendarIds,jobCalendarIds:config.jobCalendarIds,
+    ...(conversionStart(config) ? {notBefore:conversionStart(config)!}:{}), enabledStages:config.enabledStages};
+  const allCandidates = leads.flatMap(lead => {
+    const snapshot=snapshotByContact.get(lead.contactId);
+    if(snapshot)return detectCanonicalConversions(lead,canonicalByContact.get(lead.contactId)??[],{
+      ...detectionOptions,sourceStates:sourceStatesByContact.get(lead.contactId)??[],
+      customerState:{...(snapshot.snapshot as CanonicalCustomerGate),state:snapshot.state}
+    });
+    return detectConversions({
     lead, appointments: appointmentsByContact.get(lead.contactId) ?? [],
     opportunities: opportunitiesByContact.get(lead.contactId) ?? [], jobs: jobsByContact.get(lead.contactId) ?? []
   }, { now, walkthroughCalendarIds: config.walkthroughCalendarIds, jobCalendarIds: config.jobCalendarIds,
-    ...(config.startAt ? { notBefore: config.startAt } : {}) }));
+    ...(conversionStart(config) ? { notBefore: conversionStart(config)! } : {}) }).map(holdForCanonicalState);
+  });
   const candidates = allCandidates.filter(candidate => {
     if (options.eventIds && !options.eventIds.includes(candidate.eventId)) return false;
     if (!candidate.eventTime) return true; // Explain missing transition history instead of concealing it.
     const time = new Date(candidate.eventTime);
     return time >= range.from && time <= range.to;
   }).sort((a, b) => (a.eventTime ?? "").localeCompare(b.eventTime ?? "") || a.eventId.localeCompare(b.eventId));
-  return { candidates, allCandidates, leads, range };
+  const canonicalCoverage={
+    missingCustomers:leads.filter(l=>!snapshotByContact.has(l.contactId)).map(l=>({contactId:l.contactId,leadId:l.leadId,reason:'missing_canonical_state'})),
+    excludedCustomers:snapshots.flatMap(s=>{const reasons=canonicalExclusionReasons({...s.snapshot as CanonicalCustomerGate,state:s.state});return reasons.length?[{contactId:s.contactId,reasons}]:[]}),
+    sourceExtractionHeldEvents:allCandidates.filter(c=>c.reasons.includes('canonical_source_extraction_incomplete')).map(c=>({eventId:c.eventId,contactId:c.contactId,canonicalEventId:c.canonicalEventId}))
+  };
+  return { candidates, allCandidates, leads, range, canonicalCoverage };
 }
 
 async function readiness(config: ConversionConfig) {
@@ -78,7 +100,7 @@ function publicLedger(row: typeof ledger.$inferSelect) {
 
 export async function previewConversions(options: ConversionOptions = {}) {
   const config = conversionConfig();
-  const { candidates, range, leads } = await discover(options, config);
+  const { candidates, range, leads, canonicalCoverage } = await discover(options, config);
   const records = await getDb().select().from(ledger);
   const byId = new Map(records.map(row => [row.id, row]));
   const health: Record<string, number> = {};
@@ -90,7 +112,7 @@ export async function previewConversions(options: ConversionOptions = {}) {
   }
   return {
     generatedAt: new Date().toISOString(), configuration: configurationHealth(config), productionBlockers: await readiness(config),
-    from: range.from.toISOString(), to: range.to.toISOString(), attributionHealth: health,
+    from: range.from.toISOString(), to: range.to.toISOString(), attributionHealth: health, canonicalCoverage,
     total: candidates.length, eligible: candidates.filter(c => c.eligible).length,
     alreadySynced: candidates.filter(c => byId.get(c.eventId)?.status === "accepted").length,
     truncated: candidates.length > range.limit,
@@ -106,7 +128,7 @@ async function queueCandidate(candidate: ConversionCandidate, config: Conversion
     id: candidate.eventId, contactId: candidate.contactId, leadId: candidate.leadId,
     appointmentId: candidate.appointmentId ?? null, jobId: candidate.jobId ?? null, opportunityId: candidate.opportunityId ?? null,
     eventType: candidate.stage, eventTime: candidate.eventTime ? new Date(candidate.eventTime) : null,
-    datasetId: config.datasetId, attribution: { ...candidate.attribution }, valueCents: candidate.valueCents ?? null,
+    datasetId: config.datasetId, attribution: { ...candidate.attribution, ...(candidate.canonicalEventId ? {canonicalEventId:candidate.canonicalEventId}:{}) }, valueCents: candidate.valueCents ?? null,
     currency: candidate.currency ?? null, payloadVersion: candidate.payloadVersion,
     payload: candidate.payload ? { ...candidate.payload } : null,
     status: candidate.eligible ? "pending" : "skipped", error: candidate.eligible ? null : candidate.reasons.join(","),
@@ -116,6 +138,17 @@ async function queueCandidate(candidate: ConversionCandidate, config: Conversion
     target: ledger.id, set: values,
     setWhere: and(eq(ledger.attemptCount, 0), inArray(ledger.status, ["pending", "skipped"]))!
   });
+}
+
+async function markCanonicalAccepted(writer:Pick<ReturnType<typeof getDb>,'update'>,row:typeof ledger.$inferSelect,currentCanonicalId?:string) {
+  const acceptedId=typeof row.attribution.canonicalEventId==='string'?row.attribution.canonicalEventId:null;
+  const matchingCustomer=and(eq(schema.customerEvents.contactId,row.contactId),eq(schema.customerEvents.leadId,row.leadId));
+  if(acceptedId)await writer.update(schema.customerEvents).set({syncState:'accepted',updatedAt:new Date()}).where(and(matchingCustomer,eq(schema.customerEvents.eventId,acceptedId)));
+  // A legacy accepted Meta identity may predate the canonical ledger. Explicitly
+  // label its current evidence as deduplicated, never as a fresh transmission.
+  if(!acceptedId&&currentCanonicalId)await writer.update(schema.customerEvents).set({syncState:'deduplicated',updatedAt:new Date()}).where(and(matchingCustomer,eq(schema.customerEvents.eventId,currentCanonicalId),sql`${schema.customerEvents.syncState}<>'accepted'`));
+  const aliases=canonicalStageAliases(row.eventType);
+  if(aliases.length)await writer.update(schema.customerEvents).set({syncState:'deduplicated',updatedAt:new Date()}).where(and(matchingCustomer,eq(schema.customerEvents.active,true),inArray(schema.customerEvents.eventType,aliases),sql`${schema.customerEvents.syncState}<>'accepted'`,...(acceptedId?[sql`${schema.customerEvents.eventId}<>${acceptedId}`]:[])));
 }
 
 /** Durable lease and immutable snapshot commit BEFORE the external request. */
@@ -132,7 +165,7 @@ async function transmit(eventId: string, config: ConversionConfig, now: Date) {
         and(eq(ledger.status, "processing"), lte(ledger.leaseUntil, now))),
       or(isNull(ledger.firstAttemptAt), gte(ledger.firstAttemptAt, new Date(now.valueOf() - 47 * 3_600_000))),
       gte(ledger.eventTime, new Date(now.valueOf() - 7 * DAY)), lte(ledger.eventTime, now),
-      gte(ledger.eventTime, config.startAt!)
+      gte(ledger.eventTime, conversionStart(config)!)
     )).returning();
     if (row) await tx.insert(schema.metaConversionAttempts).values({ eventId, attemptNumber: row.attemptCount, startedAt: now });
     return row;
@@ -154,6 +187,10 @@ async function transmit(eventId: string, config: ConversionConfig, now: Date) {
     }).where(result.accepted
       ? and(eq(ledger.id, eventId), eq(ledger.datasetId, config.datasetId), sql`${ledger.status} <> 'accepted'`)
       : and(eq(ledger.id, eventId), eq(ledger.leaseToken, claimToken), eq(ledger.status, "processing")));
+    const canonicalEventId = claimed.attribution.canonicalEventId;
+    if(result.accepted)await markCanonicalAccepted(tx,claimed);
+    else if (typeof canonicalEventId === 'string') await tx.update(schema.customerEvents).set({syncState:'failed',updatedAt:finishedAt})
+      .where(and(eq(schema.customerEvents.eventId,canonicalEventId),sql`${schema.customerEvents.syncState} not in ('accepted','deduplicated')`));
   });
   return result.accepted ? "accepted" as const : "failed" as const;
 }
@@ -186,14 +223,14 @@ async function runSync(options: ConversionOptions, retryOnly: boolean) {
     || (["pending", "failed", "processing"].includes(row.status) && retrySafety(row.firstAttemptAt, row.eventTime, new Date()) !== null));
   let sent = 0;
   for (const row of rows) {
-    if (row.status === "accepted") { counts.alreadySynced++; continue; }
+    if (row.status === "accepted") { await markCanonicalAccepted(getDb(),row,currentById.get(row.id)?.canonicalEventId);counts.alreadySynced++; continue; }
     if (retryOnly && !["failed", "processing"].includes(row.status)) continue;
     if (row.status === "processing" && row.leaseUntil && row.leaseUntil > new Date()) { counts.pending++; continue; }
     const current = currentById.get(row.id);
     const reason = retrySafety(row.firstAttemptAt, row.eventTime, new Date())
       ?? (row.datasetId !== config.datasetId ? "destination_changed_manual_review" : null)
       ?? (!current?.eligible ? "source_no_longer_eligible" : null)
-      ?? (config.startAt && row.eventTime && row.eventTime < config.startAt ? "before_production_activation" : null);
+      ?? (conversionStart(config) && row.eventTime && row.eventTime < conversionStart(config)! ? "before_production_activation" : null);
     if (reason) {
       await getDb().update(ledger).set({ status: "skipped", retryable: false, error: reason, updatedAt: new Date() })
         .where(and(eq(ledger.id, row.id), inArray(ledger.status, ["pending", "failed", "skipped", "processing"]),
@@ -205,8 +242,14 @@ async function runSync(options: ConversionOptions, retryOnly: boolean) {
     const outcome = await transmit(row.id, config, new Date());
     if (outcome === "unclaimed") counts.pending++; else { counts[outcome]++; sent++; }
   }
-  const summary = { dryRun: false, mode: config.mode, productionBlockers: blockers, ...counts };
+  const summary = { dryRun: false, mode: config.mode, productionBlockers: blockers, ...counts,
+    discovered:candidates.length, newlySent:counts.accepted, locallyDeduplicated:counts.alreadySynced,
+    providerDeduplicated:null, missingAttribution:candidates.filter(c=>c.attribution.classification!=='eligible_meta_paid').length,
+    missingValue:candidates.filter(c=>['JOB_WON','REVENUE_COLLECTED'].includes(c.stage)&&c.valueCents===undefined).length,
+    requiringHumanReconciliation:candidates.filter(c=>c.eligibility==='manual_review'||c.reasons.some(r=>r.includes('review'))).length };
   await getDb().update(schema.metaConversionRuns).set({ finishedAt: new Date(), summary }).where(eq(schema.metaConversionRuns.id, run!.id));
+  await getDb().insert(schema.syncCursors).values({key:'meta.conversions.cursor',cursor:JSON.stringify({through:range.to.toISOString(),runId:run!.id,...counts})})
+    .onConflictDoUpdate({target:schema.syncCursors.key,set:{cursor:JSON.stringify({through:range.to.toISOString(),runId:run!.id,...counts}),updatedAt:new Date()}});
   return summary;
   } catch {
     await getDb().update(schema.metaConversionRuns).set({ finishedAt: new Date(), summary: { error: "conversion_sync_incomplete" } })
@@ -222,10 +265,11 @@ export async function conversionStatus(options: ConversionOptions = {}) {
   const config = conversionConfig();
   const now = new Date();
   const discovery = await discover({ ...options, days: options.days ?? 30 }, config, now);
-  const [records, runs, tests] = await Promise.all([
+  const [records, runs, tests, cursors] = await Promise.all([
     getDb().select().from(ledger).orderBy(desc(ledger.updatedAt)),
     getDb().select().from(schema.metaConversionRuns).orderBy(desc(schema.metaConversionRuns.startedAt)).limit(1),
-    getDb().select().from(schema.metaConversionTests).orderBy(desc(schema.metaConversionTests.createdAt)).limit(1)
+    getDb().select().from(schema.metaConversionTests).orderBy(desc(schema.metaConversionTests.createdAt)).limit(1),
+    getDb().select().from(schema.syncCursors).where(eq(schema.syncCursors.key,'meta.conversions.cursor')).limit(1)
   ]);
   const cohort = discovery.leads.filter(lead => {
     const createdAt = new Date(lead.providerCreatedAt ?? lead.createdAt ?? 0);
@@ -248,7 +292,9 @@ export async function conversionStatus(options: ConversionOptions = {}) {
   const accepted = records.filter(row => row.status === "accepted" && row.acceptedAt && row.acceptedAt >= discovery.range.from && row.acceptedAt <= discovery.range.to);
   return {
     generatedAt: now.toISOString(), configuration: configurationHealth(config), productionBlockers: await readiness(config),
-    lastSync: runs[0] ?? null, lastTest: tests[0] ?? null, counts,
+    lastSync: runs[0] ?? null, lastTest: tests[0] ?? null, counts, canonicalCoverage:discovery.canonicalCoverage,
+    lastSuccessfulMetaSync:records.filter(r=>r.status==='accepted'&&r.acceptedAt).sort((a,b)=>b.acceptedAt!.valueOf()-a.acceptedAt!.valueOf())[0]?.acceptedAt??null,
+    conversionSyncCursor:cursors[0]??null,
     pending: records.filter(row => ["pending", "processing"].includes(row.status)).slice(0, discovery.range.limit).map(publicLedger),
     failures: records.filter(row => row.status === "failed" || row.error?.includes("manual_review")).slice(0, discovery.range.limit).map(publicLedger),
     recentAccepted: accepted.slice(0, discovery.range.limit).map(publicLedger), attributionHealth, matchingHealth,

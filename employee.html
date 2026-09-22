@@ -1606,7 +1606,7 @@ function startListeners() {
 
   listen('jobs', snap => {
     firebaseConn.jobs = 'connected';
-    jobsCache = snap.docs.map(d => ({ id: d.id, ...d.data() })).filter(j => j.recordType !== 'schedule_lock' && j.recordType !== 'employee_hub_v2' && !String(j.id).startsWith('_egc_schedule_lock_') && !String(j.id).startsWith('secure_'));
+    jobsCache = snap.docs.map(d => ({ ...d.data(), id: d.id })).filter(j => j.recordType !== 'schedule_lock' && j.recordType !== 'employee_hub_v2' && !String(j.id).startsWith('_egc_') && !String(j.id).startsWith('secure_'));
     updateFirebaseStatus();
     refresh();
   }, err => {
@@ -1617,7 +1617,7 @@ function startListeners() {
 
   listen('customers', snap => {
     firebaseConn.customers = 'connected';
-    custsCache = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    custsCache = snap.docs.map(d => ({ ...d.data(), id: d.id }));
     updateFirebaseStatus();
     renderCustomersTab();
     if (typeof bk !== 'undefined' && bk.step === 1 && document.getElementById('booking-overlay')?.classList.contains('open')) {
@@ -3328,10 +3328,10 @@ async function ocBook() {
   })();
 </script>
 <script src="employee-gusto.js?v=20260909gusto"></script>
-<link rel="stylesheet" href="employee-operations.css?v=20260918">
+<link rel="stylesheet" href="employee-operations.css?v=20260922intelligence">
 <script src="employee-recordings.js?v=20260921"></script>
-<script src="employee-operations.js?v=20260918"></script>
-<script src="employee-suite.js?v=20260916quota2"></script>
+<script src="employee-operations.js?v=20260922intelligence"></script>
+<script src="employee-suite.js?v=20260922booking"></script>
 
 <div class="egc-portal-foot" style="background:#0a1628;border-top:1px solid rgba(255,255,255,.08);padding:14px 18px;text-align:center;font-size:12px;color:rgba(245,241,234,.55)">
   <a href="/privacy-policy" style="color:#ff5b1f;margin:0 8px">Privacy</a> · <a href="/" style="color:#ff5b1f">Home</a> · Employee portal — internal use only

@@ -26,6 +26,12 @@ export type LeadAuditRow = {
   lastInteractionDirection: "customer" | "human" | null;
   needsFollowUp: boolean;
   followUpReason: string | null;
+  operationalState?: string;
+  intentStage?: string;
+  pipeline?: string;
+  nextRequiredAction?: string;
+  reconciliationStatus?: string;
+  supportingEvidence?: unknown[];
 };
 
 type BaseLeadAuditRow = Omit<
@@ -116,12 +122,14 @@ export async function recomputeLeadState(contactId: string): Promise<LeadState> 
     .where(eq(schema.leads.contactId, contactId)).limit(1);
   if (!lead) throw new Error(`Lead not found for contact ${contactId}`);
 
-  const [messages, calls] = await Promise.all([
+  const [messages, calls, canonicalEvents, canonicalSnapshot] = await Promise.all([
     db.select().from(schema.messages).where(eq(schema.messages.contactId, contactId)),
-    db.select().from(schema.calls).where(eq(schema.calls.contactId, contactId))
+    db.select({call:schema.calls,transcript:schema.callTranscripts.text}).from(schema.calls).leftJoin(schema.callTranscripts,eq(schema.calls.id,schema.callTranscripts.callId)).where(eq(schema.calls.contactId,contactId)),
+    db.select().from(schema.customerEvents).where(and(eq(schema.customerEvents.contactId,contactId),eq(schema.customerEvents.active,true),eq(schema.customerEvents.humanReviewNeeded,false))),
+    db.select().from(schema.customerStateSnapshots).where(eq(schema.customerStateSnapshots.contactId,contactId))
   ]);
   const evidence = communicationSummary(
-    messages.map(m => ({...m, at:m.occurredAt})), calls.map(c => ({...c, at:c.startedAt}))
+    messages.map(m => ({...m, at:m.occurredAt})), calls.map(c => ({...c.call, transcript:c.transcript, at:c.call.startedAt}))
   );
   const [booking] = await db
     .select({ at: schema.appointments.appointmentCreatedAt })
@@ -142,7 +150,11 @@ export async function recomputeLeadState(contactId: string): Promise<LeadState> 
     ))
     .limit(1);
 
-  const {lastHumanOutreachAt, lastCustomerResponseAt, twoWayContactAt} = evidence;
+  const eventTime=(type:string)=>canonicalEvents.filter(e=>e.eventType===type&&Number(e.confidence)>=.85).reduce<Date|null>((latest,e)=>!latest||e.occurredAt>latest?e.occurredAt:latest,null);
+  const lastHumanOutreachAt=latestDate(evidence.lastHumanOutreachAt,eventTime("human_outreach"));
+  const lastCustomerResponseAt=latestDate(evidence.lastCustomerResponseAt,eventTime("customer_response"),eventTime("two_way_contact"));
+  const twoWayContactAt=latestDate(evidence.twoWayContactAt,eventTime("two_way_contact"));
+  const richState=canonicalSnapshot[0]?.state;
   const now = Date.now();
   const conversationActive = Boolean(
     twoWayContactAt &&
@@ -153,9 +165,9 @@ export async function recomputeLeadState(contactId: string): Promise<LeadState> 
   );
 
   const state = computeLeadState({
-    doNotContact: lead.doNotContact,
-    lost: Boolean(lostOpportunity),
-    booked: Boolean(booking),
+    doNotContact: lead.doNotContact || richState==="DO_NOT_CONTACT",
+    lost: richState==="LOST" || (!richState && Boolean(lostOpportunity)),
+    booked: richState ? ["WALKTHROUGH_VERBALLY_BOOKED","WALKTHROUGH_BOOKED","WALKTHROUGH_COMPLETED","JOB_VERBALLY_ACCEPTED","JOB_SOLD","JOB_SCHEDULED","JOB_COMPLETED","CASH_COLLECTED"].includes(richState) : Boolean(booking),
     hasCustomerResponse: Boolean(lastCustomerResponseAt),
     hasHumanOutreach: Boolean(lastHumanOutreachAt),
     conversationActive
@@ -194,7 +206,17 @@ async function recentLeadRows(days: number): Promise<LeadAuditRow[]> {
   .where(and(gte(schema.leads.createdAt, since),businessContactPredicate()))
   .orderBy(schema.leads.createdAt) as BaseLeadAuditRow[];
 
-  return rows.map(enrichLeadAuditRow);
+  if(!rows.length)return [];
+  const canonical=await db.select().from(schema.customerStateSnapshots).where(inArray(schema.customerStateSnapshots.contactId,rows.map(r=>r.contactId)));
+  return rows.map(row=>{
+    const old=enrichLeadAuditRow(row),projection=canonical.find(c=>c.contactId===row.contactId)?.snapshot;
+    if(!projection)return old;
+    const state=String(projection.state),terminal=["LOST","DO_NOT_CONTACT","JOB_SOLD","JOB_SCHEDULED","JOB_COMPLETED","CASH_COLLECTED"].includes(state)||projection.pipelineDisposition==="negative_outcome";
+    // A real quote or verbal commitment retains its concrete next action. Do not
+    // send closed/DNC customers back into generic lead-chasing queues.
+    const actionable=["NEW_LEAD","OUTREACH_ATTEMPTED","TWO_WAY_CONTACT","QUALIFIED","PRICE_EXPECTATION_ACCEPTED","VIDEO_QUOTE_PENDING_CUSTOMER","VIDEO_QUOTE_RECEIVED","VIDEO_QUOTE_IN_PROGRESS","QUOTE_DELIVERED","WALKTHROUGH_VERBALLY_BOOKED","WALKTHROUGH_COMPLETED","FOLLOW_UP_PENDING","CUSTOMER_DECIDING","JOB_VERBALLY_ACCEPTED"].includes(state);
+    return {...old,operationalState:state,intentStage:String(projection.intentStage),pipeline:String(projection.pipeline),nextRequiredAction:String(projection.nextRequiredAction),reconciliationStatus:String(projection.reconciliationStatus),supportingEvidence:Array.isArray(projection.supportingEvidence)?projection.supportingEvidence:[],needsFollowUp:!terminal&&actionable,followUpReason:!terminal&&actionable?String(projection.nextRequiredAction):null};
+  });
 }
 
 export async function leadsNeedingContact(days = 3): Promise<LeadAuditRow[]> {
@@ -205,6 +227,7 @@ export async function leadsNeedingContact(days = 3): Promise<LeadAuditRow[]> {
 export async function leadsNotResponding(days = 3): Promise<LeadAuditRow[]> {
   const rows = await recentLeadRows(days);
   return rows.filter((row) =>
+    !["LOST","DO_NOT_CONTACT","JOB_SOLD","JOB_SCHEDULED","JOB_COMPLETED","CASH_COLLECTED","JOB_VERBALLY_ACCEPTED","WALKTHROUGH_VERBALLY_BOOKED","WALKTHROUGH_BOOKED","VIDEO_QUOTE_RECEIVED","VIDEO_QUOTE_IN_PROGRESS","QUOTE_DELIVERED"].includes(row.operationalState??"") &&
     row.state !== "BOOKED" &&
     row.state !== "LOST" &&
     row.state !== "DO_NOT_CONTACT" &&
@@ -257,7 +280,8 @@ export async function recentBookings(days = 3) {
   ))
   .orderBy(desc(schema.appointments.appointmentCreatedAt));
 
-  return dedupeBookingsByContactAndStart(rows);
+  const canonical=rows.length?await db.select().from(schema.customerStateSnapshots).where(inArray(schema.customerStateSnapshots.contactId,rows.map(r=>r.contactId))):[];
+  return dedupeBookingsByContactAndStart(rows).map(row=>({ ...row,canonicalCustomer:canonical.find(c=>c.contactId===row.contactId)?.snapshot??null,reportingAuthority:"canonical_operational_report_for_conversion_counts" }));
 }
 
 export async function callTranscriptsForContact(contactId: string, days = 30) {

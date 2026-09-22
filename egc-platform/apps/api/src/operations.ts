@@ -1,17 +1,22 @@
 import {randomUUID} from "node:crypto";
 import type {FastifyInstance} from "fastify";
-import {OperationsError,operationsService,signRequest,verifyRequest,authorize,type Actor,type Command,type OperationsService,type PortalJobReference} from "@egc/operations";
-import {getDb} from "@egc/database";
+import {OperationsError,operationsService,signRequest,authorize,SERVICE_ORIGINS,type Actor,type Command,type OperationsService,type PortalJobReference} from "@egc/operations";
+import {getDb,schema} from "@egc/database";
 import {InboundActionReconciler,type InboundPolicy} from "./inbound-actions.js";
 import {syncPortalSchedule} from "./scheduling.js";
 import {ensureProviderNote} from "./provider-notes.js";
+import {getCanonicalReport,getCustomerTimeline,getCustomerStateDiagnostics} from '@egc/customer-state';
+import {reconcileHubBookings} from './booking-worker.js';
+import {serviceAuthEnabled,signApiServiceRequest,verifyOperationsClaims} from './service-bridge.js';
 
-export function portalAdapter(origin:string,key:string,workspace:string,fetcher:typeof fetch=fetch) {
+export function portalAdapter(origin:string,key:string,workspace:string,fetcher:typeof fetch=fetch,env:NodeJS.ProcessEnv=process.env) {
   const url=new URL(origin);
   if(url.protocol!=="https:" || url.username || url.password || url.pathname!=="/" || url.search || url.hash)
     throw new Error("EGC_PORTAL_ORIGIN must be an HTTPS origin");
+  if(serviceAuthEnabled(env)&&url.origin!==SERVICE_ORIGINS.hub)throw new OperationsError('service_origin_not_trusted',503);
   async function read(actor:Actor,body:Command) {
-    const envelope=signRequest({v:1,iss:"portal",aud:"egc-portal",iat:Math.floor(Date.now()/1000),nonce:randomUUID(),actor,request:{requestId:randomUUID(),body}},key);
+    const requestId=randomUUID(),path='/api/operations-portal';
+    const envelope=serviceAuthEnabled(env)?await signApiServiceRequest(actor,body,path,requestId,env):signRequest({v:1,iss:"portal",aud:"egc-portal",iat:Math.floor(Date.now()/1000),nonce:randomUUID(),actor,request:{requestId,body}},key);
     const response=await fetcher(new URL("/api/operations-portal",url),{method:"POST",redirect:"error",headers:{"Content-Type":"application/json"},body:JSON.stringify({envelope}),signal:AbortSignal.timeout(15000)});
     const result=await response.json() as Record<string,unknown>;
     if(!response.ok){
@@ -32,18 +37,25 @@ export async function registerOperationsRoutes(app:FastifyInstance,options:{serv
   const env=options.env??process.env;
   let service=options.service;
   let inbound:InboundActionReconciler|undefined;
+  let bookingTick:(()=>Promise<unknown>)|undefined;
   if(!service && env.EGC_OPERATIONS_ENABLED==="true") {
     const workspace=env.EGC_OPERATIONS_WORKSPACE??"egc";
-    const bridge=env.EGC_PORTAL_ORIGIN&&env.EGC_OPERATIONS_PORTAL_SIGNING_SECRET?portalAdapter(env.EGC_PORTAL_ORIGIN,env.EGC_OPERATIONS_PORTAL_SIGNING_SECRET,workspace):null;
-    service=operationsService({workspace,...(bridge?{resolvePortalJob:bridge.resolve,resolveOwner:bridge.owner,portalRead:bridge.read,syncSchedule:(actor,command)=>syncPortalSchedule(actor,command,bridge.read,{env}),ensureProviderNote:(actor,command)=>ensureProviderNote(actor,command,bridge.read,{service:service!})}:{})});
+    const bridge=env.EGC_PORTAL_ORIGIN&&(env.EGC_OPERATIONS_PORTAL_SIGNING_SECRET||serviceAuthEnabled(env))?portalAdapter(env.EGC_PORTAL_ORIGIN,env.EGC_OPERATIONS_PORTAL_SIGNING_SECRET??'',workspace,fetch,env):null;
+    service=operationsService({workspace,canonicalRead:async(_actor,command)=>{
+      if(command.command==='intelligence.report')return getCanonicalReport({since:command.since,until:command.until,...(command.cohortSince?{cohortSince:command.cohortSince}:{}),...(command.cohortUntil?{cohortUntil:command.cohortUntil}:{}),refresh:true});
+      if(command.command==='intelligence.customer')return getCustomerTimeline({contactId:command.contactId});
+      return getCustomerStateDiagnostics();
+    },...(bridge?{resolvePortalJob:bridge.resolve,resolveOwner:bridge.owner,portalRead:bridge.read,syncSchedule:(actor,command)=>syncPortalSchedule(actor,command,bridge.read,{env}),ensureProviderNote:(actor,command)=>ensureProviderNote(actor,command,bridge.read,{service:service!})}:{})});
+    if(bridge)bookingTick=()=>reconcileHubBookings(bridge.read,env);
     if(bridge){const actor:Actor={id:"inbound-response-reconciler",kind:"integration",role:"integration",workspace};inbound=new InboundActionReconciler(getDb(),service,async()=>await bridge.read(actor,{command:"portal.rules"}) as unknown as InboundPolicy,workspace);}
   }
+  if(bookingTick){let running=false;const mark=async(key:string)=>{const now=new Date();await getDb().insert(schema.syncCursors).values({key,cursor:now.toISOString()}).onConflictDoUpdate({target:schema.syncCursors.key,set:{cursor:now.toISOString(),updatedAt:now}});};const tick=async()=>{if(running)return;running=true;try{await mark('customer_state:last_booking_attempt');await bookingTick!();await mark('customer_state:last_booking_success');}catch{await mark('customer_state:last_booking_failure').catch(()=>{});app.log.warn({code:'booking_reconciliation_unavailable'},'Hub booking reconciliation needs attention');}finally{running=false;}};const timer=setInterval(()=>void tick(),5*60000);timer.unref();app.addHook('onReady',async()=>{void tick();});app.addHook('onClose',async()=>{clearInterval(timer);});}
   app.post("/operations/rpc",{bodyLimit:220000},async(request,reply)=>{
     reply.header("Cache-Control","no-store");
     if(env.EGC_OPERATIONS_ENABLED!=="true"||!service)return reply.code(503).send({error:"operations_not_enabled"});
     try {
       const body=request.body as {envelope?:unknown}|null;
-      const claims=verifyRequest(body?.envelope,{...(env.EGC_OPERATIONS_PORTAL_SIGNING_SECRET?{portal:env.EGC_OPERATIONS_PORTAL_SIGNING_SECRET}:{}),...(env.EGC_OPERATIONS_MCP_SIGNING_SECRET?{mcp:env.EGC_OPERATIONS_MCP_SIGNING_SECRET}:{})});
+      const claims=await verifyOperationsClaims(body?.envelope,env);
       if(claims.request.body.command==="inbound.reconcile"){
         authorize(claims.actor,claims.request.body,env.EGC_OPERATIONS_WORKSPACE??"egc");if(!inbound)throw new OperationsError("inbound_reconciliation_not_configured",503);
         const command=claims.request.body;return reply.send(await inbound.run({limit:command.limit,...(command.lookbackDays?{lookbackDays:command.lookbackDays}:{})}));

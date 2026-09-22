@@ -1,4 +1,5 @@
 import { getCustomers } from "../../lib/data";
+import {portalTime} from "../../lib/format";
 
 export const dynamic = "force-dynamic";
 
@@ -18,7 +19,7 @@ export default async function CustomersPage() {
                 <td>{contact.phone ?? "—"}</td>
                 <td>{contact.email ?? "—"}</td>
                 <td>{contact.source ?? "—"}</td>
-                <td>{contact.updatedAt.toLocaleString()}</td>
+                <td>{portalTime(contact.updatedAt)}</td>
               </tr>
             ))}
           </tbody>

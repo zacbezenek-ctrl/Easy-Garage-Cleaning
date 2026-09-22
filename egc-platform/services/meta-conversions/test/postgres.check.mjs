@@ -20,7 +20,8 @@ if (process.env.EGC_META_TEST !== 'isolated' ||
 // Guard before importing any service code or opening any database connection.
 const {getDb, schema} = await import('@egc/database');
 const {eq, sql} = await import('drizzle-orm');
-const {previewConversions, syncConversions, retryConversions, conversionStatus, sendTestEvent} = await import('../dist/index.js');
+const {previewConversions:previewCanonicalConversions, syncConversions, retryConversions, conversionStatus, sendTestEvent} = await import('../dist/index.js');
+const {reconcileCustomerState,recordUserConfirmedOutcome,getCanonicalReport}=await import('../../customer-state/dist/index.js');
 const db = getDb();
 const originalFetch = globalThis.fetch;
 const originalEnvironment = Object.fromEntries(Object.entries(process.env).filter(([key]) => key.startsWith('META_CAPI_')));
@@ -57,7 +58,9 @@ globalThis.fetch = async (input, init) => {
 const eventRows = () => db.select().from(schema.metaConversionEvents);
 const attemptRows = () => db.select().from(schema.metaConversionAttempts);
 const productionRequests = () => requests.filter(request => !request.test_event_code);
-const sync = (extra = {}) => syncConversions({days: 7, limit: 100, dryRun: false, ...extra});
+const reconcile=async()=>{const result=await reconcileCustomerState({since:daysAgo(365),useAI:false,maxContacts:500});assert.equal(result.failed,0,'Synthetic canonical reconciliation must succeed before Meta sync');};
+const sync = async (extra = {}) => {await reconcile();return syncConversions({days: 7, limit: 100, dryRun: false, ...extra});};
+const previewConversions=async(options)=>{await reconcile();return previewCanonicalConversions(options);};
 const retry = (extra = {}) => retryConversions({days: 7, limit: 100, dryRun: false, ...extra});
 
 async function countLedgerRows() {
@@ -115,11 +118,13 @@ async function makeRetryDue(id) {
 }
 
 beforeEach(async () => {
+  await db.execute(sql`SET client_min_messages TO warning`);
   for (const key of Object.keys(process.env)) if (key.startsWith('META_CAPI_')) delete process.env[key];
   Object.assign(process.env, {
     META_CAPI_MODE: 'shadow', META_CAPI_DATASET_ID: datasetId, META_CAPI_DATASET_VERIFIED_ID: datasetId,
     META_CAPI_ACCESS_TOKEN: syntheticToken, META_CAPI_TEST_EVENT_CODE: syntheticTestCode,
     META_CAPI_START_AT: daysAgo(1).toISOString(), META_CAPI_FUNNEL_VERIFIED: 'true',
+    META_CAPI_EVENT_STAGES: 'WALKTHROUGH_BOOKED,JOB_WON',
     META_CAPI_WALKTHROUGH_CALENDAR_IDS: 'synthetic-walkthrough-calendar',
     META_CAPI_JOB_CALENDAR_IDS: 'synthetic-job-calendar'
   });
@@ -224,10 +229,11 @@ test('test events are synthetic and separately audited, with no production conve
   assert.equal((await eventRows())[0].status, 'accepted');
 });
 
-test('booked and won stages transmit once with actual revenue and immutable event identities', async () => {
+test('booked and won stages transmit once with verified approved quote value and immutable event identities', async () => {
   const fixture = await seedWalkthrough();
   const won = await seedWonOpportunity(fixture);
   assert.ok(won.wonAt instanceof Date, 'DB trigger must persist a real won transition');
+  await reconcileCustomerState({contactIds:[fixture.contact.id],useAI:false,portalRecords:[{id:'synthetic-approved-job',highlevelContactId:fixture.contact.providerId,kind:'job',status:'quote_sent',createdAt:won.wonAt.toISOString(),financials:{quote:{at:won.wonAt.toISOString(),amountCents:190000,source:'customer_approval'}}}]});
   await enableProduction();
   const firstSync = await sync();
   assert.equal(firstSync.accepted, 2);
@@ -259,9 +265,9 @@ test('booked and won stages transmit once with actual revenue and immutable even
   assert.equal(status.cohort.customers, 1);
 });
 
-test('won opportunity without reliable value sends the stage without invented revenue', async () => {
+test('won opportunity with an unverified CRM estimate sends the stage without invented revenue', async () => {
   const fixture = await seedLead();
-  await seedWonOpportunity(fixture, null);
+  await seedWonOpportunity(fixture, 990000);
   await enableProduction();
   await sync();
   assert.equal(productionRequests().length, 1);
@@ -533,6 +539,72 @@ test('database failures propagate without sending or falsely reporting an empty 
   } finally {
     await db.execute(sql`ALTER TABLE meta_conversion_events_temporarily_unavailable RENAME TO meta_conversion_events`);
   }
+});
+
+test('canonical verbal commitment sends without provider appointment and later provider mirror cannot replay it',async()=>{
+ const fixture=await seedLead();
+ const at=minutesAgo(20);
+ await recordUserConfirmedOutcome({contactId:fixture.contact.id,field:'walkthrough_verbally_booked',value:true,exactText:'Tuesday at 2:15 works. The address is confirmed.',sourceReference:'isolated:verified-booking',actorId:'synthetic-owner',occurredAt:at});
+ await enableProduction();
+ assert.equal((await sync()).accepted,1);
+ const original=structuredClone(productionRequests()[0].data[0]);
+ await db.insert(schema.appointments).values({providerId:`synthetic-later-mirror-${randomUUID()}`,contactId:fixture.contact.id,calendarId:'synthetic-walkthrough-calendar',title:'Garage walkthrough',status:'confirmed',appointmentCreatedAt:minutesAgo(1),appointmentStartAt:new Date(Date.now()+86_400_000)});
+ assert.equal((await sync()).accepted,0);
+ assert.equal(productionRequests().length,1);
+ assert.deepEqual((await eventRows())[0].payload,original);
+  assert.equal((await eventRows())[0].attemptCount,1);
+  const aliases=await db.select().from(schema.customerEvents).where(eq(schema.customerEvents.contactId,fixture.contact.id));
+  assert.equal(aliases.find(e=>e.eventType==='walkthrough_verbally_booked').syncState,'accepted');
+  assert.equal(aliases.find(e=>e.eventType==='walkthrough_booked').syncState,'deduplicated');
+});
+
+test('one accepted revenue milestone never marks separate later cash receipts accepted or deduplicated',async()=>{
+ const fixture=await seedLead();process.env.META_CAPI_EVENT_STAGES='REVENUE_COLLECTED';
+ await reconcileCustomerState({contactIds:[fixture.contact.id],useAI:false,portalRecords:[{id:'synthetic-receipts-job',highlevelContactId:fixture.contact.providerId,kind:'job',status:'paid',createdAt:minutesAgo(30).toISOString(),financials:{payments:[{key:'first-receipt',at:minutesAgo(20).toISOString(),amountCents:10000},{key:'later-receipt',at:minutesAgo(10).toISOString(),amountCents:20000}]}}]});
+ await enableProduction();assert.equal((await sync()).accepted,1);assert.equal((await sync()).accepted,0);
+ const receipts=(await db.select().from(schema.customerEvents).where(eq(schema.customerEvents.contactId,fixture.contact.id))).filter(e=>e.eventType==='revenue_collected');
+ assert.equal(receipts.filter(e=>e.syncState==='accepted').length,1);assert.equal(receipts.filter(e=>e.syncState==='pending').length,1);assert.equal(receipts.filter(e=>e.syncState==='deduplicated').length,0);
+});
+
+test('report separates all-time Meta ledger totals from provider acceptances during the period',async()=>{
+ await seedWalkthrough();await enableProduction();await sync();
+ const [row]=await eventRows();await db.update(schema.metaConversionEvents).set({acceptedAt:daysAgo(20)}).where(eq(schema.metaConversionEvents.id,row.id));
+ const report=await getCanonicalReport({since:daysAgo(7),until:new Date()});assert.equal(report.metaConversionsScope,'all_time_ledger_status_totals');assert.equal(report.metaConversions.find(r=>r.status==='accepted').count,1);assert.equal(report.metaConversionsDuringPeriod.acceptedEvents,0);
+});
+
+test('user-confirmed collected and sold with unknown dates remain operational truth but never fabricate Meta time/value',async()=>{
+ const fixture=await seedLead();
+ for(const field of ['job_sold','revenue_collected'])await recordUserConfirmedOutcome({contactId:fixture.contact.id,field,value:true,exactText:'This job closed and revenue was collected; date and amount are not known.',sourceReference:`isolated:unknown-${field}`,actorId:'synthetic-owner'});
+ process.env.META_CAPI_EVENT_STAGES='JOB_WON,REVENUE_COLLECTED';
+ await enableProduction();
+ const preview=await previewConversions({days:7});
+ assert.equal(preview.eligible,0);
+ await sync();assert.equal(productionRequests().length,0);
+ assert.ok((await eventRows()).every(row=>row.eventTime===null&&row.valueCents===null&&row.currency===null));
+});
+
+test('original lead attribution survives a later non-Meta source before downstream conversion',async()=>{
+ const fixture=await seedLead();await reconcile();
+ await db.update(schema.contacts).set({source:'Referral',raw:{attributionSource:{source:'Referral'},lastAttributionSource:{source:'Referral'}}}).where(eq(schema.contacts.id,fixture.contact.id));
+ await recordUserConfirmedOutcome({contactId:fixture.contact.id,field:'job_sold',value:true,exactText:'Customer accepted the specified work.',sourceReference:'isolated:original-attribution',actorId:'synthetic-owner',occurredAt:minutesAgo(1)});
+ await enableProduction();assert.equal((await sync()).accepted,1);
+ const event=productionRequests()[0].data[0];
+ assert.equal(event.event_name,'JOB_WON');
+ assert.equal(event.custom_data.value,undefined);
+ const row=(await eventRows())[0];assert.equal(row.attribution.evidence.adId,'120253868777650385');
+});
+
+test('canonical DNC assertion blocks a verified booking even while provider fields lag',async()=>{
+ const fixture=await seedWalkthrough();
+ await recordUserConfirmedOutcome({contactId:fixture.contact.id,field:'do_not_contact',value:true,exactText:'Do not contact this customer.',sourceReference:'isolated:verified-dnc',actorId:'synthetic-owner',occurredAt:minutesAgo(1)});
+ await enableProduction();await sync();assert.equal(productionRequests().length,0);
+ assert.ok((await eventRows()).every(row=>row.status!=='accepted'));
+});
+
+test('a missing canonical snapshot is held instead of transmitting raw legacy classifications',async()=>{
+ await seedWalkthrough();await enableProduction();
+ const result=await syncConversions({days:7,dryRun:false});
+ assert.equal(result.accepted,0);assert.equal(productionRequests().length,0);
 });
 
 test('the destructive fixture guard refuses remote or production-named databases before importing services', () => {

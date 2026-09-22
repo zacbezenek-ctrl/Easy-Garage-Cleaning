@@ -52,7 +52,7 @@ export async function syncPortalSchedule(actor:Actor,command:Sync,portal:Portal,
     let providerId=asString(visit.highlevelAppointmentId)??recordedIds[0]??null;
     if(!providerId&&unresolved){providerId=(await postgresAppointmentStore(db).get(unresolved.id))?.providerAppointmentId??null;}
     if(visit.highlevelAppointmentId&&recordedIds[0]&&recordedIds[0]!==visit.highlevelAppointmentId)throw new OperationsError("schedule_provider_link_conflict",409);
-    const state=String(visit.status),status=state==="cancelled"?"cancelled":["completed","paid","invoiced","closed"].includes(state)?"showed":"confirmed";
+    const state=String(visit.status).toLowerCase(),status=["cancelled","canceled"].includes(state)?"cancelled":["completed","paid","invoiced","closed","review_requested"].includes(state)?"showed":["noshow","no_show","no-show"].includes(state)?"noshow":"confirmed";
     const payload:Json={title:String(visit.title),startTime:String(visit.startTime),endTime:String(visit.endTimeInstant),address:String(visit.address??""),appointmentStatus:status,toNotify:command.runAutomations};
     const context={contactId:contact.id,contactProviderId:providerContactId,portalVisitId:command.portalVisitId};
     let verified;
@@ -61,7 +61,7 @@ export async function syncPortalSchedule(actor:Actor,command:Sync,portal:Portal,
       if(existing.id!==providerId||existing.contactId!==providerContactId)throw new OperationsError("schedule_provider_link_conflict",409);
       verified=await sender.update(providerId,payload,context,command.requestId);
     }else{
-      if(status==="cancelled")return{ok:true,authority:"employee_hub",portalVisitId:command.portalVisitId,providerSync:"not_needed",appointmentId:null};
+      if(status==="cancelled"||status==="noshow")return{ok:true,authority:"employee_hub",portalVisitId:command.portalVisitId,providerSync:"not_needed",appointmentId:null};
       const calendarPayload=await provider.getCalendars(),calendars=Array.isArray(calendarPayload.calendars)?calendarPayload.calendars.map(asRecord):[];
       const configured=visit.type==="walkthrough"?env.GHL_WALKTHROUGH_CALENDAR_ID:env.GHL_JOBS_CALENDAR_ID;
       const candidates=calendars.filter(c=>typeof c.id==="string"&&(configured?c.id===configured:visit.type==="walkthrough"?/walkthrough/i.test(String(c.name)):/customer.?jobs/i.test(String(c.name))));

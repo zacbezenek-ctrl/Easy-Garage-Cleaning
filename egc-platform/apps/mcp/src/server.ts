@@ -1,3 +1,5 @@
+import {registerCustomerStateTools,canonicalOperationalReport,canonicalFunnel} from './customer-state-tools.js';
+import {getCustomerTimeline,OPERATIONAL_STATES} from '@egc/customer-state';
 import {registerPortalRecordTools} from "./portal-record-tools.js";
 import {verifyOperationsOnStart} from "./operations-smoke.js";
 import {executeCommunication,reconcileCommunication} from "./communication-execution.js";
@@ -35,6 +37,17 @@ function textResult(value: unknown) {
     content: [{ type: "text" as const, text: JSON.stringify(value, null, 2) }],
     structuredContent: { result: value }
   };
+}
+
+async function canonicalReadContexts(contactIds:string[]):Promise<Map<string,Record<string,unknown>>> {
+  if(!contactIds.length)return new Map<string,Record<string,unknown>>();
+  const rows=await getDb().select().from(schema.customerStateSnapshots).where(inArray(schema.customerStateSnapshots.contactId,[...new Set(contactIds)]));
+  return new Map(rows.map(row=>[row.contactId,{...row.snapshot,coverage:row.coverage,lastReconciledAt:row.lastReconciledAt}]));
+}
+
+async function withCanonicalContexts<T extends {contactId:string}>(rows:T[]) {
+  const canonical=await canonicalReadContexts(rows.map(row=>row.contactId));
+  return rows.map(row=>({...row,operational:canonical.get(row.contactId)??{coverage:{complete:false,error:'customer_not_reconciled'}}}));
 }
 
 const protectedToolMetadata = {
@@ -1050,6 +1063,7 @@ export function buildServer() {
   registerRecordingTools(server);
   registerSchedulingTools(server,synchronizeHubVisit);
   registerMetaConversionTools(server);
+  registerCustomerStateTools(server);
 
   server.registerTool("ghl.pipelines", {
     description: "Return live GHL opportunity pipelines and stages for the EGC location. Use this to resolve pipeline and stage IDs before opportunity writes.",
@@ -1077,7 +1091,7 @@ export function buildServer() {
   });
 
   server.registerTool("contacts.search", {
-    description: "Search normalized EGC contacts by name, phone, or email.",
+    description: "Search EGC contacts by name, phone, or email with canonical evidence-backed operational state. Provider fields are preserved separately from operational truth.",
     inputSchema: z.object({
       query: z.string().trim().max(200).default(""),
       limit: z.number().int().min(1).max(200).default(50)
@@ -1093,7 +1107,8 @@ export function buildServer() {
           ilike(schema.contacts.email, `%${query}%`)
         )).orderBy(desc(schema.contacts.updatedAt)).limit(limit)
       : await base.orderBy(desc(schema.contacts.updatedAt)).limit(limit);
-    return textResult(rows);
+    const canonical=await canonicalReadContexts(rows.map(row=>row.id));
+    return textResult(rows.map(row=>({...row,operational:canonical.get(row.id)??{coverage:{complete:false,error:'customer_not_reconciled'}}})));
   });
 
   server.registerTool("contacts.get", {
@@ -1105,20 +1120,18 @@ export function buildServer() {
     const [row] = await db.select().from(schema.contacts)
       .where(eq(schema.contacts.id, contactId))
       .limit(1);
-    return textResult(row ?? { error: "contact_not_found" });
+    return textResult(row?{...row,canonical:await getCustomerTimeline({contactId,refresh:true})}:{ error: "contact_not_found" });
   });
 
   server.registerTool("leads.search", {
     description: "Search recent leads, optionally filtered by canonical lead state.",
     inputSchema: z.object({
-      state: z.enum([
+      state: z.enum([...OPERATIONAL_STATES,
         "NEVER_CONTACTED",
         "OUTREACH_ATTEMPTED_NO_REPLY",
         "CUSTOMER_RESPONDED",
         "ACTIVE_CONVERSATION",
-        "BOOKED",
-        "LOST",
-        "DO_NOT_CONTACT"
+        "BOOKED"
       ]).optional(),
       days: z.number().int().min(1).max(365).default(30),
       limit: z.number().int().min(1).max(500).default(100)
@@ -1134,15 +1147,11 @@ export function buildServer() {
       .from(schema.leads)
       .innerJoin(schema.contacts, eq(schema.leads.contactId, schema.contacts.id));
 
-    const rows = state
-      ? await base.where(and(
-          gte(schema.leads.createdAt, since),
-          eq(schema.leads.currentState, state)
-        )).orderBy(desc(schema.leads.createdAt)).limit(limit)
-      : await base.where(gte(schema.leads.createdAt, since))
-          .orderBy(desc(schema.leads.createdAt))
-          .limit(limit);
-    return textResult(rows);
+    const rows=await base.where(gte(schema.leads.createdAt,since)).orderBy(desc(schema.leads.createdAt)).limit(500);
+    const canonical=await canonicalReadContexts(rows.map(row=>row.contact.id));
+    const enriched=rows.map(row=>{const operational=canonical.get(row.contact.id);return {...row,lead:{...row.lead,providerState:row.lead.currentState,currentState:operational?.state??row.lead.currentState},operational:operational??{coverage:{complete:false,error:'customer_not_reconciled'}}};});
+    const aliases:Record<string,string[]>={NEVER_CONTACTED:['NEW_LEAD'],OUTREACH_ATTEMPTED_NO_REPLY:['OUTREACH_ATTEMPTED'],CUSTOMER_RESPONDED:['TWO_WAY_CONTACT'],ACTIVE_CONVERSATION:['TWO_WAY_CONTACT','QUALIFIED','PRICE_EXPECTATION_ACCEPTED','VIDEO_QUOTE_PENDING_CUSTOMER','VIDEO_QUOTE_RECEIVED','VIDEO_QUOTE_IN_PROGRESS','QUOTE_DELIVERED','FOLLOW_UP_PENDING','CUSTOMER_DECIDING'],BOOKED:['WALKTHROUGH_VERBALLY_BOOKED','WALKTHROUGH_BOOKED','WALKTHROUGH_COMPLETED','JOB_VERBALLY_ACCEPTED','JOB_SOLD','JOB_SCHEDULED','JOB_COMPLETED','CASH_COLLECTED']};
+    return textResult(enriched.filter(row=>!state||row.lead.currentState===state||(aliases[state]??[]).includes(String(row.lead.currentState))).slice(0,limit));
   });
 
   server.registerTool("leads.get", {
@@ -1159,7 +1168,9 @@ export function buildServer() {
       .innerJoin(schema.contacts, eq(schema.leads.contactId, schema.contacts.id))
       .where(eq(schema.leads.id, leadId))
       .limit(1);
-    return textResult(row ?? { error: "lead_not_found" });
+    if(!row)return textResult({error:'lead_not_found'});
+    const canonical=await getCustomerTimeline({contactId:row.contact.id,refresh:true});
+    return textResult({...row,lead:{...row.lead,providerState:row.lead.currentState,currentState:canonical.customer?.state??row.lead.currentState},canonical});
   });
 
   server.registerTool("conversations.search", {
@@ -1265,7 +1276,7 @@ export function buildServer() {
       : await db.select().from(schema.opportunities)
           .orderBy(desc(schema.opportunities.updatedAt))
           .limit(limit);
-    return textResult(rows);
+    return textResult(await withCanonicalContexts(rows));
   });
 
   server.registerTool("opportunities.get", {
@@ -1277,7 +1288,7 @@ export function buildServer() {
     const [row] = await db.select().from(schema.opportunities)
       .where(eq(schema.opportunities.id, opportunityId))
       .limit(1);
-    return textResult(row ?? { error: "opportunity_not_found" });
+    return textResult(row?{...row,canonical:await getCustomerTimeline({contactId:row.contactId,refresh:true})}:{error:'opportunity_not_found'});
   });
 
   server.registerTool("appointments.search", {
@@ -1305,7 +1316,7 @@ export function buildServer() {
       : await db.select().from(schema.appointments).where(and(...timeConditions))
           .orderBy(schema.appointments.appointmentStartAt)
           .limit(limit);
-    return textResult(rows);
+    return textResult(await withCanonicalContexts(rows));
   });
 
   server.registerTool("jobs.search", {
@@ -1330,7 +1341,7 @@ export function buildServer() {
       : await db.select().from(schema.jobs)
           .orderBy(desc(schema.jobs.updatedAt))
           .limit(limit);
-    return textResult(rows);
+    return textResult(await withCanonicalContexts(rows));
   });
 
   server.registerTool("jobs.get", {
@@ -1342,7 +1353,7 @@ export function buildServer() {
     const [row] = await db.select().from(schema.jobs)
       .where(eq(schema.jobs.id, jobId))
       .limit(1);
-    return textResult(row ?? { error: "job_not_found" });
+    return textResult(row?{...row,canonical:await getCustomerTimeline({contactId:row.contactId,refresh:true})}:{error:'job_not_found'});
   });
 
   server.registerTool("tasks.search", {
@@ -1518,7 +1529,8 @@ export function buildServer() {
       };
     }));
 
-    return textResult(enriched);
+    const canonical=await canonicalOperationalReport({days});
+    return textResult({...canonical,providerBookings:enriched});
   });
 
   server.registerTool("calls.transcript", {
@@ -1545,7 +1557,7 @@ export function buildServer() {
       db.select().from(schema.opportunities).where(eq(schema.opportunities.contactId, contactId)).orderBy(desc(schema.opportunities.updatedAt)),
       db.select().from(schema.jobs).where(eq(schema.jobs.contactId, contactId)).orderBy(desc(schema.jobs.updatedAt))
     ]);
-    return textResult({ contact, messages, calls, appointments, opportunities, jobs });
+    return textResult({ contact, messages, calls, appointments, opportunities, jobs, callTranscripts:await callTranscriptsForContact(contactId,365), canonical:await getCustomerTimeline({contactId}) });
   });
 
   if(!operationsEnabled())server.registerTool("egc.job_brief", {
@@ -1684,12 +1696,12 @@ export function buildServer() {
       ))
       .orderBy(schema.opportunities.updatedAt);
     const mappings = await referenceMap(["pipeline", "pipeline_stage", "user"]);
-    return textResult(rows.map((row) => ({
+    return textResult(await withCanonicalContexts(rows.map((row) => ({
       ...row,
       pipelineName: mappedName(mappings, "pipeline", row.pipelineId),
       pipelineStageName: mappedName(mappings, "pipeline_stage", row.pipelineStageId),
       assignedUserName: mappedName(mappings, "user", row.assignedUserId)
-    })));
+    }))));
   });
 
   server.registerTool("egc.sales_pipeline", {
@@ -1726,16 +1738,18 @@ export function buildServer() {
           .limit(limit);
 
     const mappings = await referenceMap(["pipeline", "pipeline_stage", "user"]);
-    return textResult(rows.map((row) => ({
+    const providerOpportunities=rows.map((row) => ({
       ...row,
       pipelineName: mappedName(mappings, "pipeline", row.pipelineId),
       pipelineStageName: mappedName(mappings, "pipeline_stage", row.pipelineStageId),
       assignedUserName: mappedName(mappings, "user", row.assignedUserId)
-    })));
+    }));
+    const canonical=await canonicalOperationalReport({days:90});
+    return textResult({...canonical,providerOpportunities,requestedStatus:status});
   });
 
   server.registerTool("egc.jobs_by_status", {
-    description: "Return job counts grouped by EGC job status.",
+    description: "Return canonical 30-day job activity, customer state and revenue, with raw provider job counts separately labeled for reconciliation.",
     inputSchema: z.object({}),
     ...protectedToolMetadata
   }, async () => {
@@ -1744,7 +1758,8 @@ export function buildServer() {
       status: schema.jobs.status,
       count: sql<number>`count(*)::int`
     }).from(schema.jobs).groupBy(schema.jobs.status).orderBy(schema.jobs.status);
-    return textResult(rows);
+    const canonical=await canonicalOperationalReport({days:30});
+    return textResult({...canonical,providerJobCounts:rows,definition:'Canonical sold/completed/cash milestones use evidence. Provider job counts are raw mirrors and may include walkthroughs or stale statuses.'});
   });
 
   server.registerTool("egc.lead_conversion_funnel", {
@@ -1754,148 +1769,7 @@ export function buildServer() {
     }),
     ...protectedToolMetadata
   }, async ({ days }) => {
-    const db = getDb();
-    const since = new Date(Date.now() - days * 86_400_000);
-    const cohort = await db.select({
-      contactId: schema.leads.contactId,
-      state: schema.leads.currentState,
-      createdAt: schema.leads.createdAt,
-      firstBookedAt: schema.leads.firstBookedAt
-    }).from(schema.leads)
-      .innerJoin(schema.contacts,eq(schema.contacts.id,schema.leads.contactId))
-      .where(and(gte(schema.leads.createdAt, since),businessContactPredicate()));
-
-    const total = cohort.length;
-    if (!total) {
-      return textResult({
-        days,
-        total: 0,
-        states: [],
-        counts: {
-          humanOutreach: 0,
-          customerResponse: 0,
-          twoWayContact: 0,
-          booked: 0,
-          bookedAfterTwoWayContact: 0
-        },
-        humanOutreachRate: 0,
-        customerResponseRate: 0,
-        twoWayContactRate: 0,
-        leadToBookedRate: 0,
-        contactToBookedRate: 0,
-        bookedRate: 0
-      });
-    }
-
-    const contactIds = cohort.map((row) => row.contactId);
-    const createdAtByContact = new Map(cohort.map((row) => [row.contactId, row.createdAt.valueOf()]));
-
-    const [messages, calls, appointments] = await Promise.all([
-      db.select({
-        contactId: schema.messages.contactId,
-        direction: schema.messages.direction,
-        actorType: schema.messages.actorType,
-        occurredAt: schema.messages.occurredAt,
-        type: schema.messages.type,
-        raw: schema.messages.raw
-      }).from(schema.messages)
-        .where(inArray(schema.messages.contactId, contactIds)),
-      db.select({
-        contactId: schema.calls.contactId,
-        direction: schema.calls.direction,
-        actorType: schema.calls.actorType,
-        answered: schema.calls.answered,
-        raw: schema.calls.raw,
-        startedAt: schema.calls.startedAt
-      }).from(schema.calls)
-        .where(inArray(schema.calls.contactId, contactIds)),
-      db.select({
-        contactId: schema.appointments.contactId,
-        appointmentCreatedAt: schema.appointments.appointmentCreatedAt,
-        status: schema.appointments.status
-      }).from(schema.appointments)
-        .where(and(
-          inArray(schema.appointments.contactId, contactIds),
-          inArray(schema.appointments.status, ["new", "confirmed", "showed"])
-        ))
-    ]);
-
-    const humanOutreach = new Set<string>();
-    const customerResponse = new Set<string>();
-    const answeredContact = new Set<string>();
-    const booked = new Set<string>(
-      cohort.filter((row) => Boolean(row.firstBookedAt)).map((row) => row.contactId)
-    );
-
-    for (const contactId of contactIds) {
-      const leadCreated=createdAtByContact.get(contactId)??0;
-      const evidence=communicationSummary(
-        messages.filter(m=>m.contactId===contactId && m.occurredAt.valueOf()>=leadCreated).map(m=>({...m,at:m.occurredAt})),
-        calls.filter(c=>c.contactId===contactId && c.startedAt.valueOf()>=leadCreated).map(c=>({...c,at:c.startedAt}))
-      );
-      if(evidence.hasHumanOutreach)humanOutreach.add(contactId);
-      if(evidence.hasCustomerResponse)customerResponse.add(contactId);
-      if(evidence.twoWayContactAt)answeredContact.add(contactId);
-    }
-
-    for (const appointment of appointments) {
-      const leadCreated = createdAtByContact.get(appointment.contactId) ?? 0;
-      if (!appointment.appointmentCreatedAt || appointment.appointmentCreatedAt.valueOf() >= leadCreated) {
-        booked.add(appointment.contactId);
-      }
-    }
-
-    const twoWayContact = new Set<string>();
-    for (const contactId of contactIds) {
-      if (
-        answeredContact.has(contactId)
-      ) {
-        twoWayContact.add(contactId);
-      }
-    }
-
-    const bookedAfterTwoWayContact = [...booked]
-      .filter((contactId) => twoWayContact.has(contactId)).length;
-
-    const stateCounts = new Map<string, number>();
-    for (const row of cohort) {
-      stateCounts.set(row.state, (stateCounts.get(row.state) ?? 0) + 1);
-    }
-    const states = [...stateCounts.entries()].map(([state, count]) => ({ state, count }));
-
-    const humanOutreachRate = humanOutreach.size / total;
-    const customerResponseRate = customerResponse.size / total;
-    const twoWayContactRate = twoWayContact.size / total;
-    const leadToBookedRate = booked.size / total;
-    const contactToBookedRate = twoWayContact.size
-      ? bookedAfterTwoWayContact / twoWayContact.size
-      : 0;
-
-    return textResult({
-      days,
-      total,
-      states,
-      counts: {
-        humanOutreach: humanOutreach.size,
-        customerResponse: customerResponse.size,
-        twoWayContact: twoWayContact.size,
-        booked: booked.size,
-        bookedAfterTwoWayContact
-      },
-      humanOutreachRate,
-      customerResponseRate,
-      twoWayContactRate,
-      leadToBookedRate,
-      contactToBookedRate,
-      bookedRate: leadToBookedRate,
-      definitions: {
-        humanOutreachRate: "Leads with at least one human outbound call or message / leads",
-        customerResponseRate: "Leads with a customer message or verified human call / leads",
-        twoWayContactRate: "Leads with verified human call evidence or exchanged customer and human messages / leads",
-        leadToBookedRate: "Leads with at least one booking / leads",
-        contactToBookedRate: "Booked leads with two-way contact / leads with two-way contact"
-      }
-    });
+    return textResult(await canonicalFunnel(days));
   });
 
   server.registerTool("egc.revenue_summary", {
@@ -1903,69 +1777,26 @@ export function buildServer() {
     inputSchema: z.object({days:z.number().int().min(1).max(365).default(30)}),
     ...protectedToolMetadata
   }, async ({days}) => {
-    if(operationsEnabled())return textResult(await callOperations({command:"portal.revenue",from:new Date(Date.now()-days*86400000).toISOString(),to:new Date().toISOString()}));
-    const db=getDb(),since=new Date(Date.now()-days*86400000);
-    const wonRows=await db.select({value:schema.opportunities.monetaryValueCents}).from(schema.opportunities).where(and(eq(schema.opportunities.status,"won"),gte(schema.opportunities.wonAt,since)));
-    const undated=await db.select({count:sql<number>`count(*)::int`}).from(schema.opportunities).where(and(eq(schema.opportunities.status,"won"),isNull(schema.opportunities.wonAt)));
-    const known=wonRows.filter((r):r is {value:number}=>r.value!==null);
-    return textResult({days,windowStart:since,observedWonCount:wonRows.length,undatedWonCount:undated[0]?.count??0,
-      unverifiedCrmValue:{knownSubtotalCents:known.reduce((n,r)=>n+r.value,0),missingValueCount:wonRows.length-known.length,totalCents:known.length===wonRows.length?known.reduce((n,r)=>n+r.value,0):null},
-      revenueSoldCents:null,revenueCompletedCents:null,cashCollectedCents:null,currency:"USD",
-      coverage:{verifiedQuotes:"requires_employee_hub",payments:"not_imported",saleDate:"explicit_won_at_only"},
-      note:"CRM opportunity amounts are not verified quotes. Record refresh timestamps are never sale dates; appointments and draft job prices are not revenue."});
+    const report=await canonicalOperationalReport({days});
+    return textResult({...report,revenueSoldCents:report.soldRevenue.valueCents,cashCollectedCents:report.collectedRevenue.valueCents});
   });
 
   server.registerTool("egc.sales_rep_performance", {
-    description: "Return lead assignment and booking counts by GHL user ID. This reports observed operational counts, not a subjective ranking.",
-    inputSchema: z.object({
-      days: z.number().int().min(1).max(365).default(30)
-    }),
-    ...protectedToolMetadata
-  }, async ({ days }) => {
-    const db = getDb();
-    const since = new Date(Date.now() - days * 86_400_000);
-    const [leadRows, bookingRows, wonRows] = await Promise.all([
-      db.select({ assignedUserId: schema.leads.assignedUserId })
-        .from(schema.leads)
-        .where(gte(schema.leads.createdAt, since)),
-      db.select({ assignedUserId: schema.appointments.assignedUserId })
-        .from(schema.appointments)
-        .where(and(
-          gte(schema.appointments.appointmentCreatedAt, since),
-          inArray(schema.appointments.status, ["new", "confirmed", "showed"])
-        )),
-      db.select({ assignedUserId: schema.opportunities.assignedUserId })
-        .from(schema.opportunities)
-        .where(and(
-          eq(schema.opportunities.status, "won"),
-          gte(schema.opportunities.wonAt, since)
-        ))
-    ]);
-
-    const metrics = new Map<string, { assignedLeads: number; bookings: number; wonOpportunities: number }>();
-    const ensure = (id: string | null) => {
-      const key = id ?? "unassigned";
-      const current = metrics.get(key) ?? { assignedLeads: 0, bookings: 0, wonOpportunities: 0 };
-      metrics.set(key, current);
-      return current;
-    };
-    for (const row of leadRows) ensure(row.assignedUserId).assignedLeads += 1;
-    for (const row of bookingRows) ensure(row.assignedUserId).bookings += 1;
-    for (const row of wonRows) ensure(row.assignedUserId).wonOpportunities += 1;
-
-    const mappings = await referenceMap(["user"]);
-    return textResult({
-      days,
-      reps: [...metrics.entries()].map(([assignedUserId, values]) => ({
-        assignedUserId,
-        assignedUserName: assignedUserId === "unassigned"
-          ? "Unassigned"
-          : mappedName(mappings, "user", assignedUserId),
-        ...values,
-        bookingRate: values.assignedLeads ? values.bookings / values.assignedLeads : null,
-        wonOpportunityRate: values.assignedLeads ? values.wonOpportunities / values.assignedLeads : null
-      }))
+    description:"Evidence-backed period activity and lead-cohort conversions by assigned GHL user. Attribution to a rep describes assignment, not causality. Verbal and formal bookings are separate; video quotes and accepted jobs are included.",
+    inputSchema:z.object({days:z.number().int().min(1).max(365).default(30)}),...protectedToolMetadata
+  },async({days})=>{
+    const report=await canonicalOperationalReport({days}),db=getDb();
+    const leads=await db.select({contactId:schema.leads.contactId,assignedUserId:schema.leads.assignedUserId,createdAt:schema.leads.createdAt}).from(schema.leads);
+    const assigned=new Map(leads.map(l=>[l.contactId,l.assignedUserId??'unassigned']));
+    const owners=[...new Set(report.customers.map(c=>assigned.get(c.contactId)??'unassigned'))];
+    const mappings=await referenceMap(['user']);
+    const reps=owners.map(assignedUserId=>{
+      const cohortIds=new Set(report.customers.filter(c=>c.leadCreatedAt>=report.cohort.window.since&&c.leadCreatedAt<report.cohort.window.until&&assigned.get(c.contactId)===assignedUserId).map(c=>c.contactId));
+      const metrics=Object.fromEntries(Object.entries(report.cohort.metrics).map(([key,m])=>{const contactIds=m.contactIds.filter(id=>cohortIds.has(id));return [key,{numerator:contactIds.length,denominator:cohortIds.size,rate:cohortIds.size?contactIds.length/cohortIds.size:null,contactIds}];}));
+      const periodActivity=Object.fromEntries(Object.entries(report.periodActivity).map(([key,m])=>{const contactIds=m.contactIds.filter(id=>(assigned.get(id)??'unassigned')===assignedUserId);return [key,{count:contactIds.length,unit:'customers',contactIds}];}));
+      return {assignedUserId,assignedUserName:assignedUserId==='unassigned'?'Unassigned':mappedName(mappings,'user',assignedUserId),periodActivity,cohort:{window:report.cohort.window,maturity:report.cohort.maturity,denominator:cohortIds.size,metrics}};
     });
+    return textResult({days,period:report.period,authority:report.authority,reps,coverage:report.coverage});
   });
 
   server.registerTool("egc.addon_attach_rates", {
@@ -2006,32 +1837,9 @@ export function buildServer() {
   });
 
   server.registerTool("egc.walkthrough_conversion", {
-    description: "Return current walkthrough approval/job-creation completion metrics. This is not yet a sales close-rate metric.",
-    inputSchema: z.object({
-      days: z.number().int().min(1).max(365).default(90)
-    }),
-    ...protectedToolMetadata
-  }, async ({ days }) => {
-    const db = getDb();
-    const since = new Date(Date.now() - days * 86_400_000);
-    const rows = await db.select({
-      status: schema.walkthroughs.status,
-      jobId: schema.walkthroughs.jobId
-    }).from(schema.walkthroughs).where(gte(schema.walkthroughs.createdAt, since));
-
-    const approved = rows.filter((row) => row.status === "approved").length;
-    const withJob = rows.filter((row) => row.jobId !== null).length;
-    return textResult({
-      days,
-      walkthroughs: rows.length,
-      approved,
-      withJob,
-      approvalRate: rows.length ? approved / rows.length : 0,
-      jobCreationRate: rows.length ? withJob / rows.length : 0,
-      note: "This measures the voice-walkthrough workflow. Sales walkthrough-to-job close rate requires mapped sales appointment types."
-    });
-  });
-
+    description:"Canonical walkthrough and job conversion evidence, separating period events from lead-cohort metrics. Includes verbal commitments awaiting provider reconciliation and owner-confirmed completed or negative visits.",
+    inputSchema:z.object({days:z.number().int().min(1).max(365).default(90)}),...protectedToolMetadata
+  },async({days})=>textResult(await canonicalOperationalReport({days})));
 
   server.registerTool("jobs.create", {
     description: "Create a new internal EGC job for an existing normalized contact.",
@@ -3246,6 +3054,7 @@ app.use(express.json({ limit: "2mb" }));
 app.get("/health", async (_req, res) => {
   try {
     await getDb().select({ id: schema.communicationExecutions.id }).from(schema.communicationExecutions).limit(1);
+    await getDb().select({ id: schema.customerEvents.eventId }).from(schema.customerEvents).limit(1);
     res.json({ ok: true, service: "egc-mcp", oauth: true, database: "ready",release:process.env.RAILWAY_GIT_COMMIT_SHA??process.env.EGC_RELEASE_SHA??null,operationsEnabled:operationsEnabled() });
   } catch {
     res.status(503).json({ ok: false, service: "egc-mcp", oauth: true, database: "not_ready" });

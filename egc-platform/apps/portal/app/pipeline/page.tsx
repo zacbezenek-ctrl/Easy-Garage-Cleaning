@@ -1,30 +1,8 @@
-import { getPipeline } from "../../lib/data";
-
-export const dynamic = "force-dynamic";
-
-export default async function PipelinePage() {
-  const rows = await getPipeline();
-  return (
-    <>
-      <h1>Pipeline</h1>
-      <p className="muted">GoHighLevel opportunities normalized into EGC Postgres.</p>
-      <div className="tablewrap">
-        <table>
-          <thead><tr><th>Customer</th><th>Status</th><th>Stage</th><th>Value</th><th>Assigned</th><th>Updated</th></tr></thead>
-          <tbody>
-            {rows.map(({ opportunity, contact, pipelineName, pipelineStageName, assignedUserName }) => (
-              <tr key={opportunity.id}>
-                <td><a className="tablelink" href={"/customers/" + contact.id}>{contact.name ?? contact.phone ?? "Unknown"}</a></td>
-                <td><span className="pill">{opportunity.status ?? "unknown"}</span></td>
-                <td><strong>{pipelineStageName ?? "—"}</strong><div className="subtle">{pipelineName ?? "—"}</div></td>
-                <td>{opportunity.monetaryValueCents !== null ? "$" + (opportunity.monetaryValueCents / 100).toLocaleString() : "—"}</td>
-                <td>{assignedUserName ?? "—"}</td>
-                <td>{opportunity.updatedAt.toLocaleString()}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </>
-  );
+import {getPortalIntelligence} from "../../lib/intelligence";
+import {CustomerEvidence} from "../components/customer-evidence";
+export const dynamic="force-dynamic";
+export default async function PipelinePage(){
+ const report=await getPortalIntelligence(30);
+ return <><h1>Customer pipeline</h1><p className="muted">Active walkthroughs, video quotes, and direct jobs reconstructed from customer evidence.</p>{!report.coverage.complete&&<p className="coverage-warning">Source coverage is incomplete. <a className="tablelink" href="/diagnostics">Review reconciliation issues.</a></p>}
+ {Object.entries(report.pipelines).map(([kind,customers])=><section className="sectiongap" key={kind}><h2>{kind==='videoQuote'?'Video quotes':kind==='directJob'?'Direct jobs':'Walkthroughs'} · {customers.length}</h2><div className="grid detailgrid">{customers.map(customer=><CustomerEvidence key={customer.contactId} customer={customer}/>)}</div>{!customers.length&&<p className="muted">No active opportunities recorded.</p>}</section>)}</>;
 }

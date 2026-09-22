@@ -21,6 +21,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
             <a href="/pipeline">Pipeline</a>
             <a href="/walkthroughs">Walkthroughs</a>
             <a href="/analytics">Analytics</a>
+            <a href="/diagnostics">Diagnostics</a>
           </nav>
         </header>
         <main className="shell">{children}</main>

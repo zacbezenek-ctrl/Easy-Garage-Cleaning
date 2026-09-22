@@ -1,0 +1,11 @@
+import {getCustomerStateDiagnostics,label} from "../../lib/intelligence";
+import {portalTime} from "../../lib/format";
+export const dynamic="force-dynamic";
+export default async function DiagnosticsPage(){
+ const data=await getCustomerStateDiagnostics();
+ const groups=[['Unresolved customer states',data.unresolvedDiscrepancies],['Verbal bookings awaiting provider reconciliation',data.verballyBookedProviderMissing],['Provider booking missing job link',data.providerMissingJobLink],['Duplicate appointments suspected',data.duplicateAppointmentsSuspected],['Missing call transcripts',data.missingTranscripts],['Pending video quote actions',data.pendingVideoQuotes],['Closed jobs without payment evidence',data.closedWithoutPaymentEvidence],['User-confirmed outcomes awaiting backend',data.userConfirmedAwaitingReconciliation]] as const;
+ return <><h1>Operational diagnostics</h1><p className="muted">Generated {portalTime(data.generatedAt)}. Missing evidence stays visible until reconciliation resolves it.</p>
+ <section className="card sectiongap"><h2>Meta conversion delivery</h2><div className="stats">{data.meta.counts.map(row=><div className="stat" key={row.status}><span>{label(row.status)}</span><strong>{row.count}</strong></div>)}</div><p>Last successful sync: {portalTime(data.meta.lastSuccessfulSync)}</p>{data.meta.cursors.map(cursor=><details key={cursor.key}><summary>{label(cursor.key)} · {portalTime(cursor.updatedAt)}</summary><pre>{cursor.cursor}</pre></details>)}</section>
+ {groups.map(([title,customers])=><section className="card sectiongap" key={title}><h2>{title} · {customers.length}</h2>{customers.map(c=><div className="timelineitem" key={c.contactId}><a className="tablelink" href={"/customers/"+c.contactId}>{c.customerName??c.contactId}</a><p>{c.nextRequiredAction}</p>{c.discrepancies.map(d=><p className="subtle" key={d.code}>{d.detail}</p>)}</div>)}</section>)}
+ <section className="card sectiongap"><h2>Transcript extraction failures · {data.transcriptFailures.length}</h2>{data.transcriptFailures.map(source=><p key={source.sourceRecordId}><a className="tablelink" href={"/customers/"+source.contactId}>Customer evidence</a> · {source.sourceRecordId} · {source.status} · {source.error??'Review source'}</p>)}</section></>;
+}

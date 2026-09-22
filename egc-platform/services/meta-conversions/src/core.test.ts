@@ -55,8 +55,8 @@ describe("deterministic Meta attribution", () => {
   it("does not treat Meta-shaped ad IDs as proof of Meta origin", () => {
     expect(classifyAttribution(lead({ source: "website", raw: { attributionSource: { adId: "120253868777650385" } } })).classification).toBe("ambiguous");
   });
-  it("rejects conflicting organic and paid Meta evidence", () => {
-    expect(classifyAttribution(lead({ contactSource: "Referral" })).classification).toBe("ambiguous");
+  it("preserves explicit first-touch origin while rejecting conflicts inside attribution", () => {
+    expect(classifyAttribution(lead({ contactSource: "Referral" })).classification).toBe("eligible_meta_paid");
     expect(classifyAttribution(lead({ raw: { attributionSource: { adId: "120253868777650385", sessionSource: "Organic Social" } } })).classification).toBe("ambiguous");
   });
   it("keeps initial origin authoritative over a later paid visit", () => {

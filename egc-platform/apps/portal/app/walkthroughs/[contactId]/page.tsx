@@ -1,4 +1,4 @@
-import Recorder from "./recorder";
+import {employeeHubUrl} from "../../../lib/format";
 
 export const dynamic = "force-dynamic";
 
@@ -8,17 +8,15 @@ export default async function WalkthroughPage({
   params: Promise<{ contactId: string }>;
 }) {
   const { contactId } = await params;
-  if (process.env.EGC_OPERATIONS_ENABLED !== "true") {
-    return <section className="recorder"><div><h1>Voice walkthrough</h1><p className="muted">Customer {contactId}</p></div><Recorder contactId={contactId} /></section>;
-  }
   return (
     <section className="recorder">
       <div>
-        <h1>Visit recordings</h1>
-        <p className="muted">Record and review walkthroughs in the Employee Hub Action Center. Open the exact visit under Portal schedule, then choose Recordings.</p>
-        <p>Existing transcripts remain available in the recording history. New scope reviews require your individual Hub account and update the authoritative visit.</p>
+        <h1>Open the EGC Hub walkthrough</h1>
+        <p className="muted">Schedule, record, review, and complete every walkthrough in the EGC Hub. Open the customer's saved visit to keep its scope, schedule, and job linked.</p>
+        <p>Existing transcripts remain available in the recording history.</p>
       </div>
-      <a className="button" href={"/customers/" + contactId}>Back to customer</a>
+      <a className="button" href={employeeHubUrl()}>Open EGC Hub</a>
+      <a className="tablelink" href={"/customers/" + contactId}>Back to customer evidence</a>
     </section>
   );
 }

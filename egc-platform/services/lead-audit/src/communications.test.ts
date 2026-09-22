@@ -6,15 +6,19 @@ describe("communication evidence",()=>{
   it("does not turn completed, duration, missed inbound or screening into successful contact",()=>{
     for(const raw of [{status:"completed",duration:120},{status:"no-answer",direction:"inbound"},{status:"completed",callStatus:"screened",answeredBy:"human"},{status:"completed",answeredBy:"machine"}]) expect(callContactEvidence(raw).twoWay).toBe(false);
   });
-  it("accepts the documented inbound human call tuple, with no voicemail override",()=>{
+  it("does not accept inbound completed status tuple as conversation evidence",()=>{
     const raw={direction:"inbound",status:"completed",callStatus:"completed",userId:"staff-1",callDuration:30};
-    expect(callContactEvidence(raw).twoWay).toBe(true);
+    expect(callContactEvidence(raw).twoWay).toBe(false);
     expect(callContactEvidence({...raw,disposition:"voicemail"}).twoWay).toBe(false);
   });
-  it("accepts HighLevel live GET nested call evidence for an outbound human connection",()=>{
+  it("does not accept nested completed call metadata without transcript dialogue",()=>{
     const raw={direction:"outbound",status:"completed",userId:"staff-1",meta:{call:{status:"completed",duration:192}}};
-    expect(callContactEvidence(raw).twoWay).toBe(true);
+    expect(callContactEvidence(raw).twoWay).toBe(false);
     expect(callContactEvidence({...raw,meta:{call:{status:"voicemail",duration:192}}}).twoWay).toBe(false);
+  });
+  it("uses actual customer/staff transcript turns instead of call duration",()=>{
+    expect(callContactEvidence({status:"completed"},"Agent: What time works for your walkthrough?\nCustomer: Tuesday at two works.").twoWay).toBe(true);
+    expect(callContactEvidence({status:"completed"},"Hello. Please leave a message. Hello, I am calling about your walkthrough.").twoWay).toBe(false);
   });
   it("keeps a human attempt plus missed inbound out of two-way and response counts",()=>{
     const result=communicationSummary([], [call({status:"no-answer"}),call({direction:"inbound",status:"missed"})]);

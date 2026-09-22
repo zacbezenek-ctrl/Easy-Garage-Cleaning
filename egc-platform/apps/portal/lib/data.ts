@@ -27,6 +27,13 @@ function providerName(
   return mappings.get(`${resourceType}:${providerId}`) ?? providerId;
 }
 
+async function callsWithTranscripts(contactId:string,limit=100) {
+  const rows=await getDb().select({call:schema.calls,transcript:schema.callTranscripts.text})
+    .from(schema.calls).leftJoin(schema.callTranscripts,eq(schema.callTranscripts.callId,schema.calls.id))
+    .where(eq(schema.calls.contactId,contactId)).orderBy(desc(schema.calls.startedAt)).limit(limit);
+  return rows.map(row=>({...row.call,transcript:row.transcript}));
+}
+
 export async function getDashboardData() {
   const db = getDb();
   const since = new Date(Date.now() - 30 * 86_400_000);
@@ -72,9 +79,13 @@ export async function getLeads(limit = 200) {
   const db = getDb();
   return db.select({
     lead: schema.leads,
-    contact: schema.contacts
+    contact: schema.contacts,
+    customerState: schema.customerStateSnapshots,
+    originalAttribution: schema.leadOriginalAttribution.attribution
   }).from(schema.leads)
     .innerJoin(schema.contacts, eq(schema.leads.contactId, schema.contacts.id))
+    .leftJoin(schema.customerStateSnapshots,eq(schema.customerStateSnapshots.contactId,schema.contacts.id))
+    .leftJoin(schema.leadOriginalAttribution,eq(schema.leadOriginalAttribution.leadId,schema.leads.id))
     .orderBy(desc(schema.leads.createdAt))
     .limit(limit);
 }
@@ -210,10 +221,7 @@ export async function getLeadDetail(leadId: string) {
       .where(eq(schema.messages.contactId, row.contact.id))
       .orderBy(desc(schema.messages.occurredAt))
       .limit(50),
-    db.select().from(schema.calls)
-      .where(eq(schema.calls.contactId, row.contact.id))
-      .orderBy(desc(schema.calls.startedAt))
-      .limit(25),
+    callsWithTranscripts(row.contact.id),
     db.select().from(schema.appointments)
       .where(eq(schema.appointments.contactId, row.contact.id))
       .orderBy(desc(schema.appointments.appointmentStartAt)),
@@ -235,7 +243,7 @@ export async function getCustomerDetail(contactId: string) {
   const [lead, messages, calls, appointments, opportunities, jobs, walkthroughs] = await Promise.all([
     db.select().from(schema.leads).where(eq(schema.leads.contactId, contactId)).limit(1),
     db.select().from(schema.messages).where(eq(schema.messages.contactId, contactId)).orderBy(desc(schema.messages.occurredAt)).limit(50),
-    db.select().from(schema.calls).where(eq(schema.calls.contactId, contactId)).orderBy(desc(schema.calls.startedAt)).limit(25),
+    callsWithTranscripts(contactId),
     db.select().from(schema.appointments).where(eq(schema.appointments.contactId, contactId)).orderBy(desc(schema.appointments.appointmentStartAt)),
     db.select().from(schema.opportunities).where(eq(schema.opportunities.contactId, contactId)).orderBy(desc(schema.opportunities.updatedAt)),
     db.select().from(schema.jobs).where(eq(schema.jobs.contactId, contactId)).orderBy(desc(schema.jobs.updatedAt)),

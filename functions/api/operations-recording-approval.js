@@ -1,10 +1,10 @@
-import {verifyOperationsEnvelope} from '../_lib/operations-envelope.js';
+import {operationsEnabled,verifyApiServiceEnvelope} from '../_lib/operations-service-auth.js';
 import {resolveRecordingIdentity,applyRecordingApproval} from '../_lib/operations-recording-approval.js';
 const reply=(status,body)=>Response.json(body,{status,headers:{'Cache-Control':'no-store'}});
 export async function onRequestPost({request,env}){
-  if(env.EGC_OPERATIONS_ENABLED!=='true')return reply(503,{error:'operations_not_enabled'});
+  if(!operationsEnabled(env))return reply(503,{error:'operations_not_enabled'});
   try{const text=await request.text();if(text.length>220000)return reply(413,{error:'request_too_large'});
-    const c=await verifyOperationsEnvelope(JSON.parse(text).envelope,env.EGC_OPERATIONS_PORTAL_SIGNING_SECRET,'egc-portal');
+    const c=await verifyApiServiceEnvelope(env,JSON.parse(text).envelope,'/api/operations-recording-approval');
     if(c.actor.workspace!==(env.EGC_OPERATIONS_WORKSPACE||'egc'))return reply(403,{error:'workspace_forbidden'});
     const command=c.request.body;
     if(command.command==='recording.resolve')return reply(200,{ok:true,identity:await resolveRecordingIdentity(env,command.portalJobId)});

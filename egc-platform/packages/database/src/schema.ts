@@ -517,3 +517,97 @@ export const metaConversionTests = pgTable("meta_conversion_tests", {
   error: text("error"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull()
 });
+
+// Immutable first-touch snapshot. Provider refreshes must never replace this row.
+export const leadOriginalAttribution = pgTable("lead_original_attribution", {
+  leadId: uuid("lead_id").references(() => leads.id, { onDelete: "cascade" }).primaryKey(),
+  contactId: uuid("contact_id").references(() => contacts.id, { onDelete: "cascade" }).notNull(),
+  attribution: jsonb("attribution").$type<Record<string, unknown>>().notNull(),
+  sourceRecordId: text("source_record_id").notNull(),
+  capturedAt: timestamp("captured_at", { withTimezone: true }).defaultNow().notNull(),
+  provenance: text("provenance").notNull()
+});
+
+// One extraction per source, retained independently from the deduplicated milestone.
+export const customerEvidence = pgTable("customer_evidence", {
+  id: text("id").primaryKey(),
+  contactId: uuid("contact_id").references(() => contacts.id, { onDelete: "cascade" }).notNull(),
+  leadId: uuid("lead_id").references(() => leads.id, { onDelete: "cascade" }),
+  sourceType: text("source_type").notNull(),
+  sourceRecordId: text("source_record_id").notNull(),
+  sourceHash: text("source_hash").notNull(),
+  extractorVersion: text("extractor_version").notNull(),
+  occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
+  status: text("status").notNull(),
+  extractedEvents: jsonb("extracted_events").$type<Record<string, unknown>[]>().default([]).notNull(),
+  sourcePointer: text("source_pointer"),
+  error: text("error"),
+  attemptCount: integer("attempt_count").default(0).notNull(),
+  ...timestamps
+}, t => [uniqueIndex("customer_evidence_source_uq").on(t.sourceType,t.sourceRecordId), index("customer_evidence_contact_idx").on(t.contactId,t.occurredAt)]);
+
+export const customerEvents = pgTable("customer_events", {
+  eventId: text("event_id").primaryKey(),
+  contactId: uuid("contact_id").references(() => contacts.id, { onDelete: "cascade" }).notNull(),
+  leadId: uuid("lead_id").references(() => leads.id, { onDelete: "cascade" }),
+  opportunityId: uuid("opportunity_id").references(() => opportunities.id, { onDelete: "set null" }),
+  appointmentId: uuid("appointment_id").references(() => appointments.id, { onDelete: "set null" }),
+  jobId: uuid("job_id").references(() => jobs.id, { onDelete: "set null" }),
+  eventType: text("event_type").notNull(),
+  occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
+  source: text("source").notNull(),
+  confidence: numeric("confidence", { precision: 4, scale: 3 }).notNull(),
+  humanReviewNeeded: boolean("human_review_needed").default(false).notNull(),
+  evidence: jsonb("evidence").$type<Record<string, unknown>[]>().default([]).notNull(),
+  nextAction: text("next_action"),
+  details: jsonb("details").$type<Record<string, unknown>>().default({}).notNull(),
+  attribution: jsonb("attribution").$type<Record<string, unknown>>().default({}).notNull(),
+  valueCents: integer("value_cents"),
+  currency: text("currency"),
+  valueVerified: boolean("value_verified").default(false).notNull(),
+  syncState: text("sync_state").default("pending").notNull(),
+  active: boolean("active").default(true).notNull(),
+  ...timestamps
+}, t => [index("customer_events_contact_idx").on(t.contactId,t.occurredAt),index("customer_events_type_time_idx").on(t.eventType,t.occurredAt)]);
+
+// Assertions are an auditable overlay; no provider field is silently overwritten.
+export const customerOperationalAssertions = pgTable("customer_operational_assertions", {
+  id: text("id").primaryKey(),
+  contactId: uuid("contact_id").references(() => contacts.id, { onDelete: "cascade" }).notNull(),
+  field: text("field").notNull(),
+  value: jsonb("value").notNull(),
+  source: text("source").default("user_confirmed").notNull(),
+  exactText: text("exact_text").notNull(),
+  sourceReference: text("source_reference").notNull(),
+  actorId: text("actor_id").notNull(),
+  assertedAt: timestamp("asserted_at", { withTimezone: true }).defaultNow().notNull(),
+  occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
+  occurredAtVerified: boolean("occurred_at_verified").default(false).notNull(),
+  valueCents: integer("value_cents"),
+  currency: text("currency"),
+  status: text("status").default("pending_reconciliation").notNull(),
+  reconciledAt: timestamp("reconciled_at", { withTimezone: true }),
+  ...timestamps
+}, t => [index("customer_assertions_contact_idx").on(t.contactId,t.status)]);
+
+export const customerStateSnapshots = pgTable("customer_state_snapshots", {
+  contactId: uuid("contact_id").references(() => contacts.id, { onDelete: "cascade" }).primaryKey(),
+  leadId: uuid("lead_id").references(() => leads.id, { onDelete: "cascade" }),
+  state: text("state").notNull(),
+  intentStage: text("intent_stage").notNull(),
+  pipeline: text("pipeline").notNull(),
+  reconciliationStatus: text("reconciliation_status").notNull(),
+  snapshot: jsonb("snapshot").$type<Record<string, unknown>>().notNull(),
+  coverage: jsonb("coverage").$type<Record<string, unknown>>().notNull(),
+  lastReconciledAt: timestamp("last_reconciled_at", { withTimezone: true }).notNull(),
+  ...timestamps
+}, t => [index("customer_snapshots_state_idx").on(t.state,t.reconciliationStatus)]);
+
+// Short-lived authentication receipts, separate from customer or command data.
+export const operationsServiceNonces = pgTable("operations_service_nonces", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  issuer: text("issuer").notNull(),
+  nonce: uuid("nonce").notNull(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull()
+}, t => [uniqueIndex("operations_service_nonces_issuer_nonce_uq").on(t.issuer,t.nonce),index("operations_service_nonces_expiry_idx").on(t.expiresAt)]);

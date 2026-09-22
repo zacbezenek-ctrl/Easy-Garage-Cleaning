@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 
 export const PAYLOAD_VERSION = "1";
 export const MAX_EVENT_AGE_DAYS = 7;
-export type ConversionStage = "WALKTHROUGH_BOOKED" | "JOB_WON";
+export type ConversionStage = "Lead" | "QualifiedLead" | "WALKTHROUGH_BOOKED" | "WALKTHROUGH_SHOWED" | "WALKTHROUGH_COMPLETED" | "QUOTE_DELIVERED" | "JOB_WON" | "JOB_COMPLETED" | "REVENUE_COLLECTED";
 export type AttributionClassification = "eligible_meta_paid" | "meta_insufficient_matching" | "non_meta" | "ambiguous";
 type DateValue = Date | string | null;
 
@@ -98,6 +98,7 @@ export interface MetaConversionPayload {
 }
 
 export interface ConversionCandidate {
+  canonicalEventId?: string;
   eventId: string;
   stage: ConversionStage;
   leadId: string;
@@ -195,7 +196,9 @@ export function classifyAttribution(lead: ConversionLead): AttributionResult {
   // First-touch attribution stays authoritative even after a later paid visit.
   const selected = hasInitial ? initial : hasLast ? last : raw;
   const scope: AttributionEvidence["attributionSource"] = hasInitial ? "initial" : hasLast ? "last" : Object.keys(raw).length ? "root" : "none";
-  const sourceValues = [lead.source, lead.contactSource, raw.source, selected.source, selected.utmSource, selected.utm_source, selected.adSource, selected.medium]
+  const selectedSources = [selected.source, selected.utmSource, selected.utm_source, selected.adSource, selected.medium];
+  const hasInitialOrigin = hasInitial && selectedSources.some(value => Boolean(string(value)));
+  const sourceValues = [...(hasInitialOrigin ? [] : [lead.source, lead.contactSource, raw.source]), ...selectedSources]
     .map(canonical).filter(Boolean);
   const channelValues = [selected.sessionSource, selected.session_source, selected.utmMedium, selected.utm_medium]
     .map(canonical).filter(Boolean);
@@ -244,9 +247,15 @@ export function classifyAttribution(lead: ConversionLead): AttributionResult {
   // Explicit provider test markers override otherwise valid attribution. Do not
   // guess from names, email addresses, or a numeric Meta lead ID: real customers
   // can resemble test data, and verification leads use ordinary-looking IDs.
+  const tags = Array.isArray(raw.tags) ? raw.tags.map(canonical) : [];
+  const excluded = raw.dnd === true || raw.doNotContact === true || tags.some(tag => ["do not contact", "dnc"].includes(tag));
+  const explicitInternal = raw.isInternal === true || raw.isVendor === true || tags.some(tag => ["egc test", "test", "test lead", "egc internal", "internal", "vendor", "egc vendor", "supplier"].includes(tag)) || canonical(raw.source) === "egc synthetic routing validation";
   const explicitTest = [raw, initial, last].some((source) =>
     ["isTest", "is_test", "isTestLead", "is_test_lead"].some((key) => source[key] === true));
-  if (explicitTest) {
+  if (excluded || explicitInternal) {
+    classification = "ambiguous";
+    reasons.push(excluded ? "do_not_contact" : "internal_or_vendor_record");
+  } else if (explicitTest) {
     classification = "ambiguous";
     reasons.push("explicit_test_record");
   } else if ((hasMeta && hasOther) || ad.conflict || campaign.conflict || adSet.conflict || leadIdConflict) {
@@ -328,7 +337,7 @@ function jobQualificationReasons(job: ConversionJob, lead: ConversionLead, appoi
   return reasons;
 }
 
-function buildCandidate(lead: ConversionLead, attribution: AttributionResult, detected: DetectedStage, options: DetectionOptions): ConversionCandidate {
+export function buildCandidate(lead: ConversionLead, attribution: AttributionResult, detected: DetectedStage, options: DetectionOptions): ConversionCandidate {
   const reasons = [...attribution.reasons, ...detected.reasons, ...eventTimeReasons(detected.time, options)];
   const leadCreatedAt = date(lead.providerCreatedAt ?? lead.createdAt);
   if (detected.time && leadCreatedAt && detected.time < leadCreatedAt) reasons.push("conversion_precedes_lead_creation");
@@ -336,7 +345,9 @@ function buildCandidate(lead: ConversionLead, attribution: AttributionResult, de
   const manualReview = attribution.classification === "ambiguous" || reasons.some((reason) => [
     "missing_reliable_transition_time", "walkthrough_calendar_not_configured", "unknown_walkthrough_calendar",
     "conversion_precedes_lead_creation", "missing_appointment_start", "appointment_start_precedes_booking",
-    "missing_job_schedule", "job_calendar_not_configured", "missing_verified_job_appointment", "invalid_reference_time", "future_event_time"
+    "missing_job_schedule", "job_calendar_not_configured", "missing_verified_job_appointment", "invalid_reference_time", "future_event_time",
+    "canonical_evidence_needs_review", "canonical_evidence_reference_missing", "canonical_source_extraction_incomplete",
+    "canonical_do_not_contact", "canonical_customer_excluded", "missing_canonical_state"
   ].includes(reason));
   const eventId = deterministicEventId(lead.leadId, detected.stage);
   const { userData, ...safeAttribution } = attribution;
@@ -434,6 +445,7 @@ export function detectConversions(input: {
 export function toConversionPreview(candidate: ConversionCandidate): Omit<ConversionCandidate, "payload"> {
   // An explicit allowlist avoids leaking newly added server-only fields later.
   return {
+    ...(candidate.canonicalEventId ? { canonicalEventId: candidate.canonicalEventId } : {}),
     eventId: candidate.eventId, stage: candidate.stage, leadId: candidate.leadId, contactId: candidate.contactId,
     ...(candidate.appointmentId ? { appointmentId: candidate.appointmentId } : {}),
     ...(candidate.jobId ? { jobId: candidate.jobId } : {}),

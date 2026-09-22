@@ -23,6 +23,7 @@ export interface OperationsConfiguration {
   portalRead?:(actor:Actor,command:Command)=>Promise<Record<string,unknown>>;
   syncSchedule?:(actor:Actor,command:Extract<Command,{command:"schedule.sync_provider"}>)=>Promise<Record<string,unknown>>;
   ensureProviderNote?:(actor:Actor,command:Extract<Command,{command:"provider.note.ensure"}>)=>Promise<Record<string,unknown>>;
+  canonicalRead?:(actor:Actor,command:Extract<Command,{command:"intelligence.report"|"intelligence.diagnostics"|"intelligence.customer"}>)=>Promise<Record<string,unknown>>;
 }
 
 /** One service over the existing task records. All public adapters must authenticate
@@ -37,6 +38,10 @@ export class OperationsService {
     if (!parsed.success) throw new OperationsError("invalid_command",400,{issues:parsed.error.issues.map(i=>({path:i.path,message:i.message}))});
     const command=parsed.data;
     authorize(actor,command,this.config.workspace);
+    if(command.command==="intelligence.report"||command.command==="intelligence.diagnostics"||command.command==="intelligence.customer"){
+      if(!this.config.canonicalRead)throw new OperationsError("canonical_customer_state_unavailable",503);
+      return this.config.canonicalRead(actor,command);
+    }
     if(command.command==="provider.note.ensure"){
       if(!this.config.ensureProviderNote)throw new OperationsError("provider_note_bridge_unavailable",503);
       return this.config.ensureProviderNote(actor,command);
@@ -64,7 +69,7 @@ export class OperationsService {
       }
     }
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestId)) throw new OperationsError("request_id_required",400);
-    if (["portal.note.add","portal.job.edit","portal.project.ensure","calendar","portal.job","portal.members","portal.revenue","portal.rules","schedule.resolve","schedule.mutate","schedule.bind_provider","schedule.link_customer"].includes(command.command)) {
+    if (["portal.note.add","portal.job.edit","portal.project.ensure","calendar","portal.job","portal.evidence","portal.members","portal.revenue","portal.rules","schedule.resolve","schedule.mutate","schedule.bind_provider","schedule.link_customer"].includes(command.command)) {
       if (!this.config.portalRead) throw new OperationsError("portal_authority_unavailable",503);
       return this.config.portalRead(actor,command);
     }
