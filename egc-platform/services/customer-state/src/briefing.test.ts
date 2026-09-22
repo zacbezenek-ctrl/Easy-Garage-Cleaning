@@ -12,3 +12,11 @@ it('compact presentation preserves all business counts and original evidence loo
  expect(brief.evidenceRetrieval.since).toBe(full.period.since);expect(brief.customers[0]?.evidenceRetrieval.contactId).toBe('customer');
  expect(JSON.stringify(brief).length).toBeLessThan(JSON.stringify(full).length);
 });
+
+it('preserves a requested evidence limit smaller than the compact cap and a terminal page',()=>{
+ const full=buildReport({events:[],customers:[],since:'2026-09-16T00:00:00Z',until:'2026-09-22T00:00:00Z'});
+ const brief=formatOperationalBriefing({...full,countedEventsPage:{offset:8,limit:1,total:8,nextOffset:null}});
+ expect(brief.countedEventsPage).toEqual({offset:8,limit:1,total:8,nextOffset:null});
+ expect(brief.evidenceRetrieval).toMatchObject({limit:1,nextOffset:null,since:full.period.since,until:full.period.until});
+ expect(brief.periodActivity).toMatchObject({jobsSold:{count:0,unit:'distinct_customers'}});
+});
