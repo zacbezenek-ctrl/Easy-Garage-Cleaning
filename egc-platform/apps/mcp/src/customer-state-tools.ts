@@ -15,7 +15,14 @@ const eventId=z.string().regex(/^egcev_[a-f0-9]{64}$/);
 function compactMetaRead<T extends object>(value:T,tool:'meta.conversions.status'|'meta.conversions.preview',days:number,cohortIds:Set<string>){
  const original=value as Record<string,unknown>,output:Record<string,unknown>={...original},detailPages:Record<string,unknown>={};
  const sample=(key:string,rows:unknown[])=>{detailPages[key]={returnedByService:rows.length,shown:Math.min(20,rows.length),omitted:Math.max(0,rows.length-20),presentationTruncated:rows.length>20};return rows.slice(0,20);};
- for(const key of ['pending','failures','recentAccepted','leads','events'])if(Array.isArray(original[key]))output[key]=sample(key,original[key]);
+ for(const key of ['pending','failures','recentAccepted','leads','events'])if(Array.isArray(original[key])){
+  const rows=original[key] as unknown[];
+  // A bounded preview must surface events awaiting a real decision before old
+  // skipped inventory. Counts and source order remain unchanged in the service.
+  const prioritized=key==='events'&&tool==='meta.conversions.preview'?[...rows].sort((a,b)=>Number(Boolean((b as {eligible?:boolean})?.eligible))-Number(Boolean((a as {eligible?:boolean})?.eligible))):rows;
+  output[key]=sample(key,prioritized);
+  if(key==='events'&&tool==='meta.conversions.preview')detailPages[key]={...detailPages[key] as Record<string,unknown>,order:'eligible_first_then_original_service_order',eligibleOmitted:prioritized.slice(20).filter(e=>(e as {eligible?:boolean})?.eligible===true).length};
+ }
  if(original.canonicalCoverage&&typeof original.canonicalCoverage==='object'){
   const coverage={...original.canonicalCoverage as Record<string,unknown>};
   for(const key of ['missingCustomers','excludedCustomers','sourceExtractionHeldEvents'])if(Array.isArray(coverage[key])){
