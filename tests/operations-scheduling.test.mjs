@@ -53,3 +53,55 @@ test('multi-day dispatch intervals resolve and bind the exact end date; single-d
  await assert.rejects(bindScheduledProvider(f.store,actor,{...input,event:{...input.event,endTime:'2026-09-23T21:00:00.000Z'}}),/state_conflict/);
  assert.equal((await bindScheduledProvider(f.store,actor,input)).visit.endDate,'2026-09-25');
 });
+
+test('employee availability never blocks unassigned or unrelated booking resources globally',async()=>{
+  for(const assignedTo of [undefined,'crew-two']){
+    const f=fixture();
+    f.rows.set('jobs/time-off',{id:'time-off',type:'availability',recordType:'crew_availability',employee:'crew-one',date:'2026-09-23',allDay:true,status:'active'});
+    f.rows.set('jobs/_egc_schedule_lock_2026-09-23',{id:'_egc_schedule_lock_2026-09-23',recordType:'schedule_lock',revision:'lock-r1',entries:[{id:'time-off',type:'availability',assignedCrew:['crew-one'],start:'00:00',end:'24:00',status:'active'}]});
+    const input=f.input();if(assignedTo)input.changes.assignedTo=assignedTo;
+    const result=await mutateScheduledVisit(f.store,actor,input);assert.equal(result.ok,true);
+    assert.equal(f.rows.get('jobs/_egc_schedule_lock_2026-09-23').entries.length,2);
+    assert.ok(f.rows.get('dispatchState/revision'));
+  }
+});
+
+test('matching employee unavailable time and unique legacy aliases block a booking',async()=>{
+  for(const employee of ['crew-one','Crew One']){
+    const f=fixture();f.store.roster=async()=>[{id:'crew-one',name:'Crew One'},{id:'crew-two',name:'Crew Two'}];
+    f.rows.set('jobs/time-off',{id:'time-off',type:'availability',employee,date:'2026-09-23',allDay:true,status:'active'});
+    await assert.rejects(mutateScheduledVisit(f.store,actor,f.input({changes:{date:'2026-09-23',time:'10:00',endTime:'11:00',assignedTo:'crew-one'}})),/slot_conflict/);
+  }
+});
+
+test('manager-created multi-day availability is enforced by the canonical booking sender',async()=>{
+  const f=fixture();f.store.resources=async()=>[{id:'manager-off',recordType:'availability',employeeId:'crew-one',date:'2026-09-22',endDate:'2026-09-24',allDay:true,status:'active'}];
+  await assert.rejects(mutateScheduledVisit(f.store,actor,f.input({changes:{date:'2026-09-23',time:'10:00',endTime:'11:00',assignedTo:'crew-one'}})),/slot_conflict/);
+  assert.equal((await mutateScheduledVisit(f.store,actor,f.input())).ok,true);
+});
+
+test('independent known crews may overlap but shared employees, vehicles and blocked slots cannot',async()=>{
+  const f=fixture();f.rows.set('jobs/existing',{id:'existing',type:'job',customerId:'other-customer',date:'2026-09-23',time:'10:00',endTime:'12:00',assignedCrew:['crew-one'],status:'scheduled'});
+  const parallel=await mutateScheduledVisit(f.store,actor,f.input({changes:{date:'2026-09-23',time:'10:00',endTime:'11:00',assignedTo:'crew-two'}}));
+  assert.equal(parallel.ok,true);
+  const g=fixture();g.rows.set('jobs/existing',{id:'existing',type:'job',customerId:'customer-a',date:'2026-09-23',time:'10:00',endTime:'12:00',assignedCrew:['crew-one'],status:'scheduled'});
+  await assert.rejects(mutateScheduledVisit(g.store,actor,g.input({changes:{date:'2026-09-23',time:'10:30',endTime:'11:30',assignedTo:'crew-one'}})),/slot_conflict/);
+  const h=fixture();h.rows.set('jobs/blocked',{id:'blocked',type:'blocked',date:'2026-09-23',time:'09:00',endTime:'12:00',status:'active'});
+  await assert.rejects(mutateScheduledVisit(h.store,actor,h.input({changes:{date:'2026-09-23',time:'10:00',endTime:'11:00',assignedTo:'crew-two'}})),/slot_conflict/);
+});
+
+test('lock entries cover a prior-day multi-day employee or truck assignment',async()=>{
+  for(const assignedTo of [undefined,'crew-one']){
+    const f=fixture();f.rows.set('jobs/_egc_schedule_lock_2026-09-23',{id:'_egc_schedule_lock_2026-09-23',recordType:'schedule_lock',revision:'lock-r1',entries:[{id:'multi',type:'job',assignedCrew:['crew-one'],vehicleId:'truck',start:'00:00',end:'24:00',status:'scheduled'}]});
+    const input=f.input();if(assignedTo)input.changes.assignedTo=assignedTo;
+    await assert.rejects(mutateScheduledVisit(f.store,actor,input),/slot_conflict/);
+  }
+});
+
+test('legacy text assignment cannot silently override canonical dispatch crews or malformed guards',async()=>{
+  const f=fixture();f.rows.set('jobs/assigned',{id:'assigned',type:'job',customerId:'customer-a',date:'2026-09-23',time:'10:00',endTime:'11:00',assignedCrew:['crew-one'],assignedTo:'crew-one',status:'scheduled',revision:'r1'});
+  await assert.rejects(mutateScheduledVisit(f.store,actor,f.input({mode:'update',portalVisitId:'assigned',expectedRevision:'r1',kind:'job',changes:{assignedTo:'crew-two'}})),/assignment_requires_dispatch/);
+  const g=fixture();g.rows.set('jobs/_egc_schedule_lock_2026-09-23',{id:'_egc_schedule_lock_2026-09-23',recordType:'schedule_lock',revision:'lock-r1',entries:'bad'});
+  await assert.rejects(mutateScheduledVisit(g.store,actor,g.input()),/lock_unavailable/);
+  assert.equal(g.rows.get('jobs/_egc_schedule_lock_2026-09-23').entries,'bad');
+});

@@ -60,10 +60,12 @@ function legacyMembers(job, roster) {
 }
 
 const DTO_FIELDS = ['id','revision','type','customerId','customer','phone','address','title','date','time','endDate','endTime','assignedTo','crewLead','crewId','vehicleId','crewNeeded','travelBufferMinutes','jobInstructions','accessInstructions','customerInstructions','opsNotes','requiredEquipment','materials','serviceType','syncStatus','highlevelAppointmentId','sourceWalkthroughId','createdAt','updatedAt','completedAt'];
+const scopeText = job => typeof job.operationalScope?.text === 'string' ? job.operationalScope.text : typeof job.jobInstructions === 'string' ? job.jobInstructions : job.jobInstructions?.operationalScope || (typeof job.scope === 'string' ? job.scope : '') || job.scopeOfWork || '';
 export function projectDispatchJob(job, roster = []) {
   const output = Object.fromEntries(DTO_FIELDS.filter(key => job[key] !== undefined).map(key => [key, job[key]]));
   const interval = scheduleInterval(job);
   return { ...output, assignedCrew: roster.length ? legacyMembers(job,roster) : jobCrewNames(job), crewLead: job.crewLead ? resolveMember(job.crewLead,roster,true) || job.crewLead : null, status: state(job), endDate: job.endDate || job.date || '',
+    jobInstructions:scopeText(job),
     crewNeeded: job.crewNeeded || job.requiredCrewSize || 1, startAt: interval?.startAt || null, endAt: interval?.endAt || null,
     activity:fieldActivity(job),activityReason:job.fieldExecution?.activityReason || '',activityAt:job.fieldExecution?.activityAt || null,
     attention:job.fieldExecution?.attention?.status === 'open' ? {status:'open',reason:job.fieldExecution.attention.reason || '',at:job.fieldExecution.attention.at || null,actorName:job.fieldExecution.attention.actorName || ''} : null,
@@ -78,7 +80,7 @@ function jobWarnings(job, jobs, resources, roster) {
   const interval = scheduleInterval(job), crew = legacyMembers(job, roster);
   if (!String(job.address || '').trim()) add('missing_address', 'Add the job address before dispatching the crew.');
   if (!job.customerId) add('missing_customer_link', 'This legacy job needs its canonical customer link reviewed.');
-  if (!String(job.jobInstructions || job.scope || '').trim()) add('missing_scope', 'Add the work scope so the crew knows what was sold.');
+  if (!String(scopeText(job)).trim()) add('missing_scope', 'Add the work scope so the crew knows what was sold.');
   if (!interval) add(job.date ? 'invalid_schedule' : 'unscheduled', job.date ? 'The saved date or time needs review.' : 'This job has no scheduled time.');
   if (!crew.length) add('unassigned', 'No employees are assigned.');
   if (crew.length < (job.crewNeeded || job.requiredCrewSize || 1)) add('crew_size_short', `Requires ${job.crewNeeded || job.requiredCrewSize || 1} crew members; ${crew.length} assigned.`);
@@ -138,7 +140,7 @@ export async function dispatchOverview(store, session, query = {}, now = new Dat
 }
 
 const SCHEDULE_KEYS = ['date','time','endDate','endTime','assignedCrew','crewLead','crewId','vehicleId','crewNeeded','travelBufferMinutes','title','address','serviceType','jobInstructions','accessInstructions','customerInstructions','opsNotes','requiredEquipment','materials'];
-function schedulePatch(changes, current, resources, roster) {
+function schedulePatch(changes, current, resources, roster, now, actor) {
   onlyKeys(changes, SCHEDULE_KEYS);
   const patch = {};
   for (const key of ['date','time','endDate','endTime']) if (key in changes) patch[key] = text(changes[key], key, 10);
@@ -146,7 +148,8 @@ function schedulePatch(changes, current, resources, roster) {
     const span = validDate(current?.date) && validDate(current?.endDate) ? Math.round((Date.parse(current.endDate) - Date.parse(current.date)) / 86400000) : 0;
     patch.endDate = changes.date ? addDays(changes.date,span) : '';
   }
-  for (const key of ['title','address','serviceType','jobInstructions','accessInstructions','customerInstructions','opsNotes']) if (key in changes) patch[key] = text(changes[key], key, ['title','address','serviceType'].includes(key) ? 500 : 8000);
+  for (const key of ['title','address','serviceType','accessInstructions','customerInstructions','opsNotes']) if (key in changes) patch[key] = text(changes[key], key, ['title','address','serviceType'].includes(key) ? 500 : 8000);
+  if ('jobInstructions' in changes) patch.operationalScope={text:text(changes.jobInstructions,'Work scope',20000),updatedBy:actor,updatedAt:now,reason:'Updated in dispatch',approvalKind:'staff_operational_instructions'};
   for (const key of ['crewId','vehicleId']) if (key in changes) {
     if (changes[key] !== null && changes[key] !== '' && !safeId(changes[key])) throw fail('dispatch_resource_invalid', `Choose a valid ${key}.`);
     patch[key] = changes[key] || null;
@@ -194,7 +197,7 @@ function conflictCheck(next, jobs, resources, roster) {
 }
 
 function auditState(job) {
-  return Object.fromEntries(['date','time','endDate','endTime','status','pipelineStatus','assignedCrew','assignedTo','crewId','crewLead','vehicleId','jobInstructions','accessInstructions','customerInstructions','opsNotes','requiredEquipment','materials','crewNeeded','travelBufferMinutes','title','address','serviceType','name','memberIds','leadId','notes','employeeId','allDay','reason'].filter(key => job?.[key] !== undefined).map(key => [key,job[key]]));
+  return Object.fromEntries(['date','time','endDate','endTime','status','pipelineStatus','assignedCrew','assignedTo','crewId','crewLead','vehicleId','jobInstructions','operationalScope','accessInstructions','customerInstructions','opsNotes','requiredEquipment','materials','crewNeeded','travelBufferMinutes','title','address','serviceType','name','memberIds','leadId','notes','employeeId','allDay','reason'].filter(key => job?.[key] !== undefined).map(key => [key,job[key]]));
 }
 
 export async function mutateDispatch(store, session, input, now = new Date().toISOString()) {
@@ -248,7 +251,7 @@ async function executeDispatch(store, session, input, now) {
         if (source.highlevelContactId && customer.highlevelContactId && source.highlevelContactId !== customer.highlevelContactId) throw fail('dispatch_contact_link_conflict','The source walkthrough and customer point to different CRM contacts. Correct that link before creating an operational job.',409);
         if (jobs.some(job => visibleJob(job) && job.sourceWalkthroughId === source.id)) throw fail('dispatch_handoff_exists','This walkthrough already has an operational job. Open that job instead.',409);
       }
-      const sourceFields = ['jobInstructions','accessInstructions','customerInstructions','requiredEquipment','materials','serviceType','reviewedWalkthroughScope','salesNotes','customerNotes','estimate'];
+      const sourceFields = ['jobInstructions','operationalScope','accessInstructions','customerInstructions','requiredEquipment','materials','serviceType','reviewedWalkthroughScope','salesNotes','customerNotes','estimate'];
       current = null;
       patch = { ...(source ? Object.fromEntries(sourceFields.filter(key => source[key] !== undefined).map(key => [key,source[key]])) : {}),
         id, type: input.kind, customerId: customer.id, customer: customer.name || [customer.firstName,customer.lastName].filter(Boolean).join(' '),
@@ -274,7 +277,7 @@ async function executeDispatch(store, session, input, now) {
       patch = {};
     }
     if (cancel && Object.keys(input.changes || {}).length) throw fail('dispatch_cancel_patch_invalid','Cancellation cannot also edit job details.');
-    if (!cancel) Object.assign(patch,schedulePatch(input.changes || {},current || patch,resources,roster));
+    if (!cancel) Object.assign(patch,schedulePatch(input.changes || {},current || patch,resources,roster,now,session.user));
     let next = { ...current, ...patch };
     const hasSchedule = Boolean(next.date || next.time || next.endDate || next.endTime), interval = scheduleInterval(next);
     if (!cancel && hasSchedule && !interval) throw fail('dispatch_time_invalid','Choose valid Denver start and end times within 31 days. Missing or repeated DST hours cannot be scheduled.');

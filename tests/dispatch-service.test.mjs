@@ -277,3 +277,19 @@ test('malformed scheduling locks are preserved for review rather than overwritte
   await assert.rejects(f.mutate(f.create()),error=>error.code==='dispatch_lock_unavailable');
   assert.equal(f.rows.get('jobs/_egc_schedule_lock_2026-09-23').entries,'malformed');
 });
+
+test('dispatch scope edits preserve structured legacy instructions and replace the canonical staff scope',async()=>{
+  const f=fixture(),created=await f.mutate(f.create()),job=f.rows.get('jobs/'+created.job.id);
+  job.jobInstructions={operationalScope:'Older scope',customerGoal:'Keep heirloom cabinet',hazards:['Low ceiling'],keepItems:['Cabinet']};
+  job.operationalScope={text:'Previously approved staff scope',updatedBy:'other-manager'};
+  let overview=await dispatchOverview(f.store,manager,{startDate:'2026-09-23',endDate:'2026-09-24'});
+  assert.equal(overview.jobs[0].jobInstructions,'Previously approved staff scope');
+  const saved=await f.mutate(f.edit(created.job,{jobInstructions:'Install shelves and organize tools'}));
+  assert.equal(saved.job.jobInstructions,'Install shelves and organize tools');
+  assert.equal(f.rows.get('jobs/'+job.id).jobInstructions.customerGoal,'Keep heirloom cabinet');
+  assert.deepEqual(f.rows.get('jobs/'+job.id).jobInstructions.hazards,['Low ceiling']);
+  assert.equal(f.rows.get('jobs/'+job.id).operationalScope.approvalKind,'staff_operational_instructions');
+  await f.mutate(f.edit(saved.job,{jobInstructions:''}));
+  overview=await dispatchOverview(f.store,manager,{startDate:'2026-09-23',endDate:'2026-09-24'});
+  assert.equal(overview.jobs[0].jobInstructions,'');assert.ok(overview.warnings.some(warning=>warning.code==='missing_scope'));
+});
