@@ -1,5 +1,6 @@
 import { asRecord, validDate } from "./core.js";
 import type { CustomerEventType, EvidenceEvent, Json, PortalEvidenceRecord, SourceRecord } from "./types.js";
+import {attachOccurrenceIdentities} from './occurrence-sources.js';
 type Row=Record<string,unknown>;
 export interface SourceBundle {
   contact:Row;lead:Row;messages?:Row[];calls?:Row[];transcripts?:Row[];appointments?:Row[];opportunities?:Row[];jobs?:Row[];notes?:Row[];providerNotes?:Row[];walkthroughs?:Row[];
@@ -34,11 +35,15 @@ export function recordsFromSnapshot(bundle:SourceBundle):SourceRecord[] {
     add({sourceType:text?"call_transcript":"call",sourceRecordId:str(c.providerMessageId)||str(c.id),occurredAt:timestamp(c.startedAt,c.createdAt),text,direction:str(c.direction),actorType:str(c.actorType),raw:asRecord(c.raw),sourcePointer:text?`call_transcripts:${str(transcript?.id)||str(c.id)}`:`calls:${str(c.id)}`});
   }
   const walkIds=new Set(bundle.walkthroughCalendarIds??[]),jobIds=new Set(bundle.jobCalendarIds??[]);
+  const exactPortalKind=(appointmentId:unknown,localJobId?:unknown)=>{
+    const kinds=[...new Set((bundle.portalRecords??[]).filter(p=>p.highlevelContactId===contact.providerId&&['job','walkthrough'].includes(p.kind)&&((Boolean(appointmentId)&&p.highlevelAppointmentId===appointmentId)||(Boolean(localJobId)&&p.normalizedLocalJobId===localJobId))).map(p=>p.kind))];
+    return kinds.length===1?kinds[0]:kinds.length>1?'conflict':null;
+  };
   for(const a of bundle.appointments??[]) {
     if(!["new","confirmed","showed"].includes(str(a.status)))continue;
     const calendar=str(a.calendarId),raw=asRecord(a.raw),title=str(a.title);
-    const isJob=jobIds.has(calendar)||/^SERVICE JOB\b/i.test(title);
-    const walkthrough=!isJob&&(walkIds.has(calendar)||/walk\s*through|walkthrough|consultation/i.test(title));
+    const portalKind=exactPortalKind(a.providerId),isJob=portalKind==='job'||(!portalKind&&(jobIds.has(calendar)||/^SERVICE JOB\b/i.test(title)));
+    const walkthrough=portalKind==='walkthrough'||(!portalKind&&!isJob&&(walkIds.has(calendar)||/walk\s*through|walkthrough|consultation/i.test(title)));
     const creation=validDate(a.appointmentCreatedAt),events:EvidenceEvent[]=[];
     if(walkthrough)events.push(event("walkthrough_booked",`Provider appointment ${str(a.providerId)}: ${title} (${str(a.status)})`,{scheduledAt:validDate(a.appointmentStartAt),address:raw.address??null,occurredAtVerified:Boolean(creation)}));
     if(isJob)events.push(event("job_scheduled",`Service appointment ${str(a.providerId)}: ${title}`,{scheduledAt:validDate(a.appointmentStartAt),occurredAtVerified:Boolean(creation)}));
@@ -59,14 +64,14 @@ export function recordsFromSnapshot(bundle:SourceBundle):SourceRecord[] {
   }
   for(const j of bundle.jobs??[]) {
     const linkedAppointment=(bundle.appointments??[]).find(a=>a.id===j.appointmentId);
-    const serviceCalendar=Boolean(linkedAppointment&&jobIds.has(str(linkedAppointment.calendarId)));
-    const walkthrough=!serviceCalendar&&(/walk\s*through|estimate|consultation/i.test(str(j.serviceType)) || Boolean(linkedAppointment && (walkIds.has(str(linkedAppointment.calendarId)) || /walk\s*through|consultation/i.test(str(linkedAppointment.title))))),events:EvidenceEvent[]=[],won=validDate(j.wonAt),status=str(j.status).toLowerCase();
+    const portalKind=exactPortalKind(linkedAppointment?.providerId,j.id),serviceCalendar=Boolean(linkedAppointment&&jobIds.has(str(linkedAppointment.calendarId)));
+    const walkthrough=portalKind==='walkthrough'||(!portalKind&&!serviceCalendar&&(/walk\s*through|estimate|consultation/i.test(str(j.serviceType)) || Boolean(linkedAppointment && (walkIds.has(str(linkedAppointment.calendarId)) || /walk\s*through|consultation/i.test(str(linkedAppointment.title)))))),events:EvidenceEvent[]=[],won=validDate(j.wonAt),status=str(j.status).toLowerCase();
     if(!walkthrough && ["sold","won","confirmed","scheduled","in_progress","completed","paid","closed"].includes(status))events.push(event("job_sold",`EGC service job status ${status}`,{occurredAtVerified:Boolean(won)}));
     if(!walkthrough && validDate(j.scheduledAt)&&["confirmed","scheduled","in_progress","completed","paid","closed"].includes(status))events.push(event("job_scheduled",`EGC service job scheduled ${String(j.scheduledAt)}`,{scheduledAt:validDate(j.scheduledAt),occurredAtVerified:false}));
     if(!walkthrough && ["completed","paid","closed"].includes(status))events.push({...event("job_completed",`EGC service job status ${status}`,{occurredAtVerified:Boolean(validDate(j.completedAt))}),occurredAt:timestamp(j.completedAt,j.updatedAt)});
     // A quoted price or deposit field is not proof of payment.
     if(walkthrough&&validDate(j.scheduledAt)&&["scheduled","confirmed"].includes(status))events.push(event("walkthrough_verbally_booked",`Local walkthrough scheduled ${String(j.scheduledAt)}`,{scheduledAt:validDate(j.scheduledAt),address:j.serviceAddress??null,occurredAtVerified:false}));
-    add({sourceType:"job",sourceRecordId:str(j.id),jobId:str(j.id),opportunityId:str(j.opportunityId)||null,appointmentId:str(j.appointmentId)||null,occurredAt:won??timestamp(j.createdAt,j.updatedAt),text:`Job status ${status}. ${str(j.accessNotes)}`,events});
+    add({sourceType:"job",sourceRecordId:str(j.id),jobId:str(j.id),opportunityId:str(j.opportunityId)||null,appointmentId:str(j.appointmentId)||null,occurredAt:won??timestamp(j.createdAt,j.updatedAt),text:`Job status ${status}. ${str(j.accessNotes)}`,events:portalKind==='conflict'?events.map(e=>({...e,humanReviewNeeded:true,details:{...e.details,occurrenceIdentityConflict:true},nextAction:'Resolve conflicting Portal work types for the exact appointment binding'})):events});
     if(str(j.accessNotes))add({sourceType:"job_note",sourceRecordId:`${str(j.id)}:access_notes`,jobId:str(j.id),occurredAt:timestamp(j.updatedAt,j.createdAt),text:str(j.accessNotes),raw:{occurredAtVerified:false}});
   }
   for(const n of bundle.notes??[])add({sourceType:"job_note",sourceRecordId:str(n.id),jobId:str(n.jobId)||null,occurredAt:timestamp(n.createdAt,n.updatedAt),text:str(n.body),raw:{source:n.source??null,createdBy:n.createdBy??null}});
@@ -105,5 +110,5 @@ export function recordsFromSnapshot(bundle:SourceBundle):SourceRecord[] {
     else if(paid && amount(p.paidCents)!==null&&!processorPayments.length&&!staffPayments.length&&!conflictingKeys.size)events.push({...event("revenue_collected",`EGC Portal payment recorded ${p.id}`,{...details,occurredAtVerified:true},amount(p.paidCents)),occurredAt:paid});
     add({sourceType:p.kind==="walkthrough"?"portal_visit":p.kind==="payment"?"portal_payment":"portal_job",sourceRecordId:p.id,occurredAt:created??timestamp(p.updatedAt,p.startAt),text:`EGC Portal ${p.kind} ${p.id} status ${status}`,raw:{sourceRevision:p.sourceRevision??null},events});
   }
-  return records.sort((a,b)=>a.occurredAt.localeCompare(b.occurredAt)||a.sourceRecordId.localeCompare(b.sourceRecordId));
+  return attachOccurrenceIdentities(records.sort((a,b)=>a.occurredAt.localeCompare(b.occurredAt)||a.sourceRecordId.localeCompare(b.sourceRecordId)),bundle);
 }

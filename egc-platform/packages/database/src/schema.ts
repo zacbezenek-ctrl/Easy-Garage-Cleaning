@@ -546,8 +546,43 @@ export const customerEvidence = pgTable("customer_evidence", {
   ...timestamps
 }, t => [uniqueIndex("customer_evidence_source_uq").on(t.sourceType,t.sourceRecordId), index("customer_evidence_contact_idx").on(t.contactId,t.occurredAt)]);
 
+// Business work identities are independent of acquisition and delivery IDs.
+export const customerOccurrences = pgTable("customer_occurrences", {
+  id: text("id").primaryKey(),
+  contactId: uuid("contact_id").references(() => contacts.id, { onDelete: "cascade" }).notNull(),
+  leadId: uuid("lead_id").references(() => leads.id, { onDelete: "set null" }),
+  kind: text("kind").notNull(),
+  originalSourceType: text("original_source_type").notNull(),
+  originalSourceRecordId: text("original_source_record_id").notNull(),
+  authoritativePortalIds: jsonb("authoritative_portal_ids").$type<string[]>().default([]).notNull(),
+  status: text("status").notNull(),
+  mergedIntoId: text("merged_into_id"),
+  details: jsonb("details").$type<Record<string, unknown>>().default({}).notNull(),
+  ...timestamps
+}, t => [index("customer_occurrences_contact_idx").on(t.contactId,t.kind)]);
+
+export const customerOccurrenceAliases = pgTable("customer_occurrence_aliases", {
+  id: text("id").primaryKey(),
+  contactId: uuid("contact_id").references(() => contacts.id, { onDelete: "cascade" }).notNull(),
+  occurrenceId: text("occurrence_id").references(() => customerOccurrences.id, { onDelete: "cascade" }).notNull(),
+  namespace: text("namespace").notNull(),
+  recordId: text("record_id").notNull(),
+  kind: text("kind").notNull(),
+  ...timestamps
+}, t => [uniqueIndex("customer_occurrence_alias_identity_uq").on(t.namespace,t.recordId,t.kind),index("customer_occurrence_alias_contact_idx").on(t.contactId)]);
+
+export const customerOccurrenceLinks = pgTable("customer_occurrence_links", {
+  id: text("id").primaryKey(),
+  contactId: uuid("contact_id").references(() => contacts.id, { onDelete: "cascade" }).notNull(),
+  fromOccurrenceId: text("from_occurrence_id").references(() => customerOccurrences.id, { onDelete: "cascade" }).notNull(),
+  toOccurrenceId: text("to_occurrence_id").references(() => customerOccurrences.id, { onDelete: "cascade" }).notNull(),
+  relationship: text("relationship").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull()
+}, t => [index("customer_occurrence_links_contact_idx").on(t.contactId)]);
+
 export const customerEvents = pgTable("customer_events", {
   eventId: text("event_id").primaryKey(),
+  occurrenceId: text("occurrence_id").references(() => customerOccurrences.id, { onDelete: "set null" }),
   contactId: uuid("contact_id").references(() => contacts.id, { onDelete: "cascade" }).notNull(),
   leadId: uuid("lead_id").references(() => leads.id, { onDelete: "cascade" }),
   opportunityId: uuid("opportunity_id").references(() => opportunities.id, { onDelete: "set null" }),

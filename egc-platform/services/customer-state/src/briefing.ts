@@ -4,7 +4,7 @@ import type {CanonicalEvent,CustomerProjection,EvidenceRef} from './types.js';
 const sourceRef=({sourceType,sourceRecordId}:EvidenceRef)=>({sourceType,sourceRecordId});
 const quote=(ref:EvidenceRef)=>({...ref,excerpt:ref.excerpt.slice(0,400),...(ref.excerpt.length>400?{excerptTruncated:true}:{})});
 const eventSummary=(event:CanonicalEvent)=>{
-  return {eventId:event.eventId,contactId:event.contactId,eventType:event.eventType,occurredAt:event.occurredAt,occurredAtVerified:event.details.occurredAtVerified!==false,confidence:event.confidence,humanReviewNeeded:event.humanReviewNeeded,nextAction:event.nextAction,
+  return {eventId:event.eventId,contactId:event.contactId,...(event.occurrenceId?{occurrenceId:event.occurrenceId,occurrenceIdentityStatus:event.details.occurrenceIdentityStatus}:{}),eventType:event.eventType,occurredAt:event.occurredAt,occurredAtVerified:event.details.occurredAtVerified!==false,confidence:event.confidence,humanReviewNeeded:event.humanReviewNeeded,nextAction:event.nextAction,
     ...(event.valueCents!==null||['job_sold','revenue_collected'].includes(event.eventType)?{valueCents:event.valueCents,currency:event.currency,valueVerified:event.valueVerified}:{}),
     ...(event.details.reason?{reason:event.details.reason}:{}),...(event.details.scheduledAt?{scheduledAt:event.details.scheduledAt}:{}),...(event.details.timeMention?{timeMention:event.details.timeMention}:{}),
     evidence:event.evidence.slice(0,1).map(quote),evidenceSourceCount:event.evidence.length,evidenceSources:event.evidence.map(sourceRef)};
@@ -13,7 +13,7 @@ const customerSummary=(customer:CustomerProjection)=>{
   const {eventIds,supportingEvidence}=customer;
   return {contactId:customer.contactId,customerName:customer.customerName,leadCreatedAt:customer.leadCreatedAt,state:customer.state,intentStage:customer.intentStage,pipeline:customer.pipeline,videoQuoteStage:customer.videoQuoteStage,pipelineDisposition:customer.pipelineDisposition,reconciliationStatus:customer.reconciliationStatus,nextRequiredAction:customer.nextRequiredAction,humanReviewNeeded:customer.humanReviewNeeded,discrepancies:customer.discrepancies,
     supportingEvidence:supportingEvidence.slice(-1).map(quote),supportingEvidenceSourceCount:supportingEvidence.length,supportingEvidenceSources:supportingEvidence.map(sourceRef),timelineEventCount:eventIds.length,
-    ...(customer.followUpCommitment?{followUpCommitment:{occurredAt:customer.followUpCommitment.occurredAt,deadline:customer.followUpCommitment.deadline,action:customer.followUpCommitment.action}}:{}),
+    ...(customer.followUpCommitment?{followUpCommitment:{occurredAt:customer.followUpCommitment.occurredAt,deadline:customer.followUpCommitment.deadline,action:customer.followUpCommitment.action}}:{}),...(customer.activeWork?{activeWork:customer.activeWork}:{}),
     evidenceRetrieval:{tool:'egc.customer_timeline',contactId:customer.contactId}};
 };
 

@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import {occurrenceMetric,occurrenceMetricRows} from './occurrence-report.js';
 import { EVENT_TYPES, OPERATIONAL_STATES, type CanonicalEvent, type CustomerEventType, type CustomerProjection, type EvidenceEvent, type EvidenceRef, type Json, type OperationalAssertion, type OperationalState, type SourceRecord } from "./types.js";
 export * from "./types.js";
 export const EXTRACTOR_VERSION = "customer-evidence-1";
@@ -171,7 +172,9 @@ export function buildCanonicalEvents(records: SourceRecord[], attribution: Json 
   for(const record of sorted) for(const event of record.events ?? extractEvidence(record,sorted)) {
     if(!(EVENT_TYPES as readonly string[]).includes(event.eventType) || !validDate(event.occurredAt ?? record.occurredAt)) continue;
     const occurrence=typeof event.details?.paymentReceiptKey === "string"?`receipt:${event.details.paymentReceiptKey}`:record.sourceRecordId;
-    const eventId = canonicalEventId(record.contactId,record.leadId,event.eventType,occurrence);
+    const occurrenceId=typeof event.details?.occurrenceId==='string'?event.details.occurrenceId:null;
+    const retainedId=typeof event.details?.canonicalEventId==='string'&&/^egcev_[a-f0-9]{64}$/.test(event.details.canonicalEventId)?event.details.canonicalEventId:null;
+    const eventId = retainedId??(occurrenceId&&!event.details?.paymentReceiptKey?`egcev_${hash(`egc:occurrence:${occurrenceId}:event:${event.eventType}`)}`:canonicalEventId(record.contactId,record.leadId,event.eventType,occurrence));
     const occurredAt = validDate(event.occurredAt ?? record.occurredAt)!;
     const excerptLimit=event.eventType==='human_outreach'?180:1600;
     const evidence: EvidenceRef = {sourceType:record.sourceType,sourceRecordId:record.sourceRecordId,occurredAt,excerpt:event.supportingText.slice(0,excerptLimit),...(event.supportingText.length>excerptLimit?{excerptTruncated:true}:{}),confidence:event.confidence,humanReviewNeeded:event.humanReviewNeeded,sourcePointer:record.sourcePointer??`${record.sourceType}:${record.sourceRecordId}`};
@@ -183,7 +186,7 @@ export function buildCanonicalEvents(records: SourceRecord[], attribution: Json 
     const verifiedValue = trusted && event.valueVerified === true && money(event.valueCents) && /^[A-Z]{3}$/.test(event.currency ?? "");
     const replacement = !previous || (record.sourceType === "user_confirmed" && previous.source !== "user_confirmed") || (previous.humanReviewNeeded && trusted) || (previous.source !== "user_confirmed" && event.confidence > previous.confidence);
     events.set(eventId,{
-      eventId,contactId:record.contactId,leadId:record.leadId ?? null,eventType:event.eventType,
+      eventId,contactId:record.contactId,leadId:record.leadId ?? null,eventType:event.eventType,...(occurrenceId?{occurrenceId}:{}),
       opportunityId:record.opportunityId ?? previous?.opportunityId ?? null,appointmentId:record.appointmentId ?? previous?.appointmentId ?? null,jobId:record.jobId ?? previous?.jobId ?? null,
       occurredAt:selectedTime,
       source:replacement?record.sourceType:previous!.source,confidence:Math.max(event.confidence,previous?.confidence ?? 0),
@@ -289,7 +292,7 @@ export function buildReport(input:{events:CanonicalEvent[];customers:CustomerPro
   const cohortMetrics:Record<string,{numerator:number;denominator:number;rate:number|null;window:{since:string;until:string};observedThrough:string;contactIds:string[]}>= {};
   for(const [name,types] of Object.entries(REPORT_METRICS)) {
     const matches=activity.filter(e=>types.includes(e.eventType)),ids=[...new Set(matches.map(e=>e.contactId))];
-    periodActivity[name]={count:ids.length,unit:"distinct_customers",eventIds:matches.map(e=>e.eventId),contactIds:ids};
+    periodActivity[name]={count:ids.length,unit:"distinct_customers",...occurrenceMetric(matches,types),eventIds:matches.map(e=>e.eventId),contactIds:ids};
     const converted=[...new Set(trusted.filter(e=>cohortIds.has(e.contactId)&&types.includes(e.eventType)).map(e=>e.contactId))];
     cohortMetrics[name]={numerator:converted.length,denominator:cohort.length,rate:cohort.length?converted.length/cohort.length:null,window:{since:cohortSince,until:cohortUntil},observedThrough:until,contactIds:converted};
   }
@@ -301,10 +304,11 @@ export function buildReport(input:{events:CanonicalEvent[];customers:CustomerPro
     cohortMetrics.leads={...cohortMetrics.leads!,numerator:cohort.length,rate:cohort.length?1:null,contactIds:[...cohortIds]};
   }
   const revenue=(type:CustomerEventType)=>{
-    const rows=activity.filter(e=>e.eventType===type),undated=trusted.filter(e=>e.eventType===type&&e.details.occurredAtVerified===false);
+    const allRows=activity.filter(e=>e.eventType===type),rows=occurrenceMetricRows(allRows),undated=occurrenceMetricRows(trusted.filter(e=>e.eventType===type&&e.details.occurredAtVerified===false));
+    const unallocated=allRows.filter(e=>!rows.includes(e)&&e.valueVerified);
     const known=rows.filter(e=>e.valueVerified&&e.currency==="USD"),knownSubtotalCents=known.reduce((n,e)=>n+(e.valueCents??0),0);
     const incomplete=type==="revenue_collected"&&trusted.some(e=>e.details.revenueCoverageIncomplete===true),unknownValue=[...rows,...undated].filter(e=>!e.valueVerified||e.currency!=="USD");
-    return {valueCents:known.length===rows.length&&!incomplete&&!undated.length?knownSubtotalCents:null,knownSubtotalCents,currency:"USD",basis:type==="revenue_collected"?"verified_gross_customer_receipts":"accepted_customer_work",coverageIncomplete:incomplete||undated.length>0,verifiedEvents:known.length,missingValue:unknownValue.map(e=>e.eventId),unknownValueCount:unknownValue.length,unknownOccurrenceCount:undated.length,unknownOccurrenceEvents:undated.map(e=>({eventId:e.eventId,contactId:e.contactId,valueCents:e.valueVerified?e.valueCents:null,currency:e.valueVerified?e.currency:null})),qualification:undated.length?"Confirmed outcomes have unknown occurrence time; they are not assigned to this period, so a complete period total is unavailable.":incomplete?"Payment history is incomplete; the verified dated subtotal is not a complete total.":unknownValue.length?"Some dated outcomes have unverified amounts; only the verified subtotal is known.":"Verified dated outcomes in this period."};
+    return {valueCents:known.length===rows.length&&!incomplete&&!undated.length&&!unallocated.length?knownSubtotalCents:null,knownSubtotalCents,currency:"USD",basis:type==="revenue_collected"?"verified_gross_customer_receipts":"accepted_customer_work",coverageIncomplete:incomplete||undated.length>0||unallocated.length>0,verifiedEvents:known.length,missingValue:unknownValue.map(e=>e.eventId),unknownValueCount:unknownValue.length,unknownOccurrenceCount:undated.length,unknownOccurrenceEvents:undated.map(e=>({eventId:e.eventId,contactId:e.contactId,valueCents:e.valueVerified?e.valueCents:null,currency:e.valueVerified?e.currency:null})),unallocatedVerifiedEvents:unallocated.map(e=>({eventId:e.eventId,contactId:e.contactId,valueCents:e.valueCents,currency:e.currency})),qualification:undated.length?"Confirmed outcomes have unknown occurrence time; they are not assigned to this period, so a complete period total is unavailable.":unallocated.length?"Verified amounts remain unassigned to exact work; they are disclosed separately and are not added to known jobs.":incomplete?"Payment history is incomplete; the verified dated subtotal is not a complete total.":unknownValue.length?"Some dated outcomes have unverified amounts; only the verified subtotal is known.":"Verified dated outcomes in this period."};
   };
   const active=customers.filter(c=>c.pipelineDisposition==="active");
   return {authority:"canonical_customer_event_ledger",generatedAt:asOf,period:{since,until,boundaries:"inclusive_start_exclusive_end"},periodActivity,

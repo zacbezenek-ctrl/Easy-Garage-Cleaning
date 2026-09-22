@@ -2,13 +2,18 @@ import { and, asc, desc, eq, gte, inArray, lt, or, sql } from "drizzle-orm";
 import { getDb, schema } from "@egc/database";
 import { assertionEvents, assertionReconciled, asRecord, buildCanonicalEvents, buildReport, captureOriginalAttribution, EXTRACTOR_VERSION, exclusionReasons, extractEvidence, hash, projectCustomer, validDate,validateUserConfirmedOutcome,paginateEventEvidence } from "./core.js";
 import { extractStructuredEvidence } from "./extractor.js";
-import { recordsFromSnapshot,usableTranscriptText } from "./sources.js";
+import { recordsFromSnapshot,usableTranscriptText,type SourceBundle } from "./sources.js";
+import {attachOccurrenceIdentities} from './occurrence-sources.js';
+import {resolveCustomerOccurrences,type CustomerOccurrence,type PersistedOccurrenceAlias} from './occurrences.js';
+import {applyOccurrenceProjection} from './occurrence-report.js';
 import {customerActivityPredicate,customerRefreshOrder} from "./selection.js";
 import type { CanonicalEvent, CustomerProjection, EvidenceEvent, Json, OperationalAssertion, ReconcileOptions, SourceRecord } from "./types.js";
 export * from "./core.js";
 export * from "./sources.js";
 export * from "./selection.js";
 export * from "./briefing.js";
+export * from './occurrences.js';
+export * from './occurrence-report.js';
 export { extractStructuredEvidence, validateExtractedEvent } from "./extractor.js";
 
 type DbEvent=typeof schema.customerEvents.$inferSelect;
@@ -23,6 +28,7 @@ export async function reconcileCustomerState(options:ReconcileOptions={}):Promis
   const db=getDb(),startedAt=new Date(),since=new Date(options.since??Date.now()-30*86_400_000),until=new Date(options.until??Date.now());
   if(!Number.isFinite(since.valueOf())||!Number.isFinite(until.valueOf())||since>until)throw new Error("invalid_reconciliation_window");
   const max=Math.max(1,Math.min(2000,options.maxContacts??500));
+  const occurrenceMode=options.occurrenceMode??(process.env.CUSTOMER_OCCURRENCE_LEDGER_MODE==='enabled'?'enabled':process.env.CUSTOMER_OCCURRENCE_LEDGER_MODE==='shadow'?'shadow':'off');
   const selected=await db.select({contact:schema.contacts,lead:schema.leads}).from(schema.leads).innerJoin(schema.contacts,eq(schema.contacts.id,schema.leads.contactId)).where(
     options.contactIds ? (options.contactIds.length?inArray(schema.contacts.id,options.contactIds):sql`false`) : and(lt(schema.leads.createdAt,until),customerActivityPredicate(since))
   ).orderBy(customerRefreshOrder(),desc(schema.leads.createdAt)).limit(max+1);
@@ -45,8 +51,9 @@ export async function reconcileCustomerState(options:ReconcileOptions={}):Promis
       ]);
       const attribution=captureOriginalAttribution({raw:contact.raw,source:lead.source,leadCreatedAt:lead.createdAt.toISOString()},originalRows[0]?.attribution);
       await db.insert(schema.leadOriginalAttribution).values({leadId:lead.id,contactId:contact.id,attribution,sourceRecordId:contact.providerId,provenance:String(attribution.provenance??"provider_initial_attribution")}).onConflictDoNothing();
-      const records=recordsFromSnapshot({contact,lead,messages,calls,transcripts,appointments,opportunities,jobs,notes,providerNotes,walkthroughs,
-        portalRecords:options.portalRecords??[],walkthroughCalendarIds:ids(process.env.META_CAPI_WALKTHROUGH_CALENDAR_IDS),jobCalendarIds:ids(process.env.META_CAPI_JOB_CALENDAR_IDS)});
+      const sourceBundle:SourceBundle={contact,lead,messages,calls,transcripts,appointments,opportunities,jobs,notes,providerNotes,walkthroughs,
+        portalRecords:options.portalRecords??[],walkthroughCalendarIds:ids(process.env.META_CAPI_WALKTHROUGH_CALENDAR_IDS),jobCalendarIds:ids(process.env.META_CAPI_JOB_CALENDAR_IDS)};
+      const records=recordsFromSnapshot(sourceBundle);
       // Hub is a separate authoritative source. A worker without its bridge must
       // retain the last known exact records and disclose their freshness.
       const seen=new Set(records.map(sourceId));
@@ -85,13 +92,15 @@ export async function reconcileCustomerState(options:ReconcileOptions={}):Promis
       // Text/time and address often arrive separately. Re-evaluate every message
       // against preceding content without discarding semantic events in its cache.
       for(const record of prepared){const {events:alreadyExtracted,...source}=record;const local=record.extractionStatus==="complete"&&["message","call_transcript","job_note","provider_note"].includes(record.sourceType)?[]:extractEvidence(source,records);record.events=[...(alreadyExtracted??[]),...local.filter(e=>!alreadyExtracted?.some(p=>p.eventType===e.eventType))].map(e=>record.raw?.occurredAtVerified===false?{...e,details:{...e.details,occurredAtVerified:false}}:e);}
+      prepared.splice(0,prepared.length,...attachOccurrenceIdentities(prepared,sourceBundle));
       const providerEvents=buildCanonicalEvents(prepared,attribution),assertions=assertionRows.map(toAssertion);
       for(const assertion of assertions)if(assertionReconciled(assertion,providerEvents)){assertion.status="reconciled";assertion.reconciledAt=startedAt.toISOString();}
       const assertionSources:SourceRecord[]=assertions.map(a=>({sourceType:"user_confirmed",sourceRecordId:a.id,contactId:contact.id,leadId:lead.id,occurredAt:a.occurredAt,text:a.exactText,events:assertionEvents(a).filter(e=>!(e.eventType==="revenue_collected"&&a.status==="reconciled"&&providerEvents.some(p=>p.eventType==="revenue_collected"&&p.details.paymentReceiptKey))),sourcePointer:a.sourceReference}));
-      const events=buildCanonicalEvents([...prepared,...assertionSources],attribution);
+      let events=buildCanonicalEvents([...prepared,...assertionSources],attribution);
       const missingTranscripts=calls.filter(c=>c.startedAt>=since&&!transcripts.some(t=>t.callId===c.id&&usableTranscriptText(t.text))&&((c.raw.attachments instanceof Array && c.raw.attachments.length>0)||c.recordingUrl||c.status==="completed")).map(c=>c.id);
       const groups=new Map<string,number>();for(const a of appointments.filter(a=>["new","confirmed"].includes(a.status))){const key=`${a.calendarId}:${a.appointmentStartAt.toISOString()}`;groups.set(key,(groups.get(key)??0)+1);}
-      const snapshot=projectCustomer({contactId:contact.id,leadId:lead.id,customerName:contact.name,leadCreatedAt:lead.createdAt.toISOString(),events,assertions,exclusionReasons:exclusionReasons({tags:contact.tags,raw:contact.raw,source:contact.source,doNotContact:lead.doNotContact}),providerAppointmentCount:Math.max(0,...groups.values()),missingJobLink:appointments.some(a=>["new","confirmed"].includes(a.status)&&!jobs.some(j=>j.appointmentId===a.id)),missingTranscriptIds:missingTranscripts});
+      const projectionInput={contactId:contact.id,leadId:lead.id,customerName:contact.name,leadCreatedAt:lead.createdAt.toISOString(),assertions,exclusionReasons:exclusionReasons({tags:contact.tags,raw:contact.raw,source:contact.source,doNotContact:lead.doNotContact}),providerAppointmentCount:Math.max(0,...groups.values()),missingJobLink:appointments.some(a=>["new","confirmed"].includes(a.status)&&!jobs.some(j=>j.appointmentId===a.id)),missingTranscriptIds:missingTranscripts};
+      let snapshot=projectCustomer({...projectionInput,events});
       const priorCoverage=await db.select({coverage:schema.customerStateSnapshots.coverage}).from(schema.customerStateSnapshots).where(eq(schema.customerStateSnapshots.contactId,contact.id));
       const portalCoverage=options.portalCoverage??asRecord(priorCoverage[0]?.coverage.portal);
       let providerNoteCoverage:Json={complete:false,error:"provider_notes_not_synced"};try{if(notesCursor[0]?.cursor)providerNoteCoverage=asRecord(JSON.parse(notesCursor[0].cursor));}catch{providerNoteCoverage={complete:false,error:"provider_notes_cursor_invalid"};}
@@ -112,6 +121,22 @@ export async function reconcileCustomerState(options:ReconcileOptions={}):Promis
           }
           return;
         }
+        if(occurrenceMode!=='off'){
+          const [oldOccurrences,oldAliases,oldEvents]=await Promise.all([
+            tx.select().from(schema.customerOccurrences).where(eq(schema.customerOccurrences.contactId,contact.id)),
+            tx.select().from(schema.customerOccurrenceAliases).where(eq(schema.customerOccurrenceAliases.contactId,contact.id)),
+            tx.select().from(schema.customerEvents).where(eq(schema.customerEvents.contactId,contact.id))]);
+          const resolved=resolveCustomerOccurrences({contactId:contact.id,leadId:lead.id,records:[...prepared,...assertionSources],existingOccurrences:oldOccurrences.map(o=>({...o,createdAt:o.createdAt.toISOString(),kind:o.kind as CustomerOccurrence['kind'],status:o.status as CustomerOccurrence['status']})),existingAliases:oldAliases as PersistedOccurrenceAlias[],existingEvents:oldEvents.map(toEvent),now:startedAt.toISOString()});
+          const scopedEvents=buildCanonicalEvents(resolved.records,attribution),scopedCustomer=applyOccurrenceProjection(projectCustomer({...projectionInput,events:scopedEvents}),scopedEvents);
+          for(const issue of resolved.issues)scopedCustomer.discrepancies.push(issue);
+          if(resolved.issues.length){scopedCustomer.humanReviewNeeded=true;scopedCustomer.reconciliationStatus='reconciliation_needed';}
+          const comparison=buildReport({events:scopedEvents,customers:[scopedCustomer],since:since.toISOString(),until:until.toISOString()});
+          coverage.occurrences={mode:occurrenceMode,resolved:resolved.occurrences.filter(o=>o.status==='resolved').length,unassigned:resolved.occurrences.filter(o=>o.status==='unassigned').length,issues:resolved.issues,preview:{periodActivity:comparison.periodActivity,soldRevenue:comparison.soldRevenue,collectedRevenue:comparison.collectedRevenue,activeWork:scopedCustomer.activeWork}};
+          for(const o of resolved.occurrences){const value={...o,createdAt:new Date(o.createdAt),updatedAt:startedAt};const {createdAt:_original,...mutable}=value;await tx.insert(schema.customerOccurrences).values(value).onConflictDoUpdate({target:schema.customerOccurrences.id,set:mutable});}
+          for(const a of resolved.aliases){const id=`egcoa_${hash(`${a.kind}:${a.namespace}:${a.recordId}`)}`;const written=await tx.insert(schema.customerOccurrenceAliases).values({id,...a,updatedAt:startedAt}).onConflictDoUpdate({target:[schema.customerOccurrenceAliases.namespace,schema.customerOccurrenceAliases.recordId,schema.customerOccurrenceAliases.kind],set:{occurrenceId:a.occurrenceId,updatedAt:startedAt},setWhere:eq(schema.customerOccurrenceAliases.contactId,contact.id)}).returning({id:schema.customerOccurrenceAliases.id});if(!written.length)throw new Error('occurrence_alias_contact_conflict');}
+          for(const link of resolved.links)await tx.insert(schema.customerOccurrenceLinks).values(link).onConflictDoNothing();
+          if(occurrenceMode==='enabled'){events=scopedEvents;snapshot=scopedCustomer;}
+        }
         for(const record of prepared){const value={id:sourceId(record),contactId:contact.id,leadId:lead.id,sourceType:record.sourceType,sourceRecordId:record.sourceRecordId,sourceHash:hashes.get(sourceId(record))??hash(JSON.stringify(record.events)),extractorVersion:EXTRACTOR_VERSION,occurredAt:new Date(record.occurredAt),status:record.extractionStatus??"complete",extractedEvents:(record.events??[]) as unknown as Json[],sourcePointer:record.sourcePointer??null,error:record.extractionStatus!=="complete"?record.extractionError??(extractionErrors.join(",")||"semantic_coverage_partial"):null,updatedAt:startedAt};
           await tx.insert(schema.customerEvidence).values(value).onConflictDoUpdate({target:schema.customerEvidence.id,set:{...value,attemptCount:sql`${schema.customerEvidence.attemptCount}+1`}});
         }
@@ -125,7 +150,7 @@ export async function reconcileCustomerState(options:ReconcileOptions={}):Promis
         const row={contactId:contact.id,leadId:lead.id,state:snapshot.state,intentStage:snapshot.intentStage,pipeline:snapshot.pipeline,reconciliationStatus:snapshot.reconciliationStatus,snapshot:snapshot as unknown as Json,coverage,lastReconciledAt:startedAt,updatedAt:startedAt};
         await tx.insert(schema.customerStateSnapshots).values(row).onConflictDoUpdate({target:schema.customerStateSnapshots.contactId,set:row});
       });
-      if(refreshAfterRace){const refreshed=await reconcileCustomerState({contactIds:[contact.id],useAI:false});results.push(...refreshed.results);continue;}
+      if(refreshAfterRace){const refreshed=await reconcileCustomerState({contactIds:[contact.id],useAI:false,occurrenceMode});results.push(...refreshed.results);continue;}
       results.push({contactId:contact.id,state:snapshot.state,events:events.length,coverage});
     } catch(error) {results.push({contactId:contact.id,error:error instanceof Error&&/invalid_|required|not_found/.test(error.message)?error.message:"customer_reconciliation_failed"});}
   }
@@ -161,12 +186,13 @@ export async function recordUserConfirmedOutcome(input:UserConfirmedOutcomeInput
 
 export async function getCustomerTimeline(input:{contactId:string;refresh?:boolean}) {
   if(input.refresh)await reconcileCustomerState({contactIds:[input.contactId],useAI:false});
-  const db=getDb();const [snapshot,events,assertions,evidence]=await Promise.all([
+  const db=getDb();const [snapshot,events,assertions,evidence,occurrences,occurrenceLinks]=await Promise.all([
     db.select().from(schema.customerStateSnapshots).where(eq(schema.customerStateSnapshots.contactId,input.contactId)),
     db.select().from(schema.customerEvents).where(and(eq(schema.customerEvents.contactId,input.contactId),eq(schema.customerEvents.active,true))).orderBy(asc(schema.customerEvents.occurredAt)),
     db.select().from(schema.customerOperationalAssertions).where(eq(schema.customerOperationalAssertions.contactId,input.contactId)).orderBy(asc(schema.customerOperationalAssertions.assertedAt)),
-    db.select().from(schema.customerEvidence).where(eq(schema.customerEvidence.contactId,input.contactId)).orderBy(asc(schema.customerEvidence.occurredAt))]);
-  return {contactId:input.contactId,customer:snapshot[0]?.snapshot??null,coverage:snapshot[0]?.coverage??{complete:false,error:"customer_not_reconciled"},lastReconciledAt:snapshot[0]?.lastReconciledAt??null,events:events.map(toEvent),assertions:assertions.map(toAssertion),extraction:evidence.map(e=>({sourceType:e.sourceType,sourceRecordId:e.sourceRecordId,status:e.status,error:e.error,occurredAt:e.occurredAt,sourcePointer:e.sourcePointer}))};
+    db.select().from(schema.customerEvidence).where(eq(schema.customerEvidence.contactId,input.contactId)).orderBy(asc(schema.customerEvidence.occurredAt)),
+    db.select().from(schema.customerOccurrences).where(eq(schema.customerOccurrences.contactId,input.contactId)),db.select().from(schema.customerOccurrenceLinks).where(eq(schema.customerOccurrenceLinks.contactId,input.contactId))]);
+  return {contactId:input.contactId,customer:snapshot[0]?.snapshot??null,coverage:snapshot[0]?.coverage??{complete:false,error:"customer_not_reconciled"},lastReconciledAt:snapshot[0]?.lastReconciledAt??null,events:events.map(toEvent),assertions:assertions.map(toAssertion),occurrences,occurrenceLinks,extraction:evidence.map(e=>({sourceType:e.sourceType,sourceRecordId:e.sourceRecordId,status:e.status,error:e.error,occurredAt:e.occurredAt,sourcePointer:e.sourcePointer}))};
 }
 export const getCanonicalCustomer=getCustomerTimeline;
 
