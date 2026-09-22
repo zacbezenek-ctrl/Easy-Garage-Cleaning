@@ -209,3 +209,18 @@ test('self-assignment observes multi-day unavailable time and cannot race manage
   const races=await Promise.allSettled([mutateDispatchSelfAssignment(g.store,{user:'crew1'},{action:'claim',jobId:open.job.id,requestId:randomUUID()},NOW),g.mutate(g.create({time:'09:00',endTime:'11:00'},{customerId:'c2'}))]);
   assert.equal(races.filter(result=>result.status==='fulfilled').length,1);
 });
+
+test('a malformed dated assignment cannot silently advertise its crew as available',async () => {
+  const f=fixture();
+  f.rows.set('jobs/bad-time',{id:'bad-time',type:'job',date:'2026-09-23',time:'08:00',endTime:'',assignedCrew:['crew1'],status:'scheduled'});
+  await assert.rejects(f.mutate(f.create()),error=>error.code==='dispatch_conflict' && error.details.conflicts.some(conflict=>conflict.code==='unverifiable_assignment'));
+  const otherDay=await f.mutate(f.create({date:'2026-09-24'}));assert.equal(otherDay.ok,true);
+});
+
+test('canonical usernames containing punctuation remain valid leads and explicit object IDs never become display aliases',async () => {
+  const f=fixture();f.roster.push({id:'new.user',name:'Dot User',role:'crew'});
+  const job=await f.mutate(f.create({assignedCrew:['new.user'],crewLead:'new.user'}));
+  assert.equal(job.job.crewLead,'new.user');
+  f.rows.set('jobs/explicit',{id:'explicit',type:'job',date:'2026-09-24',time:'08:00',endTime:'10:00',assignedCrew:[{id:'Crew One',name:'Someone'}],status:'scheduled'});
+  const scheduled=await f.mutate(f.create({date:'2026-09-24'}));assert.equal(scheduled.ok,true);
+});

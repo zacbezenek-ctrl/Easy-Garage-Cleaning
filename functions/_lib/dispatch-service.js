@@ -85,10 +85,15 @@ function jobWarnings(job, jobs, resources, roster) {
   for (const other of jobs) {
     if (other.id === job.id || !activeJob(other)) continue;
     const otherInterval = scheduleInterval(other);
-    if (!otherInterval) continue;
     const shared = crew.filter(id => legacyMembers(other, roster).includes(id));
     const vehicle = job.vehicleId && job.vehicleId === other.vehicleId;
     if (!shared.length && !vehicle && other.type !== 'blocked') continue;
+    if (!otherInterval) {
+      // An existing dated assignment with malformed times cannot be treated as
+      // free capacity. Undated work is intentionally a schedulable backlog.
+      if (other.date && (!validDate(other.date) || other.date <= interval.endDate && (!validDate(other.endDate || other.date) || (other.endDate || other.date) >= interval.date))) add('unverifiable_assignment','Another assignment for this employee or vehicle has invalid times. Repair that schedule before assigning overlapping dates.',{otherJobId:other.id,employeeIds:shared,vehicleId:vehicle ? job.vehicleId : null});
+      continue;
+    }
     if (overlaps(interval, otherInterval)) add('schedule_overlap', 'This job overlaps another assignment.', { otherJobId: other.id, employeeIds: shared, vehicleId: vehicle ? job.vehicleId : null });
     else {
       const earlier = interval.end <= otherInterval.start ? job : other;
@@ -137,9 +142,13 @@ function schedulePatch(changes, current, resources, roster) {
     patch.endDate = changes.date ? addDays(changes.date,span) : '';
   }
   for (const key of ['title','address','serviceType','jobInstructions','accessInstructions','customerInstructions','opsNotes']) if (key in changes) patch[key] = text(changes[key], key, ['title','address','serviceType'].includes(key) ? 500 : 8000);
-  for (const key of ['crewId','vehicleId','crewLead']) if (key in changes) {
+  for (const key of ['crewId','vehicleId']) if (key in changes) {
     if (changes[key] !== null && changes[key] !== '' && !safeId(changes[key])) throw fail('dispatch_resource_invalid', `Choose a valid ${key}.`);
     patch[key] = changes[key] || null;
+  }
+  if ('crewLead' in changes) {
+    patch.crewLead = changes.crewLead ? resolveMember(changes.crewLead,roster) : null;
+    if (changes.crewLead && !patch.crewLead) throw fail('dispatch_employee_inactive','Choose an active employee as crew lead.');
   }
   if ('crewNeeded' in changes) patch.crewNeeded = integer(changes.crewNeeded,'Crew size',1,20);
   if ('travelBufferMinutes' in changes) patch.travelBufferMinutes = integer(changes.travelBufferMinutes,'Travel time',0,180);
@@ -175,7 +184,7 @@ function schedulePatch(changes, current, resources, roster) {
 
 function conflictCheck(next, jobs, resources, roster) {
   if (!activeJob(next) || !scheduleInterval(next)) return;
-  const conflicts = jobWarnings(next,jobs,resources,roster).filter(warning => ['schedule_overlap','employee_unavailable'].includes(warning.code));
+  const conflicts = jobWarnings(next,jobs,resources,roster).filter(warning => ['schedule_overlap','employee_unavailable','unverifiable_assignment'].includes(warning.code));
   if (conflicts.length) throw fail('dispatch_conflict','This change conflicts with scheduled work or employee availability. Choose a different time, crew, or vehicle.',409,{ conflicts });
 }
 
