@@ -17,6 +17,14 @@ const norm=v=>String(v||'').trim().replace(/\s+/g,' ').toLowerCase();
 const phone=v=>String(v||'').replace(/\D/g,'').replace(/^1(?=\d{10}$)/,'');
 const email=v=>String(v||'').trim().toLowerCase();
 const mins=v=>/^\d\d:\d\d$/.test(v||'')?Number(v.slice(0,2))*60+Number(v.slice(3)):NaN;
+function validateOperationalScope(scope,localJobId){
+ if(scope===undefined||scope===null)return;
+ if(!exact(scope,['sourceType','sourceId','sourceCreatedAt','sourceUpdatedAt','serviceType','accessNotes','itemsKeep','itemsRelocate','itemsRemove','estimatedLaborHours'])||scope.sourceType!=='local_job'||!uuid(scope.sourceId)||scope.sourceId!==localJobId||!['sourceCreatedAt','sourceUpdatedAt'].every(key=>scope[key]===null||instant(scope[key])!==null)||!(scope.serviceType===null||typeof scope.serviceType==='string'&&scope.serviceType.length<=500)||!(scope.accessNotes===null||typeof scope.accessNotes==='string'&&scope.accessNotes.length<=10000)||!(scope.estimatedLaborHours===null||typeof scope.estimatedLaborHours==='number'&&Number.isFinite(scope.estimatedLaborHours)&&scope.estimatedLaborHours>=0&&scope.estimatedLaborHours<=9999.99)||!['itemsKeep','itemsRelocate','itemsRemove'].every(key=>Array.isArray(scope[key])&&scope[key].length<=100&&scope[key].every(item=>typeof item==='string'&&item.length<=1000)))throw fail('schedule_adoption_operational_scope_invalid',400);
+ if([scope.serviceType||'',scope.accessNotes||'',...scope.itemsKeep,...scope.itemsRelocate,...scope.itemsRemove].reduce((sum,text)=>sum+text.length,0)>18000)throw fail('schedule_adoption_operational_scope_invalid',400);
+}
+function operationalScopeText(scope){
+ return [scope.serviceType&&`Service: ${scope.serviceType}`,scope.accessNotes&&`Access and source notes: ${scope.accessNotes}`,...[['Keep',scope.itemsKeep],['Relocate',scope.itemsRelocate],['Remove',scope.itemsRemove]].flatMap(([label,items])=>items.length?[`${label}:`,...items.map(item=>`- ${item}`)]:[]),scope.estimatedLaborHours!==null&&`Estimated labor hours: ${scope.estimatedLaborHours}`].filter(Boolean).join('\n');
+}
 function validateLock(lock){
  if(!lock)return;
  if(lock.recordType!=='schedule_lock'||!Array.isArray(lock.entries)||typeof lock.revision!=='string'||!lock.revision)throw fail('schedule_adoption_day_lock_invalid');
@@ -30,9 +38,10 @@ const local=value=>{const p=Object.fromEntries(new Intl.DateTimeFormat('en-US',{
 function validate(actor,input,now){
  if(actor?.kind!=='integration'||actor.role!=='integration'||actor.id!=='booking-adoption-worker'||actor.workspace!=='egc')throw fail('schedule_adoption_internal_only',403);
  const p=input?.proof,contact=p?.providerContact;
- if(!exact(input,['command','requestId','proof'])||input.command!=='schedule.adopt'||!uuid(input.requestId)||!exact(p,['source','sourceId','sourceRevision','contactProviderId','providerContact','kind','startAt','endAt','address','title','originalBookingAt','sourceCreatedAt','verifiedAt','providerAppointmentId','providerCalendarId','providerStatus','localJobId','normalizedLocalAppointmentId','evidenceIds'])||!['ghl_appointment','local_job'].includes(p.source)||!safeId(p.sourceId)||!safeId(p.contactProviderId)||typeof p.sourceRevision!=='string'||!p.sourceRevision||p.sourceRevision.length>200||!['walkthrough','job'].includes(p.kind)||typeof p.address!=='string'||!p.address.trim()||p.address.length>1000||typeof p.title!=='string'||!p.title.trim()||p.title.length>500)throw fail('schedule_adoption_proof_invalid',400);
+ if(!exact(input,['command','requestId','proof'])||input.command!=='schedule.adopt'||!uuid(input.requestId)||!exact(p,['source','sourceId','sourceRevision','contactProviderId','providerContact','kind','startAt','endAt','address','title','originalBookingAt','sourceCreatedAt','verifiedAt','providerAppointmentId','providerCalendarId','providerStatus','localJobId','normalizedLocalAppointmentId','evidenceIds','operationalScope'])||!['ghl_appointment','local_job'].includes(p.source)||!safeId(p.sourceId)||!safeId(p.contactProviderId)||typeof p.sourceRevision!=='string'||!p.sourceRevision||p.sourceRevision.length>200||!['walkthrough','job'].includes(p.kind)||typeof p.address!=='string'||!p.address.trim()||p.address.length>1000||typeof p.title!=='string'||!p.title.trim()||p.title.length>500)throw fail('schedule_adoption_proof_invalid',400);
  if(!exact(contact,['id','locationId','name','firstName','lastName','phone','email','address1'])||contact.id!==p.contactProviderId||Object.values(contact).some(v=>typeof v!=='string'||v.length>1000)||contact.locationId!==undefined&&!safeId(contact.locationId))throw fail('schedule_adoption_contact_invalid',400);
  if(!Array.isArray(p.evidenceIds)||!p.evidenceIds.length||p.evidenceIds.length>30||p.evidenceIds.some(x=>typeof x!=='string'||!/^[A-Za-z0-9:_-]{1,200}$/.test(x))||!['localJobId','normalizedLocalAppointmentId'].every(k=>p[k]===null||uuid(p[k])))throw fail('schedule_adoption_proof_invalid',400);
+ validateOperationalScope(p.operationalScope,p.localJobId);
  const verified=instant(p.verifiedAt),start=instant(p.startAt),end=instant(p.endAt),at=Date.parse(now);
  if(verified===null||verified>at+5000||verified<at-120000)throw fail('schedule_adoption_proof_expired');
  if(start===null||end===null||end<=start||end-start>86400000||start<at-900000||start>at+180*86400000)throw fail('schedule_adoption_time_out_of_scope');
@@ -113,6 +122,13 @@ export async function adoptScheduledVisit(store,actor,input,now=new Date().toISO
  const source={type:p.source,id:p.sourceId,revision:p.sourceRevision,verifiedAt,evidenceIds:[...new Set(p.evidenceIds)]};
  const patch={id,type:current?.type||p.kind,customerId,projectId,highlevelContactId:p.contactProviderId,scheduleSource:'egc_hub',providerSyncOwner:'operations',adoptionSource:source,adoptedAt:current?.adoptedAt||now,adoptionOriginalBookingAt:p.originalBookingAt,updatedAt:now};
  if(!current)Object.assign(patch,{bookingKey,date:from.date,time:from.time,endTime:to.time,status:'scheduled',pipelineStatus:'scheduled',createdAt:p.originalBookingAt||p.sourceCreatedAt||null,createdBy:actor.id,title:p.title,serviceType:p.kind==='walkthrough'?'Free garage walkthrough':'Customer job',customer:p.providerContact.name||[p.providerContact.firstName,p.providerContact.lastName].filter(Boolean).join(' '),phone:p.providerContact.phone||'',email:p.providerContact.email||'',address:p.address});
+ if(!current&&p.operationalScope){
+  const scope=p.operationalScope;
+  patch.adoptionOperationalScope=structuredClone(scope);
+  patch.operationalScope={text:operationalScopeText(scope),updatedBy:actor.id,updatedAt:now,reason:'Preserved exact local operational source during verified Hub adoption',approvalKind:'staff_operational_instructions',sourceType:scope.sourceType,sourceId:scope.sourceId,sourceRevision:p.sourceRevision};
+  patch.originalServiceType=scope.serviceType;
+  if(p.kind==='job'&&scope.serviceType?.trim())patch.serviceType=scope.serviceType;
+ }
  if(p.localJobId)patch.normalizedLocalJobId=p.localJobId;if(p.normalizedLocalAppointmentId)patch.normalizedLocalAppointmentId=p.normalizedLocalAppointmentId;
  if(p.providerAppointmentId)Object.assign(patch,{highlevelAppointmentId:p.providerAppointmentId,highlevelCalendarId:p.providerCalendarId,providerAppointmentStatus:p.providerStatus,syncStatus:'synced',syncedAt:verifiedAt});else if(!current?.highlevelAppointmentId)patch.syncStatus='pending';
  const next={...current,...patch},writes=[{collection:'jobs',id,revision:current?.revision,patch}];

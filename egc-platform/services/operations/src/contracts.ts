@@ -78,6 +78,11 @@ export const patchTaskSchema = z.object({
 }).strict().refine(value => Object.keys(value).length > 0, "At least one change is required");
 const versioned = { taskId: entityId, revision: z.number().int().positive() };
 const page = { offset: z.number().int().min(0).max(1000000).default(0), limit:z.number().int().min(1).max(200).default(50) };
+const adoptionOperationalScope=z.object({
+  sourceType:z.literal("local_job"),sourceId:entityId,sourceCreatedAt:isoTime.nullable(),sourceUpdatedAt:isoTime.nullable(),serviceType:z.string().max(500).nullable(),accessNotes:z.string().max(10000).nullable(),
+  itemsKeep:z.array(z.string().max(1000)).max(100),itemsRelocate:z.array(z.string().max(1000)).max(100),itemsRemove:z.array(z.string().max(1000)).max(100),
+  estimatedLaborHours:z.number().min(0).max(9999.99).nullable()
+}).strict().refine(scope=>[scope.serviceType||"",scope.accessNotes||"",...scope.itemsKeep,...scope.itemsRelocate,...scope.itemsRemove].reduce((sum,text)=>sum+text.length,0)<=18000,"Operational scope exceeds the bounded source text limit");
 export const commandSchema = z.discriminatedUnion("command", [
   z.object({command:z.literal("intelligence.report"),since:isoTime,until:isoTime,cohortSince:isoTime.optional(),cohortUntil:isoTime.optional()}).strict(),
   z.object({command:z.literal("intelligence.diagnostics")}).strict(),
@@ -94,8 +99,8 @@ export const commandSchema = z.discriminatedUnion("command", [
     kind:z.enum(["walkthrough","job"]),startAt:isoTime,endAt:isoTime,address:z.string().trim().min(1).max(1000),title:z.string().trim().min(1).max(500),
     originalBookingAt:isoTime.nullable(),sourceCreatedAt:isoTime.nullable(),verifiedAt:isoTime,
     providerAppointmentId:portalId.nullable(),providerCalendarId:portalId.nullable(),providerStatus:z.enum(["confirmed","new"]).nullable(),
-    localJobId:entityId.nullable(),normalizedLocalAppointmentId:entityId.nullable(),evidenceIds:z.array(z.string().regex(/^[A-Za-z0-9:_-]{1,200}$/)).min(1).max(30)
-  }).strict()}).strict(),
+    localJobId:entityId.nullable(),normalizedLocalAppointmentId:entityId.nullable(),evidenceIds:z.array(z.string().regex(/^[A-Za-z0-9:_-]{1,200}$/)).min(1).max(30),operationalScope:adoptionOperationalScope.nullable().optional()
+  }).strict().refine(proof=>!proof.operationalScope||proof.operationalScope.sourceId===proof.localJobId,"Operational scope must reference the exact local job")}).strict(),
   z.object({command:z.literal("schedule.link_customer"),portalVisitId:portalId,expectedRevision:z.string().min(1),providerContact:z.record(z.string(),z.unknown())}).strict(),
   z.object({command:z.literal("schedule.resolve"),portalVisitId:portalId}).strict(),
   z.object({command:z.literal("schedule.mutate"),requestId:entityId,mode:z.enum(["create","update","cancel"]),portalVisitId:portalId.optional(),portalCustomerId:portalId,sourceWalkthroughId:portalId.optional(),

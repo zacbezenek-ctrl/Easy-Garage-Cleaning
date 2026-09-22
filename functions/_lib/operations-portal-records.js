@@ -100,7 +100,7 @@ export async function portalJob(env,id,fetcher=firestoreFetch) {
     date:r.date||null,endDate:r.endDate||r.date||null,time:r.time||null,endTime:r.endTime||null,scope:r.jobInstructions||r.scope||null,
     scopeApproval:r.acceptance?.acceptedAt?'customer_acceptance_recorded':'not_explicit_in_source',notes:r.notes||null,operationNotes:r.operationNotes||[],operationalScope:r.operationalScope||null,completedAt:r.completedAt||financials.completion?.at||null,soldAt:financials.quote?.at||null,
     highlevelAppointmentId:r.highlevelAppointmentId||null,highlevelCalendarId:r.highlevelCalendarId||null,providerAppointmentStatus:r.providerAppointmentStatus||null,
-    normalizedLocalJobId:r.normalizedLocalJobId||null,normalizedLocalAppointmentId:r.normalizedLocalAppointmentId||null,adoptionSource:r.adoptionSource||null,
+    normalizedLocalJobId:r.normalizedLocalJobId||null,normalizedLocalAppointmentId:r.normalizedLocalAppointmentId||null,adoptionSource:r.adoptionSource||null,adoptionOperationalScope:r.adoptionOperationalScope||null,originalServiceType:r.originalServiceType||null,
     syncStatus:r.syncStatus||'unknown',syncedAt:r.syncedAt||null,createdAt:r.createdAt||null,updatedAt:r.updatedAt||null},
     financials,reviewedWalkthroughScope:r.reviewedWalkthroughScope||null,
     coverage:{complete:true,asOf:new Date().toISOString()}};
@@ -112,7 +112,7 @@ export async function portalEvidence(env,command,fetcher=firestoreFetch){
   const requested=command.contactProviderIds;
   if(!Array.isArray(requested)||!requested.length||requested.length>500||requested.some(id=>typeof id!=='string'||!SAFE_ID.test(id)))throw error('invalid_portal_evidence_contacts',400);
   const contactIds=new Set(requested),records=[],seen=new Set(),tokens=new Set();let token='',pages=0;
-  const fields=['recordType','type','highlevelContactId','customerId','projectId','sourceWalkthroughId','date','endDate','time','endTime','status','pipelineStatus','createdAt','updatedAt','adoptionOriginalBookingAt','originalBookingAt','completedAt','soldAt','highlevelAppointmentId','highlevelCalendarId','providerAppointmentStatus','syncStatus','syncedAt','address','isTest','test','estimate','customerApproval','payment','invoice','postJobChecklist','refunds','normalizedLocalJobId','normalizedLocalAppointmentId','adoptionSource','scope','jobInstructions','operationalScope','serviceType','notes','operationNotes'];
+  const fields=['recordType','type','highlevelContactId','customerId','projectId','sourceWalkthroughId','date','endDate','time','endTime','status','pipelineStatus','createdAt','updatedAt','adoptionOriginalBookingAt','originalBookingAt','completedAt','soldAt','highlevelAppointmentId','highlevelCalendarId','providerAppointmentStatus','syncStatus','syncedAt','address','isTest','test','estimate','customerApproval','payment','invoice','postJobChecklist','refunds','normalizedLocalJobId','normalizedLocalAppointmentId','adoptionSource','scope','jobInstructions','operationalScope','serviceType','notes','operationNotes','adoptionOperationalScope','originalServiceType'];
   do{
     if(++pages>200)throw error('portal_evidence_scan_incomplete');
     const url=new URL(BASE);url.searchParams.set('pageSize','500');if(token)url.searchParams.set('pageToken',token);for(const field of fields)url.searchParams.append('mask.fieldPaths',field);
@@ -122,7 +122,7 @@ export async function portalEvidence(env,command,fetcher=firestoreFetch){
       const r=decodeDoc(raw);if(excluded(r)||r.isTest===true||r.test===true||!contactIds.has(r.highlevelContactId))continue;
       if(seen.has(r.id))throw error('portal_evidence_changed_during_scan');seen.add(r.id);
       if(!['job','walkthrough','cleanout','reorg'].includes(r.type))continue;
-      const financials=financialFacts(r),truncatedFields=new Set(),content=Object.fromEntries(['scope','jobInstructions','operationalScope','serviceType','notes','operationNotes'].map(field=>[field,safeOperationalContent(r[field],truncatedFields,field)]));
+      const financials=financialFacts(r),truncatedFields=new Set(),content=Object.fromEntries(['scope','jobInstructions','operationalScope','serviceType','notes','operationNotes','adoptionOperationalScope','originalServiceType'].map(field=>[field,safeOperationalContent(r[field],truncatedFields,field)]));
       records.push({id:r.id,highlevelContactId:r.highlevelContactId,kind:r.type==='walkthrough'?'walkthrough':'job',sourceType:r.type,status:r.pipelineStatus||r.status||'unknown',customerId:r.customerId||null,projectId:r.projectId||null,
         createdAt:r.createdAt||null,updatedAt:r.updatedAt||null,originalBookingAt:r.adoptionOriginalBookingAt||r.originalBookingAt||r.adoptionSource?.originalBookingAt||null,completedAt:r.completedAt||financials.completion?.at||null,soldAt:financials.quote?.at||null,
         startAt:localInstant(String(r.date||''),String(r.time||'')),endAt:localInstant(String(r.endDate||r.date||''),String(r.endTime||'')),localDate:r.date||null,localEndDate:r.endDate||r.date||null,localStart:r.time||null,localEnd:r.endTime||null,timeZone:'America/Denver',
