@@ -27,6 +27,15 @@ test('partial, duplicate and stalled result sets fail closed instead of omitting
   await assert.rejects(dispatchStorage({},async()=>response({error:'unavailable'},503)).jobs(),error=>error.code==='dispatch_storage_unavailable');
 });
 
+test('corrupt pagination, document identity and missing revisions cannot masquerade as complete schedule data',async()=>{
+  for(const body of [null,[],{nextPageToken:0},{nextPageToken:{opaque:true}},{documents:[{...document('job'),updateTime:''}]},{documents:[{...document('job'),fields:[]}]},{documents:[{...document('job'),name:'projects/egcw-1ec83/databases/(default)/documents/customers/job'}]}]) {
+    await assert.rejects(dispatchStorage({},async()=>response(body)).jobs(),error=>error.code==='dispatch_storage_incomplete');
+  }
+  await assert.rejects(dispatchStorage({},async()=>response(document('other'))).read('jobs','requested'),error=>error.code==='dispatch_storage_incomplete');
+  const valid=await dispatchStorage({},async()=>response(document('requested',{id:{stringValue:'fake-stored-id'}}))).read('jobs','requested');
+  assert.equal(valid.id,'requested');assert.ok(valid.revision);
+});
+
 test('all writes use create-only or exact revision and a single atomic commit',async () => {
   let sent;
   const store=dispatchStorage({},async (env,url,options)=>{sent={url,body:JSON.parse(options.body)};return response({writeResults:[]});});

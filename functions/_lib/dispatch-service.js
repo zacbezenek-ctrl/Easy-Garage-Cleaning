@@ -88,18 +88,56 @@ export function projectDispatchJob(job, roster = []) {
     timeZone: DISPATCH_TIME_ZONE, timeNeedsReview: Boolean(job.date) && !interval };
 }
 
-function jobWarnings(job, jobs, resources, roster) {
+function scheduleInspection(jobs,resources,roster) {
+  const intervals=new WeakMap(),memberships=new WeakMap(),byEmployee=new Map(),byVehicle=new Map(),global=[],active=jobs.filter(activeJob),order=new Map(active.map((job,index)=>[job,index]));
+  const crew=job=>{if(!memberships.has(job))memberships.set(job,legacyMembers(job,roster));return memberships.get(job);};
+  const interval=job=>{if(!intervals.has(job))intervals.set(job,scheduleInterval(job));return intervals.get(job);};
+  const append=(map,id,row)=>{if(!map.has(id))map.set(id,[]);map.get(id).push(row);};
+  for(const job of active) {
+    const ids=crew(job);
+    if(job.type==='blocked'||job.assignmentKnown===false||!ids.length&&!Array.isArray(job.assignedCrew))global.push(job);
+    for(const id of ids)append(byEmployee,id,job);
+    if(job.vehicleId)append(byVehicle,job.vehicleId,job);
+  }
+  const availability=new Map();
+  for(const block of [...resources.filter(row=>row.recordType==='availability'),...jobs.filter(row=>row.type==='availability'||row.recordType==='crew_availability')]) {
+    if(TERMINAL.has(state(block)))continue;
+    const person=resolveMember(block.employeeId||block.employee,roster,true);
+    if(person)append(availability,person,{block,person,interval:availabilityInterval(block)});
+  }
+  return {crew,interval,
+    neighbors(job) {
+      const ids=crew(job);
+      if(job.type==='blocked'||job.assignmentKnown===false||!ids.length&&!Array.isArray(job.assignedCrew))return active;
+      const found=new Set(global);
+      for(const id of ids)for(const other of byEmployee.get(id)||[])found.add(other);
+      for(const other of byVehicle.get(job.vehicleId)||[])found.add(other);
+      return [...found].sort((a,b)=>order.get(a)-order.get(b));
+    },
+    availability(job){return crew(job).flatMap(id=>availability.get(id)||[]);},
+  };
+}
+
+function potentiallyNear(left,right) {
+  const leftEnd=left.endDate||left.date,rightEnd=right.endDate||right.date;
+  if(!validDate(left.date)||!validDate(leftEnd)||!validDate(right.date)||!validDate(rightEnd)||leftEnd<left.date||rightEnd<right.date)return true;
+  const buffer=Math.max(Number(left.travelBufferMinutes)||0,Number(right.travelBufferMinutes)||0);
+  const days=Math.ceil(buffer/1440);
+  return rightEnd>=addDays(left.date,-days)&&right.date<=addDays(leftEnd,days);
+}
+
+function jobWarnings(job, jobs, resources, roster, inspection=scheduleInspection(jobs,resources,roster)) {
   const warnings = [], add = (code, message, extra = {}) => warnings.push({ code, jobId: job.id, message, ...extra });
   if (job.fieldExecution?.attention?.status === 'open') add('needs_follow_up',job.fieldExecution.attention.reason || 'The crew flagged this job for management follow-up.');
-  if (['pending','error'].includes(job.fieldCompletionSync?.status)) add(`completion_sync_${job.fieldCompletionSync.status}`,String(job.fieldCompletionSync.message || 'Work completion is saved; the CRM completion handoff needs confirmation.').slice(0,600));
+  if (['pending','error','blocked'].includes(job.fieldCompletionSync?.status)) add(`completion_sync_${job.fieldCompletionSync.status}`,String(job.fieldCompletionSync.message || 'Work completion is saved; the CRM completion handoff needs confirmation.').slice(0,600));
   if (!activeJob(job)) return warnings;
   if (['paused','waiting','delayed'].includes(fieldActivity(job))) add(`job_${fieldActivity(job)}`,job.fieldExecution.activityReason || `The crew reported this job as ${fieldActivity(job)}.`);
-  const interval = scheduleInterval(job), crew = legacyMembers(job, roster);
+  const interval = inspection.interval(job), crew = inspection.crew(job);
+  if (!interval) add(job.date ? 'invalid_schedule' : 'unscheduled', job.date ? 'The saved date or time needs review.' : 'This job has no scheduled time.');
   if (job.type !== 'blocked') {
   if (!String(job.address || '').trim()) add('missing_address', 'Add the job address before dispatching the crew.');
   if (!job.customerId) add('missing_customer_link', 'This legacy job needs its canonical customer link reviewed.');
   if (!String(scopeText(job)).trim()) add('missing_scope', 'Add the work scope so the crew knows what was sold.');
-  if (!interval) add(job.date ? 'invalid_schedule' : 'unscheduled', job.date ? 'The saved date or time needs review.' : 'This job has no scheduled time.');
   if (!crew.length) add('unassigned', 'No employees are assigned.');
   if (crew.length < (job.crewNeeded || job.requiredCrewSize || 1)) add('crew_size_short', `Requires ${job.crewNeeded || job.requiredCrewSize || 1} crew members; ${crew.length} assigned.`);
   if (crew.some(id => !roster.some(person => person.id === id))) add('inactive_assignment', 'An assigned employee is no longer in the active roster.');
@@ -108,12 +146,12 @@ function jobWarnings(job, jobs, resources, roster) {
   if (job.syncStatus === 'pending' || job.syncStatus === 'error') add('provider_sync_pending', 'The Hub schedule is saved; the HighLevel mirror still needs confirmation.');
   }
   if (!interval) return warnings;
-  for (const other of jobs) {
-    if (other.id === job.id || !activeJob(other)) continue;
-    const otherInterval = scheduleInterval(other);
-    const shared = crew.filter(id => legacyMembers(other, roster).includes(id));
+  for (const other of inspection.neighbors(job)) {
+    if (other.id === job.id || !potentiallyNear(job,other)) continue;
+    const shared = crew.filter(id => inspection.crew(other).includes(id));
     const vehicle = job.vehicleId && job.vehicleId === other.vehicleId;
     if (!sharedScheduleResources(job,other,roster)) continue;
+    const otherInterval = inspection.interval(other);
     if (!otherInterval) {
       // An existing dated assignment with malformed times cannot be treated as
       // free capacity. Undated work is intentionally a schedulable backlog.
@@ -129,11 +167,8 @@ function jobWarnings(job, jobs, resources, roster) {
       if (buffer && gap < buffer && assignmentKey(earlier.address) !== assignmentKey(later.address)) add('travel_buffer_short', `Only ${gap} minutes between jobs; ${buffer} minutes were requested for travel.`, { otherJobId: other.id, gapMinutes: gap, requiredMinutes: buffer });
     }
   }
-  const blocks = [...resources.filter(resource => resource.recordType === 'availability'), ...jobs.filter(row => row.type === 'availability' || row.recordType === 'crew_availability')];
-  for (const block of blocks) {
-    if (block.status === 'cancelled') continue;
-    const person = resolveMember(block.employeeId || block.employee, roster, true);
-    if (person && crew.includes(person) && scheduleRowsConflict(job,block,roster)) add('employee_unavailable', 'An assigned employee has unavailable time or time off with invalid dates during this job.', { employeeId: person, availabilityId: block.id });
+  for (const {block,person,interval:blockInterval} of inspection.availability(job)) {
+    if (blockInterval ? overlaps(interval,blockInterval) : scheduleRowsConflict(job,block,roster)) add('employee_unavailable', 'An assigned employee has unavailable time or time off with invalid dates during this job.', { employeeId: person, availabilityId: block.id });
   }
   return warnings;
 }
@@ -156,12 +191,13 @@ export async function dispatchOverview(store, session, query = {}, now = new Dat
   if (!validDate(startDate) || !validDate(endDate) || startDate >= endDate || Date.parse(endDate) - Date.parse(startDate) > 93 * 86400000) throw fail('dispatch_range_invalid', 'Choose a valid date range of up to 93 days. The end date is exclusive.');
   const [jobs, resources, roster] = await Promise.all([store.jobs(), store.resources(), store.roster()]);
   const includeUnscheduled = query.includeUnscheduled === true || query.includeUnscheduled === 'true';
-  const selected = jobs.filter(visibleJob).filter(job => !validDate(job.date) ? includeUnscheduled : job.date < endDate && (job.endDate || job.date) >= startDate);
+  const selected = jobs.filter(visibleJob).filter(job => !job.date ? includeUnscheduled : !validDate(job.date) || job.endDate && (!validDate(job.endDate) || job.endDate < job.date) || job.date < endDate && (job.endDate || job.date) >= startDate);
   selected.sort((a,b) => String(a.date || '9999').localeCompare(String(b.date || '9999')) || String(a.time || '').localeCompare(String(b.time || '')) || a.id.localeCompare(b.id));
+  const inspection=scheduleInspection(jobs,resources,roster);
   return { ok: true, timeZone: DISPATCH_TIME_ZONE, startDate, endDate, jobs: selected.map(job=>projectDispatchJob(job,roster)), roster,
     crews: resources.filter(row => row.recordType === 'crew'), vehicles: resources.filter(row => row.recordType === 'vehicle'),
     availability: resources.filter(row => row.recordType === 'availability').concat(jobs.filter(row => row.type === 'availability' || row.recordType === 'crew_availability').map(row => ({ ...row, employeeId: resolveMember(row.employee,roster,true) || row.employee }))).filter(row => row.date < endDate && (row.endDate || row.date) >= startDate),
-    warnings: selected.flatMap(job => jobWarnings(job, jobs, resources, roster)), coverage: { complete: true, asOf: now.toISOString() } };
+    warnings: selected.flatMap(job => jobWarnings(job, jobs, resources, roster,inspection)), coverage: { complete: true, asOf: now.toISOString() } };
 }
 
 const SCHEDULE_KEYS = ['date','time','endDate','endTime','assignedCrew','crewLead','crewId','vehicleId','crewNeeded','travelBufferMinutes','title','address','serviceType','jobInstructions','accessInstructions','customerInstructions','opsNotes','requiredEquipment','materials','recurrence','reminderDays','notify','shiftPickupEnabled','notes'];
@@ -224,9 +260,9 @@ function schedulePatch(changes, current, resources, roster, now, actor) {
   return patch;
 }
 
-function conflictCheck(next, jobs, resources, roster) {
+function conflictCheck(next, jobs, resources, roster,inspection) {
   if (!activeJob(next) || !scheduleInterval(next)) return;
-  const conflicts = jobWarnings(next,jobs,resources,roster).filter(warning => ['schedule_overlap','employee_unavailable','unverifiable_assignment'].includes(warning.code));
+  const conflicts = jobWarnings(next,jobs,resources,roster,inspection).filter(warning => ['schedule_overlap','employee_unavailable','unverifiable_assignment'].includes(warning.code));
   if (conflicts.length) throw fail('dispatch_conflict','This change conflicts with scheduled work or employee availability. Choose a different time, crew, or vehicle.',409,{ conflicts });
 }
 
@@ -384,8 +420,9 @@ async function executeDispatch(store, session, input, now) {
     // Read final conflict evidence AFTER acquiring each affected day revision;
     // either we see an older sender's job or its commit invalidates our lock.
     const finalJobs = days.length ? await store.jobs() : jobs;
-    conflictCheck(next,finalJobs,resources,roster);
-    warnings = jobWarnings(next,finalJobs,resources,roster);
+    const inspection=scheduleInspection(finalJobs,resources,roster);
+    conflictCheck(next,finalJobs,resources,roster,inspection);
+    warnings = jobWarnings(next,finalJobs,resources,roster,inspection);
   } else {
     collection = 'dispatchResources';
     id = input.id || `${input.action.split('.')[0]}_${receiptId.replaceAll('-','')}`;

@@ -357,6 +357,7 @@ test('exact dispatch lookup survives date changes and completion handoff remains
   assert.deepEqual(result.job.completionSync,{status:'error',message:'Retry CRM handoff',attemptedAt:NOW,syncedAt:null});
   assert.ok(result.warnings.some(w=>w.code==='completion_sync_error'));
   raw.fieldCompletionSync.status='pending';assert.ok((await dispatchOverview(f.store,manager,{view:'job',jobId:created.job.id})).warnings.some(w=>w.code==='completion_sync_pending'));
+  raw.fieldCompletionSync.status='blocked';assert.ok((await dispatchOverview(f.store,manager,{view:'job',jobId:created.job.id})).warnings.some(w=>w.code==='completion_sync_blocked'));
   await assert.rejects(dispatchOverview(f.store,{user:'crew1',role:'crew'},{view:'job',jobId:created.job.id}),e=>e.status===403);
   await assert.rejects(dispatchOverview(f.store,manager,{view:'job',jobId:'secure_account'}),e=>e.status===404);
 });
@@ -382,4 +383,26 @@ test('dispatch viewer identity is verified by the session for each GET shape',as
     const response=await handlers.get({request:new Request('https://egc.test/api/dispatch'+query),env:{}});
     assert.equal(response.status,200);assert.deepEqual((await response.json()).viewer,{id:'zacb'});
   }
+});
+
+test('dispatch read reuses date calculations and ignores unrelated history without losing current conflicts',async()=>{
+  const f=fixture(),base={type:'job',customerId:'c1',customer:'Customer',address:'100 Test',jobInstructions:'Clean',status:'scheduled',assignedCrew:['crew1'],time:'08:00',endTime:'09:00',travelBufferMinutes:0};
+  for(let i=0;i<1500;i++)f.rows.set(`jobs/history_${i}`,{...base,id:`history_${i}`,date:'2025-01-01',revision:`history${i}`});
+  for(let i=0;i<60;i++)f.rows.set(`jobs/current_${i}`,{...base,id:`current_${i}`,date:'2026-09-23',revision:`current${i}`});
+  const original=Intl.DateTimeFormat;let conversions=0;
+  Intl.DateTimeFormat=new Proxy(original,{construct(target,args,newTarget){conversions++;return Reflect.construct(target,args,newTarget);}});
+  let result;
+  try { result=await dispatchOverview(f.store,manager,{startDate:'2026-09-23',endDate:'2026-09-24'}); }
+  finally {Intl.DateTimeFormat=original;}
+  assert.equal(result.jobs.length,60);assert.equal(result.warnings.filter(w=>w.code==='schedule_overlap').length,60*59);
+  assert.ok(conversions<=400,`Denver conversion work must scale with visible/relevant rows, not every job pair (${conversions}).`);
+});
+
+test('corrupt scheduled dates remain visible for repair even without the unscheduled backlog filter',async()=>{
+  const f=fixture();
+  for(const [id,changes] of [['bad-end',{date:'2026-09-23',endDate:'2026-09-21'}],['bad-date',{date:'not-a-date'}],['bad-block',{type:'blocked',date:'2026-09-23',time:'invalid'}]])f.rows.set('jobs/'+id,{id,type:'job',status:'scheduled',time:'08:00',endTime:'10:00',assignedCrew:['crew1'],revision:id,...changes});
+  f.rows.set('jobs/backlog',{id:'backlog',type:'job',date:'',status:'unscheduled',assignedCrew:[],revision:'backlog'});
+  const result=await dispatchOverview(f.store,manager,{startDate:'2026-09-23',endDate:'2026-09-24',includeUnscheduled:false});
+  assert.deepEqual(result.jobs.map(job=>job.id).sort(),['bad-block','bad-date','bad-end']);
+  assert.equal(result.warnings.filter(w=>w.code==='invalid_schedule').length,3);
 });

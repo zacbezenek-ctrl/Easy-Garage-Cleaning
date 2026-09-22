@@ -6,7 +6,12 @@ import { listHubUserProfiles } from './hub-session.js';
 const ROOT = 'projects/egcw-1ec83/databases/(default)/documents';
 const BASE = `https://firestore.googleapis.com/v1/${ROOT}`;
 const failure = (code, message, status = 503) => Object.assign(new Error(message), { code, status });
-const decode = document => ({ ...decodeFirestoreFields(document.fields || {}), id: String(document.name || '').split('/').pop(), revision: document.updateTime || '' });
+function decode(document,collection,id) {
+  const prefix=`/documents/${collection}/`,name=document?.name;
+  const path=typeof name==='string'&&name.includes(prefix)?name.slice(name.indexOf(prefix)+prefix.length):'';
+  if (!path||path.includes('/')||id&&path!==id||typeof document.updateTime!=='string'||!document.updateTime||document.fields!==undefined&&(!document.fields||typeof document.fields!=='object'||Array.isArray(document.fields))) throw failure('dispatch_storage_incomplete','Dispatch received a record without a verifiable identity or revision. Refresh before changing work.');
+  return {...decodeFirestoreFields(document.fields || {}),id:path,revision:document.updateTime};
+}
 const JOB_FIELDS = ['type','recordType','date','time','endDate','endTime','customerId','customer','phone','address','title','serviceType','status','pipelineStatus','assignedCrew','assignedTo','crewLead','crewId','vehicleId','crewNeeded','requiredCrewSize','travelBufferMinutes','jobInstructions','operationalScope.text','scope','scopeOfWork','accessInstructions','customerInstructions','opsNotes','requiredEquipment','materials','syncStatus','highlevelAppointmentId','highlevelContactId','sourceWalkthroughId','sourceTemplateJobId','recurrence','recurrenceParentId','reminderDays','notify','shiftPickupEnabled','openShift','notes','durationMin','estimatedDurationMin','createdAt','updatedAt','completedAt','cancelledAt','startedAt','employee','employeeId','allDay','reason','startAt','endAt','fieldExecution.activity','fieldExecution.activityReason','fieldExecution.activityAt','fieldExecution.activityBy','fieldExecution.attention','fieldExecution.jobTime','fieldLastActionAt','fieldCompletionSync.status','fieldCompletionSync.message','fieldCompletionSync.attemptedAt','fieldCompletionSync.syncedAt'];
 
 export async function dispatchRoster(env) {
@@ -39,9 +44,10 @@ export function dispatchStorage(env, fetcher = firestoreFetch) {
       const response = await send(url);
       if (!response.ok) throw failure('dispatch_storage_unavailable', 'The complete dispatch records could not be loaded. Retry before scheduling.');
       const page = await response.json();
+      if (!page||typeof page!=='object'||Array.isArray(page)||page.nextPageToken!==undefined&&typeof page.nextPageToken!=='string') throw failure('dispatch_storage_incomplete','Dispatch pagination returned incomplete metadata. Retry before scheduling.');
       if (page.documents !== undefined && !Array.isArray(page.documents)) throw failure('dispatch_storage_incomplete', 'Dispatch returned incomplete records. Retry before scheduling.');
       for (const document of page.documents || []) {
-        const row = decode(document);
+        const row = decode(document,collection);
         if (!row.id || ids.has(row.id) || rows.length >= limit) throw failure('dispatch_storage_incomplete', 'Dispatch could not verify the complete schedule. Narrowing the displayed dates will not bypass conflict checks.');
         rows.push(row); ids.add(row.id);
       }
@@ -60,7 +66,7 @@ export function dispatchStorage(env, fetcher = firestoreFetch) {
       const response = await send(`${BASE}/${collection}/${encodeURIComponent(id)}`);
       if (response.status === 404) return null;
       if (!response.ok) throw failure('dispatch_storage_unavailable', 'The dispatch record could not be loaded. Retry.');
-      return decode(await response.json());
+      return decode(await response.json(),collection,id);
     },
     async commit(writes) {
       let response;
