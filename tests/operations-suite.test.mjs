@@ -272,7 +272,7 @@ test('crew checklist progress resumes across devices and is visible to the manag
 });
 
 test('dispatch and job start create explicit HighLevel lifecycle triggers',async()=>{
-  for(const marker of ['async function syncLifecycle','job-dispatched','job-arrived','job-started','lifecycleSync','lifecycleSyncPayload','lifecycleSyncNextRetryAt','opsRetryLifecycle','Workflow trigger remains safely queued','Status saved and HighLevel workflow triggered','Add the walkthrough brief before dispatching this crew'])assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
+  for(const marker of ['async function syncLifecycle','lifecycleSync','lifecycleSyncPayload','lifecycleSyncNextRetryAt','opsRetryLifecycle','Workflow trigger remains safely queued',"location.href=job.type==='walkthrough'?'/crew/gameplan.html?walkthroughId='", "'/crew/job.html?jobId='+encodeURIComponent(id)"])assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
   for(const marker of ['async function syncStartLifecycle',"event:'job-started'",'lifecycleSyncPayload:payload','lifecycleSyncNextRetryAt','HighLevel was notified'])assert.match(prejob,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
   assert.match(suite,/dispatchable=ready&&stage==='scheduled'/);
   const {onRequestPost}=await import('../functions/api/highlevel.js'),calls=[],originalFetch=globalThis.fetch;
@@ -501,7 +501,7 @@ test('resaving a walkthrough updates the existing HighLevel job appointment and 
 });
 
 test('Hub finance scaffolding and customer history work without claiming external settlement',()=>{
-  for(const marker of ['function customerRows','function customerHistory','function financeState','function jobEconomics','function financeSummary','function financeBoard','Known job contribution','crew-hrs','direct cost','before overhead and ads','Load variance','opsFinanceAction','Record approval','Record deposit','Issue invoice','Record payment','acceptanceMethod','termsVersion','verified:true','verifiedPaid','pendingPaid','Verified collected','pending manager verification','Verify the payment reference in Finance before marking this job paid','A payment reference is required for verification','Hub records only · keys needed']){
+  for(const marker of ['function customerRows','function customerHistory','function financeState','function jobEconomics','function financeSummary','function financeBoard','Known job contribution','crew-hrs','direct cost','before overhead and ads','Load variance','opsFinanceAction','Record approval','Record deposit','Issue invoice','Record payment','acceptanceMethod','termsVersion','verified:true','verifiedPaid','pendingPaid','Verified collected','pending manager verification','Use Estimates & payments to record verified financial activity.','A payment reference is required for verification','Hub records only · keys needed']){
     assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),marker+' is missing');
   }
   assert.match(suite,/jobs\(\)\.filter\(j=>j\.type!=='blocked'\)/);
@@ -1215,7 +1215,7 @@ test('post-booking portal saves customer memory decisions rebooking family acces
 });
 
 test('customer experience manager flow supports remote decisions credits membership and paid closeout',()=>{
-  for(const marker of ['customerExperienceManager','opsSendCustomerDecision','opsIssueCustomerCredit','opsSetCustomerMembership','opsReviewRebooking','decision-needed','Customer portal profile','Collect the remaining'])assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),marker+' is missing from the manager flow');
+  for(const marker of ['customerExperienceManager','opsSendCustomerDecision','opsIssueCustomerCredit','opsSetCustomerMembership','opsReviewRebooking','decision-needed','Customer portal profile','Use Estimates & payments to record verified financial activity.'])assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),marker+' is missing from the manager flow');
   for(const marker of ['Property memory','If you won’t be there','Bring the crew back','Your EGC wallet','Family and property team','Garage Guard','save_customer_memory','save_job_day_rules','save_collaborators','create_collaborator_invite','respond_decision','request_rebook','apply_gift_credit','request_gift_transfer','Copy invite'])assert.match(customerPortal,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),marker+' is missing from the customer portal');
   assert.match(postjob,/Payment required before leaving/);
   assert.match(postjob,/This job needs a locked total/);

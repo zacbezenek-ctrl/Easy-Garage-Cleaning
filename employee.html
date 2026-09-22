@@ -2435,10 +2435,10 @@ function mkJobCard(job) {
     <div class="jcard-actions" id="ja-${job.id}"></div>`;
   const acts = card.querySelector('#ja-'+job.id);
   if (job.status==='scheduled') {
-    const b=document.createElement('button'); b.className='bsm complete'; b.textContent='Mark Complete'; b.onclick=()=>setStatus(job.id,'completed'); acts.appendChild(b);
+    const b=document.createElement('button'); b.className='bsm complete'; b.textContent='Open completion'; b.onclick=()=>setStatus(job.id,'completed'); acts.appendChild(b);
   }
   if (job.status==='completed' && ADMINS.includes(me)) {
-    const b=document.createElement('button'); b.className='bsm approve'; b.textContent='Approve Payment'; b.onclick=()=>setStatus(job.id,'paid'); acts.appendChild(b);
+    const b=document.createElement('button'); b.className='bsm approve'; b.textContent='Record payment'; b.onclick=()=>setStatus(job.id,'paid'); acts.appendChild(b);
   }
   const eb=document.createElement('button'); eb.className='bsm edit'; eb.textContent='Edit'; eb.onclick=()=>openBooking(null,job); acts.appendChild(eb);
   const db=document.createElement('button'); db.className='bsm del'; db.textContent='Delete'; db.onclick=()=>delJob(job.id); acts.appendChild(db);
@@ -2446,28 +2446,20 @@ function mkJobCard(job) {
 }
 
 function setStatus(id, status) {
-  const patch = { status, updatedAt: new Date().toISOString() };
-  if (status === 'completed') patch.pipelineStatus = 'completed';
-  else if (status === 'paid') patch.pipelineStatus = 'paid';
-  else if (status === 'scheduled') patch.pipelineStatus = 'scheduled';
-  db.collection('jobs').doc(id).update(patch);
-  if (typeof logActivity === 'function') logActivity(id, 'Status → ' + cap(status), me);
-
-  // ── Review-request webhook ─────────────────────────────
-  // When a job is marked complete, fire the Zapier Zap that
-  // sends the customer an SMS review request.
-  if (status === 'completed') {
-    const job = loadJobs().find(j => j.id === id);
-    if (job && job.phone) {
-      const firstName = (job.customer || '').split(' ')[0] || job.customer || '';
-      hubFetch('/api/operations-event', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ event: 'review_request', payload: { phone: job.phone, firstName, jobId: job.id } })
-      }).catch(err => console.warn('Review webhook failed:', err));
-    }
+  const job = loadJobs().find(j => j.id === id);
+  if (!job) return;
+  if (['dispatched','arrived','in_progress','completed'].includes(status)) {
+    location.href = job.type === 'walkthrough'
+      ? '/crew/gameplan.html?walkthroughId=' + encodeURIComponent(id)
+      : '/crew/job.html?jobId=' + encodeURIComponent(id);
+    return;
   }
-  // ── End review-request webhook ─────────────────────────
+  if (['paid','invoiced','review_requested'].includes(status)) {
+    if (typeof opsGo === 'function') opsGo('finance');
+    if (typeof showToast === 'function') showToast('Use Estimates & payments to record verified financial activity.');
+    return;
+  }
+  if (status === 'scheduled' && typeof opsGo === 'function') opsGo('schedule');
 }
 
 function delJob(id) {
