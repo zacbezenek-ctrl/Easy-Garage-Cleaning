@@ -43,3 +43,10 @@ test('oversized operational content reports its field truncation separately from
   const result=await portalEvidence({},{contactProviderIds:['contact-a']},async()=>response({documents:[doc('job-a',{highlevelContactId:'contact-a',jobInstructions:'x'.repeat(20001),operationNotes:Array.from({length:101},(_,i)=>({id:'note-'+i,body:'scope'}))})]}));
   assert.equal(result.coverage.complete,true);assert.equal(result.records[0].jobInstructions.length,20000);assert.equal(result.records[0].operationNotes.length,100);assert.deepEqual(result.records[0].contentCoverage,{complete:false,truncatedFields:['jobInstructions','operationNotes']});
 });
+
+test('native evidence retains the original booking time persisted by adoption rather than import time',async()=>{
+  const original='2026-09-17T22:54:50Z',result=await portalEvidence({},{contactProviderIds:['contact-a']},async(_env,url)=>{
+    assert.ok(new URL(url).searchParams.getAll('mask.fieldPaths').includes('adoptionOriginalBookingAt'));
+    return response({documents:[doc('adopted',{highlevelContactId:'contact-a',createdAt:'2026-09-22T08:00:00Z',adoptionOriginalBookingAt:original,originalBookingAt:'2026-09-22T08:00:00Z'})]});
+  });assert.equal(result.records[0].originalBookingAt,original);
+});

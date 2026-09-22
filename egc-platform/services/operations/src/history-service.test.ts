@@ -26,6 +26,12 @@ describe("history service native enrichment",()=>{
   it("keeps mirrored history readable with explicit unavailable native coverage",async()=>{
     const f=fixture();const result=await new OperationsService(f.db as never,{workspace:"egc"}).execute(actor,{command:"history",contactId},requestId);
     expect(result.ok).toBe(true);expect(result.nativeEvidence).toMatchObject({total:null,records:[],coverage:{complete:false,available:false,reason:"portal_authority_unavailable"}});
+    expect(result.coverage).toMatchObject({quotes:"unavailable",payments:"unavailable"});
+  });
+  it("labels financial source coverage partial when the native source is partial",async()=>{
+    const f=fixture(),portalRead=vi.fn(async()=>({...native(),coverage:{complete:false,asOf:at}}));
+    const result=await new OperationsService(f.db as never,{workspace:"egc",portalRead}).execute(actor,{command:"history",contactId},requestId);
+    expect(result.coverage).toMatchObject({quotes:"partial_exact_provider_contact_native_records",payments:"partial_exact_provider_contact_native_records",nativePortal:{complete:false,available:true}});
   });
   it("never performs a provider read for another CRM namespace",async()=>{
     const f=fixture("other"),portalRead=vi.fn(async()=>native());const result=await new OperationsService(f.db as never,{workspace:"egc",portalRead}).execute(actor,{command:"history",contactId},requestId);

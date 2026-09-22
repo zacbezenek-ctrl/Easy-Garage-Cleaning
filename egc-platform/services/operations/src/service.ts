@@ -206,7 +206,8 @@ export class OperationsService {
         const [contact]=await tx.select({id:schema.contacts.id,name:schema.contacts.name}).from(schema.contacts).where(eq(schema.contacts.id,command.contactId)).limit(1);
         if (!contact) throw new OperationsError("contact_not_found",404);
         const timeline=await customerTimeline(tx,command.contactId,actor.workspace,command.offset,command.limit,portalEvents);
-        return {ok:true,contact,...timeline,nativeEvidence,coverage:{...timeline.coverage,nativePortal:nativeEvidence?.coverage??null,quotes:"exact_provider_contact_native_records",payments:"exact_provider_contact_native_records"}};
+        const nativeCoverage=nativeEvidence?.coverage.available?(nativeEvidence.coverage.complete?"exact_provider_contact_native_records":"partial_exact_provider_contact_native_records"):"unavailable";
+        return {ok:true,contact,...timeline,nativeEvidence,coverage:{...timeline.coverage,nativePortal:nativeEvidence?.coverage??null,quotes:nativeCoverage,payments:nativeCoverage}};
       }
       default:throw new OperationsError("unsupported_read",400);
     }
