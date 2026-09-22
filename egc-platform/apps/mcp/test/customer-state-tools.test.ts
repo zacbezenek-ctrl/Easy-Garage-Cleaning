@@ -15,6 +15,13 @@ function event(id=eventId){return {eventId:id,contactId,eventType:'job_sold',occ
 async function call(name:string,input:unknown={}){const t=tools.get(`egc.${name}`)!;return t.handler(t.config.inputSchema.parse(input));}
 beforeEach(()=>{vi.resetAllMocks();tools.clear();registerCustomerStateTools({registerTool:(name:string,config:Registration['config'],handler:Registration['handler'])=>tools.set(name,{config,handler})} as unknown as McpServer);});
 describe('canonical customer-state MCP boundary',()=>{
+ it('surfaces eligible Meta events before skipped inventory without changing service counts or input order',async()=>{
+  service.getCanonicalReport.mockResolvedValue(report());meta.conversionStatus.mockResolvedValue({});
+  const events=Array.from({length:25},(_,i)=>({eventId:`stable-${i}`,eligible:i>=22,reasons:i>=22?['verified_evidence']:['missing_occurrence_time']}));
+  meta.previewConversions.mockResolvedValue({total:25,eligible:3,events});const r=await canonicalFunnel(7);
+  expect(r.meta.preview).toMatchObject({total:25,eligible:3,detailPages:{events:{order:'eligible_first_then_original_service_order',eligibleOmitted:0,omitted:5}}});
+  expect((r.meta.preview.events as typeof events).slice(0,3).map(e=>e.eventId)).toEqual(['stable-22','stable-23','stable-24']);expect(events[0]?.eventId).toBe('stable-0');expect(meta.syncConversions).not.toHaveBeenCalled();
+ });
  it('bounds Meta detail presentation while distinguishing historical missing snapshots from the reported cohort',async()=>{
   service.getCanonicalReport.mockResolvedValue(report({cohort:{denominator:1,window:{since:from,until:to},metrics:{leads:{contactIds:[contactId]}}}}));
   const missingCustomers=[{contactId},...Array.from({length:29},(_,i)=>({contactId:`historical-${i}`}))],events=Array.from({length:31},(_,i)=>({eventId:`stable-${i}`,reasons:['canonical_source_extraction_incomplete']}));

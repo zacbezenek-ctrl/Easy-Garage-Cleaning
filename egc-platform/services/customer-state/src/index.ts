@@ -1,14 +1,21 @@
 import { and, asc, desc, eq, gte, inArray, lt, or, sql } from "drizzle-orm";
 import { getDb, schema } from "@egc/database";
-import { assertionEvents, assertionReconciled, asRecord, buildCanonicalEvents, buildReport, captureOriginalAttribution, EXTRACTOR_VERSION, exclusionReasons, extractEvidence, hash, projectCustomer, validDate,validateUserConfirmedOutcome,paginateEventEvidence } from "./core.js";
+import { assertionEvents, assertionReconciled, asRecord, buildCanonicalEvents, buildReport, captureOriginalAttribution, EXTRACTOR_VERSION, exclusionReasons, extractEvidence,isOutboundBusinessMediaPromise, hash, projectCustomer, validDate,validateUserConfirmedOutcome,paginateEventEvidence } from "./core.js";
 import { extractStructuredEvidence } from "./extractor.js";
-import { recordsFromSnapshot,usableTranscriptText } from "./sources.js";
+import { recordsFromSnapshot,usableTranscriptText,type SourceBundle } from "./sources.js";
+import {attachOccurrenceIdentities} from './occurrence-sources.js';
+import {resolveCustomerOccurrences,type CustomerOccurrence,type PersistedOccurrenceAlias} from './occurrences.js';
+import {applyOccurrenceProjection} from './occurrence-report.js';
+import {runSemanticQueue} from './semantic-queue.js';
 import {customerActivityPredicate,customerRefreshOrder} from "./selection.js";
 import type { CanonicalEvent, CustomerProjection, EvidenceEvent, Json, OperationalAssertion, ReconcileOptions, SourceRecord } from "./types.js";
 export * from "./core.js";
 export * from "./sources.js";
 export * from "./selection.js";
 export * from "./briefing.js";
+export * from './occurrences.js';
+export * from './occurrence-report.js';
+export * from './semantic-queue.js';
 export { extractStructuredEvidence, validateExtractedEvent } from "./extractor.js";
 
 type DbEvent=typeof schema.customerEvents.$inferSelect;
@@ -16,13 +23,15 @@ const toEvent=(e:DbEvent):CanonicalEvent=>({...e,confidence:Number(e.confidence)
 const toAssertion=(a:typeof schema.customerOperationalAssertions.$inferSelect):OperationalAssertion=>({...a,assertedAt:a.assertedAt.toISOString(),occurredAt:a.occurredAt.toISOString(),reconciledAt:a.reconciledAt?.toISOString()??null,status:a.status as OperationalAssertion["status"]});
 const sourceId=(r:Pick<SourceRecord,"sourceType"|"sourceRecordId">)=>`egce_${hash(`${r.sourceType}:${r.sourceRecordId}`)}`;
 const ids=(s:string|undefined)=>(s??"").split(",").map(s=>s.trim()).filter(Boolean);
-const operationalCursorFilter=()=>sql`${schema.syncCursors.key} like '%conversion%' or ${schema.syncCursors.key}='customer_state_reconciliation' or ${schema.syncCursors.key} in ('customer_state:booking_reconciliation','customer_state:call_transcripts','customer_state:provider_notes') or ${schema.syncCursors.key} like 'customer_state:last_%'`;
+const operationalCursorFilter=()=>sql`${schema.syncCursors.key} like '%conversion%' or ${schema.syncCursors.key}='customer_state_reconciliation' or ${schema.syncCursors.key} in ('customer_state:booking_reconciliation','customer_state:call_transcripts','customer_state:provider_notes','customer_state:semantic_queue') or ${schema.syncCursors.key} like 'customer_state:last_%'`;
 
 export type ReconciliationResult={startedAt:string;finishedAt:string;inspected:number;truncated:boolean;failed:number;partialCustomers:number;results:Array<{contactId:string;state?:string;events?:number;coverage?:Json;error?:string}>};
+export const runCustomerSemanticQueue=(options:Parameters<typeof runSemanticQueue>[1]={})=>runSemanticQueue(reconcileCustomerState,options);
 export async function reconcileCustomerState(options:ReconcileOptions={}):Promise<ReconciliationResult> {
   const db=getDb(),startedAt=new Date(),since=new Date(options.since??Date.now()-30*86_400_000),until=new Date(options.until??Date.now());
   if(!Number.isFinite(since.valueOf())||!Number.isFinite(until.valueOf())||since>until)throw new Error("invalid_reconciliation_window");
   const max=Math.max(1,Math.min(2000,options.maxContacts??500));
+  const occurrenceMode=options.occurrenceMode??(process.env.CUSTOMER_OCCURRENCE_LEDGER_MODE==='enabled'?'enabled':process.env.CUSTOMER_OCCURRENCE_LEDGER_MODE==='shadow'?'shadow':'off');
   const selected=await db.select({contact:schema.contacts,lead:schema.leads}).from(schema.leads).innerJoin(schema.contacts,eq(schema.contacts.id,schema.leads.contactId)).where(
     options.contactIds ? (options.contactIds.length?inArray(schema.contacts.id,options.contactIds):sql`false`) : and(lt(schema.leads.createdAt,until),customerActivityPredicate(since))
   ).orderBy(customerRefreshOrder(),desc(schema.leads.createdAt)).limit(max+1);
@@ -45,8 +54,9 @@ export async function reconcileCustomerState(options:ReconcileOptions={}):Promis
       ]);
       const attribution=captureOriginalAttribution({raw:contact.raw,source:lead.source,leadCreatedAt:lead.createdAt.toISOString()},originalRows[0]?.attribution);
       await db.insert(schema.leadOriginalAttribution).values({leadId:lead.id,contactId:contact.id,attribution,sourceRecordId:contact.providerId,provenance:String(attribution.provenance??"provider_initial_attribution")}).onConflictDoNothing();
-      const records=recordsFromSnapshot({contact,lead,messages,calls,transcripts,appointments,opportunities,jobs,notes,providerNotes,walkthroughs,
-        portalRecords:options.portalRecords??[],walkthroughCalendarIds:ids(process.env.META_CAPI_WALKTHROUGH_CALENDAR_IDS),jobCalendarIds:ids(process.env.META_CAPI_JOB_CALENDAR_IDS)});
+      const sourceBundle:SourceBundle={contact,lead,messages,calls,transcripts,appointments,opportunities,jobs,notes,providerNotes,walkthroughs,
+        portalRecords:options.portalRecords??[],walkthroughCalendarIds:ids(process.env.META_CAPI_WALKTHROUGH_CALENDAR_IDS),jobCalendarIds:ids(process.env.META_CAPI_JOB_CALENDAR_IDS)};
+      const records=recordsFromSnapshot(sourceBundle);
       // Hub is a separate authoritative source. A worker without its bridge must
       // retain the last known exact records and disclose their freshness.
       const seen=new Set(records.map(sourceId));
@@ -65,38 +75,47 @@ export async function reconcileCustomerState(options:ReconcileOptions={}):Promis
         const digest=hash(JSON.stringify({text:record.text,direction:record.direction,actorType:record.actorType,raw:record.raw,events:record.events}));hashes.set(sourceId(record),digest);
         const previous=cached.find(e=>e.id===sourceId(record));
         const goodCache=previous?.sourceHash===digest && previous.extractorVersion===EXTRACTOR_VERSION;
-        if(goodCache && (previous.status==="complete" || previous.status==="review_required" || options.useAI===false || !process.env.OPENAI_API_KEY))prepared.push({...record,events:previous.extractedEvents as unknown as EvidenceEvent[],extractionStatus:previous.status,extractionError:previous.error});
+        const retryableReview=previous?.status==='review_required'&&previous.error?.startsWith('unsupported_or_unquoted_events:');
+        if(goodCache && (previous.status==="complete" || (previous.status==="review_required"&&!retryableReview) || options.useAI===false || !process.env.OPENAI_API_KEY))prepared.push({...record,events:previous.extractedEvents as unknown as EvidenceEvent[],extractionStatus:previous.status,extractionError:previous.error});
         else if(record.events)prepared.push({...record,extractionStatus:"complete"});
         else pending.push(record);
       }
       // Bounded model requests keep complete transcripts intact. Context adds prior
       // messages so a customer's short agreement can refer to the actual offer.
       const extractionErrors:string[]=[];
-      let batch:SourceRecord[]=[],size=0;
+      let batch:SourceRecord[]=[],size=0,attemptedBatches=0;
       const runBatch=async()=>{
         if(!batch.length)return;
-        const earliest=batch[0]!.occurredAt,context=records.filter(r=>r.occurredAt<earliest&&r.text&&["message","call_transcript"].includes(r.sourceType)).slice(-8);
-        const extracted=await extractStructuredEvidence(batch,context,{useAI:options.useAI!==false});
+        batch.sort((a,b)=>a.occurredAt.localeCompare(b.occurredAt));
+        const earliest=batch[0]!.occurredAt,context:SourceRecord[]=[];let contextSize=0;
+        for(const record of records.filter(r=>r.occurredAt<earliest&&r.text&&["message","call_transcript"].includes(r.sourceType)).slice(-8).reverse()){if(contextSize+record.text.length>40_000)continue;context.unshift(record);contextSize+=record.text.length;}
+        const deferred=attemptedBatches>=(options.semanticMaxBatches??Number.POSITIVE_INFINITY);
+        const extracted=await extractStructuredEvidence(batch,context,{useAI:!deferred&&options.useAI!==false,...(options.semanticTimeoutMs?{timeoutMs:options.semanticTimeoutMs}:{})});
+        if(extracted.attempted)attemptedBatches++;
+        if(deferred&&extracted.status!=='complete')extracted.error='semantic_batch_budget_deferred';
         if(extracted.error)extractionErrors.push(extracted.error);
-        prepared.push(...extracted.records.map(r=>({...r,extractionStatus:extracted.status==="complete"?"complete":extracted.error?.startsWith("unsupported_or_unquoted")?"review_required":"partial",extractionError:extracted.error})));
+        prepared.push(...extracted.records.map(r=>({...r,extractionStatus:r.extractionStatus??(extracted.status==="complete"?"complete":extracted.error?.startsWith("unsupported_or_unquoted")?"review_required":"partial"),extractionError:r.extractionStatus==='complete'?null:r.extractionError??extracted.error,extractionAttempted:r.extractionAttempted??extracted.attempted})));
         batch=[];size=0;
       };
-      for(const record of pending){if(size+record.text.length>60_000 || batch.length>=35)await runBatch();batch.push(record);size+=record.text.length;}await runBatch();
+      const orderedPending=options.semanticMaxBatches?[...pending].sort((a,b)=>Number(b.sourceType==='call_transcript')-Number(a.sourceType==='call_transcript')||b.occurredAt.localeCompare(a.occurredAt)):pending;
+      for(const record of orderedPending){if(size+record.text.length>60_000 || batch.length>=35)await runBatch();batch.push(record);size+=record.text.length;}await runBatch();
       // Text/time and address often arrive separately. Re-evaluate every message
       // against preceding content without discarding semantic events in its cache.
-      for(const record of prepared){const {events:alreadyExtracted,...source}=record;const local=record.extractionStatus==="complete"&&["message","call_transcript","job_note","provider_note"].includes(record.sourceType)?[]:extractEvidence(source,records);record.events=[...(alreadyExtracted??[]),...local.filter(e=>!alreadyExtracted?.some(p=>p.eventType===e.eventType))].map(e=>record.raw?.occurredAtVerified===false?{...e,details:{...e.details,occurredAtVerified:false}}:e);}
+      for(const record of prepared){const {events:alreadyExtracted,...source}=record;const deterministic=extractEvidence(source,records),verifiedQuote=record.sourceType==='message'&&record.direction==='outbound'&&record.actorType==='human'?deterministic.find(e=>e.eventType==='quote_delivered'&&(e.valueVerified===true||e.details?.verifiedScopedQuote===true)):undefined;const local=record.extractionStatus==="complete"&&["message","call_transcript","job_note","provider_note"].includes(record.sourceType)?verifiedQuote?[verifiedQuote]:[]:deterministic;record.events=[...(alreadyExtracted??[]),...local.filter(e=>!alreadyExtracted?.some(p=>p.eventType===e.eventType))].filter(e=>e.eventType!=='video_quote_requested'||!isOutboundBusinessMediaPromise(source)).map(e=>{const restored=e.eventType==='quote_delivered'&&verifiedQuote?.valueVerified?{...e,valueCents:verifiedQuote.valueCents!,valueVerified:true,currency:verifiedQuote.currency!}:e;return record.raw?.occurredAtVerified===false?{...restored,details:{...restored.details,occurredAtVerified:false}}:restored;});}
+      prepared.splice(0,prepared.length,...attachOccurrenceIdentities(prepared,sourceBundle));
       const providerEvents=buildCanonicalEvents(prepared,attribution),assertions=assertionRows.map(toAssertion);
       for(const assertion of assertions)if(assertionReconciled(assertion,providerEvents)){assertion.status="reconciled";assertion.reconciledAt=startedAt.toISOString();}
       const assertionSources:SourceRecord[]=assertions.map(a=>({sourceType:"user_confirmed",sourceRecordId:a.id,contactId:contact.id,leadId:lead.id,occurredAt:a.occurredAt,text:a.exactText,events:assertionEvents(a).filter(e=>!(e.eventType==="revenue_collected"&&a.status==="reconciled"&&providerEvents.some(p=>p.eventType==="revenue_collected"&&p.details.paymentReceiptKey))),sourcePointer:a.sourceReference}));
-      const events=buildCanonicalEvents([...prepared,...assertionSources],attribution);
+      let events=buildCanonicalEvents([...prepared,...assertionSources],attribution);
       const missingTranscripts=calls.filter(c=>c.startedAt>=since&&!transcripts.some(t=>t.callId===c.id&&usableTranscriptText(t.text))&&((c.raw.attachments instanceof Array && c.raw.attachments.length>0)||c.recordingUrl||c.status==="completed")).map(c=>c.id);
       const groups=new Map<string,number>();for(const a of appointments.filter(a=>["new","confirmed"].includes(a.status))){const key=`${a.calendarId}:${a.appointmentStartAt.toISOString()}`;groups.set(key,(groups.get(key)??0)+1);}
-      const snapshot=projectCustomer({contactId:contact.id,leadId:lead.id,customerName:contact.name,leadCreatedAt:lead.createdAt.toISOString(),events,assertions,exclusionReasons:exclusionReasons({tags:contact.tags,raw:contact.raw,source:contact.source,doNotContact:lead.doNotContact}),providerAppointmentCount:Math.max(0,...groups.values()),missingJobLink:appointments.some(a=>["new","confirmed"].includes(a.status)&&!jobs.some(j=>j.appointmentId===a.id)),missingTranscriptIds:missingTranscripts});
+      const projectionInput={contactId:contact.id,leadId:lead.id,customerName:contact.name,leadCreatedAt:lead.createdAt.toISOString(),assertions,exclusionReasons:exclusionReasons({tags:contact.tags,raw:contact.raw,source:contact.source,doNotContact:lead.doNotContact}),providerAppointmentCount:Math.max(0,...groups.values()),missingJobLink:appointments.some(a=>["new","confirmed"].includes(a.status)&&!jobs.some(j=>j.appointmentId===a.id)),missingTranscriptIds:missingTranscripts};
+      let snapshot=projectCustomer({...projectionInput,events});
       const priorCoverage=await db.select({coverage:schema.customerStateSnapshots.coverage}).from(schema.customerStateSnapshots).where(eq(schema.customerStateSnapshots.contactId,contact.id));
       const portalCoverage=options.portalCoverage??asRecord(priorCoverage[0]?.coverage.portal);
       let providerNoteCoverage:Json={complete:false,error:"provider_notes_not_synced"};try{if(notesCursor[0]?.cursor)providerNoteCoverage=asRecord(JSON.parse(notesCursor[0].cursor));}catch{providerNoteCoverage={complete:false,error:"provider_notes_cursor_invalid"};}
       const coverage:Json={messages:{inspected:messages.length},calls:{inspected:calls.length,transcriptsInspected:transcripts.length,missingTranscriptIds:missingTranscripts},appointments:{inspected:appointments.length},opportunities:{inspected:opportunities.length},jobs:{inspected:jobs.length},notes:{inspected:notes.length},providerNotes:{...providerNoteCoverage,inspected:providerNotes.length},walkthroughs:{inspected:walkthroughs.length},userConfirmed:{inspected:assertions.length},portal:portalCoverage,
-        extraction:{version:EXTRACTOR_VERSION,complete:prepared.every(r=>r.extractionStatus==="complete")&&missingTranscripts.length===0,errors:[...new Set([...extractionErrors,...prepared.map(r=>r.extractionError).filter(Boolean)])],partialSourceIds:prepared.filter(r=>r.extractionStatus!=="complete").map(r=>r.sourceRecordId)},asOf:startedAt.toISOString()};
+        extraction:{version:EXTRACTOR_VERSION,complete:prepared.every(r=>r.extractionStatus==="complete")&&missingTranscripts.length===0,errors:[...new Set([...extractionErrors,...prepared.map(r=>r.extractionError).filter(Boolean)])],partialSourceIds:prepared.filter(r=>r.extractionStatus!=="complete").map(r=>r.sourceRecordId),attemptedBatches,attemptedSources:prepared.filter(r=>r.extractionAttempted).length},asOf:startedAt.toISOString()};
       let refreshAfterRace=false;
       await db.transaction(async tx=>{
         await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`customer-state:${contact.id}`}))`);
@@ -107,13 +126,29 @@ export async function reconcileCustomerState(options:ReconcileOptions={}):Promis
           // sources, then rebuild from fresh rows instead of discarding the AI
           // work or overwriting a newer contact/provider/assertion snapshot.
           if(options.useAI!==false)for(const record of prepared.filter(r=>r.extractionStatus==="complete")){
-            const changed=await tx.update(schema.customerEvidence).set({extractedEvents:(record.events??[]) as unknown as Json[],status:"complete",error:null,updatedAt:new Date()}).where(and(eq(schema.customerEvidence.id,sourceId(record)),eq(schema.customerEvidence.sourceHash,hashes.get(sourceId(record))??""),sql`${schema.customerEvidence.status}<>'complete'`)).returning({id:schema.customerEvidence.id});
+            const changed=await tx.update(schema.customerEvidence).set({extractedEvents:(record.events??[]) as unknown as Json[],status:"complete",error:null,attemptCount:sql`${schema.customerEvidence.attemptCount}+${record.extractionAttempted?1:0}`,updatedAt:new Date()}).where(and(eq(schema.customerEvidence.id,sourceId(record)),eq(schema.customerEvidence.sourceHash,hashes.get(sourceId(record))??""),sql`${schema.customerEvidence.status}<>'complete'`)).returning({id:schema.customerEvidence.id});
             if(changed.length)refreshAfterRace=true;
           }
           return;
         }
-        for(const record of prepared){const value={id:sourceId(record),contactId:contact.id,leadId:lead.id,sourceType:record.sourceType,sourceRecordId:record.sourceRecordId,sourceHash:hashes.get(sourceId(record))??hash(JSON.stringify(record.events)),extractorVersion:EXTRACTOR_VERSION,occurredAt:new Date(record.occurredAt),status:record.extractionStatus??"complete",extractedEvents:(record.events??[]) as unknown as Json[],sourcePointer:record.sourcePointer??null,error:record.extractionStatus!=="complete"?record.extractionError??(extractionErrors.join(",")||"semantic_coverage_partial"):null,updatedAt:startedAt};
-          await tx.insert(schema.customerEvidence).values(value).onConflictDoUpdate({target:schema.customerEvidence.id,set:{...value,attemptCount:sql`${schema.customerEvidence.attemptCount}+1`}});
+        if(occurrenceMode!=='off'){
+          const [oldOccurrences,oldAliases,oldEvents]=await Promise.all([
+            tx.select().from(schema.customerOccurrences).where(eq(schema.customerOccurrences.contactId,contact.id)),
+            tx.select().from(schema.customerOccurrenceAliases).where(eq(schema.customerOccurrenceAliases.contactId,contact.id)),
+            tx.select().from(schema.customerEvents).where(eq(schema.customerEvents.contactId,contact.id))]);
+          const resolved=resolveCustomerOccurrences({contactId:contact.id,leadId:lead.id,records:[...prepared,...assertionSources],existingOccurrences:oldOccurrences.map(o=>({...o,createdAt:o.createdAt.toISOString(),kind:o.kind as CustomerOccurrence['kind'],status:o.status as CustomerOccurrence['status']})),existingAliases:oldAliases as PersistedOccurrenceAlias[],existingEvents:oldEvents.map(toEvent),now:startedAt.toISOString()});
+          const scopedEvents=buildCanonicalEvents(resolved.records,attribution),scopedCustomer=applyOccurrenceProjection(projectCustomer({...projectionInput,events:scopedEvents}),scopedEvents);
+          for(const issue of resolved.issues)scopedCustomer.discrepancies.push(issue);
+          if(resolved.issues.length){scopedCustomer.humanReviewNeeded=true;scopedCustomer.reconciliationStatus='reconciliation_needed';}
+          const comparison=buildReport({events:scopedEvents,customers:[scopedCustomer],since:since.toISOString(),until:until.toISOString()});
+          coverage.occurrences={mode:occurrenceMode,resolved:resolved.occurrences.filter(o=>o.status==='resolved').length,unassigned:resolved.occurrences.filter(o=>o.status==='unassigned').length,issues:resolved.issues,preview:{periodActivity:comparison.periodActivity,soldRevenue:comparison.soldRevenue,collectedRevenue:comparison.collectedRevenue,activeWork:scopedCustomer.activeWork}};
+          for(const o of resolved.occurrences){const value={...o,createdAt:new Date(o.createdAt),updatedAt:startedAt};const {createdAt:_original,...mutable}=value;await tx.insert(schema.customerOccurrences).values(value).onConflictDoUpdate({target:schema.customerOccurrences.id,set:mutable});}
+          for(const a of resolved.aliases){const id=`egcoa_${hash(`${a.kind}:${a.namespace}:${a.recordId}`)}`;const written=await tx.insert(schema.customerOccurrenceAliases).values({id,...a,updatedAt:startedAt}).onConflictDoUpdate({target:[schema.customerOccurrenceAliases.namespace,schema.customerOccurrenceAliases.recordId,schema.customerOccurrenceAliases.kind],set:{occurrenceId:a.occurrenceId,updatedAt:startedAt},setWhere:eq(schema.customerOccurrenceAliases.contactId,contact.id)}).returning({id:schema.customerOccurrenceAliases.id});if(!written.length)throw new Error('occurrence_alias_contact_conflict');}
+          for(const link of resolved.links)await tx.insert(schema.customerOccurrenceLinks).values(link).onConflictDoNothing();
+          if(occurrenceMode==='enabled'){events=scopedEvents;snapshot=scopedCustomer;}
+        }
+        for(const record of prepared){const attemptIncrement=record.extractionAttempted?1:0;const value={id:sourceId(record),contactId:contact.id,leadId:lead.id,sourceType:record.sourceType,sourceRecordId:record.sourceRecordId,sourceHash:hashes.get(sourceId(record))??hash(JSON.stringify(record.events)),extractorVersion:EXTRACTOR_VERSION,occurredAt:new Date(record.occurredAt),status:record.extractionStatus??"complete",extractedEvents:(record.events??[]) as unknown as Json[],sourcePointer:record.sourcePointer??null,error:record.extractionStatus!=="complete"?record.extractionError??(extractionErrors.join(",")||"semantic_coverage_partial"):null,attemptCount:attemptIncrement,updatedAt:startedAt};
+          await tx.insert(schema.customerEvidence).values(value).onConflictDoUpdate({target:schema.customerEvidence.id,set:{...value,attemptCount:sql`${schema.customerEvidence.attemptCount}+${attemptIncrement}`}});
         }
         for(const oldId of retiredPortalIds)await tx.update(schema.customerEvidence).set({extractedEvents:[],status:"complete",sourceHash:hash("retired_by_complete_portal_snapshot"),updatedAt:startedAt}).where(eq(schema.customerEvidence.id,oldId));
         // Retire unsupported projections, retaining the durable old evidence row
@@ -125,7 +160,7 @@ export async function reconcileCustomerState(options:ReconcileOptions={}):Promis
         const row={contactId:contact.id,leadId:lead.id,state:snapshot.state,intentStage:snapshot.intentStage,pipeline:snapshot.pipeline,reconciliationStatus:snapshot.reconciliationStatus,snapshot:snapshot as unknown as Json,coverage,lastReconciledAt:startedAt,updatedAt:startedAt};
         await tx.insert(schema.customerStateSnapshots).values(row).onConflictDoUpdate({target:schema.customerStateSnapshots.contactId,set:row});
       });
-      if(refreshAfterRace){const refreshed=await reconcileCustomerState({contactIds:[contact.id],useAI:false});results.push(...refreshed.results);continue;}
+      if(refreshAfterRace){const refreshed=await reconcileCustomerState({contactIds:[contact.id],useAI:false,occurrenceMode});results.push(...refreshed.results);continue;}
       results.push({contactId:contact.id,state:snapshot.state,events:events.length,coverage});
     } catch(error) {results.push({contactId:contact.id,error:error instanceof Error&&/invalid_|required|not_found/.test(error.message)?error.message:"customer_reconciliation_failed"});}
   }
@@ -161,28 +196,40 @@ export async function recordUserConfirmedOutcome(input:UserConfirmedOutcomeInput
 
 export async function getCustomerTimeline(input:{contactId:string;refresh?:boolean}) {
   if(input.refresh)await reconcileCustomerState({contactIds:[input.contactId],useAI:false});
-  const db=getDb();const [snapshot,events,assertions,evidence]=await Promise.all([
+  const db=getDb();const [snapshot,events,assertions,evidence,occurrences,occurrenceLinks]=await Promise.all([
     db.select().from(schema.customerStateSnapshots).where(eq(schema.customerStateSnapshots.contactId,input.contactId)),
     db.select().from(schema.customerEvents).where(and(eq(schema.customerEvents.contactId,input.contactId),eq(schema.customerEvents.active,true))).orderBy(asc(schema.customerEvents.occurredAt)),
     db.select().from(schema.customerOperationalAssertions).where(eq(schema.customerOperationalAssertions.contactId,input.contactId)).orderBy(asc(schema.customerOperationalAssertions.assertedAt)),
-    db.select().from(schema.customerEvidence).where(eq(schema.customerEvidence.contactId,input.contactId)).orderBy(asc(schema.customerEvidence.occurredAt))]);
-  return {contactId:input.contactId,customer:snapshot[0]?.snapshot??null,coverage:snapshot[0]?.coverage??{complete:false,error:"customer_not_reconciled"},lastReconciledAt:snapshot[0]?.lastReconciledAt??null,events:events.map(toEvent),assertions:assertions.map(toAssertion),extraction:evidence.map(e=>({sourceType:e.sourceType,sourceRecordId:e.sourceRecordId,status:e.status,error:e.error,occurredAt:e.occurredAt,sourcePointer:e.sourcePointer}))};
+    db.select().from(schema.customerEvidence).where(eq(schema.customerEvidence.contactId,input.contactId)).orderBy(asc(schema.customerEvidence.occurredAt)),
+    db.select().from(schema.customerOccurrences).where(eq(schema.customerOccurrences.contactId,input.contactId)),db.select().from(schema.customerOccurrenceLinks).where(eq(schema.customerOccurrenceLinks.contactId,input.contactId))]);
+  return {contactId:input.contactId,customer:snapshot[0]?.snapshot??null,coverage:snapshot[0]?.coverage??{complete:false,error:"customer_not_reconciled"},lastReconciledAt:snapshot[0]?.lastReconciledAt??null,events:events.map(toEvent),assertions:assertions.map(toAssertion),occurrences,occurrenceLinks,extraction:evidence.map(e=>({sourceType:e.sourceType,sourceRecordId:e.sourceRecordId,status:e.status,error:e.error,occurredAt:e.occurredAt,sourcePointer:e.sourcePointer}))};
 }
 export const getCanonicalCustomer=getCustomerTimeline;
 
 export async function getCanonicalReport(input:{since:Date|string;until:Date|string;cohortSince?:Date|string;cohortUntil?:Date|string;refresh?:boolean;evidenceOffset?:number;evidenceLimit?:number}) {
-  const since=validDate(input.since),until=validDate(input.until);if(!since||!until)throw new Error("invalid_report_window");
+  const since=validDate(input.since),until=validDate(input.until),cohortSince=validDate(input.cohortSince??input.since),cohortUntil=validDate(input.cohortUntil??input.until);if(!since||!until||since>=until||!cohortSince||!cohortUntil||cohortSince>=cohortUntil)throw new Error("invalid_report_window");
   if(input.refresh)await reconcileCustomerState({since,until,useAI:false});
-  const db=getDb();const [snapshots,events,leads,meta,cursors,periodAccepted]=await Promise.all([
-    db.select().from(schema.customerStateSnapshots),db.select().from(schema.customerEvents).where(eq(schema.customerEvents.active,true)),
-    db.select({id:schema.leads.id,contactId:schema.leads.contactId,createdAt:schema.leads.createdAt,doNotContact:schema.leads.doNotContact,source:schema.contacts.source,tags:schema.contacts.tags,raw:schema.contacts.raw}).from(schema.leads).innerJoin(schema.contacts,eq(schema.contacts.id,schema.leads.contactId)).where(or(and(gte(schema.leads.createdAt,new Date(input.cohortSince??since)),lt(schema.leads.createdAt,new Date(input.cohortUntil??until))),and(gte(schema.leads.createdAt,new Date(since)),lt(schema.leads.createdAt,new Date(until))))),
+  const db=getDb();
+  // Coverage belongs to this report's business scope, not every historical CRM
+  // contact. Older active deals and actual period activity remain in scope even
+  // when acquisition occurred before the selected cohort.
+  const leads=await db.select({id:schema.leads.id,contactId:schema.leads.contactId,createdAt:schema.leads.createdAt,doNotContact:schema.leads.doNotContact,source:schema.contacts.source,tags:schema.contacts.tags,raw:schema.contacts.raw}).from(schema.leads).innerJoin(schema.contacts,eq(schema.contacts.id,schema.leads.contactId)).where(or(
+    and(lt(schema.leads.createdAt,new Date(until)),customerActivityPredicate(new Date(since))),
+    and(gte(schema.leads.createdAt,new Date(cohortSince)),lt(schema.leads.createdAt,new Date(cohortUntil))),
+    sql`exists(select 1 from customer_events e where e.contact_id=${schema.contacts.id} and e.active=true and e.occurred_at>=${since}::timestamptz and e.occurred_at<${until}::timestamptz)`
+  ));
+  const contactIds=leads.map(l=>l.contactId),scope=contactIds.length?inArray(schema.customerStateSnapshots.contactId,contactIds):sql`false`,eventScope=contactIds.length?inArray(schema.customerEvents.contactId,contactIds):sql`false`;
+  const [snapshots,events,meta,cursors,periodAccepted,inventory]=await Promise.all([
+    db.select().from(schema.customerStateSnapshots).where(scope),db.select().from(schema.customerEvents).where(and(eq(schema.customerEvents.active,true),eventScope)),
     db.select({status:schema.metaConversionEvents.status,count:sql<number>`count(*)::int`}).from(schema.metaConversionEvents).groupBy(schema.metaConversionEvents.status),db.select().from(schema.syncCursors).where(operationalCursorFilter()),
-    db.select({stage:schema.metaConversionEvents.eventType,count:sql<number>`count(*)::int`}).from(schema.metaConversionEvents).where(and(eq(schema.metaConversionEvents.status,'accepted'),gte(schema.metaConversionEvents.acceptedAt,new Date(since)),lt(schema.metaConversionEvents.acceptedAt,new Date(until)))).groupBy(schema.metaConversionEvents.eventType)]);
+    db.select({stage:schema.metaConversionEvents.eventType,count:sql<number>`count(*)::int`}).from(schema.metaConversionEvents).where(and(eq(schema.metaConversionEvents.status,'accepted'),gte(schema.metaConversionEvents.acceptedAt,new Date(since)),lt(schema.metaConversionEvents.acceptedAt,new Date(until)))).groupBy(schema.metaConversionEvents.eventType),
+    db.select({count:sql<number>`count(*)::int`}).from(schema.customerStateSnapshots)]);
   const leadRoster=leads.map(l=>({contactId:l.contactId,leadCreatedAt:l.createdAt.toISOString(),excluded:exclusionReasons({tags:l.tags,raw:l.raw,source:l.source,doNotContact:l.doNotContact}).includes("test_internal_or_vendor")}));
   const report=buildReport({events:events.map(toEvent),customers:snapshots.map(s=>s.snapshot as unknown as CustomerProjection),leadRoster,since,until,...(input.cohortSince?{cohortSince:validDate(input.cohortSince)!}:{}),...(input.cohortUntil?{cohortUntil:validDate(input.cohortUntil)!}:{})});
   const missing=leads.filter(l=>!snapshots.some(s=>s.contactId===l.contactId));
   const evidence=paginateEventEvidence(report.countedEvents,input.evidenceOffset,input.evidenceLimit);
-  return {...report,countedEvents:evidence.events,countedEventsPage:evidence.page,coverage:{complete:!missing.length&&snapshots.every(s=>asRecord(s.coverage.extraction).complete===true&&asRecord(s.coverage.portal).complete===true&&asRecord(s.coverage.providerNotes).complete===true),missingCustomers:missing.map(l=>({id:l.id,contactId:l.contactId})),customers:snapshots.map(s=>({contactId:s.contactId,lastReconciledAt:s.lastReconciledAt,coverage:s.coverage})),source:"provider_mirrors_plus_persisted_portal_evidence"},metaConversions:meta,metaConversionsScope:'all_time_ledger_status_totals',metaConversionsDuringPeriod:{window:{since,until},basis:'provider_acceptance_time',acceptedEvents:periodAccepted.reduce((n,row)=>n+row.count,0),stages:periodAccepted},cursors};
+  const relevantSnapshots=snapshots.filter(s=>!(s.snapshot as unknown as CustomerProjection).excluded),missingBusiness=missing.filter(l=>!exclusionReasons({tags:l.tags,raw:l.raw,source:l.source,doNotContact:l.doNotContact}).includes('test_internal_or_vendor'));
+  return {...report,countedEvents:evidence.events,countedEventsPage:evidence.page,coverage:{scope:'report_cohort_period_activity_and_active_opportunities',complete:!missingBusiness.length&&relevantSnapshots.every(s=>asRecord(s.coverage.extraction).complete===true&&asRecord(s.coverage.portal).complete===true&&asRecord(s.coverage.providerNotes).complete===true),missingCustomers:missingBusiness.map(l=>({id:l.id,contactId:l.contactId})),customers:relevantSnapshots.map(s=>({contactId:s.contactId,lastReconciledAt:s.lastReconciledAt,coverage:s.coverage})),historicalInventory:{snapshotCount:inventory[0]?.count??0,outsideReportScope:Math.max(0,(inventory[0]?.count??0)-snapshots.length),diagnosticsTool:'egc.customer_state_diagnostics'},source:"provider_mirrors_plus_persisted_portal_evidence"},metaConversions:meta,metaConversionsScope:'all_time_ledger_status_totals',metaConversionsDuringPeriod:{window:{since,until},basis:'provider_acceptance_time',acceptedEvents:periodAccepted.reduce((n,row)=>n+row.count,0),stages:periodAccepted},cursors};
 }
 
 /** A small read for follow-up evidence pages: no repeated report/pipeline payload,
@@ -195,13 +242,15 @@ export async function getOperationalEventEvidence(input:{since:Date|string;until
 }
 
 export async function getCustomerStateDiagnostics() {
-  const db=getDb();const [snapshots,failedSources,meta,lastAccepted,cursors,transcriptCursors]=await Promise.all([
+  const db=getDb();const [snapshots,failedSources,meta,lastAccepted,cursors,transcriptCursors,semanticCursors]=await Promise.all([
     db.select().from(schema.customerStateSnapshots),db.select().from(schema.customerEvidence).where(sql`${schema.customerEvidence.status}<>'complete'`),
     db.select({status:schema.metaConversionEvents.status,count:sql<number>`count(*)::int`}).from(schema.metaConversionEvents).groupBy(schema.metaConversionEvents.status),
     db.select({at:schema.metaConversionEvents.acceptedAt}).from(schema.metaConversionEvents).where(eq(schema.metaConversionEvents.status,"accepted")).orderBy(desc(schema.metaConversionEvents.acceptedAt)).limit(1),
     db.select().from(schema.syncCursors).where(operationalCursorFilter()),
-    db.select().from(schema.syncCursors).where(sql`${schema.syncCursors.key} like 'customer_state:call_transcript:%'`).orderBy(desc(schema.syncCursors.updatedAt)).limit(501)]);
+    db.select().from(schema.syncCursors).where(sql`${schema.syncCursors.key} like 'customer_state:call_transcript:%'`).orderBy(desc(schema.syncCursors.updatedAt)).limit(501),
+    db.select().from(schema.syncCursors).where(sql`${schema.syncCursors.key} like 'customer_state:semantic:%'`).orderBy(desc(schema.syncCursors.updatedAt)).limit(501)]);
   const customers=snapshots.map(s=>s.snapshot as unknown as CustomerProjection),withCode=(code:string)=>customers.filter(c=>c.discrepancies.some(d=>d.code===code));
   const transcriptRecovery={cursor:cursors.find(c=>c.key==='customer_state:call_transcripts')??null,truncated:transcriptCursors.length>500,calls:transcriptCursors.slice(0,500).map(c=>{let state:Json;try{state=asRecord(JSON.parse(c.cursor??''));}catch{state={error:'invalid_transcript_recovery_cursor'};}return {callId:c.key.slice('customer_state:call_transcript:'.length),updatedAt:c.updatedAt,...state};})};
-  return {generatedAt:new Date().toISOString(),unresolvedDiscrepancies:customers.filter(c=>c.discrepancies.length),verballyBookedProviderMissing:withCode("verbally_booked_provider_missing"),providerMissingJobLink:withCode("provider_missing_job_link"),duplicateAppointmentsSuspected:withCode("duplicate_appointment_suspected"),transcriptFailures:failedSources.filter(e=>e.sourceType==="call_transcript"||e.sourceType==="call").map(e=>({contactId:e.contactId,sourceRecordId:e.sourceRecordId,status:e.status,error:e.error})),missingTranscripts:withCode("transcript_unavailable"),transcriptRecovery,pendingVideoQuotes:customers.filter(c=>c.pipeline==="video_quote"&&c.pipelineDisposition==="active"),closedWithoutPaymentEvidence:withCode("closed_without_payment_evidence"),userConfirmedAwaitingReconciliation:withCode("user_confirmed_awaiting_backend"),meta:{counts:meta,scope:'all_time_ledger_status_totals',lastSuccessfulSync:lastAccepted[0]?.at??null,cursors},coverage:snapshots.map(s=>({contactId:s.contactId,lastReconciledAt:s.lastReconciledAt,coverage:s.coverage}))};
+  const semanticQueue={cursor:cursors.find(c=>c.key==='customer_state:semantic_queue')??null,truncated:semanticCursors.length>500,customers:semanticCursors.slice(0,500).map(c=>{let state:Json;try{state=asRecord(JSON.parse(c.cursor??''));}catch{state={error:'invalid_semantic_queue_cursor'};}return {contactId:c.key.slice('customer_state:semantic:'.length),updatedAt:c.updatedAt,...state};})};
+  return {generatedAt:new Date().toISOString(),semanticQueue,unresolvedDiscrepancies:customers.filter(c=>c.discrepancies.length),verballyBookedProviderMissing:withCode("verbally_booked_provider_missing"),providerMissingJobLink:withCode("provider_missing_job_link"),duplicateAppointmentsSuspected:withCode("duplicate_appointment_suspected"),transcriptFailures:failedSources.filter(e=>e.sourceType==="call_transcript"||e.sourceType==="call").map(e=>({contactId:e.contactId,sourceRecordId:e.sourceRecordId,status:e.status,error:e.error})),missingTranscripts:withCode("transcript_unavailable"),transcriptRecovery,pendingVideoQuotes:customers.filter(c=>c.pipeline==="video_quote"&&c.pipelineDisposition==="active"),closedWithoutPaymentEvidence:withCode("closed_without_payment_evidence"),userConfirmedAwaitingReconciliation:withCode("user_confirmed_awaiting_backend"),meta:{counts:meta,scope:'all_time_ledger_status_totals',lastSuccessfulSync:lastAccepted[0]?.at??null,cursors},coverage:snapshots.map(s=>({contactId:s.contactId,lastReconciledAt:s.lastReconciledAt,coverage:s.coverage}))};
 }

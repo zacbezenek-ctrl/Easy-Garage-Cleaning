@@ -23,6 +23,43 @@ after(async()=>{
 });
 const refresh=()=>reconcileCustomerState({contactIds:[contact.id],useAI:false});
 
+test('two exact paid jobs remain separate occurrences with one acquisition after legacy migration and replay',async()=>{
+  const records=[13900,72500].map((amountCents,i)=>({id:`occurrence-${contact.id}-${i}`,highlevelContactId:contact.providerId,kind:'job',status:'completed',createdAt:prior.toISOString(),completedAt:at.toISOString(),financials:{quote:{at:prior.toISOString(),amountCents,source:'customer_approval'},payments:[{key:`receipt-${contact.id}-${i}`,at:at.toISOString(),amountCents}]}}));
+  await reconcileCustomerState({contactIds:[contact.id],useAI:false,portalRecords:records,occurrenceMode:'off'});
+  const legacy=(await getCustomerTimeline({contactId:contact.id})).events.find(e=>e.eventType==='job_sold').eventId;
+  await db.update(schema.customerEvents).set({syncState:'accepted'}).where(eq(schema.customerEvents.eventId,legacy));
+  const enabled=await reconcileCustomerState({contactIds:[contact.id],useAI:false,portalRecords:records,occurrenceMode:'enabled'});assert.equal(enabled.failed,0);
+  let timeline=await getCustomerTimeline({contactId:contact.id}),sold=timeline.events.filter(e=>e.eventType==='job_sold');assert.equal(sold.length,2);assert.equal(new Set(sold.map(e=>e.occurrenceId)).size,2);assert.ok(sold.some(e=>e.eventId===legacy&&e.syncState==='accepted'));
+  const originalIds=sold.map(e=>e.eventId).sort();
+  await reconcileCustomerState({contactIds:[contact.id],useAI:false,occurrenceMode:'enabled'});timeline=await getCustomerTimeline({contactId:contact.id});assert.deepEqual(timeline.events.filter(e=>e.eventType==='job_sold').map(e=>e.eventId).sort(),originalIds);
+  const report=await getCanonicalReport({since:new Date(Date.now()-7*86400000),until:new Date()});
+  assert.equal(report.periodActivity.jobsSold.contactIds.filter(id=>id===contact.id).length,1);assert.ok(report.periodActivity.jobsSold.count>=2);assert.equal(report.periodActivity.jobsSold.unit,'distinct_job_occurrences');
+  const ownSold=timeline.events.filter(e=>e.eventType==='job_sold');assert.equal(ownSold.reduce((n,e)=>n+e.valueCents,0),86400);assert.equal(timeline.events.filter(e=>e.eventType==='revenue_collected').reduce((n,e)=>n+e.valueCents,0),86400);
+});
+
+test('occurrence shadow mode persists exact identities while preserving the live legacy event set',async()=>{
+  const records=[0,1].map(i=>({id:`shadow-${contact.id}-${i}`,highlevelContactId:contact.providerId,kind:'job',status:'quote_sent',createdAt:prior.toISOString(),financials:{quote:{at:prior.toISOString(),amountCents:10000,source:'customer_approval'}}}));
+  const result=await reconcileCustomerState({contactIds:[contact.id],useAI:false,portalRecords:records,occurrenceMode:'shadow'});assert.equal(result.failed,0);
+  const timeline=await getCustomerTimeline({contactId:contact.id});assert.equal(timeline.events.filter(e=>e.eventType==='job_sold').length,1);assert.equal(timeline.occurrences.filter(o=>o.status==='resolved').length,2);assert.equal(timeline.coverage.occurrences.preview.periodActivity.jobsSold.count,2);
+});
+
+test('separate receipts on one job survive occurrence migration and repeated reconciliation',async()=>{
+  const receipts=[{key:`deposit-${contact.id}`,at:prior.toISOString(),amountCents:10000},{key:`balance-${contact.id}`,at:at.toISOString(),amountCents:20000}];
+  const portalRecords=[{id:`installments-${contact.id}`,highlevelContactId:contact.providerId,kind:'job',status:'paid',createdAt:prior.toISOString(),financials:{payments:receipts}}];
+  await reconcileCustomerState({contactIds:[contact.id],useAI:false,portalRecords,occurrenceMode:'off'});
+  const original=(await getCustomerTimeline({contactId:contact.id})).events.filter(e=>e.eventType==='revenue_collected').map(e=>e.eventId).sort();assert.equal(original.length,2);
+  for(let i=0;i<3;i++){
+    const result=await reconcileCustomerState({contactIds:[contact.id],useAI:false,portalRecords,occurrenceMode:'enabled'});assert.equal(result.failed,0);
+    const collected=(await getCustomerTimeline({contactId:contact.id})).events.filter(e=>e.eventType==='revenue_collected');assert.deepEqual(collected.map(e=>e.eventId).sort(),original);assert.equal(collected.reduce((n,e)=>n+e.valueCents,0),30000);assert.equal(new Set(collected.map(e=>e.occurredAt)).size,2);
+  }
+});
+
+test('a completed paid job cannot hide a second accepted unscheduled job',async()=>{
+  const records=[{id:`done-${contact.id}`,highlevelContactId:contact.providerId,kind:'job',status:'completed',createdAt:prior.toISOString(),completedAt:at.toISOString(),financials:{quote:{at:prior.toISOString(),amountCents:10000,source:'customer_approval'},payments:[{key:`done-payment-${contact.id}`,at:at.toISOString(),amountCents:10000}]}},{id:`next-${contact.id}`,highlevelContactId:contact.providerId,kind:'job',status:'quote_sent',createdAt:at.toISOString(),financials:{quote:{at:at.toISOString(),amountCents:30000,source:'customer_approval'}}}];
+  const result=await reconcileCustomerState({contactIds:[contact.id],useAI:false,portalRecords:records,occurrenceMode:'enabled'});assert.equal(result.failed,0);
+  const timeline=await getCustomerTimeline({contactId:contact.id});assert.equal(timeline.customer.state,'JOB_SOLD');assert.equal(timeline.customer.pipelineDisposition,'active');assert.equal(timeline.customer.activeWork.length,1);assert.match(timeline.customer.nextRequiredAction,/schedule|Portal/i);
+});
+
 test('read refresh preserves the worker semantic provider error on cached partial evidence',async()=>{
   const providerId=`cached-error-${randomUUID()}`;
   await db.insert(schema.messages).values({providerId,contactId:contact.id,type:'SMS',direction:'inbound',actorType:'customer',body:'Can you provide a quote?',occurredAt:at});
@@ -130,6 +167,23 @@ test('unreconciled customers remain in the cohort denominator and period lead co
 test('an explicit empty contact scope never expands to a global Portal retirement',async()=>{
   const result=await reconcileCustomerState({contactIds:[],useAI:false,portalRecords:[],portalCoverage:{complete:true,asOf:new Date().toISOString()}});
   assert.equal(result.inspected,0);assert.deepEqual(result.results,[]);
+});
+
+test('report coverage excludes cold history while retaining older active work, period events, and explicit cohorts',async()=>{
+  const old=new Date(Date.now()-90*86400000),ids=[];
+  for(let i=0;i<3;i++){
+    const [c]=await db.insert(schema.contacts).values({providerId:`scope-${randomUUID()}`,name:'Synthetic historical scope',source:'Facebook'}).returning();created.push(c.id);ids.push(c.id);
+    await db.insert(schema.leads).values({contactId:c.id,source:'Facebook',createdAt:old});
+    await reconcileCustomerState({contactIds:[c.id],useAI:false,portalRecords:i===2?[{id:`scope-quote-${c.id}`,highlevelContactId:c.providerId,kind:'job',status:'quote_sent',createdAt:old.toISOString(),financials:{quote:{at:at.toISOString(),amountCents:13900,source:'customer_approval'}}}]:[]});
+  }
+  const active=(await getCustomerTimeline({contactId:ids[1]})).customer;
+  await db.update(schema.customerStateSnapshots).set({state:'VIDEO_QUOTE_PENDING_CUSTOMER',snapshot:{...active,state:'VIDEO_QUOTE_PENDING_CUSTOMER',pipeline:'video_quote',pipelineDisposition:'active'}}).where(eq(schema.customerStateSnapshots.contactId,ids[1]));
+  const report=await getCanonicalReport({since:prior,until:new Date()});
+  assert.ok(!report.customers.some(c=>c.contactId===ids[0]));assert.ok(!report.coverage.customers.some(c=>c.contactId===ids[0]));
+  assert.ok(report.customers.some(c=>c.contactId===ids[1]));assert.ok(report.periodActivity.jobsSold.contactIds.includes(ids[2]));
+  assert.equal(report.coverage.scope,'report_cohort_period_activity_and_active_opportunities');assert.ok(report.coverage.historicalInventory.outsideReportScope>=1);
+  const cohort=await getCanonicalReport({since:prior,until:new Date(),cohortSince:new Date(old.valueOf()-1000),cohortUntil:new Date(old.valueOf()+1000)});
+  assert.ok(cohort.coverage.customers.some(c=>c.contactId===ids[0]));assert.ok(cohort.cohort.metrics.leads.contactIds.includes(ids[0]));
 });
 
 test('report evidence pages preserve all counted event identities and original source references',async()=>{

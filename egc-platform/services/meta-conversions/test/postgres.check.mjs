@@ -566,6 +566,16 @@ test('one accepted revenue milestone never marks separate later cash receipts ac
  assert.equal(receipts.filter(e=>e.syncState==='accepted').length,1);assert.equal(receipts.filter(e=>e.syncState==='pending').length,1);assert.equal(receipts.filter(e=>e.syncState==='deduplicated').length,0);
 });
 
+test('first-acquisition Purchase sends once and never marks a second real job as a delivery alias',async()=>{
+  const fixture=await seedLead();process.env.META_CAPI_EVENT_STAGES='JOB_WON';
+  const portalRecords=[0,1].map(i=>({id:`repeat-job-${i}`,highlevelContactId:fixture.contact.providerId,kind:'job',status:'quote_sent',createdAt:minutesAgo(30-i*10).toISOString(),financials:{quote:{at:minutesAgo(30-i*10).toISOString(),amountCents:10000+i*5000,source:'customer_approval'}}}));
+  const reconciled=await reconcileCustomerState({contactIds:[fixture.contact.id],useAI:false,portalRecords,occurrenceMode:'enabled'});assert.equal(reconciled.failed,0);
+  await enableProduction();assert.equal((await syncConversions({days:7,limit:100,dryRun:false})).accepted,1);
+  assert.equal((await syncConversions({days:7,limit:100,dryRun:false})).accepted,0);assert.equal(productionRequests().length,1);
+  const sold=(await db.select().from(schema.customerEvents).where(eq(schema.customerEvents.contactId,fixture.contact.id))).filter(e=>e.eventType==='job_sold'&&e.active);
+  assert.equal(sold.length,2);assert.equal(sold.filter(e=>e.syncState==='accepted').length,1);assert.equal(sold.filter(e=>e.syncState==='pending').length,1);assert.equal(sold.filter(e=>e.syncState==='deduplicated').length,0);
+});
+
 test('report separates all-time Meta ledger totals from provider acceptances during the period',async()=>{
  await seedWalkthrough();await enableProduction();await sync();
  const [row]=await eventRows();await db.update(schema.metaConversionEvents).set({acceptedAt:daysAgo(20)}).where(eq(schema.metaConversionEvents.id,row.id));

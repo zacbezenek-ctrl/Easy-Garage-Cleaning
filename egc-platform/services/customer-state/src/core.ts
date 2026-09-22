@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import {occurrenceMetric,occurrenceMetricRows} from './occurrence-report.js';
 import { EVENT_TYPES, OPERATIONAL_STATES, type CanonicalEvent, type CustomerEventType, type CustomerProjection, type EvidenceEvent, type EvidenceRef, type Json, type OperationalAssertion, type OperationalState, type SourceRecord } from "./types.js";
 export * from "./types.js";
 export const EXTRACTOR_VERSION = "customer-evidence-1";
@@ -43,6 +44,10 @@ export function exclusionReasons(input: { tags?: string[]; raw?: Json; source?: 
 export function isVoicemailOrScreening(text: string) {
   return /(?:please (?:leave|record) (?:your |a |an )?(?:message|name)|after the (?:tone|beep)|not available|couldn't get to your call|can(?:not|'t) come to the phone|see if this person is available|mailbox|call has been forwarded|leave me a message)/i.test(text);
 }
+/** Photos EGC promises to send (portfolio/examples) are not customer quote media. */
+export function isOutboundBusinessMediaPromise(record:Pick<SourceRecord,'sourceType'|'direction'|'text'>) {
+  return record.sourceType==='message'&&record.direction==='outbound'&&/\b(?:I|we)(?:'ll| will| can| am going to| are going to| would).{0,30}(?:send|text|upload).{0,65}(?:photos?|pictures?|video)/i.test(record.text.replace(/[’‘]/g,"'"))&&!/(?:can|could|would) you.{0,30}(?:send|text|upload)|please (?:send|text|upload)|(?:send|text|upload) (?:me|us|your)\b/i.test(record.text);
+}
 const address = /\b\d{1,6}\s+(?:[a-z0-9]+[ .-]+){0,6}(?:street|st\b|avenue|ave\b|road|rd\b|drive|dr\b|lane|ln\b|court|ct\b|way\b|circle|cir\b|boulevard|blvd\b|place|pl\b|trail|terrace|parkway)/i;
 const timeMention = /\b(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday|tomorrow|today)\b.{0,40}\b(?:\d{1,2}(?::\d{2})?\s*(?:am|pm)?|morning|afternoon|noon)|\b\d{1,2}:\d{2}\s*(?:am|pm)?\b/i;
 const acceptance = /\b(?:works(?: for me| for us)?|sounds good|that(?:'s| is) (?:fine|great|good|okay|ok|acceptable)|(?:I|we)(?:'ll| will| can| would like to| want to) (?:do|take|book|schedule|send|accept)|let(?:'s| us) (?:do|book|schedule)|yes|agreed)\b/i;
@@ -51,7 +56,7 @@ const walkthroughContext = /walk\s*through|walkthrough|in.person (?:quote|estima
 const videoContext = /video|photos?|pictures?/i;
 const priceContext = /(?:\$\s*\d|\b\d[\d,]*\s*dollars?\b|\bprice range\b|\bquoted?\b|\bestimate\b|\bcost\b)/i;
 function explicitQuoteCents(text:string):number|null {
-  if(/(?:starts? at|typically|usually|between|range|rough|ballpark|around|\bper\b|\/hr|\/hour|plus|additional|tax|discount|\d\s*[-–]\s*\$?\d)/i.test(text))return null;
+  if(/(?:starts? at|typically|usually|normally|between|range|rough|ballpark|around|\bper\b|\/hr|\/hour|plus|additional|tax|discount|\d\s*[-–]\s*\$?\d)/i.test(text))return null;
   const monetary=[...text.matchAll(/(?:\$\s*(\d[\d,]*(?:\.\d{1,2})?)|(\d[\d,]*(?:\.\d{1,2})?)\s*\$)/g)].map(m=>Math.round(Number((m[1]??m[2])!.replace(/,/g,""))*100));
   // Spoken-style written revision: "I can come down to 139" has an explicit
   // monetary predicate. Dates and addresses alone never match this branch.
@@ -116,7 +121,11 @@ export function extractEvidence(record: SourceRecord, history: SourceRecord[] = 
     if(/(?:need to|want to|please) cancel.{0,40}(?:appointment|walkthrough|visit)|(?:appointment|walkthrough|visit).{0,30}cancel/i.test(subject)) add("appointment_cancelled",customerLines || record.text,.98,"Reconcile cancellation in EGC Portal");
   }
   if(human && /(?:got you|have you|you're|you are) (?:all )?(?:booked|scheduled|on (?:the|our) calendar)/i.test(text) && walkthroughContext.test(context) && !negative.test(text)) add("walkthrough_verbally_booked",record.text,.96,"Verify EGC Portal appointment and provider sync");
-  if(human && /(?:send|text|upload).{0,45}(?:video|photos?|pictures?)/i.test(text)) add("video_quote_requested",record.text,.98,"Await customer media for the quote");
+  if(human && !isOutboundBusinessMediaPromise(record) && /(?:send|text|upload).{0,45}(?:video|photos?|pictures?)/i.test(text)) add("video_quote_requested",record.text,.98,"Await customer media for the quote");
+  // A scoped pickup request followed by two explicit scheduling prices is a
+  // delivered quote, but neither option is a verified accepted sale value.
+  const scopedPickup=before.filter(r=>r.sourceType==='message'&&r.direction==='inbound'&&r.actorType==='customer'&&/(?:pick\s*up|pickup|remove|haul|take away|charge to take)/i.test(r.text)&&/(?:bed|frame|mattress|couch|sofa|dresser|refrigerator|fridge|appliance|table|chairs?|piano|treadmill|furniture)/i.test(r.text)).at(-1);
+  if(human&&scopedPickup&&/normally.{0,25}(?:at|charge|cost).{0,8}\$?\s*\d[\d,]*(?:\.\d{1,2})?\s+for that.{0,25}but if you book.{0,100}(?:at|charge|cost).{0,8}\$\s*\d/i.test(text))add('quote_delivered',record.text,.98,'Ask which scheduling price option the customer wants',{verifiedScopedQuote:true,conditionalPriceOptions:true,scopeSourceRecordId:scopedPickup.sourceRecordId});
   if(human && /(?:quote|estimate|total|price).{0,35}\$\s*\d|\$\s*\d[\d,.]*.{0,50}(?:for (?:the|your)|all.in|total)|\d\s*\$.{0,30}(?:for|pickup)|come down to\s*\d/i.test(text) && !/(?:starts? at|typically|usually|between|range|rough|ballpark)/i.test(text)) {
     add("quote_delivered",record.text,.95,"Confirm the customer's decision on the delivered quote");
     const cents=explicitQuoteCents(text);
@@ -171,7 +180,9 @@ export function buildCanonicalEvents(records: SourceRecord[], attribution: Json 
   for(const record of sorted) for(const event of record.events ?? extractEvidence(record,sorted)) {
     if(!(EVENT_TYPES as readonly string[]).includes(event.eventType) || !validDate(event.occurredAt ?? record.occurredAt)) continue;
     const occurrence=typeof event.details?.paymentReceiptKey === "string"?`receipt:${event.details.paymentReceiptKey}`:record.sourceRecordId;
-    const eventId = canonicalEventId(record.contactId,record.leadId,event.eventType,occurrence);
+    const occurrenceId=typeof event.details?.occurrenceId==='string'?event.details.occurrenceId:null;
+    const retainedId=typeof event.details?.canonicalEventId==='string'&&/^egcev_[a-f0-9]{64}$/.test(event.details.canonicalEventId)?event.details.canonicalEventId:null;
+    const eventId = retainedId??(occurrenceId&&!event.details?.paymentReceiptKey?`egcev_${hash(`egc:occurrence:${occurrenceId}:event:${event.eventType}`)}`:canonicalEventId(record.contactId,record.leadId,event.eventType,occurrence));
     const occurredAt = validDate(event.occurredAt ?? record.occurredAt)!;
     const excerptLimit=event.eventType==='human_outreach'?180:1600;
     const evidence: EvidenceRef = {sourceType:record.sourceType,sourceRecordId:record.sourceRecordId,occurredAt,excerpt:event.supportingText.slice(0,excerptLimit),...(event.supportingText.length>excerptLimit?{excerptTruncated:true}:{}),confidence:event.confidence,humanReviewNeeded:event.humanReviewNeeded,sourcePointer:record.sourcePointer??`${record.sourceType}:${record.sourceRecordId}`};
@@ -183,7 +194,7 @@ export function buildCanonicalEvents(records: SourceRecord[], attribution: Json 
     const verifiedValue = trusted && event.valueVerified === true && money(event.valueCents) && /^[A-Z]{3}$/.test(event.currency ?? "");
     const replacement = !previous || (record.sourceType === "user_confirmed" && previous.source !== "user_confirmed") || (previous.humanReviewNeeded && trusted) || (previous.source !== "user_confirmed" && event.confidence > previous.confidence);
     events.set(eventId,{
-      eventId,contactId:record.contactId,leadId:record.leadId ?? null,eventType:event.eventType,
+      eventId,contactId:record.contactId,leadId:record.leadId ?? null,eventType:event.eventType,...(occurrenceId?{occurrenceId}:{}),
       opportunityId:record.opportunityId ?? previous?.opportunityId ?? null,appointmentId:record.appointmentId ?? previous?.appointmentId ?? null,jobId:record.jobId ?? previous?.jobId ?? null,
       occurredAt:selectedTime,
       source:replacement?record.sourceType:previous!.source,confidence:Math.max(event.confidence,previous?.confidence ?? 0),
@@ -289,7 +300,7 @@ export function buildReport(input:{events:CanonicalEvent[];customers:CustomerPro
   const cohortMetrics:Record<string,{numerator:number;denominator:number;rate:number|null;window:{since:string;until:string};observedThrough:string;contactIds:string[]}>= {};
   for(const [name,types] of Object.entries(REPORT_METRICS)) {
     const matches=activity.filter(e=>types.includes(e.eventType)),ids=[...new Set(matches.map(e=>e.contactId))];
-    periodActivity[name]={count:ids.length,unit:"distinct_customers",eventIds:matches.map(e=>e.eventId),contactIds:ids};
+    periodActivity[name]={count:ids.length,unit:"distinct_customers",...occurrenceMetric(matches,types),eventIds:matches.map(e=>e.eventId),contactIds:ids};
     const converted=[...new Set(trusted.filter(e=>cohortIds.has(e.contactId)&&types.includes(e.eventType)).map(e=>e.contactId))];
     cohortMetrics[name]={numerator:converted.length,denominator:cohort.length,rate:cohort.length?converted.length/cohort.length:null,window:{since:cohortSince,until:cohortUntil},observedThrough:until,contactIds:converted};
   }
@@ -301,10 +312,11 @@ export function buildReport(input:{events:CanonicalEvent[];customers:CustomerPro
     cohortMetrics.leads={...cohortMetrics.leads!,numerator:cohort.length,rate:cohort.length?1:null,contactIds:[...cohortIds]};
   }
   const revenue=(type:CustomerEventType)=>{
-    const rows=activity.filter(e=>e.eventType===type),undated=trusted.filter(e=>e.eventType===type&&e.details.occurredAtVerified===false);
+    const allRows=activity.filter(e=>e.eventType===type),rows=occurrenceMetricRows(allRows),undated=occurrenceMetricRows(trusted.filter(e=>e.eventType===type&&e.details.occurredAtVerified===false));
+    const unallocated=allRows.filter(e=>!rows.includes(e)&&e.valueVerified);
     const known=rows.filter(e=>e.valueVerified&&e.currency==="USD"),knownSubtotalCents=known.reduce((n,e)=>n+(e.valueCents??0),0);
     const incomplete=type==="revenue_collected"&&trusted.some(e=>e.details.revenueCoverageIncomplete===true),unknownValue=[...rows,...undated].filter(e=>!e.valueVerified||e.currency!=="USD");
-    return {valueCents:known.length===rows.length&&!incomplete&&!undated.length?knownSubtotalCents:null,knownSubtotalCents,currency:"USD",basis:type==="revenue_collected"?"verified_gross_customer_receipts":"accepted_customer_work",coverageIncomplete:incomplete||undated.length>0,verifiedEvents:known.length,missingValue:unknownValue.map(e=>e.eventId),unknownValueCount:unknownValue.length,unknownOccurrenceCount:undated.length,unknownOccurrenceEvents:undated.map(e=>({eventId:e.eventId,contactId:e.contactId,valueCents:e.valueVerified?e.valueCents:null,currency:e.valueVerified?e.currency:null})),qualification:undated.length?"Confirmed outcomes have unknown occurrence time; they are not assigned to this period, so a complete period total is unavailable.":incomplete?"Payment history is incomplete; the verified dated subtotal is not a complete total.":unknownValue.length?"Some dated outcomes have unverified amounts; only the verified subtotal is known.":"Verified dated outcomes in this period."};
+    return {valueCents:known.length===rows.length&&!incomplete&&!undated.length&&!unallocated.length?knownSubtotalCents:null,knownSubtotalCents,currency:"USD",basis:type==="revenue_collected"?"verified_gross_customer_receipts":"accepted_customer_work",coverageIncomplete:incomplete||undated.length>0||unallocated.length>0,verifiedEvents:known.length,missingValue:unknownValue.map(e=>e.eventId),unknownValueCount:unknownValue.length,unknownOccurrenceCount:undated.length,unknownOccurrenceEvents:undated.map(e=>({eventId:e.eventId,contactId:e.contactId,valueCents:e.valueVerified?e.valueCents:null,currency:e.valueVerified?e.currency:null})),unallocatedVerifiedEvents:unallocated.map(e=>({eventId:e.eventId,contactId:e.contactId,valueCents:e.valueCents,currency:e.currency})),qualification:undated.length?"Confirmed outcomes have unknown occurrence time; they are not assigned to this period, so a complete period total is unavailable.":unallocated.length?"Verified amounts remain unassigned to exact work; they are disclosed separately and are not added to known jobs.":incomplete?"Payment history is incomplete; the verified dated subtotal is not a complete total.":unknownValue.length?"Some dated outcomes have unverified amounts; only the verified subtotal is known.":"Verified dated outcomes in this period."};
   };
   const active=customers.filter(c=>c.pipelineDisposition==="active");
   return {authority:"canonical_customer_event_ledger",generatedAt:asOf,period:{since,until,boundaries:"inclusive_start_exclusive_end"},periodActivity,

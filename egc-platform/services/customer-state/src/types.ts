@@ -38,7 +38,7 @@ export interface SourceRecord {
   sourceType: SourceType; sourceRecordId: string; contactId: string; leadId?: string | null;
   occurredAt: string; text: string; direction?: string; actorType?: string; raw?: Json;
   opportunityId?: string | null; appointmentId?: string | null; jobId?: string | null;
-  events?: EvidenceEvent[]; extractionStatus?: string; extractionError?: string | null; sourcePointer?: string;
+  events?: EvidenceEvent[]; extractionStatus?: string; extractionError?: string | null; extractionAttempted?: boolean; sourcePointer?: string;
 }
 export interface CanonicalEvent {
   eventId: string; eventType: CustomerEventType; contactId: string; leadId: string | null;
@@ -67,16 +67,20 @@ export interface CustomerProjection {
   followUpCommitment?: {occurredAt:string;deadline:unknown;action:string|null;evidence:EvidenceRef[]}|null;
   discrepancies: Array<{code: string; detail: string; sourceIds: string[]}>;
   excluded: boolean; exclusionReasons: string[]; eventIds: string[]; lastEventAt: string;
+  activeWork?: Array<{occurrenceId:string;kind:string;state:OperationalState;pipeline:string;nextRequiredAction:string;eventIds:string[];identityStatus:string}>;
 }
 export interface PortalEvidenceRecord {
   id: string; highlevelContactId: string; kind: "walkthrough" | "job" | "payment";
   status: string; createdAt?: string | null; updatedAt?: string | null; completedAt?: string | null;
   startAt?: string | null; sourceRevision?: string | null; highlevelAppointmentId?: string | null;
   jobId?: string | null; sourceWalkthroughId?: string | null; address?: string | null;
+  normalizedLocalJobId?: string | null; normalizedLocalAppointmentId?: string | null;
   soldAt?: string | null; paidAt?: string | null; priceCents?: number | null; paidCents?: number | null;
   currency?: string | null; financials?: Json;
 }
 export interface ReconcileOptions {
+  occurrenceMode?: 'off' | 'shadow' | 'enabled';
+  semanticMaxBatches?: number; semanticTimeoutMs?: number;
   contactIds?: string[]; since?: Date | string; until?: Date | string; useAI?: boolean; maxContacts?: number;
   portalRecords?: PortalEvidenceRecord[]; portalCoverage?: { complete: boolean; asOf: string; error?: string; window?: { start: string; end: string } };
 }
