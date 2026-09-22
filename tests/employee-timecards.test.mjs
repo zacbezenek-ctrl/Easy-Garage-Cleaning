@@ -211,6 +211,18 @@ test('employee job switches are assigned, server-timestamped, break-aware and sa
   assert.equal((await post('job-clock', { clockOutAt: 'client-time', status: 'submitted' })).status, 200);
   assert.equal((await (await view('view=own-job-time')).json()).entry, null);
   assert.equal((await post('job-clock', request)).status, 200, 'same request stays a safe replay after clock-out');
+  assert.equal((await post('job-clock', { approvalStatus: 'approved' }, 'ZacB')).status, 200);
+  const approved = await (await view('view=job-labor&jobId=job-a', 'ZacB')).json();
+  assert.equal(approved.employees[0].approvedWorkMs, 10 * 60000); assert.equal(approved.employees[0].pendingWorkMs, 0);
+  assert.equal((await post('job-clock', { approvalStatus: 'rejected' }, 'ZacB')).status, 200);
+  const rejected = await (await view('view=job-labor&jobId=job-a', 'ZacB')).json();
+  assert.equal(rejected.employees[0].rejectedWorkMs, 10 * 60000); assert.equal(rejected.employees[0].pendingWorkMs, 0);
+  const older = { employee: crew.user, employeeName: crew.displayName, jobId: 'job-a', status: 'submitted', clockInAt: new Date(Date.now() - 7200000).toISOString(), clockOutAt: new Date(Date.now() - 3600000).toISOString(), breaks: [], hourlyRate: 25, approvalStatus: 'approved' };
+  assert.equal((await post('historical-association', older, 'ZacB')).status, 200);
+  const withLegacy = await (await view('view=job-labor&jobId=job-a', 'ZacB')).json();
+  assert.equal(withLegacy.legacyAssociationOnlyCount, 1);
+  assert.equal(withLegacy.employees[0].workMs, 10 * 60000, 'legacy whole-shift associations must not inflate recorded job labor');
+  assert.equal(JSON.stringify(withLegacy).includes('hourlyRate'), false);
 });
 
 test('job segments deny unknown/unassigned/closed work and fence a concurrent crew reassignment', async t => {

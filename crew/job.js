@@ -50,6 +50,23 @@
     } catch (error) { S.shiftError = error.message; }
     finally { S.shiftLoading = false; renderEmployeeJobTime(); }
   }
+  function renderManagerLabor() {
+    const host = document.getElementById('manager-job-labor'); if (!host || !S.job?.canAddManagementNote) return;
+    const data = S.managerLabor, employees = data?.employees || [];
+    const total = key => employees.reduce((sum, employee) => sum + Number(employee[key] || 0), 0);
+    host.innerHTML = `<div class="section-heading"><h2>Employee time on this job</h2><span class="eyebrow">Manager view</span></div><p>Net employee work and travel from explicit job segments. Recorded breaks are excluded. Job elapsed work above measures the job itself.</p>${S.managerLaborError ? `<p class="notice error">${esc(S.managerLaborError)}</p>` : ''}${data ? `<dl class="detail-grid"><div><dt>Total recorded employee work</dt><dd>${durationLabel(total('workMs'))}</dd></div><div><dt>Total recorded employee travel</dt><dd>${durationLabel(total('travelMs'))}</dd></div><div><dt>Work on approved timecards</dt><dd>${durationLabel(total('approvedWorkMs'))}</dd></div><div><dt>Work awaiting approval</dt><dd>${durationLabel(total('pendingWorkMs'))}</dd></div>${total('rejectedWorkMs') ? `<div><dt>Work on rejected timecards</dt><dd>${durationLabel(total('rejectedWorkMs'))}</dd></div>` : ''}</dl>${data.legacyAssociationOnlyCount ? `<p class="notice">${esc(data.legacyAssociationOnlyCount)} linked historical shift${data.legacyAssociationOnlyCount === 1 ? ' has' : 's have'} time without explicit job segments. Those untracked minutes are excluded.</p>` : ''}${data.needsReviewCount ? `<p class="notice error">${esc(data.needsReviewCount)} timecard${data.needsReviewCount === 1 ? ' needs' : 's need'} review and ${data.needsReviewCount === 1 ? 'is' : 'are'} excluded from these totals.</p>` : ''}${employees.length ? employees.map(employee => `<article class="history-item"><h3>${esc(employee.name || employee.employee)}</h3><p>Work: <strong>${durationLabel(employee.workMs)}</strong> · Travel: <strong>${durationLabel(employee.travelMs)}</strong></p><small>Approved work: ${durationLabel(employee.approvedWorkMs)} · Awaiting approval: ${durationLabel(employee.pendingWorkMs)}${employee.rejectedWorkMs ? ` · Rejected: ${durationLabel(employee.rejectedWorkMs)}` : ''}<br>${esc(employee.entryCount)} contributing shift${employee.entryCount === 1 ? '' : 's'}</small></article>`).join('') : '<p class="empty">No employee job segments have been recorded for this job.</p>'}<small>Last confirmed ${esc(stamp(data.asOf))} Mountain Time. Approval remains in the employee timecard workflow.</small>` : S.managerLaborLoading ? '<p>Loading employee job time…</p>' : '<p>Employee totals have not been confirmed.</p>'}<div class="actions"><button data-action="refresh-manager-labor" ${S.managerLaborLoading ? 'disabled' : ''}>Refresh employee time</button><a class="button" href="/employee?view=timesheets">Open employee timecards</a></div>`;
+  }
+  async function loadManagerLabor() {
+    if (!S.job?.canAddManagementNote || S.managerLaborLoading) return;
+    S.managerLaborLoading = true; const user = S.user.user; renderManagerLabor();
+    try {
+      const data = await api(`/api/employee-hub?view=job-labor&jobId=${encodeURIComponent(jobId)}`);
+      if (S.user?.user !== user || !S.job?.canAddManagementNote) return;
+      if (data.jobId !== jobId || !Array.isArray(data.employees)) throw new Error('Employee time could not be associated with this job.');
+      S.managerLabor = data; S.managerLaborError = '';
+    } catch (error) { S.managerLabor = null; S.managerLaborError = error.message; }
+    finally { S.managerLaborLoading = false; renderManagerLabor(); }
+  }
   async function submitEmployeeJobTime(kind, retry = false) {
     if (S.busy || S.uploadBusy || S.pending || !retry && (S.shiftPending || !S.shiftEntry)) return;
     const payload = retry ? S.shiftPending : { collection: 'timeEntries', id: S.shiftEntry.id, data: { jobAction: { requestId: crypto.randomUUID(), expectedSegmentId: S.shiftEntry.currentSegmentId, jobId: kind === 'general' ? '' : jobId, kind } } };
@@ -89,13 +106,13 @@
   function renderError(text) { main.innerHTML = `<section class="card"><h1>We could not open this work</h1><p class="notice error" role="alert">${esc(text)}</p><div class="actions"><button data-action="reload">Retry</button><a class="button" href="/crew/job.html">My assignments</a><a class="button" href="/employee?view=my_day">Employee Hub</a></div></section>`; }
   async function load() {
     if (!jobId) return loadDay();
-    if (S.shiftOwner !== S.user?.user) { S.shiftEntry = null; S.shiftLoaded = false; S.shiftError = ''; S.shiftOwner = S.user?.user; }
+    if (S.shiftOwner !== S.user?.user) { S.shiftEntry = null; S.shiftLoaded = false; S.shiftError = ''; S.shiftOwner = S.user?.user; S.managerLabor = null; S.managerLaborError = ''; }
     try { S.shiftPending = JSON.parse(getDraft('shiftAction', 'null')); } catch { S.shiftPending = null; }
     try {
       const data = await api(`/api/field-jobs?jobId=${encodeURIComponent(jobId)}`);
       acceptJob(data.job); S.historyCursor = data.historyCursor; S.photosAvailable = data.photosAvailable;
       try { S.pending = JSON.parse(getDraft('pending', 'null')); } catch { S.pending = null; }
-      await loadPhotoQueue(); renderJob(); await loadEmployeeJobTime();
+      await loadPhotoQueue(); renderJob(); await loadEmployeeJobTime(); await loadManagerLabor();
     } catch (error) { if (error.status !== 401) renderError(error.message); throw error; }
   }
   async function refreshJob() {
@@ -123,6 +140,7 @@
   function mountJobSections() {
     const timeCard = document.createElement('section'); timeCard.className = 'card'; timeCard.id = 'job-time'; main.querySelector('.grid').insertAdjacentElement('beforebegin', timeCard); renderJobTime();
     const employeeTime = document.createElement('section'); employeeTime.className = 'card'; employeeTime.id = 'employee-job-time'; timeCard.insertAdjacentElement('afterend', employeeTime); renderEmployeeJobTime();
+    if (S.job.canAddManagementNote) { const labor = document.createElement('section'); labor.className = 'card'; labor.id = 'manager-job-labor'; employeeTime.insertAdjacentElement('afterend', labor); renderManagerLabor(); }
     const scope = [...main.querySelectorAll('h2')].find(heading => heading.textContent === 'Scope & instructions'); if (scope) scope.closest('.card').id = 'scope-card';
     const notes = [...main.querySelectorAll('h2')].find(heading => heading.textContent === 'Crew notes & issues'); if (notes) notes.closest('.card').id = 'notes-card';
     const nav = document.createElement('nav'); nav.className = 'job-sections'; nav.setAttribute('aria-label', 'Job sections'); nav.innerHTML = [['scope-card', 'Scope'], ['checklist-card', 'Checklist'], ['photos-card', 'Photos'], ['notes-card', 'Notes'], ['complete-card', 'Complete']].map(([id, text]) => `<a href="#${id}">${text}</a>`).join(''); main.querySelector('h1').insertAdjacentElement('afterend', nav);
@@ -275,6 +293,7 @@
       else if (action === 'shift-time') await submitEmployeeJobTime(button.dataset.kind);
       else if (action === 'retry-shift-time') await submitEmployeeJobTime('', true);
       else if (action === 'refresh-shift-time') await loadEmployeeJobTime();
+      else if (action === 'refresh-manager-labor') await loadManagerLabor();
       else if (action === 'clear-shift-time') { await loadEmployeeJobTime(); if (!S.shiftError) { S.shiftPending = null; setDraft('shiftAction', ''); renderEmployeeJobTime(); } }
       else if (action === 'today' || action === 'tomorrow') { const date = new Date(`${mountainDate()}T12:00:00Z`); if (action === 'tomorrow') date.setUTCDate(date.getUTCDate() + 1); S.date = date.toISOString().slice(0, 10); await loadDay(); }
       else if (action === 'retry-pending') { await refreshJob(); await submitAction(S.pending, true); }

@@ -474,9 +474,9 @@ export async function onRequestGet({ request, env }) {
         if (same(entry.jobId, jobId) && (!summary.recorded || summary.partialHistory)) legacyAssociationOnlyCount++;
         if (summary.needsReview && (time || same(entry.jobId, jobId) || Array.isArray(entry.jobTracking?.segments) && entry.jobTracking.segments.some(item => item?.jobId === jobId))) { needsReviewCount++; continue; }
         if (!time) continue;
-        const key = personKey(entry.employee), employee = employees.get(key) || { employee: entry.employee, name: entry.employeeName || entry.employee, workMs: 0, travelMs: 0, approvedWorkMs: 0, pendingWorkMs: 0, entryCount: 0 };
+        const key = personKey(entry.employee), employee = employees.get(key) || { employee: entry.employee, name: entry.employeeName || entry.employee, workMs: 0, travelMs: 0, approvedWorkMs: 0, pendingWorkMs: 0, rejectedWorkMs: 0, entryCount: 0 };
         employee.workMs += time.workMs; employee.travelMs += time.travelMs; employee.entryCount++;
-        employee[entry.approvalStatus === 'approved' ? 'approvedWorkMs' : 'pendingWorkMs'] += time.workMs;
+        employee[entry.approvalStatus === 'approved' ? 'approvedWorkMs' : entry.approvalStatus === 'rejected' ? 'rejectedWorkMs' : 'pendingWorkMs'] += time.workMs;
         employees.set(key, employee);
       }
       return reply(200, { ok: true, jobId, asOf: now, employees: [...employees.values()], legacyAssociationOnlyCount, needsReviewCount, source: 'explicit_employee_job_segments' });

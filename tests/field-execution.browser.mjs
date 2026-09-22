@@ -99,6 +99,8 @@ try {
   await page.unroute('**/api/employee-hub'); await page.reload();
   await page.getByRole('button', { name: 'Retry job time', exact: true }).click();
   await page.getByRole('button', { name: 'Recording work here', exact: true }).waitFor();
+  assert.equal(await page.locator('#manager-job-labor').count(), 0);
+  assert.equal(await page.evaluate(async () => (await fetch('/api/employee-hub?view=job-labor&jobId=browser-job')).status), 403);
   const personalShift = await page.evaluate(async () => (await (await fetch('/api/employee-hub')).json()).collections.timeEntries.find(entry => entry.id === 'browser-personal-shift'));
   assert.equal(personalShift.jobTracking.segments.length, 3, 'lost response must not duplicate employee segments');
   await page.getByLabel('Add a note', { exact: true }).fill('Customer confirmed the green cabinet is staying.');
@@ -184,6 +186,11 @@ try {
   await managerPage.getByRole('button', { name: 'Save note', exact: true }).click();
   await managerPage.getByText('Private manager-only pricing discussion.', { exact: true }).waitFor();
   await managerPage.goto('http://localhost:8793/crew/job.html?jobId=browser-job');
+  await managerPage.locator('#manager-job-labor').getByRole('heading', { name: 'Crew One', exact: true }).waitFor();
+  await managerPage.locator('#manager-job-labor').getByText('Work awaiting approval', { exact: true }).waitFor();
+  assert.equal(await managerPage.locator('body').evaluate(body => body.scrollWidth <= innerWidth), true, 'manager labor cards must fit a phone');
+  await managerPage.getByRole('button', { name: 'Refresh employee time', exact: true }).click();
+  await managerPage.locator('#manager-job-labor').getByRole('heading', { name: 'Crew One', exact: true }).waitFor();
   await managerPage.getByLabel('Add a note', { exact: true }).fill('Customer needs the replacement hardware delivered.');
   await managerPage.getByText('Flag an issue needing operations follow-up', { exact: true }).click();
   await managerPage.getByRole('button', { name: 'Save note', exact: true }).click();
@@ -200,5 +207,5 @@ try {
   assert.equal(store.get('jobs/browser-job').status, 'completed');
   await managerContext.close(); await Promise.all(background);
   assert.deepEqual(errors, [], 'no browser JavaScript errors after recovery');
-  console.log(JSON.stringify({ ok: true, browser: browser.version(), viewport: '390x844 touch, Pacific device timezone with Mountain job dates', checks: ['login', 'personal day', 'navigate job', 'en route', 'arrived', 'start validation', 'checklists', 'materials', 'live elapsed work', 'pause and resume segment timing', 'employee work and travel segments', 'employee lost response retry', 'end employee job time after completion', 'library upload', 'draft refresh persistence', 'multiple photos', 'notes', 'completion', 'server refresh persistence', 'next job preserved', 'private photo viewer', 'reassignment revokes detail', 'mobile overflow', 'desktop render', 'offline retry', 'lost response idempotency', 'stale job review', 'auth expiry', 'draft isolation between accounts', 'manager checklist configuration', 'manager private note', 'audited issue resolution after completion', 'durable failed CRM handoff', 'no browser errors'], artifacts: artifactDir }));
+  console.log(JSON.stringify({ ok: true, browser: browser.version(), viewport: '390x844 touch, Pacific device timezone with Mountain job dates', checks: ['login', 'personal day', 'navigate job', 'en route', 'arrived', 'start validation', 'checklists', 'materials', 'live elapsed work', 'pause and resume segment timing', 'employee work and travel segments', 'employee lost response retry', 'end employee job time after completion', 'library upload', 'draft refresh persistence', 'multiple photos', 'notes', 'completion', 'server refresh persistence', 'next job preserved', 'private photo viewer', 'reassignment revokes detail', 'mobile overflow', 'desktop render', 'offline retry', 'lost response idempotency', 'stale job review', 'auth expiry', 'draft isolation between accounts', 'manager employee labor totals', 'crew denied manager labor', 'manager checklist configuration', 'manager private note', 'audited issue resolution after completion', 'durable failed CRM handoff', 'no browser errors'], artifacts: artifactDir }));
 } finally { await context.close(); await browser.close(); await new Promise(resolve => server.close(resolve)); globalThis.fetch = originalFetch; }
