@@ -28,6 +28,8 @@ class BrowserTests(unittest.TestCase):
     def setUp(self):
         self.context=self.browser.new_context(viewport={'width':1360,'height':1000});self.page=self.context.new_page()
         self.items=[task()];self.calls=[];self.enabled=True;self.fail_once=False;self.stale=False;self.errors=[];self.calendar_available=False
+        self.sold_revenue={'valueCents':None,'knownSubtotalCents':0,'unknownOccurrenceCount':1,'unknownValueCount':1,'missingValue':['confirmed-undated-sale'],'coverageIncomplete':True,'qualification':'Confirmed outcome has no verified occurrence date.','unknownOccurrenceEvents':[{'eventId':'confirmed-undated-sale','contactId':'synthetic-contact','valueCents':None,'currency':None}]}
+        self.collected_revenue={'valueCents':None,'knownSubtotalCents':13900,'unknownOccurrenceCount':0,'unknownValueCount':0,'missingValue':[],'coverageIncomplete':True,'qualification':'Payment history is incomplete; the dated subtotal is not a complete total.','unknownOccurrenceEvents':[]}
         self.page.on('pageerror',lambda e:self.errors.append(str(e)))
         self.page.route('**/*',self.route)
     def tearDown(self):
@@ -37,7 +39,9 @@ class BrowserTests(unittest.TestCase):
         req=route.request;p=urlparse(req.url)
         if p.hostname!='127.0.0.1': route.abort();return
         if p.path!='/api/operations': route.continue_();return
-        def send(body,status=200):route.fulfill(status=status,content_type='application/json',body=json.dumps(body))
+        def send(body,status=200):
+            if body.get('authority')=='canonical_customer_event_ledger':body={**body,'soldRevenue':self.sold_revenue,'collectedRevenue':self.collected_revenue}
+            route.fulfill(status=status,content_type='application/json',body=json.dumps(body))
         if req.method=='GET':send({'ok':True,'enabled':self.enabled,'actor':{'id':'test-owner','role':'owner','kind':'human'},'owners':[{'id':'test-owner','name':'Test owner','role':'owner'}]});return
         r=req.post_data_json;self.calls.append(r);c=r['body'];name=c['command']
         if name=='queue':
@@ -100,7 +104,17 @@ class BrowserTests(unittest.TestCase):
     def test_authoritative_instructions_show_current_notes_and_escape_untrusted_content(self):
         self.calendar_available=True;self.open();self.page.get_by_role('tab',name='Portal schedule',exact=True).click();self.page.get_by_role('button',name='Instructions',exact=True).click();dialog=self.page.get_by_role('dialog');expect(dialog).to_contain_text('Protect shelving <img');expect(dialog).to_contain_text('Reviewed note');expect(dialog).not_to_contain_text('Old note');self.assertEqual(dialog.locator('img').count(),0);self.assertIsNone(self.page.evaluate('window.injected'));reads=[r['body'] for r in self.calls if r['body']['command']=='portal.job'];self.assertEqual(reads,[{'command':'portal.job','jobId':'exact-fixture-visit'}])
     def test_sales_evidence_separates_activity_cohort_and_pipeline_with_safe_transcripts(self):
-        self.open();self.page.get_by_role('tab',name='Sales evidence',exact=True).click();view=self.page.locator('[data-ac-content]');expect(view).to_contain_text('Activity in this period');expect(view).to_contain_text('1 / 8');expect(view).to_contain_text('12.5%');expect(view).to_contain_text('Walkthrough pipeline · 1');expect(view).to_contain_text('Video quote pipeline · 1');expect(view).to_contain_text('Tuesday at 2:15 works <img');expect(view).to_contain_text('1 event(s) with amount unverified');self.assertEqual(view.locator('img').count(),0);self.assertIsNone(self.page.evaluate('window.injected'))
+        self.open();self.page.get_by_role('tab',name='Sales evidence',exact=True).click();view=self.page.locator('[data-ac-content]');expect(view).to_contain_text('Activity in this period');expect(view).to_contain_text('1 / 8');expect(view).to_contain_text('12.5%');expect(view).to_contain_text('Walkthrough pipeline · 1');expect(view).to_contain_text('Video quote pipeline · 1');expect(view).to_contain_text('Tuesday at 2:15 works <img');expect(view).to_contain_text('Amount unverified: 1');self.assertEqual(view.locator('img').count(),0);self.assertIsNone(self.page.evaluate('window.injected'))
         self.page.get_by_role('button',name='Customer evidence',exact=True).first.click();expect(self.page.get_by_role('dialog')).to_contain_text('Tuesday at 2:15 works');self.page.get_by_role('button',name='Close',exact=True).click();self.page.get_by_label('Sales evidence reporting window').select_option('7');expect(view).to_contain_text('Synthetic booked customer');reads=[r['body'] for r in self.calls if r['body']['command']=='intelligence.report'];self.assertEqual(len(reads),2);self.assertNotEqual(reads[0]['since'],reads[1]['since']);self.assertEqual(reads[1]['cohortSince'],reads[1]['since'])
         self.page.set_viewport_size({'width':390,'height':900});self.assertLessEqual(self.page.evaluate('document.documentElement.scrollWidth'),391);out=ROOT/'test-results';out.mkdir(exist_ok=True);self.page.screenshot(path=str(out/'sales-evidence-mobile.png'),full_page=True)
+    def test_partial_revenue_keeps_known_subtotal_and_undated_outcomes_out_of_total(self):
+        self.open();self.page.get_by_role('tab',name='Sales evidence',exact=True).click()
+        sold=self.page.locator('[data-revenue-kind="Sold revenue"]');collected=self.page.locator('[data-revenue-kind="Collected revenue"]')
+        expect(sold.locator('strong')).to_have_text('Total unavailable');expect(sold).to_contain_text('Verified dated subtotal: $0.00');expect(sold).to_contain_text('Date unknown: 1 · Amount unverified: 1');expect(sold).to_contain_text('Confirmed outcome has no verified occurrence date.')
+        expect(collected.locator('strong')).to_have_text('Total unavailable');expect(collected).to_contain_text('Verified dated subtotal: $139.00');expect(collected).to_contain_text('Payment history is incomplete')
+        sold.get_by_text('Review outcomes without dates',exact=True).click();expect(sold).to_contain_text('Not assigned to this period');sold.get_by_role('button',name='Customer evidence',exact=True).click();expect(self.page.get_by_role('dialog')).to_contain_text('Tuesday at 2:15 works')
+    def test_verified_zero_is_distinct_from_unknown_total_and_qualifications_are_escaped(self):
+        self.sold_revenue={'valueCents':0,'knownSubtotalCents':0,'unknownOccurrenceCount':0,'unknownValueCount':0,'coverageIncomplete':False,'qualification':'Verified dated outcomes in this period.','unknownOccurrenceEvents':[]}
+        self.collected_revenue['qualification']='<img src=x onerror="window.injected=true">'
+        self.open();self.page.get_by_role('tab',name='Sales evidence',exact=True).click();sold=self.page.locator('[data-revenue-kind="Sold revenue"]');expect(sold.locator('strong')).to_have_text('$0.00');expect(sold).not_to_contain_text('Total unavailable');self.assertEqual(self.page.locator('img').count(),0);self.assertIsNone(self.page.evaluate('window.injected'))
 if __name__=='__main__':unittest.main(verbosity=2)

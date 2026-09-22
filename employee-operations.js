@@ -107,6 +107,17 @@ async function loadCalendar(generation){const r=await rpc({command:'calendar',st
 const metricNames={leads:'Leads created',leadsCreated:'Leads created',humanContacts:'Human contacts',twoWayContacts:'Two-way conversations',qualified:'Qualified',priceExpectationsAccepted:'Price expectations accepted',videoQuoteOpportunities:'Video quote opportunities',videoQuotesReceived:'Video quotes received',quotesDelivered:'Quotes delivered',walkthroughsVerballyBooked:'Walkthroughs verbally booked',walkthroughsFormallyBooked:'Walkthroughs formally booked',walkthroughsBooked:'Walkthroughs formally booked',walkthroughsCompleted:'Walkthroughs completed',jobsSold:'Jobs sold',jobsCompleted:'Jobs completed',cashCollected:'Customers with cash collected'};
 const words=s=>metricNames[s]||String(s).replaceAll('_',' ').replace(/([a-z])([A-Z])/g,'$1 $2');
 const money=cents=>cents==null?'Amount unverified':new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}).format(cents/100);
+function revenueCard(label,revenue,customers=[]){
+  const events=Array.isArray(revenue.unknownOccurrenceEvents)?revenue.unknownOccurrenceEvents:[],count=(v,fallback)=>Number.isSafeInteger(v)&&v>=0?v:fallback;
+  const unknownDates=count(revenue.unknownOccurrenceCount,events.length),unknownValues=count(revenue.unknownValueCount,revenue.missingValue?.length||0);
+  const complete=Number.isSafeInteger(revenue.valueCents)&&!revenue.coverageIncomplete&&!unknownDates&&!unknownValues;
+  const subtotal=Number.isSafeInteger(revenue.knownSubtotalCents)?revenue.knownSubtotalCents:complete?revenue.valueCents:null;
+  const card=h('article',{'data-revenue-kind':label},h('span',{},label),h('strong',{},complete?money(revenue.valueCents):'Total unavailable'));
+  if(!complete)card.append(h('small',{},'Verified dated subtotal: '+(subtotal===null?'Not available':money(subtotal))));
+  card.append(h('small',{},`Date unknown: ${unknownDates} · Amount unverified: ${unknownValues}`),h('small',{},revenue.qualification||(complete?'Verified dated outcomes in this period.':'The verified dated subtotal is not a complete period total.')));
+  if(events.length){const list=h('ul');for(const event of events){const customer=customers.find(c=>c.contactId===event.contactId);list.append(h('li',{},button(customer?.customerName||'Customer evidence',()=>intelligenceCustomer(event.contactId)),h('small',{},(Number.isSafeInteger(event.valueCents)&&event.currency==='USD'?money(event.valueCents):'Amount unverified')+' · Not assigned to this period')));}card.append(h('details',{},h('summary',{},'Review outcomes without dates'),list));}
+  return card;
+}
 async function intelligenceCustomer(contactId){
   const ui=openDialog('Customer evidence');ui.body.append(h('p',{class:'ac-loading'},'Loading the customer event ledger…'));
   try{const result=await rpc({command:'intelligence.customer',contactId});if(state.dialog!==ui.dialog)return;const r=result.timeline||result;
@@ -128,7 +139,7 @@ async function loadIntelligence(generation){
   if(r.coverage?.complete===false||r.sourceCoverage?.complete===false)target.append(banner('Some customer sources remain incomplete. Review diagnostics before treating these totals as complete.'));
   target.append(h('h3',{},'Activity in this period'));const stats=h('div',{class:'ac-intelligence-metrics'});
   for(const [key,value] of Object.entries(r.periodActivity||{}))stats.append(h('article',{},h('span',{},words(key)),h('strong',{},value.count??'Unavailable')));
-  for(const [key,label] of [['soldRevenue','Verified sold revenue'],['collectedRevenue','Verified collected revenue']])if(r[key])stats.append(h('article',{},h('span',{},label),h('strong',{},money(r[key].valueCents)),h('small',{},`${r[key].missingValue?.length||0} event(s) with amount unverified`)));
+  for(const [key,label] of [['soldRevenue','Sold revenue'],['collectedRevenue','Collected revenue']])if(r[key])stats.append(revenueCard(label,r[key],r.customers||[]));
   target.append(stats,h('h3',{},'Lead cohort conversion'));const table=h('table',{class:'ac-cohort-table'},h('thead',{},h('tr',{},h('th',{},'Outcome'),h('th',{},'Converted / leads'),h('th',{},'Observed rate')))),body=h('tbody');
   for(const [key,value] of Object.entries(r.cohort?.metrics||{}))body.append(h('tr',{},h('td',{},words(key)),h('td',{},`${value.numerator} / ${value.denominator}`),h('td',{},value.rate==null?'—':(value.rate*100).toFixed(1)+'%')));
   table.append(body);target.append(h('p',{class:'ac-muted'},'Only leads created in the selected window are in these denominators. Their outcomes are observed through '+displayTime(r.cohort?.observedThrough||until)+'. This is an immature cohort, not a final close rate.'),h('div',{class:'ac-table-scroll'},table));

@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, gte, inArray, lt, or, sql } from "drizzle-orm";
 import { getDb, schema } from "@egc/database";
-import { assertionEvents, assertionReconciled, asRecord, buildCanonicalEvents, buildReport, captureOriginalAttribution, EXTRACTOR_VERSION, exclusionReasons, extractEvidence, hash, projectCustomer, validDate,validateUserConfirmedOutcome } from "./core.js";
+import { assertionEvents, assertionReconciled, asRecord, buildCanonicalEvents, buildReport, captureOriginalAttribution, EXTRACTOR_VERSION, exclusionReasons, extractEvidence, hash, projectCustomer, validDate,validateUserConfirmedOutcome,paginateEventEvidence } from "./core.js";
 import { extractStructuredEvidence } from "./extractor.js";
 import { recordsFromSnapshot,usableTranscriptText } from "./sources.js";
 import {customerActivityPredicate,customerRefreshOrder} from "./selection.js";
@@ -8,6 +8,7 @@ import type { CanonicalEvent, CustomerProjection, EvidenceEvent, Json, Operation
 export * from "./core.js";
 export * from "./sources.js";
 export * from "./selection.js";
+export * from "./briefing.js";
 export { extractStructuredEvidence, validateExtractedEvent } from "./extractor.js";
 
 type DbEvent=typeof schema.customerEvents.$inferSelect;
@@ -169,7 +170,7 @@ export async function getCustomerTimeline(input:{contactId:string;refresh?:boole
 }
 export const getCanonicalCustomer=getCustomerTimeline;
 
-export async function getCanonicalReport(input:{since:Date|string;until:Date|string;cohortSince?:Date|string;cohortUntil?:Date|string;refresh?:boolean}) {
+export async function getCanonicalReport(input:{since:Date|string;until:Date|string;cohortSince?:Date|string;cohortUntil?:Date|string;refresh?:boolean;evidenceOffset?:number;evidenceLimit?:number}) {
   const since=validDate(input.since),until=validDate(input.until);if(!since||!until)throw new Error("invalid_report_window");
   if(input.refresh)await reconcileCustomerState({since,until,useAI:false});
   const db=getDb();const [snapshots,events,leads,meta,cursors,periodAccepted]=await Promise.all([
@@ -180,7 +181,17 @@ export async function getCanonicalReport(input:{since:Date|string;until:Date|str
   const leadRoster=leads.map(l=>({contactId:l.contactId,leadCreatedAt:l.createdAt.toISOString(),excluded:exclusionReasons({tags:l.tags,raw:l.raw,source:l.source,doNotContact:l.doNotContact}).includes("test_internal_or_vendor")}));
   const report=buildReport({events:events.map(toEvent),customers:snapshots.map(s=>s.snapshot as unknown as CustomerProjection),leadRoster,since,until,...(input.cohortSince?{cohortSince:validDate(input.cohortSince)!}:{}),...(input.cohortUntil?{cohortUntil:validDate(input.cohortUntil)!}:{})});
   const missing=leads.filter(l=>!snapshots.some(s=>s.contactId===l.contactId));
-  return {...report,coverage:{complete:!missing.length&&snapshots.every(s=>asRecord(s.coverage.extraction).complete===true&&asRecord(s.coverage.portal).complete===true&&asRecord(s.coverage.providerNotes).complete===true),missingCustomers:missing.map(l=>({id:l.id,contactId:l.contactId})),customers:snapshots.map(s=>({contactId:s.contactId,lastReconciledAt:s.lastReconciledAt,coverage:s.coverage})),source:"provider_mirrors_plus_persisted_portal_evidence"},metaConversions:meta,metaConversionsScope:'all_time_ledger_status_totals',metaConversionsDuringPeriod:{window:{since,until},basis:'provider_acceptance_time',acceptedEvents:periodAccepted.reduce((n,row)=>n+row.count,0),stages:periodAccepted},cursors};
+  const evidence=paginateEventEvidence(report.countedEvents,input.evidenceOffset,input.evidenceLimit);
+  return {...report,countedEvents:evidence.events,countedEventsPage:evidence.page,coverage:{complete:!missing.length&&snapshots.every(s=>asRecord(s.coverage.extraction).complete===true&&asRecord(s.coverage.portal).complete===true&&asRecord(s.coverage.providerNotes).complete===true),missingCustomers:missing.map(l=>({id:l.id,contactId:l.contactId})),customers:snapshots.map(s=>({contactId:s.contactId,lastReconciledAt:s.lastReconciledAt,coverage:s.coverage})),source:"provider_mirrors_plus_persisted_portal_evidence"},metaConversions:meta,metaConversionsScope:'all_time_ledger_status_totals',metaConversionsDuringPeriod:{window:{since,until},basis:'provider_acceptance_time',acceptedEvents:periodAccepted.reduce((n,row)=>n+row.count,0),stages:periodAccepted},cursors};
+}
+
+/** A small read for follow-up evidence pages: no repeated report/pipeline payload,
+ * no extraction side effects, and every original evidence/source pointer retained. */
+export async function getOperationalEventEvidence(input:{since:Date|string;until:Date|string;offset?:number;limit?:number;eventIds?:string[]}) {
+  const since=validDate(input.since),until=validDate(input.until);if(!since||!until||since>=until)throw new Error('invalid_report_window');
+  if(input.eventIds&&(input.eventIds.length>200||input.eventIds.some(id=>!/^egcev_[a-f0-9]{64}$/.test(id))))throw new Error('invalid_event_ids');
+  const db=getDb(),rows=await db.select({event:schema.customerEvents}).from(schema.customerEvents).innerJoin(schema.customerStateSnapshots,eq(schema.customerStateSnapshots.contactId,schema.customerEvents.contactId)).where(and(eq(schema.customerEvents.active,true),eq(schema.customerEvents.humanReviewNeeded,false),sql`${schema.customerEvents.confidence}>=0.85`,sql`coalesce(${schema.customerStateSnapshots.snapshot}->>'excluded','false')<>'true'`,input.eventIds?(input.eventIds.length?inArray(schema.customerEvents.eventId,input.eventIds):sql`false`):and(gte(schema.customerEvents.occurredAt,new Date(since)),lt(schema.customerEvents.occurredAt,new Date(until)),sql`coalesce(${schema.customerEvents.details}->>'occurredAtVerified','true')<>'false'`)));
+  const evidence=paginateEventEvidence(rows.map(r=>toEvent(r.event)),input.offset,input.limit);return {period:{since,until},...evidence};
 }
 
 export async function getCustomerStateDiagnostics() {

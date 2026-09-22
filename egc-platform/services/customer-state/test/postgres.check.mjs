@@ -6,7 +6,7 @@ const url=new URL(process.env.DATABASE_URL??'http://invalid');
 if(process.env.EGC_CUSTOMER_STATE_TEST!=='isolated'||!['localhost','127.0.0.1'].includes(url.hostname)||!['/egc_operations_test','/egc_customer_state_test'].includes(url.pathname)||!['postgres:','postgresql:'].includes(url.protocol))throw new Error('Customer-state integration requires EGC_CUSTOMER_STATE_TEST=isolated and explicitly named loopback test database');
 const {getDb,schema}=await import('@egc/database');
 const {eq,sql}=await import('drizzle-orm');
-const {reconcileCustomerState,recordUserConfirmedOutcome,getCustomerTimeline,getCanonicalReport}=await import('../dist/index.js');
+const {reconcileCustomerState,recordUserConfirmedOutcome,getCustomerTimeline,getCanonicalReport,getOperationalEventEvidence}=await import('../dist/index.js');
 const db=getDb(),created=[];
 const originalFetch=globalThis.fetch;
 globalThis.fetch=async()=>{throw new Error('All external HTTP disabled in isolated customer-state integration test');};
@@ -119,6 +119,14 @@ test('unreconciled customers remain in the cohort denominator and period lead co
 test('an explicit empty contact scope never expands to a global Portal retirement',async()=>{
   const result=await reconcileCustomerState({contactIds:[],useAI:false,portalRecords:[],portalCoverage:{complete:true,asOf:new Date().toISOString()}});
   assert.equal(result.inspected,0);assert.deepEqual(result.results,[]);
+});
+
+test('report evidence pages preserve all counted event identities and original source references',async()=>{
+  const sourceIds=[];for(let i=0;i<7;i++){const providerId=`pagination-outreach-${randomUUID()}`;sourceIds.push(providerId);await db.insert(schema.messages).values({providerId,contactId:contact.id,type:'SMS',direction:'outbound',actorType:'human',body:`Scheduling follow-up ${i}.`,occurredAt:at});}
+  await refresh();const timeline=await getCustomerTimeline({contactId:contact.id}),eventIds=timeline.events.filter(e=>e.eventType==='human_outreach').map(e=>e.eventId),seen=[];
+  for(let offset=0;offset<eventIds.length;offset+=2){const page=await getOperationalEventEvidence({since:prior,until:new Date(),eventIds,offset,limit:2});assert.equal(page.page.total,7);seen.push(...page.events);}
+  assert.deepEqual(new Set(seen.map(e=>e.eventId)),new Set(eventIds));assert.deepEqual(new Set(seen.flatMap(e=>e.evidence.map(r=>r.sourceRecordId))),new Set(sourceIds));
+  const report=await getCanonicalReport({since:prior,until:new Date(),evidenceLimit:2});assert.equal(report.countedEvents.length,2);assert.ok(eventIds.every(id=>report.periodActivity.humanOutreach.eventIds.includes(id)));assert.ok(report.countedEventsPage.nextOffset!==null);
 });
 
 test('completed call with no customer transcript is not two-way contact and incomplete coverage stays visible',async()=>{

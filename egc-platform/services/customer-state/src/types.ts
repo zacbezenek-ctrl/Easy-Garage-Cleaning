@@ -20,7 +20,7 @@ export type SourceType = "lead" | "message" | "call" | "call_transcript" | "appo
 export type Json = Record<string, unknown>;
 export type EvidenceRef = {
   sourceType: SourceType; sourceRecordId: string; occurredAt: string; excerpt: string;
-  sourcePointer?: string; confidence: number; humanReviewNeeded: boolean;
+  sourcePointer?: string; confidence: number; humanReviewNeeded: boolean; excerptTruncated?: boolean;
 };
 export interface EvidenceEvent {
   eventType: CustomerEventType;
