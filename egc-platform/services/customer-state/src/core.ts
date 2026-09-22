@@ -44,6 +44,10 @@ export function exclusionReasons(input: { tags?: string[]; raw?: Json; source?: 
 export function isVoicemailOrScreening(text: string) {
   return /(?:please (?:leave|record) (?:your |a |an )?(?:message|name)|after the (?:tone|beep)|not available|couldn't get to your call|can(?:not|'t) come to the phone|see if this person is available|mailbox|call has been forwarded|leave me a message)/i.test(text);
 }
+/** Photos EGC promises to send (portfolio/examples) are not customer quote media. */
+export function isOutboundBusinessMediaPromise(record:Pick<SourceRecord,'sourceType'|'direction'|'text'>) {
+  return record.sourceType==='message'&&record.direction==='outbound'&&/\b(?:I|we)(?:'ll| will| can| am going to| are going to| would).{0,30}(?:send|text|upload).{0,65}(?:photos?|pictures?|video)/i.test(record.text.replace(/[’‘]/g,"'"))&&!/(?:can|could|would) you.{0,30}(?:send|text|upload)|please (?:send|text|upload)|(?:send|text|upload) (?:me|us|your)\b/i.test(record.text);
+}
 const address = /\b\d{1,6}\s+(?:[a-z0-9]+[ .-]+){0,6}(?:street|st\b|avenue|ave\b|road|rd\b|drive|dr\b|lane|ln\b|court|ct\b|way\b|circle|cir\b|boulevard|blvd\b|place|pl\b|trail|terrace|parkway)/i;
 const timeMention = /\b(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday|tomorrow|today)\b.{0,40}\b(?:\d{1,2}(?::\d{2})?\s*(?:am|pm)?|morning|afternoon|noon)|\b\d{1,2}:\d{2}\s*(?:am|pm)?\b/i;
 const acceptance = /\b(?:works(?: for me| for us)?|sounds good|that(?:'s| is) (?:fine|great|good|okay|ok|acceptable)|(?:I|we)(?:'ll| will| can| would like to| want to) (?:do|take|book|schedule|send|accept)|let(?:'s| us) (?:do|book|schedule)|yes|agreed)\b/i;
@@ -117,7 +121,7 @@ export function extractEvidence(record: SourceRecord, history: SourceRecord[] = 
     if(/(?:need to|want to|please) cancel.{0,40}(?:appointment|walkthrough|visit)|(?:appointment|walkthrough|visit).{0,30}cancel/i.test(subject)) add("appointment_cancelled",customerLines || record.text,.98,"Reconcile cancellation in EGC Portal");
   }
   if(human && /(?:got you|have you|you're|you are) (?:all )?(?:booked|scheduled|on (?:the|our) calendar)/i.test(text) && walkthroughContext.test(context) && !negative.test(text)) add("walkthrough_verbally_booked",record.text,.96,"Verify EGC Portal appointment and provider sync");
-  if(human && /(?:send|text|upload).{0,45}(?:video|photos?|pictures?)/i.test(text)) add("video_quote_requested",record.text,.98,"Await customer media for the quote");
+  if(human && !isOutboundBusinessMediaPromise(record) && /(?:send|text|upload).{0,45}(?:video|photos?|pictures?)/i.test(text)) add("video_quote_requested",record.text,.98,"Await customer media for the quote");
   // A scoped pickup request followed by two explicit scheduling prices is a
   // delivered quote, but neither option is a verified accepted sale value.
   const scopedPickup=before.filter(r=>r.sourceType==='message'&&r.direction==='inbound'&&r.actorType==='customer'&&/(?:pick\s*up|pickup|remove|haul|take away|charge to take)/i.test(r.text)&&/(?:bed|frame|mattress|couch|sofa|dresser|refrigerator|fridge|appliance|table|chairs?|piano|treadmill|furniture)/i.test(r.text)).at(-1);

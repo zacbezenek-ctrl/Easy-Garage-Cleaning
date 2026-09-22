@@ -9,6 +9,12 @@ const projection=(records:SourceRecord[],patch:Partial<Parameters<typeof project
 const assertion=(patch:Partial<OperationalAssertion>={}):OperationalAssertion=>({id:"assertion-1",contactId,field:"job_sold",value:true,exactText:"Annette closed and revenue collected.",sourceReference:"conversation:user-message",actorId:"zac",assertedAt:at,occurredAt:at,status:"pending_reconciliation",...patch});
 
 describe("conversation evidence",()=>{
+  it('does not turn business portfolio-photo promises into customer quote-media requests',()=>{
+    const portfolio=source("Hey, it was really nice meeting you today! I'll send over those before-and-after photos as well.",{direction:'outbound',actorType:'human'});
+    expect(extractEvidence(portfolio).some(e=>e.eventType==='video_quote_requested')).toBe(false);
+    expect(validateExtractedEvent({eventType:'video_quote_requested',supportingText:portfolio.text,confidence:1,customerCommitmentVerified:true},portfolio)).toBeNull();
+    expect(extractEvidence(source('Good speaking with you! Send over those photos whenever you can.',{direction:'outbound',actorType:'human'})).some(e=>e.eventType==='video_quote_requested')).toBe(true);
+  });
   it('counts scoped schedule-dependent quote options without choosing a price or fabricating a sale',()=>{
     const request=source('What do you charge to take a king size bed and frame? I’m in SW Loveland.',{sourceRecordId:'specific-work',occurredAt:'2026-09-21T17:00:00.000Z'});
     const quoted=source('Normally, we are at 350 for that, but if you book on a day when we have a truck out, we are at $250',{direction:'outbound',actorType:'human'});
