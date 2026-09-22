@@ -27,7 +27,7 @@ export function dispatchHandlers({ session = getHubSession, storage = dispatchSt
       try {
         const actor = await session(request,env); requireDispatcher(actor);
         const params = Object.fromEntries(new URL(request.url).searchParams.entries());
-        return reply(200,await dispatchOverview(storage(env),actor,params));
+        return reply(200,{...await dispatchOverview(storage(env),actor,params),viewer:{id:actor.user}});
       } catch(error) { return errorResponse(error); }
     },
     async post({request,env}) {

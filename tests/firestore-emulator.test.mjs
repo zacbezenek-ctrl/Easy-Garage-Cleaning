@@ -109,10 +109,15 @@ test('actual Firestore rules isolate canonical operations from crew SDK access',
       const availabilityRequest=body=>({env:{},request:new Request('https://easygaragecleaning.com/api/crew-availability',{method:'POST',headers:{Origin:'https://easygaragecleaning.com','Content-Type':'application/json'},body:JSON.stringify(body)})});
       const unavailable=await handlers.post(availabilityRequest({action:'create',requestId:crypto.randomUUID(),changes:{date:'2099-09-14',allDay:true,reason:'Synthetic time off'}}));
       assert.equal(unavailable.status,200);const block=await unavailable.json();assert.equal(block.record.employee,'crew1');
+      const {dispatchOpenings}=await import('../functions/_lib/dispatch-openings.js');
+      const capacityQuery={startDate:'2099-09-14',endDate:'2099-09-15',employeeIds:'crew1',durationMinutes:'60',travelBufferMinutes:'0'};
+      assert.deepEqual((await dispatchOpenings(store,actor,capacityQuery)).candidates,[]);
       await assert.rejects(mutateDispatch(store,actor,create('customer',{date:'2099-09-14'})),error=>error.code==='dispatch_conflict');
       const cancelled=await handlers.post(availabilityRequest({action:'cancel',requestId:crypto.randomUUID(),id:block.record.id,expectedRevision:block.record.revision}));
       assert.equal(cancelled.status,200);assert.equal((await cancelled.json()).record.status,'cancelled');
+      assert.equal((await dispatchOpenings(store,actor,capacityQuery)).candidates[0].time,'08:00');
       assert.equal((await mutateDispatch(store,actor,create('customer',{date:'2099-09-14'}))).ok,true);
+      const capacity=await dispatchOpenings(store,actor,capacityQuery);assert.equal(capacity.candidates[0].time,'10:20');assert.ok(capacity.coverage.revision);
     });
   } finally {await environment.cleanup();}
 });

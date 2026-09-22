@@ -67,6 +67,21 @@
  * A 409 dispatch_conflict has details.conflicts with employee/vehicle/job IDs.
  * Conflicts are never bypassed by a client flag. Understaffing and travel buffers
  * are explicit warnings returned on GET and successful POST.
+ *
+ * GET /api/dispatch-openings?startDate=YYYY-MM-DD&endDate=exclusive&
+ * durationMinutes=120&workdayStart=08:00&workdayEnd=17:00&employeeIds=id1,id2&
+ * vehicleId=optional&travelBufferMinutes=20
+ * Manager only; at most14days, duration15..1440min, buffer0..180min. Explicit
+ * active employee IDs required. Workdayend24:00 is allowed. Past times omitted.
+ * => {ok,timeZone,startDate,endDate,asOf,coverage:{complete,consistent,mode,
+ * revision,asOf},constraints:{...,workingAvailabilityConfirmed:false},
+ * candidates:[{date,time,endDate,endTime,startAt,endAt,gapStartAt,gapEndAt,
+ * gapMinutes}],total,truncated,warnings,roster,vehicles:[{id,name,status}]}.
+ * Each candidate is the earliest representable start in one maximal workday
+ * gap; at most20 earliest candidates are returned. No working-hours availability
+ * is inferred. A candidate is only a suggestion and MUST use ordinary dispatch
+ * POST validation when booking. Snapshot consistency covers guarded dispatch
+ * writes and day locks, not independent provider databases or route estimates.
  */
 export const DISPATCH_TIME_ZONE = 'America/Denver';
 export const DISPATCH_ACTIONS = Object.freeze(['schedule.create','schedule.update','schedule.cancel','schedule.restore','crew.save','vehicle.save','availability.save']);

@@ -43,7 +43,9 @@ export function scheduleRowsConflict(next,other,roster=[]) {
   if(!left)return true;
   if(right)return overlaps(left,right);
   // Do not invent free capacity from malformed dated work or time off.
-  return Boolean(other.date&&(!validDate(other.date)||other.date<=left.endDate&&(!validDate(other.endDate||other.date)||(other.endDate||other.date)>=left.date)));
+  if (!other.date) return unavailable(other);
+  if (!validDate(other.date)||!validDate(other.endDate||other.date)||(other.endDate||other.date)<other.date) return true;
+  return other.date<=left.endDate&&(other.endDate||other.date)>=left.date;
 }
 
 const minutes=(value,end=false)=>{
