@@ -146,6 +146,7 @@ test('personal day includes multi-day assigned work, sorts it, and excludes othe
   store.put('jobs/private', { ...baseline(), recordType: 'employee_account_v1' });
   store.put('jobs/cancelled', { ...baseline(), status: 'cancelled', pipelineStatus: 'cancelled' });
   store.put('jobs/previous', { ...baseline(), date: '2026-09-20' });
+  store.put('jobs/ends-midnight', { ...baseline(), date: '2026-09-21', endDate: '2026-09-22', endTime: '00:00' });
   store.put('dispatchResources/truck-1', { recordType: 'vehicle', name: 'Box truck', notes: 'Sensitive staff note' });
   const data = await (await route.onRequestGet({ env, request: req('Crew.One', undefined, '?date=2026-09-22&status=active') })).json();
   assert.deepEqual(data.jobs.map(job => job.id), ['multiday', 'job-1']);
