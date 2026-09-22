@@ -29,6 +29,7 @@ import { customerCalendars, isStaffScheduledCalendar } from '../_lib/highlevel-c
 import { createJobAssignmentAccess } from '../_lib/job-assignment.js';
 import { syncNativeSchedule } from '../_lib/operations-schedule-sync.js';
 import { syncNativeNote } from '../_lib/operations-note-sync.js';
+import { operationsEnabled } from '../_lib/operations-service-auth.js';
 
 const API = 'https://services.leadconnectorhq.com';
 const DEFAULT_LEAD_RESET_AT = '2026-09-03T21:51:19.314Z';
@@ -342,7 +343,7 @@ async function completeAppointment(c, appointmentId, targetStatus = 'completed')
 }
 
 async function createAppointment(c, payload, contactId) {
-  if(c.operationsEnv?.EGC_OPERATIONS_ENABLED==='true')return syncNativeSchedule(c.operationsEnv,c.operationsSession,{portalVisitId:payload.job_id,requestId:payload.idempotency_key,contactProviderId:contactId,runAutomations:payload.notify!==false});
+  if(c.operationsEnv&&operationsEnabled(c.operationsEnv))return syncNativeSchedule(c.operationsEnv,c.operationsSession,{portalVisitId:payload.job_id,requestId:payload.idempotency_key,contactProviderId:contactId,runAutomations:payload.notify!==false});
   const type = payload.event_type === 'job' ? 'job' : 'walkthrough';
   const calendarId = payload.calendar_id || await findCalendar(c, type);
   if (calendarId === '2yYX63nHYvUsL6KKhAc0') throw new Error('The Employee hiring calendar cannot be used for customer appointments');
@@ -545,7 +546,7 @@ export async function onRequestPost({ request, env }) {
   if (payload.tool === 'game_plan' && !hasBusinessAccess(session)) return reply(403, { ok: false, code: 'BUSINESS_ACCESS_REQUIRED', error: 'Walkthrough access is limited to Zac, Tyler, and Alex' });
   if (payload.tool === 'schedule' && !hasBusinessAccess(session)) return reply(403, { ok: false, code: 'BUSINESS_ACCESS_REQUIRED', error: 'Schedule changes are limited to managers' });
   c.operationsEnv=env;c.operationsSession=session;
-  if(env.EGC_OPERATIONS_ENABLED==='true'&&['schedule','game_plan'].includes(payload.tool)&&!payload.job_id)return reply(409,{ok:false,code:'SCHEDULE_STABLE_IDENTITY_REQUIRED',error:'Save the exact Hub visit before synchronizing its provider appointment.'});
+  if(operationsEnabled(env)&&['schedule','game_plan'].includes(payload.tool)&&!payload.job_id)return reply(409,{ok:false,code:'SCHEDULE_STABLE_IDENTITY_REQUIRED',error:'Save the exact Hub visit before synchronizing its provider appointment.'});
   // This runs independently of notes/calendar writes, and validates approval and
   // recipient from storage. Repeating the handoff cannot send another invitation.
   const portalInvitation = inviteRequested ? await sendAcceptedQuotePortal(env, payload.job_id, { requireRequested: true }) : undefined;
@@ -598,12 +599,12 @@ export async function onRequestPost({ request, env }) {
       const tag = `egc-${event}`;
       if (!payload.suppress_automation) await addTags(c, contactId, [tag]);
       const appointmentStatus = ['cancelled','confirmed'].includes(String(payload.appointment_status || '').toLowerCase()) ? String(payload.appointment_status).toLowerCase() : '';
-      const appointment = appointmentStatus && (payload.appointment_id||env.EGC_OPERATIONS_ENABLED==='true'&&payload.job_id) ? env.EGC_OPERATIONS_ENABLED==='true'
+      const appointment = appointmentStatus && (payload.appointment_id||operationsEnabled(env)&&payload.job_id) ? operationsEnabled(env)
         ? await syncNativeSchedule(env,session,{portalVisitId:payload.job_id,requestId:payload.idempotency_key,contactProviderId:contactId,runAutomations:false})
         : await completeAppointment(c, payload.appointment_id, appointmentStatus) : {};
       let noteId = '';
       if (String(payload.note || '').trim()) {
-        const note = env.EGC_OPERATIONS_ENABLED==='true'
+        const note = operationsEnabled(env)
           ? await syncNativeNote(env,session,{portalJobId:payload.job_id,requestId:payload.idempotency_key||payload.request_id,contactId,scope:'lifecycle_'+event.slice(0,80),title:`EGC Lifecycle — ${event}`,body:String(payload.note).trim().slice(0,3000)})
           : await ghl(c, `/contacts/${encodeURIComponent(contactId)}/notes`, { method: 'POST', headers: payload.idempotency_key ? { 'Idempotency-Key': payload.idempotency_key } : {}, body: JSON.stringify({ userId: c.userId || undefined, title: `EGC Lifecycle — ${event}`, body: String(payload.note).trim().slice(0, 3000), color: '#F15A24', pinned: false }) });
         noteId = note.note?.id || '';
@@ -611,7 +612,7 @@ export async function onRequestPost({ request, env }) {
       return finish(contactId, { ok: true, contactId, noteId, ...appointment, portalInvitation, automation: { trigger: payload.suppress_automation ? '' : tag, suppressed: Boolean(payload.suppress_automation) } });
     }
     const isCloseout = payload.tool === 'post_job';
-    const note = env.EGC_OPERATIONS_ENABLED==='true'
+    const note = operationsEnabled(env)
       ? await syncNativeNote(env,session,{portalJobId:payload.job_id,requestId:payload.idempotency_key||payload.request_id,contactId,scope:isCloseout?'post_job':'game_plan',title:isCloseout?'EGC Job Closeout':'EGC Internal Job Brief',body:isCloseout?closeoutNote(payload):noteBody(payload)})
       : await ghl(c, `/contacts/${encodeURIComponent(contactId)}/notes`, { method: 'POST', headers: payload.idempotency_key ? { 'Idempotency-Key': payload.idempotency_key } : {}, body: JSON.stringify({
       userId: c.userId || undefined, title: isCloseout ? 'EGC Job Closeout' : 'EGC Internal Job Brief',
@@ -620,7 +621,7 @@ export async function onRequestPost({ request, env }) {
     let taskId = '';
     if (isCloseout) {
       await addTags(c, contactId, ['egc-job-complete', 'egc-review-ready']);
-      if(env.EGC_OPERATIONS_ENABLED==='true')taskId=note.followupTaskId||'';
+      if(operationsEnabled(env))taskId=note.followupTaskId||'';
       else {const due = new Date(); due.setMonth(due.getMonth() + 6);
       try {
         const task = await ghl(c, `/contacts/${encodeURIComponent(contactId)}/tasks`, { method: 'POST', body: JSON.stringify({
@@ -637,7 +638,7 @@ export async function onRequestPost({ request, env }) {
       // persuasion requires the current saved estimate to still be open.
       const quoteIsOpen = savedJob && !salesExitMilestone(savedJob) && ['sent', 'open'].includes(String(savedJob.estimate?.status || '').toLowerCase());
       await addTags(c, contactId, ['egc-walkthrough-complete', ...(quoteIsOpen ? c.quoteReadyTags : [])]);
-      const walkthrough = env.EGC_OPERATIONS_ENABLED==='true'
+      const walkthrough = operationsEnabled(env)
         ? savedJob?.sourceWalkthroughId ? await syncNativeSchedule(env,session,{portalVisitId:savedJob.sourceWalkthroughId,requestId:(payload.idempotency_key||'')+':walkthrough',contactProviderId:contactId,runAutomations:false}) : {updated:false,reason:'exact-source-walkthrough-not-linked'}
         : await completeAppointment(c, client.highlevel_appointment_id || payload.walkthrough_appointment_id || '');
       const q = payload.quote || {};

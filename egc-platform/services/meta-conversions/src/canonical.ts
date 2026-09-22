@@ -8,6 +8,13 @@ export const CANONICAL_META_STAGES: Record<string, ConversionStage> = {
   job_completed: 'JOB_COMPLETED', revenue_collected: 'REVENUE_COLLECTED'
 };
 
+/** Only interchangeable aliases for one acquisition milestone. Individual cash
+ * receipts deliberately never share a canonical delivery status. */
+export function canonicalStageAliases(stage:string):string[] {
+  const aliases=Object.entries(CANONICAL_META_STAGES).filter(([,mapped])=>mapped===stage).map(([type])=>type);
+  return aliases.length>1?aliases:[];
+}
+
 export interface CanonicalConversionEvidence {
   eventId: string; contactId: string; leadId: string | null; eventType: string;
   occurredAt: Date | string; active: boolean; humanReviewNeeded: boolean; confidence: string | number;

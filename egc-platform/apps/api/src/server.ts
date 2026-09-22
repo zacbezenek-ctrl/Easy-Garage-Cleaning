@@ -10,6 +10,7 @@ import { registerOperationsRoutes } from "./operations.js";
 import { registerRecordingRoutes } from "./recordings.js";
 import { registerLegacyWalkthroughRoutes } from "./legacy-walkthroughs.js";
 import { registerIntelligenceRoutes } from './intelligence.js';
+import {registerServiceKeyRoute} from './service-bridge.js';
 
 const app = Fastify({ logger: true });
 
@@ -40,6 +41,7 @@ app.get("/health", async (_request, reply) => {
   try {
     await getDb().select({ id: schema.communicationExecutions.id }).from(schema.communicationExecutions).limit(1);
     await getDb().select({ id: schema.customerEvents.eventId }).from(schema.customerEvents).limit(1);
+    await getDb().select({ id: schema.operationsServiceNonces.id }).from(schema.operationsServiceNonces).limit(1);
     return { ok: true, service: "egc-api", database: "ready",release:process.env.RAILWAY_GIT_COMMIT_SHA??process.env.EGC_RELEASE_SHA??null,operationsEnabled:process.env.EGC_OPERATIONS_ENABLED==="true" };
   } catch {
     return reply.code(503).send({ ok: false, service: "egc-api", database: "not_ready" });
@@ -65,6 +67,7 @@ app.get("/walkthroughs/:walkthroughId", {
 await registerLegacyWalkthroughRoutes(app, requireInternalAuth);
 await registerRecordingRoutes(app);
 await registerOperationsRoutes(app);
+await registerServiceKeyRoute(app);
 await registerIntelligenceRoutes(app,requireInternalAuth);
 
 const port = Number(process.env.PORT ?? process.env.API_PORT ?? 4100);

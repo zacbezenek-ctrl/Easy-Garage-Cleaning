@@ -5,9 +5,10 @@ import {getDb,schema} from '@egc/database';
 import {getObject,putObject} from '@egc/storage';
 import {extractWalkthrough,transcribeWalkthrough} from '@egc/ai';
 import {walkthroughExtractionSchema} from '@egc/schemas';
-import {OperationsError,operationsService,type Actor} from '@egc/operations';
+import {OperationsError,operationsService,SERVICE_ORIGINS,type Actor} from '@egc/operations';
 import {portalAdapter} from './operations.js';
-import {fingerprint,MAX_AUDIO_BYTES,safeRecordingError,signRecordingEnvelope,stableUuid,verifyRecordingEnvelope,type RecordingClaims,type RecordingCommand} from './recording-contracts.js';
+import {fingerprint,MAX_AUDIO_BYTES,safeRecordingError,signRecordingEnvelope,stableUuid,verifyRecordingEnvelope,verifiedHubRecordingClaims,type RecordingClaims,type RecordingCommand} from './recording-contracts.js';
+import {serviceAuthEnabled,signApiServiceRequest,verifyHubServiceClaims,tokenVersion} from './service-bridge.js';
 type Row=typeof schema.walkthroughs.$inferSelect;
 type Identity={portalJobId:string;portalVisitId:string;portalCustomerId:string;portalProjectId:string|null;portalRevision:string;highlevelContactId:string|null;authority:'employee_hub'};
 type Approval=Extract<RecordingCommand,{command:'recording.approve'}>;
@@ -20,7 +21,9 @@ export class RecordingService{
   private async portal(actor:Actor,body:Record<string,unknown>){
     const key=this.env.EGC_OPERATIONS_PORTAL_SIGNING_SECRET??'',origin=new URL(this.env.EGC_PORTAL_ORIGIN??'https://invalid.invalid');
     if(origin.protocol!=='https:'||origin.username||origin.password||origin.pathname!=='/'||origin.search||origin.hash||origin.hostname==='invalid.invalid')throw new OperationsError('recording_bridge_not_configured',503);
-    const envelope=signRecordingEnvelope({v:1,iss:'portal',aud:'egc-portal',iat:Math.floor(Date.now()/1000),nonce:randomUUID(),actor,request:{requestId:randomUUID(),body}},key);
+    if(serviceAuthEnabled(this.env)&&origin.origin!==SERVICE_ORIGINS.hub)throw new OperationsError('service_origin_not_trusted',503);
+    const requestId=randomUUID(),path='/api/operations-recording-approval';
+    const envelope=serviceAuthEnabled(this.env)?await signApiServiceRequest(actor,body,path,requestId,this.env):signRecordingEnvelope({v:1,iss:'portal',aud:'egc-portal',iat:Math.floor(Date.now()/1000),nonce:randomUUID(),actor,request:{requestId,body}},key);
     let response:Response;try{response=await this.fetcher(new URL('/api/operations-recording-approval',origin),{method:'POST',redirect:'error',headers:{'content-type':'application/json'},body:JSON.stringify({envelope}),signal:AbortSignal.timeout(20000)});}catch{throw new OperationsError('recording_approval_outcome_unknown',503);}
     const result=await response.json() as Record<string,unknown>;
     if(!response.ok){const code=typeof result.error==='string'&&/^recording_[a-z_]+$/.test(result.error)?result.error:'recording_source_unavailable';throw new OperationsError(code,response.status>=500?503:409);}
@@ -88,7 +91,7 @@ export class RecordingService{
   }
   private async approve(actor:Actor,requestId:string,command:Approval){
     if(!['owner','manager'].includes(actor.role)||actor.kind!=='human')throw new OperationsError('human_manager_approval_required',403);
-    const validationBridge=portalAdapter(this.env.EGC_PORTAL_ORIGIN!,this.env.EGC_OPERATIONS_PORTAL_SIGNING_SECRET!,this.workspace,this.fetcher);
+    const validationBridge=portalAdapter(this.env.EGC_PORTAL_ORIGIN!,this.env.EGC_OPERATIONS_PORTAL_SIGNING_SECRET??'',this.workspace,this.fetcher,this.env);
     for(const action of command.actions){if(action.dependencies.length)throw new OperationsError('recording_action_dependencies_not_supported',400);if(!await validationBridge.owner(action.assignedUserId))throw new OperationsError('recording_action_owner_unverified',409);}
     const hash=fingerprint({extraction:command.extraction,actions:command.actions});
     const row=await this.db.transaction(async tx=>{
@@ -104,7 +107,7 @@ export class RecordingService{
     const stored=row.approvalPayload as {actor:Actor;command:Approval};
     try{
       await this.portal(stored.actor,{command:'recording.apply',recordingId:row.id,requestId:row.approvalRequestId,fingerprint:hash,expectedRevision:row.portalRevision,portalJobId:row.portalJobId,portalVisitId:row.portalVisitId,portalCustomerId:row.portalCustomerId,portalProjectId:row.portalProjectId,extraction:stored.command.extraction});
-      const bridge=portalAdapter(this.env.EGC_PORTAL_ORIGIN!,this.env.EGC_OPERATIONS_PORTAL_SIGNING_SECRET!,this.workspace,this.fetcher),operations=operationsService({workspace:this.workspace,resolvePortalJob:bridge.resolve,resolveOwner:bridge.owner,portalRead:bridge.read});
+      const bridge=portalAdapter(this.env.EGC_PORTAL_ORIGIN!,this.env.EGC_OPERATIONS_PORTAL_SIGNING_SECRET??'',this.workspace,this.fetcher,this.env),operations=operationsService({workspace:this.workspace,resolvePortalJob:bridge.resolve,resolveOwner:bridge.owner,portalRead:bridge.read});
       for(let i=0;i<stored.command.actions.length;i++){const action=stored.command.actions[i]!;await operations.execute(stored.actor,{command:'task.create',task:{...action,dedupeKey:`recording:${row.id}:action:${i}`,sourceEvidence:[...action.sourceEvidence,{source:'recording',id:row.id,excerpt:action.description.slice(0,2000)}]}},stableUuid(`recording:${row.id}:action:${i}`));}
       await this.db.transaction(async tx=>{const[current]=await tx.select().from(schema.walkthroughs).where(eq(schema.walkthroughs.id,row.id)).for('update');if(current?.status==='approved')return;await tx.update(schema.walkthroughs).set({status:'approved',extraction:stored.command.extraction,approvedBy:stored.actor.id,approvedAt:new Date(),approvedRevision:row.portalRevision,lastErrorCode:null,updatedAt:new Date()}).where(eq(schema.walkthroughs.id,row.id));await tx.insert(schema.auditLogs).values({actor:stored.actor.id,action:'recording.approve',entity:'walkthrough',entityId:row.id,source:'employee_hub',newValue:{portalJobId:row.portalJobId,portalVisitId:row.portalVisitId,fingerprint:hash,actions:stored.command.actions.length}});});
       return{ok:true,recording:publicRow(await this.row(row.id))};
@@ -114,9 +117,9 @@ export class RecordingService{
 
 export async function registerRecordingRoutes(app:FastifyInstance,env:NodeJS.ProcessEnv=process.env,service?:RecordingService){
   const enabled=env.EGC_OPERATIONS_ENABLED==='true',s=service??(enabled?new RecordingService(env):undefined);
-  function claims(token:unknown){if(!enabled||!s)throw new OperationsError('operations_not_enabled',503);return verifyRecordingEnvelope(token,{portal:env.EGC_OPERATIONS_PORTAL_SIGNING_SECRET??'',mcp:env.EGC_OPERATIONS_MCP_SIGNING_SECRET??''},env.EGC_OPERATIONS_WORKSPACE??'egc');}
+  async function claims(token:unknown,path:string){if(!enabled||!s)throw new OperationsError('operations_not_enabled',503);if(serviceAuthEnabled(env)&&tokenVersion(token)===2)return verifiedHubRecordingClaims(await verifyHubServiceClaims(token,path,env),env.EGC_OPERATIONS_WORKSPACE??'egc');return verifyRecordingEnvelope(token,{portal:serviceAuthEnabled(env)?'':env.EGC_OPERATIONS_PORTAL_SIGNING_SECRET??'',mcp:env.EGC_OPERATIONS_MCP_SIGNING_SECRET??''},env.EGC_OPERATIONS_WORKSPACE??'egc');}
   function failure(error:unknown,reply:import('fastify').FastifyReply){return reply.code(error instanceof OperationsError?error.status:503).send({error:safeRecordingError(error),retryable:!(error instanceof OperationsError)||error.status>=500});}
-  app.post('/recordings/rpc',{bodyLimit:220000},async(request,reply)=>{reply.header('Cache-Control','no-store');try{const c=claims((request.body as {envelope?:unknown})?.envelope);return await s!.execute(c);}catch(e){return failure(e,reply);}});
-  app.post('/recordings/upload',async(request,reply)=>{reply.header('Cache-Control','no-store');try{let c:RecordingClaims|undefined,audio:Buffer|undefined,type='';for await(const part of request.parts({limits:{fileSize:MAX_AUDIO_BYTES,files:1,fields:1}})){if(part.type==='field'&&part.fieldname==='envelope')c=claims(part.value);else if(part.type==='file'&&part.fieldname==='audio'){if(!c)throw new OperationsError('recording_signature_required_first',401);audio=await part.toBuffer();type=part.mimetype;}}if(!c||!audio)throw new OperationsError('recording_audio_required',400);return reply.code(202).send(await s!.upload(c,audio,type));}catch(e){return failure(e,reply);}});
+  app.post('/recordings/rpc',{bodyLimit:220000},async(request,reply)=>{reply.header('Cache-Control','no-store');try{const c=await claims((request.body as {envelope?:unknown})?.envelope,'/recordings/rpc');return await s!.execute(c);}catch(e){return failure(e,reply);}});
+  app.post('/recordings/upload',async(request,reply)=>{reply.header('Cache-Control','no-store');try{let c:RecordingClaims|undefined,audio:Buffer|undefined,type='';for await(const part of request.parts({limits:{fileSize:MAX_AUDIO_BYTES,files:1,fields:1}})){if(part.type==='field'&&part.fieldname==='envelope')c=await claims(part.value,'/recordings/upload');else if(part.type==='file'&&part.fieldname==='audio'){if(!c)throw new OperationsError('recording_signature_required_first',401);audio=await part.toBuffer();type=part.mimetype;}}if(!c||!audio)throw new OperationsError('recording_audio_required',400);return reply.code(202).send(await s!.upload(c,audio,type));}catch(e){return failure(e,reply);}});
   if(enabled&&s){let running=false;const tick=async()=>{if(running)return;running=true;try{await s.processNext();}catch{app.log.warn({code:'recording_worker_unavailable'},'Recording processing will retry');}finally{running=false;}};const timer=setInterval(()=>void tick(),15000);timer.unref();app.addHook('onClose',async()=>{clearInterval(timer);});app.addHook('onReady',async()=>{void tick();});}
 }

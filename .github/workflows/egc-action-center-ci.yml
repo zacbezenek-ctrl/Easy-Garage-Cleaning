@@ -78,6 +78,7 @@ jobs:
         run: |
           node --test apps/mcp/test/appointments-postgres.check.mjs
           node --test apps/api/test/scheduling-postgres.check.mjs
+          node --test apps/api/test/service-auth-postgres.check.mjs
         working-directory: egc-platform
       - name: Durable recording intake, retries and authoritative review
         run: pnpm --filter @egc/api test:recordings:integration
@@ -93,6 +94,7 @@ jobs:
           node --test apps/mcp/test/communications-postgres.check.mjs
           node --test apps/worker/test/notes-postgres.check.mjs
           node --test apps/worker/test/provider-notes-read-postgres.check.mjs
+          node --test apps/worker/test/call-transcript-postgres.check.mjs
           pnpm --filter @egc/api test:provider-notes:integration
         working-directory: egc-platform
       - name: Verify schema has no uncommitted migration drift

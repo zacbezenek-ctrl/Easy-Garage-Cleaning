@@ -1,6 +1,6 @@
 import { describe,it,expect } from "vitest";
 import { assertionEvents,assertionReconciled,buildCanonicalEvents,buildReport,captureOriginalAttribution,canonicalEventId,exclusionReasons,extractEvidence,projectCustomer,validateUserConfirmedOutcome,type SourceRecord,type OperationalAssertion,type EvidenceEvent } from "./core.js";
-import { recordsFromSnapshot } from "./sources.js";
+import { recordsFromSnapshot,usableTranscriptText } from "./sources.js";
 import { validateExtractedEvent } from "./extractor.js";
 const at="2026-09-21T18:00:00.000Z",contactId="contact-1",leadId="lead-1";
 const source=(text:string,patch:Partial<SourceRecord>={}):SourceRecord=>({sourceType:"message",sourceRecordId:"message-1",contactId,leadId,occurredAt:at,text,direction:"inbound",actorType:"customer",...patch});
@@ -152,6 +152,10 @@ describe("report denominators and value",()=>{
 });
 
 describe("source adapters",()=>{
+  it("keeps provider errors/placeholders out of transcript coverage until recovery normalizes them",()=>{
+    for(const text of ['No transcription found for this message.','Transcript pending','<html>Unauthorized</html>','{"error":"forbidden"}'])expect(usableTranscriptText(text)).toBe('');
+    expect(usableTranscriptText('[00:01] Customer: Tuesday works.')).toBe('[00:01] Customer: Tuesday works.');
+  });
   const base={contact:{id:contactId,providerId:"ghl-1"},lead:{id:leadId,createdAt:at}};
   it("never equates a local deposit/price field with money collected",()=>{
     const events=buildCanonicalEvents(recordsFromSnapshot({...base,jobs:[{id:"job",status:"scheduled",serviceType:"cleaning",priceCents:50000,depositCents:20000,createdAt:at,scheduledAt:at}]}));

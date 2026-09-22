@@ -602,3 +602,12 @@ export const customerStateSnapshots = pgTable("customer_state_snapshots", {
   lastReconciledAt: timestamp("last_reconciled_at", { withTimezone: true }).notNull(),
   ...timestamps
 }, t => [index("customer_snapshots_state_idx").on(t.state,t.reconciliationStatus)]);
+
+// Short-lived authentication receipts, separate from customer or command data.
+export const operationsServiceNonces = pgTable("operations_service_nonces", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  issuer: text("issuer").notNull(),
+  nonce: uuid("nonce").notNull(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull()
+}, t => [uniqueIndex("operations_service_nonces_issuer_nonce_uq").on(t.issuer,t.nonce),index("operations_service_nonces_expiry_idx").on(t.expiresAt)]);

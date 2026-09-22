@@ -30,6 +30,14 @@ export function verifyRecordingEnvelope(token:unknown,keys:string|{portal:string
   if(expected.length!==actual.length||!timingSafeEqual(expected,actual))throw new OperationsError('invalid_recording_signature',401);
   const parsed=claimsSchema.safeParse(decoded);if(!parsed.success)throw new OperationsError('invalid_recording_request',400);
   const c=parsed.data;if(Math.abs(now-c.iat*1000)>60000)throw new OperationsError('recording_signature_expired',401);
+  return authorizeRecordingClaims(c,workspace);
+}
+export function verifiedHubRecordingClaims(claims:{iat:number;nonce:string;actor:Actor;request:unknown},workspace:string):RecordingClaims{
+  const parsed=claimsSchema.safeParse({v:1,iss:'portal',aud:'egc-recordings',iat:claims.iat,nonce:claims.nonce,actor:claims.actor,request:claims.request});
+  if(!parsed.success)throw new OperationsError('invalid_recording_request',400);
+  return authorizeRecordingClaims(parsed.data,workspace);
+}
+function authorizeRecordingClaims(c:RecordingClaims,workspace:string):RecordingClaims{
   const integrationRead=c.iss==='mcp'&&c.actor.kind==='integration'&&c.actor.role==='integration'&&['recording.list','recording.get','recording.retry'].includes(c.request.body.command);
   const human=c.iss==='portal'&&c.actor.kind==='human'&&['owner','manager','sales'].includes(c.actor.role);
   if(c.actor.workspace!==workspace||(!human&&!integrationRead))throw new OperationsError('recording_role_forbidden',403);

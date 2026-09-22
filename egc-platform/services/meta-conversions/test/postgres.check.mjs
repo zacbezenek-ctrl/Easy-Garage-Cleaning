@@ -21,7 +21,7 @@ if (process.env.EGC_META_TEST !== 'isolated' ||
 const {getDb, schema} = await import('@egc/database');
 const {eq, sql} = await import('drizzle-orm');
 const {previewConversions:previewCanonicalConversions, syncConversions, retryConversions, conversionStatus, sendTestEvent} = await import('../dist/index.js');
-const {reconcileCustomerState,recordUserConfirmedOutcome}=await import('../../customer-state/dist/index.js');
+const {reconcileCustomerState,recordUserConfirmedOutcome,getCanonicalReport}=await import('../../customer-state/dist/index.js');
 const db = getDb();
 const originalFetch = globalThis.fetch;
 const originalEnvironment = Object.fromEntries(Object.entries(process.env).filter(([key]) => key.startsWith('META_CAPI_')));
@@ -229,10 +229,11 @@ test('test events are synthetic and separately audited, with no production conve
   assert.equal((await eventRows())[0].status, 'accepted');
 });
 
-test('booked and won stages transmit once with actual revenue and immutable event identities', async () => {
+test('booked and won stages transmit once with verified approved quote value and immutable event identities', async () => {
   const fixture = await seedWalkthrough();
   const won = await seedWonOpportunity(fixture);
   assert.ok(won.wonAt instanceof Date, 'DB trigger must persist a real won transition');
+  await reconcileCustomerState({contactIds:[fixture.contact.id],useAI:false,portalRecords:[{id:'synthetic-approved-job',highlevelContactId:fixture.contact.providerId,kind:'job',status:'quote_sent',createdAt:won.wonAt.toISOString(),financials:{quote:{at:won.wonAt.toISOString(),amountCents:190000,source:'customer_approval'}}}]});
   await enableProduction();
   const firstSync = await sync();
   assert.equal(firstSync.accepted, 2);
@@ -264,9 +265,9 @@ test('booked and won stages transmit once with actual revenue and immutable even
   assert.equal(status.cohort.customers, 1);
 });
 
-test('won opportunity without reliable value sends the stage without invented revenue', async () => {
+test('won opportunity with an unverified CRM estimate sends the stage without invented revenue', async () => {
   const fixture = await seedLead();
-  await seedWonOpportunity(fixture, null);
+  await seedWonOpportunity(fixture, 990000);
   await enableProduction();
   await sync();
   assert.equal(productionRequests().length, 1);
@@ -551,7 +552,24 @@ test('canonical verbal commitment sends without provider appointment and later p
  assert.equal((await sync()).accepted,0);
  assert.equal(productionRequests().length,1);
  assert.deepEqual((await eventRows())[0].payload,original);
- assert.equal((await eventRows())[0].attemptCount,1);
+  assert.equal((await eventRows())[0].attemptCount,1);
+  const aliases=await db.select().from(schema.customerEvents).where(eq(schema.customerEvents.contactId,fixture.contact.id));
+  assert.equal(aliases.find(e=>e.eventType==='walkthrough_verbally_booked').syncState,'accepted');
+  assert.equal(aliases.find(e=>e.eventType==='walkthrough_booked').syncState,'deduplicated');
+});
+
+test('one accepted revenue milestone never marks separate later cash receipts accepted or deduplicated',async()=>{
+ const fixture=await seedLead();process.env.META_CAPI_EVENT_STAGES='REVENUE_COLLECTED';
+ await reconcileCustomerState({contactIds:[fixture.contact.id],useAI:false,portalRecords:[{id:'synthetic-receipts-job',highlevelContactId:fixture.contact.providerId,kind:'job',status:'paid',createdAt:minutesAgo(30).toISOString(),financials:{payments:[{key:'first-receipt',at:minutesAgo(20).toISOString(),amountCents:10000},{key:'later-receipt',at:minutesAgo(10).toISOString(),amountCents:20000}]}}]});
+ await enableProduction();assert.equal((await sync()).accepted,1);assert.equal((await sync()).accepted,0);
+ const receipts=(await db.select().from(schema.customerEvents).where(eq(schema.customerEvents.contactId,fixture.contact.id))).filter(e=>e.eventType==='revenue_collected');
+ assert.equal(receipts.filter(e=>e.syncState==='accepted').length,1);assert.equal(receipts.filter(e=>e.syncState==='pending').length,1);assert.equal(receipts.filter(e=>e.syncState==='deduplicated').length,0);
+});
+
+test('report separates all-time Meta ledger totals from provider acceptances during the period',async()=>{
+ await seedWalkthrough();await enableProduction();await sync();
+ const [row]=await eventRows();await db.update(schema.metaConversionEvents).set({acceptedAt:daysAgo(20)}).where(eq(schema.metaConversionEvents.id,row.id));
+ const report=await getCanonicalReport({since:daysAgo(7),until:new Date()});assert.equal(report.metaConversionsScope,'all_time_ledger_status_totals');assert.equal(report.metaConversions.find(r=>r.status==='accepted').count,1);assert.equal(report.metaConversionsDuringPeriod.acceptedEvents,0);
 });
 
 test('user-confirmed collected and sold with unknown dates remain operational truth but never fabricate Meta time/value',async()=>{
