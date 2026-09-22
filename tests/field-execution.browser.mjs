@@ -146,10 +146,21 @@ try {
   await managerPage.getByText('Management only', { exact: true }).click(); await managerPage.getByRole('button', { name: 'Save note', exact: true }).click();
   await managerPage.getByText('Private manager-only pricing discussion.', { exact: true }).waitFor();
   await managerPage.goto('http://localhost:8793/crew/job.html?jobId=browser-job');
+  await managerPage.getByLabel('Add a note', { exact: true }).fill('Customer needs the replacement hardware delivered.');
+  await managerPage.getByText('Flag an issue needing operations follow-up', { exact: true }).click();
+  await managerPage.getByRole('button', { name: 'Save note', exact: true }).click();
+  await managerPage.getByRole('heading', { name: 'Operations follow-up needed', exact: true }).waitFor();
+  await managerPage.getByLabel('Resolution & follow-up', { exact: true }).fill('Replacement hardware was delivered and the customer confirmed receipt.');
+  await managerPage.getByRole('button', { name: 'Resolve issue', exact: true }).click();
+  await managerPage.locator('#job-issue').getByRole('heading', { name: 'Issue resolved', exact: true }).waitFor();
+  await managerPage.reload();
+  await managerPage.locator('#job-issue').getByText('Replacement hardware was delivered and the customer confirmed receipt.', { exact: true }).waitFor();
+  assert.equal(store.get('jobs/browser-job').fieldExecution.attention.status, 'resolved');
+  assert.equal(store.get('jobs/browser-job').fieldExecution.attention.reason, 'Customer needs the replacement hardware delivered.');
   await managerPage.getByRole('button', { name: 'Retry internal handoff', exact: true }).click();
   await managerPage.getByText('Internal completion handoff: blocked', { exact: true }).waitFor();
   assert.equal(store.get('jobs/browser-job').status, 'completed');
   await managerContext.close(); await Promise.all(background);
   assert.deepEqual(errors, [], 'no browser JavaScript errors after recovery');
-  console.log(JSON.stringify({ ok: true, browser: browser.version(), viewport: '390x844 touch, Pacific device timezone with Mountain job dates', checks: ['login', 'personal day', 'navigate job', 'en route', 'arrived', 'start validation', 'checklists', 'materials', 'library upload', 'draft refresh persistence', 'multiple photos', 'notes', 'completion', 'server refresh persistence', 'next job preserved', 'private photo viewer', 'reassignment revokes detail', 'mobile overflow', 'desktop render', 'offline retry', 'lost response idempotency', 'stale job review', 'auth expiry', 'draft isolation between accounts', 'manager checklist configuration', 'manager private note', 'durable failed CRM handoff', 'no browser errors'], artifacts: artifactDir }));
+  console.log(JSON.stringify({ ok: true, browser: browser.version(), viewport: '390x844 touch, Pacific device timezone with Mountain job dates', checks: ['login', 'personal day', 'navigate job', 'en route', 'arrived', 'start validation', 'checklists', 'materials', 'library upload', 'draft refresh persistence', 'multiple photos', 'notes', 'completion', 'server refresh persistence', 'next job preserved', 'private photo viewer', 'reassignment revokes detail', 'mobile overflow', 'desktop render', 'offline retry', 'lost response idempotency', 'stale job review', 'auth expiry', 'draft isolation between accounts', 'manager checklist configuration', 'manager private note', 'audited issue resolution after completion', 'durable failed CRM handoff', 'no browser errors'], artifacts: artifactDir }));
 } finally { await context.close(); await browser.close(); await new Promise(resolve => server.close(resolve)); globalThis.fetch = originalFetch; }

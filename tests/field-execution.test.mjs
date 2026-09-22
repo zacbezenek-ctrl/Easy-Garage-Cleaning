@@ -61,6 +61,43 @@ test('legacy lists and malformed checklist entries do not hide the workday or me
   assert.equal(fieldChecklist(job).filter(item => item.id.startsWith('departure-')).length, 2, 'unusable imported template retains standard safety checks');
 });
 
+test('managers resolve issues on completed jobs with a permanent report, resolution and exactly-once receipt', async t => {
+  const store = storage(t); store.put('jobs/job-1', { ...baseline(), status: 'completed', pipelineStatus: 'completed', completedAt: '2026-09-22T15:00:00Z' });
+  const reportId = uuid();
+  assert.equal((await post(store, { action: 'note', requestId: reportId, body: 'A shelf needs a replacement bracket.', issue: true, visibility: 'crew' })).status, 200);
+  const resolve = { action: 'resolve_issue', issueId: reportId, resolution: 'The replacement bracket was installed and the customer confirmed it.' };
+  assert.equal((await post(store, resolve)).status, 403);
+  assert.equal((await post(store, { ...resolve, resolution: 'Done' }, 'ZacB')).status, 400);
+  assert.equal((await post(store, { ...resolve, issueId: 'older-issue' }, 'ZacB')).status, 409);
+  const requestId = uuid(), response = await post(store, { ...resolve, requestId }, 'ZacB');
+  assert.equal(response.status, 200);
+  const data = await response.json();
+  assert.equal(data.job.attention.status, 'resolved');
+  assert.equal(data.job.attention.reason, 'A shelf needs a replacement bracket.');
+  assert.equal(data.job.attention.resolvedBy, 'Owner');
+  assert.equal(data.job.status, 'completed');
+  assert.equal(data.job.completedAt, '2026-09-22T15:00:00Z');
+  assert.equal(store.get('jobs/job-1').payment.amount, 100);
+  assert.equal((await (await post(store, { ...resolve, requestId }, 'ZacB')).json()).alreadyApplied, true);
+  const crew = await (await route.onRequestGet({ env, request: req('Crew.One', undefined, '?jobId=job-1') })).json();
+  assert.equal(crew.job.attention.canResolve, false);
+  assert.equal(crew.job.history.filter(item => item.action === 'resolve_issue').length, 1);
+  assert.equal(crew.job.history.some(item => item.id === reportId), true);
+});
+
+test('private and unclassified issues and their resolutions remain management-only', async t => {
+  const store = storage(t); store.put('jobs/job-1', baseline());
+  const issueId = uuid();
+  await post(store, { action: 'note', requestId: issueId, body: 'Private financial follow-up required.', issue: true, visibility: 'management' }, 'ZacB');
+  await post(store, { action: 'resolve_issue', issueId, resolution: 'Private financial adjustment was verified.' }, 'ZacB');
+  const crew = await (await route.onRequestGet({ env, request: req('Crew.One', undefined, '?jobId=job-1') })).json();
+  assert.equal(crew.job.attention, null);
+  assert.equal(JSON.stringify(crew).includes('financial'), false);
+  const legacy = { ...baseline(), fieldExecution: { attention: { reason: 'Unclassified prior issue', status: 'open', at: '2026-09-22T14:00:00Z', actorId: 'ZacB' } } };
+  assert.equal(fieldJobProjection(legacy).attention, null);
+  assert.equal(fieldJobProjection(legacy, [], { manager: true }).attention.canResolve, true);
+});
+
 test('today uses Mountain calendar days through UTC midnight and daylight saving transitions', () => {
   assert.equal(route.fieldToday(new Date('2026-09-22T05:59:59Z')), '2026-09-21');
   assert.equal(route.fieldToday(new Date('2026-09-22T06:00:00Z')), '2026-09-22');
