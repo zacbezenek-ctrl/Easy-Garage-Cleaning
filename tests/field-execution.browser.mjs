@@ -157,7 +157,10 @@ try {
   await managerPage.getByRole('button', { name: 'Save checklist', exact: true }).click();
   await managerPage.getByText('Confirm the pressure washer is loaded', { exact: true }).waitFor();
   await managerPage.getByLabel('Add a note', { exact: true }).fill('Private manager-only pricing discussion.');
-  await managerPage.getByText('Management only', { exact: true }).click(); await managerPage.getByRole('button', { name: 'Save note', exact: true }).click();
+  await managerPage.getByText('Management only', { exact: true }).click();
+  await managerPage.reload();
+  assert.equal(await managerPage.locator('#note-private').isChecked(), true, 'a private draft must stay private through refresh');
+  await managerPage.getByRole('button', { name: 'Save note', exact: true }).click();
   await managerPage.getByText('Private manager-only pricing discussion.', { exact: true }).waitFor();
   await managerPage.goto('http://localhost:8793/crew/job.html?jobId=browser-job');
   await managerPage.getByLabel('Add a note', { exact: true }).fill('Customer needs the replacement hardware delivered.');
