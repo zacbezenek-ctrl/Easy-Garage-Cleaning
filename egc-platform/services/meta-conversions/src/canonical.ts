@@ -19,6 +19,7 @@ export interface CanonicalConversionEvidence {
   eventId: string; contactId: string; leadId: string | null; eventType: string;
   occurredAt: Date | string; active: boolean; humanReviewNeeded: boolean; confidence: string | number;
   evidence: Record<string, unknown>[]; details: Record<string, unknown>;
+  occurrenceId?: string | null;
   appointmentId?: string | null; opportunityId?: string | null; jobId?: string | null;
   valueCents?: number | null; currency?: string | null; valueVerified: boolean;
 }

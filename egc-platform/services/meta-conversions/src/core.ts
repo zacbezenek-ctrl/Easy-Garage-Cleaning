@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 
 export const PAYLOAD_VERSION = "1";
 export const MAX_EVENT_AGE_DAYS = 7;
-export type ConversionStage = "Lead" | "QualifiedLead" | "WALKTHROUGH_BOOKED" | "WALKTHROUGH_SHOWED" | "WALKTHROUGH_COMPLETED" | "QUOTE_DELIVERED" | "JOB_WON" | "JOB_COMPLETED" | "REVENUE_COLLECTED";
+export type ConversionStage = "Lead" | "QualifiedLead" | "Purchase" | "WALKTHROUGH_BOOKED" | "WALKTHROUGH_SHOWED" | "WALKTHROUGH_COMPLETED" | "QUOTE_DELIVERED" | "JOB_WON" | "JOB_COMPLETED" | "REVENUE_COLLECTED";
 export type AttributionClassification = "eligible_meta_paid" | "meta_insufficient_matching" | "non_meta" | "ambiguous";
 type DateValue = Date | string | null;
 
@@ -92,12 +92,15 @@ export interface MetaConversionPayload {
   custom_data: {
     event_source: "crm";
     lead_event_source: "EGC";
+    order_id?: string;
     value?: number;
     currency?: "USD";
   };
 }
 
 export interface ConversionCandidate {
+  /** Additional feedback projection; never certifies the source stage delivery. */
+  derivedFeedback?: boolean;
   canonicalEventId?: string;
   eventId: string;
   stage: ConversionStage;
