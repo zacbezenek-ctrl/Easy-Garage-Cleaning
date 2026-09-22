@@ -38,6 +38,29 @@ test('authentication and exact assigned identity are enforced before reads, writ
   assert.equal(store.calls.commits, 0); assert.equal(store.calls.uploads, 0);
 });
 
+test('legacy lists and malformed checklist entries do not hide the workday or merge separate requirements', async t => {
+  const store = storage(t), job = baseline();
+  job.jobInstructions = {};
+  job.scope = { keep_items: ['Family photographs', null, 'Workbench'], keep_remove: ['Old boxes'], exclusions: ['Attached shelving'] };
+  job.fieldExecution = { checklistTemplate: [null, 13, {}, { id: 'same', stage: 'arrival', label: 'First requirement', required: true }, { id: 'same', stage: 'invalid', label: 'Second requirement', required: true }], checks: { same: { completed: true } } };
+  job.clientChecklists = { preJob: [null, false, {}, 'Customer request', { id: '__proto__', label: 'Protect piano' }], postJob: [{ id: 'duplicate', label: 'Inspect west wall' }, { id: 'duplicate', label: 'Inspect east wall' }] };
+  store.put('jobs/job-1', job);
+  const response = await route.onRequestGet({ env, request: req('Crew.One', undefined, '?jobId=job-1') });
+  assert.equal(response.status, 200);
+  const { job: projected } = await response.json();
+  assert.equal(projected.keepItems, 'Family photographs\nWorkbench');
+  assert.equal(projected.removeItems, 'Old boxes');
+  assert.equal(projected.exclusions, 'Attached shelving');
+  assert.equal(projected.checklist.length, 6);
+  assert.equal(new Set(projected.checklist.map(item => item.id)).size, 6);
+  assert.equal(projected.checklist.find(item => item.label === 'First requirement').completed, true);
+  assert.equal(projected.checklist.find(item => item.label === 'Second requirement').completed, false);
+  assert.ok(projected.completionMissing.some(item => item.includes('Second requirement')));
+  assert.ok(!projected.checklist.some(item => item.id.includes('__proto__')));
+  job.fieldExecution.checklistTemplate = [null, {}, false];
+  assert.equal(fieldChecklist(job).filter(item => item.id.startsWith('departure-')).length, 2, 'unusable imported template retains standard safety checks');
+});
+
 test('today uses Mountain calendar days through UTC midnight and daylight saving transitions', () => {
   assert.equal(route.fieldToday(new Date('2026-09-22T05:59:59Z')), '2026-09-21');
   assert.equal(route.fieldToday(new Date('2026-09-22T06:00:00Z')), '2026-09-22');

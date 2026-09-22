@@ -6,6 +6,8 @@ export const fieldRequestId = value => typeof value === 'string' && /^[0-9a-f]{8
 export const fieldText = (value, max = 4000) => typeof value === 'string' ? value.trim().slice(0, max) : '';
 const list = value => Array.isArray(value) ? value : [];
 const textList = value => (Array.isArray(value) ? value : typeof value === 'string' ? [value] : []).map(item => fieldText(item, 500)).filter(Boolean).slice(0, 100);
+const description = value => Array.isArray(value) ? textList(value).join('\n').slice(0, 4000) : fieldText(value);
+const checklistId = value => typeof value === 'string' && /^[a-zA-Z0-9_-]{1,80}$/.test(value) && !['__proto__', 'constructor', 'prototype'].includes(value);
 export const fieldStage = job => fieldText(job.pipelineStatus || job.status || 'scheduled', 40).toLowerCase();
 const closed = job => ['completed', 'invoiced', 'paid', 'review_requested', 'cancelled'].includes(fieldStage(job));
 export function fieldActivity(job) {
@@ -27,15 +29,23 @@ export const FIELD_CHECKLIST_DEFAULTS = [
 
 export function fieldChecklist(job) {
   const configured = job.fieldExecution?.checklistTemplate;
-  const base = Array.isArray(configured) && configured.length ? configured : FIELD_CHECKLIST_DEFAULTS;
-  const entries = base.map(item => ({ id: item.id, stage: item.stage, label: fieldText(item.label, 500), detail: fieldText(item.detail, 1000), required: item.required !== false }));
+  // Older imported instructions are not guaranteed to have been written through
+  // the current validator. Preserve meaningful tasks without letting one bad
+  // entry break the entire crew workday or collapse two tasks into one check.
+  const normalize = (item, index) => ({ id: checklistId(item?.id) && !item.id.startsWith('client-') ? item.id : `task-${index}`, stage: ['departure', 'arrival', 'work', 'finish'].includes(item?.stage) ? item.stage : 'work', label: fieldText(typeof item === 'string' ? item : item?.label || item?.title, 500), detail: fieldText(item?.detail, 1000), required: item?.required !== false });
+  const custom = list(configured).slice(0, 80).map(normalize).filter(item => item.label);
+  const entries = custom.length ? custom : FIELD_CHECKLIST_DEFAULTS.map(normalize);
   for (const [key, stage] of [['preJob', 'arrival'], ['postJob', 'finish']]) {
     list(job.clientChecklists?.[key]).slice(0, 80).forEach((item, index) => {
-      const label = fieldText(typeof item === 'string' ? item : item.label || item.title, 500);
-      if (label) entries.push({ id: `client-${key}-${fieldText(item.id, 80) || index}`, stage, label, detail: fieldText(item.detail, 1000), required: item.required !== false });
+      const label = fieldText(typeof item === 'string' ? item : item?.label || item?.title, 500);
+      if (label) entries.push({ id: `client-${key}-${checklistId(item?.id) ? item.id : index}`, stage, label, detail: fieldText(item?.detail, 1000), required: item?.required !== false });
     });
   }
-  return entries.filter(item => item.label).map(item => {
+  const used = new Set();
+  return entries.map(item => {
+    const baseId = item.id; let suffix = 1;
+    while (used.has(item.id)) item = { ...item, id: `${baseId}-duplicate-${suffix++}` };
+    used.add(item.id);
     const check = job.fieldExecution?.checks?.[item.id];
     return { ...item, completed: check?.completed === true, completedAt: check?.at || null, completedBy: check?.actorName || check?.actorId || null };
   });
@@ -88,8 +98,8 @@ export function fieldJobProjection(job, events = [], options = {}) {
     crewNeeded: Number(job.crewNeeded || job.requiredCrewSize || job.crewSize || 1),
     scope: fieldText(typeof job.operationalScope?.text === 'string' ? job.operationalScope.text : instructionText || instructions.operationalScope || (typeof job.scope === 'string' ? job.scope : '') || job.scopeOfWork, 20000),
     customerGoal: fieldText(instructions.customerGoal || job.discovery?.success, 4000),
-    keepItems: fieldText(instructions.keepItems || scope.keep_items), removeItems: fieldText(instructions.removeItems || scope.remove_items || scope.keep_remove),
-    exclusions: fieldText(instructions.exclusions || scope.exclusions), hazards: textList(instructions.hazards || scope.hazards),
+    keepItems: description(instructions.keepItems || scope.keep_items), removeItems: description(instructions.removeItems || scope.remove_items || scope.keep_remove),
+    exclusions: description(instructions.exclusions || scope.exclusions), hazards: textList(instructions.hazards || scope.hazards),
     accessInstructions: fieldText(job.accessInstructions || instructions.accessNotes || logistics.notes), access: textList(instructions.access || scope.access || logistics.access),
     truckPlacement: fieldText(instructions.truckPlacement || logistics.truck_placement),
     customerInstructions: fieldText(job.customerInstructions || instructions.customerNotes || job.customerNotesSummary),
