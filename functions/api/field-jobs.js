@@ -5,6 +5,7 @@ import { createJobAssignmentAccess } from '../_lib/job-assignment.js';
 import { fieldCommand, fieldFailure, fieldFingerprint, fieldId, fieldJobProjection, fieldPhotos, fieldRequestId, fieldStage, fieldText } from '../_lib/field-execution.js';
 import { createFieldStore } from '../_lib/field-execution-store.js';
 import { createFieldPhotoClient, decodeFieldPhoto, fieldPhotosConfigured, verifyFieldPhotoMetadata } from '../_lib/field-execution-photos.js';
+import { syncFieldCompletion } from '../_lib/field-execution-sync.js';
 
 const reply = (status, body) => Response.json(body, { status, headers: { 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' } });
 const mutationOriginAllowed = request => {
@@ -134,11 +135,13 @@ async function savePhoto(ctx, env, job, input, fingerprint, receipt) {
   }
 }
 
-export async function onRequestPost({ request, env }) {
+export async function onRequestPost(handlerContext) {
+  const { request, env } = handlerContext;
   let ctx, input, fingerprint;
   try {
     if (!mutationOriginAllowed(request)) throw fieldFailure('This job action must come from the Employee Hub.', 403, 'FIELD_ORIGIN_FORBIDDEN');
     ctx = await context(request, env); input = await readInput(request);
+    if (input.expectedUser !== undefined && (typeof input.expectedUser !== 'string' || input.expectedUser.toLowerCase() !== ctx.session.user.toLowerCase())) throw fieldFailure('Your signed-in account changed. Sign in again before retrying this work.', 401, 'FIELD_ACCOUNT_CHANGED');
     const job = await authorizedJob(ctx, input.jobId);
     fingerprint = await fieldFingerprint(ctx.session.user, input);
     const receipt = await ctx.store.readEvent(job.id, input.requestId);
@@ -146,10 +149,17 @@ export async function onRequestPost({ request, env }) {
     if (receipt?.state === 'applied') return reply(200, { ok: true, alreadyApplied: true, ...await detail(ctx, env, job.id) });
     if (!receipt && job.__updateTime !== input.expectedRevision) throw fieldFailure('This job changed. Refresh to review the latest assignment and details before retrying.', 409, 'FIELD_REVISION_CONFLICT');
     if (input.action === 'photo') await savePhoto(ctx, env, job, input, fingerprint, receipt);
+    else if (input.action === 'retry_completion_sync') {
+      if (!ctx.manager) throw fieldFailure('Only operations managers can retry the internal CRM integration.', 403);
+      await syncFieldCompletion(env, job.id, { store: ctx.store, actor: ctx.session, eventId: input.requestId, fingerprint });
+    }
     else {
       if (receipt) throw fieldFailure('This action is pending verification. Retry shortly.', 409, 'FIELD_ACTION_PENDING');
       const result = fieldCommand(job, { ...ctx.session, manager: ctx.manager }, input);
       await ctx.store.commit(job, result.patch, { ...result.event, fingerprint });
+      if (input.action === 'complete' && typeof handlerContext.waitUntil === 'function') {
+        handlerContext.waitUntil(syncFieldCompletion(env, job.id, { actor: ctx.session }));
+      }
     }
     return reply(200, { ok: true, alreadyApplied: false, ...await detail(ctx, env, job.id) });
   } catch (error) {

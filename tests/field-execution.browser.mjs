@@ -12,13 +12,14 @@ import * as auth from '../functions/api/hub-auth.js';
 
 const modulePath = process.env.FIELD_PLAYWRIGHT_MODULE;
 if (!modulePath) throw new Error('Set FIELD_PLAYWRIGHT_MODULE to the Playwright index.mjs path.');
-const { chromium } = await import(pathToFileURL(modulePath).href);
+const playwright = await import(pathToFileURL(modulePath).href), engine = process.env.FIELD_BROWSER_ENGINE || 'chromium';
 const root = fileURLToPath(new URL('../', import.meta.url));
 const password = 'Synthetic browser test only!';
 const users = Object.fromEntries(await Promise.all(['ZacB', 'Crew.One', 'Crew-One'].map(async user => [user, { passwordHash: await hashHubCredential(user, password), role: user === 'ZacB' ? 'owner' : 'crew', displayName: user === 'Crew.One' ? 'Crew One' : user }])));
 const env = { HUB_SESSION_SECRET: 'field-browser-synthetic', FIREBASE_API_KEY: 'firebase-test-field-browser', HUB_AUTH_USERS_JSON: JSON.stringify(users), GOOGLE_CLIENT_ID: 'test', GOOGLE_CLIENT_SECRET: 'test', GOOGLE_REFRESH_TOKEN: 'test' };
 const originalFetch = globalThis.fetch;
 const store = storage({ mock: { method(object, key, implementation) { object[key] = implementation; } } });
+const background = [];
 const date = field.fieldToday();
 const job = { id: 'browser-job', type: 'job', date, time: '08:00', endTime: '11:00', customer: 'Synthetic Garage', phone: '9705550100', address: '123 Test Street, Fort Collins, CO', assignedCrew: ['Crew.One'], crewLead: 'Crew.One', status: 'scheduled', pipelineStatus: 'scheduled', jobInstructions: { operationalScope: 'Clean the garage, preserve the green cabinet and install the rack.', accessNotes: 'Customer will open the side gate.' }, requiredEquipment: ['Gloves', 'Pressure washer'], materials: [{ id: 'rack', name: 'Wall rack', quantity: 1 }] };
 store.put('jobs/browser-job', job);
@@ -30,7 +31,7 @@ const server = createServer(async (incoming, outgoing) => {
       const parts = []; for await (const part of incoming) parts.push(part);
       const bytes = Buffer.concat(parts), request = new Request(url, { method: incoming.method, headers: incoming.headers, ...(bytes.length ? { body: bytes } : {}) });
       const route = url.pathname === '/api/field-jobs' ? field : auth;
-      const response = await route[incoming.method === 'POST' ? 'onRequestPost' : 'onRequestGet']({ request, env });
+      const response = await route[incoming.method === 'POST' ? 'onRequestPost' : 'onRequestGet']({ request, env, waitUntil: promise => background.push(promise) });
       outgoing.writeHead(response.status, Object.fromEntries(response.headers)); outgoing.end(Buffer.from(await response.arrayBuffer())); return;
     }
     const filename = resolve(root, `.${url.pathname}`);
@@ -39,7 +40,7 @@ const server = createServer(async (incoming, outgoing) => {
   } catch (error) { outgoing.writeHead(500); outgoing.end(String(error.message)); }
 });
 await new Promise(resolve => server.listen(8793, 'localhost', resolve));
-const browser = await chromium.launch({ headless: true, ...(process.env.FIELD_BROWSER_CHANNEL ? { channel: process.env.FIELD_BROWSER_CHANNEL } : {}) });
+const browser = await playwright[engine].launch({ headless: true, ...(engine === 'chromium' && process.env.FIELD_BROWSER_CHANNEL ? { channel: process.env.FIELD_BROWSER_CHANNEL } : {}) });
 const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, timezoneId: 'America/Los_Angeles' });
 const page = await context.newPage(), errors = [];
 page.on('pageerror', error => errors.push(error.message));
@@ -94,5 +95,61 @@ try {
   store.put('jobs/browser-job', { ...store.get('jobs/browser-job'), assignedCrew: ['Crew-One'] });
   await page.reload(); await page.getByRole('heading', { name: 'We could not open this work' }).waitFor();
   assert.equal(await page.getByText('This job is not currently assigned', { exact: false }).count() > 0, true);
-  console.log(JSON.stringify({ ok: true, browser: browser.version(), viewport: '390x844 touch, Pacific device timezone with Mountain job dates', checks: ['login', 'personal day', 'navigate job', 'en route', 'arrived', 'start validation', 'checklists', 'materials', 'library upload', 'draft refresh persistence', 'multiple photos', 'notes', 'completion', 'server refresh persistence', 'next job preserved', 'private photo viewer', 'reassignment revokes detail', 'mobile overflow', 'desktop render', 'no browser errors'], artifacts: artifactDir }));
+  store.put('jobs/browser-interruption', { ...job, id: 'browser-interruption', customer: 'Synthetic Interruption Job' });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('http://localhost:8793/crew/job.html?jobId=browser-interruption');
+  await page.getByRole('heading', { name: 'Synthetic Interruption Job', exact: true }).waitFor();
+  await context.setOffline(true);
+  await page.getByLabel('Add a note', { exact: true }).fill('Offline note survives refresh and retry.');
+  await page.getByRole('button', { name: 'Save note', exact: true }).click();
+  await page.getByRole('heading', { name: 'Action awaiting confirmation', exact: true }).waitFor();
+  await context.setOffline(false); await page.reload();
+  await page.getByRole('button', { name: 'Refresh and retry', exact: true }).click(); await settled();
+  await page.getByText('Offline note survives refresh and retry.', { exact: true }).waitFor();
+  let interruptResponse = true;
+  await page.route('**/api/field-jobs', async intercepted => {
+    if (interruptResponse && intercepted.request().method() === 'POST' && intercepted.request().postDataJSON().action === 'note') { interruptResponse = false; await intercepted.fetch(); await intercepted.abort('failed'); }
+    else await intercepted.continue();
+  });
+  await page.getByLabel('Add a note', { exact: true }).fill('This note committed before the response disappeared.');
+  await page.getByRole('button', { name: 'Save note', exact: true }).click();
+  await page.getByRole('heading', { name: 'Action awaiting confirmation', exact: true }).waitFor();
+  await page.unroute('**/api/field-jobs'); await page.reload();
+  await page.getByRole('button', { name: 'Refresh and retry', exact: true }).click(); await settled();
+  assert.equal(await page.getByText('This note committed before the response disappeared.', { exact: true }).count(), 1);
+  await page.getByLabel('Add a note', { exact: true }).fill('Reviewed the latest scope before this note.');
+  store.put('jobs/browser-interruption', { ...store.get('jobs/browser-interruption'), operationalScope: { text: 'New authoritative scope from dispatch.' } });
+  await page.getByRole('button', { name: 'Save note', exact: true }).click();
+  await page.getByRole('heading', { name: 'Action awaiting confirmation', exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Refresh and retry', exact: true }).click(); await settled();
+  await page.getByText('New authoritative scope from dispatch.', { exact: true }).waitFor();
+  await page.getByLabel('Add a note', { exact: true }).fill('Unsaved note retained through an expired session.');
+  await context.clearCookies(); await page.getByRole('button', { name: 'Refresh job', exact: true }).click();
+  await page.getByRole('heading', { name: 'Your workday starts here', exact: true }).waitFor();
+  assert.equal(await page.getByRole('heading', { name: 'Synthetic Interruption Job', exact: true }).count(), 0);
+  await page.getByLabel('Username', { exact: true }).fill('Crew.One'); await page.getByLabel('Password', { exact: true }).fill(password); await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+  await page.getByRole('heading', { name: 'Synthetic Interruption Job', exact: true }).waitFor();
+  assert.equal(await page.getByLabel('Add a note', { exact: true }).inputValue(), 'Unsaved note retained through an expired session.');
+  await page.screenshot({ path: resolve(artifactDir, 'recovered-mobile.png'), fullPage: true });
+  await context.clearCookies(); await page.reload();
+  await page.getByLabel('Username', { exact: true }).fill('Crew-One'); await page.getByLabel('Password', { exact: true }).fill(password); await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+  await page.getByRole('heading', { name: 'We could not open this work', exact: true }).waitFor();
+  assert.equal(await page.getByText('Unsaved note retained through an expired session.', { exact: true }).count(), 0);
+  const managerContext = await browser.newContext({ viewport: { width: 390, height: 844 } }), managerPage = await managerContext.newPage();
+  await managerPage.goto('http://localhost:8793/crew/job.html?jobId=browser-interruption');
+  await managerPage.getByLabel('Username', { exact: true }).fill('ZacB'); await managerPage.getByLabel('Password', { exact: true }).fill(password); await managerPage.getByRole('button', { name: 'Sign in', exact: true }).click();
+  await managerPage.getByText('Manager: configure this job’s checklist', { exact: true }).click();
+  await managerPage.getByLabel('Job checklist', { exact: true }).fill('departure | required | Confirm the pressure washer is loaded\narrival | required | Confirm scope and protect belongings\nwork | required | Perform garage service\nfinish | required | Customer walkthrough and cleanup');
+  await managerPage.getByRole('button', { name: 'Save checklist', exact: true }).click();
+  await managerPage.getByText('Confirm the pressure washer is loaded', { exact: true }).waitFor();
+  await managerPage.getByLabel('Add a note', { exact: true }).fill('Private manager-only pricing discussion.');
+  await managerPage.getByText('Management only', { exact: true }).click(); await managerPage.getByRole('button', { name: 'Save note', exact: true }).click();
+  await managerPage.getByText('Private manager-only pricing discussion.', { exact: true }).waitFor();
+  await managerPage.goto('http://localhost:8793/crew/job.html?jobId=browser-job');
+  await managerPage.getByRole('button', { name: 'Retry internal handoff', exact: true }).click();
+  await managerPage.getByText('Internal completion handoff: blocked', { exact: true }).waitFor();
+  assert.equal(store.get('jobs/browser-job').status, 'completed');
+  await managerContext.close(); await Promise.all(background);
+  assert.deepEqual(errors, [], 'no browser JavaScript errors after recovery');
+  console.log(JSON.stringify({ ok: true, browser: browser.version(), viewport: '390x844 touch, Pacific device timezone with Mountain job dates', checks: ['login', 'personal day', 'navigate job', 'en route', 'arrived', 'start validation', 'checklists', 'materials', 'library upload', 'draft refresh persistence', 'multiple photos', 'notes', 'completion', 'server refresh persistence', 'next job preserved', 'private photo viewer', 'reassignment revokes detail', 'mobile overflow', 'desktop render', 'offline retry', 'lost response idempotency', 'stale job review', 'auth expiry', 'draft isolation between accounts', 'manager checklist configuration', 'manager private note', 'durable failed CRM handoff', 'no browser errors'], artifacts: artifactDir }));
 } finally { await context.close(); await browser.close(); await new Promise(resolve => server.close(resolve)); globalThis.fetch = originalFetch; }

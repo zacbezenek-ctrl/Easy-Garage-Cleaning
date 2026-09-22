@@ -4,6 +4,8 @@ import { createHubSessionCookie } from '../functions/_lib/hub-session.js';
 import { storage } from './helpers/field-fixture.mjs';
 import { fieldChecklist, fieldCommand, fieldCompletionMissing, fieldFingerprint, fieldJobProjection } from '../functions/_lib/field-execution.js';
 import { decodeFieldPhoto } from '../functions/_lib/field-execution-photos.js';
+import { createFieldStore } from '../functions/_lib/field-execution-store.js';
+import { syncFieldCompletion } from '../functions/_lib/field-execution-sync.js';
 import * as route from '../functions/api/field-jobs.js';
 
 const env = { HUB_SESSION_SECRET: 'field-test-session-secret', FIREBASE_API_KEY: 'firebase-test-field', HUB_AUTH_USERS_JSON: JSON.stringify({ ZacB: { passwordHash: 'test', role: 'owner', displayName: 'Owner' }, 'Crew.One': { passwordHash: 'test', role: 'crew', displayName: 'Crew One' }, 'Crew-One': { passwordHash: 'test', role: 'crew', displayName: 'Crew Other' } }), GOOGLE_CLIENT_ID: 'test', GOOGLE_CLIENT_SECRET: 'test', GOOGLE_REFRESH_TOKEN: 'test' };
@@ -22,6 +24,8 @@ test('field detail is an allowlist: no money, provider linkage, credentials or p
   const text = JSON.stringify(projected);
   for (const secret of ['1500', 'Sensitive management', 'private-link', 'secret-payment', 'file-1', 'Private salary']) assert.equal(text.includes(secret), false, secret);
   assert.equal(projected.scope, 'Clean out garage'); assert.deepEqual(projected.assignedCrew, ['Crew.One']); assert.equal(projected.vehicleId, 'truck-1');
+  assert.equal(fieldJobProjection({ ...j, jobInstructions: 'Dispatch-created scope' }).scope, 'Dispatch-created scope');
+  assert.equal(fieldJobProjection({ ...j, jobInstructions: 'Previous scope', operationalScope: { text: 'Canonical scope' } }).scope, 'Canonical scope');
 });
 
 test('authentication and exact assigned identity are enforced before reads, writes and photos', async t => {
@@ -77,6 +81,7 @@ test('stale writes, cross-site mutations, and reassigned retries are rejected', 
   assert.equal((await post(store, { action: 'note', body: 'Stale note', expectedRevision: old })).status, 409);
   const r = req('Crew.One', { action: 'note', jobId: 'job-1', requestId: uuid(), expectedRevision: store.revision('job-1'), body: 'Forged' }); r.headers.set('Origin', 'https://attacker.example');
   assert.equal((await route.onRequestPost({ env, request: r })).status, 403);
+  assert.equal((await post(store, { action: 'note', body: 'Old account draft', expectedUser: 'Crew-One' })).status, 401);
   const id = uuid(); assert.equal((await post(store, { action: 'note', body: 'Before reassignment', requestId: id })).status, 200);
   store.put('jobs/job-1', { ...store.get('jobs/job-1'), assignedCrew: ['Crew-One'] });
   assert.equal((await post(store, { action: 'note', body: 'Before reassignment', requestId: id })).status, 403);
@@ -235,4 +240,52 @@ test('history pagination retains older records with equal timestamps and does no
   const first = await (await route.onRequestGet({ env, request: req('Crew.One', undefined, '?jobId=job-1') })).json(); assert.equal(first.job.history.length, 50); assert.ok(first.historyCursor);
   const second = await (await route.onRequestGet({ env, request: req('Crew.One', undefined, `?jobId=job-1&historyCursor=${encodeURIComponent(first.historyCursor)}`) })).json(); assert.equal(second.job.history.length, 15); assert.equal(second.historyCursor, null);
   assert.deepEqual([...first.job.history, ...second.job.history].map(event => event.id).sort(), ids.sort());
+});
+
+function readyJob() {
+  const job = { ...baseline(), status: 'in_progress', pipelineStatus: 'in_progress', startedAt: '2026-09-22T14:00:00.000Z' };
+  job.fieldExecution = { checks: Object.fromEntries(fieldChecklist(job).map(item => [item.id, { completed: true, actorId: actor.user }])), photos: ['before', 'after'].map(category => ({ id: uuid(), fileId: `file-${category}`, category, verified: true })) };
+  return job;
+}
+
+function completedJob() { const job = readyJob(); return { ...job, ...fieldCommand(job, actor, { action: 'complete', requestId: uuid(), notes: 'The agreed garage services and walkthrough are complete.', hasIssues: false }).patch }; }
+const enabledEnv = { ...env, EGC_OPERATIONS_ENABLED: 'true', EGC_OPERATIONS_SERVICE_AUTH: 'legacy' };
+
+test('completion stays saved when the provider is unconfigured and the pending handoff is durable', async t => {
+  const store = storage(t); store.put('jobs/job-1', readyJob());
+  const background = [];
+  const response = await route.onRequestPost({ env, request: req('Crew.One', { action: 'complete', jobId: 'job-1', requestId: uuid(), expectedRevision: store.revision('job-1'), notes: 'Completed work and customer walkthrough.', hasIssues: false }), waitUntil: promise => background.push(promise) });
+  assert.equal(response.status, 200); assert.equal(store.get('jobs/job-1').status, 'completed');
+  await Promise.all(background); const job = store.get('jobs/job-1');
+  assert.equal(job.fieldCompletionSync.status, 'blocked'); assert.equal(job.fieldCompletionSync.errorCode, 'FIELD_COMPLETION_SYNC_UNAVAILABLE'); assert.equal(job.payment.amount, 100);
+  assert.equal((await post(store, { action: 'retry_completion_sync' })).status, 403);
+  const manager = await (await route.onRequestGet({ env, request: req('ZacB', undefined, '?jobId=job-1') })).json(); assert.equal(manager.job.completionSync.canRetry, true);
+});
+
+test('completion handoff retries share one provider note intent and preserve completion attribution', async t => {
+  const store = storage(t); const job = completedJob(); store.put('jobs/job-1', job); const calls = [];
+  const syncNote = async (_env, who, payload) => { calls.push({ who, payload }); if (calls.length === 1) throw Object.assign(new Error('Provider is reconciling'), { code: 'provider_note_pending', operationId: 'outbox-stable' }); return { note: { id: 'note-verified' }, outboxId: 'outbox-stable', followupTaskId: 'followup-stable' }; };
+  let result = await syncFieldCompletion(enabledEnv, 'job-1', { syncNote }); assert.equal(result.status, 'error'); assert.equal(result.outboxId, 'outbox-stable');
+  result = await syncFieldCompletion(enabledEnv, 'job-1', { syncNote, actor: { user: 'ZacB', displayName: 'Owner' } }); assert.equal(result.status, 'synced'); assert.equal(result.attempts, 2);
+  assert.equal(calls[0].payload.requestId, calls[1].payload.requestId); assert.equal(calls[0].payload.body, calls[1].payload.body); assert.equal(calls[0].payload.scope, 'post_job'); assert.match(calls[0].payload.body, /Crew One \(Crew.One\)/);
+  assert.equal(store.get('jobs/job-1').completedBy, 'Crew.One');
+  await syncFieldCompletion(enabledEnv, 'job-1', { syncNote }); assert.equal(calls.length, 2, 'verified handoffs do not call the provider again');
+  const crew = await (await route.onRequestGet({ env, request: req('Crew.One', undefined, '?jobId=job-1') })).json(); assert.equal(crew.job.history.some(event => event.action === 'completion_sync'), false); assert.equal(JSON.stringify(crew).includes('note-verified'), false);
+});
+
+test('completion handoff metadata retries preserve concurrent changes and cannot overwrite later successful sync', async t => {
+  const fixture = storage(t); fixture.put('jobs/job-1', completedJob());
+  const store = createFieldStore(env), originalCommit = store.commit; let race = true, noteCalls = 0;
+  store.commit = async (job, patch, event) => {
+    if (race) { race = false; fixture.put('jobs/job-1', { ...fixture.get('jobs/job-1'), customerInstructions: 'Changed during handoff' }); }
+    return originalCommit(job, patch, event);
+  };
+  await syncFieldCompletion(enabledEnv, 'job-1', { store, syncNote: async () => { noteCalls++; return { note: { id: 'note' }, outboxId: 'outbox', followupTaskId: 'followup' }; } });
+  assert.equal(noteCalls, 1); assert.equal(fixture.get('jobs/job-1').customerInstructions, 'Changed during handoff'); assert.equal(fixture.get('jobs/job-1').fieldCompletionSync.status, 'synced');
+});
+
+test('changed customer links block completion handoff instead of sending notes to the wrong person', async t => {
+  const store = storage(t); const job = completedJob(); store.put('jobs/job-1', { ...job, highlevelContactId: 'different-contact' }); let called = false;
+  const result = await syncFieldCompletion(enabledEnv, 'job-1', { syncNote: async () => { called = true; } });
+  assert.equal(result.status, 'blocked'); assert.equal(result.errorCode, 'FIELD_COMPLETION_CONTACT_CHANGED'); assert.equal(called, false);
 });

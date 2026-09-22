@@ -72,7 +72,8 @@ export function fieldEventProjection(event, manager = false) {
 }
 
 export function fieldJobProjection(job, events = [], options = {}) {
-  const instructions = job.jobInstructions || {}, scope = job.scope || {}, logistics = job.logistics || {};
+  const instructions = job.jobInstructions && typeof job.jobInstructions === 'object' ? job.jobInstructions : job.instructions && typeof job.instructions === 'object' ? job.instructions : {}, scope = job.scope || {}, logistics = job.logistics || {};
+  const instructionText = typeof job.jobInstructions === 'string' ? job.jobInstructions : typeof job.instructions === 'string' ? job.instructions : '';
   const state = job.fieldExecution || {}, stage = fieldStage(job), frozen = closed(job);
   const crewNames = options.crewNames || {};
   return {
@@ -80,12 +81,12 @@ export function fieldJobProjection(job, events = [], options = {}) {
     customer: fieldText(job.customer, 200), phone: fieldText(job.phone, 100), address: fieldText(job.address, 1000),
     date: fieldText(job.date, 10), time: fieldText(job.time, 8), endDate: fieldText(job.endDate || job.date, 10), endTime: fieldText(job.endTime, 8),
     startAt: fieldText(job.startAt, 40), endAt: fieldText(job.endAt, 40), arrivalWindow: fieldText(job.arrivalWindow || instructions.arrivalWindow, 200),
-    status: stage, fieldStatus: fieldActivity(job), serviceType: fieldText(job.serviceType, 300),
+    status: stage, fieldStatus: fieldActivity(job), statusReason: fieldActivity(job) !== stage ? fieldText(state.activityReason, 1000) : '', serviceType: fieldText(job.serviceType, 300),
     assignedCrew: jobCrewNames(job), crewMembers: jobCrewNames(job).map(id => ({ id, name: crewNames[id.toLowerCase()] || id })),
     crewLead: fieldText(job.crewLead, 120), crewId: fieldText(job.crewId, 180), crewName: fieldText(options.crewName || job.crewName, 150),
     vehicleId: fieldText(job.vehicleId, 180), vehicleName: fieldText(options.vehicleName || job.vehicleName, 150),
     crewNeeded: Number(job.crewNeeded || job.requiredCrewSize || job.crewSize || 1),
-    scope: fieldText(job.operationalScope?.text || instructions.operationalScope || (typeof job.scope === 'string' ? job.scope : '') || job.scopeOfWork, 20000),
+    scope: fieldText(job.operationalScope?.text || instructionText || instructions.operationalScope || (typeof job.scope === 'string' ? job.scope : '') || job.scopeOfWork, 20000),
     customerGoal: fieldText(instructions.customerGoal || job.discovery?.success, 4000),
     keepItems: fieldText(instructions.keepItems || scope.keep_items), removeItems: fieldText(instructions.removeItems || scope.remove_items || scope.keep_remove),
     exclusions: fieldText(instructions.exclusions || scope.exclusions), hazards: textList(instructions.hazards || scope.hazards),
@@ -97,6 +98,7 @@ export function fieldJobProjection(job, events = [], options = {}) {
     photos: fieldPhotos(job).map(photo => ({ id: photo.id, category: photo.category, caption: fieldText(photo.caption, 500), createdAt: photo.createdAt, actorName: photo.actorName, bytes: photo.bytes, url: `/api/field-jobs?jobId=${encodeURIComponent(job.id)}&photoId=${encodeURIComponent(photo.id)}` })),
     history: events.map(event => fieldEventProjection(event, options.manager)).filter(Boolean),
     completion: state.completion ? { completedAt: state.completion.completedAt, completedBy: state.completion.actorName || state.completion.actorId, notes: fieldText(state.completion.notes), hasIssues: state.completion.hasIssues === true, issueNotes: fieldText(state.completion.issueNotes) } : null,
+    completionSync: job.fieldCompletionSync ? { status: job.fieldCompletionSync.status, message: fieldText(job.fieldCompletionSync.message, 600), attemptedAt: job.fieldCompletionSync.attemptedAt || null, syncedAt: job.fieldCompletionSync.syncedAt || null, canRetry: options.manager === true && job.fieldCompletionSync.status !== 'synced' } : null,
     startedAt: job.startedAt || null, completedAt: job.completedAt || null,
     completionMissing: frozen ? [] : fieldCompletionMissing(job),
     canEdit: !frozen, canManageChecklist: options.manager === true && !frozen,
@@ -105,7 +107,7 @@ export function fieldJobProjection(job, events = [], options = {}) {
 }
 
 export async function fieldFingerprint(actor, input) {
-  const normalize = value => Array.isArray(value) ? value.map(normalize) : value && typeof value === 'object' ? Object.fromEntries(Object.keys(value).filter(key => key !== 'expectedRevision').sort().map(key => [key, normalize(value[key])])) : value;
+  const normalize = value => Array.isArray(value) ? value.map(normalize) : value && typeof value === 'object' ? Object.fromEntries(Object.keys(value).filter(key => !['expectedRevision', 'expectedUser'].includes(key)).sort().map(key => [key, normalize(value[key])])) : value;
   return [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify({ actor, input: normalize(input) }))))].map(value => value.toString(16).padStart(2, '0')).join('');
 }
 
@@ -166,6 +168,7 @@ export function fieldCommand(job, actor, input, now = new Date().toISOString()) 
       const checklist = fieldChecklist(job);
       const progress = stage => { const items = checklist.filter(item => stage === 'pre' ? ['departure', 'arrival'].includes(item.stage) : ['work', 'finish'].includes(item.stage)); return { completedAt: now, completedBy: actorId, completedCount: items.filter(item => item.completed).length, totalCount: items.length, standardItems: items }; };
       patch = { status: 'completed', pipelineStatus: 'completed', completedAt: now, completedBy: actorId, closeoutNotes: completion.notes, fieldExecution: { ...state, activity: 'completed', completion, ...(input.hasIssues ? { attention: { ...stamp, reason: completion.issueNotes, status: 'open' } } : {}) }, postJobProgress: progress('post'), postJobChecklist: progress('post'), preJobProgress: job.preJobProgress || progress('pre'), preJobChecklist: { ...(job.preJobChecklist || progress('pre')) }, afterPhotoCount: fieldPhotos(job).filter(photo => photo.category === 'after').length, completionEvidence: { kind: 'verified_field_execution', actorId, recordedAt: now, requestId: input.requestId, photoIds: completion.evidencePhotoIds } };
+      patch.fieldCompletionSync = { requestId: input.requestId, status: 'pending', message: 'Work is saved. The internal CRM completion note and follow-up are awaiting verification.', createdAt: now, attempts: 0, requestedBy: actorId, requestedByName: actorName, providerContactId: fieldText(job.highlevelContactId, 200), title: 'EGC field completion', body: [`EGC job: ${job.id}`, `Work completed: ${now}`, `Completed by: ${actorName} (${actorId})`, `Services: ${fieldText(job.serviceType, 500) || 'Garage service'}`, `Work performed: ${completion.notes}`, `Verified before photos: ${fieldPhotos(job).filter(photo => photo.category === 'before').length}`, `Verified after photos: ${fieldPhotos(job).filter(photo => photo.category === 'after').length}`, `Required checklist: ${checklist.filter(item => item.required).length} complete`, `Issues / follow-up: ${completion.hasIssues ? completion.issueNotes : 'None reported'}`, 'This is an operational work-completion record. Payment status has not been changed.'].join('\n') };
       event.summary = input.hasIssues ? 'Work completed — follow-up required' : 'Work completed'; event.body = completion.notes;
       break;
     }
