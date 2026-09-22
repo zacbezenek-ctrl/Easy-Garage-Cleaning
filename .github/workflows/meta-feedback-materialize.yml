@@ -22,7 +22,7 @@ jobs:
           POSTGRES_DB: egc_meta_test
         ports: ['5432:5432']
         options: >-
-          --health-cmd 'pg_isready -U egc_test -d egc_meta_test'
+          --health-cmd "pg_isready -U egc_test -d egc_meta_test"
           --health-interval 5s --health-timeout 5s --health-retries 10
     steps:
       - uses: actions/checkout@v4
@@ -101,8 +101,10 @@ jobs:
         run: |
           mkdir -p feedback-evidence
           cp /tmp/meta-*.txt feedback-evidence/ 2>/dev/null || true
-          git diff > feedback-evidence/source.diff
-          git rev-parse HEAD > feedback-evidence/revision.txt
+          if [ -d .git ]; then
+            git diff > feedback-evidence/source.diff
+            git rev-parse HEAD > feedback-evidence/revision.txt
+          fi
           tail -20 /tmp/meta-unit.txt /tmp/meta-postgres.txt 2>/dev/null || true
       - uses: actions/upload-artifact@v4
         if: always()
