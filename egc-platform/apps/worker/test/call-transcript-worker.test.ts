@@ -44,6 +44,10 @@ describe('provider-only delayed transcript recovery',()=>{
   const m=memory([{retry},{}]),p=provider();p.downloadCallTranscript.mockRejectedValueOnce(new GhlError('rate limit',429,'body')).mockResolvedValueOnce('Customer: I accept the quoted work.');
   expect(await recoverCallTranscripts({provider:p,store:m.store,now})).toMatchObject({attempted:2,failed:1,recovered:1});expect(m.data[0]?.retry?.nextAttemptAt).toBe('2026-09-22T07:20:00.000Z');expect(m.saved.size).toBe(1);
  });
+ it('exposes exact safe provider status counts without logging private response bodies',async()=>{
+  const m=memory([{},{}]),p=provider();p.downloadCallTranscript.mockRejectedValue(new GhlError('PRIVATE message',400,'PRIVATE body'));p.getCallTranscript.mockRejectedValueOnce(new GhlError('PRIVATE message',422,'PRIVATE body')).mockRejectedValueOnce(new GhlError('PRIVATE message',503,'PRIVATE body'));
+  const result=await recoverCallTranscripts({provider:p,store:m.store,now});expect(result).toMatchObject({failed:2,errorCounts:{provider_http_422:1,provider_http_503:1}});expect(m.data[0]?.retry?.error).toBe('provider_http_422');expect(JSON.stringify(result)+JSON.stringify(m.data)).not.toContain('PRIVATE');
+ });
  it('canonicalizes a previously stored JSON envelope without hitting the provider',async()=>{
   const m=memory([{existingText:'{"transcript":"Real customer speech."}'}]),p=provider();expect(await recoverCallTranscripts({provider:p,store:m.store,now})).toMatchObject({recovered:1,attempted:0});expect(p.downloadCallTranscript).not.toHaveBeenCalled();expect(m.data[0]?.existingText).toBe('Real customer speech.');
  });
