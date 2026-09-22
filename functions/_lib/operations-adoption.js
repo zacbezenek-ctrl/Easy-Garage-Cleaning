@@ -2,6 +2,8 @@ import {firestoreFetch} from './firebase-service-account.js';
 import {decodeFirestoreFields} from './firestore-job.js';
 import {localInstant} from './operations-portal-records.js';
 import {schedulingStorage} from './operations-scheduling.js';
+import {dispatchStorage} from './dispatch-storage.js';
+import {scheduleRowsConflict,scheduleLockConflict,scheduleDayEntry} from './dispatch-conflicts.js';
 const BASE='https://firestore.googleapis.com/v1/projects/egcw-1ec83/databases/(default)/documents/jobs';
 const fail=(code,status=409)=>Object.assign(new Error(code),{status});
 const safeId=v=>typeof v==='string'&&/^[A-Za-z0-9_-]{1,180}$/.test(v)&&!/^(_egc_|secure_)/.test(v);
@@ -30,7 +32,7 @@ function validateLock(lock){
  if(lock.recordType!=='schedule_lock'||!Array.isArray(lock.entries)||typeof lock.revision!=='string'||!lock.revision)throw fail('schedule_adoption_day_lock_invalid');
  const seen=new Set();
  for(const entry of lock.entries){
-  if(!obj(entry)||typeof entry.id!=='string'||!entry.id||entry.id.length>200||/[\x00-\x1f]/.test(entry.id)||seen.has(entry.id)||!/^([01]\d|2[0-3]):[0-5]\d$/.test(entry.start||'')||!/^(([01]\d|2[0-3]):[0-5]\d|24:00)$/.test(entry.end||'')||mins(entry.end)<=mins(entry.start)||entry.type!==undefined&&typeof entry.type!=='string'||entry.status!==undefined&&typeof entry.status!=='string'||entry.assignedCrew!==undefined&&(!Array.isArray(entry.assignedCrew)||entry.assignedCrew.some(v=>typeof v!=='string'||!v||v.length>200)))throw fail('schedule_adoption_day_lock_invalid');
+  if(!obj(entry)||typeof entry.id!=='string'||!entry.id||entry.id.length>200||/[\x00-\x1f]/.test(entry.id)||seen.has(entry.id)||!/^([01]\d|2[0-3]):[0-5]\d$/.test(entry.start||'')||!/^(([01]\d|2[0-3]):[0-5]\d|24:00)$/.test(entry.end||'')||mins(entry.end)<=mins(entry.start)||entry.type!==undefined&&typeof entry.type!=='string'||entry.status!==undefined&&typeof entry.status!=='string'||entry.assignmentKnown!==undefined&&typeof entry.assignmentKnown!=='boolean'||entry.vehicleId!==undefined&&entry.vehicleId!==null&&(typeof entry.vehicleId!=='string'||!entry.vehicleId)||entry.assignedCrew!==undefined&&(!Array.isArray(entry.assignedCrew)||entry.assignedCrew.some(v=>typeof v!=='string'||!v||v.length>200)))throw fail('schedule_adoption_day_lock_invalid');
   seen.add(entry.id);
  }
 }
@@ -53,7 +55,10 @@ function validate(actor,input,now){
 }
 /** A complete bounded source scan includes cancelled tombstones and prior-day
  * intervals. A failed/partial scan cannot establish that adoption is safe. */
-export function adoptionStorage(env,fetcher=firestoreFetch){return{...schedulingStorage(env,fetcher),async identityCandidates(contact){
+export function adoptionStorage(env,fetcher=firestoreFetch){return{...schedulingStorage(env,fetcher),
+ async resources(){try{return await dispatchStorage(env,fetcher).resources();}catch{throw fail('schedule_adoption_source_unavailable',503);}},
+ async roster(){try{return await dispatchStorage(env,fetcher).roster();}catch{throw fail('schedule_adoption_source_unavailable',503);}},
+ async identityCandidates(contact){
  const wantedPhone=phone(contact.phone),wantedEmail=email(contact.email);
  if(!wantedPhone&&!wantedEmail)return[];
  const matches=[],seen=new Set(),tokens=new Set();let token='';
@@ -69,12 +74,12 @@ export function adoptionStorage(env,fetcher=firestoreFetch){return{...scheduling
  throw fail('schedule_adoption_customer_scan_incomplete',503);
 },async snapshot(){
  const rows=[],seen=new Set(),tokens=new Set();let token='';
- const fields=['recordType','type','customerId','projectId','highlevelContactId','highlevelAppointmentId','highlevelCalendarId','normalizedLocalJobId','normalizedLocalAppointmentId','date','endDate','time','endTime','status','pipelineStatus','address','phone','email','adoptionSource','adoptionOriginalBookingAt'];
+ const fields=['recordType','type','customerId','projectId','highlevelContactId','highlevelAppointmentId','highlevelCalendarId','normalizedLocalJobId','normalizedLocalAppointmentId','date','endDate','time','endTime','status','pipelineStatus','address','phone','email','adoptionSource','adoptionOriginalBookingAt','assignedCrew','assignedTo','vehicleId','assignmentKnown','employee','employeeId','allDay'];
  for(let page=0;page<20;page++){
   const url=new URL(BASE);url.searchParams.set('pageSize','500');if(token)url.searchParams.set('pageToken',token);for(const f of fields)url.searchParams.append('mask.fieldPaths',f);
   const r=await fetcher(env,url.toString(),{signal:AbortSignal.timeout(15000)});if(!r.ok)throw fail('schedule_adoption_source_unavailable',503);
   const data=await r.json();if(data.documents!==undefined&&!Array.isArray(data.documents))throw fail('schedule_adoption_source_incomplete',503);
-  for(const doc of data.documents||[]){const id=String(doc.name||'').split('/').pop();if(!id||seen.has(id))throw fail('schedule_adoption_source_changed',503);seen.add(id);const row={...decodeFirestoreFields(doc.fields||{}),id,revision:doc.updateTime};if(!row.recordType&&safeId(id))rows.push(row);}
+  for(const doc of data.documents||[]){const id=String(doc.name||'').split('/').pop();if(!id||seen.has(id))throw fail('schedule_adoption_source_changed',503);seen.add(id);const row={...decodeFirestoreFields(doc.fields||{}),id,revision:doc.updateTime};if((!row.recordType||['availability','crew_availability'].includes(row.recordType))&&safeId(id))rows.push(row);}
   token=data.nextPageToken||'';if(!token)return rows;if(tokens.has(token))throw fail('schedule_adoption_source_incomplete',503);tokens.add(token);
  }
  throw fail('schedule_adoption_source_incomplete',503);
@@ -104,8 +109,11 @@ export async function adoptScheduledVisit(store,actor,input,now=new Date().toISO
   if(manualCandidates.length)throw fail('schedule_adoption_customer_identity_requires_manager');
  }
  const bookingKey=await digest({customerId,kind:p.kind,date:from.date,time:from.time,timeZone:'America/Denver'}),deterministicId=`visit_${bookingKey.slice(0,40)}`;
- const lockId=`_egc_schedule_lock_${from.date}`,lock=await store.read('jobs',lockId);validateLock(lock);const snapshot=await store.snapshot();
- if(!Array.isArray(snapshot))throw fail('schedule_adoption_source_incomplete',503);
+ const dispatchGuard=await store.read('dispatchState','revision');
+ const lockId=`_egc_schedule_lock_${from.date}`,lock=await store.read('jobs',lockId);validateLock(lock);
+ if(typeof store.resources!=='function'||typeof store.roster!=='function')throw fail('schedule_adoption_source_incomplete',503);
+ const [snapshot,resources,roster]=await Promise.all([store.snapshot(),store.resources(),store.roster()]);
+ if(!Array.isArray(snapshot)||!Array.isArray(resources)||!Array.isArray(roster))throw fail('schedule_adoption_source_incomplete',503);
  const same=snapshot.filter(v=>v.highlevelContactId===p.contactProviderId&&kind(v.type)===p.kind&&instant(localInstant(v.date,v.time))===instant(p.startAt));
  const linked=snapshot.filter(v=>p.providerAppointmentId&&v.highlevelAppointmentId===p.providerAppointmentId||p.localJobId&&v.normalizedLocalJobId===p.localJobId||p.normalizedLocalAppointmentId&&v.normalizedLocalAppointmentId===p.normalizedLocalAppointmentId||v.adoptionSource?.type===p.source&&v.adoptionSource?.id===p.sourceId);
  if(same.length>1||linked.length>1)throw fail('schedule_adoption_duplicate_suspected');
@@ -115,9 +123,13 @@ export async function adoptScheduledVisit(store,actor,input,now=new Date().toISO
  if(current&&!compatible(current,p,customerId))throw fail('schedule_adoption_existing_visit_conflict');
  if(current){current=await store.read('jobs',current.id);if(!compatible(current,p,customerId)||terminal(current.pipelineStatus||current.status))throw fail('schedule_adoption_source_changed');}
  const id=current?.id||deterministicId,activeEntries=(Array.isArray(lock?.entries)?lock.entries:[]).filter(v=>v.id!==id&&!terminal(v.status));
- const start=instant(p.startAt),end=instant(p.endAt);
- for(const row of snapshot){if(row.id===id||terminal(row.pipelineStatus||row.status)||!kind(row.type)&&!['blocked','block'].includes(row.type))continue;const a=instant(localInstant(row.date,row.time)),b=instant(localInstant(row.endDate||row.date,row.endTime));if(a===null||b===null){if(row.date===from.date)throw fail('schedule_adoption_conflict_time_unresolved');continue;}if(a<end&&start<b)throw fail('schedule_adoption_slot_conflict');}
- for(const entry of activeEntries){if(entry.type==='availability')continue;const a=mins(entry.start),b=mins(entry.end);if(!Number.isFinite(a)||!Number.isFinite(b)||b<=a)throw fail('schedule_adoption_conflict_time_unresolved');if(a<mins(to.time)&&mins(from.time)<b)throw fail('schedule_adoption_slot_conflict');}
+ // Preserve existing explicit resource assignments. A new unassigned imported
+ // visit intentionally omits assignedCrew:[]: unknown legacy capacity is global.
+ const candidate={...current,id,type:current?.type||p.kind,date:from.date,time:from.time,endTime:to.time};
+ if(candidate.vehicleId&&!resources.some(row=>row.id===candidate.vehicleId&&row.recordType==='vehicle'&&row.status==='available'))throw fail('schedule_adoption_vehicle_unavailable');
+ if(resources.some(row=>row.recordType==='availability'&&scheduleRowsConflict(candidate,row,roster)))throw fail('schedule_adoption_slot_conflict');
+ for(const row of snapshot){if(row.id===id||terminal(row.pipelineStatus||row.status)||!kind(row.type)&&!['blocked','block','availability'].includes(row.type)&&!['availability','crew_availability'].includes(row.recordType))continue;if(scheduleRowsConflict(candidate,row.type==='block'?{...row,type:'blocked'}:row,roster))throw fail('schedule_adoption_slot_conflict');}
+ for(const entry of activeEntries)if(scheduleLockConflict(candidate,entry,from.date,roster))throw fail('schedule_adoption_slot_conflict');
  const projectId=current?.projectId||`project_${id}`,project=await store.read('projects',projectId);if(project&&project.customerId!==customerId)throw fail('schedule_adoption_project_conflict');
  const source={type:p.source,id:p.sourceId,revision:p.sourceRevision,verifiedAt,evidenceIds:[...new Set(p.evidenceIds)]};
  const patch={id,type:current?.type||p.kind,customerId,projectId,highlevelContactId:p.contactProviderId,scheduleSource:'egc_hub',providerSyncOwner:'operations',adoptionSource:source,adoptedAt:current?.adoptedAt||now,adoptionOriginalBookingAt:p.originalBookingAt,updatedAt:now};
@@ -133,9 +145,10 @@ export async function adoptScheduledVisit(store,actor,input,now=new Date().toISO
  if(p.providerAppointmentId)Object.assign(patch,{highlevelAppointmentId:p.providerAppointmentId,highlevelCalendarId:p.providerCalendarId,providerAppointmentStatus:p.providerStatus,syncStatus:'synced',syncedAt:verifiedAt});else if(!current?.highlevelAppointmentId)patch.syncStatus='pending';
  const next={...current,...patch},writes=[{collection:'jobs',id,revision:current?.revision,patch}];
  writes.push({collection:'customerIdentityState',id:'revision',revision:identityGuard?.revision,patch:{updatedAt:now,lastRequestId:input.requestId}});
+ writes.push({collection:'dispatchState',id:'revision',revision:dispatchGuard?.revision,patch:{updatedAt:now,lastRequestId:input.requestId}});
  if(!customer)writes.push({collection:'customers',id:customerId,patch:{id:customerId,name:next.customer||'',phone:p.providerContact.phone||'',email:p.providerContact.email||'',address:p.address,highlevelContactId:p.contactProviderId,createdAt:now,updatedAt:now,source:'verified_operational_adoption'}});
  if(!project)writes.push({collection:'projects',id:projectId,patch:{id:projectId,customerId,sourceRecordId:id,sourceWalkthroughId:p.kind==='walkthrough'?id:null,createdBy:actor.id,createdAt:now,updatedAt:now,authority:'employee_hub'}});
- activeEntries.push({id,start:from.time,end:to.time,label:next.customer||'',status:next.status||'scheduled',updatedAt:now});
+ activeEntries.push(scheduleDayEntry(next,from.date,roster,now));
  writes.push({collection:'jobs',id:lockId,revision:lock?.revision,patch:{recordType:'schedule_lock',date:from.date,entries:activeEntries,updatedAt:now}});
  for(const receiptId of [sourceReceiptId,requestReceiptId])writes.push({collection:'jobs',id:receiptId,patch:{recordType:'schedule_adoption',fingerprint,portalVisitId:id,portalCustomerId:customerId,source,adopted:!current,actorId:actor.id,createdAt:now}});
  try{await store.commit(writes);}catch(error){const recovered=await store.read('jobs',sourceReceiptId).catch(()=>null),request=await store.read('jobs',requestReceiptId).catch(()=>null);if(recovered?.fingerprint!==fingerprint||request?.fingerprint!==fingerprint)throw error;}

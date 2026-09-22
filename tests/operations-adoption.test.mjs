@@ -12,7 +12,7 @@ const operationalScope=()=>({sourceType:'local_job',sourceId:sourceJob,sourceCre
 function fixture(){
  const rows=new Map();let revision=0,commits=0;
  const normPhone=v=>String(v||'').replace(/\D/g,'').replace(/^1(?=\d{10}$)/,''),normEmail=v=>String(v||'').trim().toLowerCase();
- const store={read:async(c,id)=>structuredClone(rows.get(`${c}/${id}`)||null),customers:async provider=>[...rows.entries()].filter(([k,v])=>k.startsWith('customers/')&&v.highlevelContactId===provider).map(([,v])=>structuredClone(v)),identityCandidates:async contact=>[...rows.entries()].filter(([k,v])=>k.startsWith('customers/')&&!v.highlevelContactId&&(normPhone(contact.phone)&&normPhone(v.phone)===normPhone(contact.phone)||normEmail(contact.email)&&normEmail(v.email)===normEmail(contact.email))).map(([,v])=>structuredClone(v)),snapshot:async()=>[...rows.entries()].filter(([k,v])=>k.startsWith('jobs/')&&!v.recordType).map(([,v])=>structuredClone(v)),commit:async writes=>{
+ const store={read:async(c,id)=>structuredClone(rows.get(`${c}/${id}`)||null),resources:async()=>[...rows.entries()].filter(([k])=>k.startsWith('dispatchResources/')).map(([,v])=>structuredClone(v)),roster:async()=>[{id:'crew-a',name:'Crew A'},{id:'crew-b',name:'Crew B'}],customers:async provider=>[...rows.entries()].filter(([k,v])=>k.startsWith('customers/')&&v.highlevelContactId===provider).map(([,v])=>structuredClone(v)),identityCandidates:async contact=>[...rows.entries()].filter(([k,v])=>k.startsWith('customers/')&&!v.highlevelContactId&&(normPhone(contact.phone)&&normPhone(v.phone)===normPhone(contact.phone)||normEmail(contact.email)&&normEmail(v.email)===normEmail(contact.email))).map(([,v])=>structuredClone(v)),snapshot:async()=>[...rows.entries()].filter(([k,v])=>k.startsWith('jobs/')&&!v.recordType).map(([,v])=>structuredClone(v)),commit:async writes=>{
   for(const w of writes){const current=rows.get(`${w.collection}/${w.id}`);if(w.revision?current?.revision!==w.revision:Boolean(current))throw new Error('schedule_revision_conflict');}
   for(const w of writes)rows.set(`${w.collection}/${w.id}`,{...rows.get(`${w.collection}/${w.id}`),...structuredClone(w.patch),id:w.id,revision:`revision-${++revision}`});commits++;
  }};
@@ -86,6 +86,42 @@ test('concurrent manager identity creation invalidates adoption atomically and r
 test('incomplete or failed source snapshot never means no collision',async()=>{const f=fixture();f.store.snapshot=async()=>{throw new Error('source unavailable');};await assert.rejects(adoptScheduledVisit(f.store,actor,input(),now),/source unavailable/);assert.equal(f.commits(),0);});
 test('live Hub schedule change during exact reread is not overwritten',async()=>{const f=fixture();f.rows.set('jobs/existing',existing());const read=f.store.read;f.store.read=async(c,id)=>c==='jobs'&&id==='existing'?existing({time:'16:00',endTime:'16:30',revision:'r2'}):read(c,id);await assert.rejects(adoptScheduledVisit(f.store,actor,input(),now),/source_changed/);assert.equal(f.commits(),0);});
 test('availability entries do not occupy calendar; dispatch state and other lock entries survive',async()=>{const f=fixture();f.rows.set('jobs/_egc_schedule_lock_2026-09-22',{id:'_egc_schedule_lock_2026-09-22',recordType:'schedule_lock',revision:'lock1',dispatchState:{revision:12,keep:true},entries:[{id:'available',type:'availability',assignedCrew:['crew'],start:'08:00',end:'18:00'},{id:'earlier',start:'10:00',end:'11:00'}]});await adoptScheduledVisit(f.store,actor,input(),now);const lock=f.rows.get('jobs/_egc_schedule_lock_2026-09-22');assert.equal(lock.entries.length,3);assert.deepEqual(lock.dispatchState,{revision:12,keep:true});});
+
+test('new imports preserve unknown assignment rather than pretending no employee capacity is reserved',async()=>{
+ const f=fixture(),r=await adoptScheduledVisit(f.store,actor,input(),now),v=f.rows.get('jobs/'+r.jobId),entry=f.rows.get('jobs/_egc_schedule_lock_2026-09-22').entries[0];
+ assert.equal(v.assignedCrew,undefined);assert.equal(entry.assignmentKnown,false);assert.deepEqual(entry.assignedCrew,[]);assert.equal(entry.type,'walkthrough');assert.equal(entry.vehicleId,null);
+});
+
+test('existing exact native assignment and vehicle survive adoption and allow independent crew work',async()=>{
+ const f=fixture();f.rows.set('jobs/existing',existing({assignedCrew:['crew-a'],assignedTo:'Crew A',vehicleId:'van-a'}));f.rows.set('dispatchResources/van-a',{id:'van-a',recordType:'vehicle',status:'available'});f.rows.set('jobs/other',existing({id:'other',highlevelContactId:'other',assignedCrew:['crew-b'],vehicleId:'van-b'}));
+ f.rows.set('jobs/_egc_schedule_lock_2026-09-22',{id:'_egc_schedule_lock_2026-09-22',recordType:'schedule_lock',revision:'lock1',entries:[{id:'other',type:'job',start:'14:00',end:'15:00',status:'scheduled',assignedCrew:['crew-b'],assignmentKnown:true,vehicleId:'van-b'}]});
+ const r=await adoptScheduledVisit(f.store,actor,input(),now),v=f.rows.get('jobs/'+r.jobId),entries=f.rows.get('jobs/_egc_schedule_lock_2026-09-22').entries;
+ assert.deepEqual(v.assignedCrew,['crew-a']);assert.equal(v.assignedTo,'Crew A');assert.equal(v.vehicleId,'van-a');assert.deepEqual(entries.find(e=>e.id==='existing').assignedCrew,['crew-a']);assert.equal(entries.find(e=>e.id==='existing').vehicleId,'van-a');assert.equal(entries.find(e=>e.id==='existing').assignmentKnown,true);assert.equal(entries.find(e=>e.id==='other').vehicleId,'van-b');
+});
+
+test('shared crew, vehicle, resource availability and malformed lock assignments block writes',async()=>{
+ for(const conflict of ['crew','vehicle','availability','legacy-lock','unavailable-vehicle']){
+  const f=fixture();f.rows.set('jobs/existing',existing({assignedCrew:['crew-a'],vehicleId:'van-a'}));f.rows.set('dispatchResources/van-a',{id:'van-a',recordType:'vehicle',status:conflict==='unavailable-vehicle'?'out_of_service':'available'});
+  if(conflict==='crew'||conflict==='vehicle')f.rows.set('jobs/other',existing({id:'other',highlevelContactId:'other',assignedCrew:[conflict==='crew'?'crew-a':'crew-b'],vehicleId:conflict==='vehicle'?'van-a':'van-b'}));
+  if(conflict==='availability')f.rows.set('dispatchResources/time-off',{id:'time-off',recordType:'availability',employeeId:'crew-a',date:'2026-09-22',allDay:true,status:'active'});
+  if(conflict==='legacy-lock')f.rows.set('jobs/_egc_schedule_lock_2026-09-22',{id:'_egc_schedule_lock_2026-09-22',recordType:'schedule_lock',revision:'lock1',entries:[{id:'legacy',start:'14:00',end:'15:00',assignedCrew:[],assignmentKnown:false}]});
+  await assert.rejects(adoptScheduledVisit(f.store,actor,input(),now),/slot_conflict|vehicle_unavailable/);assert.equal(f.commits(),0);
+ }
+});
+
+test('another employee availability does not block an exactly assigned native crew',async()=>{
+ const f=fixture();f.rows.set('jobs/existing',existing({assignedCrew:['crew-a']}));f.rows.set('dispatchResources/time-off',{id:'time-off',recordType:'availability',employeeId:'crew-b',date:'2026-09-22',allDay:true,status:'active'});assert.equal((await adoptScheduledVisit(f.store,actor,input(),now)).ok,true);
+});
+
+test('dispatch guard is read before snapshots and commits in the same transaction as adoption',async()=>{
+ const f=fixture(),calls=[],read=f.store.read,snapshot=f.store.snapshot;f.rows.set('dispatchState/revision',{id:'revision',revision:'dispatch1',retain:true});f.store.read=async(c,id)=>{calls.push(c+'/'+id);return read(c,id);};f.store.snapshot=async()=>{calls.push('snapshot');return snapshot();};const i=input();await adoptScheduledVisit(f.store,actor,i,now);
+ assert.ok(calls.indexOf('dispatchState/revision')<calls.indexOf('snapshot'));assert.equal(f.rows.get('dispatchState/revision').lastRequestId,i.requestId);assert.equal(f.rows.get('dispatchState/revision').retain,true);
+});
+
+test('interleaved dispatch writes invalidate the adoption snapshot atomically and failed resource reads are not empty',async()=>{
+ const f=fixture(),commit=f.store.commit;f.store.commit=async writes=>{f.rows.set('dispatchState/revision',{id:'revision',revision:'concurrent'});return commit(writes);};await assert.rejects(adoptScheduledVisit(f.store,actor,input(),now),/revision_conflict/);assert.equal(f.visits().length,0);assert.equal(f.commits(),0);
+ const g=fixture();g.store.resources=async()=>{throw new Error('resource scan unavailable');};await assert.rejects(adoptScheduledVisit(g.store,actor,input(),now),/resource scan unavailable/);assert.equal(g.commits(),0);
+});
 test('existing malformed day locks fail closed and are never replaced with an empty conflict set',async()=>{
  const good={id:'one',type:'job',start:'10:00',end:'11:00',assignedCrew:['crew-a'],vehicleId:'van-1'};
  for(const entries of [undefined,null,{},[null],[{}],[{...good,id:''}],[{...good,start:'99:00'}],[{...good,end:'09:00'}],[{...good,assignedCrew:'crew-a'}],[good,good]]){const f=fixture(),row={id:'_egc_schedule_lock_2026-09-22',recordType:'schedule_lock',revision:'lock1',dispatchState:{revision:9},entries};f.rows.set('jobs/'+row.id,structuredClone(row));await assert.rejects(adoptScheduledVisit(f.store,actor,input(),now),/day_lock_invalid/);assert.deepEqual(f.rows.get('jobs/'+row.id),row);assert.equal(f.commits(),0);}
