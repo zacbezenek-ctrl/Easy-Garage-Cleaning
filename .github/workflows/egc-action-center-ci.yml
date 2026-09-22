@@ -121,6 +121,12 @@ jobs:
         run: python tests/browser/test_recordings_ui.py
       - name: Native Hub booking recovery and Denver time-zone tests
         run: python tests/browser/test_native_booking_ui.py
+      - name: Dispatch conflict recovery, openings and mobile controls
+        run: python tests/browser/test_dispatch_ui.py
+      - name: Crew availability and private draft recovery
+        run: python tests/browser/test_availability_ui.py
+      - name: Personal field agenda and Mountain date boundaries
+        run: python tests/browser/test_field_today_ui.py
       - uses: actions/upload-artifact@v4
         if: always()
         with:
