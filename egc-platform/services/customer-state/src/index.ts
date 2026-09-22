@@ -59,13 +59,13 @@ export async function reconcileCustomerState(options:ReconcileOptions={}):Promis
         const start=validDate(window.start),end=validDate(window.end);
         return Boolean(start&&end&&scheduled.length&&scheduled.every(at=>at>=start&&at<end));
       }).map(row=>row.id));
-      for(const row of cached)if(["portal_visit","portal_job","portal_payment","provider_note"].includes(row.sourceType)&&!seen.has(row.id)&&!retiredPortalIds.has(row.id))records.push({sourceType:row.sourceType as SourceRecord["sourceType"],sourceRecordId:row.sourceRecordId,contactId:contact.id,leadId:lead.id,occurredAt:row.occurredAt.toISOString(),text:"",events:row.extractedEvents as unknown as EvidenceEvent[],extractionStatus:row.status,...(row.sourcePointer?{sourcePointer:row.sourcePointer}:{})});
+      for(const row of cached)if(["portal_visit","portal_job","portal_payment","provider_note"].includes(row.sourceType)&&!seen.has(row.id)&&!retiredPortalIds.has(row.id))records.push({sourceType:row.sourceType as SourceRecord["sourceType"],sourceRecordId:row.sourceRecordId,contactId:contact.id,leadId:lead.id,occurredAt:row.occurredAt.toISOString(),text:"",events:row.extractedEvents as unknown as EvidenceEvent[],extractionStatus:row.status,extractionError:row.error,...(row.sourcePointer?{sourcePointer:row.sourcePointer}:{})});
       const pending:SourceRecord[]=[],prepared:SourceRecord[]=[],hashes=new Map<string,string>();
       for(const record of records) {
         const digest=hash(JSON.stringify({text:record.text,direction:record.direction,actorType:record.actorType,raw:record.raw,events:record.events}));hashes.set(sourceId(record),digest);
         const previous=cached.find(e=>e.id===sourceId(record));
         const goodCache=previous?.sourceHash===digest && previous.extractorVersion===EXTRACTOR_VERSION;
-        if(goodCache && (previous.status==="complete" || previous.status==="review_required" || options.useAI===false || !process.env.OPENAI_API_KEY))prepared.push({...record,events:previous.extractedEvents as unknown as EvidenceEvent[],extractionStatus:previous.status});
+        if(goodCache && (previous.status==="complete" || previous.status==="review_required" || options.useAI===false || !process.env.OPENAI_API_KEY))prepared.push({...record,events:previous.extractedEvents as unknown as EvidenceEvent[],extractionStatus:previous.status,extractionError:previous.error});
         else if(record.events)prepared.push({...record,extractionStatus:"complete"});
         else pending.push(record);
       }
@@ -78,7 +78,7 @@ export async function reconcileCustomerState(options:ReconcileOptions={}):Promis
         const earliest=batch[0]!.occurredAt,context=records.filter(r=>r.occurredAt<earliest&&r.text&&["message","call_transcript"].includes(r.sourceType)).slice(-8);
         const extracted=await extractStructuredEvidence(batch,context,{useAI:options.useAI!==false});
         if(extracted.error)extractionErrors.push(extracted.error);
-        prepared.push(...extracted.records.map(r=>({...r,extractionStatus:extracted.status==="complete"?"complete":extracted.error?.startsWith("unsupported_or_unquoted")?"review_required":"partial"})));
+        prepared.push(...extracted.records.map(r=>({...r,extractionStatus:extracted.status==="complete"?"complete":extracted.error?.startsWith("unsupported_or_unquoted")?"review_required":"partial",extractionError:extracted.error})));
         batch=[];size=0;
       };
       for(const record of pending){if(size+record.text.length>60_000 || batch.length>=35)await runBatch();batch.push(record);size+=record.text.length;}await runBatch();
@@ -96,7 +96,7 @@ export async function reconcileCustomerState(options:ReconcileOptions={}):Promis
       const portalCoverage=options.portalCoverage??asRecord(priorCoverage[0]?.coverage.portal);
       let providerNoteCoverage:Json={complete:false,error:"provider_notes_not_synced"};try{if(notesCursor[0]?.cursor)providerNoteCoverage=asRecord(JSON.parse(notesCursor[0].cursor));}catch{providerNoteCoverage={complete:false,error:"provider_notes_cursor_invalid"};}
       const coverage:Json={messages:{inspected:messages.length},calls:{inspected:calls.length,transcriptsInspected:transcripts.length,missingTranscriptIds:missingTranscripts},appointments:{inspected:appointments.length},opportunities:{inspected:opportunities.length},jobs:{inspected:jobs.length},notes:{inspected:notes.length},providerNotes:{...providerNoteCoverage,inspected:providerNotes.length},walkthroughs:{inspected:walkthroughs.length},userConfirmed:{inspected:assertions.length},portal:portalCoverage,
-        extraction:{version:EXTRACTOR_VERSION,complete:prepared.every(r=>r.extractionStatus==="complete")&&missingTranscripts.length===0,errors:extractionErrors,partialSourceIds:prepared.filter(r=>r.extractionStatus!=="complete").map(r=>r.sourceRecordId)},asOf:startedAt.toISOString()};
+        extraction:{version:EXTRACTOR_VERSION,complete:prepared.every(r=>r.extractionStatus==="complete")&&missingTranscripts.length===0,errors:[...new Set([...extractionErrors,...prepared.map(r=>r.extractionError).filter(Boolean)])],partialSourceIds:prepared.filter(r=>r.extractionStatus!=="complete").map(r=>r.sourceRecordId)},asOf:startedAt.toISOString()};
       let refreshAfterRace=false;
       await db.transaction(async tx=>{
         await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`customer-state:${contact.id}`}))`);
@@ -112,7 +112,7 @@ export async function reconcileCustomerState(options:ReconcileOptions={}):Promis
           }
           return;
         }
-        for(const record of prepared){const value={id:sourceId(record),contactId:contact.id,leadId:lead.id,sourceType:record.sourceType,sourceRecordId:record.sourceRecordId,sourceHash:hashes.get(sourceId(record))??hash(JSON.stringify(record.events)),extractorVersion:EXTRACTOR_VERSION,occurredAt:new Date(record.occurredAt),status:record.extractionStatus??"complete",extractedEvents:(record.events??[]) as unknown as Json[],sourcePointer:record.sourcePointer??null,error:record.extractionStatus==="partial"?extractionErrors.join(",")||"semantic_coverage_partial":null,updatedAt:startedAt};
+        for(const record of prepared){const value={id:sourceId(record),contactId:contact.id,leadId:lead.id,sourceType:record.sourceType,sourceRecordId:record.sourceRecordId,sourceHash:hashes.get(sourceId(record))??hash(JSON.stringify(record.events)),extractorVersion:EXTRACTOR_VERSION,occurredAt:new Date(record.occurredAt),status:record.extractionStatus??"complete",extractedEvents:(record.events??[]) as unknown as Json[],sourcePointer:record.sourcePointer??null,error:record.extractionStatus!=="complete"?record.extractionError??(extractionErrors.join(",")||"semantic_coverage_partial"):null,updatedAt:startedAt};
           await tx.insert(schema.customerEvidence).values(value).onConflictDoUpdate({target:schema.customerEvidence.id,set:{...value,attemptCount:sql`${schema.customerEvidence.attemptCount}+1`}});
         }
         for(const oldId of retiredPortalIds)await tx.update(schema.customerEvidence).set({extractedEvents:[],status:"complete",sourceHash:hash("retired_by_complete_portal_snapshot"),updatedAt:startedAt}).where(eq(schema.customerEvidence.id,oldId));

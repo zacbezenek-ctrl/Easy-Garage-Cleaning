@@ -12,6 +12,22 @@ const result=(value:unknown)=>({content:[{type:'text' as const,text:JSON.stringi
 const iso=z.string().datetime({offset:true});
 const offset=z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),limit=z.number().int().min(1).max(200);
 const eventId=z.string().regex(/^egcev_[a-f0-9]{64}$/);
+function compactMetaRead<T extends object>(value:T,tool:'meta.conversions.status'|'meta.conversions.preview',days:number,cohortIds:Set<string>){
+ const original=value as Record<string,unknown>,output:Record<string,unknown>={...original},detailPages:Record<string,unknown>={};
+ const sample=(key:string,rows:unknown[])=>{detailPages[key]={returnedByService:rows.length,shown:Math.min(20,rows.length),omitted:Math.max(0,rows.length-20),presentationTruncated:rows.length>20};return rows.slice(0,20);};
+ for(const key of ['pending','failures','recentAccepted','leads','events'])if(Array.isArray(original[key]))output[key]=sample(key,original[key]);
+ if(original.canonicalCoverage&&typeof original.canonicalCoverage==='object'){
+  const coverage={...original.canonicalCoverage as Record<string,unknown>};
+  for(const key of ['missingCustomers','excludedCustomers','sourceExtractionHeldEvents'])if(Array.isArray(coverage[key])){
+   const rows=coverage[key] as Array<{contactId?:string}>;
+   coverage[`${key}Count`]=rows.length;coverage[key]=sample(`canonicalCoverage.${key}`,rows);
+   if(key==='missingCustomers')coverage.missingCustomersScope={inventory:'inventory_all_leads',currentReportCohort:rows.filter(row=>row.contactId&&cohortIds.has(row.contactId)).length,outsideCurrentReportCohort:rows.filter(row=>!row.contactId||!cohortIds.has(row.contactId)).length,qualification:'Missing canonical snapshots across discovery inventory; outside-cohort records may contain current activity and are not all current-cohort failures.'};
+  }
+  output.canonicalCoverage=coverage;
+ }
+ const range=tool==='meta.conversions.status'&&original.cohort&&typeof original.cohort==='object'?original.cohort as Record<string,unknown>:original;
+ return {...output,presentation:'compact_meta_diagnostics',detailPages,detailRetrieval:{tool,input:{days,...(typeof range.from==='string'?{from:range.from}:{}),...(typeof range.to==='string'?{to:range.to}:{}),limit:100},limitation:'Read tool returns at most 100 event/lead detail rows and has no offset pagination. Narrow the time window when its response is truncated; this briefing does not claim complete detail retrieval. Canonical coverage inventory may span older leads.'}};
+}
 export function reportWindow(days:number,from?:string,to?:string){const until=to??new Date().toISOString(),end=Date.parse(until);if(!Number.isFinite(end)||!Number.isInteger(days)||days<1||days>365)throw new Error('invalid_report_window');const since=from??new Date(end-days*86400000).toISOString();if(!Number.isFinite(Date.parse(since))||Date.parse(since)>=end)throw new Error('invalid_report_window');return {since,until};}
 export async function canonicalOperationalReport(input:{days?:number|undefined;from?:string|undefined;to?:string|undefined;cohortFrom?:string|undefined;cohortTo?:string|undefined;refresh?:boolean|undefined;evidenceOffset?:number|undefined;evidenceLimit?:number|undefined}={}){
  const window=reportWindow(input.days??7,input.from,input.to);
@@ -22,8 +38,9 @@ export async function canonicalOperationalReport(input:{days?:number|undefined;f
 export async function canonicalFunnel(days:number){
  const report=await canonicalOperationalReport({days});
  const metaWindow=Math.min(days,90);
- const meta={status:await conversionStatus({days:metaWindow,limit:500}),preview:await previewConversions({days:metaWindow,limit:500})};
  const metrics=report.cohort.metrics,total=report.cohort.denominator;
+ const cohortIds=new Set(metrics.leads?.contactIds??report.customers.filter(c=>c.leadCreatedAt>=report.cohort.window.since&&c.leadCreatedAt<report.cohort.window.until).map(c=>c.contactId));
+ const meta={status:compactMetaRead(await conversionStatus({days:metaWindow,limit:500}),'meta.conversions.status',metaWindow,cohortIds),preview:compactMetaRead(await previewConversions({days:metaWindow,limit:500}),'meta.conversions.preview',metaWindow,cohortIds)};
  const bookedIds=new Set([...(metrics.walkthroughsVerballyBooked?.contactIds??[]),...(metrics.walkthroughsFormallyBooked?.contactIds??[])]);
  const contacted=new Set(metrics.twoWayContacts?.contactIds??[]);
  const states=new Map<string,number>();for(const c of report.customers.filter(c=>c.leadCreatedAt>=report.cohort.window.since&&c.leadCreatedAt<report.cohort.window.until))states.set(c.state,(states.get(c.state)??0)+1);

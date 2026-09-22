@@ -23,6 +23,17 @@ after(async()=>{
 });
 const refresh=()=>reconcileCustomerState({contactIds:[contact.id],useAI:false});
 
+test('read refresh preserves the worker semantic provider error on cached partial evidence',async()=>{
+  const providerId=`cached-error-${randomUUID()}`;
+  await db.insert(schema.messages).values({providerId,contactId:contact.id,type:'SMS',direction:'inbound',actorType:'customer',body:'Can you provide a quote?',occurredAt:at});
+  await refresh();
+  await db.update(schema.customerEvidence).set({status:'partial',error:'semantic_provider_http_429'}).where(eq(schema.customerEvidence.sourceRecordId,providerId));
+  await refresh();
+  const [source]=await db.select().from(schema.customerEvidence).where(eq(schema.customerEvidence.sourceRecordId,providerId));
+  assert.equal(source.error,'semantic_provider_http_429');
+  const timeline=await getCustomerTimeline({contactId:contact.id});assert.ok(timeline.coverage.extraction.errors.includes('semantic_provider_http_429'));
+});
+
 test('worker bulk window includes recent leads and older leads with recent call activity',async()=>{
   await db.update(schema.leads).set({createdAt:new Date(Date.now()-60*86_400_000)}).where(eq(schema.leads.id,lead.id));
   await db.insert(schema.calls).values({providerMessageId:`bulk-call-${randomUUID()}`,contactId:contact.id,direction:'outbound',actorType:'human',startedAt:at,status:'no-answer',raw:{status:'no-answer'}});

@@ -38,10 +38,11 @@ export interface SourceRecord {
   sourceType: SourceType; sourceRecordId: string; contactId: string; leadId?: string | null;
   occurredAt: string; text: string; direction?: string; actorType?: string; raw?: Json;
   opportunityId?: string | null; appointmentId?: string | null; jobId?: string | null;
-  events?: EvidenceEvent[]; extractionStatus?: string; sourcePointer?: string;
+  events?: EvidenceEvent[]; extractionStatus?: string; extractionError?: string | null; sourcePointer?: string;
 }
 export interface CanonicalEvent {
   eventId: string; eventType: CustomerEventType; contactId: string; leadId: string | null;
+  occurrenceId?: string | null;
   opportunityId: string | null; appointmentId: string | null; jobId: string | null;
   occurredAt: string; source: SourceType; confidence: number; humanReviewNeeded: boolean;
   evidence: EvidenceRef[]; nextAction: string | null; details: Json;
