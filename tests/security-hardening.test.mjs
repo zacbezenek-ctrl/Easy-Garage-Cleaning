@@ -112,7 +112,8 @@ test('Firestore requires a Hub-minted Firebase session and server calls use serv
   assert.doesNotMatch(read('firestore.rules'), /match \/jobs\/\{documentId\}[\s\S]*?allow read, write: if signedIn\(\)/);
   assert.match(read('firestore.rules'), /assignedToUser\(resource\.data\)/);
   assert.match(read('crew/index.html'), /\/api\/crew-jobs/);
-  assert.match(read('employee.html'), /if \(!canRunBusiness\(\)\)[\s\S]*?\/api\/crew-jobs/);
+  assert.match(read('employee.html'), /if \(!canRunBusiness\(\)\) \{\s*void refreshCrewSchedule\(\)/);
+  assert.match(read('employee.html'), /function refreshCrewSchedule\(\)[\s\S]*?\/api\/crew-jobs/);
   assert.match(read('firestore.rules'), /match \/\{document=\*\*\}[\s\S]*allow read, write: if false/);
   assert.doesNotMatch(read('functions/_lib/hub-session.js'), /[a-f0-9]{64}/i);
   assert.doesNotMatch(read('functions/_lib/hub-session.js'), /HIGHLEVEL_API_KEY|GHL_API_KEY/);

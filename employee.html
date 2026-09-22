@@ -1459,6 +1459,7 @@ async function doLogout() {
   ++hubAuthVersion;
   clearHubProfile();
   _dataGeneration++;
+  crewScheduleRequest=null;crewScheduleState={loaded:false,loading:false,error:''};
   _dataUnsubscribers.forEach(unsubscribe => unsubscribe());
   _dataUnsubscribers = [];
   _listenersStarted = false;
@@ -1563,6 +1564,24 @@ function loadJobs()      { return jobsCache; }
 function loadCustomers() { return custsCache; }
 function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2,6); }
 
+let crewScheduleState={loaded:false,loading:false,error:''},crewScheduleRequest=null;
+function refreshCrewSchedule(){
+  if(canRunBusiness())return Promise.resolve(true);
+  if(crewScheduleRequest)return crewScheduleRequest;
+  const generation=_dataGeneration;crewScheduleState.loading=true;
+  const request=(async()=>{
+    try{
+      const response=await hubFetch('/api/crew-jobs',{cache:'no-store'}),data=await response.json().catch(()=>({}));
+      if(generation!==_dataGeneration)return false;
+      if(!response.ok||!data.ok||!Array.isArray(data.jobs))throw new Error(data.error||'Current crew assignments could not be loaded. Refresh to retry.');
+      jobsCache=data.jobs;custsCache=[];blockedDays=new Set();blockedSlots=new Set();leadsCache=[];
+      firebaseConn.jobs='connected';firebaseConn.customers='restricted';firebaseConn.leads='connected';window._lastLeadsSync=Date.now();
+      crewScheduleState.loaded=true;crewScheduleState.error='';return true;
+    }catch(error){if(generation===_dataGeneration){crewScheduleState.error=error.message||'Crew schedule unavailable';firebaseConn.jobs='error';}return false;}
+    finally{if(generation===_dataGeneration){crewScheduleState.loading=false;updateFirebaseStatus();refresh();}}
+  })();
+  crewScheduleRequest=request;request.finally(()=>{if(crewScheduleRequest===request)crewScheduleRequest=null;});return request;
+}
 function startListeners() {
   if (_listenersStarted) return;
   _listenersStarted = true;
@@ -1577,30 +1596,7 @@ function startListeners() {
   updateFirebaseStatus();
 
   if (!canRunBusiness()) {
-    hubFetch('/api/crew-jobs', { cache: 'no-store' })
-      .then(async response => {
-        const data = await response.json().catch(() => ({}));
-        if (generation !== _dataGeneration) return;
-        if (!response.ok || !data.ok) throw new Error(data.error || 'Crew schedule unavailable');
-        jobsCache = Array.isArray(data.jobs) ? data.jobs : [];
-        custsCache = [];
-        blockedDays = new Set();
-        blockedSlots = new Set();
-        leadsCache = [];
-        firebaseConn.jobs = 'connected';
-        firebaseConn.customers = 'restricted';
-        firebaseConn.leads = 'connected';
-        window._lastLeadsSync = Date.now();
-        updateFirebaseStatus();
-        refresh();
-        if (typeof window.opsRefresh === 'function') window.opsRefresh();
-      })
-      .catch(error => {
-        if (generation !== _dataGeneration) return;
-        firebaseConn.jobs = 'error';
-        updateFirebaseStatus();
-        console.error('Crew schedule error', error);
-      });
+    void refreshCrewSchedule();
     return;
   }
 
@@ -3331,7 +3327,13 @@ async function ocBook() {
 <link rel="stylesheet" href="employee-operations.css?v=20260922intelligence">
 <script src="employee-recordings.js?v=20260921"></script>
 <script src="employee-operations.js?v=20260922intelligence"></script>
-<script src="employee-suite.js?v=20260922booking"></script>
+<link rel="stylesheet" href="employee-dispatch.css?v=20260922ops">
+<link rel="stylesheet" href="employee-field-today.css?v=20260922ops">
+<link rel="stylesheet" href="employee-availability.css?v=20260922ops">
+<script src="employee-dispatch.js?v=20260922ops"></script>
+<script src="employee-field-today.js?v=20260922ops"></script>
+<script src="employee-availability.js?v=20260922ops"></script>
+<script src="employee-suite.js?v=20260922ops"></script>
 
 <div class="egc-portal-foot" style="background:#0a1628;border-top:1px solid rgba(255,255,255,.08);padding:14px 18px;text-align:center;font-size:12px;color:rgba(245,241,234,.55)">
   <a href="/privacy-policy" style="color:#ff5b1f;margin:0 8px">Privacy</a> · <a href="/" style="color:#ff5b1f">Home</a> · Employee portal — internal use only

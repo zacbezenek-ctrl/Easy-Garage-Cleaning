@@ -635,6 +635,13 @@ async function restoreWalkthroughPhotoFolder(){if(!HUBDB||!CENTRAL_JOB_ID)return
 let crewWorkflowReady=false,crewWorkflowLoading=false;
 async function openCrewWorkflow(standalone=false){
   if(crewWorkflowReady||crewWorkflowLoading)return;
+  // Crew execution now uses the authenticated, projected job API. Managers
+  // retain the existing financial closeout tools; raw Firestore denies crew.
+  if(!EGCHubAuth.canRunBusiness(EGCHubAuth.profile().user)){
+    const id=REQUESTED_JOB_ID||CENTRAL_JOB_ID||'';
+    location.replace('/crew/job.html'+(id?'?jobId='+encodeURIComponent(id):''));
+    return;
+  }
   crewWorkflowLoading=true;
   document.getElementById('crew-job-standalone').hidden=Boolean(REQUESTED_JOB_ID);
   if(standalone&&!REQUESTED_JOB_ID){CENTRAL_JOB_ID='';ACTIVE={}}

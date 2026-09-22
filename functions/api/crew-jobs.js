@@ -3,6 +3,9 @@ import { decodeFirestoreFields, patchJob, readJob } from '../_lib/firestore-job.
 import { firebaseServiceAccountConfigured, firestoreFetch } from '../_lib/firebase-service-account.js';
 import { appendConversationMessage, cleanMessage, cleanRequestId, conversationMessages, deliverHighLevelMessage, findConversationMessage, replaceConversationMessage } from '../_lib/customer-messaging.js';
 import { createJobAssignmentAccess, jobCrewNames as crewNames } from '../_lib/job-assignment.js';
+import { crewJobProjection } from '../_lib/crew-job-projection.js';
+import { dispatchStorage } from '../_lib/dispatch-storage.js';
+import { mutateDispatchSelfAssignment } from '../_lib/dispatch-service.js';
 
 const PROJECT_ID = 'egcw-1ec83';
 
@@ -125,7 +128,7 @@ export async function onRequestGet({ request, env }) {
     .filter(job => job.recordType !== 'schedule_lock' && job.recordType !== 'employee_hub_v2' && !job.id.startsWith('secure_'));
   const jobs = [];
   for (const job of rows) {
-    if (manager || await access.assigned(job) || await availabilityOwner(job, access)) jobs.push(job);
+    if (manager || await access.assigned(job) || await availabilityOwner(job, access)) jobs.push(manager ? job : crewJobProjection(job));
     else if (availableOpenShift(job)) jobs.push(publicOpenShift(job));
   }
 
@@ -158,7 +161,7 @@ export async function onRequestPost({ request, env }) {
     if (!body) return reply(400, { ok: false, error: 'Write a message before sending' });
     if (!requestId) return reply(400, { ok: false, error: 'A valid message request ID is required' });
     const duplicate = findConversationMessage(job, { requestId });
-    if (duplicate) return reply(200, { ok: true, duplicate: true, message: duplicate, job: { ...job, customerConversation: conversationMessages(job) } });
+    if (duplicate) return reply(200, { ok: true, duplicate: true, message: duplicate, job: hasBusinessAccess(session) ? { ...job, customerConversation: conversationMessages(job) } : crewJobProjection(job) });
     const now = new Date().toISOString(), identity = String(session.displayName || session.user || 'Easy Garage Cleaning').trim();
     const message = {
       id: `crew-${requestId}`.slice(0, 140), requestId, direction: 'to_customer',
@@ -177,58 +180,19 @@ export async function onRequestPost({ request, env }) {
       const latest = await readJob(env, jobId);
       updated = await patchJob(env, jobId, { customerConversation: replaceConversationMessage(latest, message.id, { delivery }), customerConversationUpdatedAt: new Date().toISOString(), updatedAt: new Date().toISOString() }, latest.__updateTime);
     } catch { /* The queued portal message remains visible and can be retried safely. */ }
-    return reply(200, { ok: true, message: { ...message, delivery }, job: { ...updated, customerConversation: conversationMessages(updated) } });
+    return reply(200, { ok: true, message: { ...message, delivery }, job: hasBusinessAccess(session) ? { ...updated, customerConversation: conversationMessages(updated) } : crewJobProjection(updated) });
   }
-
-  if (!pickupEnabled(job) || !pickupStageOpen(job)) return reply(409, { ok: false, error: 'This shift is no longer open' });
-
-  const identity = String(session.user || '').trim();
-  const crew = crewNames(job);
-  const isAssigned = await access.assigned(job);
-  const claims = Array.isArray(job.shiftClaims) ? job.shiftClaims : [];
-  const ownClaims = await Promise.all(claims.map(item => access.matches(item?.employee || item)));
-  const claimedByUser = ownClaims.some(Boolean) || await access.matches(job.lastShiftClaim?.employee);
-  const needed = crewCapacity(job);
-
-  if (action === 'claim' && job.openShift !== true) return reply(409, { ok: false, error: 'This shift is no longer open' });
-  if (action === 'claim' && isAssigned) return reply(409, { ok: false, error: 'You already picked up this shift' });
-  if (action === 'claim' && crew.length >= needed) return reply(409, { ok: false, error: 'This shift is already full' });
-  if (action === 'release' && (!isAssigned || !claimedByUser)) {
-    return reply(403, { ok: false, error: 'Only the employee who picked up this shift can release it' });
-  }
-  if (action === 'claim') {
-    let conflict;
-    try { conflict = await scheduleConflict(env, job, access); }
-    catch { return reply(502, { ok: false, error: 'The schedule could not be checked' }); }
-    if (conflict) return reply(409, { ok: false, error: 'This shift overlaps your existing schedule or unavailable time' });
-  }
-
-  const now = new Date().toISOString();
-  const ownCrew = await Promise.all(crew.map(name => access.matches(name)));
-  const assignedCrew = action === 'claim' ? [...crew, identity] : crew.filter((name, index) => !ownCrew[index]);
-  const nextClaims = action === 'claim'
-    ? [...claims.filter((item, index) => !ownClaims[index]), { employee: identity, claimedAt: now }]
-    : claims.filter((item, index) => !ownClaims[index]);
-  const patch = {
-    assignedCrew,
-    assignedTo: assignedCrew.join(' + '),
-    crewSize: needed,
-    openShift: assignedCrew.length < needed,
-    shiftPickupEnabled: true,
-    shiftClaims: nextClaims,
-    ...(action === 'claim' ? { lastShiftClaim: { employee: identity, claimedAt: now } } : { lastShiftRelease: { employee: identity, releasedAt: now } }),
-    syncStatus: 'pending',
-    syncIdempotencyKey: `crew-${action}:${jobId}:${now}`,
-    updatedAt: now,
-  };
 
   try {
-    const updated = await patchJob(env, jobId, patch, job.__updateTime);
-    return reply(200, { ok: true, action, job: action === 'claim' ? updated : publicOpenShift(updated) });
+    const result = await mutateDispatchSelfAssignment(dispatchStorage(env), session, {
+      action, jobId, requestId: payload.requestId,
+      ...(payload.expectedRevision ? { expectedRevision: payload.expectedRevision } : {}),
+    });
+    return reply(200, { ok: true, action, replayed: result.replayed === true,
+      job: action === 'claim' ? (hasBusinessAccess(session) ? result.job : crewJobProjection(result.job)) : publicOpenShift(result.job),
+    });
   } catch (error) {
-    if (/412|409|precondition/i.test(String(error?.message || ''))) {
-      return reply(409, { ok: false, error: 'The shift changed while you were viewing it. Refresh and try again.' });
-    }
-    return reply(502, { ok: false, error: 'The shift could not be updated' });
+    return reply(error.status || 503, { ok: false, code: error.code || 'shift_update_unavailable', error: error.code ? error.message : 'The shift could not be confirmed. Retry the same action.', ...(error.details ? { details: error.details } : {}) });
   }
+
 }

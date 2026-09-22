@@ -17,7 +17,7 @@
  *  4. Save it as JOBBER_REFRESH_TOKEN (secret). This endpoint then returns 404.
  */
 
-import { createHubActionState, getHubSession, verifyHubActionState } from '../_lib/hub-session.js';
+import { createHubActionState, getHubSession, getHubUserProfile, hasBusinessAccess, verifyHubActionState } from '../_lib/hub-session.js';
 
 const TOKEN_URL = 'https://api.getjobber.com/api/oauth/token';
 const AUTH_URL = 'https://api.getjobber.com/api/oauth/authorize';
@@ -26,7 +26,7 @@ const page = (title, body, status = 200) => new Response(
   `<!doctype html><meta charset="utf-8"><meta name="robots" content="noindex"><title>${title}</title>
    <body style="font-family:system-ui;max-width:640px;margin:40px auto;padding:0 16px;line-height:1.5">
    <h2>${title}</h2>${body}</body>`,
-  { status, headers: { 'Content-Type': 'text/html', 'Cache-Control': 'no-store' } });
+  { status, headers: { 'Content-Type': 'text/html', 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer', 'X-Content-Type-Options': 'nosniff' } });
 
 export async function onRequestGet({ request, env }) {
   // Self-disable after setup — once the refresh token exists this endpoint is unnecessary surface.
@@ -43,12 +43,14 @@ export async function onRequestGet({ request, env }) {
   if (!code) {
     const session = await getHubSession(request, env);
     if (!session) return page('Jobber setup — sign in required','<p>Sign in to the EGC Hub, then open this setup link again.</p>',401);
+    if (!hasBusinessAccess(session)) return page('Jobber setup — business access required','<p>Only an EGC manager can connect business integrations.</p>',403);
     const state = await createHubActionState(env, 'jobber-oauth', session.user);
     const auth = `${AUTH_URL}?client_id=${encodeURIComponent(env.JOBBER_CLIENT_ID)}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&state=${encodeURIComponent(state)}`;
     return Response.redirect(auth, 302);
   }
 
-  if (!await verifyHubActionState(env, url.searchParams.get('state'), 'jobber-oauth')) {
+  const state = await verifyHubActionState(env, url.searchParams.get('state'), 'jobber-oauth');
+  if (!state || !hasBusinessAccess(getHubUserProfile(env, state.user))) {
     return page('Jobber setup — expired or invalid','<p>Return to the EGC Hub and start the connection again.</p>',403);
   }
 
@@ -66,11 +68,11 @@ export async function onRequestGet({ request, env }) {
   const data = await resp.json().catch(() => ({}));
   if (!resp.ok || !data.refresh_token) {
     return page('Jobber setup — exchange failed',
-      `<p>Jobber returned ${resp.status}.</p><pre>${JSON.stringify(data).slice(0, 500)}</pre>
+      `<p>Jobber returned ${resp.status}.</p><pre>The provider did not complete the connection. Return to the Hub and restart setup.</pre>
        <p>Check the redirect URI matches exactly, then retry.</p>`);
   }
   return page('Jobber connected — one step left',
     `<p>Copy this refresh token into Cloudflare Pages env as <code>JOBBER_REFRESH_TOKEN</code> (mark it a secret), then redeploy:</p>
-     <pre style="background:#eee;padding:12px;border-radius:8px;white-space:pre-wrap;word-break:break-all">${data.refresh_token}</pre>
+     <pre style="background:#eee;padding:12px;border-radius:8px;white-space:pre-wrap;word-break:break-all">${String(data.refresh_token).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}</pre>
      <p>This page disables itself once that variable is set. Keep Refresh Token Rotation OFF in the Jobber app settings.</p>`);
 }

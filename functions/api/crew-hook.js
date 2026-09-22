@@ -70,6 +70,7 @@ export async function onRequestPost({ request, env }) {
   if (!originAllowed(request)) return json(403, { ok: false, error: 'Forbidden origin' });
   const session = await getHubSession(request, env);
   if (!session) return json(401, { ok: false, error: 'Sign in to the EGC Hub' });
+  if (!hasBusinessAccess(session)) return json(403, { ok: false, error: 'Business access is required for external workflow triggers. Complete assigned work from the field job.' });
 
   const raw = await request.text();
   if (raw.length > MAX_BODY) return json(413, { ok: false, error: 'Payload too large' });

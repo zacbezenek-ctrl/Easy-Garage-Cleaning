@@ -229,20 +229,19 @@ service cloud.firestore {
         ));
     }
 
-    // Managers can operate on the complete schedule. Crew can retrieve and
-    // update only their assigned work and manage their own availability.
-    // Open shifts are redacted and claimed through the authenticated server API.
+    // Canonical jobs include financial evidence, signatures and private notes.
+    // Crew reads and execution writes go through assigned-only server DTOs;
+    // otherwise direct SDK reads would bypass projection and completion gates.
+    // Managers retain the established administrative workflows.
     match /jobs/{documentId} {
-      allow read: if businessUser() || assignedToUser(resource.data) || ownAvailability(resource.data);
-      allow create: if businessUser() || ownAvailabilityCreateIsSafe();
-      allow update: if businessUser() || assignedUpdateIsSafe() ||
-        ownAvailabilityUpdateIsSafe();
-      allow delete: if businessUser() || ownAvailability(resource.data);
+      allow read: if businessUser() || ownAvailability(resource.data);
+      // Crew mutations use the session-authorized APIs and shared capacity locks.
+      allow create, update, delete: if businessUser();
     }
 
     match /customers/{documentId} {
       allow read, create, delete: if businessUser();
-      allow update: if businessUser() || assignedCustomerCloseoutIsSafe();
+      allow update: if businessUser();
     }
     match /leads/{documentId} {
       allow read, write: if businessUser();

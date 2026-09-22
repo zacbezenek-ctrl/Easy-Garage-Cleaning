@@ -222,7 +222,7 @@ test('walkthrough conversion keeps canonical IDs and durable acceptance metadata
     assert.match(page,/new URLSearchParams\(location\.search\)\.get\("jobId"\)/);
     assert.match(page,/collection\('jobs'\)\.doc\(CENTRAL_JOB_ID\)\.get\(\)/);
   }
-  assert.match(suite,/prejob\.html\?jobId=/);
+  assert.match(suite,/job\.html\?jobId=/);
   assert.match(suite,/postjob\.html\?jobId=/);
 });
 
@@ -676,7 +676,7 @@ test('legacy Firebase leads are not loaded into the reset Hub',()=>{
   assert.doesNotMatch(employee,/db\.collection\('leads'\)\.get/);
   assert.match(employee,/leadsCache = \[\];/);
   assert.match(suite,/New HighLevel leads/);
-  assert.match(suite,/setInterval\(\(\)=>\{if\(!document\.hidden&&typeof me!=='undefined'&&me&&isLead\(\)\)loadGhl\(\)\},60000\)/);
+  assert.match(suite,/setInterval\(\(\)=>\{if\(!document\.hidden&&typeof me!=='undefined'&&me\)\{if\(isLead\(\)\)loadGhl\(\);else if\(typeof refreshCrewSchedule==='function'\)refreshCrewSchedule\(\)\}\},60000\)/);
   assert.match(highlevel,/DEFAULT_LEAD_RESET_AT/);
   assert.match(webLead,/syncHighLevelLead/);
 });
@@ -686,7 +686,7 @@ test('employees can discover and safely pick up manager-opened crew shifts',()=>
     assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),marker+' is missing');
   }
   assert.match(suite,/hubFetch\('\/api\/crew-jobs'/);
-  assert.match(suite,/JSON\.stringify\(\{jobId:id,action\}\)/);
+  assert.match(suite,/JSON\.stringify\(request\.body\)/);
   assert.match(suite,/window\.opsClaimShift=id=>changeShift\(id,'claim'\)/);
   assert.match(suite,/Shift added to your schedule/);
   assert.doesNotMatch(suite,/collection\(['"]open_shifts['"]\)/);
@@ -750,8 +750,8 @@ test('Hub supports salted PBKDF2 credentials and rejects malformed or wrong hash
 test('employees have a personal schedule for assigned and claimed work',()=>{
   for(const marker of ["'my_shifts'",'My shifts','PERSONAL FIELD SCHEDULE','myShiftJobs','myShiftBoard','Manager-assigned and self-claimed work','Open brief'])assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),marker+' is missing');
   assert.match(suite,/crewNames\(j\)\.some\(n=>sameScheduleEmployee\(n,identity\)\)/);
-  assert.match(suite,/String\(j\.date\|\|''\)>=day\(\)/);
-  assert.match(suite,/\/crew\/prejob\.html\?jobId=/);
+  assert.match(suite,/String\(j\.endDate\|\|j\.date\|\|''\)>=day\(\)/);
+  assert.match(suite,/\/crew\/job\.html\?jobId=/);
   assert.match(suite,/routeUrl\(j\.address\)/);
 });
 
@@ -768,15 +768,15 @@ test('claimed shifts stay visible and can be safely released by the claimant',()
   assert.match(suite,/window\.opsReleaseShift=id=>changeShift\(id,'release'\)/);
 });
 
-test('employee availability prevents manager assignment and conflicting shift pickup',()=>{
-  for(const marker of ["'availability'",'Time off','TIME-OFF CALENDAR','availabilityCalendar','opsSelectAvailabilityDay','opsAvailabilityMove','Block the full day','crew_availability','opsSaveAvailability','opsRemoveAvailability','crewAvailabilityConflict','marked this time unavailable','overlaps time you marked unavailable'])assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
+test('employee availability uses the current server tools and cannot bypass capacity locks',()=>{
+  assert.match(suite,/window\.EGCAvailability\.mount\(host\)/);
+  assert.match(suite,/window\.EGCAvailability\.canLeave\(\)/);
+  assert.match(employee,/employee-availability\.js/);
+  assert.match(read('employee-availability.js'),/\/api\/crew-availability/);
+  assert.doesNotMatch(read('employee-availability.js'),/db\.collection|firestore\(/);
+  assert.doesNotMatch(suite,/window\.opsSaveAvailability|window\.opsRemoveAvailability/);
   assert.match(suite,/const isAvailability=/);
   assert.match(suite,/jobsCache\.filter\(j=>!isScheduleLock\(j\)&&!isAvailability\(j\)&&!isPrivateHubRecord\(j\)\)/);
-  assert.match(suite,/recordType:'crew_availability'/);
-  assert.match(suite,/sameScheduleEmployee\(row\.employee,identity\)/);
-  assert.match(suite,/status:'cancelled',cancelledAt/);
-  assert.match(suite,/You are already assigned to \$\{assigned\.customer/);
-  assert.match(suite,/ask a manager to reassign it first/);
 });
 
 test('walkthrough estimates job length and offers the next three collision-free openings',()=>{
@@ -816,7 +816,7 @@ test('open-shift scheduling fields persist on the canonical job record',()=>{
   assert.match(suite,/b\.type==='job'\?'':'ops-hidden'/);
   assert.match(suite,/b\.type==='blocked'\?'ops-hidden':''/);
   assert.match(employee,/employee-suite\.css\?v=20260909gusto/);
-  assert.match(employee,/employee-suite\.js\?v=20260922booking/);
+  assert.match(employee,/employee-suite\.js\?v=20260922ops/);
 });
 
 test('recurring visits keep the client plan but reset prior completion and payment state',()=>{
