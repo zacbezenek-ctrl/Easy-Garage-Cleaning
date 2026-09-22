@@ -173,7 +173,8 @@ export function buildCanonicalEvents(records: SourceRecord[], attribution: Json 
     const occurrence=typeof event.details?.paymentReceiptKey === "string"?`receipt:${event.details.paymentReceiptKey}`:record.sourceRecordId;
     const eventId = canonicalEventId(record.contactId,record.leadId,event.eventType,occurrence);
     const occurredAt = validDate(event.occurredAt ?? record.occurredAt)!;
-    const evidence: EvidenceRef = {sourceType:record.sourceType,sourceRecordId:record.sourceRecordId,occurredAt,excerpt:event.supportingText,confidence:event.confidence,humanReviewNeeded:event.humanReviewNeeded,...(record.sourcePointer?{sourcePointer:record.sourcePointer}:{})};
+    const excerptLimit=event.eventType==='human_outreach'?180:1600;
+    const evidence: EvidenceRef = {sourceType:record.sourceType,sourceRecordId:record.sourceRecordId,occurredAt,excerpt:event.supportingText.slice(0,excerptLimit),...(event.supportingText.length>excerptLimit?{excerptTruncated:true}:{}),confidence:event.confidence,humanReviewNeeded:event.humanReviewNeeded,sourcePointer:record.sourcePointer??`${record.sourceType}:${record.sourceRecordId}`};
     const previous = events.get(eventId), trusted = !event.humanReviewNeeded && event.confidence >= .85;
     const timeVerified=event.details?.occurredAtVerified!==false,previousTimeVerified=previous?.details.occurredAtVerified!==false;
     const previousTrusted=Boolean(previous&&!previous.humanReviewNeeded&&previous.confidence>=.85),timeRank=Number(trusted)*2+Number(timeVerified),previousTimeRank=Number(previousTrusted)*2+Number(previousTimeVerified);
@@ -267,6 +268,15 @@ export const REPORT_METRICS:Record<string,CustomerEventType[]> = {
   leads:["lead_created"],humanContacts:["two_way_contact"],humanOutreach:["human_outreach"],twoWayContacts:["two_way_contact"],qualified:["qualified","price_expectation_accepted"],priceExpectationsAccepted:["price_expectation_accepted"],
   videoQuoteOpportunities:["video_quote_requested","video_quote_customer_agreed"],videoQuotesReceived:["video_quote_received"],quotesDelivered:["quote_delivered"],walkthroughsVerballyBooked:["walkthrough_verbally_booked"],walkthroughsFormallyBooked:["walkthrough_booked"],walkthroughsCompleted:["walkthrough_completed","walkthrough_showed"],jobsVerballyAccepted:["job_verbally_accepted"],jobsSold:["job_sold"],jobsCompleted:["job_completed"],cashCollected:["revenue_collected"]
 };
+
+export function paginateEventEvidence(events:CanonicalEvent[],offset=0,limit=100) {
+  if(!Number.isSafeInteger(offset)||offset<0||!Number.isSafeInteger(limit)||limit<1||limit>200)throw new Error('invalid_evidence_page');
+  const basic=new Set(['lead_created','human_outreach','customer_response','address_supplied','appointment_time_agreed','price_expectation_given','payment_discussed']);
+  const priority=(event:CanonicalEvent)=>basic.has(event.eventType)?2:event.eventType==='two_way_contact'?1:0;
+  const ordered=[...events].sort((a,b)=>priority(a)-priority(b)||a.occurredAt.localeCompare(b.occurredAt)||a.eventId.localeCompare(b.eventId));
+  const page=ordered.slice(offset,offset+limit);
+  return {events:page,page:{offset,limit,total:ordered.length,nextOffset:offset+page.length<ordered.length?offset+page.length:null,order:'material_business_events_then_two_way_then_basic_activity',fullSource:'customer_timeline_and_original_source_pointer'}};
+}
 export function buildReport(input:{events:CanonicalEvent[];customers:CustomerProjection[];since:string;until:string;cohortSince?:string;cohortUntil?:string;asOf?:string;leadRoster?:Array<{contactId:string;leadCreatedAt:string;excluded:boolean}>}) {
   const since=validDate(input.since),until=validDate(input.until),cohortSince=validDate(input.cohortSince??input.since),cohortUntil=validDate(input.cohortUntil??input.until);
   if(!since||!until||!cohortSince||!cohortUntil||since>=until||cohortSince>=cohortUntil)throw new Error("invalid_report_window");
@@ -290,7 +300,12 @@ export function buildReport(input:{events:CanonicalEvent[];customers:CustomerPro
     periodActivity.leads={...periodActivity.leads!,count:periodLeads.length,contactIds:periodLeads};
     cohortMetrics.leads={...cohortMetrics.leads!,numerator:cohort.length,rate:cohort.length?1:null,contactIds:[...cohortIds]};
   }
-  const revenue=(type:CustomerEventType)=>{const rows=activity.filter(e=>e.eventType===type),known=rows.filter(e=>e.valueVerified&&e.currency==="USD"),knownSubtotalCents=known.reduce((n,e)=>n+(e.valueCents??0),0),incomplete=type==="revenue_collected"&&trusted.some(e=>e.details.revenueCoverageIncomplete===true);return {valueCents:known.length===rows.length&&!incomplete?knownSubtotalCents:null,knownSubtotalCents,currency:"USD",basis:type==="revenue_collected"?"verified_gross_customer_receipts":"accepted_customer_work",coverageIncomplete:incomplete,verifiedEvents:known.length,missingValue:rows.filter(e=>!e.valueVerified||e.currency!=="USD").map(e=>e.eventId)};};
+  const revenue=(type:CustomerEventType)=>{
+    const rows=activity.filter(e=>e.eventType===type),undated=trusted.filter(e=>e.eventType===type&&e.details.occurredAtVerified===false);
+    const known=rows.filter(e=>e.valueVerified&&e.currency==="USD"),knownSubtotalCents=known.reduce((n,e)=>n+(e.valueCents??0),0);
+    const incomplete=type==="revenue_collected"&&trusted.some(e=>e.details.revenueCoverageIncomplete===true),unknownValue=[...rows,...undated].filter(e=>!e.valueVerified||e.currency!=="USD");
+    return {valueCents:known.length===rows.length&&!incomplete&&!undated.length?knownSubtotalCents:null,knownSubtotalCents,currency:"USD",basis:type==="revenue_collected"?"verified_gross_customer_receipts":"accepted_customer_work",coverageIncomplete:incomplete||undated.length>0,verifiedEvents:known.length,missingValue:unknownValue.map(e=>e.eventId),unknownValueCount:unknownValue.length,unknownOccurrenceCount:undated.length,unknownOccurrenceEvents:undated.map(e=>({eventId:e.eventId,contactId:e.contactId,valueCents:e.valueVerified?e.valueCents:null,currency:e.valueVerified?e.currency:null})),qualification:undated.length?"Confirmed outcomes have unknown occurrence time; they are not assigned to this period, so a complete period total is unavailable.":incomplete?"Payment history is incomplete; the verified dated subtotal is not a complete total.":unknownValue.length?"Some dated outcomes have unverified amounts; only the verified subtotal is known.":"Verified dated outcomes in this period."};
+  };
   const active=customers.filter(c=>c.pipelineDisposition==="active");
   return {authority:"canonical_customer_event_ledger",generatedAt:asOf,period:{since,until,boundaries:"inclusive_start_exclusive_end"},periodActivity,
     soldRevenue:revenue("job_sold"),collectedRevenue:revenue("revenue_collected"),cohort:{window:{since:cohortSince,until:cohortUntil},denominator:cohort.length,observedThrough:until,
