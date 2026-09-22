@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { dispatchOverview, mutateDispatch, projectDispatchJob } from '../functions/_lib/dispatch-service.js';
+import { dispatchOverview, mutateDispatch, mutateDispatchSelfAssignment, projectDispatchJob } from '../functions/_lib/dispatch-service.js';
 import { dispatchHandlers } from '../functions/api/dispatch.js';
 import { denverToday, addDays, scheduleInterval, occupiedDays, availabilityInterval } from '../functions/_lib/dispatch-time.js';
 
@@ -173,4 +173,39 @@ test('server authorization, origin, JSON and private fields are enforced',async 
   const good=await send(JSON.stringify(f.create()));assert.equal(good.status,200);assert.equal(good.headers.get('cache-control'),'no-store');
   const safe=projectDispatchJob({id:'test',type:'job',estimate:{total:1000},password:'secret',hourlyRate:100,assignedCrew:[]});
   assert.equal(safe.estimate,undefined);assert.equal(safe.password,undefined);assert.equal(safe.hourlyRate,undefined);
+});
+
+test('two different open shifts claimed concurrently cannot double-book the same employee',async () => {
+  const f=fixture();
+  const a=await f.mutate(f.create({assignedCrew:[],crewNeeded:2}));
+  const b=await f.mutate(f.create({assignedCrew:[],crewNeeded:2,time:'09:00',endTime:'11:00'},{customerId:'c2'}));
+  for (const job of [a.job,b.job]) Object.assign(f.rows.get('jobs/'+job.id),{openShift:true,shiftPickupEnabled:true,syncStatus:'synced'});
+  const session={user:'crew1',role:'crew',businessAccess:false};
+  const claims=await Promise.allSettled([a,b].map(result=>mutateDispatchSelfAssignment(f.store,session,{action:'claim',jobId:result.job.id,requestId:randomUUID()},NOW)));
+  assert.equal(claims.filter(claim=>claim.status==='fulfilled').length,1);
+  const assigned=[...f.rows.values()].filter(row=>row.type==='job' && row.assignedCrew.includes('crew1'));
+  assert.equal(assigned.length,1);assert.equal(assigned[0].syncStatus,'synced');
+});
+
+test('open shift claim retries are idempotent and only self-claimed assignments can be released',async () => {
+  const f=fixture(),created=await f.mutate(f.create({assignedCrew:['crew2'],crewNeeded:2}));
+  Object.assign(f.rows.get('jobs/'+created.job.id),{openShift:true,shiftPickupEnabled:true});
+  const employee={user:'crew1'},input={action:'claim',jobId:created.job.id,requestId:randomUUID()};
+  const results=await Promise.all(Array.from({length:4},()=>mutateDispatchSelfAssignment(f.store,employee,input,NOW)));
+  assert.equal(results.filter(result=>result.replayed).length,3);
+  assert.deepEqual(results[0].job.assignedCrew,['crew2','crew1']);assert.equal(results[0].job.openShift,false);
+  await assert.rejects(mutateDispatchSelfAssignment(f.store,{user:'crew2'},{action:'release',jobId:created.job.id,requestId:randomUUID()},NOW),error=>error.code==='dispatch_shift_release_forbidden');
+  const released=await mutateDispatchSelfAssignment(f.store,employee,{action:'release',jobId:created.job.id,requestId:randomUUID()},NOW);
+  assert.deepEqual(released.job.assignedCrew,['crew2']);assert.equal(released.job.openShift,true);
+});
+
+test('self-assignment observes multi-day unavailable time and cannot race manager assignment',async () => {
+  const f=fixture(),created=await f.mutate(f.create({assignedCrew:[],endDate:'2026-09-25',crewNeeded:2}));
+  Object.assign(f.rows.get('jobs/'+created.job.id),{openShift:true,shiftPickupEnabled:true});
+  await f.mutate({action:'availability.save',requestId:randomUUID(),changes:{employeeId:'crew1',date:'2026-09-24',allDay:true}});
+  await assert.rejects(mutateDispatchSelfAssignment(f.store,{user:'crew1'},{action:'claim',jobId:created.job.id,requestId:randomUUID()},NOW),error=>error.code==='dispatch_conflict');
+  const g=fixture(),open=await g.mutate(g.create({assignedCrew:[],crewNeeded:2}));
+  Object.assign(g.rows.get('jobs/'+open.job.id),{openShift:true,shiftPickupEnabled:true});
+  const races=await Promise.allSettled([mutateDispatchSelfAssignment(g.store,{user:'crew1'},{action:'claim',jobId:open.job.id,requestId:randomUUID()},NOW),g.mutate(g.create({time:'09:00',endTime:'11:00'},{customerId:'c2'}))]);
+  assert.equal(races.filter(result=>result.status==='fulfilled').length,1);
 });

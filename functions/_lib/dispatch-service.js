@@ -352,3 +352,65 @@ function resourcePatch(kind,changes,current,roster) {
   if (!next.employeeId || !availabilityInterval(next)) throw fail('dispatch_availability_invalid','Choose valid unavailable dates and times within 31 days.');
   return {employeeId:next.employeeId,date:next.date,endDate:next.endDate || next.date,time:next.time,endTime:next.endTime,allDay:next.allDay,reason:next.reason,status:next.status};
 }
+
+/** Server-only self-service shift assignment. The HTTP caller must project the
+ * returned canonical job for the requesting employee before returning JSON. */
+export async function mutateDispatchSelfAssignment(store,session,input,now = new Date().toISOString()) {
+  if (!session?.user) throw fail('dispatch_sign_in_required','Sign in to pick up a shift.',401);
+  onlyKeys(input,['action','jobId','requestId','expectedRevision']);
+  if (!['claim','release'].includes(input.action) || !safeId(input.jobId) || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(input.requestId || '')) throw fail('dispatch_request_invalid','A valid shift and unique request ID are required.');
+  const fingerprint = await digest({actor:session.user,input}), receiptId = input.requestId.toLowerCase();
+  async function replay() {
+    const receipt = await store.read('dispatchOperations',receiptId);
+    if (!receipt) return null;
+    if (receipt.fingerprint !== fingerprint) throw fail('dispatch_idempotency_conflict','This shift request ID was already used for different changes.',409);
+    const saved = await store.read('jobs',input.jobId);
+    if (!saved || saved.dispatchRequestId !== input.requestId) throw fail('dispatch_changed_since_operation','Your shift request saved, but the assignment has since changed. Refresh to see your current schedule.',409);
+    return {ok:true,action:input.action,requestId:input.requestId,replayed:true,job:saved,warnings:[]};
+  }
+  const previous = await replay();
+  if (previous) return previous;
+  try {
+    const guard = await store.read('dispatchState','revision');
+    const [job,jobs,resources,roster] = await Promise.all([store.read('jobs',input.jobId),store.jobs(),store.resources(),store.roster()]);
+    const identity = resolveMember(session.user,roster);
+    if (!identity) throw fail('dispatch_employee_inactive','Your active employee account could not be verified. Sign in again before choosing a shift.',403);
+    if (!job || !visibleJob(job)) throw fail('dispatch_job_not_found','This shift no longer exists.',404);
+    if (input.expectedRevision && input.expectedRevision !== job.revision) throw fail('dispatch_revision_conflict','This shift changed. Refresh before choosing it.',409);
+    if (job.type !== 'job' || job.shiftPickupEnabled !== true || TERMINAL.has(state(job)) || ['dispatched','arrived','in_progress','paused','waiting'].includes(state(job))) throw fail('dispatch_shift_closed','This shift is no longer available for pickup or release.',409);
+    const interval = scheduleInterval(job);
+    if (!interval || interval.end <= Date.parse(now)) throw fail('dispatch_shift_time_invalid','Only upcoming shifts with valid start and end times can be picked up or released.',409);
+    const crew = legacyMembers(job,roster), claims = Array.isArray(job.shiftClaims) ? job.shiftClaims : [];
+    const isOwnClaim = value => resolveMember(value?.employee || value,roster,true) === identity;
+    const selfClaimed = claims.some(isOwnClaim) || isOwnClaim(job.lastShiftClaim);
+    const neededValue = Number(job.crewNeeded ?? job.crewSize ?? 1), needed = Number.isFinite(neededValue) ? Math.max(1,Math.min(20,Math.ceil(neededValue))) : 1;
+    if (input.action === 'claim') {
+      if (job.openShift !== true || crew.length >= needed) throw fail('dispatch_shift_full','This shift is already full or no longer open.',409);
+      if (crew.includes(identity)) throw fail('dispatch_shift_already_assigned','You are already assigned to this shift.',409);
+    } else if (!crew.includes(identity) || !selfClaimed) throw fail('dispatch_shift_release_forbidden','You can only release a shift you picked up yourself. Contact dispatch to change a manager assignment.',403);
+    const assignedCrew = input.action === 'claim' ? [...crew,identity] : crew.filter(id=>id!==identity);
+    const patch = {assignedCrew,assignedTo:assignedCrew.join(', '),crewNeeded:needed,crewSize:needed,openShift:assignedCrew.length < needed,
+      shiftClaims:input.action === 'claim' ? [...claims.filter(value=>!isOwnClaim(value)),{employee:identity,claimedAt:now}] : claims.filter(value=>!isOwnClaim(value)),
+      ...(input.action === 'claim' ? {lastShiftClaim:{employee:identity,claimedAt:now}} : {lastShiftRelease:{employee:identity,releasedAt:now},...(resolveMember(job.crewLead,roster,true) === identity ? {crewLead:null} : {})}),
+      dispatchRequestId:input.requestId,dispatchUpdatedAt:now,updatedAt:now,updatedBy:identity};
+    const next = {...job,...patch};
+    if (input.action === 'claim') conflictCheck(next,jobs,resources,roster);
+    const writes = [{collection:'jobs',id:job.id,revision:job.revision,patch}];
+    for (const date of occupiedDays(job)) {
+      const id = `_egc_schedule_lock_${date}`,lock = await store.read('jobs',id);
+      const entries = (Array.isArray(lock?.entries) ? lock.entries : []).filter(entry=>entry.id!==job.id && !TERMINAL.has(entry.status));
+      entries.push({id:job.id,start:date===job.date ? job.time : '00:00',end:date===(job.endDate || job.date) ? job.endTime : '24:00',label:job.customer || job.title || '',status:state(job),assignedCrew,vehicleId:job.vehicleId || null,updatedAt:now});
+      writes.push({collection:'jobs',id,revision:lock?.revision,patch:{recordType:'schedule_lock',date,entries,updatedAt:now}});
+    }
+    writes.push({collection:'dispatchState',id:'revision',revision:guard?.revision,patch:{updatedAt:now,lastRequestId:input.requestId}});
+    writes.push({collection:'dispatchOperations',id:receiptId,patch:{fingerprint,actorId:identity,action:`shift.${input.action}`,collection:'jobs',targetId:job.id,requestId:input.requestId,createdAt:now,before:auditState(job),after:auditState(next)}});
+    await store.commit(writes);
+    const saved = await store.read('jobs',job.id);
+    if (!saved || saved.dispatchRequestId !== input.requestId) throw fail('dispatch_changed_since_operation','Your assignment saved, but dispatch has changed it again. Refresh your schedule.',409);
+    return {ok:true,action:input.action,requestId:input.requestId,job:saved,warnings:jobWarnings(saved,jobs,resources,roster).filter(warning=>warning.code==='travel_buffer_short')};
+  } catch(error) {
+    const recovered = await replay().catch(replayError => { if (['dispatch_changed_since_operation','dispatch_idempotency_conflict'].includes(replayError.code)) throw replayError; return null; });
+    if (recovered) return recovered;
+    throw error;
+  }
+}
