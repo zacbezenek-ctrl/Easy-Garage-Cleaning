@@ -5,6 +5,7 @@ import { dispatchOverview, mutateDispatch, mutateDispatchSelfAssignment, project
 import { dispatchHandlers } from '../functions/api/dispatch.js';
 import { denverToday, addDays, scheduleInterval, occupiedDays, availabilityInterval } from '../functions/_lib/dispatch-time.js';
 import { mutateScheduledVisit } from '../functions/_lib/operations-scheduling.js';
+import { sharedScheduleResources, scheduleDayEntry, scheduleLockConflict } from '../functions/_lib/dispatch-conflicts.js';
 
 const manager = {user:'zacb',displayName:'Owner',role:'owner',businessAccess:true};
 const NOW = '2026-09-22T12:00:00.000Z';
@@ -292,4 +293,69 @@ test('dispatch scope edits preserve structured legacy instructions and replace t
   await f.mutate(f.edit(saved.job,{jobInstructions:''}));
   overview=await dispatchOverview(f.store,manager,{startDate:'2026-09-23',endDate:'2026-09-24'});
   assert.equal(overview.jobs[0].jobInstructions,'');assert.ok(overview.warnings.some(warning=>warning.code==='missing_scope'));
+});
+
+test('legacy scheduling metadata remains bounded and pickup capacity follows assignments and lifecycle',async()=>{
+  const f=fixture(),created=await f.mutate(f.create({assignedCrew:[],crewNeeded:1,shiftPickupEnabled:true,recurrence:'monthly',reminderDays:7,notify:false,notes:'Gate code on arrival'}));
+  assert.equal(created.job.openShift,true);assert.equal(created.job.recurrence,'monthly');assert.equal(created.job.notify,false);
+  const claimed=await mutateDispatchSelfAssignment(f.store,{user:'crew1'},{action:'claim',jobId:created.job.id,requestId:randomUUID()},NOW);
+  assert.equal(claimed.job.openShift,false);
+  const removed=await f.mutate(f.edit(claimed.job,{assignedCrew:[]}));
+  assert.equal(removed.job.openShift,true);assert.deepEqual(f.rows.get('jobs/'+created.job.id).shiftClaims,[]);assert.equal(f.rows.get('jobs/'+created.job.id).lastShiftClaim,null);
+  const reassigned=await f.mutate(f.edit(removed.job,{assignedCrew:['crew1']}));
+  await assert.rejects(mutateDispatchSelfAssignment(f.store,{user:'crew1'},{action:'release',jobId:created.job.id,requestId:randomUUID()},NOW),e=>e.code==='dispatch_shift_release_forbidden');
+  for (const changes of [{recurrence:'daily'},{reminderDays:0},{reminderDays:31},{notify:'true'},{shiftPickupEnabled:1},{openShift:true}]) await assert.rejects(f.mutate(f.edit(reassigned.job,changes)));
+  const cancelled=await f.mutate({...f.edit(reassigned.job,{},'schedule.cancel'),cancellationReason:'Customer postponed'});
+  assert.equal(cancelled.job.openShift,false);
+  const raw=f.rows.get('jobs/'+cancelled.job.id);assert.equal(raw.cancellationReason,'Customer postponed');assert.equal(raw.cancelledBy,'zacb');assert.equal(raw.cancelledAt,NOW);
+  const receipt=f.rows.get('dispatchOperations/'+cancelled.requestId);assert.equal(receipt.after.cancellationReason,'Customer postponed');
+});
+
+test('recurring clone keeps operational requirements but cannot carry accepted price, photos or completed work',async()=>{
+  const f=fixture(),source=await f.mutate(f.create({recurrence:'monthly',materials:[{id:'shelf',name:'Shelf',quantity:2}],requiredEquipment:['Drill'],notes:'Use driveway'}));
+  const raw=f.rows.get('jobs/'+source.job.id);
+  Object.assign(raw,{status:'completed',pipelineStatus:'completed',completedAt:NOW,sourceWalkthroughId:'old-walkthrough',highlevelAppointmentId:'old-appointment',payment:{amount:500},estimate:{total:1000},acceptance:{accepted:true},fieldExecution:{photos:['old-photo']},photos:['old-photo'],jobInstructions:{customerGoal:'Storage access',hazards:['low beam'],photos:['hidden-photo'],price:1000},fieldCompletionSync:{status:'synced'},materials:[{id:'shelf',name:'Shelf',quantity:2,price:400}]});
+  const cloned=await f.mutate(f.create({date:'2026-10-23',assignedCrew:[]},{sourceTemplateJobId:source.job.id})),saved=f.rows.get('jobs/'+cloned.job.id);
+  assert.equal(saved.sourceTemplateJobId,source.job.id);assert.equal(saved.recurrenceParentId,source.job.id);assert.equal(saved.sourceTemplateRevision,raw.revision);
+  assert.notEqual(saved.projectId,raw.projectId);assert.equal(saved.recurrence,'monthly');assert.equal(saved.notes,'Use driveway');assert.equal(saved.jobInstructions.customerGoal,'Storage access');assert.deepEqual(saved.jobInstructions.hazards,['low beam']);
+  assert.deepEqual(saved.materials,[{id:'shelf',name:'Shelf',quantity:2}]);assert.deepEqual(saved.assignedCrew,[]);assert.equal(saved.openShift,false);
+  for (const key of ['payment','estimate','acceptance','fieldExecution','photos','fieldCompletionSync','highlevelAppointmentId','completedAt','sourceWalkthroughId']) assert.equal(saved[key],undefined,key);
+  assert.equal(saved.jobInstructions.photos,undefined);assert.equal(saved.jobInstructions.price,undefined);
+  await assert.rejects(f.mutate(f.create({date:'2026-11-23'},{customerId:'c2',sourceTemplateJobId:source.job.id})),e=>e.code==='dispatch_template_invalid');
+  await assert.rejects(f.mutate(f.create({date:'2026-11-23'},{sourceTemplateJobId:source.job.id,sourceWalkthroughId:'both'})),e=>e.code==='dispatch_handoff_invalid');
+});
+
+test('global blocks use the canonical atomic schedule and keep customer jobs and crews out',async()=>{
+  const f=fixture(),input={action:'schedule.create',requestId:randomUUID(),kind:'blocked',changes:{date:'2026-09-23',time:'08:00',endDate:'2026-09-24',endTime:'10:00',title:'Company training'}};
+  const block=await f.mutate(input);assert.equal(block.job.type,'blocked');assert.equal(block.providerSync,'not_needed');
+  assert.equal([...f.rows.keys()].filter(key=>key.startsWith('projects/')).length,0);
+  const overview=await dispatchOverview(f.store,manager,{startDate:'2026-09-23',endDate:'2026-09-25'});assert.equal(overview.jobs[0].title,'Company training');assert.deepEqual(overview.warnings,[]);
+  assert.equal(f.rows.get('jobs/_egc_schedule_lock_2026-09-24').entries[0].type,'blocked');
+  await assert.rejects(f.mutate(f.create({date:'2026-09-24',assignedCrew:['crew2']})),e=>e.code==='dispatch_conflict');
+  await assert.rejects(f.mutate(f.edit(block.job,{assignedCrew:['crew1']})),e=>e.code==='dispatch_patch_not_allowed');
+  const cancelled=await f.mutate(f.edit(block.job,{},'schedule.cancel'));await f.mutate(f.create());
+  await assert.rejects(f.mutate(f.edit(cancelled.job,{},'schedule.restore')),e=>e.code==='dispatch_conflict');
+  await assert.rejects(f.mutate({...input,requestId:randomUUID(),customerId:'c1'}),e=>e.code==='dispatch_block_invalid');
+});
+
+test('explicit native empty crew does not become a global block while missing legacy assignments stay conservative',()=>{
+  const next={id:'next',type:'job',date:'2026-09-23',time:'08:00',endTime:'10:00',assignedCrew:['crew1']};
+  const native={id:'native',type:'job',date:'2026-09-23',time:'08:00',endTime:'10:00',assignedCrew:[]};
+  const legacy={id:'legacy',type:'job',date:'2026-09-23',time:'08:00',endTime:'10:00'};
+  assert.equal(sharedScheduleResources(next,native),false);assert.equal(sharedScheduleResources(next,legacy),true);
+  assert.equal(scheduleLockConflict(next,scheduleDayEntry(native,native.date),native.date),false);
+  assert.equal(scheduleLockConflict(next,scheduleDayEntry(legacy,legacy.date),legacy.date),true);
+  assert.equal(sharedScheduleResources({...next,vehicleId:'truck'},{...native,assignedCrew:['crew2'],vehicleId:'truck'}),true);
+});
+
+test('exact dispatch lookup survives date changes and completion handoff remains visible without exposing body or provider IDs',async()=>{
+  const f=fixture(),created=await f.mutate(f.create()),raw=f.rows.get('jobs/'+created.job.id);
+  Object.assign(raw,{date:'2027-01-01',endDate:'2027-01-01',status:'completed',pipelineStatus:'completed',durationMin:60,estimatedDurationMin:90,fieldCompletionSync:{status:'error',message:'Retry CRM handoff',attemptedAt:NOW,body:'PRIVATE',providerContactId:'PRIVATE'}});
+  const result=await dispatchOverview(f.store,manager,{view:'job',jobId:created.job.id});
+  assert.equal(result.job.date,'2027-01-01');assert.equal(result.job.durationMin,60);assert.equal(result.job.estimatedDurationMin,90);
+  assert.deepEqual(result.job.completionSync,{status:'error',message:'Retry CRM handoff',attemptedAt:NOW,syncedAt:null});
+  assert.ok(result.warnings.some(w=>w.code==='completion_sync_error'));
+  raw.fieldCompletionSync.status='pending';assert.ok((await dispatchOverview(f.store,manager,{view:'job',jobId:created.job.id})).warnings.some(w=>w.code==='completion_sync_pending'));
+  await assert.rejects(dispatchOverview(f.store,{user:'crew1',role:'crew'},{view:'job',jobId:created.job.id}),e=>e.status===403);
+  await assert.rejects(dispatchOverview(f.store,manager,{view:'job',jobId:'secure_account'}),e=>e.status===404);
 });

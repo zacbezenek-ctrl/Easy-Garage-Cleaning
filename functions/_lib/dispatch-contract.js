@@ -8,19 +8,33 @@
  *       warnings:[{code,jobId,message,...}], coverage:{complete,asOf},startDate,endDate}
  * GET /api/dispatch?view=customers&q=phone-or-name
  *   => {ok,customers:[{id,name,phone,email,address}],total}; at most 50 results.
+ * GET /api/dispatch?view=job&jobId=exact-ID
+ *   => {ok,job:DispatchJob,roster,crews,vehicles,warnings}; no date-range filter.
  *
  * POST /api/dispatch always requires requestId = crypto.randomUUID(). Keep the
  * SAME requestId and unchanged body when retrying a lost/network response.
  * {action:'schedule.create',requestId,customerId,kind:'job'|'walkthrough',changes,
- *  sourceWalkthroughId?: existing ID}
+ *  sourceWalkthroughId?: existing ID,sourceTemplateJobId?: existing job ID}
+ * sourceTemplateJobId and sourceWalkthroughId are mutually exclusive. A repeat
+ * copies only operational instructions, materials/equipment, service and cadence;
+ * it has a new project and never copies payments, acceptance, photos or execution.
+ * {action:'schedule.create',requestId,kind:'blocked',changes:{date,time,endDate?,
+ *  endTime,title?,opsNotes?,notes?}} creates a company-wide block without customer.
  * {action:'schedule.update'|'schedule.cancel'|'schedule.restore',requestId,
- *  jobId,expectedRevision,changes:{...}}   // cancel requires changes:{}
+ *  jobId,expectedRevision,changes:{...},cancellationReason?:string(240)}
+ * cancel requires changes:{}; only cancellation accepts cancellationReason.
  * changes: date, time, endDate, endTime (all strings; all '' for unscheduled),
  * assignedCrew:string[] (canonical roster IDs), crewLead:string|null,
  * crewId:string|null, vehicleId:string|null, crewNeeded:integer 1..20,
  * travelBufferMinutes:integer 0..180, title, address, serviceType,
  * jobInstructions, accessInstructions, customerInstructions, opsNotes,
  * requiredEquipment:string[], materials:[{id,name,quantity:number}].
+ * Also recurrence:'none'|'weekly'|'biweekly'|'monthly'|'quarterly',
+ * reminderDays:integer1..30,notify:boolean,shiftPickupEnabled:boolean,notes:string.
+ * Cadence and notification preferences are stored metadata, not a guarantee that
+ * another visit or message has been created. Provider sync reports separately.
+ * openShift is derived server-side from pickup permission, crew capacity, valid
+ * schedule and lifecycle; it is never accepted as an arbitrary client field.
  * Schedule dates store local Denver calendar values and derived startAt/endAt.
  * assignedCrew is an explicit per-job membership snapshot; crewId labels it.
  * When crewId is supplied without assignedCrew, use the saved crew membership.
@@ -42,7 +56,10 @@
  * crewLead,crewId,vehicleId,crewNeeded,travelBufferMinutes,jobInstructions,
  * accessInstructions,customerInstructions,opsNotes,requiredEquipment,materials,
  * serviceType,syncStatus,highlevelAppointmentId,sourceWalkthroughId,completedAt,
- * createdAt,updatedAt. Date/time invalid or absent is represented as startAt:null.
+ * createdAt,updatedAt,recurrence,recurrenceParentId,sourceTemplateJobId,reminderDays,
+ * notify,shiftPickupEnabled,openShift,notes,durationMin,estimatedDurationMin,
+ * completionSync:{status,message,attemptedAt,syncedAt}|null.
+ * Date/time invalid or absent is represented as startAt:null.
  * Financial/credential/employee payroll fields are deliberately absent.
  *
  * Errors: {ok:false,code,error,details?}. 400 validation, 401 sign-in,

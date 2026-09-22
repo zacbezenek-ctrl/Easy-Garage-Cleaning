@@ -1,11 +1,12 @@
 import { hasBusinessAccess } from './hub-session.js';
 import { jobCrewNames, assignmentKey } from './job-assignment.js';
 import { fieldActivity } from './field-execution.js';
+import { sharedScheduleResources, scheduleRowsConflict, scheduleDayEntry } from './dispatch-conflicts.js';
 import { DISPATCH_ACTIONS, DISPATCH_TIME_ZONE } from './dispatch-contract.js';
 import { validDate, addDays, denverToday, scheduleInterval, availabilityInterval, occupiedDays, overlaps } from './dispatch-time.js';
 
 const TERMINAL = new Set(['cancelled','canceled','completed','invoiced','paid','review_requested','closed','noshow','no_show','no-show']);
-const JOB_TYPES = new Set(['job','walkthrough','cleanout','reorg']);
+const JOB_TYPES = new Set(['job','walkthrough','cleanout','reorg','blocked']);
 const isObject = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const safeId = id => typeof id === 'string' && /^[A-Za-z0-9_-]{1,180}$/.test(id) && !/^(secure_|_egc_)/.test(id);
 const fail = (code, message, status = 400, details) => Object.assign(new Error(message), { code, status, ...(details ? { details } : {}) });
@@ -59,8 +60,20 @@ function legacyMembers(job, roster) {
   return [...new Set(ids)];
 }
 
-const DTO_FIELDS = ['id','revision','type','customerId','customer','phone','address','title','date','time','endDate','endTime','assignedTo','crewLead','crewId','vehicleId','crewNeeded','travelBufferMinutes','jobInstructions','accessInstructions','customerInstructions','opsNotes','requiredEquipment','materials','serviceType','syncStatus','highlevelAppointmentId','sourceWalkthroughId','createdAt','updatedAt','completedAt'];
+const DTO_FIELDS = ['id','revision','type','customerId','customer','phone','address','title','date','time','endDate','endTime','assignedTo','crewLead','crewId','vehicleId','crewNeeded','travelBufferMinutes','jobInstructions','accessInstructions','customerInstructions','opsNotes','requiredEquipment','materials','serviceType','syncStatus','highlevelAppointmentId','sourceWalkthroughId','sourceTemplateJobId','recurrence','recurrenceParentId','reminderDays','notify','shiftPickupEnabled','openShift','notes','durationMin','estimatedDurationMin','createdAt','updatedAt','completedAt'];
 const scopeText = job => typeof job.operationalScope?.text === 'string' ? job.operationalScope.text : typeof job.jobInstructions === 'string' ? job.jobInstructions : job.jobInstructions?.operationalScope || (typeof job.scope === 'string' ? job.scope : '') || job.scopeOfWork || '';
+function recurringTemplateFields(source,actor,now) {
+  const output={};
+  for (const key of ['accessInstructions','customerInstructions','serviceType','recurrence','reminderDays','notify','notes','opsNotes','crewNeeded','travelBufferMinutes','title','durationMin','estimatedDurationMin']) {
+    if (['string','number','boolean'].includes(typeof source[key])) output[key]=source[key];
+  }
+  const instructions=source.jobInstructions;
+  if (isObject(instructions)) output.jobInstructions=Object.fromEntries(['customerGoal','keepItems','removeItems','exclusions','hazards','accessNotes','access','truckPlacement','customerNotes'].filter(key=>typeof instructions[key] === 'string' || Array.isArray(instructions[key]) && instructions[key].every(value=>typeof value==='string')).map(key=>[key,instructions[key]]));
+  output.operationalScope={text:String(scopeText(source)),updatedBy:actor,updatedAt:now,reason:'Copied from recurring template',approvalKind:'staff_operational_instructions'};
+  if (Array.isArray(source.requiredEquipment)) output.requiredEquipment=source.requiredEquipment.filter(value=>typeof value==='string');
+  if (Array.isArray(source.materials)) output.materials=source.materials.filter(item=>item&&typeof item.id==='string'&&typeof item.name==='string'&&Number.isFinite(item.quantity)).map(({id,name,quantity})=>({id,name,quantity}));
+  return output;
+}
 export function projectDispatchJob(job, roster = []) {
   const output = Object.fromEntries(DTO_FIELDS.filter(key => job[key] !== undefined).map(key => [key, job[key]]));
   const interval = scheduleInterval(job);
@@ -69,15 +82,18 @@ export function projectDispatchJob(job, roster = []) {
     crewNeeded: job.crewNeeded || job.requiredCrewSize || 1, startAt: interval?.startAt || null, endAt: interval?.endAt || null,
     activity:fieldActivity(job),activityReason:job.fieldExecution?.activityReason || '',activityAt:job.fieldExecution?.activityAt || null,
     attention:job.fieldExecution?.attention?.status === 'open' ? {status:'open',reason:job.fieldExecution.attention.reason || '',at:job.fieldExecution.attention.at || null,actorName:job.fieldExecution.attention.actorName || ''} : null,
+    completionSync:job.fieldCompletionSync ? {status:job.fieldCompletionSync.status,message:String(job.fieldCompletionSync.message || '').slice(0,600),attemptedAt:job.fieldCompletionSync.attemptedAt || null,syncedAt:job.fieldCompletionSync.syncedAt || null} : null,
     timeZone: DISPATCH_TIME_ZONE, timeNeedsReview: Boolean(job.date) && !interval };
 }
 
 function jobWarnings(job, jobs, resources, roster) {
   const warnings = [], add = (code, message, extra = {}) => warnings.push({ code, jobId: job.id, message, ...extra });
   if (job.fieldExecution?.attention?.status === 'open') add('needs_follow_up',job.fieldExecution.attention.reason || 'The crew flagged this job for management follow-up.');
+  if (['pending','error'].includes(job.fieldCompletionSync?.status)) add(`completion_sync_${job.fieldCompletionSync.status}`,String(job.fieldCompletionSync.message || 'Work completion is saved; the CRM completion handoff needs confirmation.').slice(0,600));
   if (!activeJob(job)) return warnings;
   if (['paused','waiting','delayed'].includes(fieldActivity(job))) add(`job_${fieldActivity(job)}`,job.fieldExecution.activityReason || `The crew reported this job as ${fieldActivity(job)}.`);
   const interval = scheduleInterval(job), crew = legacyMembers(job, roster);
+  if (job.type !== 'blocked') {
   if (!String(job.address || '').trim()) add('missing_address', 'Add the job address before dispatching the crew.');
   if (!job.customerId) add('missing_customer_link', 'This legacy job needs its canonical customer link reviewed.');
   if (!String(scopeText(job)).trim()) add('missing_scope', 'Add the work scope so the crew knows what was sold.');
@@ -88,13 +104,14 @@ function jobWarnings(job, jobs, resources, roster) {
   if (crew.length > 1 && !job.crewLead) add('missing_crew_lead', 'Choose a crew lead for this assignment.');
   if (job.vehicleId && resources.find(resource => resource.id === job.vehicleId)?.status !== 'available') add('vehicle_unavailable', 'The assigned vehicle is unavailable or missing.');
   if (job.syncStatus === 'pending' || job.syncStatus === 'error') add('provider_sync_pending', 'The Hub schedule is saved; the HighLevel mirror still needs confirmation.');
+  }
   if (!interval) return warnings;
   for (const other of jobs) {
     if (other.id === job.id || !activeJob(other)) continue;
     const otherInterval = scheduleInterval(other);
     const shared = crew.filter(id => legacyMembers(other, roster).includes(id));
     const vehicle = job.vehicleId && job.vehicleId === other.vehicleId;
-    if (!shared.length && !vehicle && other.type !== 'blocked') continue;
+    if (!sharedScheduleResources(job,other,roster)) continue;
     if (!otherInterval) {
       // An existing dated assignment with malformed times cannot be treated as
       // free capacity. Undated work is intentionally a schedulable backlog.
@@ -114,13 +131,19 @@ function jobWarnings(job, jobs, resources, roster) {
   for (const block of blocks) {
     if (block.status === 'cancelled') continue;
     const person = resolveMember(block.employeeId || block.employee, roster, true);
-    if (person && crew.includes(person) && overlaps(interval, availabilityInterval(block))) add('employee_unavailable', 'An assigned employee has unavailable time during this job.', { employeeId: person, availabilityId: block.id });
+    if (person && crew.includes(person) && scheduleRowsConflict(job,block,roster)) add('employee_unavailable', 'An assigned employee has unavailable time or time off with invalid dates during this job.', { employeeId: person, availabilityId: block.id });
   }
   return warnings;
 }
 
 export async function dispatchOverview(store, session, query = {}, now = new Date()) {
   requireDispatcher(session);
+  if (query.view === 'job') {
+    if (!safeId(query.jobId)) throw fail('dispatch_job_not_found','Choose a valid job.',404);
+    const [job,jobs,resources,roster] = await Promise.all([store.read('jobs',query.jobId),store.jobs(),store.resources(),store.roster()]);
+    if (!visibleJob(job)) throw fail('dispatch_job_not_found','This operational job could not be found.',404);
+    return {ok:true,job:projectDispatchJob(job,roster),roster,crews:resources.filter(row=>row.recordType==='crew'),vehicles:resources.filter(row=>row.recordType==='vehicle'),warnings:jobWarnings(job,jobs,resources,roster)};
+  }
   if (query.view === 'customers') {
     const needle = text(query.q || '', 'Search', 200).toLowerCase(), digits = needle.replace(/\D/g, '');
     const all = await store.customers();
@@ -139,7 +162,7 @@ export async function dispatchOverview(store, session, query = {}, now = new Dat
     warnings: selected.flatMap(job => jobWarnings(job, jobs, resources, roster)), coverage: { complete: true, asOf: now.toISOString() } };
 }
 
-const SCHEDULE_KEYS = ['date','time','endDate','endTime','assignedCrew','crewLead','crewId','vehicleId','crewNeeded','travelBufferMinutes','title','address','serviceType','jobInstructions','accessInstructions','customerInstructions','opsNotes','requiredEquipment','materials'];
+const SCHEDULE_KEYS = ['date','time','endDate','endTime','assignedCrew','crewLead','crewId','vehicleId','crewNeeded','travelBufferMinutes','title','address','serviceType','jobInstructions','accessInstructions','customerInstructions','opsNotes','requiredEquipment','materials','recurrence','reminderDays','notify','shiftPickupEnabled','notes'];
 function schedulePatch(changes, current, resources, roster, now, actor) {
   onlyKeys(changes, SCHEDULE_KEYS);
   const patch = {};
@@ -148,7 +171,16 @@ function schedulePatch(changes, current, resources, roster, now, actor) {
     const span = validDate(current?.date) && validDate(current?.endDate) ? Math.round((Date.parse(current.endDate) - Date.parse(current.date)) / 86400000) : 0;
     patch.endDate = changes.date ? addDays(changes.date,span) : '';
   }
-  for (const key of ['title','address','serviceType','accessInstructions','customerInstructions','opsNotes']) if (key in changes) patch[key] = text(changes[key], key, ['title','address','serviceType'].includes(key) ? 500 : 8000);
+  for (const key of ['title','address','serviceType','accessInstructions','customerInstructions','opsNotes','notes']) if (key in changes) patch[key] = text(changes[key], key, ['title','address','serviceType'].includes(key) ? 500 : 8000);
+  if ('recurrence' in changes) {
+    if (!['none','weekly','biweekly','monthly','quarterly'].includes(changes.recurrence)) throw fail('dispatch_recurrence_invalid','Choose a supported repeat interval.');
+    patch.recurrence=changes.recurrence;
+  }
+  if ('reminderDays' in changes) patch.reminderDays=integer(changes.reminderDays,'Reminder days',1,30);
+  for (const key of ['notify','shiftPickupEnabled']) if (key in changes) {
+    if (typeof changes[key] !== 'boolean') throw fail('dispatch_invalid_field',`${key} must be true or false.`);
+    patch[key]=changes[key];
+  }
   if ('jobInstructions' in changes) patch.operationalScope={text:text(changes.jobInstructions,'Work scope',20000),updatedBy:actor,updatedAt:now,reason:'Updated in dispatch',approvalKind:'staff_operational_instructions'};
   for (const key of ['crewId','vehicleId']) if (key in changes) {
     if (changes[key] !== null && changes[key] !== '' && !safeId(changes[key])) throw fail('dispatch_resource_invalid', `Choose a valid ${key}.`);
@@ -197,7 +229,7 @@ function conflictCheck(next, jobs, resources, roster) {
 }
 
 function auditState(job) {
-  return Object.fromEntries(['date','time','endDate','endTime','status','pipelineStatus','assignedCrew','assignedTo','crewId','crewLead','vehicleId','jobInstructions','operationalScope','accessInstructions','customerInstructions','opsNotes','requiredEquipment','materials','crewNeeded','travelBufferMinutes','title','address','serviceType','name','memberIds','leadId','notes','employeeId','allDay','reason'].filter(key => job?.[key] !== undefined).map(key => [key,job[key]]));
+  return Object.fromEntries(['date','time','endDate','endTime','status','pipelineStatus','assignedCrew','assignedTo','crewId','crewLead','vehicleId','jobInstructions','operationalScope','accessInstructions','customerInstructions','opsNotes','requiredEquipment','materials','crewNeeded','travelBufferMinutes','title','address','serviceType','name','memberIds','leadId','notes','employeeId','allDay','reason','recurrence','reminderDays','notify','shiftPickupEnabled','openShift','sourceTemplateJobId','recurrenceParentId','cancellationReason'].filter(key => job?.[key] !== undefined).map(key => [key,job[key]]));
 }
 
 export async function mutateDispatch(store, session, input, now = new Date().toISOString()) {
@@ -217,7 +249,10 @@ export async function mutateDispatch(store, session, input, now = new Date().toI
 async function executeDispatch(store, session, input, now) {
   requireDispatcher(session);
   if (!isObject(input) || !DISPATCH_ACTIONS.includes(input.action) || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(input.requestId || '')) throw fail('dispatch_request_invalid','Use a supported dispatch action with a unique request ID.');
-  onlyKeys(input,['action','requestId','customerId','kind','sourceWalkthroughId','jobId','id','expectedRevision','changes']);
+  onlyKeys(input,['action','requestId','customerId','kind','sourceWalkthroughId','sourceTemplateJobId','jobId','id','expectedRevision','changes','cancellationReason']);
+  if ('cancellationReason' in input && input.action !== 'schedule.cancel') throw fail('dispatch_cancel_patch_invalid','A cancellation reason can only be saved when cancelling a job.');
+  if ((input.sourceWalkthroughId || input.sourceTemplateJobId) && input.action !== 'schedule.create') throw fail('dispatch_handoff_invalid','A source record can only be selected when creating a job.');
+  if (input.sourceWalkthroughId && input.sourceTemplateJobId) throw fail('dispatch_handoff_invalid','Choose either a walkthrough or a recurring job template.');
   const fingerprint = await digest({ actor: session.user, input }), receiptId = input.requestId.toLowerCase();
   const prior = await store.read('dispatchOperations',receiptId);
   if (prior) {
@@ -236,6 +271,12 @@ async function executeDispatch(store, session, input, now) {
     collection = 'jobs';
     const create = input.action === 'schedule.create', cancel = input.action === 'schedule.cancel', restore = input.action === 'schedule.restore';
     if (create) {
+      if (input.kind === 'blocked') {
+        if (input.customerId || input.sourceWalkthroughId || input.sourceTemplateJobId) throw fail('dispatch_block_invalid','A company-wide scheduling block cannot have a customer or source job.');
+        id=`block_${receiptId.replaceAll('-','')}`;
+        current=null;
+        patch={id,type:'blocked',title:'Unavailable',date:'',time:'',endDate:'',endTime:'',assignedCrew:[],assignedTo:'',status:'scheduled',pipelineStatus:'scheduled',createdAt:now,createdBy:session.user,scheduleSource:'egc_hub'};
+      } else {
       if (!safeId(input.customerId) || !['job','walkthrough'].includes(input.kind)) throw fail('dispatch_customer_required','Select an existing customer and job type before creating work.');
       const customer = await store.read('customers',input.customerId);
       if (!customer) throw fail('dispatch_customer_not_found','This customer no longer exists. Search again.',404);
@@ -243,7 +284,13 @@ async function executeDispatch(store, session, input, now) {
       const bookingKey = changes.date && changes.time ? await digest({ customerId: customer.id, kind: input.kind, date: changes.date, time: changes.time, timeZone: DISPATCH_TIME_ZONE }) : null;
       id = bookingKey ? `visit_${bookingKey.slice(0,40)}` : `dispatch_${receiptId.replaceAll('-','')}`;
       if (await store.read('jobs',id) || jobs.some(job => visibleJob(job) && job.customerId === customer.id && (job.type === 'walkthrough' ? 'walkthrough' : 'job') === input.kind && changes.date && job.date === changes.date && job.time === changes.time)) throw fail('dispatch_job_already_exists','This customer already has that visit at the selected time. Open the existing job.',409);
-      let source = null;
+      let source = null, template = null;
+      if (input.sourceTemplateJobId) {
+        if (!safeId(input.sourceTemplateJobId) || input.kind !== 'job') throw fail('dispatch_template_invalid','Choose an existing job to repeat.');
+        template=await store.read('jobs',input.sourceTemplateJobId);
+        if (!template || !['job','cleanout','reorg'].includes(template.type) || template.recordType || template.customerId !== customer.id) throw fail('dispatch_template_invalid','The recurring template must be an operational job for this customer.',409);
+        if (template.highlevelContactId && customer.highlevelContactId && template.highlevelContactId !== customer.highlevelContactId) throw fail('dispatch_contact_link_conflict','The template and customer point to different CRM contacts. Correct that link before repeating work.',409);
+      }
       if (input.sourceWalkthroughId) {
         if (!safeId(input.sourceWalkthroughId) || input.kind !== 'job') throw fail('dispatch_handoff_invalid','Select a valid source walkthrough for this job.');
         source = await store.read('jobs',input.sourceWalkthroughId);
@@ -259,6 +306,7 @@ async function executeDispatch(store, session, input, now) {
         date: '', time: '', endDate: '', endTime: '', assignedCrew: [], assignedTo: '', crewLead: null, crewId: null, vehicleId: null, crewNeeded: 1, travelBufferMinutes: 20,
         status: 'unscheduled', pipelineStatus: 'unscheduled', createdAt: now, createdBy: session.user, scheduleSource: 'egc_hub',
         ...(bookingKey ? { bookingKey } : {}), ...(source ? { sourceWalkthroughId: source.id } : {}),
+        ...(template ? {...recurringTemplateFields(template,session.user,now),sourceTemplateJobId:template.id,sourceTemplateRevision:template.revision,recurrenceParentId:template.recurrenceParentId || template.id,address:template.address || customer.address || ''} : {}),
       };
       const projectId = source?.projectId || `project_${source?.id || id}`;
       const project = await store.read('projects',projectId);
@@ -266,6 +314,7 @@ async function executeDispatch(store, session, input, now) {
       patch.projectId = projectId;
       if (!project) writes.push({ collection:'projects', id:projectId, patch:{ id:projectId, customerId:customer.id, sourceRecordId:source?.id || id, sourceWalkthroughId:source?.id || (input.kind === 'walkthrough' ? id : null), authority:'employee_hub',createdAt:now,updatedAt:now,createdBy:session.user } });
       if (source && !source.projectId) writes.push({ collection:'jobs',id:source.id,revision:source.revision,patch:{ projectId, updatedAt:now } });
+      }
     } else {
       id = input.jobId;
       if (!safeId(id)) throw fail('dispatch_job_not_found','Choose a valid job.',404);
@@ -277,18 +326,29 @@ async function executeDispatch(store, session, input, now) {
       patch = {};
     }
     if (cancel && Object.keys(input.changes || {}).length) throw fail('dispatch_cancel_patch_invalid','Cancellation cannot also edit job details.');
+    if ((current || patch).type === 'blocked') onlyKeys(input.changes || {},['date','time','endDate','endTime','title','opsNotes','notes']);
     if (!cancel) Object.assign(patch,schedulePatch(input.changes || {},current || patch,resources,roster,now,session.user));
+    if (current && 'assignedCrew' in patch) {
+      const retained=value=>patch.assignedCrew.includes(resolveMember(value?.employee || value,roster,true));
+      if (Array.isArray(current.shiftClaims)) patch.shiftClaims=current.shiftClaims.filter(retained);
+      if (current.lastShiftClaim && !retained(current.lastShiftClaim)) patch.lastShiftClaim=null;
+    }
     let next = { ...current, ...patch };
     const hasSchedule = Boolean(next.date || next.time || next.endDate || next.endTime), interval = scheduleInterval(next);
     if (!cancel && hasSchedule && !interval) throw fail('dispatch_time_invalid','Choose valid Denver start and end times within 31 days. Missing or repeated DST hours cannot be scheduled.');
+    if (!cancel && next.type === 'blocked' && !interval) throw fail('dispatch_block_invalid','A company-wide scheduling block needs valid start and end times.');
     if (!cancel && !hasSchedule && current?.highlevelAppointmentId) throw fail('dispatch_linked_unschedule_unsupported','A provider-linked appointment must be rescheduled or cancelled, not cleared.');
     if (create || restore) Object.assign(patch,{ status:interval ? 'scheduled' : 'unscheduled',pipelineStatus:interval ? 'scheduled' : 'unscheduled' });
     if (!create && !restore && !cancel && state(current) === 'unscheduled' && interval) Object.assign(patch,{status:'scheduled',pipelineStatus:'scheduled'});
     if (!cancel && !interval && !create && state(current) === 'scheduled') Object.assign(patch,{status:'unscheduled',pipelineStatus:'unscheduled'});
-    if (cancel) Object.assign(patch,{status:'cancelled',pipelineStatus:'cancelled',cancelledAt:now,cancelledBy:session.user});
+    if (cancel) Object.assign(patch,{status:'cancelled',pipelineStatus:'cancelled',cancelledAt:now,cancelledBy:session.user,cancellationReason:text(input.cancellationReason || '','Cancellation reason',240)});
     if (restore) Object.assign(patch,{cancelledAt:null,cancelledBy:null,restoredAt:now,restoredBy:session.user});
     Object.assign(patch,{updatedAt:now,updatedBy:session.user,dispatchUpdatedAt:now,dispatchRequestId:input.requestId,...(!cancel ? { startAt:interval?.startAt || null,endAt:interval?.endAt || null,timeZone:DISPATCH_TIME_ZONE } : {})});
     next = { ...current, ...patch };
+    if (next.type !== 'blocked' && (create || cancel || restore || ['assignedCrew','crewNeeded','crewId','shiftPickupEnabled','date','time','endDate','endTime'].some(key=>key in patch))) {
+      patch.openShift=next.type === 'job' && next.shiftPickupEnabled === true && ['scheduled','confirmed','crew_assigned'].includes(state(next)) && Boolean(interval) && legacyMembers(next,roster).length < (next.crewNeeded || next.requiredCrewSize || 1);
+      next={...next,...patch};
+    }
     const scheduleChanged = create || cancel || restore || ['date','time','endDate','endTime','title','address'].some(key => key in patch && patch[key] !== current?.[key]);
     if (scheduleChanged && current && (current.highlevelContactId || current.highlevelAppointmentId)) {
       const customer = current.customerId ? await store.read('customers',current.customerId) : null;
@@ -304,7 +364,7 @@ async function executeDispatch(store, session, input, now) {
       const lockId = `_egc_schedule_lock_${date}`, lock = await store.read('jobs',lockId);
       if (lock && (lock.recordType !== 'schedule_lock' || !Array.isArray(lock.entries))) throw fail('dispatch_lock_unavailable','A scheduling guard needs review before this date can be changed.',503);
       const entries = (Array.isArray(lock?.entries) ? lock.entries : []).filter(entry => entry.id !== id && !TERMINAL.has(entry.status));
-      if (activeJob(next) && occupiedDays(next).includes(date)) entries.push({id,start:date === next.date ? next.time : '00:00',end:date === (next.endDate || next.date) ? next.endTime : '24:00',label:next.customer || next.title || '',status:state(next),assignedCrew:legacyMembers(next,roster),vehicleId:next.vehicleId || null,updatedAt:now});
+      if (activeJob(next) && occupiedDays(next).includes(date)) entries.push(scheduleDayEntry(next,date,roster,now));
       writes.push({collection:'jobs',id:lockId,revision:lock?.revision,patch:{recordType:'schedule_lock',date,entries,updatedAt:now}});
     }
     // The older operations scheduler shares day locks but not dispatchState.

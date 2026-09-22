@@ -22,7 +22,7 @@ export function scheduleCrewIds(job,roster=[]) {
 /** Availability is employee-specific. Older work with unknown resource
  * assignments stays conservative; known independent crews can work in parallel. */
 export function sharedScheduleResources(next,other,roster=[]) {
-  if(other?.type==='blocked')return true;
+  if(next?.type==='blocked'||other?.type==='blocked')return true;
   const left=scheduleCrewIds(next,roster);
   if(unavailable(other)) {
     const right=other.employeeId||other.employee?[resolve(other.employeeId||other.employee,roster)]:scheduleCrewIds(other,roster);
@@ -31,7 +31,10 @@ export function sharedScheduleResources(next,other,roster=[]) {
   const right=scheduleCrewIds(other,roster);
   if(next?.vehicleId&&next.vehicleId===other?.vehicleId)return true;
   if(left.some(id=>right.includes(id)))return true;
-  return !left.length||!right.length;
+  // A native empty crew snapshot reserves no employee. Missing legacy resource
+  // metadata is different: keep that work conservative until dispatch reviews it.
+  const known=(row,ids)=>row?.assignmentKnown === false ? false : ids.length>0 || Array.isArray(row?.assignedCrew);
+  return !known(next,left)||!known(other,right);
 }
 
 export function scheduleRowsConflict(next,other,roster=[]) {
@@ -59,5 +62,6 @@ export function scheduleLockConflict(next,entry,date,roster=[]) {
 /** Shared day-lock contract for native dispatch, availability and provider
  * adoption. End 24:00 means the end of this local day, never the next day 24:00. */
 export function scheduleDayEntry(job,date,roster=[],now=new Date().toISOString()) {
-  return {id:job.id,type:job.type||'job',start:date===job.date?job.time:'00:00',end:date===(job.endDate||job.date)?job.endTime:'24:00',label:job.customer||job.title||'',status:job.pipelineStatus||job.status||'scheduled',assignedCrew:scheduleCrewIds(job,roster),vehicleId:job.vehicleId||null,updatedAt:now};
+  const assignedCrew=scheduleCrewIds(job,roster);
+  return {id:job.id,type:job.type||'job',start:date===job.date?job.time:'00:00',end:date===(job.endDate||job.date)?job.endTime:'24:00',label:job.customer||job.title||'',status:job.pipelineStatus||job.status||'scheduled',assignedCrew,assignmentKnown:assignedCrew.length>0 || Array.isArray(job.assignedCrew),vehicleId:job.vehicleId||null,updatedAt:now};
 }

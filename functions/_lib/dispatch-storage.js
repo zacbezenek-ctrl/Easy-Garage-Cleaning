@@ -7,7 +7,7 @@ const ROOT = 'projects/egcw-1ec83/databases/(default)/documents';
 const BASE = `https://firestore.googleapis.com/v1/${ROOT}`;
 const failure = (code, message, status = 503) => Object.assign(new Error(message), { code, status });
 const decode = document => ({ ...decodeFirestoreFields(document.fields || {}), id: String(document.name || '').split('/').pop(), revision: document.updateTime || '' });
-const JOB_FIELDS = ['type','recordType','date','time','endDate','endTime','customerId','customer','phone','address','title','serviceType','status','pipelineStatus','assignedCrew','assignedTo','crewLead','crewId','vehicleId','crewNeeded','requiredCrewSize','travelBufferMinutes','jobInstructions','operationalScope.text','scope','scopeOfWork','accessInstructions','customerInstructions','opsNotes','requiredEquipment','materials','syncStatus','highlevelAppointmentId','highlevelContactId','sourceWalkthroughId','createdAt','updatedAt','completedAt','employee','allDay','reason','startAt','endAt','fieldExecution.activity','fieldExecution.activityReason','fieldExecution.activityAt','fieldExecution.activityBy','fieldExecution.attention','fieldLastActionAt'];
+const JOB_FIELDS = ['type','recordType','date','time','endDate','endTime','customerId','customer','phone','address','title','serviceType','status','pipelineStatus','assignedCrew','assignedTo','crewLead','crewId','vehicleId','crewNeeded','requiredCrewSize','travelBufferMinutes','jobInstructions','operationalScope.text','scope','scopeOfWork','accessInstructions','customerInstructions','opsNotes','requiredEquipment','materials','syncStatus','highlevelAppointmentId','highlevelContactId','sourceWalkthroughId','sourceTemplateJobId','recurrence','recurrenceParentId','reminderDays','notify','shiftPickupEnabled','openShift','notes','durationMin','estimatedDurationMin','createdAt','updatedAt','completedAt','employee','employeeId','allDay','reason','startAt','endAt','fieldExecution.activity','fieldExecution.activityReason','fieldExecution.activityAt','fieldExecution.activityBy','fieldExecution.attention','fieldLastActionAt','fieldCompletionSync.status','fieldCompletionSync.message','fieldCompletionSync.attemptedAt','fieldCompletionSync.syncedAt'];
 
 export async function dispatchRoster(env) {
   const profiles = listHubUserProfiles(env).map(p => ({ id: p.user.trim().toLowerCase(), name: p.displayName, role: p.role }));
@@ -55,7 +55,7 @@ export function dispatchStorage(env, fetcher = firestoreFetch) {
     roster: () => dispatchRoster(env),
     jobs: () => scan('jobs', JOB_FIELDS),
     resources: () => scan('dispatchResources', null, 2000),
-    customers: () => scan('customers', ['name','firstName','lastName','phone','email','address'], 20000),
+    customers: () => scan('customers', ['name','firstName','lastName','phone','email','address','highlevelContactId'], 20000),
     async read(collection, id) {
       const response = await send(`${BASE}/${collection}/${encodeURIComponent(id)}`);
       if (response.status === 404) return null;
