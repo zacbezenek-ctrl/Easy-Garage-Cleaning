@@ -1,0 +1,112 @@
+name: Verify qualified and sale feedback
+on:
+  push:
+    branches: [fix/meta-qualified-sales-20260922]
+    paths: [.github/workflows/meta-feedback-materialize.yml]
+permissions:
+  contents: write
+concurrency:
+  group: meta-qualified-sales-repair
+  cancel-in-progress: false
+jobs:
+  verify:
+    if: github.repository == 'zacbezenek-ctrl/Easy-Garage-Cleaning' && github.ref == 'refs/heads/fix/meta-qualified-sales-20260922'
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: egc_test
+          POSTGRES_PASSWORD: isolated_ci_only
+          POSTGRES_DB: egc_meta_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd 'pg_isready -U egc_test -d egc_meta_test'
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Materialize only exact verified source edits
+        run: |
+          python3 - <<'PY'
+          import hashlib, json
+          from pathlib import Path
+          root = Path.cwd().resolve()
+          def blob(s):
+              b=s.encode()
+              return hashlib.sha1(b'blob '+str(len(b)).encode()+b'\0'+b).hexdigest()
+          manifest=Path('scripts/meta-feedback-edits.json')
+          data=json.loads(manifest.read_text())
+          for name,expected in data['newFiles'].items():
+              path=(root/name).resolve()
+              assert path.is_relative_to(root)
+              assert blob(path.read_text())==expected, 'new source changed: '+name
+          outputs={}
+          for item in data['files']:
+              name=item['path'];path=(root/name).resolve()
+              assert path.is_relative_to(root) and name.startswith('egc-platform/services/meta-conversions/')
+              text=path.read_text()
+              assert blob(text)==item['before'], 'original source changed: '+name
+              for before,after in item.get('replacements',[]):
+                  assert text.count(before)==1, 'non-unique edit: '+name
+                  text=text.replace(before,after)
+              if item.get('appendFile'):
+                  appendix=(root/item['appendFile']).resolve()
+                  assert appendix.is_relative_to(root)
+                  extra=appendix.read_text()
+                  assert blob(extra)==item['appendHash'], 'appendix changed'
+                  text+=extra
+              assert blob(text)==item['after'], 'result hash mismatch: '+name
+              outputs[path]=text
+          for path,text in outputs.items():
+              path.write_text(text)
+              print('Verified',path.relative_to(root),blob(text))
+          PY
+      - name: Install dependencies and build service packages
+        working-directory: egc-platform
+        run: |
+          pnpm install --no-frozen-lockfile > /tmp/meta-install.txt 2>&1
+          pnpm build:packages > /tmp/meta-build.txt 2>&1
+      - name: Run complete Meta unit regression
+        working-directory: egc-platform
+        run: pnpm --filter @egc/meta-conversions test > /tmp/meta-unit.txt 2>&1
+      - name: Run durable PostgreSQL sender and replay acceptance
+        working-directory: egc-platform
+        env:
+          DATABASE_URL: postgres://egc_test:isolated_ci_only@localhost:5432/egc_meta_test
+          EGC_META_TEST: isolated
+        run: |
+          pnpm --filter @egc/database migrate:runtime > /tmp/meta-migrate.txt 2>&1
+          pnpm --filter @egc/meta-conversions test:integration > /tmp/meta-postgres.txt 2>&1
+      - name: Commit tested readable source, removing temporary transport files
+        run: |
+          rm scripts/meta-feedback-edits.json egc-platform/services/meta-conversions/test/feedback-cases.inc .github/workflows/meta-feedback-materialize.yml
+          git config user.name 'EGC verified release'
+          git config user.email 'verified-release@users.noreply.github.com'
+          git add -u
+          git diff --cached --check
+          git commit -m 'Fix qualified-lead coverage and verified full-value Purchase feedback'
+          git push origin HEAD:refs/heads/fix/meta-qualified-sales-20260922
+          git rev-parse HEAD
+      - name: Save bounded isolated test evidence
+        if: always()
+        run: |
+          mkdir -p feedback-evidence
+          cp /tmp/meta-*.txt feedback-evidence/ 2>/dev/null || true
+          git diff > feedback-evidence/source.diff
+          git rev-parse HEAD > feedback-evidence/revision.txt
+          tail -20 /tmp/meta-unit.txt /tmp/meta-postgres.txt 2>/dev/null || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: meta-qualified-sales-verification
+          path: feedback-evidence/
+          retention-days: 2
