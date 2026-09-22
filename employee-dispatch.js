@@ -4,7 +4,8 @@
 const TZ = 'America/Denver';
 const terminal = new Set(['completed', 'cancelled', 'canceled', 'paid', 'invoiced', 'review_requested', 'closed']);
 const active = job => !terminal.has(job.status || job.pipelineStatus);
-const S = { host:null, root:null, date:today(), view:'day', query:'', status:'active', employee:'', type:'', data:null, loading:false, generation:0, modal:null, refreshTimer:null, pending:false, error:'', notice:'', controller:null };
+const S = { host:null, root:null, date:today(), view:'day', query:'', status:'active', employee:'', type:'', data:null, loading:false, generation:0, modal:null, refreshTimer:null, pending:false, error:'', notice:'', controller:null, viewer:null, recovery:null };
+const recoveryPrefix='egc.dispatch.pending.v1.';
 function h(tag, props, ...children) {
   const node = document.createElement(tag);
   for (const [key, value] of Object.entries(props || {})) {
@@ -43,9 +44,32 @@ function errorText(error) {
 async function api(query='', body=null, signal) {
   const response = await fetch('/api/dispatch'+query, {method:body?'POST':'GET', credentials:'same-origin', cache:'no-store', headers:body?{'Content-Type':'application/json'}:undefined, body:body?JSON.stringify(body):undefined, signal});
   const data = await response.json().catch(()=>({}));
-  if (!response.ok || data.ok !== true) throw Object.assign(new Error(data.error||'Dispatch is temporarily unavailable.'),{status:response.status,code:data.code,details:data.details});
+  if (!response.ok || data.ok !== true) throw Object.assign(new Error(data.error||'The dispatch response could not be verified. Retry the original request.'),{status:response.ok?503:response.status,code:data.code,details:data.details});
+  const invalid=()=>Object.assign(new Error('The dispatch response was incomplete. Retry the original request to verify the outcome.'),{status:503,code:'dispatch_response_unverified'});
+  if(body) {
+    const record=body.action.startsWith('schedule.')?data.job:data.resource;
+    if(data.requestId!==body.requestId||!record||typeof record.id!=='string'||!record.id||typeof record.revision!=='string'||!record.revision||(body.jobId&&record.id!==body.jobId)||(body.id&&record.id!==body.id))throw invalid();
+  } else if(new URLSearchParams(query.replace(/^\?/, '')).get('view')==='customers') {
+    if(!Array.isArray(data.customers))throw invalid();
+  } else if(!data.viewer?.id||!['jobs','roster','crews','vehicles','availability','warnings'].every(name=>Array.isArray(data[name]))||typeof data.coverage?.complete!=='boolean')throw invalid();
   return data;
 }
+function restoreRecovery(viewer) {
+  S.viewer=viewer;S.recovery=null;
+  try {
+    const raw=sessionStorage.getItem(recoveryPrefix+viewer);if(!raw)return;
+    const saved=JSON.parse(raw);
+    if(saved?.viewerId!==viewer||typeof saved.success!=='string'||!saved.request||!['schedule.create','schedule.update','schedule.cancel','schedule.restore','crew.save','vehicle.save','availability.save'].includes(saved.request.action)||!/^[a-f\d-]{36}$/i.test(saved.request.requestId||''))throw new Error('invalid');
+    S.recovery=saved;
+  } catch {S.recovery={invalid:true};}
+}
+function preserveRequest(request,success) {
+  if(!S.viewer)throw new Error('Your manager identity has not been verified. Refresh before saving.');
+  const saved={viewerId:S.viewer,request,success,savedAt:new Date().toISOString()};
+  try {sessionStorage.setItem(recoveryPrefix+S.viewer,JSON.stringify(saved));}catch{throw new Error('This browser cannot retain a save receipt. No change was sent. Allow browser storage or reopen the Hub before saving.');}
+  S.recovery=saved;
+}
+function clearRecovery() {if(S.viewer)try{sessionStorage.removeItem(recoveryPrefix+S.viewer);}catch{}S.recovery=null;}
 function notice(text, kind='') { return h('div', {class:'dp-notice '+kind, role:kind==='error'?'alert':'status'}, text); }
 function signInLink() { return h('a',{class:'dp-btn',href:'/employee.html?view=schedule'},'Sign in to Employee Hub'); }
 async function load({quiet=false}={}) {
@@ -57,7 +81,7 @@ async function load({quiet=false}={}) {
     const r=range(), params=new URLSearchParams({...r,includeUnscheduled:'true'});
     const data=await api('?'+params, null, S.controller.signal);
     if (generation!==S.generation || !S.root) return;
-    S.data=data; S.error='';
+    S.data=data; S.error='';restoreRecovery(data.viewer.id);
   } catch (error) { if (generation!==S.generation || error.name==='AbortError') return; if([401,403].includes(error.status))S.data=null; S.error=errorText(error); S.errorStatus=error.status; }
   finally { if (generation===S.generation && S.root) { S.loading=false; render(); } }
 }
@@ -114,6 +138,7 @@ function renderBody() {
   if(S.loading&&!S.data){target.append(h('p',{class:'dp-loading',role:'status'},'Loading the Hub schedule…'));return;}
   if(S.error) {target.append(notice(S.error,'error'),S.errorStatus===401?signInLink():btn('Retry',()=>load())); if(!S.data)return;}
   if(!S.data)return;
+  if(S.recovery){target.append(notice(S.recovery.invalid?'A saved request could not be read. Reopen this browser session before making another dispatch change.':'A previous dispatch save has not been verified. Review and retry its original request before making another change.','error'));if(!S.recovery.invalid)target.append(btn('Review unverified save',openRecovery,'primary'));}
   if(S.data.coverage?.complete===false)target.append(notice('Some records could not be loaded. This schedule is incomplete; verify missing work before dispatching.','error'));
   if(S.notice)target.append(notice(S.notice));
   const all=S.data.jobs||[], dateJobs=all.filter(j=>onDate(j,S.date)), running=dateJobs.filter(j=>['dispatched','arrived','in_progress'].includes(j.status)), due=dateJobs.filter(active);
@@ -153,8 +178,9 @@ function render() {
     select([['','All work types'],['job','Jobs'],['walkthrough','Walkthroughs']],S.type,v=>setFilter('type',v),{'aria-label':'Filter by work type'})));
   S.root.append(h('div',{'data-dp-body':''}));renderBody();
 }
-function modal(title,description) {
+function modal(title,description,{recovery=false}={}) {
   if(S.modal)return null;
+  if(S.recovery&&!recovery){if(!S.recovery.invalid)openRecovery();return null;}
   const previousFocus=document.activeElement;
   const dialog=h('dialog',{class:'dp-dialog','aria-label':title});
   const form=h('form',{class:'dp-form'});
@@ -165,7 +191,7 @@ function modal(title,description) {
   form.append(h('header',{class:'dp-dialog-head'},h('div',{},h('h2',{},title),h('p',{},description)),btn('×',close,'',{'aria-label':'Close dialog'})));
   const fields=h('div',{class:'dp-form-grid'}),footer=h('footer',{class:'dp-dialog-foot'});
   form.append(fields,status,footer);dialog.append(form);document.body.append(dialog);
-  const model={dialog,form,fields,footer,status,close,previousFocus,request:null};
+  const model={dialog,form,fields,footer,status,close,previousFocus,request:null,viewer:S.viewer,recovery};
   S.modal=model;dialog.showModal();return model;
 }
 function field(model,name,label,value='',type='text',extra={}) {const input=h(type==='textarea'?'textarea':'input',{name,type:type==='textarea'?undefined:type,value,...extra});model.fields.append(labeled(label,input));return input;}
@@ -179,24 +205,37 @@ async function save(model,body,success) {
   if(model.request&&JSON.stringify({...body,requestId:model.request.requestId})!==JSON.stringify(model.request)) {
     model.status.replaceChildren(notice('The previous save has an unknown outcome. Retry its unchanged request before changing this draft.','error'));return;
   }
+  const retry=Boolean(model.request);
+  try {preserveRequest(model.request||body,success);}catch(error){model.status.replaceChildren(notice(error.message,'error'));return;}
   model.request ||= body;formBusy(model,true);model.status.replaceChildren(notice('Saving and verifying…'));
   try {
+    if(retry){const current=await api('?'+new URLSearchParams({...range(),includeUnscheduled:'true'}));if(current.viewer.id!==model.viewer)throw Object.assign(new Error('Sign in again with the manager account that started this save before retrying it.'),{status:503,code:'dispatch_account_changed'});}
     const result=await api('',model.request);
     if(S.modal!==model)return;
     S.notice=success+(result.warnings?.length?' '+result.warnings.map(w=>w.message||words(w.code)).join(' '):'')+(result.providerSync==='pending'?' Customer calendar sync is pending.':'');
-    formBusy(model,false);model.request=null;model.close();await load();
+    formBusy(model,false);model.request=null;clearRecovery();model.close();await load();
   } catch(error) {
     if(S.modal!==model)return;
     formBusy(model,false);
-    if(error.status&&error.status<500){model.request=null;model.disabledState=null;}
+    if(error.status>=400&&error.status<500&&![401,403,408,429].includes(error.status)){model.request=null;model.disabledState=null;clearRecovery();}
     model.status.replaceChildren(notice(errorText(error),'error'));
     if(error.status===401)model.status.append(signInLink());
     if(/revision/.test(error.code||''))model.status.append(btn('Discard draft and load latest',()=>{model.close();void load();}));
+    if(model.recovery&&!model.request)model.status.append(btn('Return to schedule',model.close));
     if(model.request) {
       for(const input of model.form.querySelectorAll('input,textarea,select'))input.disabled=true;
-      model.status.append(h('p',{},'Your draft is kept here. Retry the original save to avoid duplicates.'),btn('Retry original save',()=>save(model,model.request,success),'primary'));
+      model.status.append(h('p',{},'This request is saved in this browser tab, including after refresh. Retry the original save to avoid duplicates.'),btn('Retry original save',()=>save(model,model.request,success),'primary'));
     }
   }
+}
+function openRecovery() {
+  const saved=S.recovery;if(!saved||saved.invalid)return;
+  const model=modal('Verify previous dispatch save','The same request ID will be used to recover the result without creating a duplicate.',{recovery:true});if(!model)return;
+  model.request=saved.request;
+  const changes=saved.request.changes||{},facts=[['Action',words(saved.request.action.replace('.', ' '))],['Job / record',saved.request.jobId||saved.request.id||changes.serviceType||changes.name||'New record'],['Schedule',changes.date?[changes.date,clock(changes.time),changes.endDate,clock(changes.endTime)].filter(Boolean).join(' · '):'Unchanged or unscheduled'],['Crew',(changes.assignedCrew||[]).map(person).join(', ')||'Unchanged or unassigned'],['Scope',changes.jobInstructions||'Unchanged']];
+  model.fields.append(h('dl',{class:'dp-recovery-facts dp-wide'},facts.map(([label,value])=>h('div',{},h('dt',{},label),h('dd',{},value)))));
+  model.footer.append(btn('Retry original save',()=>save(model,saved.request,saved.success),'primary'));
+  model.form.addEventListener('submit',event=>{event.preventDefault();void save(model,saved.request,saved.success);});
 }
 function openJob(job=null,options={}) {
   if(!S.data)return;
@@ -258,7 +297,7 @@ function openJob(job=null,options={}) {
     const list=name=>String(data.get(name)||'').split('\n').map(v=>v.trim()).filter(Boolean);
     const changes={date:unscheduled.checked?'':startDate.value,time:unscheduled.checked?'':startTime.value,endDate:unscheduled.checked?'':endDate.value,endTime:unscheduled.checked?'':endTime.value,
       serviceType:service.value.trim(),address:address.value.trim(),assignedCrew:members,crewId:crewSelect.value||null,crewLead:lead.value||null,vehicleId:truck.value||null,
-      crewNeeded:Number(data.get('crewNeeded')),travelBufferMinutes:Number(data.get('travelBufferMinutes')),jobInstructions:{...(typeof job?.jobInstructions==='object'?job.jobInstructions:{}),customerGoal:instructions.value.trim()},
+      crewNeeded:Number(data.get('crewNeeded')),travelBufferMinutes:Number(data.get('travelBufferMinutes')),jobInstructions:instructions.value.trim(),
       accessInstructions:String(data.get('accessInstructions')||'').trim(),customerInstructions:String(data.get('customerInstructions')||'').trim(),opsNotes:String(data.get('opsNotes')||'').trim(),
       requiredEquipment:list('requiredEquipment'),materials:list('materials').map((name,i)=>{const existing=job?.materials?.find(m=>m.name===name);return existing||{id:'material-'+i+'-'+name.toLowerCase().replace(/[^a-z0-9]/g,'').slice(0,30),name,quantity:1};})};
     const body=job?{action:'schedule.update',requestId:key(),jobId:job.id,expectedRevision:job.revision,changes}:{action:'schedule.create',requestId:key(),customerId:selectedCustomer.id,kind:type.value,changes};
@@ -318,8 +357,8 @@ function mount(host) {
   unmount();S.host=host;S.root=h('section',{class:'egc-dispatch'});host.replaceChildren(S.root);render();void load();
   S.refreshTimer=setInterval(()=>{if(!document.hidden&&!S.modal&&!S.pending)void load({quiet:true});},60000);
 }
-function unmount() {S.controller?.abort();S.generation++;if(S.refreshTimer)clearInterval(S.refreshTimer);S.refreshTimer=null;if(S.modal){S.modal.dialog.close();S.modal.dialog.remove();S.modal=null;}S.pending=false;S.root?.remove();S.root=null;S.host=null;S.data=null;}
-window.addEventListener('egc:signout',unmount);
+function unmount() {S.controller?.abort();S.generation++;if(S.refreshTimer)clearInterval(S.refreshTimer);S.refreshTimer=null;if(S.modal){S.modal.dialog.close();S.modal.dialog.remove();S.modal=null;}S.pending=false;S.root?.remove();S.root=null;S.host=null;S.data=null;S.viewer=null;S.recovery=null;}
+window.addEventListener('egc:signout',()=>{try{for(let i=sessionStorage.length-1;i>=0;i--){const name=sessionStorage.key(i);if(name?.startsWith(recoveryPrefix))sessionStorage.removeItem(name);}}catch{}unmount();});
 window.addEventListener('beforeunload',event=>{if(S.modal){event.preventDefault();event.returnValue='';}});
 window.EGCDispatch={mount,unmount,refresh:load,canLeave:()=>!S.modal&&!S.pending};
 })();

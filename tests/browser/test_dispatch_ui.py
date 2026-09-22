@@ -13,7 +13,7 @@ def job(**changes):
     result = {'id': 'job-1', 'revision': 'rev-1', 'type': 'job', 'customerId': CUSTOMER['id'], 'customer': CUSTOMER['name'], 'phone': CUSTOMER['phone'], 'address': CUSTOMER['address'],
               'date': DAY, 'time': '08:00', 'endDate': DAY, 'endTime': '10:00', 'startAt': DAY+'T08:00:00-06:00', 'endAt': DAY+'T10:00:00-06:00', 'status': 'scheduled',
               'assignedCrew': ['crew.one', 'lead.one'], 'crewLead': 'lead.one', 'crewId': 'crew-main', 'vehicleId': 'truck-1', 'crewNeeded': 2, 'travelBufferMinutes': 20,
-              'serviceType': 'Garage cleanout', 'jobInstructions': {'customerGoal': 'Clear the garage; preserve the workbench.'}, 'requiredEquipment': ['Dolly', 'Brooms'], 'materials': [{'id': 'shelves', 'name': 'Shelving', 'quantity': 2}], 'syncStatus': 'not_needed'}
+              'serviceType': 'Garage cleanout', 'jobInstructions': 'Clear the garage; preserve the workbench.', 'requiredEquipment': ['Dolly', 'Brooms'], 'materials': [{'id': 'shelves', 'name': 'Shelving', 'quantity': 2}], 'syncStatus': 'not_needed'}
     result.update(changes)
     return result
 
@@ -42,8 +42,9 @@ class DispatchBrowserTests(unittest.TestCase):
         self.page = self.context.new_page(); self.page.set_default_timeout(7000); self.errors = []; self.calls = []; self.gets = []; self.jobs = [job()]
         self.crews = [{'id': 'crew-main', 'revision': 'crew-rev-1', 'name': 'North Crew', 'memberIds': ['crew.one', 'lead.one'], 'leadId': 'lead.one', 'status': 'active'}]
         self.vehicles = [{'id': 'truck-1', 'revision': 'truck-rev-1', 'name': 'Box Truck', 'status': 'available', 'notes': 'Check straps'}, {'id': 'truck-2', 'revision': 'truck-rev-2', 'name': 'Spare Truck', 'status': 'out_of_service', 'notes': 'Repair pending'}]
-        self.availability = []; self.fail_once = None; self.read_status = 200; self.completed = {}; self.lost_once = False
+        self.availability = []; self.fail_once = None; self.read_status = 200; self.completed = {}; self.lost_once = False; self.malformed_once = False; self.viewer = 'manager.one'; self.bad_read = False
         self.page.on('pageerror', lambda e: self.errors.append(str(e)))
+        self.page.on('dialog', lambda dialog: dialog.accept())
         self.page.route('**/*', self.route)
     def tearDown(self):
         self.assertEqual(self.errors, [], f'Browser errors: {self.errors}')
@@ -59,7 +60,8 @@ class DispatchBrowserTests(unittest.TestCase):
             if params.get('view') == ['customers']: send({'ok': True, 'customers': [CUSTOMER], 'total': 1}); return
             first = params.get('startDate', [DAY])[0]; last = params.get('endDate', ['2026-09-29'])[0]
             rows = [row for row in self.jobs if not row.get('date') or (row['date'] < last and (row.get('endDate') or row['date']) >= first)]
-            send({'ok': True, 'timeZone': 'America/Denver', 'jobs': rows, 'roster': ROSTER, 'crews': self.crews, 'vehicles': self.vehicles, 'availability': self.availability,
+            if self.bad_read: send({'ok': True}); return
+            send({'ok': True, 'viewer': {'id': self.viewer}, 'timeZone': 'America/Denver', 'jobs': rows, 'roster': ROSTER, 'crews': self.crews, 'vehicles': self.vehicles, 'availability': self.availability,
                   'warnings': [], 'coverage': {'complete': True, 'asOf': '2026-09-22T14:00:00Z'}, 'startDate': first, 'endDate': last}); return
         body = req.post_data_json; self.calls.append(copy.deepcopy(body))
         if self.fail_once:
@@ -85,8 +87,10 @@ class DispatchBrowserTests(unittest.TestCase):
             if resource: resource.update(changes); resource['revision'] += '-next'
             else: resource = {'id': 'new-'+action, 'revision': 'new-resource-rev', **changes}; group.append(resource)
             response = {'ok': True, 'resource': resource, 'warnings': []}
+        response['requestId'] = body['requestId']
         self.completed[body['requestId']] = copy.deepcopy(response)
         if self.lost_once: self.lost_once = False; route.abort('connectionfailed'); return
+        if self.malformed_once: self.malformed_once = False; send({'ok': True}); return
         send(response)
     def open(self):
         self.page.goto(self.url)
@@ -113,7 +117,7 @@ class DispatchBrowserTests(unittest.TestCase):
         self.open(); self.create(); self.page.get_by_role('combobox', name='Saved crew', exact=True).select_option('crew-main'); self.page.get_by_role('combobox', name='Vehicle / truck', exact=True).select_option('truck-1')
         self.page.get_by_role('combobox', name='Expected duration', exact=True).select_option('180'); self.page.get_by_label('Scope of work', exact=True).fill('Keep the marked boxes; remove debris.'); self.submit('Create job'); self.closed()
         write = self.calls[-1]; self.assertEqual(write['customerId'], CUSTOMER['id']); self.assertEqual(write['changes']['assignedCrew'], ['crew.one', 'lead.one']); self.assertEqual(write['changes']['crewLead'], 'lead.one')
-        self.assertEqual(write['changes']['endTime'], '16:00'); self.assertEqual(write['changes']['vehicleId'], 'truck-1'); self.assertEqual(write['changes']['jobInstructions']['customerGoal'], 'Keep the marked boxes; remove debris.')
+        self.assertEqual(write['changes']['endTime'], '16:00'); self.assertEqual(write['changes']['vehicleId'], 'truck-1'); self.assertEqual(write['changes']['jobInstructions'], 'Keep the marked boxes; remove debris.')
         self.page.reload(); expect(self.page.locator('.dp-job').filter(has_text='New synthetic service')).to_have_count(1)
     def test_unscheduled_create_and_filter(self):
         self.open(); self.create(); self.page.get_by_label('Keep unscheduled', exact=True).check(); expect(self.page.get_by_label('Start date', exact=True)).to_be_disabled(); self.submit('Create job'); self.closed()
@@ -141,6 +145,26 @@ class DispatchBrowserTests(unittest.TestCase):
         self.open(); self.create(); self.lost_once = True; self.submit('Create job'); expect(self.page.get_by_role('button', name='Retry original save', exact=True)).to_be_visible()
         self.page.get_by_role('button', name='Back', exact=True).click(); expect(self.page.get_by_role('dialog')).to_be_visible(); expect(self.page.get_by_label('Service', exact=True)).to_be_disabled()
         self.page.get_by_role('button', name='Retry original save', exact=True).click(); self.closed(); self.assertEqual(len(self.calls), 2); self.assertEqual(self.calls[0], self.calls[1]); self.assertEqual(len(self.jobs), 2)
+    def test_lost_committed_save_survives_reload_and_recovers_same_receipt(self):
+        self.open(); self.create(); self.lost_once = True; self.submit('Create job'); expect(self.page.get_by_role('button', name='Retry original save', exact=True)).to_be_visible()
+        original = copy.deepcopy(self.calls[-1]); self.page.reload(); self.page.get_by_role('button', name='Review unverified save', exact=True).click()
+        expect(self.page.get_by_role('dialog')).to_contain_text('New synthetic service'); self.page.get_by_role('dialog').get_by_role('button', name='Retry original save', exact=True).click(); self.closed()
+        self.assertEqual(self.calls[-1], original); self.assertEqual(len(self.jobs), 2); self.assertIsNone(self.page.evaluate("sessionStorage.getItem('egc.dispatch.pending.v1.manager.one')"))
+    def test_success_without_receipt_is_unknown_and_recovers_without_duplicate(self):
+        self.open(); self.create(); self.malformed_once = True; self.submit('Create job'); expect(self.page.get_by_role('alert')).to_contain_text('incomplete')
+        self.page.get_by_role('button', name='Retry original save', exact=True).click(); self.closed(); self.assertEqual(self.calls[0], self.calls[1]); self.assertEqual(len(self.jobs), 2)
+    def test_expired_auth_after_lost_write_retains_receipt(self):
+        self.open(); self.create(); self.lost_once = True; self.submit('Create job'); expect(self.page.get_by_role('button', name='Retry original save', exact=True)).to_be_visible()
+        self.read_status = 401; self.page.get_by_role('button', name='Retry original save', exact=True).click(); expect(self.page.get_by_role('alert')).to_contain_text('sign-in expired')
+        self.assertEqual(len(self.calls), 1); self.assertIsNotNone(self.page.evaluate("sessionStorage.getItem('egc.dispatch.pending.v1.manager.one')"))
+        self.read_status = 200; self.page.get_by_role('button', name='Retry original save', exact=True).click(); self.closed(); self.assertEqual(len(self.jobs), 2)
+    def test_account_switch_cannot_retry_another_managers_request(self):
+        self.open(); self.create(); self.lost_once = True; self.submit('Create job'); expect(self.page.get_by_role('button', name='Retry original save', exact=True)).to_be_visible()
+        self.viewer = 'manager.two'; self.page.get_by_role('button', name='Retry original save', exact=True).click(); expect(self.page.get_by_role('alert')).to_contain_text('manager account that started')
+        self.assertEqual(len(self.calls), 1); self.page.reload(); expect(self.card()).to_be_visible(); expect(self.page.get_by_role('button', name='Review unverified save', exact=True)).to_have_count(0)
+        self.page.evaluate("window.dispatchEvent(new Event('egc:signout'))"); self.assertEqual(self.page.evaluate("Object.keys(sessionStorage).filter(key=>key.startsWith('egc.dispatch.pending.')).length"), 0)
+    def test_incomplete_read_does_not_present_fake_empty_schedule(self):
+        self.bad_read = True; self.page.goto(self.url); expect(self.page.get_by_role('alert')).to_contain_text('incomplete'); expect(self.page.get_by_role('heading', name='No jobs match these filters.', exact=True)).to_have_count(0)
     def test_revision_conflict_preserves_text_until_explicit_draft_discard(self):
         self.open(); self.card().get_by_role('button', name='Edit / assign', exact=True).click(); self.page.get_by_label('Scope of work', exact=True).fill('My retained draft')
         self.jobs[0]['revision'] = 'changed-on-server'; self.submit('Save changes'); expect(self.page.get_by_label('Scope of work', exact=True)).to_have_value('My retained draft')
@@ -178,7 +202,7 @@ class DispatchBrowserTests(unittest.TestCase):
         self.page.evaluate('EGCDispatch.mount(document.querySelector("#host"))'); expect(self.card()).to_be_visible(); self.read_status = 401
         self.page.get_by_role('button', name='Refresh', exact=True).click(); expect(self.page.get_by_role('alert')).to_contain_text('sign-in expired'); expect(self.page.locator('.dp-job')).to_have_count(0)
     def test_mobile_views_forms_and_untrusted_text_have_no_overflow(self):
-        self.jobs[0]['jobInstructions'] = {'customerGoal': '<img src=x onerror="window.injected=true">'}; self.open()
+        self.jobs[0]['jobInstructions'] = '<img src=x onerror="window.injected=true">'; self.open()
         for width in [1360, 390, 320]:
             self.page.set_viewport_size({'width': width, 'height': 850})
             for view in ['Day', 'Week', 'Crew', 'Jobs']:
