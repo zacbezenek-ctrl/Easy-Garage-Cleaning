@@ -15,7 +15,8 @@ export function conversionConfig(env: NodeJS.ProcessEnv = process.env) {
     apiVersion: /^v\d+\.0$/.test(env.META_CAPI_API_VERSION ?? "") ? env.META_CAPI_API_VERSION! : "v25.0",
     startAt: startAt && Number.isFinite(startAt.valueOf()) ? startAt : null,
     backfillStartAt: backfill && Number.isFinite(backfill.valueOf()) ? backfill : null,
-    enabledStages: ids(env.META_CAPI_EVENT_STAGES ?? 'QualifiedLead,WALKTHROUGH_BOOKED,WALKTHROUGH_SHOWED,WALKTHROUGH_COMPLETED,QUOTE_DELIVERED,JOB_WON,JOB_COMPLETED,REVENUE_COLLECTED'),
+    qualifiedSalesFeedback: env.META_CAPI_QUALIFIED_SALES_FEEDBACK === "true",
+    enabledStages: ids(env.META_CAPI_EVENT_STAGES ?? 'QualifiedLead,Purchase,WALKTHROUGH_BOOKED,WALKTHROUGH_SHOWED,WALKTHROUGH_COMPLETED,QUOTE_DELIVERED,JOB_WON,JOB_COMPLETED,REVENUE_COLLECTED'),
     walkthroughCalendarIds: ids(env.META_CAPI_WALKTHROUGH_CALENDAR_IDS),
     jobCalendarIds: ids(env.META_CAPI_JOB_CALENDAR_IDS)
   };
@@ -36,6 +37,9 @@ export function configurationHealth(config: ConversionConfig) {
     mode: config.mode, datasetId: config.datasetId || null,
     destinationVerified: config.verified, stageCollectionVerified: config.stageCollectionVerified,
     optimizationMapping: "not_verified_by_this_integration",
+    qualifiedSalesFeedback: config.qualifiedSalesFeedback,
+    salesEvent: config.qualifiedSalesFeedback ? "Purchase" : "JOB_WON",
+    salesValueBasis: "verified_agreed_order_total_not_deposit",
     tokenConfigured: Boolean(config.accessToken), testCodeConfigured: Boolean(config.testEventCode),
     startAt: config.startAt?.toISOString() ?? null,
     historicalReconciliationFrom: config.backfillStartAt?.toISOString() ?? null,

@@ -3,7 +3,8 @@ import { and, asc, desc, eq, gte, inArray, isNull, lt, lte, or, sql } from "driz
 import { getDb, schema } from "@egc/database";
 import { classifyAttribution, detectConversions, sha256, toConversionPreview, type ConversionCandidate, type ConversionLead } from "./core.js";
 import { configurationHealth, conversionConfig, conversionStart, productionBlockers, type ConversionConfig } from "./config.js";
-import { canonicalExclusionReasons, canonicalStageAliases, detectCanonicalConversions, holdForCanonicalState, type CanonicalCustomerGate } from './canonical.js';
+import { canonicalExclusionReasons, canonicalStageAliases, holdForCanonicalState, type CanonicalCustomerGate } from './canonical.js';
+import { detectCanonicalFeedback } from './feedback.js';
 import { retrySafety, sendToMeta } from "./sender.js";
 
 export interface ConversionOptions {
@@ -35,13 +36,15 @@ async function discover(options: ConversionOptions, config: ConversionConfig, no
   const db = getDb();
   const range = bounds(options, now);
   // Do not restrict by lead creation: a months-old lead can legitimately book today.
-  const [rows, appointments, opportunities, jobs, canonicalEvents, originalAttribution, snapshots, sourceStates] = await Promise.all([
+  const [rows, appointments, opportunities, jobs, canonicalEvents, originalAttribution, snapshots, sourceStates, occurrences, occurrenceAliases] = await Promise.all([
     db.select({ lead: schema.leads, contact: schema.contacts }).from(schema.leads)
       .innerJoin(schema.contacts, eq(schema.contacts.id, schema.leads.contactId)),
     db.select().from(schema.appointments), db.select().from(schema.opportunities), db.select().from(schema.jobs),
     db.select().from(schema.customerEvents), db.select().from(schema.leadOriginalAttribution),
     db.select({contactId:schema.customerStateSnapshots.contactId,state:schema.customerStateSnapshots.state,snapshot:schema.customerStateSnapshots.snapshot}).from(schema.customerStateSnapshots),
-    db.select({contactId:schema.customerEvidence.contactId,sourceType:schema.customerEvidence.sourceType,sourceRecordId:schema.customerEvidence.sourceRecordId,status:schema.customerEvidence.status}).from(schema.customerEvidence)
+    db.select({contactId:schema.customerEvidence.contactId,sourceType:schema.customerEvidence.sourceType,sourceRecordId:schema.customerEvidence.sourceRecordId,status:schema.customerEvidence.status}).from(schema.customerEvidence),
+    config.qualifiedSalesFeedback ? db.select().from(schema.customerOccurrences) : Promise.resolve([]),
+    config.qualifiedSalesFeedback ? db.select().from(schema.customerOccurrenceAliases) : Promise.resolve([])
   ]);
   const appointmentsByContact = grouped(appointments), opportunitiesByContact = grouped(opportunities), jobsByContact = grouped(jobs);
   const canonicalByContact = grouped(canonicalEvents), snapshotByContact = new Map(snapshots.map(s=>[s.contactId,s]));
@@ -58,8 +61,8 @@ async function discover(options: ConversionOptions, config: ConversionConfig, no
     ...(conversionStart(config) ? {notBefore:conversionStart(config)!}:{}), enabledStages:config.enabledStages};
   const allCandidates = leads.flatMap(lead => {
     const snapshot=snapshotByContact.get(lead.contactId);
-    if(snapshot)return detectCanonicalConversions(lead,canonicalByContact.get(lead.contactId)??[],{
-      ...detectionOptions,sourceStates:sourceStatesByContact.get(lead.contactId)??[],
+    if(snapshot)return detectCanonicalFeedback(lead,canonicalByContact.get(lead.contactId)??[],{
+      ...detectionOptions,qualifiedSalesFeedback:config.qualifiedSalesFeedback,occurrences,occurrenceAliases,sourceStates:sourceStatesByContact.get(lead.contactId)??[],
       customerState:{...(snapshot.snapshot as CanonicalCustomerGate),state:snapshot.state}
     });
     return detectConversions({
@@ -128,7 +131,7 @@ async function queueCandidate(candidate: ConversionCandidate, config: Conversion
     id: candidate.eventId, contactId: candidate.contactId, leadId: candidate.leadId,
     appointmentId: candidate.appointmentId ?? null, jobId: candidate.jobId ?? null, opportunityId: candidate.opportunityId ?? null,
     eventType: candidate.stage, eventTime: candidate.eventTime ? new Date(candidate.eventTime) : null,
-    datasetId: config.datasetId, attribution: { ...candidate.attribution, ...(candidate.canonicalEventId ? {canonicalEventId:candidate.canonicalEventId}:{}) }, valueCents: candidate.valueCents ?? null,
+    datasetId: config.datasetId, attribution: { ...candidate.attribution, ...(candidate.derivedFeedback ? {derivedFeedback:true}:{}), ...(candidate.canonicalEventId ? {canonicalEventId:candidate.canonicalEventId}:{}) }, valueCents: candidate.valueCents ?? null,
     currency: candidate.currency ?? null, payloadVersion: candidate.payloadVersion,
     payload: candidate.payload ? { ...candidate.payload } : null,
     status: candidate.eligible ? "pending" : "skipped", error: candidate.eligible ? null : candidate.reasons.join(","),
@@ -141,6 +144,7 @@ async function queueCandidate(candidate: ConversionCandidate, config: Conversion
 }
 
 async function markCanonicalAccepted(writer:Pick<ReturnType<typeof getDb>,'update'>,row:typeof ledger.$inferSelect,currentCanonicalId?:string) {
+  if(row.attribution.derivedFeedback === true) return;
   const acceptedId=typeof row.attribution.canonicalEventId==='string'?row.attribution.canonicalEventId:null;
   const matchingCustomer=and(eq(schema.customerEvents.contactId,row.contactId),eq(schema.customerEvents.leadId,row.leadId));
   if(acceptedId)await writer.update(schema.customerEvents).set({syncState:'accepted',updatedAt:new Date()}).where(and(matchingCustomer,eq(schema.customerEvents.eventId,acceptedId)));
@@ -192,7 +196,7 @@ async function transmit(eventId: string, config: ConversionConfig, now: Date) {
       : and(eq(ledger.id, eventId), eq(ledger.leaseToken, claimToken), eq(ledger.status, "processing")));
     const canonicalEventId = claimed.attribution.canonicalEventId;
     if(result.accepted)await markCanonicalAccepted(tx,claimed);
-    else if (typeof canonicalEventId === 'string') await tx.update(schema.customerEvents).set({syncState:'failed',updatedAt:finishedAt})
+    else if (claimed.attribution.derivedFeedback !== true && typeof canonicalEventId === 'string') await tx.update(schema.customerEvents).set({syncState:'failed',updatedAt:finishedAt})
       .where(and(eq(schema.customerEvents.eventId,canonicalEventId),sql`${schema.customerEvents.syncState} not in ('accepted','deduplicated')`));
   });
   return result.accepted ? "accepted" as const : "failed" as const;
@@ -233,6 +237,7 @@ async function runSync(options: ConversionOptions, retryOnly: boolean) {
     const reason = retrySafety(row.firstAttemptAt, row.eventTime, new Date())
       ?? (row.datasetId !== config.datasetId ? "destination_changed_manual_review" : null)
       ?? (!current?.eligible ? "source_no_longer_eligible" : null)
+      ?? (row.eventType === "Purchase" && (row.valueCents !== current?.valueCents || row.currency !== current?.currency || row.payload?.event_time !== current?.payload?.event_time || (row.payload?.custom_data as Record<string,unknown> | undefined)?.order_id !== current?.payload?.custom_data.order_id) ? "purchase_sale_evidence_changed_manual_review" : null)
       ?? (conversionStart(config) && row.eventTime && row.eventTime < conversionStart(config)! ? "before_production_activation" : null);
     if (reason) {
       await getDb().update(ledger).set({ status: "skipped", retryable: false, error: reason, updatedAt: new Date() })
@@ -248,7 +253,7 @@ async function runSync(options: ConversionOptions, retryOnly: boolean) {
   const summary = { dryRun: false, mode: config.mode, productionBlockers: blockers, ...counts,
     discovered:candidates.length, newlySent:counts.accepted, locallyDeduplicated:counts.alreadySynced,
     providerDeduplicated:null, missingAttribution:candidates.filter(c=>c.attribution.classification!=='eligible_meta_paid').length,
-    missingValue:candidates.filter(c=>['JOB_WON','REVENUE_COLLECTED'].includes(c.stage)&&c.valueCents===undefined).length,
+    missingValue:candidates.filter(c=>['Purchase','JOB_WON','REVENUE_COLLECTED'].includes(c.stage)&&c.valueCents===undefined).length,
     requiringHumanReconciliation:candidates.filter(c=>c.eligibility==='manual_review'||c.reasons.some(r=>r.includes('review'))).length };
   await getDb().update(schema.metaConversionRuns).set({ finishedAt: new Date(), summary }).where(eq(schema.metaConversionRuns.id, run!.id));
   await getDb().insert(schema.syncCursors).values({key:'meta.conversions.cursor',cursor:JSON.stringify({through:range.to.toISOString(),runId:run!.id,...counts})})
@@ -305,7 +310,16 @@ export async function conversionStatus(options: ConversionOptions = {}) {
       eligibleMetaLeads: eligible.length, booked, customers, stillUnqualified: Math.max(0, eligible.length - new Set(observed.map(c => c.leadId)).size),
       walkthroughRate: eligible.length ? booked / eligible.length : null, customerRate: eligible.length ? customers / eligible.length : null,
       qualification: "Observed current legitimate stages; missing historical win timestamps are excluded." },
-    transmissions: { walkthroughs: accepted.filter(r => r.eventType === "WALKTHROUGH_BOOKED").length,
+    deliveryByEventName: [...new Set(records.map(r=>r.eventType))].sort().map(eventName=>({
+      eventName, scope:"accepted_at_in_requested_window",
+      accepted:accepted.filter(r=>r.eventType===eventName).length,
+      valueCents:accepted.filter(r=>r.eventType===eventName).reduce((sum,r)=>sum+(r.valueCents??0),0),
+      currency:"USD",
+      latestAcceptedAt:accepted.filter(r=>r.eventType===eventName&&r.acceptedAt).sort((a,b)=>b.acceptedAt!.valueOf()-a.acceptedAt!.valueOf())[0]?.acceptedAt??null
+    })),
+    transmissions: { purchases:accepted.filter(r=>r.eventType === "Purchase").length,
+      purchaseValueCents:accepted.filter(r=>r.eventType === "Purchase").reduce((sum,r)=>sum+(r.valueCents??0),0),
+      walkthroughs: accepted.filter(r => r.eventType === "WALKTHROUGH_BOOKED").length,
       wonJobs: accepted.filter(r => r.eventType === "JOB_WON").length,
       wonValueCents: accepted.filter(r => r.eventType === "JOB_WON").reduce((sum, r) => sum + (r.valueCents ?? 0), 0), currency: "USD" }
   };
