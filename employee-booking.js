@@ -2,7 +2,7 @@
  * Scheduling authority, crew checks and immutable receipts remain server-side. */
 (function(){
 'use strict';
-const prefix='egc-booking-request-v1:', memory=new Map(), busy=new Set();let generation=0;
+const prefix='egc-booking-request-v1:', seriesPrefix='egc-booking-series-v1:', memory=new Map(), busy=new Set();let generation=0;
 const plain=value=>value!==null&&typeof value==='object'&&!Array.isArray(value);
 const canonical=value=>Array.isArray(value)?'['+value.map(canonical).join(',')+']':plain(value)?'{'+Object.entries(value).filter(([,value])=>value!==undefined).sort(([a],[b])=>a.localeCompare(b)).map(([key,value])=>JSON.stringify(key)+':'+canonical(value)).join(',')+'}':JSON.stringify(value);
 const error=(message,code='booking_invalid',status=400)=>Object.assign(new Error(message),{code,status});
@@ -10,14 +10,16 @@ const user=()=>String(sessionStorage.getItem('egc_u')||'').trim().toLowerCase();
 const cacheKey=key=>prefix+user()+':'+key;
 function pending(key){if(memory.has(cacheKey(key)))return memory.get(cacheKey(key));try{const row=JSON.parse(sessionStorage.getItem(cacheKey(key))||'null');if(row&&typeof row.fingerprint==='string'&&plain(row.request)){memory.set(cacheKey(key),row);return row;}}catch{}return null;}
 function rememberStored(k,value){if(value){memory.set(k,value);try{sessionStorage.setItem(k,JSON.stringify(value));}catch{}}else{memory.delete(k);try{sessionStorage.removeItem(k);}catch{}}}
-function recoveries(){const start=prefix+user()+':';try{for(const key of Object.keys(sessionStorage))if(key.startsWith(start))pending(key.slice(start.length));}catch{}return [...memory].filter(([key])=>key.startsWith(start)).map(([key,row])=>({key:key.slice(start.length),...row}));}
+function seriesKey(key){return seriesPrefix+user()+':'+key;}
+function seriesRecord(key,value){const k=seriesKey(key);try{if(value===undefined)return JSON.parse(sessionStorage.getItem(k)||'null');if(value)sessionStorage.setItem(k,JSON.stringify(value));else sessionStorage.removeItem(k);}catch{}return null;}
+function recoveries(){const start=prefix+user()+':',seriesStart=seriesPrefix+user()+':',series=[];try{for(const key of Object.keys(sessionStorage)){if(key.startsWith(start))pending(key.slice(start.length));if(key.startsWith(seriesStart)){const id=key.slice(seriesStart.length),row=seriesRecord(id);if(row?.job&&Array.isArray(row.saved))series.push({key:'series:'+id,series:true,field:'job',request:{action:'schedule.series',changes:{date:row.job.date}},saved:row.saved.length});}}}catch{}return [...series,...[...memory].filter(([key])=>key.startsWith(start)&&!series.some(row=>key.slice(start.length).includes(row.key.slice(7)+':visit:'))).map(([key,row])=>({key:key.slice(start.length),...row}))];}
 function recoveryPanel(){
   if(typeof document==='undefined'||!document.body)return;
   let panel=document.getElementById('egc-booking-recovery');const rows=recoveries().filter(row=>!busy.has(cacheKey(row.key)));
   if(!rows.length){panel?.remove();return;}
   if(!panel){panel=document.createElement('section');panel.id='egc-booking-recovery';panel.setAttribute('aria-label','Unverified booking saves');panel.setAttribute('aria-live','polite');document.body.append(panel);}
   panel.replaceChildren();const heading=document.createElement('strong');heading.textContent='A booking save needs verification';panel.append(heading);
-  for(const row of rows){const box=document.createElement('div'),text=document.createElement('p'),button=document.createElement('button');text.textContent=row.field==='customer'?'Customer save: retry to verify it, then return to booking.':(row.request.action==='schedule.cancel'?'Cancellation':row.request.action==='schedule.update'?'Schedule change':'New booking')+' · '+(row.request.changes?.date||row.request.jobId||'saved request');button.type='button';button.textContent='Retry saved request';button.onclick=async()=>{button.disabled=true;try{const saved=await retryPending(row.key);if(typeof jobsCache!=='undefined'&&row.field!=='customer')jobsCache=[...jobsCache.filter(job=>job.id!==saved.id),saved];window.dispatchEvent(new CustomEvent('egc:booking-recovered',{detail:{job:row.field==='customer'?null:saved}}));if(typeof showToast==='function')showToast(row.field==='customer'?'Customer verified. Return to booking to finish the schedule.':'Saved booking verified.');}catch(problem){if(panel.isConnected){text.textContent=message(problem);button.disabled=false;}}};box.append(text,button);panel.append(box);}
+  for(const row of rows){const box=document.createElement('div'),text=document.createElement('p'),button=document.createElement('button');text.textContent=row.field==='customer'?'Customer save: retry to verify it, then return to booking.':(row.series?'Recurring booking ('+row.saved+' visits verified)':row.request.action==='schedule.cancel'?'Cancellation':row.request.action==='schedule.update'?'Schedule change':'New booking')+' · '+(row.request.changes?.date||row.request.jobId||'saved request');button.type='button';button.textContent='Retry saved request';button.onclick=async()=>{button.disabled=true;try{const result=await retryPending(row.key),saved=result.job||result,all=result.visits||[saved];if(typeof jobsCache!=='undefined'&&row.field!=='customer')jobsCache=[...jobsCache.filter(job=>!all.some(item=>item.id===job.id)),...all.map(item=>({...jobsCache.find(job=>job.id===item.id),...item}))];window.dispatchEvent(new CustomEvent('egc:booking-recovered',{detail:{job:row.field==='customer'?null:saved,operationKey:row.key}}));if(typeof showToast==='function')showToast(result.warning||(row.field==='customer'?'Customer verified. Return to booking to finish the schedule.':'Saved booking verified.'));}catch(problem){if(panel.isConnected){text.textContent=message(problem);button.disabled=false;}}};box.append(text,button);panel.append(box);}
 }
 async function api(query='',body=null,endpoint='/api/dispatch'){
   let response;try{response=await fetch(endpoint+query,{method:body?'POST':'GET',credentials:'same-origin',cache:'no-store',headers:body?{'Content-Type':'application/json'}:undefined,body:body?JSON.stringify(body):undefined,signal:AbortSignal.timeout(25000)});}catch{throw error('The save could not be verified. Retry the unchanged request.','booking_outcome_unknown',503);}
@@ -75,7 +77,7 @@ async function request(key,fingerprint,build,{endpoint='/api/dispatch',field='jo
     problem.message=message(problem);throw problem;
   }finally{busy.delete(storageKey);recoveryPanel();}
 }
-async function retryPending(key){const record=pending(key);if(!record)throw error('There is no saved request to retry.');return request(key,record.fingerprint,async()=>record.request,{endpoint:record.endpoint||(key.startsWith('customer:')?'/api/customer-resolve':'/api/dispatch'),field:record.field||(key.startsWith('customer:')?'customer':'job')});}
+async function retryPending(key){if(key.startsWith('series:'))return saveSeries(null,{}, {operationKey:key.slice(7)});const record=pending(key);if(!record)throw error('There is no saved request to retry.');return request(key,record.fingerprint,async()=>record.request,{endpoint:record.endpoint||(key.startsWith('customer:')?'/api/customer-resolve':'/api/dispatch'),field:record.field||(key.startsWith('customer:')?'customer':'job')});}
 async function save(job,previous={},options={}){
   const key=options.operationKey||job.id||'booking',draft=intent(job,previous),fingerprint=canonical(draft);
   return request(key,fingerprint,async()=>{
@@ -107,14 +109,30 @@ async function cancel(job,reason,options={}){
   const key=options.operationKey||'cancel:'+job.id,fingerprint=canonical({id:job.id,reason});
   return request(key,fingerprint,async()=>{const current=await snapshot(job.id);if(job.revision&&job.revision!==current.job.revision||job.updatedAt&&job.updatedAt!==current.job.updatedAt)throw error('This job changed after it was opened. Refresh before cancelling.','dispatch_revision_conflict',409);return{action:'schedule.cancel',requestId:crypto.randomUUID(),jobId:job.id,expectedRevision:current.job.revision,cancellationReason:String(reason||'').trim(),changes:{}};});
 }
+function recurringDate(date,cadence,index){const base=new Date(date+'T12:00:00Z');if(cadence==='weekly'||cadence==='biweekly')base.setUTCDate(base.getUTCDate()+index*(cadence==='weekly'?7:14));else{const day=base.getUTCDate();base.setUTCDate(1);base.setUTCMonth(base.getUTCMonth()+index*(cadence==='monthly'?1:3));const last=new Date(Date.UTC(base.getUTCFullYear(),base.getUTCMonth()+1,0)).getUTCDate();base.setUTCDate(Math.min(day,last));}return base.toISOString().slice(0,10);}
+async function saveSeries(job,previous={},options={}){
+  const key=options.operationKey||job?.id||'legacy-series',lock=cacheKey('series:'+key),started=generation,identity=user();if(busy.has(lock))throw error('The recurring booking is already saving.','booking_in_progress',409);
+  let plan=seriesRecord(key);if(plan&&job&&plan.fingerprint!==canonical({job,previous}))throw error('Retry the original recurring booking before changing its fields.','booking_pending_operation',409);
+  if(!plan){if(!job)throw error('The saved recurring booking is unavailable.');plan={job,previous,fingerprint:canonical({job,previous}),saved:[]};seriesRecord(key,plan);}
+  const count=plan.previous?.id?0:({weekly:8,biweekly:6,monthly:6,quarterly:4}[plan.job.recurrence]||0);busy.add(lock);
+  try{
+    for(let index=plan.saved.length;index<=count;index++){
+      if(started!==generation||identity!==user())throw error('Sign in again to continue the booking.','booking_session_changed',401);
+      const base=plan.saved[0],date=index?recurringDate(plan.job.date,plan.job.recurrence,index):plan.job.date,days=Math.round((Date.parse((plan.job.endDate||plan.job.date)+'T12:00:00Z')-Date.parse(plan.job.date+'T12:00:00Z'))/86400000),endDate=new Date(Date.parse(date+'T12:00:00Z')+days*86400000).toISOString().slice(0,10),visit={...plan.job,date,endDate,...(index?{customerId:base.customerId,...(base.type==='job'?{sourceTemplateJobId:base.id}:{})}:{})};
+      try{const saved=await save(visit,index?{}:plan.previous,{operationKey:key+':visit:'+index});plan.saved.push(saved);seriesRecord(key,plan);}
+      catch(problem){if(problem.status>=500||[401,403,408,429].includes(problem.status)||problem.code==='booking_pending_operation')throw problem;seriesRecord(key,null);if(!plan.saved.length)throw problem;return{job:plan.saved[0],visits:plan.saved,remaining:count+1-plan.saved.length,warning:plan.saved.length+' visit(s) saved. Remaining visits were not created: '+message(problem)};}
+    }
+    seriesRecord(key,null);return{job:plan.saved[0],visits:plan.saved,remaining:0};
+  }finally{busy.delete(lock);recoveryPanel();}
+}
 async function resolveCustomer(customer,key='customer'){
   return request('customer:'+key,canonical(customer),async()=>({requestId:crypto.randomUUID(),customer}),{endpoint:'/api/customer-resolve',field:'customer'});
 }
 async function roster(){const result=await api();if(!Array.isArray(result.roster))throw error('The active crew roster could not be loaded.','booking_roster_unavailable',503);return result.roster;}
-function clear(){generation++;memory.clear();busy.clear();try{for(const key of Object.keys(sessionStorage))if(key.startsWith(prefix))sessionStorage.removeItem(key);}catch{}recoveryPanel();}
+function clear(){generation++;memory.clear();busy.clear();try{for(const key of Object.keys(sessionStorage))if(key.startsWith(prefix)||key.startsWith(seriesPrefix))sessionStorage.removeItem(key);}catch{}recoveryPanel();}
 window.addEventListener('egc:signout',clear);
 window.addEventListener('beforeunload',event=>{if(recoveries().length||busy.size){event.preventDefault();event.returnValue='';}});
 window.addEventListener('DOMContentLoaded',recoveryPanel);
-window.EGCBooking={save,cancel,snapshot,resolveCustomer,roster,pending,message,recoveries,retryPending,canLeave:()=>recoveries().length===0&&busy.size===0};
+window.EGCBooking={save,saveSeries,cancel,snapshot,resolveCustomer,roster,pending,message,recoveries,retryPending,canLeave:()=>recoveries().length===0&&busy.size===0};
 recoveryPanel();
 })();

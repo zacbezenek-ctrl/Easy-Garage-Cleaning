@@ -67,3 +67,16 @@ test('offline reads do not manufacture a pending save and signout clears saved m
 test('refresh recovery discovers saved commands and replays without needing the old form draft',async()=>{
   const f=fixture();f.lost=true;await assert.rejects(f.ui.save(draft()));f.reload();assert.equal(f.ui.canLeave(),false);const recovery=f.ui.recoveries();assert.equal(recovery.length,1);assert.equal(recovery[0].request.changes.date,'2026-09-23');const saved=await f.ui.retryPending(recovery[0].key);assert.equal(saved.status,'scheduled');assert.equal((await f.store.jobs()).filter(row=>row.type==='job').length,1);assert.equal(f.ui.recoveries().length,0);
 });
+test('recurring series resumes after a lost response and clamps month ends in Mountain calendar dates',async()=>{
+  const f=fixture(),input=draft({date:'2026-01-31',recurrence:'monthly'});f.lost=true;await assert.rejects(f.ui.saveSeries(input,{}, {operationKey:'series-draft'}));f.reload();const recovery=f.ui.recoveries();assert.equal(recovery.length,1);assert.equal(recovery[0].series,true);const result=await f.ui.retryPending(recovery[0].key);
+  assert.equal(result.visits.length,7);assert.equal(result.visits[1].date,'2026-02-28');assert.equal(result.visits[2].date,'2026-03-31');assert.equal((await f.store.jobs()).filter(row=>row.type==='job').length,7);assert.equal(f.ui.canLeave(),true);
+});
+test('recurring series stops on a definite resource conflict and reports its exact partial result',async()=>{
+  const f=fixture();f.rows.set('dispatchResources/timeoff',{id:'timeoff',recordType:'availability',employeeId:'crew.one',date:'2026-09-30',allDay:true,status:'active'});
+  const result=await f.ui.saveSeries(draft({recurrence:'weekly'}),{}, {operationKey:'blocked-series'});assert.equal(result.visits.length,1);assert.equal(result.remaining,8);assert.match(result.warning,/Remaining visits were not created/);assert.equal((await f.store.jobs()).filter(row=>row.type==='job').length,1);assert.equal(f.ui.canLeave(),true);
+});
+test('a late save response after signout cannot restore another session draft',async()=>{
+  const f=fixture(),original=f.context.fetch;let release,started;const waiting=new Promise(resolve=>release=resolve),sent=new Promise(resolve=>started=resolve);
+  f.context.fetch=async(path,options)=>{const response=await original(path,options);if(path==='/api/dispatch'&&options.method==='POST'){started();await waiting;}return response;};
+  const saving=f.ui.save(draft());await sent;f.signout();f.context.sessionStorage.setItem('egc_u','another.manager');release();await assert.rejects(saving,problem=>problem.code==='booking_session_changed');assert.equal(f.ui.canLeave(),true);assert.equal(f.ui.recoveries().length,0);
+});
