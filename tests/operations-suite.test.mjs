@@ -168,7 +168,7 @@ test('private webhook destinations are absent from browser and function source',
 });
 
 test('walkthrough is photo-led, builds price in the background, and saves Hub scheduling',()=>{
-  for(const marker of ['Customer','Photos','Scope','Finish','Schedule','Review','whyNow','outcome','truckPlacement','PHOTO_COUNT','Homeowner signature','function recommend','saveHubJob','scheduleSource'])assert.match(crew,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
+  for(const marker of ['Customer','Photos','Scope','Finish','Schedule','Review','whyNow','outcome','truckPlacement','PHOTO_COUNT','Homeowner signature','function recommend','saveHubJob','gameplan-handoff.js'])assert.match(crew,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
   assert.doesNotMatch(crew,/14-point|Damage Zone|Comeback Zone|layout sketch|AI after/i);
   assert.match(crew,/discovery:\{/);
   assert.match(crew,/function validateStep/);
@@ -211,13 +211,12 @@ test('Hub rescheduling preserves the signed handoff and observed revision throug
 });
 
 test('walkthrough conversion keeps canonical IDs and durable acceptance metadata',()=>{
-  for(const marker of ['walkthroughId','sourceWalkthroughId','convertedJobId','conversionStatus','acceptanceAt','acceptanceBy','termsVersion','signatureCaptured','in_person_signature','syncIdempotencyKey']){
-    assert.match(crew,new RegExp(marker),marker+' is missing');
-  }
-  assert.match(crew,/hubDb\.collection\('jobs'\)\.doc\(S\.jobId\)/);
-  assert.match(crew,/status:'completed',pipelineStatus:'completed'/);
-  assert.match(crew,/tx\.set\(sourceRef,\{status:'completed'/);
-  assert.match(crew,/j\.pipeline\?\.opportunityId\|\|S\.highlevelOpportunityId/);
+  const handoff=read('functions/_lib/walkthrough-handoff.js'),client=read('crew/gameplan-handoff.js');
+  for(const marker of ['sourceWalkthroughId','convertedJobId','conversionStatus','acceptedAt','acceptedBy','termsVersion','signatureCaptured','in_person_signature','syncIdempotencyKey'])assert.ok(handoff.includes(marker),marker+' is missing');
+  assert.match(handoff,/await mutateDispatch\(adapter, actor, dispatchInput, now\)/);
+  assert.match(handoff,/walkthroughHandoffs/);
+  assert.doesNotMatch(handoff,/status: 'completed'|pipelineStatus: 'completed'/);
+  assert.match(client,/highlevelOpportunityId/);
   assert.doesNotMatch(crew,/S\.highLevelOpportunityId/);
   for(const page of [prejob,postjob]){
     assert.match(page,/new URLSearchParams\(location\.search\)\.get\("jobId"\)/);
@@ -227,11 +226,12 @@ test('walkthrough conversion keeps canonical IDs and durable acceptance metadata
   assert.match(suite,/postjob\.html\?jobId=/);
 });
 
-test('walkthrough promise syncs to the job, customer profile, crew brief, and HighLevel notes',()=>{
-  for(const marker of ['buildJobInstructions','buildInternalNotes','buildClientChecklists','jobInstructions:instructions','internalNotes','clientChecklists:checklists','customerNotesSummary','latestJobInstructions','latestClientChecklists','customerGoal','keepItems','removeItems','operationalNotes','walkthroughSyncedAt']){
-    assert.match(crew,new RegExp(marker),marker+' is missing from the walkthrough handoff');
-  }
-  assert.match(crew,/hubDb\.collection\('customers'\)\.doc\(customerId\)/);
+test('walkthrough promise syncs to the canonical job, crew brief, and HighLevel notes',()=>{
+  const handoff=read('functions/_lib/walkthrough-handoff.js');
+  for(const marker of ['buildJobInstructions','buildInternalNotes','buildClientChecklists'])assert.ok(crew.includes(marker));
+  for(const marker of ['jobInstructions: instructions','internalNotes: plan.internal_notes','clientChecklists: plan.client_checklists','customerNotesSummary','customerGoal','keepItems','removeItems','walkthroughSyncedAt'])assert.ok(handoff.includes(marker),marker+' is missing');
+  assert.match(handoff,/fence\('customers', customer\)/);
+  assert.doesNotMatch(handoff,/latestJobInstructions|latestClientChecklists/,'a second property cannot overwrite another property-specific customer history');
   for(const page of [prejob,postjob]){
     assert.match(page,/function normalizedInstructions/);
     assert.match(page,/id="job-brief"/);
@@ -783,13 +783,11 @@ test('employee availability uses the current server tools and cannot bypass capa
   assert.match(suite,/jobsCache\.filter\(j=>!isScheduleLock\(j\)&&!isAvailability\(j\)&&!isPrivateHubRecord\(j\)\)/);
 });
 
-test('walkthrough estimates job length and offers the next three collision-free openings',()=>{
-  for(const marker of ['estimatedJobMinutes','findNearestSlots','SLOT_OPTIONS','Next 3 openings','Checking the Hub, crew time off, and HighLevel','estimatedDurationMin','estimatedDurationHours','expectedShiftHours','ESTIMATED JOB TIME','EXPECTED PAID SHIFT'])assert.match(crew,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),marker+' is missing');
+test('walkthrough estimates job length and asks canonical dispatch for three openings',()=>{
+  const client=read('crew/gameplan-handoff.js');
+  for(const marker of ['estimatedJobMinutes','findNearestSlots','SLOT_OPTIONS','Next 3 openings','estimatedDurationMin','estimatedDurationHours','expectedShiftHours','ESTIMATED JOB TIME','EXPECTED PAID SHIFT'])assert.ok(crew.includes(marker),marker+' is missing');
+  assert.match(client,/\/api\/dispatch-openings/);assert.match(client,/body\.candidates/);assert.match(client,/slice\(0,3\)/);assert.match(client,/ids\.length<Number\(S\.crewSize\)/);
   assert.match(crew,/jobMinutes\+90/);
-  assert.match(crew,/options\.length<3/);
-  assert.match(crew,/view=schedule&start=/);
-  assert.match(crew,/recordType==='crew_availability'/);
-  assert.match(crew,/date\.getDay\(\)===0/);
 });
 
 test('crew assignment updates the HighLevel appointment without retriggering customer automation',async()=>{
@@ -830,17 +828,13 @@ test('recurring visits request a server-side handoff clone instead of copying pr
   assert.match(clone,/jobsCache=.*saved/);
 });
 
-test('schedule stops safely when the Hub session expires during CRM collision checks',()=>{
-  assert.match(suite,/if\(error\?\.code==='HUB_AUTH_REQUIRED'\)throw error/);
+test('schedule stops safely on a changed account and preserves the original handoff request',()=>{
   assert.match(read('employee-booking.js'),/Sign in again, then retry your saved booking\./);
-  assert.match(suite,/Retry original save/);
-  assert.match(crew,/if\(error\?\.code==='HUB_AUTH_REQUIRED'\)throw error/);
-  assert.match(crew,/Your walkthrough is saved on this device\. Sign in again before scheduling it\./);
+  const client=read('crew/gameplan-handoff.js');assert.match(client,/await d\.actor\(\) !== actor/);assert.match(client,/Reopen the original account/);assert.match(client,/pending\.body/);
 });
 
-test('walkthrough preserves job creation time and hands off the scheduled job appointment',()=>{
-  assert.match(crew,/if\(!existing\.exists\)job\.createdAt=now/);
-  assert.match(crew,/highlevelAppointmentId:S\.highlevelJobAppointmentId/);
+test('walkthrough uses dispatch to preserve job creation time and passes canonical appointment identity',()=>{
+  const handoff=read('functions/_lib/walkthrough-handoff.js');assert.match(handoff,/action: 'schedule.update'/);assert.match(handoff,/highlevel_job_appointment_id: job.highlevelAppointmentId/);assert.match(handoff,/previous\?\.estimate\?\.createdAt \|\| now/);
 });
 
 test('material walkthrough edits invalidate stale customer approval',()=>{
@@ -861,8 +855,9 @@ test('walkthrough hazard choices cannot contradict the crew brief',()=>{
   assert.match(crew,/filter\(x=>x!=='No visible hazards'\)/);
 });
 
-test('walkthrough photos have a durable cross-device handoff when Drive is connected',()=>{
-  for(const marker of ['syncWalkthroughPhotos','/api/drive-upload','photoSyncStatus','photoDriveUrl','latestPhotoFolderUrl'])assert.match(crew,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
+test('walkthrough photos have a private verified cross-device handoff when Drive is connected',()=>{
+  const client=read('crew/gameplan-handoff.js'),field=read('functions/api/field-jobs.js');
+  assert.match(crew,/syncWalkthroughPhotos/);assert.match(client,/\/api\/field-jobs/);assert.match(client,/fieldPhotoRequestId/);assert.match(client,/uploadedToJobId/);assert.match(field,/verifyFieldPhotoMetadata/);assert.match(field,/walkthroughPhotoAt/);
   assert.match(prejob,/renderWalkthroughPhotoFolder/);
   assert.match(postjob,/restoreWalkthroughPhotoFolder/);
   assert.match(prejob,/Open the client photo folder/);

@@ -30,7 +30,7 @@ export function createFieldStore(env) {
       // new composite index or a full scan of all historical jobs.
       queries.push({ from: [{ collectionId: 'jobs' }], where: { fieldFilter: { field: { fieldPath: 'endDate' }, op: 'GREATER_THAN_OR_EQUAL', value: { stringValue: start } } } });
       const rows = (await Promise.all(queries.map(querySpec => query('', querySpec)))).flat();
-      return [...new Map(rows.map(job => [job.id, job])).values()].filter(job => job.type === 'job' && !job.recordType && fieldId(job.id) && job.date <= end && (job.endDate || job.date) >= start && !(job.date < start && job.endDate === start && /^00:00(?::00)?$/.test(job.endTime || '')));
+      return [...new Map(rows.map(job => [job.id, job])).values()].filter(job => ['job', 'cleanout', 'reorg'].includes(job.type) && !job.recordType && fieldId(job.id) && job.date <= end && (job.endDate || job.date) >= start && !(job.date < start && job.endDate === start && /^00:00(?::00)?$/.test(job.endTime || '')));
     },
     async events(id, cursor = '') {
       const spec = { from: [{ collectionId: 'fieldEvents' }], orderBy: [{ field: { fieldPath: 'createdAt' }, direction: 'DESCENDING' }, { field: { fieldPath: '__name__' }, direction: 'DESCENDING' }], limit: 51 };

@@ -125,48 +125,15 @@ test('failed approval handoff retains the job ID and persisted invitation reques
   assert.equal(context.jobsCache[0].customerPortalInvitation.status, 'submitted');
 });
 
-for (const transactional of [false, true]) {
-  test(`signed walkthrough persists approval and its invitation request before handoff using ${transactional ? 'transaction' : 'fallback'} storage`, async () => {
-    const store = memoryStore({ transactional }), time = clock(), requests = [], status = {};
-    const context = {
-      S: { jobId: 'job-1', name: 'Test Customer', phone: '9705550123', email: 'test@example.com', address: 'Test Address', jobDate: '2026-09-10', startTime: '08:00', endTime: '12:00', lockedPrice: 1000, crewSize: 2, approved: true, signature: 'data:synthetic', acceptanceAt: '2026-09-06T10:00:00Z' },
-      hubDb: store.db, PHOTO_COUNT: 0, APPTS: [], Date: time.Date,
-      normPhone: value => value, recommend: () => 1000, estimatedJobMinutes: () => 240,
-      buildJobInstructions: () => ({}), buildInternalNotes: () => 'Crew brief', buildClientChecklists: () => ({}), customerDocId: () => 'customer-1',
-      hubScheduleConflict: async () => null, highLevelScheduleConflict: async () => null, readyToSend: () => [], $: () => status,
-      writeActive: () => {}, syncWalkthroughPhotos: async () => ({ status: 'synced' }),
-      firebase: { firestore: { FieldValue: { increment: () => 1 } } }, localStorage: { removeItem: () => {} }, draftKey: () => 'draft',
-      EGCHubAuth: { fetch: async (url, options) => {
-        requests.push({ url, payload: JSON.parse(options.body), persistedAtDispatch: structuredClone(store.records.get('jobs/job-1')) });
-        return new Response(JSON.stringify({ ok: true, contactId: 'contact-1', portalInvitation: { status: 'submitted' } }));
-      } },
-    };
-    vm.createContext(context);
-    vm.runInContext(['function walkthroughDeposit(', 'function applyWalkthroughFinance(', 'function payload(', 'async function saveHubJob(', 'async function sendHighLevel('].map(prefix => sourceLine(walkthrough, prefix)).join('\n'), context, { filename: 'crew/gameplan.html#signed-handoff' });
-
-    await context.sendHighLevel({});
-    assert.equal(requests.length, 1);
-    const { payload, persistedAtDispatch } = requests[0];
-    assert.equal(persistedAtDispatch.estimate.status, 'accepted');
-    assert.equal(persistedAtDispatch.acceptance.signatureCaptured, true);
-    assert.equal(persistedAtDispatch.customerPortalInvitationRequestedAt, '2026-09-06T12:00:00.000Z');
-    assert.equal(payload.tool, 'game_plan');
-    assert.equal(payload.job_id, persistedAtDispatch.id);
-    assert.equal(payload.terms_accepted, true);
-    assert.equal(payload.quote.deposit, 500);
-    assert.equal(persistedAtDispatch.estimate.depositRequired, 500);
-    assert.equal(persistedAtDispatch.deposit.amount, 500);
-    store.records.get('jobs/job-1').deposit = { amount: 500, paidAmount: 500, status: 'paid', verified: true, reference: 'stripe-paid' };
-
-    time.advance();
-    await context.sendHighLevel({});
-    assert.equal(requests.length, 2);
-    assert.equal(store.records.get('jobs/job-1').updatedAt, '2026-09-06T12:01:00.000Z');
-    assert.equal(requests[1].persistedAtDispatch.customerPortalInvitationRequestedAt, persistedAtDispatch.customerPortalInvitationRequestedAt);
-    assert.equal(store.records.get('jobs/job-1').customerPortalInvitationRequestedAt, persistedAtDispatch.customerPortalInvitationRequestedAt);
-    assert.equal(store.records.get('jobs/job-1').deposit.paidAmount, 500);
-    assert.equal(store.records.get('jobs/job-1').deposit.status, 'paid');
-    assert.equal(store.records.get('jobs/job-1').deposit.reference, 'stripe-paid');
-    assert.equal(store.records.get('jobs/job-1').deposit.verified, true);
-  });
-}
+test('signed walkthrough delegates to the authoritative handoff controller instead of browser financial writes', () => {
+  assert.match(walkthrough, /async function saveHubJob\(\)\{return window\.EGCWalkthroughHandoff\.save\(\)\}/);
+  assert.match(walkthrough, /async function sendHighLevel\(btn\)\{return window\.EGCWalkthroughHandoff\.send\(btn\)\}/);
+  const client = readFileSync(resolve(siteRoot, 'crew/gameplan-handoff.js'), 'utf8');
+  assert.match(client, /Portal email queued in HighLevel/);
+  assert.match(client, /Portal text queued in HighLevel/);
+  assert.match(client, /Portal delivery is paused/);
+  assert.doesNotMatch(client, /hubDb|firebase\.firestore/);
+  // Persistence, payment preservation and failed-write recovery are exercised
+  // against the real server mutator by walkthrough-handoff.test.mjs; a direct
+  // client fallback is intentionally no longer a supported success path.
+});

@@ -383,3 +383,28 @@ test('changed customer links block completion handoff instead of sending notes t
   const result = await syncFieldCompletion(enabledEnv, 'job-1', { syncNote: async () => { called = true; } });
   assert.equal(result.status, 'blocked'); assert.equal(result.errorCode, 'FIELD_COMPLETION_CONTACT_CHANGED'); assert.equal(called, false);
 });
+
+
+test('walkthrough reference photos remain private, replayable and separate from work evidence', async t => {
+  const store = storage(t); store.put('jobs/job-1', baseline());
+  const id = uuid(), input = {action:'photo',requestId:id,category:'walkthrough',caption:'Walkthrough reference',dataUrl:picture};
+  assert.equal((await post(store,input,'Crew.One')).status,403);
+  assert.equal(store.calls.uploads,0);
+  const first=await post(store,input,'ZacB'); assert.equal(first.status,200);
+  const result=await first.json(); assert.equal(result.job.photos[0].category,'walkthrough');
+  assert.equal((await post(store,input,'ZacB')).status,200); assert.equal(store.calls.uploads,1);
+  const saved=await createFieldStore(env).readJob('job-1');
+  assert.equal(saved.fieldLastActionAt,undefined); assert.equal(saved.photoSyncStatus,'verified_in_job');
+  assert.ok(fieldCompletionMissing(saved,{notes:'Fixture completion',hasIssues:false}).some(x=>x.includes('before photo')));
+  assert.ok(fieldCompletionMissing(saved,{notes:'Fixture completion',hasIssues:false}).some(x=>x.includes('after photo')));
+  assert.equal((await route.onRequestGet({env,request:req('Crew.One',undefined,`?jobId=job-1&photoId=${id}`)})).status,200);
+  assert.equal((await route.onRequestGet({env,request:req('Crew-One',undefined,`?jobId=job-1&photoId=${id}`)})).status,403);
+});
+
+for (const type of ['cleanout','reorg']) test(`legacy ${type} work uses the same assigned field workflow`,async t=>{
+  const store=storage(t);store.put('jobs/job-1',{...baseline(),type});
+  const response=await route.onRequestGet({env,request:req('Crew.One',undefined,'?jobId=job-1')});assert.equal(response.status,200);
+  assert.equal((await post(store,{action:'note',body:'Operational note for legacy work'})).status,200);
+  const rows=await createFieldStore(env).listDays('2026-09-22','2026-09-22');assert.ok(rows.some(j=>j.id==='job-1'));
+  assert.equal((await route.onRequestGet({env,request:req('Crew-One',undefined,'?jobId=job-1')})).status,403);
+});

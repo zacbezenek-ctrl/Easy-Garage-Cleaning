@@ -29,7 +29,7 @@ async function context(request, env) {
 async function authorizedJob(ctx, id) {
   if (!fieldId(id)) throw fieldFailure('Choose a valid job.');
   const job = await ctx.store.readJob(id);
-  if (!job || job.type !== 'job' || job.recordType) throw fieldFailure('This job is unavailable. Open Today for your current assignments.', 404, 'FIELD_JOB_NOT_FOUND');
+  if (!job || !['job', 'cleanout', 'reorg'].includes(job.type) || job.recordType) throw fieldFailure('This job is unavailable. Open Today for your current assignments.', 404, 'FIELD_JOB_NOT_FOUND');
   if (!ctx.manager && !await ctx.access.assigned(job)) throw fieldFailure('This job is not currently assigned to your account. Open Today for your assignments.', 403, 'FIELD_JOB_NOT_ASSIGNED');
   return job;
 }
@@ -110,7 +110,8 @@ async function readInput(request) {
 }
 
 async function savePhoto(ctx, env, job, input, fingerprint, receipt) {
-  if (!['before', 'progress', 'after', 'damage'].includes(input.category) || typeof input.caption !== 'string' || input.caption.length > 500) throw fieldFailure('Choose a photo category and a caption no longer than 500 characters.');
+  if (!['before', 'progress', 'after', 'damage', 'walkthrough'].includes(input.category) || typeof input.caption !== 'string' || input.caption.length > 500) throw fieldFailure('Choose a photo category and a caption no longer than 500 characters.');
+  if(input.category==='walkthrough'&&!ctx.manager)throw fieldFailure('Only a manager can attach the signed walkthrough reference photos.',403,'FIELD_REFERENCE_PHOTO_MANAGER_REQUIRED');
   if (fieldStage(job) === 'cancelled') throw fieldFailure('This job is cancelled. Ask operations before adding evidence.', 409, 'FIELD_JOB_CLOSED');
   if (fieldPhotos(job).length >= 100) throw fieldFailure('This job already has 100 field photos. Contact operations to archive photos before adding more.', 409, 'FIELD_PHOTO_LIMIT');
   const picture = decodeFieldPhoto(input.dataUrl), client = await createFieldPhotoClient(env);
@@ -135,7 +136,7 @@ async function savePhoto(ctx, env, job, input, fingerprint, receipt) {
     if (existing.length >= 100) throw fieldFailure('This job already has 100 field photos. Contact operations.', 409, 'FIELD_PHOTO_LIMIT');
     const now = new Date().toISOString(), photo = { id: input.requestId, fileId: pending.fileId, category: input.category, caption: fieldText(input.caption, 500), actorId: ctx.session.user, actorName: pending.actorName, createdAt: now, verified: true, mime: picture.mime, bytes: picture.bytes.length };
     const event = { ...pending, state: 'applied', createdAt: now, photoId: photo.id, summary: `${input.category} photo uploaded`, body: photo.caption }; delete event.__updateTime;
-    try { await ctx.store.commit(latest, { fieldExecution: { ...(latest.fieldExecution || {}), photos: [...existing, photo] }, updatedAt: now, fieldLastActionAt: now }, event, currentReceipt); return; }
+    try { await ctx.store.commit(latest, { fieldExecution: { ...(latest.fieldExecution || {}), photos: [...existing, photo] }, updatedAt: now, ...(input.category==='walkthrough'?{walkthroughPhotoAt:now,photoSyncStatus:'verified_in_job'}:{fieldLastActionAt:now}) }, event, currentReceipt); return; }
     catch (error) { if (error.code !== 'FIELD_REVISION_CONFLICT' || attempt === 2) throw error; }
   }
 }

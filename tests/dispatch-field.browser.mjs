@@ -14,6 +14,8 @@ import * as openings from '../functions/api/dispatch-openings.js';
 import * as history from '../functions/api/dispatch-search.js';
 import * as field from '../functions/api/field-jobs.js';
 import * as availability from '../functions/api/crew-availability.js';
+import * as handoff from '../functions/api/walkthrough-handoff.js';
+import {verifyWalkthroughHandoff} from './walkthrough-handoff.browser.mjs';
 
 const emulator=process.env.FIRESTORE_EMULATOR_HOST;
 assert.match(emulator||'',/^(127\.0\.0\.1|localhost):\d{2,5}$/,'A loopback emulator is required.');
@@ -48,7 +50,7 @@ globalThis.fetch=async(input,options={})=>{
  if(['localhost','127.0.0.1'].includes(url.hostname))return originalFetch(input,options);
  throw new Error('External network refused by isolated acceptance test: '+url.hostname);
 };
-const routes={'/api/hub-auth':auth,'/api/dispatch':dispatch,'/api/dispatch-openings':openings,'/api/dispatch-search':history,'/api/field-jobs':field,'/api/crew-availability':availability};
+const routes={'/api/hub-auth':auth,'/api/dispatch':dispatch,'/api/dispatch-openings':openings,'/api/dispatch-search':history,'/api/field-jobs':field,'/api/crew-availability':availability,'/api/walkthrough-handoff':handoff};
 const background=[],serverErrors=[],apiErrors=[];
 const server=createServer(async(incoming,outgoing)=>{
  try{
@@ -143,6 +145,7 @@ try{
  const denied=await crew.request.get(base+'/api/dispatch?startDate='+day+'&endDate='+tomorrow);assert.equal(denied.status(),403);
  assert.equal(await crewPage.locator('body').evaluate(body=>body.scrollWidth<=innerWidth),true);
  const out=resolve(root,'test-results');await mkdir(out,{recursive:true});await crewPage.screenshot({path:resolve(out,'actual-field-day-mobile.png'),fullPage:true});
+ await verifyWalkthroughHandoff({environment,managerPage,crewPage,base,date:tomorrow,readJob});
  assert.deepEqual(pageErrors,[]);assert.deepEqual(serverErrors,[]);
  console.log('PASS: actual manager login/create/assign/vehicle/conflict/openings/history search -> crew login/route/status/checklist/materials/photos/notes/completion -> manager visibility/reschedule/cancel/restore, persisted by Firestore emulator.');
 }catch(error){console.error('Acceptance failure context:',JSON.stringify({apiErrors,pageErrors,serverErrors}));await managerPage.screenshot({path:resolve(root,'test-results/actual-day-manager-failure.png'),fullPage:true});await crewPage.screenshot({path:resolve(root,'test-results/actual-day-crew-failure.png'),fullPage:true});throw error;}
