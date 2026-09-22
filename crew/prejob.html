@@ -187,6 +187,10 @@ EGCHubAuth.session().then(user=>{if(user){resolveCrewAuthentication();document.g
 <main id="crew-workflow" style="display:none">
   <div class="eyebrow">Run before every job — no exceptions</div>
   <h1>Pre-Job Playbook</h1>
+  <section class="handoff" aria-label="Verified job workflow">
+    <p>This manager playbook is reference material. Record job photos, checklist evidence, notes, and status in the verified job workflow.</p>
+    <button class="actbtn" type="button" onclick="finish()">Open verified job workflow</button>
+  </section>
 
   <div class="jobcard">
     <div class="grid2">
@@ -224,7 +228,7 @@ EGCHubAuth.session().then(user=>{if(user){resolveCrewAuthentication();document.g
 <div id="pviewer" onclick="this.classList.remove('on')"><button type="button" class="x" aria-label="Close">×</button><img id="pviewerimg" alt="photo" width="1200" height="900"></div>
 
 <div id="donebar" style="display:none"><div class="inner">
-  <button id="donebtn" onclick="finish()">Complete all checks to start the job</button>
+  <button id="donebtn" onclick="finish()">Open verified job workflow</button>
 </div></div>
 
 <script>
@@ -451,8 +455,8 @@ function render(){
   document.getElementById("pt").textContent="/"+total+" DONE";
   document.getElementById("barfill").style.width=(100*done/total)+"%";
   const btn=document.getElementById("donebtn");
-  if(done===total){btn.classList.add("ready");btn.textContent="All checks complete — start the job";}
-  else{btn.classList.remove("ready");btn.textContent=`Complete all checks to start the job (${total-done} left)`;}
+  btn.classList.add("ready");
+  btn.textContent=CENTRAL_JOB_ID||ACTIVE.jobId?"Open verified job workflow":"Open my assigned jobs";
   renderJobBrief();
 }
 function tog(si,ii){state[key(si,ii)]=!state[key(si,ii)];render();saveAll();queueProgressSave();}
@@ -468,19 +472,11 @@ function copyScript(si,btn){
   navigator.clipboard&&navigator.clipboard.writeText(txt);
   btn.textContent="Copied ✓";setTimeout(()=>{btn.textContent="Copy text";},1500);
 }
-async function syncStartLifecycle(startedAt){if(!ACTIVE.jobId)return false;const key=`lifecycle:${ACTIVE.jobId}:job-started:${startedAt}`,payload={tool:'lifecycle',event:'job-started',idempotency_key:key,highlevel_contact_id:ACTIVE.highlevelContactId||'',appointment_id:ACTIVE.highlevelAppointmentId||'',client:{name:ACTIVE.name||'',phone:ACTIVE.phone||'',email:ACTIVE.email||'',address:ACTIVE.addr||'',highlevel_contact_id:ACTIVE.highlevelContactId||''}};try{const response=await EGCHubAuth.fetch('/api/highlevel',{method:'POST',headers:{'Content-Type':'application/json','Idempotency-Key':key},body:JSON.stringify(payload)}),result=await response.json();if(!response.ok||!result.ok)throw new Error(result.error||'HighLevel lifecycle sync failed');if(HUBDB)await HUBDB.collection('jobs').doc(ACTIVE.jobId).set({lifecycleSync:{event:'job-started',status:'synced',trigger:result.automation?.trigger||'',syncedAt:startedAt},lifecycleSyncPayload:payload,lifecycleSyncError:'',lifecycleSyncNextRetryAt:'',highlevelContactId:result.contactId||ACTIVE.highlevelContactId||'',updatedAt:startedAt},{merge:true});return true}catch(error){if(HUBDB)await HUBDB.collection('jobs').doc(ACTIVE.jobId).set({lifecycleSync:{event:'job-started',status:'error',error:String(error.message||error).slice(0,160),attemptedAt:startedAt},lifecycleSyncPayload:payload,lifecycleSyncAttempts:1,lifecycleSyncError:String(error.message||error).slice(0,160),lifecycleSyncNextRetryAt:new Date(Date.now()+10*60000).toISOString(),updatedAt:startedAt},{merge:true}).catch(()=>{});return false}}
+// Canonical job execution belongs to the signed server workflow. These legacy
+// manager playbooks retain reference material and payment return handling only.
 async function finish(){
-  const total=totalChecks();
-  if(totalDone()<total) return;
-  const startedAt=ACTIVE.startedAt||localStorage.getItem(startKey())||new Date().toISOString(),completedBy=sessionStorage.getItem('egc_u')||localStorage.getItem('egc_u')||'',importantItemNotes=(document.getElementById('important_notes')?.value||'').trim();
-  let importantItemPhotoCount=0;try{importantItemPhotoCount=(await photoList(jobKey(),'important')).length}catch(e){}
-  ACTIVE.importantItemNotes=importantItemNotes;ACTIVE.importantItemPhotoCount=importantItemPhotoCount;
-  if(HUBDB&&ACTIVE.jobId){try{await HUBDB.collection('jobs').doc(ACTIVE.jobId).set({status:'in_progress',pipelineStatus:'in_progress',startedAt,importantItemNotes,importantItemPhotoCount,importantItemsRecordedAt:startedAt,preJobProgress:{...progressPayload(),completedAt:startedAt},preJobChecklist:{completedAt:startedAt,completedBy,importantItemNotes,importantItemPhotoCount,clientItems:clientItems().map(it=>({id:it.id,label:it.label,detail:it.detail,completed:true})),standardItems:SECTIONS.flatMap(sec=>sec.items.map(it=>it.t))},updatedAt:startedAt},{merge:true})}catch(error){alert("The Hub could not record job start. Your checklist is still saved on this device—reconnect and retry before starting work.");return}}
-  const workflowSynced=await syncStartLifecycle(startedAt);
-  localStorage.removeItem(saveKey());
-  localStorage.removeItem(startKey());
-  const btn=document.getElementById('donebtn');btn.disabled=true;btn.classList.add('ready');btn.textContent='Job started — handoff complete ✓';
-  document.getElementById('donebar').insertAdjacentHTML('beforebegin',`<div class="handoff" style="margin:18px"><div class="brief-head"><div><span>Ready to work</span><h2>Pre-job complete</h2></div><b>${workflowSynced?'HighLevel was notified':'Hub saved'}</b></div><p class="brief-empty">The job is marked in progress. Come back here only if you need the customer promise again.</p><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px"><a class="actbtn alt" href="/crew/">Crew home</a><a class="actbtn" href="/crew/postjob?jobId=${encodeURIComponent(ACTIVE.jobId||'')}">Open closeout</a></div></div>`);
+  const id=CENTRAL_JOB_ID||ACTIVE.jobId||'';
+  location.assign('/crew/job.html'+(id?'?jobId='+encodeURIComponent(id):''));
 }
 async function loadCentralJob(){if(!CENTRAL_JOB_ID)return;if(!HUBDB)throw new Error('The job connection is unavailable.');const snap=await HUBDB.collection('jobs').doc(CENTRAL_JOB_ID).get({source:'server'});if(!snap.exists){const error=new Error('This job could not be found.');error.code='CREW_JOB_NOT_FOUND';throw error;}restoreAll();const j={id:snap.id,...snap.data()};ACTIVE={...ACTIVE,jobId:j.id,customerId:j.customerId||'',highlevelContactId:j.highlevelContactId||'',highlevelOpportunityId:j.highlevelOpportunityId||'',highlevelAppointmentId:j.highlevelAppointmentId||'',name:j.customer||'',phone:j.phone||'',email:j.email||'',addr:j.address||'',pkg:j.serviceType||'',total:j.total||j.priceQuoted||'',rate:j.total||j.priceQuoted||'',deposit:j.deposit?.amount||'',jobdate:j.date||'',startTime:j.time||'',endTime:j.endTime||'',assignedTo:j.assignedTo||'',crewSize:Number(j.crewSize||0),pain:j.walkthroughNotes||'',customerNotesSummary:j.customerNotesSummary||j.notes||'',internalNotes:j.internalNotes||'',clientChecklists:j.clientChecklists||{},discovery:j.discovery||{},scope:j.scope||{},logistics:j.logistics||{},instructions:normalizedInstructions(j),photosBefore:Number(j.photoCount||0),importantItemNotes:j.importantItemNotes||j.preJobChecklist?.importantItemNotes||'',importantItemPhotoCount:Number(j.importantItemPhotoCount||j.preJobChecklist?.importantItemPhotoCount||0),savedAt:j.updatedAt||j.createdAt||''};restoreSharedProgress(j.preJobProgress);document.getElementById('j_name').value=j.customer||'';document.getElementById('j_addr').value=j.address||'';document.getElementById('j_date').value=j.date||'';document.getElementById('j_rate').value=j.total||j.priceQuoted||'';document.getElementById('j_pkg').value=j.serviceType||'Garage service';document.getElementById('important_notes').value=ACTIVE.importantItemNotes||'';saveAll()}
 document.addEventListener("input",event=>{if(!crewWorkflowReady)return;saveAll();if(event.target&&event.target.id==="important_notes")queueImportantItems()});
@@ -489,6 +485,13 @@ async function renderWalkthroughPhotoFolder(){if(!HUBDB||!CENTRAL_JOB_ID)return;
 let crewWorkflowReady=false,crewWorkflowLoading=false;
 async function openCrewWorkflow(standalone=false){
   if(crewWorkflowReady||crewWorkflowLoading)return;
+  // Crew execution now uses the authenticated, projected job API. Managers
+  // retain the existing financial closeout tools; raw Firestore denies crew.
+  if(!EGCHubAuth.canRunBusiness(EGCHubAuth.profile().user)){
+    const id=REQUESTED_JOB_ID||CENTRAL_JOB_ID||'';
+    location.replace('/crew/job.html'+(id?'?jobId='+encodeURIComponent(id):''));
+    return;
+  }
   crewWorkflowLoading=true;
   document.getElementById('crew-job-standalone').hidden=Boolean(REQUESTED_JOB_ID);
   if(standalone&&!REQUESTED_JOB_ID){CENTRAL_JOB_ID='';ACTIVE={}}

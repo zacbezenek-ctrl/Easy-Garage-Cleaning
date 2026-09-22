@@ -1127,25 +1127,13 @@ body.has-session #login-screen { display: none; }
 
         <div class="frow" style="margin-bottom:1.1rem">
           <div class="fg" style="margin:0"><label>Date *</label><input type="date" id="b-date"></div>
-          <div class="fg" style="margin:0"><label>Start Time</label><input type="time" id="b-time"></div>
+          <div class="fg" style="margin:0"><label>End date *</label><input type="date" id="b-enddate"></div>
+          <div class="fg" style="margin:0"><label>Start (Mountain)</label><input type="time" id="b-time"></div>
           <div class="fg" style="margin:0"><label>End Time</label><input type="time" id="b-endtime"></div>
         </div>
 
-        <div class="slbl-sm">Assigned To</div>
-        <div class="assignees">
-          <div class="asgn" id="as-Zac" onclick="selAssignee('ZacB')">
-            <div class="aav" style="background:linear-gradient(135deg,var(--accent),#f59e0b)">Z</div>
-            ZacB
-          </div>
-          <div class="asgn selected" id="as-Tyler" onclick="selAssignee('TylerG')">
-            <div class="aav" style="background:linear-gradient(135deg,#3b82f6,#8b5cf6)">T</div>
-            TylerG
-          </div>
-          <div class="asgn" id="as-Both" onclick="selAssignee('Both')">
-            <div class="aav" style="background:linear-gradient(135deg,#22c55e,#3b82f6)">B</div>
-            Both
-          </div>
-        </div>
+        <div class="slbl-sm">Assigned crew</div>
+        <div id="booking-crew" class="egc-crew-options" aria-label="Assigned crew"></div>
 
         <div class="fg">
           <label>Address <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted)">(pre-filled from customer)</span></label>
@@ -1459,6 +1447,7 @@ async function doLogout() {
   ++hubAuthVersion;
   clearHubProfile();
   _dataGeneration++;
+  crewScheduleRequest=null;crewScheduleState={loaded:false,loading:false,error:''};
   _dataUnsubscribers.forEach(unsubscribe => unsubscribe());
   _dataUnsubscribers = [];
   _listenersStarted = false;
@@ -1536,7 +1525,7 @@ function bootDashboard() {
   document.getElementById('dashboard').style.display = 'flex';
   document.getElementById('u-lbl').textContent = me;
   document.getElementById('u-av').textContent = me[0];
-  bk.assignedTo = me === 'TylerG' ? 'TylerG' : 'ZacB';
+  // Crew assignments are chosen from the current server roster.
   // Show admin tab for admins only (the button may not exist in this build —
   // a missing element here must not abort the rest of dashboard boot)
   if (ADMINS.includes(me)) {
@@ -1563,6 +1552,24 @@ function loadJobs()      { return jobsCache; }
 function loadCustomers() { return custsCache; }
 function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2,6); }
 
+let crewScheduleState={loaded:false,loading:false,error:''},crewScheduleRequest=null;
+function refreshCrewSchedule(){
+  if(canRunBusiness())return Promise.resolve(true);
+  if(crewScheduleRequest)return crewScheduleRequest;
+  const generation=_dataGeneration;crewScheduleState.loading=true;
+  const request=(async()=>{
+    try{
+      const response=await hubFetch('/api/crew-jobs',{cache:'no-store'}),data=await response.json().catch(()=>({}));
+      if(generation!==_dataGeneration)return false;
+      if(!response.ok||!data.ok||!Array.isArray(data.jobs))throw new Error(data.error||'Current crew assignments could not be loaded. Refresh to retry.');
+      jobsCache=data.jobs;custsCache=[];blockedDays=new Set();blockedSlots=new Set();leadsCache=[];
+      firebaseConn.jobs='connected';firebaseConn.customers='restricted';firebaseConn.leads='connected';window._lastLeadsSync=Date.now();
+      crewScheduleState.loaded=true;crewScheduleState.error='';return true;
+    }catch(error){if(generation===_dataGeneration){crewScheduleState.error=error.message||'Crew schedule unavailable';firebaseConn.jobs='error';}return false;}
+    finally{if(generation===_dataGeneration){crewScheduleState.loading=false;updateFirebaseStatus();refresh();}}
+  })();
+  crewScheduleRequest=request;request.finally(()=>{if(crewScheduleRequest===request)crewScheduleRequest=null;});return request;
+}
 function startListeners() {
   if (_listenersStarted) return;
   _listenersStarted = true;
@@ -1577,30 +1584,7 @@ function startListeners() {
   updateFirebaseStatus();
 
   if (!canRunBusiness()) {
-    hubFetch('/api/crew-jobs', { cache: 'no-store' })
-      .then(async response => {
-        const data = await response.json().catch(() => ({}));
-        if (generation !== _dataGeneration) return;
-        if (!response.ok || !data.ok) throw new Error(data.error || 'Crew schedule unavailable');
-        jobsCache = Array.isArray(data.jobs) ? data.jobs : [];
-        custsCache = [];
-        blockedDays = new Set();
-        blockedSlots = new Set();
-        leadsCache = [];
-        firebaseConn.jobs = 'connected';
-        firebaseConn.customers = 'restricted';
-        firebaseConn.leads = 'connected';
-        window._lastLeadsSync = Date.now();
-        updateFirebaseStatus();
-        refresh();
-        if (typeof window.opsRefresh === 'function') window.opsRefresh();
-      })
-      .catch(error => {
-        if (generation !== _dataGeneration) return;
-        firebaseConn.jobs = 'error';
-        updateFirebaseStatus();
-        console.error('Crew schedule error', error);
-      });
+    void refreshCrewSchedule();
     return;
   }
 
@@ -2045,10 +2029,9 @@ async function fetchSheetCustomers() {
     }).filter(c => c.name);
 
     const local = loadCustomers().filter(c => !c.fromSheet);
-    const batch = db.batch();
-    sheetCusts.forEach(c => batch.set(db.collection('customers').doc(c.id), c, { merge: true }));
-    await batch.commit();
-    el.textContent = `${sheetCusts.length} customers synced`;
+    // Sheet rows are lookup suggestions. Canonical records are resolved on booking.
+    custsCache=[...local,...sheetCusts];
+    el.textContent = `${sheetCusts.length} sheet suggestions loaded`;
     renderCustomersTab();
   } catch {
     el.textContent = 'Sheet sync failed';
@@ -2382,7 +2365,7 @@ function renderCustomersTab() {
         </div>
         <div style="display:flex;gap:.4rem">
           ${c.fromSheet?'<span class="bdg scheduled">Sheet</span>':''}
-          <button class="bsm del" onclick="deleteCust('${c.id}')">Remove</button>
+          <button class="bsm del" disabled title="Customer records are retained with job history">Retained</button>
         </div>
       </div>`;
     list.appendChild(card);
@@ -2390,6 +2373,7 @@ function renderCustomersTab() {
 }
 
 function openAddCustomer() {
+  if(customerSaveKey&&window.EGCBooking.pending('customer:'+customerSaveKey)){document.getElementById('add-cust-overlay').style.display='flex';return;}customerSaveKey='';
   ['ac-name','ac-phone','ac-email','ac-addr'].forEach(id=>document.getElementById(id).value='');
   const o = document.getElementById('add-cust-overlay');
   o.style.display='flex';
@@ -2397,20 +2381,15 @@ function openAddCustomer() {
 
 function closeAddCust(e) { if(e.target===document.getElementById('add-cust-overlay')) document.getElementById('add-cust-overlay').style.display='none'; }
 
-function saveNewCustomer() {
-  const name = document.getElementById('ac-name').value.trim();
-  if (!name) { alert('Name is required'); return; }
-  const id = uid();
-  const c = { id, name, phone:document.getElementById('ac-phone').value.trim(), email:document.getElementById('ac-email').value.trim(), address:document.getElementById('ac-addr').value.trim() };
-  db.collection('customers').doc(id).set(c);
-  document.getElementById('add-cust-overlay').style.display='none';
-  showToast('Customer added!');
+let customerSaveKey='';
+async function saveNewCustomer() {
+  const name=document.getElementById('ac-name').value.trim();if(!name){showToast('Name is required.');return;}
+  customerSaveKey=customerSaveKey||'add-customer:'+crypto.randomUUID();
+  const customer={name,phone:document.getElementById('ac-phone').value.trim(),email:document.getElementById('ac-email').value.trim(),address:document.getElementById('ac-addr').value.trim()};
+  try{const saved=await window.EGCBooking.resolveCustomer(customer,customerSaveKey);custsCache=[...custsCache.filter(row=>row.id!==saved.id),saved];document.getElementById('add-cust-overlay').style.display='none';customerSaveKey='';renderCustomersTab();showToast('Customer verified and saved.');}
+  catch(problem){showToast(problem.message||'The customer could not be saved. Retry the same details.');}
 }
-
-function deleteCust(id) {
-  if (!confirm('Remove this customer?')) return;
-  db.collection('customers').doc(id).delete();
-}
+function deleteCust(){showToast('Customer records stay linked to job history. Contact an administrator to resolve duplicate records.');}
 
 /* ═══════════════════════════════════════════════════════
    JOB CARD
@@ -2439,10 +2418,10 @@ function mkJobCard(job) {
     <div class="jcard-actions" id="ja-${job.id}"></div>`;
   const acts = card.querySelector('#ja-'+job.id);
   if (job.status==='scheduled') {
-    const b=document.createElement('button'); b.className='bsm complete'; b.textContent='Mark Complete'; b.onclick=()=>setStatus(job.id,'completed'); acts.appendChild(b);
+    const b=document.createElement('button'); b.className='bsm complete'; b.textContent='Open completion'; b.onclick=()=>setStatus(job.id,'completed'); acts.appendChild(b);
   }
   if (job.status==='completed' && ADMINS.includes(me)) {
-    const b=document.createElement('button'); b.className='bsm approve'; b.textContent='Approve Payment'; b.onclick=()=>setStatus(job.id,'paid'); acts.appendChild(b);
+    const b=document.createElement('button'); b.className='bsm approve'; b.textContent='Record payment'; b.onclick=()=>setStatus(job.id,'paid'); acts.appendChild(b);
   }
   const eb=document.createElement('button'); eb.className='bsm edit'; eb.textContent='Edit'; eb.onclick=()=>openBooking(null,job); acts.appendChild(eb);
   const db=document.createElement('button'); db.className='bsm del'; db.textContent='Delete'; db.onclick=()=>delJob(job.id); acts.appendChild(db);
@@ -2450,33 +2429,25 @@ function mkJobCard(job) {
 }
 
 function setStatus(id, status) {
-  const patch = { status, updatedAt: new Date().toISOString() };
-  if (status === 'completed') patch.pipelineStatus = 'completed';
-  else if (status === 'paid') patch.pipelineStatus = 'paid';
-  else if (status === 'scheduled') patch.pipelineStatus = 'scheduled';
-  db.collection('jobs').doc(id).update(patch);
-  if (typeof logActivity === 'function') logActivity(id, 'Status → ' + cap(status), me);
-
-  // ── Review-request webhook ─────────────────────────────
-  // When a job is marked complete, fire the Zapier Zap that
-  // sends the customer an SMS review request.
-  if (status === 'completed') {
-    const job = loadJobs().find(j => j.id === id);
-    if (job && job.phone) {
-      const firstName = (job.customer || '').split(' ')[0] || job.customer || '';
-      hubFetch('/api/operations-event', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ event: 'review_request', payload: { phone: job.phone, firstName, jobId: job.id } })
-      }).catch(err => console.warn('Review webhook failed:', err));
-    }
+  const job = loadJobs().find(j => j.id === id);
+  if (!job) return;
+  if (['dispatched','arrived','in_progress','completed'].includes(status)) {
+    location.href = job.type === 'walkthrough'
+      ? '/crew/gameplan.html?walkthroughId=' + encodeURIComponent(id)
+      : '/crew/job.html?jobId=' + encodeURIComponent(id);
+    return;
   }
-  // ── End review-request webhook ─────────────────────────
+  if (['paid','invoiced','review_requested'].includes(status)) {
+    if (typeof opsGo === 'function') opsGo('finance');
+    if (typeof showToast === 'function') showToast('Use Estimates & payments to record verified financial activity.');
+    return;
+  }
+  if (status === 'scheduled' && typeof opsGo === 'function') opsGo('schedule');
 }
 
 function delJob(id) {
-  if(!confirm('Delete this appointment?'))return;
-  db.collection('jobs').doc(id).delete();
+  if(typeof opsCancelBooking==='function')return opsCancelBooking(id);
+  showToast('Open Dispatch to cancel this appointment and retain its history.');
 }
 
 function refresh() {
@@ -2492,7 +2463,7 @@ function refresh() {
 let bk = {
   step:1, customer:null, isNew:false,
   type:'walkthrough', date:'', time:'', endTime:'', durationMin:60,
-  assignedTo:'ZacB', address:'', notes:'',
+  assignedTo:'', assignedCrew:[], address:'', notes:'',
   editId:null, _fromLeadId:null
 };
 
@@ -2511,6 +2482,7 @@ function calcDurFromTimes(start, end) {
 }
 
 function openBooking(dateStr, editJob, timeStr) {
+  if(bk.saving||bk.uncertain){showToast('Retry the saved booking before opening another appointment.');return;}
   const eType = editJob?.type || 'walkthrough';
   const eTime = editJob?.time || timeStr || '';
   const eDur = editJob?.durationMin || typeDefaultDur(eType);
@@ -2519,21 +2491,22 @@ function openBooking(dateStr, editJob, timeStr) {
     step: editJob ? 2 : 1,
     customer: null, isNew: false,
     type: eType,
-    date: editJob?.date || dateStr || fmtDate(new Date()),
+    date: editJob?.date || dateStr || new Intl.DateTimeFormat('en-CA',{timeZone:'America/Denver',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date()),
+    endDate:editJob?.endDate||editJob?.date||dateStr||'',original:editJob?structuredClone(editJob):{},operationKey:'legacy-booking:'+crypto.randomUUID(),
     time: eTime,
     endTime: eEnd,
     durationMin: eDur,
-    assignedTo: editJob?.assignedTo || (me==='TylerG'?'TylerG':'ZacB'),
+    assignedTo: editJob?.assignedTo || '',assignedCrew:editJob?.assignedCrew||String(editJob?.assignedTo||'').split(/[,+/&]/).map(x=>x.trim()).filter(Boolean),
     address: editJob?.address || '',
     notes: editJob?.notes || '',
-    editId: editJob?.id || null,
+    recurrence:editJob?.recurrence||'none',editId: editJob?.id || null,
     _fromLeadId: null
   };
 
   if (editJob) {
     const custs = loadCustomers();
-    const found = custs.find(c=>c.name===editJob.customer);
-    bk.customer = found || { id:'legacy', name:editJob.customer||'', email:'', phone:editJob.phone||'', address:editJob.address||'' };
+    const found = custs.find(c=>c.id===editJob.customerId);
+    bk.customer = found || { id:editJob.customerId||'', name:editJob.customer||'', email:editJob.email||'', phone:editJob.phone||'', address:editJob.address||'',highlevelContactId:editJob.highlevelContactId||'' };
   }
 
   document.getElementById('bk-title').textContent = editJob ? 'Edit Appointment' : 'Book Appointment';
@@ -2544,7 +2517,7 @@ function openBooking(dateStr, editJob, timeStr) {
   renderStep();
 }
 
-function closeBooking() { document.getElementById('booking-overlay').classList.remove('open'); }
+function closeBooking() {if(bk.saving||bk.uncertain){showToast('Retry and verify the saved booking before closing.');return;}document.getElementById('booking-overlay').classList.remove('open');}
 function overlayClick(e) { if(e.target===document.getElementById('booking-overlay')) closeBooking(); }
 
 function renderStep() {
@@ -2571,12 +2544,12 @@ function renderStep() {
 }
 
 function stepNext() {
+  if(bk.saving)return;if(bk.uncertain){confirmBooking();return;}
   if (bk.step===1) {
     if (bk.isNew) {
       const name=document.getElementById('nc-name').value.trim();
       if (!name) { showErr('Please enter a customer name.'); return; }
-      const nc = { id:uid(), name, phone:document.getElementById('nc-phone').value.trim(), email:document.getElementById('nc-email').value.trim(), address:document.getElementById('nc-addr').value.trim() };
-      db.collection('customers').doc(nc.id).set(nc);
+      const nc = { name, phone:document.getElementById('nc-phone').value.trim(), email:document.getElementById('nc-email').value.trim(), address:document.getElementById('nc-addr').value.trim() };
       bk.customer=nc; bk.isNew=false;
     }
     if (!bk.customer) { showErr('Please select or add a customer.'); return; }
@@ -2584,12 +2557,13 @@ function stepNext() {
   } else if (bk.step===2) {
     bk.date=document.getElementById('b-date').value;
     bk.time=document.getElementById('b-time').value;
+    bk.endDate=document.getElementById('b-enddate').value||bk.date;
     bk.endTime=document.getElementById('b-endtime').value;
     bk.durationMin=calcDurFromTimes(bk.time,bk.endTime);
     bk.address=document.getElementById('b-addr').value.trim();
     bk.notes=document.getElementById('b-notes').value.trim();
     bk.recurrence=document.getElementById('job-recurrence').value||'none';
-    if (!bk.date) { showErr('Please pick a date.'); return; }
+    if (!bk.date||!bk.time||!bk.endTime) { showErr('Choose a date, start time and end time in Mountain Time.'); return; }
     bk.step=3;
   } else if (bk.step===3) {
     confirmBooking();
@@ -2598,7 +2572,7 @@ function stepNext() {
   renderStep();
 }
 
-function stepBack() { if(bk.step>1){ bk.step--; renderStep(); } }
+function stepBack() { if(bk.saving||bk.uncertain)return;if(bk.step>1){ bk.step--; renderStep(); } }
 
 /* Step 1 helpers */
 function renderCustList(q) {
@@ -2646,21 +2620,23 @@ function toggleNewCust() {
 
 /* Step 2 helpers */
 function fillDetails() {
-  document.getElementById('b-date').value=bk.date||fmtDate(new Date());
+  document.getElementById('b-date').value=bk.date;
+  document.getElementById('b-enddate').value=bk.endDate||bk.date;
   document.getElementById('b-time').value=bk.time||'';
   document.getElementById('b-endtime').value=bk.endTime||calcEndTime(bk.time,bk.durationMin||typeDefaultDur(bk.type));
   document.getElementById('b-addr').value=bk.address||bk.customer?.address||'';
   document.getElementById('b-notes').value=bk.notes||'';
   document.getElementById('job-recurrence').value=bk.recurrence||'none';
-  selAssignee(bk.assignedTo);
-  selType(bk.type);
+  bookingCrew('booking-crew',bk);
+  selType(bk.type,true);
 }
 
 function typeDefaultDur(t) { return t==='walkthrough'?30:t==='reorg'?150:90; }
 function typeLabel(t) { return t==='walkthrough'?'Walk-Through':t==='reorg'?'Reorganization':'Cleanout'; }
 function typeServiceLabel(t) { return t==='walkthrough'?'Walk-Through':t==='reorg'?'Garage Reorganization':'Garage Cleanout'; }
 
-function selType(t) {
+function selType(t,preserve=false) {
+  if(bk.saving||bk.uncertain)return;if(bk.editId&&!preserve){showErr('Appointment type is fixed after creation. Use a walkthrough handoff to create sold work.');return;}
   if(t==='job') t='cleanout';
   bk.type=t;
   document.getElementById('tp-walk').classList.toggle('selected',t==='walkthrough');
@@ -2669,20 +2645,25 @@ function selType(t) {
   const dur=typeDefaultDur(t);
   bk.durationMin=dur;
   const startTime=document.getElementById('b-time').value||bk.time;
-  if(startTime) {
+  if(startTime&&!preserve) {
     const end=calcEndTime(startTime,dur);
     document.getElementById('b-endtime').value=end;
     bk.endTime=end;
   }
 }
 
-function selAssignee(who) {
-  bk.assignedTo=who;
-  ['ZacB','TylerG','Both'].forEach(w=>{
-    const id=w==='ZacB'?'as-Zac':w==='TylerG'?'as-Tyler':'as-Both';
-    document.getElementById(id).classList.toggle('selected',w===who);
-  });
+async function bookingCrew(hostId,state){
+  const host=document.getElementById(hostId);if(!host)return;host._crewState=state;host.replaceChildren();
+  const note=document.createElement('p');note.textContent='Loading active crew…';host.append(note);
+  try{
+    const roster=await window.EGCBooking.roster();if(!host.isConnected||host._crewState!==state)return;
+    state.assignedCrew=(state.assignedCrew||[]).map(value=>{const text=String(value).toLowerCase(),matches=roster.filter(row=>row.id===text||String(row.name||'').toLowerCase()===text);return matches.length===1?matches[0].id:value;});
+    host.replaceChildren();const selected=new Set(state.assignedCrew),rows=[...roster,...state.assignedCrew.filter(id=>!roster.some(row=>row.id===id)).map(id=>({id,name:id+' (not active; remove before saving)'}))];
+    for(const person of rows){const label=document.createElement('label'),box=document.createElement('input'),name=document.createElement('span');label.className='egc-crew-choice';box.type='checkbox';box.checked=selected.has(person.id);box.value=person.id;box.onchange=()=>{if(state.saving||state.uncertain){box.checked=!box.checked;return;}if(box.checked)selected.add(person.id);else selected.delete(person.id);state.assignedCrew=[...selected];state.assignedTo=state.assignedCrew.join(', ');};name.textContent=person.name||person.id;label.append(box,name);host.append(label);}
+    if(!rows.length){note.textContent='No active employees. Leave the job unassigned and update the roster in People.';host.append(note);}
+  }catch(problem){note.textContent=problem.message||'Crew could not be loaded.';const retry=document.createElement('button');retry.type='button';retry.textContent='Retry crew list';retry.onclick=()=>bookingCrew(hostId,state);host.append(retry);}
 }
+function selAssignee(who){if(bk.saving||bk.uncertain)return;bk.assignedCrew=Array.isArray(who)?who:[who];bk.assignedTo=bk.assignedCrew.join(', ');bookingCrew('booking-crew',bk);}
 
 /* Step 3 helpers */
 function renderReview() {
@@ -2710,106 +2691,21 @@ function renderReview() {
 }
 
 /* Confirm */
+function legacyBookingControls(rootId,busy,uncertain=false){
+  const root=document.getElementById(rootId);if(!root)return;
+  root.querySelectorAll('button,input,select,textarea').forEach(control=>{control.disabled=busy||uncertain&&!['btn-next','oc-next'].includes(control.id);});
+}
 async function confirmBooking() {
-  const btn=document.getElementById('btn-next');
-  btn.disabled=true; btn.textContent='Saving…';
-
-  const c=bk.customer;
-  const addr=bk.address||c.address||'';
-  const jobId = bk.editId||uid();
-  const existing = bk.editId ? jobsCache.find(j=>j.id===bk.editId) : null;
-  const recurrence = bk.recurrence || 'none';
-  const job = {
-    id: jobId,
-    type: bk.type,
-    serviceType: typeServiceLabel(bk.type),
-    date: bk.date,
-    time: bk.time,
-    endTime: bk.endTime || '',
-    durationMin: bk.durationMin || 60,
-    customer: c.name,
-    phone: c.phone||'',
-    email: c.email||'',
-    address: addr,
-    assignedTo: bk.assignedTo,
-    notes: bk.notes,
-    recurrence,
-    status: existing?.status || 'scheduled',
-    pipelineStatus: existing?.pipelineStatus || 'scheduled',
-    createdBy: me,
-    createdAt: existing?.createdAt || new Date().toISOString(),
-    updatedAt: new Date().toISOString()
-  };
-
-  await db.collection('jobs').doc(jobId).set(job);
-
-  // Generate recurring instances for new (non-edit) appointments
-  if (!bk.editId && recurrence !== 'none') {
-    const recurrenceConfig = {
-      weekly:    { daysStep: 7,   count: 8 },
-      biweekly:  { daysStep: 14,  count: 6 },
-      monthly:   { daysStep: null, monthStep: 1, count: 6 },
-      quarterly: { daysStep: null, monthStep: 3, count: 4 },
-    };
-    const cfg = recurrenceConfig[recurrence];
-    if (cfg) {
-      const baseDate = new Date(bk.date + 'T12:00:00');
-      const saves = [];
-      for (let i = 1; i <= cfg.count; i++) {
-        const nextDate = new Date(baseDate);
-        if (cfg.daysStep) {
-          nextDate.setDate(nextDate.getDate() + cfg.daysStep * i);
-        } else {
-          nextDate.setMonth(nextDate.getMonth() + cfg.monthStep * i);
-        }
-        const instanceId = uid();
-        saves.push(db.collection('jobs').doc(instanceId).set({
-          ...job,
-          id: instanceId,
-          date: fmtDate(nextDate),
-          parentJobId: jobId,
-          isRecurring: true,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        }));
-      }
-      await Promise.all(saves);
-    }
-  }
-
-  // If booked from a lead: mark lead as booked + fire Zap 6
-  if (bk._fromLeadId) {
-    db.collection('leads').doc(bk._fromLeadId).update({
-      status: 'booked', bookedAt: new Date().toISOString(), jobId
-    });
-    fireWebhook(CFG.ZAP6_BOOKING_WEBHOOK, {
-      leadId: bk._fromLeadId, jobId,
-      name: job.customer, phone: job.phone, email: job.email,
-      date: job.date, time: job.time, address: job.address
-    });
-  }
-
-  // Send email
-  const sendEmail=document.getElementById('send-email')?.checked && c.email;
-  if (sendEmail) {
-    const es=document.getElementById('email-status');
-    es.style.display='block'; es.className=''; es.classList.add('sending'); es.textContent='Sending confirmation…';
-    try {
-      await sendBookingConfirmation(jobId);
-      es.className=''; es.classList.add('sent'); es.textContent='Confirmation sent to '+c.email;
-      await new Promise(r=>setTimeout(r,1200));
-    } catch(err) {
-      console.error('EmailJS error:', err);
-      const detail = err?.text || err?.message || JSON.stringify(err);
-      es.className=''; es.classList.add('fail'); es.textContent='Email failed: ' + detail;
-      await new Promise(r=>setTimeout(r,3000));
-    }
-  }
-
-  btn.disabled=false;
-  closeBooking();
-  refresh();
-  showToast(bk.editId?'Appointment updated!':'Appointment booked!');
+  if(bk.saving)return;const btn=document.getElementById('btn-next'),c=bk.customer;if(!c)return;bk.saving=true;legacyBookingControls('booking-overlay',true);btn.textContent='Saving verified schedule…';
+  const job=bk.submitted||{id:bk.operationKey,type:bk.type==='walkthrough'?'walkthrough':'job',serviceType:typeServiceLabel(bk.type),date:bk.date,time:bk.time,endDate:bk.endDate||bk.date,endTime:bk.endTime,customerId:bk.original?.customerId||(!c._isLead&&!c.fromSheet?c.id:undefined),customer:c.name,phone:c.phone||'',email:c.email||'',address:bk.address||c.address||'',assignedCrew:bk.assignedCrew||[],crewNeeded:Math.max(1,bk.assignedCrew?.length||1),notes:bk.notes||'',recurrence:bk.recurrence||'none',highlevelContactId:c.highlevelContactId||''};bk.submitted=job;
+  try{
+    const result=await window.EGCBooking.saveSeries(job,bk.original||{},{operationKey:bk.operationKey});
+    jobsCache=[...jobsCache.filter(row=>!result.visits.some(visit=>visit.id===row.id)),...result.visits.map(visit=>({...bk.original,...visit}))];
+    bk.uncertain=false;bk.saving=false;bk.submitted=null;let notice=result.warning||(bk.editId?'Appointment updated in Dispatch.':result.visits.length+' appointment(s) saved in Dispatch.');
+    if(document.getElementById('send-email')?.checked&&c.email){try{await sendBookingConfirmation(result.job.id);notice+=' Confirmation sent.';}catch(problem){notice+=' Confirmation was not sent: '+problem.message;}}
+    closeBooking();refresh();showToast(notice);
+  }catch(problem){bk.saving=false;bk.uncertain=window.EGCBooking.recoveries().some(row=>row.key==='series:'+bk.operationKey||row.key.includes(bk.operationKey));if(!bk.uncertain)bk.submitted=null;document.getElementById('step-err').textContent=problem.message||'The booking could not be verified. Retry before leaving.';btn.textContent=bk.uncertain?'Retry original booking':'Retry booking';}
+  finally{legacyBookingControls('booking-overlay',false,bk.uncertain);}
 }
 
 /* ═══════════════════════════════════════════════════════
@@ -2824,7 +2720,7 @@ function showToast(msg) {
 /* ═══════════════════════════════════════════════════════
    HELPERS
 ═══════════════════════════════════════════════════════ */
-function showErr(m) { const e=document.getElementById('step-err'); e.textContent=m; setTimeout(()=>e.textContent='',3000); }
+function showErr(m) { document.getElementById('step-err').textContent=m; }
 function clearErr() { document.getElementById('step-err').textContent=''; }
 function fmtDate(d) { return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
 function fmtTime(t) { if(!t)return''; const[h,m]=t.split(':').map(Number); return(h%12||12)+':'+String(m).padStart(2,'0')+(h>=12?' PM':' AM'); }
@@ -2864,7 +2760,7 @@ function selectMode(mode) {
 /* ═══════════════════════════════════════════════════════
    ON-CALL FLOW
 ═══════════════════════════════════════════════════════ */
-let oc = { step:1, customer:null, isNew:false, quote:{ space:'garage', size:'medium', fill:'moderate', specials:{}, cubicYards:0, floors:0, distanceMiles:0, custAddr:'' }, booking:{ assignedTo:'TylerG' } };
+let oc = { step:1, customer:null, isNew:false, quote:{ space:'garage', size:'medium', fill:'moderate', specials:{}, cubicYards:0, floors:0, distanceMiles:0, custAddr:'' }, booking:{ assignedTo:'',assignedCrew:[] } };
 
 const SPECIALS = [
   { id:'fridge',     name:'Refrigerator',   price:60, icon:'' },
@@ -2877,9 +2773,10 @@ const SPECIALS = [
 ];
 
 function openOnCall() {
+  if(oc.booking?.saving||oc.booking?.uncertain){showToast('Retry the saved booking first.');return;}
   oc = { step:1, customer:null, isNew:false,
     quote:{ space:'garage', size:'medium', fill:'moderate', specials:{}, cubicYards:0, floors:0, distanceMiles:0, custAddr:'' },
-    booking:{ assignedTo: me==='TylerG'?'TylerG':'ZacB' }
+    booking:{ assignedTo:'',assignedCrew:[],operationKey:'phone-booking:'+crypto.randomUUID() }
   };
   document.getElementById('oncall-overlay').classList.add('open');
   // Legacy Firestore leads are intentionally excluded after the HighLevel reset.
@@ -2889,6 +2786,7 @@ function openOnCall() {
 }
 
 function exitCall() {
+  if(oc.booking?.saving||oc.booking?.uncertain){showToast('Retry and verify this booking before leaving.');return;}
   document.getElementById('oncall-overlay').classList.remove('open');
   showModeSelect();
 }
@@ -2912,12 +2810,12 @@ function renderOcStep() {
 }
 
 function ocNext() {
+  if(oc.booking?.saving)return;if(oc.booking?.uncertain){ocBook();return;}
   if (oc.step===1) {
     if (oc.isNew) {
       const name = document.getElementById('oc-nc-name')?.value.trim();
       if (!name) { alert('Please enter a customer name.'); return; }
-      oc.customer = { id:uid(), name, phone:document.getElementById('oc-nc-phone')?.value.trim()||'', email:document.getElementById('oc-nc-email')?.value.trim()||'', address:document.getElementById('oc-nc-addr')?.value.trim()||'' };
-      db.collection('customers').doc(oc.customer.id).set(oc.customer);
+      oc.customer = { name, phone:document.getElementById('oc-nc-phone')?.value.trim()||'', email:document.getElementById('oc-nc-email')?.value.trim()||'', address:document.getElementById('oc-nc-addr')?.value.trim()||'' };
     }
     if (!oc.customer) { alert('Please select or add a customer.'); return; }
     oc.step = 2;
@@ -2929,7 +2827,7 @@ function ocNext() {
   renderOcStep();
 }
 
-function ocBack() { if (oc.step>1) { oc.step--; renderOcStep(); } }
+function ocBack() { if(oc.booking?.saving||oc.booking?.uncertain)return;if (oc.step>1) { oc.step--; renderOcStep(); } }
 
 /* ─── Step 1: Customer ─────────────────────────────── */
 function ocStep1(body) {
@@ -3258,64 +3156,35 @@ function ocStep3(body) {
     </div>
     <div class="frow">
       <div class="fg" style="margin:0"><label>Date *</label><input type="date" id="oc-date" value="${fmtDate(new Date())}"></div>
-      <div class="fg" style="margin:0"><label>Start Time</label><input type="time" id="oc-time"></div>
+      <div class="fg" style="margin:0"><label>Start (Mountain)</label><input type="time" id="oc-time"></div>
       <div class="fg" style="margin:0"><label>End Time</label><input type="time" id="oc-endtime"></div>
     </div>
     <div class="fg" style="margin-top:.65rem">
-      <label>Assigned To</label>
-      <div class="assignees">
-        <div class="asgn${oc.booking.assignedTo==='ZacB'?' selected':''}"   id="ocas-Z" onclick="ocAsgn('ZacB')">  <div class="aav" style="background:linear-gradient(135deg,var(--accent),#f59e0b)">Z</div>ZacB</div>
-        <div class="asgn${oc.booking.assignedTo==='TylerG'?' selected':''}" id="ocas-T" onclick="ocAsgn('TylerG')"><div class="aav" style="background:linear-gradient(135deg,#3b82f6,#8b5cf6)">T</div>TylerG</div>
-        <div class="asgn${oc.booking.assignedTo==='Both'?' selected':''}"   id="ocas-B" onclick="ocAsgn('Both')">  <div class="aav" style="background:linear-gradient(135deg,#22c55e,#3b82f6)">B</div>Both</div>
-      </div>
+      <label>Assigned crew</label><div id="oncall-crew" class="egc-crew-options" aria-label="Assigned crew"></div>
     </div>
     <div class="fg"><label>Address</label><input type="text" id="oc-addr" value="${esc(c.address||'')}" placeholder="123 Main St, Fort Collins, CO"></div>
     <div class="fg"><label>Notes</label><textarea id="oc-notes">Quote discussed: $${low}–$${high}. ${SPECIALS.filter(s=>(oc.quote.specials[s.id]||0)>0).map(s=>s.name+' ×'+oc.quote.specials[s.id]).join(', ')}</textarea></div>
-    ${c.email ? `<div class="email-toggle-row"><input type="checkbox" id="oc-email" checked><label for="oc-email">Send confirmation email<span class="esub">${esc(c.email)}</span></label></div>` : ''}`;
+    ${c.email ? `<div class="email-toggle-row"><input type="checkbox" id="oc-email" checked><label for="oc-email">Send confirmation email<span class="esub">${esc(c.email)}</span></label></div>` : ''}<p id="oc-booking-error" role="alert"></p>`;
+  bookingCrew('oncall-crew',oc.booking);
 }
 
-function ocAsgn(who) {
-  oc.booking.assignedTo = who;
-  ['ZacB','TylerG','Both'].forEach(w => {
-    document.getElementById('ocas-'+(w==='ZacB'?'Z':w==='TylerG'?'T':'B'))?.classList.toggle('selected', w===who);
-  });
-}
+function ocAsgn(who){if(oc.booking.saving||oc.booking.uncertain)return;oc.booking.assignedCrew=Array.isArray(who)?who:[who];oc.booking.assignedTo=oc.booking.assignedCrew.join(', ');bookingCrew('oncall-crew',oc.booking);}
 
 async function ocBook() {
-  const btn = document.getElementById('oc-next');
-  btn.disabled = true; btn.textContent = 'Booking…';
-  const date = document.getElementById('oc-date')?.value;
-  if (!date) { btn.disabled=false; btn.textContent='Book Appointment'; alert('Please pick a date.'); return; }
-  const { low, high } = calcQuote();
-  const c = oc.customer;
-  const jobId = uid();
-  const job = {
-    id: jobId,
-    type: document.getElementById('oc-type')?.value || 'walkthrough',
-    date,
-    time: document.getElementById('oc-time')?.value || '',
-    endTime: document.getElementById('oc-endtime')?.value || '',
-    durationMin: calcDurFromTimes(document.getElementById('oc-time')?.value, document.getElementById('oc-endtime')?.value),
-    customer: c.name, phone: c.phone||'', email: c.email||'',
-    address: document.getElementById('oc-addr')?.value.trim() || c.address || '',
-    assignedTo: oc.booking.assignedTo,
-    notes: document.getElementById('oc-notes')?.value.trim() || '',
-    quote: `$${low}–$${high}`,
-    priceQuoted: Math.round((low + high) / 2),
-    quoteStatus: 'sent',
-    pipelineStatus: 'scheduled',
-    status: 'scheduled', createdBy: me, createdAt: new Date().toISOString()
-  };
-  await db.collection('jobs').doc(jobId).set(job);
-  if (document.getElementById('oc-email')?.checked && c.email) {
-    try {
-      await sendBookingConfirmation(jobId);
-    } catch(e) { console.error('Email failed:', e); }
-  }
-  document.getElementById('oncall-overlay').classList.remove('open');
-  showToast('Booked for ' + c.name + '!');
-  bootDashboard();
+  const state=oc.booking;if(state.saving)return;const btn=document.getElementById('oc-next'),c=oc.customer,date=document.getElementById('oc-date')?.value;
+  if(!date){document.getElementById('oc-booking-error').textContent='Choose a date.';return;}
+  const {low,high}=calcQuote();state.operationKey=state.operationKey||'phone-booking:'+crypto.randomUUID();
+  const job=state.submitted||{id:state.operationKey,type:document.getElementById('oc-type')?.value||'walkthrough',customerId:!c._isLead&&!c.fromSheet?c.id:undefined,customer:c.name,phone:c.phone||'',email:c.email||'',highlevelContactId:c.highlevelContactId||'',date,time:document.getElementById('oc-time')?.value||'',endDate:date,endTime:document.getElementById('oc-endtime')?.value||'',address:document.getElementById('oc-addr')?.value.trim()||c.address||'',assignedCrew:state.assignedCrew||[],crewNeeded:Math.max(1,state.assignedCrew?.length||1),notes:(document.getElementById('oc-notes')?.value.trim()||'')+'\nPhone estimate discussed: $'+low+'–$'+high+'. Confirm the scope and agreed price before work.'};
+  if(!job.time||!job.endTime){document.getElementById('oc-booking-error').textContent='Choose start and end times in Mountain Time.';return;}
+  state.saving=true;state.submitted=job;legacyBookingControls('oncall-overlay',true);btn.textContent='Checking schedule…';
+  try{const saved=await window.EGCBooking.save(job,{}, {operationKey:state.operationKey});jobsCache=[...jobsCache.filter(row=>row.id!==saved.id),saved];state.uncertain=false;state.saving=false;state.submitted=null;let notice='Appointment saved in Dispatch.';
+    if(document.getElementById('oc-email')?.checked&&c.email){try{await sendBookingConfirmation(saved.id);notice+=' Confirmation sent.';}catch(problem){notice+=' Confirmation was not sent: '+problem.message;}}
+    document.getElementById('oncall-overlay').classList.remove('open');showToast(notice);bootDashboard();
+  }catch(problem){state.saving=false;state.uncertain=Boolean(window.EGCBooking.pending(state.operationKey)||window.EGCBooking.pending('customer:'+state.operationKey));if(!state.uncertain)state.submitted=null;document.getElementById('oc-booking-error').textContent=problem.message;btn.textContent=state.uncertain?'Retry original booking':'Retry booking';}
+  finally{legacyBookingControls('oncall-overlay',false,state.uncertain);}
 }
+
+window.addEventListener('egc:booking-recovered',event=>{const key=event.detail?.operationKey||'';if(bk.uncertain&&(key==='series:'+bk.operationKey||key.includes(bk.operationKey))){bk.uncertain=false;bk.saving=false;closeBooking();}if(oc.booking?.uncertain&&key.includes(oc.booking.operationKey)){oc.booking.uncertain=false;oc.booking.saving=false;document.getElementById('oncall-overlay').classList.remove('open');}refresh();});
 </script>
 <script>
   // Load Google Maps JS API dynamically so CFG.GOOGLE_MAPS_KEY is available
@@ -3331,7 +3200,15 @@ async function ocBook() {
 <link rel="stylesheet" href="employee-operations.css?v=20260922intelligence">
 <script src="employee-recordings.js?v=20260921"></script>
 <script src="employee-operations.js?v=20260922intelligence"></script>
-<script src="employee-suite.js?v=20260922booking"></script>
+<link rel="stylesheet" href="employee-dispatch.css?v=20260922ops">
+<link rel="stylesheet" href="employee-field-today.css?v=20260922ops">
+<link rel="stylesheet" href="employee-availability.css?v=20260922ops">
+<script src="employee-dispatch.js?v=20260922ops"></script>
+<link rel="stylesheet" href="employee-booking.css?v=20260922ops">
+<script src="employee-booking.js?v=20260922ops"></script>
+<script src="employee-field-today.js?v=20260922ops"></script>
+<script src="employee-availability.js?v=20260922ops"></script>
+<script src="employee-suite.js?v=20260922ops"></script>
 
 <div class="egc-portal-foot" style="background:#0a1628;border-top:1px solid rgba(255,255,255,.08);padding:14px 18px;text-align:center;font-size:12px;color:rgba(245,241,234,.55)">
   <a href="/privacy-policy" style="color:#ff5b1f;margin:0 8px">Privacy</a> · <a href="/" style="color:#ff5b1f">Home</a> · Employee portal — internal use only

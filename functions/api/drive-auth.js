@@ -20,7 +20,7 @@
  *  5. Save as GOOGLE_REFRESH_TOKEN (secret). This endpoint then returns 404.
  */
 
-import { createHubActionState, getHubSession, verifyHubActionState } from '../_lib/hub-session.js';
+import { createHubActionState, getHubSession, getHubUserProfile, hasBusinessAccess, verifyHubActionState } from '../_lib/hub-session.js';
 
 const SCOPE = 'https://www.googleapis.com/auth/drive.file';
 const AUTH_URL = 'https://accounts.google.com/o/oauth2/v2/auth';
@@ -30,7 +30,7 @@ const page = (title, body, status = 200) => new Response(
   `<!doctype html><meta charset="utf-8"><meta name="robots" content="noindex"><title>${title}</title>
    <body style="font-family:system-ui;max-width:640px;margin:40px auto;padding:0 16px;line-height:1.5">
    <h2>${title}</h2>${body}</body>`,
-  { status, headers: { 'Content-Type': 'text/html', 'Cache-Control': 'no-store' } });
+  { status, headers: { 'Content-Type': 'text/html', 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer', 'X-Content-Type-Options': 'nosniff' } });
 
 export async function onRequestGet({ request, env }) {
   if (env.GOOGLE_REFRESH_TOKEN) return new Response('Not found', { status: 404 });
@@ -46,6 +46,7 @@ export async function onRequestGet({ request, env }) {
   if (!code) {
     const session = await getHubSession(request, env);
     if (!session) return page('Drive setup — sign in required','<p>Sign in to the EGC Hub, then open this setup link again.</p>',401);
+    if (!hasBusinessAccess(session)) return page('Drive setup — business access required','<p>Only an EGC manager can connect business integrations.</p>',403);
     const state = await createHubActionState(env, 'drive-oauth', session.user);
     const auth = `${AUTH_URL}?client_id=${encodeURIComponent(env.GOOGLE_CLIENT_ID)}` +
       `&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code` +
@@ -54,7 +55,8 @@ export async function onRequestGet({ request, env }) {
     return Response.redirect(auth, 302);
   }
 
-  if (!await verifyHubActionState(env, url.searchParams.get('state'), 'drive-oauth')) {
+  const state = await verifyHubActionState(env, url.searchParams.get('state'), 'drive-oauth');
+  if (!state || !hasBusinessAccess(getHubUserProfile(env, state.user))) {
     return page('Drive setup — expired or invalid','<p>Return to the EGC Hub and start the Drive connection again.</p>',403);
   }
 
@@ -72,11 +74,11 @@ export async function onRequestGet({ request, env }) {
   const data = await resp.json().catch(() => ({}));
   if (!resp.ok || !data.refresh_token) {
     return page('Drive setup — exchange failed',
-      `<p>Google returned ${resp.status}.</p><pre>${JSON.stringify(data).slice(0, 500)}</pre>
+      `<p>Google returned ${resp.status}.</p><pre>The provider did not complete the connection. Return to the Hub and restart setup.</pre>
        <p>If there's no refresh_token, remove the app at myaccount.google.com/permissions and retry (prompt=consent needs a fresh grant).</p>`);
   }
   return page('Drive connected — one step left',
     `<p>Copy this refresh token into Cloudflare Pages env as <code>GOOGLE_REFRESH_TOKEN</code> (mark it a secret), then redeploy:</p>
-     <pre style="background:#eee;padding:12px;border-radius:8px;white-space:pre-wrap;word-break:break-all">${data.refresh_token}</pre>
+     <pre style="background:#eee;padding:12px;border-radius:8px;white-space:pre-wrap;word-break:break-all">${String(data.refresh_token).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}</pre>
      <p>This page disables itself once that variable is set.</p>`);
 }

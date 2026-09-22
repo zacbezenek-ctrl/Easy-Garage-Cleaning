@@ -5,7 +5,8 @@ import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
-// Exercise the actual gate, central-job loader and boot statements, using a
+// Exercise retained manager workflows and crew redirection through the actual gate,
+// central-job loader and boot statements, using a
 // deferred auth adapter to model the network/custom-token sign-in boundary.
 const here = path.dirname(fileURLToPath(import.meta.url));
 const site = path.resolve(here, '..');
@@ -15,7 +16,7 @@ function deferred() {
   const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
   return { promise, resolve, reject };
 }
-function harness(page, { jobId = 'job-test', readError = null, missing = false, handoff = null, draft = null, owner = 'crewtest', scopedDraft = null } = {}) {
+function harness(page, { jobId = 'job-test', readError = null, missing = false, handoff = null, draft = null, owner = 'crewtest', scopedDraft = null, business = true } = {}) {
   const html = fs.readFileSync(path.join(site, 'crew', `${page}.html`), 'utf8');
   const gate = [...html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/g)].map(match => match[1]).find(script => script.includes('async function gateLogin()'));
   const centralLoader = html.split(/\r?\n/).find(line => line.startsWith('async function loadCentralJob(){'));
@@ -45,9 +46,11 @@ function harness(page, { jobId = 'job-test', readError = null, missing = false, 
   const context = vm.createContext({
     document: { getElementById: element, querySelector: () => element('unlock'), addEventListener: (type, handler) => listeners.set(type, handler) },
     localStorage: { getItem: key => storage.get(key) || null, setItem: (key, value) => storage.set(key, value) },
-    location: { search: jobId ? '?job=' + jobId : '', reload: () => state.reloads++ },
+    location: { search: jobId ? '?job=' + jobId : '', reload: () => state.reloads++, replace: value => { state.redirect = value; } },
     URLSearchParams,
     EGCHubAuth: {
+      profile: () => ({ user: owner }),
+      canRunBusiness: () => business,
       session: () => session.promise,
       signIn: async (username, password) => {
         assert.equal(username, 'crewtest');
@@ -102,6 +105,16 @@ function harness(page, { jobId = 'job-test', readError = null, missing = false, 
 }
 
 for (const page of ['prejob', 'postjob']) {
+  test(page+': crew direct links open secure execution without raw Firestore or draft access',async()=>{
+    const h=harness(page,{business:false,draft:{fields:{j_name:'Legacy private data'}}});
+    h.state.ready=true;h.session.resolve('crewtest');await flush();
+    assert.equal(h.state.redirect,'/crew/job.html?jobId=job-test');
+    assert.equal(h.state.reads,0);assert.equal(h.state.restored,0);assert.deepEqual(h.state.effects,[]);
+  });
+  test(page+': crew without a selected job opens the current assigned day',async()=>{
+    const h=harness(page,{business:false,jobId:''});h.state.ready=true;h.session.resolve('crewtest');await flush();
+    assert.equal(h.state.redirect,'/crew/job.html');assert.equal(h.state.reads,0);assert.equal(h.state.restored,0);
+  });
   test(`${page}: fresh direct job link loads automatically after full sign-in`, async () => {
     const h = harness(page);
     h.session.resolve(null);

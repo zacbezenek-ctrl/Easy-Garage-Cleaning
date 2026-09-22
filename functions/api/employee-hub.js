@@ -3,6 +3,8 @@ import { firebaseServiceAccountConfigured, firestoreFetch } from '../_lib/fireba
 import { employeeVaultSecret, employeeVaultReadOnly } from '../_lib/employee-vault-key.js';
 import { createJobAssignmentAccess } from '../_lib/job-assignment.js';
 import { listEmployeeApplications, normalizeEmployeeUsername } from '../_lib/employee-accounts.js';
+import { activeTimecard, authorizeTimecard, timecardError } from '../_lib/employee-timecards.js';
+import { activeJobSegment, employeeJobTime, ownJobTimeProjection } from '../_lib/employee-job-time.js';
 
 const PROJECT_ID = 'egcw-1ec83';
 const RECORD_TYPE = 'employee_hub_v2';
@@ -119,7 +121,7 @@ async function readJob(env, id) {
   if (response.status === 404) return null;
   if (!response.ok) throw new Error(`Job access check failed (${response.status})`);
   const document = await response.json();
-  return Object.fromEntries(Object.entries(document.fields || {}).map(([key, value]) => [key, decodeValue(value)]));
+  return { ...Object.fromEntries(Object.entries(document.fields || {}).map(([key, value]) => [key, decodeValue(value)])), id: safeId, __updateTime: document.updateTime || '' };
 }
 
 function parseFirestoreDocument(document) {
@@ -131,7 +133,7 @@ function parseFirestoreDocument(document) {
     payload: valueOf(fields.sealedPayload),
     iv: valueOf(fields.sealedIv),
   };
-  if (!stored.documentId || !COLLECTIONS.has(stored.collection) ||
+  if (!stored.documentId || !(COLLECTIONS.has(stored.collection) || stored.collection === 'timeLocks') ||
       valueOf(fields.recordType) !== RECORD_TYPE ||
       valueOf(fields.vaultId) !== stored.documentId ||
       valueOf(fields.schemaVersion) !== 2 ||
@@ -153,7 +155,8 @@ async function openStored(env, stored) {
 
 async function readOne(env, collection, id) {
   const documentId = await opaqueId(env, collection, id);
-  const url = `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents/jobs/${encodeURIComponent(documentId)}`;
+  const physicalCollection = collection === 'timeLocks' ? 'employee_time_locks' : 'jobs';
+  const url = `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents/${physicalCollection}/${encodeURIComponent(documentId)}`;
   const response = await firestoreFetch(env, url);
   if (response.status === 404) return { documentId, data: null };
   if (!response.ok) throw new Error(`Employee Hub storage read failed (${response.status})`);
@@ -183,6 +186,7 @@ async function readAll(env) {
       continue;
     }
     const stored = parseFirestoreDocument(row.document);
+    if (!COLLECTIONS.has(stored.collection)) throw unreadableStorage();
     decoded.push({ collection: stored.collection, data: await openStored(env, stored) });
   }
   return decoded;
@@ -213,13 +217,74 @@ async function writeOne(env, collection, id, data, expected = null) {
     const failure = await response.json().catch(() => ({}));
     if (expected && ([409, 412].includes(response.status) ||
         ['FAILED_PRECONDITION', 'ABORTED', 'ALREADY_EXISTS', 'NOT_FOUND'].includes(failure.error?.status))) {
-      const conflict = new Error('Employee profile changed while saving. Please retry.');
+      const conflict = new Error('Employee record changed while saving. Refresh and retry.');
       conflict.code = 'EMPLOYEE_HUB_WRITE_CONFLICT';
       throw conflict;
     }
     throw new Error(`Employee Hub storage write failed (${response.status})`);
   }
   return { ...data, id, updatedAt: data.updatedAt || updatedAt };
+}
+
+function expectedDocument(target) {
+  if (!target.data) return { exists: false };
+  if (!target.updateTime) throw unreadableStorage();
+  return { updateTime: target.updateTime };
+}
+
+async function writeTimecard(env, session, id, data, target) {
+  if (data === target.data) return data;
+  let assignedJobGuard = null;
+  const segment = activeJobSegment(data), previousSegment = activeJobSegment(target.data);
+  if (segment?.jobId && segment.id !== previousSegment?.id) {
+    const job = await readJob(env, segment.jobId);
+    if (!job || job.type !== 'job' || job.recordType || ['completed', 'invoiced', 'paid', 'review_requested', 'cancelled', 'canceled'].includes(job.pipelineStatus || job.status) || !await createJobAssignmentAccess(env, session).assigned(job)) throw timecardError('New job time is limited to your currently assigned active jobs.', 403);
+    if (!job.__updateTime) throw unreadableStorage();
+    segment.jobLabel = String(job.customer || job.serviceType || 'Assigned job').slice(0, 180);
+    assignedJobGuard = { update: { name: `projects/${PROJECT_ID}/databases/(default)/documents/jobs/${job.id}`, fields: { type: { stringValue: 'job' } } }, updateMask: { fieldPaths: ['type'] }, currentDocument: { updateTime: job.__updateTime } };
+  }
+  if (!manager(session) && data.jobId && data.jobId !== target.data?.jobId) {
+    const job = await readJob(env, data.jobId);
+    if (!job || !await createJobAssignmentAccess(env, session).assigned(job)) throw timecardError('This job time is limited to your assigned jobs.', 403);
+    data.jobLabel = String(job.customer || job.serviceType || 'Assigned job').slice(0, 180);
+  }
+  if (!activeTimecard(data) && !activeTimecard(target.data)) return writeOne(env, 'timeEntries', id, data, target);
+  const employee = personKey(data.employee);
+  if (!employee) throw timecardError('An employee is required for an active timecard.');
+  const lock = await readOne(env, 'timeLocks', employee);
+  if (activeTimecard(data)) {
+    if (lock.data?.entryId && lock.data.entryId !== id) {
+      const held = await readOne(env, 'timeEntries', lock.data.entryId);
+      if (activeTimecard(held.data)) throw timecardError('You already have an active shift. Refresh and clock out before starting another.', 409);
+    }
+    // Backfill the per-employee guard without ignoring shifts saved before it
+    // existed. The guard version serializes concurrent attempts with new IDs.
+    if (!activeTimecard(target.data)) {
+      const other = (await readEmployeeTimecards(env)).find(entry => entry.id !== id && same(entry.employee, employee) && activeTimecard(entry));
+      if (other) throw timecardError('You already have an active shift. Refresh and clock out before starting another.', 409);
+    }
+  }
+  const updatedAt = new Date().toISOString(), documentId = target.documentId;
+  const encrypted = await seal(env, documentId, data);
+  const writes = [{ update: { name: `projects/${PROJECT_ID}/databases/(default)/documents/jobs/${documentId}`, ...firestoreDoc('timeEntries', documentId, encrypted, updatedAt) }, currentDocument: expectedDocument(target) }];
+  if (assignedJobGuard) writes.push(assignedJobGuard);
+  // Closing one legacy duplicate must not release another shift's guard.
+  if (activeTimecard(data) || !lock.data?.entryId || lock.data.entryId === id) {
+    const lockData = { id: employee, entryId: activeTimecard(data) ? id : '', updatedAt, updatedBy: session.user };
+    const sealedLock = await seal(env, lock.documentId, lockData);
+    writes.push({ update: { name: `projects/${PROJECT_ID}/databases/(default)/documents/employee_time_locks/${lock.documentId}`, ...firestoreDoc('timeLocks', lock.documentId, sealedLock, updatedAt) }, currentDocument: expectedDocument(lock) });
+  }
+  const response = await firestoreFetch(env, `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents:commit`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ writes }),
+  });
+  if (!response.ok) {
+    const failure = await response.json().catch(() => ({}));
+    if ([409, 412].includes(response.status) || ['FAILED_PRECONDITION', 'ABORTED', 'ALREADY_EXISTS', 'NOT_FOUND'].includes(failure.error?.status)) {
+      throw Object.assign(new Error('Your timecard changed while saving. Refresh and retry.'), { code: 'EMPLOYEE_HUB_WRITE_CONFLICT' });
+    }
+    throw new Error(`Timecard storage could not confirm the save (${response.status}). Refresh before retrying.`);
+  }
+  return data;
 }
 
 const manager = session => hasBusinessAccess(session);
@@ -271,6 +336,8 @@ async function employeeRate(env, session) {
 
 async function authorizeMutation(env, session, collection, id, incoming, existing) {
   const now = new Date().toISOString();
+  if (collection === 'timeEntries') return authorizeTimecard({ session, manager: manager(session), id, incoming, existing,
+    hourlyRate: existing?.hourlyRate ?? await employeeRate(env, session), now });
   if (manager(session) && !(collection === 'training' && incoming.moduleId)) return { ...(existing || {}), ...incoming, id };
 
   if (collection === 'profiles') {
@@ -321,24 +388,6 @@ async function authorizeMutation(env, session, collection, id, incoming, existin
   }
 
   if (existing && !visibleTo(session, collection, existing)) throw new Error('This record belongs to another employee');
-
-  if (collection === 'timeEntries') {
-    if (!existing) {
-      const lat = Number(incoming.lastLocation?.lat), lng = Number(incoming.lastLocation?.lng);
-      if (incoming.locationTracking !== true || !Number.isFinite(lat) || !Number.isFinite(lng)) throw new Error('Shift location is required to clock in');
-      return {
-      ...incoming, id, employee: session.user, employeeName: session.displayName, role: session.role,
-      payType: session.payType, hourlyRate: await employeeRate(env, session), clockInAt: now,
-      approvalStatus: 'open', approvedBy: '', approvedAt: '',
-      };
-    }
-    const safe = { ...existing, ...incoming, id, employee: existing.employee, employeeName: existing.employeeName,
-      role: existing.role, payType: existing.payType, hourlyRate: existing.hourlyRate,
-      approvalStatus: existing.approvalStatus, approvedBy: existing.approvedBy || '', approvedAt: existing.approvedAt || '' };
-    if (incoming.clockOutAt && incoming.status === 'submitted') safe.approvalStatus = 'pending';
-    if (Array.isArray(safe.locationTrail)) safe.locationTrail = safe.locationTrail.slice(-120);
-    return safe;
-  }
 
   if (collection === 'requests') {
     if (existing) throw new Error('Only a manager can change a submitted request');
@@ -401,6 +450,37 @@ export async function onRequestGet({ request, env }) {
   }
   if (!vaultSecret(env) || !firebaseServiceAccountConfigured(env)) return reply(503, { ok: false, error: 'Employee Hub storage is not configured' });
   try {
+    const params = new URL(request.url).searchParams;
+    if (params.get('view') === 'own-job-time') {
+      const lock = await readOne(env, 'timeLocks', personKey(session.user));
+      let active = lock.data?.entryId ? (await readOne(env, 'timeEntries', lock.data.entryId)).data : null;
+      if (!activeTimecard(active) || !same(active.employee, session.user)) {
+        const candidates = (await readEmployeeTimecards(env)).filter(entry => same(entry.employee, session.user) && activeTimecard(entry));
+        if (candidates.length > 1) return reply(409, { ok: false, error: 'More than one active shift needs manager review before job time can be started.' });
+        active = candidates[0] || null;
+      }
+      return reply(200, { ok: true, user: session.user, entry: ownJobTimeProjection(active) });
+    }
+    if (params.get('view') === 'job-labor') {
+      if (!manager(session)) return reply(403, { ok: false, error: 'Only operations managers can view employee time for a job.' });
+      const jobId = params.get('jobId') || '';
+      if (!/^[A-Za-z0-9_-]{1,180}$/.test(jobId) || /^(?:_egc_|secure_)/.test(jobId)) return reply(400, { ok: false, error: 'Choose a valid job.' });
+      const job = await readJob(env, jobId);
+      if (!job || job.type !== 'job' || job.recordType) return reply(404, { ok: false, error: 'This operational job could not be found.' });
+      const entries = await readEmployeeTimecards(env), employees = new Map(); let legacyAssociationOnlyCount = 0, needsReviewCount = 0;
+      const now = new Date().toISOString();
+      for (const entry of entries) {
+        const summary = employeeJobTime(entry, now), time = summary.jobs.find(item => item.jobId === jobId);
+        if (same(entry.jobId, jobId) && (!summary.recorded || summary.partialHistory)) legacyAssociationOnlyCount++;
+        if (summary.needsReview && (time || same(entry.jobId, jobId) || Array.isArray(entry.jobTracking?.segments) && entry.jobTracking.segments.some(item => item?.jobId === jobId))) { needsReviewCount++; continue; }
+        if (!time) continue;
+        const key = personKey(entry.employee), employee = employees.get(key) || { employee: entry.employee, name: entry.employeeName || entry.employee, workMs: 0, travelMs: 0, approvedWorkMs: 0, pendingWorkMs: 0, rejectedWorkMs: 0, entryCount: 0 };
+        employee.workMs += time.workMs; employee.travelMs += time.travelMs; employee.entryCount++;
+        employee[entry.approvalStatus === 'approved' ? 'approvedWorkMs' : entry.approvalStatus === 'rejected' ? 'rejectedWorkMs' : 'pendingWorkMs'] += time.workMs;
+        employees.set(key, employee);
+      }
+      return reply(200, { ok: true, jobId, asOf: now, employees: [...employees.values()], legacyAssociationOnlyCount, needsReviewCount, source: 'explicit_employee_job_segments' });
+    }
     const rows = await readAll(env);
     const collections = Object.fromEntries([...COLLECTIONS].map(name => [name, []]));
     const jobAccess = new Map();
@@ -495,6 +575,7 @@ export async function onRequestPost({ request, env }) {
       if (!current.data) await readAll(env);
       const data = await authorizeMutation(env, session, collection, id, incoming, current.data);
       try {
+        if (collection === 'timeEntries') return reply(200, { ok: true, record: await writeTimecard(env, session, id, data, target) });
         return reply(200, { ok: true, record: await writeOne(env, collection, id, data, collection === 'profiles' ? target : null) });
       } catch (error) {
         if (error.code !== 'EMPLOYEE_HUB_WRITE_CONFLICT' || attempt + 1 === attempts) throw error;
@@ -504,7 +585,7 @@ export async function onRequestPost({ request, env }) {
     const message = String(error.message || 'Employee record could not be saved');
     const forbidden = /only|belongs|limited|own/i.test(message);
     const invalid = /required|not passed|invalid/i.test(message);
-    return reply(error.code === 'EMPLOYEE_HUB_WRITE_CONFLICT' ? 409 : forbidden ? 403 : invalid ? 400 : 502, { ok: false, ...(error.code ? { code: error.code } : {}), error: message });
+    return reply(error.code === 'EMPLOYEE_HUB_WRITE_CONFLICT' ? 409 : error.status || (forbidden ? 403 : invalid ? 400 : 502), { ok: false, ...(error.code ? { code: error.code } : {}), error: message });
   }
 }
 

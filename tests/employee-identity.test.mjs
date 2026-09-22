@@ -25,7 +25,14 @@ function storage(t) {
   let revision = 0;
   t.mock.method(globalThis, 'fetch', async (input, options = {}) => {
     const url = new URL(input), method = options.method || 'GET';
-    if (url.pathname.endsWith('/documents:runQuery')) return Response.json([...documents].map(([id, document]) => ({ document: {
+    if (url.pathname.endsWith('/documents:commit')) {
+      const writes = JSON.parse(options.body).writes;
+      const key = write => write.update.name.split('/').pop();
+      if (writes.some(write => (write.currentDocument?.exists === false && documents.has(key(write))) || (write.currentDocument?.updateTime && documents.get(key(write))?.updateTime !== write.currentDocument.updateTime))) return Response.json({}, { status: 412 });
+      for (const write of writes) documents.set(key(write), { fields: write.update.fields, updateTime: `2026-09-07T00:00:00.${String(++revision).padStart(9, '0')}Z` });
+      return Response.json({ writeResults: writes.map(() => ({ updateTime: `2026-09-07T00:00:00.${String(revision).padStart(9, '0')}Z` })) });
+    }
+    if (url.pathname.endsWith('/documents:runQuery')) return Response.json([...documents].filter(([, document]) => document.fields.employeeHubType?.stringValue !== 'timeLocks').map(([id, document]) => ({ document: {
       name: `projects/egcw-1ec83/databases/(default)/documents/jobs/${id}`, ...document,
     } })));
     const id = decodeURIComponent(url.pathname.split('/').pop());

@@ -1,0 +1,46 @@
+name: EGC Firestore Rules and Dispatch
+
+on:
+  pull_request:
+    paths: ['firestore.rules','firebase*.json','functions/**','crew/**','employee-dispatch.*','dispatch.html','tests/firestore-emulator.test.mjs','tests/dispatch-field.browser.mjs','tests/helpers/field-fixture.mjs','.github/workflows/egc-firestore-ci.yml']
+  push:
+    branches: [main]
+    paths: ['firestore.rules','firebase*.json','functions/**','crew/**','employee-dispatch.*','dispatch.html','tests/firestore-emulator.test.mjs','tests/dispatch-field.browser.mjs','tests/helpers/field-fixture.mjs','.github/workflows/egc-firestore-ci.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  firestore-emulator:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Install pinned emulator test dependencies
+        run: npm install --no-save --ignore-scripts firebase-tools@15.30.2 @firebase/rules-unit-testing@5.0.2 firebase@12.19.0 playwright@1.63.0
+      - name: Install browser for operational acceptance
+        run: npx --no-install playwright install --with-deps chromium
+      - name: Verify real rules and atomic dispatch on an isolated demo project
+        env:
+          EGC_FIREBASE_EMULATOR_TEST: '1'
+        run: npx --no-install firebase emulators:exec --only firestore --project demo-egc-field-rules --config firebase.emulator.json --non-interactive 'node --test tests/firestore-emulator.test.mjs'
+      - name: Run a full manager and crew day through real HTTP and Firestore
+        env:
+          FIELD_PLAYWRIGHT_MODULE: ${{ github.workspace }}/node_modules/playwright/index.mjs
+        run: npx --no-install firebase emulators:exec --only firestore --project demo-egc-dispatch-day --config firebase.field-day.json --non-interactive 'node tests/dispatch-field.browser.mjs'
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: operational-day-failure
+          path: |
+            test-results/
+            firestore-debug.log

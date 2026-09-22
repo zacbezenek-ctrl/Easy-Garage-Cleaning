@@ -168,29 +168,28 @@ test('private webhook destinations are absent from browser and function source',
 });
 
 test('walkthrough is photo-led, builds price in the background, and saves Hub scheduling',()=>{
-  for(const marker of ['Customer','Photos','Scope','Finish','Schedule','Review','whyNow','outcome','truckPlacement','PHOTO_COUNT','Homeowner signature','function recommend','saveHubJob','scheduleSource'])assert.match(crew,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
+  for(const marker of ['Customer','Photos','Scope','Finish','Schedule','Review','whyNow','outcome','truckPlacement','PHOTO_COUNT','Homeowner signature','function recommend','saveHubJob','gameplan-handoff.js'])assert.match(crew,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
   assert.doesNotMatch(crew,/14-point|Damage Zone|Comeback Zone|layout sketch|AI after/i);
   assert.match(crew,/discovery:\{/);
   assert.match(crew,/function validateStep/);
 });
 
 test('Hub owns scheduling while HighLevel owns CRM automation',()=>{
-  for(const marker of ['HUB SCHEDULE','Schedule the work here','scheduleSource','Save + sync','New HighLevel leads'])assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
-  assert.match(suite,/tx\.set\(ref,job,\{merge:true\}\)/);
-  assert.match(suite,/Choose a valid Mountain time with the end after the start/);
+  for(const marker of ['HUB SCHEDULE','Schedule the work here','window.EGCBooking.save','Save + sync','New HighLevel leads'])assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
+  assert.match(read('functions/_lib/dispatch-service.js'),/scheduleSource: 'egc_hub'/);
+  assert.match(suite,/Choose valid Mountain start and end times/);
   for(const field of ['phone','email','address','date','time','endTime','assignedTo','notes','notify'])assert.match(suite,new RegExp(`opsBookField\\('${field}'`));
 });
 
-test('schedule writes prevent collisions and retain retryable sync state',()=>{
-  for(const marker of ['function collisionFor','function saveScheduledJob','scheduleLockRef','recordType:\'schedule_lock\'','db.runTransaction','SCHEDULE_CONFLICT','remoteCollision','syncAttempts','syncNextRetryAt','retryDueSyncs','opsRetrySync','opsRetryAll','Idempotency-Key']){
-    assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),marker+' is missing');
-  }
-  assert.match(suite,/Math\.min\(24\*60,Math\.pow\(2,Math\.min\(attempts,8\)\)\*5\)/);
-  assert.match(suite,/tx\.set\(ref,job,\{merge:true\}\)/);
+test('schedule writes use the canonical dispatch adapter and retain provider retry visibility',()=>{
+  const adapter=read('employee-booking.js');
+  for(const marker of ['function saveScheduledJob','window.EGCBooking.save','syncAttempts','syncNextRetryAt','retryDueSyncs','opsRetrySync','opsRetryAll'])assert.ok(suite.includes(marker),marker+' is missing');
+  for(const marker of ['/api/dispatch','expectedRevision','requestId:crypto.randomUUID()','booking_pending_operation','sourceTemplateJobId'])assert.ok(adapter.includes(marker),marker+' is missing');
+  const scheduleSave=suite.slice(suite.indexOf('async function saveScheduledJob'),suite.indexOf('async function remoteCollision'));
+  assert.doesNotMatch(scheduleSave,/db\.runTransaction|tx\.set|collection\(/);
   assert.doesNotMatch(suite,/collection\(['"]scheduleLocks['"]\)/);
   assert.match(employee,/recordType !== 'schedule_lock'/);
   assert.match(copilot,/recordType !== 'schedule_lock'/);
-  assert.doesNotMatch(crew,/collection\(['"]scheduleLocks['"]\)/);
 });
 
 test('Hub retries preserve the full walkthrough handoff instead of downgrading to a calendar-only sync',()=>{
@@ -200,37 +199,39 @@ test('Hub retries preserve the full walkthrough handoff instead of downgrading t
   }
 });
 
-test('Hub rescheduling preserves and refreshes the signed walkthrough handoff',()=>{
-  for(const marker of ['function replaceBriefLine','function refreshChecklistNotes','function refreshWalkthroughHandoff','latestJobInstructions:job.jobInstructions','latestClientChecklists:job.clientChecklists','if(customerRef)tx.set(customerRef,customerUpdate','job={...previous,...derived','status:b.id?(previous.status','pipelineStatus:b.id?(previous.pipelineStatus']){
-    assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),marker+' is missing');
-  }
-  for(const field of ['CREW / WINDOW','INTERNAL CUSTOMER NOTES','customerNotes','assignedTo','crewSize','arrivalWindow'])assert.match(suite,new RegExp(field.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
+test('Hub rescheduling preserves the signed handoff and observed revision through dispatch',()=>{
+  const adapter=read('employee-booking.js');
+  assert.match(suite,/original:structuredClone\(j\)/);
+  assert.match(suite,/previous=b\.original\|\|\{\}/);
+  assert.match(adapter,/previous\.revision!==data\.job\.revision/);
+  assert.match(adapter,/previous\.updatedAt!==data\.job\.updatedAt/);
+  assert.match(adapter,/typeof job\.jobInstructions==='string'/);
   assert.match(suite,/terminalScheduleStages=.*'invoiced'.*'review_requested'.*'closed'/);
   assert.match(suite,/Closed work stays locked/);
 });
 
 test('walkthrough conversion keeps canonical IDs and durable acceptance metadata',()=>{
-  for(const marker of ['walkthroughId','sourceWalkthroughId','convertedJobId','conversionStatus','acceptanceAt','acceptanceBy','termsVersion','signatureCaptured','in_person_signature','syncIdempotencyKey']){
-    assert.match(crew,new RegExp(marker),marker+' is missing');
-  }
-  assert.match(crew,/hubDb\.collection\('jobs'\)\.doc\(S\.jobId\)/);
-  assert.match(crew,/status:'completed',pipelineStatus:'completed'/);
-  assert.match(crew,/tx\.set\(sourceRef,\{status:'completed'/);
-  assert.match(crew,/j\.pipeline\?\.opportunityId\|\|S\.highlevelOpportunityId/);
+  const handoff=read('functions/_lib/walkthrough-handoff.js'),client=read('crew/gameplan-handoff.js');
+  for(const marker of ['sourceWalkthroughId','convertedJobId','conversionStatus','acceptedAt','acceptedBy','termsVersion','signatureCaptured','in_person_signature','syncIdempotencyKey'])assert.ok(handoff.includes(marker),marker+' is missing');
+  assert.match(handoff,/await mutateDispatch\(adapter, actor, dispatchInput, now\)/);
+  assert.match(handoff,/walkthroughHandoffs/);
+  assert.doesNotMatch(handoff,/status: 'completed'|pipelineStatus: 'completed'/);
+  assert.match(client,/highlevelOpportunityId/);
   assert.doesNotMatch(crew,/S\.highLevelOpportunityId/);
   for(const page of [prejob,postjob]){
     assert.match(page,/new URLSearchParams\(location\.search\)\.get\("jobId"\)/);
     assert.match(page,/collection\('jobs'\)\.doc\(CENTRAL_JOB_ID\)\.get\(\)/);
   }
-  assert.match(suite,/prejob\.html\?jobId=/);
+  assert.match(suite,/job\.html\?jobId=/);
   assert.match(suite,/postjob\.html\?jobId=/);
 });
 
-test('walkthrough promise syncs to the job, customer profile, crew brief, and HighLevel notes',()=>{
-  for(const marker of ['buildJobInstructions','buildInternalNotes','buildClientChecklists','jobInstructions:instructions','internalNotes','clientChecklists:checklists','customerNotesSummary','latestJobInstructions','latestClientChecklists','customerGoal','keepItems','removeItems','operationalNotes','walkthroughSyncedAt']){
-    assert.match(crew,new RegExp(marker),marker+' is missing from the walkthrough handoff');
-  }
-  assert.match(crew,/hubDb\.collection\('customers'\)\.doc\(customerId\)/);
+test('walkthrough promise syncs to the canonical job, crew brief, and HighLevel notes',()=>{
+  const handoff=read('functions/_lib/walkthrough-handoff.js');
+  for(const marker of ['buildJobInstructions','buildInternalNotes','buildClientChecklists'])assert.ok(crew.includes(marker));
+  for(const marker of ['jobInstructions: instructions','internalNotes: plan.internal_notes','clientChecklists: plan.client_checklists','customerNotesSummary','customerGoal','keepItems','removeItems','walkthroughSyncedAt'])assert.ok(handoff.includes(marker),marker+' is missing');
+  assert.match(handoff,/fence\('customers', customer\)/);
+  assert.doesNotMatch(handoff,/latestJobInstructions|latestClientChecklists/,'a second property cannot overwrite another property-specific customer history');
   for(const page of [prejob,postjob]){
     assert.match(page,/function normalizedInstructions/);
     assert.match(page,/id="job-brief"/);
@@ -244,20 +245,20 @@ test('walkthrough promise syncs to the job, customer profile, crew brief, and Hi
   assert.match(suite,/hasCrewBrief/);
   assert.doesNotMatch(prejob,/status:j\.status==='scheduled'\?'arrived'/);
   assert.doesNotMatch(postjob,/collection\(['"]scheduleLocks['"]\)/);
-  assert.match(postjob,/_egc_schedule_lock_/);
+  assert.doesNotMatch(postjob,/releaseCentralLock/);
   for(const page of [prejob,postjob]){
     assert.match(page,/function renderClientChecklist/);
     assert.match(page,/function totalChecks/);
     assert.match(page,/clientState/);
     assert.match(page,/Generated from this client/);
   }
-  assert.match(prejob,/preJobChecklist:\{/);
-  assert.match(postjob,/postJobChecklist:\{/);
+  assert.match(read('functions/_lib/field-execution.js'),/preJobChecklist/);
+  assert.match(read('functions/_lib/field-execution.js'),/postJobChecklist/);
 });
 
 test('crew checklist progress resumes across devices and is visible to the manager',()=>{
   for(const [page,phase] of [[prejob,'preJob'],[postjob,'postJob']]){
-    for(const marker of ['function progressPayload','function restoreSharedProgress','function queueProgressSave',`${phase}Progress:snapshot`,`restoreSharedProgress(j.${phase}Progress)`,`${phase}Progress:{...progressPayload(),completedAt`]){
+    for(const marker of ['function progressPayload','function restoreSharedProgress','function queueProgressSave',`${phase}Progress:snapshot`,`restoreSharedProgress(j.${phase}Progress)`]){
       assert.match(page,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),`${phase}: ${marker} is missing`);
     }
     assert.match(page,/queueProgressSave\(\)/);
@@ -266,14 +267,13 @@ test('crew checklist progress resumes across devices and is visible to the manag
   assert.match(suite,/postProgress=j\.postJobProgress/);
   assert.match(suite,/Pre-job \$\{preProgress\.completedCount\|\|0\}\/\$\{preProgress\.totalCount\}/);
   assert.match(suite,/Closeout \$\{postProgress\.completedCount\|\|0\}\/\$\{postProgress\.totalCount\}/);
-  assert.match(prejob,/The Hub could not record job start/);
-  assert.match(postjob,/The Hub could not record closeout/);
-  assert.match(postjob,/Retry → Save closeout to Hub/);
+  for(const page of [prejob,postjob])assert.match(page,/Open verified job workflow/);
 });
 
 test('dispatch and job start create explicit HighLevel lifecycle triggers',async()=>{
-  for(const marker of ['async function syncLifecycle','job-dispatched','job-arrived','job-started','lifecycleSync','lifecycleSyncPayload','lifecycleSyncNextRetryAt','opsRetryLifecycle','Workflow trigger remains safely queued','Status saved and HighLevel workflow triggered','Add the walkthrough brief before dispatching this crew'])assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
-  for(const marker of ['async function syncStartLifecycle',"event:'job-started'",'lifecycleSyncPayload:payload','lifecycleSyncNextRetryAt','HighLevel was notified'])assert.match(prejob,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
+  for(const marker of ['async function syncLifecycle','lifecycleSync','lifecycleSyncPayload','lifecycleSyncNextRetryAt','opsRetryLifecycle','Workflow trigger remains safely queued',"location.href=job.type==='walkthrough'?'/crew/gameplan.html?walkthroughId='", "'/crew/job.html?jobId='+encodeURIComponent(id)"])assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
+  assert.doesNotMatch(prejob,/async function syncStartLifecycle/);
+  assert.match(prejob,/location\.assign\('\/crew\/job\.html'/);
   assert.match(suite,/dispatchable=ready&&stage==='scheduled'/);
   const {onRequestPost}=await import('../functions/api/highlevel.js'),calls=[],originalFetch=globalThis.fetch;
   globalThis.fetch=async(url,options={})=>{calls.push({url:String(url),options});return new Response('{}',{status:200})};
@@ -304,7 +304,7 @@ test('arrival text sends through Quo and records a silent HighLevel note',async(
 });
 
 test('cancelling keeps an audit record, releases the Hub slot, and cancels the HighLevel appointment',async()=>{
-  for(const marker of ['opsCancelBooking','Cancellation reason','cancellation:{reason','cancelledBy:employeeIdentity','releaseScheduleLock(job)','walkthrough-cancelled','job-cancelled','HighLevel cancellation is queued','Event type locks after the first save'])assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),marker+' is missing');
+  for(const marker of ['opsCancelBooking','Cancellation reason','window.EGCBooking.cancel','HighLevel cancellation is queued','Event type locks after the first save'])assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),marker+' is missing');
   const {onRequestPost}=await import('../functions/api/highlevel.js'),calls=[],originalFetch=globalThis.fetch;
   globalThis.fetch=async(url,options={})=>{
     calls.push({url:String(url),options});
@@ -329,22 +329,23 @@ test('cancelling keeps an audit record, releases the Hub slot, and cancels the H
 });
 
 test('failed HighLevel closeouts remain durable and manager-retryable',()=>{
-  for(const marker of ['closeoutSyncPayload:payload','closeoutSyncNextRetryAt','Nothing was cleared'])assert.match(postjob,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
+  const fieldSync=read('functions/_lib/field-execution-sync.js');
+  for(const marker of ['fieldCompletionSync','syncNativeNote','attempts'])assert.ok(fieldSync.includes(marker));
   for(const marker of ['async function syncCloseoutRecord','closeoutSyncPayload','closeoutSyncAttempts','closeoutSyncNextRetryAt','opsRetryCloseout','Retry closeout','closeout needs HighLevel retry','closeoutPending','Closeout remains safely queued in the Hub'])assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),marker+' is missing');
   assert.match(suite,/Math\.min\(1440,Math\.pow\(2,Math\.min\(attempts,8\)\)\*5\)/);
 });
 
-test('closeout records job-costing actuals and explains walkthrough scope variance',()=>{
-  for(const marker of ['Actual loads','Hours on site','Enter the actual truckloads','Enter the crew hours on site','The walkthrough planned','quoted_loads:quotedLoads','actual_loads:actualLoads','scopeVariance:{quotedLoads,actualLoads,difference:variance'])assert.match(postjob,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),marker+' is missing');
+test('legacy job-costing reference cannot silently complete work',()=>{
+  for(const marker of ['Actual loads','Hours on site','reference material','Open verified job workflow'])assert.ok(postjob.includes(marker));
+  assert.doesNotMatch(postjob,/scopeVariance:\{|timeTracking:\{|actual_loads:actualLoads/);
   for(const marker of ['Walkthrough load plan','Actual truckloads','Load variance'])assert.match(highlevel,new RegExp(marker));
 });
 
-test('closeout preserves deposits and records only the payment received now',()=>{
-  for(const marker of ['j_payment_amount','paidToDate=Number(j.payment?.amount||0)','paymentRecord:j.payment||{}','amount_received:paymentAmount','previously_paid:paidToDate','paid_to_date:cumulativePaid','balance:remainingBalance','paymentRecord=paidNow?','verifiedPaidInFull?\'paid\':\'completed\'','lastPaymentBalance:remainingBalance'])assert.match(postjob,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),marker+' is missing');
-  assert.match(postjob,/paymentAmount>outstanding\+\.01/);
-  assert.match(postjob,/invoice:\{status:verifiedPaidInFull\?'paid':cumulativePaid>0\?'pending_verification':'ready'/);
-  assert.match(postjob,/stripeSelected&&!stripePaid/);
-  assert.match(postjob,/verified:verifiedPaidInFull/);
+test('closeout preserves verified payments and directs manual receipts to Finance',()=>{
+  for(const marker of ['j_payment_amount','paidToDate=Number(j.payment?.amount||0)','paymentRecord:j.payment||{}','recordVerifiedStripePayment','Card amount to charge','/employee?view=finance'])assert.ok(postjob.includes(marker),marker+' is missing');
+  assert.match(postjob,/result\.jobId!==ACTIVE\.jobId/);
+  assert.doesNotMatch(postjob,/verifiedPaidInFull|paymentRecord=paidNow|verificationSource:'crew_attestation'/);
+  assert.match(postjob,/<select id="j_payment" disabled>/);
   for(const marker of ['Payment received now','Paid to date','Balance remaining','Payment method / reference'])assert.match(highlevel,new RegExp(marker));
 });
 
@@ -378,10 +379,9 @@ test('verified Stripe payment writes a HighLevel payment tag and audit note',asy
   try{const request=new Request('https://easygaragecleaning.com/api/highlevel',{method:'POST',headers:{Origin:'https://easygaragecleaning.com',Cookie:TEST_HUB_COOKIE,'Content-Type':'application/json'},body:JSON.stringify({tool:'lifecycle',event:'payment-received',highlevel_contact_id:'contact-pay',idempotency_key:'stripe-payment:cs_test_1',client:{name:'Test Customer',highlevel_contact_id:'contact-pay'},note:'Stripe payment verified: $1,250. Balance: $0.'})});const response=await onRequestPost({request,env:TEST_HUB_ENV}),result=await response.json();assert.equal(response.status,200);assert.equal(result.automation.trigger,'egc-payment-received');const tagCall=calls.find(call=>call.url.includes('/contacts/contact-pay/tags'));assert.ok(tagCall);assert.match(tagCall.options.body,/egc-payment-received/);const noteCall=calls.find(call=>call.url.includes('/contacts/contact-pay/notes'));assert.ok(noteCall);assert.match(noteCall.options.body,/Stripe payment verified/)}finally{globalThis.fetch=originalFetch}
 });
 
-test('durable job start pre-fills elapsed closeout time without preventing correction',()=>{
-  assert.match(prejob,/const startedAt=ACTIVE\.startedAt\|\|localStorage\.getItem\(startKey\(\)\)\|\|new Date\(\)\.toISOString\(\)/);
-  assert.match(prejob,/ACTIVE\.startedAt=startedAt/);
-  for(const marker of ['hours_hint','Calculated from','adjust if needed','timeTracking:{startedAt','elapsedHours:hoursOnSite','started_at:ACTIVE.startedAt'])assert.match(postjob,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
+test('canonical start time continues to prefill manager reference hours',()=>{
+  assert.match(read('functions/_lib/field-execution.js'),/startedAt/);
+  for(const marker of ['hours_hint','Calculated from','adjust if needed'])assert.ok(postjob.includes(marker));
   assert.match(postjob,/Math\.round\(\(Date\.now\(\)-Date\.parse\(ACTIVE\.startedAt\)\)\/900000\)\/4/);
   assert.match(postjob,/if\(ACTIVE\.startedAt&&hours&&!hours\.value\)/);
 });
@@ -426,8 +426,8 @@ test('pre-job and closeout share walkthrough styling and preserve important-item
   const brand=read('crew/crew-brand.css');
   for(const page of [prejob,postjob])assert.match(page,/<body class="crew-playbook-modern">/);
   for(const marker of ['.crew-playbook-modern .important-record','.crew-playbook-modern #sections>section','.crew-playbook-modern .item.on','.crew-playbook-modern #donebar'])assert.match(brand,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
-  for(const marker of ['Important items &amp; heirlooms','important_notes','mountImportantItems','photoAdd(jobKey(),"important"','importantItemPhotoCount','importantItemsRecordedAt'])assert.match(prejob,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
-  for(const marker of ['Important items &amp; heirlooms','important_ref','photo.tag==="important"','important_item_notes','photos:{after:AFTER_COUNT,important:IMPORTANT_COUNT}','importantItemsVerifiedAt'])assert.match(postjob,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
+  for(const marker of ['Important items &amp; heirlooms','important_notes','mountImportantItems','photoAdd(jobKey(),"important"','importantItemPhotoCount','importantItemsUpdatedAt'])assert.match(prejob,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
+  for(const marker of ['Important items &amp; heirlooms','important_ref','photo.tag==="important"','importantItemNotes'])assert.match(postjob,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
 });
 
 test('weekly timesheets use individual timecards with a legacy closeout fallback',()=>{
@@ -443,8 +443,12 @@ test('Gusto Smart Import export includes approved completed shifts only',()=>{
   }
 });
 
-test('closeout requires a completed pre-job handoff or a documented exception',()=>{
-  for(const marker of ['preJobCompletedAt','preJobCompletedBy','No completed pre-job handoff was found','manager-approved exception','closeoutPreJobException','pre_job_completed_at','pre_job_exception','No completed pre-job handoff is attached'])assert.match(postjob,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),marker+' is missing');
+test('legacy closeout cannot waive the server completion requirements',()=>{
+  for(const marker of ['preJobCompletedAt','preJobCompletedBy','closeoutPreJobException','No completed pre-job handoff is attached'])assert.ok(postjob.includes(marker));
+  assert.doesNotMatch(postjob,/manager-approved exception reason to continue/);
+  const field=read('functions/_lib/field-execution.js');
+  assert.match(field,/fieldCompletionMissing/);
+  assert.match(field,/FIELD_COMPLETION_INCOMPLETE/);
   assert.match(highlevel,/Pre-job handoff:/);
   assert.match(highlevel,/No completion record/);
 });
@@ -501,7 +505,7 @@ test('resaving a walkthrough updates the existing HighLevel job appointment and 
 });
 
 test('Hub finance scaffolding and customer history work without claiming external settlement',()=>{
-  for(const marker of ['function customerRows','function customerHistory','function financeState','function jobEconomics','function financeSummary','function financeBoard','Known job contribution','crew-hrs','direct cost','before overhead and ads','Load variance','opsFinanceAction','Record approval','Record deposit','Issue invoice','Record payment','acceptanceMethod','termsVersion','verified:true','verifiedPaid','pendingPaid','Verified collected','pending manager verification','Verify the payment reference in Finance before marking this job paid','A payment reference is required for verification','Hub records only · keys needed']){
+  for(const marker of ['function customerRows','function customerHistory','function financeState','function jobEconomics','function financeSummary','function financeBoard','Known job contribution','crew-hrs','direct cost','before overhead and ads','Load variance','opsFinanceAction','Record approval','Record deposit','Issue invoice','Record payment','acceptanceMethod','termsVersion','verified:true','verifiedPaid','pendingPaid','Verified collected','pending manager verification','Use Estimates & payments to record verified financial activity.','A payment reference is required for verification','Hub records only · keys needed']){
     assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),marker+' is missing');
   }
   assert.match(suite,/jobs\(\)\.filter\(j=>j\.type!=='blocked'\)/);
@@ -676,7 +680,7 @@ test('legacy Firebase leads are not loaded into the reset Hub',()=>{
   assert.doesNotMatch(employee,/db\.collection\('leads'\)\.get/);
   assert.match(employee,/leadsCache = \[\];/);
   assert.match(suite,/New HighLevel leads/);
-  assert.match(suite,/setInterval\(\(\)=>\{if\(!document\.hidden&&typeof me!=='undefined'&&me&&isLead\(\)\)loadGhl\(\)\},60000\)/);
+  assert.match(suite,/setInterval\(\(\)=>\{if\(!document\.hidden&&typeof me!=='undefined'&&me\)\{if\(isLead\(\)\)loadGhl\(\);else if\(typeof refreshCrewSchedule==='function'\)refreshCrewSchedule\(\)\}\},60000\)/);
   assert.match(highlevel,/DEFAULT_LEAD_RESET_AT/);
   assert.match(webLead,/syncHighLevelLead/);
 });
@@ -686,7 +690,7 @@ test('employees can discover and safely pick up manager-opened crew shifts',()=>
     assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),marker+' is missing');
   }
   assert.match(suite,/hubFetch\('\/api\/crew-jobs'/);
-  assert.match(suite,/JSON\.stringify\(\{jobId:id,action\}\)/);
+  assert.match(suite,/JSON\.stringify\(request\.body\)/);
   assert.match(suite,/window\.opsClaimShift=id=>changeShift\(id,'claim'\)/);
   assert.match(suite,/Shift added to your schedule/);
   assert.doesNotMatch(suite,/collection\(['"]open_shifts['"]\)/);
@@ -750,8 +754,8 @@ test('Hub supports salted PBKDF2 credentials and rejects malformed or wrong hash
 test('employees have a personal schedule for assigned and claimed work',()=>{
   for(const marker of ["'my_shifts'",'My shifts','PERSONAL FIELD SCHEDULE','myShiftJobs','myShiftBoard','Manager-assigned and self-claimed work','Open brief'])assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),marker+' is missing');
   assert.match(suite,/crewNames\(j\)\.some\(n=>sameScheduleEmployee\(n,identity\)\)/);
-  assert.match(suite,/String\(j\.date\|\|''\)>=day\(\)/);
-  assert.match(suite,/\/crew\/prejob\.html\?jobId=/);
+  assert.match(suite,/String\(j\.endDate\|\|j\.date\|\|''\)>=day\(\)/);
+  assert.match(suite,/\/crew\/job\.html\?jobId=/);
   assert.match(suite,/routeUrl\(j\.address\)/);
 });
 
@@ -768,24 +772,22 @@ test('claimed shifts stay visible and can be safely released by the claimant',()
   assert.match(suite,/window\.opsReleaseShift=id=>changeShift\(id,'release'\)/);
 });
 
-test('employee availability prevents manager assignment and conflicting shift pickup',()=>{
-  for(const marker of ["'availability'",'Time off','TIME-OFF CALENDAR','availabilityCalendar','opsSelectAvailabilityDay','opsAvailabilityMove','Block the full day','crew_availability','opsSaveAvailability','opsRemoveAvailability','crewAvailabilityConflict','marked this time unavailable','overlaps time you marked unavailable'])assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
+test('employee availability uses the current server tools and cannot bypass capacity locks',()=>{
+  assert.match(suite,/window\.EGCAvailability\.mount\(host\)/);
+  assert.match(suite,/window\.EGCAvailability\.canLeave\(\)/);
+  assert.match(employee,/employee-availability\.js/);
+  assert.match(read('employee-availability.js'),/\/api\/crew-availability/);
+  assert.doesNotMatch(read('employee-availability.js'),/db\.collection|firestore\(/);
+  assert.doesNotMatch(suite,/window\.opsSaveAvailability|window\.opsRemoveAvailability/);
   assert.match(suite,/const isAvailability=/);
   assert.match(suite,/jobsCache\.filter\(j=>!isScheduleLock\(j\)&&!isAvailability\(j\)&&!isPrivateHubRecord\(j\)\)/);
-  assert.match(suite,/recordType:'crew_availability'/);
-  assert.match(suite,/sameScheduleEmployee\(row\.employee,identity\)/);
-  assert.match(suite,/status:'cancelled',cancelledAt/);
-  assert.match(suite,/You are already assigned to \$\{assigned\.customer/);
-  assert.match(suite,/ask a manager to reassign it first/);
 });
 
-test('walkthrough estimates job length and offers the next three collision-free openings',()=>{
-  for(const marker of ['estimatedJobMinutes','findNearestSlots','SLOT_OPTIONS','Next 3 openings','Checking the Hub, crew time off, and HighLevel','estimatedDurationMin','estimatedDurationHours','expectedShiftHours','ESTIMATED JOB TIME','EXPECTED PAID SHIFT'])assert.match(crew,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),marker+' is missing');
+test('walkthrough estimates job length and asks canonical dispatch for three openings',()=>{
+  const client=read('crew/gameplan-handoff.js');
+  for(const marker of ['estimatedJobMinutes','findNearestSlots','SLOT_OPTIONS','Next 3 openings','estimatedDurationMin','estimatedDurationHours','expectedShiftHours','ESTIMATED JOB TIME','EXPECTED PAID SHIFT'])assert.ok(crew.includes(marker),marker+' is missing');
+  assert.match(client,/\/api\/dispatch-openings/);assert.match(client,/body\.candidates/);assert.match(client,/slice\(0,3\)/);assert.match(client,/ids\.length<Number\(S\.crewSize\)/);
   assert.match(crew,/jobMinutes\+90/);
-  assert.match(crew,/options\.length<3/);
-  assert.match(crew,/view=schedule&start=/);
-  assert.match(crew,/recordType==='crew_availability'/);
-  assert.match(crew,/date\.getDay\(\)===0/);
 });
 
 test('crew assignment updates the HighLevel appointment without retriggering customer automation',async()=>{
@@ -808,46 +810,31 @@ test('crew assignment updates the HighLevel appointment without retriggering cus
 test('open-shift scheduling fields persist on the canonical job record',()=>{
   for(const field of ['openShift','crewNeeded','assignedCrew'])assert.match(suite,new RegExp(field));
   assert.match(suite,/b\.openShift=fd\.has\('openShift'\)/);
-  assert.match(suite,/job\.shiftPickupEnabled=b\.type==='job'/);
-  assert.match(suite,/job\.openShift=job\.shiftPickupEnabled/);
-  assert.match(suite,/assignedCrew\.length<crewNeeded/);
-  assert.match(suite,/crewSize:b\.type==='job'\?crewNeeded/);
-  assert.match(suite,/if\(k==='type'\)render\(\)/);
+  assert.match(suite,/shiftPickupEnabled:b\.type==='job'/);
+  assert.match(read('employee-booking.js'),/changes\.assignedCrew=ids\(job,data\.roster\)/);
+  assert.match(read('functions/_lib/dispatch-service.js'),/patch\.openShift=.*shiftPickupEnabled === true/);
+  assert.match(suite,/if\(k==='type'\)render\(true\)/);
   assert.match(suite,/b\.type==='job'\?'':'ops-hidden'/);
   assert.match(suite,/b\.type==='blocked'\?'ops-hidden':''/);
   assert.match(employee,/employee-suite\.css\?v=20260909gusto/);
-  assert.match(employee,/employee-suite\.js\?v=20260922booking/);
+  assert.match(employee,/employee-suite\.js\?v=20260922ops/);
 });
 
-test('recurring visits keep the client plan but reset prior completion and payment state',()=>{
-  for(const marker of ['sourceTemplateJobId:j.id',"sourceWalkthroughId:''",'acceptance:null','preJobProgress:null','preJobChecklist:null','postJobProgress:null','postJobChecklist:null','actualLoads:null','hoursOnSite:null','scopeVariance:null','closeoutSyncPayload:null','reviewStatus:'])assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),marker+' is missing from recurring reset');
-  assert.match(suite,/derived=refreshWalkthroughHandoff\(j/);
-  assert.match(suite,/shiftClaims:\[\]/);
-  assert.match(suite,/lastShiftClaim:null/);
-  assert.match(suite,/lastShiftRelease:null/);
-  assert.match(suite,/openShift:shiftPickupEnabled&&assignedCrew\.length<crewNeeded/);
-  assert.match(suite,/crewAvailabilityConflict\(date,next\.time,next\.endTime,assignedCrew\)/);
-  assert.match(suite,/is unavailable during the next visit/);
-  assert.match(suite,/const remote=await remoteCollision\(next\)/);
-  assert.match(suite,/HighLevel already has \$\{remote\.title\|\|'an appointment'\} during that time/);
-  assert.match(suite,/notes:job\.internalNotes\|\|job\.notes/);
-  assert.match(suite,/customerUpdate=job\.customerId&&job\.internalNotes/);
-  assert.match(suite,/function addCalendarMonths\(date,months\)/);
-  assert.match(suite,/d\.setDate\(1\);d\.setMonth\(d\.getMonth\(\)\+months\)/);
-  assert.match(suite,/Math\.min\(originalDay,lastDay\)/);
+test('recurring visits request a server-side handoff clone instead of copying prior execution or payments',()=>{
+  assert.match(suite,/sourceTemplateJobId:job\.id/);
+  assert.match(suite,/saveScheduledJob\(next,\{\}\)/);
+  const clone=suite.slice(suite.indexOf('window.opsCreateNextVisit='),suite.indexOf('window.opsAdvanceStatus='));
+  assert.doesNotMatch(clone,/db\.collection|syncJobRecord|patchJob/);
+  assert.match(clone,/jobsCache=.*saved/);
 });
 
-test('schedule stops safely when the Hub session expires during CRM collision checks',()=>{
-  assert.match(suite,/if\(error\?\.code==='HUB_AUTH_REQUIRED'\)throw error/);
-  assert.match(suite,/Sign in again to check HighLevel before saving\. Your form is still here\./);
-  assert.match(suite,/button\.textContent='Retry schedule check'/);
-  assert.match(crew,/if\(error\?\.code==='HUB_AUTH_REQUIRED'\)throw error/);
-  assert.match(crew,/Your walkthrough is saved on this device\. Sign in again before scheduling it\./);
+test('schedule stops safely on a changed account and preserves the original handoff request',()=>{
+  assert.match(read('employee-booking.js'),/Sign in again, then retry your saved booking\./);
+  const client=read('crew/gameplan-handoff.js');assert.match(client,/await d\.actor\(\) !== actor/);assert.match(client,/Reopen the original account/);assert.match(client,/pending\.body/);
 });
 
-test('walkthrough preserves job creation time and hands off the scheduled job appointment',()=>{
-  assert.match(crew,/if\(!existing\.exists\)job\.createdAt=now/);
-  assert.match(crew,/highlevelAppointmentId:S\.highlevelJobAppointmentId/);
+test('walkthrough uses dispatch to preserve job creation time and passes canonical appointment identity',()=>{
+  const handoff=read('functions/_lib/walkthrough-handoff.js');assert.match(handoff,/action: 'schedule.update'/);assert.match(handoff,/highlevel_job_appointment_id: job.highlevelAppointmentId/);assert.match(handoff,/previous\?\.estimate\?\.createdAt \|\| now/);
 });
 
 test('material walkthrough edits invalidate stale customer approval',()=>{
@@ -868,8 +855,9 @@ test('walkthrough hazard choices cannot contradict the crew brief',()=>{
   assert.match(crew,/filter\(x=>x!=='No visible hazards'\)/);
 });
 
-test('walkthrough photos have a durable cross-device handoff when Drive is connected',()=>{
-  for(const marker of ['syncWalkthroughPhotos','/api/drive-upload','photoSyncStatus','photoDriveUrl','latestPhotoFolderUrl'])assert.match(crew,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
+test('walkthrough photos have a private verified cross-device handoff when Drive is connected',()=>{
+  const client=read('crew/gameplan-handoff.js'),field=read('functions/api/field-jobs.js');
+  assert.match(crew,/syncWalkthroughPhotos/);assert.match(client,/\/api\/field-jobs/);assert.match(client,/fieldPhotoRequestId/);assert.match(client,/uploadedToJobId/);assert.match(field,/verifyFieldPhotoMetadata/);assert.match(field,/walkthroughPhotoAt/);
   assert.match(prejob,/renderWalkthroughPhotoFolder/);
   assert.match(postjob,/restoreWalkthroughPhotoFolder/);
   assert.match(prejob,/Open the client photo folder/);
@@ -1215,12 +1203,13 @@ test('post-booking portal saves customer memory decisions rebooking family acces
 });
 
 test('customer experience manager flow supports remote decisions credits membership and paid closeout',()=>{
-  for(const marker of ['customerExperienceManager','opsSendCustomerDecision','opsIssueCustomerCredit','opsSetCustomerMembership','opsReviewRebooking','decision-needed','Customer portal profile','Collect the remaining'])assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),marker+' is missing from the manager flow');
+  for(const marker of ['customerExperienceManager','opsSendCustomerDecision','opsIssueCustomerCredit','opsSetCustomerMembership','opsReviewRebooking','decision-needed','Customer portal profile','Use Estimates & payments to record verified financial activity.'])assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),marker+' is missing from the manager flow');
   for(const marker of ['Property memory','If you won’t be there','Bring the crew back','Your EGC wallet','Family and property team','Garage Guard','save_customer_memory','save_job_day_rules','save_collaborators','create_collaborator_invite','respond_decision','request_rebook','apply_gift_credit','request_gift_transfer','Copy invite'])assert.match(customerPortal,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),marker+' is missing from the customer portal');
-  assert.match(postjob,/Payment required before leaving/);
-  assert.match(postjob,/This job needs a locked total/);
-  assert.match(suite,/customerMemoryInheritedFrom/);
-  assert.match(suite,/customerDecisions:\[\],rebookingRequests:\[\],jobDayRules:\{\}/);
+  assert.match(postjob,/Completing job work never records a payment/);
+  assert.match(postjob,/Take card payment/);
+  assert.match(suite,/customerAccountOwnerJobId/);
+  const create=suite.slice(suite.indexOf('window.opsSaveBooking='),suite.indexOf('const customerKey='));
+  assert.doesNotMatch(create,/customerMemoryInheritedFrom|customerAccountOwnerJobId|giftWallet|customerCollaborators/,'The browser must not infer customer access lineage or clone account state.');
 });
 
 test('professional estimate and invoice workflow tracks revisions deadlines terms and balances',()=>{

@@ -295,7 +295,11 @@ export async function onRequestPost({ request, env }) {
       communicationPreference: ['text', 'email', 'call'].includes(body.communication_preference) ? body.communication_preference : 'text',
       preferredCrew: safe(body.preferred_crew, 160), updatedAt: now, source: 'customer_portal',
     };
-    await patchJob(env, result.accountJobId, { customerMemory: memory, customerMemoryUpdatedAt: now, updatedAt: now });
+    try {
+      await patchJob(env, result.memoryJobId, { customerMemory: memory, customerMemoryUpdatedAt: now, updatedAt: now }, result.memoryUpdateTime);
+    } catch(error) {
+      return reply(/\((409|412)\)/.test(String(error?.message))?409:503,{ok:false,error:'Property preferences could not be saved. Refresh the project and review its latest instructions before retrying.'});
+    }
     return reply(200, { ok: true, memory });
   }
 

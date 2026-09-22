@@ -195,6 +195,10 @@ EGCHubAuth.session().then(user=>{if(user){resolveCrewAuthentication();document.g
 <main id="crew-workflow" style="display:none">
   <div class="eyebrow">Run before the truck leaves the driveway</div>
   <h1>Post-Job Playbook</h1>
+  <section class="handoff" aria-label="Verified job workflow">
+    <p>This manager playbook is reference material. Record job photos, checklist evidence, notes, and status in the verified job workflow.</p>
+    <button class="actbtn" type="button" onclick="finish()">Open verified job workflow</button>
+  </section>
 
   <div class="jobcard">
     <div class="grid2">
@@ -214,10 +218,11 @@ EGCHubAuth.session().then(user=>{if(user){resolveCrewAuthentication();document.g
     <label class="fl" for="j_notes">Job notes / issues / damage</label>
     <textarea id="j_notes" placeholder="Anything off-plan, anything broken, anything to flag for Zac"></textarea>
     <div class="grid3">
-      <div><label class="fl" for="j_payment">Payment status / method</label><select id="j_payment"><option value="unpaid">Not collected — invoice</option><option value="stripe_paid">Paid securely through Stripe (server verified)</option><option value="card">Card / processor receipt (manager review)</option><option value="cash">Cash (manager review)</option><option value="check">Check (manager review)</option><option value="other">Other payment (manager review)</option></select></div>
-      <div><label class="fl" for="j_payment_amount">Amount received now $</label><input type="number" inputmode="decimal" id="j_payment_amount" min="0" step="0.01" placeholder="Required when collected"><small id="payment_hint" style="display:block;color:var(--khaki);font-size:11px;margin-top:5px"></small></div>
-      <div><label class="fl" for="j_payment_ref">Transaction / receipt reference</label><input id="j_payment_ref" placeholder="Required when payment collected"></div>
+      <div><label class="fl" for="j_payment">Verified payment status</label><select id="j_payment" disabled><option value="unpaid">See verified balance below</option><option value="stripe_paid">Paid securely through Stripe (server verified)</option></select></div>
+      <div><label class="fl" for="j_payment_amount">Card amount to charge $</label><input type="number" inputmode="decimal" id="j_payment_amount" min="0" step="0.01" placeholder="Amount for Stripe"><small id="payment_hint" style="display:block;color:var(--khaki);font-size:11px;margin-top:5px"></small></div>
+      <div><label class="fl" for="j_payment_ref">Transaction / receipt reference</label><input id="j_payment_ref" readonly placeholder="Recorded after Stripe verification"></div>
     </div>
+    <p>Record cash, check, or other payments in <a href="/employee?view=finance">Finance</a>. Completing job work never records a payment.</p>
     <div class="stripe-pay" id="stripe_pay"><div><div class="when">Secure card payment</div><strong>Take the customer’s balance with Stripe</strong><small>Stripe opens its hosted checkout. EGC never handles or stores the card number.</small></div><button type="button" onclick="takeStripePayment(this)">Take card payment</button><div class="stripe-status" id="stripe_status">Load a Hub job to calculate the verified balance.</div></div>
   </div>
 
@@ -245,7 +250,7 @@ EGCHubAuth.session().then(user=>{if(user){resolveCrewAuthentication();document.g
 <div id="pviewer" onclick="this.classList.remove('on')"><button type="button" class="x" aria-label="Close">×</button><img id="pviewerimg" alt="photo" width="1200" height="900"></div>
 
 <div id="donebar" style="display:none"><div class="inner">
-  <button id="donebtn" onclick="finish()">Complete all checks to close the job</button>
+  <button id="donebtn" onclick="finish()">Open verified job workflow</button>
 </div></div>
 
 <script>
@@ -533,8 +538,8 @@ function render(){
   document.getElementById("pt").textContent="/"+total+" DONE";
   document.getElementById("barfill").style.width=(100*done/total)+"%";
   const btn=document.getElementById("donebtn");
-  if(done===total){btn.classList.add("ready");btn.textContent="Job closed — every loop fed ✓";}
-  else{btn.classList.remove("ready");btn.textContent=`Complete all checks to close the job (${total-done} left)`;}
+  btn.classList.add("ready");
+  btn.textContent=CENTRAL_JOB_ID||ACTIVE.jobId?"Open verified job workflow":"Open my assigned jobs";
   renderJobBrief();
 }
 function tog(si,ii){state[key(si,ii)]=!state[key(si,ii)];render();saveAll();queueProgressSave();}
@@ -575,66 +580,26 @@ async function sendReview(btn){
   if(ok){btn.textContent="Review text sent ✓";if(HUBDB&&ACTIVE.jobId)await HUBDB.collection('jobs').doc(ACTIVE.jobId).set({reviewStatus:'requested',reviewRequestedAt:new Date().toISOString(),reviewRequestId:_reviewId,updatedAt:new Date().toISOString()},{merge:true}).catch(()=>{});}
   else{btn.disabled=false;btn.textContent="Retry → Send review link";alert("Review text did NOT send (HQ unreachable). Check signal and tap again.");}
 }
-let _finishId="";
+// Canonical job execution belongs to the signed server workflow. These legacy
+// manager playbooks retain reference material and payment return handling only.
 async function finish(){
-  const total=totalChecks();
-  if(totalDone()<total) return;
-  await refreshPhotoCounts();
-  const v=id=>document.getElementById(id).value;
-  const actualLoadsRaw=v("j_loads"),hoursRaw=v("j_hours"),actualLoads=Number(actualLoadsRaw),hoursOnSite=Number(hoursRaw),quotedLoads=Number(ACTIVE.scope?.loads||0),variance=actualLoads-quotedLoads,closeoutNotes=v("j_notes").trim();
-  if(CENTRAL_JOB_ID&&!ACTIVE.preJobCompletedAt&&!ACTIVE.preJobException){const reason=prompt("No completed pre-job handoff was found. Enter the manager-approved exception reason to continue.");if(!String(reason||'').trim()){alert("Closeout stopped. Complete the pre-job handoff or record a manager-approved exception.");return}ACTIVE.preJobException=String(reason).trim()}
-  if(actualLoadsRaw===""||!Number.isFinite(actualLoads)||actualLoads<0){alert("Enter the actual truckloads before closing the job.");return;}
-  if(hoursRaw===""||!Number.isFinite(hoursOnSite)||hoursOnSite<=0){alert("Enter the crew hours on site before closing the job.");return;}
-  if(quotedLoads&&Math.abs(variance)>.01&&!closeoutNotes){alert(`The walkthrough planned ${quotedLoads} load${quotedLoads===1?'':'s'}, but closeout shows ${actualLoads}. Add a job note explaining the difference.`);return;}
-  const totalPrice=Number(ACTIVE.total||ACTIVE.rate||0),paidToDate=Number(ACTIVE.paidToDate||0),outstanding=Math.max(0,totalPrice-paidToDate),paymentMethod=v("j_payment")||"unpaid",stripeSelected=paymentMethod==="stripe_paid",stripePaid=stripeSelected&&ACTIVE.paymentRecord?.verified===true&&ACTIVE.paymentRecord?.processor==="stripe",manualPayment=paymentMethod!=="unpaid"&&!stripeSelected,paymentReference=(v("j_payment_ref")||ACTIVE.paymentRecord?.reference||"").trim(),paymentAmountRaw=v("j_payment_amount"),paymentAmount=manualPayment?Number(paymentAmountRaw):0;
-  if(stripeSelected&&!stripePaid){alert("Stripe payment has not been verified by the server. Use Take card payment or choose the actual payment method.");return;}
-  if(manualPayment&&(paymentAmountRaw===""||!Number.isFinite(paymentAmount)||paymentAmount<=0)){alert("Enter the amount received now before recording payment.");return;}
-  if(manualPayment&&paymentAmount>outstanding+.01){alert(`The amount received is greater than the ${outstanding.toLocaleString('en-US',{style:'currency',currency:'USD'})} balance. Record tips separately.`);return;}
-  if(manualPayment&&!paymentReference){alert("Add the processor transaction ID, check number, or receipt reference before recording payment.");return;}
-  const cumulativePaid=Math.min(totalPrice,paidToDate+paymentAmount),remainingBalance=Math.max(0,totalPrice-cumulativePaid),paidInFull=totalPrice>0&&remainingBalance<.01,verifiedPaidInFull=paidInFull&&!manualPayment&&ACTIVE.paymentRecord?.verified===true;
-  if(totalPrice<=0){alert("Closeout stopped. This job needs a locked total before the crew can finish.");return;}
-  if(remainingBalance>.01){alert(`Payment required before leaving. Collect the remaining ${remainingBalance.toLocaleString('en-US',{style:'currency',currency:'USD'})} by Stripe or record the payment for manager verification.`);return;}
-  _finishId=_finishId||uid();
-  const payload={tool:"post_job",request_id:_finishId,job_id:ACTIVE.jobId||"",opportunity_id:ACTIVE.highlevelOpportunityId||"",idempotency_key:`post-job:${ACTIVE.jobId||"manual"}:${_finishId}`,sent_at:new Date().toISOString(),
-    job:{customer:v("j_name"),phone:normPhone(v("j_phone")),date:v("j_date"),quoted_loads:quotedLoads,actual_loads:actualLoads,
-         hours_on_site:hoursOnSite,started_at:ACTIVE.startedAt||"",dump_fees:Number(v("j_fees")||0),notes:closeoutNotes,
-         package:ACTIVE.pkg||"",quoted_rate:ACTIVE.rate||"",locked_total:ACTIVE.total||ACTIVE.rate||"",pain:ACTIVE.pain||"",customer_goal:ACTIVE.instructions?.customerGoal||"",original_customer_notes:ACTIVE.instructions?.customerNotes||ACTIVE.customerNotesSummary||"",important_item_notes:ACTIVE.importantItemNotes||"",pre_job_completed_at:ACTIVE.preJobCompletedAt||"",pre_job_exception:ACTIVE.preJobException||""},
-    garage_guard:GUARD||"not recorded",
-    photos:{after:AFTER_COUNT,important:IMPORTANT_COUNT},
-    drive_folder:(function(){try{return localStorage.getItem(driveKey())||"";}catch(e){return "";}})(),
-    highlevel_contact_id:ACTIVE.highlevelContactId||"",
-     client_checklist:clientItems().map(it=>({label:it.label,detail:it.detail,completed:true})),
-     payment:{method:stripePaid?'stripe':paymentMethod,processor:stripePaid?'stripe':'',amount_received:paymentAmount,previously_paid:paidToDate,paid_to_date:cumulativePaid,balance:remainingBalance,reference:paymentReference,verified:verifiedPaidInFull},
-     checklist:[...clientItems().map(it=>`CLIENT: ${it.label} — ${it.detail}: done`),...SECTIONS.flatMap(s=>s.items.map(it=>it.t+": done"))].join("\n")};
-  // Local backup FIRST — job-costing data (loads/hours/fees) must survive even if HQ is down.
-  try{const log=JSON.parse(localStorage.getItem("egc_job_log")||"[]");log.push(payload);
-    localStorage.setItem("egc_job_log",JSON.stringify(log.slice(-50)));}catch(e){}
-  const completedAt=new Date().toISOString();
-  if(HUBDB&&ACTIVE.jobId){const paidNow=manualPayment&&Boolean(paymentReference),existingPayment=ACTIVE.paymentRecord&&typeof ACTIVE.paymentRecord==='object'?ACTIVE.paymentRecord:{},paymentRecord=paidNow?{...existingPayment,amount:cumulativePaid,lastAmount:paymentAmount,lastReceivedAt:completedAt,method:paymentMethod,reference:paymentReference,verified:false,verificationSource:'crew_attestation',recordedBy:'crew'}:(Object.keys(existingPayment).length?existingPayment:{amount:0,method:'unpaid',verified:false}),completedBy=sessionStorage.getItem('egc_u')||localStorage.getItem('egc_u')||'';try{await HUBDB.collection('jobs').doc(ACTIVE.jobId).set({status:verifiedPaidInFull?'paid':'completed',pipelineStatus:verifiedPaidInFull?'paid':'completed',completedAt,actualLoads,hoursOnSite,timeTracking:{startedAt:ACTIVE.startedAt||'',completedAt,elapsedHours:hoursOnSite,recordedBy:completedBy},dumpFees:Number(v('j_fees')||0),closeoutNotes,closeoutPreJobException:ACTIVE.preJobException||'',scopeVariance:{quotedLoads,actualLoads,difference:variance,notes:closeoutNotes,recordedAt:completedAt},postJobProgress:{...progressPayload(),completedAt},postJobChecklist:{completedAt,completedBy,importantItemNotes:ACTIVE.importantItemNotes||'',importantItemPhotoCount:IMPORTANT_COUNT,clientItems:clientItems().map(it=>({id:it.id,label:it.label,detail:it.detail,completed:true})),standardItems:SECTIONS.flatMap(sec=>sec.items.map(it=>it.t))},afterPhotoCount:AFTER_COUNT,importantItemPhotoCount:IMPORTANT_COUNT,importantItemsVerifiedAt:completedAt,photoDriveUrl:payload.drive_folder||ACTIVE.photoDriveUrl||'',payment:paymentRecord,invoice:{status:verifiedPaidInFull?'paid':cumulativePaid>0?'pending_verification':'ready',amount:totalPrice,balance:remainingBalance,updatedAt:completedAt},closeoutSyncStatus:'pending',closeoutSyncPayload:payload,closeoutIdempotencyKey:_finishId,updatedAt:completedAt},{merge:true})}catch(error){document.getElementById("donebtn").textContent="Retry → Save closeout to Hub";alert("The Hub could not record closeout. The full closeout is still saved on this device—reconnect and retry before leaving.");return}}
-  if(HUBDB&&ACTIVE.customerId)await HUBDB.collection('customers').doc(ACTIVE.customerId).set({latestJobId:ACTIVE.jobId,lastServiceAt:completedAt,lastCloseoutNotes:v('j_notes'),lastPaymentStatus:verifiedPaidInFull?'paid':cumulativePaid>0?'pending_verification':'unpaid',lastPaymentBalance:remainingBalance,updatedAt:completedAt},{merge:true}).catch(()=>{});
-  if(HUBDB&&ACTIVE.jobId)await releaseCentralLock();
-  const btn=document.getElementById("donebtn");btn.textContent="Saving to HighLevel…";
-  let ok=false; try{ ok=await postHighLevel(payload); }catch(e){ ok=false; }
-  if(!ok){
-    if(HUBDB&&ACTIVE.jobId)await HUBDB.collection('jobs').doc(ACTIVE.jobId).set({closeoutSyncStatus:'error',closeoutSyncError:'HighLevel unavailable',closeoutSyncNextRetryAt:new Date(Date.now()+10*60000).toISOString(),updatedAt:new Date().toISOString()},{merge:true}).catch(()=>{});
-    btn.classList.remove("ready");btn.textContent="Retry → Save closeout to HighLevel";
-    alert("Job not saved to HighLevel. It's still saved on this iPad — reconnect and tap again. Nothing was cleared.");
-    return; // don't wipe the handoff/checklist on failure, so a retry still works
-  }
-  if(HUBDB&&ACTIVE.jobId)await HUBDB.collection('jobs').doc(ACTIVE.jobId).set({closeoutSyncStatus:'synced',closeoutSyncError:'',closeoutSyncNextRetryAt:'',updatedAt:new Date().toISOString()},{merge:true}).catch(()=>{});
-  btn.textContent="Job closed & saved to HighLevel ✓";btn.disabled=true;
-  localStorage.removeItem(saveKey());
-  try{const handoff=JSON.parse(localStorage.getItem("egc_active_job")||"null");if(ACTIVE.jobId&&handoff?.jobId===ACTIVE.jobId)localStorage.removeItem("egc_active_job")}catch{}
-  document.getElementById('donebar').insertAdjacentHTML('beforebegin',`<div class="handoff" style="margin:18px"><div class="brief-head"><div><span>Shift complete</span><h2>Job closed successfully</h2></div><b>Synced</b></div><p class="brief-empty">The Hub and HighLevel are updated. Your local job handoff has been cleared.</p><div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:12px"><a class="actbtn alt" href="/crew/">Back to crew home</a><a class="actbtn" href="/employee?view=earnings">See my time & pay</a></div></div>`);
+  const id=CENTRAL_JOB_ID||ACTIVE.jobId||'';
+  location.assign('/crew/job.html'+(id?'?jobId='+encodeURIComponent(id):''));
 }
 async function loadCentralJob(){if(!CENTRAL_JOB_ID)return;if(!HUBDB)throw new Error('The job connection is unavailable.');const snap=await HUBDB.collection('jobs').doc(CENTRAL_JOB_ID).get({source:'server'});if(!snap.exists){const error=new Error('This job could not be found.');error.code='CREW_JOB_NOT_FOUND';throw error;}restoreAll();const j={id:snap.id,...snap.data()},total=Number(j.total||j.priceQuoted||0),paidToDate=Number(j.payment?.amount||0),balance=Math.max(0,total-paidToDate);ACTIVE={...ACTIVE,jobId:j.id,customerId:j.customerId||'',highlevelContactId:j.highlevelContactId||'',highlevelOpportunityId:j.highlevelOpportunityId||'',highlevelAppointmentId:j.highlevelAppointmentId||'',name:j.customer||'',phone:j.phone||'',email:j.email||'',addr:j.address||'',pkg:j.serviceType||'',total:j.total||j.priceQuoted||'',rate:j.total||j.priceQuoted||'',deposit:j.deposit?.amount||'',paidToDate,paymentRecord:j.payment||{},paymentSyncStatus:j.paymentSyncStatus||'',paymentSyncPayload:j.paymentSyncPayload||null,jobdate:j.date||'',startTime:j.time||'',endTime:j.endTime||'',pain:j.walkthroughNotes||'',customerNotesSummary:j.customerNotesSummary||j.notes||'',internalNotes:j.internalNotes||'',clientChecklists:j.clientChecklists||{},discovery:j.discovery||{},scope:j.scope||{},logistics:j.logistics||{},instructions:normalizedInstructions(j),preJobCompletedAt:j.preJobChecklist?.completedAt||'',preJobCompletedBy:j.preJobChecklist?.completedBy||'',preJobException:j.closeoutPreJobException||'',importantItemNotes:j.importantItemNotes||j.preJobChecklist?.importantItemNotes||'',importantItemPhotoCount:Number(j.importantItemPhotoCount||j.preJobChecklist?.importantItemPhotoCount||0),savedAt:j.updatedAt||j.createdAt||''};restoreSharedProgress(j.postJobProgress);document.getElementById('j_name').value=j.customer||'';document.getElementById('j_phone').value=j.phone||'';document.getElementById('j_date').value=j.date||'';const amount=document.getElementById('j_payment_amount'),hint=document.getElementById('payment_hint');if(amount&&!amount.value&&balance>0)amount.value=String(balance);if(hint)hint.textContent=paidToDate?`${paidToDate.toLocaleString('en-US',{style:'currency',currency:'USD'})} already recorded · ${balance.toLocaleString('en-US',{style:'currency',currency:'USD'})} remaining`:`${balance.toLocaleString('en-US',{style:'currency',currency:'USD'})} outstanding`;saveAll()}
-async function releaseCentralLock(){try{const ref=HUBDB.collection('jobs').doc(`_egc_schedule_lock_${String(ACTIVE.jobdate||'').replace(/[^0-9-]/g,'')}`),snap=await ref.get(),entries=(Array.isArray(snap.data()?.entries)?snap.data().entries:[]).filter(x=>x.id!==ACTIVE.jobId);await ref.set({recordType:'schedule_lock',date:ACTIVE.jobdate,entries,updatedAt:new Date().toISOString()},{merge:true})}catch(e){}}
 document.addEventListener("input",()=>{if(crewWorkflowReady)saveAll()});
 if(!STORAGE_OK) setTimeout(()=>alert("Heads up: this browser is blocking local storage (often Private Browsing). The job won't pre-fill from the Game Plan and progress won't save. Switch off Private Browsing for this iPad."),200);
 async function restoreWalkthroughPhotoFolder(){if(!HUBDB||!CENTRAL_JOB_ID)return;try{const snap=await HUBDB.collection('jobs').doc(CENTRAL_JOB_ID).get(),data=snap.data()||{},url=data.photoDriveUrl,grid=document.querySelector('#job-brief .brief-grid'),hours=document.getElementById('j_hours'),hint=document.getElementById('hours_hint');ACTIVE.startedAt=data.startedAt||data.timeTracking?.startedAt||'';if(ACTIVE.startedAt&&hours&&!hours.value){const elapsed=Math.max(.25,Math.round((Date.now()-Date.parse(ACTIVE.startedAt))/900000)/4);if(Number.isFinite(elapsed)){hours.value=String(elapsed);if(hint)hint.textContent=`Calculated from ${new Date(ACTIVE.startedAt).toLocaleTimeString([],{hour:'numeric',minute:'2-digit'})}; adjust if needed.`;saveAll()}}if(url){localStorage.setItem(driveKey(),url);if(grid)grid.insertAdjacentHTML('beforeend',`<article class="wide"><small>Walkthrough photos</small><strong><a href="${esc(url)}" target="_blank" rel="noopener">Open the client photo folder ↗</a></strong></article>`)}}catch(e){}}
 let crewWorkflowReady=false,crewWorkflowLoading=false;
 async function openCrewWorkflow(standalone=false){
   if(crewWorkflowReady||crewWorkflowLoading)return;
+  // Crew execution now uses the authenticated, projected job API. Managers
+  // retain the existing financial closeout tools; raw Firestore denies crew.
+  if(!EGCHubAuth.canRunBusiness(EGCHubAuth.profile().user)){
+    const id=REQUESTED_JOB_ID||CENTRAL_JOB_ID||'';
+    location.replace('/crew/job.html'+(id?'?jobId='+encodeURIComponent(id):''));
+    return;
+  }
   crewWorkflowLoading=true;
   document.getElementById('crew-job-standalone').hidden=Boolean(REQUESTED_JOB_ID);
   if(standalone&&!REQUESTED_JOB_ID){CENTRAL_JOB_ID='';ACTIVE={}}

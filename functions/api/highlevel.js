@@ -21,6 +21,8 @@
  *   HIGHLEVEL_LEADS_RESET_AT
  */
 
+import { savedHandoffPayload } from '../_lib/walkthrough-handoff.js';
+import { requireDispatcher } from '../_lib/dispatch-service.js';
 import { getHubSession, hasBusinessAccess } from '../_lib/hub-session.js';
 import { sendAcceptedQuotePortal } from '../_lib/portal-invitation.js';
 import { syncSalesFollowupExit, salesExitMilestone } from '../_lib/sales-followup-exit.js';
@@ -490,6 +492,7 @@ export async function onRequestGet({ request, env }) {
   if (!allowed(request)) return reply(403, { ok: false, error: 'Forbidden origin' });
   const session = await getHubSession(request, env);
   if (!session) return reply(401, { ok: false, code: 'HUB_AUTH_REQUIRED', error: 'Sign in to the EGC Hub' });
+  if (!hasBusinessAccess(session)) return reply(403, { ok: false, code: 'BUSINESS_ACCESS_REQUIRED', error: 'Business access is required for CRM records and handoffs. Open the assigned field job for crew actions.' });
   const c = config(env);
   if (!c.token || !c.locationId) return reply(501, { ok: false, code: 'HIGHLEVEL_NOT_CONFIGURED', error: 'HighLevel needs an API key and location ID' });
   const url = new URL(request.url), view = url.searchParams.get('view') || 'command';
@@ -520,6 +523,7 @@ export async function onRequestPost({ request, env }) {
   if (!allowed(request)) return reply(403, { ok: false, error: 'Forbidden origin' });
   const session = await getHubSession(request, env);
   if (!session) return reply(401, { ok: false, code: 'HUB_AUTH_REQUIRED', error: 'Sign in to the EGC Hub' });
+  if (!hasBusinessAccess(session)) return reply(403, { ok: false, code: 'BUSINESS_ACCESS_REQUIRED', error: 'Business access is required for CRM records and handoffs. Open the assigned field job for crew actions.' });
   const assignments = createJobAssignmentAccess(env, session);
   const c = config(env);
   if (!c.token || !c.locationId) return reply(501, { ok: false, code: 'HIGHLEVEL_NOT_CONFIGURED', error: 'HighLevel needs an API key and location ID' });
@@ -536,6 +540,20 @@ export async function onRequestPost({ request, env }) {
   if (payload.tool === 'sales_exit') {
     if (!hasBusinessAccess(session)) return reply(403, { ok: false, error: 'Business access required' });
     return reply(200, { ok: true, salesFollowupExit: await syncSalesFollowupExit(env, payload.job_id) });
+  }
+  // New signed walkthroughs are synchronized from their persisted snapshot.
+  // The browser supplies only the canonical job and original request identity.
+  const handoffRequestId = payload.tool === 'game_plan' ? payload.handoff_request_id || '' : '';
+  if (payload.tool === 'game_plan' && payload.job_id) {
+    try {
+      const saved = handoffRequestId ? await readJob(env, payload.job_id) : await readJob(env, payload.job_id).catch(()=>null);
+      if (handoffRequestId || saved?.handoffVersion === 1) {
+        requireDispatcher(session);
+        if (!operationsEnabled(env)) return reply(503,{ok:false,code:'HANDOFF_NATIVE_SYNC_REQUIRED',error:'The signed job is saved. The native operations bridge must be available before CRM synchronization.'});
+        if (!saved || saved.id !== payload.job_id) return reply(409,{ok:false,error:'The saved handoff job could not be verified.'});
+        payload = savedHandoffPayload(saved, handoffRequestId);
+      }
+    } catch (error) { return reply(error.status || 503,{ok:false,code:error.code || 'HANDOFF_SNAPSHOT_UNAVAILABLE',error:'The signed handoff could not be verified. Open the saved Hub job before synchronizing.'}); }
   }
   const inviteRequested = payload.tool === 'game_plan' || (payload.tool === 'lifecycle' && payload.event === 'estimate-approved');
   if (inviteRequested && !hasBusinessAccess(session)) return reply(403, { ok: false, code: 'BUSINESS_ACCESS_REQUIRED', error: 'Business access required for quote approvals' });
@@ -559,6 +577,7 @@ export async function onRequestPost({ request, env }) {
     return syncSalesFollowupExit(env, payload.job_id);
   };
   const finish = async (contactId, result) => {
+    let handoffSync = handoffRequestId ? {status:'pending',reason:'storage_readback_required'} : undefined;
     // Preserve durable links before evaluating the saved job. Never trust an
     // incoming contact ID as authority to stop that person's sales workflows.
     try {
@@ -572,11 +591,22 @@ export async function onRequestPost({ request, env }) {
           const patch = { highlevelContactId: contactId };
           if (result.pipeline?.updated && result.pipeline.opportunityId) patch.highlevelOpportunityId = result.pipeline.opportunityId;
           if (result.appointmentId) patch.highlevelAppointmentId = result.appointmentId;
+          if (handoffRequestId) {
+            savedHandoffPayload(job,handoffRequestId);
+            const verified=operationsEnabled(env)&&result.providerSync==='verified'&&Boolean(result.noteId);
+            Object.assign(patch,{handoffSyncStatus:verified?'synced':'pending',handoffSyncError:verified?'':'provider_evidence_incomplete',handoffLastSyncAt:new Date().toISOString(),handoffNoteId:result.noteId || '',pipelineSync:result.pipeline || {}});
+          }
           await patchJob(env, payload.job_id, patch, job.__updateTime);
+          if (handoffRequestId) {
+            const live=await readJob(env,payload.job_id);
+            if(!live||live.handoffRequestId!==handoffRequestId||live.highlevelContactId!==contactId||result.appointmentId&&live.highlevelAppointmentId!==result.appointmentId)throw new Error('handoff_link_readback_failed');
+            handoffSync={status:live.handoffSyncStatus || 'pending',noteId:live.handoffNoteId || '',pipeline:result.pipeline || {}};
+          }
         }
       }
     } catch { /* Missing/ambiguous storage is handled by the verification below. */ }
-    return reply(200, { ...result, salesFollowupExit: await exitForJob() });
+    if(handoffRequestId&&handoffSync.reason==='storage_readback_required')return reply(503,{ok:false,code:'HANDOFF_STORAGE_READBACK_PENDING',error:'The Hub job is saved. CRM results need exact storage read-back before retrying.',portalInvitation,handoffSync});
+    return reply(200, { ...result, ...(handoffSync?{handoffSync}:{}), salesFollowupExit: await exitForJob() });
   };
   try {
     const contactId = await ensureContact(c, { ...client, highlevel_contact_id: client.highlevel_contact_id || payload.highlevel_contact_id }, payload.tool === 'schedule' ? 'EGC Hub schedule' : payload.tool === 'lifecycle' ? 'EGC Hub lifecycle' : 'EGC walkthrough');
@@ -637,7 +667,10 @@ export async function onRequestPost({ request, env }) {
       // Never re-enrol an accepted job when staff resave its Game Plan. Quote
       // persuasion requires the current saved estimate to still be open.
       const quoteIsOpen = savedJob && !salesExitMilestone(savedJob) && ['sent', 'open'].includes(String(savedJob.estimate?.status || '').toLowerCase());
-      await addTags(c, contactId, ['egc-walkthrough-complete', ...(quoteIsOpen ? c.quoteReadyTags : [])]);
+      const sourceVisit=handoffRequestId&&savedJob?.sourceWalkthroughId?await readJob(env,savedJob.sourceWalkthroughId).catch(()=>null):null;
+      const sourceCompleted=sourceVisit&&sourceVisit.customerId===savedJob.customerId&&Number.isFinite(Date.parse(sourceVisit.completedAt||''))&&['completed','paid','invoiced','closed'].includes(String(sourceVisit.pipelineStatus||sourceVisit.status));
+      const visitTags=[...(!handoffRequestId||sourceCompleted?['egc-walkthrough-complete']:[]),...(quoteIsOpen?c.quoteReadyTags:[])];
+      if(visitTags.length)await addTags(c,contactId,visitTags);
       const walkthrough = operationsEnabled(env)
         ? savedJob?.sourceWalkthroughId ? await syncNativeSchedule(env,session,{portalVisitId:savedJob.sourceWalkthroughId,requestId:(payload.idempotency_key||'')+':walkthrough',contactProviderId:contactId,runAutomations:false}) : {updated:false,reason:'exact-source-walkthrough-not-linked'}
         : await completeAppointment(c, client.highlevel_appointment_id || payload.walkthrough_appointment_id || '');
@@ -659,6 +692,7 @@ export async function onRequestPost({ request, env }) {
     }
     return reply(200, { ok: true, contactId, noteId: note.note && note.note.id || '', taskId, automation: { trigger: 'egc-walkthrough-complete' } });
   } catch (error) {
+    if(handoffRequestId)try{const current=await readJob(env,payload.job_id);if(current?.__updateTime&&current.handoffRequestId===handoffRequestId)await patchJob(env,payload.job_id,{handoffSyncStatus:'pending',handoffSyncError:'provider_handoff_unconfirmed',handoffLastAttemptAt:new Date().toISOString()},current.__updateTime);}catch{/* The signed job and original request remain recoverable. */}
     return reply(502, { ok: false, error: 'HighLevel rejected the field handoff', detail: error.code||error.detail || error.message,...(error.operationId?{operationId:error.operationId}:{}), portalInvitation, salesFollowupExit: await exitForJob() });
   }
 }

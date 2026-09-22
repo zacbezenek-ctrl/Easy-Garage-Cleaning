@@ -112,7 +112,8 @@ test('Firestore requires a Hub-minted Firebase session and server calls use serv
   assert.doesNotMatch(read('firestore.rules'), /match \/jobs\/\{documentId\}[\s\S]*?allow read, write: if signedIn\(\)/);
   assert.match(read('firestore.rules'), /assignedToUser\(resource\.data\)/);
   assert.match(read('crew/index.html'), /\/api\/crew-jobs/);
-  assert.match(read('employee.html'), /if \(!canRunBusiness\(\)\)[\s\S]*?\/api\/crew-jobs/);
+  assert.match(read('employee.html'), /if \(!canRunBusiness\(\)\) \{\s*void refreshCrewSchedule\(\)/);
+  assert.match(read('employee.html'), /function refreshCrewSchedule\(\)[\s\S]*?\/api\/crew-jobs/);
   assert.match(read('firestore.rules'), /match \/\{document=\*\*\}[\s\S]*allow read, write: if false/);
   assert.doesNotMatch(read('functions/_lib/hub-session.js'), /[a-f0-9]{64}/i);
   assert.doesNotMatch(read('functions/_lib/hub-session.js'), /HIGHLEVEL_API_KEY|GHL_API_KEY/);
@@ -185,32 +186,40 @@ test('open shifts cannot be read directly and are claimed with an authenticated 
   const cookie = (await createHubSessionCookie(env, 'Crewtest', { displayName: 'Crew Test' })).split(';')[0];
   const originalFetch = globalThis.fetch;
   const calls = [];
+  let revision=0;
+  const root='projects/egcw-1ec83/databases/(default)/documents/';
+  const documents=new Map([['jobs/open-job',{name:root+'jobs/open-job',updateTime:'initial',fields:encodeFirestoreFields({type:'job',status:'scheduled',date:'2099-09-08',time:'10:00',endTime:'11:00',openShift:true,shiftPickupEnabled:true,assignedCrew:[],crewNeeded:2,estimate:{total:1000},opsNotes:'Private manager note'})}]]);
   globalThis.fetch = async (url, options = {}) => {
     calls.push({ url: String(url), options });
     if (String(url).includes(':runQuery')) return new Response('[]', { status: 200 });
-    if ((options.method || 'GET') === 'GET') return new Response(JSON.stringify({
-      name: 'projects/x/databases/(default)/documents/jobs/open-job',
-      updateTime: '2026-09-04T18:00:00.000000Z',
-      fields: encodeFirestoreFields({ type: 'job', status: 'scheduled', openShift: true, shiftPickupEnabled: true, assignedCrew: [], crewNeeded: 2 }),
-    }), { status: 200 });
-    return new Response(JSON.stringify({
-      name: 'projects/x/databases/(default)/documents/jobs/open-job',
-      fields: encodeFirestoreFields({ type: 'job', status: 'scheduled', openShift: true, shiftPickupEnabled: true, assignedCrew: ['Crew Test'], assignedTo: 'Crew Test', crewNeeded: 2 }),
-    }), { status: 200 });
+    if (String(url).includes(':commit')) {
+      const writes=JSON.parse(options.body).writes;
+      for(const write of writes){const existing=documents.get(write.update.name.slice(root.length));if(write.currentDocument?.exists===false&&existing||write.currentDocument?.updateTime&&write.currentDocument.updateTime!==existing?.updateTime)return Response.json({}, {status:412});}
+      for(const write of writes){const key=write.update.name.slice(root.length),existing=documents.get(key);documents.set(key,{name:write.update.name,fields:{...existing?.fields,...write.update.fields},updateTime:'revision-'+(++revision)});}
+      return Response.json({writeResults:[]});
+    }
+    const path=new URL(url).pathname.split('/documents/')[1];
+    if (!path.includes('/')) return Response.json({documents:[...documents.entries()].filter(([key])=>key.startsWith(path+'/')).map(([,value])=>value)});
+    return documents.has(path)?Response.json(documents.get(path)):Response.json({}, {status:404});
   };
   try {
     const request = new Request('https://easygaragecleaning.com/api/crew-jobs', {
       method: 'POST',
       headers: { Cookie: cookie, Origin: 'https://easygaragecleaning.com', 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'claim', jobId: 'open-job' }),
+      body: JSON.stringify({ action: 'claim', jobId: 'open-job',requestId:crypto.randomUUID() }),
     });
     const response = await route.onRequestPost({ request, env });
     assert.equal(response.status, 200);
     const result = await response.json();
-    assert.deepEqual(result.job.assignedCrew, ['Crew Test']);
-    const write = calls.find(call => call.options.method === 'PATCH');
-    assert.ok(write);
-    assert.match(write.url, /currentDocument\.updateTime=/);
+    assert.deepEqual(result.job.assignedCrew, ['crewtest']);
+    assert.equal(result.job.estimate,undefined);assert.equal(result.job.opsNotes,undefined);
+    const commit = calls.find(call => call.url.includes(':commit'));
+    assert.ok(commit);
+    const writes=JSON.parse(commit.options.body).writes;
+    assert.equal(writes.find(write=>write.update.name.endsWith('/jobs/open-job')).currentDocument.updateTime,'initial');
+    assert.ok(writes.some(write=>write.update.name.endsWith('/dispatchState/revision')));
+    assert.ok(writes.some(write=>write.update.name.includes('/dispatchOperations/')));
+    assert.ok(!calls.some(call=>call.options.method==='PATCH'));
     assert.match(read('employee-suite.js'), /window\.opsClaimShift=id=>changeShift\(id,'claim'\)/);
   } finally { globalThis.fetch = originalFetch; }
 });
@@ -234,9 +243,9 @@ test('crew job rules limit assigned staff to operational fields', () => {
   assert.match(rules, /lastPaymentStatus == 'paid'[\s\S]*?job\.payment\.verified == true/);
   assert.match(read('functions/api/job-payment.js'), /recordStripePayment/);
   assert.match(read('functions/api/job-payment.js'), /Payment exceeds the current job balance/);
-  assert.match(read('crew/postjob.html'), /verificationSource:'crew_attestation'/);
-  assert.match(read('crew/postjob.html'), /pending_verification/);
-  assert.match(read('crew/postjob.html'), /verifiedPaidInFull/);
+  assert.doesNotMatch(read('crew/postjob.html'), /verificationSource:'crew_attestation'|verifiedPaidInFull/);
+  assert.match(read('crew/postjob.html'), /Completing job work never records a payment/);
+  assert.match(read('crew/postjob.html'), /result\.jobId!==ACTIVE\.jobId/);
   assert.match(read('functions/api/quo-send.js'), /readJob\(env, jobId\)/);
   assert.match(read('functions/api/quo-send.js'), /await assignedToJob\(job, session, env\)/);
   assert.match(read('crew/prejob.html'), /job_id:ACTIVE\.jobId/);

@@ -8,6 +8,7 @@ import { encodeFirestoreFields, decodeFirestoreFields } from '../functions/_lib/
 import * as portal from '../functions/api/customer-portal.js';
 import * as exchange from '../functions/api/customer-portal-session.js';
 import * as upload from '../functions/api/drive-upload.js';
+import { readCustomerPortalContext } from '../functions/_lib/customer-portal-access.js';
 
 const origin = 'https://easygaragecleaning.com';
 const env = {
@@ -28,7 +29,7 @@ const get = cookie => portal.onRequestGet({ env, request: request('/api/customer
 const post = (cookie, body) => portal.onRequestPost({ env, request: request('/api/customer-portal', cookie, body) });
 
 function fixture(t, initial = {}) {
-  const jobs = new Map(Object.entries({ 'job-1': { customer: 'Synthetic Customer', type: 'job', total: 400, customerCollaborators: [person()], ...initial } }));
+  const jobs = new Map(Object.entries({ 'job-1': { customer: 'Synthetic Customer',customerId:'customer-1',address:'100 Test Street', type: 'job', total: 400, customerCollaborators: [person()], ...initial } }));
   const calls = [], writes = [];
   t.mock.method(globalThis, 'fetch', async (input, options = {}) => {
     const url = new URL(input), method = options.method || 'GET';
@@ -74,10 +75,10 @@ test('customer access follows saved collaborator permissions and removal immedia
 
 test('recurring job permissions use the account source and never its stale copied people', async t => {
   const f = fixture(t, { customerAccountOwnerJobId: 'account-job' });
-  f.jobs.set('account-job', { customerCollaborators: [] });
+  f.jobs.set('account-job', {type:'job',customerId:'customer-1',customerCollaborators: [] });
   const cookie = await cookieFor('job-1', 'person-1');
   assert.equal((await get(cookie)).status, 403);
-  f.jobs.set('account-job', { customerCollaborators: [person()] });
+  f.jobs.set('account-job', {type:'job',customerId:'customer-1',customerCollaborators: [person()] });
   assert.equal((await get(cookie)).status, 200);
   f.jobs.delete('account-job');
   assert.equal((await get(cookie)).status, 503, 'an unavailable account cannot reactivate a stale copied invitation');
@@ -105,6 +106,44 @@ test('a temporary account lookup failure never calls a valid customer invitation
   const response = await exchange.onRequestGet({ env, request: new Request(`${origin}/api/customer-portal-session?access=${encodeURIComponent(token)}`) });
   assert.equal(response.headers.get('location'), '/customer-portal?error=unavailable');
   assert.equal(response.headers.has('set-cookie'), false);
+});
+
+test('crosscustomer or circular account roots cannot expose wallet facts or grant collaborator access',async t=>{
+  const f=fixture(t,{customerAccountOwnerJobId:'root'}),cookie=await cookieFor();
+  f.jobs.set('root',{type:'job',customerId:'another-customer',giftWallet:{balance:5000},customerCollaborators:[person()]});
+  let response=await get(cookie);assert.equal(response.status,403);assert.equal((await response.json()).code,'CUSTOMER_PORTAL_ACCOUNT_INVALID');
+  f.jobs.set('root',{type:'job',customerId:'customer-1',customerAccountOwnerJobId:'job-1'});
+  response=await get(cookie);assert.equal(response.status,403);assert.equal(f.writes.length,0);
+});
+
+test('samecustomer different-property memory stays job-specific while verified wallet identity stays shared',async t=>{
+  const f=fixture(t,{customerAccountOwnerJobId:'root',customerMemory:{parkingNotes:'This property'},giftWallet:{balance:9999}});
+  f.jobs.set('root',{type:'job',customerId:'customer-1',address:'200 Other Street',customerMemory:{alarmNotes:'Other property alarm'},giftWallet:{balance:300},customerCollaborators:[person()]});
+  let context=await readCustomerPortalContext(env,{jobId:'job-1'});
+  assert.equal(context.accountJobId,'root');assert.equal(context.memoryJobId,'job-1');assert.deepEqual(context.job.customerMemory,{parkingNotes:'This property'});assert.equal(context.job.giftWallet.balance,300);
+  delete f.jobs.get('root').giftWallet;
+  context=await readCustomerPortalContext(env,{jobId:'job-1'});assert.equal(context.job.giftWallet,undefined,'A stale cloned wallet cannot reappear when the authoritative root has none.');
+  const response=await post(await cookieFor(),{action:'save_customer_memory',parking_notes:'Updated driveway note'});assert.equal(response.status,200);
+  assert.equal(f.jobs.get('job-1').customerMemory.parkingNotes,'Updated driveway note');assert.equal(f.jobs.get('root').customerMemory.alarmNotes,'Other property alarm');
+  const write=f.calls.find(call=>call.method==='PATCH');assert.equal(write.url.searchParams.get('currentDocument.updateTime'),'2026-09-07T00:00:00Z');assert.ok(write.url.pathname.endsWith('/job-1'));
+});
+
+test('same-property account memory stays authoritative and collaborator revocation still applies each request',async t=>{
+  const f=fixture(t,{customerAccountOwnerJobId:'root',propertyId:'property-1',customerMemory:{parkingNotes:'Stale copy'}});
+  f.jobs.set('root',{type:'job',customerId:'customer-1',propertyId:'property-1',address:'Updated address display',customerMemory:{parkingNotes:'Current property instructions'},customerCollaborators:[person()]});
+  const context=await readCustomerPortalContext(env,{jobId:'job-1'});assert.equal(context.memoryJobId,'root');assert.equal(context.job.customerMemory.parkingNotes,'Current property instructions');
+  assert.equal((await post(await cookieFor(),{action:'save_customer_memory',parking_notes:'New root instructions'})).status,200);assert.deepEqual(f.writes,['root']);
+  const collaborator=await cookieFor('job-1','person-1');assert.equal((await get(collaborator)).status,200);
+  f.jobs.get('root').customerCollaborators=[];assert.equal((await get(collaborator)).status,403);
+});
+
+test('explicit sameproperty source history is followed only within the verified customer account',async t=>{
+  const f=fixture(t,{customerAccountOwnerJobId:'root',customerMemoryInheritedFrom:'prior'});
+  f.jobs.set('root',{type:'job',customerId:'customer-1',address:'200 Other Street',customerMemory:{alarmNotes:'Wrong garage'}});
+  f.jobs.set('prior',{type:'job',customerId:'customer-1',customerAccountOwnerJobId:'root',address:'100 Test Street',customerMemory:{parkingNotes:'Shared driveway'}});
+  const context=await readCustomerPortalContext(env,{jobId:'job-1'});assert.equal(context.memoryJobId,'prior');assert.equal(context.job.customerMemory.parkingNotes,'Shared driveway');
+  assert.equal((await post(await cookieFor(),{action:'save_customer_memory',parking_notes:'New shared note'})).status,200);assert.deepEqual(f.writes,['prior']);
+  f.jobs.get('prior').customerId='other';assert.equal((await get(await cookieFor())).status,403);
 });
 
 const photos = [{ id: 'synthetic-photo', tag: 'before', dataUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jSsoAAAAASUVORK5CYII=' }];
@@ -149,7 +188,7 @@ test('quiet portal refresh hides revoked access and clears the retained customer
   assert.match(source, /uploadContext:'customer_portal'/);
 });
 
-for (const code of ['CUSTOMER_PORTAL_AUTH_REQUIRED', 'CUSTOMER_PORTAL_ACCESS_REVOKED']) {
+for (const code of ['CUSTOMER_PORTAL_AUTH_REQUIRED', 'CUSTOMER_PORTAL_ACCESS_REVOKED','CUSTOMER_PORTAL_ACCOUNT_INVALID']) {
   test(`payment errors restore the button safely after ${code} clears portal data`, async () => {
     const source = readFileSync(new URL('../customer-portal.html', import.meta.url), 'utf8');
     const lines = source.split(/\r?\n/), errors = [], messages = [], handlers = {};

@@ -29,9 +29,9 @@ const request = (route, user, data) => new Request(`https://easygaragecleaning.c
 
 function storage(t) {
   const documents = new Map();
-  const calls = { writes: 0, upstream: 0, accountQueries: 0, documentReads: [] };
+  const calls = { writes: 0, commits: [], upstream: 0, accountQueries: 0, documentReads: [] };
   let revision = 0;
-  const document = (id, data) => ({ name: `projects/egcw-1ec83/databases/(default)/documents/jobs/${id}`, fields: encodeFirestoreFields(data), updateTime: `2026-09-07T00:00:00.${String(++revision).padStart(9, '0')}Z` });
+  const document = (id, data, collection='jobs') => ({ name: `projects/egcw-1ec83/databases/(default)/documents/${collection}/${id}`, fields: encodeFirestoreFields(data), updateTime: `2026-09-07T00:00:00.${String(++revision).padStart(9, '0')}Z` });
   t.mock.method(globalThis, 'fetch', async (input, options = {}) => {
     const url = new URL(input), method = options.method || 'GET';
     if (url.hostname !== 'firestore.googleapis.com') {
@@ -43,10 +43,26 @@ function storage(t) {
       const query = JSON.parse(options.body).structuredQuery;
       const filter = query.where?.fieldFilter;
       if (filter?.value?.stringValue === 'employee_account_v1') calls.accountQueries++;
-      const rows = [...documents.values()].filter(row => !filter || row.fields?.[filter.field.fieldPath]?.stringValue === filter.value.stringValue).map(document => ({ document }));
+      const rows = [...documents.values()].filter(row=>row.name.split('/documents/')[1].split('/')[0]===query.from[0].collectionId).filter(row => !filter || row.fields?.[filter.field.fieldPath]?.stringValue === filter.value.stringValue).map(document => ({ document }));
       return Response.json(rows.length ? rows : [{ readTime: '2026-09-07T00:00:00Z' }]);
     }
+    if (url.pathname.endsWith('/documents:commit')) {
+      const writes=JSON.parse(options.body).writes;
+      calls.commits.push(writes);
+      const pending=[];
+      for (const write of writes) {
+        const path=write.update.name.split('/documents/')[1],collection=path.split('/')[0],id=path.split('/')[1],key=collection==='jobs'?id:path,existing=documents.get(key);
+        if (write.currentDocument?.exists===false && existing || write.currentDocument?.updateTime && write.currentDocument.updateTime!==existing?.updateTime) return Response.json({}, {status:412});
+        pending.push({key,id,collection,fields:{...decodeFirestoreFields(existing?.fields||{}),...decodeFirestoreFields(write.update.fields)}});
+      }
+      for (const item of pending) documents.set(item.key,document(item.id,item.fields,item.collection));
+      calls.writes+=pending.length;
+      return Response.json({writeResults:pending.map(item=>({updateTime:documents.get(item.key).updateTime}))});
+    }
+    const collectionList=url.pathname.match(/\/documents\/([^/]+)$/);
+    if (method==='GET' && collectionList) return Response.json({documents:[...documents.values()].filter(row=>row.name.split('/documents/')[1].split('/')[0]===collectionList[1])});
     const id = decodeURIComponent(url.pathname.split('/').pop());
+    const collection=url.pathname.split('/').at(-2),key=collection==='jobs'?id:`${collection}/${id}`;
     if (method === 'GET') calls.documentReads.push(id);
     if (method === 'PATCH') {
       const existing = documents.get(id);
@@ -57,7 +73,7 @@ function storage(t) {
       documents.set(id, document(id, { ...decodeFirestoreFields(existing?.fields || {}), ...incoming }));
       calls.writes++;
     }
-    return documents.has(id) ? Response.json(documents.get(id)) : Response.json({}, { status: 404 });
+    return documents.has(key) ? Response.json(documents.get(key)) : Response.json({}, { status: 404 });
   });
   return { documents, calls, put: (id, data) => documents.set(id, document(id, data)), get: id => decodeFirestoreFields(documents.get(id)?.fields || {}) };
 }
@@ -78,8 +94,18 @@ test('assignment identities retain punctuation and suffixes, and explicit crew o
     }
     assert.equal(await access.assigned({ assignedCrew: [null, 42, { username: {} }, { name: user }] }), true);
     assert.equal(await access.assigned({ assignedCrew: ['Outsider'], assignedTo: user }), false);
+    assert.equal(await access.assigned({ assignedCrew: [], assignedTo: user }), false, 'Explicitly unassigned work cannot revive a stale legacy assignee');
   }
   assert.deepEqual(jobCrewNames({ assignedCrew: [...variants, 'john.smith'] }), variants);
+  assert.deepEqual(jobCrewNames({assignedCrew:[],assignedTo:variants[0]}),[]);
+});
+
+test('explicitly removed crew cannot read prior job rooms or act through stale assignment text',async t=>{
+  const store=storage(t),user=variants[0];store.put('unassigned-job',{type:'job',assignedCrew:[],assignedTo:user,customer:'Private old assignment',phone:'9705550100'});
+  const schedule=await (await crew.onRequestGet({env,request:request('crew-jobs',user)})).json();assert.equal(schedule.jobs.some(job=>job.id==='unassigned-job'),false);
+  const denied=await payment.onRequestPost({env,request:request('job-payment',user,{job_id:'unassigned-job',amount_cents:1000,request_id:'removed-crew'})});assert.equal(denied.status,403);
+  const message=await hub.onRequestPost({env,request:request('employee-hub',user,{collection:'jobMessages',id:'removed-crew-note',data:{jobId:'unassigned-job',body:'Should not save'}})});assert.equal(message.status,403);
+  assert.equal(store.calls.writes,0);assert.equal(store.calls.upstream,0);
 });
 
 test('every job mutation route rejects prefix and punctuation neighbors before writes or external calls', async t => {
@@ -180,29 +206,54 @@ test('legacy display names require a unique approved account and share one roste
 test('new pickup and release records use usernames even for employees sharing a display name', async t => {
   const store = storage(t);
   const claimEnv = { ...env, HUB_AUTH_USERS_JSON: JSON.stringify(Object.fromEntries(variants.map(user => [user, { passwordHash: 'synthetic', displayName: 'John Smith' }]))) };
-  store.put('pickup', { id: 'pickup', type: 'job', status: 'scheduled', date: '2026-09-08', time: '10:00', endTime: '11:00', shiftPickupEnabled: true, openShift: true, crewNeeded: 3, assignedCrew: [] });
-  for (const user of ['John.Smith', 'John-Smith']) assert.equal((await crew.onRequestPost({ env: claimEnv, request: request('crew-jobs', user, { action: 'claim', jobId: 'pickup' }) })).status, 200);
-  assert.deepEqual(store.get('pickup').assignedCrew, ['John.Smith', 'John-Smith']);
-  assert.deepEqual(store.get('pickup').shiftClaims.map(row => row.employee), ['John.Smith', 'John-Smith']);
-  assert.equal((await crew.onRequestPost({ env: claimEnv, request: request('crew-jobs', 'JohnSmith', { action: 'release', jobId: 'pickup' }) })).status, 403);
-  assert.equal((await crew.onRequestPost({ env: claimEnv, request: request('crew-jobs', 'John.Smith', { action: 'release', jobId: 'pickup' }) })).status, 200);
-  assert.deepEqual(store.get('pickup').assignedCrew, ['John-Smith']);
-  assert.deepEqual(store.get('pickup').shiftClaims.map(row => row.employee), ['John-Smith']);
+  store.put('pickup', { id: 'pickup', type: 'job', status: 'scheduled', date: '2099-09-08', time: '10:00', endTime: '11:00', shiftPickupEnabled: true, openShift: true, crewNeeded: 3, assignedCrew: [] });
+  for (const user of ['John.Smith', 'John-Smith']) assert.equal((await crew.onRequestPost({ env: claimEnv, request: request('crew-jobs', user, { action: 'claim', jobId: 'pickup',requestId:crypto.randomUUID() }) })).status, 200);
+  assert.deepEqual(store.get('pickup').assignedCrew, ['john.smith', 'john-smith']);
+  assert.deepEqual(store.get('pickup').shiftClaims.map(row => row.employee), ['john.smith', 'john-smith']);
+  assert.equal((await crew.onRequestPost({ env: claimEnv, request: request('crew-jobs', 'JohnSmith', { action: 'release', jobId: 'pickup',requestId:crypto.randomUUID() }) })).status, 403);
+  assert.equal((await crew.onRequestPost({ env: claimEnv, request: request('crew-jobs', 'John.Smith', { action: 'release', jobId: 'pickup',requestId:crypto.randomUUID() }) })).status, 200);
+  assert.deepEqual(store.get('pickup').assignedCrew, ['john-smith']);
+  assert.deepEqual(store.get('pickup').shiftClaims.map(row => row.employee), ['john-smith']);
+  assert.equal(store.calls.commits.length,3);
+  for (const writes of store.calls.commits) assert.ok(writes.some(write=>write.update.name.includes('/dispatchState/revision')));
 });
 
 test('pickup conflict checks distinguish similar accounts and preserve exact legacy unavailable time', async t => {
   const store = storage(t);
-  const slot = { type: 'job', status: 'scheduled', date: '2026-09-08', time: '10:00', endTime: '11:00', shiftPickupEnabled: true, openShift: true, crewNeeded: 3, assignedCrew: [] };
+  const slot = { type: 'job', status: 'scheduled', date: '2099-09-08', time: '10:00', endTime: '11:00', shiftPickupEnabled: true, openShift: true, crewNeeded: 3, assignedCrew: [] };
   store.put('pickup', { ...slot, id: 'pickup' });
   store.put('other-time', { type: 'availability', status: 'active', date: slot.date, time: '09:00', endTime: '12:00', employee: 'John-Smith' });
-  assert.equal((await crew.onRequestPost({ env, request: request('crew-jobs', 'John.Smith', { action: 'claim', jobId: 'pickup' }) })).status, 200);
+  assert.equal((await crew.onRequestPost({ env, request: request('crew-jobs', 'John.Smith', { action: 'claim', jobId: 'pickup',requestId:crypto.randomUUID() }) })).status, 200);
   store.put('pickup', { ...slot, id: 'pickup' });
   store.put('own-time', { type: 'availability', status: 'active', date: slot.date, time: '09:00', endTime: '12:00', employee: 'John.Smith' });
-  assert.equal((await crew.onRequestPost({ env, request: request('crew-jobs', 'John.Smith', { action: 'claim', jobId: 'pickup' }) })).status, 409);
+  assert.equal((await crew.onRequestPost({ env, request: request('crew-jobs', 'John.Smith', { action: 'claim', jobId: 'pickup',requestId:crypto.randomUUID() }) })).status, 409);
   store.documents.delete('own-time');
   const aliasEnv = { ...env, HUB_AUTH_USERS_JSON: JSON.stringify({ ...users, 'John.Smith': { ...users['John.Smith'], displayName: 'Exact Legacy' } }) };
   store.put('own-time', { type: 'availability', status: 'active', date: slot.date, time: '09:00', endTime: '12:00', employee: 'Exact Legacy' });
-  assert.equal((await crew.onRequestPost({ env: aliasEnv, request: request('crew-jobs', 'John.Smith', { action: 'claim', jobId: 'pickup' }) })).status, 409);
+  assert.equal((await crew.onRequestPost({ env: aliasEnv, request: request('crew-jobs', 'John.Smith', { action: 'claim', jobId: 'pickup',requestId:crypto.randomUUID() }) })).status, 409);
+});
+
+test('authenticated owner and crew cannot concurrently exceed open-shift capacity',async t=>{
+  const store=storage(t);
+  store.put('pickup',{id:'pickup',type:'job',status:'scheduled',date:'2099-09-08',time:'10:00',endTime:'11:00',shiftPickupEnabled:true,openShift:true,crewNeeded:1,assignedCrew:[]});
+  const responses=await Promise.all(['ZacB','John.Smith'].map(user=>crew.onRequestPost({env,request:request('crew-jobs',user,{action:'claim',jobId:'pickup',requestId:crypto.randomUUID()})})));
+  assert.deepEqual(responses.map(response=>response.status).sort(),[200,409]);
+  assert.equal(store.get('pickup').assignedCrew.length,1);
+  assert.equal(store.get('pickup').shiftClaims.length,1);
+  assert.equal(store.get('pickup').openShift,false);
+});
+
+test('HTTP shift retries preserve actor identity and do not return private manager fields',async t=>{
+  const store=storage(t);
+  store.put('pickup',{id:'pickup',type:'job',status:'scheduled',date:'2099-09-08',time:'10:00',endTime:'11:00',shiftPickupEnabled:true,openShift:true,crewNeeded:2,assignedCrew:[],estimate:{total:999},opsNotes:'Private',priceQuoted:999});
+  const payload={action:'claim',jobId:'pickup',requestId:crypto.randomUUID(),employeeId:'John-Smith'};
+  const responses=await Promise.all(Array.from({length:3},()=>crew.onRequestPost({env,request:request('crew-jobs','John.Smith',payload)})));
+  assert.ok(responses.every(response=>response.status===200));
+  for(const response of responses){const result=await response.json();assert.deepEqual(result.job.assignedCrew,['john.smith']);for(const key of ['estimate','opsNotes','priceQuoted'])assert.equal(result.job[key],undefined);}
+  assert.deepEqual(store.get('pickup').assignedCrew,['john.smith']);
+  const release={action:'release',jobId:'pickup',requestId:crypto.randomUUID()};
+  const response=await crew.onRequestPost({env,request:request('crew-jobs','John.Smith',release)});
+  assert.equal(response.status,200);const result=await response.json();assert.equal(result.job.customer,'Open shift');assert.equal(result.job.address,'');
 });
 
 test('unreadable alias roster denies legacy access while canonical assignments remain usable', async t => {

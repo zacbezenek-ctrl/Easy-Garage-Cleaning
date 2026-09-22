@@ -8,8 +8,7 @@ const assignmentName = value => typeof value === 'string' ? value.trim()
   : String(value?.username || value?.user || value?.id || value?.name || '').trim();
 
 export function jobCrewNames(job) {
-  const explicit = Array.isArray(job?.assignedCrew) ? job.assignedCrew : [];
-  const names = explicit.length ? explicit : String(job?.assignedTo || '').split(/\s*(?:,|\+|&|\band\b)\s*/i);
+  const names = Array.isArray(job?.assignedCrew) ? job.assignedCrew : String(job?.assignedTo || '').split(/\s*(?:,|\+|&|\band\b)\s*/i);
   const seen = new Set();
   return names.map(assignmentName).filter(name => name && !seen.has(assignmentKey(name)) && seen.add(assignmentKey(name)));
 }
@@ -40,8 +39,7 @@ export function createJobAssignmentAccess(env, session) {
 
   async function assigned(job) {
     if (!job) return false;
-    const explicit = Array.isArray(job.assignedCrew) ? job.assignedCrew : [];
-    const names = explicit.length ? explicit : jobCrewNames(job);
+    const names = Array.isArray(job.assignedCrew) ? job.assignedCrew : jobCrewNames(job);
     for (const name of names) if (await matches(name)) return true;
     return false;
   }

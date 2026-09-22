@@ -1,6 +1,8 @@
 import {firestoreFetch} from './firebase-service-account.js';
 import {encodeFirestoreFields,decodeFirestoreFields} from './firestore-job.js';
 import {localInstant} from './operations-portal-records.js';
+import {dispatchStorage} from './dispatch-storage.js';
+import {scheduleRowsConflict,scheduleLockConflict,scheduleDayEntry} from './dispatch-conflicts.js';
 const ROOT='projects/egcw-1ec83/databases/(default)/documents';
 const URL=`https://firestore.googleapis.com/v1/${ROOT}`;
 const safeId=id=>typeof id==='string'&&/^[A-Za-z0-9_-]{1,180}$/.test(id)&&!/^(_egc_|secure_)/.test(id);
@@ -10,11 +12,11 @@ const terminal=new Set(['cancelled','canceled','completed','invoiced','paid','re
 const failure=(code,status=409)=>Object.assign(new Error(code),{status});
 const canonical=v=>Array.isArray(v)?`[${v.map(canonical).join(',')}]`:v&&typeof v==='object'?`{${Object.entries(v).sort(([a],[b])=>a.localeCompare(b)).map(([k,x])=>`${JSON.stringify(k)}:${canonical(x)}`).join(',')}}`:JSON.stringify(v);
 const digest=async v=>[...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(canonical(v))))].map(x=>x.toString(16).padStart(2,'0')).join('');
-const minutes=s=>/^\d\d:\d\d$/.test(s||'')?Number(s.slice(0,2))*60+Number(s.slice(3)):NaN;
-const overlap=(a,b)=>minutes(a.time)<minutes(b.endTime)&&minutes(b.time)<minutes(a.endTime);
 const scheduleState=visit=>({date:visit.date,...(visit.endDate&&visit.endDate!==visit.date?{endDate:visit.endDate}:{}),time:visit.time,endTime:visit.endTime,status:visit.pipelineStatus||visit.status,title:visit.title||null,address:visit.address||null,assignedTo:visit.assignedTo||null});
 function fromDoc(doc){return{...decodeFirestoreFields(doc.fields||{}),id:String(doc.name||'').split('/').pop(),revision:doc.updateTime};}
 export function schedulingStorage(env,fetcher=firestoreFetch){return{
+  resources:()=>dispatchStorage(env,fetcher).resources(),
+  roster:()=>dispatchStorage(env,fetcher).roster(),
   async customers(providerId){const r=await fetcher(env,`${URL}:runQuery`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({structuredQuery:{from:[{collectionId:'customers'}],where:{fieldFilter:{field:{fieldPath:'highlevelContactId'},op:'EQUAL',value:{stringValue:providerId}}},limit:3}}),signal:AbortSignal.timeout(15000)});if(!r.ok)throw failure('schedule_source_unavailable',503);const rows=await r.json();if(!Array.isArray(rows))throw failure('schedule_source_incomplete',503);return rows.filter(x=>x.document).map(x=>fromDoc(x.document));},
   async read(collection,id){const r=await fetcher(env,`${URL}/${collection}/${encodeURIComponent(id)}`,{signal:AbortSignal.timeout(15000)});if(r.status===404)return null;if(!r.ok)throw failure('schedule_source_unavailable',503);return fromDoc(await r.json());},
   async day(date){const r=await fetcher(env,`${URL}:runQuery`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({structuredQuery:{from:[{collectionId:'jobs'}],where:{fieldFilter:{field:{fieldPath:'date'},op:'EQUAL',value:{stringValue:date}}},limit:501}}),signal:AbortSignal.timeout(15000)});if(!r.ok)throw failure('schedule_source_unavailable',503);const rows=await r.json();if(!Array.isArray(rows)||rows.length>500)throw failure('schedule_source_incomplete',503);return rows.filter(x=>x.document).map(x=>fromDoc(x.document));},
@@ -96,12 +98,23 @@ export async function mutateScheduledVisit(store,actor,input,now=new Date().toIS
   }
   const changes=input.changes||{},allowed=new Set(['date','time','endTime','title','assignedTo','address']);
   if(Object.keys(changes).some(k=>!allowed.has(k)))throw failure('schedule_patch_not_allowed',400);
+  if(Object.entries(changes).some(([key,value])=>typeof value!=='string'||value.length>({title:500,assignedTo:200,address:1000}[key]||10)))throw failure('schedule_patch_invalid',400);
+  if(current?.assignedCrew?.length&&changes.assignedTo!==undefined&&changes.assignedTo!==current.assignedTo)throw failure('schedule_assignment_requires_dispatch');
   const kind=visitKind(current?.type)||input.kind;if(!['walkthrough','job'].includes(kind))throw failure('schedule_visit_kind_required',400);
   const patch={...changes,id,type:current?.type||kind,customerId:customer.id,customer:current?.customer||customer.name||'',
     highlevelContactId:current?.highlevelContactId||customer.highlevelContactId||'',scheduleSource:'egc_hub',providerSyncOwner:'operations',syncStatus:'pending',updatedAt:now};
   if(input.mode==='create')Object.assign(patch,{bookingKey,status:'scheduled',pipelineStatus:'scheduled',createdAt:now,createdBy:actor.id,phone:customer.phone||'',email:customer.email||'',address:changes.address||customer.address||'',serviceType:kind==='walkthrough'?'Free garage walkthrough':'Customer job'});
   if(input.mode==='cancel')Object.assign(patch,{status:'cancelled',pipelineStatus:'cancelled',cancelledAt:now,cancelledBy:actor.id});
   const projectWrites=[];
+  // Firestore cannot put read preconditions on a commit. Identity-field no-ops
+  // fence the exact customer/source/project revisions together with the visit,
+  // receipt and schedule locks; a changed lineage must abort the entire save.
+  const identityWrites=[];
+  const guardIdentity=(collection,record)=>{
+    if(typeof record?.revision!=='string'||!record.revision)throw failure('schedule_source_unavailable',503);
+    identityWrites.push({collection,id:record.id,revision:record.revision,patch:{id:record.id}});
+  };
+  guardIdentity('customers',customer);
   if(input.mode==='create'){
     let projectId=`project_${id}`;
     if(input.sourceWalkthroughId){
@@ -109,24 +122,31 @@ export async function mutateScheduledVisit(store,actor,input,now=new Date().toIS
       if(kind!=='job'||!source||source.type!=='walkthrough'||source.customerId!==customer.id||!source.projectId)throw failure('schedule_source_walkthrough_link_conflict');
       const project=await store.read('projects',source.projectId);
       if(!project||project.customerId!==customer.id)throw failure('schedule_project_link_conflict');
+      guardIdentity('jobs',source);guardIdentity('projects',project);
       projectId=source.projectId;patch.sourceWalkthroughId=source.id;
     }else projectWrites.push({collection:'projects',id:projectId,patch:{id:projectId,customerId:customer.id,sourceRecordId:id,sourceWalkthroughId:kind==='walkthrough'?id:null,createdBy:actor.id,createdAt:now,updatedAt:now,authority:'employee_hub'}});
     patch.projectId=projectId;
   }
   const next={...current,...patch},start=localInstant(next.date,next.time),end=localInstant(next.date,next.endTime);
   if(!start||!end||end<=start)throw failure('schedule_time_invalid_or_ambiguous',400);
+  const dispatchGuard=await store.read('dispatchState','revision');
+  const [resources,roster]=await Promise.all([store.resources?store.resources():[],store.roster?store.roster():[]]);
+  if(input.mode!=='cancel'&&next.vehicleId&&!resources.some(row=>row.id===next.vehicleId&&row.recordType==='vehicle'&&row.status==='available'))throw failure('schedule_vehicle_unavailable');
+  if(input.mode!=='cancel'&&resources.some(row=>row.recordType==='availability'&&scheduleRowsConflict(next,row,roster)))throw failure('schedule_slot_conflict');
   const days=[...new Set([next.date,current?.date].filter(Boolean))],locks=[];
   for(const date of days){
-    const lockId=`_egc_schedule_lock_${date}`,lock=await store.read('jobs',lockId),entries=(Array.isArray(lock?.entries)?lock.entries:[]).filter(x=>x.id!==id&&!terminal.has(x.status));
+    const lockId=`_egc_schedule_lock_${date}`,lock=await store.read('jobs',lockId);
+    if(lock&&(lock.recordType!=='schedule_lock'||!Array.isArray(lock.entries)))throw failure('schedule_lock_unavailable',503);
+    const entries=(Array.isArray(lock?.entries)?lock.entries:[]).filter(x=>x.id!==id&&!terminal.has(x.status));
     if(date===next.date&&input.mode!=='cancel'){
       const existing=await store.day(date);
-      const conflict=existing.find(x=>x.id!==id&&(visitKind(x.type)||x.type==='blocked')&&!terminal.has(x.pipelineStatus||x.status)&&overlap(next,x));
-      if(conflict||entries.some(x=>overlap(next,{time:x.start,endTime:x.end})))throw failure('schedule_slot_conflict');
-      entries.push({id,start:next.time,end:next.endTime,label:next.customer,status:next.status||'scheduled',updatedAt:now});
+      const conflict=existing.find(x=>x.id!==next.id&&(visitKind(x.type)||x.type==='blocked'||x.type==='availability'||x.recordType==='crew_availability')&&(!terminal.has(x.pipelineStatus||x.status)&&x.customerId===next.customerId&&visitKind(x.type)===visitKind(next.type)&&x.date===next.date&&x.time===next.time||scheduleRowsConflict(next,x,roster)));
+      if(conflict||entries.some(x=>scheduleLockConflict(next,x,date,roster)))throw failure('schedule_slot_conflict');
+      entries.push(scheduleDayEntry(next,date,roster,now));
     }
     locks.push({collection:'jobs',id:lockId,revision:lock?.revision,patch:{recordType:'schedule_lock',date,entries,updatedAt:now}});
   }
-  const writes=[{collection:'jobs',id,revision:current?.revision,patch},...projectWrites,...locks,{collection:'jobs',id:receiptId,patch:{recordType:'schedule_operation',fingerprint:hash,scheduleHash:await digest(scheduleState(next)),portalVisitId:id,actorId:actor.id,actorKind:actor.kind,requestId:input.requestId,mode:input.mode,before:current?{date:current.date,time:current.time,endTime:current.endTime,status:current.status,revision:current.revision}:null,after:{date:next.date,time:next.time,endTime:next.endTime,status:next.status},createdAt:now}}];
+  const writes=[{collection:'jobs',id,revision:current?.revision,patch},...projectWrites,...identityWrites,...locks,{collection:'dispatchState',id:'revision',revision:dispatchGuard?.revision,patch:{updatedAt:now,lastRequestId:input.requestId}},{collection:'jobs',id:receiptId,patch:{recordType:'schedule_operation',fingerprint:hash,scheduleHash:await digest(scheduleState(next)),portalVisitId:id,actorId:actor.id,actorKind:actor.kind,requestId:input.requestId,mode:input.mode,before:current?{date:current.date,time:current.time,endTime:current.endTime,status:current.status,revision:current.revision}:null,after:{date:next.date,time:next.time,endTime:next.endTime,status:next.status},createdAt:now}}];
   try{await store.commit(writes);}catch(error){const receipt=await store.read('jobs',receiptId).catch(()=>null);if(!receipt||receipt.fingerprint!==hash)throw error;}
   const saved=await store.read('jobs',id);
   if(!saved||await digest(scheduleState(saved))!==await digest(scheduleState(next)))throw failure('schedule_changed_since_operation');

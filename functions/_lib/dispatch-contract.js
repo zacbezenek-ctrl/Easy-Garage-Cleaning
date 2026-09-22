@@ -14,10 +14,18 @@
  * POST /api/dispatch always requires requestId = crypto.randomUUID(). Keep the
  * SAME requestId and unchanged body when retrying a lost/network response.
  * {action:'schedule.create',requestId,customerId,kind:'job'|'walkthrough',changes,
- *  sourceWalkthroughId?: existing ID,sourceTemplateJobId?: existing job ID}
+ *  sourceWalkthroughId?: existing ID,sourceTemplateJobId?: existing job ID,
+ *  sourceJobId?: existing job ID}
  * sourceTemplateJobId and sourceWalkthroughId are mutually exclusive. A repeat
  * copies only operational instructions, materials/equipment, service and cadence;
  * it has a new project and never copies payments, acceptance, photos or execution.
+ * sourceJobId selects only verified customer account/property lineage; it never
+ * copies a quote, payment, collaborator, token or work scope. Exact customer IDs
+ * and bounded root chains are required; multiple roots/history require selection.
+ * 409 dispatch_lineage_selection_required details:{candidates:[{jobId,customerId,
+ * customer,address,date,rootJobId?}],truncated}; max50 exact-customer candidates.
+ * Property memory requires matching stable property IDs or matching full normalized
+ * addresses. Different properties keep separate memory and return a warning.
  * {action:'schedule.create',requestId,kind:'blocked',changes:{date,time,endDate?,
  *  endTime,title?,opsNotes?,notes?}} creates a company-wide block without customer.
  * {action:'schedule.update'|'schedule.cancel'|'schedule.restore',requestId,
