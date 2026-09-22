@@ -4,6 +4,7 @@ import { employeeVaultSecret, employeeVaultReadOnly } from '../_lib/employee-vau
 import { createJobAssignmentAccess } from '../_lib/job-assignment.js';
 import { listEmployeeApplications, normalizeEmployeeUsername } from '../_lib/employee-accounts.js';
 import { activeTimecard, authorizeTimecard, timecardError } from '../_lib/employee-timecards.js';
+import { activeJobSegment, employeeJobTime, ownJobTimeProjection } from '../_lib/employee-job-time.js';
 
 const PROJECT_ID = 'egcw-1ec83';
 const RECORD_TYPE = 'employee_hub_v2';
@@ -120,7 +121,7 @@ async function readJob(env, id) {
   if (response.status === 404) return null;
   if (!response.ok) throw new Error(`Job access check failed (${response.status})`);
   const document = await response.json();
-  return Object.fromEntries(Object.entries(document.fields || {}).map(([key, value]) => [key, decodeValue(value)]));
+  return { ...Object.fromEntries(Object.entries(document.fields || {}).map(([key, value]) => [key, decodeValue(value)])), id: safeId, __updateTime: document.updateTime || '' };
 }
 
 function parseFirestoreDocument(document) {
@@ -233,6 +234,15 @@ function expectedDocument(target) {
 
 async function writeTimecard(env, session, id, data, target) {
   if (data === target.data) return data;
+  let assignedJobGuard = null;
+  const segment = activeJobSegment(data), previousSegment = activeJobSegment(target.data);
+  if (segment?.jobId && segment.id !== previousSegment?.id) {
+    const job = await readJob(env, segment.jobId);
+    if (!job || job.type !== 'job' || job.recordType || ['completed', 'invoiced', 'paid', 'review_requested', 'cancelled', 'canceled'].includes(job.pipelineStatus || job.status) || !await createJobAssignmentAccess(env, session).assigned(job)) throw timecardError('New job time is limited to your currently assigned active jobs.', 403);
+    if (!job.__updateTime) throw unreadableStorage();
+    segment.jobLabel = String(job.customer || job.serviceType || 'Assigned job').slice(0, 180);
+    assignedJobGuard = { update: { name: `projects/${PROJECT_ID}/databases/(default)/documents/jobs/${job.id}`, fields: { type: { stringValue: 'job' } } }, updateMask: { fieldPaths: ['type'] }, currentDocument: { updateTime: job.__updateTime } };
+  }
   if (!manager(session) && data.jobId && data.jobId !== target.data?.jobId) {
     const job = await readJob(env, data.jobId);
     if (!job || !await createJobAssignmentAccess(env, session).assigned(job)) throw timecardError('This job time is limited to your assigned jobs.', 403);
@@ -257,6 +267,7 @@ async function writeTimecard(env, session, id, data, target) {
   const updatedAt = new Date().toISOString(), documentId = target.documentId;
   const encrypted = await seal(env, documentId, data);
   const writes = [{ update: { name: `projects/${PROJECT_ID}/databases/(default)/documents/jobs/${documentId}`, ...firestoreDoc('timeEntries', documentId, encrypted, updatedAt) }, currentDocument: expectedDocument(target) }];
+  if (assignedJobGuard) writes.push(assignedJobGuard);
   // Closing one legacy duplicate must not release another shift's guard.
   if (activeTimecard(data) || !lock.data?.entryId || lock.data.entryId === id) {
     const lockData = { id: employee, entryId: activeTimecard(data) ? id : '', updatedAt, updatedBy: session.user };
@@ -439,6 +450,37 @@ export async function onRequestGet({ request, env }) {
   }
   if (!vaultSecret(env) || !firebaseServiceAccountConfigured(env)) return reply(503, { ok: false, error: 'Employee Hub storage is not configured' });
   try {
+    const params = new URL(request.url).searchParams;
+    if (params.get('view') === 'own-job-time') {
+      const lock = await readOne(env, 'timeLocks', personKey(session.user));
+      let active = lock.data?.entryId ? (await readOne(env, 'timeEntries', lock.data.entryId)).data : null;
+      if (!activeTimecard(active) || !same(active.employee, session.user)) {
+        const candidates = (await readEmployeeTimecards(env)).filter(entry => same(entry.employee, session.user) && activeTimecard(entry));
+        if (candidates.length > 1) return reply(409, { ok: false, error: 'More than one active shift needs manager review before job time can be started.' });
+        active = candidates[0] || null;
+      }
+      return reply(200, { ok: true, entry: ownJobTimeProjection(active) });
+    }
+    if (params.get('view') === 'job-labor') {
+      if (!manager(session)) return reply(403, { ok: false, error: 'Only operations managers can view employee time for a job.' });
+      const jobId = params.get('jobId') || '';
+      if (!/^[A-Za-z0-9_-]{1,180}$/.test(jobId) || /^(?:_egc_|secure_)/.test(jobId)) return reply(400, { ok: false, error: 'Choose a valid job.' });
+      const job = await readJob(env, jobId);
+      if (!job || job.type !== 'job' || job.recordType) return reply(404, { ok: false, error: 'This operational job could not be found.' });
+      const entries = await readEmployeeTimecards(env), employees = new Map(); let legacyAssociationOnlyCount = 0, needsReviewCount = 0;
+      const now = new Date().toISOString();
+      for (const entry of entries) {
+        const summary = employeeJobTime(entry, now), time = summary.jobs.find(item => item.jobId === jobId);
+        if (same(entry.jobId, jobId) && (!summary.recorded || summary.partialHistory)) legacyAssociationOnlyCount++;
+        if (summary.needsReview && (time || same(entry.jobId, jobId) || Array.isArray(entry.jobTracking?.segments) && entry.jobTracking.segments.some(item => item?.jobId === jobId))) { needsReviewCount++; continue; }
+        if (!time) continue;
+        const key = personKey(entry.employee), employee = employees.get(key) || { employee: entry.employee, name: entry.employeeName || entry.employee, workMs: 0, travelMs: 0, approvedWorkMs: 0, pendingWorkMs: 0, entryCount: 0 };
+        employee.workMs += time.workMs; employee.travelMs += time.travelMs; employee.entryCount++;
+        employee[entry.approvalStatus === 'approved' ? 'approvedWorkMs' : 'pendingWorkMs'] += time.workMs;
+        employees.set(key, employee);
+      }
+      return reply(200, { ok: true, jobId, asOf: now, employees: [...employees.values()], legacyAssociationOnlyCount, needsReviewCount, source: 'explicit_employee_job_segments' });
+    }
     const rows = await readAll(env);
     const collections = Object.fromEntries([...COLLECTIONS].map(name => [name, []]));
     const jobAccess = new Map();

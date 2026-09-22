@@ -4,6 +4,7 @@ import { authorizeTimecard, timecardHours, timecardWorkDate } from '../functions
 import { createHubCredentialHash, createHubSessionCookie } from '../functions/_lib/hub-session.js';
 import { onRequestGet, onRequestPost } from '../functions/api/employee-hub.js';
 import { encodeFirestoreFields } from '../functions/_lib/firestore-job.js';
+import { activeJobSegment } from '../functions/_lib/employee-job-time.js';
 
 const crew = { user: 'Crew.One', displayName: 'Crew One', role: 'crew', payType: 'hourly' };
 const manager = { user: 'ZacB', displayName: 'Manager', role: 'owner' };
@@ -94,7 +95,7 @@ const get = (user = 'Crew.One') => onRequestGet({ env, request: new Request(endp
 const clockIn = extra => ({ locationTracking: true, lastLocation: point, status: 'active', ...extra });
 
 function storage(t) {
-  const documents = new Map(), writes = []; let revision = 0, lostReply = false, barrierCount = 0, barrierResolve;
+  const documents = new Map(), writes = []; let revision = 0, lostReply = false, barrierCount = 0, barrierResolve, commitHook;
   let barrier;
   const nameOf = (collection, id) => `projects/egcw-1ec83/databases/(default)/documents/${collection}/${id}`;
   const nextVersion = () => `2026-09-22T01:00:00.${String(++revision).padStart(9, '0')}Z`;
@@ -103,10 +104,11 @@ function storage(t) {
     const url = new URL(input), body = options.body ? JSON.parse(options.body) : null;
     if (url.pathname.endsWith('/documents:runQuery')) return Response.json([...documents.values()].filter(doc => doc.name.includes('/documents/jobs/') && doc.fields.recordType?.stringValue === body.structuredQuery.where.fieldFilter.value.stringValue).map(document => ({ document })));
     if (url.pathname.endsWith('/documents:commit')) {
+      if (commitHook) { const hook = commitHook; commitHook = null; hook(); }
       if (barrierCount) { barrierCount--; if (!barrierCount) barrierResolve(); await barrier; }
       if (body.writes.some(write => !matches(documents.get(write.update.name), write.currentDocument))) return Response.json({ error: { status: 'FAILED_PRECONDITION' } }, { status: 409 });
       const updateTime = nextVersion();
-      for (const write of body.writes) { documents.set(write.update.name, { ...write.update, updateTime }); writes.push(write); }
+      for (const write of body.writes) { const existing = documents.get(write.update.name); documents.set(write.update.name, { ...write.update, ...(write.updateMask ? { fields: { ...(existing?.fields || {}), ...write.update.fields } } : {}), updateTime }); writes.push(write); }
       if (lostReply) { lostReply = false; throw new Error('Synthetic connection lost after atomic commit'); }
       return Response.json({ writeResults: body.writes.map(() => ({ updateTime })) });
     }
@@ -118,7 +120,7 @@ function storage(t) {
     }
     return documents.has(name) ? Response.json(documents.get(name)) : Response.json({}, { status: 404 });
   });
-  return { documents, writes, loseCommitReply: () => { lostReply = true; }, barrier: count => { barrierCount = count; barrier = new Promise(resolve => { barrierResolve = resolve; }); },
+  return { documents, writes, loseCommitReply: () => { lostReply = true; }, beforeCommit: fn => { commitHook = fn; }, barrier: count => { barrierCount = count; barrier = new Promise(resolve => { barrierResolve = resolve; }); },
     job: (id, data) => documents.set(nameOf('jobs', id), { name: nameOf('jobs', id), fields: encodeFirestoreFields(data), updateTime: nextVersion() }) };
 }
 
@@ -178,4 +180,49 @@ test('approved crew edits fail without a storage write and manager correction at
   assert.equal(store.writes.length, before);
   const corrected = await post('approved', { clockOutAt: new Date().toISOString() }, 'ZacB'); assert.equal(corrected.status, 200);
   const card = (await corrected.json()).record; assert.equal(card.approvalStatus, 'pending'); assert.equal(card.hours, 2); assert.equal(card.history.at(-1).actor, 'ZacB');
+});
+
+const view = (query, user = 'Crew.One') => onRequestGet({ env, request: new Request(`${endpoint}?${query}`, { headers: { Cookie: cookies[user] } }) });
+test('employee job switches are assigned, server-timestamped, break-aware and safely retry after a lost response', async t => {
+  const store = storage(t); store.job('job-a', { type: 'job', status: 'scheduled', assignedCrew: [crew.user], customer: 'Real job A', total: 900 }); store.job('job-b', { type: 'job', status: 'scheduled', assignedCrew: [crew.user], customer: 'Real job B' });
+  const first = (await (await post('job-clock', clockIn())).json()).record;
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse(first.clockInAt) + 30 * 60000 });
+  const request = { jobAction: { requestId: crypto.randomUUID(), expectedSegmentId: activeJobSegment(first).id, jobId: 'job-a', kind: 'work', startedAt: '2000-01-01T00:00:00Z', jobLabel: 'Spoofed' } };
+  store.loseCommitReply(); assert.equal((await post('job-clock', request)).status, 502);
+  t.mock.timers.tick(10 * 60000);
+  const retried = (await (await post('job-clock', request)).json()).record;
+  assert.equal(retried.jobTracking.segments.length, 2);
+  assert.equal(activeJobSegment(retried).startedAt, new Date(Date.parse(first.clockInAt) + 30 * 60000).toISOString());
+  assert.equal(activeJobSegment(retried).jobLabel, 'Real job A');
+  assert.equal(store.documents.get('projects/egcw-1ec83/databases/(default)/documents/jobs/job-a').fields.total.integerValue, '900', 'assignment fence preserves the canonical job');
+  await post('job-clock', { breaks: [{ startAt: 'client-time' }] });
+  t.mock.timers.tick(20 * 60000);
+  const switchJob = { jobAction: { requestId: crypto.randomUUID(), expectedSegmentId: activeJobSegment(retried).id, jobId: 'job-b', kind: 'travel' } };
+  assert.equal((await post('job-clock', switchJob)).status, 200);
+  const current = (await (await get()).json()).collections.timeEntries[0];
+  assert.equal((await post('job-clock', { breaks: [{ ...current.breaks[0], endAt: 'client-time' }] })).status, 200);
+  t.mock.timers.tick(15 * 60000);
+  const own = await (await view('view=own-job-time')).json();
+  assert.equal(own.entry.current.jobId, 'job-b'); assert.equal(own.entry.summary.jobs[0].workMs, 10 * 60000); assert.equal(own.entry.summary.jobs[1].travelMs, 15 * 60000);
+  assert.equal(JSON.stringify(own).includes('hourlyRate'), false);
+  const labor = await (await view('view=job-labor&jobId=job-a', 'ZacB')).json();
+  assert.equal(labor.employees[0].workMs, 10 * 60000); assert.equal(labor.employees[0].pendingWorkMs, 10 * 60000);
+  assert.equal((await view('view=job-labor&jobId=job-a')).status, 403);
+  assert.equal((await post('job-clock', { clockOutAt: 'client-time', status: 'submitted' })).status, 200);
+  assert.equal((await (await view('view=own-job-time')).json()).entry, null);
+  assert.equal((await post('job-clock', request)).status, 200, 'same request stays a safe replay after clock-out');
+});
+
+test('job segments deny unknown/unassigned/closed work and fence a concurrent crew reassignment', async t => {
+  const store = storage(t), first = (await (await post('guard-clock', clockIn())).json()).record;
+  store.job('other', { type: 'job', status: 'scheduled', assignedCrew: ['Other'] });
+  store.job('closed', { type: 'job', status: 'completed', assignedCrew: [crew.user] });
+  store.job('race', { type: 'job', status: 'scheduled', assignedCrew: [crew.user] });
+  const command = jobId => ({ jobAction: { requestId: crypto.randomUUID(), expectedSegmentId: activeJobSegment(first).id, jobId, kind: 'work' } });
+  for (const id of ['unknown', 'other', 'closed']) assert.equal((await post('guard-clock', command(id))).status, 403);
+  store.beforeCommit(() => store.job('race', { type: 'job', status: 'scheduled', assignedCrew: ['Other'] }));
+  assert.equal((await post('guard-clock', command('race'))).status, 409);
+  const own = await (await view('view=own-job-time')).json();
+  assert.equal(own.entry.current.kind, 'general');
+  assert.equal(own.entry.summary.jobs.length, 0);
 });

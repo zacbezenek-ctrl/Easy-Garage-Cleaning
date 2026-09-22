@@ -1,3 +1,5 @@
+import { applyEmployeeJobAction, finishEmployeeJobTime, initializeJobTracking } from './employee-job-time.js';
+
 const equal = (left, right) => JSON.stringify(left) === JSON.stringify(right);
 const text = (value, limit = 180) => String(value || '').trim().slice(0, limit);
 const own = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
@@ -69,6 +71,11 @@ function changeBreak(existing, incoming, now) {
 }
 
 export function authorizeTimecard({ session, manager, id, incoming, existing, hourlyRate = 0, now = new Date().toISOString() }) {
+  if (incoming.jobAction) {
+    if (Object.keys(incoming).some(key => key !== 'jobAction')) throw timecardError('Send job-time changes separately from other timecard edits.');
+    return applyEmployeeJobAction(existing, incoming.jobAction, session, now);
+  }
+  if (own(incoming, 'jobTracking') && !equal(incoming.jobTracking, existing?.jobTracking)) throw timecardError('Job time segments are server records and cannot be replaced.', 403);
   if (manager) {
     const next = { ...(existing || {}), ...incoming, id };
     // Existing administrative import/correction support is preserved. Every
@@ -88,7 +95,8 @@ export function authorizeTimecard({ session, manager, id, incoming, existing, ho
       next.hours = timecardHours(next);
       next.grossEstimate = Math.round(next.hours * Math.max(0, Number(next.hourlyRate || 0)) * 100) / 100;
     }
-    return withAudit(existing, next, session, now, existing ? 'manager_timecard_update' : 'manager_timecard_create');
+    const finalized = next.clockOutAt && !existing?.clockOutAt ? finishEmployeeJobTime(next, session, next.clockOutAt) : next;
+    return withAudit(existing, finalized, session, now, existing ? 'manager_timecard_update' : 'manager_timecard_create');
   }
   if (!existing) {
     if (incoming.locationTracking !== true) throw timecardError('Shift location is required to clock in.');
@@ -96,6 +104,7 @@ export function authorizeTimecard({ session, manager, id, incoming, existing, ho
     return withAudit(null, { id, employee: session.user, employeeName: session.displayName, role: session.role,
       payType: session.payType, hourlyRate, clockInAt: now, clockOutAt: '', status: 'active', approvalStatus: 'open', approvedBy: '', approvedAt: '',
       jobId: text(incoming.jobId), jobLabel: text(incoming.jobLabel), locationTracking: true, locationConsentAt: now,
+      jobTracking: initializeJobTracking(id, session, now),
       locationStatus: 'tracking', lastLocation: point, locationTrail: [point], locationUpdatedAt: now, breaks: [], createdAt: now,
       recordedBy: session.user, recordingVersion: 1 }, session, now, 'clock_in');
   }
@@ -110,7 +119,7 @@ export function authorizeTimecard({ session, manager, id, incoming, existing, ho
   const next = { ...existing };
   // Identity, pay, original clock-in and historical attribution cannot be
   // changed by a full-record browser retry or forged client fields.
-  if (own(incoming, 'jobId')) { next.jobId = text(incoming.jobId); next.jobLabel = text(incoming.jobLabel); }
+  if (own(incoming, 'jobId') && text(incoming.jobId) !== text(existing.jobId)) throw timecardError('Use Start job time or Switch job time so earlier shift hours keep their original job.', 409);
   if (own(incoming, 'notes')) next.notes = text(incoming.notes, 2000);
   if (own(incoming, 'breaks')) next.breaks = changeBreak(existing.breaks, incoming.breaks, now);
   if (incoming.lastLocation) {
@@ -125,7 +134,7 @@ export function authorizeTimecard({ session, manager, id, incoming, existing, ho
     next.breaks = (next.breaks || []).map(item => item.endAt ? item : { ...item, endAt: now });
     next.locationTracking = false; next.locationStatus = 'stopped';
     next.hours = timecardHours(next); next.grossEstimate = Math.round(next.hours * Math.max(0, Number(next.hourlyRate || 0)) * 100) / 100;
-    return withAudit(existing, next, session, now, 'clock_out');
+    return withAudit(existing, finishEmployeeJobTime(next, session, now), session, now, 'clock_out');
   }
   timecardHours(next, Date.parse(now));
   return withAudit(existing, next, session, now, own(incoming, 'breaks') ? 'break_update' : 'timecard_update');
