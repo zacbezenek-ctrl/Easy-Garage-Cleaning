@@ -8,7 +8,12 @@ export interface SourceBundle {
 const str=(v:unknown)=>typeof v==="string"?v:"";
 const timestamp=(v:unknown,fallback:unknown)=>validDate(v)??validDate(fallback)??"1970-01-01T00:00:00.000Z";
 const amount=(v:unknown)=>typeof v==="number"&&Number.isSafeInteger(v)&&v>=0?v:null;
-export const usableTranscriptText=(v:unknown)=>typeof v==="string"&&v.trim().length>0&&!/^(?:no transcript(?:ion)? (?:found|available)|transcript(?:ion)? (?:not found|unavailable)|null|undefined)$/i.test(v.trim())?v:"";
+export function usableTranscriptText(v:unknown):string {
+  if(typeof v!=="string")return "";const text=v.replace(/^\uFEFF/,'').trim();
+  if(!text||/^(?:(?:null|undefined)[.!\s]*$|(?:no transcript(?:ion)?(?: found| available)?|transcript(?:ion)? (?:not found|unavailable|pending|processing)|failed to (?:retrieve|fetch|download) transcript|not found|unauthorized|forbidden|internal server error|service unavailable)(?:$|[.!:\s]))/i.test(text)||/^<(?:!doctype|html|head|body)\b/i.test(text))return "";
+  if(/^[\[{]/.test(text)){try{JSON.parse(text);return "";}catch{/* Timestamped plain speech such as [00:01] remains valid. */}}
+  return text;
+}
 const event=(eventType:CustomerEventType,text:string,details:Json={},valueCents:number|null=null):EvidenceEvent=>({eventType,supportingText:text,confidence:1,humanReviewNeeded:false,nextAction:null,details,...(valueCents===null?{}:{valueCents,valueVerified:true,currency:"USD"})});
 
 /** Every adapter preserves source identifiers. Missing transition times are recorded

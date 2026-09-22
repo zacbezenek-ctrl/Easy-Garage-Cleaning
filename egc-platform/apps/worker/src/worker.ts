@@ -7,6 +7,7 @@ import { recomputeLeadState, callContactEvidence, isCallMessage } from "@egc/lea
 import { startMetaConversionWorker } from "./meta-conversion-worker.js";
 import { startCustomerStateWorker } from './customer-state-worker.js';
 import {startProviderNotesWorker} from './provider-notes-worker.js';
+import {parseProviderTranscript,persistProviderTranscript,startCallTranscriptWorker} from './call-transcript-worker.js';
 
 const db = getDb();
 const ghl = GhlClient.fromEnv();
@@ -248,61 +249,6 @@ async function syncContacts() {
   }
 }
 
-async function persistTranscript(callId: string, payload: unknown) {
-  if (typeof payload === "string") {
-    const text = payload.trim();
-    if (!text) return;
-
-    await db.insert(schema.callTranscripts).values({
-      callId,
-      text,
-      segments: [],
-      providerPayload: { source: "ghl_transcript_download" }
-    }).onConflictDoUpdate({
-      target: schema.callTranscripts.callId,
-      set: {
-        text,
-        segments: [],
-        providerPayload: { source: "ghl_transcript_download" },
-        updatedAt: new Date()
-      }
-    });
-    return;
-  }
-
-  const segments = Array.isArray(payload) ? payload : [payload];
-  const cleanSegments = segments
-    .map(asRecord)
-    .filter((segment) => Object.keys(segment).length > 0);
-
-  const text = cleanSegments
-    .map((segment) =>
-      asString(segment.transcript) ??
-      asString(segment.transcription) ??
-      asString(segment.text) ??
-      ""
-    )
-    .filter(Boolean)
-    .join("\n");
-
-  if (!text) return;
-
-  await db.insert(schema.callTranscripts).values({
-    callId,
-    text,
-    segments: cleanSegments,
-    providerPayload: { segments: cleanSegments }
-  }).onConflictDoUpdate({
-    target: schema.callTranscripts.callId,
-    set: {
-      text,
-      segments: cleanSegments,
-      providerPayload: { segments: cleanSegments },
-      updatedAt: new Date()
-    }
-  });
-}
-
 async function getSyncCursor(key: string) {
   const [row] = await db.select().from(schema.syncCursors)
     .where(eq(schema.syncCursors.key, key))
@@ -439,18 +385,18 @@ async function persistMessage(rawValue: unknown): Promise<string | null> {
     }).returning();
 
     if (call) {
-      const [existingTranscript] = await db.select({ id: schema.callTranscripts.id })
+      const [existingTranscript] = await db.select({ text: schema.callTranscripts.text })
         .from(schema.callTranscripts)
         .where(eq(schema.callTranscripts.callId, call.id))
         .limit(1);
 
-      if (!existingTranscript) {
+      if (!parseProviderTranscript(existingTranscript?.text)) {
         const downloaded = await ghl.downloadCallTranscript(messageId).catch(() => null);
-        if (downloaded?.trim()) {
-          await persistTranscript(call.id, downloaded);
+        if (parseProviderTranscript(downloaded)) {
+          await persistProviderTranscript(call.id, downloaded);
         } else {
           const transcript = await ghl.getCallTranscript(messageId).catch(() => null);
-          if (transcript) await persistTranscript(call.id, transcript);
+          if (transcript) await persistProviderTranscript(call.id, transcript);
         }
       }
     }
@@ -708,6 +654,7 @@ async function main() {
   console.log("EGC worker started");
   startCustomerStateWorker();
   startProviderNotesWorker();
+  startCallTranscriptWorker();
   startMetaConversionWorker();
   // A transient GHL startup failure must not stop Meta synchronization or the
   // existing webhook/outbox polling loops from being scheduled.

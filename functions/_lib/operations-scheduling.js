@@ -12,7 +12,7 @@ const canonical=v=>Array.isArray(v)?`[${v.map(canonical).join(',')}]`:v&&typeof 
 const digest=async v=>[...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(canonical(v))))].map(x=>x.toString(16).padStart(2,'0')).join('');
 const minutes=s=>/^\d\d:\d\d$/.test(s||'')?Number(s.slice(0,2))*60+Number(s.slice(3)):NaN;
 const overlap=(a,b)=>minutes(a.time)<minutes(b.endTime)&&minutes(b.time)<minutes(a.endTime);
-const scheduleState=visit=>({date:visit.date,time:visit.time,endTime:visit.endTime,status:visit.pipelineStatus||visit.status,title:visit.title||null,address:visit.address||null,assignedTo:visit.assignedTo||null});
+const scheduleState=visit=>({date:visit.date,...(visit.endDate&&visit.endDate!==visit.date?{endDate:visit.endDate}:{}),time:visit.time,endTime:visit.endTime,status:visit.pipelineStatus||visit.status,title:visit.title||null,address:visit.address||null,assignedTo:visit.assignedTo||null});
 function fromDoc(doc){return{...decodeFirestoreFields(doc.fields||{}),id:String(doc.name||'').split('/').pop(),revision:doc.updateTime};}
 export function schedulingStorage(env,fetcher=firestoreFetch){return{
   async customers(providerId){const r=await fetcher(env,`${URL}:runQuery`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({structuredQuery:{from:[{collectionId:'customers'}],where:{fieldFilter:{field:{fieldPath:'highlevelContactId'},op:'EQUAL',value:{stringValue:providerId}}},limit:3}}),signal:AbortSignal.timeout(15000)});if(!r.ok)throw failure('schedule_source_unavailable',503);const rows=await r.json();if(!Array.isArray(rows))throw failure('schedule_source_incomplete',503);return rows.filter(x=>x.document).map(x=>fromDoc(x.document));},
@@ -26,9 +26,9 @@ function visitIdentity(visit,customer){
   if(visit.highlevelContactId&&customer.highlevelContactId&&visit.highlevelContactId!==customer.highlevelContactId)throw failure('schedule_contact_link_conflict');
   return {portalVisitId:visit.id,portalCustomerId:customer.id,portalProjectId:visit.projectId||null,revision:visit.revision,
     highlevelContactId:visit.highlevelContactId||customer.highlevelContactId||null,highlevelAppointmentId:visit.highlevelAppointmentId||null,
-    type:visitKind(visit.type),sourceType:visit.type,date:visit.date,time:visit.time,endTime:visit.endTime,status:visit.pipelineStatus||visit.status,
+    type:visitKind(visit.type),sourceType:visit.type,date:visit.date,endDate:visit.endDate||visit.date,time:visit.time,endTime:visit.endTime,status:visit.pipelineStatus||visit.status,
     title:visit.title||visit.serviceType|| (visit.type==='walkthrough'?'EGC Free Walkthrough':'EGC Customer Job'),address:visit.address||customer.address||'',
-    startTime:localInstant(visit.date,visit.time),endTimeInstant:localInstant(visit.date,visit.endTime),syncStatus:visit.syncStatus||'unknown'};
+    startTime:localInstant(visit.date,visit.time),endTimeInstant:localInstant(visit.endDate||visit.date,visit.endTime),syncStatus:visit.syncStatus||'unknown'};
 }
 export async function resolveScheduledVisit(store,id){
   if(!safeId(id))throw failure('schedule_visit_not_found',404);
@@ -86,6 +86,9 @@ export async function mutateScheduledVisit(store,actor,input,now=new Date().toIS
   if(input.mode==='create'&&current)throw failure('schedule_visit_already_exists');
   if(input.mode!=='create'){
     visitIdentity(current,customer);
+    // Dispatch owns multi-day lock updates. The original single-day mutation
+    // path must never truncate an interval or leave intermediate locks behind.
+    if(current.endDate&&current.endDate!==current.date)throw failure('schedule_multiday_requires_dispatch');
     if(current.customerId!==input.portalCustomerId)throw failure('schedule_customer_link_conflict');
     if(!input.expectedRevision||current.revision!==input.expectedRevision)throw failure('schedule_revision_conflict');
     if(input.kind&&input.kind!==visitKind(current.type))throw failure('schedule_visit_kind_immutable');

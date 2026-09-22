@@ -3,7 +3,7 @@ import { and, asc, desc, eq, gte, inArray, isNull, lt, lte, or, sql } from "driz
 import { getDb, schema } from "@egc/database";
 import { classifyAttribution, detectConversions, sha256, toConversionPreview, type ConversionCandidate, type ConversionLead } from "./core.js";
 import { configurationHealth, conversionConfig, conversionStart, productionBlockers, type ConversionConfig } from "./config.js";
-import { canonicalExclusionReasons, detectCanonicalConversions, holdForCanonicalState, type CanonicalCustomerGate } from './canonical.js';
+import { canonicalExclusionReasons, canonicalStageAliases, detectCanonicalConversions, holdForCanonicalState, type CanonicalCustomerGate } from './canonical.js';
 import { retrySafety, sendToMeta } from "./sender.js";
 
 export interface ConversionOptions {
@@ -140,6 +140,17 @@ async function queueCandidate(candidate: ConversionCandidate, config: Conversion
   });
 }
 
+async function markCanonicalAccepted(writer:Pick<ReturnType<typeof getDb>,'update'>,row:typeof ledger.$inferSelect,currentCanonicalId?:string) {
+  const acceptedId=typeof row.attribution.canonicalEventId==='string'?row.attribution.canonicalEventId:null;
+  const matchingCustomer=and(eq(schema.customerEvents.contactId,row.contactId),eq(schema.customerEvents.leadId,row.leadId));
+  if(acceptedId)await writer.update(schema.customerEvents).set({syncState:'accepted',updatedAt:new Date()}).where(and(matchingCustomer,eq(schema.customerEvents.eventId,acceptedId)));
+  // A legacy accepted Meta identity may predate the canonical ledger. Explicitly
+  // label its current evidence as deduplicated, never as a fresh transmission.
+  if(!acceptedId&&currentCanonicalId)await writer.update(schema.customerEvents).set({syncState:'deduplicated',updatedAt:new Date()}).where(and(matchingCustomer,eq(schema.customerEvents.eventId,currentCanonicalId),sql`${schema.customerEvents.syncState}<>'accepted'`));
+  const aliases=canonicalStageAliases(row.eventType);
+  if(aliases.length)await writer.update(schema.customerEvents).set({syncState:'deduplicated',updatedAt:new Date()}).where(and(matchingCustomer,eq(schema.customerEvents.active,true),inArray(schema.customerEvents.eventType,aliases),sql`${schema.customerEvents.syncState}<>'accepted'`,...(acceptedId?[sql`${schema.customerEvents.eventId}<>${acceptedId}`]:[])));
+}
+
 /** Durable lease and immutable snapshot commit BEFORE the external request. */
 async function transmit(eventId: string, config: ConversionConfig, now: Date) {
   const db = getDb();
@@ -177,8 +188,9 @@ async function transmit(eventId: string, config: ConversionConfig, now: Date) {
       ? and(eq(ledger.id, eventId), eq(ledger.datasetId, config.datasetId), sql`${ledger.status} <> 'accepted'`)
       : and(eq(ledger.id, eventId), eq(ledger.leaseToken, claimToken), eq(ledger.status, "processing")));
     const canonicalEventId = claimed.attribution.canonicalEventId;
-    if (typeof canonicalEventId === 'string') await tx.update(schema.customerEvents).set({syncState:result.accepted?'accepted':'failed',updatedAt:finishedAt})
-      .where(eq(schema.customerEvents.eventId,canonicalEventId));
+    if(result.accepted)await markCanonicalAccepted(tx,claimed);
+    else if (typeof canonicalEventId === 'string') await tx.update(schema.customerEvents).set({syncState:'failed',updatedAt:finishedAt})
+      .where(and(eq(schema.customerEvents.eventId,canonicalEventId),sql`${schema.customerEvents.syncState} not in ('accepted','deduplicated')`));
   });
   return result.accepted ? "accepted" as const : "failed" as const;
 }
@@ -211,7 +223,7 @@ async function runSync(options: ConversionOptions, retryOnly: boolean) {
     || (["pending", "failed", "processing"].includes(row.status) && retrySafety(row.firstAttemptAt, row.eventTime, new Date()) !== null));
   let sent = 0;
   for (const row of rows) {
-    if (row.status === "accepted") { counts.alreadySynced++; continue; }
+    if (row.status === "accepted") { await markCanonicalAccepted(getDb(),row,currentById.get(row.id)?.canonicalEventId);counts.alreadySynced++; continue; }
     if (retryOnly && !["failed", "processing"].includes(row.status)) continue;
     if (row.status === "processing" && row.leaseUntil && row.leaseUntil > new Date()) { counts.pending++; continue; }
     const current = currentById.get(row.id);
