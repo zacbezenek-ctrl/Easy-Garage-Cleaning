@@ -106,6 +106,15 @@ export async function mutateScheduledVisit(store,actor,input,now=new Date().toIS
   if(input.mode==='create')Object.assign(patch,{bookingKey,status:'scheduled',pipelineStatus:'scheduled',createdAt:now,createdBy:actor.id,phone:customer.phone||'',email:customer.email||'',address:changes.address||customer.address||'',serviceType:kind==='walkthrough'?'Free garage walkthrough':'Customer job'});
   if(input.mode==='cancel')Object.assign(patch,{status:'cancelled',pipelineStatus:'cancelled',cancelledAt:now,cancelledBy:actor.id});
   const projectWrites=[];
+  // Firestore cannot put read preconditions on a commit. Identity-field no-ops
+  // fence the exact customer/source/project revisions together with the visit,
+  // receipt and schedule locks; a changed lineage must abort the entire save.
+  const identityWrites=[];
+  const guardIdentity=(collection,record)=>{
+    if(typeof record?.revision!=='string'||!record.revision)throw failure('schedule_source_unavailable',503);
+    identityWrites.push({collection,id:record.id,revision:record.revision,patch:{id:record.id}});
+  };
+  guardIdentity('customers',customer);
   if(input.mode==='create'){
     let projectId=`project_${id}`;
     if(input.sourceWalkthroughId){
@@ -113,6 +122,7 @@ export async function mutateScheduledVisit(store,actor,input,now=new Date().toIS
       if(kind!=='job'||!source||source.type!=='walkthrough'||source.customerId!==customer.id||!source.projectId)throw failure('schedule_source_walkthrough_link_conflict');
       const project=await store.read('projects',source.projectId);
       if(!project||project.customerId!==customer.id)throw failure('schedule_project_link_conflict');
+      guardIdentity('jobs',source);guardIdentity('projects',project);
       projectId=source.projectId;patch.sourceWalkthroughId=source.id;
     }else projectWrites.push({collection:'projects',id:projectId,patch:{id:projectId,customerId:customer.id,sourceRecordId:id,sourceWalkthroughId:kind==='walkthrough'?id:null,createdBy:actor.id,createdAt:now,updatedAt:now,authority:'employee_hub'}});
     patch.projectId=projectId;
@@ -136,7 +146,7 @@ export async function mutateScheduledVisit(store,actor,input,now=new Date().toIS
     }
     locks.push({collection:'jobs',id:lockId,revision:lock?.revision,patch:{recordType:'schedule_lock',date,entries,updatedAt:now}});
   }
-  const writes=[{collection:'jobs',id,revision:current?.revision,patch},...projectWrites,...locks,{collection:'dispatchState',id:'revision',revision:dispatchGuard?.revision,patch:{updatedAt:now,lastRequestId:input.requestId}},{collection:'jobs',id:receiptId,patch:{recordType:'schedule_operation',fingerprint:hash,scheduleHash:await digest(scheduleState(next)),portalVisitId:id,actorId:actor.id,actorKind:actor.kind,requestId:input.requestId,mode:input.mode,before:current?{date:current.date,time:current.time,endTime:current.endTime,status:current.status,revision:current.revision}:null,after:{date:next.date,time:next.time,endTime:next.endTime,status:next.status},createdAt:now}}];
+  const writes=[{collection:'jobs',id,revision:current?.revision,patch},...projectWrites,...identityWrites,...locks,{collection:'dispatchState',id:'revision',revision:dispatchGuard?.revision,patch:{updatedAt:now,lastRequestId:input.requestId}},{collection:'jobs',id:receiptId,patch:{recordType:'schedule_operation',fingerprint:hash,scheduleHash:await digest(scheduleState(next)),portalVisitId:id,actorId:actor.id,actorKind:actor.kind,requestId:input.requestId,mode:input.mode,before:current?{date:current.date,time:current.time,endTime:current.endTime,status:current.status,revision:current.revision}:null,after:{date:next.date,time:next.time,endTime:next.endTime,status:next.status},createdAt:now}}];
   try{await store.commit(writes);}catch(error){const receipt=await store.read('jobs',receiptId).catch(()=>null);if(!receipt||receipt.fingerprint!==hash)throw error;}
   const saved=await store.read('jobs',id);
   if(!saved||await digest(scheduleState(saved))!==await digest(scheduleState(next)))throw failure('schedule_changed_since_operation');
