@@ -12,7 +12,7 @@ function decode(document,collection,id) {
   if (!path||path.includes('/')||id&&path!==id||typeof document.updateTime!=='string'||!document.updateTime||document.fields!==undefined&&(!document.fields||typeof document.fields!=='object'||Array.isArray(document.fields))) throw failure('dispatch_storage_incomplete','Dispatch received a record without a verifiable identity or revision. Refresh before changing work.');
   return {...decodeFirestoreFields(document.fields || {}),id:path,revision:document.updateTime};
 }
-const JOB_FIELDS = ['type','recordType','date','time','endDate','endTime','customerId','customer','phone','address','title','serviceType','status','pipelineStatus','assignedCrew','assignedTo','crewLead','crewId','vehicleId','crewNeeded','requiredCrewSize','travelBufferMinutes','jobInstructions','operationalScope.text','scope','scopeOfWork','accessInstructions','customerInstructions','opsNotes','requiredEquipment','materials','syncStatus','highlevelAppointmentId','highlevelContactId','sourceWalkthroughId','sourceTemplateJobId','recurrence','recurrenceParentId','reminderDays','notify','shiftPickupEnabled','openShift','notes','durationMin','estimatedDurationMin','createdAt','updatedAt','completedAt','cancelledAt','startedAt','employee','employeeId','allDay','reason','startAt','endAt','fieldExecution.activity','fieldExecution.activityReason','fieldExecution.activityAt','fieldExecution.activityBy','fieldExecution.attention','fieldExecution.jobTime','fieldLastActionAt','fieldCompletionSync.status','fieldCompletionSync.message','fieldCompletionSync.attemptedAt','fieldCompletionSync.syncedAt'];
+const JOB_FIELDS = ['type','recordType','date','time','endDate','endTime','customerId','customerAccountOwnerJobId','customerMemoryInheritedFrom','propertyId','customer','phone','address','title','serviceType','status','pipelineStatus','assignedCrew','assignedTo','crewLead','crewId','vehicleId','crewNeeded','requiredCrewSize','travelBufferMinutes','jobInstructions','operationalScope.text','scope','scopeOfWork','accessInstructions','customerInstructions','opsNotes','requiredEquipment','materials','syncStatus','highlevelAppointmentId','highlevelContactId','sourceWalkthroughId','sourceTemplateJobId','recurrence','recurrenceParentId','reminderDays','notify','shiftPickupEnabled','openShift','notes','durationMin','estimatedDurationMin','createdAt','updatedAt','completedAt','cancelledAt','startedAt','employee','employeeId','allDay','reason','startAt','endAt','fieldExecution.activity','fieldExecution.activityReason','fieldExecution.activityAt','fieldExecution.activityBy','fieldExecution.attention','fieldExecution.jobTime','fieldLastActionAt','fieldCompletionSync.status','fieldCompletionSync.message','fieldCompletionSync.attemptedAt','fieldCompletionSync.syncedAt'];
 
 export async function dispatchRoster(env) {
   const profiles = listHubUserProfiles(env).map(p => ({ id: p.user.trim().toLowerCase(), name: p.displayName, role: p.role }));
@@ -69,17 +69,47 @@ export function dispatchStorage(env, fetcher = firestoreFetch) {
       return decode(await response.json(),collection,id);
     },
     async commit(writes) {
-      let response;
+      let response,transaction;
+      const checks=writes.filter(write=>write.verify),mutations=writes.filter(write=>!write.verify);
+      const json=body=>({method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+      const rollback=async()=>{if(transaction)await send(`${BASE}:rollback`,json({transaction})).catch(()=>null);};
+      if(checks.length) {
+        // Public REST Write has no documented read-only verify operation. A
+        // transaction protects lineage reads without changing account documents.
+        const started=await send(`${BASE}:beginTransaction`,json({options:{readWrite:{}}}));
+        if(!started.ok)throw failure('dispatch_storage_unavailable','Customer account verification could not begin. Retry before creating this visit.');
+        transaction=(await started.json()).transaction;
+        if(typeof transaction!=='string'||!transaction)throw failure('dispatch_storage_incomplete','Customer account verification returned an incomplete transaction.');
+        try {
+          const result=await send(`${BASE}:batchGet`,json({documents:checks.map(write=>`${ROOT}/${write.collection}/${write.id}`),mask:{fieldPaths:['customerId']},transaction}));
+          if(!result.ok)throw failure([409,412].includes(result.status)?'dispatch_revision_conflict':'dispatch_storage_unavailable','Customer account records changed or could not be verified. Refresh before saving.',[409,412].includes(result.status)?409:503);
+          const rows=await result.json();
+          if(!Array.isArray(rows)||rows.length!==checks.length)throw failure('dispatch_storage_incomplete','The complete set of customer account revisions could not be verified.');
+          const found=new Map();
+          for(const row of rows) {
+            if(row.missing)throw failure('dispatch_revision_conflict','A source customer account was removed. Refresh before creating this visit.',409);
+            if(!row.found?.name||found.has(row.found.name))throw failure('dispatch_storage_incomplete','Customer account verification returned duplicate or incomplete records.');
+            found.set(row.found.name,row.found);
+          }
+          for(const check of checks) {
+            const suffix=`/documents/${check.collection}/${check.id}`;
+            const document=[...found.values()].find(row=>row.name.endsWith(suffix));
+            if(!document||document.updateTime!==check.revision)throw failure('dispatch_revision_conflict','Customer account ownership changed while the visit was being created. Refresh and review the source job.',409);
+          }
+        } catch(error) {await rollback();throw error;}
+      }
       try {
         response = await send(`${BASE}:commit`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
-          writes: writes.map(write => ({
+          ...(transaction?{transaction}:{}),
+          writes: mutations.map(write => ({
             update: { name: `${ROOT}/${write.collection}/${write.id}`, fields: encodeFirestoreFields(write.patch) },
             updateMask: { fieldPaths: Object.keys(write.patch) },
             currentDocument: write.revision ? { updateTime: write.revision } : { exists: false },
           })),
         }) });
-      } catch { throw failure('dispatch_outcome_unknown', 'The save response was lost. Retry the same request to safely verify whether it saved.'); }
+      } catch { await rollback();throw failure('dispatch_outcome_unknown', 'The save response was lost. Retry the same request to safely verify whether it saved.'); }
       if (!response.ok) {
+        await rollback();
         if ([409, 412].includes(response.status)) throw failure('dispatch_revision_conflict', 'The schedule changed while you were editing. Refresh and review the latest information.', 409);
         throw failure('dispatch_outcome_unknown', 'The save could not be verified. Retry the same request to safely check its outcome.');
       }

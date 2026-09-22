@@ -2,6 +2,7 @@ import { hasBusinessAccess } from './hub-session.js';
 import { jobCrewNames, assignmentKey } from './job-assignment.js';
 import { fieldActivity } from './field-execution.js';
 import { advanceFieldTime, fieldJobTime } from './field-execution-time.js';
+import { resolveDispatchLineage, sameOperationalProperty } from './dispatch-lineage.js';
 import { sharedScheduleResources, scheduleRowsConflict, scheduleDayEntry } from './dispatch-conflicts.js';
 import { DISPATCH_ACTIONS, DISPATCH_TIME_ZONE } from './dispatch-contract.js';
 import { validDate, addDays, denverToday, scheduleInterval, availabilityInterval, occupiedDays, overlaps } from './dispatch-time.js';
@@ -210,6 +211,7 @@ function schedulePatch(changes, current, resources, roster, now, actor) {
     patch.endDate = changes.date ? addDays(changes.date,span) : '';
   }
   for (const key of ['title','address','serviceType','accessInstructions','customerInstructions','opsNotes','notes']) if (key in changes) patch[key] = text(changes[key], key, ['title','address','serviceType'].includes(key) ? 500 : 8000);
+  if ('address' in patch && current?.propertyId && !sameOperationalProperty({address:current.address},{address:patch.address})) patch.propertyId=null;
   if ('recurrence' in changes) {
     if (!['none','weekly','biweekly','monthly','quarterly'].includes(changes.recurrence)) throw fail('dispatch_recurrence_invalid','Choose a supported repeat interval.');
     patch.recurrence=changes.recurrence;
@@ -287,9 +289,11 @@ export async function mutateDispatch(store, session, input, now = new Date().toI
 async function executeDispatch(store, session, input, now) {
   requireDispatcher(session);
   if (!isObject(input) || !DISPATCH_ACTIONS.includes(input.action) || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(input.requestId || '')) throw fail('dispatch_request_invalid','Use a supported dispatch action with a unique request ID.');
-  onlyKeys(input,['action','requestId','customerId','kind','sourceWalkthroughId','sourceTemplateJobId','jobId','id','expectedRevision','changes','cancellationReason']);
+  onlyKeys(input,['action','requestId','customerId','kind','sourceWalkthroughId','sourceTemplateJobId','sourceJobId','jobId','id','expectedRevision','changes','cancellationReason']);
   if ('cancellationReason' in input && input.action !== 'schedule.cancel') throw fail('dispatch_cancel_patch_invalid','A cancellation reason can only be saved when cancelling a job.');
-  if ((input.sourceWalkthroughId || input.sourceTemplateJobId) && input.action !== 'schedule.create') throw fail('dispatch_handoff_invalid','A source record can only be selected when creating a job.');
+  if ((input.sourceWalkthroughId || input.sourceTemplateJobId || input.sourceJobId) && input.action !== 'schedule.create') throw fail('dispatch_handoff_invalid','A source record can only be selected when creating a job.');
+  if(input.sourceJobId&&input.sourceTemplateJobId&&input.sourceJobId!==input.sourceTemplateJobId)throw fail('dispatch_lineage_invalid','Choose one explicit source job for customer account ownership.');
+  if(input.sourceJobId&&input.kind!=='job')throw fail('dispatch_lineage_invalid','Customer account lineage can only be chosen for an operational job.');
   if (input.sourceWalkthroughId && input.sourceTemplateJobId) throw fail('dispatch_handoff_invalid','Choose either a walkthrough or a recurring job template.');
   const fingerprint = await digest({ actor: session.user, input }), receiptId = input.requestId.toLowerCase();
   const prior = await store.read('dispatchOperations',receiptId);
@@ -304,13 +308,13 @@ async function executeDispatch(store, session, input, now) {
   // reads. It serializes assignment checks with resource/availability changes.
   const guard = await store.read('dispatchState','revision');
   const [jobs,resources,roster] = await Promise.all([store.jobs(),store.resources(),store.roster()]);
-  let collection, id, current, patch, warnings = [], writes = [], providerSync = 'not_needed', fieldTimeSegment = null;
+  let collection, id, current, patch, warnings = [], writes = [], providerSync = 'not_needed', fieldTimeSegment = null, lineage = null;
   if (input.action.startsWith('schedule.')) {
     collection = 'jobs';
     const create = input.action === 'schedule.create', cancel = input.action === 'schedule.cancel', restore = input.action === 'schedule.restore';
     if (create) {
       if (input.kind === 'blocked') {
-        if (input.customerId || input.sourceWalkthroughId || input.sourceTemplateJobId) throw fail('dispatch_block_invalid','A company-wide scheduling block cannot have a customer or source job.');
+        if (input.customerId || input.sourceWalkthroughId || input.sourceTemplateJobId || input.sourceJobId) throw fail('dispatch_block_invalid','A company-wide scheduling block cannot have a customer or source job.');
         id=`block_${receiptId.replaceAll('-','')}`;
         current=null;
         patch={id,type:'blocked',title:'Unavailable',date:'',time:'',endDate:'',endTime:'',assignedCrew:[],assignedTo:'',status:'scheduled',pipelineStatus:'scheduled',createdAt:now,createdBy:session.user,scheduleSource:'egc_hub'};
@@ -345,6 +349,7 @@ async function executeDispatch(store, session, input, now) {
         status: 'unscheduled', pipelineStatus: 'unscheduled', createdAt: now, createdBy: session.user, scheduleSource: 'egc_hub',
         ...(bookingKey ? { bookingKey } : {}), ...(source ? { sourceWalkthroughId: source.id } : {}),
         ...(template ? {...recurringTemplateFields(template,session.user,now),sourceTemplateJobId:template.id,sourceTemplateRevision:template.revision,recurrenceParentId:template.recurrenceParentId || template.id,address:template.address || customer.address || ''} : {}),
+        ...(source?.propertyId || template?.propertyId ? {propertyId:source?.propertyId || template.propertyId} : {}),
       };
       const projectId = source?.projectId || `project_${source?.id || id}`;
       const project = await store.read('projects',projectId);
@@ -372,6 +377,10 @@ async function executeDispatch(store, session, input, now) {
       if (current.lastShiftClaim && !retained(current.lastShiftClaim)) patch.lastShiftClaim=null;
     }
     let next = { ...current, ...patch };
+    if(create&&next.type==='job') {
+      lineage=await resolveDispatchLineage(store,{customerId:next.customerId,jobs,address:next.address,propertyId:next.propertyId,sourceJobId:input.sourceTemplateJobId||input.sourceJobId});
+      Object.assign(patch,lineage.patch);next={...next,...lineage.patch};
+    }
     const hasSchedule = Boolean(next.date || next.time || next.endDate || next.endTime), interval = scheduleInterval(next);
     if (!cancel && hasSchedule && !interval) throw fail('dispatch_time_invalid','Choose valid Denver start and end times within 31 days. Missing or repeated DST hours cannot be scheduled.');
     if (!cancel && next.type === 'blocked' && !interval) throw fail('dispatch_block_invalid','A company-wide scheduling block needs valid start and end times.');
@@ -423,6 +432,7 @@ async function executeDispatch(store, session, input, now) {
     const inspection=scheduleInspection(finalJobs,resources,roster);
     conflictCheck(next,finalJobs,resources,roster,inspection);
     warnings = jobWarnings(next,finalJobs,resources,roster,inspection);
+    if(lineage?.metadata&&!lineage.metadata.memoryAddressMatches)warnings.push({code:'customer_memory_not_inherited',jobId:id,message:'The verified customer account is linked, but this property does not match the selected account history. Property instructions remain specific to this job; review access and scope before dispatch.'});
   } else {
     collection = 'dispatchResources';
     id = input.id || `${input.action.split('.')[0]}_${receiptId.replaceAll('-','')}`;
@@ -445,7 +455,12 @@ async function executeDispatch(store, session, input, now) {
   }
   writes.push({collection,id,revision:current?.revision,patch});
   writes.push({collection:'dispatchState',id:'revision',revision:guard?.revision,patch:{updatedAt:now,lastRequestId:input.requestId}});
-  writes.push({collection:'dispatchOperations',id:receiptId,patch:{fingerprint,actorId:session.user,action:input.action,collection,targetId:id,requestId:input.requestId,createdAt:now,before:current ? auditState(current) : null,after:auditState({...current,...patch}),warnings,...(fieldTimeSegment ? {metadata:{fieldTimeSegment}} : {})}});
+  writes.push({collection:'dispatchOperations',id:receiptId,patch:{fingerprint,actorId:session.user,action:input.action,collection,targetId:id,requestId:input.requestId,createdAt:now,before:current ? auditState(current) : null,after:auditState({...current,...patch}),warnings,...(fieldTimeSegment || lineage?.metadata ? {metadata:{...(fieldTimeSegment?{fieldTimeSegment}:{}),...(lineage?.metadata?{customerLineage:lineage.metadata}:{})}} : {})}});
+  for(const check of lineage?.checks || []) {
+    const write=writes.find(item=>item.collection===check.collection&&item.id===check.id);
+    if(write&&write.revision!==check.revision)throw fail('dispatch_revision_conflict','The source job changed while its account ownership was verified. Refresh and retry.',409);
+    if(!write)writes.push(check);
+  }
   try { await store.commit(writes); }
   catch (error) {
     const receipt = await store.read('dispatchOperations',receiptId).catch(() => null);

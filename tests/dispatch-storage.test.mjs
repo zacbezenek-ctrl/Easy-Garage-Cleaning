@@ -52,6 +52,29 @@ test('revision failures differ from uncertain commit outcomes for safe UI retry 
   for (const fetcher of [async()=>response({},503),async()=>{throw new Error('network');}]) await assert.rejects(dispatchStorage({},fetcher).commit([]),error=>error.code==='dispatch_outcome_unknown'&&error.status===503);
 });
 
+test('read-only lineage revisions use a documented transaction and never rewrite customer account documents',async()=>{
+  const calls=[],source=document('root');
+  const store=dispatchStorage({},async(_env,url,options)=>{
+    const body=JSON.parse(options.body);calls.push({url:String(url),body});
+    if(String(url).endsWith(':beginTransaction'))return response({transaction:'synthetic-transaction'});
+    if(String(url).endsWith(':batchGet'))return response([{found:source}]);
+    assert.ok(String(url).endsWith(':commit'));return response({writeResults:[{updateTime:'new-revision'}]});
+  });
+  await store.commit([{collection:'jobs',id:'root',revision:source.updateTime,verify:true},{collection:'jobs',id:'new-job',patch:{customerId:'customer'}}]);
+  assert.equal(calls.length,3);assert.deepEqual(calls[0].body,{options:{readWrite:{}}});
+  assert.equal(calls[1].body.transaction,'synthetic-transaction');assert.deepEqual(calls[1].body.mask,{fieldPaths:['customerId']});
+  assert.equal(calls[2].body.transaction,'synthetic-transaction');assert.equal(calls[2].body.writes.length,1);assert.ok(calls[2].body.writes[0].update.name.endsWith('/new-job'));assert.equal(calls[2].body.writes[0].verify,undefined);
+});
+
+test('changed or incomplete lineage snapshots roll back before any schedule mutation is committed',async()=>{
+  for(const rows of [[{found:document('root')}],[{missing:'projects/egcw-1ec83/databases/(default)/documents/jobs/root'}],[]]) {
+    const calls=[];
+    const store=dispatchStorage({},async(_env,url)=>{const target=String(url);calls.push(target);if(target.endsWith(':beginTransaction'))return response({transaction:'tx'});if(target.endsWith(':batchGet'))return response(rows);assert.ok(target.endsWith(':rollback'));return response({});});
+    await assert.rejects(store.commit([{collection:'jobs',id:'root',revision:'stale',verify:true},{collection:'jobs',id:'new',patch:{customerId:'c1'}}]),e=>['dispatch_revision_conflict','dispatch_storage_incomplete'].includes(e.code));
+    assert.ok(calls.at(-1).endsWith(':rollback'));assert.ok(calls.every(url=>!url.endsWith(':commit')));
+  }
+});
+
 test('server roster exposes configured identities without password hashes, rates, or invented employees',async () => {
   const roster=await dispatchRoster({HUB_AUTH_USERS_JSON:JSON.stringify({zacb:{passwordHash:'a'.repeat(64),displayName:'Owner',role:'owner',hourlyRate:500},'New.User':{passwordHash:'b'.repeat(64),displayName:'New Employee',role:'crew'}})});
   assert.deepEqual(roster.map(person=>person.id).sort(),['new.user','zacb']);

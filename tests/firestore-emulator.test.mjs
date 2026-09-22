@@ -85,10 +85,13 @@ test('actual Firestore rules isolate canonical operations from crew SDK access',
       });
       const create=(customerId,changes={})=>({action:'schedule.create',requestId:crypto.randomUUID(),customerId,kind:'job',changes:{date:'2099-09-10',time:'08:00',endTime:'10:00',assignedCrew:['crew1'],jobInstructions:'Synthetic emulator work only',...changes}});
       const input=create('customer');
+      const accountBefore=await store.read('jobs','assigned');
       const copies=await Promise.all([mutateDispatch(store,actor,input),mutateDispatch(store,actor,input)]);
       assert.equal(copies[0].job.id,copies[1].job.id);
       assert.equal((await mutateDispatch(store,actor,input)).replayed,true);
       assert.equal((await store.jobs()).filter(job=>job.id===copies[0].job.id).length,1);
+      assert.equal((await store.read('jobs',copies[0].job.id)).customerAccountOwnerJobId,'assigned');
+      assert.equal((await store.read('jobs','assigned')).revision,accountBefore.revision,'Read verification must not mutate the account root.');
       assert.match(copies[0].job.revision,/^\d{4}-\d{2}-\d{2}T/);
       const job=copies[0].job;
       const changed=await mutateDispatch(store,actor,{action:'schedule.update',requestId:crypto.randomUUID(),jobId:job.id,expectedRevision:job.revision,changes:{date:'2099-09-11'}});
@@ -118,6 +121,9 @@ test('actual Firestore rules isolate canonical operations from crew SDK access',
       assert.equal((await dispatchOpenings(store,actor,capacityQuery)).candidates[0].time,'08:00');
       assert.equal((await mutateDispatch(store,actor,create('customer',{date:'2099-09-14'}))).ok,true);
       const capacity=await dispatchOpenings(store,actor,capacityQuery);assert.equal(capacity.candidates[0].time,'10:20');assert.ok(capacity.coverage.revision);
+      await store.commit([{collection:'jobs',id:'assigned',revision:accountBefore.revision,patch:{lineageTestChange:true}}]);
+      await assert.rejects(store.commit([{collection:'jobs',id:'assigned',revision:accountBefore.revision,verify:true},{collection:'jobs',id:'must-not-save',patch:{type:'job',customerId:'customer'}}]),error=>error.code==='dispatch_revision_conflict');
+      assert.equal(await store.read('jobs','must-not-save'),null,'A stale ownership read cannot write another job.');
     });
   } finally {await environment.cleanup();}
 });

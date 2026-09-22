@@ -29,7 +29,7 @@ function fixture() {
         assert.ok(!seen.has(key),'No duplicate writes per document'); seen.add(key);
         if (write.revision ? old?.revision !== write.revision : Boolean(old)) throw Object.assign(new Error('Conflict'),{code:'dispatch_revision_conflict',status:409});
       }
-      for (const write of writes) rows.set(`${write.collection}/${write.id}`,{...rows.get(`${write.collection}/${write.id}`),...clone(write.patch),id:write.id,revision:`r${++revision}`});
+      for (const write of writes) if(!write.verify)rows.set(`${write.collection}/${write.id}`,{...rows.get(`${write.collection}/${write.id}`),...clone(write.patch),id:write.id,revision:`r${++revision}`});
     },
   };
   const create = (changes = {}, extra = {}) => ({action:'schedule.create',requestId:randomUUID(),customerId:'c1',kind:'job',changes:{date:'2026-09-23',time:'08:00',endTime:'10:00',assignedCrew:['crew1'],jobInstructions:'Clean garage',...changes},...extra});
@@ -405,4 +405,25 @@ test('corrupt scheduled dates remain visible for repair even without the unsched
   const result=await dispatchOverview(f.store,manager,{startDate:'2026-09-23',endDate:'2026-09-24',includeUnscheduled:false});
   assert.deepEqual(result.jobs.map(job=>job.id).sort(),['bad-block','bad-date','bad-end']);
   assert.equal(result.warnings.filter(w=>w.code==='invalid_schedule').length,3);
+});
+
+test('new visits inherit verified customer identity without copying account state or touching the account root',async()=>{
+  const f=fixture(),first=await f.mutate(f.create()),root=f.rows.get('jobs/'+first.job.id);
+  root.giftWallet={balance:250};root.customerCollaborators=[{id:'private-person'}];root.customerMemory={parkingNotes:'Back drive'};
+  const second=await f.mutate(f.create({date:'2026-09-24'})),saved=f.rows.get('jobs/'+second.job.id);
+  assert.equal(saved.customerAccountOwnerJobId,root.id);assert.equal(saved.customerMemoryInheritedFrom,root.id);assert.equal(root.revision,first.job.revision);
+  assert.equal(saved.giftWallet,undefined);assert.equal(saved.customerCollaborators,undefined);assert.equal(saved.customerMemory,undefined);
+  assert.equal(f.rows.get('dispatchOperations/'+second.requestId).metadata.customerLineage.rootJobId,root.id);
+  const third=await f.mutate(f.create({date:'2026-09-25',address:'200 Different Property'},{sourceJobId:root.id})),different=f.rows.get('jobs/'+third.job.id);
+  assert.equal(different.customerAccountOwnerJobId,root.id);assert.equal(different.customerMemoryInheritedFrom,undefined);assert.equal(different.address,'200 Different Property');assert.ok(third.warnings.some(row=>row.code==='customer_memory_not_inherited'));
+});
+
+test('account lineage changes outside the dispatch guard still invalidate the atomic new-job save',async()=>{
+  const f=fixture(),first=await f.mutate(f.create()),commit=f.store.commit;
+  f.store.commit=async writes=>{
+    if(writes.some(write=>write.verify&&write.id===first.job.id)){const root=f.rows.get('jobs/'+first.job.id);root.customerId='c2';root.revision='external-owner-change';}
+    return commit(writes);
+  };
+  await assert.rejects(f.mutate(f.create({date:'2026-09-24'})),e=>e.code==='dispatch_revision_conflict');
+  assert.equal([...f.rows.values()].filter(row=>row.type==='job').length,1);
 });
