@@ -94,8 +94,18 @@ test('assignment identities retain punctuation and suffixes, and explicit crew o
     }
     assert.equal(await access.assigned({ assignedCrew: [null, 42, { username: {} }, { name: user }] }), true);
     assert.equal(await access.assigned({ assignedCrew: ['Outsider'], assignedTo: user }), false);
+    assert.equal(await access.assigned({ assignedCrew: [], assignedTo: user }), false, 'Explicitly unassigned work cannot revive a stale legacy assignee');
   }
   assert.deepEqual(jobCrewNames({ assignedCrew: [...variants, 'john.smith'] }), variants);
+  assert.deepEqual(jobCrewNames({assignedCrew:[],assignedTo:variants[0]}),[]);
+});
+
+test('explicitly removed crew cannot read prior job rooms or act through stale assignment text',async t=>{
+  const store=storage(t),user=variants[0];store.put('unassigned-job',{type:'job',assignedCrew:[],assignedTo:user,customer:'Private old assignment',phone:'9705550100'});
+  const schedule=await (await crew.onRequestGet({env,request:request('crew-jobs',user)})).json();assert.equal(schedule.jobs.some(job=>job.id==='unassigned-job'),false);
+  const denied=await payment.onRequestPost({env,request:request('job-payment',user,{job_id:'unassigned-job',amount_cents:1000,request_id:'removed-crew'})});assert.equal(denied.status,403);
+  const message=await hub.onRequestPost({env,request:request('employee-hub',user,{collection:'jobMessages',id:'removed-crew-note',data:{jobId:'unassigned-job',body:'Should not save'}})});assert.equal(message.status,403);
+  assert.equal(store.calls.writes,0);assert.equal(store.calls.upstream,0);
 });
 
 test('every job mutation route rejects prefix and punctuation neighbors before writes or external calls', async t => {

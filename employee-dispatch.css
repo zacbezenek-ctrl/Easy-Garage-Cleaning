@@ -5,4 +5,5 @@
 .dp-date-shortcuts{display:flex;gap:7px}
 .dp-recovery-facts{margin:0;display:grid;gap:14px;overflow-wrap:anywhere}.dp-recovery-facts dt{font-weight:750}.dp-recovery-facts dd{margin:3px 0 0;white-space:pre-wrap}
 .dp-openings-results{display:grid;gap:12px}.dp-openings-results article{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;border:1px solid var(--dp-line);border-radius:10px;padding:14px}.dp-openings-results small{display:block;color:var(--dp-muted)}
+.dp-search-results{display:grid;gap:14px}.dp-search-result{padding:16px;border:1px solid var(--dp-line);border-radius:10px;overflow-wrap:anywhere}.dp-search-result p{margin:6px 0}.dp-search-result .dp-job-top{gap:10px;flex-wrap:wrap}.dp-search-result small{display:block;margin-top:5px}
 @media(max-width:680px){.dp-date-controls>.dp-date-shortcuts{grid-column:1/-1;display:grid;grid-template-columns:1fr 1fr}}

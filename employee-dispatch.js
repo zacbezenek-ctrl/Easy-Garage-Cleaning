@@ -41,9 +41,16 @@ function errorText(error) {
   if (conflicts?.length) return 'Scheduling conflict: '+conflicts.map(c=>c.message||[words(c.code||c.type),c.employeeId?person(c.employeeId):'',c.jobId||''].filter(Boolean).join(' · ')).join('; ');
   return error.message || 'The request could not be verified. Retry the same request.';
 }
+async function requestJSON(path,options={},signal) {
+  const controller=new AbortController(),abort=()=>controller.abort();let timedOut=false;
+  if(signal?.aborted)controller.abort();else signal?.addEventListener('abort',abort,{once:true});
+  const timeout=setTimeout(()=>{timedOut=true;controller.abort();},30000);
+  try{const response=await fetch(path,{credentials:'same-origin',cache:'no-store',...options,signal:controller.signal}),data=await response.json().catch(()=>({}));return{response,data};}
+  catch(error){if(timedOut)throw Object.assign(new Error('The server did not confirm this request within 30 seconds. Retry the original request to verify the outcome.'),{status:503,code:'dispatch_timeout'});throw error;}
+  finally{clearTimeout(timeout);signal?.removeEventListener('abort',abort);}
+}
 async function api(query='', body=null, signal) {
-  const response = await fetch('/api/dispatch'+query, {method:body?'POST':'GET', credentials:'same-origin', cache:'no-store', headers:body?{'Content-Type':'application/json'}:undefined, body:body?JSON.stringify(body):undefined, signal});
-  const data = await response.json().catch(()=>({}));
+  const {response,data}=await requestJSON('/api/dispatch'+query,{method:body?'POST':'GET',headers:body?{'Content-Type':'application/json'}:undefined,body:body?JSON.stringify(body):undefined},signal);
   if (!response.ok || data.ok !== true) throw Object.assign(new Error(data.error||'The dispatch response could not be verified. Retry the original request.'),{status:response.ok?503:response.status,code:data.code,details:data.details});
   const invalid=()=>Object.assign(new Error('The dispatch response was incomplete. Retry the original request to verify the outcome.'),{status:503,code:'dispatch_response_unverified'});
   if(body) {
@@ -182,8 +189,8 @@ function labeled(label,control,help) {const id=control.id||'dp-'+key();control.i
 function select(options,value,onChange,props={}) {return h('select',{onchange:e=>onChange(e.target.value),...props},options.map(([id,label])=>h('option',{value:id,selected:id===value},label)));}
 function render() {
   if(!S.root||S.modal)return;
-  const search=h('input',{type:'search',value:S.query,placeholder:'Customer, address, phone, job or date',oninput:e=>setFilter('query',e.target.value),'aria-label':'Search jobs'});
-  S.root.replaceChildren(h('header',{class:'dp-header'},h('div',{},h('span',{class:'dp-eyebrow'},'EGC OPERATIONS'),h('h1',{},'Dispatch'),h('p',{},'Schedule, assign and run the day.')),h('div',{class:'dp-header-actions'},btn('Find opening',openOpenings,'',{disabled:!S.data}),btn('Block time',()=>openBlock(),'',{disabled:!S.data}),btn('Crews & vehicles',()=>openResources()),btn('Refresh',()=>load(),'',{disabled:S.loading}),btn('Create job',()=>openJob(),'primary',{disabled:!S.data}))));
+  const search=h('input',{type:'search',value:S.query,placeholder:'Filter this date range',oninput:e=>setFilter('query',e.target.value),'aria-label':'Search jobs'});
+  S.root.replaceChildren(h('header',{class:'dp-header'},h('div',{},h('span',{class:'dp-eyebrow'},'EGC OPERATIONS'),h('h1',{},'Dispatch'),h('p',{},'Schedule, assign and run the day.')),h('div',{class:'dp-header-actions'},btn('Search all jobs',openSearch,'',{disabled:!S.data}),btn('Find opening',openOpenings,'',{disabled:!S.data}),btn('Block time',()=>openBlock(),'',{disabled:!S.data}),btn('Crews & vehicles',()=>openResources()),btn('Refresh',()=>load(),'',{disabled:S.loading}),btn('Create job',()=>openJob(),'primary',{disabled:!S.data}))));
   const modes=h('div',{class:'dp-modes',role:'group','aria-label':'Calendar view'});
   for(const [id,label]of [['day','Day'],['week','Week'],['crew','Crew'],['jobs','Jobs']])modes.append(btn(label,()=>{S.view=id;void load();},S.view===id?'selected':'',{'aria-pressed':S.view===id?'true':'false'}));
   S.root.append(h('div',{class:'dp-controls'},h('div',{class:'dp-date-controls'},btn('←',()=>move(-1),'',{'aria-label':'Previous period'}),labeled('Schedule date',h('input',{type:'date',value:S.date,onchange:e=>setDate(e.target.value)})),btn('→',()=>move(1),'',{'aria-label':'Next period'}),h('div',{class:'dp-date-shortcuts'},btn('Today',()=>setDate(today())),btn('Tomorrow',()=>setDate(addDays(today(),1))))),modes));
@@ -234,6 +241,7 @@ async function save(model,body,success) {
     formBusy(model,false);
     if(error.status>=400&&error.status<500&&![401,403,408,429].includes(error.status)){model.request=null;model.disabledState=null;clearRecovery();}
     model.status.replaceChildren(notice(errorText(error),'error'));
+    model.onError?.(error);
     if(error.status===401)model.status.append(signInLink());
     if(/revision/.test(error.code||''))model.status.append(btn('Discard draft and load latest',()=>{model.close();void load();}));
     if(model.recovery&&!model.request)model.status.append(btn('Return to schedule',model.close));
@@ -251,6 +259,36 @@ function openRecovery() {
   model.fields.append(h('dl',{class:'dp-recovery-facts dp-wide'},facts.map(([label,value])=>h('div',{},h('dt',{},label),h('dd',{},value)))));
   model.footer.append(btn('Retry original save',()=>save(model,saved.request,saved.success),'primary'));
   model.form.addEventListener('submit',event=>{event.preventDefault();void save(model,saved.request,saved.success);});
+}
+function openSearch() {
+  if(!S.data)return;
+  const model=modal('Search all Hub jobs','Find work across all dates by customer, address, phone, email, employee, job ID or date (MM/DD/YYYY).');if(!model)return;
+  const query=field(model,'query','Search all dates','','search',{required:true,minLength:2,maxLength:200,placeholder:'Customer, phone, address or employee'});
+  const status=select([['all','All statuses'],['active','Active work'],['completed','Completed'],['cancelled','Cancelled / no-show'],['unscheduled','Unscheduled']],'all',()=>{});
+  model.fields.append(labeled('Job status',status));
+  const results=h('div',{class:'dp-search-results dp-wide','aria-live':'polite'});model.fields.append(results);
+  model.footer.append(btn('Back',model.close),h('button',{type:'submit',class:'dp-btn primary'},'Search history'));
+  query.addEventListener('input',()=>results.replaceChildren());status.addEventListener('change',()=>results.replaceChildren());
+  model.form.addEventListener('submit',async event=>{
+    event.preventDefault();if(S.pending)return;
+    formBusy(model,true);results.replaceChildren();model.status.replaceChildren(notice('Searching canonical Hub history…'));
+    try{
+      const {response,data}=await requestJSON('/api/dispatch-search?'+new URLSearchParams({q:query.value.trim(),status:status.value}));
+      if(!response.ok||data.ok!==true)throw Object.assign(new Error(data.error||'Job history could not be verified. Retry the search.'),{status:response.ok?503:response.status,code:data.code});
+      if(data.coverage?.complete!==true||!Array.isArray(data.results)||!Number.isInteger(data.total)||data.results.some(row=>!row?.job?.id||!row.job.revision))throw new Error('The job search response was incomplete. Retry the search.');
+      if(S.modal!==model)return;
+      model.status.replaceChildren(notice(data.total+' matching '+(data.total===1?'job':'jobs')+(data.truncated?' · showing the first 50. Refine the search to see other matches.':'.')));
+      if(!data.results.length)results.append(h('p',{},'No Hub jobs match. Try another customer name, phone, address, employee or date.'));
+      for(const row of data.results){const job=row.job,blocked=job.type==='blocked';
+        const actions=h('div',{class:'dp-card-actions'});
+        if(!blocked)actions.append(h('a',{class:'dp-btn primary',href:job.type==='walkthrough'?'/crew/gameplan.html?walkthroughId='+encodeURIComponent(job.id):'/crew/job.html?jobId='+encodeURIComponent(job.id)},job.type==='walkthrough'?'Open walkthrough':'Open job'));
+        actions.append(btn('Show in dispatch',()=>{model.close();S.date=/^\d{4}-\d{2}-\d{2}$/.test(job.date||'')?job.date:today();S.view=job.date?'day':'jobs';S.status='all';S.employee='';S.type='';S.query=job.date?'':job.id;S.notice='Showing '+(job.customer||job.title||job.id)+(job.date?' on '+dateText(job.date)+'.':' in unscheduled work.');void load();}));
+        results.append(h('article',{class:'dp-search-result'},h('div',{class:'dp-job-top'},h('strong',{},job.customer||job.title||row.canonicalCustomerName||job.id),pill(words(job.activity||job.status))),row.canonicalCustomerName&&row.canonicalCustomerName!==job.customer?h('small',{class:'dp-muted'},'Customer record: '+row.canonicalCustomerName):null,h('p',{},job.date?job.date+' · '+clock(job.time)+' – '+clock(job.endTime):'Unscheduled'),job.address?h('p',{},job.address):null,h('p',{class:'dp-muted'},[job.serviceType||words(job.type),job.id].filter(Boolean).join(' · ')),actions));
+      }
+    }catch(error){if(S.modal===model){results.replaceChildren();model.status.replaceChildren(notice(errorText(error),'error'));if(error.status===401)model.status.append(signInLink());}}
+    finally{if(S.modal===model)formBusy(model,false);}
+  });
+  query.focus();
 }
 function openOpenings() {
   if(!S.data)return;
@@ -276,7 +314,7 @@ function openOpenings() {
     const query={startDate:start.value,endDate:addDays(last.value,1),durationMinutes:duration.value,workdayStart:begins.value,workdayEnd:ends.value,employeeIds:employeeIds.join(','),travelBufferMinutes:buffer.value,...(truck.value?{vehicleId:truck.value}:{})};
     formBusy(model,true);results.replaceChildren();model.status.replaceChildren(notice('Checking recorded capacity…'));
     try{
-      const response=await fetch('/api/dispatch-openings?'+new URLSearchParams(query),{credentials:'same-origin',cache:'no-store'}),data=await response.json().catch(()=>({}));
+      const {response,data}=await requestJSON('/api/dispatch-openings?'+new URLSearchParams(query));
       if(!response.ok||data.ok!==true)throw Object.assign(new Error(data.error||'Openings could not be verified. Retry the search.'),{status:response.ok?503:response.status,code:data.code,details:data.details});
       if(data.coverage?.complete!==true||data.coverage?.consistent!==true||!Array.isArray(data.candidates)||!Array.isArray(data.warnings))throw new Error('The openings response was incomplete. Retry before booking.');
       if(S.modal!==model)return;
@@ -309,12 +347,21 @@ function openJob(job=null,options={}) {
   if(!S.data)return;
   if(job?.type==='blocked')return openBlock(job,options);
   const model=modal(job?'Edit / assign job':'Create job','Times are Mountain Time. Conflicting employee and vehicle assignments are blocked.');if(!model)return;
-  let selectedCustomer=job?.customerId?{id:job.customerId,name:job.customer,address:job.address,phone:job.phone}:null;
+  let selectedCustomer=job?.customerId?{id:job.customerId,name:job.customer,address:job.address,phone:job.phone}:null,sourceJobId=null;
   const search=field(model,'customerSearch','Customer',job?.customer||'','search',{required:!job,readOnly:!!job,autocomplete:'off',placeholder:'Search existing customers'});
   const customerResults=h('div',{class:'dp-customer-results',role:'status'});search.parentElement.append(customerResults);
+  const lineage=h('div',{class:'dp-wide'});model.fields.append(lineage);
+  model.onError=error=>{
+    if(job||error.code!=='dispatch_lineage_selection_required'||!Array.isArray(error.details?.candidates))return;
+    const candidates=error.details.candidates.filter(row=>row.customerId===selectedCustomer?.id&&typeof row.jobId==='string');
+    const choose=select([['','Choose a previous visit'],...candidates.map(row=>[row.jobId,[row.date||'Unscheduled',row.customer||'Customer job',row.address||'Address missing',row.jobId].join(' · ')])],sourceJobId||'',id=>{sourceJobId=id||null;},{required:true});
+    lineage.replaceChildren(notice('This customer has more than one saved account or property history. Select the prior visit whose customer account this booking should use, and review its address.'),labeled('Previous customer visit',choose));
+    if(error.details.truncated){const custom=h('input',{type:'text',maxLength:180,placeholder:'Exact job ID from Search all jobs',oninput:event=>{sourceJobId=event.target.value.trim()||choose.value||null;choose.required=!event.target.value.trim();}});lineage.append(labeled('Different prior job ID',custom,'Only the first 50 prior visits are listed. The selected job must belong to this exact customer.'));}
+    choose.focus();
+  };
   let customerGeneration=0;
   search.addEventListener('input',async()=>{
-    if(job)return;selectedCustomer=null;const g=++customerGeneration,q=search.value.trim();if(q.length<2){customerResults.replaceChildren(h('small',{},'Type at least 2 characters.'));return;}
+    if(job)return;selectedCustomer=null;sourceJobId=null;lineage.replaceChildren();const g=++customerGeneration,q=search.value.trim();if(q.length<2){customerResults.replaceChildren(h('small',{},'Type at least 2 characters.'));return;}
     customerResults.replaceChildren(h('small',{},'Searching…'));
     try{const r=await api('?'+new URLSearchParams({view:'customers',q}));if(g!==customerGeneration||S.modal!==model)return;customerResults.replaceChildren(...r.customers.map(c=>btn(c.name+' · '+(c.phone||c.address||'No contact details'),()=>{selectedCustomer=c;search.value=c.name;address.value=c.address||'';customerResults.replaceChildren(h('small',{},'Customer selected'));})));if(!r.customers.length)customerResults.append(h('p',{},'No matching Hub customer. Create or link the customer in Customers first.'));}
     catch(error){if(g===customerGeneration)customerResults.replaceChildren(notice(errorText(error),'error'));}
@@ -369,7 +416,7 @@ function openJob(job=null,options={}) {
       crewNeeded:Number(data.get('crewNeeded')),travelBufferMinutes:Number(data.get('travelBufferMinutes')),jobInstructions:instructions.value.trim(),
       accessInstructions:String(data.get('accessInstructions')||'').trim(),customerInstructions:String(data.get('customerInstructions')||'').trim(),opsNotes:String(data.get('opsNotes')||'').trim(),
       requiredEquipment:list('requiredEquipment'),materials:list('materials').map((name,i)=>{const existing=job?.materials?.find(m=>m.name===name);return existing||{id:'material-'+i+'-'+name.toLowerCase().replace(/[^a-z0-9]/g,'').slice(0,30),name,quantity:1};})};
-    const body=job?{action:'schedule.update',requestId:key(),jobId:job.id,expectedRevision:job.revision,changes}:{action:'schedule.create',requestId:key(),customerId:selectedCustomer.id,kind:type.value,changes};
+    const body=job?{action:'schedule.update',requestId:key(),jobId:job.id,expectedRevision:job.revision,changes}:{action:'schedule.create',requestId:key(),customerId:selectedCustomer.id,kind:type.value,...(sourceJobId?{sourceJobId}:{}),changes};
     void save(model,body,job?'Job updated.':'Job created.');
   });
   setTimeout(()=>search.focus(),0);

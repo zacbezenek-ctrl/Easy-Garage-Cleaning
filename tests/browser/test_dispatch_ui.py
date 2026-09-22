@@ -44,6 +44,7 @@ class DispatchBrowserTests(unittest.TestCase):
         self.vehicles = [{'id': 'truck-1', 'revision': 'truck-rev-1', 'name': 'Box Truck', 'status': 'available', 'notes': 'Check straps'}, {'id': 'truck-2', 'revision': 'truck-rev-2', 'name': 'Spare Truck', 'status': 'out_of_service', 'notes': 'Repair pending'}]
         self.availability = []; self.fail_once = None; self.read_status = 200; self.completed = {}; self.lost_once = False; self.malformed_once = False; self.viewer = 'manager.one'; self.bad_read = False
         self.opening_queries = []; self.opening_failure = None; self.opening_candidates = [{'date': DAY, 'time': '13:00', 'endDate': DAY, 'endTime': '15:00', 'startAt': DAY+'T19:00:00Z', 'endAt': DAY+'T21:00:00Z', 'gapMinutes': 240}]
+        self.search_queries = []; self.search_results = []; self.search_failure = None; self.hang_once = False; self.hung_route = None
         self.page.on('pageerror', lambda e: self.errors.append(str(e)))
         self.page.on('dialog', lambda dialog: dialog.accept())
         self.page.route('**/*', self.route)
@@ -53,6 +54,10 @@ class DispatchBrowserTests(unittest.TestCase):
     def route(self, route):
         req = route.request; parsed = urlparse(req.url)
         if parsed.hostname != '127.0.0.1': route.abort(); return
+        if parsed.path == '/api/dispatch-search':
+            self.search_queries.append(parse_qs(parsed.query))
+            if self.search_failure: route.fulfill(status=503, content_type='application/json', body=json.dumps({'ok': False, 'error': self.search_failure})); return
+            route.fulfill(status=200, content_type='application/json', body=json.dumps({'ok': True, 'coverage': {'complete': True}, 'results': self.search_results, 'total': len(self.search_results), 'truncated': False})); return
         if parsed.path == '/api/dispatch-openings':
             self.opening_queries.append(parse_qs(parsed.query))
             if self.opening_failure: route.fulfill(status=503, content_type='application/json', body=json.dumps({'ok': False, 'error': self.opening_failure})); return
@@ -96,6 +101,7 @@ class DispatchBrowserTests(unittest.TestCase):
         self.completed[body['requestId']] = copy.deepcopy(response)
         if self.lost_once: self.lost_once = False; route.abort('connectionfailed'); return
         if self.malformed_once: self.malformed_once = False; send({'ok': True}); return
+        if self.hang_once: self.hang_once = False; self.hung_route = route; return
         send(response)
     def open(self):
         self.page.goto(self.url)
@@ -142,6 +148,10 @@ class DispatchBrowserTests(unittest.TestCase):
         self.fail_once = (409, 'dispatch_conflict', 'Overlap', {'conflicts': [{'code': 'employee_overlap', 'employeeId': 'crew.one', 'message': 'Crew One is assigned to another job from 09:00 to 11:00.'}]})
         self.submit('Save changes'); expect(self.page.get_by_role('alert')).to_contain_text('Crew One is assigned'); expect(self.page.get_by_label('Start time', exact=True)).to_have_value('09:00'); expect(self.page.get_by_role('combobox', name='Work type', exact=True)).to_be_disabled()
         self.page.get_by_label('Start time', exact=True).fill('13:00'); self.page.get_by_label('End time', exact=True).fill('15:00'); self.submit('Save changes'); self.closed(); self.assertEqual(len(self.calls), 2)
+    def test_ambiguous_customer_history_requires_explicit_prior_visit_selection(self):
+        self.open(); self.create(); self.fail_once=(409,'dispatch_lineage_selection_required','Choose the previous customer account.',{'candidates':[{'jobId':'prior-visit','customerId':CUSTOMER['id'],'customer':CUSTOMER['name'],'address':CUSTOMER['address'],'date':'2025-02-03'},{'jobId':'wrong-customer','customerId':'different','customer':'Not this customer'}]})
+        self.submit('Create job'); select=self.page.get_by_role('combobox',name='Previous customer visit',exact=True); expect(select).to_be_visible(); self.assertEqual(select.locator('option').count(),2); expect(self.page.get_by_label('Service',exact=True)).to_have_value('New synthetic service')
+        select.select_option('prior-visit'); self.submit('Create job'); self.closed(); self.assertEqual(self.calls[-1]['sourceJobId'],'prior-visit'); self.assertNotEqual(self.calls[0]['requestId'],self.calls[1]['requestId'])
     def test_unscheduled_controls_stay_disabled_after_validation_failure(self):
         self.open(); self.create(); self.page.get_by_label('Keep unscheduled', exact=True).check(); self.fail_once = (400, 'dispatch_validation', 'Review scope', {})
         self.submit('Create job'); expect(self.page.get_by_role('alert')).to_contain_text('Review scope'); expect(self.page.get_by_label('Start date', exact=True)).to_be_disabled()
@@ -158,6 +168,9 @@ class DispatchBrowserTests(unittest.TestCase):
     def test_success_without_receipt_is_unknown_and_recovers_without_duplicate(self):
         self.open(); self.create(); self.malformed_once = True; self.submit('Create job'); expect(self.page.get_by_role('alert')).to_contain_text('incomplete')
         self.page.get_by_role('button', name='Retry original save', exact=True).click(); self.closed(); self.assertEqual(self.calls[0], self.calls[1]); self.assertEqual(len(self.jobs), 2)
+    def test_stalled_save_becomes_retryable_and_does_not_duplicate_committed_job(self):
+        self.page.clock.install(); self.open(); self.create(); self.hang_once = True; self.submit('Create job'); expect(self.page.get_by_role('status').filter(has_text='Saving and verifying')).to_be_visible(); self.page.clock.fast_forward(31000)
+        expect(self.page.get_by_role('alert')).to_contain_text('30 seconds'); self.hung_route.abort('timedout'); self.hung_route=None; self.page.get_by_role('button', name='Retry original save', exact=True).click(); self.closed(); self.assertEqual(self.calls[0], self.calls[1]); self.assertEqual(len(self.jobs), 2)
     def test_expired_auth_after_lost_write_retains_receipt(self):
         self.open(); self.create(); self.lost_once = True; self.submit('Create job'); expect(self.page.get_by_role('button', name='Retry original save', exact=True)).to_be_visible()
         self.read_status = 401; self.page.get_by_role('button', name='Retry original save', exact=True).click(); expect(self.page.get_by_role('alert')).to_contain_text('sign-in expired')
@@ -197,6 +210,14 @@ class DispatchBrowserTests(unittest.TestCase):
         block.get_by_role('button', name='Edit / assign', exact=True).click(); expect(self.page.get_by_role('dialog')).to_have_attribute('aria-label', 'Edit company time block'); self.page.get_by_label('Internal notes', exact=True).fill('Bring gloves'); self.submit('Save time block'); self.closed(); self.assertEqual(self.calls[-1]['changes']['opsNotes'], 'Bring gloves')
     def test_midnight_ending_assignment_is_not_shown_on_the_next_day(self):
         self.jobs[0].update({'endDate': '2026-09-23', 'endTime': '00:00', 'endAt': '2026-09-23T00:00:00-06:00'}); self.open(); self.page.get_by_role('button', name='Tomorrow', exact=True).click(); expect(self.page.locator('.dp-job')).to_have_count(0); expect(self.page.locator('.dp-stats article').filter(has_text='Scheduled').locator('strong')).to_have_text('0')
+    def test_global_search_finds_history_outside_the_board_range_and_opens_its_day(self):
+        historical=job(id='old-job', customer='Historical Customer', date='2025-02-03', endDate='2025-02-03', status='completed'); self.jobs.append(historical); self.search_results=[{'job': historical, 'canonicalCustomerName': 'Current Customer Name'}]
+        self.open(); expect(self.page.locator('.dp-job').filter(has_text='Historical Customer')).to_have_count(0); self.page.get_by_role('button', name='Search all jobs', exact=True).click(); self.page.get_by_label('Search all dates', exact=True).fill('Historical'); self.submit('Search history')
+        expect(self.page.locator('.dp-search-result')).to_contain_text('2025-02-03'); expect(self.page.locator('.dp-search-result')).to_contain_text('Current Customer Name'); expect(self.page.locator('.dp-search-result').get_by_role('link', name='Open job', exact=True)).to_have_attribute('href','/crew/job.html?jobId=old-job'); self.assertEqual(self.search_queries[-1]['q'], ['Historical'])
+        self.page.get_by_role('button', name='Show in dispatch', exact=True).click(); self.closed(); expect(self.page.get_by_label('Schedule date', exact=True)).to_have_value('2025-02-03'); expect(self.page.locator('.dp-job')).to_contain_text('Historical Customer'); expect(self.page.get_by_label('Filter by status', exact=True)).to_have_value('all')
+    def test_global_search_failure_is_explicit_and_does_not_show_false_zero_results(self):
+        self.open(); self.page.set_viewport_size({'width': 320, 'height': 850}); self.page.get_by_role('button', name='Search all jobs', exact=True).click(); self.page.get_by_label('Search all dates', exact=True).fill('customer'); self.search_failure='History storage unavailable. Retry.'; self.submit('Search history'); expect(self.page.get_by_role('alert')).to_contain_text('storage unavailable'); expect(self.page.get_by_text('No Hub jobs match.', exact=False)).to_have_count(0)
+        self.search_failure=None; self.submit('Search history'); expect(self.page.get_by_text('No Hub jobs match.', exact=False)).to_be_visible(); self.assertLessEqual(self.page.get_by_role('dialog').evaluate('(el)=>el.scrollWidth'),self.page.get_by_role('dialog').evaluate('(el)=>el.clientWidth')+1)
     def test_revision_conflict_preserves_text_until_explicit_draft_discard(self):
         self.open(); self.card().get_by_role('button', name='Edit / assign', exact=True).click(); self.page.get_by_label('Scope of work', exact=True).fill('My retained draft')
         self.jobs[0]['revision'] = 'changed-on-server'; self.submit('Save changes'); expect(self.page.get_by_label('Scope of work', exact=True)).to_have_value('My retained draft')

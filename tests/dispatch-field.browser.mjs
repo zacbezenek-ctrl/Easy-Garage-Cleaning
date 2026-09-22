@@ -11,6 +11,7 @@ import {storage as driveFixture} from './helpers/field-fixture.mjs';
 import * as auth from '../functions/api/hub-auth.js';
 import * as dispatch from '../functions/api/dispatch.js';
 import * as openings from '../functions/api/dispatch-openings.js';
+import * as history from '../functions/api/dispatch-search.js';
 import * as field from '../functions/api/field-jobs.js';
 import * as availability from '../functions/api/crew-availability.js';
 
@@ -26,6 +27,8 @@ const day=field.fieldToday(),tomorrow=new Date(Date.parse(day+'T12:00Z')+8640000
 await environment.withSecurityRulesDisabled(async context=>{
  const db=context.firestore();
  await db.doc('customers/day-customer').set({name:'Synthetic Day Customer',phone:'9705550100',address:'123 Synthetic Way, Fort Collins, CO'});
+ await db.doc('customers/history-customer').set({name:'Synthetic Archived Customer',phone:'9705550199',address:'99 Historical Way, Fort Collins, CO'});
+ await db.doc('jobs/history-job').set({type:'job',customerId:'history-customer',customer:'Synthetic Archived Customer',address:'99 Historical Way, Fort Collins, CO',date:'2025-01-02',time:'08:00',endDate:'2025-01-02',endTime:'10:00',status:'completed',assignedCrew:[],serviceType:'Historical cleanout'});
  await db.doc('dispatchResources/day-crew').set({recordType:'crew',name:'Day Crew',status:'active',memberIds:['crew.one','lead.one'],leadId:'lead.one'});
  await db.doc('dispatchResources/day-truck').set({recordType:'vehicle',name:'Day Truck',status:'available',notes:'Check straps'});
 });
@@ -45,7 +48,7 @@ globalThis.fetch=async(input,options={})=>{
  if(['localhost','127.0.0.1'].includes(url.hostname))return originalFetch(input,options);
  throw new Error('External network refused by isolated acceptance test: '+url.hostname);
 };
-const routes={'/api/hub-auth':auth,'/api/dispatch':dispatch,'/api/dispatch-openings':openings,'/api/field-jobs':field,'/api/crew-availability':availability};
+const routes={'/api/hub-auth':auth,'/api/dispatch':dispatch,'/api/dispatch-openings':openings,'/api/dispatch-search':history,'/api/field-jobs':field,'/api/crew-availability':availability};
 const background=[],serverErrors=[],apiErrors=[];
 const server=createServer(async(incoming,outgoing)=>{
  try{
@@ -105,6 +108,9 @@ try{
  await managerPage.getByRole('button',{name:'Check openings',exact:true}).click();await managerPage.getByRole('button',{name:'Use this opening',exact:true}).first().click();
  assert.equal(await managerPage.getByLabel('Start date',{exact:true}).inputValue(),tomorrow);assert.equal(await managerPage.getByLabel('Start time',{exact:true}).inputValue(),'08:00');assert.equal(await managerPage.getByRole('combobox',{name:'Crew lead',exact:true}).inputValue(),'lead.one');
  await managerPage.getByRole('button',{name:'Back',exact:true}).click();await managerPage.getByRole('dialog').waitFor({state:'detached'});
+ await managerPage.getByRole('button',{name:'Search all jobs',exact:true}).click();await managerPage.getByLabel('Search all dates',{exact:true}).fill('Archived');await managerPage.getByRole('button',{name:'Search history',exact:true}).click();
+ await managerPage.locator('.dp-search-result').filter({hasText:'2025-01-02'}).waitFor();await managerPage.getByRole('button',{name:'Show in dispatch',exact:true}).click();
+ await managerPage.locator('.dp-job').filter({hasText:'Synthetic Archived Customer'}).waitFor();await managerPage.getByRole('button',{name:'Today',exact:true}).click();await firstCard.waitFor();
  await login(crewPage,'Crew.One');assert.equal(await crewPage.locator('.day-job').count(),2);
  await crewPage.goto(base+'/crew/job.html?jobId='+id);await crewPage.getByRole('heading',{name:'Synthetic Day Customer',exact:true}).waitFor();
  await crewPage.getByText('Install shelving and preserve the heirloom cabinet.',{exact:true}).waitFor();await crewPage.getByText('Day Truck',{exact:true}).waitFor();
@@ -138,6 +144,6 @@ try{
  assert.equal(await crewPage.locator('body').evaluate(body=>body.scrollWidth<=innerWidth),true);
  const out=resolve(root,'test-results');await mkdir(out,{recursive:true});await crewPage.screenshot({path:resolve(out,'actual-field-day-mobile.png'),fullPage:true});
  assert.deepEqual(pageErrors,[]);assert.deepEqual(serverErrors,[]);
- console.log('PASS: actual manager login/create/assign/vehicle/conflict/openings -> crew login/route/status/checklist/materials/photos/notes/completion -> manager visibility/reschedule/cancel/restore, persisted by Firestore emulator.');
+ console.log('PASS: actual manager login/create/assign/vehicle/conflict/openings/history search -> crew login/route/status/checklist/materials/photos/notes/completion -> manager visibility/reschedule/cancel/restore, persisted by Firestore emulator.');
 }catch(error){console.error('Acceptance failure context:',JSON.stringify({apiErrors,pageErrors,serverErrors}));await managerPage.screenshot({path:resolve(root,'test-results/actual-day-manager-failure.png'),fullPage:true});await crewPage.screenshot({path:resolve(root,'test-results/actual-day-crew-failure.png'),fullPage:true});throw error;}
 finally{await Promise.allSettled(background);await browser.close();await new Promise(resolve=>server.close(resolve));globalThis.fetch=originalFetch;await environment.cleanup();}
