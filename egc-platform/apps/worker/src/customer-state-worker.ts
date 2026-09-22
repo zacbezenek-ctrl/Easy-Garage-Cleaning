@@ -1,4 +1,4 @@
-import {reconcileCustomerState,recordUserConfirmedOutcome} from '@egc/customer-state';
+import {runCustomerSemanticQueue,recordUserConfirmedOutcome} from '@egc/customer-state';
 import {validateUserConfirmedOutcome} from '@egc/customer-state/core';
 import {getDb,schema} from '@egc/database';
 
@@ -22,7 +22,7 @@ export async function importConfirmedOutcomes(env:NodeJS.ProcessEnv=process.env)
  return {imported:input.length};
 }
 
-export function startCustomerStateWorker({reconcile=reconcileCustomerState,intervalMs=60_000,logger=console,env=process.env}:{reconcile?:typeof reconcileCustomerState;intervalMs?:number;logger?:Pick<Console,'log'|'error'>;env?:NodeJS.ProcessEnv}={}){
+export function startCustomerStateWorker({reconcile=runCustomerSemanticQueue,intervalMs=60_000,logger=console,env=process.env}:{reconcile?:typeof runCustomerSemanticQueue;intervalMs?:number;logger?:Pick<Console,'log'|'error'>;env?:NodeJS.ProcessEnv}={}){
  let running=false,stopped=false,bootstrapped=false;
  const cursor=async(key:string,value:string)=>getDb().insert(schema.syncCursors).values({key,cursor:value}).onConflictDoUpdate({target:schema.syncCursors.key,set:{cursor:value,updatedAt:new Date()}});
  async function tick(){
@@ -30,9 +30,9 @@ export function startCustomerStateWorker({reconcile=reconcileCustomerState,inter
   try{
    if(!bootstrapped){await importConfirmedOutcomes(env);bootstrapped=true;}
    await cursor('customer_state:last_attempt',new Date().toISOString());
-   const result=await reconcile({since:new Date(Date.now()-30*86400000),until:new Date(),useAI:true,maxContacts:500});
-   await cursor(result.failed||result.truncated||result.partialCustomers?'customer_state:last_failure':'customer_state:last_success',new Date().toISOString());
-   const completeSemantic=!result.failed&&!result.truncated&&result.results?.length===result.inspected&&result.results.every(row=>{const extraction=row.coverage?.extraction;return extraction&&typeof extraction==='object'&&!Array.isArray(extraction)&&(extraction as Record<string,unknown>).complete===true;});
+   const result=await reconcile({since:new Date(Date.now()-30*86400000),limit:12,concurrency:3,deadlineMs:150_000,stopped:()=>stopped});
+   await cursor(result.failed||result.truncated||result.partialCustomers||result.pending>0||result.complete===false?'customer_state:last_failure':'customer_state:last_success',new Date().toISOString());
+   const completeSemantic=result.complete===true&&!result.failed&&!result.truncated&&result.pending===0;
    if(completeSemantic)await cursor('customer_state:last_complete_extraction',new Date().toISOString());
    const aggregate=Object.fromEntries(Object.entries(result).filter(([,v])=>typeof v==='number'||typeof v==='boolean'));
    logger.log(JSON.stringify({event:'customer_state_reconciled',...aggregate}));

@@ -1,4 +1,5 @@
 import {customerTimeline,type PortalTimelineEvent} from "./timeline.js";
+import {nativeHistoryEvents,readNativeHistoryEvidence,type NativeHistoryEvidence} from "./history-native-evidence.js";
 import {operationalHealth} from "./health.js";
 import {createHash,randomUUID} from "node:crypto";
 import {and,asc,desc,eq,gt,gte,inArray,isNull,lt,ne,notInArray,or,sql} from "drizzle-orm";
@@ -38,6 +39,9 @@ export class OperationsService {
     if (!parsed.success) throw new OperationsError("invalid_command",400,{issues:parsed.error.issues.map(i=>({path:i.path,message:i.message}))});
     const command=parsed.data;
     authorize(actor,command,this.config.workspace);
+    // Adoption proof is produced by the backend's exact-source verifier. Public
+    // RPC/MCP callers cannot supply proof or bypass that verifier via this service.
+    if(command.command==='schedule.adopt')throw new OperationsError('schedule_adoption_internal_only',403);
     if(command.command==="intelligence.report"||command.command==="intelligence.diagnostics"||command.command==="intelligence.customer"){
       if(!this.config.canonicalRead)throw new OperationsError("canonical_customer_state_unavailable",503);
       return this.config.canonicalRead(actor,command);
@@ -47,6 +51,7 @@ export class OperationsService {
       return this.config.ensureProviderNote(actor,command);
     }
     const portalEvents:PortalTimelineEvent[]=[];
+    let nativeEvidence:NativeHistoryEvidence|undefined;
     if(command.command==="schedule.sync_provider"){
       if(!this.config.syncSchedule)throw new OperationsError("schedule_provider_sync_unavailable",503);
       return this.config.syncSchedule(actor,command);
@@ -69,6 +74,13 @@ export class OperationsService {
       }
     }
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestId)) throw new OperationsError("request_id_required",400);
+    if(command.command==="history"&&command.contactId){
+      const [contact]=await this.db.select({id:schema.contacts.id,provider:schema.contacts.provider,providerId:schema.contacts.providerId}).from(schema.contacts).where(eq(schema.contacts.id,command.contactId)).limit(1);
+      if(!contact)throw new OperationsError("contact_not_found",404);
+      nativeEvidence=await readNativeHistoryEvidence(actor,contact.provider==="ghl"?contact.providerId:null,this.config.portalRead);
+      const existing=new Set(portalEvents.map(event=>event.id));
+      for(const event of nativeHistoryEvents(nativeEvidence))if(!existing.has(event.id)){portalEvents.push(event);existing.add(event.id);}
+    }
     if (["portal.note.add","portal.job.edit","portal.project.ensure","calendar","portal.job","portal.evidence","portal.members","portal.revenue","portal.rules","schedule.resolve","schedule.mutate","schedule.bind_provider","schedule.link_customer"].includes(command.command)) {
       if (!this.config.portalRead) throw new OperationsError("portal_authority_unavailable",503);
       return this.config.portalRead(actor,command);
@@ -91,7 +103,7 @@ export class OperationsService {
         throw new OperationsError("portal_visit_job_mismatch",409);
     }
     if (!WRITE_COMMANDS.has(command.command)) {
-      return this.db.transaction(tx=>this.read(tx,actor,command,portalEvents),{isolationLevel:"repeatable read",accessMode:"read only"});
+      return this.db.transaction(tx=>this.read(tx,actor,command,portalEvents,nativeEvidence),{isolationLevel:"repeatable read",accessMode:"read only"});
     }
     return this.db.transaction(async tx=>{
       // Serialize retries of one authenticated logical request. Different request IDs
@@ -138,7 +150,7 @@ export class OperationsService {
     await tx.insert(schema.operationEvents).values({workspaceId:actor.workspace,taskId:task?.id??null,revision:task?.revision??null,
       type,actorId:actor.id,actorKind:actor.kind,source:"operations",evidence:jsonRecord(evidence),occurredAt:this.now()});
   }
-  private async read(tx:Tx,actor:Actor,command:Command,portalEvents:PortalTimelineEvent[]=[]):Promise<Record<string,unknown>> {
+  private async read(tx:Tx,actor:Actor,command:Command,portalEvents:PortalTimelineEvent[]=[],nativeEvidence?:NativeHistoryEvidence):Promise<Record<string,unknown>> {
     switch(command.command) {
       case "status": return {ok:true,contractVersion:1,workspace:actor.workspace,actor,health:await operationalHealth(tx,actor.workspace),
         capabilities:{tasks:true,exactDraftApprovals:true,persistedBriefs:true,externalExecution:false,portalIdentity:Boolean(this.config.resolvePortalJob)},
@@ -193,7 +205,9 @@ export class OperationsService {
         if(!command.contactId)throw new OperationsError("contact_link_required",409);
         const [contact]=await tx.select({id:schema.contacts.id,name:schema.contacts.name}).from(schema.contacts).where(eq(schema.contacts.id,command.contactId)).limit(1);
         if (!contact) throw new OperationsError("contact_not_found",404);
-        return {ok:true,contact,...await customerTimeline(tx,command.contactId,actor.workspace,command.offset,command.limit,portalEvents)};
+        const timeline=await customerTimeline(tx,command.contactId,actor.workspace,command.offset,command.limit,portalEvents);
+        const nativeCoverage=nativeEvidence?.coverage.available?(nativeEvidence.coverage.complete?"exact_provider_contact_native_records":"partial_exact_provider_contact_native_records"):"unavailable";
+        return {ok:true,contact,...timeline,nativeEvidence,coverage:{...timeline.coverage,nativePortal:nativeEvidence?.coverage??null,quotes:nativeCoverage,payments:nativeCoverage}};
       }
       default:throw new OperationsError("unsupported_read",400);
     }

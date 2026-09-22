@@ -4,6 +4,7 @@ type Json=Record<string,unknown>;
 const f=vi.hoisted(()=>({providers:[] as Json[],syncs:[] as Json[],events:[] as Json[],contacts:[] as Json[],writes:[] as Json[],reconcileCustomerState:vi.fn(),syncPortalSchedule:vi.fn()}));
 vi.mock('@egc/customer-state',()=>({reconcileCustomerState:f.reconcileCustomerState,customerActivityPredicate:vi.fn(()=>true),customerRefreshOrder:vi.fn(()=>null)}));
 vi.mock('./scheduling.js',()=>({syncPortalSchedule:f.syncPortalSchedule}));
+vi.mock('./booking-adoption.js',()=>({reconcileExistingBookingAdoption:vi.fn(async()=>({dryRun:true,counts:{ready:0}}))}));
 vi.mock('@egc/operations',async()=>{const actual=await vi.importActual<typeof import('@egc/operations')>('@egc/operations');return {reconcileBookingSnapshot:actual.reconcileBookingSnapshot};});
 vi.mock('@egc/database',()=>{
  const schema={appointments:{contactId:'appointment-contact'},contacts:{id:'contact-id',providerId:'provider-id',provider:'provider',createdAt:'contact-created'},syncCursors:{key:'cursor-key'},customerEvents:{contactId:'event-contact'}};
@@ -63,6 +64,11 @@ describe('Hub booking worker source boundary',()=>{
   const p=portal({evidence:evidence(['provider-contact-one'],[{id:'extra',highlevelContactId:'provider-contact-one',kind:'job',status:'accepted'}],false)});
   const result=await reconcileHubBookings(p,{});expect(result.portalEvidence.complete).toBe(false);
   const args=f.reconcileCustomerState.mock.calls[0]?.[0];expect(args.portalRecords.map((r:Json)=>r.id)).toEqual(['visit-one','extra']);expect(args.portalCoverage).toMatchObject({complete:false,error:'hub_evidence_coverage_incomplete'});
+ });
+ it('retains exact adopted local aliases in calendar fallback when contact evidence is incomplete',async()=>{
+  const d=detail();d.job={...(d.job as Json),normalizedLocalJobId:'local-job-id',normalizedLocalAppointmentId:'local-appointment-id'};
+  const p=portal({detail:d,evidence:evidence(['provider-contact-one'],[],false)});await reconcileHubBookings(p,{});
+  expect(f.reconcileCustomerState.mock.calls[0]?.[0].portalRecords).toEqual([expect.objectContaining({id:'visit-one',normalizedLocalJobId:'local-job-id',normalizedLocalAppointmentId:'local-appointment-id'})]);
  });
  it('bounds exact contact selection at 500 and declares omitted coverage',async()=>{
   f.contacts=[...Array(501)].map((_,i)=>({contactId:`contact-${i}`,providerId:`provider-${i}`}));

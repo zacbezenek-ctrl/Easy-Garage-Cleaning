@@ -75,11 +75,12 @@ export function transcriptRecoveryStore():TranscriptRecoveryStore{
   saveRun:result=>save('customer_state:call_transcripts',JSON.stringify(result))
  };
 }
-function failureReason(error:unknown){const status=object(error).status;return status===401||status===403?'provider_permission_denied':status===429?'provider_rate_limited':status===404?'transcript_not_available':'provider_transient_error';}
+function failureReason(error:unknown){const status=object(error).status;return status===401||status===403?'provider_permission_denied':status===429?'provider_rate_limited':status===404?'transcript_not_available':typeof status==='number'&&Number.isInteger(status)&&status>=400&&status<=599?`provider_http_${status}`:'provider_transient_error';}
 function retryDelay(attempt:number,error:string){return error==='provider_permission_denied'?6*3600000:Math.min(6*3600000,5*60000*2**Math.min(8,Math.max(0,attempt-1)));}
 export async function recoverCallTranscripts({provider=GhlClient.fromEnv(),store=transcriptRecoveryStore(),now=new Date(),limit=200}:{provider?:Provider;store?:TranscriptRecoveryStore;now?:Date;limit?:number}={}){
  const max=Math.max(1,Math.min(500,Math.floor(limit))),rows=await store.listCandidates(new Date(now.valueOf()-30*86400000),max+1);
  let attempted=0,recovered=0,unchanged=0,deferred=0,failed=0,unavailableCount=0;
+ const errorCounts:Record<string,number>={};
  for(const call of rows.slice(0,max)){
   const existing=parseProviderTranscript(call.existingText);
   if(existing){
@@ -99,11 +100,12 @@ export async function recoverCallTranscripts({provider=GhlClient.fromEnv(),store
    const changed=await store.persist(call.callId,transcript);if(changed)recovered++;else unchanged++;
    await store.saveRetry(call.callId,{status:'complete',attemptCount,attemptedAt:now.toISOString(),nextAttemptAt:null,error:null,contentHash:transcript.contentHash});
   }else{
+   errorCounts[error]=(errorCounts[error]??0)+1;
    if(error==='transcript_not_available')unavailableCount++;else failed++;
    await store.saveRetry(call.callId,{status:error==='transcript_not_available'?'pending':'failed',attemptCount,attemptedAt:now.toISOString(),nextAttemptAt:new Date(now.valueOf()+retryDelay(attemptCount,error)).toISOString(),error});
   }
  }
- const result={asOf:now.toISOString(),inspected:Math.min(rows.length,max),truncated:rows.length>max,attempted,recovered,unchanged,deferred,failed,unavailable:unavailableCount};await store.saveRun(result);return result;
+ const result={asOf:now.toISOString(),inspected:Math.min(rows.length,max),truncated:rows.length>max,attempted,recovered,unchanged,deferred,failed,unavailable:unavailableCount,errorCounts};await store.saveRun(result);return result;
 }
 export function startCallTranscriptWorker({intervalMs=2*60000,recover=recoverCallTranscripts,logger=console}:{intervalMs?:number;recover?:typeof recoverCallTranscripts;logger?:Pick<Console,'log'|'error'>}={}){
  let running=false,stopped=false;const tick=async()=>{if(running||stopped)return;running=true;try{logger.log(JSON.stringify({event:'call_transcript_recovery',...await recover()}));}catch{logger.error('Call transcript recovery failed; inspect source coverage diagnostics.');}finally{running=false;}};

@@ -148,7 +148,10 @@ async function markCanonicalAccepted(writer:Pick<ReturnType<typeof getDb>,'updat
   // label its current evidence as deduplicated, never as a fresh transmission.
   if(!acceptedId&&currentCanonicalId)await writer.update(schema.customerEvents).set({syncState:'deduplicated',updatedAt:new Date()}).where(and(matchingCustomer,eq(schema.customerEvents.eventId,currentCanonicalId),sql`${schema.customerEvents.syncState}<>'accepted'`));
   const aliases=canonicalStageAliases(row.eventType);
-  if(aliases.length)await writer.update(schema.customerEvents).set({syncState:'deduplicated',updatedAt:new Date()}).where(and(matchingCustomer,eq(schema.customerEvents.active,true),inArray(schema.customerEvents.eventType,aliases),sql`${schema.customerEvents.syncState}<>'accepted'`,...(acceptedId?[sql`${schema.customerEvents.eventId}<>${acceptedId}`]:[])));
+  const canonicalReference=acceptedId??currentCanonicalId;
+  // First-acquisition delivery identity does not mean every later job was sent.
+  // Restrict interchangeable aliases to the exact represented work occurrence.
+  if(aliases.length&&canonicalReference)await writer.update(schema.customerEvents).set({syncState:'deduplicated',updatedAt:new Date()}).where(and(matchingCustomer,eq(schema.customerEvents.active,true),inArray(schema.customerEvents.eventType,aliases),sql`${schema.customerEvents.syncState}<>'accepted'`,sql`${schema.customerEvents.occurrenceId} is not distinct from (select occurrence_id from customer_events where event_id=${canonicalReference})`,...(acceptedId?[sql`${schema.customerEvents.eventId}<>${acceptedId}`]:[])));
 }
 
 /** Durable lease and immutable snapshot commit BEFORE the external request. */
