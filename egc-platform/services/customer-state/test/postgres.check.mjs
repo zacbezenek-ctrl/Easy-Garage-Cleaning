@@ -30,11 +30,37 @@ test('worker bulk window includes recent leads and older leads with recent call 
   assert.equal(result.failed,0);assert.ok(result.results.some(r=>r.contactId===contact.id));
 });
 
+test('aged active video quotes and newly updated opportunities remain in the evidence window',async()=>{
+  const old=new Date(Date.now()-90*86400000);
+  await db.update(schema.leads).set({createdAt:old}).where(eq(schema.leads.id,lead.id));
+  await db.insert(schema.customerStateSnapshots).values({contactId:contact.id,leadId:lead.id,state:'VIDEO_QUOTE_PENDING_CUSTOMER',intentStage:'engaged',pipeline:'video_quote',reconciliationStatus:'fully_reconciled',snapshot:{pipelineDisposition:'active'},coverage:{},lastReconciledAt:old});
+  let result=await reconcileCustomerState({since:new Date(Date.now()-7*86400000),useAI:false});assert.ok(result.results.some(r=>r.contactId===contact.id));
+  await db.delete(schema.customerStateSnapshots).where(eq(schema.customerStateSnapshots.contactId,contact.id));
+  await db.insert(schema.opportunities).values({providerId:`active-opportunity-${randomUUID()}`,contactId:contact.id,status:'open',providerUpdatedAt:new Date()});
+  result=await reconcileCustomerState({since:new Date(Date.now()-7*86400000),useAI:false});assert.ok(result.results.some(r=>r.contactId===contact.id));assert.equal(result.failed,0);
+});
+
+test('bounded refresh rotates through active customers rather than repeatedly selecting the newest one',async()=>{
+  const [other]=await db.insert(schema.contacts).values({providerId:`synthetic-rotation-${randomUUID()}`}).returning();created.push(other.id);await db.insert(schema.leads).values({contactId:other.id});
+  const input={contactIds:[contact.id,other.id],useAI:false,maxContacts:1};const first=await reconcileCustomerState(input),second=await reconcileCustomerState(input);
+  assert.equal(first.truncated,true);assert.equal(second.truncated,true);assert.equal(first.failed,0);assert.equal(second.failed,0);assert.notEqual(first.results[0].contactId,second.results[0].contactId);
+});
+
 test('provider notes are read by exact normalized contact identity with visible source coverage',async()=>{
   await db.insert(schema.providerMappings).values({provider:'ghl',resourceType:'contact_note',providerId:`synthetic-note-${randomUUID()}`,raw:{egcContactId:contact.id,body:'Customer asked for a video quote.',dateAdded:at.toISOString(),egcNotesReadAt:at.toISOString()}});
   await db.insert(schema.syncCursors).values({key:`customer_state:provider_notes:${contact.id}`,cursor:JSON.stringify({complete:true,count:1,asOf:at.toISOString()})});
   const result=await refresh();assert.equal(result.failed,0);
   const timeline=await getCustomerTimeline({contactId:contact.id});assert.equal(timeline.coverage.providerNotes.inspected,1);assert.equal(timeline.coverage.providerNotes.complete,true);assert.ok(timeline.extraction.some(e=>e.sourceType==='provider_note'));
+});
+
+test('provider deletion tombstone removes cached note-derived conversions on replay',async()=>{
+  const providerId=`synthetic-tombstone-${randomUUID()}`;
+  await db.insert(schema.providerMappings).values({provider:'ghl',resourceType:'contact_note',providerId,raw:{egcContactId:contact.id,body:'Customer accepted the quote.',dateAdded:at.toISOString()}});
+  await refresh();
+  await db.update(schema.customerEvidence).set({status:'complete',extractedEvents:[{eventType:'job_sold',confidence:1,supportingText:'Customer accepted the quote.',humanReviewNeeded:false,nextAction:null}]}).where(eq(schema.customerEvidence.sourceRecordId,providerId));
+  await refresh();assert.ok((await getCustomerTimeline({contactId:contact.id})).events.some(e=>e.eventType==='job_sold'));
+  await db.update(schema.providerMappings).set({raw:{egcContactId:contact.id,body:'Customer accepted the quote.',dateAdded:at.toISOString(),egcDeleted:true}}).where(eq(schema.providerMappings.providerId,providerId));
+  await refresh();await refresh();assert.ok(!(await getCustomerTimeline({contactId:contact.id})).events.some(e=>e.eventType==='job_sold'));
 });
 
 test('evidence and milestones persist once; customer assertion remains authoritative until provider catch-up',async()=>{
@@ -47,6 +73,8 @@ test('evidence and milestones persist once; customer assertion remains authorita
   await db.insert(schema.opportunities).values({providerId:`synthetic-won-${randomUUID()}`,contactId:contact.id,status:'won',wonAt:at,monetaryValueCents:45000});
   await refresh();timeline=await getCustomerTimeline({contactId:contact.id});
   assert.equal(timeline.events.filter(e=>e.eventType==='job_sold').length,1);assert.equal(timeline.events.find(e=>e.eventType==='job_sold').eventId,id);
+  assert.equal(timeline.assertions[0].status,'pending_reconciliation'); // CRM amount alone is not verified accepted revenue.
+  await reconcileCustomerState({contactIds:[contact.id],useAI:false,portalRecords:[{id:'accepted-quote',highlevelContactId:contact.providerId,kind:'job',status:'quote_sent',createdAt:at.toISOString(),financials:{quote:{at:at.toISOString(),amountCents:45000,source:'customer_approval'}}}]});timeline=await getCustomerTimeline({contactId:contact.id});
   assert.equal(timeline.assertions[0].status,'reconciled');assert.ok(!timeline.customer.discrepancies.some(d=>d.code==='user_confirmed_awaiting_backend'));
 });
 
@@ -95,5 +123,5 @@ test('an explicit empty contact scope never expands to a global Portal retiremen
 
 test('completed call with no customer transcript is not two-way contact and incomplete coverage stays visible',async()=>{
   await db.insert(schema.calls).values({providerMessageId:`synthetic-call-${randomUUID()}`,contactId:contact.id,direction:'outbound',actorType:'human',startedAt:at,status:'completed',answered:true,raw:{status:'completed',meta:{call:{status:'completed',duration:240}}}});
-  assert.equal((await refresh()).failed,0);const timeline=await getCustomerTimeline({contactId:contact.id});assert.ok(!timeline.events.some(e=>e.eventType==='two_way_contact'));assert.equal(timeline.coverage.extraction.complete,false);assert.equal(timeline.coverage.calls.missingTranscriptIds.length,1);
+  const result=await refresh();assert.equal(result.failed,0);assert.equal(result.partialCustomers,1);const timeline=await getCustomerTimeline({contactId:contact.id});assert.ok(!timeline.events.some(e=>e.eventType==='two_way_contact'));assert.equal(timeline.coverage.extraction.complete,false);assert.equal(timeline.coverage.calls.missingTranscriptIds.length,1);
 });

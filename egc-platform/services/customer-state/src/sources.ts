@@ -46,7 +46,9 @@ export function recordsFromSnapshot(bundle:SourceBundle):SourceRecord[] {
   }
   for(const o of bundle.opportunities??[]) {
     const raw=asRecord(o.raw),events:EvidenceEvent[]=[],won=validDate(o.wonAt);
-    if(o.status==="won")events.push(event("job_sold","Provider opportunity marked won",{occurredAtVerified:Boolean(won)},amount(o.monetaryValueCents)));
+    // CRM monetaryValue may still be an estimate. A won status verifies the sale
+    // milestone, while amount requires separately accepted quote/payment evidence.
+    if(o.status==="won")events.push(event("job_sold","Provider opportunity marked won",{occurredAtVerified:Boolean(won)}));
     if(o.status==="lost"||o.status==="abandoned")events.push(event("lost",`Provider opportunity marked ${str(o.status)}`,{occurredAtVerified:Boolean(validDate(raw.lostAt))}));
     add({sourceType:"opportunity",sourceRecordId:str(o.providerId)||str(o.id),opportunityId:str(o.id),occurredAt:won??timestamp(raw.lostAt,o.providerUpdatedAt??o.updatedAt),text:`Opportunity status: ${str(o.status)}`,raw,events});
   }
@@ -63,7 +65,7 @@ export function recordsFromSnapshot(bundle:SourceBundle):SourceRecord[] {
     if(str(j.accessNotes))add({sourceType:"job_note",sourceRecordId:`${str(j.id)}:access_notes`,jobId:str(j.id),occurredAt:timestamp(j.updatedAt,j.createdAt),text:str(j.accessNotes),raw:{occurredAtVerified:false}});
   }
   for(const n of bundle.notes??[])add({sourceType:"job_note",sourceRecordId:str(n.id),jobId:str(n.jobId)||null,occurredAt:timestamp(n.createdAt,n.updatedAt),text:str(n.body),raw:{source:n.source??null,createdBy:n.createdBy??null}});
-  for(const n of bundle.providerNotes??[]){const raw=asRecord(n.raw),occurredAt=validDate(raw.dateAdded??raw.createdAt);add({sourceType:"provider_note",sourceRecordId:str(n.providerId)||str(raw.id),occurredAt:occurredAt??timestamp(raw.egcNotesReadAt,n.updatedAt),text:str(raw.body)||str(raw.note),raw:{occurredAtVerified:Boolean(occurredAt),createdBy:raw.userId??raw.createdBy??null},sourcePointer:`ghl_contact_note:${str(n.providerId)||str(raw.id)}`});}
+  for(const n of bundle.providerNotes??[]){const raw=asRecord(n.raw),occurredAt=validDate(raw.dateAdded??raw.createdAt);add({sourceType:"provider_note",sourceRecordId:str(n.providerId)||str(raw.id),occurredAt:occurredAt??timestamp(raw.egcNotesReadAt,n.updatedAt),text:raw.egcDeleted===true?"":str(raw.body)||str(raw.note),raw:{occurredAtVerified:Boolean(occurredAt),createdBy:raw.userId??raw.createdBy??null,deleted:raw.egcDeleted===true},...(raw.egcDeleted===true?{events:[]}:{}),sourcePointer:`ghl_contact_note:${str(n.providerId)||str(raw.id)}`});}
   for(const w of bundle.walkthroughs??[]) {
     const events:EvidenceEvent[]=[];
     // Approved scope without visit evidence is not proof that a customer showed.

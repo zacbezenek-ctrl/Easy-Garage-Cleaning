@@ -1,7 +1,7 @@
 import {getDb,schema} from '@egc/database';
 import {and,desc,eq,inArray,or,sql} from 'drizzle-orm';
 import {reconcileBookingSnapshot,type Actor,type Command,type BookingVisit,type BookingSnapshot} from '@egc/operations';
-import {reconcileCustomerState,type PortalEvidenceRecord} from '@egc/customer-state';
+import {reconcileCustomerState,customerActivityPredicate,customerRefreshOrder,type PortalEvidenceRecord} from '@egc/customer-state';
 import {syncPortalSchedule} from './scheduling.js';
 type Json=Record<string,unknown>;
 type Portal=(actor:Actor,command:Command)=>Promise<Json>;
@@ -45,20 +45,15 @@ export async function reconcileHubBookings(portal:Portal,env:NodeJS.ProcessEnv=p
   offset=result.nextOffset;if(page===29)complete=false;
  }
  const calendarContactIds=[...new Set(visits.map(v=>v.highlevelContactId).filter((id):id is string=>Boolean(id)))];
- const activitySince=new Date(Date.now()-30*86400000).toISOString();
+ const activitySince=new Date(Date.now()-30*86400000);
  const [providerRows,syncs,events,contactRows]=await Promise.all([
   db.select({appointment:schema.appointments,providerContactId:schema.contacts.providerId}).from(schema.appointments).innerJoin(schema.contacts,eq(schema.contacts.id,schema.appointments.contactId)),
   db.select().from(schema.syncCursors).where(eq(schema.syncCursors.key,'operations:ghl:last_success')).limit(1),
   db.select({event:schema.customerEvents,providerContactId:schema.contacts.providerId}).from(schema.customerEvents).innerJoin(schema.contacts,eq(schema.contacts.id,schema.customerEvents.contactId)),
   db.select({contactId:schema.contacts.id,providerId:schema.contacts.providerId}).from(schema.contacts).where(and(eq(schema.contacts.provider,'ghl'),or(
    calendarContactIds.length?inArray(schema.contacts.providerId,calendarContactIds):sql`false`,
-   sql`exists(select 1 from leads l where l.contact_id=${schema.contacts.id} and l.created_at>=${activitySince}::timestamptz)`,
-   sql`exists(select 1 from messages m where m.contact_id=${schema.contacts.id} and m.occurred_at>=${activitySince}::timestamptz)`,
-   sql`exists(select 1 from calls c where c.contact_id=${schema.contacts.id} and c.started_at>=${activitySince}::timestamptz)`,
-   sql`exists(select 1 from customer_operational_assertions a where a.contact_id=${schema.contacts.id} and a.status='pending_reconciliation')`,
-   sql`exists(select 1 from jobs j where j.contact_id=${schema.contacts.id} and (j.status in ('scheduled','in_progress') or j.updated_at>=${activitySince}::timestamptz))`,
-   sql`exists(select 1 from customer_state_snapshots s where s.contact_id=${schema.contacts.id} and s.snapshot->>'pipelineDisposition'='active')`
-  ))).orderBy(calendarContactIds.length?desc(inArray(schema.contacts.providerId,calendarContactIds)):desc(schema.contacts.createdAt),desc(schema.contacts.createdAt)).limit(501)
+   customerActivityPredicate(activitySince)
+  ))).orderBy(calendarContactIds.length?desc(inArray(schema.contacts.providerId,calendarContactIds)):desc(schema.contacts.createdAt),customerRefreshOrder(),desc(schema.contacts.createdAt)).limit(501)
  ]);
  // Exact-contact evidence includes accepted estimates, completed work and receipts
  // with no calendar date. Never claim an unbounded snapshot for other customers.

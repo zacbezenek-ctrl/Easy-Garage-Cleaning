@@ -3,9 +3,11 @@ import { getDb, schema } from "@egc/database";
 import { assertionEvents, assertionReconciled, asRecord, buildCanonicalEvents, buildReport, captureOriginalAttribution, EXTRACTOR_VERSION, exclusionReasons, extractEvidence, hash, projectCustomer, validDate,validateUserConfirmedOutcome } from "./core.js";
 import { extractStructuredEvidence } from "./extractor.js";
 import { recordsFromSnapshot,usableTranscriptText } from "./sources.js";
+import {customerActivityPredicate,customerRefreshOrder} from "./selection.js";
 import type { CanonicalEvent, CustomerProjection, EvidenceEvent, Json, OperationalAssertion, ReconcileOptions, SourceRecord } from "./types.js";
 export * from "./core.js";
 export * from "./sources.js";
+export * from "./selection.js";
 export { extractStructuredEvidence, validateExtractedEvent } from "./extractor.js";
 
 type DbEvent=typeof schema.customerEvents.$inferSelect;
@@ -20,8 +22,8 @@ export async function reconcileCustomerState(options:ReconcileOptions={}):Promis
   if(!Number.isFinite(since.valueOf())||!Number.isFinite(until.valueOf())||since>until)throw new Error("invalid_reconciliation_window");
   const max=Math.max(1,Math.min(2000,options.maxContacts??500));
   const selected=await db.select({contact:schema.contacts,lead:schema.leads}).from(schema.leads).innerJoin(schema.contacts,eq(schema.contacts.id,schema.leads.contactId)).where(
-    options.contactIds ? (options.contactIds.length?inArray(schema.contacts.id,options.contactIds):sql`false`) : and(lt(schema.leads.createdAt,until),or(gte(schema.leads.createdAt,since),sql`exists(select 1 from messages m where m.contact_id=${schema.contacts.id} and m.occurred_at>=${since.toISOString()}::timestamptz)`,sql`exists(select 1 from calls c where c.contact_id=${schema.contacts.id} and c.started_at>=${since.toISOString()}::timestamptz)`,sql`exists(select 1 from customer_operational_assertions a where a.contact_id=${schema.contacts.id} and a.status='pending_reconciliation')`))
-  ).orderBy(desc(schema.leads.createdAt)).limit(max+1);
+    options.contactIds ? (options.contactIds.length?inArray(schema.contacts.id,options.contactIds):sql`false`) : and(lt(schema.leads.createdAt,until),customerActivityPredicate(since))
+  ).orderBy(customerRefreshOrder(),desc(schema.leads.createdAt)).limit(max+1);
   const truncated=selected.length>max,customers=selected.slice(0,max),results:Array<{contactId:string;state?:string;events?:number;coverage?:Json;error?:string}>=[];
   for(const {contact,lead} of customers) {
     try {

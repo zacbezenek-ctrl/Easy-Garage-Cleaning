@@ -2,7 +2,7 @@ import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest';
 import type {Actor,Command} from '@egc/operations';
 type Json=Record<string,unknown>;
 const f=vi.hoisted(()=>({providers:[] as Json[],syncs:[] as Json[],events:[] as Json[],contacts:[] as Json[],writes:[] as Json[],reconcileCustomerState:vi.fn(),syncPortalSchedule:vi.fn()}));
-vi.mock('@egc/customer-state',()=>({reconcileCustomerState:f.reconcileCustomerState}));
+vi.mock('@egc/customer-state',()=>({reconcileCustomerState:f.reconcileCustomerState,customerActivityPredicate:vi.fn(()=>true),customerRefreshOrder:vi.fn(()=>null)}));
 vi.mock('./scheduling.js',()=>({syncPortalSchedule:f.syncPortalSchedule}));
 vi.mock('@egc/operations',async()=>{const actual=await vi.importActual<typeof import('@egc/operations')>('@egc/operations');return {reconcileBookingSnapshot:actual.reconcileBookingSnapshot};});
 vi.mock('@egc/database',()=>{

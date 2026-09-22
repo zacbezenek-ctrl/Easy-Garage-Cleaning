@@ -40,3 +40,9 @@ test('older acquisition with fresh call activity is included without mixing cont
  await reconcileProviderNotes(provider([{id:noteId,contactId:contact.providerId,body:'I can send the video.'}]));assert.equal((await mirror()).raw.egcContactId,contact.id);
  await reconcileProviderNotes(provider([{id:noteId,contactId:'different-customer',body:'Wrong customer'}]));assert.equal((await mirror()).raw.body,'I can send the video.');assert.equal((await coverage()).complete,false);
 });
+
+test('an older quiet lead with an upcoming appointment still gets provider notes',async()=>{
+ await db.update(schema.leads).set({createdAt:new Date(Date.now()-90*86400000)}).where(eq(schema.leads.contactId,contact.id));
+ await db.insert(schema.appointments).values({providerId:`synthetic-notes-appointment-${randomUUID()}`,contactId:contact.id,status:'confirmed',appointmentStartAt:new Date(Date.now()+86400000)});
+ await reconcileProviderNotes(provider([{id:noteId,contactId:contact.providerId,body:'Walkthrough address confirmed.'}]));assert.equal((await mirror()).raw.egcContactId,contact.id);assert.equal((await coverage()).complete,true);
+});

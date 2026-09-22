@@ -157,6 +157,14 @@ describe("source adapters",()=>{
     const events=buildCanonicalEvents(recordsFromSnapshot({...base,jobs:[{id:"job",status:"scheduled",serviceType:"cleaning",priceCents:50000,depositCents:20000,createdAt:at,scheduledAt:at}]}));
     expect(events.some(e=>e.eventType==="revenue_collected")).toBe(false);expect(events.find(e=>e.eventType==="job_sold")?.valueCents).toBeNull();
   });
+  it("a won CRM opportunity does not verify its estimated monetary value",()=>{
+    const events=buildCanonicalEvents(recordsFromSnapshot({...base,opportunities:[{id:"opp",status:"won",wonAt:at,monetaryValueCents:250000}]}));
+    expect(events.find(e=>e.eventType==="job_sold")?.valueCents).toBeNull();expect(events.find(e=>e.eventType==="job_sold")?.valueVerified).toBe(false);expect(events.find(e=>e.eventType==="job_sold")?.occurredAt).toBe(at);
+  });
+  it("deleted provider notes retire their interpretations without deleting source audit",()=>{
+    const records=recordsFromSnapshot({...base,providerNotes:[{providerId:"note-1",raw:{body:"Customer accepted the quote",dateAdded:at,egcDeleted:true}}]});
+    const note=records.find(r=>r.sourceType==="provider_note");expect(note?.events).toEqual([]);expect(note?.text).toBe("");expect(note?.sourcePointer).toBe("ghl_contact_note:note-1");
+  });
   it("counts explicit accepted Hub quotes before a service is scheduled",()=>{
     for(const status of ["quote_sent","draft"]){const events=buildCanonicalEvents(recordsFromSnapshot({...base,portalRecords:[{id:"accepted-unscheduled",highlevelContactId:"ghl-1",kind:"job",status,createdAt:at,financials:{quote:{at,amountCents:45000,source:"customer_approval"}}}]}));expect(events.find(e=>e.eventType==="job_sold")?.valueCents).toBe(45000);expect(events.some(e=>e.eventType==="job_scheduled")).toBe(false);}
   });

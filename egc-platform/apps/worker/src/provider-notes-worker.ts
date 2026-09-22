@@ -1,6 +1,7 @@
 import {and,desc,eq,gte,inArray,notInArray,or,sql} from 'drizzle-orm';
 import {getDb,schema} from '@egc/database';
 import {GhlClient,asRecord} from '@egc/ghl';
+import {customerActivityPredicate,providerNotesRefreshOrder} from '@egc/customer-state';
 
 type Note=Record<string,unknown>&{id:string;body:string};
 export function validatedContactNotes(payload:Record<string,unknown>,providerContactId:string):Note[]{
@@ -12,7 +13,7 @@ export function validatedContactNotes(payload:Record<string,unknown>,providerCon
 /** Read-only provider mirroring; never creates or changes a customer's GHL note. */
 export async function reconcileProviderNotes(provider:Pick<GhlClient,'getContactNotes'>=GhlClient.fromEnv()){
  const db=getDb(),since=new Date(Date.now()-30*86400000),asOf=new Date().toISOString();
- const rows=await db.select({id:schema.contacts.id,providerId:schema.contacts.providerId}).from(schema.contacts).innerJoin(schema.leads,eq(schema.leads.contactId,schema.contacts.id)).where(or(gte(schema.leads.createdAt,since),sql`exists(select 1 from messages m where m.contact_id=${schema.contacts.id} and m.occurred_at>=${since.toISOString()}::timestamptz)`,sql`exists(select 1 from calls c where c.contact_id=${schema.contacts.id} and c.started_at>=${since.toISOString()}::timestamptz)`)).orderBy(desc(schema.leads.createdAt)).limit(501);
+ const rows=await db.select({id:schema.contacts.id,providerId:schema.contacts.providerId}).from(schema.contacts).innerJoin(schema.leads,eq(schema.leads.contactId,schema.contacts.id)).where(customerActivityPredicate(since)).orderBy(providerNotesRefreshOrder(),desc(schema.leads.createdAt)).limit(501);
  let failed=0,notes=0;
  for(const contact of rows.slice(0,500)){
   const key=`customer_state:provider_notes:${contact.id}`;
