@@ -77,14 +77,14 @@ async function result(operation: () => Promise<unknown>) {
 
 export function registerMetaConversionTools(server: McpServer) {
   server.registerTool("meta.conversions.preview", {
-    description: "Read-only preview of downstream walkthrough-booked and job-won conversions. Explain paid-Meta attribution eligibility, available matching quality, and why events would be sent or skipped. Does not send events or write the ledger.",
+    description: "Read-only preview of configured canonical customer conversion stages including qualified leads, walkthrough commitments/completion, quotes, sold/completed jobs and collected revenue. Shows stable IDs, attribution eligibility, missing value and evidence blockers. Does not send events or write the ledger.",
     inputSchema: z.object({ ...rangeFields, days: z.number().int().min(1).max(90).default(7) })
       .refine(validRange, { message: "from must be before or equal to to" }),
     ...readMetadata
   }, async (input) => result(() => previewConversions(options(input))));
 
   server.registerTool("meta.conversions.sync", {
-    description: "Reconcile and safely send eligible unsynced downstream Meta conversions using durable idempotency. Defaults to dryRun=true. Production sends require verified server configuration and activation. Event-age and activation cutoffs remain enforced; this tool cannot authorize a historical backfill.",
+    description: "Reconcile and safely send eligible unsynced canonical Meta conversions using durable idempotency. Defaults to dryRun=true. Production sends require verified server configuration. An operator-configured historical reconciliation boundary is honored without relaxing Meta event age, original timestamp or existing accepted-ID protections.",
     inputSchema: z.object({
       ...rangeFields,
       days: z.number().int().min(1).max(7).default(7),

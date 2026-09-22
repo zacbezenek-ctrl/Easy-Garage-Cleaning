@@ -1,13 +1,13 @@
-# Unified operations release evidence
+# Canonical customer intelligence release status
 
-This release preserves the existing Meta conversion implementation and configuration. It does not change ad delivery, optimization targets or attribution. The authoritative operational records remain in the existing Employee Hub; PostgreSQL holds normalized provider evidence and durable actions, recordings and execution ledgers.
+The first production deployment of this canonical reporting release is pending verification. This release changes reporting and Meta conversion preparation to use the shared customer event ledger. It preserves the existing dataset, campaign mapping and original lead attribution. The Employee Hub remains authoritative for walkthroughs, jobs, customers, scope and financial evidence. PostgreSQL stores normalized provider facts, extracted call/message evidence, user-confirmed assertions and durable reconciliation/conversion ledgers. See [the implementation and rollout record](customer-intelligence-release.md).
 
 ## Verified before deployment
 
-- Native Employee Hub regression suite: 547 passing tests.
-- Browser acceptance: 11 Action Center scenarios and 5 recording-review scenarios passed against isolated fixtures.
-- Full platform typecheck, unit/HTTP test tasks and application builds passed. PostgreSQL tests exercise actual migrations, task revisions/approvals, native/provider scheduling, recordings, inbound replies, communications, timeline, notes and lease recovery using an isolated loopback database. Final CI results and deployed revisions are recorded with the pull request and release report.
-- Migration generation reported no schema drift. Migration files are additive and preserve the prior Meta ledger migration. Runtime migration is serialized between services.
+- Native Employee Hub regression suite: the latest full run passed 565 tests, including native booking retry/time-zone and unscheduled financial-evidence cases. Final CI totals belong with the deployed revision.
+- Browser acceptance for this change: 12 Action Center scenarios and 2 native booking scenarios passed against isolated fixtures. The native tests run in a Tokyo browser time zone and verify Denver scheduling, response-lost Firestore recovery, provider outage behavior and daylight-saving validation. The previous release's 5 recording-review scenarios remain separate evidence until rerun for this revision.
+- Portal typecheck, operations build and 37 operations unit tests passed. Isolated PostgreSQL 17.9 migrations ran twice, followed by 9 lead-audit operations tests, 27 operations integration tests and 6 legacy walkthrough tests. Customer-state and Meta validation are tracked in the canonical release record. Local results do not certify production history.
+- Migration files are additive and preserve the prior Meta ledger migration. Runtime migration is serialized between services.
 - Explicit synthetic validation contacts stay available for audit but are excluded from general business lead cohorts by their exact validation source or `egc-test` tag. Ordinary customer names containing “test” are not excluded.
 
 ## Live routing repair
@@ -18,11 +18,15 @@ Three controlled, live router executions passed: transformation to the garage fl
 
 ## Rollout and remaining live checks
 
-Railway deployment begins with unified operations disabled. Existing workflows remain available until the signed Hub/API/MCP bridge has been deployed and verified. No signing keys are exposed to the browser or stored in source.
+Railway deployment begins with unified operations disabled until the signed Hub/API/MCP bridge has been deployed and verified. Walkthrough entry in the Railway portal always directs to the existing Employee Hub; the contact-only recording upload and approval proxies return a Hub redirect instruction even while the bridge is disabled. No signing keys are exposed to the browser or stored in source.
+
+GitHub check runs confirm the existing Cloudflare Pages integration deployed repository commit `32a6946ce25e2e691438e2087b4b7b8963078382` successfully on September 21, 2026 at 02:41:33 UTC. That prior deployment is `a7957e12-9b86-4456-bdce-f14e9f1e38b2` in Pages project `easy-garage-cleaning`; it does not contain this release. Production Hub HTML, JavaScript and CSS return `Cache-Control: no-store`; no service worker caches the Hub. This release versions the assets as `20260922intelligence` and `20260922booking`, so a normal reload obtains the deployed files. Verify both the new GitHub Cloudflare check and public asset contents after deployment.
+
+The native Hub now retains a save identity through ambiguous Firestore responses and verifies the exact saved record before retrying. It uses Denver wall times independently of browser time zone. A provider outage permits an authoritative Hub save with explicit provider reconciliation pending. The signed `portal.evidence` read follows exact contact identities and includes unscheduled accepted work, verified processor receipts and separately identified staff-confirmed customer receipts. It does not substitute a calendar scan for complete sales evidence.
 
 At the last authenticated-surface check, the Employee Hub, Cloudflare dashboard and HighLevel developer Marketplace required user sign-in. Therefore the following are not certified by local tests or HTTP readiness:
 
-- Cloudflare production revision, matching server-side bridge secrets and coordinated feature activation.
+- This release's Cloudflare production revision, matching server-side bridge secrets and coordinated feature activation. The API's portal signing key was absent at preparation; neither repository nor Preview/Production GitHub Actions environments contain a deployment-token secret. The available Wrangler identity belongs to another account, and the EGC Cloudflare browser login requires a password. These are configuration/access blockers, not passed deployment checks.
 - Native Hub verification of the reported historical visit/job cases. Provider read-back already showed one active appointment and two cancelled appointments in each reported case; no additional cancellation was inferred necessary.
 - Marketplace app webhook subscriptions and a verified live signed receipt.
 - Production recording/transcription/review, exact Hub mutation read-back, and the rest of the [25-case production acceptance matrix](operations-production-acceptance.md).

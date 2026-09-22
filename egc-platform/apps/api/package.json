@@ -12,6 +12,7 @@
     "test:provider-notes:integration": "node --test test/provider-notes-postgres.check.mjs"
   },
   "dependencies": {
+    "@egc/customer-state": "workspace:*",
     "@egc/ai": "workspace:*",
     "@egc/database": "workspace:*",
     "@egc/ghl": "workspace:*",

@@ -49,7 +49,11 @@ The API verifies GHL webhook signatures. Webhooks provide low latency and the wo
 
 ## Portal
 
-The existing Cloudflare Employee Hub is authoritative for operational jobs, visits, customers, scope and financial evidence. While `EGC_OPERATIONS_ENABLED=false`, the Railway portal retains its existing legacy recording upload and approval workflow. Only records without managed Hub linkage can use legacy approval, even during rollback. Once enabled, the Railway recording page directs work to the Hub and the API/MCP reject legacy recording mutations. Deploy and verify both the Cloudflare signed bridge and Railway API before enabling unified operations; set the flag consistently on API, MCP, worker and portal. Service credentials never appear in browser code.
+The existing Cloudflare Employee Hub is authoritative for operational jobs, visits, customers, scope and financial evidence. The Railway portal always directs walkthrough entry to the Employee Hub, including while `EGC_OPERATIONS_ENABLED=false`; its contact-only upload and approval proxy routes return HTTP 409 with the Hub URL. Do not reopen the legacy recording flow as a workaround for an unavailable Hub bridge. Deploy and verify both the signed Cloudflare bridge and Railway API before enabling unified operations, then set the flag consistently across the services. Service credentials never appear in browser code.
+
+Reporting pages read the canonical customer event ledger and show source evidence, intent, next actions and stale-provider discrepancies. The signed Hub `portal.evidence` command reads exact-contact operational records independently of scheduled dates, including unscheduled accepted estimates and verified customer receipts. Calendar reconciliation still uses the Hub's authoritative dates and collision locks. A HighLevel outage must leave saved Hub work visible with provider reconciliation pending.
+
+The first canonical reporting release remains production-acceptance pending until the actual deployed revision, signed bridge, customer histories and Meta responses are verified. Record results in [the operational release status](../../docs/operations-release-status.md). The root Hub uses `no-store` assets and has no service worker; confirm the release asset versions after deployment and reload the page.
 
 ## MCP
 

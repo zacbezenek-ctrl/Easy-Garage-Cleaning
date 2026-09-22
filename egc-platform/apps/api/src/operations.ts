@@ -5,6 +5,8 @@ import {getDb} from "@egc/database";
 import {InboundActionReconciler,type InboundPolicy} from "./inbound-actions.js";
 import {syncPortalSchedule} from "./scheduling.js";
 import {ensureProviderNote} from "./provider-notes.js";
+import {getCanonicalReport,getCustomerTimeline,getCustomerStateDiagnostics} from '@egc/customer-state';
+import {reconcileHubBookings} from './booking-worker.js';
 
 export function portalAdapter(origin:string,key:string,workspace:string,fetcher:typeof fetch=fetch) {
   const url=new URL(origin);
@@ -32,12 +34,19 @@ export async function registerOperationsRoutes(app:FastifyInstance,options:{serv
   const env=options.env??process.env;
   let service=options.service;
   let inbound:InboundActionReconciler|undefined;
+  let bookingTick:(()=>Promise<unknown>)|undefined;
   if(!service && env.EGC_OPERATIONS_ENABLED==="true") {
     const workspace=env.EGC_OPERATIONS_WORKSPACE??"egc";
     const bridge=env.EGC_PORTAL_ORIGIN&&env.EGC_OPERATIONS_PORTAL_SIGNING_SECRET?portalAdapter(env.EGC_PORTAL_ORIGIN,env.EGC_OPERATIONS_PORTAL_SIGNING_SECRET,workspace):null;
-    service=operationsService({workspace,...(bridge?{resolvePortalJob:bridge.resolve,resolveOwner:bridge.owner,portalRead:bridge.read,syncSchedule:(actor,command)=>syncPortalSchedule(actor,command,bridge.read,{env}),ensureProviderNote:(actor,command)=>ensureProviderNote(actor,command,bridge.read,{service:service!})}:{})});
+    service=operationsService({workspace,canonicalRead:async(_actor,command)=>{
+      if(command.command==='intelligence.report')return getCanonicalReport({since:command.since,until:command.until,...(command.cohortSince?{cohortSince:command.cohortSince}:{}),...(command.cohortUntil?{cohortUntil:command.cohortUntil}:{}),refresh:true});
+      if(command.command==='intelligence.customer')return getCustomerTimeline({contactId:command.contactId});
+      return getCustomerStateDiagnostics();
+    },...(bridge?{resolvePortalJob:bridge.resolve,resolveOwner:bridge.owner,portalRead:bridge.read,syncSchedule:(actor,command)=>syncPortalSchedule(actor,command,bridge.read,{env}),ensureProviderNote:(actor,command)=>ensureProviderNote(actor,command,bridge.read,{service:service!})}:{})});
+    if(bridge)bookingTick=()=>reconcileHubBookings(bridge.read,env);
     if(bridge){const actor:Actor={id:"inbound-response-reconciler",kind:"integration",role:"integration",workspace};inbound=new InboundActionReconciler(getDb(),service,async()=>await bridge.read(actor,{command:"portal.rules"}) as unknown as InboundPolicy,workspace);}
   }
+  if(bookingTick){let running=false;const tick=async()=>{if(running)return;running=true;try{await bookingTick!();}catch{app.log.warn({code:'booking_reconciliation_unavailable'},'Hub booking reconciliation needs attention');}finally{running=false;}};const timer=setInterval(()=>void tick(),5*60000);timer.unref();app.addHook('onReady',async()=>{void tick();});app.addHook('onClose',async()=>{clearInterval(timer);});}
   app.post("/operations/rpc",{bodyLimit:220000},async(request,reply)=>{
     reply.header("Cache-Control","no-store");
     if(env.EGC_OPERATIONS_ENABLED!=="true"||!service)return reply.code(503).send({error:"operations_not_enabled"});

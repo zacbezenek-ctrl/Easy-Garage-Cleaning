@@ -5,6 +5,8 @@ import { getDb, schema } from "@egc/database";
 import { GhlClient, asDate, asRecord, asString, findArray } from "@egc/ghl";
 import { recomputeLeadState, callContactEvidence, isCallMessage } from "@egc/lead-audit";
 import { startMetaConversionWorker } from "./meta-conversion-worker.js";
+import { startCustomerStateWorker } from './customer-state-worker.js';
+import {startProviderNotesWorker} from './provider-notes-worker.js';
 
 const db = getDb();
 const ghl = GhlClient.fromEnv();
@@ -704,6 +706,8 @@ async function processOutboxEvents() {
 
 async function main() {
   console.log("EGC worker started");
+  startCustomerStateWorker();
+  startProviderNotesWorker();
   startMetaConversionWorker();
   // A transient GHL startup failure must not stop Meta synchronization or the
   // existing webhook/outbox polling loops from being scheduled.

@@ -5,7 +5,8 @@ const ROOT='projects/egcw-1ec83/databases/(default)/documents';
 const URL=`https://firestore.googleapis.com/v1/${ROOT}`;
 const safeId=id=>typeof id==='string'&&/^[A-Za-z0-9_-]{1,180}$/.test(id)&&!/^(_egc_|secure_)/.test(id);
 const uuid=id=>typeof id==='string'&&/^[a-f0-9]{8}-[a-f0-9-]{27}$/i.test(id);
-const terminal=new Set(['cancelled','canceled','completed','invoiced','paid','review_requested','closed']);
+const visitKind=value=>value==='walkthrough'?'walkthrough':['job','cleanout','reorg'].includes(value)?'job':null;
+const terminal=new Set(['cancelled','canceled','completed','invoiced','paid','review_requested','closed','noshow','no_show','no-show']);
 const failure=(code,status=409)=>Object.assign(new Error(code),{status});
 const canonical=v=>Array.isArray(v)?`[${v.map(canonical).join(',')}]`:v&&typeof v==='object'?`{${Object.entries(v).sort(([a],[b])=>a.localeCompare(b)).map(([k,x])=>`${JSON.stringify(k)}:${canonical(x)}`).join(',')}}`:JSON.stringify(v);
 const digest=async v=>[...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(canonical(v))))].map(x=>x.toString(16).padStart(2,'0')).join('');
@@ -20,12 +21,12 @@ export function schedulingStorage(env,fetcher=firestoreFetch){return{
   async commit(writes){let r;try{r=await fetcher(env,`${URL}:commit`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({writes:writes.map(w=>({update:{name:`${ROOT}/${w.collection}/${w.id}`,fields:encodeFirestoreFields(w.patch)},updateMask:{fieldPaths:Object.keys(w.patch)},currentDocument:w.revision?{updateTime:w.revision}:{exists:false}}))}),signal:AbortSignal.timeout(15000)});}catch{throw failure('schedule_commit_outcome_unknown',503);}if(!r.ok)throw failure([409,412].includes(r.status)?'schedule_revision_conflict':'schedule_commit_outcome_unknown',r.status>=500?503:409);return r.json();}
 };}
 function visitIdentity(visit,customer){
-  if(!visit||!safeId(visit.id)||!['job','walkthrough'].includes(visit.type)||visit.recordType)throw failure('schedule_visit_not_found',404);
+  if(!visit||!safeId(visit.id)||!visitKind(visit.type)||visit.recordType)throw failure('schedule_visit_not_found',404);
   if(!visit.customerId||!customer||customer.id!==visit.customerId)throw failure('schedule_customer_link_missing');
   if(visit.highlevelContactId&&customer.highlevelContactId&&visit.highlevelContactId!==customer.highlevelContactId)throw failure('schedule_contact_link_conflict');
   return {portalVisitId:visit.id,portalCustomerId:customer.id,portalProjectId:visit.projectId||null,revision:visit.revision,
     highlevelContactId:visit.highlevelContactId||customer.highlevelContactId||null,highlevelAppointmentId:visit.highlevelAppointmentId||null,
-    type:visit.type,date:visit.date,time:visit.time,endTime:visit.endTime,status:visit.pipelineStatus||visit.status,
+    type:visitKind(visit.type),sourceType:visit.type,date:visit.date,time:visit.time,endTime:visit.endTime,status:visit.pipelineStatus||visit.status,
     title:visit.title||visit.serviceType|| (visit.type==='walkthrough'?'EGC Free Walkthrough':'EGC Customer Job'),address:visit.address||customer.address||'',
     startTime:localInstant(visit.date,visit.time),endTimeInstant:localInstant(visit.date,visit.endTime),syncStatus:visit.syncStatus||'unknown'};
 }
@@ -38,7 +39,7 @@ export async function resolveScheduledVisit(store,id){
 export async function linkScheduledCustomer(store,actor,input,now=new Date().toISOString()){
   if(actor.kind!=='integration'||actor.role!=='integration'||!safeId(input.portalVisitId))throw failure('schedule_customer_link_requires_integration',403);
   const visit=await store.read('jobs',input.portalVisitId),contact=input.providerContact||{};
-  if(!visit||!['job','walkthrough'].includes(visit.type)||visit.revision!==input.expectedRevision||!safeId(contact.id))throw failure('schedule_customer_link_conflict');
+  if(!visit||!visitKind(visit.type)||visit.revision!==input.expectedRevision||!safeId(contact.id))throw failure('schedule_customer_link_conflict');
   if(visit.highlevelContactId&&visit.highlevelContactId!==contact.id)throw failure('schedule_customer_link_conflict');
   if(!visit.highlevelContactId){
     const phone=v=>String(v||'').replace(/\D/g,'').replace(/^1(?=\d{10}$)/,''),email=v=>String(v||'').trim().toLowerCase();
@@ -67,7 +68,10 @@ export async function linkScheduledCustomer(store,actor,input,now=new Date().toI
  * visit and both affected day locks commit atomically with revision preconditions. */
 export async function mutateScheduledVisit(store,actor,input,now=new Date().toISOString()){
   if(!uuid(input.requestId)||!safeId(input.portalCustomerId)||!['create','update','cancel'].includes(input.mode))throw failure('schedule_request_invalid',400);
-  const id=input.mode==='create'?`visit_${input.requestId.replaceAll('-','')}`:input.portalVisitId;
+  // The business identity survives fresh request IDs and different entry points.
+  // Cancelled visits retain this identity and cannot be accidentally resurrected.
+  const bookingKey=input.mode==='create'?await digest({customerId:input.portalCustomerId,kind:input.kind,date:input.changes?.date,time:input.changes?.time,timeZone:'America/Denver'}):null;
+  const id=bookingKey?`visit_${bookingKey.slice(0,40)}`:input.portalVisitId;
   if(!safeId(id))throw failure('schedule_visit_not_found',404);
   const receiptId=`_egc_schedule_op_${input.requestId.replaceAll('-','')}`,hash=await digest({actor:actor.id,input});
   const previousReceipt=await store.read('jobs',receiptId);
@@ -84,15 +88,15 @@ export async function mutateScheduledVisit(store,actor,input,now=new Date().toIS
     visitIdentity(current,customer);
     if(current.customerId!==input.portalCustomerId)throw failure('schedule_customer_link_conflict');
     if(!input.expectedRevision||current.revision!==input.expectedRevision)throw failure('schedule_revision_conflict');
-    if(input.kind&&input.kind!==current.type)throw failure('schedule_visit_kind_immutable');
+    if(input.kind&&input.kind!==visitKind(current.type))throw failure('schedule_visit_kind_immutable');
     if(terminal.has(current.pipelineStatus||current.status)&&input.mode!=='cancel')throw failure('schedule_terminal_visit_requires_review');
   }
   const changes=input.changes||{},allowed=new Set(['date','time','endTime','title','assignedTo','address']);
   if(Object.keys(changes).some(k=>!allowed.has(k)))throw failure('schedule_patch_not_allowed',400);
-  const kind=current?.type||input.kind;if(!['walkthrough','job'].includes(kind))throw failure('schedule_visit_kind_required',400);
-  const patch={...changes,id,type:kind,customerId:customer.id,customer:current?.customer||customer.name||'',
+  const kind=visitKind(current?.type)||input.kind;if(!['walkthrough','job'].includes(kind))throw failure('schedule_visit_kind_required',400);
+  const patch={...changes,id,type:current?.type||kind,customerId:customer.id,customer:current?.customer||customer.name||'',
     highlevelContactId:current?.highlevelContactId||customer.highlevelContactId||'',scheduleSource:'egc_hub',providerSyncOwner:'operations',syncStatus:'pending',updatedAt:now};
-  if(input.mode==='create')Object.assign(patch,{status:'scheduled',pipelineStatus:'scheduled',createdAt:now,createdBy:actor.id,phone:customer.phone||'',email:customer.email||'',address:changes.address||customer.address||'',serviceType:kind==='walkthrough'?'Free garage walkthrough':'Customer job'});
+  if(input.mode==='create')Object.assign(patch,{bookingKey,status:'scheduled',pipelineStatus:'scheduled',createdAt:now,createdBy:actor.id,phone:customer.phone||'',email:customer.email||'',address:changes.address||customer.address||'',serviceType:kind==='walkthrough'?'Free garage walkthrough':'Customer job'});
   if(input.mode==='cancel')Object.assign(patch,{status:'cancelled',pipelineStatus:'cancelled',cancelledAt:now,cancelledBy:actor.id});
   const projectWrites=[];
   if(input.mode==='create'){
@@ -113,7 +117,7 @@ export async function mutateScheduledVisit(store,actor,input,now=new Date().toIS
     const lockId=`_egc_schedule_lock_${date}`,lock=await store.read('jobs',lockId),entries=(Array.isArray(lock?.entries)?lock.entries:[]).filter(x=>x.id!==id&&!terminal.has(x.status));
     if(date===next.date&&input.mode!=='cancel'){
       const existing=await store.day(date);
-      const conflict=existing.find(x=>x.id!==id&&['job','walkthrough','blocked'].includes(x.type)&&!terminal.has(x.pipelineStatus||x.status)&&overlap(next,x));
+      const conflict=existing.find(x=>x.id!==id&&(visitKind(x.type)||x.type==='blocked')&&!terminal.has(x.pipelineStatus||x.status)&&overlap(next,x));
       if(conflict||entries.some(x=>overlap(next,{time:x.start,endTime:x.end})))throw failure('schedule_slot_conflict');
       entries.push({id,start:next.time,end:next.endTime,label:next.customer,status:next.status||'scheduled',updatedAt:now});
     }
@@ -136,9 +140,11 @@ export async function bindScheduledProvider(store,actor,input,now=new Date().toI
   const receiptId=`_egc_schedule_provider_${input.operationId.replaceAll('-','')}`,receipt=await store.read('jobs',receiptId);
   if(receipt&&(receipt.providerAppointmentId!==event.id||receipt.portalVisitId!==input.portalVisitId))throw failure('schedule_idempotency_conflict');
   if(!event.id||event.contactId!==identity.highlevelContactId||(identity.highlevelAppointmentId&&event.id!==identity.highlevelAppointmentId))throw failure('schedule_provider_identity_conflict');
-  const providerStatus=String(event.appointmentStatus||event.appoinmentStatus||event.status||'').toLowerCase();
-  const cancelled=['cancelled','canceled'].includes(providerStatus);
-  if(!identity.startTime||!identity.endTimeInstant||Date.parse(event.startTime)!==Date.parse(identity.startTime)||Date.parse(event.endTime)!==Date.parse(identity.endTimeInstant)||cancelled!==(identity.status==='cancelled'))throw failure('schedule_provider_state_conflict');
+  const rawStatus=String(event.appointmentStatus||event.appoinmentStatus||event.status||'').toLowerCase();
+  const providerStatus=({active:'confirmed',canceled:'cancelled',completed:'showed',no_show:'noshow','no-show':'noshow'})[rawStatus]||rawStatus;
+  const state=String(identity.status).toLowerCase();
+  const expectedStatus=['cancelled','canceled'].includes(state)?'cancelled':['completed','paid','invoiced','closed','review_requested'].includes(state)?'showed':['noshow','no_show','no-show'].includes(state)?'noshow':'confirmed';
+  if(!identity.startTime||!identity.endTimeInstant||Date.parse(event.startTime)!==Date.parse(identity.startTime)||Date.parse(event.endTime)!==Date.parse(identity.endTimeInstant)||providerStatus!==expectedStatus)throw failure('schedule_provider_state_conflict');
   if(receipt)return {ok:true,authority:'employee_hub',visit:identity,replayed:true};
   if(current.revision!==input.expectedRevision)throw failure('schedule_revision_conflict');
   const patch={highlevelAppointmentId:event.id,highlevelCalendarId:event.calendarId||'',providerAppointmentStatus:providerStatus,syncStatus:'synced',syncedAt:now,updatedAt:now};

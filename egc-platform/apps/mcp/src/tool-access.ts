@@ -1,11 +1,13 @@
 import { READ_SCOPE, WRITE_SCOPE } from "./oauth.js";
 import { RECORDING_WRITE_TOOLS } from "./recording-tools.js";
 import { META_CONVERSION_WRITE_TOOLS } from "./meta-conversion-tools.js";
+import { CUSTOMER_STATE_WRITE_TOOLS } from './customer-state-tools.js';
 
 export const WRITE_TOOLS = new Set<string>([
   "actions.complete_from_message",
   ...RECORDING_WRITE_TOOLS,
   ...META_CONVERSION_WRITE_TOOLS,
+  ...CUSTOMER_STATE_WRITE_TOOLS,
   "jobs.create",
   "jobs.update",
   "jobs.add_note",

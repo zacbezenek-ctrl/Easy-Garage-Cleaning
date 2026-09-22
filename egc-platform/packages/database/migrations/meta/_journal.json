@@ -71,6 +71,13 @@
       "when": 1789950429801,
       "tag": "0009_verified_message_completion",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1790055886740,
+      "tag": "0010_tiny_maverick",
+      "breakpoints": true
     }
   ]
 }

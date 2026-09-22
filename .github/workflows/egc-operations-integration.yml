@@ -65,3 +65,8 @@ jobs:
           DATABASE_URL: postgres://egc_test:isolated_ci_only@localhost:5432/egc_operations_test
           EGC_META_TEST: isolated
         run: pnpm --filter @egc/meta-conversions test:integration
+      - name: Exercise canonical customer evidence and operational assertions against isolated PostgreSQL
+        env:
+          DATABASE_URL: postgres://egc_test:isolated_ci_only@localhost:5432/egc_operations_test
+          EGC_CUSTOMER_STATE_TEST: isolated
+        run: pnpm --filter @egc/customer-state test:integration

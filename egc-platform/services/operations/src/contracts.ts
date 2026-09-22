@@ -79,6 +79,9 @@ export const patchTaskSchema = z.object({
 const versioned = { taskId: entityId, revision: z.number().int().positive() };
 const page = { offset: z.number().int().min(0).max(1000000).default(0), limit:z.number().int().min(1).max(200).default(50) };
 export const commandSchema = z.discriminatedUnion("command", [
+  z.object({command:z.literal("intelligence.report"),since:isoTime,until:isoTime,cohortSince:isoTime.optional(),cohortUntil:isoTime.optional()}).strict(),
+  z.object({command:z.literal("intelligence.diagnostics")}).strict(),
+  z.object({command:z.literal("intelligence.customer"),contactId:entityId}).strict(),
   z.object({command:z.literal("provider.note.ensure"),requestId:z.string().min(1).max(250),portalJobId:portalId,providerContactId:z.string().min(1).max(200),scope:z.string().regex(/^[a-z0-9_-]{1,100}$/),title:z.string().min(1).max(250),body:z.string().min(1).max(20000)}).strict(),
   z.object({command:z.literal("task.complete_from_message"),...versioned,executionId:entityId}).strict(),
   z.object({command:z.literal("portal.note.add"),requestId:entityId,portalJobId:portalId,expectedRevision:z.string().min(1),body:z.string().trim().min(1).max(10000),supersedes:entityId.optional()}).strict(),
@@ -93,6 +96,7 @@ export const commandSchema = z.discriminatedUnion("command", [
   z.object({command:z.literal("status")}).strict(),
   z.object({command:z.literal("calendar"),startDate:z.string().regex(/^\d{4}-\d{2}-\d{2}$/),endDate:z.string().regex(/^\d{4}-\d{2}-\d{2}$/),timeZone:timeZone.default("America/Denver"),...page}).strict(),
   z.object({command:z.literal("portal.job"),jobId:portalId}).strict(),
+  z.object({command:z.literal("portal.evidence"),contactProviderIds:z.array(portalId).min(1).max(500)}).strict(),
   z.object({command:z.literal("portal.revenue"),from:isoTime,to:isoTime}).strict(),
   z.object({command:z.literal("portal.rules")}).strict(),
   z.object({command:z.literal("inbound.reconcile"),lookbackDays:z.number().int().min(1).max(90).optional(),limit:z.number().int().min(1).max(200).default(50)}).strict(),

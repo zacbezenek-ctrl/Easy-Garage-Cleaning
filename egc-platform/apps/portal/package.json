@@ -13,6 +13,7 @@
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "@egc/database": "workspace:*",
+    "@egc/customer-state": "workspace:*",
     "drizzle-orm": "0.44.5"
   },
   "devDependencies": {

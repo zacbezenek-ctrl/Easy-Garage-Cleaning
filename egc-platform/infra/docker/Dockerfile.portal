@@ -6,5 +6,6 @@ COPY . .
 WORKDIR /app/egc-platform
 RUN pnpm install --no-frozen-lockfile
 RUN pnpm --filter @egc/database build \
+ && pnpm --filter @egc/customer-state build \
  && pnpm --filter @egc/portal build
 CMD ["pnpm", "--filter", "@egc/portal", "start"]

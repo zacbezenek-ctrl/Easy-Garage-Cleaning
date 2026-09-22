@@ -5,3 +5,4 @@ export * from "./appointment-reliability.js";
 export * from "./appointment-store.js";
 export * from "./note-outbox.js";
 export * from "./legacy-walkthrough.js";
+export * from "./booking-reconciliation.js";

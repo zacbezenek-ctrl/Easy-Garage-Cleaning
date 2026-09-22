@@ -6,11 +6,11 @@ export function isCallMessage(type: string) {
   return /call|voicemail/i.test(type) || ["1", "10"].includes(type);
 }
 
-/** Preserve uncertainty: completed alone proves neither a human nor a conversation.
- * HighLevel documents completed status + completed callStatus + positive duration as a human-connected call.
- * Explicit voicemail/screening evidence always wins over generic completion.
+/** Provider call completion and duration also describe screening/voicemail.
+ * Only actual dialogue evidence proves contact. Unlabelled transcripts are
+ * classified by customer-state extraction and merged from its durable ledger.
  */
-export function callContactEvidence(raw: Raw) {
+export function callContactEvidence(raw: Raw, transcript?: string | null) {
   const meta = record(raw.meta);
   const call = record(meta.call);
   const status = lower(raw.status);
@@ -21,22 +21,15 @@ export function callContactEvidence(raw: Raw) {
   if (/screen/.test(combined)) return { outcome: "screened", answered: false, twoWay: false } as const;
   if (/voicemail|machine|answering.machine/.test(combined)) return { outcome: "voicemail", answered: false, twoWay: false } as const;
   if (/no.?answer|missed|busy|failed|cancel/.test(combined)) return { outcome: "unanswered", answered: false, twoWay: false } as const;
-  const duration = Number(raw.callDuration ?? raw.duration ?? meta.callDuration ?? call.duration);
-  const human = answeredBy === "human" && duration > 0;
-  const direction = lower(raw.direction);
-  const documentedConnectedCall =
-    ["inbound", "outbound"].includes(direction) &&
-    status === "completed" &&
-    callStatus === "completed" &&
-    typeof raw.userId === "string" &&
-    raw.userId.length > 0 &&
-    duration > 0;
-  if (human || documentedConnectedCall) return { outcome: "human_connected", answered: true, twoWay: true } as const;
+  if(transcript && /please (?:leave|record) (?:your |a )?(?:message|name)|after the (?:tone|beep)|see if this person is available|couldn't get to your call/i.test(transcript))return {outcome:"voicemail",answered:false,twoWay:false} as const;
+  const customerSpeech = transcript?.split(/\n/).some(line=>/^(?:\d{1,2}:\d{2}:?\s*)?(?:customer|client|lead)\s*:\s*\S.{2}/i.test(line));
+  const staffSpeech = transcript?.split(/\n/).some(line=>/^(?:\d{1,2}:\d{2}:?\s*)?(?:agent|representative|employee|zac|zach|tyler)\s*:\s*\S.{2}/i.test(line));
+  if(customerSpeech&&staffSpeech)return {outcome:"human_connected",answered:true,twoWay:true} as const;
   return { outcome: "unknown", answered: null, twoWay: false } as const;
 }
 
 export type CommunicationEvidence = {
-  direction: string; actorType: string; at: Date; type?: string; raw: Raw;
+  direction: string; actorType: string; at: Date; type?: string; raw: Raw; transcript?: string | null;
 };
 
 export function communicationSummary(messages: CommunicationEvidence[], calls: CommunicationEvidence[]) {
@@ -60,12 +53,12 @@ export function communicationSummary(messages: CommunicationEvidence[], calls: C
   }
   for (const item of calls) {
     if (item.direction === "outbound" && item.actorType === "human") lastHumanOutreachAt = latest(lastHumanOutreachAt, item.at);
-    if (callContactEvidence(item.raw).twoWay) {
+    if (callContactEvidence(item.raw,item.transcript).twoWay) {
       lastVerifiedCallAt = latest(lastVerifiedCallAt, item.at);
       lastCustomerResponseAt = latest(lastCustomerResponseAt, item.at);
     }
   }
   return { lastHumanOutreachAt, lastCustomerResponseAt,
-    twoWayContactAt: lastVerifiedCallAt ?? (lastHumanMessageAt && lastCustomerMessageAt ? latest(lastHumanMessageAt, lastCustomerMessageAt) : null),
+    twoWayContactAt: lastHumanMessageAt && lastCustomerMessageAt ? latest(lastVerifiedCallAt,latest(lastHumanMessageAt,lastCustomerMessageAt)) : lastVerifiedCallAt,
     hasHumanOutreach: Boolean(lastHumanOutreachAt), hasCustomerResponse: Boolean(lastCustomerResponseAt) };
 }

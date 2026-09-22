@@ -4,7 +4,7 @@ const BASE='https://firestore.googleapis.com/v1/projects/egcw-1ec83/databases/(d
 const instant=value=>typeof value==='string'&&/^\d{4}-\d\d-\d\dT/.test(value)&&Number.isFinite(Date.parse(value))?new Date(value).toISOString():null;
 export function moneyCents(value){if(value===null||value===undefined||value==='')return null;if(typeof value==='string'&&!/^\d+(?:\.\d{1,2})?$/.test(value.trim()))return null;const n=Number(value);return Number.isFinite(n)&&n>=0&&Number.isSafeInteger(Math.round(n*100))?Math.round(n*100):null;}
 const accepted=value=>['accepted','approved'].includes(String(value||'').toLowerCase());
-const jobEligible=job=>job.type==='job'&&!job.recordType&&!/^(secure_|_egc_)/.test(job.id||'')&&job.isTest!==true&&job.test!==true;
+const jobEligible=job=>['job','cleanout','reorg'].includes(job.type)&&!job.recordType&&!/^(secure_|_egc_)/.test(job.id||'')&&job.isTest!==true&&job.test!==true;
 export function uniqueReceipts(receipts){const parents=new Map(),root=k=>{if(!parents.has(k))parents.set(k,k);let r=k;while(parents.get(r)!==r)r=parents.get(r);return r;};const keys=r=>[r.paymentIntentId&&/^pi_[A-Za-z0-9_]+$/.test(r.paymentIntentId)?'intent:'+r.paymentIntentId:null,r.sessionId&&/^cs_(?:live_)?[A-Za-z0-9_]+$/.test(r.sessionId)?'session:'+r.sessionId:null].filter(Boolean);
   for(const r of receipts){const ids=keys(r);for(const id of ids.slice(1))parents.set(root(id),root(ids[0]));}const groups=new Map();for(const r of receipts){const id=root(keys(r)[0]||r.key);groups.set(id,[...(groups.get(id)||[]),r]);}const unique=[],conflicts=[];for(const[id,rows]of groups){if(rows.some(r=>r.amountCents!==rows[0].amountCents||r.at!==rows[0].at))conflicts.push(id);else unique.push(rows[0]);}return{unique,conflicts};}
 export function financialFacts(job){
@@ -29,23 +29,29 @@ export function financialFacts(job){
   }
   const deduped=uniqueReceipts(payments);if(deduped.conflicts.length)exceptions.push('payment_receipts_conflict');
   const observedCents=deduped.unique.reduce((sum,p)=>sum+p.amountCents,0),recorded=moneyCents(payment.amount);
-  if(recorded!==null&&recorded>observedCents){if(payment.verified===true&&payment.recordedBy&&payment.reference&&instant(payment.lastReceivedAt)&&moneyCents(payment.lastAmount)!==null){const staff={at:instant(payment.lastReceivedAt),amountCents:moneyCents(payment.lastAmount),source:'staff_recorded_receipt',portalJobId:job.id};staffPayments.push(staff);timeline.push({id:`${job.id}:staff-payment:${staff.at}`,kind:'payment_staff_recorded',at:staff.at,data:{...staff,currency:'USD',processorVerified:false}});}exceptions.push(payment.verified===true?'payment_history_incomplete':'payment_not_verified');}
+  if(recorded!==null&&recorded>observedCents){
+    const reference=String(payment.reference||''),method=String(payment.method||'').toLowerCase(),mirrorsProcessor=payments.some(receipt=>[receipt.key,receipt.sessionId,receipt.paymentIntentId].includes(reference));
+    if(payment.verified===true&&payment.recordedBy&&reference&&!mirrorsProcessor&&!/stripe|gift_credit/.test(method)&&instant(payment.lastReceivedAt)&&moneyCents(payment.lastAmount)!==null){
+      const at=instant(payment.lastReceivedAt),staff={key:`${job.id}:customer-receipt:${at}:${reference}`,at,amountCents:moneyCents(payment.lastAmount),source:'staff_recorded_customer_receipt',portalJobId:job.id,reference,recordedBy:payment.recordedBy,paymentMethod:method||'unspecified',verified:true};staffPayments.push(staff);timeline.push({id:staff.key,kind:'payment_staff_recorded',at,data:{...staff,currency:'USD',processorVerified:false}});
+    }
+    exceptions.push(payment.verified===true?'payment_history_incomplete':'payment_not_verified');
+  }
   if(job.refunds||payment.refunds||moneyCents(payment.refundedAmount)>0)exceptions.push('refunds_require_processor_reconciliation');
-  return{eligible:true,quote,completion,payments,staffPayments,exceptions:[...new Set(exceptions)],timeline:timeline.sort((a,b)=>String(b.at).localeCompare(String(a.at))||a.id.localeCompare(b.id))};
+  return{eligible:true,quote,completion,payments:deduped.unique,paymentConflicts:deduped.conflicts,staffPayments,exceptions:[...new Set(exceptions)],timeline:timeline.filter(event=>event.kind!=='payment_verified'||deduped.unique.some(receipt=>receipt.key===event.data.evidenceId)).sort((a,b)=>String(b.at).localeCompare(String(a.at))||a.id.localeCompare(b.id))};
 }
 export function summarizeFinancialJobs(jobs,from,to){
   const start=instant(from),end=instant(to);if(!start||!end||start>=end||Date.parse(end)-Date.parse(start)>366*86400000)throw Object.assign(new Error('invalid_revenue_window'),{status:400});
-  const inside=at=>Boolean(at&&at>=start&&at<end),sold={count:0,knownSubtotalCents:0,missingValueCount:0,undatedCount:0},completed={count:0,knownSubtotalCents:0,missingValueCount:0,undatedCount:0},receipts=[],exceptions=[];let eligibleJobs=0,staffRecordedCents=0,paymentCoverageIncomplete=false;
+  const inside=at=>Boolean(at&&at>=start&&at<end),sold={count:0,knownSubtotalCents:0,missingValueCount:0,undatedCount:0},completed={count:0,knownSubtotalCents:0,missingValueCount:0,undatedCount:0},receipts=[],exceptions=[],sourceConflicts=new Set();let eligibleJobs=0,staffRecordedCents=0,paymentCoverageIncomplete=false;
   for(const job of jobs){const facts=financialFacts(job);if(!facts.eligible)continue;eligibleJobs++;
     for(const reason of facts.exceptions){exceptions.push({portalJobId:job.id,code:reason});if(reason.startsWith('payment_'))paymentCoverageIncomplete=true;}
     for(const[target,fact]of [[sold,facts.quote],[completed,facts.completion]])if(fact){if(!fact.at)target.undatedCount++;else if(inside(fact.at)){target.count++;if(fact.amountCents===null)target.missingValueCount++;else target.knownSubtotalCents+=fact.amountCents;}}
-    receipts.push(...facts.payments);
+    receipts.push(...facts.payments);for(const conflict of facts.paymentConflicts||[])sourceConflicts.add(conflict);
     for(const receipt of facts.staffPayments)if(inside(receipt.at))staffRecordedCents+=receipt.amountCents;
   }
   const deduped=uniqueReceipts(receipts);let cashKnownSubtotalCents=0,receiptCount=0;for(const receipt of deduped.unique){if(inside(receipt.at)){cashKnownSubtotalCents+=receipt.amountCents;receiptCount++;}}
   const total=s=>s.missingValueCount||s.undatedCount?null:s.knownSubtotalCents;
   return{ok:true,authority:'employee_hub',currency:'USD',from:start,to:end,eligibleJobs,revenueSoldCents:total(sold),revenueCompletedCents:total(completed),cashCollectedCents:paymentCoverageIncomplete||deduped.conflicts.length?null:cashKnownSubtotalCents,netCashCollectedCents:null,
-    sold,completed,cash:{verifiedGrossSubtotalCents:cashKnownSubtotalCents,uniqueReceiptCount:receiptCount,conflictingReceiptCount:deduped.conflicts.length,staffRecordedSubtotalCents:staffRecordedCents},exceptions,
+    sold,completed,cash:{verifiedGrossSubtotalCents:cashKnownSubtotalCents,uniqueReceiptCount:receiptCount,conflictingReceiptCount:new Set([...sourceConflicts,...deduped.conflicts]).size,staffRecordedSubtotalCents:staffRecordedCents},exceptions,
     coverage:{jobs:'complete_source_scan',saleDate:'explicit_customer_approval_or_accepted_estimate',completionDate:'explicit_completed_at',cash:'verified_stripe_receipts_only',refunds:'not_reconciled',netCash:'unknown',staffPaymentHistory:'latest_receipt_only'},
     note:'Sold value, completed value and cash receipts are separate. Cash is gross verified receipts, not profit or net after refunds. Missing values and dates remain unknown; draft prices and CRM opportunity values are excluded.'};
 }

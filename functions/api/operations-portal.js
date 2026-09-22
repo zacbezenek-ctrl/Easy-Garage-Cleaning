@@ -1,6 +1,6 @@
 import {listHubUserProfiles,hasBusinessAccess} from '../_lib/hub-session.js';
 import {verifyOperationsEnvelope} from '../_lib/operations-envelope.js';
-import {portalCalendar,portalJob} from '../_lib/operations-portal-records.js';
+import {portalCalendar,portalJob,portalEvidence} from '../_lib/operations-portal-records.js';
 import {portalRevenue} from '../_lib/operations-financials.js';
 import {mutatePortalRecord} from '../_lib/operations-job-records.js';
 import {inboundResponsePolicy} from '../_lib/operations-rules.js';
@@ -21,6 +21,7 @@ export async function onRequestPost({request,env}) {
     if(command.command==='calendar')return reply(200,await portalCalendar(env,command));
     if(command.command==='portal.members')return reply(200,{ok:true,authority:'employee_hub',members:listHubUserProfiles(env).filter(hasBusinessAccess).map(p=>({id:p.user,name:p.displayName,role:p.role}))});
     if(command.command==='portal.job')return reply(200,await portalJob(env,command.jobId));
+    if(command.command==='portal.evidence')return reply(200,await portalEvidence(env,command));
     if(command.command==='portal.revenue')return reply(200,await portalRevenue(env,command));
     if(command.command==='portal.rules')return reply(200,{ok:true,...inboundResponsePolicy(env,listHubUserProfiles(env).filter(hasBusinessAccess).map(p=>({id:p.user,role:p.role})))});
     return reply(400,{error:'read_only_portal_command_required'});

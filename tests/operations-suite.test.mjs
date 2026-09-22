@@ -176,8 +176,8 @@ test('walkthrough is photo-led, builds price in the background, and saves Hub sc
 
 test('Hub owns scheduling while HighLevel owns CRM automation',()=>{
   for(const marker of ['HUB SCHEDULE','Schedule the work here','scheduleSource','Save + sync','New HighLevel leads'])assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
-  assert.match(suite,/\.set\(job,\{merge:true\}\)/);
-  assert.match(suite,/Choose an end time after the start time/);
+  assert.match(suite,/tx\.set\(ref,job,\{merge:true\}\)/);
+  assert.match(suite,/Choose a valid Mountain time with the end after the start/);
   for(const field of ['phone','email','address','date','time','endTime','assignedTo','notes','notify'])assert.match(suite,new RegExp(`opsBookField\\('${field}'`));
 });
 
@@ -816,7 +816,7 @@ test('open-shift scheduling fields persist on the canonical job record',()=>{
   assert.match(suite,/b\.type==='job'\?'':'ops-hidden'/);
   assert.match(suite,/b\.type==='blocked'\?'ops-hidden':''/);
   assert.match(employee,/employee-suite\.css\?v=20260909gusto/);
-  assert.match(employee,/employee-suite\.js\?v=20260916quota2/);
+  assert.match(employee,/employee-suite\.js\?v=20260922booking/);
 });
 
 test('recurring visits keep the client plan but reset prior completion and payment state',()=>{
