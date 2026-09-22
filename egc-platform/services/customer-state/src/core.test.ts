@@ -1,5 +1,5 @@
 import { describe,it,expect } from "vitest";
-import { assertionEvents,assertionReconciled,buildCanonicalEvents,buildReport,captureOriginalAttribution,canonicalEventId,exclusionReasons,extractEvidence,projectCustomer,validateUserConfirmedOutcome,type SourceRecord,type OperationalAssertion,type EvidenceEvent } from "./core.js";
+import { assertionEvents,assertionReconciled,buildCanonicalEvents,buildReport,captureOriginalAttribution,canonicalEventId,exclusionReasons,extractEvidence,projectCustomer,validateUserConfirmedOutcome,paginateEventEvidence,type SourceRecord,type OperationalAssertion,type EvidenceEvent } from "./core.js";
 import { recordsFromSnapshot,usableTranscriptText } from "./sources.js";
 import { validateExtractedEvent } from "./extractor.js";
 const at="2026-09-21T18:00:00.000Z",contactId="contact-1",leadId="lead-1";
@@ -148,6 +148,17 @@ describe("report denominators and value",()=>{
     const a=assertion({occurredAtVerified:false}),records=[source(a.exactText,{sourceType:"user_confirmed",events:assertionEvents(a)})];
     const report=buildReport({events:buildCanonicalEvents(records),customers:[projection(records)],since:"2026-09-21T00:00:00Z",until:"2026-09-22T00:00:00Z",cohortSince:"2026-09-16T00:00:00Z"});
     expect(report.periodActivity.jobsSold?.count).toBe(0);expect(report.cohort.metrics.jobsSold?.numerator).toBe(1);expect(report.confirmedOutcomesWithUnknownTime).toHaveLength(1);
+    expect(report.soldRevenue.valueCents).toBeNull();expect(report.soldRevenue.unknownOccurrenceCount).toBe(1);expect(report.soldRevenue.unknownValueCount).toBe(1);expect(report.soldRevenue.knownSubtotalCents).toBe(0);
+  });
+  it("bounded evidence pages retain every event and source ID without changing counts",()=>{
+    const records=Array.from({length:7},(_,i)=>source(`Outreach ${i}`,{sourceRecordId:`attempt-${i}`,events:[ev('human_outreach')]}));records.push(source('accepted',{sourceRecordId:'sale',events:[ev('job_sold')]}));
+    const events=buildCanonicalEvents(records),first=paginateEventEvidence(events,0,3),all=[];expect(first.events[0]?.eventType).toBe('job_sold');
+    for(let offset=0;offset<events.length;offset+=3)all.push(...paginateEventEvidence(events,offset,3).events);
+    expect(new Set(all.map(e=>e.eventId))).toEqual(new Set(events.map(e=>e.eventId)));expect(new Set(all.flatMap(e=>e.evidence.map(r=>r.sourceRecordId)))).toEqual(new Set(records.map(r=>r.sourceRecordId)));
+  });
+  it("bounds report excerpts while keeping original transcript evidence and its pointer",()=>{
+    const text='Customer dialogue '.repeat(2000),record=source(text,{sourceType:'call_transcript',sourceRecordId:'long-call',sourcePointer:'call_transcripts:exact-record',events:[ev('human_outreach',{supportingText:text})]});
+    const [event]=buildCanonicalEvents([record]);expect(event?.evidence[0]?.excerpt.length).toBe(180);expect(event?.evidence[0]?.excerptTruncated).toBe(true);expect(event?.evidence[0]?.sourcePointer).toBe('call_transcripts:exact-record');expect(record.events?.[0]?.supportingText).toBe(text);
   });
 });
 

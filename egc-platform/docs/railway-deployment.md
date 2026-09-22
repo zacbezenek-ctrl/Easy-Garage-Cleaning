@@ -22,6 +22,8 @@ Use the GitHub repository:
 
 Deploy the reviewed and merged `main` commit. Verify the actual deployment's commit hash; a redeploy of an old deployment can reuse its old source snapshot.
 
+With the connected Railway tools, update each existing service's `EGC_RELEASE_SHA` to the merged commit using `set_variables` with `skipDeploys:false`. This triggers a new source deployment from the configured branch. Confirm `list_deployments.meta.commitHash` equals the intended commit before proceeding; the environment variable alone is not proof. This path deployed commit `153fb907ae2b483c5ffc4f52f77567223b219562` on September 22 after the generic `redeploy` action reused the previous source snapshot. Do not create replacement services to work around source selection.
+
 All application services use repository root `/` as the build context, with watch path `/egc-platform/**`.
 
 Set the custom Dockerfile paths:

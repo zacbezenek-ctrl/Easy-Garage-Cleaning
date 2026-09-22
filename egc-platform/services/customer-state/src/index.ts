@@ -1,6 +1,6 @@
 import { and, asc, desc, eq, gte, inArray, lt, or, sql } from "drizzle-orm";
 import { getDb, schema } from "@egc/database";
-import { assertionEvents, assertionReconciled, asRecord, buildCanonicalEvents, buildReport, captureOriginalAttribution, EXTRACTOR_VERSION, exclusionReasons, extractEvidence, hash, projectCustomer, validDate,validateUserConfirmedOutcome } from "./core.js";
+import { assertionEvents, assertionReconciled, asRecord, buildCanonicalEvents, buildReport, captureOriginalAttribution, EXTRACTOR_VERSION, exclusionReasons, extractEvidence, hash, projectCustomer, validDate,validateUserConfirmedOutcome,paginateEventEvidence } from "./core.js";
 import { extractStructuredEvidence } from "./extractor.js";
 import { recordsFromSnapshot,usableTranscriptText } from "./sources.js";
 import {customerActivityPredicate,customerRefreshOrder} from "./selection.js";
@@ -8,6 +8,7 @@ import type { CanonicalEvent, CustomerProjection, EvidenceEvent, Json, Operation
 export * from "./core.js";
 export * from "./sources.js";
 export * from "./selection.js";
+export * from "./briefing.js";
 export { extractStructuredEvidence, validateExtractedEvent } from "./extractor.js";
 
 type DbEvent=typeof schema.customerEvents.$inferSelect;
@@ -58,13 +59,13 @@ export async function reconcileCustomerState(options:ReconcileOptions={}):Promis
         const start=validDate(window.start),end=validDate(window.end);
         return Boolean(start&&end&&scheduled.length&&scheduled.every(at=>at>=start&&at<end));
       }).map(row=>row.id));
-      for(const row of cached)if(["portal_visit","portal_job","portal_payment","provider_note"].includes(row.sourceType)&&!seen.has(row.id)&&!retiredPortalIds.has(row.id))records.push({sourceType:row.sourceType as SourceRecord["sourceType"],sourceRecordId:row.sourceRecordId,contactId:contact.id,leadId:lead.id,occurredAt:row.occurredAt.toISOString(),text:"",events:row.extractedEvents as unknown as EvidenceEvent[],extractionStatus:row.status,...(row.sourcePointer?{sourcePointer:row.sourcePointer}:{})});
+      for(const row of cached)if(["portal_visit","portal_job","portal_payment","provider_note"].includes(row.sourceType)&&!seen.has(row.id)&&!retiredPortalIds.has(row.id))records.push({sourceType:row.sourceType as SourceRecord["sourceType"],sourceRecordId:row.sourceRecordId,contactId:contact.id,leadId:lead.id,occurredAt:row.occurredAt.toISOString(),text:"",events:row.extractedEvents as unknown as EvidenceEvent[],extractionStatus:row.status,extractionError:row.error,...(row.sourcePointer?{sourcePointer:row.sourcePointer}:{})});
       const pending:SourceRecord[]=[],prepared:SourceRecord[]=[],hashes=new Map<string,string>();
       for(const record of records) {
         const digest=hash(JSON.stringify({text:record.text,direction:record.direction,actorType:record.actorType,raw:record.raw,events:record.events}));hashes.set(sourceId(record),digest);
         const previous=cached.find(e=>e.id===sourceId(record));
         const goodCache=previous?.sourceHash===digest && previous.extractorVersion===EXTRACTOR_VERSION;
-        if(goodCache && (previous.status==="complete" || previous.status==="review_required" || options.useAI===false || !process.env.OPENAI_API_KEY))prepared.push({...record,events:previous.extractedEvents as unknown as EvidenceEvent[],extractionStatus:previous.status});
+        if(goodCache && (previous.status==="complete" || previous.status==="review_required" || options.useAI===false || !process.env.OPENAI_API_KEY))prepared.push({...record,events:previous.extractedEvents as unknown as EvidenceEvent[],extractionStatus:previous.status,extractionError:previous.error});
         else if(record.events)prepared.push({...record,extractionStatus:"complete"});
         else pending.push(record);
       }
@@ -77,7 +78,7 @@ export async function reconcileCustomerState(options:ReconcileOptions={}):Promis
         const earliest=batch[0]!.occurredAt,context=records.filter(r=>r.occurredAt<earliest&&r.text&&["message","call_transcript"].includes(r.sourceType)).slice(-8);
         const extracted=await extractStructuredEvidence(batch,context,{useAI:options.useAI!==false});
         if(extracted.error)extractionErrors.push(extracted.error);
-        prepared.push(...extracted.records.map(r=>({...r,extractionStatus:extracted.status==="complete"?"complete":extracted.error?.startsWith("unsupported_or_unquoted")?"review_required":"partial"})));
+        prepared.push(...extracted.records.map(r=>({...r,extractionStatus:extracted.status==="complete"?"complete":extracted.error?.startsWith("unsupported_or_unquoted")?"review_required":"partial",extractionError:extracted.error})));
         batch=[];size=0;
       };
       for(const record of pending){if(size+record.text.length>60_000 || batch.length>=35)await runBatch();batch.push(record);size+=record.text.length;}await runBatch();
@@ -95,7 +96,7 @@ export async function reconcileCustomerState(options:ReconcileOptions={}):Promis
       const portalCoverage=options.portalCoverage??asRecord(priorCoverage[0]?.coverage.portal);
       let providerNoteCoverage:Json={complete:false,error:"provider_notes_not_synced"};try{if(notesCursor[0]?.cursor)providerNoteCoverage=asRecord(JSON.parse(notesCursor[0].cursor));}catch{providerNoteCoverage={complete:false,error:"provider_notes_cursor_invalid"};}
       const coverage:Json={messages:{inspected:messages.length},calls:{inspected:calls.length,transcriptsInspected:transcripts.length,missingTranscriptIds:missingTranscripts},appointments:{inspected:appointments.length},opportunities:{inspected:opportunities.length},jobs:{inspected:jobs.length},notes:{inspected:notes.length},providerNotes:{...providerNoteCoverage,inspected:providerNotes.length},walkthroughs:{inspected:walkthroughs.length},userConfirmed:{inspected:assertions.length},portal:portalCoverage,
-        extraction:{version:EXTRACTOR_VERSION,complete:prepared.every(r=>r.extractionStatus==="complete")&&missingTranscripts.length===0,errors:extractionErrors,partialSourceIds:prepared.filter(r=>r.extractionStatus!=="complete").map(r=>r.sourceRecordId)},asOf:startedAt.toISOString()};
+        extraction:{version:EXTRACTOR_VERSION,complete:prepared.every(r=>r.extractionStatus==="complete")&&missingTranscripts.length===0,errors:[...new Set([...extractionErrors,...prepared.map(r=>r.extractionError).filter(Boolean)])],partialSourceIds:prepared.filter(r=>r.extractionStatus!=="complete").map(r=>r.sourceRecordId)},asOf:startedAt.toISOString()};
       let refreshAfterRace=false;
       await db.transaction(async tx=>{
         await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`customer-state:${contact.id}`}))`);
@@ -111,7 +112,7 @@ export async function reconcileCustomerState(options:ReconcileOptions={}):Promis
           }
           return;
         }
-        for(const record of prepared){const value={id:sourceId(record),contactId:contact.id,leadId:lead.id,sourceType:record.sourceType,sourceRecordId:record.sourceRecordId,sourceHash:hashes.get(sourceId(record))??hash(JSON.stringify(record.events)),extractorVersion:EXTRACTOR_VERSION,occurredAt:new Date(record.occurredAt),status:record.extractionStatus??"complete",extractedEvents:(record.events??[]) as unknown as Json[],sourcePointer:record.sourcePointer??null,error:record.extractionStatus==="partial"?extractionErrors.join(",")||"semantic_coverage_partial":null,updatedAt:startedAt};
+        for(const record of prepared){const value={id:sourceId(record),contactId:contact.id,leadId:lead.id,sourceType:record.sourceType,sourceRecordId:record.sourceRecordId,sourceHash:hashes.get(sourceId(record))??hash(JSON.stringify(record.events)),extractorVersion:EXTRACTOR_VERSION,occurredAt:new Date(record.occurredAt),status:record.extractionStatus??"complete",extractedEvents:(record.events??[]) as unknown as Json[],sourcePointer:record.sourcePointer??null,error:record.extractionStatus!=="complete"?record.extractionError??(extractionErrors.join(",")||"semantic_coverage_partial"):null,updatedAt:startedAt};
           await tx.insert(schema.customerEvidence).values(value).onConflictDoUpdate({target:schema.customerEvidence.id,set:{...value,attemptCount:sql`${schema.customerEvidence.attemptCount}+1`}});
         }
         for(const oldId of retiredPortalIds)await tx.update(schema.customerEvidence).set({extractedEvents:[],status:"complete",sourceHash:hash("retired_by_complete_portal_snapshot"),updatedAt:startedAt}).where(eq(schema.customerEvidence.id,oldId));
@@ -169,7 +170,7 @@ export async function getCustomerTimeline(input:{contactId:string;refresh?:boole
 }
 export const getCanonicalCustomer=getCustomerTimeline;
 
-export async function getCanonicalReport(input:{since:Date|string;until:Date|string;cohortSince?:Date|string;cohortUntil?:Date|string;refresh?:boolean}) {
+export async function getCanonicalReport(input:{since:Date|string;until:Date|string;cohortSince?:Date|string;cohortUntil?:Date|string;refresh?:boolean;evidenceOffset?:number;evidenceLimit?:number}) {
   const since=validDate(input.since),until=validDate(input.until);if(!since||!until)throw new Error("invalid_report_window");
   if(input.refresh)await reconcileCustomerState({since,until,useAI:false});
   const db=getDb();const [snapshots,events,leads,meta,cursors,periodAccepted]=await Promise.all([
@@ -180,7 +181,17 @@ export async function getCanonicalReport(input:{since:Date|string;until:Date|str
   const leadRoster=leads.map(l=>({contactId:l.contactId,leadCreatedAt:l.createdAt.toISOString(),excluded:exclusionReasons({tags:l.tags,raw:l.raw,source:l.source,doNotContact:l.doNotContact}).includes("test_internal_or_vendor")}));
   const report=buildReport({events:events.map(toEvent),customers:snapshots.map(s=>s.snapshot as unknown as CustomerProjection),leadRoster,since,until,...(input.cohortSince?{cohortSince:validDate(input.cohortSince)!}:{}),...(input.cohortUntil?{cohortUntil:validDate(input.cohortUntil)!}:{})});
   const missing=leads.filter(l=>!snapshots.some(s=>s.contactId===l.contactId));
-  return {...report,coverage:{complete:!missing.length&&snapshots.every(s=>asRecord(s.coverage.extraction).complete===true&&asRecord(s.coverage.portal).complete===true&&asRecord(s.coverage.providerNotes).complete===true),missingCustomers:missing.map(l=>({id:l.id,contactId:l.contactId})),customers:snapshots.map(s=>({contactId:s.contactId,lastReconciledAt:s.lastReconciledAt,coverage:s.coverage})),source:"provider_mirrors_plus_persisted_portal_evidence"},metaConversions:meta,metaConversionsScope:'all_time_ledger_status_totals',metaConversionsDuringPeriod:{window:{since,until},basis:'provider_acceptance_time',acceptedEvents:periodAccepted.reduce((n,row)=>n+row.count,0),stages:periodAccepted},cursors};
+  const evidence=paginateEventEvidence(report.countedEvents,input.evidenceOffset,input.evidenceLimit);
+  return {...report,countedEvents:evidence.events,countedEventsPage:evidence.page,coverage:{complete:!missing.length&&snapshots.every(s=>asRecord(s.coverage.extraction).complete===true&&asRecord(s.coverage.portal).complete===true&&asRecord(s.coverage.providerNotes).complete===true),missingCustomers:missing.map(l=>({id:l.id,contactId:l.contactId})),customers:snapshots.map(s=>({contactId:s.contactId,lastReconciledAt:s.lastReconciledAt,coverage:s.coverage})),source:"provider_mirrors_plus_persisted_portal_evidence"},metaConversions:meta,metaConversionsScope:'all_time_ledger_status_totals',metaConversionsDuringPeriod:{window:{since,until},basis:'provider_acceptance_time',acceptedEvents:periodAccepted.reduce((n,row)=>n+row.count,0),stages:periodAccepted},cursors};
+}
+
+/** A small read for follow-up evidence pages: no repeated report/pipeline payload,
+ * no extraction side effects, and every original evidence/source pointer retained. */
+export async function getOperationalEventEvidence(input:{since:Date|string;until:Date|string;offset?:number;limit?:number;eventIds?:string[]}) {
+  const since=validDate(input.since),until=validDate(input.until);if(!since||!until||since>=until)throw new Error('invalid_report_window');
+  if(input.eventIds&&(input.eventIds.length>200||input.eventIds.some(id=>!/^egcev_[a-f0-9]{64}$/.test(id))))throw new Error('invalid_event_ids');
+  const db=getDb(),rows=await db.select({event:schema.customerEvents}).from(schema.customerEvents).innerJoin(schema.customerStateSnapshots,eq(schema.customerStateSnapshots.contactId,schema.customerEvents.contactId)).where(and(eq(schema.customerEvents.active,true),eq(schema.customerEvents.humanReviewNeeded,false),sql`${schema.customerEvents.confidence}>=0.85`,sql`coalesce(${schema.customerStateSnapshots.snapshot}->>'excluded','false')<>'true'`,input.eventIds?(input.eventIds.length?inArray(schema.customerEvents.eventId,input.eventIds):sql`false`):and(gte(schema.customerEvents.occurredAt,new Date(since)),lt(schema.customerEvents.occurredAt,new Date(until)),sql`coalesce(${schema.customerEvents.details}->>'occurredAtVerified','true')<>'false'`)));
+  const evidence=paginateEventEvidence(rows.map(r=>toEvent(r.event)),input.offset,input.limit);return {period:{since,until},...evidence};
 }
 
 export async function getCustomerStateDiagnostics() {
