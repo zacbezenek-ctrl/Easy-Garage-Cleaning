@@ -175,22 +175,21 @@ test('walkthrough is photo-led, builds price in the background, and saves Hub sc
 });
 
 test('Hub owns scheduling while HighLevel owns CRM automation',()=>{
-  for(const marker of ['HUB SCHEDULE','Schedule the work here','scheduleSource','Save + sync','New HighLevel leads'])assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
-  assert.match(suite,/tx\.set\(ref,job,\{merge:true\}\)/);
-  assert.match(suite,/Choose a valid Mountain time with the end after the start/);
+  for(const marker of ['HUB SCHEDULE','Schedule the work here','window.EGCBooking.save','Save + sync','New HighLevel leads'])assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
+  assert.match(read('functions/_lib/dispatch-service.js'),/scheduleSource: 'egc_hub'/);
+  assert.match(suite,/Choose valid Mountain start and end times/);
   for(const field of ['phone','email','address','date','time','endTime','assignedTo','notes','notify'])assert.match(suite,new RegExp(`opsBookField\\('${field}'`));
 });
 
-test('schedule writes prevent collisions and retain retryable sync state',()=>{
-  for(const marker of ['function collisionFor','function saveScheduledJob','scheduleLockRef','recordType:\'schedule_lock\'','db.runTransaction','SCHEDULE_CONFLICT','remoteCollision','syncAttempts','syncNextRetryAt','retryDueSyncs','opsRetrySync','opsRetryAll','Idempotency-Key']){
-    assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),marker+' is missing');
-  }
-  assert.match(suite,/Math\.min\(24\*60,Math\.pow\(2,Math\.min\(attempts,8\)\)\*5\)/);
-  assert.match(suite,/tx\.set\(ref,job,\{merge:true\}\)/);
+test('schedule writes use the canonical dispatch adapter and retain provider retry visibility',()=>{
+  const adapter=read('employee-booking.js');
+  for(const marker of ['function saveScheduledJob','window.EGCBooking.save','syncAttempts','syncNextRetryAt','retryDueSyncs','opsRetrySync','opsRetryAll'])assert.ok(suite.includes(marker),marker+' is missing');
+  for(const marker of ['/api/dispatch','expectedRevision','requestId:crypto.randomUUID()','booking_pending_operation','sourceTemplateJobId'])assert.ok(adapter.includes(marker),marker+' is missing');
+  const scheduleSave=suite.slice(suite.indexOf('async function saveScheduledJob'),suite.indexOf('async function remoteCollision'));
+  assert.doesNotMatch(scheduleSave,/db\.runTransaction|tx\.set|collection\(/);
   assert.doesNotMatch(suite,/collection\(['"]scheduleLocks['"]\)/);
   assert.match(employee,/recordType !== 'schedule_lock'/);
   assert.match(copilot,/recordType !== 'schedule_lock'/);
-  assert.doesNotMatch(crew,/collection\(['"]scheduleLocks['"]\)/);
 });
 
 test('Hub retries preserve the full walkthrough handoff instead of downgrading to a calendar-only sync',()=>{
@@ -200,11 +199,13 @@ test('Hub retries preserve the full walkthrough handoff instead of downgrading t
   }
 });
 
-test('Hub rescheduling preserves and refreshes the signed walkthrough handoff',()=>{
-  for(const marker of ['function replaceBriefLine','function refreshChecklistNotes','function refreshWalkthroughHandoff','latestJobInstructions:job.jobInstructions','latestClientChecklists:job.clientChecklists','if(customerRef)tx.set(customerRef,customerUpdate','job={...previous,...derived','status:b.id?(previous.status','pipelineStatus:b.id?(previous.pipelineStatus']){
-    assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),marker+' is missing');
-  }
-  for(const field of ['CREW / WINDOW','INTERNAL CUSTOMER NOTES','customerNotes','assignedTo','crewSize','arrivalWindow'])assert.match(suite,new RegExp(field.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
+test('Hub rescheduling preserves the signed handoff and observed revision through dispatch',()=>{
+  const adapter=read('employee-booking.js');
+  assert.match(suite,/original:structuredClone\(j\)/);
+  assert.match(suite,/previous=b\.original\|\|\{\}/);
+  assert.match(adapter,/previous\.revision!==data\.job\.revision/);
+  assert.match(adapter,/previous\.updatedAt!==data\.job\.updatedAt/);
+  assert.match(adapter,/typeof job\.jobInstructions==='string'/);
   assert.match(suite,/terminalScheduleStages=.*'invoiced'.*'review_requested'.*'closed'/);
   assert.match(suite,/Closed work stays locked/);
 });
@@ -303,7 +304,7 @@ test('arrival text sends through Quo and records a silent HighLevel note',async(
 });
 
 test('cancelling keeps an audit record, releases the Hub slot, and cancels the HighLevel appointment',async()=>{
-  for(const marker of ['opsCancelBooking','Cancellation reason','cancellation:{reason','cancelledBy:employeeIdentity','releaseScheduleLock(job)','walkthrough-cancelled','job-cancelled','HighLevel cancellation is queued','Event type locks after the first save'])assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),marker+' is missing');
+  for(const marker of ['opsCancelBooking','Cancellation reason','window.EGCBooking.cancel','HighLevel cancellation is queued','Event type locks after the first save'])assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),marker+' is missing');
   const {onRequestPost}=await import('../functions/api/highlevel.js'),calls=[],originalFetch=globalThis.fetch;
   globalThis.fetch=async(url,options={})=>{
     calls.push({url:String(url),options});
@@ -811,39 +812,28 @@ test('crew assignment updates the HighLevel appointment without retriggering cus
 test('open-shift scheduling fields persist on the canonical job record',()=>{
   for(const field of ['openShift','crewNeeded','assignedCrew'])assert.match(suite,new RegExp(field));
   assert.match(suite,/b\.openShift=fd\.has\('openShift'\)/);
-  assert.match(suite,/job\.shiftPickupEnabled=b\.type==='job'/);
-  assert.match(suite,/job\.openShift=job\.shiftPickupEnabled/);
-  assert.match(suite,/assignedCrew\.length<crewNeeded/);
-  assert.match(suite,/crewSize:b\.type==='job'\?crewNeeded/);
-  assert.match(suite,/if\(k==='type'\)render\(\)/);
+  assert.match(suite,/shiftPickupEnabled:b\.type==='job'/);
+  assert.match(read('employee-booking.js'),/changes\.assignedCrew=ids\(job,data\.roster\)/);
+  assert.match(read('functions/_lib/dispatch-service.js'),/patch\.openShift=.*shiftPickupEnabled === true/);
+  assert.match(suite,/if\(k==='type'\)render\(true\)/);
   assert.match(suite,/b\.type==='job'\?'':'ops-hidden'/);
   assert.match(suite,/b\.type==='blocked'\?'ops-hidden':''/);
   assert.match(employee,/employee-suite\.css\?v=20260909gusto/);
   assert.match(employee,/employee-suite\.js\?v=20260922ops/);
 });
 
-test('recurring visits keep the client plan but reset prior completion and payment state',()=>{
-  for(const marker of ['sourceTemplateJobId:j.id',"sourceWalkthroughId:''",'acceptance:null','preJobProgress:null','preJobChecklist:null','postJobProgress:null','postJobChecklist:null','actualLoads:null','hoursOnSite:null','scopeVariance:null','closeoutSyncPayload:null','reviewStatus:'])assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),marker+' is missing from recurring reset');
-  assert.match(suite,/derived=refreshWalkthroughHandoff\(j/);
-  assert.match(suite,/shiftClaims:\[\]/);
-  assert.match(suite,/lastShiftClaim:null/);
-  assert.match(suite,/lastShiftRelease:null/);
-  assert.match(suite,/openShift:shiftPickupEnabled&&assignedCrew\.length<crewNeeded/);
-  assert.match(suite,/crewAvailabilityConflict\(date,next\.time,next\.endTime,assignedCrew\)/);
-  assert.match(suite,/is unavailable during the next visit/);
-  assert.match(suite,/const remote=await remoteCollision\(next\)/);
-  assert.match(suite,/HighLevel already has \$\{remote\.title\|\|'an appointment'\} during that time/);
-  assert.match(suite,/notes:job\.internalNotes\|\|job\.notes/);
-  assert.match(suite,/customerUpdate=job\.customerId&&job\.internalNotes/);
-  assert.match(suite,/function addCalendarMonths\(date,months\)/);
-  assert.match(suite,/d\.setDate\(1\);d\.setMonth\(d\.getMonth\(\)\+months\)/);
-  assert.match(suite,/Math\.min\(originalDay,lastDay\)/);
+test('recurring visits request a server-side handoff clone instead of copying prior execution or payments',()=>{
+  assert.match(suite,/sourceTemplateJobId:job\.id/);
+  assert.match(suite,/saveScheduledJob\(next,\{\}\)/);
+  const clone=suite.slice(suite.indexOf('window.opsCreateNextVisit='),suite.indexOf('window.opsAdvanceStatus='));
+  assert.doesNotMatch(clone,/db\.collection|syncJobRecord|patchJob/);
+  assert.match(clone,/jobsCache=.*saved/);
 });
 
 test('schedule stops safely when the Hub session expires during CRM collision checks',()=>{
   assert.match(suite,/if\(error\?\.code==='HUB_AUTH_REQUIRED'\)throw error/);
-  assert.match(suite,/Sign in again to check HighLevel before saving\. Your form is still here\./);
-  assert.match(suite,/button\.textContent='Retry schedule check'/);
+  assert.match(read('employee-booking.js'),/Sign in again, then retry your saved booking\./);
+  assert.match(suite,/Retry original save/);
   assert.match(crew,/if\(error\?\.code==='HUB_AUTH_REQUIRED'\)throw error/);
   assert.match(crew,/Your walkthrough is saved on this device\. Sign in again before scheduling it\./);
 });
@@ -1222,8 +1212,9 @@ test('customer experience manager flow supports remote decisions credits members
   for(const marker of ['Property memory','If you won’t be there','Bring the crew back','Your EGC wallet','Family and property team','Garage Guard','save_customer_memory','save_job_day_rules','save_collaborators','create_collaborator_invite','respond_decision','request_rebook','apply_gift_credit','request_gift_transfer','Copy invite'])assert.match(customerPortal,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),marker+' is missing from the customer portal');
   assert.match(postjob,/Completing job work never records a payment/);
   assert.match(postjob,/Take card payment/);
-  assert.match(suite,/customerMemoryInheritedFrom/);
-  assert.match(suite,/customerDecisions:\[\],rebookingRequests:\[\],jobDayRules:\{\}/);
+  assert.match(suite,/customerAccountOwnerJobId/);
+  const create=suite.slice(suite.indexOf('window.opsSaveBooking='),suite.indexOf('const customerKey='));
+  assert.doesNotMatch(create,/customerMemoryInheritedFrom|customerAccountOwnerJobId|giftWallet|customerCollaborators/,'The browser must not infer customer access lineage or clone account state.');
 });
 
 test('professional estimate and invoice workflow tracks revisions deadlines terms and balances',()=>{
