@@ -1,0 +1,27 @@
+name: EGC Showcase Public Delivery
+on:
+  push:
+    branches: [main]
+    paths: ['gallery-showcase.json', 'images/gallery-showcase/**', 'gallery-preview-assets/gallery.js', 'gallery-live.css', 'tools/gallery/showcase-live.py', '.github/workflows/egc-showcase-live.yml']
+permissions:
+  contents: read
+concurrency:
+  group: egc-showcase-public-delivery
+  cancel-in-progress: true
+jobs:
+  verify-public-assets:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Verify live public page, six-image manifest and all image/script hashes
+        run: python tools/gallery/showcase-live.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: egc-showcase-public-${{ github.run_id }}
+          path: showcase-live-report.json
+          if-no-files-found: warn
