@@ -1,0 +1,48 @@
+name: EGC Simple Gallery
+on:
+  push:
+    branches: ['feat/gallery-simple-*']
+    paths: ['tools/gallery/import-simple.py', 'tools/gallery/simple-import.json', '.github/workflows/egc-simple-gallery.yml']
+permissions:
+  contents: read
+concurrency:
+  group: egc-simple-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  import-assets:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install Pillow==11.3.0
+      - name: Import paired images and preserve original foreground floor
+        run: python tools/gallery/import-simple.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: egc-simple-review-${{ github.run_id }}
+          path: |
+            simple-review/
+            images/gallery-simple/
+            gallery-simple.json
+            functions/_lib/gallery-simple-data.js
+          if-no-files-found: error
+      - name: Save only new gallery assets and manifests
+        env:
+          SOURCE_BRANCH: ${{ github.ref_name }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_BRANCH" =~ ^feat/gallery-simple-[a-zA-Z0-9-]+$ ]]
+          test "$(git ls-remote origin "refs/heads/$SOURCE_BRANCH" | cut -f1)" = "$SOURCE_SHA"
+          git add -- images/gallery-simple gallery-simple.json functions/_lib/gallery-simple-data.js
+          if git diff --cached --quiet; then exit 0; fi
+          git config user.name 'EGC Gallery Asset Bot'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Import six reference-paired garage examples with matching worn concrete'
+          git push origin "HEAD:refs/heads/$SOURCE_BRANCH"
