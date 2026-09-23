@@ -115,24 +115,26 @@ export class ReliableAppointments {
     const operation=await this.store.reserve({operationKey,resourceKey,kind,payloadHash:appointmentDigest(request),request,providerAppointmentId});
     return this.run(operation);
   }
-  async reconcile(id:string):Promise<AppointmentResult> {
+  async reconcile(id:string,observedProviderAppointmentId?:string):Promise<AppointmentResult> {
     const operation=await this.store.get(id);
     if(!operation)throw new AppointmentOperationError("appointment_operation_not_found",id);
     if(operation.status==="in_flight"&&operation.leaseExpiresAt&&operation.leaseExpiresAt>this.now())this.fail("appointment_operation_in_flight",operation);
-    return this.recover(operation);
+    if(observedProviderAppointmentId&&operation.providerAppointmentId&&observedProviderAppointmentId!==operation.providerAppointmentId)this.fail("appointment_observed_provider_id_conflict",operation);
+    return this.recover(operation,observedProviderAppointmentId);
   }
-  private async recover(operation:AppointmentOperation):Promise<AppointmentResult> {
+  private async recover(operation:AppointmentOperation,observedProviderAppointmentId?:string):Promise<AppointmentResult> {
     const payload=record(operation.request.payload);
     let event:Json|null=null;
     try {
-      if(operation.providerAppointmentId)event=appointmentRecord(await this.provider.getAppointment(operation.providerAppointmentId));
+      const exactProviderId=observedProviderAppointmentId??operation.providerAppointmentId;
+      if(exactProviderId)event=appointmentRecord(await this.provider.getAppointment(exactProviderId));
       else {
         const candidates=await this.candidates(payload);
         if(candidates.length>1)this.fail("appointment_ambiguous_matches",operation);
         event=candidates[0]??null;
       }
       const contact=record(operation.request.context).contactProviderId;
-      if(!event||(contact&&event.contactId!==contact)||!appointmentMatches(event,payload,operation.providerAppointmentId??undefined)||(operation.kind==="create"&&!active(event)))this.fail(operation.status==="accepted"?"appointment_changed_since_acceptance":"appointment_outcome_unknown",operation);
+      if(!event||(contact&&event.contactId!==contact)||!appointmentMatches(event,payload,exactProviderId??undefined)||(operation.kind==="create"&&!active(event)))this.fail(operation.status==="accepted"?"appointment_changed_since_acceptance":"appointment_outcome_unknown",operation);
     } catch(error) {
       if(operation.status!=="accepted")await this.store.finish(operation.id,"unknown",{lastError:error instanceof AppointmentOperationError?error.code:"appointment_reconciliation_unavailable"});
       if(error instanceof AppointmentOperationError)throw error;
