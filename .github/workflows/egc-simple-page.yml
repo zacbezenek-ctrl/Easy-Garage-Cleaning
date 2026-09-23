@@ -1,0 +1,92 @@
+name: EGC Simple Page Checks
+on:
+  push:
+    branches: ['main', 'feat/gallery-simple-*']
+    paths: ['functions/before-after.js', 'functions/_lib/gallery-simple-data.js', 'gallery-simple.*', 'before-after.html', 'tests/gallery-public.test.mjs', 'tools/gallery/simple-browser.cjs', 'tools/gallery/simple-live.py', '.github/workflows/egc-simple-page.yml']
+  pull_request:
+    paths: ['functions/before-after.js', 'functions/_lib/gallery-simple-data.js', 'gallery-simple.*', 'before-after.html', 'tests/gallery-public.test.mjs', 'tools/gallery/simple-browser.cjs', 'tools/gallery/simple-live.py', '.github/workflows/egc-simple-page.yml']
+permissions:
+  contents: read
+concurrency:
+  group: egc-simple-page-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Generate or verify the identical static fallback
+        env:
+          SAVE_STATIC: ${{ github.event_name == 'push' && startsWith(github.ref_name, 'feat/gallery-simple-') }}
+        run: |
+          node --input-type=module <<'JS'
+          import assert from 'node:assert/strict';
+          import {readFileSync,writeFileSync} from 'node:fs';
+          import {renderPublicGallery} from './functions/before-after.js';
+          const html=renderPublicGallery();
+          if(process.env.SAVE_STATIC==='true')writeFileSync('before-after.html',html);
+          else assert.equal(readFileSync('before-after.html','utf8'),html);
+          JS
+      - run: node --check gallery-simple.js && node --test tests/gallery-public.test.mjs
+      - name: Prepare isolated browser tooling
+        run: |
+          npm install --prefix /tmp/egc-simple-tools --no-package-lock playwright@1.55.0
+          /tmp/egc-simple-tools/node_modules/.bin/playwright install --with-deps chromium
+          python -m pip install Pillow==11.3.0
+      - name: Check desktop and phone gallery behavior
+        env:
+          NODE_PATH: /tmp/egc-simple-tools/node_modules
+        run: node tools/gallery/simple-browser.cjs
+      - name: Inspect exported pairs and verify unchanged foreground pixels
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          from PIL import Image, ImageDraw
+          out=Path('simple-page-review'); out.mkdir(exist_ok=True)
+          for i,p in enumerate(json.loads(Path('gallery-simple.json').read_text())['pairs']):
+              images=[Image.open('.'+p[s]).convert('RGB') for s in ['before','after']]
+              assert all(im.size==(1600,1200) for im in images)
+              box=(0,1024,1600,1200)
+              assert images[0].crop(box).tobytes()==images[1].crop(box).tobytes(),p['id']
+              canvas=Image.new('RGB',(1600,650),'white')
+              for x,label,im in zip([0,800],['BEFORE','AFTER'],images):
+                  canvas.paste(im.resize((800,600)),(x,50))
+                  ImageDraw.Draw(canvas).text((x+15,15),p['title']+' | '+label,fill='black')
+              canvas.save(out/f"pair-{i+1:02d}.jpg",quality=94)
+          PY
+      - name: Verify the public deployment after merge
+        if: github.event_name == 'push' && github.ref_name == 'main'
+        run: python tools/gallery/simple-live.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: egc-simple-page-${{ github.run_id }}
+          path: |
+            simple-page-review/
+            before-after.html
+          if-no-files-found: error
+      - name: Save only the rendered static page to this refresh branch
+        if: github.event_name == 'push' && startsWith(github.ref_name, 'feat/gallery-simple-')
+        env:
+          SOURCE_BRANCH: ${{ github.ref_name }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_BRANCH" =~ ^feat/gallery-simple-[a-zA-Z0-9-]+$ ]]
+          test "$(git ls-remote origin "refs/heads/$SOURCE_BRANCH" | cut -f1)" = "$SOURCE_SHA"
+          git add -- before-after.html
+          if git diff --cached --quiet; then exit 0; fi
+          git config user.name 'EGC Gallery Asset Bot'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Render the six-pair simple garage gallery static fallback'
+          git push origin "HEAD:refs/heads/$SOURCE_BRANCH"
