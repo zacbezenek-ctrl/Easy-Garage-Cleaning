@@ -2,13 +2,14 @@ import {createHash} from 'node:crypto';
 import {eq,sql} from 'drizzle-orm';
 import {getDb,schema} from '@egc/database';
 import {OperationsError,type Actor,type OperationsService} from '@egc/operations';
+import {inboundReviewCopy} from './inbound-triage.js';
 import {ReconciliationFailure,reconciliationDiagnostic,type ReconciliationDiagnostic,type ReconciliationStage} from './reconciliation-diagnostics.js';
 type Db=ReturnType<typeof getDb>;
 export type InboundPolicy={authority:'employee_hub';inboundResponse:{enabled:boolean;ownerId:string|null;dueMinutes:number|null;ownerSource:string;dueSource:string;blockedReason:string|null}};
 export function inboundRequestId(messageId:string){const h=createHash('sha256').update('inbound-action:'+messageId).digest('hex');return`${h.slice(0,8)}-${h.slice(8,12)}-5${h.slice(13,16)}-a${h.slice(17,20)}-${h.slice(20,32)}`;}
 export function inboundAction(message:{id:string;contactId:string;occurredAt:Date;body:string|null},policy:InboundPolicy){
   const p=policy.inboundResponse;if(policy.authority!=='employee_hub'||!p.enabled||!p.ownerId||!Number.isInteger(p.dueMinutes)||p.dueMinutes!<5)throw new OperationsError('inbound_policy_unresolved',409);
-  return{title:'Review and respond to customer reply',kind:'review_notes' as const,description:'A customer sent a message that has no later recorded human response. Review its context before responding; booking status does not close this obligation.',priority:'high' as const,assignedUserId:p.ownerId,dueAt:new Date(message.occurredAt.getTime()+p.dueMinutes!*60000).toISOString(),timeZone:'America/Denver',waitingOn:'EGC' as const,reviewAt:null,portalJobId:null,portalVisitId:null,contactId:message.contactId,jobId:null,completionCondition:'Record a verified human response or a documented decision after reviewing the customer message.',sourceEvidence:[{source:'message' as const,id:message.id,excerpt:(message.body||'[Customer message with no text body]').slice(0,2000)}],dependencies:[],draft:null,dedupeKey:'inbound_reply:'+message.id};
+  return{...inboundReviewCopy(message.body),kind:'review_notes' as const,assignedUserId:p.ownerId,dueAt:new Date(message.occurredAt.getTime()+p.dueMinutes!*60000).toISOString(),timeZone:'America/Denver',waitingOn:'EGC' as const,reviewAt:null,portalJobId:null,portalVisitId:null,contactId:message.contactId,jobId:null,sourceEvidence:[{source:'message' as const,id:message.id,excerpt:(message.body||'[Customer message with no text body]').slice(0,2000)}],dependencies:[],draft:null,dedupeKey:'inbound_reply:'+message.id};
 }
 export class InboundActionReconciler{
   private actor:Actor;
