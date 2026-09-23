@@ -3,7 +3,7 @@ import {processWebhookQueue,UnsupportedWebhook} from "./webhook-queue.js";
 import { and, asc, eq, lte,sql } from "drizzle-orm";
 import { getDb, schema } from "@egc/database";
 import { GhlClient, asDate, asRecord, asString, findArray } from "@egc/ghl";
-import { recomputeLeadState, callContactEvidence, isCallMessage } from "@egc/lead-audit";
+import { recomputeLeadState, normalizeCallMetadata, isCallMessage } from "@egc/lead-audit";
 import { startMetaConversionWorker } from "./meta-conversion-worker.js";
 import { startCustomerStateWorker } from './customer-state-worker.js';
 import {startProviderNotesWorker} from './provider-notes-worker.js';
@@ -356,8 +356,7 @@ async function persistMessage(rawValue: unknown): Promise<string | null> {
 
   if (isCallMessage(messageType)) {
     const meta = asRecord(msg.meta);
-    const durationRaw = msg.callDuration ?? msg.duration ?? meta.callDuration;
-    const duration = typeof durationRaw === "number" ? durationRaw : Number(durationRaw);
+    const callMetadata = normalizeCallMetadata(msg);
     const callStatus = asString(msg.callStatus) ?? asString(meta.callStatus) ?? asString(msg.status) ?? null;
     const normalizedCallStatus = callStatus?.toLowerCase() ?? "";
 
@@ -367,18 +366,18 @@ async function persistMessage(rawValue: unknown): Promise<string | null> {
       direction: messageDirection,
       actorType: actor,
       startedAt: occurredAt,
-      durationSeconds: Number.isFinite(duration) ? Math.round(duration) : null,
+      durationSeconds: callMetadata.durationSeconds,
       status: callStatus,
-      answered: callContactEvidence(msg).answered,
+      recordingUrl: callMetadata.recordingUrl,\n      answered: callMetadata.answered,
       raw: msg
     }).onConflictDoUpdate({
       target: schema.calls.providerMessageId,
       set: {
         direction: messageDirection,
         actorType: actor,
-        durationSeconds: Number.isFinite(duration) ? Math.round(duration) : null,
+        durationSeconds: callMetadata.durationSeconds,
         status: callStatus,
-        answered: callContactEvidence(msg).answered,
+        recordingUrl: callMetadata.recordingUrl,\n      answered: callMetadata.answered,
         raw: msg,
         updatedAt: new Date()
       }
