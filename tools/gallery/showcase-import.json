@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "release": "20260923-showcase-v1",
+  "provenance": "Generated design concepts selected from the six images in the current conversation. Not completed customer projects.",
+  "images": [
+    {"id":"park-and-work","title":"Room to park and work","caption":"Wall storage, a dedicated workstation, and an open center.","tags":"black metal shelves cabinets workbench bikes parking","source":"https://d2ol7oe51mr4n9.cloudfront.net/user_3JjgIOWHcjk4PKqJNGDT7ggmCDm/9fff9f6f-4b97-4497-a798-a4a7dff75b13.png","sha256":"7f7c791d662da48b182da4ca3534c7fc222a283644f90c3ef6492f3b3078cdb1"},
+    {"id":"wall-to-wall-storage","title":"Wall-to-wall storage","caption":"Coordinated bins, black metal shelving, and a place for the tools.","tags":"black metal shelves yellow bins workshop tools","source":"https://d2ol7oe51mr4n9.cloudfront.net/user_3JjgIOWHcjk4PKqJNGDT7ggmCDm/6353c955-25ae-45e6-b914-46dc6b64b4b6.png","sha256":"b1922c0700a7b1c0c29e1658365a1bedf0e3083c539a6a01b15eb7557e636701"},
+    {"id":"complete-garage-setup","title":"The complete garage setup","caption":"Storage and a workbench organized around everyday use.","tags":"black metal shelves cabinets bikes bicycle workbench","source":"https://d2ol7oe51mr4n9.cloudfront.net/user_3JjgIOWHcjk4PKqJNGDT7ggmCDm/29cfe1e5-0f8d-4e46-8c70-bd50d243080a.png","sha256":"1f03e9ba780b5fdcb3ca1034fdbe4b30f69f923fb7604078dc4228d397f91e05"},
+    {"id":"black-metal-workshop","title":"Built around your hobbies","caption":"A black-metal workshop layout with clear storage zones.","tags":"black metal shelves cabinets pegboard tools workshop bikes","source":"https://d2ol7oe51mr4n9.cloudfront.net/user_3JjgIOWHcjk4PKqJNGDT7ggmCDm/4e7287e4-3337-434b-a945-addedb76d061.png","sha256":"23a81d5c06d6ac271ec7e24774d024718fbd4a6898792a7cd32f9f7e9b620e82"},
+    {"id":"seasonal-family-storage","title":"A place for every season","caption":"Family gear and seasonal storage kept together and out of the way.","tags":"black metal shelves seasonal holiday family bikes bins","source":"https://d2ol7oe51mr4n9.cloudfront.net/user_3JjgIOWHcjk4PKqJNGDT7ggmCDm/40362cf9-71ae-4fed-9ecc-cfba754aafc9.png","sha256":"44231e2cbab0ac138980a7c8f7ef63b25284f873e594d929dc0a2238863f4b7c"},
+    {"id":"overhead-storage","title":"Storage above. Space below.","caption":"An overhead-storage concept with room for tools and bikes along the walls.","tags":"black metal shelves overhead racks ceiling cabinets bikes","source":"https://d2ol7oe51mr4n9.cloudfront.net/user_3JjgIOWHcjk4PKqJNGDT7ggmCDm/a3bbb341-41c3-464b-99b5-ab523d65b218.png","sha256":"6161cbc7ee3f70c2fc97461d857217306c11e03708ca5cf36d1a581edd85bc8d"}
+  ]
+}
