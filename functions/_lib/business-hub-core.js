@@ -53,10 +53,11 @@ export function requireJobId(value) {
   if (typeof value !== 'string' || !/^[A-Za-z0-9_-]{1,120}$/.test(value) || /^(secure_|_egc_)/.test(value)) throw fail(400, 'Enter a valid EGC project ID.');
   return value;
 }
-export function requireLinkedJob(account, jobId, job) {
+export function requireLinkedJob(account, jobId, job, { allowUnreleased = false } = {}) {
   requireJobId(jobId);
   const link = (account.projects || []).find(p => p.jobId === jobId && p.active !== false);
   if (!link || !job || job.id !== jobId || job.businessAccountId !== account.id || job.businessPropertyId !== link.propertyId) throw fail(403, 'This project is not shared with this business account.');
+  if (!allowUnreleased && !projectReleased(job)) throw fail(409, 'EGC has not released this project quote yet. Contact the account team.');
   return link;
 }
 export function businessActor(accountId, member) {
@@ -68,12 +69,19 @@ export function parseBusinessActor(actorId) {
   if (!match) throw fail(403, 'Business access is invalid.');
   return { accountId: match[1], memberId: match[2], version: Number(match[3]) };
 }
+// A prior sentAt timestamp or approval cannot publish a newly drafted revision.
+export function projectReleased(job) {
+  const statuses = [job?.estimate?.status, job?.quoteStatus].filter(Boolean).map(value => String(value).toLowerCase());
+  if (statuses.some(value => ['draft', 'void', 'superseded', 'withdrawn', 'not_ready', 'not_issued'].includes(value))) return false;
+  const state = String(job?.customerApproval?.status || job?.estimate?.status || job?.quoteStatus || '').toLowerCase();
+  return Boolean(job?.estimate?.sentAt || ['sent', 'approved', 'accepted'].includes(state));
+}
 export function projectView(account, link, job, finance, needsReview) {
-  try { requireLinkedJob(account, link.jobId, job); }
+  try { requireLinkedJob(account, link.jobId, job, { allowUnreleased: true }); }
   catch { return { jobId: link.jobId, propertyId: link.propertyId, unavailable: true }; }
   const e = job.estimate || {}, invoice = job.invoice || {};
   const quoteState = String(job.customerApproval?.status || e.status || job.quoteStatus || 'not_issued');
-  const released = Boolean(e.sentAt || ['sent', 'approved', 'accepted'].includes(quoteState));
+  const released = projectReleased(job);
   const invoiceIssued = Boolean(invoice.number && !['draft', 'void', 'superseded'].includes(invoice.status || 'draft'));
   const receipt = job.payment?.verified === true && /^https:\/\/pay\.stripe\.com\/receipts\//.test(job.payment?.receiptUrl || '') ? job.payment.receiptUrl : '';
   return {
