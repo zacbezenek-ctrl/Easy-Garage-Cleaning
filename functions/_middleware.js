@@ -1,3 +1,5 @@
+import { enforceBusinessProjectWrite } from './_lib/business-hub-write-guard.js';
+
 const PRIVATE_PATH = /^(?:\/(?:auth-verifier|contracts|docs|scripts|tests)(?:\/|$)|\/(?:sop|tyler-contract)(?:\.html)?\/?$|\/EGC-Lead-System-SOP\.pdf$|\/(?:package(?:-lock)?\.json|README\.md|firebase\.json|firestore\.rules|\.firebaserc|\.env(?:\.example)?|_[^/]+)(?:$|\/))/i;
 
 const CSP = [
@@ -31,7 +33,7 @@ export async function onRequest(context) {
   const { pathname } = new URL(context.request.url);
   if (PRIVATE_PATH.test(decodeURIComponent(pathname))) return blockedResponse();
 
-  const upstream = await context.next();
+  const upstream = await enforceBusinessProjectWrite(context.request, context.env) || await context.next();
   const explicit404 = pathname === '/404' || pathname === '/404.html';
   const response = new Response(upstream.body, {
     status: explicit404 ? 404 : upstream.status,
@@ -64,8 +66,24 @@ export async function onRequest(context) {
     response.headers.set('Referrer-Policy', 'no-referrer');
     response.headers.set('X-Frame-Options', 'DENY');
   }
+  if (pathname.startsWith('/business-hub') || pathname === '/api/business-hub') {
+    response.headers.set('Cache-Control', 'no-store');
+    response.headers.set('X-Robots-Tag', 'noindex, nofollow, noarchive');
+    response.headers.set('Referrer-Policy', 'no-referrer');
+    response.headers.set('X-Frame-Options', 'DENY');
+    response.headers.set('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; form-action 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'");
+  }
   if (upstream.status === 404 || explicit404) {
     response.headers.set('X-Robots-Tag', 'noindex, nofollow');
+  }
+  // Refresh a formerly immutable shared script URL and add a discoverable
+  // business entry in server-rendered navigation, even with JavaScript disabled.
+  if (response.status === 200 && response.headers.get('Content-Type')?.includes('text/html') && typeof HTMLRewriter !== 'undefined') {
+    return new HTMLRewriter()
+      .on('script[src^="/site-enhancements.js"]', { element(el) { el.setAttribute('src', '/site-enhancements.js?v=20260923business'); } })
+      .on('nav.nav .nav-links', { element(el) { el.setAttribute('style', 'flex-wrap:wrap;gap:8px 14px'); el.append('<li><a href="/business-hub">Business Hub</a></li>', { html: true }); } })
+      .on('#nav-drawer .drawer-cta', { element(el) { el.before('<a href="/business-hub" class="drawer-link-row">Business Client Hub</a>', { html: true }); } })
+      .transform(response);
   }
   return response;
 }

@@ -1,0 +1,7 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { onRequest } from '../functions/_middleware.js';
+const run=path=>onRequest({request:new Request('https://easygaragecleaning.com'+path),next:async()=>new Response('body',{headers:{'Content-Type':'text/html'}})});
+test('business shell and API responses stay private and uncacheable',async()=>{for(const path of ['/business-hub','/business-hub.html','/api/business-hub']){const r=await run(path);assert.equal(r.headers.get('Cache-Control'),'no-store');assert.equal(r.headers.get('Referrer-Policy'),'no-referrer');assert.equal(r.headers.get('X-Frame-Options'),'DENY');assert.match(r.headers.get('Content-Security-Policy'),/script-src 'self';/);}});
+test('internal implementation docs remain blocked',async()=>{const r=await run('/docs/business-client-hub.md');assert.equal(r.status,404);});
+test('public HTML exposes business entry and refreshes legacy script URL',async()=>{const handlers=[];globalThis.HTMLRewriter=class{on(selector,handler){handlers.push([selector,handler]);return this;}transform(response){return response;}};try{await run('/book');const script=handlers.find(([s])=>s.startsWith('script'))[1];let src;script.element({setAttribute:(k,v)=>{src=v;}});assert.equal(src,'/site-enhancements.js?v=20260923business');const nav=handlers.find(([s])=>s==='nav.nav .nav-links')[1];let entry;nav.element({setAttribute:()=>{},append:v=>{entry=v;}});assert.match(entry,/href="\/business-hub"/);}finally{delete globalThis.HTMLRewriter;}});
