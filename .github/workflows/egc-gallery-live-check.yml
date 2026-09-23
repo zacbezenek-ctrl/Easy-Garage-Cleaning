@@ -1,0 +1,37 @@
+name: EGC Gallery Live Check
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'before-after*'
+      - 'images/before-after/**'
+      - 'tools/gallery/check_live.py'
+      - '.github/workflows/egc-gallery-live-check.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: egc-gallery-live-main
+  cancel-in-progress: true
+
+jobs:
+  verify-public-release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Check live page, approved manifest, links and image hashes
+        run: python tools/gallery/check_live.py
+      - name: Preserve actual public release evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: egc-gallery-live-${{ github.run_id }}
+          path: gallery-live-report.json
+          if-no-files-found: warn
+          retention-days: 30
