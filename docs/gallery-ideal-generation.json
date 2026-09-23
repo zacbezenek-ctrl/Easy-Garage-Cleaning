@@ -6,10 +6,11 @@
   "reportedModel": "gpt_image_2_5",
   "reviewStatus": "pending-visual-review",
   "sourceBase": "https://d8j0ntlcm91z4.cloudfront.net/user_3JjgIOWHcjk4PKqJNGDT7ggmCDm/",
-  "brief": "Much messier believable before scenes; ideal attainable EGC after scenes with abundant matte black steel open shelving, matching black totes with yellow lids, wall-mounted tools/bikes, and clear parking/door access. Preserve exact architecture, camera and existing concrete; cleaning only, no flooring replacement, epoxy, paint or remodel. These remain fictional design concepts, not customer results.",
+  "brief": "Much messier believable before scenes; ideal attainable EGC after scenes with abundant matte black steel open shelving, matching black totes with yellow lids, wall-mounted tools/bikes, and clear parking/door access. Preserve architecture, camera and existing concrete; cleaning only, no flooring replacement, epoxy, paint or remodel. These remain fictional design concepts, not customer results.",
+  "rejectedOutputs": [{"jobId":"1606723b-355e-48a2-9d15-a58df8261e0b","reason":"Implausible four-high horizontal bicycle stack; replaced with floor-level bicycle storage."}],
   "pairs": [
     {"id":"01-family-garage","beforeJob":"ef560540-fbcb-482e-9d7d-4d8d7ce131fa","beforeTime":"192446","afterJob":"2a7e8e71-6a45-4506-90a0-b6df1b4512da","afterTime":"192539"},
-    {"id":"03-four-bikes","beforeJob":"c74e854f-007e-4507-b532-8d537ce100a5","beforeTime":"192446","afterJob":"1606723b-355e-48a2-9d15-a58df8261e0b","afterTime":"192539"},
+    {"id":"03-four-bikes","beforeJob":"c74e854f-007e-4507-b532-8d537ce100a5","beforeTime":"192446","afterJob":"951c8c03-2641-487f-9359-23bcf3c2e800","afterTime":"193008"},
     {"id":"04-working-bench","beforeJob":"f02eaf4e-3a23-48f3-b257-db449199a244","beforeTime":"192446","afterJob":"0db15d3f-4969-48e8-9499-65309c4247a6","afterTime":"192539"},
     {"id":"09-moving-boxes","beforeJob":"5db7e46d-7976-4430-b9e8-d0f21a59f5e4","beforeTime":"192617","afterJob":"ecd56e40-a0a2-4236-ba28-f424f49fc1a9","afterTime":"192705"},
     {"id":"23-winter-parking","beforeJob":"53ac7d59-3848-4c18-b640-dbf9a194bcd4","beforeTime":"192618","afterJob":"60b1b0c1-4581-49a0-ab1c-b17f0bb3089e","afterTime":"192705"},
