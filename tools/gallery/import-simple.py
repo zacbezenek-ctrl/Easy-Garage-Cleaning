@@ -31,8 +31,6 @@ def download(url):
             assert len(data) <= 45_000_000
             image = ImageOps.exif_transpose(Image.open(io.BytesIO(data))).convert('RGB')
             image.load()
-            # Provider rounds 4:3 to model-supported dimensions (2336 x 1744).
-            # Reject an unrelated ratio; normalize both members together below.
             assert 1200 <= image.width <= 8192 and abs(image.width / image.height - 4/3) < .015
             return image, hashlib.sha256(data).hexdigest()
         except Exception:
@@ -47,9 +45,10 @@ for index, item in enumerate(manifest['pairs']):
     after, after_hash = download(item['afterUrl'])
     assert before.size == after.size
     width, height = after.size
-    # All bottom-quarter crack branches, stains, joints and chips are identical.
-    # The reference-based edits above this region retain the room and clutter.
-    begin, end = int(height * .72), int(height * .75)
+    # Lock unobstructed foreground concrete only, never copy new furniture.
+    # In the narrow garage the new shelf extends farther toward the camera.
+    start_fraction, end_fraction = (.82, .85) if item['id'] == 'single-car' else (.72, .75)
+    begin, end = int(height * start_fraction), int(height * end_fraction)
     mask = Image.new('L', (width, height), 0)
     draw = ImageDraw.Draw(mask)
     for y in range(begin, end):
