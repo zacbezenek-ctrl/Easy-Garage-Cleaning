@@ -46,23 +46,21 @@ jobs:
         env:
           NODE_PATH: /tmp/egc-simple-tools/node_modules
         run: node tools/gallery/simple-browser.cjs
-      - name: Inspect exported pairs and verify unchanged foreground pixels
+      - name: Inspect photographic pair
         run: |
           python - <<'PY'
-          import json
           from pathlib import Path
           from PIL import Image, ImageDraw
           out=Path('simple-page-review'); out.mkdir(exist_ok=True)
-          for i,p in enumerate(json.loads(Path('gallery-simple.json').read_text())['pairs']):
-              images=[Image.open('.'+p[s]).convert('RGB') for s in ['before','after']]
-              assert all(im.size==(1600,1200) for im in images)
-              box=(0,1024,1600,1200)
-              assert images[0].crop(box).tobytes()==images[1].crop(box).tobytes(),p['id']
-              canvas=Image.new('RGB',(1600,650),'white')
-              for x,label,im in zip([0,800],['BEFORE','AFTER'],images):
-                  canvas.paste(im.resize((800,600)),(x,50))
-                  ImageDraw.Draw(canvas).text((x+15,15),p['title']+' | '+label,fill='black')
-              canvas.save(out/f"pair-{i+1:02d}.jpg",quality=94)
+          before=Image.open('images/garage-before.webp').convert('RGB')
+          after=Image.open('images/garage-after.webp').convert('RGB')
+          assert before.width > 500 and before.height > 300
+          assert after.width > 500 and after.height > 300
+          canvas=Image.new('RGB',(1600,650),'white')
+          canvas.paste(before.copy().resize((800,600)),(0,50))
+          canvas.paste(after.copy().resize((800,600)),(800,50))
+          d=ImageDraw.Draw(canvas); d.text((15,15),'BEFORE',fill='black'); d.text((815,15),'AFTER',fill='black')
+          canvas.save(out/'photographic-pair.jpg',quality=94)
           PY
       - name: Verify the public deployment after merge
         if: github.event_name == 'push' && github.ref_name == 'main'
@@ -88,5 +86,5 @@ jobs:
           if git diff --cached --quiet; then exit 0; fi
           git config user.name 'EGC Gallery Asset Bot'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git commit -m 'Render the six-pair simple garage gallery static fallback'
+          git commit -m 'Render the photographic garage gallery static fallback'
           git push origin "HEAD:refs/heads/$SOURCE_BRANCH"
