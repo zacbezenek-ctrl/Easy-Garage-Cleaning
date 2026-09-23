@@ -12,6 +12,18 @@ type Db=ReturnType<typeof getDb>;
 type Tx=Parameters<Parameters<Db["transaction"]>[0]>[0];
 type Task=typeof schema.tasks.$inferSelect;
 const active=["open","in_progress","blocked"];
+const promisePrefix="outbound_media_promise:";
+function deliveredMediaCount(raw:Record<string,unknown>) {
+  const containers=[raw.attachments,raw.messageAttachments,raw.files,raw.media,raw.mediaAttachments].filter(Array.isArray) as unknown[][];
+  const direct=[raw.attachment,raw.mediaUrl,raw.fileUrl].filter(v=>v!==undefined);
+  const values=[...containers.flat(),...direct];
+  return values.filter(value=>{
+    if(typeof value==="string")return /\.(?:jpe?g|png|gif|webp|heic|mp4|mov|webm)(?:$|[?#])/i.test(value);
+    if(!value||typeof value!=="object"||Array.isArray(value))return false;
+    const row=value as Record<string,unknown>,type=String(row.type??row.contentType??row.mimeType??"").toLowerCase(),name=String(row.name??row.filename??row.url??row.href??"").toLowerCase();
+    return /^(?:image|video)\//.test(type)||/\.(?:jpe?g|png|gif|webp|heic|mp4|mov|webm)(?:$|[?#])/.test(name);
+  }).length;
+}
 export interface PortalJobReference {
   id:string; revision:string; type:string; highlevelContactId:string|null;
   sourceWalkthroughId:string|null; customer:string|null; status:string;
@@ -331,6 +343,17 @@ export class OperationsService {
       if(until<=now)throw new OperationsError("snooze_must_be_future",400);
       patch= {...patch,...(["customer","provider"].includes(task.waitingOn)?{reviewAt:until}:{dueAt:until})};
       note={reason:command.reason,until};
+    } else if(command.command==="task.complete_promise_from_message") {
+      if(!task.dedupeKey?.startsWith(promisePrefix)||!task.contactId)throw new OperationsError("promise_task_required",409);
+      const originalId=task.dedupeKey.slice(promisePrefix.length);
+      const [original]=await tx.select().from(schema.messages).where(and(eq(schema.messages.id,originalId),eq(schema.messages.contactId,task.contactId))).limit(1);
+      if(!original||original.direction!=="outbound"||original.actorType!=="human")throw new OperationsError("promise_source_message_unverified",409);
+      const [message]=await tx.select().from(schema.messages).where(and(eq(schema.messages.id,command.messageId),eq(schema.messages.contactId,task.contactId))).limit(1);
+      if(!message||message.direction!=="outbound"||message.actorType!=="human"||message.occurredAt<=original.occurredAt)throw new OperationsError("promise_delivery_message_mismatch",409);
+      const status=String(message.raw?.status??message.raw?.messageStatus??"").toLowerCase(),mediaCount=deliveredMediaCount(message.raw);
+      if(!["delivered","read"].includes(status)||!message.providerId||mediaCount<1)throw new OperationsError("promise_delivery_not_verified",409);
+      const proof={kind:"verified_provider_media_delivery",taskId:task.id,sourcePromiseMessageId:original.id,messageId:message.id,providerMessageId:message.providerId,deliveryStatus:status,mediaAttachmentCount:mediaCount,occurredAt:message.occurredAt.toISOString(),verifiedAt:now.toISOString(),actorId:actor.id};
+      patch={...patch,status:"completed",completedAt:now,completionEvidence:[...task.completionEvidence,proof]};note=proof;
     } else if(command.command==="task.complete_from_message") {
       if(task.kind!=="followup_message"||!task.draftPayload||!task.contactId||task.status==="blocked"||!["approved","invalidated"].includes(task.approvalStatus))throw new OperationsError("message_task_not_ready_for_completion",409);
       const [execution]=await tx.select().from(schema.communicationExecutions).where(and(eq(schema.communicationExecutions.id,command.executionId),eq(schema.communicationExecutions.contactId,task.contactId))).for("update");
@@ -359,6 +382,7 @@ export class OperationsService {
       await tx.execute(sql`select set_config('egc.communication_completion',${task.id},true)`);
       patch={...patch,status:"completed",completedAt:now,completionEvidence:[...task.completionEvidence,proof]};note={...proof,externalExecution:false};
     } else if(command.command==="task.complete") {
+      if(task.dedupeKey?.startsWith(promisePrefix))throw new OperationsError("promise_requires_provider_delivery_evidence",409);
       assertCompletion(task.kind);
       if(task.dependencies.length) {
         const dependencies=await tx.select({status:schema.tasks.status}).from(schema.tasks).where(and(eq(schema.tasks.workspaceId,actor.workspace),inArray(schema.tasks.id,task.dependencies)));
