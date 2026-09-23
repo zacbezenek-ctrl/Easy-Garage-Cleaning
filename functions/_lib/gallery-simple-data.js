@@ -26,9 +26,9 @@ export const gallerySimplePairs = [
     "customerProject": false,
     "width": 1600,
     "height": 1200,
-    "before": "/images/gallery-simple/single-car-before-9441b1f5b6.webp",
-    "beforeThumbnail": "/images/gallery-simple/single-car-before-9441b1f5b6-768.webp",
-    "beforeSha256": "9441b1f5b6fd568bfc1451ceacbe2cc172575d8297140ba74d3a97b922c209ee",
+    "before": "/images/gallery-simple/single-car-before-bf2715ce2c.webp",
+    "beforeThumbnail": "/images/gallery-simple/single-car-before-bf2715ce2c-768.webp",
+    "beforeSha256": "bf2715ce2c49ea3c366d7899af85a4e775e845ecafecc51ffd1f6170c9175e6e",
     "after": "/images/gallery-simple/single-car-after-c0515ae76c.webp",
     "afterThumbnail": "/images/gallery-simple/single-car-after-c0515ae76c-768.webp",
     "afterSha256": "c0515ae76c6e3f34480672d0d50b16ef9024a8c197dc1df245a469fc6e9ded68"
