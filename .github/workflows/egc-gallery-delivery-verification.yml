@@ -23,8 +23,7 @@ jobs:
         run: |
           npm install --prefix /tmp/egc-delivery --no-package-lock playwright@1.55.0
           /tmp/egc-delivery/node_modules/.bin/playwright install --with-deps chromium
-          python -m pip install Pillow==11.3.0
-      - name: Exercise production gallery without submitting forms or events
+      - name: Exercise actual public page without submitting forms or events
         env:
           NODE_PATH: /tmp/egc-delivery/node_modules
         run: |
@@ -38,7 +37,8 @@ jobs:
           await check('Anonymous production page returns HTTP 200 and 30 designs',async()=>{assert.equal(response.status(),200);await page.waitForSelector('.showcase-card');assert.equal(await page.locator('#gallery .card').count(),30);assert.equal(await page.locator('.showcase-card').count(),6);assert.equal(await page.locator('#count').textContent(),'30 designs');});
           await check('54 displayed source images decode successfully',async()=>{const images=page.locator('#gallery img');assert.equal(await images.count(),54);for(const img of await images.all()){await img.evaluate(e=>{e.loading='eager';});await img.evaluate(e=>e.decode());assert(await img.evaluate(e=>e.naturalWidth>=300&&e.naturalHeight>=200));}});
           await check('Featured designs remain full compositions',async()=>{for(const img of await page.locator('.showcase-photo').all()){let v=await img.evaluate(e=>({w:e.naturalWidth,h:e.naturalHeight,r:e.getBoundingClientRect().toJSON()}));assert(Math.abs(v.w/v.h-4/3)<.005);assert(Math.abs(v.r.width/v.r.height-4/3)<.02);}});
-          await check('Search, empty state and reset',async()=>{await page.locator('#search').fill('black metal');assert.equal(await page.locator('#gallery .card:visible').count(),6);await page.locator('#search').fill('zz-no-such-garage');assert(await page.locator('#empty').isVisible());await page.locator('#search').fill('');assert.equal(await page.locator('#gallery .card:visible').count(),30);});
+          await check('Search matches six featured plus eight storage scenes; empty state and reset work',async()=>{await page.locator('#search').fill('black metal');assert.equal(await page.locator('#gallery .card:visible').count(),14);assert.equal(await page.locator('#gallery .showcase-card:visible').count(),6);assert.equal(await page.locator('#gallery .card:not(.showcase-card):visible').count(),8);assert.equal(await page.locator('#count').textContent(),'14 designs');await page.locator('#search').fill('zz-no-such-garage');assert(await page.locator('#empty').isVisible());assert.equal(await page.locator('#gallery .card:visible').count(),0);await page.locator('#search').fill('');assert.equal(await page.locator('#gallery .card:visible').count(),30);assert.equal(await page.locator('#count').textContent(),'30 designs');});
+          await page.locator('#search').fill('');
           const card=page.locator('.card:not(.showcase-card)').first();
           await check('Before/After buttons and native keyboard slider',async()=>{await card.locator('[data-position="100"]').click();assert.equal(await card.locator('input').inputValue(),'100');await card.locator('[data-position="0"]').click();assert.equal(await card.locator('input').inputValue(),'0');await card.locator('input').focus();await page.keyboard.press('End');assert.equal(await card.locator('input').inputValue(),'100');await page.keyboard.press('Home');assert.equal(await card.locator('input').inputValue(),'0');await card.locator('[data-position="50"]').click();});
           await check('Direct pointer dragging changes comparison',async()=>{let stage=card.locator('.image-stage');await stage.scrollIntoViewIfNeeded();let b=await stage.boundingBox();await page.mouse.move(b.x+b.width*.75,b.y+b.height*.5);await page.mouse.down();await page.mouse.move(b.x+b.width*.25,b.y+b.height*.5,{steps:8});await page.mouse.up();const n=Number(await card.locator('input').inputValue());assert(n>=23&&n<=27);await card.locator('[data-position="50"]').click();});
@@ -47,34 +47,14 @@ jobs:
           for(const width of [1440,390,320])await check('No horizontal overflow at '+width+'px',async()=>{await page.setViewportSize({width,height:1050});assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));});
           await check('Concept context and unchanged booking links',async()=>{assert((await page.locator('.hero-copy .concept-note').textContent()).includes('Concept'));const links=await page.locator('[data-cta]').evaluateAll(es=>es.map(e=>e.getAttribute('href')));assert(links.length>=2&&links.every(h=>h==='/book'));const book=await context.request.get(origin+'/book');assert.equal(book.status(),200);});
           await check('Homepage discovery, canonical URL and sitemap',async()=>{assert.equal(await page.locator('link[rel="canonical"]').getAttribute('href'),origin+'/before-after');const home=await context.request.get(origin+'/');assert.equal(home.status(),200);assert((await home.text()).includes('href="/before-after"'));const sitemap=await context.request.get(origin+'/sitemap.xml');assert.equal(sitemap.status(),200);assert((await sitemap.text()).includes('<loc>'+origin+'/before-after</loc>'));});
-          await page.setViewportSize({width:1440,height:1500});await page.evaluate(()=>scrollTo(0,0));await page.screenshot({path:'gallery-delivery/desktop.png'});
-          await page.setViewportSize({width:390,height:1600});await page.evaluate(()=>scrollTo(0,0));await page.screenshot({path:'gallery-delivery/mobile.png'});
+          await page.setViewportSize({width:1440,height:1500});await page.evaluate(()=>scrollTo({top:0,behavior:'instant'}));await page.screenshot({path:'gallery-delivery/desktop.png'});
+          await page.setViewportSize({width:390,height:1600});await page.evaluate(()=>scrollTo({top:0,behavior:'instant'}));await page.screenshot({path:'gallery-delivery/mobile.png'});
           await check('No browser runtime errors',async()=>assert.deepEqual(errors,[]));
           fs.writeFileSync('gallery-delivery/public-browser-results.json',JSON.stringify({checkedAt:new Date().toISOString(),url:origin+'/before-after',expectedSource:'2d4f5d541d09ce6fd5860a932720e3a0fb10604d',results},null,2));console.log(JSON.stringify(results,null,2));await browser.close();if(results.some(x=>!x.passed))process.exitCode=1;
           })().catch(e=>{console.error(e);process.exitCode=1;});
           JS
           node /tmp/egc-delivery/verify.cjs
-      - name: Export two completed correction candidates for visual inspection only
-        if: always()
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-          from urllib.request import urlopen
-          from PIL import Image,ImageOps,ImageDraw
-          import json
-          out=Path('gallery-delivery');out.mkdir(exist_ok=True)
-          jobs=[('11-sports-family','a0a9b128-7e80-41ea-b6b1-6c95b4ce41f2','hf_20260923_210804_a0a9b128-7e80-41ea-b6b1-6c95b4ce41f2.png'),('21-entry-zone','a70ee315-c832-464c-bbf5-5a62f8c1290b','hf_20260923_210805_a70ee315-c832-464c-bbf5-5a62f8c1290b.png')]
-          for scene,job,name in jobs:
-              data=urlopen('https://d8j0ntlcm91z4.cloudfront.net/user_3JjgIOWHcjk4PKqJNGDT7ggmCDm/'+name,timeout=40).read()
-              target=out/(scene+'-candidate.png');target.write_bytes(data)
-              before=list(Path('gallery-preview-assets/images').glob(scene+'-before-*.webp'))
-              if before:
-                  sheet=Image.new('RGB',(1600,635),'white');draw=ImageDraw.Draw(sheet)
-                  for n,p in enumerate([before[0],target]):
-                      image=Image.open(p).convert('RGB');image=ImageOps.contain(image,(800,600));sheet.paste(image,(800*n,35));draw.text((800*n+15,10),scene+(' BEFORE' if n==0 else ' CORRECTED CONCEPT'),fill='black')
-                  sheet.save(out/(scene+'-review.jpg'),quality=92)
-          PY
-      - name: Preserve source and actual delivery evidence
+      - name: Preserve actual delivery evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -82,12 +62,5 @@ jobs:
           path: |
             gallery-delivery/
             showcase-live-report.json
-            before-after.html
-            gallery-live.css
-            gallery-showcase.json
-            gallery-preview-assets/gallery.js
-            gallery-preview-assets/gallery.css
-            tools/gallery/
-            functions/_lib/*gallery*
           if-no-files-found: error
           retention-days: 30
