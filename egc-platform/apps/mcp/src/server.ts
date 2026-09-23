@@ -2847,16 +2847,16 @@ export function buildServer() {
     if(!row)return textResult({error:"appointment_operation_not_found"});
     return textResult({operationId:row.id,kind:row.kind,status:row.status,providerAppointmentId:row.providerAppointmentId,
       attemptCount:row.attemptCount,lastError:row.lastError,leaseExpiresAt:row.leaseExpiresAt,context:asRecord(row.request.context),
-      guidance:row.status==="unknown"?"Reconcile this operation. No provider write will be repeated.":null});
+      guidance:row.status==="unknown"?"Reconcile this operation. No provider write will be repeated. If an exact provider event is independently observed, appointments.reconcile can verify and bind that ID to this original operation.":null});
   });
   server.registerTool("appointments.reconcile", {
-    description:"Reconcile one durable booking operation using provider READS only. Verifies exact fields and mirrors confirmed state locally; never creates, updates, cancels, deletes or sends notifications in GHL.",
-    inputSchema:z.object({operationId:z.string().uuid()}),...writeToolMetadata
-  },async({operationId})=>{
+    description:"Reconcile one durable booking operation using provider READS only. Verifies exact fields and mirrors confirmed state locally; never creates, updates, cancels, deletes or sends notifications in GHL. If an exact provider appointment ID was independently observed, pass it to bind that record to the original operation after full contact/calendar/time/detail verification.",
+    inputSchema:z.object({operationId:z.string().uuid(),providerAppointmentId:z.string().min(1).max(200).optional()}),...writeToolMetadata
+  },async({operationId,providerAppointmentId})=>{
     try {
       const store=postgresAppointmentStore(),op=await store.get(operationId);
       if(!op)return textResult({error:"appointment_operation_not_found"});
-      const verified=await reliableAppointments().reconcile(operationId),context=asRecord(op.request.context);
+      const verified=await reliableAppointments().reconcile(operationId,providerAppointmentId),context=asRecord(op.request.context);
       const contactId=asString(context.contactId),localId=asString(context.localAppointmentId);
       if(!contactId)return textResult({error:"appointment_operation_contact_missing",operationId});
       const appointment=await syncAppointmentFromGhl(verified.event,contactId,localId??undefined);
