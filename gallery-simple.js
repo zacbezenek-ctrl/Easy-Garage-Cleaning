@@ -44,12 +44,13 @@
  function filter() {
   var query = search ? search.value.trim().toLowerCase() : '';
   var count = 0;
-  grid.querySelectorAll('.card').forEach(function (card) {
+  grid.querySelectorAll('.ba-card').forEach(function (card) {
    card.hidden = !(card.dataset.search || '').includes(query);
    if (!card.hidden) count++;
   });
-  document.getElementById('count').textContent = count + ' before & after example' + (count === 1 ? '' : 's');
-  document.getElementById('empty').hidden = count !== 0;
+  var countEl=document.getElementById('count'),empty=document.getElementById('empty');
+  if(countEl)countEl.textContent=count+' before & after example'+(count===1?'':'s');
+  if(empty)empty.hidden=count!==0;
  }
  grid.querySelectorAll('.comparison').forEach(wire);
  if (search) {
@@ -61,7 +62,7 @@
   grid.addEventListener('click', function (event) {
    var button = event.target.closest('[data-expand]');
    if (!button || !grid.contains(button)) return;
-   var card = button.closest('.card');
+   var card = button.closest('.ba-card');
    var copy = card.querySelector('.comparison').cloneNode(true);
    copy.querySelectorAll('img').forEach(function (image) {
     image.loading = 'eager';
@@ -87,4 +88,15 @@
   });
  }
  filter();
+}());
+
+(function(){
+  var toggle=document.querySelector('.nav-toggle'),drawer=document.getElementById('nav-drawer'),overlay=document.getElementById('nav-overlay'),close=document.querySelector('.nav-drawer-close');
+  if(!toggle||!drawer)return;
+  function setOpen(open){toggle.setAttribute('aria-expanded',String(open));drawer.classList.toggle('open',open);drawer.setAttribute('aria-hidden',String(!open));if(overlay){overlay.classList.toggle('open',open);overlay.setAttribute('aria-hidden',String(!open));}document.body.classList.toggle('nav-open',open);}
+  toggle.addEventListener('click',function(){setOpen(toggle.getAttribute('aria-expanded')!=='true');});
+  if(close)close.addEventListener('click',function(){setOpen(false);});
+  if(overlay)overlay.addEventListener('click',function(){setOpen(false);});
+  drawer.querySelectorAll('a').forEach(function(a){a.addEventListener('click',function(){setOpen(false);});});
+  document.addEventListener('keydown',function(e){if(e.key==='Escape')setOpen(false);});
 }());

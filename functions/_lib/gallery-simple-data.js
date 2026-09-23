@@ -1,5 +1,5 @@
 // Public gallery uses existing photographic site assets only.
-export const gallerySimpleVersion = "20260923-photo-v2";
+export const gallerySimpleVersion = "20260923-site-v3";
 export const gallerySimplePairs = [
   {
     "id": "garage-photo-pair",
