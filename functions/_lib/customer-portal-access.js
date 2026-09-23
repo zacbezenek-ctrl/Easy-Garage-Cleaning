@@ -1,11 +1,12 @@
 import { readJob } from './firestore-job.js';
 import { sameOperationalProperty, verifiedAccountRoot } from './dispatch-lineage.js';
+import { readBusinessProjectViewer } from './business-hub-store.js';
 
 function accessError(status, code, message) {
   return Object.assign(new Error(message), { status, code });
 }
 
-export async function readCustomerPortalContext(env, session, {read=readJob}={}) {
+export async function readCustomerPortalContext(env, session, {read=readJob, businessRead=readBusinessProjectViewer}={}) {
   if (!session) throw accessError(401, 'CUSTOMER_PORTAL_AUTH_REQUIRED', 'Open the private link from Easy Garage Cleaning');
   let job, accountJob, memoryJob;
   const cache=new Map();
@@ -18,6 +19,20 @@ export async function readCustomerPortalContext(env, session, {read=readJob}={})
     job = await load(session.jobId);
     if (!job) throw accessError(404, 'CUSTOMER_PORTAL_JOB_UNAVAILABLE', 'This job is no longer available');
     if(job.id!==session.jobId)throw accessError(403,'CUSTOMER_PORTAL_ACCOUNT_INVALID','This project account link needs review by Easy Garage Cleaning.');
+    // A company grant is for this exact project, not the homeowner's other
+    // properties, family collaborators, membership or account-level wallet.
+    if (String(session.actorId || '').startsWith('biz_')) {
+      let viewer;
+      try { viewer = await businessRead(env, session.actorId, job); }
+      catch (error) { throw accessError(error.status || 503, 'CUSTOMER_PORTAL_BUSINESS_ACCESS', error.publicMessage || 'Business project access could not be verified.'); }
+      const person = { id: session.actorId, name: viewer.name, role: 'Business account', status: 'active', permissions: viewer.permissions };
+      return {
+        session: { ...session, permissions: viewer.permissions }, accountJobId: job.id,
+        jobUpdateTime: job.__updateTime || '', accountUpdateTime: job.__updateTime || '',
+        memoryJobId: job.id, memoryUpdateTime: job.__updateTime || '',
+        job: { ...job, notes: '', customerMemory: job.customerMemory || {}, customerCollaborators: [person], giftWallet: { cards: [], redemptions: [] }, garageGuard: {}, membership: {} },
+      };
+    }
     const accountJobId = job.customerAccountOwnerJobId || job.id;
     accountJob = accountJobId !== job.id ? await verifiedAccountRoot(load,accountJobId,job.customerId) : job;
     // Recurring jobs can hold an old display copy of the authorized people.
