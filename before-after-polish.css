@@ -1,7 +1,7 @@
 /* Additive gallery-only polish; existing site styles are untouched. */
 .skip{position:absolute;clip-path:inset(50%);width:1px;height:1px;overflow:hidden;white-space:nowrap;transform:none}
 .skip:focus{position:fixed;clip-path:none;width:auto;height:auto;overflow:visible;transform:none}
-.concept-pair img{aspect-ratio:4/3}
+.concept-pair img{height:auto;aspect-ratio:4/3}
 .concept-open{width:100%;margin-top:12px;background:transparent;color:var(--ink);border-color:var(--line);font-size:12px;min-height:44px}
 .concept-open:hover{background:var(--paper);color:var(--ink)}
 #concept-dialog{width:min(1140px,96vw)}
