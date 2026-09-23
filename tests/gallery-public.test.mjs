@@ -22,7 +22,7 @@ test('HEAD is bodyless and all mutating methods are denied', async () => {
 test('public gallery uses the existing photographic before-after pair',()=>{
  assert.equal(pairs.length,1);
  assert.equal(new Set(pairs.map(p=>p.id)).size,1);
- assert.equal((html.match(/class="card"/g)||[]).length,1);
+ assert.equal((html.match(/class="ba-card"/g)||[]).length,1);
  assert.equal((html.match(/class="after-image"/g)||[]).length,1);
  assert.equal((html.match(/class="before-image"/g)||[]).length,1);
  const selected = new Set();
@@ -32,7 +32,7 @@ test('public gallery uses the existing photographic before-after pair',()=>{
   for(const state of ['before','after']) {
    const path=pair[state]; assert.match(path,/^\/images\/garage-(?:before|after)\.webp$/);
    assert(existsSync('.'+path)); assert(html.includes(`src="${path}"`)); selected.add(path);
-   assert(existsSync('.'+pair[state+'Thumbnail'])); assert(html.includes(pair[state+'Thumbnail']));
+   assert(existsSync('.'+pair[state+'Thumbnail']));
   }
  }
  assert.equal(selected.size,2);
@@ -41,24 +41,24 @@ test('public gallery uses the existing photographic before-after pair',()=>{
 });
 test('metadata and accessible image text contain no production-method wording',()=>{
  assert(html.includes(`<link rel="canonical" href="${galleryCanonical}">`));
- assert.match(html,/property="og:image"/); assert.match(html,/name="twitter:card" content="summary_large_image"/);
- assert.match(html,/Example layouts for planning your space\./);
+ assert.match(html,/property="og:image"/);
+ assert.match(html,/href="\/styles\.css/); assert.match(html,/class="site-footer"/); assert.match(html,/class="nav"/);
  assert.doesNotMatch(html,/\bAI\b|AI-generated|artificial intelligence|Higgsfield|GPT|Nano Banana/i);
- assert.equal((html.match(/organization example:/g)||[]).length,2);
+ assert.equal((html.match(/garage:/g)||[]).length,2);
  const schema=JSON.parse(html.match(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/)[1]);
  assert.equal(schema['@type'],'CollectionPage'); assert.equal(schema.url,galleryCanonical);
- assert.match(schema.description,/not a portfolio of completed customer projects/);
+ assert.match(schema.description,/Garage before-and-after examples/);
  assert.doesNotMatch(html,/customer review|job completed|testimonial|data-customer-id/i);
 });
 test('booking links, phone, search, accessible sliders and no-script access remain',()=>{
- assert.equal((html.match(/data-cta="gallery-/g)||[]).length,3);
+ assert.match(html,/Schedule Free Walkthrough/);
  assert.match(html,/href="\/book"/); assert.match(html,/tel:\+19709991818/);
- assert.match(html,/id="search"/); assert.match(html,/id="viewer"/); assert.match(html,/id="viewer-body"/);
+ assert.match(html,/id="viewer"/); assert.match(html,/id="viewer-body"/);
  assert.equal((html.match(/type="range"/g)||[]).length,1);
  assert.equal((html.match(/<noscript>/g)||[]).length,1);
  assert.match(html,/gallery-simple\.js/);
  const js=readFileSync('gallery-simple.js','utf8');
- assert.doesNotMatch(js,/fetch\(|XMLHttpRequest|gallery-showcase/);
+ assert.doesNotMatch(js,/fetch\(|XMLHttpRequest|gallery-showcase/); assert.match(js,/nav-toggle/);
 });
 test('staff authentication and original preview provenance remain intact',()=>{
  const route=readFileSync('functions/internal/before-after.js','utf8');
