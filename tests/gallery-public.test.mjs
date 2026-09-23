@@ -20,22 +20,22 @@ test('HEAD is bodyless and all mutating methods are denied', async () => {
  for(const method of ['POST','PUT','PATCH','DELETE']) assert.equal(onRequest({request:new Request(galleryCanonical,{method})}).status,405);
 });
 test('public gallery uses the existing photographic before-after pair',()=>{
- assert.equal(pairs.length,1);
- assert.equal(new Set(pairs.map(p=>p.id)).size,1);
- assert.equal((html.match(/class="ba-card"/g)||[]).length,1);
- assert.equal((html.match(/class="after-image"/g)||[]).length,1);
- assert.equal((html.match(/class="before-image"/g)||[]).length,1);
+ assert.equal(pairs.length,4);
+ assert.equal(new Set(pairs.map(p=>p.id)).size,4);
+ assert.equal((html.match(/class="ba-card"/g)||[]).length,4);
+ assert.equal((html.match(/class="after-image"/g)||[]).length,4);
+ assert.equal((html.match(/class="before-image"/g)||[]).length,4);
  const selected = new Set();
  for(const pair of pairs) {
-  assert.equal(pair.type,'photo'); assert.equal(pair.customerProject,false);
+  assert.match(pair.type,/^(?:photo|concept)$/); assert.equal(pair.customerProject,false);
   assert.equal(pair.width,1600); assert.equal(pair.height,1200);
   for(const state of ['before','after']) {
-   const path=pair[state]; assert.match(path,/^\/images\/garage-(?:before|after)\.webp$/);
-   assert(existsSync('.'+path)); assert(html.includes(`src="${path}"`)); selected.add(path);
-   assert(existsSync('.'+pair[state+'Thumbnail']));
+   const path=pair[state]; assert.match(path,/^(?:\/images\/garage-(?:before|after)\.webp|https:\/\/d8j0ntlcm91z4\.cloudfront\.net\/)/);
+   if(path.startsWith('/')) assert(existsSync('.'+path)); assert(html.includes(`src="${path}"`)); selected.add(path);
+   if(pair[state+'Thumbnail'].startsWith('/')) assert(existsSync('.'+pair[state+'Thumbnail']));
   }
  }
- assert.equal(selected.size,2);
+ assert.equal(selected.size,8);
  assert.doesNotMatch(html,/gallery-showcase|gallery-ideal-assets|gallery-preview-assets\/images|gallery-preview-assets\/gallery\.js/);
  assert.match(html, new RegExp('egc-gallery-release" content="'+gallerySimpleVersion));
 });
@@ -44,7 +44,7 @@ test('metadata and accessible image text contain no production-method wording',(
  assert.match(html,/property="og:image"/);
  assert.match(html,/href="\/styles\.css/); assert.match(html,/class="site-footer"/); assert.match(html,/class="nav"/);
  assert.doesNotMatch(html,/\bAI\b|AI-generated|artificial intelligence|Higgsfield|GPT|Nano Banana/i);
- assert.equal((html.match(/garage:/g)||[]).length,2);
+ assert.equal((html.match(/garage:/g)||[]).length,8);
  const schema=JSON.parse(html.match(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/)[1]);
  assert.equal(schema['@type'],'CollectionPage'); assert.equal(schema.url,galleryCanonical);
  assert.match(schema.description,/Garage before-and-after examples/);
@@ -54,8 +54,8 @@ test('booking links, phone, search, accessible sliders and no-script access rema
  assert.match(html,/Schedule Free Walkthrough/);
  assert.match(html,/href="\/book"/); assert.match(html,/tel:\+19709991818/);
  assert.match(html,/id="viewer"/); assert.match(html,/id="viewer-body"/);
- assert.equal((html.match(/type="range"/g)||[]).length,1);
- assert.equal((html.match(/<noscript>/g)||[]).length,1);
+ assert.equal((html.match(/type="range"/g)||[]).length,4);
+ assert.equal((html.match(/<noscript>/g)||[]).length,4);
  assert.match(html,/gallery-simple\.js/);
  const js=readFileSync('gallery-simple.js','utf8');
  assert.doesNotMatch(js,/fetch\(|XMLHttpRequest|gallery-showcase/); assert.match(js,/nav-toggle/);
