@@ -89,6 +89,7 @@ export const commandSchema = z.discriminatedUnion("command", [
   z.object({command:z.literal("intelligence.customer"),contactId:entityId}).strict(),
   z.object({command:z.literal("provider.note.ensure"),requestId:z.string().min(1).max(250),portalJobId:portalId,providerContactId:z.string().min(1).max(200),scope:z.string().regex(/^[a-z0-9_-]{1,100}$/),title:z.string().min(1).max(250),body:z.string().min(1).max(20000)}).strict(),
   z.object({command:z.literal("task.complete_from_message"),...versioned,executionId:entityId}).strict(),
+  z.object({command:z.literal("task.complete_promise_from_message"),...versioned,messageId:entityId}).strict(),
   z.object({command:z.literal("portal.note.add"),requestId:entityId,portalJobId:portalId,expectedRevision:z.string().min(1),body:z.string().trim().min(1).max(10000),supersedes:entityId.optional()}).strict(),
   z.object({command:z.literal("portal.project.ensure"),requestId:entityId,portalJobId:portalId,expectedRevision:z.string().min(1)}).strict(),
   z.object({command:z.literal("portal.job.edit"),requestId:entityId,portalJobId:portalId,expectedRevision:z.string().min(1),changes:z.object({operationalScope:z.string().max(20000).optional(),status:z.enum(["dispatched","in_progress","completed"]).optional()}).strict(),reason:z.string().trim().min(3).max(2000),occurredAt:isoTime.optional(),completionEvidence:z.string().min(10).max(5000).optional()}).strict(),
@@ -130,7 +131,7 @@ export const commandSchema = z.discriminatedUnion("command", [
   z.object({command:z.literal("history"),contactId:entityId.optional(),portalJobId:portalId.optional(),...page}).strict().refine(c=>Boolean(c.contactId||c.portalJobId),"An exact contact or portal record is required")
 ]);
 export type Command = z.infer<typeof commandSchema>;
-export const WRITE_COMMANDS = new Set(["provider.note.ensure","portal.note.add","portal.job.edit","portal.project.ensure","inbound.reconcile","task.create","task.edit","task.complete","task.complete_from_message","task.cancel","task.snooze","tasks.approve","task.reject","brief.create","schedule.mutate","schedule.bind_provider","schedule.sync_provider","schedule.link_customer","schedule.adopt"]);
+export const WRITE_COMMANDS = new Set(["provider.note.ensure","portal.note.add","portal.job.edit","portal.project.ensure","inbound.reconcile","task.create","task.edit","task.complete","task.complete_from_message","task.complete_promise_from_message","task.cancel","task.snooze","tasks.approve","task.reject","brief.create","schedule.mutate","schedule.bind_provider","schedule.sync_provider","schedule.link_customer","schedule.adopt"]);
 export const requestSchema = z.object({requestId:entityId,body:commandSchema}).strict();
 export const signedClaimsSchema = z.object({
   v:z.literal(CONTRACT_VERSION),iss:z.enum(["portal","mcp"]),aud:z.enum(["egc-operations","egc-portal"]),
@@ -149,6 +150,6 @@ export function authorize(actor:Actor, command:Command, workspace:string) {
   if (["tasks.approve","task.reject"].includes(command.command) &&
       (actor.kind !== "human" || !["owner","manager"].includes(actor.role)))
     throw new OperationsError("human_manager_approval_required",403);
-  if (actor.kind === "integration" && WRITE_COMMANDS.has(command.command) && !["provider.note.ensure","portal.note.add","portal.job.edit","portal.project.ensure","inbound.reconcile","task.create","task.edit","task.snooze","task.complete","task.complete_from_message","task.cancel","brief.create","schedule.mutate","schedule.bind_provider","schedule.sync_provider","schedule.link_customer","schedule.adopt"].includes(command.command))
+  if (actor.kind === "integration" && WRITE_COMMANDS.has(command.command) && !["provider.note.ensure","portal.note.add","portal.job.edit","portal.project.ensure","inbound.reconcile","task.create","task.edit","task.snooze","task.complete","task.complete_from_message","task.complete_promise_from_message","task.cancel","brief.create","schedule.mutate","schedule.bind_provider","schedule.sync_provider","schedule.link_customer","schedule.adopt"].includes(command.command))
     throw new OperationsError("integration_write_forbidden",403);
 }
