@@ -40,6 +40,7 @@ class DispatchBrowserTests(unittest.TestCase):
     def setUp(self):
         self.context = self.browser.new_context(viewport={'width': 1360, 'height': 950}, timezone_id='Asia/Tokyo')
         self.page = self.context.new_page(); self.page.set_default_timeout(7000); self.errors = []; self.calls = []; self.gets = []; self.jobs = [job()]
+        self.page.clock.install(time=DAY + 'T18:00:00Z')
         self.crews = [{'id': 'crew-main', 'revision': 'crew-rev-1', 'name': 'North Crew', 'memberIds': ['crew.one', 'lead.one'], 'leadId': 'lead.one', 'status': 'active'}]
         self.vehicles = [{'id': 'truck-1', 'revision': 'truck-rev-1', 'name': 'Box Truck', 'status': 'available', 'notes': 'Check straps'}, {'id': 'truck-2', 'revision': 'truck-rev-2', 'name': 'Spare Truck', 'status': 'out_of_service', 'notes': 'Repair pending'}]
         self.availability = []; self.fail_once = None; self.read_status = 200; self.completed = {}; self.lost_once = False; self.malformed_once = False; self.viewer = 'manager.one'; self.bad_read = False
@@ -169,7 +170,7 @@ class DispatchBrowserTests(unittest.TestCase):
         self.open(); self.create(); self.malformed_once = True; self.submit('Create job'); expect(self.page.get_by_role('alert')).to_contain_text('incomplete')
         self.page.get_by_role('button', name='Retry original save', exact=True).click(); self.closed(); self.assertEqual(self.calls[0], self.calls[1]); self.assertEqual(len(self.jobs), 2)
     def test_stalled_save_becomes_retryable_and_does_not_duplicate_committed_job(self):
-        self.page.clock.install(); self.open(); self.create(); self.hang_once = True; self.submit('Create job'); expect(self.page.get_by_role('status').filter(has_text='Saving and verifying')).to_be_visible(); self.page.clock.fast_forward(31000)
+        self.open(); self.create(); self.hang_once = True; self.submit('Create job'); expect(self.page.get_by_role('status').filter(has_text='Saving and verifying')).to_be_visible(); self.page.clock.fast_forward(31000)
         expect(self.page.get_by_role('alert')).to_contain_text('30 seconds'); self.hung_route.abort('timedout'); self.hung_route=None; self.page.get_by_role('button', name='Retry original save', exact=True).click(); self.closed(); self.assertEqual(self.calls[0], self.calls[1]); self.assertEqual(len(self.jobs), 2)
     def test_expired_auth_after_lost_write_retains_receipt(self):
         self.open(); self.create(); self.lost_once = True; self.submit('Create job'); expect(self.page.get_by_role('button', name='Retry original save', exact=True)).to_be_visible()
