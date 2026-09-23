@@ -1,0 +1,11 @@
+/* Additive gallery-only polish; existing site styles are untouched. */
+.skip{position:absolute;clip-path:inset(50%);width:1px;height:1px;overflow:hidden;white-space:nowrap;transform:none}
+.skip:focus{position:fixed;clip-path:none;width:auto;height:auto;overflow:visible;transform:none}
+.concept-pair img{aspect-ratio:4/3}
+.concept-open{width:100%;margin-top:12px;background:transparent;color:var(--ink);border-color:var(--line);font-size:12px;min-height:44px}
+.concept-open:hover{background:var(--paper);color:var(--ink)}
+#concept-dialog{width:min(1140px,96vw)}
+#concept-dialog .compare{width:min(100%,calc(64dvh * 4 / 3));aspect-ratio:4/3;height:auto;max-height:none;margin-inline:auto}
+#concept-dialog .compare-controls{max-width:100%;border:0;background:transparent;padding:12px 0 0}
+#concept-dialog .concept-modal-note{font-size:12px;margin:14px 0 0;padding:10px 14px;border-left:3px solid var(--orange);background:#fff}
+@media(max-width:760px){#concept-dialog{padding:12px}#concept-dialog .compare{width:100%}.concept-open{font-size:12px}}
