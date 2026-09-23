@@ -1,0 +1,84 @@
+{
+  "schemaVersion": 1,
+  "release": "20260923-showcase-v1",
+  "images": [
+    {
+      "id": "park-and-work",
+      "title": "Room to park and work",
+      "caption": "Wall storage, a dedicated workstation, and an open center.",
+      "tags": "black metal shelves cabinets workbench bikes parking",
+      "kind": "design-concept",
+      "src": "/images/gallery-showcase/park-and-work-7f7c791d.webp",
+      "thumbnail": "/images/gallery-showcase/park-and-work-7f7c791d-768.webp",
+      "width": 1448,
+      "height": 1086,
+      "sourceSha256": "7f7c791d662da48b182da4ca3534c7fc222a283644f90c3ef6492f3b3078cdb1",
+      "assetSha256": "d6a944ffc1537a21024d24895f73b964b6ecc01442f102c9b8c205d74c8c7b6e"
+    },
+    {
+      "id": "wall-to-wall-storage",
+      "title": "Wall-to-wall storage",
+      "caption": "Coordinated bins, black metal shelving, and a place for the tools.",
+      "tags": "black metal shelves yellow bins workshop tools",
+      "kind": "design-concept",
+      "src": "/images/gallery-showcase/wall-to-wall-storage-b1922c07.webp",
+      "thumbnail": "/images/gallery-showcase/wall-to-wall-storage-b1922c07-768.webp",
+      "width": 1448,
+      "height": 1086,
+      "sourceSha256": "b1922c0700a7b1c0c29e1658365a1bedf0e3083c539a6a01b15eb7557e636701",
+      "assetSha256": "f7fca6efdc99d69b1befae1a6e96a1f68e3530bd508aaf7ede918f9b97dff5b6"
+    },
+    {
+      "id": "complete-garage-setup",
+      "title": "The complete garage setup",
+      "caption": "Storage and a workbench organized around everyday use.",
+      "tags": "black metal shelves cabinets bikes bicycle workbench",
+      "kind": "design-concept",
+      "src": "/images/gallery-showcase/complete-garage-setup-1f03e9ba.webp",
+      "thumbnail": "/images/gallery-showcase/complete-garage-setup-1f03e9ba-768.webp",
+      "width": 1448,
+      "height": 1086,
+      "sourceSha256": "1f03e9ba780b5fdcb3ca1034fdbe4b30f69f923fb7604078dc4228d397f91e05",
+      "assetSha256": "cd8325d85e30223a0769f85ab48ef36fb36ac79535030538216532c15b2e6628"
+    },
+    {
+      "id": "black-metal-workshop",
+      "title": "Built around your hobbies",
+      "caption": "A black-metal workshop layout with clear storage zones.",
+      "tags": "black metal shelves cabinets pegboard tools workshop bikes",
+      "kind": "design-concept",
+      "src": "/images/gallery-showcase/black-metal-workshop-23a81d5c.webp",
+      "thumbnail": "/images/gallery-showcase/black-metal-workshop-23a81d5c-768.webp",
+      "width": 1448,
+      "height": 1086,
+      "sourceSha256": "23a81d5c06d6ac271ec7e24774d024718fbd4a6898792a7cd32f9f7e9b620e82",
+      "assetSha256": "459ba645f236369317599b684eb876e88053da484e2ec6fae88c514f4243547c"
+    },
+    {
+      "id": "seasonal-family-storage",
+      "title": "A place for every season",
+      "caption": "Family gear and seasonal storage kept together and out of the way.",
+      "tags": "black metal shelves seasonal holiday family bikes bins",
+      "kind": "design-concept",
+      "src": "/images/gallery-showcase/seasonal-family-storage-44231e2c.webp",
+      "thumbnail": "/images/gallery-showcase/seasonal-family-storage-44231e2c-768.webp",
+      "width": 1448,
+      "height": 1086,
+      "sourceSha256": "44231e2cbab0ac138980a7c8f7ef63b25284f873e594d929dc0a2238863f4b7c",
+      "assetSha256": "035bf5a51d4632225b81d9a5298b74aeeaf2281d3e1c22ebe33340a79aac36db"
+    },
+    {
+      "id": "overhead-storage",
+      "title": "Storage above. Space below.",
+      "caption": "An overhead-storage concept with room for tools and bikes along the walls.",
+      "tags": "black metal shelves overhead racks ceiling cabinets bikes",
+      "kind": "design-concept",
+      "src": "/images/gallery-showcase/overhead-storage-6161cbc7.webp",
+      "thumbnail": "/images/gallery-showcase/overhead-storage-6161cbc7-768.webp",
+      "width": 1448,
+      "height": 1086,
+      "sourceSha256": "6161cbc7ee3f70c2fc97461d857217306c11e03708ca5cf36d1a581edd85bc8d",
+      "assetSha256": "22218f72e6071382af7acf350211500067957c92e54947ece24dcb6718415f6d"
+    }
+  ]
+}
