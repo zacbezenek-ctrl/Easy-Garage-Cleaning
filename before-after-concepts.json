@@ -1,4 +1,35 @@
 {
   "schemaVersion": 1,
-  "concepts": []
+  "concepts": [
+    {
+      "id": "01-family-garage",
+      "type": "concept",
+      "status": "published",
+      "visualReviewPassed": true,
+      "title": "Room for the family car",
+      "caption": "A conceptual layout using practical shelving, accessible bins and a clear central parking area.",
+      "before": "/images/before-after/concepts/01-family-garage-before-9a198d37.webp",
+      "after": "/images/before-after/concepts/01-family-garage-after-25b7e833.webp"
+    },
+    {
+      "id": "04-working-bench",
+      "type": "concept",
+      "status": "published",
+      "visualReviewPassed": true,
+      "title": "Bring the workbench back",
+      "caption": "A concept for a clearer work surface, reachable tools and organized storage without remodeling the garage.",
+      "before": "/images/before-after/concepts/04-working-bench-before-1a62e106.webp",
+      "after": "/images/before-after/concepts/04-working-bench-after-124cceaa.webp"
+    },
+    {
+      "id": "06-camping-gear",
+      "type": "concept",
+      "status": "published",
+      "visualReviewPassed": true,
+      "title": "Ready for the next trip",
+      "caption": "A simulated storage layout that keeps camping gear accessible and the middle of the garage open.",
+      "before": "/images/before-after/concepts/06-camping-gear-before-d8d69a3d.webp",
+      "after": "/images/before-after/concepts/06-camping-gear-after-9c526c89.webp"
+    }
+  ]
 }
