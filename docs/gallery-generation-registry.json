@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "updatedAt": "2026-09-23",
+  "targetPairs": 24,
+  "requestedModel": "nano_banana_pro",
+  "reportedJobModel": "nano_banana_2",
+  "modelNote": "Higgsfield accepted requests to nano_banana_pro but returned nano_banana_2 in job status. Do not assert that the underlying Google Pro model was independently verified.",
+  "pairs": [
+    {"id":"01-family-garage","title":"Room for the family car","caption":"A conceptual layout using practical shelving, accessible bins and a clear central parking area.","review":{"status":"pending"},"before":{"jobId":"9a198d37-496a-4326-9c2c-2f1cdd06392a","url":"https://d8j0ntlcm91z4.cloudfront.net/user_3JjgIOWHcjk4PKqJNGDT7ggmCDm/hf_20260923_164008_9a198d37-496a-4326-9c2c-2f1cdd06392a.png"},"after":{"jobId":"25b7e833-b71b-4029-9c4c-a61f110853d6","url":"https://d8j0ntlcm91z4.cloudfront.net/user_3JjgIOWHcjk4PKqJNGDT7ggmCDm/hf_20260923_164441_25b7e833-b71b-4029-9c4c-a61f110853d6.png"}},
+    {"id":"03-four-bikes","title":"A place for the bikes","caption":"An illustrative idea for getting bicycles and everyday sports equipment out of the parking area.","review":{"status":"pending"},"before":{"jobId":"1f051c62-52b0-4886-a998-398757259af5","url":"https://d8j0ntlcm91z4.cloudfront.net/user_3JjgIOWHcjk4PKqJNGDT7ggmCDm/hf_20260923_164007_1f051c62-52b0-4886-a998-398757259af5.png"},"after":{"jobId":"293cd4db-4cbe-44d0-9286-b11f2d55deea","url":"https://d8j0ntlcm91z4.cloudfront.net/user_3JjgIOWHcjk4PKqJNGDT7ggmCDm/hf_20260923_164439_293cd4db-4cbe-44d0-9286-b11f2d55deea.png"}},
+    {"id":"04-working-bench","title":"Bring the workbench back","caption":"A concept for a clearer work surface, reachable tools and organized storage without remodeling the garage.","review":{"status":"pending"},"before":{"jobId":"1a62e106-aca7-43de-8d06-c7b373f982da","url":"https://d8j0ntlcm91z4.cloudfront.net/user_3JjgIOWHcjk4PKqJNGDT7ggmCDm/hf_20260923_164006_1a62e106-aca7-43de-8d06-c7b373f982da.png"},"after":{"jobId":"124cceaa-0cc1-4639-80d5-a7e5c4856420","url":"https://d8j0ntlcm91z4.cloudfront.net/user_3JjgIOWHcjk4PKqJNGDT7ggmCDm/hf_20260923_164439_124cceaa-0cc1-4639-80d5-a7e5c4856420.png"}},
+    {"id":"06-camping-gear","title":"Ready for the next trip","caption":"A simulated storage layout that keeps camping gear accessible and the middle of the garage open.","review":{"status":"pending"},"before":{"jobId":"d8d69a3d-89f9-4cc8-b94d-d6b4aaf00e8f","url":"https://d8j0ntlcm91z4.cloudfront.net/user_3JjgIOWHcjk4PKqJNGDT7ggmCDm/hf_20260923_164007_d8d69a3d-89f9-4cc8-b94d-d6b4aaf00e8f.png"},"after":{"jobId":"9c526c89-0736-4a24-a6ca-644a191c724d","url":"https://d8j0ntlcm91z4.cloudfront.net/user_3JjgIOWHcjk4PKqJNGDT7ggmCDm/hf_20260923_164117_9c526c89-0736-4a24-a6ca-644a191c724d.png"}}
+  ]
+}

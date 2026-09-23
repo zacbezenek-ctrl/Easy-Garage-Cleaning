@@ -1,0 +1,73 @@
+name: EGC Gallery Assets
+
+on:
+  push:
+    branches: ['feat/before-after-gallery-*']
+    paths:
+      - 'docs/gallery-generation-registry.json'
+      - 'tools/gallery/**'
+      - 'before-after*'
+      - '.github/workflows/egc-gallery-assets.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: egc-gallery-assets-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  prepare-and-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install pinned media processor
+        run: python -m pip install Pillow==11.3.0
+      - name: Import registered outputs and publish only reviewed concepts
+        run: python tools/gallery/prepare.py
+      - name: Validate page scripts and generation contract
+        run: |
+          node --check before-after.js
+          node --check site-enhancements.js
+          python tools/gallery/validate.py
+      - name: Install isolated browser test dependencies
+        run: |
+          npm install --prefix /tmp/egc-gallery-tools --no-package-lock playwright@1.55.0
+          /tmp/egc-gallery-tools/node_modules/.bin/playwright install --with-deps chromium
+      - name: Exercise actual gallery in desktop and mobile Chromium
+        env:
+          NODE_PATH: /tmp/egc-gallery-tools/node_modules
+        run: node tools/gallery/browser-test.cjs
+      - name: Save review sheets, asset checks and browser evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: egc-gallery-review-${{ github.run_id }}
+          path: |
+            gallery-review/
+            images/before-after/concepts/
+            before-after-concepts.json
+            docs/gallery-generation-registry.json
+          if-no-files-found: error
+          retention-days: 14
+      - name: Save optimized assets to the same feature branch, never main
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+          SOURCE_BRANCH: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          remote_sha=$(git ls-remote origin "refs/heads/$SOURCE_BRANCH" | cut -f1)
+          test "$remote_sha" = "$SOURCE_SHA"
+          git add images/before-after/concepts before-after-concepts.json
+          if git diff --cached --quiet; then exit 0; fi
+          git config user.name 'EGC Gallery Asset Bot'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'Materialize registered gallery images and reviewed-only manifest'
+          git push origin "HEAD:refs/heads/$SOURCE_BRANCH"
