@@ -1,0 +1,33 @@
+name: EGC Internal Gallery
+on:
+  pull_request:
+    paths:
+      - 'functions/internal/**'
+      - 'functions/internal-gallery-assets/**'
+      - 'functions/_lib/gallery-preview-*.js'
+      - 'internal-gallery-assets/**'
+      - 'tests/gallery-preview.test.mjs'
+      - '.github/workflows/egc-internal-gallery.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'functions/internal/**'
+      - 'functions/internal-gallery-assets/**'
+      - 'functions/_lib/gallery-preview-*.js'
+      - 'internal-gallery-assets/**'
+      - 'tests/gallery-preview.test.mjs'
+      - '.github/workflows/egc-internal-gallery.yml'
+permissions:
+  contents: read
+jobs:
+  internal-gallery:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --ignore-scripts --no-audit --no-fund
+      - run: node --test tests/gallery-preview.test.mjs
+      - run: node --check internal-gallery-assets/gallery.js
