@@ -1,5 +1,5 @@
 {
-  "release": "20260923-site-v3",
+  "release": "20260923-site-v4",
   "pairs": [
     {
       "id": "garage-photo-pair",
@@ -14,6 +14,48 @@
       "beforeThumbnail": "/images/garage-before.webp",
       "after": "/images/garage-after.webp",
       "afterThumbnail": "/images/garage-after.webp"
+    },
+    {
+      "id": "everyday-family-garage",
+      "title": "From floor piles to usable storage",
+      "caption": "Everyday clutter sorted onto basic shelving while the original garage stays the same.",
+      "keywords": "family garage boxes shelves black yellow totes cleanout",
+      "type": "concept",
+      "customerProject": false,
+      "width": 1168,
+      "height": 880,
+      "before": "https://d8j0ntlcm91z4.cloudfront.net/user_3JjgIOWHcjk4PKqJNGDT7ggmCDm/hf_20260923_225430_234bca2a-b7ef-40a6-a5e1-186eff3202bd.png",
+      "beforeThumbnail": "https://d8j0ntlcm91z4.cloudfront.net/user_3JjgIOWHcjk4PKqJNGDT7ggmCDm/hf_20260923_225430_234bca2a-b7ef-40a6-a5e1-186eff3202bd.png",
+      "after": "https://d8j0ntlcm91z4.cloudfront.net/user_3JjgIOWHcjk4PKqJNGDT7ggmCDm/hf_20260923_225503_bdf88dd5-ed40-4b31-a345-26ff761f989f.png",
+      "afterThumbnail": "https://d8j0ntlcm91z4.cloudfront.net/user_3JjgIOWHcjk4PKqJNGDT7ggmCDm/hf_20260923_225503_bdf88dd5-ed40-4b31-a345-26ff761f989f.png"
+    },
+    {
+      "id": "single-car-storage",
+      "title": "A clear path through the garage",
+      "caption": "The same worn garage, with tools and storage moved off the walking space.",
+      "keywords": "single car garage mower garden tools shelves storage",
+      "type": "concept",
+      "customerProject": false,
+      "width": 1168,
+      "height": 880,
+      "before": "https://d8j0ntlcm91z4.cloudfront.net/user_3JjgIOWHcjk4PKqJNGDT7ggmCDm/hf_20260923_225430_3d60b35e-79d3-4d07-9515-8317bea0192a.png",
+      "beforeThumbnail": "https://d8j0ntlcm91z4.cloudfront.net/user_3JjgIOWHcjk4PKqJNGDT7ggmCDm/hf_20260923_225430_3d60b35e-79d3-4d07-9515-8317bea0192a.png",
+      "after": "https://d8j0ntlcm91z4.cloudfront.net/user_3JjgIOWHcjk4PKqJNGDT7ggmCDm/hf_20260923_225503_11e1890b-c800-43e9-a570-fa1373c640b6.png",
+      "afterThumbnail": "https://d8j0ntlcm91z4.cloudfront.net/user_3JjgIOWHcjk4PKqJNGDT7ggmCDm/hf_20260923_225503_11e1890b-c800-43e9-a570-fa1373c640b6.png"
+    },
+    {
+      "id": "bikes-and-sports",
+      "title": "Bikes up. Parking space back.",
+      "caption": "Sports gear and bikes get simple homes without turning the garage into a showroom.",
+      "keywords": "bikes sports family garage hooks shelving bins",
+      "type": "concept",
+      "customerProject": false,
+      "width": 1168,
+      "height": 880,
+      "before": "https://d8j0ntlcm91z4.cloudfront.net/user_3JjgIOWHcjk4PKqJNGDT7ggmCDm/hf_20260923_225430_2b44986c-59ba-4c89-9f90-27979199f7c3.png",
+      "beforeThumbnail": "https://d8j0ntlcm91z4.cloudfront.net/user_3JjgIOWHcjk4PKqJNGDT7ggmCDm/hf_20260923_225430_2b44986c-59ba-4c89-9f90-27979199f7c3.png",
+      "after": "https://d8j0ntlcm91z4.cloudfront.net/user_3JjgIOWHcjk4PKqJNGDT7ggmCDm/hf_20260923_225503_247d4c70-9050-4c13-a6b3-b38d19f705b1.png",
+      "afterThumbnail": "https://d8j0ntlcm91z4.cloudfront.net/user_3JjgIOWHcjk4PKqJNGDT7ggmCDm/hf_20260923_225503_247d4c70-9050-4c13-a6b3-b38d19f705b1.png"
     }
   ]
 }
