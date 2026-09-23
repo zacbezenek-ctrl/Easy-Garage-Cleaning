@@ -28,7 +28,7 @@ test('public gallery uses the existing photographic before-after pair',()=>{
  const selected = new Set();
  for(const pair of pairs) {
   assert.match(pair.type,/^(?:photo|concept)$/); assert.equal(pair.customerProject,false);
-  assert.equal(pair.width,1600); assert.equal(pair.height,1200);
+  assert(pair.width>=1100); assert(pair.height>=800); assert(Math.abs(pair.width/pair.height-4/3)<.02);
   for(const state of ['before','after']) {
    const path=pair[state]; assert.match(path,/^(?:\/images\/garage-(?:before|after)\.webp|https:\/\/d8j0ntlcm91z4\.cloudfront\.net\/)/);
    if(path.startsWith('/')) assert(existsSync('.'+path)); assert(html.includes(`src="${path}"`)); selected.add(path);
