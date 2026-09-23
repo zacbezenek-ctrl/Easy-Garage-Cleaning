@@ -48,8 +48,9 @@
    card.hidden = !(card.dataset.search || '').includes(query);
    if (!card.hidden) count++;
   });
-  document.getElementById('count').textContent = count + ' before & after example' + (count === 1 ? '' : 's');
-  document.getElementById('empty').hidden = count !== 0;
+  var countEl=document.getElementById('count'),empty=document.getElementById('empty');
+  if(countEl)countEl.textContent=count+' before & after example'+(count===1?'':'s');
+  if(empty)empty.hidden=count!==0;
  }
  grid.querySelectorAll('.comparison').forEach(wire);
  if (search) {
