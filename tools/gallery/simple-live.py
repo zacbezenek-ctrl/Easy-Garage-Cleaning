@@ -25,7 +25,7 @@ for attempt in range(30):
     try:
         html=get('/before-after')
         assert ('name="egc-gallery-release" content="'+manifest['release']+'"').encode() in html,'Public HTML is not yet the tested release'
-        assert len(re.findall(rb'class="card"',html))==6
+        assert len(re.findall(rb'class="ba-card"',html))==1
         assert b'/gallery-simple.js' in html and b'/gallery-simple.css' in html
         assert not re.search(rb'\bAI\b|AI-generated|gallery-showcase|gallery-ideal-assets',html,re.I)
         for pair in manifest['pairs']:
@@ -40,7 +40,7 @@ for attempt in range(30):
             raise
         time.sleep(10)
 
-paths=['/gallery-simple.js','/gallery-simple.css','/gallery-live.css','/gallery-preview-assets/gallery.css']
+paths=['/gallery-simple.js','/gallery-simple.css','/styles.css']
 for pair in manifest['pairs']:
     for key in ['before','after','beforeThumbnail','afterThumbnail']:
         paths.append(pair[key])
@@ -54,6 +54,6 @@ def check(path):
 
 with concurrent.futures.ThreadPoolExecutor(max_workers=5) as pool:
     assets=list(pool.map(check,paths))
-result={'passed':True,'url':BASE+'/before-after','release':manifest['release'],'cards':6,'htmlSha256':hashlib.sha256(html).hexdigest(),'verifiedAssets':assets,'checkedAtUtc':time.strftime('%Y-%m-%dT%H:%M:%SZ',time.gmtime())}
+result={'passed':True,'url':BASE+'/before-after','release':manifest['release'],'cards':1,'htmlSha256':hashlib.sha256(html).hexdigest(),'verifiedAssets':assets,'checkedAtUtc':time.strftime('%Y-%m-%dT%H:%M:%SZ',time.gmtime())}
 (OUT/'live-report.json').write_text(json.dumps(result,indent=2))
 print(json.dumps(result,indent=2))
