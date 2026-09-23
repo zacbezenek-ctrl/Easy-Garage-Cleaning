@@ -1,7 +1,7 @@
 import { and, desc, eq, gte, inArray, sql } from "drizzle-orm";
 import { getDb, schema } from "@egc/database";
 import { communicationSummary } from "./communications.js";
-export { communicationSummary, callContactEvidence, isCallMessage } from "./communications.js";
+export { communicationSummary, callContactEvidence, normalizeCallMetadata, isCallMessage } from "./communications.js";
 import type { LeadState } from "@egc/schemas";
 
 /** Explicit EGC validation markers only. A name containing "test" is not evidence. */
