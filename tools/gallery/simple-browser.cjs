@@ -27,18 +27,15 @@ async function paint(page,selector){
    const page=await browser.newPage({viewport:{width,height:900},deviceScaleFactor:1});
    const errors=[];page.on('pageerror',error=>errors.push(error.message));
    const response=await page.goto(url,{waitUntil:'networkidle'});assert.equal(response.status(),200);
-   assert.equal(await page.locator('#gallery .card').count(),1);
+   assert.equal(await page.locator('#gallery .ba-card').count(),1);
    await page.locator('#gallery img').evaluateAll(images=>images.forEach(image=>image.loading='eager'));
    await paint(page,'#gallery img');
    assert.equal(await page.locator('#gallery img').count(),2);
    assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'horizontal overflow at '+width);
    assert.equal(await page.locator('.showcase-card').count(),0);
-   assert.equal(await page.locator('script[src*="gallery-preview-assets/gallery.js"]').count(),0);
+   assert.equal(await page.locator('script[src*="gallery-preview-assets/gallery.js"]').count(),0); assert.equal(await page.locator('link[href*="styles.css"]').count(),1); assert.equal(await page.locator('.site-footer').count(),1); assert.equal(await page.locator('.nav').count(),1);
    assert(!/\bAI\b|AI-generated|Higgsfield/i.test(await page.content()));
-   await page.locator('#search').fill('garage');assert.equal(await page.locator('#gallery .card:visible').count(),1);
-   await page.locator('#search').fill('nothing-matches-zz');assert(await page.locator('#empty').isVisible());
-   await page.locator('#search').fill('');assert.equal(await page.locator('#gallery .card:visible').count(),1);
-   const card=page.locator('#gallery .card').first();
+   const card=page.locator('#gallery .ba-card').first();
    const input=card.locator('input[type="range"]');
    await card.locator('[data-position="100"]').click();assert.equal(await input.inputValue(),'100');
    assert(await card.locator('.label-after').isHidden());
@@ -64,7 +61,7 @@ async function paint(page,selector){
    assert(await card.locator('[data-expand]').evaluate(el=>el===document.activeElement));
    await page.locator('#gallery [data-position="50"]').evaluateAll(buttons=>buttons.forEach(button=>button.click()));
    for(let i=0;i<1;i++){
-    const current=page.locator('#gallery .card').nth(i);
+    const current=page.locator('#gallery .ba-card').nth(i);
     await current.scrollIntoViewIfNeeded();
     await paint(page,'#gallery img');
     await current.screenshot({path:path.join(out,'card-'+(i+1)+'-'+width+'.png')});
@@ -75,12 +72,12 @@ async function paint(page,selector){
    assert(states.every(item=>item.position==='50%'&&item.images.every(image=>image.complete&&image.width>0)));
    const ctas=await page.locator('[data-cta^="gallery-"]').evaluateAll(links=>links.map(a=>a.getAttribute('href')));
    assert.deepEqual(ctas,['/book','/book','/book']);assert.deepEqual(errors,[]);
-   report.push({width,cards:1,imagesDecoded:2,noOverflow:true,search:true,buttons:true,pointer:true,keyboard:true,modal:true,focusRestored:true,noProductionMethodWording:true,states,errors});
+   report.push({width,cards:1,imagesDecoded:2,noOverflow:true,siteShell:true,buttons:true,pointer:true,keyboard:true,modal:true,focusRestored:true,noProductionMethodWording:true,states,errors});
    await page.close();
   }
   const nojs=await browser.newPage({javaScriptEnabled:false,viewport:{width:390,height:900}});
   await nojs.goto(url);assert.equal(await nojs.locator('noscript a').count(),2);
-  assert.equal(await nojs.locator('#gallery .card').count(),1);await nojs.close();
+  assert.equal(await nojs.locator('#gallery .ba-card').count(),1);await nojs.close();
   fs.writeFileSync(path.join(out,'browser-report.json'),JSON.stringify({passed:true,viewports:report,noJavaScript:true},null,2));
   console.log(JSON.stringify({passed:true,viewports:report,noJavaScript:true},null,2));
  }finally{await browser.close();await new Promise(resolve=>server.close(resolve));}
