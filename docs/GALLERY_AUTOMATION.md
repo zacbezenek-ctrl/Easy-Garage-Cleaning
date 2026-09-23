@@ -1,36 +1,50 @@
 # Repeatable EGC gallery production
 
-## Current access
-Higgsfield generation succeeded after the account upgrade on September 23, 2026. Requests used `nano_banana_pro`; returned job statuses report `nano_banana_2`. Preserve both identifiers and do not imply that the exact Google Pro backend was independently verified. A GPT Image 2.5 benchmark submission failed with a rate limit; no comparison result exists from that request.
+## Connected generation
+Higgsfield generation works through the authorized ChatGPT connection. Requests select `nano_banana_pro`; returned job metadata reports `nano_banana_2`. Both are recorded rather than asserting an independently verified provider backend. No head-to-head model benchmark completed: the attempted alternative-model submission was rate-limited before job creation.
 
-## One library, two kinds of evidence
-- Existing EGC photography remains separate from simulated concepts.
-- Every generated before/after pair is a fictional visualization, visibly labeled `AI-generated concept · Not a customer job`.
-- Never convert a generated after image into customer-job evidence, reviews, a completed-job claim, a quoted project price, or customer-approved case study.
+## Production flow
 
-## Repeatable production flow
-1. Generate a before image through the connected Higgsfield tool, or use an explicitly authorized source photo.
-2. Generate the after as a reference edit using the completed before job ID. Do not independently generate two unrelated rooms.
-3. Wait for terminal generation outcomes. Respect rate limits; never retry an unknown submission outcome blindly.
-4. Append actual completed job IDs and exact returned URLs to `docs/gallery-generation-registry.json` on a `feat/before-after-gallery-*` branch. New pairs start with review status `pending`.
-5. The GitHub workflow imports registered results, optimizes first-party WebP files, creates paired review sheets, runs browser tests, archives evidence, and saves prepared assets to that feature branch. It does not publish pending pairs.
-6. Visually inspect the source/edit pair: doors, windows, rails, room dimensions, light direction, permanent floor markings and supported shelves. Check useful objects for unacceptable disappearance and bikes/tools for malformed geometry. Reject pairs with structural drift or false renovation. This cannot be established just by a successful model request.
-7. Record `approved` with reviewer, review date and concrete notes only after inspection. The same workflow updates the public manifest for those pairs; rejected and pending pairs stay hidden.
-8. Release through a reviewed pull request and verify deployment. Never equate generation, a commit, passing checks, merging and public availability.
+1. Generate a fictional before image or use a specifically authorized real reference photo. A real customer photo requires permission appropriate to its use; this batch uses fictional sources only.
+2. Edit that source into an after concept. Corrections may edit the prior after result; retain the original before and the full generation lineage.
+3. Wait for terminal results and record exact successful job IDs and returned URLs. Respect rate limits; never blindly resubmit an unknown-outcome request.
+4. Register pairs in `docs/gallery-generation-registry.json` on a `feat/before-after-gallery-*` branch with review status `pending`.
+5. `EGC Gallery Assets` validates/downloads registered results, creates versioned WebP assets and paired review sheets, integrates page links, and runs real browser tests. Pending or rejected pairs never enter the public manifest.
+6. Inspect the actual pair for consistent architecture, viewpoint, believable storage, duplicated possessions and false renovation. Record approval with reviewer/date/concrete notes only after inspection. A successful request is not a visual review.
+7. The next asset run updates the approved manifest, tests desktop/mobile layouts and full-size comparison controls, and saves generated changes to the same feature branch. It refuses to push over unexpected branch movement.
+8. Merge through the normal release path, then check `EGC Gallery Live Check`. This verifies the actual public page, exact manifest, homepage link, sitemap and deployed asset hashes. A merge or hosting deployment status is not enough by itself.
 
-## Scope of automation
-This is a reusable, on-request generation and automatic asset-preparation/publication pipeline. The GitHub workflow does not have a Higgsfield API credential, does not run unattended paid generation, and is not a recurring schedule. No additional model subscription or key is needed for generating through the current ChatGPT Higgsfield connection. A future always-on generator requires its own authorized service credentials/trigger and explicit credit limits. Do not pretend a consumer subscription automatically supplies that server integration.
+## Public presentation
 
-## Cost and retry limits
-The tool estimated two credits per 2K Nano Banana Pro image on September 23. One source plus one edit estimates four credits per pair before retries. The original 24-pair target therefore estimates 96 credits, not a guarantee of actual charges. New model prices and account balance must be checked at run time. Do not buy additional plans or credit packs, silently change billing source, or exhaust the account with unlimited retries.
+Existing website photos remain distinct from generated concepts. Every concept card and its full-size comparison visibly say AI-generated and not a completed customer job. Do not invent customer names, project prices, addresses, completion dates, measured outcomes or testimonials. Keep simulated concepts out of the customer-approved-project publishing flow.
 
-## Local/CI commands
-`python -m pip install Pillow==11.3.0`
+The `/before-after` page includes filtering, full-size sliders, keyboard and pointer controls, mobile layouts, existing booking links, and a no-JavaScript fallback for the original photographs. Static homepage/footer links and the sitemap make it discoverable. The original contact widget, CRM, forms, appointments, payments and conversion logic are not rewritten.
 
-`python tools/gallery/prepare.py`
+## Tests and retained evidence
 
-`python tools/gallery/validate.py`
+The asset workflow archives contact sheets, source registry, optimized images, screenshots, asset hashes and browser reports. Tests cover approved-only selection, missing assets, image decoding, filters, range/button/pointer interactions, Escape/focus return, responsive overflow and existing booking targets. A separate regression test verifies compact 4:3 concept thumbnails at phone and desktop widths; this prevents intrinsic image height from creating large blank margins.
 
-`NODE_PATH=/path/to/playwright/node_modules node tools/gallery/browser-test.cjs`
+The main-branch live checker makes read-only HTTP requests and does not execute analytics or submit forms. Its report explicitly records failure when the public release cannot be verified.
 
-The prepare script downloads only exact account-scoped, registered output URLs, blocks redirects, checks formats/dimensions/size, produces versioned filenames, preserves pending status, and never executes source content. No private customer records or CRM access is involved.
+## Automation boundary
+
+This is on-request image generation plus automated preparation, testing and release verification. It is not an always-on paid image generator and it does not schedule recurring ChatGPT tasks. A future unattended generator needs its own authorized trigger, service credential and explicit spending ceiling. Buying a consumer subscription alone does not provision that backend.
+
+No extra image-model subscription or API key is needed for the current on-request ChatGPT/Higgsfield workflow. Never put account secrets in repository code or ask the user to paste billing credentials into chat.
+
+## Costs
+
+The September 23 estimate was two credits per 2K image: one source plus one edit estimates four credits per pair, or 96 for 24 pairs before retries. Corrections are extra. Check the current estimate and balance before future batches. A documented target does not authorize buying credits or changing plans.
+
+## Reproduce preparation and tests
+
+```sh
+python -m pip install Pillow==11.3.0
+python tools/gallery/integrate.py
+python tools/gallery/prepare.py
+python tools/gallery/validate.py
+NODE_PATH=/path/to/playwright/node_modules node tools/gallery/browser-test.cjs
+NODE_PATH=/path/to/playwright/node_modules node tools/gallery/dialog-test.cjs
+```
+
+Run `python tools/gallery/check_live.py` against the release checkout to verify the public deployment. For the actual current outcome, read its report and the latest PR release evidence rather than inferring success from this documentation.
