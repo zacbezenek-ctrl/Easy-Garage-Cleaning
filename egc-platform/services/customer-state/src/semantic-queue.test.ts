@@ -13,7 +13,16 @@ describe('bounded semantic extraction scheduling',()=>{
     expect(selectSemanticWork(rows,now).map(c=>c.contactId)).toEqual(['changed']);
   });
   it('bounds transient retries and gives configuration failures a slower backoff',()=>{
-    expect(semanticRetryDelay(['semantic_provider_http_429'],1,false)).toBe(30000);expect(semanticRetryDelay(['semantic_provider_http_429'],20,false)).toBe(900000);expect(semanticRetryDelay(['semantic_provider_http_400;code=invalid_json_schema'],1,false)).toBe(300000);expect(semanticRetryDelay(['semantic_batch_budget_deferred'],2,false)).toBe(15000);expect(semanticRetryDelay([],1,false,true)).toBe(300000);expect(semanticRetryDelay([],1,false)).toBe(30000);
+    expect(semanticRetryDelay(['semantic_provider_http_429'],1,false)).toBe(300000);expect(semanticRetryDelay(['semantic_provider_http_429'],20,false)).toBe(21600000);expect(semanticRetryDelay(['semantic_provider_http_400;code=invalid_json_schema'],1,false)).toBe(300000);expect(semanticRetryDelay(['semantic_batch_budget_deferred'],2,false)).toBe(15000);expect(semanticRetryDelay([],1,false,true)).toBe(300000);expect(semanticRetryDelay([],1,false)).toBe(30000);
+  });
+  it('persists a global provider cooldown after a rate limit so later chunks do not rotate through other contacts',async()=>{
+    let clock=now.valueOf();const progress=vi.fn(async()=>{}),finish=vi.fn(async()=>true);
+    const reconcile=vi.fn(async({contactIds})=>({failed:0,results:[{contactId:contactIds[0],coverage:{extraction:{complete:false,errors:['semantic_provider_http_429']}}}]}));
+    const first=await runSemanticQueue(reconcile,{limit:12,concurrency:1},{candidates:async()=>({candidates:Array.from({length:12},(_,i)=>candidate(String(i))),truncated:false}),claim:async(c)=>cursor({leaseToken:c.contactId,attemptedAt:new Date(clock).toISOString(),workKey:c.workKey}),finish,now:()=>new Date(clock),progress});
+    expect(reconcile).toHaveBeenCalledTimes(1);expect(first.providerBackoffUntil).toBe('2026-09-22T08:30:00.000Z');expect(first.deferred).toBe(11);
+    const secondProgress=vi.fn(async()=>{});
+    const second=await runSemanticQueue(reconcile,{limit:12,concurrency:1},{candidates:async()=>({candidates:Array.from({length:12},(_,i)=>candidate(String(i))),truncated:false,providerBackoffUntil:first.providerBackoffUntil}),claim:async()=>{throw new Error('must not claim during provider cooldown');},finish,now:()=>new Date(clock+60000),progress:secondProgress});
+    expect(second.selected).toBe(0);expect(second.inspected).toBe(0);expect(second.providerBackoffUntil).toBe(first.providerBackoffUntil);expect(reconcile).toHaveBeenCalledTimes(1);expect(secondProgress).toHaveBeenCalledWith(expect.objectContaining({status:'provider_backoff'}));
   });
   it('limits concurrent contacts to three and writes progress as work finishes',async()=>{
     let active=0,maximum=0;const progress=vi.fn(async()=>{}),finish=vi.fn(async()=>true);
