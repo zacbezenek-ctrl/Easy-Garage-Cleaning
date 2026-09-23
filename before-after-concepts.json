@@ -27,7 +27,7 @@
       "status": "published",
       "visualReviewPassed": true,
       "title": "A place for the bikes",
-      "caption": "An illustrative arrangement that puts the bicycles together along a wall instead of across the parking area.",
+      "caption": "An illustrative arrangement that puts bicycles together along a wall instead of across the parking area.",
       "before": "/images/before-after/concepts/03-four-bikes-before-1f051c62.webp",
       "after": "/images/before-after/concepts/03-four-bikes-after-6e8fe44e.webp"
     },
@@ -110,6 +110,66 @@
       "caption": "An illustrative arrangement for skis, boards, boots and winter gear.",
       "before": "/images/before-after/concepts/12-ski-snowboard-before-facdb107.webp",
       "after": "/images/before-after/concepts/12-ski-snowboard-after-8db719a7.webp"
+    },
+    {
+      "id": "13-home-workout",
+      "type": "concept",
+      "status": "published",
+      "visualReviewPassed": true,
+      "title": "Make space to move",
+      "caption": "An illustrative workout corner using the equipment already in the garage.",
+      "before": "/images/before-after/concepts/13-home-workout-before-90e23e23.webp",
+      "after": "/images/before-after/concepts/13-home-workout-after-c069b8bd.webp"
+    },
+    {
+      "id": "14-small-tool-wall",
+      "type": "concept",
+      "status": "published",
+      "visualReviewPassed": true,
+      "title": "Tools off the floor",
+      "caption": "A concept for a usable workbench and simple, reachable tool storage.",
+      "before": "/images/before-after/concepts/14-small-tool-wall-before-153ccc4c.webp",
+      "after": "/images/before-after/concepts/14-small-tool-wall-after-f9aaeee2.webp"
+    },
+    {
+      "id": "15-light-seasonal-bins",
+      "type": "concept",
+      "status": "published",
+      "visualReviewPassed": true,
+      "title": "Seasonal storage with a plan",
+      "caption": "A simulated arrangement for luggage, lightweight bins and folding chairs.",
+      "before": "/images/before-after/concepts/15-light-seasonal-bins-before-6b077d6e.webp",
+      "after": "/images/before-after/concepts/15-light-seasonal-bins-after-6188fb94.webp"
+    },
+    {
+      "id": "16-utility-access",
+      "type": "concept",
+      "status": "published",
+      "visualReviewPassed": true,
+      "title": "A clear route to the door",
+      "caption": "An organization concept that keeps storage out of everyday access routes.",
+      "before": "/images/before-after/concepts/16-utility-access-before-8fefe176.webp",
+      "after": "/images/before-after/concepts/16-utility-access-after-93be887c.webp"
+    },
+    {
+      "id": "17-reuse-shelves",
+      "type": "concept",
+      "status": "published",
+      "visualReviewPassed": true,
+      "title": "Work with what you own",
+      "caption": "A simulated turnaround that reuses existing mismatched shelving rather than replacing everything.",
+      "before": "/images/before-after/concepts/17-reuse-shelves-before-caddc66e.webp",
+      "after": "/images/before-after/concepts/17-reuse-shelves-after-1ebc139a.webp"
+    },
+    {
+      "id": "18-tandem-garage",
+      "type": "concept",
+      "status": "published",
+      "visualReviewPassed": true,
+      "title": "A path through a long garage",
+      "caption": "A storage concept that leaves a continuous route through a narrow tandem garage.",
+      "before": "/images/before-after/concepts/18-tandem-garage-before-429e8169.webp",
+      "after": "/images/before-after/concepts/18-tandem-garage-after-4f7cede1.webp"
     }
   ]
 }
