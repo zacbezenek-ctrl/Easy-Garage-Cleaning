@@ -4,16 +4,20 @@ const fs=require('node:fs');
 const path=require('node:path');
 const assert=require('node:assert/strict');
 const root=process.cwd();
-const out=path.join(root,'simple-page-review'); fs.mkdirSync(out,{recursive:true});
+const out=path.join(root,'simple-page-review');fs.mkdirSync(out,{recursive:true});
 const report=[];
 const server=http.createServer((req,res)=>{
  let name=decodeURIComponent(new URL(req.url,'http://localhost').pathname);
- if(name==='/before-after') name='/before-after.html';
+ if(name==='/before-after')name='/before-after.html';
  const file=path.resolve(root,'.'+name);
  if(!file.startsWith(root+path.sep)||!fs.existsSync(file)||!fs.statSync(file).isFile()){res.writeHead(404);res.end('Not found');return;}
  const types={'.html':'text/html','.css':'text/css','.js':'text/javascript','.webp':'image/webp','.ico':'image/x-icon','.json':'application/json'};
  res.writeHead(200,{'Content-Type':types[path.extname(file)]||'application/octet-stream'});fs.createReadStream(file).pipe(res);
 });
+async function paint(page,selector){
+ await page.locator(selector).evaluateAll(images=>Promise.all(images.map(image=>image.decode())));
+ await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+}
 (async()=>{
  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
  const url='http://127.0.0.1:'+server.address().port+'/before-after';
@@ -25,7 +29,7 @@ const server=http.createServer((req,res)=>{
    const response=await page.goto(url,{waitUntil:'networkidle'});assert.equal(response.status(),200);
    assert.equal(await page.locator('#gallery .card').count(),6);
    await page.locator('#gallery img').evaluateAll(images=>images.forEach(image=>image.loading='eager'));
-   await page.waitForFunction(()=>Array.from(document.querySelectorAll('#gallery img')).every(image=>image.complete&&image.naturalWidth>0));
+   await paint(page,'#gallery img');
    assert.equal(await page.locator('#gallery img').count(),12);
    assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'horizontal overflow at '+width);
    assert.equal(await page.locator('.showcase-card').count(),0);
@@ -38,10 +42,14 @@ const server=http.createServer((req,res)=>{
    const input=card.locator('input[type="range"]');
    await card.locator('[data-position="100"]').click();assert.equal(await input.inputValue(),'100');
    assert(await card.locator('.label-after').isHidden());
+   await paint(page,'#gallery img');
+   await card.screenshot({path:path.join(out,'first-before-'+width+'.png')});
    await card.locator('[data-position="0"]').click();assert.equal(await input.inputValue(),'0');
    assert(await card.locator('.label-before').isHidden());
+   await paint(page,'#gallery img');
+   await card.screenshot({path:path.join(out,'first-after-'+width+'.png')});
    await card.locator('[data-position="50"]').click();assert.equal(await input.inputValue(),'50');
-   const stage=card.locator('.image-stage'); await stage.scrollIntoViewIfNeeded();
+   const stage=card.locator('.image-stage');await stage.scrollIntoViewIfNeeded();
    const box=await stage.boundingBox();
    await page.mouse.move(box.x+box.width*.5,box.y+box.height*.5);await page.mouse.down();
    await page.mouse.move(box.x+box.width*.25,box.y+box.height*.5);await page.mouse.up();
@@ -50,15 +58,24 @@ const server=http.createServer((req,res)=>{
    await card.locator('[data-expand]').click();assert(await page.locator('#viewer').isVisible());
    await page.locator('#viewer [data-position="0"]').click();
    assert.equal(await page.locator('#viewer input[type="range"]').inputValue(),'0');
+   await paint(page,'#viewer img');
    await page.screenshot({path:path.join(out,'viewer-'+width+'.png')});
    await page.keyboard.press('Escape');assert(await page.locator('#viewer').isHidden());
    assert(await card.locator('[data-expand]').evaluate(el=>el===document.activeElement));
    await page.locator('#gallery [data-position="50"]').evaluateAll(buttons=>buttons.forEach(button=>button.click()));
-   await page.evaluate(()=>scrollTo(0,0));
+   for(let i=0;i<6;i++){
+    const current=page.locator('#gallery .card').nth(i);
+    await current.scrollIntoViewIfNeeded();
+    await paint(page,'#gallery img');
+    await current.screenshot({path:path.join(out,'card-'+(i+1)+'-'+width+'.png')});
+   }
+   await page.evaluate(()=>scrollTo(0,0));await paint(page,'#gallery img');
    await page.screenshot({path:path.join(out,'page-'+width+'.png'),fullPage:true});
+   const states=await page.locator('#gallery .comparison').evaluateAll(items=>items.map(item=>({position:item.style.getPropertyValue('--position'),clip:getComputedStyle(item.querySelector('.before-image')).clipPath,images:Array.from(item.querySelectorAll('img')).map(image=>({src:image.currentSrc,complete:image.complete,width:image.naturalWidth}))})));
+   assert(states.every(item=>item.position==='50%'&&item.images.every(image=>image.complete&&image.width>0)));
    const ctas=await page.locator('[data-cta^="gallery-"]').evaluateAll(links=>links.map(a=>a.getAttribute('href')));
    assert.deepEqual(ctas,['/book','/book','/book']);assert.deepEqual(errors,[]);
-   report.push({width,cards:6,imagesLoaded:12,noOverflow:true,search:true,buttons:true,pointer:true,keyboard:true,modal:true,focusRestored:true,noProductionMethodWording:true,errors});
+   report.push({width,cards:6,imagesDecoded:12,noOverflow:true,search:true,buttons:true,pointer:true,keyboard:true,modal:true,focusRestored:true,noProductionMethodWording:true,states,errors});
    await page.close();
   }
   const nojs=await browser.newPage({javaScriptEnabled:false,viewport:{width:390,height:900}});
