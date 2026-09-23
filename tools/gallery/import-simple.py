@@ -31,7 +31,9 @@ def download(url):
             assert len(data) <= 45_000_000
             image = ImageOps.exif_transpose(Image.open(io.BytesIO(data))).convert('RGB')
             image.load()
-            assert 1200 <= image.width <= 8192 and image.width * 3 == image.height * 4
+            # Provider rounds 4:3 to model-supported dimensions (2336 x 1744).
+            # Reject an unrelated ratio; normalize both members together below.
+            assert 1200 <= image.width <= 8192 and abs(image.width / image.height - 4/3) < .015
             return image, hashlib.sha256(data).hexdigest()
         except Exception:
             if attempt == 2:
@@ -45,7 +47,6 @@ for index, item in enumerate(manifest['pairs']):
     after, after_hash = download(item['afterUrl'])
     assert before.size == after.size
     width, height = after.size
-    # A shared photographed-looking foreground, not a newly generated slab.
     # All bottom-quarter crack branches, stains, joints and chips are identical.
     # The reference-based edits above this region retain the room and clutter.
     begin, end = int(height * .72), int(height * .75)
@@ -61,7 +62,6 @@ for index, item in enumerate(manifest['pairs']):
     entry.update({'type':'concept','customerProject':False,'width':1600,'height':1200})
     for state, image in [('before',before),('after',after)]:
         full = image.resize((1600,1200), Image.Resampling.LANCZOS)
-        # Lossless encoding keeps the shared slab pixels exactly identical.
         stream = io.BytesIO()
         full.save(stream, format='WEBP', lossless=True, method=6)
         data = stream.getvalue()
