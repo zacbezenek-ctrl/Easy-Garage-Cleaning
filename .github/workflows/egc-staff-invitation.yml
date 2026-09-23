@@ -1,0 +1,43 @@
+name: EGC Staff Invitation
+on:
+  pull_request:
+    paths: ['functions/_lib/employee-accounts.js', 'functions/_lib/staff-invitation*', 'functions/api/staff-setup.js', 'functions/staff-setup.js', 'functions/business-start.js', 'staff-setup.js', 'tests/staff-invitation.test.mjs', '.github/workflows/egc-staff-invitation.yml']
+  push:
+    branches: [main]
+    paths: ['functions/_lib/employee-accounts.js', 'functions/_lib/staff-invitation*', 'functions/api/staff-setup.js', 'functions/staff-setup.js', 'functions/business-start.js', 'staff-setup.js', 'tests/staff-invitation.test.mjs', '.github/workflows/egc-staff-invitation.yml']
+permissions:
+  contents: read
+jobs:
+  invitation-security:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm install --ignore-scripts
+      - run: node --test tests/staff-invitation.test.mjs tests/business-hub*.test.mjs
+      - name: Read-only production readiness and portal checks
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: python
+        run: |
+          import json,urllib.request,urllib.error,time
+          origin='https://easygaragecleaning.com'
+          def get(path):
+              req=urllib.request.Request(origin+path,headers={'Cache-Control':'no-cache','User-Agent':'EGC-Staff-Release/1.0'})
+              try: r=urllib.request.urlopen(req,timeout=20)
+              except urllib.error.HTTPError as e: r=e
+              with r: return r.status,{k.lower():v for k,v in r.headers.items()},r.read().decode()
+          for attempt in range(15):
+              status,headers,body=get('/api/staff-setup')
+              if status==200 and 'named-staff-v2' in body: break
+              if attempt==14: raise RuntimeError('Secure staff setup deployment/configuration unavailable')
+              time.sleep(10)
+          for path,needle in [('/staff-setup','Activate your EGC staff account'),('/staff-setup.js','action:\'inspect\''),('/business-start','Work in progress'),('/business-hub','Business Client Hub'),('/employee','Employee')]:
+              status,headers,body=get(path)
+              assert status==200 and needle.lower() in body.lower(),path+' unavailable'
+              if path in ['/staff-setup','/business-start']:
+                  assert 'no-store' in headers.get('cache-control',''),path+' must not cache'
+                  assert 'noindex' in headers.get('x-robots-tag',''),path+' must not index'
+          print('PASS: setup route, server configuration readiness, introductory page, B2B hub and employee portal. No real invitation was redeemed, no password set, and no customer data written.')

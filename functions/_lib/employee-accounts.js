@@ -1,5 +1,6 @@
 import { firestoreFetch, firebaseServiceAccountConfigured } from './firebase-service-account.js';
 import { employeeVaultSecret, employeeVaultReadOnly } from './employee-vault-key.js';
+import { namedStaffRole } from './staff-invitation-service.js';
 
 const PROJECT_ID = 'egcw-1ec83';
 const RECORD_TYPE = 'employee_account_v1';
@@ -155,7 +156,7 @@ async function passwordDigest(password, salt) {
 
 function publicAccount(account) {
   if (!account) return null;
-  const { passwordHash, passwordSalt, ...safe } = account;
+  const { passwordHash, passwordSalt, invitation, ...safe } = account;
   return safe;
 }
 
@@ -222,6 +223,7 @@ export async function authenticateEmployeeAccount(env, username, password) {
     await listEmployeeApplications(env);
     return null;
   }
+  if (account.status === 'invited') return null;
   if (!account.passwordSalt || !account.passwordHash) throw unreadableAccount();
   const supplied = await passwordDigest(password, account.passwordSalt);
   if (!safeEqual(supplied, account.passwordHash)) return null;
@@ -235,7 +237,7 @@ function employeeSessionProfile(account) {
   return {
     user: account.username,
     displayName: account.displayName || account.username,
-    role: 'crew',
+    role: namedStaffRole(account),
     payType: account.payType || 'hourly',
     hourlyRate: Math.max(0, Number(account.hourlyRate || 0)),
     businessAccess: false,
@@ -298,7 +300,7 @@ export async function reviewEmployeeApplication(env, username, decision, reviewe
     status: decision,
     // Repeating the same review is safe, but a changed decision revokes old sessions.
     sessionVersion: account.status === decision ? String(account.sessionVersion || '') : crypto.randomUUID(),
-    role: 'crew',
+    role: namedStaffRole(account),
     businessAccess: false,
     reviewedAt: now,
     reviewedBy: text(reviewer, 60),
@@ -306,4 +308,39 @@ export async function reviewEmployeeApplication(env, username, decision, reviewe
   };
   await writeAccount(env, updated);
   return publicAccount(updated);
+}
+
+// The invitation service uses the same encrypted employee account and password
+// format as normal sign-in. No duplicate auth realm, owner cookie or plaintext
+// password is created. Activation requires the exact observed Firestore version.
+export function employeeInvitationStore(env) {
+  function configured(write=false) {
+    if(!employeeAccountsConfigured(env))throw storageError();
+    if(write&&employeeVaultReadOnly(env))throw accountError('EMPLOYEE_ACCOUNT_RECOVERY_READ_ONLY','Employee setup is in read-only recovery.');
+  }
+  const location=id=>`https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents/jobs/${encodeURIComponent(id)}`;
+  return {
+    async read(username) {
+      configured();const id=await documentId(env,username),response=await firestoreFetch(env,location(id));
+      if(response.status===404)return null;if(!response.ok)throw storageError(response);
+      const doc=await response.json(),stored=parseDocument(doc);
+      if(!doc.updateTime||stored.id!==id||!stored.payload||!stored.iv)throw unreadableAccount();
+      let account;try{account=await open(env,id,stored.iv,stored.payload);}catch{throw unreadableAccount();}
+      if(normalizeEmployeeUsername(account?.username)!==normalizeEmployeeUsername(username))throw unreadableAccount();
+      return {account,version:doc.updateTime};
+    },
+    async list(){configured();return listEmployeeApplications(env);},
+    async create(account){configured(true);return writeAccount(env,account,true);},
+    async password(password){const salt=base64Url(crypto.getRandomValues(new Uint8Array(16)));return {passwordSalt:salt,passwordHash:await passwordDigest(password,salt)};},
+    async save(account,version){
+      configured(true);if(typeof version!=='string'||!version)throw unreadableAccount();
+      const id=await documentId(env,account.username),encrypted=await seal(env,id,account),url=new URL(location(id));
+      url.searchParams.set('currentDocument.updateTime',version);
+      const response=await firestoreFetch(env,url,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(firestoreDocument(id,account,encrypted))});
+      if([409,412].includes(response.status))throw Object.assign(new Error('This invitation was already used or the account changed.'),{status:409,publicMessage:'This invitation was already used or the account changed. Try normal staff sign-in if you already chose a password.'});
+      if(!response.ok)throw storageError(response);
+      const saved=await response.json();if(!saved.updateTime)throw storageError();
+      return {version:saved.updateTime};
+    },
+  };
 }
