@@ -368,7 +368,8 @@ async function persistMessage(rawValue: unknown): Promise<string | null> {
       startedAt: occurredAt,
       durationSeconds: callMetadata.durationSeconds,
       status: callStatus,
-      recordingUrl: callMetadata.recordingUrl,\n      answered: callMetadata.answered,
+      recordingUrl: callMetadata.recordingUrl,
+        answered: callMetadata.answered,
       raw: msg
     }).onConflictDoUpdate({
       target: schema.calls.providerMessageId,
@@ -377,7 +378,8 @@ async function persistMessage(rawValue: unknown): Promise<string | null> {
         actorType: actor,
         durationSeconds: callMetadata.durationSeconds,
         status: callStatus,
-        recordingUrl: callMetadata.recordingUrl,\n      answered: callMetadata.answered,
+        recordingUrl: callMetadata.recordingUrl,
+        answered: callMetadata.answered,
         raw: msg,
         updatedAt: new Date()
       }
