@@ -1,0 +1,63 @@
+name: EGC Business Hub Acceptance
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'business-hub*'
+      - 'functions/_lib/business-hub*'
+      - 'functions/api/business-hub.js'
+      - 'functions/_middleware.js'
+      - 'tests/business-hub*'
+      - '.github/workflows/egc-business-hub-acceptance.yml'
+permissions:
+  contents: read
+jobs:
+  business-hub:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Business account, role and isolation regressions
+        run: node --test tests/business-hub*.test.mjs
+      - name: Read-only production route and privacy checks
+        shell: python
+        run: |
+          import json, time, urllib.request, urllib.error
+          origin = 'https://easygaragecleaning.com'
+          def get(path):
+              request = urllib.request.Request(origin + path, headers={'User-Agent':'EGC-Release-Check/1.0','Cache-Control':'no-cache'})
+              try:
+                  response = urllib.request.urlopen(request, timeout=20)
+              except urllib.error.HTTPError as error:
+                  response = error
+              with response:
+                  return response.status, dict(response.headers.items()), response.read().decode('utf-8')
+          def headers_lower(headers):
+              return {key.lower(): value for key, value in headers.items()}
+          for attempt in range(18):
+              try:
+                  status, headers, body = get('/business-hub')
+                  headers = headers_lower(headers)
+                  assert status == 200 and 'Business Client Hub' in body, 'Business hub page is not live'
+                  assert 'no-store' in headers.get('cache-control',''), 'Hub shell must not be cached'
+                  assert headers.get('referrer-policy') == 'no-referrer', 'Hub needs private referrer policy'
+                  assert 'noindex' in headers.get('x-robots-tag',''), 'Hub must not be indexed'
+                  status, _, body = get('/business-hub.js')
+                  assert status == 200 and '/api/business-hub' in body, 'Client application script unavailable'
+                  status, _, body = get('/book')
+                  assert status == 200 and '/business-hub' in body, 'Booking page must expose the business hub'
+                  status, _, body = get('/api/business-hub')
+                  assert status == 401 and isinstance(json.loads(body).get('error'), str), 'Anonymous company data must be denied'
+                  status, _, body = get('/api/business-hub?staff=1')
+                  assert status in (401,403) and isinstance(json.loads(body).get('error'), str), 'Anonymous staff access must be denied'
+                  print('PASS: public business hub, application script, booking link, privacy headers and anonymous-access denial.')
+                  print('No customer records, invitations, messages or payments were created. Authenticated onboarding is a separate acceptance check.')
+                  break
+              except Exception as error:
+                  if attempt == 17:
+                      raise
+                  print(f'Waiting for deployment, attempt {attempt+1}: {error}', flush=True)
+                  time.sleep(10)
