@@ -28,6 +28,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: npm ci
+      - run: npm install --ignore-scripts --no-audit --no-fund
       - run: node --test tests/gallery-preview.test.mjs
       - run: node --check internal-gallery-assets/gallery.js
