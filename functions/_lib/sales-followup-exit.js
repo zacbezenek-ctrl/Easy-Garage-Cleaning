@@ -52,6 +52,33 @@ async function allJobs(env) {
   return docs.map(row => ({ ...decodeFirestoreFields(row.document.fields), id: String(row.document.name).split('/').pop() }));
 }
 
+function salesWorkflowId(env, service) {
+  const id = service === 'garage' ? env.HIGHLEVEL_GARAGE_SALES_WORKFLOW_ID : service === 'junk' ? env.HIGHLEVEL_JUNK_SALES_WORKFLOW_ID : '';
+  return /^[A-Za-z0-9_-]{6,200}$/.test(String(id || '')) ? String(id) : '';
+}
+
+async function verifiedSalesWorkflow(env, service) {
+  const workflowId = salesWorkflowId(env, service);
+  if (!workflowId) return null;
+  const locationId = env.HIGHLEVEL_LOCATION_ID || env.GHL_LOCATION_ID;
+  const data = await highlevel(env, `/workflows/?${new URLSearchParams({ locationId })}`);
+  if (!Array.isArray(data.workflows)) throw new Error('Workflow inventory invalid');
+  const matches = data.workflows.filter(row => row?.id === workflowId && row?.locationId === locationId);
+  if (matches.length !== 1) throw new Error('Sales workflow identity unavailable');
+  const workflow = matches[0];
+  if (String(workflow.status || '').toLowerCase() === 'draft') throw new Error('Sales workflow is not active');
+  return { id: workflowId, name: String(workflow.name || ''), status: String(workflow.status || '') };
+}
+
+async function removeFromSalesWorkflow(env, contactId, workflow) {
+  const data = await highlevel(env, `/contacts/${encodeURIComponent(contactId)}/workflow/${encodeURIComponent(workflow.id)}`, {
+    method: 'DELETE',
+    body: JSON.stringify({ eventStartTime: new Date().toISOString() })
+  });
+  if (data?.succeeded !== true && data?.succeded !== true) throw new Error('Sales workflow exit not verified');
+  return { workflowId: workflow.id, workflowName: workflow.name, workflowStatus: workflow.status, providerConfirmed: true, verifiedAt: new Date().toISOString() };
+}
+
 async function openOpportunities(env, contactId) {
   const locationId = env.HIGHLEVEL_LOCATION_ID || env.GHL_LOCATION_ID;
   const params = new URLSearchParams({ locationId, contactId, status: 'open', limit: '100', page: '1' });
@@ -95,6 +122,8 @@ export async function syncSalesFollowupExit(env, jobId) {
     const revision = [job.estimate?.revision ?? 0, Number(job.estimate?.amount || job.total || job.priceQuoted || 0)].join(':');
     if (['sending', 'uncertain'].includes(ledger.value.status) || (ledger.value.status === 'signalled' && ledger.value.revision === revision)) return ledger.value;
     if (!service) return stop('service_not_identified');
+    const workflow = await verifiedSalesWorkflow(env, service).catch(() => null);
+    if (!workflow) return stop('sales_workflow_not_verified');
     const contactId = String(job.highlevelContactId || '');
     if (!contactId) return stop('contact_not_linked');
     const linkedId = String(job.highlevelOpportunityId || '');
@@ -122,10 +151,18 @@ export async function syncSalesFollowupExit(env, jobId) {
     if (opportunities.length > 1 || (linkedId && opportunities.some(row => row.id !== linkedId))) return stop('another_opportunity_active');
     const latest = await readJob(env, jobId);
     if (!latest?.__updateTime || latest.__updateTime !== job.__updateTime) return { status: 'retry', reason: 'job_changed' };
-    const tag = `egc-${service}-sales-exit`, value = { status: 'sending', jobId, contactId, service, milestone, revision, tag, attemptedAt: new Date().toISOString() };
+    const tag = `egc-${service}-sales-exit`, value = { status: 'sending', jobId, contactId, service, milestone, revision, tag, workflowId: workflow.id, attemptedAt: new Date().toISOString() };
     claimAttempted = true; await saveState(env, jobId, value, ledger.version); claimed = true;
-    await highlevel(env, `/contacts/${encodeURIComponent(contactId)}/tags`, { method: 'POST', body: JSON.stringify({ tags: [tag] }) });
-    const current = await state(env, jobId), result = { ...value, status: 'signalled', signalledAt: new Date().toISOString() };
+    const workflowExit = await removeFromSalesWorkflow(env, contactId, workflow);
+    // Keep the legacy exit tag as a compatibility signal, but the durable proof
+    // of nurture suppression is the provider-confirmed removal from the exact
+    // configured sales workflow. This does not touch appointment-reminder workflows.
+    let tagSignalled = false;
+    try {
+      await highlevel(env, `/contacts/${encodeURIComponent(contactId)}/tags`, { method: 'POST', body: JSON.stringify({ tags: [tag] }) });
+      tagSignalled = true;
+    } catch { /* Workflow exit is authoritative; legacy tagging is best-effort. */ }
+    const current = await state(env, jobId), result = { ...value, status: 'signalled', workflowExit, tagSignalled, signalledAt: new Date().toISOString() };
     await saveState(env, jobId, result, current.version); await mirror(env, jobId, result);
     return result;
   } catch (error) {
