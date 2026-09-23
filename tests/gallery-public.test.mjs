@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, existsSync } from 'node:fs';
 import { onRequest, renderPublicGallery, galleryCanonical } from '../functions/before-after.js';
 import { galleryPreviewPairs } from '../functions/_lib/gallery-preview-data.js';
+import { galleryPublicPairs, galleryFeaturedIds } from '../functions/_lib/gallery-public-data.js';
 import { publicGalleryAsset } from '../functions/before-after-preview.js';
 
 const html = renderPublicGallery();
@@ -19,16 +20,30 @@ test('HEAD is bodyless; methods that could mutate are denied', async () => {
  assert.equal(await onRequest({request:new Request(galleryCanonical,{method:'HEAD'})}).text(),'');
  for(const method of ['POST','PUT','PATCH','DELETE']) assert.equal(onRequest({request:new Request(galleryCanonical,{method})}).status,405);
 });
-test('24 original pairs and all 48 real asset files are included exactly once',()=>{
- assert.equal(galleryPreviewPairs.length,24);
+test('24 distinct scenes and all 48 selected public assets are included exactly once',()=>{
+ assert.equal(galleryPublicPairs.length,24);
+ assert.deepEqual(galleryPublicPairs.map(p=>p.id).sort(),galleryPreviewPairs.map(p=>p.id).sort());
  assert.equal((html.match(/class="card"/g)||[]).length,24);
  assert.equal((html.match(/class="after-image"/g)||[]).length,24);
  assert.equal((html.match(/class="before-image"/g)||[]).length,24);
  const selected=new Set();
- for(const pair of galleryPreviewPairs) for(const path of [pair.before,pair.after]) {
+ for(const pair of galleryPublicPairs) for(const path of [pair.before,pair.after]) {
   const publicPath=publicGalleryAsset(path);assert(existsSync('.'+publicPath));assert(html.includes(`src="${publicPath}"`));selected.add(publicPath);
  }
  assert.equal(selected.size,48);
+});
+test('the eight refreshed black-storage concepts lead in curated order',()=>{
+ const expected=['24-complete-organization','01-family-garage','23-winter-parking','04-working-bench','05-seasonal-storage','09-moving-boxes','03-four-bikes','02-single-car'];
+ assert.deepEqual(galleryFeaturedIds,expected);
+ assert.deepEqual([...html.matchAll(/data-scene="([^"]+)"/g)].slice(0,8).map(m=>m[1]),expected);
+ for(const pair of galleryPublicPairs.slice(0,8)) {
+  assert.equal(pair.visualReviewPassed,true);assert.equal(pair.type,'concept');assert.equal(pair.customerProject,false);
+  assert(pair.before.startsWith('/gallery-ideal-assets/'));assert(pair.after.startsWith('/gallery-ideal-assets/'));
+  assert.equal(pair.width,1168);assert.equal(pair.height,880);
+ }
+ assert.match(html,/property="og:image" content="https:\/\/easygaragecleaning\.com\/gallery-ideal-assets\/images\/24-complete-organization-after-24c80cfd\.webp"/);
+ assert.match(html,/03-four-bikes-after-951c8c03\.webp/);
+ assert.doesNotMatch(html,/1606723b/);
 });
 test('canonical, sharing metadata, schema and meaningful concept context are present',()=>{
  assert(html.includes(`<link rel="canonical" href="${galleryCanonical}">`));

@@ -1,0 +1,21 @@
+{
+  "version": "20260923-ideal-storage-v2",
+  "type": "ai-generated-concept",
+  "customerProject": false,
+  "requestedModel": "gpt_image_2_5",
+  "reportedModel": "gpt_image_2_5",
+  "reviewStatus": "pending-visual-review",
+  "sourceBase": "https://d8j0ntlcm91z4.cloudfront.net/user_3JjgIOWHcjk4PKqJNGDT7ggmCDm/",
+  "brief": "Much messier believable before scenes; ideal attainable EGC after scenes with abundant matte black steel open shelving, matching black totes with yellow lids, wall-mounted tools/bikes, and clear parking/door access. Preserve architecture, camera and existing concrete; cleaning only, no flooring replacement, epoxy, paint or remodel. These remain fictional design concepts, not customer results.",
+  "rejectedOutputs": [{"jobId":"1606723b-355e-48a2-9d15-a58df8261e0b","reason":"Implausible four-high horizontal bicycle stack; replaced with floor-level bicycle storage."}],
+  "pairs": [
+    {"id":"01-family-garage","beforeJob":"ef560540-fbcb-482e-9d7d-4d8d7ce131fa","beforeTime":"192446","afterJob":"2a7e8e71-6a45-4506-90a0-b6df1b4512da","afterTime":"192539"},
+    {"id":"03-four-bikes","beforeJob":"c74e854f-007e-4507-b532-8d537ce100a5","beforeTime":"192446","afterJob":"951c8c03-2641-487f-9359-23bcf3c2e800","afterTime":"193008"},
+    {"id":"04-working-bench","beforeJob":"f02eaf4e-3a23-48f3-b257-db449199a244","beforeTime":"192446","afterJob":"0db15d3f-4969-48e8-9499-65309c4247a6","afterTime":"192539"},
+    {"id":"09-moving-boxes","beforeJob":"5db7e46d-7976-4430-b9e8-d0f21a59f5e4","beforeTime":"192617","afterJob":"ecd56e40-a0a2-4236-ba28-f424f49fc1a9","afterTime":"192705"},
+    {"id":"23-winter-parking","beforeJob":"53ac7d59-3848-4c18-b640-dbf9a194bcd4","beforeTime":"192618","afterJob":"60b1b0c1-4581-49a0-ab1c-b17f0bb3089e","afterTime":"192705"},
+    {"id":"24-complete-organization","beforeJob":"3aaa31c3-40ee-4a0c-a750-e2d2bdec48ea","beforeTime":"192446","afterJob":"24c80cfd-21e9-4016-b00b-e69a8d5fd1e2","afterTime":"192539"},
+    {"id":"02-single-car","beforeJob":"4ec5dbd1-481c-402d-bf38-68b920158e97","beforeTime":"192617","afterJob":"f1575b04-e91f-462f-b616-9e4f3406c8e3","afterTime":"192705"},
+    {"id":"05-seasonal-storage","beforeJob":"d6db183c-13fe-4057-bf0a-711245b6ad7d","beforeTime":"192618","afterJob":"d17b57ee-2695-4787-ba46-ecec21102b2b","afterTime":"192705"}
+  ]
+}
