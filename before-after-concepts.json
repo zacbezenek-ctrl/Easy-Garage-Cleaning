@@ -12,14 +12,44 @@
       "after": "/images/before-after/concepts/01-family-garage-after-25b7e833.webp"
     },
     {
+      "id": "02-single-car",
+      "type": "concept",
+      "status": "published",
+      "visualReviewPassed": true,
+      "title": "Small garage, useful space",
+      "caption": "A simulated cleanout that clears a narrow garage while keeping useful belongings together.",
+      "before": "/images/before-after/concepts/02-single-car-before-710f44c8.webp",
+      "after": "/images/before-after/concepts/02-single-car-after-5c52c6b7.webp"
+    },
+    {
+      "id": "03-four-bikes",
+      "type": "concept",
+      "status": "published",
+      "visualReviewPassed": true,
+      "title": "A place for the bikes",
+      "caption": "An illustrative arrangement that puts the bicycles together along a wall instead of across the parking area.",
+      "before": "/images/before-after/concepts/03-four-bikes-before-1f051c62.webp",
+      "after": "/images/before-after/concepts/03-four-bikes-after-6e8fe44e.webp"
+    },
+    {
       "id": "04-working-bench",
       "type": "concept",
       "status": "published",
       "visualReviewPassed": true,
       "title": "Bring the workbench back",
-      "caption": "A concept for a clearer work surface, reachable tools and organized storage without remodeling the garage.",
+      "caption": "A concept for a clearer work surface, reachable tools and organized storage without remodeling.",
       "before": "/images/before-after/concepts/04-working-bench-before-1a62e106.webp",
       "after": "/images/before-after/concepts/04-working-bench-after-124cceaa.webp"
+    },
+    {
+      "id": "05-seasonal-storage",
+      "type": "concept",
+      "status": "published",
+      "visualReviewPassed": true,
+      "title": "Find the holiday boxes",
+      "caption": "A seasonal-storage concept using shelving and folded-chair storage to free the floor.",
+      "before": "/images/before-after/concepts/05-seasonal-storage-before-96301f00.webp",
+      "after": "/images/before-after/concepts/05-seasonal-storage-after-a2094e80.webp"
     },
     {
       "id": "06-camping-gear",
@@ -27,9 +57,59 @@
       "status": "published",
       "visualReviewPassed": true,
       "title": "Ready for the next trip",
-      "caption": "A simulated storage layout that keeps camping gear accessible and the middle of the garage open.",
+      "caption": "A simulated layout that keeps camping gear accessible and the middle of the garage open.",
       "before": "/images/before-after/concepts/06-camping-gear-before-d8d69a3d.webp",
       "after": "/images/before-after/concepts/06-camping-gear-after-9c526c89.webp"
+    },
+    {
+      "id": "07-garden-tools",
+      "type": "concept",
+      "status": "published",
+      "visualReviewPassed": true,
+      "title": "The garden gear, sorted",
+      "caption": "An idea for organizing lawn tools, pots and equipment in an older garage.",
+      "before": "/images/before-after/concepts/07-garden-tools-before-b29fc36f.webp",
+      "after": "/images/before-after/concepts/07-garden-tools-after-d5df4eac.webp"
+    },
+    {
+      "id": "08-bulky-cleanout",
+      "type": "concept",
+      "status": "published",
+      "visualReviewPassed": true,
+      "title": "Remove what no longer belongs",
+      "caption": "A simulated bulky-item cleanout with useful storage retained and an open center.",
+      "before": "/images/before-after/concepts/08-bulky-cleanout-before-66e0be48.webp",
+      "after": "/images/before-after/concepts/08-bulky-cleanout-after-8d671323.webp"
+    },
+    {
+      "id": "09-moving-boxes",
+      "type": "concept",
+      "status": "published",
+      "visualReviewPassed": true,
+      "title": "Unpack the garage",
+      "caption": "An illustrative way to reuse shelving and organize belongings after a move.",
+      "before": "/images/before-after/concepts/09-moving-boxes-before-adb3318d.webp",
+      "after": "/images/before-after/concepts/09-moving-boxes-after-f5f7d407.webp"
+    },
+    {
+      "id": "10-downsizing",
+      "type": "concept",
+      "status": "published",
+      "visualReviewPassed": true,
+      "title": "Keep the things that matter",
+      "caption": "A downsizing concept with keepsakes and useful belongings stored along the walls.",
+      "before": "/images/before-after/concepts/10-downsizing-before-8ca74d2b.webp",
+      "after": "/images/before-after/concepts/10-downsizing-after-7bbb2904.webp"
+    },
+    {
+      "id": "12-ski-snowboard",
+      "type": "concept",
+      "status": "published",
+      "visualReviewPassed": true,
+      "title": "Winter gear without the pile",
+      "caption": "An illustrative arrangement for skis, boards, boots and winter gear.",
+      "before": "/images/before-after/concepts/12-ski-snowboard-before-facdb107.webp",
+      "after": "/images/before-after/concepts/12-ski-snowboard-after-8db719a7.webp"
     }
   ]
 }
