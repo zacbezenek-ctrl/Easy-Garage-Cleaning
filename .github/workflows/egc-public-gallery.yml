@@ -1,0 +1,59 @@
+name: EGC Public Gallery
+on:
+  push:
+    branches: ['feat/gallery-live-*']
+    paths: ['functions/before-after.js', 'functions/_lib/gallery-preview-data.js', 'gallery-live.css', 'tools/gallery/publish-links.py', 'tests/gallery-public.test.mjs', '.github/workflows/egc-public-gallery.yml']
+  pull_request:
+    paths: ['functions/before-after.js', 'before-after.html', 'gallery-live.css', 'tools/gallery/publish-links.py', 'tests/gallery-public.test.mjs', 'gallery-preview-assets/**', '.github/workflows/egc-public-gallery.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: gallery-live-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+jobs:
+  prepare:
+    if: github.event_name != 'pull_request' && github.repository == 'zacbezenek-ctrl/Easy-Garage-Cleaning' && startsWith(github.ref_name, 'feat/gallery-live-')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Add deterministic homepage and sitemap links
+        run: python3 tools/gallery/publish-links.py
+      - name: Render identical fallback for static hosting
+        run: node --input-type=module -e "import {writeFileSync} from 'node:fs'; import {renderPublicGallery} from './functions/before-after.js'; writeFileSync('before-after.html',renderPublicGallery());"
+      - name: Validate public route and existing image files
+        run: node --test tests/gallery-public.test.mjs
+      - name: Save only generated outputs without overwriting concurrent work
+        env:
+          TARGET_BRANCH: ${{ github.ref_name }}
+          EXPECTED_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$TARGET_BRANCH" =~ ^feat/gallery-live-[a-zA-Z0-9-]+$ ]]
+          git add -- index.html sitemap.xml before-after.html
+          if git diff --cached --quiet; then exit 0; fi
+          test "$(git ls-remote origin "refs/heads/$TARGET_BRANCH" | cut -f1)" = "$EXPECTED_SHA"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git diff --cached --stat
+          git commit -m 'Render public gallery fallback and synchronize website discovery'
+          git push origin "HEAD:refs/heads/$TARGET_BRANCH"
+  test:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node --test tests/gallery-public.test.mjs
+      - run: node --check functions/before-after.js
+      - name: Verify static and server-rendered gallery stay identical
+        run: node --input-type=module -e "import assert from 'node:assert/strict'; import {readFileSync} from 'node:fs'; import {renderPublicGallery} from './functions/before-after.js'; assert.equal(readFileSync('before-after.html','utf8'),renderPublicGallery());"
