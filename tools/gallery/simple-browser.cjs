@@ -27,10 +27,10 @@ async function paint(page,selector){
    const page=await browser.newPage({viewport:{width,height:900},deviceScaleFactor:1});
    const errors=[];page.on('pageerror',error=>errors.push(error.message));
    const response=await page.goto(url,{waitUntil:'networkidle'});assert.equal(response.status(),200);
-   assert.equal(await page.locator('#gallery .ba-card').count(),4);
+   assert.equal(await page.locator('#gallery .ba-card').count(),7);
    await page.locator('#gallery img').evaluateAll(images=>images.forEach(image=>image.loading='eager'));
    await paint(page,'#gallery img');
-   assert.equal(await page.locator('#gallery img').count(),8);
+   assert.equal(await page.locator('#gallery img').count(),14);
    assert(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'horizontal overflow at '+width);
    assert.equal(await page.locator('.showcase-card').count(),0);
    assert.equal(await page.locator('script[src*="gallery-preview-assets/gallery.js"]').count(),0); assert.equal(await page.locator('link[href*="styles.css"]').count(),1); assert.equal(await page.locator('.site-footer').count(),1); assert.equal(await page.locator('.nav').count(),1);
@@ -60,7 +60,7 @@ async function paint(page,selector){
    await page.keyboard.press('Escape');assert(await page.locator('#viewer').isHidden());
    assert(await card.locator('[data-expand]').evaluate(el=>el===document.activeElement));
    await page.locator('#gallery [data-position="50"]').evaluateAll(buttons=>buttons.forEach(button=>button.click()));
-   for(let i=0;i<4;i++){
+   for(let i=0;i<7;i++){
     const current=page.locator('#gallery .ba-card').nth(i);
     await current.scrollIntoViewIfNeeded();
     await paint(page,'#gallery img');
@@ -71,12 +71,12 @@ async function paint(page,selector){
    const states=await page.locator('#gallery .comparison').evaluateAll(items=>items.map(item=>({position:item.style.getPropertyValue('--position'),clip:getComputedStyle(item.querySelector('.before-image')).clipPath,images:Array.from(item.querySelectorAll('img')).map(image=>({src:image.currentSrc,complete:image.complete,width:image.naturalWidth}))})));
    assert(states.every(item=>item.position==='50%'&&item.images.every(image=>image.complete&&image.width>0)));
    assert(await page.locator('a[href="/book"]').count()>=3);assert(await page.locator('a[href="/garage-turnaround-fort-collins-co"]').count()>=2);const unexpected=errors.filter(e=>!e.includes("Cannot read properties of undefined (reading 'v')"));assert.deepEqual(unexpected,[]);
-   report.push({width,cards:4,imagesDecoded:8,noOverflow:true,siteShell:true,buttons:true,pointer:true,keyboard:true,modal:true,focusRestored:true,noProductionMethodWording:true,states,errors});
+   report.push({width,cards:7,imagesDecoded:14,noOverflow:true,siteShell:true,buttons:true,pointer:true,keyboard:true,modal:true,focusRestored:true,noProductionMethodWording:true,states,errors});
    await page.close();
   }
   const nojs=await browser.newPage({javaScriptEnabled:false,viewport:{width:390,height:900}});
-  await nojs.goto(url);assert.equal(await nojs.locator('noscript a').count(),8);
-  assert.equal(await nojs.locator('#gallery .ba-card').count(),4);await nojs.close();
+  await nojs.goto(url);assert.equal(await nojs.locator('noscript a').count(),14);
+  assert.equal(await nojs.locator('#gallery .ba-card').count(),7);await nojs.close();
   fs.writeFileSync(path.join(out,'browser-report.json'),JSON.stringify({passed:true,viewports:report,noJavaScript:true},null,2));
   console.log(JSON.stringify({passed:true,viewports:report,noJavaScript:true},null,2));
  }finally{await browser.close();await new Promise(resolve=>server.close(resolve));}
