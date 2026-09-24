@@ -25,7 +25,7 @@ for attempt in range(30):
     try:
         html=get('/before-after')
         assert ('name="egc-gallery-release" content="'+manifest['release']+'"').encode() in html,'Public HTML is not yet the tested release'
-        assert len(re.findall(rb'class="ba-card"',html))==4
+        assert len(re.findall(rb'class="ba-card"',html))==7
         assert b'/gallery-simple.js' in html and b'/gallery-simple.css' in html
         assert not re.search(rb'\bAI\b|AI-generated|gallery-showcase|gallery-ideal-assets',html,re.I)
         for pair in manifest['pairs']:
@@ -55,6 +55,6 @@ def check(path):
 
 with concurrent.futures.ThreadPoolExecutor(max_workers=5) as pool:
     assets=list(pool.map(check,paths))
-result={'passed':True,'url':BASE+'/before-after','release':manifest['release'],'cards':4,'htmlSha256':hashlib.sha256(html).hexdigest(),'verifiedAssets':assets,'checkedAtUtc':time.strftime('%Y-%m-%dT%H:%M:%SZ',time.gmtime())}
+result={'passed':True,'url':BASE+'/before-after','release':manifest['release'],'cards':7,'htmlSha256':hashlib.sha256(html).hexdigest(),'verifiedAssets':assets,'checkedAtUtc':time.strftime('%Y-%m-%dT%H:%M:%SZ',time.gmtime())}
 (OUT/'live-report.json').write_text(json.dumps(result,indent=2))
 print(json.dumps(result,indent=2))
