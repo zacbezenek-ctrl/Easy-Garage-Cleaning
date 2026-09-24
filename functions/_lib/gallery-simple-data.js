@@ -1,5 +1,5 @@
 // Public before-and-after gallery. CustomerProject=false entries are planning examples, not customer portfolio claims.
-export const gallerySimpleVersion = "20260923-site-v4";
+export const gallerySimpleVersion = "20260923-site-v5";
 export const gallerySimplePairs = [
   {
     "id": "garage-photo-pair",
@@ -56,5 +56,47 @@ export const gallerySimplePairs = [
     "beforeThumbnail": "https://d8j0ntlcm91z4.cloudfront.net/user_3JjgIOWHcjk4PKqJNGDT7ggmCDm/hf_20260923_225430_2b44986c-59ba-4c89-9f90-27979199f7c3.png",
     "after": "https://d8j0ntlcm91z4.cloudfront.net/user_3JjgIOWHcjk4PKqJNGDT7ggmCDm/hf_20260923_225503_247d4c70-9050-4c13-a6b3-b38d19f705b1.png",
     "afterThumbnail": "https://d8j0ntlcm91z4.cloudfront.net/user_3JjgIOWHcjk4PKqJNGDT7ggmCDm/hf_20260923_225503_247d4c70-9050-4c13-a6b3-b38d19f705b1.png"
+  },
+  {
+    "id": "full-two-car-reset",
+    "title": "From packed to parkable",
+    "caption": "A major cleanout opens both parking bays while the original garage stays original.",
+    "keywords": "extreme packed two car garage cleanout shelves parking",
+    "type": "concept",
+    "customerProject": false,
+    "width": 1168,
+    "height": 880,
+    "before": "https://d8j0ntlcm91z4.cloudfront.net/user_3JjgIOWHcjk4PKqJNGDT7ggmCDm/hf_20260924_011802_27fb5bf8-5279-4a7e-b0a6-ae76253a301d.png",
+    "beforeThumbnail": "https://d8j0ntlcm91z4.cloudfront.net/user_3JjgIOWHcjk4PKqJNGDT7ggmCDm/hf_20260924_011802_27fb5bf8-5279-4a7e-b0a6-ae76253a301d.png",
+    "after": "https://d8j0ntlcm91z4.cloudfront.net/user_3JjgIOWHcjk4PKqJNGDT7ggmCDm/hf_20260924_011834_176e3d94-63d4-40d7-9bf2-dc8f6e537c7d.png",
+    "afterThumbnail": "https://d8j0ntlcm91z4.cloudfront.net/user_3JjgIOWHcjk4PKqJNGDT7ggmCDm/hf_20260924_011834_176e3d94-63d4-40d7-9bf2-dc8f6e537c7d.png"
+  },
+  {
+    "id": "three-car-reclaim",
+    "title": "Three bays reclaimed",
+    "caption": "Boxes and gear come off the floor so the garage works like a garage again.",
+    "keywords": "extreme three car garage golf bikes fishing shelves bins",
+    "type": "concept",
+    "customerProject": false,
+    "width": 1168,
+    "height": 880,
+    "before": "https://d8j0ntlcm91z4.cloudfront.net/user_3JjgIOWHcjk4PKqJNGDT7ggmCDm/hf_20260924_011802_802c9e84-2ee1-40c5-8bd5-d65ebafc1ca8.png",
+    "beforeThumbnail": "https://d8j0ntlcm91z4.cloudfront.net/user_3JjgIOWHcjk4PKqJNGDT7ggmCDm/hf_20260924_011802_802c9e84-2ee1-40c5-8bd5-d65ebafc1ca8.png",
+    "after": "https://d8j0ntlcm91z4.cloudfront.net/user_3JjgIOWHcjk4PKqJNGDT7ggmCDm/hf_20260924_011834_d567d7bd-7963-47c9-ab06-0715f26a6664.png",
+    "afterThumbnail": "https://d8j0ntlcm91z4.cloudfront.net/user_3JjgIOWHcjk4PKqJNGDT7ggmCDm/hf_20260924_011834_d567d7bd-7963-47c9-ab06-0715f26a6664.png"
+  },
+  {
+    "id": "workbench-recovery",
+    "title": "The garage underneath the clutter",
+    "caption": "A narrow path becomes an open floor, usable workbench, and organized perimeter storage.",
+    "keywords": "extreme old garage workbench tools lumber cleanout shelves",
+    "type": "concept",
+    "customerProject": false,
+    "width": 1168,
+    "height": 880,
+    "before": "https://d8j0ntlcm91z4.cloudfront.net/user_3JjgIOWHcjk4PKqJNGDT7ggmCDm/hf_20260924_011802_c2828f23-5b4a-4abb-a531-9f76915f9568.png",
+    "beforeThumbnail": "https://d8j0ntlcm91z4.cloudfront.net/user_3JjgIOWHcjk4PKqJNGDT7ggmCDm/hf_20260924_011802_c2828f23-5b4a-4abb-a531-9f76915f9568.png",
+    "after": "https://d8j0ntlcm91z4.cloudfront.net/user_3JjgIOWHcjk4PKqJNGDT7ggmCDm/hf_20260924_011834_626701eb-aeda-4119-bcba-9593fb7fa2b3.png",
+    "afterThumbnail": "https://d8j0ntlcm91z4.cloudfront.net/user_3JjgIOWHcjk4PKqJNGDT7ggmCDm/hf_20260924_011834_626701eb-aeda-4119-bcba-9593fb7fa2b3.png"
   }
 ];
