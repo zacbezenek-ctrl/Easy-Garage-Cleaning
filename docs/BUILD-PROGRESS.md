@@ -47,6 +47,10 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   modules register in `functions/_lib/business-hub-modules.js`), per-collection store id rules, requestId-idempotent
   `create_account`/`save_property`, no member/author ids or staff usernames in client snapshots, re-invite blocked only
   for signed-in members; `window.EGCBusinessHub` plugin API and mobile card layout (44px, 16px inputs, safe areas).
+- **LI-CORE** Pure libraries (no I/O, injected `now`), not yet wired into production: `quote-model.js` (one line-item
+  model in integer cents reading both legacy shapes, totals/selection/packages/deposit, estimate fingerprint),
+  `money-core.js` (customer money totals incl. approved change orders, tips excluded, payment ledger, invoice from
+  estimate; `MAX_TOTAL_CENTS` 1e8) and `quote-duration.js` (selected-line duration suggestion). Adoption is later units.
 
 ## In progress
 
@@ -61,7 +65,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | P1-04 | Arrival windows in dispatch, field and portal | building |
 | P1-05 | Recurring plans: server record, generator, idempotent extendHorizon, API, UI | building |
 | P1-07 | Travel-time estimates (offline ZIP-centroid estimator; optional Google; default off) | building |
-| LI-CORE | One canonical line-item model (quotes, invoices, portal, catalog, duration) + money core + duration engine | building |
+| LI-CORE | One canonical line-item model (quotes, invoices, portal, catalog, duration) + money core + duration engine | merged (08b5ec8) |
 | M2 | Crew card payments recorded via Stripe webhook + Garage Guard membership linkage | building |
 | M15 | Retire dead legacy quote UIs | building |
 | CAT-DATA | Researched garage catalog data file, schema validation, pricing engine, docs/GARAGE-CATALOG.md | building |
