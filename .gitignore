@@ -13,6 +13,7 @@ node_modules/
 .pnpm-store/
 test-results/
 .wrangler/
+.turbo/
 .vercel/
 
 # Crew-tools verification output (scripts/verify-crew.mjs)
