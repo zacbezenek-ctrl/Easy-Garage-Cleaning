@@ -8,6 +8,8 @@ const RESERVED = /^(_egc_|secure_)/;
 const safe = pattern => id => pattern.test(id) && !RESERVED.test(id);
 const COLLECTIONS = Object.freeze({
   business_accounts: id => /^[a-f0-9]{32}$/.test(id), business_sessions: id => /^[a-f0-9]{64}$/.test(id), business_audit: id => /^[a-f0-9]{32}$/.test(id), business_operations: id => /^[a-f0-9]{32,64}$/.test(id),
+  // SEC-B server-only Hub audit rows (40 hex) and confirmation receipts (sha256 hex) join business commits.
+  hub_audit: id => /^[a-f0-9]{32,64}$/.test(id), confirm_tokens: id => /^[a-f0-9]{32,64}$/.test(id),
   jobs: safe(/^[A-Za-z0-9_-]{1,120}$/), customers: safe(/^[A-Za-z0-9_-]{1,180}$/), projects: safe(/^[A-Za-z0-9_-]{1,180}$/), customerIdentityState: id => id === 'revision',
 });
 // Staff account lists read only the fields the list shows (plus ownerStaff for access), not full 750KB workspaces.

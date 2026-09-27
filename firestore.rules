@@ -285,6 +285,15 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // The Hub audit trail and single-use confirmation receipts are written
+    // only by server commits; owners read the audit through /api/hub-audit.
+    match /hub_audit/{documentId} {
+      allow read, write: if false;
+    }
+    match /confirm_tokens/{documentId} {
+      allow read, write: if false;
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }

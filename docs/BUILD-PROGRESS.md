@@ -51,6 +51,10 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   model in integer cents reading both legacy shapes, totals/selection/packages/deposit, estimate fingerprint),
   `money-core.js` (customer money totals incl. approved change orders, tips excluded, payment ledger, invoice from
   estimate; `MAX_TOTAL_CENTS` 1e8) and `quote-duration.js` (selected-line duration suggestion). Adoption is later units.
+- **SEC-B** Security foundations (not yet adopted by production writers): `purpose-keys.js` (HKDF per-purpose HMAC keys
+  from `HUB_PURPOSE_KEY_SECRET`, else `HUB_SESSION_SECRET`; fail closed), server-only append-only `hub_audit` via
+  `auditWrite()` joined to the caller's commit (redacted, owner-only visibility) with owner/manager `GET /api/hub-audit`,
+  and single-use 5-minute confirmation tokens (`confirm_tokens`, env-first `issueConfirmation`/`consumeConfirmation`).
 
 ## In progress
 
@@ -85,7 +89,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | SITE-0 | Site generator determinism/scope, regenerate stale before-after.html, nav a11y | building |
 | SITE-5 | Lighthouse CI (mobile perf/a11y >= 90) harness + workflow | building |
 | SEC-A | Firestore rules hardening (vault/receipts/audit_log) + block private source paths | building |
-| SEC-B | Purpose-scoped keys + server-only hub_audit + single-use confirm tokens | building |
+| SEC-B | Purpose-scoped keys + server-only hub_audit + single-use confirm tokens | merged (75b9e1b) |
 | SEC-C | Env inventory script/test + complete both .env.example files | building |
 | CI-A | Always-on root CI, split platform gate, clock-shift guard, field-execution acceptance in CI | building |
 | CI-B | Pages Functions test router, parallel-safe emulator harness, Playwright iPhone/Android/desktop projects | building |
