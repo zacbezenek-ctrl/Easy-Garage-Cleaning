@@ -16,8 +16,9 @@ const icons={today:'M4 5h16v15H4zM8 3v4m8-4v4M4 10h16',my_day:'M4 11 12 4l8 7v9h
 const svg=n=>`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${icons[n]||icons.today}"/></svg>`;
 const nav=[['MY EGC','my_day','My day'],['MY EGC','my_shifts','My shifts'],['MY EGC','open_shifts','Open shifts'],['MY EGC','earnings','My pay'],['MY EGC','crew_chat','Crew chat'],['MY EGC','availability','Time off'],['MY EGC','requests','Requests'],['MY EGC','training','Training'],['MY EGC','safety','Safety & equipment'],['MY EGC','onboarding','Getting started'],['RUN THE BUSINESS','today','Command center'],['RUN THE BUSINESS','action_center','Action center'],['RUN THE BUSINESS','schedule','Team schedule'],['RUN THE BUSINESS','timesheets','Time approvals'],['RUN THE BUSINESS','people','Team'],['RUN THE BUSINESS','walkthroughs','Walkthroughs'],['RUN THE BUSINESS','delivery','Job delivery'],['CLIENT WORK','customers','Customers'],['CLIENT WORK','finance','Estimates & payments'],['CLIENT WORK','communications','Customer messages'],['CRM','pipeline','New HighLevel leads'],['GROW THE ENGINE','scorecard','Scorecard'],['GROW THE ENGINE','proof','Proof library'],['GROW THE ENGINE','playbook','EGC playbook'],['SYSTEM','settings','Integrations']];
 const currentRole=()=>String(sessionStorage.getItem('egc_role')||localStorage.getItem('egc_role')||'crew').toLowerCase();
-const businessUsers=new Set(['zacb','tylerg','alexk']);
-const isManager=()=>String(sessionStorage.getItem('egc_business_access')||localStorage.getItem('egc_business_access')||'')==='true'&&businessUsers.has(String(sessionStorage.getItem('egc_u')||localStorage.getItem('egc_u')||'').trim().toLowerCase());
+// Business access and ownership are granted by the signed-in server profile (/api/hub-auth).
+const sessionGrant=key=>String(sessionStorage.getItem(key)||localStorage.getItem(key)||'')==='true'&&Boolean(String(sessionStorage.getItem('egc_u')||localStorage.getItem('egc_u')||'').trim());
+const isManager=()=>sessionGrant('egc_business_access');
 const isLead=isManager;
 const employeeViews=new Set(['my_day','my_shifts','open_shifts','earnings','crew_chat','availability','requests','training','safety','onboarding']);
 const canView=name=>employeeViews.has(name)||isManager();
@@ -329,7 +330,7 @@ window.opsDownloadGusto=()=>{const rows=approvedGustoRows(),range=timesheetRange
 const peopleCollections={profiles:'profiles',timeEntries:'timeEntries',announcements:'announcements',requests:'requests',incidents:'incidents',equipment:'equipment',training:'training',teamMessages:'teamMessages',jobMessages:'jobMessages',messageReads:'messageReads'};
 let onboardingDraftTimer=null;
 let onboardingDraftWrite=Promise.resolve();
-const isOwnerAccount=()=>String(employeeIdentity()||'').trim().toLowerCase()==='zacb';
+const isOwnerAccount=()=>sessionGrant('egc_owner');
 const sessionProfile=()=>({id:employeeIdentity(),displayName:sessionStorage.getItem('egc_name')||employeeIdentity(),role:currentRole(),payType:sessionStorage.getItem('egc_pay_type')||'hourly',hourlyRate:Math.max(0,Number(sessionStorage.getItem('egc_hourly_rate')||0))});
 const ownProfile=()=>{const base=sessionProfile(),saved=S.people.profiles.find(x=>sameAccount(x.username||x.id,base.id))||{};return{...base,...saved,id:base.id,role:base.role,payType:saved.payType||base.payType,hourlyRate:Number(saved.hourlyRate??base.hourlyRate)}};
 const onboardingComplete=profile=>Boolean(profile?.onboardingCompletedAt&&profile?.onboardingVersion==='2026-09-location-v2');

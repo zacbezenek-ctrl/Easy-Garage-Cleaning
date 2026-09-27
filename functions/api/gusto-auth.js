@@ -1,4 +1,5 @@
 import { getHubSession, hasBusinessAccess, readCookie } from '../_lib/hub-session.js';
+import { OWNER_USERNAME } from '../_lib/business-users.js';
 import { gustoConfiguration, gustoAuthorizationUrl, connectGustoAuthorization } from '../_lib/gusto-client.js';
 import { readGustoRecord, writeGustoRecord } from '../_lib/gusto-store.js';
 
@@ -11,7 +12,7 @@ function sameOrigin(request) {
   const origin = request.headers.get('Origin');
   return (!origin || origin === new URL(request.url).origin) && !['cross-site'].includes(request.headers.get('Sec-Fetch-Site'));
 }
-function isOwner(session) { return session?.user?.toLowerCase() === 'zacb' && session.role === 'owner' && hasBusinessAccess(session); }
+function isOwner(session) { return session?.user?.toLowerCase() === OWNER_USERNAME && session.role === 'owner' && hasBusinessAccess(session); }
 function random() { return Array.from(crypto.getRandomValues(new Uint8Array(32)), byte => byte.toString(16).padStart(2, '0')).join(''); }
 async function sessionHash(request) {
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`egc:gusto:session:v1\n${readCookie(request)}`));

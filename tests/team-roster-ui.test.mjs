@@ -13,7 +13,7 @@ const application = { username: 'John.Smith', displayName: 'John Smith', status:
 const flush = async () => { for (let index = 0; index < 20; index++) await Promise.resolve(); };
 
 function suite(fetcher = async () => { throw new Error('Unexpected request'); }) {
-  const values = new Map(Object.entries({ egc_u: 'ZacB', egc_business_access: 'true', egc_role: 'owner' }));
+  const values = new Map(Object.entries({ egc_u: 'ZacB', egc_business_access: 'true', egc_owner: 'true', egc_role: 'owner' }));
   const storage = { getItem: key => values.get(key) || null, setItem: (key, value) => values.set(key, String(value)), removeItem: key => values.delete(key) };
   const toasts = [];
   const context = {

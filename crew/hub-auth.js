@@ -1,6 +1,5 @@
 (function () {
-  const KEYS = ['egc_u', 'egc_tok', 'egc_exp', 'egc_name', 'egc_role', 'egc_pay_type', 'egc_hourly_rate', 'egc_business_access'];
-  const BUSINESS_USERS = new Set(['zacb', 'tylerg', 'alexk']);
+  const KEYS = ['egc_u', 'egc_tok', 'egc_exp', 'egc_name', 'egc_role', 'egc_pay_type', 'egc_hourly_rate', 'egc_business_access', 'egc_owner'];
   let authVersion = 0;
   let authQueue = Promise.resolve();
   let firebaseQueue = Promise.resolve();
@@ -26,6 +25,7 @@
         storage.setItem('egc_pay_type', profile.payType || 'hourly');
         storage.setItem('egc_hourly_rate', String(Number(profile.hourlyRate || 0)));
         storage.setItem('egc_business_access', profile.businessAccess === true ? 'true' : 'false');
+        storage.setItem('egc_owner', profile.owner === true ? 'true' : 'false');
         storage.removeItem('egc_tok');
         storage.removeItem('egc_exp');
       }
@@ -160,11 +160,14 @@
       payType: get('egc_pay_type') || 'hourly',
       hourlyRate: Math.max(0, Number(get('egc_hourly_rate') || 0)),
       businessAccess: get('egc_business_access') === 'true',
+      owner: get('egc_owner') === 'true',
     };
   }
 
+  // The server grants business access to the signed-in account; no staff names live here.
   function canRunBusiness(user = profile().user) {
-    return profile().businessAccess === true && BUSINESS_USERS.has(String(user || '').trim().toLowerCase());
+    const current = profile(), signedIn = String(current.user || '').trim().toLowerCase();
+    return current.businessAccess === true && Boolean(signedIn) && String(user || '').trim().toLowerCase() === signedIn;
   }
 
   function mountCrewNav() {

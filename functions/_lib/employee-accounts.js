@@ -1,11 +1,13 @@
 import { firestoreFetch, firebaseServiceAccountConfigured } from './firebase-service-account.js';
 import { employeeVaultSecret, employeeVaultReadOnly } from './employee-vault-key.js';
 import { namedStaffRole } from './staff-invitation-service.js';
+import { BUSINESS_USERS } from './business-users.js';
 
 const PROJECT_ID = 'egcw-1ec83';
 const RECORD_TYPE = 'employee_account_v1';
 const encoder = new TextEncoder();
-const RESERVED_USERNAMES = new Set(['zacb', 'tylerg', 'alexk']);
+// Business staff sign in through the configured Hub users, never employee signup.
+const RESERVED_USERNAMES = BUSINESS_USERS;
 
 function accountError(code, message, status = 503) {
   return Object.assign(new Error(message), { code, status });

@@ -4,6 +4,7 @@ import {
   createHubSessionCookie,
   getHubSession,
   hubAuthConfigured,
+  isHubOwner,
 } from '../_lib/hub-session.js';
 
 const HOST = /^(?:easygaragecleaning\.com|www\.easygaragecleaning\.com|easy-garage-cleaning\.pages\.dev|localhost(?::\d+)?|127\.0\.0\.1(?::\d+)?)$/;
@@ -25,7 +26,7 @@ function allowed(request) {
 
 export async function onRequestGet({ request, env }) {
   const session = await getHubSession(request, env);
-  return session ? reply(200, { ok: true, ...session }) : reply(401, { ok: false, error: 'Sign in required' });
+  return session ? reply(200, { ok: true, ...session, owner: isHubOwner(session) }) : reply(401, { ok: false, error: 'Sign in required' });
 }
 
 export async function onRequestPost({ request, env }) {
@@ -53,7 +54,7 @@ export async function onRequestPost({ request, env }) {
     return reply(401, { ok: false, error: 'Incorrect username or password' });
   }
   const cookie = await createHubSessionCookie(env, profile.user, profile);
-  return reply(200, { ok: true, ...profile }, { 'Set-Cookie': cookie });
+  return reply(200, { ok: true, ...profile, owner: isHubOwner(profile) }, { 'Set-Cookie': cookie });
 }
 
 export async function onRequestDelete({ request }) {

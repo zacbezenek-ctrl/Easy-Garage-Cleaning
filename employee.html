@@ -1280,8 +1280,7 @@ function updateFirebaseStatus() {
 /* ═══════════════════════════════════════════════════════
    AUTH — validated at the server; browser receives an HttpOnly session cookie
 ═══════════════════════════════════════════════════════ */
-const ADMINS = ['ZacB', 'TylerG', 'AlexK'];
-const BUSINESS_USERS = new Set(ADMINS.map(name => name.toLowerCase()));
+// Business access comes from the signed server profile; staff are listed only in functions/_lib/business-users.js.
 let me = null;
 let hubAuthVersion = 0;
 let hubAuthQueue = Promise.resolve();
@@ -1298,7 +1297,7 @@ function serializeHubAuth(action) {
 }
 
 function canRunBusiness() {
-  return sessionStorage.getItem('egc_business_access') === 'true' && BUSINESS_USERS.has(String(me || '').trim().toLowerCase());
+  return Boolean(me) && sessionStorage.getItem('egc_business_access') === 'true';
 }
 
 async function ensureFirebaseSession(version = hubAuthVersion) {
@@ -1334,7 +1333,7 @@ async function enterEmployeeApp(data, version = hubAuthVersion) {
 function clearHubProfile() {
   me = null;
   for (const storage of [sessionStorage, localStorage]) {
-    ['egc_u','egc_name','egc_role','egc_pay_type','egc_hourly_rate','egc_business_access','egc_tok','egc_exp'].forEach(key => storage.removeItem(key));
+    ['egc_u','egc_name','egc_role','egc_pay_type','egc_hourly_rate','egc_business_access','egc_owner','egc_tok','egc_exp'].forEach(key => storage.removeItem(key));
   }
 }
 
@@ -1346,6 +1345,7 @@ function rememberHubProfile(data) {
     egc_pay_type: data.payType || 'hourly',
     egc_hourly_rate: String(Number(data.hourlyRate || 0)),
     egc_business_access: data.businessAccess === true ? 'true' : 'false',
+    egc_owner: data.owner === true ? 'true' : 'false',
   };
   Object.entries(values).forEach(([key, value]) => sessionStorage.setItem(key, value));
 }
@@ -1471,7 +1471,7 @@ function bootDashboard() {
   // Crew assignments are chosen from the current server roster.
   // Show admin tab for admins only (the button may not exist in this build —
   // a missing element here must not abort the rest of dashboard boot)
-  if (ADMINS.includes(me)) {
+  if (canRunBusiness()) {
     const adminTabBtn = document.getElementById('tab-btn-admin');
     if (adminTabBtn) adminTabBtn.style.display = '';
   }
@@ -1624,7 +1624,7 @@ function renderLeads() {
 }
 
 function toggleBlockDay(ds) {
-  if (!ADMINS.includes(me)) return;
+  if (!canRunBusiness()) return;
   if (blockedDays.has(ds)) {
     db.collection('blocked_days').doc(ds).delete();
   } else {
@@ -1633,7 +1633,7 @@ function toggleBlockDay(ds) {
 }
 
 function toggleBlockSlot(slotKey) {
-  if (!ADMINS.includes(me)) return;
+  if (!canRunBusiness()) return;
   if (blockedSlots.has(slotKey)) {
     db.collection('blocked_slots').doc(slotKey).delete();
   } else {
@@ -1934,8 +1934,8 @@ function renderCal() {
     const isBlocked = blockedDays.has(ds);
     cell.className = 'week-head-day' + (isToday?' today':'') + (isBlocked?' blocked-hd':'');
     cell.innerHTML = `<div class="wdn">${DNS[day.getDay()]}</div><div class="wdd">${day.getDate()}</div>`
-      + (ADMINS.includes(me) ? `<button class="block-btn${isBlocked?' active':''}" onclick="event.stopPropagation();toggleBlockDay('${ds}')">${isBlocked?'Blocked':'Block day'}</button>` : '');
-    cell.onclick = () => { if (!isBlocked || ADMINS.includes(me)) openBooking(ds); };
+      + (canRunBusiness() ? `<button class="block-btn${isBlocked?' active':''}" onclick="event.stopPropagation();toggleBlockDay('${ds}')">${isBlocked?'Blocked':'Block day'}</button>` : '');
+    cell.onclick = () => { if (!isBlocked || canRunBusiness()) openBooking(ds); };
     headRow.appendChild(cell);
   });
   view.appendChild(headRow);
@@ -2004,10 +2004,10 @@ function renderCal() {
       const slot = document.createElement('div');
       slot.className = 'hour-slot' + (isSlotBlocked ? ' slot-blocked' : '');
       slot.onclick = () => {
-        if ((isBlocked || isSlotBlocked) && !ADMINS.includes(me)) { alert('This time is blocked — no bookings allowed.'); return; }
+        if ((isBlocked || isSlotBlocked) && !canRunBusiness()) { alert('This time is blocked — no bookings allowed.'); return; }
         openBooking(ds, null, String(h).padStart(2,'0')+':00');
       };
-      if (ADMINS.includes(me)) {
+      if (canRunBusiness()) {
         const lockBtn = document.createElement('button');
         lockBtn.className = 'slot-lock-btn';
         lockBtn.textContent = isSlotBlocked ? '' : '';
@@ -2076,7 +2076,7 @@ function showPopup(job, anchor) {
       ${job.status==='scheduled'?`<button class="bsm edit" onclick="setStatus('${job.id}','scheduled');moveJobPipeline('${job.id}','in_progress');closePopup()">Start job</button>`:''}
       ${job.status==='scheduled'||getPipelineStatus(job)==='in_progress'?`<button class="bsm complete" onclick="setStatus('${job.id}','completed');closePopup()">Complete</button>`:''}
       <button class="bsm edit" onclick="closePopup();openJobDetail('${job.id}')">Details</button>
-      ${job.status==='completed'&&ADMINS.includes(me)?`<button class="bsm approve" onclick="setStatus('${job.id}','paid');closePopup()">Approve Payment</button>`:''}
+      ${job.status==='completed'&&canRunBusiness()?`<button class="bsm approve" onclick="setStatus('${job.id}','paid');closePopup()">Approve Payment</button>`:''}
       <button class="bsm edit" onclick="closePopup();openBooking(null,loadJobs().find(j=>j.id==='${job.id}'))">Edit</button>
       <button class="bsm del" onclick="closePopup();delJob('${job.id}')">Delete</button>
     </div>`;
@@ -2231,7 +2231,7 @@ function mkJobCard(job) {
   if (job.status==='scheduled') {
     const b=document.createElement('button'); b.className='bsm complete'; b.textContent='Open completion'; b.onclick=()=>setStatus(job.id,'completed'); acts.appendChild(b);
   }
-  if (job.status==='completed' && ADMINS.includes(me)) {
+  if (job.status==='completed' && canRunBusiness()) {
     const b=document.createElement('button'); b.className='bsm approve'; b.textContent='Record payment'; b.onclick=()=>setStatus(job.id,'paid'); acts.appendChild(b);
   }
   const eb=document.createElement('button'); eb.className='bsm edit'; eb.textContent='Edit'; eb.onclick=()=>openBooking(null,job); acts.appendChild(eb);

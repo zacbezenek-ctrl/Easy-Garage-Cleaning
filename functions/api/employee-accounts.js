@@ -1,4 +1,5 @@
 import { getHubSession, hasBusinessAccess, listHubUserProfiles } from '../_lib/hub-session.js';
+import { OWNER_USERNAME } from '../_lib/business-users.js';
 import {
   createEmployeeApplication,
   employeeAccountsConfigured,
@@ -24,7 +25,7 @@ function allowed(request) {
   try { return HOST.test(new URL(raw).host); } catch { return false; }
 }
 
-const isOwner = session => hasBusinessAccess(session) && normalizeEmployeeUsername(session?.user) === 'zacb';
+const isOwner = session => hasBusinessAccess(session) && normalizeEmployeeUsername(session?.user) === OWNER_USERNAME;
 
 function accountFailure(error, fallbackStatus, fallbackMessage) {
   if (error?.code?.startsWith('EMPLOYEE_ACCOUNT')) return reply(error.status || 503, { ok: false, code: error.code, error: error.message });

@@ -13,7 +13,7 @@ const decode = text => String(text).replace(/&(amp|lt|gt|quot|#39);/g, (_, entit
 // Model the destructive effect of innerHTML on form nodes, values, and focus.
 // Requests stay in memory; none of these tests post a real team announcement.
 function suite() {
-  const stored = new Map(Object.entries({ egc_u: 'ZacB', egc_business_access: 'true', egc_role: 'owner' }));
+  const stored = new Map(Object.entries({ egc_u: 'ZacB', egc_business_access: 'true', egc_owner: 'true', egc_role: 'owner' }));
   const storage = { getItem: key => stored.get(key) || null, setItem: (key, value) => stored.set(key, String(value)), removeItem: key => stored.delete(key) };
   const timers = [], writes = [], server = collections();
   const document = { readyState: 'loading', activeElement: null, addEventListener() {}, querySelectorAll: () => [] };

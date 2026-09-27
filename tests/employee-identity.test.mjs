@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import { createHubCredentialHash, createHubSessionCookie } from '../functions/_lib/hub-session.js';
 import { onRequestGet, onRequestPost } from '../functions/api/employee-hub.js';
+import { matchesWhere } from './helpers/firestore-query.mjs';
 
 const endpoint = 'https://easygaragecleaning.com/api/employee-hub';
 const names = ['ZacB', 'John.Smith', 'John_Smith', 'John-Smith', 'JohnSmith', 'JohnSmith2'];
@@ -32,7 +33,7 @@ function storage(t) {
       for (const write of writes) documents.set(key(write), { fields: write.update.fields, updateTime: `2026-09-07T00:00:00.${String(++revision).padStart(9, '0')}Z` });
       return Response.json({ writeResults: writes.map(() => ({ updateTime: `2026-09-07T00:00:00.${String(revision).padStart(9, '0')}Z` })) });
     }
-    if (url.pathname.endsWith('/documents:runQuery')) return Response.json([...documents].filter(([, document]) => document.fields.employeeHubType?.stringValue !== 'timeLocks').map(([id, document]) => ({ document: {
+    if (url.pathname.endsWith('/documents:runQuery')) return Response.json([...documents].filter(([, document]) => document.fields.employeeHubType?.stringValue !== 'timeLocks' && matchesWhere(document, JSON.parse(options.body).structuredQuery.where)).map(([id, document]) => ({ document: {
       name: `projects/egcw-1ec83/databases/(default)/documents/jobs/${id}`, ...document,
     } })));
     const id = decodeURIComponent(url.pathname.split('/').pop());

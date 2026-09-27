@@ -1,4 +1,5 @@
 import { authenticateEmployeeAccount, getEmployeeSessionProfile } from './employee-accounts.js';
+import { BUSINESS_USERS, OWNER_USERNAME } from './business-users.js';
 import { pbkdf2 } from '@noble/hashes/pbkdf2.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 
@@ -9,14 +10,18 @@ const PASSWORD_HASH_PREFIX = 'pbkdf2-sha256';
 const PASSWORD_HASH_ITERATIONS = 210000;
 const PASSWORD_HASH_BYTES = 32;
 
-const BUSINESS_USERS = new Set(['zacb', 'tylerg', 'alexk']);
-
 export function hasBusinessAccess(profileOrUsername) {
   if (profileOrUsername && typeof profileOrUsername === 'object') {
     const username = String(profileOrUsername.user || '').trim().toLowerCase();
     return profileOrUsername.businessAccess === true && BUSINESS_USERS.has(username);
   }
   return BUSINESS_USERS.has(String(profileOrUsername || '').trim().toLowerCase());
+}
+
+// Owner-only features require a signed profile, never a bare username.
+export function isHubOwner(profile) {
+  return Boolean(profile) && typeof profile === 'object' && hasBusinessAccess(profile) &&
+    String(profile.user || '').trim().toLowerCase() === OWNER_USERNAME;
 }
 
 const encoder = new TextEncoder();

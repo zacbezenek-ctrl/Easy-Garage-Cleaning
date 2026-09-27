@@ -1,25 +1,19 @@
 import { getHubSession, hasBusinessAccess, listHubUserProfiles } from '../_lib/hub-session.js';
+import { OWNER_USERNAME } from '../_lib/business-users.js';
 import { firebaseServiceAccountConfigured, firestoreFetch } from '../_lib/firebase-service-account.js';
 import { employeeVaultSecret, employeeVaultReadOnly } from '../_lib/employee-vault-key.js';
+import { EMPLOYEE_HUB_COLLECTIONS, expectedDocument, firestoreDoc, readAll, readCollection, readOne, seal, unreadableStorage, writeOne } from '../_lib/employee-vault.js';
 import { createJobAssignmentAccess } from '../_lib/job-assignment.js';
 import { listEmployeeApplications, normalizeEmployeeUsername } from '../_lib/employee-accounts.js';
 import { activeTimecard, authorizeTimecard, timecardError } from '../_lib/employee-timecards.js';
 import { activeJobSegment, employeeJobTime, ownJobTimeProjection } from '../_lib/employee-job-time.js';
 
 const PROJECT_ID = 'egcw-1ec83';
-const RECORD_TYPE = 'employee_hub_v2';
-const COLLECTIONS = new Set(['profiles', 'timeEntries', 'announcements', 'requests', 'incidents', 'equipment', 'training', 'teamMessages', 'jobMessages', 'messageReads']);
+const COLLECTIONS = EMPLOYEE_HUB_COLLECTIONS;
 const TRAINING_VERSION = '2026-09-employee-os-v1';
 const TRAINING_CHECKS = new Map([['welcome', { answer: 1 }], ['safety', { answer: 2, supervisor: true }], ['property', { answer: 1 }], ['truck', { answer: 1, supervisor: true }], ['proof', { answer: 1 }], ['closeout', { answer: 0 }]]);
 const HOST = /^(?:easygaragecleaning\.com|www\.easygaragecleaning\.com|easy-garage-cleaning\.pages\.dev|localhost(?::\d+)?|127\.0\.0\.1(?::\d+)?)$/;
-const encoder = new TextEncoder();
 const isRecord = value => value !== null && typeof value === 'object' && !Array.isArray(value);
-
-function unreadableStorage() {
-  const error = new Error('Employee records could not be read safely. Please contact the Hub administrator.');
-  error.code = 'EMPLOYEE_HUB_STORAGE_UNREADABLE';
-  return error;
-}
 
 function reply(status, body) {
   return new Response(JSON.stringify(body), {
@@ -35,69 +29,8 @@ function allowed(request) {
   try { return HOST.test(new URL(raw).host); } catch { return false; }
 }
 
-function base64Url(bytes) {
-  let binary = '';
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
-}
-
-function fromBase64Url(value) {
-  const padded = String(value).replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((String(value).length + 3) % 4);
-  return Uint8Array.from(atob(padded), char => char.charCodeAt(0));
-}
-
 function vaultSecret(env) {
   return employeeVaultSecret(env);
-}
-
-async function encryptionKey(env) {
-  const digest = await crypto.subtle.digest('SHA-256', encoder.encode(`${vaultSecret(env)}:employee-hub-v2:data`));
-  return crypto.subtle.importKey('raw', digest, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
-}
-
-async function opaqueId(env, collection, id) {
-  const key = await crypto.subtle.importKey('raw', encoder.encode(vaultSecret(env)), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
-  return `secure_${base64Url(new Uint8Array(await crypto.subtle.sign('HMAC', key, encoder.encode(`${collection}:${id}`))))}`;
-}
-
-async function seal(env, documentId, payload) {
-  const iv = crypto.getRandomValues(new Uint8Array(12));
-  const encrypted = await crypto.subtle.encrypt(
-    { name: 'AES-GCM', iv, additionalData: encoder.encode(documentId) },
-    await encryptionKey(env),
-    encoder.encode(JSON.stringify(payload)),
-  );
-  return { iv: base64Url(iv), payload: base64Url(new Uint8Array(encrypted)) };
-}
-
-async function open(env, documentId, iv, payload) {
-  const clear = await crypto.subtle.decrypt(
-    { name: 'AES-GCM', iv: fromBase64Url(iv), additionalData: encoder.encode(documentId) },
-    await encryptionKey(env),
-    fromBase64Url(payload),
-  );
-  return JSON.parse(new TextDecoder().decode(clear));
-}
-
-const stringField = value => ({ stringValue: String(value ?? '') });
-
-function firestoreDoc(collection, documentId, encrypted, updatedAt) {
-  return { fields: {
-    recordType: stringField(RECORD_TYPE),
-    employeeHubType: stringField(collection),
-    sealedPayload: stringField(encrypted.payload),
-    sealedIv: stringField(encrypted.iv),
-    schemaVersion: { integerValue: '2' },
-    updatedAt: stringField(updatedAt),
-    vaultId: stringField(documentId),
-  } };
-}
-
-function valueOf(field) {
-  if (!field) return undefined;
-  if ('stringValue' in field) return field.stringValue;
-  if ('integerValue' in field) return Number(field.integerValue);
-  return undefined;
 }
 
 function decodeValue(field) {
@@ -124,112 +57,9 @@ async function readJob(env, id) {
   return { ...Object.fromEntries(Object.entries(document.fields || {}).map(([key, value]) => [key, decodeValue(value)])), id: safeId, __updateTime: document.updateTime || '' };
 }
 
-function parseFirestoreDocument(document) {
-  const fields = document?.fields || {};
-  const stored = {
-    documentId: String(document?.name || '').split('/').pop(),
-    collection: valueOf(fields.employeeHubType),
-    updateTime: typeof document?.updateTime === 'string' ? document.updateTime : '',
-    payload: valueOf(fields.sealedPayload),
-    iv: valueOf(fields.sealedIv),
-  };
-  if (!stored.documentId || !(COLLECTIONS.has(stored.collection) || stored.collection === 'timeLocks') ||
-      valueOf(fields.recordType) !== RECORD_TYPE ||
-      valueOf(fields.vaultId) !== stored.documentId ||
-      valueOf(fields.schemaVersion) !== 2 ||
-      typeof stored.payload !== 'string' || !stored.payload ||
-      typeof stored.iv !== 'string' || !stored.iv) throw unreadableStorage();
-  return stored;
-}
-
-async function openStored(env, stored) {
-  try {
-    const data = await open(env, stored.documentId, stored.iv, stored.payload);
-    if (!isRecord(data) || typeof data.id !== 'string' || !data.id ||
-        await opaqueId(env, stored.collection, data.id) !== stored.documentId) throw unreadableStorage();
-    return data;
-  } catch {
-    throw unreadableStorage();
-  }
-}
-
-async function readOne(env, collection, id) {
-  const documentId = await opaqueId(env, collection, id);
-  const physicalCollection = collection === 'timeLocks' ? 'employee_time_locks' : 'jobs';
-  const url = `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents/${physicalCollection}/${encodeURIComponent(documentId)}`;
-  const response = await firestoreFetch(env, url);
-  if (response.status === 404) return { documentId, data: null };
-  if (!response.ok) throw new Error(`Employee Hub storage read failed (${response.status})`);
-  const stored = parseFirestoreDocument(await response.json().catch(() => { throw unreadableStorage(); }));
-  if (stored.documentId !== documentId || stored.collection !== collection) throw unreadableStorage();
-  return { documentId, updateTime: stored.updateTime, data: await openStored(env, stored) };
-}
-
-async function readAll(env) {
-  const url = `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents:runQuery`;
-  const response = await firestoreFetch(env, url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ structuredQuery: {
-      from: [{ collectionId: 'jobs' }],
-      where: { fieldFilter: { field: { fieldPath: 'recordType' }, op: 'EQUAL', value: stringField(RECORD_TYPE) } },
-    } }),
-  });
-  if (!response.ok) throw new Error(`Employee Hub storage query failed (${response.status})`);
-  const rows = await response.json().catch(() => { throw unreadableStorage(); });
-  if (!Array.isArray(rows)) throw unreadableStorage();
-  const decoded = [];
-  for (const row of rows) {
-    if (!isRecord(row) || row.error) throw unreadableStorage();
-    if (!row.document) {
-      if (typeof row.readTime !== 'string') throw unreadableStorage();
-      continue;
-    }
-    const stored = parseFirestoreDocument(row.document);
-    if (!COLLECTIONS.has(stored.collection)) throw unreadableStorage();
-    decoded.push({ collection: stored.collection, data: await openStored(env, stored) });
-  }
-  return decoded;
-}
-
 // Server integrations read authoritative approved timecards through the same vault.
 export async function readEmployeeTimecards(env) {
-  return (await readAll(env)).filter(row => row.collection === 'timeEntries').map(row => row.data);
-}
-
-async function writeOne(env, collection, id, data, expected = null) {
-  const documentId = await opaqueId(env, collection, id);
-  const updatedAt = new Date().toISOString();
-  const encrypted = await seal(env, documentId, { ...data, id, updatedAt: data.updatedAt || updatedAt });
-  const url = `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents/jobs/${encodeURIComponent(documentId)}`;
-  const guardedUrl = new URL(url);
-  if (expected) {
-    if (!expected.data) guardedUrl.searchParams.set('currentDocument.exists', 'false');
-    else if (expected.updateTime) guardedUrl.searchParams.set('currentDocument.updateTime', expected.updateTime);
-    else throw unreadableStorage();
-  }
-  const response = await firestoreFetch(env, guardedUrl, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(firestoreDoc(collection, documentId, encrypted, updatedAt)),
-  });
-  if (!response.ok) {
-    const failure = await response.json().catch(() => ({}));
-    if (expected && ([409, 412].includes(response.status) ||
-        ['FAILED_PRECONDITION', 'ABORTED', 'ALREADY_EXISTS', 'NOT_FOUND'].includes(failure.error?.status))) {
-      const conflict = new Error('Employee record changed while saving. Refresh and retry.');
-      conflict.code = 'EMPLOYEE_HUB_WRITE_CONFLICT';
-      throw conflict;
-    }
-    throw new Error(`Employee Hub storage write failed (${response.status})`);
-  }
-  return { ...data, id, updatedAt: data.updatedAt || updatedAt };
-}
-
-function expectedDocument(target) {
-  if (!target.data) return { exists: false };
-  if (!target.updateTime) throw unreadableStorage();
-  return { updateTime: target.updateTime };
+  return readCollection(env, 'timeEntries');
 }
 
 async function writeTimecard(env, session, id, data, target) {
@@ -445,7 +275,7 @@ export async function onRequestGet({ request, env }) {
   const session = await getHubSession(request, env);
   if (!session) return reply(401, { ok: false, error: 'Sign in required' });
   const includeAccounts = new URL(request.url).searchParams.get('include') === 'accounts';
-  if (includeAccounts && (!manager(session) || normalizeEmployeeUsername(session.user) !== 'zacb')) {
+  if (includeAccounts && (!manager(session) || normalizeEmployeeUsername(session.user) !== OWNER_USERNAME)) {
     return reply(403, { ok: false, error: 'Only Zac can approve employee accounts' });
   }
   if (!vaultSecret(env) || !firebaseServiceAccountConfigured(env)) return reply(503, { ok: false, error: 'Employee Hub storage is not configured' });
