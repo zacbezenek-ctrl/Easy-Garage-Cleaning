@@ -49,6 +49,18 @@ export const walkthroughExtractionSchema = z.object({
 });
 export type WalkthroughExtraction = z.infer<typeof walkthroughExtractionSchema>;
 
+// Strict Structured Outputs reject z.record (open additionalProperties), so the model returns evidence
+// as an array keyed by extraction field; @egc/ai folds it back into the stored record above.
+export const walkthroughEvidenceFieldSchema = walkthroughExtractionSchema.keyof().exclude(["evidence"]);
+export const walkthroughModelOutputSchema = walkthroughExtractionSchema.omit({ evidence: true }).extend({
+  evidence: z.array(z.object({
+    field: walkthroughEvidenceFieldSchema,
+    sourceQuote: z.string().min(1).max(2000),
+    confidence: z.number().min(0).max(1)
+  }).strict()).max(60)
+});
+export type WalkthroughModelOutput = z.infer<typeof walkthroughModelOutputSchema>;
+
 export const jobBriefSchema = z.object({
   jobId: z.string(),
   customerName: z.string().nullable(),
