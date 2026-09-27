@@ -246,8 +246,10 @@ service cloud.firestore {
     match /leads/{documentId} {
       allow read, write: if businessUser();
     }
+    // Retired /quote?id= contract links. Estimates now live on the canonical
+    // job; no browser reads or writes these records, so they are server-only.
     match /quotes/{documentId} {
-      allow read, write: if businessUser();
+      allow read, write: if false;
     }
     match /blocked_days/{documentId} {
       allow read, write: if businessUser();

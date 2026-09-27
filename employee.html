@@ -697,24 +697,18 @@ body.has-session #login-screen { display: none; }
 .cust-search-bar { width: 100%; max-width: 320px; background: var(--navy); border: 1px solid rgba(255,255,255,.12); border-radius: .55rem; color: #fff; padding: .6rem 1rem; margin-bottom: 1rem; font-size: .9rem; }
 .modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.75); backdrop-filter: blur(4px); z-index: 350; display: none; align-items: flex-end; justify-content: center; padding: 0; }
 .modal-backdrop.open { display: flex; }
-#booking-overlay, #contract-modal, .lead-quote-overlay { position: fixed; inset: 0; z-index: 350; display: none; align-items: center; justify-content: center; background: rgba(0,0,0,.75); backdrop-filter: blur(4px); padding: 1rem; color: var(--white); }
-#booking-overlay.open, #contract-modal.open, .lead-quote-overlay.open { display: flex; }
-/* Contract + lead-quote modal panels (white cards on the dark overlay) */
-.cm-panel, .qm-panel { background: #fff; color: var(--ink); border-radius: var(--radius-lg); width: 100%; max-width: 480px; max-height: 90vh; overflow-y: auto; padding: 1.5rem 1.75rem; box-shadow: 0 24px 64px rgba(0,0,0,.5); }
-.cm-title, .qm-title { font-family: 'Fraunces', serif; font-size: 1.15rem; font-weight: 700; margin-bottom: .35rem; }
-.cm-sub, .qm-sub { font-size: .85rem; color: var(--muted); line-height: 1.5; margin-bottom: 1.25rem; }
-.cm-link-box { font-family: 'JetBrains Mono', monospace; font-size: .78rem; line-height: 1.5; word-break: break-all; background: var(--paper); border: 1px solid rgba(10,22,40,.15); border-radius: .5rem; padding: .6rem .75rem; margin-bottom: .65rem; }
-.cm-copy-row { display: flex; flex-wrap: wrap; gap: .5rem; margin-bottom: 1.25rem; }
-.cm-sms-btn { flex: 1; display: inline-flex; align-items: center; justify-content: center; background: var(--accent); color: #fff; border-radius: .55rem; font-family: 'Inter', sans-serif; font-size: .875rem; font-weight: 600; padding: .6rem 1.1rem; text-decoration: none; transition: background .2s; white-space: nowrap; }
-.cm-sms-btn:hover { background: var(--accent-deep); color: #fff; }
-.cm-copy-btn { background: transparent; border: 1px solid rgba(10,22,40,.25); color: var(--ink); border-radius: .5rem; font-family: 'Inter', sans-serif; font-size: .875rem; font-weight: 600; padding: .6rem 1.1rem; cursor: pointer; transition: all .2s; }
-.cm-copy-btn:hover { border-color: var(--accent); color: var(--accent); }
+#booking-overlay, .lead-quote-overlay { position: fixed; inset: 0; z-index: 350; display: none; align-items: center; justify-content: center; background: rgba(0,0,0,.75); backdrop-filter: blur(4px); padding: 1rem; color: var(--white); }
+#booking-overlay.open, .lead-quote-overlay.open { display: flex; }
+/* Lead-quote modal panel (white card on the dark overlay) */
+.qm-panel { background: #fff; color: var(--ink); border-radius: var(--radius-lg); width: 100%; max-width: 480px; max-height: 90vh; overflow-y: auto; padding: 1.5rem 1.75rem; box-shadow: 0 24px 64px rgba(0,0,0,.5); }
+.qm-title { font-family: 'Fraunces', serif; font-size: 1.15rem; font-weight: 700; margin-bottom: .35rem; }
+.qm-sub { font-size: .85rem; color: var(--muted); line-height: 1.5; margin-bottom: 1.25rem; }
 .qm-input { width: 100%; background: #fff; border: 1px solid rgba(10,22,40,.22); border-radius: .5rem; color: var(--ink); font-family: 'Inter', sans-serif; font-size: 1rem; padding: .7rem 1rem; min-height: 44px; outline: none; transition: border-color .2s; margin-bottom: .65rem; }
 .qm-input:focus { border-color: var(--accent); }
 .qm-note { font-size: .78rem; color: var(--muted); line-height: 1.45; margin-bottom: 1.25rem; }
 .qm-btns { display: flex; gap: .65rem; justify-content: flex-end; }
-.cm-panel .btn-back, .qm-panel .btn-back { border-color: rgba(10,22,40,.25); color: var(--muted); }
-.cm-panel .btn-back:hover, .qm-panel .btn-back:hover { border-color: var(--ink); color: var(--ink); }
+.qm-panel .btn-back { border-color: rgba(10,22,40,.25); color: var(--muted); }
+.qm-panel .btn-back:hover { border-color: var(--ink); color: var(--ink); }
 @media (min-width: 640px) { .modal-backdrop.open { align-items: center; padding: 1rem; } }
 .modal-sheet { background: var(--navy-soft); border: 1px solid rgba(255,255,255,.08); border-radius: 1.25rem 1.25rem 0 0; width: 100%; max-width: 520px; max-height: 90vh; overflow-y: auto; padding: 1.5rem 1.75rem 2rem; box-shadow: 0 24px 64px rgba(0,0,0,.5); }
 @media (min-width: 640px) { .modal-sheet { border-radius: 1.25rem; } }
@@ -1029,18 +1023,6 @@ body.has-session #login-screen { display: none; }
     <button type="button" class="btn-main" onclick="saveLeadForm()">Save lead</button>
   </div>
 </div>
-<div id="quote-modal" class="modal-backdrop" onclick="if(event.target===this)closeQuoteModal()">
-  <div class="modal-sheet">
-    <button type="button" class="modal-close" onclick="closeQuoteModal()"></button>
-    <h3>Quote / estimate</h3>
-    <input type="hidden" id="qm-job-id">
-    <div class="fg"><label>Price tier</label><select id="qm-tier" onchange="applyQuoteTier()"><option value="">Custom</option><option value="0">Single $99–150</option><option value="1">Small $250–400</option><option value="2">Medium $400–650</option><option value="3">Large $650+</option></select></div>
-    <div class="fg"><label>Quoted amount ($)</label><input type="number" id="qm-amount" min="0" step="5"></div>
-    <div class="fg"><label>Status</label><select id="qm-status"><option value="draft">Draft</option><option value="sent">Sent</option><option value="approved">Approved</option><option value="declined">Declined</option></select></div>
-    <label class="email-toggle-row"><input type="checkbox" id="qm-pay-after"><span>Only pay after customer approves quote</span></label>
-    <button type="button" class="btn-main" onclick="saveQuoteModal()">Save quote</button>
-  </div>
-</div>
 
 <!-- ═══════════════════════════════════════
      BOOKING WIZARD
@@ -1196,45 +1178,6 @@ body.has-session #login-screen { display: none; }
     <div style="display:flex;gap:.65rem;justify-content:flex-end">
       <button class="btn-back" onclick="document.getElementById('add-cust-overlay').style.display='none'">Cancel</button>
       <button class="btn-next" onclick="saveNewCustomer()">Save Customer</button>
-    </div>
-  </div>
-</div>
-
-<!-- ── CONTRACT MODAL ───────────────────────────────── -->
-<div id="contract-modal" onclick="contractModalBgClick(event)">
-  <div class="cm-panel">
-    <div class="cm-title">Send Quote Contract</div>
-    <div class="cm-sub" id="cm-lead-sub">Customer gets a link — they tap, read, type their name, done.</div>
-
-    <div class="fg"><label>Customer Name *</label><input type="text" id="cm-name" placeholder="John Smith" /></div>
-    <div class="fg"><label>Phone (for SMS prefill)</label><input type="tel" id="cm-phone" placeholder="(970) 555-0100" /></div>
-    <div class="fg"><label>Address</label><input type="text" id="cm-addr" placeholder="123 Main St, Fort Collins, CO" /></div>
-    <div class="fg"><label>Services *</label><textarea id="cm-services" rows="3" placeholder="e.g. Single-car garage cleanout — full haul, sort, donation drop-off, floor sweep"></textarea></div>
-    <div class="frow" style="gap:.65rem;margin-bottom:1.1rem">
-      <div class="fg" style="margin:0"><label>Est. Cubic Yards</label><input type="text" id="cm-cubic-yards" placeholder="e.g. 15–20 cu yd" /></div>
-      <div class="fg" style="margin:0"><label>Time Window</label><input type="text" id="cm-time-window" placeholder="e.g. 9:00 AM – 12:00 PM" /></div>
-    </div>
-    <div class="frow" style="gap:.65rem;margin-bottom:1.1rem">
-      <div class="fg" style="margin:0"><label>Quote Amount *</label><input type="text" id="cm-amount" placeholder="$600" oninput="updateDepositPreview()" /></div>
-      <div class="fg" style="margin:0"><label>Scheduled Date</label><input type="date" id="cm-date" /></div>
-    </div>
-    <div id="cm-deposit-preview" style="display:none;background:rgba(255,91,31,.1);border:1px solid rgba(255,91,31,.3);border-radius:.6rem;padding:.65rem .9rem;font-size:.8rem;margin-bottom:1rem;color:var(--accent)">
-      Job over $1,000 — <strong id="cm-deposit-amount"></strong> deposit required at booking (25%)
-    </div>
-    <div class="fg"><label>Notes to Customer</label><textarea id="cm-notes" rows="2" placeholder="Optional — visible on the contract page"></textarea></div>
-
-    <div id="cm-link-section" style="display:none">
-      <div style="font-size:.75rem;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);margin-bottom:.5rem">Contract Link</div>
-      <div class="cm-link-box" id="cm-link-display"></div>
-      <div class="cm-copy-row">
-        <a class="cm-sms-btn" id="cm-sms-btn" href="#" target="_blank" rel="noopener">Open in Messages</a>
-        <button class="cm-copy-btn" id="cm-copy-btn" onclick="copyContractLink()">Copy link</button>
-      </div>
-    </div>
-
-    <div style="display:flex;gap:.65rem;justify-content:flex-end">
-      <button class="btn-back" onclick="closeContractModal()">Close</button>
-      <button class="btn-next" id="cm-generate-btn" onclick="generateContract()">Generate Link</button>
     </div>
   </div>
 </div>
@@ -1542,7 +1485,6 @@ window.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('l-pass').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
   document.getElementById('l-user').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('l-pass').focus(); });
   document.getElementById('lqm-amount').addEventListener('keydown', e => { if (e.key === 'Enter') submitLeadQuote(); if (e.key === 'Escape') closeLeadQuoteModal(); });
-  document.getElementById('qm-amount').addEventListener('keydown', e => { if (e.key === 'Enter') saveQuoteModal(); if (e.key === 'Escape') closeQuoteModal(); });
 });
 
 /* ═══════════════════════════════════════════════════════
@@ -1718,137 +1660,6 @@ function setLeadsFilter(f, btn) {
   document.querySelectorAll('.lead-filters .fbtn').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
   renderLeads();
-}
-
-/* ── Contract / quote-link system ───────────────────── */
-let _contractLeadId = null;
-let _contractLink   = '';
-
-function openContractModal(leadId) {
-  const lead = leadsCache.find(l => l.id === leadId);
-  if (!lead) return;
-  _contractLeadId = leadId;
-  _contractLink   = '';
-
-  // Pre-fill fields from lead data
-  document.getElementById('cm-name').value         = lead.name || lead.full_name || '';
-  document.getElementById('cm-phone').value        = lead.phone || '';
-  document.getElementById('cm-addr').value         = lead.address || '';
-  document.getElementById('cm-amount').value       = lead.quoteAmount || '';
-  document.getElementById('cm-cubic-yards').value  = lead.cubicYards || '';
-  document.getElementById('cm-time-window').value  = lead.timeWindow || '';
-  document.getElementById('cm-services').value     = lead.services || 'Garage cleanout — full haul-out, sorting, donation coordination, floor sweep';
-  document.getElementById('cm-date').value         = lead.scheduledDate || '';
-  document.getElementById('cm-notes').value        = lead.notes || '';
-  document.getElementById('cm-lead-sub').textContent = `Sending to: ${lead.name || lead.phone || 'customer'}`;
-
-  // Trigger deposit preview (in case quoteAmount pre-populated)
-  updateDepositPreview();
-
-  // Reset link section
-  document.getElementById('cm-link-section').style.display = 'none';
-  document.getElementById('cm-generate-btn').style.display = '';
-  document.getElementById('cm-generate-btn').textContent   = 'Generate Link';
-
-  document.getElementById('contract-modal').classList.add('open');
-}
-
-function closeContractModal() {
-  document.getElementById('contract-modal').classList.remove('open');
-  _contractLeadId = null;
-  _contractLink   = '';
-}
-
-function contractModalBgClick(e) {
-  if (e.target === document.getElementById('contract-modal')) closeContractModal();
-}
-
-function updateDepositPreview() {
-  const raw = document.getElementById('cm-amount').value.replace(/[^0-9.]/g, '');
-  const num = parseFloat(raw);
-  const preview = document.getElementById('cm-deposit-preview');
-  const depositAmt = document.getElementById('cm-deposit-amount');
-  if (num > 1000) {
-    const dep = (num * 0.25).toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
-    depositAmt.textContent = dep;
-    preview.style.display = '';
-  } else {
-    preview.style.display = 'none';
-  }
-}
-
-async function generateContract() {
-  const name       = document.getElementById('cm-name').value.trim();
-  const phone      = document.getElementById('cm-phone').value.trim();
-  const addr       = document.getElementById('cm-addr').value.trim();
-  const services   = document.getElementById('cm-services').value.trim();
-  const cubicYards = document.getElementById('cm-cubic-yards').value.trim();
-  const timeWindow = document.getElementById('cm-time-window').value.trim();
-  const amount     = document.getElementById('cm-amount').value.trim();
-  const date       = document.getElementById('cm-date').value;
-  const notes      = document.getElementById('cm-notes').value.trim();
-
-  if (!name || !services || !amount) {
-    showToast('Fill in Name, Services, and Amount first');
-    return;
-  }
-
-  const btn = document.getElementById('cm-generate-btn');
-  btn.textContent = 'Creating…';
-  btn.disabled = true;
-
-  // Calculate deposit if job > $1,000
-  const rawNum = parseFloat(amount.replace(/[^0-9.]/g, ''));
-  const depositAmount = (!isNaN(rawNum) && rawNum > 1000) ? Math.round(rawNum * 0.25) : null;
-
-  const quoteId = uid();
-  const quoteDoc = {
-    customerName: name, customerPhone: phone,
-    customerEmail: leadsCache.find(l => l.id === _contractLeadId)?.email || '',
-    customerAddress: addr, services,
-    cubicYards: cubicYards || null,
-    timeWindow: timeWindow || null,
-    amount,
-    depositAmount: depositAmount ? `$${depositAmount}` : null,
-    scheduledDate: date, notes,
-    createdBy: me, createdAt: new Date().toISOString(),
-    leadId: _contractLeadId || '',
-    status: 'pending'
-  };
-
-  try {
-    await db.collection('quotes').doc(quoteId).set(quoteDoc);
-  } catch(e) {
-    console.warn('Firestore quote write failed:', e);
-  }
-
-  // Mark lead as contract-sent
-  if (_contractLeadId) {
-    db.collection('leads').doc(_contractLeadId).update({
-      contractSentAt: new Date().toISOString(),
-      contractId: quoteId
-    });
-    addAuditLog('send_contract', `Lead: ${name} · Quote: ${amount} · ID: ${quoteId}`);
-  }
-
-  _contractLink = `https://easygaragecleaning.com/quote?id=${quoteId}`;
-
-  // Show link + SMS button
-  document.getElementById('cm-link-display').textContent = _contractLink;
-  document.getElementById('cm-sms-btn').href = `sms:${phone}&body=${encodeURIComponent('Hi ' + name.split(' ')[0] + '! Here\'s your quote from Easy Garage Cleaning — tap to review and sign: ' + _contractLink)}`;
-  document.getElementById('cm-link-section').style.display = '';
-  btn.style.display = 'none';
-  showToast('Contract link ready — send via SMS!');
-}
-
-function copyContractLink() {
-  if (!_contractLink) return;
-  navigator.clipboard.writeText(_contractLink).then(() => {
-    const btn = document.getElementById('cm-copy-btn');
-    btn.textContent = 'Copied';
-    btn.classList.add('copied');
-    setTimeout(() => { btn.textContent = 'Copy link'; btn.classList.remove('copied'); }, 2000);
-  });
 }
 
 let _quoteLeadId = null;

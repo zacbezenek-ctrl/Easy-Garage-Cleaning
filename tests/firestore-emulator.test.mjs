@@ -56,6 +56,10 @@ test('actual Firestore rules isolate canonical operations from crew SDK access',
     await t.test('dispatch resources, receipts, and revision locks remain server-only even for business SDK sessions',async()=>{
       for(const db of [crew,manager]) for(const path of ['dispatchResources/truck','dispatchState/revision','dispatchOperations/receipt']){await assertFails(db.doc(path).get());await assertFails(db.doc(path).update({status:'changed'}));await assertFails(db.doc(path).delete());}
     });
+    await t.test('retired legacy quote-link records are closed to every SDK session',async()=>{
+      await environment.withSecurityRulesDisabled(context=>context.firestore().doc('quotes/legacy').set({customerName:'Synthetic Customer',amount:'$600',status:'pending'}));
+      for(const db of [publicDb,crew,lead,manager]){await assertFails(db.doc('quotes/legacy').get());await assertFails(db.collection('quotes').get());await assertFails(db.doc('quotes/new').set({customerName:'Synthetic Customer',status:'pending'}));await assertFails(db.doc('quotes/legacy').update({status:'signed'}));await assertFails(db.doc('quotes/legacy').delete());}
+    });
     await t.test('manager administrative schedule and customer access remains functional',async()=>{
       await assertSucceeds(manager.doc('jobs/assigned').get());
       await assertSucceeds(manager.doc('customers/customer').get());
