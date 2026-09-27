@@ -34,6 +34,7 @@
 <script type="application/ld+json">{"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [{"@type": "Question", "name": "How much does junk removal cost in Windsor?", "acceptedAnswer": {"@type": "Answer", "text": "$99–$150 single item, $250–$400 small, $400–$650 medium, $650+ large. No Windsor travel fee."}}, {"@type": "Question", "name": "Do you serve Raindance and Pelican Lakes?", "acceptedAnswer": {"@type": "Answer", "text": "Yes — all Windsor neighborhoods including master-planned communities."}}, {"@type": "Question", "name": "How fast can you get to Windsor?", "acceptedAnswer": {"@type": "Answer", "text": "Next-day frequently available — Windsor is 15 minutes from our base."}}, {"@type": "Question", "name": "Are you insured in Windsor?", "acceptedAnswer": {"@type": "Answer", "text": "Yes — fully insured throughout Larimer and Weld County border areas."}}, {"@type": "Question", "name": "What do you haul in Windsor?", "acceptedAnswer": {"@type": "Answer", "text": "Garage junk, furniture, appliances, mattresses, yard debris, and storage contents."}}, {"@type": "Question", "name": "Can I get a walkthrough-based flat-rate pricing for Windsor?", "acceptedAnswer": {"@type": "Answer", "text": "Yes — text photos to (970) 999-1818 for a 5-minute flat-rate response."}}, {"@type": "Question", "name": "Do you donate usable items?", "acceptedAnswer": {"@type": "Answer", "text": "Yes — with tax receipt. Usable goods go to ReStore and ARC."}}, {"@type": "Question", "name": "Is Windsor in your service area?", "acceptedAnswer": {"@type": "Answer", "text": "Yes — core service area with no travel surcharge."}}]}</script>
 <script type="application/ld+json">{"@context": "https://schema.org", "@type": "WebPage", "@id": "https://easygaragecleaning.com/junk-removal-windsor-co#webpage", "url": "https://easygaragecleaning.com/junk-removal-windsor-co", "name": "Junk Removal Windsor CO | Fast Next-Day Service", "description": "Windsor junk removal — Raindance, Pelican Lakes & downtown. schedule a free on-site walkthrough for an exact flat-rate price in 5 minutes. Next-day available.", "isPartOf": {"@id": "https://easygaragecleaning.com/#website"}, "about": {"@id": "https://easygaragecleaning.com/#business"}, "speakable": {"@type": "SpeakableSpecification", "cssSelector": [".hero-sub", ".faq-q", ".faq-a", ".def-block"]}}</script>
 <link rel="stylesheet" href="/styles.css?v=20260904j">
+<style id="footer-tap">@media(max-width:640px){.site-footer .foot-brand a,.site-footer .foot-col a,.site-footer .foot-bar a{display:inline-flex;align-items:center;min-height:44px}}</style>
 </head>
 <body>
 <a href="#main-content" class="skip-link">Skip to content</a>
@@ -98,7 +99,7 @@
   </div>
 </nav>
 <div class="nav-overlay" id="nav-overlay" aria-hidden="true"></div>
-<aside class="nav-drawer" id="nav-drawer" aria-hidden="true" aria-label="Mobile navigation">
+<aside class="nav-drawer" id="nav-drawer" aria-hidden="true" aria-label="Mobile navigation" inert>
   <div class="nav-drawer-head">
     <span class="logo"><span class="logo-mark"></span>Easy Garage</span>
     <button type="button" class="nav-drawer-close" aria-label="Close menu">&times;</button>
@@ -438,6 +439,7 @@ function initNavDrawer(){
   if(toggle.dataset.navBound)return;
   toggle.dataset.navBound='1';
   let returnFocus=null;
+  drawer.inert=!drawer.classList.contains('open');
   const background=[...document.body.children].filter(el=>el!==drawer&&el!==overlay&&el.tagName!=='SCRIPT');
   const focusable=()=>[...drawer.querySelectorAll('a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])')].filter(el=>!el.hidden&&el.offsetParent!==null);
   function setOpen(open){
@@ -445,6 +447,7 @@ function initNavDrawer(){
     toggle.setAttribute('aria-expanded',open);
     drawer.classList.toggle('open',open);
     drawer.setAttribute('aria-hidden',String(!open));
+    drawer.inert=!open;
     if(overlay){overlay.classList.toggle('open',open);overlay.setAttribute('aria-hidden',String(!open));}
     document.body.classList.toggle('nav-open',open);
     background.forEach(el=>{el.inert=open;});

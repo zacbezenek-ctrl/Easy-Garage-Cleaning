@@ -1,8 +1,16 @@
 #!/usr/bin/env python3
-"""Generate service, city, project, comparison, item, and about pages for Easy Garage Cleaning."""
+"""Generate service, city, project, comparison, item, and about pages for Easy Garage Cleaning.
+
+Reproducible build: EGC_SITE_BUILD_DATE=<buildDate in tools/site-build.json> npm run site:build
+Every build records the date it stamped into tools/site-build.json; commit that file
+with the pages so tests/site-generator.test.mjs rebuilds with the same date.
+"""
+import importlib.util
 import json
+import os
 import re
-from datetime import date
+import sys
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).parent
@@ -11,7 +19,115 @@ PHONE = "+19709991818"
 PHONE_DISPLAY = "(970) 999-1818"
 FORM_KEY = "3c4fe752-ac1d-45b9-89dd-4275ea162d22"
 GA4_ID = "G-CV7HJ2QGHX"
-TODAY = date.today().isoformat()
+
+
+# Single source for the date the checked-in pages were built with. main() rewrites
+# it after every build; tests/site-generator.test.mjs rebuilds with it.
+BUILD_DATE_FILE = ROOT / "tools" / "site-build.json"
+
+
+def recorded_build_date(path=None):
+    try:
+        value = json.loads(Path(path or BUILD_DATE_FILE).read_text(encoding="utf-8")).get("buildDate")
+    except (OSError, ValueError, AttributeError):
+        return None
+    return value if isinstance(value, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}", value) else None
+
+
+def record_build_date(value, path=None):
+    """Remember the stamped date next to the output; returns True when the file changed."""
+    path = Path(path or BUILD_DATE_FILE)
+    text = json.dumps({"buildDate": value}, indent=2) + "\n"
+    try:
+        if path.read_text(encoding="utf-8") == text:
+            return False
+    except OSError:
+        pass
+    path.write_text(text, encoding="utf-8")
+    return True
+
+
+def site_build_date(env=None, interactive=None):
+    """Dates written into pages come from the environment so reruns are byte-identical."""
+    env = os.environ if env is None else env
+    raw = (env.get("EGC_SITE_BUILD_DATE") or "").strip()
+    if raw:
+        try:
+            if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", raw):
+                raise ValueError(raw)
+            return date.fromisoformat(raw).isoformat()
+        except ValueError:
+            raise SystemExit(f"EGC_SITE_BUILD_DATE must be YYYY-MM-DD, got {raw!r}")
+    epoch = (env.get("SOURCE_DATE_EPOCH") or "").strip()
+    if epoch:
+        if not epoch.isdigit():
+            raise SystemExit(f"SOURCE_DATE_EPOCH must be whole seconds, got {epoch!r}")
+        return datetime.fromtimestamp(int(epoch), tz=timezone.utc).date().isoformat()
+    if interactive is None:
+        interactive = sys.stdin is not None and sys.stdin.isatty()
+    if not interactive:
+        committed = recorded_build_date()
+        hint = f" The checked-in pages use {committed} (tools/site-build.json)." if committed else ""
+        raise SystemExit(f"Set EGC_SITE_BUILD_DATE=YYYY-MM-DD (or SOURCE_DATE_EPOCH) for a reproducible site build.{hint}")
+    today = date.today().isoformat()
+    print(f"EGC_SITE_BUILD_DATE not set; stamping pages with today's date {today}.", file=sys.stderr)
+    return today
+
+
+TODAY = site_build_date()
+
+# Authenticated staff, crew, customer and business surfaces. The generator never
+# rewrites them, lists them in llms.txt, or adds marketing analytics to them.
+PRIVATE_HTML = frozenset({
+    "business-hub.html", "client-login.html", "copilot.html", "customer-portal.html", "dispatch.html",
+    "employee.html", "employee-signup.html", "hub-login-setup.html", "quote.html", "sop.html", "tyler-contract.html",
+})
+PRIVATE_HTML_PREFIXES = ("employee",)
+# Agent worktrees, dependencies, virtualenvs, build caches, test/QA output, server code,
+# apps, tests and internal tools are never site pages. Every dot-directory is pruned too.
+PRIVATE_DIRS = frozenset({
+    ".cache", ".claude", ".git", ".github", ".lighthouseci", ".next", ".pnpm-store", ".turbo", ".venv", ".wrangler",
+    "auth-verifier", "contracts", "crew", "dist", "docs", "egc-platform", "field-qa", "functions",
+    "internal-gallery-assets", "node_modules", "scripts", "test-results", "tests", "tools", "venv",
+})
+
+
+def is_private_dir(name):
+    name = name.lower()
+    return name.startswith(".") or name in PRIVATE_DIRS
+
+
+# Public pages rendered by another source of truth (functions/before-after.js via
+# scripts/render-before-after.mjs); listed publicly but never rewritten here.
+EXTERNAL_HTML = frozenset({"before-after.html"})
+# Public conversion/utility pages that stay out of the llms.txt URL inventory.
+UNLISTED_HTML = frozenset({"404.html", "ads.html", "apply.html", "thank-you.html"})
+
+
+def is_private_html(rel):
+    rel = Path(rel)
+    name = rel.name.lower()
+    if name in PRIVATE_HTML or name.startswith(PRIVATE_HTML_PREFIXES):
+        return True
+    return any(is_private_dir(part) for part in rel.parts[:-1])
+
+
+def generator_owns(rel):
+    return not is_private_html(rel) and Path(rel).name.lower() not in EXTERNAL_HTML
+
+
+def site_html_files(root=None):
+    """Public .html pages under root; private directories are pruned, never walked."""
+    root = Path(root or ROOT)
+    pages = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if not is_private_dir(d) and not os.path.islink(os.path.join(dirpath, d))]
+        for name in filenames:
+            path = Path(dirpath, name)
+            if name.endswith(".html") and not path.is_symlink() and not is_private_html(path.relative_to(root)):
+                pages.append(path)
+    return sorted(pages)
+
 
 TAGLINE = "The easiest way to reclaim your garage"
 EMAIL = "contact@easygaragecleaning.com"
@@ -535,6 +651,7 @@ function initNavDrawer(){
   if(toggle.dataset.navBound)return;
   toggle.dataset.navBound='1';
   let returnFocus=null;
+  drawer.inert=!drawer.classList.contains('open');
   const background=[...document.body.children].filter(el=>el!==drawer&&el!==overlay&&el.tagName!=='SCRIPT');
   const focusable=()=>[...drawer.querySelectorAll('a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])')].filter(el=>!el.hidden&&el.offsetParent!==null);
   function setOpen(open){
@@ -542,6 +659,7 @@ function initNavDrawer(){
     toggle.setAttribute('aria-expanded',open);
     drawer.classList.toggle('open',open);
     drawer.setAttribute('aria-hidden',String(!open));
+    drawer.inert=!open;
     if(overlay){overlay.classList.toggle('open',open);overlay.setAttribute('aria-hidden',String(!open));}
     document.body.classList.toggle('nav-open',open);
     background.forEach(el=>{el.inert=open;});
@@ -596,6 +714,12 @@ TRACKING_BLOCK = ""
 RESOURCE_HINTS = ""
 CALLRAIL_BLOCK = ""
 
+# Footer links are 44px tap targets on phones. Inline until the next versioned
+# styles.css release absorbs it; functions/before-after.js carries the same rule.
+# The id keeps this block invisible to the "<style>" checks that find page stylesheets.
+FOOTER_TAP_MARKER = 'id="footer-tap"'
+FOOTER_TAP_STYLE = '<style id="footer-tap">@media(max-width:640px){.site-footer .foot-brand a,.site-footer .foot-col a,.site-footer .foot-bar a{display:inline-flex;align-items:center;min-height:44px}}</style>'
+
 HEAD = """<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -634,6 +758,7 @@ HEAD = """<!DOCTYPE html>
 <noscript><link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,700;1,9..144,400&family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet"></noscript>
 {schema}
 <link rel="stylesheet" href="/styles.css?v=20260904j">
+""" + FOOTER_TAP_STYLE.replace("{", "{{").replace("}", "}}") + """
 </head>
 <body>
 <a href="#main-content" class="skip-link">Skip to content</a>
@@ -700,7 +825,7 @@ NAV = """
   </div>
 </nav>
 <div class="nav-overlay" id="nav-overlay" aria-hidden="true"></div>
-<aside class="nav-drawer" id="nav-drawer" aria-hidden="true" aria-label="Mobile navigation">
+<aside class="nav-drawer" id="nav-drawer" aria-hidden="true" aria-label="Mobile navigation" inert>
   <div class="nav-drawer-head">
     <span class="logo"><span class="logo-mark"></span>Easy Garage</span>
     <button type="button" class="nav-drawer-close" aria-label="Close menu">&times;</button>
@@ -3079,6 +3204,9 @@ def collapse_trust_strips_before_main(text):
     return text[: aside_end.end()] + "\n" + banner + TRUST_STRIP_BLOCK + "\n" + text[main_start.start() :]
 
 
+_TRUST_STRIPS_AFTER_NAV = re.compile(r'(?:\s*<div class="trust-strip"[^>]*>\s*<div class="wrap trust-strip-inner">[\s\S]*?</div>\s*</div>)+\s*')
+
+
 def normalize_page_header(text, nav_html):
     if '<nav class="nav"' not in text:
         return text
@@ -3086,7 +3214,13 @@ def normalize_page_header(text, nav_html):
     nav_start = re.search(r'<nav class="nav"', text)
     if nav_start and aside_end:
         main_start = re.search(r"<main", text)
-        end = main_start.start() if main_start else aside_end.end()
+        if main_start:
+            end = main_start.start()
+        else:
+            # Legacy pages have no <main>: the nav template brings its own trust
+            # strip, so drop the ones earlier runs left after the drawer.
+            strips = _TRUST_STRIPS_AFTER_NAV.match(text, aside_end.end())
+            end = strips.end() if strips else aside_end.end()
         text = text[: nav_start.start()] + nav_html.strip() + "\n" + text[end:]
     elif re.search(r'<nav class="nav"', text):
         text = re.sub(r'<nav class="nav"[\s\S]*?</nav>\s*', nav_html.strip() + "\n", text, count=1)
@@ -3126,20 +3260,31 @@ def patch_nav_hamburger(text):
         r"[\s\S]*?document\.addEventListener\('keydown',e=>\{if\(e\.key==='Escape'\)setOpen\(false\);\}\);\s*\}\)\(\);",
         re.MULTILINE,
     )
-    named_nav = re.compile(
-        r"function initNavDrawer\(\)\{[\s\S]*?\n\}\s*"
-        r"if\(document\.readyState==='loading'\)\{document\.addEventListener\('DOMContentLoaded',initNavDrawer\);\}else\{initNavDrawer\(\);\}",
-        re.MULTILINE,
-    )
-    if named_nav.search(text):
-        text = named_nav.sub(NAV_JS_IIFE.strip(), text, count=1)
+    if _NAMED_NAV_INIT.search(text):
+        pass  # patch_nav_drawer_a11y refreshes the shared init below
     elif legacy_nav.search(text) and "function initNavDrawer" not in text:
         text = legacy_nav.sub(NAV_JS_IIFE.strip(), text, count=1)
     elif "function initNavDrawer" not in text and "querySelector('.nav-toggle')" in text:
         pass  # generated pages already embed nav_js_iife in footer script
     elif "function initNavDrawer" not in text and 'id="nav-drawer"' in text:
         text = text.replace("</body>", NAV_JS_SCRIPT + "\n</body>", 1)
-    return text
+    return patch_nav_drawer_a11y(text)
+
+
+_NAMED_NAV_INIT = re.compile(
+    r"function initNavDrawer\(\)\{[\s\S]*?\n\}\s*"
+    r"if\(document\.readyState==='loading'\)\{document\.addEventListener\('DOMContentLoaded',initNavDrawer\);\}else\{initNavDrawer\(\);\}",
+    re.MULTILINE,
+)
+_DRAWER_WITHOUT_INERT = re.compile(r'(<aside class="nav-drawer"(?:(?!\sinert[\s>=])[^>])*)>')
+
+
+def patch_nav_drawer_a11y(text):
+    """A closed drawer is inert so its hidden links never take keyboard focus."""
+    if 'class="nav-drawer"' not in text:
+        return text
+    text = _DRAWER_WITHOUT_INERT.sub(r"\1 inert>", text)
+    return _NAMED_NAV_INIT.sub(lambda _: NAV_JS_IIFE.strip(), text, count=1)
 
 
 def dedupe_nav_footer_css(text):
@@ -3172,6 +3317,18 @@ def inject_polish_css(text):
     if POLISH_CSS_MARKER not in text and "<style>" in text:
         text = text.replace("</style>", POLISH_CSS + "\n</style>", 1)
     return text
+
+
+_FOOTER_TAP_BLOCK = re.compile(r'<style id="footer-tap">[\s\S]*?</style>')
+
+
+def inject_footer_tap_css(text):
+    if FOOTER_TAP_MARKER in text:
+        # Earlier builds shipped a narrower rule; keep every page on the current one.
+        return _FOOTER_TAP_BLOCK.sub(lambda _: FOOTER_TAP_STYLE, text, count=1)
+    if 'class="site-footer"' not in text or "</head>" not in text:
+        return text
+    return text.replace("</head>", FOOTER_TAP_STYLE + "\n</head>", 1)
 
 
 def fix_index_schema(text):
@@ -3400,40 +3557,6 @@ def patch_thank_you_page(text):
     return text
 
 
-def patch_employee_portal(text):
-    """Lightweight site chrome for employee portal — home link + footer, preserve dark app UI."""
-    bar = f"""<div class="egc-portal-bar" style="background:#14243d;border-bottom:1px solid rgba(255,255,255,.1);padding:10px 18px;display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:13px">
-  <a href="/" style="color:#f5f1ea;font-weight:700;text-decoration:none"><span style="display:inline-block;width:8px;height:8px;background:#ff5b1f;border-radius:50%;margin-right:6px"></span>Easy Garage — Public site</a>
-  <a href="tel:{PHONE}" style="color:#ff5b1f;font-weight:600;text-decoration:none">{PHONE_DISPLAY}</a>
-</div>"""
-    foot = f"""<div class="egc-portal-foot" style="background:#0a1628;border-top:1px solid rgba(255,255,255,.08);padding:14px 18px;text-align:center;font-size:12px;color:rgba(245,241,234,.55)">
-  <a href="/privacy-policy.html" style="color:#ff5b1f;margin:0 8px">Privacy</a> · <a href="/" style="color:#ff5b1f">Home</a> · Employee portal — internal use only
-</div>"""
-    text = re.sub(r'<div class="mobile-sticky-cta"[\s\S]*?</div>\s*', '', text)
-    # The employee portal contains operational/customer data. Keep marketing
-    # analytics—and their third-party network connections—out of this surface.
-    text = re.sub(
-        r'\s*(?:<!-- Analytics events queue immediately; vendor libraries load after interaction\. -->\s*)?'
-        r'<script src="/analytics-loader\.js\?v=[^"]+" defer></script>\s*',
-        '\n',
-        text,
-    )
-    text = re.sub(
-        r'\s*<link rel="(?:preconnect|dns-prefetch)" href="https://(?:www\.googletagmanager\.com|www\.facebook\.com|connect\.facebook\.net)"(?: crossorigin)?>\s*',
-        '\n',
-        text,
-    )
-    text = re.sub(r'<div class="egc-portal-foot"[\s\S]*?Employee portal — internal use only\s*</div>\s*', '', text)
-    text = re.sub(r'/\* site-polish-v4 \*/[\s\S]*?(?=</style>)', '', text, count=1)
-    text = re.sub(r'\s*<a href="#top" id="back-to-top"[\s\S]*?</script>', '', text, count=1)
-    if 'class="egc-portal-bar"' in text:
-        return text.replace("</body>", foot + "\n</body>")
-    if "<body" in text:
-        text = re.sub(r"(<body[^>]*>)", r"\1\n" + bar, text, count=1)
-        text = text.replace("</body>", foot + "\n</body>")
-    return text
-
-
 def patch_index_iteration7(text):
     text = patch_index_iteration6(text)
     text = re.sub(
@@ -3515,10 +3638,9 @@ def patch_index_iteration7(text):
 
 def collect_public_html_urls():
     urls = set()
-    private_files = {"404.html", "ads.html", "apply.html", "copilot.html", "customer-portal.html", "employee-signup.html", "quote.html", "thank-you.html"}
-    for path in ROOT.rglob("*.html"):
+    for path in site_html_files():
         rel = path.relative_to(ROOT).as_posix()
-        if "employee" in path.name.lower() or rel in private_files or rel.startswith(("crew/", "contracts/")):
+        if rel in UNLISTED_HTML:
             continue
         if rel == "index.html":
             urls.add(f"{SITE}/")
@@ -3989,7 +4111,7 @@ def patch_static_pages():
     sticky_re = re.compile(r'<div class="mobile-sticky-cta"[\s\S]*?</div>\s*(?=<script|$)', re.MULTILINE)
     nav_js = NAV_JS_SCRIPT
     patterns = [
-        "index.html", "faq.html", "privacy-policy.html", "terms-of-service.html", "thank-you.html", "book.html", "employee.html",
+        "index.html", "faq.html", "privacy-policy.html", "terms-of-service.html", "thank-you.html", "book.html",
         "service-areas.html", "reviews.html",
         "blog/*.html",
         "loveland-garage-cleanout.html", "windsor-garage-cleanout.html",
@@ -4003,7 +4125,6 @@ def patch_static_pages():
             orig = text
             is_home = path.name == "index.html"
             is_book = path.name == "book.html"
-            is_internal = path.name == "employee.html"
             nav = unified_nav_book if is_book else (unified_nav_home if is_home else unified_nav_inner)
             if '<nav class="nav"' in text:
                 text = normalize_page_header(text, nav)
@@ -4014,19 +4135,15 @@ def patch_static_pages():
   <a href="sms:{phone}?body=""" + SMS_PHOTOS_BODY + """" class="mobile-cta-btn mobile-cta-text">Text</a>
   <a href="{quote_href}" class="mobile-cta-btn mobile-cta-quote">Walkthrough</a>
 </div>""", quote_href="#quote" if is_book else "/book.html#quote")
-            if is_internal:
-                text = sticky_re.sub("", text)
-            elif 'mobile-sticky-cta' in text:
+            if 'mobile-sticky-cta' in text:
                 text = sticky_re.sub(sticky + "\n", text, count=1)
             elif '</body>' in text:
                 text = text.replace("</body>", sticky + "\n</body>")
             text = dedupe_nav_footer_css(text)
             text = patch_nav_hamburger(text)
-            if not is_internal:
-                text = inject_polish_css(text)
+            text = inject_polish_css(text)
             text = patch_a11y_shell(text)
-            if not is_internal:
-                text = patch_performance_and_tracking(text, is_home)
+            text = patch_performance_and_tracking(text, is_home)
             text = patch_lazy_images(text)
             text = add_noopener_external(text)
             text = fix_blog_canonicals(text)
@@ -4054,16 +4171,15 @@ def patch_static_pages():
                     text,
                     count=1,
                 )
-            if path.name == "employee.html":
-                text = patch_employee_portal(text)
             text = dedupe_mobile_sheet_css(text)
             css_patch = "" if ".mobile-quote-sheet{position:fixed" in text else NAV_FOOTER_PATCH_CSS
             if ".quick-answer" not in text and "<style>" in text:
                 css_patch += "\n.quick-answer{background:#fff;border:1px solid rgba(10,22,40,.1);border-left:3px solid #ff5b1f;padding:18px 22px;margin:0 auto 32px;max-width:1240px;font-size:15px;line-height:1.6}.quick-answer .qa-label{font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:#d94208;margin-bottom:8px;display:block}\n.article-toc{background:#ebe4d6;border:1px solid rgba(10,22,40,.08);padding:18px 22px;margin-bottom:28px;border-radius:4px}.article-toc h2{font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:#6b7280;margin-bottom:12px}.article-toc ol{margin:0 0 0 20px;font-size:14px}\n.ba-placeholder-note{font-family:'JetBrains Mono',monospace;font-size:9px;color:#6b7280;margin-top:6px;text-align:center}\na:focus-visible,button:focus-visible{outline:2px solid #ff5b1f;outline-offset:2px}\n"
-            if 'id="nav-drawer"' in text and "<style>" in text and ".nav-links{display:none;align-items:center;gap:18px" not in text:
+            if css_patch and 'id="nav-drawer"' in text and "<style>" in text and ".nav-links{display:none;align-items:center;gap:18px" not in text:
                 text = text.replace("</style>", css_patch + "\n</style>", 1)
-            if not is_internal:
-                text = ensure_back_to_top(text)
+            # Earlier runs appended an empty patch (one blank line) per build.
+            text = re.sub(r"\n[ \t]*\n\s*(?=</style>)", "\n", text)
+            text = ensure_back_to_top(text)
             if path.parent.name == "blog" and path.name != "index.html":
                 text = inject_blog_related_links(text, path.name)
             if is_home and '"@type": "Organization"' not in text:
@@ -4097,7 +4213,7 @@ def patch_static_pages():
                         text,
                         count=1,
                     )
-            if not is_internal and GA4_ID not in text and "analytics-loader.js" not in text:
+            if GA4_ID not in text and "analytics-loader.js" not in text:
                 had_aw = "AW-18102284288" in text
                 for pat in (
                     r"<!-- Google tag \(gtag\.js\) -->[\s\S]*?</script>\s*",
@@ -4107,21 +4223,20 @@ def patch_static_pages():
                     text = re.sub(pat, "", text, count=1)
                 block = GTAG_BLOCK if had_aw else GTAG_BLOCK.replace("  gtag('config', 'AW-18102284288');\n", "")
                 text = re.sub(r"(<head[^>]*>\s*\n)", r"\1" + block + "\n", text, count=1, flags=re.I)
-            if not is_internal:
-                text = enforce_walkthrough_first_copy(text)
+            text = enforce_walkthrough_first_copy(text)
             if text != orig:
                 path.write_text(text, encoding="utf-8")
 
     # A few hand-authored landing pages sit outside the generated-page list.
     # Run the truth guard across every public marketing page without touching
     # authenticated crew, employee, contract, or private customer surfaces.
-    private_names = {"employee.html", "employee-signup.html", "customer-portal.html", "quote.html", "copilot.html", "sop.html", "tyler-contract.html"}
-    for path in ROOT.rglob("*.html"):
-        rel_parts = {part.lower() for part in path.relative_to(ROOT).parts}
-        if path.name.lower() in private_names or rel_parts.intersection({"crew", "contracts"}):
+    for path in site_html_files():
+        if not generator_owns(path.relative_to(ROOT)):
             continue
         original = path.read_text(encoding="utf-8")
         text = dedupe_mobile_sheet_css(original)
+        text = patch_nav_drawer_a11y(text)
+        text = inject_footer_tap_css(text)
         text = patch_performance_and_tracking(text)
         text = wrap_scroll_tables(text)
         text = re.sub(r'/analytics-loader\.js\?v=[^"\']+', '/analytics-loader.js?v=20260904b', text)
@@ -4169,14 +4284,9 @@ def audit_seo_meta(fix_long_titles=False):
         "House & Property Cleanouts Fort Collins CO | Move-Out, Estate & More": "Property Cleanouts Fort Collins | Easy Garage",
     }
     index_title = "Easy Garage Cleaning | Fort Collins Garage Cleanouts"
-    private_names = {"employee.html", "employee-signup.html", "customer-portal.html", "quote.html", "copilot.html", "sop.html", "tyler-contract.html"}
-    for path in sorted(ROOT.rglob("*.html")):
-        if "node_modules" in path.parts:
-            continue
-        rel_parts = {part.lower() for part in path.relative_to(ROOT).parts}
-        if path.name.lower() in private_names or rel_parts.intersection({"crew", "contracts"}):
-            continue
+    for path in site_html_files():
         rel = path.relative_to(ROOT).as_posix()
+        fix = fix_long_titles and generator_owns(rel)
         try:
             text = path.read_text(encoding="utf-8")
         except OSError:
@@ -4187,13 +4297,13 @@ def audit_seo_meta(fix_long_titles=False):
             title = tm.group(1).strip()
             if len(title) > 60:
                 issues.append(f"title>{60}: {rel} ({len(title)}) {title[:70]}")
-                if fix_long_titles and title in title_fixes:
+                if fix and title in title_fixes:
                     new_title = title_fixes[title]
                     path.write_text(
                         text.replace(f"<title>{title}</title>", f"<title>{new_title}</title>", 1),
                         encoding="utf-8",
                     )
-            if rel == "index.html" and fix_long_titles and title != index_title:
+            if rel == "index.html" and fix and title != index_title:
                 path.write_text(
                     text.replace(f"<title>{title}</title>", f"<title>{index_title}</title>", 1),
                     encoding="utf-8",
@@ -4209,6 +4319,14 @@ def audit_seo_meta(fix_long_titles=False):
             else:
                 descriptions[desc] = rel
     return issues
+
+
+def publish_gallery_links(root):
+    """tools/gallery/publish-links.py owns /before-after discovery; run it last so reruns converge."""
+    spec = importlib.util.spec_from_file_location("egc_gallery_publish_links", ROOT / "tools" / "gallery" / "publish-links.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    module.apply(root)
 
 
 def main():
@@ -4336,7 +4454,7 @@ def main():
     # canonical/link/sitemap URL in that format or GSC reports the whole
     # sitemap as "Page with redirect" (0 of 67 indexed, July 2026).
     from _finalize_urls import finalize_site
-    finalized = finalize_site(ROOT)
+    finalized = finalize_site(ROOT, skip=lambda path: not generator_owns(path.relative_to(ROOT)))
     if finalized:
         print("URL finalize:", len(finalized), "file(s) rewritten to extensionless URLs")
 
@@ -4347,6 +4465,12 @@ def main():
             print(" ", issue)
     else:
         print("SEO audit: OK")
+
+    # /before-after links (homepage nav, drawer, footer, CTA) and its sitemap entry.
+    publish_gallery_links(ROOT)
+
+    if record_build_date(TODAY):
+        print(f"Build date {TODAY} recorded in tools/site-build.json; commit it with the regenerated pages.")
 
     print("Generated:", len(generated), "pages")
     for g in generated:

@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "test": "node --test tests/*.test.mjs",
-    "check": "node --check employee-suite.js"
+    "check": "node --check employee-suite.js",
+    "site:build": "python3 _generate_site.py && node scripts/render-before-after.mjs"
   },
   "dependencies": {
     "@noble/hashes": "2.0.1"

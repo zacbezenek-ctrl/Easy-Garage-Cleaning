@@ -34,6 +34,7 @@
 <script type="application/ld+json">{"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [{"@type": "Question", "name": "How much does junk removal cost in Timnath?", "acceptedAnswer": {"@type": "Answer", "text": "Same core ranges as Fort Collins: $99–$150 single item, $300–$400 small cleanout, $400–$650 medium garage, $650+ large. No Timnath travel surcharge."}}, {"@type": "Question", "name": "Do you serve Timnath Ranch and Wildwing?", "acceptedAnswer": {"@type": "Answer", "text": "Yes — daily routes through Timnath from our Fort Collins base."}}, {"@type": "Question", "name": "Next-day junk removal in Timnath?", "acceptedAnswer": {"@type": "Answer", "text": "Often available — text photos for today's schedule."}}, {"@type": "Question", "name": "Garage cleanouts in Timnath?", "acceptedAnswer": {"@type": "Answer", "text": "Yes — full haul-out, donations, and sweep. See Fort Collins garage cleanout pricing."}}, {"@type": "Question", "name": "Are you insured in Timnath?", "acceptedAnswer": {"@type": "Answer", "text": "Yes — fully insured throughout Larimer County."}}, {"@type": "Question", "name": "How do I get a quote?", "acceptedAnswer": {"@type": "Answer", "text": "Text photos to (970) 999-1818 or book online — 5-minute flat-rate response."}}, {"@type": "Question", "name": "Do you donate usable items?", "acceptedAnswer": {"@type": "Answer", "text": "Yes — Habitat ReStore and ARC with tax receipt in your name."}}, {"@type": "Question", "name": "Is Timnath in your core service area?", "acceptedAnswer": {"@type": "Answer", "text": "Yes — no hidden travel fees for Timnath addresses."}}]}</script>
 <script type="application/ld+json">{"@context": "https://schema.org", "@type": "WebPage", "@id": "https://easygaragecleaning.com/timnath-junk-removal#webpage", "url": "https://easygaragecleaning.com/timnath-junk-removal", "name": "Timnath Junk Removal CO | Easy Garage Cleaning", "description": "Timnath junk removal and garage cleanouts with walkthrough-based flat pricing and next-day service when available. Serving Timnath Ranch and Larimer County.", "isPartOf": {"@id": "https://easygaragecleaning.com/#website"}, "about": {"@id": "https://easygaragecleaning.com/#business"}, "speakable": {"@type": "SpeakableSpecification", "cssSelector": [".hero-sub", ".faq-q", ".faq-a", ".def-block"]}}</script>
 <link rel="stylesheet" href="/styles.css?v=20260904j">
+<style id="footer-tap">@media(max-width:640px){.site-footer .foot-brand a,.site-footer .foot-col a,.site-footer .foot-bar a{display:inline-flex;align-items:center;min-height:44px}}</style>
 </head>
 <body>
 <a href="#main-content" class="skip-link">Skip to content</a>
@@ -98,7 +99,7 @@
   </div>
 </nav>
 <div class="nav-overlay" id="nav-overlay" aria-hidden="true"></div>
-<aside class="nav-drawer" id="nav-drawer" aria-hidden="true" aria-label="Mobile navigation">
+<aside class="nav-drawer" id="nav-drawer" aria-hidden="true" aria-label="Mobile navigation" inert>
   <div class="nav-drawer-head">
     <span class="logo"><span class="logo-mark"></span>Easy Garage</span>
     <button type="button" class="nav-drawer-close" aria-label="Close menu">&times;</button>
@@ -438,6 +439,7 @@ function initNavDrawer(){
   if(toggle.dataset.navBound)return;
   toggle.dataset.navBound='1';
   let returnFocus=null;
+  drawer.inert=!drawer.classList.contains('open');
   const background=[...document.body.children].filter(el=>el!==drawer&&el!==overlay&&el.tagName!=='SCRIPT');
   const focusable=()=>[...drawer.querySelectorAll('a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])')].filter(el=>!el.hidden&&el.offsetParent!==null);
   function setOpen(open){
@@ -445,6 +447,7 @@ function initNavDrawer(){
     toggle.setAttribute('aria-expanded',open);
     drawer.classList.toggle('open',open);
     drawer.setAttribute('aria-hidden',String(!open));
+    drawer.inert=!open;
     if(overlay){overlay.classList.toggle('open',open);overlay.setAttribute('aria-hidden',String(!open));}
     document.body.classList.toggle('nav-open',open);
     background.forEach(el=>{el.inert=open;});

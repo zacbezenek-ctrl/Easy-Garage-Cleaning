@@ -33,6 +33,7 @@
 <script type="application/ld+json">{"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [{"@type": "Question", "name": "How much does a garage cleanout cost in LaPorte?", "acceptedAnswer": {"@type": "Answer", "text": "Most single-car or moderate two-car garages: $400–$650. Larger rural properties with outbuildings or decades of accumulation: $1,200–$3,500. Call (970) 999-1818 for an exact quote."}}, {"@type": "Question", "name": "What's included in a LaPorte garage cleanout — do you handle sheds and outbuildings?", "acceptedAnswer": {"@type": "Answer", "text": "Full haul-out, donation coordination, dump fees, and floor sweep — all flat-rate with no hourly billing. Yes, we handle sheds, barns, and outbuildings too. See our shed cleanout service for details."}}, {"@type": "Question", "name": "Do you serve LaPorte zip code 80535?", "acceptedAnswer": {"@type": "Answer", "text": "Yes — 80535 and all surrounding Larimer County unincorporated addresses. LaPorte is in our core service area with no travel surcharge."}}, {"@type": "Question", "name": "How long does a LaPorte cleanout take?", "acceptedAnswer": {"@type": "Answer", "text": "Single-car garage: 2–4 hours. Two-car or garage plus shed: 3–6 hours depending on volume and number of structures."}}, {"@type": "Question", "name": "Can you do next-day garage cleanouts in LaPorte?", "acceptedAnswer": {"@type": "Answer", "text": "Often yes — LaPorte is only 10 minutes from our Fort Collins base. Schedule a free on-site walkthrough for accurate pricing and scheduling."}}, {"@type": "Question", "name": "Do you donate items from LaPorte cleanouts?", "acceptedAnswer": {"@type": "Answer", "text": "Yes — Habitat ReStore Fort Collins and ARC Thrift Store are both about 10 minutes away. Tax receipt in your name."}}, {"@type": "Question", "name": "Do I need to be home during the cleanout?", "acceptedAnswer": {"@type": "Answer", "text": "Present for a 15-minute walkthrough so we agree on what stays and what goes. After that, many clients leave us to finish."}}, {"@type": "Question", "name": "Are you local or a franchise?", "acceptedAnswer": {"@type": "Answer", "text": "Local Fort Collins LLC — owner Zac Bezenek on every job. Not a franchise call center."}}]}</script>
 <script type="application/ld+json">{"@context": "https://schema.org", "@type": "WebPage", "@id": "https://easygaragecleaning.com/garage-cleanouts-laporte-co#webpage", "url": "https://easygaragecleaning.com/garage-cleanouts-laporte-co", "name": "Garage Cleanouts LaPorte CO | Clear Your Garage & Outbuildings", "description": "LaPorte CO garage cleanout service, shed cleanouts & junk removal — flat-rate after an on-site walkthrough. Rural properties, outbuildings, decades of accumulation. Schedule a free on-site walkthrough.", "isPartOf": {"@id": "https://easygaragecleaning.com/#website"}, "about": {"@id": "https://easygaragecleaning.com/#business"}, "speakable": {"@type": "SpeakableSpecification", "cssSelector": [".hero-sub", ".faq-q", ".faq-a", ".def-block"]}}</script>
 <link rel="stylesheet" href="/styles.css?v=20260904j">
+<style id="footer-tap">@media(max-width:640px){.site-footer .foot-brand a,.site-footer .foot-col a,.site-footer .foot-bar a{display:inline-flex;align-items:center;min-height:44px}}</style>
 </head>
 <body>
 <a href="#main-content" class="skip-link">Skip to content</a>
@@ -100,7 +101,7 @@
   </div>
 </nav>
 <div class="nav-overlay" id="nav-overlay" aria-hidden="true"></div>
-<aside class="nav-drawer" id="nav-drawer" aria-hidden="true" aria-label="Mobile navigation">
+<aside class="nav-drawer" id="nav-drawer" aria-hidden="true" aria-label="Mobile navigation" inert>
   <div class="nav-drawer-head">
     <span class="logo"><span class="logo-mark"></span>Easy Garage</span>
     <button type="button" class="nav-drawer-close" aria-label="Close menu">&times;</button>
@@ -349,12 +350,21 @@ function initNavDrawer(){
   if(!toggle||!drawer)return;
   if(toggle.dataset.navBound)return;
   toggle.dataset.navBound='1';
+  let returnFocus=null;
+  drawer.inert=!drawer.classList.contains('open');
+  const background=[...document.body.children].filter(el=>el!==drawer&&el!==overlay&&el.tagName!=='SCRIPT');
+  const focusable=()=>[...drawer.querySelectorAll('a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])')].filter(el=>!el.hidden&&el.offsetParent!==null);
   function setOpen(open){
+    if(open)returnFocus=document.activeElement;
     toggle.setAttribute('aria-expanded',open);
     drawer.classList.toggle('open',open);
     drawer.setAttribute('aria-hidden',String(!open));
+    drawer.inert=!open;
     if(overlay){overlay.classList.toggle('open',open);overlay.setAttribute('aria-hidden',String(!open));}
     document.body.classList.toggle('nav-open',open);
+    background.forEach(el=>{el.inert=open;});
+    if(open)setTimeout(()=>{(closeBtn||focusable()[0])?.focus();},0);
+    else if(returnFocus&&typeof returnFocus.focus==='function')returnFocus.focus();
   }
   toggle.addEventListener('click',()=>setOpen(toggle.getAttribute('aria-expanded')!=='true'));
   if(closeBtn)closeBtn.addEventListener('click',()=>setOpen(false));
@@ -368,7 +378,16 @@ function initNavDrawer(){
       if(links)links.classList.toggle('open',!open);
     });
   });
-  document.addEventListener('keydown',e=>{if(e.key==='Escape')setOpen(false);});
+  document.addEventListener('keydown',e=>{
+    if(!drawer.classList.contains('open'))return;
+    if(e.key==='Escape'){e.preventDefault();setOpen(false);return;}
+    if(e.key==='Tab'){
+      const items=focusable();if(!items.length)return;
+      const first=items[0],last=items[items.length-1];
+      if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus();}
+      else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus();}
+    }
+  });
 }
 if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',initNavDrawer);}else{initNavDrawer();}
 

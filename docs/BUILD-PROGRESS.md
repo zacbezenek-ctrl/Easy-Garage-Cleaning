@@ -55,6 +55,10 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   from `HUB_PURPOSE_KEY_SECRET`, else `HUB_SESSION_SECRET`; fail closed), server-only append-only `hub_audit` via
   `auditWrite()` joined to the caller's commit (redacted, owner-only visibility) with owner/manager `GET /api/hub-audit`,
   and single-use 5-minute confirmation tokens (`confirm_tokens`, env-first `issueConfirmation`/`consumeConfirmation`).
+- **SITE-0** Deterministic site generator: fixed build date (`EGC_SITE_BUILD_DATE`/`SOURCE_DATE_EPOCH`, recorded in
+  `tools/site-build.json`), one private-scope walker (worktrees, venvs, caches never read), per-run leaks fixed,
+  `npm run site:build` also re-renders `before-after.html`; drift test rebuilds in a temp copy. Nav drawer `inert`/focus
+  and 44px footer taps (inline `footer-tap` stopgap until SITE-4 moves it into styles.css).
 
 ## In progress
 
@@ -86,7 +90,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | MSG-CORE | Approved-send core: GHL messenger, owner-approved templates, message_sends ledger, messages API | building |
 | HUB-REG | Hub screen registry, UI kit, shell stability, mobile shell pass, microphone policy fix | building |
 | B2B-SEAMS | B2B hub extension seams + mobile compliance + idempotency/leak fixes | merged (4edcf75) |
-| SITE-0 | Site generator determinism/scope, regenerate stale before-after.html, nav a11y | building |
+| SITE-0 | Site generator determinism/scope, regenerate stale before-after.html, nav a11y | merged (69ccc6d) |
 | SITE-5 | Lighthouse CI (mobile perf/a11y >= 90) harness + workflow | building |
 | SEC-A | Firestore rules hardening (vault/receipts/audit_log) + block private source paths | building |
 | SEC-B | Purpose-scoped keys + server-only hub_audit + single-use confirm tokens | merged (75b9e1b) |

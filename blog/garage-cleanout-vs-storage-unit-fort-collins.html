@@ -37,6 +37,7 @@
 <script type="application/ld+json">{"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [{"@type": "Question", "name": "Should I clean out my storage unit or garage first?", "acceptedAnswer": {"@type": "Answer", "text": "Whichever costs you more monthly — usually the storage unit. Many clients do both in the same month."}}, {"@type": "Question", "name": "Can you empty a storage unit in one trip?", "acceptedAnswer": {"@type": "Answer", "text": "Most 5x10 and 10x10 units yes. schedule a free on-site walkthrough for an exact flat-rate price."}}]}</script>
 <script type="application/ld+json">{"@context": "https://schema.org", "@type": "WebPage", "@id": "https://easygaragecleaning.com/blog/garage-cleanout-vs-storage-unit-fort-collins#webpage", "url": "https://easygaragecleaning.com/blog/garage-cleanout-vs-storage-unit-fort-collins", "name": "Garage Cleanout vs Storage Unit Fort Collins | Cost Guide", "description": "Paying for a storage unit AND a cluttered garage? Compare garage cleanout vs storage unit costs in Fort Collins. schedule a free on-site walkthrough for an exact flat-rate price.", "isPartOf": {"@id": "https://easygaragecleaning.com/#website"}, "about": {"@id": "https://easygaragecleaning.com/#business"}, "speakable": {"@type": "SpeakableSpecification", "cssSelector": [".hero-sub", ".faq-q", ".faq-a", ".def-block"]}}</script>
 <link rel="stylesheet" href="/styles.css?v=20260904j">
+<style id="footer-tap">@media(max-width:640px){.site-footer .foot-brand a,.site-footer .foot-col a,.site-footer .foot-bar a{display:inline-flex;align-items:center;min-height:44px}}</style>
 </head>
 <body>
 <a href="#main-content" class="skip-link">Skip to content</a>
@@ -101,7 +102,7 @@
   </div>
 </nav>
 <div class="nav-overlay" id="nav-overlay" aria-hidden="true"></div>
-<aside class="nav-drawer" id="nav-drawer" aria-hidden="true" aria-label="Mobile navigation">
+<aside class="nav-drawer" id="nav-drawer" aria-hidden="true" aria-label="Mobile navigation" inert>
   <div class="nav-drawer-head">
     <span class="logo"><span class="logo-mark"></span>Easy Garage</span>
     <button type="button" class="nav-drawer-close" aria-label="Close menu">&times;</button>
@@ -418,6 +419,7 @@ function initNavDrawer(){
   if(toggle.dataset.navBound)return;
   toggle.dataset.navBound='1';
   let returnFocus=null;
+  drawer.inert=!drawer.classList.contains('open');
   const background=[...document.body.children].filter(el=>el!==drawer&&el!==overlay&&el.tagName!=='SCRIPT');
   const focusable=()=>[...drawer.querySelectorAll('a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])')].filter(el=>!el.hidden&&el.offsetParent!==null);
   function setOpen(open){
@@ -425,6 +427,7 @@ function initNavDrawer(){
     toggle.setAttribute('aria-expanded',open);
     drawer.classList.toggle('open',open);
     drawer.setAttribute('aria-hidden',String(!open));
+    drawer.inert=!open;
     if(overlay){overlay.classList.toggle('open',open);overlay.setAttribute('aria-hidden',String(!open));}
     document.body.classList.toggle('nav-open',open);
     background.forEach(el=>{el.inert=open;});

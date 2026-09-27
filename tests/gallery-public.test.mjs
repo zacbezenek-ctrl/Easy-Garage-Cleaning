@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, existsSync } from 'node:fs';
-import { onRequest, renderPublicGallery, galleryCanonical } from '../functions/before-after.js';
+import { createHash } from 'node:crypto';
+import { onRequest, renderPublicGallery, galleryCanonical, galleryRelease, gallerySimpleScriptHash } from '../functions/before-after.js';
 import { galleryPreviewPairs } from '../functions/_lib/gallery-preview-data.js';
 import { gallerySimplePairs as pairs, gallerySimpleVersion } from '../functions/_lib/gallery-simple-data.js';
 
@@ -75,4 +76,12 @@ test('homepage discovery and sitemap retain the canonical gallery route',()=>{
  assert.match(home,/<h3>Company<\/h3>[\s\S]*?href="\/before-after"/);
  assert(home.includes('Explore garage before &amp; after ideas'));
  assert.equal(sitemap.split(`<loc>${galleryCanonical}</loc>`).length-1,1);
+});
+test('the gallery script cache key changes whenever gallery-simple.js changes',()=>{
+ // Returning visitors keep /gallery-simple.js for hours; new markup (the inert drawer) must never meet an old cached script.
+ const hash=createHash('sha256').update(readFileSync('gallery-simple.js','utf8').replace(/\r\n/g,'\n')).digest('hex').slice(0,12);
+ assert.equal(gallerySimpleScriptHash,hash,`gallery-simple.js changed: set gallerySimpleScriptHash in functions/before-after.js to '${hash}', then run node scripts/render-before-after.mjs`);
+ const scripts=[...html.matchAll(/<script[^>]+src="\/gallery-simple\.js\?v=([^"]+)"/g)].map(m=>m[1]);
+ assert.deepEqual(scripts,[`${galleryRelease}-${hash}`]);
+ assert.equal(readFileSync('before-after.html','utf8'),html,'run node scripts/render-before-after.mjs');
 });
