@@ -17,3 +17,6 @@ test-results/
 
 # Crew-tools verification output (scripts/verify-crew.mjs)
 verify-shots/
+
+# Agent worktrees (Claude Code isolation)
+.claude/worktrees/
