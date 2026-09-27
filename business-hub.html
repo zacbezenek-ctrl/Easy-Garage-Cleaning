@@ -1,11 +1,12 @@
 <!doctype html>
 <html lang="en">
 <head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="robots" content="noindex,nofollow,noarchive"><meta name="referrer" content="no-referrer">
 <title>Business Client Hub | Easy Garage Cleaning</title>
-<link rel="icon" href="/favicon.ico"><link rel="stylesheet" href="/business-hub.css?v=20260923a">
-<script src="/business-hub.js?v=20260923a" defer></script>
+<link rel="icon" href="/favicon.ico"><link rel="stylesheet" href="/business-hub.css?v=20260927seams">
+<script src="/business-hub.js?v=20260927seams" defer></script>
+<!-- Extension modules: one deferred /business-hub-<module>.js per line after the core, same ?v= as business-hub.js. They register through window.EGCBusinessHub. -->
 </head>
 <body>
 <div id="notice" role="status" aria-live="polite"></div>
@@ -15,8 +16,8 @@
   <div class="feature-list"><p><b>Properties and requests</b><span>Save locations and request the next cleanout without starting over.</span></p><p><b>Quotes and billing</b><span>Review shared projects, approved pricing and issued invoices.</span></p><p><b>Your team and EGC</b><span>Give colleagues the right access and keep account messages together.</span></p></div>
   <div class="contact"><b>Zoe Zoll · Business partnerships</b><a href="mailto:zoe.zoll@easygaragecleaning.com">zoe.zoll@easygaragecleaning.com</a><a href="tel:+19709991403">(970) 999-1403</a></div></div>
   <div class="gate-card"><p class="eyebrow" id="gate-kicker">PRIVATE ACCOUNT ACCESS</p><h2 id="gate-title">Welcome back.</h2><p id="gate-copy">Use the private business invitation provided by Zoe or your account administrator. This is separate from an individual project's link.</p>
-  <form id="invite-form"><label>Business invitation code<input id="invite-code" name="invite" type="password" autocomplete="off" maxlength="140" required placeholder="Paste your invitation code"></label><button class="primary" type="submit">Open business account</button><p class="small">Invitation links are single-use and expire after 48 hours. Your sign-in lasts up to seven days on this browser.</p></form>
-  <form id="staff-login" hidden><label>EGC username<input name="username" autocomplete="username" maxlength="80" required></label><label>Password<input name="password" type="password" autocomplete="current-password" required></label><button class="primary" type="submit">Sign in to account management</button></form>
+  <form id="invite-form"><label>Business invitation code<input id="invite-code" name="invite" type="password" autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="140" required placeholder="Paste your invitation code"></label><button class="primary" type="submit">Open business account</button><p class="small">Invitation links are single-use and expire after 48 hours. Your sign-in lasts up to seven days on this browser.</p></form>
+  <form id="staff-login" hidden><label>EGC username<input name="username" autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="80" required></label><label>Password<input name="password" type="password" autocomplete="current-password" required></label><button class="primary" type="submit">Sign in to account management</button></form>
   <p class="gate-status" id="gate-status" role="alert"></p><a id="access-help" class="text-link" href="mailto:zoe.zoll@easygaragecleaning.com?subject=Business%20hub%20access">Request business access from Zoe</a><p class="small"><a id="staff-entry" href="/business-hub?staff=1">EGC staff account management</a></p>
   </div></div>
 </section>

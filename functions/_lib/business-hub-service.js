@@ -1,6 +1,6 @@
 import { LIMITS, ROLES, fail, uid, isId, text, email, date, digest, randomToken, rights, permitted, staffAllowed, staffCanAccess, activeMember, bounded, requireJobId, requireLinkedJob, businessActor, projectView, accountView } from './business-hub-core.js';
 const COOKIE = '__Host-egc_business';
-const HOURS = 3600000;
+const HOURS = 3600000, SESSION = 7 * 86400 * 1000;
 const cookie = (token, age = 7 * 86400) => `${COOKIE}=${token}; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=${age}`;
 function readCookie(request) { return (request.headers.get('Cookie') || '').split(';').map(s => s.trim()).find(s => s.startsWith(COOKIE + '='))?.slice(COOKIE.length + 1) || ''; }
 function response(status, data, extra = {}) { return new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', ...extra } }); }
@@ -13,7 +13,18 @@ async function body(request) {
   const buffer = new Uint8Array(size); let offset = 0; for (const chunk of chunks) { buffer.set(chunk, offset); offset += chunk.length; }
   try { const result = JSON.parse(new TextDecoder().decode(buffer)); if (!result || typeof result !== 'object' || Array.isArray(result)) throw new Error(); return result; } catch { throw fail(400, 'The request could not be read.'); }
 }
-export function createBusinessHandler({ store, getStaff, finance, needsReview, projectCookie, clearProjectCookie, now = () => Date.now() }) {
+// Built-in actions always win; extension modules register new names through `actions`, `exports` and `decorate`.
+const BUILT_IN = new Set(['redeem', 'logout', 'create_account', 'invite_member', 'revoke_member', 'save_account', 'save_property', 'request_service', 'update_request', 'message', 'link_project', 'unlink_project', 'open_project']);
+const EXTENSION = /^[a-z][a-z0-9_]{0,49}$/;
+function registry(value, kind) {
+  for (const [name, fn] of Object.entries(value || {})) if (!EXTENSION.test(name) || BUILT_IN.has(name) || typeof fn !== 'function') throw new TypeError(`Invalid business hub ${kind}: ${name}`);
+  return value || {};
+}
+// Copy first: Response.redirect() and fetch() results have immutable headers.
+function noStore(res) { const out = new Response(res.body, res); for (const [k, v] of [['Cache-Control', 'no-store'], ['X-Content-Type-Options', 'nosniff'], ['Referrer-Policy', 'no-referrer']]) out.headers.set(k, v); return out; }
+export function createBusinessHandler({ store, getStaff, finance, needsReview, projectCookie, clearProjectCookie, now = () => Date.now(), actions = {}, exports: exporters = {}, decorate = [] }) {
+  actions = registry(actions, 'action'); exporters = registry(exporters, 'export');
+  if (!Array.isArray(decorate) || decorate.some(fn => typeof fn !== 'function')) throw new TypeError('Business hub decorators must be functions.');
   async function context(request, url) {
     if (url.searchParams.get('staff') === '1') {
       const profile = await getStaff(request);
@@ -45,17 +56,20 @@ export function createBusinessHandler({ store, getStaff, finance, needsReview, p
   function requirePermission(ctx, p) { if (!ctx.staff) permitted(ctx.member, p); }
   function requireManager(ctx) { if (!ctx.staff || !ctx.manager) throw fail(403, 'An EGC business manager must authorize project sharing.'); }
   function property(ctx, id) { const item = ctx.account.properties.find(p => p.id === id); if (!item) throw fail(400, 'Select a property from this company account.'); return item; }
-  async function invite(ctx, input) {
+  async function invite(ctx, input, extra = []) {
     requirePermission(ctx, 'team');
     const role = text(input.role, 20, true); if (!Object.hasOwn(ROLES, role)) throw fail(400, 'Select an available account role.');
     const address = email(input.email), name = text(input.name, 100, true);
     let member = ctx.account.members.find(m => m.email === address);
-    if (member && !ctx.staff && member.id === ctx.member.id) throw fail(409, 'Ask another administrator to renew your own sign-in link.');
+    if (member && !ctx.staff && member.id === ctx.member.id) throw fail(409, 'You are already signed in. When this sign-in ends, ask another administrator or EGC for a new link.');
     if (member?.role === 'admin' && member.status === 'active' && !ctx.staff && !ctx.account.members.some(m => m.id !== member.id && m.role === 'admin' && m.status === 'active')) throw fail(409, 'Keep at least one active account administrator.');
+    // A signed-in person keeps their session. Pending, expired and revoked access, and active members whose seven-day
+    // sign-in has ended (or who signed out), can be renewed. Members saved before sessionExpiresAt existed stay renewable.
+    if (member?.status === 'active' && member.sessionExpiresAt > now()) throw fail(409, 'This person is still signed in; their current sign-in lasts up to seven days. Revoke their access first if they need a replacement link now.');
     if (!member) { bounded(ctx.account, 'members'); member = { id: uid(), version: 0 }; ctx.account.members.push(member); }
-    const token = randomToken();
+    const token = randomToken(); delete member.sessionExpiresAt;
     Object.assign(member, { name, email: address, role, version: member.version + 1, status: 'invited', inviteHash: await digest(token), inviteExpiresAt: now() + 48 * HOURS });
-    await save(ctx, 'member_invited');
+    await save(ctx, 'member_invited', extra);
     return { invite: `${ctx.account.id}.${member.id}.${token}`, email: address, expiresInHours: 48 };
   }
   async function redeem(input) {
@@ -64,25 +78,46 @@ export function createBusinessHandler({ store, getStaff, finance, needsReview, p
     const account = await store.read('business_accounts', match[1]);
     const member = account?.members?.find(m => m.id === match[2] && m.status === 'invited');
     if (!account || account.status !== 'active' || !member || member.inviteExpiresAt <= now() || member.inviteHash !== await digest(match[3])) throw fail(401, 'Invalid or expired business invitation. Ask for a new link.');
-    member.status = 'active'; delete member.inviteHash; delete member.inviteExpiresAt;
+    // Redeeming is the only way to get a session, so each member generation has at most one; the member records when it ends.
+    member.status = 'active'; member.sessionExpiresAt = now() + SESSION; delete member.inviteHash; delete member.inviteExpiresAt;
     const raw = randomToken();
-    await save({ account, member }, 'invitation_redeemed', [{ collection: 'business_sessions', id: await digest(raw), data: { accountId: account.id, memberId: member.id, memberVersion: member.version, expiresAt: now() + 7 * 86400 * 1000 } }]);
+    await save({ account, member }, 'invitation_redeemed', [{ collection: 'business_sessions', id: await digest(raw), data: { accountId: account.id, memberId: member.id, memberVersion: member.version, expiresAt: member.sessionExpiresAt } }]);
     return response(200, { ok: true }, { 'Set-Cookie': cookie(raw) });
+  }
+  // Best effort after the session is ended: record that this member's sign-in is over so an administrator can renew it.
+  async function signedOut(session) {
+    const account = await store.read('business_accounts', session.accountId);
+    const member = account?.members?.find(m => m.id === session.memberId && m.status === 'active' && m.version === session.memberVersion && m.sessionExpiresAt > now());
+    if (!member) return;
+    member.sessionExpiresAt = now();
+    await save({ account, member }, 'signed_out');
   }
   async function snapshot(ctx) {
     const links = ctx.account.projects.filter(p => p.active !== false);
     const jobs = await store.jobs(links.map(p => p.jobId));
     const projects = links.map(link => { const job = jobs.get(link.jobId); return projectView(ctx.account, link, job, job ? finance(job) : {}, job ? needsReview(job) : false); });
-    return accountView(ctx.account, ctx.member, projects, ctx);
+    let view = accountView(ctx.account, ctx.member, projects, ctx);
+    for (const fn of decorate) view = (await fn(view, ctx, jobs)) ?? view;
+    return view;
   }
+  const helpers = Object.freeze({ save, requirePermission, requireManager, property, response, now, store, finance, needsReview, snapshot });
+  const operationId = value => { if (value != null && !isId(value)) throw fail(400, 'Reload the form and try again.'); return value ?? null; };
   return async function handle(request) {
     try {
       const url = new URL(request.url);
       if (request.method === 'GET') {
         const ctx = await context(request, url);
+        if (url.searchParams.has('export')) {
+          const kind = url.searchParams.get('export');
+          if (!Object.hasOwn(exporters, kind)) throw fail(400, 'Unknown business hub export.');
+          if (!ctx.account) throw fail(400, 'Choose a business account first.');
+          const result = await exporters[kind](ctx, url, helpers);
+          if (!(result instanceof Response)) throw fail(503, 'The export could not be prepared. Please retry.');
+          return noStore(result);
+        }
         if (ctx.staff && !ctx.account) {
           const result = await store.list(ctx.profile, text(url.searchParams.get('cursor'), 2500));
-          return response(200, { staff: true, manager: ctx.manager, accounts: result.accounts.filter(a => staffCanAccess(ctx.profile, a)).map(a => ({ id: a.id, company: a.company, status: a.status, properties: a.properties.length, requests: a.requests.filter(r => r.status === 'submitted').length, updatedAt: a.updatedAt })), next: result.next, limited: Boolean(result.limited) });
+          return response(200, { staff: true, manager: ctx.manager, accounts: result.accounts.filter(a => staffCanAccess(ctx.profile, a)).map(a => ({ id: a.id, company: a.company, status: a.status, properties: (a.properties || []).length, requests: (a.requests || []).filter(r => r.status === 'submitted').length, updatedAt: a.updatedAt })), next: result.next, limited: Boolean(result.limited) });
         }
         return response(200, await snapshot(ctx));
       }
@@ -91,7 +126,7 @@ export function createBusinessHandler({ store, getStaff, finance, needsReview, p
       if (action === 'redeem') return await redeem(input);
       if (action === 'logout') {
         const raw = readCookie(request);
-        if (/^[a-f0-9]{64}$/.test(raw)) { const id = await digest(raw), saved = await store.read('business_sessions', id); if (saved) await store.commit([{ collection: 'business_sessions', id, data: { ...saved, expiresAt: 0 }, version: saved._version }]); }
+        if (/^[a-f0-9]{64}$/.test(raw)) { const id = await digest(raw), saved = await store.read('business_sessions', id); if (saved) { await store.commit([{ collection: 'business_sessions', id, data: { ...saved, expiresAt: 0 }, version: saved._version }]); if (saved.expiresAt > now()) await signedOut(saved).catch(() => {}); } }
         const res = response(200, { ok: true }, { 'Set-Cookie': cookie('', 0) }); res.headers.append('Set-Cookie', clearProjectCookie()); return res;
       }
       const ctx = await context(request, url);
@@ -101,7 +136,15 @@ export function createBusinessHandler({ store, getStaff, finance, needsReview, p
         ctx.account = { id: uid(), company: text(input.company, 150, true), billingEmail: email(input.billingEmail || input.email), reference: '', status: 'active', ownerStaff: ctx.profile.user,
           acquisition: { channel: 'b2b', originatedBy: ctx.profile.user, createdAt: at }, properties: [], requests: [], projects: [], members: [], messages: [], createdAt: at, updatedAt: at };
         ctx.member = { id: `staff:${ctx.profile.user}`, name: ctx.profile.displayName || ctx.profile.user, role: 'staff' };
-        const result = await invite(ctx, { name: input.name, email: input.email, role: 'admin' });
+        // A retried onboarding (same requestId) returns the first account instead of creating a duplicate; invitation tokens are never replayed.
+        const operation = operationId(input.requestId), extra = [];
+        if (operation) {
+          const fingerprint = await digest(JSON.stringify(['create_account', ctx.member.id, ctx.account.company, ctx.account.billingEmail, text(input.name, 100, true), email(input.email)]));
+          const saved = await store.read('business_operations', operation);
+          if (saved) { if (saved.action !== 'create_account' || saved.actorId !== ctx.member.id || saved.fingerprint !== fingerprint) throw fail(409, 'Request reference already exists.'); return response(200, { ok: true, duplicate: true, accountId: saved.accountId }); }
+          extra.push({ collection: 'business_operations', id: operation, data: { action: 'create_account', actorId: ctx.member.id, fingerprint, accountId: ctx.account.id, at } });
+        }
+        const result = await invite(ctx, { name: input.name, email: input.email, role: 'admin' }, extra);
         return response(201, { ...result, accountId: ctx.account.id });
       }
       if (!ctx.account) throw fail(400, 'Choose a business account first.');
@@ -111,7 +154,7 @@ export function createBusinessHandler({ store, getStaff, finance, needsReview, p
         requirePermission(ctx, 'team');
         const target = ctx.account.members.find(m => m.id === input.memberId); if (!target) throw fail(404, 'Member not found.');
         if (!ctx.staff && target.role === 'admin' && !ctx.account.members.some(m => m.id !== target.id && m.status === 'active' && m.role === 'admin')) throw fail(409, 'Keep at least one active account administrator.');
-        target.status = 'revoked'; target.version += 1; delete target.inviteHash; delete target.inviteExpiresAt;
+        target.status = 'revoked'; target.version += 1; delete target.inviteHash; delete target.inviteExpiresAt; delete target.sessionExpiresAt;
         await save(ctx, action); return response(200, { ok: true });
       }
       if (action === 'save_account') {
@@ -122,8 +165,12 @@ export function createBusinessHandler({ store, getStaff, finance, needsReview, p
       if (action === 'save_property') {
         requirePermission(ctx, 'request');
         let item = input.propertyId ? property(ctx, input.propertyId) : null;
-        if (!item) { bounded(ctx.account, 'properties'); item = { id: uid() }; ctx.account.properties.push(item); }
-        Object.assign(item, { name: text(input.name, 100, true), address: text(input.address, 300, true), contact: text(input.contact, 150), access: text(input.access, 800), updatedAt: new Date(now()).toISOString() });
+        const fields = { name: text(input.name, 100, true), address: text(input.address, 300, true), contact: text(input.contact, 150), access: text(input.access, 800) };
+        // A new property saved with a requestId uses it as the property id, so a retry cannot add a second copy.
+        const operation = item ? null : operationId(input.requestId), existing = operation && ctx.account.properties.find(p => p.id === operation);
+        if (existing) { if (Object.keys(fields).some(k => existing[k] !== fields[k])) throw fail(409, 'Property reference already exists.'); return response(200, { ok: true, propertyId: existing.id, duplicate: true }); }
+        if (!item) { bounded(ctx.account, 'properties'); item = { id: operation || uid() }; ctx.account.properties.push(item); }
+        Object.assign(item, { ...fields, updatedAt: new Date(now()).toISOString() });
         await save(ctx, action); return response(200, { ok: true, propertyId: item.id });
       }
       if (action === 'request_service') {
@@ -180,6 +227,10 @@ export function createBusinessHandler({ store, getStaff, finance, needsReview, p
         if (!e.sentAt && !['sent', 'approved', 'accepted'].includes(quoteStatus)) throw fail(409, 'EGC has not released this project quote yet. Contact the account team.');
         const p = rights(ctx.member), actorId = businessActor(ctx.account.id, ctx.member);
         return response(200, { url: '/customer-portal' }, { 'Set-Cookie': await projectCookie(jobId, { actorId, permissions: { view: true, decide: p.decide === true, pay: p.pay === true, rebook: p.request === true } }) });
+      }
+      if (Object.hasOwn(actions, action)) {
+        const result = await actions[action](ctx, input, helpers);
+        return noStore(result instanceof Response ? result : response(result?.status || 200, result?.data ?? { ok: true }, result?.headers));
       }
       throw fail(400, 'Unknown business hub action.');
     } catch (error) { return response(error.status || 503, { error: error.publicMessage || 'The business hub could not complete that action. Please retry or contact Zoe.' }); }

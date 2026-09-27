@@ -98,13 +98,17 @@ export function projectView(account, link, job, finance, needsReview) {
     paymentNeedsReview: Boolean(needsReview), receiptUrl: receipt,
   };
 }
+// Clients never see member ids, staff usernames or internal author ids; a staff name that is only a username becomes the team label.
+const staffName = (name, actorId) => typeof actorId === 'string' && actorId.startsWith('staff:') && (!name || actorId.slice(6).toLowerCase() === String(name).trim().toLowerCase()) ? 'EGC account team' : name;
 export function accountView(account, member, projects, { staff = false, manager = false } = {}) {
   const permissions = staff ? { view: true, request: true, team: true, staff: true, link: manager } : rights(member);
-  const members = (account.members || []).map(m => ({ id: m.id, name: m.name, role: m.role, status: m.status, ...(permissions.team ? { email: m.email } : {}) }));
+  const members = (account.members || []).map(m => ({ ...(permissions.team ? { id: m.id } : {}), name: m.name, role: m.role, status: m.status, ...(permissions.team ? { email: m.email } : {}) }));
+  const requests = staff ? account.requests || [] : (account.requests || []).map(({ createdBy, ...r }) => ({ ...r, createdByName: staffName(r.createdByName, createdBy) }));
+  const messages = staff ? account.messages || [] : (account.messages || []).map(({ authorId, ...m }) => ({ ...m, author: staffName(m.author, authorId) }));
   return {
     account: { id: account.id, company: account.company, billingEmail: permissions.team || permissions.pay || staff ? account.billingEmail : '', reference: account.reference || '', status: account.status },
     viewer: { name: member.name, role: member.role, permissions },
-    properties: account.properties || [], requests: account.requests || [], messages: account.messages || [], members, projects,
+    properties: account.properties || [], requests, messages, members, projects,
     manager: { name: 'Zoe Zoll', email: 'zoe.zoll@easygaragecleaning.com', phone: '+19709991403' },
     coverage: { linked: (account.projects || []).filter(p => p.active !== false).length, unavailable: projects.filter(p => p.unavailable).length, paymentReview: projects.filter(p => p.paymentNeedsReview).length },
     updatedAt: account.updatedAt,

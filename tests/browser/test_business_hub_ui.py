@@ -1,0 +1,290 @@
+"""Business Client Hub mobile compliance and extension seams against a routed fake API; no provider or customer writes."""
+import copy, json, os, pathlib, re, threading, unittest
+from functools import partial
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import urlparse, parse_qs
+from playwright.sync_api import sync_playwright, expect
+
+ROOT = pathlib.Path(__file__).resolve().parents[2]
+NOW = '2026-09-22T18:00:00Z'
+ACCOUNT, OTHER = 'a1' * 16, 'a2' * 16
+P1, P2 = 'b1' * 16, 'b2' * 16
+R1, R2 = 'c1' * 16, 'c2' * 16
+M1, M2, M3, M4 = 'd1' * 16, 'd2' * 16, 'd3' * 16, 'd4' * 16
+HEX32 = re.compile(r'^[a-f0-9]{32}$')
+LONG_TOKEN = 'Synthetic-unbroken-reference-' + 'X' * 90
+COMPANY = 'Synthetic Property Management Group of Northern Colorado Holdings LLC'
+CLIENT_TABS = ['Overview', 'Properties', 'Service requests', 'Projects & quotes', 'Invoices & billing', 'Team access', 'Messages']
+PERMISSIONS = {
+    'admin': {'view': True, 'request': True, 'decide': True, 'pay': True, 'team': True},
+    'viewer': {'view': True},
+    'staff': {'view': True, 'request': True, 'team': True, 'staff': True, 'link': True},
+}
+EXTENSION = r"""(()=>{'use strict';const hub=window.EGCBusinessHub;
+hub.registerTab('synthetic','Synthetic ledger',data=>`<section class="card"><h2>Synthetic ledger</h2>${hub.empty('Ledger for '+data.account.company)}<button data-ext-ping="1">Run synthetic action</button></section>`,data=>!data.viewer.permissions.staff);
+hub.registerTab('broken','Broken tab',()=>{throw new Error('synthetic render failure');});
+hub.registerRequestActions(r=>`<button data-ext-progress="${hub.esc(r.id)}">Synthetic progress</button>`);
+hub.registerMemberColumns(m=>hub.esc(m.status==='active'?'All properties':'Pending'),'Property scope');
+let duplicate='accepted';try{hub.registerTab('overview','Hijack',()=>'hijacked');}catch{duplicate='rejected';}
+window.__extension={duplicate};
+document.addEventListener('click',async event=>{if(!event.target.closest('[data-ext-ping]'))return;try{const result=await hub.api({action:'synthetic_ping',requestId:hub.newId()});hub.toast('Synthetic action '+result.state);}catch(error){hub.toast(error.message,true);}});
+})();"""
+
+def snapshot(role):
+    staff = role == 'staff'
+    members = [
+        {'name': 'Synthetic Administrator With A Long Name', 'role': 'admin', 'status': 'active', 'id': M1, 'email': 'synthetic.administrator.with.long.address@example.invalid'},
+        {'name': 'Synthetic Viewer', 'role': 'viewer', 'status': 'active', 'id': M2, 'email': 'viewer@example.invalid'},
+        {'name': 'Synthetic Billing', 'role': 'billing', 'status': 'invited', 'id': M3, 'email': 'billing@example.invalid'},
+        {'name': 'Synthetic Former', 'role': 'manager', 'status': 'revoked', 'id': M4, 'email': 'former@example.invalid'},
+    ]
+    if not PERMISSIONS[role].get('team'):
+        members = [{k: v for k, v in m.items() if k not in ('id', 'email')} for m in members]
+    return {
+        'account': {'id': ACCOUNT, 'company': COMPANY, 'billingEmail': 'accounts.payable.department@synthetic-property-management.example.invalid', 'reference': 'PO-2026-SYN', 'status': 'active'},
+        'viewer': {'name': 'EGC account team' if staff else 'Synthetic Administrator', 'role': 'staff' if staff else role, 'permissions': PERMISSIONS[role]},
+        'properties': [
+            {'id': P1, 'name': 'Synthetic Tower North Parking Structure', 'address': '1200 Synthetic Boulevard, Suite 4400, Fort Collins, CO 80525', 'contact': 'Synthetic Super 970-555-0100', 'access': 'Front desk. ' + LONG_TOKEN, 'updatedAt': NOW},
+            {'id': P2, 'name': 'Synthetic Storage Annex', 'address': '44 Example Way, Loveland, CO', 'contact': '', 'access': '', 'updatedAt': NOW},
+        ],
+        'requests': [
+            {'id': R1, 'propertyId': P1, 'service': 'Garage cleanout and reset', 'scope': 'Remove approved contents. ' + LONG_TOKEN, 'preferredDate': '2026-10-01', 'purchaseOrder': 'PO-SYN-88', 'onsiteContact': 'Synthetic Super 970-555-0100', 'payer': COMPANY, 'status': 'submitted', 'createdAt': NOW},
+            {'id': R2, 'propertyId': P2, 'service': 'Recurring maintenance', 'scope': 'Quarterly reset.', 'preferredDate': '', 'purchaseOrder': '', 'onsiteContact': '', 'payer': 'Synthetic Payer', 'status': 'reviewing', 'createdAt': NOW},
+        ],
+        'messages': [
+            {'id': 'e1' * 16, 'requestId': R1, 'body': 'Please confirm the date. ' + LONG_TOKEN, 'author': 'Synthetic Administrator', 'fromStaff': False, 'at': NOW},
+            {'id': 'e2' * 16, 'requestId': '', 'body': 'EGC will confirm scope after the walkthrough.', 'author': 'EGC account team', 'fromStaff': True, 'at': NOW},
+        ],
+        'members': members,
+        'projects': [
+            {'jobId': 'synthetic_job_1', 'propertyId': P1, 'service': 'Garage cleanout and reset', 'status': 'scheduled', 'date': '2026-10-02', 'time': '08:00', 'quoteStatus': 'approved', 'quoteNumber': 'Q-SYN-1', 'total': 12845.67, 'invoiceNumber': 'INV-SYN-1001-' + 'LONG' * 8, 'invoiceStatus': 'sent', 'dueDate': '2026-10-15', 'balance': 12345.67, 'paid': 500, 'paymentNeedsReview': False, 'receiptUrl': 'https://pay.stripe.com/receipts/synthetic'},
+            {'jobId': 'synthetic_job_2', 'propertyId': P2, 'service': 'Property service', 'status': 'not_scheduled', 'date': '', 'time': '', 'quoteStatus': 'not_issued', 'quoteNumber': '', 'total': None, 'invoiceNumber': '', 'invoiceStatus': 'not_issued', 'dueDate': '', 'balance': None, 'paid': None, 'paymentNeedsReview': False, 'receiptUrl': ''},
+            {'jobId': 'synthetic_job_3', 'propertyId': P2, 'unavailable': True},
+            {'jobId': 'synthetic_job_4', 'propertyId': P1, 'service': 'Cleaning and organization', 'status': 'completed', 'date': '2026-09-01', 'time': '09:00', 'quoteStatus': 'accepted', 'quoteNumber': 'Q-SYN-4', 'total': 900, 'invoiceNumber': 'INV-SYN-1004', 'invoiceStatus': 'sent', 'dueDate': '2026-09-30', 'balance': None, 'paid': None, 'paymentNeedsReview': True, 'receiptUrl': ''},
+        ],
+        'manager': {'name': 'Zoe Zoll', 'email': 'zoe.zoll@easygaragecleaning.com', 'phone': '+19709991403'},
+        'coverage': {'linked': 4, 'unavailable': 1, 'paymentReview': 1}, 'updatedAt': NOW,
+    }
+
+ACCOUNTS = {'staff': True, 'manager': True, 'next': 'synthetic-cursor', 'limited': False, 'accounts': [
+    {'id': ACCOUNT, 'company': COMPANY, 'status': 'active', 'properties': 2, 'requests': 1, 'updatedAt': NOW},
+    {'id': OTHER, 'company': 'Synthetic Second Client', 'status': 'active', 'properties': 0, 'requests': 0, 'updatedAt': NOW},
+]}
+
+class Handler(SimpleHTTPRequestHandler):
+    def log_message(self, *args): pass
+    def send_text(self, body, content_type):
+        data = body.encode(); self.send_response(200); self.send_header('Content-Type', content_type); self.send_header('Content-Length', str(len(data))); self.end_headers(); self.wfile.write(data)
+    def do_GET(self):
+        path = urlparse(self.path).path
+        html = (ROOT / 'business-hub.html').read_text()
+        if path == '/business-hub': self.send_text(html, 'text/html; charset=utf-8')
+        elif path == '/business-hub-extension-test':
+            core = re.search(r'<script src="/business-hub\.js\?v=[^"]+" defer></script>', html).group(0)
+            self.send_text(html.replace(core, core + '<script src="/__test__/business-hub-synthetic.js" defer></script>'), 'text/html; charset=utf-8')
+        elif path == '/__test__/business-hub-synthetic.js': self.send_text(EXTENSION, 'text/javascript')
+        else: super().do_GET()
+
+AUDIT = """() => {
+  const visible = el => { if (el.closest('[hidden]')) return false; const r = el.getBoundingClientRect(), s = getComputedStyle(el); return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none'; };
+  const name = el => `${el.tagName.toLowerCase()}${el.id ? '#' + el.id : ''} "${(el.textContent || el.name || '').trim().slice(0, 40)}"`;
+  const all = [...document.querySelectorAll('body *')];
+  // The painted right edge: clipped by any ancestor with overflow hidden/clip (e.g. the visually hidden table header).
+  const right = el => { let edge = el.getBoundingClientRect().right; for (let a = el.parentElement; a; a = a.parentElement) if (['hidden', 'clip'].includes(getComputedStyle(a).overflowX)) edge = Math.min(edge, a.getBoundingClientRect().right); return edge; };
+  return {
+    width: innerWidth, scroll: document.documentElement.scrollWidth,
+    small: [...document.querySelectorAll('button, a[href], summary')].filter(visible).filter(el => el.getBoundingClientRect().height < 44).map(el => name(el) + ' ' + el.getBoundingClientRect().height.toFixed(1)),
+    fonts: [...document.querySelectorAll('input:not([type=hidden]), select, textarea')].filter(visible).filter(el => parseFloat(getComputedStyle(el).fontSize) < 16).map(name),
+    scrollers: all.filter(el => !el.closest('#tabs') && el.tagName !== 'TEXTAREA' && ['auto', 'scroll'].includes(getComputedStyle(el).overflowX) && el.scrollWidth > el.clientWidth + 1).map(name),
+    outside: all.filter(visible).filter(el => !el.closest('#tabs') && right(el) > innerWidth + 1).map(name),
+    counted: document.querySelectorAll('button, a[href], summary, input, select, textarea').length,
+  };
+}"""
+DESKTOP = """() => {
+  const box = s => document.querySelector(s).getBoundingClientRect();
+  const tabs = [...document.querySelectorAll('#tabs button')].map(b => b.getBoundingClientRect());
+  const metrics = [...document.querySelectorAll('.metric')].map(m => Math.round(m.getBoundingClientRect().top));
+  const cards = [...document.querySelectorAll('.grid > .card')].map(c => c.getBoundingClientRect());
+  const table = document.querySelector('table'), td = document.querySelector('td[data-label]'), button = document.querySelector('td button');
+  const input = document.querySelector('#content input:not([type=hidden]), #content select, #content textarea');
+  return {
+    width: innerWidth, scroll: document.documentElement.scrollWidth, rail: [box('.rail').x, box('.rail').width], workspace: box('.workspace').x,
+    tabsStacked: tabs.length > 1 && tabs.every((t, i) => i === 0 || (t.top >= tabs[i - 1].bottom - 0.5 && Math.abs(t.left - tabs[0].left) < 0.5)),
+    metricsRow: metrics.length ? new Set(metrics).size : null, cardsSideBySide: cards.length > 1 ? cards[1].left > cards[0].right : null,
+    table: table ? getComputedStyle(table).display : null, thead: table ? document.querySelector('thead').getBoundingClientRect().height : null,
+    label: td ? getComputedStyle(td, '::before').content : null, tdButton: button ? button.getBoundingClientRect().height : null,
+    input: input ? getComputedStyle(input).fontSize : null,
+  };
+}"""
+
+class BusinessHubBrowserTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.server = ThreadingHTTPServer(('127.0.0.1', 0), partial(Handler, directory=str(ROOT)))
+        threading.Thread(target=cls.server.serve_forever, daemon=True).start()
+        cls.url = f'http://127.0.0.1:{cls.server.server_port}'
+        cls.pw = sync_playwright().start()
+        options = {'executable_path': os.environ['PLAYWRIGHT_CHROMIUM_EXECUTABLE']} if os.environ.get('PLAYWRIGHT_CHROMIUM_EXECUTABLE') else {}
+        cls.browser = cls.pw.chromium.launch(headless=True, args=['--no-sandbox'], **options)
+    @classmethod
+    def tearDownClass(cls):
+        cls.browser.close(); cls.pw.stop(); cls.server.shutdown(); cls.server.server_close()
+    def setUp(self):
+        self.errors = []; self.calls = []; self.gets = []; self.role = 'admin'; self.signed_out = False; self.abort_next = 0; self.replies = []; self.contexts = []
+    def tearDown(self):
+        for context in self.contexts: context.close()
+        self.assertEqual(self.errors, [], f'Browser errors: {self.errors}')
+    def open(self, path, width=375, height=812):
+        phone = width <= 700
+        context = self.browser.new_context(viewport={'width': width, 'height': height}, timezone_id='Asia/Tokyo', is_mobile=phone, has_touch=phone, device_scale_factor=2 if phone else 1)
+        self.contexts.append(context)
+        page = context.new_page(); page.set_default_timeout(7000); page.clock.install(time=NOW)
+        page.on('pageerror', lambda e: self.errors.append(str(e))); page.on('dialog', lambda dialog: dialog.accept())
+        page.route('**/*', self.route); page.goto(self.url + path)
+        return page
+    def route(self, route):
+        req = route.request; parsed = urlparse(req.url)
+        if parsed.hostname != '127.0.0.1': route.abort(); return
+        if parsed.path == '/api/hub-auth': route.fulfill(status=200, content_type='application/json', body='{"ok":true}'); return
+        if parsed.path != '/api/business-hub': route.continue_(); return
+        def send(data, status=200): route.fulfill(status=status, content_type='application/json', body=json.dumps(data))
+        query = parse_qs(parsed.query)
+        if req.method == 'GET':
+            self.gets.append(query)
+            if self.signed_out: send({'error': 'Open your private business sign-in link or contact Zoe.'}, 401); return
+            if query.get('staff') == ['1']: send(snapshot('staff') if query.get('account') else ACCOUNTS); return
+            send(snapshot(self.role)); return
+        body = req.post_data_json; self.calls.append({'body': copy.deepcopy(body), 'headers': req.headers})
+        if self.abort_next: self.abort_next -= 1; route.abort('connectionfailed'); return
+        if self.replies: status, data = self.replies.pop(0); send(data, status); return
+        if body['action'] in ('invite_member', 'create_account'):
+            send({'invite': f'{ACCOUNT}.{M3}.' + 'e' * 64, 'email': body['email'], 'expiresInHours': 48, 'accountId': ACCOUNT}, 201); return
+        if body['action'] == 'synthetic_ping': send({'ok': True, 'state': 'done'}); return
+        send({'ok': True})
+    def audit(self, page, where):
+        result = page.evaluate(AUDIT)
+        self.assertGreater(result['counted'], 0, where)
+        self.assertLessEqual(result['scroll'], result['width'], f'{where}: horizontal scroll')
+        for key in ['small', 'fonts', 'scrollers', 'outside']: self.assertEqual(result[key], [], f'{where}: {key}')
+    def tab(self, page, name):
+        page.locator('#tabs button').filter(has_text=re.compile('^' + re.escape(name) + '$')).click()
+        expect(page.locator('#heading')).to_have_text(name)
+    def posts(self, action): return [call['body'] for call in self.calls if call['body'].get('action') == action]
+
+    def test_client_every_tab_is_touch_ready_at_375(self):
+        page = self.open('/business-hub'); expect(page.locator('#heading')).to_have_text('Overview')
+        self.assertEqual(page.locator('#tabs button').all_inner_texts(), CLIENT_TABS)
+        for name in CLIENT_TABS:
+            self.tab(page, name)
+            if name == 'Properties': page.locator('details summary').first.click(); expect(page.locator('details[open] form')).to_be_visible()
+            self.audit(page, 'client ' + name)
+        self.tab(page, 'Projects & quotes')
+        cards = page.evaluate("""() => { const td = document.querySelector('td[data-label]'); return {table: getComputedStyle(document.querySelector('table')).display, thead: document.querySelector('thead').getBoundingClientRect().height, label: getComputedStyle(td, '::before').content, actions: getComputedStyle(document.querySelector('td.actions')).display}; }""")
+        self.assertEqual(cards['table'], 'block'); self.assertLessEqual(cards['thead'], 1); self.assertEqual(cards['label'], '"Property / project"'); self.assertEqual(cards['actions'], 'flex')
+        expect(page.get_by_role('button', name='Open project').nth(1)).to_be_disabled()
+
+    def test_client_tabs_fit_320_and_390_phones(self):
+        for width, height in [(320, 640), (390, 844)]:
+            page = self.open('/business-hub', width, height); expect(page.locator('#heading')).to_have_text('Overview')
+            for name in CLIENT_TABS: self.tab(page, name); self.audit(page, f'{width} {name}')
+            self.tab(page, 'Overview')
+            heights = page.evaluate("[...document.querySelectorAll('.metric strong')].map(s => s.getBoundingClientRect().height)")
+            self.assertEqual(len(set(heights)), 1, f'{width}: a metric figure wrapped {heights}')
+
+    def test_client_inputs_use_mobile_keyboards_and_invite_dialog_is_reachable(self):
+        page = self.open('/business-hub'); self.tab(page, 'Service requests')
+        po, contact = page.locator('input[name=purchaseOrder]'), page.locator('input[name=onsiteContact]')
+        self.assertEqual((po.get_attribute('autocomplete'), po.get_attribute('autocapitalize'), po.get_attribute('spellcheck')), ('off', 'characters', 'false'))
+        self.assertEqual((contact.get_attribute('autocomplete'), contact.get_attribute('placeholder')), ('off', 'Name and mobile number'))
+        self.tab(page, 'Invoices & billing'); billing = page.locator('input[name=billingEmail]')
+        self.assertEqual((billing.get_attribute('type'), billing.get_attribute('inputmode'), billing.get_attribute('autocomplete')), ('email', 'email', 'email'))
+        self.tab(page, 'Team access'); invite = page.locator('form[data-form=invite]')
+        self.assertEqual((invite.locator('input[name=email]').get_attribute('inputmode'), invite.locator('input[name=email]').get_attribute('autocomplete')), ('email', 'off'))
+        invite.locator('input[name=name]').fill('Synthetic Colleague'); invite.locator('input[name=email]').fill('colleague@example.invalid')
+        invite.get_by_role('button', name='Create private invitation').click()
+        expect(page.locator('#invite-dialog')).to_be_visible(); self.audit(page, 'invite dialog')
+        page.locator('.dialog-close').click(); expect(page.locator('#invite-dialog')).to_be_hidden()
+        self.assertEqual(self.posts('invite_member')[-1]['email'], 'colleague@example.invalid')
+
+    def test_viewer_sees_read_only_cards_without_member_actions(self):
+        self.role = 'viewer'; page = self.open('/business-hub')
+        for name in CLIENT_TABS:
+            self.tab(page, name); self.audit(page, 'viewer ' + name)
+        self.tab(page, 'Team access'); expect(page.locator('[data-revoke]')).to_have_count(0); expect(page.locator('form[data-form=invite]')).to_have_count(0)
+
+    def test_staff_list_and_every_account_tab_at_375(self):
+        page = self.open('/business-hub?staff=1'); expect(page.locator('#heading')).to_have_text('Business accounts')
+        self.audit(page, 'staff account list')
+        page.get_by_role('button', name='Open account').first.click(); expect(page.locator('#heading')).to_have_text('Overview')
+        self.assertEqual(self.gets[-1].get('account'), [ACCOUNT])
+        for name in CLIENT_TABS:
+            self.tab(page, name); self.audit(page, 'staff ' + name)
+        self.tab(page, 'Service requests'); expect(page.locator('.request-actions button').first).to_be_visible()
+        self.tab(page, 'Projects & quotes'); expect(page.get_by_role('button', name='Remove access').first).to_be_visible()
+
+    def test_signed_out_gates_at_375(self):
+        self.signed_out = True
+        page = self.open('/business-hub'); expect(page.locator('#gate')).to_be_visible(); expect(page.locator('#invite-form')).to_be_visible(); self.audit(page, 'client gate')
+        staff = self.open('/business-hub?staff=1'); expect(staff.locator('#staff-login')).to_be_visible(); self.audit(staff, 'staff gate')
+        username = staff.locator('input[name=username]')
+        self.assertEqual((username.get_attribute('autocomplete'), username.get_attribute('autocapitalize')), ('username', 'none'))
+
+    def test_new_property_retries_reuse_one_request_id_and_edits_send_none(self):
+        page = self.open('/business-hub'); self.tab(page, 'Properties')
+        form = page.locator('section.card').filter(has=page.get_by_role('heading', name='Add a property')).locator('form')
+        form.locator('input[name=name]').fill('Synthetic New Lot'); form.locator('input[name=address]').fill('9 Example Plaza')
+        self.abort_next = 1; form.get_by_role('button', name='Add property').click()
+        expect(page.locator('#notice')).to_have_class(re.compile('error'))
+        self.replies = [(200, {'ok': True, 'propertyId': 'f1' * 16, 'duplicate': True})]; form.get_by_role('button', name='Add property').click()
+        expect(page.locator('#notice')).to_have_text('Saved.')
+        first, retry = self.posts('save_property')
+        self.assertRegex(first['requestId'], HEX32); self.assertEqual(retry['requestId'], first['requestId']); self.assertEqual(retry['propertyId'], '')
+        page.locator('details summary').first.click(); page.locator('details[open] form').get_by_role('button', name='Save property changes').click()
+        expect(page.locator('#notice')).to_have_text('Saved.')
+        edit = self.posts('save_property')[-1]; self.assertEqual(edit['propertyId'], P1); self.assertNotIn('requestId', edit)
+        fresh = page.locator('section.card').filter(has=page.get_by_role('heading', name='Add a property')).locator('form').get_attribute('data-id')
+        self.assertRegex(fresh, HEX32); self.assertNotEqual(fresh, first['requestId'])
+
+    def test_account_onboarding_retry_is_idempotent_and_duplicate_opens_the_account(self):
+        page = self.open('/business-hub?staff=1'); form = page.locator('form[data-form=create]')
+        form.locator('input[name=company]').fill('Synthetic Retry Co'); form.locator('input[name=name]').fill('Synthetic Admin'); form.locator('input[name=email]').fill('admin@example.invalid')
+        self.abort_next = 1; form.get_by_role('button', name='Create account and invitation').click()
+        expect(page.locator('#notice')).to_have_class(re.compile('error'))
+        self.replies = [(200, {'ok': True, 'duplicate': True, 'accountId': ACCOUNT})]; form.get_by_role('button', name='Create account and invitation').click()
+        expect(page.locator('#notice')).to_contain_text('already created'); expect(page.locator('#heading')).to_have_text('Overview')
+        expect(page.locator('#invite-dialog')).to_be_hidden()
+        first, retry = self.posts('create_account'); self.assertRegex(first['requestId'], HEX32); self.assertEqual(first, retry)
+        self.assertEqual(self.gets[-1].get('account'), [ACCOUNT])
+
+    def test_extension_modules_register_tabs_request_actions_and_member_columns(self):
+        page = self.open('/business-hub-extension-test'); expect(page.locator('#heading')).to_have_text('Overview')
+        self.assertEqual(page.evaluate('window.__extension.duplicate'), 'rejected')
+        self.assertEqual(page.locator('#tabs button').all_inner_texts(), CLIENT_TABS + ['Synthetic ledger', 'Broken tab'])
+        self.assertEqual(page.evaluate("EGCBusinessHub.exportUrl('synthetic_csv')"), '/api/business-hub?export=synthetic_csv')
+        self.assertTrue(page.evaluate('Object.isFrozen(EGCBusinessHub) && EGCBusinessHub.data().account.id === %r' % ACCOUNT))
+        self.tab(page, 'Synthetic ledger'); expect(page.locator('#content')).to_contain_text('Ledger for ' + COMPANY); self.audit(page, 'extension tab')
+        page.get_by_role('button', name='Run synthetic action').click(); expect(page.locator('#notice')).to_have_text('Synthetic action done')
+        call = [c for c in self.calls if c['body']['action'] == 'synthetic_ping'][-1]
+        self.assertEqual(call['headers'].get('x-egc-business'), '1'); self.assertEqual(call['headers'].get('content-type'), 'application/json'); self.assertRegex(call['body']['requestId'], HEX32)
+        self.tab(page, 'Broken tab'); expect(page.locator('#content')).to_contain_text('This section could not be displayed')
+        self.tab(page, 'Service requests'); expect(page.locator('.request-actions').get_by_role('button', name='Synthetic progress')).to_have_count(2); self.audit(page, 'extension request actions')
+        self.tab(page, 'Team access'); expect(page.locator('thead th').nth(2)).to_have_text('Property scope')
+        expect(page.locator('td[data-label="Property scope"]').first).to_have_text('All properties'); self.audit(page, 'extension member column')
+        staff = self.open('/business-hub-extension-test?staff=1&account=' + ACCOUNT); expect(staff.locator('#heading')).to_have_text('Overview')
+        self.assertEqual(staff.locator('#tabs button').all_inner_texts(), CLIENT_TABS + ['Broken tab'])
+        self.assertEqual(staff.evaluate("EGCBusinessHub.exportUrl('synthetic_csv')"), f'/api/business-hub?staff=1&account={ACCOUNT}&export=synthetic_csv')
+
+    def test_desktop_layout_is_unchanged_at_1280_and_1360(self):
+        for width, height in [(1280, 800), (1360, 950)]:
+            page = self.open('/business-hub', width, height); expect(page.locator('#heading')).to_have_text('Overview')
+            layout = page.evaluate(DESKTOP)
+            self.assertLessEqual(layout['scroll'], layout['width']); self.assertEqual(layout['rail'], [0, 245]); self.assertEqual(layout['workspace'], 245)
+            self.assertTrue(layout['tabsStacked']); self.assertEqual(layout['metricsRow'], 1); self.assertTrue(layout['cardsSideBySide'])
+            self.assertEqual(layout['table'], 'table'); self.assertGreater(layout['thead'], 20); self.assertIn(layout['label'], ('none', 'normal')); self.assertEqual(layout['tdButton'], 38)
+            self.tab(page, 'Service requests'); self.assertEqual(page.evaluate(DESKTOP)['input'], '12px')
+            staff = self.open('/business-hub?staff=1', width, height); expect(staff.locator('#heading')).to_have_text('Business accounts')
+            listed = staff.evaluate(DESKTOP); self.assertEqual(listed['table'], 'table'); self.assertEqual(listed['tdButton'], 38); self.assertLessEqual(listed['scroll'], listed['width'])
+            self.assertLess(staff.locator('.request-actions button').first.bounding_box()['height'], 44)
+
+if __name__ == '__main__':
+    unittest.main()

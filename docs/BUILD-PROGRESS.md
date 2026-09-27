@@ -43,6 +43,10 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   truncated), shift pickups write full day-lock entries, operations visits write `endDate/startAt/endAt/timeZone`, sync
   honors `endDate`, `dispatchHandlers` injects `now`, dry-run `scripts/repair-stale-schedule-instants.mjs`. Legacy
   `blocked_days` read-only behind `EGC_DISPATCH_LEGACY_BLOCKED_DAYS` (default off). Gaps: PTO approval is P1-06; `blocked_slots` ignored.
+- **B2B-SEAMS** Business hub extension seams: registered actions/`?export=` exporters/snapshot decorators (built-ins win,
+  modules register in `functions/_lib/business-hub-modules.js`), per-collection store id rules, requestId-idempotent
+  `create_account`/`save_property`, no member/author ids or staff usernames in client snapshots, re-invite blocked only
+  for signed-in members; `window.EGCBusinessHub` plugin API and mobile card layout (44px, 16px inputs, safe areas).
 
 ## In progress
 
@@ -73,7 +77,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | F-LEG | Legacy crew send-path hardening (quo-send idempotency etc.) | building |
 | MSG-CORE | Approved-send core: GHL messenger, owner-approved templates, message_sends ledger, messages API | building |
 | HUB-REG | Hub screen registry, UI kit, shell stability, mobile shell pass, microphone policy fix | building |
-| B2B-SEAMS | B2B hub extension seams + mobile compliance + idempotency/leak fixes | building |
+| B2B-SEAMS | B2B hub extension seams + mobile compliance + idempotency/leak fixes | merged (4edcf75) |
 | SITE-0 | Site generator determinism/scope, regenerate stale before-after.html, nav a11y | building |
 | SITE-5 | Lighthouse CI (mobile perf/a11y >= 90) harness + workflow | building |
 | SEC-A | Firestore rules hardening (vault/receipts/audit_log) + block private source paths | building |
