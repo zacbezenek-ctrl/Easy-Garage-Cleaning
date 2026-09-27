@@ -3,6 +3,7 @@ import {encodeFirestoreFields,decodeFirestoreFields} from './firestore-job.js';
 import {localInstant} from './operations-portal-records.js';
 import {dispatchStorage} from './dispatch-storage.js';
 import {scheduleRowsConflict,scheduleLockConflict,scheduleDayEntry} from './dispatch-conflicts.js';
+import {arrivalWindowProblem,arrivalWindowFields} from './dispatch-arrival.js';
 const ROOT='projects/egcw-1ec83/databases/(default)/documents';
 const URL=`https://firestore.googleapis.com/v1/${ROOT}`;
 const safeId=id=>typeof id==='string'&&/^[A-Za-z0-9_-]{1,180}$/.test(id)&&!/^(_egc_|secure_)/.test(id);
@@ -17,6 +18,7 @@ function fromDoc(doc){return{...decodeFirestoreFields(doc.fields||{}),id:String(
 export function schedulingStorage(env,fetcher=firestoreFetch){return{
   resources:()=>dispatchStorage(env,fetcher).resources(),
   roster:()=>dispatchStorage(env,fetcher).roster(),
+  settings:()=>dispatchStorage(env,fetcher).settings(),
   async customers(providerId){const r=await fetcher(env,`${URL}:runQuery`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({structuredQuery:{from:[{collectionId:'customers'}],where:{fieldFilter:{field:{fieldPath:'highlevelContactId'},op:'EQUAL',value:{stringValue:providerId}}},limit:3}}),signal:AbortSignal.timeout(15000)});if(!r.ok)throw failure('schedule_source_unavailable',503);const rows=await r.json();if(!Array.isArray(rows))throw failure('schedule_source_incomplete',503);return rows.filter(x=>x.document).map(x=>fromDoc(x.document));},
   async read(collection,id){const r=await fetcher(env,`${URL}/${collection}/${encodeURIComponent(id)}`,{signal:AbortSignal.timeout(15000)});if(r.status===404)return null;if(!r.ok)throw failure('schedule_source_unavailable',503);return fromDoc(await r.json());},
   async day(date){const r=await fetcher(env,`${URL}:runQuery`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({structuredQuery:{from:[{collectionId:'jobs'}],where:{fieldFilter:{field:{fieldPath:'date'},op:'EQUAL',value:{stringValue:date}}},limit:501}}),signal:AbortSignal.timeout(15000)});if(!r.ok)throw failure('schedule_source_unavailable',503);const rows=await r.json();if(!Array.isArray(rows)||rows.length>500)throw failure('schedule_source_incomplete',503);return rows.filter(x=>x.document).map(x=>fromDoc(x.document));},
@@ -133,6 +135,13 @@ export async function mutateScheduledVisit(store,actor,input,now=new Date().toIS
   const [resources,roster]=await Promise.all([store.resources?store.resources():[],store.roster?store.roster():[]]);
   if(input.mode!=='cancel'&&next.vehicleId&&!resources.some(row=>row.id===next.vehicleId&&row.recordType==='vehicle'&&row.status==='available'))throw failure('schedule_vehicle_unavailable');
   if(input.mode!=='cancel'&&resources.some(row=>row.recordType==='availability'&&scheduleRowsConflict(next,row,roster)))throw failure('schedule_slot_conflict');
+  // Arrival windows are chosen in dispatch. This writer keeps a saved window that
+  // still contains the start time, re-derives the default label, or rejects.
+  if(input.mode!=='cancel'){
+    if(arrivalWindowProblem(next))throw failure('schedule_arrival_window_requires_dispatch');
+    const arrival=arrivalWindowFields(next,store.settings?await store.settings():{});
+    for(const [key,value] of Object.entries(arrival))if((current?.[key]??null)!==value)patch[key]=value;
+  }
   const days=[...new Set([next.date,current?.date].filter(Boolean))],locks=[];
   for(const date of days){
     const lockId=`_egc_schedule_lock_${date}`,lock=await store.read('jobs',lockId);

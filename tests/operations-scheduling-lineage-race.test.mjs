@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { randomUUID, webcrypto } from 'node:crypto';
 import vm from 'node:vm';
+import { arrivalWindowProblem, arrivalWindowFields } from '../functions/_lib/dispatch-arrival.js';
 
 // Execute the actual scheduling mutator, isolating only imported I/O and time/
 // conflict helpers. This suite proves atomic dependency guards, not live
@@ -16,6 +17,8 @@ function load() {
     scheduleLockConflict: () => false,
     scheduleDayEntry: row => ({ id: row.id, status: row.status }),
     encodeFirestoreFields: value => value,
+    // Pure arrival-window rules run for real; these fixtures have no windows.
+    arrivalWindowProblem, arrivalWindowFields,
   });
   vm.runInContext(source.replace(/^import .*;\n/gm, '').replace(/^export /gm, '') +
     '\nglobalThis.api = {mutateScheduledVisit, schedulingStorage};', context);

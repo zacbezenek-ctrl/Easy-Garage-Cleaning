@@ -27,6 +27,15 @@ function today() { return new Intl.DateTimeFormat('en-CA', {timeZone:TZ, year:'n
 function addDays(date, count) { return new Date(Date.parse(date+'T12:00:00Z')+count*86400000).toISOString().slice(0,10); }
 function dateText(date, short=false) { return new Intl.DateTimeFormat('en-US', {timeZone:'UTC', weekday:short?'short':'long', month:short?'short':'long', day:'numeric'}).format(new Date(date+'T12:00:00Z')); }
 function clock(value) { const match=/^(\d{2}):(\d{2})$/.exec(value || ''); if (!match) return 'Time needed'; const hour=Number(match[1]); return (hour%12||12)+':'+match[2]+' '+(hour<12?'AM':'PM'); }
+const minutesOf = value => /^\d{2}:\d{2}$/.test(value || '') ? Number(value.slice(0,2))*60+Number(value.slice(3)) : NaN;
+const hhmm = minute => String(Math.floor(minute/60)).padStart(2,'0')+':'+String(minute%60).padStart(2,'0');
+// The server says whether blank arrival windows get a derived default (no secrets).
+function arrivalBlankText(defaults) {
+  if (defaults?.enabled===false) return 'leave both blank for none.';
+  if (defaults?.enabled!==true) return 'leave both blank for the dispatch default window, if one is turned on.';
+  const minutes=Number(defaults.minutes);
+  return 'leave both blank to use the default '+(Number.isInteger(minutes)&&minutes>0?minutes+'-minute ':'')+'window from the start time.';
+}
 function range() { return {startDate:S.date, endDate:addDays(S.date,S.view==='week'||S.view==='crew'?7:1)}; }
 const person = id => S.data?.roster?.find(p => p.id === id)?.name || id || 'Unassigned';
 const vehicle = id => S.data?.vehicles?.find(v => v.id === id)?.name || (id ? 'Vehicle unavailable' : 'No vehicle');
@@ -122,6 +131,7 @@ function jobCard(job, {compact=false}={}) {
   const title=blocked?(job.title||'Company time block'):(job.customer||job.title||'Customer needs attention');
   card.append(h('div',{class:'dp-job-top'},h('span',{class:'dp-time'},job.date?clock(job.time)+' – '+clock(job.endTime):'Unscheduled'),pill(words(job.activity||job.status||'scheduled'),active(job)?'':'muted')));
   if (job.endDate&&job.endDate!==job.date) card.append(h('small',{class:'dp-muted'},dateText(job.date,true)+' → '+dateText(job.endDate,true)));
+  if (!blocked&&job.date&&job.arrivalWindow) card.append(h('p',{class:'dp-service dp-arrival'},'Arrival window: '+job.arrivalWindow));
   card.append(h('h3',{},title),h('p',{class:'dp-service'},blocked?'Company-wide blocked time':job.serviceType||words(job.type||'job')));
   if(!blocked){
   if (job.address) card.append(h('a',{class:'dp-address',href:directions(job.address),target:'_blank',rel:'noopener'},job.address));
@@ -379,6 +389,17 @@ function openJob(job=null,options={}) {
   const endTime=field(model,'endTime','End time',options.endTime||job?.endTime||'10:00','time',{required:true});
   const timing=[startDate,startTime,endDate,endTime];
   const toggle=()=>{for(const input of timing){input.disabled=unscheduled.checked;input.required=!unscheduled.checked;}};unscheduled.addEventListener('change',toggle);toggle();
+  const blankArrival=arrivalBlankText(S.data?.arrivalDefaults);
+  const arrivalHelp=h('small',{class:'dp-muted dp-wide',id:'dp-arrival-'+key()},'Optional customer arrival window in Mountain Time. It must include the start time; '+blankArrival);
+  const arrivalStart=h('input',{type:'time',name:'arrivalWindowStart',value:job?.arrivalWindowStart||'','aria-describedby':arrivalHelp.id}),arrivalEnd=h('input',{type:'time',name:'arrivalWindowEnd',value:job?.arrivalWindowEnd||'','aria-describedby':arrivalHelp.id}),arrival=[arrivalStart,arrivalEnd];
+  const arrivalNote=h('div',{class:'dp-wide dp-arrival-note','aria-live':'polite'});
+  model.fields.append(labeled('Arrival from',arrivalStart),labeled('Arrival to',arrivalEnd),arrivalHelp,arrivalNote);
+  for(const input of arrival)input.addEventListener('input',()=>arrivalNote.replaceChildren());
+  const arrivalToggle=()=>{for(const input of arrival)input.disabled=unscheduled.checked;};unscheduled.addEventListener('change',arrivalToggle);arrivalToggle();
+  let previousStart=startTime.value;
+  // Moving the start time moves a custom arrival window with it. A window that
+  // would cross midnight is cleared, and the manager is told why.
+  startTime.addEventListener('change',()=>{const shift=minutesOf(startTime.value)-minutesOf(previousStart);previousStart=startTime.value;if(!shift||!arrival.every(input=>input.value))return;const [from,to]=arrival.map(input=>minutesOf(input.value)+shift);if(!(from>=0&&to<1440)){for(const input of arrival)input.value='';arrivalNote.replaceChildren(notice('The custom arrival window was cleared because moving it with the new start time would cross midnight. Set a new window, or '+blankArrival));return;}arrivalNote.replaceChildren();arrivalStart.value=hhmm(from);arrivalEnd.value=hhmm(to);});
   const duration=select([['','Set duration…'],['30','30 minutes'],['60','1 hour'],['90','90 minutes'],['120','2 hours'],['180','3 hours'],['240','4 hours'],['360','6 hours'],['480','8 hours']], '',value=>{
     if(!value||!startDate.value||!startTime.value)return;const minute=Number(startTime.value.slice(0,2))*60+Number(startTime.value.slice(3))+Number(value);endDate.value=addDays(startDate.value,Math.floor(minute/1440));endTime.value=String(Math.floor(minute/60)%24).padStart(2,'0')+':'+String(minute%60).padStart(2,'0');
   });model.fields.append(labeled('Expected duration',duration));
@@ -410,12 +431,15 @@ function openJob(job=null,options={}) {
     event.preventDefault();if(!job&&!selectedCustomer){model.status.replaceChildren(notice('Select an existing Hub customer before scheduling.','error'));search.focus();return;}
     const data=new FormData(model.form),members=[...checks].filter(([,input])=>input.checked).map(([id])=>id);
     if(lead.value&&!members.includes(lead.value)){model.status.replaceChildren(notice('The crew lead must be selected in Assigned employees.','error'));return;}
+    const [from,to]=unscheduled.checked?['','']:arrival.map(input=>input.value);
+    if(Boolean(from)!==Boolean(to)||from&&!(from<to&&from<=startTime.value&&startTime.value<=to)){model.status.replaceChildren(notice('Set both arrival times so the window starts at or before the start time and ends at or after it, or clear both.','error'));(from?arrivalEnd:arrivalStart).focus();return;}
     const list=name=>String(data.get(name)||'').split('\n').map(v=>v.trim()).filter(Boolean);
     const changes={date:unscheduled.checked?'':startDate.value,time:unscheduled.checked?'':startTime.value,endDate:unscheduled.checked?'':endDate.value,endTime:unscheduled.checked?'':endTime.value,
       serviceType:service.value.trim(),address:address.value.trim(),assignedCrew:members,crewId:crewSelect.value||null,crewLead:lead.value||null,vehicleId:truck.value||null,
       crewNeeded:Number(data.get('crewNeeded')),travelBufferMinutes:Number(data.get('travelBufferMinutes')),jobInstructions:instructions.value.trim(),
       accessInstructions:String(data.get('accessInstructions')||'').trim(),customerInstructions:String(data.get('customerInstructions')||'').trim(),opsNotes:String(data.get('opsNotes')||'').trim(),
       requiredEquipment:list('requiredEquipment'),materials:list('materials').map((name,i)=>{const existing=job?.materials?.find(m=>m.name===name);return existing||{id:'material-'+i+'-'+name.toLowerCase().replace(/[^a-z0-9]/g,'').slice(0,30),name,quantity:1};})};
+    Object.assign(changes,{arrivalWindowStart:from||null,arrivalWindowEnd:to||null});
     const body=job?{action:'schedule.update',requestId:key(),jobId:job.id,expectedRevision:job.revision,changes}:{action:'schedule.create',requestId:key(),customerId:selectedCustomer.id,kind:type.value,...(sourceJobId?{sourceJobId}:{}),changes};
     void save(model,body,job?'Job updated.':'Job created.');
   });

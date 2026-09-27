@@ -2,6 +2,7 @@ import { firestoreFetch } from './firebase-service-account.js';
 import { decodeFirestoreFields, encodeFirestoreFields } from './firestore-job.js';
 import { employeeAccountsConfigured, listEmployeeApplications } from './employee-accounts.js';
 import { listHubUserProfiles } from './hub-session.js';
+import { arrivalSettings } from './dispatch-arrival.js';
 
 const ROOT = 'projects/egcw-1ec83/databases/(default)/documents';
 const BASE = `https://firestore.googleapis.com/v1/${ROOT}`;
@@ -12,7 +13,7 @@ function decode(document,collection,id) {
   if (!path||path.includes('/')||id&&path!==id||typeof document.updateTime!=='string'||!document.updateTime||document.fields!==undefined&&(!document.fields||typeof document.fields!=='object'||Array.isArray(document.fields))) throw failure('dispatch_storage_incomplete','Dispatch received a record without a verifiable identity or revision. Refresh before changing work.');
   return {...decodeFirestoreFields(document.fields || {}),id:path,revision:document.updateTime};
 }
-const JOB_FIELDS = ['type','recordType','date','time','endDate','endTime','customerId','customerAccountOwnerJobId','customerMemoryInheritedFrom','propertyId','customer','phone','address','title','serviceType','status','pipelineStatus','assignedCrew','assignedTo','crewLead','crewId','vehicleId','crewNeeded','requiredCrewSize','travelBufferMinutes','jobInstructions','operationalScope.text','scope','scopeOfWork','accessInstructions','customerInstructions','opsNotes','requiredEquipment','materials','syncStatus','highlevelAppointmentId','highlevelContactId','sourceWalkthroughId','sourceTemplateJobId','recurrence','recurrenceParentId','reminderDays','notify','shiftPickupEnabled','openShift','notes','durationMin','estimatedDurationMin','createdAt','updatedAt','completedAt','cancelledAt','startedAt','employee','employeeId','allDay','reason','startAt','endAt','fieldExecution.activity','fieldExecution.activityReason','fieldExecution.activityAt','fieldExecution.activityBy','fieldExecution.attention','fieldExecution.jobTime','fieldLastActionAt','fieldCompletionSync.status','fieldCompletionSync.message','fieldCompletionSync.attemptedAt','fieldCompletionSync.syncedAt'];
+const JOB_FIELDS = ['type','recordType','date','time','endDate','endTime','customerId','customerAccountOwnerJobId','customerMemoryInheritedFrom','propertyId','customer','phone','address','title','serviceType','status','pipelineStatus','assignedCrew','assignedTo','crewLead','crewId','vehicleId','crewNeeded','requiredCrewSize','travelBufferMinutes','jobInstructions','operationalScope.text','scope','scopeOfWork','accessInstructions','customerInstructions','opsNotes','requiredEquipment','materials','syncStatus','highlevelAppointmentId','highlevelContactId','sourceWalkthroughId','sourceTemplateJobId','recurrence','recurrenceParentId','reminderDays','notify','shiftPickupEnabled','openShift','notes','durationMin','estimatedDurationMin','createdAt','updatedAt','completedAt','cancelledAt','startedAt','employee','employeeId','allDay','reason','startAt','endAt','fieldExecution.activity','fieldExecution.activityReason','fieldExecution.activityAt','fieldExecution.activityBy','fieldExecution.attention','fieldExecution.jobTime','fieldLastActionAt','fieldCompletionSync.status','fieldCompletionSync.message','fieldCompletionSync.attemptedAt','fieldCompletionSync.syncedAt','arrivalWindowStart','arrivalWindowEnd','arrivalWindow'];
 
 export async function dispatchRoster(env) {
   const profiles = listHubUserProfiles(env).map(p => ({ id: p.user.trim().toLowerCase(), name: p.displayName, role: p.role }));
@@ -62,6 +63,7 @@ export function dispatchStorage(env, fetcher = firestoreFetch) {
     jobs: () => scan('jobs', JOB_FIELDS),
     resources: () => scan('dispatchResources', null, 2000),
     customers: () => scan('customers', ['name','firstName','lastName','phone','email','address','highlevelContactId'], 20000),
+    settings: async () => arrivalSettings(env),
     async read(collection, id) {
       const response = await send(`${BASE}/${collection}/${encodeURIComponent(id)}`);
       if (response.status === 404) return null;

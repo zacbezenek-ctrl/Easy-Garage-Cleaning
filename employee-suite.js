@@ -190,7 +190,7 @@ window.opsSaveBooking=async e=>{
   try{
     const saved=await saveScheduledJob(job,previous);
     if(typeof jobsCache!=='undefined')jobsCache=[...jobsCache.filter(row=>row.id!==saved.id&&!isScheduleLock(row)),{...previous,...saved}];
-    S.booking=null;render();if(typeof showToast==='function')showToast(saved.type==='blocked'?'Time blocked in dispatch':saved.syncStatus==='pending'?'Saved in Hub. HighLevel mirror is queued.':'Saved in Hub dispatch.');
+    S.booking=null;render();if(typeof showToast==='function')showToast((saved.type==='blocked'?'Time blocked in dispatch':saved.syncStatus==='pending'?'Saved in Hub. HighLevel mirror is queued.':'Saved in Hub dispatch.')+(saved.arrivalNotice?' '+saved.arrivalNotice:''));
   }catch(problem){
     if(!S.booking)return;S.booking.nativeBusy=false;S.booking.uncertain=Boolean(window.EGCBooking?.pending(id)||window.EGCBooking?.pending('customer:'+id));S.booking.error=problem.message||'The schedule could not be verified. Keep this form and retry.';
     if(status)status.textContent=S.booking.error;bookingControls(form,false,S.booking.uncertain);if(button){button.disabled=false;button.textContent=S.booking.uncertain?'Retry original save':'Retry save';}

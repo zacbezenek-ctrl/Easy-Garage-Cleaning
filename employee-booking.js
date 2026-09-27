@@ -7,6 +7,9 @@ const plain=value=>value!==null&&typeof value==='object'&&!Array.isArray(value);
 const canonical=value=>Array.isArray(value)?'['+value.map(canonical).join(',')+']':plain(value)?'{'+Object.entries(value).filter(([,value])=>value!==undefined).sort(([a],[b])=>a.localeCompare(b)).map(([key,value])=>JSON.stringify(key)+':'+canonical(value)).join(',')+'}':JSON.stringify(value);
 const error=(message,code='booking_invalid',status=400)=>Object.assign(new Error(message),{code,status});
 const user=()=>String(sessionStorage.getItem('egc_u')||'').trim().toLowerCase();
+// Dispatch reports a cleared customer arrival window as a warning. Callers read it
+// from saved.arrivalNotice; it is non-enumerable so it never enters job caches.
+const arrivalNotice=warnings=>(Array.isArray(warnings)?warnings:[]).filter(row=>row?.code==='arrival_window_reset').map(row=>String(row.message||'The saved arrival window was cleared. Review the arrival window the customer sees.')).join(' ');
 const cacheKey=key=>prefix+user()+':'+key;
 function pending(key){if(memory.has(cacheKey(key)))return memory.get(cacheKey(key));try{const row=JSON.parse(sessionStorage.getItem(cacheKey(key))||'null');if(row&&typeof row.fingerprint==='string'&&plain(row.request)){memory.set(cacheKey(key),row);return row;}}catch{}return null;}
 function rememberStored(k,value){if(value){memory.set(k,value);try{sessionStorage.setItem(k,JSON.stringify(value));}catch{}}else{memory.delete(k);try{sessionStorage.removeItem(k);}catch{}}}
@@ -71,6 +74,7 @@ async function request(key,fingerprint,build,{endpoint='/api/dispatch',field='jo
     const result=await api('',record.request,endpoint);
     current();
     if(!result[field]?.id||!result[field].revision)throw error('The server returned an incomplete save. Retry this same booking to verify it.','booking_outcome_unknown',503);
+    if(field==='job')Object.defineProperty(result.job,'arrivalNotice',{value:arrivalNotice(result.warnings),enumerable:false});
     rememberStored(storageKey,null);return result[field];
   }catch(problem){
     if(started===generation&&problem.status&&problem.status<500&&![401,403,408,429].includes(problem.status)&&problem.code!=='booking_pending_operation')rememberStored(storageKey,null);

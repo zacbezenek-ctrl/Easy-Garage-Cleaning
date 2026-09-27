@@ -6,6 +6,7 @@ import { resolveDispatchLineage, sameOperationalProperty } from './dispatch-line
 import { sharedScheduleResources, scheduleRowsConflict, scheduleDayEntry } from './dispatch-conflicts.js';
 import { DISPATCH_ACTIONS, DISPATCH_TIME_ZONE } from './dispatch-contract.js';
 import { validDate, addDays, denverToday, scheduleInterval, availabilityInterval, occupiedDays, overlaps } from './dispatch-time.js';
+import { arrivalWindowPatch, arrivalDefaults } from './dispatch-arrival.js';
 
 const TERMINAL = new Set(['cancelled','canceled','completed','invoiced','paid','review_requested','closed','noshow','no_show','no-show']);
 const JOB_TYPES = new Set(['job','walkthrough','cleanout','reorg','blocked']);
@@ -62,7 +63,7 @@ function legacyMembers(job, roster) {
   return [...new Set(ids)];
 }
 
-const DTO_FIELDS = ['id','revision','type','customerId','customer','phone','address','title','date','time','endDate','endTime','assignedTo','crewLead','crewId','vehicleId','crewNeeded','travelBufferMinutes','jobInstructions','accessInstructions','customerInstructions','opsNotes','requiredEquipment','materials','serviceType','syncStatus','highlevelAppointmentId','sourceWalkthroughId','sourceTemplateJobId','recurrence','recurrenceParentId','reminderDays','notify','shiftPickupEnabled','openShift','notes','durationMin','estimatedDurationMin','createdAt','updatedAt','completedAt'];
+const DTO_FIELDS = ['id','revision','type','customerId','customer','phone','address','title','date','time','endDate','endTime','assignedTo','crewLead','crewId','vehicleId','crewNeeded','travelBufferMinutes','jobInstructions','accessInstructions','customerInstructions','opsNotes','requiredEquipment','materials','serviceType','syncStatus','highlevelAppointmentId','sourceWalkthroughId','sourceTemplateJobId','recurrence','recurrenceParentId','reminderDays','notify','shiftPickupEnabled','openShift','notes','durationMin','estimatedDurationMin','createdAt','updatedAt','completedAt','arrivalWindowStart','arrivalWindowEnd','arrivalWindow'];
 const scopeText = job => typeof job.operationalScope?.text === 'string' ? job.operationalScope.text : typeof job.jobInstructions === 'string' ? job.jobInstructions : job.jobInstructions?.operationalScope || (typeof job.scope === 'string' ? job.scope : '') || job.scopeOfWork || '';
 function recurringTemplateFields(source,actor,now) {
   const output={};
@@ -86,6 +87,7 @@ export function projectDispatchJob(job, roster = []) {
     attention:job.fieldExecution?.attention?.status === 'open' ? {status:'open',reason:job.fieldExecution.attention.reason || '',at:job.fieldExecution.attention.at || null,actorName:job.fieldExecution.attention.actorName || ''} : null,
     completionSync:job.fieldCompletionSync ? {status:job.fieldCompletionSync.status,message:String(job.fieldCompletionSync.message || '').slice(0,600),attemptedAt:job.fieldCompletionSync.attemptedAt || null,syncedAt:job.fieldCompletionSync.syncedAt || null} : null,
     jobTime:fieldJobTime(job),
+    arrivalWindowStart:job.arrivalWindowStart || null,arrivalWindowEnd:job.arrivalWindowEnd || null,arrivalWindow:job.arrivalWindow || '',
     timeZone: DISPATCH_TIME_ZONE, timeNeedsReview: Boolean(job.date) && !interval };
 }
 
@@ -178,9 +180,9 @@ export async function dispatchOverview(store, session, query = {}, now = new Dat
   requireDispatcher(session);
   if (query.view === 'job') {
     if (!safeId(query.jobId)) throw fail('dispatch_job_not_found','Choose a valid job.',404);
-    const [job,jobs,resources,roster] = await Promise.all([store.read('jobs',query.jobId),store.jobs(),store.resources(),store.roster()]);
+    const [job,jobs,resources,roster,settings] = await Promise.all([store.read('jobs',query.jobId),store.jobs(),store.resources(),store.roster(),store.settings ? store.settings() : {}]);
     if (!visibleJob(job)) throw fail('dispatch_job_not_found','This operational job could not be found.',404);
-    return {ok:true,job:projectDispatchJob(job,roster),roster,crews:resources.filter(row=>row.recordType==='crew'),vehicles:resources.filter(row=>row.recordType==='vehicle'),warnings:jobWarnings(job,jobs,resources,roster)};
+    return {ok:true,job:projectDispatchJob(job,roster),roster,crews:resources.filter(row=>row.recordType==='crew'),vehicles:resources.filter(row=>row.recordType==='vehicle'),warnings:jobWarnings(job,jobs,resources,roster),arrivalDefaults:arrivalDefaults(settings)};
   }
   if (query.view === 'customers') {
     const needle = text(query.q || '', 'Search', 200).toLowerCase(), digits = needle.replace(/\D/g, '');
@@ -190,7 +192,7 @@ export async function dispatchOverview(store, session, query = {}, now = new Dat
   }
   const startDate = query.startDate || denverToday(now), endDate = query.endDate || addDays(startDate,7);
   if (!validDate(startDate) || !validDate(endDate) || startDate >= endDate || Date.parse(endDate) - Date.parse(startDate) > 93 * 86400000) throw fail('dispatch_range_invalid', 'Choose a valid date range of up to 93 days. The end date is exclusive.');
-  const [jobs, resources, roster] = await Promise.all([store.jobs(), store.resources(), store.roster()]);
+  const [jobs, resources, roster, settings] = await Promise.all([store.jobs(), store.resources(), store.roster(), store.settings ? store.settings() : {}]);
   const includeUnscheduled = query.includeUnscheduled === true || query.includeUnscheduled === 'true';
   const selected = jobs.filter(visibleJob).filter(job => !job.date ? includeUnscheduled : !validDate(job.date) || job.endDate && (!validDate(job.endDate) || job.endDate < job.date) || job.date < endDate && (job.endDate || job.date) >= startDate);
   selected.sort((a,b) => String(a.date || '9999').localeCompare(String(b.date || '9999')) || String(a.time || '').localeCompare(String(b.time || '')) || a.id.localeCompare(b.id));
@@ -198,10 +200,10 @@ export async function dispatchOverview(store, session, query = {}, now = new Dat
   return { ok: true, timeZone: DISPATCH_TIME_ZONE, startDate, endDate, jobs: selected.map(job=>projectDispatchJob(job,roster)), roster,
     crews: resources.filter(row => row.recordType === 'crew'), vehicles: resources.filter(row => row.recordType === 'vehicle'),
     availability: resources.filter(row => row.recordType === 'availability').concat(jobs.filter(row => row.type === 'availability' || row.recordType === 'crew_availability').map(row => ({ ...row, employeeId: resolveMember(row.employee,roster,true) || row.employee }))).filter(row => row.date < endDate && (row.endDate || row.date) >= startDate),
-    warnings: selected.flatMap(job => jobWarnings(job, jobs, resources, roster,inspection)), coverage: { complete: true, asOf: now.toISOString() } };
+    warnings: selected.flatMap(job => jobWarnings(job, jobs, resources, roster,inspection)), coverage: { complete: true, asOf: now.toISOString() }, arrivalDefaults: arrivalDefaults(settings) };
 }
 
-const SCHEDULE_KEYS = ['date','time','endDate','endTime','assignedCrew','crewLead','crewId','vehicleId','crewNeeded','travelBufferMinutes','title','address','serviceType','jobInstructions','accessInstructions','customerInstructions','opsNotes','requiredEquipment','materials','recurrence','reminderDays','notify','shiftPickupEnabled','notes'];
+const SCHEDULE_KEYS = ['date','time','endDate','endTime','assignedCrew','crewLead','crewId','vehicleId','crewNeeded','travelBufferMinutes','title','address','serviceType','jobInstructions','accessInstructions','customerInstructions','opsNotes','requiredEquipment','materials','recurrence','reminderDays','notify','shiftPickupEnabled','notes','arrivalWindowStart','arrivalWindowEnd'];
 function schedulePatch(changes, current, resources, roster, now, actor) {
   onlyKeys(changes, SCHEDULE_KEYS);
   const patch = {};
@@ -269,7 +271,7 @@ function conflictCheck(next, jobs, resources, roster,inspection) {
 }
 
 function auditState(job) {
-  return Object.fromEntries(['date','time','endDate','endTime','status','pipelineStatus','assignedCrew','assignedTo','crewId','crewLead','vehicleId','jobInstructions','operationalScope','accessInstructions','customerInstructions','opsNotes','requiredEquipment','materials','crewNeeded','travelBufferMinutes','title','address','serviceType','name','memberIds','leadId','notes','employeeId','allDay','reason','recurrence','reminderDays','notify','shiftPickupEnabled','openShift','sourceTemplateJobId','recurrenceParentId','cancellationReason'].filter(key => job?.[key] !== undefined).map(key => [key,job[key]]));
+  return Object.fromEntries(['date','time','endDate','endTime','status','pipelineStatus','assignedCrew','assignedTo','crewId','crewLead','vehicleId','jobInstructions','operationalScope','accessInstructions','customerInstructions','opsNotes','requiredEquipment','materials','crewNeeded','travelBufferMinutes','title','address','serviceType','name','memberIds','leadId','notes','employeeId','allDay','reason','recurrence','reminderDays','notify','shiftPickupEnabled','openShift','sourceTemplateJobId','recurrenceParentId','cancellationReason','arrivalWindowStart','arrivalWindowEnd','arrivalWindow'].filter(key => job?.[key] !== undefined).map(key => [key,job[key]]));
 }
 
 export async function mutateDispatch(store, session, input, now = new Date().toISOString()) {
@@ -385,6 +387,8 @@ async function executeDispatch(store, session, input, now) {
     if (!cancel && hasSchedule && !interval) throw fail('dispatch_time_invalid','Choose valid Denver start and end times within 31 days. Missing or repeated DST hours cannot be scheduled.');
     if (!cancel && next.type === 'blocked' && !interval) throw fail('dispatch_block_invalid','A company-wide scheduling block needs valid start and end times.');
     if (!cancel && !hasSchedule && current?.highlevelAppointmentId) throw fail('dispatch_linked_unschedule_unsupported','A provider-linked appointment must be rescheduled or cancelled, not cleared.');
+    const arrival = cancel || next.type === 'blocked' ? null : arrivalWindowPatch(current,next,input.changes || {},store.settings ? await store.settings() : {});
+    if (arrival) Object.assign(patch,arrival.patch);
     if (create || restore) Object.assign(patch,{ status:interval ? 'scheduled' : 'unscheduled',pipelineStatus:interval ? 'scheduled' : 'unscheduled' });
     if (!create && !restore && !cancel && state(current) === 'unscheduled' && interval) Object.assign(patch,{status:'scheduled',pipelineStatus:'scheduled'});
     if (!cancel && !interval && !create && state(current) === 'scheduled') Object.assign(patch,{status:'unscheduled',pipelineStatus:'unscheduled'});
@@ -433,6 +437,7 @@ async function executeDispatch(store, session, input, now) {
     conflictCheck(next,finalJobs,resources,roster,inspection);
     warnings = jobWarnings(next,finalJobs,resources,roster,inspection);
     if(lineage?.metadata&&!lineage.metadata.memoryAddressMatches)warnings.push({code:'customer_memory_not_inherited',jobId:id,message:'The verified customer account is linked, but this property does not match the selected account history. Property instructions remain specific to this job; review access and scope before dispatch.'});
+    if(arrival?.reset)warnings.push({code:'arrival_window_reset',jobId:id,message:'The saved arrival window did not include the new start time and was cleared. Review the arrival window the customer sees.'});
   } else {
     collection = 'dispatchResources';
     id = input.id || `${input.action.split('.')[0]}_${receiptId.replaceAll('-','')}`;

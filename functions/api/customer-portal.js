@@ -149,7 +149,8 @@ function sanitize(job, session = {}) {
     appointment: {
       date: safe(job.date, 30), time: safe(job.time, 20), endTime: safe(job.endTime, 20),
       address: safe(job.address, 240), service: estimate.service, status: state,
-      arrivalWindow: safe(job.jobInstructions?.arrivalWindow || job.instructions?.arrivalWindow || '', 80),
+      // Dispatch writes a Denver range label; older jobs keep the walkthrough brief text.
+      arrivalWindow: safe(job.arrivalWindow || job.jobInstructions?.arrivalWindow || job.instructions?.arrivalWindow || '', 80),
     },
     estimate,
     payment: {

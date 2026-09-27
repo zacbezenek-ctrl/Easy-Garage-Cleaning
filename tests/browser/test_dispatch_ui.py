@@ -1,5 +1,5 @@
 """Native dispatch browser workflows against isolated contract fixtures; no provider/customer writes."""
-import copy, json, os, pathlib, threading, unittest
+import copy, json, os, pathlib, re, threading, unittest
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
@@ -46,6 +46,7 @@ class DispatchBrowserTests(unittest.TestCase):
         self.availability = []; self.fail_once = None; self.read_status = 200; self.completed = {}; self.lost_once = False; self.malformed_once = False; self.viewer = 'manager.one'; self.bad_read = False
         self.opening_queries = []; self.opening_failure = None; self.opening_candidates = [{'date': DAY, 'time': '13:00', 'endDate': DAY, 'endTime': '15:00', 'startAt': DAY+'T19:00:00Z', 'endAt': DAY+'T21:00:00Z', 'gapMinutes': 240}]
         self.search_queries = []; self.search_results = []; self.search_failure = None; self.hang_once = False; self.hung_route = None
+        self.arrival_defaults = {'enabled': False, 'minutes': 60}
         self.page.on('pageerror', lambda e: self.errors.append(str(e)))
         self.page.on('dialog', lambda dialog: dialog.accept())
         self.page.route('**/*', self.route)
@@ -73,7 +74,7 @@ class DispatchBrowserTests(unittest.TestCase):
             rows = [row for row in self.jobs if not row.get('date') or (row['date'] < last and (row.get('endDate') or row['date']) >= first)]
             if self.bad_read: send({'ok': True}); return
             send({'ok': True, 'viewer': {'id': self.viewer}, 'timeZone': 'America/Denver', 'jobs': rows, 'roster': ROSTER, 'crews': self.crews, 'vehicles': self.vehicles, 'availability': self.availability,
-                  'warnings': [], 'coverage': {'complete': True, 'asOf': '2026-09-22T14:00:00Z'}, 'startDate': first, 'endDate': last}); return
+                  'warnings': [], 'coverage': {'complete': True, 'asOf': '2026-09-22T14:00:00Z'}, 'startDate': first, 'endDate': last, 'arrivalDefaults': self.arrival_defaults}); return
         body = req.post_data_json; self.calls.append(copy.deepcopy(body))
         if self.fail_once:
             status, code, error, details = self.fail_once; self.fail_once = None
@@ -265,5 +266,39 @@ class DispatchBrowserTests(unittest.TestCase):
         self.create(); self.assertLessEqual(self.page.evaluate('document.documentElement.scrollWidth'), 321); self.assertLessEqual(self.page.get_by_role('dialog').evaluate('(el)=>el.scrollWidth'), self.page.get_by_role('dialog').evaluate('(el)=>el.clientWidth')+1)
         out = ROOT/'test-results'; out.mkdir(exist_ok=True); self.page.screenshot(path=str(out/'dispatch-mobile-create.png'), full_page=True)
         self.page.get_by_role('button', name='Back', exact=True).click(); self.page.screenshot(path=str(out/'dispatch-mobile.png'), full_page=True)
+    def test_arrival_window_inputs_fit_phone_move_with_start_and_send_contained_range(self):
+        self.jobs[0].update({'arrivalWindowStart': '07:30', 'arrivalWindowEnd': '09:00', 'arrivalWindow': '7:30 AM – 9:00 AM'})
+        self.page.set_viewport_size({'width': 375, 'height': 812}); self.open(); expect(self.card()).to_contain_text('Arrival window: 7:30 AM – 9:00 AM')
+        self.card().get_by_role('button', name='Edit / assign', exact=True).click()
+        arrive_from = self.page.get_by_label('Arrival from', exact=True); arrive_to = self.page.get_by_label('Arrival to', exact=True)
+        expect(arrive_from).to_have_value('07:30'); expect(arrive_to).to_have_value('09:00'); expect(arrive_from).to_have_accessible_description(re.compile('must include the start time; leave both blank for none'))
+        for control in [arrive_from, arrive_to]:
+            self.assertEqual(control.get_attribute('type'), 'time'); self.assertEqual(control.evaluate('(el)=>getComputedStyle(el).fontSize'), '16px'); self.assertGreaterEqual(control.bounding_box()['height'], 44)
+        self.assertLessEqual(self.page.evaluate('document.documentElement.scrollWidth'), 376); self.assertLessEqual(self.page.get_by_role('dialog').evaluate('(el)=>el.scrollWidth'), self.page.get_by_role('dialog').evaluate('(el)=>el.clientWidth')+1)
+        self.page.get_by_label('Start time', exact=True).fill('10:00'); expect(arrive_from).to_have_value('09:30'); expect(arrive_to).to_have_value('11:00')
+        self.page.get_by_label('End time', exact=True).fill('12:00'); arrive_to.fill('09:45'); self.submit('Save changes')
+        expect(self.page.get_by_role('alert')).to_contain_text('arrival times'); self.assertEqual(self.calls, [])
+        arrive_to.fill('11:00'); self.submit('Save changes'); self.closed(); changes = self.calls[-1]['changes']
+        self.assertEqual((changes['time'], changes['arrivalWindowStart'], changes['arrivalWindowEnd']), ('10:00', '09:30', '11:00'))
+    def test_arrival_window_is_optional_and_never_sent_for_unscheduled_work(self):
+        self.page.set_viewport_size({'width': 375, 'height': 812}); self.open(); expect(self.card()).not_to_contain_text('Arrival window')
+        self.create(); expect(self.page.get_by_label('Arrival from', exact=True)).to_have_value(''); self.submit('Create job'); self.closed()
+        self.assertIsNone(self.calls[-1]['changes']['arrivalWindowStart']); self.assertIsNone(self.calls[-1]['changes']['arrivalWindowEnd'])
+        self.create(); self.page.get_by_label('Arrival from', exact=True).fill('12:30'); self.page.get_by_label('Arrival to', exact=True).fill('13:30')
+        self.page.get_by_label('Keep unscheduled', exact=True).check(); expect(self.page.get_by_label('Arrival from', exact=True)).to_be_disabled(); expect(self.page.get_by_label('Arrival to', exact=True)).to_be_disabled()
+        self.submit('Create job'); self.closed(); self.assertEqual(self.calls[-1]['changes']['date'], ''); self.assertIsNone(self.calls[-1]['changes']['arrivalWindowStart'])
+    def test_arrival_help_follows_default_setting_and_midnight_shift_is_explained(self):
+        self.arrival_defaults = {'enabled': True, 'minutes': 90}
+        self.jobs[0].update({'time': '20:00', 'endTime': '22:00', 'arrivalWindowStart': '19:30', 'arrivalWindowEnd': '21:00', 'arrivalWindow': '7:30 PM – 9:00 PM'})
+        self.page.set_viewport_size({'width': 375, 'height': 812}); self.open(); self.card().get_by_role('button', name='Edit / assign', exact=True).click()
+        arrive_from = self.page.get_by_label('Arrival from', exact=True); arrive_to = self.page.get_by_label('Arrival to', exact=True)
+        expect(arrive_from).to_have_accessible_description(re.compile('leave both blank to use the default 90-minute window from the start time'))
+        note = self.page.get_by_role('dialog').locator('.dp-arrival-note [role=status]'); expect(note).to_have_count(0)
+        self.page.get_by_label('Start time', exact=True).fill('23:30')
+        expect(arrive_from).to_have_value(''); expect(arrive_to).to_have_value('')
+        expect(note).to_be_visible(); expect(note).to_contain_text('would cross midnight'); expect(note).to_contain_text('default 90-minute window')
+        self.assertLessEqual(self.page.evaluate('document.documentElement.scrollWidth'), 376); self.assertLessEqual(self.page.get_by_role('dialog').evaluate('(el)=>el.scrollWidth'), self.page.get_by_role('dialog').evaluate('(el)=>el.clientWidth')+1)
+        out = ROOT/'test-results'; out.mkdir(exist_ok=True); note.scroll_into_view_if_needed(); self.page.screenshot(path=str(out/'dispatch-arrival-midnight.png'))
+        arrive_from.fill('23:00'); expect(note).to_have_count(0); self.assertEqual(self.calls, [])
 
 if __name__ == '__main__': unittest.main(verbosity=2)

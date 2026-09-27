@@ -5,11 +5,14 @@
  *       crews:[{id,revision,name,memberIds,leadId,status}],
  *       vehicles:[{id,revision,name,status,notes}],
  *       availability:[{id,revision,employeeId,date,endDate,time,endTime,allDay,reason,status}],
- *       warnings:[{code,jobId,message,...}], coverage:{complete,asOf},startDate,endDate}
+ *       warnings:[{code,jobId,message,...}], coverage:{complete,asOf},startDate,endDate,
+ *       arrivalDefaults:{enabled:boolean,minutes:integer}}
+ *   arrivalDefaults says whether blank arrival windows get a derived default
+ *   (EGC_DISPATCH_DEFAULT_ARRIVAL_WINDOW_ENABLED) and its length; no secrets.
  * GET /api/dispatch?view=customers&q=phone-or-name
  *   => {ok,customers:[{id,name,phone,email,address}],total}; at most 50 results.
  * GET /api/dispatch?view=job&jobId=exact-ID
- *   => {ok,job:DispatchJob,roster,crews,vehicles,warnings}; no date-range filter.
+ *   => {ok,job:DispatchJob,roster,crews,vehicles,warnings,arrivalDefaults}; no date-range filter.
  *
  * POST /api/dispatch always requires requestId = crypto.randomUUID(). Keep the
  * SAME requestId and unchanged body when retrying a lost/network response.
@@ -47,6 +50,16 @@
  * assignedCrew is an explicit per-job membership snapshot; crewId labels it.
  * When crewId is supplied without assignedCrew, use the saved crew membership.
  * Reassigning a saved crew does not silently change existing job snapshots.
+ * arrivalWindowStart/arrivalWindowEnd: 'HH:MM'|null (both or neither) is the
+ * customer arrival range on the start date; it must contain the start time.
+ * null clears it (a default window applies only when enabled in settings). A
+ * saved window that no longer contains a changed start time is cleared with an
+ * arrival_window_reset warning. 400 dispatch_arrival_window_invalid otherwise.
+ * The derived default label is materialized on save: enabling the setting
+ * affects jobs as they are next saved (or by the dry-run-by-default
+ * scripts/backfill-arrival-windows.mjs --apply), and disabling it does not
+ * remove labels already saved. A start too late for a non-empty window before
+ * midnight derives no window.
  * No arbitrary status/financial/customer/provider identity patches are accepted.
  * => {ok,job:DispatchJob,warnings,requestId,replayed?,providerSync:'pending'|'not_needed'}
  *
@@ -66,7 +79,9 @@
  * serviceType,syncStatus,highlevelAppointmentId,sourceWalkthroughId,completedAt,
  * createdAt,updatedAt,recurrence,recurrenceParentId,sourceTemplateJobId,reminderDays,
  * notify,shiftPickupEnabled,openShift,notes,durationMin,estimatedDurationMin,
- * completionSync:{status,message,attemptedAt,syncedAt}|null.
+ * completionSync:{status,message,attemptedAt,syncedAt}|null,
+ * arrivalWindowStart,arrivalWindowEnd ('HH:MM'|null), arrivalWindow (Denver
+ * range label such as '9:00 AM – 10:00 AM', '' when none is saved).
  * Date/time invalid or absent is represented as startAt:null.
  * Financial/credential/employee payroll fields are deliberately absent.
  *

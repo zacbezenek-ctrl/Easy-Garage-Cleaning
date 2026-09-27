@@ -2512,7 +2512,7 @@ async function confirmBooking() {
   try{
     const result=await window.EGCBooking.saveSeries(job,bk.original||{},{operationKey:bk.operationKey});
     jobsCache=[...jobsCache.filter(row=>!result.visits.some(visit=>visit.id===row.id)),...result.visits.map(visit=>({...bk.original,...visit}))];
-    bk.uncertain=false;bk.saving=false;bk.submitted=null;let notice=result.warning||(bk.editId?'Appointment updated in Dispatch.':result.visits.length+' appointment(s) saved in Dispatch.');
+    bk.uncertain=false;bk.saving=false;bk.submitted=null;let notice=(result.warning||(bk.editId?'Appointment updated in Dispatch.':result.visits.length+' appointment(s) saved in Dispatch.'))+(result.job?.arrivalNotice?' '+result.job.arrivalNotice:'');
     if(document.getElementById('send-email')?.checked&&c.email){try{await sendBookingConfirmation(result.job.id);notice+=' Confirmation sent.';}catch(problem){notice+=' Confirmation was not sent: '+problem.message;}}
     closeBooking();refresh();showToast(notice);
   }catch(problem){bk.saving=false;bk.uncertain=window.EGCBooking.recoveries().some(row=>row.key==='series:'+bk.operationKey||row.key.includes(bk.operationKey));if(!bk.uncertain)bk.submitted=null;document.getElementById('step-err').textContent=problem.message||'The booking could not be verified. Retry before leaving.';btn.textContent=bk.uncertain?'Retry original booking':'Retry booking';}
