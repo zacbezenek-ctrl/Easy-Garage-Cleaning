@@ -1093,11 +1093,11 @@ test('crew chat is encrypted and job rooms are limited to assigned crew',async()
 
 test('customer portal uses expiring signed access links and an HttpOnly job session',async()=>{
   const env={HUB_SESSION_SECRET:'customer-portal-test-secret'};
-  const now=Date.now(),access=await createCustomerPortalAccessToken(env,'job-123',now);
+  const now=Date.now(),access=await createCustomerPortalAccessToken(env,'job-123',now,0);
   assert.equal((await verifyCustomerPortalAccessToken(env,access,now+29*24*60*60*1000)).jobId,'job-123');
   assert.equal(await verifyCustomerPortalAccessToken(env,access+'x',now),null);
   assert.equal(await verifyCustomerPortalAccessToken(env,access,now+31*24*60*60*1000),null);
-  const cookie=await createCustomerPortalSessionCookie(env,'job-123');
+  const cookie=await createCustomerPortalSessionCookie(env,'job-123',{linkVersion:0});
   assert.match(cookie,/egc_customer_portal=/);
   assert.match(cookie,/HttpOnly/i);
   assert.match(cookie,/Secure/i);
@@ -1112,7 +1112,7 @@ test('customer portal exchanges a signed link for a private cookie and rejects d
   const sessionApi=await import('../functions/api/customer-portal-session.js');
   const driveApi=await import('../functions/api/drive-upload.js');
   const env={HUB_SESSION_SECRET:'customer-portal-session-secret',FIREBASE_API_KEY:'firebase-test',GOOGLE_CLIENT_ID:'client',GOOGLE_CLIENT_SECRET:'secret',GOOGLE_REFRESH_TOKEN:'refresh'};
-  const access=await createCustomerPortalAccessToken(env,'job-123');
+  const access=await createCustomerPortalAccessToken(env,'job-123',Date.now(),0);
   const originalFetch=globalThis.fetch;
   let upstreamCalls=0;
   globalThis.fetch=async()=>{upstreamCalls+=1;return new Response(JSON.stringify({name:'projects/egcw-1ec83/databases/(default)/documents/jobs/job-123',fields:{customer:{stringValue:'Dana'}}}),{status:200})};
@@ -1136,7 +1136,7 @@ test('business users can create a private customer portal link and customers see
   const env={...TEST_HUB_ENV,HUB_SESSION_SECRET:'customer-portal-api-secret',FIREBASE_API_KEY:'firebase-test'};
   const zacCookie=(await createHubSessionCookie(env,'ZacB')).split(';')[0];
   const crewCookie=(await createHubSessionCookie(env,'FrankJara')).split(';')[0];
-  const customerCookie=(await createCustomerPortalSessionCookie(env,'job-123')).split(';')[0];
+  const customerCookie=(await createCustomerPortalSessionCookie(env,'job-123',{linkVersion:0})).split(';')[0];
   const fields={customer:{stringValue:'Dana Customer'},email:{stringValue:'dana@example.com'},phone:{stringValue:'9705550199'},date:{stringValue:'2026-09-18'},time:{stringValue:'09:00'},address:{stringValue:'123 Pine St'},serviceType:{stringValue:'Garage Turnaround'},total:{integerValue:'1400'},status:{stringValue:'scheduled'},estimate:{mapValue:{fields:{number:{stringValue:'EST-123'},status:{stringValue:'draft'},amount:{integerValue:'1400'},scope:{stringValue:'Bundled garage turnaround'},validUntil:{stringValue:'2099-09-30'},revision:{integerValue:'2'},depositRequired:{integerValue:'350'},lineItems:{arrayValue:{values:[{mapValue:{fields:{name:{stringValue:'Complete Garage Turnaround'},description:{stringValue:'One bundled service'},quantity:{integerValue:'1'},amount:{integerValue:'1400'}}}}]}}}}},invoice:{mapValue:{fields:{number:{stringValue:'INV-123'},status:{stringValue:'issued'},amount:{integerValue:'1400'},dueDate:{stringValue:'2099-10-07'}}}}};
   const originalFetch=globalThis.fetch;
   globalThis.fetch=async(url,options={})=>{
@@ -1186,7 +1186,7 @@ test('customer portal connects appointments estimates payments photos progress a
 });
 
 test('post-booking portal saves customer memory decisions rebooking family access credits and Garage Guard',async()=>{
-  const portalApi=await import('../functions/api/customer-portal.js'),env={...TEST_HUB_ENV,HUB_SESSION_SECRET:'post-booking-secret',FIREBASE_API_KEY:'firebase-test'},cookie=(await createCustomerPortalSessionCookie(env,'job-cx')).split(';')[0],patches=[];
+  const portalApi=await import('../functions/api/customer-portal.js'),env={...TEST_HUB_ENV,HUB_SESSION_SECRET:'post-booking-secret',FIREBASE_API_KEY:'firebase-test'},cookie=(await createCustomerPortalSessionCookie(env,'job-cx',{linkVersion:0})).split(';')[0],patches=[];
   const fields={customer:{stringValue:'Dana Customer'},date:{stringValue:'2026-09-18'},time:{stringValue:'09:00'},address:{stringValue:'123 Pine St'},serviceType:{stringValue:'Garage Turnaround'},total:{integerValue:'1400'},status:{stringValue:'in_progress'},customerDecisions:{arrayValue:{values:[{mapValue:{fields:{id:{stringValue:'decision-1'},title:{stringValue:'Remove cabinet?'},details:{stringValue:'Damaged and unsafe.'},priceDelta:{integerValue:'75'},timeDeltaMinutes:{integerValue:'20'},status:{stringValue:'pending'},promptedAt:{stringValue:'2026-09-04T18:00:00Z'}}}}]}},giftWallet:{mapValue:{fields:{cards:{arrayValue:{values:[{mapValue:{fields:{id:{stringValue:'credit-1'},label:{stringValue:'Garage Guard credit'},issuedAmount:{integerValue:'100'},remainingAmount:{integerValue:'100'},source:{stringValue:'Unused visit'}}}}]}}}}},garageGuard:{mapValue:{fields:{plan:{stringValue:'guard'},status:{stringValue:'active'},visitsIncluded:{integerValue:'4'},visitsRemaining:{integerValue:'3'}}}}};
   const originalFetch=globalThis.fetch;globalThis.fetch=async(url,options={})=>{if((options.method||'GET')==='PATCH'){const body=JSON.parse(options.body);patches.push(body.fields);return new Response(JSON.stringify({name:'projects/egcw-1ec83/databases/(default)/documents/jobs/job-cx',fields:body.fields}),{status:200})}return new Response(JSON.stringify({name:'projects/egcw-1ec83/databases/(default)/documents/jobs/job-cx',fields}),{status:200})};
   const post=body=>portalApi.onRequestPost({request:new Request('https://easygaragecleaning.com/api/customer-portal',{method:'POST',headers:{Origin:'https://easygaragecleaning.com',Cookie:cookie,'Content-Type':'application/json'},body:JSON.stringify(body)}),env});

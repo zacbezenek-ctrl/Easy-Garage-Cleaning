@@ -245,7 +245,7 @@ test('crew and customer surfaces show the dispatch label, with legacy brief text
     return Response.json({name:`projects/egcw-1ec83/databases/(default)/documents/jobs/${id}`,updateTime:'2026-09-22T12:00:00Z',fields:encodeFirestoreFields(fields)});
   });
   const view = async jobId => {
-    const cookie = (await createCustomerPortalSessionCookie(env,jobId,{actorId:'',permissions:{view:true,decide:true,pay:true,rebook:true}})).split(';')[0];
+    const cookie = (await createCustomerPortalSessionCookie(env,jobId,{actorId:'',permissions:{view:true,decide:true,pay:true,rebook:true},linkVersion:0})).split(';')[0];
     const response = await portal.onRequestGet({env,request:new Request('https://easygaragecleaning.com/api/customer-portal',{headers:{Origin:'https://easygaragecleaning.com',Cookie:cookie}})});
     assert.equal(response.status,200);return (await response.json()).appointment;
   };

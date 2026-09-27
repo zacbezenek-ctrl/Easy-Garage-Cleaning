@@ -63,7 +63,7 @@ test('assigned crew can message only the job contact and HighLevel receives an S
 test('client portal replies derive identity from the signed job and notify HighLevel', async () => {
   const route = await import('../functions/api/customer-portal.js');
   const env = { HUB_SESSION_SECRET: 'customer-thread-client', FIREBASE_API_KEY: 'firebase-test-thread-client', HIGHLEVEL_API_KEY: 'ghl-test', HIGHLEVEL_LOCATION_ID: 'location-1' };
-  const cookie = (await createCustomerPortalSessionCookie(env, 'job-2')).split(';')[0];
+  const cookie = (await createCustomerPortalSessionCookie(env, 'job-2', { linkVersion: 0 })).split(';')[0];
   let stored = { customer: 'Dana Customer', highlevelContactId: 'real-client-contact', customerConversation: [] };
   let update = 0, highLevelPayload = null;
   const originalFetch = globalThis.fetch;

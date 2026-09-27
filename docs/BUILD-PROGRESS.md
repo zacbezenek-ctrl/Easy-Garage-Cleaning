@@ -31,6 +31,10 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   malformed/offline manifest keeps the existing gallery; no analytics/backend/storage. Mutation-checked (5 deliberate
   regressions each fail at least one test).
 - Root suite after P0-1/P0-2: 934 tests, 933 pass, 0 fail, 1 skipped (emulator-only suite, run separately in CI).
+- **P4-15** Staff (owner/manager) can revoke every homeowner portal link and session for a customer account:
+  `GET/POST /api/customer-portal-revoke` bumps `customerPortalLinkVersion` on the verified account root and, by default,
+  clears saved authorized people in the same atomic commit (receipts in server-only `customerPortalOperations`). Owner
+  tokens now require an explicit signed `lv` and carry the account root `lr`. Gap: no Hub button yet (API only).
 
 ## In progress
 
@@ -55,7 +59,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | BRIDGE | Operations bridge command registry (API + Hub) with delegated human actors | building |
 | P4-01 | Customer portal correctness fixes + review request tracking | building |
 | P4-02 | Customer identity normalization + dry-run backfill | building |
-| P4-15 | Customer portal link revocation (link version) | building |
+| P4-15 | Customer portal link revocation (link version) | merged (754b885) |
 | F-PWA | Crew PWA shell + offline action outbox (field actions + time clock) | building |
 | F-EXP | Field cost capture (materials, dump fees) | building |
 | F-LEG | Legacy crew send-path hardening (quo-send idempotency etc.) | building |

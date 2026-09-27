@@ -53,7 +53,7 @@ async function fixture(t, initial = {}) {
     }
     throw new Error(`Unexpected request ${url.hostname}${url.pathname}`);
   });
-  const cookie = (await createCustomerPortalSessionCookie(env, 'job-1')).split(';')[0];
+  const cookie = (await createCustomerPortalSessionCookie(env, 'job-1', { linkVersion: 0 })).split(';')[0];
   const request = body => new Request(`${origin}/api/customer-portal`, { method: body ? 'POST' : 'GET', headers: { Origin: origin, Cookie: cookie, 'Content-Type': 'application/json' }, ...(body ? { body: JSON.stringify(body) } : {}) });
   const post = body => portal.onRequestPost({ request: request(body), env });
   const pay = (extra = {}) => post({ action: 'create_payment', request_id: `synthetic-${Math.random()}`, ...extra });

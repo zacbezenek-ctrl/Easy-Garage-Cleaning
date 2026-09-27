@@ -1,4 +1,5 @@
 import { createCustomerPortalAccessToken, customerPortalConfigured } from './customer-portal.js';
+import { customerPortalLinkAccount } from './customer-portal-revocation.js';
 import { firebaseServiceAccountConfigured, firestoreFetch } from './firebase-service-account.js';
 import { readJob, patchJob, decodeFirestoreFields, encodeFirestoreFields } from './firestore-job.js';
 
@@ -118,7 +119,12 @@ export async function sendAcceptedQuotePortal(env, jobId, { requireRequested = f
   let current;
   try { current = await readJob(env, jobId); } catch { return { status: 'storage_unavailable' }; }
   if (!current || !quoteApproved(current) || current.notify === false || phone(current.phone) !== phone(job.phone) || email(current.email) !== email(job.email) || current.highlevelContactId !== job.highlevelContactId) return { status: 'busy', jobId };
-  const token = await createCustomerPortalAccessToken(env, jobId);
+  // The link carries the account's current version and root, so a later staff
+  // revocation (or re-parenting) also ends this invitation. An unverifiable
+  // account never sends.
+  let account, linkVersion;
+  try { ({ account, linkVersion } = await customerPortalLinkAccount(id => readJob(env, id), current)); } catch { return { status: 'storage_unavailable' }; }
+  const token = await createCustomerPortalAccessToken(env, jobId, Date.now(), linkVersion, account.id);
   const url = `${PORTAL}?access=${encodeURIComponent(token)}`;
   const firstName = String(job.customer || '').trim().split(/\s+/)[0].replace(/[<>]/g, '').slice(0, 50);
   const message = `${firstName ? `Hi ${firstName}, your` : 'Your'} quote is approved. Here is your private Easy Garage Cleaning project portal for job details, messages, and payments: ${url}`;
