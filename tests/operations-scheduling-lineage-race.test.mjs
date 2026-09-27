@@ -19,6 +19,9 @@ function load() {
     encodeFirestoreFields: value => value,
     // Pure arrival-window rules run for real; these fixtures have no windows.
     arrivalWindowProblem, arrivalWindowFields,
+    DISPATCH_TIME_ZONE: 'America/Denver',
+    legacyBlockMode: () => 'off',
+    legacyBlockedDays: async () => ({ mode: 'off', rows: [] }),
   });
   vm.runInContext(source.replace(/^import .*;\n/gm, '').replace(/^export /gm, '') +
     '\nglobalThis.api = {mutateScheduledVisit, schedulingStorage};', context);

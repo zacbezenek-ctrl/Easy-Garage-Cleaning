@@ -90,6 +90,12 @@
  * A 409 dispatch_conflict has details.conflicts with employee/vehicle/job IDs.
  * Conflicts are never bypassed by a client flag. Understaffing and travel buffers
  * are explicit warnings returned on GET and successful POST.
+ * Legacy Hub calendar day blocks (blocked_days/<date>) are never written.
+ * Server env EGC_DISPATCH_LEGACY_BLOCKED_DAYS=off (default, also for unknown
+ * values): they are not read and conflicts/openings are unchanged. Opt-in =warn:
+ * placing work on one returns a legacy_blocked_day warning and openings skip the
+ * day; opt-in =enforce: new placement or shift pickup there is a 409
+ * dispatch_conflict.
  *
  * GET /api/dispatch-openings?startDate=YYYY-MM-DD&endDate=exclusive&
  * durationMinutes=120&workdayStart=08:00&workdayEnd=17:00&employeeIds=id1,id2&

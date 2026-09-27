@@ -1,6 +1,27 @@
 import { fieldJobProjection } from './field-execution.js';
 
 const text = (value, max=1000) => typeof value === 'string' ? value.slice(0,max) : '';
+/** Every stored field crewJobProjection and fieldJobProjection read (id and
+ * revision come from document metadata). Masked scans load only these, so
+ * signatures, payment evidence and provider payloads never reach Worker memory.
+ * Extend this list whenever either projection starts reading a new field. Maps
+ * that may also be stored as strings (jobInstructions, instructions, scope) are
+ * read whole; the other maps are narrowed to the members the projection reads. */
+export const CREW_PROJECTION_FIELDS = Object.freeze([
+  'type','employee','date','endDate','time','endTime','allDay','status','reason',
+  'pipelineStatus','customer','phone','address','startAt','endAt','arrivalWindow','serviceType',
+  'assignedCrew','assignedTo','crewLead','crewId','crewName','vehicleId','vehicleName','crewNeeded','requiredCrewSize','crewSize',
+  'jobInstructions','instructions','scope','operationalScope.text','scopeOfWork','discovery.success',
+  'logistics.notes','logistics.access','logistics.truck_placement','logistics.requiredEquipment',
+  'accessInstructions','customerInstructions','customerNotesSummary','requiredEquipment','materials','requiredMaterials',
+  'clientChecklists.preJob','clientChecklists.postJob',
+  'fieldExecution.activity','fieldExecution.activityReason','fieldExecution.checklistTemplate','fieldExecution.checks',
+  'fieldExecution.materialStates','fieldExecution.photos','fieldExecution.attention','fieldExecution.completion','fieldExecution.jobTime',
+  'fieldCompletionSync.status','fieldCompletionSync.message','fieldCompletionSync.attemptedAt','fieldCompletionSync.syncedAt',
+  'startedAt','completedAt','cancelledAt',
+  'title','durationMin','estimatedDurationMin','shiftPickupEnabled','openShift','shiftClaims','lastShiftClaim',
+  'customerConversation','customerConversationUpdatedAt',
+]);
 /** Compatibility DTO for the existing Hub shift and communication cards.
  * Raw Firestore records may contain signatures, costs, payment receipts and
  * private management notes. No crew response may spread those records.

@@ -4,6 +4,8 @@ import {localInstant} from './operations-portal-records.js';
 import {dispatchStorage} from './dispatch-storage.js';
 import {scheduleRowsConflict,scheduleLockConflict,scheduleDayEntry} from './dispatch-conflicts.js';
 import {arrivalWindowProblem,arrivalWindowFields} from './dispatch-arrival.js';
+import {DISPATCH_TIME_ZONE} from './dispatch-contract.js';
+import {legacyBlockMode,legacyBlockedDays} from './dispatch-legacy-blocks.js';
 const ROOT='projects/egcw-1ec83/databases/(default)/documents';
 const URL=`https://firestore.googleapis.com/v1/${ROOT}`;
 const safeId=id=>typeof id==='string'&&/^[A-Za-z0-9_-]{1,180}$/.test(id)&&!/^(_egc_|secure_)/.test(id);
@@ -19,6 +21,8 @@ export function schedulingStorage(env,fetcher=firestoreFetch){return{
   resources:()=>dispatchStorage(env,fetcher).resources(),
   roster:()=>dispatchStorage(env,fetcher).roster(),
   settings:()=>dispatchStorage(env,fetcher).settings(),
+  legacyBlockMode:legacyBlockMode(env),
+  legacyBlockedDays:dates=>dispatchStorage(env,fetcher).legacyBlockedDays(dates),
   async customers(providerId){const r=await fetcher(env,`${URL}:runQuery`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({structuredQuery:{from:[{collectionId:'customers'}],where:{fieldFilter:{field:{fieldPath:'highlevelContactId'},op:'EQUAL',value:{stringValue:providerId}}},limit:3}}),signal:AbortSignal.timeout(15000)});if(!r.ok)throw failure('schedule_source_unavailable',503);const rows=await r.json();if(!Array.isArray(rows))throw failure('schedule_source_incomplete',503);return rows.filter(x=>x.document).map(x=>fromDoc(x.document));},
   async read(collection,id){const r=await fetcher(env,`${URL}/${collection}/${encodeURIComponent(id)}`,{signal:AbortSignal.timeout(15000)});if(r.status===404)return null;if(!r.ok)throw failure('schedule_source_unavailable',503);return fromDoc(await r.json());},
   async day(date){const r=await fetcher(env,`${URL}:runQuery`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({structuredQuery:{from:[{collectionId:'jobs'}],where:{fieldFilter:{field:{fieldPath:'date'},op:'EQUAL',value:{stringValue:date}}},limit:501}}),signal:AbortSignal.timeout(15000)});if(!r.ok)throw failure('schedule_source_unavailable',503);const rows=await r.json();if(!Array.isArray(rows)||rows.length>500)throw failure('schedule_source_incomplete',503);return rows.filter(x=>x.document).map(x=>fromDoc(x.document));},
@@ -131,6 +135,13 @@ export async function mutateScheduledVisit(store,actor,input,now=new Date().toIS
   }
   const next={...current,...patch},start=localInstant(next.date,next.time),end=localInstant(next.date,next.endTime);
   if(!start||!end||end<=start)throw failure('schedule_time_invalid_or_ambiguous',400);
+  // Single-day visits keep the dispatch-derived instants in step with the wall time.
+  Object.assign(patch,{endDate:next.date,startAt:start,endAt:end,timeZone:DISPATCH_TIME_ZONE});Object.assign(next,patch);
+  // This path returns no warnings, so legacy calendar day blocks matter only when enforced.
+  if(store.legacyBlockMode==='enforce'&&input.mode!=='cancel'&&(input.mode==='create'||['date','time','endTime'].some(key=>next[key]!==current?.[key]))){
+    const legacy=await legacyBlockedDays(store,[next.date]).catch(()=>{throw failure('schedule_source_unavailable',503);});
+    if(legacy.mode==='enforce'&&legacy.rows.length)throw failure('schedule_slot_conflict');
+  }
   const dispatchGuard=await store.read('dispatchState','revision');
   const [resources,roster]=await Promise.all([store.resources?store.resources():[],store.roster?store.roster():[]]);
   if(input.mode!=='cancel'&&next.vehicleId&&!resources.some(row=>row.id===next.vehicleId&&row.recordType==='vehicle'&&row.status==='available'))throw failure('schedule_vehicle_unavailable');

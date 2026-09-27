@@ -7,6 +7,7 @@ import { sharedScheduleResources, scheduleRowsConflict, scheduleDayEntry } from 
 import { DISPATCH_ACTIONS, DISPATCH_TIME_ZONE } from './dispatch-contract.js';
 import { validDate, addDays, denverToday, scheduleInterval, availabilityInterval, occupiedDays, overlaps } from './dispatch-time.js';
 import { arrivalWindowPatch, arrivalDefaults } from './dispatch-arrival.js';
+import { legacyBlockedDays, legacyBlockWarning } from './dispatch-legacy-blocks.js';
 
 const TERMINAL = new Set(['cancelled','canceled','completed','invoiced','paid','review_requested','closed','noshow','no_show','no-show']);
 const JOB_TYPES = new Set(['job','walkthrough','cleanout','reorg','blocked']);
@@ -436,6 +437,13 @@ async function executeDispatch(store, session, input, now) {
     const inspection=scheduleInspection(finalJobs,resources,roster);
     conflictCheck(next,finalJobs,resources,roster,inspection);
     warnings = jobWarnings(next,finalJobs,resources,roster,inspection);
+    const placed = create || restore || ['date','time','endDate','endTime'].some(key => key in patch && patch[key] !== current?.[key]);
+    const legacy = placed && activeJob(next) && next.type !== 'blocked' ? await legacyBlockedDays(store,occupiedDays(next)) : null;
+    if (legacy?.rows.length) {
+      const blocked = legacy.rows.map(row => legacyBlockWarning(id,row));
+      if (legacy.mode === 'enforce') throw fail('dispatch_conflict','This date is blocked on the Hub calendar. Unblock the day or choose another date.',409,{conflicts:blocked});
+      warnings.push(...blocked);
+    }
     if(lineage?.metadata&&!lineage.metadata.memoryAddressMatches)warnings.push({code:'customer_memory_not_inherited',jobId:id,message:'The verified customer account is linked, but this property does not match the selected account history. Property instructions remain specific to this job; review access and scope before dispatch.'});
     if(arrival?.reset)warnings.push({code:'arrival_window_reset',jobId:id,message:'The saved arrival window did not include the new start time and was cleared. Review the arrival window the customer sees.'});
   } else {
@@ -557,17 +565,19 @@ export async function mutateDispatchSelfAssignment(store,session,input,now = new
       const id = `_egc_schedule_lock_${date}`,lock = await store.read('jobs',id);
       if (lock && (lock.recordType !== 'schedule_lock' || !Array.isArray(lock.entries))) throw fail('dispatch_lock_unavailable','A scheduling guard needs review before this shift can be changed.',503);
       const entries = (Array.isArray(lock?.entries) ? lock.entries : []).filter(entry=>entry.id!==job.id && !TERMINAL.has(entry.status));
-      entries.push({id:job.id,start:date===job.date ? job.time : '00:00',end:date===(job.endDate || job.date) ? job.endTime : '24:00',label:job.customer || job.title || '',status:state(job),assignedCrew,vehicleId:job.vehicleId || null,updatedAt:now});
+      entries.push(scheduleDayEntry(next,date,roster,now));
       writes.push({collection:'jobs',id,revision:lock?.revision,patch:{recordType:'schedule_lock',date,entries,updatedAt:now}});
     }
     const finalJobs = input.action === 'claim' ? await store.jobs() : jobs;
     if (input.action === 'claim') conflictCheck(next,finalJobs,resources,roster);
+    const legacy = input.action === 'claim' ? await legacyBlockedDays(store,occupiedDays(job)) : {rows:[]}, blocked = legacy.rows.map(row => legacyBlockWarning(job.id,row));
+    if (legacy.mode === 'enforce' && blocked.length) throw fail('dispatch_conflict','This shift is on a day blocked on the Hub calendar. Ask dispatch before picking it up.',409,{conflicts:blocked});
     writes.push({collection:'dispatchState',id:'revision',revision:guard?.revision,patch:{updatedAt:now,lastRequestId:input.requestId}});
     writes.push({collection:'dispatchOperations',id:receiptId,patch:{fingerprint,actorId:identity,action:`shift.${input.action}`,collection:'jobs',targetId:job.id,requestId:input.requestId,createdAt:now,before:auditState(job),after:auditState(next)}});
     await store.commit(writes);
     const saved = await store.read('jobs',job.id);
     if (!saved || saved.dispatchRequestId !== input.requestId) throw fail('dispatch_changed_since_operation','Your assignment saved, but dispatch has changed it again. Refresh your schedule.',409);
-    return {ok:true,action:input.action,requestId:input.requestId,job:saved,warnings:jobWarnings(saved,finalJobs,resources,roster).filter(warning=>warning.code==='travel_buffer_short')};
+    return {ok:true,action:input.action,requestId:input.requestId,job:saved,warnings:[...jobWarnings(saved,finalJobs,resources,roster).filter(warning=>warning.code==='travel_buffer_short'),...blocked]};
   } catch(error) {
     const recovered = await replay().catch(replayError => { if (['dispatch_changed_since_operation','dispatch_idempotency_conflict'].includes(replayError.code)) throw replayError; return null; });
     if (recovered) return recovered;

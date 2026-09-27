@@ -152,16 +152,18 @@ test('crew schedule API excludes unassigned customer jobs and redacts open shift
   const route = await import('../functions/api/crew-jobs.js');
   const env = { HUB_SESSION_SECRET: 'crew-jobs-test', FIREBASE_API_KEY: 'firebase-test-crew-jobs', HUB_AUTH_USERS_JSON: JSON.stringify({ Crewtest: { passwordHash: 'test', displayName: 'Crew Test', role: 'crew' } }) };
   const cookie = (await createHubSessionCookie(env, 'Crewtest', { displayName: 'Crew Test' })).split(';')[0];
-  const document = (id, data) => ({ document: {
+  // The schedule is read as the complete paginated jobs collection (not a
+  // truncated runQuery), so the fake Firestore serves a collection list page.
+  const document = (id, data) => ({
     name: `projects/x/databases/(default)/documents/jobs/${id}`,
-    fields: encodeFirestoreFields(data),
-  } });
+    fields: encodeFirestoreFields(data), updateTime: '2026-09-22T12:00:00.000000Z',
+  });
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = async () => new Response(JSON.stringify([
+  globalThis.fetch = async () => new Response(JSON.stringify({ documents: [
     document('mine', { type: 'job', assignedCrew: ['Crewtest'], customer: 'Assigned Customer', address: '1 Assigned Way' }),
     document('private', { type: 'job', assignedCrew: ['SomeoneElse'], customer: 'Private Customer', address: '2 Private Way' }),
     document('open', { type: 'job', openShift: true, shiftPickupEnabled: true, customer: 'Open Customer', address: '3 Private Way', serviceType: 'Garage cleanout', crewNeeded: 'not-a-number' }),
-  ]), { status: 200 });
+  ] }), { status: 200 });
   try {
     const response = await route.onRequestGet({ request: new Request('https://easygaragecleaning.com/api/crew-jobs', { headers: { Cookie: cookie } }), env });
     assert.equal(response.status, 200);

@@ -20,14 +20,15 @@ function errorResponse(error) {
 }
 
 // Dependency injection permits full request/permission tests without changing
-// production environment flags, cookies, or Firestore credentials.
-export function dispatchHandlers({ session = getHubSession, storage = dispatchStorage } = {}) {
+// production environment flags, cookies, Firestore credentials or the clock.
+// Reads take the Date; mutations take its ISO string (dispatch-contract.js).
+export function dispatchHandlers({ session = getHubSession, storage = dispatchStorage, now = () => new Date() } = {}) {
   return {
     async get({request,env}) {
       try {
         const actor = await session(request,env); requireDispatcher(actor);
         const params = Object.fromEntries(new URL(request.url).searchParams.entries());
-        return reply(200,{...await dispatchOverview(storage(env),actor,params),viewer:{id:actor.user}});
+        return reply(200,{...await dispatchOverview(storage(env),actor,params,now()),viewer:{id:actor.user}});
       } catch(error) { return errorResponse(error); }
     },
     async post({request,env}) {
@@ -39,7 +40,7 @@ export function dispatchHandlers({ session = getHubSession, storage = dispatchSt
         const raw = await request.text();
         if (new TextEncoder().encode(raw).byteLength > 64000) return reply(413,{ok:false,code:'dispatch_request_too_large',error:'The dispatch request is too large.'});
         let input; try { input = JSON.parse(raw); } catch { return reply(400,{ok:false,code:'dispatch_json_invalid',error:'The dispatch request was incomplete. Refresh the form and try again.'}); }
-        return reply(200,await mutateDispatch(storage(env),actor,input));
+        return reply(200,await mutateDispatch(storage(env),actor,input,now().toISOString()));
       } catch(error) { return errorResponse(error); }
     },
   };

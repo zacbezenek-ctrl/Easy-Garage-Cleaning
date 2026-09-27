@@ -3,6 +3,7 @@ import { decodeFirestoreFields, encodeFirestoreFields } from './firestore-job.js
 import { employeeAccountsConfigured, listEmployeeApplications } from './employee-accounts.js';
 import { listHubUserProfiles } from './hub-session.js';
 import { arrivalSettings } from './dispatch-arrival.js';
+import { legacyBlockMode } from './dispatch-legacy-blocks.js';
 
 const ROOT = 'projects/egcw-1ec83/databases/(default)/documents';
 const BASE = `https://firestore.googleapis.com/v1/${ROOT}`;
@@ -61,6 +62,22 @@ export function dispatchStorage(env, fetcher = firestoreFetch) {
   return {
     roster: () => dispatchRoster(env),
     jobs: () => scan('jobs', JOB_FIELDS),
+    // Complete paginated scan narrowed to the caller's DTO inputs. A mask is
+    // mandatory: raw job bodies carry signature images and payment evidence.
+    async jobRecords(fields) {
+      if (!Array.isArray(fields) || !fields.length || fields.some(field => typeof field !== 'string' || !field)) throw failure('dispatch_storage_mask_required', 'A jobs scan must name the fields it reads.');
+      return scan('jobs', fields);
+    },
+    legacyBlockMode: legacyBlockMode(env),
+    async legacyBlockedDays(dates) {
+      const found = await Promise.all(dates.map(async date => {
+        const response = await send(`${BASE}/blocked_days/${encodeURIComponent(date)}?mask.fieldPaths=blockedAt`);
+        if (response.status === 404) return null;
+        if (!response.ok) throw failure('dispatch_storage_unavailable', 'Blocked calendar days could not be verified. Retry before scheduling.');
+        return decode(await response.json(), 'blocked_days', date).id;
+      }));
+      return found.filter(Boolean);
+    },
     resources: () => scan('dispatchResources', null, 2000),
     customers: () => scan('customers', ['name','firstName','lastName','phone','email','address','highlevelContactId'], 20000),
     settings: async () => arrivalSettings(env),

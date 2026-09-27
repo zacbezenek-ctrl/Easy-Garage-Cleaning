@@ -1,13 +1,11 @@
 import { getHubSession, hasBusinessAccess } from '../_lib/hub-session.js';
-import { decodeFirestoreFields, patchJob, readJob } from '../_lib/firestore-job.js';
-import { firebaseServiceAccountConfigured, firestoreFetch } from '../_lib/firebase-service-account.js';
+import { patchJob, readJob } from '../_lib/firestore-job.js';
+import { firebaseServiceAccountConfigured } from '../_lib/firebase-service-account.js';
 import { appendConversationMessage, cleanMessage, cleanRequestId, conversationMessages, deliverHighLevelMessage, findConversationMessage, replaceConversationMessage } from '../_lib/customer-messaging.js';
 import { createJobAssignmentAccess, jobCrewNames as crewNames } from '../_lib/job-assignment.js';
-import { crewJobProjection } from '../_lib/crew-job-projection.js';
+import { crewJobProjection, CREW_PROJECTION_FIELDS } from '../_lib/crew-job-projection.js';
 import { dispatchStorage } from '../_lib/dispatch-storage.js';
 import { mutateDispatchSelfAssignment } from '../_lib/dispatch-service.js';
-
-const PROJECT_ID = 'egcw-1ec83';
 
 const reply = (status, body) => new Response(JSON.stringify(body), {
   status,
@@ -31,11 +29,6 @@ function pickupEnabled(job) {
 
 function availableOpenShift(job) {
   return pickupEnabled(job) && job.openShift === true;
-}
-
-function pickupStageOpen(job) {
-  return !['dispatched', 'arrived', 'in_progress', 'completed', 'invoiced', 'paid', 'review_requested', 'cancelled']
-    .includes(String(job.pipelineStatus || job.status || 'scheduled').toLowerCase());
 }
 
 function crewCapacity(job) {
@@ -69,130 +62,112 @@ function publicOpenShift(job) {
   };
 }
 
-function minutes(value) {
-  const match = String(value || '').match(/^(\d{1,2}):(\d{2})/);
-  return match ? Number(match[1]) * 60 + Number(match[2]) : null;
+// Operational readers never expose locks, receipts, encrypted Hub records or
+// other private record types. Native crew availability stays owner-visible.
+function privateRecord(job) {
+  return /^(_egc_|secure_)/.test(job.id) || Boolean(job.recordType) && job.recordType !== 'crew_availability';
 }
 
-function overlaps(leftStart, leftEnd, rightStart, rightEnd) {
-  return [leftStart, leftEnd, rightStart, rightEnd].every(Number.isFinite) && leftStart < rightEnd && rightStart < leftEnd;
-}
+// The listing scans the whole jobs collection, so it loads only the fields its
+// readers use; raw bodies carry base64 signatures, payment evidence and
+// provider payloads. id and revision come from document metadata.
+// - filtering: privateRecord, availabilityOwner, access.assigned, availableOpenShift
+// - crew rows: CREW_PROJECTION_FIELDS (crewJobProjection/fieldJobProjection)
+// - other crew's open shifts: publicOpenShift
+// - managers receive the masked row itself. Its readers are crew/index.html
+//   (next assigned work) and copilot.html (today's strip plus the schedule it
+//   forwards to /api/copilot). employee.html refreshCrewSchedule runs for crew only.
+const FILTER_FIELDS = ['type', 'recordType', 'status', 'pipelineStatus', 'date', 'endDate', 'employee', 'assignedCrew', 'assignedTo', 'shiftPickupEnabled', 'openShift'];
+const OPEN_SHIFT_FIELDS = ['time', 'endTime', 'serviceType', 'crewNeeded', 'crewSize'];
+const MANAGER_VIEW_FIELDS = ['customer', 'address', 'time', 'endTime', 'serviceType',
+  'customerName', 'name', 'timeWindow', 'scheduledTime', 'quoteAmount', 'total', 'priceQuoted', 'amount', 'cubicYards',
+  'customerAddress', 'customerPhone', 'phone', 'notes'];
+export const CREW_LISTING_FIELDS = Object.freeze([...new Set([...FILTER_FIELDS, ...CREW_PROJECTION_FIELDS, ...OPEN_SHIFT_FIELDS, ...MANAGER_VIEW_FIELDS])]);
 
-async function scheduleConflict(env, job, access) {
-  if (!job.date) return null;
-  const response = await firestoreFetch(
-    env,
-    `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents:runQuery`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ structuredQuery: { from: [{ collectionId: 'jobs' }], limit: 500 } }),
+export function crewJobsHandlers({ session = getHubSession, storage = dispatchStorage, now = () => new Date() } = {}) {
+  return {
+    async get({ request, env }) {
+      const actor = await session(request, env);
+      if (!actor) return reply(401, { ok: false, error: 'Sign in required' });
+      if (!firebaseServiceAccountConfigured(env)) return reply(503, { ok: false, error: 'Secure data access is not configured' });
+      let rows;
+      try { rows = await storage(env).jobRecords(CREW_LISTING_FIELDS); }
+      catch (error) { return reply(503, { ok: false, code: error.code || 'schedule_storage_unavailable', error: error.code ? error.message : 'Schedule storage is unavailable' }); }
+      const manager = hasBusinessAccess(actor);
+      const access = createJobAssignmentAccess(env, actor);
+      const jobs = [];
+      for (const job of rows.filter(row => !privateRecord(row))) {
+        if (manager || await access.assigned(job) || await availabilityOwner(job, access)) jobs.push(manager ? job : crewJobProjection(job));
+        else if (availableOpenShift(job)) jobs.push(publicOpenShift(job));
+      }
+      return reply(200, { ok: true, jobs, coverage: { complete: true, asOf: now().toISOString() } });
     },
-  );
-  if (!response.ok) throw new Error('Schedule storage is unavailable');
-  const start = minutes(job.time);
-  const end = minutes(job.endTime);
-  const rows = (await response.json())
-    .filter(row => row.document?.fields)
-    .map(row => ({ id: String(row.document.name || '').split('/').pop() || '', ...decodeFirestoreFields(row.document.fields) }));
-  for (const row of rows) {
-    if (row.id !== job.id && row.date === job.date &&
-      !['cancelled', 'completed', 'paid'].includes(String(row.status || row.pipelineStatus || '').toLowerCase()) &&
-      overlaps(start, end, minutes(row.time), minutes(row.endTime)) &&
-      (await availabilityOwner(row, access) || await access.assigned(row))) return row;
-  }
-  return null;
-}
 
-export async function onRequestGet({ request, env }) {
-  const session = await getHubSession(request, env);
-  if (!session) return reply(401, { ok: false, error: 'Sign in required' });
-  if (!firebaseServiceAccountConfigured(env)) return reply(503, { ok: false, error: 'Secure data access is not configured' });
+    async post({ request, env }) {
+      if (!allowed(request)) return reply(403, { ok: false, error: 'Forbidden origin' });
+      const actor = await session(request, env);
+      if (!actor) return reply(401, { ok: false, error: 'Sign in required' });
+      if (!firebaseServiceAccountConfigured(env)) return reply(503, { ok: false, error: 'Secure data access is not configured' });
 
-  const response = await firestoreFetch(
-    env,
-    `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents:runQuery`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ structuredQuery: { from: [{ collectionId: 'jobs' }], limit: 500 } }),
+      const raw = await request.text();
+      if (raw.length > 8192) return reply(413, { ok: false, error: 'Payload too large' });
+      let payload;
+      try { payload = JSON.parse(raw); } catch { return reply(400, { ok: false, error: 'Invalid JSON' }); }
+      const action = String(payload.action || '');
+      const jobId = String(payload.jobId || '');
+      if (!['claim', 'release', 'send_customer_message'].includes(action) || !/^[A-Za-z0-9_-]{1,180}$/.test(jobId)) {
+        return reply(400, { ok: false, error: 'A valid shift action and job are required' });
+      }
+
+      const job = await readJob(env, jobId).catch(() => null);
+      if (!job) return reply(404, { ok: false, error: 'This shift no longer exists' });
+      const access = createJobAssignmentAccess(env, actor);
+
+      if (action === 'send_customer_message') {
+        if (!hasBusinessAccess(actor) && !await access.assigned(job)) return reply(403, { ok: false, error: 'Only assigned crew and managers can message this customer' });
+        const body = cleanMessage(payload.body), requestId = cleanRequestId(payload.requestId);
+        if (!body) return reply(400, { ok: false, error: 'Write a message before sending' });
+        if (!requestId) return reply(400, { ok: false, error: 'A valid message request ID is required' });
+        const duplicate = findConversationMessage(job, { requestId });
+        if (duplicate) return reply(200, { ok: true, duplicate: true, message: duplicate, job: hasBusinessAccess(actor) ? { ...job, customerConversation: conversationMessages(job) } : crewJobProjection(job) });
+        const queuedAt = now().toISOString(), identity = String(actor.displayName || actor.user || 'Easy Garage Cleaning').trim();
+        const message = {
+          id: `crew-${requestId}`.slice(0, 140), requestId, direction: 'to_customer',
+          authorRole: hasBusinessAccess(actor) ? 'manager' : 'crew', authorName: identity,
+          body, createdAt: queuedAt, delivery: { channel: 'sms', status: 'queued', attemptedAt: '' },
+        };
+        let queued;
+        try {
+          queued = await patchJob(env, jobId, { customerConversation: appendConversationMessage(job, message), customerConversationUpdatedAt: queuedAt, updatedAt: queuedAt }, job.__updateTime);
+        } catch {
+          return reply(409, { ok: false, error: 'The customer thread changed. Refresh and send again.' });
+        }
+        const delivery = await deliverHighLevelMessage(env, queued, { body, direction: 'to_customer' });
+        let updated = queued;
+        try {
+          const latest = await readJob(env, jobId), deliveredAt = now().toISOString();
+          updated = await patchJob(env, jobId, { customerConversation: replaceConversationMessage(latest, message.id, { delivery }), customerConversationUpdatedAt: deliveredAt, updatedAt: deliveredAt }, latest.__updateTime);
+        } catch { /* The queued portal message remains visible and can be retried safely. */ }
+        return reply(200, { ok: true, message: { ...message, delivery }, job: hasBusinessAccess(actor) ? { ...updated, customerConversation: conversationMessages(updated) } : crewJobProjection(updated) });
+      }
+
+      try {
+        const result = await mutateDispatchSelfAssignment(storage(env), actor, {
+          action, jobId, requestId: payload.requestId,
+          ...(payload.expectedRevision ? { expectedRevision: payload.expectedRevision } : {}),
+        }, now().toISOString());
+        return reply(200, { ok: true, action, replayed: result.replayed === true,
+          job: action === 'claim' ? (hasBusinessAccess(actor) ? result.job : crewJobProjection(result.job)) : publicOpenShift(result.job),
+          // Additive: travel-buffer and legacy calendar-block notices for this shift.
+          warnings: Array.isArray(result.warnings) ? result.warnings : [],
+        });
+      } catch (error) {
+        return reply(error.status || 503, { ok: false, code: error.code || 'shift_update_unavailable', error: error.code ? error.message : 'The shift could not be confirmed. Retry the same action.', ...(error.details ? { details: error.details } : {}) });
+      }
     },
-  );
-  if (!response.ok) return reply(502, { ok: false, error: 'Schedule storage is unavailable' });
-
-  const manager = hasBusinessAccess(session);
-  const access = createJobAssignmentAccess(env, session);
-  const rows = (await response.json())
-    .filter(row => row.document?.fields)
-    .map(row => ({ id: String(row.document.name || '').split('/').pop() || '', ...decodeFirestoreFields(row.document.fields) }))
-    .filter(job => job.recordType !== 'schedule_lock' && job.recordType !== 'employee_hub_v2' && !job.id.startsWith('secure_'));
-  const jobs = [];
-  for (const job of rows) {
-    if (manager || await access.assigned(job) || await availabilityOwner(job, access)) jobs.push(manager ? job : crewJobProjection(job));
-    else if (availableOpenShift(job)) jobs.push(publicOpenShift(job));
-  }
-
-  return reply(200, { ok: true, jobs });
+  };
 }
 
-export async function onRequestPost({ request, env }) {
-  if (!allowed(request)) return reply(403, { ok: false, error: 'Forbidden origin' });
-  const session = await getHubSession(request, env);
-  if (!session) return reply(401, { ok: false, error: 'Sign in required' });
-  if (!firebaseServiceAccountConfigured(env)) return reply(503, { ok: false, error: 'Secure data access is not configured' });
-
-  const raw = await request.text();
-  if (raw.length > 8192) return reply(413, { ok: false, error: 'Payload too large' });
-  let payload;
-  try { payload = JSON.parse(raw); } catch { return reply(400, { ok: false, error: 'Invalid JSON' }); }
-  const action = String(payload.action || '');
-  const jobId = String(payload.jobId || '');
-  if (!['claim', 'release', 'send_customer_message'].includes(action) || !/^[A-Za-z0-9_-]{1,180}$/.test(jobId)) {
-    return reply(400, { ok: false, error: 'A valid shift action and job are required' });
-  }
-
-  const job = await readJob(env, jobId).catch(() => null);
-  if (!job) return reply(404, { ok: false, error: 'This shift no longer exists' });
-  const access = createJobAssignmentAccess(env, session);
-
-  if (action === 'send_customer_message') {
-    if (!hasBusinessAccess(session) && !await access.assigned(job)) return reply(403, { ok: false, error: 'Only assigned crew and managers can message this customer' });
-    const body = cleanMessage(payload.body), requestId = cleanRequestId(payload.requestId);
-    if (!body) return reply(400, { ok: false, error: 'Write a message before sending' });
-    if (!requestId) return reply(400, { ok: false, error: 'A valid message request ID is required' });
-    const duplicate = findConversationMessage(job, { requestId });
-    if (duplicate) return reply(200, { ok: true, duplicate: true, message: duplicate, job: hasBusinessAccess(session) ? { ...job, customerConversation: conversationMessages(job) } : crewJobProjection(job) });
-    const now = new Date().toISOString(), identity = String(session.displayName || session.user || 'Easy Garage Cleaning').trim();
-    const message = {
-      id: `crew-${requestId}`.slice(0, 140), requestId, direction: 'to_customer',
-      authorRole: hasBusinessAccess(session) ? 'manager' : 'crew', authorName: identity,
-      body, createdAt: now, delivery: { channel: 'sms', status: 'queued', attemptedAt: '' },
-    };
-    let queued;
-    try {
-      queued = await patchJob(env, jobId, { customerConversation: appendConversationMessage(job, message), customerConversationUpdatedAt: now, updatedAt: now }, job.__updateTime);
-    } catch {
-      return reply(409, { ok: false, error: 'The customer thread changed. Refresh and send again.' });
-    }
-    const delivery = await deliverHighLevelMessage(env, queued, { body, direction: 'to_customer' });
-    let updated = queued;
-    try {
-      const latest = await readJob(env, jobId);
-      updated = await patchJob(env, jobId, { customerConversation: replaceConversationMessage(latest, message.id, { delivery }), customerConversationUpdatedAt: new Date().toISOString(), updatedAt: new Date().toISOString() }, latest.__updateTime);
-    } catch { /* The queued portal message remains visible and can be retried safely. */ }
-    return reply(200, { ok: true, message: { ...message, delivery }, job: hasBusinessAccess(session) ? { ...updated, customerConversation: conversationMessages(updated) } : crewJobProjection(updated) });
-  }
-
-  try {
-    const result = await mutateDispatchSelfAssignment(dispatchStorage(env), session, {
-      action, jobId, requestId: payload.requestId,
-      ...(payload.expectedRevision ? { expectedRevision: payload.expectedRevision } : {}),
-    });
-    return reply(200, { ok: true, action, replayed: result.replayed === true,
-      job: action === 'claim' ? (hasBusinessAccess(session) ? result.job : crewJobProjection(result.job)) : publicOpenShift(result.job),
-    });
-  } catch (error) {
-    return reply(error.status || 503, { ok: false, code: error.code || 'shift_update_unavailable', error: error.code ? error.message : 'The shift could not be confirmed. Retry the same action.', ...(error.details ? { details: error.details } : {}) });
-  }
-
-}
+const handlers = crewJobsHandlers();
+export const onRequestGet = handlers.get;
+export const onRequestPost = handlers.post;

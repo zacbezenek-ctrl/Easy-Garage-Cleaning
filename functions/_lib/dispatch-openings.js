@@ -4,6 +4,7 @@ import { assignmentKey } from './job-assignment.js';
 import { sharedScheduleResources, scheduleRowsConflict } from './dispatch-conflicts.js';
 import { validDate, addDays, denverToday, scheduleInterval, availabilityInterval } from './dispatch-time.js';
 import { localInstant } from './operations-portal-records.js';
+import { legacyBlockedDays } from './dispatch-legacy-blocks.js';
 
 const fail=(code,message,status=400)=>Object.assign(new Error(message),{code,status});
 const closed=row=>['cancelled','canceled','completed','invoiced','paid','review_requested','closed','noshow','no_show','no-show'].includes(row.pipelineStatus || row.status);
@@ -70,7 +71,7 @@ function mergeIntervals(intervals,start,end) {
 /** GET query documented in dispatch-contract.js. No mutation/provider request. */
 export async function dispatchOpenings(store,session,query={},now=new Date()) {
   requireDispatcher(session);
-  const input=parseQuery(query,now),data=await snapshot(store,input.dates);
+  const input=parseQuery(query,now),data=await snapshot(store,input.dates),legacy=await legacyBlockedDays(store,input.dates);
   if (input.employeeIds.some(id=>!data.roster.some(person=>person.id===id))) throw fail('dispatch_employee_inactive','A selected employee is no longer active. Refresh the roster.');
   if (input.vehicleId&&!data.resources.some(row=>row.recordType==='vehicle'&&row.id===input.vehicleId&&row.status==='available')) throw fail('dispatch_vehicle_unavailable','The selected vehicle is missing, inactive, or out of service.');
   const warnings=[{code:'working_availability_unconfirmed',message:'These gaps have no recorded scheduling conflict. Confirm that the selected employees are working; unmarked time is not approved availability.'}];
@@ -86,6 +87,8 @@ export async function dispatchOpenings(store,session,query={},now=new Date()) {
       sources.push({...entry,id:entry.id||`guard:${date}`,type:entry.type||'job',date,time:entry.start,endDate:entry.end==='24:00'?addDays(date,1):date,endTime:entry.end==='24:00'?'00:00':entry.end});
     }
   });
+  // Legacy calendar day blocks are company-wide and never suggested as openings.
+  for(const row of legacy.rows){sources.push(row);warnings.push({code:'legacy_blocked_day',date:row.date,legacyBlockId:row.id,message:`${row.date} is blocked on the Hub calendar, so it has no suggested openings.`});}
   const resourceProbe={assignedCrew:input.employeeIds,vehicleId:input.vehicleId};
   const prepared=sources.filter(row=>!closed(row)&&sharedScheduleResources(resourceProbe,row,data.roster)).filter(row=>{
     const endDate=row.endDate||row.date;

@@ -39,6 +39,10 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   as scope, revision-checked job-day rules/authorized people (409), server-issued collaborator ids, injected clock.
   P4-13: `GOOGLE_REVIEW_URL` review card only when completed and paid, idempotent throttled click tracking, Hub state.
   With P4-15: collaborator invites carry the account `lv`/`lr`, so revocation ends them even when people are kept.
+- **P1-01** Scheduling reliability: `/api/crew-jobs` scans every jobs page with a field mask (no 500-row cap; 503, never
+  truncated), shift pickups write full day-lock entries, operations visits write `endDate/startAt/endAt/timeZone`, sync
+  honors `endDate`, `dispatchHandlers` injects `now`, dry-run `scripts/repair-stale-schedule-instants.mjs`. Legacy
+  `blocked_days` read-only behind `EGC_DISPATCH_LEGACY_BLOCKED_DAYS` (default off). Gaps: PTO approval is P1-06; `blocked_slots` ignored.
 
 ## In progress
 
@@ -47,7 +51,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 
 | Unit | Scope | State |
 | --- | --- | --- |
-| P1-01 | Scheduling reliability: crew list pagination, self-assignment lock entries, bridge startAt/endAt, multi-day GHL sync, legacy blocked_days (flag, default off), repair script | review passed; fixing minors |
+| P1-01 | Scheduling reliability: crew list pagination, self-assignment lock entries, bridge startAt/endAt, multi-day GHL sync, legacy blocked_days (flag, default off), repair script | merged (6fa0fa1) |
 | P1-02 | Employee vault store extraction + centralized business/owner identity (behavior-preserving) | building |
 | P1-03 | Weekly timesheet + Colorado/federal overtime engine, server payroll CSV, job labor costing | building |
 | P1-04 | Arrival windows in dispatch, field and portal | building |
