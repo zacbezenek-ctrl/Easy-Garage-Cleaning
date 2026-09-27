@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { verifyMetaConversionsOnStart } from "../src/meta-conversion-smoke.js";
 
-const env = { META_CAPI_VERIFY_ON_START: "true", MCP_BEARER_TOKEN: "synthetic-internal-credential-at-least-32-characters", MCP_PUBLIC_ORIGIN: "https://egc-mcp.example.test" };
+// These cases exercise the write-scoped dry-run sync and synthetic test, which need the explicit static-bearer write grant.
+const env = { META_CAPI_VERIFY_ON_START: "true", MCP_BEARER_TOKEN: "synthetic-internal-credential-at-least-32-characters", MCP_BEARER_WRITE_ENABLED: "true", MCP_PUBLIC_ORIGIN: "https://egc-mcp.example.test" };
 const toolNames = ["meta.conversions.preview", "meta.conversions.sync", "meta.conversions.status", "meta.conversions.retry", "meta.conversions.test", "egc.lead_conversion_funnel"];
 
 function fixture(sse = false, testValue: unknown = {}, statusExtra: Record<string, unknown> = {}) {
@@ -44,6 +45,22 @@ describe("startup MCP verification", () => {
     expect(calls).not.toContainEqual(expect.objectContaining({ name: "meta.conversions.test" }));
     expect(fetcher.mock.calls[0]?.[0]).toBe("http://127.0.0.1:4200/mcp");
     expect(fetcher.mock.calls[0]?.[1]?.headers).toMatchObject({ Host: "egc-mcp.example.test", Authorization: `Bearer ${env.MCP_BEARER_TOKEN}` });
+  });
+
+  it("skips the write-scoped dry-run sync and synthetic test with a named reason while the static bearer is read-only", async () => {
+    const { fetcher, requests } = fixture(false, { accepted: true });
+    const logger = { log: vi.fn(), error: vi.fn() };
+    const { MCP_BEARER_WRITE_ENABLED: _write, ...readOnly } = env;
+    await verifyMetaConversionsOnStart({ port: 4200, env: { ...readOnly, META_CAPI_TEST_ON_START: "true", META_CAPI_MODE: "shadow" }, fetcher: fetcher as typeof fetch, logger });
+    const calls = requests.filter(request => request.method === "tools/call").map(request => (request.params as { name: string }).name);
+    expect(calls).toEqual(["meta.conversions.preview", "meta.conversions.status", "egc.lead_conversion_funnel"]);
+    expect(logger.error.mock.calls).toEqual([["Meta startup write-scoped checks skipped", "bearer_write_disabled"]]);
+    expect(logger.log).toHaveBeenCalledTimes(1);
+    expect(logger.log.mock.calls[0]?.[0]).toBe("Meta startup verification passed");
+    const summary = JSON.parse(logger.log.mock.calls[0]?.[1]);
+    expect(summary.dryRun).toEqual({ skipped: true, error: "bearer_write_disabled" });
+    expect(summary.syntheticTest).toEqual({ accepted: false, error: "bearer_write_disabled" });
+    for (const forbidden of [env.MCP_BEARER_TOKEN, "provider-secret", "private@example.test", "secret-that-must-not-be-logged"]) expect(JSON.stringify([logger.log.mock.calls, logger.error.mock.calls])).not.toContain(forbidden);
   });
 
   it("is inactive without explicit server configuration and fails safely without credentials", async () => {

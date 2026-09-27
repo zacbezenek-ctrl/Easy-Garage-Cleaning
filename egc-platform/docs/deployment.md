@@ -31,7 +31,7 @@ Required or conditionally required variables include:
 - `STORAGE_DRIVER`
 - `STORAGE_PATH`
 
-`MCP_BEARER_TOKEN` is optional and is not used by ChatGPT OAuth.
+`MCP_BEARER_TOKEN` is optional and is not used by ChatGPT OAuth. It is read-only unless `MCP_BEARER_WRITE_ENABLED=true`.
 
 ## Database
 

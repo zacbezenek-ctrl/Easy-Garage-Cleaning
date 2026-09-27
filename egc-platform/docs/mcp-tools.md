@@ -7,6 +7,18 @@ The EGC MCP has two OAuth scopes:
 
 No payment collection or refund tools are exposed. Explicitly authorized messages use a durable execution ledger and verified provider identity; accepted and delivered are distinct states. Human approvals remain tied to the exact reviewed revision.
 
+## Tool registry and safety policy
+
+New tools are declared with `defineTool` (`apps/mcp/src/tools/define.ts`) in a module under `apps/mcp/src/tools/domains/` and listed in `tools/index.ts`. The class (`read`, `write`, `destructive`, `send`, `money`) derives everything else, so metadata and enforcement cannot drift:
+
+- `read` requires `egc:read`; every other class requires `egc:write`, is added to the HTTP write set automatically, and must accept a required UUID `requestId`.
+- `destructive`, `send` and `money` are two-step: the definition must provide a side-effect-free `preview` and an optional `confirmToken`. A call without a token returns only the preview; nothing runs without a verified confirmation. No confirmation verifier is installed yet, so these tools are preview-only.
+- Inputs must be strict objects (unknown keys are rejected). Thrown errors never reach the client; error payloads keep only a snake_case code and bounded, non-sensitive details (`tools/result.ts`). If a non-read handler throws or returns output that fails its schema, it may already have committed, so the result is `tool_outcome_unknown` with the `requestId` and `retryMode: "same_request_id"`; read tools return `tool_operation_failed`.
+- `ownerOnly` tools refuse the static service bearer and require an OAuth grant.
+- List tools page with `tools/pagination.ts`: an opaque `cursor` bound to the tool and its exact filters, `limit` ≤ 200, and a `{items,page,asOf,coverage}` envelope.
+
+`egc.safety_policy()` reads the live mode, whether one-step customer sends are enabled, the legacy writes disabled in Action Center mode, and each registry tool's class, scope, request-ID and two-step requirements.
+
 ## Meta conversion feedback
 
 - `meta.conversions.preview(days=7, from?, to?, limit=100)` — read-only downstream event candidates, eligibility reasons, matching quality, and send/skip explanations. No ledger writes or transmissions.
@@ -17,7 +29,7 @@ No payment collection or refund tools are exposed. Explicitly authorized message
 
 Date filters accept ISO 8601 timestamps with an explicit UTC offset. Preview/status allow a 1–90 day lookback; sync/retry allow 1–7 days. These tools cannot enable production mode, change the destination, change ad optimization, or authorize historical backfill. Public results omit matching values and credentials. The backend worker independently reconciles every minute, so delivery does not depend on the morning brief or an MCP call. See [Meta conversions deployment and operations](meta-conversions.md) for configuration and activation.
 
-For deployment verification, temporarily set `META_CAPI_VERIFY_ON_START=true` on the MCP service. After listening, it uses the existing server-side `MCP_BEARER_TOKEN` against its own loopback MCP endpoint to verify discovery, preview, dry-run sync, status, and the existing lead-conversion funnel. Logs contain only tool names and allowlisted aggregate counts. The diagnostic does not send Meta events or expose an additional HTTP endpoint.
+For deployment verification, temporarily set `META_CAPI_VERIFY_ON_START=true` (and `MCP_BEARER_WRITE_ENABLED=true`, because the dry-run sync and the optional `META_CAPI_TEST_ON_START=true` synthetic test are write-scoped tools) on the MCP service. Without `MCP_BEARER_WRITE_ENABLED=true` the verification skips those write-scoped checks and logs `bearer_write_disabled` instead of an opaque failure. After listening, it uses the existing server-side `MCP_BEARER_TOKEN` against its own loopback MCP endpoint to verify discovery, preview, dry-run sync, status, and the existing lead-conversion funnel. Logs contain only tool names and allowlisted aggregate counts. The diagnostic does not send Meta events or expose an additional HTTP endpoint.
 
 ## Live GHL reference tools
 
@@ -122,7 +134,7 @@ While `EGC_OPERATIONS_ENABLED=false`, legacy draft creation, editing and approva
 
 ### Authorized communication
 
-`conversations.send_message`, `send_sms` and `egc.send_followup` require explicit authorization, a stable `requestId`, verified recipient/contact and channel DND checks. The ledger stores intent before the send. Retries reuse the original execution, and unresolved identical sends remain blocked even with a new request ID. `communications.executions` and `communications.reconcile` expose safe status/recovery. These tools never infer delivery from a generic successful HTTP request.
+`conversations.send_message`, `send_sms` and `egc.send_followup` require explicit authorization, a stable `requestId`, verified recipient/contact and channel DND checks. With `EGC_OPERATIONS_ENABLED=true` they are refused with `direct_send_disabled_in_operations_mode` before any ledger or provider access unless `EGC_MCP_DIRECT_SENDS_ENABLED=true`. Queue the exact draft with `actions.propose` (kind `followup_message`) for owner/manager approval in the Employee Hub; approval does not send. Sending an approved draft needs the Hub one-tap send (Phase 3) or MCP two-step confirmation (Phase 6), and neither is enabled yet. Until then `actions.complete_from_message` has no execution ID to verify, so an approved `followup_message` action can only be cancelled. The ledger stores intent before the send. Retries reuse the original execution, and unresolved identical sends remain blocked even with a new request ID. `communications.executions` and `communications.reconcile` expose safe status/recovery. These tools never infer delivery from a generic successful HTTP request.
 
 ## Acceptance query
 

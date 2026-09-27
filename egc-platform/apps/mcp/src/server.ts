@@ -3,7 +3,9 @@ import {getCustomerTimeline,OPERATIONAL_STATES} from '@egc/customer-state';
 import {registerPortalRecordTools} from "./portal-record-tools.js";
 import {verifyOperationsOnStart} from "./operations-smoke.js";
 import {executeCommunication,reconcileCommunication} from "./communication-execution.js";
-import {registerOperationsTools,operationsPrincipal,operationsEnabled,OPERATIONS_WRITE_TOOLS,LEGACY_MUTATIONS_DISABLED,callOperations} from "./operations.js";
+import {registerOperationsTools,operationsPrincipal,operationsEnabled,blockedToolCall,directSendsBlocked,DIRECT_SEND_DISABLED,callOperations} from "./operations.js";
+import {registerDomainTools,DOMAIN_TOOLS} from "./tools/index.js";
+import {connectorMode} from "./tools/domains/policy.js";
 import {registerRecordingTools} from "./recording-tools.js";
 import express from "express";
 import {ReliableAppointments,AppointmentOperationError} from "./appointment-reliability.js";
@@ -31,6 +33,9 @@ import {
   recentBookings,
   recomputeLeadState
 } from "@egc/lead-audit";
+
+// Audit rows name the verified MCP principal set by the /mcp middleware, never a fixed client label.
+const auditActor=()=>operationsPrincipal.getStore()?.id??"unverified";
 
 function textResult(value: unknown) {
   return {
@@ -554,6 +559,7 @@ async function sendConversationMessage(input: {
   requestId:string;contactId:string;channel:"SMS"|"Email";body:string;subject?:string|undefined;
   emailFrom?:string|undefined;emailTo?:string|undefined;fromNumber?:string|undefined;toNumber?:string|undefined;duplicateWindowMinutes?:number;
 }) {
+  if(directSendsBlocked())return {ok:false,...DIRECT_SEND_DISABLED};
   const db=getDb(),actor=operationsPrincipal.getStore();
   if(!actor)return {ok:false,error:"verified_principal_required"};
   const [contact]=await db.select().from(schema.contacts).where(eq(schema.contacts.id,input.contactId)).limit(1);
@@ -648,7 +654,7 @@ async function ensureAppointment(input: {
   }
 
   await db.insert(schema.auditLogs).values({
-    actor: operationsPrincipal.getStore()?.id??"chatgpt-mcp",
+    actor: auditActor(),
     action: source === "created" ? "ghl.appointment.create" : "ghl.appointment.ensure",
     entity: "appointment",
     entityId: appointment.id,
@@ -1064,6 +1070,7 @@ export function buildServer() {
   registerSchedulingTools(server,synchronizeHubVisit);
   registerMetaConversionTools(server);
   registerCustomerStateTools(server);
+  registerDomainTools(server);
 
   server.registerTool("ghl.pipelines", {
     description: "Return live GHL opportunity pipelines and stages for the EGC location. Use this to resolve pipeline and stage IDs before opportunity writes.",
@@ -1147,11 +1154,12 @@ export function buildServer() {
       .from(schema.leads)
       .innerJoin(schema.contacts, eq(schema.leads.contactId, schema.contacts.id));
 
-    const rows=await base.where(gte(schema.leads.createdAt,since)).orderBy(desc(schema.leads.createdAt)).limit(500);
-    const canonical=await canonicalReadContexts(rows.map(row=>row.contact.id));
-    const enriched=rows.map(row=>{const operational=canonical.get(row.contact.id);return {...row,lead:{...row.lead,providerState:row.lead.currentState,currentState:operational?.state??row.lead.currentState},operational:operational??{coverage:{complete:false,error:'customer_not_reconciled'}}};});
     const aliases:Record<string,string[]>={NEVER_CONTACTED:['NEW_LEAD'],OUTREACH_ATTEMPTED_NO_REPLY:['OUTREACH_ATTEMPTED'],CUSTOMER_RESPONDED:['TWO_WAY_CONTACT'],ACTIVE_CONVERSATION:['TWO_WAY_CONTACT','QUALIFIED','PRICE_EXPECTATION_ACCEPTED','VIDEO_QUOTE_PENDING_CUSTOMER','VIDEO_QUOTE_RECEIVED','VIDEO_QUOTE_IN_PROGRESS','QUOTE_DELIVERED','FOLLOW_UP_PENDING','CUSTOMER_DECIDING'],BOOKED:['WALKTHROUGH_VERBALLY_BOOKED','WALKTHROUGH_BOOKED','WALKTHROUGH_COMPLETED','JOB_VERBALLY_ACCEPTED','JOB_SOLD','JOB_SCHEDULED','JOB_COMPLETED','CASH_COLLECTED']};
-    return textResult(enriched.filter(row=>!state||row.lead.currentState===state||(aliases[state]??[]).includes(String(row.lead.currentState))).slice(0,limit));
+    // The canonical snapshot state wins over the provider lead state, matching the enrichment below; filtering in SQL avoids a recent-row truncation.
+    const effectiveState=sql`coalesce((select ${schema.customerStateSnapshots.snapshot}->>'state' from ${schema.customerStateSnapshots} where ${schema.customerStateSnapshots.contactId}=${schema.leads.contactId}),${schema.leads.currentState}::text)`;
+    const rows=await base.where(and(gte(schema.leads.createdAt,since),state?inArray(effectiveState,[state,...(aliases[state]??[])]):undefined)).orderBy(desc(schema.leads.createdAt)).limit(limit);
+    const canonical=await canonicalReadContexts(rows.map(row=>row.contact.id));
+    return textResult(rows.map(row=>{const operational=canonical.get(row.contact.id);return {...row,lead:{...row.lead,providerState:row.lead.currentState,currentState:operational?.state??row.lead.currentState},operational:operational??{coverage:{complete:false,error:'customer_not_reconciled'}}};}));
   });
 
   server.registerTool("leads.get", {
@@ -1371,26 +1379,21 @@ export function buildServer() {
     }),
     ...protectedToolMetadata
   }, async ({ status, priority, assignedUserId, contactId, jobId, opportunityId, dueBefore, dueAfter, limit }) => {
-    const db = getDb();
-    const rows = await db.select().from(schema.tasks)
+    // Filters run in SQL so a match older than any recent-row window is still found.
+    const conditions = [
+      ...(status ? [eq(schema.tasks.status, status)] : []),
+      ...(priority ? [eq(schema.tasks.priority, priority)] : []),
+      ...(assignedUserId ? [eq(schema.tasks.assignedUserId, assignedUserId)] : []),
+      ...(contactId ? [eq(schema.tasks.contactId, contactId)] : []),
+      ...(jobId ? [eq(schema.tasks.jobId, jobId)] : []),
+      ...(opportunityId ? [eq(schema.tasks.opportunityId, opportunityId)] : []),
+      ...(dueBefore ? [lte(schema.tasks.dueAt, new Date(dueBefore))] : []),
+      ...(dueAfter ? [gte(schema.tasks.dueAt, new Date(dueAfter))] : [])
+    ];
+    return textResult(await getDb().select().from(schema.tasks)
+      .where(conditions.length ? and(...conditions) : undefined)
       .orderBy(desc(schema.tasks.updatedAt))
-      .limit(500);
-
-    const before = dueBefore ? new Date(dueBefore).valueOf() : null;
-    const after = dueAfter ? new Date(dueAfter).valueOf() : null;
-    const filtered = rows.filter((task) => {
-      if (status && task.status !== status) return false;
-      if (priority && task.priority !== priority) return false;
-      if (assignedUserId && task.assignedUserId !== assignedUserId) return false;
-      if (contactId && task.contactId !== contactId) return false;
-      if (jobId && task.jobId !== jobId) return false;
-      if (opportunityId && task.opportunityId !== opportunityId) return false;
-      if (before !== null && (!task.dueAt || task.dueAt.valueOf() > before)) return false;
-      if (after !== null && (!task.dueAt || task.dueAt.valueOf() < after)) return false;
-      return true;
-    }).slice(0, limit);
-
-    return textResult(filtered);
+      .limit(limit));
   });
 
   server.registerTool("walkthroughs.search", {
@@ -1886,7 +1889,7 @@ export function buildServer() {
       if (!row) throw new Error("job_create_failed");
 
       await tx.insert(schema.auditLogs).values({
-        actor: "chatgpt-mcp",
+        actor: auditActor(),
         action: "job.create",
         entity: "job",
         entityId: row.id,
@@ -1968,7 +1971,7 @@ export function buildServer() {
       if (!row) throw new Error("job_update_failed");
 
       await tx.insert(schema.auditLogs).values({
-        actor: "chatgpt-mcp",
+        actor: auditActor(),
         action: "job.update",
         entity: "job",
         entityId: jobId,
@@ -2008,13 +2011,13 @@ export function buildServer() {
         type,
         body,
         source: "mcp",
-        createdBy: "chatgpt-mcp"
+        createdBy: auditActor()
       }).returning();
 
       if (!created) throw new Error("job_note_create_failed");
 
       await tx.insert(schema.auditLogs).values({
-        actor: "chatgpt-mcp",
+        actor: auditActor(),
         action: "job.note.create",
         entity: "job",
         entityId: jobId,
@@ -2077,7 +2080,7 @@ export function buildServer() {
       if (!created) throw new Error("walkthrough_create_failed");
 
       await tx.insert(schema.auditLogs).values({
-        actor: "chatgpt-mcp",
+        actor: auditActor(),
         action: "walkthrough.create",
         entity: "walkthrough",
         entityId: created.id,
@@ -2118,7 +2121,7 @@ export function buildServer() {
       if (!row) throw new Error("walkthrough_update_failed");
 
       await tx.insert(schema.auditLogs).values({
-        actor: "chatgpt-mcp",
+        actor: auditActor(),
         action: "walkthrough.update",
         entity: "walkthrough",
         entityId: walkthroughId,
@@ -2139,7 +2142,7 @@ export function buildServer() {
     ...writeToolMetadata
   }, async ({walkthroughId, extraction}) => {
     try {
-      return textResult(await approveLegacyWalkthrough({walkthroughId, extraction, actor: operationsPrincipal.getStore()?.id ?? "chatgpt-mcp", source: "mcp"}));
+      return textResult(await approveLegacyWalkthrough({walkthroughId, extraction, actor: auditActor(), source: "mcp"}));
     } catch (error) {
       return textResult({error: error instanceof LegacyWalkthroughError ? error.code : "legacy_walkthrough_approval_failed"});
     }
@@ -2267,7 +2270,7 @@ export function buildServer() {
     if (!task) throw new Error("task_create_failed");
 
     await db.insert(schema.auditLogs).values({
-      actor: "chatgpt-mcp",
+      actor: auditActor(),
       action: "task.create",
       entity: "task",
       entityId: task.id,
@@ -2344,7 +2347,7 @@ export function buildServer() {
     if (!updated) throw new Error("task_update_failed");
 
     await db.insert(schema.auditLogs).values({
-      actor: "chatgpt-mcp",
+      actor: auditActor(),
       action: "task.update",
       entity: "task",
       entityId: taskId,
@@ -2381,7 +2384,7 @@ export function buildServer() {
     if (!updated) throw new Error("task_complete_failed");
 
     await db.insert(schema.auditLogs).values({
-      actor: "chatgpt-mcp",
+      actor: auditActor(),
       action: "task.complete",
       entity: "task",
       entityId: taskId,
@@ -2412,7 +2415,7 @@ export function buildServer() {
     }
 
     await db.insert(schema.auditLogs).values({
-      actor: "chatgpt-mcp",
+      actor: auditActor(),
       action: "ghl.contact.create",
       entity: "contact",
       entityId: contact.id,
@@ -2448,7 +2451,7 @@ export function buildServer() {
     }
 
     await db.insert(schema.auditLogs).values({
-      actor: "chatgpt-mcp",
+      actor: auditActor(),
       action: "ghl.contact.update",
       entity: "contact",
       entityId: contactId,
@@ -2487,7 +2490,7 @@ export function buildServer() {
     }).where(eq(schema.contacts.id, contactId)).returning();
 
     await db.insert(schema.auditLogs).values({
-      actor: "chatgpt-mcp",
+      actor: auditActor(),
       action: "ghl.contact.tags.add",
       entity: "contact",
       entityId: contactId,
@@ -2526,7 +2529,7 @@ export function buildServer() {
     }).where(eq(schema.contacts.id, contactId)).returning();
 
     await db.insert(schema.auditLogs).values({
-      actor: "chatgpt-mcp",
+      actor: auditActor(),
       action: "ghl.contact.tags.remove",
       entity: "contact",
       entityId: contactId,
@@ -2603,7 +2606,7 @@ export function buildServer() {
     }
 
     await db.insert(schema.auditLogs).values({
-      actor: "chatgpt-mcp",
+      actor: auditActor(),
       action: "ghl.opportunity.create",
       entity: "opportunity",
       entityId: opportunity.id,
@@ -2651,7 +2654,7 @@ export function buildServer() {
     const updated = await syncOpportunityFromGhl(remote, existing.contactId, opportunityId);
 
     await db.insert(schema.auditLogs).values({
-      actor: "chatgpt-mcp",
+      actor: auditActor(),
       action: "ghl.opportunity.update",
       entity: "opportunity",
       entityId: opportunityId,
@@ -2768,7 +2771,7 @@ export function buildServer() {
     }
 
     await db.insert(schema.auditLogs).values({
-      actor: "chatgpt-mcp",
+      actor: auditActor(),
       action: "ghl.appointment.update",
       entity: "appointment",
       entityId: appointmentId,
@@ -2817,7 +2820,7 @@ export function buildServer() {
     const updated = verified.appointment;
 
     await db.insert(schema.auditLogs).values({
-      actor: "chatgpt-mcp",
+      actor: auditActor(),
       action: "ghl.appointment.cancel",
       entity: "appointment",
       entityId: appointmentId,
@@ -2866,7 +2869,7 @@ export function buildServer() {
       if(jobId)await getDb().update(schema.jobs).set({appointmentId:appointment.id,scheduledAt:appointment.appointmentStartAt,updatedAt:new Date()})
         .where(and(eq(schema.jobs.id,jobId),eq(schema.jobs.contactId,contactId)));
       if(op.kind!=="create")await getDb().update(schema.jobs).set({scheduledAt:appointment.appointmentStartAt,updatedAt:new Date()}).where(eq(schema.jobs.appointmentId,appointment.id));
-      await getDb().insert(schema.auditLogs).values({actor:operationsPrincipal.getStore()?.id??"chatgpt-mcp",action:"ghl.appointment.reconcile",entity:"appointment",entityId:appointment.id,newValue:{operationId,providerAppointmentId:appointment.providerId,status:appointment.status},source:"mcp"});
+      await getDb().insert(schema.auditLogs).values({actor:auditActor(),action:"ghl.appointment.reconcile",entity:"appointment",entityId:appointment.id,newValue:{operationId,providerAppointmentId:appointment.providerId,status:appointment.status},source:"mcp"});
       return textResult({ok:true,operationId,appointment,providerWrite:false});
     }catch(error) {if(error instanceof AppointmentOperationError)return textResult({ok:false,error:error.code,operationId:error.operationId});throw error;}
   });
@@ -2911,7 +2914,7 @@ export function buildServer() {
         .where(eq(schema.appointments.id, appointmentId));
 
       await tx.insert(schema.auditLogs).values({
-        actor: "chatgpt-mcp",
+        actor: auditActor(),
         action: "ghl.appointment.delete",
         entity: "appointment",
         entityId: appointmentId,
@@ -3071,7 +3074,7 @@ app.use((req, res, next) => {
 });
 
 const handler = toNodeHandler(createMcpHandler(buildServer));
-const oauth = registerOauthRoutes(app);
+const oauth = registerOauthRoutes(app,()=>connectorMode(DOMAIN_TOOLS));
 
 app.all(
   "/mcp",
@@ -3094,12 +3097,13 @@ app.all(
         ? (body as { params: { name: string } }).params.name
         : "";
 
-    const requiredScope = OPERATIONS_WRITE_TOOLS.has(toolName) ? WRITE_SCOPE : requiredToolScope(toolName);
+    const requiredScope = requiredToolScope(toolName);
 
     const principal=await authenticatedMcpPrincipal(req.header("authorization"),requiredScope);
     if (principal) {
-      if(operationsEnabled() && LEGACY_MUTATIONS_DISABLED.has(toolName)) {
-        res.status(200).json({jsonrpc:"2.0",id:body.id??null,result:{content:[{type:"text",text:JSON.stringify({error:"legacy_mutation_disabled_in_operations_mode",instruction:"Use canonical actions for internal work, egc.add_job_note for exact Hub notes, recording review for managed walkthroughs, and durable scheduling tools. Legacy parallel job/draft writes and destructive booking deletion remain disabled."})}],isError:true}});
+      const blocked=blockedToolCall(toolName);
+      if(blocked) {
+        res.status(200).json({jsonrpc:"2.0",id:body.id??null,result:{content:[{type:"text",text:JSON.stringify(blocked)}],isError:true}});
         return;
       }
       operationsPrincipal.run({id:principal,role:"integration",kind:"integration",workspace:process.env.EGC_OPERATIONS_WORKSPACE??"egc"},()=>next());

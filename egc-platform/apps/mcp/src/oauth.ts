@@ -72,6 +72,37 @@ function htmlEscape(value: string) {
     .replaceAll("'", "&#039;");
 }
 
+export type AccessMode = { operations: boolean; directSends: boolean; moneyTools: boolean };
+export type AccessStatement = { read: string; write: string; sends: string; approvals: string; payments: string };
+
+// Approval of a queued draft does not send it, and no send path for approved drafts exists yet. Say exactly that.
+export const DIRECT_SENDS_PAUSED = "One-step MCP customer sends are paused in Action Center mode. Queue the exact draft with actions.propose (kind followup_message) for owner or manager approval in the Employee Hub; approval does not send. Sending an approved draft needs the Employee Hub one-tap send or MCP two-step confirmation, and neither is enabled on this server yet. An operator can restore one-step sends with EGC_MCP_DIRECT_SENDS_ENABLED=true.";
+
+// The consent page and /mcp-info must describe the live server policy, not an aspiration.
+export function accessStatement(mode: AccessMode): AccessStatement {
+  return {
+    read: "Read access (egc:read) retrieves business records, including customer names, phone numbers, email addresses, messages, call transcripts, jobs, schedules and reports.",
+    write: mode.operations
+      ? "Write access (egc:write) can change internal actions and save daily-brief snapshots; change exact Employee Hub notes, visit schedules, job operational scope and dispatched, in-progress or completed status, and project links (with revision checks); change contacts, tags and opportunities; reconcile customer state and record user-confirmed outcomes; retry recording processing and reconcile message delivery status; create, update, cancel and reconcile provider appointments; and sync conversion events to Meta when the server allows it. Legacy job, task and walkthrough-draft writes and appointment deletion are disabled."
+      : "Write access (egc:write) can create and change contacts, tags, opportunities, jobs, notes, internal tasks and walkthrough drafts; reconcile customer state and record user-confirmed outcomes; reconcile message delivery status; create, reschedule, cancel, reconcile or delete provider appointments; and sync conversion events to Meta when the server allows it. Employee Hub record, schedule, project, recording and action writes need Action Center mode and are not active.",
+    sends: (mode.operations && !mode.directSends
+      ? DIRECT_SENDS_PAUSED
+      : "Write access can send SMS and email to customers when you ask it to; each send checks the verified recipient and do-not-contact settings and is recorded.")
+      + " Appointment tools trigger the provider's own customer notifications only when runAutomations is explicitly set to true.",
+    approvals: mode.operations
+      ? "Action drafts and recording reviews require a signed-in Hub owner or manager; this connector cannot approve them."
+      : "Managed Hub recordings require a signed-in owner or manager to approve; legacy walkthrough drafts can be approved here.",
+    payments: mode.moneyTools
+      ? "Tools that move money show a preview and require an explicit confirmation before anything is charged or refunded."
+      : "No payment, charge or refund tool is provided."
+  };
+}
+
+export const accessLines = (access: AccessStatement) => [access.read, access.write, access.sends, access.approvals, access.payments];
+
+// The static service bearer is for internal diagnostics; it gains write scope only by explicit opt-in.
+export const bearerWriteEnabled = () => process.env.MCP_BEARER_WRITE_ENABLED === "true";
+
 function validateAuthorizeParams(params: URLSearchParams) {
   const clientId = params.get("client_id") ?? "";
   const redirectUri = params.get("redirect_uri") ?? "";
@@ -90,7 +121,7 @@ function validateAuthorizeParams(params: URLSearchParams) {
   return null;
 }
 
-function authorizationPage(params: URLSearchParams, error?: string) {
+function authorizationPage(params: URLSearchParams, access: AccessStatement, error?: string) {
   const hidden = [
     "client_id",
     "redirect_uri",
@@ -125,7 +156,8 @@ small{display:block;color:#777;margin-top:14px}
 <body>
 <main>
 <h1>Connect EGC Ops</h1>
-<p>Connect this client to EGC with the scope shown below. Read access can retrieve business records. Write access can change records and, in legacy mode, send customer communications and create, reschedule, cancel, or delete provider appointments. In Action Center mode, legacy sends and destructive booking deletion are blocked; durable create, update, cancellation and reconciliation of appointments and internal action changes remain available. Exact draft approvals require a signed-in Hub manager and do not authorize delivery. No payment or refund tool is provided.</p>
+<p>Connect this client to EGC with the scope shown below. This describes what the server allows right now.</p>
+${accessLines(access).map((line) => `<p>${htmlEscape(line)}</p>`).join("\n")}
 ${error ? `<p class="error">${htmlEscape(error)}</p>` : ""}
 <form method="post" action="/oauth/authorize">
 ${hidden}
@@ -194,8 +226,9 @@ export function oauthSecurityMetadata(scopes: string[] = [READ_SCOPE]) {
   };
 }
 
-export function registerOauthRoutes(app: Express) {
+export function registerOauthRoutes(app: Express, accessMode: () => AccessMode) {
   const origin = publicOrigin();
+  const access = () => accessStatement(accessMode());
   const resourceMetadataUrl = `${origin}/.well-known/oauth-protected-resource`;
 
   app.get("/.well-known/oauth-protected-resource", (_req, res) => {
@@ -223,9 +256,10 @@ export function registerOauthRoutes(app: Express) {
   });
 
   app.get("/mcp-info", (_req, res) => {
-    res.type("text/plain").send(
-      "Easy Garage Cleaning read-only MCP. OAuth scope: egc:read. Endpoint: /mcp."
-    );
+    res.set("Cache-Control", "no-store").type("text/plain").send([
+      "Easy Garage Cleaning MCP. Endpoint: /mcp. OAuth scopes: egc:read (reads) and egc:write (bounded writes).",
+      ...accessLines(access())
+    ].join("\n"));
   });
 
   app.get("/oauth/authorize", (req, res) => {
@@ -236,11 +270,11 @@ export function registerOauthRoutes(app: Express) {
 
     const validationError = validateAuthorizeParams(params);
     if (validationError) {
-      res.status(400).type("html").send(authorizationPage(params, validationError));
+      res.status(400).type("html").send(authorizationPage(params, access(), validationError));
       return;
     }
 
-    res.set("Cache-Control", "no-store").type("html").send(authorizationPage(params));
+    res.set("Cache-Control", "no-store").type("html").send(authorizationPage(params, access()));
   });
 
   app.post(
@@ -264,7 +298,7 @@ export function registerOauthRoutes(app: Express) {
 
       const validationError = validateAuthorizeParams(params);
       if (validationError) {
-        res.status(400).type("html").send(authorizationPage(params, validationError));
+        res.status(400).type("html").send(authorizationPage(params, access(), validationError));
         return;
       }
 
@@ -279,7 +313,7 @@ export function registerOauthRoutes(app: Express) {
         !secureEqual(username, configuredUser) ||
         !secureEqual(password, configuredPassword)
       ) {
-        res.status(401).type("html").send(authorizationPage(params, "Invalid EGC MCP credentials."));
+        res.status(401).type("html").send(authorizationPage(params, access(), "Invalid EGC MCP credentials."));
         return;
       }
 
@@ -461,7 +495,7 @@ export async function authenticatedMcpPrincipal(
     serviceToken.length >= 32 &&
     secureEqual(token, serviceToken)
   ) {
-    return "mcp-service-grant";
+    return requiredScope === READ_SCOPE || bearerWriteEnabled() ? "mcp-service-grant" : null;
   }
 
   if (!token) return null;

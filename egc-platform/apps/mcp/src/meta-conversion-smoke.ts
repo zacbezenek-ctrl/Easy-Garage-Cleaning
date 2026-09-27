@@ -136,6 +136,10 @@ export async function verifyMetaConversionsOnStart({
     const names = Array.isArray(listing.tools) ? listing.tools.map(record).map(tool => tool.name) : [];
     if (!META_TOOLS.every(name => names.includes(name)) || !names.includes("egc.lead_conversion_funnel")) throw new Error("tools_missing");
     const summary: Record<string, unknown> = { tools: META_TOOLS, existingToolExposed: true };
+    // The static bearer is read-only unless explicitly granted write scope, so
+    // write-scoped checks are skipped with a named reason instead of failing opaquely.
+    const bearerWrite = env.MCP_BEARER_WRITE_ENABLED === "true";
+    if (!bearerWrite) logger.error("Meta startup write-scoped checks skipped", "bearer_write_disabled");
 
     // A temporary deployment diagnostic, separately opted in. Never attempt a
     // test in production mode, and never retry automatically within this run.
@@ -143,6 +147,8 @@ export async function verifyMetaConversionsOnStart({
       if (env.META_CAPI_MODE !== "shadow") {
         logger.error("Meta startup synthetic test refused: explicit shadow mode required.");
         summary.syntheticTest = { accepted: false, error: "shadow_mode_required" };
+      } else if (!bearerWrite) {
+        summary.syntheticTest = { accepted: false, error: "bearer_write_disabled" };
       } else {
         check = "meta.conversions.test";
         try {
@@ -164,6 +170,10 @@ export async function verifyMetaConversionsOnStart({
       ["egc.lead_conversion_funnel", { days: 30 }]
     ] as const) {
       check = name;
+      if (name === "meta.conversions.sync" && !bearerWrite) {
+        summary.dryRun = { skipped: true, error: "bearer_write_disabled" };
+        continue;
+      }
       const value = toolResult(await request("tools/call", { name, arguments: args }));
       if (value.error) throw new Error("mcp_operation_failed");
       if (name === "meta.conversions.preview") {

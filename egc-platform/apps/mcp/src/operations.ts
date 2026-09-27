@@ -3,7 +3,7 @@ import {randomUUID} from "node:crypto";
 import type {McpServer} from "@modelcontextprotocol/server";
 import * as z from "zod/v4";
 import {signRequest,createTaskSchema,patchTaskSchema,type Actor,type Command} from "@egc/operations";
-import {oauthSecurityMetadata,READ_SCOPE,WRITE_SCOPE} from "./oauth.js";
+import {DIRECT_SENDS_PAUSED,oauthSecurityMetadata,READ_SCOPE,WRITE_SCOPE} from "./oauth.js";
 import {getCustomerTimeline} from '@egc/customer-state';
 
 // Only middleware after successful token verification may establish this context.
@@ -12,6 +12,17 @@ export const operationsPrincipal=new AsyncLocalStorage<Actor>();
 export const operationsEnabled=()=>process.env.EGC_OPERATIONS_ENABLED==="true";
 export const OPERATIONS_WRITE_TOOLS=new Set(["actions.propose","actions.edit","actions.snooze","actions.complete","actions.complete_from_message","actions.cancel","actions.reconcile_inbound","egc.generate_brief"]);
 export const LEGACY_MUTATIONS_DISABLED=new Set(["tasks.create","tasks.update","tasks.complete","appointments.delete","jobs.create","jobs.update","jobs.add_note","walkthroughs.create_draft","walkthroughs.update_draft","walkthroughs.approve"]);
+// One-step customer sends. Paused in operations mode unless the operator explicitly re-enables them.
+export const DIRECT_SEND_TOOLS=new Set(["conversations.send_message","send_sms","egc.send_followup"]);
+export const directSendsEnabled=()=>process.env.EGC_MCP_DIRECT_SENDS_ENABLED==="true";
+export const directSendsBlocked=()=>operationsEnabled()&&!directSendsEnabled();
+export const LEGACY_MUTATION_DISABLED={error:"legacy_mutation_disabled_in_operations_mode",instruction:"Use canonical actions for internal work, egc.add_job_note for exact Hub notes, recording review for managed walkthroughs, and durable scheduling tools. Legacy parallel job/draft writes and destructive booking deletion remain disabled."};
+export const DIRECT_SEND_DISABLED={error:"direct_send_disabled_in_operations_mode",sent:false,instruction:`Nothing was sent. ${DIRECT_SENDS_PAUSED} Tell the user the message has not been sent.`};
+export function blockedToolCall(toolName:string){
+  if(!operationsEnabled())return null;
+  if(LEGACY_MUTATIONS_DISABLED.has(toolName))return LEGACY_MUTATION_DISABLED;
+  return DIRECT_SEND_TOOLS.has(toolName)&&!directSendsEnabled()?DIRECT_SEND_DISABLED:null;
+}
 const result=(value:unknown)=>({content:[{type:"text" as const,text:JSON.stringify(value,null,2)}],structuredContent:{result:value}});
 export async function callOperations(command:Command,requestId:string=randomUUID(),fetcher:typeof fetch=fetch) {
   const actor=operationsPrincipal.getStore();

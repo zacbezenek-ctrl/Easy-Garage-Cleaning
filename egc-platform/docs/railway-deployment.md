@@ -111,7 +111,9 @@ MCP_OAUTH_USER=<private EGC admin username>
 MCP_OAUTH_PASSWORD=<random 20+ character password>
 ```
 
-`MCP_BEARER_TOKEN` is optional and should only be set for internal diagnostic clients. ChatGPT uses OAuth.
+`MCP_BEARER_TOKEN` is optional and should only be set for internal diagnostic clients. ChatGPT uses OAuth. It is read-only; set `MCP_BEARER_WRITE_ENABLED=true` only while a startup verification that writes is running (`EGC_OPERATIONS_CANARY_ON_START`, `META_CAPI_VERIFY_ON_START` with its dry-run sync, `META_CAPI_TEST_ON_START`), then remove it. Without it the Meta verification skips its write-scoped checks and logs `bearer_write_disabled`.
+
+With `EGC_OPERATIONS_ENABLED=true`, one-step MCP customer sends (`conversations.send_message`, `send_sms`, `egc.send_followup`) are paused and refused unless `EGC_MCP_DIRECT_SENDS_ENABLED=true`. Drafts queued with `actions.propose` (kind `followup_message`) can be approved by an owner or manager in the Employee Hub, but approval does not send. Sending an approved draft needs the Hub one-tap send (Phase 3) or MCP two-step confirmation (Phase 6), and neither is enabled yet. Until one ships, approved follow-up drafts have no send or completion path and can only be cancelled, unless you set `EGC_MCP_DIRECT_SENDS_ENABLED=true` to let ChatGPT send one-step messages again (with the recipient and do-not-contact checks, and `actions.complete_from_message` for completion).
 
 ### egc-portal
 

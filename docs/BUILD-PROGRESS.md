@@ -71,6 +71,10 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   `egc_job_payment` checkouts durably, and Stripe-confirmed charges the job cannot accept go to server-only
   `payment_reviews` (manager `GET /api/stripe-reviews`). Garage Guard memberships record once per event and link by exact
   phone/email behind `GARAGE_GUARD_MEMBERSHIP_SYNC_ENABLED` (off). Gaps: no review/resolve UI; no subscription.updated.
+- **MCP-01** MCP tool registry (`defineTool` by class read/write/destructive/send/money: scope, required uuid
+  requestId, preview-first two-step with no confirm verifier yet, sanitized results, filter-bound cursors) with
+  `egc.safety_policy`. Safety: one-step MCP customer sends refused in operations mode unless
+  `EGC_MCP_DIRECT_SENDS_ENABLED`; static bearer read-only unless `MCP_BEARER_WRITE_ENABLED`; audit actor = principal.
 
 ## In progress
 
@@ -91,7 +95,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | CAT-DATA | Researched garage catalog data file, schema validation, pricing engine, docs/GARAGE-CATALOG.md | building |
 | P3-00 | **Production blocker**: walkthrough extraction crash (strict structured output) | building |
 | P3-01 | Action kinds v2 (8 new kinds, drafts, attachments) + migration 0013 | building |
-| MCP-01 | MCP tool registry/policy framework + safety defaults (sends blocked in operations mode, read-only static bearer, real audit actor) | building |
+| MCP-01 | MCP tool registry/policy framework + safety defaults (sends blocked in operations mode, read-only static bearer, real audit actor) | merged (dfccb8d) |
 | BRIDGE | Operations bridge command registry (API + Hub) with delegated human actors | building |
 | P4-01 | Customer portal correctness fixes + review request tracking | merged (5a617a8) |
 | P4-02 | Customer identity normalization + dry-run backfill | building |

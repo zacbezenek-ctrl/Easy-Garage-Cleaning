@@ -80,6 +80,8 @@ async function verifyAttempt(port:number,env:NodeJS.ProcessEnv,now:()=>number){
     summary.hubCalendarRead=true;summary.hubCalendarCoverageComplete=true;summary.hubCalendarCount=ids.size;summary.hubCalendarPages=pages+1;summary.hubScheduleTimeNeedsReviewCount=timeNeedsReview;summary.hubCalendarWindow={...window,timeZone:'America/Denver'};
     if(env.EGC_OPERATIONS_CANARY_ON_START==='true'){
       stage='canary';
+      // The static bearer is read-only unless explicitly granted write scope for this verification.
+      if(env.MCP_BEARER_WRITE_ENABLED!=='true')throw new Error('verification_bearer_write_disabled');
       const release=String(summary.release||'');if(!/^[a-f0-9]{40}$/.test(release))throw new Error('verification_release_required');
       const eligible=owners.members.filter((m:any)=>m?.role==='owner'&&typeof m.id==='string'&&m.id.length>0);if(eligible.length!==1)throw new Error('verification_owner_ambiguous');
       const requestId=uuid('egc-internal-acceptance:'+release);

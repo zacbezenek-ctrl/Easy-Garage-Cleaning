@@ -2,8 +2,13 @@ import { READ_SCOPE, WRITE_SCOPE } from "./oauth.js";
 import { RECORDING_WRITE_TOOLS } from "./recording-tools.js";
 import { META_CONVERSION_WRITE_TOOLS } from "./meta-conversion-tools.js";
 import { CUSTOMER_STATE_WRITE_TOOLS } from './customer-state-tools.js';
+import { OPERATIONS_WRITE_TOOLS } from "./operations.js";
+import { REGISTRY_WRITE_TOOLS } from "./tools/index.js";
 
+// Legacy tools are listed by name; registry tools derive their scope from their class.
 export const WRITE_TOOLS = new Set<string>([
+  ...OPERATIONS_WRITE_TOOLS,
+  ...REGISTRY_WRITE_TOOLS,
   "actions.complete_from_message",
   ...RECORDING_WRITE_TOOLS,
   ...META_CONVERSION_WRITE_TOOLS,
