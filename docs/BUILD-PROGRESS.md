@@ -34,12 +34,27 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
 
 ## In progress
 
-- Phase 0 audit: subsystem mapping workflow (14 parallel readers + completeness critic), CI-equivalent local runs
-  (platform build/typecheck/test, Firestore emulator, Python browser tests), mobile audit.
+- Phase 0 audit: subsystem maps (dispatch and employees/time done; money, quote-builder, field, customer-portal, b2b,
+  site, ai-actions, mcp, tests-ci, data-security, messaging, hub-ui running), CI-equivalent local runs, mobile audit.
+- Phase 2 catalog research: shelving and wall-systems done; overhead, bikes, cabinets, sports-outdoor, lawn-garden,
+  small-items, floors-lighting-extras and labor norms running (each with a source-audit pass).
+- Phase 1 wave 1A (isolated worktrees, implement → adversarial review → fix, merged here after review):
+  - P1-01 scheduling reliability fixes (crew list pagination, self-assignment lock entries, bridge startAt/endAt,
+    legacy multi-day GHL sync, legacy blocked_days honored)
+  - P1-02 employee vault store extraction + centralized business/owner identity (behavior-preserving)
+  - P1-03 weekly timesheet + Colorado/federal overtime engine, server payroll CSV, job labor costing
+  - P1-04 arrival windows in dispatch
+  - P1-05 recurring plans (server record, generator, idempotent extendHorizon, API, UI)
+  - P1-07 travel-time estimates (offline ZIP-centroid estimator, optional Google Distance Matrix; default off)
 
 ## Next
 
-- Record the gap analysis and the ordered unit plan here.
+- Phase 1 wave 1B (after P1-02 lands): staff directory service (roles incl. phone, skills, effective-dated pay,
+  weekly availability) + UI; server-side PTO workflow; timesheet review UI with bulk approve and correction reasons;
+  configurable geolocation policy; dispatch roster/permissions; dispatch settings + rules engine (skills, capacity);
+  suggested duration from quote line items; assignment segments (multi-crew/split); calendar month + lanes +
+  drag/tap-assign; crew notifications outbox; reminders + on-my-way; recurring horizon cron; invoices/money units.
+- Record the full gap analysis here when all maps land.
 
 ## Decisions
 
