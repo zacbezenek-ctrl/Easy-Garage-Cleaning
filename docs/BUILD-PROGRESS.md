@@ -34,27 +34,224 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
 
 ## In progress
 
-- Phase 0 audit: subsystem maps (dispatch and employees/time done; money, quote-builder, field, customer-portal, b2b,
-  site, ai-actions, mcp, tests-ci, data-security, messaging, hub-ui running), CI-equivalent local runs, mobile audit.
-- Phase 2 catalog research: shelving and wall-systems done; overhead, bikes, cabinets, sports-outdoor, lawn-garden,
-  small-items, floors-lighting-extras and labor norms running (each with a source-audit pass).
-- Phase 1 wave 1A (isolated worktrees, implement → adversarial review → fix, merged here after review):
-  - P1-01 scheduling reliability fixes (crew list pagination, self-assignment lock entries, bridge startAt/endAt,
-    legacy multi-day GHL sync, legacy blocked_days honored)
-  - P1-02 employee vault store extraction + centralized business/owner identity (behavior-preserving)
-  - P1-03 weekly timesheet + Colorado/federal overtime engine, server payroll CSV, job labor costing
-  - P1-04 arrival windows in dispatch
-  - P1-05 recurring plans (server record, generator, idempotent extendHorizon, API, UI)
-  - P1-07 travel-time estimates (offline ZIP-centroid estimator, optional Google Distance Matrix; default off)
+Each unit runs in its own git worktree (implement, then adversarial review, then fix) and is squash-merged here as
+one prefixed commit only after the full root suite (and the platform suite when egc-platform/ changes) passes.
+
+| Unit | Scope | State |
+| --- | --- | --- |
+| P1-01 | Scheduling reliability: crew list pagination, self-assignment lock entries, bridge startAt/endAt, multi-day GHL sync, legacy blocked_days (flag, default off), repair script | review passed; fixing minors |
+| P1-02 | Employee vault store extraction + centralized business/owner identity (behavior-preserving) | building |
+| P1-03 | Weekly timesheet + Colorado/federal overtime engine, server payroll CSV, job labor costing | building |
+| P1-04 | Arrival windows in dispatch, field and portal | building |
+| P1-05 | Recurring plans: server record, generator, idempotent extendHorizon, API, UI | building |
+| P1-07 | Travel-time estimates (offline ZIP-centroid estimator; optional Google; default off) | building |
+| LI-CORE | One canonical line-item model (quotes, invoices, portal, catalog, duration) + money core + duration engine | building |
+| M2 | Crew card payments recorded via Stripe webhook + Garage Guard membership linkage | building |
+| M15 | Retire dead legacy quote UIs | building |
+| CAT-DATA | Researched garage catalog data file, schema validation, pricing engine, docs/GARAGE-CATALOG.md | building |
+| P3-00 | **Production blocker**: walkthrough extraction crash (strict structured output) | building |
+| P3-01 | Action kinds v2 (8 new kinds, drafts, attachments) + migration 0013 | building |
+| MCP-01 | MCP tool registry/policy framework + safety defaults (sends blocked in operations mode, read-only static bearer, real audit actor) | building |
+| BRIDGE | Operations bridge command registry (API + Hub) with delegated human actors | building |
+| P4-01 | Customer portal correctness fixes + review request tracking | building |
+| P4-02 | Customer identity normalization + dry-run backfill | building |
+| P4-15 | Customer portal link revocation (link version) | building |
+| F-PWA | Crew PWA shell + offline action outbox (field actions + time clock) | building |
+| F-EXP | Field cost capture (materials, dump fees) | building |
+| F-LEG | Legacy crew send-path hardening (quo-send idempotency etc.) | building |
+| MSG-CORE | Approved-send core: GHL messenger, owner-approved templates, message_sends ledger, messages API | building |
+| HUB-REG | Hub screen registry, UI kit, shell stability, mobile shell pass, microphone policy fix | building |
+| B2B-SEAMS | B2B hub extension seams + mobile compliance + idempotency/leak fixes | building |
+| SITE-0 | Site generator determinism/scope, regenerate stale before-after.html, nav a11y | building |
+| SITE-5 | Lighthouse CI (mobile perf/a11y >= 90) harness + workflow | building |
+| SEC-A | Firestore rules hardening (vault/receipts/audit_log) + block private source paths | building |
+| SEC-B | Purpose-scoped keys + server-only hub_audit + single-use confirm tokens | building |
+| SEC-C | Env inventory script/test + complete both .env.example files | building |
+| CI-A | Always-on root CI, split platform gate, clock-shift guard, field-execution acceptance in CI | building |
+| CI-B | Pages Functions test router, parallel-safe emulator harness, Playwright iPhone/Android/desktop projects | building |
 
 ## Next
 
-- Phase 1 wave 1B (after P1-02 lands): staff directory service (roles incl. phone, skills, effective-dated pay,
-  weekly availability) + UI; server-side PTO workflow; timesheet review UI with bulk approve and correction reasons;
-  configurable geolocation policy; dispatch roster/permissions; dispatch settings + rules engine (skills, capacity);
-  suggested duration from quote line items; assignment segments (multi-crew/split); calendar month + lanes +
-  drag/tap-assign; crew notifications outbox; reminders + on-my-way; recurring horizon cron; invoices/money units.
-- Record the full gap analysis here when all maps land.
+Planned unit IDs referenced by the audit below (launched when their dependencies merge):
+P1-06 server PTO workflow; P1-08 staff directory (roles incl. phone, skills, effective-dated pay, weekly availability);
+P1-09 dispatch roster/permissions/settings/rules (skills, capacity); P1-10 assignment segments (multi-crew, split,
+per-day windows); P1-11 calendar month + lanes + drag/tap-assign; P1-12 crew notifications; P1-13 day-before reminders
++ on-my-way; P1-14 recurring horizon cron; P1-15 timesheet review UI + geolocation policy + clock reliability;
+M3 server money API + ledger; M4 invoice document; M5 invoice send; M6 batch invoicing; M7 payment reminders cron;
+M8 tipping; M9 job costing; M10 dashboard; M11 money CSV; P2-02..P2-12 catalog settings/admin/itemized handoff/picker/
+drafts/portal options; P3-02..P3-13 extraction v2, transcript input, follow-up policy, call transcripts, one-tap send;
+P4-03..P4-14 magic link, account portal, crew profiles, photos, documents, invoices, isolation; B2B-01..B2B-08;
+MCP-02..MCP-12; SEC-04, SEC-06, SEC-07, SEC-12, SEC-13; CI-7..CI-14; SITE-1..SITE-4, SITE-6.
+
+## Phase 0 audit: what is broken today
+
+This audit comes from 14 read-only subsystem maps of the repository (Phase 0; no code was changed to produce it). Problems reported by more than one map are merged into one row that lists every location and takes the highest severity any map gave. Each row names the unit that fixes it: a launched unit (in flight now), a planned unit, or `NEW:` where no unit covers it yet.
+
+Scope: all 188 findings the maps exported (160 bug reports plus 28 mission or infrastructure requirements rated broken). † marks a row that also covers a requirement a map rated broken.
+
+### Critical (1)
+
+> **Production blocker.** Walkthrough audio extraction crashes on every recording today. P3-00 fixes it and should merge first.
+
+| # | Area | Problem (one sentence, plain English) | Where (file:line) | Fix unit |
+| --- | --- | --- | --- | --- |
+| 1 | AI recordings | **Every walkthrough recording fails at AI extraction:** the `evidence` record in the extraction schema makes `zodTextFormat` throw under the locked openai@7.20.0, so every managed recording ends as `recording_processing_failed` and legacy extraction returns 503 (no test runs the real extractor). † | `egc-platform/packages/ai/src/index.ts:52`; `egc-platform/packages/schemas/src/index.ts:48`; `egc-platform/apps/api/src/recordings.ts:89` | **P3-00** |
+
+### High (16)
+
+| # | Area | Problem (one sentence, plain English) | Where (file:line) | Fix unit |
+| --- | --- | --- | --- | --- |
+| 2 | Crew schedule | The crew schedule reads the shared `jobs` collection with one unordered 500-row query, and that collection also holds locks, receipts, availability and vault records, so past 500 documents crew silently lose assignments and open shifts. † | `functions/api/crew-jobs.js:118` (field map cites :297); read by `employee.html:1562` and `crew/index.html` | P1-01 |
+| 3 | Time off | Approving a time-off request writes PTO blocks straight into Firestore from the manager's browser, skipping day locks, the dispatch revision, receipts and the check against jobs already assigned, and a mid-loop failure leaves partial blocks. † | `employee-suite.js:517` | P1-06 |
+| 4 | Roles and access | Manager, dispatch and Action Center access is hard-coded to three usernames (zacb, tylerg, alexk), so a new manager cannot dispatch without a code change and the sales/phone person (Zoe) can neither be assigned follow-ups nor open the Action Center. † | `employee-suite.js:18`; `functions/_lib/hub-session.js:12`; `functions/api/operations-portal.js:24`; `functions/api/operations.js:8-14` | SEC-12 (data-driven roles), P1-08, P1-09, P3-04, P3-10 (P1-02 first centralizes the list, behavior-preserving) |
+| 5 | Reminders | Estimate-expiring and invoice-overdue reminders fire from whichever manager's browser opens the Hub (at most 3 per load, nothing on days nobody opens it, and two managers can both trigger), instead of from a scheduled idempotent job. † | `employee-suite.js:230` (via retryDueSyncs :167 from loadAll :92) | M7 |
+| 6 | Money | Card payments taken by crew are ignored by the Stripe webhook, so if the crew tab does not return to the post-job page the paid charge never reaches the job and the customer can be charged again. † | `functions/api/stripe-webhook.js:160`; `functions/api/job-payment.js:147` | M2 |
+| 7 | Money | Every Hub finance change (estimate, invoice, deposit, payment, wallet credit, Garage Guard) is written from the browser with a blind merge and no revision check or server audit, so a concurrent webhook payment or second manager's edit can be overwritten. | `employee-suite.js:161` (actions at :251-279); `firestore.rules:239` | M3 |
+| 8 | Quotes | If a customer approves in the portal while a manager has the estimate dialog open, saving the edit changes the amount but keeps the old approval, so a deposit checkout opens for a price the customer never approved. | `employee-suite.js:251` (write at :161) | P2-09 |
+| 9 | Time clock | Clock-out stops location tracking before the request and has no error handling, so a network failure leaves the shift open on the server while the employee sees no error; clock-in, breaks and people actions also lack error toasts and double-tap guards. | `employee-suite.js:412` (also :411, :413-414, :516-523) | P1-15 |
+| 10 | Hub shell | Background refreshes (60 s timer, visibility change, schedule and snapshot updates) re-render the Hub and wipe whatever someone is typing in chat, the customer thread, customer search or the scorecard. | `employee-suite.js:94` (render :101-116, refresh wrapper :561); `employee.html:1569` | HUB-REG |
+| 11 | Hub shell | The middleware sends `microphone=()` for every path except /copilot, so 'Start recording' in the Hub always fails and walkthrough audio can only be uploaded as a file. | `functions/_middleware.js:50`; `employee-recordings.js:15` | HUB-REG |
+| 12 | MCP | The OAuth consent text says sends are blocked in Action Center mode, but the send tools are not on the block list, so any write grant can text or email a customer in one call with no confirmation. † | `egc-platform/apps/mcp/src/oauth.ts:128`; `egc-platform/apps/mcp/src/operations.ts:15` | MCP-01 |
+| 13 | MCP | The static `MCP_BEARER_TOKEN`, documented as diagnostic-only, passes every scope check including `egc:write` and never expires, so if it is set in production it is a full-write credential. † | `egc-platform/apps/mcp/src/oauth.ts:458-466` | MCP-01 |
+| 14 | Public site | The next generator run would inject the marketing analytics loader (GA, Meta, Clarity) into the B2B client hub, the dispatch shell and the owner credential setup page, because they are missing from the private-page list. | `_generate_site.py:4120` | SITE-0 |
+| 15 | Data security | The Firestore `jobs` rule lets any business browser session create, change or delete the encrypted employee vault records and the server's audit and idempotency receipts stored in the same collection, so a Hub session or leaked refresh token could erase timecards or forge receipts. † | `firestore.rules:236-240` | SEC-A |
+| 16 | CI | The Action Center workflow runs the root `npm test` first, so any root failure skips the build, typecheck, platform tests, migrations, Postgres integration suites and drift check, which is why none of them ran on main for #73, #75 and #76. † | `.github/workflows/egc-action-center-ci.yml:49` | CI-A |
+| 17 | Public site | The static before-after.html fallback is older than the Function render (site-v4 vs site-v5), so the gallery identity check fails and main CI is red (Simple Page run 35942440846). † | `before-after.html:1`; `functions/before-after.js` | SITE-0 (regenerates it); CI-A (identity check in always-on CI) |
+
+### Medium (46)
+
+| # | Area | Problem (one sentence, plain English) | Where (file:line) | Fix unit |
+| --- | --- | --- | --- | --- |
+| 18 | Time clock | Clock-in is refused without location permission and then tracks location continuously, although the mission asks for an optional location stamp. † | `functions/_lib/employee-timecards.js:242` (also :102); `employee-suite.js:411` (watch :410) | P1-15 |
+| 19 | Customer portal | When the crew marks a job 'arrived', the customer's progress bar falls back from 'On the way' to 'Scheduled', and there is no crew lead name, photo or ETA. † | `functions/api/customer-portal.js:43`; `functions/_lib/field-execution.js` | P4-01 (P4-07 adds crew lead name/photo) |
+| 20 | Customer portal | When an estimate has no scope text, the portal shows the job's internal staff notes to the customer as the estimate scope, and signed walkthrough jobs never set a scope. | `functions/api/customer-portal.js:62`; `functions/_lib/walkthrough-handoff.js:184`; Hub estimate dialog prefill in `employee-suite.js` (opsFinanceAction) | P4-01 (Hub dialog prefill: P2-09) |
+| 21 | Customer portal | Saving job-day rules in the portal has no revision check, so it can overwrite a concurrent staff or customer edit. | `functions/api/customer-portal.js:314` | P4-01 |
+| 22 | Customer portal | Saving collaborators replaces the whole list with no revision check (a stale tab can restore a removed person and their old invite), and client-chosen ids starting with `biz_` collide with the business-actor path. | `functions/api/customer-portal.js:326` | P4-01 |
+| 23 | Customer portal | Customer portal links (30 days) and sessions (7 days) cannot be revoked, so a link sent to the wrong person stays valid unless the global secret is rotated, which breaks every customer's link. | `functions/_lib/customer-portal.js:35` (data-security map: :38) | P4-15 |
+| 24 | Quotes | Portal approval does not check which estimate revision or amount the customer saw and accepts draft estimates, so a staff revision made after the page loaded is approved unseen. † | `functions/api/customer-portal.js:245-266` | P2-08 |
+| 25 | Quotes | Change orders the customer approves in the portal are saved as `approvedChangeTotal` but never added to the total, balance, invoice or Stripe checkout, so they are not billed. † | `functions/api/customer-portal.js:350-352`; `functions/_lib/customer-payments.js:17`; `employee-suite.js:232` | LI-CORE (totals math), then P2-11 |
+| 26 | Quotes | Walkthrough handoff collapses the signed quote to a single 'Garage cleanout and reset' line, so add-ons (pressure wash, trapping, pest waste, shelving) never appear itemized on the estimate, portal, invoice or print. | `functions/_lib/walkthrough-handoff.js:70` and :91; `crew/gameplan-handoff.js` signedPlan() | LI-CORE (line-item shapes), then P2-05 |
+| 27 | Money | Recurring visits copy scope and duration but not the price, so their invoices and deposits show $0. | `functions/_lib/dispatch-service.js:67` | NEW: carry per-visit price onto recurring visits (P1-05 plan occurrences inherit this gap) |
+| 28 | B2B hub | Approving a quote on a B2B-linked job auto-sends an owner-level homeowner portal link (collaborators, wallet) to the job phone or email, which may be a tenant or on-site contact. † | `functions/_lib/portal-invitation.js:92`; `functions/_lib/walkthrough-handoff.js:184`; `functions/api/highlevel.js:570` | B2B-06 |
+| 29 | Messaging | The crew arrival-text endpoint ignores the idempotency key the crew page sends, so a retry or double tap texts the customer twice; the body is free text with no DND/consent check and is not logged to the conversation. | `functions/api/quo-send.js:63-72`; `crew/prejob.html` (smsCustomer) | F-LEG (P1-13 moves on-my-way to the approved-send path) |
+| 30 | Crew app | Pending offline field and shift actions live only in sessionStorage and only one can be queued, so a killed tab loses it and crew cannot record a second offline change. | `crew/job.js:15` | F-PWA |
+| 31 | Crew app | Marking a multi-day job 'complete' closes the whole job, with no per-day visit state for crews finishing day one. | `functions/_lib/field-execution.js:190` | P1-10 |
+| 32 | Messaging | The sales-followup exit check scans the whole jobs collection and fails closed at 501 rows, so once jobs pass 500 documents GHL nurture sequences keep texting customers who already accepted. | `functions/_lib/sales-followup-exit.js:48` | NEW: legacy send-path hardening (bounded per-customer queries) |
+| 33 | Staff and time | Dispatch and Hub rosters label every employee account 'crew', including the approved sales account, so roles disagree between the session and the roster. | `functions/_lib/dispatch-storage.js:21`; `functions/api/employee-hub.js:508` | P1-09 (roles from P1-08) |
+| 34 | Staff and time | Every employee-hub poll (15-60 s per open client), every new record and every clock-in (twice) decrypts the entire employee vault, including all timecards and chat, with no pagination. | `functions/api/employee-hub.js:168` (also :263, :575) | P1-02 (adds per-collection reads); NEW: move the poll path onto them |
+| 35 | Staff and time | Manager writes to employee records (pay-rate edits, request approve/deny) merge any client fields with no whitelist, audit history or revision check. | `functions/api/employee-hub.js:341` (writeOne :579) | P1-08 (profiles/pay), P1-06 (requests) |
+| 36 | Dispatch | The legacy GHL calendar sync ignores `endDate`, so multi-day jobs are cut to one day or rejected when end time is earlier than start time. | `employee-suite.js:165` | P1-01 |
+| 37 | AI recordings | Recording review turns proposed follow-up messages into 'manual' tasks without their draft, and `verify_deposit` proposals create tasks that can never be completed. | `employee-recordings.js:30` | P3-09 (after P3-01 kinds) |
+| 38 | MCP | Audit rows for legacy MCP writes record the hard-coded actor 'chatgpt-mcp' instead of the verified principal, so the log cannot say who made a change. | `egc-platform/apps/mcp/src/server.ts:1889` (and 16 more call sites through :2914) | MCP-01 |
+| 39 | MCP | `tasks.search` and `leads.search` take the 500 newest rows and then filter in memory, so filtered searches silently miss older matches. | `egc-platform/apps/mcp/src/server.ts:1375`; :1150 | MCP-01 |
+| 40 | MCP | OAuth accepts only the hard-coded ChatGPT client and redirect and has no registration endpoint, so a Claude custom connector cannot authorize. | `egc-platform/apps/mcp/src/oauth.ts:84` | MCP-03 |
+| 41 | Hub shell | Hub boot loads everything twice, doubling integration, HighLevel and walkthrough requests and running two concurrent retry passes for syncs and customer messages. | `employee-suite.js:562` (install :26) | HUB-REG |
+| 42 | Hub shell | Each 'My day' render replaces the field-today node, so the crew home unmounts, refetches and flashes 'Loading' two to three times a minute. | `employee-suite.js:117`; `employee-field-today.js:52` | HUB-REG |
+| 43 | Hub shell | In the booking modal, the CRM contact search box is re-created empty after results arrive, so the typed query disappears and the mobile keyboard closes. | `employee-suite.js:158` (input :144) | HUB-REG |
+| 44 | Hub shell | Hub navigation never updates the URL, so the phone back gesture leaves the Hub and views cannot be bookmarked. | `employee-suite.js:98` | HUB-REG |
+| 45 | Hub mobile | The mobile nav drawer has no scrim (the closing tap also clicks whatever is underneath) and its hidden links stay keyboard- and screen-reader-focusable, with no Escape or aria-expanded. | `employee-suite.js:26` | HUB-REG |
+| 46 | Hub mobile | Toasts never wrap, so 60-100 character messages are cut off on both sides of a 375 px screen. | `employee.html:538` | HUB-REG |
+| 47 | Hub mobile | On Weekly timesheets the button row does not wrap at 375 px, so the 'Download for Gusto' button is clipped and partly unreachable. | `employee-suite.css:35`; `employee-suite.js:321` | HUB-REG |
+| 48 | Hub mobile | Many Hub tap targets are under 44 px (rail nav, topbar Clock in/Refresh, drawer button, schedule Edit links, approve/reject buttons, dialog close, Action Center buttons and filters). | `employee-suite.css:10`, :15, :35, :36, :38, :63, :71; `employee-operations.css:4-5` | HUB-REG |
+| 49 | Hub shell | The Hub's meta CSP blocks blob image previews, external photos and blob audio playback (no media-src), and frame-src 'none' would block Stripe Elements. | `employee.html:9` | HUB-REG (media/blob); Stripe frame-src: NEW when a Hub payment screen needs it |
+| 50 | Public site | Rerunning the site generator drops /before-after from the homepage nav and sitemap (the link only survives because publish-links.py is run by hand), which fails the gallery test. † | `_generate_site.py:642`; :4214 | SITE-0 |
+| 51 | Public site | The generator stamps dates from the real clock (sitemap lastmod, privacy/terms, dateModified, llms/ai/humans files), so its output changes every day and cannot be tested. † | `_generate_site.py:14` | SITE-0 |
+| 52 | Public site | The generator scans every `*.html` under the repo, including `.claude/worktrees`, so a run would list worktree URLs in ai.txt and rewrite other agents' pages. † | `_generate_site.py:3516`; ~:4123; :4140 | SITE-0 |
+| 53 | Public site | The footer regex only matches a bare `<footer>` and never `<footer class="site-footer">`, so footer template changes never reach 12 frozen footer variants and a site-wide footer Client Login link cannot come from the template. | `_generate_site.py:3988` | SITE-2 |
+| 54 | Public site | The closed mobile nav drawer is aria-hidden but still focusable, a likely accessibility failure on every public page (plausible, not measured). | `styles.css:162`; `_generate_site.py` ~:528 (NAV_JS_IIFE setOpen) | SITE-0 (part B) |
+| 55 | Config and docs | Both `.env.example` files are incomplete: the root one omits the `EGC_OPERATIONS_*` bridge variables, several HighLevel stage/tag settings, `QUO_API_BASE` and the password-verifier settings, the platform one omits `EGC_OPERATIONS_SERVICE_AUTH`, `CUSTOMER_EVIDENCE_MODEL` and about ten more while listing unused ones, and the calendar variable is spelled differently in Hub and platform. | `.env.example:1`; `egc-platform/.env.example:1` | SEC-C |
+| 56 | CI | The root regression suite only runs when egc-platform, functions, employee* or tests change, so edits to the customer portal, business hub, crew pages, dispatch, the site generator or public pages run no Node tests even though tests assert on those files. † | `.github/workflows/egc-action-center-ci.yml:11` | CI-A |
+| 57 | CI | The checked-in Firestore emulator port is fixed (8089, or 8090 for field day), so a second concurrent emulator run fails with 'port taken'. † | `firebase.emulator.json:4`; `firebase.field-day.json` | CI-B |
+| 58 | Tests | The field-execution browser acceptance (clock-in, offline, lost-response coverage) runs in no workflow, binds fixed port 8793, writes artifacts outside the repo and ignores `PLAYWRIGHT_CHROMIUM_EXECUTABLE`, and the dispatch-field acceptance uses the real clock and device timezone. † | `tests/field-execution.browser.mjs:36`, :44, :49; `tests/dispatch-field.browser.mjs:28` | CI-A (field-execution in CI); NEW: injected clock for dispatch-field acceptance |
+| 59 | Tests | Source-scan tests walked `.claude/worktrees` (5,172 of 6,035 scanned files), so results depended on other agents' in-progress files. † | `tests/source-files.mjs:7`; `tests/seo-walkthrough.test.mjs` (publicHtml) | P0-3 (done for `.claude`); CI-A (other ignores); SITE-0 (seo-walkthrough) |
+| 60 | Data security | Any signed-in Firebase session, including crew, can create `audit_log` entries with any 'by' value, and business users can edit or delete them, so the collection is not a trustworthy audit trail (no emulator test covers the rule). † | `firestore.rules:258-259` | SEC-A |
+| 61 | Data security | Bridge `schedule.mutate` (mutateScheduledVisit) checks no actor role, so any validly signed actor, including crew or crew lead, can create, change or cancel visits. | `functions/_lib/operations-scheduling.js:71` | SEC-04 |
+| 62 | Data security | Middleware blocks only top-level private paths, so /egc-platform/**, /functions/**, /tools/**, /.github/**, firebase.emulator.json and pnpm-lock.yaml may be publicly served if Pages publishes the repo root (plausible; verify with a read-only production request). | `functions/_middleware.js:3` | SEC-A (part B) |
+| 63 | Data security | Firebase custom-token claims (business access, role) live on in refresh tokens, so removing a Hub user or rejecting an employee does not revoke their direct Firestore access, and no revocation code exists. | `functions/api/firebase-session.js:18` | SEC-13 |
+
+### Low / Info (62)
+
+| # | Area | Problem (one sentence, plain English) | Where (file:line) | Fix unit |
+| --- | --- | --- | --- | --- |
+| 64 | Crew schedule | Dead helpers remain in crew-jobs.js (`scheduleConflict`, `pickupStageOpen`), and `scheduleConflict` repeats the same 500-row scan. | `functions/api/crew-jobs.js:81` | P1-01 |
+| 65 | Dispatch | Bridge/MCP reschedules update date and times but not `startAt`, `endAt`, `timeZone` or `endDate`, so the field app can show stale times. | `functions/_lib/operations-scheduling.js:104` | P1-01 |
+| 66 | Dispatch | Self-assignment builds day-lock entries without `type` and `assignmentKnown`, unlike every other writer. | `functions/_lib/dispatch-service.js:555` | P1-01 |
+| 67 | Dispatch | Days and slots blocked in the legacy Hub screen are ignored by dispatch conflicts, openings and the bridge scheduler. | `employee.html:1616` (writers :1684-1699) | P1-01 (if safe read-only; else listed as a gap) |
+| 68 | Dispatch | Dispatch customer search fires on every keystroke and each call scans up to 20,000 customer documents. | `employee-dispatch.js:363`; `functions/_lib/dispatch-service.js:185-190` | NEW: indexed, debounced dispatch customer search |
+| 69 | Dispatch | Customer-facing arrival windows cannot be set or seen in dispatch, and the portal ignores the job's top-level arrival window that the crew sees. | `functions/_lib/dispatch-storage.js:15`; `functions/api/customer-portal.js:152`; `functions/_lib/field-execution.js:100` | P1-04 (P4-01 reads it in the portal) |
+| 70 | Staff and time | Crew-created requests, incidents and equipment records store any client-sent fields, limited only by a 120 KB size cap. | `functions/api/employee-hub.js:394` (also :438) | P1-06 (requests); NEW: field whitelist for incidents/equipment |
+| 71 | Staff and time | The Hub timesheet CSV exports every shift status with no approval, rate, break or overtime columns, so it is unsafe as a payroll export. | `employee-suite.js:325` | P1-03 (server CSV), P1-15 (review UI) |
+| 72 | Time clock | Clock-in can attach the shift to a future job because the server checks assignment but not date. | `employee-suite.js:411` | P1-15 |
+| 73 | Money | Job economics use a flat $20/hr labor cost instead of actual timecards and snapshotted pay rates. | `employee-suite.js:233` | P1-03 (labor cost), M9 |
+| 74 | Staff and time | All breaks are deducted from paid hours, with no paid rest vs unpaid meal distinction as Colorado COMPS requires. | `functions/_lib/employee-timecards.js:42`; `functions/_lib/gusto-timecards.js` (approvedTimecard) | P1-03 (calculation), P1-15 (recording break type) |
+| 75 | Crew app | The crew home offline banner says checklist work will sync later, but that page has no queue or sync. | `crew/index.html:123` | F-LEG (also F-PWA) |
+| 76 | Crew app | Photo upload truncates job ids to 60 characters (ids allow 180), so long ids are checked against the wrong job, and the Drive query does not escape backslashes. | `functions/api/drive-upload.js:276` (query :199) | F-LEG |
+| 77 | Crew app | The crew review-request/post-job branch in crew-hook.js is unreachable behind an unconditional 403 for non-business users, and it sets a wildcard CORS header. | `functions/api/crew-hook.js:73-94` | F-LEG |
+| 78 | Hub mobile | Hub forms show the wrong mobile keyboards (phone fields without type=tel, askAction cannot set inputmode) and use free text where a picker or select fits (assigned crew, announcement priority, Garage Guard plan/status). | `employee-suite.js:144` (also :127, :206, :208, :210, :421, :522) | HUB-REG |
+| 79 | Hub shell | Business users always land on the mode screen after login, so deep links like ?view=schedule need an extra tap. | `employee.html:2739` (enterEmployeeApp :1387) | HUB-REG |
+| 80 | Hub shell | Every Hub user, including crew on mobile data, loads the Google Maps JS API for an unreachable on-call flow, and the hidden legacy dashboard still re-renders on every refresh. | `employee.html:3190` (:2453, :798-821) | NEW: remove dead legacy code from employee.html |
+| 81 | Hub shell | Hidden legacy markup calls 14 functions that are not defined anywhere and would throw if reached. | `employee.html:990` (and :2266) | M15 (quote modal handlers); NEW: remove dead legacy code from employee.html |
+| 82 | Hub mobile | Copilot has 38 px voice/send buttons, smaller copy/logout buttons, and inputs under 16 px that make iOS zoom on focus. | `copilot.html:178` (:53) | NEW: copilot mobile fixes |
+| 83 | Dispatch | Drag-to-reschedule uses HTML5 drag events that touch devices never fire and only changes the day, so mobile has no quick tap-to-assign. | `employee-dispatch.js:119` | P1-11 |
+| 84 | AI recordings | Approving a recording adds a second recording-evidence entry to every task, and its excerpt is the commitment text rather than the quote. | `egc-platform/apps/api/src/recordings.ts:111` | P3-09 |
+| 85 | AI recordings | The old portal recorder is still linked from the lead page but always gets 409, so staff can record audio that can never be saved. † | `egc-platform/apps/portal/app/walkthroughs/[contactId]/recorder.tsx:55`; `egc-platform/apps/portal/app/leads/[id]/page.tsx:26` | P3-13 |
+| 86 | AI recordings | RecordingService and the Hub approval path read the real clock instead of an injected one, so lease and expiry tests depend on wall time. | `egc-platform/apps/api/src/recordings.ts:77` | P3-03 |
+| 87 | MCP | `/mcp-info` still says 'read-only MCP', and the connection doc claims there are no delete or messaging tools although they exist. † | `egc-platform/apps/mcp/src/oauth.ts:227`; `egc-platform/docs/chatgpt-connection.md:15` | MCP-01 |
+| 88 | MCP | The OAuth login checks one shared password with no rate limit or lockout. | `egc-platform/apps/mcp/src/oauth.ts:276` | MCP-03 |
+| 89 | MCP | The tools doc says `egc.revenue_summary` uses Hub quotes and verified cash in operations mode, but it always uses the Postgres customer-state report. | `egc-platform/docs/mcp-tools.md:126`; `egc-platform/apps/mcp/src/server.ts:1775-1782` | MCP-12 |
+| 90 | MCP | GHL contact and opportunity writes have no requestId and are audited outside any transaction, so a retry repeats the provider write and an audit failure leaves no record. | `egc-platform/apps/mcp/src/server.ts:2404` | MCP-02 (audit); NEW: requestId on legacy GHL write tools |
+| 91 | MCP | Version-1 MCP-to-API signed envelopes have no nonce store, so a leaked read envelope can be replayed within its 60-second window. | `egc-platform/services/operations/src/auth.ts:208` | NEW: retire v1 envelopes or add a nonce store |
+| 92 | Messaging | Hub customer messages mark 5xx and timeouts (where GHL may have sent) as 'failed', inviting a duplicate resend, and send no idempotency key, timeout or DND pre-check. | `functions/_lib/customer-messaging.js:86` | NEW: legacy send-path hardening (on MSG-CORE) |
+| 93 | Messaging | The HighLevel proxy has no request timeout, so a hung GHL call can use the whole function time during handoffs that also send portal invites. | `functions/api/highlevel.js:80` | NEW: legacy send-path hardening |
+| 94 | Messaging | Portal invitations read the real clock, and failed invitations are retried only when a manager opens the Hub. | `functions/_lib/portal-invitation.js:82`; `employee-suite.js:246` | NEW: signed messaging cron (portal-invite retries) with injected clock |
+| 95 | Crew app | Concurrent first photo uploads for a job can create duplicate Drive folders because folder creation is check-then-create. | `functions/api/drive-upload.js:79` | NEW: idempotent Drive folder creation |
+| 96 | Customer portal | Estimate expiry compares against the UTC date (an estimate valid through today expires about 6 pm Denver), and portal handlers read the real clock so tests cannot inject time. | `functions/api/customer-portal.js:55` (also :254) | P4-01 |
+| 97 | Customer portal | Inbound customer texts and emails attach to the contact's most recently updated job, so replies can land on the wrong job's thread. | `functions/api/highlevel-message-event.js:10` | P4-12 |
+| 98 | Customer portal | Creating a portal link writes the job with no revision check and swallows errors, so link metadata can be overwritten or silently not saved. | `functions/api/customer-portal-link.js:50` | NEW: revision check in customer-portal-link.js |
+| 99 | B2B hub | Estimate approvals by business members record only the typed name, not which company member approved. | `functions/api/customer-portal.js:249` | B2B-06 |
+| 100 | B2B hub | Re-sending an invite to an active member resets them to 'invited' and logs them out of the hub and delegated projects. | `functions/_lib/business-hub-service.js:53` | B2B-SEAMS |
+| 101 | B2B hub | Unlinking or relinking a project leaves requests showing a stale 'project_linked' status. | `functions/_lib/business-hub-service.js:163` | B2B-04 |
+| 102 | B2B hub | Creating a company account or a new property has no idempotency key, so a retry or double submit creates duplicates. | `functions/_lib/business-hub-service.js:102` | B2B-SEAMS |
+| 103 | B2B hub | The manager account list loads up to 50 full account documents (each up to 750 KB) just to show counts. | `functions/_lib/business-hub-store.js:28` | B2B-SEAMS |
+| 104 | B2B hub | Account views send every member internal staff usernames and member ids. | `functions/_lib/business-hub-core.js:105` | B2B-SEAMS |
+| 105 | B2B hub | Business hub tap targets are 34-40 px, inputs are 15 px (iOS zoom), and tables scroll sideways at 375 px. | `business-hub.css:1` | B2B-SEAMS |
+| 106 | B2B hub | The business hub acceptance workflow runs only after merge to main and checks only anonymous endpoints. | `.github/workflows/egc-business-hub-acceptance.yml:2` | CI-A (PR trigger for node tests); B2B-08 / CI-11 (authenticated end-to-end) |
+| 107 | Money | Crew card payments store no receipt URL, purpose or quote revision and leave the deposit 'due', and the Stripe key check rejects restricted `rk_` keys. | `functions/api/job-payment.js:44` | M2 |
+| 108 | Money | The first Stripe payment creates an unnumbered 'partial' invoice, so the finance board shows an invoice before one was issued. | `functions/_lib/customer-payments.js:126` | M3 |
+| 109 | Money | Recording an offline payment that clears the balance marks the job 'paid' even when the work is not completed. | `employee-suite.js:274` | M3 |
+| 110 | Money | The Hub and the server compute the job total from different fields, so the Hub can show a different balance than the portal will charge. | `employee-suite.js:232`; `employee-suite.js:274`; `functions/_lib/customer-payments.js` (customerMoneyState) | M3 (on LI-CORE totals) |
+| 111 | Money | Garage Guard Stripe alerts to Zapier are not deduplicated by event id, every `invoice.payment_failed` is assumed to be Garage Guard, and `.env.example` omits `checkout.session.async_payment_succeeded`. | `functions/api/stripe-webhook.js:163` | M2 |
+| 112 | Quotes | The Hub's legacy quote modal calls three functions that do not exist (the Enter-key listener too), so it would throw if opened. † | `employee.html:1032-1041` (:1037); keydown :1545 | M15 |
+| 113 | Quotes | The unused legacy contract modal uses a 25% deposit over $1,000 (policy is 50%), writes a second `quotes` collection and links to the retired /quote page. † | `employee.html:1789-1842` (:1800) | M15 |
+| 114 | Quotes | The walkthrough gameplan labels its schedule inputs 'Arrival start/end' but handoff uses them as the job's full time block, so a short arrival window under-books the calendar. | `crew/gameplan.html:98`; `functions/_lib/walkthrough-handoff.js` | NEW: separate arrival window from job length in gameplan handoff |
+| 115 | Quotes | Phone quotes, the walkthrough gameplan and the pricing page use three different price models, so phone ranges can contradict the walkthrough price. | `employee.html:2906`; `crew/gameplan.html` recommend(); `pricing.html` | P2-02 (M15 labels the phone range meanwhile) |
+| 116 | Public site | The generator is not idempotent: each run adds a blank line after the nav on about 25 pages and a duplicate trust strip on loveland-garage-cleanout.html. † | `_generate_site.py:3082` | SITE-0 |
+| 117 | Public site | Nav and footer logos are 195 KB and 135 KB PNGs (2400 px wide) shown at about 184x43 on every page. | `styles.css:4` | SITE-4 |
+| 118 | Public site | Google Fonts is render-blocking on the gallery and several other pages (some service pages, garage-guard, thank-you, the customer portal, crew and Hub pages), and employee.html and crew/index.html load three Firebase SDKs synchronously. | `functions/before-after.js:11`; `garage-turnaround-fort-collins-co.html` and the other pages the site map lists; `employee.html`; `crew/index.html` | SITE-4 |
+| 119 | Public site | The 'Customer Portal' link is added by JavaScript on only about 45 pages (not blog posts, FAQ or thank-you) and points to a page that needs a private token. | `site-enhancements.js:52` | SITE-2 |
+| 120 | CI | Local CI-equivalent runs leave a dirty tree: `pnpm build` rewrites the tracked portal next-env.d.ts, and firestore-debug.log, .lighthouseci/ and field-qa/ are not gitignored. † | `egc-platform/apps/portal/next-env.d.ts:1`; `.gitignore:1` | CI-A |
+| 121 | CI | Turbo lists only dist/** as build output, so the portal's Next build is never cached. | `egc-platform/turbo.json:4` | CI-A |
+| 122 | Tests | scripts/verify-crew.mjs is a stale manual verifier that stubs retired Jobber endpoints and signs in with a session token derived from a hard-coded ZacB hash. | `scripts/verify-crew.mjs:25` | CI-14 |
+| 123 | Data security | About 120 lines of unused rule helpers (assignedUpdateIsSafe and three others) wrongly suggest that crew SDK writes are allowed. † | `firestore.rules:109-233` | SEC-A |
+| 124 | B2B hub | The business audit log records only account, actor, action and time (no before/after or request id), and business session documents are never purged. | `functions/_lib/business-hub-service.js:42` | SEC-B (hub_audit writer usable by the B2B store); NEW: purge expired business sessions |
+| 125 | B2B hub | Zoe's named sales invitation expired 2026-09-25 18:23 UTC; if unredeemed, staff setup returns 410 until the owner commits a new digest. *(info)* | `functions/_lib/staff-invitation-manifest.js:5` | NEW: owner re-issues the invitation if unredeemed (owner action) |
+
+### Planned units referenced
+
+Not yet launched.
+
+- **Phase 1:** P1-06 server PTO workflow; P1-08 staff directory (roles, skills, pay, availability); P1-09 dispatch roster, permissions, settings and rules; P1-10 assignment segments; P1-11 calendar month view, lanes and tap-to-assign; P1-13 reminders and on-my-way; P1-15 timesheet review UI, geolocation policy and clock reliability.
+- **Money:** M3 server money API and ledger; M7 payment reminders cron; M9 job costing.
+- **Phase 2:** P2-02 catalog seed and pricing engine; P2-05 itemized signed handoff; P2-08 portal option toggling with revision-bound approval; P2-09 server estimate service (race fix); P2-11 bill approved change orders.
+- **Phase 3:** P3-03 transcript input for recordings (injects the RecordingService clock); P3-04 follow-up assignment policy (phone/sales owner); P3-09 Action Center UI v2 and recording mapping; P3-10 "My follow-ups" workspace for sales/phone staff; P3-13 retire the legacy portal recorder.
+- **Phase 4:** P4-07 crew profiles and on-the-way projection; P4-12 account message record and deterministic inbound routing.
+- **B2B:** B2B-04 client-visible request progress; B2B-06 portal B2B safety fixes (suppress homeowner invite for B2B jobs, approval actor); B2B-08 B2B end-to-end acceptance.
+- **MCP:** MCP-02 unified audit log; MCP-03 OAuth multi-client (Claude connector) with dynamic client registration; MCP-12 contract tests and production smoke.
+- **Security:** SEC-04 bridge command authorization policy (including the schedule.mutate role check); SEC-12 data-driven staff roles and capabilities; SEC-13 Firebase session revocation.
+- **CI:** CI-11 portal isolation and B2B end-to-end suites; CI-14 retire verify-crew.
+- **Site:** SITE-2 Client Login link site-wide; SITE-4 mobile performance pass.
+
+**Count:** 188 input lines (160 bug reports + 28 broken requirements) deduplicated to 125 rows: 1 critical, 16 high, 46 medium, 61 low, 1 info; 31 rows cover broken requirements; 81 rows name a launched unit, 33 only planned units, 11 only `NEW:` work.
 
 ## Decisions
 
@@ -62,6 +259,20 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   to `claude/amazing-shannon-n614n7`. Units are therefore separate, clearly prefixed commits on that branch with one
   draft PR. Merging to `main` deploys production (Cloudflare Pages git integration), so merge stays with the owner.
 
+- **D-002 Parallel build.** Phase 0 fixes and later-phase foundations are built in parallel isolated worktrees because
+  they touch disjoint files; merge order still follows phase order where units depend on each other, and every broken
+  item from the Phase 0 audit is assigned to a unit before new features that depend on it ship.
+- **D-003 One line-item model.** The money map and the quote-builder map each proposed a line-item model; there is one
+  canonical model (, LI-CORE) shared by quotes, invoices, portal toggling, catalog
+  pricing, dispatch duration and MCP.
+- **D-004 Behavior-changing fixes default off.** Where a bug fix changes live behavior (e.g. honoring legacy
+  blocked_days in dispatch), it ships behind a flag defaulting to current behavior, and the owner checklist
+  recommends the setting.
+
 ## Blockers
 
-(none yet)
+- Production verification of private-path exposure (,  served publicly?) could not be
+  run from this container (egress policy blocks easygaragecleaning.com); SEC-A adds the 404 rule and the owner
+  checklist gets a post-deploy check.
+- Zoe's single-use sales staff invitation expired 2026-09-25T18:23:57Z; if it was not redeemed the owner must issue a
+  new one (owner action, recorded for the checklist).
