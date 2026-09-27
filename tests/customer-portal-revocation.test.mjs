@@ -9,7 +9,8 @@ import {
 import { readCustomerPortalContext } from '../functions/_lib/customer-portal-access.js';
 import { revokeCustomerPortalLinks } from '../functions/_lib/customer-portal-revocation.js';
 import { sendAcceptedQuotePortal } from '../functions/_lib/portal-invitation.js';
-import { decodeFirestoreFields, encodeFirestoreFields } from '../functions/_lib/firestore-job.js';
+import { decodeFirestoreFields, encodeFirestoreFields, readJob } from '../functions/_lib/firestore-job.js';
+import { dispatchStorage } from '../functions/_lib/dispatch-storage.js';
 import { customerPortalRevokeHandlers } from '../functions/api/customer-portal-revoke.js';
 import { customerPortalLinkHandler } from '../functions/api/customer-portal-link.js';
 import { customerPortalSessionHandler } from '../functions/api/customer-portal-session.js';
@@ -304,11 +305,16 @@ test('a leaked owner link cannot keep access through an authorized person it add
   // authorized person and mints an invitation for that new record.
   const ownerSession = cookieOf(await exchange(leaked));
   const intruder = { id: 'intruder-1', name: 'Synthetic Intruder', email: 'intruder@example.invalid', role: 'Friend', permissions: { decide: true, pay: true, rebook: true } };
-  assert.equal((await portalPost(ownerSession, { action: 'save_collaborators', collaborators: [person(), intruder] })).status, 200);
-  const minted = await portalPost(ownerSession, { action: 'create_collaborator_invite', person_id: 'intruder-1' });
+  const saved = await portalPost(ownerSession, { action: 'save_collaborators', collaborators: [person(), intruder] });
+  assert.equal(saved.status, 200);
+  // Collaborator ids are server-issued (P4-01): a browser-minted id is replaced.
+  const intruderId = (await saved.json()).collaborators.find(item => item.email === intruder.email).id;
+  assert.notEqual(intruderId, 'intruder-1');
+  const minted = await portalPost(ownerSession, { action: 'create_collaborator_invite', person_id: intruderId });
   assert.equal(minted.status, 200);
   const invitation = accessOf((await minted.json()).url);
-  assert.equal('linkVersion' in await verifyCustomerPortalAccessToken(env, invitation, NOW), false, 'today’s invitation path embeds no version (P4-01/P4-03 TODO)');
+  const invitationClaims = await verifyCustomerPortalAccessToken(env, invitation, NOW);
+  assert.deepEqual([invitationClaims.actorId, invitationClaims.linkVersion, invitationClaims.linkRoot], [intruderId, 0, 'job-1'], 'invitations embed the account version and root');
   const intruderSession = cookieOf(await exchange(invitation));
   assert.equal((await portalGet(intruderSession)).status, 200);
 
@@ -323,7 +329,7 @@ test('a leaked owner link cannot keep access through an authorized person it add
   assert.deepEqual(f.job('job-1').customerCollaborators, []);
   const receipt = f.documents.get(`customerPortalOperations/${requestId}`).data;
   assert.equal(receipt.removedCollaboratorCount, 2);
-  for (const secret of ['intruder-1', 'Synthetic Intruder', 'intruder@example.invalid', 'person@example.invalid', 'Synthetic Person', invitation]) {
+  for (const secret of [intruderId, 'Synthetic Intruder', 'intruder@example.invalid', 'person@example.invalid', 'Synthetic Person', invitation]) {
     assert.equal(JSON.stringify(receipt).includes(secret), false, 'receipts keep a count, never names or contacts');
   }
 
@@ -336,7 +342,7 @@ test('a leaked owner link cannot keep access through an authorized person it add
   for (const access of [leaked, invitation]) assert.equal((await exchange(access)).headers.get('location'), '/customer-portal?error=invalid');
   assert.equal((await portalPost(intruderSession, { action: 'send_message', body: 'Still here?', request_id: randomUUID() })).status, 403);
   assert.equal((await portalPost(ownerSession, { action: 'save_collaborators', collaborators: [intruder] })).status, 403);
-  assert.equal((await portalPost(ownerSession, { action: 'create_collaborator_invite', person_id: 'intruder-1' })).status, 403);
+  assert.equal((await portalPost(ownerSession, { action: 'create_collaborator_invite', person_id: intruderId })).status, 403);
   assert.equal(f.writes(), writes, 'neither the leaked link nor its invitation can write anything');
   assert.deepEqual(f.job('job-1').customerCollaborators, []);
 });
@@ -362,6 +368,53 @@ test('keeping authorized people still ends collaborator invitations that carry a
   // An invitation minted without a version relies on the saved list alone,
   // which is why the Hub clears the list by default.
   assert.equal((await exchange(unversioned)).headers.get('location'), '/customer-portal');
+});
+
+test('a collaborator invitation minted by create_collaborator_invite ends on revocation even when saved people are kept', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: NOW });
+  const f = firestore(t, { 'job-1': baseJob() }), zac = await hubCookie('ZacB');
+  const link = await customerPortalLinkHandler({ now: () => new Date(NOW) })({ env, request: staffRequest('/api/customer-portal-link', zac, { job_id: 'job-1' }) });
+  const ownerSession = cookieOf(await exchange(accessOf((await link.json()).url)));
+  const minted = await portalPost(ownerSession, { action: 'create_collaborator_invite', person_id: 'person-1' });
+  assert.equal(minted.status, 200);
+  const invitation = accessOf((await minted.json()).url);
+  const collaboratorSession = cookieOf(await exchange(invitation));
+  assert.deepEqual([(await sessionClaims(collaboratorSession)).actorId, (await sessionClaims(collaboratorSession)).linkVersion], ['person-1', 0]);
+  assert.equal((await portalGet(collaboratorSession)).status, 200);
+
+  const api = customerPortalRevokeHandlers({ now: () => new Date(NOW) });
+  const revoked = await api.post({ env, request: staffRequest('/api/customer-portal-revoke', zac, { requestId: randomUUID(), jobId: 'job-1', expectedRevision: f.revision('job-1'), clearCollaborators: false }) });
+  assert.equal(revoked.status, 200);
+  assert.deepEqual(f.job('job-1').customerCollaborators.map(item => item.id), ['person-1'], 'the saved people are kept');
+  assert.equal((await exchange(invitation)).headers.get('location'), '/customer-portal?error=invalid');
+  const response = await portalGet(collaboratorSession);
+  assert.equal(response.status, 403);
+  assert.equal((await response.json()).code, 'CUSTOMER_PORTAL_ACCESS_REVOKED');
+});
+
+test('a collaborator save that read the account before a revocation cannot re-add the cleared people', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: NOW });
+  const f = firestore(t, { 'job-1': baseJob() });
+  const ownerCookie = (await createCustomerPortalSessionCookie(env, 'job-1', { linkVersion: 0, linkRoot: 'job-1' }, NOW)).split(';')[0];
+  // Staff revoke (clearing saved people) after this portal request loaded the
+  // account but before it writes: the save must not resurrect anyone.
+  let raced = false;
+  const read = async (testEnv, id) => {
+    const job = await readJob(testEnv, id);
+    if (!raced) {
+      raced = true;
+      const result = await revokeCustomerPortalLinks(dispatchStorage(env), manager, { requestId: randomUUID(), jobId: 'job-1', expectedRevision: f.revision('job-1') }, { now: new Date(NOW).toISOString() });
+      assert.deepEqual([result.linkVersion, result.removedCollaboratorCount], [1, 1]);
+    }
+    return job;
+  };
+  const handlers = portal.createCustomerPortalHandlers({ now: () => new Date(NOW), read });
+  const response = await handlers.onRequestPost({ env, request: new Request(`${origin}/api/customer-portal`, { method: 'POST', headers: { Origin: origin, Cookie: ownerCookie, 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'save_collaborators', collaborators: [person(), { name: 'Synthetic Late Add', email: 'late@example.invalid' }] }) }) });
+  assert.equal(response.status, 409);
+  assert.equal((await response.json()).code, 'CUSTOMER_PORTAL_REVISION_CONFLICT');
+  assert.deepEqual(f.job('job-1').customerCollaborators, []);
+  assert.equal(customerPortalLinkVersion(f.job('job-1')), 1);
+  assert.equal((await portalGet(ownerCookie)).status, 403, 'the stale owner session itself is revoked');
 });
 
 test('revocation is manager-only, same-origin, bounded and requires the observed revision', async t => {

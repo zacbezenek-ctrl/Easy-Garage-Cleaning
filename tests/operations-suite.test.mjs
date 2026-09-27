@@ -1237,5 +1237,11 @@ test('job costing records actual direct costs and contribution economics',()=>{
 });
 
 test('completed customer portal turns reviews and referrals into a simple next step',()=>{
-  for(const marker of ['review-referral','Leave a Google review','Text a referral','search.google.com/local/writereview?placeid=ChIJ17AGfBiyRIsRyJ3k4mDtX8Q',"['completed','paid'].includes(data.appointment.status)"])assert.match(customerPortal,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),marker+' is missing from review/referral flow');
+  // P4-13: the review URL now comes from server config (GOOGLE_REVIEW_URL, defaulting to
+  // the same place id) and visibility from the server's completed-and-paid review.eligible
+  // flag; behavior is covered in tests/customer-review-request.test.mjs.
+  for(const marker of ['review-referral','Leave a Google review','Text a referral','id="review-link"','renderReview(data)','review.eligible===true',"action:'record_review_click'"])assert.match(customerPortal,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),marker+' is missing from review/referral flow');
+  const api=read('functions/api/customer-portal.js');
+  for(const marker of ['search.google.com/local/writereview?placeid=ChIJ17AGfBiyRIsRyJ3k4mDtX8Q','GOOGLE_REVIEW_URL',"['completed', 'paid'].includes(portalStatus(job))"])assert.match(api,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),marker+' is missing from the review request API');
+  assert.doesNotMatch(customerPortal,/writereview\?placeid=/,'the portal must not hardcode a second review URL');
 });

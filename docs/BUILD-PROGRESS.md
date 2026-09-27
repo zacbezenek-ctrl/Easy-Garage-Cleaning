@@ -35,6 +35,10 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   `GET/POST /api/customer-portal-revoke` bumps `customerPortalLinkVersion` on the verified account root and, by default,
   clears saved authorized people in the same atomic commit (receipts in server-only `customerPortalOperations`). Owner
   tokens now require an explicit signed `lv` and carry the account root `lr`. Gap: no Hub button yet (API only).
+- **P4-01** Portal correctness: field statuses map to progress steps, top-level `arrivalWindow` first, no internal notes
+  as scope, revision-checked job-day rules/authorized people (409), server-issued collaborator ids, injected clock.
+  P4-13: `GOOGLE_REVIEW_URL` review card only when completed and paid, idempotent throttled click tracking, Hub state.
+  With P4-15: collaborator invites carry the account `lv`/`lr`, so revocation ends them even when people are kept.
 
 ## In progress
 
@@ -57,7 +61,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | P3-01 | Action kinds v2 (8 new kinds, drafts, attachments) + migration 0013 | building |
 | MCP-01 | MCP tool registry/policy framework + safety defaults (sends blocked in operations mode, read-only static bearer, real audit actor) | building |
 | BRIDGE | Operations bridge command registry (API + Hub) with delegated human actors | building |
-| P4-01 | Customer portal correctness fixes + review request tracking | building |
+| P4-01 | Customer portal correctness fixes + review request tracking | merged (5a617a8) |
 | P4-02 | Customer identity normalization + dry-run backfill | building |
 | P4-15 | Customer portal link revocation (link version) | merged (754b885) |
 | F-PWA | Crew PWA shell + offline action outbox (field actions + time clock) | building |
