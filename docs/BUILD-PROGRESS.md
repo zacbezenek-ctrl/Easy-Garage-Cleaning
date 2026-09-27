@@ -67,6 +67,10 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   whose stored/proposed recordType is server-owned; `audit_log` is append-only, bounded, attributed to the signed-in
   manager and server-timed (`serverAt == request.time`). Edge middleware 404s private source trees/configs (encoded and
   dot-segment bypasses included). Client audit guard follows P1-02's server-profile model (rules enforce).
+- **M2** Crew card payments share the portal's Stripe recorder (`recordCrewStripePayment`), the webhook records
+  `egc_job_payment` checkouts durably, and Stripe-confirmed charges the job cannot accept go to server-only
+  `payment_reviews` (manager `GET /api/stripe-reviews`). Garage Guard memberships record once per event and link by exact
+  phone/email behind `GARAGE_GUARD_MEMBERSHIP_SYNC_ENABLED` (off). Gaps: no review/resolve UI; no subscription.updated.
 
 ## In progress
 
@@ -82,7 +86,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | P1-05 | Recurring plans: server record, generator, idempotent extendHorizon, API, UI | building |
 | P1-07 | Travel-time estimates (offline ZIP-centroid estimator; optional Google; default off) | building |
 | LI-CORE | One canonical line-item model (quotes, invoices, portal, catalog, duration) + money core + duration engine | merged (08b5ec8) |
-| M2 | Crew card payments recorded via Stripe webhook + Garage Guard membership linkage | building |
+| M2 | Crew card payments recorded via Stripe webhook + Garage Guard membership linkage | merged (e948368) |
 | M15 | Retire dead legacy quote UIs | building |
 | CAT-DATA | Researched garage catalog data file, schema validation, pricing engine, docs/GARAGE-CATALOG.md | building |
 | P3-00 | **Production blocker**: walkthrough extraction crash (strict structured output) | building |

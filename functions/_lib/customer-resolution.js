@@ -19,6 +19,20 @@ function clean(customer){
   return result;
 }
 
+/** Exact normalized phone/email matching for server-side linkers that have no
+ * manager session (Stripe memberships). It never creates or guesses: anything
+ * except one consistent customer is returned for manager review. */
+export function matchCustomerIdentity(rows,wanted={}){
+  const p=phone(wanted.phone).length>=10?phone(wanted.phone):'',e=/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email(wanted.email))?email(wanted.email):'';
+  if(!p&&!e)return{status:'no_identity',candidates:[]};
+  const matches=rows.filter(row=>p&&phone(row.phone)===p||e&&email(row.email)===e),candidates=matches.map(row=>row.id).slice(0,20);
+  if(matches.length>1)return{status:'ambiguous',candidates};
+  if(!matches.length)return{status:'none',candidates};
+  const [row]=matches;
+  if(!safeId(row.id)||p&&phone(row.phone)&&phone(row.phone)!==p||e&&email(row.email)&&email(row.email)!==e)return{status:'conflict',candidates};
+  return{status:'matched',customer:row,candidates,method:p&&phone(row.phone)===p?(e&&email(row.email)===e?'exact_phone_email':'exact_phone'):'exact_email'};
+}
+
 /** Read provider identity using server credentials; browser contact links are
  * evidence to verify, never authority to attach an unrelated customer. */
 export async function verifiedHighLevelContact(env,id,fetcher=fetch){

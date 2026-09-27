@@ -405,7 +405,9 @@ test('crew job rules limit assigned staff to operational fields', () => {
   assert.match(rules, /preservesVerifiedPaid/);
   assert.match(rules, /resource\.data\.payment\.verified == true/);
   assert.match(rules, /lastPaymentStatus == 'paid'[\s\S]*?job\.payment\.verified == true/);
-  assert.match(read('functions/api/job-payment.js'), /recordStripePayment/);
+  // M2 moved the crew recorder into the shared, webhook-safe customer-payments.js path.
+  assert.match(read('functions/api/job-payment.js'), /recordCrewStripePayment/);
+  assert.match(read('functions/_lib/customer-payments.js'), /export async function recordCrewStripePayment/);
   assert.match(read('functions/api/job-payment.js'), /Payment exceeds the current job balance/);
   assert.doesNotMatch(read('crew/postjob.html'), /verificationSource:'crew_attestation'|verifiedPaidInFull/);
   assert.match(read('crew/postjob.html'), /Completing job work never records a payment/);

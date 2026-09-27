@@ -351,7 +351,7 @@ test('closeout preserves verified payments and directs manual receipts to Financ
 
 test('signed-in crew can create and verify a Stripe-hosted job payment',async()=>{
   const api=await import('../functions/api/job-payment.js'),originalFetch=globalThis.fetch,calls=[];
-  globalThis.fetch=async(url,options={})=>{calls.push({url:String(url),options});if(String(url).includes('firestore.googleapis.com'))return new Response(JSON.stringify({name:'projects/egcw-1ec83/databases/(default)/documents/jobs/job-1',fields:encodeFirestoreFields({customer:'Test Customer',email:'customer@example.com',total:1250,assignedCrew:['ZacB']})}),{status:200});if(options.method==='POST')return new Response(JSON.stringify({id:'cs_test_job123',url:'https://checkout.stripe.com/c/pay/cs_test_job123'}),{status:200});return new Response(JSON.stringify({id:'cs_test_job123',status:'complete',payment_status:'paid',payment_intent:'pi_job123',amount_total:125000,currency:'usd',client_reference_id:'job-1',metadata:{job_id:'job-1'},customer_details:{email:'customer@example.com'}}),{status:200})};
+  globalThis.fetch=async(url,options={})=>{calls.push({url:String(url),options});if(String(url).includes('firestore.googleapis.com'))return new Response(JSON.stringify({name:'projects/egcw-1ec83/databases/(default)/documents/jobs/job-1',updateTime:'2026-09-22T00:00:00.000001Z',fields:encodeFirestoreFields({customer:'Test Customer',email:'customer@example.com',total:1250,assignedCrew:['ZacB']})}),{status:200});if(options.method==='POST')return new Response(JSON.stringify({id:'cs_test_job123',url:'https://checkout.stripe.com/c/pay/cs_test_job123'}),{status:200});return new Response(JSON.stringify({id:'cs_test_job123',mode:'payment',status:'complete',payment_status:'paid',payment_intent:'pi_job123',amount_total:125000,currency:'usd',client_reference_id:'job-1',metadata:{kind:'egc_job_payment',job_id:'job-1'},customer_details:{email:'customer@example.com'}}),{status:200})};
   try{
     const env={...TEST_HUB_ENV,FIREBASE_API_KEY:'firebase-test-payment',STRIPE_SECRET_KEY:'sk_test_fake123'};
     const create=await api.onRequestPost({request:new Request('https://easygaragecleaning.com/api/job-payment',{method:'POST',headers:{Origin:'https://easygaragecleaning.com',Cookie:TEST_HUB_COOKIE,'Content-Type':'application/json'},body:JSON.stringify({job_id:'job-1',request_id:'attempt-1',amount_cents:125000,customer:'Test Customer',email:'customer@example.com'})}),env}),created=await create.json();
@@ -360,13 +360,16 @@ test('signed-in crew can create and verify a Stripe-hosted job payment',async()=
     assert.equal(form.get('mode'),'payment');assert.equal(form.get('line_items[0][price_data][unit_amount]'),'125000');assert.equal(form.get('metadata[job_id]'),'job-1');assert.match(stripeCreate.options.headers['Idempotency-Key'],/job-1:attempt-1/);
     const verify=await api.onRequestGet({request:new Request('https://easygaragecleaning.com/api/job-payment?session_id=cs_test_job123',{headers:{Origin:'https://easygaragecleaning.com',Cookie:TEST_HUB_COOKIE}}),env}),verified=await verify.json();
     assert.equal(verify.status,200);assert.equal(verified.paid,true);assert.equal(verified.paymentIntentId,'pi_job123');assert.equal(verified.jobId,'job-1');assert.equal(verified.amountTotal,125000);
+    // M2: verification now runs the shared webhook-safe recorder (kind + revision checked) and returns the recorded job copy.
+    assert.ok(calls.some(call=>call.url.includes('/checkout/sessions/cs_test_job123?expand')));assert.equal(verified.payment.verified,true);assert.equal(verified.invoice.balance,0);assert.equal(verified.paymentSyncPayload.sessionId,'cs_test_job123');
   }finally{globalThis.fetch=originalFetch}
 });
 
 test('job payments stay authenticated and the Stripe secret never reaches the browser',async()=>{
   const api=await import('../functions/api/job-payment.js'),originalFetch=globalThis.fetch;let called=false;globalThis.fetch=async()=>{called=true;throw new Error('must not call Stripe')};
   try{const response=await api.onRequestPost({request:new Request('https://easygaragecleaning.com/api/job-payment',{method:'POST',headers:{Origin:'https://easygaragecleaning.com','Content-Type':'application/json'},body:'{}'}),env:{STRIPE_SECRET_KEY:'sk_test_fake123'}});assert.equal(response.status,401);assert.equal(called,false)}finally{globalThis.fetch=originalFetch}
-  const paymentApi=read('functions/api/job-payment.js');
+  // M2: the key lookup and the stripeSessions recorder are shared with the webhook in customer-payments.js.
+  const paymentApi=read('functions/api/job-payment.js')+read('functions/_lib/customer-payments.js');
   for(const marker of ['getHubSession','STRIPE_SECRET_KEY','checkout/sessions','payment_status','client_reference_id','receipt_email'])assert.match(paymentApi,new RegExp(marker));
   assert.doesNotMatch(postjob,/sk_(?:test|live)_/);
   for(const marker of ['Take card payment','takeStripePayment','verifyStripeReturn','recordVerifiedStripePayment','Payment verified in Stripe, Hub, and HighLevel','payment-received'])assert.match(postjob,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));

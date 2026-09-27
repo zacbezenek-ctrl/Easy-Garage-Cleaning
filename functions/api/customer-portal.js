@@ -5,7 +5,7 @@ import { denverToday } from '../_lib/dispatch-time.js';
 import { fieldActivity } from '../_lib/field-execution.js';
 import { patchJob, patchJobsAtomic, readJob } from '../_lib/firestore-job.js';
 import { appendConversationMessage, cleanMessage, cleanRequestId, conversationMessages, deliverHighLevelMessage, findConversationMessage, replaceConversationMessage } from '../_lib/customer-messaging.js';
-import { customerMoneyState as moneyState, customerDepositState, customerPaymentNeedsReview, createCustomerStripeCheckout, recordCustomerStripePayment, stripeRequest as stripe } from '../_lib/customer-payments.js';
+import { customerMoneyState as moneyState, customerDepositState, customerPaymentNeedsReview, createCustomerStripeCheckout, recordCustomerStripePayment, stripeRequest as stripe, stripeSecretKey as stripeKey } from '../_lib/customer-payments.js';
 
 const HOST = /^(?:easygaragecleaning\.com|www\.easygaragecleaning\.com|easy-garage-cleaning\.pages\.dev|localhost(?::\d+)?|127\.0\.0\.1(?::\d+)?)$/;
 const DEFAULT_REVIEW_URL = 'https://search.google.com/local/writereview?placeid=ChIJ17AGfBiyRIsRyJ3k4mDtX8Q';
@@ -21,18 +21,6 @@ function allowed(request) {
   const raw = request.headers.get('Origin') || request.headers.get('Referer');
   if (!raw) return true;
   try { return HOST.test(new URL(raw).host); } catch { return false; }
-}
-
-function envVar(env, canonical, aliases = []) {
-  if (env[canonical]) return String(env[canonical]);
-  const wanted = [canonical, ...aliases].map(key => key.toLowerCase().replace(/[^a-z0-9]/g, ''));
-  for (const [key, value] of Object.entries(env || {})) if (value && wanted.includes(key.toLowerCase().replace(/[^a-z0-9]/g, ''))) return String(value);
-  return '';
-}
-
-function stripeKey(env) {
-  const key = envVar(env, 'STRIPE_SECRET_KEY', ['STRIPE_SECRET', 'STRIPE_KEY']);
-  return /^sk_(?:test|live)_[A-Za-z0-9_]+$/.test(key) ? key : '';
 }
 
 function safe(value, max = 180) {

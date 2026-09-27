@@ -7,8 +7,20 @@ const cents = value => {
   const n = typeof value === 'number' ? value : Number(String(value ?? '').replace(/[^0-9.-]/g, ''));
   return Number.isFinite(n) ? Math.max(0, Math.round(n * 100)) : 0;
 };
-const failure = (message, status = 409) => Object.assign(new Error(message), { status });
+const failure = (message, status = 409, code = '') => Object.assign(new Error(message), { status, ...(code ? { code } : {}) });
 const knownSession = (job, sessionId) => job.payment?.verified === true && (job.payment?.stripeSessions || []).some(item => String(item?.sessionId || item) === sessionId);
+const RECEIPT_URL = /^https:\/\/pay\.stripe\.com\/receipts\//;
+export const CHECKOUT_KINDS = Object.freeze({ portal: 'egc_customer_portal_payment', crew: 'egc_job_payment' });
+
+// Tolerant env read shared by every Stripe payment endpoint. Restricted keys
+// (rk_) are accepted alongside secret keys; publishable keys never are.
+export function stripeSecretKey(env = {}) {
+  const wanted = ['STRIPE_SECRET_KEY', 'STRIPE_SECRET', 'STRIPE_KEY'].map(key => key.toLowerCase().replace(/[^a-z0-9]/g, ''));
+  let key = env.STRIPE_SECRET_KEY ? String(env.STRIPE_SECRET_KEY) : '';
+  for (const [name, value] of Object.entries(env || {})) if (!key && value && wanted.includes(name.toLowerCase().replace(/[^a-z0-9]/g, ''))) key = String(value);
+  key = key.trim();
+  return /^(?:sk|rk)_(?:test|live)_[A-Za-z0-9_]+$/.test(key) ? key : '';
+}
 
 export function customerPaymentNeedsReview(job) {
   const paid = customerMoneyState(job).paid;
@@ -74,54 +86,119 @@ async function saveLedger(env, jobId, state, version) {
   return { state, version: doc.updateTime };
 }
 
-export async function recordCustomerStripePayment(env, checkout, expectedJobId = '') {
-  const jobId = clean(checkout.metadata?.job_id, 120), sessionId = clean(checkout.id);
-  if (!/^cs_(?:test_|live_)?[A-Za-z0-9_]+$/.test(sessionId) || !jobId || (expectedJobId && jobId !== expectedJobId) || checkout.client_reference_id !== jobId || checkout.metadata?.kind !== 'egc_customer_portal_payment' || checkout.currency !== 'usd' || checkout.mode !== 'payment' || checkout.status !== 'complete' || checkout.payment_status !== 'paid' || !Number.isInteger(checkout.amount_total) || checkout.amount_total <= 0) throw failure('Stripe has not verified this job payment');
-  const ledger = await readLedger(env, jobId);
-  if (ledger.state.sessionId === sessionId && Number(ledger.state.amountCents) !== checkout.amount_total) throw failure('The payment amount does not match this checkout');
+function verifiedCheckout(checkout, kind, expectedJobId) {
+  const jobId = clean(checkout?.metadata?.job_id, 120), sessionId = clean(checkout?.id);
+  if (!/^cs_(?:test_|live_)?[A-Za-z0-9_]+$/.test(sessionId) || !jobId || (expectedJobId && jobId !== expectedJobId) || checkout.client_reference_id !== jobId || checkout.metadata?.kind !== kind || checkout.currency !== 'usd' || checkout.mode !== 'payment' || checkout.status !== 'complete' || checkout.payment_status !== 'paid' || !Number.isInteger(checkout.amount_total) || checkout.amount_total <= 0) throw failure('Stripe has not verified this job payment', 409, 'payment_unverified');
+  return { jobId, sessionId };
+}
+
+async function paymentJob(env, jobId) {
+  const job = await readJob(env, jobId).catch(() => null);
+  if (!job?.__updateTime) throw failure('Payment information is temporarily unavailable', 503, 'payment_storage_unavailable');
+  return job;
+}
+
+// A Stripe-confirmed crew charge that the job cannot take (it exceeds the
+// balance, or an unverified receipt is on the job) is never left only in
+// Stripe's retry queue. payment_reviews/{sessionId} is server-only and
+// create-only, so the webhook and the crew return can both record it and the
+// first record wins. The job's money fields stay exactly as they were.
+export const PAYMENT_REVIEW_COLLECTION = 'payment_reviews';
+const reviewUrl = sessionId => `${DB}/${PAYMENT_REVIEW_COLLECTION}/${encodeURIComponent(sessionId)}`;
+async function recordPaymentReview(env, review) {
+  const url = new URL(reviewUrl(review.sessionId));
+  url.searchParams.set('currentDocument.exists', 'false');
+  let response = null;
+  try { response = await firestoreFetch(env, url, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fields: encodeFirestoreFields(review) }) }); }
+  catch { /* A lost response is settled by the read below. */ }
+  if (response?.ok) return;
+  // Already recorded by an earlier delivery, or our create landed without a response.
+  const saved = await firestoreFetch(env, reviewUrl(review.sessionId)).catch(() => null);
+  const doc = saved?.ok ? await saved.json().catch(() => null) : null;
+  if (doc?.updateTime && decodeFirestoreFields(doc.fields || {}).sessionId === review.sessionId) return;
+  throw failure('Payment information is temporarily unavailable', 503, 'payment_storage_unavailable');
+}
+
+// One verified path for every EGC Checkout kind. The Stripe session ID saved on
+// the job is the idempotency key, so a webhook, a browser return and their
+// replays can arrive in any order and still record a charge exactly once.
+async function recordStripeCheckout(env, checkout, { kind, expectedJobId = '', recordedBy = '', now = new Date().toISOString() }) {
+  const crew = kind === CHECKOUT_KINDS.crew, { jobId, sessionId } = verifiedCheckout(checkout, kind, expectedJobId);
+  const ledger = crew ? null : await readLedger(env, jobId);
+  if (ledger?.state.sessionId === sessionId && Number(ledger.state.amountCents) !== checkout.amount_total) throw failure('The payment amount does not match this checkout');
+  const paymentIntentId = clean(checkout.payment_intent?.id || checkout.payment_intent), charge = checkout.payment_intent?.latest_charge || {};
+  const heldForReview = async (job, finance, reason, message) => {
+    await recordPaymentReview(env, {
+      sessionId, jobId, kind, reason, status: 'open', amountCents: checkout.amount_total, currency: 'usd', paymentIntentId, livemode: checkout.livemode === true,
+      jobRevision: job.__updateTime, jobTotalCents: cents(finance.total), jobPaidCents: cents(finance.paid), jobBalanceCents: cents(finance.balance),
+      createdBy: clean(checkout.metadata?.created_by, 80), recordedBy: clean(recordedBy, 80), createdAt: now,
+    });
+    return Object.assign(failure(message, 409, reason), { reviewRecorded: true });
+  };
+  let storageFailed = false;
   for (let attempt = 0; attempt < 3; attempt++) {
-    const job = await readJob(env, jobId);
-    if (!job?.__updateTime) throw failure('Payment information is temporarily unavailable', 503);
-    const finance = customerMoneyState(job), duplicate = knownSession(job, sessionId);
-    if (duplicate) {
-      const freshReceipt = checkout.payment_intent?.latest_charge?.receipt_url || '';
-      const latest = job.payment.stripeSessions.at(-1);
-      const receiptUrl = String(latest?.sessionId || latest) === sessionId && /^https:\/\/pay\.stripe\.com\/receipts\//.test(freshReceipt) ? freshReceipt : job.payment.receiptUrl || '';
+    const job = await paymentJob(env, jobId), finance = customerMoneyState(job);
+    if (knownSession(job, sessionId)) {
+      const latest = job.payment.stripeSessions.at(-1), saved = job.payment.stripeSessions.find(item => String(item?.sessionId || item) === sessionId);
+      const receiptUrl = String(latest?.sessionId || latest) === sessionId && RECEIPT_URL.test(charge.receipt_url || '') ? charge.receipt_url : job.payment.receiptUrl || '';
+      let payment = job.payment;
       // Webhooks usually contain only a PaymentIntent ID. Enrich its receipt on
       // the expanded browser verification without adding the payment again.
       if (receiptUrl && receiptUrl !== job.payment.receiptUrl) {
-        try { await patchJob(env, jobId, { payment: { ...job.payment, receiptUrl } }, job.__updateTime); }
+        try { await patchJob(env, jobId, { payment: { ...job.payment, receiptUrl } }, job.__updateTime); payment = { ...job.payment, receiptUrl }; }
         catch { if (attempt < 2) continue; }
       }
-      return { paid: true, duplicate: true, amountPaid: checkout.amount_total / 100, balance: finance.balance, receiptUrl };
+      const item = saved && typeof saved === 'object' ? saved : { sessionId, paymentIntentId, amount: checkout.amount_total / 100 };
+      return { result: { paid: true, duplicate: true, amountPaid: checkout.amount_total / 100, balance: finance.balance, receiptUrl }, payment, invoice: job.invoice || {}, paymentSyncPayload: { ...item, balance: finance.balance, paidTotal: finance.paid } };
     }
     if (customerPaymentNeedsReview(job)) {
+      if (crew) throw await heldForReview(job, finance, 'payment_needs_review', 'Stripe confirmed this payment, but an earlier recorded payment needs manager verification. The charge is saved for manager review. Do not charge again.');
       // A crew-entered receipt cannot become verified merely because a separate
       // Stripe charge succeeds. Keep the confirmed charge durably recoverable,
       // and let Stripe retry after the manager verifies the earlier receipt.
-      await saveLedger(env, jobId, { ...ledger.state, verifiedReceipt: { sessionId, amount: checkout.amount_total / 100, paymentIntentId: clean(checkout.payment_intent?.id || checkout.payment_intent), confirmedAt: new Date().toISOString() }, requiresReview: true }, ledger.version);
-      throw failure('Your Stripe payment is confirmed. An earlier recorded payment needs team verification before the balance can be updated. Please do not pay again.');
+      await saveLedger(env, jobId, { ...ledger.state, verifiedReceipt: { sessionId, amount: checkout.amount_total / 100, paymentIntentId, confirmedAt: now }, requiresReview: true }, ledger.version);
+      throw failure('Your Stripe payment is confirmed. An earlier recorded payment needs team verification before the balance can be updated. Please do not pay again.', 409, 'payment_needs_review');
     }
+    // A crew link was sized to the balance when it opened. A payment recorded
+    // since then means this charge needs a manager before it changes the job.
+    if (crew && (cents(finance.total) <= 0 || checkout.amount_total > cents(finance.balance))) throw await heldForReview(job, finance, 'payment_exceeds_balance', 'Stripe confirmed this payment, but it exceeds the current job balance. The charge is saved for manager review. Do not charge again.');
     const paidCents = cents(finance.paid) + checkout.amount_total;
     // Preserve every confirmed dollar, including any unexpected excess, for reconciliation.
     const paidTotal = paidCents / 100, balance = Math.max(0, cents(finance.total) - paidCents) / 100;
-    const now = new Date().toISOString(), deposit = customerDepositState(job, { ...finance, paid: paidTotal, balance });
-    const charge = checkout.payment_intent?.latest_charge || {};
-    const receiptUrl = /^https:\/\/pay\.stripe\.com\/receipts\//.test(charge.receipt_url || '') ? charge.receipt_url : job.payment?.receiptUrl || '';
-    const paymentItem = { sessionId, paymentIntentId: clean(checkout.payment_intent?.id || checkout.payment_intent), amount: checkout.amount_total / 100, purpose: clean(checkout.metadata?.payment_purpose, 20), quoteRevision: clean(checkout.metadata?.quote_revision, 20), quotedTotalCents: Number(checkout.metadata?.quoted_total_cents || 0), verifiedAt: now };
+    const deposit = customerDepositState(job, { ...finance, paid: paidTotal, balance });
+    const receiptUrl = RECEIPT_URL.test(charge.receipt_url || '') ? charge.receipt_url : job.payment?.receiptUrl || '';
+    const receiptEmail = clean(checkout.customer_details?.email || checkout.customer_email);
+    const paymentItem = crew
+      ? { sessionId, paymentIntentId, amount: checkout.amount_total / 100, receiptEmail, createdBy: clean(checkout.metadata?.created_by, 80), recordedBy: clean(recordedBy, 80), verifiedAt: now }
+      : { sessionId, paymentIntentId, amount: checkout.amount_total / 100, purpose: clean(checkout.metadata?.payment_purpose, 20), quoteRevision: clean(checkout.metadata?.quote_revision, 20), quotedTotalCents: Number(checkout.metadata?.quoted_total_cents || 0), verifiedAt: now };
     const trustedSessions = job.payment?.verified === true ? (job.payment.stripeSessions || []) : [];
-    const payment = { ...(job.payment || {}), amount: paidTotal, lastAmount: paymentItem.amount, lastReceivedAt: now, method: 'stripe', processor: 'stripe', verified: true, receiptUrl, receiptEmail: clean(checkout.customer_details?.email || checkout.customer_email), reference: paymentItem.paymentIntentId || sessionId, stripeSessions: [...trustedSessions, paymentItem] };
+    const payment = { ...(job.payment || {}), amount: paidTotal, lastAmount: paymentItem.amount, lastReceivedAt: now, method: 'stripe', processor: 'stripe', verified: true, receiptUrl, receiptEmail, reference: paymentIntentId || sessionId, stripeSessions: [...trustedSessions, paymentItem], ...(crew ? { recordedBy: paymentItem.recordedBy } : {}) };
+    const invoice = { ...(job.invoice || {}), amount: finance.total, paid: paidTotal, balance, status: balance < .01 ? 'paid' : 'partial', updatedAt: now };
+    const paymentSyncPayload = { ...paymentItem, balance, paidTotal };
     try {
       await patchJob(env, jobId, {
         payment,
         deposit: { ...(job.deposit || {}), amount: deposit.required, paidAmount: deposit.paid, status: deposit.due < .01 ? 'paid' : deposit.paid ? 'partial' : 'due', verified: true, updatedAt: now },
-        invoice: { ...(job.invoice || {}), amount: finance.total, paid: paidTotal, balance, status: balance < .01 ? 'paid' : 'partial', updatedAt: now },
-        paymentSyncStatus: 'pending', paymentSyncPayload: { ...paymentItem, balance, paidTotal },
+        invoice, paymentSyncStatus: 'pending', paymentSyncPayload,
         ...(paidTotal > finance.total ? { paymentReviewRequired: true } : {}), updatedAt: now,
       }, job.__updateTime);
-      return { paid: true, duplicate: false, amountPaid: paymentItem.amount, balance, receiptUrl };
-    } catch (error) { if (attempt === 2) throw failure('The payment record changed. Refresh to confirm the latest balance.'); }
+      return { result: { paid: true, duplicate: false, amountPaid: paymentItem.amount, balance, receiptUrl }, payment, invoice, paymentSyncPayload };
+    } catch (error) { storageFailed = ![400, 409, 412].includes(error.storageStatus); } // Firestore answers a stale updateTime with 400 FAILED_PRECONDITION.
   }
+  // Each retry re-reads the job, so a write whose response was lost is found above as a duplicate.
+  throw storageFailed ? failure('Payment information is temporarily unavailable', 503, 'payment_storage_unavailable') : failure('The payment record changed. Refresh to confirm the latest balance.', 409, 'payment_changed');
+}
+
+export async function recordCustomerStripePayment(env, checkout, expectedJobId = '', now = new Date().toISOString()) {
+  return (await recordStripeCheckout(env, checkout, { kind: CHECKOUT_KINDS.portal, expectedJobId, now })).result;
+}
+
+// Crew card links (job-payment.js) settle through the same verification from
+// the Stripe webhook or the crew browser return; the latter also receives the
+// recorded job copy it shows during closeout.
+export async function recordCrewStripePayment(env, checkout, { expectedJobId = '', recordedBy = '', now = new Date().toISOString() } = {}) {
+  const { result, payment, invoice, paymentSyncPayload } = await recordStripeCheckout(env, checkout, { kind: CHECKOUT_KINDS.crew, expectedJobId, recordedBy, now });
+  return { ...result, payment, invoice, paymentSyncPayload };
 }
 
 const fingerprint = job => JSON.stringify({ total: customerMoneyState(job).total, paid: customerMoneyState(job).paid, ...customerDepositState(job), revision: job.estimate?.revision || 1, approval: job.customerApproval?.status || job.estimate?.status || job.quoteStatus || '', status: job.pipelineStatus || job.status || '' });

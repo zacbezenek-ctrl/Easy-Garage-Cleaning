@@ -59,7 +59,7 @@ export async function patchJob(env, jobId, patch, updateTime = '') {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ fields: encodeFirestoreFields(patch) }),
   });
-  if (!response.ok) throw new Error(`Job storage write failed (${response.status})`);
+  if (!response.ok) throw Object.assign(new Error(`Job storage write failed (${response.status})`), { storageStatus: response.status });
   const document = await response.json();
   return { id: jobId, ...decodeFirestoreFields(document.fields || {}) };
 }

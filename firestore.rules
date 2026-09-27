@@ -354,6 +354,22 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // Garage Guard memberships, their Stripe event receipts and identity reviews
+    // are written only by the signed Stripe webhook. Jobs carry a display copy.
+    match /memberships/{documentId} {
+      allow read, write: if false;
+    }
+    match /stripe_events/{documentId} {
+      allow read, write: if false;
+    }
+    match /membership_reviews/{documentId} {
+      allow read, write: if false;
+    }
+    // Confirmed crew card charges the webhook held off their job for a manager.
+    match /payment_reviews/{documentId} {
+      allow read, write: if false;
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }

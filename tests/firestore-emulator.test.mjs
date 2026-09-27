@@ -53,6 +53,10 @@ test('actual Firestore rules isolate canonical operations from crew SDK access',
         'dispatchState/revision':{lastRequestId:'server'},
         'dispatchOperations/receipt':{actorId:'zacb',action:'schedule.update'},
         'customerPortalOperations/receipt':{actorId:'zacb',accountJobId:'assigned',linkVersion:1,removedCollaboratorCount:0},
+        'memberships/sub_synthetic':{plan:'guard',status:'active',customerEmail:'member@example.invalid'},
+        'stripe_events/evt_synthetic':{type:'invoice.paid',subscriptionId:'sub_synthetic'},
+        'membership_reviews/sub_synthetic':{status:'open',reason:'ambiguous_customer'},
+        'payment_reviews/cs_test_synthetic':{status:'open',reason:'payment_exceeds_balance',jobId:'assigned',amountCents:50000},
       };
       for (const [path,value] of Object.entries(entries)) await db.doc(path).set(value);
     });
@@ -83,6 +87,13 @@ test('actual Firestore rules isolate canonical operations from crew SDK access',
       await environment.withSecurityRulesDisabled(async context=>{const db=context.firestore();await db.doc('message_sends/send').set({kind:'payment_reminder',status:'submitted',targetId:'assigned'});await db.doc('message_templates/payment_reminder').set({kind:'payment_reminder',liveVersion:1});await db.doc('message_operations/receipt').set({actorId:'zacb',action:'template.approve'});});
       for(const db of [publicDb,crew,lead,manager]) for(const path of ['message_sends/send','message_templates/payment_reminder','message_operations/receipt']){await assertFails(db.doc(path).get());await assertFails(db.doc(path).set({status:'changed'}));await assertFails(db.doc(path).update({status:'changed'}));await assertFails(db.doc(path).delete());}
       for(const db of [crew,manager]) for(const name of ['message_sends','message_templates','message_operations']) await assertFails(db.collection(name).get());
+    });
+    await t.test('Garage Guard memberships, Stripe event receipts and reviews are webhook-only',async()=>{
+      for(const db of [publicDb,crew,manager]) for(const path of ['memberships/sub_synthetic','stripe_events/evt_synthetic','membership_reviews/sub_synthetic','payment_reviews/cs_test_synthetic']){await assertFails(db.doc(path).get());await assertFails(db.doc(path).update({status:'changed'}));await assertFails(db.doc(path).delete());}
+      await assertFails(manager.doc('memberships/sub_new').set({plan:'black',status:'active'}));
+      await assertFails(manager.collection('memberships').get());
+      await assertFails(manager.collection('payment_reviews').get());
+      await assertFails(crew.doc('payment_reviews/cs_test_forged').set({status:'resolved',jobId:'assigned'}));
     });
     await t.test('manager administrative schedule and customer access remains functional',async()=>{
       await assertSucceeds(manager.doc('jobs/assigned').get());
@@ -310,6 +321,32 @@ test('actual Firestore rules isolate canonical operations from crew SDK access',
       await store.commit([{collection:'jobs',id:'assigned',revision:accountBefore.revision,patch:{lineageTestChange:true}}]);
       await assert.rejects(store.commit([{collection:'jobs',id:'assigned',revision:accountBefore.revision,verify:true},{collection:'jobs',id:'must-not-save',patch:{type:'job',customerId:'customer'}}]),error=>error.code==='dispatch_revision_conflict');
       assert.equal(await store.read('jobs','must-not-save'),null,'A stale ownership read cannot write another job.');
+    });
+    await t.test('Garage Guard events link, mirror and dedupe through actual Firestore REST',async()=>{
+      const {membershipStorage,applyGarageGuardEvent,garageGuardEvent}=await import('../functions/_lib/garage-guard-membership.js');
+      await environment.withSecurityRulesDisabled(async context=>{const db=context.firestore();await db.doc('customers/gg-customer').set({name:'Synthetic Member',phone:'9705550177',email:'member@example.invalid'});await db.doc('jobs/gg-root').set({type:'job',customerId:'gg-customer',customer:'Synthetic Member'});await db.doc('jobs/gg-visit').set({type:'job',customerId:'gg-customer',customerAccountOwnerJobId:'gg-root'});});
+      const store=membershipStorage({},async(_env,url,options={})=>{
+        const target=new URL(url);target.protocol='http:';target.host=host;target.pathname=target.pathname.replace('/projects/egcw-1ec83/','/projects/'+projectId+'/');
+        return fetch(target,{...options,...(options.body ? {body:options.body.replaceAll('projects/egcw-1ec83/','projects/'+projectId+'/')} : {}),headers:{...options.headers,Authorization:'Bearer owner'}});
+      });
+      const event=(id,created)=>garageGuardEvent({id,type:'checkout.session.completed',created,data:{object:{mode:'subscription',payment_status:'paid',subscription:'sub_emulator',customer:'cus_emulator',metadata:{plan:'lite'},customer_details:{email:'MEMBER@example.invalid',phone:'+19705550177'}}}});
+      const results=await Promise.all([applyGarageGuardEvent(store,event('evt_emulator_1',1),{now:'2099-09-10T12:00:00.000Z',alerts:true}),applyGarageGuardEvent(store,event('evt_emulator_1',1),{now:'2099-09-10T12:00:00.000Z',alerts:true})]);
+      assert.deepEqual(results.map(result=>result.status).sort(),['applied','duplicate']);
+      const job=await store.read('jobs','gg-root'),membership=await store.read('memberships','sub_emulator');
+      assert.deepEqual({plan:job.garageGuard.plan,visits:job.garageGuard.visitsRemaining,membershipId:job.garageGuard.membershipId},{plan:'lite',visits:2,membershipId:'sub_emulator'});
+      assert.equal(membership.link.accountJobId,'gg-root');assert.equal((await store.read('stripe_events','evt_emulator_1')).alert.status,'pending');
+      assert.equal((await store.read('jobs','gg-visit')).garageGuard,undefined);
+      assert.equal((await applyGarageGuardEvent(store,event('evt_emulator_1',1),{now:'2099-09-11T12:00:00.000Z'})).status,'duplicate');
+      assert.equal((await store.read('memberships','sub_emulator')).revision,membership.revision,'a replay writes nothing');
+      assert.equal((await store.read('customerIdentityState','revision')).lastStripeEventId,'evt_emulator_1','the first link creates the identity guard it fences');
+      // A duplicate customer created between the reads and the commit (resolveCustomer bumps the guard) fails the transaction fence.
+      await environment.withSecurityRulesDisabled(async context=>{const db=context.firestore();await db.doc('customers/gg-second').set({name:'Synthetic Second',phone:'9705550178'});await db.doc('jobs/gg-second-root').set({type:'job',customerId:'gg-second',customer:'Synthetic Second'});});
+      let raced=false;
+      const racing={...store,commit:async writes=>{if(!raced){raced=true;await environment.withSecurityRulesDisabled(async context=>{const db=context.firestore();await db.doc('customers/gg-second-dup').set({name:'Synthetic Second Duplicate',phone:'970-555-0178'});await db.doc('customerIdentityState/revision').set({updatedAt:'2099-09-10T12:00:01.000Z',lastRequestId:'synthetic-race'});});}return store.commit(writes);}};
+      const second=garageGuardEvent({id:'evt_emulator_2',type:'checkout.session.completed',created:2,data:{object:{mode:'subscription',payment_status:'paid',subscription:'sub_emulator_2',customer:'cus_emulator_2',metadata:{plan:'guard'},customer_details:{phone:'+19705550178'}}}});
+      const racedResult=await applyGarageGuardEvent(racing,second,{now:'2099-09-10T12:00:02.000Z'});
+      assert.deepEqual({raced,link:racedResult.link,reason:racedResult.reason,mirrored:racedResult.mirrored},{raced:true,link:'needs_review',reason:'ambiguous_customer',mirrored:false});
+      assert.equal((await store.read('jobs','gg-second-root')).garageGuard,undefined,'the stale one-customer decision never reaches the job');
     });
   } finally {await environment.cleanup();}
 });
