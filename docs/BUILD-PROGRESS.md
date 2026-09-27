@@ -263,7 +263,7 @@ Not yet launched.
   they touch disjoint files; merge order still follows phase order where units depend on each other, and every broken
   item from the Phase 0 audit is assigned to a unit before new features that depend on it ship.
 - **D-003 One line-item model.** The money map and the quote-builder map each proposed a line-item model; there is one
-  canonical model (, LI-CORE) shared by quotes, invoices, portal toggling, catalog
+  canonical model (`functions/_lib/quote-model.js`, LI-CORE) shared by quotes, invoices, portal toggling, catalog
   pricing, dispatch duration and MCP.
 - **D-004 Behavior-changing fixes default off.** Where a bug fix changes live behavior (e.g. honoring legacy
   blocked_days in dispatch), it ships behind a flag defaulting to current behavior, and the owner checklist
@@ -271,7 +271,7 @@ Not yet launched.
 
 ## Blockers
 
-- Production verification of private-path exposure (,  served publicly?) could not be
+- Production verification of private-path exposure (`/egc-platform/**`, `/functions/**` served publicly?) could not be
   run from this container (egress policy blocks easygaragecleaning.com); SEC-A adds the 404 rule and the owner
   checklist gets a post-deploy check.
 - Zoe's single-use sales staff invitation expired 2026-09-25T18:23:57Z; if it was not redeemed the owner must issue a
