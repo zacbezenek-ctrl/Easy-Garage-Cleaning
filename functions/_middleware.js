@@ -1,6 +1,19 @@
 import { enforceBusinessProjectWrite } from './_lib/business-hub-write-guard.js';
 
-const PRIVATE_PATH = /^(?:\/(?:auth-verifier|contracts|docs|scripts|tests)(?:\/|$)|\/(?:sop|tyler-contract)(?:\.html)?\/?$|\/EGC-Lead-System-SOP\.pdf$|\/(?:package(?:-lock)?\.json|README\.md|firebase\.json|firestore\.rules|\.firebaserc|\.env(?:\.example)?|_[^/]+)(?:$|\/))/i;
+// Source trees, tooling and deploy configs sit beside the static site; never serve them.
+const PRIVATE_PATH = /^(?:\/(?:auth-verifier|contracts|docs|scripts|tests|egc-platform|functions|tools|\.github|\.claude|node_modules)(?:\/|$)|\/(?:sop|tyler-contract)(?:\.html)?\/?$|\/EGC-Lead-System-SOP\.pdf$|\/(?:package(?:-lock)?\.json|README\.md|firebase(?:\.emulator|\.field-day)?\.json|firestore\.rules|pnpm-(?:lock|workspace)\.yaml|\.firebaserc|\.env(?:\.example)?|_[^/]+)(?:$|\/)|\/.*\.py\/?$)/i;
+
+function privatePath(pathname) {
+  let path;
+  try { path = decodeURIComponent(pathname); } catch { return true; }
+  // Test the collapsed, dot-resolved form too, so encoded separators cannot step around a prefix.
+  const segments = [];
+  for (const segment of path.split(/[\\/]+/)) {
+    if (segment === '..') segments.pop();
+    else if (segment && segment !== '.') segments.push(segment);
+  }
+  return PRIVATE_PATH.test(path) || PRIVATE_PATH.test(`/${segments.join('/')}`);
+}
 
 const CSP = [
   "default-src 'self'",
@@ -31,7 +44,7 @@ function blockedResponse() {
 
 export async function onRequest(context) {
   const { pathname } = new URL(context.request.url);
-  if (PRIVATE_PATH.test(decodeURIComponent(pathname))) return blockedResponse();
+  if (privatePath(pathname)) return blockedResponse();
 
   const upstream = await enforceBusinessProjectWrite(context.request, context.env) || await context.next();
   const explicit404 = pathname === '/404' || pathname === '/404.html';

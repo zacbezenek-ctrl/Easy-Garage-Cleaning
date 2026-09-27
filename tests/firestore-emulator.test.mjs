@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
+import vm from 'node:vm';
 
 const enabled = process.env.EGC_FIREBASE_EMULATOR_TEST === '1';
 
@@ -21,7 +22,12 @@ test('actual Firestore rules isolate canonical operations from crew SDK access',
   const otherCrew=environment.authenticatedContext('crew-two',claims('crew2')).firestore();
   const lead=environment.authenticatedContext('lead-one',claims('lead1','crew_lead')).firestore();
   const manager=environment.authenticatedContext('manager',claims('zacb','owner',true)).firestore();
+  const partner=environment.authenticatedContext('partner',claims('TylerG','manager',true)).firestore();
   const publicDb=environment.unauthenticatedContext().firestore();
+  const serverOwned=['jobs/secure_account_test','jobs/_egc_record_op_x','jobs/_egc_schedule_op_x','jobs/_egc_schedule_provider_x','jobs/_egc_adoption_request_x','jobs/_egc_adoption_source_x'];
+  // recordTypes the service account writes into jobs (vaults and receipts); see serverOwnedJobData.
+  const serverTypes=['employee_hub_v2','employee_account_v1','schedule_operation','schedule_provider_receipt','schedule_adoption','operational_record_receipt'];
+  const compat=require('firebase/compat/app');const {FieldValue,Timestamp}=(compat.default||compat).firestore;
   try {
     await environment.withSecurityRulesDisabled(async context=>{
       const db=context.firestore();
@@ -32,6 +38,15 @@ test('actual Firestore rules isolate canonical operations from crew SDK access',
         'jobs/crew2-off':{id:'crew2-off',type:'availability',recordType:'crew_availability',employee:'crew2',date:'2099-09-08',allDay:true,status:'active'},
         'jobs/_egc_schedule_lock_2099-09-08':{recordType:'schedule_lock',date:'2099-09-08',entries:[]},
         'jobs/secure_account_test':{recordType:'employee_account_v1',sealedPayload:'ciphertext'},
+        'jobs/_egc_record_op_x':{recordType:'operation_receipt',actorId:'server',fingerprint:'synthetic'},
+        'jobs/_egc_schedule_op_x':{recordType:'schedule_operation_receipt',actorId:'server',fingerprint:'synthetic'},
+        'jobs/_egc_schedule_provider_x':{recordType:'schedule_provider_receipt',status:'submitted'},
+        'jobs/_egc_adoption_request_x':{recordType:'adoption_receipt',fingerprint:'synthetic'},
+        'jobs/_egc_adoption_source_x':{recordType:'adoption_source',jobId:'assigned'},
+        'jobs/removable':{id:'removable',type:'job',status:'unscheduled'},
+        'jobs/stray-vault':{recordType:'employee_hub_v2',employeeHubType:'profiles',sealedPayload:'ciphertext'},
+        'jobs/stray-lock':{recordType:'schedule_lock',date:'2099-09-08',entries:[]},
+        'audit_log/existing':{action:'login',detail:'Logged in',by:'zacb',at:'2099-09-01T12:00:00.000Z'},
         'customers/customer':{name:'Private Customer',phone:'9705550100'},
         'customers/customer-two':{name:'Second Customer',phone:'9705550101',address:'2 Test Street'},
         'dispatchResources/truck':{recordType:'vehicle',name:'Test truck',status:'available'},
@@ -73,6 +88,164 @@ test('actual Firestore rules isolate canonical operations from crew SDK access',
       await assertSucceeds(manager.doc('jobs/assigned').get());
       await assertSucceeds(manager.doc('customers/customer').get());
       await assertSucceeds(manager.doc('jobs/assigned').update({title:'Reviewed by manager'}));
+    });
+    await t.test('server-owned receipts and encrypted records in jobs stay immutable for business SDK sessions',async()=>{
+      for(const db of [manager,partner]) for(const path of serverOwned){
+        await assertFails(db.doc(path).update({status:'changed'}));
+        await assertFails(db.doc(path).set({recordType:'forged'}));
+        await assertFails(db.doc(path).delete());
+      }
+      for(const path of ['jobs/secure_new','jobs/_egc_record_op_new','jobs/_egc_schedule_op_new','jobs/_egc_schedule_provider_new','jobs/_egc_adoption_request_new','jobs/_egc_adoption_source_new','jobs/_egc_future_receipt']) await assertFails(manager.doc(path).set({recordType:'forged'}));
+      await assertFails(manager.batch().update(manager.doc('jobs/assigned'),{title:'Batched'}).delete(manager.doc('jobs/_egc_record_op_x')).commit());
+      await assertFails(manager.runTransaction(async tx=>{const receipt=manager.doc('jobs/_egc_schedule_op_x');await tx.get(receipt);tx.update(receipt,{status:'changed'});}));
+      for(const db of [crew,lead]) for(const path of serverOwned){await assertFails(db.doc(path).update({status:'changed'}));await assertFails(db.doc(path).delete());}
+      await environment.withSecurityRulesDisabled(async context=>{
+        for(const path of serverOwned) assert.notEqual((await context.firestore().doc(path).get()).data().recordType,'forged',path);
+        assert.notEqual((await context.firestore().doc('jobs/assigned').get()).data().title,'Batched','A denied receipt write must reject the whole batch.');
+      });
+    });
+    await t.test('manager job, collection-wide read and schedule-lock workflows remain writable',async()=>{
+      await assertSucceeds(manager.collection('jobs').get());
+      for(const path of serverOwned) await assertSucceeds(manager.doc(path).get());
+      await assertSucceeds(manager.doc('jobs/assigned').update({notes:'Manager note still saves'}));
+      await assertSucceeds(manager.doc('jobs/manager-created').set({id:'manager-created',type:'job',status:'unscheduled'}));
+      await assertSucceeds(manager.doc('jobs/removable').delete());
+      await assertSucceeds(manager.doc('jobs/_egc_schedule_lock_2099-09-08').update({entries:[],updatedAt:'2099-09-01T12:00:00.000Z'}));
+      await assertSucceeds(manager.doc('jobs/_egc_schedule_lock_2099-09-20').set({recordType:'schedule_lock',date:'2099-09-20',entries:[]}));
+      await assertSucceeds(manager.runTransaction(async tx=>{const lock=manager.doc('jobs/_egc_schedule_lock_2099-09-20');await tx.get(lock);tx.set(lock,{recordType:'schedule_lock',date:'2099-09-20',entries:[],updatedAt:'2099-09-01T12:00:00.000Z'});tx.update(manager.doc('jobs/manager-created'),{date:'2099-09-20'});}));
+      await assertSucceeds(manager.doc('jobs/_egc_schedule_lock_2099-09-20').delete());
+      await assertSucceeds(manager.doc('jobs/manager-created').delete());
+      await assertFails(crew.doc('jobs/_egc_schedule_lock_2099-09-08').update({entries:[]}));
+    });
+    await t.test('business SDK writes cannot plant, adopt or remove server-owned recordTypes under ordinary job ids',async()=>{
+      for(const db of [manager,partner]) for(const recordType of serverTypes){
+        await assertFails(db.doc('jobs/forged-'+recordType).set({recordType,employeeHubType:'profiles',sealedPayload:'forged'}));
+        await assertFails(db.collection('jobs').add({recordType,sealedPayload:'forged'}));
+        await assertFails(db.doc('jobs/assigned').update({recordType}));
+        await assertFails(db.doc('jobs/assigned').set({recordType},{merge:true}));
+        await assertFails(db.doc('jobs/_egc_schedule_lock_2099-09-08').update({recordType}));
+      }
+      await assertFails(manager.doc('jobs/fake-lock').set({recordType:'schedule_lock',date:'2099-09-08',entries:[]}));
+      await assertFails(manager.doc('jobs/assigned').update({recordType:'schedule_lock'}));
+      // Rows that already carry a server-owned type stay untouchable from the SDK, including relabel and delete.
+      for(const path of ['jobs/stray-vault','jobs/stray-lock']){
+        await assertSucceeds(manager.doc(path).get());
+        await assertFails(manager.doc(path).update({sealedPayload:'changed'}));
+        await assertFails(manager.doc(path).update({recordType:'crew_availability'}));
+        await assertFails(manager.doc(path).set({type:'job',status:'unscheduled'}));
+        await assertFails(manager.doc(path).delete());
+      }
+      await assertFails(manager.batch().update(manager.doc('jobs/assigned'),{title:'Batched forged vault'}).set(manager.doc('jobs/forged-batch'),{recordType:'employee_hub_v2'}).commit());
+      await environment.withSecurityRulesDisabled(async context=>{
+        const db=context.firestore();
+        for(const recordType of serverTypes) assert.equal((await db.doc('jobs/forged-'+recordType).get()).exists,false,recordType);
+        assert.equal((await db.collection('jobs').where('recordType','==','employee_hub_v2').get()).docs.map(doc=>doc.id).join(),'stray-vault');
+        assert.equal((await db.doc('jobs/stray-vault').get()).data().sealedPayload,'ciphertext');
+        assert.equal((await db.doc('jobs/assigned').get()).data().recordType,undefined);
+        assert.notEqual((await db.doc('jobs/assigned').get()).data().title,'Batched forged vault');
+      });
+      // Manager PTO approval (employee-suite opsReviewRequest) still writes crew_availability rows with merge.
+      const pto={id:'availability-crew1-2099-09-21-pto',type:'availability',recordType:'crew_availability',employee:'crew1',date:'2099-09-21',time:'00:00',endTime:'23:59',reason:'Approved time off',requestId:'synthetic-request',status:'active',createdAt:'2099-09-01T12:00:00.000Z',updatedAt:'2099-09-01T12:00:00.000Z'};
+      await assertSucceeds(manager.doc('jobs/'+pto.id).set(pto,{merge:true}));
+      await assertSucceeds(manager.doc('jobs/'+pto.id).set({...pto,updatedAt:'2099-09-02T12:00:00.000Z'},{merge:true}));
+      await assertSucceeds(manager.doc('jobs/assigned').set({notes:'Merged manager note'},{merge:true}));
+      await assertSucceeds(manager.doc('jobs/'+pto.id).delete());
+    });
+    await t.test('the audit trail is append-only and attributed to the signed-in manager',async()=>{
+      const entry=(by,extra={})=>({action:'login',detail:'Logged in',by,at:'2099-09-01T12:00:00.000Z',serverAt:FieldValue.serverTimestamp(),...extra});
+      for(const [db,username] of [[crew,'crew1'],[otherCrew,'crew2'],[lead,'lead1']]){
+        await assertFails(db.collection('audit_log').add(entry(username)));
+        await assertFails(db.collection('audit_log').add(entry('zacb')));
+        await assertFails(db.doc('audit_log/existing').get());
+      }
+      await assertFails(publicDb.collection('audit_log').add(entry('zacb')));
+      await assertFails(manager.collection('audit_log').add(entry('tylerg')));
+      await assertFails(manager.collection('audit_log').add(entry('TylerG')));
+      await assertFails(manager.collection('audit_log').add({action:'login',detail:'Logged in',at:'2099-09-01T12:00:00.000Z'}));
+      await assertFails(manager.collection('audit_log').add(entry('zacb',{role:'owner'})));
+      await assertFails(manager.collection('audit_log').add(entry('zacb',{action:{forged:true}})));
+      await assertSucceeds(manager.collection('audit_log').add(entry('zacb')));
+      await assertSucceeds(manager.collection('audit_log').add({action:'mark_dead',by:'zacb',at:'2099-09-01T12:05:00.000Z',serverAt:FieldValue.serverTimestamp()}));
+      await assertSucceeds(partner.collection('audit_log').add(entry('TylerG',{action:'mark_quoted',detail:'Lead: Synthetic Lead · Quote: 450'})));
+      // The server clock is mandatory: legacy client-only shapes and client-chosen serverAt values are refused.
+      await assertFails(manager.collection('audit_log').add({action:'login',detail:'Logged in',by:'zacb',at:'2099-09-01T12:00:00.000Z'}));
+      await assertFails(manager.collection('audit_log').add(entry('zacb',{serverAt:Timestamp.fromDate(new Date('2099-09-01T12:00:00.000Z'))})));
+      await assertFails(manager.collection('audit_log').add(entry('zacb',{serverAt:'2099-09-01T12:00:00.000Z'})));
+      await assertFails(manager.collection('audit_log').add(entry('zacb',{serverAt:null})));
+      // 'at' must be present and ISO-8601 UTC shaped.
+      const {at,...withoutAt}=entry('zacb');assert.ok(at);
+      await assertFails(manager.collection('audit_log').add(withoutAt));
+      for(const bad of ['yesterday','2099-09-01','2099-09-01 12:00:00Z','2099-09-01T12:00:00+00:00','2099-09-01T12:00:00.000Z<b>','','x2099-09-01T12:00:00.000Z',4102488000000,null]) await assertFails(manager.collection('audit_log').add(entry('zacb',{at:bad})));
+      await assertSucceeds(manager.collection('audit_log').add(entry('zacb',{at:'2099-09-01T12:00:00Z'})));
+      // action and detail are bounded strings: 200 / 2000 UTF-16 code units, which is what Rules string.size()
+      // counts (a 2-unit emoji counts twice). employee.html addAuditLog clips to the same bounds.
+      await assertSucceeds(manager.collection('audit_log').add(entry('zacb',{action:'a'.repeat(200),detail:'d'.repeat(2000)})));
+      await assertSucceeds(manager.collection('audit_log').add(entry('zacb',{action:'\u{1F697}'.repeat(100),detail:'\u{1F697}'.repeat(1000)})));
+      for(const extra of [{action:''},{action:'a'.repeat(201)},{action:'\u{1F697}'.repeat(101)},{detail:'d'.repeat(2001)},{detail:'\u{1F697}'.repeat(1001)},{detail:42},{detail:null},{action:null}]) await assertFails(manager.collection('audit_log').add(entry('zacb',extra)));
+      // The real employee.html writer (clipping + serverTimestamp) satisfies these rules, even for oversized input.
+      const html=await readFile(new URL('../employee.html',import.meta.url),'utf8');
+      const slice=(start,end)=>{const from=html.indexOf(start),to=html.indexOf(end,from);assert.ok(from>=0&&to>from,start);return html.slice(from,to);};
+      const hubWrites=[];
+      const hub=vm.createContext({me:'ZacB',console:{warn(){}},firebase:compat.default||compat,Date:class{toISOString(){return '2099-09-01T12:10:00.000Z';}},
+        sessionStorage:{getItem:key=>key==='egc_business_access'?'true':null},
+        db:{collection:name=>({add:data=>{const write=environment.authenticatedContext('manager-cased',claims('ZacB','owner',true)).firestore().collection(name).add({...data});hubWrites.push(write);return write;}})}});
+      vm.runInContext(slice('function canRunBusiness()','async function ensureFirebaseSession(')+slice('function addAuditLog(','function renderAuditLog(')+"\naddAuditLog('hub_writer_'+'a'.repeat(300),'Lead: x'+'\\u{1F697}'.repeat(1500));addAuditLog('login');",hub);
+      assert.equal(hubWrites.length,2);
+      for(const write of hubWrites) await assertSucceeds(write);
+      await environment.withSecurityRulesDisabled(async context=>{
+        const saved=(await context.firestore().collection('audit_log').where('by','==','ZacB').get()).docs.map(doc=>doc.data()).sort((a,b)=>a.action.length-b.action.length);
+        assert.deepEqual(saved.map(row=>[row.action.length,row.detail.length,row.at,typeof row.serverAt?.toMillis]),[[5,0,'2099-09-01T12:10:00.000Z','function'],[200,1999,'2099-09-01T12:10:00.000Z','function']]);
+      });
+      await environment.withSecurityRulesDisabled(async context=>{
+        const saved=(await context.firestore().collection('audit_log').where('action','==','mark_quoted').get()).docs.map(doc=>doc.data());
+        assert.equal(saved.length,1);assert.equal(saved[0].by,'TylerG');
+        assert.equal(typeof saved[0].serverAt?.toMillis,'function','serverAt is stored as the server Timestamp.');
+      });
+      await assertSucceeds(manager.doc('audit_log/existing').get());
+      await assertSucceeds(manager.collection('audit_log').orderBy('at','desc').limit(50).get());
+      await assertSucceeds(manager.collection('audit_log').orderBy('serverAt','desc').limit(50).get());
+      for(const db of [manager,partner]){
+        await assertFails(db.doc('audit_log/existing').update({detail:'Rewritten'}));
+        await assertFails(db.doc('audit_log/existing').set(entry('zacb',{detail:'Replaced'})));
+        await assertFails(db.doc('audit_log/existing').delete());
+      }
+    });
+    await t.test('a crew session that tampers with its client business flag is still refused by the rules',async()=>{
+      // P1-02: the Hub trusts sessionStorage egc_business_access from the server profile and keeps no staff list,
+      // so the browser gate is only UX. The enforcement is the Hub-minted token: business_access comes from
+      // hasBusinessAccess(session) and username from session.user (functions/api/firebase-session.js).
+      const html=await readFile(new URL('../employee.html',import.meta.url),'utf8');
+      assert.doesNotMatch(html,/const ADMINS|BUSINESS_USERS/);
+      const slice=(start,end)=>{const from=html.indexOf(start),to=html.indexOf(end,from);assert.ok(from>=0&&to>from,start);return html.slice(from,to);};
+      const source=slice('function canRunBusiness()','async function ensureFirebaseSession(')+slice('function addAuditLog(','function renderAuditLog(');
+      let sequence=0;
+      // Runs the real addAuditLog with a client that claims business access, against a context holding tokenClaims.
+      const attempt=(me,tokenClaims)=>{
+        const writes=[];
+        const db=environment.authenticatedContext('tamper-'+(++sequence),tokenClaims).firestore();
+        vm.runInContext(source+"\naddAuditLog('tamper_probe','Lead: Synthetic Lead');",vm.createContext({me,console:{warn(){}},firebase:compat.default||compat,
+          Date:class{toISOString(){return '2099-09-01T12:20:00.000Z';}},sessionStorage:{getItem:key=>key==='egc_business_access'?'true':null},
+          db:{collection:name=>({add:data=>{const write=db.collection(name).add({...data});writes.push(write);return write;}})}}));
+        assert.equal(writes.length,1,'The client-side gate passes once the flag is forged, so only the rules stand in the way.');
+        return writes[0];
+      };
+      const {business_access:_omit,...noBusinessClaim}=claims('zacb','owner',true);
+      // Crew tokens (business_access false) are refused whatever the tampered client claims to be.
+      await assertFails(attempt('crew1',claims('crew1')));
+      await assertFails(attempt('zacb',claims('crew1')));
+      await assertFails(attempt('lead1',claims('lead1','crew_lead')));
+      // A privileged role or username in the token does not stand in for the server-minted business_access claim.
+      await assertFails(attempt('zacb',claims('zacb','owner',false)));
+      await assertFails(attempt('zacb',noBusinessClaim));
+      await assertFails(attempt('zacb',{...claims('zacb','owner',false),business_access:'true'}));
+      // A business token still cannot write under another name: 'by' must equal the token username exactly.
+      await assertFails(attempt('TylerG',claims('zacb','owner',true)));
+      await assertFails(attempt('ZacB',claims('zacb','owner',true)));
+      await assertSucceeds(attempt('zacb',claims('zacb','owner',true)));
+      await environment.withSecurityRulesDisabled(async context=>{
+        const saved=(await context.firestore().collection('audit_log').where('action','==','tamper_probe').get()).docs.map(doc=>doc.data());
+        assert.deepEqual(saved.map(row=>row.by),['zacb']);
+      });
     });
     await t.test('legacy availability reads stay private while all crew writes require the atomic server API',async()=>{
       await assertSucceeds(crew.doc('jobs/crew1-off').get());

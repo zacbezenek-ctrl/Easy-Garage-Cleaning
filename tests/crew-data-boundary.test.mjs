@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {readFileSync} from 'node:fs';
+import {readFileSync, readdirSync} from 'node:fs';
+import {join} from 'node:path';
+import {fileURLToPath} from 'node:url';
 import {crewJobProjection} from '../functions/_lib/crew-job-projection.js';
 
 test('legacy crew cards receive operational context without financial, signature or management data',()=>{
@@ -36,7 +38,27 @@ test('canonical Firestore job grants cannot bypass server crew projection or com
  const customer=rules.match(/match \/customers\/\{documentId\} \{([\s\S]*?)\n    \}/)?.[1];
  assert.ok(job);assert.doesNotMatch(job,/assignedToUser|assignedUpdateIsSafe/);
  assert.match(job,/allow read: if businessUser\(\) \|\| ownAvailability/);
- assert.match(job,/allow create, update, delete: if businessUser\(\);/);
+ // SEC-A: manager SDK writes exclude server-owned receipts and encrypted records.
+ // Every write method must also reject server-owned recordTypes on the stored and proposed document.
+ assert.doesNotMatch(job,/allow [^:]*write:|allow create, update, delete:/);
+ assert.match(job,/allow create: if businessUser\(\) && !serverOwnedJobRecord\(documentId\) &&\s*!serverOwnedJobData\(request\.resource\.data, documentId\);/);
+ assert.match(job,/allow update: if businessUser\(\) && !serverOwnedJobRecord\(documentId\) &&\s*!serverOwnedJobData\(resource\.data, documentId\) &&\s*!serverOwnedJobData\(request\.resource\.data, documentId\);/);
+ assert.match(job,/allow delete: if businessUser\(\) && !serverOwnedJobRecord\(documentId\) &&\s*!serverOwnedJobData\(resource\.data, documentId\);/);
+ assert.match(rules.match(/function serverOwnedJobRecord\(documentId\) \{([\s\S]*?)\n    \}/)?.[1]||'',/matches\('\(secure_\|_egc_\)\.\*'\) && !documentId\.matches\('_egc_schedule_lock_\.\*'\)/);
+ const ownedData=rules.match(/function serverOwnedJobData\(data, documentId\) \{([\s\S]*?)\n    \}/)?.[1]||'';
+ for(const type of ['employee_hub_v2','employee_account_v1','schedule_operation','schedule_provider_receipt','schedule_adoption','operational_record_receipt']) assert.ok(ownedData.includes(`'${type}'`),type);
+ assert.doesNotMatch(ownedData,/'crew_availability'/,'Manager PTO approvals still write crew_availability rows.');
+ assert.match(ownedData,/recordType == 'schedule_lock' && !documentId\.matches\('_egc_schedule_lock_\.\*'\)/);
+ // A new literal recordType in server code must be classified: deny it to SDK writes above, or
+ // (only if browsers legitimately write it, or it lives outside jobs) list it here.
+ const browserWritable=new Set(['schedule_lock','crew_availability']);
+ const serverTypes=new Set();
+ const functionsRoot=fileURLToPath(new URL('../functions/',import.meta.url));
+ for(const entry of readdirSync(functionsRoot,{recursive:true,withFileTypes:true}).filter(entry=>entry.isFile()&&entry.name.endsWith('.js'))){
+  for(const [,,type] of readFileSync(join(entry.parentPath,entry.name),'utf8').matchAll(/(recordType\s*:\s*|RECORD_TYPE\s*=\s*)['"]([a-z_0-9]+)['"]/g)) serverTypes.add(type);
+ }
+ for(const type of ['employee_hub_v2','employee_account_v1','operational_record_receipt','schedule_operation']) assert.ok(serverTypes.has(type),type);
+ for(const type of serverTypes) assert.ok(browserWritable.has(type)||ownedData.includes(`'${type}'`),`server-owned jobs recordType ${type} must be denied to browser SDK writes`);
  assert.match(customer,/allow update: if businessUser\(\);/);
  assert.doesNotMatch(customer,/assignedCustomerCloseout/);
  // Emulator acceptance exercises actual grants separately.

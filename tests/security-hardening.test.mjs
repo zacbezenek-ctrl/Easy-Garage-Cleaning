@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import vm from 'node:vm';
 import { createHubSessionCookie } from '../functions/_lib/hub-session.js';
 import { encodeFirestoreFields } from '../functions/_lib/firestore-job.js';
 import {sourceFiles} from './source-files.mjs';
@@ -68,6 +69,101 @@ test('confidential artifacts are removed and source paths are denied at the edge
   }
 });
 
+async function edge(path) {
+  const { onRequest } = await import('../functions/_middleware.js');
+  let continued = false;
+  const response = await onRequest({ request: new Request(`https://easygaragecleaning.com${path}`), env: {}, next: async () => { continued = true; return new Response('public', { headers: { 'Content-Type': 'text/plain' } }); } });
+  return { response, continued };
+}
+
+test('private source trees, tooling and deploy configs return a noindex 404 at the edge', async () => {
+  const blocked = [
+    '/egc-platform', '/egc-platform/', '/egc-platform/package.json', '/egc-platform/pnpm-workspace.yaml', '/egc-platform/apps/api/src/server.ts',
+    '/functions', '/functions/_middleware.js', '/functions/_lib/firebase-service-account.js', '/functions/api/employee-hub.js',
+    '/tools/', '/tools/gallery/publish-links.py', '/tools/gallery/showcase-browser.cjs', '/tools/gallery/simple-import.json',
+    '/.github/workflows/egc-firestore-ci.yml', '/.claude/settings.json', '/.claude/worktrees/unit/employee.html',
+    '/node_modules/@noble/hashes/package.json', '/node_modules/.pnpm/tslib@2.8.1/node_modules/tslib/tslib.html',
+    '/firebase.json', '/firebase.emulator.json', '/firebase.field-day.json', '/pnpm-lock.yaml', '/pnpm-workspace.yaml',
+    '/_finalize_urls.py', '/_services_data.py', '/__pycache__/_services_data.cpython-312.pyc', '/blog/generator.py', '/images/any.PY', '/deep/nested/tool.py/',
+    '/FUNCTIONS/_lib/hub-session.js', '/.GitHub/workflows/egc-platform-ci.yml', '/Firebase.Emulator.json',
+    '/%66unctions/_lib/hub-session.js', '/functions%2F_lib%2Fhub-session.js', '//functions/_lib/hub-session.js', '/%2Ffunctions/_lib/hub-session.js',
+    '/images/..%2Ffunctions/_lib/hub-session.js', '/crew/%2e%2e%2Ftools/gallery/simple-import.json', '/images%5C..%5Cegc-platform%5Cpackage.json', '/%E0%A4%A',
+  ];
+  for (const path of blocked) {
+    const { response, continued } = await edge(path);
+    assert.equal(response.status, 404, path);
+    assert.equal(continued, false, path);
+    assert.match(response.headers.get('x-robots-tag') || '', /noindex/, path);
+    assert.equal(response.headers.get('cache-control'), 'no-store', path);
+    assert.doesNotMatch(await response.text(), /public/, path);
+  }
+});
+
+test('public pages, crew tools and gallery data still reach the site after the private-path deny list', async () => {
+  const allowed = [
+    '/', '/crew/hub-auth.js', '/employee-suite.js', '/gallery-showcase.json', '/gallery-simple.json', '/before-after',
+    '/gallery-preview-assets/gallery.js', '/crew/', '/crew/postjob.html', '/employee', '/employee-dispatch.js', '/business-hub.js',
+    '/.well-known/security.txt', '/api/firebase-session', '/api/dispatch', '/projects/', '/images/logo.png', '/blog/',
+    '/toolshed', '/functions-of-a-garage', '/node_modules_guide', '/pricing.pyramid', '/firebase-setup', '/python-garage.html',
+  ];
+  for (const path of allowed) {
+    const { response, continued } = await edge(path);
+    assert.equal(continued, true, path);
+    assert.equal(response.status, 200, path);
+    assert.equal(await response.text(), 'public', path);
+  }
+});
+
+// Same-site paths a file references, resolved against the file's own URL, so relative
+// references from nested pages ('../tools/x.json' in /crew/page.html) are checked too.
+function siteReferences(text, path) {
+  const targets = [];
+  for (const match of text.matchAll(/\b(?:href|src|action)=["']([^"']+)["']|url\(\s*["']?([^"')\s]+)|["'`](\/[\w.~%-][^"'`\s]*)["'`]|https:\/\/(?:www\.)?easygaragecleaning\.com(\/[^"'`\s<>)]*)/g)) {
+    let url;
+    try { url = new URL(match.slice(1).find(Boolean) || '', `https://easygaragecleaning.com${path}`); } catch { continue; }
+    if (/^https:\/\/(?:www\.)?easygaragecleaning\.com$/.test(url.origin)) targets.push(url.pathname);
+  }
+  return targets;
+}
+
+test('the reference scan resolves relative, root-relative and absolute same-site URLs', async () => {
+  const cases = [
+    ['/crew/postjob.html', '<a href="../tools/gallery/simple-import.json">x</a>', ['/tools/gallery/simple-import.json']],
+    ['/blog/2026/post.html', '<script src="../../functions/_lib/hub-session.js"></script>', ['/functions/_lib/hub-session.js']],
+    ['/crew/index.html', '<img src="./../node_modules/x/a.png?v=1#top" alt="">', ['/node_modules/x/a.png']],
+    ['/css/site.css', 'body{background:url(../.github/banner.png)}', ['/.github/banner.png']],
+    ['/crew/index.html', '<form action="../_generate_site.py"></form>', ['/_generate_site.py']],
+    ['/crew/index.html', '<link href="https://www.easygaragecleaning.com/egc-platform/package.json">', ['/egc-platform/package.json']],
+    ['/crew/index.html', "fetch('/firebase.emulator.json')", ['/firebase.emulator.json']],
+    ['/crew/index.html', '<a href="hub-auth.js">x</a>', ['/crew/hub-auth.js']],
+    ['/crew/index.html', '<a href="mailto:a@example.invalid">m</a><a href="//cdn.example.invalid/tools/x.js">c</a><a href="https://example.invalid/functions/x">e</a><img src="data:image/png;base64,AA" alt="">', []],
+  ];
+  for (const [path, text, expected] of cases) {
+    assert.deepEqual(siteReferences(text, path), expected, text);
+    for (const target of expected.filter(target => !target.startsWith('/crew/'))) assert.equal((await edge(target)).continued, false, target);
+  }
+  assert.equal((await edge('/crew/hub-auth.js')).continued, true);
+});
+
+test('no servable page or script references a path the edge now refuses', async () => {
+  const failures = [], served = new Map(), scanned = new Set();
+  const passes = async path => {
+    if (!served.has(path)) served.set(path, (await edge(path)).continued);
+    return served.get(path);
+  };
+  for (const file of files()) {
+    const path = '/' + relative(root, file).split(/[\\/]/).join('/');
+    if (!/\.(?:html|js|css|json|webmanifest)$/.test(path) || !(await passes(path))) continue;
+    scanned.add(path);
+    for (const target of siteReferences(readFileSync(file, 'utf8'), path)) {
+      if (!(await passes(target))) failures.push(`${path} -> ${target}`);
+    }
+  }
+  for (const page of ['/index.html', '/employee.html', '/crew/index.html', '/before-after.html', '/employee-suite.js']) assert.ok(scanned.has(page), page);
+  for (const asset of ['/crew/hub-auth.js', '/employee-suite.js', '/styles.css', '/gallery-simple.js']) assert.equal(served.get(asset), true, asset);
+  assert.deepEqual([...new Set(failures)].sort(), []);
+});
+
 test('edge middleware adds browser security headers and a real explicit 404', async () => {
   const { onRequest } = await import('../functions/_middleware.js');
   const response = await onRequest({ request: new Request('https://easygaragecleaning.com/'), next: async () => new Response('ok', { headers: { 'Access-Control-Allow-Origin': '*' } }) });
@@ -94,6 +190,72 @@ test('Garage Guard scrubs Stripe bearer tokens before analytics initializes', ()
   assert.ok(scrub >= 0 && loader > scrub);
   assert.match(page,/<script src="\/analytics-loader\.js[^>]+defer>/);
   assert.match(page,/history\.replaceState\(null,''/);
+});
+
+test('Hub audit entries are written only from manager sessions and carry the signed-in username', () => {
+  const html = read('employee.html');
+  // P1-02: business identity comes only from the server profile (/api/hub-auth sign-in and session restore) and
+  // there is no client-side staff list. The Hub's check is a UX guard; the Firestore rules below are the enforcement.
+  assert.doesNotMatch(html, /const ADMINS|BUSINESS_USERS/);
+  const slice = (start, end) => {
+    const from = html.indexOf(start), to = html.indexOf(end, from);
+    assert.ok(from >= 0 && to > from, start);
+    return html.slice(from, to);
+  };
+  const source = slice('function canRunBusiness()', 'async function ensureFirebaseSession(') + slice('function addAuditLog(', 'function renderAuditLog(');
+  assert.doesNotMatch(source, /BUSINESS_USERS|ADMINS|localStorage|egc_owner|egc_role/);
+  const run = (me, businessAccess, call = `addAuditLog('mark_dead', 'Lead: Synthetic Lead');`) => {
+    const writes = [];
+    const context = vm.createContext({
+      me, console,
+      sessionStorage: { getItem: key => key === 'egc_business_access' && businessAccess !== undefined ? String(businessAccess) : null },
+      db: { collection: name => ({ add: entry => { writes.push({ name, entry }); return Promise.resolve(); } }) },
+      firebase: { firestore: { FieldValue: { serverTimestamp: () => ({ sentinel: 'serverTimestamp' }) } } },
+      Date: class { toISOString() { return '2026-09-22T12:00:00.000Z'; } },
+    });
+    vm.runInContext(`${source}\n${call}`, context);
+    return JSON.parse(JSON.stringify(writes));
+  };
+  const serverAt = { sentinel: 'serverTimestamp' };
+  assert.deepEqual(run('ZacB', true), [{ name: 'audit_log', entry: { action: 'mark_dead', detail: 'Lead: Synthetic Lead', by: 'ZacB', at: '2026-09-22T12:00:00.000Z', serverAt } }]);
+  // No write unless the server profile granted business access ('true' exactly) and a user is signed in.
+  for (const businessAccess of [false, 'false', 'TRUE', '1', 'yes', '', undefined]) {
+    assert.deepEqual(run('ZacB', businessAccess), [], String(businessAccess));
+    assert.deepEqual(run('crew.one', businessAccess), [], String(businessAccess));
+  }
+  for (const signedOut of [null, undefined, '']) assert.deepEqual(run(signedOut, true), [], String(signedOut));
+  // 'by' is always the signed-in username, never a label or a hard-coded manager. Whether that username may
+  // write at all is decided by the rules from the Hub-minted token, not by the browser (see below).
+  for (const user of ['TylerG', 'alexk', 'crew.one']) assert.deepEqual(run(user, true).map(write => write.entry.by), [user]);
+  // Oversized values are clipped to the rules' 200/2000 UTF-16-unit bounds (Rules string.size()) instead of
+  // being rejected, and a clip never splits a surrogate pair.
+  const [clipped] = run('ZacB', true, `addAuditLog('a'.repeat(250), 'Lead: x' + '\\u{1F697}'.repeat(2100));`);
+  assert.equal(clipped.entry.action, 'a'.repeat(200));
+  assert.equal(clipped.entry.detail, 'Lead: x' + '\u{1F697}'.repeat(996));
+  assert.equal(clipped.entry.detail.length, 1999);
+  assert.equal(run('ZacB', true, `addAuditLog('\\u{1F697}'.repeat(101), 'x'.repeat(2000));`)[0].entry.action, '\u{1F697}'.repeat(100));
+  assert.deepEqual(run('ZacB', true, `addAuditLog('login');`)[0].entry, { action: 'login', detail: '', by: 'ZacB', at: '2026-09-22T12:00:00.000Z', serverAt });
+
+  // The crew-refusal guarantee lives in firestore.rules, keyed to claims the server mints from the Hub session:
+  // business_access = hasBusinessAccess(session) and username = session.user. A crew account that tampers with
+  // sessionStorage or 'me' still holds a non-business token, so its create is denied; a manager cannot forge 'by'.
+  // tests/firestore-emulator.test.mjs proves both against the real rules with the real addAuditLog source.
+  const rules = read('firestore.rules');
+  const block = name => rules.match(new RegExp(`function ${name}\\(\\) \\{([\\s\\S]*?)\\n    \\}`))?.[1] || '';
+  assert.match(block('businessUser'), /request\.auth\.token\.business_access == true/);
+  assert.match(block('auditEntryIsSafe'), /entry\.by == request\.auth\.token\.username &&/);
+  const audit = rules.match(/match \/audit_log\/\{documentId\} \{([\s\S]*?)\n    \}/)?.[1] || '';
+  assert.match(audit, /allow read: if businessUser\(\);/);
+  assert.match(audit, /allow create: if businessUser\(\) && auditEntryIsSafe\(\);/);
+  assert.match(audit, /allow update, delete: if false;/);
+  assert.equal([...audit.matchAll(/allow /g)].length, 3);
+  const minted = read('functions/api/firebase-session.js');
+  assert.match(minted, /const businessAccess = hasBusinessAccess\(session\);/);
+  assert.match(minted, /business_access: businessAccess,/);
+  assert.match(minted, /username: String\(session\.user \|\| ''\)\.slice\(0, 80\),/);
+  const emulator = read('tests/firestore-emulator.test.mjs');
+  assert.match(emulator, /the audit trail is append-only and attributed to the signed-in manager/);
+  assert.match(emulator, /a crew session that tampers with its client business flag is still refused by the rules/);
 });
 
 test('Firestore requires a Hub-minted Firebase session and server calls use service authentication', () => {

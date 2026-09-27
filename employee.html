@@ -1721,9 +1721,14 @@ function reactivateLead(id) {
 
 /* ── Audit log ───────────────────────────────────────── */
 function addAuditLog(action, detail = '') {
+  // UX guard only: firestore.rules refuse tokens without the server-minted business_access claim and any 'by' other than the token username.
+  if (!canRunBusiness()) return;
+  // Rules cap action/detail at 200/2000 UTF-16 units (string.size()) and require the server clock in serverAt.
+  const clip = (value, max) => { let out = ''; for (const ch of String(value ?? '')) { if (out.length + ch.length > max) break; out += ch; } return out; };
   db.collection('audit_log').add({
-    action, detail, by: me,
-    at: new Date().toISOString()
+    action: clip(action, 200), detail: clip(detail, 2000), by: me,
+    at: new Date().toISOString(),
+    serverAt: firebase.firestore.FieldValue.serverTimestamp()
   }).catch(e => console.warn('audit_log write failed:', e));
 }
 

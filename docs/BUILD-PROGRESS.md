@@ -63,6 +63,10 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   `EGC_MESSAGING_DRY_RUN=false`): GHL messenger resolving recipients from saved data only, versioned owner-approved
   templates (`/message-templates`), per-kind policies with Denver quiet hours, preview confirm tokens, CAS `message_sends`
   ledger (uncertain never resent), billing messages kept out of the crew-readable thread. Gaps: no reconcile action, no Hub link.
+- **SEC-A** Firestore rules: business SDK sessions cannot write `secure_`/`_egc_` job ids (except day locks) or any doc
+  whose stored/proposed recordType is server-owned; `audit_log` is append-only, bounded, attributed to the signed-in
+  manager and server-timed (`serverAt == request.time`). Edge middleware 404s private source trees/configs (encoded and
+  dot-segment bypasses included). Client audit guard follows P1-02's server-profile model (rules enforce).
 
 ## In progress
 
@@ -96,7 +100,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | B2B-SEAMS | B2B hub extension seams + mobile compliance + idempotency/leak fixes | merged (4edcf75) |
 | SITE-0 | Site generator determinism/scope, regenerate stale before-after.html, nav a11y | merged (69ccc6d) |
 | SITE-5 | Lighthouse CI (mobile perf/a11y >= 90) harness + workflow | building |
-| SEC-A | Firestore rules hardening (vault/receipts/audit_log) + block private source paths | building |
+| SEC-A | Firestore rules hardening (vault/receipts/audit_log) + block private source paths | merged (c8905cd) |
 | SEC-B | Purpose-scoped keys + server-only hub_audit + single-use confirm tokens | merged (75b9e1b) |
 | SEC-C | Env inventory script/test + complete both .env.example files | building |
 | CI-A | Always-on root CI, split platform gate, clock-shift guard, field-execution acceptance in CI | building |
