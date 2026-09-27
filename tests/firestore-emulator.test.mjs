@@ -64,6 +64,11 @@ test('actual Firestore rules isolate canonical operations from crew SDK access',
     await t.test('customer portal revocation receipts remain server-only even for business SDK sessions',async()=>{
       for(const db of [publicDb,crew,manager]){const path='customerPortalOperations/receipt';await assertFails(db.doc(path).get());await assertFails(db.doc(path).set({linkVersion:0}));await assertFails(db.doc(path).delete());}
     });
+    await t.test('approved-send ledgers, message templates and messaging receipts remain server-only even for business SDK sessions',async()=>{
+      await environment.withSecurityRulesDisabled(async context=>{const db=context.firestore();await db.doc('message_sends/send').set({kind:'payment_reminder',status:'submitted',targetId:'assigned'});await db.doc('message_templates/payment_reminder').set({kind:'payment_reminder',liveVersion:1});await db.doc('message_operations/receipt').set({actorId:'zacb',action:'template.approve'});});
+      for(const db of [publicDb,crew,lead,manager]) for(const path of ['message_sends/send','message_templates/payment_reminder','message_operations/receipt']){await assertFails(db.doc(path).get());await assertFails(db.doc(path).set({status:'changed'}));await assertFails(db.doc(path).update({status:'changed'}));await assertFails(db.doc(path).delete());}
+      for(const db of [crew,manager]) for(const name of ['message_sends','message_templates','message_operations']) await assertFails(db.collection(name).get());
+    });
     await t.test('manager administrative schedule and customer access remains functional',async()=>{
       await assertSucceeds(manager.doc('jobs/assigned').get());
       await assertSucceeds(manager.doc('customers/customer').get());

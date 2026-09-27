@@ -294,6 +294,18 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // Approved-send ledger, owner-approved message wording and request
+    // receipts are server-only. Browsers use /api/messages and templates APIs.
+    match /message_sends/{documentId} {
+      allow read, write: if false;
+    }
+    match /message_templates/{documentId} {
+      allow read, write: if false;
+    }
+    match /message_operations/{documentId} {
+      allow read, write: if false;
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }

@@ -59,6 +59,10 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   `tools/site-build.json`), one private-scope walker (worktrees, venvs, caches never read), per-run leaks fixed,
   `npm run site:build` also re-renders `before-after.html`; drift test rebuilds in a temp copy. Nav drawer `inert`/focus
   and 44px footer taps (inline `footer-tap` stopgap until SITE-4 moves it into styles.css).
+- **MSG-CORE** Approved-send core (nothing wired yet; `EGC_MESSAGING_ENABLED` off, dry run unless
+  `EGC_MESSAGING_DRY_RUN=false`): GHL messenger resolving recipients from saved data only, versioned owner-approved
+  templates (`/message-templates`), per-kind policies with Denver quiet hours, preview confirm tokens, CAS `message_sends`
+  ledger (uncertain never resent), billing messages kept out of the crew-readable thread. Gaps: no reconcile action, no Hub link.
 
 ## In progress
 
@@ -87,7 +91,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | F-PWA | Crew PWA shell + offline action outbox (field actions + time clock) | building |
 | F-EXP | Field cost capture (materials, dump fees) | building |
 | F-LEG | Legacy crew send-path hardening (quo-send idempotency etc.) | building |
-| MSG-CORE | Approved-send core: GHL messenger, owner-approved templates, message_sends ledger, messages API | building |
+| MSG-CORE | Approved-send core: GHL messenger, owner-approved templates, message_sends ledger, messages API | merged (b7da326) |
 | HUB-REG | Hub screen registry, UI kit, shell stability, mobile shell pass, microphone policy fix | building |
 | B2B-SEAMS | B2B hub extension seams + mobile compliance + idempotency/leak fixes | merged (4edcf75) |
 | SITE-0 | Site generator determinism/scope, regenerate stale before-after.html, nav a11y | merged (69ccc6d) |
@@ -296,6 +300,9 @@ Not yet launched.
 - **D-004 Behavior-changing fixes default off.** Where a bug fix changes live behavior (e.g. honoring legacy
   blocked_days in dispatch), it ships behind a flag defaulting to current behavior, and the owner checklist
   recommends the setting.
+- **D-005 One confirmation system (planned).** MSG-CORE mints its own preview confirm token (HMAC keyed by
+  'message-confirm' from HUB_SESSION_SECRET). SEC-B now provides purpose keys and `confirm-token.js`; follow-up M5 moves
+  messaging onto SEC-B's `egc/confirm/v1` purpose key so there is one confirmation system. Not done in the MSG-CORE merge.
 
 ## Blockers
 

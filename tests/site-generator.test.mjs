@@ -22,7 +22,7 @@ const probe = spawnSync('python3', ['--version'], { encoding: 'utf8' });
 const skip = probe.error || probe.status !== 0 ? 'python3 is not installed' : false;
 // Other checkouts, dependencies and binary assets are never read by the build.
 const NOT_COPIED = new Set(['.git', '.claude', 'node_modules', '.pnpm-store', '.wrangler', 'test-results', 'egc-platform', 'images', 'gallery-ideal-assets', 'gallery-preview-assets', 'internal-gallery-assets', '__pycache__']);
-const PRIVATE_SHELLS = ['business-hub.html', 'dispatch.html', 'hub-login-setup.html', 'customer-portal.html', 'employee.html', 'copilot.html', 'quote.html'];
+const PRIVATE_SHELLS = ['business-hub.html', 'dispatch.html', 'hub-login-setup.html', 'customer-portal.html', 'employee.html', 'copilot.html', 'quote.html', 'message-templates.html'];
 // Bait for every rewrite the generator does: old analytics tags, a drawer without
 // inert, a footer, .html links, lazy-load candidates and a title the SEO audit shortens.
 const BAIT = `<!DOCTYPE html>
@@ -120,7 +120,7 @@ test('the site build reproduces the checked-in pages, twice, without touching pr
   assert.match(sitemap, new RegExp(`<lastmod>${BUILD_DATE}</lastmod>`));
   const llms = readFileSync(join(site, 'llms.txt'), 'utf8');
   assert.match(llms, /^- https:\/\/easygaragecleaning\.com\/before-after$/m);
-  assert.doesNotMatch(llms, /node_modules|\.claude|worktrees|egc-platform|synthetic|client-login|business-hub|\/dispatch|hub-login-setup|\/employee|\/crew\/|venv|\.next|\.turbo|\.cache|lighthouse|test-results|field-qa/);
+  assert.doesNotMatch(llms, /node_modules|\.claude|worktrees|egc-platform|synthetic|client-login|business-hub|\/dispatch|hub-login-setup|message-templates|\/employee|\/crew\/|venv|\.next|\.turbo|\.cache|lighthouse|test-results|field-qa/);
 });
 
 test('the recorded build date is the single source the drift check rebuilds with', { skip }, t => {

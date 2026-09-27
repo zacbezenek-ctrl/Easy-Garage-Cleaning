@@ -80,7 +80,8 @@ TODAY = site_build_date()
 # rewrites them, lists them in llms.txt, or adds marketing analytics to them.
 PRIVATE_HTML = frozenset({
     "business-hub.html", "client-login.html", "copilot.html", "customer-portal.html", "dispatch.html",
-    "employee.html", "employee-signup.html", "hub-login-setup.html", "quote.html", "sop.html", "tyler-contract.html",
+    "employee.html", "employee-signup.html", "hub-login-setup.html", "message-templates.html", "quote.html", "sop.html",
+    "tyler-contract.html",
 })
 PRIVATE_HTML_PREFIXES = ("employee",)
 # Agent worktrees, dependencies, virtualenvs, build caches, test/QA output, server code,
