@@ -4,6 +4,7 @@ import { firebaseServiceAccountConfigured } from '../_lib/firebase-service-accou
 import { createJobAssignmentAccess } from '../_lib/job-assignment.js';
 import { fieldCancelled, fieldCommand, fieldFailure, fieldFingerprint, fieldId, fieldJobProjection, fieldPhotos, fieldRequestId, fieldStage, fieldText, fieldViewerWorksOn } from '../_lib/field-execution.js';
 import { createFieldStore } from '../_lib/field-execution-store.js';
+import { applyMembershipVisit, garageGuardStorage, garageGuardVisitTrackingEnabled } from '../_lib/garage-guard-visits.js';
 import { createFieldPhotoClient, decodeFieldPhoto, fieldPhotosConfigured, verifyFieldPhotoMetadata } from '../_lib/field-execution-photos.js';
 import { syncFieldCompletion } from '../_lib/field-execution-sync.js';
 import { fieldJobTime } from '../_lib/field-execution-time.js';
@@ -174,6 +175,10 @@ export async function onRequestPost(handlerContext) {
       await ctx.store.commit(job, result.patch, { ...result.event, fingerprint });
       if (input.action === 'complete' && typeof handlerContext.waitUntil === 'function') {
         handlerContext.waitUntil(syncFieldCompletion(env, job.id, { actor: ctx.session }));
+      }
+      // A failed or skipped count stays 'pending' on the visit for a manager (/api/garage-guard-members).
+      if (input.action === 'complete' && result.patch.membershipVisit && garageGuardVisitTrackingEnabled(env) && typeof handlerContext.waitUntil === 'function') {
+        handlerContext.waitUntil(applyMembershipVisit(garageGuardStorage(env), ctx.session, { jobId: job.id, via: 'field' }).catch(() => null));
       }
     }
     return reply(200, { ok: true, alreadyApplied: false, ...await detail(ctx, env, job.id) });

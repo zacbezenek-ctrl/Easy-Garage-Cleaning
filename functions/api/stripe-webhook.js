@@ -23,6 +23,11 @@
  * membership_reviews item), mirrored onto the account job's garageGuard, and
  * the team alert is claimed durably so a replay never re-sends it. With the
  * flag off the Zapier relay payloads are exactly the pre-M2 ones.
+ * The same commit records the Stripe amounts (amount paid and total,
+ * discount, promotion codes), the billing-period ledger, the churn class and
+ * the membership funnel events (garage-guard-ledger.js, FUN-20); when a
+ * tracked billing period closes it first lists the membership's member-visit
+ * jobs (membershipStorage.membershipVisits), and a failure there is a 503.
  *
  * Security model:
  *  - Every request must carry a valid Stripe-Signature header. The HMAC is
@@ -46,6 +51,7 @@
 
 import { CHECKOUT_KINDS, readStripeCheckout, recordCrewStripePayment, recordCustomerStripePayment } from '../_lib/customer-payments.js';
 import { applyGarageGuardEvent, claimGarageGuardAlert, expireGarageGuardAlert, garageGuardEvent, garageGuardMembershipSyncEnabled, membershipStorage, settleGarageGuardAlert } from '../_lib/garage-guard-membership.js';
+import { garageGuardBilling, garageGuardLedgerStore, garageGuardVisitTrackingEnabled } from '../_lib/garage-guard-ledger.js';
 
 const MAX_BODY = 256 * 1024;
 const TOLERANCE_SECONDS = 300;
@@ -248,7 +254,9 @@ export function stripeWebhookHandlers({ storage = membershipStorage, now = () =>
     if (!input) return json(200, { ok: true, received: true, ignored: true });
     const store = storage(env);
     let outcome;
-    try { outcome = await applyGarageGuardEvent(store, input, { now: stamp, alerts: Boolean(hook) }); }
+    // FUN-20: the membership commit also carries the Stripe amounts, the billing-period ledger, churn class and funnel events;
+    // each billing period records whether member visit tracking was on at every event of its life.
+    try { outcome = await applyGarageGuardEvent(garageGuardLedgerStore(store, input, garageGuardBilling(event), stamp, { visitTracking: garageGuardVisitTrackingEnabled(env) }), input, { now: stamp, alerts: Boolean(hook) }); }
     catch { return json(503, { ok: false, error: 'Membership recording needs retry' }); }
     if (outcome.status === 'ignored') return json(200, { ok: true, received: true, ignored: true });
     if (hook) {

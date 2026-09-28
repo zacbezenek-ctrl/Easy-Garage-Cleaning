@@ -57,6 +57,7 @@ test('actual Firestore rules isolate canonical operations from crew SDK access',
         'memberships/sub_synthetic':{plan:'guard',status:'active',customerEmail:'member@example.invalid'},
         'stripe_events/evt_synthetic':{type:'invoice.paid',subscriptionId:'sub_synthetic'},
         'membership_reviews/sub_synthetic':{status:'open',reason:'ambiguous_customer'},
+        'garage_guard_operations/receipt':{actorId:'zacb',action:'visits.reconcile',fingerprint:'synthetic'},
         'payment_reviews/cs_test_synthetic':{status:'open',reason:'payment_exceeds_balance',jobId:'assigned',amountCents:50000},
         'moneyOperations/receipt':{actorId:'zacb',action:'payment.record_offline',jobId:'assigned',fingerprint:'synthetic'},
         'moneyInvoiceNumbers/n_INV-ASSIGN':{number:'INV-ASSIGN',jobId:'assigned'},
@@ -111,10 +112,11 @@ test('actual Firestore rules isolate canonical operations from crew SDK access',
       for(const db of [crew,manager]) for(const name of ['messaging_settings','messaging_runs','messaging_holds']) await assertFails(db.collection(name).get());
     });
     await t.test('Garage Guard memberships, Stripe event receipts and reviews are webhook-only',async()=>{
-      for(const db of [publicDb,crew,manager]) for(const path of ['memberships/sub_synthetic','stripe_events/evt_synthetic','membership_reviews/sub_synthetic','payment_reviews/cs_test_synthetic']){await assertFails(db.doc(path).get());await assertFails(db.doc(path).update({status:'changed'}));await assertFails(db.doc(path).delete());}
+      for(const db of [publicDb,crew,manager]) for(const path of ['memberships/sub_synthetic','stripe_events/evt_synthetic','membership_reviews/sub_synthetic','payment_reviews/cs_test_synthetic','garage_guard_operations/receipt']){await assertFails(db.doc(path).get());await assertFails(db.doc(path).update({status:'changed'}));await assertFails(db.doc(path).delete());}
       await assertFails(manager.doc('memberships/sub_new').set({plan:'black',status:'active'}));
       await assertFails(manager.collection('memberships').get());
       await assertFails(manager.collection('payment_reviews').get());
+      await assertFails(manager.collection('garage_guard_operations').get());
       await assertFails(crew.doc('payment_reviews/cs_test_forged').set({status:'resolved',jobId:'assigned'}));
     });
     await t.test('hub bridge command receipts (audit and idempotency) remain server-only even for business SDK sessions',async()=>{
@@ -492,10 +494,11 @@ test('actual Firestore rules isolate canonical operations from crew SDK access',
     await t.test('Garage Guard events link, mirror and dedupe through actual Firestore REST',async()=>{
       const {membershipStorage,applyGarageGuardEvent,garageGuardEvent}=await import('../functions/_lib/garage-guard-membership.js');
       await environment.withSecurityRulesDisabled(async context=>{const db=context.firestore();await db.doc('customers/gg-customer').set({name:'Synthetic Member',phone:'9705550177',email:'member@example.invalid'});await db.doc('jobs/gg-root').set({type:'job',customerId:'gg-customer',customer:'Synthetic Member'});await db.doc('jobs/gg-visit').set({type:'job',customerId:'gg-customer',customerAccountOwnerJobId:'gg-root'});});
-      const store=membershipStorage({},async(_env,url,options={})=>{
+      const emulatorFetch=async(_env,url,options={})=>{
         const target=new URL(url);target.protocol='http:';target.host=host;target.pathname=target.pathname.replace('/projects/egcw-1ec83/','/projects/'+projectId+'/');
         return fetch(target,{...options,...(options.body ? {body:options.body.replaceAll('projects/egcw-1ec83/','projects/'+projectId+'/')} : {}),headers:{...options.headers,Authorization:'Bearer owner'}});
-      });
+      };
+      const store=membershipStorage({},emulatorFetch);
       const event=(id,created)=>garageGuardEvent({id,type:'checkout.session.completed',created,data:{object:{mode:'subscription',payment_status:'paid',subscription:'sub_emulator',customer:'cus_emulator',metadata:{plan:'lite'},customer_details:{email:'MEMBER@example.invalid',phone:'+19705550177'}}}});
       const results=await Promise.all([applyGarageGuardEvent(store,event('evt_emulator_1',1),{now:'2099-09-10T12:00:00.000Z',alerts:true}),applyGarageGuardEvent(store,event('evt_emulator_1',1),{now:'2099-09-10T12:00:00.000Z',alerts:true})]);
       assert.deepEqual(results.map(result=>result.status).sort(),['applied','duplicate']);
@@ -503,6 +506,14 @@ test('actual Firestore rules isolate canonical operations from crew SDK access',
       assert.deepEqual({plan:job.garageGuard.plan,visits:job.garageGuard.visitsRemaining,membershipId:job.garageGuard.membershipId},{plan:'lite',visits:2,membershipId:'sub_emulator'});
       assert.equal(membership.link.accountJobId,'gg-root');assert.equal((await store.read('stripe_events','evt_emulator_1')).alert.status,'pending');
       assert.equal((await store.read('jobs','gg-visit')).garageGuard,undefined);
+      // FUN-20: the ledger's exact membershipId query (with its field mask) when a billing period closes.
+      await environment.withSecurityRulesDisabled(async context=>{const db=context.firestore();await db.doc('jobs/gg-member-visit').set({type:'job',customerId:'gg-customer',membershipId:'sub_emulator',visitPurpose:'member_visit',status:'completed',completedAt:'2099-09-12T12:00:00.000Z',membershipVisit:{status:'pending'},total:900});await db.doc('jobs/gg-other-member').set({type:'job',customerId:'gg-customer',membershipId:'sub_emulator_other',status:'completed'});});
+      const memberVisits=await store.membershipVisits('sub_emulator');
+      assert.deepEqual([memberVisits.complete,memberVisits.rows.map(row=>row.id),memberVisits.rows[0].membershipVisit,memberVisits.rows[0].completedAt,memberVisits.rows[0].total,typeof memberVisits.rows[0].revision],[true,['gg-member-visit'],{status:'pending'},'2099-09-12T12:00:00.000Z',undefined,'string']);
+      // FUN-20 second review: visits.reconcile lists them again (the manager store) for a year that closed without a list.
+      const {garageGuardStorage}=await import('../functions/_lib/garage-guard-visits.js');
+      const managerVisits=await garageGuardStorage({},emulatorFetch).membershipVisits('sub_emulator');
+      assert.deepEqual([managerVisits.complete,managerVisits.rows.map(row=>row.id),managerVisits.rows[0].membershipVisit,managerVisits.rows[0].total,managerVisits.rows[0].revision],[true,['gg-member-visit'],{status:'pending'},undefined,memberVisits.rows[0].revision]);
       assert.equal((await applyGarageGuardEvent(store,event('evt_emulator_1',1),{now:'2099-09-11T12:00:00.000Z'})).status,'duplicate');
       assert.equal((await store.read('memberships','sub_emulator')).revision,membership.revision,'a replay writes nothing');
       assert.equal((await store.read('customerIdentityState','revision')).lastStripeEventId,'evt_emulator_1','the first link creates the identity guard it fences');
@@ -514,6 +525,54 @@ test('actual Firestore rules isolate canonical operations from crew SDK access',
       const racedResult=await applyGarageGuardEvent(racing,second,{now:'2099-09-10T12:00:02.000Z'});
       assert.deepEqual({raced,link:racedResult.link,reason:racedResult.reason,mirrored:racedResult.mirrored},{raced:true,link:'needs_review',reason:'ambiguous_customer',mirrored:false});
       assert.equal((await store.read('jobs','gg-second-root')).garageGuard,undefined,'the stale one-customer decision never reaches the job');
+    });
+    await t.test('FUN-20: a close fences only the member visits that could land in its year, and a manager confirms an unlisted year empty, through actual Firestore REST',async()=>{
+      const {membershipStorage,applyGarageGuardEvent,garageGuardEvent}=await import('../functions/_lib/garage-guard-membership.js');
+      const {garageGuardLedgerStore,garageGuardBilling,LEDGER_LIMITS}=await import('../functions/_lib/garage-guard-ledger.js');
+      const {garageGuardStorage,garageGuardAction}=await import('../functions/_lib/garage-guard-visits.js');
+      const emulatorFetch=async(_env,url,options={})=>{
+        const target=new URL(url);target.protocol='http:';target.host=host;target.pathname=target.pathname.replace('/projects/egcw-1ec83/','/projects/'+projectId+'/');
+        return fetch(target,{...options,...(options.body ? {body:options.body.replaceAll('projects/egcw-1ec83/','projects/'+projectId+'/')} : {}),headers:{...options.headers,Authorization:'Bearer owner'}});
+      };
+      const NOW='2099-06-01T12:00:00.000Z',T=seconds=>new Date(Date.parse(NOW)+seconds*1000).toISOString(),DAY=86400,created=Math.floor(Date.parse(NOW)/1000);
+      const raw=membershipStorage({},emulatorFetch);
+      // A linked member with one open tracked year, more cancelled member visits than a year can list, and one scheduled visit.
+      const seed=async sub=>{
+        await environment.withSecurityRulesDisabled(async context=>{const db=context.firestore();for(let index=0;index<=LEDGER_LIMITS.visits;index++)await db.doc(`jobs/${sub}-cancelled-${index}`).set({type:'job',customerId:`c-${sub}`,membershipId:sub,visitPurpose:'member_visit',status:'cancelled',pipelineStatus:'cancelled',date:'2099-04-01'});});
+        await raw.commit([
+          {collection:'customers',id:`c-${sub}`,patch:{name:'Synthetic Member',phone:'9705550188',email:`${sub}@example.invalid`}},
+          {collection:'jobs',id:`root-${sub}`,patch:{type:'job',customerId:`c-${sub}`,customer:'Synthetic Member',garageGuard:{plan:'guard',status:'active',visitsIncluded:4,visitsRemaining:4,membershipId:sub,source:'stripe'}}},
+          {collection:'jobs',id:`next-${sub}`,patch:{type:'job',customerId:`c-${sub}`,membershipId:sub,visitPurpose:'member_visit',status:'scheduled',date:'2099-07-01'}},
+          {collection:'memberships',id:sub,patch:{subscriptionId:sub,status:'active',plan:'guard',visitsIncluded:4,visitsRemaining:4,livemode:true,currentPeriodEnd:T(265*DAY),statusEventCreated:created-100*DAY,createdAt:T(-100*DAY),ledgerVersion:1,startedAt:T(-100*DAY),
+            customerEmail:`${sub}@example.invalid`,phone:'+19705550188',link:{status:'linked',customerId:`c-${sub}`,accountJobId:`root-${sub}`,mirroredAt:T(-100*DAY)},
+            periods:[{id:'in_emu',status:'open',openedAt:T(-100*DAY),paidSource:'invoice',invoiceId:'in_emu',invoiceIds:['in_emu'],paidCents:80000,periodStart:T(-100*DAY),periodEnd:T(265*DAY),plan:'guard',visitsIncluded:4,visitsTracked:true,visitsUsed:0,recognizedCents:0,visits:[],adjustments:[],closedAt:null,closeReason:null,breakageCents:null,breakageUnknown:null}]}},
+        ]);
+      };
+      const cancel=sub=>garageGuardEvent({id:`evt_emu_cancel_${sub.replace(/[^A-Za-z0-9]/g,'')}`,type:'customer.subscription.deleted',created,livemode:true,data:{object:{id:sub,object:'subscription',customer:'cus_emu',status:'canceled',metadata:{plan:'guard'},canceled_at:created,ended_at:created,cancellation_details:{reason:'cancellation_requested'}}}});
+      const close=(store,sub,now)=>{const input=cancel(sub);return applyGarageGuardEvent(garageGuardLedgerStore(store,input,garageGuardBilling({type:'customer.subscription.deleted',data:{object:{cancellation_details:{reason:'cancellation_requested'}}}}),now,{visitTracking:true}),input,{now,alerts:false});};
+      // The scheduled visit is completed, backdated into the year, between the close's listing and its commit: its fence conflicts and the close lists again.
+      const fenced='sub_emu_fence5';await seed(fenced);
+      let listings=0;
+      const racing={...raw,async membershipVisits(id){const out=await raw.membershipVisits(id);listings++;if(listings===1){const job=await raw.read('jobs',`next-${fenced}`);await raw.commit([{collection:'jobs',id:job.id,revision:job.revision,patch:{status:'completed',pipelineStatus:'completed',completedAt:T(-10*DAY),membershipVisit:{status:'pending',membershipId:fenced}}}]);}return out;}};
+      const first=await raw.membershipVisits(fenced);
+      assert.deepEqual([first.complete,first.rows.length,first.rows.find(row=>row.id===`next-${fenced}`).date],[true,LEDGER_LIMITS.visits+2,'2099-07-01'],'the listing carries each job\'s date');
+      assert.equal((await close(racing,fenced,T(60))).status,'applied');
+      let period=(await raw.read('memberships',fenced)).periods[0];
+      assert.deepEqual([listings,period.status,period.unresolvedVisitJobIds,period.breakageCents,period.breakageUnknown],[2,'closed',[`next-${fenced}`],null,'visits_unresolved'],'the cancelled jobs never made the list unknown');
+      // With only cancelled jobs and the scheduled one, the year closes with a known breakage.
+      const quiet='sub_emu_quiet5';await seed(quiet);
+      assert.equal((await close(raw,quiet,T(60))).status,'applied');
+      period=(await raw.read('memberships',quiet)).periods[0];
+      assert.deepEqual([period.unresolvedVisitJobIds,period.breakageCents,period.breakageUnknown],[[],80000,null]);
+      // A listing that keeps failing: past the retry window the year closes unlisted, and a manager confirms it has no visit waiting.
+      const unlisted='sub_emu_unlisted5';await seed(unlisted);
+      const failing={...raw,membershipVisits:async()=>{throw Object.assign(new Error('down'),{code:'garage_guard_storage_unavailable'});}};
+      assert.equal((await close(failing,unlisted,T(2*3600))).status,'applied');
+      assert.equal((await raw.read('memberships',unlisted)).periods[0].unresolvedVisitJobIds,null);
+      const manager={user:'alexk',role:'manager',businessAccess:true},gg=garageGuardStorage({},emulatorFetch),down={...gg,membershipVisits:failing.membershipVisits};
+      const confirmed=await garageGuardAction(down,manager,{action:'visits.reconcile',requestId:crypto.randomUUID(),membershipId:unlisted,expectedRevision:(await raw.read('memberships',unlisted)).revision,visitsRemaining:4,note:'No member visit was done before the cancellation.',confirmEmptyPeriodIds:['in_emu']},T(3*3600));
+      period=(await raw.read('memberships',unlisted)).periods[0];
+      assert.deepEqual([confirmed.confirmedEmptyPeriodIds,period.unresolvedVisitJobIds,period.breakageCents,period.visitsConfirmedEmpty.by],[['in_emu'],[],80000,'alexk']);
     });
     await t.test('funnel events are server-only and land atomically with their business change through actual Firestore REST',async()=>{
       const {dispatchStorage}=await import('../functions/_lib/dispatch-storage.js');

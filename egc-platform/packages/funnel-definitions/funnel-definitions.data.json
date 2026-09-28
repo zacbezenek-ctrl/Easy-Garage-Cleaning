@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "definitionsVersion": "2026-09-28.2",
+  "definitionsVersion": "2026-09-28.3",
   "about": "Canonical funnel definitions shared by the Employee Hub and egc-platform (@egc/funnel-definitions). Edit only this file, then run `node scripts/funnel-definitions.mjs --write`. docs/FUNNEL-METRICS.md is the living spec.",
   "timeZone": "America/Denver",
   "eligibility": {
@@ -75,7 +75,9 @@
     "creditClasses": ["gift_purchase", "garage_guard", "referral", "courtesy", "unknown"],
     "disputeOutcomes": ["won", "lost", "warning_closed"],
     "metricStatuses": ["complete", "partial", "unknown"],
-    "coverageReasons": ["pre_cutover_history", "definitions_mismatch", "source_unavailable", "missing_outcome", "cohort_immature", "unattributed"]
+    "coverageReasons": ["pre_cutover_history", "definitions_mismatch", "source_unavailable", "missing_outcome", "cohort_immature", "unattributed"],
+    "garageGuardPlans": ["lite", "guard", "black"],
+    "membershipChurnClasses": ["voluntary", "involuntary"]
   },
   "reasonCodes": {
     "walkthroughOutcome": ["sold_on_site", "quote_to_follow", "not_interested", "customer_no_show", "rescheduled"],
@@ -220,7 +222,11 @@
     "origin": { "type": "enum", "values": "vocabularies.inquiryOrigins" },
     "creditClass": { "type": "enum", "values": "vocabularies.creditClasses" },
     "disputeOutcome": { "type": "enum", "values": "vocabularies.disputeOutcomes" },
-    "score": { "type": "integer", "min": 1, "max": 5 }
+    "score": { "type": "integer", "min": 1, "max": 5 },
+    "plan": { "type": "enum", "values": "vocabularies.garageGuardPlans" },
+    "churnClass": { "type": "enum", "values": "vocabularies.membershipChurnClasses" },
+    "discountCents": { "type": "cents" },
+    "breakageCents": { "type": "cents" }
   },
   "eventTypes": {
     "inquiry.received": { "group": "demand", "entity": ["inquiryId"], "required": ["origin"], "optional": ["serviceLine", "funnelPath"] },
@@ -272,11 +278,11 @@
     "rebook.requested": { "group": "after_job", "entity": ["jobId", "customerId", "projectId"], "required": [], "optional": [] },
     "rebook.contacted": { "group": "after_job", "entity": ["jobId", "customerId", "projectId"], "required": [], "optional": [] },
     "rebook.booked": { "group": "after_job", "entity": ["jobId", "customerId", "projectId"], "required": [], "optional": [] },
-    "membership.started": { "group": "membership", "entity": ["membershipId"], "required": [], "optional": ["amountCents"] },
-    "membership.renewed": { "group": "membership", "entity": ["membershipId"], "required": [], "optional": ["amountCents"] },
-    "membership.payment_failed": { "group": "membership", "entity": ["membershipId"], "required": [], "optional": ["amountCents"] },
-    "membership.cancelled": { "group": "membership", "entity": ["membershipId"], "required": [], "optional": ["initiatedBy"] },
-    "membership.visit_used": { "group": "membership", "entity": ["membershipId"], "required": [], "optional": ["occurrence"] }
+    "membership.started": { "group": "membership", "entity": ["membershipId"], "required": [], "optional": ["amountCents", "discountCents", "plan"] },
+    "membership.renewed": { "group": "membership", "entity": ["membershipId"], "required": [], "optional": ["amountCents", "discountCents", "breakageCents", "plan"] },
+    "membership.payment_failed": { "group": "membership", "entity": ["membershipId"], "required": [], "optional": ["amountCents", "plan"] },
+    "membership.cancelled": { "group": "membership", "entity": ["membershipId"], "required": [], "optional": ["initiatedBy", "churnClass", "breakageCents", "plan"] },
+    "membership.visit_used": { "group": "membership", "entity": ["membershipId"], "required": [], "optional": ["occurrence", "amountCents", "plan"] }
   },
   "eventGroups": ["demand", "walkthrough", "deal", "money", "visit", "project", "after_job", "membership"]
 }

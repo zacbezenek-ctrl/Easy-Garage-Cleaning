@@ -392,6 +392,11 @@ service cloud.firestore {
     match /membership_reviews/{documentId} {
       allow read, write: if false;
     }
+    // Receipts for Garage Guard member-visit and visit-count actions (FUN-20,
+    // /api/garage-guard-members), written in the same commit as the change.
+    match /garage_guard_operations/{documentId} {
+      allow read, write: if false;
+    }
     // Confirmed crew card charges the webhook held off their job for a manager.
     match /payment_reviews/{documentId} {
       allow read, write: if false;
