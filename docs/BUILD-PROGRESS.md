@@ -294,6 +294,11 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   and an Open follow-ups link to the Action Center overdue view; failures never show as zero. MCP `egc.whats_overdue`
   is a read-only registry tool (at most 996 actions per call, then coverage.complete=false).
   Gap: the deprecated screen-level homeWidget stub stays until every unit pinning `homeWidget: null` is merged.
+- **PRICE-SCRUB** Internal prices, pay and targets leave browser code: functions/_lib/pricing-config.js serves the
+  walkthrough, phone, B2B rate card and owner economics by role through /api/pricing-config (crew 403, owner part
+  owner-only); the walkthrough caches tables per user/version and fails closed offline. The six catalog services bundle
+  as a generated plain module (checked on Wrangler 3 and 4 in CI). Managers stop seeing others' pay in /api/employee-hub
+  (`EGC_STAFF_PAY_OWNER_ONLY`). Gaps: /api/timesheets and payroll CSV still show pay; pay-field edits need pay.manage later.
 
 ## In progress
 
@@ -364,6 +369,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | P3-06 | One-tap approved send from the Action Center (task.send); sales cannot self-approve | merged (8e0a1a4) |
 | P3-04 | Follow-up owner and due-time policy (phone/sales owner) | merged (063369d) |
 | OVERDUE | Overdue follow-ups widget on Hub home and MCP egc.whats_overdue | merged (33334e7) |
+| PRICE-SCRUB | Serve internal prices, pay and targets by role instead of shipping them in browser code | merged (36b1803) |
 
 ## Next
 

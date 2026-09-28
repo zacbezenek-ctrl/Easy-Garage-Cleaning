@@ -75,6 +75,7 @@ def snapshot(role):
         'manager': {'name': 'Zoe Zoll', 'email': 'zoe.zoll@easygaragecleaning.com', 'phone': '+19709991403'},
         'coverage': {'linked': 4, 'unavailable': 1, 'paymentReview': 1}, 'updatedAt': NOW,
         **({'inviteDelivery': {'email': True}} if staff else {}),
+        'rates': RATES,
     }
     if role == 'limited':
         # The server's scoped snapshot: property P1 only, its request and projects, and general messages.
@@ -83,6 +84,10 @@ def snapshot(role):
         data['projects'] = [p for p in data['projects'] if p['propertyId'] == P1]; data['messages'] = [m for m in data['messages'] if m['requestId'] in ('', R1)]
         data['coverage'] = {'linked': 2, 'unavailable': 0, 'paymentReview': 1}
     return data
+
+# PRICE-SCRUB: the rate card is the signed-in account's, from /api/business-hub; business-hub.js ships none.
+RATES = {'cards': [{'value': '12%', 'title': 'Synthetic partner savings', 'detail': 'Synthetic eligible services <b>not bold</b>.'}, {'value': '18%', 'title': 'Synthetic coordinated properties', 'detail': 'Synthetic multi-property terms.'}],
+         'terms': ['Synthetic terms: discounts follow the accepted quote.']}
 
 ACCOUNTS = {'staff': True, 'manager': True, 'next': 'synthetic-cursor', 'limited': False, 'inviteDelivery': {'email': True}, 'accounts': [
     {'id': ACCOUNT, 'company': COMPANY, 'status': 'active', 'properties': 2, 'requests': 1, 'updatedAt': NOW},
@@ -148,7 +153,7 @@ class BusinessHubBrowserTests(unittest.TestCase):
     def tearDownClass(cls):
         cls.browser.close(); cls.pw.stop(); cls.server.shutdown(); cls.server.server_close()
     def setUp(self):
-        self.errors = []; self.calls = []; self.gets = []; self.role = 'admin'; self.signed_out = False; self.abort_next = 0; self.replies = []; self.contexts = []; self.dialogs = []; self.dismiss = False
+        self.errors = []; self.calls = []; self.gets = []; self.role = 'admin'; self.signed_out = False; self.abort_next = 0; self.replies = []; self.contexts = []; self.dialogs = []; self.dismiss = False; self.hub_auth = []
     def tearDown(self):
         for context in self.contexts: context.close()
         self.assertEqual(self.errors, [], f'Browser errors: {self.errors}')
@@ -166,7 +171,7 @@ class BusinessHubBrowserTests(unittest.TestCase):
     def route(self, route):
         req = route.request; parsed = urlparse(req.url)
         if parsed.hostname != '127.0.0.1': route.abort(); return
-        if parsed.path == '/api/hub-auth': route.fulfill(status=200, content_type='application/json', body='{"ok":true}'); return
+        if parsed.path == '/api/hub-auth': self.hub_auth.append(req.method); route.fulfill(status=200, content_type='application/json', body='{"ok":true}'); return
         if parsed.path != '/api/business-hub': route.continue_(); return
         def send(data, status=200): route.fulfill(status=status, content_type='application/json', body=json.dumps(data))
         query = parse_qs(parsed.query)
@@ -234,6 +239,22 @@ class BusinessHubBrowserTests(unittest.TestCase):
         page.locator('.dialog-close').click(); expect(page.locator('#invite-dialog')).to_be_hidden()
         self.assertEqual(self.posts('invite_member')[-1]['email'], 'colleague@example.invalid')
 
+    def test_rate_card_renders_the_account_response_and_a_safe_fallback(self):
+        page = self.open('/business-hub'); expect(page.locator('#heading')).to_have_text('Overview')
+        card = page.locator('section.card').filter(has_text='Your business rates')
+        self.assertEqual(card.locator('.rate strong').all_inner_texts(), ['12%', '18%'])
+        expect(card).to_contain_text('Synthetic partner savings'); expect(card).to_contain_text('Synthetic terms: discounts follow the accepted quote.')
+        expect(card).to_contain_text('<b>not bold</b>'); expect(card.locator('b')).to_have_count(0)
+        self.assertNotIn('Partner service savings', page.content()); self.audit(page, 'rate card')
+        global RATES
+        saved, RATES = RATES, None
+        try:
+            page = self.open('/business-hub'); expect(page.locator('#heading')).to_have_text('Overview')
+            card = page.locator('section.card').filter(has_text='Your business rates')
+            expect(card).to_contain_text('Your rates are confirmed on each accepted quote.'); expect(card.locator('.rate')).to_have_count(0); self.audit(page, 'rate card fallback')
+        finally:
+            RATES = saved
+
     def test_viewer_sees_read_only_cards_without_member_actions(self):
         self.role = 'viewer'; page = self.open('/business-hub')
         for name in CLIENT_TABS:
@@ -256,6 +277,16 @@ class BusinessHubBrowserTests(unittest.TestCase):
         staff = self.open('/business-hub?staff=1'); expect(staff.locator('#staff-login')).to_be_visible(); self.audit(staff, 'staff gate')
         username = staff.locator('input[name=username]')
         self.assertEqual((username.get_attribute('autocomplete'), username.get_attribute('autocapitalize')), ('username', 'none'))
+
+    def test_staff_sign_out_removes_walkthrough_price_tables_left_on_the_device(self):
+        # PRICE-SCRUB: crew/gameplan.html caches walkthrough price tables per user; a staff sign-out here removes them too.
+        page = self.open('/business-hub?staff=1'); expect(page.locator('#heading')).to_have_text('Business accounts')
+        page.evaluate("() => { localStorage.setItem('egc_walkthrough_pricing.v1.zacb.pc_1111111111111111', '{}'); localStorage.setItem('egc_walkthrough_pricing.v1.tylerg.pc_1111111111111111', '{}'); localStorage.setItem('unrelated', 'kept'); }")
+        with page.expect_request(lambda request: request.url.endswith('/api/hub-auth') and request.method == 'DELETE'):
+            page.get_by_role('button', name='Sign out').click()
+        self.assertEqual(page.evaluate('() => Object.keys(localStorage).sort()'), ['unrelated'])
+        self.assertEqual([call['body']['action'] for call in self.calls], ['logout'])
+        self.assertEqual(self.hub_auth, ['DELETE'])
 
     def test_new_property_retries_reuse_one_request_id_and_edits_send_none(self):
         page = self.open('/business-hub'); self.tab(page, 'Properties')

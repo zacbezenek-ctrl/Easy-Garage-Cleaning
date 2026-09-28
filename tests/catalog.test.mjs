@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
 import test from 'node:test';
+import { servedPricing } from './helpers/walkthrough-pricing.mjs';
 import { AUDIT_STATUS, GARAGE_SIZES, PRODUCT_CATEGORIES, optionsForNeed, settingsReadyForCustomers, staleItems, validateCatalog, validatePricingSettings } from '../functions/_lib/catalog.js';
 
 const readJson = path => JSON.parse(fs.readFileSync(new URL(path, import.meta.url), 'utf8'));
@@ -266,7 +267,8 @@ test('default pricing settings are complete placeholders that block customer use
 test('deposit and minimum placeholders match the current walkthrough pricing in crew/gameplan.html', () => {
   const html = fs.readFileSync(new URL('../crew/gameplan.html', import.meta.url), 'utf8');
   const line = prefix => html.split(/\r?\n/).find(row => row.startsWith(prefix));
-  const context = vm.createContext({});
+  // PRICE-SCRUB: the page prices with the tables /api/pricing-config serves.
+  const context = vm.createContext({ PRICING: servedPricing() });
   vm.runInContext(line('const freshState='), context);
   context.S = vm.runInContext('freshState()', context);
   Object.assign(context.S, { garageSize: '1', fill: 'light', loads: '' });

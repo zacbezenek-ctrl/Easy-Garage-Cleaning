@@ -5,6 +5,7 @@ import vm from 'node:vm';
 import { randomUUID } from 'node:crypto';
 import { customerScopeSummary, normalizeHandoffPlan, saveWalkthroughHandoff, savedHandoffPayload } from '../functions/_lib/walkthrough-handoff.js';
 import { estimateTotals, legacyLineItems } from '../functions/_lib/quote-model.js';
+import { servedPricing } from './helpers/walkthrough-pricing.mjs';
 
 const owner = { user: 'zacb', role: 'owner', businessAccess: true, displayName: 'Owner' };
 const NOW = '2026-09-22T18:00:00.000Z';
@@ -239,7 +240,8 @@ test('the estimate scope is a customer-facing summary of sold finishes, never in
 // every pricing fixture must itemize to exactly the locked total the server checks.
 const walkthrough = read('crew/gameplan.html');
 function gameplan(overrides = {}) {
-  const context = vm.createContext({ save() {}, render() {}, invalidateAcceptance() {}, validateStep: () => [], PHOTO_COUNT: 3, uid: () => 'synthetic-job', normPhone: value => value, buildInternalNotes: () => 'Synthetic brief', buildClientChecklists: () => ({ version: '2026-09-client-v1', preJob: [], postJob: [] }) });
+  // PRICE-SCRUB: PRICING is what /api/pricing-config serves; the page ships no prices.
+  const context = vm.createContext({ PRICING: servedPricing(), save() {}, render() {}, invalidateAcceptance() {}, validateStep: () => [], PHOTO_COUNT: 3, uid: () => 'synthetic-job', normPhone: value => value, buildInternalNotes: () => 'Synthetic brief', buildClientChecklists: () => ({ version: '2026-09-client-v1', preJob: [], postJob: [] }) });
   vm.runInContext(sourceLine(walkthrough, 'const freshState='), context);
   context.S = vm.runInContext('freshState()', context);
   Object.assign(context.S, { garageSize: '1', fill: 'medium', loads: '1', jobDate: '2026-10-01', startTime: '08:00', endTime: '13:00' }, overrides);
@@ -323,7 +325,7 @@ test('the HighLevel job brief lists itemized lines and leaves a legacy single-li
 
 test('the review screen shows the homeowner the itemized lines, including a price adjustment and its reason, above the signature', () => {
   const h = gameplan({ finish: ['cleanout', 'pressure_wash', 'totes'], toteQty: 4, lockedPrice: '1575', priceManuallySet: true, priceAdjustmentReason: 'Second haul <trailer> agreed on site' });
-  vm.runInContext([sourceLine(walkthrough, 'const $=id=>'), sourceLine(walkthrough, 'const money='), sourceLine(walkthrough, 'function quoteLinesMarkup('), sourceLine(walkthrough, 'function depositSummary('), sourceLine(walkthrough, 'function durationText('), sourceLine(walkthrough, 'function reviewScreen(')].join('\n'), h);
+  vm.runInContext([sourceLine(walkthrough, 'const $=id=>'), sourceLine(walkthrough, 'const money='), sourceLine(walkthrough, 'const addOn='), sourceLine(walkthrough, 'const hazardLabel='), sourceLine(walkthrough, 'const pricingNote='), sourceLine(walkthrough, 'function quoteLinesMarkup('), sourceLine(walkthrough, 'function depositSummary('), sourceLine(walkthrough, 'function durationText('), sourceLine(walkthrough, 'function reviewScreen(')].join('\n'), h);
   Object.assign(h, { buildJobInstructions: () => ({}), buildClientChecklists: () => ({ preJob: [], postJob: [] }) });
   const html = h.reviewScreen(), lines = html.slice(html.indexOf('id="quote-lines"'), html.indexOf('<div class="approve">'));
   assert.ok(html.indexOf('id="quote-lines"') > 0 && html.indexOf('id="quote-lines"') < html.indexOf('id="signature"'), 'the lines are shown before the homeowner signs');

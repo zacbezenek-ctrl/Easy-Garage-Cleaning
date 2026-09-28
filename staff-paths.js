@@ -7,7 +7,8 @@ export const STAFF_GATED_PATHS = Object.freeze([
   '/message-templates', '/message-templates.html', '/message-templates.js', '/message-templates.css',
   '/copilot', '/copilot.html',
   // Also /crew/gameplan-handoff.js, /crew/job.js|css, any /crew/job-photo-sharing.* file and the job-cost capture tool.
-  '/crew/gameplan*', '/crew/prejob*', '/crew/postjob*', '/crew/job*', '/crew/field-expenses*',
+  // PRICE-SCRUB's walkthrough price client is loaded only by the gated game plan.
+  '/crew/gameplan*', '/crew/prejob*', '/crew/postjob*', '/crew/job*', '/crew/field-expenses*', '/crew/walkthrough-pricing.js',
 ]);
 
 // Staff-adjacent files that stay reachable signed out: the sign-in pages and their scripts, and the crew app shell. The

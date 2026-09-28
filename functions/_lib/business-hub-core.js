@@ -1,4 +1,5 @@
 /* Account boundaries and public DTOs. No browser-supplied price or role is trusted. */
+import { businessRateCard } from './pricing-config.js';
 export const LIMITS = Object.freeze({ properties: 100, requests: 300, projects: 100, members: 30, messages: 400 });
 export const ROLES = Object.freeze({
   admin: { view: true, request: true, decide: true, pay: true, team: true },
@@ -136,7 +137,7 @@ export function accountView(account, member, projects, { staff = false, manager 
   return {
     account: { id: account.id, company: account.company, billingEmail: permissions.team || permissions.pay || staff ? account.billingEmail : '', reference: account.reference || '', status: account.status },
     viewer: { name: member.name, role: member.role, permissions },
-    properties: account.properties || [], requests, messages, members, projects,
+    properties: account.properties || [], requests, messages, members, projects, rates: businessRateCard(account),
     manager: { name: 'Zoe Zoll', email: 'zoe.zoll@easygaragecleaning.com', phone: '+19709991403' },
     coverage: { linked: (account.projects || []).filter(p => p.active !== false).length, unavailable: projects.filter(p => p.unavailable).length, paymentReview: projects.filter(p => p.paymentNeedsReview).length },
     updatedAt: account.updatedAt,

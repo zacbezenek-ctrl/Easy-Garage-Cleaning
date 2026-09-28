@@ -240,16 +240,8 @@ body.has-session #login-screen { display: none; }
 .filters { display: flex; gap: .35rem; flex-wrap: wrap; }
 .fbtn { background: var(--navy-soft); border: 1px solid rgba(255,255,255,.1); color: var(--muted); border-radius: 99px; font-size: .75rem; font-weight: 500; padding: .32rem .8rem; cursor: pointer; transition: all .2s; }
 .fbtn.active, .fbtn:hover { border-color: var(--accent); color: var(--accent); }
-.payout-hd { margin-bottom: 1.5rem; }
-.payout-hd h2 { font-family: 'Inter', sans-serif; font-size: 1.35rem; font-weight: 700; letter-spacing: -.02em; }
-.total-card { background: rgba(34,197,94,.04); border: 1px solid rgba(34,197,94,.15); border-radius: 1rem; padding: 1.5rem; display: flex; align-items: center; gap: 1.25rem; margin-bottom: 1.25rem; }
-.total-card .ico { width: 52px; height: 52px; border-radius: .65rem; background: rgba(34,197,94,.12); display: flex; align-items: center; justify-content: center; font-size: 1.4rem; flex-shrink: 0; }
-.total-label { font-size: .72rem; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); margin-bottom: .2rem; }
-.total-amt { font-family: 'Inter', sans-serif; font-size: 2rem; font-weight: 800; color: #86efac; line-height: 1; letter-spacing: -.03em; }
-.total-sub { font-size: .78rem; color: var(--muted); margin-top: .25rem; }
 .stat .v.count-bump { animation: countBump .45s ease-out; }
 .badge-pulse { animation: badgePulse 1.2s ease-out 3; }
-.payout-title { font-family: 'Inter', sans-serif; font-size: 1.05rem; font-weight: 700; margin-bottom: 1rem; }
 .mode-wrap { width:100%; max-width:460px; }
 .mode-logo { text-align:center; margin-bottom:2rem; }
 .mode-logo h2 { font-family:'Inter',sans-serif; font-size:1.5rem; font-weight:800; letter-spacing:-.02em; margin:.5rem 0 .35rem; }
@@ -596,10 +588,6 @@ body.has-session #login-screen { display: none; }
       .jcard-top { gap: .65rem; }
       .jcard-actions { gap: .35rem; }
       .bsm { font-size: .7rem; padding: .32rem .65rem; }
-
-      /* Payout */
-      .total-card { flex-direction: column; text-align: center; }
-      .total-amt { font-size: 1.75rem; }
 
       /* Step track in booking wizard */
       .step-track { padding: 1rem 1rem .65rem; }
@@ -961,20 +949,6 @@ body.has-session #login-screen { display: none; }
     <div id="tab-more" class="panel">
       <div class="jobs-hd"><h2>More</h2></div>
       <div id="more-content"></div>
-      <div id="tab-payout-embed" style="margin-top:1.5rem">
-        <div class="payout-hd"><h2>Tyler's Payout</h2></div>
-        <div class="total-card">
-          <div class="ico"></div>
-          <div>
-            <div class="total-label">Total Earned</div>
-            <div class="total-amt" id="po-total">$0</div>
-            <div class="total-sub" id="po-sub">0 jobs paid</div>
-          </div>
-        </div>
-        <div class="stats-grid" id="po-stats"></div>
-        <div class="payout-title">TylerG's Jobs</div>
-        <div id="po-list"></div>
-      </div>
     </div>
 
   </div>
@@ -1224,8 +1198,6 @@ const CFG = {
   GOOGLE_SHEET_CSV_URL: '',
   GOOGLE_MAPS_KEY:      'AIzaSyCxL7-EDDaQjidBnbrUAFgdODQ1S8oVuuw',
   BASE_ADDRESS:         'Fort Collins, CO',
-  FREE_MILES:           25,
-  PRICE_PER_MILE:       1,
   // ── Zapier Webhook URLs ── paste each Zap's catch-hook URL below
   ZAP5_QUOTE_WEBHOOK:   'operations:quote_followup',
   ZAP6_BOOKING_WEBHOOK: 'operations:booking',
@@ -1335,6 +1307,9 @@ function clearHubProfile() {
   for (const storage of [sessionStorage, localStorage]) {
     ['egc_u','egc_name','egc_role','egc_pay_type','egc_hourly_rate','egc_business_access','egc_owner','egc_capabilities','egc_capability_mode','egc_tok','egc_exp'].forEach(key => storage.removeItem(key));
   }
+  // crew/gameplan.html keeps walkthrough price tables for offline walkthroughs; they leave with the account
+  // (sign-out, an expired or failed session check, a failed sign-in).
+  try { for (let i = localStorage.length - 1; i >= 0; i--) { const key = localStorage.key(i); if (key?.startsWith('egc_walkthrough_pricing.')) localStorage.removeItem(key); } } catch {}
 }
 
 function rememberHubProfile(data) {
@@ -1900,7 +1875,6 @@ function switchTab(name, btn) {
   if (panel) panel.classList.add('active');
   if (btn) btn.classList.add('active');
   if (name === 'jobs' || name === 'cal') renderJobs();
-  if (name === 'payout' || name === 'more') renderPayout();
   if (name === 'customers') renderCustomersTab();
   if (name === 'cal' || name === 'schedule') renderCal();
   if (name === 'leads') renderLeads();
@@ -2161,41 +2135,6 @@ function renderJobs() {
 }
 
 /* ═══════════════════════════════════════════════════════
-   PAYOUT
-═══════════════════════════════════════════════════════ */
-function renderPayout() {
-  const all = loadJobs();
-  const tj = all.filter(j=>j.assignedTo==='TylerG'||j.assignedTo==='Both');
-  const paid=tj.filter(j=>j.status==='paid'), comp=tj.filter(j=>j.status==='completed'), sched=tj.filter(j=>j.status==='scheduled');
-
-  // Fast lead bonuses — $3 per lead contacted under 2 min
-  const fastLeads = leadsCache.filter(l => {
-    if (!l.respondedAt) return false;
-    const start = new Date(l.notifiedAt || l.createdAt).getTime();
-    const secs = Math.floor((new Date(l.respondedAt).getTime() - start) / 1000);
-    return secs <= 120;
-  });
-  const jobPay  = paid.length * 30;
-  const leadPay = fastLeads.length * 3;
-  const total   = jobPay + leadPay;
-
-  document.getElementById('po-total').textContent = '$' + total.toLocaleString();
-  document.getElementById('po-sub').textContent =
-    paid.length + ' job' + (paid.length!==1?'s':'') + ' · ' +
-    fastLeads.length + ' fast lead' + (fastLeads.length!==1?'s':'');
-  document.getElementById('po-stats').innerHTML=`
-    <div class="stat"><div class="v" style="color:#86efac">${paid.length}</div><div class="l">Paid Jobs<br><span style="font-size:.65rem;color:var(--muted)">$${jobPay}</span></div></div>
-    <div class="stat"><div class="v" style="color:#fcd34d">${comp.length}</div><div class="l">Awaiting Approval</div></div>
-    <div class="stat"><div class="v" style="color:#60a5fa">${fastLeads.length}</div><div class="l">Fast Responses<br><span style="font-size:.65rem;color:var(--muted)">+$${leadPay}</span></div></div>
-    <div class="stat"><div class="v" style="color:#86efac">$${total}</div><div class="l">Total Owed</div></div>`;
-  const list = document.getElementById('po-list');
-  if (!tj.length) { list.innerHTML='<div class="empty"><div class="ico"></div><div>No jobs assigned to TylerG yet.</div></div>'; return; }
-  const ord={completed:0,paid:1,scheduled:2};
-  list.innerHTML='';
-  [...tj].sort((a,b)=>(ord[a.status]??9)-(ord[b.status]??9)||(((b.date||'')+(b.time||'')).localeCompare((a.date||'')+(a.time||'')))).forEach(j=>list.appendChild(mkJobCard(j)));
-}
-
-/* ═══════════════════════════════════════════════════════
    CUSTOMERS TAB
 ═══════════════════════════════════════════════════════ */
 function renderCustomersTab() {
@@ -2263,7 +2202,6 @@ function mkJobCard(job) {
           <span class="bdg ${job.type}">${typeLabel(job.type)}</span>
           <span class="bdg ${job.status}">${cap(job.status)}</span>
           <span class="bdg who">${esc(job.assignedTo)}</span>
-          ${job.status==='paid'?'<span class="bdg paid">$30</span>':''}
         </div>
       </div>
     </div>
@@ -2305,7 +2243,6 @@ function delJob(id) {
 function refresh() {
   if (scheduleTabActive()) renderCal();
   renderJobs();
-  renderPayout();
   renderCustomersTab();
 }
 
@@ -2615,15 +2552,16 @@ function selectMode(mode) {
 ═══════════════════════════════════════════════════════ */
 let oc = { step:1, customer:null, isNew:false, quote:{ space:'garage', size:'medium', fill:'moderate', specials:{}, cubicYards:0, floors:0, distanceMiles:0, custAddr:'' }, booking:{ assignedTo:'',assignedCrew:[] } };
 
-const SPECIALS = [
-  { id:'fridge',     name:'Refrigerator',   price:60, icon:'' },
-  { id:'washer',     name:'Washer / Dryer', price:50, icon:'' },
-  { id:'appliance',  name:'Other Appliance',price:40, icon:'' },
-  { id:'mattress',   name:'Mattress',       price:45, icon:'' },
-  { id:'tire',       name:'Tire',           price:50, icon:'' },
-  { id:'electronics',name:'Electronics',    price:25, icon:'' },
-  { id:'paint',      name:'Paint / Hazmat', price:45, icon:'' },
-];
+// The phone-quote table comes from /api/pricing-config for staff who quote; this page ships no prices.
+let PHONE_QUOTE = null, PHONE_QUOTE_ERROR = '';
+const phoneSpecials = () => PHONE_QUOTE?.specials || [];
+const phoneOver = miles => PHONE_QUOTE ? Math.max(0, miles - PHONE_QUOTE.freeMiles) : 0;
+async function loadPhoneQuote() {
+  PHONE_QUOTE = null; PHONE_QUOTE_ERROR = '';
+  try { PHONE_QUOTE = await window.EGCPricingConfig.load('phone'); } catch { PHONE_QUOTE = null; }
+  if (!PHONE_QUOTE) PHONE_QUOTE_ERROR = 'Phone pricing is unavailable. Reconnect and reopen the call to load prices.';
+  if (oc.step === 2 && document.getElementById('oncall-overlay')?.classList.contains('open')) renderOcStep();
+}
 
 function openOnCall() {
   if(oc.booking?.saving||oc.booking?.uncertain){showToast('Retry the saved booking first.');return;}
@@ -2632,6 +2570,7 @@ function openOnCall() {
     booking:{ assignedTo:'',assignedCrew:[],operationKey:'phone-booking:'+crypto.randomUUID() }
   };
   document.getElementById('oncall-overlay').classList.add('open');
+  loadPhoneQuote();
   // Legacy Firestore leads are intentionally excluded after the HighLevel reset.
   leadsCache = [];
   if (oc.step === 1) ocFilter(document.getElementById('oc-search')?.value || '');
@@ -2757,36 +2696,34 @@ function ocToggleNew() {
 
 /* ─── Step 2: Quote Builder ────────────────────────── */
 function calcQuote() {
-  let total = 150, lines = ['Base service fee  $150'];
+  const q = PHONE_QUOTE;
+  if (!q) return { low: null, high: null, lines: [], available: false };
+  let total = q.baseFee, lines = [`Base service fee  $${q.baseFee}`];
 
-  // Cubic yards — $25/yd
   const cy = oc.quote.cubicYards || 0;
-  if (cy > 0) { total += cy * 35; lines.push(`Cubic yards (${cy} yd³)  +$${cy*35}`); }
+  if (cy > 0) { total += cy * q.perCubicYard; lines.push(`Cubic yards (${cy} yd³)  +$${cy*q.perCubicYard}`); }
 
-  // Special items
-  SPECIALS.forEach(item => {
+  phoneSpecials().forEach(item => {
     const qty = oc.quote.specials[item.id] || 0;
-    if (qty > 0) { total += item.price * qty; lines.push(`${item.icon} ${item.name} ×${qty}  +$${item.price*qty}`); }
+    if (qty > 0) { total += item.price * qty; lines.push(`${item.name} ×${qty}  +$${item.price*qty}`); }
   });
 
-  // Floors — $20/floor
   const fl = oc.quote.floors || 0;
-  if (fl > 0) { total += fl * 20; lines.push(`Floors to climb (${fl})  +$${fl*20}`); }
+  if (fl > 0) { total += fl * q.perFloor; lines.push(`Floors to climb (${fl})  +$${fl*q.perFloor}`); }
 
-  // Distance — $1/mile beyond free radius
   const dm = oc.quote.distanceMiles || 0;
-  const billableMiles = Math.max(0, dm - CFG.FREE_MILES);
-  if (billableMiles > 0) { total += billableMiles * CFG.PRICE_PER_MILE; lines.push(`Distance (${dm} mi, ${billableMiles} mi over)  +$${billableMiles}`); }
+  const billableMiles = phoneOver(dm);
+  if (billableMiles > 0) { total += billableMiles * q.perMile; lines.push(`Distance (${dm} mi, ${billableMiles} mi over)  +$${billableMiles * q.perMile}`); }
 
-  const low  = Math.round(total / 5) * 5;
-  const high = Math.round(low * 1.18 / 5) * 5;
-  return { low, high, lines };
+  const low  = Math.round(total / q.roundTo) * q.roundTo;
+  const high = Math.round(low * q.highSpread / q.roundTo) * q.roundTo;
+  return { low, high, lines, available: true };
 }
 
 function updateQDisplay() {
-  const { low, high, lines } = calcQuote();
-  const r = document.getElementById('oc-qrange'); if (r) r.textContent = `$${low.toLocaleString()} – $${high.toLocaleString()}`;
-  const b = document.getElementById('oc-qbreak'); if (b) b.innerHTML = lines.join('<br>');
+  const { low, high, lines, available } = calcQuote();
+  const r = document.getElementById('oc-qrange'); if (r) r.textContent = available ? `$${low.toLocaleString()} – $${high.toLocaleString()}` : 'Pricing unavailable';
+  const b = document.getElementById('oc-qbreak'); if (b) b.innerHTML = available ? lines.map(esc).join('<br>') : esc(PHONE_QUOTE_ERROR || 'Loading phone pricing…');
 }
 
 function setOpt(key, val, btn) {
@@ -2805,7 +2742,7 @@ function adjSI(id, d) {
 function setCubicYards(val) {
   oc.quote.cubicYards = parseInt(val) || 0;
   const lbl = document.getElementById('cy-lbl');
-  if (lbl) lbl.textContent = oc.quote.cubicYards > 0 ? `${oc.quote.cubicYards} yd³  (+$${oc.quote.cubicYards*35})` : '0 yd³';
+  if (lbl) lbl.textContent = oc.quote.cubicYards > 0 ? `${oc.quote.cubicYards} yd³${PHONE_QUOTE ? `  (+$${oc.quote.cubicYards*PHONE_QUOTE.perCubicYard})` : ''}` : '0 yd³';
   updateQDisplay();
 }
 
@@ -2861,10 +2798,10 @@ function openMapPopup() {
       const leg = result.routes[0].legs[0];
       const meters = leg.distance.value;
       _mapDrivingMiles = Math.round(meters / 1609.34);
-      const over = Math.max(0, _mapDrivingMiles - CFG.FREE_MILES);
+      const over = phoneOver(_mapDrivingMiles);
       document.getElementById('map-result').innerHTML =
-        `<strong style="color:#fff;font-size:1rem">${leg.distance.text}</strong> &nbsp;·&nbsp; ${leg.duration.text} drive` +
-        (over > 0 ? `<br><span style="color:var(--accent)">+$${over} distance surcharge</span>` : `<br><span style="color:#86efac">Within free ${CFG.FREE_MILES}-mile zone</span>`);
+        `<strong style="color:#fff;font-size:1rem">${esc(leg.distance.text)}</strong> &nbsp;·&nbsp; ${esc(leg.duration.text)} drive` +
+        (!PHONE_QUOTE ? '' : over > 0 ? `<br><span style="color:var(--accent)">+$${over * PHONE_QUOTE.perMile} distance surcharge</span>` : `<br><span style="color:#86efac">Within the free distance zone</span>`);
       document.getElementById('map-use-btn').disabled = false;
     } else {
       document.getElementById('map-result').textContent = `Could not get directions (${status}) — enter miles manually.`;
@@ -2879,9 +2816,9 @@ function closeMapPopup() {
 
 function applyMapDistance() {
   oc.quote.distanceMiles = _mapDrivingMiles;
-  const over = Math.max(0, _mapDrivingMiles - CFG.FREE_MILES);
+  const over = phoneOver(_mapDrivingMiles);
   const statusEl = document.getElementById('dist-status');
-  if (statusEl) statusEl.textContent = `${_mapDrivingMiles} mi from base${over > 0 ? ` · +$${over} surcharge` : ' · within free zone'}`;
+  if (statusEl) statusEl.textContent = `${_mapDrivingMiles} mi from base${!PHONE_QUOTE ? '' : over > 0 ? ` · +$${over * PHONE_QUOTE.perMile} surcharge` : ' · within free zone'}`;
   const input = document.getElementById('dist-miles');
   if (input) input.value = _mapDrivingMiles;
   updateQDisplay();
@@ -2890,10 +2827,10 @@ function applyMapDistance() {
 
 function setDistanceMiles(val) {
   oc.quote.distanceMiles = Math.max(0, parseInt(val)||0);
-  const over = Math.max(0, oc.quote.distanceMiles - CFG.FREE_MILES);
+  const over = phoneOver(oc.quote.distanceMiles);
   const statusEl = document.getElementById('dist-status');
   if (statusEl) statusEl.textContent = oc.quote.distanceMiles > 0
-    ? `${oc.quote.distanceMiles} mi from base${over > 0 ? ` · +$${over} surcharge` : ' · within free zone'}`
+    ? `${oc.quote.distanceMiles} mi from base${!PHONE_QUOTE ? '' : over > 0 ? ` · +$${over * PHONE_QUOTE.perMile} surcharge` : ' · within free zone'}`
     : '';
   updateQDisplay();
 }
@@ -2928,9 +2865,9 @@ function ocStep2(body) {
     </div>
 
     <div class="q-section">
-      <div class="q-lbl">Estimated volume <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted)">($35 per cubic yard)</span></div>
+      <div class="q-lbl">Estimated volume${PHONE_QUOTE ? ` <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted)">($${PHONE_QUOTE.perCubicYard} per cubic yard)</span>` : ''}</div>
       <div id="cy-lbl" style="font-family:'JetBrains Mono',monospace;font-size:1.1rem;font-weight:600;color:var(--accent);margin:.25rem 0 .5rem">
-        ${oc.quote.cubicYards > 0 ? `${oc.quote.cubicYards} yd³  (+$${oc.quote.cubicYards*35})` : '0 yd³'}
+        ${oc.quote.cubicYards > 0 ? `${oc.quote.cubicYards} yd³${PHONE_QUOTE ? `  (+$${oc.quote.cubicYards*PHONE_QUOTE.perCubicYard})` : ''}` : '0 yd³'}
       </div>
       <input type="range" id="cy-slider" min="0" max="20" step="1" value="${Math.min(oc.quote.cubicYards,20)}"
         oninput="setCubicYards(this.value)"
@@ -2941,9 +2878,9 @@ function ocStep2(body) {
     </div>
 
     <div class="q-section">
-      <div class="q-lbl">Floors to climb <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted)">($20 per floor above ground)</span></div>
+      <div class="q-lbl">Floors to climb${PHONE_QUOTE ? ` <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted)">($${PHONE_QUOTE.perFloor} per floor above ground)</span>` : ''}</div>
       <div class="si" style="background:rgba(255,255,255,.04)">
-        <div class="si-info"><div class="sn">Floors up</div><div class="sp">+$20 per floor</div></div>
+        <div class="si-info"><div class="sn">Floors up</div><div class="sp">${PHONE_QUOTE ? `+$${PHONE_QUOTE.perFloor} per floor` : 'Priced once phone pricing loads'}</div></div>
         <div class="si-ctr">
           <button class="si-b" onclick="adjFloors(-1)">−</button>
           <div class="si-n" id="floors-n">${oc.quote.floors}</div>
@@ -2953,7 +2890,7 @@ function ocStep2(body) {
     </div>
 
     <div class="q-section">
-      <div class="q-lbl">Distance from base <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted)">($1/mi beyond ${CFG.FREE_MILES} mi)</span></div>
+      <div class="q-lbl">Distance from base${PHONE_QUOTE ? ` <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted)">($${PHONE_QUOTE.perMile}/mi beyond ${PHONE_QUOTE.freeMiles} mi)</span>` : ''}</div>
       <div style="display:flex;gap:.5rem;margin-bottom:.5rem">
         <input type="text" id="dist-addr" placeholder="Customer address…"
           value="${esc(oc.quote.custAddr || oc.customer?.address || '')}"
@@ -2965,16 +2902,17 @@ function ocStep2(body) {
           oninput="setDistanceMiles(this.value)"
           style="width:6rem;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);border-radius:.5rem;padding:.5rem .75rem;color:#fff;font-size:.875rem">
         <div id="dist-status" style="font-size:.78rem;color:var(--muted);flex:1">
-          ${oc.quote.distanceMiles > 0 ? `${oc.quote.distanceMiles} mi from base${Math.max(0,oc.quote.distanceMiles-CFG.FREE_MILES)>0?' · +$'+Math.max(0,oc.quote.distanceMiles-CFG.FREE_MILES)+' surcharge':' · within free zone'}` : 'Type address + tap Map, or enter miles manually'}
+          ${oc.quote.distanceMiles > 0 ? `${oc.quote.distanceMiles} mi from base${!PHONE_QUOTE?'':phoneOver(oc.quote.distanceMiles)>0?' · +$'+phoneOver(oc.quote.distanceMiles)*PHONE_QUOTE.perMile+' surcharge':' · within free zone'}` : 'Type address + tap Map, or enter miles manually'}
         </div>
       </div>
     </div>`;
 
   const sg = document.getElementById('oc-specials');
-  SPECIALS.forEach(item => {
+  if (!PHONE_QUOTE) sg.textContent = PHONE_QUOTE_ERROR || 'Loading phone pricing…';
+  phoneSpecials().forEach(item => {
     const qty = oc.quote.specials[item.id] || 0;
     const el = document.createElement('div'); el.className = 'si';
-    el.innerHTML = `<div class="si-info"><div class="sn">${item.icon} ${item.name}</div><div class="sp">+$${item.price} each</div></div>
+    el.innerHTML = `<div class="si-info"><div class="sn">${esc(item.name)}</div><div class="sp">+$${item.price} each</div></div>
       <div class="si-ctr">
         <button class="si-b" onclick="adjSI('${item.id}',-1)">−</button>
         <div class="si-n" id="sin-${item.id}">${qty}</div>
@@ -2987,7 +2925,7 @@ function ocStep2(body) {
 
 /* ─── Step 3: Book ─────────────────────────────────── */
 function ocStep3(body) {
-  const { low, high } = calcQuote();
+  const { low, high, available = true } = calcQuote();
   const c = oc.customer;
   body.innerHTML = `
     <div class="step-q" style="font-family:'Fraunces',serif;font-size:1rem;color:rgba(255,255,255,.55);margin-bottom:1rem">Lock in the appointment</div>
@@ -2995,7 +2933,7 @@ function ocStep3(body) {
     <div style="background:rgba(34,197,94,.08);border:1px solid rgba(34,197,94,.2);border-radius:.75rem;padding:1rem 1.25rem;margin-bottom:1.25rem;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.5rem">
       <div>
         <div style="font-size:.68rem;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--muted)">Quoted Price</div>
-        <div style="font-family:'Fraunces',serif;font-size:1.5rem;font-weight:700;color:#86efac">$${low.toLocaleString()} – $${high.toLocaleString()}</div>
+        <div style="font-family:'Fraunces',serif;font-size:1.5rem;font-weight:700;color:#86efac">${available ? `$${low.toLocaleString()} – $${high.toLocaleString()}` : 'Pricing unavailable'}</div>
       </div>
       <div style="text-align:right;font-size:.8rem;color:var(--muted)">${esc(c.name)}<br>${esc(c.phone||'')}</div>
     </div>
@@ -3016,7 +2954,7 @@ function ocStep3(body) {
       <label>Assigned crew</label><div id="oncall-crew" class="egc-crew-options" aria-label="Assigned crew"></div>
     </div>
     <div class="fg"><label>Address</label><input type="text" id="oc-addr" value="${esc(c.address||'')}" placeholder="123 Main St, Fort Collins, CO"></div>
-    <div class="fg"><label>Notes</label><textarea id="oc-notes">Quote discussed: $${low}–$${high}. ${SPECIALS.filter(s=>(oc.quote.specials[s.id]||0)>0).map(s=>s.name+' ×'+oc.quote.specials[s.id]).join(', ')}</textarea></div>
+    <div class="fg"><label>Notes</label><textarea id="oc-notes">${available ? `Quote discussed: $${low}–$${high}. ` : ''}${esc(phoneSpecials().filter(s=>(oc.quote.specials[s.id]||0)>0).map(s=>s.name+' ×'+oc.quote.specials[s.id]).join(', '))}</textarea></div>
     ${c.email ? `<div class="email-toggle-row"><input type="checkbox" id="oc-email" checked><label for="oc-email">Send confirmation email<span class="esub">${esc(c.email)}</span></label></div>` : ''}<p id="oc-booking-error" role="alert"></p>`;
   bookingCrew('oncall-crew',oc.booking);
 }
@@ -3026,8 +2964,8 @@ function ocAsgn(who){if(oc.booking.saving||oc.booking.uncertain)return;oc.bookin
 async function ocBook() {
   const state=oc.booking;if(state.saving)return;const btn=document.getElementById('oc-next'),c=oc.customer,date=document.getElementById('oc-date')?.value;
   if(!date){document.getElementById('oc-booking-error').textContent='Choose a date.';return;}
-  const {low,high}=calcQuote();state.operationKey=state.operationKey||'phone-booking:'+crypto.randomUUID();
-  const job=state.submitted||{id:state.operationKey,type:document.getElementById('oc-type')?.value||'walkthrough',customerId:!c._isLead&&!c.fromSheet?c.id:undefined,customer:c.name,phone:c.phone||'',email:c.email||'',highlevelContactId:c.highlevelContactId||'',date,time:document.getElementById('oc-time')?.value||'',endDate:date,endTime:document.getElementById('oc-endtime')?.value||'',address:document.getElementById('oc-addr')?.value.trim()||c.address||'',assignedCrew:state.assignedCrew||[],crewNeeded:Math.max(1,state.assignedCrew?.length||1),notes:(document.getElementById('oc-notes')?.value.trim()||'')+'\nPhone estimate discussed: $'+low+'–$'+high+'. Confirm the scope and agreed price before work.'};
+  const {low,high,available=true}=calcQuote();state.operationKey=state.operationKey||'phone-booking:'+crypto.randomUUID();
+  const job=state.submitted||{id:state.operationKey,type:document.getElementById('oc-type')?.value||'walkthrough',customerId:!c._isLead&&!c.fromSheet?c.id:undefined,customer:c.name,phone:c.phone||'',email:c.email||'',highlevelContactId:c.highlevelContactId||'',date,time:document.getElementById('oc-time')?.value||'',endDate:date,endTime:document.getElementById('oc-endtime')?.value||'',address:document.getElementById('oc-addr')?.value.trim()||c.address||'',assignedCrew:state.assignedCrew||[],crewNeeded:Math.max(1,state.assignedCrew?.length||1),notes:(document.getElementById('oc-notes')?.value.trim()||'')+(available?'\nPhone estimate discussed: $'+low+'–$'+high+'. Confirm the scope and agreed price before work.':'\nNo phone estimate was given. Confirm the scope and agreed price before work.')};
   if(!job.time||!job.endTime){document.getElementById('oc-booking-error').textContent='Choose start and end times in Mountain Time.';return;}
   state.saving=true;state.submitted=job;legacyBookingControls('oncall-overlay',true);btn.textContent='Checking schedule…';
   try{const saved=await window.EGCBooking.save(job,{}, {operationKey:state.operationKey});jobsCache=[...jobsCache.filter(row=>row.id!==saved.id),saved];state.uncertain=false;state.saving=false;state.submitted=null;let notice='Appointment saved in Dispatch.';
@@ -3050,6 +2988,7 @@ window.addEventListener('egc:booking-recovered',event=>{const key=event.detail?.
   })();
 </script>
 <script src="employee-gusto.js?v=20260909gusto"></script>
+<script src="employee-pricing.js?v=20260928price"></script>
 <link rel="stylesheet" href="employee-operations.css?v=20260928send">
 <script src="employee-recordings.js?v=20260921"></script>
 <script src="employee-operations.js?v=20260928sendowners"></script>

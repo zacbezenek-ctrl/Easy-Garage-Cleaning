@@ -8,6 +8,7 @@ import { listEmployeeApplications, normalizeEmployeeUsername } from '../_lib/emp
 import { activeTimecard, authorizeTimecard, timecardError } from '../_lib/employee-timecards.js';
 import { activeJobSegment, employeeJobTime, ownJobTimeProjection } from '../_lib/employee-job-time.js';
 import { legacyManagerProfile, legacyProfileView, mirrorLegacyPay, profileHourlyRate } from '../_lib/staff-directory.js';
+import { incomingPay, seesOthersPay, visiblePay } from '../_lib/pay-visibility.js';
 
 const PROJECT_ID = 'egcw-1ec83';
 const COLLECTIONS = EMPLOYEE_HUB_COLLECTIONS;
@@ -369,7 +370,9 @@ export async function onRequestGet({ request, env }) {
         awaitingFirstSignIn: account.status === 'approved' && !profile.lastSeenAt && !profile.onboardingCompletedAt,
       } : profile;
     }).map(profile => legacyProfileView(profile, viewedAt));
-    return reply(200, { ok: true, collections, ...(includeAccounts ? { accounts } : {}) });
+    // Other employees' pay goes to the owner only (EGC_STAFF_PAY_OWNER_ONLY); hours stay visible to managers.
+    for (const name of ['profiles', 'timeEntries']) collections[name] = collections[name].map(row => visiblePay(session, env, name, row));
+    return reply(200, { ok: true, collections, payVisibility: seesOthersPay(session, env) ? 'all' : 'own', ...(includeAccounts ? { accounts } : {}) });
   } catch (error) {
     return reply(502, { ok: false, ...(error.code ? { code: error.code } : {}), error: String(error.message || 'Employee Hub storage failed') });
   }
@@ -415,11 +418,11 @@ export async function onRequestPost({ request, env }) {
       }
       // A different vault key changes IDs; a 404 alone cannot prove this is new.
       if (!current.data) await readAll(env);
-      const data = await authorizeMutation(env, session, collection, id, incoming, current.data);
+      const data = await authorizeMutation(env, session, collection, id, incomingPay(session, env, collection, incoming, current.data), current.data);
       try {
-        if (collection === 'timeEntries') return reply(200, { ok: true, record: await writeTimecard(env, session, id, data, target) });
+        if (collection === 'timeEntries') return reply(200, { ok: true, record: visiblePay(session, env, collection, await writeTimecard(env, session, id, data, target)) });
         const saved = await writeOne(env, collection, id, data, collection === 'profiles' ? target : null);
-        return reply(200, { ok: true, record: collection === 'profiles' ? legacyProfileView(saved, new Date().toISOString()) : saved });
+        return reply(200, { ok: true, record: visiblePay(session, env, collection, collection === 'profiles' ? legacyProfileView(saved, new Date().toISOString()) : saved) });
       } catch (error) {
         if (error.code !== 'EMPLOYEE_HUB_WRITE_CONFLICT' || attempt + 1 === attempts) throw error;
       }

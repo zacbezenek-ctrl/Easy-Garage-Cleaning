@@ -16,8 +16,19 @@
     return pending;
   }
 
+  // Walkthrough price tables kept for offline walkthroughs (crew/walkthrough-pricing.js) belong
+  // to the signed-in account: they leave whenever this device forgets that account (sign-out,
+  // an expired or failed session check) and when a different account signs in.
+  function clearPricing() {
+    try { for (let i = localStorage.length - 1; i >= 0; i--) { const name = localStorage.key(i) || ''; if (name.startsWith('egc_walkthrough_pricing.')) localStorage.removeItem(name); } } catch {}
+  }
+  const account = value => String(value || '').trim().toLowerCase();
+
   function remember(user, profile = {}) {
     try {
+      let previous = '';
+      try { previous = localStorage.getItem('egc_u') || ''; } catch {}
+      if (account(previous) !== account(user)) clearPricing();
       for (const storage of [sessionStorage, localStorage]) {
         storage.setItem('egc_u', user);
         storage.setItem('egc_name', profile.displayName || user);
@@ -43,6 +54,7 @@
     try {
       for (const storage of [sessionStorage, localStorage]) KEYS.forEach(key => storage.removeItem(key));
     } catch {}
+    clearPricing();
   }
 
   function showGateError(message) {

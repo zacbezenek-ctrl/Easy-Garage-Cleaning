@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from './helpers/vm-realm.mjs';
 import test from 'node:test';
+import { servedPricing } from './helpers/walkthrough-pricing.mjs';
 
 const html = fs.readFileSync(new URL('../crew/gameplan.html', import.meta.url), 'utf8');
 const line = prefix => {
@@ -22,7 +23,9 @@ function harness({ requestedId = 'walkthrough-1', draft = null, manualDraft = nu
   const rows = [{ id: 'other-walkthrough', type: 'walkthrough', status: 'scheduled', customer: 'Another appointment', time: '09:00' }];
   if (draft) storage.set(`egc_walkthrough_v3:${requestedId}`, JSON.stringify(draft));
   if (manualDraft) storage.set('egc_walkthrough_v3:manual', JSON.stringify(manualDraft));
+  // PRICE-SCRUB: prices arrive from /api/pricing-config (loadPricing); here they are already loaded.
   const context = vm.createContext({
+    PRICING: servedPricing(), loadPricing: async () => {},
     $: element, esc: value => String(value).replaceAll('<', '&lt;'),
     SAVE: 'egc_walkthrough_v3', FLOW: '2026-09-simple', REQUESTED_WALKTHROUGH_ID: requestedId,
     walkthroughReady: false, APPTS_LOADING: false, APPTS_ERROR: '', APPTS: [],
@@ -61,7 +64,7 @@ function harness({ requestedId = 'walkthrough-1', draft = null, manualDraft = nu
   });
   vm.runInContext(line('const freshState='), context);
   context.S = vm.runInContext('freshState()', context);
-  for (const prefix of ['const draftKey=', 'function save(){', 'function restore(', 'function resetForWalkthrough(', 'function render(){', 'function useAppointment(', 'async function openApp()']) {
+  for (const prefix of ['const draftKey=', 'function save(){', 'function restore(', 'function applyPricingVersion(', 'function resetForWalkthrough(', 'function render(){', 'function useAppointment(', 'async function openApp()']) {
     vm.runInContext(line(prefix), context);
   }
   vm.runInContext(html.slice(html.indexOf('function walkthroughLoadPanel(){'), html.indexOf('function useAppointment(')), context);

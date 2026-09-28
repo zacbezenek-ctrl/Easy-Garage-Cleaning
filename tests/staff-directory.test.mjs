@@ -435,11 +435,13 @@ test('legacy /api/employee-hub never returns the pay schedule or audit trail, an
   for (const cookie of [owner, manager, crew]) {
     const profile = await hubProfile(cookie);
     for (const hidden of ['history', 'payRates', 'payRateMirror']) assert.equal(profile[hidden], undefined, hidden);
-    assert.equal(profile.hourlyRate, 21, 'today\'s rate is still shown where it always was'); assert.deepEqual(profile.skills.map(skill => skill.id), ['cleanout']);
+    // PRICE-SCRUB: another employee's pay goes to the owner only (EGC_STAFF_PAY_OWNER_ONLY default).
+    assert.equal(profile.hourlyRate, cookie === manager ? undefined : 21, 'today\'s rate is still shown where it always was, to the owner and the employee'); assert.deepEqual(profile.skills.map(skill => skill.id), ['cleanout']);
   }
   // The legacy profile form still edits today's fields; directory-owned fields are ignored.
+  // Manager pay edits are the legacy rule, EGC_STAFF_PAY_OWNER_ONLY=false (PRICE-SCRUB).
   const forged = { username: 'Crew.Account', jobTitle: 'Synthetic lead', hourlyRate: 22, payRates: [], payRateMirror: null, history: [], staffRoles: ['manager'], skills: [], skillCatalogVersion: 'x', weeklyAvailability: {}, migrations: ['forged'], directoryRequestId: 'forged', directoryUpdatedBy: 'forged' };
-  const response = await employeeHub.onRequestPost({ env, request: jsonRequest('/api/employee-hub', { collection: 'profiles', id: 'crew.account', data: forged }, manager) });
+  const response = await employeeHub.onRequestPost({ env: { ...env, EGC_STAFF_PAY_OWNER_ONLY: 'false' }, request: jsonRequest('/api/employee-hub', { collection: 'profiles', id: 'crew.account', data: forged }, manager) });
   assert.equal(response.status, 200, await response.clone().text());
   const { record } = await response.json();
   for (const hidden of ['history', 'payRates', 'payRateMirror']) assert.equal(record[hidden], undefined, hidden);
@@ -513,12 +515,13 @@ test('HTTP: once a scheduled raise takes effect, legacy readers show it, a crew 
   const raise = await directory.post({ env: enabled, request: jsonRequest('/api/staff-directory', { action: 'set_pay', requestId: crypto.randomUUID(), username: 'Crew.Account', expectedRevision: '', effectiveFrom: '2026-10-01', hourlyRate: 26 }, owner) });
   assert.equal(raise.status, 200, await raise.clone().text());
   const hubRate = async cookie => (await (await employeeHub.onRequestGet({ env, request: jsonRequest('/api/employee-hub', undefined, cookie) })).json()).collections.profiles.find(profile => profile.username === 'Crew.Account').hourlyRate;
-  assert.deepEqual([await hubRate(manager), await hubRate(crew)], [21, 21], 'before the effective date');
+  // PRICE-SCRUB: the owner and the employee read another employee's pay; a manager reads hours only.
+  assert.deepEqual([await hubRate(owner), await hubRate(crew), await hubRate(manager)], [21, 21, undefined], 'before the effective date');
   t.mock.timers.setTime(Date.parse('2026-10-05T18:00:00.000Z'));
   // Hub sessions last 12 hours, so everyone signs in again on Oct 5.
   owner = await cookieFor(env, 'ZacB'); manager = await cookieFor(env, 'TylerG'); ({ cookie: crew } = await login(env, 'Crew.Account'));
   assert.equal((await decrypt(fire, 'profiles', 'crew.account')).data.hourlyRate, 21, 'the stored mirror is still the old rate');
-  assert.deepEqual([await hubRate(manager), await hubRate(crew)], [26, 26], 'legacy readers see the rate in effect today');
+  assert.deepEqual([await hubRate(owner), await hubRate(crew)], [26, 26], 'legacy readers see the rate in effect today');
   const selfSave = await employeeHub.onRequestPost({ env, request: jsonRequest('/api/employee-hub', { collection: 'profiles', id: 'crew.account', data: { hourlyRate: 99 } }, crew) });
   assert.equal(selfSave.status, 200, await selfSave.clone().text());
   assert.equal((await selfSave.json()).record.hourlyRate, 26);
@@ -529,14 +532,14 @@ test('HTTP: once a scheduled raise takes effect, legacy readers show it, a crew 
   assert.equal(revert.status, 200, await revert.clone().text());
   const reverted = (await decrypt(fire, 'profiles', 'crew.account')).data;
   assert.deepEqual(effectivePayRate(reverted, '2026-10-05'), { hourlyRate: 21, payType: 'hourly', overtimeMultiplier: null, effectiveFrom: null, source: 'legacy_profile_edit', drift: true });
-  assert.equal(await hubRate(manager), 21, 'legacy readers and timecards agree on the edited rate');
+  assert.equal(await hubRate(owner), 21, 'legacy readers and timecards agree on the edited rate');
   const view = (await (await directory.get({ env: enabled, request: jsonRequest('/api/staff-directory?username=Crew.Account', undefined, owner) })).json()).people[0];
   assert.equal(view.pay.needsReview, true); assert.equal(view.pay.current.hourlyRate, 21);
   const clockIn = await employeeHub.onRequestPost({ env, request: jsonRequest('/api/employee-hub', { collection: 'timeEntries', id: 'shift-oct-5', data: { locationTracking: true, lastLocation: { lat: 40.58, lng: -105.08, accuracy: 5 } } }, crew) });
   assert.equal((await clockIn.json()).record.hourlyRate, 21);
 });
 
-test('HTTP: with the directory on, only the owner changes pay through the legacy profile form; off, managers still can', async t => {
+test('HTTP: with the directory on, only the owner changes pay through the legacy profile form; off, managers still can when EGC_STAFF_PAY_OWNER_ONLY=false', async t => {
   const fire = vaultFirestore(t), enabled = { ...env, EGC_STAFF_DIRECTORY_ENABLED: 'true' };
   t.mock.timers.enable({ apis: ['Date'], now: Date.parse(NOW) });
   await seedAccount(env, 'Crew.Account');
@@ -556,6 +559,8 @@ test('HTTP: with the directory on, only the owner changes pay through the legacy
   const own = await save(enabled, manager, 'tylerg', { username: 'TylerG', displayName: 'Synthetic Manager', hourlyRate: 99, payType: 'salary', lastSeenAt: NOW });
   assert.deepEqual([own.hourlyRate, own.payType], [30, 'hourly']);
   assert.equal((await save(enabled, owner, 'crew.account', { username: 'Crew.Account', hourlyRate: 23 })).hourlyRate, 23, 'the owner keeps today\'s legacy edit');
-  assert.equal((await save(env, manager, 'crew.account', { username: 'Crew.Account', hourlyRate: 24, payType: 'salary' })).hourlyRate, 24, 'with the directory off, managers edit pay as today');
+  // PRICE-SCRUB: by default only the owner sets another employee's pay; the legacy rule is EGC_STAFF_PAY_OWNER_ONLY=false.
+  assert.equal((await save(env, manager, 'crew.account', { username: 'Crew.Account', hourlyRate: 25, payType: 'salary' })).hourlyRate, 23, 'a manager\'s pay fields are dropped by default');
+  assert.equal((await save({ ...env, EGC_STAFF_PAY_OWNER_ONLY: 'false' }, manager, 'crew.account', { username: 'Crew.Account', hourlyRate: 24, payType: 'salary' })).hourlyRate, 24, 'with the directory off and pay open to managers, managers edit pay as before');
   assert.equal((await save(env, manager, 'tylerg', { username: 'TylerG', hourlyRate: 31 })).hourlyRate, 31);
 });

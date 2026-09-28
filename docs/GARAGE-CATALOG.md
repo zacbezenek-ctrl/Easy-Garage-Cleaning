@@ -177,7 +177,7 @@ Notable decisions:
 
 ## Legacy EGC services
 
-The existing walkthrough prices in `crew/gameplan.html` (`recommend()` and `estimatedJobMinutes()`, pricing version `2026-09-pest200-traps250`) are catalog service items, so today's prices stay identical. `crew/gameplan.html` itself is unchanged.
+The existing walkthrough prices in `crew/gameplan.html` (`recommend()` and `estimatedJobMinutes()`, pricing version `2026-09-pest200-traps250`) are catalog service items, so today's prices stay identical. Since PRICE-SCRUB the page ships no prices: `functions/_lib/pricing-config.js` prices with these service items (plus the walkthrough's own base, fill, special-item and access tables and its labor-minute model) and `/api/pricing-config` serves them to staff who quote. The Worker never loads this JSON: `node scripts/generate-walkthrough-services.mjs --write` copies the legacy service items into the plain module `functions/_data/walkthrough-services.js`, because Wrangler 3 cannot bundle a JSON import. Changing a service's `fixedPriceCents` (with `legacy.amountDollars`) or `legacy.jobMinutes` here changes the walkthrough: regenerate the module (a test fails until it matches the catalog) and bump `WALKTHROUGH_PRICING_VERSION` (a test pins the tables to that label).
 
 | Item | Price | When it applies today | Rounding | Job minutes at 2-person crew | `installMinutes` |
 |---|---:|---|---|---:|---:|

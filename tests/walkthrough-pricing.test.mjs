@@ -2,7 +2,10 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from './helpers/vm-realm.mjs';
 import test from 'node:test';
+import { servedPricing } from './helpers/walkthrough-pricing.mjs';
 
+// PRICE-SCRUB: the page ships no prices; it prices with the tables /api/pricing-config serves
+// (functions/_lib/pricing-config.js). Every total and minute below is unchanged.
 const html = fs.readFileSync(new URL('../crew/gameplan.html', import.meta.url), 'utf8');
 const line = prefix => {
   const found = html.split(/\r?\n/).find(row => row.startsWith(prefix));
@@ -13,7 +16,7 @@ function harness(overrides = {}) {
   const context = vm.createContext({
     save() {}, render() {}, invalidateAcceptance() { context.invalidated = true; },
     validateStep: () => [], PHOTO_COUNT: 3, uid: () => 'synthetic-job', normPhone: value => value,
-    buildInternalNotes: () => '', buildClientChecklists: () => ({ preJob: [], postJob: [] }),
+    buildInternalNotes: () => '', buildClientChecklists: () => ({ preJob: [], postJob: [] }), PRICING: servedPricing(),
   });
   vm.runInContext(line('const freshState='), context);
   context.S = vm.runInContext('freshState()', context);

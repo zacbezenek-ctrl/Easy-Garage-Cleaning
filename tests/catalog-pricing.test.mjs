@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import vm from 'node:vm';
 import test from 'node:test';
 import { applyMinimum, catalogLine, computeSellPriceCents } from '../functions/_lib/catalog.js';
+import { servedPricing } from './helpers/walkthrough-pricing.mjs';
 
 const readJson = path => JSON.parse(fs.readFileSync(new URL(path, import.meta.url), 'utf8'));
 const catalog = readJson('../functions/_data/garage-catalog.json');
@@ -165,8 +166,9 @@ test('every active item meets the LI-CORE line contract at any quantity', () => 
 // Legacy walkthrough pricing, run from crew/gameplan.html itself.
 const html = fs.readFileSync(new URL('../crew/gameplan.html', import.meta.url), 'utf8');
 const line = prefix => html.split(/\r?\n/).find(row => row.startsWith(prefix)) || assert.fail(prefix);
+// PRICE-SCRUB: the page prices with the tables /api/pricing-config builds from this catalog.
 function gameplan(overrides = {}) {
-  const context = vm.createContext({});
+  const context = vm.createContext({ PRICING: servedPricing() });
   vm.runInContext(line('const freshState='), context);
   context.S = vm.runInContext('freshState()', context);
   Object.assign(context.S, { garageSize: '1', fill: 'medium', loads: '1', crewSize: '2' }, overrides);

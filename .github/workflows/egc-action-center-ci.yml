@@ -112,6 +112,26 @@ jobs:
           pnpm db:generate
           test -z "$(git status --porcelain packages/database/migrations)"
         working-directory: egc-platform
+  functions-bundle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --ignore-scripts --no-audit --no-fund
+      # PRICE-SCRUB: the walkthrough prices must bundle on the Wrangler majors Pages may build with; the check fails on a
+      # leftover runtime import(), an unsupported dynamic import or [ERROR] in the build log, or a missing walkthrough service.
+      - name: Pages Functions bundle builds on Wrangler 3 and 4
+        run: |
+          for major in 3 4; do
+            npx --yes wrangler@$major pages functions build functions --outdir /tmp/pages-fn$major > /tmp/pages-fn$major.log 2>&1 || { cat /tmp/pages-fn$major.log; exit 1; }
+            node scripts/check-functions-bundle.mjs /tmp/pages-fn$major/index.js /tmp/pages-fn$major.log
+          done
   browser:
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -154,6 +174,8 @@ jobs:
         run: python tests/browser/test_followup_settings_ui.py
       - name: Hub home overdue follow-ups widget (isolated and Command center)
         run: python tests/browser/test_home_widgets_ui.py
+      - name: Walkthrough pricing served by role, offline copy and Hub outage messages
+        run: python tests/browser/test_gameplan_pricing_ui.py
       - name: Staff directory Team screen on a phone
         run: python tests/browser/test_staff_ui.py
       - name: Field job-cost capture on a phone
