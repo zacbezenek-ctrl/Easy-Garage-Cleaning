@@ -265,7 +265,7 @@ service cloud.firestore {
       return recordType in [
           'employee_hub_v2', 'employee_account_v1', 'schedule_operation',
           'schedule_provider_receipt', 'schedule_adoption', 'operational_record_receipt',
-          'recurring_plan'
+          'recurring_plan', 'quo_message_receipt'
         ] || (recordType == 'schedule_lock' && !documentId.matches('_egc_schedule_lock_.*'));
     }
 

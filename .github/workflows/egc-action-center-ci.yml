@@ -139,6 +139,8 @@ jobs:
         run: python tests/browser/test_field_today_ui.py
       - name: Field job-cost capture on a phone
         run: python tests/browser/test_field_expenses_ui.py
+      - name: Crew pre-job customer texts are idempotent and never re-sent
+        run: python tests/browser/test_prejob_sms_ui.py
       - name: Public nav drawer keyboard contract and footer tap targets
         run: python tests/browser/test_nav_drawer_ui.py
       - name: Owner message template drafts, approval and conflict recovery

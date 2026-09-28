@@ -428,7 +428,7 @@ async function driveUploadAll(btn,doneEl){
     btn.textContent=`⬆️ Uploading ${Math.min(i+batch.length,todo.length)}/${todo.length}…`;
     try{
       const res=await EGCHubAuth.fetch("/api/drive-upload",{method:"POST",headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({jobId:job,label:driveLabel(),photos:batch.map(p=>({id:p.id,tag:p.tag,dataUrl:p.dataUrl}))})});
+        body:JSON.stringify({jobId:job.replace(/[^A-Za-z0-9_-]/g,"_").slice(0,180),label:driveLabel(),photos:batch.map(p=>({id:p.id,tag:p.tag,dataUrl:p.dataUrl}))})});
       const j=await res.json().catch(()=>({}));
       if(res.status===501){alert("Drive upload isn't connected yet — Zac: run /api/drive-auth once.");failed=true;failureStatus="needs_setup";failureDetail="Google Drive is not connected";break;}
       if(!res.ok||!j.ok){failed=true;failureDetail=String(j.error||`Drive returned ${res.status}`).slice(0,160);break;}

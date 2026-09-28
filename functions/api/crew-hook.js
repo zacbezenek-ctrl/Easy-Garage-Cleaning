@@ -21,35 +21,28 @@
  */
 
 import { getHubSession, hasBusinessAccess } from '../_lib/hub-session.js';
-import { readJob } from '../_lib/firestore-job.js';
-import { createJobAssignmentAccess } from '../_lib/job-assignment.js';
-
-// Hosts allowed to POST here. Referer/Origin is spoofable via curl, so this is
-// a casual-abuse filter, not real auth — pair with Cloudflare Access for that.
-const ALLOWED_HOST_RE = /^(?:easygaragecleaning\.com|www\.easygaragecleaning\.com|easy-garage-cleaning\.pages\.dev|localhost(?::\d+)?|127\.0\.0\.1(?::\d+)?)$/;
 
 const ALLOWED_TOOLS = new Set(['game_plan', 'review_request', 'post_job', 'plan_text']);
 const MAX_BODY = 256 * 1024; // 256 KB — generous for a signature dataURL, caps abuse
 
-function hostOf(value) {
-  try { return new URL(value).host; } catch { return ''; }
-}
+// Same pattern as functions/api/field-jobs.js: a present Origin/Referer must be
+// this exact origin. Absent headers are allowed (some same-origin fetches omit
+// Origin) because the business session cookie is SameSite=Strict.
+const mutationOriginAllowed = request => {
+  if (request.headers.get('Sec-Fetch-Site') === 'cross-site') return false;
+  const origin = request.headers.get('Origin') || request.headers.get('Referer');
+  if (!origin) return true;
+  try { return new URL(origin).origin === new URL(request.url).origin; } catch { return false; }
+};
+const jsonRequest = request => request.headers.get('Content-Type')?.split(';')[0].trim().toLowerCase() === 'application/json';
 
-function originAllowed(request) {
-  const origin = request.headers.get('Origin');
-  const referer = request.headers.get('Referer');
-  // If neither header is present we can't vet it — allow (native fetch sometimes
-  // omits Origin same-origin), the payload validation below is the real filter.
-  if (!origin && !referer) return true;
-  const h = hostOf(origin) || hostOf(referer);
-  return ALLOWED_HOST_RE.test(h);
-}
-
-export async function onRequestOptions() {
+// Same-origin crew pages never need CORS; a foreign preflight gets no grant.
+export async function onRequestOptions({ request }) {
+  if (!mutationOriginAllowed(request)) return new Response(null, { status: 403 });
   return new Response(null, {
     status: 204,
     headers: {
-      'Access-Control-Allow-Origin': '*',
+      Allow: 'POST, OPTIONS',
       'Access-Control-Allow-Methods': 'POST, OPTIONS',
       'Access-Control-Allow-Headers': 'Content-Type',
     },
@@ -62,12 +55,13 @@ export async function onRequestPost({ request, env }) {
       status,
       headers: {
         'Content-Type': 'application/json',
-        'Access-Control-Allow-Origin': '*',
         'Cache-Control': 'no-store',
+        'X-Content-Type-Options': 'nosniff',
       },
     });
 
-  if (!originAllowed(request)) return json(403, { ok: false, error: 'Forbidden origin' });
+  if (!mutationOriginAllowed(request)) return json(403, { ok: false, code: 'CREW_HOOK_ORIGIN_FORBIDDEN', error: 'Forbidden origin' });
+  if (!jsonRequest(request)) return json(415, { ok: false, code: 'CREW_HOOK_JSON_REQUIRED', error: 'Workflow triggers must be sent as JSON.' });
   const session = await getHubSession(request, env);
   if (!session) return json(401, { ok: false, error: 'Sign in to the EGC Hub' });
   if (!hasBusinessAccess(session)) return json(403, { ok: false, error: 'Business access is required for external workflow triggers. Complete assigned work from the field job.' });
@@ -78,19 +72,10 @@ export async function onRequestPost({ request, env }) {
   let body;
   try { body = JSON.parse(raw); }
   catch { return json(400, { ok: false, error: 'Invalid JSON' }); }
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return json(400, { ok: false, error: 'Invalid JSON' });
 
   const tool = String(body.tool || '');
   if (!ALLOWED_TOOLS.has(tool)) return json(400, { ok: false, error: 'Unknown tool' });
-
-  if (!hasBusinessAccess(session)) {
-    if (!['review_request', 'post_job'].includes(tool)) {
-      return json(403, { ok: false, error: 'Business access required' });
-    }
-    const jobId = String(body.job_id || '');
-    if (!/^[A-Za-z0-9_-]{1,180}$/.test(jobId)) return json(400, { ok: false, error: 'A valid assigned job is required' });
-    const job = await readJob(env, jobId).catch(() => null);
-    if (!job || !await createJobAssignmentAccess(env, session).assigned(job)) return json(403, { ok: false, error: 'This job is not assigned to you' });
-  }
 
   // The review path actually sends an SMS downstream — never forward one
   // without both a destination and a message.

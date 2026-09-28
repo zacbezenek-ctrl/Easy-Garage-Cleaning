@@ -238,7 +238,7 @@ const SECTIONS = [
     when:"Night before", title:"Lock the Job", items:[
       {t:"Deposit verified on Stripe", s:"Card on file + deposit captured. No deposit = call Tyler before anything else.", crit:true, act:{type:"call"}},
       {t:"Game Plan reviewed", s:"Re-read the walkthrough: scope, hazards, heavy items, the zone they said drives them craziest. You'll quote it back tomorrow."},
-      {t:"Confirmation text sent", s:"Use the script below. If no reply by 8 PM, Tyler calls.", crit:true, act:{type:"sms", body:"Hi [NAME], it's Easy Garage Cleaning — confirming your garage comeback tomorrow at [TIME]. Crew of [N], we'll knock when we arrive. Flat rate locked at $[RATE] like we agreed — nothing changes. Reply C to confirm. — Alex"}},
+      {t:"Confirmation text sent", s:"Use the script below. If no reply by 8 PM, Tyler calls.", crit:true, act:{type:"sms", script:"confirmation", label:"Send confirmation text", body:"Hi [NAME], it's Easy Garage Cleaning — confirming your garage comeback tomorrow at [TIME]. Crew of [N], we'll knock when we arrive. Flat rate locked at $[RATE] like we agreed — nothing changes. Reply C to confirm. — Alex"}},
       {t:"Upsell materials purchased & staged", s:"Racks / bins from the Game Plan bought (Home Depot pickup) and staged for load-out. Job day is too late."},
       {t:"Dump / donation route planned", s:"Transfer station hours checked. Donation drop-off mapped if the plan includes a donation run."},
     ],
@@ -254,7 +254,7 @@ const SECTIONS = [
       {t:"Broom, dustpan, shop vac", s:"The swept floor IS the after photo. Never skip."},
       {t:"Shelving / bins for install loaded", s:"Only if sold on the Game Plan — check it."},
       {t:"Tripod + phone mount + charged phone", s:"Content kit. Footage is ad inventory — treat it like equipment.", crit:true},
-      {t:"Fuel + route + arrival ETA texted", s:"Send the customer a clean arrival message when wheels roll.", act:{type:"sms", body:"Hi [NAME] — the Easy Garage Cleaning crew is on the way to [ADDRESS]. We'll see you shortly. Reply here if anything changed."}},
+      {t:"Fuel + route + arrival ETA texted", s:"Send the customer a clean arrival message when wheels roll.", act:{type:"sms", script:"arrival", label:"Send arrival text", body:"Hi [NAME] — the Easy Garage Cleaning crew is on the way to [ADDRESS]. We'll see you shortly. Reply here if anything changed."}},
     ]
   },
   {
@@ -337,7 +337,7 @@ async function mountActions(){
     const it=SECTIONS[si].items[ii]; if(!it.act) continue;
     const el=document.getElementById(actId(si,ii)); if(!el) continue;
     if(it.act.type==="photo") await mountPhotoAct(el,it.act);
-    else if(it.act.type==="sms") el.innerHTML=`<button class="actbtn alt" onclick="event.stopPropagation();smsCustomer(${si},${ii},this)">💬 Send arrival text</button>`;
+    else if(it.act.type==="sms") el.innerHTML=`<button class="actbtn alt" onclick="event.stopPropagation();smsCustomer(${si},${ii},this)">💬 ${esc(it.act.label||"Send arrival text")}</button><p class="acthint" id="${actId(si,ii)}_status" role="status" aria-live="polite">${esc(SMS_NOTES[actId(si,ii)]||"")}</p>`;
     else if(it.act.type==="call") el.innerHTML=`<button class="actbtn" onclick="event.stopPropagation();callOffice()">📞 Call office</button>`;
     else if(it.act.type==="clock"){const started=ACTIVE.startedAt||localStorage.getItem(startKey()),parsed=Date.parse(started||''),label=Number.isFinite(parsed)?new Date(parsed).toLocaleTimeString([],{hour:'numeric',minute:'2-digit'}):started;
       el.innerHTML=started?`<button class="actbtn done" onclick="event.stopPropagation();logStart(${si},${ii})">⏱️ Started ${esc(label)} — tap to reset</button>`
@@ -372,22 +372,46 @@ function queueImportantItems(){clearTimeout(importantTimer);importantTimer=setTi
 async function onImportantPhoto(input){const file=input.files&&input.files[0];if(!file)return;try{await photoAdd(jobKey(),"important",await fileToDataUrl(file))}catch(e){}input.value="";await mountImportantItems();await persistImportantItems()}
 async function onImportantPhotoDel(id){await photoDel(id);await mountImportantItems();await persistImportantItems()}
 function custPhoneDigits(){return String(ACTIVE.phone||"").replace(/\D/g,"");}
+/* One Quo send key per job + script, kept in localStorage so a retry, a reload
+   or a tap minutes later replays the first attempt instead of texting twice.
+   A new key is made only when the text itself changes. */
+var SMS_NOTES={},SMS_KEYS={};
+function smsTextHash(text){let h=0x811c9dc5;for(let i=0;i<text.length;i++){h^=text.charCodeAt(i);h=Math.imul(h,0x01000193)>>>0}return h.toString(16).padStart(8,"0")}
+function smsKeySlot(script){let user="";try{user=sessionStorage.getItem("egc_u")||localStorage.getItem("egc_u")||""}catch(e){}return"egc-quo-send:"+user+":"+(ACTIVE.jobId||custPhoneDigits())+":"+script}
+function smsSendKey(script,body){
+  const slot=smsKeySlot(script),hash=smsTextHash(body);let saved=SMS_KEYS[slot];
+  try{saved=JSON.parse(localStorage.getItem(slot)||"null")||saved}catch(e){}
+  if(saved&&saved.hash===hash&&typeof saved.key==="string")return saved.key;
+  const random=typeof crypto.randomUUID==="function"?crypto.randomUUID():Array.from(crypto.getRandomValues(new Uint8Array(16)),b=>b.toString(16).padStart(2,"0")).join("");
+  const key="prejob-"+script+":"+String(ACTIVE.jobId||custPhoneDigits()).replace(/[^A-Za-z0-9_-]/g,"_").slice(0,120)+":"+random;
+  SMS_KEYS[slot]={key,hash};try{localStorage.setItem(slot,JSON.stringify(SMS_KEYS[slot]))}catch(e){}
+  return key;
+}
+function forgetSmsKey(script){const slot=smsKeySlot(script);delete SMS_KEYS[slot];try{localStorage.removeItem(slot)}catch(e){}}
+function smsNote(si,ii,text){SMS_NOTES[actId(si,ii)]=text;const note=document.getElementById(actId(si,ii)+"_status");if(note)note.textContent=text}
 async function smsCustomer(si,ii,btn){
-  const it=SECTIONS[si].items[ii];
+  const it=SECTIONS[si].items[ii],script=it.act.script||("item-"+si+"-"+ii),label="💬 "+(it.act.label||"Send arrival text");
   const name=(document.getElementById("j_name").value||"").split(" ")[0]||"there";
   const rate=document.getElementById("j_rate").value||"[RATE]";
   const body=String(it.act.body||"").replaceAll("[NAME]",name).replaceAll("[RATE]",rate).replaceAll("[ADDRESS]",ACTIVE.addr||"your garage");
   const num=custPhoneDigits();
   if(!num){alert("Add the customer's mobile number before sending the arrival text.");return}
-  const sentAt=new Date().toISOString(),idempotency=`arrival-text:${ACTIVE.jobId||num}:${sentAt.slice(0,16)}`;btn.disabled=true;btn.textContent="Sending…";
+  const sentAt=new Date().toISOString(),idempotency=smsSendKey(script,body);btn.disabled=true;btn.textContent="Sending…";smsNote(si,ii,"");
+  let response,result;
+  try{response=await EGCHubAuth.fetch('/api/quo-send',{method:'POST',headers:{'Content-Type':'application/json','Idempotency-Key':idempotency},body:JSON.stringify({job_id:ACTIVE.jobId,to:num,message:body,idempotency_key:idempotency})});result=await response.json().catch(()=>({}))}
+  catch(e){btn.disabled=false;btn.textContent=label;smsNote(si,ii,"The connection dropped, so this text may already have been sent. Tap again to check: the same text is never sent twice.");return}
+  // Never open the composer when Quo may already have the text: a second send would double-text the customer.
+  if(result.code==="QUO_SEND_OUTCOME_UNKNOWN"){btn.disabled=false;btn.textContent=label;smsNote(si,ii,"This text may already have been sent. Check the customer's conversation in Quo before resending, and resend from Quo only if it is not there.");return}
+  if(result.code==="QUO_SEND_IDEMPOTENCY_CONFLICT"){forgetSmsKey(script);btn.disabled=false;btn.textContent=label;smsNote(si,ii,"The job details changed since the last attempt, so nothing was sent. Review the text, then tap again to send it once.");return}
+  if(!response.ok||!result.ok){btn.disabled=false;btn.textContent="Open phone text instead";alert("Direct send did not go through. The phone message composer will open so you can review and tap Send.");location.href="sms:"+num+"&body="+encodeURIComponent(body);return}
+  smsNote(si,ii,result.replayed?"Already sent: the customer has this text, so nothing new was sent.":"Sent through Quo.");
   try{
-    const response=await EGCHubAuth.fetch('/api/quo-send',{method:'POST',headers:{'Content-Type':'application/json','Idempotency-Key':idempotency},body:JSON.stringify({job_id:ACTIVE.jobId,to:num,message:body,idempotency_key:idempotency})}),result=await response.json().catch(()=>({}));
-    if(!response.ok||!result.ok)throw new Error(result.error||'send failed');
     const crmPayload={tool:'lifecycle',event:'crew-on-the-way',suppress_automation:true,idempotency_key:idempotency+':crm',highlevel_contact_id:ACTIVE.highlevelContactId||'',appointment_id:ACTIVE.highlevelAppointmentId||'',note:`Arrival text sent via Quo at ${sentAt}.`,client:{name:ACTIVE.name||name,phone:num,email:ACTIVE.email||'',address:ACTIVE.addr||'',highlevel_contact_id:ACTIVE.highlevelContactId||''}};
     let crmSynced=false,crmError='';try{const crmResponse=await EGCHubAuth.fetch('/api/highlevel',{method:'POST',headers:{'Content-Type':'application/json','Idempotency-Key':crmPayload.idempotency_key},body:JSON.stringify(crmPayload)}),crmResult=await crmResponse.json().catch(()=>({}));if(!crmResponse.ok||!crmResult.ok)throw new Error(crmResult.error||'HighLevel arrival note failed');crmSynced=true}catch(error){crmError=String(error.message||error).slice(0,160)}
     if(HUBDB&&ACTIVE.jobId){const crmState=crmSynced?{lifecycleSync:{event:'crew-on-the-way',status:'synced',syncedAt:sentAt},lifecycleSyncPayload:crmPayload,lifecycleSyncError:'',lifecycleSyncNextRetryAt:''}:{lifecycleSync:{event:'crew-on-the-way',status:'error',error:crmError,attemptedAt:sentAt},lifecycleSyncPayload:crmPayload,lifecycleSyncAttempts:1,lifecycleSyncError:crmError,lifecycleSyncNextRetryAt:new Date(Date.now()+10*60000).toISOString()};await HUBDB.collection('jobs').doc(ACTIVE.jobId).set({arrivalTextStatus:'sent',lastCustomerMessage:{type:'sms',event:'crew-on-the-way',sentAt,channel:'quo',messageId:result.id||'',sentBy:sessionStorage.getItem('egc_u')||localStorage.getItem('egc_u')||'',crmStatus:crmSynced?'synced':'queued'},...crmState,updatedAt:sentAt},{merge:true}).catch(()=>{})}
     state[key(si,ii)]=true;saveAll();queueProgressSave();render();
-  }catch(e){btn.disabled=false;btn.textContent="Open phone text instead";alert("Direct send did not go through. The phone message composer will open so you can review and tap Send.");location.href="sms:"+num+"&body="+encodeURIComponent(body)}
+  }catch(e){}
+  btn.disabled=false;btn.textContent=label;
 }
 function callOffice(){location.href="tel:"+BIZPHONE;}
 function logStart(si,ii){const startedAt=new Date().toISOString();ACTIVE.startedAt=startedAt;localStorage.setItem(startKey(),startedAt);state[key(si,ii)]=true;saveAll();queueProgressSave();render()}

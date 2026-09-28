@@ -134,6 +134,11 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   with idempotent replays, manager edit/void receipts and audit, per-person and per-job limits; Job costs card on
   `/crew/job.html` only when the job payload says `features.jobCosts`. `sumFieldExpenses(env, jobId, {store})` for job
   costing. Gap: the date-range read needs a `fieldExpenses.incurredOn` collection-group index.
+- **F-LEG** Legacy crew send paths hardened: `/api/quo-send` needs an idempotency key and claims a create-only
+  `messageReceipts/quo_<sha256(key)>` receipt before calling Quo (replays never re-send; uncertain outcomes never
+  auto-resend), crew texts render from the saved job and rate; drive-upload/agreement-upload use exact job ids with
+  Drive-sized `egcJobKey`; crew-hook is business-only; exact same-origin JSON on all four. Audit #29, #75-#77 done.
+  Gap: prejob confirmation still sends literal [TIME]/[N].
 
 ## In progress
 
@@ -162,7 +167,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | P4-15 | Customer portal link revocation (link version) | merged (754b885) |
 | F-PWA | Crew PWA shell + offline action outbox (field actions + time clock) | building |
 | F-EXP | Field cost capture (materials, dump fees) | merged (302ab11) |
-| F-LEG | Legacy crew send-path hardening (quo-send idempotency etc.) | building |
+| F-LEG | Legacy crew send-path hardening (quo-send idempotency etc.) | merged (adc23c7) |
 | MSG-CORE | Approved-send core: GHL messenger, owner-approved templates, message_sends ledger, messages API | merged (b7da326) |
 | HUB-REG | Hub screen registry, UI kit, shell stability, mobile shell pass, microphone policy fix | building |
 | B2B-SEAMS | B2B hub extension seams + mobile compliance + idempotency/leak fixes | merged (4edcf75) |
@@ -238,7 +243,7 @@ Scope: all 188 findings the maps exported (160 bug reports plus 28 mission or in
 | 26 | Quotes | Walkthrough handoff collapses the signed quote to a single 'Garage cleanout and reset' line, so add-ons (pressure wash, trapping, pest waste, shelving) never appear itemized on the estimate, portal, invoice or print. | `functions/_lib/walkthrough-handoff.js:70` and :91; `crew/gameplan-handoff.js` signedPlan() | LI-CORE (line-item shapes), then P2-05 |
 | 27 | Money | Recurring visits copy scope and duration but not the price, so their invoices and deposits show $0. | `functions/_lib/dispatch-service.js:67` | NEW: carry per-visit price onto recurring visits (P1-05 plan occurrences inherit this gap) |
 | 28 | B2B hub | Approving a quote on a B2B-linked job auto-sends an owner-level homeowner portal link (collaborators, wallet) to the job phone or email, which may be a tenant or on-site contact. † | `functions/_lib/portal-invitation.js:92`; `functions/_lib/walkthrough-handoff.js:184`; `functions/api/highlevel.js:570` | B2B-06 |
-| 29 | Messaging | The crew arrival-text endpoint ignores the idempotency key the crew page sends, so a retry or double tap texts the customer twice; the body is free text with no DND/consent check and is not logged to the conversation. | `functions/api/quo-send.js:63-72`; `crew/prejob.html` (smsCustomer) | F-LEG (P1-13 moves on-my-way to the approved-send path) |
+| 29 | Messaging | The crew arrival-text endpoint ignores the idempotency key the crew page sends, so a retry or double tap texts the customer twice; the body is free text with no DND/consent check and is not logged to the conversation. | `functions/api/quo-send.js:63-72`; `crew/prejob.html` (smsCustomer) | F-LEG (done; P1-13 moves on-my-way to the approved-send path) |
 | 30 | Crew app | Pending offline field and shift actions live only in sessionStorage and only one can be queued, so a killed tab loses it and crew cannot record a second offline change. | `crew/job.js:15` | F-PWA |
 | 31 | Crew app | Marking a multi-day job 'complete' closes the whole job, with no per-day visit state for crews finishing day one. | `functions/_lib/field-execution.js:190` | P1-10 |
 | 32 | Messaging | The sales-followup exit check scans the whole jobs collection and fails closed at 501 rows, so once jobs pass 500 documents GHL nurture sequences keep texting customers who already accepted. | `functions/_lib/sales-followup-exit.js:48` | NEW: legacy send-path hardening (bounded per-customer queries) |
@@ -289,9 +294,9 @@ Scope: all 188 findings the maps exported (160 bug reports plus 28 mission or in
 | 72 | Time clock | Clock-in can attach the shift to a future job because the server checks assignment but not date. | `employee-suite.js:411` | P1-15 |
 | 73 | Money | Job economics use a flat $20/hr labor cost instead of actual timecards and snapshotted pay rates. | `employee-suite.js:233` | P1-03 (done: labor cost API), M9 |
 | 74 | Staff and time | All breaks are deducted from paid hours, with no paid rest vs unpaid meal distinction as Colorado COMPS requires. | `functions/_lib/employee-timecards.js:42`; `functions/_lib/gusto-timecards.js` (approvedTimecard) | P1-03 (done: calculation), P1-15 (recording break type) |
-| 75 | Crew app | The crew home offline banner says checklist work will sync later, but that page has no queue or sync. | `crew/index.html:123` | F-LEG (also F-PWA) |
-| 76 | Crew app | Photo upload truncates job ids to 60 characters (ids allow 180), so long ids are checked against the wrong job, and the Drive query does not escape backslashes. | `functions/api/drive-upload.js:276` (query :199) | F-LEG |
-| 77 | Crew app | The crew review-request/post-job branch in crew-hook.js is unreachable behind an unconditional 403 for non-business users, and it sets a wildcard CORS header. | `functions/api/crew-hook.js:73-94` | F-LEG |
+| 75 | Crew app | The crew home offline banner says checklist work will sync later, but that page has no queue or sync. | `crew/index.html:123` | F-LEG (done; also F-PWA) |
+| 76 | Crew app | Photo upload truncates job ids to 60 characters (ids allow 180), so long ids are checked against the wrong job, and the Drive query does not escape backslashes. | `functions/api/drive-upload.js:276` (query :199) | F-LEG (done) |
+| 77 | Crew app | The crew review-request/post-job branch in crew-hook.js is unreachable behind an unconditional 403 for non-business users, and it sets a wildcard CORS header. | `functions/api/crew-hook.js:73-94` | F-LEG (done) |
 | 78 | Hub mobile | Hub forms show the wrong mobile keyboards (phone fields without type=tel, askAction cannot set inputmode) and use free text where a picker or select fits (assigned crew, announcement priority, Garage Guard plan/status). | `employee-suite.js:144` (also :127, :206, :208, :210, :421, :522) | HUB-REG |
 | 79 | Hub shell | Business users always land on the mode screen after login, so deep links like ?view=schedule need an extra tap. | `employee.html:2739` (enterEmployeeApp :1387) | HUB-REG |
 | 80 | Hub shell | Every Hub user, including crew on mobile data, loads the Google Maps JS API for an unreachable on-call flow, and the hidden legacy dashboard still re-renders on every refresh. | `employee.html:3190` (:2453, :798-821) | NEW: remove dead legacy code from employee.html |

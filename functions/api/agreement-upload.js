@@ -18,9 +18,14 @@
  *
  * Request:  { jobId, label, filename, dataUrl (application/pdf, ≤ 6 MB) }
  * Response: { ok:true, folderId, folderUrl } | { ok:false, error }
+ *
+ * The jobId is validated in full (fieldId, never truncated) and each PDF is
+ * stamped with egcJobKey, plus egcJobId when it fits Drive's 124-byte limit.
  */
 
 import { getHubSession, hasBusinessAccess } from '../_lib/hub-session.js';
+import { fieldId } from '../_lib/field-execution.js';
+import { driveJobProperties } from '../_lib/drive-job-key.js';
 
 const TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const FILES_URL = 'https://www.googleapis.com/drive/v3/files';
@@ -28,13 +33,15 @@ const UPLOAD_URL = 'https://www.googleapis.com/upload/drive/v3/files?uploadType=
 const FOLDER_NAME = 'Customer Agreements';
 const MAX_BODY = 8 * 1024 * 1024;
 
-const ALLOWED_HOST_RE = /^(?:easygaragecleaning\.com|www\.easygaragecleaning\.com|easy-garage-cleaning\.pages\.dev|localhost(?::\d+)?|127\.0\.0\.1(?::\d+)?)$/;
-function hostOf(v) { try { return new URL(v).host; } catch { return ''; } }
-function originAllowed(request) {
-  const o = request.headers.get('Origin'), r = request.headers.get('Referer');
-  if (!o && !r) return true;
-  return ALLOWED_HOST_RE.test(hostOf(o) || hostOf(r));
-}
+// Same pattern as functions/api/field-jobs.js: a present Origin/Referer must be
+// this exact origin (absent headers rely on the SameSite=Strict cookies).
+const mutationOriginAllowed = request => {
+  if (request.headers.get('Sec-Fetch-Site') === 'cross-site') return false;
+  const origin = request.headers.get('Origin') || request.headers.get('Referer');
+  if (!origin) return true;
+  try { return new URL(origin).origin === new URL(request.url).origin; } catch { return false; }
+};
+const jsonRequest = request => request.headers.get('Content-Type')?.split(';')[0].trim().toLowerCase() === 'application/json';
 
 let cached = { token: null, exp: 0 };
 async function accessToken(env) {
@@ -80,15 +87,18 @@ async function findOrCreateFolder(token) {
 function dataUrlToBytes(dataUrl) {
   const m = /^data:([^;]+);base64,(.*)$/s.exec(String(dataUrl || ''));
   if (!m) return null;
-  const bin = atob(m[2]);
+  let bin;
+  try { bin = atob(m[2]); } catch { return null; }
   const bytes = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
   return { bytes, mime: m[1] };
 }
 
-export async function onRequestOptions() {
+// Same-origin Hub pages never need CORS; a foreign preflight gets no grant.
+export async function onRequestOptions({ request }) {
+  if (!mutationOriginAllowed(request)) return new Response(null, { status: 403 });
   return new Response(null, { status: 204, headers: {
-    'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' } });
+    Allow: 'POST, OPTIONS', 'Access-Control-Allow-Methods': 'POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' } });
 }
 
 export async function onRequestGet() {
@@ -97,9 +107,10 @@ export async function onRequestGet() {
 
 export async function onRequestPost({ request, env }) {
   const json = (status, body) => new Response(JSON.stringify(body), {
-    status, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-store' } });
+    status, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' } });
 
-  if (!originAllowed(request)) return json(403, { ok: false, error: 'Forbidden origin' });
+  if (!mutationOriginAllowed(request)) return json(403, { ok: false, code: 'AGREEMENT_UPLOAD_ORIGIN_FORBIDDEN', error: 'Forbidden origin' });
+  if (!jsonRequest(request)) return json(415, { ok: false, code: 'AGREEMENT_UPLOAD_JSON_REQUIRED', error: 'Agreements must be sent as JSON.' });
   const session = await getHubSession(request, env);
   if (!session) return json(401, { ok: false, error: 'Sign in to the EGC Hub' });
   if (!hasBusinessAccess(session)) return json(403, { ok: false, error: 'Business access is required to save customer agreements' });
@@ -111,12 +122,15 @@ export async function onRequestPost({ request, env }) {
   if (raw.length > MAX_BODY) return json(413, { ok: false, error: 'PDF too large' });
   let body;
   try { body = JSON.parse(raw); } catch { return json(400, { ok: false, error: 'Invalid JSON' }); }
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return json(400, { ok: false, error: 'Invalid JSON' });
 
-  const jobId = String(body.jobId || '').trim().slice(0, 60);
+  // Job ids are never truncated: a shortened id could file under another job.
+  const jobId = String(body.jobId || '').trim();
   const filename = (String(body.filename || '').trim().slice(0, 140) || 'EGC agreement.pdf')
     .replace(/[\\/:*?"<>|]/g, '-').replace(/\.pdf$/i, '') + '.pdf';
   const pdf = dataUrlToBytes(body.dataUrl);
   if (!jobId) return json(400, { ok: false, error: 'jobId required' });
+  if (!fieldId(jobId)) return json(400, { ok: false, error: 'A valid jobId is required' });
   if (!pdf || pdf.mime !== 'application/pdf' || pdf.bytes.length < 500) {
     return json(400, { ok: false, error: 'dataUrl must be an application/pdf data URL' });
   }
@@ -128,7 +142,7 @@ export async function onRequestPost({ request, env }) {
     const token = await accessToken(env);
     const folderId = await findOrCreateFolder(token);
     const boundary = 'egc' + Math.random().toString(36).slice(2);
-    const meta = JSON.stringify({ name: filename, parents: [folderId], appProperties: { egcJobId: jobId } });
+    const meta = JSON.stringify({ name: filename, parents: [folderId], appProperties: await driveJobProperties(jobId) });
     const enc = new TextEncoder();
     const head = enc.encode(`--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${meta}\r\n--${boundary}\r\nContent-Type: application/pdf\r\n\r\n`);
     const tail = enc.encode(`\r\n--${boundary}--`);
@@ -141,7 +155,8 @@ export async function onRequestPost({ request, env }) {
     });
     if (!r.ok) throw new Error('upload ' + r.status);
     return json(200, { ok: true, folderId, folderUrl: `https://drive.google.com/drive/folders/${folderId}` });
-  } catch (e) {
-    return json(502, { ok: false, error: 'Drive upload failed', detail: String(e && e.message || e).slice(0, 200) });
+  } catch {
+    // Drive error bodies stay server-side; the Hub only needs the outcome.
+    return json(502, { ok: false, error: 'Drive upload failed' });
   }
 }
