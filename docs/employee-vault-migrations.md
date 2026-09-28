@@ -124,3 +124,35 @@ levels, and per-day window counts plus the changed days; verifications and exact
 in the sealed `history`.
 Employee-account roles are authoritative on the sealed account (`staffRoles`); a role change
 there also rotates `sessionVersion`, which signs the employee out.
+
+## Hub screen (TEAM-UI)
+
+`employee-staff.js` (`window.EGCStaff`) is the screen over `/api/staff-directory`. It appears
+at the bottom of the Team page (`#ops-staff-directory`) and as the registered **Staff
+directory** screen (`employee-hub-screens.js`, business capability). It shows role chips,
+skills, pay history by effective date and the weekly availability, and offers only the
+edits the server's returned capabilities allow: roles (owner, employee accounts only), skills
+(managers), pay (owner, employee accounts only, effective today through a year ahead) and
+weekly availability (managers). Each save carries a `requestId`, the `expectedRevision` the
+editor was opened at, and `expectedUser` (the tab's account). A refresh or a return to the
+page does not move that revision: a draft over a changed record is flagged and the save gets
+a revision conflict, and only "Reload record, keep my draft" moves the draft onto the latest
+revision (an untouched editor simply follows the latest record). The API refuses a change
+whose `expectedUser` is not the signed-in account (401 `staff_directory_account_changed`),
+because the session cookie is shared by every tab; the tab keeps the change for its own
+account, and a directory answered for another account is not shown. The request is kept in
+`sessionStorage` before it is sent, so a lost answer is retried with the same `requestId`;
+403s the API documents as permanent (`staff_directory_forbidden`, `_owner_role_reserved`,
+`_origin_forbidden`) are dropped instead. The pay editor's Denver day is the server's `asOf`
+plus the time elapsed since that answer, so a tab left open past midnight moves on. A failed
+or unverifiable load shows "unavailable", never an empty team. With the directory flag off
+the screen says it is turned off.
+
+With `EGC_STAFF_ROLE_PERMISSIONS=true`, `/api/hub-auth` also returns `capabilityMode:
+'staff_roles'` for accounts whose stored roles decide their access. The Hub then narrows its
+views by those capabilities (never widening the business grant): Team and the Staff
+directory need `time.approve` or `dispatch.write`, Team schedule `dispatch.write`, Time
+approvals `time.approve`, Action center `followups.own` and Customer messages
+`customer.send`. Every API keeps its own checks. The crew onboarding prompt still follows
+the business grant itself, so a business account narrowed to crew views is not sent to
+onboarding.

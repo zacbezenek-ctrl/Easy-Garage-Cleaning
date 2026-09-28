@@ -6,7 +6,7 @@ import {
   hubAuthConfigured,
   isHubOwner,
 } from '../_lib/hub-session.js';
-import { staffCapabilities } from '../_lib/staff-roles.js';
+import { capabilityMode, staffCapabilities } from '../_lib/staff-roles.js';
 
 const HOST = /^(?:easygaragecleaning\.com|www\.easygaragecleaning\.com|easy-garage-cleaning\.pages\.dev|localhost(?::\d+)?|127\.0\.0\.1(?::\d+)?)$/;
 
@@ -27,7 +27,7 @@ function allowed(request) {
 
 export async function onRequestGet({ request, env }) {
   const session = await getHubSession(request, env);
-  return session ? reply(200, { ok: true, ...session, owner: isHubOwner(session), capabilities: staffCapabilities(session, env) }) : reply(401, { ok: false, error: 'Sign in required' });
+  return session ? reply(200, { ok: true, ...session, owner: isHubOwner(session), capabilities: staffCapabilities(session, env), capabilityMode: capabilityMode(session, env) }) : reply(401, { ok: false, error: 'Sign in required' });
 }
 
 export async function onRequestPost({ request, env }) {
@@ -55,7 +55,7 @@ export async function onRequestPost({ request, env }) {
     return reply(401, { ok: false, error: 'Incorrect username or password' });
   }
   const cookie = await createHubSessionCookie(env, profile.user, profile);
-  return reply(200, { ok: true, ...profile, owner: isHubOwner(profile), capabilities: staffCapabilities(profile, env) }, { 'Set-Cookie': cookie });
+  return reply(200, { ok: true, ...profile, owner: isHubOwner(profile), capabilities: staffCapabilities(profile, env), capabilityMode: capabilityMode(profile, env) }, { 'Set-Cookie': cookie });
 }
 
 export async function onRequestDelete({ request }) {

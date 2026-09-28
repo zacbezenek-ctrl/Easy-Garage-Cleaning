@@ -1,5 +1,5 @@
 (function () {
-  const KEYS = ['egc_u', 'egc_tok', 'egc_exp', 'egc_name', 'egc_role', 'egc_pay_type', 'egc_hourly_rate', 'egc_business_access', 'egc_owner', 'egc_capabilities'];
+  const KEYS = ['egc_u', 'egc_tok', 'egc_exp', 'egc_name', 'egc_role', 'egc_pay_type', 'egc_hourly_rate', 'egc_business_access', 'egc_owner', 'egc_capabilities', 'egc_capability_mode'];
   let authVersion = 0;
   let authQueue = Promise.resolve();
   let firebaseQueue = Promise.resolve();
@@ -27,6 +27,7 @@
         storage.setItem('egc_business_access', profile.businessAccess === true ? 'true' : 'false');
         storage.setItem('egc_owner', profile.owner === true ? 'true' : 'false');
         storage.setItem('egc_capabilities', JSON.stringify(Array.isArray(profile.capabilities) ? profile.capabilities.filter(item => typeof item === 'string') : []));
+        storage.setItem('egc_capability_mode', profile.capabilityMode === 'staff_roles' ? 'staff_roles' : 'legacy');
         storage.removeItem('egc_tok');
         storage.removeItem('egc_exp');
       }

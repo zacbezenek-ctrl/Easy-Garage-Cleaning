@@ -25,6 +25,19 @@ JOBS = [
      'syncStatus': 'synced', 'invoice': {'number': 'INV-1001', 'status': 'issued', 'dueDate': '2026-09-30', 'amount': 1800}, 'closeoutSyncStatus': 'error', 'closeoutSyncPayload': {'tool': 'post_job'},
      'closeoutSyncNextRetryAt': '2099-01-01T00:00:00Z', 'rebookingRequests': [{'id': 'rebook-1', 'status': 'pending', 'kind': 'repeat'}]},
 ]
+# /api/staff-directory for the Team page section and the registered Staff directory screen (TEAM-UI).
+STAFF = {'ok': True, 'authority': 'employee_hub', 'timeZone': 'America/Denver', 'today': DAY,
+         'viewer': {'user': 'ZacB', 'capabilities': ['dispatch.write', 'time.approve', 'pay.manage', 'accounts.approve', 'customer.send', 'followups.own']},
+         'catalog': {'version': 'synthetic-skills', 'skills': [{'id': 'cleanout', 'label': 'Garage cleanout'}, {'id': 'customer_phone', 'label': 'Customer phone follow-up'}], 'levels': ['trainee', 'proficient', 'lead'],
+                     'roles': ['owner', 'manager', 'crew_lead', 'crew', 'sales', 'phone'], 'days': ['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']},
+         'people': [{'username': 'Synthetic.Crew', 'displayName': 'Synthetic Crew', 'source': 'employee_account', 'accountStatus': 'approved', 'staffRoles': ['crew', 'phone'], 'staffRolesSource': 'account', 'primaryRole': 'phone',
+                     'skills': [{'id': 'customer_phone', 'level': 'lead', 'verifiedBy': 'zacb', 'verifiedAt': '2026-09-10T16:00:00Z'}],
+                     'weeklyAvailability': {'mon': [{'start': '08:00', 'end': '17:00'}], 'tue': [], 'wed': [{'start': '18:00', 'end': '24:00'}], 'thu': [], 'fri': [], 'sat': [], 'sun': []}, 'weeklyAvailabilityNeedsReview': False,
+                     'pay': {'current': {'hourlyRate': 20, 'payType': 'hourly', 'overtimeMultiplier': 1.5, 'effectiveFrom': '2026-09-01', 'source': 'pay_rates', 'drift': False},
+                             'upcoming': [{'effectiveFrom': '2026-10-01', 'hourlyRate': 22, 'payType': 'hourly', 'overtimeMultiplier': 1.5}],
+                             'schedule': [{'effectiveFrom': '2026-09-01', 'hourlyRate': 20, 'payType': 'hourly', 'overtimeMultiplier': 1.5}, {'effectiveFrom': '2026-10-01', 'hourlyRate': 22, 'payType': 'hourly', 'overtimeMultiplier': 1.5}], 'needsReview': False},
+                     'history': [], 'revision': 'rev-staff-1', 'profileNeedsReview': False}],
+         'coverage': {'complete': True, 'asOf': NOW}}
 FIREBASE = r'''(function(){
 const snap=name=>({docs:(name==='jobs'?(window.__egcJobs||[]):[]).map(row=>({id:row.id,data:()=>({...row})}))});
 const ref=name=>({onSnapshot(next){setTimeout(()=>next(snap(name)),0);return()=>{};},add:async()=>({id:'synthetic'}),get:async()=>snap(name),where(){return this;},orderBy(){return this;},limit(){return this;},
@@ -160,6 +173,7 @@ class HubShell:
                   'warnings': [], 'coverage': {'complete': True, 'asOf': DAY + 'T18:00:00Z'}, 'startDate': start, 'endDate': end}); return
         if path == '/api/crew-availability' and request.method == 'GET':
             send({'ok': True, 'timeZone': 'America/Denver', 'employee': {'id': 'synthetic.crew', 'name': 'Synthetic Crew'}, 'startDate': DAY, 'endDate': '2026-10-22', 'availability': [], 'exceptions': [], 'coverage': {'complete': True}}); return
+        if path == '/api/staff-directory' and request.method == 'GET': send(copy.deepcopy(STAFF)); return
         if path == '/api/operations' and request.method == 'GET':
             send({'ok': True, 'enabled': False, 'actor': {'id': 'zacb', 'role': 'owner', 'kind': 'human'}, 'owners': [{'id': 'zacb', 'name': 'Synthetic Owner', 'role': 'owner'}]}); return
         send({'ok': False, 'error': 'Synthetic service unavailable'}, 503)

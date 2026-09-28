@@ -1333,7 +1333,7 @@ async function enterEmployeeApp(data, version = hubAuthVersion) {
 function clearHubProfile() {
   me = null;
   for (const storage of [sessionStorage, localStorage]) {
-    ['egc_u','egc_name','egc_role','egc_pay_type','egc_hourly_rate','egc_business_access','egc_owner','egc_tok','egc_exp'].forEach(key => storage.removeItem(key));
+    ['egc_u','egc_name','egc_role','egc_pay_type','egc_hourly_rate','egc_business_access','egc_owner','egc_capabilities','egc_capability_mode','egc_tok','egc_exp'].forEach(key => storage.removeItem(key));
   }
 }
 
@@ -1346,6 +1346,9 @@ function rememberHubProfile(data) {
     egc_hourly_rate: String(Number(data.hourlyRate || 0)),
     egc_business_access: data.businessAccess === true ? 'true' : 'false',
     egc_owner: data.owner === true ? 'true' : 'false',
+    // Display only: the suite narrows its views by these when the server reports staff-role permissions.
+    egc_capabilities: JSON.stringify(Array.isArray(data.capabilities) ? data.capabilities.filter(item => typeof item === 'string') : []),
+    egc_capability_mode: data.capabilityMode === 'staff_roles' ? 'staff_roles' : 'legacy',
   };
   Object.entries(values).forEach(([key, value]) => sessionStorage.setItem(key, value));
 }
@@ -3066,7 +3069,9 @@ window.addEventListener('egc:booking-recovered',event=>{const key=event.detail?.
 <script src="employee-money-document.js?v=20260928m4"></script>
 <link rel="stylesheet" href="employee-portal-documents.css?v=20260927docs">
 <script src="employee-portal-documents.js?v=20260927docs"></script>
-<script src="employee-suite.js?v=20260928legacysend"></script>
+<link rel="stylesheet" href="employee-staff.css?v=20260928team">
+<script src="employee-staff.js?v=20260928team"></script>
+<script src="employee-suite.js?v=20260928team"></script>
 <link rel="stylesheet" href="employee-money-actions.css?v=20260928money">
 <script src="employee-money-actions.js?v=20260928money"></script>
 <link rel="stylesheet" href="employee-mobile.css?v=20260927hubreg">

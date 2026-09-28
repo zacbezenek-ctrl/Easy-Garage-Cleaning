@@ -14,7 +14,7 @@ const PAY_TYPES = ['hourly', 'salary'];
 const HISTORY_LIMIT = 200, PAY_RATE_LIMIT = 60, VIEW_HISTORY = 50;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const TIME = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
-const COMMON = ['action', 'requestId', 'username', 'expectedRevision', 'reason'];
+const COMMON = ['action', 'requestId', 'username', 'expectedRevision', 'expectedUser', 'reason'];
 const ACTIONS = { set_roles: ['staffRoles'], set_skills: ['skills'], set_pay: ['effectiveFrom', 'hourlyRate', 'payType', 'overtimeMultiplier'], set_availability: ['weeklyAvailability'] };
 
 export const staffDirectoryEnabled = env => env?.EGC_STAFF_DIRECTORY_ENABLED === 'true';
@@ -115,6 +115,7 @@ function validateInput(input) {
   if (typeof input.requestId !== 'string' || !UUID.test(input.requestId)) throw fail('invalid_request', 'The change needs a request id. Refresh and try again.');
   if (typeof input.username !== 'string' || !input.username.trim() || input.username.length > 80) throw fail('invalid_request', 'Choose a staff member.');
   if (typeof input.expectedRevision !== 'string' || input.expectedRevision.length > 100) throw fail('invalid_request', 'The change needs the revision you reviewed. Refresh and try again.');
+  if (input.expectedUser !== undefined && (typeof input.expectedUser !== 'string' || !input.expectedUser.trim() || input.expectedUser.length > 80)) throw fail('invalid_request', 'The change names an invalid account. Refresh and try again.');
   return reasonText(input.reason);
 }
 
@@ -282,6 +283,9 @@ export function createStaffDirectoryService({ store, env = {}, now = () => new D
     async mutate(session, input) {
       if (!session?.user) throw fail('sign_in_required', 'Sign in to change the staff directory.', 401);
       const reason = validateInput(input), date = now(), nowIso = date.toISOString(), today = denverToday(date), actor = String(session.user);
+      // expectedUser (optional): the account the change was made under. The session cookie is shared by every tab, so a
+      // change kept in one tab is refused after another tab signs in as someone else; the client keeps it (401).
+      if (input.expectedUser !== undefined && !same(input.expectedUser, session.user)) throw fail('account_changed', 'This change was made while signed in as another account. Sign in as that account to retry it, or discard it.', 401);
       if (!permitted(session, input.action, { username: input.username })) throw fail('forbidden', input.action === 'set_roles' || input.action === 'set_pay' ? 'Only the owner can change staff roles and pay.' : 'Only a manager can change another staff member.', 403);
       if (store.readOnly()) throw fail('recovery_read_only', 'Employee setup is being verified. Existing records are preserved and cannot be changed yet.', 503);
       const requestId = input.requestId.toLowerCase(), fingerprint = await store.fingerprint(canonicalJson({ actor: personKey(actor), input }));

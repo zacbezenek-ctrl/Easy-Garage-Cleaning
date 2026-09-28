@@ -823,7 +823,7 @@ test('open-shift scheduling fields persist on the canonical job record',()=>{
   assert.match(suite,/b\.type==='blocked'\?'ops-hidden':''/);
   assert.match(employee,/employee-suite\.css\?v=20260909gusto/);
   // Bumped deliberately (LEGACY-SEND): the customer thread delivery labels changed.
-  assert.match(employee,/employee-suite\.js\?v=20260928legacysend/);
+  assert.match(employee,/employee-suite\.js\?v=20260928team/);
 });
 
 test('recurring visits request a server-side handoff clone instead of copying prior execution or payments',()=>{

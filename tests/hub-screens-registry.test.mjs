@@ -167,7 +167,7 @@ test('a screen whose files fail to load shows unavailable with Retry, never an e
 
 test('registration rejects ambiguous access, unsafe asset paths and markup in labels', () => {
   const page = hubPage(), registry = page.context.EGCHubScreens, base = fixtureScreen().spec;
-  // Screens shipped in MANIFEST (FUN-19 added stocked_costs) register first.
+  // Screens shipped in MANIFEST (FUN-19 stocked_costs, TEAM-UI staff) register first; none of the invalid specs may join them.
   const shipped = registry.list().map(entry => entry.id);
   registry.register(base);
   const invalid = [
@@ -234,12 +234,12 @@ test("labels are plain text: '&' and quotes are accepted and escaped by the shel
 
 test('one invalid MANIFEST line is skipped with a console warning and every other screen still registers', () => {
   const source = readFileSync(new URL('../employee-hub-screens.js', import.meta.url), 'utf8');
-  // Screens have landed (FUN-19: stocked_costs), so the fixtures are appended after the shipped lines, and
+  // Screens have landed (FUN-19 stocked_costs, TEAM-UI staff), so the fixtures are appended after the shipped lines, and
   // every shipped line must itself register cleanly.
   const manifest = /const MANIFEST=\[\n((?:\{[^\n]*\},\n)*)\];/.exec(source);
   assert.ok(manifest, 'MANIFEST keeps one {...}, line per screen');
   const shipped = [...manifest[1].matchAll(/^\{id:'([a-z][a-z0-9_]+)'/gm)].map(match => match[1]);
-  assert.ok(shipped.includes('stocked_costs'));
+  for (const id of ['stocked_costs', 'staff']) assert.ok(shipped.includes(id), `${id} ships in MANIFEST`);
   const lines = [
     "{id:'fixture_first',group:'SYSTEM',label:'First & foremost',capability:'business',mount(){}}",
     "{id:'Bad Id',group:'SYSTEM',label:'Broken',capability:'business',mount(){}}",

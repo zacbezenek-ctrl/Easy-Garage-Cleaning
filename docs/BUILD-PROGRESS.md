@@ -257,6 +257,10 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   reload or lost reply never loses or doubles a photo; refused photos wait with a thumbnail for Retry/Discard, and an
   upload never locks the job page. Only a sign-out the person chooses (with a "photos will be deleted" prompt) purges
   waiting photos; an expired session or a crew "Sign in again" renewal keeps them. Gap: queued actions wait behind a failing photo.
+- **TEAM-UI** Staff directory screen (`employee-staff.js`, Team page section and the 'staff' HUB-REG screen) on P1-08's
+  API: role chips, skills, effective-dated pay history and weekly availability with capability-driven owner/manager
+  editors; saves carry the opened revision and expectedUser (401 staff_directory_account_changed on a tab switch).
+  `/api/hub-auth` reports capabilityMode; with EGC_STAFF_ROLE_PERMISSIONS the suite only narrows business views.
 
 ## In progress
 
@@ -319,6 +323,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | FUN-19 | Closeout expense attestation, cost kinds, payer, shared loads and stocked-item standard costs | merged (84f8d37) |
 | FUN-05 | Walkthrough visit API: start/finish/no-show with funnel events, rep lock and timecard segment (flag off) | merged (11f1788) |
 | PHOTO-OUTBOX | Queued crew photos in the field outbox survive session expiry and reloads; explicit sign-out purges them | merged (2ef0b70) |
+| TEAM-UI | Staff directory Team screen (roles, skills, pay history, availability) on the P1-08 API | merged (22a6fc0) |
 
 ## Next
 
