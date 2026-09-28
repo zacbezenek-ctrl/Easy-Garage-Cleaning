@@ -95,6 +95,8 @@ class BrowserTests(unittest.TestCase):
         self.open()
         for width in [1360,390]:
             self.page.set_viewport_size({'width':width,'height':900});self.assertLessEqual(self.page.evaluate('document.documentElement.scrollWidth'),width+1)
+        # Let the 390 px relayout finish before the full-page capture; capturing mid-resize can fail with "Unable to capture screenshot".
+        self.page.evaluate('() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))')
         out=ROOT/'test-results';out.mkdir(exist_ok=True);self.page.screenshot(path=str(out/'action-center-mobile.png'),full_page=True)
     def test_untrusted_customer_text_is_not_html(self):
         self.items[0]['title']='<img src=x onerror="window.injected=true">';self.open();self.assertEqual(self.page.locator('img').count(),0);self.assertIsNone(self.page.evaluate('window.injected'))
