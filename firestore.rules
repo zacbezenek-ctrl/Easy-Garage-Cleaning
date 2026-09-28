@@ -453,6 +453,15 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // Walkthrough visit request receipts and each rep's open-walkthrough lock
+    // (FUN-05) are written only in the server commit that records the visit.
+    match /walkthroughVisitOperations/{documentId} {
+      allow read, write: if false;
+    }
+    match /walkthroughVisitLocks/{documentId} {
+      allow read, write: if false;
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }

@@ -30,11 +30,14 @@ export function validateJobCostingRange({ start, end, jobId = '' }) {
  * also includes pending ones, and `pending` is the change in cost if the pending timecards are approved as-is.
  * Approved cost is final only while coverage.complete: approving more time in the same employee-week moves overtime
  * premium onto it. Timecard bonus and tips themselves are not costed to a job (the bonus still raises the regular
- * rate behind the premium). */
+ * rate behind the premium). Walkthrough visit segments (visitKind 'walkthrough', FUN-05) are acquisition cost,
+ * not job cost (docs/FUNNEL-METRICS.md §6.1): they are left out of `jobs` and `totals` and reported under
+ * `walkthroughLabor`. */
 export function computeJobLaborCost({ timecards = [], policy = 'colorado', start, end, jobId = '', includeTravel = false, now = new Date().toISOString() } = {}) {
   validateJobCostingRange({ start, end, jobId });
   if (!Array.isArray(timecards)) throw fail('Timecards could not be read as a complete list.', 'job_costing_records_invalid', 503);
   const rules = resolveOvertimePolicy(policy), jobs = new Map(), selected = [], touched = new Map();
+  const walkthroughs = new Set(timecards.flatMap(card => Array.isArray(card?.jobTracking?.segments) ? card.jobTracking.segments.filter(segment => segment?.visitKind === 'walkthrough' && costableJobId(segment.jobId)).map(segment => segment.jobId) : []));
   for (const card of timecards) {
     const state = timecardPayState(card), workDate = denverWorkDate(card?.clockInAt);
     if (state !== 'rejected' && workDate && workDate >= start && workDate < end) selected.push({ card, state, weekStart: timesheetWeekStart(workDate) });
@@ -77,14 +80,18 @@ export function computeJobLaborCost({ timecards = [], policy = 'colorado', start
       if (!hourly) row.missingRateCount++;
     }
   }
-  const rows = [...jobs.values()].map(row => ({
+  const summarize = list => list.map(row => ({
     jobId: row.jobId, jobLabel: row.jobLabel, approved: bucket(row.approved), pending: bucket(minus(row.projected, row.approved)), projected: bucket(row.projected),
     employees: [...row.employees.values()].map(person => ({ employee: person.employee, name: person.name, approvedHours: hours(person.approved.laborMs), pendingHours: hours(person.projected.laborMs - person.approved.laborMs),
       approvedCost: cents(cents(person.approved.straight) + cents(person.approved.premium)), projectedCost: cents(cents(person.projected.straight) + cents(person.projected.premium)) })).sort((a, b) => a.name.localeCompare(b.name) || a.employee.localeCompare(b.employee)),
     approvedTimecards: row.approvedTimecards.size, pendingTimecards: row.pendingTimecards.size, openShifts: row.openShifts, needsReviewCount: row.needsReviewCount, legacyAssociationOnlyCount: row.legacyAssociationOnlyCount, missingRateCount: row.missingRateCount,
   })).sort((a, b) => b.projected.cost - a.projected.cost || a.jobId.localeCompare(b.jobId));
-  const total = key => { const sum = zero(); for (const row of jobs.values()) add(sum, key === 'pending' ? minus(row.projected, row.approved) : row[key]); return bucket(sum); };
-  const count = key => rows.reduce((sum, row) => sum + row[key], 0), totals = { approved: total('approved'), pending: total('pending'), projected: total('projected') }, found = new Set();
+  const jobRows = [...jobs.values()].filter(row => !walkthroughs.has(row.jobId)), visitRows = [...jobs.values()].filter(row => walkthroughs.has(row.jobId));
+  const total = (list, key) => { const sum = zero(); for (const row of list) add(sum, key === 'pending' ? minus(row.projected, row.approved) : row[key]); return bucket(sum); };
+  const totalsOf = list => ({ approved: total(list, 'approved'), pending: total(list, 'pending'), projected: total(list, 'projected') });
+  const rows = summarize(jobRows), visits = summarize(visitRows), totals = totalsOf(jobRows), walkthroughTotals = totalsOf(visitRows), found = new Set();
+  // Coverage and the review counts describe everything returned, walkthrough labor included.
+  const count = key => [...rows, ...visits].reduce((sum, row) => sum + row[key], 0);
   // Approved cost is complete only when every employee-week whose overtime it shares is finished and settled, even
   // where the unsettled time is on another job or on days outside the range.
   const today = denverWorkDate(now);
@@ -102,10 +109,10 @@ export function computeJobLaborCost({ timecards = [], policy = 'colorado', start
   }
   if (count('needsReviewCount')) found.add('needs_review');
   if (count('openShifts')) found.add('open_shifts');
-  if (count('pendingTimecards') || Object.values(totals.pending).some(Boolean)) found.add('pending_timecards');
+  if (count('pendingTimecards') || [totals, walkthroughTotals].some(sums => Object.values(sums.pending).some(Boolean))) found.add('pending_timecards');
   if (count('missingRateCount')) found.add('missing_rate');
   const reasons = COVERAGE_REASONS.filter(reason => found.has(reason));
   return { policy: { ...rules }, start, end, endExclusive: true, jobId, includeTravel: includeTravel === true, asOf: now,
-    source: 'explicit_employee_job_segments', jobs: rows, totals,
+    source: 'explicit_employee_job_segments', jobs: rows, totals, walkthroughLabor: { costedAs: 'acquisition', visits, totals: walkthroughTotals },
     needsReviewCount: count('needsReviewCount'), openShifts: count('openShifts'), legacyAssociationOnlyCount: count('legacyAssociationOnlyCount'), coverage: { complete: !reasons.length, asOf: now, reasons } };
 }

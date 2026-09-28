@@ -159,6 +159,25 @@ test('a quarter of job costing over two years of five-person history reads each 
   assert.deepEqual([result.jobs.length, result.totals.approved.workHours, result.totals.approved.straightCost, result.coverage.complete], [40, 2632, 57920, true]);
 });
 
+test('walkthrough visit segments are acquisition labor: left out of job rows and totals and reported apart', () => {
+  const parts = [['work', 'walk-1', '08:00'], ['work', 'job-a', '10:00']];
+  const card = tracked('shift', '2026-09-21', '08:00', '16:00', parts, { hourlyRate: 25 });
+  card.jobTracking.segments[0].visitKind = 'walkthrough';
+  const result = cost([card]);
+  assert.deepEqual(result.jobs.map(row => row.jobId), ['job-a']);
+  assert.deepEqual(result.totals.approved, { workHours: 6, travelHours: 0, laborHours: 6, straightCost: 150, overtimePremium: 0, cost: 150 });
+  assert.equal(result.walkthroughLabor.costedAs, 'acquisition');
+  assert.deepEqual(result.walkthroughLabor.visits.map(row => [row.jobId, row.approved.cost, row.approvedTimecards]), [['walk-1', 50, 1]]);
+  assert.deepEqual(result.walkthroughLabor.totals.approved, { workHours: 2, travelHours: 0, laborHours: 2, straightCost: 50, overtimePremium: 0, cost: 50 });
+  assert.equal(result.coverage.complete, true);
+  // Asking for the walkthrough itself returns it only as acquisition labor.
+  const one = cost([card], { jobId: 'walk-1' });
+  assert.deepEqual([one.jobs.length, one.walkthroughLabor.visits.map(row => row.jobId), one.totals.approved.cost], [0, ['walk-1'], 0]);
+  // Unmarked segments (every P1-03 job segment) are costed exactly as before.
+  const unmarked = cost([tracked('shift', '2026-09-21', '08:00', '16:00', parts, { hourlyRate: 25 })]);
+  assert.deepEqual([unmarked.jobs.length, unmarked.walkthroughLabor.visits.length, unmarked.totals.approved.cost, unmarked.walkthroughLabor.totals.approved.cost], [2, 0, 200, 0]);
+});
+
 const manager = { user: 'ZacB', role: 'owner', businessAccess: true };
 const handler = (options = {}) => jobCostingHandlers({ session: async () => manager, read: async () => [tracked('shift', '2026-09-21', '08:00', '12:00', [['work', 'job-a', '08:00']])], now: () => new Date(NOW), ...options }).get;
 const request = query => new Request(`https://easygaragecleaning.com/api/job-costing${query}`);

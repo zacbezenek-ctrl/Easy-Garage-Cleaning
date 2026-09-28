@@ -249,6 +249,10 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   income), who-paid on every cost, shared dump loads split in exact cents, per-kind "None" attestation, a manager
   job-costing view where unknown stays null, and owner-set standard costs for stocked catalog items (Hub System screen).
   `FIELD_EXPENSE_CLOSEOUT_REQUIRED` (off) gates completion. Crew sw VERSION bump left for FIELD-MULTIDAY's cache-bust.
+- **FUN-05** Walkthrough visit API (`/api/walkthrough-visit` start | finish | no_show, GET state) behind
+  `EGC_WALKTHROUGH_VISIT_ENABLED` (off): each tap is one commit with the visit fields, FUN-01 funnel events, a per-rep lock,
+  a receipt and the rep's sealed timecard segment; rebooked no-shows archive the earlier occurrence. Walkthrough labor is
+  reported separately (acquisition cost). Gaps: occurrence numbers fall back until FUN-02; a manager Finish leaves the rep's segment open.
 
 ## In progress
 
@@ -309,6 +313,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | BRIDGE-AUTHZ | SEC-04 bridge command policy table (crew refused, sales read-only, audited writes, confirm flag off) | merged (e4309f5) |
 | DISPATCH-CAL | Dispatch Month and Lanes views: drag to reschedule on desktop, tap-assign on phones (client only) | merged (f3f74c8) |
 | FUN-19 | Closeout expense attestation, cost kinds, payer, shared loads and stocked-item standard costs | merged (84f8d37) |
+| FUN-05 | Walkthrough visit API: start/finish/no-show with funnel events, rep lock and timecard segment (flag off) | merged (11f1788) |
 
 ## Next
 
