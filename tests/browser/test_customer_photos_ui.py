@@ -47,9 +47,7 @@ class CustomerPhotosBrowserTests(unittest.TestCase):
         cls.url = f'http://127.0.0.1:{cls.server.server_port}'
         cls.pw = sync_playwright().start()
         options = {'executable_path': os.environ['PLAYWRIGHT_CHROMIUM_EXECUTABLE']} if os.environ.get('PLAYWRIGHT_CHROMIUM_EXECUTABLE') else {}
-        # Chromium's lazy-image distance depends on its connection estimate (1250px on 4G, 2500-3000px on 3G or
-        # unknown), and CI runners report a slower one. Pin 4G so the below-the-fold lazy-loading check is stable.
-        cls.browser = cls.pw.chromium.launch(headless=True, args=['--no-sandbox', '--force-effective-connection-type=4G'], **options)
+        cls.browser = cls.pw.chromium.launch(headless=True, args=['--no-sandbox'], **options)
     @classmethod
     def tearDownClass(cls):
         cls.browser.close(); cls.pw.stop(); cls.server.shutdown(); cls.server.server_close()
@@ -119,6 +117,12 @@ class CustomerPhotosBrowserTests(unittest.TestCase):
     def open_portal(self):
         self.page.goto(self.url + '/customer-portal.html'); expect(self.page.locator('#portal')).to_be_visible()
     def test_portal_gallery_groups_photos_with_alt_text_and_denver_dates(self):
+        # Chromium starts lazy images within a distance of the viewport that depends on its connection estimate
+        # (1250px on 4G, up to 8000px on the slowest types) and the CI headless shell reports a slower one than a
+        # local browser. Push the gallery beyond every threshold so "below the fold" means the same everywhere.
+        self.page.add_init_script("""document.addEventListener('DOMContentLoaded', () => {
+            const style = document.createElement('style'); style.textContent = '#gallery-card{margin-top:9000px}';
+            document.head.appendChild(style); });""")
         self.open_portal()
         card = self.page.locator('#gallery-card'); expect(card).to_be_visible()
         expect(card.get_by_role('heading', name='Your project photos')).to_be_visible()
