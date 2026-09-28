@@ -50,7 +50,7 @@ class PortalDocumentsBrowserTests(unittest.TestCase):
         self.context = self.browser.new_context(viewport={'width': 375, 'height': 812}, is_mobile=True, has_touch=True, timezone_id='Asia/Tokyo', accept_downloads=True)
         self.page = self.context.new_page(); self.page.set_default_timeout(5000); self.page.clock.install(time=NOW)
         self.errors = []; self.posts = []; self.portal_gets = 0; self.status_available = True; self.pdf_status = 200
-        self.hub = hub_status(); self.hub_status_code = 200; self.hub_post = None
+        self.hub = hub_status(); self.hub_status_code = 200; self.hub_post = None; self.portal_post = None
         self.page.on('pageerror', lambda error: self.errors.append(str(error))); self.page.route('**/*', self.route)
     def tearDown(self):
         self.assertEqual(self.errors, []); self.context.close()
@@ -61,6 +61,7 @@ class PortalDocumentsBrowserTests(unittest.TestCase):
         if parsed.path == '/api/customer-portal':
             if request.method == 'GET': self.portal_gets += 1; send(portal_view()); return
             body = request.post_data_json; self.posts.append(body)
+            if self.portal_post: self.portal_post(send, body); return
             send({'ok': False, 'code': 'CUSTOMER_PORTAL_TERMS_CHANGED', 'error': 'Our estimate terms were updated. Review the latest terms, then approve again.'}, 409); return
         if parsed.path == '/api/customer-portal-document':
             if parsed.query == 'kind=insurance&view=status': send({'ok': True, 'kind': 'insurance', 'available': self.status_available}); return
@@ -120,6 +121,18 @@ class PortalDocumentsBrowserTests(unittest.TestCase):
             if self.portal_gets > before: break
             self.page.wait_for_timeout(100)
         self.assertGreater(self.portal_gets, before, 'the page reloads the latest terms')
+
+    def test_a_stripe_return_held_for_review_keeps_the_portal_open_and_says_not_to_pay_again(self):
+        # REVIEWS-UI: a charge Stripe shows refunded is held for the owner, never recorded as paid.
+        held = 'Stripe shows this payment was refunded, so it was not added to your balance. It is held for our team to review. Please do not pay again until we contact you.'
+        self.portal_post = lambda send, body: send({'ok': False, 'error': held, 'code': 'payment_refunded', 'reviewRecorded': True}, 409)
+        self.page.goto(self.url + '/customer-portal.html?payment=stripe-success&session_id=cs_test_synthetic_held')
+        notice = self.page.locator('#payment-notice')
+        expect(notice).to_have_text(held); expect(notice).to_have_attribute('role', 'alert')
+        expect(self.page.locator('#portal')).to_be_visible(); expect(self.page.locator('#error')).to_be_hidden()
+        self.assertEqual(self.posts, [{'action': 'verify_payment', 'session_id': 'cs_test_synthetic_held'}])
+        self.assertEqual(self.page.evaluate('location.search'), '', 'a reload does not verify the held charge again')
+        self.assert_mobile('#payment-notice')
 
     def open_hub(self):
         self.page.goto(self.url + '/hub-documents'); expect(self.page.get_by_role('heading', name='Portal documents')).to_be_visible()

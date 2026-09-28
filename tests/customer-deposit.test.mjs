@@ -141,8 +141,11 @@ test('another checkout request reconciles a completed deposit before offering an
 
 test('a browser return enriches the receipt after an unexpanded webhook without double counting', async t => {
   const f = await fixture(t); await f.pay(); const id = [...f.sessions.keys()][0], paid = f.complete(id);
+  // The webhook reads the session from Stripe, which has not issued the receipt yet.
+  const receipt = paid.payment_intent.latest_charge.receipt_url; delete paid.payment_intent.latest_charge.receipt_url;
   assert.equal((await f.event({ ...paid, payment_intent: paid.payment_intent.id })).status, 200);
   assert.equal(f.job().payment.receiptUrl, '');
+  paid.payment_intent.latest_charge.receipt_url = receipt;
   const response = await f.post({ action: 'verify_payment', session_id: id });
   assert.equal(response.status, 200); assert.equal((await response.json()).duplicate, true);
   assert.equal(f.job().payment.receiptUrl, `https://pay.stripe.com/receipts/${id}`);

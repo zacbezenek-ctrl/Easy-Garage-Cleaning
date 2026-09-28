@@ -14,6 +14,10 @@ on:
       - 'functions/_lib/pricing-config.js'
       - 'functions/_middleware.js'
       - 'tests/business-hub*'
+      - 'scripts/business-members-scope-export.mjs'
+      - 'scripts/business-operations-ttl-backfill.mjs'
+      - 'scripts/backfill-customer-identity.mjs'
+      - 'firestore.indexes.json'
       - 'tests/browser/test_business_hub_ui.py'
       - '.github/workflows/egc-business-hub-acceptance.yml'
   push:
@@ -31,6 +35,10 @@ on:
       - 'functions/_lib/pricing-config.js'
       - 'functions/_middleware.js'
       - 'tests/business-hub*'
+      - 'scripts/business-members-scope-export.mjs'
+      - 'scripts/business-operations-ttl-backfill.mjs'
+      - 'scripts/backfill-customer-identity.mjs'
+      - 'firestore.indexes.json'
       - 'tests/browser/test_business_hub_ui.py'
       - '.github/workflows/egc-business-hub-acceptance.yml'
 permissions:

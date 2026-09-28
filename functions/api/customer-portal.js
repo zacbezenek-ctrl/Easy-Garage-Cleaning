@@ -380,8 +380,8 @@ async function handlePost({ request, env }, { clock, read }) {
     const requestId = safe(body.request_id, 120);
     if (!requestId) return reply(400, { ok: false, error: 'Payment request ID required' });
     try {
-      return reply(200, await createCustomerStripeCheckout(env, secret, result.session.jobId, new URL(request.url).origin));
-    } catch (error) { return reply(error.status || 502, { ok: false, error: error.message || 'Secure checkout could not be created' }); }
+      return reply(200, await createCustomerStripeCheckout(env, secret, result.session.jobId, new URL(request.url).origin, { now }));
+    } catch (error) { return reply(error.status || 502, { ok: false, error: error.message || 'Secure checkout could not be created', ...(error.reviewRecorded ? { code: error.code, reviewRecorded: true } : {}) }); }
   }
 
   if (body.action === 'verify_payment') {
@@ -391,8 +391,9 @@ async function handlePost({ request, env }, { clock, read }) {
     if (!/^cs_(?:test_|live_)?[A-Za-z0-9_]+$/.test(sessionId)) return reply(400, { ok: false, error: 'Invalid Checkout session' });
     try {
       const checkout = await stripe(secret, `checkout/sessions/${encodeURIComponent(sessionId)}?expand[]=payment_intent.latest_charge`);
-      return reply(200, { ok: true, ...await recordCustomerStripePayment(env, checkout, result.session.jobId) });
-    } catch (error) { return reply(error.status || 502, { ok: false, error: error.message || 'Stripe payment could not be verified' }); }
+      return reply(200, { ok: true, ...await recordCustomerStripePayment(env, checkout, result.session.jobId, now) });
+    // A charge held for review (for example, one Stripe shows refunded) answers 409 with its "do not pay again" message.
+    } catch (error) { return reply(error.status || 502, { ok: false, error: error.message || 'Stripe payment could not be verified', ...(error.reviewRecorded ? { code: error.code, reviewRecorded: true } : {}) }); }
   }
 
   if (body.action === 'save_customer_memory') {

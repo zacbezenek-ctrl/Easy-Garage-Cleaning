@@ -14,6 +14,8 @@ const COLLECTIONS = Object.freeze({
   hub_audit: id => /^[a-f0-9]{32,64}$/.test(id), confirm_tokens: id => /^[a-f0-9]{32,64}$/.test(id),
   jobs: safe(/^[A-Za-z0-9_-]{1,120}$/), customers: safe(/^[A-Za-z0-9_-]{1,180}$/), projects: safe(/^[A-Za-z0-9_-]{1,180}$/), customerIdentityState: id => id === 'revision',
 });
+// Every business_* collection this store writes. firestore.rules keeps each one server-only (tests/firestore-emulator.test.mjs).
+export const BUSINESS_COLLECTIONS = Object.freeze(Object.keys(COLLECTIONS).filter(name => name.startsWith('business_')));
 // Staff account lists read only the fields the list shows (plus ownerStaff for access), not full 750KB workspaces.
 export const LIST_FIELDS = Object.freeze(['company', 'status', 'ownerStaff', 'updatedAt', 'properties', 'requests']);
 const PURGE_TIMEOUT = 5000;

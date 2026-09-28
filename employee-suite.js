@@ -160,6 +160,7 @@ function render(force=false){
   }
   if(S.active==='my_day')window.EGCFieldToday?.mount(host?.querySelector('#ops-field-today'));else window.EGCFieldToday?.unmount();
   if(homeViews.has(S.active))window.EGCHubScreens?.mountHome?.(S.active,host?.querySelector('#ops-home-widgets'),hubContext());
+  if(S.active==='today'&&canView('today')&&host&&window.EGCReviewAlerts){let slot=host.querySelector('#ops-review-alerts');if(!slot){slot=document.createElement('div');slot.id='ops-review-alerts';host.insertBefore(slot,host.firstElementChild);}window.EGCReviewAlerts.mount(slot,hubContext());}else window.EGCReviewAlerts?.unmount();
   if(S.active==='settings'&&canView('settings')&&host&&window.EGCPortalDocuments){let slot=host.querySelector('#ops-portal-documents');if(!slot){slot=document.createElement('div');slot.id='ops-portal-documents';const modal=host.querySelector(':scope>.ops-modal');if(modal)modal.before(slot);else host.append(slot);}window.EGCPortalDocuments.mount(slot);}else window.EGCPortalDocuments?.unmount();
   if(S.active==='people'&&canView('people')&&host?.querySelector('#ops-staff-directory')&&window.EGCStaff)window.EGCStaff.mount(host.querySelector('#ops-staff-directory'),hubContext());else window.EGCStaff?.unmount();
   updateQuickClock();sync();

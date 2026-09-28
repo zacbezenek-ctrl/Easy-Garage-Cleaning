@@ -1,11 +1,52 @@
-import { LIMITS, ROLES, INVITE_HOURS, INVITE_ORIGIN, fail, uid, isId, text, email, personName, safeName, date, digest, randomToken, rights, permitted, staffAllowed, staffCanAccess, activeMember, bounded, requireJobId, requireLinkedJob, businessActor, projectView, accountView, inviteState } from './business-hub-core.js';
+import { LIMITS, ROLES, INVITE_HOURS, INVITE_ORIGIN, fail, uid, isId, text, email, personName, safeName, date, digest, randomToken, rights, permitted, staffAllowed, staffCanAccess, activeMember, bounded, requireJobId, requireLinkedJob, businessActor, projectView, accountView, inviteState, receiptExpiry, QUOTA_WINDOW, quotaExpiry } from './business-hub-core.js';
 import { PROPERTY_DENIED, memberPropertyIds, canSeeProperty, scopeAccount, isScopedAccount, requireScopedProperty, requireScopedLinkedJob, requestedPropertyIds, scopeKey, applyPropertyIds, memberSummary, propertySummary, businessHubAudit, scopedAccountView, operationReceipt } from './business-hub-scope.js';
 const COOKIE = '__Host-egc_business';
+// save() persists only a FULL account: one this hub read from storage (including through helpers.store), one it built for a
+// new company, or a copyStoredAccount() of one. The marker is private to this module, so no other module can make a scoped
+// view, a spread ({...account}) or a clone savable, and masked list rows are never marked.
+const STORED = new WeakSet();
+// The marker says which object may be saved; RECORDED says what it must still hold. For each stored account it keeps the
+// ids its lists held when the hub read or built it. No hub action removes an entry (unlink_project sets active:false,
+// revoke_member sets a status, and bounded() refuses a full list instead of trimming it), so a business_accounts write
+// that lacks a recorded id would drop records: for example the properties a limited member cannot see, after a module
+// copied scoped(ctx) into the stored account. That write is refused with 503 and nothing is written.
+const RECORDED = new WeakMap();
+const LISTS = Object.freeze({ properties: 'id', requests: 'id', projects: 'jobId', messages: 'id', members: 'id' });
+const listed = (account, list) => Array.isArray(account?.[list]) ? account[list] : [];
+const entries = account => Object.freeze(Object.fromEntries(Object.keys(LISTS).map(list => [list, Object.freeze(listed(account, list).map(item => item?.[LISTS[list]]))])));
+// Each recorded id is still listed, and each list is at least as long as it was (so an entry without an id counts too).
+function keepsEntries(account, recorded) {
+  return Boolean(recorded) && Object.keys(LISTS).every(list => {
+    const items = listed(account, list), ids = new Set(items.map(item => item?.[LISTS[list]]));
+    return items.length >= recorded[list].length && recorded[list].every(id => ids.has(id));
+  });
+}
+export const SAVE_REFUSED = 'The business hub could not complete that action. Please retry or contact Zoe.';
+function storedAccount(account, recorded = entries(account)) { if (account && typeof account === 'object') { STORED.add(account); RECORDED.set(account, recorded); } return account; }
+export const isStoredAccount = account => STORED.has(account) && !isScopedAccount(account);
+const savable = account => isStoredAccount(account) && keepsEntries(account, RECORDED.get(account));
+const cloneAccount = value => { try { return structuredClone(value); } catch { throw fail(503, SAVE_REFUSED); } };
+// The only public way to derive a new account to save: a deep copy of a stored account, never of a scoped view or a spread.
+// The copy must still hold every entry the original was read with, whatever the original holds now.
+export function copyStoredAccount(account) {
+  if (!isStoredAccount(account)) throw fail(503, SAVE_REFUSED);
+  return storedAccount(cloneAccount(account), RECORDED.get(account));
+}
+// What a business_accounts write persists: one snapshot of a stored account, under its own id and still holding every
+// recorded entry. The snapshot is both what is checked and what is written, so a getter cannot answer differently.
+function accountWrite(account, id) {
+  if (!isStoredAccount(account)) throw fail(503, SAVE_REFUSED);
+  const data = cloneAccount(account);
+  if (data?.id !== id || !keepsEntries(data, RECORDED.get(account))) throw fail(503, SAVE_REFUSED);
+  return data;
+}
+// A write is plain data: a getter on it is refused, since it could answer the check and the store differently.
+const plainWrite = w => Boolean(w) && typeof w === 'object' && Object.values(Object.getOwnPropertyDescriptors(w)).every(d => Object.hasOwn(d, 'value'));
 const HOURS = 3600000, SESSION = 7 * 86400 * 1000;
 // Invitation emails in a rolling day: per member (member.invite.sends), and across every account per mailbox and per EGC
 // sender (business_operations quota records). Then the expired sessions removed per sign-in or sign-out, the longest a
 // sign-in or sign-out response waits for that purge when the runtime offers no waitUntil, and the access changes kept per member.
-const EMAIL_LIMIT = 3, ADDRESS_LIMIT = 3, SENDER_LIMIT = 20, EMAIL_WINDOW = 24 * HOURS, PURGE_LIMIT = 20, PURGE_WAIT = 2000, HISTORY = 10;
+const EMAIL_LIMIT = 3, ADDRESS_LIMIT = 3, SENDER_LIMIT = 20, EMAIL_WINDOW = QUOTA_WINDOW, PURGE_LIMIT = 20, PURGE_WAIT = 2000, HISTORY = 10;
 const QUOTAS = Object.freeze({
   address: { limit: ADDRESS_LIMIT, message: 'This email address was already sent three invitations in the last 24 hours. Wait before emailing another, or create a private link.' },
   sender: { limit: SENDER_LIMIT, message: `You have emailed ${SENDER_LIMIT} invitations in the last 24 hours. Wait before emailing more, or create private links.` },
@@ -43,6 +84,21 @@ function noStore(res) { const out = new Response(res.body, res); for (const [k, 
 export function createBusinessHandler({ store, getStaff, finance, needsReview, projectCookie, clearProjectCookie, now = () => Date.now(), invites = null, waitUntil = null, actions = {}, exports: exporters = {}, decorate = [] }) {
   const emailInvites = invites?.enabled === true && typeof invites.deliver === 'function';
   actions = registry(actions, 'action'); exporters = registry(exporters, 'export');
+  // Every account the hub reads is marked as the stored record save() accepts, whatever store is injected.
+  const readAccount = async id => storedAccount(await store.read('business_accounts', id));
+  // save(), actions and exports share this store. A business account read through it is savable with any injected store,
+  // so tests and production agree, and no commit (a module's own or save()'s extra writes) can write an account that is
+  // not a stored one (a scoped view, a spread, a clone or a partial patch) or one that lost a recorded entry: it is
+  // refused with 503 and nothing is written. Each write is copied once and only the copy is checked and committed.
+  const hubStore = Object.freeze({
+    read: (collection, id) => collection === 'business_accounts' ? readAccount(id) : store.read(collection, id),
+    async commit(changes) {
+      const writes = Array.from(changes, w => { if (!plainWrite(w)) throw fail(503, SAVE_REFUSED); return { ...w }; });
+      for (const w of writes) if (w.collection === 'business_accounts') w.data = accountWrite(w.data, w.id);
+      return store.commit(writes);
+    },
+    list: (...args) => store.list(...args), jobs: ids => store.jobs(ids),
+  });
   if (!Array.isArray(decorate) || decorate.some(fn => typeof fn !== 'function')) throw new TypeError('Business hub decorators must be functions.');
   async function context(request, url) {
     if (url.searchParams.get('staff') === '1') {
@@ -51,7 +107,7 @@ export function createBusinessHandler({ store, getStaff, finance, needsReview, p
       const accountId = url.searchParams.get('account');
       if (!accountId) return { staff: true, manager: profile.businessAccess === true, profile };
       if (!isId(accountId)) throw fail(400, 'Choose a valid account.');
-      const account = await store.read('business_accounts', accountId);
+      const account = await readAccount(accountId);
       if (!account || !staffCanAccess(profile, account)) throw fail(403, 'This business account is not assigned to you.');
       return { staff: true, manager: profile.businessAccess === true, profile, account, member: { id: `staff:${profile.user}`, name: profile.displayName || profile.user, role: 'staff' } };
     }
@@ -59,23 +115,24 @@ export function createBusinessHandler({ store, getStaff, finance, needsReview, p
     if (!/^[a-f0-9]{64}$/.test(raw)) throw fail(401, 'Open your private business sign-in link or contact Zoe.');
     const session = await store.read('business_sessions', await digest(raw));
     if (!session || session.expiresAt <= now()) throw fail(401, 'Your session expired. Ask your account administrator for a new sign-in link.');
-    const account = await store.read('business_accounts', session.accountId);
+    const account = await readAccount(session.accountId);
     const member = activeMember(account, session.memberId, session.memberVersion);
     return { staff: false, manager: false, account, member, session };
   }
   // details: {hub, requestId, before, after} (B2B-SCOPE) extend the business_audit row, and details.hub also writes a hub_audit
   // row in the same commit. Every other key (B2B-INVITE: which member changed, the role granted, the generation and channel)
-  // goes into the row's details.
+  // goes into the row's details. Only the stored account itself (or copyStoredAccount of it) is saved: never a scoped view or a
+  // copy, and never one that lost an entry it was read with.
   async function save(ctx, action, extra = [], details = null) {
     const account = ctx.account;
-    if (isScopedAccount(account)) throw fail(503, 'The business hub could not complete that action. Please retry or contact Zoe.');
+    if (!savable(account)) throw fail(503, SAVE_REFUSED);
     account.updatedAt = new Date(now()).toISOString();
     if (new TextEncoder().encode(JSON.stringify(account)).length > 750000) throw fail(409, 'This workspace is at its storage limit. Contact EGC to archive older records; your existing records are unchanged.');
     const { hub: hubAction, requestId, before, after, ...change } = details && typeof details === 'object' ? details : {};
     const trail = details && ['hub', 'requestId', 'before', 'after'].some(key => Object.hasOwn(details, key)) ? { requestId: requestId ?? null, before: before ?? null, after: after ?? null } : {};
     const hub = hubAction ? [businessHubAudit(ctx, { hub: hubAction, requestId, before, after, at: account.updatedAt })] : [];
     const audit = { accountId: account.id, actorId: ctx.member.id, action, at: account.updatedAt, ...trail, ...(Object.keys(change).length ? { details: detail(change) } : {}) };
-    await store.commit([
+    await hubStore.commit([
       { collection: 'business_accounts', id: account.id, data: account, version: account._version },
       { collection: 'business_audit', id: uid(), data: audit }, ...extra, ...hub,
     ]);
@@ -100,7 +157,8 @@ export function createBusinessHandler({ store, getStaff, finance, needsReview, p
   async function receipt(ctx, operation, action, parts) {
     const fingerprint = await digest(JSON.stringify([action, ctx.member.id, ...parts])), saved = await store.read('business_operations', operation);
     if (saved && (saved.action !== action || saved.actorId !== ctx.member.id || saved.fingerprint !== fingerprint)) throw fail(409, 'Request reference already exists.');
-    return { saved, data: { action, actorId: ctx.member.id, fingerprint, accountId: ctx.account.id, at: new Date(now()).toISOString() } };
+    const at = now();
+    return { saved, data: { action, actorId: ctx.member.id, fingerprint, accountId: ctx.account.id, at: new Date(at).toISOString(), expireAt: receiptExpiry(at) } };
   }
   // The saved status only while that invitation generation is still the member's current access; a later resend, reset or revoke supersedes it.
   async function replayed(saved, account) {
@@ -119,8 +177,9 @@ export function createBusinessHandler({ store, getStaff, finance, needsReview, p
     for (const scope of Object.keys(QUOTAS)) {
       const doc = await store.read('business_operations', ids[scope]), sends = quotaSends(doc);
       if (sends.length >= QUOTAS[scope].limit) throw fail(429, QUOTAS[scope].message);
+      const next = [...sends, { at, attemptId, accountId: ctx.account.id, memberId: member.id }];
       writes.push({ collection: 'business_operations', id: ids[scope], version: doc?._version,
-        data: { kind: 'invite_email_quota', scope, sends: [...sends, { at, attemptId, accountId: ctx.account.id, memberId: member.id }], updatedAt: new Date(at).toISOString() } });
+        data: { kind: 'invite_email_quota', scope, sends: next, updatedAt: new Date(at).toISOString(), expireAt: quotaExpiry(next, at) } });
     }
     return { ids: Object.values(ids), writes };
   }
@@ -130,13 +189,13 @@ export function createBusinessHandler({ store, getStaff, finance, needsReview, p
     const release = NOT_EMAILED.has(sent.status);
     for (let attempt = 0; attempt < 3; attempt += 1) {
       try {
-        const account = await store.read('business_accounts', ctx.account.id), member = account?.members?.find(m => m.id === memberId);
+        const account = await readAccount(ctx.account.id), member = account?.members?.find(m => m.id === memberId);
         const current = Boolean(member) && member.version === generation && member.invite?.attemptId === attemptId;
         const sends = Array.isArray(member?.invite?.sends) ? member.invite.sends : [], index = release ? sends.lastIndexOf(issuedAt) : -1;
-        const freed = [];
+        const freed = [], at = now();
         for (const id of release ? quotas : []) {
           const doc = await store.read('business_operations', id), list = Array.isArray(doc?.sends) ? doc.sends : [], kept = list.filter(entry => entry?.attemptId !== attemptId);
-          if (kept.length !== list.length) freed.push({ collection: 'business_operations', id, version: doc._version, data: { kind: doc.kind, scope: doc.scope, sends: kept, updatedAt: new Date(now()).toISOString() } });
+          if (kept.length !== list.length) freed.push({ collection: 'business_operations', id, version: doc._version, data: { kind: doc.kind, scope: doc.scope, sends: kept, updatedAt: new Date(at).toISOString(), expireAt: quotaExpiry(kept, at) } });
         }
         if (!account || (!current && index < 0 && !freed.length)) return false;
         if (index >= 0) sends.splice(index, 1);
@@ -212,7 +271,7 @@ export function createBusinessHandler({ store, getStaff, finance, needsReview, p
   async function redeem(request, input) {
     const match = /^([a-f0-9]{32})\.([a-f0-9]{32})\.([a-f0-9]{64})$/.exec(text(input.invite, 140, true));
     if (!match) throw fail(401, 'Invalid or expired business invitation. Ask for a new link.');
-    const account = await store.read('business_accounts', match[1]);
+    const account = await readAccount(match[1]);
     const member = account?.members?.find(m => m.id === match[2] && m.status === 'invited');
     if (!account || account.status !== 'active' || !member || member.inviteExpiresAt <= now() || member.inviteHash !== await digest(match[3])) throw fail(401, 'Invalid or expired business invitation. Ask for a new link.');
     // Redeeming is the only way to get a session, so each member generation has at most one; the member records when it ends.
@@ -227,7 +286,7 @@ export function createBusinessHandler({ store, getStaff, finance, needsReview, p
   }
   // Best effort after the session is ended: record that this member's sign-in is over so an administrator can renew it.
   async function signedOut(session, via) {
-    const account = await store.read('business_accounts', session.accountId);
+    const account = await readAccount(session.accountId);
     const member = account?.members?.find(m => m.id === session.memberId && m.status === 'active' && m.version === session.memberVersion && m.sessionExpiresAt > now());
     if (!member) return;
     member.sessionExpiresAt = now();
@@ -254,7 +313,7 @@ export function createBusinessHandler({ store, getStaff, finance, needsReview, p
     return view;
   }
   const canSee = (ctx, propertyId) => ctx.staff || canSeeProperty(ctx.member, propertyId), scoped = ctx => scopedContext(ctx).account;
-  const helpers = Object.freeze({ save, requirePermission, requireManager, property, canSeeProperty: canSee, scoped, response, now, store, finance, needsReview, snapshot });
+  const helpers = Object.freeze({ save, requirePermission, requireManager, property, canSeeProperty: canSee, scoped, response, now, store: hubStore, finance, needsReview, snapshot });
   const operationId = value => { if (value != null && !isId(value)) throw fail(400, 'Reload the form and try again.'); return value ?? null; };
   return async function handle(request) {
     try {
@@ -286,8 +345,8 @@ export function createBusinessHandler({ store, getStaff, finance, needsReview, p
       if (action === 'create_account') {
         if (!ctx.staff) throw fail(403, 'EGC must onboard this business account.');
         const at = new Date(now()).toISOString();
-        ctx.account = { id: uid(), company: text(input.company, 150, true), billingEmail: email(input.billingEmail || input.email), reference: '', status: 'active', ownerStaff: ctx.profile.user,
-          acquisition: { channel: 'b2b', originatedBy: ctx.profile.user, createdAt: at }, properties: [], requests: [], projects: [], members: [], messages: [], createdAt: at, updatedAt: at };
+        ctx.account = storedAccount({ id: uid(), company: text(input.company, 150, true), billingEmail: email(input.billingEmail || input.email), reference: '', status: 'active', ownerStaff: ctx.profile.user,
+          acquisition: { channel: 'b2b', originatedBy: ctx.profile.user, createdAt: at }, properties: [], requests: [], projects: [], members: [], messages: [], createdAt: at, updatedAt: at });
         ctx.member = { id: `staff:${ctx.profile.user}`, name: ctx.profile.displayName || ctx.profile.user, role: 'staff' };
         // A retried onboarding (same requestId) returns the first account instead of creating a duplicate; invitation tokens are never replayed.
         const operation = operationId(input.requestId), requested = deliveryMode(ctx, input);

@@ -7,10 +7,10 @@ on:
         required: false
         default: ''
   pull_request:
-    paths: ['egc-platform/**','functions/**','employee*','tests/**','crew/**','scripts/repair-stale-schedule-instants.mjs','scripts/backfill-job-contact-keys.mjs','scripts/backfill-customer-identity.mjs','_generate_site.py','_services_data.py','_finalize_urls.py','tools/site-build.json','tools/gallery/**','scripts/render-before-after.mjs','gallery-simple.js','package.json','*.html','blog/**','projects/**','sitemap.xml','llms.txt','message-templates.*','customer-portal.html','staff-paths.js','staff-login.*','.github/workflows/egc-action-center-ci.yml']
+    paths: ['egc-platform/**','functions/**','employee*','tests/**','crew/**','scripts/repair-stale-schedule-instants.mjs','scripts/backfill-job-contact-keys.mjs','scripts/backfill-customer-identity.mjs','_generate_site.py','_services_data.py','_finalize_urls.py','tools/site-build.json','tools/gallery/**','scripts/render-before-after.mjs','gallery-simple.js','package.json','*.html','blog/**','projects/**','sitemap.xml','llms.txt','message-templates.*','customer-portal.html','staff-paths.js','staff-login.*','fb-capture.js','analytics-loader.js','.github/workflows/egc-action-center-ci.yml']
   push:
     branches: [main]
-    paths: ['egc-platform/**','functions/**','employee*','tests/**','crew/**','scripts/repair-stale-schedule-instants.mjs','scripts/backfill-job-contact-keys.mjs','scripts/backfill-customer-identity.mjs','_generate_site.py','_services_data.py','_finalize_urls.py','tools/site-build.json','tools/gallery/**','scripts/render-before-after.mjs','gallery-simple.js','package.json','*.html','blog/**','projects/**','sitemap.xml','llms.txt','message-templates.*','customer-portal.html','staff-paths.js','staff-login.*','.github/workflows/egc-action-center-ci.yml']
+    paths: ['egc-platform/**','functions/**','employee*','tests/**','crew/**','scripts/repair-stale-schedule-instants.mjs','scripts/backfill-job-contact-keys.mjs','scripts/backfill-customer-identity.mjs','_generate_site.py','_services_data.py','_finalize_urls.py','tools/site-build.json','tools/gallery/**','scripts/render-before-after.mjs','gallery-simple.js','package.json','*.html','blog/**','projects/**','sitemap.xml','llms.txt','message-templates.*','customer-portal.html','staff-paths.js','staff-login.*','fb-capture.js','analytics-loader.js','.github/workflows/egc-action-center-ci.yml']
 permissions:
   contents: read
 # Push runs are keyed by commit SHA: a shared refs/heads/main group would let a newer queued
@@ -175,6 +175,8 @@ jobs:
         run: python tests/browser/test_followup_settings_ui.py
       - name: Hub home overdue follow-ups widget (isolated and Command center)
         run: python tests/browser/test_home_widgets_ui.py
+      - name: Review queues for held Stripe charges, member matches and unconfirmed sends, and the Command Center alert
+        run: python tests/browser/test_review_queues_ui.py
       - name: Walkthrough pricing served by role, offline copy and Hub outage messages
         run: python tests/browser/test_gameplan_pricing_ui.py
       - name: Staff directory Team screen on a phone
@@ -197,6 +199,8 @@ jobs:
         run: python tests/browser/test_customer_photos_ui.py
       - name: Public nav drawer keyboard contract and footer tap targets
         run: python tests/browser/test_nav_drawer_ui.py
+      - name: Website lead relay, ads.html relay fix and book.html Meta Lead eventID on a phone
+        run: python tests/browser/test_lead_relay_ui.py
       - name: Owner message template drafts, approval and conflict recovery
         run: python tests/browser/test_message_templates_ui.py
       - uses: actions/upload-artifact@v4

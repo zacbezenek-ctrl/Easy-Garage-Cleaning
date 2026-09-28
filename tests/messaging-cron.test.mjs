@@ -43,7 +43,7 @@ function signedVerifier() {
   return { nonces, verify: (env, token, path, options) => verifyApiServiceEnvelope(env, token, path, { ...options, resolveKey: async () => (await keys).keys[0], firestoreFetch }) };
 }
 
-async function fixture({ jobs = { 'day-1': tomorrow(), 'pay-1': overdue() }, rows = {}, automated = ['day_before_reminder', 'payment_reminder'], ghl: ghlOptions = {} } = {}) {
+async function fixture({ jobs = { 'day-1': tomorrow(), 'pay-1': overdue() }, rows = {}, automated = ['day_before_reminder', 'payment_reminder'], ghl: ghlOptions = {}, webLeads } = {}) {
   const store = memoryStore({ ...Object.fromEntries(Object.entries(jobs).map(([id, fields]) => [`jobs/${id}`, fields])), ...rows });
   store.jobRecords = async fields => { assert.ok(fields.length > 5, 'jobs scans are always masked'); return Promise.all([...store.rows.keys()].filter(key => key.startsWith('jobs/')).map(key => store.read('jobs', key.slice(5)))); };
   for (const kind of automated) {
@@ -56,6 +56,7 @@ async function fixture({ jobs = { 'day-1': tomorrow(), 'pay-1': overdue() }, row
     verify: signed.verify, storage: () => store, now: time, links: () => LINKS,
     messenger: env => createGhlMessenger({ env, fetcher: ghl.fetcher, clock: time }),
     portalInvite: () => async jobId => { invites.push(jobId); return { status: 'submitted' }; },
+    ...(webLeads ? { webLeads } : {}),
   });
   const post = (envelope, { env = ENV, headers = {}, body } = {}) => handler.post({ request: new Request('https://easygaragecleaning.com/api/messaging-cron', { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: body ?? JSON.stringify({ envelope }) }), env });
   const runs = () => [...store.rows].filter(([key]) => key.startsWith('messaging_runs/')).map(([, value]) => value);
@@ -169,6 +170,51 @@ test('with the default budget, undeliverable reminders are held back so a delive
   const next = await tick();
   assert.deepEqual([rows(next).slice(0, 2), next.held, holds().day], [['a-dnd:suppressed', 'a-dnd2:suppressed'], 0, '2026-09-23']);
   assert.equal(f.ghl.sends().length, 1, 'nothing was ever sent to a do-not-disturb contact or sent twice');
+});
+
+test('FUN-13: website-lead sync retries run on the signed tick even while server messaging is off, after the reminders and from what they left', async () => {
+  const calls = [];
+  let f;
+  const runner = async options => {
+    const at = options.elapsed();
+    f.time.advance(31000);
+    calls.push({ ...options, startBudget: options.budget(), sentBefore: f.ghl.sends().length, elapsed: [at, options.elapsed()] });
+    f.time.advance(-31000);
+    options.charge(10);
+    return { due: 1, attempted: 1, synced: 1 };
+  };
+  f = await fixture({ webLeads: () => runner });
+  const { EGC_SERVER_MESSAGING_ENABLED, ...off } = ENV;
+  const refused = await json(await f.post(await sign(), { env: off }));
+  assert.deepEqual([refused.status, refused.body.code, refused.body.webLeads, f.runs().length], [409, 'messaging_cron_disabled', { due: 1, attempted: 1, synced: 1 }, 0]);
+  assert.deepEqual([calls[0].now.toISOString(), calls[0].dryRun, calls[0].startBudget], [NOW, false, Math.floor((9500 - 4) / 3)]);
+  assert.deepEqual(calls[0].elapsed, [0, 31000], 'the retry pass is told how long the tick has run, so it can stop starting retries');
+  const dry = await json(await f.post(await sign({ body: { command: 'messaging.run', dryRun: true } }), { env: off }));
+  assert.deepEqual([dry.status, calls[1].dryRun, dry.body.webLeads.synced], [200, true, 1]);
+  const live = await json(await f.post(await sign()));
+  assert.deepEqual([live.status, live.body.summary.sent, live.body.webLeads.synced], [200, 2, 1]);
+  assert.equal(calls[2].sentBefore, 2, 'the reminder run goes first, so slow HighLevel lead retries never cost it its tick');
+  const broken = await fixture({ webLeads: () => async () => { throw new Error('synthetic outage'); } });
+  const survived = await json(await broken.post(await sign()));
+  assert.deepEqual([survived.status, survived.body.webLeads, survived.body.summary.sent], [200, { error: 'web_lead_retry_unavailable' }, 2]);
+  const plain = await fixture();
+  const untouched = await json(await plain.post(await sign()));
+  assert.equal('webLeads' in untouched.body, false, 'without the ledger the tick is unchanged');
+});
+
+test('FUN-13: the lead retries get at most a third of the budget, and only what the reminder run left', async () => {
+  const seen = [];
+  const runner = async options => { seen.push(options.budget()); return { due: 0 }; };
+  const { EGC_MESSAGING_SUBREQUEST_BUDGET, ...standard } = ENV;
+  const light = await fixture({ jobs: {}, webLeads: () => runner });
+  assert.equal((await json(await light.post(await sign(), { env: standard }))).status, 200);
+  assert.equal(seen[0], Math.floor((45 - 4) / 3), 'an idle reminder run leaves the lead retries their full third');
+  // A reminder run that stops for budget ends with less left than one reminder needs (24), below a third of 86.
+  const jobs = Object.fromEntries(Array.from({ length: 12 }, (_, index) => [`pay-${String(index).padStart(2, '0')}`, overdue()]));
+  const busy = await fixture({ jobs, automated: ['payment_reminder'], webLeads: () => runner });
+  const result = await json(await busy.post(await sign(), { env: { ...ENV, EGC_MESSAGING_SUBREQUEST_BUDGET: '90' } }));
+  assert.deepEqual([result.status, result.body.summary.budgetExhausted, result.body.summary.limitReached], [200, true, false], JSON.stringify(result.body.summary));
+  assert.ok(seen[1] >= 0 && seen[1] < 24, `the lead retries get only what the reminder run left (${seen[1]}), not their third (${Math.floor((90 - 4) / 3)})`);
 });
 
 test('unreadable settings fail the run closed and are recorded', async () => {

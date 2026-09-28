@@ -11,6 +11,7 @@ import { sendAcceptedQuotePortal } from '../_lib/portal-invitation.js';
 import { portalLinkProviders } from '../_lib/message-links.js';
 import { serverMessagingEnabled } from '../_lib/messaging-settings.js';
 import { CLAIM_COST, CRON_ACTOR_ID, finishRun, runDueMessages, startRun } from '../_lib/messaging-scheduler.js';
+import { webLeadRetryRunner } from '../_lib/web-lead-intake.js';
 
 export const MESSAGING_CRON_PATH = '/api/messaging-cron';
 const MAX_BYTES = 32000;
@@ -48,7 +49,7 @@ export function messagingCronHandlers({
   verify = verifyApiServiceEnvelope, storage = messagingStorage, messenger = env => createGhlMessenger({ env }), now = () => new Date(),
   portalInvite = env => jobId => sendAcceptedQuotePortal(env, jobId, { requireRequested: true }),
   links = (env, { store, clock }) => portalLinkProviders({ env, read: id => store.read('jobs', id), now: () => clock().getTime() }),
-  options = () => ({}), crewOutbox = () => null,
+  options = () => ({}), crewOutbox = () => null, webLeads = env => webLeadRetryRunner(env),
 } = {}) {
   return {
     async get() { return failure(405, 'messaging_cron_method_not_allowed', 'Use a signed POST from the EGC worker.'); },
@@ -72,17 +73,28 @@ export function messagingCronHandlers({
       if (actor.id !== CRON_ACTOR_ID || actor.kind !== 'integration' || actor.role !== 'integration') return failure(403, 'messaging_cron_forbidden', 'Only the messaging worker can run the messaging schedule.');
       const command = claims.request?.body;
       if (!object(command) || Object.keys(command).some(key => !COMMAND_KEYS.includes(key)) || command.command !== 'messaging.run' || (command.dryRun !== undefined && typeof command.dryRun !== 'boolean')) return failure(400, 'messaging_cron_command_invalid', 'Use messaging.run with an optional dryRun flag.');
-      const dryRun = command.dryRun === true;
+      const dryRun = command.dryRun === true, budget = budgetOf(env), retryLeads = webLeads(env);
+      // FUN-13: website-lead receipts whose HighLevel sync failed retry on this
+      // tick whether or not server messaging is on. They run after the reminder
+      // run, from what it left (at most a third of the budget), and start no new
+      // retry once the tick is 30 s old.
+      const withLeads = async (body, left = budget) => {
+        if (!retryLeads) return body;
+        let used = 0, leads;
+        try { leads = await retryLeads({ now: started, dryRun, budget: () => Math.min(left, Math.floor(budget / 3)) - used, charge: cost => { used += cost; }, elapsed: () => now().getTime() - started.getTime() }); }
+        catch { leads = { error: 'web_lead_retry_unavailable' }; }
+        return { ...body, webLeads: leads };
+      };
       // Until the owner turns server messaging on, the Hub's legacy browser
       // triggers own these reminders; only dry runs may inspect the schedule.
-      if (!dryRun && !serverMessagingEnabled(env)) return failure(409, 'messaging_cron_disabled', 'Server messaging is turned off. Nothing was sent.');
+      if (!dryRun && !serverMessagingEnabled(env)) return reply(409, await withLeads({ ok: false, code: 'messaging_cron_disabled', error: 'Server messaging is turned off. Nothing was sent.' }));
       try {
-        const meter = metered(storage(env), messenger(env), budgetOf(env)), store = meter.store, flags = messagingFlags(env);
+        const meter = metered(storage(env), messenger(env), budget), store = meter.store, flags = messagingFlags(env);
         const runId = claims.request.requestId.toLowerCase(), attemptId = crypto.randomUUID(), fingerprint = await messageDigest({ scope: 'messaging_cron', actor: actor.id, command });
         const run = await startRun(store, { runId, attemptId, fingerprint, actorId: actor.id, dryRun, at: started.toISOString() });
         if (run.existing) {
           if (run.existing.fingerprint !== fingerprint) return failure(409, 'messaging_idempotency_conflict', 'This request ID was already used for a different run.');
-          if (run.existing.status === 'completed') return reply(200, { ok: true, runId, replayed: true, summary: run.existing.summary });
+          if (run.existing.status === 'completed') return reply(200, await withLeads({ ok: true, runId, replayed: true, summary: run.existing.summary }, meter.left()));
           if (run.existing.status === 'failed') return reply(503, { ok: false, code: run.existing.code || 'messaging_run_failed', error: 'This run did not finish. Start a new run.', runId });
           return failure(409, 'messaging_run_in_progress', 'This run is still in progress.');
         }
@@ -98,7 +110,7 @@ export function messagingCronHandlers({
           return reply(error?.status && error.status < 500 ? error.status : 503, { ok: false, code, error: code === 'messaging_settings_invalid' ? error.message : 'The messaging schedule could not finish. Nothing more was sent; the next run retries.', runId });
         }
         const saved = await finishRun(store, runId, attemptId, { status: 'completed', completedAt: now().toISOString(), summary });
-        return reply(200, { ok: true, runId, summarySaved: saved, summary });
+        return reply(200, await withLeads({ ok: true, runId, summarySaved: saved, summary }, meter.left()));
       } catch {
         return failure(503, 'messaging_cron_unavailable', 'The messaging schedule could not be verified. The next run retries safely.');
       }

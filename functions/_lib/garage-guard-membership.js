@@ -128,7 +128,18 @@ async function resolveAccount(store, membership, eventId, now) {
   if (match.status === 'no_identity') return { link: { status: 'unlinked' } };
   const fences = [identityFence(guard, eventId, now)];
   if (match.status !== 'matched') return review({ none: 'no_customer_match', ambiguous: 'ambiguous_customer', conflict: 'contact_conflict' }[match.status], match.candidates, fences);
-  const customerId = match.customer.id, jobs = await store.customerJobs(customerId, JOB_LIMIT);
+  return membershipAccount(store, membership, match.customer.id, match.method, fences, now);
+}
+
+/**
+ * The account root one customer's membership would link to, with every read it
+ * depends on fenced (lineage checks are pushed onto `fences`). Returns
+ * {link, job, fences} or a review {link, review, fences} when the account
+ * cannot take the membership. Used by the webhook's exact match and by a
+ * manager choosing a customer in the review queue (method 'manager').
+ */
+export async function membershipAccount(store, membership, customerId, method, fences, now) {
+  const jobs = await store.customerJobs(customerId, JOB_LIMIT);
   if (jobs.length >= JOB_LIMIT) return review('too_many_jobs', [customerId], fences);
   let lineage;
   try { lineage = await resolveDispatchLineage(store, { customerId, jobs }); }
@@ -142,7 +153,7 @@ async function resolveAccount(store, membership, eventId, now) {
   // The mirror writes the root at this revision, so it must be the one lineage verified.
   if (!job?.revision || (observed && observed.revision !== job.revision)) throw fail('account_changed', 'The customer account changed during linking. Retry the event.', 409);
   if (plain(job.garageGuard) && job.garageGuard.membershipId && job.garageGuard.membershipId !== membership.subscriptionId) return review('account_has_other_membership', [customerId], fences);
-  return { link: { status: 'linked', customerId, accountJobId: job.id, method: match.method, linkedAt: now }, job, fences };
+  return { link: { status: 'linked', customerId, accountJobId: job.id, method, linkedAt: now }, job, fences };
 }
 
 async function linkedAccount(store, membership) {
@@ -155,7 +166,7 @@ async function linkedAccount(store, membership) {
 // Display copy only; the membership record stays authoritative. Visits are
 // written when this event restores them or on the first mirror, so a manager's
 // used-visit count survives (including Hub edits that rewrite garageGuard).
-function mirrorPatch(job, membership, reset, now) {
+export function mirrorPatch(job, membership, reset, now) {
   if (!['active', 'past_due', 'cancelled'].includes(membership.status)) return null;
   const current = plain(job.garageGuard) ? job.garageGuard : {}, carries = current.membershipId === membership.subscriptionId || Boolean(membership.link.mirroredAt);
   const garageGuard = { ...current, plan: membership.plan, status: membership.status, visitsIncluded: membership.visitsIncluded, membershipId: membership.subscriptionId, source: 'stripe', updatedAt: now, updatedBy: 'stripe_webhook' };
@@ -174,9 +185,9 @@ export async function applyGarageGuardEvent(store, input, { now = new Date().toI
     if (!current && !input.plan) return { status: 'ignored' };
     const { membership, reset, previousStatus } = nextMembership(current, input, now);
     const saved = plain(membership.link) ? membership.link : { status: 'unlinked' };
-    // A link needing review stays with the manager; automation never re-guesses it.
+    // A link needing review, or one a manager dismissed, stays with the manager; automation never re-guesses it.
     let account;
-    try { account = saved.status === 'linked' ? await linkedAccount(store, membership) : saved.status === 'needs_review' ? { link: saved } : await resolveAccount(store, membership, input.eventId, now); }
+    try { account = saved.status === 'linked' ? await linkedAccount(store, membership) : ['needs_review', 'dismissed'].includes(saved.status) ? { link: saved } : await resolveAccount(store, membership, input.eventId, now); }
     catch (error) { if (error.code === 'garage_guard_account_changed' && attempt < 2) continue; throw error; }
     const writes = [];
     if (account.review) {

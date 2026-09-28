@@ -373,6 +373,14 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // Website lead delivery receipts (FUN-13): written by /api/web-lead before
+    // the HighLevel sync, retried by the signed messaging cron. The sealed lead
+    // is cleared after the sync (or 30 days after the receipt is abandoned);
+    // this is never a browser lead store.
+    match /web_lead_receipts/{documentId} {
+      allow read, write: if false;
+    }
+
     // Garage Guard memberships, their Stripe event receipts and identity reviews
     // are written only by the signed Stripe webhook. Jobs carry a display copy.
     match /memberships/{documentId} {
@@ -390,6 +398,10 @@ service cloud.firestore {
     }
     // Single-use receipts for Hub approvals of MCP OAuth grants (/api/mcp-grant).
     match /mcp_grant_nonces/{documentId} {
+      allow read, write: if false;
+    }
+    // Receipts for review resolutions made in the Hub (/api/stripe-reviews).
+    match /stripe_review_operations/{documentId} {
       allow read, write: if false;
     }
 

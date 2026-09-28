@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import { HUB_COMMAND_POLICY, HUB_FUNNEL_CASE_CURSOR_PATTERN, HUB_FUNNEL_FEED_CURSOR_PATTERN, HUB_FUNNEL_MAX_TYPES, HUB_FUNNEL_PAGE_LIMIT } from '../egc-platform/services/operations/src/hub-command-policy.ts';
-import { FUNNEL_CASE_CURSOR_MAX_AGE_MS, FUNNEL_FEED_SETTLE_MS, WALKTHROUGH_OUTCOME_EVENT_TYPES, feedCursor, feedDataFields, funnelCase, funnelCaseInput, funnelEventsFeed, funnelEventsInput, funnelFeedStorage, privateFieldName, projectFunnelEvent, walkthroughOutcomesFeed, walkthroughOutcomesInput } from '../functions/_lib/funnel-feed.js';
+import { FUNNEL_CASE_CURSOR_MAX_AGE_MS, FUNNEL_CASE_CURSOR_SKEW_MS, FUNNEL_FEED_SETTLE_MS, WALKTHROUGH_OUTCOME_EVENT_TYPES, feedCursor, feedDataFields, funnelCase, funnelCaseInput, funnelEventsFeed, funnelEventsInput, funnelFeedStorage, privateFieldName, projectFunnelEvent, walkthroughOutcomesFeed, walkthroughOutcomesInput } from '../functions/_lib/funnel-feed.js';
 import { HUB_COMMAND_REGISTRY, runHubCommand } from '../functions/_lib/operations-hub-commands.js';
 import { OPERATIONS_COMMAND_POLICY, authorizeCommand } from '../functions/_lib/operations-command-policy.js';
 import { funnelEventWrite } from '../functions/_lib/funnel-events.js';
@@ -11,6 +11,7 @@ import { recordWalkthroughVisit, WALKTHROUGH_VISIT_OPERATIONS } from '../functio
 import { saveWalkthroughHandoff } from '../functions/_lib/walkthrough-handoff.js';
 import { encodeFirestoreFields } from '../functions/_lib/firestore-job.js';
 import { signOperationsEnvelope } from '../functions/_lib/operations-envelope.js';
+import { mutateDispatch } from '../functions/_lib/dispatch-service.js';
 import { PORTAL_COMMANDS, onRequestPost as portal } from '../functions/api/operations-portal.js';
 
 // FUN-37: the bridge funnel event feed. Events come from the real writers
@@ -25,6 +26,13 @@ const conflict = () => Object.assign(new Error('Conflict'), { code: 'dispatch_re
 const rejectsCode = (promise, code, status) => assert.rejects(promise, error => { assert.equal(error.code, code); if (status) assert.equal(error.status, status); return true; });
 const throwsCode = (fn, code, status = 400) => assert.throws(fn, error => error.code === code && error.status === status);
 const byPosition = order => (a, b) => a[order] < b[order] ? -1 : a[order] > b[order] ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+// Request ids, idempotency keys, source ids and envelope nonces: unique per call (the writers'
+// replay and idempotency rules are unchanged) but the same on every run. Event ids are sha256 of
+// the idempotency key, so random keys made random 40-hex ids that now and then contained a leak
+// probe such as '7777' or '1437' and failed the no-secret checks. The v4 shape passes the
+// writers' UUID checks; the letters keep request.toUpperCase() a different string.
+let uuids = 0;
+const testUUID = () => `feed0000-0000-4000-8000-${(++uuids).toString(16).padStart(12, '0')}`;
 
 // In-memory Firestore: create-only without a revision, compare-and-set with one, all or
 // nothing. Every commit is stamped with the store's Firestore clock, so a query or record
@@ -74,8 +82,8 @@ function ledger(seed = {}) {
 
 const job = (id, extra = {}) => ({ id, type: 'job', status: 'scheduled', customerId: 'c1', projectId: 'project_a', highlevelContactId: 'contactA', ...extra });
 function jobEvent(type, record, data = {}, extra = {}) {
-  return { type, idempotencyKey: { kind: 'requestId', value: randomUUID() }, jobId: record.id, ...(record.projectId ? { projectId: record.projectId } : {}), ...(record.highlevelContactId ? { highlevelContactId: record.highlevelContactId } : {}), customerId: 'c1',
-    actor: { id: 'zacb', kind: 'human', role: 'owner' }, via: 'hub', source: { collection: 'dispatchOperations', id: randomUUID() }, data, eligibility: { hub: record }, ...extra };
+  return { type, idempotencyKey: { kind: 'requestId', value: testUUID() }, jobId: record.id, ...(record.projectId ? { projectId: record.projectId } : {}), ...(record.highlevelContactId ? { highlevelContactId: record.highlevelContactId } : {}), customerId: 'c1',
+    actor: { id: 'zacb', kind: 'human', role: 'owner' }, via: 'hub', source: { collection: 'dispatchOperations', id: testUUID() }, data, eligibility: { hub: record }, ...extra };
 }
 async function emit(store, clock, ...events) {
   const writes = []; for (const event of events) writes.push(await funnelEventWrite(null, clock, event));
@@ -170,14 +178,24 @@ test('feed projections are allowlists: no cost, pay, fee or margin field, no fin
   // The projection takes the allowed list, so a definitions field named for a cost is dropped automatically.
   assert.deepEqual(projectFunnelEvent({ ...event, data: { amountCents: 1, feeCents: 2 } }, ['amountCents', 'feeCents'].filter(name => !privateFieldName(name))).data, { amountCents: 1 });
   // A source id is shown only when it is neither a private record nor the event's idempotency key (a request receipt).
-  const request = randomUUID();
+  const request = testUUID();
   for (const [source, idempotencyKey, shown] of [
     [{ collection: 'dispatchOperations', id: request }, `requestId:${request}`, null], [{ collection: 'walkthroughVisitOperations', id: request.toUpperCase() }, `requestId:${request}`, null],
     [{ collection: 'jobs', id: '_egc_receipt_x' }, 'backfill:jobs/_egc_receipt_x', null], [{ collection: 'jobs', id: '_egc_receipt_x:stripeSessions:cs_live_abcdef' }, 'backfill:jobs/_egc_receipt_x:stripeSessions:cs_live_abcdef', null],
     [{ collection: 'employees', id: 'secure_vault' }, 'derived:vault', null], [{ collection: 'portalRequests', id: 'portal-req-12345678' }, 'portalRequest:portal-req-12345678', null],
     [{ collection: 'dispatchOperations', id: 'receipt-1' }, undefined, null],
     [{ collection: 'stripeSessions', id: 'cs_live_abcdef' }, 'backfill:stripeSessions/cs_live_abcdef', 'cs_live_abcdef'], [{ collection: 'dispatchOperations', id: event.source.id }, event.idempotencyKey, event.source.id],
+    // A backfill sub-record ('<docId>:<field>:<subId>') shows only its document id.
+    [{ collection: 'jobs', id: 'job-1:stripeSessions:cs_live_abcdef' }, 'backfill:jobs/job-1:stripeSessions:cs_live_abcdef', 'job-1'], [{ collection: 'jobs', id: 'job-1:statusHistory:3' }, 'backfill:jobs/job-1:statusHistory:3', 'job-1'],
   ]) assert.deepEqual(projectFunnelEvent({ ...event, source, idempotencyKey }).source, { collection: source.collection, id: shown }, JSON.stringify(source));
+  // A FUN-04 backfill event whose source names a Stripe Checkout session sub-record: the session id never leaves the Hub.
+  const backfilled = ledger(), sessionSource = { collection: 'jobs', id: 'job-1:stripeSessions:cs_live_a1b2c3d4e5f6' };
+  const [imported] = await emit(backfilled, T0, { type: 'payment.received', idempotencyKey: { kind: 'backfill', value: `${sessionSource.collection}/${sessionSource.id}` }, jobId: 'job-1', customerId: 'c1', actor: { id: 'backfill', kind: 'system' }, via: 'backfill', clockSource: 'backfill',
+    occurredAt: '2026-01-02T00:00:00.000Z', source: sessionSource, data: { amountCents: 5000, kind: 'deposit', method: 'card' }, eligibility: { hub: { id: 'job-1', type: 'job' } } });
+  assert.deepEqual([imported.source, imported.idempotencyKey], [sessionSource, 'backfill:jobs/job-1:stripeSessions:cs_live_a1b2c3d4e5f6'], 'the ledger row keeps the sub-record');
+  const importedPage = await feed(backfilled, {}, at(T0, SETTLED)), importedText = JSON.stringify(importedPage);
+  assert.deepEqual(importedPage.events.map(item => [item.id, item.via, item.source]), [[imported.id, 'backfill', { collection: 'jobs', id: 'job-1' }]]);
+  for (const secret of ['cs_live_', 'a1b2c3d4e5f6', 'stripeSessions']) assert.equal(importedText.includes(secret), false, secret);
 });
 
 test('test and internal records stay in the feed, flagged by the single eligibility function', async () => {
@@ -192,7 +210,7 @@ test('feed and case inputs are strict: cursors, types, limits and case keys', as
   assert.deepEqual(funnelEventsInput({}), { sinceCursor: null, types: null, limit: 100 });
   assert.deepEqual(funnelEventsInput({ sinceCursor: cursor, types: ['job.scheduled', 'deal.sold'], limit: 200 }), { sinceCursor: cursor, types: ['deal.sold', 'job.scheduled'], limit: 200 });
   assert.deepEqual(funnelEventsInput({ sinceCursor: null }), { sinceCursor: null, types: null, limit: 100 });
-  for (const input of [{ types: [] }, { types: ['job.scheduled', 'job.scheduled'] }, { types: ['job.unknown'] }, { types: ['__proto__'] }, { types: 'job.scheduled' }, { types: Array(31).fill('job.scheduled') }, { limit: 0 }, { limit: 201 }, { limit: 1.5 }, { limit: '10' }, { offset: 10 }, { requestId: randomUUID() }, { actor: { id: 'zacb' } }])
+  for (const input of [{ types: [] }, { types: ['job.scheduled', 'job.scheduled'] }, { types: ['job.unknown'] }, { types: ['__proto__'] }, { types: 'job.scheduled' }, { types: Array(31).fill('job.scheduled') }, { limit: 0 }, { limit: 201 }, { limit: 1.5 }, { limit: '10' }, { offset: 10 }, { requestId: testUUID() }, { actor: { id: 'zacb' } }])
     throwsCode(() => funnelEventsInput(input), 'hub_command_invalid');
   for (const sinceCursor of ['', 'f1~bad', `f1~2026-02-30T00:00:00.000Z~fe_${'0'.repeat(40)}`, `f1~${T0}~fe_${'0'.repeat(39)}`, `f2~${T0}~fe_${'0'.repeat(40)}`, `f1~2026-09-22T18:00:00Z~fe_${'0'.repeat(40)}`, 42])
     throwsCode(() => funnelEventsInput({ sinceCursor }), 'hub_funnel_cursor_invalid');
@@ -244,8 +262,8 @@ function outcomeLedger() {
     'projects/project_w1': { customerId: 'c1', sourceWalkthroughId: 'w1', createdAt: '2026-09-20T15:00:00.000Z', highlevelContactId: 'contactA' }, 'projects/project_w4': { customerId: 'c1', sourceWalkthroughId: 'w4', createdAt: '2026-09-20T15:00:00.000Z' },
     'projects/project_w2': { customerId: 'c1', sourceWalkthroughId: 'w2', createdAt: '2026-09-20T15:00:00.000Z' } });
   const visit = id => store.rows.get(`jobs/${id}`);
-  const act = (id, action, extra, now, session = rep) => recordWalkthroughVisit(store, session, { action, visitId: id, requestId: randomUUID(), expectedRevision: visit(id).revision, ...extra }, now);
-  const handoff = (id, now, acceptedAt, revise, jobDate) => saveWalkthroughHandoff(store, owner, { requestId: randomUUID(), customerId: 'c1', sourceWalkthroughId: id, sourceRevision: visit(id).revision, plan: plan(acceptedAt, jobDate), ...(revise ? { jobId: revise, expectedRevision: store.rows.get(`jobs/${revise}`).revision } : {}) }, now);
+  const act = (id, action, extra, now, session = rep) => recordWalkthroughVisit(store, session, { action, visitId: id, requestId: testUUID(), expectedRevision: visit(id).revision, ...extra }, now);
+  const handoff = (id, now, acceptedAt, revise, jobDate) => saveWalkthroughHandoff(store, owner, { requestId: testUUID(), customerId: 'c1', sourceWalkthroughId: id, sourceRevision: visit(id).revision, plan: plan(acceptedAt, jobDate), ...(revise ? { jobId: revise, expectedRevision: store.rows.get(`jobs/${revise}`).revision } : {}) }, now);
   return { store, visit, act, handoff };
 }
 
@@ -398,8 +416,8 @@ test('a case cursor edited or forged to read another case, a later snapshot or a
     [{ jobId: 'job-a' }, forge({ jobId: 'job-a' }, `c1~${readTime}~projectId~project_b~${position}`)],
     [{ jobId: 'job-a' }, forge({ jobId: 'job-a' }, `c1~${readTime}~jobId~job-a~${position}`)],
     [{ projectId: 'project_a' }, forge({ projectId: 'project_a' }, `c1~${readTime}~walkthroughId~w1~${position}`)],
-    // A snapshot after now, however well formed.
-    [{ highlevelContactId: 'contactA' }, forge({ highlevelContactId: 'contactA' }, `c1~2026-09-22T19:05:00.001000Z~highlevelContactId~contactA~${position}`)],
+    // A snapshot more than the allowed clock skew after now, however well formed.
+    [{ highlevelContactId: 'contactA' }, forge({ highlevelContactId: 'contactA' }, `c1~2026-09-22T19:06:00.001000Z~highlevelContactId~contactA~${position}`)],
     // An issued cursor with its readTime, query or position edited (digest not recomputed), or with the old key-only digest.
     [{ highlevelContactId: 'contactA' }, contactFirst.nextCursor.replace(readTime, '2026-09-22T18:59:00.000001Z')],
     [{ highlevelContactId: 'contactA' }, contactFirst.nextCursor.replace(position, `${other.occurredAt}~${other.id}`)],
@@ -412,6 +430,24 @@ test('a case cursor edited or forged to read another case, a later snapshot or a
   assert.deepEqual([same.case.query, same.events.map(event => event.projectId)], [{ field: 'projectId', value: 'project_a' }, ['project_a']]);
   const issued = await read({ jobId: 'job-a' }, jobFirst.nextCursor);
   assert.deepEqual([issued.events.length, issued.hasMore, issued.asOf], [1, false, FIRESTORE_TIME]);
+});
+
+test('a case cursor whose readTime is a little ahead of the Hub clock (Firestore clock skew) continues; more than a minute ahead is refused', async () => {
+  const store = ledger();
+  // Firestore's clock runs 20 ms ahead of the Worker's, so page one's readTime is after the Hub's now.
+  store.clock = '2026-09-22T19:00:00.020000Z';
+  await emit(store, T0, jobEvent('job.scheduled', job('job-a')), jobEvent('job.assigned', job('job-a')));
+  const now = Date.parse('2026-09-22T19:00:00.000Z'), issued = Date.parse(store.clock);
+  const first = await funnelCase(store, funnelCaseInput({ highlevelContactId: 'contactA', limit: 1 }), new Date(now));
+  assert.deepEqual([first.asOf, first.events.length, first.hasMore], [store.clock, 1, true]);
+  const next = ms => funnelCase(store, funnelCaseInput({ highlevelContactId: 'contactA', cursor: first.nextCursor, limit: 1 }), new Date(ms));
+  // Page two asked 5 ms later, while the readTime is still 15 ms ahead of the Hub clock.
+  const second = await next(now + 5);
+  assert.deepEqual([second.asOf, second.events.length, second.hasMore, second.nextCursor], [store.clock, 1, false, null]);
+  assert.deepEqual([...first.events, ...second.events].map(event => event.id), store.events().sort(byPosition('occurredAt')).map(event => event.id));
+  assert.equal(FUNNEL_CASE_CURSOR_SKEW_MS, 60000);
+  assert.equal((await next(issued - FUNNEL_CASE_CURSOR_SKEW_MS)).events.length, 1, 'exactly a minute ahead is still skew');
+  await rejectsCode(next(issued - FUNNEL_CASE_CURSOR_SKEW_MS - 1), 'hub_funnel_cursor_invalid', 400);
 });
 
 test('a project case includes its source walkthrough\'s and source job\'s events recorded before they were linked to it', async () => {
@@ -445,12 +481,40 @@ test('a project case includes its source walkthrough\'s and source job\'s events
   const rework = await funnelCase(store, funnelCaseInput({ projectId: 'project_r' }), now);
   assert.deepEqual([rework.case.matches, rework.events.map(event => event.id)], [[{ field: 'projectId', value: 'project_r' }, { field: 'jobId', value: 'legacy-job' }], [early.id, late.id]]);
   assert.deepEqual(store.queries.at(-1).anyOf, rework.case.matches);
+  // A rework booked from a legacy job made from a legacy walkthrough, neither with a project: dispatch-service makes
+  // project_<walkthrough> with the job as its source and no sourceWalkthroughId, and back-fills only the job. The
+  // walkthrough's events are matched through the jobs' sourceWalkthroughId, read at the case's readTime.
+  const oldWalk = walkthrough('w6', { time: '07:00', endTime: '08:00' }); delete oldWalk.projectId;
+  store.rows.set('jobs/w6', { ...oldWalk, id: 'w6', revision: 'w6-r0' });
+  await act('w6', 'start', { skipTimecard: true, recordingStatus: 'recorded' }, '2026-09-22T13:02:00.000Z');
+  await act('w6', 'finish', { outcome: 'quote_to_follow', recordingStatus: 'recorded' }, '2026-09-22T13:40:00.000Z');
+  const oldJob = job('j-old', { status: 'completed', sourceWalkthroughId: 'w6' }); delete oldJob.projectId;
+  store.rows.set('jobs/j-old', { ...oldJob, revision: 'j-old-r1' });
+  await emit(store, '2026-09-22T14:00:00.000Z', jobEvent('job.scheduled', oldJob));
+  const walkEvents = store.events().filter(event => event.walkthroughId === 'w6');
+  assert.ok(walkEvents.length >= 2 && walkEvents.every(event => event.projectId === null && event.jobId === null), 'the walkthrough events carry only its own id');
+  const lone = await funnelCase(store, funnelCaseInput({ jobId: 'j-old' }), now);
+  assert.deepEqual([lone.case.query, lone.case.matches], [{ field: 'jobId', value: 'j-old' }, [{ field: 'jobId', value: 'j-old' }, { field: 'walkthroughId', value: 'w6' }]], 'before any project, the job\'s case reads the walkthrough it came from');
+  const booked = await mutateDispatch(store, owner, { action: 'schedule.create', requestId: testUUID(), customerId: 'c1', kind: 'job', sourceJobId: 'j-old', changes: { date: '2026-09-29', time: '08:00', endTime: '10:00', assignedCrew: ['crew1'] }, booking: { visitPurpose: 'rework', reworkOfJobId: 'j-old' } }, '2026-09-22T18:30:00.000Z');
+  const legacyProject = store.rows.get('projects/project_w6');
+  assert.deepEqual([store.rows.get(`jobs/${booked.job.id}`).projectId, store.rows.get('jobs/j-old').projectId, store.rows.get('jobs/w6').projectId, legacyProject.sourceRecordId, legacyProject.sourceWalkthroughId], ['project_w6', 'project_w6', undefined, 'j-old', null]);
+  const legacyCase = store.events().filter(event => event.projectId === 'project_w6' || event.jobId === 'j-old' || event.walkthroughId === 'w6').sort(byPosition('occurredAt')).map(event => event.id);
+  for (const key of [{ jobId: booked.job.id }, { jobId: 'j-old' }, { projectId: 'project_w6' }]) {
+    const found = await funnelCase(store, funnelCaseInput(key), now);
+    assert.deepEqual([found.events.map(event => event.id), found.coverage.complete], [legacyCase, true], JSON.stringify(key));
+    for (const event of walkEvents) assert.ok(found.events.some(item => item.id === event.id), JSON.stringify(key));
+  }
+  assert.deepEqual(store.recordReads.slice(-2), [{ collection: 'projects', ids: ['project_w6'], readTime: null }, { collection: 'jobs', ids: ['j-old'], readTime: FIRESTORE_TIME }], 'the source job is read at the project\'s readTime');
+  assert.deepEqual(store.queries.at(-1).anyOf, [{ field: 'projectId', value: 'project_w6' }, { field: 'jobId', value: 'j-old' }, { field: 'walkthroughId', value: 'w6' }]);
+  const legacyPaged = []; cursor = null;
+  do { const page = await funnelCase(store, funnelCaseInput({ projectId: 'project_w6', cursor: cursor ?? undefined, limit: 1 }), now); legacyPaged.push(...page.events.map(event => event.id)); cursor = page.nextCursor; } while (cursor);
+  assert.deepEqual([legacyPaged, store.recordReads.at(-1)], [legacyCase, { collection: 'jobs', ids: ['j-old'], readTime: FIRESTORE_TIME }]);
 });
 
 test('hub.funnel.case reads a job or walkthrough without a project by its own id and refuses unknown or private records', async () => {
   const store = ledger({ 'jobs/legacy-job': { type: 'job', status: 'scheduled' }, 'jobs/legacy-walk': { type: 'walkthrough', status: 'scheduled' }, 'jobs/secret': { recordType: 'employee_hub_v2' } });
   await emit(store, T0, jobEvent('job.scheduled', { id: 'legacy-job', type: 'job' }));
-  await emit(store, T0, { type: 'walkthrough.booked', idempotencyKey: { kind: 'requestId', value: randomUUID() }, walkthroughId: 'legacy-walk', actor: { id: 'zacb', kind: 'human', role: 'owner' }, via: 'hub', source: { collection: 'dispatchOperations', id: randomUUID() }, eligibility: { hub: { id: 'legacy-walk', type: 'walkthrough' } } });
+  await emit(store, T0, { type: 'walkthrough.booked', idempotencyKey: { kind: 'requestId', value: testUUID() }, walkthroughId: 'legacy-walk', actor: { id: 'zacb', kind: 'human', role: 'owner' }, via: 'hub', source: { collection: 'dispatchOperations', id: testUUID() }, eligibility: { hub: { id: 'legacy-walk', type: 'walkthrough' } } });
   const now = new Date(at(T0, MIN));
   const legacyJob = await funnelCase(store, funnelCaseInput({ jobId: 'legacy-job' }), now), legacyWalk = await funnelCase(store, funnelCaseInput({ jobId: 'legacy-walk' }), now);
   assert.deepEqual([legacyJob.case.query, legacyJob.events.map(event => event.type)], [{ field: 'jobId', value: 'legacy-job' }, ['job.scheduled']]);
@@ -530,7 +594,7 @@ const NOW = '2026-09-22T19:00:00.000Z', key = 'isolated-funnel-feed-test-key-012
 const staffEnv = extra => ({ EGC_OPERATIONS_ENABLED: 'true', EGC_OPERATIONS_PORTAL_SIGNING_SECRET: key, FIREBASE_API_KEY: 'firebase-test-funnel-feed',
   HUB_AUTH_USERS_JSON: JSON.stringify({ zacb: { passwordHash: 'synthetic-hash-never-returned', role: 'owner', displayName: 'Synthetic Owner' }, tylerg: { passwordHash: 'synthetic-hash-never-returned', role: 'manager', displayName: 'Synthetic Manager' }, alexk: { passwordHash: 'synthetic-hash-never-returned', role: 'sales', displayName: 'Synthetic Sales' } }), ...extra });
 async function signed(actor, body, env = staffEnv()) {
-  const claims = { v: 1, iss: 'portal', aud: 'egc-portal', iat: Math.floor(Date.parse(NOW) / 1000), nonce: randomUUID(), actor, request: { requestId: randomUUID(), body } };
+  const claims = { v: 1, iss: 'portal', aud: 'egc-portal', iat: Math.floor(Date.parse(NOW) / 1000), nonce: testUUID(), actor, request: { requestId: testUUID(), body } };
   const response = await portal({ request: new Request('https://portal.test/api/operations-portal', { method: 'POST', body: JSON.stringify({ envelope: await signOperationsEnvelope(claims, key) }) }), env });
   return { status: response.status, body: await response.json() };
 }
@@ -539,7 +603,7 @@ test('the signed bridge serves hub.funnel.events from Firestore to owners, manag
   t.mock.timers.enable({ apis: ['Date'], now: Date.parse(NOW) });
   const a = job('job-a'), [event] = [await funnelEventWrite(null, '2026-09-22T18:00:00.000Z', jobEvent('deal.sold', a, { amountCents: 140000, estimateRevision: 1 }))];
   const queries = [];
-  t.mock.method(globalThis, 'fetch', async (input, init = {}) => {
+  const fetched = t.mock.method(globalThis, 'fetch', async (input, init = {}) => {
     const url = new URL(String(input));
     assert.equal(url.hostname, 'firestore.googleapis.com'); assert.equal(url.searchParams.get('key'), 'firebase-test-funnel-feed');
     assert.ok(url.pathname.endsWith(':runQuery'), url.pathname);
@@ -564,7 +628,30 @@ test('the signed bridge serves hub.funnel.events from Firestore to owners, manag
   assert.deepEqual([delegated.status, delegated.body.actedAs, delegated.body.events.length], [200, { user: 'zacb', delegatedBy: grant.id }, 1]);
   assert.deepEqual(await signed({ id: 'zacb', role: 'owner', kind: 'human', workspace: 'egc' }, { command: 'hub.funnel.events', sinceCursor: 'f1~nope' }), { status: 400, body: { error: 'hub_funnel_cursor_invalid' } });
   assert.deepEqual(await signed({ id: 'zacb', role: 'owner', kind: 'human', workspace: 'egc' }, { command: 'hub.funnel.case', projectId: 'project_a', jobId: 'job-a' }), { status: 400, body: { error: 'hub_command_invalid' } });
-  assert.deepEqual(await signed({ id: 'zacb', role: 'owner', kind: 'human', workspace: 'egc' }, { command: 'hub.funnel.events', requestId: randomUUID() }), { status: 400, body: { error: 'hub_command_invalid' } });
+  assert.deepEqual(await signed({ id: 'zacb', role: 'owner', kind: 'human', workspace: 'egc' }, { command: 'hub.funnel.events', requestId: testUUID() }), { status: 400, body: { error: 'hub_command_invalid' } });
+  // Each command refuses crew roles, a human or delegate whose Hub role changed or was revoked since signing,
+  // a delegate mapped to someone else and an MCP principal with no map entry, before any storage read.
+  const STAFF = { zacb: 'owner', tylerg: 'manager', alexk: 'sales', crew1: 'crew', lead1: 'crew_lead' };
+  const staff = (roles, extra = {}) => staffEnv({ HUB_AUTH_USERS_JSON: JSON.stringify(Object.fromEntries(Object.entries(roles).map(([user, role]) => [user, { passwordHash: 'synthetic-hash-never-returned', role, displayName: `Synthetic ${role}` }]))), ...extra });
+  const mapped = user => ({ EGC_OPERATIONS_HUB_DELEGATES_JSON: JSON.stringify({ [grant.id]: user }) });
+  const human = (id, role) => ({ id, role, kind: 'human', workspace: 'egc' });
+  const refusals = [
+    ['a crew human', human('crew1', 'crew'), {}, staff(STAFF), 401, 'unauthorized'],
+    ['a crew_lead human', human('lead1', 'crew_lead'), {}, staff(STAFF), 401, 'unauthorized'],
+    ['a manager demoted to sales since the token', human('tylerg', 'manager'), {}, staff({ ...STAFF, tylerg: 'sales' }), 403, 'hub_actor_changed'],
+    ['a manager demoted to crew since the token', human('tylerg', 'manager'), {}, staff({ ...STAFF, tylerg: 'crew' }), 403, 'hub_actor_role_forbidden'],
+    ['a manager revoked since the token', human('tylerg', 'manager'), {}, staff({ zacb: 'owner' }), 403, 'hub_actor_unknown'],
+    ['a delegate demoted to sales', grant, { delegate: 'tylerg' }, staff({ ...STAFF, tylerg: 'sales' }, mapped('tylerg')), 403, 'hub_role_forbidden'],
+    ['a delegate demoted to crew', grant, { delegate: 'tylerg' }, staff({ ...STAFF, tylerg: 'crew' }, mapped('tylerg')), 403, 'hub_actor_role_forbidden'],
+    ['a revoked delegate', grant, { delegate: 'tylerg' }, staff({ zacb: 'owner' }, mapped('tylerg')), 403, 'hub_delegate_unverified'],
+    ['a delegate mapped to another user', grant, { delegate: 'zacb' }, staff(STAFF, mapped('tylerg')), 403, 'hub_delegate_unverified'],
+    ['an MCP service principal with no map entry', { ...grant, id: 'mcp-service-grant' }, { delegate: 'zacb' }, staff(STAFF, mapped('zacb')), 403, 'hub_delegate_unverified'],
+    ['an MCP OAuth principal with no map entry', { ...grant, id: 'mcp-oauth-grant:6ba7b810-9dad-41d1-80b4-00c04fd430c8' }, { delegate: 'zacb' }, staff(STAFF), 403, 'hub_delegate_unverified'],
+  ];
+  const reads = fetched.mock.callCount();
+  for (const command of ['hub.funnel.events', 'hub.walkthrough.outcomes', 'hub.funnel.case']) for (const [who, actor, extra, env, status, error] of refusals)
+    assert.deepEqual(await signed(actor, { command, ...(command === 'hub.funnel.case' ? { jobId: 'job-a' } : {}), ...extra }, env), { status, body: { error } }, `${command}: ${who}`);
+  assert.equal(fetched.mock.callCount(), reads, 'no refusal reads storage');
 });
 
 test('the signed bridge fails closed when the ledger cannot be read', async t => {

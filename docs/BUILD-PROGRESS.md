@@ -309,6 +309,26 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   Behind `MCP_OAUTH_HUB_IDENTITY_ENABLED` a Hub owner/manager approves at /api/mcp-grant; the grant acts as
   `mcp:<hub user>:<grant>` and the API re-verifies the Hub-signed delegate before the SEC-04 table applies (migration 0014).
   Gaps: no Hub screen to revoke grants (30-day re-approval); Hub-approved grants cannot run legacy bridge writes yet.
+- **REVIEWS-UI** Hub Review queues (owners and managers): held Stripe crew/portal charges (reconcile; owner-only Record
+  refund after a read-only Stripe check, with kept-amount and on-job acknowledgements and refund follow-ups), Garage Guard
+  member matches (link or dismiss), and message sends left uncertain/sending (delivered / not delivered, never resent);
+  a Command Center alert, and the webhook now reads every checkout back from Stripe with its charge before recording it.
+  Flag: `PAYMENT_REVIEW_CHECKOUT_BLOCK_ENABLED` (off). Gaps: no Hub refund action on job money; resolved items live in hub_audit.
+- **FUN-13** Website lead intake reliability: ads.html leads now reach /api/web-lead (fb-capture.js relay with one v4
+  inquiry_id per answer set, reused as the Meta Lead eventID; book.html gets data-meta-lead). Behind
+  `WEB_LEAD_RECEIPTS_ENABLED` a sealed server-only web_lead_receipts record and inquiry.received event are written before
+  the HighLevel sync, and failed syncs retry on the signed messaging cron. Ads leads stay held until
+  `WEB_LEAD_ADS_RELAY_ENABLED`; the egc-delayed-sync tag is opt-in (`WEB_LEAD_DELAYED_SYNC_TAG`). Gaps: no Hub list of
+  failed receipts (FUN-25); the ads.html pixel move waits for the owner's Meta check.
+- **B2B-HARDEN** Business hub isolation hardening: save() writes only the stored account object (a scoped view, spread or
+  clone is refused with 503; `copyStoredAccount` is the one way to derive a savable copy), business_operations receipts and
+  invite cap records carry `expireAt` for a declared Firestore TTL policy (dry-run backfill script), a read-only member
+  scope export for rollbacks past B2B-SCOPE, and emulator denies on every business_* collection for every client role.
+  Gaps: the TTL policy must be enabled once; scripts that build the raw store directly are outside the save guard.
+- **FUN-37-FIX** Second-review minors for the funnel feed: hub.funnel.case also matches the walkthrough a source or key
+  job was made from (legacy rework case), backfill source ids stop at the document id (no Stripe session ids), case
+  cursors tolerate 60 s of clock skew, the signed endpoint's refusal matrix covers all three commands without storage
+  reads, and the feed tests use deterministic ids (the '1437'/'7777' substring flake).
 
 ## In progress
 
@@ -382,6 +402,10 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | PRICE-SCRUB | Serve internal prices, pay and targets by role instead of shipping them in browser code | merged (36b1803) |
 | FUN-37 | Bridge funnel event feed: hub.funnel.events, hub.walkthrough.outcomes and hub.funnel.case (read-only, owner/manager and delegates) | merged (d33e15a) |
 | MCP-OAUTH | MCP OAuth multi-client (Claude/ChatGPT metadata documents, DCR, revocation, lockout) and Hub-approved grants (migration 0014) | merged (b4cd2ac) |
+| REVIEWS-UI | Review queues for held Stripe charges, member matches and unconfirmed sends; Command Center alert; checkout block flag | merged (297acde) |
+| FUN-13 | Website lead intake: ads relay fix, inquiry ids, durable sealed receipts with cron retries (flags off) | merged (61a1fff) |
+| B2B-HARDEN | B2B isolation hardening: stored-account save guard, receipt/quota TTL, scope export, business_* emulator denies | merged (a1c706f) |
+| FUN-37-FIX | FUN-37 follow-up: legacy rework case, backfill source ids, cursor skew, authz matrix and deterministic test ids | merged (0a00c28) |
 
 ## Next
 

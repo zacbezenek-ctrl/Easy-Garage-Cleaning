@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createHmac, hkdfSync } from 'node:crypto';
-import { PURPOSES, purposeKey, purposeKeyRoot, purposeSign, purposeVerify } from '../functions/_lib/purpose-keys.js';
+import { createDecipheriv, createHmac, hkdfSync } from 'node:crypto';
+import { PURPOSES, SEAL_MAX_BYTES, SEAL_PURPOSES, purposeFromBase64Url, purposeKey, purposeKeyRoot, purposeOpen, purposeSeal, purposeSign, purposeVerify } from '../functions/_lib/purpose-keys.js';
 import { createHubSessionToken, verifyHubSessionToken } from '../functions/_lib/hub-session.js';
 
 const ROOT = 'synthetic-hub-session-root-secret-0123456789abcdef';
@@ -69,4 +69,54 @@ test('purpose keys never equal the raw secret and existing session tokens are no
     assert.equal(await purposeVerify(env, label, payload, signature), false, `${label} must reject a session signature`);
     assert.equal(await verifyHubSessionToken(hubEnv, `${payload}.${derived}`, now + 1000), null, `a ${label} signature must not become a session`);
   }
+});
+
+test('FUN-13 sealing keys are AES-GCM keys on their own HKDF label, bound to the record that stores the value', async () => {
+  assert.deepEqual(Object.values(SEAL_PURPOSES), ['egc/seal/web-lead-receipt/v1']);
+  const label = SEAL_PURPOSES.webLeadReceipt, aad = 'web_lead_receipts/0b7c4f5e-8d1a-4c2b-9e3f-1a2b3c4d5e6f', value = { name: 'Synthetic Person', phone: '(970) 555-0101' };
+  const sealed = await purposeSeal(env, label, value, aad);
+  assert.deepEqual(Object.keys(sealed), ['v', 'iv', 'ct']);
+  assert.doesNotMatch(JSON.stringify(sealed), /Synthetic|555/);
+  assert.deepEqual(await purposeOpen(env, label, sealed, aad), value);
+  // Independent Node decryption with the documented derivation proves the key and binding.
+  const key = Buffer.from(hkdfSync('sha256', ROOT, 'egc/purpose-keys/v1', label, 32)), ct = Buffer.from(sealed.ct, 'base64url');
+  const decipher = createDecipheriv('aes-256-gcm', key, Buffer.from(sealed.iv, 'base64url'));
+  decipher.setAAD(Buffer.from(aad)); decipher.setAuthTag(ct.subarray(-16));
+  assert.deepEqual(JSON.parse(Buffer.concat([decipher.update(ct.subarray(0, -16)), decipher.final()]).toString()), value);
+  assert.notDeepEqual((await purposeSeal(env, label, value, aad)).iv, sealed.iv, 'every seal uses a fresh IV');
+  const tampered = { ...sealed, ct: `${sealed.ct.slice(0, -2)}${sealed.ct.at(-2) === 'A' ? 'B' : 'A'}${sealed.ct.at(-1)}` };
+  for (const [candidate, bound, root] of [[sealed, `${aad}x`, env], [tampered, aad, env], [sealed, aad, { HUB_SESSION_SECRET: `${ROOT}x` }], [{ ...sealed, v: 2 }, aad, env], [{ ...sealed, iv: 'short' }, aad, env], [null, aad, env]]) {
+    await assert.rejects(purposeOpen(root, label, candidate, bound), { code: 'purpose_seal_invalid' });
+  }
+  await assert.rejects(purposeSeal(env, PURPOSES.confirm, value, aad), { code: 'purpose_key_label_invalid' }, 'a signing label never seals');
+  await assert.rejects(purposeSign(env, label, 'message'), { code: 'purpose_key_label_invalid' }, 'a sealing label never signs');
+  await assert.rejects(purposeSeal(env, label, value, ''), { code: 'purpose_seal_invalid' });
+  await assert.rejects(purposeSeal({}, label, value, aad), { code: 'purpose_key_unavailable' });
+});
+
+test('FUN-13 sealed values have their own size bound: anything sealed opens again, larger values are refused, tokens keep the 4096 cap', async () => {
+  const label = SEAL_PURPOSES.webLeadReceipt, aad = 'web_lead_receipts/0b7c4f5e-8d1a-4c2b-9e3f-1a2b3c4d5e6f';
+  // A JSON string of n ASCII characters is n + 2 bytes; the 3-byte characters fill the same bound in UTF-8.
+  const largest = 'x'.repeat(SEAL_MAX_BYTES - 2), multiByte = '車'.repeat(Math.floor((SEAL_MAX_BYTES - 2) / 3)), small = { name: 'Synthetic Person' };
+  for (const value of [largest, multiByte, small]) {
+    const sealed = await purposeSeal(env, label, value, aad);
+    assert.deepEqual(await purposeOpen(env, label, sealed, aad), value);
+    if (typeof value === 'string') assert.ok(sealed.ct.length > 64 * 4096, 'far past the 4096-character token limit');
+    // Node's own AES-GCM opens it too, so the bound is not hiding a different encoding.
+    const key = Buffer.from(hkdfSync('sha256', ROOT, 'egc/purpose-keys/v1', label, 32)), ct = Buffer.from(sealed.ct, 'base64url');
+    const decipher = createDecipheriv('aes-256-gcm', key, Buffer.from(sealed.iv, 'base64url'));
+    decipher.setAAD(Buffer.from(aad)); decipher.setAuthTag(ct.subarray(-16));
+    assert.deepEqual(JSON.parse(Buffer.concat([decipher.update(ct.subarray(0, -16)), decipher.final()]).toString()), value);
+  }
+  await assert.rejects(purposeSeal(env, label, 'x'.repeat(SEAL_MAX_BYTES - 1), aad), { code: 'purpose_seal_too_large' }, 'a value that could not be opened again is never sealed');
+  await assert.rejects(purposeSeal(env, label, '車'.repeat(Math.floor((SEAL_MAX_BYTES - 2) / 3) + 1), aad), { code: 'purpose_seal_too_large' });
+  const sealed = await purposeSeal(env, label, largest, aad);
+  await assert.rejects(purposeOpen(env, label, { ...sealed, ct: `${sealed.ct}AAAA` }, aad), { code: 'purpose_seal_invalid' });
+  // Signatures and confirm-token bodies keep the token cap.
+  assert.equal(purposeFromBase64Url('A'.repeat(4096))?.length, 3072);
+  assert.equal(purposeFromBase64Url('A'.repeat(4100)), null);
+  assert.equal(purposeFromBase64Url(''), null);
+  const signature = await purposeSign(env, PURPOSES.confirm, 'message');
+  assert.equal(await purposeVerify(env, PURPOSES.confirm, 'message', signature), true);
+  assert.equal(await purposeVerify(env, PURPOSES.confirm, 'message', `${signature}${'A'.repeat(4100)}`), false);
 });
