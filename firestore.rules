@@ -393,6 +393,15 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // Staff directory and employee vault migration receipts are written only by
+    // server commits with the sealed profiles; browsers use /api/staff-directory.
+    match /staffDirectoryOperations/{documentId} {
+      allow read, write: if false;
+    }
+    match /employeeVaultMigrations/{documentId} {
+      allow read, write: if false;
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }

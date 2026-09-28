@@ -1,5 +1,5 @@
 (function () {
-  const KEYS = ['egc_u', 'egc_tok', 'egc_exp', 'egc_name', 'egc_role', 'egc_pay_type', 'egc_hourly_rate', 'egc_business_access', 'egc_owner'];
+  const KEYS = ['egc_u', 'egc_tok', 'egc_exp', 'egc_name', 'egc_role', 'egc_pay_type', 'egc_hourly_rate', 'egc_business_access', 'egc_owner', 'egc_capabilities'];
   let authVersion = 0;
   let authQueue = Promise.resolve();
   let firebaseQueue = Promise.resolve();
@@ -26,6 +26,7 @@
         storage.setItem('egc_hourly_rate', String(Number(profile.hourlyRate || 0)));
         storage.setItem('egc_business_access', profile.businessAccess === true ? 'true' : 'false');
         storage.setItem('egc_owner', profile.owner === true ? 'true' : 'false');
+        storage.setItem('egc_capabilities', JSON.stringify(Array.isArray(profile.capabilities) ? profile.capabilities.filter(item => typeof item === 'string') : []));
         storage.removeItem('egc_tok');
         storage.removeItem('egc_exp');
       }
@@ -154,6 +155,10 @@
     throw expired;
   }
 
+  function capabilities(value) {
+    try { const list = JSON.parse(value || '[]'); return Array.isArray(list) ? list.filter(item => typeof item === 'string') : []; } catch { return []; }
+  }
+
   function profile() {
     const get = key => sessionStorage.getItem(key) || localStorage.getItem(key) || '';
     return {
@@ -164,7 +169,13 @@
       hourlyRate: Math.max(0, Number(get('egc_hourly_rate') || 0)),
       businessAccess: get('egc_business_access') === 'true',
       owner: get('egc_owner') === 'true',
+      capabilities: capabilities(get('egc_capabilities')),
     };
+  }
+
+  // Capabilities come from /api/hub-auth for display only; every API re-checks them.
+  function can(capability) {
+    return profile().capabilities.includes(capability);
   }
 
   // The server grants business access to the signed-in account; no staff names live here.
@@ -195,5 +206,5 @@
 
   window.addEventListener('DOMContentLoaded', mountCrewNav);
 
-  window.EGCHubAuth = { session, signIn, signOut, fetch: securedFetch, clearLocal, profile, canRunBusiness, mountCrewNav, ensureFirebaseSession };
+  window.EGCHubAuth = { session, signIn, signOut, fetch: securedFetch, clearLocal, profile, can, canRunBusiness, mountCrewNav, ensureFirebaseSession };
 })();

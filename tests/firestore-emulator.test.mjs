@@ -109,6 +109,12 @@ test('actual Firestore rules isolate canonical operations from crew SDK access',
       for(const db of [crew,manager]) for(const name of ['moneyOperations','moneyInvoiceNumbers']) await assertFails(db.collection(name).get());
       await assertFails(manager.doc('moneyInvoiceNumbers/n_INV-NEW').set({number:'INV-NEW',jobId:'assigned'}));
     });
+    await t.test('staff directory and employee vault migration receipts are server-only even for business SDK sessions',async()=>{
+      await environment.withSecurityRulesDisabled(async context=>{const db=context.firestore();await db.doc('staffDirectoryOperations/receipt').set({kind:'staff_directory_receipt_v1',actor:'zacb',target:'crew1'});await db.doc('employeeVaultMigrations/receipt').set({kind:'employee_vault_migration_receipt_v1',status:'completed'});});
+      for(const db of [publicDb,crew,lead,manager,partner]) for(const path of ['staffDirectoryOperations/receipt','employeeVaultMigrations/receipt']){await assertFails(db.doc(path).get());await assertFails(db.doc(path).set({status:'changed'}));await assertFails(db.doc(path).update({status:'changed'}));await assertFails(db.doc(path).delete());}
+      for(const db of [crew,manager]) for(const name of ['staffDirectoryOperations','employeeVaultMigrations']) await assertFails(db.collection(name).get());
+      await assertFails(manager.doc('staffDirectoryOperations/forged').set({fingerprint:'0'.repeat(64)}));
+    });
     await t.test('manager administrative schedule and customer access remains functional',async()=>{
       await assertSucceeds(manager.doc('jobs/assigned').get());
       await assertSucceeds(manager.doc('customers/customer').get());

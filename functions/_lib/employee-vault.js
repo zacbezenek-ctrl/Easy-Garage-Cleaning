@@ -1,5 +1,6 @@
 import { firestoreFetch } from './firebase-service-account.js';
 import { employeeVaultReadOnly, employeeVaultSecret } from './employee-vault-key.js';
+import { encodeFirestoreFields } from './firestore-job.js';
 
 // Sealed Employee Hub records. The key derivation strings, the AAD (document id)
 // and the '<collection>:<id>' document-id HMAC input are storage contracts:
@@ -127,16 +128,16 @@ export async function readOne(env, collection, id) {
 
 const equalTo = (fieldPath, value) => ({ fieldFilter: { field: { fieldPath }, op: 'EQUAL', value: stringField(value) } });
 
-function runQuery(env, where) {
+function runQuery(env, where, collectionId = 'jobs') {
   return firestoreFetch(env, `${DOCUMENTS}:runQuery`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ structuredQuery: { from: [{ collectionId: 'jobs' }], where } }),
+    body: JSON.stringify({ structuredQuery: { from: [{ collectionId }], where } }),
   });
 }
 
 // A malformed or partial query response is never treated as an empty vault.
-async function decodeRows(env, response, accepts) {
+async function decodeRows(env, response, accepts, withRevision = false) {
   if (!response.ok) throw new Error(`Employee Hub storage query failed (${response.status})`);
   const rows = await response.json().catch(() => { throw unreadableStorage(); });
   if (!Array.isArray(rows)) throw unreadableStorage();
@@ -149,13 +150,13 @@ async function decodeRows(env, response, accepts) {
     }
     const stored = parseFirestoreDocument(row.document);
     if (!accepts(stored.collection)) throw unreadableStorage();
-    decoded.push({ collection: stored.collection, data: await openStored(env, stored) });
+    decoded.push({ collection: stored.collection, data: await openStored(env, stored), ...(withRevision ? { documentId: stored.documentId, updateTime: stored.updateTime } : {}) });
   }
   return decoded;
 }
 
-export async function readAll(env) {
-  return decodeRows(env, await runQuery(env, equalTo('recordType', EMPLOYEE_HUB_RECORD_TYPE)), collection => EMPLOYEE_HUB_COLLECTIONS.has(collection));
+export async function readAll(env, withRevision = false) {
+  return decodeRows(env, await runQuery(env, equalTo('recordType', EMPLOYEE_HUB_RECORD_TYPE)), collection => EMPLOYEE_HUB_COLLECTIONS.has(collection), withRevision);
 }
 
 // Firestore rejects a query it cannot serve without a composite index with
@@ -169,11 +170,6 @@ async function indexRequired(response) {
   return isRecord(error) && error.status === 'FAILED_PRECONDITION';
 }
 
-// The pre-P1-02 family read: decrypt the whole vault, keep one family.
-async function readFamilyFromVault(env, collection) {
-  return (await readAll(env)).filter(row => row.collection === collection).map(row => row.data);
-}
-
 // EGC_EMPLOYEE_VAULT_QUERY=legacy makes every family read use the whole-vault
 // query. Any other value (or none) uses the two-filter family query.
 const legacyFamilyQuery = env => String(env?.EGC_EMPLOYEE_VAULT_QUERY ?? '').trim().toLowerCase() === 'legacy';
@@ -185,14 +181,29 @@ const legacyFamilyQuery = env => String(env?.EGC_EMPLOYEE_VAULT_QUERY ?? '').tri
 // query; every other failed or malformed response still fails closed.
 export async function readCollection(env, collection) {
   if (!EMPLOYEE_HUB_COLLECTIONS.has(collection)) throw unsupportedCollection();
-  if (legacyFamilyQuery(env)) return readFamilyFromVault(env, collection);
+  return (await familyRows(env, collection)).map(row => row.data);
+}
+
+// The same fail-closed family read, keeping each record's vault document id and
+// Firestore updateTime for compare-and-set writes (staff directory, migrations).
+// Time locks live in their own physical collection and are read with the same filters.
+export async function readCollectionRecords(env, collection) {
+  const rows = await familyRows(env, collection, true);
+  if (rows.some(row => !row.updateTime)) throw unreadableStorage();
+  return rows.map(({ documentId, updateTime, data }) => ({ documentId, updateTime, data }));
+}
+
+async function familyRows(env, collection, withRevision = false) {
   const where = { compositeFilter: { op: 'AND', filters: [equalTo('recordType', EMPLOYEE_HUB_RECORD_TYPE), equalTo('employeeHubType', collection)] } };
+  if (collection === 'timeLocks') return decodeRows(env, await runQuery(env, where, 'employee_time_locks'), type => type === collection, withRevision);
+  if (!EMPLOYEE_HUB_COLLECTIONS.has(collection)) throw unsupportedCollection();
+  if (legacyFamilyQuery(env)) return (await readAll(env, withRevision)).filter(row => row.collection === collection);
   const response = await runQuery(env, where);
   if (await indexRequired(response)) {
     console.warn(`Employee vault: the ${collection} family query needs a Firestore index (FAILED_PRECONDITION); using the whole-vault read.`);
-    return readFamilyFromVault(env, collection);
+    return (await readAll(env, withRevision)).filter(row => row.collection === collection);
   }
-  return (await decodeRows(env, response, type => type === collection)).map(row => row.data);
+  return decodeRows(env, response, type => type === collection, withRevision);
 }
 
 export async function writeOne(env, collection, id, data, expected = null, updatedAt = new Date().toISOString()) {
@@ -227,4 +238,51 @@ export function expectedDocument(target) {
   if (!target.data) return { exists: false };
   if (!target.updateTime) throw unreadableStorage();
   return { updateTime: target.updateTime };
+}
+
+// Plain field values of a sealed vault document (the firestoreDoc shape), for
+// multi-document commits that write a vault record with other documents.
+export async function sealedFields(env, collection, documentId, data, updatedAt) {
+  if (!EMPLOYEE_HUB_COLLECTIONS.has(collection) && collection !== 'timeLocks') throw unsupportedCollection();
+  const { fields } = firestoreDoc(collection, documentId, await seal(env, documentId, data), updatedAt);
+  return Object.fromEntries(Object.entries(fields).map(([name, field]) => [name, valueOf(field)]));
+}
+
+// One atomic commit of several documents ({collection, id, revision?, patch} with
+// plain values, the dispatchStorage/auditWrite shape). Each write carries its own
+// precondition: currentDocument.updateTime, or exists:false without a revision.
+// Firestore answers a stale updateTime with 400 FAILED_PRECONDITION and an existing
+// create with 409 ALREADY_EXISTS; both are conflicts and nothing was written. A lost
+// or unrecognized reply is an unknown outcome: callers re-read their receipt.
+export async function commitVaultDocuments(env, writes, fetcher = firestoreFetch) {
+  const unknown = () => Object.assign(new Error('The employee record save could not be verified. Retry the same request.'), { code: 'EMPLOYEE_HUB_OUTCOME_UNKNOWN', status: 503 });
+  if (!Array.isArray(writes) || !writes.length || writes.some(write => !isRecord(write?.patch) || typeof write.collection !== 'string' || typeof write.id !== 'string' || !write.id)) throw new TypeError('Invalid employee vault commit');
+  let response;
+  try {
+    response = await fetcher(env, `${DOCUMENTS}:commit`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ writes: writes.map(write => ({
+      update: { name: `projects/${PROJECT_ID}/databases/(default)/documents/${write.collection}/${write.id}`, fields: encodeFirestoreFields(write.patch) },
+      updateMask: { fieldPaths: Object.keys(write.patch) },
+      currentDocument: write.revision ? { updateTime: write.revision } : { exists: false },
+    })) }) });
+  } catch { throw unknown(); }
+  if (!response.ok) {
+    const failure = await response.json().catch(() => ({}));
+    if ([409, 412].includes(response.status) || ['FAILED_PRECONDITION', 'ABORTED', 'ALREADY_EXISTS', 'NOT_FOUND'].includes(failure?.error?.status)) {
+      throw Object.assign(new Error('Employee record changed while saving. Refresh and retry.'), { code: 'EMPLOYEE_HUB_WRITE_CONFLICT', status: 409 });
+    }
+    throw unknown();
+  }
+  const result = await response.json().catch(() => null);
+  if (!Array.isArray(result?.writeResults) || result.writeResults.length !== writes.length || result.writeResults.some(item => typeof item?.updateTime !== 'string' || !item.updateTime)) throw unknown();
+  return result;
+}
+
+// Keyed digest for server-only receipts: a plain SHA-256 of a small payload (for
+// example a pay rate) could be guessed; this key is derived from the vault secret.
+export async function vaultDigest(env, purpose, text) {
+  const secret = employeeVaultSecret(env);
+  if (!secret) throw Object.assign(new Error('Employee Hub storage is not configured'), { code: 'EMPLOYEE_HUB_NOT_CONFIGURED', status: 503 });
+  const material = await crypto.subtle.digest('SHA-256', encoder.encode(`${secret}:${purpose}`));
+  const key = await crypto.subtle.importKey('raw', material, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  return [...new Uint8Array(await crypto.subtle.sign('HMAC', key, encoder.encode(String(text))))].map(byte => byte.toString(16).padStart(2, '0')).join('');
 }

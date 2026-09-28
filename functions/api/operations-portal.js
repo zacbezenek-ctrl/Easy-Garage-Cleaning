@@ -1,4 +1,4 @@
-import {listHubUserProfiles,hasBusinessAccess} from '../_lib/hub-session.js';
+import {operationsMembers} from '../_lib/operations-staff.js';
 import {operationsEnabled,verifyApiServiceEnvelope} from '../_lib/operations-service-auth.js';
 import {isHubCommand,runHubCommand} from '../_lib/operations-hub-commands.js';
 import {portalCalendar,portalJob,portalEvidence} from '../_lib/operations-portal-records.js';
@@ -23,11 +23,11 @@ export async function onRequestPost({request,env}) {
     if(command.command==='schedule.mutate')return reply(200,await mutateScheduledVisit(schedulingStorage(env),c.actor,command));
     if(command.command==='schedule.bind_provider')return reply(200,await bindScheduledProvider(schedulingStorage(env),c.actor,command));
     if(command.command==='calendar')return reply(200,await portalCalendar(env,command));
-    if(command.command==='portal.members')return reply(200,{ok:true,authority:'employee_hub',members:listHubUserProfiles(env).filter(hasBusinessAccess).map(p=>({id:p.user,name:p.displayName,role:p.role}))});
+    if(command.command==='portal.members')return reply(200,{ok:true,authority:'employee_hub',members:await operationsMembers(env)});
     if(command.command==='portal.job')return reply(200,await portalJob(env,command.jobId));
     if(command.command==='portal.evidence')return reply(200,await portalEvidence(env,command));
     if(command.command==='portal.revenue')return reply(200,await portalRevenue(env,command));
-    if(command.command==='portal.rules')return reply(200,{ok:true,...inboundResponsePolicy(env,listHubUserProfiles(env).filter(hasBusinessAccess).map(p=>({id:p.user,role:p.role})))});
+    if(command.command==='portal.rules')return reply(200,{ok:true,...inboundResponsePolicy(env,(await operationsMembers(env)).map(({id,role,staffRoles})=>staffRoles?{id,role,staffRoles}:{id,role}))});
     return reply(400,{error:'read_only_portal_command_required'});
   }catch(e){return reply(e.status||(e.message==='Unauthorized'?401:503),{error:e.status?e.message:e.message==='Unauthorized'?'unauthorized':'portal_source_unavailable'});}
 }

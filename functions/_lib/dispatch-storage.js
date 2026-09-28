@@ -4,6 +4,10 @@ import { employeeAccountsConfigured, listEmployeeApplications } from './employee
 import { listHubUserProfiles } from './hub-session.js';
 import { arrivalSettings } from './dispatch-arrival.js';
 import { legacyBlockMode } from './dispatch-legacy-blocks.js';
+import { readCollection } from './employee-vault.js';
+import { primaryStaffRole, sanitizeStaffRoles } from './staff-roles.js';
+import { legacyPersonKeys, staffDirectoryEnabled, storedWeeklyAvailability } from './staff-directory.js';
+import { storedSkills } from './staff-skills.js';
 
 const ROOT = 'projects/egcw-1ec83/databases/(default)/documents';
 const BASE = `https://firestore.googleapis.com/v1/${ROOT}`;
@@ -16,16 +20,37 @@ function decode(document,collection,id) {
 }
 const JOB_FIELDS = ['type','recordType','date','time','endDate','endTime','customerId','customerAccountOwnerJobId','customerMemoryInheritedFrom','propertyId','customer','phone','address','title','serviceType','status','pipelineStatus','assignedCrew','assignedTo','crewLead','crewId','vehicleId','crewNeeded','requiredCrewSize','travelBufferMinutes','jobInstructions','operationalScope.text','scope','scopeOfWork','accessInstructions','customerInstructions','opsNotes','requiredEquipment','materials','syncStatus','highlevelAppointmentId','highlevelContactId','sourceWalkthroughId','sourceTemplateJobId','recurrence','recurrenceParentId','reminderDays','notify','shiftPickupEnabled','openShift','notes','durationMin','estimatedDurationMin','createdAt','updatedAt','completedAt','cancelledAt','startedAt','employee','employeeId','allDay','reason','startAt','endAt','fieldExecution.activity','fieldExecution.activityReason','fieldExecution.activityAt','fieldExecution.activityBy','fieldExecution.attention','fieldExecution.jobTime','fieldLastActionAt','fieldCompletionSync.status','fieldCompletionSync.message','fieldCompletionSync.attemptedAt','fieldCompletionSync.syncedAt','arrivalWindowStart','arrivalWindowEnd','arrivalWindow'];
 
+// Roles come from stored staff roles (configuration or the encrypted account), else the
+// configured role or namedStaffRole(). With EGC_STAFF_DIRECTORY_ENABLED the rows also
+// carry staffRoles, skills and weekly availability from the encrypted profiles.
 export async function dispatchRoster(env) {
-  const profiles = listHubUserProfiles(env).map(p => ({ id: p.user.trim().toLowerCase(), name: p.displayName, role: p.role }));
+  const roles = [], role = (stored, fallback) => stored ? primaryStaffRole(stored) : fallback;
+  const profiles = listHubUserProfiles(env).map(p => {
+    const stored = sanitizeStaffRoles(p.staffRoles, p);
+    roles.push(stored || [p.role]);
+    return { id: p.user.trim().toLowerCase(), name: p.displayName, role: role(stored, p.role) };
+  });
   if (employeeAccountsConfigured(env)) {
     const approved = (await listEmployeeApplications(env)).filter(p => p.status === 'approved');
-    profiles.push(...approved.map(p => ({ id: String(p.username || p.user || '').trim().toLowerCase(), name: p.displayName, role: 'crew' })));
+    for (const p of approved) {
+      const username = String(p.username || p.user || ''), stored = sanitizeStaffRoles(p.staffRoles, { user: username, businessAccess: false });
+      roles.push(stored || [p.role === 'sales' ? 'sales' : 'crew']);
+      profiles.push({ id: username.trim().toLowerCase(), name: p.displayName, role: role(stored, p.role === 'sales' ? 'sales' : 'crew') });
+    }
   }
   const seen = new Set();
   for (const profile of profiles) {
     if (!profile.id || seen.has(profile.id)) throw failure('dispatch_roster_ambiguous', 'Employee identities need review before dispatch can safely assign work.');
     seen.add(profile.id);
+  }
+  if (staffDirectoryEnabled(env)) {
+    let stored;
+    try { stored = await readCollection(env, 'profiles'); }
+    catch { throw failure('dispatch_storage_unavailable', 'Staff skills and availability could not be verified. Retry before scheduling.'); }
+    profiles.forEach((profile, index) => {
+      const ids = [profile.id, ...legacyPersonKeys(profile.id)], saved = ids.map(id => stored.find(row => row?.id === id && String(row.username || '').trim().toLowerCase() === profile.id)).find(Boolean) || {};
+      Object.assign(profile, { staffRoles: roles[index], skills: storedSkills(saved.skills).map(({ id, level }) => ({ id, level })), weeklyAvailability: storedWeeklyAvailability(saved.weeklyAvailability) });
+    });
   }
   return profiles.sort((a, b) => a.name.localeCompare(b.name));
 }

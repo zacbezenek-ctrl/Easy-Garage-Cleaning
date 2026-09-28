@@ -1,6 +1,7 @@
 import { getHubSession, hasBusinessAccess } from '../_lib/hub-session.js';
 import { createFirebaseCustomToken, firebaseServiceAccountConfigured } from '../_lib/firebase-service-account.js';
 import { assignmentKey, createJobAssignmentAccess } from '../_lib/job-assignment.js';
+import { staffCapabilities, staffRolePermissionsEnabled } from '../_lib/staff-roles.js';
 
 const json = (status, body) => new Response(JSON.stringify(body), {
   status,
@@ -24,6 +25,8 @@ export async function onRequestGet({ request, env }) {
       assignment_identities: identities,
       assignment_keys: identities.map(assignmentKey),
       assignment_version: 1,
+      // Capability claims exist only when stored staff roles are authoritative.
+      ...(staffRolePermissionsEnabled(env) ? { caps: staffCapabilities(session, env), caps_v: 1 } : {}),
     });
     return json(200, { ok: true, token });
   } catch {

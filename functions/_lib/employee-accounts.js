@@ -159,7 +159,8 @@ async function passwordDigest(password, salt) {
 function publicAccount(account) {
   if (!account) return null;
   const { passwordHash, passwordSalt, invitation, ...safe } = account;
-  return safe;
+  // The listed role is derived like the session role, so a stored 'sales' needs the invitation.
+  return { ...safe, role: namedStaffRole(account) };
 }
 
 function validateApplication(input) {
@@ -245,6 +246,8 @@ function employeeSessionProfile(account) {
     businessAccess: false,
     source: 'employee-account',
     sessionVersion: String(account.sessionVersion || ''),
+    // Owner-assigned staff directory roles (additive); staff-roles.js sanitizes them.
+    ...(Array.isArray(account.staffRoles) ? { staffRoles: account.staffRoles.filter(role => typeof role === 'string').slice(0, 6) } : {}),
   };
 }
 
@@ -259,6 +262,28 @@ export async function getEmployeeSessionProfile(env, username, sessionVersion) {
 
 export async function listEmployeeApplications(env) {
   if (!employeeAccountsConfigured(env)) throw new Error('Employee account signup is not configured');
+  return (await accountRows(env)).map(row => publicAccount(row.account)).sort((left, right) => String(right.appliedAt).localeCompare(String(left.appliedAt)));
+}
+
+// Complete encrypted accounts with their Firestore revisions, for server-side
+// compare-and-set writers (staff directory roles, vault migrations). Never returned to browsers.
+export async function employeeAccountRecords(env) {
+  if (!employeeAccountsConfigured(env)) throw storageError();
+  const rows = await accountRows(env);
+  if (rows.some(row => typeof row.updateTime !== 'string' || !row.updateTime)) throw unreadableAccount();
+  return rows.map(({ id, updateTime, account }) => ({ documentId: id, updateTime, account }));
+}
+
+// The sealed account document as plain field values (firestoreDocument's shape) for
+// an atomic multi-document commit with a currentDocument precondition.
+export async function sealedAccountFields(env, account) {
+  if (employeeVaultReadOnly(env)) throw accountError('EMPLOYEE_ACCOUNT_RECOVERY_READ_ONLY', 'Employee setup is being verified. Existing accounts are preserved and cannot be changed yet.');
+  if (!employeeAccountsConfigured(env)) throw storageError();
+  const id = await documentId(env, account.username), { fields } = firestoreDocument(id, account, await seal(env, id, account));
+  return { documentId: id, fields: Object.fromEntries(Object.entries(fields).map(([name, field]) => [name, 'integerValue' in field ? Number(field.integerValue) : field.stringValue])) };
+}
+
+async function accountRows(env) {
   const url = `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents:runQuery`;
   const response = await firestoreFetch(env, url, {
     method: 'POST',
@@ -285,10 +310,10 @@ export async function listEmployeeApplications(env) {
     try {
       const account = await open(env, stored.id, stored.iv, stored.payload);
       if (!account?.username || await documentId(env, account.username) !== stored.id) throw unreadableAccount();
-      accounts.push(publicAccount(account));
+      accounts.push({ id: stored.id, updateTime: row.document.updateTime, account });
     } catch { throw unreadableAccount(); }
   }
-  return accounts.sort((left, right) => String(right.appliedAt).localeCompare(String(left.appliedAt)));
+  return accounts;
 }
 
 export async function reviewEmployeeApplication(env, username, decision, reviewer) {

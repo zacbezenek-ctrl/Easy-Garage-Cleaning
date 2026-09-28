@@ -7,6 +7,7 @@ import { createJobAssignmentAccess } from '../_lib/job-assignment.js';
 import { listEmployeeApplications, normalizeEmployeeUsername } from '../_lib/employee-accounts.js';
 import { activeTimecard, authorizeTimecard, timecardError } from '../_lib/employee-timecards.js';
 import { activeJobSegment, employeeJobTime, ownJobTimeProjection } from '../_lib/employee-job-time.js';
+import { legacyManagerProfile, legacyProfileView, mirrorLegacyPay, profileHourlyRate } from '../_lib/staff-directory.js';
 
 const PROJECT_ID = 'egcw-1ec83';
 const COLLECTIONS = EMPLOYEE_HUB_COLLECTIONS;
@@ -167,17 +168,17 @@ function configuredProfiles(env) {
   }));
 }
 
-async function employeeRate(env, session) {
+// The rate in effect today (Denver) from the staff directory's pay schedule, else the profile rate.
+async function employeeRate(env, session, now) {
   const profile = await readEmployeeProfile(env, session.user);
-  const rate = Number(profile.data?.hourlyRate);
-  return Number.isFinite(rate) && rate >= 0 ? rate : Math.max(0, Number(session.hourlyRate || 0));
+  return profileHourlyRate(profile.data, now) ?? Math.max(0, Number(session.hourlyRate || 0));
 }
 
 async function authorizeMutation(env, session, collection, id, incoming, existing) {
   const now = new Date().toISOString();
   if (collection === 'timeEntries') return authorizeTimecard({ session, manager: manager(session), id, incoming, existing,
-    hourlyRate: existing?.hourlyRate ?? await employeeRate(env, session), now, env });
-  if (manager(session) && !(collection === 'training' && incoming.moduleId)) return { ...(existing || {}), ...incoming, id };
+    hourlyRate: existing?.hourlyRate ?? await employeeRate(env, session, now), now, env });
+  if (manager(session) && !(collection === 'training' && incoming.moduleId)) return collection === 'profiles' ? legacyManagerProfile({ env, session, existing, incoming, id, now }) : { ...(existing || {}), ...incoming, id };
 
   if (collection === 'profiles') {
     if (id !== personKey(session.user)) throw new Error('You can only update your own employee profile');
@@ -214,11 +215,11 @@ async function authorizeMutation(env, session, collection, id, incoming, existin
       locationVerifiedAt: text(incoming.locationVerifiedAt, 40),
       locationVerificationAccuracy: Math.max(0, Math.min(10000, Number(incoming.locationVerificationAccuracy || 0))),
     } : {};
-    return {
+    return mirrorLegacyPay(existing, {
       ...(existing || {}), ...onboarding, id, username: session.user, displayName: session.displayName,
-      role: session.role, payType: session.payType, hourlyRate: await employeeRate(env, session),
+      role: session.role, payType: session.payType, hourlyRate: await employeeRate(env, session, now),
       status: 'active', lastSeenAt: now,
-    };
+    }, now);
   }
 
   if (collection === 'announcements') {
@@ -322,7 +323,7 @@ export async function onRequestGet({ request, env }) {
       }
       return reply(200, { ok: true, jobId, asOf: now, employees: [...employees.values()], legacyAssociationOnlyCount, needsReviewCount, source: 'explicit_employee_job_segments' });
     }
-    const rows = await readAll(env);
+    const rows = await readAll(env), viewedAt = new Date().toISOString();
     const collections = Object.fromEntries([...COLLECTIONS].map(name => [name, []]));
     const jobAccess = new Map();
     const assignments = createJobAssignmentAccess(env, session);
@@ -367,7 +368,7 @@ export async function onRequestGet({ request, env }) {
         status: account.status === 'approved' ? profile.status : 'inactive',
         awaitingFirstSignIn: account.status === 'approved' && !profile.lastSeenAt && !profile.onboardingCompletedAt,
       } : profile;
-    });
+    }).map(profile => legacyProfileView(profile, viewedAt));
     return reply(200, { ok: true, collections, ...(includeAccounts ? { accounts } : {}) });
   } catch (error) {
     return reply(502, { ok: false, ...(error.code ? { code: error.code } : {}), error: String(error.message || 'Employee Hub storage failed') });
@@ -417,7 +418,8 @@ export async function onRequestPost({ request, env }) {
       const data = await authorizeMutation(env, session, collection, id, incoming, current.data);
       try {
         if (collection === 'timeEntries') return reply(200, { ok: true, record: await writeTimecard(env, session, id, data, target) });
-        return reply(200, { ok: true, record: await writeOne(env, collection, id, data, collection === 'profiles' ? target : null) });
+        const saved = await writeOne(env, collection, id, data, collection === 'profiles' ? target : null);
+        return reply(200, { ok: true, record: collection === 'profiles' ? legacyProfileView(saved, new Date().toISOString()) : saved });
       } catch (error) {
         if (error.code !== 'EMPLOYEE_HUB_WRITE_CONFLICT' || attempt + 1 === attempts) throw error;
       }

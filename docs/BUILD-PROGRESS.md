@@ -183,6 +183,11 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   commit with the job revision, a create-only `moneyOperations` receipt, `moneyInvoiceNumbers` reservation and `hub_audit`
   entry; Firestore 400/409/412 map to `money_revision_conflict`. Hub buttons switch over only when the flag reads true
   (sticky per viewer). Gaps: no payment.verify action; costs button stays legacy; run the ledger backfill before enabling.
+- **P1-08** Staff roles and capabilities: canonical roles (owner, manager, crew_lead, crew, sales, phone) and `can()` in
+  `staff-roles.js` that reproduce today's checks unless `EGC_STAFF_ROLE_PERMISSIONS` (off) and stored `staffRoles`;
+  `/api/staff-directory` behind `EGC_STAFF_DIRECTORY_ENABLED` (off) keeps versioned skills, effective-dated pay (owner-only,
+  Denver date at clock-in) and weekly availability on the sealed profiles with receipts and hub_audit, plus an owner-only
+  dry-run vault migration API. Gaps: no Hub directory screen; configured-user skips count as 'unchanged' in migrations.
 
 ## In progress
 
@@ -229,6 +234,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | P2-05 | Itemized signed walkthrough handoff and revision/amount/fingerprint-bound portal approval | merged (1b039fd) |
 | CI-WF | Wire merged units' tests into the existing CI workflows (pending CI notes) | merged (31e1562) |
 | M3 | Server-authoritative money mutation API, audit and payment ledger (MONEY_API_ENABLED) | merged (8b095ec) |
+| P1-08 | Staff roles and capabilities, staff directory (skills, effective-dated pay, availability), vault migrations | merged (fcf6b5b) |
 
 ## Next
 

@@ -101,6 +101,8 @@ function userRecord(env, username) {
     role: ['owner', 'manager', 'sales', 'crew_lead', 'crew'].includes(role) ? role : 'crew',
     payType: String(record.payType || 'hourly'),
     hourlyRate: Math.max(0, Number(record.hourlyRate || 0)),
+    // Optional staff directory roles for configured users; staff-roles.js sanitizes them.
+    ...(Array.isArray(record.staffRoles) ? { staffRoles: record.staffRoles.filter(value => typeof value === 'string').slice(0, 6) } : {}),
   };
 }
 
