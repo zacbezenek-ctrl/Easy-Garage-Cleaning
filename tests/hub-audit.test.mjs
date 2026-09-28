@@ -84,7 +84,7 @@ test('snapshots redact credential and payment-card data wherever it appears', ()
   const before = {
     status: 'draft', password: 'CANARY-PASSWORD', nested: { apiKey: 'CANARY-API', list: [{ sessionToken: 'CANARY-SESSION' }, { inviteHash: 'CANARY-HASH' }] },
     card: { number: '4242 4242 4242 4242', cvc: 'CANARY-CVC', brand: 'visa', last4: '4242' }, nonce: 'CANARY-NONCE', otp: 'CANARY-OTP', customerSignature: 'CANARY-SIG',
-    note: 'Paid with 4000-0566-5566-5556 today; call 970-555-0100', header: 'Bearer abc.def.ghi', stripe: 'sk_live_1234567890abcdef', hook: 'whsec_abcdefghijklmnop',
+    note: 'Paid with 4000-0566-5566-5556 today; call 970-555-0100', header: 'Bearer abc.def.ghi', stripe: ['sk', 'live', '1234567890abcdef'].join('_'), hook: 'whsec_abcdefghijklmnop',
     jwt: 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTYifQ.c2lnbmF0dXJlLXZhbHVl', link: 'https://easygaragecleaning.com/customer-portal?job=j1&t=secret-portal-token#x',
     photo: `data:image/jpeg;base64,${'A'.repeat(5000)}`, order: '4242424242424241',
   };

@@ -96,6 +96,11 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   `/api/operations`; actors are rebuilt from the current Hub profile, integrations only read via an owner-mapped delegate
   (`EGC_OPERATIONS_HUB_DELEGATES_JSON`). Proof reads: `hub.dispatch.overview`, `hub.staff.roster` (no pay). Writes get
   audited, idempotent `hub_command_operations` receipts (server-only rule). Gaps: no real write command or MCP tools yet.
+- **SEC-C** `scripts/env-inventory.mjs` + `tests/env-inventory.test.mjs`: every env var the code reads must have a one-line
+  `.env.example` entry (purpose, Unset behaviour, [secret|plain; where]) and nothing documented may be unused;
+  `docs/env-inventory.md` is generated; a secret scan fails on committed live keys. Merged by the main session on the
+  owner's approval; the 12 vars added by units merged since (messaging, dispatch windows, vault query, review URL, purpose
+  keys, Garage Guard sync, MCP safety) were documented in the merge, and SEC-B's fake `sk_live_` fixture is built at runtime.
 
 ## In progress
 
@@ -132,7 +137,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | SITE-5 | Lighthouse CI (mobile perf/a11y >= 90) harness + workflow | building |
 | SEC-A | Firestore rules hardening (vault/receipts/audit_log) + block private source paths | merged (c8905cd) |
 | SEC-B | Purpose-scoped keys + server-only hub_audit + single-use confirm tokens | merged (75b9e1b) |
-| SEC-C | Env inventory script/test + complete both .env.example files | building |
+| SEC-C | Env inventory script/test + complete both .env.example files | merged |
 | CI-A | Always-on root CI, split platform gate, clock-shift guard, field-execution acceptance in CI | merged (a067d1f) |
 | CI-B | Pages Functions test router, parallel-safe emulator harness, Playwright iPhone/Android/desktop projects | building |
 | CI-WF | Wire merged units' tests into the existing CI workflows (pending CI notes) | merged (31e1562) |
