@@ -90,6 +90,9 @@ const createJob=async(service,start,end)=>{
  await managerPage.getByRole('combobox',{name:'Saved crew',exact:true}).selectOption('day-crew');await managerPage.getByRole('combobox',{name:'Vehicle / truck',exact:true}).selectOption('day-truck');
  await managerPage.getByLabel('Required crew size',{exact:true}).fill('2');await managerPage.getByLabel('Scope of work',{exact:true}).fill('Install shelving and preserve the heirloom cabinet.');
  await managerPage.getByLabel('Required equipment — one per line',{exact:true}).fill('Dolly\nBroom');await managerPage.getByLabel('Materials — one per line',{exact:true}).fill('Wall rack');
+ await managerPage.getByRole('combobox',{name:'How was this booked?',exact:true}).selectOption('hub_phone');
+ // The synthetic customer has no HighLevel contact, so FUN-02 asks why before creating the visit.
+ await managerPage.getByRole('combobox',{name:'Why is there no CRM contact?',exact:true}).selectOption('internal_or_test');
  await managerPage.getByRole('dialog').getByRole('button',{name:'Create job',exact:true}).click();
 };
 try{
@@ -134,9 +137,13 @@ try{
  await managerPage.getByRole('button',{name:'Refresh',exact:true}).click();await managerPage.getByLabel('Filter by status').selectOption('completed');await managerPage.locator('.dp-job').filter({hasText:'Morning garage service'}).waitFor();
  await managerPage.getByLabel('Filter by status').selectOption('active');await nextCard.getByRole('button',{name:'Edit / assign'}).click();
  await managerPage.getByLabel('Start date',{exact:true}).fill(tomorrow);await managerPage.getByLabel('End date',{exact:true}).fill(tomorrow);
+ // FUN-02: moving a placed visit asks why and who asked; the funnel records it as a reschedule.
+ await managerPage.getByRole('dialog').getByRole('combobox',{name:'Reason',exact:true}).selectOption('customer_request');await managerPage.getByRole('dialog').getByRole('combobox',{name:'Who asked for it?',exact:true}).selectOption('customer');
  await managerPage.getByRole('dialog').getByRole('button',{name:'Save changes',exact:true}).click();await managerPage.getByRole('dialog').waitFor({state:'detached'});
  await crewPage.goto(base+'/crew/job.html');await crewPage.getByRole('button',{name:'Tomorrow',exact:true}).click();await crewPage.locator('.day-job').filter({hasText:'Second garage service'}).waitFor();
- await managerPage.getByRole('button',{name:'Tomorrow',exact:true}).click();await nextCard.getByRole('button',{name:'Cancel',exact:true}).click();await managerPage.getByRole('dialog').getByRole('button',{name:'Cancel job',exact:true}).click();await managerPage.getByRole('dialog').waitFor({state:'detached'});
+ await managerPage.getByRole('button',{name:'Tomorrow',exact:true}).click();await nextCard.getByRole('button',{name:'Cancel',exact:true}).click();
+ await managerPage.getByRole('dialog').getByRole('combobox',{name:'Reason',exact:true}).selectOption('customer_changed_plans');await managerPage.getByRole('dialog').getByRole('combobox',{name:'Who asked for it?',exact:true}).selectOption('customer');
+ await managerPage.getByRole('dialog').getByRole('button',{name:'Cancel job',exact:true}).click();await managerPage.getByRole('dialog').waitFor({state:'detached'});
  await crewPage.getByRole('button',{name:'Refresh',exact:true}).click();await crewPage.locator('.day-job .badge').filter({hasText:'Cancelled'}).waitFor();
  assert.equal((await readJob(nextId)).status,'cancelled');
  await managerPage.getByLabel('Filter by status').selectOption('cancelled');await nextCard.getByRole('button',{name:'Restore',exact:true}).click();await managerPage.getByRole('dialog').getByRole('button',{name:'Restore job',exact:true}).click();await managerPage.getByRole('dialog').waitFor({state:'detached'});
