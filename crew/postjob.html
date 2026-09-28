@@ -277,14 +277,17 @@ const SECTIONS = [
   {
     when:"At peak satisfaction — within 5 minutes of the reveal", title:"Cash, Review, Referral", items:[
       {t:"Balance collected", s:"Open secure Stripe checkout in the job card above, hand the customer the device to enter their card, and wait for the verified receipt. Don't leave with money outstanding.", crit:true},
-      {t:"Review ask — face to face, then text the link", s:"Use the script. Ask while they're standing in the empty garage, not tomorrow. Send the Google link via Quo before you pull away.", crit:true},
-      {t:"Referral ask — the neighbor line", s:"Script below. Every garage on the street looks the same inside. One job per street should become two."},
+      {t:"Review ask — face to face, then text the link", s:"Use the script, the same way with every customer — never only the ones you expect to be happy. Neutral ask only: no discount, gift, or anything in return, and don't suggest what to write. Send the Google link via Quo before you pull away, or let them scan the QR with their own phone.", crit:true},
+      {t:"Referral ask — the neighbor line (separate moment)", s:"Later, as its own conversation — after the review ask is finished (e.g. while loading the last items or at the truck). Script below. The referral thank-you is only for a neighbor who books; it never depends on a review, so don't mention reviews here."},
       {t:"Garage Guard pitched — top-down", s:"Open at Guard Black. Step down one tier on hesitation. Lite is the save. Two options, never yes/no."},
       {t:"6-month check-in scheduled", s:"Confirm the HighLevel follow-up is active. ‘We'll text you in 6 months to see how the system's holding up’ — said out loud, then actually scheduled."},
     ],
-    script:{h:"Review + referral — exact words", p:[
-      "“One favor — reviews are how a local crew like us survives against the big franchises. I'm texting you the link right now, it's 30 seconds. Mention the garage if you can — photos are gold.”",
-      "“And hey — anyone else on the street with a garage like yours used to be? We're already here with the truck. If a neighbor books off your word, there's a $50 EGC gift card in it for you.”"
+    script:{h:"Review ask — exact words (neutral: no offer, no steering)", p:[
+      "“One favor — honest reviews are how a small local crew like us gets found. I'm texting you the Google link right now; it takes about 30 seconds. An honest review, good or bad, helps us.”"
+    ]},
+    referral:{h:"Referral — later, a separate moment (never in the same breath as the review ask)", p:[
+      "“Different topic — anyone else on the street with a garage like yours used to be? We're already here with the truck. If a neighbor books with us off your word, there's a $50 EGC gift card in it for you.”",
+      "<i>The gift card is a thank-you for a booked referral only. It is never tied to leaving a review — don't bring up reviews in this conversation.</i>"
     ]},
     script2:{h:"Garage Guard — open at the top, step down only", p:[
       "“Guard Black — $2,500/yr: monthly whole-property visits, free monthly single-item pickup, annual deep clean, front-of-line scheduling. Only 5 memberships in Fort Collins.”",
@@ -525,6 +528,7 @@ function render(){
         ${si===1?`<button class="copybtn" id="revbtn" style="margin-left:8px;background:#2e7d4f" onclick="event.stopPropagation();sendReview(this)">Send review link from EGC number</button>`:""}
         ${si===1?`<div class="reviewqr">${REVIEW_QR}<div class="cap"><b>Or have them scan</b><small>Point their phone camera here — it opens our Google review page.</small></div></div>`:""}
       </div>`:""}
+      ${sec.referral?`<div class="script referral-script"><h4>${sec.referral.h}</h4>${sec.referral.p.map(p=>`<p>${p}</p>`).join("")}</div>`:""}
       ${sec.script2?`<div class="script"><h4>${sec.script2.h}</h4>${guardYearOneFree()?`<p style="background:#e8581c;color:#fff;border-radius:8px;padding:8px 11px;font-size:13.5px;margin-bottom:8px"><b>This package already includes Garage Guard year one free.</b> Don't cold-sell — frame it as “here's what kicks in after your free year,” or pitch the Guard Black upgrade.</p>`:""}${sec.script2.p.map(p=>`<p>${p}</p>`).join("")}</div>`:""}
       ${sec.guard?`<div class="guardrow"><div class="guardlbl">Garage Guard result</div>
         <div class="gchips" role="group" aria-label="Garage Guard result">${GUARD_OPTS.map(g=>`<button type="button" class="gchip ${GUARD===g?'on':''} ${g==='Not today'?'no':''}" aria-pressed="${GUARD===g}" onclick="setGuard('${g}')">${g}</button>`).join("")}</div></div>`:""}
@@ -576,7 +580,7 @@ async function sendReview(btn){
   btn.disabled=true;btn.textContent="Sending…";
   const ok=await postHook({tool:"review_request",request_id:_reviewId,job_id:ACTIVE.jobId||"",sent_at:new Date().toISOString(),
     customer:name,phone:phone,review_link:REVIEW_LINK,
-    message:`Hi ${name?name.split(" ")[0]:"there"}, it was great working with you! If you have a moment, we'd really appreciate it if you left us a review — it goes a long way in helping us grow. As a thank-you for choosing us, we'd love to offer you 10% off your next service. We look forward to working with you again! ${REVIEW_LINK||"[REVIEW LINK]"}`}).catch(()=>false);
+    message:`Hi ${name?name.split(" ")[0]:"there"}, thanks for having Easy Garage Cleaning out today. If you have a minute, an honest Google review helps our small local crew a lot: ${REVIEW_LINK||"[REVIEW LINK]"}`}).catch(()=>false);
   if(ok){btn.textContent="Review text sent ✓";if(HUBDB&&ACTIVE.jobId)await HUBDB.collection('jobs').doc(ACTIVE.jobId).set({reviewStatus:'requested',reviewRequestedAt:new Date().toISOString(),reviewRequestId:_reviewId,updatedAt:new Date().toISOString()},{merge:true}).catch(()=>{});}
   else{btn.disabled=false;btn.textContent="Retry → Send review link";alert("Review text did NOT send (HQ unreachable). Check signal and tap again.");}
 }

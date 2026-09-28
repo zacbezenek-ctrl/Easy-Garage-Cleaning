@@ -3,11 +3,11 @@
 <head>
 
 <!-- Analytics events queue immediately; vendor libraries load after interaction. -->
-<script src="/analytics-loader.js?v=20260904b" data-meta-pixel-id="861741726934219" defer></script>
+<script src="/analytics-loader.js?v=20260928a" data-meta-pixel-id="861741726934219" defer></script>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Garage Cleanout Tonight | Fort Collins CO</title>
-<meta name="description" content="For Fort Collins, Loveland, Windsor & Timnath homeowners who've been putting it off for years. Handled in one day — before dinner — or the job is free. Flat rate. Insured. Local." />
+<meta name="description" content="For Fort Collins, Loveland, Windsor, Timnath, Wellington, Severance & LaPorte homeowners who've been putting it off for years. Handled in one day — before dinner — or the job is free. Flat rate. Insured. Local." />
 <meta name="robots" content="noindex, follow" />
 <link rel="canonical" href="https://easygaragecleaning.com/ads" />
 <link rel="icon" type="image/x-icon" href="/favicon.ico" />
@@ -269,7 +269,7 @@ h1.hero-title .marker { background: linear-gradient(180deg, transparent 62%, rgb
 .project-card h3 a:hover{color:var(--accent-deep)}
 
 </style>
-<script src="/fb-capture.js?v=20260903c" defer></script>
+<script src="/fb-capture.js?v=20260928a" defer></script>
 </head>
 <body>
 <a href="#main-content" class="skip-link">Skip to content</a>
@@ -285,7 +285,7 @@ h1.hero-title .marker { background: linear-gradient(180deg, transparent 62%, rgb
 </header>
 
 <div class="service-bar">
-  Serving <strong>Fort Collins, Loveland, Windsor &amp; Timnath only</strong> &middot; Colorado LLC &middot; Fully Insured
+  Serving <strong>Fort Collins, Loveland, Windsor, Timnath, Wellington, Severance &amp; LaPorte</strong> &middot; Colorado LLC &middot; Fully Insured
 </div>
 
 <main id="main-content">
@@ -351,11 +351,14 @@ h1.hero-title .marker { background: linear-gradient(180deg, transparent 62%, rgb
             <form id="adsForm" class="lead-form-lite">
               <input type="hidden" name="access_key" value="3c4fe752-ac1d-45b9-89dd-4275ea162d22">
               <input type="hidden" name="source" value="Ads Landing Page">
+              <input type="hidden" name="page_service" value="garage-cleanout">
               <input type="hidden" name="fbc" value="">
               <input type="hidden" name="fbp" value="">
               <input type="hidden" name="fbclid" value="">
               <input type="hidden" name="landing_url" value="">
               <input type="hidden" name="referrer" value="">
+              <input type="hidden" name="request_id" value="">
+              <input type="hidden" name="in_service_area" value="">
               <input type="hidden" name="subject" value="🔥 LEAD - Easy Garage Cleaning Ads Page">
               <input type="hidden" name="from_name" value="Easy Garage Cleaning Ads Page">
               <input type="checkbox" name="botcheck" class="sr-only" tabindex="-1" autocomplete="off" aria-hidden="true" hidden>
@@ -376,7 +379,7 @@ h1.hero-title .marker { background: linear-gradient(180deg, transparent 62%, rgb
                 <div class="field">
                   <label for="zip">Your ZIP Code</label>
                   <input type="text" id="zip" name="ZIP" required inputmode="numeric" pattern="[0-9]{5}" maxlength="5" autocomplete="postal-code" placeholder="80525" />
-                  <div class="hint">Fort Collins, Loveland, Windsor &amp; Timnath only</div>
+                  <div class="hint">Fort Collins, Loveland, Windsor, Timnath, Wellington, Severance &amp; LaPorte</div>
                 </div>
               </div>
               <label class="sms-consent"><input type="checkbox" name="sms_consent" value="yes"><span>I agree to receive text messages from Easy Garage Cleaning about my quote and appointment at the number provided. Consent is not a condition of purchase. Message frequency varies, msg &amp; data rates may apply. Reply STOP to opt out or HELP for help. See our <a href="/privacy-policy" target="_blank" rel="noopener">Privacy Policy</a> and <a href="/terms-of-service" target="_blank" rel="noopener">Terms of Service</a>.</span></label>
@@ -398,7 +401,7 @@ h1.hero-title .marker { background: linear-gradient(180deg, transparent 62%, rgb
 
           <div class="form-out-of-area" id="formOutOfArea">
             <h3>We're not in your area yet.</h3>
-            <p>We currently serve Fort Collins, Loveland, Windsor, and Timnath only. Thanks for checking — we'll text you if we expand.</p>
+            <p>We currently serve Fort Collins, Loveland, Windsor, Timnath, Wellington, Severance, and LaPorte only. Thanks for checking — we'll text you if we expand.</p>
           </div>
 
           <div class="form-success" id="formSuccess">
@@ -649,7 +652,7 @@ h1.hero-title .marker { background: linear-gradient(180deg, transparent 62%, rgb
       </div>
       <div class="faq-item">
         <h3 class="faq-q"><span class="faq-q-num">Q.09</span>What areas do you serve?</h3>
-        <p class="faq-a">Fort Collins, Loveland, Windsor, and Timnath only. We don't service Greeley, Cheyenne, Denver metro, or anywhere outside this area — we keep it tight so we can stay accountable to local neighbors and respond fast.</p>
+        <p class="faq-a">Fort Collins, Loveland, Windsor, Timnath, Wellington, Severance, and LaPorte only. We don't service Greeley, Cheyenne, Denver metro, or anywhere outside this area — we keep it tight so we can stay accountable to local neighbors and respond fast.</p>
       </div>
       <div class="faq-item">
         <h3 class="faq-q"><span class="faq-q-num">Q.10</span>How do I pay?</h3>
@@ -747,11 +750,15 @@ h1.hero-title .marker { background: linear-gradient(180deg, transparent 62%, rgb
   }, { threshold: 0.1 });
   document.querySelectorAll('.reveal').forEach(el => io.observe(el));
 
+  // In-area ZIPs for the 7 service towns — the one list on this page.
   const SERVICE_ZIPS = new Set([
-    '80521','80522','80523','80524','80525','80526','80527','80528',
-    '80537','80538','80539',
-    '80550','80551',
-    '80547'
+    '80521','80522','80523','80524','80525','80526','80527','80528', // Fort Collins
+    '80537','80538','80539', // Loveland
+    '80550','80551', // Windsor (80550 also covers part of Severance)
+    '80547', // Timnath
+    '80549', // Wellington
+    '80546', // Severance
+    '80535'  // LaPorte
   ]);
 
   const form = document.getElementById('adsForm');
@@ -771,6 +778,11 @@ h1.hero-title .marker { background: linear-gradient(180deg, transparent 62%, rgb
 
     submitBtn.disabled = true;
     submitBtn.textContent = 'Sending...';
+
+    // This handler cancels the native submit, so fb-capture.js's document
+    // listener skips it; mirror the lead to HighLevel here, before Web3Forms.
+    form.querySelector('input[name="in_service_area"]').value = inServiceArea ? 'yes' : 'no';
+    if (window.EGCLeadRelay) window.EGCLeadRelay.relay(form);
 
     try {
       const fd = new FormData(form);

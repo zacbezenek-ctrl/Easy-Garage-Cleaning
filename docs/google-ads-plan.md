@@ -12,6 +12,14 @@ Prepared September 27, 2026. Based on:
 Sources are listed at the bottom. Industry numbers come mostly from agencies
 and are labeled as such.
 
+**Update (same day):** ads now point at the dedicated landing page
+`/junk-removal-quote` (section 4b), which uses **(970) 999-1818** and the
+on-site pricing model (section 7). The `gclid` now lands on the HighLevel
+opportunity in **Opp GCLID** (section 5). The budget in sections 1, 8 and 10 is
+revised for cash constraints: $20–25/day, and only after the launch gates in
+section 8 pass. HighLevel setup and the pre-launch test are in
+`docs/ghl-junk-lead-intake.md`.
+
 ---
 
 ## 1. What to do, in order
@@ -30,9 +38,13 @@ and are labeled as such.
    the phone.
 4. **Delete the Performance Max campaign and don't run PMax again** until
    Search is profitable and booked-job conversions are flowing back to Google.
-5. **Launch at $50/day in October** with a seasonal hook ("Park inside before
-   the first snow"). Scale budget with the seasonal index in section 8, but
-   don't go dark in winter: clicks get cheaper when competitors pause.
+5. **Launch Search at $20–25/day, and only after the launch gates in
+   section 8 pass** (tracking test passed, landing page live, phone answered,
+   10+ Google reviews, cash collected from open quotes). Use a seasonal hook
+   ("Park inside before the first snow"). Release more spend only as cash from
+   completed jobs comes in. The seasonal numbers in section 8 are ceilings,
+   not targets. Don't go dark in winter: clicks get cheaper when competitors
+   pause.
 6. **Judge the channel on cost per booked job, not cost per click,** and give
    it 90 days before a final verdict. Section 8 has the checkpoints.
 
@@ -83,11 +95,15 @@ Other findings:
 - **Phone numbers:** the Google Ads call asset and `/ads` use
   **(970) 658-9454**, while the service pages where Google traffic lands use
   **(970) 999-1818**. Calls to 999-1818 from ad clicks are invisible to Google
-  Ads.
+  Ads. **Update:** 658-9454 is not connected to HighLevel (it never appears
+  there), so where it rings is unknown. The new landing page uses **999-1818**
+  (which lands in HighLevel, with missed-call text-back) until 658-9454 is
+  connected.
 - **Conversion setup:** the primary conversions are GA4 `generate_lead` and
   "Calls from ads", all valued at the $1 default. There's no website-call
   conversion and no offline (booked-job) import, even though
-  `functions/api/web-lead.js` already captures `gclid` into HighLevel.
+  `functions/api/web-lead.js` already captures `gclid` into HighLevel (it now
+  writes it to the opportunity's **Opp GCLID** field).
 - **GA4, Apr–Sep:** Paid Search sent 59 sessions and 6 key events. Organic
   sent 289 sessions and 21. The site converts, but the volume is small.
 
@@ -188,7 +204,8 @@ Johnstown) or add LSA and Meta, not bigger Search bids.
   will answer within 5 minutes.
 - Devices: all. Most of the spend will be mobile, which is normal for this
   category.
-- Budget: $50/day to start.
+- Budget: **$20–25/day** to start, only after the section 8 launch gates
+  pass. Add more only as completed-job cash comes in.
 - Bidding, step by step:
   1. **Weeks 1–3:** Maximize Clicks with a **$12 max CPC cap**, or Manual CPC
      at $8–11 on exact match.
@@ -198,19 +215,24 @@ Johnstown) or add LSA and Meta, not bigger Search bids.
      flowing:** Target CPA at about 1.2x the actual CPA.
   4. **Later:** Maximize Conversion Value when job values are imported.
 
-**Ad groups.** Use exact + phrase match, and point each group at the matching
-page that already exists on the site. Item-specific groups tend to earn the
+**Ad groups.** Use exact + phrase match. Every group points at the one
+landing page, **`/junk-removal-quote`**, with a `?v=` variant that matches the
+ad group's headline and item (core terms use the default page, no `?v=`). The
+variant also tags the lead in HighLevel. Item-specific groups tend to earn the
 cheapest clicks. One case study bid only on the object being removed (hot tub,
 shed) at $20/day and a $5.29 CPC, and booked $1,100–2,000 jobs.
 
 | Ad group | Keywords (exact + phrase) | Final URL |
 |---|---|---|
-| Junk Removal (core) | junk removal fort collins, junk removal near me, junk removal, junk removal services, junk removal company, junk hauling fort collins, junk haulers near me, junk pickup near me, junk removal loveland / windsor / wellington / timnath | /junk-removal-fort-collins-co (city pages for city terms) |
-| Same-Day | same day junk removal, junk removal today, junk removal open now | /same-day-junk-removal-fort-collins-co |
-| Furniture / Couch / Mattress | furniture removal (near me / fort collins), couch removal, sofa removal, mattress removal, mattress pickup, mattress disposal near me | /furniture-removal-…, /couch-removal-…, /mattress-removal-… |
-| Appliances / Hot Tub / Shed | appliance removal, refrigerator removal, fridge disposal near me, washer dryer removal, hot tub removal, spa removal, shed removal, playset removal | /appliance-removal-…, /refrigerator-removal-…, /hot-tub-removal-…, /shed-cleanout-… |
-| Garage Cleanout | garage cleanout, garage junk removal, garage clean out service, garage cleaning service | /garage-cleanouts-fort-collins-co |
-| Estate / House Cleanout | estate cleanout, house cleanout, property cleanout, hoarder cleanout, basement cleanout, storage unit cleanout | /property-cleanout-fort-collins-co, /estate-cleanout-fort-collins |
+| Junk Removal (core) | junk removal fort collins, junk removal near me, junk removal, junk removal services, junk removal company, junk hauling fort collins, junk haulers near me, junk pickup near me, junk removal loveland / windsor / wellington / timnath | /junk-removal-quote (default) |
+| Same-Day | same day junk removal, junk removal today, junk removal open now | /junk-removal-quote?v=fast |
+| Furniture / Couch / Mattress | furniture removal (near me / fort collins), couch removal, sofa removal, mattress removal, mattress pickup, mattress disposal near me | /junk-removal-quote?v=furniture |
+| Appliances | appliance removal, refrigerator removal, fridge disposal near me, washer dryer removal | /junk-removal-quote?v=appliance |
+| Hot Tub | hot tub removal, spa removal, hot tub disposal | /junk-removal-quote?v=hottub |
+| Yard Debris | yard debris removal, brush removal, branch haul away | /junk-removal-quote?v=yard |
+| Shed / Playset | shed removal, playset removal, swing set removal (**hold until the owner confirms the crew takes down sheds and playsets**; then send them to the default page, since the yard page only promises debris) | /junk-removal-quote (default) |
+| Garage Cleanout | garage cleanout, garage junk removal, garage clean out service, garage cleaning service | /junk-removal-quote?v=garage |
+| Estate / House Cleanout | estate cleanout, house cleanout, property cleanout, hoarder cleanout, basement cleanout, storage unit cleanout | /junk-removal-quote?v=estate |
 
 **Ads.** Write one responsive search ad per group with 15 headlines and 4
 descriptions. Pin headline 1 to "{Service} Fort Collins". Rotate these angles:
@@ -219,13 +241,18 @@ descriptions. Pin headline 1 to "{Service} Fort Collins". Rotate these angles:
   said "$139 up to 4 cu yd" while `/pricing` says $99–150. Local low-price
   anchors exist (LoadUp "from $60", Dropcurb "$79 first item"), so lead with
   the flat rate and the full-service value, not the lowest price.
-- Speed: "Same-Day & Next-Day Pickup", "Text a Photo, Get a Price in 5 Min".
+- Speed and pricing model: "Same-Day & Next-Day Pickup", "Book a Window
+  Online", "Flat Price Confirmed On-Site", "Approve It, We Haul It Same
+  Visit". Don't promise a price from photos or by text: the exact price is
+  set only after the crew sees the job.
 - Local trust: "Local & Family-Run, Not a Franchise", "Licensed & Insured",
   "{N} 5-Star Google Reviews".
 - Seasonal (Oct–Nov): "Park Inside Before the First Snow".
 
 **Assets:**
 - Call asset: must use the **same tracked number** as the landing pages.
+  Until (970) 658-9454 is connected to HighLevel, that's **(970) 999-1818**
+  (or a Google forwarding number that forwards to it).
   Don't use call-only ads; Google has stopped allowing new ones (Feb 2026) and
   existing ones stop serving in Feb 2027.
 - Sitelinks: Pricing, What We Take, Book Online, Before & After.
@@ -268,15 +295,23 @@ searches don't leak into generic ad groups.
    the gtag phone snippet, counted at **≥ 60 seconds**, the same threshold as
    call assets) *or* a HighLevel number pool with dynamic number insertion.
    Either way, a Google Ads visitor who calls from a service page has to be
-   counted. Put that same number on the Google Ads call asset.
+   counted. Put that same number on the Google Ads call asset. For now
+   `/junk-removal-quote` shows **(970) 999-1818**, because 658-9454 isn't
+   connected to HighLevel.
 2. **Conversion actions:**
    - **Primary:** Calls from ads ≥ 60s, Calls from website ≥ 60s, and
      `generate_lead` (web form). Give each a value of about $100, roughly
-     expected revenue × close rate, instead of $1.
+     expected revenue × close rate, instead of $1. The thanks page already
+     sends `generate_lead` with value = the service's expected revenue × 0.35
+     (about $44–210) and **$0 for an out-of-area ZIP**; change `CLOSE_RATE` in
+     `junk-removal-quote-thanks.html` to your real close rate. It fires only in
+     the browser that submitted the form (a shared thanks link never counts).
    - **Secondary** (observe only): `form_submit`, `sms_click`, `phone_call`
      clicks, and any directions or store-visit actions.
-3. **Booked-job offline conversions.** The `gclid` already lands in HighLevel.
-   Add an import:
+3. **Booked-job offline conversions.** The `gclid` now lands on the HighLevel
+   opportunity in the **Opp GCLID** field (`gbraid:…` / `wbraid:…` when
+   that's all Google sent), next to Opp Lead Source and Opp UTM fields. Add an
+   import that reads it:
    - Trigger: a HighLevel opportunity moves to Won / Job Completed (or a
      Jobber job/invoice is completed).
    - Action: send a Google Ads **"Booked Job"** offline conversion with the
@@ -361,11 +396,16 @@ any irrelevant term that appears twice.
 
 ## 7. Landing page and speed-to-lead
 
-- **Above the fold on every ad landing page:**
-  - a click-to-call button with the tracked number,
-  - a price range ("single items from $99"), since hiding price is the
-    biggest conversion killer in this category,
-  - "Text a photo for a price",
+- **The ad landing page is `/junk-removal-quote`** (variants in section 4b).
+  Above the fold:
+  - a click-to-call button with **(970) 999-1818**,
+  - published price ranges (single item $99–150, partial load $250–400,
+    standard garage $400–650, full garage/estate $650+, hot tub $400–800),
+    since hiding price is the biggest conversion killer in this category,
+  - the pricing model: **book a window, we confirm your flat price on-site
+    before we lift anything, and if you approve it we haul it the same
+    visit** (the 1-800-GOT-JUNK model). Photos are welcome as planning
+    context, but the page never promises a price from photos,
   - review stars and count,
   - same-day availability.
 - **Page speed:** analytics already loads after interaction, which is good.
@@ -373,9 +413,11 @@ any irrelevant term that appears twice.
 - **Speed-to-lead:**
   - Answer live during ad hours.
   - Set up missed-call text-back in OpenPhone/Quo or HighLevel immediately.
-  - The HighLevel instant-text relay for web leads already exists; confirm it
-    fires within 60 seconds. The chance of reaching a lead drops about 100x
-    between a 5-minute and a 30-minute response.
+  - Build the junk speed-to-lead text in HighLevel (item 6 in
+    `docs/ghl-junk-lead-intake.md`) and confirm it fires within 60 seconds,
+    from 999-1818, and only once (HighLevel or the Zapier text-back, not
+    both). The chance of reaching a lead drops about 100x between a 5-minute
+    and a 30-minute response.
   - Every unanswered ad call costs about $55–90 in media alone.
 - **Close more on-site:** every junk-removal job is a chance to pitch the
   garage transformation. Track the upsell rate. It's where Google's cost per
@@ -385,16 +427,32 @@ any irrelevant term that appears twice.
 
 ## 8. Rollout, budget, and checkpoints
 
+**Launch gates (all five before any Search spend):**
+1. **Tracking test passed:** the pre-launch test in
+   `docs/ghl-junk-lead-intake.md` (tags, Lead Source = Google Paid, Opp GCLID,
+   `generate_lead` with `transaction_id`, exactly one text from 999-1818).
+2. **Page live:** `/junk-removal-quote` and its `?v=` variants.
+3. **Phone answered:** someone picks up 999-1818 during ad hours, and
+   missed-call text-back works.
+4. **10+ Google reviews.**
+5. **Cash collected from open quotes,** so ad spend comes out of money already
+   in the bank.
+
 | When | Search budget | Actions |
 |---|---|---|
-| Now → Oct 5 | $0 | Tracking fixes (section 5), phone-number unification, LSA application, negatives, rebuild Core, delete PMax. |
-| Oct 6 → Nov 2 | $50/day | Launch. Review search terms **daily** for 2 weeks, then twice a week. "Before the first snow" ads. |
-| Nov 3 → Dec 31 | $45/day | Switch to Maximize Conversions once ≥15 conv. Pause ad groups with ≥$150 spend and 0 leads. Test Conquest at $10/day if Core is on target. Push furniture and move-out angles. |
-| Jan → Feb | $35/day | Slowest months, but keep running: clicks are cheaper when competitors pause. Estate cleanouts are strong now. Lean on LSA, gather reviews, get booked-job import live. |
-| Mar | $45/day | Ramp up from mid-March. |
-| Apr → Aug | $60–90/day | Peak season. Scale to the demand ceiling. Plan for spikes at CSU move-out (mid-May) and Aug 1 lease turnover (furniture, mattresses). Target CPA once ≥30 conv/mo. |
+| Now → gates pass | $0 | Tracking fixes (section 5), phone-number unification, LSA application, negatives, rebuild Core, delete PMax, run the pre-launch test. |
+| Gates pass → first 4 weeks | $20–25/day | Launch. Review search terms **daily** for 2 weeks, then twice a week. "Before the first snow" ads in Oct–Nov. |
+| After that | +$5–10/day at a time | Raise only after completed Google-sourced jobs have been **paid**, and cost per booked job is on target. Never raise spend on leads that haven't turned into cash. |
+| Nov 3 → Dec 31 | ceiling $45/day | Switch to Maximize Conversions once ≥15 conv. Pause ad groups with ≥$150 spend and 0 leads. Test Conquest at $10/day if Core is on target. Push furniture and move-out angles. |
+| Jan → Feb | ceiling $35/day | Slowest months, but keep running: clicks are cheaper when competitors pause. Estate cleanouts are strong now. Lean on LSA, gather reviews, get booked-job import live. |
+| Mar | ceiling $45/day | Ramp up from mid-March. |
+| Apr → Aug | ceiling $60–90/day | Peak season. Scale toward the demand ceiling as cash allows. Plan for spikes at CSU move-out (mid-May) and Aug 1 lease turnover (furniture, mattresses). Target CPA once ≥30 conv/mo. |
 
-**Checkpoint 1: after $1,000 of Search spend (about 125 clicks).** If you have
+The dollar figures after launch are **ceilings, not targets**: completed-job
+cash decides how fast you get there.
+
+**Checkpoint 1: after $1,000 of Search spend (about 125 clicks, roughly 6–7
+weeks at $20–25/day).** If you have
 fewer than 8 leads (cost per lead above $125), pause and diagnose in this
 order: search terms → phone answer rate → landing page. Don't add budget.
 
@@ -440,10 +498,14 @@ These are ready to run through the NotFair MCP. Nothing has been changed yet.
    with a $12 cap.
 5. Merge "Garage Cleaning: Fort Collins" into Core as the Garage Cleanout ad
    group. Add the item-specific ad groups and new responsive search ads from
-   section 4b.
+   section 4b, with final URLs on `/junk-removal-quote` and its `?v=`
+   variants. Switch the call asset to (970) 999-1818 until 658-9454 is
+   connected to HighLevel.
 6. Remove the Performance Max campaign.
-7. Set the guardrail monthly cap to $1,600.
-8. Re-enable Core at $50/day (**only after** the section 5 tracking is live).
+7. Set the guardrail monthly cap to $750 ($25/day). Raise it only as
+   completed-job cash comes in.
+8. Re-enable Core at $20–25/day (**only after** all section 8 launch gates
+   pass).
 
 ---
 
@@ -455,10 +517,12 @@ get recalculated:
 - Gross margin: about 55%.
 - Lead→booked rate: 50%.
 - Someone answers the phone Mon–Sat 7–7.
-- (970) 658-9454 is the intended ads tracking line; (970) 999-1818 is the
-  main line.
+- (970) 999-1818 is the main line and lands in HighLevel. (970) 658-9454 is
+  **not** connected to HighLevel; until it is, the landing page and call
+  asset use 999-1818.
 - No existing LSA profile.
 - Current Google review count: unknown (it drives both LSA rank and ad copy).
+  Launch needs 10 or more (section 8 gates).
 
 ---
 

@@ -8,13 +8,15 @@ const CSP = [
   "object-src 'none'",
   "frame-ancestors 'none'",
   "form-action 'self' https://api.web3forms.com",
-  "script-src 'self' 'unsafe-inline' https://www.gstatic.com https://maps.googleapis.com https://www.googletagmanager.com https://connect.facebook.net https://www.clarity.ms https://scripts.clarity.ms",
+  // Google tag (GA4 + Google Ads AW-18102284288): hosts from Google's CSP guide
+  // for GA4 with signals, Ads conversions, remarketing and the conversion linker.
+  "script-src 'self' 'unsafe-inline' https://www.gstatic.com https://maps.googleapis.com https://www.googletagmanager.com https://www.googleadservices.com https://googleads.g.doubleclick.net https://www.google.com https://connect.facebook.net https://www.clarity.ms https://scripts.clarity.ms",
   "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
   "font-src 'self' https://fonts.gstatic.com data:",
   "img-src 'self' data: blob: https:",
   "media-src 'self' blob: https:",
-  "connect-src 'self' https://*.googleapis.com https://*.firebaseio.com https://*.firebaseapp.com https://api.web3forms.com https://www.google-analytics.com https://region1.google-analytics.com https://*.clarity.ms https://connect.facebook.net",
-  "frame-src 'self' https://www.youtube-nocookie.com https://www.youtube.com https://maps.google.com https://www.google.com https://js.stripe.com https://checkout.stripe.com",
+  "connect-src 'self' https://*.googleapis.com https://*.firebaseio.com https://*.firebaseapp.com https://api.web3forms.com https://www.google-analytics.com https://region1.google-analytics.com https://*.google-analytics.com https://*.analytics.google.com https://*.googletagmanager.com https://*.g.doubleclick.net https://www.google.com https://google.com https://www.googleadservices.com https://pagead2.googlesyndication.com https://*.clarity.ms https://connect.facebook.net https://www.facebook.com",
+  "frame-src 'self' https://www.youtube-nocookie.com https://www.youtube.com https://maps.google.com https://www.google.com https://js.stripe.com https://checkout.stripe.com https://td.doubleclick.net https://bid.g.doubleclick.net https://www.googletagmanager.com",
   "upgrade-insecure-requests",
 ].join('; ');
 

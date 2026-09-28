@@ -336,11 +336,14 @@ await page.waitForTimeout(150);
 ok('postjob: chip selection sets GUARD', await page.evaluate(() => GUARD === 'Guard Lite'));
 await page.reload(); await page.waitForTimeout(400);
 ok('postjob: GUARD persists across reload', await page.evaluate(() => GUARD === 'Guard Lite'));
-// referral + review wording
-const refScript = await page.locator('.script', { hasText: 'reviews are how a local crew' }).textContent();
-ok('postjob: referral offer = $50 EGC gift card', /\$50 EGC gift card/.test(refScript));
+// referral + review wording — the review ask is neutral (no incentive, no content steering)
+// and the referral reward lives in its own, separate script block.
+const reviewScript = await page.locator('.script', { hasText: 'honest reviews are how a small local crew' }).textContent();
+ok('postjob: review script is neutral (no reward, no steering)', !/gift card|\$50|% off|discount|mention the garage|photos are gold/i.test(reviewScript));
+const refScript = await page.locator('.script.referral-script').textContent();
+ok('postjob: referral offer = $50 EGC gift card, separate from the review ask', /\$50 EGC gift card/.test(refScript) && /separate moment/.test(refScript));
 const reviewSrc = await page.evaluate(() => sendReview.toString());
-ok('postjob: review message wording swapped', /it was great working with you/.test(reviewSrc) && /10% off your next service/.test(reviewSrc));
+ok('postjob: review message is a neutral ask', /an honest Google review helps our small local crew a lot/.test(reviewSrc) && !/% off|discount|gift card|thank-you for choosing/i.test(reviewSrc));
 ok('postjob: REVIEW_LINK set', await page.evaluate(() => REVIEW_LINK) === 'https://search.google.com/local/writereview?placeid=ChIJ17AGfBiyRIsRyJ3k4mDtX8Q');
 await page.screenshot({ path: `${SHOTS}/07-postjob-380.png` });
 
@@ -361,8 +364,8 @@ await page.waitForTimeout(300);
 const rev = sent.slice(beforeRev).find(p => p.tool === 'review_request');
 ok('postjob: review send posts via proxy with E.164 phone + request_id',
    !!rev && rev.phone === '+19705550123' && !!rev.request_id, rev ? rev.phone : 'none');
-ok('postjob: review message is the proven wording verbatim',
-   !!rev && /it was great working with you/.test(rev.message) && /10% off your next service/.test(rev.message) && rev.message.endsWith(rev.review_link));
+ok('postjob: review message is the neutral wording verbatim',
+   !!rev && /an honest Google review helps our small local crew a lot/.test(rev.message) && !/% off|discount|gift card/i.test(rev.message) && rev.message.endsWith(rev.review_link));
 ok('postjob: review button shows real success', /Review text sent/i.test(await page.locator('#revbtn').textContent()));
 
 // finish payload shape (build it the way finish() does) — carries locked_total + garage_guard
