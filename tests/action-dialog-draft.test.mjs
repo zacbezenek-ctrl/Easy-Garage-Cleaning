@@ -33,12 +33,15 @@ function suite() {
       const markup = html.match(/<form\b[^>]*class="[^"]*\bops-action-dialog\b[^"]*"[^>]*>([\s\S]*?)<\/form>/)?.[1];
       if (!markup) return;
       const form = { fields: [], isConnected: true };
-      for (const match of markup.matchAll(/<input\b([^>]*?)>|<textarea\b([^>]*?)>([\s\S]*?)<\/textarea>/g)) {
-        const tag = match[1] === undefined ? 'textarea' : 'input';
-        const attributes = match[1] ?? match[2], content = match[3];
+      // Fixed-choice fields (announcement priority) render as <select>; model the selected option's value.
+      for (const match of markup.matchAll(/<input\b([^>]*?)>|<textarea\b([^>]*?)>([\s\S]*?)<\/textarea>|<select\b([^>]*?)>([\s\S]*?)<\/select>/g)) {
+        const tag = match[1] !== undefined ? 'input' : match[2] !== undefined ? 'textarea' : 'select';
+        const attributes = match[1] ?? match[2] ?? match[4], content = match[3];
         const attr = name => decode(attributes.match(new RegExp(`\\b${name}="([^"]*)"`))?.[1] || '');
+        const options = [...(match[5] || '').matchAll(/<option value="([^"]*)"\s*(selected)?/g)];
+        const selected = decode((options.find(option => option[2]) || options[0])?.[1] || '');
         const field = {
-          name: attr('name'), tagName: tag.toUpperCase(), value: tag === 'textarea' ? decode(content || '') : attr('value'),
+          name: attr('name'), tagName: tag.toUpperCase(), value: tag === 'textarea' ? decode(content || '') : tag === 'select' ? selected : attr('value'),
           selectionStart: 0, selectionEnd: 0,
           focus() { document.activeElement = this; },
           closest(selector) { return selector.split(',').some(part => part.trim() === '.ops-action-dialog') ? form : null; },

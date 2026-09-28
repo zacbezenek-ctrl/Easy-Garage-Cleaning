@@ -148,6 +148,11 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   recorded as suppressed before any HighLevel call (re-checked after the claim), Copy portal link is 409 and collaborator
   invites 403. Company approvals store the approving actor/account/member ids (never shown in the portal), and older
   writers strip them from new approvals. Audit #28 and #99 done. Gap: links issued before a project was linked stay valid.
+- **HUB-REG** Hub screen registry (`employee-hub-screens.js`: capability-gated, lazily loaded screens from one MANIFEST
+  line; empty today) and UI kit (`employee-ui-kit.js/css`: safe `h()`, `/api/`-only requests with pending-request replay,
+  Denver dates, CSV guard, cents). Shell stability: background refreshes keep typed drafts and focus, one boot load,
+  persistent My day node, `?view=` history and deep links; 375px mobile pass; `/employee` may use the microphone. Audit
+  #10, #11, #41-#48, #78, #79 done. Gap: no screens registered yet; img-src blob still blocked.
 
 ## In progress
 
@@ -178,7 +183,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | F-EXP | Field cost capture (materials, dump fees) | merged (302ab11) |
 | F-LEG | Legacy crew send-path hardening (quo-send idempotency etc.) | merged (adc23c7) |
 | MSG-CORE | Approved-send core: GHL messenger, owner-approved templates, message_sends ledger, messages API | merged (b7da326) |
-| HUB-REG | Hub screen registry, UI kit, shell stability, mobile shell pass, microphone policy fix | building |
+| HUB-REG | Hub screen registry, UI kit, shell stability, mobile shell pass, microphone policy fix | merged (a4c5977) |
 | B2B-SEAMS | B2B hub extension seams + mobile compliance + idempotency/leak fixes | merged (4edcf75) |
 | SITE-0 | Site generator determinism/scope, regenerate stale before-after.html, nav a11y | merged (69ccc6d) |
 | SITE-5 | Lighthouse CI (mobile perf/a11y >= 90) harness + workflow | merged (9ad1915) |
@@ -229,8 +234,8 @@ Scope: all 188 findings the maps exported (160 bug reports plus 28 mission or in
 | 7 | Money | Every Hub finance change (estimate, invoice, deposit, payment, wallet credit, Garage Guard) is written from the browser with a blind merge and no revision check or server audit, so a concurrent webhook payment or second manager's edit can be overwritten. | `employee-suite.js:161` (actions at :251-279); `firestore.rules:239` | M3 |
 | 8 | Quotes | If a customer approves in the portal while a manager has the estimate dialog open, saving the edit changes the amount but keeps the old approval, so a deposit checkout opens for a price the customer never approved. | `employee-suite.js:251` (write at :161) | P2-09 |
 | 9 | Time clock | Clock-out stops location tracking before the request and has no error handling, so a network failure leaves the shift open on the server while the employee sees no error; clock-in, breaks and people actions also lack error toasts and double-tap guards. | `employee-suite.js:412` (also :411, :413-414, :516-523) | P1-15 |
-| 10 | Hub shell | Background refreshes (60 s timer, visibility change, schedule and snapshot updates) re-render the Hub and wipe whatever someone is typing in chat, the customer thread, customer search or the scorecard. | `employee-suite.js:94` (render :101-116, refresh wrapper :561); `employee.html:1569` | HUB-REG |
-| 11 | Hub shell | The middleware sends `microphone=()` for every path except /copilot, so 'Start recording' in the Hub always fails and walkthrough audio can only be uploaded as a file. | `functions/_middleware.js:50`; `employee-recordings.js:15` | HUB-REG |
+| 10 | Hub shell | Background refreshes (60 s timer, visibility change, schedule and snapshot updates) re-render the Hub and wipe whatever someone is typing in chat, the customer thread, customer search or the scorecard. | `employee-suite.js:94` (render :101-116, refresh wrapper :561); `employee.html:1569` | HUB-REG (done) |
+| 11 | Hub shell | The middleware sends `microphone=()` for every path except /copilot, so 'Start recording' in the Hub always fails and walkthrough audio can only be uploaded as a file. | `functions/_middleware.js:50`; `employee-recordings.js:15` | HUB-REG (done) |
 | 12 | MCP | The OAuth consent text says sends are blocked in Action Center mode, but the send tools are not on the block list, so any write grant can text or email a customer in one call with no confirmation. † | `egc-platform/apps/mcp/src/oauth.ts:128`; `egc-platform/apps/mcp/src/operations.ts:15` | MCP-01 |
 | 13 | MCP | The static `MCP_BEARER_TOKEN`, documented as diagnostic-only, passes every scope check including `egc:write` and never expires, so if it is set in production it is a full-write credential. † | `egc-platform/apps/mcp/src/oauth.ts:458-466` | MCP-01 |
 | 14 | Public site | The next generator run would inject the marketing analytics loader (GA, Meta, Clarity) into the B2B client hub, the dispatch shell and the owner credential setup page, because they are missing from the private-page list. | `_generate_site.py:4120` | SITE-0 |
@@ -265,15 +270,15 @@ Scope: all 188 findings the maps exported (160 bug reports plus 28 mission or in
 | 38 | MCP | Audit rows for legacy MCP writes record the hard-coded actor 'chatgpt-mcp' instead of the verified principal, so the log cannot say who made a change. | `egc-platform/apps/mcp/src/server.ts:1889` (and 16 more call sites through :2914) | MCP-01 |
 | 39 | MCP | `tasks.search` and `leads.search` take the 500 newest rows and then filter in memory, so filtered searches silently miss older matches. | `egc-platform/apps/mcp/src/server.ts:1375`; :1150 | MCP-01 |
 | 40 | MCP | OAuth accepts only the hard-coded ChatGPT client and redirect and has no registration endpoint, so a Claude custom connector cannot authorize. | `egc-platform/apps/mcp/src/oauth.ts:84` | MCP-03 |
-| 41 | Hub shell | Hub boot loads everything twice, doubling integration, HighLevel and walkthrough requests and running two concurrent retry passes for syncs and customer messages. | `employee-suite.js:562` (install :26) | HUB-REG |
-| 42 | Hub shell | Each 'My day' render replaces the field-today node, so the crew home unmounts, refetches and flashes 'Loading' two to three times a minute. | `employee-suite.js:117`; `employee-field-today.js:52` | HUB-REG |
-| 43 | Hub shell | In the booking modal, the CRM contact search box is re-created empty after results arrive, so the typed query disappears and the mobile keyboard closes. | `employee-suite.js:158` (input :144) | HUB-REG |
-| 44 | Hub shell | Hub navigation never updates the URL, so the phone back gesture leaves the Hub and views cannot be bookmarked. | `employee-suite.js:98` | HUB-REG |
-| 45 | Hub mobile | The mobile nav drawer has no scrim (the closing tap also clicks whatever is underneath) and its hidden links stay keyboard- and screen-reader-focusable, with no Escape or aria-expanded. | `employee-suite.js:26` | HUB-REG |
-| 46 | Hub mobile | Toasts never wrap, so 60-100 character messages are cut off on both sides of a 375 px screen. | `employee.html:538` | HUB-REG |
-| 47 | Hub mobile | On Weekly timesheets the button row does not wrap at 375 px, so the 'Download for Gusto' button is clipped and partly unreachable. | `employee-suite.css:35`; `employee-suite.js:321` | HUB-REG |
-| 48 | Hub mobile | Many Hub tap targets are under 44 px (rail nav, topbar Clock in/Refresh, drawer button, schedule Edit links, approve/reject buttons, dialog close, Action Center buttons and filters). | `employee-suite.css:10`, :15, :35, :36, :38, :63, :71; `employee-operations.css:4-5` | HUB-REG |
-| 49 | Hub shell | The Hub's meta CSP blocks blob image previews, external photos and blob audio playback (no media-src), and frame-src 'none' would block Stripe Elements. | `employee.html:9` | HUB-REG (media/blob); Stripe frame-src: NEW when a Hub payment screen needs it |
+| 41 | Hub shell | Hub boot loads everything twice, doubling integration, HighLevel and walkthrough requests and running two concurrent retry passes for syncs and customer messages. | `employee-suite.js:562` (install :26) | HUB-REG (done) |
+| 42 | Hub shell | Each 'My day' render replaces the field-today node, so the crew home unmounts, refetches and flashes 'Loading' two to three times a minute. | `employee-suite.js:117`; `employee-field-today.js:52` | HUB-REG (done) |
+| 43 | Hub shell | In the booking modal, the CRM contact search box is re-created empty after results arrive, so the typed query disappears and the mobile keyboard closes. | `employee-suite.js:158` (input :144) | HUB-REG (done) |
+| 44 | Hub shell | Hub navigation never updates the URL, so the phone back gesture leaves the Hub and views cannot be bookmarked. | `employee-suite.js:98` | HUB-REG (done) |
+| 45 | Hub mobile | The mobile nav drawer has no scrim (the closing tap also clicks whatever is underneath) and its hidden links stay keyboard- and screen-reader-focusable, with no Escape or aria-expanded. | `employee-suite.js:26` | HUB-REG (done) |
+| 46 | Hub mobile | Toasts never wrap, so 60-100 character messages are cut off on both sides of a 375 px screen. | `employee.html:538` | HUB-REG (done) |
+| 47 | Hub mobile | On Weekly timesheets the button row does not wrap at 375 px, so the 'Download for Gusto' button is clipped and partly unreachable. | `employee-suite.css:35`; `employee-suite.js:321` | HUB-REG (done) |
+| 48 | Hub mobile | Many Hub tap targets are under 44 px (rail nav, topbar Clock in/Refresh, drawer button, schedule Edit links, approve/reject buttons, dialog close, Action Center buttons and filters). | `employee-suite.css:10`, :15, :35, :36, :38, :63, :71; `employee-operations.css:4-5` | HUB-REG (done) |
+| 49 | Hub shell | The Hub's meta CSP blocks blob image previews, external photos and blob audio playback (no media-src), and frame-src 'none' would block Stripe Elements. | `employee.html:9` | HUB-REG (partly done: media-src blob; img-src blob still missing); Stripe frame-src: NEW when a Hub payment screen needs it |
 | 50 | Public site | Rerunning the site generator drops /before-after from the homepage nav and sitemap (the link only survives because publish-links.py is run by hand), which fails the gallery test. † | `_generate_site.py:642`; :4214 | SITE-0 |
 | 51 | Public site | The generator stamps dates from the real clock (sitemap lastmod, privacy/terms, dateModified, llms/ai/humans files), so its output changes every day and cannot be tested. † | `_generate_site.py:14` | SITE-0 |
 | 52 | Public site | The generator scans every `*.html` under the repo, including `.claude/worktrees`, so a run would list worktree URLs in ai.txt and rewrite other agents' pages. † | `_generate_site.py:3516`; ~:4123; :4140 | SITE-0 |
@@ -307,8 +312,8 @@ Scope: all 188 findings the maps exported (160 bug reports plus 28 mission or in
 | 75 | Crew app | The crew home offline banner says checklist work will sync later, but that page has no queue or sync. | `crew/index.html:123` | F-LEG (done; also F-PWA, done) |
 | 76 | Crew app | Photo upload truncates job ids to 60 characters (ids allow 180), so long ids are checked against the wrong job, and the Drive query does not escape backslashes. | `functions/api/drive-upload.js:276` (query :199) | F-LEG (done) |
 | 77 | Crew app | The crew review-request/post-job branch in crew-hook.js is unreachable behind an unconditional 403 for non-business users, and it sets a wildcard CORS header. | `functions/api/crew-hook.js:73-94` | F-LEG (done) |
-| 78 | Hub mobile | Hub forms show the wrong mobile keyboards (phone fields without type=tel, askAction cannot set inputmode) and use free text where a picker or select fits (assigned crew, announcement priority, Garage Guard plan/status). | `employee-suite.js:144` (also :127, :206, :208, :210, :421, :522) | HUB-REG |
-| 79 | Hub shell | Business users always land on the mode screen after login, so deep links like ?view=schedule need an extra tap. | `employee.html:2739` (enterEmployeeApp :1387) | HUB-REG |
+| 78 | Hub mobile | Hub forms show the wrong mobile keyboards (phone fields without type=tel, askAction cannot set inputmode) and use free text where a picker or select fits (assigned crew, announcement priority, Garage Guard plan/status). | `employee-suite.js:144` (also :127, :206, :208, :210, :421, :522) | HUB-REG (done) |
+| 79 | Hub shell | Business users always land on the mode screen after login, so deep links like ?view=schedule need an extra tap. | `employee.html:2739` (enterEmployeeApp :1387) | HUB-REG (done) |
 | 80 | Hub shell | Every Hub user, including crew on mobile data, loads the Google Maps JS API for an unreachable on-call flow, and the hidden legacy dashboard still re-renders on every refresh. | `employee.html:3190` (:2453, :798-821) | NEW: remove dead legacy code from employee.html |
 | 81 | Hub shell | Hidden legacy markup calls 14 functions that are not defined anywhere and would throw if reached. | `employee.html:990` (and :2266) | M15 (quote modal handlers); NEW: remove dead legacy code from employee.html |
 | 82 | Hub mobile | Copilot has 38 px voice/send buttons, smaller copy/logout buttons, and inputs under 16 px that make iOS zoom on focus. | `copilot.html:178` (:53) | NEW: copilot mobile fixes |

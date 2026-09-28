@@ -1,0 +1,23 @@
+/* Employee Hub mobile shell pass (375x812 first). Loaded last so it can raise tap targets,
+   wrap toolbars and fit the toast without editing each module's stylesheet. */
+.ops-nav button,.ops-menu,.ops-system button,.ops-edit-event,.ops-booking header>button,.ops-announcements button,.ops-request-list button,.ops-time-row button,.ops-availability-list button,.ac-btn,.ac-tab,.ac-filter select{min-height:44px}
+.ops-menu,.ops-booking header>button{min-width:44px}
+.ops-schedule-bar>div{flex-wrap:wrap}
+.ops-schedule-bar>div:first-child>button{width:44px;height:44px}
+.ops-schedule-bar .ops-button{width:auto;height:auto;min-height:44px;padding:0 14px}
+.ops-card-head{flex-wrap:wrap}
+.ops-card-head>div{min-width:0}
+.ops-walk-list a{display:inline-flex;align-items:center;min-height:44px}
+.ops-notify{min-height:44px}
+.ops-context{min-width:0;flex:1 1 auto}
+.ops-context strong{display:block;max-width:100%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ops-team-grid header>div,.ops-team-grid header h2{min-width:0;overflow-wrap:anywhere}
+#toast{white-space:normal;width:max-content;max-width:calc(100vw - 32px);box-sizing:border-box;text-align:center;overflow-wrap:anywhere;bottom:calc(1.5rem + env(safe-area-inset-bottom));transform:translateX(-50%) translateY(calc(100% + 2rem + env(safe-area-inset-bottom)))}
+.ops-scrim{position:fixed;inset:0;z-index:89;border:0;padding:0;margin:0;background:rgba(7,15,27,.55);cursor:pointer}
+.ops-scrim[hidden]{display:none}
+@media (max-width:860px){
+  .ops-rail{visibility:hidden;transition:transform .2s,visibility 0s linear .2s}
+  .ops-rail.open{visibility:visible;transition:transform .2s}
+  .ops-nav button{transition-property:color,background-color,box-shadow}
+  .ops-menu{width:44px;height:44px}
+}

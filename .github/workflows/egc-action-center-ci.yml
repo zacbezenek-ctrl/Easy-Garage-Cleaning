@@ -137,6 +137,10 @@ jobs:
         run: python tests/browser/test_availability_ui.py
       - name: Personal field agenda and Mountain date boundaries
         run: python tests/browser/test_field_today_ui.py
+      - name: Hub shell registry, draft-safe refreshes and navigation history
+        run: python tests/browser/test_hub_shell_ui.py
+      - name: Hub mobile shell at phone widths
+        run: python tests/browser/test_hub_mobile_ui.py
       - name: Field job-cost capture on a phone
         run: python tests/browser/test_field_expenses_ui.py
       - name: Crew pre-job customer texts are idempotent and never re-sent

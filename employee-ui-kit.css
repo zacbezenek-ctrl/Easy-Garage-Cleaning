@@ -1,0 +1,68 @@
+/* EGC Hub UI kit for registered screens (window.EGCHubKit).
+   Tokens reconcile the ops (suite), dp (dispatch), ac (action center) and av (availability) palettes.
+   Breakpoints: <=680px mobile (single column, 16px inputs, full-width actions), <=1000px tablet (two columns max).
+   Screens scope their own layout under a root class and use these tokens instead of new colours. */
+:root{
+  --hub-navy:#0c1829;--hub-navy-2:#14243b;--hub-orange:#ee5c2b;--hub-orange-ink:#b73f0e;--hub-ink:#172033;--hub-muted:#536173;
+  --hub-line:#d5dbe2;--hub-paper:#f1f0ec;--hub-card:#fbfaf7;--hub-soft:#f1f5f8;--hub-green:#19734f;--hub-red:#b83b44;--hub-blue:#2563a9;--hub-amber:#8a5a00;
+  --hub-space-1:4px;--hub-space-2:8px;--hub-space-3:12px;--hub-space-4:16px;--hub-space-5:24px;--hub-space-6:32px;
+  --hub-radius:6px;--hub-radius-lg:10px;--hub-shadow:0 14px 36px rgba(15,25,42,.08);
+  --hub-font:Inter,system-ui,-apple-system,'Segoe UI',sans-serif;--hub-serif:'Fraunces',Georgia,serif;--hub-mono:'JetBrains Mono',ui-monospace,monospace;
+  --hub-tap:44px;
+}
+.hub-screen{font-family:var(--hub-font);color:var(--hub-ink);min-width:0;display:grid;gap:var(--hub-space-4)}
+.hub-screen *{box-sizing:border-box}
+.hub-screen h1,.hub-screen h2,.hub-screen h3{font-family:var(--hub-serif);color:var(--hub-navy);margin:0;overflow-wrap:anywhere}
+.hub-eyebrow{display:block;font:700 10px/1.3 var(--hub-mono);letter-spacing:.13em;text-transform:uppercase;color:var(--hub-orange-ink)}
+.hub-head{display:flex;align-items:flex-end;justify-content:space-between;gap:var(--hub-space-4);flex-wrap:wrap}
+.hub-head p{margin:6px 0 0;color:var(--hub-muted);max-width:70ch}
+.hub-actions{display:flex;flex-wrap:wrap;gap:var(--hub-space-2)}
+.hub-btn{min-height:var(--hub-tap);min-width:var(--hub-tap);display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:9px 14px;border:1px solid var(--hub-line);border-radius:var(--hub-radius);background:#fff;color:var(--hub-ink);font:700 14px/1.2 var(--hub-font);cursor:pointer;text-decoration:none;touch-action:manipulation}
+.hub-btn:hover{border-color:var(--hub-ink)}
+.hub-btn:focus-visible,.hub-field :is(input,select,textarea):focus-visible{outline:3px solid rgba(238,92,43,.35);outline-offset:2px}
+.hub-btn.primary{background:var(--hub-orange);border-color:var(--hub-orange);color:#fff}
+.hub-btn.dark{background:var(--hub-navy);border-color:var(--hub-navy);color:#fff}
+.hub-btn.danger{background:#fff;border-color:#efb5b8;color:var(--hub-red)}
+.hub-btn.quiet{border-color:transparent;background:transparent}
+.hub-btn:disabled,.hub-btn[aria-busy="true"]{opacity:.55;cursor:not-allowed}
+.hub-card{background:var(--hub-card);border:1px solid var(--hub-line);border-radius:var(--hub-radius);padding:var(--hub-space-5);box-shadow:var(--hub-shadow);min-width:0}
+.hub-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr));gap:var(--hub-space-4)}
+.hub-grid>*{min-width:0}
+.hub-field{display:grid;gap:6px;min-width:0}
+.hub-field>span{font:700 12px/1.3 var(--hub-font);color:var(--hub-ink)}
+.hub-field :is(input,select,textarea){width:100%;min-height:var(--hub-tap);padding:10px 12px;border:1px solid var(--hub-line);border-radius:var(--hub-radius);background:#fff;color:var(--hub-ink);font:500 15px/1.35 var(--hub-font)}
+.hub-field textarea{min-height:96px;resize:vertical}
+.hub-field small{color:var(--hub-muted);font-size:12px;line-height:1.4}
+.hub-check{grid-template-columns:auto minmax(0,1fr);align-items:center;min-height:var(--hub-tap);cursor:pointer}
+.hub-check input{width:22px;height:22px;min-height:0;margin:0}
+.hub-check small{grid-column:2}
+.hub-notice{border:1px solid var(--hub-line);border-left:4px solid var(--hub-blue);background:#fff;padding:12px 14px;border-radius:var(--hub-radius);color:var(--hub-ink);overflow-wrap:anywhere}
+.hub-notice.error{border-left-color:var(--hub-red);background:#fff7f7}
+.hub-notice.warning{border-left-color:var(--hub-amber);background:#fffaf0}
+.hub-notice.success{border-left-color:var(--hub-green);background:#f5fbf8}
+.hub-notice .hub-actions{margin-top:10px}
+.hub-table-scroll{max-width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch;border:1px solid var(--hub-line);border-radius:var(--hub-radius);background:#fff}
+.hub-table-scroll table{border-collapse:collapse;width:100%;min-width:560px;font-size:14px}
+.hub-table-scroll th,.hub-table-scroll td{padding:10px 12px;border-bottom:1px solid var(--hub-line);text-align:left;vertical-align:top}
+.hub-table-scroll th{font:700 11px var(--hub-mono);letter-spacing:.08em;text-transform:uppercase;color:var(--hub-muted);background:var(--hub-soft);position:sticky;top:0}
+.hub-dialog{width:min(640px,calc(100vw - 24px));max-height:calc(100dvh - 24px);padding:0;border:1px solid var(--hub-line);border-radius:var(--hub-radius-lg);background:var(--hub-card);color:var(--hub-ink);box-shadow:0 30px 80px rgba(0,0,0,.3);overflow:auto}
+.hub-dialog::backdrop{background:rgba(7,15,27,.72)}
+.hub-dialog>header,.hub-dialog>footer{position:sticky;z-index:1;background:var(--hub-card);padding:16px 20px}
+.hub-dialog>header{top:0;border-bottom:1px solid var(--hub-line);display:flex;justify-content:space-between;align-items:flex-start;gap:12px}
+.hub-dialog>footer{bottom:0;border-top:1px solid var(--hub-line);display:flex;justify-content:flex-end;flex-wrap:wrap;gap:8px}
+.hub-dialog>.hub-dialog-body{padding:18px 20px;display:grid;gap:14px}
+.hub-screen-loading{display:grid;gap:12px;padding:24px 0}
+.hub-skeleton{display:block;height:18px;border-radius:var(--hub-radius);background:linear-gradient(90deg,#e8e7e2,#f4f3ef,#e8e7e2);background-size:200% 100%;animation:hub-shimmer 1.2s ease-in-out infinite}
+.hub-skeleton.wide{height:120px}
+@keyframes hub-shimmer{from{background-position:200% 0}to{background-position:-200% 0}}
+@media (prefers-reduced-motion:reduce){.hub-skeleton{animation:none}}
+.hub-sr-only{position:absolute!important;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+@media (max-width:1000px){.hub-grid{grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr))}.hub-card{padding:var(--hub-space-4)}}
+@media (max-width:680px){
+  .hub-field :is(input,select,textarea){font-size:16px}
+  .hub-head{align-items:flex-start}
+  .hub-head .hub-actions,.hub-dialog>footer{width:100%}
+  .hub-head .hub-actions .hub-btn,.hub-dialog>footer .hub-btn{flex:1 1 auto}
+  .hub-dialog{width:calc(100vw - 12px);max-height:calc(100dvh - 12px)}
+  .hub-dialog>header,.hub-dialog>footer,.hub-dialog>.hub-dialog-body{padding-left:14px;padding-right:14px}
+}

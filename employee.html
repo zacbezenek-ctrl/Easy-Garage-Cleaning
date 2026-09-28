@@ -6,7 +6,7 @@
   <title>Employee Portal — Easy Garage Cleaning</title>
   <meta name="robots" content="noindex, nofollow">
   <!-- Content Security Policy — restricts where scripts/connections can go -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' www.gstatic.com maps.googleapis.com; style-src 'self' 'unsafe-inline' fonts.googleapis.com; font-src fonts.gstatic.com data:; connect-src 'self' *.googleapis.com *.firebaseio.com *.firebaseapp.com firestore.googleapis.com; img-src 'self' data: maps.gstatic.com maps.googleapis.com; frame-src 'none'; object-src 'none'; base-uri 'self';">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' www.gstatic.com maps.googleapis.com; style-src 'self' 'unsafe-inline' fonts.googleapis.com; font-src fonts.gstatic.com data:; connect-src 'self' *.googleapis.com *.firebaseio.com *.firebaseapp.com firestore.googleapis.com; img-src 'self' data: maps.gstatic.com maps.googleapis.com; media-src 'self' blob:; frame-src 'none'; object-src 'none'; base-uri 'self';">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-title" content="EGC Portal">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -2556,7 +2556,8 @@ function avatarBg(n) {
    MODE SELECT
 ═══════════════════════════════════════════════════════ */
 function showModeSelect() {
-  if (!canRunBusiness()) { bootDashboard(); return; }
+  // A ?view= link (bookmark, reload, back gesture) opens that Hub view instead of the mode screen on entry.
+  if (!canRunBusiness() || new URLSearchParams(location.search).has('view') && !document.querySelector('#dashboard.ops-installed')) { bootDashboard(); return; }
   document.getElementById('login-screen').style.display  = 'none';
   document.getElementById('dashboard').style.display     = 'none';
   document.getElementById('oncall-overlay').classList.remove('open');
@@ -3029,7 +3030,9 @@ window.addEventListener('egc:booking-recovered',event=>{const key=event.detail?.
 <script src="employee-booking.js?v=20260928recur"></script>
 <script src="employee-field-today.js?v=20260922ops"></script>
 <script src="employee-availability.js?v=20260922ops"></script>
+<script src="employee-hub-screens.js?v=20260927hubreg"></script>
 <script src="employee-suite.js?v=20260922ops"></script>
+<link rel="stylesheet" href="employee-mobile.css?v=20260927hubreg">
 
 <div class="egc-portal-foot" style="background:#0a1628;border-top:1px solid rgba(255,255,255,.08);padding:14px 18px;text-align:center;font-size:12px;color:rgba(245,241,234,.55)">
   <a href="/privacy-policy" style="color:#ff5b1f;margin:0 8px">Privacy</a> · <a href="/" style="color:#ff5b1f">Home</a> · Employee portal — internal use only
