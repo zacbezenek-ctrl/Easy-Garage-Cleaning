@@ -3,6 +3,7 @@ import { firebaseServiceAccountConfigured } from '../_lib/firebase-service-accou
 import { customerPortalConfigured } from '../_lib/customer-portal.js';
 import { employeeAccountsConfigured } from '../_lib/employee-accounts.js';
 import { gustoConfiguration } from '../_lib/gusto-client.js';
+import { moneyApiEnabled } from '../_lib/money-service.js';
 
 /** Returns configuration readiness only. Secret values never leave the server. */
 export async function onRequestGet({request,env}){
@@ -25,5 +26,7 @@ export async function onRequestGet({request,env}){
     highlevelPipeline:any('HIGHLEVEL_SCHEDULED_STAGE_ID','GHL_SCHEDULED_STAGE_ID','HIGHLEVEL_PIPELINE_STAGE_SCHEDULED_ID','GHL_PIPELINE_STAGE_SCHEDULED_ID'),
     automations:all('WEBSITE_LEAD_HOOK_URL','QUOTE_FOLLOWUP_WEBHOOK_URL','BOOKING_WEBHOOK_URL','REVIEW_WEBHOOK_URL','META_SIGNAL_WEBHOOK_URL')
   };
-  return new Response(JSON.stringify({ok:true,status}),{headers:{'Content-Type':'application/json','Cache-Control':'no-store'}});
+  // Browser feature flags (booleans only); money writes stay in the browser unless moneyApi is on.
+  const flags={moneyApi:moneyApiEnabled(env)};
+  return new Response(JSON.stringify({ok:true,status,flags}),{headers:{'Content-Type':'application/json','Cache-Control':'no-store'}});
 }

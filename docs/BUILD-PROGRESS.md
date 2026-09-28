@@ -178,6 +178,11 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   `estimate.lineItems`, adds Dispatch materials and retires a stale issued invoice; legacy plans keep the single line.
   Portal approval now requires the displayed `estimate_revision`, `amount_cents` and `estimate_fingerprint` (409 if
   stale). `CUSTOMER_PORTAL_REJECT_DRAFT_ESTIMATES` (off) refuses drafts. Gap: Hub still releases estimates as 'draft'.
+- **M3** Server-authoritative money API behind `MONEY_API_ENABLED` (off): `/api/money` + `mutateMoney` save estimates,
+  approvals, offline deposits/payments (stored `paymentLedger`), invoice issue/void and owner-only costs in one Firestore
+  commit with the job revision, a create-only `moneyOperations` receipt, `moneyInvoiceNumbers` reservation and `hub_audit`
+  entry; Firestore 400/409/412 map to `money_revision_conflict`. Hub buttons switch over only when the flag reads true
+  (sticky per viewer). Gaps: no payment.verify action; costs button stays legacy; run the ledger backfill before enabling.
 
 ## In progress
 
@@ -223,6 +228,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | PHOTO | Customer-visible before/after photos, manager share toggle, portal photo stream (FIELD_CUSTOMER_PHOTOS_ENABLED) | merged (77ebb4f) |
 | P2-05 | Itemized signed walkthrough handoff and revision/amount/fingerprint-bound portal approval | merged (1b039fd) |
 | CI-WF | Wire merged units' tests into the existing CI workflows (pending CI notes) | merged (31e1562) |
+| M3 | Server-authoritative money mutation API, audit and payment ledger (MONEY_API_ENABLED) | merged (8b095ec) |
 
 ## Next
 

@@ -384,6 +384,15 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // Money API request receipts and invoice-number reservations are written
+    // only in the same server commit as the job change (/api/money).
+    match /moneyOperations/{documentId} {
+      allow read, write: if false;
+    }
+    match /moneyInvoiceNumbers/{documentId} {
+      allow read, write: if false;
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }

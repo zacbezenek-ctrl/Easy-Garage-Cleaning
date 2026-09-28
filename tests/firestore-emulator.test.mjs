@@ -58,6 +58,8 @@ test('actual Firestore rules isolate canonical operations from crew SDK access',
         'stripe_events/evt_synthetic':{type:'invoice.paid',subscriptionId:'sub_synthetic'},
         'membership_reviews/sub_synthetic':{status:'open',reason:'ambiguous_customer'},
         'payment_reviews/cs_test_synthetic':{status:'open',reason:'payment_exceeds_balance',jobId:'assigned',amountCents:50000},
+        'moneyOperations/receipt':{actorId:'zacb',action:'payment.record_offline',jobId:'assigned',fingerprint:'synthetic'},
+        'moneyInvoiceNumbers/n_INV-ASSIGN':{number:'INV-ASSIGN',jobId:'assigned'},
       };
       for (const [path,value] of Object.entries(entries)) await db.doc(path).set(value);
     });
@@ -101,6 +103,11 @@ test('actual Firestore rules isolate canonical operations from crew SDK access',
     });
     await t.test('hub bridge command receipts (audit and idempotency) remain server-only even for business SDK sessions',async()=>{
       for(const db of [publicDb,crew,manager]){const ref=db.doc('hub_command_operations/receipt');await assertFails(ref.get());await assertFails(ref.set({fingerprint:'forged',before:'null',after:'{}'}));await assertFails(ref.delete());}
+    });
+    await t.test('money API receipts and invoice-number reservations are server-only even for business SDK sessions',async()=>{
+      for(const db of [publicDb,crew,lead,manager]) for(const path of ['moneyOperations/receipt','moneyInvoiceNumbers/n_INV-ASSIGN']){await assertFails(db.doc(path).get());await assertFails(db.doc(path).set({jobId:'open'}));await assertFails(db.doc(path).update({jobId:'open'}));await assertFails(db.doc(path).delete());}
+      for(const db of [crew,manager]) for(const name of ['moneyOperations','moneyInvoiceNumbers']) await assertFails(db.collection(name).get());
+      await assertFails(manager.doc('moneyInvoiceNumbers/n_INV-NEW').set({number:'INV-NEW',jobId:'assigned'}));
     });
     await t.test('manager administrative schedule and customer access remains functional',async()=>{
       await assertSucceeds(manager.doc('jobs/assigned').get());

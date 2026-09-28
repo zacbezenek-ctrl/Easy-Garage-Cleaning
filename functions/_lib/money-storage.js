@@ -1,0 +1,50 @@
+import { firestoreFetch } from './firebase-service-account.js';
+import { encodeFirestoreFields } from './firestore-job.js';
+import { dispatchStorage } from './dispatch-storage.js';
+
+const ROOT = 'projects/egcw-1ec83/databases/(default)/documents';
+const BASE = `https://firestore.googleapis.com/v1/${ROOT}`;
+const failure = (code, message, status = 503) => Object.assign(new Error(message), { code, status });
+
+// Everything the money reads, lists, CSV exports and the ledger backfill need.
+// A mask is mandatory: raw job bodies also carry signature images and private notes.
+export const MONEY_JOB_FIELDS = Object.freeze(['type', 'recordType', 'customer', 'customerId', 'date', 'status', 'pipelineStatus', 'serviceType', 'scopeSummary', 'notify',
+  'total', 'priceQuoted', 'lockedTotal', 'rate', 'estimate', 'customerApproval', 'quoteStatus', 'invoice', 'payment', 'deposit', 'approvedChangeTotal', 'customerDecisions',
+  'giftWallet.redemptions', 'refunds', 'completedAt', 'postJobChecklist.completedAt', 'postJobProgress.standardItems', 'costs',
+  'paymentLedger', 'paymentLedgerStatus', 'paymentLedgerIssues', 'paymentLedgerVersion', 'moneyRequestId']);
+
+/**
+ * Money store over the same Firestore REST contract as dispatchStorage:
+ * rows carry revision = updateTime and commit(writes) applies every write or
+ * none, each with currentDocument.updateTime (update), exists:false (create) or,
+ * for a write marked exists:true, exists:true (a merge into a document that must exist).
+ * Firestore reports a stale updateTime as FAILED_PRECONDITION (HTTP 400) and a
+ * create collision as ALREADY_EXISTS (409); both mean nothing was applied, so
+ * both are money_revision_conflict. A lost or unexplained response is
+ * money_outcome_unknown: retry the same requestId, whose receipt is the proof.
+ */
+export function moneyStorage(env, fetcher = firestoreFetch) {
+  const base = dispatchStorage(env, fetcher);
+  async function mapped(work, message) {
+    try { return await work(); }
+    catch (error) { throw failure(error?.code === 'dispatch_storage_incomplete' ? 'money_storage_incomplete' : 'money_storage_unavailable', message); }
+  }
+  return {
+    read: (collection, id) => mapped(() => base.read(collection, id), 'The job money record could not be loaded. Retry.'),
+    jobs: () => mapped(() => base.jobRecords([...MONEY_JOB_FIELDS]), 'The complete job money records could not be loaded. Retry.'),
+    async commit(writes) {
+      let response;
+      const body = JSON.stringify({ writes: writes.map(write => ({
+        update: { name: `${ROOT}/${write.collection}/${write.id}`, fields: encodeFirestoreFields(write.patch) },
+        updateMask: { fieldPaths: Object.keys(write.patch) },
+        currentDocument: write.revision ? { updateTime: write.revision } : { exists: write.exists === true },
+      })) });
+      try { response = await fetcher(env, `${BASE}:commit`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body, signal: AbortSignal.timeout(20000) }); }
+      catch { throw failure('money_outcome_unknown', 'The save response was lost. Retry the same request to safely check whether it saved.'); }
+      if (response.ok) return response.json().catch(() => ({}));
+      const detail = await response.json().catch(() => null);
+      if ([409, 412].includes(response.status) || response.status === 400 && detail?.error?.status === 'FAILED_PRECONDITION') throw failure('money_revision_conflict', 'This job changed while you were saving. Refresh and review the latest money details.', 409);
+      throw failure('money_outcome_unknown', 'The save could not be verified. Retry the same request to safely check its outcome.');
+    },
+  };
+}

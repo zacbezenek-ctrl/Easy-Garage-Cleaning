@@ -154,6 +154,8 @@ jobs:
         run: python3 -m unittest tests/browser/test_money_document_ui.py
       - name: Portal insurance certificate, guarantee and terms, and the Hub documents admin
         run: python tests/browser/test_portal_documents_ui.py
+      - name: Hub money actions on the server money API, flag fallback and phone layout
+        run: python3 -m unittest tests/browser/test_money_actions_ui.py
       - name: Customer before/after photos and manager sharing on a phone
         run: python tests/browser/test_customer_photos_ui.py
       - name: Public nav drawer keyboard contract and footer tap targets
