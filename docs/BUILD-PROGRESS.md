@@ -168,6 +168,11 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   categories only when a manager shares that photo; hide always wins), owner/manager share toggles on `/crew/job.html`
   via `/api/field-photo-sharing` (receipted, revision-checked), and a session-checked `/api/customer-portal-photo`
   stream with a portal gallery and camera capture. Gap: thumbnails stream full images; add a WAF rate limit.
+- **CI-B** Test infrastructure: an in-process Pages Functions router with clock injection (`tests/helpers/pages-router.mjs`),
+  a parallel-safe emulator harness and `scripts/emulator-exec.mjs` (private ports/config per run, one retry on a port
+  race), and Playwright device projects (iPhone 375, Pixel 7, desktop 1440) with mobile invariants and a ratcheting
+  tap/keyboard allowlist in `egc-mobile-e2e.yml`. Firestore CI runs two emulators in parallel. Gap: tap-target debt
+  and the book/pricing camera gaps remain (docs/testing.md).
 
 ## In progress
 
@@ -206,7 +211,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | SEC-B | Purpose-scoped keys + server-only hub_audit + single-use confirm tokens | merged (75b9e1b) |
 | SEC-C | Env inventory script/test + complete both .env.example files | merged |
 | CI-A | Always-on root CI, split platform gate, clock-shift guard, field-execution acceptance in CI | merged (a067d1f) |
-| CI-B | Pages Functions test router, parallel-safe emulator harness, Playwright iPhone/Android/desktop projects | building |
+| CI-B | Pages Functions test router, parallel-safe emulator harness, Playwright iPhone/Android/desktop projects | merged (eda841b) |
 | B2B-SAFE | Portal B2B safety: no homeowner owner links for business-linked jobs; attributed company approvals (B2B-06) | merged (4dd1be5) |
 | M4 | Server-rendered branded estimate/invoice/receipt document with pay link (MONEY_DOCUMENT_ENABLED) | merged (fac0a2c) |
 | P4-09 | Portal documents: certificate of insurance (private Drive PDF via session-checked proxy), guarantee and terms (versioned) | merged (835f29a) |
@@ -304,7 +309,7 @@ Scope: all 188 findings the maps exported (160 bug reports plus 28 mission or in
 | 54 | Public site | The closed mobile nav drawer is aria-hidden but still focusable, a likely accessibility failure on every public page (plausible, not measured). | `styles.css:162`; `_generate_site.py` ~:528 (NAV_JS_IIFE setOpen) | SITE-0 (part B) |
 | 55 | Config and docs | Both `.env.example` files are incomplete: the root one omits the `EGC_OPERATIONS_*` bridge variables, several HighLevel stage/tag settings, `QUO_API_BASE` and the password-verifier settings, the platform one omits `EGC_OPERATIONS_SERVICE_AUTH`, `CUSTOMER_EVIDENCE_MODEL` and about ten more while listing unused ones, and the calendar variable is spelled differently in Hub and platform. | `.env.example:1`; `egc-platform/.env.example:1` | SEC-C |
 | 56 | CI | The root regression suite only runs when egc-platform, functions, employee* or tests change, so edits to the customer portal, business hub, crew pages, dispatch, the site generator or public pages run no Node tests even though tests assert on those files. † | `.github/workflows/egc-action-center-ci.yml:11` | CI-A (done) |
-| 57 | CI | The checked-in Firestore emulator port is fixed (8089, or 8090 for field day), so a second concurrent emulator run fails with 'port taken'. † | `firebase.emulator.json:4`; `firebase.field-day.json` | CI-B |
+| 57 | CI | The checked-in Firestore emulator port is fixed (8089, or 8090 for field day), so a second concurrent emulator run fails with 'port taken'. † | `firebase.emulator.json:4`; `firebase.field-day.json` | CI-B (done) |
 | 58 | Tests | The field-execution browser acceptance (clock-in, offline, lost-response coverage) runs in no workflow, binds fixed port 8793, writes artifacts outside the repo and ignores `PLAYWRIGHT_CHROMIUM_EXECUTABLE`, and the dispatch-field acceptance uses the real clock and device timezone. † | `tests/field-execution.browser.mjs:36`, :44, :49; `tests/dispatch-field.browser.mjs:28` | CI-A (done: field-execution in CI); NEW: injected clock for dispatch-field acceptance |
 | 59 | Tests | Source-scan tests walked `.claude/worktrees` (5,172 of 6,035 scanned files), so results depended on other agents' in-progress files. † | `tests/source-files.mjs:7`; `tests/seo-walkthrough.test.mjs` (publicHtml) | P0-3 (done for `.claude`); CI-A (done: other ignores); SITE-0 (seo-walkthrough) |
 | 60 | Data security | Any signed-in Firebase session, including crew, can create `audit_log` entries with any 'by' value, and business users can edit or delete them, so the collection is not a trustworthy audit trail (no emulator test covers the rule). † | `firestore.rules:258-259` | SEC-A |

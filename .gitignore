@@ -24,6 +24,7 @@ field-qa/
 .lighthouseci/
 e2e-report.json
 firestore-debug.log
+# Private per-run Firestore emulator configs (scripts/emulator-exec.mjs)
 .firebase-emulator.*.json
 
 # Agent worktrees (Claude Code isolation)

@@ -22,4 +22,4 @@ createServer(async (request, response) => {
   } catch {
     response.writeHead(404).end('Not found');
   }
-}).listen(8765, '127.0.0.1', () => console.log('Visual audit server: http://127.0.0.1:8765'));
+}).listen(Number(process.env.EGC_VISUAL_AUDIT_PORT) || 8765, '127.0.0.1', function () { console.log(`Visual audit server: http://127.0.0.1:${this.address().port}`); });
