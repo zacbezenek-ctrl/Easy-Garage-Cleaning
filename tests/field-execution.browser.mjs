@@ -23,23 +23,30 @@ const originalFetch = globalThis.fetch;
 const store = storage({ mock: { method(object, key, implementation) { object[key] = implementation; } } });
 const background = [];
 let base = '';
+// Simulates a dropped connection for the page and its service worker alike.
+let serverDown = false;
+// Commits one matching request, then cuts its reply mid-body: a lost response.
+// (Playwright's route.fetch()+abort() now reports "Route is already handled!".)
+let loseReply = null;
 const date = field.fieldToday();
 const job = { id: 'browser-job', type: 'job', date, time: '08:00', endTime: '11:00', customer: 'Synthetic Garage', phone: '9705550100', address: '123 Test Street, Fort Collins, CO', assignedCrew: ['Crew.One'], crewLead: 'Crew.One', status: 'scheduled', pipelineStatus: 'scheduled', jobInstructions: { operationalScope: 'Clean the garage, preserve the green cabinet and install the rack.', accessNotes: 'Customer will open the side gate.' }, requiredEquipment: ['Gloves', 'Pressure washer'], materials: [{ id: 'rack', name: 'Wall rack', quantity: 1 }] };
 store.put('jobs/browser-job', job);
 store.put('jobs/browser-next', { ...job, id: 'browser-next', customer: 'Synthetic Next Job', time: '13:00', endTime: '16:00' });
 const server = createServer(async (incoming, outgoing) => {
+  if (serverDown) { incoming.socket.destroy(); return; }
   try {
     const url = new URL(incoming.url, base);
     if (url.pathname.startsWith('/api/')) {
       const parts = []; for await (const part of incoming) parts.push(part);
       const bytes = Buffer.concat(parts), request = new Request(url, { method: incoming.method, headers: incoming.headers, ...(bytes.length ? { body: bytes } : {}) });
       const route = url.pathname === '/api/field-jobs' ? field : url.pathname === '/api/employee-hub' ? employee : auth;
-      const response = await route[incoming.method === 'POST' ? 'onRequestPost' : 'onRequestGet']({ request, env, waitUntil: promise => background.push(promise) });
+      const response = await route[{ POST: 'onRequestPost', DELETE: 'onRequestDelete' }[incoming.method] || 'onRequestGet']({ request, env, waitUntil: promise => background.push(promise) });
+      if (loseReply?.(url, incoming.method, bytes.toString())) { loseReply = null; outgoing.writeHead(200, { 'Content-Type': 'application/json', 'Content-Length': '4096' }); outgoing.write('{"ok":'); setTimeout(() => incoming.socket.destroy(), 50); return; }
       outgoing.writeHead(response.status, Object.fromEntries(response.headers)); outgoing.end(Buffer.from(await response.arrayBuffer())); return;
     }
     const filename = resolve(root, `.${url.pathname}`);
     if (!filename.startsWith(resolve(root, 'crew') + '\\') && !filename.startsWith(resolve(root, 'crew') + '/')) { outgoing.writeHead(404); outgoing.end(); return; }
-    const data = await readFile(filename); outgoing.writeHead(200, { 'Content-Type': ({ '.html': 'text/html', '.js': 'application/javascript', '.css': 'text/css' })[extname(filename)] || 'application/octet-stream' }); outgoing.end(data);
+    const data = await readFile(filename); outgoing.writeHead(200, { 'Content-Type': ({ '.html': 'text/html', '.js': 'application/javascript', '.css': 'text/css', '.json': 'application/json', '.webmanifest': 'application/manifest+json' })[extname(filename)] || 'application/octet-stream' }); outgoing.end(data);
   } catch (error) { outgoing.writeHead(500); outgoing.end(String(error.message)); }
 });
 await new Promise(resolve => server.listen(0, 'localhost', resolve)); base = `http://localhost:${server.address().port}`;
@@ -91,16 +98,12 @@ try {
   assert.equal(store.get('jobs/browser-job').fieldExecution.jobTime.current.kind, 'paused');
   await page.getByRole('button', { name: 'Resume work', exact: true }).click(); await settled();
   assert.equal(store.get('jobs/browser-job').fieldExecution.jobTime.current.kind, 'work');
-  let loseTimeReply = true;
-  await page.route('**/api/employee-hub', async intercepted => {
-    if (loseTimeReply && intercepted.request().method() === 'POST' && intercepted.request().postDataJSON().data.jobAction) { loseTimeReply = false; await intercepted.fetch(); await intercepted.abort('failed'); }
-    else await intercepted.continue();
-  });
+  loseReply = (url, method, body) => url.pathname === '/api/employee-hub' && method === 'POST' && Boolean(JSON.parse(body).data?.jobAction);
   await page.getByRole('button', { name: 'Start my work time here', exact: true }).click();
-  await page.getByText('Job time awaiting confirmation', { exact: true }).waitFor();
-  await page.getByText('The server did not confirm this action', { exact: false }).first().waitFor();
-  await page.unroute('**/api/employee-hub'); await page.reload();
-  await page.getByRole('button', { name: 'Retry job time', exact: true }).click();
+  await page.getByRole('heading', { name: 'Action awaiting confirmation', exact: true }).waitFor();
+  await page.getByText('Time awaiting confirmation', { exact: true }).waitFor();
+  assert.equal(loseReply, null, 'the job-time switch was committed before its reply was lost');
+  await page.reload();
   await page.getByRole('button', { name: 'Recording work here', exact: true }).waitFor();
   assert.equal(await page.locator('#manager-job-labor').count(), 0);
   assert.equal(await page.evaluate(async () => (await fetch('/api/employee-hub?view=job-labor&jobId=browser-job')).status), 403);
@@ -139,29 +142,96 @@ try {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(`${base}/crew/job.html?jobId=browser-interruption`);
   await page.getByRole('heading', { name: 'Synthetic Interruption Job', exact: true }).waitFor();
-  await context.setOffline(true);
-  await page.getByLabel('Add a note', { exact: true }).fill('Offline note survives refresh and retry.');
+  // Offline outbox: queue three checks and a note, reload with no connection
+  // (shell from the service worker), reconnect, and every action applies once.
+  await page.waitForFunction(() => Boolean(navigator.serviceWorker?.controller));
+  serverDown = true; await context.setOffline(true);
+  const offlineChecks = page.locator('input[data-check]'), checkIds = [];
+  for (let index = 0; index < 3; index++) {
+    checkIds.push(await offlineChecks.nth(index).getAttribute('data-check'));
+    await offlineChecks.nth(index).click();
+    await page.getByRole('heading', { name: `${index + 1} action${index ? 's' : ''} saved on this phone`, exact: true }).waitFor();
+  }
+  await page.getByLabel('Add a note', { exact: true }).fill('Offline note survives refresh and syncs once.');
   await page.getByRole('button', { name: 'Save note', exact: true }).click();
-  await page.getByRole('heading', { name: 'Action awaiting confirmation', exact: true }).waitFor();
-  await context.setOffline(false); await page.reload();
-  await page.getByRole('button', { name: 'Refresh and retry', exact: true }).click(); await settled();
-  await page.getByText('Offline note survives refresh and retry.', { exact: true }).waitFor();
-  let interruptResponse = true;
-  await page.route('**/api/field-jobs', async intercepted => {
-    if (interruptResponse && intercepted.request().method() === 'POST' && intercepted.request().postDataJSON().action === 'note') { interruptResponse = false; await intercepted.fetch(); await intercepted.abort('failed'); }
-    else await intercepted.continue();
-  });
+  await page.getByRole('heading', { name: '4 actions saved on this phone', exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Start break', exact: true }).click();
+  await page.getByRole('heading', { name: '5 actions saved on this phone', exact: true }).waitFor();
+  await page.getByRole('button', { name: 'End break', exact: true }).waitFor();
+  assert.match(await page.locator('#connection').textContent(), /5 saved actions are on this phone/);
+  await page.reload();
+  await page.getByRole('heading', { name: 'Synthetic Interruption Job', exact: true }).waitFor();
+  await page.getByRole('heading', { name: '5 actions saved on this phone', exact: true }).waitFor();
+  await page.getByRole('button', { name: 'End break', exact: true }).waitFor();
+  assert.equal(await page.locator('input[data-check]:checked').count(), 3, 'queued checks stay visible after an offline reload');
+  assert.equal(await page.getByLabel('Add a note', { exact: true }).inputValue(), '', 'the queued note is held by the outbox, not left as a draft');
+  assert.equal(await page.locator('body').evaluate(body => body.scrollWidth <= innerWidth), true, 'offline outbox must fit a phone');
+  await page.screenshot({ path: resolve(artifactDir, 'offline-outbox-mobile.png'), fullPage: true });
+  const beforeSync = store.calls.commits;
+  serverDown = false; await context.setOffline(false);
+  await page.getByText('Offline note survives refresh and syncs once.', { exact: true }).waitFor();
+  await page.waitForFunction(() => !document.querySelector('.pending-action') && !document.querySelector('#outbox-card li')); await settled();
+  const synced = store.get('jobs/browser-interruption');
+  assert.deepEqual(checkIds.map(id => synced.fieldExecution.checks[id]?.completed), [true, true, true]);
+  const offlineEvents = [...store.documents.keys()].filter(key => key.startsWith('jobs/browser-interruption/fieldEvents/')).map(key => store.get(key));
+  assert.equal(offlineEvents.filter(event => event.action === 'note' && event.body === 'Offline note survives refresh and syncs once.').length, 1, 'the offline note applies exactly once');
+  assert.equal(offlineEvents.filter(event => event.action === 'checklist').length, 3, 'each offline check applies exactly once');
+  assert.equal(store.calls.commits - beforeSync, 5, 'four job actions and one break produce five commits');
+  // Weak signal: the server is unreachable while the phone still reports a
+  // connection, so no 'online' event follows. Returning to the page resyncs.
+  serverDown = true; await page.reload();
+  await page.getByText('Offline: showing the last copy of this job confirmed in this tab.', { exact: false }).waitFor();
+  await page.getByLabel('Add a note', { exact: true }).fill('Weak signal note syncs without an online event.');
+  await page.getByRole('button', { name: 'Save note', exact: true }).click();
+  await page.getByRole('heading', { name: '1 action saved on this phone', exact: true }).waitFor();
+  serverDown = false;
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+  await page.getByText('Weak signal note syncs without an online event.', { exact: true }).waitFor(); await settled();
+  assert.equal([...store.documents.keys()].filter(key => key.startsWith('jobs/browser-interruption/fieldEvents/')).map(key => store.get(key)).filter(event => event.body === 'Weak signal note syncs without an online event.').length, 1);
+  const onBreak = await page.evaluate(async () => (await (await fetch('/api/employee-hub?view=own-job-time')).json()).entry);
+  assert.equal(onBreak.id, 'browser-personal-shift'); assert.equal(onBreak.onBreak, true); assert.equal(onBreak.breaks.length, 1, 'the offline break was recorded once');
+  await page.getByRole('button', { name: 'End break', exact: true }).click();
+  await page.getByRole('button', { name: 'Start break', exact: true }).waitFor(); await settled();
+  // EGC_OFFLINE_CLOCK_ENABLED is off here: a time action saved on the phone
+  // ten minutes ago is refused for review, never recorded at the sync time.
+  await page.evaluate(() => window.EGCFieldOutbox.create().enqueue({ requestId: crypto.randomUUID(), kind: 'clock', user: 'Crew.One', jobId: 'browser-interruption', payload: { op: 'break_start', entryId: 'browser-personal-shift', deviceCapturedAt: new Date(Date.now() - 10 * 60000).toISOString() } }));
+  await page.reload();
+  await page.getByRole('heading', { name: 'Saved action needs review', exact: true }).waitFor();
+  await page.locator('.outbox-error').getByText('Offline clock times are not enabled. Record it again now or ask a manager for a time correction.', { exact: true }).waitFor();
+  assert.equal(await page.locator('body').evaluate(body => body.scrollWidth <= innerWidth), true, 'the refused time action fits a phone');
+  await page.screenshot({ path: resolve(artifactDir, 'stale-clock-refused-mobile.png'), fullPage: true });
+  assert.equal(await page.getByRole('button', { name: 'Start break', exact: true }).isDisabled(), true, 'more time waits until the refused action is reviewed');
+  await page.getByRole('button', { name: 'Discard this action', exact: true }).click();
+  await page.waitForFunction(() => !document.querySelector('.outbox-error') && document.querySelector('[data-action="break-start"]')?.disabled === false);
+  const afterStale = await page.evaluate(async () => (await (await fetch('/api/employee-hub?view=own-job-time')).json()).entry);
+  assert.equal(afterStale.onBreak, false); assert.equal(afterStale.breaks.length, 1, 'the stale offline break was never recorded');
+  await page.getByRole('button', { name: 'Clock out', exact: true }).click();
+  await page.getByText('You are not clocked in.', { exact: false }).waitFor(); await settled();
+  const submitted = await page.evaluate(async () => (await (await fetch('/api/employee-hub')).json()).collections.timeEntries.find(entry => entry.id === 'browser-personal-shift'));
+  assert.equal(submitted.status, 'submitted'); assert.equal(submitted.approvalStatus, 'pending'); assert.ok(submitted.breaks[0].endAt <= submitted.clockOutAt);
+  await context.grantPermissions(['geolocation'], { origin: base }); await context.setGeolocation({ latitude: 40.58, longitude: -105.08, accuracy: 8 });
+  await page.getByRole('button', { name: 'Clock in', exact: true }).click();
+  await page.getByRole('button', { name: 'Start break', exact: true }).waitFor(); await settled();
+  const reopened = await page.evaluate(async () => (await (await fetch('/api/employee-hub?view=own-job-time')).json()).entry);
+  assert.match(reopened.id, /^time-crew\.one-/); assert.equal(reopened.deviceTime, false, 'a fresh device time records server time while EGC_OFFLINE_CLOCK_ENABLED is off');
+  const reopenedCard = await page.evaluate(async id => (await (await fetch('/api/employee-hub')).json()).collections.timeEntries.find(entry => entry.id === id), reopened.id);
+  assert.equal(reopenedCard.locationTracking, true); assert.equal(reopenedCard.locationStatus, 'unavailable', 'Today’s work does not claim continuous location sharing');
+  assert.equal(await page.locator('#outbox-card .pending-action').count(), 0);
+  const cachedUrls = await page.evaluate(async () => { const urls = []; for (const name of await caches.keys()) for (const request of await (await caches.open(name)).keys()) urls.push(request.url); return urls; });
+  assert.ok(cachedUrls.some(url => new URL(url).pathname === '/crew/job.html'), 'the job shell is cached for offline reloads');
+  assert.equal(cachedUrls.some(url => new URL(url).pathname.startsWith('/api/')), false, 'the service worker never caches API responses');
+  loseReply = (url, method, body) => url.pathname === '/api/field-jobs' && method === 'POST' && JSON.parse(body).action === 'note';
   await page.getByLabel('Add a note', { exact: true }).fill('This note committed before the response disappeared.');
   await page.getByRole('button', { name: 'Save note', exact: true }).click();
   await page.getByRole('heading', { name: 'Action awaiting confirmation', exact: true }).waitFor();
-  await page.getByRole('alert').filter({ hasText: 'The server did not confirm this action' }).waitFor();
-  await page.unroute('**/api/field-jobs'); await page.reload();
-  await page.getByRole('button', { name: 'Refresh and retry', exact: true }).click(); await settled();
+  assert.equal(loseReply, null, 'the note was committed before its reply was lost');
+  await page.reload();
+  await page.getByText('This note committed before the response disappeared.', { exact: true }).waitFor(); await settled();
   assert.equal(await page.getByText('This note committed before the response disappeared.', { exact: true }).count(), 1);
   await page.getByLabel('Add a note', { exact: true }).fill('Reviewed the latest scope before this note.');
   store.put('jobs/browser-interruption', { ...store.get('jobs/browser-interruption'), operationalScope: { text: 'New authoritative scope from dispatch.' } });
   await page.getByRole('button', { name: 'Save note', exact: true }).click();
-  await page.getByRole('heading', { name: 'Action awaiting confirmation', exact: true }).waitFor();
+  await page.getByRole('heading', { name: 'Saved action needs review', exact: true }).waitFor();
   await page.getByRole('button', { name: 'Refresh and retry', exact: true }).click(); await settled();
   await page.getByText('New authoritative scope from dispatch.', { exact: true }).waitFor();
   await page.getByLabel('Add a note', { exact: true }).fill('Unsaved note retained through an expired session.');
@@ -209,7 +279,46 @@ try {
   await managerPage.getByRole('button', { name: 'Retry internal handoff', exact: true }).click();
   await managerPage.getByText('Internal completion handoff: blocked', { exact: true }).waitFor();
   assert.equal(store.get('jobs/browser-job').status, 'completed');
-  await managerContext.close(); await Promise.all(background);
+  await managerContext.close();
+  // A shared phone: after a sign-out, the offline copy of a job is never shown
+  // and nothing can be queued, whether the sign-out was in another tab, in a
+  // tab open on the job, or in this same tab.
+  const shared = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, timezoneId: 'America/Los_Angeles' });
+  const phone = await shared.newPage(); phone.on('pageerror', error => errors.push(error.message)); phone.on('dialog', dialog => dialog.accept());
+  const nextJob = `${base}/crew/job.html?jobId=browser-next`;
+  const openNextJob = async () => { await phone.goto(nextJob); await phone.getByLabel('Username', { exact: true }).fill('Crew.One'); await phone.getByLabel('Password', { exact: true }).fill(password); await phone.getByRole('button', { name: 'Sign in', exact: true }).click(); await phone.getByRole('heading', { name: 'Synthetic Next Job', exact: true }).waitFor(); };
+  const signOutIn = async target => { await target.goto(`${base}/crew/offline.html`); await target.addScriptTag({ url: '/crew/hub-auth.js?v=20260904c' }); await target.evaluate(() => window.EGCHubAuth.signOut()); };
+  const offlineReopen = async shot => {
+    serverDown = true; await shared.setOffline(true);
+    await phone.goto(nextJob);
+    await phone.getByText('Sign in when you reconnect to open your work.', { exact: true }).waitFor();
+    if (shot) { await phone.screenshot({ path: resolve(artifactDir, shot), fullPage: true }); assert.equal(await phone.locator('body').evaluate(body => body.scrollWidth <= innerWidth), true, 'the signed-out offline notice fits a phone'); }
+    const shown = await phone.locator('body').innerText();
+    for (const text of ['Synthetic Next Job', '123 Test Street', '9705550100', 'Clean the garage', 'side gate']) assert.equal(shown.includes(text), false, `${text} is not shown after sign-out`);
+    assert.equal(await phone.locator('input[data-check], select[data-material], #note-form, [data-action="status"], [data-action="clock-in"], [data-action="break-start"], [data-action="clock-out"]').count(), 0, 'nothing can be queued after sign-out');
+    assert.deepEqual(await phone.evaluate(() => Object.keys(sessionStorage).filter(name => name.startsWith('egc-field:'))), [], 'the stale copies are removed');
+    assert.equal(await phone.evaluate(async () => (await window.EGCFieldOutbox.create().items('Crew.One')).length), 0);
+    serverDown = false; await shared.setOffline(false);
+    await phone.getByRole('heading', { name: 'Your workday starts here', exact: true }).waitFor();
+    assert.equal(await phone.locator('#connection').isHidden(), true, 'reconnecting to a signed-out session clears the offline notice');
+  };
+  await openNextJob();
+  await phone.waitForFunction(() => Boolean(navigator.serviceWorker?.controller));
+  await phone.goto(`${base}/crew/offline.html`);
+  assert.equal(await phone.evaluate(() => Boolean(sessionStorage.getItem('egc-field:Crew.One:browser-next:snapshot'))), true, 'this tab kept an offline copy of the job');
+  const otherTab = await shared.newPage(); await signOutIn(otherTab); await otherTab.close();
+  assert.equal(await phone.evaluate(() => Boolean(sessionStorage.getItem('egc-field:Crew.One:browser-next:snapshot'))), true, 'another tab cannot clear this tab’s session copy');
+  await offlineReopen();
+  await openNextJob();
+  const liveTab = await shared.newPage(); await signOutIn(liveTab); await liveTab.close();
+  await phone.getByText('You signed out. Sign in again to open your work.', { exact: true }).waitFor();
+  assert.equal(await phone.getByRole('heading', { name: 'Synthetic Next Job', exact: true }).count(), 0, 'an open job page closes when the phone signs out elsewhere');
+  await offlineReopen();
+  await openNextJob();
+  await signOutIn(phone);
+  assert.deepEqual(await phone.evaluate(() => Object.keys(sessionStorage).filter(name => name.startsWith('egc-field:'))), [], 'signing out in this tab removes its copies');
+  await offlineReopen('signed-out-offline-mobile.png');
+  await shared.close(); await Promise.all(background);
   assert.deepEqual(errors, [], 'no browser JavaScript errors after recovery');
-  console.log(JSON.stringify({ ok: true, browser: browser.version(), viewport: '390x844 touch, Pacific device timezone with Mountain job dates', checks: ['login', 'personal day', 'navigate job', 'en route', 'arrived', 'start validation', 'checklists', 'materials', 'live elapsed work', 'pause and resume segment timing', 'employee work and travel segments', 'employee lost response retry', 'end employee job time after completion', 'library upload', 'draft refresh persistence', 'multiple photos', 'notes', 'completion', 'server refresh persistence', 'next job preserved', 'private photo viewer', 'reassignment revokes detail', 'mobile overflow', 'desktop render', 'offline retry', 'lost response idempotency', 'stale job review', 'auth expiry', 'draft isolation between accounts', 'manager employee labor totals', 'crew denied manager labor', 'manager checklist configuration', 'manager private note', 'audited issue resolution after completion', 'durable failed CRM handoff', 'no browser errors'], artifacts: artifactDir }));
+  console.log(JSON.stringify({ ok: true, browser: browser.version(), viewport: '390x844 touch, Pacific device timezone with Mountain job dates', checks: ['login', 'personal day', 'navigate job', 'en route', 'arrived', 'start validation', 'checklists', 'materials', 'live elapsed work', 'pause and resume segment timing', 'employee work and travel segments', 'employee lost response retry', 'end employee job time after completion', 'library upload', 'draft refresh persistence', 'multiple photos', 'notes', 'completion', 'server refresh persistence', 'next job preserved', 'private photo viewer', 'reassignment revokes detail', 'mobile overflow', 'desktop render', 'offline outbox reload via service worker', 'offline checks and note applied once', 'offline break synced once', 'weak-signal resync without an online event', 'stale offline clock action refused while the flag is off', 'crew clock in, break and clock out', 'no offline job after sign-out (other tab, open tab, same tab)', 'service worker never caches API', 'lost response idempotency', 'stale job review', 'auth expiry', 'draft isolation between accounts', 'manager employee labor totals', 'crew denied manager labor', 'manager checklist configuration', 'manager private note', 'audited issue resolution after completion', 'durable failed CRM handoff', 'no browser errors'], artifacts: artifactDir }));
 } finally { await context.close(); await browser.close(); await new Promise(resolve => server.close(resolve)); globalThis.fetch = originalFetch; }

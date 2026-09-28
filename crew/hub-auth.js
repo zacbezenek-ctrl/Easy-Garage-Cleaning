@@ -124,6 +124,9 @@
   async function signOut() {
     ++authVersion;
     clearLocal();
+    // Today's work keeps offline copies per tab; a sign-out retires them on this device.
+    try { localStorage.setItem('egc-field:signed-out-at', String(Date.now())); } catch {}
+    try { for (let i = sessionStorage.length - 1; i >= 0; i--) { const name = sessionStorage.key(i) || ''; if (name === 'egc-field:viewer' || /^egc-field:.*:(snapshot|shift-snapshot)$/.test(name)) sessionStorage.removeItem(name); } } catch {}
     return serializeAuth(async () => {
       const pending = firebaseQueue.then(async () => { try { await firebase.auth().signOut(); } catch {} });
       firebaseQueue = pending.catch(() => {});

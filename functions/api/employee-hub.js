@@ -176,7 +176,7 @@ async function employeeRate(env, session) {
 async function authorizeMutation(env, session, collection, id, incoming, existing) {
   const now = new Date().toISOString();
   if (collection === 'timeEntries') return authorizeTimecard({ session, manager: manager(session), id, incoming, existing,
-    hourlyRate: existing?.hourlyRate ?? await employeeRate(env, session), now });
+    hourlyRate: existing?.hourlyRate ?? await employeeRate(env, session), now, env });
   if (manager(session) && !(collection === 'training' && incoming.moduleId)) return { ...(existing || {}), ...incoming, id };
 
   if (collection === 'profiles') {

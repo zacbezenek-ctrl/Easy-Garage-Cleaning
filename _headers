@@ -31,6 +31,15 @@
   X-Content-Type-Options: nosniff
   Referrer-Policy: strict-origin-when-cross-origin
 
+# Crew offline-shell service worker. Revalidate on every check so a fix or the
+# /crew/sw-config.json kill switch reaches phones at once; scope stays /crew/.
+/crew/sw.js
+  Cache-Control: no-cache
+  Service-Worker-Allowed: /crew/
+
+/crew/sw-config.json
+  Cache-Control: no-store
+
 # Internal operations hub — never index, frame, or keep a stale application shell.
 /employee*
   X-Robots-Tag: noindex

@@ -1397,6 +1397,9 @@ async function doLogout() {
   clearInterval(_leadsTimer);
   jobsCache = []; custsCache = []; leadsCache = [];
   blockedDays = new Set(); blockedSlots = new Set();
+  // Crew job pages keep offline copies per tab; a sign-out retires them on this device.
+  try { localStorage.setItem('egc-field:signed-out-at', String(Date.now())); } catch {}
+  try { for (let i = sessionStorage.length - 1; i >= 0; i--) { const name = sessionStorage.key(i) || ''; if (name === 'egc-field:viewer' || /^egc-field:.*:(snapshot|shift-snapshot)$/.test(name)) sessionStorage.removeItem(name); } } catch {}
   window.dispatchEvent(new Event('egc:signout'));
   document.body.classList.remove('has-session');
   document.getElementById('oncall-overlay').classList.remove('open');
