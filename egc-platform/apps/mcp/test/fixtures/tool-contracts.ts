@@ -42,6 +42,8 @@ export const TOOL_CONTRACTS:Record<string,ToolContract>={
   'tasks.search':read({status:'open',jobId:CONTACT},{status:'done'},select('tasks')),
   'walkthroughs.search':read({status:'draft'},{limit:0},select('walkthroughs')),
   'walkthroughs.get':read({walkthroughId:CONTACT},{},select('walkthroughs')),
+  // Pages the Hub overdue queue through the bridge; in legacy mode it is refused before any request.
+  'egc.whats_overdue':read({owner:'owner-1',limit:5},{owner:'owner-1',limit:51},{bridge:'queue'}),
 
   // Operations bridge. In legacy mode every bridge call is refused with operations_not_enabled before any request.
   'egc.operations_status':read({},'not-an-object',{bridge:'status'}),
