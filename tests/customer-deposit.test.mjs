@@ -83,7 +83,9 @@ test('deposit defaults to half in cents, subtracts previous receipts, and preser
 test('accepting a quote saves its 50% term, then server ignores caller-supplied charge amounts', async t => {
   const f = await fixture(t, { estimate: { status: 'draft', amount: 1000 }, deposit: null });
   assert.equal((await f.pay()).status, 409); assert.equal(f.sessions.size, 0);
-  const approval = await f.post({ action: 'approve_estimate', signed_name: 'Test Customer', confirmed: true });
+  // Approvals name the revision and total the page displayed (portal approval binding, M14).
+  const shown = (await f.get()).estimate;
+  const approval = await f.post({ action: 'approve_estimate', signed_name: 'Test Customer', confirmed: true, estimate_revision: shown.revision, amount_cents: Math.round(shown.amount * 100), estimate_fingerprint: shown.fingerprint });
   assert.equal(approval.status, 200); assert.equal(f.job().estimate.depositRequired, 500);
   const response = await f.pay({ amount_cents: 100000, deposit_percent: 100, job_id: 'another-job' });
   assert.equal(response.status, 200); const checkout = [...f.sessions.values()][0];

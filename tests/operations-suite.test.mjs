@@ -1167,7 +1167,7 @@ test('business users can create a private customer portal link and customers see
     assert.equal(viewBody.payment.dueDate,'2099-10-07');
     assert.equal('email' in viewBody.customer,false);
     assert.equal('phone' in viewBody.customer,false);
-    const approved=await portalApi.onRequestPost({request:new Request('https://easygaragecleaning.com/api/customer-portal',{method:'POST',headers:{Origin:'https://easygaragecleaning.com',Cookie:customerCookie,'Content-Type':'application/json'},body:JSON.stringify({action:'approve_estimate',signed_name:'Dana Customer',confirmed:true})}),env});
+    const approved=await portalApi.onRequestPost({request:new Request('https://easygaragecleaning.com/api/customer-portal',{method:'POST',headers:{Origin:'https://easygaragecleaning.com',Cookie:customerCookie,'Content-Type':'application/json'},body:JSON.stringify({action:'approve_estimate',signed_name:'Dana Customer',confirmed:true,estimate_revision:viewBody.estimate.revision,amount_cents:Math.round(viewBody.estimate.amount*100),estimate_fingerprint:viewBody.estimate.fingerprint})}),env});
     assert.equal(approved.status,200);
   }finally{globalThis.fetch=originalFetch}
 });

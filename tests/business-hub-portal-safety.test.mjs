@@ -64,6 +64,12 @@ const handlers = createCustomerPortalHandlers({ now: () => new Date(NOW) });
 const cookie = async (claims = { linkVersion: 0 }) => `egc_customer_portal=${await createCustomerPortalSessionToken(env, 'job-1', Date.parse(NOW), claims)}`;
 const company = (who = ADMIN) => cookie({ actorId: businessActor(ACCOUNT, who), permissions: { view: true, decide: true, pay: true, rebook: true } });
 const call = async (viewer, payload) => {
+  // P2-05: a portal approval names the revision, amount and fingerprint of the
+  // estimate the page displayed, so read it as the same viewer first.
+  if (payload?.action === 'approve_estimate' && payload.estimate_fingerprint === undefined) {
+    const shown = (await call(viewer)).body.estimate;
+    if (shown) payload = { ...payload, estimate_revision: shown.revision, amount_cents: Math.round(Number(shown.amount) * 100), estimate_fingerprint: shown.fingerprint };
+  }
   const request = new Request(`${origin}/api/customer-portal`, { method: payload ? 'POST' : 'GET', headers: { Origin: origin, Cookie: viewer, 'Content-Type': 'application/json' }, ...(payload ? { body: JSON.stringify(payload) } : {}) });
   const response = await (payload ? handlers.onRequestPost : handlers.onRequestGet)({ env, request });
   return { status: response.status, body: await response.json() };

@@ -452,6 +452,13 @@ test('the Drive client caches its token, streams only PDFs and uploads with app 
   assert.throws(() => createPortalDocumentDrive({ fetcher })({ ...env, GOOGLE_CLIENT_SECRET: '' }), error => error.code === 'PORTAL_DOCUMENTS_DRIVE_UNCONFIGURED');
 });
 
+// P2-05: portal approvals name the revision, amount and fingerprint of the estimate
+// the page displayed; these tests read it as the page would before approving.
+async function bound(cookie, body) {
+  const shown = (await portalView(portalHandlers(), cookie)).body.estimate;
+  return { ...body, estimate_revision: shown.revision, amount_cents: Math.round(shown.amount * 100), estimate_fingerprint: shown.fingerprint };
+}
+
 test('the portal returns versioned documents and approval records the terms version shown', async t => {
   const f = portalStore(t, { 'job-1': job({ estimate: { number: 'EST-1', status: 'sent', amount: 800, termsVersion: '2026-09' } }) });
   const cookie = await portalCookie();
@@ -460,7 +467,7 @@ test('the portal returns versioned documents and approval records the terms vers
   assert.equal(view.body.estimate.termsVersion, CUSTOMER_PORTAL_TERMS_VERSION);
   assert.deepEqual(view.body.documents, customerPortalDocuments());
   assert.equal(view.body.documents.insurance.url, '/api/customer-portal-document?kind=insurance');
-  const approved = await portalPost(portalHandlers(), cookie, { action: 'approve_estimate', signed_name: 'Synthetic Customer', confirmed: true, terms_version: view.body.estimate.termsVersion });
+  const approved = await portalPost(portalHandlers(), cookie, await bound(cookie, { action: 'approve_estimate', signed_name: 'Synthetic Customer', confirmed: true, terms_version: view.body.estimate.termsVersion }));
   assert.equal(approved.status, 200);
   assert.equal(approved.body.approval.termsVersion, CUSTOMER_PORTAL_TERMS_VERSION);
   assert.equal(f.job('job-1').customerApproval.termsVersion, CUSTOMER_PORTAL_TERMS_VERSION);
@@ -472,14 +479,14 @@ test('approval with terms the page no longer shows is refused without a write', 
   const f = portalStore(t, { 'job-1': job({ estimate: { number: 'EST-1', status: 'sent', amount: 800 } }) });
   const cookie = await portalCookie(), writes = f.writes.length;
   for (const terms_version of ['2025-01-portal', '', null]) {
-    const stale = await portalPost(portalHandlers(), cookie, { action: 'approve_estimate', signed_name: 'Synthetic Customer', confirmed: true, terms_version });
+    const stale = await portalPost(portalHandlers(), cookie, await bound(cookie, { action: 'approve_estimate', signed_name: 'Synthetic Customer', confirmed: true, terms_version }));
     assert.deepEqual([stale.status, stale.body.code], [409, 'CUSTOMER_PORTAL_TERMS_CHANGED']);
   }
   assert.equal(f.writes.length, writes);
   assert.equal(f.job('job-1').customerApproval, undefined);
   // A page from before versioning showed the same estimate terms line, but not
   // the guarantee or service terms, so it is recorded as exactly that.
-  const legacy = await portalPost(portalHandlers(), cookie, { action: 'approve_estimate', signed_name: 'Synthetic Customer', confirmed: true });
+  const legacy = await portalPost(portalHandlers(), cookie, await bound(cookie, { action: 'approve_estimate', signed_name: 'Synthetic Customer', confirmed: true }));
   assert.equal(legacy.status, 200);
   assert.equal(legacy.body.approval.termsVersion, UNVERSIONED_PAGE_TERMS_VERSION);
   assert.equal(f.job('job-1').customerApproval.termsVersion, '2026-09-estimate-terms-unversioned');
@@ -501,9 +508,9 @@ test('pages from before versioning are accepted only while their estimate terms 
 test('a stale page is refused before any write even when the rest of the approval is valid', async t => {
   const f = portalStore(t, { 'job-1': job({ estimate: { number: 'EST-1', status: 'sent', amount: 800 } }) });
   const cookie = await portalCookie();
-  const refused = await portalPost(portalHandlers(), cookie, { action: 'approve_estimate', signed_name: 'Synthetic Customer', confirmed: true, terms_version: '2026-09-deposit50' });
+  const refused = await portalPost(portalHandlers(), cookie, await bound(cookie, { action: 'approve_estimate', signed_name: 'Synthetic Customer', confirmed: true, terms_version: '2026-09-deposit50' }));
   assert.deepEqual([refused.status, refused.body.code, f.writes.length], [409, 'CUSTOMER_PORTAL_TERMS_CHANGED', 0], 'the walkthrough terms version is not the portal copy');
-  const approved = await portalPost(portalHandlers(), cookie, { action: 'approve_estimate', signed_name: 'Synthetic Customer', confirmed: true, terms_version: CUSTOMER_PORTAL_TERMS_VERSION });
+  const approved = await portalPost(portalHandlers(), cookie, await bound(cookie, { action: 'approve_estimate', signed_name: 'Synthetic Customer', confirmed: true, terms_version: CUSTOMER_PORTAL_TERMS_VERSION }));
   assert.equal(approved.status, 200);
   assert.deepEqual(f.writes.map(write => write.fields.includes('customerApproval')), [true]);
   assert.equal(f.job('job-1').customerApproval.termsVersion, CUSTOMER_PORTAL_TERMS_VERSION);
@@ -589,14 +596,15 @@ test('the approve button sends the displayed terms version and reloads on a term
   const bodies = [], loads = [];
   const button = { disabled: false, textContent: 'Approve estimate', addEventListener: (event, handler) => { button.handler = handler; } };
   const context = {
-    portalData: { estimate: { termsVersion: CUSTOMER_PORTAL_TERMS_VERSION } }, Error,
+    // P2-05: the page also binds the approval to the estimate it displayed.
+    portalData: { estimate: { termsVersion: CUSTOMER_PORTAL_TERMS_VERSION, revision: 2, amount: 800, fingerprint: 'synthetic-fingerprint' } }, Error,
     $: id => ({ 'approve-button': button, 'approval-name': { value: ' Synthetic Customer ' }, 'approval-confirm': { checked: true }, 'pay-button': { classList: { contains: () => true } } })[id],
     toast: () => {}, showError: () => {}, load: async quiet => loads.push(quiet),
     fetch: async (url, init) => { bodies.push(JSON.parse(init.body)); return { ok: false, json: async () => ({ ok: false, code: 'CUSTOMER_PORTAL_TERMS_CHANGED', error: 'Terms changed' }) }; },
   };
   vm.runInNewContext(portalScript(html, ['function portalError(', 'async function api(', "$('approve-button').addEventListener('click',"]), context);
   await button.handler();
-  assert.deepEqual(bodies, [{ action: 'approve_estimate', signed_name: 'Synthetic Customer', confirmed: true, terms_version: CUSTOMER_PORTAL_TERMS_VERSION }]);
+  assert.deepEqual(bodies, [{ action: 'approve_estimate', signed_name: 'Synthetic Customer', confirmed: true, terms_version: CUSTOMER_PORTAL_TERMS_VERSION, estimate_revision: 2, amount_cents: 80000, estimate_fingerprint: 'synthetic-fingerprint' }]);
   assert.deepEqual(loads, [true]);
   assert.equal(button.disabled, false);
 });

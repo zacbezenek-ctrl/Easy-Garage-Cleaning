@@ -11,6 +11,7 @@ import { customerMoneyState as moneyState, customerDepositState, customerPayment
 import { parseBusinessActor } from '../_lib/business-hub-core.js';
 import { businessAccountJob } from '../_lib/portal-invitation.js';
 import { moneyDocumentEnabled, moneyDocumentLinks } from '../_lib/money-document.js';
+import { estimateFingerprint, included, legacyLineItems } from '../_lib/quote-model.js';
 
 const HOST = /^(?:easygaragecleaning\.com|www\.easygaragecleaning\.com|easy-garage-cleaning\.pages\.dev|localhost(?::\d+)?|127\.0\.0\.1(?::\d+)?)$/;
 const DEFAULT_REVIEW_URL = 'https://search.google.com/local/writereview?placeid=ChIJ17AGfBiyRIsRyJ3k4mDtX8Q';
@@ -74,12 +75,37 @@ export function customerReviewUrl(env = {}) {
   } catch { return DEFAULT_REVIEW_URL; }
 }
 
-function estimateState(job, finance, today) {
+// A replaced or withdrawn estimate is never approvable. A draft is refused only
+// with CUSTOMER_PORTAL_REJECT_DRAFT_ESTIMATES=true: Hub estimate saves still
+// release customer-facing estimates as 'draft' today.
+const rejectDrafts = env => env?.CUSTOMER_PORTAL_REJECT_DRAFT_ESTIMATES === 'true';
+function approvalBlocked(job, draftsRejected) {
+  const status = String(job.estimate?.status || '').toLowerCase();
+  return ['superseded', 'void', 'withdrawn'].includes(status) || draftsRejected && status === 'draft';
+}
+
+function estimateRevision(job) {
+  const value = Number(job.estimate?.revision || 1);
+  return Number.isSafeInteger(value) && value >= 1 ? value : 1;
+}
+
+// Saved lines are read through the canonical quote model: only included lines
+// are shown, and discounts keep their sign.
+function estimateLines(job, finance) {
+  if (!Array.isArray(job.estimate?.lineItems) || !job.estimate.lineItems.length) return [{ name: safe(job.serviceType || job.type || 'Garage service', 160), description: safe(job.estimate?.scope || job.scopeSummary || '', 600), quantity: 1, amount: Math.max(0, amount(finance.total)) }];
+  return legacyLineItems(job).lineItems.filter(included).map(line => ({ name: line.name, description: line.description, quantity: line.quantity, amount: line.amount ?? 0 }));
+}
+
+// A digest of exactly what the estimate card shows (total, deposit, scope and
+// lines); an approval must name it, so a scope or line edit that keeps the
+// revision and total still needs a fresh review.
+const shownFingerprint = estimate => estimateFingerprint({ amount: estimate.amount, depositRequired: estimate.depositRequired, scope: estimate.scope, lineItems: estimate.lineItems });
+
+function estimateState(job, finance, today, draftsRejected = false) {
   const rawStatus = String(job.customerApproval?.status || job.estimate?.status || job.quoteStatus || (finance.total ? 'ready' : 'not_ready')).toLowerCase();
   const validUntil = safe(job.estimate?.validUntil || '', 30);
   const status = validUntil && validUntil < today && !['accepted', 'approved'].includes(rawStatus) ? 'expired' : rawStatus;
-  const sourceItems = Array.isArray(job.estimate?.lineItems) && job.estimate.lineItems.length ? job.estimate.lineItems : [{ name: job.serviceType || job.type || 'Garage service', description: job.estimate?.scope || job.scopeSummary || '', quantity: 1, amount: finance.total }];
-  return {
+  const estimate = {
     number: safe(job.estimate?.number || job.quoteId || `EST-${String(job.id || '').slice(-6).toUpperCase()}`, 80),
     status: ['accepted', 'approved'].includes(status) ? 'approved' : status,
     amount: finance.total,
@@ -88,12 +114,14 @@ function estimateState(job, finance, today) {
     approvedAt: safe(job.customerApproval?.approvedAt || job.estimate?.acceptedAt || '', 50),
     approvedBy: safe(job.customerApproval?.approvedBy || '', 120),
     validUntil,
-    revision: Math.max(1, Number(job.estimate?.revision || 1)),
+    revision: estimateRevision(job),
+    approvable: !approvalBlocked(job, draftsRejected),
     depositRequired: customerDepositState(job, finance).required,
-    lineItems: sourceItems.slice(0, 12).map(item => ({ name: safe(item?.name || 'Garage service', 160), description: safe(item?.description || '', 600), quantity: Math.max(1, Number(item?.quantity || 1)), amount: Math.max(0, amount(item?.amount)) })),
+    lineItems: estimateLines(job, finance),
     terms: CUSTOMER_PORTAL_CONTENT.estimateTerms,
     termsVersion: CUSTOMER_PORTAL_TERMS_VERSION,
   };
+  return { ...estimate, fingerprint: shownFingerprint(estimate) };
 }
 
 function isoDate(value) {
@@ -192,9 +220,9 @@ function customerExperience(job, owner = true) {
   };
 }
 
-function sanitize(job, session = {}, { today, reviewUrl }) {
+function sanitize(job, session = {}, { today, reviewUrl, draftsRejected = false }) {
   const finance = moneyState(job);
-  const estimate = estimateState(job, finance, today);
+  const estimate = estimateState(job, finance, today, draftsRejected);
   const state = portalStatus(job), review = reviewReady(job);
   const owner = !session.actorId, experience = customerExperience(job, owner), actor = experience.collaborators.find(person => person.id === session.actorId);
   return {
@@ -256,7 +284,7 @@ async function handleGet({ request, env }, deps) {
   const result = await requirePortal(request, env, deps);
   if (result.error) return result.error;
   const at = deps.clock();
-  const body = { ...sanitize(result.job, result.session, { today: denverToday(at), reviewUrl: customerReviewUrl(env) }), moneyDocuments: moneyDocumentLinks(result.job, { enabled: moneyDocumentEnabled(env), now: at.toISOString() }) };
+  const body = { ...sanitize(result.job, result.session, { today: denverToday(at), reviewUrl: customerReviewUrl(env), draftsRejected: rejectDrafts(env) }), moneyDocuments: moneyDocumentLinks(result.job, { enabled: moneyDocumentEnabled(env), now: at.toISOString() }) };
   // Default off: without the flag the DTO keeps its current shape.
   if (customerPhotosEnabled(env) && result.session.permissions?.view !== false) body.beforeAfter = customerPhotoProjection(result.job, customerPhotoPolicy(env));
   return reply(200, body);
@@ -316,6 +344,12 @@ async function handlePost({ request, env }, { clock, read }) {
     const finance = moneyState(result.job);
     if (finance.total < .01) return reply(409, { ok: false, error: 'The estimate is not ready yet' });
     if (result.job.estimate?.validUntil && String(result.job.estimate.validUntil) < today) return reply(409, { ok: false, error: 'This estimate has expired. Ask the team for an updated estimate.' });
+    if (approvalBlocked(result.job, rejectDrafts(env))) return reply(409, { ok: false, code: 'CUSTOMER_PORTAL_ESTIMATE_NOT_APPROVABLE', error: 'This estimate is being updated and cannot be approved yet. Refresh the page or ask the team for the current estimate.' });
+    // The approval binds to the exact revision, total and shown content the
+    // customer saw. An older page that does not send them must refresh; it
+    // never approves a price or scope it did not show.
+    if (!Number.isSafeInteger(body.estimate_revision) || !Number.isSafeInteger(body.amount_cents) || typeof body.estimate_fingerprint !== 'string') return reply(409, { ok: false, code: 'CUSTOMER_PORTAL_ESTIMATE_CHANGED', error: 'This page is out of date. Refresh it to review the current estimate before approving.' });
+    if (body.estimate_revision !== estimateRevision(result.job) || body.amount_cents !== Math.round(finance.total * 100) || body.estimate_fingerprint !== estimateState(result.job, finance, today).fingerprint) return reply(409, { ok: false, code: 'CUSTOMER_PORTAL_ESTIMATE_CHANGED', error: 'The estimate changed after this page loaded. Refresh and review the current estimate before approving.' });
     // The approval records the terms version the page displayed (a page from
     // before versioning is recorded as having shown only the estimate terms).
     // A page opened before the copy changed must reload rather than approve unseen terms.
@@ -331,7 +365,11 @@ async function handlePost({ request, env }, { clock, read }) {
         quoteStatus: 'approved',
         updatedAt: now,
       }, result.jobUpdateTime);
-    } catch { return reply(409, { ok: false, error: 'The estimate changed. Refresh before approving it.' }); }
+    } catch (error) {
+      return conflict(error)
+        ? reply(409, { ok: false, code: 'CUSTOMER_PORTAL_REVISION_CONFLICT', error: 'The estimate changed. Refresh before approving it.' })
+        : reply(503, { ok: false, code: 'CUSTOMER_PORTAL_STORAGE_UNAVAILABLE', error: 'Your approval could not be saved. Please try again shortly.' });
+    }
     const salesFollowupExit = await syncSalesFollowupExit(env, result.session.jobId);
     return reply(200, { ok: true, approval, salesFollowupExit });
   }

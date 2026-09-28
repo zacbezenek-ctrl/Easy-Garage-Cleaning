@@ -173,6 +173,11 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   race), and Playwright device projects (iPhone 375, Pixel 7, desktop 1440) with mobile invariants and a ratcheting
   tap/keyboard allowlist in `egc-mobile-e2e.yml`. Firestore CI runs two emulators in parallel. Gap: tap-target debt
   and the book/pricing camera gaps remain (docs/testing.md).
+- **P2-05** Itemized signed walkthrough handoff: the page sends canonical line items (a manual rate change is an explicit
+  'Price adjustment' line with a customer-visible reason), the server checks them strictly through quote-model, saves
+  `estimate.lineItems`, adds Dispatch materials and retires a stale issued invoice; legacy plans keep the single line.
+  Portal approval now requires the displayed `estimate_revision`, `amount_cents` and `estimate_fingerprint` (409 if
+  stale). `CUSTOMER_PORTAL_REJECT_DRAFT_ESTIMATES` (off) refuses drafts. Gap: Hub still releases estimates as 'draft'.
 
 ## In progress
 
@@ -216,6 +221,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | M4 | Server-rendered branded estimate/invoice/receipt document with pay link (MONEY_DOCUMENT_ENABLED) | merged (fac0a2c) |
 | P4-09 | Portal documents: certificate of insurance (private Drive PDF via session-checked proxy), guarantee and terms (versioned) | merged (835f29a) |
 | PHOTO | Customer-visible before/after photos, manager share toggle, portal photo stream (FIELD_CUSTOMER_PHOTOS_ENABLED) | merged (77ebb4f) |
+| P2-05 | Itemized signed walkthrough handoff and revision/amount/fingerprint-bound portal approval | merged (1b039fd) |
 | CI-WF | Wire merged units' tests into the existing CI workflows (pending CI notes) | merged (31e1562) |
 
 ## Next
@@ -278,7 +284,7 @@ Scope: all 188 findings the maps exported (160 bug reports plus 28 mission or in
 | 23 | Customer portal | Customer portal links (30 days) and sessions (7 days) cannot be revoked, so a link sent to the wrong person stays valid unless the global secret is rotated, which breaks every customer's link. | `functions/_lib/customer-portal.js:35` (data-security map: :38) | P4-15 |
 | 24 | Quotes | Portal approval does not check which estimate revision or amount the customer saw and accepts draft estimates, so a staff revision made after the page loaded is approved unseen. † | `functions/api/customer-portal.js:245-266` | P2-08 |
 | 25 | Quotes | Change orders the customer approves in the portal are saved as `approvedChangeTotal` but never added to the total, balance, invoice or Stripe checkout, so they are not billed. † | `functions/api/customer-portal.js:350-352`; `functions/_lib/customer-payments.js:17`; `employee-suite.js:232` | LI-CORE (totals math), then P2-11 |
-| 26 | Quotes | Walkthrough handoff collapses the signed quote to a single 'Garage cleanout and reset' line, so add-ons (pressure wash, trapping, pest waste, shelving) never appear itemized on the estimate, portal, invoice or print. | `functions/_lib/walkthrough-handoff.js:70` and :91; `crew/gameplan-handoff.js` signedPlan() | LI-CORE (line-item shapes), then P2-05 |
+| 26 | Quotes | Walkthrough handoff collapses the signed quote to a single 'Garage cleanout and reset' line, so add-ons (pressure wash, trapping, pest waste, shelving) never appear itemized on the estimate, portal, invoice or print. | `functions/_lib/walkthrough-handoff.js:70` and :91; `crew/gameplan-handoff.js` signedPlan() | LI-CORE (line-item shapes), then P2-05 (done) |
 | 27 | Money | Recurring visits copy scope and duration but not the price, so their invoices and deposits show $0. | `functions/_lib/dispatch-service.js:67` | NEW: carry per-visit price onto recurring visits (P1-05 plan occurrences inherit this gap) |
 | 28 | B2B hub | Approving a quote on a B2B-linked job auto-sends an owner-level homeowner portal link (collaborators, wallet) to the job phone or email, which may be a tenant or on-site contact. † | `functions/_lib/portal-invitation.js:92`; `functions/_lib/walkthrough-handoff.js:184`; `functions/api/highlevel.js:570` | B2B-SAFE (done; was B2B-06) |
 | 29 | Messaging | The crew arrival-text endpoint ignores the idempotency key the crew page sends, so a retry or double tap texts the customer twice; the body is free text with no DND/consent check and is not logged to the conversation. | `functions/api/quo-send.js:63-72`; `crew/prejob.html` (smsCustomer) | F-LEG (done; P1-13 moves on-my-way to the approved-send path) |
@@ -390,7 +396,7 @@ Not yet launched.
 
 - **Phase 1:** P1-06 server PTO workflow; P1-08 staff directory (roles, skills, pay, availability); P1-09 dispatch roster, permissions, settings and rules; P1-10 assignment segments; P1-11 calendar month view, lanes and tap-to-assign; P1-13 reminders and on-my-way; P1-15 timesheet review UI, geolocation policy and clock reliability.
 - **Money:** M3 server money API and ledger; M7 payment reminders cron; M9 job costing.
-- **Phase 2:** P2-02 catalog seed and pricing engine; P2-05 itemized signed handoff; P2-08 portal option toggling with revision-bound approval; P2-09 server estimate service (race fix); P2-11 bill approved change orders.
+- **Phase 2:** P2-02 catalog seed and pricing engine; P2-08 portal option toggling with revision-bound approval; P2-09 server estimate service (race fix); P2-11 bill approved change orders.
 - **Phase 3:** P3-03 transcript input for recordings (injects the RecordingService clock); P3-04 follow-up assignment policy (phone/sales owner); P3-09 Action Center UI v2 and recording mapping; P3-10 "My follow-ups" workspace for sales/phone staff.
 - **Phase 4:** P4-07 crew profiles and on-the-way projection; P4-12 account message record and deterministic inbound routing.
 - **B2B:** B2B-04 client-visible request progress; B2B-08 B2B end-to-end acceptance.

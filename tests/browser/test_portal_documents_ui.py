@@ -16,7 +16,7 @@ DOCUMENTS = json.loads(subprocess.run(['node', '--input-type=module', '-e', "con
 def portal_view(**estimate):
     return {'ok': True, 'customer': {'name': 'Synthetic Customer', 'firstName': 'Synthetic'},
             'appointment': {'date': '2026-09-28', 'time': '09:00', 'endTime': '12:30', 'arrivalWindow': '9:00 AM – 9:30 AM', 'address': '100 Synthetic Street, Fort Collins', 'service': 'Garage Turnaround', 'status': 'scheduled'},
-            'estimate': {'number': 'EST-0001', 'amount': 800, 'scope': 'Synthetic garage cleanout scope.', 'status': 'sent', 'approvedBy': '', 'approvedAt': '', 'validUntil': '2026-10-15', 'revision': 1, 'depositRequired': 400, 'lineItems': [{'name': 'Synthetic Garage Turnaround', 'description': 'One bundled synthetic service.', 'quantity': 1, 'amount': 800}], 'terms': 'Synthetic estimate terms.', 'termsVersion': DOCUMENTS['termsVersion'], **estimate},
+            'estimate': {'number': 'EST-0001', 'amount': 800, 'scope': 'Synthetic garage cleanout scope.', 'status': 'sent', 'approvedBy': '', 'approvedAt': '', 'validUntil': '2026-10-15', 'revision': 1, 'depositRequired': 400, 'lineItems': [{'name': 'Synthetic Garage Turnaround', 'description': 'One bundled synthetic service.', 'quantity': 1, 'amount': 800}], 'terms': 'Synthetic estimate terms.', 'termsVersion': DOCUMENTS['termsVersion'], 'fingerprint': 'synthetic-estimate-fingerprint', **estimate},
             'payment': {'total': 800, 'paid': 0, 'balance': 800, 'dueNow': 400, 'purpose': 'deposit', 'creditApplied': 0, 'receiptUrl': '', 'invoiceNumber': '', 'dueDate': ''},
             'photos': {'customerUploadCount': 0}, 'messaging': {'highLevelLinked': False, 'refreshSeconds': 20}, 'conversation': [],
             'review': {'eligible': False, 'url': ''}, 'experience': {'memory': {}, 'jobDayRules': {}, 'decisions': [], 'rebooking': [], 'giftWallet': {'available': 0, 'cards': []}, 'garageGuard': {}, 'collaborators': []},
@@ -113,7 +113,8 @@ class PortalDocumentsBrowserTests(unittest.TestCase):
         self.open_portal(); before = self.portal_gets
         self.page.locator('#approval-name').fill('Synthetic Customer'); self.page.locator('#approval-confirm').check(); self.page.locator('#approve-button').click()
         expect(self.page.locator('#toast')).to_contain_text('Our estimate terms were updated')
-        self.assertEqual(self.posts[-1], {'action': 'approve_estimate', 'signed_name': 'Synthetic Customer', 'confirmed': True, 'terms_version': DOCUMENTS['termsVersion']})
+        # P2-05: the approval also names the revision, amount and fingerprint the page displayed.
+        self.assertEqual(self.posts[-1], {'action': 'approve_estimate', 'signed_name': 'Synthetic Customer', 'confirmed': True, 'terms_version': DOCUMENTS['termsVersion'], 'estimate_revision': 1, 'amount_cents': 80000, 'estimate_fingerprint': 'synthetic-estimate-fingerprint'})
         expect(self.page.locator('#approve-button')).to_be_enabled()
         for _ in range(50):
             if self.portal_gets > before: break

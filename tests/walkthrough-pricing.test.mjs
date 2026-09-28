@@ -18,7 +18,7 @@ function harness(overrides = {}) {
   vm.runInContext(line('const freshState='), context);
   context.S = vm.runInContext('freshState()', context);
   Object.assign(context.S, { garageSize: '1', fill: 'medium', loads: '1', jobDate: '2026-10-01', startTime: '08:00', endTime: '13:00' }, overrides);
-  for (const prefix of ['function recommend(', 'function depositSummary(', 'function estimatedJobMinutes(', 'function pick(', 'function readyToSend(', 'function buildJobInstructions(', 'function payload(']) {
+  for (const prefix of ['function recommend(', 'function depositSummary(', 'function estimatedJobMinutes(', 'function pick(', 'function readyToSend(', 'function buildJobInstructions(', 'function signedLines(', 'function payload(']) {
     vm.runInContext(line(prefix), context);
   }
   return context;

@@ -387,6 +387,14 @@ function finishSummary(value) {
   return (Array.isArray(value) ? value : [value]).filter(Boolean).map(item => labels[item] || item).join(', ') || '—';
 }
 
+// Itemized signed quotes list their sold lines; a legacy single-line quote
+// keeps today's note unchanged.
+function quoteLines(quote) {
+  const lines = quote?.itemized === true && Array.isArray(quote.line_items) ? quote.line_items : [];
+  const amount = value => `${Number(value) < 0 ? '-' : ''}$${Math.abs(Number(value) || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  return lines.length ? ['Itemized quote:', ...lines.slice(0, 40).map(line => `- ${String(line?.name || 'Line item').slice(0, 160)}${Number(line?.qty) !== 1 ? ` × ${Number(line?.qty)}` : ''}: ${amount(line?.total)}`)] : [];
+}
+
 function noteBody(payload) {
   const p = payload || {}, q = p.quote || {}, d = p.discovery || {}, s = p.scope || {}, l = p.logistics || {};
   const list = value => Array.isArray(value) ? value.filter(Boolean).join(', ') : (value || '—');
@@ -397,6 +405,7 @@ function noteBody(payload) {
     `Locked total: $${Number(q.total || 0).toLocaleString('en-US')}`,
     `Deposit: $${Number(q.deposit || 0).toLocaleString('en-US')}`,
     `Target date: ${q.job_date || 'TBD'} · ${q.start_time || 'TBD'}–${q.end_time || 'TBD'}`,
+    ...quoteLines(q),
     '',
     String(p.internal_notes).replace(/^EGC INTERNAL JOB BRIEF\s*/i, '').trim(),
   ].join('\n').slice(0, 4900);
@@ -406,6 +415,7 @@ function noteBody(payload) {
     '',
     `Locked total: $${Number(q.total || 0).toLocaleString('en-US')}`,
     `Deposit: $${Number(q.deposit || 0).toLocaleString('en-US')}`,
+    ...quoteLines(q),
     `Target date: ${q.job_date || 'TBD'}`,
     `Arrival window: ${q.start_time || 'TBD'}–${q.end_time || 'TBD'}`,
     `Assigned crew: ${l.assigned_to || 'Unassigned'}${l.crew_size ? ` (${l.crew_size} needed)` : ''}`,

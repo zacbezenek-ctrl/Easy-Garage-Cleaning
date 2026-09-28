@@ -266,8 +266,10 @@ test('estimate expiry and approval use the injected clock on the Denver calendar
 
 test('approval inside the validity window records the injected time', async t => {
   const f = portalStore(t, { 'job-1': { ...base(), estimate: { number: 'EST-1', status: 'sent', amount: 800, validUntil: '2026-09-22' } } });
-  const at = '2026-09-23T05:30:00.000Z';
-  const approved = await portalPost(portalHandlers(at), await portalCookie('job-1', {}, Date.parse(at)), { action: 'approve_estimate', signed_name: 'Synthetic Customer', confirmed: true });
+  const at = '2026-09-23T05:30:00.000Z', handlers = portalHandlers(at), cookie = await portalCookie('job-1', {}, Date.parse(at));
+  // Approvals name the revision and total the page displayed (portal approval binding, M14).
+  const shown = (await portalView(handlers, cookie)).body.estimate;
+  const approved = await portalPost(handlers, cookie, { action: 'approve_estimate', signed_name: 'Synthetic Customer', confirmed: true, estimate_revision: shown.revision, amount_cents: Math.round(shown.amount * 100), estimate_fingerprint: shown.fingerprint });
   assert.equal(approved.status, 200);
   assert.equal(f.job('job-1').customerApproval.approvedAt, at);
   assert.equal(f.job('job-1').estimate.acceptedAt, at);

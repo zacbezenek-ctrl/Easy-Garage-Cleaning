@@ -7,7 +7,7 @@
   function signedPlan(p) {
     return { ...select(p, ['discovery','scope','logistics','internal_notes','client_checklists','signature','acceptance','terms_version','terms_accepted','photos','notes']),
       client: select(p.client, ['name','phone','email','address','highlevel_contact_id']),
-      quote: select(p.quote, ['title','total','deposit','job_date','start_time','end_time','estimated_duration_min']) };
+      quote: select(p.quote, ['title','total','deposit','job_date','start_time','end_time','estimated_duration_min','line_items','catalog_version','duration_override_reason']) };
   }
   // This controller owns one frozen, actor-scoped request through lost responses.
   // Neither a reload nor a CRM outage creates a second dispatch request.
