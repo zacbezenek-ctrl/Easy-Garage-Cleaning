@@ -1,0 +1,39 @@
+{
+ "schemaVersion": 1,
+ "settingsVersion": "placeholder-2026-09-27",
+ "mustSetBeforeCustomerUse": true,
+ "currency": "USD",
+ "laborRateCents": 7500,
+ "markupPct": {
+  "default": 20,
+  "byCategory": {
+   "bikes": 20,
+   "cabinets-workbenches": 20,
+   "floors-lighting-extras": 20,
+   "lawn-garden": 20,
+   "overhead": 20,
+   "shelving": 20,
+   "small-items": 20,
+   "sports-outdoor": 20,
+   "wall-systems": 20
+  }
+ },
+ "minimumJobCents": 45000,
+ "includeDisposal": true,
+ "disposalCentsPerItem": 1000,
+ "depositPct": 50,
+ "roundingRule": "half_up_cent",
+ "comments": {
+  "schemaVersion": "Format version of this settings document. Only 1 exists.",
+  "settingsVersion": "Label for this set of values. Change it every time the owner saves new settings so quotes can record which settings priced them.",
+  "mustSetBeforeCustomerUse": "PLACEHOLDER GUARD. Every number in this file is a placeholder chosen from market research, not an owner decision. While this is true, settingsReadyForCustomers() is false and no customer-facing quote may use these settings. The owner sets it to false only after reviewing every value below.",
+  "currency": "All amounts are integer US cents.",
+  "laborRateCents": "PLACEHOLDER: $75.00 per technician-hour, charged per technician-minute. Catalog installMinutes are total technician minutes, so a 2-person item listed at 120 minutes bills 120 minutes (about 60 minutes on site). Chosen inside the observed Fort Collins handyman range of $50-$90/hr (HomeGuide/Thumbtack Fort Collins handyman snippet, 2026-09-27) and at the top of the $55-$75/hr garage-organizer range (Fixr/Angi snippet). Denver Handy Co. publishes $80/hr per person. The ~$29/hr Colorado handyman wage (Indeed) is EGC's cost, not a price.",
+  "markupPct": "PLACEHOLDER: percent added to the product cost (the catalog's retailPriceHighCents, or the actual cost entered on the quote). General-contractor material markup runs 15%-35%, about 20% on commodity items and about 35% on specialty or special-order items (Angi/Foreman snippet); another guide gives 7.5%-20% (Truitt & White snippet). No garage-organizer-specific markup was found. Every category starts at 20%; the owner may want more on special-order cabinet systems and motorized lifts. A category missing from byCategory uses default.",
+  "minimumJobCents": "PLACEHOLDER: $450 minimum per quote, matching today's walkthrough minimum in crew/gameplan.html recommend() (Math.max(450, ...)). Market references: Colorado handyman minimums $100-$200 for the first hour plus travel, Boulder-area 2-hour minimums of about $150-$300, and Denver Handy Co.'s $320 (2 people x 2 hours). Applied once to the whole quote with applyMinimum(), never to a single line.",
+  "includeDisposal": "PLACEHOLDER: when true, every item marked haulAwayApplicable adds disposalCentsPerItem per unit for breaking down and hauling away its packaging.",
+  "disposalCentsPerItem": "PLACEHOLDER: $10.00 per unit of packaging haul-away. The Larimer County landfill charges $22-$37 per pickup load in 2026 (larimer.gov fee schedule snippet) and local junk haulers' minimums run $60-$150; $10 per unit assumes several units' cardboard and foam share one load. No packaging-specific fee was published anywhere we could read.",
+  "depositPct": "Matches current policy: a 50% deposit (crew/gameplan.html walkthroughDeposit and depositSummary, terms version 2026-09-deposit50). The catalog math does not use it; it lives here so the quote builder reads one settings record.",
+  "roundingRule": "half_up_cent: each fractional cent rounds half up (0.5 cent becomes 1 cent), applied once per line component (labor, markup) on the line total, never per unit. ceil_cent rounds any fraction up instead."
+ }
+}

@@ -101,6 +101,11 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   `docs/env-inventory.md` is generated; a secret scan fails on committed live keys. Merged by the main session on the
   owner's approval; the 12 vars added by units merged since (messaging, dispatch windows, vault query, review URL, purpose
   keys, Garage Guard sync, MCP safety) were documented in the merge, and SEC-B's fake `sk_live_` fixture is built at runtime.
+- **CAT-DATA** Audited garage catalog `functions/_data/garage-catalog.json` (version 2026-09-27.1: 239 products + 11 legacy
+  services at today's `recommend()` prices, 62 needs), placeholder `pricing-settings.defaults.json` (blocks customer use),
+  and `functions/_lib/catalog.js` (strict validator, need/zone lookups, Denver stale flag, per-unit integer-cent pricing;
+  `catalogLine()` feeds LI-CORE strict). Merge: `quote-model.js` accepts dated catalog versions. Gaps: 113 prices
+  unverified, 12 needs lack a verified option, 8 two-person items have doubled minutes; no UI/API/Firestore yet.
 
 ## In progress
 
@@ -118,7 +123,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | LI-CORE | One canonical line-item model (quotes, invoices, portal, catalog, duration) + money core + duration engine | merged (08b5ec8) |
 | M2 | Crew card payments recorded via Stripe webhook + Garage Guard membership linkage | merged (e948368) |
 | M15 | Retire dead legacy quote UIs | building |
-| CAT-DATA | Researched garage catalog data file, schema validation, pricing engine, docs/GARAGE-CATALOG.md | building |
+| CAT-DATA | Researched garage catalog data file, schema validation, pricing engine, docs/GARAGE-CATALOG.md | merged (6e546f5) |
 | P3-00 | **Production blocker**: walkthrough extraction crash (strict structured output) | building |
 | P3-01 | Action kinds v2 (8 new kinds, drafts, attachments) + migration 0013 | merged (106af38) |
 | P3-13 | Retire the dead portal recorder (Hub deep links) and scripts/verify-crew.mjs (audit #85, #122) | merged (4152a18) |

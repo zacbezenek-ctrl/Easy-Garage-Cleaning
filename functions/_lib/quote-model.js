@@ -65,6 +65,9 @@ const plain = value => value !== null && typeof value === 'object' && !Array.isA
 const fail = (code, message, details) => Object.assign(new Error(message), { code: `quote_${code}`, status: 400, ...(details ? { details } : {}) });
 const clean = (value, max) => String(value || '').replace(/[\r\n\t]/g, ' ').trim().slice(0, max);
 const safeId = value => typeof value === 'string' && ID.test(value) && !RESERVED.has(value);
+// Catalog versions are either a positive integer, an id, or a dated catalog release (YYYY-MM-DD.N, see functions/_lib/catalog.js).
+const CATALOG_VERSION = /^\d{4}-\d{2}-\d{2}\.\d{1,3}$/;
+const catalogVersion = value => Number.isSafeInteger(value) && value >= 1 || safeId(value) || typeof value === 'string' && CATALOG_VERSION.test(value);
 const negative = cents => cents === 0 ? 0 : -Math.abs(cents);
 const hundredths = quantity => Math.round(quantity * 100);
 const canonical = value => Array.isArray(value) ? `[${value.map(canonical).join(',')}]` : plain(value) ? `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonical(value[key])}`).join(',')}}` : JSON.stringify(value ?? null);
@@ -140,7 +143,7 @@ function normalizeGroup(value, problem) {
 function normalizeCatalog(value, problem) {
   if (value === undefined || value === null) return null;
   const version = value?.version;
-  if (!plain(value) || Object.keys(value).some(key => !['itemId', 'version'].includes(key)) || !safeId(value.itemId) || !(Number.isSafeInteger(version) && version >= 1 || safeId(version))) {
+  if (!plain(value) || Object.keys(value).some(key => !['itemId', 'version'].includes(key)) || !safeId(value.itemId) || !catalogVersion(version)) {
     problem('invalid_catalog', 'The catalog reference needs an item id and version.');
     return null;
   }

@@ -80,6 +80,7 @@ test('private source trees, tooling and deploy configs return a noindex 404 at t
   const blocked = [
     '/egc-platform', '/egc-platform/', '/egc-platform/package.json', '/egc-platform/pnpm-workspace.yaml', '/egc-platform/apps/api/src/server.ts',
     '/functions', '/functions/_middleware.js', '/functions/_lib/firebase-service-account.js', '/functions/api/employee-hub.js',
+    '/functions/_data/garage-catalog.json', '/functions/_data/pricing-settings.defaults.json',
     '/tools/', '/tools/gallery/publish-links.py', '/tools/gallery/showcase-browser.cjs', '/tools/gallery/simple-import.json',
     '/.github/workflows/egc-firestore-ci.yml', '/.claude/settings.json', '/.claude/worktrees/unit/employee.html',
     '/node_modules/@noble/hashes/package.json', '/node_modules/.pnpm/tslib@2.8.1/node_modules/tslib/tslib.html',

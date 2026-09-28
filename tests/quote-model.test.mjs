@@ -373,3 +373,22 @@ test('customer projections and the Hub invoice fallback naming', () => {
   assert.equal(singleLineItem(job).name, 'cleanout', 'the portal surface is unchanged');
   assert.equal(legacyLineItems({ id: 'x', estimate: { lineItems: [{ amount: 10 }] } }, { surface: 'invoice' }).lineItems[0].name, 'Garage transformation');
 });
+
+test('a dated catalog release (YYYY-MM-DD.N) is a valid catalog version for a real catalogLine() output', async () => {
+  const { readFileSync } = await import('node:fs');
+  const { catalogLine } = await import('../functions/_lib/catalog.js');
+  const catalog = JSON.parse(readFileSync(new URL('../functions/_data/garage-catalog.json', import.meta.url), 'utf8'));
+  const settings = JSON.parse(readFileSync(new URL('../functions/_data/pricing-settings.defaults.json', import.meta.url), 'utf8'));
+  assert.match(catalog.catalogVersion, /^\d{4}-\d{2}-\d{2}\.\d{1,3}$/);
+  const item = catalog.items.find(row => row.kind === 'product' && row.availability === 'active');
+  assert.ok(item, 'the catalog has an active product');
+  const reference = { itemId: item.id, version: catalog.catalogVersion };
+  const [normalized] = strict([{ id: 'catalog-line', ...catalogLine(item, settings, { quantity: 3 }), catalog: reference }]);
+  assert.deepEqual(normalized.catalog, reference);
+  assert.equal(normalized.totalCents, normalized.unitCents * 3);
+  assert.equal(estimateTotals([{ id: 'catalog-line', ...catalogLine(item, settings), catalog: reference }]).complete, true);
+  for (const version of ['2026-9-27.1', '2026-09-27.', '2026-09-27.1234', '2026-09-27.1 ', '2026-09-27.1.2', 0, -1, 1.5])
+    assert.throws(() => strict([line({ catalog: { itemId: item.id, version } })]), code('quote_invalid_catalog'), String(version));
+  assert.equal(strict([line({ catalog: { itemId: item.id, version: 3 } })])[0].catalog.version, 3, 'integer versions still work');
+  assert.equal(strict([line({ catalog: { itemId: item.id, version: 'v2' } })])[0].catalog.version, 'v2', 'id versions still work');
+});
