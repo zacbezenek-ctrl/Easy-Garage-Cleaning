@@ -1,23 +1,39 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { createHubSessionCookie } from '../functions/_lib/hub-session.js';
 import { encodeFirestoreFields } from '../functions/_lib/firestore-job.js';
+import { sourceFiles } from './source-files.mjs';
 
 const root = path.resolve(new URL('..', import.meta.url).pathname.replace(/^\/(.:)/, '$1'));
 const privateNames = new Set(['employee.html', 'employee-signup.html', 'customer-portal.html', 'quote.html', 'copilot.html', 'sop.html', 'tyler-contract.html']);
 
-function publicHtml(dir = root) {
-  return fs.readdirSync(dir, { withFileTypes: true }).flatMap(entry => {
-    const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) {
-      if (entry.isSymbolicLink()||['.git', '.claude', 'node_modules', '.pnpm-store', '.next', '.turbo', 'dist', 'test-results', 'crew', 'contracts'].includes(entry.name)) return [];
-      return publicHtml(full);
-    }
-    return entry.name.endsWith('.html') && !privateNames.has(entry.name) ? [full] : [];
-  });
+const nonPublicDirs = new Set(['crew', 'contracts']);
+
+// Built on sourceFiles() so this scan skips exactly what every other repo scan skips: agent
+// worktrees (.claude/, worktrees/), dependencies, build output and local QA captures.
+function publicHtml(base = root) {
+  return sourceFiles(base)
+    .filter(entry => entry.name.endsWith('.html') && !privateNames.has(entry.name)
+      && !path.relative(base, entry.parentPath).split(path.sep).some(part => nonPublicDirs.has(part)))
+    .map(entry => path.join(entry.parentPath, entry.name));
 }
+
+test('the public-copy scan reads only this checkout, never agent worktrees or QA output', t => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'egc-public-html-'));
+  t.after(() => fs.rmSync(temp, { recursive: true, force: true }));
+  const planted = ['.claude/worktrees/agent-1/index.html', 'worktrees/agent-2/book.html', 'field-qa/report.html', '.lighthouseci/lhr-1.html',
+    'test-results/field-qa/report.html', 'node_modules/synthetic/index.html', 'dist/index.html', 'crew/job.html', 'blog/contracts/sign.html', 'employee.html'];
+  for (const file of ['index.html', 'blog/garage-tips.html', ...planted]) {
+    fs.mkdirSync(path.dirname(path.join(temp, file)), { recursive: true });
+    fs.writeFileSync(path.join(temp, file), '<p>Text us for a photo quote.</p>');
+  }
+  const scanned = publicHtml(temp).map(file => path.relative(temp, file).split(path.sep).join('/')).sort();
+  assert.deepEqual(scanned, ['blog/garage-tips.html', 'index.html']);
+  assert.ok(publicHtml().some(file => path.relative(root, file) === 'book.html'), 'the real scan still reaches the public pages');
+});
 
 test('public marketing pages do not promise prices from photos', () => {
   const prohibited = [

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import vm from 'node:vm';
+import vm from './helpers/vm-realm.mjs';
 import { arrivalClock, formatArrivalWindow, defaultArrivalWindow, arrivalWindowProblem, arrivalWindowFields, arrivalWindowMinutes, arrivalSettings, arrivalWindowPatch, arrivalDefaults } from '../functions/_lib/dispatch-arrival.js';
 import { dispatchOverview, mutateDispatch } from '../functions/_lib/dispatch-service.js';
 import { dispatchHandlers } from '../functions/api/dispatch.js';

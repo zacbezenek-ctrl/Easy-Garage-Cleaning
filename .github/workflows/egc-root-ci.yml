@@ -1,0 +1,65 @@
+name: EGC Root CI
+# Always on: every pull request and every push to main, with no path filter, so a Hub,
+# portal or public-site change can never merge without the root suite running.
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+# A concurrency group holds at most one running and one pending run. A newly queued run
+# cancels the group's older PENDING run even when cancel-in-progress is false, so a shared
+# refs/heads/main group would silently skip the middle commits of a quick series of pushes.
+# Pull requests share one group per PR and cancel superseded runs; each push to main gets
+# its own group (keyed by commit SHA), so every main commit gets a complete run.
+concurrency:
+  group: egc-root-ci-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+jobs:
+  root-suite:
+    name: Root suite, syntax and static gallery identity
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --ignore-scripts --no-audit --no-fund
+      - name: Hub, portal, security and public-site regression tests
+        run: node --test tests/*.test.mjs
+      - name: Syntax check every browser script and Pages Function
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          shopt -s globstar nullglob
+          files=(*.js crew/*.js functions/**/*.js)
+          for file in "${files[@]}"; do node --check "$file"; done
+          echo "Checked ${#files[@]} files."
+      - name: Static Before & After fallback matches the server render
+        if: ${{ !cancelled() }}
+        run: node scripts/render-before-after.mjs --check
+  shifted-clock:
+    name: Root suite with the clock moved 400 days ahead
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --ignore-scripts --no-audit --no-fund
+      - name: Tests must inject time instead of reading today's date
+        env:
+          EGC_CLOCK_SHIFT_DAYS: '400'
+        # The preload is passed as an absolute file: URL because some tests start node in a
+        # temporary working directory, where a relative --import would not resolve.
+        run: |
+          set -euo pipefail
+          NODE_OPTIONS="--import=$(node -p 'require("node:url").pathToFileURL("tests/helpers/shift-clock.mjs").href')"
+          export NODE_OPTIONS
+          node --test tests/*.test.mjs

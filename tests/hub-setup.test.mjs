@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import vm from 'node:vm';
+import vm from './helpers/vm-realm.mjs';
 import { webcrypto, pbkdf2Sync } from 'node:crypto';
 import { onRequest } from '../functions/_middleware.js';
 

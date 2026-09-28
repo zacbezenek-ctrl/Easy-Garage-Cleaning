@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import vm from 'node:vm';
+import vm from './helpers/vm-realm.mjs';
 
 const suite=readFileSync(new URL('../employee-suite.js',import.meta.url),'utf8');
 const html=readFileSync(new URL('../employee.html',import.meta.url),'utf8');

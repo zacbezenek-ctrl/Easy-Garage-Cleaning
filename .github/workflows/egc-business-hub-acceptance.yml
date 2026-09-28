@@ -1,5 +1,14 @@
 name: EGC Business Hub Acceptance
 on:
+  pull_request:
+    paths:
+      - 'business-hub*'
+      - 'functions/_lib/business-hub*'
+      - 'functions/api/business-hub.js'
+      - 'functions/_middleware.js'
+      - 'tests/business-hub*'
+      - 'tests/browser/test_business_hub_ui.py'
+      - '.github/workflows/egc-business-hub-acceptance.yml'
   push:
     branches: [main]
     paths:
@@ -12,18 +21,25 @@ on:
       - '.github/workflows/egc-business-hub-acceptance.yml'
 permissions:
   contents: read
+# Push runs are keyed by commit SHA so a newer queued run never cancels an older pending main run.
+concurrency:
+  group: egc-business-hub-acceptance-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   business-hub:
     runs-on: ubuntu-latest
     timeout-minutes: 8
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
       - name: Business account, role and isolation regressions
         run: node --test tests/business-hub*.test.mjs
       - name: Read-only production route and privacy checks
+        if: github.event_name == 'push'
         shell: python
         run: |
           import json, time, urllib.request, urllib.error

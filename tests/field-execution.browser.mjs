@@ -1,4 +1,5 @@
-// Run with FIELD_PLAYWRIGHT_MODULE pointing to an installed Playwright module.
+// Run with FIELD_PLAYWRIGHT_MODULE pointing to an installed Playwright module (optional
+// PLAYWRIGHT_CHROMIUM_EXECUTABLE; screenshots go to FIELD_QA_OUTPUT or test-results/field-qa).
 // Uses real HTTP handlers and browser UI, with synthetic Firestore/Drive only.
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
@@ -21,13 +22,14 @@ const env = { HUB_SESSION_SECRET: 'field-browser-synthetic', EMPLOYEE_HUB_DATA_S
 const originalFetch = globalThis.fetch;
 const store = storage({ mock: { method(object, key, implementation) { object[key] = implementation; } } });
 const background = [];
+let base = '';
 const date = field.fieldToday();
 const job = { id: 'browser-job', type: 'job', date, time: '08:00', endTime: '11:00', customer: 'Synthetic Garage', phone: '9705550100', address: '123 Test Street, Fort Collins, CO', assignedCrew: ['Crew.One'], crewLead: 'Crew.One', status: 'scheduled', pipelineStatus: 'scheduled', jobInstructions: { operationalScope: 'Clean the garage, preserve the green cabinet and install the rack.', accessNotes: 'Customer will open the side gate.' }, requiredEquipment: ['Gloves', 'Pressure washer'], materials: [{ id: 'rack', name: 'Wall rack', quantity: 1 }] };
 store.put('jobs/browser-job', job);
 store.put('jobs/browser-next', { ...job, id: 'browser-next', customer: 'Synthetic Next Job', time: '13:00', endTime: '16:00' });
 const server = createServer(async (incoming, outgoing) => {
   try {
-    const url = new URL(incoming.url, 'http://localhost:8793');
+    const url = new URL(incoming.url, base);
     if (url.pathname.startsWith('/api/')) {
       const parts = []; for await (const part of incoming) parts.push(part);
       const bytes = Buffer.concat(parts), request = new Request(url, { method: incoming.method, headers: incoming.headers, ...(bytes.length ? { body: bytes } : {}) });
@@ -40,16 +42,16 @@ const server = createServer(async (incoming, outgoing) => {
     const data = await readFile(filename); outgoing.writeHead(200, { 'Content-Type': ({ '.html': 'text/html', '.js': 'application/javascript', '.css': 'text/css' })[extname(filename)] || 'application/octet-stream' }); outgoing.end(data);
   } catch (error) { outgoing.writeHead(500); outgoing.end(String(error.message)); }
 });
-await new Promise(resolve => server.listen(8793, 'localhost', resolve));
-const browser = await playwright[engine].launch({ headless: true, ...(engine === 'chromium' && process.env.FIELD_BROWSER_CHANNEL ? { channel: process.env.FIELD_BROWSER_CHANNEL } : {}) });
+await new Promise(resolve => server.listen(0, 'localhost', resolve)); base = `http://localhost:${server.address().port}`;
+const browser = await playwright[engine].launch({ headless: true, ...(engine === 'chromium' && process.env.FIELD_BROWSER_CHANNEL ? { channel: process.env.FIELD_BROWSER_CHANNEL } : {}), ...(engine === 'chromium' && process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE ? { executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE } : {}) });
 const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, timezoneId: 'America/Los_Angeles' });
 const page = await context.newPage(), errors = [];
 page.on('pageerror', error => errors.push(error.message));
 page.on('dialog', dialog => dialog.accept());
-const artifactDir = process.env.FIELD_QA_OUTPUT || resolve(root, '../field-qa'); await mkdir(artifactDir, { recursive: true });
+const artifactDir = process.env.FIELD_QA_OUTPUT || resolve(root, 'test-results/field-qa'); await mkdir(artifactDir, { recursive: true });
 const settled = async () => { await page.waitForFunction(() => !document.querySelector('.pending-action')); await page.waitForTimeout(75); };
 try {
-  await page.goto('http://localhost:8793/crew/job.html');
+  await page.goto(`${base}/crew/job.html`);
   await page.getByLabel('Username', { exact: true }).fill('Crew.One'); await page.getByLabel('Password', { exact: true }).fill(password); await page.getByRole('button', { name: 'Sign in', exact: true }).click();
   await page.getByRole('heading', { name: 'Synthetic Garage', exact: true }).waitFor();
   assert.equal(await page.locator('body').evaluate(body => body.scrollWidth <= innerWidth), true, 'mobile Today must not overflow');
@@ -96,6 +98,7 @@ try {
   });
   await page.getByRole('button', { name: 'Start my work time here', exact: true }).click();
   await page.getByText('Job time awaiting confirmation', { exact: true }).waitFor();
+  await page.getByText('The server did not confirm this action', { exact: false }).first().waitFor();
   await page.unroute('**/api/employee-hub'); await page.reload();
   await page.getByRole('button', { name: 'Retry job time', exact: true }).click();
   await page.getByRole('button', { name: 'Recording work here', exact: true }).waitFor();
@@ -134,7 +137,7 @@ try {
   assert.equal(await page.getByText('This job is not currently assigned', { exact: false }).count() > 0, true);
   store.put('jobs/browser-interruption', { ...job, id: 'browser-interruption', customer: 'Synthetic Interruption Job' });
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto('http://localhost:8793/crew/job.html?jobId=browser-interruption');
+  await page.goto(`${base}/crew/job.html?jobId=browser-interruption`);
   await page.getByRole('heading', { name: 'Synthetic Interruption Job', exact: true }).waitFor();
   await context.setOffline(true);
   await page.getByLabel('Add a note', { exact: true }).fill('Offline note survives refresh and retry.');
@@ -151,6 +154,7 @@ try {
   await page.getByLabel('Add a note', { exact: true }).fill('This note committed before the response disappeared.');
   await page.getByRole('button', { name: 'Save note', exact: true }).click();
   await page.getByRole('heading', { name: 'Action awaiting confirmation', exact: true }).waitFor();
+  await page.getByRole('alert').filter({ hasText: 'The server did not confirm this action' }).waitFor();
   await page.unroute('**/api/field-jobs'); await page.reload();
   await page.getByRole('button', { name: 'Refresh and retry', exact: true }).click(); await settled();
   assert.equal(await page.getByText('This note committed before the response disappeared.', { exact: true }).count(), 1);
@@ -173,7 +177,7 @@ try {
   await page.getByRole('heading', { name: 'We could not open this work', exact: true }).waitFor();
   assert.equal(await page.getByText('Unsaved note retained through an expired session.', { exact: true }).count(), 0);
   const managerContext = await browser.newContext({ viewport: { width: 390, height: 844 } }), managerPage = await managerContext.newPage();
-  await managerPage.goto('http://localhost:8793/crew/job.html?jobId=browser-interruption');
+  await managerPage.goto(`${base}/crew/job.html?jobId=browser-interruption`);
   await managerPage.getByLabel('Username', { exact: true }).fill('ZacB'); await managerPage.getByLabel('Password', { exact: true }).fill(password); await managerPage.getByRole('button', { name: 'Sign in', exact: true }).click();
   await managerPage.getByText('Manager: configure this job’s checklist', { exact: true }).click();
   await managerPage.getByLabel('Job checklist', { exact: true }).fill('departure | required | Confirm the pressure washer is loaded\narrival | required | Confirm scope and protect belongings\nwork | required | Perform garage service\nfinish | required | Customer walkthrough and cleanup');
@@ -185,7 +189,7 @@ try {
   assert.equal(await managerPage.locator('#note-private').isChecked(), true, 'a private draft must stay private through refresh');
   await managerPage.getByRole('button', { name: 'Save note', exact: true }).click();
   await managerPage.getByText('Private manager-only pricing discussion.', { exact: true }).waitFor();
-  await managerPage.goto('http://localhost:8793/crew/job.html?jobId=browser-job');
+  await managerPage.goto(`${base}/crew/job.html?jobId=browser-job`);
   await managerPage.locator('#manager-job-labor').getByRole('heading', { name: 'Crew One', exact: true }).waitFor();
   await managerPage.locator('#manager-job-labor').getByText('Work awaiting approval', { exact: true }).waitFor();
   assert.equal(await managerPage.locator('body').evaluate(body => body.scrollWidth <= innerWidth), true, 'manager labor cards must fit a phone');

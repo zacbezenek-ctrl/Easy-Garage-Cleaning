@@ -24,7 +24,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: pnpm install --no-frozen-lockfile
+      - run: pnpm install --frozen-lockfile
       - name: Generate database migrations
         env:
           DATABASE_URL: postgres://egc:egc@localhost:5432/egc
@@ -37,3 +37,7 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm build
+      - name: Build leaves no uncommitted changes outside generated migrations
+        run: |
+          git status --porcelain
+          test -z "$(git status --porcelain -- . ':!packages/database/migrations')"

@@ -87,6 +87,10 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   browser tests and the MCP safety Postgres check, with site sources in its path filters; business-hub acceptance gets a
   Playwright job; Firestore CI runs the hub-audit emulator file sequentially; the gallery workflows use
   `scripts/render-before-after.mjs` (+ nav-a11y). Workflow-only change.
+- **CI-A** Always-on `egc-root-ci.yml` (root suite, `node --check` of every browser script/Function, before-after identity,
+  and the suite again with `tests/helpers/shift-clock.mjs` moving the clock +400 days); Action Center no longer gates the
+  platform on the root suite; frozen lockfiles, clean-tree checks, per-SHA push concurrency, business-hub PR runs, and
+  field-execution acceptance in Firestore CI. Scans skip worktrees/QA output; vm realms inherit the shift (`vm-realm.mjs`).
 
 ## In progress
 
@@ -124,7 +128,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | SEC-A | Firestore rules hardening (vault/receipts/audit_log) + block private source paths | merged (c8905cd) |
 | SEC-B | Purpose-scoped keys + server-only hub_audit + single-use confirm tokens | merged (75b9e1b) |
 | SEC-C | Env inventory script/test + complete both .env.example files | building |
-| CI-A | Always-on root CI, split platform gate, clock-shift guard, field-execution acceptance in CI | building |
+| CI-A | Always-on root CI, split platform gate, clock-shift guard, field-execution acceptance in CI | merged (a067d1f) |
 | CI-B | Pages Functions test router, parallel-safe emulator harness, Playwright iPhone/Android/desktop projects | building |
 | CI-WF | Wire merged units' tests into the existing CI workflows (pending CI notes) | merged (31e1562) |
 
@@ -173,8 +177,8 @@ Scope: all 188 findings the maps exported (160 bug reports plus 28 mission or in
 | 13 | MCP | The static `MCP_BEARER_TOKEN`, documented as diagnostic-only, passes every scope check including `egc:write` and never expires, so if it is set in production it is a full-write credential. † | `egc-platform/apps/mcp/src/oauth.ts:458-466` | MCP-01 |
 | 14 | Public site | The next generator run would inject the marketing analytics loader (GA, Meta, Clarity) into the B2B client hub, the dispatch shell and the owner credential setup page, because they are missing from the private-page list. | `_generate_site.py:4120` | SITE-0 |
 | 15 | Data security | The Firestore `jobs` rule lets any business browser session create, change or delete the encrypted employee vault records and the server's audit and idempotency receipts stored in the same collection, so a Hub session or leaked refresh token could erase timecards or forge receipts. † | `firestore.rules:236-240` | SEC-A |
-| 16 | CI | The Action Center workflow runs the root `npm test` first, so any root failure skips the build, typecheck, platform tests, migrations, Postgres integration suites and drift check, which is why none of them ran on main for #73, #75 and #76. † | `.github/workflows/egc-action-center-ci.yml:49` | CI-A |
-| 17 | Public site | The static before-after.html fallback is older than the Function render (site-v4 vs site-v5), so the gallery identity check fails and main CI is red (Simple Page run 35942440846). † | `before-after.html:1`; `functions/before-after.js` | SITE-0 (regenerates it); CI-A (identity check in always-on CI) |
+| 16 | CI | The Action Center workflow runs the root `npm test` first, so any root failure skips the build, typecheck, platform tests, migrations, Postgres integration suites and drift check, which is why none of them ran on main for #73, #75 and #76. † | `.github/workflows/egc-action-center-ci.yml:49` | CI-A (done) |
+| 17 | Public site | The static before-after.html fallback is older than the Function render (site-v4 vs site-v5), so the gallery identity check fails and main CI is red (Simple Page run 35942440846). † | `before-after.html:1`; `functions/before-after.js` | SITE-0 (done); CI-A (done) |
 
 ### Medium (46)
 
@@ -218,10 +222,10 @@ Scope: all 188 findings the maps exported (160 bug reports plus 28 mission or in
 | 53 | Public site | The footer regex only matches a bare `<footer>` and never `<footer class="site-footer">`, so footer template changes never reach 12 frozen footer variants and a site-wide footer Client Login link cannot come from the template. | `_generate_site.py:3988` | SITE-2 |
 | 54 | Public site | The closed mobile nav drawer is aria-hidden but still focusable, a likely accessibility failure on every public page (plausible, not measured). | `styles.css:162`; `_generate_site.py` ~:528 (NAV_JS_IIFE setOpen) | SITE-0 (part B) |
 | 55 | Config and docs | Both `.env.example` files are incomplete: the root one omits the `EGC_OPERATIONS_*` bridge variables, several HighLevel stage/tag settings, `QUO_API_BASE` and the password-verifier settings, the platform one omits `EGC_OPERATIONS_SERVICE_AUTH`, `CUSTOMER_EVIDENCE_MODEL` and about ten more while listing unused ones, and the calendar variable is spelled differently in Hub and platform. | `.env.example:1`; `egc-platform/.env.example:1` | SEC-C |
-| 56 | CI | The root regression suite only runs when egc-platform, functions, employee* or tests change, so edits to the customer portal, business hub, crew pages, dispatch, the site generator or public pages run no Node tests even though tests assert on those files. † | `.github/workflows/egc-action-center-ci.yml:11` | CI-A |
+| 56 | CI | The root regression suite only runs when egc-platform, functions, employee* or tests change, so edits to the customer portal, business hub, crew pages, dispatch, the site generator or public pages run no Node tests even though tests assert on those files. † | `.github/workflows/egc-action-center-ci.yml:11` | CI-A (done) |
 | 57 | CI | The checked-in Firestore emulator port is fixed (8089, or 8090 for field day), so a second concurrent emulator run fails with 'port taken'. † | `firebase.emulator.json:4`; `firebase.field-day.json` | CI-B |
-| 58 | Tests | The field-execution browser acceptance (clock-in, offline, lost-response coverage) runs in no workflow, binds fixed port 8793, writes artifacts outside the repo and ignores `PLAYWRIGHT_CHROMIUM_EXECUTABLE`, and the dispatch-field acceptance uses the real clock and device timezone. † | `tests/field-execution.browser.mjs:36`, :44, :49; `tests/dispatch-field.browser.mjs:28` | CI-A (field-execution in CI); NEW: injected clock for dispatch-field acceptance |
-| 59 | Tests | Source-scan tests walked `.claude/worktrees` (5,172 of 6,035 scanned files), so results depended on other agents' in-progress files. † | `tests/source-files.mjs:7`; `tests/seo-walkthrough.test.mjs` (publicHtml) | P0-3 (done for `.claude`); CI-A (other ignores); SITE-0 (seo-walkthrough) |
+| 58 | Tests | The field-execution browser acceptance (clock-in, offline, lost-response coverage) runs in no workflow, binds fixed port 8793, writes artifacts outside the repo and ignores `PLAYWRIGHT_CHROMIUM_EXECUTABLE`, and the dispatch-field acceptance uses the real clock and device timezone. † | `tests/field-execution.browser.mjs:36`, :44, :49; `tests/dispatch-field.browser.mjs:28` | CI-A (done: field-execution in CI); NEW: injected clock for dispatch-field acceptance |
+| 59 | Tests | Source-scan tests walked `.claude/worktrees` (5,172 of 6,035 scanned files), so results depended on other agents' in-progress files. † | `tests/source-files.mjs:7`; `tests/seo-walkthrough.test.mjs` (publicHtml) | P0-3 (done for `.claude`); CI-A (done: other ignores); SITE-0 (seo-walkthrough) |
 | 60 | Data security | Any signed-in Firebase session, including crew, can create `audit_log` entries with any 'by' value, and business users can edit or delete them, so the collection is not a trustworthy audit trail (no emulator test covers the rule). † | `firestore.rules:258-259` | SEC-A |
 | 61 | Data security | Bridge `schedule.mutate` (mutateScheduledVisit) checks no actor role, so any validly signed actor, including crew or crew lead, can create, change or cancel visits. | `functions/_lib/operations-scheduling.js:71` | SEC-04 |
 | 62 | Data security | Middleware blocks only top-level private paths, so /egc-platform/**, /functions/**, /tools/**, /.github/**, firebase.emulator.json and pnpm-lock.yaml may be publicly served if Pages publishes the repo root (plausible; verify with a read-only production request). | `functions/_middleware.js:3` | SEC-A (part B) |
@@ -273,7 +277,7 @@ Scope: all 188 findings the maps exported (160 bug reports plus 28 mission or in
 | 103 | B2B hub | The manager account list loads up to 50 full account documents (each up to 750 KB) just to show counts. | `functions/_lib/business-hub-store.js:28` | B2B-SEAMS |
 | 104 | B2B hub | Account views send every member internal staff usernames and member ids. | `functions/_lib/business-hub-core.js:105` | B2B-SEAMS |
 | 105 | B2B hub | Business hub tap targets are 34-40 px, inputs are 15 px (iOS zoom), and tables scroll sideways at 375 px. | `business-hub.css:1` | B2B-SEAMS |
-| 106 | B2B hub | The business hub acceptance workflow runs only after merge to main and checks only anonymous endpoints. | `.github/workflows/egc-business-hub-acceptance.yml:2` | CI-A (PR trigger for node tests); B2B-08 / CI-11 (authenticated end-to-end) |
+| 106 | B2B hub | The business hub acceptance workflow runs only after merge to main and checks only anonymous endpoints. | `.github/workflows/egc-business-hub-acceptance.yml:2` | CI-A (done: PR trigger for node tests); B2B-08 / CI-11 (authenticated end-to-end) |
 | 107 | Money | Crew card payments store no receipt URL, purpose or quote revision and leave the deposit 'due', and the Stripe key check rejects restricted `rk_` keys. | `functions/api/job-payment.js:44` | M2 |
 | 108 | Money | The first Stripe payment creates an unnumbered 'partial' invoice, so the finance board shows an invoice before one was issued. | `functions/_lib/customer-payments.js:126` | M3 |
 | 109 | Money | Recording an offline payment that clears the balance marks the job 'paid' even when the work is not completed. | `employee-suite.js:274` | M3 |
@@ -287,8 +291,8 @@ Scope: all 188 findings the maps exported (160 bug reports plus 28 mission or in
 | 117 | Public site | Nav and footer logos are 195 KB and 135 KB PNGs (2400 px wide) shown at about 184x43 on every page. | `styles.css:4` | SITE-4 |
 | 118 | Public site | Google Fonts is render-blocking on the gallery and several other pages (some service pages, garage-guard, thank-you, the customer portal, crew and Hub pages), and employee.html and crew/index.html load three Firebase SDKs synchronously. | `functions/before-after.js:11`; `garage-turnaround-fort-collins-co.html` and the other pages the site map lists; `employee.html`; `crew/index.html` | SITE-4 |
 | 119 | Public site | The 'Customer Portal' link is added by JavaScript on only about 45 pages (not blog posts, FAQ or thank-you) and points to a page that needs a private token. | `site-enhancements.js:52` | SITE-2 |
-| 120 | CI | Local CI-equivalent runs leave a dirty tree: `pnpm build` rewrites the tracked portal next-env.d.ts, and firestore-debug.log, .lighthouseci/ and field-qa/ are not gitignored. † | `egc-platform/apps/portal/next-env.d.ts:1`; `.gitignore:1` | CI-A |
-| 121 | CI | Turbo lists only dist/** as build output, so the portal's Next build is never cached. | `egc-platform/turbo.json:4` | CI-A |
+| 120 | CI | Local CI-equivalent runs leave a dirty tree: `pnpm build` rewrites the tracked portal next-env.d.ts, and firestore-debug.log, .lighthouseci/ and field-qa/ are not gitignored. † | `egc-platform/apps/portal/next-env.d.ts:1`; `.gitignore:1` | CI-A (done) |
+| 121 | CI | Turbo lists only dist/** as build output, so the portal's Next build is never cached. | `egc-platform/turbo.json:4` | CI-A (done) |
 | 122 | Tests | scripts/verify-crew.mjs is a stale manual verifier that stubs retired Jobber endpoints and signs in with a session token derived from a hard-coded ZacB hash. | `scripts/verify-crew.mjs:25` | P3-13 (done; was CI-14) |
 | 123 | Data security | About 120 lines of unused rule helpers (assignedUpdateIsSafe and three others) wrongly suggest that crew SDK writes are allowed. † | `firestore.rules:109-233` | SEC-A |
 | 124 | B2B hub | The business audit log records only account, actor, action and time (no before/after or request id), and business session documents are never purged. | `functions/_lib/business-hub-service.js:42` | SEC-B (hub_audit writer usable by the B2B store); NEW: purge expired business sessions |

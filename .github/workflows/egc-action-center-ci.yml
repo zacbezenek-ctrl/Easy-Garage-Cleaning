@@ -13,6 +13,11 @@ on:
     paths: ['egc-platform/**','functions/**','employee*','tests/**','scripts/repair-stale-schedule-instants.mjs','_generate_site.py','_services_data.py','_finalize_urls.py','tools/site-build.json','tools/gallery/**','scripts/render-before-after.mjs','gallery-simple.js','package.json','*.html','blog/**','projects/**','sitemap.xml','llms.txt','message-templates.*','.github/workflows/egc-action-center-ci.yml']
 permissions:
   contents: read
+# Push runs are keyed by commit SHA: a shared refs/heads/main group would let a newer queued
+# run cancel an older PENDING one even with cancel-in-progress false, skipping main commits.
+concurrency:
+  group: egc-action-center-ci-${{ inputs.ref || github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   database-and-platform:
     runs-on: ubuntu-latest
@@ -42,11 +47,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: npm install --ignore-scripts
-      - run: pnpm install --no-frozen-lockfile
+      - run: pnpm install --frozen-lockfile
         working-directory: egc-platform
-      - name: Existing Hub and portal contract regression tests
-        run: npm test
       - name: Build shared packages
         run: pnpm build:packages
         working-directory: egc-platform
@@ -58,6 +60,11 @@ jobs:
         working-directory: egc-platform
       - name: Build all applications
         run: pnpm build
+        working-directory: egc-platform
+      - name: Build leaves no uncommitted changes
+        run: |
+          git status --porcelain
+          test -z "$(git status --porcelain)"
         working-directory: egc-platform
       - name: Apply checked-in migrations twice
         run: |

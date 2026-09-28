@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import vm from 'node:vm';
+import vm from './helpers/vm-realm.mjs';
 for(const path of ['crew/prejob.html','crew/postjob.html']){
   test(`${path} renders staff instructions and current notes without altering signed scope or interpreting HTML`,()=>{
     const source=readFileSync(path,'utf8'),host={innerHTML:''};

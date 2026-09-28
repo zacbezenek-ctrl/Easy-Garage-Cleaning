@@ -16,5 +16,12 @@ test-results/
 .turbo/
 .vercel/
 
+# Local QA, browser acceptance and emulator output
+field-qa/
+.lighthouseci/
+e2e-report.json
+firestore-debug.log
+.firebase-emulator.*.json
+
 # Agent worktrees (Claude Code isolation)
 .claude/worktrees/

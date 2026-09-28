@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import vm from 'node:vm';
+import vm from './helpers/vm-realm.mjs';
 import { createCustomerPortalSessionCookie } from '../functions/_lib/customer-portal.js';
 import { createHubSessionCookie } from '../functions/_lib/hub-session.js';
 import { customerMoneyState, customerDepositState } from '../functions/_lib/customer-payments.js';

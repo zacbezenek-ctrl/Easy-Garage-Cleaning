@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import vm from 'node:vm';
+import vm from './helpers/vm-realm.mjs';
 
 // M15: the retired quote modal and /quote?id= contract modal are gone from the
 // Employee Hub, and every handler the page still wires up resolves to real code.

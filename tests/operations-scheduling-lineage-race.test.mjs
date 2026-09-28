@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { randomUUID, webcrypto } from 'node:crypto';
-import vm from 'node:vm';
+import vm from './helpers/vm-realm.mjs';
 import { arrivalWindowProblem, arrivalWindowFields } from '../functions/_lib/dispatch-arrival.js';
 
 // Execute the actual scheduling mutator, isolating only imported I/O and time/

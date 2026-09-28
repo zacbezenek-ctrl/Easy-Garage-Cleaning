@@ -1,23 +1,23 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readdirSync, readFileSync } from 'node:fs';
-import { extname, join, relative } from 'node:path';
+import { readFileSync } from 'node:fs';
+import { extname, join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { sourceFiles } from './source-files.mjs';
 
 // M15: /quote?id= contract links are retired (quote.html only offers a fresh
 // portal link) and the legacy `quotes` collection has no browser access.
 const root = fileURLToPath(new URL('..', import.meta.url));
 const read = name => readFileSync(join(root, name), 'utf8');
-const SKIP_DIRS = new Set(['.git', '.claude', 'node_modules', '.pnpm-store', '.next', '.turbo', '.wrangler', 'dist', 'test-results', 'tests', 'docs']);
+// sourceFiles() already skips agent worktrees, dependencies and build output; tests and docs
+// quote the retired link on purpose.
+const SKIP_DIRS = new Set(['tests', 'docs']);
 const CODE = new Set(['.html', '.js', '.mjs', '.cjs', '.ts', '.tsx', '.py']);
 
-function codeFiles(dir = root, files = []) {
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    if (entry.isSymbolicLink()) continue;
-    if (entry.isDirectory()) { if (!SKIP_DIRS.has(entry.name)) codeFiles(join(dir, entry.name), files); }
-    else if (entry.isFile() && CODE.has(extname(entry.name))) files.push(join(dir, entry.name));
-  }
-  return files;
+function codeFiles(dir = root) {
+  return sourceFiles(dir)
+    .filter(entry => CODE.has(extname(entry.name)) && !relative(dir, entry.parentPath).split(sep).some(part => SKIP_DIRS.has(part)))
+    .map(entry => join(entry.parentPath, entry.name));
 }
 
 // Returns [path, body] for each `match` block, with braces balanced.

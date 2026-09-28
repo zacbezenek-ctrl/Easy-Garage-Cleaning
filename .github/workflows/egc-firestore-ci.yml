@@ -2,13 +2,18 @@ name: EGC Firestore Rules and Dispatch
 
 on:
   pull_request:
-    paths: ['firestore.rules','firebase*.json','functions/**','crew/**','employee-dispatch.*','dispatch.html','tests/firestore-emulator.test.mjs','tests/firestore-emulator-hub-audit.test.mjs','tests/dispatch-field.browser.mjs','tests/helpers/field-fixture.mjs','.github/workflows/egc-firestore-ci.yml']
+    paths: ['firestore.rules','firebase*.json','functions/**','crew/**','employee-dispatch.*','dispatch.html','tests/firestore-emulator.test.mjs','tests/firestore-emulator-hub-audit.test.mjs','tests/dispatch-field.browser.mjs','tests/field-execution.browser.mjs','tests/helpers/field-fixture.mjs','.github/workflows/egc-firestore-ci.yml']
   push:
     branches: [main]
-    paths: ['firestore.rules','firebase*.json','functions/**','crew/**','employee-dispatch.*','dispatch.html','tests/firestore-emulator.test.mjs','tests/firestore-emulator-hub-audit.test.mjs','tests/dispatch-field.browser.mjs','tests/helpers/field-fixture.mjs','.github/workflows/egc-firestore-ci.yml']
+    paths: ['firestore.rules','firebase*.json','functions/**','crew/**','employee-dispatch.*','dispatch.html','tests/firestore-emulator.test.mjs','tests/firestore-emulator-hub-audit.test.mjs','tests/dispatch-field.browser.mjs','tests/field-execution.browser.mjs','tests/helpers/field-fixture.mjs','.github/workflows/egc-firestore-ci.yml']
 
 permissions:
   contents: read
+
+# Push runs are keyed by commit SHA so a newer queued run never cancels an older pending main run.
+concurrency:
+  group: egc-firestore-ci-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   firestore-emulator:
@@ -37,6 +42,11 @@ jobs:
         env:
           FIELD_PLAYWRIGHT_MODULE: ${{ github.workspace }}/node_modules/playwright/index.mjs
         run: npx --no-install firebase emulators:exec --only firestore --project demo-egc-dispatch-day --config firebase.field-day.json --non-interactive 'node tests/dispatch-field.browser.mjs'
+      - name: Crew field execution on a phone through real HTTP handlers
+        if: ${{ !cancelled() }}
+        env:
+          FIELD_PLAYWRIGHT_MODULE: ${{ github.workspace }}/node_modules/playwright/index.mjs
+        run: node tests/field-execution.browser.mjs
       - uses: actions/upload-artifact@v4
         if: failure()
         with:

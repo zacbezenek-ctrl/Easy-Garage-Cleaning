@@ -14,9 +14,10 @@ on:
 permissions:
   contents: read
 
+# Push runs are keyed by commit SHA so a newer queued run never cancels an older pending main run.
 concurrency:
-  group: egc-operations-integration-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  group: egc-operations-integration-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   postgres-integration:
@@ -47,7 +48,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: pnpm install --no-frozen-lockfile
+      - run: pnpm install --frozen-lockfile
       - run: pnpm build:packages
       - name: Migrate isolated database and verify idempotent rerun
         env:

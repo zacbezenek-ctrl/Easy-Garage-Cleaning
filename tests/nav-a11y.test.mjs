@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import vm from 'node:vm';
+import vm from './helpers/vm-realm.mjs';
 import { sourceFiles } from './source-files.mjs';
 import { renderPublicGallery } from '../functions/before-after.js';
 
