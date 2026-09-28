@@ -2,9 +2,9 @@ name: EGC Public Gallery
 on:
   push:
     branches: ['feat/gallery-live-*']
-    paths: ['functions/before-after.js', 'functions/_lib/gallery-preview-data.js', 'gallery-live.css', 'tools/gallery/publish-links.py', 'tests/gallery-public.test.mjs', '.github/workflows/egc-public-gallery.yml']
+    paths: ['functions/before-after.js', 'functions/_lib/gallery-preview-data.js', 'gallery-live.css', 'tools/gallery/publish-links.py', 'tests/gallery-public.test.mjs', 'scripts/render-before-after.mjs', 'gallery-simple.js', '.github/workflows/egc-public-gallery.yml']
   pull_request:
-    paths: ['functions/before-after.js', 'before-after.html', 'gallery-live.css', 'tools/gallery/publish-links.py', 'tests/gallery-public.test.mjs', 'gallery-preview-assets/**', '.github/workflows/egc-public-gallery.yml']
+    paths: ['functions/before-after.js', 'before-after.html', 'gallery-live.css', 'tools/gallery/publish-links.py', 'tests/gallery-public.test.mjs', 'gallery-preview-assets/**', 'scripts/render-before-after.mjs', 'gallery-simple.js', '.github/workflows/egc-public-gallery.yml']
   workflow_dispatch:
 permissions:
   contents: read
@@ -26,7 +26,7 @@ jobs:
       - name: Add deterministic homepage and sitemap links
         run: python3 tools/gallery/publish-links.py
       - name: Render identical fallback for static hosting
-        run: node --input-type=module -e "import {writeFileSync} from 'node:fs'; import {renderPublicGallery} from './functions/before-after.js'; writeFileSync('before-after.html',renderPublicGallery());"
+        run: node scripts/render-before-after.mjs
       - name: Validate public route and existing image files
         run: node --test tests/gallery-public.test.mjs
       - name: Save only generated outputs without overwriting concurrent work
@@ -56,4 +56,4 @@ jobs:
       - run: node --test tests/gallery-public.test.mjs
       - run: node --check functions/before-after.js
       - name: Verify static and server-rendered gallery stay identical
-        run: node --input-type=module -e "import assert from 'node:assert/strict'; import {readFileSync} from 'node:fs'; import {renderPublicGallery} from './functions/before-after.js'; assert.equal(readFileSync('before-after.html','utf8'),renderPublicGallery());"
+        run: node scripts/render-before-after.mjs --check

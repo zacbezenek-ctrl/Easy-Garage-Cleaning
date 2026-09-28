@@ -8,6 +8,7 @@ on:
       - 'functions/api/business-hub.js'
       - 'functions/_middleware.js'
       - 'tests/business-hub*'
+      - 'tests/browser/test_business_hub_ui.py'
       - '.github/workflows/egc-business-hub-acceptance.yml'
 permissions:
   contents: read
@@ -61,3 +62,17 @@ jobs:
                       raise
                   print(f'Waiting for deployment, attempt {attempt+1}: {error}', flush=True)
                   time.sleep(10)
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install playwright==1.57.0
+      - run: python -m playwright install --with-deps chromium
+      - name: Business hub mobile compliance and extension seams in a real browser
+        run: python tests/browser/test_business_hub_ui.py

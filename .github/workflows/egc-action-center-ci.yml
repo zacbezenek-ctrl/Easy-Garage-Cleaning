@@ -7,10 +7,10 @@ on:
         required: false
         default: ''
   pull_request:
-    paths: ['egc-platform/**','functions/**','employee*','tests/**','scripts/repair-stale-schedule-instants.mjs','.github/workflows/egc-action-center-ci.yml']
+    paths: ['egc-platform/**','functions/**','employee*','tests/**','scripts/repair-stale-schedule-instants.mjs','_generate_site.py','_services_data.py','_finalize_urls.py','tools/site-build.json','tools/gallery/**','scripts/render-before-after.mjs','gallery-simple.js','package.json','*.html','blog/**','projects/**','sitemap.xml','llms.txt','message-templates.*','.github/workflows/egc-action-center-ci.yml']
   push:
     branches: [main]
-    paths: ['egc-platform/**','functions/**','employee*','tests/**','scripts/repair-stale-schedule-instants.mjs','.github/workflows/egc-action-center-ci.yml']
+    paths: ['egc-platform/**','functions/**','employee*','tests/**','scripts/repair-stale-schedule-instants.mjs','_generate_site.py','_services_data.py','_finalize_urls.py','tools/site-build.json','tools/gallery/**','scripts/render-before-after.mjs','gallery-simple.js','package.json','*.html','blog/**','projects/**','sitemap.xml','llms.txt','message-templates.*','.github/workflows/egc-action-center-ci.yml']
 permissions:
   contents: read
 jobs:
@@ -74,9 +74,10 @@ jobs:
           node --test services/operations/test/message-completion.check.mjs
           node --test services/operations/test/legacy-walkthrough.check.mjs
         working-directory: egc-platform
-      - name: Durable appointment claims and unknown-outcome reconciliation
+      - name: Durable appointment claims, unknown-outcome reconciliation and MCP safety defaults
         run: |
           node --test apps/mcp/test/appointments-postgres.check.mjs
+          node --test apps/mcp/test/safety-postgres.check.mjs
           node --test apps/api/test/scheduling-postgres.check.mjs
           node --test apps/api/test/service-auth-postgres.check.mjs
         working-directory: egc-platform
@@ -127,6 +128,10 @@ jobs:
         run: python tests/browser/test_availability_ui.py
       - name: Personal field agenda and Mountain date boundaries
         run: python tests/browser/test_field_today_ui.py
+      - name: Public nav drawer keyboard contract and footer tap targets
+        run: python tests/browser/test_nav_drawer_ui.py
+      - name: Owner message template drafts, approval and conflict recovery
+        run: python tests/browser/test_message_templates_ui.py
       - uses: actions/upload-artifact@v4
         if: always()
         with:

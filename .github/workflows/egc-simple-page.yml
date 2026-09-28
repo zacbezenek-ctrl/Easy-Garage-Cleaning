@@ -2,9 +2,9 @@ name: EGC Simple Page Checks
 on:
   push:
     branches: ['main', 'feat/gallery-simple-*']
-    paths: ['functions/before-after.js', 'functions/_lib/gallery-simple-data.js', 'gallery-simple.*', 'before-after.html', 'tests/gallery-public.test.mjs', 'tools/gallery/simple-browser.cjs', 'tools/gallery/simple-live.py', '.github/workflows/egc-simple-page.yml']
+    paths: ['functions/before-after.js', 'functions/_lib/gallery-simple-data.js', 'gallery-simple.*', 'before-after.html', 'tests/gallery-public.test.mjs', 'tests/nav-a11y.test.mjs', 'scripts/render-before-after.mjs', 'tools/gallery/simple-browser.cjs', 'tools/gallery/simple-live.py', '.github/workflows/egc-simple-page.yml']
   pull_request:
-    paths: ['functions/before-after.js', 'functions/_lib/gallery-simple-data.js', 'gallery-simple.*', 'before-after.html', 'tests/gallery-public.test.mjs', 'tools/gallery/simple-browser.cjs', 'tools/gallery/simple-live.py', '.github/workflows/egc-simple-page.yml']
+    paths: ['functions/before-after.js', 'functions/_lib/gallery-simple-data.js', 'gallery-simple.*', 'before-after.html', 'tests/gallery-public.test.mjs', 'tests/nav-a11y.test.mjs', 'scripts/render-before-after.mjs', 'tools/gallery/simple-browser.cjs', 'tools/gallery/simple-live.py', '.github/workflows/egc-simple-page.yml']
 permissions:
   contents: read
 concurrency:
@@ -28,15 +28,8 @@ jobs:
         env:
           SAVE_STATIC: ${{ github.event_name == 'push' && startsWith(github.ref_name, 'feat/gallery-simple-') }}
         run: |
-          node --input-type=module <<'JS'
-          import assert from 'node:assert/strict';
-          import {readFileSync,writeFileSync} from 'node:fs';
-          import {renderPublicGallery} from './functions/before-after.js';
-          const html=renderPublicGallery();
-          if(process.env.SAVE_STATIC==='true')writeFileSync('before-after.html',html);
-          else assert.equal(readFileSync('before-after.html','utf8'),html);
-          JS
-      - run: node --check gallery-simple.js && node --test tests/gallery-public.test.mjs
+          if [ "$SAVE_STATIC" = 'true' ]; then node scripts/render-before-after.mjs; else node scripts/render-before-after.mjs --check; fi
+      - run: node --check gallery-simple.js && node --test tests/gallery-public.test.mjs tests/nav-a11y.test.mjs
       - name: Prepare isolated browser tooling
         run: |
           npm install --prefix /tmp/egc-simple-tools --no-package-lock playwright@1.55.0

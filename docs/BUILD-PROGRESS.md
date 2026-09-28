@@ -83,6 +83,10 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   (`/employee?view=action_center` or `?view=walkthroughs`), `/walkthroughs/[contactId]` is a handoff page, the 409
   `/api/walkthrough*` stubs are gone (now 404) and portal vitest render tests guard it. `scripts/verify-crew.mjs` (hard-coded
   ZacB hash) deleted with its .gitignore entry; audit #85 and #122 done. Gap: the deep link opens Action Center, not the visit tab.
+- **CI-WF** Pending CI notes wired into existing workflows: Action Center CI runs the nav-drawer and message-template
+  browser tests and the MCP safety Postgres check, with site sources in its path filters; business-hub acceptance gets a
+  Playwright job; Firestore CI runs the hub-audit emulator file sequentially; the gallery workflows use
+  `scripts/render-before-after.mjs` (+ nav-a11y). Workflow-only change.
 
 ## In progress
 
@@ -122,6 +126,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | SEC-C | Env inventory script/test + complete both .env.example files | building |
 | CI-A | Always-on root CI, split platform gate, clock-shift guard, field-execution acceptance in CI | building |
 | CI-B | Pages Functions test router, parallel-safe emulator harness, Playwright iPhone/Android/desktop projects | building |
+| CI-WF | Wire merged units' tests into the existing CI workflows (pending CI notes) | merged (31e1562) |
 
 ## Next
 
