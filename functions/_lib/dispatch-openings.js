@@ -22,7 +22,7 @@ function integer(value,label,min,max,defaultValue) {
   return parsed;
 }
 function parseQuery(query,now) {
-  const keys=['startDate','endDate','durationMinutes','workdayStart','workdayEnd','employeeIds','vehicleId','travelBufferMinutes'];
+  const keys=['startDate','endDate','durationMinutes','workdayStart','workdayEnd','employeeIds','vehicleId','travelBufferMinutes','address','zip'];
   if (!query||typeof query!=='object'||Array.isArray(query)||Object.keys(query).some(key=>!keys.includes(key))) throw fail('dispatch_openings_invalid','The openings request contains unsupported fields.');
   const startDate=query.startDate||denverToday(now),endDate=query.endDate||addDays(startDate,7);
   if (!validDate(startDate)||!validDate(endDate)||endDate<=startDate||Date.parse(endDate)-Date.parse(startDate)>14*86400000) throw fail('dispatch_openings_range_invalid','Choose a date range of up to 14 days. The end date is exclusive.');
@@ -35,7 +35,10 @@ function parseQuery(query,now) {
   const vehicleId=query.vehicleId || null;
   if (vehicleId!==null&&(typeof vehicleId!=='string'||!/^[A-Za-z0-9_-]{1,180}$/.test(vehicleId))) throw fail('dispatch_resource_invalid','Choose a valid vehicle.');
   const dates=[];for(let date=startDate;date<endDate;date=addDays(date,1))dates.push(date);
-  return {startDate,endDate,dates,durationMinutes:integer(query.durationMinutes,'Duration',15,1440,120),workdayStart,workdayEnd,employeeIds,vehicleId,travelBufferMinutes:integer(query.travelBufferMinutes,'Travel buffer',0,180,20)};
+  // Optional new-job location pads gaps with drive estimates; never required.
+  if(query.address!==undefined&&(typeof query.address!=='string'||!query.address.trim()||query.address.length>500)||query.zip!==undefined&&(typeof query.zip!=='string'||!/^\d{5}$/.test(query.zip))||query.address!==undefined&&query.zip!==undefined) throw fail('dispatch_openings_invalid','Enter either a job address of up to 500 characters or a 5-digit ZIP code, not both.');
+  const destination=query.address!==undefined?{address:query.address.trim()}:query.zip!==undefined?{zip:query.zip}:{};
+  return {startDate,endDate,dates,durationMinutes:integer(query.durationMinutes,'Duration',15,1440,120),workdayStart,workdayEnd,employeeIds,vehicleId,travelBufferMinutes:integer(query.travelBufferMinutes,'Travel buffer',0,180,20),...destination};
 }
 
 // A suggestion never reserves capacity. Detect changes across the paginated
@@ -68,8 +71,9 @@ function mergeIntervals(intervals,start,end) {
   return merged;
 }
 
-/** GET query documented in dispatch-contract.js. No mutation/provider request. */
-export async function dispatchOpenings(store,session,query={},now=new Date()) {
+/** GET query documented in dispatch-contract.js. No schedule mutation. Optional
+ * address/zip drive estimates follow dispatch-travel.js (off by default). */
+export async function dispatchOpenings(store,session,query={},now=new Date(),{travel=null}={}) {
   requireDispatcher(session);
   const input=parseQuery(query,now),data=await snapshot(store,input.dates),legacy=await legacyBlockedDays(store,input.dates);
   if (input.employeeIds.some(id=>!data.roster.some(person=>person.id===id))) throw fail('dispatch_employee_inactive','A selected employee is no longer active. Refresh the roster.');
@@ -95,6 +99,15 @@ export async function dispatchOpenings(store,session,query={},now=new Date()) {
     if(!validDate(row.date)||!validDate(endDate)||endDate<row.date)return true;
     return endDate>=addDays(input.startDate,-1)&&row.date<=input.endDate;
   }).map(row=>({row,interval:unavailable(row)?availabilityInterval(row):scheduleInterval(row)}));
+  const destination=input.address||input.zip||null,travelled=row=>!unavailable(row)&&row.type!=='blocked';
+  let estimate=()=>null;
+  if(destination&&travel?.enabled) {
+    const nearby=prepared.filter(({row,interval})=>interval&&travelled(row)).sort((a,b)=>a.interval.start-b.interval.start);
+    estimate=await travel.prefetch(nearby.filter(({row})=>String(row.address||'').trim()).flatMap(({row})=>[[destination,row],[row,destination]]));
+    const missing=nearby.filter(({row})=>!estimate(destination,row)||!estimate(row,destination)).length;
+    warnings.push({code:'travel_time_estimated',message:'Gaps also reserve the estimated drive between this job location and nearby assignments. The travel buffer is always the minimum.'});
+    if(missing)warnings.push({code:'travel_estimate_unavailable',count:missing,message:`${missing} nearby ${missing===1?'assignment has':'assignments have'} no drive estimate (unknown ZIP or address); the travel buffer is used.`});
+  } else if(destination)warnings.push({code:'travel_estimates_disabled',message:'Drive-time estimates are turned off. Gaps use the travel buffer only.'});
   const candidates=[],warningKeys=new Set(),earliest=Math.ceil(now.getTime()/60000)*60000;
   let total=0;
   const addWarning=(code,row,date)=>{
@@ -111,8 +124,9 @@ export async function dispatchOpenings(store,session,query={},now=new Date()) {
         if (scheduleRowsConflict(day,row,data.roster)) {spans.push(window);addWarning('invalid_schedule',row,date);}
         continue;
       }
-      const requested=Number(row.travelBufferMinutes),buffer=unavailable(row)||row.type==='blocked'?0:Math.max(input.travelBufferMinutes,Number.isFinite(requested)&&requested>0?requested:0)*60000;
-      spans.push({start:interval.start-buffer,end:interval.end+buffer});
+      const requested=Number(row.travelBufferMinutes),buffer=unavailable(row)||row.type==='blocked'?0:Math.max(input.travelBufferMinutes,Number.isFinite(requested)&&requested>0?requested:0);
+      const before=travelled(row)?Math.max(buffer,estimate(destination,row)?.minutes||0):buffer,after=travelled(row)?Math.max(buffer,estimate(row,destination)?.minutes||0):buffer;
+      spans.push({start:interval.start-before*60000,end:interval.end+after*60000});
     }
     const occupied=mergeIntervals(spans,window.start,window.end),gaps=[];
     let cursor=Math.max(window.start,earliest);

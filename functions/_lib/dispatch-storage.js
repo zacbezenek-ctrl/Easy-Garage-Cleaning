@@ -87,6 +87,14 @@ export function dispatchStorage(env, fetcher = firestoreFetch) {
       if (!response.ok) throw failure('dispatch_storage_unavailable', 'The dispatch record could not be loaded. Retry.');
       return decode(await response.json(),collection,id);
     },
+    async readMany(collection, ids) {
+      if (!ids.length) return [];
+      const response = await send(`${BASE}:batchGet`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ documents: ids.map(id => `${ROOT}/${collection}/${id}`) }) });
+      if (!response.ok) throw failure('dispatch_storage_unavailable', 'The dispatch records could not be loaded. Retry.');
+      const rows = await response.json();
+      if (!Array.isArray(rows)) throw failure('dispatch_storage_incomplete', 'Dispatch returned incomplete records. Retry.');
+      return rows.filter(row => row?.found).map(row => decode(row.found,collection));
+    },
     async commit(writes) {
       let response,transaction;
       const checks=writes.filter(write=>write.verify),mutations=writes.filter(write=>!write.verify);

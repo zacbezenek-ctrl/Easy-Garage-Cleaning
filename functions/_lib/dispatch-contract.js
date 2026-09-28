@@ -99,9 +99,14 @@
  *
  * GET /api/dispatch-openings?startDate=YYYY-MM-DD&endDate=exclusive&
  * durationMinutes=120&workdayStart=08:00&workdayEnd=17:00&employeeIds=id1,id2&
- * vehicleId=optional&travelBufferMinutes=20
+ * vehicleId=optional&travelBufferMinutes=20&address=optional|zip=optional
  * Manager only; at most14days, duration15..1440min, buffer0..180min. Explicit
  * active employee IDs required. Workdayend24:00 is allowed. Past times omitted.
+ * Optional job location for drive estimates: EITHER address (non-empty, <=500
+ * chars) OR zip (5 digits), never both (400 dispatch_openings_invalid). With
+ * EGC_DISPATCH_TRAVEL_ESTIMATES on, neighbouring work is padded by
+ * max(travel buffer, estimated drive); unknown locations keep the buffer and
+ * add a travel_estimate_unavailable warning. Off (default): buffer only.
  * => {ok,timeZone,startDate,endDate,asOf,coverage:{complete,consistent,mode,
  * revision,asOf},constraints:{...,workingAvailabilityConfirmed:false},
  * candidates:[{date,time,endDate,endTime,startAt,endAt,gapStartAt,gapEndAt,
@@ -110,7 +115,24 @@
  * gap; at most20 earliest candidates are returned. No working-hours availability
  * is inferred. A candidate is only a suggestion and MUST use ordinary dispatch
  * POST validation when booking. Snapshot consistency covers guarded dispatch
- * writes and day locks, not independent provider databases or route estimates.
+ * writes and day locks, not independent provider databases.
+ *
+ * GET /api/dispatch-travel?date=YYYY-MM-DD&employeeId=optional (manager only;
+ * duplicate/unknown/invalid params 400 dispatch_travel_invalid; storage
+ * failure 503 dispatch_travel_unavailable; no-store, nosniff; read-only)
+ * => {ok,timeZone,date,asOf,travel:{mode,requestedMode,blockTravelShort},
+ * coverage:{complete,asOf},employees:[{employeeId,name,active,complete,
+ * jobs:[{id,type,customer,title,address,date,time,endDate,endTime,startAt,endAt,
+ * status,travelBufferMinutes}],legs:[{fromJobId,toJobId,gapMinutes,
+ * bufferMinutes,estimatedMinutes,estimateSource,requiredMinutes,shortByMinutes,
+ * status:'ok'|'short'|'same_property'|'overlap'}],totals:{stops,legs,shortLegs,
+ * estimatedDriveMinutes,unestimatedLegs}}],warnings}. legs[i] joins jobs[i] and
+ * jobs[i+1]; no phone, email, money or pay fields. Estimates come from
+ * functions/_lib/dispatch-travel.js (EGC_DISPATCH_TRAVEL_ESTIMATES off|offline|
+ * google). travel_buffer_short warnings carry bufferMinutes, estimatedMinutes,
+ * estimateSource and blocking; with EGC_DISPATCH_BLOCK_TRAVEL_SHORT=true a save
+ * that moves a stop into a gap shorter than the estimated drive is a 409
+ * dispatch_conflict (manual-buffer shortfalls stay warnings).
  */
 export const DISPATCH_TIME_ZONE = 'America/Denver';
 export const DISPATCH_ACTIONS = Object.freeze(['schedule.create','schedule.update','schedule.cancel','schedule.restore','crew.save','vehicle.save','availability.save']);

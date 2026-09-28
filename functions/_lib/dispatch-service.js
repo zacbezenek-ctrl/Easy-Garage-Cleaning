@@ -109,7 +109,7 @@ function scheduleInspection(jobs,resources,roster) {
     const person=resolveMember(block.employeeId||block.employee,roster,true);
     if(person)append(availability,person,{block,person,interval:availabilityInterval(block)});
   }
-  return {crew,interval,
+  return {crew,interval,travel:()=>null,travelWindow:0,blockTravelShort:false,
     neighbors(job) {
       const ids=crew(job);
       if(job.type==='blocked'||job.assignmentKnown===false||!ids.length&&!Array.isArray(job.assignedCrew))return active;
@@ -122,10 +122,37 @@ function scheduleInspection(jobs,resources,roster) {
   };
 }
 
-function potentiallyNear(left,right) {
+// Estimates are resolved before the synchronous checks. A missing estimate
+// keeps the manual buffer; an estimate can only lengthen the required gap.
+// Only the nearest earlier and later stop per shared employee or vehicle is
+// estimated, so the lookup budget goes to consecutive legs.
+async function withTravel(inspection,targets,roster,travel) {
+  if(!travel?.enabled)return inspection;
+  const pairs=[];
+  for(const job of targets) {
+    const interval=inspection.interval(job),nearest=new Map();
+    if(!activeJob(job)||!interval||job.type==='blocked')continue;
+    for(const other of inspection.neighbors(job)) {
+      const otherInterval=other.id!==job.id&&other.type!=='blocked'&&inspection.interval(other);
+      if(!otherInterval||overlaps(interval,otherInterval)||!sharedScheduleResources(job,other,roster))continue;
+      const forward=interval.end<=otherInterval.start,gap=forward?otherInterval.start-interval.end:interval.start-otherInterval.end;
+      if(gap/60000>=travel.windowMinutes)continue;
+      const keys=inspection.crew(job).filter(id=>inspection.crew(other).includes(id)).map(id=>['employee',id]);
+      if(job.vehicleId&&job.vehicleId===other.vehicleId)keys.push(['vehicle',job.vehicleId]);
+      for(const key of keys.length?keys:[['shared']]) {
+        const slot=JSON.stringify([forward,...key]);
+        if(!nearest.has(slot)||gap<nearest.get(slot).gap)nearest.set(slot,{gap,pair:forward?[job,other]:[other,job]});
+      }
+    }
+    for(const {pair} of nearest.values())pairs.push(pair);
+  }
+  return Object.assign(inspection,{travel:await travel.prefetch(pairs),travelWindow:travel.windowMinutes,blockTravelShort:travel.blockShort===true});
+}
+
+function potentiallyNear(left,right,window=0) {
   const leftEnd=left.endDate||left.date,rightEnd=right.endDate||right.date;
   if(!validDate(left.date)||!validDate(leftEnd)||!validDate(right.date)||!validDate(rightEnd)||leftEnd<left.date||rightEnd<right.date)return true;
-  const buffer=Math.max(Number(left.travelBufferMinutes)||0,Number(right.travelBufferMinutes)||0);
+  const buffer=Math.max(Number(left.travelBufferMinutes)||0,Number(right.travelBufferMinutes)||0,window);
   const days=Math.ceil(buffer/1440);
   return rightEnd>=addDays(left.date,-days)&&right.date<=addDays(leftEnd,days);
 }
@@ -151,7 +178,7 @@ function jobWarnings(job, jobs, resources, roster, inspection=scheduleInspection
   }
   if (!interval) return warnings;
   for (const other of inspection.neighbors(job)) {
-    if (other.id === job.id || !potentiallyNear(job,other)) continue;
+    if (other.id === job.id || !potentiallyNear(job,other,inspection.travelWindow)) continue;
     const shared = crew.filter(id => inspection.crew(other).includes(id));
     const vehicle = job.vehicleId && job.vehicleId === other.vehicleId;
     if (!sharedScheduleResources(job,other,roster)) continue;
@@ -168,7 +195,9 @@ function jobWarnings(job, jobs, resources, roster, inspection=scheduleInspection
       const later = earlier === job ? other : job;
       const gap = interval.end <= otherInterval.start ? (otherInterval.start - interval.end) / 60000 : (interval.start - otherInterval.end) / 60000;
       const buffer = Math.max(Number(earlier.travelBufferMinutes) || 0, Number(later.travelBufferMinutes) || 0);
-      if (buffer && gap < buffer && assignmentKey(earlier.address) !== assignmentKey(later.address)) add('travel_buffer_short', `Only ${gap} minutes between jobs; ${buffer} minutes were requested for travel.`, { otherJobId: other.id, gapMinutes: gap, requiredMinutes: buffer });
+      const estimate = inspection.travel(earlier,later), required = Math.max(buffer, estimate?.minutes || 0);
+      if (required && gap < required && estimate?.source !== 'same_property' && assignmentKey(earlier.address) !== assignmentKey(later.address)) add('travel_buffer_short', estimate?.minutes > buffer ? `Only ${gap} minutes between jobs; about ${estimate.minutes} minutes of driving is estimated.` : `Only ${gap} minutes between jobs; ${buffer} minutes were requested for travel.`, { otherJobId: other.id, gapMinutes: gap, requiredMinutes: required,
+        ...(estimate ? { bufferMinutes: buffer, estimatedMinutes: estimate.minutes, estimateSource: estimate.source, ...(inspection.blockTravelShort && gap < estimate.minutes ? { blocking: true } : {}) } : {}) });
     }
   }
   for (const {block,person,interval:blockInterval} of inspection.availability(job)) {
@@ -177,13 +206,14 @@ function jobWarnings(job, jobs, resources, roster, inspection=scheduleInspection
   return warnings;
 }
 
-export async function dispatchOverview(store, session, query = {}, now = new Date()) {
+export async function dispatchOverview(store, session, query = {}, now = new Date(), options = {}) {
   requireDispatcher(session);
   if (query.view === 'job') {
     if (!safeId(query.jobId)) throw fail('dispatch_job_not_found','Choose a valid job.',404);
     const [job,jobs,resources,roster,settings] = await Promise.all([store.read('jobs',query.jobId),store.jobs(),store.resources(),store.roster(),store.settings ? store.settings() : {}]);
     if (!visibleJob(job)) throw fail('dispatch_job_not_found','This operational job could not be found.',404);
-    return {ok:true,job:projectDispatchJob(job,roster,new Date(now).toISOString()),roster,crews:resources.filter(row=>row.recordType==='crew'),vehicles:resources.filter(row=>row.recordType==='vehicle'),warnings:jobWarnings(job,jobs,resources,roster),arrivalDefaults:arrivalDefaults(settings)};
+    const inspection=await withTravel(scheduleInspection(jobs,resources,roster),[job],roster,options.travel);
+    return {ok:true,job:projectDispatchJob(job,roster,new Date(now).toISOString()),roster,crews:resources.filter(row=>row.recordType==='crew'),vehicles:resources.filter(row=>row.recordType==='vehicle'),warnings:jobWarnings(job,jobs,resources,roster,inspection),arrivalDefaults:arrivalDefaults(settings)};
   }
   if (query.view === 'customers') {
     const needle = text(query.q || '', 'Search', 200).toLowerCase(), digits = needle.replace(/\D/g, '');
@@ -197,7 +227,7 @@ export async function dispatchOverview(store, session, query = {}, now = new Dat
   const includeUnscheduled = query.includeUnscheduled === true || query.includeUnscheduled === 'true';
   const selected = jobs.filter(visibleJob).filter(job => !job.date ? includeUnscheduled : !validDate(job.date) || job.endDate && (!validDate(job.endDate) || job.endDate < job.date) || job.date < endDate && (job.endDate || job.date) >= startDate);
   selected.sort((a,b) => String(a.date || '9999').localeCompare(String(b.date || '9999')) || String(a.time || '').localeCompare(String(b.time || '')) || a.id.localeCompare(b.id));
-  const inspection=scheduleInspection(jobs,resources,roster);
+  const inspection=await withTravel(scheduleInspection(jobs,resources,roster),selected,roster,options.travel);
   return { ok: true, timeZone: DISPATCH_TIME_ZONE, startDate, endDate, jobs: selected.map(job=>projectDispatchJob(job,roster,new Date(now).toISOString())), roster,
     crews: resources.filter(row => row.recordType === 'crew'), vehicles: resources.filter(row => row.recordType === 'vehicle'),
     availability: resources.filter(row => row.recordType === 'availability').concat(jobs.filter(row => row.type === 'availability' || row.recordType === 'crew_availability').map(row => ({ ...row, employeeId: resolveMember(row.employee,roster,true) || row.employee }))).filter(row => row.date < endDate && (row.endDate || row.date) >= startDate),
@@ -267,7 +297,7 @@ function schedulePatch(changes, current, resources, roster, now, actor) {
 
 function conflictCheck(next, jobs, resources, roster,inspection) {
   if (!activeJob(next) || !scheduleInterval(next)) return;
-  const conflicts = jobWarnings(next,jobs,resources,roster,inspection).filter(warning => ['schedule_overlap','employee_unavailable','unverifiable_assignment'].includes(warning.code));
+  const conflicts = jobWarnings(next,jobs,resources,roster,inspection).filter(warning => ['schedule_overlap','employee_unavailable','unverifiable_assignment'].includes(warning.code) || warning.blocking === true);
   if (conflicts.length) throw fail('dispatch_conflict','This change conflicts with scheduled work or employee availability. Choose a different time, crew, or vehicle.',409,{ conflicts });
 }
 
@@ -275,21 +305,21 @@ function auditState(job) {
   return Object.fromEntries(['date','time','endDate','endTime','status','pipelineStatus','assignedCrew','assignedTo','crewId','crewLead','vehicleId','jobInstructions','operationalScope','accessInstructions','customerInstructions','opsNotes','requiredEquipment','materials','crewNeeded','travelBufferMinutes','title','address','serviceType','name','memberIds','leadId','notes','employeeId','allDay','reason','recurrence','reminderDays','notify','shiftPickupEnabled','openShift','sourceTemplateJobId','recurrenceParentId','cancellationReason','arrivalWindowStart','arrivalWindowEnd','arrivalWindow'].filter(key => job?.[key] !== undefined).map(key => [key,job[key]]));
 }
 
-export async function mutateDispatch(store, session, input, now = new Date().toISOString()) {
+export async function mutateDispatch(store, session, input, now = new Date().toISOString(), options = {}) {
   requireDispatcher(session);
-  try { return await executeDispatch(store,session,input,now); }
+  try { return await executeDispatch(store,session,input,now,options); }
   catch (error) {
     // Another copy of the same request may commit between our initial receipt
     // read and any later validation read, not merely during the final commit.
     if (!['dispatch_changed_since_operation','dispatch_idempotency_conflict'].includes(error.code) && /^[a-f0-9-]{36}$/i.test(input?.requestId || '')) {
       const receipt = await store.read('dispatchOperations',input.requestId.toLowerCase()).catch(() => null);
-      if (receipt?.fingerprint === await digest({actor:session.user,input})) return executeDispatch(store,session,input,now);
+      if (receipt?.fingerprint === await digest({actor:session.user,input})) return executeDispatch(store,session,input,now,options);
     }
     throw error;
   }
 }
 
-async function executeDispatch(store, session, input, now) {
+async function executeDispatch(store, session, input, now, options = {}) {
   requireDispatcher(session);
   if (!isObject(input) || !DISPATCH_ACTIONS.includes(input.action) || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(input.requestId || '')) throw fail('dispatch_request_invalid','Use a supported dispatch action with a unique request ID.');
   onlyKeys(input,['action','requestId','customerId','kind','sourceWalkthroughId','sourceTemplateJobId','sourceJobId','jobId','id','expectedRevision','changes','cancellationReason']);
@@ -434,7 +464,9 @@ async function executeDispatch(store, session, input, now) {
     // Read final conflict evidence AFTER acquiring each affected day revision;
     // either we see an older sender's job or its commit invalidates our lock.
     const finalJobs = days.length ? await store.jobs() : jobs;
-    const inspection=scheduleInspection(finalJobs,resources,roster);
+    const inspection=await withTravel(scheduleInspection(finalJobs,resources,roster),[next],roster,options.travel);
+    // An existing drive shortfall blocks only a change that moves this stop.
+    if(!create&&!restore&&!['date','time','endDate','endTime','assignedCrew','crewId','vehicleId','address','propertyId'].some(key=>key in patch&&JSON.stringify(patch[key])!==JSON.stringify(current?.[key])))inspection.blockTravelShort=false;
     conflictCheck(next,finalJobs,resources,roster,inspection);
     warnings = jobWarnings(next,finalJobs,resources,roster,inspection);
     const placed = create || restore || ['date','time','endDate','endTime'].some(key => key in patch && patch[key] !== current?.[key]);

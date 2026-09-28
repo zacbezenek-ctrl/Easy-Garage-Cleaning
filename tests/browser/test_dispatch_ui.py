@@ -17,6 +17,17 @@ def job(**changes):
     result.update(changes)
     return result
 
+def stop(id, time, end, customer, address=''):
+    return {'id': id, 'type': 'job', 'customer': customer, 'title': '', 'address': address, 'date': DAY, 'time': time, 'endDate': DAY, 'endTime': end, 'startAt': DAY+'T'+time+':00-06:00', 'endAt': DAY+'T'+end+':00-06:00', 'status': 'scheduled', 'travelBufferMinutes': 20}
+TRAVEL = {'ok': True, 'timeZone': 'America/Denver', 'date': DAY, 'asOf': '2026-09-22T14:00:00Z', 'travel': {'mode': 'offline', 'requestedMode': 'offline', 'blockTravelShort': False}, 'coverage': {'complete': True, 'asOf': '2026-09-22T14:00:00Z'},
+          'employees': [{'employeeId': 'crew.one', 'name': 'Crew One', 'active': True, 'complete': True,
+                         'jobs': [stop('job-1', '08:00', '10:00', CUSTOMER['name'], '123 Synthetic Way, Fort Collins, CO 80525'), stop('job-2', '10:15', '11:00', '<img src=x onerror="window.injected=true">'), stop('job-3', '12:00', '13:00', 'Second Synthetic Garage', '200 Synthetic Ave, Loveland, CO 80537')],
+                         'legs': [{'fromJobId': 'job-1', 'toJobId': 'job-2', 'gapMinutes': 15, 'bufferMinutes': 20, 'estimatedMinutes': 30, 'estimateSource': 'offline_zip', 'requiredMinutes': 30, 'shortByMinutes': 15, 'status': 'short'},
+                                  {'fromJobId': 'job-2', 'toJobId': 'job-3', 'gapMinutes': 60, 'bufferMinutes': 20, 'estimatedMinutes': None, 'estimateSource': None, 'requiredMinutes': 20, 'shortByMinutes': 0, 'status': 'ok'}],
+                         'totals': {'stops': 3, 'legs': 2, 'shortLegs': 1, 'estimatedDriveMinutes': 30, 'unestimatedLegs': 1}},
+                        {'employeeId': 'lead.one', 'name': 'Lead One', 'active': True, 'complete': False, 'jobs': [], 'legs': [], 'totals': {'stops': 0, 'legs': 0, 'shortLegs': 0, 'estimatedDriveMinutes': 0, 'unestimatedLegs': 0}}],
+          'warnings': [{'code': 'travel_estimate_unavailable', 'count': 1, 'message': '1 leg has no drive estimate (unknown ZIP or address). The manual travel buffer applies.'}]}
+
 class Handler(SimpleHTTPRequestHandler):
     def log_message(self, *args): pass
     def do_GET(self):
@@ -47,6 +58,7 @@ class DispatchBrowserTests(unittest.TestCase):
         self.opening_queries = []; self.opening_failure = None; self.opening_candidates = [{'date': DAY, 'time': '13:00', 'endDate': DAY, 'endTime': '15:00', 'startAt': DAY+'T19:00:00Z', 'endAt': DAY+'T21:00:00Z', 'gapMinutes': 240}]
         self.search_queries = []; self.search_results = []; self.search_failure = None; self.hang_once = False; self.hung_route = None
         self.arrival_defaults = {'enabled': False, 'minutes': 60}
+        self.travel_queries = []; self.travel_failure = None
         self.page.on('pageerror', lambda e: self.errors.append(str(e)))
         self.page.on('dialog', lambda dialog: dialog.accept())
         self.page.route('**/*', self.route)
@@ -60,6 +72,10 @@ class DispatchBrowserTests(unittest.TestCase):
             self.search_queries.append(parse_qs(parsed.query))
             if self.search_failure: route.fulfill(status=503, content_type='application/json', body=json.dumps({'ok': False, 'error': self.search_failure})); return
             route.fulfill(status=200, content_type='application/json', body=json.dumps({'ok': True, 'coverage': {'complete': True}, 'results': self.search_results, 'total': len(self.search_results), 'truncated': False})); return
+        if parsed.path == '/api/dispatch-travel':
+            params = parse_qs(parsed.query); self.travel_queries.append(params)
+            if self.travel_failure: route.fulfill(status=503, content_type='application/json', body=json.dumps({'ok': False, 'code': 'dispatch_travel_unavailable', 'error': self.travel_failure})); return
+            route.fulfill(status=200, content_type='application/json', body=json.dumps({**copy.deepcopy(TRAVEL), 'date': params.get('date', [DAY])[0]})); return
         if parsed.path == '/api/dispatch-openings':
             self.opening_queries.append(parse_qs(parsed.query))
             if self.opening_failure: route.fulfill(status=503, content_type='application/json', body=json.dumps({'ok': False, 'error': self.opening_failure})); return
@@ -199,6 +215,30 @@ class DispatchBrowserTests(unittest.TestCase):
     def test_openings_empty_and_mobile_layout(self):
         self.open(); self.page.set_viewport_size({'width': 320, 'height': 850}); self.page.get_by_role('button', name='Find opening', exact=True).click(); self.page.get_by_label('Crew Two', exact=True).check(); self.opening_candidates = []; self.submit('Check openings'); expect(self.page.get_by_role('heading', name='No matching openings', exact=True)).to_be_visible()
         self.assertLessEqual(self.page.evaluate('document.documentElement.scrollWidth'), 321); self.assertLessEqual(self.page.get_by_role('dialog').evaluate('(el)=>el.scrollWidth'), self.page.get_by_role('dialog').evaluate('(el)=>el.clientWidth')+1)
+    def test_openings_send_an_optional_job_zip_or_address_for_drive_estimates(self):
+        self.open(); self.page.get_by_role('button', name='Find opening', exact=True).click(); self.page.get_by_label('Crew One', exact=True).check(); self.submit('Check openings'); expect(self.page.get_by_role('button', name='Use this opening', exact=True)).to_be_visible()
+        self.assertNotIn('zip', self.opening_queries[-1]); self.assertNotIn('address', self.opening_queries[-1])
+        place = self.page.get_by_role('textbox', name='New job ZIP or address (optional)', exact=True); self.assertEqual(place.evaluate('el=>el.type'), 'text')
+        place.fill('80525'); expect(self.page.get_by_role('button', name='Use this opening', exact=True)).to_have_count(0); self.submit('Check openings'); expect(self.page.get_by_role('button', name='Use this opening', exact=True)).to_be_visible()
+        self.assertEqual(self.opening_queries[-1]['zip'], ['80525']); self.assertNotIn('address', self.opening_queries[-1])
+        place.fill('  200 Synthetic Ave, Loveland, CO 80537 '); self.submit('Check openings'); expect(self.page.get_by_role('button', name='Use this opening', exact=True)).to_be_visible()
+        self.assertEqual(self.opening_queries[-1]['address'], ['200 Synthetic Ave, Loveland, CO 80537']); self.assertNotIn('zip', self.opening_queries[-1]); self.assertEqual(self.calls, [])
+    def test_drive_times_show_ordered_legs_without_writes_and_fit_phones(self):
+        self.open(); self.page.set_viewport_size({'width': 375, 'height': 812}); self.page.get_by_role('button', name='Drive times', exact=True).click()
+        dialog = self.page.get_by_role('dialog'); expect(dialog).to_have_attribute('aria-label', 'Drive times'); expect(dialog).to_contain_text('Crew One'); self.assertEqual(self.travel_queries[-1]['date'], [DAY])
+        expect(dialog).to_contain_text('3 stops · about 30 min estimated driving · 1 tight gap')
+        expect(dialog.locator('.dp-warning')).to_have_text('15 min gap · about 30 min drive (ZIP estimate) · buffer 20 min · short by 15 min')
+        expect(dialog.locator('p.dp-muted').filter(has_text='60 min gap')).to_have_text('60 min gap · no drive estimate · buffer 20 min · enough time')
+        expect(dialog.get_by_text('Address needed', exact=True)).to_be_visible(); expect(dialog.get_by_role('alert')).to_contain_text('route is incomplete'); expect(dialog).to_contain_text('1 leg has no drive estimate')
+        self.assertEqual(self.page.locator('img').count(), 0); self.assertIsNone(self.page.evaluate('window.injected'))
+        for width in [375, 320]:
+            self.page.set_viewport_size({'width': width, 'height': 812}); self.assertLessEqual(self.page.evaluate('document.documentElement.scrollWidth'), width+1); self.assertLessEqual(dialog.evaluate('(el)=>el.scrollWidth'), dialog.evaluate('(el)=>el.clientWidth')+1)
+            for name in ['Back', 'Show drive times']: self.assertGreaterEqual(dialog.get_by_role('button', name=name, exact=True).bounding_box()['height'], 44)
+        self.assertEqual(self.page.get_by_label('Route date', exact=True).evaluate('el=>parseFloat(getComputedStyle(el).fontSize)'), 16)
+        self.page.get_by_label('Route date', exact=True).fill('2026-09-23'); expect(dialog.locator('.dp-search-result')).to_have_count(0); self.submit('Show drive times')
+        expect(dialog.get_by_role('heading', name='Wednesday, September 23', exact=True)).to_be_visible(); self.assertEqual(self.travel_queries[-1]['date'], ['2026-09-23'])
+        self.travel_failure = 'Drive times are unavailable. Retry.'; self.submit('Show drive times'); expect(dialog.get_by_role('alert')).to_contain_text('Drive times are unavailable'); expect(dialog.locator('.dp-search-result')).to_have_count(0)
+        self.page.get_by_role('button', name='Back', exact=True).click(); self.closed(); self.assertEqual(self.calls, [])
     def test_attention_counts_jobs_and_includes_completed_handoff_failures(self):
         self.jobs[0].update({'activity': 'delayed', 'activityReason': 'Truck repair is delaying departure.', 'attention': {'status': 'open', 'reason': 'Customer requested a manager callback.'}})
         self.jobs.append(job(id='done-job', customer='Completed customer', status='completed', activity='completed', completionSync={'status': 'blocked', 'message': 'CRM completion configuration needs review.'}))

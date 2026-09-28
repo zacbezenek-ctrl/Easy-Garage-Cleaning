@@ -110,6 +110,10 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   performance/accessibility >= 0.9, private artifact + job summary; warn-only until repo variable `LIGHTHOUSE_ENFORCE=true`)
   over a local server (`tests/lighthouse/serve.mjs`) with synthetic fixtures for portal, business hub and crew Today, plus
   a render check (`test_lighthouse_pages_ui.py`). Gap: local baseline has 5 of 12 pages below 90 on performance.
+- **P1-07** Drive-time estimates (`EGC_DISPATCH_TRAVEL_ESTIMATES` off by default; offline Northern Colorado ZIP table, or
+  Google Distance Matrix with a hashed 30-day cache and 25-call budget): dispatch warnings and openings (optional address
+  or zip) use max(buffer, estimate), manager-only `GET /api/dispatch-travel` + Drive times dialog, and
+  `EGC_DISPATCH_BLOCK_TRAVEL_SHORT` blocks only saves that move a stop. Gaps: crew self-assignment ignores estimates; no Routes API.
 
 ## In progress
 
@@ -123,7 +127,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | P1-03 | Weekly timesheet + Colorado/federal overtime engine, server payroll CSV, job labor costing | building |
 | P1-04 | Arrival windows in dispatch, field and portal | building |
 | P1-05 | Recurring plans: server record, generator, idempotent extendHorizon, API, UI | building |
-| P1-07 | Travel-time estimates (offline ZIP-centroid estimator; optional Google; default off) | building |
+| P1-07 | Travel-time estimates (offline ZIP-centroid estimator; optional Google; default off) | merged (ae810dd) |
 | LI-CORE | One canonical line-item model (quotes, invoices, portal, catalog, duration) + money core + duration engine | merged (08b5ec8) |
 | M2 | Crew card payments recorded via Stripe webhook + Garage Guard membership linkage | merged (e948368) |
 | M15 | Retire dead legacy quote UIs | building |

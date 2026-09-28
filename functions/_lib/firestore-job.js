@@ -31,6 +31,7 @@ export function encodeFirestoreValue(value) {
   if (typeof value === 'string') return { stringValue: value };
   if (typeof value === 'boolean') return { booleanValue: value };
   if (typeof value === 'number') return Number.isInteger(value) ? { integerValue: String(value) } : { doubleValue: value };
+  if (value instanceof Date) return Number.isFinite(value.getTime()) ? { timestampValue: value.toISOString() } : { nullValue: null };
   if (Array.isArray(value)) return { arrayValue: { values: value.map(encodeFirestoreValue) } };
   if (typeof value === 'object') return { mapValue: { fields: encodeFirestoreFields(value) } };
   return { stringValue: String(value) };

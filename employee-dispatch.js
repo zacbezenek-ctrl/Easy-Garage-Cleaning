@@ -201,6 +201,7 @@ function render() {
   if(!S.root||S.modal)return;
   const search=h('input',{type:'search',value:S.query,placeholder:'Filter this date range',oninput:e=>setFilter('query',e.target.value),'aria-label':'Search jobs'});
   S.root.replaceChildren(h('header',{class:'dp-header'},h('div',{},h('span',{class:'dp-eyebrow'},'EGC OPERATIONS'),h('h1',{},'Dispatch'),h('p',{},'Schedule, assign and run the day.')),h('div',{class:'dp-header-actions'},btn('Search all jobs',openSearch,'',{disabled:!S.data}),btn('Find opening',openOpenings,'',{disabled:!S.data}),btn('Block time',()=>openBlock(),'',{disabled:!S.data}),btn('Crews & vehicles',()=>openResources()),btn('Refresh',()=>load(),'',{disabled:S.loading}),btn('Create job',()=>openJob(),'primary',{disabled:!S.data}))));
+  S.root.querySelector('.dp-header-actions').insertBefore(btn('Drive times',openTravel,'',{disabled:!S.data}),S.root.querySelector('.dp-header-actions .primary'));
   const modes=h('div',{class:'dp-modes',role:'group','aria-label':'Calendar view'});
   for(const [id,label]of [['day','Day'],['week','Week'],['crew','Crew'],['jobs','Jobs']])modes.append(btn(label,()=>{S.view=id;void load();},S.view===id?'selected':'',{'aria-pressed':S.view===id?'true':'false'}));
   S.root.append(h('div',{class:'dp-controls'},h('div',{class:'dp-date-controls'},btn('←',()=>move(-1),'',{'aria-label':'Previous period'}),labeled('Schedule date',h('input',{type:'date',value:S.date,onchange:e=>setDate(e.target.value)})),btn('→',()=>move(1),'',{'aria-label':'Next period'}),h('div',{class:'dp-date-shortcuts'},btn('Today',()=>setDate(today())),btn('Tomorrow',()=>setDate(addDays(today(),1))))),modes));
@@ -307,6 +308,7 @@ function openOpenings() {
   const last=field(model,'lastDate','Search through',addDays(S.date,6),'date',{required:true});
   const duration=field(model,'durationMinutes','Job duration (minutes)',120,'number',{min:15,max:1440,step:15,required:true});
   const buffer=field(model,'travelBufferMinutes','Travel buffer (minutes)',20,'number',{min:0,max:180,step:5,required:true});
+  const destination=field(model,'destination','New job ZIP or address (optional)','','text',{maxLength:500,autocomplete:'off',placeholder:'80525 or street address'});
   const begins=field(model,'workdayStart','Workday starts','08:00','time',{required:true});
   const ends=field(model,'workdayEnd','Workday ends','17:00','time',{required:true});
   const checks=new Map(),members=h('fieldset',{class:'dp-wide'},h('legend',{},'Employees needed together'));
@@ -322,6 +324,7 @@ function openOpenings() {
     const employeeIds=[...checks].filter(([,input])=>input.checked).map(([id])=>id);
     if(!employeeIds.length){model.status.replaceChildren(notice('Choose the employees who need an opening together.','error'));return;}
     const query={startDate:start.value,endDate:addDays(last.value,1),durationMinutes:duration.value,workdayStart:begins.value,workdayEnd:ends.value,employeeIds:employeeIds.join(','),travelBufferMinutes:buffer.value,...(truck.value?{vehicleId:truck.value}:{})};
+    const place=destination.value.trim();if(place)query[/^\d{5}$/.test(place)?'zip':'address']=place;
     formBusy(model,true);results.replaceChildren();model.status.replaceChildren(notice('Checking recorded capacity…'));
     try{
       const {response,data}=await requestJSON('/api/dispatch-openings?'+new URLSearchParams(query));
@@ -341,6 +344,48 @@ function openOpenings() {
     }catch(error){if(S.modal===model){results.replaceChildren();model.status.replaceChildren(notice(errorText(error),'error'));if(error.status===401)model.status.append(signInLink());}}
     finally{if(S.modal===model)formBusy(model,false);}
   });
+}
+const legSources={offline_zip:'ZIP estimate',google:'Google estimate',same_property:'same property'};
+function legText(leg) {
+  if(leg.status==='overlap')return 'Overlaps the next stop by '+leg.shortByMinutes+' min. Review this schedule.';
+  if(leg.status==='same_property')return leg.gapMinutes+' min gap · same property, no drive';
+  return [leg.gapMinutes+' min gap',Number.isInteger(leg.estimatedMinutes)?'about '+leg.estimatedMinutes+' min drive ('+(legSources[leg.estimateSource]||'estimate')+')':'no drive estimate','buffer '+leg.bufferMinutes+' min',leg.status==='short'?'short by '+leg.shortByMinutes+' min':'enough time'].join(' · ');
+}
+function travelRoutes(data) {
+  if(!data.employees.length)return [h('p',{},'No assigned work with valid times on this date.')];
+  return data.employees.map(route=>{
+    const stops=h('div',{class:'dp-resource-list'});
+    route.jobs.forEach((stop,index)=>{
+      stops.append(h('article',{},h('div',{},h('strong',{},clock(stop.time)+' – '+clock(stop.endTime)+' · '+(stop.customer||stop.title||'Job')),stop.address?h('small',{},stop.address):h('small',{class:'dp-missing'},'Address needed'))));
+      const leg=route.legs[index];
+      if(leg&&leg.fromJobId===stop.id)stops.append(h('p',{class:['short','overlap'].includes(leg.status)?'dp-warning':'dp-muted'},legText(leg)));
+    });
+    const totals=route.totals||{};
+    return h('section',{class:'dp-search-result'},h('h3',{},route.name||person(route.employeeId)),h('p',{class:'dp-muted'},route.jobs.length+' '+(route.jobs.length===1?'stop':'stops')+(totals.estimatedDriveMinutes?' · about '+totals.estimatedDriveMinutes+' min estimated driving':'')+(totals.shortLegs?' · '+totals.shortLegs+' tight '+(totals.shortLegs===1?'gap':'gaps'):'')),route.complete===false?notice('An assignment for this employee has invalid times, so this route is incomplete.','error'):null,stops);
+  });
+}
+function openTravel() {
+  if(!S.data)return;
+  const model=modal('Drive times','Each employee\'s stops in order, with the gap and estimated drive between jobs. Estimates never shorten a job\'s travel buffer.');if(!model)return;
+  const day=field(model,'travelDate','Route date',S.date,'date',{required:true});
+  const results=h('div',{class:'dp-search-results dp-wide','aria-live':'polite'});model.fields.append(results);
+  model.footer.append(btn('Back',model.close),h('button',{type:'submit',class:'dp-btn primary'},'Show drive times'));
+  day.addEventListener('input',()=>results.replaceChildren());
+  const show=async()=>{
+    if(S.pending||!/^\d{4}-\d{2}-\d{2}$/.test(day.value))return;
+    formBusy(model,true);model.status.replaceChildren();results.replaceChildren(h('p',{class:'dp-loading',role:'status'},'Loading drive times…'));
+    try{
+      const {response,data}=await requestJSON('/api/dispatch-travel?'+new URLSearchParams({date:day.value}));
+      if(!response.ok||data.ok!==true)throw Object.assign(new Error(data.error||'Drive times could not be verified. Retry.'),{status:response.ok?503:response.status,code:data.code});
+      if(data.coverage?.complete!==true||data.date!==day.value||!Array.isArray(data.employees)||!Array.isArray(data.warnings)||data.employees.some(row=>!Array.isArray(row?.jobs)||!Array.isArray(row?.legs)))throw new Error('The drive-time response was incomplete. Retry.');
+      if(S.modal!==model)return;
+      model.status.replaceChildren(...data.warnings.map(warning=>notice(warning.message||words(warning.code))));
+      results.replaceChildren(h('h3',{},dateText(data.date)),...travelRoutes(data));
+    }catch(error){if(S.modal===model){results.replaceChildren();model.status.replaceChildren(notice(errorText(error),'error'));if(error.status===401)model.status.append(signInLink());}}
+    finally{if(S.modal===model)formBusy(model,false);}
+  };
+  model.form.addEventListener('submit',event=>{event.preventDefault();void show();});
+  void show();
 }
 function openBlock(job=null,options={}) {
   if(!S.data)return;
