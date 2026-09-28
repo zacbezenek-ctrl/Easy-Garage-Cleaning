@@ -27,7 +27,7 @@ class BrowserTests(unittest.TestCase):
     def tearDownClass(cls): cls.browser.close();cls.pw.stop();cls.server.shutdown();cls.server.server_close()
     def setUp(self):
         self.context=self.browser.new_context(viewport={'width':1360,'height':1000});self.page=self.context.new_page()
-        self.items=[task()];self.calls=[];self.enabled=True;self.fail_once=False;self.stale=False;self.errors=[];self.calendar_available=False
+        self.items=[task()];self.calls=[];self.enabled=True;self.fail_once=False;self.stale=False;self.errors=[];self.calendar_available=False;self.send_available=False;self.send_errors=[];self.send_results=[];self.started=set()
         self.sold_revenue={'valueCents':None,'knownSubtotalCents':0,'unknownOccurrenceCount':1,'unknownValueCount':1,'missingValue':['confirmed-undated-sale'],'coverageIncomplete':True,'qualification':'Confirmed outcome has no verified occurrence date.','unknownOccurrenceEvents':[{'eventId':'confirmed-undated-sale','contactId':'synthetic-contact','valueCents':None,'currency':None}]}
         self.collected_revenue={'valueCents':None,'knownSubtotalCents':13900,'unknownOccurrenceCount':0,'unknownValueCount':0,'missingValue':[],'coverageIncomplete':True,'qualification':'Payment history is incomplete; the dated subtotal is not a complete total.','unknownOccurrenceEvents':[]}
         self.page.on('pageerror',lambda e:self.errors.append(str(e)))
@@ -52,13 +52,25 @@ class BrowserTests(unittest.TestCase):
             if c['view']=='ownerless':rows=[t for t in rows if not t['assignedUserId']]
             send({'ok':True,'items':rows,'total':len(rows),'nextOffset':None,'coverage':{'registeredTasks':'complete','inferredCommitments':'not_complete'}})
         elif name=='task.get':
-            t=next(t for t in self.items if t['id']==c['taskId']);send({'ok':True,'task':t,'previewHash':'a'*64,'effectiveApproval':t['approvalStatus'],'history':[],'approvals':[],'externalExecution':False})
+            t=next(t for t in self.items if t['id']==c['taskId']);history=[{'type':'message.execution_started','revision':t['revision'],'actorId':'test-owner','occurredAt':at(),'evidence':{'executionId':'synthetic-execution'}}] if t['id'] in self.started else []
+            send({'ok':True,'task':t,'previewHash':'a'*64,'effectiveApproval':t['approvalStatus'],'history':history,'approvals':[],'externalExecution':False,'actionSend':{'available':self.send_available}})
         elif name in ['task.create','task.edit']:
             if self.fail_once:self.fail_once=False;send({'error':'operations_unavailable'},503);return
             if self.stale:send({'error':'task_revision_conflict','currentRevision':2},409);return
             if name=='task.create':t=task(**{k:v for k,v in c['task'].items() if k!='draft'});self.items.append(t)
             else:t=next(t for t in self.items if t['id']==c['taskId']);t.update(c['changes']);t['revision']+=1
             send({'ok':True,'task':t})
+        elif name=='task.send':
+            if self.send_errors:status,body=self.send_errors.pop(0);send(body,status);return
+            t=next(t for t in self.items if t['id']==c['taskId'])
+            # A send that went out without verified delivery: the server recorded message.execution_started,
+            # and a mirrored 'sent' read-back invalidates the approval (the conversation changed).
+            if self.send_results:
+                body=self.send_results.pop(0);self.started.add(t['id'])
+                if body.get('mirrored'):t['approvalStatus']='invalidated'
+                send({'ok':True,'sent':True,'taskId':t['id'],'approvedRevision':c['revision'],'approvalId':'synthetic-approval','executionId':'synthetic-execution','edited':False,'verificationFresh':True,**body});return
+            t['status']='completed'
+            send({'ok':True,'sent':True,'delivered':True,'status':'delivered','messageId':'synthetic-message','verificationFresh':True,'duplicatePrevented':False,'taskId':t['id'],'approvedRevision':c['revision'],'approvalId':'synthetic-approval','executionId':'synthetic-execution','edited':False,'mirrored':True,'completion':{'ok':True,'status':'completed'}})
         elif name=='tasks.approve':
             for a in c['items']:next(t for t in self.items if t['id']==a['taskId'])['approvalStatus']='approved'
             send({'ok':True,'externalExecution':False,'scope':'draft_review'})
@@ -162,4 +174,91 @@ class BrowserTests(unittest.TestCase):
             form.get_by_label('Action',exact=True).fill('Edited '+title);form.get_by_role('button',name='Save',exact=True).click();expect(self.page.get_by_role('dialog')).to_have_count(0)
             edit=[r['body'] for r in self.calls if r['body']['command']=='task.edit'][-1];self.assertEqual(edit['taskId'],item['id']);self.assertEqual(edit['changes']['title'],'Edited '+title);self.assertEqual(edit['changes']['draft'],{**expected,'attachments':links})
         self.assertEqual(len([r for r in self.calls if r['body']['command']=='task.edit']),3)
+    # One-tap send: only an approved, fully visible draft inside its window is offered; the
+    # confirmation shows every link, and an unconfirmed outcome is retried with the same request.
+    CONFIRM='I confirm sending exactly this message and every attachment link to this recipient'
+    PENDING="sessionStorage.getItem('egc.actions.send.v1.test-owner')"
+    def send_ready(self,**extra):
+        self.send_available=True;t=self.message_task(links=self.LINKS,**extra);t['approvalStatus']='approved';return t
+    def sends(self):return [r for r in self.calls if r['body']['command']=='task.send']
+    def start_send(self,title='Synthetic send_quote'):
+        self.open_task(title);self.page.get_by_role('dialog').get_by_role('button',name='Send now',exact=True).click();dialog=self.page.get_by_role('dialog');expect(dialog).to_contain_text('Send this exact message');return dialog
+    def test_send_now_confirms_the_exact_message_and_every_link_then_sends_once(self):
+        self.fixed_context(375);self.items=[self.send_ready()];self.open();self.open_task('Synthetic send_quote')
+        offer=self.page.get_by_role('dialog').get_by_role('button',name='Send now',exact=True);expect(offer).to_be_visible();self.assertGreaterEqual(offer.bounding_box()['height'],44)
+        offer.click();dialog=self.page.get_by_role('dialog')
+        for text in ['synthetic@example.invalid','EMAIL','Your synthetic quote','Exact synthetic quote text','Attachment links · 2','Portal quote · Your quote <img',self.LINKS[0]['url'],self.LINKS[1]['url'],'Review fingerprint '+'a'*16,'2 attachment links and revision 1']:expect(dialog).to_contain_text(text)
+        expect(dialog.get_by_role('link',name='Open link to verify')).to_have_count(2);self.assertEqual(self.page.locator('img').count(),0);self.assertIsNone(self.page.evaluate('window.injected'))
+        submit=dialog.get_by_role('button',name='Send now',exact=True);self.assertGreaterEqual(submit.bounding_box()['height'],44)
+        confirm=dialog.get_by_label(self.CONFIRM,exact=True);self.assertGreaterEqual(self.page.locator('label:has(.ac-send-confirm)').bounding_box()['height'],44)
+        submit.click();expect(dialog).to_contain_text('Exact synthetic quote text');self.assertEqual(self.sends(),[])
+        self.assertLessEqual(self.page.evaluate('document.documentElement.scrollWidth'),375);out=ROOT/'test-results';out.mkdir(exist_ok=True);self.page.screenshot(path=str(out/'action-center-send-mobile.png'),full_page=True)
+        confirm.check();submit.click();result=self.page.get_by_role('dialog');expect(result).to_contain_text('Delivered. The provider confirmed delivery.');expect(result).to_contain_text('The action was completed from verified delivery.')
+        sends=self.sends();self.assertEqual(len(sends),1);self.assertEqual(sends[0]['body'],{'command':'task.send','taskId':self.items[0]['id'],'revision':1,'previewHash':'a'*64,'confirm':True})
+        self.assertRegex(sends[0]['requestId'],r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$');self.assertIsNone(self.page.evaluate(self.PENDING))
+        self.assertFalse(any(r['body']['command']=='tasks.approve' for r in self.calls))
+    def test_unconfirmed_send_is_kept_and_retried_with_the_same_request_id(self):
+        self.fixed_context(375);self.items=[self.send_ready()];self.send_errors=[(503,{'error':'message_outcome_unknown','retryMode':'reconcile_only','retryable':True}),(503,{'error':'operations_unavailable','retryable':True})];self.open()
+        dialog=self.start_send();dialog.get_by_label(self.CONFIRM,exact=True).check();dialog.get_by_role('button',name='Send now',exact=True).click()
+        expect(dialog.get_by_role('alert')).to_contain_text('never sends a second copy');expect(dialog.get_by_role('button',name='Retry original request')).to_be_visible();expect(dialog.get_by_label(self.CONFIRM,exact=True)).to_be_disabled()
+        self.assertIsNotNone(self.page.evaluate(self.PENDING))
+        # The pending request survives closing the dialog and remounting the Action Center.
+        self.page.once('dialog',lambda d:d.accept());dialog.get_by_role('button',name='Cancel',exact=True).click();expect(self.page.get_by_role('dialog')).to_have_count(0)
+        self.page.evaluate('EGCActionCenter.unmount();EGCActionCenter.mount(document.querySelector("#host"))');expect(self.page.locator('[data-ac-content]')).to_contain_text('Synthetic send_quote')
+        self.open_task('Synthetic send_quote');self.page.get_by_role('button',name='Check pending send').click();dialog=self.page.get_by_role('dialog');expect(dialog).to_contain_text('outcome is not confirmed');expect(dialog.get_by_label(self.CONFIRM,exact=True)).to_have_count(0)
+        dialog.get_by_role('button',name='Retry original request').click();expect(dialog.get_by_role('alert')).to_contain_text('backend is unavailable')
+        dialog.get_by_role('button',name='Retry original request').click();expect(self.page.get_by_role('dialog')).to_contain_text('Delivered.')
+        sends=self.sends();self.assertEqual(len(sends),3);self.assertEqual(sends[0],sends[1]);self.assertEqual(sends[1],sends[2]);self.assertIsNone(self.page.evaluate(self.PENDING))
+    def test_send_now_is_offered_only_when_available_approved_and_inside_the_window(self):
+        self.fixed_context();ready=self.send_ready();review=self.message_task(kind='deposit_reminder',links=[]);early=self.message_task(kind='answer_question',links=[]);early['approvalStatus']='approved';early['draftPayload']['sendWindowStart']=self.fixed(2)
+        self.items=[ready,review,early];self.send_available=False;self.open()
+        def offered(title):
+            self.open_task(title);dialog=self.page.get_by_role('dialog');count=dialog.get_by_role('button',name='Send now',exact=True).count();text=dialog.inner_text();dialog.get_by_role('button',name='Close',exact=True).click();expect(self.page.get_by_role('dialog')).to_have_count(0);return count,text
+        self.assertEqual(offered(ready['title'])[0],0)
+        self.send_available=True
+        self.assertEqual(offered(review['title'])[0],0)
+        count,text=offered(early['title']);self.assertEqual(count,0);self.assertIn('Send now opens at',text)
+        # A definite refusal discards the attempt; nothing is kept for retry.
+        self.send_errors=[(409,{'error':'contact_do_not_contact','sent':False})]
+        dialog=self.start_send(ready['title']);dialog.get_by_label(self.CONFIRM,exact=True).check();dialog.get_by_role('button',name='Send now',exact=True).click()
+        expect(dialog.get_by_role('alert')).to_contain_text('do-not-contact');expect(dialog.get_by_role('button',name='Send now',exact=True)).to_be_enabled();expect(dialog.get_by_role('button',name='Retry original request')).to_have_count(0);expect(dialog.get_by_label(self.CONFIRM,exact=True)).to_be_enabled()
+        self.assertIsNone(self.page.evaluate(self.PENDING));self.assertEqual(len(self.sends()),1)
+    def test_signout_clears_a_pending_send(self):
+        self.fixed_context();self.items=[self.send_ready()];self.send_errors=[(503,{'error':'message_outcome_unknown','retryable':True})];self.open()
+        dialog=self.start_send();dialog.get_by_label(self.CONFIRM,exact=True).check();dialog.get_by_role('button',name='Send now',exact=True).click();expect(dialog.get_by_role('button',name='Retry original request')).to_be_visible()
+        self.assertIsNotNone(self.page.evaluate(self.PENDING));self.page.evaluate("window.dispatchEvent(new Event('egc:signout'))");self.assertIsNone(self.page.evaluate(self.PENDING));expect(self.page.locator('#host')).to_be_empty()
+    CHECK='Check send status'
+    def test_a_send_that_went_out_unverified_offers_only_a_status_check_until_delivery_completes_it(self):
+        self.fixed_context(375);self.items=[self.send_ready()];self.open()
+        self.send_results=[{'delivered':False,'verification':'pending','status':None,'messageId':'synthetic-message','retryMode':'reconcile_only','duplicatePrevented':False,'mirrored':False,'completion':None},{'delivered':False,'status':'sent','messageId':'synthetic-message','duplicatePrevented':True,'mirrored':True,'completion':None}]
+        dialog=self.start_send();dialog.get_by_label(self.CONFIRM,exact=True).check();dialog.get_by_role('button',name='Send now',exact=True).click()
+        result=self.page.get_by_role('dialog');expect(result).to_contain_text('delivery is not verified yet');expect(result).to_contain_text('use Check send status');self.assertIsNone(self.page.evaluate(self.PENDING))
+        result.locator('.ac-dialog-footer').get_by_role('button',name='Close').click();expect(self.page.get_by_role('dialog')).to_have_count(0)
+        # Still approved (nothing was mirrored), but the send started: Send now is never offered again.
+        for step in range(2):
+            self.open_task('Synthetic send_quote');details=self.page.get_by_role('dialog')
+            expect(details.get_by_role('button',name='Send now',exact=True)).to_have_count(0);check=details.get_by_role('button',name=self.CHECK,exact=True);self.assertGreaterEqual(check.bounding_box()['height'],44);check.click()
+            dialog=self.page.get_by_role('dialog');expect(dialog).to_contain_text('Nothing is sent again');expect(dialog).to_contain_text('Checking does not record a new approval');expect(dialog.get_by_label(self.CONFIRM,exact=True)).to_have_count(0)
+            self.assertLessEqual(self.page.evaluate('document.documentElement.scrollWidth'),375)
+            if step==0:
+                dialog.get_by_role('button',name=self.CHECK,exact=True).click();result=self.page.get_by_role('dialog');expect(result).to_contain_text('status: sent');expect(result).to_contain_text('No second copy went out')
+                result.locator('.ac-dialog-footer').get_by_role('button',name='Close').click();expect(self.page.get_by_role('dialog')).to_have_count(0);self.assertEqual(self.items[0]['approvalStatus'],'invalidated')
+        # The sent message invalidated the approval; the status check is still offered and completes the action.
+        dialog.get_by_role('button',name=self.CHECK,exact=True).click();result=self.page.get_by_role('dialog');expect(result).to_contain_text('Delivered.');expect(result).to_contain_text('completed from verified delivery')
+        sends=self.sends();self.assertEqual(len(sends),3);self.assertEqual(len({r['requestId'] for r in sends}),3)
+        for r in sends:self.assertEqual(r['body'],{'command':'task.send','taskId':self.items[0]['id'],'revision':1,'previewHash':'a'*64,'confirm':True})
+    def test_a_refused_retry_reloads_the_action_instead_of_leaving_a_dead_button(self):
+        self.fixed_context(375);self.items=[self.send_ready()];self.send_errors=[(503,{'error':'message_outcome_unknown','retryMode':'reconcile_only','retryable':True}),(409,{'error':'approval_preview_changed'})];self.open()
+        dialog=self.start_send();dialog.get_by_label(self.CONFIRM,exact=True).check();dialog.get_by_role('button',name='Send now',exact=True).click();expect(dialog.get_by_role('button',name='Retry original request')).to_be_visible()
+        self.page.once('dialog',lambda d:d.accept());dialog.get_by_role('button',name='Cancel',exact=True).click();expect(self.page.get_by_role('dialog')).to_have_count(0)
+        # Reopened from the kept request: no confirmation box in this mode, so a refusal must not leave a dead Send now.
+        self.open_task('Synthetic send_quote');self.page.get_by_role('button',name='Check pending send').click();dialog=self.page.get_by_role('dialog');expect(dialog.get_by_label(self.CONFIRM,exact=True)).to_have_count(0)
+        dialog.get_by_role('button',name='Retry original request').click();expect(dialog.get_by_role('alert')).to_contain_text('changed after you opened it');self.assertIsNone(self.page.evaluate(self.PENDING))
+        expect(dialog.get_by_role('button',name='Send now',exact=True)).to_have_count(0);gets=len([r for r in self.calls if r['body']['command']=='task.get']);reload=dialog.get_by_role('button',name='Reload action',exact=True);expect(reload).to_be_enabled();reload.click()
+        details=self.page.get_by_role('dialog');expect(details).to_contain_text('Completion condition');self.assertEqual(len([r for r in self.calls if r['body']['command']=='task.get']),gets+1);self.assertEqual(len(self.sends()),2)
+        expect(details.get_by_role('button',name='Send now',exact=True)).to_be_visible()
+        # A status check refused the same way also reloads rather than resending.
+        self.started.add(self.items[0]['id']);self.send_errors=[(409,{'error':'message_send_already_started'})];details.get_by_role('button',name='Close',exact=True).click();expect(self.page.get_by_role('dialog')).to_have_count(0)
+        self.open_task('Synthetic send_quote');self.page.get_by_role('dialog').get_by_role('button',name=self.CHECK,exact=True).click();dialog=self.page.get_by_role('dialog');dialog.get_by_role('button',name=self.CHECK,exact=True).click()
+        expect(dialog.get_by_role('alert')).to_contain_text('already sent');dialog.get_by_role('button',name='Reload action',exact=True).click();expect(self.page.get_by_role('dialog')).to_contain_text('Completion condition');self.assertEqual(len(self.sends()),3)
 if __name__=='__main__':unittest.main(verbosity=2)

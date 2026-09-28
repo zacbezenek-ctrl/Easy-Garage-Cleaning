@@ -2,17 +2,25 @@ import {customerTimeline,type PortalTimelineEvent} from "./timeline.js";
 import {nativeHistoryEvents,readNativeHistoryEvidence,type NativeHistoryEvidence} from "./history-native-evidence.js";
 import {operationalHealth} from "./health.js";
 import {createHash,randomUUID} from "node:crypto";
-import {and,asc,desc,eq,gt,gte,inArray,isNull,lt,ne,notInArray,or,sql} from "drizzle-orm";
+import {and,asc,desc,eq,gt,gte,inArray,isNull,lt,lte,ne,notInArray,or,sql} from "drizzle-orm";
 import {getDb,schema} from "@egc/database";
 import {buildDueWorkSnapshot,collectTaskPages,pageDueWork,type QueueSnapshot,type SourceCoverage,type WaitingOn} from "@egc/lead-audit/operations-core";
 import {authorize,commandSchema,OperationsError,PORTAL_PASSTHROUGH,WRITE_COMMANDS,type Actor,type Command} from "./contracts.js";
-import {assertCompletion,assertEditable,assertTiming,digest,jsonRecord,requestDigest} from "./policy.js";
+import {assertCompletion,assertEditable,assertTiming,digest,jsonRecord,requestDigest,withoutEmptyAttachments} from "./policy.js";
 import {isMessageTaskKind} from "./action-kinds.js";
 
 type Db=ReturnType<typeof getDb>;
 type Tx=Parameters<Parameters<Db["transaction"]>[0]>[0];
 type Task=typeof schema.tasks.$inferSelect;
+type SendCommand=Extract<Command,{command:"task.send"}>;
 const active=["open","in_progress","blocked"];
+const REQUEST_ID=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+/** One provider request per approved revision: every retry, duplicate tap and second
+ * confirmer of that revision claims the same execution and can never send twice. */
+export function taskSendRequestId(taskId:string,revision:number) {
+  const hash=createHash("sha256").update(`task-send:${taskId}:${revision}`).digest("hex");
+  return `${hash.slice(0,8)}-${hash.slice(8,12)}-5${hash.slice(13,16)}-a${hash.slice(17,20)}-${hash.slice(20,32)}`;
+}
 // The provider payload must carry exactly the approved attachment URLs, in order.
 // Legacy drafts and payloads without attachments both mean none.
 function sameAttachmentUrls(sent:unknown,approved:unknown) {
@@ -33,6 +41,8 @@ export interface OperationsConfiguration {
   syncSchedule?:(actor:Actor,command:Extract<Command,{command:"schedule.sync_provider"}>)=>Promise<Record<string,unknown>>;
   ensureProviderNote?:(actor:Actor,command:Extract<Command,{command:"provider.note.ensure"}>)=>Promise<Record<string,unknown>>;
   canonicalRead?:(actor:Actor,command:Extract<Command,{command:"intelligence.report"|"intelligence.diagnostics"|"intelligence.customer"}>)=>Promise<Record<string,unknown>>;
+  // Present only when one-tap sending is enabled and configured (EGC_OPERATIONS_ACTION_SEND_ENABLED).
+  sendTaskMessage?:(actor:Actor,command:SendCommand,requestId:string)=>Promise<Record<string,unknown>>;
 }
 
 /** One service over the existing task records. All public adapters must authenticate
@@ -81,7 +91,13 @@ export class OperationsService {
         if(job.type==="walkthrough"&&typeof job.completedAt==="string"&&Number.isFinite(Date.parse(job.completedAt)))portalEvents.push({id:"hub-walkthrough:"+String(job.id),kind:"walkthrough_completed",at:job.completedAt,data:{portalVisitId:job.id,authority:"employee_hub",association:"exact_visit"}});
       }
     }
-    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(requestId)) throw new OperationsError("request_id_required",400);
+    if (!REQUEST_ID.test(requestId)) throw new OperationsError("request_id_required",400);
+    // The send adapter owns task.send end to end: approval (approveForSend), provider
+    // execution and reconciliation. Retries must reach it, so no stored-response replay here.
+    if(command.command==="task.send"){
+      if(!this.config.sendTaskMessage)throw new OperationsError("action_send_disabled",503);
+      return this.config.sendTaskMessage(actor,command,requestId);
+    }
     if(command.command==="history"&&command.contactId){
       const [contact]=await this.db.select({id:schema.contacts.id,provider:schema.contacts.provider,providerId:schema.contacts.providerId}).from(schema.contacts).where(eq(schema.contacts.id,command.contactId)).limit(1);
       if(!contact)throw new OperationsError("contact_not_found",404);
@@ -131,6 +147,107 @@ export class OperationsService {
       return response;
     });
   }
+  /** task.send transaction 1, idempotent per request ID. An owner's or manager's exact
+   * approval of the reviewed preview (an edited draft is saved as the next revision first, so
+   * the approval covers the edited content); a salesperson's confirmation of such an approval;
+   * or, once the revision's send started, its covering approval for a read-back only. No
+   * provider call happens here.
+   */
+  async approveForSend(actor:Actor,command:SendCommand,requestId:string):Promise<Record<string,unknown>> {
+    authorize(actor,command,this.config.workspace);
+    if (!REQUEST_ID.test(requestId)) throw new OperationsError("request_id_required",400);
+    const digestOfRequest=requestDigest(actor,command);
+    return this.db.transaction(async tx=>{
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`operations:${actor.workspace}:${actor.id}:${requestId}`},0))`);
+      const [prior]=await tx.select().from(schema.operationRequests).where(and(
+        eq(schema.operationRequests.workspaceId,actor.workspace),eq(schema.operationRequests.actorId,actor.id),eq(schema.operationRequests.requestId,requestId))).limit(1);
+      if (prior) {
+        if (prior.digest!==digestOfRequest) throw new OperationsError("idempotency_key_payload_conflict",409);
+        return {...prior.response,replayed:true};
+      }
+      await tx.execute(sql`select set_config('egc.operations_actor',${actor.id},true),set_config('egc.operations_actor_kind',${actor.kind},true)`);
+      const now=this.now();
+      let task=await this.task(tx,actor,command.taskId,true);
+      this.assertRevision(task,command.revision);assertEditable(actor,task);assertTiming(task);
+      if(!isMessageTaskKind(task.kind) || !task.draftPayload) throw new OperationsError("task_has_no_message_draft",409);
+      if(task.status==="blocked") throw new OperationsError("blocked_task_requires_review",409);
+      if(!task.contactId) throw new OperationsError("message_task_contact_required",409);
+      if((await this.preview(tx,task)).hash!==command.previewHash) throw new OperationsError("approval_preview_changed",409,{taskId:task.id});
+      const save=async(result:Record<string,unknown>)=>{const response=jsonRecord(result);await tx.insert(schema.operationRequests).values({workspaceId:actor.workspace,actorId:actor.id,requestId,digest:digestOfRequest,response});return response;};
+      const changesDraft=Boolean(command.draft)&&digest(withoutEmptyAttachments(jsonRecord(command.draft)))!==digest(withoutEmptyAttachments(task.draftPayload));
+      // This revision's send already started, so the adapter only reads it back. No new
+      // approval is recorded (it could not have covered the send) and no edit is applied.
+      const [started]=await tx.select({id:schema.communicationExecutions.id,createdAt:schema.communicationExecutions.createdAt}).from(schema.communicationExecutions).where(and(eq(schema.communicationExecutions.contactId,task.contactId),eq(schema.communicationExecutions.requestId,taskSendRequestId(task.id,task.revision)))).orderBy(asc(schema.communicationExecutions.createdAt)).limit(1);
+      if(started) {
+        if(changesDraft) throw new OperationsError("message_send_already_started",409,{taskId:task.id,executionId:started.id});
+        const [covering]=await tx.select().from(schema.operationApprovals).where(and(eq(schema.operationApprovals.workspaceId,actor.workspace),eq(schema.operationApprovals.taskId,task.id),eq(schema.operationApprovals.taskRevision,task.revision),lte(schema.operationApprovals.createdAt,started.createdAt),gte(schema.operationApprovals.expiresAt,started.createdAt))).orderBy(desc(schema.operationApprovals.createdAt)).limit(1);
+        if(!covering) throw new OperationsError("send_approval_not_current",409,{taskId:task.id});
+        return save({ok:true,task,approval:covering,previewHash:command.previewHash,approvedRevision:task.revision,edited:false,scope:"draft_review",sendStarted:true});
+      }
+      // Sales send an owner's or manager's current approval of this exact revision. They never
+      // approve, override a rejection or send an edit of their own.
+      const reviewer=["owner","manager"].includes(actor.role);
+      if(!reviewer && task.approvalStatus==="rejected") throw new OperationsError("draft_rejected_requires_review",409,{taskId:task.id});
+      if(!reviewer && changesDraft) throw new OperationsError("human_manager_approval_required",403,{taskId:task.id});
+      let edited=false;
+      if(changesDraft) {
+        const [updated]=await tx.update(schema.tasks).set({draftPayload:jsonRecord(command.draft),updatedAt:now}).where(and(eq(schema.tasks.id,task.id),eq(schema.tasks.revision,task.revision))).returning();
+        if(!updated) throw new OperationsError("task_revision_conflict",409);
+        task=updated;edited=true;
+        await this.event(tx,actor,task,"task.edit",{changes:{draft:command.draft},via:"task.send"});
+      }
+      this.assertSendWindow(task,now);
+      const preview=await this.preview(tx,task),end=new Date(String(task.draftPayload!.sendWindowEnd));
+      const expiresAt=new Date(Math.min(end.valueOf(),now.valueOf()+24*60*60*1000));
+      const current=[eq(schema.operationApprovals.workspaceId,actor.workspace),eq(schema.operationApprovals.taskId,task.id),eq(schema.operationApprovals.taskRevision,task.revision),eq(schema.operationApprovals.fingerprint,preview.hash),gt(schema.operationApprovals.expiresAt,now)];
+      if(!reviewer) {
+        // Only owners and managers record approvals; one by this actor never counts as theirs.
+        const [managed]=await tx.select().from(schema.operationApprovals).where(and(...current,ne(schema.operationApprovals.actorId,actor.id))).orderBy(desc(schema.operationApprovals.createdAt)).limit(1);
+        if(!managed || task.approvalStatus!=="approved") throw new OperationsError("human_manager_approval_required",403,{taskId:task.id});
+        return save({ok:true,task,approval:managed,previewHash:preview.hash,approvedRevision:task.revision,edited,scope:"draft_review"});
+      }
+      const [existing]=await tx.select().from(schema.operationApprovals).where(and(...current,eq(schema.operationApprovals.actorId,actor.id))).orderBy(desc(schema.operationApprovals.expiresAt)).limit(1);
+      let approval=existing&&task.approvalStatus==="approved"?existing:undefined;
+      if(!approval) {
+        [approval]=await tx.insert(schema.operationApprovals).values({workspaceId:actor.workspace,taskId:task.id,taskRevision:task.revision,fingerprint:preview.hash,snapshot:preview.subject,actorId:actor.id,expiresAt,createdAt:now}).returning();
+        if(!approval) throw new OperationsError("approval_save_failed",503);
+        const [approved]=await tx.update(schema.tasks).set({approvalStatus:"approved",updatedAt:now}).where(eq(schema.tasks.id,task.id)).returning();
+        if(!approved) throw new OperationsError("approval_save_failed",503);
+        task=approved;
+        await this.event(tx,actor,task,"draft.approved",{approvalId:approval.id,expiresAt,scope:"draft_review",externalExecution:true,via:"task.send"});
+      }
+      return save({ok:true,task,approval,previewHash:preview.hash,approvedRevision:task.revision,edited,scope:"draft_review"});
+    });
+  }
+  /** Re-checked immediately before a provider send: the approved revision is still current,
+   * still approved by this approval, inside its window and unchanged in context. */
+  async sendReadiness(actor:Actor,taskId:string,revision:number,approvalId:string) {
+    return this.db.transaction(async tx=>{
+      const now=this.now(),task=await this.task(tx,actor,taskId);
+      this.assertRevision(task,revision);assertEditable(actor,task);
+      if(!isMessageTaskKind(task.kind) || !task.draftPayload || !task.contactId) throw new OperationsError("task_has_no_message_draft",409);
+      if(task.status==="blocked") throw new OperationsError("blocked_task_requires_review",409);
+      this.assertSendWindow(task,now);
+      const [approval]=await tx.select().from(schema.operationApprovals).where(and(eq(schema.operationApprovals.id,approvalId),eq(schema.operationApprovals.workspaceId,actor.workspace),eq(schema.operationApprovals.taskId,task.id),eq(schema.operationApprovals.taskRevision,revision))).limit(1);
+      if(!approval || approval.expiresAt<=now || task.approvalStatus!=="approved") throw new OperationsError("send_approval_not_current",409,{taskId:task.id});
+      if((await this.preview(tx,task)).hash!==approval.fingerprint) throw new OperationsError("approval_preview_changed",409,{taskId:task.id});
+      return {task,approval};
+    },{isolationLevel:"repeatable read",accessMode:"read only"});
+  }
+  /** Links the approved revision to its durable communication execution (once per execution). */
+  async recordExecutionStarted(actor:Actor,taskId:string,revision:number,evidence:{executionId:string}&Record<string,unknown>) {
+    await this.db.transaction(async tx=>{
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`task-send:${actor.workspace}:${evidence.executionId}`},0))`);
+      const task=await this.task(tx,actor,taskId);
+      const [existing]=await tx.select({id:schema.operationEvents.id}).from(schema.operationEvents).where(and(eq(schema.operationEvents.workspaceId,actor.workspace),eq(schema.operationEvents.taskId,task.id),eq(schema.operationEvents.type,"message.execution_started"),sql`${schema.operationEvents.evidence}->>'executionId'=${evidence.executionId}`)).limit(1);
+      if(!existing) await this.event(tx,actor,{...task,revision},"message.execution_started",evidence);
+    });
+  }
+  private assertSendWindow(task:Task,now:Date) {
+    const start=new Date(String(task.draftPayload?.sendWindowStart)),end=new Date(String(task.draftPayload?.sendWindowEnd));
+    if(!(end>now)) throw new OperationsError("draft_window_expired",409);
+    if(!(start<=now)) throw new OperationsError("draft_window_not_open",409,{sendWindowStart:Number.isFinite(start.valueOf())?start.toISOString():null});
+  }
   private async task(tx:Tx,actor:Actor,id:string,lock=false):Promise<Task> {
     const query=tx.select().from(schema.tasks).where(and(eq(schema.tasks.id,id),eq(schema.tasks.workspaceId,actor.workspace))).limit(1);
     const [task]=lock ? await query.for("update") : await query;
@@ -161,7 +278,7 @@ export class OperationsService {
   private async read(tx:Tx,actor:Actor,command:Command,portalEvents:PortalTimelineEvent[]=[],nativeEvidence?:NativeHistoryEvidence):Promise<Record<string,unknown>> {
     switch(command.command) {
       case "status": return {ok:true,contractVersion:1,workspace:actor.workspace,actor,health:await operationalHealth(tx,actor.workspace),
-        capabilities:{tasks:true,exactDraftApprovals:true,persistedBriefs:true,externalExecution:false,portalIdentity:Boolean(this.config.resolvePortalJob)},
+        capabilities:{tasks:true,exactDraftApprovals:true,persistedBriefs:true,externalExecution:false,actionSend:Boolean(this.config.sendTaskMessage),portalIdentity:Boolean(this.config.resolvePortalJob)},
         tenancy:"single-workspace-deployment",release:process.env.RAILWAY_GIT_COMMIT_SHA??process.env.EGC_RELEASE_SHA??null,externalExecutionReason:"Action draft review never sends. Explicitly authorized messaging and scheduling use separate durable execution tools."};
       case "queue": {
         const now=this.now();
@@ -189,7 +306,7 @@ export class OperationsService {
         const history=await tx.select().from(schema.operationEvents).where(and(eq(schema.operationEvents.workspaceId,actor.workspace),eq(schema.operationEvents.taskId,task.id))).orderBy(desc(schema.operationEvents.occurredAt),desc(schema.operationEvents.id)).limit(100);
         const approval=approvals.find(a=>a.taskRevision===task.revision && a.fingerprint===preview.hash && a.expiresAt>this.now());
         return {ok:true,task,previewHash:preview.hash,approvalScope:"draft_review",effectiveApproval:task.approvalStatus==="approved"?(approval?"approved":"invalidated_or_expired"):task.approvalStatus,
-          approvals,history,historyLimit:100,historyMayHaveMore:history.length===100,externalExecution:false};
+          approvals,history,historyLimit:100,historyMayHaveMore:history.length===100,externalExecution:false,actionSend:{available:Boolean(this.config.sendTaskMessage)}};
       }
       case "brief.latest": {
         const [brief]=await tx.select({id:schema.operationBriefs.id}).from(schema.operationBriefs).where(eq(schema.operationBriefs.workspaceId,actor.workspace)).orderBy(desc(schema.operationBriefs.generatedAt)).limit(1);
@@ -355,8 +472,10 @@ export class OperationsService {
       // exclusion reconstructs the reviewed context; any OTHER message, call,
       // restriction or task edit still changes the exact approval fingerprint.
       const preview=await this.preview(tx,task,execution.providerMessageId);
-      const [approval]=await tx.select().from(schema.operationApprovals).where(and(eq(schema.operationApprovals.workspaceId,actor.workspace),eq(schema.operationApprovals.taskId,task.id),eq(schema.operationApprovals.taskRevision,task.revision),eq(schema.operationApprovals.fingerprint,preview.hash),gt(schema.operationApprovals.expiresAt,now))).orderBy(desc(schema.operationApprovals.createdAt)).limit(1);
-      if(!approval||execution.createdAt<approval.createdAt||occurredAt<approval.createdAt)throw new OperationsError("message_approval_context_changed_or_expired",409);
+      // The approval that covered the send, exactly as the database guard checks it. A later
+      // approval of the same content (another confirmer, a re-approval) never displaces it.
+      const [approval]=await tx.select().from(schema.operationApprovals).where(and(eq(schema.operationApprovals.workspaceId,actor.workspace),eq(schema.operationApprovals.taskId,task.id),eq(schema.operationApprovals.taskRevision,task.revision),eq(schema.operationApprovals.fingerprint,preview.hash),gt(schema.operationApprovals.expiresAt,now),lte(schema.operationApprovals.createdAt,execution.createdAt),gte(schema.operationApprovals.expiresAt,execution.createdAt))).orderBy(desc(schema.operationApprovals.createdAt)).limit(1);
+      if(!approval||occurredAt<approval.createdAt)throw new OperationsError("message_approval_context_changed_or_expired",409);
       if(task.portalJobId){
         if(!this.config.resolvePortalJob)throw new OperationsError("portal_identity_adapter_unavailable",503);
         const source=await this.config.resolvePortalJob(task.portalJobId);

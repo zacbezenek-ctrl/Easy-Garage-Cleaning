@@ -7,7 +7,7 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run src",
-    "test:integration": "node --test test/integration.mjs"
+    "test:integration": "node --test --test-concurrency=1 test/integration.mjs test/task-send.check.mjs"
   },
   "dependencies": {"@egc/database": "workspace:*", "@egc/lead-audit": "workspace:*", "@egc/schemas": "workspace:*", "drizzle-orm": "0.44.5", "zod": "4.6.4"},
   "devDependencies": {"@types/node": "^24.5.2", "typescript": "^6.0.2", "vitest": "^3.2.4"}

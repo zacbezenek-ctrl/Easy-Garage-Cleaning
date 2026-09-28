@@ -12,14 +12,15 @@ export const jsonRecord = (value:unknown):Record<string,unknown> => JSON.parse(J
 // Drafts parsed before action kinds v2 had no attachments key; the parser now defaults it
 // to []. A missing list and an empty list mean the same draft, so both hash identically and
 // a request first sent before the deploy still replays instead of conflicting.
-const withoutEmptyAttachments = <T,>(draft:T):T => {
+export const withoutEmptyAttachments = <T,>(draft:T):T => {
   const attachments=draft && typeof draft==="object" ? (draft as {attachments?:unknown}).attachments : undefined;
   if (!Array.isArray(attachments) || attachments.length) return draft;
   const {attachments:_,...rest}=draft as Record<string,unknown>;return rest as T;
 };
 export function requestDigest(actor:Actor,command:Command):string {
   const stable=command.command==="task.create"?{...command,task:{...command.task,draft:withoutEmptyAttachments(command.task.draft)}}:
-    command.command==="task.edit"&&command.changes.draft?{...command,changes:{...command.changes,draft:withoutEmptyAttachments(command.changes.draft)}}:command;
+    command.command==="task.edit"&&command.changes.draft?{...command,changes:{...command.changes,draft:withoutEmptyAttachments(command.changes.draft)}}:
+    command.command==="task.send"&&command.draft?{...command,draft:withoutEmptyAttachments(command.draft)}:command;
   return digest({actor:{id:actor.id,kind:actor.kind,role:actor.role,workspace:actor.workspace},command:stable});
 }
 export function assertEditable(actor:Actor,task:{status:string;assignedUserId:string|null}) {

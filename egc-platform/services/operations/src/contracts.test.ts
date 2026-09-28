@@ -1,6 +1,6 @@
 import {describe,it,expect} from "vitest";
 import {randomUUID,createHmac} from "node:crypto";
-import {authorize,commandSchema,createTaskSchema,messageDraft,OperationsError,patchTaskSchema,taskKind,type Actor,type SignedClaims} from "./contracts.js";
+import {authorize,commandSchema,createTaskSchema,messageDraft,OperationsError,patchTaskSchema,taskKind,WRITE_COMMANDS,type Actor,type SignedClaims} from "./contracts.js";
 import {INTERNAL_TASK_KINDS,isMessageTaskKind,MESSAGE_ATTACHMENT_KINDS,MESSAGE_TASK_KINDS,TASK_KINDS} from "./action-kinds.js";
 import {signRequest,verifyRequest} from "./auth.js";
 import {assertCompletion,digest,requestDigest} from "./policy.js";
@@ -57,6 +57,23 @@ describe("canonical attachment URLs",()=>{
  it("is idempotent because MCP parses a task before the API parses it again",()=>{const first=parseMessage("send_quote",{attachments:[{...attachment,url:"HTTPS://Example.COM\\A/./b"}]});expect(first.success).toBe(true);const again=parseMessage("send_quote",{attachments:first.data!.draft!.attachments});expect(again.data?.draft?.attachments).toEqual(first.data?.draft?.attachments);expect(first.data?.draft?.attachments[0]?.url).toBe("https://example.com/A/b");});
  it("treats spellings of one link as duplicates",()=>{for(const pair of [["https://A.com/x","https://a.com/x"],["https://a.com\\x","https://a.com/x"],["https:a.com/x","https://a.com/x"]])expect(parseMessage("send_quote",{attachments:pair.map((url,i)=>({...attachment,url,refId:`ref-${i}`}))}).success,pair.join(" ")).toBe(false);});
  it("rejects invisible format characters, private hosts and over-long canonical forms",()=>{for(const url of ["https://example.com/​x","https://exa​mple.com/x","https://example.com/‮gpj.exe","https://example.com/﻿x","https://⁠example.com/","https://localhost/q","https://LOCALHOST./q","https://api.localhost/q","https://127.0.0.1/q","https://2130706433/q","https://127.1/q","https://10.0.0.8/q","https://[::1]/q","https://[2001:db8::1]/q","https://intranet/q","https://user@example.com/q","https://example.com/"+"é".repeat(995)])expect(urlOf(url),JSON.stringify(url)).toBeNull();});
+});
+describe("task.send contract",()=>{
+ const send={command:"task.send",taskId:"00000000-0000-4000-8000-000000000002",revision:1,previewHash:"a".repeat(64),confirm:true};
+ it("requires explicit confirmation, the exact preview hash and a valid optional draft",()=>{
+  expect(commandSchema.safeParse(send).success).toBe(true);expect(commandSchema.safeParse({...send,draft:{...draft,attachments:[attachment]}}).success).toBe(true);
+  for(const bad of [{...send,confirm:false},{...send,confirm:undefined},{...send,confirm:"true"},{...send,previewHash:"A".repeat(64)},{...send,previewHash:undefined},{...send,revision:0},{...send,draft:{...draft,recipient:"555"}},{...send,draft:{...draft,attachments:[{...attachment,url:"http://example.com/q"}]}},{...send,recipient:"+15555550100"},{...send,actorId:"forged"}])expect(commandSchema.safeParse(bad).success).toBe(false);
+ });
+ it("is a write only a signed-in person with a business role may confirm",()=>{
+  const parsed=commandSchema.parse(send);expect(WRITE_COMMANDS.has("task.send")).toBe(true);
+  errorCode(()=>authorize({id:"grant-1",kind:"integration",role:"integration",workspace:"egc"},parsed,"egc"),"human_send_confirmation_required");
+  for(const role of ["owner","manager","sales"] as const)expect(()=>authorize({...owner,role},parsed,"egc")).not.toThrow();
+  for(const role of ["crew","crew_lead"] as const)errorCode(()=>authorize({...owner,role},parsed,"egc"),"role_forbidden");
+ });
+ it("digests an edited draft the same with a missing or empty attachment list, but not the same as no edit",()=>{
+  const digestOf=(value:object)=>requestDigest(owner,commandSchema.parse(value));
+  expect(digestOf({...send,draft})).toBe(digestOf({...send,draft:{...draft,attachments:[]}}));expect(digestOf({...send,draft})).not.toBe(digestOf(send));expect(digestOf({...send,draft:{...draft,attachments:[attachment]}})).not.toBe(digestOf({...send,draft}));
+ });
 });
 describe("request digest across the attachments default",()=>{
  const legacyDigest=(command:Record<string,unknown>)=>digest({actor:{id:owner.id,kind:owner.kind,role:owner.role,workspace:owner.workspace},command});

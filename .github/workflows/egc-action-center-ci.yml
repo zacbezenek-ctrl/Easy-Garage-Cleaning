@@ -105,6 +105,7 @@ jobs:
           node --test apps/worker/test/provider-notes-read-postgres.check.mjs
           node --test apps/worker/test/call-transcript-postgres.check.mjs
           pnpm --filter @egc/api test:provider-notes:integration
+          pnpm --filter @egc/api test:action-send:integration
         working-directory: egc-platform
       - name: Verify schema has no uncommitted migration drift
         run: |

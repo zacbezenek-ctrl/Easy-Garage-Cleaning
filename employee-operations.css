@@ -23,3 +23,9 @@
 .ac-link{display:inline-flex;align-items:center;min-height:44px;text-decoration:none}
 .ac-fingerprint{font-size:13px;color:#536173;overflow-wrap:anywhere}
 .ac-statusbar ul{margin:6px 0 0;padding-left:20px}
+/* One-tap send: the confirmation and Send now stay large and within thumb reach on a phone. */
+.ac-dialog-footer .ac-btn,.ac-btn.ac-send-now{min-height:44px}
+.ac-form-grid label:has(.ac-send-confirm){flex-direction:row;align-items:center;gap:12px;min-height:44px;font-size:15px}
+.ac-form-grid input.ac-send-confirm{width:24px;height:24px;flex:none;margin:0}
+.ac-send-summary dd{font-weight:700}
+@media(max-width:560px){.ac-dialog-footer .ac-btn.ac-send-now{flex:1 1 100%;order:2;min-height:48px}}

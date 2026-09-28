@@ -153,6 +153,9 @@ export const commandSchema = z.discriminatedUnion("command", [
   z.object({command:z.literal("task.snooze"),...versioned,until:isoTime,reason:z.string().trim().min(3).max(1000)}).strict(),
   z.object({command:z.literal("tasks.approve"),items:z.array(z.object({...versioned,previewHash:z.string().regex(/^[a-f0-9]{64}$/)}).strict()).min(1).max(30),expiresAt:isoTime}).strict(),
   z.object({command:z.literal("task.reject"),...versioned,reason:z.string().trim().min(3).max(2000)}).strict(),
+  // One-tap Action Center send: a signed-in person approves the exact reviewed preview (an
+  // optional edited draft becomes the next revision first) and the approved message is sent.
+  z.object({command:z.literal("task.send"),...versioned,previewHash:z.string().regex(/^[a-f0-9]{64}$/),draft:messageDraft.optional(),confirm:z.literal(true)}).strict(),
   z.object({command:z.literal("brief.create"),dueBefore:isoTime,timeZone:timeZone.default("America/Denver")}).strict(),
   z.object({command:z.literal("brief.get"),briefId:entityId,...page}).strict(),
   z.object({command:z.literal("brief.latest"),...page}).strict(),
@@ -160,7 +163,7 @@ export const commandSchema = z.discriminatedUnion("command", [
   ...Object.values(HUB_COMMANDS)
 ]);
 export type Command = z.infer<typeof commandSchema>;
-export const WRITE_COMMANDS = new Set(["provider.note.ensure","portal.note.add","portal.job.edit","portal.project.ensure","inbound.reconcile","task.create","task.edit","task.complete","task.complete_from_message","task.cancel","task.snooze","tasks.approve","task.reject","brief.create","schedule.mutate","schedule.bind_provider","schedule.sync_provider","schedule.link_customer","schedule.adopt",...HUB_WRITE_COMMANDS]);
+export const WRITE_COMMANDS = new Set(["provider.note.ensure","portal.note.add","portal.job.edit","portal.project.ensure","inbound.reconcile","task.create","task.edit","task.complete","task.complete_from_message","task.cancel","task.snooze","tasks.approve","task.reject","task.send","brief.create","schedule.mutate","schedule.bind_provider","schedule.sync_provider","schedule.link_customer","schedule.adopt",...HUB_WRITE_COMMANDS]);
 export const requestSchema = z.object({requestId:entityId,body:commandSchema}).strict();
 export const signedClaimsSchema = z.object({
   v:z.literal(CONTRACT_VERSION),iss:z.enum(["portal","mcp"]),aud:z.enum(["egc-operations","egc-portal"]),
@@ -189,6 +192,8 @@ export function authorize(actor:Actor, command:Command, workspace:string, hubPol
   if (["tasks.approve","task.reject"].includes(command.command) &&
       (actor.kind !== "human" || !["owner","manager"].includes(actor.role)))
     throw new OperationsError("human_manager_approval_required",403);
+  // A customer send is confirmed by a signed-in person; integrations (MCP) never send here.
+  if (command.command === "task.send" && actor.kind !== "human") throw new OperationsError("human_send_confirmation_required",403);
   if (actor.kind === "integration" && WRITE_COMMANDS.has(command.command) && !["provider.note.ensure","portal.note.add","portal.job.edit","portal.project.ensure","inbound.reconcile","task.create","task.edit","task.snooze","task.complete","task.complete_from_message","task.cancel","brief.create","schedule.mutate","schedule.bind_provider","schedule.sync_provider","schedule.link_customer","schedule.adopt"].includes(command.command))
     throw new OperationsError("integration_write_forbidden",403);
 }

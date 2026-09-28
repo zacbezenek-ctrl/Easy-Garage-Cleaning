@@ -2,7 +2,7 @@ import {registerCustomerStateTools,canonicalOperationalReport,canonicalFunnel} f
 import {getCustomerTimeline} from '@egc/customer-state';
 import {registerPortalRecordTools} from "./portal-record-tools.js";
 import {verifyOperationsOnStart} from "./operations-smoke.js";
-import {executeCommunication,reconcileCommunication} from "./communication-execution.js";
+import {executeCommunication,reconcileCommunication,preflightRecipient,persistOutboundMessage} from "./communication-execution.js";
 import {registerOperationsTools,operationsPrincipal,operationsEnabled,blockedToolCall,directSendsBlocked,DIRECT_SEND_DISABLED,callOperations} from "./operations.js";
 import {registerDomainTools,DOMAIN_TOOLS} from "./tools/index.js";
 import type {RegisterOptions} from "./tools/define.js";
@@ -412,68 +412,6 @@ function normalizedComparableText(value: string | null | undefined) {
     .replace(/\s+/g, " ");
 }
 
-async function persistOutboundMessage(input: {
-  contactId: string;
-  contactProviderId: string;
-  channel: "SMS" | "Email";
-  body: string;
-  providerMessageId: string;
-  conversationProviderId: string;
-  providerPayload: Record<string, unknown>;
-  occurredAt?: Date;
-}) {
-  const db = getDb();
-  const occurredAt = input.occurredAt ?? new Date();
-
-  const [conversation] = await db.insert(schema.conversations).values({
-    providerId: input.conversationProviderId,
-    contactId: input.contactId,
-    raw: {
-      id: input.conversationProviderId,
-      contactId: input.contactProviderId,
-      locationId: ghlClient().locationId
-    }
-  }).onConflictDoUpdate({
-    target: schema.conversations.providerId,
-    set: {
-      contactId: input.contactId,
-      raw: {
-        id: input.conversationProviderId,
-        contactId: input.contactProviderId,
-        locationId: ghlClient().locationId
-      },
-      updatedAt: new Date()
-    }
-  }).returning();
-
-  await db.insert(schema.messages).values({
-    providerId: input.providerMessageId,
-    conversationId: conversation?.id ?? null,
-    contactId: input.contactId,
-    type: input.channel === "SMS" ? "TYPE_SMS" : "TYPE_EMAIL",
-    direction: "outbound",
-    actorType: "automation",
-    body: input.body,
-    occurredAt,
-    raw: input.providerPayload
-  }).onConflictDoUpdate({
-    target: schema.messages.providerId,
-    set: {
-      conversationId: conversation?.id ?? null,
-      contactId: input.contactId,
-      type: input.channel === "SMS" ? "TYPE_SMS" : "TYPE_EMAIL",
-      direction: "outbound",
-      actorType: "automation",
-      body: input.body,
-      occurredAt,
-      raw: input.providerPayload,
-      updatedAt: new Date()
-    }
-  });
-
-  await recomputeLeadState(input.contactId);
-}
-
 async function findRecentDuplicateOutbound(input: {
   contactId: string;
   body: string;
@@ -551,21 +489,13 @@ async function sendConversationMessage(input: {
   if(directSendsBlocked())return {ok:false,...DIRECT_SEND_DISABLED};
   const db=getDb(),actor=operationsPrincipal.getStore();
   if(!actor)return {ok:false,error:"verified_principal_required"};
-  const [contact]=await db.select().from(schema.contacts).where(eq(schema.contacts.id,input.contactId)).limit(1);
-  if(!contact)return {ok:false,error:"contact_not_found"};
-  const [lead]=await db.select({dnd:schema.leads.doNotContact}).from(schema.leads).where(eq(schema.leads.contactId,input.contactId)).limit(1);
-  const provider=ghlClient();
-  let live:Record<string,unknown>;
-  try{const response=await provider.getContact(contact.providerId);live=asRecord(response.contact??response);}catch{return {ok:false,error:"contact_preflight_unavailable"};}
-  const restriction=asRecord(asRecord(live.dndSettings)[input.channel]);
-  if(lead?.dnd||live.dnd===true||restriction.status==="active")return {ok:false,error:"contact_do_not_contact"};
-  const phone=asString(live.phone),email=asString(live.email);
-  if(input.channel==="SMS" && (!phone || (input.toNumber && input.toNumber.replace(/\D/g,"")!==phone.replace(/\D/g,""))))return {ok:false,error:"verified_contact_phone_required"};
-  if(input.channel==="Email" && (!email || (input.emailTo && input.emailTo.toLowerCase()!==email.toLowerCase())))return {ok:false,error:"verified_contact_email_required"};
+  const verified=await preflightRecipient({contactId:input.contactId,channel:input.channel,toNumber:input.toNumber,emailTo:input.emailTo},ghlClient,db);
+  if(!verified.ok)return {ok:false,error:verified.error};
+  const {contact,provider,phone,email}=verified;
   const payload={type:input.channel,contactId:contact.providerId,message:input.body,...(input.channel==="SMS"?{toNumber:phone,fromNumber:input.fromNumber}:{emailTo:email,emailFrom:input.emailFrom,subject:input.subject})};
   const result=await executeCommunication({requestId:input.requestId,actorId:actor.id,contactId:input.contactId,payload,...(input.duplicateWindowMinutes?{duplicateWindowMinutes:input.duplicateWindowMinutes}:{})},provider,db);
   if("providerMessage" in result && result.providerMessage && result.messageId && result.conversationId) {
-    await persistOutboundMessage({contactId:input.contactId,contactProviderId:contact.providerId,channel:input.channel,body:input.body,providerMessageId:result.messageId,conversationProviderId:result.conversationId,providerPayload:result.providerMessage,occurredAt:asDate(result.providerMessage.dateAdded)??new Date()});
+    await persistOutboundMessage({contactId:input.contactId,contactProviderId:contact.providerId,locationId:provider.locationId,channel:input.channel,body:input.body,providerMessageId:result.messageId,conversationProviderId:result.conversationId,providerPayload:result.providerMessage,occurredAt:asDate(result.providerMessage.dateAdded)??new Date()},db);
     const {providerMessage:_,...receipt}=result;return receipt;
   }
   return result;

@@ -9,7 +9,8 @@
     "test": "vitest run src",
     "test:recordings:integration": "node --test test/recordings-postgres.check.mjs",
     "test:inbound:integration": "node --test test/inbound-postgres.check.mjs",
-    "test:provider-notes:integration": "node --test test/provider-notes-postgres.check.mjs"
+    "test:provider-notes:integration": "node --test test/provider-notes-postgres.check.mjs",
+    "test:action-send:integration": "node --test test/action-send-postgres.check.mjs"
   },
   "dependencies": {
     "@egc/customer-state": "workspace:*",

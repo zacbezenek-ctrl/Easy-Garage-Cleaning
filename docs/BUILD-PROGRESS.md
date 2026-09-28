@@ -279,6 +279,11 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   requestId receipts that replay the saved delivery status, caps (3/member, 3/mailbox, 20/sender per 24 h), audited
   membership details with a 10-entry accessHistory, and a bounded expired-session purge. Merged with B2B-SCOPE's receipts
   and hub_audit rows. Gaps: no live GHL send tested; quota records are never deleted; resend/reset write no hub_audit row.
+- **P3-06** One-tap "Send now" in the Action Center for approved message tasks (human-only `task.send`, behind
+  `EGC_OPERATIONS_ACTION_SEND_ENABLED`, off). The shared communication execution moved into @egc/operations (MCP
+  re-exports it); one provider request per approved revision, retries only read back, and the task completes only on
+  verified delivery. Sales cannot self-approve: they send only on an unexpired owner/manager approval of the exact revision.
+  Gaps: no in-dialog edit; attachments are not checked on the provider read-back; started-send detection reads 100 events.
 
 ## In progress
 
@@ -346,6 +351,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | FUN-02 | Booking, dispatch and approval funnel events in the same commit as each visit change; schedule.no_show | merged (98925a0) |
 | B2B-SCOPE | B2B per-property member access (propertyIds) and audited member invite/revoke/scope changes | merged (d8257e6) |
 | B2B-INVITE | B2B member invitations by email via the approved-send core, resend/reset, send caps and audited membership changes | merged (e2e32fc) |
+| P3-06 | One-tap approved send from the Action Center (task.send); sales cannot self-approve | merged (8e0a1a4) |
 
 ## Next
 
