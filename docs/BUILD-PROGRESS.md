@@ -124,6 +124,11 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   rate, bonus/tips, manager-set paid PTO; `GET /api/timesheets` (JSON or guarded payroll CSV, only for settled weeks) and
   `GET /api/job-costing` (segment cost + spread OT premium, exclusive end). Employee requests cannot set paid PTO fields.
   Gaps: COMPS reading needs accountant sign-off; no UI; PTO pay set by API only.
+- **P4-02** Customer identity keys: `customer-identity.js` (E.164 phone, lowercased email, fail-closed
+  `findCustomerCandidates` that returns an id only for one current match), written by `resolveCustomer`, native CRM link,
+  adoption and the walkthrough handoff; dry-run-by-default `scripts/backfill-customer-identity.mjs` that links only
+  confirmed single matches in revision-fenced lineage components and never creates a second account root. Gaps: live
+  backfill not run; native CRM link path does not bump the identity/schedule guards (quiet-window run).
 
 ## In progress
 
@@ -148,7 +153,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | MCP-01 | MCP tool registry/policy framework + safety defaults (sends blocked in operations mode, read-only static bearer, real audit actor) | merged (dfccb8d) |
 | BRIDGE | Operations bridge command registry (API + Hub) with delegated human actors | merged (d821773) |
 | P4-01 | Customer portal correctness fixes + review request tracking | merged (5a617a8) |
-| P4-02 | Customer identity normalization + dry-run backfill | building |
+| P4-02 | Customer identity normalization + dry-run backfill | merged (41d8d70) |
 | P4-15 | Customer portal link revocation (link version) | merged (754b885) |
 | F-PWA | Crew PWA shell + offline action outbox (field actions + time clock) | building |
 | F-EXP | Field cost capture (materials, dump fees) | building |
@@ -275,10 +280,10 @@ Scope: all 188 findings the maps exported (160 bug reports plus 28 mission or in
 | 68 | Dispatch | Dispatch customer search fires on every keystroke and each call scans up to 20,000 customer documents. | `employee-dispatch.js:363`; `functions/_lib/dispatch-service.js:185-190` | NEW: indexed, debounced dispatch customer search |
 | 69 | Dispatch | Customer-facing arrival windows cannot be set or seen in dispatch, and the portal ignores the job's top-level arrival window that the crew sees. | `functions/_lib/dispatch-storage.js:15`; `functions/api/customer-portal.js:152`; `functions/_lib/field-execution.js:100` | P1-04 (P4-01 reads it in the portal) |
 | 70 | Staff and time | Crew-created requests, incidents and equipment records store any client-sent fields, limited only by a 120 KB size cap. | `functions/api/employee-hub.js:394` (also :438) | P1-06 (requests); NEW: field whitelist for incidents/equipment |
-| 71 | Staff and time | The Hub timesheet CSV exports every shift status with no approval, rate, break or overtime columns, so it is unsafe as a payroll export. | `employee-suite.js:325` | P1-03 (server CSV), P1-15 (review UI) |
+| 71 | Staff and time | The Hub timesheet CSV exports every shift status with no approval, rate, break or overtime columns, so it is unsafe as a payroll export. | `employee-suite.js:325` | P1-03 (done: server CSV), P1-15 (review UI) |
 | 72 | Time clock | Clock-in can attach the shift to a future job because the server checks assignment but not date. | `employee-suite.js:411` | P1-15 |
-| 73 | Money | Job economics use a flat $20/hr labor cost instead of actual timecards and snapshotted pay rates. | `employee-suite.js:233` | P1-03 (labor cost), M9 |
-| 74 | Staff and time | All breaks are deducted from paid hours, with no paid rest vs unpaid meal distinction as Colorado COMPS requires. | `functions/_lib/employee-timecards.js:42`; `functions/_lib/gusto-timecards.js` (approvedTimecard) | P1-03 (calculation), P1-15 (recording break type) |
+| 73 | Money | Job economics use a flat $20/hr labor cost instead of actual timecards and snapshotted pay rates. | `employee-suite.js:233` | P1-03 (done: labor cost API), M9 |
+| 74 | Staff and time | All breaks are deducted from paid hours, with no paid rest vs unpaid meal distinction as Colorado COMPS requires. | `functions/_lib/employee-timecards.js:42`; `functions/_lib/gusto-timecards.js` (approvedTimecard) | P1-03 (done: calculation), P1-15 (recording break type) |
 | 75 | Crew app | The crew home offline banner says checklist work will sync later, but that page has no queue or sync. | `crew/index.html:123` | F-LEG (also F-PWA) |
 | 76 | Crew app | Photo upload truncates job ids to 60 characters (ids allow 180), so long ids are checked against the wrong job, and the Drive query does not escape backslashes. | `functions/api/drive-upload.js:276` (query :199) | F-LEG |
 | 77 | Crew app | The crew review-request/post-job branch in crew-hook.js is unreachable behind an unconditional 403 for non-business users, and it sets a wildcard CORS header. | `functions/api/crew-hook.js:73-94` | F-LEG |

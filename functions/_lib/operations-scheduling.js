@@ -6,6 +6,7 @@ import {scheduleRowsConflict,scheduleLockConflict,scheduleDayEntry} from './disp
 import {arrivalWindowProblem,arrivalWindowFields} from './dispatch-arrival.js';
 import {DISPATCH_TIME_ZONE} from './dispatch-contract.js';
 import {legacyBlockMode,legacyBlockedDays} from './dispatch-legacy-blocks.js';
+import {customerIdentityFields} from './customer-identity.js';
 const ROOT='projects/egcw-1ec83/databases/(default)/documents';
 const URL=`https://firestore.googleapis.com/v1/${ROOT}`;
 const safeId=id=>typeof id==='string'&&/^[A-Za-z0-9_-]{1,180}$/.test(id)&&!/^(_egc_|secure_)/.test(id);
@@ -66,8 +67,8 @@ export async function linkScheduledCustomer(store,actor,input,now=new Date().toI
   const writes=[{collection:'jobs',id:visit.id,revision:visit.revision,patch:{customerId:id,projectId,highlevelContactId:contact.id,providerSyncOwner:'operations',updatedAt:now}}];
   if(root.id!==visit.id&&!root.projectId)writes.push({collection:'jobs',id:root.id,revision:root.revision,patch:{projectId,updatedAt:now}});
   if(!project)writes.push({collection:'projects',id:projectId,patch:{id:projectId,customerId:id,sourceRecordId:root.id,sourceWalkthroughId:root.type==='walkthrough'?root.id:null,createdAt:now,updatedAt:now,authority:'employee_hub'}});
-  if(!customer)writes.push({collection:'customers',id,patch:{id,name:contact.name||[contact.firstName,contact.lastName].filter(Boolean).join(' ')||visit.customer||'',phone:contact.phone||'',email:contact.email||'',address:visit.address||contact.address1||'',highlevelContactId:contact.id,createdAt:now,updatedAt:now,source:'verified_provider_contact'}});
-  else if(!customer.highlevelContactId)writes.push({collection:'customers',id,revision:customer.revision,patch:{highlevelContactId:contact.id,updatedAt:now}});
+  if(!customer)writes.push({collection:'customers',id,patch:{id,name:contact.name||[contact.firstName,contact.lastName].filter(Boolean).join(' ')||visit.customer||'',phone:contact.phone||'',email:contact.email||'',...customerIdentityFields(contact),address:visit.address||contact.address1||'',highlevelContactId:contact.id,createdAt:now,updatedAt:now,source:'verified_provider_contact'}});
+  else if(!customer.highlevelContactId)writes.push({collection:'customers',id,revision:customer.revision,patch:{highlevelContactId:contact.id,...customerIdentityFields(customer),updatedAt:now}});
   try{await store.commit(writes);}catch(error){const latest=await store.read('jobs',visit.id).catch(()=>null);if(!latest||latest.customerId!==id||latest.highlevelContactId!==contact.id)throw error;}
   return resolveScheduledVisit(store,visit.id);
 }

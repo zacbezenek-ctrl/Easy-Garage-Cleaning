@@ -4,6 +4,7 @@ import {localInstant} from './operations-portal-records.js';
 import {schedulingStorage} from './operations-scheduling.js';
 import {dispatchStorage} from './dispatch-storage.js';
 import {scheduleRowsConflict,scheduleLockConflict,scheduleDayEntry} from './dispatch-conflicts.js';
+import {customerIdentityFields} from './customer-identity.js';
 const BASE='https://firestore.googleapis.com/v1/projects/egcw-1ec83/databases/(default)/documents/jobs';
 const fail=(code,status=409)=>Object.assign(new Error(code),{status});
 const safeId=v=>typeof v==='string'&&/^[A-Za-z0-9_-]{1,180}$/.test(v)&&!/^(_egc_|secure_)/.test(v);
@@ -146,7 +147,7 @@ export async function adoptScheduledVisit(store,actor,input,now=new Date().toISO
  const next={...current,...patch},writes=[{collection:'jobs',id,revision:current?.revision,patch}];
  writes.push({collection:'customerIdentityState',id:'revision',revision:identityGuard?.revision,patch:{updatedAt:now,lastRequestId:input.requestId}});
  writes.push({collection:'dispatchState',id:'revision',revision:dispatchGuard?.revision,patch:{updatedAt:now,lastRequestId:input.requestId}});
- if(!customer)writes.push({collection:'customers',id:customerId,patch:{id:customerId,name:next.customer||'',phone:p.providerContact.phone||'',email:p.providerContact.email||'',address:p.address,highlevelContactId:p.contactProviderId,createdAt:now,updatedAt:now,source:'verified_operational_adoption'}});
+ if(!customer)writes.push({collection:'customers',id:customerId,patch:{id:customerId,name:next.customer||'',phone:p.providerContact.phone||'',email:p.providerContact.email||'',...customerIdentityFields(p.providerContact),address:p.address,highlevelContactId:p.contactProviderId,createdAt:now,updatedAt:now,source:'verified_operational_adoption'}});
  if(!project)writes.push({collection:'projects',id:projectId,patch:{id:projectId,customerId,sourceRecordId:id,sourceWalkthroughId:p.kind==='walkthrough'?id:null,createdBy:actor.id,createdAt:now,updatedAt:now,authority:'employee_hub'}});
  activeEntries.push(scheduleDayEntry(next,from.date,roster,now));
  writes.push({collection:'jobs',id:lockId,revision:lock?.revision,patch:{recordType:'schedule_lock',date:from.date,entries:activeEntries,updatedAt:now}});

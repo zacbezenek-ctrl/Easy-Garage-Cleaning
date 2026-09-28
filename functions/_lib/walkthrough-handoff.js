@@ -1,6 +1,7 @@
 import { mutateDispatch, requireDispatcher } from './dispatch-service.js';
 import { assignmentKey, jobCrewNames } from './job-assignment.js';
 import { localInstant } from './operations-portal-records.js';
+import { customerIdentityPatch } from './customer-identity.js';
 
 const plain = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const safeId = value => typeof value === 'string' && /^[A-Za-z0-9_-]{1,180}$/.test(value) && !/^(secure_|_egc_)/.test(value);
@@ -190,7 +191,8 @@ export async function saveWalkthroughHandoff(store, actor, input, now = new Date
           if (patch) { found.verify = false; found.patch = { ...found.patch, ...patch }; }
         } else writes.push({ collection, id: row.id, revision: row.revision, ...(patch ? { patch } : { verify: true }) });
       }
-      fence('customers', customer);
+      // Also brings a legacy customer's derived phone/email lookup keys current.
+      fence('customers', customer, customerIdentityPatch(customer, now));
       if (sourceProject) fence('projects', sourceProject);
       if (source) fence('jobs', source, { customerId: customer.id, convertedJobId: target.id, conversionStatus: 'job_scheduled', updatedAt: now });
       // Scheduling a sold job is not proof the source visit has completed.

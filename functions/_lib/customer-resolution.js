@@ -1,4 +1,5 @@
 import { requireDispatcher } from './dispatch-service.js';
+import { customerIdentityFields } from './customer-identity.js';
 
 const plain=value=>value!==null&&typeof value==='object'&&!Array.isArray(value);
 const safeId=value=>typeof value==='string'&&/^[A-Za-z0-9_-]{1,180}$/.test(value)&&!/^(_egc_|secure_)/.test(value);
@@ -73,8 +74,8 @@ export async function resolveCustomer(store,session,input,{verifyContact,now=new
   if(!safeId(id))throw fail('invalid_customer_id','This customer record needs manager review before booking.',409);
   if(!current&&await store.read('customers',id))throw fail('customer_changed','A matching customer was created during lookup. Retry with the same customer details.',409);
   const created=!current,linked=Boolean(provider&&current&&!current.highlevelContactId),writes=[];
-  if(created)writes.push({collection:'customers',id,patch:{id,...wanted,source:provider?'verified_provider_contact':'manager_intake',createdAt:now,updatedAt:now,createdBy:session.user}});
-  else if(linked)writes.push({collection:'customers',id,revision:current.revision,patch:{highlevelContactId:provider,providerLinkedAt:now,providerLinkedBy:session.user,updatedAt:now}});
+  if(created)writes.push({collection:'customers',id,patch:{id,...wanted,...customerIdentityFields(wanted),source:provider?'verified_provider_contact':'manager_intake',createdAt:now,updatedAt:now,createdBy:session.user}});
+  else if(linked)writes.push({collection:'customers',id,revision:current.revision,patch:{highlevelContactId:provider,...customerIdentityFields(current),providerLinkedAt:now,providerLinkedBy:session.user,updatedAt:now}});
   writes.push({collection:'customerIdentityState',id:'revision',revision:guard?.revision,patch:{updatedAt:now,lastRequestId:input.requestId}});
   writes.push({collection:'customerOperations',id:receiptId,patch:{fingerprint,actorId:session.user,customerId:id,highlevelContactId:provider||current?.highlevelContactId||'',created,linked,createdAt:now,requestId:input.requestId}});
   try{await store.commit(writes);}catch(problem){const recovered=await replay();if(recovered)return recovered;throw problem;}

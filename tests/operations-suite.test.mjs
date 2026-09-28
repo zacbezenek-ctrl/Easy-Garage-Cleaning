@@ -230,7 +230,8 @@ test('walkthrough promise syncs to the canonical job, crew brief, and HighLevel 
   const handoff=read('functions/_lib/walkthrough-handoff.js');
   for(const marker of ['buildJobInstructions','buildInternalNotes','buildClientChecklists'])assert.ok(crew.includes(marker));
   for(const marker of ['jobInstructions: instructions','internalNotes: plan.internal_notes','clientChecklists: plan.client_checklists','customerNotesSummary','customerGoal','keepItems','removeItems','walkthroughSyncedAt'])assert.ok(handoff.includes(marker),marker+' is missing');
-  assert.match(handoff,/fence\('customers', customer\)/);
+  // The customer stays revision-fenced; P4-02 lets that fence carry only the derived phone/email lookup keys.
+  assert.match(handoff,/fence\('customers', customer(?:, customerIdentityPatch\(customer, now\))?\)/);
   assert.doesNotMatch(handoff,/latestJobInstructions|latestClientChecklists/,'a second property cannot overwrite another property-specific customer history');
   for(const page of [prejob,postjob]){
     assert.match(page,/function normalizedInstructions/);
