@@ -228,6 +228,11 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   Upcoming work becomes unscheduled dispatch-review jobs on one account root per customer; completed visits become
   read-only `jobber_history`; open invoices become opening balances. Runbook in `docs/JOBBER-CUTOVER.md`. Gaps: multi-visit
   one-off jobs are listed for manual scheduling; operator must pause Dispatch and legacy edits during apply.
+- **LEGACY-SEND** Legacy customer send hardening: HighLevel thread texts carry an Idempotency-Key, a 15 s timeout and a
+  phone/location/DND/consent pre-check (sent, failed, uncertain never auto-resent, suppressed); quo-send fills [TIME]/[N]
+  from the saved job or refuses, and refuses the "tomorrow" confirmation unless the job is tomorrow in Denver; crew/prejob
+  never opens the composer with placeholders. The sales exit's 501-job scan became bounded identity lookups (removes the
+  Jobber 500-job blocker). Gap: job writers don't set contact keys; rerun `backfill-job-contact-keys.mjs` after imports.
 
 ## In progress
 
@@ -283,6 +288,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | MCP-READS | Registry CRM reads with cursor pagination and per-tool contract gate | merged (44e2882) |
 | SEC-13 | Revoke staff Firebase sessions when access changes | merged (251fcf7) |
 | JOB-CUT | Jobber cutover import tooling (dry run by default) and runbook | merged (a233020) |
+| LEGACY-SEND | Legacy customer send hardening, bounded sales-exit lookups, owner messaging setup doc | merged (cb34f34) |
 
 ## Next
 

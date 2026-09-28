@@ -7,7 +7,10 @@
  * The recipient is always the saved job phone. Business users keep free-form
  * job texts. Everyone else may only send a crew/prejob.html script, which the
  * server renders from the saved job: crew never supply the price, so no reply
- * can confirm or deny a guessed rate.
+ * can confirm or deny a guessed rate. A script placeholder ([TIME], [N], ...)
+ * left in any text is filled from the saved job, or the send is refused, so a
+ * literal placeholder never reaches the customer. The confirmation script says
+ * "tomorrow", so it is sent only the day before the saved job date (Denver).
  *
  * Idempotency: every send claims messageReceipts/quo_<sha256(key)> (a
  * top-level, server-only collection; the catch-all Firestore rule denies
@@ -28,8 +31,10 @@
 import { getHubSession, hasBusinessAccess } from '../_lib/hub-session.js';
 import { readJob, encodeFirestoreFields, decodeFirestoreFields } from '../_lib/firestore-job.js';
 import { firestoreFetch } from '../_lib/firebase-service-account.js';
-import { createJobAssignmentAccess } from '../_lib/job-assignment.js';
+import { createJobAssignmentAccess, jobCrewNames } from '../_lib/job-assignment.js';
 import { fieldId } from '../_lib/field-execution.js';
+import { arrivalClock } from '../_lib/dispatch-arrival.js';
+import { addDays, denverToday } from '../_lib/dispatch-time.js';
 
 const DOCUMENTS = 'https://firestore.googleapis.com/v1/projects/egcw-1ec83/databases/(default)/documents';
 const RECEIPTS = 'messageReceipts';
@@ -38,15 +43,16 @@ const IDEMPOTENCY_KEY = /^[A-Za-z0-9][A-Za-z0-9:._-]{7,255}$/;
 const SAFE_NAME = /^[\p{L}\p{M}][\p{L}\p{M}'’.-]{0,39}$/u;
 const PRICE = /^\d{1,7}(?:\.\d{1,2})?$/;
 // Server copy of the crew/prejob.html SMS scripts (the idempotency test runs
-// that page's buttons against it). [TIME] and [N] are sent literally by that
-// page today, so only NAME, ADDRESS and RATE are slots.
-const SLOT = { NAME: '[^ ]{1,60}', ADDRESS: '[\\s\\S]{1,300}', RATE: '[^ ]{1,20}' };
+// that page's buttons against it). The page sends [TIME] and [N] literally;
+// they are rendered here from the saved start time and crew size.
+const SLOT = { NAME: '[^ ]{1,60}', ADDRESS: '[\\s\\S]{1,300}', RATE: '[^ ]{1,20}', TIME: '[^\\n]{1,20}', N: '[^ ,]{1,4}' };
+const PLACEHOLDER = /\[(NAME|ADDRESS|RATE|TIME|N)\]/g;
 const TEMPLATES = new Map([
   ['arrival', 'Hi [NAME] — the Easy Garage Cleaning crew is on the way to [ADDRESS]. We\'ll see you shortly. Reply here if anything changed.'],
   ['confirmation', 'Hi [NAME], it\'s Easy Garage Cleaning — confirming your garage comeback tomorrow at [TIME]. Crew of [N], we\'ll knock when we arrive. Flat rate locked at $[RATE] like we agreed — nothing changes. Reply C to confirm. — Alex'],
 ].map(([id, text]) => {
   const slots = [];
-  const source = text.split(/\[(NAME|ADDRESS|RATE)\]/).map((part, index) => index % 2 ? (slots.push(part), `(${SLOT[part]})`) : part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('');
+  const source = text.split(/\[(NAME|ADDRESS|RATE|TIME|N)\]/).map((part, index) => index % 2 ? (slots.push(part), `(${SLOT[part]})`) : part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('');
   return [id, { id, text, slots, pattern: new RegExp(`^${source}$`, 'u') }];
 }));
 
@@ -81,12 +87,31 @@ export function savedJobRate(job = {}) {
   }
   return '';
 }
-// Returns the value to send, or null when the caller's value is off-script.
-// RATE is always the saved job rate: a typed price (or the [RATE] placeholder)
-// only has to look like a price, and a wrong guess renders the same text as a
-// right one, so the reply never depends on the saved price.
+// Start time as the customer reads it ('9:00 AM'), or '' when none is saved.
+export function savedJobTime(job = {}) {
+  return arrivalClock(job.time);
+}
+// Planned crew size, else the number of assigned crew; '' when neither is saved.
+export function savedCrewSize(job = {}) {
+  for (const value of [job.crewNeeded, job.crewSize]) {
+    if (value === '' || value == null) continue;
+    const size = Number(value);
+    if (Number.isInteger(size) && size >= 1 && size <= 20) return String(size);
+  }
+  const assigned = jobCrewNames(job).length;
+  return assigned >= 1 && assigned <= 20 ? String(assigned) : '';
+}
+// Returns the value to send ('' when the saved job lacks it), or null when the
+// caller's value is off-script. RATE is always the saved job rate: a typed
+// price (or the [RATE] placeholder) only has to look like a price, and a wrong
+// guess renders the same text as a right one, so the reply never depends on
+// the saved price. TIME and N accept the placeholder or the saved value only.
 function scriptSlot(slot, value, job) {
   if (slot === 'RATE') return value === '[RATE]' || PRICE.test(value) ? savedJobRate(job) : null;
+  if (slot === 'TIME' || slot === 'N') {
+    const saved = slot === 'TIME' ? savedJobTime(job) : savedCrewSize(job);
+    return value === `[${slot}]` || (saved !== '' && value === saved) ? saved : null;
+  }
   if (slot === 'ADDRESS') {
     const address = typeof job.address === 'string' ? job.address : '';
     if (value === '[ADDRESS]') return address.trim() ? address : 'your garage';
@@ -100,7 +125,8 @@ function scriptSlot(slot, value, job) {
  * Renders a pre-job script from the saved job. `message` may be the page's
  * filled-in text or the script with its placeholders; with only `template`,
  * the script's placeholders are used. Returns null when nothing matches, or
- * { template, message, rateMissing } otherwise.
+ * { template, message, missing } otherwise, where `missing` lists the slots
+ * the saved job cannot fill.
  */
 export function renderScript(job = {}, { message = '', template = '' } = {}) {
   const candidates = template ? [TEMPLATES.get(template)].filter(Boolean) : [...TEMPLATES.values()];
@@ -110,11 +136,22 @@ export function renderScript(job = {}, { message = '', template = '' } = {}) {
     const values = script.slots.map((slot, index) => scriptSlot(slot, match[index + 1], job));
     if (values.includes(null)) continue;
     let slot = 0;
-    return { template: script.id, message: script.text.replace(/\[(?:NAME|ADDRESS|RATE)\]/g, () => values[slot++]), rateMissing: values.includes('') };
+    return { template: script.id, message: script.text.replace(PLACEHOLDER, () => values[slot++]), missing: script.slots.filter((_, index) => values[index] === '') };
   }
   return null;
 }
 const scriptId = message => [...TEMPLATES.values()].find(script => script.pattern.test(message))?.id || '';
+// Business free-form texts keep their words; only left-over placeholders are
+// filled from the saved job.
+export function fillPlaceholders(job = {}, text = '') {
+  const missing = new Set();
+  const message = text.replace(PLACEHOLDER, (placeholder, slot) => {
+    const value = scriptSlot(slot, placeholder, job);
+    if (!value) missing.add(slot);
+    return value || placeholder;
+  });
+  return { message, missing: [...missing] };
+}
 
 const sha256 = async text => [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text)))].map(value => value.toString(16).padStart(2, '0')).join('');
 const receiptUrl = id => `${DOCUMENTS}/${RECEIPTS}/${id}`;
@@ -141,7 +178,12 @@ async function writeReceipt(env, id, patch, updateTime = '') {
 const json = (status, body) => new Response(JSON.stringify(body), {
   status, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' } });
 const unavailable = () => json(503, { ok: false, code: 'QUO_SEND_STORAGE_UNAVAILABLE', error: 'The text could not be checked against earlier sends. Retry shortly.' });
-const templateRequired = () => json(400, { ok: false, code: 'QUO_SEND_TEMPLATE_REQUIRED', error: 'Crew texts must use the pre-job script for this job. Open the phone composer to review a custom message.' });
+const templateRequired = () => json(400, { ok: false, code: 'QUO_SEND_TEMPLATE_REQUIRED', error: 'Crew texts must use the pre-job script with this job\'s saved details. Reload the page to pick up the latest job, then send again.' });
+// Managers may save the job or type the value themselves; crew can only ask.
+const detailsMissing = (missing, business) => missing.includes('RATE')
+  ? json(400, { ok: false, code: 'QUO_SEND_RATE_UNAVAILABLE', error: business ? 'This job has no saved flat rate yet. Save the flat rate on the job, or type the amount in place of [RATE], then send again.' : 'This job has no saved flat rate yet. Ask a manager to send the confirmation text.' })
+  : json(400, { ok: false, code: 'QUO_SEND_SCHEDULE_UNAVAILABLE', error: business ? 'This job has no saved start time or crew size yet. Save them on the job, or type them in place of [TIME] and [N], then send again.' : 'This job has no saved start time or crew size yet. Ask a manager to save them on the job, then send the confirmation text.' });
+const wrongDay = business => json(400, { ok: false, code: 'QUO_SEND_CONFIRMATION_DATE_MISMATCH', error: `The confirmation text says "tomorrow", but this job is not saved for tomorrow. Send it the day before the job${business ? ', or text the customer your own wording' : ''}.` });
 
 export function quoSendHandlers({ session: readSession = getHubSession, now = () => new Date() } = {}) {
   return {
@@ -175,13 +217,14 @@ export function quoSendHandlers({ session: readSession = getHubSession, now = ()
       const requested = body.template == null || body.template === '' ? '' : String(body.template);
       if (requested && !TEMPLATES.has(requested)) return templateRequired();
       const typed = String(body.message || '').slice(0, 1500);
-      let message = typed, template = scriptId(typed) || 'custom';
+      let message = typed, template = scriptId(typed) || 'custom', missing;
       if (requested || !hasBusinessAccess(session)) {
         const script = renderScript(job, { message: typed, template: requested });
         if (!script) return templateRequired();
-        if (script.rateMissing) return json(400, { ok: false, code: 'QUO_SEND_RATE_UNAVAILABLE', error: 'This job has no saved flat rate yet. Ask a manager to send the confirmation text.' });
-        ({ message, template } = script);
-      }
+        ({ message, template, missing } = script);
+      } else ({ message, missing } = fillPlaceholders(job, typed));
+      if (missing.length) return detailsMissing(missing, hasBusinessAccess(session));
+      if (template === 'confirmation' && job.date !== addDays(denverToday(now()), 1)) return wrongDay(hasBusinessAccess(session));
       if (!to || !message) return json(400, { ok: false, error: 'to and message are required' });
 
       // The fingerprint omits the actor: two crew members tapping the same

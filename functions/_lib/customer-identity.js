@@ -7,6 +7,10 @@ const CUSTOMER_LIMIT=10,JOB_LIMIT=100;
 const CUSTOMER_FIELDS=['name','phone','email','phoneE164','emailLower','highlevelContactId'];
 const QUERY_FIELDS=new Set(['phoneE164','emailLower','highlevelContactId']);
 const JOB_FIELDS=['type','recordType','customerId','highlevelContactId'];
+// Job fields that may be looked up by exact value. phoneE164/emailLower exist on
+// jobs only once scripts/backfill-job-contact-keys.mjs has written them, so callers
+// also pass the raw phone/email spellings to match (at most IN_LIMIT).
+const JOB_QUERY_FIELDS=new Set(['highlevelContactId','customerId','phoneE164','emailLower','phone','email']),IN_LIMIT=30;
 const safeId=value=>typeof value==='string'&&/^[A-Za-z0-9_-]{1,180}$/.test(value)&&!/^(_egc_|secure_)/.test(value);
 const fail=(code,message,status=503)=>Object.assign(new Error(message),{code:'customer_identity_'+code,status});
 export const operationalJob=row=>Boolean(row&&safeId(row.id)&&!row.recordType&&['job','cleanout','reorg','walkthrough'].includes(row.type));
@@ -32,8 +36,34 @@ export function normalizeEmail(value) {
   return text.length<=254&&/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(text)?text:'';
 }
 
+/** Exact spellings a legacy job may have saved for one NANP number, for bounded
+ * equality lookups on the unnormalized job phone field. Other numbers keep their
+ * own spelling and E.164. */
+export function phoneSpellings(value) {
+  const raw=typeof value==='string'?value.trim():typeof value==='number'?String(value):'',e164=normalizePhoneE164(value),found=new Set(raw?[raw]:[]);
+  if(/^\+1\d{10}$/.test(e164)) {
+    const d=e164.slice(2),[a,b,c]=[d.slice(0,3),d.slice(3,6),d.slice(6)];
+    for(const text of [d,'1'+d,e164,`(${a}) ${b}-${c}`,`(${a})${b}-${c}`,`(${a}) ${b} ${c}`,`${a}-${b}-${c}`,`${a}.${b}.${c}`,`${a} ${b} ${c}`,`${a} ${b}-${c}`,
+      `1-${a}-${b}-${c}`,`1 ${a} ${b} ${c}`,`1 (${a}) ${b}-${c}`,`1 ${a}-${b}-${c}`,`+1 ${a} ${b} ${c}`,`+1 (${a}) ${b}-${c}`,`+1-${a}-${b}-${c}`,`+1 ${a}-${b}-${c}`,`+1 ${a}.${b}.${c}`,`+1.${a}.${b}.${c}`])found.add(text);
+  } else if(e164)found.add(e164);
+  return [...found].slice(0,IN_LIMIT);
+}
+
+/** The saved spelling and its lowercase form of one valid address. */
+export function emailSpellings(value) {
+  const raw=typeof value==='string'?value.trim():'';
+  return normalizeEmail(raw)?[...new Set([raw,raw.toLowerCase()])]:[];
+}
+
 export function customerIdentityFields(row) {
   return {phoneE164:normalizePhoneE164(row?.phone),emailLower:normalizeEmail(row?.email)};
+}
+
+/** Derived phone/email lookup keys for a saved job, or null when they are current
+ * (a job with neither key and no phone or email needs none). */
+export function jobContactKeysPatch(row,now=new Date().toISOString()) {
+  const fields=customerIdentityFields(row);
+  return (row?.phoneE164??'')===fields.phoneE164&&(row?.emailLower??'')===fields.emailLower?null:{...fields,contactKeysNormalizedAt:now};
 }
 
 /** Derived lookup keys for a saved customer, or null when they are current. */
@@ -93,9 +123,11 @@ function decode(document,collection) {
 
 export function customerIdentityStorage(env,fetcher=firestoreFetch) {
   // Masked, bounded equality lookups: only the identity fields ever leave Firestore.
+  // An array value is an IN lookup (one of the values).
   async function query(collection,fields,field,value,limit) {
+    const filter=Array.isArray(value)?{op:'IN',value:{arrayValue:{values:value.map(stringValue=>({stringValue}))}}}:{op:'EQUAL',value:{stringValue:value}};
     let response;
-    try{response=await fetcher(env,`${BASE}:runQuery`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({structuredQuery:{from:[{collectionId:collection}],select:{fields:fields.map(fieldPath=>({fieldPath}))},where:{fieldFilter:{field:{fieldPath:field},op:'EQUAL',value:{stringValue:value}}},limit}}),signal:AbortSignal.timeout(15000)});}
+    try{response=await fetcher(env,`${BASE}:runQuery`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({structuredQuery:{from:[{collectionId:collection}],select:{fields:fields.map(fieldPath=>({fieldPath}))},where:{fieldFilter:{field:{fieldPath:field},...filter}},limit}}),signal:AbortSignal.timeout(15000)});}
     catch{throw fail('storage_unavailable','Customer identity lookup is unavailable. Retry.');}
     if(!response.ok)throw fail('storage_unavailable','Customer identity lookup is unavailable. Retry.');
     const rows=await response.json().catch(()=>null);
@@ -110,6 +142,15 @@ export function customerIdentityStorage(env,fetcher=firestoreFetch) {
     async jobsByContact(contactId,limit=JOB_LIMIT) {
       if(!safeId(contactId))throw fail('query_invalid','Customer job lookup needs a valid CRM contact.',400);
       return query('jobs',JOB_FIELDS,'highlevelContactId',contactId,limit);
+    },
+    /** Jobs whose `field` equals one of `values` (bounded; a full page means the
+     * caller's coverage is incomplete). Private rows are returned for the caller to skip. */
+    async queryJobsByField(field,values,{fields=JOB_FIELDS,limit=JOB_LIMIT}={}) {
+      const list=[...new Set((Array.isArray(values)?values:[values]).filter(value=>typeof value==='string'&&value))];
+      if(!JOB_QUERY_FIELDS.has(field)||!list.length||list.length>IN_LIMIT||['highlevelContactId','customerId'].includes(field)&&!list.every(safeId))throw fail('query_invalid','Customer job lookup needs a valid CRM contact, customer, phone or email.',400);
+      const rows=await query('jobs',[...new Set([...fields,field])],field,list.length===1?list[0]:list,limit);
+      if(rows.some(row=>!list.includes(row[field])))throw fail('storage_incomplete','Customer job history returned incomplete records. Retry.');
+      return rows;
     },
   };
 }

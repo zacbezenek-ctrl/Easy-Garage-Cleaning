@@ -20,6 +20,8 @@ Existing Cloudflare Pages production secrets must include:
 - `FIREBASE_SERVICE_ACCOUNT_JSON`: credentials for project `egcw-1ec83`, with the Firestore access needed to read jobs and write delivery metadata. Keep the JSON encrypted in Cloudflare, outside the repository.
 - `HIGHLEVEL_API_KEY` and `HIGHLEVEL_LOCATION_ID`: contact read/upsert and conversation-message write access; an operational SMS/email sender in the existing account.
 
+The full owner checklist for customer messaging (HighLevel scopes, A2P 10DLC, sender number and email domain, workflows to adjust per message kind, the inbound reply webhook, template approval and a dry-run acceptance pass) is in [Customer messaging owner setup](messaging-owner-setup.md).
+
 Publish the reviewed Firestore rules from this repository as part of the secure portal setup. Configure secrets in Cloudflare and redeploy before using the feature. The invitation code does not fall back to anonymous Firestore access.
 
 As of September 6, 2026, the Cloudflare production settings showed the HighLevel connection, but did not contain `HUB_SESSION_SECRET`, `HUB_AUTH_USERS_JSON`, or `FIREBASE_SERVICE_ACCOUNT_JSON`. Automatic invitations therefore remain unavailable until the secure Hub/portal setup is completed.

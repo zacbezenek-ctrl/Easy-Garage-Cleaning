@@ -13,6 +13,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 JOB = {'customer': 'Dana Synthetic', 'phone': '(970) 555-0100', 'address': '746 Synthetic Grass Ln', 'total': 450,
        'date': '2026-09-23', 'time': '09:00', 'serviceType': 'Synthetic garage reset', 'assignedCrew': ['ZacB']}
 ARRIVAL = "Hi Dana — the Easy Garage Cleaning crew is on the way to 746 Synthetic Grass Ln. We'll see you shortly. Reply here if anything changed."
+REFUSAL = 'This job has no saved start time or crew size yet. Save them on the job, or type them in place of [TIME] and [N], then send again.'
 # Stands in for the three gstatic Firebase compat scripts: auth succeeds and the
 # job document read returns JOB. Every other external host is aborted.
 FIREBASE_STUB = """
@@ -93,6 +94,8 @@ class PrejobSmsBrowserTests(unittest.TestCase):
                 return self.json(route, {'ok': True, 'id': saved['id'], 'replayed': True})
             return self.json(route, {'ok': False, 'code': 'QUO_SEND_OUTCOME_UNKNOWN', 'error': 'Synthetic unknown outcome'}, 409)
         status = self.replies.pop(0) if self.replies else 'sent'
+        if status == 'schedule_unavailable':
+            return self.json(route, {'ok': False, 'code': 'QUO_SEND_SCHEDULE_UNAVAILABLE', 'error': REFUSAL}, 400)
         self.receipts[key] = {'message': body['message'], 'status': status, 'id': f'synthetic-message-{len(self.receipts) + 1}'}
         if status == 'sent':
             return self.json(route, {'ok': True, 'id': self.receipts[key]['id']})
@@ -144,6 +147,20 @@ class PrejobSmsBrowserTests(unittest.TestCase):
         self.assertEqual(self.dialogs, [], 'no alert for an outcome that may already have reached the customer')
         self.assertTrue(self.page.url.endswith('/crew/prejob.html?jobId=job-1'), 'the SMS composer never opens')
         expect(self.page.get_by_role('button', name='Send arrival text')).to_be_enabled()
+        self.assertLessEqual(self.page.evaluate('document.documentElement.scrollWidth'), self.page.evaluate('innerWidth'))
+
+    def test_refused_confirmation_shows_the_reason_and_never_opens_the_composer(self):
+        self.open()
+        self.replies.append('schedule_unavailable')
+        button = self.page.get_by_role('button', name='Send confirmation text')
+        button.click()
+        expect(self.status('Send confirmation text')).to_have_text(REFUSAL)
+        expect(button).to_be_enabled()
+        self.assertEqual(self.dialogs, [], 'no alert: the composer is not offered')
+        self.assertTrue(self.page.url.endswith('/crew/prejob.html?jobId=job-1'), 'no sms: navigation')
+        self.assertEqual(len(self.sends), 1)
+        self.assertIn('at [TIME]. Crew of [N]', self.sends[0]['message'], 'the server, not the page, fills the schedule for Quo')
+        self.assertGreaterEqual(button.bounding_box()['height'], 44)
         self.assertLessEqual(self.page.evaluate('document.documentElement.scrollWidth'), self.page.evaluate('innerWidth'))
 
 

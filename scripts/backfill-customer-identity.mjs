@@ -64,7 +64,7 @@ export function backfillStorage(env,fetcher=firestoreFetch) {
     }
     throw fail('storage_incomplete',`The ${collection} scan did not finish.`);
   }
-  return {read:base.read,commit:base.commit,customers:()=>scan('customers',CUSTOMER_FIELDS),jobs:()=>scan('jobs',JOB_FIELDS)};
+  return {read:base.read,commit:base.commit,customers:()=>scan('customers',CUSTOMER_FIELDS),jobs:(fields=JOB_FIELDS)=>scan('jobs',fields)};
 }
 
 function identityConflict(keys,customer,viaContact) {

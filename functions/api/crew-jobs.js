@@ -142,7 +142,7 @@ export function crewJobsHandlers({ session = getHubSession, storage = dispatchSt
         } catch {
           return reply(409, { ok: false, error: 'The customer thread changed. Refresh and send again.' });
         }
-        const delivery = await deliverHighLevelMessage(env, queued, { body, direction: 'to_customer' });
+        const delivery = await deliverHighLevelMessage(env, queued, { body, direction: 'to_customer', requestId }, { clock: now });
         let updated = queued;
         try {
           const latest = await readJob(env, jobId), deliveredAt = now().toISOString();

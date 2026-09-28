@@ -328,7 +328,7 @@ async function handlePost({ request, env }, { clock, read }) {
     } catch {
       return reply(409, { ok: false, error: 'The conversation changed. Refresh and send again.' });
     }
-    const highLevelDelivery = await deliverHighLevelMessage(env, queued, { body: messageBody, direction: 'from_customer' });
+    const highLevelDelivery = await deliverHighLevelMessage(env, queued, { body: messageBody, direction: 'from_customer', requestId }, { clock });
     const delivery = highLevelDelivery.status === 'sent' ? highLevelDelivery : message.delivery;
     let updated = queued;
     try {
@@ -370,7 +370,7 @@ async function handlePost({ request, env }, { clock, read }) {
         ? reply(409, { ok: false, code: 'CUSTOMER_PORTAL_REVISION_CONFLICT', error: 'The estimate changed. Refresh before approving it.' })
         : reply(503, { ok: false, code: 'CUSTOMER_PORTAL_STORAGE_UNAVAILABLE', error: 'Your approval could not be saved. Please try again shortly.' });
     }
-    const salesFollowupExit = await syncSalesFollowupExit(env, result.session.jobId);
+    const salesFollowupExit = await syncSalesFollowupExit(env, result.session.jobId, { now: clock });
     return reply(200, { ok: true, approval, salesFollowupExit });
   }
 

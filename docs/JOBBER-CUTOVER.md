@@ -385,20 +385,27 @@ roots, the root that imported jobs and balances join. It must be one of the conf
 
 ### Jobs collection size limit
 
-One live reader still stops working correctly once the `jobs` collection holds more than **500** documents: the sales
-follow-up exit check (`functions/_lib/sales-followup-exit.js`, audit #32) reads one 501-row page and refuses above 500.
-Past that, HighLevel nurture keeps texting customers who already accepted. (The crew schedule had the same limit, audit
-#2; P1-01 fixed it and is merged.)
+The 500-document limit this import used to guard against is gone. It came from the sales follow-up exit check
+(`functions/_lib/sales-followup-exit.js`, audit #32), which read one 501-row page of `jobs` and refused above 500, so
+HighLevel nurture kept texting customers who had already accepted. LEGACY-SEND replaced that scan with bounded
+per-customer lookups (normalized `phoneE164`/`emailLower` job keys first, then the raw phone/email spellings), so a
+large `jobs` collection no longer breaks it. (The crew schedule had the same limit, audit #2; P1-01 fixed it.)
 
-History records live in `jobs`, so the dry run projects the collection size. If the projection is above 500, apply
-refuses until one of these happens:
+The dry run still projects the collection size (`counts.jobsCollection`), and apply still refuses a projection above
+500 by default as a leftover interlock (`jobs_collection_limit`). Once the Hub build containing LEGACY-SEND is deployed
+to production, pass `--allow-large-jobs-collection` on both the dry run and the apply; nothing else is needed, and you
+no longer have to narrow `--history-since` to stay under 500.
 
-- a later `--history-since` keeps the import under the limit, or
-- a bounded, per-customer follow-up exit query is **deployed** (audit #32, "NEW: legacy send-path hardening", not yet
-  assigned to a unit). Then pass `--allow-large-jobs-collection`.
+After **every** import (and any other large job import), rerun the contact-key backfill so imported jobs get the
+normalized keys the sales exit looks up first:
 
-You can also import clients, upcoming jobs and invoices now, and import older history later by moving
-`--history-since` back. Reruns are additive and never duplicate.
+```
+node scripts/backfill-job-contact-keys.mjs                         # dry run: counts only
+node scripts/backfill-job-contact-keys.mjs --apply --report keys.json
+```
+
+It needs `FIREBASE_SERVICE_ACCOUNT_JSON`, is safe to rerun, and checks each job's revision. Jobs without keys still
+fall back to the raw-spelling lookups, and the HighLevel open-opportunity check remains the backstop.
 
 ### After apply
 
@@ -417,6 +424,8 @@ You can also import clients, upcoming jobs and invoices now, and import older hi
   recurring plan instead.
 - **Open balances.** Hub finance shows each imported balance (and marks it overdue if it is past due). Collect it by
   your normal method and use **Record payment**. Automatic reminders stay off unless you enable them per job.
+- **Contact keys.** Run `node scripts/backfill-job-contact-keys.mjs` (dry run), then with `--apply --report keys.json`,
+  so the sales follow-up exit finds imported jobs by normalized phone and email (see "Jobs collection size limit").
 - **Spot-check.** Pick 10 customers from `matches`. Compare their Jobber and Hub records: history visits, open balance,
   upcoming work.
 
@@ -449,8 +458,10 @@ Jobber is switched off only when **all** of these are true, in writing, signed o
 - [ ] **Owner checklist complete for everything the flows depend on:** Stripe webhook, HighLevel keys and workflows,
   Gusto, Firebase service account, feature flags set as recommended, and `firestore.rules` published.
 - [ ] **Import dry run is clean:** `blocking: []`, **zero unresolved conflicts**, zero blocking `unmappable` rows, and
-  the jobs-collection projection within the limit, or explicitly allowed once the bounded follow-up exit check is
-  deployed.
+  a jobs-collection projection above 500 allowed with `--allow-large-jobs-collection` (safe once LEGACY-SEND's bounded
+  follow-up exit check is deployed).
+- [ ] **Contact keys backfilled after the import:** `node scripts/backfill-job-contact-keys.mjs --apply` has run since
+  the last import.
 - [ ] **Import applied:** the receipt `jobberImport/<runId>` shows `status: 'completed'`. A rerun dry run plans zero
   writes and reports no `changedSinceImport`, or each one has been handled.
 - [ ] **Every imported upcoming job has been reviewed:** each `jobber_job_*` is scheduled, cancelled or intentionally

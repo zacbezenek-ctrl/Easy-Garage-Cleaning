@@ -1,6 +1,7 @@
 import { firebaseServiceAccountConfigured, firestoreFetch } from './firebase-service-account.js';
 import { readJob, patchJob, decodeFirestoreFields, encodeFirestoreFields } from './firestore-job.js';
 import { customerCalendars } from './highlevel-calendars.js';
+import { customerIdentityStorage, emailSpellings, normalizeEmail, normalizePhoneE164, phoneSpellings } from './customer-identity.js';
 
 const API = 'https://services.leadconnectorhq.com';
 const DB = 'https://firestore.googleapis.com/v1/projects/egcw-1ec83/databases/(default)/documents';
@@ -8,6 +9,9 @@ const EMPLOYEE_CALENDAR = '2yYX63nHYvUsL6KKhAc0';
 const phone = value => { const digits = String(value || '').replace(/\D/g, ''); return digits.length === 10 ? `1${digits}` : digits; };
 const email = value => String(value || '').trim().toLowerCase();
 const inactive = job => [job.status, job.pipelineStatus].some(x => ['cancelled', 'canceled', 'superseded', 'completed', 'paid', 'lost'].includes(String(x || '').toLowerCase()));
+const safeId = value => typeof value === 'string' && /^[A-Za-z0-9_-]{1,180}$/.test(value) && !/^(_egc_|secure_)/.test(value);
+const CUSTOMER_LIMIT = 10, JOB_LIMIT = 100;
+const JOB_FIELDS = ['type', 'recordType', 'status', 'pipelineStatus', 'customerId', 'highlevelContactId', 'phone', 'email'];
 
 export function salesExitMilestone(job = {}) {
   if (!job) return '';
@@ -28,7 +32,8 @@ export function salesExitService(job = {}) {
 }
 
 function sameCustomer(left, right) {
-  return Boolean(left.highlevelContactId && left.highlevelContactId === right.highlevelContactId) ||
+  return Boolean(safeId(left.customerId) && left.customerId === right.customerId) ||
+    Boolean(left.highlevelContactId && left.highlevelContactId === right.highlevelContactId) ||
     Boolean(phone(left.phone) && phone(left.phone) === phone(right.phone)) || Boolean(email(left.email) && email(left.email) === email(right.email));
 }
 
@@ -40,16 +45,35 @@ async function highlevel(env, path, options = {}) {
   return response.json().catch(() => ({}));
 }
 
-// Read the complete bounded job inventory, including records not linked to GHL
-// yet. A full page is not proof that there are no other matching customer jobs.
-async function allJobs(env) {
-  const response = await firestoreFetch(env, `${DB}:runQuery`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ structuredQuery: { from: [{ collectionId: 'jobs' }], limit: 501 } }) });
-  if (!response.ok) throw new Error('Job verification unavailable');
-  const data = await response.json();
-  if (!Array.isArray(data)) throw new Error('Job inventory invalid');
-  const docs = data.filter(row => row.document?.fields);
-  if (docs.length >= 501) throw new Error('Job inventory needs review');
-  return docs.map(row => ({ ...decodeFirestoreFields(row.document.fields), id: String(row.document.name).split('/').pop() }));
+// Every job that may belong to this customer, by bounded exact lookups instead
+// of a full scan: the CRM contact, the Hub customer (and any customer saved with
+// the same normalized phone or email), the jobs' normalized phone/email keys
+// (scripts/backfill-job-contact-keys.mjs) and, for jobs saved without them, the
+// spellings of the saved phone and email, including records not linked to GHL
+// yet. A full page of any lookup is not proof that there are no other matching
+// customer jobs.
+async function customerJobs(env, job, contactId) {
+  const store = customerIdentityStorage(env), contacts = new Set([contactId]), customers = new Set(safeId(job.customerId) ? [job.customerId] : []);
+  const keys = { phoneE164: normalizePhoneE164(job.phone), emailLower: normalizeEmail(job.email) };
+  const phones = new Set(phoneSpellings(job.phone)), emails = new Set(emailSpellings(job.email));
+  let complete = true;
+  for (const [field, value] of Object.entries(keys)) {
+    if (!value) continue;
+    const rows = await store.queryCustomers(field, value, CUSTOMER_LIMIT);
+    if (rows.length >= CUSTOMER_LIMIT) complete = false;
+    for (const row of rows) {
+      customers.add(row.id);
+      if (safeId(row.highlevelContactId)) contacts.add(row.highlevelContactId);
+    }
+  }
+  const found = new Map();
+  for (const [field, values] of [['highlevelContactId', contacts], ['customerId', customers], ...Object.entries(keys).map(([field, value]) => [field, new Set(value ? [value] : [])]), ['phone', phones], ['email', emails]]) {
+    if (!values.size) continue;
+    const rows = await store.queryJobsByField(field, [...values], { fields: JOB_FIELDS, limit: JOB_LIMIT });
+    if (rows.length >= JOB_LIMIT) complete = false;
+    for (const row of rows) found.set(row.id, row);
+  }
+  return { jobs: [...found.values()], complete };
 }
 
 async function openOpportunities(env, contactId) {
@@ -83,14 +107,14 @@ async function mirror(env, jobId, value) {
 
 // Signals only the two no-message GHL exit helpers. Caller payloads cannot choose
 // the contact, service, or outcome. DND/notify=false must not prevent a sales exit.
-export async function syncSalesFollowupExit(env, jobId) {
+export async function syncSalesFollowupExit(env, jobId, { now = () => new Date() } = {}) {
   if (!/^[A-Za-z0-9_-]{1,120}$/.test(String(jobId || ''))) return { status: 'needs_job' };
   if (!firebaseServiceAccountConfigured(env) || !(env.HIGHLEVEL_API_KEY || env.GHL_API_KEY) || !(env.HIGHLEVEL_LOCATION_ID || env.GHL_LOCATION_ID)) return { status: 'not_configured' };
   let claimed = false, claimAttempted = false;
   try {
     const ledger = await state(env, jobId);
     const job = await readJob(env, jobId), milestone = salesExitMilestone(job), service = salesExitService(job);
-    const stop = async reason => { const value = { status: 'needs_review', reason, checkedAt: new Date().toISOString() }; await mirror(env, jobId, value); return value; };
+    const stop = async reason => { const value = { status: 'needs_review', reason, checkedAt: now().toISOString() }; await mirror(env, jobId, value); return value; };
     if (!job || !milestone) return { status: 'not_eligible' };
     const revision = [job.estimate?.revision ?? 0, Number(job.estimate?.amount || job.total || job.priceQuoted || 0)].join(':');
     if (['sending', 'uncertain'].includes(ledger.value.status) || (ledger.value.status === 'signalled' && ledger.value.revision === revision)) return ledger.value;
@@ -112,9 +136,9 @@ export async function syncSalesFollowupExit(env, jobId) {
         !['confirmed', 'showed', 'completed'].includes(String(event.appointmentStatus || event.status || '').toLowerCase()) ||
         `${part('year')}-${part('month')}-${part('day')}` !== job.date || `${part('hour')}:${part('minute')}` !== job.time) return stop('service_booking_not_verified');
     }
-    const jobs = await allJobs(env);
-    if (!jobs.some(row => row.id === jobId)) return stop('job_inventory_incomplete');
-    if (jobs.some(row => row.id !== jobId && row.id !== job.sourceWalkthroughId && !row.recordType && !String(row.id).startsWith('secure_') && sameCustomer(row, job) && !inactive(row))) return stop('another_customer_job_active');
+    const { jobs, complete } = await customerJobs(env, job, contactId);
+    if (!complete || !jobs.some(row => row.id === jobId)) return stop('job_inventory_incomplete');
+    if (jobs.some(row => row.id !== jobId && row.id !== job.sourceWalkthroughId && !row.recordType && !/^(_egc_|secure_)/.test(String(row.id)) && sameCustomer(row, job) && !inactive(row))) return stop('another_customer_job_active');
     const linkedData = await highlevel(env, `/opportunities/${encodeURIComponent(linkedId)}`), linked = linkedData.opportunity || linkedData;
     const pipelineId = env.HIGHLEVEL_PIPELINE_ID || env.GHL_PIPELINE_ID || 'anSgrMpYHtAX6YlUHnIR';
     if (linked.id !== linkedId || (linked.contactId || linked.contact?.id) !== contactId || linked.pipelineId !== pipelineId) return stop('opportunity_mismatch');
@@ -122,10 +146,10 @@ export async function syncSalesFollowupExit(env, jobId) {
     if (opportunities.length > 1 || (linkedId && opportunities.some(row => row.id !== linkedId))) return stop('another_opportunity_active');
     const latest = await readJob(env, jobId);
     if (!latest?.__updateTime || latest.__updateTime !== job.__updateTime) return { status: 'retry', reason: 'job_changed' };
-    const tag = `egc-${service}-sales-exit`, value = { status: 'sending', jobId, contactId, service, milestone, revision, tag, attemptedAt: new Date().toISOString() };
+    const tag = `egc-${service}-sales-exit`, value = { status: 'sending', jobId, contactId, service, milestone, revision, tag, attemptedAt: now().toISOString() };
     claimAttempted = true; await saveState(env, jobId, value, ledger.version); claimed = true;
     await highlevel(env, `/contacts/${encodeURIComponent(contactId)}/tags`, { method: 'POST', body: JSON.stringify({ tags: [tag] }) });
-    const current = await state(env, jobId), result = { ...value, status: 'signalled', signalledAt: new Date().toISOString() };
+    const current = await state(env, jobId), result = { ...value, status: 'signalled', signalledAt: now().toISOString() };
     await saveState(env, jobId, result, current.version); await mirror(env, jobId, result);
     return result;
   } catch (error) {
@@ -133,7 +157,7 @@ export async function syncSalesFollowupExit(env, jobId) {
       try { const latest = await state(env, jobId); if (['sending', 'signalled', 'uncertain'].includes(latest.value.status)) return latest.value; } catch {}
     }
     const rejected = claimed && error.status >= 400 && error.status < 500 && error.status !== 408;
-    const result = { status: claimed ? (rejected ? 'failed' : 'uncertain') : 'needs_review', reason: rejected ? 'handoff_rejected' : claimed ? 'handoff_result_unknown' : 'verification_unavailable', checkedAt: new Date().toISOString() };
+    const result = { status: claimed ? (rejected ? 'failed' : 'uncertain') : 'needs_review', reason: rejected ? 'handoff_rejected' : claimed ? 'handoff_result_unknown' : 'verification_unavailable', checkedAt: now().toISOString() };
     if (claimed) { try { const latest = await state(env, jobId); await saveState(env, jobId, { ...latest.value, ...result }, latest.version); } catch {} }
     await mirror(env, jobId, result);
     return result;

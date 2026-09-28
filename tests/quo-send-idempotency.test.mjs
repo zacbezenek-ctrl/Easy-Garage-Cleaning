@@ -21,9 +21,15 @@ const env = {
 const cookies = new Map(await Promise.all(Object.keys(users).map(async user => [user, (await createHubSessionCookie(env, user)).split(';')[0]])));
 const handler = quoSendHandlers => quoSendHandlers({ now: () => new Date(NOW) }).post;
 const send = handler(quo.quoSendHandlers);
-const JOB = { type: 'job', customer: 'Dana Synthetic', phone: '(970) 555-0100', address: '746 Synthetic Grass Ln', total: 450, assignedCrew: ['Crew.One', 'Crew.Two'] };
+// Updated deliberately (LEGACY-SEND review): the confirmation says "tomorrow",
+// so the saved job is dated the day after NOW in Denver.
+const JOB = { type: 'job', customer: 'Dana Synthetic', phone: '(970) 555-0100', address: '746 Synthetic Grass Ln', total: 450, date: '2026-09-23', time: '09:00', crewSize: 2, assignedCrew: ['Crew.One', 'Crew.Two'] };
 const ARRIVAL = 'Hi Dana — the Easy Garage Cleaning crew is on the way to 746 Synthetic Grass Ln. We\'ll see you shortly. Reply here if anything changed.';
-const CONFIRMATION = rate => `Hi Dana, it's Easy Garage Cleaning — confirming your garage comeback tomorrow at [TIME]. Crew of [N], we'll knock when we arrive. Flat rate locked at $${rate} like we agreed — nothing changes. Reply C to confirm. — Alex`;
+// SCRIPT is what crew/prejob.html sends ([TIME] and [N] literal); CONFIRMATION
+// is what the customer receives. Updated deliberately (LEGACY-SEND): the server
+// now renders [TIME]/[N] from the saved job instead of texting them literally.
+const SCRIPT = rate => `Hi Dana, it's Easy Garage Cleaning — confirming your garage comeback tomorrow at [TIME]. Crew of [N], we'll knock when we arrive. Flat rate locked at $${rate} like we agreed — nothing changes. Reply C to confirm. — Alex`;
+const CONFIRMATION = rate => SCRIPT(rate).replace('[TIME]', '9:00 AM').replace('[N]', '2');
 const KEY = 'arrival-text:job-1:2026-09-22T12:00';
 
 function request(user, body, { key = KEY, headers = {} } = {}) {
@@ -209,8 +215,9 @@ test('crew texts are limited to the pre-job scripts rendered from the saved job;
     [ARRIVAL.replace('Hi Dana', 'Hi Anne-Marie'), ARRIVAL.replace('Hi Dana', 'Hi Anne-Marie')],
     [ARRIVAL.replace('Hi Dana', "Hi O'Brien"), ARRIVAL.replace('Hi Dana', "Hi O'Brien")],
     [ARRIVAL_SCRIPT, ARRIVAL],
+    [SCRIPT('450'), CONFIRMATION('450')],
+    [SCRIPT('[RATE]'), CONFIRMATION('450')],
     [CONFIRMATION('450'), CONFIRMATION('450')],
-    [CONFIRMATION('[RATE]'), CONFIRMATION('450')],
   ];
   for (const [message, sent] of allowed) {
     assert.equal((await attempt('Crew.One', message)).status, 200, message);
@@ -224,8 +231,10 @@ test('crew texts are limited to the pre-job scripts rendered from the saved job;
     ARRIVAL.replace('Hi Dana', 'Hi synthetic.example'),
     ARRIVAL.replace('Hi Dana', 'Hi bit.ly/abc'),
     ARRIVAL.replace('Hi Dana', 'Hi Call-9705550199'),
-    CONFIRMATION('free'),
-    CONFIRMATION('450').replace('[TIME]', 'midnight, pay cash'),
+    SCRIPT('free'),
+    SCRIPT('450').replace('[TIME]', 'midnight, pay cash'),
+    SCRIPT('450').replace('[TIME]', '10:00 AM'),
+    SCRIPT('450').replace('[N]', '5'),
   ];
   for (const message of refused) {
     const response = await attempt('Crew.One', message);
@@ -240,8 +249,8 @@ test('crew texts are limited to the pre-job scripts rendered from the saved job;
   assert.equal((await attempt('Crew.One', CONFIRMATION('450'), { template: 'arrival' })).status, 400, 'a named script must match the text');
   assert.equal(state.quo.length, allowed.length);
   assert.equal((await attempt('ZacB', 'Synthetic manager update for this job')).status, 200);
-  assert.equal((await attempt('ZacB', CONFIRMATION('475'))).status, 200);
-  assert.equal(state.quo.at(-1).content, CONFIRMATION('475'), 'managers send the flat rate they typed on the page');
+  assert.equal((await attempt('ZacB', SCRIPT('475'))).status, 200);
+  assert.equal(state.quo.at(-1).content, CONFIRMATION('475'), 'managers send the flat rate they typed on the page, with the saved time and crew filled in');
   assert.ok(state.quo.every(body => body.to.length === 1 && body.to[0] === '+19705550100'), 'the saved job phone is always the recipient');
   const managerReceipts = state.receipts().filter(receipt => receipt.actorId === 'ZacB').map(receipt => receipt.template).sort();
   assert.deepEqual(managerReceipts, ['confirmation', 'custom']);
@@ -253,7 +262,7 @@ test('crew never supply or learn the saved price: every rate guess gets the same
   let n = 0;
   for (const guess of ['1', '45', '612.5', '612.50', '9999999', '[RATE]']) {
     const key = `synthetic-rate-guess-${++n}`;
-    const response = await send({ env, request: request('Crew.One', payload(CONFIRMATION(guess), { idempotency_key: key }), { key }) });
+    const response = await send({ env, request: request('Crew.One', payload(SCRIPT(guess), { idempotency_key: key }), { key }) });
     const body = await response.json();
     replies.push(JSON.stringify([response.status, Object.keys(body).sort(), body.ok, body.code ?? null]));
   }
@@ -261,7 +270,7 @@ test('crew never supply or learn the saved price: every rate guess gets the same
   assert.equal(JSON.parse(replies[0])[0], 200);
   assert.equal(state.quo.length, 6);
   assert.ok(state.quo.every(body => body.content === CONFIRMATION('612.50')), 'the customer always gets the saved rate');
-  const replay = await send({ env, request: request('Crew.One', payload(CONFIRMATION('777'), { idempotency_key: 'synthetic-rate-guess-1' }), { key: 'synthetic-rate-guess-1' }) });
+  const replay = await send({ env, request: request('Crew.One', payload(SCRIPT('777'), { idempotency_key: 'synthetic-rate-guess-1' }), { key: 'synthetic-rate-guess-1' }) });
   assert.equal(replay.status, 200);
   assert.equal((await replay.json()).replayed, true, 'another guess under a used key replays the rendered send');
   const key = 'synthetic-template-only';
@@ -274,7 +283,7 @@ test('crew never supply or learn the saved price: every rate guess gets the same
 test('the confirmation is refused the same way for every guess when the job has no saved rate', async t => {
   const state = fixture(t, { ...JOB, total: '', priceQuoted: null });
   let n = 0;
-  for (const body of [payload(CONFIRMATION('450')), payload(CONFIRMATION('[RATE]')), { job_id: 'job-1', template: 'confirmation' }]) {
+  for (const body of [payload(SCRIPT('450')), payload(SCRIPT('[RATE]')), { job_id: 'job-1', template: 'confirmation' }]) {
     const key = `synthetic-no-rate-${++n}`;
     const response = await send({ env, request: request('Crew.One', { ...body, idempotency_key: key }, { key }) });
     assert.equal(response.status, 400);
@@ -370,7 +379,7 @@ function prejobPage(t, user, options = {}) {
   class FixedDate extends Date { constructor(...args) { super(...(args.length ? args : [page.clock])); } static now() { return Date.parse(page.clock); } }
   const context = vm.createContext({
     Date: FixedDate, JSON, String, Error, Array, Math, Uint8Array, console, encodeURIComponent, crypto: globalThis.crypto,
-    ACTIVE: { jobId: 'job-1', phone: '9705550100', addr: JOB.address, name: JOB.customer },
+    ACTIVE: { jobId: 'job-1', phone: '9705550100', addr: JOB.address, name: JOB.customer, ...options.active },
     HUBDB: null, state: {}, key: (si, ii) => `${si}_${ii}`, actId: (si, ii) => `act_${si}_${ii}`, saveAll() {}, queueProgressSave() {}, render() {},
     alert: message => page.alerts.push(message), location: page.location,
     sessionStorage: storage(new Map([['egc_u', user]])), localStorage: storage(page.stored),
@@ -469,8 +478,75 @@ for (const user of ['ZacB', 'Crew.One']) {
     assert.equal(rejected.button.textContent, 'Open phone text instead');
     assert.equal(page.alerts.length, 1);
     assert.match(page.location.href, /^sms:9705550100&body=Hi%20Lee%20/);
+    assert.doesNotMatch(decodeURIComponent(page.location.href), /\[[A-Z ]+\]/);
+  });
+
+  test(`crew/prejob.html (${user}): a server refusal for missing job details shows its note and never opens the composer`, async t => {
+    const job = { ...JOB, time: '' };
+    const { state, page } = prejobPage(t, user, { job, active: { startTime: '09:00', crewSize: 2 } });
+    const refused = await page.tap('confirmation');
+    assert.match(refused.note, /no saved start time or crew size/, 'the server\'s reason is shown');
+    assert.match(refused.note, user === 'ZacB' ? /Save them on the job, or type them in place of \[TIME\] and \[N\]/ : /Ask a manager to save them on the job/);
+    assert.equal(refused.button.disabled, false);
+    assert.equal(refused.button.textContent, '💬 Send confirmation text');
+    assert.equal(page.location.href, undefined, 'no sms: navigation');
+    assert.deepEqual(page.alerts, []);
+    assert.equal(state.quo.length, 0);
+    assert.equal(state.receipts().length, 0);
+
+    const noRate = prejobPage(t, user, { job: { ...JOB, total: '', priceQuoted: null } });
+    noRate.page.values.j_rate = '';
+    assert.match((await noRate.page.tap('confirmation')).note, /no saved flat rate yet/);
+    const wrongDay = prejobPage(t, user, { job: { ...JOB, date: '2026-09-22' } });
+    assert.match((await wrongDay.page.tap('confirmation')).note, /not saved for tomorrow/);
+    for (const other of [noRate, wrongDay]) {
+      assert.equal(other.page.location.href, undefined);
+      assert.deepEqual(other.page.alerts, []);
+      assert.equal(other.state.quo.length, 0);
+    }
+  });
+
+  test(`crew/prejob.html (${user}): the composer fallback fills [TIME] and [N] from the loaded job, or stays closed`, async t => {
+    const loaded = prejobPage(t, user, { active: { startTime: '13:05', crewNeeded: 0, crewSize: 0, assignedCrew: ['Crew.One', 'crew.one ', { username: 'Crew.Two' }] } });
+    loaded.state.quoReplies.push({ status: 400, body: { message: 'Synthetic rejection' } });
+    const rejected = await loaded.page.tap('confirmation');
+    assert.equal(rejected.button.textContent, 'Open phone text instead');
+    const body = decodeURIComponent(loaded.page.location.href.replace(/^sms:9705550100&body=/, ''));
+    assert.match(body, /tomorrow at 1:05 PM\. Crew of 2,/);
+    assert.match(body, /Flat rate locked at \$450 /);
+    assert.doesNotMatch(body, /\[[A-Z ]+\]/, 'no placeholder in the composer body');
+    assert.equal(loaded.page.alerts.length, 1);
+
+    for (const [active, values] of [[{}, {}], [{ startTime: '09:00', crewSize: 2 }, { j_rate: '' }], [{ startTime: '9am', assignedTo: 'Crew.One' }, {}]]) {
+      const stale = prejobPage(t, user, { active });
+      Object.assign(stale.page.values, values);
+      stale.state.quoReplies.push({ status: 400, body: { message: 'Synthetic rejection' } });
+      const closed = await stale.page.tap('confirmation');
+      assert.match(closed.note, /phone composer stays closed/, JSON.stringify(active));
+      assert.equal(closed.button.textContent, '💬 Send confirmation text');
+      assert.equal(stale.page.location.href, undefined, 'a body with a placeholder never reaches the composer');
+      assert.deepEqual(stale.page.alerts, []);
+      assert.equal(stale.state.quo.length, 1, 'the direct send was tried once and definitively rejected');
+    }
   });
 }
+
+test('crew/prejob.html fills the composer time and crew size exactly like the server renders them', () => {
+  const html = readFileSync(new URL('../crew/prejob.html', import.meta.url), 'utf8');
+  const helpers = html.split(/\r?\n/).filter(line => /^function sms(Clock|CrewSize)\(/.test(line)).join('\n');
+  const context = vm.createContext({ ACTIVE: {} });
+  vm.runInContext(helpers, context);
+  const jobs = [
+    { time: '00:05', crewNeeded: 3, crewSize: 2 }, { time: '12:00', crewNeeded: '', crewSize: '4' }, { time: '23:59', crewSize: 0, assignedCrew: ['a', 'A ', { user: 'b' }] },
+    { time: '9:00', assignedTo: 'Crew One, Crew Two & Crew Three' }, { time: '24:00', crewNeeded: 2.5, assignedCrew: [] }, { time: '07:30', crewNeeded: 21 }, {},
+  ];
+  for (const job of jobs) {
+    // The same mapping loadCentralJob() applies to the saved job document.
+    context.ACTIVE = { startTime: job.time || '', assignedTo: job.assignedTo || '', assignedCrew: Array.isArray(job.assignedCrew) ? job.assignedCrew : null, crewNeeded: Number(job.crewNeeded || 0), crewSize: Number(job.crewSize || 0) };
+    assert.equal(context.smsClock(context.ACTIVE.startTime), quo.savedJobTime(job), JSON.stringify(job));
+    assert.equal(context.smsCrewSize(), quo.savedCrewSize(job), JSON.stringify(job));
+  }
+});
 
 test('Quo send receipts stay server-only under the Firestore rules', () => {
   const rules = readFileSync(new URL('../firestore.rules', import.meta.url), 'utf8');

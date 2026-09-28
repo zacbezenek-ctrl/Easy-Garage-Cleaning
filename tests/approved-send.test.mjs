@@ -82,7 +82,8 @@ test('uncertain provider outcomes are recorded and never automatically resent', 
     const f = await setup({ ghl }), token = await previewToken(f, owner, onMyWay());
     assert.equal((await sendWith(f, owner, onMyWay(), token)).status, 'uncertain', JSON.stringify(ghl));
     assert.equal(f.ledgers()[0].status, 'uncertain');
-    assert.equal(f.row().customerConversation.at(-1).delivery.status, 'queued');
+    // Updated deliberately (LEGACY-SEND): the thread now keeps 'uncertain' instead of showing it as 'queued' (Sending…).
+    assert.equal(f.row().customerConversation.at(-1).delivery.status, 'uncertain');
     const preview = await f.service.preview(owner, onMyWay());
     assert.equal(preview.status, 'uncertain'); assert.equal(preview.confirmToken, undefined);
     const retry = await sendWith(f, owner, onMyWay(), token);
