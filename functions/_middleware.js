@@ -55,7 +55,9 @@ export async function onRequest(context) {
   });
   const ownerSetup = /^\/hub-login-setup(?:\.html|\.js)?$/.test(pathname);
   const gustoAuth = pathname === '/api/gusto-auth';
-  if (!gustoAuth || !response.headers.has('Content-Security-Policy')) response.headers.set('Content-Security-Policy', ownerSetup
+  // These responses carry their own stricter CSP (OAuth nonce page, no-script money document).
+  const ownPolicy = gustoAuth || pathname === '/api/money-document';
+  if (!ownPolicy || !response.headers.has('Content-Security-Policy')) response.headers.set('Content-Security-Policy', ownerSetup
     ? "default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; connect-src 'none'; form-action 'none'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'"
     : CSP);
   response.headers.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
@@ -76,7 +78,7 @@ export async function onRequest(context) {
     response.headers.set('Cache-Control', 'no-store');
     response.headers.set('X-Robots-Tag', 'noindex, nofollow');
   }
-  if (gustoAuth) {
+  if (ownPolicy) {
     response.headers.set('Referrer-Policy', 'no-referrer');
     response.headers.set('X-Frame-Options', 'DENY');
   }

@@ -8,6 +8,7 @@ import { appendConversationMessage, cleanMessage, cleanRequestId, conversationMe
 import { customerMoneyState as moneyState, customerDepositState, customerPaymentNeedsReview, createCustomerStripeCheckout, recordCustomerStripePayment, stripeRequest as stripe, stripeSecretKey as stripeKey } from '../_lib/customer-payments.js';
 import { parseBusinessActor } from '../_lib/business-hub-core.js';
 import { businessAccountJob } from '../_lib/portal-invitation.js';
+import { moneyDocumentEnabled, moneyDocumentLinks } from '../_lib/money-document.js';
 
 const HOST = /^(?:easygaragecleaning\.com|www\.easygaragecleaning\.com|easy-garage-cleaning\.pages\.dev|localhost(?::\d+)?|127\.0\.0\.1(?::\d+)?)$/;
 const DEFAULT_REVIEW_URL = 'https://search.google.com/local/writereview?placeid=ChIJ17AGfBiyRIsRyJ3k4mDtX8Q';
@@ -250,7 +251,8 @@ async function handleGet({ request, env }, deps) {
   if (!allowed(request)) return reply(403, { ok: false, error: 'Forbidden origin' });
   const result = await requirePortal(request, env, deps);
   if (result.error) return result.error;
-  return reply(200, sanitize(result.job, result.session, { today: denverToday(deps.clock()), reviewUrl: customerReviewUrl(env) }));
+  const at = deps.clock();
+  return reply(200, { ...sanitize(result.job, result.session, { today: denverToday(at), reviewUrl: customerReviewUrl(env) }), documents: moneyDocumentLinks(result.job, { enabled: moneyDocumentEnabled(env), now: at.toISOString() }) });
 }
 
 async function handlePost({ request, env }, { clock, read }) {

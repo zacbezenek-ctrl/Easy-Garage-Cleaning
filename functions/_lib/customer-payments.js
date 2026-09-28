@@ -49,7 +49,9 @@ export function customerDepositState(job, finance = customerMoneyState(job)) {
   return { required: requiredCents / 100, paid: Math.min(requiredCents, cents(finance.paid)) / 100, due: dueCents / 100, dueNow: amountDue, purpose: closing ? 'balance' : 'deposit', remainder: Math.max(0, cents(finance.balance) - cents(amountDue)) / 100 };
 }
 
-function payable(job) {
+// The portal checkout's own rule: throws when no card payment can open, else
+// the customerDepositState it charges. Money documents offer "Pay" only on it.
+export function payable(job) {
   if (!job || [job.status, job.pipelineStatus].some(status => ['cancelled', 'canceled', 'superseded', 'lost'].includes(String(status || '').toLowerCase()))) throw failure('This job is not available for payment');
   if (customerPaymentNeedsReview(job)) throw failure('A recorded payment is awaiting team verification. Please wait before paying again.');
   const status = String(job.customerApproval?.status || job.estimate?.status || job.quoteStatus || '').toLowerCase();

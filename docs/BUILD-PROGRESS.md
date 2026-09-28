@@ -153,6 +153,11 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   Denver dates, CSV guard, cents). Shell stability: background refreshes keep typed drafts and focus, one boot load,
   persistent My day node, `?view=` history and deep links; 375px mobile pass; `/employee` may use the microphone. Audit
   #10, #11, #41-#48, #78, #79 done. Gap: no screens registered yet; img-src blob still blocked.
+- **M4** Server-rendered estimate, invoice and receipt documents behind `MONEY_DOCUMENT_ENABLED` (off): `GET
+  /api/money-document` (staff with business access, or the job's own portal session re-checked each request), no
+  scripts, stylesheet-hash CSP, no-store, phone-first and printable; every figure from money-core. Pay button only
+  when the portal checkout would charge exactly the due-now amount. Portal lists links; Hub print hands off. Gap:
+  documents with change orders or tips show the right balance but no Pay button until the portal moves to money-core.
 
 ## In progress
 
@@ -193,6 +198,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | CI-A | Always-on root CI, split platform gate, clock-shift guard, field-execution acceptance in CI | merged (a067d1f) |
 | CI-B | Pages Functions test router, parallel-safe emulator harness, Playwright iPhone/Android/desktop projects | building |
 | B2B-SAFE | Portal B2B safety: no homeowner owner links for business-linked jobs; attributed company approvals (B2B-06) | merged (4dd1be5) |
+| M4 | Server-rendered branded estimate/invoice/receipt document with pay link (MONEY_DOCUMENT_ENABLED) | merged (fac0a2c) |
 | CI-WF | Wire merged units' tests into the existing CI workflows (pending CI notes) | merged (31e1562) |
 
 ## Next
@@ -202,7 +208,7 @@ P1-06 server PTO workflow; P1-08 staff directory (roles incl. phone, skills, eff
 P1-09 dispatch roster/permissions/settings/rules (skills, capacity); P1-10 assignment segments (multi-crew, split,
 per-day windows); P1-11 calendar month + lanes + drag/tap-assign; P1-12 crew notifications; P1-13 day-before reminders
 + on-my-way; P1-14 recurring horizon cron; P1-15 timesheet review UI + geolocation policy + clock reliability;
-M3 server money API + ledger; M4 invoice document; M5 invoice send; M6 batch invoicing; M7 payment reminders cron;
+M3 server money API + ledger; M5 invoice send; M6 batch invoicing; M7 payment reminders cron;
 M8 tipping; M9 job costing; M10 dashboard; M11 money CSV; P2-02..P2-12 catalog settings/admin/itemized handoff/picker/
 drafts/portal options; P3-02..P3-13 extraction v2, transcript input, follow-up policy, call transcripts, one-tap send;
 P4-03..P4-14 magic link, account portal, crew profiles, photos, documents, invoices, isolation; B2B-01..B2B-08;
