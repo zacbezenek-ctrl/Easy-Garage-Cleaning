@@ -860,7 +860,7 @@ body.has-session #login-screen { display: none; }
       <div class="user-menu">
         <div class="av" id="u-av">Z</div>
         <span class="user-name" id="u-lbl">ZacB</span>
-        <button class="btn-logout" onclick="doLogout()">Sign out</button>
+        <button class="btn-logout" onclick="signOutClicked()">Sign out</button>
       </div>
     </div>
   </div>
@@ -1386,7 +1386,33 @@ async function doLogin() {
   }
 }
 
-async function doLogout() {
+// Photos from Today's work still waiting on this device (crew/field-outbox.js), counted or, with remove,
+// deleted along with the retired draft store. Where the browser lists its databases, a device without one gets none.
+async function fieldPhotosOnDevice(remove = false) {
+  const scan = (name, storeName, key, match) => new Promise(resolve => {
+    const open = indexedDB.open(name);
+    open.onupgradeneeded = () => open.result.createObjectStore(storeName, { keyPath: key });
+    open.onerror = open.onblocked = () => resolve(0);
+    open.onsuccess = () => {
+      const db = open.result, done = count => { db.close(); resolve(count); };
+      try { const tx = db.transaction(storeName, remove ? 'readwrite' : 'readonly'), store = tx.objectStore(storeName), rows = store.getAll(); let count = 0; rows.onsuccess = () => rows.result.forEach(row => { if (match(row)) { count++; if (remove) store.delete(row[key]); } }); tx.oncomplete = () => done(count); tx.onabort = tx.onerror = () => done(0); } catch { done(0); }
+    };
+  });
+  try {
+    if (remove) indexedDB.deleteDatabase('egc-field-photo-drafts');
+    const names = indexedDB.databases ? (await indexedDB.databases()).map(db => db.name) : null;
+    return (!names || names.includes('egc-field-outbox') ? await scan('egc-field-outbox', 'actions', 'requestId', row => row?.payload?.action === 'photo') : 0) + (!remove && names?.includes('egc-field-photo-drafts') ? await scan('egc-field-photo-drafts', 'photos', 'id', Boolean) : 0);
+  } catch { return 0; }
+}
+
+// The Sign out button deletes those photos, so it asks first. An expired session (hubFetch) keeps them.
+async function signOutClicked() {
+  const photos = await fieldPhotosOnDevice();
+  if (photos && !confirm(`${photos} photo${photos === 1 ? ' has' : 's have'} not uploaded and will be deleted. Sign out anyway?`)) return;
+  return doLogout({ explicit: true });
+}
+
+async function doLogout({ explicit = false } = {}) {
   ++hubAuthVersion;
   clearHubProfile();
   _dataGeneration++;
@@ -1400,6 +1426,8 @@ async function doLogout() {
   // Crew job pages keep offline copies per tab; a sign-out retires them on this device.
   try { localStorage.setItem('egc-field:signed-out-at', String(Date.now())); } catch {}
   try { for (let i = sessionStorage.length - 1; i >= 0; i--) { const name = sessionStorage.key(i) || ''; if (name === 'egc-field:viewer' || /^egc-field:.*:(snapshot|shift-snapshot)$/.test(name)) sessionStorage.removeItem(name); } } catch {}
+  // Photos from Today's work are private job evidence: choosing Sign out deletes those not yet uploaded.
+  if (explicit === true) { try { localStorage.setItem('egc-field:photos-cleared-at', String(Date.now())); } catch {} fieldPhotosOnDevice(true); }
   // crew/job.html keeps unconfirmed manager photo-sharing retries in this tab; it never loads here.
   try { for (let i = sessionStorage.length - 1; i >= 0; i--) { const key = sessionStorage.key(i); if (key?.startsWith('egc.photo-sharing.pending.v1.')) sessionStorage.removeItem(key); } } catch {}
   window.dispatchEvent(new Event('egc:signout'));

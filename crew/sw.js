@@ -2,12 +2,12 @@
    offline reloads. API responses, customer data and non-GET requests are never
    intercepted or cached; queued work lives in the explicit field outbox. */
 'use strict';
-const VERSION = '20260928gate';
+const VERSION = '20260928photoq';
 const CACHE_PREFIX = 'egc-crew-shell-';
 const CACHE = `${CACHE_PREFIX}${VERSION}`;
 const CONFIG = '/crew/sw-config.json';
 const PAGES = { '/crew/job.html': '/crew/job.html', '/crew/job': '/crew/job.html', '/crew/offline.html': '/crew/offline.html', '/crew/offline': '/crew/offline.html' };
-const ASSETS = ['/crew/job.css?v=20260927pwa', '/crew/job.js?v=20260927pwa', '/crew/field-outbox.js?v=20260927pwa', '/crew/field-expenses.css?v=20260928fun19', '/crew/field-expenses.js?v=20260928fun19', '/crew/job-photo-sharing.css?v=20260927photo', '/crew/job-photo-sharing.js?v=20260928photo', '/crew/manifest.webmanifest'];
+const ASSETS = ['/crew/job.css?v=20260928photoq', '/crew/job.js?v=20260928photoq', '/crew/field-outbox.js?v=20260928photoq', '/crew/field-expenses.css?v=20260928fun19', '/crew/field-expenses.js?v=20260928fun19', '/crew/job-photo-sharing.css?v=20260927photo', '/crew/job-photo-sharing.js?v=20260928photo', '/crew/manifest.webmanifest'];
 const ASSET_PATHS = new Set(ASSETS.map(asset => asset.split('?')[0]));
 // With EGC_STAFF_PAGE_GATE=on the edge refuses the job page and its files without a Hub session (staff-paths.js). Every
 // install needs this public part; the rest is cached when the install, or a later signed-in load, receives it.
@@ -15,7 +15,7 @@ const PUBLIC_SHELL = new Set(['/crew/offline.html', '/crew/field-outbox.js', '/c
 const NETWORK_WAIT = 6000;
 let configCheckedAt = 0;
 
-importScripts('/crew/field-outbox.js?v=20260927pwa');
+importScripts('/crew/field-outbox.js?v=20260928photoq');
 
 // Pretty-URL redirects (/crew/job.html -> /crew/job) must not be replayed as a
 // redirected response, which browsers refuse for navigations.

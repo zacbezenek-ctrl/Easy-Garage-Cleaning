@@ -122,10 +122,10 @@ try{
  const checks=crewPage.locator('input[data-check]');for(let index=0;index<await checks.count();index++){await checks.nth(index).check();await settle();}
  await crewPage.getByLabel('Wall rack state',{exact:true}).selectOption('loaded');await settle();
  const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jN5sAAAAASUVORK5CYII=','base64');
- await crewPage.getByLabel('Choose photos from library').setInputFiles({name:'before.png',mimeType:'image/png',buffer:png});await crewPage.getByRole('button',{name:'Upload photo',exact:true}).click();await crewPage.getByText('1 verified',{exact:true}).waitFor();
+ await crewPage.getByLabel('Choose photos from library').setInputFiles({name:'before.png',mimeType:'image/png',buffer:png});await crewPage.getByText('1 verified',{exact:true}).waitFor();await settle();
  await crewPage.getByRole('button',{name:'Start work',exact:true}).click();await settle();
  await crewPage.getByLabel('Add a note',{exact:true}).fill('Cabinet protected; customer approved the rack placement.');await crewPage.getByRole('button',{name:'Save note',exact:true}).click();await settle();
- await crewPage.getByLabel('Photo category').selectOption('after');await crewPage.getByLabel('Choose photos from library').setInputFiles({name:'after.png',mimeType:'image/png',buffer:png});await crewPage.getByRole('button',{name:'Upload photo',exact:true}).click();await crewPage.getByText('2 verified',{exact:true}).waitFor();
+ await crewPage.getByLabel('Photo category').selectOption('after');await crewPage.getByLabel('Choose photos from library').setInputFiles({name:'after.png',mimeType:'image/png',buffer:png});await crewPage.getByText('2 verified',{exact:true}).waitFor();await settle();
  await crewPage.getByLabel('Completion notes',{exact:true}).fill('Garage cleared, rack installed, cabinet protected; customer walkthrough completed.');await crewPage.getByLabel('Does anything need follow-up?').selectOption('no');
  await crewPage.getByRole('button',{name:'Review & complete job',exact:true}).click();await settle();await crewPage.getByText('Completed by Crew One.',{exact:true}).waitFor();
  await crewPage.reload();await crewPage.getByText('Completed by Crew One.',{exact:true}).waitFor();

@@ -122,12 +122,42 @@
     });
   }
 
-  async function signOut() {
+  // Photos from Today's work still waiting on this phone (crew/field-outbox.js),
+  // counted or, with remove, deleted along with the retired draft store. Where
+  // the browser lists its databases, a device without one is not given one.
+  async function fieldPhotos(remove = false) {
+    const scan = (name, storeName, key, match) => new Promise(resolve => {
+      const open = indexedDB.open(name);
+      open.onupgradeneeded = () => open.result.createObjectStore(storeName, { keyPath: key });
+      open.onerror = open.onblocked = () => resolve(0);
+      open.onsuccess = () => {
+        const db = open.result, done = count => { db.close(); resolve(count); };
+        try { const tx = db.transaction(storeName, remove ? 'readwrite' : 'readonly'), store = tx.objectStore(storeName), rows = store.getAll(); let count = 0; rows.onsuccess = () => rows.result.forEach(row => { if (match(row)) { count++; if (remove) store.delete(row[key]); } }); tx.oncomplete = () => done(count); tx.onabort = tx.onerror = () => done(0); } catch { done(0); }
+      };
+    });
+    try {
+      if (remove) indexedDB.deleteDatabase('egc-field-photo-drafts');
+      const names = indexedDB.databases ? (await indexedDB.databases()).map(db => db.name) : null;
+      return (!names || names.includes('egc-field-outbox') ? await scan('egc-field-outbox', 'actions', 'requestId', row => row?.payload?.action === 'photo') : 0) + (!remove && names?.includes('egc-field-photo-drafts') ? await scan('egc-field-photo-drafts', 'photos', 'id', Boolean) : 0);
+    } catch { return 0; }
+  }
+
+  // A sign-out the person chooses deletes those photos, so it asks first.
+  async function confirmSignOut() {
+    const photos = await fieldPhotos();
+    return !photos || window.confirm(`${photos} photo${photos === 1 ? ' has' : 's have'} not uploaded and will be deleted. Sign out anyway?`);
+  }
+
+  // explicit: the person chose to sign out, so photos from Today's work that
+  // have not uploaded are private evidence to delete. A session that merely
+  // ended keeps them for the next sign-in.
+  async function signOut({ explicit = false } = {}) {
     ++authVersion;
     clearLocal();
     // Today's work keeps offline copies per tab; a sign-out retires them on this device.
     try { localStorage.setItem('egc-field:signed-out-at', String(Date.now())); } catch {}
     try { for (let i = sessionStorage.length - 1; i >= 0; i--) { const name = sessionStorage.key(i) || ''; if (name === 'egc-field:viewer' || /^egc-field:.*:(snapshot|shift-snapshot)$/.test(name)) sessionStorage.removeItem(name); } } catch {}
+    if (explicit === true) { try { localStorage.setItem('egc-field:photos-cleared-at', String(Date.now())); } catch {} fieldPhotos(true); }
     return serializeAuth(async () => {
       const pending = firebaseQueue.then(async () => { try { await firebase.auth().signOut(); } catch {} });
       firebaseQueue = pending.catch(() => {});
@@ -206,5 +236,5 @@
 
   window.addEventListener('DOMContentLoaded', mountCrewNav);
 
-  window.EGCHubAuth = { session, signIn, signOut, fetch: securedFetch, clearLocal, profile, can, canRunBusiness, mountCrewNav, ensureFirebaseSession };
+  window.EGCHubAuth = { session, signIn, signOut, confirmSignOut, fetch: securedFetch, clearLocal, profile, can, canRunBusiness, mountCrewNav, ensureFirebaseSession };
 })();

@@ -219,7 +219,7 @@ body { margin: 0; background: var(--navy); color: #fff; font-family: 'Inter', sy
     <div class="topbar-logo">EGC <span>Co-Pilot</span></div>
     <div id="topbar-time"></div>
     <div id="topbar-user"></div>
-    <button class="logout-btn" onclick="doLogout()" title="Log out">✕</button>
+    <button class="logout-btn" onclick="doLogout({explicit:true})" title="Log out">✕</button>
   </div>
 
   <div class="schedule-strip">
@@ -347,9 +347,12 @@ async function checkSession() {
   }
 }
 
-async function doLogout() {
+// The Log out button signs out explicitly (photos that have not uploaded from
+// Today's work are deleted, so it asks first); an expired session does not.
+async function doLogout(options = {}) {
+  if (options.explicit === true && !await EGCHubAuth.confirmSignOut()) return;
   endSession();
-  await EGCHubAuth.signOut();
+  await EGCHubAuth.signOut(options);
 }
 
 /* ══════════════════════════════════════════════════

@@ -1,12 +1,13 @@
 // Minimal asynchronous IndexedDB stand-in for vm-loaded browser modules. It
-// models open/upgrade, keyPath stores, getAll/put/delete requests and
-// transaction completion, plus an injectable failure for unavailable storage.
+// models open/upgrade, keyPath stores, get/getAll/put/delete requests, transaction
+// completion, databases()/deleteDatabase(), plus injectable failures for
+// unavailable storage and a full device (QuotaExceededError aborts the write).
 const copy = value => JSON.parse(JSON.stringify(value));
 const later = callback => setTimeout(callback, 0);
 
 export function fakeIndexedDB() {
-  const databases = new Map(), stats = { opens: 0, closes: 0, transactions: 0 };
-  let failOpen = false;
+  const databases = new Map(), stats = { opens: 0, closes: 0, transactions: 0, deleted: [] };
+  let failOpen = false, quota = false;
   const request = () => ({ result: undefined, onsuccess: null, onerror: null, onupgradeneeded: null, onblocked: null });
   function connection(name) {
     const data = databases.get(name);
@@ -18,21 +19,31 @@ export function fakeIndexedDB() {
         const store = data.stores.get(storeName);
         if (!store) throw new Error(`NotFoundError: ${storeName}`);
         stats.transactions++;
-        const operations = [], transaction = { oncomplete: null, onerror: null, onabort: null };
+        const operations = [], transaction = { oncomplete: null, onerror: null, onabort: null, error: null }, before = new Map(store.rows);
+        let writes = false;
         const queue = run => { const pending = request(); operations.push(() => { pending.result = run(); pending.onsuccess?.(); }); return pending; };
         transaction.objectStore = () => ({
           getAll: () => queue(() => [...store.rows.values()].map(copy)),
-          put(value) { if (mode !== 'readwrite') throw new Error('ReadOnlyError'); return queue(() => { store.rows.set(value[store.keyPath], copy(value)); return value[store.keyPath]; }); },
+          get: key => queue(() => store.rows.has(key) ? copy(store.rows.get(key)) : undefined),
+          put(value) { if (mode !== 'readwrite') throw new Error('ReadOnlyError'); writes = true; return queue(() => { store.rows.set(value[store.keyPath], copy(value)); return value[store.keyPath]; }); },
           delete(key) { if (mode !== 'readwrite') throw new Error('ReadOnlyError'); return queue(() => { store.rows.delete(key); }); },
         });
-        later(() => { for (const operation of operations) operation(); transaction.oncomplete?.(); });
+        later(() => {
+          for (const operation of operations) operation();
+          // A full device aborts the whole write transaction and keeps the old rows.
+          if (writes && quota) { quota = false; store.rows = before; transaction.error = { name: 'QuotaExceededError' }; transaction.onabort?.(); return; }
+          transaction.oncomplete?.();
+        });
         return transaction;
       },
     };
   }
   return {
-    databases, stats,
+    stored: databases, stats,
     failNextOpen() { failOpen = true; },
+    fillNextWrite() { quota = true; },
+    async databases() { return [...databases.entries()].map(([name, data]) => ({ name, version: data.version })); },
+    deleteDatabase(name) { stats.deleted.push(name); databases.delete(name); const pending = request(); later(() => pending.onsuccess?.()); return pending; },
     rows(name, store) { return [...(databases.get(name)?.stores.get(store)?.rows.values() || [])].map(copy); },
     open(name, version) {
       stats.opens++;
@@ -40,7 +51,7 @@ export function fakeIndexedDB() {
       later(() => {
         if (failOpen) { failOpen = false; pending.onerror?.(); return; }
         const created = !databases.has(name);
-        if (created) databases.set(name, { version, stores: new Map() });
+        if (created) databases.set(name, { version: version || 1, stores: new Map() });
         pending.result = connection(name);
         if (created) pending.onupgradeneeded?.();
         pending.onsuccess?.();

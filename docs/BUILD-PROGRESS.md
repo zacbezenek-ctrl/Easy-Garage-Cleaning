@@ -253,6 +253,10 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   `EGC_WALKTHROUGH_VISIT_ENABLED` (off): each tap is one commit with the visit fields, FUN-01 funnel events, a per-rep lock,
   a receipt and the rep's sealed timecard segment; rebooked no-shows archive the earlier occurrence. Walkthrough labor is
   reported separately (acquisition cost). Gaps: occurrence numbers fall back until FUN-02; a manager Finish leaves the rep's segment open.
+- **PHOTO-OUTBOX** Crew photos go through the IndexedDB field outbox keyed by the receipt requestId, so a lost signal,
+  reload or lost reply never loses or doubles a photo; refused photos wait with a thumbnail for Retry/Discard, and an
+  upload never locks the job page. Only a sign-out the person chooses (with a "photos will be deleted" prompt) purges
+  waiting photos; an expired session or a crew "Sign in again" renewal keeps them. Gap: queued actions wait behind a failing photo.
 
 ## In progress
 
@@ -314,6 +318,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | DISPATCH-CAL | Dispatch Month and Lanes views: drag to reschedule on desktop, tap-assign on phones (client only) | merged (f3f74c8) |
 | FUN-19 | Closeout expense attestation, cost kinds, payer, shared loads and stocked-item standard costs | merged (84f8d37) |
 | FUN-05 | Walkthrough visit API: start/finish/no-show with funnel events, rep lock and timecard segment (flag off) | merged (11f1788) |
+| PHOTO-OUTBOX | Queued crew photos in the field outbox survive session expiry and reloads; explicit sign-out purges them | merged (2ef0b70) |
 
 ## Next
 

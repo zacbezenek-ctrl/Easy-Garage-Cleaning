@@ -57,7 +57,7 @@ const normPhone=raw=>{const d=String(raw||'').replace(/\D/g,'');return d.length=
 function denyWalkthrough(){location.replace('/crew/?notice=walkthrough-restricted')}
 async function validSession(){const user=await EGCHubAuth.session();if(user&&!EGCHubAuth.canRunBusiness(user)){denyWalkthrough();return null}return user}
 async function login(e){e.preventDefault();const button=e.submitter||e.currentTarget.querySelector('button'),error=$('gate-error');button.disabled=true;button.textContent='Signing in…';error.style.display='none';try{const user=await EGCHubAuth.signIn($('user').value.trim(),$('pass').value);if(!EGCHubAuth.canRunBusiness(user)){denyWalkthrough();return}await openApp()}catch(err){error.textContent=err.message||'Unable to sign in. Try again.';error.style.display='block'}finally{button.disabled=false;button.textContent='Unlock walkthrough'}}
-async function logout(){await EGCHubAuth.signOut();location.reload()}
+async function logout(){if(!await EGCHubAuth.confirmSignOut())return;await EGCHubAuth.signOut({explicit:true});location.reload()}
 let hubDb=null;
 try{if(window.firebase){if(!firebase.apps.length)firebase.initializeApp({apiKey:'AIzaSyA8g4UAW4P4bsCrQNZhUe81CbC7BvjJbNc',authDomain:'egcw-1ec83.firebaseapp.com',projectId:'egcw-1ec83',storageBucket:'egcw-1ec83.firebasestorage.app',messagingSenderId:'763340109795',appId:'1:763340109795:web:ac203b3eb71831fa4ed2d6'});hubDb=firebase.firestore()}}catch(e){}
 async function openApp(){$('gate').style.display='none';$('app').style.display='block';if(!REQUESTED_WALKTHROUGH_ID&&!walkthroughReady){restore();walkthroughReady=true;refreshPhotoCount()}render();await loadAppointments()}
