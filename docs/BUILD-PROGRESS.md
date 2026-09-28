@@ -233,6 +233,10 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   from the saved job or refuses, and refuses the "tomorrow" confirmation unless the job is tomorrow in Denver; crew/prejob
   never opens the composer with placeholders. The sales exit's 501-job scan became bounded identity lookups (removes the
   Jobber 500-job blocker). Gap: job writers don't set contact keys; rerun `backfill-job-contact-keys.mjs` after imports.
+- **P0-4** Shared Firestore write-failure classifier (`functions/_lib/firestore-errors.js`): 400 FAILED_PRECONDITION, 412
+  and non-ALREADY_EXISTS 409s are `stale`, other 4xx `rejected`. Dispatch and its stores, scheduling bridge, business hub,
+  Gusto, patchJob, staff accounts, field costs, recording approval, nonces and Quo receipts return a 409 revision conflict
+  instead of a 503 retry loop (replaces SEGMENTS' flag-only mapping). Gap: portal conflict()/payments treat any 400 as a conflict.
 
 ## In progress
 
@@ -289,6 +293,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | SEC-13 | Revoke staff Firebase sessions when access changes | merged (251fcf7) |
 | JOB-CUT | Jobber cutover import tooling (dry run by default) and runbook | merged (a233020) |
 | LEGACY-SEND | Legacy customer send hardening, bounded sales-exit lookups, owner messaging setup doc | merged (cb34f34) |
+| P0-4 | Firestore 400 FAILED_PRECONDITION on a stale updateTime is a revision conflict (409) across the stores (shared firestore-errors.js) | merged (d410b88) |
 
 ## Next
 

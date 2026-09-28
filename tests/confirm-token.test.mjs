@@ -225,7 +225,8 @@ test('a lost commit response is recovered by requestId; caller conflicts and sto
 });
 
 test('a retry of a completed request is replayed from the receipt even when its stale caller write would fail first with 503', async () => {
-  // Real Firestore reports a stale updateTime as FAILED_PRECONDITION, which dispatchStorage maps to 503;
+  // Real Firestore reports a stale updateTime as FAILED_PRECONDITION, which a store may still map to 503
+  // (dispatchStorage did before P0-4);
   // this store checks the caller's writes before the receipt, the order that previously misreported replayed:false.
   const rows = new Map();
   let revision = 0, commits = 0;

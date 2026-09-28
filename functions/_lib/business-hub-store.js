@@ -1,5 +1,6 @@
 import { firestoreFetch } from './firebase-service-account.js';
 import { decodeFirestoreFields, encodeFirestoreFields } from './firestore-job.js';
+import { commitConflict, commitFailure } from './firestore-errors.js';
 import { fail, isId, parseBusinessActor, activeMember, requireLinkedJob, rights } from './business-hub-core.js';
 const ROOT = 'projects/egcw-1ec83/databases/(default)/documents';
 const DB = `https://firestore.googleapis.com/v1/${ROOT}`;
@@ -35,7 +36,8 @@ export function createBusinessStore(env, fetcher = firestoreFetch) {
           ...(patch ? { updateMask: { fieldPaths: Object.keys(fields) } } : {}) };
       });
       const response = await fetcher(env, `${DB}:commit`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ writes }) });
-      if (!response.ok) throw fail([400, 409, 412].includes(response.status) ? 409 : 503, 'The record changed or could not be saved. Refresh and retry; no partial update was applied.');
+      // Only a precondition failure is a 409; a 400 INVALID_ARGUMENT is not a conflict.
+      if (!response.ok) throw fail(commitConflict(await commitFailure(response)) ? 409 : 503, 'The record changed or could not be saved. Refresh and retry; no partial update was applied.');
     },
     async list(profile, cursor = '') {
       if (profile.businessAccess === true) {

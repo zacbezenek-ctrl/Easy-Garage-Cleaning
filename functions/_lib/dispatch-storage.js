@@ -9,6 +9,7 @@ import { primaryStaffRole, sanitizeStaffRoles } from './staff-roles.js';
 import { legacyPersonKeys, staffDirectoryEnabled, storedWeeklyAvailability } from './staff-directory.js';
 import { storedSkills } from './staff-skills.js';
 import { segmentsEnabled } from './dispatch-segments.js';
+import { commitConflict, commitFailure } from './firestore-errors.js';
 
 const ROOT = 'projects/egcw-1ec83/databases/(default)/documents';
 const BASE = `https://firestore.googleapis.com/v1/${ROOT}`;
@@ -165,14 +166,10 @@ export function dispatchStorage(env, fetcher = firestoreFetch) {
         }) });
       } catch { await rollback();throw failure('dispatch_outcome_unknown', 'The save response was lost. Retry the same request to safely verify whether it saved.'); }
       if (!response.ok) {
+        const failed = await commitFailure(response);
         await rollback();
-        if ([409, 412].includes(response.status)) throw failure('dispatch_revision_conflict', 'The schedule changed while you were editing. Refresh and review the latest information.', 409);
-        // Firestore reports a stale updateTime as HTTP 400 FAILED_PRECONDITION. With
-        // segments on, a save touches more day locks, so report it as a conflict.
-        if (response.status === 400 && segmentsEnabled(env)) {
-          const body = await response.json().catch(() => null), error = Array.isArray(body) ? body[0]?.error : body?.error;
-          if (error?.status === 'FAILED_PRECONDITION') throw failure('dispatch_revision_conflict', 'The schedule changed while you were editing. Refresh and review the latest information.', 409);
-        }
+        // A stale updateTime is 400 FAILED_PRECONDITION on real Firestore; it never applied.
+        if (commitConflict(failed)) throw failure('dispatch_revision_conflict', 'The schedule changed while you were editing. Refresh and review the latest information.', 409);
         throw failure('dispatch_outcome_unknown', 'The save could not be verified. Retry the same request to safely check its outcome.');
       }
       return response.json();

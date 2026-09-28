@@ -31,6 +31,7 @@
 import { getHubSession, hasBusinessAccess } from '../_lib/hub-session.js';
 import { readJob, encodeFirestoreFields, decodeFirestoreFields } from '../_lib/firestore-job.js';
 import { firestoreFetch } from '../_lib/firebase-service-account.js';
+import { commitConflict, commitFailure } from '../_lib/firestore-errors.js';
 import { createJobAssignmentAccess, jobCrewNames } from '../_lib/job-assignment.js';
 import { fieldId } from '../_lib/field-execution.js';
 import { arrivalClock } from '../_lib/dispatch-arrival.js';
@@ -170,7 +171,7 @@ async function writeReceipt(env, id, patch, updateTime = '') {
     url.searchParams.set('currentDocument.updateTime', updateTime);
   } else url.searchParams.set('currentDocument.exists', 'false');
   const response = await firestoreFetch(env, url, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ fields: encodeFirestoreFields(patch) }) });
-  if ([400, 409, 412].includes(response.status)) return null;
+  if (!response.ok && commitConflict(await commitFailure(response))) return null;
   if (!response.ok) throw new Error(`Receipt write failed (${response.status})`);
   return receiptRecord(await response.json());
 }

@@ -249,7 +249,7 @@ test('vault commits map Firestore precondition answers to conflicts and anything
     ['projects/egcw-1ec83/databases/(default)/documents/jobs/secure_a', ['sealedPayload', 'schemaVersion'], { updateTime: '2026-09-22T12:00:00.000001Z' }],
     ['projects/egcw-1ec83/databases/(default)/documents/hub_audit/ffff', ['v', 'actor'], { exists: false }]]);
   assert.deepEqual(calls[0].body.writes[0].update.fields.schemaVersion, { integerValue: '2' });
-  // Real Firestore answers a stale updateTime with 400 FAILED_PRECONDITION (the dispatch store reports that as unknown).
+  // Real Firestore answers a stale updateTime with 400 FAILED_PRECONDITION (a revision conflict, as in the shared firestore-errors classifier).
   for (const [status, code] of [[400, 'FAILED_PRECONDITION'], [409, 'ALREADY_EXISTS'], [409, 'ABORTED'], [404, 'NOT_FOUND'], [412, 'UNKNOWN']]) {
     await assert.rejects(commitVaultDocuments(env, writes, reply(status, { error: { code: status, status: code } })), error => error.code === 'EMPLOYEE_HUB_WRITE_CONFLICT' && error.status === 409, `${status} ${code}`);
   }

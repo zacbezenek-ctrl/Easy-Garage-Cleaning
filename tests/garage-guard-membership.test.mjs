@@ -13,7 +13,7 @@ const T0 = Math.floor(Date.parse(NOW) / 1000);
 const origin = 'https://easygaragecleaning.com';
 const env = { STRIPE_WEBHOOK_SECRET: 'whsec_synthetic_garage_guard', GARAGE_GUARD_HOOK_URL: 'https://hooks.example.invalid/garage-guard', GARAGE_GUARD_MEMBERSHIP_SYNC_ENABLED: 'true', FIREBASE_API_KEY: 'firebase-test-garage-guard', CUSTOMER_PORTAL_SECRET: 'synthetic-garage-guard-portal-secret' };
 const conflict = () => Object.assign(new Error('Synthetic revision conflict'), { code: 'dispatch_revision_conflict', status: 409 });
-// dispatchStorage reports Firestore's 400 FAILED_PRECONDITION and lost responses alike.
+// A lost response. dispatchStorage reports Firestore's stale 400 FAILED_PRECONDITION as conflict() above.
 const unknown = () => Object.assign(new Error('Synthetic unknown outcome'), { code: 'dispatch_outcome_unknown', status: 503 });
 
 const account = () => ({

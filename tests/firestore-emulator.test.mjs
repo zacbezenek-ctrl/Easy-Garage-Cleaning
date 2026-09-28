@@ -418,6 +418,64 @@ test('actual Firestore rules isolate canonical operations from crew SDK access',
       await assert.rejects(store.commit({insuranceCertificate:null},before.revision),error=>/^PORTAL_DOCUMENTS_(REVISION_CONFLICT|OUTCOME_UNKNOWN)$/.test(error.code));
       assert.equal((await store.read()).insuranceCertificate.driveFileId,'synthetic-drive-file-0002','a stale revision never overwrites the certificate');
     });
+    await t.test('a stale updateTime is 400 FAILED_PRECONDITION on actual Firestore and the stores report a revision conflict',async st=>{
+      const {dispatchStorage}=await import('../functions/_lib/dispatch-storage.js');
+      const {schedulingStorage}=await import('../functions/_lib/operations-scheduling.js');
+      const {createBusinessStore}=await import('../functions/_lib/business-hub-store.js');
+      const {patchJob}=await import('../functions/_lib/firestore-job.js');
+      const {classifyCommitFailure}=await import('../functions/_lib/firestore-errors.js');
+      const realFetch=globalThis.fetch;
+      const emulator=async(_env,url,options={})=>{
+        const target=new URL(url);target.protocol='http:';target.host=host;target.pathname=target.pathname.replace('/projects/egcw-1ec83/','/projects/'+projectId+'/');target.searchParams.delete('key');
+        assert.equal(target.hostname,hostname);
+        return realFetch(target,{...options,...(options.body ? {body:options.body.replaceAll('projects/egcw-1ec83/','projects/'+projectId+'/')} : {}),headers:{...Object.fromEntries(new Headers(options.headers)),Authorization:'Bearer owner'}});
+      };
+      const store=dispatchStorage({},emulator),id='p04-stale-'+crypto.randomUUID().slice(0,8);
+      await store.commit([{collection:'jobs',id,patch:{type:'job',status:'scheduled'}}]);
+      const first=await store.read('jobs',id);
+      await store.commit([{collection:'jobs',id,revision:first.revision,patch:{status:'confirmed'}}]);
+      const raw=await emulator({},'https://firestore.googleapis.com/v1/projects/egcw-1ec83/databases/(default)/documents:commit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({writes:[{update:{name:`projects/egcw-1ec83/databases/(default)/documents/jobs/${id}`,fields:{status:{stringValue:'cancelled'}}},updateMask:{fieldPaths:['status']},currentDocument:{updateTime:first.revision}}]})});
+      const body=await raw.json();
+      assert.deepEqual([raw.status,body.error?.status],[400,'FAILED_PRECONDITION'],'Firestore answers a stale updateTime with 400, not 409/412.');
+      assert.equal(classifyCommitFailure(raw.status,body),'stale');
+      await assert.rejects(store.commit([{collection:'jobs',id,revision:first.revision,patch:{status:'cancelled'}}]),error=>error.code==='dispatch_revision_conflict'&&error.status===409);
+      await assert.rejects(store.commit([{collection:'jobs',id:id+'-never-created',revision:first.revision,patch:{status:'cancelled'}}]),error=>error.code==='dispatch_revision_conflict','A vanished document is a stale precondition too.');
+      await assert.rejects(store.commit([{collection:'jobs',id,patch:{status:'cancelled'}}]),error=>error.code==='dispatch_revision_conflict','A create collision (409 ALREADY_EXISTS) stays a conflict.');
+      await assert.rejects(store.commit([{collection:'jobs',id,revision:'not-a-revision',patch:{status:'cancelled'}}]),error=>error.code==='dispatch_outcome_unknown'&&error.status===503,'400 INVALID_ARGUMENT is never a conflict.');
+      await assert.rejects(schedulingStorage({},emulator).commit([{collection:'jobs',id,revision:first.revision,patch:{status:'cancelled'}}]),error=>error.message==='schedule_revision_conflict'&&error.status===409);
+      const business=createBusinessStore({},emulator),account=crypto.randomUUID().replaceAll('-','');
+      await business.commit([{collection:'business_accounts',id:account,data:{status:'active'}}]);
+      const opened=await business.read('business_accounts',account);
+      await business.commit([{collection:'business_accounts',id:account,version:opened._version,data:{status:'paused'},patch:true}]);
+      await assert.rejects(business.commit([{collection:'business_accounts',id:account,version:opened._version,data:{status:'closed'},patch:true}]),error=>error.status===409);
+      st.mock.method(globalThis,'fetch',(input,init={})=>emulator({},input,init));
+      await assert.rejects(patchJob({FIREBASE_API_KEY:'firebase-test-emulator'},id,{status:'cancelled'},first.revision),error=>error.storageStatus===400&&error.storageFailure==='stale');
+      assert.equal((await store.read('jobs',id)).status,'confirmed','No stale write was applied.');
+      assert.equal((await business.read('business_accounts',account)).status,'paused');
+    });
+    await t.test('an overlapping identical recording approval that loses the job precondition reports the applied receipt',async()=>{
+      const {applyRecordingApproval,resolveRecordingIdentity}=await import('../functions/_lib/operations-recording-approval.js');
+      const realFetch=globalThis.fetch;
+      const emulator=async(_env,url,options={})=>{
+        const target=new URL(url);target.protocol='http:';target.host=host;target.pathname=target.pathname.replace('/projects/egcw-1ec83/','/projects/'+projectId+'/');target.searchParams.delete('key');
+        assert.equal(target.hostname,hostname);
+        return realFetch(target,{...options,...(options.body ? {body:options.body.replaceAll('projects/egcw-1ec83/','projects/'+projectId+'/')} : {}),headers:{...Object.fromEntries(new Headers(options.headers)),Authorization:'Bearer owner'}});
+      };
+      const visit='p04-recording-'+crypto.randomUUID().slice(0,8),customer=visit+'-customer',actor={id:'zacb',kind:'human',role:'owner'};
+      await environment.withSecurityRulesDisabled(async context=>{const db=context.firestore();await db.doc('customers/'+customer).set({name:'Synthetic Recording Customer'});await db.doc('jobs/'+visit).set({type:'walkthrough',customerId:customer});});
+      const approval=async fingerprint=>({recordingId:crypto.randomUUID(),requestId:crypto.randomUUID(),fingerprint,portalJobId:visit,expectedRevision:(await resolveRecordingIdentity({},visit,emulator)).portalRevision,portalVisitId:visit,portalCustomerId:customer,portalProjectId:null,extraction:{summary:'Synthetic scope'}});
+      // Request #2 has read "no receipt" and the job revision; request #1 (a Railway retry of the same approval) commits first.
+      const command=await approval('c'.repeat(64));let first=null;
+      const second=await applyRecordingApproval({},command,actor,async(env,url,options)=>{if(String(url).endsWith(':commit')&&!first)first=await applyRecordingApproval({},command,actor,emulator);return emulator(env,url,options);});
+      assert.equal(first.alreadyApplied,false);
+      assert.deepEqual(second,{ok:true,alreadyApplied:true,recordingId:command.recordingId,appliedAt:first.appliedAt},'The identical approval applied once; the loser reports it instead of a revision conflict.');
+      // A plain edit between the identity read and the commit, with no receipt, is still a revision conflict.
+      const stale=await approval('d'.repeat(64));
+      await assert.rejects(applyRecordingApproval({},stale,actor,async(env,url,options)=>{if(String(url).endsWith(':commit'))await environment.withSecurityRulesDisabled(context=>context.firestore().doc('jobs/'+visit).update({opsNotes:'Synthetic edit'}));return emulator(env,url,options);}),error=>error.message==='recording_source_revision_conflict'&&error.status===409);
+      const job=await (await emulator({},`https://firestore.googleapis.com/v1/projects/egcw-1ec83/databases/(default)/documents/jobs/${visit}`)).json();
+      assert.equal(job.fields.reviewedWalkthroughScope.mapValue.fields.recordingId.stringValue,command.recordingId,'Only the first approval reached the job.');
+      assert.equal((await emulator({},`https://firestore.googleapis.com/v1/projects/egcw-1ec83/databases/(default)/documents/operation_recording_approvals/${stale.recordingId}`)).status,404,'The stale approval left no receipt.');
+    });
     await t.test('Garage Guard events link, mirror and dedupe through actual Firestore REST',async()=>{
       const {membershipStorage,applyGarageGuardEvent,garageGuardEvent}=await import('../functions/_lib/garage-guard-membership.js');
       await environment.withSecurityRulesDisabled(async context=>{const db=context.firestore();await db.doc('customers/gg-customer').set({name:'Synthetic Member',phone:'9705550177',email:'member@example.invalid'});await db.doc('jobs/gg-root').set({type:'job',customerId:'gg-customer',customer:'Synthetic Member'});await db.doc('jobs/gg-visit').set({type:'job',customerId:'gg-customer',customerAccountOwnerJobId:'gg-root'});});

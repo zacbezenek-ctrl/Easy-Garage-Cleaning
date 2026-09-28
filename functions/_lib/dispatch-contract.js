@@ -98,8 +98,9 @@
  * their own segments and a hull of them; managers see every segment. No
  * backfill is needed or provided: a job without assignmentSegments is one
  * implicit segment computed from its own fields, so existing records, locks and
- * readers are unchanged. With the flag on, dispatchStorage also reports a
- * Firestore 400 FAILED_PRECONDITION commit as 409 dispatch_revision_conflict.
+ * readers are unchanged. dispatchStorage reports a Firestore 400
+ * FAILED_PRECONDITION commit as 409 dispatch_revision_conflict with the flag
+ * on or off (functions/_lib/firestore-errors.js).
  * => {ok,job:DispatchJob,warnings,requestId,replayed?,providerSync:'pending'|'not_needed'}
  *
  * {action:'crew.save',requestId,id?:string,expectedRevision?:string,

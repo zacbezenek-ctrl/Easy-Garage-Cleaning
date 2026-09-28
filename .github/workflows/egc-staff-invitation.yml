@@ -1,10 +1,10 @@
 name: EGC Staff Invitation
 on:
   pull_request:
-    paths: ['functions/_lib/employee-accounts.js', 'functions/_lib/staff-invitation*', 'functions/api/staff-setup.js', 'functions/staff-setup.js', 'functions/business-start.js', 'staff-setup.js', 'tests/staff-invitation.test.mjs', '.github/workflows/egc-staff-invitation.yml']
+    paths: ['functions/_lib/employee-accounts.js', 'functions/_lib/firestore-errors.js', 'functions/_lib/staff-invitation*', 'functions/api/staff-setup.js', 'functions/staff-setup.js', 'functions/business-start.js', 'staff-setup.js', 'tests/staff-invitation.test.mjs', '.github/workflows/egc-staff-invitation.yml']
   push:
     branches: [main]
-    paths: ['functions/_lib/employee-accounts.js', 'functions/_lib/staff-invitation*', 'functions/api/staff-setup.js', 'functions/staff-setup.js', 'functions/business-start.js', 'staff-setup.js', 'tests/staff-invitation.test.mjs', '.github/workflows/egc-staff-invitation.yml']
+    paths: ['functions/_lib/employee-accounts.js', 'functions/_lib/firestore-errors.js', 'functions/_lib/staff-invitation*', 'functions/api/staff-setup.js', 'functions/staff-setup.js', 'functions/business-start.js', 'staff-setup.js', 'tests/staff-invitation.test.mjs', '.github/workflows/egc-staff-invitation.yml']
 permissions:
   contents: read
 jobs:

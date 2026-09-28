@@ -283,7 +283,7 @@ test('segment validation is strict and warnings are reported per segment', async
   assert.deepEqual(roundTrip.assignmentSegments,stored.assignmentSegments,'segments survive the Firestore encoding unchanged');
 });
 
-test('dispatch storage masks segments into scans and maps FAILED_PRECONDITION only with the flag on', async () => {
+test('dispatch storage masks segments into scans and maps FAILED_PRECONDITION to a revision conflict with the flag on or off', async () => {
   const masks = [];
   const scan = async (_env,url) => { masks.push(new URL(url).searchParams.getAll('mask.fieldPaths')); return Response.json({documents:[]}); };
   await dispatchStorage({},scan).jobs();
@@ -291,9 +291,11 @@ test('dispatch storage masks segments into scans and maps FAILED_PRECONDITION on
   const stale = async () => Response.json({error:{code:400,status:'FAILED_PRECONDITION',message:'Synthetic stale updateTime'}},{status:400});
   const write = [{collection:'jobs',id:'job-1',revision:'2026-09-22T00:00:00.000000Z',patch:{title:'Synthetic'}}];
   await assert.rejects(dispatchStorage({EGC_DISPATCH_SEGMENTS:'true'},stale).commit(write),error => error.code === 'dispatch_revision_conflict' && error.status === 409);
-  await assert.rejects(dispatchStorage({},stale).commit(write),error => error.code === 'dispatch_outcome_unknown' && error.status === 503);
+  // P0-4 (functions/_lib/firestore-errors.js) classifies a stale updateTime for every store, so the flag no longer matters.
+  await assert.rejects(dispatchStorage({},stale).commit(write),error => error.code === 'dispatch_revision_conflict' && error.status === 409);
   const invalid = async () => Response.json({error:{code:400,status:'INVALID_ARGUMENT'}},{status:400});
   await assert.rejects(dispatchStorage({EGC_DISPATCH_SEGMENTS:'true'},invalid).commit(write),error => error.code === 'dispatch_outcome_unknown');
+  await assert.rejects(dispatchStorage({},invalid).commit(write),error => error.code === 'dispatch_outcome_unknown' && error.status === 503);
 });
 
 test('turning the flag off keeps honouring saved segments and still allows clearing them', async () => {

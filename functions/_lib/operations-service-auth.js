@@ -1,6 +1,7 @@
 import {SERVICE_ORIGINS,servicePublicKeySet,signServiceRequest,verifyServiceRequest} from '../../egc-platform/services/operations/src/service-auth.ts';
 import {signOperationsEnvelope,verifyOperationsEnvelope} from './operations-envelope.js';
 import {firestoreFetch} from './firebase-service-account.js';
+import {commitConflict,commitFailure} from './firestore-errors.js';
 const ROOT='projects/egcw-1ec83/databases/(default)/documents';
 const FIRESTORE_URL=`https://firestore.googleapis.com/v1/${ROOT}`;
 const COLLECTION='operations_service_nonces';
@@ -38,8 +39,7 @@ export async function consumePortalServiceNonce(env,issuer,nonce,expiresAt,fetch
   const name=`${ROOT}/${COLLECTION}/api_${nonce}`;
   const fields={issuer:{stringValue:issuer},nonce:{stringValue:nonce},expiresAt:{timestampValue:new Date(expiresAt*1000).toISOString()},createdAt:{timestampValue:new Date().toISOString()}};
   const r=await fetcher(env,`${FIRESTORE_URL}:commit`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({writes:[{update:{name,fields},currentDocument:{exists:false}}]}),signal:AbortSignal.timeout(10000)});
-  if(r.status===409||r.status===412)return false;
-  if(!r.ok)throw fail('service_replay_store_unavailable');
+  if(!r.ok){if(commitConflict(await commitFailure(r)))return false;throw fail('service_replay_store_unavailable');}
   // Expired receipts cannot authorize anything. Periodically remove a bounded
   // batch so operation does not depend on separately configuring a TTL policy.
   if(nonce.endsWith('0'))await cleanupExpiredPortalServiceNonces(env,fetcher).catch(()=>{});

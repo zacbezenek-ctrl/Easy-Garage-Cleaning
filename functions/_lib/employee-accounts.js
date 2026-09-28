@@ -2,6 +2,7 @@ import { firestoreFetch, firebaseServiceAccountConfigured } from './firebase-ser
 import { employeeVaultSecret, employeeVaultReadOnly } from './employee-vault-key.js';
 import { namedStaffRole } from './staff-invitation-service.js';
 import { BUSINESS_USERS } from './business-users.js';
+import { commitConflict, commitFailure } from './firestore-errors.js';
 
 const PROJECT_ID = 'egcw-1ec83';
 const RECORD_TYPE = 'employee_account_v1';
@@ -141,7 +142,7 @@ async function writeAccount(env, account, createOnly = false) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(firestoreDocument(id, account, encrypted)),
   });
-  if (response.status === 409 || response.status === 412) throw new Error('That username is already registered');
+  if (!response.ok && commitConflict(await commitFailure(response))) throw new Error('That username is already registered');
   if (!response.ok) throw storageError(response);
   return account;
 }
@@ -370,7 +371,7 @@ export function employeeInvitationStore(env) {
       const id=await documentId(env,account.username),encrypted=await seal(env,id,account),url=new URL(location(id));
       url.searchParams.set('currentDocument.updateTime',version);
       const response=await firestoreFetch(env,url,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(firestoreDocument(id,account,encrypted))});
-      if([409,412].includes(response.status))throw Object.assign(new Error('This invitation was already used or the account changed.'),{status:409,publicMessage:'This invitation was already used or the account changed. Try normal staff sign-in if you already chose a password.'});
+      if(!response.ok&&commitConflict(await commitFailure(response)))throw Object.assign(new Error('This invitation was already used or the account changed.'),{status:409,publicMessage:'This invitation was already used or the account changed. Try normal staff sign-in if you already chose a password.'});
       if(!response.ok)throw storageError(response);
       const saved=await response.json();if(!saved.updateTime)throw storageError();
       return {version:saved.updateTime};

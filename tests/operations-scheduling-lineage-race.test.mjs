@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { randomUUID, webcrypto } from 'node:crypto';
 import vm from './helpers/vm-realm.mjs';
 import { arrivalWindowProblem, arrivalWindowFields } from '../functions/_lib/dispatch-arrival.js';
+import { commitConflict, commitFailure } from '../functions/_lib/firestore-errors.js';
 
 // Execute the actual scheduling mutator, isolating only imported I/O and time/
 // conflict helpers. This suite proves atomic dependency guards, not live
@@ -22,6 +23,8 @@ function load() {
     DISPATCH_TIME_ZONE: 'America/Denver',
     legacyBlockMode: () => 'off',
     legacyBlockedDays: async () => ({ mode: 'off', rows: [] }),
+    // The real shared classifier, so commit error paths map as in production.
+    commitConflict, commitFailure,
   });
   vm.runInContext(source.replace(/^import .*;\n/gm, '').replace(/^export /gm, '') +
     '\nglobalThis.api = {mutateScheduledVisit, schedulingStorage};', context);
@@ -113,4 +116,7 @@ test('Firestore adapter serializes dependency revisions as updateTime preconditi
   await store.commit([{ collection: 'customers', id: 'customer-1', revision: 'original-revision', patch: { id: 'customer-1' } }]);
   assert.deepEqual(sent.writes[0].currentDocument, { updateTime: 'original-revision' });
   assert.deepEqual(sent.writes[0].updateMask, { fieldPaths: ['id'] });
+  const failing = reply => api.schedulingStorage({}, async () => reply()).commit([{ collection: 'customers', id: 'customer-1', revision: 'original-revision', patch: { id: 'customer-1' } }]);
+  await assert.rejects(failing(() => Response.json({ error: { code: 400, status: 'FAILED_PRECONDITION' } }, { status: 400 })), error => error.message === 'schedule_revision_conflict' && error.status === 409);
+  await assert.rejects(failing(() => Response.json({ error: { code: 400, status: 'INVALID_ARGUMENT' } }, { status: 400 })), error => error.message === 'schedule_commit_outcome_unknown');
 });

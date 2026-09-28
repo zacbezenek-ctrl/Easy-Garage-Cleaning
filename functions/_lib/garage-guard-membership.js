@@ -199,9 +199,9 @@ export async function applyGarageGuardEvent(store, input, { now = new Date().toI
     const targets = new Set(writes.map(write => `${write.collection}/${write.id}`));
     for (const fence of account.fences || []) if (!targets.has(`${fence.collection}/${fence.id}`)) { targets.add(`${fence.collection}/${fence.id}`); writes.push(fence); }
     try { await store.commit(writes); }
-    // Firestore reports a stale revision as FAILED_PRECONDITION, which the store
-    // cannot tell from a lost response. The commit is atomic, so re-reading the
-    // receipt settles both: present means applied, absent means safe to retry.
+    // dispatchStorage reports a stale revision as dispatch_revision_conflict and a
+    // lost response as dispatch_outcome_unknown. The commit is atomic, so the next
+    // pass re-reads the receipt for both: present means applied, absent means safe to retry.
     catch (error) { if (RETRYABLE.has(error.code) && attempt < 2) continue; throw error; }
     return { status: 'applied', membershipId: input.subscriptionId, link: membership.link.status, reason: membership.link.reason || '', mirrored: Boolean(mirror), alertPending: alerts && alertWanted };
   }
@@ -221,7 +221,7 @@ export async function claimGarageGuardAlert(store, eventId, now = new Date().toI
   try { await store.commit([{ collection: 'stripe_events', id: eventId, revision: receipt.revision, patch: { alert: { ...receipt.alert, status: 'sending', attemptId, claimedAt: now } } }]); return true; }
   catch (error) {
     if (!RETRYABLE.has(error.code)) throw error;
-    // Firestore reports a stale revision like a lost response; the receipt tells them apart.
+    // A stale claim (another delivery moved the receipt) or a lost response: the receipt tells whose claim stands.
     const alert = (await store.read('stripe_events', eventId))?.alert;
     if (alert?.status === 'sending' && alert.attemptId === attemptId) return true;
     if (alert?.status === 'pending') throw fail('alert_unconfirmed', 'The team alert could not be claimed. Retry the event.');

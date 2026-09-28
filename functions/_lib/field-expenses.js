@@ -3,6 +3,7 @@ import { decodeFirestoreFields, encodeFirestoreFields } from './firestore-job.js
 import { fieldFailure, fieldId, fieldRequestId, fieldText } from './field-execution.js';
 import { createFieldStore } from './field-execution-store.js';
 import { assignmentKey } from './job-assignment.js';
+import { commitConflict, commitFailure } from './firestore-errors.js';
 
 // Field costs live in jobs/{jobId}/fieldExpenses/{requestId}. Nothing is copied
 // onto the job document, so crew, customer and dispatch projections of the job
@@ -175,7 +176,7 @@ export function createFieldExpenseStore(env, fetcher = firestoreFetch) {
   }
   async function commit(writes, conflict, transaction = '') {
     const response = await send(`${BASE}:commit`, json({ ...(transaction ? { transaction } : {}), writes }));
-    if (response.status === 409 || response.status === 412) throw conflict();
+    if (!response.ok && commitConflict(await commitFailure(response))) throw conflict();
     if (!response.ok) throw fieldFailure('The cost could not be confirmed. Retry with the same entry to check its result.', 503, 'FIELD_STORAGE_UNAVAILABLE');
   }
   // The public REST Write has no read-only verify operation (see

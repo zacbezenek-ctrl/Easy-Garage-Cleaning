@@ -160,7 +160,7 @@ function withoutApprovalActor(estimate) {
 }
 
 // Firestore answers a stale currentDocument.updateTime with 400
-// FAILED_PRECONDITION (as business-hub-store.js assumes); 409/412 count too.
+// FAILED_PRECONDITION; 409/412 count too.
 function conflict(error) {
   return /\((400|409|412)\)/.test(String(error?.message));
 }

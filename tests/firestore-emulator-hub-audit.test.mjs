@@ -38,10 +38,10 @@ test('hub_audit and confirm_tokens are server-only and their REST contracts hold
     await t.test('an audit entry and its change land together or not at all', async () => {
       const rejected = auditWrite({ actor: actor(owner), via: 'hub', action: 'job.cancel', entity: { collection: 'jobs', id: jobId }, requestId: randomUUID(), now: '2026-09-22T15:00:00.000Z' });
       // A create collision is ALREADY_EXISTS (409). A stale updateTime is
-      // FAILED_PRECONDITION (HTTP 400), which dispatchStorage reports as an
-      // unknown outcome. Either way Firestore applies neither write.
+      // FAILED_PRECONDITION (HTTP 400), which dispatchStorage also reports as a
+      // revision conflict (P0-4). Either way Firestore applies neither write.
       await assert.rejects(store.commit([{ collection: 'jobs', id: jobId, patch: { status: 'cancelled' } }, rejected]), error => error.code === 'dispatch_revision_conflict');
-      await assert.rejects(store.commit([{ collection: 'jobs', id: jobId, revision: '2000-01-01T00:00:00.000000Z', patch: { status: 'cancelled' } }, rejected]), error => error.code === 'dispatch_outcome_unknown');
+      await assert.rejects(store.commit([{ collection: 'jobs', id: jobId, revision: '2000-01-01T00:00:00.000000Z', patch: { status: 'cancelled' } }, rejected]), error => error.code === 'dispatch_revision_conflict' && error.status === 409);
       assert.equal(await store.read('hub_audit', rejected.id), null);
       assert.equal((await store.read('jobs', jobId)).status, 'scheduled');
       const saved = await store.read('hub_audit', created.id);
@@ -82,7 +82,7 @@ test('hub_audit and confirm_tokens are server-only and their REST contracts hold
       assert.equal((await store.read('confirm_tokens', issued.confirmationId)).action, 'invoice.send');
       // A stale caller write rolls back the token too, so it stays usable.
       const next = await issueConfirmation(env, { ...expected, now: '2026-09-22T12:00:00.000Z' });
-      await assert.rejects(consumeConfirmation(env, store, next.token, expected, [{ collection: 'jobs', id: jobId, revision: '2000-01-01T00:00:00.000000Z', patch: { status: 'sent' } }]), error => error.code === 'dispatch_outcome_unknown');
+      await assert.rejects(consumeConfirmation(env, store, next.token, expected, [{ collection: 'jobs', id: jobId, revision: '2000-01-01T00:00:00.000000Z', patch: { status: 'sent' } }]), error => error.code === 'dispatch_revision_conflict');
       assert.equal(await store.read('confirm_tokens', next.confirmationId), null);
       const current = await store.read('jobs', jobId), requestId = randomUUID();
       const confirmed = [{ collection: 'jobs', id: jobId, revision: current.revision, patch: { invoiceStatus: 'sending' } }];
