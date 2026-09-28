@@ -97,7 +97,7 @@ export function crewJobsHandlers({ session = getHubSession, storage = dispatchSt
       const access = createJobAssignmentAccess(env, actor);
       const jobs = [];
       for (const job of rows.filter(row => !privateRecord(row))) {
-        if (manager || await access.assigned(job) || await availabilityOwner(job, access)) jobs.push(manager ? job : crewJobProjection(job));
+        if (manager || await access.assigned(job) || await availabilityOwner(job, access)) jobs.push(manager ? job : crewJobProjection(job, { viewer: actor.user }));
         else if (availableOpenShift(job)) jobs.push(publicOpenShift(job));
       }
       return reply(200, { ok: true, jobs, coverage: { complete: true, asOf: now().toISOString() } });
@@ -129,7 +129,7 @@ export function crewJobsHandlers({ session = getHubSession, storage = dispatchSt
         if (!body) return reply(400, { ok: false, error: 'Write a message before sending' });
         if (!requestId) return reply(400, { ok: false, error: 'A valid message request ID is required' });
         const duplicate = findConversationMessage(job, { requestId });
-        if (duplicate) return reply(200, { ok: true, duplicate: true, message: duplicate, job: hasBusinessAccess(actor) ? { ...job, customerConversation: conversationMessages(job) } : crewJobProjection(job) });
+        if (duplicate) return reply(200, { ok: true, duplicate: true, message: duplicate, job: hasBusinessAccess(actor) ? { ...job, customerConversation: conversationMessages(job) } : crewJobProjection(job, { viewer: actor.user }) });
         const queuedAt = now().toISOString(), identity = String(actor.displayName || actor.user || 'Easy Garage Cleaning').trim();
         const message = {
           id: `crew-${requestId}`.slice(0, 140), requestId, direction: 'to_customer',
@@ -148,7 +148,7 @@ export function crewJobsHandlers({ session = getHubSession, storage = dispatchSt
           const latest = await readJob(env, jobId), deliveredAt = now().toISOString();
           updated = await patchJob(env, jobId, { customerConversation: replaceConversationMessage(latest, message.id, { delivery }), customerConversationUpdatedAt: deliveredAt, updatedAt: deliveredAt }, latest.__updateTime);
         } catch { /* The queued portal message remains visible and can be retried safely. */ }
-        return reply(200, { ok: true, message: { ...message, delivery }, job: hasBusinessAccess(actor) ? { ...updated, customerConversation: conversationMessages(updated) } : crewJobProjection(updated) });
+        return reply(200, { ok: true, message: { ...message, delivery }, job: hasBusinessAccess(actor) ? { ...updated, customerConversation: conversationMessages(updated) } : crewJobProjection(updated, { viewer: actor.user }) });
       }
 
       try {
@@ -157,7 +157,7 @@ export function crewJobsHandlers({ session = getHubSession, storage = dispatchSt
           ...(payload.expectedRevision ? { expectedRevision: payload.expectedRevision } : {}),
         }, now().toISOString());
         return reply(200, { ok: true, action, replayed: result.replayed === true,
-          job: action === 'claim' ? (hasBusinessAccess(actor) ? result.job : crewJobProjection(result.job)) : publicOpenShift(result.job),
+          job: action === 'claim' ? (hasBusinessAccess(actor) ? result.job : crewJobProjection(result.job, { viewer: actor.user })) : publicOpenShift(result.job),
           // Additive: travel-buffer and legacy calendar-block notices for this shift.
           warnings: Array.isArray(result.warnings) ? result.warnings : [],
         });

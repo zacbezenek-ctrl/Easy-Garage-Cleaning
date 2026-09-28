@@ -1,5 +1,6 @@
 import { assignmentKey, jobCrewNames } from './job-assignment.js';
-import { scheduleInterval, availabilityInterval, overlaps, validDate } from './dispatch-time.js';
+import { scheduleInterval, availabilityInterval, overlaps, validDate, occupiedDays } from './dispatch-time.js';
+import { jobSegments, segmented, lockEntryOwner } from './dispatch-segments.js';
 
 const unavailable = row => row?.type === 'availability' || ['availability','crew_availability'].includes(row?.recordType);
 const closed = row => ['cancelled','canceled','completed','invoiced','paid','review_requested','closed','noshow','no_show','no-show'].includes(String(row?.pipelineStatus || row?.status || '').toLowerCase());
@@ -20,8 +21,13 @@ export function scheduleCrewIds(job,roster=[]) {
 }
 
 /** Availability is employee-specific. Older work with unknown resource
- * assignments stays conservative; known independent crews can work in parallel. */
+ * assignments stays conservative; known independent crews can work in parallel.
+ * Segmented jobs share a resource when any pair of their segments does. */
 export function sharedScheduleResources(next,other,roster=[]) {
+  if(segmented(next)||segmented(other))return jobSegments(next).some(left=>jobSegments(other).some(right=>sharedRowResources(left,right,roster)));
+  return sharedRowResources(next,other,roster);
+}
+function sharedRowResources(next,other,roster) {
   if(next?.type==='blocked'||other?.type==='blocked')return true;
   const left=scheduleCrewIds(next,roster);
   if(unavailable(other)) {
@@ -38,7 +44,12 @@ export function sharedScheduleResources(next,other,roster=[]) {
 }
 
 export function scheduleRowsConflict(next,other,roster=[]) {
-  if(other?.id===next?.id||closed(other)||!sharedScheduleResources(next,other,roster))return false;
+  if(other?.id===next?.id||closed(other))return false;
+  if(segmented(next)||segmented(other))return jobSegments(next).some(left=>jobSegments(other).some(right=>rowsConflict(left,right,roster)));
+  return rowsConflict(next,other,roster);
+}
+function rowsConflict(next,other,roster) {
+  if(!sharedRowResources(next,other,roster))return false;
   const left=scheduleInterval(next),right=unavailable(other)?availabilityInterval(other):scheduleInterval(other);
   if(!left)return true;
   if(right)return overlaps(left,right);
@@ -54,7 +65,13 @@ const minutes=(value,end=false)=>{
   return hour<24&&minute<60?hour*60+minute:end&&hour===24&&minute===0?1440:NaN;
 };
 export function scheduleLockConflict(next,entry,date,roster=[]) {
-  if(entry?.id===next?.id||closed(entry)||!sharedScheduleResources(next,entry,roster))return false;
+  if(entry?.id===next?.id||lockEntryOwner(entry)===next?.id||closed(entry))return false;
+  // Only the segments working on this date can collide with its entries.
+  if(segmented(next))return jobSegments(next).filter(row=>occupiedDays(row).includes(date)).some(row=>lockConflict(row,entry,date,roster));
+  return lockConflict(next,entry,date,roster);
+}
+function lockConflict(next,entry,date,roster) {
+  if(!sharedRowResources(next,entry,roster))return false;
   const start=minutes(next.date===date?next.time:'00:00'),end=minutes((next.endDate||next.date)===date?next.endTime:'24:00',true);
   const otherStart=minutes(entry.start),otherEnd=minutes(entry.end,true);
   if(![start,end,otherStart,otherEnd].every(Number.isFinite)||otherEnd<=otherStart)return true;

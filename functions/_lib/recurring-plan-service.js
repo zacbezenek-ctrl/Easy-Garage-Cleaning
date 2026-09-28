@@ -9,6 +9,7 @@ import { assignmentKey } from './job-assignment.js';
 import { validDate, addDays, denverToday, scheduleInterval } from './dispatch-time.js';
 import { DISPATCH_TIME_ZONE } from './dispatch-contract.js';
 import { dispatchStorage } from './dispatch-storage.js';
+import { segmented } from './dispatch-segments.js';
 import { cadenceLabel, horizonRange, nextOccurrences, normalizeRecurringSchedule, occurrenceDates, occurrenceSchedule } from './recurring-plans.js';
 
 export const RECURRING_PLAN_ACTIONS = Object.freeze(['create','update','pause','resume','end','extend']);
@@ -167,6 +168,8 @@ export async function mutateRecurringPlan(store, session, input, now = new Date(
     if (!safeId(input.plan.templateJobId)) throw fail('template_invalid', 'Choose an existing job to repeat.');
     const template = await store.read('jobs', input.plan.templateJobId);
     if (!template || template.recordType || !['job','cleanout','reorg'].includes(template.type) || !safeId(template.customerId)) throw fail('template_invalid', 'The recurring template must be an operational job linked to a Hub customer.', 409);
+    // A plan repeats one time window and crew; a split job's hull would reserve every crew for the whole span.
+    if (segmented(template)) throw fail('template_segmented', 'A job split into crew segments cannot be repeated. Repeat a job with one time and crew, or remove its segments first.', 409);
     const customer = await store.read('customers', template.customerId);
     if (!customer) throw fail('customer_not_found', 'The template customer no longer exists. Review the job before repeating it.', 409);
     const schedule = normalizeRecurringSchedule({ ...templateSchedule(template), ...Object.fromEntries(SCHEDULE_FIELDS.filter(key => key in input.plan).map(key => [key, input.plan[key]])) });

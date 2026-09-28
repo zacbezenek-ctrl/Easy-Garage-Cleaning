@@ -8,6 +8,7 @@ import { DISPATCH_ACTIONS, DISPATCH_TIME_ZONE } from './dispatch-contract.js';
 import { validDate, addDays, denverToday, scheduleInterval, availabilityInterval, occupiedDays, overlaps } from './dispatch-time.js';
 import { arrivalWindowPatch, arrivalDefaults } from './dispatch-arrival.js';
 import { legacyBlockedDays, legacyBlockWarning } from './dispatch-legacy-blocks.js';
+import { SEGMENT_HULL_KEYS, SEGMENT_LIMIT, segmented, segmentsInvalid, jobSegments, segmentDays, segmentLockEntries, ownsLockEntry, projectSegments, validateSegments } from './dispatch-segments.js';
 
 const TERMINAL = new Set(['cancelled','canceled','completed','invoiced','paid','review_requested','closed','noshow','no_show','no-show']);
 const JOB_TYPES = new Set(['job','walkthrough','cleanout','reorg','blocked']);
@@ -89,11 +90,13 @@ export function projectDispatchJob(job, roster = [], now = new Date().toISOStrin
     completionSync:job.fieldCompletionSync ? {status:job.fieldCompletionSync.status,message:String(job.fieldCompletionSync.message || '').slice(0,600),attemptedAt:job.fieldCompletionSync.attemptedAt || null,syncedAt:job.fieldCompletionSync.syncedAt || null} : null,
     jobTime:fieldJobTime(job,now),
     arrivalWindowStart:job.arrivalWindowStart || null,arrivalWindowEnd:job.arrivalWindowEnd || null,arrivalWindow:job.arrivalWindow || '',
+    ...(segmented(job) ? {assignmentSegments:projectSegments(job),...(segmentsInvalid(job) ? {segmentsInvalid:true} : {})} : {}),
     timeZone: DISPATCH_TIME_ZONE, timeNeedsReview: Boolean(job.date) && !interval };
 }
 
 function scheduleInspection(jobs,resources,roster) {
-  const intervals=new WeakMap(),memberships=new WeakMap(),byEmployee=new Map(),byVehicle=new Map(),global=[],active=jobs.filter(activeJob),order=new Map(active.map((job,index)=>[job,index]));
+  // Segmented jobs are indexed per segment; a legacy job is its own row.
+  const intervals=new WeakMap(),memberships=new WeakMap(),byEmployee=new Map(),byVehicle=new Map(),global=[],active=jobs.filter(activeJob).flatMap(jobSegments),order=new Map(active.map((job,index)=>[job,index]));
   const crew=job=>{if(!memberships.has(job))memberships.set(job,legacyMembers(job,roster));return memberships.get(job);};
   const interval=job=>{if(!intervals.has(job))intervals.set(job,scheduleInterval(job));return intervals.get(job);};
   const append=(map,id,row)=>{if(!map.has(id))map.set(id,[]);map.get(id).push(row);};
@@ -129,7 +132,7 @@ function scheduleInspection(jobs,resources,roster) {
 async function withTravel(inspection,targets,roster,travel) {
   if(!travel?.enabled)return inspection;
   const pairs=[];
-  for(const job of targets) {
+  for(const job of targets.flatMap(jobSegments)) {
     const interval=inspection.interval(job),nearest=new Map();
     if(!activeJob(job)||!interval||job.type==='blocked')continue;
     for(const other of inspection.neighbors(job)) {
@@ -163,8 +166,9 @@ function jobWarnings(job, jobs, resources, roster, inspection=scheduleInspection
   if (['pending','error','blocked'].includes(job.fieldCompletionSync?.status)) add(`completion_sync_${job.fieldCompletionSync.status}`,String(job.fieldCompletionSync.message || 'Work completion is saved; the CRM completion handoff needs confirmation.').slice(0,600));
   if (!activeJob(job)) return warnings;
   if (['paused','waiting','delayed'].includes(fieldActivity(job))) add(`job_${fieldActivity(job)}`,job.fieldExecution.activityReason || `The crew reported this job as ${fieldActivity(job)}.`);
-  const interval = inspection.interval(job), crew = inspection.crew(job);
+  const interval = inspection.interval(job), crew = inspection.crew(job), rows = jobSegments(job);
   if (!interval) add(job.date ? 'invalid_schedule' : 'unscheduled', job.date ? 'The saved date or time needs review.' : 'This job has no scheduled time.');
+  if (segmentsInvalid(job)) add('segments_invalid', 'The saved crew segments could not be read, so the whole job time and crew stay reserved. Open the job and save one job-level time and crew.');
   if (job.type !== 'blocked') {
   if (!String(job.address || '').trim()) add('missing_address', 'Add the job address before dispatching the crew.');
   if (!job.customerId) add('missing_customer_link', 'This legacy job needs its canonical customer link reviewed.');
@@ -172,36 +176,46 @@ function jobWarnings(job, jobs, resources, roster, inspection=scheduleInspection
   if (!crew.length) add('unassigned', 'No employees are assigned.');
   if (crew.length < (job.crewNeeded || job.requiredCrewSize || 1)) add('crew_size_short', `Requires ${job.crewNeeded || job.requiredCrewSize || 1} crew members; ${crew.length} assigned.`);
   if (crew.some(id => !roster.some(person => person.id === id))) add('inactive_assignment', 'An assigned employee is no longer in the active roster.');
-  if (crew.length > 1 && !job.crewLead) add('missing_crew_lead', 'Choose a crew lead for this assignment.');
-  if (job.vehicleId && resources.find(resource => resource.id === job.vehicleId)?.status !== 'available') add('vehicle_unavailable', 'The assigned vehicle is unavailable or missing.');
+  for (const row of rows) {
+    const where = row.segmentId ? { segmentId: row.segmentId } : {}, rowCrew = inspection.crew(row);
+    if (row.segmentId && !rowCrew.length) add('segment_unassigned', 'No employees are assigned to this segment.', where);
+    if (rowCrew.length > 1 && !row.crewLead) add('missing_crew_lead', row.segmentId ? 'Choose a crew lead for this segment.' : 'Choose a crew lead for this assignment.', where);
+    if (row.vehicleId && resources.find(resource => resource.id === row.vehicleId)?.status !== 'available') add('vehicle_unavailable', 'The assigned vehicle is unavailable or missing.', where);
+  }
   if (job.syncStatus === 'pending' || job.syncStatus === 'error') add('provider_sync_pending', 'The Hub schedule is saved; the HighLevel mirror still needs confirmation.');
   }
   if (!interval) return warnings;
-  for (const other of inspection.neighbors(job)) {
-    if (other.id === job.id || !potentiallyNear(job,other,inspection.travelWindow)) continue;
-    const shared = crew.filter(id => inspection.crew(other).includes(id));
-    const vehicle = job.vehicleId && job.vehicleId === other.vehicleId;
-    if (!sharedScheduleResources(job,other,roster)) continue;
+  // Each segment is checked against every other job's segments; segments of
+  // this job were validated against each other when they were saved.
+  for (const row of rows) {
+  const rowInterval = inspection.interval(row), rowCrew = inspection.crew(row), where = row.segmentId ? { segmentId: row.segmentId } : {};
+  if (!rowInterval) { add('invalid_schedule', 'An assignment segment needs its date or time reviewed.', where); continue; }
+  for (const other of inspection.neighbors(row)) {
+    if (other.id === job.id || !potentiallyNear(row,other,inspection.travelWindow)) continue;
+    const shared = rowCrew.filter(id => inspection.crew(other).includes(id));
+    const vehicle = row.vehicleId && row.vehicleId === other.vehicleId, pair = { ...where, ...(other.segmentId ? { otherSegmentId: other.segmentId } : {}) };
+    if (!sharedScheduleResources(row,other,roster)) continue;
     const otherInterval = inspection.interval(other);
     if (!otherInterval) {
       // An existing dated assignment with malformed times cannot be treated as
       // free capacity. Undated work is intentionally a schedulable backlog.
-      if (scheduleRowsConflict(job,other,roster)) add('unverifiable_assignment','Another assignment for this employee or vehicle has invalid times. Repair that schedule before assigning overlapping dates.',{otherJobId:other.id,employeeIds:shared,vehicleId:vehicle ? job.vehicleId : null});
+      if (scheduleRowsConflict(row,other,roster)) add('unverifiable_assignment','Another assignment for this employee or vehicle has invalid times. Repair that schedule before assigning overlapping dates.',{otherJobId:other.id,employeeIds:shared,vehicleId:vehicle ? row.vehicleId : null,...pair});
       continue;
     }
-    if (overlaps(interval, otherInterval)) add('schedule_overlap', 'This job overlaps another assignment.', { otherJobId: other.id, employeeIds: shared, vehicleId: vehicle ? job.vehicleId : null });
+    if (overlaps(rowInterval, otherInterval)) add('schedule_overlap', 'This job overlaps another assignment.', { otherJobId: other.id, employeeIds: shared, vehicleId: vehicle ? row.vehicleId : null, ...pair });
     else {
-      const earlier = interval.end <= otherInterval.start ? job : other;
-      const later = earlier === job ? other : job;
-      const gap = interval.end <= otherInterval.start ? (otherInterval.start - interval.end) / 60000 : (interval.start - otherInterval.end) / 60000;
+      const earlier = rowInterval.end <= otherInterval.start ? row : other;
+      const later = earlier === row ? other : row;
+      const gap = rowInterval.end <= otherInterval.start ? (otherInterval.start - rowInterval.end) / 60000 : (rowInterval.start - otherInterval.end) / 60000;
       const buffer = Math.max(Number(earlier.travelBufferMinutes) || 0, Number(later.travelBufferMinutes) || 0);
       const estimate = inspection.travel(earlier,later), required = Math.max(buffer, estimate?.minutes || 0);
       if (required && gap < required && estimate?.source !== 'same_property' && assignmentKey(earlier.address) !== assignmentKey(later.address)) add('travel_buffer_short', estimate?.minutes > buffer ? `Only ${gap} minutes between jobs; about ${estimate.minutes} minutes of driving is estimated.` : `Only ${gap} minutes between jobs; ${buffer} minutes were requested for travel.`, { otherJobId: other.id, gapMinutes: gap, requiredMinutes: required,
-        ...(estimate ? { bufferMinutes: buffer, estimatedMinutes: estimate.minutes, estimateSource: estimate.source, ...(inspection.blockTravelShort && gap < estimate.minutes ? { blocking: true } : {}) } : {}) });
+        ...(estimate ? { bufferMinutes: buffer, estimatedMinutes: estimate.minutes, estimateSource: estimate.source, ...(inspection.blockTravelShort && gap < estimate.minutes ? { blocking: true } : {}) } : {}), ...pair });
     }
   }
-  for (const {block,person,interval:blockInterval} of inspection.availability(job)) {
-    if (blockInterval ? overlaps(interval,blockInterval) : scheduleRowsConflict(job,block,roster)) add('employee_unavailable', 'An assigned employee has unavailable time or time off with invalid dates during this job.', { employeeId: person, availabilityId: block.id });
+  for (const {block,person,interval:blockInterval} of inspection.availability(row)) {
+    if (blockInterval ? overlaps(rowInterval,blockInterval) : scheduleRowsConflict(row,block,roster)) add('employee_unavailable', 'An assigned employee has unavailable time or time off with invalid dates during this job.', { employeeId: person, availabilityId: block.id, ...where });
+  }
   }
   return warnings;
 }
@@ -213,7 +227,7 @@ export async function dispatchOverview(store, session, query = {}, now = new Dat
     const [job,jobs,resources,roster,settings] = await Promise.all([store.read('jobs',query.jobId),store.jobs(),store.resources(),store.roster(),store.settings ? store.settings() : {}]);
     if (!visibleJob(job)) throw fail('dispatch_job_not_found','This operational job could not be found.',404);
     const inspection=await withTravel(scheduleInspection(jobs,resources,roster),[job],roster,options.travel);
-    return {ok:true,job:projectDispatchJob(job,roster,new Date(now).toISOString()),roster,crews:resources.filter(row=>row.recordType==='crew'),vehicles:resources.filter(row=>row.recordType==='vehicle'),warnings:jobWarnings(job,jobs,resources,roster,inspection),arrivalDefaults:arrivalDefaults(settings)};
+    return {ok:true,job:projectDispatchJob(job,roster,new Date(now).toISOString()),roster,crews:resources.filter(row=>row.recordType==='crew'),vehicles:resources.filter(row=>row.recordType==='vehicle'),warnings:jobWarnings(job,jobs,resources,roster,inspection),arrivalDefaults:arrivalDefaults(settings),segments:{enabled:store.segmentsEnabled===true,max:SEGMENT_LIMIT}};
   }
   if (query.view === 'customers') {
     const needle = text(query.q || '', 'Search', 200).toLowerCase(), digits = needle.replace(/\D/g, '');
@@ -231,13 +245,21 @@ export async function dispatchOverview(store, session, query = {}, now = new Dat
   return { ok: true, timeZone: DISPATCH_TIME_ZONE, startDate, endDate, jobs: selected.map(job=>projectDispatchJob(job,roster,new Date(now).toISOString())), roster,
     crews: resources.filter(row => row.recordType === 'crew'), vehicles: resources.filter(row => row.recordType === 'vehicle'),
     availability: resources.filter(row => row.recordType === 'availability').concat(jobs.filter(row => row.type === 'availability' || row.recordType === 'crew_availability').map(row => ({ ...row, employeeId: resolveMember(row.employee,roster,true) || row.employee }))).filter(row => row.date < endDate && (row.endDate || row.date) >= startDate),
-    warnings: selected.flatMap(job => jobWarnings(job, jobs, resources, roster,inspection)), coverage: { complete: true, asOf: now.toISOString() }, arrivalDefaults: arrivalDefaults(settings) };
+    warnings: selected.flatMap(job => jobWarnings(job, jobs, resources, roster,inspection)), coverage: { complete: true, asOf: now.toISOString() }, arrivalDefaults: arrivalDefaults(settings), segments: { enabled: store.segmentsEnabled === true, max: SEGMENT_LIMIT } };
 }
 
-const SCHEDULE_KEYS = ['date','time','endDate','endTime','assignedCrew','crewLead','crewId','vehicleId','crewNeeded','travelBufferMinutes','title','address','serviceType','jobInstructions','accessInstructions','customerInstructions','opsNotes','requiredEquipment','materials','recurrence','reminderDays','notify','shiftPickupEnabled','notes','arrivalWindowStart','arrivalWindowEnd'];
-function schedulePatch(changes, current, resources, roster, now, actor) {
+const SCHEDULE_KEYS = ['date','time','endDate','endTime','assignedCrew','crewLead','crewId','vehicleId','crewNeeded','travelBufferMinutes','title','address','serviceType','jobInstructions','accessInstructions','customerInstructions','opsNotes','requiredEquipment','materials','recurrence','reminderDays','notify','shiftPickupEnabled','notes','arrivalWindowStart','arrivalWindowEnd','assignmentSegments'];
+function schedulePatch(changes, current, resources, roster, now, actor, segmentsOn = false) {
   onlyKeys(changes, SCHEDULE_KEYS);
   const patch = {};
+  let plan;
+  if ('assignmentSegments' in changes) {
+    // Clearing a saved split stays possible with the flag off, so turning the
+    // flag off never strands a segmented job.
+    if (!segmentsOn && !(Array.isArray(changes.assignmentSegments) && !changes.assignmentSegments.length && segmented(current))) throw fail('dispatch_segments_disabled','Assignment segments are turned off for this Hub. Save one job-level time and crew instead.');
+    plan = validateSegments(changes.assignmentSegments,{roster,resources});
+    if (plan && SEGMENT_HULL_KEYS.some(key => key in changes)) throw fail('dispatch_segments_hull_derived','The job schedule and crew come from its segments. Send either segments or job-level times and crew, not both.');
+  } else if (segmented(current) && SEGMENT_HULL_KEYS.some(key => key in changes)) throw fail('dispatch_segments_hull_derived','This job is split into assignment segments. Edit its segments, or clear them to set one job-level time and crew.');
   for (const key of ['date','time','endDate','endTime']) if (key in changes) patch[key] = text(changes[key], key, 10);
   if ('date' in changes && !('endDate' in changes)) {
     const span = validDate(current?.date) && validDate(current?.endDate) ? Math.round((Date.parse(current.endDate) - Date.parse(current.date)) / 86400000) : 0;
@@ -288,6 +310,8 @@ function schedulePatch(changes, current, resources, roster, now, actor) {
   }
   if ('assignedCrew' in changes) patch.assignedCrew = members(changes.assignedCrew,roster);
   if (patch.assignedCrew) patch.assignedTo = patch.assignedCrew.join(', ');
+  if (plan) Object.assign(patch,plan.hull,{assignmentSegments:plan.segments});
+  else if (plan === null && segmented(current)) patch.assignmentSegments = null;
   const next = { ...current, ...patch }, crew = legacyMembers(next,roster);
   if (next.crewLead && !crew.includes(assignmentKey(next.crewLead))) throw fail('dispatch_lead_not_assigned','The crew lead must be one of the assigned employees.');
   if (next.vehicleId && !resources.some(row => row.recordType === 'vehicle' && row.id === next.vehicleId && row.status === 'available')) throw fail('dispatch_vehicle_unavailable','This vehicle is unavailable. Choose an available vehicle or remove its assignment.');
@@ -302,7 +326,7 @@ function conflictCheck(next, jobs, resources, roster,inspection) {
 }
 
 function auditState(job) {
-  return Object.fromEntries(['date','time','endDate','endTime','status','pipelineStatus','assignedCrew','assignedTo','crewId','crewLead','vehicleId','jobInstructions','operationalScope','accessInstructions','customerInstructions','opsNotes','requiredEquipment','materials','crewNeeded','travelBufferMinutes','title','address','serviceType','name','memberIds','leadId','notes','employeeId','allDay','reason','recurrence','reminderDays','notify','shiftPickupEnabled','openShift','sourceTemplateJobId','recurrenceParentId','cancellationReason','arrivalWindowStart','arrivalWindowEnd','arrivalWindow'].filter(key => job?.[key] !== undefined).map(key => [key,job[key]]));
+  return Object.fromEntries(['date','time','endDate','endTime','status','pipelineStatus','assignedCrew','assignedTo','crewId','crewLead','vehicleId','jobInstructions','operationalScope','accessInstructions','customerInstructions','opsNotes','requiredEquipment','materials','crewNeeded','travelBufferMinutes','title','address','serviceType','name','memberIds','leadId','notes','employeeId','allDay','reason','recurrence','reminderDays','notify','shiftPickupEnabled','openShift','sourceTemplateJobId','recurrenceParentId','cancellationReason','arrivalWindowStart','arrivalWindowEnd','arrivalWindow','assignmentSegments'].filter(key => job?.[key] !== undefined).map(key => [key,job[key]]));
 }
 
 export async function mutateDispatch(store, session, input, now = new Date().toISOString(), options = {}) {
@@ -356,9 +380,11 @@ async function executeDispatch(store, session, input, now, options = {}) {
       const customer = await store.read('customers',input.customerId);
       if (!customer) throw fail('dispatch_customer_not_found','This customer no longer exists. Search again.',404);
       const changes = input.changes || {};
-      const bookingKey = changes.date && changes.time ? await digest({ customerId: customer.id, kind: input.kind, date: changes.date, time: changes.time, timeZone: DISPATCH_TIME_ZONE }) : null;
+      // A split job is keyed by its first segment's start (the hull), like one visit.
+      const start = store.segmentsEnabled === true && Array.isArray(changes.assignmentSegments) && changes.assignmentSegments.length ? validateSegments(changes.assignmentSegments,{roster,resources}).hull : changes;
+      const bookingKey = start.date && start.time ? await digest({ customerId: customer.id, kind: input.kind, date: start.date, time: start.time, timeZone: DISPATCH_TIME_ZONE }) : null;
       id = bookingKey ? `visit_${bookingKey.slice(0,40)}` : `dispatch_${receiptId.replaceAll('-','')}`;
-      if (await store.read('jobs',id) || jobs.some(job => visibleJob(job) && job.customerId === customer.id && (job.type === 'walkthrough' ? 'walkthrough' : 'job') === input.kind && changes.date && job.date === changes.date && job.time === changes.time)) throw fail('dispatch_job_already_exists','This customer already has that visit at the selected time. Open the existing job.',409);
+      if (await store.read('jobs',id) || jobs.some(job => visibleJob(job) && job.customerId === customer.id && (job.type === 'walkthrough' ? 'walkthrough' : 'job') === input.kind && start.date && job.date === start.date && job.time === start.time)) throw fail('dispatch_job_already_exists','This customer already has that visit at the selected time. Open the existing job.',409);
       let source = null, template = null;
       if (input.sourceTemplateJobId) {
         if (!safeId(input.sourceTemplateJobId) || input.kind !== 'job') throw fail('dispatch_template_invalid','Choose an existing job to repeat.');
@@ -403,7 +429,7 @@ async function executeDispatch(store, session, input, now, options = {}) {
     }
     if (cancel && Object.keys(input.changes || {}).length) throw fail('dispatch_cancel_patch_invalid','Cancellation cannot also edit job details.');
     if ((current || patch).type === 'blocked') onlyKeys(input.changes || {},['date','time','endDate','endTime','title','opsNotes','notes']);
-    if (!cancel) Object.assign(patch,schedulePatch(input.changes || {},current || patch,resources,roster,now,session.user));
+    if (!cancel) Object.assign(patch,schedulePatch(input.changes || {},current || patch,resources,roster,now,session.user,store.segmentsEnabled === true));
     if (current && 'assignedCrew' in patch) {
       const retained=value=>patch.assignedCrew.includes(resolveMember(value?.employee || value,roster,true));
       if (Array.isArray(current.shiftClaims)) patch.shiftClaims=current.shiftClaims.filter(retained);
@@ -438,8 +464,9 @@ async function executeDispatch(store, session, input, now, options = {}) {
     }
     Object.assign(patch,{updatedAt:now,updatedBy:session.user,dispatchUpdatedAt:now,dispatchRequestId:input.requestId,...(!cancel ? { startAt:interval?.startAt || null,endAt:interval?.endAt || null,timeZone:DISPATCH_TIME_ZONE } : {})});
     next = { ...current, ...patch };
-    if (next.type !== 'blocked' && (create || cancel || restore || ['assignedCrew','crewNeeded','crewId','shiftPickupEnabled','date','time','endDate','endTime'].some(key=>key in patch))) {
-      patch.openShift=next.type === 'job' && next.shiftPickupEnabled === true && ['scheduled','confirmed','crew_assigned'].includes(state(next)) && Boolean(interval) && legacyMembers(next,roster).length < (next.crewNeeded || next.requiredCrewSize || 1);
+    if (next.type !== 'blocked' && (create || cancel || restore || ['assignedCrew','crewNeeded','crewId','shiftPickupEnabled','date','time','endDate','endTime','assignmentSegments'].some(key=>key in patch))) {
+      // Self-service pickup edits the job-level crew, so a segmented job is never an open shift.
+      patch.openShift=next.type === 'job' && next.shiftPickupEnabled === true && ['scheduled','confirmed','crew_assigned'].includes(state(next)) && Boolean(interval) && legacyMembers(next,roster).length < (next.crewNeeded || next.requiredCrewSize || 1) && !segmented(next);
       next={...next,...patch};
     }
     const scheduleChanged = create || cancel || restore || ['date','time','endDate','endTime','title','address'].some(key => key in patch && patch[key] !== current?.[key]);
@@ -452,12 +479,13 @@ async function executeDispatch(store, session, input, now, options = {}) {
       Object.assign(patch,{syncStatus:'pending',syncIdempotencyKey:input.requestId,providerSyncOwner:'operations'}); providerSync = 'pending';
     } else if (create) patch.syncStatus = 'not_needed';
     next = { ...current, ...patch };
-    const days = [...new Set([...occupiedDays(current),...occupiedDays(next)])].sort();
+    // Segments lock only their own days, one entry each (`${jobId}~${segmentId}`).
+    const days = [...new Set([...segmentDays(current),...segmentDays(next)])].sort();
     for (const date of days) {
       const lockId = `_egc_schedule_lock_${date}`, lock = await store.read('jobs',lockId);
       if (lock && (lock.recordType !== 'schedule_lock' || !Array.isArray(lock.entries))) throw fail('dispatch_lock_unavailable','A scheduling guard needs review before this date can be changed.',503);
-      const entries = (Array.isArray(lock?.entries) ? lock.entries : []).filter(entry => entry.id !== id && !TERMINAL.has(entry.status));
-      if (activeJob(next) && occupiedDays(next).includes(date)) entries.push(scheduleDayEntry(next,date,roster,now));
+      const entries = (Array.isArray(lock?.entries) ? lock.entries : []).filter(entry => !ownsLockEntry(entry,id) && !TERMINAL.has(entry.status));
+      if (activeJob(next) && segmentDays(next).includes(date)) entries.push(...segmentLockEntries(next,date,roster,now));
       writes.push({collection:'jobs',id:lockId,revision:lock?.revision,patch:{recordType:'schedule_lock',date,entries,updatedAt:now}});
     }
     // The older operations scheduler shares day locks but not dispatchState.
@@ -466,11 +494,11 @@ async function executeDispatch(store, session, input, now, options = {}) {
     const finalJobs = days.length ? await store.jobs() : jobs;
     const inspection=await withTravel(scheduleInspection(finalJobs,resources,roster),[next],roster,options.travel);
     // An existing drive shortfall blocks only a change that moves this stop.
-    if(!create&&!restore&&!['date','time','endDate','endTime','assignedCrew','crewId','vehicleId','address','propertyId'].some(key=>key in patch&&JSON.stringify(patch[key])!==JSON.stringify(current?.[key])))inspection.blockTravelShort=false;
+    if(!create&&!restore&&!['date','time','endDate','endTime','assignedCrew','crewId','vehicleId','address','propertyId','assignmentSegments'].some(key=>key in patch&&canonical(patch[key])!==canonical(current?.[key])))inspection.blockTravelShort=false;
     conflictCheck(next,finalJobs,resources,roster,inspection);
     warnings = jobWarnings(next,finalJobs,resources,roster,inspection);
-    const placed = create || restore || ['date','time','endDate','endTime'].some(key => key in patch && patch[key] !== current?.[key]);
-    const legacy = placed && activeJob(next) && next.type !== 'blocked' ? await legacyBlockedDays(store,occupiedDays(next)) : null;
+    const placed = create || restore || ['date','time','endDate','endTime'].some(key => key in patch && patch[key] !== current?.[key]) || 'assignmentSegments' in patch && canonical(patch.assignmentSegments) !== canonical(current?.assignmentSegments ?? null);
+    const legacy = placed && activeJob(next) && next.type !== 'blocked' ? await legacyBlockedDays(store,segmentDays(next)) : null;
     if (legacy?.rows.length) {
       const blocked = legacy.rows.map(row => legacyBlockWarning(id,row));
       if (legacy.mode === 'enforce') throw fail('dispatch_conflict','This date is blocked on the Hub calendar. Unblock the day or choose another date.',409,{conflicts:blocked});
@@ -490,12 +518,14 @@ async function executeDispatch(store, session, input, now, options = {}) {
     Object.assign(patch,{id,recordType,updatedAt:now,updatedBy:session.user,dispatchRequestId:input.requestId,...(!current ? {createdAt:now,createdBy:session.user} : {})});
     const next = {...current,...patch};
     if (recordType === 'availability' && next.status !== 'cancelled') {
-      const conflicts = jobs.filter(activeJob).filter(job => legacyMembers(job,roster).includes(next.employeeId) && overlaps(scheduleInterval(job),availabilityInterval(next))).map(job => ({jobId:job.id,employeeId:next.employeeId}));
+      // Only the segments this employee works can collide with their time off.
+      const conflicts = jobs.filter(activeJob).flatMap(jobSegments).filter(row => legacyMembers(row,roster).includes(next.employeeId) && overlaps(scheduleInterval(row),availabilityInterval(next))).map(row => ({jobId:row.id,employeeId:next.employeeId,...(row.segmentId ? {segmentId:row.segmentId} : {})}));
       if (conflicts.length) warnings.push({code:'availability_conflicts',message:'Time off was saved. Reassign the affected jobs before dispatch.',conflicts});
     }
     if (recordType === 'vehicle' && next.status !== 'available') {
-      const affected = jobs.filter(activeJob).filter(job => job.vehicleId === id && (!scheduleInterval(job) || scheduleInterval(job).end > Date.parse(now)));
-      if (affected.length) warnings.push({code:'vehicle_assignments_need_review',message:'Vehicle availability was updated. Existing assignments need reassignment.',jobIds:affected.map(job => job.id)});
+      // A split job has no job-level vehicle when its segments use different trucks.
+      const affected = jobs.filter(activeJob).flatMap(jobSegments).filter(row => row.vehicleId === id && (!scheduleInterval(row) || scheduleInterval(row).end > Date.parse(now))), split = affected.filter(row => row.segmentId);
+      if (affected.length) warnings.push({code:'vehicle_assignments_need_review',message:'Vehicle availability was updated. Existing assignments need reassignment.',jobIds:[...new Set(affected.map(row => row.id))],...(split.length ? {segments:split.map(row => ({jobId:row.id,segmentId:row.segmentId}))} : {})});
     }
   }
   writes.push({collection,id,revision:current?.revision,patch});
@@ -575,7 +605,7 @@ export async function mutateDispatchSelfAssignment(store,session,input,now = new
     if (!identity) throw fail('dispatch_employee_inactive','Your active employee account could not be verified. Sign in again before choosing a shift.',403);
     if (!job || !visibleJob(job)) throw fail('dispatch_job_not_found','This shift no longer exists.',404);
     if (input.expectedRevision && input.expectedRevision !== job.revision) throw fail('dispatch_revision_conflict','This shift changed. Refresh before choosing it.',409);
-    if (job.type !== 'job' || job.shiftPickupEnabled !== true || TERMINAL.has(state(job)) || ['dispatched','arrived','in_progress','paused','waiting'].includes(state(job))) throw fail('dispatch_shift_closed','This shift is no longer available for pickup or release.',409);
+    if (job.type !== 'job' || job.shiftPickupEnabled !== true || TERMINAL.has(state(job)) || ['dispatched','arrived','in_progress','paused','waiting'].includes(state(job)) || segmented(job)) throw fail('dispatch_shift_closed','This shift is no longer available for pickup or release.',409);
     const interval = scheduleInterval(job);
     if (!interval || interval.end <= Date.parse(now)) throw fail('dispatch_shift_time_invalid','Only upcoming shifts with valid start and end times can be picked up or released.',409);
     const crew = legacyMembers(job,roster), claims = Array.isArray(job.shiftClaims) ? job.shiftClaims : [];

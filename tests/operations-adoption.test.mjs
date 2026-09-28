@@ -109,6 +109,13 @@ test('shared crew, vehicle, resource availability and malformed lock assignments
  }
 });
 
+test('an assignment-segmented Hub visit is left to dispatch instead of being adopted around its segment locks',async()=>{
+ const part=(id,crew)=>({id,date:'2026-09-22',time:'14:15',endDate:'2026-09-22',endTime:'14:45',assignedCrew:[crew],crewLead:null,crewId:null,vehicleId:null,notes:''});
+ const f=fixture();f.rows.set('jobs/existing',existing({assignedCrew:['crew-a','crew-b'],assignmentSegments:[part('a','crew-a'),part('b','crew-b')]}));
+ await assert.rejects(adoptScheduledVisit(f.store,actor,input(),now),/schedule_adoption_segments_require_dispatch/);
+ assert.equal(f.commits(),0);assert.equal(f.rows.get('jobs/existing').revision,'r1');
+});
+
 test('another employee availability does not block an exactly assigned native crew',async()=>{
  const f=fixture();f.rows.set('jobs/existing',existing({assignedCrew:['crew-a']}));f.rows.set('dispatchResources/time-off',{id:'time-off',recordType:'availability',employeeId:'crew-b',date:'2026-09-22',allDay:true,status:'active'});assert.equal((await adoptScheduledVisit(f.store,actor,input(),now)).ok,true);
 });

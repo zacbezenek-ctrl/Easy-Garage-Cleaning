@@ -7,6 +7,7 @@ import {arrivalWindowProblem,arrivalWindowFields} from './dispatch-arrival.js';
 import {DISPATCH_TIME_ZONE} from './dispatch-contract.js';
 import {legacyBlockMode,legacyBlockedDays} from './dispatch-legacy-blocks.js';
 import {customerIdentityFields} from './customer-identity.js';
+import {segmented} from './dispatch-segments.js';
 const ROOT='projects/egcw-1ec83/databases/(default)/documents';
 const URL=`https://firestore.googleapis.com/v1/${ROOT}`;
 const safeId=id=>typeof id==='string'&&/^[A-Za-z0-9_-]{1,180}$/.test(id)&&!/^(_egc_|secure_)/.test(id);
@@ -97,6 +98,8 @@ export async function mutateScheduledVisit(store,actor,input,now=new Date().toIS
     visitIdentity(current,customer);
     // Dispatch owns multi-day lock updates. The original single-day mutation
     // path must never truncate an interval or leave intermediate locks behind.
+    // Split crews and per-day windows have per-segment locks only dispatch maintains.
+    if(segmented(current))throw failure('schedule_segments_require_dispatch');
     if(current.endDate&&current.endDate!==current.date)throw failure('schedule_multiday_requires_dispatch');
     if(current.customerId!==input.portalCustomerId)throw failure('schedule_customer_link_conflict');
     if(!input.expectedRevision||current.revision!==input.expectedRevision)throw failure('schedule_revision_conflict');

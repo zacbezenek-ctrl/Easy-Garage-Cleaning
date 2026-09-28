@@ -2,7 +2,7 @@ import { getHubSession, hasBusinessAccess, listHubUserProfiles } from '../_lib/h
 import { employeeAccountsConfigured, listEmployeeApplications } from '../_lib/employee-accounts.js';
 import { firebaseServiceAccountConfigured } from '../_lib/firebase-service-account.js';
 import { createJobAssignmentAccess } from '../_lib/job-assignment.js';
-import { fieldCommand, fieldFailure, fieldFingerprint, fieldId, fieldJobProjection, fieldPhotos, fieldRequestId, fieldStage, fieldText } from '../_lib/field-execution.js';
+import { fieldCommand, fieldFailure, fieldFingerprint, fieldId, fieldJobProjection, fieldPhotos, fieldRequestId, fieldStage, fieldText, fieldViewerWorksOn } from '../_lib/field-execution.js';
 import { createFieldStore } from '../_lib/field-execution-store.js';
 import { createFieldPhotoClient, decodeFieldPhoto, fieldPhotosConfigured, verifyFieldPhotoMetadata } from '../_lib/field-execution-photos.js';
 import { syncFieldCompletion } from '../_lib/field-execution-sync.js';
@@ -44,9 +44,12 @@ async function displayContext(ctx, env, jobs) {
     const profiles = await listEmployeeApplications(env).catch(() => []);
     for (const profile of profiles) if (profile.status === 'approved') crewNames[String(profile.username || profile.user).toLowerCase()] = profile.displayName;
   }
-  const resourceIds = [...new Set(jobs.flatMap(job => [job.vehicleId, job.crewId]).filter(fieldId))];
+  const segmentResources = job => Array.isArray(job.assignmentSegments) ? job.assignmentSegments.flatMap(segment => [segment?.vehicleId, segment?.crewId]) : [];
+  const resourceIds = [...new Set(jobs.flatMap(job => [job.vehicleId, job.crewId, ...segmentResources(job)]).filter(fieldId))];
   const resources = new Map(await Promise.all(resourceIds.map(async id => [id, await ctx.store.readResource(id).catch(() => null)])));
-  return job => ({ manager: ctx.manager, crewNames, vehicleName: resources.get(job.vehicleId)?.name || '', crewName: resources.get(job.crewId)?.name || '' });
+  const resourceNames = Object.fromEntries([...resources].filter(([, row]) => row?.name).map(([id, row]) => [id, row.name]));
+  // viewer limits a split job to the signed-in employee's own segments.
+  return job => ({ manager: ctx.manager, crewNames, vehicleName: resources.get(job.vehicleId)?.name || '', crewName: resources.get(job.crewId)?.name || '', viewer: ctx.session.user, resourceNames });
 }
 
 async function detail(ctx, env, jobId, cursor = '') {
@@ -83,7 +86,7 @@ export async function onRequestGet({ request, env }) {
     for (const job of source) {
       // This is the signed-in employee's day, including for managers. Managers
       // can open any job by ID and use dispatch for the company-wide view.
-      if (!await ctx.access.assigned(job)) continue;
+      if (!await ctx.access.assigned(job) || !fieldViewerWorksOn(job, ctx.session.user, date, end.toISOString().slice(0, 10))) continue;
       const stage = fieldStage(job), completed = ['completed', 'paid', 'invoiced', 'review_requested'].includes(stage);
       if (status === 'active' && (completed || stage === 'cancelled') || status === 'completed' && !completed || status === 'cancelled' && stage !== 'cancelled') continue;
       jobs.push(job);

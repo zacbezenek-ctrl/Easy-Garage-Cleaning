@@ -6,13 +6,13 @@
  *       vehicles:[{id,revision,name,status,notes}],
  *       availability:[{id,revision,employeeId,date,endDate,time,endTime,allDay,reason,status}],
  *       warnings:[{code,jobId,message,...}], coverage:{complete,asOf},startDate,endDate,
- *       arrivalDefaults:{enabled:boolean,minutes:integer}}
+ *       arrivalDefaults:{enabled:boolean,minutes:integer},segments:{enabled:boolean,max:31}}
  *   arrivalDefaults says whether blank arrival windows get a derived default
  *   (EGC_DISPATCH_DEFAULT_ARRIVAL_WINDOW_ENABLED) and its length; no secrets.
  * GET /api/dispatch?view=customers&q=phone-or-name
  *   => {ok,customers:[{id,name,phone,email,address}],total}; at most 50 results.
  * GET /api/dispatch?view=job&jobId=exact-ID
- *   => {ok,job:DispatchJob,roster,crews,vehicles,warnings,arrivalDefaults}; no date-range filter.
+ *   => {ok,job:DispatchJob,roster,crews,vehicles,warnings,arrivalDefaults,segments}; no date-range filter.
  *
  * POST /api/dispatch always requires requestId = crypto.randomUUID(). Keep the
  * SAME requestId and unchanged body when retrying a lost/network response.
@@ -65,6 +65,41 @@
  * remove labels already saved. A start too late for a non-empty window before
  * midnight derives no window.
  * No arbitrary status/financial/customer/provider identity patches are accepted.
+ * assignmentSegments (P1-DS-08, functions/_lib/dispatch-segments.js): a complete
+ * replacement list of up to 31 [{id:/^[A-Za-z0-9_-]{1,19}$/ unique,date,time,
+ * endDate?,endTime,assignedCrew?:string[],crewLead?:string|null,crewId?:string|
+ * null,vehicleId?:string|null,notes?:string(2000)}] for multi-crew jobs, split
+ * assignments and per-day work windows (e.g. 3 days of 08:00-17:00 frees each
+ * night). Segments are sorted by start. crewId without assignedCrew uses that
+ * crew's members and lead. Parallel segments need different employees and
+ * vehicles (else 409 dispatch_conflict, details.conflicts[].code
+ * 'segment_overlap'). The job's date/time/endDate/endTime become the hull
+ * (earliest start, latest end, at most 31 days), assignedCrew/assignedTo the
+ * union, crewLead the earliest segment lead, crewId/vehicleId the shared value
+ * or null; a save cannot also send those hull keys (400
+ * dispatch_segments_hull_derived), nor edit them on a segmented job without
+ * sending segments. [] clears segments and keeps the hull as a single job-level
+ * assignment. Blocks cannot have segments. Server env EGC_DISPATCH_SEGMENTS
+ * (exactly 'true'; default off): off rejects the field with 400
+ * dispatch_segments_disabled, except [] on an already segmented job, so turning
+ * it off never strands one. Saved segments are honoured whatever the flag.
+ * Conflicts, warnings, openings, drive-time routes and crew time off are checked
+ * per segment; a segment on its own days reserves only its own window, crew and
+ * vehicle. Each segment writes one day-lock entry per occupied day with id
+ * `${jobId}~${segmentId}` (plus jobId, segmentId); legacy entries keep the job
+ * ID. Edits and cancellation release every entry owned by the job. A malformed
+ * saved split (bad or duplicate ID, crew not a list) is checked and locked as its
+ * hull with the union crew, never as free capacity. Warnings may
+ * carry segmentId/otherSegmentId, plus segment_unassigned. A segmented job is
+ * never an open shift and shift pickup/release is 409 dispatch_shift_closed.
+ * The older operations scheduler rejects segmented jobs with
+ * schedule_segments_require_dispatch (adoption: schedule_adoption_segments_
+ * require_dispatch). Crew DTOs (field-execution.js) show a crew viewer only
+ * their own segments and a hull of them; managers see every segment. No
+ * backfill is needed or provided: a job without assignmentSegments is one
+ * implicit segment computed from its own fields, so existing records, locks and
+ * readers are unchanged. With the flag on, dispatchStorage also reports a
+ * Firestore 400 FAILED_PRECONDITION commit as 409 dispatch_revision_conflict.
  * => {ok,job:DispatchJob,warnings,requestId,replayed?,providerSync:'pending'|'not_needed'}
  *
  * {action:'crew.save',requestId,id?:string,expectedRevision?:string,
@@ -85,7 +120,9 @@
  * notify,shiftPickupEnabled,openShift,notes,durationMin,estimatedDurationMin,
  * completionSync:{status,message,attemptedAt,syncedAt}|null,
  * arrivalWindowStart,arrivalWindowEnd ('HH:MM'|null), arrivalWindow (Denver
- * range label such as '9:00 AM – 10:00 AM', '' when none is saved).
+ * range label such as '9:00 AM – 10:00 AM', '' when none is saved),
+ * assignmentSegments (only on segmented jobs): [{id,date,time,endDate,endTime,
+ * startAt,endAt,assignedCrew,crewLead,crewId,vehicleId,notes}].
  * Date/time invalid or absent is represented as startAt:null.
  * Financial/credential/employee payroll fields are deliberately absent.
  *

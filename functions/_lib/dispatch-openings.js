@@ -5,6 +5,7 @@ import { sharedScheduleResources, scheduleRowsConflict } from './dispatch-confli
 import { validDate, addDays, denverToday, scheduleInterval, availabilityInterval } from './dispatch-time.js';
 import { localInstant } from './operations-portal-records.js';
 import { legacyBlockedDays } from './dispatch-legacy-blocks.js';
+import { jobSegments, lockEntryOwner } from './dispatch-segments.js';
 
 const fail=(code,message,status=400)=>Object.assign(new Error(message),{code,status});
 const closed=row=>['cancelled','canceled','completed','invoiced','paid','review_requested','closed','noshow','no_show','no-show'].includes(row.pipelineStatus || row.status);
@@ -80,13 +81,14 @@ export async function dispatchOpenings(store,session,query={},now=new Date(),{tr
   if (input.vehicleId&&!data.resources.some(row=>row.recordType==='vehicle'&&row.id===input.vehicleId&&row.status==='available')) throw fail('dispatch_vehicle_unavailable','The selected vehicle is missing, inactive, or out of service.');
   const warnings=[{code:'working_availability_unconfirmed',message:'These gaps have no recorded scheduling conflict. Confirm that the selected employees are working; unmarked time is not approved availability.'}];
   if(input.travelBufferMinutes)warnings.push({code:'travel_buffer_estimate',message:'Travel buffers reserve time around other jobs. They are not route or driving-time estimates.'});
-  const sources=[...data.jobs.filter(operational),...data.resources.filter(unavailable)];
+  // Each assignment segment reserves only its own window, crew and vehicle.
+  const sources=[...data.jobs.filter(operational).flatMap(jobSegments),...data.resources.filter(unavailable)];
   // An orphan lock is still a reservation until an operations manager reviews
   // it. Existing jobs, including completed work, are authoritative over old locks.
   const canonicalIds=new Set(data.jobs.map(row=>row.id));
   data.locks.forEach((lock,index)=>{
     for(const entry of lock?.entries || []) {
-      if (canonicalIds.has(entry.id))continue;
+      if (canonicalIds.has(entry.id)||canonicalIds.has(lockEntryOwner(entry)))continue;
       const date=input.dates[index];
       sources.push({...entry,id:entry.id||`guard:${date}`,type:entry.type||'job',date,time:entry.start,endDate:entry.end==='24:00'?addDays(date,1):date,endTime:entry.end==='24:00'?'00:00':entry.end});
     }

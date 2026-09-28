@@ -198,6 +198,11 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   `next`, else 401; allowed responses private/no-store). The crew worker caches only same-origin 200 shell files, so a
   sign-in page or 401 is never kept (VERSION 20260928gate). Gaps: older/preview deployments stay ungated (Cloudflare
   Access); any staff session still sees pay copy (PRICE-SCRUB). New staff files must be listed in `staff-paths.js`.
+- **SEGMENTS** Assignment segments behind `EGC_DISPATCH_SEGMENTS` (off): a job can carry `assignmentSegments` (multi-crew,
+  split days, per-day windows, each with crew, lead and vehicle); the job-level window is their hull and `assignedCrew`
+  their union, so legacy readers keep working. Conflicts, day locks, openings, travel, availability and the field/crew
+  projections work per segment; crew projections fail closed to the viewer's own segments. Saved segments are always
+  honoured and can be cleared with the flag off. Split jobs cannot be recurring templates.
 
 ## In progress
 
@@ -247,6 +252,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | P1-08 | Staff roles and capabilities, staff directory (skills, effective-dated pay, availability), vault migrations | merged (fcf6b5b) |
 | P2-03 | Catalog and owner pricing settings API with versioned, audited Firestore storage (CATALOG_QUOTES_ENABLED) | merged (9d16e9e) |
 | STAFF-GATE | Server-side Hub session gate for staff pages and scripts, /staff-login (EGC_STAFF_PAGE_GATE) | merged (107ef94) |
+| SEGMENTS | Assignment segments: multi-crew jobs, split crews and per-day work windows (EGC_DISPATCH_SEGMENTS) | merged (ec78661) |
 
 ## Next
 

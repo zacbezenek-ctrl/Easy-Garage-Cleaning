@@ -5,6 +5,7 @@ import {schedulingStorage} from './operations-scheduling.js';
 import {dispatchStorage} from './dispatch-storage.js';
 import {scheduleRowsConflict,scheduleLockConflict,scheduleDayEntry} from './dispatch-conflicts.js';
 import {customerIdentityFields} from './customer-identity.js';
+import {segmented} from './dispatch-segments.js';
 const BASE='https://firestore.googleapis.com/v1/projects/egcw-1ec83/databases/(default)/documents/jobs';
 const fail=(code,status=409)=>Object.assign(new Error(code),{status});
 const safeId=v=>typeof v==='string'&&/^[A-Za-z0-9_-]{1,180}$/.test(v)&&!/^(_egc_|secure_)/.test(v);
@@ -122,7 +123,7 @@ export async function adoptScheduledVisit(store,actor,input,now=new Date().toISO
  let current=same[0]||await store.read('jobs',deterministicId);
  if(current&&(terminal(current.pipelineStatus||current.status)||!kind(current.type)))throw fail('schedule_adoption_terminal_tombstone');
  if(current&&!compatible(current,p,customerId))throw fail('schedule_adoption_existing_visit_conflict');
- if(current){current=await store.read('jobs',current.id);if(!compatible(current,p,customerId)||terminal(current.pipelineStatus||current.status))throw fail('schedule_adoption_source_changed');}
+ if(current){current=await store.read('jobs',current.id);if(!compatible(current,p,customerId)||terminal(current.pipelineStatus||current.status))throw fail('schedule_adoption_source_changed');if(segmented(current))throw fail('schedule_adoption_segments_require_dispatch');}
  const id=current?.id||deterministicId,activeEntries=(Array.isArray(lock?.entries)?lock.entries:[]).filter(v=>v.id!==id&&!terminal(v.status));
  // Preserve existing explicit resource assignments. A new unassigned imported
  // visit intentionally omits assignedCrew:[]: unknown legacy capacity is global.

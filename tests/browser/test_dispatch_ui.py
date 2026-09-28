@@ -59,6 +59,7 @@ class DispatchBrowserTests(unittest.TestCase):
         self.search_queries = []; self.search_results = []; self.search_failure = None; self.hang_once = False; self.hung_route = None
         self.arrival_defaults = {'enabled': False, 'minutes': 60}
         self.travel_queries = []; self.travel_failure = None
+        self.segments = None
         self.page.on('pageerror', lambda e: self.errors.append(str(e)))
         self.page.on('dialog', lambda dialog: dialog.accept())
         self.page.route('**/*', self.route)
@@ -90,7 +91,7 @@ class DispatchBrowserTests(unittest.TestCase):
             rows = [row for row in self.jobs if not row.get('date') or (row['date'] < last and (row.get('endDate') or row['date']) >= first)]
             if self.bad_read: send({'ok': True}); return
             send({'ok': True, 'viewer': {'id': self.viewer}, 'timeZone': 'America/Denver', 'jobs': rows, 'roster': ROSTER, 'crews': self.crews, 'vehicles': self.vehicles, 'availability': self.availability,
-                  'warnings': [], 'coverage': {'complete': True, 'asOf': '2026-09-22T14:00:00Z'}, 'startDate': first, 'endDate': last, 'arrivalDefaults': self.arrival_defaults}); return
+                  'warnings': [], 'coverage': {'complete': True, 'asOf': '2026-09-22T14:00:00Z'}, 'startDate': first, 'endDate': last, 'arrivalDefaults': self.arrival_defaults, **({'segments': self.segments} if self.segments else {})}); return
         body = req.post_data_json; self.calls.append(copy.deepcopy(body))
         if self.fail_once:
             status, code, error, details = self.fail_once; self.fail_once = None
@@ -125,6 +126,10 @@ class DispatchBrowserTests(unittest.TestCase):
         self.page.goto(self.url)
         self.page.get_by_label('Schedule date', exact=True).fill(DAY)
         expect(self.page.get_by_role('heading', name=CUSTOMER['name'], exact=True)).to_be_visible()
+    def split_job(self):
+        segment = lambda id, date, time, end, crew, lead=None, truck=None, notes='': {'id': id, 'date': date, 'time': time, 'endDate': date, 'endTime': end, 'startAt': date+'T'+time+':00-06:00', 'endAt': date+'T'+end+':00-06:00', 'assignedCrew': crew, 'crewLead': lead, 'crewId': None, 'vehicleId': truck, 'notes': notes}
+        return job(id='job-split', revision='split-rev-1', customer='Synthetic Split Garage', endDate='2026-09-24', endTime='12:00', endAt='2026-09-24T12:00:00-06:00', assignedCrew=['crew.one', 'crew.two'], crewLead='crew.one', crewId=None, vehicleId=None,
+                   assignmentSegments=[segment('s1', DAY, '08:00', '17:00', ['crew.one'], 'crew.one', 'truck-1', 'Synthetic front bay'), segment('s2', DAY, '08:00', '17:00', ['crew.two']), segment('s3', '2026-09-24', '08:00', '12:00', ['crew.two'])])
     def card(self, name=CUSTOMER['name']): return self.page.locator('.dp-job').filter(has=self.page.get_by_role('heading', name=name, exact=True)).first
     def create(self):
         self.page.get_by_role('button', name='Create job', exact=True).first.click()
@@ -340,5 +345,85 @@ class DispatchBrowserTests(unittest.TestCase):
         self.assertLessEqual(self.page.evaluate('document.documentElement.scrollWidth'), 376); self.assertLessEqual(self.page.get_by_role('dialog').evaluate('(el)=>el.scrollWidth'), self.page.get_by_role('dialog').evaluate('(el)=>el.clientWidth')+1)
         out = ROOT/'test-results'; out.mkdir(exist_ok=True); note.scroll_into_view_if_needed(); self.page.screenshot(path=str(out/'dispatch-arrival-midnight.png'))
         arrive_from.fill('23:00'); expect(note).to_have_count(0); self.assertEqual(self.calls, [])
+
+    def test_segment_editor_is_absent_while_the_server_flag_is_off(self):
+        self.open(); self.card().get_by_role('button', name='Edit / assign', exact=True).click(); dialog = self.page.get_by_role('dialog')
+        expect(dialog.get_by_role('button', name='Add crew segment', exact=True)).to_have_count(0); expect(dialog.get_by_role('heading', name='Crew segments', exact=True)).to_have_count(0)
+        self.submit('Save changes'); self.closed(); self.assertNotIn('assignmentSegments', self.calls[-1]['changes']); self.assertEqual(self.calls[-1]['changes']['assignedCrew'], ['crew.one', 'lead.one'])
+    def test_calendar_shows_each_segment_on_its_own_day_and_crew(self):
+        self.segments = {'enabled': True, 'max': 31}; self.jobs.append(self.split_job()); self.open()
+        card = self.card('Synthetic Split Garage'); expect(card.locator('.dp-segment-list li')).to_have_count(2); expect(card).to_contain_text('By segment')
+        expect(card.locator('.dp-segment-list li').first).to_contain_text('8:00 AM – 5:00 PM · Crew One · Lead Crew One · Box Truck · Synthetic front bay')
+        self.page.get_by_role('button', name='Week', exact=True).click(); days = self.page.locator('.dp-day')
+        split_on = lambda index: days.nth(index).locator('.dp-job').filter(has=self.page.get_by_role('heading', name='Synthetic Split Garage', exact=True))
+        expect(split_on(0)).to_have_count(1); expect(split_on(1)).to_have_count(0); expect(split_on(2).locator('.dp-segment-list li')).to_have_count(1); expect(split_on(2)).to_contain_text('8:00 AM – 12:00 PM · Crew Two')
+        self.page.get_by_label('Filter by employee', exact=True).select_option('crew.one'); expect(split_on(0)).to_have_count(1); expect(split_on(2)).to_have_count(0)
+        self.page.get_by_label('Filter by employee', exact=True).select_option(''); self.page.get_by_role('button', name='Crew', exact=True).click()
+        group = self.page.locator('.dp-crew-group').filter(has=self.page.get_by_role('heading', name='Crew Two', exact=True))
+        expect(group).to_contain_text('2 jobs · 13.0 reserved hours'); expect(group.locator('.dp-segment-list li')).to_have_count(2); expect(group).not_to_contain_text('Synthetic front bay')
+        self.page.set_viewport_size({'width': 375, 'height': 812}); self.page.get_by_role('button', name='Week', exact=True).click(); expect(split_on(0)).to_have_count(1)
+        self.assertLessEqual(self.page.evaluate('document.documentElement.scrollWidth'), 376); self.assertEqual(self.calls, [])
+    def test_phone_manager_adds_a_parallel_crew_segment(self):
+        self.segments = {'enabled': True, 'max': 31}; self.vehicles.append({'id': 'van-1', 'revision': 'van-rev-1', 'name': 'Synthetic Van', 'status': 'available', 'notes': ''})
+        self.page.set_viewport_size({'width': 375, 'height': 812}); self.open(); self.card().get_by_role('button', name='Edit / assign', exact=True).click(); dialog = self.page.get_by_role('dialog')
+        expect(dialog.get_by_role('heading', name='Crew segments', exact=True)).to_be_visible(); add = dialog.get_by_role('button', name='Add crew segment', exact=True); add.click()
+        expect(dialog.locator('.dp-segment-card')).to_have_count(2); expect(dialog.get_by_label('Start time', exact=True)).to_be_hidden(); expect(dialog.get_by_role('button', name='Split across days', exact=True)).to_have_count(0)
+        second = dialog.get_by_role('region', name='Segment 2'); expect(second.get_by_label('Segment start', exact=True)).to_have_value('08:00')
+        second.get_by_label('Crew Two', exact=True).check(); second.get_by_role('combobox', name='Segment vehicle', exact=True).select_option('van-1'); second.get_by_label('Segment notes', exact=True).fill('Synthetic back shelving')
+        for control in [add, second.get_by_role('button', name='Remove segment 2', exact=True), second.get_by_label('Segment start', exact=True), second.get_by_role('combobox', name='Segment vehicle', exact=True), second.locator('label.dp-check').first]:
+            self.assertGreaterEqual(control.bounding_box()['height'], 44)
+        self.assertEqual(second.get_by_label('Segment date', exact=True).evaluate('(el)=>getComputedStyle(el).fontSize'), '16px')
+        self.assertLessEqual(self.page.evaluate('document.documentElement.scrollWidth'), 376); self.assertLessEqual(dialog.evaluate('(el)=>el.scrollWidth'), dialog.evaluate('(el)=>el.clientWidth')+1)
+        out = ROOT/'test-results'; out.mkdir(exist_ok=True); second.scroll_into_view_if_needed(); self.page.screenshot(path=str(out/'dispatch-segments-phone.png'))
+        self.submit('Save changes'); self.closed(); changes = self.calls[-1]['changes']
+        for name in ['date', 'time', 'endDate', 'endTime', 'assignedCrew', 'crewId', 'crewLead', 'vehicleId']: self.assertNotIn(name, changes)
+        segments = changes['assignmentSegments']; self.assertEqual(len(segments), 2); self.assertNotEqual(segments[0]['id'], segments[1]['id']); self.assertTrue(all(re.fullmatch(r'[A-Za-z0-9_-]{1,19}', row['id']) for row in segments))
+        pick = lambda row, names: {name: row.get(name) for name in names}
+        self.assertEqual(pick(segments[0], ['date', 'time', 'endDate', 'endTime', 'assignedCrew', 'crewLead', 'crewId', 'vehicleId']), {'date': DAY, 'time': '08:00', 'endDate': DAY, 'endTime': '10:00', 'assignedCrew': ['crew.one', 'lead.one'], 'crewLead': 'lead.one', 'crewId': 'crew-main', 'vehicleId': 'truck-1'})
+        self.assertEqual(pick(segments[1], ['date', 'time', 'endTime', 'assignedCrew', 'crewLead', 'vehicleId', 'notes']), {'date': DAY, 'time': '08:00', 'endTime': '10:00', 'assignedCrew': ['crew.two'], 'crewLead': None, 'vehicleId': 'van-1', 'notes': 'Synthetic back shelving'})
+    def test_split_across_days_makes_daily_windows_with_a_crew_per_day(self):
+        self.segments = {'enabled': True, 'max': 31}; self.page.set_viewport_size({'width': 375, 'height': 812}); self.open(); self.card().get_by_role('button', name='Edit / assign', exact=True).click(); dialog = self.page.get_by_role('dialog')
+        split = dialog.get_by_role('button', name='Split across days', exact=True); split.click(); expect(dialog.get_by_role('alert')).to_contain_text('later end date'); expect(dialog.locator('.dp-segment-card')).to_have_count(0)
+        dialog.get_by_label('End date', exact=True).fill('2026-09-24'); dialog.get_by_label('End time', exact=True).fill('17:00'); split.click()
+        expect(dialog.locator('.dp-segment-card')).to_have_count(3); expect(dialog.get_by_role('alert')).to_have_count(0)
+        third = dialog.get_by_role('region', name='Segment 3'); expect(third.get_by_label('Segment date', exact=True)).to_have_value('2026-09-24'); expect(third.get_by_label('Segment end', exact=True)).to_have_value('17:00')
+        third.get_by_label('Crew One', exact=True).uncheck(); third.get_by_label('Crew Two', exact=True).check(); third.get_by_role('combobox', name='Segment lead', exact=True).select_option('crew.two')
+        dialog.get_by_role('region', name='Segment 2').get_by_role('button', name='Remove segment 2', exact=True).click(); expect(dialog.locator('.dp-segment-card')).to_have_count(2)
+        expect(dialog.get_by_role('region', name='Segment 2').get_by_label('Segment date', exact=True)).to_have_value('2026-09-24')
+        self.assertLessEqual(self.page.evaluate('document.documentElement.scrollWidth'), 376)
+        self.submit('Save changes'); self.closed(); segments = self.calls[-1]['changes']['assignmentSegments']
+        self.assertEqual([(row['date'], row['time'], row['endDate'], row['endTime'], row['assignedCrew'], row['crewLead']) for row in segments], [(DAY, '08:00', DAY, '17:00', ['crew.one', 'lead.one'], 'lead.one'), ('2026-09-24', '08:00', '2026-09-24', '17:00', ['lead.one', 'crew.two'], 'crew.two')])
+    def test_segmented_job_with_the_flag_off_keeps_its_segments_or_clears_them(self):
+        self.jobs.append(self.split_job()); self.open(); split = self.card('Synthetic Split Garage'); split.get_by_role('button', name='Edit / assign', exact=True).click(); dialog = self.page.get_by_role('dialog')
+        expect(dialog).to_contain_text('Crew segments are turned off'); expect(dialog.get_by_role('button', name='Add crew segment', exact=True)).to_have_count(0)
+        expect(dialog.get_by_role('region', name='Segment 1').get_by_label('Segment start', exact=True)).to_be_disabled(); expect(dialog.get_by_label('Start time', exact=True)).to_be_hidden()
+        dialog.get_by_label('Scope of work', exact=True).fill('Synthetic updated scope'); self.submit('Save changes'); self.closed()
+        changes = self.calls[-1]['changes']
+        for name in ['assignmentSegments', 'date', 'time', 'assignedCrew', 'crewLead', 'vehicleId']: self.assertNotIn(name, changes)
+        self.card('Synthetic Split Garage').get_by_role('button', name='Edit / assign', exact=True).click(); dialog.get_by_role('button', name='Remove all segments', exact=True).click()
+        expect(dialog.get_by_label('Start time', exact=True)).to_be_visible(); expect(dialog.locator('.dp-segment-card')).to_have_count(0); self.submit('Save changes'); self.closed()
+        changes = self.calls[-1]['changes']; self.assertEqual(changes['assignmentSegments'], []); self.assertEqual((changes['date'], changes['endDate'], changes['time'], changes['endTime']), (DAY, '2026-09-24', '08:00', '12:00')); self.assertEqual(changes['assignedCrew'], ['crew.one', 'crew.two'])
+    def test_split_job_drag_is_refused_while_segments_are_off(self):
+        # The split job alone, so the drag starts on its card.
+        self.jobs = [self.split_job()]; self.page.goto(self.url); self.page.get_by_label('Schedule date', exact=True).fill(DAY); self.page.get_by_role('button', name='Week', exact=True).click(); days = self.page.locator('.dp-day')
+        split_on = lambda index: days.nth(index).locator('.dp-job').filter(has=self.page.get_by_role('heading', name='Synthetic Split Garage', exact=True))
+        expect(split_on(0)).to_have_count(1); split_on(0).drag_to(days.nth(3)); expect(self.page.get_by_role('dialog')).to_have_count(0)
+        expect(self.page.locator('.dp-notice')).to_contain_text('Remove all segments to move this job while segments are off.'); expect(split_on(0)).to_have_count(1); self.assertEqual(self.calls, [])
+        self.segments = {'enabled': True, 'max': 31}; self.page.get_by_role('button', name='Refresh', exact=True).click(); expect(self.page.get_by_role('button', name='Refresh', exact=True)).to_be_enabled()
+        split_on(0).drag_to(days.nth(3)); dialog = self.page.get_by_role('dialog'); expect(dialog).to_be_visible()
+        expect(dialog.get_by_role('region', name='Segment 1').get_by_label('Segment date', exact=True)).to_have_value('2026-09-25'); expect(dialog.get_by_role('region', name='Segment 3').get_by_label('Segment date', exact=True)).to_have_value('2026-09-27')
+        self.submit('Save changes'); self.closed(); self.assertEqual([row['date'] for row in self.calls[-1]['changes']['assignmentSegments']], ['2026-09-25', '2026-09-25', '2026-09-27'])
+    def test_unreadable_saved_segments_are_replaced_by_the_job_level_schedule(self):
+        self.jobs.append(job(id='job-broken', revision='broken-rev-1', customer='Synthetic Broken Split', assignedCrew=['crew.one', 'crew.two'], crewLead='crew.one', crewId=None, vehicleId=None, assignmentSegments=[], segmentsInvalid=True))
+        self.page.set_viewport_size({'width': 375, 'height': 812}); self.open(); self.card('Synthetic Broken Split').get_by_role('button', name='Edit / assign', exact=True).click(); dialog = self.page.get_by_role('dialog')
+        expect(dialog.get_by_role('alert')).to_contain_text('could not be read'); expect(dialog.get_by_label('Start time', exact=True)).to_be_visible(); expect(dialog.get_by_role('button', name='Add crew segment', exact=True)).to_have_count(0)
+        self.assertLessEqual(self.page.evaluate('document.documentElement.scrollWidth'), 376)
+        dialog.get_by_label('Start time', exact=True).fill('09:00'); dialog.get_by_label('End time', exact=True).fill('11:00'); self.submit('Save changes'); self.closed()
+        changes = self.calls[-1]['changes']; self.assertEqual(changes['assignmentSegments'], []); self.assertEqual((changes['date'], changes['time'], changes['endDate'], changes['endTime']), (DAY, '09:00', DAY, '11:00')); self.assertEqual(changes['assignedCrew'], ['crew.one', 'crew.two'])
+    def test_repeat_is_offered_only_for_jobs_without_segments(self):
+        self.page.add_init_script('window.EGCRecurring={open(){window.repeatOpened=true;}}')
+        self.jobs += [self.split_job(), job(id='job-broken', revision='broken-rev-1', customer='Synthetic Broken Split', assignmentSegments=[], segmentsInvalid=True)]; self.open()
+        expect(self.card().locator('.dp-repeat')).to_have_count(1)
+        for name in ['Synthetic Split Garage', 'Synthetic Broken Split']: expect(self.card(name).get_by_role('button', name='Edit / assign', exact=True)).to_be_visible(); expect(self.card(name).locator('.dp-repeat')).to_have_count(0)
 
 if __name__ == '__main__': unittest.main(verbosity=2)

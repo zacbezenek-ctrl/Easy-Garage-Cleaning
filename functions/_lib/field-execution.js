@@ -1,5 +1,7 @@
-import { jobCrewNames } from './job-assignment.js';
+import { jobCrewNames, assignmentKey } from './job-assignment.js';
 import { advanceFieldTime, fieldJobTime } from './field-execution-time.js';
+import { segmented, jobSegments } from './dispatch-segments.js';
+import { occupiedDays } from './dispatch-time.js';
 
 export const fieldFailure = (message, status = 400, code = 'FIELD_REQUEST_INVALID', details = {}) => Object.assign(new Error(message), { status, code, ...details });
 export const fieldId = value => typeof value === 'string' && /^[A-Za-z0-9_-]{1,180}$/.test(value) && !/^(_egc_|secure_)/.test(value);
@@ -88,7 +90,32 @@ export function fieldAttention(job, manager = false) {
   return { id: issue.requestId || `${issue.at || ''}:${issue.actorId || ''}`, status: issue.status === 'resolved' ? 'resolved' : 'open', reason: fieldText(issue.reason), reportedAt: issue.at || null, reportedBy: fieldText(issue.actorName || issue.actorId, 200), visibility: issue.visibility === 'crew' ? 'crew' : 'management', resolvedAt: issue.resolvedAt || null, resolvedBy: fieldText(issue.resolvedByName || issue.resolvedBy, 200), resolution: fieldText(issue.resolution), canResolve: manager && issue.status !== 'resolved' };
 }
 
+const ownsSegment = (row, viewer) => Boolean(viewer) && row.assignedCrew.some(id => assignmentKey(id) === viewer);
+/** A split job shows a crew viewer only their own assignment segments: their
+ * windows, co-workers, lead and vehicle. Managers (manager:true) see every
+ * segment and the job-level hull. Anyone else needs options.viewer: without
+ * one, or without a readable segment of their own, the view fails closed with
+ * no crew, lead, vehicle or times. Legacy jobs return the job unchanged with
+ * segments null. */
+export function fieldSegmentView(job, options = {}) {
+  if (!segmented(job)) return { view: job, segments: null };
+  const rows = jobSegments(job).filter(row => row.segmentId);
+  if (options.manager === true) return { view: job, segments: rows };
+  const viewer = assignmentKey(options.viewer), segments = viewer ? rows.filter(row => ownsSegment(row, viewer)) : [], timed = segments.filter(row => row.startAt && row.endAt);
+  const first = timed.length ? timed.reduce((a, b) => Date.parse(b.startAt) < Date.parse(a.startAt) ? b : a) : null, last = timed.length ? timed.reduce((a, b) => Date.parse(b.endAt) > Date.parse(a.endAt) ? b : a) : null;
+  const shared = key => segments.length && segments.every(row => row[key] && row[key] === segments[0][key]) ? segments[0][key] : '';
+  return { segments, view: { ...job, date: first?.date || '', time: first?.time || '', endDate: last?.endDate || '', endTime: last?.endTime || '', startAt: first?.startAt || '', endAt: last?.endAt || '',
+    assignedCrew: [...new Set(segments.flatMap(row => row.assignedCrew))], assignedTo: '', crewLead: segments.find(row => row.crewLead)?.crewLead || '', crewId: shared('crewId'), vehicleId: shared('vehicleId') } };
+}
+/** Field day listings: a split job appears only on days the viewer works. */
+export function fieldViewerWorksOn(job, viewer, start, end) {
+  if (!segmented(job)) return true;
+  const key = assignmentKey(viewer);
+  return jobSegments(job).some(row => (!row.segmentId || ownsSegment(row, key)) && occupiedDays(row).some(day => day >= start && day <= end));
+}
+
 export function fieldJobProjection(job, events = [], options = {}) {
+  const { view, segments } = fieldSegmentView(job, options), names = options.resourceNames || {};
   const instructions = job.jobInstructions && typeof job.jobInstructions === 'object' ? job.jobInstructions : job.instructions && typeof job.instructions === 'object' ? job.instructions : {}, scope = job.scope || {}, logistics = job.logistics || {};
   const instructionText = typeof job.jobInstructions === 'string' ? job.jobInstructions : typeof job.instructions === 'string' ? job.instructions : '';
   const state = job.fieldExecution || {}, stage = fieldStage(job), frozen = closed(job);
@@ -96,12 +123,15 @@ export function fieldJobProjection(job, events = [], options = {}) {
   return {
     id: job.id, expectedRevision: job.__updateTime || job.revision || '', type: 'job',
     customer: fieldText(job.customer, 200), phone: fieldText(job.phone, 100), address: fieldText(job.address, 1000),
-    date: fieldText(job.date, 10), time: fieldText(job.time, 8), endDate: fieldText(job.endDate || job.date, 10), endTime: fieldText(job.endTime, 8),
-    startAt: fieldText(job.startAt, 40), endAt: fieldText(job.endAt, 40), arrivalWindow: fieldText(job.arrivalWindow || instructions.arrivalWindow, 200),
+    date: fieldText(view.date, 10), time: fieldText(view.time, 8), endDate: fieldText(view.endDate || view.date, 10), endTime: fieldText(view.endTime, 8),
+    startAt: fieldText(view.startAt, 40), endAt: fieldText(view.endAt, 40), arrivalWindow: fieldText(job.arrivalWindow || instructions.arrivalWindow, 200),
     status: stage, fieldStatus: fieldActivity(job), statusReason: fieldActivity(job) !== stage ? fieldText(state.activityReason, 1000) : '', serviceType: fieldText(job.serviceType, 300),
-    assignedCrew: jobCrewNames(job), crewMembers: jobCrewNames(job).map(id => ({ id, name: crewNames[id.toLowerCase()] || id })),
-    crewLead: fieldText(job.crewLead, 120), crewId: fieldText(job.crewId, 180), crewName: fieldText(options.crewName || job.crewName, 150),
-    vehicleId: fieldText(job.vehicleId, 180), vehicleName: fieldText(options.vehicleName || job.vehicleName, 150),
+    assignedCrew: jobCrewNames(view), crewMembers: jobCrewNames(view).map(id => ({ id, name: crewNames[id.toLowerCase()] || id })),
+    crewLead: fieldText(view.crewLead, 120), crewId: fieldText(view.crewId, 180), crewName: fieldText(view === job ? options.crewName || job.crewName : names[view.crewId], 150),
+    vehicleId: fieldText(view.vehicleId, 180), vehicleName: fieldText(view === job ? options.vehicleName || job.vehicleName : names[view.vehicleId], 150),
+    ...(segments ? { assignmentSegments: segments.map(row => ({ id: row.segmentId, date: fieldText(row.date, 10), time: fieldText(row.time, 8), endDate: fieldText(row.endDate, 10), endTime: fieldText(row.endTime, 8),
+      startAt: fieldText(row.startAt, 40), endAt: fieldText(row.endAt, 40), crewMembers: row.assignedCrew.map(id => ({ id, name: crewNames[id.toLowerCase()] || id })), crewLead: fieldText(row.crewLead, 120),
+      vehicleId: fieldText(row.vehicleId, 180), vehicleName: fieldText(names[row.vehicleId], 150), notes: fieldText(row.segmentNotes, 2000) })) } : {}),
     crewNeeded: Number(job.crewNeeded || job.requiredCrewSize || job.crewSize || 1),
     scope: fieldText(typeof job.operationalScope?.text === 'string' ? job.operationalScope.text : instructionText || instructions.operationalScope || (typeof job.scope === 'string' ? job.scope : '') || job.scopeOfWork, 20000),
     customerGoal: fieldText(instructions.customerGoal || job.discovery?.success, 4000),

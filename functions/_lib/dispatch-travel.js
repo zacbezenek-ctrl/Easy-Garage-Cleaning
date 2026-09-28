@@ -31,6 +31,7 @@ import { sameOperationalProperty } from './dispatch-lineage.js';
 import { scheduleCrewIds } from './dispatch-conflicts.js';
 import { DISPATCH_TIME_ZONE } from './dispatch-contract.js';
 import { validDate, denverToday, scheduleInterval, occupiedDays } from './dispatch-time.js';
+import { jobSegments } from './dispatch-segments.js';
 
 export const TRAVEL_ROAD_FACTOR = 1.35, TRAVEL_AVERAGE_MPH = 35, TRAVEL_OVERHEAD_MINUTES = 5, TRAVEL_WINDOW_MINUTES = 240;
 const CACHE_TTL_MS = 30 * 86400000, GOOGLE_PAIR_LIMIT = 25, GOOGLE_CONCURRENCY = 5, CACHE_READ_LIMIT = 200, GOOGLE_TIMEOUT_MS = 5000, MODES = new Set(['off','offline','google']);
@@ -206,7 +207,8 @@ export async function dispatchTravelRoutes(store, session, query = {}, now = new
     if (!routes.has(id)) { const person = roster.find(row => row.id === id); routes.set(id, { employeeId: id, name: person?.name || id, active: Boolean(person), complete: true, stops: [] }); }
     return routes.get(id);
   };
-  for (const job of jobs.filter(stop)) {
+  // A split job is one stop per segment, on that segment's crew routes only.
+  for (const job of jobs.filter(stop).flatMap(jobSegments)) {
     const crew = scheduleCrewIds(job, roster).filter(id => !input.employeeId || id === input.employeeId), interval = scheduleInterval(job);
     if (!crew.length) continue;
     if (!interval) {
