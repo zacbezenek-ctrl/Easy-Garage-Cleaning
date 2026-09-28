@@ -5,9 +5,10 @@ import {getDb,schema} from "@egc/database";
 import {InboundActionReconciler,type InboundPolicy} from "./inbound-actions.js";
 import {syncPortalSchedule} from "./scheduling.js";
 import {ensureProviderNote} from "./provider-notes.js";
+import {actionSendEnabled,actionSendHook} from "./action-send.js";
 import {getCanonicalReport,getCustomerTimeline,getCustomerStateDiagnostics} from '@egc/customer-state';
 import {reconcileHubBookings} from './booking-worker.js';
-import {serviceAuthEnabled,signApiServiceRequest,verifyOperationsClaims} from './service-bridge.js';
+import {serviceAuthEnabled,signApiServiceRequest,verifyDelegatedClaims,verifyOperationsClaims} from './service-bridge.js';
 import {reconciliationDiagnostic,safeReconciliationCode} from './reconciliation-diagnostics.js';
 
 export function portalAdapter(origin:string,key:string,workspace:string,fetcher:typeof fetch=fetch,env:NodeJS.ProcessEnv=process.env) {
@@ -22,7 +23,7 @@ export function portalAdapter(origin:string,key:string,workspace:string,fetcher:
     let result:Record<string,unknown>;
     try{result=await response.json() as Record<string,unknown>;}catch{throw new OperationsError('invalid_json_response',503,{upstreamStatus:response.status});}
     if(!response.ok){
-      const code=safeReconciliationCode(result.error)??(typeof result.error==="string"&&/^(?:schedule|record|project|note|job|completion|operational_scope)_[a-z_]+$/.test(result.error)?result.error:"portal_authority_unavailable");
+      const code=safeReconciliationCode(result.error)??(typeof result.error==="string"&&/^(?:schedule|record|project|note|job|completion|operational_scope|hub|dispatch|bridge|confirm_token)_[a-z_]+$/.test(result.error)?result.error:"portal_authority_unavailable");
       throw new OperationsError(code,response.status>=500?503:response.status,{upstreamStatus:response.status});
     }
     return result;
@@ -43,7 +44,10 @@ export async function registerOperationsRoutes(app:FastifyInstance,options:{serv
   if(!service && env.EGC_OPERATIONS_ENABLED==="true") {
     const workspace=env.EGC_OPERATIONS_WORKSPACE??"egc";
     const bridge=env.EGC_PORTAL_ORIGIN&&(env.EGC_OPERATIONS_PORTAL_SIGNING_SECRET||serviceAuthEnabled(env))?portalAdapter(env.EGC_PORTAL_ORIGIN,env.EGC_OPERATIONS_PORTAL_SIGNING_SECRET??'',workspace,fetch,env):null;
-    service=operationsService({workspace,canonicalRead:async(_actor,command)=>{
+    // One-tap Action Center send stays off unless EGC_OPERATIONS_ACTION_SEND_ENABLED is exactly "true".
+    const sendTaskMessage=actionSendHook(env,()=>service!,{log:event=>app.log.warn(event,"Action Center send needs attention")});
+    if(actionSendEnabled(env)&&!sendTaskMessage)app.log.warn({code:"action_send_not_configured"},"One-tap send needs GHL_PRIVATE_INTEGRATION_TOKEN and GHL_LOCATION_ID; task.send stays disabled");
+    service=operationsService({workspace,...(sendTaskMessage?{sendTaskMessage}:{}),canonicalRead:async(_actor,command)=>{
       if(command.command==='intelligence.report')return getCanonicalReport({since:command.since,until:command.until,...(command.cohortSince?{cohortSince:command.cohortSince}:{}),...(command.cohortUntil?{cohortUntil:command.cohortUntil}:{}),refresh:true});
       if(command.command==='intelligence.customer')return getCustomerTimeline({contactId:command.contactId});
       return getCustomerStateDiagnostics();
@@ -58,6 +62,12 @@ export async function registerOperationsRoutes(app:FastifyInstance,options:{serv
     try {
       const body=request.body as {envelope?:unknown}|null;
       const claims=await verifyOperationsClaims(body?.envelope,env);
+      // A customer send is confirmed in the Hub only: whatever actor another issuer (the MCP)
+      // signs, it never reaches task.send.
+      if(claims.request.body.command==="task.send"&&claims.iss!=="portal"&&claims.iss!==SERVICE_ORIGINS.hub)throw new OperationsError("human_send_confirmation_required",403);
+      // MCP-OAUTH: a Hub-approved grant's delegate is re-verified here; service.execute then
+      // applies authorize() (the SEC-04 BRIDGE-AUTHZ table) to the same actor.
+      await verifyDelegatedClaims(claims);
       if(claims.request.body.command==="inbound.reconcile"){
         authorize(claims.actor,claims.request.body,env.EGC_OPERATIONS_WORKSPACE??"egc");if(!inbound)throw new OperationsError("inbound_reconciliation_not_configured",503);
         const command=claims.request.body;return reply.send(await inbound.run({limit:command.limit,...(command.lookbackDays?{lookbackDays:command.lookbackDays}:{})}));

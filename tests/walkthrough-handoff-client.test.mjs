@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import vm from 'node:vm';
+import vm from './helpers/vm-realm.mjs';
 import { readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 const source=readFileSync(new URL('../crew/gameplan-handoff.js',import.meta.url),'utf8');

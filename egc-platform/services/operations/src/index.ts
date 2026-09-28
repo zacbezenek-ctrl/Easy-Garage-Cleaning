@@ -1,4 +1,5 @@
 export * from "./contracts.js";
+export * from "./action-kinds.js";
 export * from "./auth.js";
 export * from "./service.js";
 export * from "./appointment-reliability.js";
@@ -7,3 +8,4 @@ export * from "./note-outbox.js";
 export * from "./legacy-walkthrough.js";
 export * from "./booking-reconciliation.js";
 export * from "./service-auth.js";
+export * from "./communication-execution.js";

@@ -37,17 +37,15 @@ a { color: inherit; text-decoration: none; }
   cursor: pointer;
 }
 .button.secondary { background: #e9e9e4; color: #111; }
-.button.danger { background: #b42318; }
 .button:disabled { opacity: .5; cursor: not-allowed; }
-.recorder {
+.handoff {
   display: grid;
   gap: 18px;
   max-width: 720px;
   margin: 0 auto;
 }
-.timer { font-size: clamp(40px, 10vw, 72px); font-variant-numeric: tabular-nums; font-weight: 800; letter-spacing: -.05em; }
+.handoff .tablelink { display: flex; align-items: center; min-height: 44px; }
 .muted { color: #686868; }
-.review { display: grid; gap: 12px; }
 pre {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -60,20 +58,6 @@ pre {
   .shell { padding: 18px 14px 40px; }
   .topbar { padding: 0 16px; }
   .button { width: 100%; min-height: 54px; }
-}
-
-
-.review textarea {
-  width: 100%;
-  min-height: 28rem;
-  resize: vertical;
-  border: 1px solid #d0d5dd;
-  border-radius: 12px;
-  padding: 14px;
-  margin: 0 0 16px;
-  font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  background: #fff;
-  color: #111827;
 }
 
 
@@ -180,6 +164,7 @@ tbody tr:last-child td { border-bottom: 0; }
   .pagehead { flex-direction: column; }
   .actions { width: 100%; }
   .actions .button, .pagehead > .button { width: 100%; }
+  .actions .button.compact, .pagehead > .button.compact { display: flex; align-items: center; min-height: 44px; }
   .detailgrid { grid-template-columns: 1fr; }
 }
 .coverage-warning{padding:16px 18px;border:1px solid #e8c37a;background:#fff8e7;border-radius:12px;color:#704d08;line-height:1.5}.source-evidence{border-left:3px solid #3375bb;margin:14px 0;padding:8px 14px;background:#f5f8fb;overflow-wrap:anywhere}.source-evidence p{white-space:pre-wrap;margin:0 0 8px}.source-evidence cite{font-size:12px;color:#52627a;font-style:normal}summary{cursor:pointer;line-height:1.5}td,.card p,.card small{overflow-wrap:anywhere}

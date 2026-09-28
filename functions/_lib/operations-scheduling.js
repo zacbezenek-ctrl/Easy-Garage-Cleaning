@@ -3,6 +3,14 @@ import {encodeFirestoreFields,decodeFirestoreFields} from './firestore-job.js';
 import {localInstant} from './operations-portal-records.js';
 import {dispatchStorage} from './dispatch-storage.js';
 import {scheduleRowsConflict,scheduleLockConflict,scheduleDayEntry} from './dispatch-conflicts.js';
+import {arrivalWindowProblem,arrivalWindowFields} from './dispatch-arrival.js';
+import {DISPATCH_TIME_ZONE} from './dispatch-contract.js';
+import {legacyBlockMode,legacyBlockedDays} from './dispatch-legacy-blocks.js';
+import {customerIdentityFields} from './customer-identity.js';
+import {segmented} from './dispatch-segments.js';
+import {reasonInput,cancelPatch,visitFunnelWrites,requestKey,eventActor,eventVia,defaultVisitPurpose} from './dispatch-funnel.js';
+import {commitConflict,commitFailure} from './firestore-errors.js';
+import {bridgeCommandDenial,bridgeCommandPolicy} from '../../egc-platform/services/operations/src/bridge-command-policy.ts';
 const ROOT='projects/egcw-1ec83/databases/(default)/documents';
 const URL=`https://firestore.googleapis.com/v1/${ROOT}`;
 const safeId=id=>typeof id==='string'&&/^[A-Za-z0-9_-]{1,180}$/.test(id)&&!/^(_egc_|secure_)/.test(id);
@@ -17,10 +25,13 @@ function fromDoc(doc){return{...decodeFirestoreFields(doc.fields||{}),id:String(
 export function schedulingStorage(env,fetcher=firestoreFetch){return{
   resources:()=>dispatchStorage(env,fetcher).resources(),
   roster:()=>dispatchStorage(env,fetcher).roster(),
+  settings:()=>dispatchStorage(env,fetcher).settings(),
+  legacyBlockMode:legacyBlockMode(env),
+  legacyBlockedDays:dates=>dispatchStorage(env,fetcher).legacyBlockedDays(dates),
   async customers(providerId){const r=await fetcher(env,`${URL}:runQuery`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({structuredQuery:{from:[{collectionId:'customers'}],where:{fieldFilter:{field:{fieldPath:'highlevelContactId'},op:'EQUAL',value:{stringValue:providerId}}},limit:3}}),signal:AbortSignal.timeout(15000)});if(!r.ok)throw failure('schedule_source_unavailable',503);const rows=await r.json();if(!Array.isArray(rows))throw failure('schedule_source_incomplete',503);return rows.filter(x=>x.document).map(x=>fromDoc(x.document));},
   async read(collection,id){const r=await fetcher(env,`${URL}/${collection}/${encodeURIComponent(id)}`,{signal:AbortSignal.timeout(15000)});if(r.status===404)return null;if(!r.ok)throw failure('schedule_source_unavailable',503);return fromDoc(await r.json());},
   async day(date){const r=await fetcher(env,`${URL}:runQuery`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({structuredQuery:{from:[{collectionId:'jobs'}],where:{fieldFilter:{field:{fieldPath:'date'},op:'EQUAL',value:{stringValue:date}}},limit:501}}),signal:AbortSignal.timeout(15000)});if(!r.ok)throw failure('schedule_source_unavailable',503);const rows=await r.json();if(!Array.isArray(rows)||rows.length>500)throw failure('schedule_source_incomplete',503);return rows.filter(x=>x.document).map(x=>fromDoc(x.document));},
-  async commit(writes){let r;try{r=await fetcher(env,`${URL}:commit`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({writes:writes.map(w=>({update:{name:`${ROOT}/${w.collection}/${w.id}`,fields:encodeFirestoreFields(w.patch)},updateMask:{fieldPaths:Object.keys(w.patch)},currentDocument:w.revision?{updateTime:w.revision}:{exists:false}}))}),signal:AbortSignal.timeout(15000)});}catch{throw failure('schedule_commit_outcome_unknown',503);}if(!r.ok)throw failure([409,412].includes(r.status)?'schedule_revision_conflict':'schedule_commit_outcome_unknown',r.status>=500?503:409);return r.json();}
+  async commit(writes){let r;try{r=await fetcher(env,`${URL}:commit`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({writes:writes.map(w=>({update:{name:`${ROOT}/${w.collection}/${w.id}`,fields:encodeFirestoreFields(w.patch)},updateMask:{fieldPaths:Object.keys(w.patch)},currentDocument:w.revision?{updateTime:w.revision}:{exists:false}}))}),signal:AbortSignal.timeout(15000)});}catch{throw failure('schedule_commit_outcome_unknown',503);}if(!r.ok){if(commitConflict(await commitFailure(r)))throw failure('schedule_revision_conflict',409);throw failure('schedule_commit_outcome_unknown',r.status>=500?503:409);}return r.json();}
 };}
 function visitIdentity(visit,customer){
   if(!visit||!safeId(visit.id)||!visitKind(visit.type)||visit.recordType)throw failure('schedule_visit_not_found',404);
@@ -60,16 +71,23 @@ export async function linkScheduledCustomer(store,actor,input,now=new Date().toI
   const writes=[{collection:'jobs',id:visit.id,revision:visit.revision,patch:{customerId:id,projectId,highlevelContactId:contact.id,providerSyncOwner:'operations',updatedAt:now}}];
   if(root.id!==visit.id&&!root.projectId)writes.push({collection:'jobs',id:root.id,revision:root.revision,patch:{projectId,updatedAt:now}});
   if(!project)writes.push({collection:'projects',id:projectId,patch:{id:projectId,customerId:id,sourceRecordId:root.id,sourceWalkthroughId:root.type==='walkthrough'?root.id:null,createdAt:now,updatedAt:now,authority:'employee_hub'}});
-  if(!customer)writes.push({collection:'customers',id,patch:{id,name:contact.name||[contact.firstName,contact.lastName].filter(Boolean).join(' ')||visit.customer||'',phone:contact.phone||'',email:contact.email||'',address:visit.address||contact.address1||'',highlevelContactId:contact.id,createdAt:now,updatedAt:now,source:'verified_provider_contact'}});
-  else if(!customer.highlevelContactId)writes.push({collection:'customers',id,revision:customer.revision,patch:{highlevelContactId:contact.id,updatedAt:now}});
+  if(!customer)writes.push({collection:'customers',id,patch:{id,name:contact.name||[contact.firstName,contact.lastName].filter(Boolean).join(' ')||visit.customer||'',phone:contact.phone||'',email:contact.email||'',...customerIdentityFields(contact),address:visit.address||contact.address1||'',highlevelContactId:contact.id,createdAt:now,updatedAt:now,source:'verified_provider_contact'}});
+  else if(!customer.highlevelContactId)writes.push({collection:'customers',id,revision:customer.revision,patch:{highlevelContactId:contact.id,...customerIdentityFields(customer),updatedAt:now}});
   try{await store.commit(writes);}catch(error){const latest=await store.read('jobs',visit.id).catch(()=>null);if(!latest||latest.customerId!==id||latest.highlevelContactId!==contact.id)throw error;}
   return resolveScheduledVisit(store,visit.id);
 }
 
 /** Uses the Hub's existing jobs and per-day schedule-lock documents. The receipt,
  * visit and both affected day locks commit atomically with revision preconditions. */
-export async function mutateScheduledVisit(store,actor,input,now=new Date().toISOString()){
+export async function mutateScheduledVisit(store,actor,input,now=new Date().toISOString(),{via='bridge'}={}){
+  // SEC-04: the shared bridge policy's roles (owner/manager or integration) hold for every
+  // caller; the signed bridge matched the exact integration principal before this runs.
+  if(bridgeCommandDenial(actor,bridgeCommandPolicy({command:'schedule.mutate',mode:input?.mode}),{principals:false}))throw failure('schedule_actor_forbidden',403);
   if(!uuid(input.requestId)||!safeId(input.portalCustomerId)||!['create','update','cancel'].includes(input.mode))throw failure('schedule_request_invalid',400);
+  // FUN-02: an optional reason on a move or cancel (codes from the shared funnel definitions).
+  const reasonList=input.mode==='update'?'reschedule':input.mode==='cancel'?'cancel':null;
+  if(!reasonList&&(input.reasonCode!==undefined||input.initiatedBy!==undefined))throw failure('schedule_reason_code_invalid',400);
+  const reason=reasonList?reasonInput(input,reasonList,code=>failure(`schedule_${code}`,400)):{reasonCode:null,initiatedBy:null};
   // The business identity survives fresh request IDs and different entry points.
   // Cancelled visits retain this identity and cannot be accidentally resurrected.
   const bookingKey=input.mode==='create'?await digest({customerId:input.portalCustomerId,kind:input.kind,date:input.changes?.date,time:input.changes?.time,timeZone:'America/Denver'}):null;
@@ -90,11 +108,15 @@ export async function mutateScheduledVisit(store,actor,input,now=new Date().toIS
     visitIdentity(current,customer);
     // Dispatch owns multi-day lock updates. The original single-day mutation
     // path must never truncate an interval or leave intermediate locks behind.
+    // Split crews and per-day windows have per-segment locks only dispatch maintains.
+    if(segmented(current))throw failure('schedule_segments_require_dispatch');
     if(current.endDate&&current.endDate!==current.date)throw failure('schedule_multiday_requires_dispatch');
     if(current.customerId!==input.portalCustomerId)throw failure('schedule_customer_link_conflict');
     if(!input.expectedRevision||current.revision!==input.expectedRevision)throw failure('schedule_revision_conflict');
     if(input.kind&&input.kind!==visitKind(current.type))throw failure('schedule_visit_kind_immutable');
     if(terminal.has(current.pipelineStatus||current.status)&&input.mode!=='cancel')throw failure('schedule_terminal_visit_requires_review');
+    // A dispatch no-show (FUN-02) is a final fact: the bridge cannot relabel it a cancellation.
+    if(input.mode==='cancel'&&['noshow','no_show','no-show'].includes(current.pipelineStatus||current.status))throw failure('schedule_terminal_visit_requires_review');
   }
   const changes=input.changes||{},allowed=new Set(['date','time','endTime','title','assignedTo','address']);
   if(Object.keys(changes).some(k=>!allowed.has(k)))throw failure('schedule_patch_not_allowed',400);
@@ -103,8 +125,10 @@ export async function mutateScheduledVisit(store,actor,input,now=new Date().toIS
   const kind=visitKind(current?.type)||input.kind;if(!['walkthrough','job'].includes(kind))throw failure('schedule_visit_kind_required',400);
   const patch={...changes,id,type:current?.type||kind,customerId:customer.id,customer:current?.customer||customer.name||'',
     highlevelContactId:current?.highlevelContactId||customer.highlevelContactId||'',scheduleSource:'egc_hub',providerSyncOwner:'operations',syncStatus:'pending',updatedAt:now};
-  if(input.mode==='create')Object.assign(patch,{bookingKey,status:'scheduled',pipelineStatus:'scheduled',createdAt:now,createdBy:actor.id,phone:customer.phone||'',email:customer.email||'',address:changes.address||customer.address||'',serviceType:kind==='walkthrough'?'Free garage walkthrough':'Customer job'});
-  if(input.mode==='cancel')Object.assign(patch,{status:'cancelled',pipelineStatus:'cancelled',cancelledAt:now,cancelledBy:actor.id});
+  if(input.mode==='create')Object.assign(patch,{bookingKey,status:'scheduled',pipelineStatus:'scheduled',createdAt:now,createdBy:actor.id,phone:customer.phone||'',email:customer.email||'',address:changes.address||customer.address||'',serviceType:kind==='walkthrough'?'Free garage walkthrough':'Customer job',
+    bookingChannel:actor.kind==='integration'?'mcp':null,channelSelfReported:null,bookedBy:actor.id,visitPurpose:defaultVisitPurpose(kind),crmLinkReason:null});
+  // Cancelling an already cancelled visit keeps the original cancellation's time, actor and reason facts.
+  if(input.mode==='cancel'&&!['cancelled','canceled'].includes(current.pipelineStatus||current.status))Object.assign(patch,{status:'cancelled',pipelineStatus:'cancelled',cancelledAt:now,cancelledBy:actor.id,...cancelPatch(reason,current,now)});
   const projectWrites=[];
   // Firestore cannot put read preconditions on a commit. Identity-field no-ops
   // fence the exact customer/source/project revisions together with the visit,
@@ -124,15 +148,29 @@ export async function mutateScheduledVisit(store,actor,input,now=new Date().toIS
       if(!project||project.customerId!==customer.id)throw failure('schedule_project_link_conflict');
       guardIdentity('jobs',source);guardIdentity('projects',project);
       projectId=source.projectId;patch.sourceWalkthroughId=source.id;
-    }else projectWrites.push({collection:'projects',id:projectId,patch:{id:projectId,customerId:customer.id,sourceRecordId:id,sourceWalkthroughId:kind==='walkthrough'?id:null,createdBy:actor.id,createdAt:now,updatedAt:now,authority:'employee_hub'}});
+    }else projectWrites.push({collection:'projects',id:projectId,patch:{id:projectId,customerId:customer.id,sourceRecordId:id,sourceWalkthroughId:kind==='walkthrough'?id:null,createdBy:actor.id,createdAt:now,updatedAt:now,authority:'employee_hub',highlevelContactId:patch.highlevelContactId,crmLinkReason:null}});
     patch.projectId=projectId;
   }
   const next={...current,...patch},start=localInstant(next.date,next.time),end=localInstant(next.date,next.endTime);
   if(!start||!end||end<=start)throw failure('schedule_time_invalid_or_ambiguous',400);
+  // Single-day visits keep the dispatch-derived instants in step with the wall time.
+  Object.assign(patch,{endDate:next.date,startAt:start,endAt:end,timeZone:DISPATCH_TIME_ZONE});Object.assign(next,patch);
+  // This path returns no warnings, so legacy calendar day blocks matter only when enforced.
+  if(store.legacyBlockMode==='enforce'&&input.mode!=='cancel'&&(input.mode==='create'||['date','time','endTime'].some(key=>next[key]!==current?.[key]))){
+    const legacy=await legacyBlockedDays(store,[next.date]).catch(()=>{throw failure('schedule_source_unavailable',503);});
+    if(legacy.mode==='enforce'&&legacy.rows.length)throw failure('schedule_slot_conflict');
+  }
   const dispatchGuard=await store.read('dispatchState','revision');
   const [resources,roster]=await Promise.all([store.resources?store.resources():[],store.roster?store.roster():[]]);
   if(input.mode!=='cancel'&&next.vehicleId&&!resources.some(row=>row.id===next.vehicleId&&row.recordType==='vehicle'&&row.status==='available'))throw failure('schedule_vehicle_unavailable');
   if(input.mode!=='cancel'&&resources.some(row=>row.recordType==='availability'&&scheduleRowsConflict(next,row,roster)))throw failure('schedule_slot_conflict');
+  // Arrival windows are chosen in dispatch. This writer keeps a saved window that
+  // still contains the start time, re-derives the default label, or rejects.
+  if(input.mode!=='cancel'){
+    if(arrivalWindowProblem(next))throw failure('schedule_arrival_window_requires_dispatch');
+    const arrival=arrivalWindowFields(next,store.settings?await store.settings():{});
+    for(const [key,value] of Object.entries(arrival))if((current?.[key]??null)!==value)patch[key]=value;
+  }
   const days=[...new Set([next.date,current?.date].filter(Boolean))],locks=[];
   for(const date of days){
     const lockId=`_egc_schedule_lock_${date}`,lock=await store.read('jobs',lockId);
@@ -146,7 +184,10 @@ export async function mutateScheduledVisit(store,actor,input,now=new Date().toIS
     }
     locks.push({collection:'jobs',id:lockId,revision:lock?.revision,patch:{recordType:'schedule_lock',date,entries,updatedAt:now}});
   }
-  const writes=[{collection:'jobs',id,revision:current?.revision,patch},...projectWrites,...identityWrites,...locks,{collection:'dispatchState',id:'revision',revision:dispatchGuard?.revision,patch:{updatedAt:now,lastRequestId:input.requestId}},{collection:'jobs',id:receiptId,patch:{recordType:'schedule_operation',fingerprint:hash,scheduleHash:await digest(scheduleState(next)),portalVisitId:id,actorId:actor.id,actorKind:actor.kind,requestId:input.requestId,mode:input.mode,before:current?{date:current.date,time:current.time,endTime:current.endTime,status:current.status,revision:current.revision}:null,after:{date:next.date,time:next.time,endTime:next.endTime,status:next.status},createdAt:now}}];
+  const assigned=input.mode!=='cancel'&&typeof changes.assignedTo==='string'&&Boolean(changes.assignedTo.trim())&&changes.assignedTo!==(current?.assignedTo||'');
+  const funnel=await visitFunnelWrites({action:input.mode,before:current,after:{...current,...patch},actor:eventActor(actor),via:eventVia(via),key:requestKey(input.requestId),source:{collection:'jobs',id:receiptId},reason:{...reason,lateCancel:patch.lateCancel},crewChanged:assigned,now});
+  Object.assign(patch,funnel.patch);
+  const writes=[{collection:'jobs',id,revision:current?.revision,patch},...projectWrites,...identityWrites,...locks,...funnel.writes,{collection:'dispatchState',id:'revision',revision:dispatchGuard?.revision,patch:{updatedAt:now,lastRequestId:input.requestId}},{collection:'jobs',id:receiptId,patch:{recordType:'schedule_operation',fingerprint:hash,scheduleHash:await digest(scheduleState(next)),portalVisitId:id,actorId:actor.id,actorKind:actor.kind,requestId:input.requestId,mode:input.mode,before:current?{date:current.date,time:current.time,endTime:current.endTime,status:current.status,revision:current.revision}:null,after:{date:next.date,time:next.time,endTime:next.endTime,status:next.status},createdAt:now}}];
   try{await store.commit(writes);}catch(error){const receipt=await store.read('jobs',receiptId).catch(()=>null);if(!receipt||receipt.fingerprint!==hash)throw error;}
   const saved=await store.read('jobs',id);
   if(!saved||await digest(scheduleState(saved))!==await digest(scheduleState(next)))throw failure('schedule_changed_since_operation');

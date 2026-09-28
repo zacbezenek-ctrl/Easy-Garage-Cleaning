@@ -12,10 +12,10 @@ function sameOrigin(request) {
   const source = request.headers.get('Origin') || request.headers.get('Referer');
   try { return !source || new URL(source).origin === new URL(request.url).origin; } catch { return false; }
 }
-export function crewAvailabilityHandlers({session=getHubSession,storage=dispatchStorage}={}) {
+export function crewAvailabilityHandlers({session=getHubSession,storage=dispatchStorage,now=()=>new Date()}={}) {
   return {
     async get({request,env}) {
-      try { return reply(200,await crewAvailabilityOverview(storage(env),await session(request,env),Object.fromEntries(new URL(request.url).searchParams))); }
+      try { return reply(200,await crewAvailabilityOverview(storage(env),await session(request,env),Object.fromEntries(new URL(request.url).searchParams),now())); }
       catch(error) { return errorResponse(error); }
     },
     async post({request,env}) {
@@ -28,7 +28,7 @@ export function crewAvailabilityHandlers({session=getHubSession,storage=dispatch
         const raw = await request.text();
         if (new TextEncoder().encode(raw).byteLength > 8192) return reply(413,{ok:false,code:'crew_availability_request_too_large',error:'The availability request is too large.'});
         let body; try { body=JSON.parse(raw); } catch { return reply(400,{ok:false,code:'crew_availability_json_invalid',error:'The availability request was incomplete. Retry from the form.'}); }
-        return reply(200,await mutateCrewAvailability(storage(env),actor,body));
+        return reply(200,await mutateCrewAvailability(storage(env),actor,body,now().toISOString()));
       } catch(error) { return errorResponse(error); }
     },
   };

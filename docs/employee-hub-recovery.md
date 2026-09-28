@@ -21,6 +21,7 @@ Use the existing Cloudflare Pages project `easy-garage-cleaning`, Production env
 | `EMPLOYEE_HUB_DATA_SECRET` | Exact historical vault secret for the existing records; resolve this before the session secret changes. |
 | `EMPLOYEE_HUB_LEGACY_KEY_SOURCE` | Optional plaintext selector, exactly `HIGHLEVEL_API_KEY`, only when retaining that known historical key in place. Leave the dedicated secret unset when using this path. |
 | `EMPLOYEE_HUB_LEGACY_WRITES_VERIFIED` | Optional plaintext recovery gate. Leave unset or `false` until both record families are verified; set to exactly `true` afterward. |
+| `EGC_EMPLOYEE_VAULT_QUERY` | Optional plaintext setting. Leave unset. Timecard reads query only the timecard family and automatically fall back to the whole-vault read if Firestore reports a missing index. Set to exactly `legacy` and redeploy (no code change) only if clock-in, job time or the Gusto preview still fail with a storage query error; it does not change keys or stored records. |
 | `HUB_SESSION_SECRET` | Independent randomly generated session-signing secret, at least 32 random bytes. |
 | `HUB_AUTH_USERS_JSON` | Existing static users, including the `ZacB` owner, with securely generated password hashes. Preserve other existing entries. |
 | `FIREBASE_SERVICE_ACCOUNT_JSON` | A complete service-account JSON key for project `egcw-1ec83`, with the required Firestore data permissions. |

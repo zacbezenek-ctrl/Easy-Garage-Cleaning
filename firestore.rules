@@ -106,6 +106,11 @@ service cloud.firestore {
         data.employee is string && data.employee.trim().lower() in assignmentKeys();
     }
 
+    // assignedUpdateIsSafe, ownAvailabilityCreateIsSafe, ownAvailabilityUpdateIsSafe
+    // and assignedCustomerCloseoutIsSafe are intentionally bound to no match:
+    // every crew write goes through the session-authorized APIs (field-jobs,
+    // crew-jobs, crew-availability). They record the crew field allowlists those
+    // APIs mirror; binding one again needs new emulator tests first.
     function assignedUpdateIsSafe() {
       // Unchanged assignment fields make a second assignment evaluation redundant.
       let changed = request.resource.data.diff(resource.data).affectedKeys();
@@ -203,6 +208,21 @@ service cloud.firestore {
         ]);
     }
 
+    function auditEntryIsSafe() {
+      // serverAt must be FieldValue.serverTimestamp(), so it is the trusted
+      // ordering time. 'at' remains the ISO copy that older readers display.
+      // string.size() counts UTF-16 code units; the Hub clips to these bounds.
+      let entry = request.resource.data;
+      return entry.keys().hasOnly(['action', 'detail', 'by', 'at', 'serverAt']) &&
+        entry.keys().hasAll(['action', 'by', 'at', 'serverAt']) &&
+        entry.by == request.auth.token.username &&
+        entry.action is string && entry.action.size() > 0 && entry.action.size() <= 200 &&
+        entry.get('detail', '') is string && entry.get('detail', '').size() <= 2000 &&
+        entry.at is string &&
+        entry.at.matches('[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}([.][0-9]{1,9})?Z') &&
+        entry.serverAt == request.time;
+    }
+
     function assignedCustomerCloseoutIsSafe() {
       return signedIn() && resource.data.latestJobId is string &&
         request.resource.data.latestJobId == resource.data.latestJobId &&
@@ -229,6 +249,27 @@ service cloud.firestore {
         ));
     }
 
+    function serverOwnedJobRecord(documentId) {
+      // Operation receipts, provider/adoption proofs and encrypted employee
+      // records are written only by the service account. Manager schedule
+      // saves still maintain the shared _egc_schedule_lock_* capacity locks.
+      return documentId.matches('(secure_|_egc_).*') && !documentId.matches('_egc_schedule_lock_.*');
+    }
+
+    function serverOwnedJobData(data, documentId) {
+      // Server readers select vaults and receipts by recordType and fail closed
+      // on a row they cannot open, so one forged row under any id would block
+      // them. Browser SDK writers use only crew_availability (approved PTO) and
+      // schedule_lock, which is valid only under its _egc_schedule_lock_ id.
+      // Imported Jobber visit history (jobber_history) is read-only history.
+      let recordType = data.get('recordType', '');
+      return recordType in [
+          'employee_hub_v2', 'employee_account_v1', 'schedule_operation',
+          'schedule_provider_receipt', 'schedule_adoption', 'operational_record_receipt',
+          'recurring_plan', 'quo_message_receipt', 'jobber_history'
+        ] || (recordType == 'schedule_lock' && !documentId.matches('_egc_schedule_lock_.*'));
+    }
+
     // Canonical jobs include financial evidence, signatures and private notes.
     // Crew reads and execution writes go through assigned-only server DTOs;
     // otherwise direct SDK reads would bypass projection and completion gates.
@@ -236,7 +277,14 @@ service cloud.firestore {
     match /jobs/{documentId} {
       allow read: if businessUser() || ownAvailability(resource.data);
       // Crew mutations use the session-authorized APIs and shared capacity locks.
-      allow create, update, delete: if businessUser();
+      // Business SDK writes can neither touch nor produce a server-owned record.
+      allow create: if businessUser() && !serverOwnedJobRecord(documentId) &&
+        !serverOwnedJobData(request.resource.data, documentId);
+      allow update: if businessUser() && !serverOwnedJobRecord(documentId) &&
+        !serverOwnedJobData(resource.data, documentId) &&
+        !serverOwnedJobData(request.resource.data, documentId);
+      allow delete: if businessUser() && !serverOwnedJobRecord(documentId) &&
+        !serverOwnedJobData(resource.data, documentId);
     }
 
     match /customers/{documentId} {
@@ -246,8 +294,10 @@ service cloud.firestore {
     match /leads/{documentId} {
       allow read, write: if businessUser();
     }
+    // Retired /quote?id= contract links. Estimates now live on the canonical
+    // job; no browser reads or writes these records, so they are server-only.
     match /quotes/{documentId} {
-      allow read, write: if businessUser();
+      allow read, write: if false;
     }
     match /blocked_days/{documentId} {
       allow read, write: if businessUser();
@@ -255,9 +305,11 @@ service cloud.firestore {
     match /blocked_slots/{documentId} {
       allow read, write: if businessUser();
     }
+    // The Hub audit trail is append-only and attributed to the signed-in manager.
     match /audit_log/{documentId} {
-      allow create: if signedIn();
-      allow read, update, delete: if businessUser();
+      allow read: if businessUser();
+      allow create: if businessUser() && auditEntryIsSafe();
+      allow update, delete: if false;
     }
 
     // Authentication records and retired contract records are server-only.
@@ -274,6 +326,149 @@ service cloud.firestore {
     // Invitation claims and delivery status are authoritative server records.
     // The job holds only a display copy, so stale schedule saves cannot resend.
     match /portal_invitations/{documentId} {
+      allow read, write: if false;
+    }
+
+    // Customer portal link revocation receipts (idempotency, audit) are written
+    // only by the server with the service account.
+    match /customerPortalOperations/{documentId} {
+      allow read, write: if false;
+    }
+
+    // Jobber import run receipts (scripts/jobber-import.mjs, service account).
+    match /jobberImport/{documentId} {
+      allow read, write: if false;
+    }
+
+    // The Hub audit trail and single-use confirmation receipts are written
+    // only by server commits; owners read the audit through /api/hub-audit.
+    match /hub_audit/{documentId} {
+      allow read, write: if false;
+    }
+    match /confirm_tokens/{documentId} {
+      allow read, write: if false;
+    }
+
+    // Approved-send ledger, owner-approved message wording and request
+    // receipts are server-only. Browsers use /api/messages and templates APIs.
+    match /message_sends/{documentId} {
+      allow read, write: if false;
+    }
+    match /message_templates/{documentId} {
+      allow read, write: if false;
+    }
+    match /message_operations/{documentId} {
+      allow read, write: if false;
+    }
+    // Owner reminder cadence, the signed messaging cron's run summaries and
+    // its same-day holds are written only by the server; browsers never read
+    // or change them.
+    match /messaging_settings/{documentId} {
+      allow read, write: if false;
+    }
+    match /messaging_runs/{documentId} {
+      allow read, write: if false;
+    }
+    match /messaging_holds/{documentId} {
+      allow read, write: if false;
+    }
+
+    // Garage Guard memberships, their Stripe event receipts and identity reviews
+    // are written only by the signed Stripe webhook. Jobs carry a display copy.
+    match /memberships/{documentId} {
+      allow read, write: if false;
+    }
+    match /stripe_events/{documentId} {
+      allow read, write: if false;
+    }
+    match /membership_reviews/{documentId} {
+      allow read, write: if false;
+    }
+    // Confirmed crew card charges the webhook held off their job for a manager.
+    match /payment_reviews/{documentId} {
+      allow read, write: if false;
+    }
+    // Single-use receipts for Hub approvals of MCP OAuth grants (/api/mcp-grant).
+    match /mcp_grant_nonces/{documentId} {
+      allow read, write: if false;
+    }
+
+    // Owner-entered standard costs for stocked catalog items and their save
+    // receipts. Managers read and the owner writes them via /api/standard-costs.
+    match /catalogStandardCosts/{documentId} {
+      allow read, write: if false;
+    }
+    match /catalogStandardCostOperations/{documentId} {
+      allow read, write: if false;
+    }
+
+    // Hub bridge command receipts hold the audited before/after and the
+    // idempotency fingerprint for every registry write. Server-only.
+    match /hub_command_operations/{documentId} {
+      allow read, write: if false;
+    }
+
+    // Portal documents settings (certificate of insurance Drive pointer,
+    // upload claims and history) are server-only; customers get the file
+    // through the session-checked proxy and staff through the Hub API.
+    match /portal_settings/{documentId} {
+      allow read, write: if false;
+    }
+
+    // Money API request receipts and invoice-number reservations are written
+    // only in the same server commit as the job change (/api/money).
+    match /moneyOperations/{documentId} {
+      allow read, write: if false;
+    }
+    match /moneyInvoiceNumbers/{documentId} {
+      allow read, write: if false;
+    }
+
+    // Staff directory and employee vault migration receipts are written only by
+    // server commits with the sealed profiles; browsers use /api/staff-directory.
+    match /staffDirectoryOperations/{documentId} {
+      allow read, write: if false;
+    }
+    match /employeeVaultMigrations/{documentId} {
+      allow read, write: if false;
+    }
+
+    // Garage catalog versions (immutable snapshots and the published pointer),
+    // owner pricing settings, every saved settings version and their request
+    // receipts are server-only. Managers read and the owner writes them
+    // through /api/catalog.
+    match /catalogVersions/{documentId} {
+      allow read, write: if false;
+    }
+    match /pricingSettings/{documentId} {
+      allow read, write: if false;
+    }
+    match /pricingSettingsVersions/{documentId} {
+      allow read, write: if false;
+    }
+    match /catalogOperations/{documentId} {
+      allow read, write: if false;
+    }
+
+    // Funnel event ledger (FUN-01): append-only rows written only in the same
+    // server commit as their business change. Staff read through the API and
+    // the platform through the signed bridge; no SDK session reads or writes.
+    match /funnelEvents/{documentId} {
+      allow read, write: if false;
+    }
+
+    // Walkthrough visit request receipts and each rep's open-walkthrough lock
+    // (FUN-05) are written only in the server commit that records the visit.
+    match /walkthroughVisitOperations/{documentId} {
+      allow read, write: if false;
+    }
+    match /walkthroughVisitLocks/{documentId} {
+      allow read, write: if false;
+    }
+
+    // Operations settings (P3-04 follow-up owner and due-time policy) are written
+    // only by the owner through /api/operations-followup-settings with a hub_audit entry.
+    match /operations_settings/{documentId} {
       allow read, write: if false;
     }
 

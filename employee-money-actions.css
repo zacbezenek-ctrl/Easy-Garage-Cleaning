@@ -1,0 +1,69 @@
+.egc-money{--em-ink:#172033;--em-muted:#5f6b7c;--em-line:#d9d8d2;--em-paper:#fbfaf7;--em-green:#19734f;--em-red:#b83b44;--em-amber:#8a5a00;--em-orange:#ee5c2b;width:calc(100vw - 12px);max-width:640px;max-height:calc(100dvh - 12px);padding:0;border:0;border-radius:14px;background:var(--em-paper);color:var(--em-ink);font:16px/1.45 system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;box-shadow:0 18px 48px rgba(15,25,42,.28);overflow:hidden}
+.egc-money::backdrop{background:rgba(12,24,41,.55)}
+.egc-money *{box-sizing:border-box}
+.em-sheet{display:flex;flex-direction:column;max-height:calc(100dvh - 12px);min-width:0}
+.em-head{position:sticky;top:0;z-index:1;display:flex;gap:12px;align-items:flex-start;justify-content:space-between;padding:14px 16px 12px;border-bottom:1px solid var(--em-line);background:#fff}
+.em-head>div{min-width:0}
+.em-kicker{margin:0;font-size:.72rem;font-weight:750;letter-spacing:.12em;color:var(--em-orange)}
+.em-head h2{margin:2px 0 0;font-size:1.12rem;line-height:1.3;overflow-wrap:anywhere}
+.em-close{flex:0 0 44px;width:44px;height:44px;border:1px solid var(--em-line);border-radius:10px;background:#fff;color:var(--em-ink);font-size:1.5rem;line-height:1;cursor:pointer}
+.em-body{flex:1 1 auto;overflow:auto;overscroll-behavior:contain;padding:14px 16px 18px;display:grid;gap:14px;min-width:0}
+.em-body>*{min-width:0;margin:0}
+.em-body p{margin:0;overflow-wrap:anywhere}
+.em-summary{padding:12px;border:1px solid var(--em-line);border-radius:12px;background:#fff;display:grid;gap:8px}
+.em-customer{font-weight:700}
+.em-summary dl{margin:0;display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,110px),1fr));gap:8px}
+.em-summary dl div{min-width:0;padding:8px 10px;border-radius:9px;background:#f4f3ef}
+.em-summary dt{font-size:.75rem;color:var(--em-muted)}
+.em-summary dd{margin:0;font-weight:700;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.em-muted{color:var(--em-muted);font-size:.88rem}
+.em-note{color:var(--em-muted);font-size:.88rem}
+.em-notice{padding:10px 12px;border-radius:10px;border:1px solid #c9d7e6;background:#eef4fa;font-size:.92rem}
+.em-notice.warn{border-color:#ecd49a;background:#fff8e6;color:#4d3800}
+.em-notice.error{border-color:#e6b9bd;background:#fff1f1;color:#7c1f27}
+.em-notice.error:focus{outline:3px solid var(--em-red);outline-offset:2px}
+.em-field{display:grid;gap:5px;min-width:0}
+.em-field>label{font-size:.86rem;font-weight:650}
+.em-field small{color:var(--em-muted);font-size:.8rem}
+.em-field input,.em-field select,.em-field textarea{width:100%;min-width:0;min-height:44px;padding:10px 12px;border:1px solid #c5c9cf;border-radius:9px;background:#fff;color:var(--em-ink);font:inherit;font-size:16px}
+.em-field textarea{resize:vertical;min-height:72px}
+.em-field input:focus-visible,.em-field select:focus-visible,.em-field textarea:focus-visible,.em-button:focus-visible,.em-close:focus-visible{outline:3px solid #b3841c;outline-offset:2px}
+.em-pair{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,220px),1fr));gap:12px}
+.em-lines{display:grid;gap:12px}
+.em-line{margin:0;padding:12px;border:1px solid var(--em-line);border-radius:12px;background:#fff;display:grid;gap:10px;min-width:0}
+.em-line legend{padding:0 4px;font-size:.8rem;font-weight:700;color:var(--em-muted)}
+.em-line-grid{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(0,.8fr) minmax(0,1.2fr);gap:10px}
+.em-line-foot{display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between}
+.em-line-foot output{font-weight:700;font-variant-numeric:tabular-nums}
+.em-total{display:block;padding:10px 12px;border-radius:10px;background:#172033;color:#fff;font-weight:700;font-variant-numeric:tabular-nums}
+.em-preview{margin:0;padding:0;list-style:none;border:1px solid var(--em-line);border-radius:12px;background:#fff}
+.em-preview li{display:flex;gap:12px;justify-content:space-between;padding:10px 12px;border-top:1px solid #eeede8}
+.em-preview li:first-child{border-top:0}
+.em-preview span{min-width:0;overflow-wrap:anywhere}
+.em-preview b{font-variant-numeric:tabular-nums;white-space:nowrap}
+.em-body .em-preview-total{display:flex;gap:12px;justify-content:space-between;padding:10px 12px;border-radius:10px;background:#172033;color:#fff;font-weight:700;font-variant-numeric:tabular-nums}
+.em-button{appearance:none;min-height:44px;padding:10px 16px;border:1px solid #c5c9cf;border-radius:10px;background:#fff;color:var(--em-ink);font:650 .95rem/1.25 system-ui,-apple-system,sans-serif;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;text-align:center;max-width:100%}
+.em-button.primary{background:var(--em-green);border-color:var(--em-green);color:#fff}
+.em-button.danger{color:var(--em-red);border-color:#e3bcc0}
+.em-button.primary.danger{background:var(--em-red);border-color:var(--em-red);color:#fff}
+.em-button:disabled,.em-close:disabled{opacity:.55;cursor:default}
+.em-body>.em-button{justify-self:start}
+.em-foot{position:sticky;bottom:0;display:grid;gap:8px;padding:12px 16px calc(12px + env(safe-area-inset-bottom));border-top:1px solid var(--em-line);background:#fff}
+.em-status{margin:0;min-height:1.2em;font-size:.85rem;color:var(--em-muted)}
+.em-actions{display:flex;flex-wrap:wrap;gap:10px;justify-content:flex-end}
+.em-skeleton{display:grid;gap:12px}
+.em-skeleton span{display:block;height:64px;border-radius:12px;background:linear-gradient(90deg,#ecebe6 0%,#f7f6f2 50%,#ecebe6 100%);background-size:200% 100%;animation:em-shimmer 1.2s linear infinite}
+@keyframes em-shimmer{to{background-position:-200% 0}}
+@media (prefers-reduced-motion:reduce){.em-skeleton span{animation:none}}
+@media (max-width:680px){
+  .egc-money{width:calc(100vw - 12px);border-radius:12px}
+  .em-head,.em-body,.em-foot{padding-left:12px;padding-right:12px}
+  .em-actions{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,130px),1fr))}
+  .em-actions .em-button{width:100%}
+  .em-actions .primary{grid-column:1/-1}
+  .em-field input,.em-field select,.em-field textarea{font-size:16px}
+}
+@media (max-width:380px){
+  .em-line-grid{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+  .em-line-grid>.em-field:first-child{grid-column:1/-1}
+}

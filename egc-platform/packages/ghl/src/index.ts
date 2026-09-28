@@ -172,6 +172,8 @@ export class GhlClient {
     emailFrom?: string | undefined;
     emailTo?: string | undefined;
     replyMessageId?: string | undefined;
+    // Exact public URLs, in order. Sent as-is; approved drafts store canonical URLs.
+    attachments?: string[] | undefined;
   }) {
     return this.request<Record<string, unknown>>(
       "/conversations/messages",

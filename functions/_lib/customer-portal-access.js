@@ -1,6 +1,7 @@
 import { readJob } from './firestore-job.js';
 import { sameOperationalProperty, verifiedAccountRoot } from './dispatch-lineage.js';
 import { readBusinessProjectViewer } from './business-hub-store.js';
+import { customerPortalLinkVersion } from './customer-portal.js';
 
 function accessError(status, code, message) {
   return Object.assign(new Error(message), { status, code });
@@ -62,7 +63,21 @@ export async function readCustomerPortalContext(env, session, {read=readJob, bus
     throw accessError(503, 'CUSTOMER_PORTAL_STORAGE_UNAVAILABLE', 'Your project could not be loaded. Please try again shortly.');
   }
 
-  let viewer = session;
+  // A token bound to an account root (lr) only works while this job still
+  // resolves to that root: re-parenting must never carry an old link onto
+  // another account whose version was never bumped. Unbound tokens skip this.
+  if (session.linkRoot !== undefined && session.linkRoot !== accountJob.id) {
+    throw accessError(403, 'CUSTOMER_PORTAL_ACCESS_REVOKED', 'This private project link was replaced. Contact Easy Garage Cleaning for a new link.');
+  }
+  // Staff revocation bumps the account version. Owner links minted before
+  // versions existed count as 0; collaborator links follow saved people below.
+  const linkVersion = customerPortalLinkVersion(accountJob);
+  if (linkVersion === null) throw accessError(403, 'CUSTOMER_PORTAL_ACCOUNT_INVALID', 'This project account link needs review by Easy Garage Cleaning.');
+  if ((!session.actorId || session.linkVersion !== undefined) && !(Number(session.linkVersion ?? 0) >= linkVersion)) {
+    throw accessError(403, 'CUSTOMER_PORTAL_ACCESS_REVOKED', 'This private project link was replaced. Contact Easy Garage Cleaning for a new link.');
+  }
+
+  let viewer = session.actorId ? session : { ...session, linkVersion };
   if (session.actorId) {
     const people = Array.isArray(accountJob.customerCollaborators) ? accountJob.customerCollaborators : [];
     const person = people.find(item => item.id === session.actorId && (item.status || 'active') === 'active');
@@ -81,6 +96,9 @@ export async function readCustomerPortalContext(env, session, {read=readJob, bus
 
   return {
     session: viewer,
+    // Mint new tokens from these two values (lv and lr claims).
+    linkVersion,
+    linkRoot: accountJob.id,
     accountJobId: accountJob.id,
     jobUpdateTime: job.__updateTime || '',
     accountUpdateTime: accountJob.__updateTime || '',

@@ -8,11 +8,14 @@ const script = [...read('copilot.html').matchAll(/<script>([\s\S]*?)<\/script>/g
 const response = (body, status = 200) => ({ ok: status < 400, status, json: async () => body });
 const flush = async () => { for (let i = 0; i < 30; i++) await Promise.resolve(); };
 
-test('Co-Pilot voice input can request the microphone on its own page', async () => {
+// The Employee Hub page now records walkthrough audio (employee-recordings.js), so it joins Co-Pilot;
+// the signup page and public pages stay blocked.
+test('Co-Pilot voice input and Hub recordings can request the microphone only on their own pages', async () => {
   const { onRequest } = await import('../functions/_middleware.js');
-  for (const path of ['/copilot', '/copilot.html', '/employee', '/']) {
+  for (const [path, allowed] of [['/copilot', true], ['/copilot.html', true], ['/employee', true], ['/employee.html', true], ['/employee-signup', false], ['/employee-suite.js', false], ['/', false], ['/crew/job.html', false]]) {
     const r = await onRequest({ request: new Request('https://easygaragecleaning.com' + path), next: async () => new Response('page') });
-    assert.ok(r.headers.get('Permissions-Policy').includes(path.startsWith('/copilot') ? 'microphone=(self)' : 'microphone=()'));
+    assert.ok(r.headers.get('Permissions-Policy').includes(allowed ? 'microphone=(self)' : 'microphone=()'), path);
+    assert.match(r.headers.get('Permissions-Policy'), /camera=\(\)/, path);
   }
 });
 function deferred() {

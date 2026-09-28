@@ -1,4 +1,5 @@
 import { firestoreFetch } from './firebase-service-account.js';
+import { commitFailure } from './firestore-errors.js';
 
 const PROJECT_ID = 'egcw-1ec83';
 
@@ -31,6 +32,7 @@ export function encodeFirestoreValue(value) {
   if (typeof value === 'string') return { stringValue: value };
   if (typeof value === 'boolean') return { booleanValue: value };
   if (typeof value === 'number') return Number.isInteger(value) ? { integerValue: String(value) } : { doubleValue: value };
+  if (value instanceof Date) return Number.isFinite(value.getTime()) ? { timestampValue: value.toISOString() } : { nullValue: null };
   if (Array.isArray(value)) return { arrayValue: { values: value.map(encodeFirestoreValue) } };
   if (typeof value === 'object') return { mapValue: { fields: encodeFirestoreFields(value) } };
   return { stringValue: String(value) };
@@ -59,7 +61,9 @@ export async function patchJob(env, jobId, patch, updateTime = '') {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ fields: encodeFirestoreFields(patch) }),
   });
-  if (!response.ok) throw new Error(`Job storage write failed (${response.status})`);
+  // storageFailure is the shared classification (firestore-errors.js): a stale
+  // updateTime arrives as 400 FAILED_PRECONDITION and classifies as 'stale'.
+  if (!response.ok) throw Object.assign(new Error(`Job storage write failed (${response.status})`), { storageStatus: response.status, storageFailure: await commitFailure(response) });
   const document = await response.json();
   return { id: jobId, ...decodeFirestoreFields(document.fields || {}) };
 }
@@ -74,7 +78,7 @@ export async function patchJobsAtomic(env, updates = []) {
     ...(item.updateTime ? { currentDocument: { updateTime: item.updateTime } } : {}),
   }));
   const response = await firestoreFetch(env, url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ writes }) });
-  if (!response.ok) throw new Error(`Job storage transaction failed (${response.status})`);
+  if (!response.ok) throw Object.assign(new Error(`Job storage transaction failed (${response.status})`), { storageStatus: response.status, storageFailure: await commitFailure(response) });
   return response.json();
 }
 

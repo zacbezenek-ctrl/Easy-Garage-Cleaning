@@ -1,6 +1,9 @@
 __pycache__/
 *.pyc
 
+# Local Lighthouse CI output (tests/lighthouse, docs/lighthouse-ci.md; .lighthouseci/ is listed below)
+lighthouse-reports/
+
 # Secrets — never commit
 .env
 .env.local
@@ -13,7 +16,16 @@ node_modules/
 .pnpm-store/
 test-results/
 .wrangler/
+.turbo/
 .vercel/
 
-# Crew-tools verification output (scripts/verify-crew.mjs)
-verify-shots/
+# Local QA, browser acceptance and emulator output
+field-qa/
+.lighthouseci/
+e2e-report.json
+firestore-debug.log
+# Private per-run Firestore emulator configs (scripts/emulator-exec.mjs)
+.firebase-emulator.*.json
+
+# Agent worktrees (Claude Code isolation)
+.claude/worktrees/

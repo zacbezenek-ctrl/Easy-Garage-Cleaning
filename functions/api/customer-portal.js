@@ -1,11 +1,23 @@
 import { syncSalesFollowupExit } from '../_lib/sales-followup-exit.js';
-import { clearCustomerPortalSessionCookie, createCustomerPortalCollaboratorAccessToken, getCustomerPortalSession } from '../_lib/customer-portal.js';
+import { clearCustomerPortalSessionCookie, createCustomerPortalCollaboratorAccessToken, readCookie, verifyCustomerPortalSessionToken } from '../_lib/customer-portal.js';
 import { readCustomerPortalContext } from '../_lib/customer-portal-access.js';
+import { denverToday } from '../_lib/dispatch-time.js';
+import { fieldActivity } from '../_lib/field-execution.js';
+import { customerPhotoPolicy, customerPhotoProjection, customerPhotosEnabled } from '../_lib/customer-photo-visibility.js';
 import { patchJob, patchJobsAtomic, readJob } from '../_lib/firestore-job.js';
+import { CUSTOMER_PORTAL_CONTENT, CUSTOMER_PORTAL_TERMS_VERSION, approvalTermsVersion, customerPortalDocuments } from '../_lib/customer-portal-content.js';
 import { appendConversationMessage, cleanMessage, cleanRequestId, conversationMessages, deliverHighLevelMessage, findConversationMessage, replaceConversationMessage } from '../_lib/customer-messaging.js';
-import { customerMoneyState as moneyState, customerDepositState, customerPaymentNeedsReview, createCustomerStripeCheckout, recordCustomerStripePayment, stripeRequest as stripe } from '../_lib/customer-payments.js';
+import { customerMoneyState as moneyState, customerDepositState, customerPaymentNeedsReview, createCustomerStripeCheckout, recordCustomerStripePayment, stripeRequest as stripe, stripeSecretKey as stripeKey } from '../_lib/customer-payments.js';
+import { parseBusinessActor } from '../_lib/business-hub-core.js';
+import { businessAccountJob } from '../_lib/portal-invitation.js';
+import { moneyDocumentEnabled, moneyDocumentLinks } from '../_lib/money-document.js';
+import { estimateFingerprint, included, legacyLineItems } from '../_lib/quote-model.js';
 
 const HOST = /^(?:easygaragecleaning\.com|www\.easygaragecleaning\.com|easy-garage-cleaning\.pages\.dev|localhost(?::\d+)?|127\.0\.0\.1(?::\d+)?)$/;
+const DEFAULT_REVIEW_URL = 'https://search.google.com/local/writereview?placeid=ChIJ17AGfBiyRIsRyJ3k4mDtX8Q';
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const REVIEW_CLICK_WINDOW_MS = 60 * 1000;
+const APPROVAL_ACTOR_FIELDS = ['approvedByActorId', 'approvedByBusinessAccountId', 'approvedByBusinessMemberId'];
 
 function reply(status, body, headers = {}) {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', ...headers } });
@@ -18,18 +30,6 @@ function allowed(request) {
   try { return HOST.test(new URL(raw).host); } catch { return false; }
 }
 
-function envVar(env, canonical, aliases = []) {
-  if (env[canonical]) return String(env[canonical]);
-  const wanted = [canonical, ...aliases].map(key => key.toLowerCase().replace(/[^a-z0-9]/g, ''));
-  for (const [key, value] of Object.entries(env || {})) if (value && wanted.includes(key.toLowerCase().replace(/[^a-z0-9]/g, ''))) return String(value);
-  return '';
-}
-
-function stripeKey(env) {
-  const key = envVar(env, 'STRIPE_SECRET_KEY', ['STRIPE_SECRET', 'STRIPE_KEY']);
-  return /^sk_(?:test|live)_[A-Za-z0-9_]+$/.test(key) ? key : '';
-}
-
 function safe(value, max = 180) {
   return String(value || '').replace(/[\r\n\t]/g, ' ').trim().slice(0, max);
 }
@@ -40,34 +40,88 @@ function amount(value) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+// Field tools store paused/waiting/delayed as an activity on top of the
+// canonical stage; older writers may still save them as the status itself.
 function portalStatus(job) {
   const raw = String(job.pipelineStatus || job.status || 'scheduled').toLowerCase();
   if (raw === 'paid') return 'paid';
-  if (raw === 'completed') return 'completed';
-  if (raw === 'in_progress' || job.startedAt) return 'in_progress';
-  if (raw === 'dispatched' || job.dispatchedAt) return 'dispatched';
+  if (['completed', 'review_requested', 'closed'].includes(raw) || raw === 'invoiced' && (job.completedAt || job.postJobChecklist?.completedAt)) return 'completed';
+  if (['in_progress', 'paused'].includes(raw) || job.startedAt) return 'in_progress';
+  if (['arrived', 'waiting'].includes(raw) || job.arrivedAt) return 'arrived';
+  if (['dispatched', 'delayed'].includes(raw) || job.dispatchedAt) return 'dispatched';
   return 'scheduled';
 }
 
-function estimateState(job, finance) {
+function portalActivity(job) {
+  const activity = fieldActivity(job);
+  return ['delayed', 'waiting', 'paused'].includes(activity) ? activity : '';
+}
+
+function paymentStatus(job, finance) {
+  return customerPaymentNeedsReview(job) ? 'pending_verification' : finance.balance < .01 && finance.total ? 'paid' : finance.paid ? 'partial' : 'unpaid';
+}
+
+// The review ask appears only after the work is complete and fully paid.
+function reviewReady(job) {
+  return ['completed', 'paid'].includes(portalStatus(job)) && paymentStatus(job, moneyState(job)) === 'paid';
+}
+
+export function customerReviewUrl(env = {}) {
+  const raw = String(env.GOOGLE_REVIEW_URL || '').trim();
+  if (!raw || raw.length > 500) return DEFAULT_REVIEW_URL;
+  try {
+    const url = new URL(raw);
+    return url.protocol === 'https:' && !url.username && !url.password ? url.href : DEFAULT_REVIEW_URL;
+  } catch { return DEFAULT_REVIEW_URL; }
+}
+
+// A replaced or withdrawn estimate is never approvable. A draft is refused only
+// with CUSTOMER_PORTAL_REJECT_DRAFT_ESTIMATES=true: Hub estimate saves still
+// release customer-facing estimates as 'draft' today.
+const rejectDrafts = env => env?.CUSTOMER_PORTAL_REJECT_DRAFT_ESTIMATES === 'true';
+function approvalBlocked(job, draftsRejected) {
+  const status = String(job.estimate?.status || '').toLowerCase();
+  return ['superseded', 'void', 'withdrawn'].includes(status) || draftsRejected && status === 'draft';
+}
+
+function estimateRevision(job) {
+  const value = Number(job.estimate?.revision || 1);
+  return Number.isSafeInteger(value) && value >= 1 ? value : 1;
+}
+
+// Saved lines are read through the canonical quote model: only included lines
+// are shown, and discounts keep their sign.
+function estimateLines(job, finance) {
+  if (!Array.isArray(job.estimate?.lineItems) || !job.estimate.lineItems.length) return [{ name: safe(job.serviceType || job.type || 'Garage service', 160), description: safe(job.estimate?.scope || job.scopeSummary || '', 600), quantity: 1, amount: Math.max(0, amount(finance.total)) }];
+  return legacyLineItems(job).lineItems.filter(included).map(line => ({ name: line.name, description: line.description, quantity: line.quantity, amount: line.amount ?? 0 }));
+}
+
+// A digest of exactly what the estimate card shows (total, deposit, scope and
+// lines); an approval must name it, so a scope or line edit that keeps the
+// revision and total still needs a fresh review.
+const shownFingerprint = estimate => estimateFingerprint({ amount: estimate.amount, depositRequired: estimate.depositRequired, scope: estimate.scope, lineItems: estimate.lineItems });
+
+function estimateState(job, finance, today, draftsRejected = false) {
   const rawStatus = String(job.customerApproval?.status || job.estimate?.status || job.quoteStatus || (finance.total ? 'ready' : 'not_ready')).toLowerCase();
   const validUntil = safe(job.estimate?.validUntil || '', 30);
-  const status = validUntil && validUntil < new Date().toISOString().slice(0, 10) && !['accepted', 'approved'].includes(rawStatus) ? 'expired' : rawStatus;
-  const sourceItems = Array.isArray(job.estimate?.lineItems) && job.estimate.lineItems.length ? job.estimate.lineItems : [{ name: job.serviceType || job.type || 'Garage service', description: job.estimate?.scope || job.scopeSummary || '', quantity: 1, amount: finance.total }];
-  return {
+  const status = validUntil && validUntil < today && !['accepted', 'approved'].includes(rawStatus) ? 'expired' : rawStatus;
+  const estimate = {
     number: safe(job.estimate?.number || job.quoteId || `EST-${String(job.id || '').slice(-6).toUpperCase()}`, 80),
     status: ['accepted', 'approved'].includes(status) ? 'approved' : status,
     amount: finance.total,
     service: safe(job.serviceType || job.type || 'Garage service', 120),
-    scope: safe(job.estimate?.scope || job.scopeSummary || job.notes || 'Your flat-rate garage service based on the agreed walkthrough scope.', 1600),
+    scope: safe(job.estimate?.scope || job.scopeSummary || 'Your flat-rate garage service based on the agreed walkthrough scope.', 1600),
     approvedAt: safe(job.customerApproval?.approvedAt || job.estimate?.acceptedAt || '', 50),
     approvedBy: safe(job.customerApproval?.approvedBy || '', 120),
     validUntil,
-    revision: Math.max(1, Number(job.estimate?.revision || 1)),
+    revision: estimateRevision(job),
+    approvable: !approvalBlocked(job, draftsRejected),
     depositRequired: customerDepositState(job, finance).required,
-    lineItems: sourceItems.slice(0, 12).map(item => ({ name: safe(item?.name || 'Garage service', 160), description: safe(item?.description || '', 600), quantity: Math.max(1, Number(item?.quantity || 1)), amount: Math.max(0, amount(item?.amount)) })),
-    terms: 'This flat-rate estimate covers the scope shown. The displayed deposit is due upfront after approval and is applied to your total. The remaining balance is due on completion. Any material change requires your approval before additional work or charges.',
+    lineItems: estimateLines(job, finance),
+    terms: CUSTOMER_PORTAL_CONTENT.estimateTerms,
+    termsVersion: CUSTOMER_PORTAL_TERMS_VERSION,
   };
+  return { ...estimate, fingerprint: shownFingerprint(estimate) };
 }
 
 function isoDate(value) {
@@ -80,9 +134,35 @@ function email(value) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(text) ? text : '';
 }
 
+function newId(prefix) {
+  return `${prefix}-${crypto.randomUUID()}`;
+}
+
 function id(value, prefix = 'item') {
   const cleaned = safe(value, 100).replace(/[^a-zA-Z0-9_-]/g, '');
-  return cleaned || `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  return cleaned || newId(prefix);
+}
+
+// A company (biz_) approval names the delegated member, so an AP sign-off stays
+// attributable after that member's name, role or access changes. Homeowner and
+// family approvals keep their existing shape. Only the saved job holds these
+// ids: the approval response and portal DTOs never return them.
+function approvalActor(actorId) {
+  if (!String(actorId || '').startsWith('biz_')) return {};
+  const { accountId, memberId } = parseBusinessActor(actorId);
+  return { approvedByActorId: actorId, approvedByBusinessAccountId: accountId, approvedByBusinessMemberId: memberId };
+}
+
+// The estimate is spread forward on re-approval; an earlier company approver
+// must never be credited with a later signature.
+function withoutApprovalActor(estimate) {
+  return Object.fromEntries(Object.entries(estimate || {}).filter(([key]) => !APPROVAL_ACTOR_FIELDS.includes(key)));
+}
+
+// Firestore answers a stale currentDocument.updateTime with 400
+// FAILED_PRECONDITION; 409/412 count too.
+function conflict(error) {
+  return /\((400|409|412)\)/.test(String(error?.message));
 }
 
 function customerExperience(job, owner = true) {
@@ -112,6 +192,9 @@ function customerExperience(job, owner = true) {
       permissions: { view: person.permissions?.view !== false, decide: Boolean(person.permissions?.decide), pay: Boolean(person.permissions?.pay), rebook: Boolean(person.permissions?.rebook) },
       status: person.status === 'removed' ? 'removed' : 'active',
     })),
+    // A company project's people are managed in its business account, and the
+    // server refuses invitations for it (CUSTOMER_PORTAL_BUSINESS_PROJECT).
+    invitesAvailable: owner && !businessAccountJob(job),
     decisions: decisions.slice(-20).map(item => ({
       id: id(item.id, 'decision'), title: safe(item.title, 180), details: safe(item.details, 1200),
       photoUrl: /^https:\/\/(?:drive|docs)\.google\.com\//i.test(item.photoUrl || '') ? item.photoUrl : '',
@@ -137,10 +220,10 @@ function customerExperience(job, owner = true) {
   };
 }
 
-function sanitize(job, session = {}) {
+function sanitize(job, session = {}, { today, reviewUrl, draftsRejected = false }) {
   const finance = moneyState(job);
-  const estimate = estimateState(job, finance);
-  const state = portalStatus(job);
+  const estimate = estimateState(job, finance, today, draftsRejected);
+  const state = portalStatus(job), review = reviewReady(job);
   const owner = !session.actorId, experience = customerExperience(job, owner), actor = experience.collaborators.find(person => person.id === session.actorId);
   return {
     ok: true,
@@ -149,7 +232,8 @@ function sanitize(job, session = {}) {
     appointment: {
       date: safe(job.date, 30), time: safe(job.time, 20), endTime: safe(job.endTime, 20),
       address: safe(job.address, 240), service: estimate.service, status: state,
-      arrivalWindow: safe(job.jobInstructions?.arrivalWindow || job.instructions?.arrivalWindow || '', 80),
+      // Dispatch writes a Denver range label; older jobs keep the walkthrough brief text.
+      arrivalWindow: safe(job.arrivalWindow || job.jobInstructions?.arrivalWindow || job.instructions?.arrivalWindow || '', 80),
     },
     estimate,
     payment: {
@@ -158,7 +242,7 @@ function sanitize(job, session = {}) {
       purpose: customerDepositState(job, finance).purpose,
       deposit: customerDepositState(job, finance),
       needsReview: customerPaymentNeedsReview(job),
-      status: customerPaymentNeedsReview(job) ? 'pending_verification' : finance.balance < .01 && finance.total ? 'paid' : finance.paid ? 'partial' : 'unpaid',
+      status: paymentStatus(job, finance),
       receiptUrl: /^https:\/\/pay\.stripe\.com\/receipts\//.test(job.payment?.receiptUrl || '') ? job.payment.receiptUrl : '',
       receiptEmail: safe(job.payment?.receiptEmail || '', 180),
       invoiceNumber: safe(job.invoice?.number || '', 80),
@@ -167,8 +251,9 @@ function sanitize(job, session = {}) {
       creditApplied: Math.max(0, amount(job.payment?.giftCreditApplied)), completionRequiresPayment: true,
     },
     progress: {
-      status: state,
+      status: state, activity: portalActivity(job),
       dispatchedAt: safe(job.dispatchedAt || job.lastCustomerMessage?.sentAt || '', 50),
+      arrivedAt: safe(job.arrivedAt || '', 50),
       startedAt: safe(job.startedAt || '', 50),
       completedAt: safe(job.completedAt || job.postJobChecklist?.completedAt || '', 50),
       updatedAt: safe(job.updatedAt || '', 50),
@@ -180,34 +265,41 @@ function sanitize(job, session = {}) {
       delivery: { channel: message.delivery.channel, status: message.delivery.status, attemptedAt: message.delivery.attemptedAt },
     })),
     messaging: { highLevelLinked: Boolean(job.highlevelContactId), refreshSeconds: 20 },
+    review: { eligible: review, url: review ? reviewUrl : '' },
     experience,
+    documents: customerPortalDocuments(),
     support: { phone: '(970) 999-1818', phoneHref: 'tel:+19709991818', smsHref: 'sms:+19709991818' },
   };
 }
 
-async function requirePortal(request, env) {
-  try { return await readCustomerPortalContext(env, await getCustomerPortalSession(request, env)); }
+async function requirePortal(request, env, { clock, read }) {
+  try { return await readCustomerPortalContext(env, await verifyCustomerPortalSessionToken(env, readCookie(request), clock().getTime()), { read }); }
   catch (error) {
     return { error: reply(error.status || 503, { ok: false, code: error.code || 'CUSTOMER_PORTAL_STORAGE_UNAVAILABLE', error: error.message }) };
   }
 }
 
-export async function onRequestGet({ request, env }) {
+async function handleGet({ request, env }, deps) {
   if (!allowed(request)) return reply(403, { ok: false, error: 'Forbidden origin' });
-  const result = await requirePortal(request, env);
+  const result = await requirePortal(request, env, deps);
   if (result.error) return result.error;
-  return reply(200, sanitize(result.job, result.session));
+  const at = deps.clock();
+  const body = { ...sanitize(result.job, result.session, { today: denverToday(at), reviewUrl: customerReviewUrl(env), draftsRejected: rejectDrafts(env) }), moneyDocuments: moneyDocumentLinks(result.job, { enabled: moneyDocumentEnabled(env), now: at.toISOString() }) };
+  // Default off: without the flag the DTO keeps its current shape.
+  if (customerPhotosEnabled(env) && result.session.permissions?.view !== false) body.beforeAfter = customerPhotoProjection(result.job, customerPhotoPolicy(env));
+  return reply(200, body);
 }
 
-export async function onRequestPost({ request, env }) {
+async function handlePost({ request, env }, { clock, read }) {
   if (!allowed(request)) return reply(403, { ok: false, error: 'Forbidden origin' });
-  const result = await requirePortal(request, env);
+  const result = await requirePortal(request, env, { clock, read });
   if (result.error) return result.error;
   const raw = await request.text();
   if (raw.length > 32 * 1024) return reply(413, { ok: false, error: 'Request too large' });
   let body;
   try { body = JSON.parse(raw); } catch { return reply(400, { ok: false, error: 'Invalid JSON' }); }
-  const now = new Date().toISOString();
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return reply(400, { ok: false, error: 'Invalid JSON' });
+  const started = clock(), now = started.toISOString(), today = denverToday(started);
   const owner = !result.session.actorId, can = permission => owner || Boolean(result.session.permissions?.[permission]);
   const ownerOnly = new Set(['save_customer_memory', 'save_job_day_rules', 'save_collaborators', 'create_collaborator_invite', 'request_gift_transfer', 'record_photo_upload']);
   if (ownerOnly.has(body.action) && !owner) return reply(403, { ok: false, error: 'Only the primary customer can make that change' });
@@ -236,12 +328,12 @@ export async function onRequestPost({ request, env }) {
     } catch {
       return reply(409, { ok: false, error: 'The conversation changed. Refresh and send again.' });
     }
-    const highLevelDelivery = await deliverHighLevelMessage(env, queued, { body: messageBody, direction: 'from_customer' });
+    const highLevelDelivery = await deliverHighLevelMessage(env, queued, { body: messageBody, direction: 'from_customer', requestId }, { clock });
     const delivery = highLevelDelivery.status === 'sent' ? highLevelDelivery : message.delivery;
     let updated = queued;
     try {
-      const latest = await readJob(env, result.session.jobId);
-      updated = await patchJob(env, result.session.jobId, { customerConversation: replaceConversationMessage(latest, message.id, { delivery }), customerConversationUpdatedAt: new Date().toISOString(), updatedAt: new Date().toISOString() }, latest.__updateTime);
+      const latest = await read(env, result.session.jobId), deliveredAt = clock().toISOString();
+      updated = await patchJob(env, result.session.jobId, { customerConversation: replaceConversationMessage(latest, message.id, { delivery }), customerConversationUpdatedAt: deliveredAt, updatedAt: deliveredAt }, latest.__updateTime);
     } catch { /* The customer reply is already safely stored in the project thread. */ }
     return reply(200, { ok: true, message: { ...message, delivery }, conversation: conversationMessages(updated) });
   }
@@ -251,19 +343,34 @@ export async function onRequestPost({ request, env }) {
     if (signedName.length < 3 || body.confirmed !== true) return reply(400, { ok: false, error: 'Enter your full name and confirm the estimate' });
     const finance = moneyState(result.job);
     if (finance.total < .01) return reply(409, { ok: false, error: 'The estimate is not ready yet' });
-    if (result.job.estimate?.validUntil && String(result.job.estimate.validUntil) < new Date().toISOString().slice(0, 10)) return reply(409, { ok: false, error: 'This estimate has expired. Ask the team for an updated estimate.' });
-    const approval = { status: 'approved', approvedAt: now, approvedBy: signedName, amount: finance.total, source: 'customer_portal' };
-    const deposit = customerDepositState(result.job, finance);
+    if (result.job.estimate?.validUntil && String(result.job.estimate.validUntil) < today) return reply(409, { ok: false, error: 'This estimate has expired. Ask the team for an updated estimate.' });
+    if (approvalBlocked(result.job, rejectDrafts(env))) return reply(409, { ok: false, code: 'CUSTOMER_PORTAL_ESTIMATE_NOT_APPROVABLE', error: 'This estimate is being updated and cannot be approved yet. Refresh the page or ask the team for the current estimate.' });
+    // The approval binds to the exact revision, total and shown content the
+    // customer saw. An older page that does not send them must refresh; it
+    // never approves a price or scope it did not show.
+    if (!Number.isSafeInteger(body.estimate_revision) || !Number.isSafeInteger(body.amount_cents) || typeof body.estimate_fingerprint !== 'string') return reply(409, { ok: false, code: 'CUSTOMER_PORTAL_ESTIMATE_CHANGED', error: 'This page is out of date. Refresh it to review the current estimate before approving.' });
+    if (body.estimate_revision !== estimateRevision(result.job) || body.amount_cents !== Math.round(finance.total * 100) || body.estimate_fingerprint !== estimateState(result.job, finance, today).fingerprint) return reply(409, { ok: false, code: 'CUSTOMER_PORTAL_ESTIMATE_CHANGED', error: 'The estimate changed after this page loaded. Refresh and review the current estimate before approving.' });
+    // The approval records the terms version the page displayed (a page from
+    // before versioning is recorded as having shown only the estimate terms).
+    // A page opened before the copy changed must reload rather than approve unseen terms.
+    const termsVersion = approvalTermsVersion(body.terms_version);
+    if (!termsVersion) return reply(409, { ok: false, code: 'CUSTOMER_PORTAL_TERMS_CHANGED', error: 'Our estimate terms were updated. Review the latest terms, then approve again.' });
+    const approval = { status: 'approved', approvedAt: now, approvedBy: signedName, amount: finance.total, source: 'customer_portal', termsVersion };
+    const deposit = customerDepositState(result.job, finance), actor = approvalActor(result.session.actorId);
     try {
       await patchJob(env, result.session.jobId, {
-        customerApproval: approval,
-        estimate: { ...(result.job.estimate || {}), status: 'approved', acceptedAt: now, acceptedBy: signedName, amount: finance.total, depositRequired: deposit.required },
+        customerApproval: { ...approval, ...actor },
+        estimate: { ...withoutApprovalActor(result.job.estimate), status: 'approved', acceptedAt: now, acceptedBy: signedName, amount: finance.total, depositRequired: deposit.required, acceptedTermsVersion: termsVersion, ...actor },
         deposit: { ...(result.job.deposit || {}), amount: deposit.required, paidAmount: deposit.paid, status: deposit.due < .01 ? 'paid' : deposit.paid ? 'partial' : 'due' },
         quoteStatus: 'approved',
         updatedAt: now,
       }, result.jobUpdateTime);
-    } catch { return reply(409, { ok: false, error: 'The estimate changed. Refresh before approving it.' }); }
-    const salesFollowupExit = await syncSalesFollowupExit(env, result.session.jobId);
+    } catch (error) {
+      return conflict(error)
+        ? reply(409, { ok: false, code: 'CUSTOMER_PORTAL_REVISION_CONFLICT', error: 'The estimate changed. Refresh before approving it.' })
+        : reply(503, { ok: false, code: 'CUSTOMER_PORTAL_STORAGE_UNAVAILABLE', error: 'Your approval could not be saved. Please try again shortly.' });
+    }
+    const salesFollowupExit = await syncSalesFollowupExit(env, result.session.jobId, { now: clock });
     return reply(200, { ok: true, approval, salesFollowupExit });
   }
 
@@ -298,7 +405,7 @@ export async function onRequestPost({ request, env }) {
     try {
       await patchJob(env, result.memoryJobId, { customerMemory: memory, customerMemoryUpdatedAt: now, updatedAt: now }, result.memoryUpdateTime);
     } catch(error) {
-      return reply(/\((409|412)\)/.test(String(error?.message))?409:503,{ok:false,error:'Property preferences could not be saved. Refresh the project and review its latest instructions before retrying.'});
+      return reply(conflict(error)?409:503,{ok:false,error:'Property preferences could not be saved. Refresh the project and review its latest instructions before retrying.'});
     }
     return reply(200, { ok: true, memory });
   }
@@ -311,28 +418,53 @@ export async function onRequestPost({ request, env }) {
       remoteCompletionAllowed: Boolean(body.remote_completion_allowed), updatedAt: now, source: 'customer_portal',
     };
     if (rules.awayMode && (!rules.decisionMaker || !rules.payer)) return reply(400, { ok: false, error: 'Name the decision-maker and payer for an unattended job' });
-    await patchJob(env, result.session.jobId, { jobDayRules: rules, updatedAt: now });
+    try {
+      await patchJob(env, result.session.jobId, { jobDayRules: rules, updatedAt: now }, result.jobUpdateTime);
+    } catch (error) {
+      return conflict(error)
+        ? reply(409, { ok: false, code: 'CUSTOMER_PORTAL_REVISION_CONFLICT', error: 'Your job-day plan changed. Refresh and review it before saving again.' })
+        : reply(503, { ok: false, code: 'CUSTOMER_PORTAL_STORAGE_UNAVAILABLE', error: 'Your job-day plan could not be saved. Please try again shortly.' });
+    }
     return reply(200, { ok: true, rules });
   }
 
   if (body.action === 'save_collaborators') {
-    const supplied = Array.isArray(body.collaborators) ? body.collaborators.slice(0, 8) : [];
-    const collaborators = supplied.map(person => ({
-      id: id(person.id, 'person'), name: safe(person.name, 120), email: email(person.email), role: safe(person.role || 'Family', 80),
-      permissions: { view: true, decide: Boolean(person.permissions?.decide), pay: Boolean(person.permissions?.pay), rebook: Boolean(person.permissions?.rebook) },
-      status: 'active', updatedAt: now,
-    })).filter(person => person.name && person.email);
+    const supplied = Array.isArray(body.collaborators) ? body.collaborators.slice(0, 8).map(person => person && typeof person === 'object' ? person : {}) : [];
+    // Ids are server-issued: a browser may keep an existing person's id but
+    // never mint one, and never one that could be read as a business grant.
+    const known = new Set((Array.isArray(result.job.customerCollaborators) ? result.job.customerCollaborators : []).map(person => person?.id).filter(value => typeof value === 'string' && value && !value.startsWith('biz_')));
+    const used = new Set();
+    const collaborators = supplied.map(person => {
+      const personId = known.has(person.id) && !used.has(person.id) ? person.id : newId('person');
+      used.add(personId);
+      return {
+        id: personId, name: safe(person.name, 120), email: email(person.email), role: safe(person.role || 'Family', 80),
+        permissions: { view: true, decide: Boolean(person.permissions?.decide), pay: Boolean(person.permissions?.pay), rebook: Boolean(person.permissions?.rebook) },
+        status: 'active', updatedAt: now,
+      };
+    }).filter(person => person.name && person.email);
     if (supplied.length && !collaborators.length) return reply(400, { ok: false, error: 'Add a name and valid email for each person' });
-    await patchJob(env, result.accountJobId, { customerCollaborators: collaborators, collaboratorsUpdatedAt: now, updatedAt: now });
+    try {
+      await patchJob(env, result.accountJobId, { customerCollaborators: collaborators, collaboratorsUpdatedAt: now, updatedAt: now }, result.accountUpdateTime);
+    } catch (error) {
+      return conflict(error)
+        ? reply(409, { ok: false, code: 'CUSTOMER_PORTAL_REVISION_CONFLICT', error: 'Your authorized people changed. Refresh and review them before saving again.' })
+        : reply(503, { ok: false, code: 'CUSTOMER_PORTAL_STORAGE_UNAVAILABLE', error: 'Authorized people could not be saved. Please try again shortly.' });
+    }
     return reply(200, { ok: true, collaborators });
   }
 
   if (body.action === 'create_collaborator_invite') {
+    // A company project's people are managed in its business account. An owner
+    // link that predates the business link can never mint more access to it.
+    if (businessAccountJob(result.job)) return reply(403, { ok: false, code: 'CUSTOMER_PORTAL_BUSINESS_PROJECT', error: 'This project is managed through a business account, so invitations are not available here. Contact Easy Garage Cleaning to add someone.' });
     const personId = id(body.person_id, 'person');
     const people = Array.isArray(result.job.customerCollaborators) ? result.job.customerCollaborators : [];
-    const person = people.find(item => item.id === personId && item.status !== 'removed');
+    const person = people.find(item => item.id === personId && item.status !== 'removed' && !personId.startsWith('biz_'));
     if (!person) return reply(404, { ok: false, error: 'That authorized person is no longer available' });
-    const token = await createCustomerPortalCollaboratorAccessToken(env, result.session.jobId, person.id, { view: true, decide: Boolean(person.permissions?.decide), pay: Boolean(person.permissions?.pay), rebook: Boolean(person.permissions?.rebook) });
+    // Bind the invitation to the account's current link version and root so a
+    // staff revocation ends it even when saved people are kept (P4-15).
+    const token = await createCustomerPortalCollaboratorAccessToken(env, result.session.jobId, person.id, { view: true, decide: Boolean(person.permissions?.decide), pay: Boolean(person.permissions?.pay), rebook: Boolean(person.permissions?.rebook) }, clock().getTime(), result.linkVersion, result.linkRoot);
     const origin = new URL(request.url).origin;
     return reply(200, { ok: true, person: safe(person.name, 120), url: `${origin}/api/customer-portal-session?access=${encodeURIComponent(token)}`, expiresInDays: 30 });
   }
@@ -358,12 +490,12 @@ export async function onRequestPost({ request, env }) {
     const kind = ['repeat', 'touch_up', 'garage_guard'].includes(body.kind) ? body.kind : 'repeat';
     const timing = ['asap', 'same_weekday', 'choose_date'].includes(body.timing) ? body.timing : 'asap';
     const preferredDate = timing === 'choose_date' ? isoDate(body.preferred_date) : '';
-    if (timing === 'choose_date' && (!preferredDate || preferredDate < new Date().toISOString().slice(0, 10))) return reply(400, { ok: false, error: 'Choose a future preferred date' });
+    if (timing === 'choose_date' && (!preferredDate || preferredDate < today)) return reply(400, { ok: false, error: 'Choose a future preferred date' });
     const requests = Array.isArray(result.job.rebookingRequests) ? result.job.rebookingRequests : [];
     const duplicate = requests.find(request => request.status === 'pending' && request.kind === kind && request.timing === timing && (request.preferredDate || '') === preferredDate && safe(request.notes, 600) === safe(body.notes, 600));
     if (duplicate) return reply(200, { ok: true, request: duplicate });
     if (requests.filter(request => request.status === 'pending').length >= 3) return reply(409, { ok: false, error: 'The team already has your rebooking request' });
-    const request = { id: id('', 'rebook'), kind, timing, preferredDate, preferredCrew: Boolean(body.preferred_crew), notes: safe(body.notes, 600), status: 'pending', requestedAt: now, sourceJobId: result.session.jobId };
+    const request = { id: newId('rebook'), kind, timing, preferredDate, preferredCrew: Boolean(body.preferred_crew), notes: safe(body.notes, 600), status: 'pending', requestedAt: now, sourceJobId: result.session.jobId };
     try {
       await patchJob(env, result.session.jobId, { rebookingRequests: [...requests, request].slice(-10), rebookingStatus: 'pending', rebookingUpdatedAt: now, updatedAt: now }, result.jobUpdateTime);
     } catch { return reply(409, { ok: false, error: 'Your project changed. Refresh before requesting another visit.' }); }
@@ -388,7 +520,7 @@ export async function onRequestPost({ request, env }) {
     const updatedCards = cards.map(item => item.id === cardId ? { ...item, remainingAmount: Math.max(0, amount(item.remainingAmount) - applied), updatedAt: now } : item);
     const paidTotal = Math.min(finance.total, finance.paid + applied);
     const balance = Math.max(0, finance.total - paidTotal);
-    const redemption = { id: id('', 'redemption'), requestId, cardId, amount: applied, appliedAt: now, jobId: result.session.jobId };
+    const redemption = { id: newId('redemption'), requestId, cardId, amount: applied, appliedAt: now, jobId: result.session.jobId };
     const walletPatch = { giftWallet: { ...wallet, cards: updatedCards, redemptions: [...redemptions, redemption].slice(-40), updatedAt: now }, updatedAt: now };
     const jobPatch = {
       payment: { ...(result.job.payment || {}), amount: paidTotal, giftCreditApplied: amount(result.job.payment?.giftCreditApplied) + applied, lastAmount: applied, lastReceivedAt: now, method: finance.paid > 0 ? 'mixed_with_gift_credit' : 'gift_credit', verified: true },
@@ -411,7 +543,7 @@ export async function onRequestPost({ request, env }) {
     const requests = Array.isArray(wallet.transferRequests) ? wallet.transferRequests : [];
     const duplicate = requests.find(request => request.status === 'pending' && request.cardId === cardId && email(request.recipientEmail) === recipientEmail);
     if (duplicate) return reply(200, { ok: true, transfer: duplicate });
-    const transfer = { id: id('', 'transfer'), cardId, recipientName, recipientEmail, amount: amount(card.remainingAmount), status: 'pending', requestedAt: now };
+    const transfer = { id: newId('transfer'), cardId, recipientName, recipientEmail, amount: amount(card.remainingAmount), status: 'pending', requestedAt: now };
     try {
       await patchJob(env, result.accountJobId, { giftWallet: { ...wallet, transferRequests: [...requests, transfer].slice(-20), updatedAt: now }, giftTransferStatus: 'pending', updatedAt: now }, result.accountUpdateTime);
     } catch { return reply(409, { ok: false, error: 'The gift-card balance changed. Refresh before transferring it.' }); }
@@ -426,9 +558,48 @@ export async function onRequestPost({ request, env }) {
     return reply(200, { ok: true, count });
   }
 
+  if (body.action === 'record_review_click') {
+    const requestId = typeof body.request_id === 'string' && UUID.test(body.request_id) ? body.request_id.toLowerCase() : '';
+    if (!requestId) return reply(400, { ok: false, code: 'CUSTOMER_PORTAL_REQUEST_INVALID', error: 'A valid review request ID is required' });
+    const viewer = owner ? 'customer' : String(result.session.actorId).startsWith('biz_') ? 'business' : 'collaborator', actorId = owner ? '' : safe(result.session.actorId, 100);
+    let job = result.job, updateTime = result.jobUpdateTime;
+    // Only the click is recorded. Nothing is sent to the customer or Google.
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const clicks = Array.isArray(job.reviewClicks) ? job.reviewClicks : [];
+      if (clicks.some(click => click?.requestId === requestId)) return reply(200, { ok: true, recorded: false, duplicate: true });
+      if (!reviewReady(job)) return reply(409, { ok: false, code: 'CUSTOMER_PORTAL_REVIEW_NOT_READY', error: 'Reviews open after your project is complete and paid.' });
+      // One visit per viewer per minute: repeat taps or a looping client cannot
+      // inflate the staff count or keep bumping the job's revision.
+      if (clicks.some(item => item?.viewer === viewer && String(item.actorId || '') === actorId && Math.abs(started.getTime() - Date.parse(item.clickedAt)) < REVIEW_CLICK_WINDOW_MS)) return reply(200, { ok: true, recorded: false, duplicate: false });
+      const click = { requestId, clickedAt: now, viewer, ...(owner ? {} : { actorId }) };
+      try {
+        await patchJob(env, result.session.jobId, {
+          reviewClicks: [...clicks, click].slice(-20), reviewClickCount: Math.max(0, Number(job.reviewClickCount) || 0) + 1,
+          reviewClickedAt: safe(job.reviewClickedAt, 50) || now, reviewLastClickedAt: now,
+        }, updateTime);
+        return reply(200, { ok: true, recorded: true, duplicate: false });
+      } catch (error) {
+        if (!conflict(error)) break;
+      }
+      try { job = await read(env, result.session.jobId); } catch { job = null; }
+      if (!job) break;
+      updateTime = job.__updateTime || '';
+    }
+    return reply(503, { ok: false, code: 'CUSTOMER_PORTAL_STORAGE_UNAVAILABLE', error: 'Your review link is ready. We could not note the visit, and nothing else changed.' });
+  }
+
   return reply(400, { ok: false, error: 'Unknown customer portal action' });
 }
 
 export async function onRequestDelete() {
   return reply(200, { ok: true }, { 'Set-Cookie': clearCustomerPortalSessionCookie() });
 }
+
+export function createCustomerPortalHandlers({ now = () => new Date(), read = readJob } = {}) {
+  const deps = { clock: now, read };
+  return { onRequestGet: context => handleGet(context, deps), onRequestPost: context => handlePost(context, deps), onRequestDelete };
+}
+
+const handlers = createCustomerPortalHandlers();
+export const onRequestGet = handlers.onRequestGet;
+export const onRequestPost = handlers.onRequestPost;

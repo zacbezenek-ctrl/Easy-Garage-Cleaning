@@ -1,10 +1,13 @@
 (function (root) {
   'use strict';
   const select = (value, keys) => Object.fromEntries(keys.map(key => [key, value?.[key]]));
+  // Dispatch clears a saved customer arrival window that no longer contains the
+  // new start time; the person saving must see that warning.
+  const arrivalNotice = warnings => (Array.isArray(warnings) ? warnings : []).filter(x => x?.code === 'arrival_window_reset').map(x => String(x.message || 'The saved arrival window was cleared. Review the arrival window the customer sees.')).join(' ');
   function signedPlan(p) {
     return { ...select(p, ['discovery','scope','logistics','internal_notes','client_checklists','signature','acceptance','terms_version','terms_accepted','photos','notes']),
       client: select(p.client, ['name','phone','email','address','highlevel_contact_id']),
-      quote: select(p.quote, ['title','total','deposit','job_date','start_time','end_time','estimated_duration_min']) };
+      quote: select(p.quote, ['title','total','deposit','job_date','start_time','end_time','estimated_duration_min','line_items','catalog_version','duration_override_reason']) };
   }
   // This controller owns one frozen, actor-scoped request through lost responses.
   // Neither a reload nor a CRM outage creates a second dispatch request.
@@ -56,7 +59,7 @@
       if (result.requestId !== pending.requestId || !result.job?.id || result.job.customerId !== pending.body.customerId) throw new Error('The saved job identity did not match the request. Review Dispatch before retrying.');
       pending.result=result;remember(k,pending);
       d.accept(result,pending);
-      return {result,pending,key:k};
+      return {result,pending,key:k,arrivalNotice:arrivalNotice(result.warnings)};
     }
     function save(recoverOriginal=false) {
       if(active)return active;
@@ -107,7 +110,8 @@
       const scheduleText=synced.handoffSync?.status==='synced'?'Job and CRM schedule verified. ':'Job saved; CRM reconciliation still needs attention. ';
       const photoText=photos.status==='synced'?'Walkthrough photos uploaded. ':photos.status==='needs_setup'?'Drive needs setup; photos remain on this device. ':'Photos remain on this device; upload needs attention. ';
       const staffing=saved.result.warnings.some(x=>['unassigned','crew_size_short','missing_crew_lead'].includes(x.code))?'Assign the required crew in Dispatch before work. ':'';
-      status.textContent=portalText+scheduleText+photoText+staffing+(recoverOriginal?'The original signed version was recovered; review any later form edits separately.':'');
+      const arrival=saved.arrivalNotice?saved.arrivalNotice+' ':'';
+      status.textContent=portalText+scheduleText+photoText+staffing+arrival+(recoverOriginal?'The original signed version was recovered; review any later form edits separately.':'');
       button.disabled=false;button.textContent=photos.status==='synced'&&synced.handoffSync?.status==='synced'?'Saved — verify again':'Retry remaining synchronization';
       // Keep the same immutable request for photo/CRM retries. A signed revision
       // is a separate explicit action only after the original save is confirmed.
@@ -115,7 +119,7 @@
       revise.onclick=()=>{client.release(saved);invalidateAcceptance();save();render();};status.appendChild(revise);
     } catch(error) {
       button.disabled=false;button.textContent=saved?'Retry synchronization':'Retry original save';
-      status.textContent=(saved?'The signed Hub job is saved. ':'')+(error.message || 'The request could not be verified. Keep this form and retry.');
+      status.textContent=(saved?'The signed Hub job is saved. '+(saved.arrivalNotice?saved.arrivalNotice+' ':''):'')+(error.message || 'The request could not be verified. Keep this form and retry.');
       if(error.code==='handoff_original_request_required'){
         const recover=document.createElement('button');recover.type='button';recover.textContent='Recover original signed save';recover.onclick=()=>send(button,true);status.appendChild(recover);
       }

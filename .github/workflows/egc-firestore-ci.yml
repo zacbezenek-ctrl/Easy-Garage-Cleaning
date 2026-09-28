@@ -2,13 +2,18 @@ name: EGC Firestore Rules and Dispatch
 
 on:
   pull_request:
-    paths: ['firestore.rules','firebase*.json','functions/**','crew/**','employee-dispatch.*','dispatch.html','tests/firestore-emulator.test.mjs','tests/dispatch-field.browser.mjs','tests/helpers/field-fixture.mjs','.github/workflows/egc-firestore-ci.yml']
+    paths: ['firestore.rules','firebase*.json','firestore.indexes.json','functions/**','crew/**','employee-dispatch.*','dispatch.html','tests/firestore-emulator.test.mjs','tests/firestore-emulator-hub-audit.test.mjs','tests/firestore-emulator-money.test.mjs','tests/firestore-emulator-firebase-revocation.test.mjs','tests/firestore-emulator-funnel-feed.test.mjs','scripts/backfill-payment-ledger.mjs','tests/dispatch-field.browser.mjs','tests/field-execution.browser.mjs','tests/helpers/**','scripts/emulator-exec.mjs','tests/emulator-harness.test.mjs','employee.html','.github/workflows/egc-firestore-ci.yml']
   push:
     branches: [main]
-    paths: ['firestore.rules','firebase*.json','functions/**','crew/**','employee-dispatch.*','dispatch.html','tests/firestore-emulator.test.mjs','tests/dispatch-field.browser.mjs','tests/helpers/field-fixture.mjs','.github/workflows/egc-firestore-ci.yml']
+    paths: ['firestore.rules','firebase*.json','firestore.indexes.json','functions/**','crew/**','employee-dispatch.*','dispatch.html','tests/firestore-emulator.test.mjs','tests/firestore-emulator-hub-audit.test.mjs','tests/firestore-emulator-money.test.mjs','tests/firestore-emulator-firebase-revocation.test.mjs','tests/firestore-emulator-funnel-feed.test.mjs','scripts/backfill-payment-ledger.mjs','tests/dispatch-field.browser.mjs','tests/field-execution.browser.mjs','tests/helpers/**','scripts/emulator-exec.mjs','tests/emulator-harness.test.mjs','employee.html','.github/workflows/egc-firestore-ci.yml']
 
 permissions:
   contents: read
+
+# Push runs are keyed by commit SHA so a newer queued run never cancels an older pending main run.
+concurrency:
+  group: egc-firestore-ci-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   firestore-emulator:
@@ -29,14 +34,28 @@ jobs:
         run: npm install --no-save --ignore-scripts firebase-tools@15.30.2 @firebase/rules-unit-testing@5.0.2 firebase@12.19.0 playwright@1.63.0
       - name: Install browser for operational acceptance
         run: npx --no-install playwright install --with-deps chromium
-      - name: Verify real rules and atomic dispatch on an isolated demo project
+      # Download the emulator jar once. Two cold-cache emulators started side by side both download it into
+      # the same cache path, and one of them can start from a half-written jar and exit 1.
+      - name: Download the Firestore emulator before the parallel runs
+        run: npx --no-install firebase setup:emulators:firestore
+      - name: Verify real rules, atomic dispatch, hub audit and money commits, and the emulator harness, on parallel private emulators
         env:
           EGC_FIREBASE_EMULATOR_TEST: '1'
-        run: npx --no-install firebase emulators:exec --only firestore --project demo-egc-field-rules --config firebase.emulator.json --non-interactive 'node --test tests/firestore-emulator.test.mjs'
+        # scripts/emulator-exec.mjs gives each run private ports and a private config,
+        # so the two emulators run side by side; the step fails if either run fails.
+        run: |
+          node scripts/emulator-exec.mjs --project demo-egc-field-rules 'node --test --test-concurrency=1 tests/firestore-emulator.test.mjs tests/firestore-emulator-hub-audit.test.mjs tests/firestore-emulator-money.test.mjs tests/firestore-emulator-firebase-revocation.test.mjs tests/firestore-emulator-funnel-feed.test.mjs' & a=$!
+          node scripts/emulator-exec.mjs --project demo-egc-harness 'node --test tests/emulator-harness.test.mjs' & b=$!
+          wait $a && wait $b
       - name: Run a full manager and crew day through real HTTP and Firestore
         env:
           FIELD_PLAYWRIGHT_MODULE: ${{ github.workspace }}/node_modules/playwright/index.mjs
         run: npx --no-install firebase emulators:exec --only firestore --project demo-egc-dispatch-day --config firebase.field-day.json --non-interactive 'node tests/dispatch-field.browser.mjs'
+      - name: Crew field execution on a phone through real HTTP handlers
+        if: ${{ !cancelled() }}
+        env:
+          FIELD_PLAYWRIGHT_MODULE: ${{ github.workspace }}/node_modules/playwright/index.mjs
+        run: node tests/field-execution.browser.mjs
       - uses: actions/upload-artifact@v4
         if: failure()
         with:

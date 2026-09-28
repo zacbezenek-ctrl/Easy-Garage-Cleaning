@@ -1,7 +1,7 @@
 import { localInstant } from './operations-portal-records.js';
 
 const KINDS = ['work', 'paused', 'waiting', 'delayed', 'travel', 'arrival'];
-const terminal = job => ['completed', 'invoiced', 'paid', 'review_requested', 'cancelled', 'canceled'].includes(job.pipelineStatus || job.status);
+const terminal = job => ['completed', 'invoiced', 'paid', 'review_requested', 'cancelled', 'canceled', 'no_show', 'noshow', 'no-show'].includes(job.pipelineStatus || job.status);
 const instant = value => typeof value === 'string' && /^\d{4}-\d\d-\d\dT\d\d:\d\d(?::\d\d(?:\.\d{1,9})?)?(?:Z|[+-]\d\d:\d\d)$/.test(value) ? Date.parse(value) : NaN;
 const kindFor = activity => ({ in_progress: 'work', paused: 'paused', waiting: 'waiting', delayed: 'delayed', dispatched: 'travel', arrived: 'arrival' })[activity] || null;
 const emptyTotals = () => Object.fromEntries(KINDS.map(kind => [kind, 0]));
@@ -61,7 +61,7 @@ export function fieldJobTime(job, now = new Date().toISOString()) {
     const canonical = job.pipelineStatus || job.status;
     const activity = job.fieldExecution?.activity;
     const currentActivity = kindFor(activity) && (activity === canonical || ['paused', 'waiting', 'delayed'].includes(activity) && ['in_progress', 'arrived', 'dispatched'].includes(canonical)) ? activity : canonical;
-    const stop = terminal(job) ? instant(job.cancelledAt || job.completedAt || clock.stoppedAt) : at;
+    const stop = terminal(job) ? instant(job.cancelledAt || job.noShowAt || job.completedAt || clock.stoppedAt) : at;
     if (terminal(job) || kindFor(currentActivity) !== clock.current.kind) needsReview = true;
     const elapsed = stop - instant(clock.current.startedAt);
     if (Number.isFinite(elapsed) && elapsed >= 0 && Number.isSafeInteger(totals[clock.current.kind] + elapsed) && (terminal(job) || kindFor(currentActivity) === clock.current.kind)) {

@@ -34,6 +34,7 @@
 <script type="application/ld+json">{"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [{"@type": "Question", "name": "How much does junk removal cost in Wellington?", "acceptedAnswer": {"@type": "Answer", "text": "Same core ranges: $99–$150 single item to $650+ for large property hauls. Acreage jobs quoted by photo."}}, {"@type": "Question", "name": "Do you serve rural Wellington addresses?", "acceptedAnswer": {"@type": "Answer", "text": "Yes — including acreage, barns, and outbuildings. Send photos of access paths."}}, {"@type": "Question", "name": "Is there a travel fee for Wellington?", "acceptedAnswer": {"@type": "Answer", "text": "No — Wellington is in our core Northern Colorado service area."}}, {"@type": "Question", "name": "Can you haul ranch equipment and barn junk?", "acceptedAnswer": {"@type": "Answer", "text": "Yes — old fencing, farm equipment, and barn clutter are common Wellington jobs."}}, {"@type": "Question", "name": "Next-day junk removal in Wellington?", "acceptedAnswer": {"@type": "Answer", "text": "Often available — call or text for today's schedule."}}, {"@type": "Question", "name": "Do you donate from Wellington jobs?", "acceptedAnswer": {"@type": "Answer", "text": "Yes — usable household goods to ReStore/ARC with tax receipt."}}, {"@type": "Question", "name": "Are you insured for rural properties?", "acceptedAnswer": {"@type": "Answer", "text": "Yes — general liability and commercial auto on every job."}}, {"@type": "Question", "name": "How do I get a quote?", "acceptedAnswer": {"@type": "Answer", "text": "Text photos to (970) 999-1818 — include access info for long driveways if relevant."}}]}</script>
 <script type="application/ld+json">{"@context": "https://schema.org", "@type": "WebPage", "@id": "https://easygaragecleaning.com/junk-removal-wellington-co#webpage", "url": "https://easygaragecleaning.com/junk-removal-wellington-co", "name": "Junk Removal Wellington CO | Fast Flat-Rate Haul", "description": "Wellington junk removal — acreage, barns & garages. schedule a free on-site walkthrough for an exact flat-rate price in 5 minutes. No travel surcharge from Fort Collins base.", "isPartOf": {"@id": "https://easygaragecleaning.com/#website"}, "about": {"@id": "https://easygaragecleaning.com/#business"}, "speakable": {"@type": "SpeakableSpecification", "cssSelector": [".hero-sub", ".faq-q", ".faq-a", ".def-block"]}}</script>
 <link rel="stylesheet" href="/styles.css?v=20260904j">
+<style id="footer-tap">@media(max-width:640px){.site-footer .foot-brand a,.site-footer .foot-col a,.site-footer .foot-bar a{display:inline-flex;align-items:center;min-height:44px}}</style>
 </head>
 <body>
 <a href="#main-content" class="skip-link">Skip to content</a>
@@ -98,7 +99,7 @@
   </div>
 </nav>
 <div class="nav-overlay" id="nav-overlay" aria-hidden="true"></div>
-<aside class="nav-drawer" id="nav-drawer" aria-hidden="true" aria-label="Mobile navigation">
+<aside class="nav-drawer" id="nav-drawer" aria-hidden="true" aria-label="Mobile navigation" inert>
   <div class="nav-drawer-head">
     <span class="logo"><span class="logo-mark"></span>Easy Garage</span>
     <button type="button" class="nav-drawer-close" aria-label="Close menu">&times;</button>
@@ -438,6 +439,7 @@ function initNavDrawer(){
   if(toggle.dataset.navBound)return;
   toggle.dataset.navBound='1';
   let returnFocus=null;
+  drawer.inert=!drawer.classList.contains('open');
   const background=[...document.body.children].filter(el=>el!==drawer&&el!==overlay&&el.tagName!=='SCRIPT');
   const focusable=()=>[...drawer.querySelectorAll('a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])')].filter(el=>!el.hidden&&el.offsetParent!==null);
   function setOpen(open){
@@ -445,6 +447,7 @@ function initNavDrawer(){
     toggle.setAttribute('aria-expanded',open);
     drawer.classList.toggle('open',open);
     drawer.setAttribute('aria-hidden',String(!open));
+    drawer.inert=!open;
     if(overlay){overlay.classList.toggle('open',open);overlay.setAttribute('aria-hidden',String(!open));}
     document.body.classList.toggle('nav-open',open);
     background.forEach(el=>{el.inert=open;});

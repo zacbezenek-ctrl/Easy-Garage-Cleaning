@@ -1,28 +1,61 @@
 name: EGC Business Hub Acceptance
 on:
+  pull_request:
+    paths:
+      - 'business-hub*'
+      - 'functions/_lib/business-hub*'
+      - 'functions/api/business-hub.js'
+      - 'functions/_lib/hub-audit.js'
+      - 'functions/_lib/customer-portal-access.js'
+      - 'functions/_lib/message-template-*'
+      - 'functions/_lib/approved-send.js'
+      - 'functions/_lib/message-policies.js'
+      - 'functions/_lib/ghl-messenger.js'
+      - 'functions/_lib/pricing-config.js'
+      - 'functions/_middleware.js'
+      - 'tests/business-hub*'
+      - 'tests/browser/test_business_hub_ui.py'
+      - '.github/workflows/egc-business-hub-acceptance.yml'
   push:
     branches: [main]
     paths:
       - 'business-hub*'
       - 'functions/_lib/business-hub*'
       - 'functions/api/business-hub.js'
+      - 'functions/_lib/hub-audit.js'
+      - 'functions/_lib/customer-portal-access.js'
+      - 'functions/_lib/message-template-*'
+      - 'functions/_lib/approved-send.js'
+      - 'functions/_lib/message-policies.js'
+      - 'functions/_lib/ghl-messenger.js'
+      - 'functions/_lib/pricing-config.js'
       - 'functions/_middleware.js'
       - 'tests/business-hub*'
+      - 'tests/browser/test_business_hub_ui.py'
       - '.github/workflows/egc-business-hub-acceptance.yml'
 permissions:
   contents: read
+# Push runs are keyed by commit SHA so a newer queued run never cancels an older pending main run.
+concurrency:
+  group: egc-business-hub-acceptance-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   business-hub:
     runs-on: ubuntu-latest
     timeout-minutes: 8
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      # The regressions import Pages Functions that depend on root packages (e.g. @noble/hashes).
+      - run: npm install --ignore-scripts --no-audit --no-fund
       - name: Business account, role and isolation regressions
         run: node --test tests/business-hub*.test.mjs
       - name: Read-only production route and privacy checks
+        if: github.event_name == 'push'
         shell: python
         run: |
           import json, time, urllib.request, urllib.error
@@ -61,3 +94,17 @@ jobs:
                       raise
                   print(f'Waiting for deployment, attempt {attempt+1}: {error}', flush=True)
                   time.sleep(10)
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install playwright==1.57.0
+      - run: python -m playwright install --with-deps chromium
+      - name: Business hub mobile compliance and extension seams in a real browser
+        run: python tests/browser/test_business_hub_ui.py

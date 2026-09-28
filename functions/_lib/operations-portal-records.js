@@ -1,5 +1,6 @@
 import {firestoreFetch} from './firebase-service-account.js';
 import {financialFacts} from './operations-financials.js';
+import {hubEligibilityFields} from './funnel-definitions.js';
 const PROJECT='egcw-1ec83';
 const BASE=`https://firestore.googleapis.com/v1/projects/${PROJECT}/databases/(default)/documents/jobs`;
 const SAFE_ID=/^[A-Za-z0-9_-]{1,180}$/;
@@ -112,7 +113,8 @@ export async function portalEvidence(env,command,fetcher=firestoreFetch){
   const requested=command.contactProviderIds;
   if(!Array.isArray(requested)||!requested.length||requested.length>500||requested.some(id=>typeof id!=='string'||!SAFE_ID.test(id)))throw error('invalid_portal_evidence_contacts',400);
   const contactIds=new Set(requested),records=[],seen=new Set(),tokens=new Set();let token='',pages=0;
-  const fields=['recordType','type','highlevelContactId','customerId','projectId','sourceWalkthroughId','date','endDate','time','endTime','status','pipelineStatus','createdAt','updatedAt','adoptionOriginalBookingAt','originalBookingAt','completedAt','soldAt','highlevelAppointmentId','highlevelCalendarId','providerAppointmentStatus','syncStatus','syncedAt','address','isTest','test','estimate','customerApproval','payment','invoice','postJobChecklist','refunds','normalizedLocalJobId','normalizedLocalAppointmentId','adoptionSource','scope','jobInstructions','operationalScope','serviceType','notes','operationNotes','adoptionOperationalScope','originalServiceType'];
+  // financialFacts().eligible reads every FUN-01 eligibility field (isInternal too), so the mask carries them all.
+  const fields=[...hubEligibilityFields(),'type','highlevelContactId','customerId','projectId','sourceWalkthroughId','date','endDate','time','endTime','status','pipelineStatus','createdAt','updatedAt','adoptionOriginalBookingAt','originalBookingAt','completedAt','soldAt','highlevelAppointmentId','highlevelCalendarId','providerAppointmentStatus','syncStatus','syncedAt','address','estimate','customerApproval','payment','invoice','postJobChecklist','refunds','normalizedLocalJobId','normalizedLocalAppointmentId','adoptionSource','scope','jobInstructions','operationalScope','serviceType','notes','operationNotes','adoptionOperationalScope','originalServiceType'];
   do{
     if(++pages>200)throw error('portal_evidence_scan_incomplete');
     const url=new URL(BASE);url.searchParams.set('pageSize','500');if(token)url.searchParams.set('pageToken',token);for(const field of fields)url.searchParams.append('mask.fieldPaths',field);

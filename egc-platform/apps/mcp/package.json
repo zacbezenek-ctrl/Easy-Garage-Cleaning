@@ -7,7 +7,8 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run && tsc -p tsconfig.json && node --test test/operations-http.check.mjs",
-    "test:operations:http": "node --test test/operations-http.check.mjs"
+    "test:operations:http": "node --test test/operations-http.check.mjs",
+    "test:crm-reads:postgres": "node --test test/crm-reads-postgres.check.mjs"
   },
   "dependencies": {
     "@egc/customer-state": "workspace:*",

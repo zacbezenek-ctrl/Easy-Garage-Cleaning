@@ -1,4 +1,5 @@
 import { authenticateEmployeeAccount, getEmployeeSessionProfile } from './employee-accounts.js';
+import { BUSINESS_USERS, OWNER_USERNAME } from './business-users.js';
 import { pbkdf2 } from '@noble/hashes/pbkdf2.js';
 import { sha256 } from '@noble/hashes/sha2.js';
 
@@ -9,14 +10,18 @@ const PASSWORD_HASH_PREFIX = 'pbkdf2-sha256';
 const PASSWORD_HASH_ITERATIONS = 210000;
 const PASSWORD_HASH_BYTES = 32;
 
-const BUSINESS_USERS = new Set(['zacb', 'tylerg', 'alexk']);
-
 export function hasBusinessAccess(profileOrUsername) {
   if (profileOrUsername && typeof profileOrUsername === 'object') {
     const username = String(profileOrUsername.user || '').trim().toLowerCase();
     return profileOrUsername.businessAccess === true && BUSINESS_USERS.has(username);
   }
   return BUSINESS_USERS.has(String(profileOrUsername || '').trim().toLowerCase());
+}
+
+// Owner-only features require a signed profile, never a bare username.
+export function isHubOwner(profile) {
+  return Boolean(profile) && typeof profile === 'object' && hasBusinessAccess(profile) &&
+    String(profile.user || '').trim().toLowerCase() === OWNER_USERNAME;
 }
 
 const encoder = new TextEncoder();
@@ -96,6 +101,8 @@ function userRecord(env, username) {
     role: ['owner', 'manager', 'sales', 'crew_lead', 'crew'].includes(role) ? role : 'crew',
     payType: String(record.payType || 'hourly'),
     hourlyRate: Math.max(0, Number(record.hourlyRate || 0)),
+    // Optional staff directory roles for configured users; staff-roles.js sanitizes them.
+    ...(Array.isArray(record.staffRoles) ? { staffRoles: record.staffRoles.filter(value => typeof value === 'string').slice(0, 6) } : {}),
   };
 }
 

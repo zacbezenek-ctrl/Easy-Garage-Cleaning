@@ -28,7 +28,8 @@ export function storage(t) {
       const spec = JSON.parse(options.body).structuredQuery, collection = spec.from[0].collectionId; calls.queries.push(spec);
       const parent = path.replace(/:runQuery$/, '').replace(/\/$/, ''), prefix = `${parent ? `${parent}/` : ''}${collection}/`;
       let rows = [...documents.entries()].filter(([key]) => key.startsWith(prefix) && !key.slice(prefix.length).includes('/')).map(([, doc]) => doc);
-      if (spec.where?.fieldFilter) { const f = spec.where.fieldFilter; rows = rows.filter(doc => { const v = decodeFirestoreFields(doc.fields)[f.field.fieldPath], expected = f.value.stringValue; return f.op === 'EQUAL' ? v === expected : v >= expected; }); }
+      if (spec.where?.compositeFilter) assert.equal(spec.where.compositeFilter.op, 'AND');
+      for (const f of spec.where?.compositeFilter ? spec.where.compositeFilter.filters.map(item => item.fieldFilter) : spec.where?.fieldFilter ? [spec.where.fieldFilter] : []) { rows = rows.filter(doc => { const v = decodeFirestoreFields(doc.fields)[f.field.fieldPath], expected = f.value.stringValue; return f.op === 'EQUAL' ? v === expected : v >= expected; }); }
       if (spec.orderBy) rows.sort((a, b) => { const x = decodeFirestoreFields(a.fields), y = decodeFirestoreFields(b.fields); return String(y.createdAt).localeCompare(String(x.createdAt)) || b.name.localeCompare(a.name); });
       if (spec.startAt) { const [at, id] = spec.startAt.values; rows = rows.filter(doc => { const row = decodeFirestoreFields(doc.fields); return row.createdAt < at.stringValue || row.createdAt === at.stringValue && doc.name < id.referenceValue; }); }
       return Response.json(rows.slice(0, spec.limit || rows.length).map(document => ({ document })));

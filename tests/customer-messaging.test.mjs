@@ -29,11 +29,13 @@ test('assigned crew can message only the job contact and HighLevel receives an S
   const env = { HUB_SESSION_SECRET: 'customer-thread-crew', HUB_AUTH_USERS_JSON: JSON.stringify(users), FIREBASE_API_KEY: 'firebase-test-thread', HIGHLEVEL_API_KEY: 'ghl-test', HIGHLEVEL_LOCATION_ID: 'location-1' };
   const assignedCookie = (await createHubSessionCookie(env, 'Assigned', { displayName: 'Assigned Crew' })).split(';')[0];
   const outsiderCookie = (await createHubSessionCookie(env, 'Outsider', { displayName: 'Other Person' })).split(';')[0];
-  let stored = { type: 'job', customer: 'Dana Customer', assignedCrew: ['Assigned Crew'], highlevelContactId: 'real-contact', highlevelAppointmentId: 'real-appt', customerConversation: [] };
+  // The saved job phone must match the linked contact (LEGACY-SEND recipient pre-check).
+  let stored = { type: 'job', customer: 'Dana Customer', phone: '(970) 555-0100', assignedCrew: ['Assigned Crew'], highlevelContactId: 'real-contact', highlevelAppointmentId: 'real-appt', customerConversation: [] };
   let update = 0, highLevelPayload = null;
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (url, options = {}) => {
     if (String(url).includes('/documents:runQuery')) return Response.json([{ readTime: '2026-09-07T00:00:00Z' }]);
+    if (String(url).includes('services.leadconnectorhq.com/contacts/')) return Response.json({ contact: { id: 'real-contact', locationId: 'location-1', phone: '+19705550100' } });
     if (String(url).includes('services.leadconnectorhq.com')) {
       highLevelPayload = JSON.parse(options.body);
       return new Response(JSON.stringify({ messageId: 'ghl-message', conversationId: 'ghl-conversation' }), { status: 200 });
@@ -54,6 +56,7 @@ test('assigned crew can message only the job contact and HighLevel receives an S
     assert.equal(highLevelPayload.type, 'SMS');
     assert.equal(highLevelPayload.contactId, 'real-contact');
     assert.equal(highLevelPayload.appointmentId, 'real-appt');
+    assert.equal(highLevelPayload.toNumber, '+19705550100');
     assert.equal(result.message.delivery.status, 'sent');
     assert.equal(stored.customerConversation[0].authorName, 'Assigned Crew');
     assert.equal(stored.customerConversation[0].delivery.messageId, 'ghl-message');
@@ -63,7 +66,7 @@ test('assigned crew can message only the job contact and HighLevel receives an S
 test('client portal replies derive identity from the signed job and notify HighLevel', async () => {
   const route = await import('../functions/api/customer-portal.js');
   const env = { HUB_SESSION_SECRET: 'customer-thread-client', FIREBASE_API_KEY: 'firebase-test-thread-client', HIGHLEVEL_API_KEY: 'ghl-test', HIGHLEVEL_LOCATION_ID: 'location-1' };
-  const cookie = (await createCustomerPortalSessionCookie(env, 'job-2')).split(';')[0];
+  const cookie = (await createCustomerPortalSessionCookie(env, 'job-2', { linkVersion: 0 })).split(';')[0];
   let stored = { customer: 'Dana Customer', highlevelContactId: 'real-client-contact', customerConversation: [] };
   let update = 0, highLevelPayload = null;
   const originalFetch = globalThis.fetch;

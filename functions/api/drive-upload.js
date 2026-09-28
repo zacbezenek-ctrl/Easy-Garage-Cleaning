@@ -4,8 +4,11 @@
  *
  * Uploads crew photos into a UNIQUE Google Drive folder per job:
  *   EGC Job Photos / <label e.g. "2026-06-12 — Dana Tester — 746 Star Grass Ln">
- * The job folder is found (by jobId stamped in appProperties) or created, so
- * repeat uploads from any tool land in the same folder. Returns the folder link.
+ * The job folder is found (by appProperties) or created, so repeat uploads
+ * from any tool land in the same folder. Returns the folder link. Folders are
+ * keyed by egcJobKey (a digest of the exact job id, because Drive caps each
+ * property at 124 bytes); folders from before that carry only egcJobId and are
+ * looked up first, so no job ever gets a second folder.
  *
  * Env vars: GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, GOOGLE_REFRESH_TOKEN
  * (minted once via /api/drive-auth — drive.file scope: this app only ever
@@ -20,6 +23,8 @@ import { getCustomerPortalSession } from '../_lib/customer-portal.js';
 import { readCustomerPortalContext } from '../_lib/customer-portal-access.js';
 import { readJob } from '../_lib/firestore-job.js';
 import { createJobAssignmentAccess } from '../_lib/job-assignment.js';
+import { fieldId } from '../_lib/field-execution.js';
+import { driveJobProperties } from '../_lib/drive-job-key.js';
 
 const TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const FILES_URL = 'https://www.googleapis.com/drive/v3/files';
@@ -35,13 +40,15 @@ const IMAGE_TYPES = new Map([
   ['image/webp', { extension: 'webp', valid: bytes => bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46 && bytes[8] === 0x57 && bytes[9] === 0x45 && bytes[10] === 0x42 && bytes[11] === 0x50 }],
 ]);
 
-const ALLOWED_HOST_RE = /^(?:easygaragecleaning\.com|www\.easygaragecleaning\.com|easy-garage-cleaning\.pages\.dev|localhost(?::\d+)?|127\.0\.0\.1(?::\d+)?)$/;
-function hostOf(v) { try { return new URL(v).host; } catch { return ''; } }
-function originAllowed(request) {
-  const o = request.headers.get('Origin'), r = request.headers.get('Referer');
-  if (!o && !r) return true;
-  return ALLOWED_HOST_RE.test(hostOf(o) || hostOf(r));
-}
+// Same pattern as functions/api/field-jobs.js: a present Origin/Referer must be
+// this exact origin (absent headers rely on the SameSite=Strict cookies).
+const mutationOriginAllowed = request => {
+  if (request.headers.get('Sec-Fetch-Site') === 'cross-site') return false;
+  const origin = request.headers.get('Origin') || request.headers.get('Referer');
+  if (!origin) return true;
+  try { return new URL(origin).origin === new URL(request.url).origin; } catch { return false; }
+};
+const jsonRequest = request => request.headers.get('Content-Type')?.split(';')[0].trim().toLowerCase() === 'application/json';
 
 let cached = { token: null, exp: 0 };
 async function accessToken(env) {
@@ -69,20 +76,42 @@ async function gjson(url, token, init = {}) {
   return d;
 }
 
-async function findOrCreateFolder(token, { name, parent, propKey, propVal }) {
+// Drive query strings escape backslashes first, then single quotes.
+export const driveQueryString = value => `'${String(value).replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`;
+
+async function findFolder(token, { parent, propKey, propVal }) {
   const qParts = [
     `mimeType='application/vnd.google-apps.folder'`,
     'trashed=false',
-    propKey ? `appProperties has { key='${propKey}' and value='${propVal.replace(/'/g, '')}' }` : `name='${name.replace(/'/g, '')}'`,
+    `appProperties has { key=${driveQueryString(propKey)} and value=${driveQueryString(propVal)} }`,
   ];
-  if (parent) qParts.push(`'${parent}' in parents`);
+  if (parent) qParts.push(`${driveQueryString(parent)} in parents`);
   const found = await gjson(`${FILES_URL}?q=${encodeURIComponent(qParts.join(' and '))}&fields=files(id,name)&pageSize=1`, token);
-  if (found.files && found.files.length) return found.files[0].id;
-  const meta = { name, mimeType: 'application/vnd.google-apps.folder' };
+  return found.files && found.files.length ? found.files[0].id : '';
+}
+
+async function createFolder(token, { name, parent, appProperties }) {
+  const meta = { name, mimeType: 'application/vnd.google-apps.folder', appProperties };
   if (parent) meta.parents = [parent];
-  if (propKey) meta.appProperties = { [propKey]: propVal };
   const created = await gjson(`${FILES_URL}?fields=id`, token, { method: 'POST', body: JSON.stringify(meta) });
   return created.id;
+}
+
+async function rootFolder(token) {
+  return await findFolder(token, { propKey: 'egcRoot', propVal: '1' })
+    || createFolder(token, { name: ROOT_NAME, appProperties: { egcRoot: '1' } });
+}
+
+// Legacy egcJobId folders are found first (only ids that fit Drive's limit
+// could ever have been stamped), then egcJobKey; create only when both miss.
+async function jobFolderId(token, { name, parent, jobId }) {
+  const properties = await driveJobProperties(jobId);
+  if (properties.egcJobId) {
+    const legacy = await findFolder(token, { parent, propKey: 'egcJobId', propVal: properties.egcJobId });
+    if (legacy) return legacy;
+  }
+  return await findFolder(token, { parent, propKey: 'egcJobKey', propVal: properties.egcJobKey })
+    || createFolder(token, { name, parent, appProperties: properties });
 }
 
 function dataUrlToBytes(dataUrl) {
@@ -116,9 +145,10 @@ async function uploadOne(token, folderId, name, pic) {
   if (!r.ok) throw new Error('upload ' + r.status);
 }
 
-export async function onRequestOptions() {
+export async function onRequestOptions({ request }) {
+  if (!mutationOriginAllowed(request)) return new Response(null, { status: 403 });
   return new Response(null, { status: 204, headers: {
-    'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' } });
+    Allow: 'POST, OPTIONS', 'Access-Control-Allow-Methods': 'POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' } });
 }
 
 export async function onRequestGet() {
@@ -127,9 +157,10 @@ export async function onRequestGet() {
 
 export async function onRequestPost({ request, env }) {
   const json = (status, body) => new Response(JSON.stringify(body), {
-    status, headers: { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-store' } });
+    status, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' } });
 
-  if (!originAllowed(request)) return json(403, { ok: false, error: 'Forbidden origin' });
+  if (!mutationOriginAllowed(request)) return json(403, { ok: false, code: 'DRIVE_UPLOAD_ORIGIN_FORBIDDEN', error: 'Forbidden origin' });
+  if (!jsonRequest(request)) return json(415, { ok: false, code: 'DRIVE_UPLOAD_JSON_REQUIRED', error: 'Photo uploads must be sent as JSON.' });
   const hubSession = await getHubSession(request, env);
   const portalSession = await getCustomerPortalSession(request, env);
   if (!hubSession && !portalSession) return json(401, { ok: false, error: 'Sign in to the EGC Hub or open a private customer link' });
@@ -150,10 +181,12 @@ export async function onRequestPost({ request, env }) {
   if (customerUpload && !customerSession) return json(401, { ok: false, code: 'CUSTOMER_PORTAL_AUTH_REQUIRED', error: 'Open your private customer link before uploading photos' });
   if (customerSession?.actorId) return json(403, { ok: false, error: 'Only the primary customer can upload project photos' });
 
-  const jobId = customerSession ? customerSession.jobId : String(body.jobId || '').trim().slice(0, 60);
+  // Job ids are never truncated: a shortened id could read or file under another job.
+  const jobId = customerSession ? customerSession.jobId : String(body.jobId || '').trim();
   const label = customerSession ? 'Customer uploads' : (String(body.label || 'EGC job').trim().slice(0, 120) || 'EGC job');
   const photos = Array.isArray(body.photos) ? body.photos.slice(0, customerSession ? MAX_CUSTOMER_PHOTOS : MAX_PHOTOS) : [];
   if (!jobId) return json(400, { ok: false, error: 'jobId required' });
+  if (!fieldId(jobId)) return json(400, { ok: false, error: 'A valid jobId is required' });
   if (!photos.length) return json(400, { ok: false, error: 'No photos in batch' });
   const preparedPhotos = photos.map(photo => ({ photo, pic: dataUrlToBytes(photo.dataUrl) }));
   if (preparedPhotos.some(item => !item.pic)) {
@@ -177,8 +210,8 @@ export async function onRequestPost({ request, env }) {
 
   try {
     const token = await accessToken(env);
-    const rootId = await findOrCreateFolder(token, { name: ROOT_NAME, propKey: 'egcRoot', propVal: '1' });
-    const folderId = await findOrCreateFolder(token, { name: label, parent: rootId, propKey: 'egcJobId', propVal: jobId });
+    const rootId = await rootFolder(token);
+    const folderId = await jobFolderId(token, { name: label, parent: rootId, jobId });
 
     const uploaded = [];
     for (const { photo: p, pic } of preparedPhotos) {

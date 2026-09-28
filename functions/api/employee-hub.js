@@ -1,25 +1,21 @@
 import { getHubSession, hasBusinessAccess, listHubUserProfiles } from '../_lib/hub-session.js';
+import { OWNER_USERNAME } from '../_lib/business-users.js';
 import { firebaseServiceAccountConfigured, firestoreFetch } from '../_lib/firebase-service-account.js';
 import { employeeVaultSecret, employeeVaultReadOnly } from '../_lib/employee-vault-key.js';
+import { EMPLOYEE_HUB_COLLECTIONS, expectedDocument, firestoreDoc, readAll, readCollection, readOne, seal, unreadableStorage, writeOne } from '../_lib/employee-vault.js';
 import { createJobAssignmentAccess } from '../_lib/job-assignment.js';
 import { listEmployeeApplications, normalizeEmployeeUsername } from '../_lib/employee-accounts.js';
 import { activeTimecard, authorizeTimecard, timecardError } from '../_lib/employee-timecards.js';
 import { activeJobSegment, employeeJobTime, ownJobTimeProjection } from '../_lib/employee-job-time.js';
+import { legacyManagerProfile, legacyProfileView, mirrorLegacyPay, profileHourlyRate } from '../_lib/staff-directory.js';
+import { incomingPay, seesOthersPay, visiblePay } from '../_lib/pay-visibility.js';
 
 const PROJECT_ID = 'egcw-1ec83';
-const RECORD_TYPE = 'employee_hub_v2';
-const COLLECTIONS = new Set(['profiles', 'timeEntries', 'announcements', 'requests', 'incidents', 'equipment', 'training', 'teamMessages', 'jobMessages', 'messageReads']);
+const COLLECTIONS = EMPLOYEE_HUB_COLLECTIONS;
 const TRAINING_VERSION = '2026-09-employee-os-v1';
 const TRAINING_CHECKS = new Map([['welcome', { answer: 1 }], ['safety', { answer: 2, supervisor: true }], ['property', { answer: 1 }], ['truck', { answer: 1, supervisor: true }], ['proof', { answer: 1 }], ['closeout', { answer: 0 }]]);
 const HOST = /^(?:easygaragecleaning\.com|www\.easygaragecleaning\.com|easy-garage-cleaning\.pages\.dev|localhost(?::\d+)?|127\.0\.0\.1(?::\d+)?)$/;
-const encoder = new TextEncoder();
 const isRecord = value => value !== null && typeof value === 'object' && !Array.isArray(value);
-
-function unreadableStorage() {
-  const error = new Error('Employee records could not be read safely. Please contact the Hub administrator.');
-  error.code = 'EMPLOYEE_HUB_STORAGE_UNREADABLE';
-  return error;
-}
 
 function reply(status, body) {
   return new Response(JSON.stringify(body), {
@@ -35,69 +31,8 @@ function allowed(request) {
   try { return HOST.test(new URL(raw).host); } catch { return false; }
 }
 
-function base64Url(bytes) {
-  let binary = '';
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
-}
-
-function fromBase64Url(value) {
-  const padded = String(value).replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((String(value).length + 3) % 4);
-  return Uint8Array.from(atob(padded), char => char.charCodeAt(0));
-}
-
 function vaultSecret(env) {
   return employeeVaultSecret(env);
-}
-
-async function encryptionKey(env) {
-  const digest = await crypto.subtle.digest('SHA-256', encoder.encode(`${vaultSecret(env)}:employee-hub-v2:data`));
-  return crypto.subtle.importKey('raw', digest, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
-}
-
-async function opaqueId(env, collection, id) {
-  const key = await crypto.subtle.importKey('raw', encoder.encode(vaultSecret(env)), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
-  return `secure_${base64Url(new Uint8Array(await crypto.subtle.sign('HMAC', key, encoder.encode(`${collection}:${id}`))))}`;
-}
-
-async function seal(env, documentId, payload) {
-  const iv = crypto.getRandomValues(new Uint8Array(12));
-  const encrypted = await crypto.subtle.encrypt(
-    { name: 'AES-GCM', iv, additionalData: encoder.encode(documentId) },
-    await encryptionKey(env),
-    encoder.encode(JSON.stringify(payload)),
-  );
-  return { iv: base64Url(iv), payload: base64Url(new Uint8Array(encrypted)) };
-}
-
-async function open(env, documentId, iv, payload) {
-  const clear = await crypto.subtle.decrypt(
-    { name: 'AES-GCM', iv: fromBase64Url(iv), additionalData: encoder.encode(documentId) },
-    await encryptionKey(env),
-    fromBase64Url(payload),
-  );
-  return JSON.parse(new TextDecoder().decode(clear));
-}
-
-const stringField = value => ({ stringValue: String(value ?? '') });
-
-function firestoreDoc(collection, documentId, encrypted, updatedAt) {
-  return { fields: {
-    recordType: stringField(RECORD_TYPE),
-    employeeHubType: stringField(collection),
-    sealedPayload: stringField(encrypted.payload),
-    sealedIv: stringField(encrypted.iv),
-    schemaVersion: { integerValue: '2' },
-    updatedAt: stringField(updatedAt),
-    vaultId: stringField(documentId),
-  } };
-}
-
-function valueOf(field) {
-  if (!field) return undefined;
-  if ('stringValue' in field) return field.stringValue;
-  if ('integerValue' in field) return Number(field.integerValue);
-  return undefined;
 }
 
 function decodeValue(field) {
@@ -124,112 +59,18 @@ async function readJob(env, id) {
   return { ...Object.fromEntries(Object.entries(document.fields || {}).map(([key, value]) => [key, decodeValue(value)])), id: safeId, __updateTime: document.updateTime || '' };
 }
 
-function parseFirestoreDocument(document) {
-  const fields = document?.fields || {};
-  const stored = {
-    documentId: String(document?.name || '').split('/').pop(),
-    collection: valueOf(fields.employeeHubType),
-    updateTime: typeof document?.updateTime === 'string' ? document.updateTime : '',
-    payload: valueOf(fields.sealedPayload),
-    iv: valueOf(fields.sealedIv),
-  };
-  if (!stored.documentId || !(COLLECTIONS.has(stored.collection) || stored.collection === 'timeLocks') ||
-      valueOf(fields.recordType) !== RECORD_TYPE ||
-      valueOf(fields.vaultId) !== stored.documentId ||
-      valueOf(fields.schemaVersion) !== 2 ||
-      typeof stored.payload !== 'string' || !stored.payload ||
-      typeof stored.iv !== 'string' || !stored.iv) throw unreadableStorage();
-  return stored;
-}
-
-async function openStored(env, stored) {
-  try {
-    const data = await open(env, stored.documentId, stored.iv, stored.payload);
-    if (!isRecord(data) || typeof data.id !== 'string' || !data.id ||
-        await opaqueId(env, stored.collection, data.id) !== stored.documentId) throw unreadableStorage();
-    return data;
-  } catch {
-    throw unreadableStorage();
-  }
-}
-
-async function readOne(env, collection, id) {
-  const documentId = await opaqueId(env, collection, id);
-  const physicalCollection = collection === 'timeLocks' ? 'employee_time_locks' : 'jobs';
-  const url = `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents/${physicalCollection}/${encodeURIComponent(documentId)}`;
-  const response = await firestoreFetch(env, url);
-  if (response.status === 404) return { documentId, data: null };
-  if (!response.ok) throw new Error(`Employee Hub storage read failed (${response.status})`);
-  const stored = parseFirestoreDocument(await response.json().catch(() => { throw unreadableStorage(); }));
-  if (stored.documentId !== documentId || stored.collection !== collection) throw unreadableStorage();
-  return { documentId, updateTime: stored.updateTime, data: await openStored(env, stored) };
-}
-
-async function readAll(env) {
-  const url = `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents:runQuery`;
-  const response = await firestoreFetch(env, url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ structuredQuery: {
-      from: [{ collectionId: 'jobs' }],
-      where: { fieldFilter: { field: { fieldPath: 'recordType' }, op: 'EQUAL', value: stringField(RECORD_TYPE) } },
-    } }),
-  });
-  if (!response.ok) throw new Error(`Employee Hub storage query failed (${response.status})`);
-  const rows = await response.json().catch(() => { throw unreadableStorage(); });
-  if (!Array.isArray(rows)) throw unreadableStorage();
-  const decoded = [];
-  for (const row of rows) {
-    if (!isRecord(row) || row.error) throw unreadableStorage();
-    if (!row.document) {
-      if (typeof row.readTime !== 'string') throw unreadableStorage();
-      continue;
-    }
-    const stored = parseFirestoreDocument(row.document);
-    if (!COLLECTIONS.has(stored.collection)) throw unreadableStorage();
-    decoded.push({ collection: stored.collection, data: await openStored(env, stored) });
-  }
-  return decoded;
-}
-
 // Server integrations read authoritative approved timecards through the same vault.
 export async function readEmployeeTimecards(env) {
-  return (await readAll(env)).filter(row => row.collection === 'timeEntries').map(row => row.data);
+  return readCollection(env, 'timeEntries');
 }
 
-async function writeOne(env, collection, id, data, expected = null) {
-  const documentId = await opaqueId(env, collection, id);
-  const updatedAt = new Date().toISOString();
-  const encrypted = await seal(env, documentId, { ...data, id, updatedAt: data.updatedAt || updatedAt });
-  const url = `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents/jobs/${encodeURIComponent(documentId)}`;
-  const guardedUrl = new URL(url);
-  if (expected) {
-    if (!expected.data) guardedUrl.searchParams.set('currentDocument.exists', 'false');
-    else if (expected.updateTime) guardedUrl.searchParams.set('currentDocument.updateTime', expected.updateTime);
-    else throw unreadableStorage();
-  }
-  const response = await firestoreFetch(env, guardedUrl, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(firestoreDoc(collection, documentId, encrypted, updatedAt)),
-  });
-  if (!response.ok) {
-    const failure = await response.json().catch(() => ({}));
-    if (expected && ([409, 412].includes(response.status) ||
-        ['FAILED_PRECONDITION', 'ABORTED', 'ALREADY_EXISTS', 'NOT_FOUND'].includes(failure.error?.status))) {
-      const conflict = new Error('Employee record changed while saving. Refresh and retry.');
-      conflict.code = 'EMPLOYEE_HUB_WRITE_CONFLICT';
-      throw conflict;
-    }
-    throw new Error(`Employee Hub storage write failed (${response.status})`);
-  }
-  return { ...data, id, updatedAt: data.updatedAt || updatedAt };
-}
-
-function expectedDocument(target) {
-  if (!target.data) return { exists: false };
-  if (!target.updateTime) throw unreadableStorage();
-  return { updateTime: target.updateTime };
+// Payroll reads timecards and time-off requests through the per-family vault reads
+// (readCollection: one query per family, whole-vault fallback when the index is
+// missing or EGC_EMPLOYEE_VAULT_QUERY=legacy). Returns {name: records[]} for each name.
+export async function readEmployeeHubRecords(env, names) {
+  const records = Object.fromEntries(names.map(name => [name, []]));
+  for (const name of Object.keys(records)) records[name] = await readCollection(env, name);
+  return records;
 }
 
 async function writeTimecard(env, session, id, data, target) {
@@ -328,17 +169,17 @@ function configuredProfiles(env) {
   }));
 }
 
-async function employeeRate(env, session) {
+// The rate in effect today (Denver) from the staff directory's pay schedule, else the profile rate.
+async function employeeRate(env, session, now) {
   const profile = await readEmployeeProfile(env, session.user);
-  const rate = Number(profile.data?.hourlyRate);
-  return Number.isFinite(rate) && rate >= 0 ? rate : Math.max(0, Number(session.hourlyRate || 0));
+  return profileHourlyRate(profile.data, now) ?? Math.max(0, Number(session.hourlyRate || 0));
 }
 
 async function authorizeMutation(env, session, collection, id, incoming, existing) {
   const now = new Date().toISOString();
   if (collection === 'timeEntries') return authorizeTimecard({ session, manager: manager(session), id, incoming, existing,
-    hourlyRate: existing?.hourlyRate ?? await employeeRate(env, session), now });
-  if (manager(session) && !(collection === 'training' && incoming.moduleId)) return { ...(existing || {}), ...incoming, id };
+    hourlyRate: existing?.hourlyRate ?? await employeeRate(env, session, now), now, env });
+  if (manager(session) && !(collection === 'training' && incoming.moduleId)) return collection === 'profiles' ? legacyManagerProfile({ env, session, existing, incoming, id, now }) : { ...(existing || {}), ...incoming, id };
 
   if (collection === 'profiles') {
     if (id !== personKey(session.user)) throw new Error('You can only update your own employee profile');
@@ -375,11 +216,11 @@ async function authorizeMutation(env, session, collection, id, incoming, existin
       locationVerifiedAt: text(incoming.locationVerifiedAt, 40),
       locationVerificationAccuracy: Math.max(0, Math.min(10000, Number(incoming.locationVerificationAccuracy || 0))),
     } : {};
-    return {
+    return mirrorLegacyPay(existing, {
       ...(existing || {}), ...onboarding, id, username: session.user, displayName: session.displayName,
-      role: session.role, payType: session.payType, hourlyRate: await employeeRate(env, session),
+      role: session.role, payType: session.payType, hourlyRate: await employeeRate(env, session, now),
       status: 'active', lastSeenAt: now,
-    };
+    }, now);
   }
 
   if (collection === 'announcements') {
@@ -391,7 +232,9 @@ async function authorizeMutation(env, session, collection, id, incoming, existin
 
   if (collection === 'requests') {
     if (existing) throw new Error('Only a manager can change a submitted request');
-    return { ...incoming, id, employee: session.user, status: 'pending', reviewedBy: '', reviewedAt: '' };
+    // Paid time-off hours and weekend pay are set by a manager; an employee request cannot pre-fill them.
+    const { paidHoursPerDay, paidWeekends, ...requested } = incoming;
+    return { ...requested, id, employee: session.user, status: 'pending', reviewedBy: '', reviewedAt: '' };
   }
 
   if (collection === 'training') {
@@ -445,7 +288,7 @@ export async function onRequestGet({ request, env }) {
   const session = await getHubSession(request, env);
   if (!session) return reply(401, { ok: false, error: 'Sign in required' });
   const includeAccounts = new URL(request.url).searchParams.get('include') === 'accounts';
-  if (includeAccounts && (!manager(session) || normalizeEmployeeUsername(session.user) !== 'zacb')) {
+  if (includeAccounts && (!manager(session) || normalizeEmployeeUsername(session.user) !== OWNER_USERNAME)) {
     return reply(403, { ok: false, error: 'Only Zac can approve employee accounts' });
   }
   if (!vaultSecret(env) || !firebaseServiceAccountConfigured(env)) return reply(503, { ok: false, error: 'Employee Hub storage is not configured' });
@@ -481,7 +324,7 @@ export async function onRequestGet({ request, env }) {
       }
       return reply(200, { ok: true, jobId, asOf: now, employees: [...employees.values()], legacyAssociationOnlyCount, needsReviewCount, source: 'explicit_employee_job_segments' });
     }
-    const rows = await readAll(env);
+    const rows = await readAll(env), viewedAt = new Date().toISOString();
     const collections = Object.fromEntries([...COLLECTIONS].map(name => [name, []]));
     const jobAccess = new Map();
     const assignments = createJobAssignmentAccess(env, session);
@@ -526,8 +369,10 @@ export async function onRequestGet({ request, env }) {
         status: account.status === 'approved' ? profile.status : 'inactive',
         awaitingFirstSignIn: account.status === 'approved' && !profile.lastSeenAt && !profile.onboardingCompletedAt,
       } : profile;
-    });
-    return reply(200, { ok: true, collections, ...(includeAccounts ? { accounts } : {}) });
+    }).map(profile => legacyProfileView(profile, viewedAt));
+    // Other employees' pay goes to the owner only (EGC_STAFF_PAY_OWNER_ONLY); hours stay visible to managers.
+    for (const name of ['profiles', 'timeEntries']) collections[name] = collections[name].map(row => visiblePay(session, env, name, row));
+    return reply(200, { ok: true, collections, payVisibility: seesOthersPay(session, env) ? 'all' : 'own', ...(includeAccounts ? { accounts } : {}) });
   } catch (error) {
     return reply(502, { ok: false, ...(error.code ? { code: error.code } : {}), error: String(error.message || 'Employee Hub storage failed') });
   }
@@ -573,10 +418,11 @@ export async function onRequestPost({ request, env }) {
       }
       // A different vault key changes IDs; a 404 alone cannot prove this is new.
       if (!current.data) await readAll(env);
-      const data = await authorizeMutation(env, session, collection, id, incoming, current.data);
+      const data = await authorizeMutation(env, session, collection, id, incomingPay(session, env, collection, incoming, current.data), current.data);
       try {
-        if (collection === 'timeEntries') return reply(200, { ok: true, record: await writeTimecard(env, session, id, data, target) });
-        return reply(200, { ok: true, record: await writeOne(env, collection, id, data, collection === 'profiles' ? target : null) });
+        if (collection === 'timeEntries') return reply(200, { ok: true, record: visiblePay(session, env, collection, await writeTimecard(env, session, id, data, target)) });
+        const saved = await writeOne(env, collection, id, data, collection === 'profiles' ? target : null);
+        return reply(200, { ok: true, record: visiblePay(session, env, collection, collection === 'profiles' ? legacyProfileView(saved, new Date().toISOString()) : saved) });
       } catch (error) {
         if (error.code !== 'EMPLOYEE_HUB_WRITE_CONFLICT' || attempt + 1 === attempts) throw error;
       }

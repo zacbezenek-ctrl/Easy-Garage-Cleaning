@@ -34,6 +34,7 @@
 <script type="application/ld+json">{"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [{"@type": "Question", "name": "Do you serve Old Town Fort Collins?", "acceptedAnswer": {"@type": "Answer", "text": "Yes — daily routes through Old Town, Midtown, and all Fort Collins neighborhoods."}}, {"@type": "Question", "name": "Can you access narrow Old Town alleys?", "acceptedAnswer": {"@type": "Answer", "text": "Yes — note alley or gate access when you text photos so we bring the right truck."}}, {"@type": "Question", "name": "How much does junk removal cost in Old Town?", "acceptedAnswer": {"@type": "Answer", "text": "$99–$150 single item, $300–$400 small load, $400–$650 typical garage. Flat-rate locked before work."}}, {"@type": "Question", "name": "Detached garage cleanouts in Old Town?", "acceptedAnswer": {"@type": "Answer", "text": "Common job type — we empty, donate, and sweep so you can park again."}}, {"@type": "Question", "name": "Next-day service in Old Town?", "acceptedAnswer": {"@type": "Answer", "text": "Often available — text photos for fastest scheduling."}}, {"@type": "Question", "name": "Estate or multi-room cleanouts?", "acceptedAnswer": {"@type": "Answer", "text": "Yes — quoted individually from photos, typically $650+ for full-property hauls."}}, {"@type": "Question", "name": "Donation receipts?", "acceptedAnswer": {"@type": "Answer", "text": "Included for usable goods dropped at Habitat ReStore Fort Collins."}}, {"@type": "Question", "name": "Who does the work?", "acceptedAnswer": {"@type": "Answer", "text": "Owner Zac Bezenek and local crew — Fort Collins LLC, fully insured."}}]}</script>
 <script type="application/ld+json">{"@context": "https://schema.org", "@type": "WebPage", "@id": "https://easygaragecleaning.com/old-town-fort-collins-junk-removal#webpage", "url": "https://easygaragecleaning.com/old-town-fort-collins-junk-removal", "name": "Old Town Junk Removal Fort Collins | Easy Garage", "description": "Junk removal & garage cleanout in Old Town Fort Collins. Historic homes, narrow detached garages. Flat-rate, insured, free on-site walkthrough.", "isPartOf": {"@id": "https://easygaragecleaning.com/#website"}, "about": {"@id": "https://easygaragecleaning.com/#business"}, "speakable": {"@type": "SpeakableSpecification", "cssSelector": [".hero-sub", ".faq-q", ".faq-a", ".def-block"]}}</script>
 <link rel="stylesheet" href="/styles.css?v=20260904j">
+<style id="footer-tap">@media(max-width:640px){.site-footer .foot-brand a,.site-footer .foot-col a,.site-footer .foot-bar a{display:inline-flex;align-items:center;min-height:44px}}</style>
 </head>
 <body>
 <a href="#main-content" class="skip-link">Skip to content</a>
@@ -98,7 +99,7 @@
   </div>
 </nav>
 <div class="nav-overlay" id="nav-overlay" aria-hidden="true"></div>
-<aside class="nav-drawer" id="nav-drawer" aria-hidden="true" aria-label="Mobile navigation">
+<aside class="nav-drawer" id="nav-drawer" aria-hidden="true" aria-label="Mobile navigation" inert>
   <div class="nav-drawer-head">
     <span class="logo"><span class="logo-mark"></span>Easy Garage</span>
     <button type="button" class="nav-drawer-close" aria-label="Close menu">&times;</button>
@@ -438,6 +439,7 @@ function initNavDrawer(){
   if(toggle.dataset.navBound)return;
   toggle.dataset.navBound='1';
   let returnFocus=null;
+  drawer.inert=!drawer.classList.contains('open');
   const background=[...document.body.children].filter(el=>el!==drawer&&el!==overlay&&el.tagName!=='SCRIPT');
   const focusable=()=>[...drawer.querySelectorAll('a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])')].filter(el=>!el.hidden&&el.offsetParent!==null);
   function setOpen(open){
@@ -445,6 +447,7 @@ function initNavDrawer(){
     toggle.setAttribute('aria-expanded',open);
     drawer.classList.toggle('open',open);
     drawer.setAttribute('aria-hidden',String(!open));
+    drawer.inert=!open;
     if(overlay){overlay.classList.toggle('open',open);overlay.setAttribute('aria-hidden',String(!open));}
     document.body.classList.toggle('nav-open',open);
     background.forEach(el=>{el.inert=open;});

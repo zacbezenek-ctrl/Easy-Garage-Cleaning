@@ -1,9 +1,13 @@
 import {registerCustomerStateTools,canonicalOperationalReport,canonicalFunnel} from './customer-state-tools.js';
-import {getCustomerTimeline,OPERATIONAL_STATES} from '@egc/customer-state';
+import {getCustomerTimeline} from '@egc/customer-state';
 import {registerPortalRecordTools} from "./portal-record-tools.js";
 import {verifyOperationsOnStart} from "./operations-smoke.js";
-import {executeCommunication,reconcileCommunication} from "./communication-execution.js";
-import {registerOperationsTools,operationsPrincipal,operationsEnabled,OPERATIONS_WRITE_TOOLS,LEGACY_MUTATIONS_DISABLED,callOperations} from "./operations.js";
+import {executeCommunication,reconcileCommunication,preflightRecipient,persistOutboundMessage} from "./communication-execution.js";
+import {registerOperationsTools,operationsPrincipal,operationsEnabled,blockedToolCall,directSendsBlocked,DIRECT_SEND_DISABLED,callOperations,runAsPrincipal,type Principal} from "./operations.js";
+import {registerDomainTools,DOMAIN_TOOLS} from "./tools/index.js";
+import type {RegisterOptions} from "./tools/define.js";
+import {taskPrioritySchema,taskStatusSchema,withCanonicalContexts} from "./tools/domains/crm-reads.js";
+import {connectorMode} from "./tools/domains/policy.js";
 import {registerRecordingTools} from "./recording-tools.js";
 import express from "express";
 import {ReliableAppointments,AppointmentOperationError} from "./appointment-reliability.js";
@@ -13,12 +17,12 @@ import {pathToFileURL} from "node:url";
 import { toNodeHandler } from "@modelcontextprotocol/node";
 import { createMcpHandler, McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod/v4";
-import { and, desc, eq, gte, ilike, inArray, isNull, lt, lte, or, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNull, lt, lte, or, sql } from "drizzle-orm";
 import { getDb, schema } from "@egc/database";
 import { approveLegacyWalkthrough, isManagedWalkthrough, LegacyWalkthroughError } from "@egc/operations";
 import { walkthroughExtractionSchema } from "@egc/schemas";
 import { GhlClient, asDate, asRecord, asString, findArray } from "@egc/ghl";
-import { authenticatedMcpPrincipal, authorizeMcpRequest, mcpAuthenticateChallenge, oauthSecurityMetadata, READ_SCOPE, registerOauthRoutes, WRITE_SCOPE } from "./oauth.js";
+import { mcpAuthenticateChallenge, oauthSecurityMetadata, READ_SCOPE, registerOauthRoutes, verifiedMcpPrincipal, WRITE_SCOPE, type VerifiedMcpPrincipal } from "./oauth.js";
 import { registerMetaConversionTools } from "./meta-conversion-tools.js";
 import { requiredToolScope } from "./tool-access.js";
 import { verifyMetaConversionsOnStart } from "./meta-conversion-smoke.js";
@@ -32,22 +36,14 @@ import {
   recomputeLeadState
 } from "@egc/lead-audit";
 
+// Audit rows name the verified MCP principal set by the /mcp middleware, never a fixed client label.
+const auditActor=()=>operationsPrincipal.getStore()?.id??"unverified";
+
 function textResult(value: unknown) {
   return {
     content: [{ type: "text" as const, text: JSON.stringify(value, null, 2) }],
     structuredContent: { result: value }
   };
-}
-
-async function canonicalReadContexts(contactIds:string[]):Promise<Map<string,Record<string,unknown>>> {
-  if(!contactIds.length)return new Map<string,Record<string,unknown>>();
-  const rows=await getDb().select().from(schema.customerStateSnapshots).where(inArray(schema.customerStateSnapshots.contactId,[...new Set(contactIds)]));
-  return new Map(rows.map(row=>[row.contactId,{...row.snapshot,coverage:row.coverage,lastReconciledAt:row.lastReconciledAt}]));
-}
-
-async function withCanonicalContexts<T extends {contactId:string}>(rows:T[]) {
-  const canonical=await canonicalReadContexts(rows.map(row=>row.contactId));
-  return rows.map(row=>({...row,operational:canonical.get(row.contactId)??{coverage:{complete:false,error:'customer_not_reconciled'}}}));
 }
 
 const protectedToolMetadata = {
@@ -189,8 +185,6 @@ const appointmentMutationSchema = z.object({
   ignoreFreeSlotValidation: z.boolean().default(false)
 });
 
-const taskPrioritySchema = z.enum(["low", "medium", "high", "urgent"]);
-const taskStatusSchema = z.enum(["open", "in_progress", "blocked", "completed", "cancelled"]);
 const taskMutationSchema = z.object({
   title: z.string().min(1).max(500).optional(),
   description: z.string().max(5000).nullable().optional(),
@@ -418,68 +412,6 @@ function normalizedComparableText(value: string | null | undefined) {
     .replace(/\s+/g, " ");
 }
 
-async function persistOutboundMessage(input: {
-  contactId: string;
-  contactProviderId: string;
-  channel: "SMS" | "Email";
-  body: string;
-  providerMessageId: string;
-  conversationProviderId: string;
-  providerPayload: Record<string, unknown>;
-  occurredAt?: Date;
-}) {
-  const db = getDb();
-  const occurredAt = input.occurredAt ?? new Date();
-
-  const [conversation] = await db.insert(schema.conversations).values({
-    providerId: input.conversationProviderId,
-    contactId: input.contactId,
-    raw: {
-      id: input.conversationProviderId,
-      contactId: input.contactProviderId,
-      locationId: ghlClient().locationId
-    }
-  }).onConflictDoUpdate({
-    target: schema.conversations.providerId,
-    set: {
-      contactId: input.contactId,
-      raw: {
-        id: input.conversationProviderId,
-        contactId: input.contactProviderId,
-        locationId: ghlClient().locationId
-      },
-      updatedAt: new Date()
-    }
-  }).returning();
-
-  await db.insert(schema.messages).values({
-    providerId: input.providerMessageId,
-    conversationId: conversation?.id ?? null,
-    contactId: input.contactId,
-    type: input.channel === "SMS" ? "TYPE_SMS" : "TYPE_EMAIL",
-    direction: "outbound",
-    actorType: "automation",
-    body: input.body,
-    occurredAt,
-    raw: input.providerPayload
-  }).onConflictDoUpdate({
-    target: schema.messages.providerId,
-    set: {
-      conversationId: conversation?.id ?? null,
-      contactId: input.contactId,
-      type: input.channel === "SMS" ? "TYPE_SMS" : "TYPE_EMAIL",
-      direction: "outbound",
-      actorType: "automation",
-      body: input.body,
-      occurredAt,
-      raw: input.providerPayload,
-      updatedAt: new Date()
-    }
-  });
-
-  await recomputeLeadState(input.contactId);
-}
-
 async function findRecentDuplicateOutbound(input: {
   contactId: string;
   body: string;
@@ -554,23 +486,16 @@ async function sendConversationMessage(input: {
   requestId:string;contactId:string;channel:"SMS"|"Email";body:string;subject?:string|undefined;
   emailFrom?:string|undefined;emailTo?:string|undefined;fromNumber?:string|undefined;toNumber?:string|undefined;duplicateWindowMinutes?:number;
 }) {
+  if(directSendsBlocked())return {ok:false,...DIRECT_SEND_DISABLED};
   const db=getDb(),actor=operationsPrincipal.getStore();
   if(!actor)return {ok:false,error:"verified_principal_required"};
-  const [contact]=await db.select().from(schema.contacts).where(eq(schema.contacts.id,input.contactId)).limit(1);
-  if(!contact)return {ok:false,error:"contact_not_found"};
-  const [lead]=await db.select({dnd:schema.leads.doNotContact}).from(schema.leads).where(eq(schema.leads.contactId,input.contactId)).limit(1);
-  const provider=ghlClient();
-  let live:Record<string,unknown>;
-  try{const response=await provider.getContact(contact.providerId);live=asRecord(response.contact??response);}catch{return {ok:false,error:"contact_preflight_unavailable"};}
-  const restriction=asRecord(asRecord(live.dndSettings)[input.channel]);
-  if(lead?.dnd||live.dnd===true||restriction.status==="active")return {ok:false,error:"contact_do_not_contact"};
-  const phone=asString(live.phone),email=asString(live.email);
-  if(input.channel==="SMS" && (!phone || (input.toNumber && input.toNumber.replace(/\D/g,"")!==phone.replace(/\D/g,""))))return {ok:false,error:"verified_contact_phone_required"};
-  if(input.channel==="Email" && (!email || (input.emailTo && input.emailTo.toLowerCase()!==email.toLowerCase())))return {ok:false,error:"verified_contact_email_required"};
+  const verified=await preflightRecipient({contactId:input.contactId,channel:input.channel,toNumber:input.toNumber,emailTo:input.emailTo},ghlClient,db);
+  if(!verified.ok)return {ok:false,error:verified.error};
+  const {contact,provider,phone,email}=verified;
   const payload={type:input.channel,contactId:contact.providerId,message:input.body,...(input.channel==="SMS"?{toNumber:phone,fromNumber:input.fromNumber}:{emailTo:email,emailFrom:input.emailFrom,subject:input.subject})};
   const result=await executeCommunication({requestId:input.requestId,actorId:actor.id,contactId:input.contactId,payload,...(input.duplicateWindowMinutes?{duplicateWindowMinutes:input.duplicateWindowMinutes}:{})},provider,db);
   if("providerMessage" in result && result.providerMessage && result.messageId && result.conversationId) {
-    await persistOutboundMessage({contactId:input.contactId,contactProviderId:contact.providerId,channel:input.channel,body:input.body,providerMessageId:result.messageId,conversationProviderId:result.conversationId,providerPayload:result.providerMessage,occurredAt:asDate(result.providerMessage.dateAdded)??new Date()});
+    await persistOutboundMessage({contactId:input.contactId,contactProviderId:contact.providerId,locationId:provider.locationId,channel:input.channel,body:input.body,providerMessageId:result.messageId,conversationProviderId:result.conversationId,providerPayload:result.providerMessage,occurredAt:asDate(result.providerMessage.dateAdded)??new Date()},db);
     const {providerMessage:_,...receipt}=result;return receipt;
   }
   return result;
@@ -648,7 +573,7 @@ async function ensureAppointment(input: {
   }
 
   await db.insert(schema.auditLogs).values({
-    actor: operationsPrincipal.getStore()?.id??"chatgpt-mcp",
+    actor: auditActor(),
     action: source === "created" ? "ghl.appointment.create" : "ghl.appointment.ensure",
     entity: "appointment",
     entityId: appointment.id,
@@ -1052,7 +977,8 @@ function mappedName(
   return mappings.get(`${resourceType}:${providerId}`) ?? providerId;
 }
 
-export function buildServer() {
+/** options reach the registry tools; tests inject the clock here. */
+export function buildServer(options: RegisterOptions = {}) {
   const server = new McpServer(
     { name: "easy-garage-cleaning", version: "0.1.0" },
     { capabilities: { tools: { listChanged: false } } }
@@ -1064,6 +990,7 @@ export function buildServer() {
   registerSchedulingTools(server,synchronizeHubVisit);
   registerMetaConversionTools(server);
   registerCustomerStateTools(server);
+  registerDomainTools(server, options);
 
   server.registerTool("ghl.pipelines", {
     description: "Return live GHL opportunity pipelines and stages for the EGC location. Use this to resolve pipeline and stage IDs before opportunity writes.",
@@ -1088,346 +1015,6 @@ export function buildServer() {
     const companyId = asString(location.companyId);
     if (!companyId) return textResult({ error: "ghl_company_id_not_found" });
     return textResult(await ghl.searchUsers(companyId));
-  });
-
-  server.registerTool("contacts.search", {
-    description: "Search EGC contacts by name, phone, or email with canonical evidence-backed operational state. Provider fields are preserved separately from operational truth.",
-    inputSchema: z.object({
-      query: z.string().trim().max(200).default(""),
-      limit: z.number().int().min(1).max(200).default(50)
-    }),
-    ...protectedToolMetadata
-  }, async ({ query, limit }) => {
-    const db = getDb();
-    const base = db.select().from(schema.contacts);
-    const rows = query
-      ? await base.where(or(
-          ilike(schema.contacts.name, `%${query}%`),
-          ilike(schema.contacts.phone, `%${query}%`),
-          ilike(schema.contacts.email, `%${query}%`)
-        )).orderBy(desc(schema.contacts.updatedAt)).limit(limit)
-      : await base.orderBy(desc(schema.contacts.updatedAt)).limit(limit);
-    const canonical=await canonicalReadContexts(rows.map(row=>row.id));
-    return textResult(rows.map(row=>({...row,operational:canonical.get(row.id)??{coverage:{complete:false,error:'customer_not_reconciled'}}})));
-  });
-
-  server.registerTool("contacts.get", {
-    description: "Get one normalized EGC contact by internal contact ID.",
-    inputSchema: z.object({ contactId: z.string().uuid() }),
-    ...protectedToolMetadata
-  }, async ({ contactId }) => {
-    const db = getDb();
-    const [row] = await db.select().from(schema.contacts)
-      .where(eq(schema.contacts.id, contactId))
-      .limit(1);
-    return textResult(row?{...row,canonical:await getCustomerTimeline({contactId,refresh:true})}:{ error: "contact_not_found" });
-  });
-
-  server.registerTool("leads.search", {
-    description: "Search recent leads, optionally filtered by canonical lead state.",
-    inputSchema: z.object({
-      state: z.enum([...OPERATIONAL_STATES,
-        "NEVER_CONTACTED",
-        "OUTREACH_ATTEMPTED_NO_REPLY",
-        "CUSTOMER_RESPONDED",
-        "ACTIVE_CONVERSATION",
-        "BOOKED"
-      ]).optional(),
-      days: z.number().int().min(1).max(365).default(30),
-      limit: z.number().int().min(1).max(500).default(100)
-    }),
-    ...protectedToolMetadata
-  }, async ({ state, days, limit }) => {
-    const db = getDb();
-    const since = new Date(Date.now() - days * 86_400_000);
-    const base = db.select({
-      lead: schema.leads,
-      contact: schema.contacts
-    })
-      .from(schema.leads)
-      .innerJoin(schema.contacts, eq(schema.leads.contactId, schema.contacts.id));
-
-    const rows=await base.where(gte(schema.leads.createdAt,since)).orderBy(desc(schema.leads.createdAt)).limit(500);
-    const canonical=await canonicalReadContexts(rows.map(row=>row.contact.id));
-    const enriched=rows.map(row=>{const operational=canonical.get(row.contact.id);return {...row,lead:{...row.lead,providerState:row.lead.currentState,currentState:operational?.state??row.lead.currentState},operational:operational??{coverage:{complete:false,error:'customer_not_reconciled'}}};});
-    const aliases:Record<string,string[]>={NEVER_CONTACTED:['NEW_LEAD'],OUTREACH_ATTEMPTED_NO_REPLY:['OUTREACH_ATTEMPTED'],CUSTOMER_RESPONDED:['TWO_WAY_CONTACT'],ACTIVE_CONVERSATION:['TWO_WAY_CONTACT','QUALIFIED','PRICE_EXPECTATION_ACCEPTED','VIDEO_QUOTE_PENDING_CUSTOMER','VIDEO_QUOTE_RECEIVED','VIDEO_QUOTE_IN_PROGRESS','QUOTE_DELIVERED','FOLLOW_UP_PENDING','CUSTOMER_DECIDING'],BOOKED:['WALKTHROUGH_VERBALLY_BOOKED','WALKTHROUGH_BOOKED','WALKTHROUGH_COMPLETED','JOB_VERBALLY_ACCEPTED','JOB_SOLD','JOB_SCHEDULED','JOB_COMPLETED','CASH_COLLECTED']};
-    return textResult(enriched.filter(row=>!state||row.lead.currentState===state||(aliases[state]??[]).includes(String(row.lead.currentState))).slice(0,limit));
-  });
-
-  server.registerTool("leads.get", {
-    description: "Get one lead with its contact by internal lead ID.",
-    inputSchema: z.object({ leadId: z.string().uuid() }),
-    ...protectedToolMetadata
-  }, async ({ leadId }) => {
-    const db = getDb();
-    const [row] = await db.select({
-      lead: schema.leads,
-      contact: schema.contacts
-    })
-      .from(schema.leads)
-      .innerJoin(schema.contacts, eq(schema.leads.contactId, schema.contacts.id))
-      .where(eq(schema.leads.id, leadId))
-      .limit(1);
-    if(!row)return textResult({error:'lead_not_found'});
-    const canonical=await getCustomerTimeline({contactId:row.contact.id,refresh:true});
-    return textResult({...row,lead:{...row.lead,providerState:row.lead.currentState,currentState:canonical.customer?.state??row.lead.currentState},canonical});
-  });
-
-  server.registerTool("conversations.search", {
-    description: "Return conversations for a contact.",
-    inputSchema: z.object({
-      contactId: z.string().uuid(),
-      limit: z.number().int().min(1).max(200).default(50)
-    }),
-    ...protectedToolMetadata
-  }, async ({ contactId, limit }) => {
-    const db = getDb();
-    return textResult(await db.select().from(schema.conversations)
-      .where(eq(schema.conversations.contactId, contactId))
-      .orderBy(desc(schema.conversations.updatedAt))
-      .limit(limit));
-  });
-
-  server.registerTool("conversations.get", {
-    description: "Get one conversation and its normalized messages.",
-    inputSchema: z.object({
-      conversationId: z.string().uuid(),
-      messageLimit: z.number().int().min(1).max(500).default(100)
-    }),
-    ...protectedToolMetadata
-  }, async ({ conversationId, messageLimit }) => {
-    const db = getDb();
-    const [conversation] = await db.select().from(schema.conversations)
-      .where(eq(schema.conversations.id, conversationId))
-      .limit(1);
-    if (!conversation) return textResult({ error: "conversation_not_found" });
-
-    const messages = await db.select().from(schema.messages)
-      .where(eq(schema.messages.conversationId, conversationId))
-      .orderBy(desc(schema.messages.occurredAt))
-      .limit(messageLimit);
-    return textResult({ conversation, messages });
-  });
-
-  server.registerTool("calls.search", {
-    description: "Search recent normalized calls, optionally for one contact.",
-    inputSchema: z.object({
-      contactId: z.string().uuid().optional(),
-      days: z.number().int().min(1).max(365).default(30),
-      limit: z.number().int().min(1).max(500).default(100)
-    }),
-    ...protectedToolMetadata
-  }, async ({ contactId, days, limit }) => {
-    const db = getDb();
-    const since = new Date(Date.now() - days * 86_400_000);
-    const base = db.select({
-      call: schema.calls,
-      customerName: schema.contacts.name,
-      phone: schema.contacts.phone
-    })
-      .from(schema.calls)
-      .innerJoin(schema.contacts, eq(schema.calls.contactId, schema.contacts.id));
-    const rows = contactId
-      ? await base.where(and(
-          eq(schema.calls.contactId, contactId),
-          gte(schema.calls.startedAt, since)
-        )).orderBy(desc(schema.calls.startedAt)).limit(limit)
-      : await base.where(gte(schema.calls.startedAt, since))
-          .orderBy(desc(schema.calls.startedAt))
-          .limit(limit);
-    return textResult(rows);
-  });
-
-  server.registerTool("calls.get", {
-    description: "Get one call and its persisted transcript.",
-    inputSchema: z.object({ callId: z.string().uuid() }),
-    ...protectedToolMetadata
-  }, async ({ callId }) => {
-    const db = getDb();
-    const [call] = await db.select().from(schema.calls)
-      .where(eq(schema.calls.id, callId))
-      .limit(1);
-    if (!call) return textResult({ error: "call_not_found" });
-    const [transcript] = await db.select().from(schema.callTranscripts)
-      .where(eq(schema.callTranscripts.callId, callId))
-      .limit(1);
-    return textResult({ call, transcript: transcript ?? null });
-  });
-
-  server.registerTool("opportunities.search", {
-    description: "Search normalized GHL opportunities by contact or status.",
-    inputSchema: z.object({
-      contactId: z.string().uuid().optional(),
-      status: z.string().max(50).optional(),
-      limit: z.number().int().min(1).max(500).default(100)
-    }),
-    ...protectedToolMetadata
-  }, async ({ contactId, status, limit }) => {
-    const db = getDb();
-    const conditions = [
-      ...(contactId ? [eq(schema.opportunities.contactId, contactId)] : []),
-      ...(status ? [eq(schema.opportunities.status, status)] : [])
-    ];
-    const rows = conditions.length
-      ? await db.select().from(schema.opportunities)
-          .where(and(...conditions))
-          .orderBy(desc(schema.opportunities.updatedAt))
-          .limit(limit)
-      : await db.select().from(schema.opportunities)
-          .orderBy(desc(schema.opportunities.updatedAt))
-          .limit(limit);
-    return textResult(await withCanonicalContexts(rows));
-  });
-
-  server.registerTool("opportunities.get", {
-    description: "Get one normalized opportunity by internal ID.",
-    inputSchema: z.object({ opportunityId: z.string().uuid() }),
-    ...protectedToolMetadata
-  }, async ({ opportunityId }) => {
-    const db = getDb();
-    const [row] = await db.select().from(schema.opportunities)
-      .where(eq(schema.opportunities.id, opportunityId))
-      .limit(1);
-    return textResult(row?{...row,canonical:await getCustomerTimeline({contactId:row.contactId,refresh:true})}:{error:'opportunity_not_found'});
-  });
-
-  server.registerTool("appointments.search", {
-    description: "Search appointments in a relative time window, optionally for one contact.",
-    inputSchema: z.object({
-      contactId: z.string().uuid().optional(),
-      daysPast: z.number().int().min(0).max(365).default(30),
-      daysFuture: z.number().int().min(0).max(730).default(90),
-      limit: z.number().int().min(1).max(500).default(200)
-    }),
-    ...protectedToolMetadata
-  }, async ({ contactId, daysPast, daysFuture, limit }) => {
-    const db = getDb();
-    const start = new Date(Date.now() - daysPast * 86_400_000);
-    const end = new Date(Date.now() + daysFuture * 86_400_000);
-    const timeConditions = [
-      gte(schema.appointments.appointmentStartAt, start),
-      lt(schema.appointments.appointmentStartAt, end)
-    ];
-    const rows = contactId
-      ? await db.select().from(schema.appointments).where(and(
-          ...timeConditions,
-          eq(schema.appointments.contactId, contactId)
-        )).orderBy(schema.appointments.appointmentStartAt).limit(limit)
-      : await db.select().from(schema.appointments).where(and(...timeConditions))
-          .orderBy(schema.appointments.appointmentStartAt)
-          .limit(limit);
-    return textResult(await withCanonicalContexts(rows));
-  });
-
-  server.registerTool("jobs.search", {
-    description: "Search EGC jobs by contact or status.",
-    inputSchema: z.object({
-      contactId: z.string().uuid().optional(),
-      status: z.string().max(80).optional(),
-      limit: z.number().int().min(1).max(500).default(100)
-    }),
-    ...protectedToolMetadata
-  }, async ({ contactId, status, limit }) => {
-    const db = getDb();
-    const conditions = [
-      ...(contactId ? [eq(schema.jobs.contactId, contactId)] : []),
-      ...(status ? [eq(schema.jobs.status, status)] : [])
-    ];
-    const rows = conditions.length
-      ? await db.select().from(schema.jobs)
-          .where(and(...conditions))
-          .orderBy(desc(schema.jobs.updatedAt))
-          .limit(limit)
-      : await db.select().from(schema.jobs)
-          .orderBy(desc(schema.jobs.updatedAt))
-          .limit(limit);
-    return textResult(await withCanonicalContexts(rows));
-  });
-
-  server.registerTool("jobs.get", {
-    description: "Get one raw normalized EGC job by internal ID.",
-    inputSchema: z.object({ jobId: z.string().uuid() }),
-    ...protectedToolMetadata
-  }, async ({ jobId }) => {
-    const db = getDb();
-    const [row] = await db.select().from(schema.jobs)
-      .where(eq(schema.jobs.id, jobId))
-      .limit(1);
-    return textResult(row?{...row,canonical:await getCustomerTimeline({contactId:row.contactId,refresh:true})}:{error:'job_not_found'});
-  });
-
-  server.registerTool("tasks.search", {
-    description: "Search EGC operational tasks/todos by status, priority, assignment, linked entity, or due date.",
-    inputSchema: z.object({
-      status: taskStatusSchema.optional(),
-      priority: taskPrioritySchema.optional(),
-      assignedUserId: z.string().max(200).optional(),
-      contactId: z.string().uuid().optional(),
-      jobId: z.string().uuid().optional(),
-      opportunityId: z.string().uuid().optional(),
-      dueBefore: isoDateTimeSchema.optional(),
-      dueAfter: isoDateTimeSchema.optional(),
-      limit: z.number().int().min(1).max(200).default(100)
-    }),
-    ...protectedToolMetadata
-  }, async ({ status, priority, assignedUserId, contactId, jobId, opportunityId, dueBefore, dueAfter, limit }) => {
-    const db = getDb();
-    const rows = await db.select().from(schema.tasks)
-      .orderBy(desc(schema.tasks.updatedAt))
-      .limit(500);
-
-    const before = dueBefore ? new Date(dueBefore).valueOf() : null;
-    const after = dueAfter ? new Date(dueAfter).valueOf() : null;
-    const filtered = rows.filter((task) => {
-      if (status && task.status !== status) return false;
-      if (priority && task.priority !== priority) return false;
-      if (assignedUserId && task.assignedUserId !== assignedUserId) return false;
-      if (contactId && task.contactId !== contactId) return false;
-      if (jobId && task.jobId !== jobId) return false;
-      if (opportunityId && task.opportunityId !== opportunityId) return false;
-      if (before !== null && (!task.dueAt || task.dueAt.valueOf() > before)) return false;
-      if (after !== null && (!task.dueAt || task.dueAt.valueOf() < after)) return false;
-      return true;
-    }).slice(0, limit);
-
-    return textResult(filtered);
-  });
-
-  server.registerTool("walkthroughs.search", {
-    description: "Search voice walkthroughs by contact or workflow status.",
-    inputSchema: z.object({
-      contactId: z.string().uuid().optional(),
-      status: z.string().max(80).optional(),
-      limit: z.number().int().min(1).max(500).default(100)
-    }),
-    ...protectedToolMetadata
-  }, async ({ contactId, status, limit }) => {
-    const db = getDb();
-    const conditions = [
-      ...(contactId ? [eq(schema.walkthroughs.contactId, contactId)] : []),
-      ...(status ? [eq(schema.walkthroughs.status, status)] : [])
-    ];
-    const rows = conditions.length
-      ? await db.select().from(schema.walkthroughs)
-          .where(and(...conditions))
-          .orderBy(desc(schema.walkthroughs.createdAt))
-          .limit(limit)
-      : await db.select().from(schema.walkthroughs)
-          .orderBy(desc(schema.walkthroughs.createdAt))
-          .limit(limit);
-    return textResult(rows);
-  });
-
-  server.registerTool("walkthroughs.get", {
-    description: "Get one voice walkthrough, including reviewed extraction.",
-    inputSchema: z.object({ walkthroughId: z.string().uuid() }),
-    ...protectedToolMetadata
-  }, async ({ walkthroughId }) => {
-    const db = getDb();
-    const [row] = await db.select().from(schema.walkthroughs)
-      .where(eq(schema.walkthroughs.id, walkthroughId))
-      .limit(1);
-    return textResult(row ?? { error: "walkthrough_not_found" });
   });
 
   server.registerTool("walkthroughs.transcript", {
@@ -1886,7 +1473,7 @@ export function buildServer() {
       if (!row) throw new Error("job_create_failed");
 
       await tx.insert(schema.auditLogs).values({
-        actor: "chatgpt-mcp",
+        actor: auditActor(),
         action: "job.create",
         entity: "job",
         entityId: row.id,
@@ -1968,7 +1555,7 @@ export function buildServer() {
       if (!row) throw new Error("job_update_failed");
 
       await tx.insert(schema.auditLogs).values({
-        actor: "chatgpt-mcp",
+        actor: auditActor(),
         action: "job.update",
         entity: "job",
         entityId: jobId,
@@ -2008,13 +1595,13 @@ export function buildServer() {
         type,
         body,
         source: "mcp",
-        createdBy: "chatgpt-mcp"
+        createdBy: auditActor()
       }).returning();
 
       if (!created) throw new Error("job_note_create_failed");
 
       await tx.insert(schema.auditLogs).values({
-        actor: "chatgpt-mcp",
+        actor: auditActor(),
         action: "job.note.create",
         entity: "job",
         entityId: jobId,
@@ -2077,7 +1664,7 @@ export function buildServer() {
       if (!created) throw new Error("walkthrough_create_failed");
 
       await tx.insert(schema.auditLogs).values({
-        actor: "chatgpt-mcp",
+        actor: auditActor(),
         action: "walkthrough.create",
         entity: "walkthrough",
         entityId: created.id,
@@ -2118,7 +1705,7 @@ export function buildServer() {
       if (!row) throw new Error("walkthrough_update_failed");
 
       await tx.insert(schema.auditLogs).values({
-        actor: "chatgpt-mcp",
+        actor: auditActor(),
         action: "walkthrough.update",
         entity: "walkthrough",
         entityId: walkthroughId,
@@ -2139,7 +1726,7 @@ export function buildServer() {
     ...writeToolMetadata
   }, async ({walkthroughId, extraction}) => {
     try {
-      return textResult(await approveLegacyWalkthrough({walkthroughId, extraction, actor: operationsPrincipal.getStore()?.id ?? "chatgpt-mcp", source: "mcp"}));
+      return textResult(await approveLegacyWalkthrough({walkthroughId, extraction, actor: auditActor(), source: "mcp"}));
     } catch (error) {
       return textResult({error: error instanceof LegacyWalkthroughError ? error.code : "legacy_walkthrough_approval_failed"});
     }
@@ -2267,7 +1854,7 @@ export function buildServer() {
     if (!task) throw new Error("task_create_failed");
 
     await db.insert(schema.auditLogs).values({
-      actor: "chatgpt-mcp",
+      actor: auditActor(),
       action: "task.create",
       entity: "task",
       entityId: task.id,
@@ -2344,7 +1931,7 @@ export function buildServer() {
     if (!updated) throw new Error("task_update_failed");
 
     await db.insert(schema.auditLogs).values({
-      actor: "chatgpt-mcp",
+      actor: auditActor(),
       action: "task.update",
       entity: "task",
       entityId: taskId,
@@ -2381,7 +1968,7 @@ export function buildServer() {
     if (!updated) throw new Error("task_complete_failed");
 
     await db.insert(schema.auditLogs).values({
-      actor: "chatgpt-mcp",
+      actor: auditActor(),
       action: "task.complete",
       entity: "task",
       entityId: taskId,
@@ -2412,7 +1999,7 @@ export function buildServer() {
     }
 
     await db.insert(schema.auditLogs).values({
-      actor: "chatgpt-mcp",
+      actor: auditActor(),
       action: "ghl.contact.create",
       entity: "contact",
       entityId: contact.id,
@@ -2448,7 +2035,7 @@ export function buildServer() {
     }
 
     await db.insert(schema.auditLogs).values({
-      actor: "chatgpt-mcp",
+      actor: auditActor(),
       action: "ghl.contact.update",
       entity: "contact",
       entityId: contactId,
@@ -2487,7 +2074,7 @@ export function buildServer() {
     }).where(eq(schema.contacts.id, contactId)).returning();
 
     await db.insert(schema.auditLogs).values({
-      actor: "chatgpt-mcp",
+      actor: auditActor(),
       action: "ghl.contact.tags.add",
       entity: "contact",
       entityId: contactId,
@@ -2526,7 +2113,7 @@ export function buildServer() {
     }).where(eq(schema.contacts.id, contactId)).returning();
 
     await db.insert(schema.auditLogs).values({
-      actor: "chatgpt-mcp",
+      actor: auditActor(),
       action: "ghl.contact.tags.remove",
       entity: "contact",
       entityId: contactId,
@@ -2603,7 +2190,7 @@ export function buildServer() {
     }
 
     await db.insert(schema.auditLogs).values({
-      actor: "chatgpt-mcp",
+      actor: auditActor(),
       action: "ghl.opportunity.create",
       entity: "opportunity",
       entityId: opportunity.id,
@@ -2651,7 +2238,7 @@ export function buildServer() {
     const updated = await syncOpportunityFromGhl(remote, existing.contactId, opportunityId);
 
     await db.insert(schema.auditLogs).values({
-      actor: "chatgpt-mcp",
+      actor: auditActor(),
       action: "ghl.opportunity.update",
       entity: "opportunity",
       entityId: opportunityId,
@@ -2768,7 +2355,7 @@ export function buildServer() {
     }
 
     await db.insert(schema.auditLogs).values({
-      actor: "chatgpt-mcp",
+      actor: auditActor(),
       action: "ghl.appointment.update",
       entity: "appointment",
       entityId: appointmentId,
@@ -2817,7 +2404,7 @@ export function buildServer() {
     const updated = verified.appointment;
 
     await db.insert(schema.auditLogs).values({
-      actor: "chatgpt-mcp",
+      actor: auditActor(),
       action: "ghl.appointment.cancel",
       entity: "appointment",
       entityId: appointmentId,
@@ -2866,7 +2453,7 @@ export function buildServer() {
       if(jobId)await getDb().update(schema.jobs).set({appointmentId:appointment.id,scheduledAt:appointment.appointmentStartAt,updatedAt:new Date()})
         .where(and(eq(schema.jobs.id,jobId),eq(schema.jobs.contactId,contactId)));
       if(op.kind!=="create")await getDb().update(schema.jobs).set({scheduledAt:appointment.appointmentStartAt,updatedAt:new Date()}).where(eq(schema.jobs.appointmentId,appointment.id));
-      await getDb().insert(schema.auditLogs).values({actor:operationsPrincipal.getStore()?.id??"chatgpt-mcp",action:"ghl.appointment.reconcile",entity:"appointment",entityId:appointment.id,newValue:{operationId,providerAppointmentId:appointment.providerId,status:appointment.status},source:"mcp"});
+      await getDb().insert(schema.auditLogs).values({actor:auditActor(),action:"ghl.appointment.reconcile",entity:"appointment",entityId:appointment.id,newValue:{operationId,providerAppointmentId:appointment.providerId,status:appointment.status},source:"mcp"});
       return textResult({ok:true,operationId,appointment,providerWrite:false});
     }catch(error) {if(error instanceof AppointmentOperationError)return textResult({ok:false,error:error.code,operationId:error.operationId});throw error;}
   });
@@ -2911,7 +2498,7 @@ export function buildServer() {
         .where(eq(schema.appointments.id, appointmentId));
 
       await tx.insert(schema.auditLogs).values({
-        actor: "chatgpt-mcp",
+        actor: auditActor(),
         action: "ghl.appointment.delete",
         entity: "appointment",
         entityId: appointmentId,
@@ -3070,39 +2657,52 @@ app.use((req, res, next) => {
   res.status(403).json({ error: "invalid_host" });
 });
 
-const handler = toNodeHandler(createMcpHandler(buildServer));
-const oauth = registerOauthRoutes(app);
+const handler = toNodeHandler(createMcpHandler(() => buildServer()));
+const oauth = registerOauthRoutes(app,()=>connectorMode(DOMAIN_TOOLS));
 
-app.all(
-  "/mcp",
-  async (req, res, next) => {
+const principalActor=(principal:VerifiedMcpPrincipal):Principal=>({id:principal.id,role:"integration",kind:"integration",workspace:process.env.EGC_OPERATIONS_WORKSPACE??"egc",...(principal.delegate?{delegate:principal.delegate}:{})});
+const toolNameOf=(body:unknown)=>{
+  const params=(body as {params?:unknown}|undefined)?.params;
+  return params&&typeof params==="object"&&typeof (params as {name?:unknown}).name==="string"?(params as {name:string}).name:"";
+};
+
+// /mcp keeps discovery open so ChatGPT can initialize and list protected tools before
+// linking; a tool call without the scope it needs gets an in-band challenge. /mcp/oauth
+// follows the MCP authorization spec for clients such as Claude: every request needs a
+// token and a missing or insufficient one is an HTTP 401/403 with WWW-Authenticate.
+function mcpAuthentication(strict:boolean):express.RequestHandler {
+  return async (req, res, next) => {
     if(Array.isArray(req.body)){res.status(400).json({jsonrpc:"2.0",id:null,error:{code:-32600,message:"Batch requests are not supported"}});return;}
     const body = req.body as { id?: string | number | null; method?: string } | undefined;
+    const call = body?.method === "tools/call";
 
-    // Keep MCP discovery unauthenticated so ChatGPT can initialize and list
-    // protected tools. Authentication is enforced when a tool is invoked.
-    if (body?.method !== "tools/call") {
+    if (!strict && !call) {
       next();
       return;
     }
 
-    const toolName =
-      body &&
-      typeof (body as { params?: unknown }).params === "object" &&
-      (body as { params?: { name?: unknown } }).params !== null &&
-      typeof (body as { params?: { name?: unknown } }).params?.name === "string"
-        ? (body as { params: { name: string } }).params.name
-        : "";
-
-    const requiredScope = OPERATIONS_WRITE_TOOLS.has(toolName) ? WRITE_SCOPE : requiredToolScope(toolName);
-
-    const principal=await authenticatedMcpPrincipal(req.header("authorization"),requiredScope);
+    const toolName = call ? toolNameOf(body) : "";
+    const requiredScope = call ? requiredToolScope(toolName) : READ_SCOPE;
+    let principal: VerifiedMcpPrincipal | null;
+    try { principal = await verifiedMcpPrincipal(req.header("authorization"), requiredScope); }
+    catch { res.status(503).set("Retry-After", "30").json({jsonrpc:"2.0",id:body?.id??null,error:{code:-32603,message:"Authentication is temporarily unavailable. Retry shortly."}}); return; }
     if (principal) {
-      if(operationsEnabled() && LEGACY_MUTATIONS_DISABLED.has(toolName)) {
-        res.status(200).json({jsonrpc:"2.0",id:body.id??null,result:{content:[{type:"text",text:JSON.stringify({error:"legacy_mutation_disabled_in_operations_mode",instruction:"Use canonical actions for internal work, egc.add_job_note for exact Hub notes, recording review for managed walkthroughs, and durable scheduling tools. Legacy parallel job/draft writes and destructive booking deletion remain disabled."})}],isError:true}});
+      const blocked = call ? blockedToolCall(toolName) : null;
+      if(blocked) {
+        res.status(200).json({jsonrpc:"2.0",id:body?.id??null,result:{content:[{type:"text",text:JSON.stringify(blocked)}],isError:true}});
         return;
       }
-      operationsPrincipal.run({id:principal,role:"integration",kind:"integration",workspace:process.env.EGC_OPERATIONS_WORKSPACE??"egc"},()=>next());
+      runAsPrincipal(principalActor(principal),principal.assertion,()=>next());
+      return;
+    }
+
+    if (strict) {
+      const presented = Boolean(req.header("authorization"));
+      const insufficient = presented && requiredScope !== READ_SCOPE && Boolean(await verifiedMcpPrincipal(req.header("authorization"), READ_SCOPE).catch(() => null));
+      const scope = `${READ_SCOPE} ${WRITE_SCOPE}`;
+      res.status(insufficient ? 403 : 401)
+        .set("WWW-Authenticate", `Bearer resource_metadata="${oauth.oauthEndpointResourceMetadataUrl}", scope="${scope}"${presented ? `, error="${insufficient ? "insufficient_scope" : "invalid_token"}"` : ""}`)
+        .json({jsonrpc:"2.0",id:body?.id??null,error:{code:-32001,message:insufficient?"This connection does not have write access.":"Authentication required: connect your Easy Garage Cleaning account to continue."}});
       return;
     }
 
@@ -3114,7 +2714,7 @@ app.all(
 
     res.status(200).json({
       jsonrpc: "2.0",
-      id: body.id ?? null,
+      id: body?.id ?? null,
       result: {
         content: [{
           type: "text",
@@ -3126,9 +2726,11 @@ app.all(
         }
       }
     });
-  },
-  (req, res) => void handler(req, res, req.body)
-);
+  };
+}
+
+app.all("/mcp", mcpAuthentication(false), (req, res) => void handler(req, res, req.body));
+app.all("/mcp/oauth", mcpAuthentication(true), (req, res) => void handler(req, res, req.body));
 
 const port = Number(process.env.PORT ?? process.env.MCP_PORT ?? 4200);
 if(process.argv[1] && pathToFileURL(process.argv[1]).href===import.meta.url) {

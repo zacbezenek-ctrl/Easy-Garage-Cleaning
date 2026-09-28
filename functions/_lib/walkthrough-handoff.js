@@ -1,6 +1,14 @@
 import { mutateDispatch, requireDispatcher } from './dispatch-service.js';
 import { assignmentKey, jobCrewNames } from './job-assignment.js';
 import { localInstant } from './operations-portal-records.js';
+import { customerIdentityPatch } from './customer-identity.js';
+import { suggestedDurationMinutes } from './quote-duration.js';
+import { estimateTotals, included, normalizeLineItems, toWalkthroughLineItem, validateSelection } from './quote-model.js';
+import { funnelEventWrite } from './funnel-events.js';
+import { funnelHubId } from './funnel-definitions.js';
+import { instantMs } from './funnel-calendar.js';
+import { validDate } from './dispatch-time.js';
+import { eventActor } from './dispatch-funnel.js';
 
 const plain = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const safeId = value => typeof value === 'string' && /^[A-Za-z0-9_-]{1,180}$/.test(value) && !/^(secure_|_egc_)/.test(value);
@@ -45,6 +53,58 @@ function checks(value) {
   }
   return output;
 }
+const dollars = cents => Number.isSafeInteger(cents) ? `${cents < 0 ? '-' : ''}$${(Math.abs(cents) / 100).toFixed(2)}` : 'an unknown amount';
+// A plan without line items keeps today's single signed line. An itemized plan
+// is read strictly through the canonical quote model and its selected lines
+// must equal the signed total; a manual price change is an explicit line.
+function itemizedQuote(quote, totalCents, crewSize, minutes) {
+  if (quote.line_items === undefined || quote.line_items === null) return null;
+  if (!Array.isArray(quote.line_items) || !quote.line_items.length) throw fail('invalid_line_items', 'An itemized quote needs at least one line item.', 400);
+  let lineItems;
+  try { ({ lineItems } = normalizeLineItems(quote.line_items, { strict: true })); }
+  catch (error) { if (/^quote_/.test(error?.code || '')) throw fail('invalid_line_items', `The itemized quote is invalid: ${error.message}`, 400); throw error; }
+  if (lineItems.some(line => line.kind === 'tip')) throw fail('invalid_line_items', 'A signed quote cannot include a tip line.', 400);
+  const adjustment = lineItems.find(line => line.id === 'adjustment');
+  if (adjustment && (!['fee', 'discount'].includes(adjustment.kind) || adjustment.optional || adjustment.group || adjustment.quantity !== 1 || adjustment.description.length < 3)) throw fail('invalid_adjustment', 'A manual price change must be one required adjustment line (a fee or discount, quantity 1) that states the reason the customer approved.', 400);
+  const selection = validateSelection(lineItems);
+  if (!selection.ok) throw fail('invalid_line_items', `The itemized quote is invalid: ${selection.issues[0].message}`, 400);
+  const totals = estimateTotals(lineItems);
+  if (!totals.complete || totals.totalCents !== totalCents) throw fail('invalid_amount', `The selected line items come to ${dollars(totals.totalCents)}, but the signed total is ${dollars(totalCents)}. Record any manual price change as an adjustment line with its reason.`, 400);
+  const version = quote.catalog_version ?? '';
+  if (version !== '' && !(Number.isSafeInteger(version) && version >= 1) && !(typeof version === 'string' && /^[A-Za-z0-9_-]{1,80}$/.test(version))) throw fail('invalid_plan', 'The catalog version is invalid.', 400);
+  const suggestion = suggestedDurationMinutes(lineItems, { crewSize, job: { estimatedDurationMin: minutes } }), reason = text(quote.duration_override_reason ?? '', 'Duration override reason', 500);
+  const overridden = suggestion.source === 'line_items' && suggestion.minutes !== minutes;
+  if (overridden && !reason) throw fail('invalid_duration', `The selected line items suggest ${suggestion.minutes} minutes on site. Use that estimate or record the manager's reason for overriding it.`, 400);
+  const sold = lineItems.filter(included);
+  return { line_items: sold.map(toWalkthroughLineItem), line_items_count: sold.length, itemized: true, catalog_version: version === '' ? null : version, estimate_line_items: lineItems,
+    duration_suggestion: { minutes: suggestion.minutes, source: suggestion.source }, duration_override_reason: overridden ? reason : '' };
+}
+const LABELS = { cleanout: 'Garage cleanout and reset', deep_clean: 'Deep clean', pressure_wash: 'One-car garage pressure wash', mouse_trapping: 'Non-toxic mouse trapping' };
+/** Customer-facing estimate scope built only from the sold finish options;
+ * internal notes, discovery and crew instructions never reach it. */
+export function customerScopeSummary(scope) {
+  const finish = Array.isArray(scope?.finish) ? scope.finish : [], details = plain(scope?.finish_details) ? scope.finish_details : {};
+  const count = (qty, label, fallback) => Number.isInteger(qty) && qty > 0 ? `${qty} ${label}${qty === 1 ? '' : 's'}` : fallback;
+  const shelf = ['metal', 'wood', 'plastic'].includes(details.shelf_type) ? `${details.shelf_type} ` : '';
+  const items = [...new Set(finish)].map(id => id === 'shelving' ? count(details.shelf_qty, `${shelf}shelving unit`, 'Shelving') : id === 'totes' ? count(details.tote_qty, 'storage tote', 'Storage totes') : LABELS[id] || '').filter(Boolean);
+  if (plain(scope?.hazard_details?.pest_waste)) items.push('Pest-waste cleanup');
+  return `Included: ${(items.length ? items : [LABELS.cleanout]).join('; ')}.`;
+}
+/** Dispatch materials the crew loads for the sold product lines. */
+export function handoffMaterials(plan) {
+  return plan.quote.itemized ? plan.quote.estimate_line_items.filter(line => included(line) && line.kind === 'product' && !line.customerSupplied).map(line => ({ id: `quote-${line.id}`, name: line.name, quantity: line.quantity })) : [];
+}
+// Materials added in Dispatch survive a signed revision; quote-derived ones are
+// replaced (and removed when the new plan is not itemized). A list Dispatch
+// could not re-validate is left untouched rather than failing the handoff; the
+// checks mirror dispatch-service's materials rules.
+const material = item => plain(item) && safeId(item.id) && typeof item.name === 'string' && item.name.length <= 200 && item.name.trim() && typeof item.quantity === 'number' && Number.isFinite(item.quantity) && item.quantity > 0 && item.quantity <= 100000;
+function materialChanges(plan, existing) {
+  const list = Array.isArray(existing) ? existing : [], kept = list.filter(item => !String(item?.id || '').startsWith('quote-')), quoted = handoffMaterials(plan);
+  if (!quoted.length && kept.length === list.length) return {};
+  const materials = [...kept.map(item => plain(item) ? { id: item.id, name: item.name, quantity: item.quantity } : item), ...quoted];
+  return materials.length <= 100 && materials.every(material) && new Set(materials.map(item => item.id)).size === materials.length ? { materials } : {};
+}
 export function normalizeHandoffPlan(input, now = new Date().toISOString()) {
   if (!plain(input) || !plain(input.client) || !plain(input.quote) || !plain(input.acceptance)) throw fail('invalid_plan', 'Review the complete walkthrough before saving.', 400);
   const quote = input.quote, acceptance = input.acceptance;
@@ -67,7 +127,8 @@ export function normalizeHandoffPlan(input, now = new Date().toISOString()) {
   if (!Number.isInteger(minutes) || minutes < 15 || minutes > 1440) throw fail('invalid_plan', 'The estimated job duration is invalid.', 400);
   const before = input.photos?.before;
   if (!Number.isInteger(before) || before < 0 || before > 1000) throw fail('invalid_plan', 'The walkthrough photo count is invalid.', 400);
-  return { client, quote: { title: text(quote.title || 'EGC Garage Service', 'Job title', 500, true), total: totalCents / 100, deposit: depositCents / 100, job_date: date, start_time: start, end_time: end, start_at: startAt, end_at: endAt, estimated_duration_min: minutes, expected_shift_hours: (minutes + 90) / 60, line_items: [{ name: 'Garage cleanout and reset', qty: 1, total: totalCents / 100 }], line_items_count: 1 }, discovery, scope, logistics, internal_notes: text(input.internal_notes, 'Job brief', 4900, true), client_checklists: checks(input.client_checklists), signature, acceptance: { accepted_at: new Date(acceptedAt).toISOString(), accepted_by: text(acceptance.accepted_by, 'Signer name', 200, true), method: 'in_person_signature', terms_version: terms, signature_captured: true }, terms_version: terms, terms_accepted: true, photos: { before }, notes: text(input.notes || '', 'Customer notes', 8000) };
+  const lines = itemizedQuote(quote, totalCents, logistics.crew_size, minutes) || { line_items: [{ name: 'Garage cleanout and reset', qty: 1, total: totalCents / 100 }], line_items_count: 1 };
+  return { client, quote: { title: text(quote.title || 'EGC Garage Service', 'Job title', 500, true), total: totalCents / 100, deposit: depositCents / 100, job_date: date, start_time: start, end_time: end, start_at: startAt, end_at: endAt, estimated_duration_min: minutes, expected_shift_hours: (minutes + 90) / 60, ...lines }, discovery, scope, logistics, internal_notes: text(input.internal_notes, 'Job brief', 4900, true), client_checklists: checks(input.client_checklists), signature, acceptance: { accepted_at: new Date(acceptedAt).toISOString(), accepted_by: text(acceptance.accepted_by, 'Signer name', 200, true), method: 'in_person_signature', terms_version: terms, signature_captured: true }, terms_version: terms, terms_accepted: true, photos: { before }, notes: text(input.notes || '', 'Customer notes', 8000) };
 }
 function identityMatches(left, right) {
   const a = phone(left.phone), b = phone(right.phone), c = email(left.email), d = email(right.email);
@@ -80,7 +141,7 @@ function requireRevision(row) {
 }
 export function handoffInstructions(plan, sourceId = '') {
   const s = plan.scope, l = plan.logistics, f = s.finish_details || {};
-  return { customerGoal: String(plan.discovery.success || ''), whyNow: String(plan.discovery.why_now || ''), sortMethod: String(s.sort_method || ''), keepItems: String(s.keep_items || ''), removeItems: String(s.remove_items || ''), exclusions: String(s.exclusions || ''), hazards: Array.isArray(s.hazards) ? s.hazards : [], access: Array.isArray(s.access) ? s.access : [], accessNotes: String(l.notes || ''), truckPlacement: String(l.truck_placement || s.truck_placement || ''), specialItems: Array.isArray(s.special_items) ? s.special_items : [], finish: Array.isArray(s.finish) ? s.finish : [], shelving: { type: String(f.shelf_type || ''), qty: Number(f.shelf_qty || 0) }, totes: { qty: Number(f.tote_qty || 0) }, customerNotes: plan.notes, crewSize: l.crew_size, arrivalWindow: `${plan.quote.start_time}–${plan.quote.end_time}`, estimatedJobMinutes: plan.quote.estimated_duration_min, estimatedJobHours: plan.quote.estimated_duration_min / 60, expectedShiftHours: plan.quote.expected_shift_hours, photoCount: plan.photos.before, sourceWalkthroughId: sourceId };
+  return { customerGoal: String(plan.discovery.success || ''), whyNow: String(plan.discovery.why_now || ''), sortMethod: String(s.sort_method || ''), keepItems: String(s.keep_items || ''), removeItems: String(s.remove_items || ''), exclusions: String(s.exclusions || ''), hazards: Array.isArray(s.hazards) ? s.hazards : [], access: Array.isArray(s.access) ? s.access : [], accessNotes: String(l.notes || ''), truckPlacement: String(l.truck_placement || s.truck_placement || ''), specialItems: Array.isArray(s.special_items) ? s.special_items : [], finish: Array.isArray(s.finish) ? s.finish : [], shelving: { type: String(f.shelf_type || ''), qty: Number(f.shelf_qty || 0) }, totes: { qty: Number(f.tote_qty || 0) }, customerNotes: plan.notes, crewSize: l.crew_size, arrivalWindow: `${plan.quote.start_time}–${plan.quote.end_time}`, estimatedJobMinutes: plan.quote.estimated_duration_min, estimatedJobHours: plan.quote.estimated_duration_min / 60, expectedShiftHours: plan.quote.expected_shift_hours, photoCount: plan.photos.before, sourceWalkthroughId: sourceId, ...(plan.quote.itemized ? { materials: handoffMaterials(plan) } : {}) };
 }
 function financePatch(plan, previous, jobId, actor, now) {
   const total = plan.quote.total, amount = plan.quote.deposit, prior = plain(previous?.deposit) ? previous.deposit : {};
@@ -88,11 +149,41 @@ function financePatch(plan, previous, jobId, actor, now) {
   const patch = { total, priceQuoted: total, quoteStatus: 'approved', termsVersion: plan.terms_version,
     acceptance: { acceptedAt: plan.acceptance.accepted_at, acceptedBy: plan.acceptance.accepted_by, method: 'in_person_signature', termsVersion: plan.terms_version, signatureCaptured: true, signatureData: plan.signature, recordedBy: actor.user, recordedAt: now },
     customerApproval: { status: 'approved', approvedAt: plan.acceptance.accepted_at, approvedBy: plan.acceptance.accepted_by, amount: total, source: 'in_person_signature' },
-    estimate: { number: previous?.estimate?.number || `EST-${jobId.slice(-6).toUpperCase()}`, revision: Number.isInteger(previous?.estimate?.revision) ? previous.estimate.revision + 1 : 1, status: 'accepted', amount: total, depositRequired: amount, acceptedAt: plan.acceptance.accepted_at, acceptedBy: plan.acceptance.accepted_by, acceptanceMethod: 'in_person_signature', termsVersion: plan.terms_version, createdAt: previous?.estimate?.createdAt || now, source: 'walkthrough' },
-    deposit: { ...prior, amount, paidAmount: paid, status: paid >= amount ? 'paid' : paid > 0 ? 'partial' : 'due' } };
-  const changed = previous && (previous.estimate?.amount !== total || previous.estimate?.depositRequired !== amount || canonical(previous.scope || {}) !== canonical(plan.scope));
+    estimate: { number: previous?.estimate?.number || `EST-${jobId.slice(-6).toUpperCase()}`, revision: Number.isInteger(previous?.estimate?.revision) ? previous.estimate.revision + 1 : 1, status: 'accepted', amount: total, depositRequired: amount, acceptedAt: plan.acceptance.accepted_at, acceptedBy: plan.acceptance.accepted_by, acceptanceMethod: 'in_person_signature', termsVersion: plan.terms_version, createdAt: previous?.estimate?.createdAt || now, source: 'walkthrough', scope: customerScopeSummary(plan.scope),
+      ...(plan.quote.itemized ? { lineItems: structuredClone(plan.quote.estimate_line_items), catalogVersion: plan.quote.catalog_version } : {}) },
+    deposit: { ...prior, amount, paidAmount: paid, status: paid >= amount ? 'paid' : paid > 0 ? 'partial' : 'due' },
+    ...(plan.quote.itemized || previous?.durationOverride ? { durationOverride: plan.quote.duration_override_reason ? { suggestedMinutes: plan.quote.duration_suggestion.minutes, minutes: plan.quote.estimated_duration_min, reason: plan.quote.duration_override_reason, recordedBy: actor.user, recordedAt: now } : null } : {}) };
+  // Any change to what the customer signed (price, deposit, scope or, when
+  // either side is itemized, the lines) retires an issued invoice; recorded
+  // payments stay intact. A single bundled Hub line is not an itemized quote.
+  const itemized = plan.quote.itemized || previous?.acceptedHandoffPayload?.quote?.itemized === true || Array.isArray(previous?.estimate?.lineItems) && previous.estimate.lineItems.length > 1;
+  const changed = previous && (previous.estimate?.amount !== total || previous.estimate?.depositRequired !== amount || canonical(previous.scope || {}) !== canonical(plan.scope) || itemized && canonical(previous.estimate?.lineItems ?? null) !== canonical(patch.estimate.lineItems ?? null));
   if (changed && previous.invoice?.amount && !['void', 'superseded'].includes(previous.invoice.status)) patch.invoice = { ...previous.invoice, status: 'superseded', supersededAt: now, supersededReason: 'walkthrough_revised' };
   return patch;
+}
+// FUN-02: the sale this signature records, in the handoff commit. The signed
+// time is the iPad's clock, accepted only inside the two-sided bounds (now + 5
+// min, and walkthrough start - 1 h / scheduled date - 1 day); otherwise the sale
+// is attested and dated at the bound or server time. A revision first retires
+// the approval it replaces, so the net of deal.sold minus
+// deal.approval_superseded is always the current signed contract.
+async function saleEvents({ plan, previous, source, job, actor, requestId, receiptId, now }) {
+  const base = { idempotencyKey: { kind: 'requestId', value: requestId }, projectId: funnelHubId(job.projectId) ? job.projectId : undefined, jobId: job.id, walkthroughId: funnelHubId(source?.id) ? source.id : undefined, customerId: funnelHubId(job.customerId) ? job.customerId : undefined,
+    highlevelContactId: /^[A-Za-z0-9_-]{1,120}$/.test(job.highlevelContactId || '') ? job.highlevelContactId : undefined, actor: eventActor({ id: actor.user, kind: 'human', role: actor.role }), via: 'hub', source: { collection: 'walkthroughHandoffs', id: receiptId }, eligibility: { hub: job } };
+  const writes = [], prior = previous?.customerApproval;
+  if (prior?.status === 'approved' && typeof prior.amount === 'number' && Number.isFinite(prior.amount) && prior.amount >= 0) writes.push(await funnelEventWrite(null, now, { ...base, type: 'deal.approval_superseded', data: { amountCents: Math.round(prior.amount * 100), ...(Number.isInteger(previous.estimate?.revision) ? { estimateRevision: previous.estimate.revision } : {}) } }));
+  const startedAt = source?.walkthroughVisit?.startedAt;
+  writes.push(await funnelEventWrite(null, now, { ...base, type: 'deal.sold', data: { amountCents: Math.round(plan.quote.total * 100), estimateRevision: job.estimate.revision },
+    deviceAt: plan.acceptance.accepted_at, deviceBounds: { startedAt: instantMs(startedAt) === null ? null : startedAt, scheduledDate: validDate(source?.date) ? source.date : null } }));
+  return writes;
+}
+// The walkthrough's sold_on_site outcome in FUN-05's walkthroughOutcome shape, dated like
+// its deal.sold. Its occurrence is FUN-05's {number, date, time, startAt, scheduleOccurrence}.
+function soldOutcome(source, sold, actor, requestId, deviceAt) {
+  const date = validDate(source.date) ? source.date : null, time = typeof source.time === 'string' && /^\d\d:\d\d$/.test(source.time) ? source.time : null;
+  const counter = Number.isInteger(source.scheduleOccurrence) && source.scheduleOccurrence >= 1 && source.scheduleOccurrence <= 1000 ? source.scheduleOccurrence : null;
+  return { outcome: 'sold_on_site', reasonCode: null, finishedAt: sold.occurredAt, performedBy: assignmentKey(actor.user), recordingStatus: null, requestId: requestId.toLowerCase(), clockSource: sold.clockSource, deviceAt,
+    occurrence: { number: counter ?? 1, date, time, startAt: date && time ? localInstant(date, time) : null, scheduleOccurrence: counter }, repTime: { status: 'not_started', segmentId: null }, source: 'walkthrough_handoff' };
 }
 
 /** Resolve an already-saved handoff without changing history, customer identity,
@@ -167,8 +258,8 @@ export async function saveWalkthroughHandoff(store, actor, input, now = new Date
     return aliases[0].id;
   });
   const instructions = handoffInstructions(plan, source?.id || '');
-  const changes = { date: plan.quote.job_date, endDate: plan.quote.job_date, time: plan.quote.start_time, endTime: plan.quote.end_time, title: plan.quote.title, address: plan.client.address, serviceType: 'Garage transformation', crewNeeded: plan.logistics.crew_size, assignedCrew, jobInstructions: plan.internal_notes, accessInstructions: instructions.accessNotes, customerInstructions: plan.notes, notify: true };
-  const dispatchInput = previous ? { action: 'schedule.update', requestId: input.requestId, jobId: previous.id, expectedRevision: previous.revision, changes } : { action: 'schedule.create', requestId: input.requestId, customerId: customer.id, kind: 'job', ...(source ? { sourceWalkthroughId: source.id } : {}), changes };
+  const changes = { date: plan.quote.job_date, endDate: plan.quote.job_date, time: plan.quote.start_time, endTime: plan.quote.end_time, title: plan.quote.title, address: plan.client.address, serviceType: 'Garage transformation', crewNeeded: plan.logistics.crew_size, assignedCrew, jobInstructions: plan.internal_notes, accessInstructions: instructions.accessNotes, customerInstructions: plan.notes, notify: true, ...materialChanges(plan, previous ? previous.materials : source?.materials) };
+  const dispatchInput = previous ? { action: 'schedule.update', requestId: input.requestId, jobId: previous.id, expectedRevision: previous.revision, changes } : { action: 'schedule.create', requestId: input.requestId, customerId: customer.id, kind: 'job', ...(source ? { sourceWalkthroughId: source.id } : {}), booking: { channel: 'hub_in_person' }, changes };
   const adapter = { ...store,
     read: async (collection, id) => {
       const row = await store.read(collection, id);
@@ -190,11 +281,18 @@ export async function saveWalkthroughHandoff(store, actor, input, now = new Date
           if (patch) { found.verify = false; found.patch = { ...found.patch, ...patch }; }
         } else writes.push({ collection, id: row.id, revision: row.revision, ...(patch ? { patch } : { verify: true }) });
       }
-      fence('customers', customer);
+      // Also brings a legacy customer's derived phone/email lookup keys current.
+      fence('customers', customer, customerIdentityPatch(customer, now));
       if (sourceProject) fence('projects', sourceProject);
-      if (source) fence('jobs', source, { customerId: customer.id, convertedJobId: target.id, conversionStatus: 'job_scheduled', updatedAt: now });
+      const sale = await saleEvents({ plan, previous, source, job: { ...previous, ...target.patch, id: target.id }, actor, requestId: input.requestId, receiptId, now });
+      // A signed handoff records the walkthrough's sold_on_site outcome (FUN-02). A walkthrough
+      // the rep Started (FUN-05) gets its outcome, completion and event from its own Finish, and
+      // an outcome the walkthrough visit already recorded is never overwritten.
+      const ownOutcome = plain(source?.walkthroughOutcome) || plain(source?.walkthroughVisit) && instantMs(source.walkthroughVisit.startedAt) !== null;
+      if (source) fence('jobs', source, { customerId: customer.id, convertedJobId: target.id, conversionStatus: 'job_scheduled', updatedAt: now, ...(ownOutcome ? {} : { walkthroughOutcome: soldOutcome(source, sale.at(-1).patch, actor, input.requestId, plan.acceptance.accepted_at) }) });
       // Scheduling a sold job is not proof the source visit has completed.
       // Its original status, actual completion time, signature and money stay intact.
+      writes.push(...sale);
       const dispatchReceipt = writes.find(write => write.collection === 'dispatchOperations' && write.id === receiptId);
       writes.push({ collection: 'walkthroughHandoffs', id: receiptId, patch: { fingerprint, actorId: actor.user, customerId: customer.id, jobId: target.id, sourceWalkthroughId: source?.id || '', sourceRevision: source?.revision || '', originalJobRevision: previous?.revision || '', acceptedAt: plan.acceptance.accepted_at, amountCents: Math.round(plan.quote.total * 100), signature: plan.signature, plan: providerPayload, priorEstimate: previous?.estimate || null, priorAcceptance: previous?.acceptance || null, createdAt: now, warnings: dispatchReceipt?.patch?.warnings || [] } });
       await store.commit(writes);
@@ -211,7 +309,7 @@ export async function saveWalkthroughHandoff(store, actor, input, now = new Date
  * browser price, provider appointment, or claim that work/payment completed. */
 export function savedHandoffPayload(job, handoffRequestId) {
   const p = job?.acceptedHandoffPayload;
-  if (job?.handoffVersion !== 1 || !p || job.handoffRequestId !== handoffRequestId || !['accepted', 'approved'].includes(job.estimate?.status) || job.estimate.amount !== p.quote.total || job.estimate.depositRequired !== p.quote.deposit || job.acceptance?.acceptedAt !== p.acceptance.accepted_at || canonical(job.scope || {}) !== canonical(p.scope || {}) || ['cancelled','canceled','completed','paid','invoiced','closed'].includes(state(job))) throw fail('sync_snapshot_changed', 'The signed handoff changed. Review the current saved job before synchronizing it.');
+  if (job?.handoffVersion !== 1 || !p || job.handoffRequestId !== handoffRequestId || !['accepted', 'approved'].includes(job.estimate?.status) || job.estimate.amount !== p.quote.total || job.estimate.depositRequired !== p.quote.deposit || job.acceptance?.acceptedAt !== p.acceptance.accepted_at || canonical(job.scope || {}) !== canonical(p.scope || {}) || p.quote.itemized === true && canonical(job.estimate.lineItems ?? null) !== canonical(p.quote.estimate_line_items ?? null) || ['cancelled','canceled','completed','paid','invoiced','closed'].includes(state(job))) throw fail('sync_snapshot_changed', 'The signed handoff changed. Review the current saved job before synchronizing it.');
   const start = localInstant(job.date, job.time), end = localInstant(job.endDate || job.date, job.endTime);
   if (!start || !end || end <= start) throw fail('invalid_schedule', 'The current Hub schedule needs review before CRM synchronization.');
   return { ...p, job_id: job.id, idempotency_key: job.syncIdempotencyKey, opportunity_id: job.highlevelOpportunityId || '', client: { ...p.client, highlevel_contact_id: job.highlevelContactId || p.client.highlevel_contact_id || '', highlevel_job_appointment_id: job.highlevelAppointmentId || '', highlevel_appointment_id: job.walkthroughAppointmentId || '' }, quote: { ...p.quote, job_date: job.date, start_time: job.time, end_time: job.endTime, start_at: start, end_at: end }, walkthrough_id: job.sourceWalkthroughId || '' };

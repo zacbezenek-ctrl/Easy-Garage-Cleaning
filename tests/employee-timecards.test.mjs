@@ -5,6 +5,7 @@ import { createHubCredentialHash, createHubSessionCookie } from '../functions/_l
 import { onRequestGet, onRequestPost } from '../functions/api/employee-hub.js';
 import { encodeFirestoreFields } from '../functions/_lib/firestore-job.js';
 import { activeJobSegment } from '../functions/_lib/employee-job-time.js';
+import { matchesWhere } from './helpers/firestore-query.mjs';
 
 const crew = { user: 'Crew.One', displayName: 'Crew One', role: 'crew', payType: 'hourly' };
 const manager = { user: 'ZacB', displayName: 'Manager', role: 'owner' };
@@ -102,7 +103,7 @@ function storage(t) {
   const matches = (current, condition) => condition?.exists === false ? !current : !condition?.updateTime || current?.updateTime === condition.updateTime;
   t.mock.method(globalThis, 'fetch', async (input, options = {}) => {
     const url = new URL(input), body = options.body ? JSON.parse(options.body) : null;
-    if (url.pathname.endsWith('/documents:runQuery')) return Response.json([...documents.values()].filter(doc => doc.name.includes('/documents/jobs/') && doc.fields.recordType?.stringValue === body.structuredQuery.where.fieldFilter.value.stringValue).map(document => ({ document })));
+    if (url.pathname.endsWith('/documents:runQuery')) return Response.json([...documents.values()].filter(doc => doc.name.includes('/documents/jobs/') && matchesWhere(doc, body.structuredQuery.where)).map(document => ({ document })));
     if (url.pathname.endsWith('/documents:commit')) {
       if (commitHook) { const hook = commitHook; commitHook = null; hook(); }
       if (barrierCount) { barrierCount--; if (!barrierCount) barrierResolve(); await barrier; }

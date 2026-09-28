@@ -83,6 +83,7 @@
 .gg-manage-list li::before{content:"·";position:absolute;left:8px;color:var(--accent-deep);font-weight:700}
 @media(max-width:720px){.gg-plans{grid-template-columns:1fr}.gg-plan.gg-featured{order:-1}}
 </style>
+<style id="footer-tap">@media(max-width:640px){.site-footer .foot-brand a,.site-footer .foot-col a,.site-footer .foot-bar a{display:inline-flex;align-items:center;min-height:44px}}</style>
 </head>
 <body>
 <a href="#main-content" class="skip-link">Skip to content</a>
@@ -150,7 +151,7 @@
   </div>
 </nav>
 <div class="nav-overlay" id="nav-overlay" aria-hidden="true"></div>
-<aside class="nav-drawer" id="nav-drawer" aria-hidden="true" aria-label="Mobile navigation">
+<aside class="nav-drawer" id="nav-drawer" aria-hidden="true" aria-label="Mobile navigation" inert>
   <div class="nav-drawer-head">
     <span class="logo"><span class="logo-mark"></span>Easy Garage</span>
     <button type="button" class="nav-drawer-close" aria-label="Close menu">&times;</button>
@@ -405,12 +406,21 @@ function initNavDrawer(){
   if(!toggle||!drawer)return;
   if(toggle.dataset.navBound)return;
   toggle.dataset.navBound='1';
+  let returnFocus=null;
+  drawer.inert=!drawer.classList.contains('open');
+  const background=[...document.body.children].filter(el=>el!==drawer&&el!==overlay&&el.tagName!=='SCRIPT');
+  const focusable=()=>[...drawer.querySelectorAll('a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])')].filter(el=>!el.hidden&&el.offsetParent!==null);
   function setOpen(open){
+    if(open)returnFocus=document.activeElement;
     toggle.setAttribute('aria-expanded',open);
     drawer.classList.toggle('open',open);
     drawer.setAttribute('aria-hidden',String(!open));
+    drawer.inert=!open;
     if(overlay){overlay.classList.toggle('open',open);overlay.setAttribute('aria-hidden',String(!open));}
     document.body.classList.toggle('nav-open',open);
+    background.forEach(el=>{el.inert=open;});
+    if(open)setTimeout(()=>{(closeBtn||focusable()[0])?.focus();},0);
+    else if(returnFocus&&typeof returnFocus.focus==='function')returnFocus.focus();
   }
   toggle.addEventListener('click',()=>setOpen(toggle.getAttribute('aria-expanded')!=='true'));
   if(closeBtn)closeBtn.addEventListener('click',()=>setOpen(false));
@@ -424,7 +434,16 @@ function initNavDrawer(){
       if(links)links.classList.toggle('open',!open);
     });
   });
-  document.addEventListener('keydown',e=>{if(e.key==='Escape')setOpen(false);});
+  document.addEventListener('keydown',e=>{
+    if(!drawer.classList.contains('open'))return;
+    if(e.key==='Escape'){e.preventDefault();setOpen(false);return;}
+    if(e.key==='Tab'){
+      const items=focusable();if(!items.length)return;
+      const first=items[0],last=items[items.length-1];
+      if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus();}
+      else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus();}
+    }
+  });
 }
 if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',initNavDrawer);}else{initNavDrawer();}
 

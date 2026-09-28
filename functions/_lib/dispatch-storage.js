@@ -2,6 +2,14 @@ import { firestoreFetch } from './firebase-service-account.js';
 import { decodeFirestoreFields, encodeFirestoreFields } from './firestore-job.js';
 import { employeeAccountsConfigured, listEmployeeApplications } from './employee-accounts.js';
 import { listHubUserProfiles } from './hub-session.js';
+import { arrivalSettings } from './dispatch-arrival.js';
+import { legacyBlockMode } from './dispatch-legacy-blocks.js';
+import { readCollection } from './employee-vault.js';
+import { primaryStaffRole, sanitizeStaffRoles } from './staff-roles.js';
+import { legacyPersonKeys, staffDirectoryEnabled, storedWeeklyAvailability } from './staff-directory.js';
+import { storedSkills } from './staff-skills.js';
+import { segmentsEnabled } from './dispatch-segments.js';
+import { commitConflict, commitFailure } from './firestore-errors.js';
 
 const ROOT = 'projects/egcw-1ec83/databases/(default)/documents';
 const BASE = `https://firestore.googleapis.com/v1/${ROOT}`;
@@ -12,18 +20,39 @@ function decode(document,collection,id) {
   if (!path||path.includes('/')||id&&path!==id||typeof document.updateTime!=='string'||!document.updateTime||document.fields!==undefined&&(!document.fields||typeof document.fields!=='object'||Array.isArray(document.fields))) throw failure('dispatch_storage_incomplete','Dispatch received a record without a verifiable identity or revision. Refresh before changing work.');
   return {...decodeFirestoreFields(document.fields || {}),id:path,revision:document.updateTime};
 }
-const JOB_FIELDS = ['type','recordType','date','time','endDate','endTime','customerId','customerAccountOwnerJobId','customerMemoryInheritedFrom','propertyId','customer','phone','address','title','serviceType','status','pipelineStatus','assignedCrew','assignedTo','crewLead','crewId','vehicleId','crewNeeded','requiredCrewSize','travelBufferMinutes','jobInstructions','operationalScope.text','scope','scopeOfWork','accessInstructions','customerInstructions','opsNotes','requiredEquipment','materials','syncStatus','highlevelAppointmentId','highlevelContactId','sourceWalkthroughId','sourceTemplateJobId','recurrence','recurrenceParentId','reminderDays','notify','shiftPickupEnabled','openShift','notes','durationMin','estimatedDurationMin','createdAt','updatedAt','completedAt','cancelledAt','startedAt','employee','employeeId','allDay','reason','startAt','endAt','fieldExecution.activity','fieldExecution.activityReason','fieldExecution.activityAt','fieldExecution.activityBy','fieldExecution.attention','fieldExecution.jobTime','fieldLastActionAt','fieldCompletionSync.status','fieldCompletionSync.message','fieldCompletionSync.attemptedAt','fieldCompletionSync.syncedAt'];
+const JOB_FIELDS = ['type','recordType','date','time','endDate','endTime','customerId','customerAccountOwnerJobId','customerMemoryInheritedFrom','propertyId','customer','phone','address','title','serviceType','status','pipelineStatus','assignedCrew','assignedTo','crewLead','crewId','vehicleId','crewNeeded','requiredCrewSize','travelBufferMinutes','jobInstructions','operationalScope.text','scope','scopeOfWork','accessInstructions','customerInstructions','opsNotes','requiredEquipment','materials','syncStatus','highlevelAppointmentId','highlevelContactId','sourceWalkthroughId','sourceTemplateJobId','recurrence','recurrenceParentId','reminderDays','notify','shiftPickupEnabled','openShift','notes','durationMin','estimatedDurationMin','createdAt','updatedAt','completedAt','cancelledAt','startedAt','employee','employeeId','allDay','reason','startAt','endAt','fieldExecution.activity','fieldExecution.activityReason','fieldExecution.activityAt','fieldExecution.activityBy','fieldExecution.attention','fieldExecution.jobTime','fieldLastActionAt','fieldCompletionSync.status','fieldCompletionSync.message','fieldCompletionSync.attemptedAt','fieldCompletionSync.syncedAt','arrivalWindowStart','arrivalWindowEnd','arrivalWindow','assignmentSegments'];
 
+// Roles come from stored staff roles (configuration or the encrypted account), else the
+// configured role or namedStaffRole(). With EGC_STAFF_DIRECTORY_ENABLED the rows also
+// carry staffRoles, skills and weekly availability from the encrypted profiles.
 export async function dispatchRoster(env) {
-  const profiles = listHubUserProfiles(env).map(p => ({ id: p.user.trim().toLowerCase(), name: p.displayName, role: p.role }));
+  const roles = [], role = (stored, fallback) => stored ? primaryStaffRole(stored) : fallback;
+  const profiles = listHubUserProfiles(env).map(p => {
+    const stored = sanitizeStaffRoles(p.staffRoles, p);
+    roles.push(stored || [p.role]);
+    return { id: p.user.trim().toLowerCase(), name: p.displayName, role: role(stored, p.role) };
+  });
   if (employeeAccountsConfigured(env)) {
     const approved = (await listEmployeeApplications(env)).filter(p => p.status === 'approved');
-    profiles.push(...approved.map(p => ({ id: String(p.username || p.user || '').trim().toLowerCase(), name: p.displayName, role: 'crew' })));
+    for (const p of approved) {
+      const username = String(p.username || p.user || ''), stored = sanitizeStaffRoles(p.staffRoles, { user: username, businessAccess: false });
+      roles.push(stored || [p.role === 'sales' ? 'sales' : 'crew']);
+      profiles.push({ id: username.trim().toLowerCase(), name: p.displayName, role: role(stored, p.role === 'sales' ? 'sales' : 'crew') });
+    }
   }
   const seen = new Set();
   for (const profile of profiles) {
     if (!profile.id || seen.has(profile.id)) throw failure('dispatch_roster_ambiguous', 'Employee identities need review before dispatch can safely assign work.');
     seen.add(profile.id);
+  }
+  if (staffDirectoryEnabled(env)) {
+    let stored;
+    try { stored = await readCollection(env, 'profiles'); }
+    catch { throw failure('dispatch_storage_unavailable', 'Staff skills and availability could not be verified. Retry before scheduling.'); }
+    profiles.forEach((profile, index) => {
+      const ids = [profile.id, ...legacyPersonKeys(profile.id)], saved = ids.map(id => stored.find(row => row?.id === id && String(row.username || '').trim().toLowerCase() === profile.id)).find(Boolean) || {};
+      Object.assign(profile, { staffRoles: roles[index], skills: storedSkills(saved.skills).map(({ id, level }) => ({ id, level })), weeklyAvailability: storedWeeklyAvailability(saved.weeklyAvailability) });
+    });
   }
   return profiles.sort((a, b) => a.name.localeCompare(b.name));
 }
@@ -60,13 +89,41 @@ export function dispatchStorage(env, fetcher = firestoreFetch) {
   return {
     roster: () => dispatchRoster(env),
     jobs: () => scan('jobs', JOB_FIELDS),
+    // Complete paginated scan narrowed to the caller's DTO inputs. A mask is
+    // mandatory: raw job bodies carry signature images and payment evidence.
+    async jobRecords(fields) {
+      if (!Array.isArray(fields) || !fields.length || fields.some(field => typeof field !== 'string' || !field)) throw failure('dispatch_storage_mask_required', 'A jobs scan must name the fields it reads.');
+      return scan('jobs', fields);
+    },
+    legacyBlockMode: legacyBlockMode(env),
+    // EGC_DISPATCH_SEGMENTS: segment writes; reads always honour saved segments.
+    segmentsEnabled: segmentsEnabled(env),
+    async legacyBlockedDays(dates) {
+      const found = await Promise.all(dates.map(async date => {
+        const response = await send(`${BASE}/blocked_days/${encodeURIComponent(date)}?mask.fieldPaths=blockedAt`);
+        if (response.status === 404) return null;
+        if (!response.ok) throw failure('dispatch_storage_unavailable', 'Blocked calendar days could not be verified. Retry before scheduling.');
+        return decode(await response.json(), 'blocked_days', date).id;
+      }));
+      return found.filter(Boolean);
+    },
     resources: () => scan('dispatchResources', null, 2000),
     customers: () => scan('customers', ['name','firstName','lastName','phone','email','address','highlevelContactId'], 20000),
+    settings: async () => arrivalSettings(env),
+    recurringPlans: () => scan('recurringPlans', null, 2000),
     async read(collection, id) {
       const response = await send(`${BASE}/${collection}/${encodeURIComponent(id)}`);
       if (response.status === 404) return null;
       if (!response.ok) throw failure('dispatch_storage_unavailable', 'The dispatch record could not be loaded. Retry.');
       return decode(await response.json(),collection,id);
+    },
+    async readMany(collection, ids) {
+      if (!ids.length) return [];
+      const response = await send(`${BASE}:batchGet`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ documents: ids.map(id => `${ROOT}/${collection}/${id}`) }) });
+      if (!response.ok) throw failure('dispatch_storage_unavailable', 'The dispatch records could not be loaded. Retry.');
+      const rows = await response.json();
+      if (!Array.isArray(rows)) throw failure('dispatch_storage_incomplete', 'Dispatch returned incomplete records. Retry.');
+      return rows.filter(row => row?.found).map(row => decode(row.found,collection));
     },
     async commit(writes) {
       let response,transaction;
@@ -109,8 +166,10 @@ export function dispatchStorage(env, fetcher = firestoreFetch) {
         }) });
       } catch { await rollback();throw failure('dispatch_outcome_unknown', 'The save response was lost. Retry the same request to safely verify whether it saved.'); }
       if (!response.ok) {
+        const failed = await commitFailure(response);
         await rollback();
-        if ([409, 412].includes(response.status)) throw failure('dispatch_revision_conflict', 'The schedule changed while you were editing. Refresh and review the latest information.', 409);
+        // A stale updateTime is 400 FAILED_PRECONDITION on real Firestore; it never applied.
+        if (commitConflict(failed)) throw failure('dispatch_revision_conflict', 'The schedule changed while you were editing. Refresh and review the latest information.', 409);
         throw failure('dispatch_outcome_unknown', 'The save could not be verified. Retry the same request to safely check its outcome.');
       }
       return response.json();

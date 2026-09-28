@@ -81,5 +81,6 @@ export function employeeJobTime(entry, now = new Date().toISOString()) {
 export function ownJobTimeProjection(entry, now = new Date().toISOString()) {
   if (!entry) return null;
   const summary = employeeJobTime(entry, now), current = summary.needsReview ? null : activeJobSegment(entry);
-  return { id: entry.id, employee: entry.employee, clockInAt: entry.clockInAt, onBreak: Array.isArray(entry.breaks) && entry.breaks.some(item => item && !item.endAt), currentSegmentId: current?.id || '', current: current ? { id: current.id, kind: current.kind, jobId: current.jobId, jobLabel: current.jobLabel, startedAt: current.startedAt } : null, summary };
+  // Breaks are returned exactly as stored so an offline break replay can extend them unchanged.
+  return { id: entry.id, employee: entry.employee, clockInAt: entry.clockInAt, onBreak: Array.isArray(entry.breaks) && entry.breaks.some(item => item && !item.endAt), breaks: Array.isArray(entry.breaks) ? entry.breaks : [], deviceTime: entry.deviceTime === true, currentSegmentId: current?.id || '', current: current ? { id: current.id, kind: current.kind, jobId: current.jobId, jobLabel: current.jobLabel, startedAt: current.startedAt } : null, summary };
 }

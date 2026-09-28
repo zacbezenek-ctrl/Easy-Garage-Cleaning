@@ -1,6 +1,8 @@
 import { getHubSession } from '../_lib/hub-session.js';
 import { dispatchStorage } from '../_lib/dispatch-storage.js';
 import { dispatchOverview, mutateDispatch, requireDispatcher } from '../_lib/dispatch-service.js';
+import { travelEstimator } from '../_lib/dispatch-travel.js';
+import { dispatchFunnelOptions } from '../_lib/dispatch-funnel.js';
 
 function reply(status, body) {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type':'application/json','Cache-Control':'no-store','X-Content-Type-Options':'nosniff' } });
@@ -20,14 +22,16 @@ function errorResponse(error) {
 }
 
 // Dependency injection permits full request/permission tests without changing
-// production environment flags, cookies, or Firestore credentials.
-export function dispatchHandlers({ session = getHubSession, storage = dispatchStorage } = {}) {
+// production environment flags, cookies, Firestore credentials or the clock.
+// Reads take the Date; mutations take its ISO string (dispatch-contract.js).
+export function dispatchHandlers({ session = getHubSession, storage = dispatchStorage, travel = travelEstimator, now = () => new Date() } = {}) {
   return {
     async get({request,env}) {
       try {
         const actor = await session(request,env); requireDispatcher(actor);
         const params = Object.fromEntries(new URL(request.url).searchParams.entries());
-        return reply(200,{...await dispatchOverview(storage(env),actor,params),viewer:{id:actor.user}});
+        const store = storage(env);
+        return reply(200,{...await dispatchOverview(store,actor,params,now(),{travel:travel({env,store,now})}),viewer:{id:actor.user},funnel:dispatchFunnelOptions()});
       } catch(error) { return errorResponse(error); }
     },
     async post({request,env}) {
@@ -39,7 +43,10 @@ export function dispatchHandlers({ session = getHubSession, storage = dispatchSt
         const raw = await request.text();
         if (new TextEncoder().encode(raw).byteLength > 64000) return reply(413,{ok:false,code:'dispatch_request_too_large',error:'The dispatch request is too large.'});
         let input; try { input = JSON.parse(raw); } catch { return reply(400,{ok:false,code:'dispatch_json_invalid',error:'The dispatch request was incomplete. Refresh the form and try again.'}); }
-        return reply(200,await mutateDispatch(storage(env),actor,input));
+        const store = storage(env);
+        // Saves read cached drive times only: no provider call or cache write
+        // runs between the day locks and the schedule commit.
+        return reply(200,await mutateDispatch(store,actor,input,now().toISOString(),{travel:travel({env,store,now,googleLimit:0,cacheWrites:false})}));
       } catch(error) { return errorResponse(error); }
     },
   };

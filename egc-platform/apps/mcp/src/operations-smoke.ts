@@ -56,13 +56,13 @@ async function verifyAttempt(port:number,env:NodeJS.ProcessEnv,now:()=>number){
   const listed=await rpc('tools/list');if(!Array.isArray(listed.tools)||listed.tools.some((t:any)=>typeof t?.name!=='string'))throw new Error('verification_tools_missing');const names=new Set(listed.tools.map((t:any)=>t.name));
   if(names.size!==listed.tools.length)throw new Error('verification_duplicate_tools');
   if(required.some(n=>!names.has(n)))throw new Error('verification_tools_missing');summary.discoveredTools=names.size;summary.requiredToolsPresent=true;
-  stage='contacts';const contacts=await tool('contacts.search',{limit:1});if(!Array.isArray(contacts))throw new Error('verification_contact_read_failed');summary.existingContactRead=true;
+  stage='contacts';const contacts=await tool('contacts.search',{limit:1});if(!Array.isArray(contacts.items)||contacts.items.length>1||typeof contacts.page?.returned!=='number'||typeof contacts.coverage?.complete!=='boolean')throw new Error('verification_contact_read_failed');summary.existingContactRead=true;
   if(env.EGC_OPERATIONS_ENABLED==='true'){
     stage='operations_status';
     const status=await tool('egc.operations_status',{});if(status.ok!==true)throw new Error('verification_operations_unavailable');summary.operationsRead=true;
     stage='hub_owners';
     const owners=await tool('egc.operations_owners',{});
-    if(owners.ok!==true||owners.authority!=='employee_hub'||!Array.isArray(owners.members)||!owners.members.length||owners.members.some((m:any)=>!m||typeof m.id!=='string'||!m.id||!['owner','manager','sales','crew_lead','crew'].includes(m.role))||new Set(owners.members.map((m:any)=>m.id)).size!==owners.members.length)throw fault('verification_owner_unverified');
+    if(owners.ok!==true||owners.authority!=='employee_hub'||!Array.isArray(owners.members)||!owners.members.length||owners.members.some((m:any)=>!m||typeof m.id!=='string'||!m.id||!['owner','manager','sales','phone','crew_lead','crew'].includes(m.role))||new Set(owners.members.map((m:any)=>m.id)).size!==owners.members.length)throw fault('verification_owner_unverified');
     summary.hubOwnersRead=true;summary.hubOwnerCount=owners.members.length;
     stage='hub_calendar';
     const window=calendarWindow(now()),ids=new Set<string>();let offset=0,total:number|undefined,pages=0,finished=false,timeNeedsReview=0;
@@ -80,6 +80,8 @@ async function verifyAttempt(port:number,env:NodeJS.ProcessEnv,now:()=>number){
     summary.hubCalendarRead=true;summary.hubCalendarCoverageComplete=true;summary.hubCalendarCount=ids.size;summary.hubCalendarPages=pages+1;summary.hubScheduleTimeNeedsReviewCount=timeNeedsReview;summary.hubCalendarWindow={...window,timeZone:'America/Denver'};
     if(env.EGC_OPERATIONS_CANARY_ON_START==='true'){
       stage='canary';
+      // The static bearer is read-only unless explicitly granted write scope for this verification.
+      if(env.MCP_BEARER_WRITE_ENABLED!=='true')throw new Error('verification_bearer_write_disabled');
       const release=String(summary.release||'');if(!/^[a-f0-9]{40}$/.test(release))throw new Error('verification_release_required');
       const eligible=owners.members.filter((m:any)=>m?.role==='owner'&&typeof m.id==='string'&&m.id.length>0);if(eligible.length!==1)throw new Error('verification_owner_ambiguous');
       const requestId=uuid('egc-internal-acceptance:'+release);

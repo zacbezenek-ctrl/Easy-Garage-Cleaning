@@ -43,7 +43,7 @@ const collections = () => Object.fromEntries(collectionNames.map(name => [name, 
 
 function suite(fetcher) {
   const env = browser();
-  env.context.sessionStorage = storage({ egc_u: 'ZacB', egc_business_access: 'true', egc_role: 'owner' });
+  env.context.sessionStorage = storage({ egc_u: 'ZacB', egc_business_access: 'true', egc_owner: 'true', egc_role: 'owner' });
   env.context.me = 'ZacB';
   env.context.jobsCache = [];
   env.context.hubFetch = fetcher;
@@ -146,7 +146,7 @@ function employeeAuth(fetcher) {
     jobsCache: [], custsCache: [], leadsCache: [], blockedDays: new Set(), blockedSlots: new Set(),
   });
   const page = read('employee.html');
-  const source = page.slice(page.indexOf("const ADMINS ="), page.indexOf('async function sendBookingConfirmation'));
+  const source = page.slice(page.indexOf('let me = null;'), page.indexOf('async function sendBookingConfirmation'));
   vm.runInNewContext(source + '\nglobalThis.ui={doLogin,doLogout,enterEmployeeApp,restoreHubSession,hubFetch,getUser:()=>me};', env.context);
   return { ...env, api: env.context.ui };
 }

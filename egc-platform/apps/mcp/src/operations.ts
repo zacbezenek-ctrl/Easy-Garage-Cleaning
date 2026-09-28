@@ -2,30 +2,61 @@ import {AsyncLocalStorage} from "node:async_hooks";
 import {randomUUID} from "node:crypto";
 import type {McpServer} from "@modelcontextprotocol/server";
 import * as z from "zod/v4";
-import {signRequest,createTaskSchema,patchTaskSchema,type Actor,type Command} from "@egc/operations";
-import {oauthSecurityMetadata,READ_SCOPE,WRITE_SCOPE} from "./oauth.js";
+import {signRequest,createTaskSchema,patchTaskSchema,type Actor,type Command,type Delegate} from "@egc/operations";
+import {DIRECT_SENDS_PAUSED,oauthSecurityMetadata,READ_SCOPE,WRITE_SCOPE} from "./oauth.js";
 import {getCustomerTimeline} from '@egc/customer-state';
 
+// A Hub-approved grant acts as the integration mcp:<hub user>:<grant id> on behalf of delegate {user, role}.
+export type Principal=Actor&{delegate?:Pick<Delegate,"user"|"role">};
 // Only middleware after successful token verification may establish this context.
 // OAuth grant IDs persist across refresh. Raw token values never leave the auth layer.
-export const operationsPrincipal=new AsyncLocalStorage<Actor>();
+export const operationsPrincipal=new AsyncLocalStorage<Principal>();
+// The Hub-signed grant stays beside the principal, never inside it, so tool results and logs cannot echo it.
+const delegateAssertions=new WeakMap<Principal,string>();
+export function runAsPrincipal<T>(principal:Principal,assertion:string|undefined,run:()=>T):T{
+  if(principal.delegate&&assertion)delegateAssertions.set(principal,assertion);
+  return operationsPrincipal.run(principal,run);
+}
+/** The exact four-field actor every signed contract accepts. */
+export const bridgeActor=(principal:Principal):Actor=>({id:principal.id,kind:principal.kind,role:principal.role,workspace:principal.workspace});
+/** The delegate forwarded in the envelope so the API can verify the Hub's signature and refuse non-manager writes. */
+export function bridgeDelegate(principal:Principal):Delegate|null|undefined{
+  if(!principal.delegate)return undefined;
+  const assertion=delegateAssertions.get(principal);
+  return assertion?{user:principal.delegate.user,role:principal.delegate.role,assertion}:null;
+}
 export const operationsEnabled=()=>process.env.EGC_OPERATIONS_ENABLED==="true";
 export const OPERATIONS_WRITE_TOOLS=new Set(["actions.propose","actions.edit","actions.snooze","actions.complete","actions.complete_from_message","actions.cancel","actions.reconcile_inbound","egc.generate_brief"]);
 export const LEGACY_MUTATIONS_DISABLED=new Set(["tasks.create","tasks.update","tasks.complete","appointments.delete","jobs.create","jobs.update","jobs.add_note","walkthroughs.create_draft","walkthroughs.update_draft","walkthroughs.approve"]);
+// One-step customer sends. Paused in operations mode unless the operator explicitly re-enables them.
+export const DIRECT_SEND_TOOLS=new Set(["conversations.send_message","send_sms","egc.send_followup"]);
+export const directSendsEnabled=()=>process.env.EGC_MCP_DIRECT_SENDS_ENABLED==="true";
+export const directSendsBlocked=()=>operationsEnabled()&&!directSendsEnabled();
+export const LEGACY_MUTATION_DISABLED={error:"legacy_mutation_disabled_in_operations_mode",instruction:"Use canonical actions for internal work, egc.add_job_note for exact Hub notes, recording review for managed walkthroughs, and durable scheduling tools. Legacy parallel job/draft writes and destructive booking deletion remain disabled."};
+export const DIRECT_SEND_DISABLED={error:"direct_send_disabled_in_operations_mode",sent:false,instruction:`Nothing was sent. ${DIRECT_SENDS_PAUSED} Tell the user the message has not been sent.`};
+export function blockedToolCall(toolName:string){
+  if(!operationsEnabled())return null;
+  if(LEGACY_MUTATIONS_DISABLED.has(toolName))return LEGACY_MUTATION_DISABLED;
+  return DIRECT_SEND_TOOLS.has(toolName)&&!directSendsEnabled()?DIRECT_SEND_DISABLED:null;
+}
 const result=(value:unknown)=>({content:[{type:"text" as const,text:JSON.stringify(value,null,2)}],structuredContent:{result:value}});
+// The API refuses a Hub-approved grant whose stored approval no longer verifies (the Hub key was rotated, or it was altered).
+export const DELEGATE_RECONNECT="This connection's Employee Hub approval is no longer valid, for example because the Hub signing key changed. Nothing was done. Ask the user to disconnect and reconnect the EGC connector and approve again in the Employee Hub; retrying will not help.";
 export async function callOperations(command:Command,requestId:string=randomUUID(),fetcher:typeof fetch=fetch) {
-  const actor=operationsPrincipal.getStore();
+  const principal=operationsPrincipal.getStore();
   if(!operationsEnabled())return {error:"operations_not_enabled",authority:"none",coverage:"unknown"};
-  if(!actor)return {error:"verified_principal_required"};
+  if(!principal)return {error:"verified_principal_required"};
+  const delegate=bridgeDelegate(principal);
+  if(delegate===null)return {error:"verified_principal_required"};
   const origin=process.env.EGC_OPERATIONS_API_ORIGIN,key=process.env.EGC_OPERATIONS_MCP_SIGNING_SECRET;
   if(!origin||!key||key.length<32)return {error:"operations_bridge_not_configured"};
   try {
     const url=new URL(origin);
     if(url.protocol!=="https:"||url.pathname!=="/"||url.username||url.password||url.search||url.hash)return {error:"operations_bridge_not_configured"};
-    const envelope=signRequest({v:1,iss:"mcp",aud:"egc-operations",iat:Math.floor(Date.now()/1000),nonce:randomUUID(),actor,request:{requestId,body:command}},key);
+    const envelope=signRequest({v:1,iss:"mcp",aud:"egc-operations",iat:Math.floor(Date.now()/1000),nonce:randomUUID(),actor:bridgeActor(principal),...(delegate?{delegate}:{}),request:{requestId,body:command}},key);
     const response=await fetcher(new URL("/operations/rpc",url),{method:"POST",redirect:"error",headers:{"Content-Type":"application/json"},body:JSON.stringify({envelope}),signal:AbortSignal.timeout(20000)});
     const body=await response.json() as Record<string,unknown>;
-    return {...body,httpStatus:response.status,requestId};
+    return {...body,httpStatus:response.status,requestId,...(body.error==="delegate_invalid"?{instruction:DELEGATE_RECONNECT}:{})};
   }catch{return {error:"operations_outcome_unknown",requestId,instruction:"Retry exactly the same command and requestId. Do not create a fresh copy."};}
 }
 export function registerOperationsTools(server:McpServer,options:{includeAuthorityOverrides?:boolean}={}) {

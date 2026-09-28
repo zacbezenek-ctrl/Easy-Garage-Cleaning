@@ -52,4 +52,4 @@ From ChatGPT, the MCP must be able to:
 - create/edit/approve walkthrough drafts and turn approved scope into a job;
 - mirror approved operational notes back to GHL.
 
-The voice walkthrough saves a draft structured scope first. A human can review/edit it in the portal, or ChatGPT can edit/approve it with `egc:write`.
+Walkthrough audio is recorded, reviewed and approved on the exact visit in the Employee Hub (Action Center → Portal schedule → Recordings). The reporting portal only links there and never records audio. The legacy draft flow (API `/walkthroughs/*`, MCP approval with `egc:write`) remains for rollback compatibility only and is refused once `EGC_OPERATIONS_ENABLED=true`.

@@ -361,10 +361,58 @@ export const oauthAuthorizationCodes = pgTable("oauth_authorization_codes", {
   scopes: jsonb("scopes").$type<string[]>().default([]).notNull(),
   expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
   usedAt: timestamp("used_at", { withTimezone: true }),
+  // Set only for a grant a signed-in Hub user approved; null for the shared login.
+  principalId: text("principal_id"),
+  principalRole: text("principal_role"),
+  principalAssertion: text("principal_assertion"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull()
 }, (t) => [
   uniqueIndex("oauth_authorization_codes_hash_uq").on(t.codeHash),
   index("oauth_authorization_codes_expires_idx").on(t.expiresAt)
+]);
+
+// RFC 7591 dynamically registered public clients. Redirect URIs are re-checked
+// against the live allowlist on every authorization, never trusted from this row.
+export const oauthClients = pgTable("oauth_clients", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  clientId: text("client_id").notNull(),
+  clientName: text("client_name").notNull(),
+  redirectUris: jsonb("redirect_uris").$type<string[]>().notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull()
+}, (t) => [
+  uniqueIndex("oauth_clients_client_id_uq").on(t.clientId),
+  index("oauth_clients_name_idx").on(t.clientName)
+]);
+
+// A validated authorization request waiting for the Employee Hub to name the approving user.
+export const oauthGrantRequests = pgTable("oauth_grant_requests", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  nonceHash: text("nonce_hash").notNull(),
+  clientId: text("client_id").notNull(),
+  redirectUri: text("redirect_uri").notNull(),
+  codeChallenge: text("code_challenge").notNull(),
+  resource: text("resource").notNull(),
+  scopes: jsonb("scopes").$type<string[]>().default([]).notNull(),
+  state: text("state"),
+  // The label the Hub approval page shows and signs, and the digest of the browser-binding cookie.
+  clientLabel: text("client_label").notNull(),
+  bindingHash: text("binding_hash").notNull(),
+  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  usedAt: timestamp("used_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull()
+}, (t) => [
+  uniqueIndex("oauth_grant_requests_nonce_hash_uq").on(t.nonceHash),
+  index("oauth_grant_requests_expires_idx").on(t.expiresAt)
+]);
+
+// Sliding-window attempt log for OAuth login lockout and registration limits.
+export const oauthRateLimitEvents = pgTable("oauth_rate_limit_events", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  bucket: text("bucket").notNull(),
+  occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull()
+}, (t) => [
+  index("oauth_rate_limit_events_bucket_idx").on(t.bucket, t.occurredAt),
+  index("oauth_rate_limit_events_occurred_idx").on(t.occurredAt)
 ]);
 
 export const oauthTokens = pgTable("oauth_tokens", {
@@ -377,6 +425,9 @@ export const oauthTokens = pgTable("oauth_tokens", {
   accessExpiresAt: timestamp("access_expires_at", { withTimezone: true }).notNull(),
   refreshExpiresAt: timestamp("refresh_expires_at", { withTimezone: true }).notNull(),
   revokedAt: timestamp("revoked_at", { withTimezone: true }),
+  principalId: text("principal_id"),
+  principalRole: text("principal_role"),
+  principalAssertion: text("principal_assertion"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull()
 }, (t) => [

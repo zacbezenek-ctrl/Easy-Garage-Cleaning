@@ -34,6 +34,7 @@
 <script type="application/ld+json">{"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [{"@type": "Question", "name": "How much does junk removal cost in Loveland?", "acceptedAnswer": {"@type": "Answer", "text": "Same ranges as Fort Collins: $99–$150 single item, $250–$400 small load, $400–$650 medium, $650+ large. No Loveland travel surcharge."}}, {"@type": "Question", "name": "Do you serve Centerra and Mariana Butte?", "acceptedAnswer": {"@type": "Answer", "text": "Yes — all Loveland neighborhoods including Centerra, Mariana Butte, Boyd Lake, and Downtown."}}, {"@type": "Question", "name": "How fast can you come to Loveland?", "acceptedAnswer": {"@type": "Answer", "text": "Next-day often available. Loveland is a quick drive down US-287 from Fort Collins."}}, {"@type": "Question", "name": "Are you insured in Loveland?", "acceptedAnswer": {"@type": "Answer", "text": "Yes — fully insured for all Larimer County jobs."}}, {"@type": "Question", "name": "Do you donate items from Loveland jobs?", "acceptedAnswer": {"@type": "Answer", "text": "Yes — Habitat ReStore Loveland area, ARC, and Goodwill with tax receipt in your name."}}, {"@type": "Question", "name": "What junk do you remove in Loveland?", "acceptedAnswer": {"@type": "Answer", "text": "Furniture, appliances, mattresses, boxes, yard debris, garage contents — single items to full loads."}}, {"@type": "Question", "name": "Is there a travel fee for Loveland?", "acceptedAnswer": {"@type": "Answer", "text": "No hidden travel fees for Loveland — it's in our core service area."}}, {"@type": "Question", "name": "Can I text photos for a Loveland quote?", "acceptedAnswer": {"@type": "Answer", "text": "Yes — text to (970) 999-1818. we respond as quickly as we can during business hours."}}]}</script>
 <script type="application/ld+json">{"@context": "https://schema.org", "@type": "WebPage", "@id": "https://easygaragecleaning.com/junk-removal-loveland-co#webpage", "url": "https://easygaragecleaning.com/junk-removal-loveland-co", "name": "Junk Removal Loveland CO | Fast Next-Day Service", "description": "Loveland junk removal — flat-rate from Centerra to Downtown. schedule a free on-site walkthrough for an exact flat-rate price in 5 minutes. No travel surcharge. Next-day available.", "isPartOf": {"@id": "https://easygaragecleaning.com/#website"}, "about": {"@id": "https://easygaragecleaning.com/#business"}, "speakable": {"@type": "SpeakableSpecification", "cssSelector": [".hero-sub", ".faq-q", ".faq-a", ".def-block"]}}</script>
 <link rel="stylesheet" href="/styles.css?v=20260904j">
+<style id="footer-tap">@media(max-width:640px){.site-footer .foot-brand a,.site-footer .foot-col a,.site-footer .foot-bar a{display:inline-flex;align-items:center;min-height:44px}}</style>
 </head>
 <body>
 <a href="#main-content" class="skip-link">Skip to content</a>
@@ -98,7 +99,7 @@
   </div>
 </nav>
 <div class="nav-overlay" id="nav-overlay" aria-hidden="true"></div>
-<aside class="nav-drawer" id="nav-drawer" aria-hidden="true" aria-label="Mobile navigation">
+<aside class="nav-drawer" id="nav-drawer" aria-hidden="true" aria-label="Mobile navigation" inert>
   <div class="nav-drawer-head">
     <span class="logo"><span class="logo-mark"></span>Easy Garage</span>
     <button type="button" class="nav-drawer-close" aria-label="Close menu">&times;</button>
@@ -438,6 +439,7 @@ function initNavDrawer(){
   if(toggle.dataset.navBound)return;
   toggle.dataset.navBound='1';
   let returnFocus=null;
+  drawer.inert=!drawer.classList.contains('open');
   const background=[...document.body.children].filter(el=>el!==drawer&&el!==overlay&&el.tagName!=='SCRIPT');
   const focusable=()=>[...drawer.querySelectorAll('a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])')].filter(el=>!el.hidden&&el.offsetParent!==null);
   function setOpen(open){
@@ -445,6 +447,7 @@ function initNavDrawer(){
     toggle.setAttribute('aria-expanded',open);
     drawer.classList.toggle('open',open);
     drawer.setAttribute('aria-hidden',String(!open));
+    drawer.inert=!open;
     if(overlay){overlay.classList.toggle('open',open);overlay.setAttribute('aria-hidden',String(!open));}
     document.body.classList.toggle('nav-open',open);
     background.forEach(el=>{el.inert=open;});

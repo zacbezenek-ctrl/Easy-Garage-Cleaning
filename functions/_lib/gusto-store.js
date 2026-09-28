@@ -1,5 +1,6 @@
 import { firestoreFetch } from './firebase-service-account.js';
 import { employeeVaultReadOnly, employeeVaultSecret } from './employee-vault-key.js';
+import { classifyCommitFailure, commitConflict } from './firestore-errors.js';
 
 // This collection is denied by Firestore's existing browser catch-all rules.
 // The broadly writable jobs collection must never contain integration state.
@@ -72,7 +73,7 @@ export async function writeGustoRecord(env, key, data, expected) {
   });
   if (!response.ok) {
     const error = await response.json().catch(() => ({}));
-    if ([409, 412].includes(response.status) || ['ALREADY_EXISTS', 'FAILED_PRECONDITION', 'ABORTED'].includes(error.error?.status)) throw failure('GUSTO_WRITE_CONFLICT', 'Gusto settings changed. Reload and try again.', 409);
+    if (commitConflict(classifyCommitFailure(response.status, error))) throw failure('GUSTO_WRITE_CONFLICT', 'Gusto settings changed. Reload and try again.', 409);
     throw failure('GUSTO_STORAGE_ERROR', 'Gusto secure storage could not be updated.');
   }
   const saved = await response.json().catch(() => null);

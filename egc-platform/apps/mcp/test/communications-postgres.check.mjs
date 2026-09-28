@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {getDb,schema} from '@egc/database';
 import {eq,sql} from 'drizzle-orm';
-import {executeCommunication,reconcileCommunication} from '../dist/communication-execution.js';
+import {createHash} from 'node:crypto';
+import {executeCommunication,reconcileCommunication,normalizedCommunicationPayload} from '../dist/communication-execution.js';
 const url=new URL(process.env.DATABASE_URL||'http://invalid');
 if(process.env.EGC_OPERATIONS_TEST!=='isolated'||!['127.0.0.1','localhost'].includes(url.hostname)||url.pathname!=='/egc_operations_test')throw new Error('Only isolated loopback egc_operations_test is allowed');
 globalThis.fetch=async()=>{throw new Error('External HTTP forbidden');};
@@ -98,6 +99,16 @@ test('documented SMS from/to fields provide exact recipient proof',async()=>{
 });
 test('documented email child read supplies exact subject and single recipient proof',async()=>{
  const i=input({payload:{type:'Email',contactId:'synthetic-provider-id',message:'Synthetic authorized message',subject:'Exact subject',emailTo:'synthetic@example.invalid'}});saved.messageType='TYPE_EMAIL';saved.meta={email:{email:{messageIds:['email-child']}}};saved.dateAdded=new Date().toISOString();provider.getEmailMessage=async id=>({id,threadId:saved.id,contactId:saved.contactId,conversationId:saved.conversationId,direction:'outbound',body:saved.body,subject:'Exact subject',to:['synthetic@example.invalid'],from:'sender@example.invalid',status:'delivered',dateAdded:saved.dateAdded});const r=await executeCommunication(i,provider,db);assert.equal(r.ok,true);assert.equal(r.matchEvidence.recipient,'synthetic@example.invalid');assert.equal(r.matchEvidence.subject,'Exact subject');assert.equal(r.delivered,true);
+});
+test('the shared execution keeps the pre-attachment hash for plain messages and binds attachment URLs into the hash',async()=>{
+ const plain=input(),first=await executeCommunication(plain,provider,db);assert.equal(first.ok,true);
+ const [row]=await db.select().from(schema.communicationExecutions);const legacy={type:'SMS',contactId:'synthetic-provider-id',message:'Synthetic authorized message',subject:null,emailFrom:null,emailTo:null,fromNumber:null,toNumber:null};
+ assert.equal(row.payloadHash,createHash('sha256').update(JSON.stringify(legacy)).digest('hex'));assert.equal('attachments' in row.payload,false);
+ await db.execute(sql`truncate communication_executions`);let sent;provider.sendMessage=async payload=>{writes++;sent=payload;return {messageId:saved.id};};
+ const urls=['https://easygaragecleaning.com/portal/quote/synthetic-1','https://pay.example.com/synthetic-deposit'],linked=input({payload:{...plain.payload,attachments:urls}});
+ assert.equal((await executeCommunication(linked,provider,db)).ok,true);assert.deepEqual(sent.attachments,urls);
+ const [withLinks]=await db.select().from(schema.communicationExecutions);assert.deepEqual(withLinks.payload.attachments,urls);assert.equal(withLinks.payloadHash,normalizedCommunicationPayload(linked.payload).hash);assert.notEqual(withLinks.payloadHash,row.payloadHash);
+ await assert.rejects(executeCommunication({...linked,payload:{...linked.payload,attachments:[...urls].reverse()}},provider,db),/message_request_conflict/);assert.equal(writes,2);
 });
 test('ambiguous email children do not guess which exact email was sent',async()=>{
  const i=input({payload:{type:'Email',contactId:'synthetic-provider-id',message:'Synthetic authorized message',subject:'Exact subject',emailTo:'synthetic@example.invalid'}});saved.messageType='TYPE_EMAIL';saved.meta={email:{email:{messageIds:['first','second']}}};provider.getEmailMessage=async()=>{throw new Error('must not guess');};assert.equal((await executeCommunication(i,provider,db)).error,'message_verification_pending');

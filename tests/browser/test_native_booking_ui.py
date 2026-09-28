@@ -27,7 +27,7 @@ class NativeBookingBrowserTests(unittest.TestCase):
  @classmethod
  def tearDownClass(cls):cls.browser.close();cls.pw.stop();cls.server.shutdown();cls.server.server_close()
  def setUp(self):
-  self.context=self.browser.new_context(viewport={'width':1360,'height':1000},timezone_id='Asia/Tokyo');self.page=self.context.new_page();self.page.set_default_timeout(6000);self.errors=[];self.calls=[];self.receipts={};self.jobs=[];self.lost=False;self.failure=None;self.page.on('pageerror',lambda e:self.errors.append(str(e)));self.page.route('**/*',self.route)
+  self.context=self.browser.new_context(viewport={'width':1360,'height':1000},timezone_id='Asia/Tokyo');self.page=self.context.new_page();self.page.set_default_timeout(6000);self.errors=[];self.calls=[];self.receipts={};self.jobs=[];self.lost=False;self.failure=None;self.plan_checks=0;self.page.on('pageerror',lambda e:self.errors.append(str(e)));self.page.route('**/*',self.route)
  def tearDown(self):self.assertEqual(self.errors,[]);self.context.close()
  def route(self,route):
   req=route.request;url=urlparse(req.url)
@@ -35,6 +35,7 @@ class NativeBookingBrowserTests(unittest.TestCase):
   if not url.path.startswith('/api/'):route.continue_();return
   def send(body,status=200):route.fulfill(status=status,content_type='application/json',body=json.dumps(body))
   if url.path=='/api/customer-resolve':send({'ok':True,'customer':CUSTOMER});return
+  if url.path=='/api/recurring-plans':self.plan_checks+=1;send({'ok':True,'enabled':False});return
   if url.path!='/api/dispatch':send({'ok':False,'error':'Synthetic provider unavailable'},503);return
   if req.method=='GET':
    args=parse_qs(url.query);found=next((row for row in self.jobs if row['id']==args.get('jobId',[''])[0]),None);send({'ok':True,'jobs':self.jobs,'job':found,'roster':ROSTER,'crews':[],'vehicles':[],'warnings':[]});return
@@ -63,7 +64,7 @@ class NativeBookingBrowserTests(unittest.TestCase):
  def test_multi_day_edit_preserves_duration_and_cadence(self):
   job={'id':'existing','revision':'r1','type':'job','customerId':CUSTOMER['id'],'customer':CUSTOMER['name'],'date':'2026-09-22','time':'08:00','endDate':'2026-09-23','endTime':'16:30','assignedCrew':['crew.one'],'recurrence':'monthly','status':'scheduled'};self.jobs=[job];self.legacy();self.page.evaluate('(j)=>openBooking(null,j)',job);expect(self.page.locator('#b-enddate')).to_have_value('2026-09-23');expect(self.page.locator('#b-endtime')).to_have_value('16:30');expect(self.page.locator('#job-recurrence')).to_have_value('monthly');self.page.locator('#btn-next').click();self.page.locator('#send-email').uncheck();self.page.locator('#btn-next').click();expect(self.page.locator('#booking-overlay')).not_to_have_class(re.compile('open'));self.assertEqual(len(self.calls),1);self.assertEqual(self.calls[0]['changes']['endDate'],'2026-09-23')
  def test_series_lost_response_replays_then_finishes(self):
-  self.legacy();self.page.locator('#job-recurrence').select_option('weekly');self.review();self.lost=True;self.page.locator('#btn-next').click();expect(self.page.locator('#btn-next')).to_have_text('Retry original booking');expect(self.page.locator('#btn-back')).to_be_disabled();self.page.locator('#btn-next').click();expect(self.page.locator('#booking-overlay')).not_to_have_class(re.compile('open'));self.assertEqual(len(self.jobs),9);self.assertEqual(self.calls[0],self.calls[1])
+  self.legacy();self.page.locator('#job-recurrence').select_option('weekly');self.review();self.lost=True;self.page.locator('#btn-next').click();expect(self.page.locator('#btn-next')).to_have_text('Retry original booking');expect(self.page.locator('#btn-back')).to_be_disabled();self.page.locator('#btn-next').click();expect(self.page.locator('#booking-overlay')).not_to_have_class(re.compile('open'));self.assertEqual(len(self.jobs),9);self.assertEqual(self.calls[0],self.calls[1]);self.assertEqual(self.plan_checks,0,'walkthrough series never consult recurring plans')
  def test_phone_quote_preserves_range_as_notes(self):
   self.legacy();self.page.evaluate('(c)=>{closeBooking();openOnCall();oc.customer=c;oc.step=3;renderOcStep()}',CUSTOMER);self.page.locator('#oc-time').fill('13:00');self.page.locator('#oc-endtime').fill('14:00');self.page.locator('#oncall-crew').get_by_label('Lead One',exact=True).check();self.page.locator('#oc-email').uncheck();self.page.locator('#oc-next').click();expect(self.page.locator('#oncall-overlay')).not_to_have_class(re.compile('open'));self.assertEqual(self.calls[0]['changes']['assignedCrew'],['lead.one']);self.assertIn('$400–$600',self.calls[0]['changes']['notes']);self.assertNotIn('priceQuoted',self.calls[0]['changes'])
  def test_phone_size_review_and_save(self):

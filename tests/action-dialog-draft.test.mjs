@@ -13,7 +13,7 @@ const decode = text => String(text).replace(/&(amp|lt|gt|quot|#39);/g, (_, entit
 // Model the destructive effect of innerHTML on form nodes, values, and focus.
 // Requests stay in memory; none of these tests post a real team announcement.
 function suite() {
-  const stored = new Map(Object.entries({ egc_u: 'ZacB', egc_business_access: 'true', egc_role: 'owner' }));
+  const stored = new Map(Object.entries({ egc_u: 'ZacB', egc_business_access: 'true', egc_owner: 'true', egc_role: 'owner' }));
   const storage = { getItem: key => stored.get(key) || null, setItem: (key, value) => stored.set(key, String(value)), removeItem: key => stored.delete(key) };
   const timers = [], writes = [], server = collections();
   const document = { readyState: 'loading', activeElement: null, addEventListener() {}, querySelectorAll: () => [] };
@@ -33,12 +33,15 @@ function suite() {
       const markup = html.match(/<form\b[^>]*class="[^"]*\bops-action-dialog\b[^"]*"[^>]*>([\s\S]*?)<\/form>/)?.[1];
       if (!markup) return;
       const form = { fields: [], isConnected: true };
-      for (const match of markup.matchAll(/<input\b([^>]*?)>|<textarea\b([^>]*?)>([\s\S]*?)<\/textarea>/g)) {
-        const tag = match[1] === undefined ? 'textarea' : 'input';
-        const attributes = match[1] ?? match[2], content = match[3];
+      // Fixed-choice fields (announcement priority) render as <select>; model the selected option's value.
+      for (const match of markup.matchAll(/<input\b([^>]*?)>|<textarea\b([^>]*?)>([\s\S]*?)<\/textarea>|<select\b([^>]*?)>([\s\S]*?)<\/select>/g)) {
+        const tag = match[1] !== undefined ? 'input' : match[2] !== undefined ? 'textarea' : 'select';
+        const attributes = match[1] ?? match[2] ?? match[4], content = match[3];
         const attr = name => decode(attributes.match(new RegExp(`\\b${name}="([^"]*)"`))?.[1] || '');
+        const options = [...(match[5] || '').matchAll(/<option value="([^"]*)"\s*(selected)?/g)];
+        const selected = decode((options.find(option => option[2]) || options[0])?.[1] || '');
         const field = {
-          name: attr('name'), tagName: tag.toUpperCase(), value: tag === 'textarea' ? decode(content || '') : attr('value'),
+          name: attr('name'), tagName: tag.toUpperCase(), value: tag === 'textarea' ? decode(content || '') : tag === 'select' ? selected : attr('value'),
           selectionStart: 0, selectionEnd: 0,
           focus() { document.activeElement = this; },
           closest(selector) { return selector.split(',').some(part => part.trim() === '.ops-action-dialog') ? form : null; },

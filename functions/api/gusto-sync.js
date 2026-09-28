@@ -1,4 +1,5 @@
 import { getHubSession, hasBusinessAccess } from '../_lib/hub-session.js';
+import { OWNER_USERNAME } from '../_lib/business-users.js';
 import { readEmployeeTimecards } from './employee-hub.js';
 import { gustoConfiguration, gustoStatus, gustoRequest, gustoList } from '../_lib/gusto-client.js';
 import { readGustoRecord, writeGustoRecord } from '../_lib/gusto-store.js';
@@ -34,7 +35,7 @@ export function createGustoSyncHandlers({ timecards = service, session = getHubS
   async function authorize(request, env) {
     const user = await session(request, env);
     if (!user) throw gustoTimecardError('Sign in to the Employee Hub.', 401);
-    if (String(user.user || '').trim().toLowerCase() !== 'zacb' || user.role !== 'owner' || !hasBusinessAccess(user)) throw gustoTimecardError('Only the EGC owner can manage the Gusto payroll connection.', 403);
+    if (String(user.user || '').trim().toLowerCase() !== OWNER_USERNAME || user.role !== 'owner' || !hasBusinessAccess(user)) throw gustoTimecardError('Only the EGC owner can manage the Gusto payroll connection.', 403);
   }
   function failed(error) {
     const status = Number.isInteger(error?.status) && error.status >= 400 && error.status <= 599 ? error.status : 503;

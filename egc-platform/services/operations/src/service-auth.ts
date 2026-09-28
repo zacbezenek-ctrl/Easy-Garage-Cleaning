@@ -14,6 +14,7 @@ export type ServicePublicJwk = JsonWebKey & {kty:"OKP";crv:"Ed25519";x:string;ki
 export type ServicePublicKeySet = {protocol:typeof SERVICE_AUTH_PROTOCOL;issuer:string;workspace:string;keys:ServicePublicJwk[]};
 type RootOptions = {service:ServiceIdentity;rootSecret:string;workspace:string};
 type Resolver = (service:ServiceIdentity,workspace:string,kid:string)=>Promise<ServicePublicJwk>;
+export type ServiceKeyResolver = Resolver;
 const encoder=new TextEncoder();
 const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const exact=(value:unknown,keys:string[])=>!!value&&typeof value==="object"&&!Array.isArray(value)&&Object.keys(value).length===keys.length&&keys.every(k=>Object.hasOwn(value,k));
@@ -85,6 +86,60 @@ export function createServiceKeyResolver(options:{fetcher?:typeof fetch;ttlMs?:n
     let task=pending.get(id);if(!task){task=load(service,workspace).finally(()=>pending.delete(id));pending.set(id,task);}
     const key=await task;if(key.kid!==kid)return fail("unknown_service_key");return key;
   };
+}
+/**
+ * Short-lived service assertions (for example a Hub grant for the MCP) signed with
+ * the SAME per-service Ed25519 key. The signed bytes carry a protocol prefix that no
+ * base64url request payload can start with, so an assertion signature never verifies
+ * as a service request and a request signature never verifies as an assertion.
+ */
+export const SERVICE_ASSERTION_PROTOCOL = "egc-service-assertion-v1";
+export type ServiceAssertion = {v:1;alg:"EdDSA";typ:string;kid:string;iss:string;aud:string;workspace:string;iat:number;exp:number;claims:Record<string,unknown>};
+const LABEL=/^[a-z][a-z0-9-]{2,40}$/;
+const assertionMessage=(typ:string,payload:string)=>encoder.encode(`${SERVICE_ASSERTION_PROTOCOL}/${typ}/${payload}`);
+const plain=(value:unknown):value is Record<string,unknown>=>!!value&&typeof value==="object"&&!Array.isArray(value)&&Object.getPrototypeOf(value)===Object.prototype;
+export async function signServiceAssertion(options:RootOptions&{typ:string;aud:string;ttlSeconds:number;claims:Record<string,unknown>;now?:number}):Promise<string>{
+  if(!LABEL.test(options.typ)||!LABEL.test(options.aud)||!Number.isInteger(options.ttlSeconds)||options.ttlSeconds<1||options.ttlSeconds>300||!plain(options.claims))fail("invalid_service_assertion",400);
+  const key=await signingKey(options),jwk=await publicJwk(options,key),iat=Math.floor((options.now??Date.now())/1000);
+  const assertion:ServiceAssertion={v:1,alg:"EdDSA",typ:options.typ,kid:jwk.kid,iss:SERVICE_ORIGINS[options.service],aud:options.aud,workspace:options.workspace,iat,exp:iat+options.ttlSeconds,claims:options.claims};
+  const payload=b64(encoder.encode(JSON.stringify(assertion)));if(payload.length>8000)fail("service_assertion_too_large",413);
+  return payload+"."+b64(new Uint8Array(await crypto.subtle.sign("Ed25519",key,assertionMessage(options.typ,payload))));
+}
+/** Verifies signature, issuer key, type, audience and exact lifetime. allowExpired only proves what the issuer once signed; it never authorizes a fresh grant. */
+export async function verifyServiceAssertion(token:unknown,options:{issuer:ServiceIdentity;workspace:string;typ:string;aud:string;ttlSeconds:number;now?:number;resolveKey?:Resolver;allowExpired?:boolean}):Promise<ServiceAssertion>{
+  if(typeof token!=="string"||token.length>8200)return fail("invalid_service_assertion");const parts=token.split(".");if(parts.length!==2)return fail("invalid_service_assertion");
+  const payload=parts[0]!,signature=unb64(parts[1]!);if(signature.length!==64)return fail("invalid_service_assertion");
+  let a:ServiceAssertion;try{a=JSON.parse(new TextDecoder("utf-8",{fatal:true}).decode(unb64(payload)));}catch{return fail("invalid_service_assertion");}
+  if(!exact(a,["v","alg","typ","kid","iss","aud","workspace","iat","exp","claims"])||a.v!==1||a.alg!=="EdDSA"||a.typ!==options.typ||!LABEL.test(a.typ)||a.iss!==SERVICE_ORIGINS[options.issuer]||a.aud!==options.aud||options.workspace!=="egc"||a.workspace!==options.workspace||typeof a.kid!=="string"||!new RegExp(`^${options.issuer}-v2-[a-f0-9]{32}$`).test(a.kid)||!plain(a.claims))return fail("invalid_service_assertion");
+  const now=Math.floor((options.now??Date.now())/1000);
+  if(!Number.isInteger(a.iat)||!Number.isInteger(a.exp)||a.exp!==a.iat+options.ttlSeconds||a.iat>now+5||!options.allowExpired&&a.exp<=now)return fail("service_assertion_expired");
+  const resolve=options.resolveKey??(defaultResolver??=createServiceKeyResolver());
+  const jwk=await resolve(options.issuer,options.workspace,a.kid);
+  const key=await crypto.subtle.importKey("jwk",jwk,"Ed25519",false,["verify"]);
+  if(!await crypto.subtle.verify("Ed25519",key,bytes(signature),assertionMessage(a.typ,payload)))return fail("invalid_service_assertion");
+  return a;
+}
+/** The Hub's grant that binds one pending MCP OAuth authorization to the signed-in Hub user who approved it. */
+export const MCP_GRANT = Object.freeze({typ:"egc-mcp-grant",aud:"egc-mcp",ttlSeconds:60});
+// The Hub signs the access and client label its approval page showed, so the MCP grants only what the approver saw.
+export const MCP_GRANT_SCOPES = Object.freeze(["egc:read","egc:read egc:write"] as const);
+export type McpGrantClaims = {hubUser:string;role:"owner"|"manager"|"sales"|"crew_lead"|"crew";businessAccess:boolean;grantNonce:string;resource:string;scope:typeof MCP_GRANT_SCOPES[number];client:string};
+export const MCP_GRANT_NONCE = /^[A-Za-z0-9_-]{43}$/;
+/** The client label as the approval page shows it. Both sides normalise with this one function (idempotent, at most 120 code points), so the MCP compares it exactly. */
+export function mcpGrantLabel(value:unknown){return Array.from(String(value??"").replace(/[\p{Cc}\p{Cf}\p{Cs}]/gu,"").replace(/\s+/g," ").trim()).slice(0,120).join("").trim();}
+export function mcpGrantClaims(value:unknown):McpGrantClaims{
+  const c=value as McpGrantClaims;
+  if(!exact(value,["hubUser","role","businessAccess","grantNonce","resource","scope","client"])||!(MCP_GRANT_SCOPES as readonly unknown[]).includes(c.scope)||typeof c.client!=="string"||c.client!==mcpGrantLabel(c.client)||typeof c.hubUser!=="string"||!/^[a-z0-9][a-z0-9_.@-]{0,119}$/.test(c.hubUser)||!["owner","manager","sales","crew_lead","crew"].includes(c.role)||typeof c.businessAccess!=="boolean"||typeof c.grantNonce!=="string"||!MCP_GRANT_NONCE.test(c.grantNonce)||typeof c.resource!=="string")return fail("invalid_mcp_grant");
+  let origin:URL;try{origin=new URL(c.resource);}catch{return fail("invalid_mcp_grant");}
+  if(origin.origin!==c.resource||!["https:","http:"].includes(origin.protocol))return fail("invalid_mcp_grant");
+  return {hubUser:c.hubUser,role:c.role,businessAccess:c.businessAccess,grantNonce:c.grantNonce,resource:c.resource,scope:c.scope,client:c.client};
+}
+/** resource pins the MCP deployment the grant was issued for; a receiver that is not the MCP may omit it. */
+export async function verifyMcpGrant(token:unknown,options:{resource?:string;now?:number;resolveKey?:Resolver;allowExpired?:boolean}):Promise<McpGrantClaims>{
+  const assertion=await verifyServiceAssertion(token,{issuer:"hub",workspace:"egc",...MCP_GRANT,...(options.now!==undefined?{now:options.now}:{}),...(options.resolveKey?{resolveKey:options.resolveKey}:{}),...(options.allowExpired?{allowExpired:true}:{})});
+  const claims=mcpGrantClaims(assertion.claims);
+  if(options.resource!==undefined&&claims.resource!==options.resource)return fail("invalid_mcp_grant");
+  return claims;
 }
 let defaultResolver:Resolver|undefined;
 export async function verifyServiceRequest(token:unknown,options:{service:ServiceIdentity;workspace:string;path:string;consumeNonce:(issuer:string,nonce:string,expiresAt:number)=>Promise<boolean>;now?:number;resolveKey?:Resolver}):Promise<ServiceClaims>{

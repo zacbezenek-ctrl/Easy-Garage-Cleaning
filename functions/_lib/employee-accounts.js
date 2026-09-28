@@ -1,11 +1,14 @@
 import { firestoreFetch, firebaseServiceAccountConfigured } from './firebase-service-account.js';
 import { employeeVaultSecret, employeeVaultReadOnly } from './employee-vault-key.js';
 import { namedStaffRole } from './staff-invitation-service.js';
+import { BUSINESS_USERS } from './business-users.js';
+import { commitConflict, commitFailure } from './firestore-errors.js';
 
 const PROJECT_ID = 'egcw-1ec83';
 const RECORD_TYPE = 'employee_account_v1';
 const encoder = new TextEncoder();
-const RESERVED_USERNAMES = new Set(['zacb', 'tylerg', 'alexk']);
+// Business staff sign in through the configured Hub users, never employee signup.
+const RESERVED_USERNAMES = BUSINESS_USERS;
 
 function accountError(code, message, status = 503) {
   return Object.assign(new Error(message), { code, status });
@@ -139,7 +142,7 @@ async function writeAccount(env, account, createOnly = false) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(firestoreDocument(id, account, encrypted)),
   });
-  if (response.status === 409 || response.status === 412) throw new Error('That username is already registered');
+  if (!response.ok && commitConflict(await commitFailure(response))) throw new Error('That username is already registered');
   if (!response.ok) throw storageError(response);
   return account;
 }
@@ -157,7 +160,8 @@ async function passwordDigest(password, salt) {
 function publicAccount(account) {
   if (!account) return null;
   const { passwordHash, passwordSalt, invitation, ...safe } = account;
-  return safe;
+  // The listed role is derived like the session role, so a stored 'sales' needs the invitation.
+  return { ...safe, role: namedStaffRole(account) };
 }
 
 function validateApplication(input) {
@@ -243,6 +247,8 @@ function employeeSessionProfile(account) {
     businessAccess: false,
     source: 'employee-account',
     sessionVersion: String(account.sessionVersion || ''),
+    // Owner-assigned staff directory roles (additive); staff-roles.js sanitizes them.
+    ...(Array.isArray(account.staffRoles) ? { staffRoles: account.staffRoles.filter(role => typeof role === 'string').slice(0, 6) } : {}),
   };
 }
 
@@ -257,6 +263,28 @@ export async function getEmployeeSessionProfile(env, username, sessionVersion) {
 
 export async function listEmployeeApplications(env) {
   if (!employeeAccountsConfigured(env)) throw new Error('Employee account signup is not configured');
+  return (await accountRows(env)).map(row => publicAccount(row.account)).sort((left, right) => String(right.appliedAt).localeCompare(String(left.appliedAt)));
+}
+
+// Complete encrypted accounts with their Firestore revisions, for server-side
+// compare-and-set writers (staff directory roles, vault migrations). Never returned to browsers.
+export async function employeeAccountRecords(env) {
+  if (!employeeAccountsConfigured(env)) throw storageError();
+  const rows = await accountRows(env);
+  if (rows.some(row => typeof row.updateTime !== 'string' || !row.updateTime)) throw unreadableAccount();
+  return rows.map(({ id, updateTime, account }) => ({ documentId: id, updateTime, account }));
+}
+
+// The sealed account document as plain field values (firestoreDocument's shape) for
+// an atomic multi-document commit with a currentDocument precondition.
+export async function sealedAccountFields(env, account) {
+  if (employeeVaultReadOnly(env)) throw accountError('EMPLOYEE_ACCOUNT_RECOVERY_READ_ONLY', 'Employee setup is being verified. Existing accounts are preserved and cannot be changed yet.');
+  if (!employeeAccountsConfigured(env)) throw storageError();
+  const id = await documentId(env, account.username), { fields } = firestoreDocument(id, account, await seal(env, id, account));
+  return { documentId: id, fields: Object.fromEntries(Object.entries(fields).map(([name, field]) => [name, 'integerValue' in field ? Number(field.integerValue) : field.stringValue])) };
+}
+
+async function accountRows(env) {
   const url = `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents:runQuery`;
   const response = await firestoreFetch(env, url, {
     method: 'POST',
@@ -283,18 +311,23 @@ export async function listEmployeeApplications(env) {
     try {
       const account = await open(env, stored.id, stored.iv, stored.payload);
       if (!account?.username || await documentId(env, account.username) !== stored.id) throw unreadableAccount();
-      accounts.push(publicAccount(account));
+      accounts.push({ id: stored.id, updateTime: row.document.updateTime, account });
     } catch { throw unreadableAccount(); }
   }
-  return accounts.sort((left, right) => String(right.appliedAt).localeCompare(String(left.appliedAt)));
+  return accounts;
 }
 
-export async function reviewEmployeeApplication(env, username, decision, reviewer) {
+export async function reviewEmployeeApplication(env, username, decision, reviewer, now = new Date().toISOString()) {
+  return (await reviewEmployeeApplicationChange(env, username, decision, reviewer, now)).account;
+}
+
+// accessChanged is true when the review changed the account status or the role
+// its sessions carry; a repeated identical review changes neither.
+export async function reviewEmployeeApplicationChange(env, username, decision, reviewer, now = new Date().toISOString()) {
   if (!['approved', 'rejected'].includes(decision)) throw new Error('Choose approve or reject');
   if (isReservedEmployeeUsername(username)) throw new Error('Business accounts are managed through secure staff configuration');
   const account = await readAccount(env, username);
   if (!account) throw new Error('Employee application not found');
-  const now = new Date().toISOString();
   const updated = {
     ...account,
     status: decision,
@@ -307,7 +340,8 @@ export async function reviewEmployeeApplication(env, username, decision, reviewe
     updatedAt: now,
   };
   await writeAccount(env, updated);
-  return publicAccount(updated);
+  const accessChanged = account.status !== updated.status || namedStaffRole(account) !== namedStaffRole(updated);
+  return { account: publicAccount(updated), accessChanged };
 }
 
 // The invitation service uses the same encrypted employee account and password
@@ -337,7 +371,7 @@ export function employeeInvitationStore(env) {
       const id=await documentId(env,account.username),encrypted=await seal(env,id,account),url=new URL(location(id));
       url.searchParams.set('currentDocument.updateTime',version);
       const response=await firestoreFetch(env,url,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify(firestoreDocument(id,account,encrypted))});
-      if([409,412].includes(response.status))throw Object.assign(new Error('This invitation was already used or the account changed.'),{status:409,publicMessage:'This invitation was already used or the account changed. Try normal staff sign-in if you already chose a password.'});
+      if(!response.ok&&commitConflict(await commitFailure(response)))throw Object.assign(new Error('This invitation was already used or the account changed.'),{status:409,publicMessage:'This invitation was already used or the account changed. Try normal staff sign-in if you already chose a password.'});
       if(!response.ok)throw storageError(response);
       const saved=await response.json();if(!saved.updateTime)throw storageError();
       return {version:saved.updateTime};

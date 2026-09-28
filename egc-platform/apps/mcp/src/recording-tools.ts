@@ -1,7 +1,7 @@
 import {createHmac,randomUUID} from 'node:crypto';
 import type {McpServer} from '@modelcontextprotocol/server';
 import * as z from 'zod/v4';
-import {operationsPrincipal,operationsEnabled} from './operations.js';
+import {bridgeActor,operationsPrincipal,operationsEnabled} from './operations.js';
 import {oauthSecurityMetadata,READ_SCOPE,WRITE_SCOPE} from './oauth.js';
 export const RECORDING_WRITE_TOOLS=new Set(['recordings.retry']);
 export async function callRecordings(body:Record<string,unknown>,requestId:string=randomUUID(),fetcher:typeof fetch=fetch){
@@ -9,7 +9,7 @@ export async function callRecordings(body:Record<string,unknown>,requestId:strin
   const key=process.env.EGC_OPERATIONS_MCP_SIGNING_SECRET,origin=process.env.EGC_OPERATIONS_API_ORIGIN;if(!key||key.length<32||!origin)return{error:'recording_bridge_not_configured'};
   if(!['recording.list','recording.get','recording.retry'].includes(String(body.command)))return{error:'recording_mcp_command_forbidden'};
   try{const url=new URL(origin);if(url.protocol!=='https:'||url.pathname!=='/'||url.username||url.password||url.search||url.hash)return{error:'recording_bridge_not_configured'};
-    const claims={v:1,iss:'mcp',aud:'egc-recordings',iat:Math.floor(Date.now()/1000),nonce:randomUUID(),actor,request:{requestId,body}},payload=Buffer.from(JSON.stringify(claims)).toString('base64url'),envelope=payload+'.'+createHmac('sha256',key).update(payload).digest('base64url');
+    const claims={v:1,iss:'mcp',aud:'egc-recordings',iat:Math.floor(Date.now()/1000),nonce:randomUUID(),actor:bridgeActor(actor),request:{requestId,body}},payload=Buffer.from(JSON.stringify(claims)).toString('base64url'),envelope=payload+'.'+createHmac('sha256',key).update(payload).digest('base64url');
     const r=await fetcher(new URL('/recordings/rpc',url),{method:'POST',redirect:'error',headers:{'content-type':'application/json'},body:JSON.stringify({envelope}),signal:AbortSignal.timeout(20000)});return{...await r.json() as Record<string,unknown>,httpStatus:r.status,requestId};
   }catch{return{error:'recording_outcome_unknown',requestId,instruction:'Inspect current recording status. Retry with the same requestId; approval occurs only in the Employee Hub.'};}
 }

@@ -1,7 +1,12 @@
+import { createGhlMessenger } from './ghl-messenger.js';
+
 const HIGHLEVEL_API = 'https://services.leadconnectorhq.com';
 const HIGHLEVEL_ED25519_SPKI = 'MCowBQYDK2VwAyEAi2HR1srL4o18O8BRa7gVJY7G7bupbN3H9AwJrHCDiOg=';
 
 const cleanInline = (value, max = 180) => String(value || '').replace(/[\r\n\t]+/g, ' ').trim().slice(0, max);
+// uncertain: HighLevel may have sent it (timeout, 5xx, lost or id-less reply),
+// so it is never re-sent automatically. suppressed: the saved contact opted out.
+export const DELIVERY_STATUSES = Object.freeze(['queued', 'sent', 'received', 'failed', 'uncertain', 'suppressed', 'needs_contact', 'not_configured']);
 
 export function cleanMessage(value, max = 1200) {
   return String(value || '')
@@ -31,7 +36,7 @@ export function conversationMessages(job = {}) {
     createdAt: cleanInline(row?.createdAt, 50),
     delivery: {
       channel: ['sms', 'highlevel', 'portal'].includes(row?.delivery?.channel) ? row.delivery.channel : 'portal',
-      status: ['queued', 'sent', 'received', 'failed', 'needs_contact', 'not_configured'].includes(row?.delivery?.status) ? row.delivery.status : 'received',
+      status: DELIVERY_STATUSES.includes(row?.delivery?.status) ? row.delivery.status : 'received',
       attemptedAt: cleanInline(row?.delivery?.attemptedAt, 50),
       messageId: cleanInline(row?.delivery?.messageId, 180),
       conversationId: cleanInline(row?.delivery?.conversationId, 180),
@@ -62,34 +67,56 @@ function highLevelConfig(env = {}) {
   };
 }
 
-export async function deliverHighLevelMessage(env, job, { body, direction }) {
-  const config = highLevelConfig(env);
+const sha256 = async text => [...new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text)))].map(byte => byte.toString(16).padStart(2, '0')).join('');
+const RECIPIENT_DELIVERY = { not_configured: 'not_configured', suppressed: 'suppressed', unavailable: 'failed' };
+
+// One provider key per thread message, derived from its requestId, so a replayed
+// request cannot be delivered twice where HighLevel honours Idempotency-Key.
+export async function threadIdempotencyKey(job, direction, requestId) {
+  const id = cleanRequestId(requestId);
+  return id ? `egc-thread-${await sha256(JSON.stringify([cleanInline(job?.id, 180), direction === 'to_customer' ? 'to_customer' : 'from_customer', id]))}` : '';
+}
+
+/* Customer-bound texts go only to the saved contact after the same identity,
+   DND and SMS-consent check as approved sends. A 2xx with a message id is
+   sent and other 4xx (except 408) failed; a timeout, 5xx, throw or id-less
+   2xx is uncertain. Nothing here retries. */
+export async function deliverHighLevelMessage(env, job, { body, direction, requestId = '' } = {}, { fetcher = fetch, clock = () => new Date() } = {}) {
+  const config = highLevelConfig(env), toCustomer = direction === 'to_customer', attemptedAt = clock().toISOString();
+  const result = (status, extra = {}) => ({ channel: toCustomer ? 'sms' : 'highlevel', status, attemptedAt, ...extra });
   const contactId = cleanInline(job?.highlevelContactId, 180);
-  const attemptedAt = new Date().toISOString();
-  if (!contactId) return { channel: direction === 'to_customer' ? 'sms' : 'highlevel', status: 'needs_contact', attemptedAt };
-  if (!config.token) return { channel: direction === 'to_customer' ? 'sms' : 'highlevel', status: 'not_configured', attemptedAt };
+  if (!contactId) return result('needs_contact');
+  if (!config.token) return result('not_configured');
+  let toNumber = '';
+  if (toCustomer) {
+    const recipient = await createGhlMessenger({ env, fetcher, clock }).resolveRecipient({ contactId, phone: job?.phone, preferred: 'SMS', upsert: false });
+    if (recipient.status !== 'ready') return result(RECIPIENT_DELIVERY[recipient.status] || 'needs_contact');
+    toNumber = recipient.toNumber;
+  }
   const payload = {
-    type: direction === 'to_customer' ? 'SMS' : 'InternalComment',
+    type: toCustomer ? 'SMS' : 'InternalComment',
     contactId,
-    message: direction === 'to_customer' ? cleanMessage(body) : `Client portal reply: ${cleanMessage(body)}`,
+    message: toCustomer ? cleanMessage(body) : `Client portal reply: ${cleanMessage(body)}`,
     status: 'pending',
+    ...(toNumber ? { toNumber } : {}),
     ...(cleanInline(job?.highlevelAppointmentId, 180) ? { appointmentId: cleanInline(job.highlevelAppointmentId, 180) } : {}),
     ...(config.userId ? { userId: config.userId } : {}),
   };
+  const idempotencyKey = await threadIdempotencyKey(job, direction, requestId);
   try {
-    const response = await fetch(`${HIGHLEVEL_API}/conversations/messages`, {
+    const response = await fetcher(`${HIGHLEVEL_API}/conversations/messages`, {
       method: 'POST',
-      headers: { Accept: 'application/json', Authorization: `Bearer ${config.token}`, Version: 'v3', 'Content-Type': 'application/json' },
+      headers: { Accept: 'application/json', Authorization: `Bearer ${config.token}`, Version: 'v3', 'Content-Type': 'application/json', ...(idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {}) },
       body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(15000),
     });
     const data = await response.json().catch(() => ({}));
-    if (!response.ok) return { channel: direction === 'to_customer' ? 'sms' : 'highlevel', status: 'failed', attemptedAt };
-    return {
-      channel: direction === 'to_customer' ? 'sms' : 'highlevel', status: 'sent', attemptedAt,
-      messageId: cleanInline(data.messageId, 180), conversationId: cleanInline(data.conversationId, 180),
-    };
+    const messageId = cleanInline(data?.messageId, 180);
+    if (response.ok && messageId) return result('sent', { messageId, conversationId: cleanInline(data.conversationId, 180) });
+    if (response.status >= 400 && response.status < 500 && response.status !== 408) return result('failed');
+    return result('uncertain');
   } catch {
-    return { channel: direction === 'to_customer' ? 'sms' : 'highlevel', status: 'failed', attemptedAt };
+    return result('uncertain');
   }
 }
 

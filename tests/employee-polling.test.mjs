@@ -10,7 +10,7 @@ const response = (body, status = 200) => ({ ok: status < 400, status, json: asyn
 function suite() {
   let now = 1700000000000, nextTimer = 0;
   const timers = new Map(), events = {}, documentEvents = {}, calls = [];
-  const values = new Map([['egc_u', 'ZacB'], ['egc_business_access', 'true'], ['egc_role', 'owner']]);
+  const values = new Map([['egc_u', 'ZacB'], ['egc_business_access', 'true'], ['egc_owner', 'true'], ['egc_role', 'owner']]);
   const storage = { getItem: key => values.get(key) || null, setItem: (key, value) => values.set(key, String(value)), removeItem: key => values.delete(key) };
   const context = {
     console, URLSearchParams, Intl, Promise, Set, Map, Error,

@@ -6,7 +6,7 @@
   <title>Employee Portal — Easy Garage Cleaning</title>
   <meta name="robots" content="noindex, nofollow">
   <!-- Content Security Policy — restricts where scripts/connections can go -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' www.gstatic.com maps.googleapis.com; style-src 'self' 'unsafe-inline' fonts.googleapis.com; font-src fonts.gstatic.com data:; connect-src 'self' *.googleapis.com *.firebaseio.com *.firebaseapp.com firestore.googleapis.com; img-src 'self' data: maps.gstatic.com maps.googleapis.com; frame-src 'none'; object-src 'none'; base-uri 'self';">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' www.gstatic.com maps.googleapis.com; style-src 'self' 'unsafe-inline' fonts.googleapis.com; font-src fonts.gstatic.com data:; connect-src 'self' *.googleapis.com *.firebaseio.com *.firebaseapp.com firestore.googleapis.com; img-src 'self' data: maps.gstatic.com maps.googleapis.com; media-src 'self' blob:; frame-src 'none'; object-src 'none'; base-uri 'self';">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-title" content="EGC Portal">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -240,16 +240,8 @@ body.has-session #login-screen { display: none; }
 .filters { display: flex; gap: .35rem; flex-wrap: wrap; }
 .fbtn { background: var(--navy-soft); border: 1px solid rgba(255,255,255,.1); color: var(--muted); border-radius: 99px; font-size: .75rem; font-weight: 500; padding: .32rem .8rem; cursor: pointer; transition: all .2s; }
 .fbtn.active, .fbtn:hover { border-color: var(--accent); color: var(--accent); }
-.payout-hd { margin-bottom: 1.5rem; }
-.payout-hd h2 { font-family: 'Inter', sans-serif; font-size: 1.35rem; font-weight: 700; letter-spacing: -.02em; }
-.total-card { background: rgba(34,197,94,.04); border: 1px solid rgba(34,197,94,.15); border-radius: 1rem; padding: 1.5rem; display: flex; align-items: center; gap: 1.25rem; margin-bottom: 1.25rem; }
-.total-card .ico { width: 52px; height: 52px; border-radius: .65rem; background: rgba(34,197,94,.12); display: flex; align-items: center; justify-content: center; font-size: 1.4rem; flex-shrink: 0; }
-.total-label { font-size: .72rem; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); margin-bottom: .2rem; }
-.total-amt { font-family: 'Inter', sans-serif; font-size: 2rem; font-weight: 800; color: #86efac; line-height: 1; letter-spacing: -.03em; }
-.total-sub { font-size: .78rem; color: var(--muted); margin-top: .25rem; }
 .stat .v.count-bump { animation: countBump .45s ease-out; }
 .badge-pulse { animation: badgePulse 1.2s ease-out 3; }
-.payout-title { font-family: 'Inter', sans-serif; font-size: 1.05rem; font-weight: 700; margin-bottom: 1rem; }
 .mode-wrap { width:100%; max-width:460px; }
 .mode-logo { text-align:center; margin-bottom:2rem; }
 .mode-logo h2 { font-family:'Inter',sans-serif; font-size:1.5rem; font-weight:800; letter-spacing:-.02em; margin:.5rem 0 .35rem; }
@@ -597,10 +589,6 @@ body.has-session #login-screen { display: none; }
       .jcard-actions { gap: .35rem; }
       .bsm { font-size: .7rem; padding: .32rem .65rem; }
 
-      /* Payout */
-      .total-card { flex-direction: column; text-align: center; }
-      .total-amt { font-size: 1.75rem; }
-
       /* Step track in booking wizard */
       .step-track { padding: 1rem 1rem .65rem; }
       .step-node .slbl { font-size: .58rem; }
@@ -697,24 +685,18 @@ body.has-session #login-screen { display: none; }
 .cust-search-bar { width: 100%; max-width: 320px; background: var(--navy); border: 1px solid rgba(255,255,255,.12); border-radius: .55rem; color: #fff; padding: .6rem 1rem; margin-bottom: 1rem; font-size: .9rem; }
 .modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.75); backdrop-filter: blur(4px); z-index: 350; display: none; align-items: flex-end; justify-content: center; padding: 0; }
 .modal-backdrop.open { display: flex; }
-#booking-overlay, #contract-modal, .lead-quote-overlay { position: fixed; inset: 0; z-index: 350; display: none; align-items: center; justify-content: center; background: rgba(0,0,0,.75); backdrop-filter: blur(4px); padding: 1rem; color: var(--white); }
-#booking-overlay.open, #contract-modal.open, .lead-quote-overlay.open { display: flex; }
-/* Contract + lead-quote modal panels (white cards on the dark overlay) */
-.cm-panel, .qm-panel { background: #fff; color: var(--ink); border-radius: var(--radius-lg); width: 100%; max-width: 480px; max-height: 90vh; overflow-y: auto; padding: 1.5rem 1.75rem; box-shadow: 0 24px 64px rgba(0,0,0,.5); }
-.cm-title, .qm-title { font-family: 'Fraunces', serif; font-size: 1.15rem; font-weight: 700; margin-bottom: .35rem; }
-.cm-sub, .qm-sub { font-size: .85rem; color: var(--muted); line-height: 1.5; margin-bottom: 1.25rem; }
-.cm-link-box { font-family: 'JetBrains Mono', monospace; font-size: .78rem; line-height: 1.5; word-break: break-all; background: var(--paper); border: 1px solid rgba(10,22,40,.15); border-radius: .5rem; padding: .6rem .75rem; margin-bottom: .65rem; }
-.cm-copy-row { display: flex; flex-wrap: wrap; gap: .5rem; margin-bottom: 1.25rem; }
-.cm-sms-btn { flex: 1; display: inline-flex; align-items: center; justify-content: center; background: var(--accent); color: #fff; border-radius: .55rem; font-family: 'Inter', sans-serif; font-size: .875rem; font-weight: 600; padding: .6rem 1.1rem; text-decoration: none; transition: background .2s; white-space: nowrap; }
-.cm-sms-btn:hover { background: var(--accent-deep); color: #fff; }
-.cm-copy-btn { background: transparent; border: 1px solid rgba(10,22,40,.25); color: var(--ink); border-radius: .5rem; font-family: 'Inter', sans-serif; font-size: .875rem; font-weight: 600; padding: .6rem 1.1rem; cursor: pointer; transition: all .2s; }
-.cm-copy-btn:hover { border-color: var(--accent); color: var(--accent); }
+#booking-overlay, .lead-quote-overlay { position: fixed; inset: 0; z-index: 350; display: none; align-items: center; justify-content: center; background: rgba(0,0,0,.75); backdrop-filter: blur(4px); padding: 1rem; color: var(--white); }
+#booking-overlay.open, .lead-quote-overlay.open { display: flex; }
+/* Lead-quote modal panel (white card on the dark overlay) */
+.qm-panel { background: #fff; color: var(--ink); border-radius: var(--radius-lg); width: 100%; max-width: 480px; max-height: 90vh; overflow-y: auto; padding: 1.5rem 1.75rem; box-shadow: 0 24px 64px rgba(0,0,0,.5); }
+.qm-title { font-family: 'Fraunces', serif; font-size: 1.15rem; font-weight: 700; margin-bottom: .35rem; }
+.qm-sub { font-size: .85rem; color: var(--muted); line-height: 1.5; margin-bottom: 1.25rem; }
 .qm-input { width: 100%; background: #fff; border: 1px solid rgba(10,22,40,.22); border-radius: .5rem; color: var(--ink); font-family: 'Inter', sans-serif; font-size: 1rem; padding: .7rem 1rem; min-height: 44px; outline: none; transition: border-color .2s; margin-bottom: .65rem; }
 .qm-input:focus { border-color: var(--accent); }
 .qm-note { font-size: .78rem; color: var(--muted); line-height: 1.45; margin-bottom: 1.25rem; }
 .qm-btns { display: flex; gap: .65rem; justify-content: flex-end; }
-.cm-panel .btn-back, .qm-panel .btn-back { border-color: rgba(10,22,40,.25); color: var(--muted); }
-.cm-panel .btn-back:hover, .qm-panel .btn-back:hover { border-color: var(--ink); color: var(--ink); }
+.qm-panel .btn-back { border-color: rgba(10,22,40,.25); color: var(--muted); }
+.qm-panel .btn-back:hover { border-color: var(--ink); color: var(--ink); }
 @media (min-width: 640px) { .modal-backdrop.open { align-items: center; padding: 1rem; } }
 .modal-sheet { background: var(--navy-soft); border: 1px solid rgba(255,255,255,.08); border-radius: 1.25rem 1.25rem 0 0; width: 100%; max-width: 520px; max-height: 90vh; overflow-y: auto; padding: 1.5rem 1.75rem 2rem; box-shadow: 0 24px 64px rgba(0,0,0,.5); }
 @media (min-width: 640px) { .modal-sheet { border-radius: 1.25rem; } }
@@ -866,7 +848,7 @@ body.has-session #login-screen { display: none; }
       <div class="user-menu">
         <div class="av" id="u-av">Z</div>
         <span class="user-name" id="u-lbl">ZacB</span>
-        <button class="btn-logout" onclick="doLogout()">Sign out</button>
+        <button class="btn-logout" onclick="signOutClicked()">Sign out</button>
       </div>
     </div>
   </div>
@@ -967,20 +949,6 @@ body.has-session #login-screen { display: none; }
     <div id="tab-more" class="panel">
       <div class="jobs-hd"><h2>More</h2></div>
       <div id="more-content"></div>
-      <div id="tab-payout-embed" style="margin-top:1.5rem">
-        <div class="payout-hd"><h2>Tyler's Payout</h2></div>
-        <div class="total-card">
-          <div class="ico"></div>
-          <div>
-            <div class="total-label">Total Earned</div>
-            <div class="total-amt" id="po-total">$0</div>
-            <div class="total-sub" id="po-sub">0 jobs paid</div>
-          </div>
-        </div>
-        <div class="stats-grid" id="po-stats"></div>
-        <div class="payout-title">TylerG's Jobs</div>
-        <div id="po-list"></div>
-      </div>
     </div>
 
   </div>
@@ -1027,18 +995,6 @@ body.has-session #login-screen { display: none; }
       <div class="fg" style="margin:0"><label>Status</label><select id="lf-status"><option value="new">New</option><option value="quoted">Quoted</option><option value="booked">Booked</option><option value="dead">Dead</option><option value="no_answer_6_attempts">No Answer (6×)</option></select></div>
     </div>
     <button type="button" class="btn-main" onclick="saveLeadForm()">Save lead</button>
-  </div>
-</div>
-<div id="quote-modal" class="modal-backdrop" onclick="if(event.target===this)closeQuoteModal()">
-  <div class="modal-sheet">
-    <button type="button" class="modal-close" onclick="closeQuoteModal()"></button>
-    <h3>Quote / estimate</h3>
-    <input type="hidden" id="qm-job-id">
-    <div class="fg"><label>Price tier</label><select id="qm-tier" onchange="applyQuoteTier()"><option value="">Custom</option><option value="0">Single $99–150</option><option value="1">Small $250–400</option><option value="2">Medium $400–650</option><option value="3">Large $650+</option></select></div>
-    <div class="fg"><label>Quoted amount ($)</label><input type="number" id="qm-amount" min="0" step="5"></div>
-    <div class="fg"><label>Status</label><select id="qm-status"><option value="draft">Draft</option><option value="sent">Sent</option><option value="approved">Approved</option><option value="declined">Declined</option></select></div>
-    <label class="email-toggle-row"><input type="checkbox" id="qm-pay-after"><span>Only pay after customer approves quote</span></label>
-    <button type="button" class="btn-main" onclick="saveQuoteModal()">Save quote</button>
   </div>
 </div>
 
@@ -1200,45 +1156,6 @@ body.has-session #login-screen { display: none; }
   </div>
 </div>
 
-<!-- ── CONTRACT MODAL ───────────────────────────────── -->
-<div id="contract-modal" onclick="contractModalBgClick(event)">
-  <div class="cm-panel">
-    <div class="cm-title">Send Quote Contract</div>
-    <div class="cm-sub" id="cm-lead-sub">Customer gets a link — they tap, read, type their name, done.</div>
-
-    <div class="fg"><label>Customer Name *</label><input type="text" id="cm-name" placeholder="John Smith" /></div>
-    <div class="fg"><label>Phone (for SMS prefill)</label><input type="tel" id="cm-phone" placeholder="(970) 555-0100" /></div>
-    <div class="fg"><label>Address</label><input type="text" id="cm-addr" placeholder="123 Main St, Fort Collins, CO" /></div>
-    <div class="fg"><label>Services *</label><textarea id="cm-services" rows="3" placeholder="e.g. Single-car garage cleanout — full haul, sort, donation drop-off, floor sweep"></textarea></div>
-    <div class="frow" style="gap:.65rem;margin-bottom:1.1rem">
-      <div class="fg" style="margin:0"><label>Est. Cubic Yards</label><input type="text" id="cm-cubic-yards" placeholder="e.g. 15–20 cu yd" /></div>
-      <div class="fg" style="margin:0"><label>Time Window</label><input type="text" id="cm-time-window" placeholder="e.g. 9:00 AM – 12:00 PM" /></div>
-    </div>
-    <div class="frow" style="gap:.65rem;margin-bottom:1.1rem">
-      <div class="fg" style="margin:0"><label>Quote Amount *</label><input type="text" id="cm-amount" placeholder="$600" oninput="updateDepositPreview()" /></div>
-      <div class="fg" style="margin:0"><label>Scheduled Date</label><input type="date" id="cm-date" /></div>
-    </div>
-    <div id="cm-deposit-preview" style="display:none;background:rgba(255,91,31,.1);border:1px solid rgba(255,91,31,.3);border-radius:.6rem;padding:.65rem .9rem;font-size:.8rem;margin-bottom:1rem;color:var(--accent)">
-      Job over $1,000 — <strong id="cm-deposit-amount"></strong> deposit required at booking (25%)
-    </div>
-    <div class="fg"><label>Notes to Customer</label><textarea id="cm-notes" rows="2" placeholder="Optional — visible on the contract page"></textarea></div>
-
-    <div id="cm-link-section" style="display:none">
-      <div style="font-size:.75rem;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);margin-bottom:.5rem">Contract Link</div>
-      <div class="cm-link-box" id="cm-link-display"></div>
-      <div class="cm-copy-row">
-        <a class="cm-sms-btn" id="cm-sms-btn" href="#" target="_blank" rel="noopener">Open in Messages</a>
-        <button class="cm-copy-btn" id="cm-copy-btn" onclick="copyContractLink()">Copy link</button>
-      </div>
-    </div>
-
-    <div style="display:flex;gap:.65rem;justify-content:flex-end">
-      <button class="btn-back" onclick="closeContractModal()">Close</button>
-      <button class="btn-next" id="cm-generate-btn" onclick="generateContract()">Generate Link</button>
-    </div>
-  </div>
-</div>
-
 <!-- ── QUOTE MODAL (leads) ─────────────────────────── -->
 <div id="lead-quote-modal" class="lead-quote-overlay" onclick="leadQuoteBgClick(event)">
   <div class="qm-panel">
@@ -1281,8 +1198,6 @@ const CFG = {
   GOOGLE_SHEET_CSV_URL: '',
   GOOGLE_MAPS_KEY:      'AIzaSyCxL7-EDDaQjidBnbrUAFgdODQ1S8oVuuw',
   BASE_ADDRESS:         'Fort Collins, CO',
-  FREE_MILES:           25,
-  PRICE_PER_MILE:       1,
   // ── Zapier Webhook URLs ── paste each Zap's catch-hook URL below
   ZAP5_QUOTE_WEBHOOK:   'operations:quote_followup',
   ZAP6_BOOKING_WEBHOOK: 'operations:booking',
@@ -1337,8 +1252,7 @@ function updateFirebaseStatus() {
 /* ═══════════════════════════════════════════════════════
    AUTH — validated at the server; browser receives an HttpOnly session cookie
 ═══════════════════════════════════════════════════════ */
-const ADMINS = ['ZacB', 'TylerG', 'AlexK'];
-const BUSINESS_USERS = new Set(ADMINS.map(name => name.toLowerCase()));
+// Business access comes from the signed server profile; staff are listed only in functions/_lib/business-users.js.
 let me = null;
 let hubAuthVersion = 0;
 let hubAuthQueue = Promise.resolve();
@@ -1355,7 +1269,7 @@ function serializeHubAuth(action) {
 }
 
 function canRunBusiness() {
-  return sessionStorage.getItem('egc_business_access') === 'true' && BUSINESS_USERS.has(String(me || '').trim().toLowerCase());
+  return Boolean(me) && sessionStorage.getItem('egc_business_access') === 'true';
 }
 
 async function ensureFirebaseSession(version = hubAuthVersion) {
@@ -1391,8 +1305,11 @@ async function enterEmployeeApp(data, version = hubAuthVersion) {
 function clearHubProfile() {
   me = null;
   for (const storage of [sessionStorage, localStorage]) {
-    ['egc_u','egc_name','egc_role','egc_pay_type','egc_hourly_rate','egc_business_access','egc_tok','egc_exp'].forEach(key => storage.removeItem(key));
+    ['egc_u','egc_name','egc_role','egc_pay_type','egc_hourly_rate','egc_business_access','egc_owner','egc_capabilities','egc_capability_mode','egc_tok','egc_exp'].forEach(key => storage.removeItem(key));
   }
+  // crew/gameplan.html keeps walkthrough price tables for offline walkthroughs; they leave with the account
+  // (sign-out, an expired or failed session check, a failed sign-in).
+  try { for (let i = localStorage.length - 1; i >= 0; i--) { const key = localStorage.key(i); if (key?.startsWith('egc_walkthrough_pricing.')) localStorage.removeItem(key); } } catch {}
 }
 
 function rememberHubProfile(data) {
@@ -1403,6 +1320,10 @@ function rememberHubProfile(data) {
     egc_pay_type: data.payType || 'hourly',
     egc_hourly_rate: String(Number(data.hourlyRate || 0)),
     egc_business_access: data.businessAccess === true ? 'true' : 'false',
+    egc_owner: data.owner === true ? 'true' : 'false',
+    // Display only: the suite narrows its views by these when the server reports staff-role permissions.
+    egc_capabilities: JSON.stringify(Array.isArray(data.capabilities) ? data.capabilities.filter(item => typeof item === 'string') : []),
+    egc_capability_mode: data.capabilityMode === 'staff_roles' ? 'staff_roles' : 'legacy',
   };
   Object.entries(values).forEach(([key, value]) => sessionStorage.setItem(key, value));
 }
@@ -1443,7 +1364,33 @@ async function doLogin() {
   }
 }
 
-async function doLogout() {
+// Photos from Today's work still waiting on this device (crew/field-outbox.js), counted or, with remove,
+// deleted along with the retired draft store. Where the browser lists its databases, a device without one gets none.
+async function fieldPhotosOnDevice(remove = false) {
+  const scan = (name, storeName, key, match) => new Promise(resolve => {
+    const open = indexedDB.open(name);
+    open.onupgradeneeded = () => open.result.createObjectStore(storeName, { keyPath: key });
+    open.onerror = open.onblocked = () => resolve(0);
+    open.onsuccess = () => {
+      const db = open.result, done = count => { db.close(); resolve(count); };
+      try { const tx = db.transaction(storeName, remove ? 'readwrite' : 'readonly'), store = tx.objectStore(storeName), rows = store.getAll(); let count = 0; rows.onsuccess = () => rows.result.forEach(row => { if (match(row)) { count++; if (remove) store.delete(row[key]); } }); tx.oncomplete = () => done(count); tx.onabort = tx.onerror = () => done(0); } catch { done(0); }
+    };
+  });
+  try {
+    if (remove) indexedDB.deleteDatabase('egc-field-photo-drafts');
+    const names = indexedDB.databases ? (await indexedDB.databases()).map(db => db.name) : null;
+    return (!names || names.includes('egc-field-outbox') ? await scan('egc-field-outbox', 'actions', 'requestId', row => row?.payload?.action === 'photo') : 0) + (!remove && names?.includes('egc-field-photo-drafts') ? await scan('egc-field-photo-drafts', 'photos', 'id', Boolean) : 0);
+  } catch { return 0; }
+}
+
+// The Sign out button deletes those photos, so it asks first. An expired session (hubFetch) keeps them.
+async function signOutClicked() {
+  const photos = await fieldPhotosOnDevice();
+  if (photos && !confirm(`${photos} photo${photos === 1 ? ' has' : 's have'} not uploaded and will be deleted. Sign out anyway?`)) return;
+  return doLogout({ explicit: true });
+}
+
+async function doLogout({ explicit = false } = {}) {
   ++hubAuthVersion;
   clearHubProfile();
   _dataGeneration++;
@@ -1454,6 +1401,13 @@ async function doLogout() {
   clearInterval(_leadsTimer);
   jobsCache = []; custsCache = []; leadsCache = [];
   blockedDays = new Set(); blockedSlots = new Set();
+  // Crew job pages keep offline copies per tab; a sign-out retires them on this device.
+  try { localStorage.setItem('egc-field:signed-out-at', String(Date.now())); } catch {}
+  try { for (let i = sessionStorage.length - 1; i >= 0; i--) { const name = sessionStorage.key(i) || ''; if (name === 'egc-field:viewer' || /^egc-field:.*:(snapshot|shift-snapshot)$/.test(name)) sessionStorage.removeItem(name); } } catch {}
+  // Photos from Today's work are private job evidence: choosing Sign out deletes those not yet uploaded.
+  if (explicit === true) { try { localStorage.setItem('egc-field:photos-cleared-at', String(Date.now())); } catch {} fieldPhotosOnDevice(true); }
+  // crew/job.html keeps unconfirmed manager photo-sharing retries in this tab; it never loads here.
+  try { for (let i = sessionStorage.length - 1; i >= 0; i--) { const key = sessionStorage.key(i); if (key?.startsWith('egc.photo-sharing.pending.v1.')) sessionStorage.removeItem(key); } } catch {}
   window.dispatchEvent(new Event('egc:signout'));
   document.body.classList.remove('has-session');
   document.getElementById('oncall-overlay').classList.remove('open');
@@ -1528,7 +1482,7 @@ function bootDashboard() {
   // Crew assignments are chosen from the current server roster.
   // Show admin tab for admins only (the button may not exist in this build —
   // a missing element here must not abort the rest of dashboard boot)
-  if (ADMINS.includes(me)) {
+  if (canRunBusiness()) {
     const adminTabBtn = document.getElementById('tab-btn-admin');
     if (adminTabBtn) adminTabBtn.style.display = '';
   }
@@ -1542,7 +1496,6 @@ window.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('l-pass').addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
   document.getElementById('l-user').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('l-pass').focus(); });
   document.getElementById('lqm-amount').addEventListener('keydown', e => { if (e.key === 'Enter') submitLeadQuote(); if (e.key === 'Escape') closeLeadQuoteModal(); });
-  document.getElementById('qm-amount').addEventListener('keydown', e => { if (e.key === 'Enter') saveQuoteModal(); if (e.key === 'Escape') closeQuoteModal(); });
 });
 
 /* ═══════════════════════════════════════════════════════
@@ -1682,7 +1635,7 @@ function renderLeads() {
 }
 
 function toggleBlockDay(ds) {
-  if (!ADMINS.includes(me)) return;
+  if (!canRunBusiness()) return;
   if (blockedDays.has(ds)) {
     db.collection('blocked_days').doc(ds).delete();
   } else {
@@ -1691,7 +1644,7 @@ function toggleBlockDay(ds) {
 }
 
 function toggleBlockSlot(slotKey) {
-  if (!ADMINS.includes(me)) return;
+  if (!canRunBusiness()) return;
   if (blockedSlots.has(slotKey)) {
     db.collection('blocked_slots').doc(slotKey).delete();
   } else {
@@ -1718,137 +1671,6 @@ function setLeadsFilter(f, btn) {
   document.querySelectorAll('.lead-filters .fbtn').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
   renderLeads();
-}
-
-/* ── Contract / quote-link system ───────────────────── */
-let _contractLeadId = null;
-let _contractLink   = '';
-
-function openContractModal(leadId) {
-  const lead = leadsCache.find(l => l.id === leadId);
-  if (!lead) return;
-  _contractLeadId = leadId;
-  _contractLink   = '';
-
-  // Pre-fill fields from lead data
-  document.getElementById('cm-name').value         = lead.name || lead.full_name || '';
-  document.getElementById('cm-phone').value        = lead.phone || '';
-  document.getElementById('cm-addr').value         = lead.address || '';
-  document.getElementById('cm-amount').value       = lead.quoteAmount || '';
-  document.getElementById('cm-cubic-yards').value  = lead.cubicYards || '';
-  document.getElementById('cm-time-window').value  = lead.timeWindow || '';
-  document.getElementById('cm-services').value     = lead.services || 'Garage cleanout — full haul-out, sorting, donation coordination, floor sweep';
-  document.getElementById('cm-date').value         = lead.scheduledDate || '';
-  document.getElementById('cm-notes').value        = lead.notes || '';
-  document.getElementById('cm-lead-sub').textContent = `Sending to: ${lead.name || lead.phone || 'customer'}`;
-
-  // Trigger deposit preview (in case quoteAmount pre-populated)
-  updateDepositPreview();
-
-  // Reset link section
-  document.getElementById('cm-link-section').style.display = 'none';
-  document.getElementById('cm-generate-btn').style.display = '';
-  document.getElementById('cm-generate-btn').textContent   = 'Generate Link';
-
-  document.getElementById('contract-modal').classList.add('open');
-}
-
-function closeContractModal() {
-  document.getElementById('contract-modal').classList.remove('open');
-  _contractLeadId = null;
-  _contractLink   = '';
-}
-
-function contractModalBgClick(e) {
-  if (e.target === document.getElementById('contract-modal')) closeContractModal();
-}
-
-function updateDepositPreview() {
-  const raw = document.getElementById('cm-amount').value.replace(/[^0-9.]/g, '');
-  const num = parseFloat(raw);
-  const preview = document.getElementById('cm-deposit-preview');
-  const depositAmt = document.getElementById('cm-deposit-amount');
-  if (num > 1000) {
-    const dep = (num * 0.25).toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
-    depositAmt.textContent = dep;
-    preview.style.display = '';
-  } else {
-    preview.style.display = 'none';
-  }
-}
-
-async function generateContract() {
-  const name       = document.getElementById('cm-name').value.trim();
-  const phone      = document.getElementById('cm-phone').value.trim();
-  const addr       = document.getElementById('cm-addr').value.trim();
-  const services   = document.getElementById('cm-services').value.trim();
-  const cubicYards = document.getElementById('cm-cubic-yards').value.trim();
-  const timeWindow = document.getElementById('cm-time-window').value.trim();
-  const amount     = document.getElementById('cm-amount').value.trim();
-  const date       = document.getElementById('cm-date').value;
-  const notes      = document.getElementById('cm-notes').value.trim();
-
-  if (!name || !services || !amount) {
-    showToast('Fill in Name, Services, and Amount first');
-    return;
-  }
-
-  const btn = document.getElementById('cm-generate-btn');
-  btn.textContent = 'Creating…';
-  btn.disabled = true;
-
-  // Calculate deposit if job > $1,000
-  const rawNum = parseFloat(amount.replace(/[^0-9.]/g, ''));
-  const depositAmount = (!isNaN(rawNum) && rawNum > 1000) ? Math.round(rawNum * 0.25) : null;
-
-  const quoteId = uid();
-  const quoteDoc = {
-    customerName: name, customerPhone: phone,
-    customerEmail: leadsCache.find(l => l.id === _contractLeadId)?.email || '',
-    customerAddress: addr, services,
-    cubicYards: cubicYards || null,
-    timeWindow: timeWindow || null,
-    amount,
-    depositAmount: depositAmount ? `$${depositAmount}` : null,
-    scheduledDate: date, notes,
-    createdBy: me, createdAt: new Date().toISOString(),
-    leadId: _contractLeadId || '',
-    status: 'pending'
-  };
-
-  try {
-    await db.collection('quotes').doc(quoteId).set(quoteDoc);
-  } catch(e) {
-    console.warn('Firestore quote write failed:', e);
-  }
-
-  // Mark lead as contract-sent
-  if (_contractLeadId) {
-    db.collection('leads').doc(_contractLeadId).update({
-      contractSentAt: new Date().toISOString(),
-      contractId: quoteId
-    });
-    addAuditLog('send_contract', `Lead: ${name} · Quote: ${amount} · ID: ${quoteId}`);
-  }
-
-  _contractLink = `https://easygaragecleaning.com/quote?id=${quoteId}`;
-
-  // Show link + SMS button
-  document.getElementById('cm-link-display').textContent = _contractLink;
-  document.getElementById('cm-sms-btn').href = `sms:${phone}&body=${encodeURIComponent('Hi ' + name.split(' ')[0] + '! Here\'s your quote from Easy Garage Cleaning — tap to review and sign: ' + _contractLink)}`;
-  document.getElementById('cm-link-section').style.display = '';
-  btn.style.display = 'none';
-  showToast('Contract link ready — send via SMS!');
-}
-
-function copyContractLink() {
-  if (!_contractLink) return;
-  navigator.clipboard.writeText(_contractLink).then(() => {
-    const btn = document.getElementById('cm-copy-btn');
-    btn.textContent = 'Copied';
-    btn.classList.add('copied');
-    setTimeout(() => { btn.textContent = 'Copy link'; btn.classList.remove('copied'); }, 2000);
-  });
 }
 
 let _quoteLeadId = null;
@@ -1910,9 +1732,14 @@ function reactivateLead(id) {
 
 /* ── Audit log ───────────────────────────────────────── */
 function addAuditLog(action, detail = '') {
+  // UX guard only: firestore.rules refuse tokens without the server-minted business_access claim and any 'by' other than the token username.
+  if (!canRunBusiness()) return;
+  // Rules cap action/detail at 200/2000 UTF-16 units (string.size()) and require the server clock in serverAt.
+  const clip = (value, max) => { let out = ''; for (const ch of String(value ?? '')) { if (out.length + ch.length > max) break; out += ch; } return out; };
   db.collection('audit_log').add({
-    action, detail, by: me,
-    at: new Date().toISOString()
+    action: clip(action, 200), detail: clip(detail, 2000), by: me,
+    at: new Date().toISOString(),
+    serverAt: firebase.firestore.FieldValue.serverTimestamp()
   }).catch(e => console.warn('audit_log write failed:', e));
 }
 
@@ -2048,7 +1875,6 @@ function switchTab(name, btn) {
   if (panel) panel.classList.add('active');
   if (btn) btn.classList.add('active');
   if (name === 'jobs' || name === 'cal') renderJobs();
-  if (name === 'payout' || name === 'more') renderPayout();
   if (name === 'customers') renderCustomersTab();
   if (name === 'cal' || name === 'schedule') renderCal();
   if (name === 'leads') renderLeads();
@@ -2123,8 +1949,8 @@ function renderCal() {
     const isBlocked = blockedDays.has(ds);
     cell.className = 'week-head-day' + (isToday?' today':'') + (isBlocked?' blocked-hd':'');
     cell.innerHTML = `<div class="wdn">${DNS[day.getDay()]}</div><div class="wdd">${day.getDate()}</div>`
-      + (ADMINS.includes(me) ? `<button class="block-btn${isBlocked?' active':''}" onclick="event.stopPropagation();toggleBlockDay('${ds}')">${isBlocked?'Blocked':'Block day'}</button>` : '');
-    cell.onclick = () => { if (!isBlocked || ADMINS.includes(me)) openBooking(ds); };
+      + (canRunBusiness() ? `<button class="block-btn${isBlocked?' active':''}" onclick="event.stopPropagation();toggleBlockDay('${ds}')">${isBlocked?'Blocked':'Block day'}</button>` : '');
+    cell.onclick = () => { if (!isBlocked || canRunBusiness()) openBooking(ds); };
     headRow.appendChild(cell);
   });
   view.appendChild(headRow);
@@ -2193,10 +2019,10 @@ function renderCal() {
       const slot = document.createElement('div');
       slot.className = 'hour-slot' + (isSlotBlocked ? ' slot-blocked' : '');
       slot.onclick = () => {
-        if ((isBlocked || isSlotBlocked) && !ADMINS.includes(me)) { alert('This time is blocked — no bookings allowed.'); return; }
+        if ((isBlocked || isSlotBlocked) && !canRunBusiness()) { alert('This time is blocked — no bookings allowed.'); return; }
         openBooking(ds, null, String(h).padStart(2,'0')+':00');
       };
-      if (ADMINS.includes(me)) {
+      if (canRunBusiness()) {
         const lockBtn = document.createElement('button');
         lockBtn.className = 'slot-lock-btn';
         lockBtn.textContent = isSlotBlocked ? '' : '';
@@ -2265,7 +2091,7 @@ function showPopup(job, anchor) {
       ${job.status==='scheduled'?`<button class="bsm edit" onclick="setStatus('${job.id}','scheduled');moveJobPipeline('${job.id}','in_progress');closePopup()">Start job</button>`:''}
       ${job.status==='scheduled'||getPipelineStatus(job)==='in_progress'?`<button class="bsm complete" onclick="setStatus('${job.id}','completed');closePopup()">Complete</button>`:''}
       <button class="bsm edit" onclick="closePopup();openJobDetail('${job.id}')">Details</button>
-      ${job.status==='completed'&&ADMINS.includes(me)?`<button class="bsm approve" onclick="setStatus('${job.id}','paid');closePopup()">Approve Payment</button>`:''}
+      ${job.status==='completed'&&canRunBusiness()?`<button class="bsm approve" onclick="setStatus('${job.id}','paid');closePopup()">Approve Payment</button>`:''}
       <button class="bsm edit" onclick="closePopup();openBooking(null,loadJobs().find(j=>j.id==='${job.id}'))">Edit</button>
       <button class="bsm del" onclick="closePopup();delJob('${job.id}')">Delete</button>
     </div>`;
@@ -2306,41 +2132,6 @@ function renderJobs() {
   if (!jobs.length) { list.innerHTML='<div class="empty"><div>No appointments found.</div></div>'; return; }
   list.innerHTML='';
   jobs.forEach(j=>list.appendChild(mkJobCard(j)));
-}
-
-/* ═══════════════════════════════════════════════════════
-   PAYOUT
-═══════════════════════════════════════════════════════ */
-function renderPayout() {
-  const all = loadJobs();
-  const tj = all.filter(j=>j.assignedTo==='TylerG'||j.assignedTo==='Both');
-  const paid=tj.filter(j=>j.status==='paid'), comp=tj.filter(j=>j.status==='completed'), sched=tj.filter(j=>j.status==='scheduled');
-
-  // Fast lead bonuses — $3 per lead contacted under 2 min
-  const fastLeads = leadsCache.filter(l => {
-    if (!l.respondedAt) return false;
-    const start = new Date(l.notifiedAt || l.createdAt).getTime();
-    const secs = Math.floor((new Date(l.respondedAt).getTime() - start) / 1000);
-    return secs <= 120;
-  });
-  const jobPay  = paid.length * 30;
-  const leadPay = fastLeads.length * 3;
-  const total   = jobPay + leadPay;
-
-  document.getElementById('po-total').textContent = '$' + total.toLocaleString();
-  document.getElementById('po-sub').textContent =
-    paid.length + ' job' + (paid.length!==1?'s':'') + ' · ' +
-    fastLeads.length + ' fast lead' + (fastLeads.length!==1?'s':'');
-  document.getElementById('po-stats').innerHTML=`
-    <div class="stat"><div class="v" style="color:#86efac">${paid.length}</div><div class="l">Paid Jobs<br><span style="font-size:.65rem;color:var(--muted)">$${jobPay}</span></div></div>
-    <div class="stat"><div class="v" style="color:#fcd34d">${comp.length}</div><div class="l">Awaiting Approval</div></div>
-    <div class="stat"><div class="v" style="color:#60a5fa">${fastLeads.length}</div><div class="l">Fast Responses<br><span style="font-size:.65rem;color:var(--muted)">+$${leadPay}</span></div></div>
-    <div class="stat"><div class="v" style="color:#86efac">$${total}</div><div class="l">Total Owed</div></div>`;
-  const list = document.getElementById('po-list');
-  if (!tj.length) { list.innerHTML='<div class="empty"><div class="ico"></div><div>No jobs assigned to TylerG yet.</div></div>'; return; }
-  const ord={completed:0,paid:1,scheduled:2};
-  list.innerHTML='';
-  [...tj].sort((a,b)=>(ord[a.status]??9)-(ord[b.status]??9)||(((b.date||'')+(b.time||'')).localeCompare((a.date||'')+(a.time||'')))).forEach(j=>list.appendChild(mkJobCard(j)));
 }
 
 /* ═══════════════════════════════════════════════════════
@@ -2411,7 +2202,6 @@ function mkJobCard(job) {
           <span class="bdg ${job.type}">${typeLabel(job.type)}</span>
           <span class="bdg ${job.status}">${cap(job.status)}</span>
           <span class="bdg who">${esc(job.assignedTo)}</span>
-          ${job.status==='paid'?'<span class="bdg paid">$30</span>':''}
         </div>
       </div>
     </div>
@@ -2420,7 +2210,7 @@ function mkJobCard(job) {
   if (job.status==='scheduled') {
     const b=document.createElement('button'); b.className='bsm complete'; b.textContent='Open completion'; b.onclick=()=>setStatus(job.id,'completed'); acts.appendChild(b);
   }
-  if (job.status==='completed' && ADMINS.includes(me)) {
+  if (job.status==='completed' && canRunBusiness()) {
     const b=document.createElement('button'); b.className='bsm approve'; b.textContent='Record payment'; b.onclick=()=>setStatus(job.id,'paid'); acts.appendChild(b);
   }
   const eb=document.createElement('button'); eb.className='bsm edit'; eb.textContent='Edit'; eb.onclick=()=>openBooking(null,job); acts.appendChild(eb);
@@ -2453,7 +2243,6 @@ function delJob(id) {
 function refresh() {
   if (scheduleTabActive()) renderCal();
   renderJobs();
-  renderPayout();
   renderCustomersTab();
 }
 
@@ -2701,7 +2490,7 @@ async function confirmBooking() {
   try{
     const result=await window.EGCBooking.saveSeries(job,bk.original||{},{operationKey:bk.operationKey});
     jobsCache=[...jobsCache.filter(row=>!result.visits.some(visit=>visit.id===row.id)),...result.visits.map(visit=>({...bk.original,...visit}))];
-    bk.uncertain=false;bk.saving=false;bk.submitted=null;let notice=result.warning||(bk.editId?'Appointment updated in Dispatch.':result.visits.length+' appointment(s) saved in Dispatch.');
+    bk.uncertain=false;bk.saving=false;bk.submitted=null;let notice=(result.warning||(bk.editId?'Appointment updated in Dispatch.':result.visits.length+' appointment(s) saved in Dispatch.'))+(result.job?.arrivalNotice?' '+result.job.arrivalNotice:'');
     if(document.getElementById('send-email')?.checked&&c.email){try{await sendBookingConfirmation(result.job.id);notice+=' Confirmation sent.';}catch(problem){notice+=' Confirmation was not sent: '+problem.message;}}
     closeBooking();refresh();showToast(notice);
   }catch(problem){bk.saving=false;bk.uncertain=window.EGCBooking.recoveries().some(row=>row.key==='series:'+bk.operationKey||row.key.includes(bk.operationKey));if(!bk.uncertain)bk.submitted=null;document.getElementById('step-err').textContent=problem.message||'The booking could not be verified. Retry before leaving.';btn.textContent=bk.uncertain?'Retry original booking':'Retry booking';}
@@ -2737,7 +2526,8 @@ function avatarBg(n) {
    MODE SELECT
 ═══════════════════════════════════════════════════════ */
 function showModeSelect() {
-  if (!canRunBusiness()) { bootDashboard(); return; }
+  // A ?view= link (bookmark, reload, back gesture) opens that Hub view instead of the mode screen on entry.
+  if (!canRunBusiness() || new URLSearchParams(location.search).has('view') && !document.querySelector('#dashboard.ops-installed')) { bootDashboard(); return; }
   document.getElementById('login-screen').style.display  = 'none';
   document.getElementById('dashboard').style.display     = 'none';
   document.getElementById('oncall-overlay').classList.remove('open');
@@ -2762,15 +2552,16 @@ function selectMode(mode) {
 ═══════════════════════════════════════════════════════ */
 let oc = { step:1, customer:null, isNew:false, quote:{ space:'garage', size:'medium', fill:'moderate', specials:{}, cubicYards:0, floors:0, distanceMiles:0, custAddr:'' }, booking:{ assignedTo:'',assignedCrew:[] } };
 
-const SPECIALS = [
-  { id:'fridge',     name:'Refrigerator',   price:60, icon:'' },
-  { id:'washer',     name:'Washer / Dryer', price:50, icon:'' },
-  { id:'appliance',  name:'Other Appliance',price:40, icon:'' },
-  { id:'mattress',   name:'Mattress',       price:45, icon:'' },
-  { id:'tire',       name:'Tire',           price:50, icon:'' },
-  { id:'electronics',name:'Electronics',    price:25, icon:'' },
-  { id:'paint',      name:'Paint / Hazmat', price:45, icon:'' },
-];
+// The phone-quote table comes from /api/pricing-config for staff who quote; this page ships no prices.
+let PHONE_QUOTE = null, PHONE_QUOTE_ERROR = '';
+const phoneSpecials = () => PHONE_QUOTE?.specials || [];
+const phoneOver = miles => PHONE_QUOTE ? Math.max(0, miles - PHONE_QUOTE.freeMiles) : 0;
+async function loadPhoneQuote() {
+  PHONE_QUOTE = null; PHONE_QUOTE_ERROR = '';
+  try { PHONE_QUOTE = await window.EGCPricingConfig.load('phone'); } catch { PHONE_QUOTE = null; }
+  if (!PHONE_QUOTE) PHONE_QUOTE_ERROR = 'Phone pricing is unavailable. Reconnect and reopen the call to load prices.';
+  if (oc.step === 2 && document.getElementById('oncall-overlay')?.classList.contains('open')) renderOcStep();
+}
 
 function openOnCall() {
   if(oc.booking?.saving||oc.booking?.uncertain){showToast('Retry the saved booking first.');return;}
@@ -2779,6 +2570,7 @@ function openOnCall() {
     booking:{ assignedTo:'',assignedCrew:[],operationKey:'phone-booking:'+crypto.randomUUID() }
   };
   document.getElementById('oncall-overlay').classList.add('open');
+  loadPhoneQuote();
   // Legacy Firestore leads are intentionally excluded after the HighLevel reset.
   leadsCache = [];
   if (oc.step === 1) ocFilter(document.getElementById('oc-search')?.value || '');
@@ -2904,36 +2696,34 @@ function ocToggleNew() {
 
 /* ─── Step 2: Quote Builder ────────────────────────── */
 function calcQuote() {
-  let total = 150, lines = ['Base service fee  $150'];
+  const q = PHONE_QUOTE;
+  if (!q) return { low: null, high: null, lines: [], available: false };
+  let total = q.baseFee, lines = [`Base service fee  $${q.baseFee}`];
 
-  // Cubic yards — $25/yd
   const cy = oc.quote.cubicYards || 0;
-  if (cy > 0) { total += cy * 35; lines.push(`Cubic yards (${cy} yd³)  +$${cy*35}`); }
+  if (cy > 0) { total += cy * q.perCubicYard; lines.push(`Cubic yards (${cy} yd³)  +$${cy*q.perCubicYard}`); }
 
-  // Special items
-  SPECIALS.forEach(item => {
+  phoneSpecials().forEach(item => {
     const qty = oc.quote.specials[item.id] || 0;
-    if (qty > 0) { total += item.price * qty; lines.push(`${item.icon} ${item.name} ×${qty}  +$${item.price*qty}`); }
+    if (qty > 0) { total += item.price * qty; lines.push(`${item.name} ×${qty}  +$${item.price*qty}`); }
   });
 
-  // Floors — $20/floor
   const fl = oc.quote.floors || 0;
-  if (fl > 0) { total += fl * 20; lines.push(`Floors to climb (${fl})  +$${fl*20}`); }
+  if (fl > 0) { total += fl * q.perFloor; lines.push(`Floors to climb (${fl})  +$${fl*q.perFloor}`); }
 
-  // Distance — $1/mile beyond free radius
   const dm = oc.quote.distanceMiles || 0;
-  const billableMiles = Math.max(0, dm - CFG.FREE_MILES);
-  if (billableMiles > 0) { total += billableMiles * CFG.PRICE_PER_MILE; lines.push(`Distance (${dm} mi, ${billableMiles} mi over)  +$${billableMiles}`); }
+  const billableMiles = phoneOver(dm);
+  if (billableMiles > 0) { total += billableMiles * q.perMile; lines.push(`Distance (${dm} mi, ${billableMiles} mi over)  +$${billableMiles * q.perMile}`); }
 
-  const low  = Math.round(total / 5) * 5;
-  const high = Math.round(low * 1.18 / 5) * 5;
-  return { low, high, lines };
+  const low  = Math.round(total / q.roundTo) * q.roundTo;
+  const high = Math.round(low * q.highSpread / q.roundTo) * q.roundTo;
+  return { low, high, lines, available: true };
 }
 
 function updateQDisplay() {
-  const { low, high, lines } = calcQuote();
-  const r = document.getElementById('oc-qrange'); if (r) r.textContent = `$${low.toLocaleString()} – $${high.toLocaleString()}`;
-  const b = document.getElementById('oc-qbreak'); if (b) b.innerHTML = lines.join('<br>');
+  const { low, high, lines, available } = calcQuote();
+  const r = document.getElementById('oc-qrange'); if (r) r.textContent = available ? `$${low.toLocaleString()} – $${high.toLocaleString()}` : 'Pricing unavailable';
+  const b = document.getElementById('oc-qbreak'); if (b) b.innerHTML = available ? lines.map(esc).join('<br>') : esc(PHONE_QUOTE_ERROR || 'Loading phone pricing…');
 }
 
 function setOpt(key, val, btn) {
@@ -2952,7 +2742,7 @@ function adjSI(id, d) {
 function setCubicYards(val) {
   oc.quote.cubicYards = parseInt(val) || 0;
   const lbl = document.getElementById('cy-lbl');
-  if (lbl) lbl.textContent = oc.quote.cubicYards > 0 ? `${oc.quote.cubicYards} yd³  (+$${oc.quote.cubicYards*35})` : '0 yd³';
+  if (lbl) lbl.textContent = oc.quote.cubicYards > 0 ? `${oc.quote.cubicYards} yd³${PHONE_QUOTE ? `  (+$${oc.quote.cubicYards*PHONE_QUOTE.perCubicYard})` : ''}` : '0 yd³';
   updateQDisplay();
 }
 
@@ -3008,10 +2798,10 @@ function openMapPopup() {
       const leg = result.routes[0].legs[0];
       const meters = leg.distance.value;
       _mapDrivingMiles = Math.round(meters / 1609.34);
-      const over = Math.max(0, _mapDrivingMiles - CFG.FREE_MILES);
+      const over = phoneOver(_mapDrivingMiles);
       document.getElementById('map-result').innerHTML =
-        `<strong style="color:#fff;font-size:1rem">${leg.distance.text}</strong> &nbsp;·&nbsp; ${leg.duration.text} drive` +
-        (over > 0 ? `<br><span style="color:var(--accent)">+$${over} distance surcharge</span>` : `<br><span style="color:#86efac">Within free ${CFG.FREE_MILES}-mile zone</span>`);
+        `<strong style="color:#fff;font-size:1rem">${esc(leg.distance.text)}</strong> &nbsp;·&nbsp; ${esc(leg.duration.text)} drive` +
+        (!PHONE_QUOTE ? '' : over > 0 ? `<br><span style="color:var(--accent)">+$${over * PHONE_QUOTE.perMile} distance surcharge</span>` : `<br><span style="color:#86efac">Within the free distance zone</span>`);
       document.getElementById('map-use-btn').disabled = false;
     } else {
       document.getElementById('map-result').textContent = `Could not get directions (${status}) — enter miles manually.`;
@@ -3026,9 +2816,9 @@ function closeMapPopup() {
 
 function applyMapDistance() {
   oc.quote.distanceMiles = _mapDrivingMiles;
-  const over = Math.max(0, _mapDrivingMiles - CFG.FREE_MILES);
+  const over = phoneOver(_mapDrivingMiles);
   const statusEl = document.getElementById('dist-status');
-  if (statusEl) statusEl.textContent = `${_mapDrivingMiles} mi from base${over > 0 ? ` · +$${over} surcharge` : ' · within free zone'}`;
+  if (statusEl) statusEl.textContent = `${_mapDrivingMiles} mi from base${!PHONE_QUOTE ? '' : over > 0 ? ` · +$${over * PHONE_QUOTE.perMile} surcharge` : ' · within free zone'}`;
   const input = document.getElementById('dist-miles');
   if (input) input.value = _mapDrivingMiles;
   updateQDisplay();
@@ -3037,10 +2827,10 @@ function applyMapDistance() {
 
 function setDistanceMiles(val) {
   oc.quote.distanceMiles = Math.max(0, parseInt(val)||0);
-  const over = Math.max(0, oc.quote.distanceMiles - CFG.FREE_MILES);
+  const over = phoneOver(oc.quote.distanceMiles);
   const statusEl = document.getElementById('dist-status');
   if (statusEl) statusEl.textContent = oc.quote.distanceMiles > 0
-    ? `${oc.quote.distanceMiles} mi from base${over > 0 ? ` · +$${over} surcharge` : ' · within free zone'}`
+    ? `${oc.quote.distanceMiles} mi from base${!PHONE_QUOTE ? '' : over > 0 ? ` · +$${over * PHONE_QUOTE.perMile} surcharge` : ' · within free zone'}`
     : '';
   updateQDisplay();
 }
@@ -3075,9 +2865,9 @@ function ocStep2(body) {
     </div>
 
     <div class="q-section">
-      <div class="q-lbl">Estimated volume <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted)">($35 per cubic yard)</span></div>
+      <div class="q-lbl">Estimated volume${PHONE_QUOTE ? ` <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted)">($${PHONE_QUOTE.perCubicYard} per cubic yard)</span>` : ''}</div>
       <div id="cy-lbl" style="font-family:'JetBrains Mono',monospace;font-size:1.1rem;font-weight:600;color:var(--accent);margin:.25rem 0 .5rem">
-        ${oc.quote.cubicYards > 0 ? `${oc.quote.cubicYards} yd³  (+$${oc.quote.cubicYards*35})` : '0 yd³'}
+        ${oc.quote.cubicYards > 0 ? `${oc.quote.cubicYards} yd³${PHONE_QUOTE ? `  (+$${oc.quote.cubicYards*PHONE_QUOTE.perCubicYard})` : ''}` : '0 yd³'}
       </div>
       <input type="range" id="cy-slider" min="0" max="20" step="1" value="${Math.min(oc.quote.cubicYards,20)}"
         oninput="setCubicYards(this.value)"
@@ -3088,9 +2878,9 @@ function ocStep2(body) {
     </div>
 
     <div class="q-section">
-      <div class="q-lbl">Floors to climb <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted)">($20 per floor above ground)</span></div>
+      <div class="q-lbl">Floors to climb${PHONE_QUOTE ? ` <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted)">($${PHONE_QUOTE.perFloor} per floor above ground)</span>` : ''}</div>
       <div class="si" style="background:rgba(255,255,255,.04)">
-        <div class="si-info"><div class="sn">Floors up</div><div class="sp">+$20 per floor</div></div>
+        <div class="si-info"><div class="sn">Floors up</div><div class="sp">${PHONE_QUOTE ? `+$${PHONE_QUOTE.perFloor} per floor` : 'Priced once phone pricing loads'}</div></div>
         <div class="si-ctr">
           <button class="si-b" onclick="adjFloors(-1)">−</button>
           <div class="si-n" id="floors-n">${oc.quote.floors}</div>
@@ -3100,7 +2890,7 @@ function ocStep2(body) {
     </div>
 
     <div class="q-section">
-      <div class="q-lbl">Distance from base <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted)">($1/mi beyond ${CFG.FREE_MILES} mi)</span></div>
+      <div class="q-lbl">Distance from base${PHONE_QUOTE ? ` <span style="font-weight:400;text-transform:none;letter-spacing:0;color:var(--muted)">($${PHONE_QUOTE.perMile}/mi beyond ${PHONE_QUOTE.freeMiles} mi)</span>` : ''}</div>
       <div style="display:flex;gap:.5rem;margin-bottom:.5rem">
         <input type="text" id="dist-addr" placeholder="Customer address…"
           value="${esc(oc.quote.custAddr || oc.customer?.address || '')}"
@@ -3112,16 +2902,17 @@ function ocStep2(body) {
           oninput="setDistanceMiles(this.value)"
           style="width:6rem;background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.12);border-radius:.5rem;padding:.5rem .75rem;color:#fff;font-size:.875rem">
         <div id="dist-status" style="font-size:.78rem;color:var(--muted);flex:1">
-          ${oc.quote.distanceMiles > 0 ? `${oc.quote.distanceMiles} mi from base${Math.max(0,oc.quote.distanceMiles-CFG.FREE_MILES)>0?' · +$'+Math.max(0,oc.quote.distanceMiles-CFG.FREE_MILES)+' surcharge':' · within free zone'}` : 'Type address + tap Map, or enter miles manually'}
+          ${oc.quote.distanceMiles > 0 ? `${oc.quote.distanceMiles} mi from base${!PHONE_QUOTE?'':phoneOver(oc.quote.distanceMiles)>0?' · +$'+phoneOver(oc.quote.distanceMiles)*PHONE_QUOTE.perMile+' surcharge':' · within free zone'}` : 'Type address + tap Map, or enter miles manually'}
         </div>
       </div>
     </div>`;
 
   const sg = document.getElementById('oc-specials');
-  SPECIALS.forEach(item => {
+  if (!PHONE_QUOTE) sg.textContent = PHONE_QUOTE_ERROR || 'Loading phone pricing…';
+  phoneSpecials().forEach(item => {
     const qty = oc.quote.specials[item.id] || 0;
     const el = document.createElement('div'); el.className = 'si';
-    el.innerHTML = `<div class="si-info"><div class="sn">${item.icon} ${item.name}</div><div class="sp">+$${item.price} each</div></div>
+    el.innerHTML = `<div class="si-info"><div class="sn">${esc(item.name)}</div><div class="sp">+$${item.price} each</div></div>
       <div class="si-ctr">
         <button class="si-b" onclick="adjSI('${item.id}',-1)">−</button>
         <div class="si-n" id="sin-${item.id}">${qty}</div>
@@ -3134,7 +2925,7 @@ function ocStep2(body) {
 
 /* ─── Step 3: Book ─────────────────────────────────── */
 function ocStep3(body) {
-  const { low, high } = calcQuote();
+  const { low, high, available = true } = calcQuote();
   const c = oc.customer;
   body.innerHTML = `
     <div class="step-q" style="font-family:'Fraunces',serif;font-size:1rem;color:rgba(255,255,255,.55);margin-bottom:1rem">Lock in the appointment</div>
@@ -3142,7 +2933,7 @@ function ocStep3(body) {
     <div style="background:rgba(34,197,94,.08);border:1px solid rgba(34,197,94,.2);border-radius:.75rem;padding:1rem 1.25rem;margin-bottom:1.25rem;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.5rem">
       <div>
         <div style="font-size:.68rem;font-weight:600;letter-spacing:.07em;text-transform:uppercase;color:var(--muted)">Quoted Price</div>
-        <div style="font-family:'Fraunces',serif;font-size:1.5rem;font-weight:700;color:#86efac">$${low.toLocaleString()} – $${high.toLocaleString()}</div>
+        <div style="font-family:'Fraunces',serif;font-size:1.5rem;font-weight:700;color:#86efac">${available ? `$${low.toLocaleString()} – $${high.toLocaleString()}` : 'Pricing unavailable'}</div>
       </div>
       <div style="text-align:right;font-size:.8rem;color:var(--muted)">${esc(c.name)}<br>${esc(c.phone||'')}</div>
     </div>
@@ -3163,7 +2954,7 @@ function ocStep3(body) {
       <label>Assigned crew</label><div id="oncall-crew" class="egc-crew-options" aria-label="Assigned crew"></div>
     </div>
     <div class="fg"><label>Address</label><input type="text" id="oc-addr" value="${esc(c.address||'')}" placeholder="123 Main St, Fort Collins, CO"></div>
-    <div class="fg"><label>Notes</label><textarea id="oc-notes">Quote discussed: $${low}–$${high}. ${SPECIALS.filter(s=>(oc.quote.specials[s.id]||0)>0).map(s=>s.name+' ×'+oc.quote.specials[s.id]).join(', ')}</textarea></div>
+    <div class="fg"><label>Notes</label><textarea id="oc-notes">${available ? `Quote discussed: $${low}–$${high}. ` : ''}${esc(phoneSpecials().filter(s=>(oc.quote.specials[s.id]||0)>0).map(s=>s.name+' ×'+oc.quote.specials[s.id]).join(', '))}</textarea></div>
     ${c.email ? `<div class="email-toggle-row"><input type="checkbox" id="oc-email" checked><label for="oc-email">Send confirmation email<span class="esub">${esc(c.email)}</span></label></div>` : ''}<p id="oc-booking-error" role="alert"></p>`;
   bookingCrew('oncall-crew',oc.booking);
 }
@@ -3173,8 +2964,8 @@ function ocAsgn(who){if(oc.booking.saving||oc.booking.uncertain)return;oc.bookin
 async function ocBook() {
   const state=oc.booking;if(state.saving)return;const btn=document.getElementById('oc-next'),c=oc.customer,date=document.getElementById('oc-date')?.value;
   if(!date){document.getElementById('oc-booking-error').textContent='Choose a date.';return;}
-  const {low,high}=calcQuote();state.operationKey=state.operationKey||'phone-booking:'+crypto.randomUUID();
-  const job=state.submitted||{id:state.operationKey,type:document.getElementById('oc-type')?.value||'walkthrough',customerId:!c._isLead&&!c.fromSheet?c.id:undefined,customer:c.name,phone:c.phone||'',email:c.email||'',highlevelContactId:c.highlevelContactId||'',date,time:document.getElementById('oc-time')?.value||'',endDate:date,endTime:document.getElementById('oc-endtime')?.value||'',address:document.getElementById('oc-addr')?.value.trim()||c.address||'',assignedCrew:state.assignedCrew||[],crewNeeded:Math.max(1,state.assignedCrew?.length||1),notes:(document.getElementById('oc-notes')?.value.trim()||'')+'\nPhone estimate discussed: $'+low+'–$'+high+'. Confirm the scope and agreed price before work.'};
+  const {low,high,available=true}=calcQuote();state.operationKey=state.operationKey||'phone-booking:'+crypto.randomUUID();
+  const job=state.submitted||{id:state.operationKey,type:document.getElementById('oc-type')?.value||'walkthrough',customerId:!c._isLead&&!c.fromSheet?c.id:undefined,customer:c.name,phone:c.phone||'',email:c.email||'',highlevelContactId:c.highlevelContactId||'',date,time:document.getElementById('oc-time')?.value||'',endDate:date,endTime:document.getElementById('oc-endtime')?.value||'',address:document.getElementById('oc-addr')?.value.trim()||c.address||'',assignedCrew:state.assignedCrew||[],crewNeeded:Math.max(1,state.assignedCrew?.length||1),notes:(document.getElementById('oc-notes')?.value.trim()||'')+(available?'\nPhone estimate discussed: $'+low+'–$'+high+'. Confirm the scope and agreed price before work.':'\nNo phone estimate was given. Confirm the scope and agreed price before work.')};
   if(!job.time||!job.endTime){document.getElementById('oc-booking-error').textContent='Choose start and end times in Mountain Time.';return;}
   state.saving=true;state.submitted=job;legacyBookingControls('oncall-overlay',true);btn.textContent='Checking schedule…';
   try{const saved=await window.EGCBooking.save(job,{}, {operationKey:state.operationKey});jobsCache=[...jobsCache.filter(row=>row.id!==saved.id),saved];state.uncertain=false;state.saving=false;state.submitted=null;let notice='Appointment saved in Dispatch.';
@@ -3197,18 +2988,34 @@ window.addEventListener('egc:booking-recovered',event=>{const key=event.detail?.
   })();
 </script>
 <script src="employee-gusto.js?v=20260909gusto"></script>
-<link rel="stylesheet" href="employee-operations.css?v=20260922intelligence">
+<script src="employee-pricing.js?v=20260928price"></script>
+<link rel="stylesheet" href="employee-operations.css?v=20260928send">
 <script src="employee-recordings.js?v=20260921"></script>
-<script src="employee-operations.js?v=20260922intelligence"></script>
-<link rel="stylesheet" href="employee-dispatch.css?v=20260922ops">
+<script src="employee-operations.js?v=20260928sendowners"></script>
+<link rel="stylesheet" href="employee-dispatch.css?v=20260928segments">
+<link rel="stylesheet" href="employee-dispatch-calendar.css?v=20260928cal">
 <link rel="stylesheet" href="employee-field-today.css?v=20260922ops">
 <link rel="stylesheet" href="employee-availability.css?v=20260922ops">
-<script src="employee-dispatch.js?v=20260922ops"></script>
+<script src="employee-dispatch.js?v=20260928fun02r"></script>
+<script src="employee-dispatch-calendar.js?v=20260928calfun02"></script>
+<link rel="stylesheet" href="employee-recurring.css?v=20260927rec">
+<script src="employee-recurring.js?v=20260927rec"></script>
 <link rel="stylesheet" href="employee-booking.css?v=20260922ops">
-<script src="employee-booking.js?v=20260922ops"></script>
+<script src="employee-booking.js?v=20260928recur"></script>
 <script src="employee-field-today.js?v=20260922ops"></script>
 <script src="employee-availability.js?v=20260922ops"></script>
-<script src="employee-suite.js?v=20260922ops"></script>
+<script src="employee-hub-screens.js?v=20260928overdue"></script>
+<link rel="stylesheet" href="employee-followups-home.css?v=20260928overdue">
+<script src="employee-followups-home.js?v=20260928overdue"></script>
+<script src="employee-money-document.js?v=20260928m4"></script>
+<link rel="stylesheet" href="employee-portal-documents.css?v=20260927docs">
+<script src="employee-portal-documents.js?v=20260927docs"></script>
+<link rel="stylesheet" href="employee-staff.css?v=20260928team">
+<script src="employee-staff.js?v=20260928team"></script>
+<script src="employee-suite.js?v=20260928team"></script>
+<link rel="stylesheet" href="employee-money-actions.css?v=20260928money">
+<script src="employee-money-actions.js?v=20260928money"></script>
+<link rel="stylesheet" href="employee-mobile.css?v=20260927hubreg">
 
 <div class="egc-portal-foot" style="background:#0a1628;border-top:1px solid rgba(255,255,255,.08);padding:14px 18px;text-align:center;font-size:12px;color:rgba(245,241,234,.55)">
   <a href="/privacy-policy" style="color:#ff5b1f;margin:0 8px">Privacy</a> · <a href="/" style="color:#ff5b1f">Home</a> · Employee portal — internal use only

@@ -1,6 +1,7 @@
 import { assignmentKey } from './job-assignment.js';
 import { projectDispatchJob } from './dispatch-service.js';
 import { validDate, addDays, denverToday, scheduleInterval, availabilityInterval, occupiedDays, overlaps } from './dispatch-time.js';
+import { jobSegments } from './dispatch-segments.js';
 
 const TZ = 'America/Denver';
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
@@ -74,12 +75,15 @@ function availabilityDays(row) {
 }
 function checkConflicts(next, jobs, resources, roster, employee) {
   const interval = availabilityInterval(next), conflicts = [];
-  for (const job of jobs) {
-    if ((job.type !== 'blocked' && (job.recordType || !['job','walkthrough','cleanout','reorg'].includes(job.type))) || !active(job)) continue;
+  for (const record of jobs) {
+    if ((record.type !== 'blocked' && (record.recordType || !['job','walkthrough','cleanout','reorg'].includes(record.type))) || !active(record)) continue;
+    // Only the segments this employee works can collide with their time off.
+    for (const job of jobSegments(record)) {
     if (job.type !== 'blocked' && !projectDispatchJob(job,roster).assignedCrew.includes(employee)) continue;
     const scheduled = scheduleInterval(job);
     const unverifiable = !scheduled && job.date && (!validDate(job.date) || job.date <= interval.endDate && (!validDate(job.endDate || job.date) || (job.endDate || job.date) >= interval.date));
-    if (overlaps(interval,scheduled) || unverifiable) conflicts.push({code:unverifiable?'invalid_assignment_time':'assigned_job',jobId:job.id,message:unverifiable?'An assignment has invalid times. Ask dispatch to review it first.':'You are already assigned during this time. Ask dispatch to reassign that work before blocking availability.'});
+    if (overlaps(interval,scheduled) || unverifiable) conflicts.push({code:unverifiable?'invalid_assignment_time':'assigned_job',jobId:job.id,...(job.segmentId?{segmentId:job.segmentId}:{}),message:unverifiable?'An assignment has invalid times. Ask dispatch to review it first.':'You are already assigned during this time. Ask dispatch to reassign that work before blocking availability.'});
+    }
   }
   if (conflicts.length) throw fail('assignment_conflict','You already have assigned work during this time. Ask an operations manager to handle the schedule change.',409,{conflicts});
   for (const row of [...jobs.filter(nativeAvailability),...resources.filter(resourceAvailability)]) {

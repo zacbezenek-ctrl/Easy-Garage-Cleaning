@@ -2,7 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { randomUUID, webcrypto } from 'node:crypto';
-import vm from 'node:vm';
+import vm from './helpers/vm-realm.mjs';
+import { arrivalWindowProblem, arrivalWindowFields } from '../functions/_lib/dispatch-arrival.js';
+import * as funnel from '../functions/_lib/dispatch-funnel.js';
+import { commitConflict, commitFailure } from '../functions/_lib/firestore-errors.js';
+import { bridgeCommandDenial, bridgeCommandPolicy } from '../egc-platform/services/operations/src/bridge-command-policy.ts';
 
 // Execute the actual scheduling mutator, isolating only imported I/O and time/
 // conflict helpers. This suite proves atomic dependency guards, not live
@@ -16,6 +20,18 @@ function load() {
     scheduleLockConflict: () => false,
     scheduleDayEntry: row => ({ id: row.id, status: row.status }),
     encodeFirestoreFields: value => value,
+    // Pure arrival-window rules run for real; these fixtures have no windows.
+    arrivalWindowProblem, arrivalWindowFields,
+    // The shared SEC-04 bridge policy runs for real (the owner actor below is allowed).
+    bridgeCommandDenial, bridgeCommandPolicy,
+    DISPATCH_TIME_ZONE: 'America/Denver',
+    legacyBlockMode: () => 'off',
+    legacyBlockedDays: async () => ({ mode: 'off', rows: [] }),
+    // FUN-02 booking fields and funnel events run for real.
+    reasonInput: funnel.reasonInput, cancelPatch: funnel.cancelPatch, visitFunnelWrites: funnel.visitFunnelWrites,
+    requestKey: funnel.requestKey, eventActor: funnel.eventActor, eventVia: funnel.eventVia, defaultVisitPurpose: funnel.defaultVisitPurpose,
+    // The real shared classifier, so commit error paths map as in production.
+    commitConflict, commitFailure,
   });
   vm.runInContext(source.replace(/^import .*;\n/gm, '').replace(/^export /gm, '') +
     '\nglobalThis.api = {mutateScheduledVisit, schedulingStorage};', context);
@@ -107,4 +123,7 @@ test('Firestore adapter serializes dependency revisions as updateTime preconditi
   await store.commit([{ collection: 'customers', id: 'customer-1', revision: 'original-revision', patch: { id: 'customer-1' } }]);
   assert.deepEqual(sent.writes[0].currentDocument, { updateTime: 'original-revision' });
   assert.deepEqual(sent.writes[0].updateMask, { fieldPaths: ['id'] });
+  const failing = reply => api.schedulingStorage({}, async () => reply()).commit([{ collection: 'customers', id: 'customer-1', revision: 'original-revision', patch: { id: 'customer-1' } }]);
+  await assert.rejects(failing(() => Response.json({ error: { code: 400, status: 'FAILED_PRECONDITION' } }, { status: 400 })), error => error.message === 'schedule_revision_conflict' && error.status === 409);
+  await assert.rejects(failing(() => Response.json({ error: { code: 400, status: 'INVALID_ARGUMENT' } }, { status: 400 })), error => error.message === 'schedule_commit_outcome_unknown');
 });

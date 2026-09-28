@@ -1,0 +1,43 @@
+name: EGC Mobile Device E2E
+
+on:
+  pull_request:
+    paths: ['*.html','*.css','*.js','crew/**','images/**','functions/_lib/**','scripts/visual-audit-server.mjs','tests/e2e/**','tests/mobile-allowlist.test.mjs','.github/workflows/egc-mobile-e2e.yml']
+  push:
+    branches: [main]
+    paths: ['*.html','*.css','*.js','crew/**','images/**','functions/_lib/**','scripts/visual-audit-server.mjs','tests/e2e/**','tests/mobile-allowlist.test.mjs','.github/workflows/egc-mobile-e2e.yml']
+
+permissions:
+  contents: read
+
+# Push runs are keyed by commit SHA so a newer queued run never cancels an older pending main run.
+concurrency:
+  group: egc-mobile-e2e-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  devices:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install the pinned Playwright runner without touching package.json
+        run: npm install --no-save --ignore-scripts @playwright/test@1.63.0 playwright@1.63.0
+      - name: Install Chromium
+        run: npx --no-install playwright install --with-deps chromium
+      - name: Ratchet allowlist contract
+        run: node --test tests/mobile-allowlist.test.mjs
+      - name: iPhone 375x812, Pixel 7 and desktop 1440 against the local site only
+        run: npx --no-install playwright test -c tests/e2e/playwright.config.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: egc-mobile-e2e-${{ github.run_id }}
+          path: test-results/
+          if-no-files-found: ignore
+          retention-days: 7

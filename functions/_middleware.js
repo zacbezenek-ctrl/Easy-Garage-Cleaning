@@ -1,6 +1,20 @@
 import { enforceBusinessProjectWrite } from './_lib/business-hub-write-guard.js';
+import { gateStaffPage, privateStaffResponse } from './_lib/staff-page-gate.js';
 
-const PRIVATE_PATH = /^(?:\/(?:auth-verifier|contracts|docs|scripts|tests)(?:\/|$)|\/(?:sop|tyler-contract)(?:\.html)?\/?$|\/EGC-Lead-System-SOP\.pdf$|\/(?:package(?:-lock)?\.json|README\.md|firebase\.json|firestore\.rules|\.firebaserc|\.env(?:\.example)?|_[^/]+)(?:$|\/))/i;
+// Source trees, tooling and deploy configs sit beside the static site; never serve them.
+const PRIVATE_PATH = /^(?:\/(?:auth-verifier|contracts|docs|scripts|tests|egc-platform|functions|tools|\.github|\.claude|node_modules)(?:\/|$)|\/(?:sop|tyler-contract)(?:\.html)?\/?$|\/EGC-Lead-System-SOP\.pdf$|\/(?:package(?:-lock)?\.json|README\.md|firebase(?:\.emulator|\.field-day)?\.json|firestore\.(?:rules|indexes\.json)|pnpm-(?:lock|workspace)\.yaml|\.firebaserc|\.env(?:\.example)?|_[^/]+)(?:$|\/)|\/.*\.py\/?$)/i;
+
+function privatePath(pathname) {
+  let path;
+  try { path = decodeURIComponent(pathname); } catch { return true; }
+  // Test the collapsed, dot-resolved form too, so encoded separators cannot step around a prefix.
+  const segments = [];
+  for (const segment of path.split(/[\\/]+/)) {
+    if (segment === '..') segments.pop();
+    else if (segment && segment !== '.') segments.push(segment);
+  }
+  return PRIVATE_PATH.test(path) || PRIVATE_PATH.test(`/${segments.join('/')}`);
+}
 
 const CSP = [
   "default-src 'self'",
@@ -31,9 +45,11 @@ function blockedResponse() {
 
 export async function onRequest(context) {
   const { pathname } = new URL(context.request.url);
-  if (PRIVATE_PATH.test(decodeURIComponent(pathname))) return blockedResponse();
+  if (privatePath(pathname)) return blockedResponse();
 
-  const upstream = await enforceBusinessProjectWrite(context.request, context.env) || await context.next();
+  // EGC_STAFF_PAGE_GATE=on: staff pages and scripts need a Hub session (staff-paths.js); off leaves every response as before.
+  const staffPage = await gateStaffPage(context.request, context.env);
+  const upstream = staffPage?.refusal || await enforceBusinessProjectWrite(context.request, context.env) || await context.next();
   const explicit404 = pathname === '/404' || pathname === '/404.html';
   const response = new Response(upstream.body, {
     status: explicit404 ? 404 : upstream.status,
@@ -41,16 +57,20 @@ export async function onRequest(context) {
     headers: upstream.headers,
   });
   const ownerSetup = /^\/hub-login-setup(?:\.html|\.js)?$/.test(pathname);
-  const gustoAuth = pathname === '/api/gusto-auth';
-  if (!gustoAuth || !response.headers.has('Content-Security-Policy')) response.headers.set('Content-Security-Policy', ownerSetup
+  // These responses carry their own stricter CSP (OAuth nonce page, no-script money document), and
+  // the relay pages set their own narrower CSP for the one other origin they post to.
+  const relayPage = pathname === '/api/gusto-auth' || pathname === '/api/mcp-grant';
+  const ownPolicy = relayPage || pathname === '/api/money-document';
+  if (!ownPolicy || !response.headers.has('Content-Security-Policy')) response.headers.set('Content-Security-Policy', ownerSetup
     ? "default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; connect-src 'none'; form-action 'none'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'"
     : CSP);
   response.headers.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
-  const voiceInput = /^\/copilot(?:\.html)?\/?$/.test(pathname);
+  // Co-Pilot voice input and Hub walkthrough recordings may ask for the microphone; every other page cannot.
+  const voiceInput = /^\/copilot(?:\.html)?\/?$/.test(pathname) || /^\/employee(?:\.html)?\/?$/.test(pathname);
   response.headers.set('Permissions-Policy', `camera=(), microphone=${voiceInput ? '(self)' : '()'}, geolocation=(self), payment=(), usb=()`);
   response.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
   response.headers.set('X-Content-Type-Options', 'nosniff');
-  response.headers.set('X-Frame-Options', pathname.startsWith('/employee') || pathname.startsWith('/crew/') || pathname.startsWith('/copilot') ? 'DENY' : 'SAMEORIGIN');
+  response.headers.set('X-Frame-Options', pathname.startsWith('/employee') || pathname.startsWith('/crew/') || pathname.startsWith('/copilot') || pathname.startsWith('/staff-login') ? 'DENY' : 'SAMEORIGIN');
   response.headers.delete('Access-Control-Allow-Origin');
   if (ownerSetup) {
     response.headers.set('Cache-Control', 'no-store');
@@ -62,9 +82,16 @@ export async function onRequest(context) {
     response.headers.set('Cache-Control', 'no-store');
     response.headers.set('X-Robots-Tag', 'noindex, nofollow');
   }
-  if (gustoAuth) {
-    response.headers.set('Referrer-Policy', 'no-referrer');
+  if (ownPolicy) {
+    // The MCP approval page may keep same-origin, so its own form POST carries a real Origin; the rest send none.
+    const sameOriginApproval = pathname === '/api/mcp-grant' && upstream.headers.get('Referrer-Policy') === 'same-origin';
+    response.headers.set('Referrer-Policy', sameOriginApproval ? 'same-origin' : 'no-referrer');
     response.headers.set('X-Frame-Options', 'DENY');
+  }
+  // Private certificate PDFs keep their handler's sandboxed CSP and never send a referrer.
+  if (pathname === '/api/customer-portal-document' || pathname === '/api/portal-documents-admin') {
+    if (upstream.headers.has('Content-Security-Policy')) response.headers.set('Content-Security-Policy', upstream.headers.get('Content-Security-Policy'));
+    response.headers.set('Referrer-Policy', 'no-referrer');
   }
   if (pathname.startsWith('/business-hub') || pathname === '/api/business-hub') {
     response.headers.set('Cache-Control', 'no-store');
@@ -76,6 +103,7 @@ export async function onRequest(context) {
   if (upstream.status === 404 || explicit404) {
     response.headers.set('X-Robots-Tag', 'noindex, nofollow');
   }
+  if (staffPage) privateStaffResponse(response);
   // Refresh a formerly immutable shared script URL and add a discoverable
   // business entry in server-rendered navigation, even with JavaScript disabled.
   if (response.status === 200 && response.headers.get('Content-Type')?.includes('text/html') && typeof HTMLRewriter !== 'undefined') {

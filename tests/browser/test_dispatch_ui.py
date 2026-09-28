@@ -1,5 +1,5 @@
 """Native dispatch browser workflows against isolated contract fixtures; no provider/customer writes."""
-import copy, json, os, pathlib, threading, unittest
+import copy, json, os, pathlib, re, threading, unittest
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
@@ -16,6 +16,22 @@ def job(**changes):
               'serviceType': 'Garage cleanout', 'jobInstructions': 'Clear the garage; preserve the workbench.', 'requiredEquipment': ['Dolly', 'Brooms'], 'materials': [{'id': 'shelves', 'name': 'Shelving', 'quantity': 2}], 'syncStatus': 'not_needed'}
     result.update(changes)
     return result
+
+def stop(id, time, end, customer, address=''):
+    return {'id': id, 'type': 'job', 'customer': customer, 'title': '', 'address': address, 'date': DAY, 'time': time, 'endDate': DAY, 'endTime': end, 'startAt': DAY+'T'+time+':00-06:00', 'endAt': DAY+'T'+end+':00-06:00', 'status': 'scheduled', 'travelBufferMinutes': 20}
+TRAVEL = {'ok': True, 'timeZone': 'America/Denver', 'date': DAY, 'asOf': '2026-09-22T14:00:00Z', 'travel': {'mode': 'offline', 'requestedMode': 'offline', 'blockTravelShort': False}, 'coverage': {'complete': True, 'asOf': '2026-09-22T14:00:00Z'},
+          'employees': [{'employeeId': 'crew.one', 'name': 'Crew One', 'active': True, 'complete': True,
+                         'jobs': [stop('job-1', '08:00', '10:00', CUSTOMER['name'], '123 Synthetic Way, Fort Collins, CO 80525'), stop('job-2', '10:15', '11:00', '<img src=x onerror="window.injected=true">'), stop('job-3', '12:00', '13:00', 'Second Synthetic Garage', '200 Synthetic Ave, Loveland, CO 80537')],
+                         'legs': [{'fromJobId': 'job-1', 'toJobId': 'job-2', 'gapMinutes': 15, 'bufferMinutes': 20, 'estimatedMinutes': 30, 'estimateSource': 'offline_zip', 'requiredMinutes': 30, 'shortByMinutes': 15, 'status': 'short'},
+                                  {'fromJobId': 'job-2', 'toJobId': 'job-3', 'gapMinutes': 60, 'bufferMinutes': 20, 'estimatedMinutes': None, 'estimateSource': None, 'requiredMinutes': 20, 'shortByMinutes': 0, 'status': 'ok'}],
+                         'totals': {'stops': 3, 'legs': 2, 'shortLegs': 1, 'estimatedDriveMinutes': 30, 'unestimatedLegs': 1}},
+                        {'employeeId': 'lead.one', 'name': 'Lead One', 'active': True, 'complete': False, 'jobs': [], 'legs': [], 'totals': {'stops': 0, 'legs': 0, 'shortLegs': 0, 'estimatedDriveMinutes': 0, 'unestimatedLegs': 0}}],
+          'warnings': [{'code': 'travel_estimate_unavailable', 'count': 1, 'message': '1 leg has no drive estimate (unknown ZIP or address). The manual travel buffer applies.'}]}
+
+# FUN-02 code lists as GET /api/dispatch returns them from the shared funnel definitions.
+FUNNEL = {'visitPurposes': ['service', 'install', 'return', 'rework', 'member_visit'], 'bookingChannels': ['hub_phone', 'hub_in_person'], 'selfReportedChannels': ['google_search', 'referral', 'other'],
+          'crmLinkReasons': ['crm_sync_pending', 'other'], 'initiatedBy': ['customer', 'company'],
+          'reasonCodes': {'cancel': ['customer_changed_plans', 'weather', 'other'], 'reschedule': ['customer_request', 'weather', 'other'], 'noShow': ['customer_not_home', 'no_access', 'other']}}
 
 class Handler(SimpleHTTPRequestHandler):
     def log_message(self, *args): pass
@@ -46,6 +62,9 @@ class DispatchBrowserTests(unittest.TestCase):
         self.availability = []; self.fail_once = None; self.read_status = 200; self.completed = {}; self.lost_once = False; self.malformed_once = False; self.viewer = 'manager.one'; self.bad_read = False
         self.opening_queries = []; self.opening_failure = None; self.opening_candidates = [{'date': DAY, 'time': '13:00', 'endDate': DAY, 'endTime': '15:00', 'startAt': DAY+'T19:00:00Z', 'endAt': DAY+'T21:00:00Z', 'gapMinutes': 240}]
         self.search_queries = []; self.search_results = []; self.search_failure = None; self.hang_once = False; self.hung_route = None
+        self.arrival_defaults = {'enabled': False, 'minutes': 60}
+        self.travel_queries = []; self.travel_failure = None
+        self.segments = None; self.funnel = None; self.customers = [CUSTOMER]
         self.page.on('pageerror', lambda e: self.errors.append(str(e)))
         self.page.on('dialog', lambda dialog: dialog.accept())
         self.page.route('**/*', self.route)
@@ -59,6 +78,10 @@ class DispatchBrowserTests(unittest.TestCase):
             self.search_queries.append(parse_qs(parsed.query))
             if self.search_failure: route.fulfill(status=503, content_type='application/json', body=json.dumps({'ok': False, 'error': self.search_failure})); return
             route.fulfill(status=200, content_type='application/json', body=json.dumps({'ok': True, 'coverage': {'complete': True}, 'results': self.search_results, 'total': len(self.search_results), 'truncated': False})); return
+        if parsed.path == '/api/dispatch-travel':
+            params = parse_qs(parsed.query); self.travel_queries.append(params)
+            if self.travel_failure: route.fulfill(status=503, content_type='application/json', body=json.dumps({'ok': False, 'code': 'dispatch_travel_unavailable', 'error': self.travel_failure})); return
+            route.fulfill(status=200, content_type='application/json', body=json.dumps({**copy.deepcopy(TRAVEL), 'date': params.get('date', [DAY])[0]})); return
         if parsed.path == '/api/dispatch-openings':
             self.opening_queries.append(parse_qs(parsed.query))
             if self.opening_failure: route.fulfill(status=503, content_type='application/json', body=json.dumps({'ok': False, 'error': self.opening_failure})); return
@@ -68,12 +91,12 @@ class DispatchBrowserTests(unittest.TestCase):
         if req.method == 'GET':
             params = parse_qs(parsed.query); self.gets.append(params)
             if self.read_status != 200: send({'ok': False, 'code': 'dispatch_forbidden', 'error': 'Sign in required'}, self.read_status); return
-            if params.get('view') == ['customers']: send({'ok': True, 'customers': [CUSTOMER], 'total': 1}); return
+            if params.get('view') == ['customers']: send({'ok': True, 'customers': self.customers, 'total': len(self.customers)}); return
             first = params.get('startDate', [DAY])[0]; last = params.get('endDate', ['2026-09-29'])[0]
             rows = [row for row in self.jobs if not row.get('date') or (row['date'] < last and (row.get('endDate') or row['date']) >= first)]
             if self.bad_read: send({'ok': True}); return
             send({'ok': True, 'viewer': {'id': self.viewer}, 'timeZone': 'America/Denver', 'jobs': rows, 'roster': ROSTER, 'crews': self.crews, 'vehicles': self.vehicles, 'availability': self.availability,
-                  'warnings': [], 'coverage': {'complete': True, 'asOf': '2026-09-22T14:00:00Z'}, 'startDate': first, 'endDate': last}); return
+                  'warnings': [], 'coverage': {'complete': True, 'asOf': '2026-09-22T14:00:00Z'}, 'startDate': first, 'endDate': last, 'arrivalDefaults': self.arrival_defaults, **({'segments': self.segments} if self.segments else {}), **({'funnel': self.funnel} if self.funnel else {})}); return
         body = req.post_data_json; self.calls.append(copy.deepcopy(body))
         if self.fail_once:
             status, code, error, details = self.fail_once; self.fail_once = None
@@ -91,6 +114,7 @@ class DispatchBrowserTests(unittest.TestCase):
             row.update(changes); row['revision'] += '-next'
             if action == 'schedule.cancel': row['status'] = 'cancelled'
             if action == 'schedule.restore': row['status'] = 'scheduled'
+            if action == 'schedule.no_show': row['status'] = 'no_show'
             response = {'ok': True, 'job': row, 'warnings': [], 'providerSync': 'pending'}
         else:
             group = {'crew.save': self.crews, 'vehicle.save': self.vehicles, 'availability.save': self.availability}[action]
@@ -108,6 +132,10 @@ class DispatchBrowserTests(unittest.TestCase):
         self.page.goto(self.url)
         self.page.get_by_label('Schedule date', exact=True).fill(DAY)
         expect(self.page.get_by_role('heading', name=CUSTOMER['name'], exact=True)).to_be_visible()
+    def split_job(self):
+        segment = lambda id, date, time, end, crew, lead=None, truck=None, notes='': {'id': id, 'date': date, 'time': time, 'endDate': date, 'endTime': end, 'startAt': date+'T'+time+':00-06:00', 'endAt': date+'T'+end+':00-06:00', 'assignedCrew': crew, 'crewLead': lead, 'crewId': None, 'vehicleId': truck, 'notes': notes}
+        return job(id='job-split', revision='split-rev-1', customer='Synthetic Split Garage', endDate='2026-09-24', endTime='12:00', endAt='2026-09-24T12:00:00-06:00', assignedCrew=['crew.one', 'crew.two'], crewLead='crew.one', crewId=None, vehicleId=None,
+                   assignmentSegments=[segment('s1', DAY, '08:00', '17:00', ['crew.one'], 'crew.one', 'truck-1', 'Synthetic front bay'), segment('s2', DAY, '08:00', '17:00', ['crew.two']), segment('s3', '2026-09-24', '08:00', '12:00', ['crew.two'])])
     def card(self, name=CUSTOMER['name']): return self.page.locator('.dp-job').filter(has=self.page.get_by_role('heading', name=name, exact=True)).first
     def create(self):
         self.page.get_by_role('button', name='Create job', exact=True).first.click()
@@ -198,6 +226,30 @@ class DispatchBrowserTests(unittest.TestCase):
     def test_openings_empty_and_mobile_layout(self):
         self.open(); self.page.set_viewport_size({'width': 320, 'height': 850}); self.page.get_by_role('button', name='Find opening', exact=True).click(); self.page.get_by_label('Crew Two', exact=True).check(); self.opening_candidates = []; self.submit('Check openings'); expect(self.page.get_by_role('heading', name='No matching openings', exact=True)).to_be_visible()
         self.assertLessEqual(self.page.evaluate('document.documentElement.scrollWidth'), 321); self.assertLessEqual(self.page.get_by_role('dialog').evaluate('(el)=>el.scrollWidth'), self.page.get_by_role('dialog').evaluate('(el)=>el.clientWidth')+1)
+    def test_openings_send_an_optional_job_zip_or_address_for_drive_estimates(self):
+        self.open(); self.page.get_by_role('button', name='Find opening', exact=True).click(); self.page.get_by_label('Crew One', exact=True).check(); self.submit('Check openings'); expect(self.page.get_by_role('button', name='Use this opening', exact=True)).to_be_visible()
+        self.assertNotIn('zip', self.opening_queries[-1]); self.assertNotIn('address', self.opening_queries[-1])
+        place = self.page.get_by_role('textbox', name='New job ZIP or address (optional)', exact=True); self.assertEqual(place.evaluate('el=>el.type'), 'text')
+        place.fill('80525'); expect(self.page.get_by_role('button', name='Use this opening', exact=True)).to_have_count(0); self.submit('Check openings'); expect(self.page.get_by_role('button', name='Use this opening', exact=True)).to_be_visible()
+        self.assertEqual(self.opening_queries[-1]['zip'], ['80525']); self.assertNotIn('address', self.opening_queries[-1])
+        place.fill('  200 Synthetic Ave, Loveland, CO 80537 '); self.submit('Check openings'); expect(self.page.get_by_role('button', name='Use this opening', exact=True)).to_be_visible()
+        self.assertEqual(self.opening_queries[-1]['address'], ['200 Synthetic Ave, Loveland, CO 80537']); self.assertNotIn('zip', self.opening_queries[-1]); self.assertEqual(self.calls, [])
+    def test_drive_times_show_ordered_legs_without_writes_and_fit_phones(self):
+        self.open(); self.page.set_viewport_size({'width': 375, 'height': 812}); self.page.get_by_role('button', name='Drive times', exact=True).click()
+        dialog = self.page.get_by_role('dialog'); expect(dialog).to_have_attribute('aria-label', 'Drive times'); expect(dialog).to_contain_text('Crew One'); self.assertEqual(self.travel_queries[-1]['date'], [DAY])
+        expect(dialog).to_contain_text('3 stops · about 30 min estimated driving · 1 tight gap')
+        expect(dialog.locator('.dp-warning')).to_have_text('15 min gap · about 30 min drive (ZIP estimate) · buffer 20 min · short by 15 min')
+        expect(dialog.locator('p.dp-muted').filter(has_text='60 min gap')).to_have_text('60 min gap · no drive estimate · buffer 20 min · enough time')
+        expect(dialog.get_by_text('Address needed', exact=True)).to_be_visible(); expect(dialog.get_by_role('alert')).to_contain_text('route is incomplete'); expect(dialog).to_contain_text('1 leg has no drive estimate')
+        self.assertEqual(self.page.locator('img').count(), 0); self.assertIsNone(self.page.evaluate('window.injected'))
+        for width in [375, 320]:
+            self.page.set_viewport_size({'width': width, 'height': 812}); self.assertLessEqual(self.page.evaluate('document.documentElement.scrollWidth'), width+1); self.assertLessEqual(dialog.evaluate('(el)=>el.scrollWidth'), dialog.evaluate('(el)=>el.clientWidth')+1)
+            for name in ['Back', 'Show drive times']: self.assertGreaterEqual(dialog.get_by_role('button', name=name, exact=True).bounding_box()['height'], 44)
+        self.assertEqual(self.page.get_by_label('Route date', exact=True).evaluate('el=>parseFloat(getComputedStyle(el).fontSize)'), 16)
+        self.page.get_by_label('Route date', exact=True).fill('2026-09-23'); expect(dialog.locator('.dp-search-result')).to_have_count(0); self.submit('Show drive times')
+        expect(dialog.get_by_role('heading', name='Wednesday, September 23', exact=True)).to_be_visible(); self.assertEqual(self.travel_queries[-1]['date'], ['2026-09-23'])
+        self.travel_failure = 'Drive times are unavailable. Retry.'; self.submit('Show drive times'); expect(dialog.get_by_role('alert')).to_contain_text('Drive times are unavailable'); expect(dialog.locator('.dp-search-result')).to_have_count(0)
+        self.page.get_by_role('button', name='Back', exact=True).click(); self.closed(); self.assertEqual(self.calls, [])
     def test_attention_counts_jobs_and_includes_completed_handoff_failures(self):
         self.jobs[0].update({'activity': 'delayed', 'activityReason': 'Truck repair is delaying departure.', 'attention': {'status': 'open', 'reason': 'Customer requested a manager callback.'}})
         self.jobs.append(job(id='done-job', customer='Completed customer', status='completed', activity='completed', completionSync={'status': 'blocked', 'message': 'CRM completion configuration needs review.'}))
@@ -265,5 +317,180 @@ class DispatchBrowserTests(unittest.TestCase):
         self.create(); self.assertLessEqual(self.page.evaluate('document.documentElement.scrollWidth'), 321); self.assertLessEqual(self.page.get_by_role('dialog').evaluate('(el)=>el.scrollWidth'), self.page.get_by_role('dialog').evaluate('(el)=>el.clientWidth')+1)
         out = ROOT/'test-results'; out.mkdir(exist_ok=True); self.page.screenshot(path=str(out/'dispatch-mobile-create.png'), full_page=True)
         self.page.get_by_role('button', name='Back', exact=True).click(); self.page.screenshot(path=str(out/'dispatch-mobile.png'), full_page=True)
+    def test_arrival_window_inputs_fit_phone_move_with_start_and_send_contained_range(self):
+        self.jobs[0].update({'arrivalWindowStart': '07:30', 'arrivalWindowEnd': '09:00', 'arrivalWindow': '7:30 AM – 9:00 AM'})
+        self.page.set_viewport_size({'width': 375, 'height': 812}); self.open(); expect(self.card()).to_contain_text('Arrival window: 7:30 AM – 9:00 AM')
+        self.card().get_by_role('button', name='Edit / assign', exact=True).click()
+        arrive_from = self.page.get_by_label('Arrival from', exact=True); arrive_to = self.page.get_by_label('Arrival to', exact=True)
+        expect(arrive_from).to_have_value('07:30'); expect(arrive_to).to_have_value('09:00'); expect(arrive_from).to_have_accessible_description(re.compile('must include the start time; leave both blank for none'))
+        for control in [arrive_from, arrive_to]:
+            self.assertEqual(control.get_attribute('type'), 'time'); self.assertEqual(control.evaluate('(el)=>getComputedStyle(el).fontSize'), '16px'); self.assertGreaterEqual(control.bounding_box()['height'], 44)
+        self.assertLessEqual(self.page.evaluate('document.documentElement.scrollWidth'), 376); self.assertLessEqual(self.page.get_by_role('dialog').evaluate('(el)=>el.scrollWidth'), self.page.get_by_role('dialog').evaluate('(el)=>el.clientWidth')+1)
+        self.page.get_by_label('Start time', exact=True).fill('10:00'); expect(arrive_from).to_have_value('09:30'); expect(arrive_to).to_have_value('11:00')
+        self.page.get_by_label('End time', exact=True).fill('12:00'); arrive_to.fill('09:45'); self.submit('Save changes')
+        expect(self.page.get_by_role('alert')).to_contain_text('arrival times'); self.assertEqual(self.calls, [])
+        arrive_to.fill('11:00'); self.submit('Save changes'); self.closed(); changes = self.calls[-1]['changes']
+        self.assertEqual((changes['time'], changes['arrivalWindowStart'], changes['arrivalWindowEnd']), ('10:00', '09:30', '11:00'))
+    def test_arrival_window_is_optional_and_never_sent_for_unscheduled_work(self):
+        self.page.set_viewport_size({'width': 375, 'height': 812}); self.open(); expect(self.card()).not_to_contain_text('Arrival window')
+        self.create(); expect(self.page.get_by_label('Arrival from', exact=True)).to_have_value(''); self.submit('Create job'); self.closed()
+        self.assertIsNone(self.calls[-1]['changes']['arrivalWindowStart']); self.assertIsNone(self.calls[-1]['changes']['arrivalWindowEnd'])
+        self.create(); self.page.get_by_label('Arrival from', exact=True).fill('12:30'); self.page.get_by_label('Arrival to', exact=True).fill('13:30')
+        self.page.get_by_label('Keep unscheduled', exact=True).check(); expect(self.page.get_by_label('Arrival from', exact=True)).to_be_disabled(); expect(self.page.get_by_label('Arrival to', exact=True)).to_be_disabled()
+        self.submit('Create job'); self.closed(); self.assertEqual(self.calls[-1]['changes']['date'], ''); self.assertIsNone(self.calls[-1]['changes']['arrivalWindowStart'])
+    def test_arrival_help_follows_default_setting_and_midnight_shift_is_explained(self):
+        self.arrival_defaults = {'enabled': True, 'minutes': 90}
+        self.jobs[0].update({'time': '20:00', 'endTime': '22:00', 'arrivalWindowStart': '19:30', 'arrivalWindowEnd': '21:00', 'arrivalWindow': '7:30 PM – 9:00 PM'})
+        self.page.set_viewport_size({'width': 375, 'height': 812}); self.open(); self.card().get_by_role('button', name='Edit / assign', exact=True).click()
+        arrive_from = self.page.get_by_label('Arrival from', exact=True); arrive_to = self.page.get_by_label('Arrival to', exact=True)
+        expect(arrive_from).to_have_accessible_description(re.compile('leave both blank to use the default 90-minute window from the start time'))
+        note = self.page.get_by_role('dialog').locator('.dp-arrival-note [role=status]'); expect(note).to_have_count(0)
+        self.page.get_by_label('Start time', exact=True).fill('23:30')
+        expect(arrive_from).to_have_value(''); expect(arrive_to).to_have_value('')
+        expect(note).to_be_visible(); expect(note).to_contain_text('would cross midnight'); expect(note).to_contain_text('default 90-minute window')
+        self.assertLessEqual(self.page.evaluate('document.documentElement.scrollWidth'), 376); self.assertLessEqual(self.page.get_by_role('dialog').evaluate('(el)=>el.scrollWidth'), self.page.get_by_role('dialog').evaluate('(el)=>el.clientWidth')+1)
+        out = ROOT/'test-results'; out.mkdir(exist_ok=True); note.scroll_into_view_if_needed(); self.page.screenshot(path=str(out/'dispatch-arrival-midnight.png'))
+        arrive_from.fill('23:00'); expect(note).to_have_count(0); self.assertEqual(self.calls, [])
+
+    def test_segment_editor_is_absent_while_the_server_flag_is_off(self):
+        self.open(); self.card().get_by_role('button', name='Edit / assign', exact=True).click(); dialog = self.page.get_by_role('dialog')
+        expect(dialog.get_by_role('button', name='Add crew segment', exact=True)).to_have_count(0); expect(dialog.get_by_role('heading', name='Crew segments', exact=True)).to_have_count(0)
+        self.submit('Save changes'); self.closed(); self.assertNotIn('assignmentSegments', self.calls[-1]['changes']); self.assertEqual(self.calls[-1]['changes']['assignedCrew'], ['crew.one', 'lead.one'])
+    def test_calendar_shows_each_segment_on_its_own_day_and_crew(self):
+        self.segments = {'enabled': True, 'max': 31}; self.jobs.append(self.split_job()); self.open()
+        card = self.card('Synthetic Split Garage'); expect(card.locator('.dp-segment-list li')).to_have_count(2); expect(card).to_contain_text('By segment')
+        expect(card.locator('.dp-segment-list li').first).to_contain_text('8:00 AM – 5:00 PM · Crew One · Lead Crew One · Box Truck · Synthetic front bay')
+        self.page.get_by_role('button', name='Week', exact=True).click(); days = self.page.locator('.dp-day')
+        split_on = lambda index: days.nth(index).locator('.dp-job').filter(has=self.page.get_by_role('heading', name='Synthetic Split Garage', exact=True))
+        expect(split_on(0)).to_have_count(1); expect(split_on(1)).to_have_count(0); expect(split_on(2).locator('.dp-segment-list li')).to_have_count(1); expect(split_on(2)).to_contain_text('8:00 AM – 12:00 PM · Crew Two')
+        self.page.get_by_label('Filter by employee', exact=True).select_option('crew.one'); expect(split_on(0)).to_have_count(1); expect(split_on(2)).to_have_count(0)
+        self.page.get_by_label('Filter by employee', exact=True).select_option(''); self.page.get_by_role('button', name='Crew', exact=True).click()
+        group = self.page.locator('.dp-crew-group').filter(has=self.page.get_by_role('heading', name='Crew Two', exact=True))
+        expect(group).to_contain_text('2 jobs · 13.0 reserved hours'); expect(group.locator('.dp-segment-list li')).to_have_count(2); expect(group).not_to_contain_text('Synthetic front bay')
+        self.page.set_viewport_size({'width': 375, 'height': 812}); self.page.get_by_role('button', name='Week', exact=True).click(); expect(split_on(0)).to_have_count(1)
+        self.assertLessEqual(self.page.evaluate('document.documentElement.scrollWidth'), 376); self.assertEqual(self.calls, [])
+    def test_phone_manager_adds_a_parallel_crew_segment(self):
+        self.segments = {'enabled': True, 'max': 31}; self.vehicles.append({'id': 'van-1', 'revision': 'van-rev-1', 'name': 'Synthetic Van', 'status': 'available', 'notes': ''})
+        self.page.set_viewport_size({'width': 375, 'height': 812}); self.open(); self.card().get_by_role('button', name='Edit / assign', exact=True).click(); dialog = self.page.get_by_role('dialog')
+        expect(dialog.get_by_role('heading', name='Crew segments', exact=True)).to_be_visible(); add = dialog.get_by_role('button', name='Add crew segment', exact=True); add.click()
+        expect(dialog.locator('.dp-segment-card')).to_have_count(2); expect(dialog.get_by_label('Start time', exact=True)).to_be_hidden(); expect(dialog.get_by_role('button', name='Split across days', exact=True)).to_have_count(0)
+        second = dialog.get_by_role('region', name='Segment 2'); expect(second.get_by_label('Segment start', exact=True)).to_have_value('08:00')
+        second.get_by_label('Crew Two', exact=True).check(); second.get_by_role('combobox', name='Segment vehicle', exact=True).select_option('van-1'); second.get_by_label('Segment notes', exact=True).fill('Synthetic back shelving')
+        for control in [add, second.get_by_role('button', name='Remove segment 2', exact=True), second.get_by_label('Segment start', exact=True), second.get_by_role('combobox', name='Segment vehicle', exact=True), second.locator('label.dp-check').first]:
+            self.assertGreaterEqual(control.bounding_box()['height'], 44)
+        self.assertEqual(second.get_by_label('Segment date', exact=True).evaluate('(el)=>getComputedStyle(el).fontSize'), '16px')
+        self.assertLessEqual(self.page.evaluate('document.documentElement.scrollWidth'), 376); self.assertLessEqual(dialog.evaluate('(el)=>el.scrollWidth'), dialog.evaluate('(el)=>el.clientWidth')+1)
+        out = ROOT/'test-results'; out.mkdir(exist_ok=True); second.scroll_into_view_if_needed(); self.page.screenshot(path=str(out/'dispatch-segments-phone.png'))
+        self.submit('Save changes'); self.closed(); changes = self.calls[-1]['changes']
+        for name in ['date', 'time', 'endDate', 'endTime', 'assignedCrew', 'crewId', 'crewLead', 'vehicleId']: self.assertNotIn(name, changes)
+        segments = changes['assignmentSegments']; self.assertEqual(len(segments), 2); self.assertNotEqual(segments[0]['id'], segments[1]['id']); self.assertTrue(all(re.fullmatch(r'[A-Za-z0-9_-]{1,19}', row['id']) for row in segments))
+        pick = lambda row, names: {name: row.get(name) for name in names}
+        self.assertEqual(pick(segments[0], ['date', 'time', 'endDate', 'endTime', 'assignedCrew', 'crewLead', 'crewId', 'vehicleId']), {'date': DAY, 'time': '08:00', 'endDate': DAY, 'endTime': '10:00', 'assignedCrew': ['crew.one', 'lead.one'], 'crewLead': 'lead.one', 'crewId': 'crew-main', 'vehicleId': 'truck-1'})
+        self.assertEqual(pick(segments[1], ['date', 'time', 'endTime', 'assignedCrew', 'crewLead', 'vehicleId', 'notes']), {'date': DAY, 'time': '08:00', 'endTime': '10:00', 'assignedCrew': ['crew.two'], 'crewLead': None, 'vehicleId': 'van-1', 'notes': 'Synthetic back shelving'})
+    def test_split_across_days_makes_daily_windows_with_a_crew_per_day(self):
+        self.segments = {'enabled': True, 'max': 31}; self.page.set_viewport_size({'width': 375, 'height': 812}); self.open(); self.card().get_by_role('button', name='Edit / assign', exact=True).click(); dialog = self.page.get_by_role('dialog')
+        split = dialog.get_by_role('button', name='Split across days', exact=True); split.click(); expect(dialog.get_by_role('alert')).to_contain_text('later end date'); expect(dialog.locator('.dp-segment-card')).to_have_count(0)
+        dialog.get_by_label('End date', exact=True).fill('2026-09-24'); dialog.get_by_label('End time', exact=True).fill('17:00'); split.click()
+        expect(dialog.locator('.dp-segment-card')).to_have_count(3); expect(dialog.get_by_role('alert')).to_have_count(0)
+        third = dialog.get_by_role('region', name='Segment 3'); expect(third.get_by_label('Segment date', exact=True)).to_have_value('2026-09-24'); expect(third.get_by_label('Segment end', exact=True)).to_have_value('17:00')
+        third.get_by_label('Crew One', exact=True).uncheck(); third.get_by_label('Crew Two', exact=True).check(); third.get_by_role('combobox', name='Segment lead', exact=True).select_option('crew.two')
+        dialog.get_by_role('region', name='Segment 2').get_by_role('button', name='Remove segment 2', exact=True).click(); expect(dialog.locator('.dp-segment-card')).to_have_count(2)
+        expect(dialog.get_by_role('region', name='Segment 2').get_by_label('Segment date', exact=True)).to_have_value('2026-09-24')
+        self.assertLessEqual(self.page.evaluate('document.documentElement.scrollWidth'), 376)
+        self.submit('Save changes'); self.closed(); segments = self.calls[-1]['changes']['assignmentSegments']
+        self.assertEqual([(row['date'], row['time'], row['endDate'], row['endTime'], row['assignedCrew'], row['crewLead']) for row in segments], [(DAY, '08:00', DAY, '17:00', ['crew.one', 'lead.one'], 'lead.one'), ('2026-09-24', '08:00', '2026-09-24', '17:00', ['lead.one', 'crew.two'], 'crew.two')])
+    def test_segmented_job_with_the_flag_off_keeps_its_segments_or_clears_them(self):
+        self.jobs.append(self.split_job()); self.open(); split = self.card('Synthetic Split Garage'); split.get_by_role('button', name='Edit / assign', exact=True).click(); dialog = self.page.get_by_role('dialog')
+        expect(dialog).to_contain_text('Crew segments are turned off'); expect(dialog.get_by_role('button', name='Add crew segment', exact=True)).to_have_count(0)
+        expect(dialog.get_by_role('region', name='Segment 1').get_by_label('Segment start', exact=True)).to_be_disabled(); expect(dialog.get_by_label('Start time', exact=True)).to_be_hidden()
+        dialog.get_by_label('Scope of work', exact=True).fill('Synthetic updated scope'); self.submit('Save changes'); self.closed()
+        changes = self.calls[-1]['changes']
+        for name in ['assignmentSegments', 'date', 'time', 'assignedCrew', 'crewLead', 'vehicleId']: self.assertNotIn(name, changes)
+        self.card('Synthetic Split Garage').get_by_role('button', name='Edit / assign', exact=True).click(); dialog.get_by_role('button', name='Remove all segments', exact=True).click()
+        expect(dialog.get_by_label('Start time', exact=True)).to_be_visible(); expect(dialog.locator('.dp-segment-card')).to_have_count(0); self.submit('Save changes'); self.closed()
+        changes = self.calls[-1]['changes']; self.assertEqual(changes['assignmentSegments'], []); self.assertEqual((changes['date'], changes['endDate'], changes['time'], changes['endTime']), (DAY, '2026-09-24', '08:00', '12:00')); self.assertEqual(changes['assignedCrew'], ['crew.one', 'crew.two'])
+    def test_split_job_drag_is_refused_while_segments_are_off(self):
+        # The split job alone, so the drag starts on its card.
+        self.jobs = [self.split_job()]; self.page.goto(self.url); self.page.get_by_label('Schedule date', exact=True).fill(DAY); self.page.get_by_role('button', name='Week', exact=True).click(); days = self.page.locator('.dp-day')
+        split_on = lambda index: days.nth(index).locator('.dp-job').filter(has=self.page.get_by_role('heading', name='Synthetic Split Garage', exact=True))
+        expect(split_on(0)).to_have_count(1); split_on(0).drag_to(days.nth(3)); expect(self.page.get_by_role('dialog')).to_have_count(0)
+        expect(self.page.locator('.dp-notice')).to_contain_text('Remove all segments to move this job while segments are off.'); expect(split_on(0)).to_have_count(1); self.assertEqual(self.calls, [])
+        self.segments = {'enabled': True, 'max': 31}; self.page.get_by_role('button', name='Refresh', exact=True).click(); expect(self.page.get_by_role('button', name='Refresh', exact=True)).to_be_enabled()
+        split_on(0).drag_to(days.nth(3)); dialog = self.page.get_by_role('dialog'); expect(dialog).to_be_visible()
+        expect(dialog.get_by_role('region', name='Segment 1').get_by_label('Segment date', exact=True)).to_have_value('2026-09-25'); expect(dialog.get_by_role('region', name='Segment 3').get_by_label('Segment date', exact=True)).to_have_value('2026-09-27')
+        self.submit('Save changes'); self.closed(); self.assertEqual([row['date'] for row in self.calls[-1]['changes']['assignmentSegments']], ['2026-09-25', '2026-09-25', '2026-09-27'])
+    def test_unreadable_saved_segments_are_replaced_by_the_job_level_schedule(self):
+        self.jobs.append(job(id='job-broken', revision='broken-rev-1', customer='Synthetic Broken Split', assignedCrew=['crew.one', 'crew.two'], crewLead='crew.one', crewId=None, vehicleId=None, assignmentSegments=[], segmentsInvalid=True))
+        self.page.set_viewport_size({'width': 375, 'height': 812}); self.open(); self.card('Synthetic Broken Split').get_by_role('button', name='Edit / assign', exact=True).click(); dialog = self.page.get_by_role('dialog')
+        expect(dialog.get_by_role('alert')).to_contain_text('could not be read'); expect(dialog.get_by_label('Start time', exact=True)).to_be_visible(); expect(dialog.get_by_role('button', name='Add crew segment', exact=True)).to_have_count(0)
+        self.assertLessEqual(self.page.evaluate('document.documentElement.scrollWidth'), 376)
+        dialog.get_by_label('Start time', exact=True).fill('09:00'); dialog.get_by_label('End time', exact=True).fill('11:00'); self.submit('Save changes'); self.closed()
+        changes = self.calls[-1]['changes']; self.assertEqual(changes['assignmentSegments'], []); self.assertEqual((changes['date'], changes['time'], changes['endDate'], changes['endTime']), (DAY, '09:00', DAY, '11:00')); self.assertEqual(changes['assignedCrew'], ['crew.one', 'crew.two'])
+    def test_repeat_is_offered_only_for_jobs_without_segments(self):
+        self.page.add_init_script('window.EGCRecurring={open(){window.repeatOpened=true;}}')
+        self.jobs += [self.split_job(), job(id='job-broken', revision='broken-rev-1', customer='Synthetic Broken Split', assignmentSegments=[], segmentsInvalid=True)]; self.open()
+        expect(self.card().locator('.dp-repeat')).to_have_count(1)
+        for name in ['Synthetic Split Garage', 'Synthetic Broken Split']: expect(self.card(name).get_by_role('button', name='Edit / assign', exact=True)).to_be_visible(); expect(self.card(name).locator('.dp-repeat')).to_have_count(0)
+    def test_booking_facts_and_reschedule_reason_come_from_the_shared_codes(self):
+        self.funnel = FUNNEL; self.open(); self.create(); dialog = self.page.get_by_role('dialog')
+        expect(dialog.get_by_role('combobox', name='Visit purpose', exact=True)).to_have_value('service')
+        self.submit('Create job'); self.assertEqual(self.calls, [], 'the booking channel is one required tap')
+        dialog.get_by_role('combobox', name='How was this booked?', exact=True).select_option('hub_phone'); dialog.get_by_role('combobox', name='Visit purpose', exact=True).select_option('return')
+        dialog.get_by_role('combobox', name='How did they hear about us?', exact=True).select_option('referral'); self.submit('Create job'); self.closed()
+        self.assertEqual(self.calls[-1]['booking'], {'channel': 'hub_phone', 'visitPurpose': 'return', 'channelSelfReported': 'referral'})
+        self.page.get_by_role('button', name='Create job', exact=True).first.click(); dialog.get_by_role('combobox', name='Work type', exact=True).select_option('walkthrough')
+        expect(dialog.get_by_role('combobox', name='Visit purpose', exact=True)).to_be_hidden(); self.page.get_by_role('button', name='Back', exact=True).click(); self.closed()
+        self.card().get_by_role('button', name='Edit / assign', exact=True).click(); expect(dialog.get_by_role('group', name='Why is this visit moving?')).to_be_hidden()
+        dialog.get_by_label('Access instructions', exact=True).fill('Use the side gate'); self.submit('Save changes'); self.closed(); self.assertNotIn('reasonCode', self.calls[-1])
+        self.card().get_by_role('button', name='Edit / assign', exact=True).click(); dialog.get_by_label('Start time', exact=True).fill('09:00'); dialog.get_by_label('End time', exact=True).fill('11:00')
+        moving = dialog.get_by_role('group', name='Why is this visit moving?'); expect(moving).to_be_visible(); calls = len(self.calls); self.submit('Save changes'); self.assertEqual(len(self.calls), calls, 'a move needs its reason')
+        moving.get_by_role('combobox', name='Reason', exact=True).select_option('weather'); moving.get_by_role('combobox', name='Who asked for it?', exact=True).select_option('company'); self.submit('Save changes'); self.closed()
+        self.assertEqual((self.calls[-1]['reasonCode'], self.calls[-1]['initiatedBy'], self.calls[-1]['changes']['time']), ('weather', 'company', '09:00'))
+    def test_phone_cancel_reason_and_no_show_are_recorded_with_codes(self):
+        self.funnel = FUNNEL; self.jobs.append(job(id='later', revision='later-rev', customer='Synthetic Later Garage', time='17:00', endTime='18:00', startAt=DAY+'T17:00:00-06:00', endAt=DAY+'T18:00:00-06:00', assignedCrew=['crew.two'], crewId=None, crewLead=None, vehicleId=None))
+        self.page.set_viewport_size({'width': 375, 'height': 812}); self.open(); dialog = self.page.get_by_role('dialog')
+        expect(self.card('Synthetic Later Garage').get_by_role('button', name='No-show', exact=True)).to_have_count(0)
+        self.card('Synthetic Later Garage').get_by_role('button', name='Cancel', exact=True).click(); self.submit('Cancel job'); self.assertEqual(self.calls, [])
+        dialog.get_by_role('combobox', name='Reason', exact=True).select_option('customer_changed_plans'); dialog.get_by_role('combobox', name='Who asked for it?', exact=True).select_option('customer')
+        dialog.get_by_label('Cancellation note (optional)', exact=True).fill('Synthetic: moving out of state')
+        for width in [375, 320]:
+            self.page.set_viewport_size({'width': width, 'height': 812}); self.assertLessEqual(self.page.evaluate('document.documentElement.scrollWidth'), width+1); self.assertLessEqual(dialog.evaluate('(el)=>el.scrollWidth'), dialog.evaluate('(el)=>el.clientWidth')+1)
+        for control in [dialog.get_by_role('combobox', name='Reason', exact=True), dialog.get_by_role('button', name='Cancel job', exact=True)]: self.assertGreaterEqual(control.bounding_box()['height'], 44)
+        self.assertEqual(dialog.get_by_role('combobox', name='Reason', exact=True).evaluate('(el)=>getComputedStyle(el).fontSize'), '16px')
+        self.submit('Cancel job'); self.closed()
+        self.assertEqual({key: self.calls[-1][key] for key in ['action', 'reasonCode', 'initiatedBy', 'cancellationReason']}, {'action': 'schedule.cancel', 'reasonCode': 'customer_changed_plans', 'initiatedBy': 'customer', 'cancellationReason': 'Synthetic: moving out of state'})
+        self.page.set_viewport_size({'width': 375, 'height': 812}); self.card().get_by_role('button', name='No-show', exact=True).click(); expect(dialog).to_contain_text('does not message the customer')
+        self.submit('Record no-show'); self.assertEqual(len(self.calls), 1, 'a no-show needs its reason')
+        dialog.get_by_role('combobox', name='Reason', exact=True).select_option('customer_not_home'); expect(dialog.get_by_role('combobox', name='Who asked for it?', exact=True)).to_have_count(0)
+        self.submit('Record no-show'); self.closed()
+        self.assertEqual({key: self.calls[-1][key] for key in ['action', 'jobId', 'expectedRevision', 'reasonCode', 'changes']}, {'action': 'schedule.no_show', 'jobId': 'job-1', 'expectedRevision': 'rev-1', 'reasonCode': 'customer_not_home', 'changes': {}})
+        expect(self.page.get_by_role('heading', name=CUSTOMER['name'], exact=True)).to_have_count(0); self.assertLessEqual(self.page.evaluate('document.documentElement.scrollWidth'), 376)
+    def test_rework_names_its_original_job_and_an_unlinked_customer_gives_the_crm_reason(self):
+        self.funnel = FUNNEL; self.customers = [{**CUSTOMER, 'crmLinked': False}]
+        self.page.set_viewport_size({'width': 375, 'height': 812}); self.open(); self.create(); dialog = self.page.get_by_role('dialog')
+        crm = dialog.get_by_role('combobox', name='Why is there no CRM contact?', exact=True); original = dialog.locator('input[name=reworkOfJobId]')
+        expect(crm).to_be_visible(); expect(original).to_be_hidden()
+        dialog.get_by_role('combobox', name='How was this booked?', exact=True).select_option('hub_phone'); dialog.get_by_role('combobox', name='Visit purpose', exact=True).select_option('rework')
+        expect(original).to_be_visible(); self.assertEqual(original.evaluate('(el)=>getComputedStyle(el).fontSize'), '16px'); self.assertGreaterEqual(original.bounding_box()['height'], 44)
+        self.submit('Create job'); self.assertEqual(self.calls, [], 'a rework needs its original job and the CRM reason')
+        original.fill(' job-original '); self.submit('Create job'); self.assertEqual(self.calls, [], 'the CRM reason is one required tap for an unlinked customer')
+        crm.select_option('crm_sync_pending')
+        self.assertLessEqual(self.page.evaluate('document.documentElement.scrollWidth'), 376); self.assertLessEqual(dialog.evaluate('(el)=>el.scrollWidth'), dialog.evaluate('(el)=>el.clientWidth')+1)
+        self.submit('Create job'); self.closed()
+        self.assertEqual(self.calls[-1]['booking'], {'channel': 'hub_phone', 'visitPurpose': 'rework', 'reworkOfJobId': 'job-original', 'crmLinkReason': 'crm_sync_pending'})
+        self.page.get_by_role('button', name='Create job', exact=True).first.click(); self.page.locator('input[name=customerSearch]').fill('Johnson')
+        self.customers = [{**CUSTOMER, 'crmLinked': True}]; self.page.locator('input[name=customerSearch]').fill('Johnso')
+        self.page.get_by_role('button', name=CUSTOMER['name']+' · '+CUSTOMER['phone'], exact=True).click()
+        expect(crm).to_be_hidden(); dialog.get_by_role('combobox', name='Visit purpose', exact=True).select_option('rework'); dialog.get_by_role('combobox', name='Work type', exact=True).select_option('walkthrough')
+        expect(original).to_be_hidden(); self.assertEqual(original.evaluate('(el)=>el.required'), False)
+    def test_no_show_is_offered_for_jobs_only_a_walkthrough_records_its_own(self):
+        self.funnel = FUNNEL
+        self.jobs = [job(), job(id='walk-1', revision='walk-rev', type='walkthrough', customer='Synthetic Walkthrough Garage', assignedCrew=['crew.two'], crewId=None, crewLead=None, vehicleId=None, time='07:00', endTime='07:30', startAt=DAY+'T07:00:00-06:00', endAt=DAY+'T07:30:00-06:00')]
+        self.open(); expect(self.card().get_by_role('button', name='No-show', exact=True)).to_have_count(1)
+        walk = self.card('Synthetic Walkthrough Garage'); expect(walk.get_by_role('button', name='Cancel', exact=True)).to_have_count(1); expect(walk.get_by_role('button', name='No-show', exact=True)).to_have_count(0)
+    def test_no_show_is_not_offered_without_the_shared_reason_codes(self):
+        self.open(); expect(self.card().get_by_role('button', name='No-show', exact=True)).to_have_count(0)
+        self.card().get_by_role('button', name='Cancel', exact=True).click(); expect(self.page.get_by_role('dialog').get_by_role('combobox', name='Reason', exact=True)).to_have_count(0); self.submit('Cancel job'); self.closed()
+        self.assertNotIn('reasonCode', self.calls[-1])
 
 if __name__ == '__main__': unittest.main(verbosity=2)

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import vm from 'node:vm';
+import vm from './helpers/vm-realm.mjs';
 import test from 'node:test';
 
 for (const page of ['prejob', 'postjob']) {

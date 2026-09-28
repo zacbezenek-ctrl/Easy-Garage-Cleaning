@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
+import vm from 'node:vm';
 
 const enabled = process.env.EGC_FIREBASE_EMULATOR_TEST === '1';
 
@@ -21,7 +22,12 @@ test('actual Firestore rules isolate canonical operations from crew SDK access',
   const otherCrew=environment.authenticatedContext('crew-two',claims('crew2')).firestore();
   const lead=environment.authenticatedContext('lead-one',claims('lead1','crew_lead')).firestore();
   const manager=environment.authenticatedContext('manager',claims('zacb','owner',true)).firestore();
+  const partner=environment.authenticatedContext('partner',claims('TylerG','manager',true)).firestore();
   const publicDb=environment.unauthenticatedContext().firestore();
+  const serverOwned=['jobs/secure_account_test','jobs/_egc_record_op_x','jobs/_egc_schedule_op_x','jobs/_egc_schedule_provider_x','jobs/_egc_adoption_request_x','jobs/_egc_adoption_source_x'];
+  // recordTypes the service account writes into jobs (vaults and receipts); see serverOwnedJobData.
+  const serverTypes=['employee_hub_v2','employee_account_v1','schedule_operation','schedule_provider_receipt','schedule_adoption','operational_record_receipt'];
+  const compat=require('firebase/compat/app');const {FieldValue,Timestamp}=(compat.default||compat).firestore;
   try {
     await environment.withSecurityRulesDisabled(async context=>{
       const db=context.firestore();
@@ -32,11 +38,28 @@ test('actual Firestore rules isolate canonical operations from crew SDK access',
         'jobs/crew2-off':{id:'crew2-off',type:'availability',recordType:'crew_availability',employee:'crew2',date:'2099-09-08',allDay:true,status:'active'},
         'jobs/_egc_schedule_lock_2099-09-08':{recordType:'schedule_lock',date:'2099-09-08',entries:[]},
         'jobs/secure_account_test':{recordType:'employee_account_v1',sealedPayload:'ciphertext'},
+        'jobs/_egc_record_op_x':{recordType:'operation_receipt',actorId:'server',fingerprint:'synthetic'},
+        'jobs/_egc_schedule_op_x':{recordType:'schedule_operation_receipt',actorId:'server',fingerprint:'synthetic'},
+        'jobs/_egc_schedule_provider_x':{recordType:'schedule_provider_receipt',status:'submitted'},
+        'jobs/_egc_adoption_request_x':{recordType:'adoption_receipt',fingerprint:'synthetic'},
+        'jobs/_egc_adoption_source_x':{recordType:'adoption_source',jobId:'assigned'},
+        'jobs/removable':{id:'removable',type:'job',status:'unscheduled'},
+        'jobs/stray-vault':{recordType:'employee_hub_v2',employeeHubType:'profiles',sealedPayload:'ciphertext'},
+        'jobs/stray-lock':{recordType:'schedule_lock',date:'2099-09-08',entries:[]},
+        'audit_log/existing':{action:'login',detail:'Logged in',by:'zacb',at:'2099-09-01T12:00:00.000Z'},
         'customers/customer':{name:'Private Customer',phone:'9705550100'},
         'customers/customer-two':{name:'Second Customer',phone:'9705550101',address:'2 Test Street'},
         'dispatchResources/truck':{recordType:'vehicle',name:'Test truck',status:'available'},
         'dispatchState/revision':{lastRequestId:'server'},
         'dispatchOperations/receipt':{actorId:'zacb',action:'schedule.update'},
+        'customerPortalOperations/receipt':{actorId:'zacb',accountJobId:'assigned',linkVersion:1,removedCollaboratorCount:0},
+        'portal_settings/documents':{insuranceCertificate:{driveFileId:'synthetic-drive-file-0001',expiresOn:'2099-01-01',uploadedAt:'2026-09-22T12:00:00.000Z',uploadedBy:'zacb'}},
+        'memberships/sub_synthetic':{plan:'guard',status:'active',customerEmail:'member@example.invalid'},
+        'stripe_events/evt_synthetic':{type:'invoice.paid',subscriptionId:'sub_synthetic'},
+        'membership_reviews/sub_synthetic':{status:'open',reason:'ambiguous_customer'},
+        'payment_reviews/cs_test_synthetic':{status:'open',reason:'payment_exceeds_balance',jobId:'assigned',amountCents:50000},
+        'moneyOperations/receipt':{actorId:'zacb',action:'payment.record_offline',jobId:'assigned',fingerprint:'synthetic'},
+        'moneyInvoiceNumbers/n_INV-ASSIGN':{number:'INV-ASSIGN',jobId:'assigned'},
       };
       for (const [path,value] of Object.entries(entries)) await db.doc(path).set(value);
     });
@@ -56,10 +79,275 @@ test('actual Firestore rules isolate canonical operations from crew SDK access',
     await t.test('dispatch resources, receipts, and revision locks remain server-only even for business SDK sessions',async()=>{
       for(const db of [crew,manager]) for(const path of ['dispatchResources/truck','dispatchState/revision','dispatchOperations/receipt']){await assertFails(db.doc(path).get());await assertFails(db.doc(path).update({status:'changed'}));await assertFails(db.doc(path).delete());}
     });
+    await t.test('retired legacy quote-link records are closed to every SDK session',async()=>{
+      await environment.withSecurityRulesDisabled(context=>context.firestore().doc('quotes/legacy').set({customerName:'Synthetic Customer',amount:'$600',status:'pending'}));
+      for(const db of [publicDb,crew,lead,manager]){await assertFails(db.doc('quotes/legacy').get());await assertFails(db.collection('quotes').get());await assertFails(db.doc('quotes/new').set({customerName:'Synthetic Customer',status:'pending'}));await assertFails(db.doc('quotes/legacy').update({status:'signed'}));await assertFails(db.doc('quotes/legacy').delete());}
+    });
+    await t.test('customer portal revocation receipts remain server-only even for business SDK sessions',async()=>{
+      for(const db of [publicDb,crew,manager]){const path='customerPortalOperations/receipt';await assertFails(db.doc(path).get());await assertFails(db.doc(path).set({linkVersion:0}));await assertFails(db.doc(path).delete());}
+    });
+    await t.test('job-cost closeout attestations and stocked-item standard costs remain server-only even for business SDK sessions',async()=>{
+      for(const db of [publicDb,crew,lead,manager]) for(const path of ['jobs/assigned/fieldExpenseCloseout/material','jobs/assigned/fieldExpenses/entry','catalogStandardCosts/current','catalogStandardCostOperations/receipt']){await assertFails(db.doc(path).get());await assertFails(db.doc(path).set({attestation:'none',standardUnitCostCents:1}));await assertFails(db.doc(path).delete());}
+      for(const db of [crew,manager]){await assertFails(db.collection('catalogStandardCosts').get());await assertFails(db.collection('jobs/assigned/fieldExpenseCloseout').get());}
+    });
+    await t.test('portal document settings (insurance certificate pointer) remain server-only even for business SDK sessions',async()=>{
+      for(const db of [publicDb,crew,lead,manager]){const path='portal_settings/documents';await assertFails(db.doc(path).get());await assertFails(db.collection('portal_settings').get());await assertFails(db.doc(path).set({insuranceCertificate:{driveFileId:'attacker-file-0001',expiresOn:'2099-12-31'}}));await assertFails(db.doc(path).update({'insuranceCertificate.expiresOn':'2099-12-31'}));await assertFails(db.doc(path).delete());await assertFails(db.doc('portal_settings/new').set({insuranceCertificate:null}));}
+    });
+    await t.test('imported Jobber history is read-only and import receipts are server-only',async()=>{
+      const history='jobs/jobber_visit_2002_20260910_1300_1500';
+      await environment.withSecurityRulesDisabled(async context=>{const db=context.firestore();await db.doc(history).set({type:'job',recordType:'jobber_history',customerId:'customer',status:'completed',date:'2026-09-10'});await db.doc('jobberImport/run').set({status:'completed',committed:{customers:1,jobs:1}});});
+      await assertSucceeds(manager.doc(history).get());
+      for(const db of [manager,partner]){await assertFails(db.doc(history).update({status:'scheduled'}));await assertFails(db.doc(history).set({type:'job',status:'unscheduled'}));await assertFails(db.doc(history).delete());await assertFails(db.doc('jobs/forged-history').set({type:'job',recordType:'jobber_history'}));await assertFails(db.doc('jobs/assigned').update({recordType:'jobber_history'}));}
+      for(const db of [publicDb,crew,manager]){await assertFails(db.doc('jobberImport/run').get());await assertFails(db.doc('jobberImport/run').set({status:'running'}));await assertFails(db.doc('jobberImport/run').delete());await assertFails(db.collection('jobberImport').get());}
+    });
+    await t.test('approved-send ledgers, message templates and messaging receipts remain server-only even for business SDK sessions',async()=>{
+      await environment.withSecurityRulesDisabled(async context=>{const db=context.firestore();await db.doc('message_sends/send').set({kind:'payment_reminder',status:'submitted',targetId:'assigned'});await db.doc('message_templates/payment_reminder').set({kind:'payment_reminder',liveVersion:1});await db.doc('message_operations/receipt').set({actorId:'zacb',action:'template.approve'});});
+      for(const db of [publicDb,crew,lead,manager]) for(const path of ['message_sends/send','message_templates/payment_reminder','message_operations/receipt']){await assertFails(db.doc(path).get());await assertFails(db.doc(path).set({status:'changed'}));await assertFails(db.doc(path).update({status:'changed'}));await assertFails(db.doc(path).delete());}
+      for(const db of [crew,manager]) for(const name of ['message_sends','message_templates','message_operations']) await assertFails(db.collection(name).get());
+    });
+    await t.test('messaging cadence settings, signed cron run summaries and holds remain server-only even for business SDK sessions',async()=>{
+      await environment.withSecurityRulesDisabled(async context=>{const db=context.firestore();await db.doc('messaging_settings/automation').set({paused:false,paymentReminderDays:[1,7,14]});await db.doc('messaging_runs/run').set({status:'completed',actorId:'messaging-cron-worker'});await db.doc('messaging_holds/current').set({day:'2026-09-22',entries:[{key:'payment_reminder:job:2026-09-21:1',status:'suppressed'}]});});
+      for(const db of [publicDb,crew,lead,manager]) for(const path of ['messaging_settings/automation','messaging_runs/run','messaging_holds/current']){await assertFails(db.doc(path).get());await assertFails(db.doc(path).set({paused:true}));await assertFails(db.doc(path).update({status:'changed'}));await assertFails(db.doc(path).delete());}
+      for(const db of [crew,manager]) for(const name of ['messaging_settings','messaging_runs','messaging_holds']) await assertFails(db.collection(name).get());
+    });
+    await t.test('Garage Guard memberships, Stripe event receipts and reviews are webhook-only',async()=>{
+      for(const db of [publicDb,crew,manager]) for(const path of ['memberships/sub_synthetic','stripe_events/evt_synthetic','membership_reviews/sub_synthetic','payment_reviews/cs_test_synthetic']){await assertFails(db.doc(path).get());await assertFails(db.doc(path).update({status:'changed'}));await assertFails(db.doc(path).delete());}
+      await assertFails(manager.doc('memberships/sub_new').set({plan:'black',status:'active'}));
+      await assertFails(manager.collection('memberships').get());
+      await assertFails(manager.collection('payment_reviews').get());
+      await assertFails(crew.doc('payment_reviews/cs_test_forged').set({status:'resolved',jobId:'assigned'}));
+    });
+    await t.test('hub bridge command receipts (audit and idempotency) remain server-only even for business SDK sessions',async()=>{
+      for(const db of [publicDb,crew,manager]){const ref=db.doc('hub_command_operations/receipt');await assertFails(ref.get());await assertFails(ref.set({fingerprint:'forged',before:'null',after:'{}'}));await assertFails(ref.delete());}
+    });
+    await t.test('money API receipts and invoice-number reservations are server-only even for business SDK sessions',async()=>{
+      for(const db of [publicDb,crew,lead,manager]) for(const path of ['moneyOperations/receipt','moneyInvoiceNumbers/n_INV-ASSIGN']){await assertFails(db.doc(path).get());await assertFails(db.doc(path).set({jobId:'open'}));await assertFails(db.doc(path).update({jobId:'open'}));await assertFails(db.doc(path).delete());}
+      for(const db of [crew,manager]) for(const name of ['moneyOperations','moneyInvoiceNumbers']) await assertFails(db.collection(name).get());
+      await assertFails(manager.doc('moneyInvoiceNumbers/n_INV-NEW').set({number:'INV-NEW',jobId:'assigned'}));
+    });
+    await t.test('staff directory and employee vault migration receipts are server-only even for business SDK sessions',async()=>{
+      await environment.withSecurityRulesDisabled(async context=>{const db=context.firestore();await db.doc('staffDirectoryOperations/receipt').set({kind:'staff_directory_receipt_v1',actor:'zacb',target:'crew1'});await db.doc('employeeVaultMigrations/receipt').set({kind:'employee_vault_migration_receipt_v1',status:'completed'});});
+      for(const db of [publicDb,crew,lead,manager,partner]) for(const path of ['staffDirectoryOperations/receipt','employeeVaultMigrations/receipt']){await assertFails(db.doc(path).get());await assertFails(db.doc(path).set({status:'changed'}));await assertFails(db.doc(path).update({status:'changed'}));await assertFails(db.doc(path).delete());}
+      for(const db of [crew,manager]) for(const name of ['staffDirectoryOperations','employeeVaultMigrations']) await assertFails(db.collection(name).get());
+      await assertFails(manager.doc('staffDirectoryOperations/forged').set({fingerprint:'0'.repeat(64)}));
+    });
+    await t.test('garage catalog versions, pricing settings, settings versions and catalog receipts remain server-only even for business SDK sessions',async()=>{
+      const paths=['catalogVersions/current','catalogVersions/2099-09-01.1','pricingSettings/current','catalogOperations/receipt','pricingSettingsVersions/synthetic'];
+      await environment.withSecurityRulesDisabled(async context=>{const db=context.firestore();await db.doc(paths[0]).set({version:'2099-09-01.1'});await db.doc(paths[1]).set({catalogVersion:'2099-09-01.1',catalogJson:'{}'});await db.doc(paths[2]).set({settingsVersion:'synthetic',readyForCustomers:false});await db.doc(paths[3]).set({actorId:'zacb',action:'catalog.publish'});await db.doc(paths[4]).set({settingsVersion:'synthetic',readyForCustomers:false});});
+      for(const db of [publicDb,crew,lead,manager,partner]) for(const path of paths){await assertFails(db.doc(path).get());await assertFails(db.doc(path).set({readyForCustomers:true}));await assertFails(db.doc(path).update({readyForCustomers:true}));await assertFails(db.doc(path).delete());}
+      for(const db of [crew,manager,partner]) for(const name of ['catalogVersions','pricingSettings','pricingSettingsVersions','catalogOperations']) await assertFails(db.collection(name).get());
+      await assertFails(manager.doc('catalogVersions/2099-09-02.1').set({catalogVersion:'2099-09-02.1',catalogJson:'{}'}));
+      await environment.withSecurityRulesDisabled(async context=>{for(const path of paths)await context.firestore().doc(path).delete();});
+    });
+    await t.test('catalog publishes and settings saves keep their Firestore REST preconditions and audit atomically',async()=>{
+      const {catalogStorage,mutateCatalog,readCatalogState}=await import('../functions/_lib/catalog-store.js');
+      const {hubAuditStorage,listAudit}=await import('../functions/_lib/hub-audit.js');
+      const fetcher=async(_env,url,options={})=>{
+        const target=new URL(url);target.protocol='http:';target.host=host;target.pathname=target.pathname.replace('/projects/egcw-1ec83/','/projects/'+projectId+'/');
+        assert.equal(target.hostname,hostname);
+        return fetch(target,{...options,...(options.body ? {body:options.body.replaceAll('projects/egcw-1ec83/','projects/'+projectId+'/')} : {}),headers:{...options.headers,Authorization:'Bearer owner'}});
+      };
+      const store=catalogStorage({},fetcher),owner={user:'zacb',role:'owner',businessAccess:true},now='2099-09-10T18:00:00.000Z';
+      const shipped=JSON.parse(await readFile(new URL('../functions/_data/garage-catalog.json',import.meta.url),'utf8'));
+      const defaults=JSON.parse(await readFile(new URL('../functions/_data/pricing-settings.defaults.json',import.meta.url),'utf8'));
+      assert.equal((await readCatalogState(store)).publication.source,'seed');
+      const publish={action:'catalog.publish',requestId:crypto.randomUUID(),basedOnVersion:shipped.catalogVersion,catalog:{...shipped,catalogVersion:'2099-09-10.1',generatedOn:'2099-09-10'}};
+      const copies=await Promise.all([mutateCatalog(store,owner,publish,now),mutateCatalog(store,owner,publish,now)]);
+      assert.deepEqual(copies.map(copy=>copy.publication.version),['2099-09-10.1','2099-09-10.1']);
+      assert.equal(copies.filter(copy=>copy.replayed).length,1,'a racing copy of the same request recovers the one commit');
+      const state=await readCatalogState(store);
+      assert.deepEqual([state.publication.source,state.publication.version,state.catalog.items.length],['firestore','2099-09-10.1',shipped.items.length],'a full catalog fits one verified snapshot document');
+      assert.equal((await listAudit(hubAuditStorage({},fetcher),{entity:'catalogVersions/2099-09-10.1'})).entries.length,1);
+      await assert.rejects(mutateCatalog(store,owner,{...publish,requestId:crypto.randomUUID(),catalog:{...publish.catalog,catalogVersion:'2099-09-10.2'}},now),error=>error.code==='catalog_version_conflict');
+      const saved=await mutateCatalog(store,owner,{action:'settings.update',requestId:crypto.randomUUID(),expectedRevision:null,settings:{...defaults,settingsVersion:'emulator:1'}},now);
+      assert.match(saved.settings.revision,/^\d{4}-\d{2}-\d{2}T/);
+      assert.equal((await store.read('pricingSettings','current')).revision,saved.settings.revision,'the commit write result is the stored revision');
+      assert.equal((await store.read('pricingSettingsVersions','emulator:1')).settings.settingsVersion,'emulator:1');
+      // The emulator's not-found answer for a missing document (an id with ':' included) reads as absent.
+      assert.equal(await store.read('pricingSettingsVersions','emulator:missing'),null);
+      await assert.rejects(mutateCatalog(store,owner,{action:'settings.update',requestId:crypto.randomUUID(),expectedRevision:saved.settings.revision,settings:{...defaults,settingsVersion:'emulator:1',laborRateCents:9000}},now),error=>error.code==='catalog_settings_version_unchanged');
+      // A stale updateTime is FAILED_PRECONDITION (HTTP 400) and a create over an existing document is
+      // ALREADY_EXISTS (409): both are revision conflicts, and Firestore applies no write of the commit.
+      const receipt={collection:'catalogOperations',id:crypto.randomUUID(),patch:{action:'settings.update'}};
+      await assert.rejects(store.commit([{collection:'pricingSettings',id:'current',revision:'2000-01-01T00:00:00.000000Z',patch:{updatedBy:'stale'}},receipt]),error=>error.code==='catalog_revision_conflict');
+      await assert.rejects(store.commit([{collection:'catalogVersions',id:'2099-09-10.1',patch:{catalogJson:'{}'}},receipt]),error=>error.code==='catalog_revision_conflict');
+      // Updating a document that was deleted since it was read is a conflict too.
+      await assert.rejects(store.commit([{collection:'pricingSettingsVersions',id:'emulator-deleted',revision:saved.settings.revision,patch:{settingsVersion:'emulator-deleted'}},receipt]),error=>error.code==='catalog_revision_conflict');
+      assert.equal(await store.read('catalogOperations',receipt.id),null);
+      assert.equal((await store.read('pricingSettings','current')).revision,saved.settings.revision);
+      await environment.withSecurityRulesDisabled(async context=>{for(const path of ['catalogVersions/current','catalogVersions/2099-09-10.1','pricingSettings/current','pricingSettingsVersions/emulator:1'])await context.firestore().doc(path).delete();});
+    });
+    await t.test('operations follow-up settings are server-only even for business SDK sessions',async()=>{
+      await environment.withSecurityRulesDisabled(async context=>{await context.firestore().doc('operations_settings/followups').set({ownerId:'Zoe.Synthetic',dueMinutes:240,sendWindow:{startHour:8,endHour:19,timeZone:'America/Denver'},updatedBy:'zacb'});});
+      for(const db of [publicDb,crew,lead,manager,partner]){const ref=db.doc('operations_settings/followups');await assertFails(ref.get());await assertFails(ref.set({ownerId:'attacker'}));await assertFails(ref.update({ownerId:'attacker'}));await assertFails(ref.delete());await assertFails(db.doc('operations_settings/other').set({ownerId:'attacker'}));}
+      for(const db of [crew,manager])await assertFails(db.collection('operations_settings').get());
+    });
+    await t.test('MCP grant approval receipts are server-only even for business SDK sessions',async()=>{
+      await environment.withSecurityRulesDisabled(async context=>{await context.firestore().doc(`mcp_grant_nonces/${'a'.repeat(64)}`).set({hubUser:'zacb',role:'owner',mcp:'https://mcp.example.invalid'});});
+      for(const db of [publicDb,crew,lead,manager]){const path=`mcp_grant_nonces/${'a'.repeat(64)}`;await assertFails(db.doc(path).get());await assertFails(db.doc(path).update({hubUser:'crew1'}));await assertFails(db.doc(path).delete());await assertFails(db.doc(`mcp_grant_nonces/${'b'.repeat(64)}`).set({hubUser:'zacb',role:'owner'}));await assertFails(db.collection('mcp_grant_nonces').get());}
+    });
     await t.test('manager administrative schedule and customer access remains functional',async()=>{
       await assertSucceeds(manager.doc('jobs/assigned').get());
       await assertSucceeds(manager.doc('customers/customer').get());
       await assertSucceeds(manager.doc('jobs/assigned').update({title:'Reviewed by manager'}));
+    });
+    await t.test('server-owned receipts and encrypted records in jobs stay immutable for business SDK sessions',async()=>{
+      for(const db of [manager,partner]) for(const path of serverOwned){
+        await assertFails(db.doc(path).update({status:'changed'}));
+        await assertFails(db.doc(path).set({recordType:'forged'}));
+        await assertFails(db.doc(path).delete());
+      }
+      for(const path of ['jobs/secure_new','jobs/_egc_record_op_new','jobs/_egc_schedule_op_new','jobs/_egc_schedule_provider_new','jobs/_egc_adoption_request_new','jobs/_egc_adoption_source_new','jobs/_egc_future_receipt']) await assertFails(manager.doc(path).set({recordType:'forged'}));
+      await assertFails(manager.batch().update(manager.doc('jobs/assigned'),{title:'Batched'}).delete(manager.doc('jobs/_egc_record_op_x')).commit());
+      await assertFails(manager.runTransaction(async tx=>{const receipt=manager.doc('jobs/_egc_schedule_op_x');await tx.get(receipt);tx.update(receipt,{status:'changed'});}));
+      for(const db of [crew,lead]) for(const path of serverOwned){await assertFails(db.doc(path).update({status:'changed'}));await assertFails(db.doc(path).delete());}
+      await environment.withSecurityRulesDisabled(async context=>{
+        for(const path of serverOwned) assert.notEqual((await context.firestore().doc(path).get()).data().recordType,'forged',path);
+        assert.notEqual((await context.firestore().doc('jobs/assigned').get()).data().title,'Batched','A denied receipt write must reject the whole batch.');
+      });
+    });
+    await t.test('manager job, collection-wide read and schedule-lock workflows remain writable',async()=>{
+      await assertSucceeds(manager.collection('jobs').get());
+      for(const path of serverOwned) await assertSucceeds(manager.doc(path).get());
+      await assertSucceeds(manager.doc('jobs/assigned').update({notes:'Manager note still saves'}));
+      await assertSucceeds(manager.doc('jobs/manager-created').set({id:'manager-created',type:'job',status:'unscheduled'}));
+      await assertSucceeds(manager.doc('jobs/removable').delete());
+      await assertSucceeds(manager.doc('jobs/_egc_schedule_lock_2099-09-08').update({entries:[],updatedAt:'2099-09-01T12:00:00.000Z'}));
+      await assertSucceeds(manager.doc('jobs/_egc_schedule_lock_2099-09-20').set({recordType:'schedule_lock',date:'2099-09-20',entries:[]}));
+      await assertSucceeds(manager.runTransaction(async tx=>{const lock=manager.doc('jobs/_egc_schedule_lock_2099-09-20');await tx.get(lock);tx.set(lock,{recordType:'schedule_lock',date:'2099-09-20',entries:[],updatedAt:'2099-09-01T12:00:00.000Z'});tx.update(manager.doc('jobs/manager-created'),{date:'2099-09-20'});}));
+      await assertSucceeds(manager.doc('jobs/_egc_schedule_lock_2099-09-20').delete());
+      await assertSucceeds(manager.doc('jobs/manager-created').delete());
+      await assertFails(crew.doc('jobs/_egc_schedule_lock_2099-09-08').update({entries:[]}));
+    });
+    await t.test('business SDK writes cannot plant, adopt or remove server-owned recordTypes under ordinary job ids',async()=>{
+      for(const db of [manager,partner]) for(const recordType of serverTypes){
+        await assertFails(db.doc('jobs/forged-'+recordType).set({recordType,employeeHubType:'profiles',sealedPayload:'forged'}));
+        await assertFails(db.collection('jobs').add({recordType,sealedPayload:'forged'}));
+        await assertFails(db.doc('jobs/assigned').update({recordType}));
+        await assertFails(db.doc('jobs/assigned').set({recordType},{merge:true}));
+        await assertFails(db.doc('jobs/_egc_schedule_lock_2099-09-08').update({recordType}));
+      }
+      await assertFails(manager.doc('jobs/fake-lock').set({recordType:'schedule_lock',date:'2099-09-08',entries:[]}));
+      await assertFails(manager.doc('jobs/assigned').update({recordType:'schedule_lock'}));
+      // Rows that already carry a server-owned type stay untouchable from the SDK, including relabel and delete.
+      for(const path of ['jobs/stray-vault','jobs/stray-lock']){
+        await assertSucceeds(manager.doc(path).get());
+        await assertFails(manager.doc(path).update({sealedPayload:'changed'}));
+        await assertFails(manager.doc(path).update({recordType:'crew_availability'}));
+        await assertFails(manager.doc(path).set({type:'job',status:'unscheduled'}));
+        await assertFails(manager.doc(path).delete());
+      }
+      await assertFails(manager.batch().update(manager.doc('jobs/assigned'),{title:'Batched forged vault'}).set(manager.doc('jobs/forged-batch'),{recordType:'employee_hub_v2'}).commit());
+      await environment.withSecurityRulesDisabled(async context=>{
+        const db=context.firestore();
+        for(const recordType of serverTypes) assert.equal((await db.doc('jobs/forged-'+recordType).get()).exists,false,recordType);
+        assert.equal((await db.collection('jobs').where('recordType','==','employee_hub_v2').get()).docs.map(doc=>doc.id).join(),'stray-vault');
+        assert.equal((await db.doc('jobs/stray-vault').get()).data().sealedPayload,'ciphertext');
+        assert.equal((await db.doc('jobs/assigned').get()).data().recordType,undefined);
+        assert.notEqual((await db.doc('jobs/assigned').get()).data().title,'Batched forged vault');
+      });
+      // Manager PTO approval (employee-suite opsReviewRequest) still writes crew_availability rows with merge.
+      const pto={id:'availability-crew1-2099-09-21-pto',type:'availability',recordType:'crew_availability',employee:'crew1',date:'2099-09-21',time:'00:00',endTime:'23:59',reason:'Approved time off',requestId:'synthetic-request',status:'active',createdAt:'2099-09-01T12:00:00.000Z',updatedAt:'2099-09-01T12:00:00.000Z'};
+      await assertSucceeds(manager.doc('jobs/'+pto.id).set(pto,{merge:true}));
+      await assertSucceeds(manager.doc('jobs/'+pto.id).set({...pto,updatedAt:'2099-09-02T12:00:00.000Z'},{merge:true}));
+      await assertSucceeds(manager.doc('jobs/assigned').set({notes:'Merged manager note'},{merge:true}));
+      await assertSucceeds(manager.doc('jobs/'+pto.id).delete());
+    });
+    await t.test('the audit trail is append-only and attributed to the signed-in manager',async()=>{
+      const entry=(by,extra={})=>({action:'login',detail:'Logged in',by,at:'2099-09-01T12:00:00.000Z',serverAt:FieldValue.serverTimestamp(),...extra});
+      for(const [db,username] of [[crew,'crew1'],[otherCrew,'crew2'],[lead,'lead1']]){
+        await assertFails(db.collection('audit_log').add(entry(username)));
+        await assertFails(db.collection('audit_log').add(entry('zacb')));
+        await assertFails(db.doc('audit_log/existing').get());
+      }
+      await assertFails(publicDb.collection('audit_log').add(entry('zacb')));
+      await assertFails(manager.collection('audit_log').add(entry('tylerg')));
+      await assertFails(manager.collection('audit_log').add(entry('TylerG')));
+      await assertFails(manager.collection('audit_log').add({action:'login',detail:'Logged in',at:'2099-09-01T12:00:00.000Z'}));
+      await assertFails(manager.collection('audit_log').add(entry('zacb',{role:'owner'})));
+      await assertFails(manager.collection('audit_log').add(entry('zacb',{action:{forged:true}})));
+      await assertSucceeds(manager.collection('audit_log').add(entry('zacb')));
+      await assertSucceeds(manager.collection('audit_log').add({action:'mark_dead',by:'zacb',at:'2099-09-01T12:05:00.000Z',serverAt:FieldValue.serverTimestamp()}));
+      await assertSucceeds(partner.collection('audit_log').add(entry('TylerG',{action:'mark_quoted',detail:'Lead: Synthetic Lead · Quote: 450'})));
+      // The server clock is mandatory: legacy client-only shapes and client-chosen serverAt values are refused.
+      await assertFails(manager.collection('audit_log').add({action:'login',detail:'Logged in',by:'zacb',at:'2099-09-01T12:00:00.000Z'}));
+      await assertFails(manager.collection('audit_log').add(entry('zacb',{serverAt:Timestamp.fromDate(new Date('2099-09-01T12:00:00.000Z'))})));
+      await assertFails(manager.collection('audit_log').add(entry('zacb',{serverAt:'2099-09-01T12:00:00.000Z'})));
+      await assertFails(manager.collection('audit_log').add(entry('zacb',{serverAt:null})));
+      // 'at' must be present and ISO-8601 UTC shaped.
+      const {at,...withoutAt}=entry('zacb');assert.ok(at);
+      await assertFails(manager.collection('audit_log').add(withoutAt));
+      for(const bad of ['yesterday','2099-09-01','2099-09-01 12:00:00Z','2099-09-01T12:00:00+00:00','2099-09-01T12:00:00.000Z<b>','','x2099-09-01T12:00:00.000Z',4102488000000,null]) await assertFails(manager.collection('audit_log').add(entry('zacb',{at:bad})));
+      await assertSucceeds(manager.collection('audit_log').add(entry('zacb',{at:'2099-09-01T12:00:00Z'})));
+      // action and detail are bounded strings: 200 / 2000 UTF-16 code units, which is what Rules string.size()
+      // counts (a 2-unit emoji counts twice). employee.html addAuditLog clips to the same bounds.
+      await assertSucceeds(manager.collection('audit_log').add(entry('zacb',{action:'a'.repeat(200),detail:'d'.repeat(2000)})));
+      await assertSucceeds(manager.collection('audit_log').add(entry('zacb',{action:'\u{1F697}'.repeat(100),detail:'\u{1F697}'.repeat(1000)})));
+      for(const extra of [{action:''},{action:'a'.repeat(201)},{action:'\u{1F697}'.repeat(101)},{detail:'d'.repeat(2001)},{detail:'\u{1F697}'.repeat(1001)},{detail:42},{detail:null},{action:null}]) await assertFails(manager.collection('audit_log').add(entry('zacb',extra)));
+      // The real employee.html writer (clipping + serverTimestamp) satisfies these rules, even for oversized input.
+      const html=await readFile(new URL('../employee.html',import.meta.url),'utf8');
+      const slice=(start,end)=>{const from=html.indexOf(start),to=html.indexOf(end,from);assert.ok(from>=0&&to>from,start);return html.slice(from,to);};
+      const hubWrites=[];
+      const hub=vm.createContext({me:'ZacB',console:{warn(){}},firebase:compat.default||compat,Date:class{toISOString(){return '2099-09-01T12:10:00.000Z';}},
+        sessionStorage:{getItem:key=>key==='egc_business_access'?'true':null},
+        db:{collection:name=>({add:data=>{const write=environment.authenticatedContext('manager-cased',claims('ZacB','owner',true)).firestore().collection(name).add({...data});hubWrites.push(write);return write;}})}});
+      vm.runInContext(slice('function canRunBusiness()','async function ensureFirebaseSession(')+slice('function addAuditLog(','function renderAuditLog(')+"\naddAuditLog('hub_writer_'+'a'.repeat(300),'Lead: x'+'\\u{1F697}'.repeat(1500));addAuditLog('login');",hub);
+      assert.equal(hubWrites.length,2);
+      for(const write of hubWrites) await assertSucceeds(write);
+      await environment.withSecurityRulesDisabled(async context=>{
+        const saved=(await context.firestore().collection('audit_log').where('by','==','ZacB').get()).docs.map(doc=>doc.data()).sort((a,b)=>a.action.length-b.action.length);
+        assert.deepEqual(saved.map(row=>[row.action.length,row.detail.length,row.at,typeof row.serverAt?.toMillis]),[[5,0,'2099-09-01T12:10:00.000Z','function'],[200,1999,'2099-09-01T12:10:00.000Z','function']]);
+      });
+      await environment.withSecurityRulesDisabled(async context=>{
+        const saved=(await context.firestore().collection('audit_log').where('action','==','mark_quoted').get()).docs.map(doc=>doc.data());
+        assert.equal(saved.length,1);assert.equal(saved[0].by,'TylerG');
+        assert.equal(typeof saved[0].serverAt?.toMillis,'function','serverAt is stored as the server Timestamp.');
+      });
+      await assertSucceeds(manager.doc('audit_log/existing').get());
+      await assertSucceeds(manager.collection('audit_log').orderBy('at','desc').limit(50).get());
+      await assertSucceeds(manager.collection('audit_log').orderBy('serverAt','desc').limit(50).get());
+      for(const db of [manager,partner]){
+        await assertFails(db.doc('audit_log/existing').update({detail:'Rewritten'}));
+        await assertFails(db.doc('audit_log/existing').set(entry('zacb',{detail:'Replaced'})));
+        await assertFails(db.doc('audit_log/existing').delete());
+      }
+    });
+    await t.test('a crew session that tampers with its client business flag is still refused by the rules',async()=>{
+      // P1-02: the Hub trusts sessionStorage egc_business_access from the server profile and keeps no staff list,
+      // so the browser gate is only UX. The enforcement is the Hub-minted token: business_access comes from
+      // hasBusinessAccess(session) and username from session.user (functions/api/firebase-session.js).
+      const html=await readFile(new URL('../employee.html',import.meta.url),'utf8');
+      assert.doesNotMatch(html,/const ADMINS|BUSINESS_USERS/);
+      const slice=(start,end)=>{const from=html.indexOf(start),to=html.indexOf(end,from);assert.ok(from>=0&&to>from,start);return html.slice(from,to);};
+      const source=slice('function canRunBusiness()','async function ensureFirebaseSession(')+slice('function addAuditLog(','function renderAuditLog(');
+      let sequence=0;
+      // Runs the real addAuditLog with a client that claims business access, against a context holding tokenClaims.
+      const attempt=(me,tokenClaims)=>{
+        const writes=[];
+        const db=environment.authenticatedContext('tamper-'+(++sequence),tokenClaims).firestore();
+        vm.runInContext(source+"\naddAuditLog('tamper_probe','Lead: Synthetic Lead');",vm.createContext({me,console:{warn(){}},firebase:compat.default||compat,
+          Date:class{toISOString(){return '2099-09-01T12:20:00.000Z';}},sessionStorage:{getItem:key=>key==='egc_business_access'?'true':null},
+          db:{collection:name=>({add:data=>{const write=db.collection(name).add({...data});writes.push(write);return write;}})}}));
+        assert.equal(writes.length,1,'The client-side gate passes once the flag is forged, so only the rules stand in the way.');
+        return writes[0];
+      };
+      const {business_access:_omit,...noBusinessClaim}=claims('zacb','owner',true);
+      // Crew tokens (business_access false) are refused whatever the tampered client claims to be.
+      await assertFails(attempt('crew1',claims('crew1')));
+      await assertFails(attempt('zacb',claims('crew1')));
+      await assertFails(attempt('lead1',claims('lead1','crew_lead')));
+      // A privileged role or username in the token does not stand in for the server-minted business_access claim.
+      await assertFails(attempt('zacb',claims('zacb','owner',false)));
+      await assertFails(attempt('zacb',noBusinessClaim));
+      await assertFails(attempt('zacb',{...claims('zacb','owner',false),business_access:'true'}));
+      // A business token still cannot write under another name: 'by' must equal the token username exactly.
+      await assertFails(attempt('TylerG',claims('zacb','owner',true)));
+      await assertFails(attempt('ZacB',claims('zacb','owner',true)));
+      await assertSucceeds(attempt('zacb',claims('zacb','owner',true)));
+      await environment.withSecurityRulesDisabled(async context=>{
+        const saved=(await context.firestore().collection('audit_log').where('action','==','tamper_probe').get()).docs.map(doc=>doc.data());
+        assert.deepEqual(saved.map(row=>row.by),['zacb']);
+      });
     });
     await t.test('legacy availability reads stay private while all crew writes require the atomic server API',async()=>{
       await assertSucceeds(crew.doc('jobs/crew1-off').get());
@@ -124,6 +412,128 @@ test('actual Firestore rules isolate canonical operations from crew SDK access',
       await store.commit([{collection:'jobs',id:'assigned',revision:accountBefore.revision,patch:{lineageTestChange:true}}]);
       await assert.rejects(store.commit([{collection:'jobs',id:'assigned',revision:accountBefore.revision,verify:true},{collection:'jobs',id:'must-not-save',patch:{type:'job',customerId:'customer'}}]),error=>error.code==='dispatch_revision_conflict');
       assert.equal(await store.read('jobs','must-not-save'),null,'A stale ownership read cannot write another job.');
+    });
+    await t.test('actual Firestore REST stores the insurance certificate pointer with revision checks',async()=>{
+      const {portalDocumentsStorage,uploadInsuranceCertificate,insuranceCertificateStatus}=await import('../functions/_lib/customer-documents.js');
+      const store=portalDocumentsStorage({},async(_env,url,options={})=>{
+        const target=new URL(url);target.protocol='http:';target.host=host;target.pathname=target.pathname.replace('/projects/egcw-1ec83/','/projects/'+projectId+'/');
+        assert.equal(target.hostname,hostname);
+        return fetch(target,{...options,...(options.body ? {body:options.body.replaceAll('projects/egcw-1ec83/','projects/'+projectId+'/')} : {}),headers:{...options.headers,Authorization:'Bearer owner'}});
+      });
+      const files=new Map(),pdf=new TextEncoder().encode('%PDF-1.4\n% Synthetic emulator certificate fixture only\ntrailer << >>\n%%EOF\n');
+      const drive={allocate:async()=>'synthetic-drive-file-0002',metadata:async id=>files.get(id)||null,upload:async(id,meta,bytes)=>{files.set(id,{mimeType:'application/pdf',size:String(bytes.length),appProperties:{egcPortalDocument:'insurance_certificate',egcRequestId:meta.requestId}});}};
+      const before=await store.read(),now='2026-09-22T18:00:00.000Z';
+      assert.equal(insuranceCertificateStatus(before,now).state,'current');
+      const saved=await uploadInsuranceCertificate({store,drive},{user:'zacb',role:'owner',businessAccess:true},{action:'upload',requestId:crypto.randomUUID(),expectedRevision:before.revision,expiresOn:'2027-09-01',filename:'Synthetic.pdf',dataUrl:'data:application/pdf;base64,'+Buffer.from(pdf).toString('base64')},now);
+      assert.equal(saved.insurance.expiresOn,'2027-09-01');
+      const after=await store.read();
+      assert.deepEqual([after.insuranceCertificate.driveFileId,after.pendingInsuranceUpload,after.insuranceCertificateHistory[0].driveFileId],['synthetic-drive-file-0002',null,'synthetic-drive-file-0001']);
+      await assert.rejects(store.commit({insuranceCertificate:null},before.revision),error=>/^PORTAL_DOCUMENTS_(REVISION_CONFLICT|OUTCOME_UNKNOWN)$/.test(error.code));
+      assert.equal((await store.read()).insuranceCertificate.driveFileId,'synthetic-drive-file-0002','a stale revision never overwrites the certificate');
+    });
+    await t.test('a stale updateTime is 400 FAILED_PRECONDITION on actual Firestore and the stores report a revision conflict',async st=>{
+      const {dispatchStorage}=await import('../functions/_lib/dispatch-storage.js');
+      const {schedulingStorage}=await import('../functions/_lib/operations-scheduling.js');
+      const {createBusinessStore}=await import('../functions/_lib/business-hub-store.js');
+      const {patchJob}=await import('../functions/_lib/firestore-job.js');
+      const {classifyCommitFailure}=await import('../functions/_lib/firestore-errors.js');
+      const realFetch=globalThis.fetch;
+      const emulator=async(_env,url,options={})=>{
+        const target=new URL(url);target.protocol='http:';target.host=host;target.pathname=target.pathname.replace('/projects/egcw-1ec83/','/projects/'+projectId+'/');target.searchParams.delete('key');
+        assert.equal(target.hostname,hostname);
+        return realFetch(target,{...options,...(options.body ? {body:options.body.replaceAll('projects/egcw-1ec83/','projects/'+projectId+'/')} : {}),headers:{...Object.fromEntries(new Headers(options.headers)),Authorization:'Bearer owner'}});
+      };
+      const store=dispatchStorage({},emulator),id='p04-stale-'+crypto.randomUUID().slice(0,8);
+      await store.commit([{collection:'jobs',id,patch:{type:'job',status:'scheduled'}}]);
+      const first=await store.read('jobs',id);
+      await store.commit([{collection:'jobs',id,revision:first.revision,patch:{status:'confirmed'}}]);
+      const raw=await emulator({},'https://firestore.googleapis.com/v1/projects/egcw-1ec83/databases/(default)/documents:commit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({writes:[{update:{name:`projects/egcw-1ec83/databases/(default)/documents/jobs/${id}`,fields:{status:{stringValue:'cancelled'}}},updateMask:{fieldPaths:['status']},currentDocument:{updateTime:first.revision}}]})});
+      const body=await raw.json();
+      assert.deepEqual([raw.status,body.error?.status],[400,'FAILED_PRECONDITION'],'Firestore answers a stale updateTime with 400, not 409/412.');
+      assert.equal(classifyCommitFailure(raw.status,body),'stale');
+      await assert.rejects(store.commit([{collection:'jobs',id,revision:first.revision,patch:{status:'cancelled'}}]),error=>error.code==='dispatch_revision_conflict'&&error.status===409);
+      await assert.rejects(store.commit([{collection:'jobs',id:id+'-never-created',revision:first.revision,patch:{status:'cancelled'}}]),error=>error.code==='dispatch_revision_conflict','A vanished document is a stale precondition too.');
+      await assert.rejects(store.commit([{collection:'jobs',id,patch:{status:'cancelled'}}]),error=>error.code==='dispatch_revision_conflict','A create collision (409 ALREADY_EXISTS) stays a conflict.');
+      await assert.rejects(store.commit([{collection:'jobs',id,revision:'not-a-revision',patch:{status:'cancelled'}}]),error=>error.code==='dispatch_outcome_unknown'&&error.status===503,'400 INVALID_ARGUMENT is never a conflict.');
+      await assert.rejects(schedulingStorage({},emulator).commit([{collection:'jobs',id,revision:first.revision,patch:{status:'cancelled'}}]),error=>error.message==='schedule_revision_conflict'&&error.status===409);
+      const business=createBusinessStore({},emulator),account=crypto.randomUUID().replaceAll('-','');
+      await business.commit([{collection:'business_accounts',id:account,data:{status:'active'}}]);
+      const opened=await business.read('business_accounts',account);
+      await business.commit([{collection:'business_accounts',id:account,version:opened._version,data:{status:'paused'},patch:true}]);
+      await assert.rejects(business.commit([{collection:'business_accounts',id:account,version:opened._version,data:{status:'closed'},patch:true}]),error=>error.status===409);
+      st.mock.method(globalThis,'fetch',(input,init={})=>emulator({},input,init));
+      await assert.rejects(patchJob({FIREBASE_API_KEY:'firebase-test-emulator'},id,{status:'cancelled'},first.revision),error=>error.storageStatus===400&&error.storageFailure==='stale');
+      assert.equal((await store.read('jobs',id)).status,'confirmed','No stale write was applied.');
+      assert.equal((await business.read('business_accounts',account)).status,'paused');
+    });
+    await t.test('an overlapping identical recording approval that loses the job precondition reports the applied receipt',async()=>{
+      const {applyRecordingApproval,resolveRecordingIdentity}=await import('../functions/_lib/operations-recording-approval.js');
+      const realFetch=globalThis.fetch;
+      const emulator=async(_env,url,options={})=>{
+        const target=new URL(url);target.protocol='http:';target.host=host;target.pathname=target.pathname.replace('/projects/egcw-1ec83/','/projects/'+projectId+'/');target.searchParams.delete('key');
+        assert.equal(target.hostname,hostname);
+        return realFetch(target,{...options,...(options.body ? {body:options.body.replaceAll('projects/egcw-1ec83/','projects/'+projectId+'/')} : {}),headers:{...Object.fromEntries(new Headers(options.headers)),Authorization:'Bearer owner'}});
+      };
+      const visit='p04-recording-'+crypto.randomUUID().slice(0,8),customer=visit+'-customer',actor={id:'zacb',kind:'human',role:'owner'};
+      await environment.withSecurityRulesDisabled(async context=>{const db=context.firestore();await db.doc('customers/'+customer).set({name:'Synthetic Recording Customer'});await db.doc('jobs/'+visit).set({type:'walkthrough',customerId:customer});});
+      const approval=async fingerprint=>({recordingId:crypto.randomUUID(),requestId:crypto.randomUUID(),fingerprint,portalJobId:visit,expectedRevision:(await resolveRecordingIdentity({},visit,emulator)).portalRevision,portalVisitId:visit,portalCustomerId:customer,portalProjectId:null,extraction:{summary:'Synthetic scope'}});
+      // Request #2 has read "no receipt" and the job revision; request #1 (a Railway retry of the same approval) commits first.
+      const command=await approval('c'.repeat(64));let first=null;
+      const second=await applyRecordingApproval({},command,actor,async(env,url,options)=>{if(String(url).endsWith(':commit')&&!first)first=await applyRecordingApproval({},command,actor,emulator);return emulator(env,url,options);});
+      assert.equal(first.alreadyApplied,false);
+      assert.deepEqual(second,{ok:true,alreadyApplied:true,recordingId:command.recordingId,appliedAt:first.appliedAt},'The identical approval applied once; the loser reports it instead of a revision conflict.');
+      // A plain edit between the identity read and the commit, with no receipt, is still a revision conflict.
+      const stale=await approval('d'.repeat(64));
+      await assert.rejects(applyRecordingApproval({},stale,actor,async(env,url,options)=>{if(String(url).endsWith(':commit'))await environment.withSecurityRulesDisabled(context=>context.firestore().doc('jobs/'+visit).update({opsNotes:'Synthetic edit'}));return emulator(env,url,options);}),error=>error.message==='recording_source_revision_conflict'&&error.status===409);
+      const job=await (await emulator({},`https://firestore.googleapis.com/v1/projects/egcw-1ec83/databases/(default)/documents/jobs/${visit}`)).json();
+      assert.equal(job.fields.reviewedWalkthroughScope.mapValue.fields.recordingId.stringValue,command.recordingId,'Only the first approval reached the job.');
+      assert.equal((await emulator({},`https://firestore.googleapis.com/v1/projects/egcw-1ec83/databases/(default)/documents/operation_recording_approvals/${stale.recordingId}`)).status,404,'The stale approval left no receipt.');
+    });
+    await t.test('Garage Guard events link, mirror and dedupe through actual Firestore REST',async()=>{
+      const {membershipStorage,applyGarageGuardEvent,garageGuardEvent}=await import('../functions/_lib/garage-guard-membership.js');
+      await environment.withSecurityRulesDisabled(async context=>{const db=context.firestore();await db.doc('customers/gg-customer').set({name:'Synthetic Member',phone:'9705550177',email:'member@example.invalid'});await db.doc('jobs/gg-root').set({type:'job',customerId:'gg-customer',customer:'Synthetic Member'});await db.doc('jobs/gg-visit').set({type:'job',customerId:'gg-customer',customerAccountOwnerJobId:'gg-root'});});
+      const store=membershipStorage({},async(_env,url,options={})=>{
+        const target=new URL(url);target.protocol='http:';target.host=host;target.pathname=target.pathname.replace('/projects/egcw-1ec83/','/projects/'+projectId+'/');
+        return fetch(target,{...options,...(options.body ? {body:options.body.replaceAll('projects/egcw-1ec83/','projects/'+projectId+'/')} : {}),headers:{...options.headers,Authorization:'Bearer owner'}});
+      });
+      const event=(id,created)=>garageGuardEvent({id,type:'checkout.session.completed',created,data:{object:{mode:'subscription',payment_status:'paid',subscription:'sub_emulator',customer:'cus_emulator',metadata:{plan:'lite'},customer_details:{email:'MEMBER@example.invalid',phone:'+19705550177'}}}});
+      const results=await Promise.all([applyGarageGuardEvent(store,event('evt_emulator_1',1),{now:'2099-09-10T12:00:00.000Z',alerts:true}),applyGarageGuardEvent(store,event('evt_emulator_1',1),{now:'2099-09-10T12:00:00.000Z',alerts:true})]);
+      assert.deepEqual(results.map(result=>result.status).sort(),['applied','duplicate']);
+      const job=await store.read('jobs','gg-root'),membership=await store.read('memberships','sub_emulator');
+      assert.deepEqual({plan:job.garageGuard.plan,visits:job.garageGuard.visitsRemaining,membershipId:job.garageGuard.membershipId},{plan:'lite',visits:2,membershipId:'sub_emulator'});
+      assert.equal(membership.link.accountJobId,'gg-root');assert.equal((await store.read('stripe_events','evt_emulator_1')).alert.status,'pending');
+      assert.equal((await store.read('jobs','gg-visit')).garageGuard,undefined);
+      assert.equal((await applyGarageGuardEvent(store,event('evt_emulator_1',1),{now:'2099-09-11T12:00:00.000Z'})).status,'duplicate');
+      assert.equal((await store.read('memberships','sub_emulator')).revision,membership.revision,'a replay writes nothing');
+      assert.equal((await store.read('customerIdentityState','revision')).lastStripeEventId,'evt_emulator_1','the first link creates the identity guard it fences');
+      // A duplicate customer created between the reads and the commit (resolveCustomer bumps the guard) fails the transaction fence.
+      await environment.withSecurityRulesDisabled(async context=>{const db=context.firestore();await db.doc('customers/gg-second').set({name:'Synthetic Second',phone:'9705550178'});await db.doc('jobs/gg-second-root').set({type:'job',customerId:'gg-second',customer:'Synthetic Second'});});
+      let raced=false;
+      const racing={...store,commit:async writes=>{if(!raced){raced=true;await environment.withSecurityRulesDisabled(async context=>{const db=context.firestore();await db.doc('customers/gg-second-dup').set({name:'Synthetic Second Duplicate',phone:'970-555-0178'});await db.doc('customerIdentityState/revision').set({updatedAt:'2099-09-10T12:00:01.000Z',lastRequestId:'synthetic-race'});});}return store.commit(writes);}};
+      const second=garageGuardEvent({id:'evt_emulator_2',type:'checkout.session.completed',created:2,data:{object:{mode:'subscription',payment_status:'paid',subscription:'sub_emulator_2',customer:'cus_emulator_2',metadata:{plan:'guard'},customer_details:{phone:'+19705550178'}}}});
+      const racedResult=await applyGarageGuardEvent(racing,second,{now:'2099-09-10T12:00:02.000Z'});
+      assert.deepEqual({raced,link:racedResult.link,reason:racedResult.reason,mirrored:racedResult.mirrored},{raced:true,link:'needs_review',reason:'ambiguous_customer',mirrored:false});
+      assert.equal((await store.read('jobs','gg-second-root')).garageGuard,undefined,'the stale one-customer decision never reaches the job');
+    });
+    await t.test('funnel events are server-only and land atomically with their business change through actual Firestore REST',async()=>{
+      const {dispatchStorage}=await import('../functions/_lib/dispatch-storage.js');
+      const {funnelEventWrite}=await import('../functions/_lib/funnel-events.js');
+      const store=dispatchStorage({},async(_env,url,options={})=>{
+        const target=new URL(url);target.protocol='http:';target.host=host;target.pathname=target.pathname.replace('/projects/egcw-1ec83/','/projects/'+projectId+'/');
+        return fetch(target,{...options,...(options.body ? {body:options.body.replaceAll('projects/egcw-1ec83/','projects/'+projectId+'/')} : {}),headers:{...options.headers,Authorization:'Bearer owner'}});
+      });
+      await environment.withSecurityRulesDisabled(context=>context.firestore().doc('jobs/fun-job').set({type:'job',customerId:'customer',status:'scheduled'}));
+      const job=await store.read('jobs','fun-job'),requestId=crypto.randomUUID();
+      const event=input=>funnelEventWrite(store,'2099-09-10T12:00:00.000Z',{type:'job.cancelled',idempotencyKey:{kind:'requestId',value:requestId},jobId:'fun-job',actor:{id:'zacb',kind:'human',role:'owner'},via:'hub',source:{collection:'dispatchOperations',id:requestId},data:{reasonCode:'weather',initiatedBy:'company',...input},eligibility:{hub:job}});
+      const write=await event();
+      await store.commit([{collection:'jobs',id:'fun-job',revision:job.revision,patch:{status:'cancelled'}},write]);
+      assert.equal((await store.read('funnelEvents',write.id)).data.reasonCode,'weather');
+      assert.equal(await event(),null,'a retry after a lost response finds the identical saved event');
+      await assert.rejects(event({reasonCode:'crew_unavailable'}),error=>error.code==='funnel_event_idempotency_conflict');
+      const after=await store.read('jobs','fun-job');
+      await assert.rejects(store.commit([{collection:'jobs',id:'fun-job',revision:after.revision,patch:{status:'scheduled'}},write]),error=>error.code==='dispatch_revision_conflict','an event id is never written twice');
+      assert.equal((await store.read('jobs','fun-job')).status,'cancelled','the business change is rejected with its duplicate event');
+      for(const db of [publicDb,crew,lead,manager,partner]){const ref=db.doc('funnelEvents/'+write.id);await assertFails(ref.get());await assertFails(ref.set({type:'deal.sold'}));await assertFails(ref.update({type:'deal.sold'}));await assertFails(ref.delete());await assertFails(db.collection('funnelEvents').get());await assertFails(db.doc('funnelEvents/fe_forged').set({type:'deal.sold',data:{amountCents:1}}));}
     });
   } finally {await environment.cleanup();}
 });

@@ -61,11 +61,14 @@ def _rewrite_html(text, file_dir):
     return _HREF_RE.sub(href, text)
 
 
-def finalize_site(root):
+def finalize_site(root, skip=None):
+    """skip(path) -> True leaves a page untouched (private surfaces, externally rendered pages)."""
     root = Path(root)
     changed = []
     for pattern in ("*.html", "blog/*.html", "projects/*.html"):
         for f in sorted(root.glob(pattern)):
+            if skip and skip(f):
+                continue
             rel_dir = str(f.parent.relative_to(root))
             rel_dir = "" if rel_dir == "." else rel_dir
             text = f.read_text(encoding="utf-8")

@@ -1,0 +1,86 @@
+name: EGC Lighthouse (mobile)
+# Mobile performance and accessibility >= 90 for the public site, the portals and the crew Today screen.
+# Warn-only until the LIGHTHOUSE_ENFORCE repository variable is 'true'. See docs/lighthouse-ci.md.
+on:
+  push:
+    branches: ['main']
+    paths: ['*.html', '*.css', '*.js', 'styles.css', 'site-enhancements.js', 'analytics-loader.js', 'images/**', 'blog/*.html', 'functions/before-after.js', 'crew/**', 'customer-portal.html', 'business-hub.*', 'client-login.*', 'client-login/**', 'functions/client-login*.js', 'functions/client-login/**', 'employee-field-today.*', '_headers', 'tests/lighthouse/**', 'tests/lighthouse-ci.test.mjs', 'tests/browser/test_lighthouse_pages_ui.py', '.github/workflows/egc-lighthouse.yml']
+  pull_request:
+    paths: ['*.html', '*.css', '*.js', 'styles.css', 'site-enhancements.js', 'analytics-loader.js', 'images/**', 'blog/*.html', 'functions/before-after.js', 'crew/**', 'customer-portal.html', 'business-hub.*', 'client-login.*', 'client-login/**', 'functions/client-login*.js', 'functions/client-login/**', 'employee-field-today.*', '_headers', 'tests/lighthouse/**', 'tests/lighthouse-ci.test.mjs', 'tests/browser/test_lighthouse_pages_ui.py', '.github/workflows/egc-lighthouse.yml']
+permissions:
+  contents: read
+concurrency:
+  group: egc-lighthouse-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  lighthouse:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      LHCI_TOOLS: /tmp/egc-lighthouse-tools
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # The server check loads functions/_middleware.js, which imports root packages (e.g. @noble/hashes).
+      - run: npm install --ignore-scripts --no-audit --no-fund
+      - name: Check the Pages look-alike server, fixtures and configuration
+        run: node --test tests/lighthouse/*.test.mjs
+      - name: Prepare pinned Lighthouse CI outside the repository
+        # @lhci/cli is pinned exactly; its dependencies resolve from that release's own ranges (no lockfile, see
+        # docs/lighthouse-ci.md). --ignore-scripts keeps install-time code from running, and the resolved tree is saved.
+        run: |
+          npm install --prefix /tmp/egc-lighthouse-tools --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @lhci/cli@0.15.1
+          npx --no-install --prefix "$LHCI_TOOLS" lhci --version
+          mkdir -p test-results/lighthouse
+          npm ls --prefix "$LHCI_TOOLS" --all > test-results/lighthouse/tool-versions.txt || true
+      - name: Use the runner's Chrome
+        run: |
+          chrome="$(command -v google-chrome || command -v google-chrome-stable || true)"
+          test -n "$chrome" || { echo "::error::The runner has no Google Chrome."; exit 1; }
+          "$chrome" --version
+          echo "CHROME_PATH=$chrome" >> "$GITHUB_ENV"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Check the portal, business hub and crew Today render their signed-in views from the fixtures
+        run: |
+          python -m pip install playwright==1.57.0
+          PLAYWRIGHT_CHROMIUM_EXECUTABLE="$CHROME_PATH" python tests/browser/test_lighthouse_pages_ui.py
+      - name: Collect three mobile runs per page
+        run: npx --no-install --prefix "$LHCI_TOOLS" lhci collect --config=tests/lighthouse/lighthouserc.cjs
+      - name: Assert performance and accessibility >= 0.9
+        env:
+          LIGHTHOUSE_ENFORCE: ${{ vars.LIGHTHOUSE_ENFORCE }}
+        run: |
+          set +e
+          npx --no-install --prefix "$LHCI_TOOLS" lhci assert --config=tests/lighthouse/lighthouserc.cjs
+          status=$?
+          set -e
+          if [ "$status" -eq 0 ]; then exit 0; fi
+          if [ "$LIGHTHOUSE_ENFORCE" = "true" ]; then
+            echo "::error::Lighthouse mobile scores are below 0.9. Open the egc-lighthouse report artifact for the failing audits."
+            exit "$status"
+          fi
+          echo "::warning::Lighthouse mobile scores are below 0.9. Warn-only until the LIGHTHOUSE_ENFORCE repository variable is 'true'."
+      - name: Write the HTML and JSON reports
+        if: ${{ !cancelled() }}
+        run: npx --no-install --prefix "$LHCI_TOOLS" lhci upload --config=tests/lighthouse/lighthouserc.cjs
+      - name: Record the score table in the job summary
+        if: ${{ !cancelled() }}
+        env:
+          LIGHTHOUSE_ENFORCE: ${{ vars.LIGHTHOUSE_ENFORCE }}
+        run: node tests/lighthouse/summary.mjs >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: egc-lighthouse-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            test-results/
+            .lighthouseci/
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 30

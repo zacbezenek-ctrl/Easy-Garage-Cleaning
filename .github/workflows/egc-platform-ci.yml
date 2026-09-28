@@ -4,6 +4,12 @@ on:
   pull_request:
     paths:
       - "egc-platform/**"
+      - "functions/_data/funnel-definitions.data.json"
+      - "scripts/funnel-definitions.mjs"
+      - "functions/api/mcp-grant.js"
+      - "functions/_lib/mcp-grant-assertion.js"
+      - "functions/_middleware.js"
+      - "tests/mcp-grant.browser.mjs"
       - ".github/workflows/egc-platform-ci.yml"
 
 concurrency:
@@ -24,7 +30,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: pnpm install --no-frozen-lockfile
+      - run: pnpm install --frozen-lockfile
       - name: Generate database migrations
         env:
           DATABASE_URL: postgres://egc:egc@localhost:5432/egc
@@ -37,3 +43,20 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm build
+      - name: Build leaves no uncommitted changes outside generated migrations
+        run: |
+          git status --porcelain
+          test -z "$(git status --porcelain -- . ':!packages/database/migrations')"
+      # MCP-OAUTH: Hub-approved MCP grants in real Chromium, through the built MCP OAuth routes
+      # (apps/mcp/dist) and the real Hub approval page and middleware. No external network.
+      - name: Install root dependencies and the pinned browser for the MCP grant acceptance test
+        working-directory: .
+        run: |
+          npm install --ignore-scripts --no-audit --no-fund
+          npm install --no-save --ignore-scripts --no-audit --no-fund playwright@1.63.0
+          npx --no-install playwright install --with-deps chromium
+      - name: Hub approval of an MCP grant on a phone (Claude client, binding cookie, tampered link)
+        working-directory: .
+        env:
+          FIELD_PLAYWRIGHT_MODULE: ${{ github.workspace }}/node_modules/playwright/index.mjs
+        run: node tests/mcp-grant.browser.mjs

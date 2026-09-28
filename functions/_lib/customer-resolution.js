@@ -1,4 +1,5 @@
 import { requireDispatcher } from './dispatch-service.js';
+import { customerIdentityFields } from './customer-identity.js';
 
 const plain=value=>value!==null&&typeof value==='object'&&!Array.isArray(value);
 const safeId=value=>typeof value==='string'&&/^[A-Za-z0-9_-]{1,180}$/.test(value)&&!/^(_egc_|secure_)/.test(value);
@@ -17,6 +18,20 @@ function clean(customer){
   if(result.phone&&(phone(result.phone).length<10||phone(result.phone).length>15))throw fail('invalid_phone','Enter a complete customer phone number.');
   if(result.email&&!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(result.email))throw fail('invalid_email','Enter a valid customer email address.');
   return result;
+}
+
+/** Exact normalized phone/email matching for server-side linkers that have no
+ * manager session (Stripe memberships). It never creates or guesses: anything
+ * except one consistent customer is returned for manager review. */
+export function matchCustomerIdentity(rows,wanted={}){
+  const p=phone(wanted.phone).length>=10?phone(wanted.phone):'',e=/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email(wanted.email))?email(wanted.email):'';
+  if(!p&&!e)return{status:'no_identity',candidates:[]};
+  const matches=rows.filter(row=>p&&phone(row.phone)===p||e&&email(row.email)===e),candidates=matches.map(row=>row.id).slice(0,20);
+  if(matches.length>1)return{status:'ambiguous',candidates};
+  if(!matches.length)return{status:'none',candidates};
+  const [row]=matches;
+  if(!safeId(row.id)||p&&phone(row.phone)&&phone(row.phone)!==p||e&&email(row.email)&&email(row.email)!==e)return{status:'conflict',candidates};
+  return{status:'matched',customer:row,candidates,method:p&&phone(row.phone)===p?(e&&email(row.email)===e?'exact_phone_email':'exact_phone'):'exact_email'};
 }
 
 /** Read provider identity using server credentials; browser contact links are
@@ -59,8 +74,8 @@ export async function resolveCustomer(store,session,input,{verifyContact,now=new
   if(!safeId(id))throw fail('invalid_customer_id','This customer record needs manager review before booking.',409);
   if(!current&&await store.read('customers',id))throw fail('customer_changed','A matching customer was created during lookup. Retry with the same customer details.',409);
   const created=!current,linked=Boolean(provider&&current&&!current.highlevelContactId),writes=[];
-  if(created)writes.push({collection:'customers',id,patch:{id,...wanted,source:provider?'verified_provider_contact':'manager_intake',createdAt:now,updatedAt:now,createdBy:session.user}});
-  else if(linked)writes.push({collection:'customers',id,revision:current.revision,patch:{highlevelContactId:provider,providerLinkedAt:now,providerLinkedBy:session.user,updatedAt:now}});
+  if(created)writes.push({collection:'customers',id,patch:{id,...wanted,...customerIdentityFields(wanted),source:provider?'verified_provider_contact':'manager_intake',createdAt:now,updatedAt:now,createdBy:session.user}});
+  else if(linked)writes.push({collection:'customers',id,revision:current.revision,patch:{highlevelContactId:provider,...customerIdentityFields(current),providerLinkedAt:now,providerLinkedBy:session.user,updatedAt:now}});
   writes.push({collection:'customerIdentityState',id:'revision',revision:guard?.revision,patch:{updatedAt:now,lastRequestId:input.requestId}});
   writes.push({collection:'customerOperations',id:receiptId,patch:{fingerprint,actorId:session.user,customerId:id,highlevelContactId:provider||current?.highlevelContactId||'',created,linked,createdAt:now,requestId:input.requestId}});
   try{await store.commit(writes);}catch(problem){const recovered=await replay();if(recovered)return recovered;throw problem;}

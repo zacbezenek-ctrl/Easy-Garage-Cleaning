@@ -7,12 +7,17 @@ on:
         required: false
         default: ''
   pull_request:
-    paths: ['egc-platform/**','functions/**','employee*','tests/**','.github/workflows/egc-action-center-ci.yml']
+    paths: ['egc-platform/**','functions/**','employee*','tests/**','crew/**','scripts/repair-stale-schedule-instants.mjs','scripts/backfill-job-contact-keys.mjs','scripts/backfill-customer-identity.mjs','_generate_site.py','_services_data.py','_finalize_urls.py','tools/site-build.json','tools/gallery/**','scripts/render-before-after.mjs','gallery-simple.js','package.json','*.html','blog/**','projects/**','sitemap.xml','llms.txt','message-templates.*','customer-portal.html','staff-paths.js','staff-login.*','.github/workflows/egc-action-center-ci.yml']
   push:
     branches: [main]
-    paths: ['egc-platform/**','functions/**','employee*','tests/**','.github/workflows/egc-action-center-ci.yml']
+    paths: ['egc-platform/**','functions/**','employee*','tests/**','crew/**','scripts/repair-stale-schedule-instants.mjs','scripts/backfill-job-contact-keys.mjs','scripts/backfill-customer-identity.mjs','_generate_site.py','_services_data.py','_finalize_urls.py','tools/site-build.json','tools/gallery/**','scripts/render-before-after.mjs','gallery-simple.js','package.json','*.html','blog/**','projects/**','sitemap.xml','llms.txt','message-templates.*','customer-portal.html','staff-paths.js','staff-login.*','.github/workflows/egc-action-center-ci.yml']
 permissions:
   contents: read
+# Push runs are keyed by commit SHA: a shared refs/heads/main group would let a newer queued
+# run cancel an older PENDING one even with cancel-in-progress false, skipping main commits.
+concurrency:
+  group: egc-action-center-ci-${{ inputs.ref || github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   database-and-platform:
     runs-on: ubuntu-latest
@@ -42,11 +47,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: npm install --ignore-scripts
-      - run: pnpm install --no-frozen-lockfile
+      - run: pnpm install --frozen-lockfile
         working-directory: egc-platform
-      - name: Existing Hub and portal contract regression tests
-        run: npm test
       - name: Build shared packages
         run: pnpm build:packages
         working-directory: egc-platform
@@ -58,6 +60,11 @@ jobs:
         working-directory: egc-platform
       - name: Build all applications
         run: pnpm build
+        working-directory: egc-platform
+      - name: Build leaves no uncommitted changes
+        run: |
+          git status --porcelain
+          test -z "$(git status --porcelain)"
         working-directory: egc-platform
       - name: Apply checked-in migrations twice
         run: |
@@ -74,9 +81,12 @@ jobs:
           node --test services/operations/test/message-completion.check.mjs
           node --test services/operations/test/legacy-walkthrough.check.mjs
         working-directory: egc-platform
-      - name: Durable appointment claims and unknown-outcome reconciliation
+      - name: Durable appointment claims, unknown-outcome reconciliation, MCP safety defaults, OAuth clients and grants, and paged CRM reads
         run: |
           node --test apps/mcp/test/appointments-postgres.check.mjs
+          node --test apps/mcp/test/safety-postgres.check.mjs
+          node --test apps/mcp/test/oauth-postgres.check.mjs
+          pnpm --filter @egc/mcp test:crm-reads:postgres
           node --test apps/api/test/scheduling-postgres.check.mjs
           node --test apps/api/test/service-auth-postgres.check.mjs
         working-directory: egc-platform
@@ -96,15 +106,36 @@ jobs:
           node --test apps/worker/test/provider-notes-read-postgres.check.mjs
           node --test apps/worker/test/call-transcript-postgres.check.mjs
           pnpm --filter @egc/api test:provider-notes:integration
+          pnpm --filter @egc/api test:action-send:integration
         working-directory: egc-platform
       - name: Verify schema has no uncommitted migration drift
         run: |
           pnpm db:generate
           test -z "$(git status --porcelain packages/database/migrations)"
         working-directory: egc-platform
+  functions-bundle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --ignore-scripts --no-audit --no-fund
+      # PRICE-SCRUB: the walkthrough prices must bundle on the Wrangler majors Pages may build with; the check fails on a
+      # leftover runtime import(), an unsupported dynamic import or [ERROR] in the build log, or a missing walkthrough service.
+      - name: Pages Functions bundle builds on Wrangler 3 and 4
+        run: |
+          for major in 3 4; do
+            npx --yes wrangler@$major pages functions build functions --outdir /tmp/pages-fn$major > /tmp/pages-fn$major.log 2>&1 || { cat /tmp/pages-fn$major.log; exit 1; }
+            node scripts/check-functions-bundle.mjs /tmp/pages-fn$major/index.js /tmp/pages-fn$major.log
+          done
   browser:
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
         with:
@@ -113,6 +144,11 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      # Some browser fixtures render server modules with Node (money documents).
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --ignore-scripts --no-audit --no-fund
       - run: pip install playwright==1.57.0
       - run: python -m playwright install --with-deps chromium
       - name: Isolated real-browser Action Center tests
@@ -123,10 +159,46 @@ jobs:
         run: python tests/browser/test_native_booking_ui.py
       - name: Dispatch conflict recovery, openings and mobile controls
         run: python tests/browser/test_dispatch_ui.py
+      - name: Dispatch month grid, time lanes, drag and phone tap-to-assign
+        run: python tests/browser/test_dispatch_calendar_ui.py
+      - name: Recurring plans dialog, mobile layout and save recovery
+        run: python tests/browser/test_recurring_ui.py
       - name: Crew availability and private draft recovery
         run: python tests/browser/test_availability_ui.py
       - name: Personal field agenda and Mountain date boundaries
         run: python tests/browser/test_field_today_ui.py
+      - name: Hub shell registry, draft-safe refreshes and navigation history
+        run: python tests/browser/test_hub_shell_ui.py
+      - name: Hub mobile shell at phone widths
+        run: python tests/browser/test_hub_mobile_ui.py
+      - name: Follow-up owner and due-time settings on a phone
+        run: python tests/browser/test_followup_settings_ui.py
+      - name: Hub home overdue follow-ups widget (isolated and Command center)
+        run: python tests/browser/test_home_widgets_ui.py
+      - name: Walkthrough pricing served by role, offline copy and Hub outage messages
+        run: python tests/browser/test_gameplan_pricing_ui.py
+      - name: Staff directory Team screen on a phone
+        run: python tests/browser/test_staff_ui.py
+      - name: Field job-cost capture on a phone
+        run: python tests/browser/test_field_expenses_ui.py
+      - name: Owner stocked item costs screen, manager read-only view and phone layout
+        run: python tests/browser/test_standard_costs_ui.py
+      - name: Crew pre-job customer texts are idempotent and never re-sent
+        run: python tests/browser/test_prejob_sms_ui.py
+      - name: Server-rendered estimate, invoice and receipt documents on a phone
+        run: python3 -m unittest tests/browser/test_money_document_ui.py
+      - name: Portal insurance certificate, guarantee and terms, and the Hub documents admin
+        run: python tests/browser/test_portal_documents_ui.py
+      - name: Hub money actions on the server money API, flag fallback and phone layout
+        run: python3 -m unittest tests/browser/test_money_actions_ui.py
+      - name: Staff page gate sign-in redirects, 401 scripts and crew service worker installs
+        run: python tests/browser/test_staff_gate_ui.py
+      - name: Customer before/after photos and manager sharing on a phone
+        run: python tests/browser/test_customer_photos_ui.py
+      - name: Public nav drawer keyboard contract and footer tap targets
+        run: python tests/browser/test_nav_drawer_ui.py
+      - name: Owner message template drafts, approval and conflict recovery
+        run: python tests/browser/test_message_templates_ui.py
       - uses: actions/upload-artifact@v4
         if: always()
         with:

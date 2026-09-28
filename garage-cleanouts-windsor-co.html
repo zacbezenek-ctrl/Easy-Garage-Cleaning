@@ -34,6 +34,7 @@
 <script type="application/ld+json">{"@context": "https://schema.org", "@type": "FAQPage", "mainEntity": [{"@type": "Question", "name": "How much does a garage cleanout cost in Windsor?", "acceptedAnswer": {"@type": "Answer", "text": "Most garages: $400–$650. Large three-car or packed garages: $650+. walkthrough-based flat-rate pricing for exact price."}}, {"@type": "Question", "name": "Do you clean out three-car garages in Windsor?", "acceptedAnswer": {"@type": "Answer", "text": "Yes — common in Raindance and Pelican Lakes. Quoted by volume, not hourly."}}, {"@type": "Question", "name": "What's included?", "acceptedAnswer": {"@type": "Answer", "text": "Labor, hauling, dump fees, donations, and floor sweep. All-inclusive flat rate."}}, {"@type": "Question", "name": "Next-day Windsor cleanouts?", "acceptedAnswer": {"@type": "Answer", "text": "Often available — text photos to check today's schedule."}}, {"@type": "Question", "name": "Do you serve Weld County side of Windsor?", "acceptedAnswer": {"@type": "Answer", "text": "Yes — all Windsor addresses in our service area."}}, {"@type": "Question", "name": "Background-checked crew?", "acceptedAnswer": {"@type": "Answer", "text": "Yes — an insured, background-checked crew on every Windsor cleanout."}}, {"@type": "Question", "name": "Donation receipts?", "acceptedAnswer": {"@type": "Answer", "text": "Included — Habitat ReStore and ARC drop-offs with your tax receipt."}}, {"@type": "Question", "name": "How do I book?", "acceptedAnswer": {"@type": "Answer", "text": "Text photos or use the quote form — 5-minute callback during business hours."}}]}</script>
 <script type="application/ld+json">{"@context": "https://schema.org", "@type": "WebPage", "@id": "https://easygaragecleaning.com/garage-cleanouts-windsor-co#webpage", "url": "https://easygaragecleaning.com/garage-cleanouts-windsor-co", "name": "Garage Cleanouts Windsor CO | Get Your Garage Back Fast", "description": "Reclaim your Windsor garage — full empty-out, donation & sweep. Flat-rate pricing. schedule a free on-site walkthrough. Background-checked crew.", "isPartOf": {"@id": "https://easygaragecleaning.com/#website"}, "about": {"@id": "https://easygaragecleaning.com/#business"}, "speakable": {"@type": "SpeakableSpecification", "cssSelector": [".hero-sub", ".faq-q", ".faq-a", ".def-block"]}}</script>
 <link rel="stylesheet" href="/styles.css?v=20260904j">
+<style id="footer-tap">@media(max-width:640px){.site-footer .foot-brand a,.site-footer .foot-col a,.site-footer .foot-bar a{display:inline-flex;align-items:center;min-height:44px}}</style>
 </head>
 <body>
 <a href="#main-content" class="skip-link">Skip to content</a>
@@ -98,7 +99,7 @@
   </div>
 </nav>
 <div class="nav-overlay" id="nav-overlay" aria-hidden="true"></div>
-<aside class="nav-drawer" id="nav-drawer" aria-hidden="true" aria-label="Mobile navigation">
+<aside class="nav-drawer" id="nav-drawer" aria-hidden="true" aria-label="Mobile navigation" inert>
   <div class="nav-drawer-head">
     <span class="logo"><span class="logo-mark"></span>Easy Garage</span>
     <button type="button" class="nav-drawer-close" aria-label="Close menu">&times;</button>
@@ -438,6 +439,7 @@ function initNavDrawer(){
   if(toggle.dataset.navBound)return;
   toggle.dataset.navBound='1';
   let returnFocus=null;
+  drawer.inert=!drawer.classList.contains('open');
   const background=[...document.body.children].filter(el=>el!==drawer&&el!==overlay&&el.tagName!=='SCRIPT');
   const focusable=()=>[...drawer.querySelectorAll('a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])')].filter(el=>!el.hidden&&el.offsetParent!==null);
   function setOpen(open){
@@ -445,6 +447,7 @@ function initNavDrawer(){
     toggle.setAttribute('aria-expanded',open);
     drawer.classList.toggle('open',open);
     drawer.setAttribute('aria-hidden',String(!open));
+    drawer.inert=!open;
     if(overlay){overlay.classList.toggle('open',open);overlay.setAttribute('aria-hidden',String(!open));}
     document.body.classList.toggle('nav-open',open);
     background.forEach(el=>{el.inert=open;});

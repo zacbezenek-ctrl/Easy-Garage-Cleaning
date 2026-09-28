@@ -1,5 +1,7 @@
--- Additive guards for the existing task table. Installed via a checked-in migration.
--- Message completion requires an accepted, verified delivered execution and exact approval.
+-- Additive guards for the existing task table. Installed via checked-in migrations
+-- (latest: 0013_action_kinds_v2). Every message kind requires an exact draft, and its
+-- completion requires an accepted, verified delivered execution, exact approval and
+-- exactly the approved attachment URLs. Internal kinds never carry a draft.
 CREATE OR REPLACE FUNCTION egc_task_revision_guard() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE content_changed boolean; actor text; system_actor text;
 BEGIN
@@ -20,7 +22,7 @@ BEGIN
     IF content_changed AND OLD.approval_status='approved' THEN NEW.approval_status := 'invalidated'; END IF;
   END IF;
   IF NEW.source='operations' THEN
-    IF NEW.kind NOT IN ('manual','callback','prepare_quote','followup_message','review_notes','verify_deposit','job_readiness') OR
+    IF NEW.kind NOT IN ('manual','callback','prepare_quote','followup_message','review_notes','verify_deposit','job_readiness','send_before_afters','send_insurance_certificate','send_quote','send_product_options','schedule_job','answer_question','deposit_reminder') OR
        NEW.status NOT IN ('open','in_progress','blocked','completed','cancelled','superseded') OR
        NEW.waiting_on NOT IN ('none','EGC','customer','provider') OR
        NEW.approval_status NOT IN ('not_required','pending','approved','rejected','expired','invalidated') OR
@@ -29,13 +31,13 @@ BEGIN
        (NEW.waiting_on IN ('customer','provider') AND NEW.review_at IS NULL) THEN
       RAISE EXCEPTION 'managed_action_invariant_failed' USING ERRCODE='23514';
     END IF;
-    IF (NEW.kind='followup_message') IS DISTINCT FROM (NEW.draft_payload IS NOT NULL) THEN
+    IF (NEW.kind IN ('followup_message','send_before_afters','send_insurance_certificate','send_quote','send_product_options','answer_question','deposit_reminder')) IS DISTINCT FROM (NEW.draft_payload IS NOT NULL) THEN
       RAISE EXCEPTION 'managed_action_draft_type_mismatch' USING ERRCODE='23514';
     END IF;
     IF NEW.status='completed' AND NEW.kind='verify_deposit' THEN
       RAISE EXCEPTION 'provider_evidence_completion_not_activated' USING ERRCODE='23514';
     END IF;
-    IF NEW.status='completed' AND NEW.kind='followup_message' AND (TG_OP='INSERT' OR OLD.status IS DISTINCT FROM 'completed') THEN
+    IF NEW.status='completed' AND NEW.kind IN ('followup_message','send_before_afters','send_insurance_certificate','send_quote','send_product_options','answer_question','deposit_reminder') AND (TG_OP='INSERT' OR OLD.status IS DISTINCT FROM 'completed') THEN
       IF TG_OP='INSERT' OR current_setting('egc.communication_completion',true) IS DISTINCT FROM NEW.id::text OR NEW.completed_at IS NULL OR NOT EXISTS (
         SELECT 1 FROM jsonb_array_elements(NEW.completion_evidence) proof
         JOIN communication_executions execution ON execution.id::text=proof->>'executionId'
@@ -53,6 +55,8 @@ BEGIN
             ELSE execution.payload->>'emailTo'=NEW.draft_payload->>'recipient'
               AND coalesce(execution.payload->>'subject','')=coalesce(NEW.draft_payload->>'subject','') END
           AND execution.payload->>'message'=NEW.draft_payload->>'body'
+          AND coalesce(execution.payload->'attachments','[]'::jsonb)=coalesce((SELECT jsonb_agg(attachment->'url' ORDER BY ord)
+            FROM jsonb_array_elements(coalesce(NEW.draft_payload->'attachments','[]'::jsonb)) WITH ORDINALITY approved(attachment,ord)),'[]'::jsonb)
           AND lower(execution.channel)=lower(NEW.draft_payload->>'channel')
           AND approval.created_at <= execution.created_at AND approval.expires_at >= execution.created_at
       ) THEN
@@ -91,7 +95,7 @@ BEGIN
   IF TG_OP='DELETE' THEN contact:=OLD.contact_id; inbound:=true; ELSE contact:=NEW.contact_id; inbound:=(NEW.direction='inbound'); END IF;
   previous_system:=current_setting('egc.operations_system',true);
   PERFORM set_config('egc.operations_system','communication:'||TG_TABLE_NAME,true);
-  FOR t IN SELECT id FROM tasks WHERE contact_id=contact AND kind='followup_message' AND status IN ('open','in_progress','blocked') ORDER BY id FOR UPDATE LOOP
+  FOR t IN SELECT id FROM tasks WHERE contact_id=contact AND kind IN ('followup_message','send_before_afters','send_insurance_certificate','send_quote','send_product_options','answer_question','deposit_reminder') AND status IN ('open','in_progress','blocked') ORDER BY id FOR UPDATE LOOP
     UPDATE tasks SET approval_status='invalidated', status=CASE WHEN inbound THEN 'blocked' ELSE status END WHERE id=t.id;
   END LOOP;
   PERFORM set_config('egc.operations_system',coalesce(previous_system,''),true);

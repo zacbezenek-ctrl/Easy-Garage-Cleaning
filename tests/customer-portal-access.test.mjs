@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import vm from 'node:vm';
+import vm from './helpers/vm-realm.mjs';
 import { createHubSessionCookie } from '../functions/_lib/hub-session.js';
 import { createCustomerPortalSessionCookie, createCustomerPortalCollaboratorAccessToken, verifyCustomerPortalSessionToken } from '../functions/_lib/customer-portal.js';
 import { encodeFirestoreFields, decodeFirestoreFields } from '../functions/_lib/firestore-job.js';
@@ -24,7 +24,8 @@ const request = (path, cookie, body) => new Request(origin + path, {
   headers: { Origin: origin, Cookie: cookie, 'Content-Type': 'application/json' },
   ...(body === undefined ? {} : { body: JSON.stringify(body) }),
 });
-const cookieFor = async (jobId = 'job-1', actorId = '') => (await createCustomerPortalSessionCookie(env, jobId, { actorId, permissions })).split(';')[0];
+// Owner sessions must name their link version (no job here was ever revoked).
+const cookieFor = async (jobId = 'job-1', actorId = '') => (await createCustomerPortalSessionCookie(env, jobId, { actorId, permissions, ...(actorId ? {} : { linkVersion: 0 }) })).split(';')[0];
 const get = cookie => portal.onRequestGet({ env, request: request('/api/customer-portal', cookie) });
 const post = (cookie, body) => portal.onRequestPost({ env, request: request('/api/customer-portal', cookie, body) });
 

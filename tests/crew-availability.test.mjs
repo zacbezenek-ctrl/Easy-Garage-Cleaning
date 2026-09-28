@@ -116,7 +116,7 @@ test('malformed assigned work cannot silently appear as available and corrupt da
   await assert.rejects(g.mutate(g.create()),error=>error.status===503);assert.equal(g.commits.length,0);
 });
 test('HTTP API enforces signed account, same-origin JSON, bounded bodies and no-store responses',async()=>{
-  const f=fixture();let actor=null;const handlers=crewAvailabilityHandlers({session:async()=>actor,storage:()=>f.store}),url='https://easygaragecleaning.com/api/crew-availability';
+  const f=fixture();let actor=null;const handlers=crewAvailabilityHandlers({session:async()=>actor,storage:()=>f.store,now:()=>new Date(NOW)}),url='https://easygaragecleaning.com/api/crew-availability';
   const post=(body,headers={})=>handlers.post({env:{},request:new Request(url,{method:'POST',headers:{'Content-Type':'application/json',Origin:'https://easygaragecleaning.com',...headers},body:typeof body==='string'?body:JSON.stringify(body)})});
   assert.equal((await handlers.get({env:{},request:new Request(url)})).status,401);assert.equal((await post(f.create())).status,401);actor=crew;
   assert.equal((await post(f.create(),{Origin:'https://attacker.example'})).status,403);assert.equal((await post(f.create(),{'Sec-Fetch-Site':'cross-site'})).status,403);assert.equal((await post(f.create(),{'Content-Type':'text/plain'})).status,415);

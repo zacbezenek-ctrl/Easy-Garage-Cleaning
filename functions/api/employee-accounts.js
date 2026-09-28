@@ -1,12 +1,20 @@
 import { getHubSession, hasBusinessAccess, listHubUserProfiles } from '../_lib/hub-session.js';
+import { OWNER_USERNAME } from '../_lib/business-users.js';
 import {
   createEmployeeApplication,
   employeeAccountsConfigured,
   listEmployeeApplications,
   normalizeEmployeeUsername,
   isReservedEmployeeUsername,
-  reviewEmployeeApplication,
+  reviewEmployeeApplicationChange,
 } from '../_lib/employee-accounts.js';
+import {
+  firebaseRevocations,
+  firebaseRevocationTime,
+  recordStaffFirebaseIntent,
+  revokeStaffFirebaseSessions,
+  settleStaffFirebaseIntent,
+} from '../_lib/firebase-revocation.js';
 
 const HOST = /^(?:easygaragecleaning\.com|www\.easygaragecleaning\.com|easy-garage-cleaning\.pages\.dev|localhost(?::\d+)?|127\.0\.0\.1(?::\d+)?)$/;
 
@@ -24,7 +32,7 @@ function allowed(request) {
   try { return HOST.test(new URL(raw).host); } catch { return false; }
 }
 
-const isOwner = session => hasBusinessAccess(session) && normalizeEmployeeUsername(session?.user) === 'zacb';
+const isOwner = session => hasBusinessAccess(session) && normalizeEmployeeUsername(session?.user) === OWNER_USERNAME;
 
 function accountFailure(error, fallbackStatus, fallbackMessage) {
   if (error?.code?.startsWith('EMPLOYEE_ACCOUNT')) return reply(error.status || 503, { ok: false, code: error.code, error: error.message });
@@ -33,8 +41,15 @@ function accountFailure(error, fallbackStatus, fallbackMessage) {
   return reply(fallbackStatus, { ok: false, error: fallbackMessage });
 }
 
-export async function onRequestGet({ request, env }) {
-  const session = await getHubSession(request, env);
+// revocations(env) is the Firebase session revocation service (null when the
+// server account is absent); now() is the review clock.
+export function employeeAccountsHandlers({ session = getHubSession, revocations = firebaseRevocations, now = () => new Date() } = {}) {
+  const deps = { readSession: session, revocations, now };
+  return { get: context => accountsGet(context, deps), post: context => accountsPost(context, deps) };
+}
+
+async function accountsGet({ request, env }, { readSession }) {
+  const session = await readSession(request, env);
   if (!session) return reply(401, { ok: false, error: 'Sign in required' });
   if (!isOwner(session)) return reply(403, { ok: false, error: 'Only Zac can approve employee accounts' });
   if (!employeeAccountsConfigured(env)) return reply(503, { ok: false, code: 'EMPLOYEE_ACCOUNTS_NOT_CONFIGURED', error: 'Employee accounts are unavailable while Zac completes secure Hub setup. Existing applications are preserved.' });
@@ -45,7 +60,7 @@ export async function onRequestGet({ request, env }) {
   }
 }
 
-export async function onRequestPost({ request, env }) {
+async function accountsPost({ request, env }, { readSession, revocations, now }) {
   if (!allowed(request)) return reply(403, { ok: false, error: 'Forbidden origin' });
   if (!employeeAccountsConfigured(env)) return reply(503, { ok: false, code: 'EMPLOYEE_ACCOUNTS_NOT_CONFIGURED', error: 'Employee accounts are unavailable while Zac completes secure Hub setup. This request was not saved; keep your details and retry after setup.' });
   const raw = await request.text();
@@ -71,25 +86,46 @@ export async function onRequestPost({ request, env }) {
   }
 
   if (action === 'review') {
-    const session = await getHubSession(request, env);
+    const session = await readSession(request, env);
     if (!session) return reply(401, { ok: false, error: 'Sign in required' });
     if (!isOwner(session)) return reply(403, { ok: false, error: 'Only Zac can approve employee accounts' });
+    const at = now().toISOString(), decision = String(body.decision || ''), username = normalizeEmployeeUsername(body.username);
+    const service = revocations(env);
+    // Intent first, so a change that lands after this request stops is still
+    // revoked. The revocation time is read after the review is saved (rounded
+    // past its second): sessions minted before the save end with it.
+    const target = username && ['approved', 'rejected'].includes(decision) && !isReservedEmployeeUsername(username) ? [username] : [];
+    const intent = target.length ? await recordStaffFirebaseIntent(service, target, 'account_status', at) : '';
+    let review;
     try {
-      const account = await reviewEmployeeApplication(
+      review = await reviewEmployeeApplicationChange(
         env,
         String(body.username || ''),
-        String(body.decision || ''),
+        decision,
         session.user,
+        at,
       );
-      return reply(200, { ok: true, account });
     } catch (error) {
       const validation = /^(Choose approve|Employee application not found|Business accounts are managed)/.test(error?.message || '');
+      // A refusal changed nothing; any other failure may have saved the change.
+      if (validation) await settleStaffFirebaseIntent(service, target, intent, now().toISOString());
+      else if (target.length) await revokeStaffFirebaseSessions(service, target, 'account_status', firebaseRevocationTime(now()), intent);
       return accountFailure(error, validation ? 400 : 502, validation ? error.message : 'Employee application could not be reviewed. Try again later.');
     }
+    // The saved review already ended Hub sessions; a Firebase failure is
+    // reported and queued, never turned into a failed review.
+    let firebaseRevocation = { status: 'not_needed' };
+    if (review.accessChanged) firebaseRevocation = await revokeStaffFirebaseSessions(service, [review.account.username], 'account_status', firebaseRevocationTime(now()), intent);
+    else await settleStaffFirebaseIntent(service, target, intent, now().toISOString());
+    return reply(200, { ok: true, account: review.account, firebaseRevocation });
   }
 
   return reply(400, { ok: false, error: 'Unsupported employee account action' });
 }
+
+const handlers = employeeAccountsHandlers();
+export const onRequestGet = handlers.get;
+export const onRequestPost = handlers.post;
 
 export async function onRequestOptions({ request }) {
   if (!allowed(request)) return new Response(null, { status: 403 });

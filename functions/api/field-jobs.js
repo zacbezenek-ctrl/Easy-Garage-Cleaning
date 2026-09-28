@@ -2,11 +2,12 @@ import { getHubSession, hasBusinessAccess, listHubUserProfiles } from '../_lib/h
 import { employeeAccountsConfigured, listEmployeeApplications } from '../_lib/employee-accounts.js';
 import { firebaseServiceAccountConfigured } from '../_lib/firebase-service-account.js';
 import { createJobAssignmentAccess } from '../_lib/job-assignment.js';
-import { fieldCommand, fieldFailure, fieldFingerprint, fieldId, fieldJobProjection, fieldPhotos, fieldRequestId, fieldStage, fieldText } from '../_lib/field-execution.js';
+import { fieldCancelled, fieldCommand, fieldFailure, fieldFingerprint, fieldId, fieldJobProjection, fieldPhotos, fieldRequestId, fieldStage, fieldText, fieldViewerWorksOn } from '../_lib/field-execution.js';
 import { createFieldStore } from '../_lib/field-execution-store.js';
 import { createFieldPhotoClient, decodeFieldPhoto, fieldPhotosConfigured, verifyFieldPhotoMetadata } from '../_lib/field-execution-photos.js';
 import { syncFieldCompletion } from '../_lib/field-execution-sync.js';
 import { fieldJobTime } from '../_lib/field-execution-time.js';
+import { fieldExpenseCloseoutMissing, fieldExpensesEnabled, requireFieldExpenseCloseout } from '../_lib/field-expenses.js';
 
 const reply = (status, body) => Response.json(body, { status, headers: { 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' } });
 const mutationOriginAllowed = request => {
@@ -43,15 +44,22 @@ async function displayContext(ctx, env, jobs) {
     const profiles = await listEmployeeApplications(env).catch(() => []);
     for (const profile of profiles) if (profile.status === 'approved') crewNames[String(profile.username || profile.user).toLowerCase()] = profile.displayName;
   }
-  const resourceIds = [...new Set(jobs.flatMap(job => [job.vehicleId, job.crewId]).filter(fieldId))];
+  const segmentResources = job => Array.isArray(job.assignmentSegments) ? job.assignmentSegments.flatMap(segment => [segment?.vehicleId, segment?.crewId]) : [];
+  const resourceIds = [...new Set(jobs.flatMap(job => [job.vehicleId, job.crewId, ...segmentResources(job)]).filter(fieldId))];
   const resources = new Map(await Promise.all(resourceIds.map(async id => [id, await ctx.store.readResource(id).catch(() => null)])));
-  return job => ({ manager: ctx.manager, crewNames, vehicleName: resources.get(job.vehicleId)?.name || '', crewName: resources.get(job.crewId)?.name || '' });
+  const resourceNames = Object.fromEntries([...resources].filter(([, row]) => row?.name).map(([id, row]) => [id, row.name]));
+  // viewer limits a split job to the signed-in employee's own segments.
+  return job => ({ manager: ctx.manager, crewNames, vehicleName: resources.get(job.vehicleId)?.name || '', crewName: resources.get(job.crewId)?.name || '', viewer: ctx.session.user, resourceNames });
 }
 
 async function detail(ctx, env, jobId, cursor = '') {
   const job = await authorizedJob(ctx, jobId);
   const [history, display] = await Promise.all([ctx.store.events(jobId, cursor), displayContext(ctx, env, [job])]);
-  return { job: fieldJobProjection(job, history.events, display(job)), historyCursor: history.cursor, photosAvailable: fieldPhotosConfigured(env), timezone: 'America/Denver' };
+  const projection = fieldJobProjection(job, history.events, display(job));
+  // With FIELD_EXPENSE_CLOSEOUT_REQUIRED on, an open job lists its missing cost closeout (no amounts).
+  if (projection.canEdit) projection.completionMissing.push(...await fieldExpenseCloseoutMissing(env, job.id, { safe: true }));
+  // features lets the job page skip optional modules (and their API calls) that are switched off.
+  return { job: projection, historyCursor: history.cursor, photosAvailable: fieldPhotosConfigured(env), features: { jobCosts: fieldExpensesEnabled(env) }, timezone: 'America/Denver' };
 }
 
 function errorResponse(error) {
@@ -81,9 +89,9 @@ export async function onRequestGet({ request, env }) {
     for (const job of source) {
       // This is the signed-in employee's day, including for managers. Managers
       // can open any job by ID and use dispatch for the company-wide view.
-      if (!await ctx.access.assigned(job)) continue;
+      if (!await ctx.access.assigned(job) || !fieldViewerWorksOn(job, ctx.session.user, date, end.toISOString().slice(0, 10))) continue;
       const stage = fieldStage(job), completed = ['completed', 'paid', 'invoiced', 'review_requested'].includes(stage);
-      if (status === 'active' && (completed || stage === 'cancelled') || status === 'completed' && !completed || status === 'cancelled' && stage !== 'cancelled') continue;
+      if (status === 'active' && (completed || fieldCancelled(job)) || status === 'completed' && !completed || status === 'cancelled' && stage !== 'cancelled') continue;
       jobs.push(job);
     }
     jobs.sort((a, b) => `${a.date} ${a.time || '99:99'}`.localeCompare(`${b.date} ${b.time || '99:99'}`) || a.id.localeCompare(b.id));
@@ -112,7 +120,7 @@ async function readInput(request) {
 async function savePhoto(ctx, env, job, input, fingerprint, receipt) {
   if (!['before', 'progress', 'after', 'damage', 'walkthrough'].includes(input.category) || typeof input.caption !== 'string' || input.caption.length > 500) throw fieldFailure('Choose a photo category and a caption no longer than 500 characters.');
   if(input.category==='walkthrough'&&!ctx.manager)throw fieldFailure('Only a manager can attach the signed walkthrough reference photos.',403,'FIELD_REFERENCE_PHOTO_MANAGER_REQUIRED');
-  if (fieldStage(job) === 'cancelled') throw fieldFailure('This job is cancelled. Ask operations before adding evidence.', 409, 'FIELD_JOB_CLOSED');
+  if (fieldCancelled(job)) throw fieldFailure(fieldStage(job) === 'cancelled' ? 'This job is cancelled. Ask operations before adding evidence.' : 'This job was marked a no-show. Ask operations before adding evidence.', 409, 'FIELD_JOB_CLOSED');
   if (fieldPhotos(job).length >= 100) throw fieldFailure('This job already has 100 field photos. Contact operations to archive photos before adding more.', 409, 'FIELD_PHOTO_LIMIT');
   const picture = decodeFieldPhoto(input.dataUrl), client = await createFieldPhotoClient(env);
   let pending = receipt;
@@ -131,7 +139,7 @@ async function savePhoto(ctx, env, job, input, fingerprint, receipt) {
     const latest = await authorizedJob(ctx, job.id), currentReceipt = await ctx.store.readEvent(job.id, input.requestId);
     if (currentReceipt?.state === 'applied') return;
     if (!currentReceipt || currentReceipt.fingerprint !== fingerprint) throw fieldFailure('This upload receipt changed. Contact operations.', 409, 'FIELD_IDEMPOTENCY_CONFLICT');
-    if (fieldStage(latest) === 'cancelled') throw fieldFailure('The job was cancelled during upload. The photo has not been added to the job.', 409, 'FIELD_JOB_CLOSED');
+    if (fieldCancelled(latest)) throw fieldFailure('The job was cancelled or marked a no-show during upload. The photo has not been added to the job.', 409, 'FIELD_JOB_CLOSED');
     const existing = fieldPhotos(latest);
     if (existing.length >= 100) throw fieldFailure('This job already has 100 field photos. Contact operations.', 409, 'FIELD_PHOTO_LIMIT');
     const now = new Date().toISOString(), photo = { id: input.requestId, fileId: pending.fileId, category: input.category, caption: fieldText(input.caption, 500), actorId: ctx.session.user, actorName: pending.actorName, createdAt: now, verified: true, mime: picture.mime, bytes: picture.bytes.length };
@@ -161,6 +169,7 @@ export async function onRequestPost(handlerContext) {
     }
     else {
       if (receipt) throw fieldFailure('This action is pending verification. Retry shortly.', 409, 'FIELD_ACTION_PENDING');
+      if (input.action === 'complete') await requireFieldExpenseCloseout(env, job, input);
       const result = fieldCommand(job, { ...ctx.session, manager: ctx.manager }, input);
       await ctx.store.commit(job, result.patch, { ...result.event, fingerprint });
       if (input.action === 'complete' && typeof handlerContext.waitUntil === 'function') {

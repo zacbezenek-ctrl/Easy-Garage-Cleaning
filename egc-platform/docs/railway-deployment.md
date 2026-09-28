@@ -91,6 +91,8 @@ GHL_WRITEBACK_ENABLED=true
 
 The OAuth client secret is not required for the private-integration-token sync path. Keep it available only if/when the deployment switches to GHL OAuth.
 
+The signed messaging cron is off unless `EGC_MESSAGING_CRON_ENABLED=true` (`EGC_MESSAGING_CRON_DRY_RUN=true` asks the Hub for dry runs only). It then also needs `API_BEARER_TOKEN=<same value as egc-api>` to sign its `/api/messaging-cron` requests. That value is the API's root service-signing secret: whoever holds it can sign any API-to-Hub service request, for any actor and path, not only the cron. Setting it on the worker extends that trust to the worker process. The Hub runs the messaging schedule only for the `messaging-cron-worker` integration actor on `/api/messaging-cron`, but its other service endpoints cannot tell which process signed. Leave the cron off, and the secret unset on the worker, until that trade-off is accepted. A purpose-scoped worker signing key is a planned follow-up.
+
 ### egc-api
 
 ```
@@ -111,7 +113,9 @@ MCP_OAUTH_USER=<private EGC admin username>
 MCP_OAUTH_PASSWORD=<random 20+ character password>
 ```
 
-`MCP_BEARER_TOKEN` is optional and should only be set for internal diagnostic clients. ChatGPT uses OAuth.
+`MCP_BEARER_TOKEN` is optional and should only be set for internal diagnostic clients. ChatGPT uses OAuth. It is read-only; set `MCP_BEARER_WRITE_ENABLED=true` only while a startup verification that writes is running (`EGC_OPERATIONS_CANARY_ON_START`, `META_CAPI_VERIFY_ON_START` with its dry-run sync, `META_CAPI_TEST_ON_START`), then remove it. Without it the Meta verification skips its write-scoped checks and logs `bearer_write_disabled`.
+
+With `EGC_OPERATIONS_ENABLED=true`, one-step MCP customer sends (`conversations.send_message`, `send_sms`, `egc.send_followup`) are paused and refused unless `EGC_MCP_DIRECT_SENDS_ENABLED=true`. Drafts queued with `actions.propose` (kind `followup_message`) can be approved by an owner or manager in the Employee Hub, but approval does not send. Sending an approved draft needs the Hub one-tap send (Phase 3) or MCP two-step confirmation (Phase 6), and neither is enabled yet. Until one ships, approved follow-up drafts have no send or completion path and can only be cancelled, unless you set `EGC_MCP_DIRECT_SENDS_ENABLED=true` to let ChatGPT send one-step messages again (with the recipient and do-not-contact checks, and `actions.complete_from_message` for completion).
 
 ### egc-portal
 
