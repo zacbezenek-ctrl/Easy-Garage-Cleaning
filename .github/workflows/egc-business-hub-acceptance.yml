@@ -36,6 +36,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      # The regressions import Pages Functions that depend on root packages (e.g. @noble/hashes).
+      - run: npm install --ignore-scripts --no-audit --no-fund
       - name: Business account, role and isolation regressions
         run: node --test tests/business-hub*.test.mjs
       - name: Read-only production route and privacy checks
