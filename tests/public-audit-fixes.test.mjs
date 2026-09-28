@@ -2,12 +2,13 @@ import {sourceFiles} from './source-files.mjs';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 import test from 'node:test';
+import vm from 'node:vm';
 
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
 
 test('homepage loads analytics outside the critical rendering path', () => {
   const html = read('index.html');
-  assert.match(html, /<script src="\/analytics-loader\.js\?v=20260904b" defer><\/script>/);
+  assert.match(html, /<script src="\/analytics-loader\.js\?v=20260928a" defer><\/script>/);
   assert.doesNotMatch(html, /<script[^>]+src="https:\/\/www\.googletagmanager\.com\/gtag\/js/);
   assert.doesNotMatch(html, /<script[^>]*>[\s\S]*?connect\.facebook\.net\/en_US\/fbevents\.js[\s\S]*?<\/script>/);
   assert.doesNotMatch(html, /<script[^>]*>[\s\S]*?www\.clarity\.ms\/tag[\s\S]*?<\/script>/);
@@ -164,7 +165,7 @@ test('every public lead form mirrors to HighLevel and carries its own consent di
     .filter((page) => /<form[^>]*class=["'][^"']*(?:lead-form-lite|multi-step-form)/i.test(page.html));
   assert.ok(pages.length >= 45, 'expected the full lead-form page set');
   for (const page of pages) {
-    assert.match(page.html, /<script[^>]+src="\/fb-capture\.js\?v=20260903c"[^>]*>/, `${page.name} does not load the current HighLevel mirror`);
+    assert.match(page.html, /<script[^>]+src="\/fb-capture\.js\?v=20260928a"[^>]*>/, `${page.name} does not load the current HighLevel mirror`);
     const forms = [...page.html.matchAll(/<form[^>]*class=["'][^"']*(?:lead-form-lite|multi-step-form)[^"']*["'][^>]*>([\s\S]*?)<\/form>/gi)];
     assert.ok(forms.length, `${page.name} has no readable lead form`);
     for (const form of forms) {
@@ -173,4 +174,58 @@ test('every public lead form mirrors to HighLevel and carries its own consent di
       assert.match(form[0], /href=["']\/terms-of-service["']/, `${page.name} lead form has no terms link`);
     }
   }
+});
+
+test('every page and the site generator pin the current relay and analytics loader versions', () => {
+  const root = new URL('../', import.meta.url);
+  const pages = sourceFiles(root)
+    // HTML pages plus Pages Functions that render HTML (e.g. /before-after).
+    .filter((entry) => entry.isFile() && (entry.name.endsWith('.html') || (entry.name.endsWith('.js') && /[\\/]functions(?:[\\/]|$)/.test(entry.parentPath))))
+    .map((entry) => ({ name: `${entry.parentPath}/${entry.name}`, html: readFileSync(`${entry.parentPath}/${entry.name}`, 'utf8') }));
+  assert.ok(pages.some((page) => page.name.endsWith('functions/before-after.js')), 'server-rendered pages are scanned too');
+  const stale = [];
+  for (const page of pages) {
+    for (const [ref] of page.html.matchAll(/\/(?:fb-capture|analytics-loader)\.js(?:\?v=[^"']*)?/g)) {
+      if (!ref.endsWith('?v=20260928a')) stale.push(`${page.name}: ${ref}`);
+    }
+  }
+  assert.deepEqual(stale, []);
+  const generator = read('_generate_site.py');
+  for (const [ref] of generator.matchAll(/(?:fb-capture|analytics-loader)\.js\?v=(?!\[)[^"'\s]+/g)) {
+    assert.equal(ref.replace(/^.*\?v=/, ''), '20260928a', `_generate_site.py still writes ${ref}`);
+  }
+  const privateFiles = generator.match(/private_files = \{([^}]*)\}/)[1];
+  for (const page of ['junk-removal-quote.html', 'junk-removal-quote-thanks.html', 'ads.html', 'thank-you.html']) {
+    assert.ok(privateFiles.includes(`"${page}"`), `${page} must stay out of the sitemap and llms.txt inventory`);
+  }
+});
+
+test('analytics loader starts vendor tags immediately only when data-eager="1"', () => {
+  const source = read('analytics-loader.js');
+  const run = (eager) => {
+    const added = [];
+    const listeners = [];
+    const timers = [];
+    const window = {
+      addEventListener: (type, fn) => listeners.push({ type, fn }),
+      removeEventListener: () => {},
+      setTimeout: (fn, ms) => timers.push({ fn, ms }),
+    };
+    const document = {
+      currentScript: { getAttribute: (name) => (name === 'data-eager' && eager ? '1' : null) },
+      createElement: () => ({}),
+      head: { appendChild: (script) => added.push(script.src) },
+    };
+    vm.runInNewContext(source, { window, document, Date });
+    return { added, listeners, timers };
+  };
+  const lazy = run(false);
+  assert.deepEqual(lazy.added, [], 'default pages keep vendor tags out of the first render');
+  lazy.listeners.find((l) => l.type === 'load').fn();
+  assert.equal(lazy.timers[0].ms, 2500);
+  const eager = run(true);
+  assert.equal(eager.added.length, 3);
+  assert.ok(eager.added.some((src) => src.includes('googletagmanager.com/gtag/js?id=G-CV7HJ2QGHX')));
+  assert.ok(eager.added.some((src) => src.includes('connect.facebook.net/en_US/fbevents.js')));
+  assert.ok(eager.added.some((src) => src.includes('clarity.ms/tag/')));
 });

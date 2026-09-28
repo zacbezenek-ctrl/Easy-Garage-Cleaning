@@ -589,7 +589,7 @@ def dedupe_mobile_sheet_css(text):
     return text[:first + len(block)] + text[first + len(block):].replace(block, "")
 
 GTAG_BLOCK = """<!-- Analytics events queue immediately; vendor libraries load after interaction. -->
-<script src="/analytics-loader.js?v=20260904b" defer></script>
+<script src="/analytics-loader.js?v=20260928a" defer></script>
 """
 
 TRACKING_BLOCK = ""
@@ -2222,7 +2222,7 @@ def render_pricing():
 <p class="section-sub">Unlike hourly haulers, we set one complete price after seeing the property with you. These ranges help you plan; the exact number is approved before work begins.</p>
 </div>
 <div class="pricing-how-grid reveal">
-<div class="step"><div class="step-num">Single item</div><h3>$99–150</h3><p>One couch, mattress, appliance, hot tub, treadmill, or bulky piece. Priced individually — not by the hour.</p></div>
+<div class="step"><div class="step-num">Single item</div><h3>$99–150</h3><p>One couch, mattress, appliance, treadmill, or bulky piece. Priced individually — not by the hour. Hot tubs are $400–800, depending on size and access.</p></div>
 <div class="step"><div class="step-num">Partial load</div><h3>$250–400</h3><p>A corner of the garage, a few furniture pieces, or a small haul. Great for targeted cleanouts.</p></div>
 <div class="step"><div class="step-num">Standard garage</div><h3>$400–650</h3><p>Most single-car or moderately full two-car garages. Our most common booking in Fort Collins.</p></div>
 <div class="step"><div class="step-num">Full garage / estate</div><h3>$650+</h3><p>Packed two-car garages, multi-space cleanouts, or estate situations. Final pricing follows the on-site walkthrough.</p></div>
@@ -2639,7 +2639,7 @@ def render_spring_blog():
 <li>Spare refrigerators and freezers hogging a parking spot</li>
 <li>Storage totes labeled "winter" that never got opened</li>
 </ul>
-<p>Single bulky pieces — couches, treadmills, hot tubs — often qualify for <a href="/junk-removal-fort-collins-co.html" class="content-link">junk removal in Fort Collins</a> at $99–$150 before a full garage haul.</p>
+<p>Single bulky pieces — couches, treadmills, mattresses — often qualify for <a href="/junk-removal-fort-collins-co.html" class="content-link">junk removal in Fort Collins</a> at $99–$150 before a full garage haul.</p>
 <h2>Step 3: Donate before you dump</h2>
 <p>Colorado tax law still allows charitable deductions when you itemize and have receipts. Spring is ideal for:</p>
 <ul>
@@ -3515,7 +3515,7 @@ def patch_index_iteration7(text):
 
 def collect_public_html_urls():
     urls = set()
-    private_files = {"404.html", "ads.html", "apply.html", "copilot.html", "customer-portal.html", "employee-signup.html", "quote.html", "thank-you.html"}
+    private_files = {"404.html", "ads.html", "apply.html", "copilot.html", "customer-portal.html", "employee-signup.html", "junk-removal-quote.html", "junk-removal-quote-thanks.html", "quote.html", "thank-you.html"}
     for path in ROOT.rglob("*.html"):
         rel = path.relative_to(ROOT).as_posix()
         if "employee" in path.name.lower() or rel in private_files or rel.startswith(("crew/", "contracts/")):
@@ -3858,7 +3858,7 @@ def patch_performance_and_tracking(text, is_home=False):
         "",
         text,
     )
-    loader = '\n<!-- Analytics events queue immediately; vendor libraries load after interaction. -->\n<script src="/analytics-loader.js?v=20260904b" defer></script>\n'
+    loader = '\n<!-- Analytics events queue immediately; vendor libraries load after interaction. -->\n<script src="/analytics-loader.js?v=20260928a" defer></script>\n'
     scrub_pattern = r'(<script>(?:(?!</script>)[\s\S])*?__egcGarageGuardReturn(?:(?!</script>)[\s\S])*?</script>\s*)'
     loader_pattern = r'\s*(?:<!-- Analytics events queue immediately; vendor libraries load after interaction\. -->\s*)?<script src="/analytics-loader\.js\?v=[^"]+" defer></script>\s*'
     scrub = re.search(scrub_pattern, text)
@@ -4124,14 +4124,14 @@ def patch_static_pages():
         text = dedupe_mobile_sheet_css(original)
         text = patch_performance_and_tracking(text)
         text = wrap_scroll_tables(text)
-        text = re.sub(r'/analytics-loader\.js\?v=[^"\']+', '/analytics-loader.js?v=20260904b', text)
+        text = re.sub(r'/analytics-loader\.js\?v=[^"\']+', '/analytics-loader.js?v=20260928a', text)
         text = re.sub(r'^[ \t]+$', '', text, flags=re.M)
         text = re.sub(r'/styles\.css\?v=[^"\']+', '/styles.css?v=20260904j', text)
         has_public_form = bool(re.search(r'<form[^>]*class=["\'][^"\']*(?:lead-form-lite|multi-step-form)', text, re.I))
         if has_public_form and 'fb-capture.js' not in text:
-            text = text.replace('</body>', '<script src="/fb-capture.js?v=20260903c" defer></script>\n</body>', 1)
+            text = text.replace('</body>', '<script src="/fb-capture.js?v=20260928a" defer></script>\n</body>', 1)
         elif not has_public_form:
-            text = re.sub(r'\s*<script src="/fb-capture\.js\?v=20260903c" defer></script>', '', text)
+            text = re.sub(r'\s*<script src="/fb-capture\.js\?v=[^"]+" defer></script>', '', text)
         guarded = enforce_walkthrough_first_copy(text)
         if guarded != original:
             path.write_text(guarded, encoding="utf-8")

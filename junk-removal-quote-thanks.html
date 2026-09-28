@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- Analytics events queue immediately; vendor libraries load after interaction. -->
+<script src="/analytics-loader.js?v=20260928a" data-eager="1" defer></script>
+<title>Request Received | Easy Garage Cleaning</title>
+<meta name="description" content="Your junk pickup request is in. We'll be in touch shortly to lock your window.">
+<meta name="robots" content="noindex, nofollow">
+<meta name="theme-color" content="#0a1628">
+<meta name="format-detection" content="telephone=no">
+<link rel="icon" type="image/x-icon" href="/favicon.ico">
+<style>
+:root{--ink:#0a1628;--text:#2b3647;--muted:#4f5a6b;--paper:#f5f1ea;--line:rgba(10,22,40,.14);--accent:#ff5b1f;--cta:#c43d0a;--cta-hover:#a3330a;--sans:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;--serif:Georgia,"Times New Roman",Times,serif;color-scheme:light}
+*,*::before,*::after{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;font-family:var(--sans);font-size:16px;line-height:1.55;color:var(--text);background:var(--paper);-webkit-font-smoothing:antialiased;min-height:100vh;display:flex;flex-direction:column}
+h1,p,ol{margin:0}
+a:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
+.wrap{max-width:640px;margin:0 auto;padding:0 16px;width:100%}
+.top{background:var(--ink);color:#fff;border-bottom:3px solid var(--accent)}
+.top .wrap{min-height:46px;display:flex;align-items:center}
+.logo{font-family:var(--serif);font-weight:700;font-size:18px;display:flex;align-items:center;gap:8px}
+.logo .dot{width:9px;height:9px;border-radius:50%;background:var(--accent)}
+main{flex:1;padding:28px 0 40px}
+.check{width:52px;height:52px;border-radius:50%;background:#dcfce7;display:flex;align-items:center;justify-content:center;margin-bottom:14px}
+h1{font-family:var(--serif);font-size:28px;line-height:1.18;letter-spacing:-.015em;color:var(--ink);margin-bottom:10px;text-wrap:balance}
+.lede{font-size:17px;margin-bottom:20px}
+.ctas{display:grid;gap:10px;margin-bottom:18px}
+.btn{display:flex;align-items:center;justify-content:center;min-height:52px;padding:12px 18px;border-radius:8px;font:700 17px/1.2 var(--sans);text-decoration:none;text-align:center;border:2px solid transparent}
+.btn-primary{background:var(--cta);color:#fff}
+.btn-primary:hover{background:var(--cta-hover)}
+.btn-ghost{background:#fff;color:var(--ink);border-color:var(--ink)}
+.btn-ghost:hover{background:#ebe4d6}
+.help{font-size:14px;color:var(--muted);margin-bottom:22px}
+.area{background:#fff7ed;border:1px solid #fdba74;border-radius:10px;padding:12px 14px;margin-bottom:20px;color:#7c2d12;font-size:15px}
+.next{background:#fff;border:1px solid var(--line);border-radius:10px;padding:16px 16px 16px 36px;margin-bottom:18px}
+.next li{margin-bottom:6px}
+.next li:last-child{margin-bottom:0}
+.rid{font-size:13px;color:var(--muted);word-break:break-all}
+.rid code{font:13px/1.4 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:var(--ink)}
+.foot{background:var(--ink);color:#cfd6e0;font-size:14px;padding:20px 0 24px;text-align:center}
+.foot a{color:#fff}
+.foot p+p{margin-top:6px}
+@media (min-width:600px){h1{font-size:36px}main{padding:56px 0 64px}.ctas{grid-template-columns:auto auto;justify-content:start}}
+</style>
+</head>
+<body>
+<header class="top">
+<div class="wrap"><span class="logo"><span class="dot" aria-hidden="true"></span>Easy Garage Cleaning</span></div>
+</header>
+<main id="main">
+<div class="wrap">
+<div class="check" aria-hidden="true"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#166534" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg></div>
+<h1 id="thanks-h1">Got it — we'll text or call you shortly to lock your window.</h1>
+<p class="lede">Mon–Sat 7am–7pm. After hours? We'll reply first thing.</p>
+<p class="area" id="out-of-area" hidden>Heads up: that ZIP looks outside our 7-town area (Fort Collins, Loveland, Windsor, Timnath, Wellington, Severance and LaPorte). We'll still reach out to see if we can help.</p>
+<div class="ctas">
+<a class="btn btn-primary" href="sms:+19709991818?&amp;body=Hi!%20Here%27s%20a%20photo%20of%20what%20needs%20to%20go.">Text us a photo (optional)</a>
+<a class="btn btn-ghost" href="tel:+19709991818">Call (970) 999-1818</a>
+</div>
+<p class="help">A photo just helps us bring the right crew. Your flat price is still confirmed on-site before we lift anything.</p>
+<ol class="next">
+<li id="step-1">We text or call to lock your pickup window.</li>
+<li>The crew arrives and confirms your flat price on-site.</li>
+<li>You approve, and we load, haul, donate what we can, and sweep up.</li>
+</ol>
+<p class="rid" id="rid-line" hidden>Your request ID: <code id="rid"></code></p>
+</div>
+</main>
+<footer class="foot">
+<p>Easy Garage Cleaning LLC · Fort Collins, CO · Insured</p>
+<p><a href="/privacy-policy">Privacy Policy</a> · <a href="/terms-of-service">Terms</a></p>
+</footer>
+<script>
+(function () {
+  // Conversion value = expected job revenue × close rate (docs/google-ads-plan.md
+  // §5.2: about $100 a lead). CLOSE_RATE is an estimate; set it to the real one.
+  var CLOSE_RATE = 0.35;
+  var VALUE = { 'Single item': 125, 'A few items': 325, 'Partial load': 325, 'Garage or full cleanout': 525, 'Hot tub': 600 };
+  // "Not sure" on an item-specific ad variant is valued like that item (same as HighLevel).
+  var PAGE_VALUE = { furniture: 125, appliance: 125, 'hot-tub': 600, yard: 400, 'garage-cleanout': 525, estate: 525 };
+  var rid = '';
+  try { rid = new URLSearchParams(location.search).get('rid') || ''; } catch (e) {}
+  if (!/^[A-Za-z0-9-]{8,64}$/.test(rid)) rid = '';
+  var storageReadable = true;
+  var raw = null;
+  try { raw = sessionStorage.getItem('egc_lp_lead'); } catch (e) { storageReadable = false; }
+  var lead = {};
+  try { lead = JSON.parse(raw || '{}') || {}; } catch (e) { lead = {}; }
+  if (!rid || lead.rid !== rid) lead = {};
+  // Only the browser that submitted the form counts the conversion. A shared,
+  // bookmarked or reopened thanks URL has no matching submit record.
+  var submittedHere = !!rid && (lead.rid === rid || !storageReadable);
+  if (lead.area === 'no') document.getElementById('out-of-area').hidden = false;
+  if (lead.consent === 'yes') {
+    document.getElementById('thanks-h1').textContent = "Got it — we'll text you shortly to lock your window.";
+  } else if (lead.consent === 'no') {
+    document.getElementById('thanks-h1').textContent = "Got it — we'll call you shortly to lock your window.";
+    document.getElementById('step-1').textContent = 'We call to lock your pickup window.';
+  }
+  if (!rid) return;
+  document.getElementById('rid').textContent = rid;
+  document.getElementById('rid-line').hidden = false;
+  if (!submittedHere) return;
+
+  // One conversion per request id, even across reloads and back/forward.
+  function alreadyCounted() {
+    var key = 'egc_lp_conversions';
+    try {
+      var seen = JSON.parse(localStorage.getItem(key) || '[]');
+      if (!Array.isArray(seen)) seen = [];
+      if (seen.indexOf(rid) !== -1) return true;
+      seen.push(rid);
+      localStorage.setItem(key, JSON.stringify(seen.slice(-25)));
+      return false;
+    } catch (e) {
+      try {
+        if (sessionStorage.getItem('egc_conv_' + rid)) return true;
+        sessionStorage.setItem('egc_conv_' + rid, '1');
+      } catch (e2) {}
+      return false;
+    }
+  }
+  function leadValue() {
+    // Out-of-area leads are not worth bidding for.
+    if (lead.area === 'no') return 0;
+    var base = VALUE[lead.service] || PAGE_VALUE[lead.page_service] || 250;
+    return Math.round(base * CLOSE_RATE);
+  }
+  function fire() {
+    if (alreadyCounted()) return;
+    window.dataLayer = window.dataLayer || [];
+    if (typeof window.gtag !== 'function') window.gtag = function () { window.dataLayer.push(arguments); };
+    window.gtag('event', 'generate_lead', {
+      transaction_id: rid,
+      value: leadValue(),
+      currency: 'USD',
+      page_variant: lead.variant || 'unknown',
+      in_service_area: lead.area || 'unknown'
+    });
+  }
+  // Deferred analytics-loader.js has defined gtag and queued its config by DOMContentLoaded.
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', fire);
+  else fire();
+}());
+</script>
+</body>
+</html>

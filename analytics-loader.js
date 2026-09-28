@@ -5,6 +5,9 @@
   var loaderScript = document.currentScript;
   var requestedPixel = loaderScript && loaderScript.getAttribute('data-meta-pixel-id');
   var metaPixelId = /^\d{8,20}$/.test(requestedPixel || '') ? requestedPixel : '970332989051988';
+  // data-eager="1": paid landing pages load the vendor tags immediately so
+  // short ad-click visits still record the click and the conversion.
+  var eager = !!loaderScript && loaderScript.getAttribute('data-eager') === '1';
 
   window.dataLayer = window.dataLayer || [];
   window.gtag = window.gtag || function () { window.dataLayer.push(arguments); };
@@ -53,4 +56,5 @@
     // Keep analytics out of the first render without losing most short visits.
     window.setTimeout(startAnalytics, 2500);
   }, { once: true });
+  if (eager) startAnalytics();
 }());

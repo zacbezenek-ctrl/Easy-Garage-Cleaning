@@ -636,6 +636,7 @@ test('website leads go directly to HighLevel before the existing automation rela
     calls.push({url:String(url),options});
     if(String(url).endsWith('/contacts/upsert'))return new Response(JSON.stringify({contact:{id:'contact-web'}}),{status:200});
     if(String(url).includes('/opportunities/pipelines?'))return new Response(JSON.stringify({pipelines:[{id:'pipe-1',stages:[{id:'stage-new'}]}]}),{status:200});
+    if(String(url).includes('/opportunities/search?'))return new Response(JSON.stringify({opportunities:[],meta:{total:0}}),{status:200});
     if(String(url).endsWith('/opportunities/upsert'))return new Response(JSON.stringify({opportunity:{id:'opp-web'},new:true}),{status:200});
     return new Response('{}',{status:200});
   };
@@ -652,8 +653,26 @@ test('website leads go directly to HighLevel before the existing automation rela
     assert.ok(detailNote,'website lead details were not written to HighLevel');
     for(const value of ['Garage Cleanout','Medium garage','Boxes and furniture','Full two-car garage','Fort Collins 80525','Tomorrow AM','$400–$650','SMS consent checked: yes','facebook · paid-social · fall-garages'])assert.match(JSON.parse(detailNote.options.body).body,new RegExp(value.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
     assert.equal(calls.filter(call=>call.url.endsWith('/opportunities/upsert')).length,1);
-    const consentTags=calls.find(call=>call.url.endsWith('/contacts/contact-web/tags'));
-    assert.deepEqual(JSON.parse(consentTags.options.body).tags,['egc-website-lead','egc-sms-consent']);
+    const upsertBody=JSON.parse(calls.find(call=>call.url.endsWith('/contacts/upsert')).options.body);
+    assert.equal(upsertBody.postalCode,'80525');
+    assert.equal('source' in upsertBody||'assignedTo' in upsertBody,false,'the upsert must not overwrite an existing contact source or owner');
+    const tagCalls=calls.filter(call=>call.url.endsWith('/contacts/contact-web/tags'));
+    const consentTags=tagCalls.find(call=>call.options.method==='POST');
+    assert.ok(consentTags,'HighLevel adds tags with POST');
+    assert.equal(tagCalls.some(call=>call.options.method==='PUT'),false);
+    assert.deepEqual(JSON.parse(consentTags.options.body).tags.slice(0,2),['egc-website-lead','egc-sms-consent']);
+    for(const tag of ['egc-svc-garage','egc-src-meta-ads','egc-ch-web','egc-item-garage-cleanout'])assert.ok(JSON.parse(consentTags.options.body).tags.includes(tag),tag+' is missing');
+    const removed=tagCalls.find(call=>call.options.method==='DELETE');
+    assert.deepEqual(JSON.parse(removed.options.body).tags,['egc-no-sms-consent','egc-out-of-area','egc-repeat-inquiry'],'the opposite consent tag and state tags that no longer apply are removed');
+    assert.ok(tagCalls.indexOf(removed)<tagCalls.indexOf(consentTags),'removals land before the new tags');
+    const search=calls.find(call=>call.url.includes('/opportunities/search?'));
+    assert.ok(search,'the contact opportunities are checked before any tag and before the upsert');
+    const searchParams=new URL(search.url).searchParams;
+    assert.deepEqual([searchParams.get('location_id'),searchParams.get('contact_id'),searchParams.get('pipeline_id'),searchParams.get('status')],['location-1','contact-web','pipe-1','all']);
+    assert.ok(calls.indexOf(search)<calls.indexOf(removed));
+    assert.ok(calls.indexOf(search)<calls.findIndex(call=>call.url.endsWith('/opportunities/upsert')));
+    assert.equal(JSON.parse(calls.find(call=>call.url.endsWith('/opportunities/upsert')).options.body).monetaryValue,525);
+    assert.equal(result.highlevel.tagsSynced,true);
     assert.equal(calls.filter(call=>call.url.startsWith('https://hooks.example.test/lead')).length,1);
   }finally{globalThis.fetch=originalFetch}
 });
@@ -670,8 +689,13 @@ test('website leads enter HighLevel but never trigger the text relay without exp
     assert.equal(result.relay.sent,false);
     assert.equal(result.relay.skipped,'no-sms-consent');
     assert.equal(calls.some(call=>call.url.startsWith('https://hooks.example.test/lead')),false);
-    const consentTags=calls.find(call=>call.url.endsWith('/contacts/contact-no-consent/tags'));
-    assert.deepEqual(JSON.parse(consentTags.options.body).tags,['egc-website-lead','egc-no-sms-consent']);
+    const consentTags=calls.find(call=>call.url.endsWith('/contacts/contact-no-consent/tags')&&call.options.method==='POST');
+    assert.ok(consentTags);
+    assert.deepEqual(JSON.parse(consentTags.options.body).tags.slice(0,2),['egc-website-lead','egc-no-sms-consent']);
+    assert.equal(JSON.parse(consentTags.options.body).tags.includes('egc-sms-consent'),false);
+    const removed=calls.find(call=>call.url.endsWith('/contacts/contact-no-consent/tags')&&call.options.method==='DELETE');
+    assert.deepEqual(JSON.parse(removed.options.body).tags,['egc-sms-consent'],'an unchecked box removes any earlier consent tag');
+    assert.ok(calls.indexOf(removed)<calls.indexOf(consentTags),'the old consent tag is gone before any new tag lands');
   }finally{globalThis.fetch=originalFetch}
 });
 
@@ -729,7 +753,9 @@ test('client hub help becomes a HighLevel conversation comment without creating 
     assert.equal(response.status,200);
     assert.equal(result.highlevel.synced,true);
     const tags=calls.find(call=>call.url.endsWith('/contacts/contact-hub-help/tags'));
+    assert.equal(tags.options.method,'POST');
     assert.deepEqual(JSON.parse(tags.options.body).tags,['egc-client-hub-help','egc-sms-consent']);
+    assert.equal(calls.some(call=>call.options.method==='PUT'&&/customFields/.test(String(call.options.body||''))),false,'client hub help does not rewrite lead fields');
     const note=calls.find(call=>call.url.endsWith('/contacts/contact-hub-help/notes'));
     assert.equal(JSON.parse(note.options.body).title,'EGC Client Hub Help');
     assert.equal(JSON.parse(note.options.body).pinned,true);

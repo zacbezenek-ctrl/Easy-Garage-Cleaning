@@ -13,7 +13,7 @@
 <head>
 
 <!-- Analytics events queue immediately; vendor libraries load after interaction. -->
-<script src="/analytics-loader.js?v=20260904b" defer></script>
+<script src="/analytics-loader.js?v=20260928a" defer></script>
 <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Junk Removal Fort Collins | Easy Garage Cleaning</title>
@@ -198,6 +198,8 @@
           <input type="hidden" name="fbclid" value="">
           <input type="hidden" name="landing_url" value="">
           <input type="hidden" name="referrer" value="">
+          <input type="hidden" name="request_id" value="">
+          <input type="hidden" name="page_service" value="junk">
           <div class="form-row"><div class="field">
             <label for="ppc-name">Name</label>
             <input type="text" id="ppc-name" name="name" required autocomplete="name" placeholder="First name">
@@ -338,7 +340,7 @@
 </div>
 
 <!-- Lead attribution + relay mirror (same first-party script as the rest of the site) -->
-<script src="/fb-capture.js?v=20260903c" defer></script>
+<script src="/fb-capture.js?v=20260928a" defer></script>
 
 <script>
 (function () {
@@ -371,9 +373,10 @@
   });
 
   /* (c) quote form — AJAX submit, inline confirmation, conversion event.
-     fb-capture.js sees the same submit event (capture phase) and mirrors the
-     lead to /api/web-lead → Zapier instant-text, so the crew gets pinged even
-     while the Web3Forms email is in flight. */
+     This handler cancels the native submit, so fb-capture.js's document
+     listener (bubble phase, skips defaultPrevented submits) never sees it.
+     After validation we mirror the lead ourselves via EGCLeadRelay.relay →
+     /api/web-lead → HighLevel, before the Web3Forms email is sent. */
   var form = document.getElementById('ppcQuoteForm');
   var success = document.getElementById('ppcSuccess');
   var errEl = document.getElementById('ppcFormError');
@@ -394,11 +397,12 @@
       btn.disabled = true;
       btn.textContent = 'Sending…';
       fireConversion('form', 'quote-form');
+      if (window.EGCLeadRelay) window.EGCLeadRelay.relay(form);
       fetch(form.action, {
         method: 'POST',
         body: new FormData(form),
         headers: { 'Accept': 'application/json' }
-      }).catch(function () { /* relay leg via fb-capture already fired */ })
+      }).catch(function () { /* HighLevel relay leg already fired above */ })
         .then(function () {
           form.hidden = true;
           success.hidden = false;

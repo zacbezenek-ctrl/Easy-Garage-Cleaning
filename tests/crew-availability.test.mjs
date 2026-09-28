@@ -121,5 +121,7 @@ test('HTTP API enforces signed account, same-origin JSON, bounded bodies and no-
   assert.equal((await handlers.get({env:{},request:new Request(url)})).status,401);assert.equal((await post(f.create())).status,401);actor=crew;
   assert.equal((await post(f.create(),{Origin:'https://attacker.example'})).status,403);assert.equal((await post(f.create(),{'Sec-Fetch-Site':'cross-site'})).status,403);assert.equal((await post(f.create(),{'Content-Type':'text/plain'})).status,415);
   assert.equal((await post('{')).status,400);assert.equal((await post(null)).status,400);assert.equal((await post('x'.repeat(9000))).status,413);
-  const result=await post(f.create());assert.equal(result.status,200);assert.equal(result.headers.get('Cache-Control'),'no-store');assert.equal((await result.json()).record.employee,'crew.one');
+  // The HTTP handler uses the real clock, so the successful write needs a date that is still upcoming.
+  const upcoming=new Date(Date.now()+7*86400000).toISOString().slice(0,10);
+  const result=await post(f.create({date:upcoming}));assert.equal(result.status,200);assert.equal(result.headers.get('Cache-Control'),'no-store');assert.equal((await result.json()).record.employee,'crew.one');
 });
