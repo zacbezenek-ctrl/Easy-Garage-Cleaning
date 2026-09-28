@@ -261,11 +261,12 @@ service cloud.firestore {
       // on a row they cannot open, so one forged row under any id would block
       // them. Browser SDK writers use only crew_availability (approved PTO) and
       // schedule_lock, which is valid only under its _egc_schedule_lock_ id.
+      // Imported Jobber visit history (jobber_history) is read-only history.
       let recordType = data.get('recordType', '');
       return recordType in [
           'employee_hub_v2', 'employee_account_v1', 'schedule_operation',
           'schedule_provider_receipt', 'schedule_adoption', 'operational_record_receipt',
-          'recurring_plan', 'quo_message_receipt'
+          'recurring_plan', 'quo_message_receipt', 'jobber_history'
         ] || (recordType == 'schedule_lock' && !documentId.matches('_egc_schedule_lock_.*'));
     }
 
@@ -331,6 +332,11 @@ service cloud.firestore {
     // Customer portal link revocation receipts (idempotency, audit) are written
     // only by the server with the service account.
     match /customerPortalOperations/{documentId} {
+      allow read, write: if false;
+    }
+
+    // Jobber import run receipts (scripts/jobber-import.mjs, service account).
+    match /jobberImport/{documentId} {
       allow read, write: if false;
     }
 

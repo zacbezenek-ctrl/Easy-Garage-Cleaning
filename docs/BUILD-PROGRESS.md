@@ -223,6 +223,11 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   failures queue in server-only `firebaseSessionRevocations/state` (CAS, per-uid `revokedThrough`) and retry on business
   Hub loads; Integrations shows "Firebase sign-out". Needs the Firebase Authentication Admin role. Gaps: issued ID tokens
   live up to 1 h; roster reconcile only on production hosts; no cron (retries on Hub load).
+- **JOB-CUT** `scripts/jobber-import.mjs`: Jobber-to-Hub import from CSV exports or GraphQL, dry run by default with a
+  PII-masked report; apply only creates records in receipt-tracked, fingerprint-checked batches with deterministic ids.
+  Upcoming work becomes unscheduled dispatch-review jobs on one account root per customer; completed visits become
+  read-only `jobber_history`; open invoices become opening balances. Runbook in `docs/JOBBER-CUTOVER.md`. Gaps: multi-visit
+  one-off jobs are listed for manual scheduling; operator must pause Dispatch and legacy edits during apply.
 
 ## In progress
 
@@ -277,6 +282,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | FUN-01 | Funnel definitions, business calendar and funnelEvents ledger library | merged (7ab606e) |
 | MCP-READS | Registry CRM reads with cursor pagination and per-tool contract gate | merged (44e2882) |
 | SEC-13 | Revoke staff Firebase sessions when access changes | merged (251fcf7) |
+| JOB-CUT | Jobber cutover import tooling (dry run by default) and runbook | merged (a233020) |
 
 ## Next
 
