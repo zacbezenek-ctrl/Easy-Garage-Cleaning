@@ -110,14 +110,14 @@
     try { S.shiftPending = JSON.parse(getDraft('shiftAction', 'null')); } catch { S.shiftPending = null; }
     try {
       const data = await api(`/api/field-jobs?jobId=${encodeURIComponent(jobId)}`);
-      acceptJob(data.job); S.historyCursor = data.historyCursor; S.photosAvailable = data.photosAvailable;
+      acceptJob(data.job); S.historyCursor = data.historyCursor; S.photosAvailable = data.photosAvailable; S.jobCosts = data.features?.jobCosts === true;
       try { S.pending = JSON.parse(getDraft('pending', 'null')); } catch { S.pending = null; }
       await loadPhotoQueue(); renderJob(); await loadEmployeeJobTime(); await loadManagerLabor();
     } catch (error) { if (error.status !== 401) renderError(error.message); throw error; }
   }
   async function refreshJob() {
     const data = await api(`/api/field-jobs?jobId=${encodeURIComponent(jobId)}`);
-    acceptJob(data.job); S.historyCursor = data.historyCursor; S.photosAvailable = data.photosAvailable; return data;
+    acceptJob(data.job); S.historyCursor = data.historyCursor; S.photosAvailable = data.photosAvailable; S.jobCosts = data.features?.jobCosts === true; return data;
   }
   async function loadDay() {
     try {
@@ -143,6 +143,8 @@
     if (S.job.canAddManagementNote) { const labor = document.createElement('section'); labor.className = 'card'; labor.id = 'manager-job-labor'; employeeTime.insertAdjacentElement('afterend', labor); renderManagerLabor(); }
     const scope = [...main.querySelectorAll('h2')].find(heading => heading.textContent === 'Scope & instructions'); if (scope) scope.closest('.card').id = 'scope-card';
     const notes = [...main.querySelectorAll('h2')].find(heading => heading.textContent === 'Crew notes & issues'); if (notes) notes.closest('.card').id = 'notes-card';
+    // Job costs mount only when the server reports the feature on, so a disabled flag adds no card and no request.
+    if (S.jobCosts && window.EGCFieldExpenses) { const costs = document.createElement('section'); costs.className = 'card'; costs.id = 'field-expenses-card'; document.getElementById('photos-card').insertAdjacentElement('afterend', costs); window.EGCFieldExpenses.mount(costs, { jobId, user: S.user.user, manager: S.job.canAddManagementNote === true }); }
     const nav = document.createElement('nav'); nav.className = 'job-sections'; nav.setAttribute('aria-label', 'Job sections'); nav.innerHTML = [['scope-card', 'Scope'], ['checklist-card', 'Checklist'], ['photos-card', 'Photos'], ['notes-card', 'Notes'], ['complete-card', 'Complete']].map(([id, text]) => `<a href="#${id}">${text}</a>`).join(''); main.querySelector('h1').insertAdjacentElement('afterend', nav);
     if (S.job.statusReason) { const reason = document.createElement('p'); reason.className = 'notice'; reason.textContent = `${label(S.job.fieldStatus)}: ${S.job.statusReason}`; nav.insertAdjacentElement('afterend', reason); }
     const history = document.getElementById('history-card'), entries = [...history.querySelectorAll('.history-item')];

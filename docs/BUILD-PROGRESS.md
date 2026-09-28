@@ -129,6 +129,11 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   adoption and the walkthrough handoff; dry-run-by-default `scripts/backfill-customer-identity.mjs` that links only
   confirmed single matches in revision-fenced lineage components and never creates a second account root. Gaps: live
   backfill not run; native CRM link path does not bump the identity/schedule guards (quiet-window run).
+- **F-EXP** Field cost capture behind `FIELD_EXPENSES_ENABLED` (off): `/api/field-expenses` records material, dump-fee
+  and other costs (integer cents <= $5,000, optional private Drive receipt) at `jobs/{jobId}/fieldExpenses/{requestId}`
+  with idempotent replays, manager edit/void receipts and audit, per-person and per-job limits; Job costs card on
+  `/crew/job.html` only when the job payload says `features.jobCosts`. `sumFieldExpenses(env, jobId, {store})` for job
+  costing. Gap: the date-range read needs a `fieldExpenses.incurredOn` collection-group index.
 
 ## In progress
 
@@ -156,7 +161,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | P4-02 | Customer identity normalization + dry-run backfill | merged (41d8d70) |
 | P4-15 | Customer portal link revocation (link version) | merged (754b885) |
 | F-PWA | Crew PWA shell + offline action outbox (field actions + time clock) | building |
-| F-EXP | Field cost capture (materials, dump fees) | building |
+| F-EXP | Field cost capture (materials, dump fees) | merged (302ab11) |
 | F-LEG | Legacy crew send-path hardening (quo-send idempotency etc.) | building |
 | MSG-CORE | Approved-send core: GHL messenger, owner-approved templates, message_sends ledger, messages API | merged (b7da326) |
 | HUB-REG | Hub screen registry, UI kit, shell stability, mobile shell pass, microphone policy fix | building |

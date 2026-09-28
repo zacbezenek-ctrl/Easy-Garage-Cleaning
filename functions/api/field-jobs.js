@@ -7,6 +7,7 @@ import { createFieldStore } from '../_lib/field-execution-store.js';
 import { createFieldPhotoClient, decodeFieldPhoto, fieldPhotosConfigured, verifyFieldPhotoMetadata } from '../_lib/field-execution-photos.js';
 import { syncFieldCompletion } from '../_lib/field-execution-sync.js';
 import { fieldJobTime } from '../_lib/field-execution-time.js';
+import { fieldExpensesEnabled } from '../_lib/field-expenses.js';
 
 const reply = (status, body) => Response.json(body, { status, headers: { 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' } });
 const mutationOriginAllowed = request => {
@@ -51,7 +52,8 @@ async function displayContext(ctx, env, jobs) {
 async function detail(ctx, env, jobId, cursor = '') {
   const job = await authorizedJob(ctx, jobId);
   const [history, display] = await Promise.all([ctx.store.events(jobId, cursor), displayContext(ctx, env, [job])]);
-  return { job: fieldJobProjection(job, history.events, display(job)), historyCursor: history.cursor, photosAvailable: fieldPhotosConfigured(env), timezone: 'America/Denver' };
+  // features lets the job page skip optional modules (and their API calls) that are switched off.
+  return { job: fieldJobProjection(job, history.events, display(job)), historyCursor: history.cursor, photosAvailable: fieldPhotosConfigured(env), features: { jobCosts: fieldExpensesEnabled(env) }, timezone: 'America/Denver' };
 }
 
 function errorResponse(error) {
