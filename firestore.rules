@@ -377,6 +377,13 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // Portal documents settings (certificate of insurance Drive pointer,
+    // upload claims and history) are server-only; customers get the file
+    // through the session-checked proxy and staff through the Hub API.
+    match /portal_settings/{documentId} {
+      allow read, write: if false;
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }

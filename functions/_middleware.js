@@ -82,6 +82,11 @@ export async function onRequest(context) {
     response.headers.set('Referrer-Policy', 'no-referrer');
     response.headers.set('X-Frame-Options', 'DENY');
   }
+  // Private certificate PDFs keep their handler's sandboxed CSP and never send a referrer.
+  if (pathname === '/api/customer-portal-document' || pathname === '/api/portal-documents-admin') {
+    if (upstream.headers.has('Content-Security-Policy')) response.headers.set('Content-Security-Policy', upstream.headers.get('Content-Security-Policy'));
+    response.headers.set('Referrer-Policy', 'no-referrer');
+  }
   if (pathname.startsWith('/business-hub') || pathname === '/api/business-hub') {
     response.headers.set('Cache-Control', 'no-store');
     response.headers.set('X-Robots-Tag', 'noindex, nofollow, noarchive');

@@ -158,6 +158,11 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   scripts, stylesheet-hash CSP, no-store, phone-first and printable; every figure from money-core. Pay button only
   when the portal checkout would charge exactly the due-now amount. Portal lists links; Hub print hands off. Gap:
   documents with change orders or tips show the right balance but no Pay button until the portal moves to money-core.
+- **P4-09** Portal documents: certificate of insurance stored privately in Drive (server-only `portal_settings/documents`
+  pointer with expiry and history; customers download only through the session-checked `/api/customer-portal-document`;
+  owners/managers upload, renew or withdraw in Hub > Settings with requestId/fingerprint/revision CAS), plus the site's
+  guarantee and terms copied verbatim at version `2026-09-portal`; approvals record the terms version shown (409 if stale).
+  Merge renamed M4's portal field to `moneyDocuments`. Gaps: no Command Center alert for an expired certificate.
 
 ## In progress
 
@@ -199,6 +204,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | CI-B | Pages Functions test router, parallel-safe emulator harness, Playwright iPhone/Android/desktop projects | building |
 | B2B-SAFE | Portal B2B safety: no homeowner owner links for business-linked jobs; attributed company approvals (B2B-06) | merged (4dd1be5) |
 | M4 | Server-rendered branded estimate/invoice/receipt document with pay link (MONEY_DOCUMENT_ENABLED) | merged (fac0a2c) |
+| P4-09 | Portal documents: certificate of insurance (private Drive PDF via session-checked proxy), guarantee and terms (versioned) | merged (835f29a) |
 | CI-WF | Wire merged units' tests into the existing CI workflows (pending CI notes) | merged (31e1562) |
 
 ## Next

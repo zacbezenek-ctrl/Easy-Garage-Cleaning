@@ -4,6 +4,7 @@ import { readCustomerPortalContext } from '../_lib/customer-portal-access.js';
 import { denverToday } from '../_lib/dispatch-time.js';
 import { fieldActivity } from '../_lib/field-execution.js';
 import { patchJob, patchJobsAtomic, readJob } from '../_lib/firestore-job.js';
+import { CUSTOMER_PORTAL_CONTENT, CUSTOMER_PORTAL_TERMS_VERSION, approvalTermsVersion, customerPortalDocuments } from '../_lib/customer-portal-content.js';
 import { appendConversationMessage, cleanMessage, cleanRequestId, conversationMessages, deliverHighLevelMessage, findConversationMessage, replaceConversationMessage } from '../_lib/customer-messaging.js';
 import { customerMoneyState as moneyState, customerDepositState, customerPaymentNeedsReview, createCustomerStripeCheckout, recordCustomerStripePayment, stripeRequest as stripe, stripeSecretKey as stripeKey } from '../_lib/customer-payments.js';
 import { parseBusinessActor } from '../_lib/business-hub-core.js';
@@ -89,7 +90,8 @@ function estimateState(job, finance, today) {
     revision: Math.max(1, Number(job.estimate?.revision || 1)),
     depositRequired: customerDepositState(job, finance).required,
     lineItems: sourceItems.slice(0, 12).map(item => ({ name: safe(item?.name || 'Garage service', 160), description: safe(item?.description || '', 600), quantity: Math.max(1, Number(item?.quantity || 1)), amount: Math.max(0, amount(item?.amount)) })),
-    terms: 'This flat-rate estimate covers the scope shown. The displayed deposit is due upfront after approval and is applied to your total. The remaining balance is due on completion. Any material change requires your approval before additional work or charges.',
+    terms: CUSTOMER_PORTAL_CONTENT.estimateTerms,
+    termsVersion: CUSTOMER_PORTAL_TERMS_VERSION,
   };
 }
 
@@ -236,6 +238,7 @@ function sanitize(job, session = {}, { today, reviewUrl }) {
     messaging: { highLevelLinked: Boolean(job.highlevelContactId), refreshSeconds: 20 },
     review: { eligible: review, url: review ? reviewUrl : '' },
     experience,
+    documents: customerPortalDocuments(),
     support: { phone: '(970) 999-1818', phoneHref: 'tel:+19709991818', smsHref: 'sms:+19709991818' },
   };
 }
@@ -252,7 +255,7 @@ async function handleGet({ request, env }, deps) {
   const result = await requirePortal(request, env, deps);
   if (result.error) return result.error;
   const at = deps.clock();
-  return reply(200, { ...sanitize(result.job, result.session, { today: denverToday(at), reviewUrl: customerReviewUrl(env) }), documents: moneyDocumentLinks(result.job, { enabled: moneyDocumentEnabled(env), now: at.toISOString() }) });
+  return reply(200, { ...sanitize(result.job, result.session, { today: denverToday(at), reviewUrl: customerReviewUrl(env) }), moneyDocuments: moneyDocumentLinks(result.job, { enabled: moneyDocumentEnabled(env), now: at.toISOString() }) });
 }
 
 async function handlePost({ request, env }, { clock, read }) {
@@ -309,12 +312,17 @@ async function handlePost({ request, env }, { clock, read }) {
     const finance = moneyState(result.job);
     if (finance.total < .01) return reply(409, { ok: false, error: 'The estimate is not ready yet' });
     if (result.job.estimate?.validUntil && String(result.job.estimate.validUntil) < today) return reply(409, { ok: false, error: 'This estimate has expired. Ask the team for an updated estimate.' });
-    const approval = { status: 'approved', approvedAt: now, approvedBy: signedName, amount: finance.total, source: 'customer_portal' };
+    // The approval records the terms version the page displayed (a page from
+    // before versioning is recorded as having shown only the estimate terms).
+    // A page opened before the copy changed must reload rather than approve unseen terms.
+    const termsVersion = approvalTermsVersion(body.terms_version);
+    if (!termsVersion) return reply(409, { ok: false, code: 'CUSTOMER_PORTAL_TERMS_CHANGED', error: 'Our estimate terms were updated. Review the latest terms, then approve again.' });
+    const approval = { status: 'approved', approvedAt: now, approvedBy: signedName, amount: finance.total, source: 'customer_portal', termsVersion };
     const deposit = customerDepositState(result.job, finance), actor = approvalActor(result.session.actorId);
     try {
       await patchJob(env, result.session.jobId, {
         customerApproval: { ...approval, ...actor },
-        estimate: { ...withoutApprovalActor(result.job.estimate), status: 'approved', acceptedAt: now, acceptedBy: signedName, amount: finance.total, depositRequired: deposit.required, ...actor },
+        estimate: { ...withoutApprovalActor(result.job.estimate), status: 'approved', acceptedAt: now, acceptedBy: signedName, amount: finance.total, depositRequired: deposit.required, acceptedTermsVersion: termsVersion, ...actor },
         deposit: { ...(result.job.deposit || {}), amount: deposit.required, paidAmount: deposit.paid, status: deposit.due < .01 ? 'paid' : deposit.paid ? 'partial' : 'due' },
         quoteStatus: 'approved',
         updatedAt: now,

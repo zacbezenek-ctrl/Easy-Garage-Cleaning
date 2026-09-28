@@ -9,6 +9,7 @@ import { createHubSessionCookie } from '../functions/_lib/hub-session.js';
 import { sendAcceptedQuotePortal } from '../functions/_lib/portal-invitation.js';
 import { createCustomerPortalHandlers } from '../functions/api/customer-portal.js';
 import { customerPortalLinkHandler } from '../functions/api/customer-portal-link.js';
+import { UNVERSIONED_PAGE_TERMS_VERSION } from '../functions/_lib/customer-portal-content.js';
 
 // B2B-SAFE: company projects shared through the business hub never receive a
 // homeowner owner-level portal link, and company approvals name the member.
@@ -67,7 +68,8 @@ const call = async (viewer, payload) => {
   const response = await (payload ? handlers.onRequestPost : handlers.onRequestGet)({ env, request });
   return { status: response.status, body: await response.json() };
 };
-const publicApproval = { status: 'approved', approvedAt: NOW, approvedBy: 'Synthetic Signer', amount: 800, source: 'customer_portal' };
+// P4-09: approvals record the terms version the page showed; these requests send none, so the unversioned marker is stored.
+const publicApproval = { status: 'approved', approvedAt: NOW, approvedBy: 'Synthetic Signer', amount: 800, source: 'customer_portal', termsVersion: UNVERSIONED_PAGE_TERMS_VERSION };
 
 test('a company member approval is attributed to that member for accounts payable', async t => {
   const earlier = { approvedByActorId: businessActor(ACCOUNT, BILLING), approvedByBusinessAccountId: ACCOUNT, approvedByBusinessMemberId: BILLING.id };
@@ -78,7 +80,7 @@ test('a company member approval is attributed to that member for accounts payabl
   assert.deepEqual(result.body.approval, publicApproval, 'the response never returns member ids');
   const saved = f.job('job-1');
   assert.deepEqual(saved.customerApproval, { ...publicApproval, ...attribution });
-  assert.deepEqual(saved.estimate, { number: 'EST-1', status: 'approved', amount: 800, sentAt: '2026-09-20T12:00:00.000Z', revision: 1, acceptedAt: NOW, acceptedBy: 'Synthetic Signer', depositRequired: 400, ...attribution }, 'the current signer replaces an earlier approver');
+  assert.deepEqual(saved.estimate, { number: 'EST-1', status: 'approved', amount: 800, sentAt: '2026-09-20T12:00:00.000Z', revision: 1, acceptedAt: NOW, acceptedBy: 'Synthetic Signer', depositRequired: 400, acceptedTermsVersion: UNVERSIONED_PAGE_TERMS_VERSION, ...attribution }, 'the current signer replaces an earlier approver');
   assert.equal(saved.quoteStatus, 'approved');
   const view = await call(await company());
   assert.equal(view.status, 200);
@@ -103,7 +105,7 @@ test('homeowner and family approvals keep their existing shape', async t => {
     assert.deepEqual(result.body.approval, publicApproval);
     const saved = f.job('job-1');
     assert.deepEqual(saved.customerApproval, publicApproval, 'no actor fields are added');
-    assert.deepEqual(Object.keys(saved.estimate).sort(), ['acceptedAt', 'acceptedBy', 'amount', 'depositRequired', 'number', 'revision', 'sentAt', 'status']);
+    assert.deepEqual(Object.keys(saved.estimate).sort(), ['acceptedAt', 'acceptedBy', 'acceptedTermsVersion', 'amount', 'depositRequired', 'number', 'revision', 'sentAt', 'status']);
   });
 });
 

@@ -151,6 +151,7 @@ function render(force=false){
     S.renderedView=S.active;fieldTodayNode(host);restoreFilter(kept);
   }
   if(S.active==='my_day')window.EGCFieldToday?.mount(host?.querySelector('#ops-field-today'));else window.EGCFieldToday?.unmount();
+  if(S.active==='settings'&&canView('settings')&&host&&window.EGCPortalDocuments){let slot=host.querySelector('#ops-portal-documents');if(!slot){slot=document.createElement('div');slot.id='ops-portal-documents';const modal=host.querySelector(':scope>.ops-modal');if(modal)modal.before(slot);else host.append(slot);}window.EGCPortalDocuments.mount(slot);}else window.EGCPortalDocuments?.unmount();
   updateQuickClock();sync();
   if(S.active==='timesheets'&&S.peopleState.loaded&&!S.peopleState.error){
     const range=timesheetRange();

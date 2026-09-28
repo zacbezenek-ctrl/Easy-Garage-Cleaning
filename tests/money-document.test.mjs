@@ -520,9 +520,9 @@ test('the portal response lists session-scoped document links only while the fla
   portalStore(t, portalJobs());
   const handlers = portalHandlers(), cookie = await portalCookie('job-1');
   const off = await portalView(handlers, cookie);
-  assert.equal(off.status, 200); assert.deepEqual(off.body.documents, []);
+  assert.equal(off.status, 200); assert.deepEqual(off.body.moneyDocuments, []);
   const on = await portalView(handlers, cookie, env);
-  assert.deepEqual(on.body.documents, [
+  assert.deepEqual(on.body.moneyDocuments, [
     { kind: 'estimate', label: 'View estimate', url: '/api/money-document?kind=estimate' },
     { kind: 'invoice', label: 'View invoice', url: '/api/money-document?kind=invoice' },
     { kind: 'receipt', label: 'View receipt', url: '/api/money-document?kind=receipt' },
@@ -546,7 +546,7 @@ test('edge middleware keeps the document CSP, no-referrer and DENY framing', asy
 
 // ---- Browser code ----
 function portalFunctions(documents, hash = '') {
-  const page = read('customer-portal.html'), source = ['function renderDocuments(', 'function focusPayFromLink('].map(prefix => page.split(/\r?\n/).find(line => line.startsWith(prefix))).join('\n');
+  const page = read('customer-portal.html'), source = ['function renderMoneyDocuments(', 'function focusPayFromLink('].map(prefix => page.split(/\r?\n/).find(line => line.startsWith(prefix))).join('\n');
   const element = tag => ({ tag, className: '', textContent: '', children: [], attributes: {}, classes: new Set(), classList: { toggle(name, on) { if (on) this.owner.classes.add(name); else this.owner.classes.delete(name); }, contains(name) { return this.owner.classes.has(name); } }, replaceChildren(...children) { this.children = children; } });
   const nodes = {}, $ = id => { if (!nodes[id]) { nodes[id] = element('div'); nodes[id].classList.owner = nodes[id]; } return nodes[id]; };
   const scrolled = [];
@@ -554,7 +554,7 @@ function portalFunctions(documents, hash = '') {
   const make = (tag, className, text) => { const node = element(tag); node.className = className; if (text !== undefined) node.textContent = text; return node; };
   const context = vm.createContext({ $, make, location: { hash }, String, Array });
   vm.runInContext(source, context);
-  context.renderDocuments({ documents });
+  context.renderMoneyDocuments({ moneyDocuments: documents });
   return { nodes, scrolled, context };
 }
 
@@ -577,7 +577,7 @@ test('the portal renders document links as text-only links and ignores anything 
   const page = read('customer-portal.html');
   assert.match(page, /<nav class="document-links hidden" id="document-links" aria-label="Printable estimate, invoice and receipt"><\/nav><\/section>/);
   assert.match(page, /\.document-links \.btn\{min-height:48px;/);
-  assert.match(page, /renderExperience\(data\);renderDocuments\(data\);focusPayFromLink\(\)\};/);
+  assert.match(page, /renderExperience\(data\);renderMoneyDocuments\(data\);focusPayFromLink\(\)\};/);
 });
 
 test('a document pay link lands on the portal pay button once', () => {

@@ -53,6 +53,7 @@ test('actual Firestore rules isolate canonical operations from crew SDK access',
         'dispatchState/revision':{lastRequestId:'server'},
         'dispatchOperations/receipt':{actorId:'zacb',action:'schedule.update'},
         'customerPortalOperations/receipt':{actorId:'zacb',accountJobId:'assigned',linkVersion:1,removedCollaboratorCount:0},
+        'portal_settings/documents':{insuranceCertificate:{driveFileId:'synthetic-drive-file-0001',expiresOn:'2099-01-01',uploadedAt:'2026-09-22T12:00:00.000Z',uploadedBy:'zacb'}},
         'memberships/sub_synthetic':{plan:'guard',status:'active',customerEmail:'member@example.invalid'},
         'stripe_events/evt_synthetic':{type:'invoice.paid',subscriptionId:'sub_synthetic'},
         'membership_reviews/sub_synthetic':{status:'open',reason:'ambiguous_customer'},
@@ -82,6 +83,9 @@ test('actual Firestore rules isolate canonical operations from crew SDK access',
     });
     await t.test('customer portal revocation receipts remain server-only even for business SDK sessions',async()=>{
       for(const db of [publicDb,crew,manager]){const path='customerPortalOperations/receipt';await assertFails(db.doc(path).get());await assertFails(db.doc(path).set({linkVersion:0}));await assertFails(db.doc(path).delete());}
+    });
+    await t.test('portal document settings (insurance certificate pointer) remain server-only even for business SDK sessions',async()=>{
+      for(const db of [publicDb,crew,lead,manager]){const path='portal_settings/documents';await assertFails(db.doc(path).get());await assertFails(db.collection('portal_settings').get());await assertFails(db.doc(path).set({insuranceCertificate:{driveFileId:'attacker-file-0001',expiresOn:'2099-12-31'}}));await assertFails(db.doc(path).update({'insuranceCertificate.expiresOn':'2099-12-31'}));await assertFails(db.doc(path).delete());await assertFails(db.doc('portal_settings/new').set({insuranceCertificate:null}));}
     });
     await t.test('approved-send ledgers, message templates and messaging receipts remain server-only even for business SDK sessions',async()=>{
       await environment.withSecurityRulesDisabled(async context=>{const db=context.firestore();await db.doc('message_sends/send').set({kind:'payment_reminder',status:'submitted',targetId:'assigned'});await db.doc('message_templates/payment_reminder').set({kind:'payment_reminder',liveVersion:1});await db.doc('message_operations/receipt').set({actorId:'zacb',action:'template.approve'});});
@@ -324,6 +328,24 @@ test('actual Firestore rules isolate canonical operations from crew SDK access',
       await store.commit([{collection:'jobs',id:'assigned',revision:accountBefore.revision,patch:{lineageTestChange:true}}]);
       await assert.rejects(store.commit([{collection:'jobs',id:'assigned',revision:accountBefore.revision,verify:true},{collection:'jobs',id:'must-not-save',patch:{type:'job',customerId:'customer'}}]),error=>error.code==='dispatch_revision_conflict');
       assert.equal(await store.read('jobs','must-not-save'),null,'A stale ownership read cannot write another job.');
+    });
+    await t.test('actual Firestore REST stores the insurance certificate pointer with revision checks',async()=>{
+      const {portalDocumentsStorage,uploadInsuranceCertificate,insuranceCertificateStatus}=await import('../functions/_lib/customer-documents.js');
+      const store=portalDocumentsStorage({},async(_env,url,options={})=>{
+        const target=new URL(url);target.protocol='http:';target.host=host;target.pathname=target.pathname.replace('/projects/egcw-1ec83/','/projects/'+projectId+'/');
+        assert.equal(target.hostname,hostname);
+        return fetch(target,{...options,...(options.body ? {body:options.body.replaceAll('projects/egcw-1ec83/','projects/'+projectId+'/')} : {}),headers:{...options.headers,Authorization:'Bearer owner'}});
+      });
+      const files=new Map(),pdf=new TextEncoder().encode('%PDF-1.4\n% Synthetic emulator certificate fixture only\ntrailer << >>\n%%EOF\n');
+      const drive={allocate:async()=>'synthetic-drive-file-0002',metadata:async id=>files.get(id)||null,upload:async(id,meta,bytes)=>{files.set(id,{mimeType:'application/pdf',size:String(bytes.length),appProperties:{egcPortalDocument:'insurance_certificate',egcRequestId:meta.requestId}});}};
+      const before=await store.read(),now='2026-09-22T18:00:00.000Z';
+      assert.equal(insuranceCertificateStatus(before,now).state,'current');
+      const saved=await uploadInsuranceCertificate({store,drive},{user:'zacb',role:'owner',businessAccess:true},{action:'upload',requestId:crypto.randomUUID(),expectedRevision:before.revision,expiresOn:'2027-09-01',filename:'Synthetic.pdf',dataUrl:'data:application/pdf;base64,'+Buffer.from(pdf).toString('base64')},now);
+      assert.equal(saved.insurance.expiresOn,'2027-09-01');
+      const after=await store.read();
+      assert.deepEqual([after.insuranceCertificate.driveFileId,after.pendingInsuranceUpload,after.insuranceCertificateHistory[0].driveFileId],['synthetic-drive-file-0002',null,'synthetic-drive-file-0001']);
+      await assert.rejects(store.commit({insuranceCertificate:null},before.revision),error=>/^PORTAL_DOCUMENTS_(REVISION_CONFLICT|OUTCOME_UNKNOWN)$/.test(error.code));
+      assert.equal((await store.read()).insuranceCertificate.driveFileId,'synthetic-drive-file-0002','a stale revision never overwrites the certificate');
     });
     await t.test('Garage Guard events link, mirror and dedupe through actual Firestore REST',async()=>{
       const {membershipStorage,applyGarageGuardEvent,garageGuardEvent}=await import('../functions/_lib/garage-guard-membership.js');
