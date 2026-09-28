@@ -6,6 +6,8 @@ const terminal = new Set(['completed', 'cancelled', 'canceled', 'paid', 'invoice
 const active = job => !terminal.has(job.status || job.pipelineStatus);
 const S = { host:null, root:null, date:today(), view:'day', query:'', status:'active', employee:'', type:'', data:null, loading:false, generation:0, modal:null, refreshTimer:null, pending:false, error:'', notice:'', controller:null, viewer:null, recovery:null };
 const recoveryPrefix='egc.dispatch.pending.v1.';
+// Extra views (employee-dispatch-calendar.js) register {label, range(date), step(date,count), render(target,jobs), help}; they save through save().
+const views=new Map();
 function h(tag, props, ...children) {
   const node = document.createElement(tag);
   for (const [key, value] of Object.entries(props || {})) {
@@ -36,7 +38,7 @@ function arrivalBlankText(defaults) {
   const minutes=Number(defaults.minutes);
   return 'leave both blank to use the default '+(Number.isInteger(minutes)&&minutes>0?minutes+'-minute ':'')+'window from the start time.';
 }
-function range() { return {startDate:S.date, endDate:addDays(S.date,S.view==='week'||S.view==='crew'?7:1)}; }
+function range() { const view=views.get(S.view); return view?view.range(S.date):{startDate:S.date, endDate:addDays(S.date,S.view==='week'||S.view==='crew'?7:1)}; }
 const person = id => S.data?.roster?.find(p => p.id === id)?.name || id || 'Unassigned';
 const vehicle = id => S.data?.vehicles?.find(v => v.id === id)?.name || (id ? 'Vehicle unavailable' : 'No vehicle');
 const crewName = job => S.data?.crews?.find(c => c.id === job.crewId)?.name || (job.assignedCrew?.length ? job.assignedCrew.map(person).join(', ') : 'Unassigned');
@@ -108,7 +110,8 @@ async function load({quiet=false}={}) {
   finally { if (generation===S.generation && S.root) { S.loading=false; render(); } }
 }
 function setFilter(field,value) { S[field]=value; renderBody(); }
-function move(count) { S.date=addDays(S.date,count*(S.view==='week'||S.view==='crew'?7:1)); void load(); }
+function move(count) { const view=views.get(S.view); S.date=view?.step?view.step(S.date,count):addDays(S.date,count*(S.view==='week'||S.view==='crew'?7:1)); void load(); }
+function show(view,date) { if(/^\d{4}-\d{2}-\d{2}$/.test(date||''))S.date=date; if(view)S.view=view; void load(); }
 function setDate(date) { if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return; S.date=date; void load(); }
 function filtered() {
   const q=S.query.toLowerCase().trim(), phone=q.replace(/\D/g,'');
@@ -193,10 +196,12 @@ function renderBody() {
   for(const [label,count]of [['Scheduled',dateJobs.filter(j=>!['cancelled','canceled','noshow','no_show','no-show'].includes(j.status)).length],['In progress',running.length],['Remaining',due.length],['Unassigned',due.filter(j=>!j.assignedCrew?.length).length],['Needs attention',attention.length]])stats.append(h('article',{},h('span',{},label),h('strong',{},count),label==='Needs attention'&&count?btn('Review',()=>{S.status='attention';render();},'subtle',{'aria-label':'Review jobs needing attention'}):null));
   target.append(stats);
   const jobs=filtered();
-  if(!jobs.length){target.append(empty());return;}
+  if(!jobs.length&&!views.has(S.view)){target.append(empty());return;}
   const unscheduled=jobs.filter(j=>!j.date);
   if(S.view==='jobs') {
     target.append(h('div',{class:'dp-job-grid'},jobs.map(j=>jobCard(j))));
+  } else if(views.has(S.view)) {
+    views.get(S.view).render(target,jobs);
   } else if(S.view==='crew') {
     const groups=new Map();
     // Each crew segment is grouped under the crew that works it.
@@ -209,7 +214,7 @@ function renderBody() {
     target.append(h('div',{class:S.view==='week'?'dp-week':'dp-day-board'},Array.from({length:S.view==='week'?7:1},(_,i)=>dayColumn(addDays(S.date,i),jobs))));
   }
   if(unscheduled.length&&S.view!=='jobs')target.append(h('section',{class:'dp-unscheduled'},h('h2',{},'Unscheduled work · '+unscheduled.length),h('div',{class:'dp-job-grid'},unscheduled.map(j=>jobCard(j)))));
-  target.append(h('p',{class:'dp-footnote'},'All scheduling times use Mountain Time. '+(S.data.coverage?.asOf?'Updated '+new Intl.DateTimeFormat('en-US',{timeZone:TZ,hour:'numeric',minute:'2-digit'}).format(new Date(S.data.coverage.asOf))+'.':'')+' Drag a job onto a day to review its new time.'));
+  target.append(h('p',{class:'dp-footnote'},'All scheduling times use Mountain Time. '+(S.data.coverage?.asOf?'Updated '+new Intl.DateTimeFormat('en-US',{timeZone:TZ,hour:'numeric',minute:'2-digit'}).format(new Date(S.data.coverage.asOf))+'.':'')+' '+(views.get(S.view)?.help||'Drag a job onto a day to review its new time.')));
 }
 function labeled(label,control,help) {const id=control.id||'dp-'+key();control.id=id;return h('label',{class:'dp-field',htmlFor:id},h('span',{},label),control,help?h('small',{},help):null);}
 function select(options,value,onChange,props={}) {return h('select',{onchange:e=>onChange(e.target.value),...props},options.map(([id,label])=>h('option',{value:id,selected:id===value},label)));}
@@ -219,7 +224,7 @@ function render() {
   S.root.replaceChildren(h('header',{class:'dp-header'},h('div',{},h('span',{class:'dp-eyebrow'},'EGC OPERATIONS'),h('h1',{},'Dispatch'),h('p',{},'Schedule, assign and run the day.')),h('div',{class:'dp-header-actions'},btn('Search all jobs',openSearch,'',{disabled:!S.data}),btn('Find opening',openOpenings,'',{disabled:!S.data}),btn('Block time',()=>openBlock(),'',{disabled:!S.data}),btn('Crews & vehicles',()=>openResources()),window.EGCRecurring?btn('Recurring plans',()=>window.EGCRecurring.open({onChange:()=>load({quiet:true})})):null,btn('Refresh',()=>load(),'',{disabled:S.loading}),btn('Create job',()=>openJob(),'primary',{disabled:!S.data}))));
   S.root.querySelector('.dp-header-actions').insertBefore(btn('Drive times',openTravel,'',{disabled:!S.data}),S.root.querySelector('.dp-header-actions .primary'));
   const modes=h('div',{class:'dp-modes',role:'group','aria-label':'Calendar view'});
-  for(const [id,label]of [['day','Day'],['week','Week'],['crew','Crew'],['jobs','Jobs']])modes.append(btn(label,()=>{S.view=id;void load();},S.view===id?'selected':'',{'aria-pressed':S.view===id?'true':'false'}));
+  for(const [id,label]of [['day','Day'],['week','Week'],['crew','Crew'],['jobs','Jobs'],...[...views].map(([id,view])=>[id,view.label])])modes.append(btn(label,()=>{S.view=id;void load();},S.view===id?'selected':'',{'aria-pressed':S.view===id?'true':'false'}));
   S.root.append(h('div',{class:'dp-controls'},h('div',{class:'dp-date-controls'},btn('←',()=>move(-1),'',{'aria-label':'Previous period'}),labeled('Schedule date',h('input',{type:'date',value:S.date,onchange:e=>setDate(e.target.value)})),btn('→',()=>move(1),'',{'aria-label':'Next period'}),h('div',{class:'dp-date-shortcuts'},btn('Today',()=>setDate(today())),btn('Tomorrow',()=>setDate(addDays(today(),1))))),modes));
   S.root.append(h('div',{class:'dp-filters'},search,
     select([['active','Active work'],['all','All statuses'],['attention','Needs attention'],['unassigned','Unassigned'],['unscheduled','Unscheduled'],['completed','Completed'],['cancelled','Cancelled']],S.status,v=>setFilter('status',v),{'aria-label':'Filter by status'}),
@@ -629,5 +634,12 @@ function mount(host) {
 function unmount() {S.controller?.abort();S.generation++;if(S.refreshTimer)clearInterval(S.refreshTimer);S.refreshTimer=null;if(S.modal){S.modal.dialog.close();S.modal.dialog.remove();S.modal=null;}S.pending=false;S.root?.remove();S.root=null;S.host=null;S.data=null;S.viewer=null;S.recovery=null;}
 window.addEventListener('egc:signout',()=>{try{for(let i=sessionStorage.length-1;i>=0;i--){const name=sessionStorage.key(i);if(name?.startsWith(recoveryPrefix))sessionStorage.removeItem(name);}}catch{}unmount();});
 window.addEventListener('beforeunload',event=>{if(S.modal){event.preventDefault();event.returnValue='';}});
-window.EGCDispatch={mount,unmount,refresh:load,canLeave:()=>!S.modal&&!S.pending};
+function registerView(name,view) {
+  if(!/^[a-z][a-z0-9_]{1,23}$/.test(name)||['day','week','crew','jobs'].includes(name)||views.has(name)||typeof view?.label!=='string'||typeof view.range!=='function'||typeof view.render!=='function')throw new Error('Dispatch view '+name+' is invalid or already registered.');
+  views.set(name,Object.freeze({label:view.label,range:view.range,step:typeof view.step==='function'?view.step:null,render:view.render,help:typeof view.help==='string'?view.help:''}));
+  if(S.root&&!S.modal)render();
+}
+// Registered views share this client, its dialogs and the save-recovery protocol (same requestId on retry).
+const internals=Object.freeze({state:()=>S,api,save,modal,openJob,show,redraw:renderBody,person,crewName,vehicle,h,btn,pill,notice,errorText,clock,dateText,addDays,today,words,key,segmentsOf,segmentsOn,active,warningsFor});
+window.EGCDispatch={mount,unmount,refresh:load,canLeave:()=>!S.modal&&!S.pending,registerView,internals};
 })();

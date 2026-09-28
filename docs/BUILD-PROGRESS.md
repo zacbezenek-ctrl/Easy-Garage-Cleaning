@@ -241,6 +241,10 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   via `operations-command-policy.js`): crew/crew_lead refused, sales read-only, integration writers named (MCP principals,
   schedule-sync, note-link, booking-adoption-worker); every bridge write commits a hub_audit entry in the same commit.
   Cancel confirm tokens only with `EGC_OPERATIONS_BRIDGE_CONFIRM_REQUIRED` (off; no issuer yet). Gap: no onBehalfOf.
+- **DISPATCH-CAL** Dispatch Month (Sunday-first 28-42 day grid, a chip per segment, tap a day for Day view) and Lanes
+  (employee or saved-crew rows, 6 AM-8 PM, unavailable/blocked shading, travel gaps) through an `EGCDispatch.registerView`
+  hook. Desktop drag opens a confirm; phones tap-assign from a bottom sheet; both save via schedule.update with
+  expectedRevision and the same retry recovery. Client only, no flag. Gap: lane footnote keeps the drag hint on phones.
 
 ## In progress
 
@@ -299,6 +303,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | LEGACY-SEND | Legacy customer send hardening, bounded sales-exit lookups, owner messaging setup doc | merged (cb34f34) |
 | P0-4 | Firestore 400 FAILED_PRECONDITION on a stale updateTime is a revision conflict (409) across the stores (shared firestore-errors.js) | merged (d410b88) |
 | BRIDGE-AUTHZ | SEC-04 bridge command policy table (crew refused, sales read-only, audited writes, confirm flag off) | merged (e4309f5) |
+| DISPATCH-CAL | Dispatch Month and Lanes views: drag to reschedule on desktop, tap-assign on phones (client only) | merged (f3f74c8) |
 
 ## Next
 
