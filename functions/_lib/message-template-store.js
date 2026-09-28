@@ -1,6 +1,6 @@
 import { hasBusinessAccess } from './hub-session.js';
 import { TEMPLATE_KINDS, TEMPLATE_KIND_IDS } from './message-template-defaults.js';
-import { validateTemplateVersion, templateHash, messageDigest } from './message-templates.js';
+import { validateTemplateVersion, templateHash, messageDigest, templateVariables } from './message-templates.js';
 import { MESSAGE_TEMPLATES, MESSAGE_OPERATIONS } from './message-send-store.js';
 
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[1-8][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i;
@@ -100,6 +100,9 @@ export async function mutateTemplate(store, session, input, now = new Date().toI
     const target = versions.find(row => row.version === input.version);
     if (!target) throw fail('messaging_template_version_missing', 'That template version no longer exists. Refresh and review.', 404);
     if (typeof input.hash !== 'string' || target.hash !== input.hash || target.hash !== await templateHash(input.kind, target)) throw fail('messaging_template_revision_conflict', 'The template text changed. Review the latest wording before approving.', 409);
+    const used = [...templateVariables(target.subject || ''), ...templateVariables(target.body || '')];
+    const missing = (TEMPLATE_KINDS[input.kind].required || []).find(name => !used.includes(name));
+    if (missing) throw fail('messaging_template_variable_required', `This message must include {{${missing}}} before it can be approved.`, 409, { variable: missing });
     if (target.status === 'approved' && activeVersion === target.version) unchanged = true;
     else {
       for (const row of versions) if (row.version === activeVersion && row.version !== target.version) Object.assign(row, { status: 'retired', retiredAt: now });

@@ -1,4 +1,4 @@
-"""Business Client Hub mobile compliance and extension seams against a routed fake API; no provider or customer writes."""
+"""Business Client Hub mobile compliance, extension seams and team invitations against a routed fake API; no provider or customer writes."""
 import copy, json, os, pathlib, re, threading, unittest
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -21,6 +21,13 @@ PERMISSIONS = {
     'limited': {'view': True, 'request': True, 'decide': True},
     'staff': {'view': True, 'request': True, 'team': True, 'staff': True, 'link': True},
 }
+# Team viewers get invitation status per member (business-hub-invites.js renders it); the admin's own row is marked self.
+INVITES = {
+    M1: {'inviteStatus': 'active', 'deliveryStatus': 'manual', 'lastSentAt': NOW, 'expiresAt': ''},
+    M2: {'inviteStatus': 'active', 'deliveryStatus': 'submitted', 'lastSentAt': NOW, 'expiresAt': ''},
+    M3: {'inviteStatus': 'pending', 'deliveryStatus': 'uncertain', 'lastSentAt': NOW, 'expiresAt': '2026-09-24T18:00:00Z'},
+    M4: {'inviteStatus': 'revoked', 'deliveryStatus': 'manual', 'lastSentAt': '', 'expiresAt': ''},
+}
 EXTENSION = r"""(()=>{'use strict';const hub=window.EGCBusinessHub;
 hub.registerTab('synthetic','Synthetic ledger',data=>`<section class="card"><h2>Synthetic ledger</h2>${hub.empty('Ledger for '+data.account.company)}<button data-ext-ping="1">Run synthetic action</button></section>`,data=>!data.viewer.permissions.staff);
 hub.registerTab('broken','Broken tab',()=>{throw new Error('synthetic render failure');});
@@ -41,6 +48,8 @@ def snapshot(role):
     ]
     if not PERMISSIONS[role].get('team'):
         members = [{k: v for k, v in m.items() if k not in ('id', 'email', 'propertyIds')} for m in members]
+    else:
+        members = [{**m, **INVITES[m['id']], **({'self': True} if role == 'admin' and m['id'] == M1 else {})} for m in members]
     data = {
         'account': {'id': ACCOUNT, 'company': COMPANY, 'billingEmail': 'accounts.payable.department@synthetic-property-management.example.invalid', 'reference': 'PO-2026-SYN', 'status': 'active'},
         'viewer': {'name': 'EGC account team' if staff else 'Synthetic Administrator', 'role': 'staff' if staff else 'manager' if role == 'limited' else role, 'permissions': PERMISSIONS[role]},
@@ -65,6 +74,7 @@ def snapshot(role):
         ],
         'manager': {'name': 'Zoe Zoll', 'email': 'zoe.zoll@easygaragecleaning.com', 'phone': '+19709991403'},
         'coverage': {'linked': 4, 'unavailable': 1, 'paymentReview': 1}, 'updatedAt': NOW,
+        **({'inviteDelivery': {'email': True}} if staff else {}),
     }
     if role == 'limited':
         # The server's scoped snapshot: property P1 only, its request and projects, and general messages.
@@ -74,7 +84,7 @@ def snapshot(role):
         data['coverage'] = {'linked': 2, 'unavailable': 0, 'paymentReview': 1}
     return data
 
-ACCOUNTS = {'staff': True, 'manager': True, 'next': 'synthetic-cursor', 'limited': False, 'accounts': [
+ACCOUNTS = {'staff': True, 'manager': True, 'next': 'synthetic-cursor', 'limited': False, 'inviteDelivery': {'email': True}, 'accounts': [
     {'id': ACCOUNT, 'company': COMPANY, 'status': 'active', 'properties': 2, 'requests': 1, 'updatedAt': NOW},
     {'id': OTHER, 'company': 'Synthetic Second Client', 'status': 'active', 'properties': 0, 'requests': 0, 'updatedAt': NOW},
 ]}
@@ -138,7 +148,7 @@ class BusinessHubBrowserTests(unittest.TestCase):
     def tearDownClass(cls):
         cls.browser.close(); cls.pw.stop(); cls.server.shutdown(); cls.server.server_close()
     def setUp(self):
-        self.errors = []; self.calls = []; self.gets = []; self.role = 'admin'; self.signed_out = False; self.abort_next = 0; self.replies = []; self.contexts = []
+        self.errors = []; self.calls = []; self.gets = []; self.role = 'admin'; self.signed_out = False; self.abort_next = 0; self.replies = []; self.contexts = []; self.dialogs = []; self.dismiss = False
     def tearDown(self):
         for context in self.contexts: context.close()
         self.assertEqual(self.errors, [], f'Browser errors: {self.errors}')
@@ -147,9 +157,12 @@ class BusinessHubBrowserTests(unittest.TestCase):
         context = self.browser.new_context(viewport={'width': width, 'height': height}, timezone_id='Asia/Tokyo', is_mobile=phone, has_touch=phone, device_scale_factor=2 if phone else 1)
         self.contexts.append(context)
         page = context.new_page(); page.set_default_timeout(7000); page.clock.install(time=NOW)
-        page.on('pageerror', lambda e: self.errors.append(str(e))); page.on('dialog', lambda dialog: dialog.accept())
+        page.on('pageerror', lambda e: self.errors.append(str(e))); page.on('dialog', self.on_dialog)
         page.route('**/*', self.route); page.goto(self.url + path)
         return page
+    def on_dialog(self, dialog):
+        self.dialogs.append(dialog.message)
+        dialog.dismiss() if self.dismiss else dialog.accept()
     def route(self, route):
         req = route.request; parsed = urlparse(req.url)
         if parsed.hostname != '127.0.0.1': route.abort(); return
@@ -165,8 +178,10 @@ class BusinessHubBrowserTests(unittest.TestCase):
         body = req.post_data_json; self.calls.append({'body': copy.deepcopy(body), 'headers': req.headers})
         if self.abort_next: self.abort_next -= 1; route.abort('connectionfailed'); return
         if self.replies: status, data = self.replies.pop(0); send(data, status); return
-        if body['action'] in ('invite_member', 'create_account'):
-            send({'invite': f'{ACCOUNT}.{M3}.' + 'e' * 64, 'email': body['email'], 'expiresInHours': 48, 'accountId': ACCOUNT}, 201); return
+        if body['action'] in ('invite_member', 'create_account', 'resend_invite', 'reset_sign_in'):
+            member = body.get('memberId', M3); address = body.get('email') or next(m['email'] for m in snapshot('staff')['members'] if m['id'] == member)
+            if body.get('deliver') == 'email': send({'email': address, 'expiresInHours': 48, 'memberId': member, 'accountId': ACCOUNT, 'delivery': {'channel': 'email', 'status': 'submitted', 'reason': '', 'recorded': True}}, 201); return
+            send({'invite': f'{ACCOUNT}.{member}.' + 'e' * 64, 'email': address, 'expiresInHours': 48, 'memberId': member, 'accountId': ACCOUNT}, 201); return
         if body['action'] == 'synthetic_ping': send({'ok': True, 'state': 'done'}); return
         send({'ok': True})
     def audit(self, page, where):
@@ -365,6 +380,94 @@ class BusinessHubBrowserTests(unittest.TestCase):
         expect(page.locator('thead th')).to_have_text(['Person', 'Role / access', ''])
         desktop = self.open('/business-hub', 1280, 800); expect(desktop.locator('#content .scope-note .scope-badge')).to_have_text('Access limited to 1 property')
         self.assertLessEqual(desktop.evaluate('document.documentElement.scrollWidth'), 1280)
+
+    def row(self, page, name): return page.locator('tbody tr').filter(has_text=name)
+
+    def test_staff_invitation_column_resend_reset_and_emailed_dialog_at_375(self):
+        page = self.open('/business-hub?staff=1&account=' + ACCOUNT); self.tab(page, 'Team access')
+        expect(page.locator('thead th').nth(2)).to_have_text('Invitation')
+        billing, viewer, former = self.row(page, 'Synthetic Billing'), self.row(page, 'Synthetic Viewer'), self.row(page, 'Synthetic Former')
+        expect(billing.locator('td[data-label="Invitation"] .pill')).to_have_text('Invitation pending')
+        expect(billing.locator('td[data-label="Invitation"] small')).to_contain_text('Email not confirmed')
+        expect(billing.get_by_role('button', name='Email new link')).to_be_visible(); expect(billing.get_by_role('button', name='New link', exact=True)).to_be_visible()
+        expect(viewer.get_by_role('button', name='Reset & email')).to_be_visible(); expect(viewer.get_by_role('button', name='Reset sign-in')).to_be_visible()
+        expect(former.locator('[data-ext-invite]')).to_have_count(0); expect(former.locator('td[data-label="Invitation"] .pill')).to_have_text('Access revoked')
+        expect(former.get_by_role('button', name='Revoke access')).to_have_count(0); expect(viewer.get_by_role('button', name='Revoke access')).to_be_visible()
+        self.audit(page, 'staff invitation column')
+        self.dismiss = True; billing.get_by_role('button', name='Email new link').click()
+        self.assertEqual(self.dialogs[-1], 'Email a new invitation to Synthetic Billing at billing@example.invalid? Their earlier link stops working.'); self.assertEqual(self.posts('resend_invite'), [])
+        self.dismiss = False; billing.get_by_role('button', name='Email new link').click()
+        expect(page.locator('#invite-dialog')).to_be_visible(); expect(page.locator('#invite-title')).to_have_text('Invitation emailed.')
+        expect(page.locator('#invite-recipient')).to_have_text('Emailed to billing@example.invalid. This link opens only their company account.')
+        expect(page.locator('#invite-link')).to_be_hidden(); expect(page.locator('#copy-invite')).to_be_hidden()
+        self.audit(page, 'emailed dialog')
+        sent = self.posts('resend_invite')[-1]
+        self.assertEqual((sent['memberId'], sent['deliver']), (M3, 'email')); self.assertRegex(sent['requestId'], HEX32); self.assertNotIn('confirm', sent)
+        page.locator('.dialog-close').click(); expect(page.locator('#invite-dialog')).to_be_hidden()
+        viewer.get_by_role('button', name='Reset sign-in').click()
+        expect(page.locator('#invite-title')).to_have_text('Share with this person only.'); expect(page.locator('#invite-link')).to_be_visible()
+        self.assertIn(f'#invite={ACCOUNT}.{M2}.', page.locator('#invite-url').input_value())
+        reset = self.posts('reset_sign_in')[-1]; self.assertEqual((reset['memberId'], reset['deliver'], reset['confirm']), (M2, 'manual', True))
+        self.assertIn("End Synthetic Viewer's current sign-in", self.dialogs[-1])
+        page.locator('.dialog-close').click()
+
+    def test_email_fallback_dialog_and_retry_reuse_the_request(self):
+        page = self.open('/business-hub?staff=1&account=' + ACCOUNT); self.tab(page, 'Team access')
+        billing = self.row(page, 'Synthetic Billing')
+        self.replies = [(201, {'invite': f'{ACCOUNT}.{M3}.' + 'f' * 64, 'email': 'billing@example.invalid', 'memberId': M3, 'expiresInHours': 48, 'delivery': {'channel': 'email', 'status': 'failed', 'reason': '', 'recorded': True}})]
+        billing.get_by_role('button', name='Email new link').click()
+        expect(page.locator('#invite-title')).to_have_text('Share with this person only.'); expect(page.locator('#invite-link')).to_be_visible(); expect(page.locator('#copy-invite')).to_be_visible()
+        expect(page.locator('#invite-note')).to_contain_text('The email was rejected, so it was not sent.')
+        self.assertTrue(page.locator('#invite-url').input_value().endswith('#invite=' + f'{ACCOUNT}.{M3}.' + 'f' * 64))
+        self.audit(page, 'fallback dialog'); page.locator('.dialog-close').click()
+        self.replies = [(201, {'invite': f'{ACCOUNT}.{M3}.' + 'f' * 64, 'email': 'billing@example.invalid', 'memberId': M3, 'expiresInHours': 48, 'delivery': {'channel': 'email', 'status': 'uncertain', 'reason': 'no_provider_response', 'recorded': True}})]
+        billing.get_by_role('button', name='Email new link').click()
+        expect(page.locator('#invite-note')).to_have_text('Email delivery could not be confirmed, so it may still arrive. Do not send another; if it does not arrive, share this same link privately. It expires after 48 hours.')
+        page.locator('.dialog-close').click()
+        self.replies = [(201, {'invite': f'{ACCOUNT}.{M3}.' + 'a' * 64, 'email': 'billing@example.invalid', 'memberId': M3, 'expiresInHours': 48, 'delivery': {'channel': 'email', 'status': 'not_sent', 'reason': 'template_missing_invite_link', 'recorded': True}})]
+        billing.get_by_role('button', name='Email new link').click()
+        expect(page.locator('#invite-note')).to_contain_text('The approved invitation wording has no link, so nothing was sent.'); expect(page.locator('#invite-link')).to_be_visible()
+        page.locator('.dialog-close').click()
+        self.abort_next = 1; billing.get_by_role('button', name='New link', exact=True).click()
+        expect(page.locator('#notice')).to_have_class(re.compile('error'))
+        self.replies = [(200, {'ok': True, 'duplicate': True, 'accountId': ACCOUNT, 'memberId': M3, 'email': 'billing@example.invalid', 'delivery': {'channel': 'manual', 'status': 'manual'}})]
+        billing.get_by_role('button', name='New link', exact=True).click()
+        expect(page.locator('#notice')).to_have_text('This request was already completed. The team list shows its current status.')
+        first, retry = self.posts('resend_invite')[-2:]
+        self.assertEqual(first, retry); self.assertEqual(first['deliver'], 'manual')
+        billing.get_by_role('button', name='New link', exact=True).click(); expect(page.locator('#invite-dialog')).to_be_visible()
+        self.assertNotEqual(self.posts('resend_invite')[-1]['requestId'], first['requestId'])
+
+    def test_staff_invite_and_onboarding_forms_offer_email_after_confirmation(self):
+        page = self.open('/business-hub?staff=1&account=' + ACCOUNT); self.tab(page, 'Team access')
+        form = page.locator('form[data-form=invite]'); expect(form.locator('select[name=deliver]')).to_have_value('email')
+        form.locator('input[name=name]').fill('Synthetic Colleague'); form.locator('input[name=email]').fill('colleague@example.invalid')
+        self.dismiss = True; form.get_by_role('button', name='Create private invitation').click()
+        self.assertEqual(self.dialogs[-1], 'EGC will email a private sign-in link to colleague@example.invalid. Send it now?'); self.assertEqual(self.posts('invite_member'), [])
+        self.dismiss = False; form.get_by_role('button', name='Create private invitation').click()
+        expect(page.locator('#invite-title')).to_have_text('Invitation emailed.'); expect(page.locator('#invite-recipient')).to_contain_text('Emailed to colleague@example.invalid')
+        body = self.posts('invite_member')[-1]; self.assertEqual(body['deliver'], 'email'); self.assertRegex(body['requestId'], HEX32)
+        page.locator('.dialog-close').click()
+        form = page.locator('form[data-form=invite]'); form.locator('input[name=name]').fill('Synthetic Manual'); form.locator('input[name=email]').fill('manual@example.invalid')
+        form.locator('select[name=deliver]').select_option('manual'); form.get_by_role('button', name='Create private invitation').click()
+        expect(page.locator('#invite-link')).to_be_visible(); self.assertEqual(self.posts('invite_member')[-1]['deliver'], 'manual')
+        page.locator('.dialog-close').click()
+        listing = self.open('/business-hub?staff=1'); expect(listing.locator('form[data-form=create] select[name=deliver]')).to_have_value('email')
+        self.audit(listing, 'staff onboarding with delivery choice')
+
+    def test_client_admin_invitations_are_private_links_only_and_fit_small_phones(self):
+        for width, height in [(375, 812), (320, 640)]:
+            page = self.open('/business-hub', width, height); self.tab(page, 'Team access')
+            expect(page.locator('[data-deliver="email"]')).to_have_count(0); expect(page.locator('form[data-form=invite] select[name=deliver]')).to_have_count(0)
+            expect(self.row(page, 'Synthetic Administrator With A Long Name').locator('[data-ext-invite]')).to_have_count(0)
+            expect(self.row(page, 'Synthetic Billing').get_by_role('button', name='New link', exact=True)).to_be_visible()
+            self.audit(page, f'{width} client invitation column')
+        self.row(page, 'Synthetic Billing').get_by_role('button', name='New link', exact=True).click()
+        expect(page.locator('#invite-link')).to_be_visible(); self.assertEqual(self.posts('resend_invite')[-1]['deliver'], 'manual')
+        self.role = 'viewer'; viewer = self.open('/business-hub'); self.tab(viewer, 'Team access')
+        expect(viewer.locator('[data-ext-invite]')).to_have_count(0); expect(viewer.locator('td[data-label="Invitation"] .pill')).to_have_count(0)
+        desktop = self.open('/business-hub', 1280, 800); self.tab(desktop, 'Team access')
+        expect(desktop.locator('thead th')).to_have_text(['Person', 'Role / access', '']); expect(desktop.locator('td[data-label="Invitation"]')).to_have_count(0)
 
     def test_desktop_layout_is_unchanged_at_1280_and_1360(self):
         for width, height in [(1280, 800), (1360, 950)]:

@@ -111,6 +111,9 @@ function parseOverrides(policy, value) {
 export function createApprovedSendService({
   store, messenger, templates = templateRegistry(store), clock = () => new Date(), env = {}, secret = env.HUB_SESSION_SECRET || '',
   links = {}, attachments = async () => [], crewContact = async () => null, readAccount = (target, id) => target.read('customers', id),
+  // Policies with the 'account_staff' role ask the caller twice: staffGate(actor) before the record is read, then
+  // accountAccess(actor, account) for the resolved account. Both refuse unless injected, so the role stays closed by default.
+  staffGate = () => false, accountAccess = async () => false,
   assignment = actor => createJobAssignmentAccess(env, actor), reserve = () => {},
 } = {}) {
   const now = () => { const value = clock(); return value instanceof Date ? value : new Date(value); };
@@ -123,7 +126,7 @@ export function createApprovedSendService({
 
   // Role checks that do not depend on the record run before it is read, so an
   // account that may not use a message type cannot probe which records exist.
-  // Returns true when only a job assignment could still authorize the actor.
+  // Returns true when only a job assignment or account ownership could still authorize the actor.
   function gate(policy, actor, source, input) {
     if (actor.kind === 'customer') {
       if (source === 'portal' && policy.roles.includes('customer') && policy.target === 'account' && input.accountId === actor.customerAccountId) return false;
@@ -131,7 +134,7 @@ export function createApprovedSendService({
     }
     const dispatcher = hasBusinessAccess(actor) && ['owner', 'manager'].includes(actor.role);
     if ((policy.roles.includes('dispatcher') && dispatcher) || (policy.roles.includes('business') && hasBusinessAccess(actor))) return false;
-    if (policy.roles.includes('assigned_crew')) return true;
+    if (policy.roles.includes('assigned_crew') || (policy.roles.includes('account_staff') && staffGate(actor) === true)) return true;
     throw forbidden(policy);
   }
 
@@ -144,7 +147,7 @@ export function createApprovedSendService({
     }
     if (input.jobId !== undefined || !safeId(input.accountId)) throw fail('messaging_request_invalid', 'Choose a valid customer account for this message.');
     const account = await readAccount(store, input.accountId);
-    if (!account || account.recordType || !safeId(account.id)) throw fail('messaging_target_not_found', 'That customer account could not be found.', 404);
+    if (!account || account.recordType || !safeId(account.id)) throw crewOnly ? forbidden(policy) : fail('messaging_target_not_found', 'That customer account could not be found.', 404);
     return { job: null, account };
   }
 
@@ -160,6 +163,7 @@ export function createApprovedSendService({
     if (policy.roles.includes('dispatcher') && dispatcher) return;
     if (policy.roles.includes('business') && hasBusinessAccess(actor)) return;
     if (policy.roles.includes('assigned_crew') && ctx.actorAssigned) return;
+    if (policy.roles.includes('account_staff') && account && staffGate(actor) === true && await accountAccess(actor, account) === true) return;
     throw forbidden(policy);
   }
 

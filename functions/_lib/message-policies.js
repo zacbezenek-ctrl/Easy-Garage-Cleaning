@@ -113,9 +113,12 @@ export const MESSAGE_POLICIES = Object.freeze({
     // confirmed preview keeps its send key across a bucket boundary.
     dedupe: c => `portal_magic_link:${c.account.id}:${Math.floor(c.keyMs / 600000)}`,
   }),
+  // Business hub member invitations (business-hub-invite-delivery.js): a staff click with the owner-approved wording.
+  // The account id names one member invitation generation, so each rotated link is emailed at most once and an
+  // uncertain send is never repeated. Sales staff may send for the business accounts they own.
   b2b_invite: policy('b2b_invite', {
-    target: 'account', roles: ['business'], triggers: ['hub', 'mcp'],
-    dedupe: c => `b2b_invite:${c.account.id}:${c.keyDay}`,
+    target: 'account', roles: ['business', 'account_staff'], triggers: ['hub'], approvals: ['template+human_trigger'], maxAttempts: 1,
+    dedupe: c => `b2b_invite:${c.account.id}`,
   }),
   // Documents the existing automatic portal invitation on quote acceptance.
   // It keeps running through portal-invitation.js unchanged.

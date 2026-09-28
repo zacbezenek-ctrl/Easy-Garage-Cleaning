@@ -253,7 +253,8 @@ test('invite and revoke request ids are receipted: replays never reissue a link 
   const first=await h.call(invite,{cookie:a.cookie});assert.equal(first.status,201);
   const memberId=first.data.invite.split('.')[1],read=async()=>(await h.account(a)).members.find(m=>m.id===memberId),version=(await read()).version,audits=h.store.rows('hub_audit').length;
   h.advance(1);const again=await h.call({...invite,email:'Lead@Example.invalid'},{cookie:a.cookie});
-  assert.equal(again.status,200);assert.deepEqual(again.data,{ok:true,duplicate:true,email:'lead@example.invalid'});
+  // B2B-INVITE's replay shape: the saved invitation status, never the link.
+  assert.equal(again.status,200);assert.deepEqual(again.data,{ok:true,duplicate:true,accountId:a.accountId,memberId,email:'lead@example.invalid',delivery:{channel:'manual',status:'manual'}});
   assert.equal((await read()).version,version);assert.equal(h.store.rows('hub_audit').length,audits);
   const login=await h.call({action:'redeem',invite:first.data.invite});assert.equal(login.status,200);
   // Signed in now: the replay is still a duplicate rather than the "still signed in" refusal, and a changed payload is 409.

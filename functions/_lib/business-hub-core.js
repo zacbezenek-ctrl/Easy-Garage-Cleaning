@@ -6,6 +6,7 @@ export const ROLES = Object.freeze({
   billing: { view: true, request: false, decide: false, pay: true, team: false },
   viewer: { view: true, request: false, decide: false, pay: false, team: false },
 });
+export const INVITE_HOURS = 48, INVITE_ORIGIN = 'https://easygaragecleaning.com';
 export const fail = (status, message) => Object.assign(new Error(message), { status, publicMessage: message });
 export const uid = () => crypto.randomUUID().replaceAll('-', '');
 export const isId = value => typeof value === 'string' && /^[a-f0-9]{32}$/.test(value);
@@ -18,6 +19,15 @@ export function text(value, max = 180, required = false) {
 export function email(value, required = true) {
   const result = text(value, 180, required).toLowerCase();
   if (result && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(result)) throw fail(400, 'Enter a valid email address.');
+  return result;
+}
+// Member names are greeted by name in EGC-branded invitation email, so they hold letters, spaces and simple punctuation
+// only: no digits, '/', ':', '@' or anything shaped like a web address (a period directly before two letters, or www.).
+const NAME_CHARS = /^[\p{L}\p{M} '’.,&()-]+$/u, WEB_LIKE = /\.[\p{L}\p{M}]{2,}|www\./iu;
+export const safeName = value => typeof value === 'string' && NAME_CHARS.test(value) && /\p{L}/u.test(value) && !WEB_LIKE.test(value);
+export function personName(value) {
+  const result = text(value, 100, true);
+  if (!safeName(result)) throw fail(400, 'Enter the person’s name using letters, spaces and simple punctuation only (no web addresses, digits or @).');
   return result;
 }
 export function date(value) {
@@ -45,6 +55,23 @@ export function activeMember(account, memberId, version) {
   const member = (account.members || []).find(m => m.id === memberId && m.status === 'active');
   if (!member || member.version !== version) throw fail(401, 'Your access has changed. Ask for a new private sign-in link.');
   return member;
+}
+// Invitation state for team views: pending or expired invitation, active or sign_in_ended access, or revoked. A missing
+// sessionExpiresAt (saved before it existed) stays 'active'; without a clock nothing is reported as expired.
+export function inviteState(member, now) {
+  const due = at => Number.isFinite(now) && Number.isFinite(at) && at <= now;
+  if (member?.status === 'invited') return due(member.inviteExpiresAt) ? 'expired' : 'pending';
+  if (member?.status === 'active') return due(member.sessionExpiresAt) ? 'sign_in_ended' : 'active';
+  return member?.status === 'revoked' ? 'revoked' : 'unknown';
+}
+// Team viewers only. Members invited before delivery tracking read as manual links issued 48 hours before expiry.
+export function inviteView(member, now) {
+  const invite = member.invite || {}, expires = Number.isFinite(member.inviteExpiresAt) ? member.inviteExpiresAt : null;
+  return {
+    inviteStatus: inviteState(member, now), deliveryStatus: typeof invite.status === 'string' && invite.status ? invite.status : 'manual',
+    lastSentAt: invite.requestedAt || (expires ? new Date(expires - INVITE_HOURS * 3600000).toISOString() : ''),
+    expiresAt: member.status === 'invited' && expires ? new Date(expires).toISOString() : '',
+  };
 }
 export function bounded(account, field) {
   if ((account[field] || []).length >= LIMITS[field]) throw fail(409, 'This account has reached its workspace limit. Contact EGC before adding more records. Existing records remain available.');
@@ -100,9 +127,10 @@ export function projectView(account, link, job, finance, needsReview) {
 }
 // Clients never see member ids, staff usernames or internal author ids; a staff name that is only a username becomes the team label.
 const staffName = (name, actorId) => typeof actorId === 'string' && actorId.startsWith('staff:') && (!name || actorId.slice(6).toLowerCase() === String(name).trim().toLowerCase()) ? 'EGC account team' : name;
-export function accountView(account, member, projects, { staff = false, manager = false } = {}) {
+export function accountView(account, member, projects, { staff = false, manager = false, now = null } = {}) {
   const permissions = staff ? { view: true, request: true, team: true, staff: true, link: manager } : rights(member);
-  const members = (account.members || []).map(m => ({ ...(permissions.team ? { id: m.id } : {}), name: m.name, role: m.role, status: m.status, ...(permissions.team ? { email: m.email } : {}) }));
+  const members = (account.members || []).map(m => ({ ...(permissions.team ? { id: m.id } : {}), name: m.name, role: m.role, status: m.status,
+    ...(permissions.team ? { email: m.email, ...inviteView(m, now), ...(!staff && m.id === member.id ? { self: true } : {}) } : {}) }));
   const requests = staff ? account.requests || [] : (account.requests || []).map(({ createdBy, ...r }) => ({ ...r, createdByName: staffName(r.createdByName, createdBy) }));
   const messages = staff ? account.messages || [] : (account.messages || []).map(({ authorId, ...m }) => ({ ...m, author: staffName(m.author, authorId) }));
   return {

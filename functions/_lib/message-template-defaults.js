@@ -44,9 +44,10 @@ export const TEMPLATE_KINDS = Object.freeze({
     variables: [...common, 'loginLink'],
     body: 'Hi {{firstName}}, here is your private Easy Garage Cleaning sign-in link: {{loginLink}} It expires soon. If you did not ask for it, you can ignore this message.',
   },
+  // `required`: variables an approved version must contain (the invitation is useless without its link).
   b2b_invite: {
     label: 'Business hub invitation', audience: 'customer', channel: 'Email',
-    variables: [...common, 'inviteLink'],
+    variables: [...common, 'inviteLink'], required: ['inviteLink'],
     subject: 'Your Easy Garage Cleaning business hub invitation',
     body: 'Hi {{firstName}},\n\nYou have been invited to your company\'s Easy Garage Cleaning business hub, where you can request service, follow projects and review invoices in one place.\n\nAccept your invitation here: {{inviteLink}}\n\nThis private link expires in 48 hours. Questions? Call {{companyPhone}}.\n\nThe Easy Garage Cleaning team',
   },

@@ -16,6 +16,7 @@ const COLLECTIONS = Object.freeze({
 });
 // Staff account lists read only the fields the list shows (plus ownerStaff for access), not full 750KB workspaces.
 export const LIST_FIELDS = Object.freeze(['company', 'status', 'ownerStaff', 'updatedAt', 'properties', 'requests']);
+const PURGE_TIMEOUT = 5000;
 function path(collection, id) {
   if (!Object.hasOwn(COLLECTIONS, collection) || typeof id !== 'string' || !COLLECTIONS[collection](id)) throw fail(400, 'Invalid record identifier.');
   return `${collection}/${id}`;
@@ -55,6 +56,24 @@ export function createBusinessStore(env, fetcher = firestoreFetch) {
       if (!response.ok) throw fail(503, 'Your business accounts could not be loaded.');
       const rows = (await response.json()).filter(row => row.document).map(row => decode(row.document));
       return { accounts: rows.slice(0, 50), next: '', limited: rows.length > 50 };
+    },
+    // Deletes at most `limit` (1-25) session records that expired at or before `now`. Each delete is preconditioned on the
+    // version the query saw, so a session refreshed in between is kept. Best effort and time-bounded: returns how many were removed.
+    async purgeExpiredSessions(now, limit = 20) {
+      if (!Number.isFinite(now)) return 0;
+      const response = await fetcher(env, `${DB}:runQuery`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: AbortSignal.timeout(PURGE_TIMEOUT), body: JSON.stringify({ structuredQuery: {
+        select: { fields: [{ fieldPath: 'expiresAt' }] }, from: [{ collectionId: 'business_sessions' }],
+        where: { fieldFilter: { field: { fieldPath: 'expiresAt' }, op: 'LESS_THAN_OR_EQUAL', value: { integerValue: String(Math.floor(now)) } } },
+        limit: Math.min(25, Math.max(1, Math.floor(limit) || 1)),
+      } }) });
+      if (!response.ok) return 0;
+      const rows = await response.json();
+      const expired = (Array.isArray(rows) ? rows : []).filter(row => row?.document?.name && row.document.updateTime).map(row => decode(row.document))
+        .filter(row => COLLECTIONS.business_sessions(row.id) && Number.isFinite(row.expiresAt) && row.expiresAt <= now);
+      if (!expired.length) return 0;
+      const writes = expired.map(row => ({ delete: `${ROOT}/${path('business_sessions', row.id)}`, currentDocument: { updateTime: row._version } }));
+      const result = await fetcher(env, `${DB}:commit`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: AbortSignal.timeout(PURGE_TIMEOUT), body: JSON.stringify({ writes }) });
+      return result.ok ? expired.length : 0;
     },
     async jobs(ids) {
       if (!ids.length) return new Map();

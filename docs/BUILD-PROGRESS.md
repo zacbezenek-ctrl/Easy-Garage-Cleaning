@@ -274,6 +274,11 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   message, open_project, exports/decorators and delegated /customer-portal access (live, no version bump). Invite, revoke
   and scope changes write hub_audit + business_audit in the same commit with create-only requestId receipts.
   Gaps: save()'s filtered-account guard is a marker check (spread copies bypass it); rollback past this unit fails open.
+- **B2B-INVITE** Staff can email business member invitations through the approved-send core (`b2b_invite`, behind
+  `BUSINESS_HUB_INVITE_DELIVERY`, owner-approved wording that must contain `{{inviteLink}}`), plus Resend and Reset sign-in,
+  requestId receipts that replay the saved delivery status, caps (3/member, 3/mailbox, 20/sender per 24 h), audited
+  membership details with a 10-entry accessHistory, and a bounded expired-session purge. Merged with B2B-SCOPE's receipts
+  and hub_audit rows. Gaps: no live GHL send tested; quota records are never deleted; resend/reset write no hub_audit row.
 
 ## In progress
 
@@ -340,6 +345,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | P3-02 | Conversation extraction v2: evidence quotes validated against the transcript, review-only drafts (EGC_EXTRACTION_V2 off) | merged (9ddac3d) |
 | FUN-02 | Booking, dispatch and approval funnel events in the same commit as each visit change; schedule.no_show | merged (98925a0) |
 | B2B-SCOPE | B2B per-property member access (propertyIds) and audited member invite/revoke/scope changes | merged (d8257e6) |
+| B2B-INVITE | B2B member invitations by email via the approved-send core, resend/reset, send caps and audited membership changes | merged (e2e32fc) |
 
 ## Next
 
