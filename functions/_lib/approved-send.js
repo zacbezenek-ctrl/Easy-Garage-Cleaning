@@ -5,6 +5,7 @@ import { hasBusinessAccess } from './hub-session.js';
 import { assignmentKey, createJobAssignmentAccess, jobCrewNames } from './job-assignment.js';
 import { appendConversationMessage } from './customer-messaging.js';
 import { denverToday, validDate } from './dispatch-time.js';
+import { arrivalSettings, arrivalWindowFields } from './dispatch-arrival.js';
 import { HUMAN_APPROVALS, messagePolicy, quietHoursDecision, invoiceBalance, depositDue } from './message-policies.js';
 import { LINK_VARIABLES, messageDigest, renderTemplate, templateVariables, validateTemplateVersion } from './message-templates.js';
 import { TEMPLATE_KINDS } from './message-template-defaults.js';
@@ -169,6 +170,10 @@ export function createApprovedSendService({
     if (name === 'etaMinutes') return overrides.etaMinutes === undefined ? '' : String(overrides.etaMinutes);
     if (name === 'serviceDate') return dateText(job?.date);
     if (name === 'arrivalWindow') {
+      // Dispatch's saved window (or its enabled default) is what the customer
+      // was promised; the start-time estimate is only the legacy fallback.
+      const promised = job ? arrivalWindowFields(job, arrivalSettings(env)).arrivalWindow : null;
+      if (promised) return promised;
       const start = minutesOf(job?.time), window = Number.isInteger(job?.arrivalWindowMinutes) && job.arrivalWindowMinutes > 0 && job.arrivalWindowMinutes <= 240 ? job.arrivalWindowMinutes : 60;
       return start === null ? '' : `${clockText(start)}–${clockText(start + window)}`;
     }

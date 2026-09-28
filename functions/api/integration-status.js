@@ -4,6 +4,7 @@ import { customerPortalConfigured } from '../_lib/customer-portal.js';
 import { employeeAccountsConfigured } from '../_lib/employee-accounts.js';
 import { gustoConfiguration } from '../_lib/gusto-client.js';
 import { moneyApiEnabled } from '../_lib/money-service.js';
+import { serverMessagingEnabled } from '../_lib/messaging-settings.js';
 
 /** Returns configuration readiness only. Secret values never leave the server. */
 export async function onRequestGet({request,env}){
@@ -24,7 +25,10 @@ export async function onRequestGet({request,env}){
     quickbooks:any('QUICKBOOKS_CLIENT_ID','QBO_CLIENT_ID')&&any('QUICKBOOKS_CLIENT_SECRET','QBO_CLIENT_SECRET'),
     gusto:gustoConfiguration(env).configured,
     highlevelPipeline:any('HIGHLEVEL_SCHEDULED_STAGE_ID','GHL_SCHEDULED_STAGE_ID','HIGHLEVEL_PIPELINE_STAGE_SCHEDULED_ID','GHL_PIPELINE_STAGE_SCHEDULED_ID'),
-    automations:all('WEBSITE_LEAD_HOOK_URL','QUOTE_FOLLOWUP_WEBHOOK_URL','BOOKING_WEBHOOK_URL','REVIEW_WEBHOOK_URL','META_SIGNAL_WEBHOOK_URL')
+    automations:all('WEBSITE_LEAD_HOOK_URL','QUOTE_FOLLOWUP_WEBHOOK_URL','BOOKING_WEBHOOK_URL','REVIEW_WEBHOOK_URL','META_SIGNAL_WEBHOOK_URL'),
+    // True once the signed messaging cron owns reminders and portal-invitation
+    // retries; the Hub then stops triggering them from a manager's page load.
+    serverMessaging:serverMessagingEnabled(env)
   };
   // Browser feature flags (booleans only); money writes stay in the browser unless moneyApi is on.
   const flags={moneyApi:moneyApiEnabled(env)};

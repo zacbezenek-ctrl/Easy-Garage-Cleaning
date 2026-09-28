@@ -94,6 +94,11 @@ test('actual Firestore rules isolate canonical operations from crew SDK access',
       for(const db of [publicDb,crew,lead,manager]) for(const path of ['message_sends/send','message_templates/payment_reminder','message_operations/receipt']){await assertFails(db.doc(path).get());await assertFails(db.doc(path).set({status:'changed'}));await assertFails(db.doc(path).update({status:'changed'}));await assertFails(db.doc(path).delete());}
       for(const db of [crew,manager]) for(const name of ['message_sends','message_templates','message_operations']) await assertFails(db.collection(name).get());
     });
+    await t.test('messaging cadence settings, signed cron run summaries and holds remain server-only even for business SDK sessions',async()=>{
+      await environment.withSecurityRulesDisabled(async context=>{const db=context.firestore();await db.doc('messaging_settings/automation').set({paused:false,paymentReminderDays:[1,7,14]});await db.doc('messaging_runs/run').set({status:'completed',actorId:'messaging-cron-worker'});await db.doc('messaging_holds/current').set({day:'2026-09-22',entries:[{key:'payment_reminder:job:2026-09-21:1',status:'suppressed'}]});});
+      for(const db of [publicDb,crew,lead,manager]) for(const path of ['messaging_settings/automation','messaging_runs/run','messaging_holds/current']){await assertFails(db.doc(path).get());await assertFails(db.doc(path).set({paused:true}));await assertFails(db.doc(path).update({status:'changed'}));await assertFails(db.doc(path).delete());}
+      for(const db of [crew,manager]) for(const name of ['messaging_settings','messaging_runs','messaging_holds']) await assertFails(db.collection(name).get());
+    });
     await t.test('Garage Guard memberships, Stripe event receipts and reviews are webhook-only',async()=>{
       for(const db of [publicDb,crew,manager]) for(const path of ['memberships/sub_synthetic','stripe_events/evt_synthetic','membership_reviews/sub_synthetic','payment_reviews/cs_test_synthetic']){await assertFails(db.doc(path).get());await assertFails(db.doc(path).update({status:'changed'}));await assertFails(db.doc(path).delete());}
       await assertFails(manager.doc('memberships/sub_new').set({plan:'black',status:'active'}));

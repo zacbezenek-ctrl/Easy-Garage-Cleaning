@@ -354,6 +354,18 @@ service cloud.firestore {
     match /message_operations/{documentId} {
       allow read, write: if false;
     }
+    // Owner reminder cadence, the signed messaging cron's run summaries and
+    // its same-day holds are written only by the server; browsers never read
+    // or change them.
+    match /messaging_settings/{documentId} {
+      allow read, write: if false;
+    }
+    match /messaging_runs/{documentId} {
+      allow read, write: if false;
+    }
+    match /messaging_holds/{documentId} {
+      allow read, write: if false;
+    }
 
     // Garage Guard memberships, their Stripe event receipts and identity reviews
     // are written only by the signed Stripe webhook. Jobs carry a display copy.

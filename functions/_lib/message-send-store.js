@@ -22,7 +22,7 @@ function messagingError(error) {
 export function messagingStorage(env, fetcher = firestoreFetch) {
   const base = dispatchStorage(env, fetcher);
   const wrap = method => async (...args) => { try { return await method(...args); } catch (error) { throw messagingError(error); } };
-  return { read: wrap(base.read), commit: wrap(base.commit), roster: wrap(base.roster) };
+  return { read: wrap(base.read), commit: wrap(base.commit), roster: wrap(base.roster), jobRecords: wrap(base.jobRecords) };
 }
 
 export const ledgerId = sendKey => messageDigest(`egc-message-send:${sendKey}`);

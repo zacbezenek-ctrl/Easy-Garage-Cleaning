@@ -203,6 +203,11 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   their union, so legacy readers keep working. Conflicts, day locks, openings, travel, availability and the field/crew
   projections work per segment; crew projections fail closed to the viewer's own segments. Saved segments are always
   honoured and can be cleared with the flag off. Split jobs cannot be recurring templates.
+- **MSG-CRON** Signed messaging cron: the Railway worker (`EGC_MESSAGING_CRON_ENABLED`, off) POSTs a v2 service envelope
+  to `/api/messaging-cron` every 15 minutes; one bounded tick sends day-before, deposit, payment (+1/+7/+14) and
+  estimate-expiring reminders plus portal-invitation retries through the approved-send core (Denver quiet hours, 25 per
+  tick, dry run, `messaging_runs`/`messaging_holds`). With `EGC_SERVER_MESSAGING_ENABLED` the Hub stops page-load triggers
+  and skips legacy-sent reminders. Gaps: worker holds the API root secret; no crew_assignment outbox.
 
 ## In progress
 
@@ -253,6 +258,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | P2-03 | Catalog and owner pricing settings API with versioned, audited Firestore storage (CATALOG_QUOTES_ENABLED) | merged (9d16e9e) |
 | STAFF-GATE | Server-side Hub session gate for staff pages and scripts, /staff-login (EGC_STAFF_PAGE_GATE) | merged (107ef94) |
 | SEGMENTS | Assignment segments: multi-crew jobs, split crews and per-day work windows (EGC_DISPATCH_SEGMENTS) | merged (ec78661) |
+| MSG-CRON | Signed messaging cron (Railway worker -> /api/messaging-cron), server-side reminders, browser triggers behind a flag | merged (7ad17e3) |
 
 ## Next
 

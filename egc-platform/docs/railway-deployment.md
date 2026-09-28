@@ -91,6 +91,8 @@ GHL_WRITEBACK_ENABLED=true
 
 The OAuth client secret is not required for the private-integration-token sync path. Keep it available only if/when the deployment switches to GHL OAuth.
 
+The signed messaging cron is off unless `EGC_MESSAGING_CRON_ENABLED=true` (`EGC_MESSAGING_CRON_DRY_RUN=true` asks the Hub for dry runs only). It then also needs `API_BEARER_TOKEN=<same value as egc-api>` to sign its `/api/messaging-cron` requests. That value is the API's root service-signing secret: whoever holds it can sign any API-to-Hub service request, for any actor and path, not only the cron. Setting it on the worker extends that trust to the worker process. The Hub runs the messaging schedule only for the `messaging-cron-worker` integration actor on `/api/messaging-cron`, but its other service endpoints cannot tell which process signed. Leave the cron off, and the secret unset on the worker, until that trade-off is accepted. A purpose-scoped worker signing key is a planned follow-up.
+
 ### egc-api
 
 ```
