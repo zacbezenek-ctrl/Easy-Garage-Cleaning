@@ -47,7 +47,9 @@ class CustomerPhotosBrowserTests(unittest.TestCase):
         cls.url = f'http://127.0.0.1:{cls.server.server_port}'
         cls.pw = sync_playwright().start()
         options = {'executable_path': os.environ['PLAYWRIGHT_CHROMIUM_EXECUTABLE']} if os.environ.get('PLAYWRIGHT_CHROMIUM_EXECUTABLE') else {}
-        cls.browser = cls.pw.chromium.launch(headless=True, args=['--no-sandbox'], **options)
+        # Chromium's lazy-image distance depends on its connection estimate (1250px on 4G, 2500-3000px on 3G or
+        # unknown), and CI runners report a slower one. Pin 4G so the below-the-fold lazy-loading check is stable.
+        cls.browser = cls.pw.chromium.launch(headless=True, args=['--no-sandbox', '--force-effective-connection-type=4G'], **options)
     @classmethod
     def tearDownClass(cls):
         cls.browser.close(); cls.pw.stop(); cls.server.shutdown(); cls.server.server_close()
