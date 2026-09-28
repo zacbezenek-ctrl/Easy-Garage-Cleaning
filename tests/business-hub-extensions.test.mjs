@@ -49,7 +49,7 @@ test('a registered action runs only after the CSRF, origin, JSON, session and ac
   assert.equal(seen.length,0);
   saved.status='active';await h.store.commit([{collection:'business_accounts',id:a.accountId,data:{...saved},version:(await h.store.read('business_accounts',a.accountId))._version}]);
   const ok=await h.call(ping,{cookie:a.cookie});assert.equal(ok.status,202);assert.deepEqual(ok.data,{ok:true,echo:'synthetic'});assert.equal(ok.headers.get('Cache-Control'),'no-store');
-  assert.equal(seen.length,1);assert.equal(seen[0].account,a.accountId);assert.deepEqual(seen[0].helpers,['finance','needsReview','now','property','requireManager','requirePermission','response','save','snapshot','store']);
+  assert.equal(seen.length,1);assert.equal(seen[0].account,a.accountId);assert.deepEqual(seen[0].helpers,['canSeeProperty','finance','needsReview','now','property','requireManager','requirePermission','response','save','scoped','snapshot','store']);
 });
 
 test('registered actions use the shared save, permission and property helpers and cannot make responses cacheable',async()=>{

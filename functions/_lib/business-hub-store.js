@@ -1,7 +1,8 @@
 import { firestoreFetch } from './firebase-service-account.js';
 import { decodeFirestoreFields, encodeFirestoreFields } from './firestore-job.js';
 import { commitConflict, commitFailure } from './firestore-errors.js';
-import { fail, isId, parseBusinessActor, activeMember, requireLinkedJob, rights } from './business-hub-core.js';
+import { fail, isId, parseBusinessActor, activeMember, rights } from './business-hub-core.js';
+import { requireScopedLinkedJob } from './business-hub-scope.js';
 const ROOT = 'projects/egcw-1ec83/databases/(default)/documents';
 const DB = `https://firestore.googleapis.com/v1/${ROOT}`;
 // Each collection accepts only its own id shape; private job records (_egc_, secure_) are never addressable here.
@@ -65,13 +66,13 @@ export function createBusinessStore(env, fetcher = firestoreFetch) {
     },
   };
 }
-/* Every delegated project request rechecks the account, member and exact project grant. */
+/* Every delegated project request rechecks the account, member, exact project grant and the member's property access. */
 export async function readBusinessProjectViewer(env, actorId, job, { store = createBusinessStore(env) } = {}) {
   const claims = parseBusinessActor(actorId);
   if (!isId(claims.accountId)) throw fail(403, 'Business access is invalid.');
   const account = await store.read('business_accounts', claims.accountId);
   const member = activeMember(account, claims.memberId, claims.version);
-  requireLinkedJob(account, job.id, job);
+  requireScopedLinkedJob(account, member, job.id, job);
   const p = rights(member);
   return { name: member.name, permissions: { view: true, decide: p.decide === true, pay: p.pay === true, rebook: p.request === true } };
 }

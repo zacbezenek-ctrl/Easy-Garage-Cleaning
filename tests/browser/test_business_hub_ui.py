@@ -18,6 +18,7 @@ CLIENT_TABS = ['Overview', 'Properties', 'Service requests', 'Projects & quotes'
 PERMISSIONS = {
     'admin': {'view': True, 'request': True, 'decide': True, 'pay': True, 'team': True},
     'viewer': {'view': True},
+    'limited': {'view': True, 'request': True, 'decide': True},
     'staff': {'view': True, 'request': True, 'team': True, 'staff': True, 'link': True},
 }
 EXTENSION = r"""(()=>{'use strict';const hub=window.EGCBusinessHub;
@@ -34,15 +35,15 @@ def snapshot(role):
     staff = role == 'staff'
     members = [
         {'name': 'Synthetic Administrator With A Long Name', 'role': 'admin', 'status': 'active', 'id': M1, 'email': 'synthetic.administrator.with.long.address@example.invalid'},
-        {'name': 'Synthetic Viewer', 'role': 'viewer', 'status': 'active', 'id': M2, 'email': 'viewer@example.invalid'},
+        {'name': 'Synthetic Viewer', 'role': 'viewer', 'status': 'active', 'id': M2, 'email': 'viewer@example.invalid', 'propertyIds': [P1]},
         {'name': 'Synthetic Billing', 'role': 'billing', 'status': 'invited', 'id': M3, 'email': 'billing@example.invalid'},
         {'name': 'Synthetic Former', 'role': 'manager', 'status': 'revoked', 'id': M4, 'email': 'former@example.invalid'},
     ]
     if not PERMISSIONS[role].get('team'):
-        members = [{k: v for k, v in m.items() if k not in ('id', 'email')} for m in members]
-    return {
+        members = [{k: v for k, v in m.items() if k not in ('id', 'email', 'propertyIds')} for m in members]
+    data = {
         'account': {'id': ACCOUNT, 'company': COMPANY, 'billingEmail': 'accounts.payable.department@synthetic-property-management.example.invalid', 'reference': 'PO-2026-SYN', 'status': 'active'},
-        'viewer': {'name': 'EGC account team' if staff else 'Synthetic Administrator', 'role': 'staff' if staff else role, 'permissions': PERMISSIONS[role]},
+        'viewer': {'name': 'EGC account team' if staff else 'Synthetic Administrator', 'role': 'staff' if staff else 'manager' if role == 'limited' else role, 'permissions': PERMISSIONS[role]},
         'properties': [
             {'id': P1, 'name': 'Synthetic Tower North Parking Structure', 'address': '1200 Synthetic Boulevard, Suite 4400, Fort Collins, CO 80525', 'contact': 'Synthetic Super 970-555-0100', 'access': 'Front desk. ' + LONG_TOKEN, 'updatedAt': NOW},
             {'id': P2, 'name': 'Synthetic Storage Annex', 'address': '44 Example Way, Loveland, CO', 'contact': '', 'access': '', 'updatedAt': NOW},
@@ -65,6 +66,13 @@ def snapshot(role):
         'manager': {'name': 'Zoe Zoll', 'email': 'zoe.zoll@easygaragecleaning.com', 'phone': '+19709991403'},
         'coverage': {'linked': 4, 'unavailable': 1, 'paymentReview': 1}, 'updatedAt': NOW,
     }
+    if role == 'limited':
+        # The server's scoped snapshot: property P1 only, its request and projects, and general messages.
+        data['viewer']['propertyIds'] = [P1]; data['account']['billingEmail'] = ''
+        data['properties'] = [p for p in data['properties'] if p['id'] == P1]; data['requests'] = [r for r in data['requests'] if r['propertyId'] == P1]
+        data['projects'] = [p for p in data['projects'] if p['propertyId'] == P1]; data['messages'] = [m for m in data['messages'] if m['requestId'] in ('', R1)]
+        data['coverage'] = {'linked': 2, 'unavailable': 0, 'paymentReview': 1}
+    return data
 
 ACCOUNTS = {'staff': True, 'manager': True, 'next': 'synthetic-cursor', 'limited': False, 'accounts': [
     {'id': ACCOUNT, 'company': COMPANY, 'status': 'active', 'properties': 2, 'requests': 1, 'updatedAt': NOW},
@@ -170,6 +178,11 @@ class BusinessHubBrowserTests(unittest.TestCase):
         page.locator('#tabs button').filter(has_text=re.compile('^' + re.escape(name) + '$')).click()
         expect(page.locator('#heading')).to_have_text(name)
     def posts(self, action): return [call['body'] for call in self.calls if call['body'].get('action') == action]
+    def wait_posts(self, page, action, count):
+        for _ in range(100):
+            if len(self.posts(action)) >= count: return self.posts(action)
+            page.wait_for_timeout(50)
+        self.fail(f'{action}: expected {count} posts, saw {len(self.posts(action))}')
 
     def test_client_every_tab_is_touch_ready_at_375(self):
         page = self.open('/business-hub'); expect(page.locator('#heading')).to_have_text('Overview')
@@ -241,7 +254,7 @@ class BusinessHubBrowserTests(unittest.TestCase):
         self.assertRegex(first['requestId'], HEX32); self.assertEqual(retry['requestId'], first['requestId']); self.assertEqual(retry['propertyId'], '')
         page.locator('details summary').first.click(); page.locator('details[open] form').get_by_role('button', name='Save property changes').click()
         expect(page.locator('#notice')).to_have_text('Saved.')
-        edit = self.posts('save_property')[-1]; self.assertEqual(edit['propertyId'], P1); self.assertNotIn('requestId', edit)
+        edit = self.wait_posts(page, 'save_property', 3)[-1]; self.assertEqual(edit['propertyId'], P1); self.assertNotIn('requestId', edit)
         fresh = page.locator('section.card').filter(has=page.get_by_role('heading', name='Add a property')).locator('form').get_attribute('data-id')
         self.assertRegex(fresh, HEX32); self.assertNotEqual(fresh, first['requestId'])
 
@@ -273,6 +286,85 @@ class BusinessHubBrowserTests(unittest.TestCase):
         staff = self.open('/business-hub-extension-test?staff=1&account=' + ACCOUNT); expect(staff.locator('#heading')).to_have_text('Overview')
         self.assertEqual(staff.locator('#tabs button').all_inner_texts(), CLIENT_TABS + ['Broken tab'])
         self.assertEqual(staff.evaluate("EGCBusinessHub.exportUrl('synthetic_csv')"), f'/api/business-hub?staff=1&account={ACCOUNT}&export=synthetic_csv')
+
+    def test_team_property_access_badges_and_edit_dialog_at_375(self):
+        page = self.open('/business-hub'); self.tab(page, 'Team access')
+        self.assertEqual(page.locator('td[data-label="Property access"] .scope-badge').all_inner_texts(), ['All properties', 'Access limited to 1 property', 'All properties', 'All properties'])
+        self.assertEqual(page.locator('[data-ext-scope]').evaluate_all('b => b.map(x => [x.dataset.extScope, x.textContent])'), [[M2, 'Edit property access'], [M3, 'Limit to properties']])
+        self.audit(page, 'team property access')
+        page.get_by_role('button', name='Edit property access').click(); dialog = page.locator('#scope-dialog')
+        expect(dialog).to_be_visible(); expect(dialog.get_by_role('heading', name='Synthetic Viewer')).to_be_visible()
+        expect(dialog.get_by_label('Only selected properties')).to_be_checked()
+        expect(dialog.get_by_label(re.compile('Synthetic Tower North'))).to_be_checked(); expect(dialog.get_by_label(re.compile('Synthetic Storage Annex'))).not_to_be_checked()
+        self.audit(page, 'property access dialog')
+        dialog.get_by_label(re.compile('Synthetic Storage Annex')).check()
+        self.abort_next = 1; dialog.get_by_role('button', name='Save property access').click()
+        expect(dialog.locator('.scope-error')).not_to_be_empty(); expect(dialog).to_be_visible()
+        dialog.get_by_role('button', name='Save property access').click()
+        expect(dialog).to_be_hidden(); expect(page.locator('#notice')).to_contain_text('Property access saved')
+        first, retry = self.posts('set_member_properties')
+        self.assertEqual({k: v for k, v in first.items() if k != 'requestId'}, {'action': 'set_member_properties', 'memberId': M2, 'propertyIds': [P1, P2]})
+        self.assertRegex(first['requestId'], HEX32); self.assertEqual(retry, first)
+        page.get_by_role('button', name='Limit to properties').click()
+        expect(dialog.get_by_label('All properties, including ones added later')).to_be_checked(); expect(dialog.locator('.scope-list')).to_be_hidden()
+        dialog.get_by_label('Only selected properties').check(); expect(dialog.locator('.scope-list')).to_be_visible()
+        dialog.get_by_role('button', name='Save property access').click()
+        expect(dialog.locator('.scope-error')).to_have_text('Select at least one property, or choose All properties.')
+        self.assertEqual(len(self.posts('set_member_properties')), 2)
+        dialog.get_by_label(re.compile('Synthetic Tower North')).check(); dialog.get_by_role('button', name='Save property access').click(); expect(dialog).to_be_hidden()
+        third = self.wait_posts(page, 'set_member_properties', 3)[-1]
+        self.assertEqual((third['memberId'], third['propertyIds']), (M3, [P1])); self.assertNotEqual(third['requestId'], first['requestId'])
+        page.get_by_role('button', name='Limit to properties').click(); dialog.get_by_role('button', name='Close').click()
+        expect(dialog).to_be_hidden(); self.assertEqual(page.evaluate('document.activeElement.dataset.extScope'), M3)
+
+    def test_invite_sends_selected_properties_and_administrators_get_every_property(self):
+        page = self.open('/business-hub'); self.tab(page, 'Team access'); form = page.locator('form[data-form=invite]')
+        field = form.locator('.scope-field'); expect(field.locator('.scope-list')).to_be_hidden()
+        form.locator('input[name=name]').fill('Synthetic Scoped'); form.locator('input[name=email]').fill('scoped@example.invalid')
+        field.get_by_label('Only selected properties').check(); self.audit(page, 'invite property checkboxes')
+        form.get_by_role('button', name='Create private invitation').click()
+        expect(page.locator('#notice')).to_have_text('Select at least one property, or choose All properties.'); self.assertEqual(self.posts('invite_member'), [])
+        field.get_by_label(re.compile('Synthetic Storage Annex')).check(); form.get_by_role('button', name='Create private invitation').click()
+        expect(page.locator('#invite-dialog')).to_be_visible(); page.locator('.dialog-close').click()
+        sent = self.wait_posts(page, 'invite_member', 1)[-1]
+        self.assertEqual(sent['propertyIds'], [P2]); self.assertEqual(sent['role'], 'manager'); self.assertNotIn('propertyScope', sent)
+        form = page.locator('form[data-form=invite]'); field = form.locator('.scope-field')
+        form.locator('input[name=email]').fill('viewer@example.invalid'); form.locator('input[name=email]').dispatch_event('change')
+        expect(field.get_by_label('Only selected properties')).to_be_checked(); expect(field.get_by_label(re.compile('Synthetic Tower North'))).to_be_checked()
+        form.locator('input[name=name]').fill('Synthetic Promoted'); form.locator('select[name=role]').select_option('admin')
+        expect(field.get_by_label('Only selected properties')).to_be_disabled(); expect(field.get_by_label('All properties, including ones added later')).to_be_checked()
+        expect(field.locator('.scope-admin')).to_be_visible()
+        form.get_by_role('button', name='Create private invitation').click(); expect(page.locator('#invite-dialog')).to_be_visible()
+        admin = self.wait_posts(page, 'invite_member', 2)[-1]; self.assertEqual((admin['role'], admin['propertyIds']), ('admin', []))
+
+    def test_invite_prefill_never_overrides_a_property_choice_the_administrator_made(self):
+        page = self.open('/business-hub'); self.tab(page, 'Team access'); form = page.locator('form[data-form=invite]')
+        field = form.locator('.scope-field'); address = form.locator('input[name=email]'); role = form.locator('select[name=role]')
+        north = field.get_by_label(re.compile('Synthetic Tower North')); every = field.get_by_label('All properties, including ones added later'); some = field.get_by_label('Only selected properties')
+        # Untouched: a member's email starts from their saved access, returning from administrator keeps it, and a new email resets it.
+        address.fill('viewer@example.invalid'); address.dispatch_event('change')
+        expect(north).to_be_checked(); expect(field.locator('.scope-prefill')).to_have_text('Starting from Synthetic Viewer’s saved property access.')
+        role.select_option('admin'); expect(every).to_be_checked(); expect(field.locator('.scope-prefill')).to_have_text('')
+        role.select_option('manager'); expect(some).to_be_checked(); expect(north).to_be_checked()
+        address.fill('new.person@example.invalid'); address.dispatch_event('change'); expect(every).to_be_checked(); expect(field.locator('.scope-prefill')).to_have_text('')
+        # Touched: the email of an unrestricted member keeps the administrator's selection and says so.
+        some.check(); north.check(); form.locator('input[name=name]').fill('Synthetic Billing')
+        address.fill('billing@example.invalid'); address.dispatch_event('change')
+        expect(some).to_be_checked(); expect(north).to_be_checked()
+        expect(field.locator('.scope-prefill')).to_have_text('Your choice here replaces Synthetic Billing’s saved property access.'); self.audit(page, 'invite prefill note')
+        form.get_by_role('button', name='Create private invitation').click(); expect(page.locator('#invite-dialog')).to_be_visible()
+        sent = self.wait_posts(page, 'invite_member', 1)[-1]; self.assertEqual((sent['email'], sent['propertyIds']), ('billing@example.invalid', [P1]))
+
+    def test_limited_member_sees_badge_and_cannot_add_properties_at_375(self):
+        self.role = 'limited'; page = self.open('/business-hub'); expect(page.locator('#heading')).to_have_text('Overview')
+        for name in CLIENT_TABS:
+            self.tab(page, name); expect(page.locator('#content .scope-note')).to_contain_text('Access limited to 1 property'); self.audit(page, 'limited ' + name)
+        self.tab(page, 'Properties'); expect(page.get_by_role('heading', name='Add a property')).to_have_count(0)
+        expect(page.locator('details summary')).to_have_count(1)
+        self.tab(page, 'Team access'); expect(page.locator('[data-ext-scope]')).to_have_count(0); expect(page.locator('form[data-form=invite]')).to_have_count(0)
+        expect(page.locator('thead th')).to_have_text(['Person', 'Role / access', ''])
+        desktop = self.open('/business-hub', 1280, 800); expect(desktop.locator('#content .scope-note .scope-badge')).to_have_text('Access limited to 1 property')
+        self.assertLessEqual(desktop.evaluate('document.documentElement.scrollWidth'), 1280)
 
     def test_desktop_layout_is_unchanged_at_1280_and_1360(self):
         for width, height in [(1280, 800), (1360, 950)]:

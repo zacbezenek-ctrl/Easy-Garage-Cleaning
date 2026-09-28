@@ -269,6 +269,11 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   events in the same commit as every visit change: booked/scheduled, rescheduled (reason, who asked, occurrence), cancelled,
   a new job `schedule.no_show`, restored, assigned; the handoff writes deal.sold and recording approval scope.reviewed.
   No-show is treated as closed like a cancel. Gaps: MCP cancels record other_legacy; no-show fee policy is FUN-30's.
+- **B2B-SCOPE** Business members can be limited to selected properties (optional `member.propertyIds`; absent or empty
+  = all, admins always all, malformed fails closed). Enforced server-side on snapshot, save_property, request_service,
+  message, open_project, exports/decorators and delegated /customer-portal access (live, no version bump). Invite, revoke
+  and scope changes write hub_audit + business_audit in the same commit with create-only requestId receipts.
+  Gaps: save()'s filtered-account guard is a marker check (spread copies bypass it); rollback past this unit fails open.
 
 ## In progress
 
@@ -334,6 +339,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | TEAM-UI | Staff directory Team screen (roles, skills, pay history, availability) on the P1-08 API | merged (22a6fc0) |
 | P3-02 | Conversation extraction v2: evidence quotes validated against the transcript, review-only drafts (EGC_EXTRACTION_V2 off) | merged (9ddac3d) |
 | FUN-02 | Booking, dispatch and approval funnel events in the same commit as each visit change; schedule.no_show | merged (98925a0) |
+| B2B-SCOPE | B2B per-property member access (propertyIds) and audited member invite/revoke/scope changes | merged (d8257e6) |
 
 ## Next
 

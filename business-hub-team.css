@@ -1,0 +1,20 @@
+/* Team extension: per-property member access (business-hub-team.js). */
+.scope-field{border:0;margin:0;padding:0;min-width:0;display:grid;gap:4px}
+.scope-field legend{font-size:12px;font-weight:700;padding:0;margin-bottom:4px}
+.scope-option{display:flex;align-items:center;gap:10px;min-height:44px;font-size:13px;font-weight:500;overflow-wrap:anywhere;cursor:pointer}
+.scope-option input{flex:none;width:19px;min-height:19px;height:19px;margin:0;padding:0;accent-color:var(--orange)}
+.scope-option span{min-width:0}
+.scope-option small{display:block;font-size:11px;color:var(--muted)}
+.scope-list{display:grid;gap:2px;max-height:260px;overflow:hidden auto;border:1px solid var(--line);border-radius:7px;padding:2px 12px}
+.scope-list[hidden]{display:none}
+.scope-admin{margin:4px 0 0}
+.scope-prefill{margin:0}
+.scope-badge{display:inline-block;font-size:11px;font-weight:700;padding:4px 8px;border-radius:5px;background:#eef2f6;color:#425872;margin:0 8px 6px 0;white-space:nowrap}
+.scope-badge.limited{background:#fff0d5;color:#6f4300}
+.scope-note{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;font-size:13px;color:var(--muted);margin:0 0 18px}
+.scope-note .scope-badge{margin:0}
+.scope-error{color:#a82912;font-size:13px;min-height:20px;margin:0}
+#scope-dialog form{gap:12px}
+#scope-dialog h2{margin:0;overflow-wrap:anywhere}
+#scope-dialog .scope-list{max-height:min(44vh,340px)}
+@media(max-width:700px){#scope-dialog{width:calc(100vw - 12px);max-height:calc(100dvh - 12px);padding:20px 16px}.scope-option{font-size:15px}}

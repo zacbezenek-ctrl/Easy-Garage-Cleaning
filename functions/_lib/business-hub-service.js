@@ -1,4 +1,5 @@
 import { LIMITS, ROLES, fail, uid, isId, text, email, date, digest, randomToken, rights, permitted, staffAllowed, staffCanAccess, activeMember, bounded, requireJobId, requireLinkedJob, businessActor, projectView, accountView } from './business-hub-core.js';
+import { PROPERTY_DENIED, memberPropertyIds, canSeeProperty, scopeAccount, isScopedAccount, requireScopedProperty, requireScopedLinkedJob, requestedPropertyIds, scopeKey, applyPropertyIds, memberSummary, propertySummary, businessHubAudit, scopedAccountView, operationReceipt } from './business-hub-scope.js';
 const COOKIE = '__Host-egc_business';
 const HOURS = 3600000, SESSION = 7 * 86400 * 1000;
 const cookie = (token, age = 7 * 86400) => `${COOKIE}=${token}; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=${age}`;
@@ -44,32 +45,46 @@ export function createBusinessHandler({ store, getStaff, finance, needsReview, p
     const member = activeMember(account, session.memberId, session.memberVersion);
     return { staff: false, manager: false, account, member, session };
   }
-  async function save(ctx, action, extra = []) {
+  // details {requestId, before, after} extend the business_audit row; details.hub also writes a hub_audit row in the same commit.
+  async function save(ctx, action, extra = [], details = null) {
     const account = ctx.account;
+    if (isScopedAccount(account)) throw fail(503, 'The business hub could not complete that action. Please retry or contact Zoe.');
     account.updatedAt = new Date(now()).toISOString();
     if (new TextEncoder().encode(JSON.stringify(account)).length > 750000) throw fail(409, 'This workspace is at its storage limit. Contact EGC to archive older records; your existing records are unchanged.');
+    const trail = details ? { requestId: details.requestId ?? null, before: details.before ?? null, after: details.after ?? null } : {};
+    const hub = details?.hub ? [businessHubAudit(ctx, { ...details, at: account.updatedAt })] : [];
     await store.commit([
       { collection: 'business_accounts', id: account.id, data: account, version: account._version },
-      { collection: 'business_audit', id: uid(), data: { accountId: account.id, actorId: ctx.member.id, action, at: account.updatedAt } }, ...extra,
+      { collection: 'business_audit', id: uid(), data: { accountId: account.id, actorId: ctx.member.id, action, at: account.updatedAt, ...trail } }, ...extra, ...hub,
     ]);
   }
   function requirePermission(ctx, p) { if (!ctx.staff) permitted(ctx.member, p); }
   function requireManager(ctx) { if (!ctx.staff || !ctx.manager) throw fail(403, 'An EGC business manager must authorize project sharing.'); }
-  function property(ctx, id) { const item = ctx.account.properties.find(p => p.id === id); if (!item) throw fail(400, 'Select a property from this company account.'); return item; }
-  async function invite(ctx, input, extra = []) {
+  function property(ctx, id) { return requireScopedProperty(ctx.account, ctx.staff ? null : ctx.member, id); }
+  const scopedContext = ctx => ctx.staff ? ctx : { ...ctx, account: scopeAccount(ctx.account, ctx.member) };
+  // receipt=false: create_account already holds the receipt for this requestId.
+  async function invite(ctx, input, extra = [], receipt = true) {
     requirePermission(ctx, 'team');
     const role = text(input.role, 20, true); if (!Object.hasOwn(ROLES, role)) throw fail(400, 'Select an available account role.');
-    const address = email(input.email), name = text(input.name, 100, true);
+    const address = email(input.email), name = text(input.name, 100, true), requestId = operationId(input.requestId);
+    // Omitted propertyIds keep a renewed member's saved scope; administrators always see every property.
+    const propertyIds = requestedPropertyIds(ctx.account, input.propertyIds);
+    if (role === 'admin' && propertyIds) throw fail(400, 'Account administrators always have access to every property.');
+    // A replayed invitation is not re-issued and its link is never replayed (only its hash is stored).
+    const replay = receipt ? await operationReceipt(store, ctx, 'invite_member', requestId, { email: address, name, role, propertyIds: scopeKey(propertyIds) }, new Date(now()).toISOString()) : { duplicate: false, writes: [] };
+    if (replay.duplicate) return { ok: true, duplicate: true, email: address };
     let member = ctx.account.members.find(m => m.email === address);
     if (member && !ctx.staff && member.id === ctx.member.id) throw fail(409, 'You are already signed in. When this sign-in ends, ask another administrator or EGC for a new link.');
     if (member?.role === 'admin' && member.status === 'active' && !ctx.staff && !ctx.account.members.some(m => m.id !== member.id && m.role === 'admin' && m.status === 'active')) throw fail(409, 'Keep at least one active account administrator.');
     // A signed-in person keeps their session. Pending, expired and revoked access, and active members whose seven-day
     // sign-in has ended (or who signed out), can be renewed. Members saved before sessionExpiresAt existed stay renewable.
     if (member?.status === 'active' && member.sessionExpiresAt > now()) throw fail(409, 'This person is still signed in; their current sign-in lasts up to seven days. Revoke their access first if they need a replacement link now.');
+    const before = memberSummary(member);
     if (!member) { bounded(ctx.account, 'members'); member = { id: uid(), version: 0 }; ctx.account.members.push(member); }
     const token = randomToken(); delete member.sessionExpiresAt;
     Object.assign(member, { name, email: address, role, version: member.version + 1, status: 'invited', inviteHash: await digest(token), inviteExpiresAt: now() + 48 * HOURS });
-    await save(ctx, 'member_invited', extra);
+    applyPropertyIds(member, propertyIds);
+    await save(ctx, 'member_invited', [...extra, ...replay.writes], { hub: 'business.member_invited', requestId, before, after: memberSummary(member) });
     return { invite: `${ctx.account.id}.${member.id}.${token}`, email: address, expiresInHours: 48 };
   }
   async function redeem(input) {
@@ -92,15 +107,17 @@ export function createBusinessHandler({ store, getStaff, finance, needsReview, p
     member.sessionExpiresAt = now();
     await save({ account, member }, 'signed_out');
   }
+  // Restricted members see (and decorators and exports receive) only their properties' requests, projects and jobs.
   async function snapshot(ctx) {
-    const links = ctx.account.projects.filter(p => p.active !== false);
+    const scoped = scopedContext(ctx), links = scoped.account.projects.filter(p => p.active !== false);
     const jobs = await store.jobs(links.map(p => p.jobId));
-    const projects = links.map(link => { const job = jobs.get(link.jobId); return projectView(ctx.account, link, job, job ? finance(job) : {}, job ? needsReview(job) : false); });
-    let view = accountView(ctx.account, ctx.member, projects, ctx);
-    for (const fn of decorate) view = (await fn(view, ctx, jobs)) ?? view;
+    const projects = links.map(link => { const job = jobs.get(link.jobId); return projectView(scoped.account, link, job, job ? finance(job) : {}, job ? needsReview(job) : false); });
+    let view = scopedAccountView(ctx.account, ctx.member, projects, ctx);
+    for (const fn of decorate) view = (await fn(view, scoped, jobs)) ?? view;
     return view;
   }
-  const helpers = Object.freeze({ save, requirePermission, requireManager, property, response, now, store, finance, needsReview, snapshot });
+  const canSee = (ctx, propertyId) => ctx.staff || canSeeProperty(ctx.member, propertyId), scoped = ctx => scopedContext(ctx).account;
+  const helpers = Object.freeze({ save, requirePermission, requireManager, property, canSeeProperty: canSee, scoped, response, now, store, finance, needsReview, snapshot });
   const operationId = value => { if (value != null && !isId(value)) throw fail(400, 'Reload the form and try again.'); return value ?? null; };
   return async function handle(request) {
     try {
@@ -111,7 +128,7 @@ export function createBusinessHandler({ store, getStaff, finance, needsReview, p
           const kind = url.searchParams.get('export');
           if (!Object.hasOwn(exporters, kind)) throw fail(400, 'Unknown business hub export.');
           if (!ctx.account) throw fail(400, 'Choose a business account first.');
-          const result = await exporters[kind](ctx, url, helpers);
+          const result = await exporters[kind](scopedContext(ctx), url, helpers);
           if (!(result instanceof Response)) throw fail(503, 'The export could not be prepared. Please retry.');
           return noStore(result);
         }
@@ -144,18 +161,22 @@ export function createBusinessHandler({ store, getStaff, finance, needsReview, p
           if (saved) { if (saved.action !== 'create_account' || saved.actorId !== ctx.member.id || saved.fingerprint !== fingerprint) throw fail(409, 'Request reference already exists.'); return response(200, { ok: true, duplicate: true, accountId: saved.accountId }); }
           extra.push({ collection: 'business_operations', id: operation, data: { action: 'create_account', actorId: ctx.member.id, fingerprint, accountId: ctx.account.id, at } });
         }
-        const result = await invite(ctx, { name: input.name, email: input.email, role: 'admin' }, extra);
+        const result = await invite(ctx, { name: input.name, email: input.email, role: 'admin', requestId: operation }, extra, false);
         return response(201, { ...result, accountId: ctx.account.id });
       }
       if (!ctx.account) throw fail(400, 'Choose a business account first.');
       if (ctx.account.status !== 'active') throw fail(403, 'This business account is inactive.');
-      if (action === 'invite_member') return response(201, await invite(ctx, input));
+      if (action === 'invite_member') { const result = await invite(ctx, input); return response(result.duplicate ? 200 : 201, result); }
       if (action === 'revoke_member') {
         requirePermission(ctx, 'team');
-        const target = ctx.account.members.find(m => m.id === input.memberId); if (!target) throw fail(404, 'Member not found.');
+        const requestId = operationId(input.requestId), target = ctx.account.members.find(m => m.id === input.memberId); if (!target) throw fail(404, 'Member not found.');
+        // A replay never revokes a member who was renewed after the original revocation.
+        const replay = await operationReceipt(store, ctx, action, requestId, { memberId: target.id }, new Date(now()).toISOString());
+        if (replay.duplicate) return response(200, { ok: true, duplicate: true });
         if (!ctx.staff && target.role === 'admin' && !ctx.account.members.some(m => m.id !== target.id && m.status === 'active' && m.role === 'admin')) throw fail(409, 'Keep at least one active account administrator.');
+        const before = memberSummary(target);
         target.status = 'revoked'; target.version += 1; delete target.inviteHash; delete target.inviteExpiresAt; delete target.sessionExpiresAt;
-        await save(ctx, action); return response(200, { ok: true });
+        await save(ctx, action, replay.writes, { hub: 'business.member_revoked', requestId, before, after: memberSummary(target) }); return response(200, { ok: true });
       }
       if (action === 'save_account') {
         requirePermission(ctx, 'team');
@@ -165,13 +186,16 @@ export function createBusinessHandler({ store, getStaff, finance, needsReview, p
       if (action === 'save_property') {
         requirePermission(ctx, 'request');
         let item = input.propertyId ? property(ctx, input.propertyId) : null;
+        // A new property is outside every restricted member's list, so only all-property access can create one.
+        if (!item && !ctx.staff && memberPropertyIds(ctx.member)) throw fail(403, 'Only people with access to every property can add a property. Ask your account administrator.');
         const fields = { name: text(input.name, 100, true), address: text(input.address, 300, true), contact: text(input.contact, 150), access: text(input.access, 800) };
         // A new property saved with a requestId uses it as the property id, so a retry cannot add a second copy.
         const operation = item ? null : operationId(input.requestId), existing = operation && ctx.account.properties.find(p => p.id === operation);
         if (existing) { if (Object.keys(fields).some(k => existing[k] !== fields[k])) throw fail(409, 'Property reference already exists.'); return response(200, { ok: true, propertyId: existing.id, duplicate: true }); }
+        const before = propertySummary(item), requestId = operation || (item && isId(input.requestId) ? input.requestId : null);
         if (!item) { bounded(ctx.account, 'properties'); item = { id: operation || uid() }; ctx.account.properties.push(item); }
         Object.assign(item, { ...fields, updatedAt: new Date(now()).toISOString() });
-        await save(ctx, action); return response(200, { ok: true, propertyId: item.id });
+        await save(ctx, action, [], { requestId, before, after: propertySummary(item) }); return response(200, { ok: true, propertyId: item.id });
       }
       if (action === 'request_service') {
         requirePermission(ctx, 'request'); property(ctx, input.propertyId);
@@ -192,6 +216,8 @@ export function createBusinessHandler({ store, getStaff, finance, needsReview, p
       if (action === 'message') {
         if (!ctx.staff && !['admin', 'manager', 'billing'].includes(ctx.member.role)) throw fail(403, 'This account role is read-only.');
         if (!isId(input.messageId)) throw fail(400, 'Reload the message form and try again.');
+        const topic = input.requestId && ctx.account.requests.find(r => r.id === input.requestId);
+        if (topic && !ctx.staff && !canSeeProperty(ctx.member, topic.propertyId)) throw fail(403, PROPERTY_DENIED);
         const duplicate = ctx.account.messages.find(m => m.id === input.messageId);
         if (duplicate) { if (duplicate.authorId !== ctx.member.id || duplicate.body !== text(input.body, 1600, true) || duplicate.requestId !== text(input.requestId, 40)) throw fail(409, 'Message reference already exists.'); return response(200, { ok: true, duplicate: true }); }
         bounded(ctx.account, 'messages');
@@ -222,7 +248,7 @@ export function createBusinessHandler({ store, getStaff, finance, needsReview, p
       }
       if (action === 'open_project') {
         if (ctx.staff) throw fail(403, 'Use the Employee Hub for staff project access.');
-        const jobId = requireJobId(input.jobId), job = await store.read('jobs', jobId); requireLinkedJob(ctx.account, jobId, job);
+        const jobId = requireJobId(input.jobId), job = await store.read('jobs', jobId); requireScopedLinkedJob(ctx.account, ctx.member, jobId, job);
         const e = job.estimate || {}, quoteStatus = String(job.customerApproval?.status || e.status || job.quoteStatus || '');
         if (!e.sentAt && !['sent', 'approved', 'accepted'].includes(quoteStatus)) throw fail(409, 'EGC has not released this project quote yet. Contact the account team.');
         const p = rights(ctx.member), actorId = businessActor(ctx.account.id, ctx.member);
