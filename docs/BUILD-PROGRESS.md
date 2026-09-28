@@ -325,6 +325,10 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   invite cap records carry `expireAt` for a declared Firestore TTL policy (dry-run backfill script), a read-only member
   scope export for rollbacks past B2B-SCOPE, and emulator denies on every business_* collection for every client role.
   Gaps: the TTL policy must be enabled once; scripts that build the raw store directly are outside the save guard.
+- **FUN-37-FIX** Second-review minors for the funnel feed: hub.funnel.case also matches the walkthrough a source or key
+  job was made from (legacy rework case), backfill source ids stop at the document id (no Stripe session ids), case
+  cursors tolerate 60 s of clock skew, the signed endpoint's refusal matrix covers all three commands without storage
+  reads, and the feed tests use deterministic ids (the '1437'/'7777' substring flake).
 
 ## In progress
 
@@ -401,6 +405,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | REVIEWS-UI | Review queues for held Stripe charges, member matches and unconfirmed sends; Command Center alert; checkout block flag | merged (297acde) |
 | FUN-13 | Website lead intake: ads relay fix, inquiry ids, durable sealed receipts with cron retries (flags off) | merged (61a1fff) |
 | B2B-HARDEN | B2B isolation hardening: stored-account save guard, receipt/quota TTL, scope export, business_* emulator denies | merged (a1c706f) |
+| FUN-37-FIX | FUN-37 follow-up: legacy rework case, backfill source ids, cursor skew, authz matrix and deterministic test ids | merged (0a00c28) |
 
 ## Next
 

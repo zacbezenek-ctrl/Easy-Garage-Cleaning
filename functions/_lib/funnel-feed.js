@@ -21,7 +21,8 @@ import { WALKTHROUGH_VISIT_OPERATIONS } from './walkthrough-visit.js';
 //    case's events by (occurredAt, id), every page (its records and its events)
 //    read at the first page's Firestore readTime. A jobId resolves to its
 //    project; a project case also reads its source walkthrough's and source
-//    job's events, which can predate their project link.
+//    job's events, which can predate their project link, and the walkthrough a
+//    source or key job was made from.
 // The consumer keeps a cursor, never a copy it treats as the source. Every
 // projection is an allowlist and drops any cost, pay, fee or margin field.
 
@@ -33,6 +34,8 @@ export const FUNNEL_FEED_SETTLE_MS = 5 * 60000;
 export const FUNNEL_FEED_DEFAULT_LIMIT = 100;
 // Firestore reads at a pinned readTime only within the last hour.
 export const FUNNEL_CASE_CURSOR_MAX_AGE_MS = 50 * 60000;
+// A case cursor's readTime is Firestore's (Google's) clock, not the Worker's: up to this far after now is clock skew.
+export const FUNNEL_CASE_CURSOR_SKEW_MS = 60000;
 export const WALKTHROUGH_OUTCOME_EVENT_TYPES = Object.freeze(['deal.sold', 'walkthrough.completed', 'walkthrough.no_show']);
 const ROOT = 'projects/egcw-1ec83/databases/(default)/documents';
 const BASE = `https://firestore.googleapis.com/v1/${ROOT}`;
@@ -41,7 +44,7 @@ const PROVIDER_ID = /^[A-Za-z0-9_-]{1,120}$/, ACTOR = /^[a-z0-9][a-z0-9_.@:+-]{0
 const CASE_KEYS = ['projectId', 'jobId', 'highlevelContactId'];
 const REBOOKABLE = new Set(['customer_no_show', 'rescheduled']);
 const VISIT_FIELDS = ['type', 'recordType', 'walkthroughOutcome', 'walkthroughVisit', 'walkthroughOccurrences'];
-const JOB_FIELDS = ['type', 'recordType', 'projectId'];
+const JOB_FIELDS = ['type', 'recordType', 'projectId', 'sourceWalkthroughId'];
 const PROJECT_FIELDS = ['customerId', 'highlevelContactId', 'sourceWalkthroughId', 'sourceRecordId', 'previousProjectId', 'createdAt'];
 // Words that mark a cost, pay, fee or margin figure; a data field named with any of them never leaves the Hub.
 const PRIVATE_WORDS = new Set(['cost', 'costs', 'fee', 'fees', 'margin', 'margins', 'pay', 'payroll', 'wage', 'wages', 'salary', 'rate', 'rates', 'hourly', 'labor', 'labour', 'burden', 'contribution', 'profit', 'commission', 'tip', 'tips', 'overtime', 'bonus']);
@@ -117,10 +120,13 @@ export function funnelCaseInput(input) {
 }
 
 // The source record's id, unless it is a private record (an _egc_ receipt, a secure_ record) or
-// carries the event's idempotency key (a request receipt is stored under its requestId).
+// carries the event's idempotency key (a request receipt is stored under its requestId). A backfill
+// key is 'backfill:<collection>/<source.id>', so a backfill source shows only its document id (before
+// the first ':'), never a '<docId>:<field>:<subId>' sub-record such as a Stripe Checkout session id.
 function sourceView(source, idempotencyKey) {
   if (!plain(source)) return null;
-  const id = text(source.id, SOURCE_ID), key = typeof idempotencyKey === 'string' && idempotencyKey.includes(':') ? idempotencyKey.slice(idempotencyKey.indexOf(':') + 1).toLowerCase() : '';
+  const split = typeof idempotencyKey === 'string' ? idempotencyKey.indexOf(':') : -1, key = split >= 0 ? idempotencyKey.slice(split + 1).toLowerCase() : '';
+  const raw = text(source.id, SOURCE_ID), id = raw && split >= 0 && idempotencyKey.slice(0, split) === 'backfill' ? raw.split(':')[0] : raw;
   const shown = id && key && !funnelDefinitions().eligibility.hub.privateIdPrefixes.some(prefix => id.startsWith(prefix)) && !id.toLowerCase().includes(key);
   return { collection: text(source.collection, COLLECTION), id: shown ? id : null };
 }
@@ -264,13 +270,16 @@ const sameMatch = (a, b) => a.field === b.field && a.value === b.value;
  * project is read by its own id. The ledger query also matches the case's own records by
  * their ids: the key job, and the project's source walkthrough and source job. A walkthrough
  * or job gets its projectId only when a project is made from it (dispatch-service back-fills
- * the origin), so its earlier events carry just its own id. */
+ * the origin), so its earlier events carry just its own id. The walkthrough a source or key
+ * job was made from is matched too: a rework booked from a legacy job makes a project with the
+ * job as its source and no sourceWalkthroughId, and back-fills only the job. */
+const walkthroughOf = job => job && !job.recordType && hubId(job.sourceWalkthroughId) ? { field: 'walkthroughId', value: job.sourceWalkthroughId } : null;
 async function caseScope(store, key, readTime) {
-  let query = key, own = null, pinned = readTime, project = null;
+  let query = key, own = null, pinned = readTime, project = null, keyJob = null;
   if (key.field === 'jobId') {
     const read = await recordsAt(store, 'jobs', [key.value], JOB_FIELDS, pinned), [job] = read.rows;
     if (!job || job.recordType) throw fail('hub_funnel_case_not_found', 404);
-    pinned = read.readTime; own = { field: job.type === 'walkthrough' ? 'walkthroughId' : 'jobId', value: key.value };
+    pinned = read.readTime; own = { field: job.type === 'walkthrough' ? 'walkthroughId' : 'jobId', value: key.value }; keyJob = job;
     query = hubId(job.projectId) ? { field: 'projectId', value: job.projectId } : own;
   }
   if (query.field === 'projectId') {
@@ -280,8 +289,10 @@ async function caseScope(store, key, readTime) {
     if (row) project = { id: query.value, customerId: hubId(row.customerId), highlevelContactId: providerId(row.highlevelContactId), sourceWalkthroughId: hubId(row.sourceWalkthroughId), sourceRecordId: hubId(row.sourceRecordId),
       previousProjectId: hubId(row.previousProjectId), createdAt: typeof row.createdAt === 'string' && instantMs(row.createdAt) !== null ? row.createdAt : null };
   }
-  const sources = project ? [project.sourceWalkthroughId && { field: 'walkthroughId', value: project.sourceWalkthroughId }, project.sourceRecordId && project.sourceRecordId !== project.sourceWalkthroughId && { field: 'jobId', value: project.sourceRecordId }] : [];
-  const matches = [query, own, ...sources].filter(Boolean).filter((match, index, all) => all.findIndex(other => sameMatch(other, match)) === index);
+  const sourceJobId = project?.sourceRecordId && project.sourceRecordId !== project.sourceWalkthroughId ? project.sourceRecordId : null;
+  const sourceJob = !sourceJobId ? null : keyJob?.id === sourceJobId ? keyJob : (await recordsAt(store, 'jobs', [sourceJobId], JOB_FIELDS, pinned)).rows[0];
+  const sources = project ? [project.sourceWalkthroughId && { field: 'walkthroughId', value: project.sourceWalkthroughId }, sourceJobId && { field: 'jobId', value: sourceJobId }] : [];
+  const matches = [query, own, ...sources, walkthroughOf(keyJob), walkthroughOf(sourceJob)].filter(Boolean).filter((match, index, all) => all.findIndex(other => sameMatch(other, match)) === index);
   return { query, matches, project, readTime: pinned };
 }
 
@@ -289,14 +300,15 @@ async function caseScope(store, key, readTime) {
  * hub.funnel.case: the case's events by (occurredAt, id). Page one resolves the key and
  * reads at Firestore's current time; later pages resolve it again and read at that same
  * readTime, so the pages form one snapshot. A cursor continues only the case its key
- * resolves to at its readTime, and only while that readTime is in the last 50 minutes.
+ * resolves to at its readTime, and only while that readTime is in the last 50 minutes
+ * (or at most a minute ahead of now: Firestore's clock may run ahead of the Worker's).
  */
 export async function funnelCase(store, input, now) {
   const field = CASE_KEYS.find(name => input[name] !== undefined), key = { field, value: input[field] };
   let scope, after = null;
   if (input.cursor) {
     const cursor = parseCaseCursor(input.cursor), issued = Date.parse(cursor.readTime), current = nowMs(now);
-    if (cursor.digest !== caseDigest(key, cursor.body) || issued > current) throw fail('hub_funnel_cursor_invalid');
+    if (cursor.digest !== caseDigest(key, cursor.body) || issued > current + FUNNEL_CASE_CURSOR_SKEW_MS) throw fail('hub_funnel_cursor_invalid');
     if (current - issued > FUNNEL_CASE_CURSOR_MAX_AGE_MS) throw fail('hub_funnel_cursor_expired', 409);
     scope = await caseScope(store, key, cursor.readTime);
     if (!sameMatch(scope.query, cursor.query)) throw fail('hub_funnel_cursor_invalid');
