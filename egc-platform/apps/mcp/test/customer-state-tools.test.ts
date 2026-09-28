@@ -3,7 +3,7 @@ import type {McpServer} from '@modelcontextprotocol/server';
 import type {ZodType} from 'zod/v4';
 const service=vi.hoisted(()=>({getCanonicalReport:vi.fn(),getOperationalEventEvidence:vi.fn(),getCustomerTimeline:vi.fn(),getCustomerStateDiagnostics:vi.fn(),reconcileCustomerState:vi.fn(),recordUserConfirmedOutcome:vi.fn()}));
 const meta=vi.hoisted(()=>({conversionStatus:vi.fn(),previewConversions:vi.fn(),syncConversions:vi.fn(),retryConversions:vi.fn(),sendTestEvent:vi.fn()}));
-vi.mock('@egc/customer-state',async()=>({...service,formatOperationalBriefing:(await import('../../../services/customer-state/src/briefing.js')).formatOperationalBriefing}));vi.mock('@egc/meta-conversions',()=>meta);
+vi.mock('@egc/customer-state',async()=>({...service,formatOperationalBriefing:(await import('../../../services/customer-state/src/briefing.js')).formatOperationalBriefing,OPERATIONAL_STATES:(await import('../../../services/customer-state/src/types.js')).OPERATIONAL_STATES}));vi.mock('@egc/meta-conversions',()=>meta);
 import {registerCustomerStateTools,canonicalFunnel,CUSTOMER_STATE_WRITE_TOOLS} from '../src/customer-state-tools.js';
 import {requiredToolScope} from '../src/tool-access.js';
 import {operationsPrincipal} from '../src/operations.js';

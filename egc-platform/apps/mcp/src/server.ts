@@ -1,10 +1,12 @@
 import {registerCustomerStateTools,canonicalOperationalReport,canonicalFunnel} from './customer-state-tools.js';
-import {getCustomerTimeline,OPERATIONAL_STATES} from '@egc/customer-state';
+import {getCustomerTimeline} from '@egc/customer-state';
 import {registerPortalRecordTools} from "./portal-record-tools.js";
 import {verifyOperationsOnStart} from "./operations-smoke.js";
 import {executeCommunication,reconcileCommunication} from "./communication-execution.js";
 import {registerOperationsTools,operationsPrincipal,operationsEnabled,blockedToolCall,directSendsBlocked,DIRECT_SEND_DISABLED,callOperations} from "./operations.js";
 import {registerDomainTools,DOMAIN_TOOLS} from "./tools/index.js";
+import type {RegisterOptions} from "./tools/define.js";
+import {taskPrioritySchema,taskStatusSchema,withCanonicalContexts} from "./tools/domains/crm-reads.js";
 import {connectorMode} from "./tools/domains/policy.js";
 import {registerRecordingTools} from "./recording-tools.js";
 import express from "express";
@@ -15,7 +17,7 @@ import {pathToFileURL} from "node:url";
 import { toNodeHandler } from "@modelcontextprotocol/node";
 import { createMcpHandler, McpServer } from "@modelcontextprotocol/server";
 import * as z from "zod/v4";
-import { and, desc, eq, gte, ilike, inArray, isNull, lt, lte, or, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNull, lt, lte, or, sql } from "drizzle-orm";
 import { getDb, schema } from "@egc/database";
 import { approveLegacyWalkthrough, isManagedWalkthrough, LegacyWalkthroughError } from "@egc/operations";
 import { walkthroughExtractionSchema } from "@egc/schemas";
@@ -42,17 +44,6 @@ function textResult(value: unknown) {
     content: [{ type: "text" as const, text: JSON.stringify(value, null, 2) }],
     structuredContent: { result: value }
   };
-}
-
-async function canonicalReadContexts(contactIds:string[]):Promise<Map<string,Record<string,unknown>>> {
-  if(!contactIds.length)return new Map<string,Record<string,unknown>>();
-  const rows=await getDb().select().from(schema.customerStateSnapshots).where(inArray(schema.customerStateSnapshots.contactId,[...new Set(contactIds)]));
-  return new Map(rows.map(row=>[row.contactId,{...row.snapshot,coverage:row.coverage,lastReconciledAt:row.lastReconciledAt}]));
-}
-
-async function withCanonicalContexts<T extends {contactId:string}>(rows:T[]) {
-  const canonical=await canonicalReadContexts(rows.map(row=>row.contactId));
-  return rows.map(row=>({...row,operational:canonical.get(row.contactId)??{coverage:{complete:false,error:'customer_not_reconciled'}}}));
 }
 
 const protectedToolMetadata = {
@@ -194,8 +185,6 @@ const appointmentMutationSchema = z.object({
   ignoreFreeSlotValidation: z.boolean().default(false)
 });
 
-const taskPrioritySchema = z.enum(["low", "medium", "high", "urgent"]);
-const taskStatusSchema = z.enum(["open", "in_progress", "blocked", "completed", "cancelled"]);
 const taskMutationSchema = z.object({
   title: z.string().min(1).max(500).optional(),
   description: z.string().max(5000).nullable().optional(),
@@ -1058,7 +1047,8 @@ function mappedName(
   return mappings.get(`${resourceType}:${providerId}`) ?? providerId;
 }
 
-export function buildServer() {
+/** options reach the registry tools; tests inject the clock here. */
+export function buildServer(options: RegisterOptions = {}) {
   const server = new McpServer(
     { name: "easy-garage-cleaning", version: "0.1.0" },
     { capabilities: { tools: { listChanged: false } } }
@@ -1070,7 +1060,7 @@ export function buildServer() {
   registerSchedulingTools(server,synchronizeHubVisit);
   registerMetaConversionTools(server);
   registerCustomerStateTools(server);
-  registerDomainTools(server);
+  registerDomainTools(server, options);
 
   server.registerTool("ghl.pipelines", {
     description: "Return live GHL opportunity pipelines and stages for the EGC location. Use this to resolve pipeline and stage IDs before opportunity writes.",
@@ -1095,342 +1085,6 @@ export function buildServer() {
     const companyId = asString(location.companyId);
     if (!companyId) return textResult({ error: "ghl_company_id_not_found" });
     return textResult(await ghl.searchUsers(companyId));
-  });
-
-  server.registerTool("contacts.search", {
-    description: "Search EGC contacts by name, phone, or email with canonical evidence-backed operational state. Provider fields are preserved separately from operational truth.",
-    inputSchema: z.object({
-      query: z.string().trim().max(200).default(""),
-      limit: z.number().int().min(1).max(200).default(50)
-    }),
-    ...protectedToolMetadata
-  }, async ({ query, limit }) => {
-    const db = getDb();
-    const base = db.select().from(schema.contacts);
-    const rows = query
-      ? await base.where(or(
-          ilike(schema.contacts.name, `%${query}%`),
-          ilike(schema.contacts.phone, `%${query}%`),
-          ilike(schema.contacts.email, `%${query}%`)
-        )).orderBy(desc(schema.contacts.updatedAt)).limit(limit)
-      : await base.orderBy(desc(schema.contacts.updatedAt)).limit(limit);
-    const canonical=await canonicalReadContexts(rows.map(row=>row.id));
-    return textResult(rows.map(row=>({...row,operational:canonical.get(row.id)??{coverage:{complete:false,error:'customer_not_reconciled'}}})));
-  });
-
-  server.registerTool("contacts.get", {
-    description: "Get one normalized EGC contact by internal contact ID.",
-    inputSchema: z.object({ contactId: z.string().uuid() }),
-    ...protectedToolMetadata
-  }, async ({ contactId }) => {
-    const db = getDb();
-    const [row] = await db.select().from(schema.contacts)
-      .where(eq(schema.contacts.id, contactId))
-      .limit(1);
-    return textResult(row?{...row,canonical:await getCustomerTimeline({contactId,refresh:true})}:{ error: "contact_not_found" });
-  });
-
-  server.registerTool("leads.search", {
-    description: "Search recent leads, optionally filtered by canonical lead state.",
-    inputSchema: z.object({
-      state: z.enum([...OPERATIONAL_STATES,
-        "NEVER_CONTACTED",
-        "OUTREACH_ATTEMPTED_NO_REPLY",
-        "CUSTOMER_RESPONDED",
-        "ACTIVE_CONVERSATION",
-        "BOOKED"
-      ]).optional(),
-      days: z.number().int().min(1).max(365).default(30),
-      limit: z.number().int().min(1).max(500).default(100)
-    }),
-    ...protectedToolMetadata
-  }, async ({ state, days, limit }) => {
-    const db = getDb();
-    const since = new Date(Date.now() - days * 86_400_000);
-    const base = db.select({
-      lead: schema.leads,
-      contact: schema.contacts
-    })
-      .from(schema.leads)
-      .innerJoin(schema.contacts, eq(schema.leads.contactId, schema.contacts.id));
-
-    const aliases:Record<string,string[]>={NEVER_CONTACTED:['NEW_LEAD'],OUTREACH_ATTEMPTED_NO_REPLY:['OUTREACH_ATTEMPTED'],CUSTOMER_RESPONDED:['TWO_WAY_CONTACT'],ACTIVE_CONVERSATION:['TWO_WAY_CONTACT','QUALIFIED','PRICE_EXPECTATION_ACCEPTED','VIDEO_QUOTE_PENDING_CUSTOMER','VIDEO_QUOTE_RECEIVED','VIDEO_QUOTE_IN_PROGRESS','QUOTE_DELIVERED','FOLLOW_UP_PENDING','CUSTOMER_DECIDING'],BOOKED:['WALKTHROUGH_VERBALLY_BOOKED','WALKTHROUGH_BOOKED','WALKTHROUGH_COMPLETED','JOB_VERBALLY_ACCEPTED','JOB_SOLD','JOB_SCHEDULED','JOB_COMPLETED','CASH_COLLECTED']};
-    // The canonical snapshot state wins over the provider lead state, matching the enrichment below; filtering in SQL avoids a recent-row truncation.
-    const effectiveState=sql`coalesce((select ${schema.customerStateSnapshots.snapshot}->>'state' from ${schema.customerStateSnapshots} where ${schema.customerStateSnapshots.contactId}=${schema.leads.contactId}),${schema.leads.currentState}::text)`;
-    const rows=await base.where(and(gte(schema.leads.createdAt,since),state?inArray(effectiveState,[state,...(aliases[state]??[])]):undefined)).orderBy(desc(schema.leads.createdAt)).limit(limit);
-    const canonical=await canonicalReadContexts(rows.map(row=>row.contact.id));
-    return textResult(rows.map(row=>{const operational=canonical.get(row.contact.id);return {...row,lead:{...row.lead,providerState:row.lead.currentState,currentState:operational?.state??row.lead.currentState},operational:operational??{coverage:{complete:false,error:'customer_not_reconciled'}}};}));
-  });
-
-  server.registerTool("leads.get", {
-    description: "Get one lead with its contact by internal lead ID.",
-    inputSchema: z.object({ leadId: z.string().uuid() }),
-    ...protectedToolMetadata
-  }, async ({ leadId }) => {
-    const db = getDb();
-    const [row] = await db.select({
-      lead: schema.leads,
-      contact: schema.contacts
-    })
-      .from(schema.leads)
-      .innerJoin(schema.contacts, eq(schema.leads.contactId, schema.contacts.id))
-      .where(eq(schema.leads.id, leadId))
-      .limit(1);
-    if(!row)return textResult({error:'lead_not_found'});
-    const canonical=await getCustomerTimeline({contactId:row.contact.id,refresh:true});
-    return textResult({...row,lead:{...row.lead,providerState:row.lead.currentState,currentState:canonical.customer?.state??row.lead.currentState},canonical});
-  });
-
-  server.registerTool("conversations.search", {
-    description: "Return conversations for a contact.",
-    inputSchema: z.object({
-      contactId: z.string().uuid(),
-      limit: z.number().int().min(1).max(200).default(50)
-    }),
-    ...protectedToolMetadata
-  }, async ({ contactId, limit }) => {
-    const db = getDb();
-    return textResult(await db.select().from(schema.conversations)
-      .where(eq(schema.conversations.contactId, contactId))
-      .orderBy(desc(schema.conversations.updatedAt))
-      .limit(limit));
-  });
-
-  server.registerTool("conversations.get", {
-    description: "Get one conversation and its normalized messages.",
-    inputSchema: z.object({
-      conversationId: z.string().uuid(),
-      messageLimit: z.number().int().min(1).max(500).default(100)
-    }),
-    ...protectedToolMetadata
-  }, async ({ conversationId, messageLimit }) => {
-    const db = getDb();
-    const [conversation] = await db.select().from(schema.conversations)
-      .where(eq(schema.conversations.id, conversationId))
-      .limit(1);
-    if (!conversation) return textResult({ error: "conversation_not_found" });
-
-    const messages = await db.select().from(schema.messages)
-      .where(eq(schema.messages.conversationId, conversationId))
-      .orderBy(desc(schema.messages.occurredAt))
-      .limit(messageLimit);
-    return textResult({ conversation, messages });
-  });
-
-  server.registerTool("calls.search", {
-    description: "Search recent normalized calls, optionally for one contact.",
-    inputSchema: z.object({
-      contactId: z.string().uuid().optional(),
-      days: z.number().int().min(1).max(365).default(30),
-      limit: z.number().int().min(1).max(500).default(100)
-    }),
-    ...protectedToolMetadata
-  }, async ({ contactId, days, limit }) => {
-    const db = getDb();
-    const since = new Date(Date.now() - days * 86_400_000);
-    const base = db.select({
-      call: schema.calls,
-      customerName: schema.contacts.name,
-      phone: schema.contacts.phone
-    })
-      .from(schema.calls)
-      .innerJoin(schema.contacts, eq(schema.calls.contactId, schema.contacts.id));
-    const rows = contactId
-      ? await base.where(and(
-          eq(schema.calls.contactId, contactId),
-          gte(schema.calls.startedAt, since)
-        )).orderBy(desc(schema.calls.startedAt)).limit(limit)
-      : await base.where(gte(schema.calls.startedAt, since))
-          .orderBy(desc(schema.calls.startedAt))
-          .limit(limit);
-    return textResult(rows);
-  });
-
-  server.registerTool("calls.get", {
-    description: "Get one call and its persisted transcript.",
-    inputSchema: z.object({ callId: z.string().uuid() }),
-    ...protectedToolMetadata
-  }, async ({ callId }) => {
-    const db = getDb();
-    const [call] = await db.select().from(schema.calls)
-      .where(eq(schema.calls.id, callId))
-      .limit(1);
-    if (!call) return textResult({ error: "call_not_found" });
-    const [transcript] = await db.select().from(schema.callTranscripts)
-      .where(eq(schema.callTranscripts.callId, callId))
-      .limit(1);
-    return textResult({ call, transcript: transcript ?? null });
-  });
-
-  server.registerTool("opportunities.search", {
-    description: "Search normalized GHL opportunities by contact or status.",
-    inputSchema: z.object({
-      contactId: z.string().uuid().optional(),
-      status: z.string().max(50).optional(),
-      limit: z.number().int().min(1).max(500).default(100)
-    }),
-    ...protectedToolMetadata
-  }, async ({ contactId, status, limit }) => {
-    const db = getDb();
-    const conditions = [
-      ...(contactId ? [eq(schema.opportunities.contactId, contactId)] : []),
-      ...(status ? [eq(schema.opportunities.status, status)] : [])
-    ];
-    const rows = conditions.length
-      ? await db.select().from(schema.opportunities)
-          .where(and(...conditions))
-          .orderBy(desc(schema.opportunities.updatedAt))
-          .limit(limit)
-      : await db.select().from(schema.opportunities)
-          .orderBy(desc(schema.opportunities.updatedAt))
-          .limit(limit);
-    return textResult(await withCanonicalContexts(rows));
-  });
-
-  server.registerTool("opportunities.get", {
-    description: "Get one normalized opportunity by internal ID.",
-    inputSchema: z.object({ opportunityId: z.string().uuid() }),
-    ...protectedToolMetadata
-  }, async ({ opportunityId }) => {
-    const db = getDb();
-    const [row] = await db.select().from(schema.opportunities)
-      .where(eq(schema.opportunities.id, opportunityId))
-      .limit(1);
-    return textResult(row?{...row,canonical:await getCustomerTimeline({contactId:row.contactId,refresh:true})}:{error:'opportunity_not_found'});
-  });
-
-  server.registerTool("appointments.search", {
-    description: "Search appointments in a relative time window, optionally for one contact.",
-    inputSchema: z.object({
-      contactId: z.string().uuid().optional(),
-      daysPast: z.number().int().min(0).max(365).default(30),
-      daysFuture: z.number().int().min(0).max(730).default(90),
-      limit: z.number().int().min(1).max(500).default(200)
-    }),
-    ...protectedToolMetadata
-  }, async ({ contactId, daysPast, daysFuture, limit }) => {
-    const db = getDb();
-    const start = new Date(Date.now() - daysPast * 86_400_000);
-    const end = new Date(Date.now() + daysFuture * 86_400_000);
-    const timeConditions = [
-      gte(schema.appointments.appointmentStartAt, start),
-      lt(schema.appointments.appointmentStartAt, end)
-    ];
-    const rows = contactId
-      ? await db.select().from(schema.appointments).where(and(
-          ...timeConditions,
-          eq(schema.appointments.contactId, contactId)
-        )).orderBy(schema.appointments.appointmentStartAt).limit(limit)
-      : await db.select().from(schema.appointments).where(and(...timeConditions))
-          .orderBy(schema.appointments.appointmentStartAt)
-          .limit(limit);
-    return textResult(await withCanonicalContexts(rows));
-  });
-
-  server.registerTool("jobs.search", {
-    description: "Search EGC jobs by contact or status.",
-    inputSchema: z.object({
-      contactId: z.string().uuid().optional(),
-      status: z.string().max(80).optional(),
-      limit: z.number().int().min(1).max(500).default(100)
-    }),
-    ...protectedToolMetadata
-  }, async ({ contactId, status, limit }) => {
-    const db = getDb();
-    const conditions = [
-      ...(contactId ? [eq(schema.jobs.contactId, contactId)] : []),
-      ...(status ? [eq(schema.jobs.status, status)] : [])
-    ];
-    const rows = conditions.length
-      ? await db.select().from(schema.jobs)
-          .where(and(...conditions))
-          .orderBy(desc(schema.jobs.updatedAt))
-          .limit(limit)
-      : await db.select().from(schema.jobs)
-          .orderBy(desc(schema.jobs.updatedAt))
-          .limit(limit);
-    return textResult(await withCanonicalContexts(rows));
-  });
-
-  server.registerTool("jobs.get", {
-    description: "Get one raw normalized EGC job by internal ID.",
-    inputSchema: z.object({ jobId: z.string().uuid() }),
-    ...protectedToolMetadata
-  }, async ({ jobId }) => {
-    const db = getDb();
-    const [row] = await db.select().from(schema.jobs)
-      .where(eq(schema.jobs.id, jobId))
-      .limit(1);
-    return textResult(row?{...row,canonical:await getCustomerTimeline({contactId:row.contactId,refresh:true})}:{error:'job_not_found'});
-  });
-
-  server.registerTool("tasks.search", {
-    description: "Search EGC operational tasks/todos by status, priority, assignment, linked entity, or due date.",
-    inputSchema: z.object({
-      status: taskStatusSchema.optional(),
-      priority: taskPrioritySchema.optional(),
-      assignedUserId: z.string().max(200).optional(),
-      contactId: z.string().uuid().optional(),
-      jobId: z.string().uuid().optional(),
-      opportunityId: z.string().uuid().optional(),
-      dueBefore: isoDateTimeSchema.optional(),
-      dueAfter: isoDateTimeSchema.optional(),
-      limit: z.number().int().min(1).max(200).default(100)
-    }),
-    ...protectedToolMetadata
-  }, async ({ status, priority, assignedUserId, contactId, jobId, opportunityId, dueBefore, dueAfter, limit }) => {
-    // Filters run in SQL so a match older than any recent-row window is still found.
-    const conditions = [
-      ...(status ? [eq(schema.tasks.status, status)] : []),
-      ...(priority ? [eq(schema.tasks.priority, priority)] : []),
-      ...(assignedUserId ? [eq(schema.tasks.assignedUserId, assignedUserId)] : []),
-      ...(contactId ? [eq(schema.tasks.contactId, contactId)] : []),
-      ...(jobId ? [eq(schema.tasks.jobId, jobId)] : []),
-      ...(opportunityId ? [eq(schema.tasks.opportunityId, opportunityId)] : []),
-      ...(dueBefore ? [lte(schema.tasks.dueAt, new Date(dueBefore))] : []),
-      ...(dueAfter ? [gte(schema.tasks.dueAt, new Date(dueAfter))] : [])
-    ];
-    return textResult(await getDb().select().from(schema.tasks)
-      .where(conditions.length ? and(...conditions) : undefined)
-      .orderBy(desc(schema.tasks.updatedAt))
-      .limit(limit));
-  });
-
-  server.registerTool("walkthroughs.search", {
-    description: "Search voice walkthroughs by contact or workflow status.",
-    inputSchema: z.object({
-      contactId: z.string().uuid().optional(),
-      status: z.string().max(80).optional(),
-      limit: z.number().int().min(1).max(500).default(100)
-    }),
-    ...protectedToolMetadata
-  }, async ({ contactId, status, limit }) => {
-    const db = getDb();
-    const conditions = [
-      ...(contactId ? [eq(schema.walkthroughs.contactId, contactId)] : []),
-      ...(status ? [eq(schema.walkthroughs.status, status)] : [])
-    ];
-    const rows = conditions.length
-      ? await db.select().from(schema.walkthroughs)
-          .where(and(...conditions))
-          .orderBy(desc(schema.walkthroughs.createdAt))
-          .limit(limit)
-      : await db.select().from(schema.walkthroughs)
-          .orderBy(desc(schema.walkthroughs.createdAt))
-          .limit(limit);
-    return textResult(rows);
-  });
-
-  server.registerTool("walkthroughs.get", {
-    description: "Get one voice walkthrough, including reviewed extraction.",
-    inputSchema: z.object({ walkthroughId: z.string().uuid() }),
-    ...protectedToolMetadata
-  }, async ({ walkthroughId }) => {
-    const db = getDb();
-    const [row] = await db.select().from(schema.walkthroughs)
-      .where(eq(schema.walkthroughs.id, walkthroughId))
-      .limit(1);
-    return textResult(row ?? { error: "walkthrough_not_found" });
   });
 
   server.registerTool("walkthroughs.transcript", {
@@ -3073,7 +2727,7 @@ app.use((req, res, next) => {
   res.status(403).json({ error: "invalid_host" });
 });
 
-const handler = toNodeHandler(createMcpHandler(buildServer));
+const handler = toNodeHandler(createMcpHandler(() => buildServer()));
 const oauth = registerOauthRoutes(app,()=>connectorMode(DOMAIN_TOOLS));
 
 app.all(

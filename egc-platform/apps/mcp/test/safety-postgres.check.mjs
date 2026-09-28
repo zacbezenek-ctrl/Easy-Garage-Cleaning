@@ -66,12 +66,12 @@ test('tasks.search filters in SQL and finds a task older than the 500 most recen
   const [old]=await db.insert(schema.tasks).values({title:'Old job task',status:'blocked',priority:'urgent',jobId:job.id,contactId:contact.id,dueAt:new Date('2020-02-01T00:00:00Z'),updatedAt:new Date('2020-01-01T00:00:00Z')}).returning();
   await db.insert(schema.tasks).values(Array.from({length:505},(_,i)=>({title:`Recent ${i}`,updatedAt:new Date(Date.UTC(2026,8,1,0,i))})));
   const byJob=await legacy.call('tasks.search',{jobId:job.id,limit:10});
-  assert.deepEqual(byJob.value.map(t=>t.id),[old.id]);
+  assert.deepEqual(byJob.value.items.map(t=>t.id),[old.id]);assert.equal(byJob.value.page.nextCursor,null);assert.equal(byJob.value.coverage.complete,true);
   for(const filter of [{status:'blocked'},{priority:'urgent'},{contactId:contact.id},{dueBefore:'2020-03-01T00:00:00Z'},{dueAfter:'2020-01-15T00:00:00Z'},{dueAfter:'2020-02-01T00:00:00Z',dueBefore:'2020-02-01T00:00:00Z'}])
-    assert.deepEqual((await legacy.call('tasks.search',filter)).value.map(t=>t.id),[old.id],JSON.stringify(filter));
-  assert.deepEqual((await legacy.call('tasks.search',{dueBefore:'2020-01-31T23:59:59Z'})).value,[]);
+    assert.deepEqual((await legacy.call('tasks.search',filter)).value.items.map(t=>t.id),[old.id],JSON.stringify(filter));
+  assert.deepEqual((await legacy.call('tasks.search',{dueBefore:'2020-01-31T23:59:59Z'})).value.items,[]);
   const recent=await legacy.call('tasks.search',{status:'open',limit:3});
-  assert.deepEqual(recent.value.map(t=>t.title),['Recent 504','Recent 503','Recent 502']);
+  assert.deepEqual(recent.value.items.map(t=>t.title),['Recent 504','Recent 503','Recent 502']);assert.ok(recent.value.page.nextCursor);
 });
 test('leads.search filters canonical state in SQL beyond the 500 most recent leads',async()=>{
   const contacts=await db.insert(schema.contacts).values(Array.from({length:504},(_,i)=>({provider:'ghl',providerId:`synthetic-lead-${i}`,name:`Synthetic lead ${i}`}))).returning();
@@ -83,13 +83,15 @@ test('leads.search filters canonical state in SQL beyond the 500 most recent lea
     {contactId:contacts[1].id,leadId:leads[1].id,state:'NEW_LEAD',intentStage:'new',pipeline:'walkthrough',reconciliationStatus:'reconciled',snapshot:{state:'NEW_LEAD'},coverage:{complete:true},lastReconciledAt:at(1)}
   ]);
   const booked=await legacy.call('leads.search',{state:'BOOKED',limit:10});
-  assert.deepEqual(booked.value.map(row=>row.contact.id),[contacts[2].id,contacts[0].id]);
-  const sold=booked.value[1];
+  assert.deepEqual(booked.value.items.map(row=>row.contact.id),[contacts[2].id,contacts[0].id]);
+  const sold=booked.value.items[1];
   assert.equal(sold.lead.currentState,'JOB_SOLD');assert.equal(sold.lead.providerState,'NEVER_CONTACTED');assert.equal(sold.operational.state,'JOB_SOLD');
-  assert.equal(booked.value[0].operational.coverage.error,'customer_not_reconciled');
-  const newLeads=await legacy.call('leads.search',{state:'NEVER_CONTACTED',limit:500});
-  assert.equal(newLeads.value.length,500);assert.ok(!newLeads.value.some(row=>row.contact.id===contacts[0].id));
-  assert.equal((await legacy.call('leads.search',{limit:5})).value.length,5);
+  assert.equal(booked.value.items[0].operational.coverage.error,'customer_not_reconciled');
+  // A legacy limit of 500 is still accepted; it is served 200 per page and the cursor reaches every match (501 provider NEVER_CONTACTED plus the NEW_LEAD snapshot), never truncating silently.
+  const seen=[];let cursor,pages=0;
+  do{const r=await legacy.call('leads.search',{state:'NEVER_CONTACTED',limit:500,...(cursor?{cursor}:{})});assert.equal(r.isError,false);assert.ok(r.value.items.length<=200);seen.push(...r.value.items.map(row=>row.contact.id));cursor=r.value.page.nextCursor;pages++;}while(cursor&&pages<10);
+  assert.equal(pages,3);assert.equal(seen.length,502);assert.equal(new Set(seen).size,502);assert.ok(!seen.includes(contacts[0].id));assert.ok(seen.includes(contacts[1].id));
+  assert.equal((await legacy.call('leads.search',{limit:5})).value.items.length,5);
 });
 test('operations mode refuses one-step sends before any execution record, even with write scope',async()=>{
   for(const name of ['conversations.send_message','send_sms','egc.send_followup']){

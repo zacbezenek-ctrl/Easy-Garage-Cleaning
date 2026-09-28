@@ -81,10 +81,11 @@ jobs:
           node --test services/operations/test/message-completion.check.mjs
           node --test services/operations/test/legacy-walkthrough.check.mjs
         working-directory: egc-platform
-      - name: Durable appointment claims, unknown-outcome reconciliation and MCP safety defaults
+      - name: Durable appointment claims, unknown-outcome reconciliation, MCP safety defaults and paged CRM reads
         run: |
           node --test apps/mcp/test/appointments-postgres.check.mjs
           node --test apps/mcp/test/safety-postgres.check.mjs
+          pnpm --filter @egc/mcp test:crm-reads:postgres
           node --test apps/api/test/scheduling-postgres.check.mjs
           node --test apps/api/test/service-auth-postgres.check.mjs
         working-directory: egc-platform

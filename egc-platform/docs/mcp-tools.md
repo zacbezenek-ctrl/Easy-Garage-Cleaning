@@ -15,7 +15,9 @@ New tools are declared with `defineTool` (`apps/mcp/src/tools/define.ts`) in a m
 - `destructive`, `send` and `money` are two-step: the definition must provide a side-effect-free `preview` and an optional `confirmToken`. A call without a token returns only the preview; nothing runs without a verified confirmation. No confirmation verifier is installed yet, so these tools are preview-only.
 - Inputs must be strict objects (unknown keys are rejected). Thrown errors never reach the client; error payloads keep only a snake_case code and bounded, non-sensitive details (`tools/result.ts`). If a non-read handler throws or returns output that fails its schema, it may already have committed, so the result is `tool_outcome_unknown` with the `requestId` and `retryMode: "same_request_id"`; read tools return `tool_operation_failed`.
 - `ownerOnly` tools refuse the static service bearer and require an OAuth grant.
-- List tools page with `tools/pagination.ts`: an opaque `cursor` bound to the tool and its exact filters, `limit` ≤ 200, and a `{items,page,asOf,coverage}` envelope.
+- List tools page with `tools/pagination.ts`: an opaque `cursor` bound to the tool and its exact filters (and optionally anchored to the first page's time, refused after a day), `limit` ≤ 200, and a `{items,page,asOf,coverage}` envelope.
+
+Every registered tool, legacy or registry, has an entry in `apps/mcp/test/fixtures/tool-contracts.ts` (valid and invalid input, class and scope, two-step requirement, and the bridge command, SQL statement, provider call or service it must reach in each mode). `test/tool-contracts.test.ts` builds the full server in both modes on a fixed clock and fails when a tool has no entry, when its annotations or scopes disagree with `tool-access.ts`, when a read tool runs any statement other than a select or a session `set`/`show` (a data-modifying CTE or an unrecognised statement counts as a write), or when a tool that writes the send ledger or calls the provider's send, or is listed in `DIRECT_SEND_TOOLS`, is not class `send`.
 
 `egc.safety_policy()` reads the live mode, whether one-step customer sends are enabled, the legacy writes disabled in Action Center mode, and each registry tool's class, scope, request-ID and two-step requirements.
 
@@ -60,21 +62,35 @@ Use these before writes when provider IDs are unknown:
 
 ## Raw normalized read tools
 
-- `contacts.search(query, limit)`
+> **Breaking change (2026-09-28, MCP-READS).** Connector owners and scripts that call these tools must update before this deploys:
+> - The nine `.search` tools return `{items,page,asOf,coverage}` instead of a bare array; read rows from `items` and follow `page.nextCursor`.
+> - `conversations.get` returns `messages` as the same page envelope instead of an array.
+> - A `limit` or `messageLimit` above 200 is still accepted but is served 200 rows per call; the rest arrives through `page.nextCursor`, so a walk that used to be one call may now take several.
+> - A `.get` for a missing record is an error result (`isError`, e.g. `{error:"job_not_found"}`) instead of a normal result.
+> - Unknown input keys are rejected instead of ignored.
+>
+> Saved ChatGPT or Claude prompts that index the old array, and external scripts that parse it, will break at deploy. There is no compatibility flag.
+
+These read the PostgreSQL provider mirror, not the Employee Hub. The `.search`/`.get` tools are registry `read` tools (`apps/mcp/src/tools/domains/crm-reads.ts`). Each `.search` returns `{items,page:{limit,offset,returned,nextCursor},asOf,coverage}`: every filter runs in SQL before `LIMIT`, ordering has an `id` tie-breaker, and `page.nextCursor` passed back as `cursor` with the same filters reads the next page until it is `null`. A cursor is bound to its tool and exact filters. The original inputs, defaults and maximum `limit` values are still accepted; a page never exceeds 200 rows, so larger requests continue through `nextCursor` instead of being truncated. Unknown input keys are rejected.
+
+A walk is anchored to its first page: the cursor carries that page's time, every later page reports the same `asOf`, and relative windows (`days`, `daysPast`, `daysFuture`) are measured from it, so an appointment that starts between calls cannot shift the offset. A cursor is refused with `invalid_cursor` once its anchor is more than a day old (or in the future); start again without `cursor`. Pages are offsets over a live ordering, so after reading a later page the tool checks for rows matching the same filters that were created or updated after `asOf` (for `leads.search` with `state`, also a canonical snapshot written after `asOf`). If there are any, that page reports `coverage:{complete:false,reason:"rows_changed_after_asOf"}`, because a row may be missing or repeated; start a fresh walk when an exact set matters. A row that is deleted, or stops matching a filter, after `asOf` is not detected by that check.
+
+- `contacts.search(query="", limit=50, cursor?)`
 - `contacts.get(contactId)`
-- `leads.search(state?, days, limit)`
+- `leads.search(state?, days=30, limit=100, cursor?)`
 - `leads.get(leadId)`
-- `conversations.search(contactId, limit)`
-- `conversations.get(conversationId, messageLimit)`
-- `calls.search(contactId?, days, limit)`
+- `conversations.search(contactId, limit=50, cursor?)`
+- `conversations.get(conversationId, messageLimit=100, cursor?)` — `messages` is a page of the conversation's messages, newest first.
+- `calls.search(contactId?, days=30, limit=100, cursor?)`
 - `calls.get(callId)`
 - `calls.transcript(contactId, days=30)`
-- `opportunities.search(contactId?, status?, limit)`
+- `opportunities.search(contactId?, status?, limit=100, cursor?)`
 - `opportunities.get(opportunityId)`
-- `appointments.search(contactId?, daysPast, daysFuture, limit)`
-- `jobs.search(contactId?, status?, limit)`
+- `appointments.search(contactId?, daysPast=30, daysFuture=90, limit=200, cursor?)` — earliest start first.
+- `jobs.search(contactId?, status?, limit=100, cursor?)`
 - `jobs.get(jobId)`
-- `walkthroughs.search(contactId?, status?, limit)`
+- `tasks.search(status?, priority?, assignedUserId?, contactId?, jobId?, opportunityId?, dueBefore?, dueAfter?, limit=100, cursor?)`
+- `walkthroughs.search(contactId?, status?, limit=100, cursor?)`
 - `walkthroughs.get(walkthroughId)`
 - `walkthroughs.transcript(walkthroughId)`
 

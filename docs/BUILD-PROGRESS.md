@@ -213,6 +213,11 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   (`scripts/funnel-definitions.mjs --check` in root CI); `funnel-calendar.js` (Denver business hours, holidays, periods),
   `funnel-events.js` (create-only `funnelEvents` rows in the business commit; device times clamped). Fixes the revenue
   scan counting internal jobs. Gaps: platform services still use their own exclusion lists (FUN-14/31); cutoverDate null.
+- **MCP-READS** The 16 Postgres CRM read tools (contacts, leads, conversations, calls, opportunities, appointments,
+  jobs, tasks, walkthroughs) move into `tools/domains/crm-reads.ts` via defineTool with the same names and limits; searches
+  return `{items,page,asOf,coverage}` with anchored cursors (24h expiry, filters in SQL, id tie-break, 200-row pages) and
+  flag `rows_changed_after_asOf`; unknown input keys are rejected. BREAKING for MCP clients: read `result.items` and follow
+  `page.nextCursor`. Gap: rows deleted or leaving a filter mid-walk can still shift a page unflagged.
 
 ## In progress
 
@@ -265,6 +270,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | SEGMENTS | Assignment segments: multi-crew jobs, split crews and per-day work windows (EGC_DISPATCH_SEGMENTS) | merged (ec78661) |
 | MSG-CRON | Signed messaging cron (Railway worker -> /api/messaging-cron), server-side reminders, browser triggers behind a flag | merged (7ad17e3) |
 | FUN-01 | Funnel definitions, business calendar and funnelEvents ledger library | merged (7ab606e) |
+| MCP-READS | Registry CRM reads with cursor pagination and per-tool contract gate | merged (44e2882) |
 
 ## Next
 

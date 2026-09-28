@@ -56,7 +56,7 @@ async function verifyAttempt(port:number,env:NodeJS.ProcessEnv,now:()=>number){
   const listed=await rpc('tools/list');if(!Array.isArray(listed.tools)||listed.tools.some((t:any)=>typeof t?.name!=='string'))throw new Error('verification_tools_missing');const names=new Set(listed.tools.map((t:any)=>t.name));
   if(names.size!==listed.tools.length)throw new Error('verification_duplicate_tools');
   if(required.some(n=>!names.has(n)))throw new Error('verification_tools_missing');summary.discoveredTools=names.size;summary.requiredToolsPresent=true;
-  stage='contacts';const contacts=await tool('contacts.search',{limit:1});if(!Array.isArray(contacts))throw new Error('verification_contact_read_failed');summary.existingContactRead=true;
+  stage='contacts';const contacts=await tool('contacts.search',{limit:1});if(!Array.isArray(contacts.items)||contacts.items.length>1||typeof contacts.page?.returned!=='number'||typeof contacts.coverage?.complete!=='boolean')throw new Error('verification_contact_read_failed');summary.existingContactRead=true;
   if(env.EGC_OPERATIONS_ENABLED==='true'){
     stage='operations_status';
     const status=await tool('egc.operations_status',{});if(status.ok!==true)throw new Error('verification_operations_unavailable');summary.operationsRead=true;
