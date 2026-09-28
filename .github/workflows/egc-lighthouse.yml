@@ -25,6 +25,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      # The server check loads functions/_middleware.js, which imports root packages (e.g. @noble/hashes).
+      - run: npm install --ignore-scripts --no-audit --no-fund
       - name: Check the Pages look-alike server, fixtures and configuration
         run: node --test tests/lighthouse/*.test.mjs
       - name: Prepare pinned Lighthouse CI outside the repository
