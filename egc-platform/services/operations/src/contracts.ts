@@ -1,5 +1,7 @@
 import * as z from "zod/v4";
 import {isMessageTaskKind,MESSAGE_ATTACHMENT_KINDS,TASK_KINDS} from "./action-kinds.js";
+import {HUB_COMMANDS,HUB_COMMAND_POLICY,HUB_WRITE_COMMANDS,hubCommandDenial,hubCommandPolicy,isHubCommandName,type HubCommandPolicy} from "./hub-commands.js";
+export * from "./hub-commands.js";
 
 export const CONTRACT_VERSION = 1;
 export const isoTime = z.string().datetime({ offset: true });
@@ -152,10 +154,11 @@ export const commandSchema = z.discriminatedUnion("command", [
   z.object({command:z.literal("brief.create"),dueBefore:isoTime,timeZone:timeZone.default("America/Denver")}).strict(),
   z.object({command:z.literal("brief.get"),briefId:entityId,...page}).strict(),
   z.object({command:z.literal("brief.latest"),...page}).strict(),
-  z.object({command:z.literal("history"),contactId:entityId.optional(),portalJobId:portalId.optional(),...page}).strict().refine(c=>Boolean(c.contactId||c.portalJobId),"An exact contact or portal record is required")
+  z.object({command:z.literal("history"),contactId:entityId.optional(),portalJobId:portalId.optional(),...page}).strict().refine(c=>Boolean(c.contactId||c.portalJobId),"An exact contact or portal record is required"),
+  ...Object.values(HUB_COMMANDS)
 ]);
 export type Command = z.infer<typeof commandSchema>;
-export const WRITE_COMMANDS = new Set(["provider.note.ensure","portal.note.add","portal.job.edit","portal.project.ensure","inbound.reconcile","task.create","task.edit","task.complete","task.complete_from_message","task.cancel","task.snooze","tasks.approve","task.reject","brief.create","schedule.mutate","schedule.bind_provider","schedule.sync_provider","schedule.link_customer","schedule.adopt"]);
+export const WRITE_COMMANDS = new Set(["provider.note.ensure","portal.note.add","portal.job.edit","portal.project.ensure","inbound.reconcile","task.create","task.edit","task.complete","task.complete_from_message","task.cancel","task.snooze","tasks.approve","task.reject","brief.create","schedule.mutate","schedule.bind_provider","schedule.sync_provider","schedule.link_customer","schedule.adopt",...HUB_WRITE_COMMANDS]);
 export const requestSchema = z.object({requestId:entityId,body:commandSchema}).strict();
 export const signedClaimsSchema = z.object({
   v:z.literal(CONTRACT_VERSION),iss:z.enum(["portal","mcp"]),aud:z.enum(["egc-operations","egc-portal"]),
@@ -166,11 +169,16 @@ export type SignedClaims = z.infer<typeof signedClaimsSchema>;
 export class OperationsError extends Error {
   constructor(public code:string, public status=400, public details:Record<string,unknown>={}) { super(code); }
 }
-export function authorize(actor:Actor, command:Command, workspace:string) {
+export function authorize(actor:Actor, command:Command, workspace:string, hubPolicies:Readonly<Record<string,HubCommandPolicy>>=HUB_COMMAND_POLICY) {
   if (!actorSchema.safeParse(actor).success || (actor.role === "integration") !== (actor.kind === "integration")) throw new OperationsError("invalid_actor",403);
   if (actor.workspace !== workspace) throw new OperationsError("workspace_forbidden",403);
   if(command.command==='schedule.adopt'&&(actor.kind!=='integration'||actor.role!=='integration'||actor.id!=='booking-adoption-worker'))throw new OperationsError('schedule_adoption_internal_only',403);
   if (!["owner","manager","sales","integration"].includes(actor.role)) throw new OperationsError("role_forbidden",403);
+  const hub=hubCommandPolicy(command.command,hubPolicies);
+  // Fail closed: a hub.* command without a policy entry is never authorized.
+  if (isHubCommandName(command.command) && !hub) throw new OperationsError("hub_command_unknown",403);
+  const hubDenied=hub&&hubCommandDenial(actor,command,hub);
+  if (hubDenied) throw new OperationsError(hubDenied,403);
   if (["tasks.approve","task.reject"].includes(command.command) &&
       (actor.kind !== "human" || !["owner","manager"].includes(actor.role)))
     throw new OperationsError("human_manager_approval_required",403);

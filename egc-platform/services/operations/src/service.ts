@@ -5,7 +5,7 @@ import {createHash,randomUUID} from "node:crypto";
 import {and,asc,desc,eq,gt,gte,inArray,isNull,lt,ne,notInArray,or,sql} from "drizzle-orm";
 import {getDb,schema} from "@egc/database";
 import {buildDueWorkSnapshot,collectTaskPages,pageDueWork,type QueueSnapshot,type SourceCoverage,type WaitingOn} from "@egc/lead-audit/operations-core";
-import {authorize,commandSchema,OperationsError,WRITE_COMMANDS,type Actor,type Command} from "./contracts.js";
+import {authorize,commandSchema,OperationsError,PORTAL_PASSTHROUGH,WRITE_COMMANDS,type Actor,type Command} from "./contracts.js";
 import {assertCompletion,assertEditable,assertTiming,digest,jsonRecord,requestDigest} from "./policy.js";
 import {isMessageTaskKind} from "./action-kinds.js";
 
@@ -89,7 +89,7 @@ export class OperationsService {
       const existing=new Set(portalEvents.map(event=>event.id));
       for(const event of nativeHistoryEvents(nativeEvidence))if(!existing.has(event.id)){portalEvents.push(event);existing.add(event.id);}
     }
-    if (["portal.note.add","portal.job.edit","portal.project.ensure","calendar","portal.job","portal.evidence","portal.members","portal.revenue","portal.rules","schedule.resolve","schedule.mutate","schedule.bind_provider","schedule.link_customer"].includes(command.command)) {
+    if (PORTAL_PASSTHROUGH.has(command.command)) {
       if (!this.config.portalRead) throw new OperationsError("portal_authority_unavailable",503);
       return this.config.portalRead(actor,command);
     }

@@ -370,6 +370,12 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // Hub bridge command receipts hold the audited before/after and the
+    // idempotency fingerprint for every registry write. Server-only.
+    match /hub_command_operations/{documentId} {
+      allow read, write: if false;
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }

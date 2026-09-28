@@ -1,5 +1,6 @@
 import {listHubUserProfiles,hasBusinessAccess} from '../_lib/hub-session.js';
 import {operationsEnabled,verifyApiServiceEnvelope} from '../_lib/operations-service-auth.js';
+import {isHubCommand,runHubCommand} from '../_lib/operations-hub-commands.js';
 import {portalCalendar,portalJob,portalEvidence} from '../_lib/operations-portal-records.js';
 import {portalRevenue} from '../_lib/operations-financials.js';
 import {mutatePortalRecord} from '../_lib/operations-job-records.js';
@@ -13,6 +14,7 @@ export async function onRequestPost({request,env}) {
     const content=await request.text();if(content.length>220000)return reply(413,{error:'request_too_large'});
     const c=await verifyApiServiceEnvelope(env,JSON.parse(content).envelope,'/api/operations-portal');
     if(c.actor.workspace!==(env.EGC_OPERATIONS_WORKSPACE||'egc'))return reply(403,{error:'workspace_forbidden'});
+    if(isHubCommand(c.request.body))return reply(200,await runHubCommand(env,c.actor,c.request.body));
     const command=c.request.body;
     if(command.command==='schedule.adopt')return reply(200,await adoptScheduledVisit(adoptionStorage(env),c.actor,command));
     if(['portal.note.add','portal.job.edit','portal.project.ensure'].includes(command.command))return reply(200,await mutatePortalRecord(schedulingStorage(env),c.actor,command));

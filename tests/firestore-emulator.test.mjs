@@ -95,6 +95,9 @@ test('actual Firestore rules isolate canonical operations from crew SDK access',
       await assertFails(manager.collection('payment_reviews').get());
       await assertFails(crew.doc('payment_reviews/cs_test_forged').set({status:'resolved',jobId:'assigned'}));
     });
+    await t.test('hub bridge command receipts (audit and idempotency) remain server-only even for business SDK sessions',async()=>{
+      for(const db of [publicDb,crew,manager]){const ref=db.doc('hub_command_operations/receipt');await assertFails(ref.get());await assertFails(ref.set({fingerprint:'forged',before:'null',after:'{}'}));await assertFails(ref.delete());}
+    });
     await t.test('manager administrative schedule and customer access remains functional',async()=>{
       await assertSucceeds(manager.doc('jobs/assigned').get());
       await assertSucceeds(manager.doc('customers/customer').get());

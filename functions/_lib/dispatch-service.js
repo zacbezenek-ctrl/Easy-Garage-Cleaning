@@ -78,7 +78,7 @@ function recurringTemplateFields(source,actor,now) {
   if (Array.isArray(source.materials)) output.materials=source.materials.filter(item=>item&&typeof item.id==='string'&&typeof item.name==='string'&&Number.isFinite(item.quantity)).map(({id,name,quantity})=>({id,name,quantity}));
   return output;
 }
-export function projectDispatchJob(job, roster = []) {
+export function projectDispatchJob(job, roster = [], now = new Date().toISOString()) {
   const output = Object.fromEntries(DTO_FIELDS.filter(key => job[key] !== undefined).map(key => [key, job[key]]));
   const interval = scheduleInterval(job);
   return { ...output, assignedCrew: roster.length ? legacyMembers(job,roster) : jobCrewNames(job), crewLead: job.crewLead ? resolveMember(job.crewLead,roster,true) || job.crewLead : null, status: state(job), endDate: job.endDate || job.date || '',
@@ -87,7 +87,7 @@ export function projectDispatchJob(job, roster = []) {
     activity:fieldActivity(job),activityReason:job.fieldExecution?.activityReason || '',activityAt:job.fieldExecution?.activityAt || null,
     attention:job.fieldExecution?.attention?.status === 'open' ? {status:'open',reason:job.fieldExecution.attention.reason || '',at:job.fieldExecution.attention.at || null,actorName:job.fieldExecution.attention.actorName || ''} : null,
     completionSync:job.fieldCompletionSync ? {status:job.fieldCompletionSync.status,message:String(job.fieldCompletionSync.message || '').slice(0,600),attemptedAt:job.fieldCompletionSync.attemptedAt || null,syncedAt:job.fieldCompletionSync.syncedAt || null} : null,
-    jobTime:fieldJobTime(job),
+    jobTime:fieldJobTime(job,now),
     arrivalWindowStart:job.arrivalWindowStart || null,arrivalWindowEnd:job.arrivalWindowEnd || null,arrivalWindow:job.arrivalWindow || '',
     timeZone: DISPATCH_TIME_ZONE, timeNeedsReview: Boolean(job.date) && !interval };
 }
@@ -183,7 +183,7 @@ export async function dispatchOverview(store, session, query = {}, now = new Dat
     if (!safeId(query.jobId)) throw fail('dispatch_job_not_found','Choose a valid job.',404);
     const [job,jobs,resources,roster,settings] = await Promise.all([store.read('jobs',query.jobId),store.jobs(),store.resources(),store.roster(),store.settings ? store.settings() : {}]);
     if (!visibleJob(job)) throw fail('dispatch_job_not_found','This operational job could not be found.',404);
-    return {ok:true,job:projectDispatchJob(job,roster),roster,crews:resources.filter(row=>row.recordType==='crew'),vehicles:resources.filter(row=>row.recordType==='vehicle'),warnings:jobWarnings(job,jobs,resources,roster),arrivalDefaults:arrivalDefaults(settings)};
+    return {ok:true,job:projectDispatchJob(job,roster,new Date(now).toISOString()),roster,crews:resources.filter(row=>row.recordType==='crew'),vehicles:resources.filter(row=>row.recordType==='vehicle'),warnings:jobWarnings(job,jobs,resources,roster),arrivalDefaults:arrivalDefaults(settings)};
   }
   if (query.view === 'customers') {
     const needle = text(query.q || '', 'Search', 200).toLowerCase(), digits = needle.replace(/\D/g, '');
@@ -198,7 +198,7 @@ export async function dispatchOverview(store, session, query = {}, now = new Dat
   const selected = jobs.filter(visibleJob).filter(job => !job.date ? includeUnscheduled : !validDate(job.date) || job.endDate && (!validDate(job.endDate) || job.endDate < job.date) || job.date < endDate && (job.endDate || job.date) >= startDate);
   selected.sort((a,b) => String(a.date || '9999').localeCompare(String(b.date || '9999')) || String(a.time || '').localeCompare(String(b.time || '')) || a.id.localeCompare(b.id));
   const inspection=scheduleInspection(jobs,resources,roster);
-  return { ok: true, timeZone: DISPATCH_TIME_ZONE, startDate, endDate, jobs: selected.map(job=>projectDispatchJob(job,roster)), roster,
+  return { ok: true, timeZone: DISPATCH_TIME_ZONE, startDate, endDate, jobs: selected.map(job=>projectDispatchJob(job,roster,new Date(now).toISOString())), roster,
     crews: resources.filter(row => row.recordType === 'crew'), vehicles: resources.filter(row => row.recordType === 'vehicle'),
     availability: resources.filter(row => row.recordType === 'availability').concat(jobs.filter(row => row.type === 'availability' || row.recordType === 'crew_availability').map(row => ({ ...row, employeeId: resolveMember(row.employee,roster,true) || row.employee }))).filter(row => row.date < endDate && (row.endDate || row.date) >= startDate),
     warnings: selected.flatMap(job => jobWarnings(job, jobs, resources, roster,inspection)), coverage: { complete: true, asOf: now.toISOString() }, arrivalDefaults: arrivalDefaults(settings) };

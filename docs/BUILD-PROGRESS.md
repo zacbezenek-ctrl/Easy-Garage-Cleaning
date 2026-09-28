@@ -91,6 +91,11 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   and the suite again with `tests/helpers/shift-clock.mjs` moving the clock +400 days); Action Center no longer gates the
   platform on the root suite; frozen lockfiles, clean-tree checks, per-SHA push concurrency, business-hub PR runs, and
   field-execution acceptance in Firestore CI. Scans skip worktrees/QA output; vm realms inherit the shift (`vm-realm.mjs`).
+- **BRIDGE** Signed Hub command registry: `hub.*` commands (strict zod, one shared dependency-free
+  `hub-command-policy.ts` used by the API's `authorize()` and the Hub runner, fail-closed) reach Hub domains through
+  `/api/operations`; actors are rebuilt from the current Hub profile, integrations only read via an owner-mapped delegate
+  (`EGC_OPERATIONS_HUB_DELEGATES_JSON`). Proof reads: `hub.dispatch.overview`, `hub.staff.roster` (no pay). Writes get
+  audited, idempotent `hub_command_operations` receipts (server-only rule). Gaps: no real write command or MCP tools yet.
 
 ## In progress
 
@@ -113,7 +118,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | P3-01 | Action kinds v2 (8 new kinds, drafts, attachments) + migration 0013 | merged (106af38) |
 | P3-13 | Retire the dead portal recorder (Hub deep links) and scripts/verify-crew.mjs (audit #85, #122) | merged (4152a18) |
 | MCP-01 | MCP tool registry/policy framework + safety defaults (sends blocked in operations mode, read-only static bearer, real audit actor) | merged (dfccb8d) |
-| BRIDGE | Operations bridge command registry (API + Hub) with delegated human actors | building |
+| BRIDGE | Operations bridge command registry (API + Hub) with delegated human actors | merged (d821773) |
 | P4-01 | Customer portal correctness fixes + review request tracking | merged (5a617a8) |
 | P4-02 | Customer identity normalization + dry-run backfill | building |
 | P4-15 | Customer portal link revocation (link version) | merged (754b885) |
