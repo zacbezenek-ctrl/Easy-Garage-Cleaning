@@ -62,6 +62,15 @@ export async function readEmployeeTimecards(env) {
   return readCollection(env, 'timeEntries');
 }
 
+// Payroll reads timecards and time-off requests through the per-family vault reads
+// (readCollection: one query per family, whole-vault fallback when the index is
+// missing or EGC_EMPLOYEE_VAULT_QUERY=legacy). Returns {name: records[]} for each name.
+export async function readEmployeeHubRecords(env, names) {
+  const records = Object.fromEntries(names.map(name => [name, []]));
+  for (const name of Object.keys(records)) records[name] = await readCollection(env, name);
+  return records;
+}
+
 async function writeTimecard(env, session, id, data, target) {
   if (data === target.data) return data;
   let assignedJobGuard = null;
@@ -221,7 +230,9 @@ async function authorizeMutation(env, session, collection, id, incoming, existin
 
   if (collection === 'requests') {
     if (existing) throw new Error('Only a manager can change a submitted request');
-    return { ...incoming, id, employee: session.user, status: 'pending', reviewedBy: '', reviewedAt: '' };
+    // Paid time-off hours and weekend pay are set by a manager; an employee request cannot pre-fill them.
+    const { paidHoursPerDay, paidWeekends, ...requested } = incoming;
+    return { ...requested, id, employee: session.user, status: 'pending', reviewedBy: '', reviewedAt: '' };
   }
 
   if (collection === 'training') {

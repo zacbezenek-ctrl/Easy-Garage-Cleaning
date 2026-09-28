@@ -119,6 +119,11 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   (deterministic requestIds through unchanged `schedule.create`; conflicts saved unscheduled), manager
   `/api/recurring-plans`, Dispatch > Recurring plans/Repeat UI, and `saveSeries` plans when on. Gaps: no horizon cron
   (P1-DS-11); plan edits never move existing visits; visits still carry no price (#27).
+- **P1-03** Payroll engine (manager-only reads, no UI): `timesheet-week.js` Denver Monday-Sunday workweeks with Colorado
+  daily/weekly/12-consecutive overtime (greater of, never added) or federal via `EGC_OVERTIME_POLICY`, weighted regular
+  rate, bonus/tips, manager-set paid PTO; `GET /api/timesheets` (JSON or guarded payroll CSV, only for settled weeks) and
+  `GET /api/job-costing` (segment cost + spread OT premium, exclusive end). Employee requests cannot set paid PTO fields.
+  Gaps: COMPS reading needs accountant sign-off; no UI; PTO pay set by API only.
 
 ## In progress
 
@@ -129,7 +134,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | --- | --- | --- |
 | P1-01 | Scheduling reliability: crew list pagination, self-assignment lock entries, bridge startAt/endAt, multi-day GHL sync, legacy blocked_days (flag, default off), repair script | merged (6fa0fa1) |
 | P1-02 | Employee vault store extraction + centralized business/owner identity (behavior-preserving) | building |
-| P1-03 | Weekly timesheet + Colorado/federal overtime engine, server payroll CSV, job labor costing | building |
+| P1-03 | Weekly timesheet + Colorado/federal overtime engine, server payroll CSV, job labor costing | merged (f21994f) |
 | P1-04 | Arrival windows in dispatch, field and portal | building |
 | P1-05 | Recurring plans: server record, generator, idempotent extendHorizon, API, UI | merged (a8bc498) |
 | P1-07 | Travel-time estimates (offline ZIP-centroid estimator; optional Google; default off) | merged (ae810dd) |
