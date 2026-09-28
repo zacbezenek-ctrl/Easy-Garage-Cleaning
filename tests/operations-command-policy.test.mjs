@@ -360,12 +360,13 @@ test('recording.apply joins its hub_audit entry to the approval commit',async()=
   const result=await applyRecordingApproval({},bridge.command,owner,fetcher,{now:bridge.now,audit:bridge.audit});
   assert.deepEqual([result.ok,result.appliedAt,commits.length],[true,NOW,1]);
   const writes=commits[0].writes,auditWriteDoc=writes.find(write=>write.update.name.includes(`/${HUB_AUDIT_COLLECTION}/`));
-  assert.equal(writes.length,3);assert.deepEqual(auditWriteDoc.currentDocument,{exists:false});
+  // Job, receipt, the FUN-02 scope.reviewed funnel event and the audit entry.
+  assert.equal(writes.length,4);assert.deepEqual(auditWriteDoc.currentDocument,{exists:false});
   const entry=decodeFirestoreFields(auditWriteDoc.update.fields);
   assert.deepEqual([entry.action,entry.entityKey,entry.actor.id,entry.via,entry.requestId],['recording.apply','jobs/visit-1','zacb','portal',command.requestId]);
   assert.equal(JSON.parse(entry.after).reviewedWalkthroughScope.recordingId,command.recordingId);
   const plain=[];await applyRecordingApproval({},bridge.command,owner,async(e,url,options)=>{if(String(url).endsWith(':commit'))plain.push(JSON.parse(options.body));return fetcher(e,url,options);},{now:NOW});
-  assert.equal(plain[0].writes.length,2,'Without an audit hook the approval commit is unchanged.');
+  assert.equal(plain[0].writes.length,3,'Without an audit hook the approval commit is the job, the receipt and the funnel event.');
 });
 
 test('hub_audit records onBehalfOf only when given and lists it back',async()=>{

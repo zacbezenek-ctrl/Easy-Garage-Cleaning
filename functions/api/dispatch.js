@@ -2,6 +2,7 @@ import { getHubSession } from '../_lib/hub-session.js';
 import { dispatchStorage } from '../_lib/dispatch-storage.js';
 import { dispatchOverview, mutateDispatch, requireDispatcher } from '../_lib/dispatch-service.js';
 import { travelEstimator } from '../_lib/dispatch-travel.js';
+import { dispatchFunnelOptions } from '../_lib/dispatch-funnel.js';
 
 function reply(status, body) {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type':'application/json','Cache-Control':'no-store','X-Content-Type-Options':'nosniff' } });
@@ -30,7 +31,7 @@ export function dispatchHandlers({ session = getHubSession, storage = dispatchSt
         const actor = await session(request,env); requireDispatcher(actor);
         const params = Object.fromEntries(new URL(request.url).searchParams.entries());
         const store = storage(env);
-        return reply(200,{...await dispatchOverview(store,actor,params,now(),{travel:travel({env,store,now})}),viewer:{id:actor.user}});
+        return reply(200,{...await dispatchOverview(store,actor,params,now(),{travel:travel({env,store,now})}),viewer:{id:actor.user},funnel:dispatchFunnelOptions()});
       } catch(error) { return errorResponse(error); }
     },
     async post({request,env}) {

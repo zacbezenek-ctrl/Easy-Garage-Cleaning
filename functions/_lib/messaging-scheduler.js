@@ -52,7 +52,8 @@ const DAY_MS = 86400000;
 const RESULT_LIMIT = 60;
 const PRIORITY = { day_before_reminder: 0, portal_invitation: 1, crew_assignment: 2, deposit_reminder: 3, payment_reminder: 4, estimate_expiring: 5 };
 const TERMINAL = new Set(['cancelled','canceled','completed','invoiced','paid','review_requested','closed','noshow','no_show','no-show','superseded','lost']);
-const UNPAYABLE_JOB = new Set(['cancelled','canceled','superseded','lost']);
+// A dispatch no-show (FUN-02) stops automatic payment and estimate reminders like a cancel; staff collect any fee by hand.
+const UNPAYABLE_JOB = new Set(['cancelled','canceled','superseded','lost','noshow','no_show','no-show']);
 const UNPAYABLE_INVOICE = new Set(['void','superseded','draft','paid','pending_verification']);
 const CLOSED_ESTIMATE = new Set(['accepted','approved','draft','declined','rejected','superseded','void','expired','cancelled','canceled','lost']);
 const PORTAL_HELD = new Set(['submitted','sending','uncertain','suppressed','contact_mismatch']);

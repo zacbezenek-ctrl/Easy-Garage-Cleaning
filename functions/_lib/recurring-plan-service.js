@@ -256,7 +256,7 @@ function occurrenceInput(plan, template, date, requestId, conflict) {
   const schedule = occurrenceSchedule(plan, date);
   if (!conflict) Object.assign(changes, schedule);
   else changes.opsNotes = clip([`Recurring visit for ${date} ${plan.time}–${plan.endTime} (Mountain Time) could not be scheduled: ${conflict.message}`, template?.opsNotes].filter(value => typeof value === 'string' && value.trim()).join('\n\n'), 8000);
-  return { action: 'schedule.create', requestId, customerId: plan.customerId, kind: 'job', sourceTemplateJobId: plan.templateJobId, changes };
+  return { action: 'schedule.create', requestId, customerId: plan.customerId, kind: 'job', sourceTemplateJobId: plan.templateJobId, booking: { channel: 'recurring_plan' }, changes };
 }
 
 async function createOccurrence(store, actor, plan, template, date, { now, runId, conflict = null }) {

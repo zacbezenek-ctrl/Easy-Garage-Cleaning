@@ -6,6 +6,7 @@ import {dispatchStorage} from './dispatch-storage.js';
 import {scheduleRowsConflict,scheduleLockConflict,scheduleDayEntry} from './dispatch-conflicts.js';
 import {customerIdentityFields} from './customer-identity.js';
 import {segmented} from './dispatch-segments.js';
+import {visitFunnelWrites,eventActor,defaultVisitPurpose,providerClock} from './dispatch-funnel.js';
 const BASE='https://firestore.googleapis.com/v1/projects/egcw-1ec83/databases/(default)/documents/jobs';
 const fail=(code,status=409)=>Object.assign(new Error(code),{status});
 const safeId=v=>typeof v==='string'&&/^[A-Za-z0-9_-]{1,180}$/.test(v)&&!/^(_egc_|secure_)/.test(v);
@@ -135,7 +136,8 @@ export async function adoptScheduledVisit(store,actor,input,now=new Date().toISO
  const projectId=current?.projectId||`project_${id}`,project=await store.read('projects',projectId);if(project&&project.customerId!==customerId)throw fail('schedule_adoption_project_conflict');
  const source={type:p.source,id:p.sourceId,revision:p.sourceRevision,verifiedAt,evidenceIds:[...new Set(p.evidenceIds)]};
  const patch={id,type:current?.type||p.kind,customerId,projectId,highlevelContactId:p.contactProviderId,scheduleSource:'egc_hub',providerSyncOwner:'operations',adoptionSource:source,adoptedAt:current?.adoptedAt||now,adoptionOriginalBookingAt:p.originalBookingAt,updatedAt:now};
- if(!current)Object.assign(patch,{bookingKey,date:from.date,time:from.time,endTime:to.time,status:'scheduled',pipelineStatus:'scheduled',createdAt:p.originalBookingAt||p.sourceCreatedAt||null,createdBy:actor.id,title:p.title,serviceType:p.kind==='walkthrough'?'Free garage walkthrough':'Customer job',customer:p.providerContact.name||[p.providerContact.firstName,p.providerContact.lastName].filter(Boolean).join(' '),phone:p.providerContact.phone||'',email:p.providerContact.email||'',address:p.address});
+ if(!current)Object.assign(patch,{bookingKey,date:from.date,time:from.time,endTime:to.time,status:'scheduled',pipelineStatus:'scheduled',createdAt:p.originalBookingAt||p.sourceCreatedAt||null,createdBy:actor.id,title:p.title,serviceType:p.kind==='walkthrough'?'Free garage walkthrough':'Customer job',customer:p.providerContact.name||[p.providerContact.firstName,p.providerContact.lastName].filter(Boolean).join(' '),phone:p.providerContact.phone||'',email:p.providerContact.email||'',address:p.address,
+  bookingChannel:p.source==='ghl_appointment'?'ghl_self_booking':null,channelSelfReported:null,visitPurpose:defaultVisitPurpose(p.kind)});
  if(!current&&p.operationalScope){
   const scope=p.operationalScope;
   patch.adoptionOperationalScope=structuredClone(scope);
@@ -146,6 +148,8 @@ export async function adoptScheduledVisit(store,actor,input,now=new Date().toISO
  if(p.localJobId)patch.normalizedLocalJobId=p.localJobId;if(p.normalizedLocalAppointmentId)patch.normalizedLocalAppointmentId=p.normalizedLocalAppointmentId;
  if(p.providerAppointmentId)Object.assign(patch,{highlevelAppointmentId:p.providerAppointmentId,highlevelCalendarId:p.providerCalendarId,providerAppointmentStatus:p.providerStatus,syncStatus:'synced',syncedAt:verifiedAt});else if(!current?.highlevelAppointmentId)patch.syncStatus='pending';
  const next={...current,...patch},writes=[{collection:'jobs',id,revision:current?.revision,patch}];
+ // FUN-02: a newly adopted visit is its booking, dated by the provider's booking time.
+ if(!current){const funnel=await visitFunnelWrites({action:'create',after:next,actor:eventActor(actor),via:'bridge',key:{kind:'ghlAdoption',value:`${p.source}:${p.sourceId}`},source:{collection:'jobs',id:sourceReceiptId},bookedClock:providerClock(p.originalBookingAt||p.sourceCreatedAt,now),now});Object.assign(patch,funnel.patch);writes.push(...funnel.writes);}
  writes.push({collection:'customerIdentityState',id:'revision',revision:identityGuard?.revision,patch:{updatedAt:now,lastRequestId:input.requestId}});
  writes.push({collection:'dispatchState',id:'revision',revision:dispatchGuard?.revision,patch:{updatedAt:now,lastRequestId:input.requestId}});
  if(!customer)writes.push({collection:'customers',id:customerId,patch:{id:customerId,name:next.customer||'',phone:p.providerContact.phone||'',email:p.providerContact.email||'',...customerIdentityFields(p.providerContact),address:p.address,highlevelContactId:p.contactProviderId,createdAt:now,updatedAt:now,source:'verified_operational_adoption'}});

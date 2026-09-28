@@ -184,6 +184,13 @@ function moveChanges(data, item, target, {date=null, start=null}={}) {
   return result;
 }
 
+/** True when a move changes the visit's start (a split job starts at its earliest segment); the server records that as a reschedule. */
+function startChanged(item, result) {
+  if (!result?.moved) return false;
+  const first = rows => rows.map(row => row.date+'T'+row.time).sort()[0], before=rowsOf(item.job);
+  return first(before) !== first(before.map(row => !item.row.segmentId || row.segmentId===item.row.segmentId ? {...row, ...result.next} : row));
+}
+
 // Browser views.
 const kit = () => window.EGCDispatch?.internals;
 const pct = minute => Math.min(100,Math.max(0,(minute-AXIS_START)/SPAN*100));
@@ -347,8 +354,11 @@ function confirmMove(item, lane, start) {
     result.crew?['Crew',members.map(id => nameOf(S.data,id)).join(', ')+(result.crew.crewLead?' · lead '+nameOf(S.data,result.crew.crewLead):'')]:null]),
     k.h('div',{class:'dp-wide'},k.h('h3',{class:'dc-subhead'},'Loaded-schedule check'),hintList(k,hints(S.data,{...item.row,...result.next,job},members))),
     result.arrivalCleared?k.notice('The customer arrival window is cleared because moving it with the new start would cross midnight. Set a new window in Edit / assign.','error'):null].filter(Boolean));
+  // A move of the visit's start is a reschedule: dispatch asks why and who asked (FUN-02).
+  const moveBox=k.h('fieldset',{class:'dp-wide'},k.h('legend',{},'Why is this visit moving?')), reason=startChanged(item,result)&&k.reasonControls ? k.reasonControls(moveBox,'reschedule',{who:true}) : null;
+  if (reason) model.fields.append(moveBox);
   model.footer.append(k.btn('Back',model.close),k.h('button',{type:'submit',class:'dp-btn primary'},'Save move'));
-  model.form.addEventListener('submit',event => { event.preventDefault(); void k.save(model,{action:'schedule.update',requestId:k.key(),jobId:job.id,expectedRevision:job.revision,changes:result.changes},'Schedule updated.'); });
+  model.form.addEventListener('submit',event => { event.preventDefault(); void k.save(model,{action:'schedule.update',requestId:k.key(),jobId:job.id,expectedRevision:job.revision,changes:result.changes,...(reason?reason():{})},'Schedule updated.'); });
 }
 // Phone and keyboard: a sheet of employees and crews; one tap sends the assignment.
 function openSheet(item) {
@@ -381,7 +391,7 @@ function openSheet(item) {
 
 // The last lane model holds customer schedule data; drop it with the rest of the Hub state.
 window.addEventListener('egc:signout',() => { cancelDrag(); lastModel=null; C.mode='employee'; C.message=''; C.statusNode=null; });
-window.EGCDispatchCalendar=Object.freeze({AXIS_START, AXIS_END, SLOT, monthGrid, addMonths, dayWindow, rowsOf, laneModel, untimed, hints, crewChange, moveChanges});
+window.EGCDispatchCalendar=Object.freeze({AXIS_START, AXIS_END, SLOT, monthGrid, addMonths, dayWindow, rowsOf, laneModel, untimed, hints, crewChange, moveChanges, startChanged});
 const dispatch=window.EGCDispatch;
 if (dispatch?.registerView) {
   dispatch.registerView('month',{label:'Month', range:date => { const grid=monthGrid(date); return {startDate:grid.startDate, endDate:grid.endDate}; }, step:addMonths, render:renderMonth, help:'Tap a day to open it.'});

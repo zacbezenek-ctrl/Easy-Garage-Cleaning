@@ -34,6 +34,33 @@
  * {action:'schedule.update'|'schedule.cancel'|'schedule.restore',requestId,
  *  jobId,expectedRevision,changes:{...},cancellationReason?:string(240)}
  * cancel requires changes:{}; only cancellation accepts cancellationReason.
+ * FUN-02 (functions/_lib/dispatch-funnel.js; codes from the shared funnel
+ * definitions, `funnel` on GET lists them): schedule.create of a customer visit
+ * takes booking?:{channel?:'hub_phone'|'hub_in_person'|...,channelSelfReported?,
+ * visitPurpose?:'service'|'install'|'return'|'rework'|'member_visit' (a job;
+ * default 'service', a walkthrough is always 'walkthrough'),reworkOfJobId?
+ * (required for, and only for, rework: an operational job of this customer,
+ * whose project the visit joins),membershipId? (required for, and only for,
+ * member_visit),crmLinkReason? (kept only when the visit has no CRM contact)},
+ * saved as bookingChannel, channelSelfReported, bookedBy, visitPurpose,
+ * reworkOfJobId, membershipId, crmLinkReason (400 dispatch_booking_*).
+ * schedule.update and schedule.cancel take reasonCode? (reschedule or cancel
+ * list; other_legacy is reserved) and initiatedBy?:'customer'|'company'|'system'
+ * (400 dispatch_reason_code_invalid). A cancel saves cancellationReasonCode
+ * (other_legacy when none was sent), cancellationInitiatedBy and lateCancel
+ * (customer cancel within 24 h of the start; false for company or a visit never
+ * placed; null when nobody said who asked or the saved start cannot be read).
+ * {action:'schedule.no_show',requestId,jobId,expectedRevision,changes:{},
+ *  reasonCode (noShow list, required)} marks a placed customer job no_show
+ * from one hour before its start (409 dispatch_no_show_too_early /
+ * dispatch_no_show_invalid; a walkthrough no-show is the walkthrough visit's
+ * own outcome, 409 dispatch_no_show_walkthrough), saves noShowAt/noShowBy/
+ * noShowReasonCode, frees its day locks and never changes the provider
+ * appointment. It is final like a completion (the bridge cannot cancel it). Every visit change writes its
+ * funnel events (walkthrough.booked / job.scheduled on first placement,
+ * *.rescheduled with fromStartAt/toStartAt and the scheduleOccurrence counter,
+ * *.cancelled, job.no_show, *.restored, job.assigned) in the same commit as the
+ * visit and its receipt. GET view=customers adds crmLinked (boolean).
  * changes: date, time, endDate, endTime (all strings; all '' for unscheduled),
  * assignedCrew:string[] (canonical roster IDs), crewLead:string|null,
  * crewId:string|null, vehicleId:string|null, crewNeeded:integer 1..20,
@@ -177,4 +204,4 @@
  * dispatch_conflict (manual-buffer shortfalls stay warnings).
  */
 export const DISPATCH_TIME_ZONE = 'America/Denver';
-export const DISPATCH_ACTIONS = Object.freeze(['schedule.create','schedule.update','schedule.cancel','schedule.restore','crew.save','vehicle.save','availability.save']);
+export const DISPATCH_ACTIONS = Object.freeze(['schedule.create','schedule.update','schedule.cancel','schedule.restore','schedule.no_show','crew.save','vehicle.save','availability.save']);

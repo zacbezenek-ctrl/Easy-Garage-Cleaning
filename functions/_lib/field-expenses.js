@@ -2,7 +2,7 @@ import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex } from '@noble/hashes/utils.js';
 import { firestoreFetch } from './firebase-service-account.js';
 import { decodeFirestoreFields, encodeFirestoreFields } from './firestore-job.js';
-import { fieldCompletionMissing, fieldFailure, fieldId, fieldPhotos, fieldRequestId, fieldStage, fieldText } from './field-execution.js';
+import { fieldCancelled, fieldCompletionMissing, fieldFailure, fieldId, fieldPhotos, fieldRequestId, fieldStage, fieldText } from './field-execution.js';
 import { createFieldStore } from './field-execution-store.js';
 import { assignmentKey } from './job-assignment.js';
 import { commitConflict, commitFailure } from './firestore-errors.js';
@@ -585,7 +585,7 @@ export async function fieldExpenseCloseoutMissing(env, jobId, { store, safe = fa
 // together with the other completion requirements.
 export async function requireFieldExpenseCloseout(env, job, input, { store } = {}) {
   // A closed job keeps its own answer (FIELD_JOB_CLOSED from the field command).
-  if (['completed', 'invoiced', 'paid', 'review_requested', 'cancelled'].includes(fieldStage(job))) return;
+  if (['completed', 'invoiced', 'paid', 'review_requested'].includes(fieldStage(job)) || fieldCancelled(job)) return;
   const missing = await fieldExpenseCloseoutMissing(env, job.id, { store });
   if (missing.length) throw fieldFailure('Finish the required closeout items.', 409, 'FIELD_COMPLETION_INCOMPLETE', { missing: [...fieldCompletionMissing(job, input), ...missing] });
 }

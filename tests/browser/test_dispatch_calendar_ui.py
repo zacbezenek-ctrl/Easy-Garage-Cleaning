@@ -46,7 +46,7 @@ class DispatchCalendarTests(unittest.TestCase):
         cls.browser.close(); cls.pw.stop(); cls.server.shutdown(); cls.server.server_close()
     def setUp(self):
         self.errors = []; self.calls = []; self.gets = []; self.completed = {}; self.fail_once = None; self.lost_once = False; self.segments = None; self.viewer = 'manager.one'
-        self.hold_get = False; self.held = None; self.read_failure = False
+        self.hold_get = False; self.held = None; self.read_failure = False; self.funnel = None
         self.jobs = [job(), job(id='job-2', revision='rev-2', customer='Synthetic Unassigned Garage', time='13:00', endTime='15:00', assignedCrew=[], crewLead=None, crewId=None, vehicleId=None)]
         self.crews = [{'id': 'crew-main', 'revision': 'crew-rev-1', 'name': 'North Crew', 'memberIds': ['crew.one', 'lead.one'], 'leadId': 'lead.one', 'status': 'active'},
                       {'id': 'crew-south', 'revision': 'crew-rev-2', 'name': 'South Crew', 'memberIds': ['crew.two'], 'leadId': 'crew.two', 'status': 'active'}]
@@ -76,7 +76,7 @@ class DispatchCalendarTests(unittest.TestCase):
             if self.hold_get: self.hold_get = False; self.held = (route, first, last); return
             send({'ok': True, 'viewer': {'id': self.viewer}, 'timeZone': 'America/Denver', 'jobs': rows, 'roster': ROSTER, 'crews': self.crews, 'vehicles': [{'id': 'truck-1', 'revision': 't1', 'name': 'Box Truck', 'status': 'available'}],
                   'availability': self.availability, 'warnings': self.warnings, 'coverage': {'complete': True, 'asOf': DAY+'T18:00:00Z'}, 'startDate': first, 'endDate': last, 'arrivalDefaults': {'enabled': False, 'minutes': 60},
-                  **({'segments': self.segments} if self.segments else {})}); return
+                  **({'segments': self.segments} if self.segments else {}), **({'funnel': self.funnel} if self.funnel else {})}); return
         body = req.post_data_json; self.calls.append(copy.deepcopy(body))
         if self.fail_once:
             status, code, error, details = self.fail_once; self.fail_once = None
@@ -153,6 +153,42 @@ class DispatchCalendarTests(unittest.TestCase):
         self.assertEqual((write['action'], write['jobId'], write['expectedRevision']), ('schedule.update', 'job-1', 'rev-1')); self.assertRegex(write['requestId'], r'^[0-9a-f-]{36}$')
         self.assertEqual(write['changes'], {'date': DAY, 'time': '10:00', 'endDate': DAY, 'endTime': '12:00', 'assignedCrew': ['crew.two', 'lead.one'], 'crewLead': 'lead.one', 'crewId': None})
         expect(self.item('Crew Two', 'Synthetic Johnson Garage')).to_contain_text('10:00 AM – 12:00 PM'); expect(self.page.locator('.dp-notice').first).to_contain_text('Schedule updated.')
+
+    def test_a_move_of_the_start_needs_a_reschedule_reason_and_assignment_alone_does_not(self):
+        # FUN-02: the server's shared funnel lists (GET funnel) drive the reason controls.
+        self.funnel = {'initiatedBy': ['customer', 'company'], 'reasonCodes': {'reschedule': ['customer_request', 'weather', 'crew_unavailable', 'other'], 'cancel': ['weather', 'other'], 'noShow': ['customer_not_home', 'other']},
+                       'bookingChannels': ['hub_phone', 'hub_in_person'], 'visitPurposes': ['service', 'install', 'return', 'rework', 'member_visit'], 'selfReportedChannels': ['google_search', 'other'], 'crmLinkReasons': ['crm_sync_pending', 'other']}
+        # A tall window keeps every lane on screen as the moved jobs stack.
+        self.segments = {'enabled': True, 'max': 31}; self.jobs.append(split_job()); self.start(1360, 1600); self.mode('Lanes')
+        self.drag(self.item('Crew One', 'Synthetic Johnson Garage'), 'Crew Two', 600)
+        dialog = self.page.get_by_role('dialog'); expect(dialog).to_contain_text('Crew Two · Tue, Sep 22 · 10:00 AM – 12:00 PM')
+        moving = dialog.get_by_role('group', name='Why is this visit moving?'); expect(moving).to_be_visible()
+        reason = moving.get_by_role('combobox', name='Reason', exact=True); who = moving.get_by_role('combobox', name='Who asked for it?', exact=True)
+        expect(reason).to_have_attribute('required', ''); expect(who).to_have_attribute('required', '')
+        dialog.get_by_role('button', name='Save move', exact=True).click()
+        self.assertEqual(self.calls, [], 'a start move cannot be saved without a reason'); self.assertFalse(reason.evaluate('(el)=>el.validity.valid'))
+        reason.select_option('weather'); who.select_option('company'); self.no_null(dialog)
+        dialog.get_by_role('button', name='Save move', exact=True).click(); self.closed()
+        self.assertEqual(len(self.calls), 1); write = self.calls[0]
+        self.assertEqual((write['reasonCode'], write['initiatedBy'], write['changes']['time']), ('weather', 'company', '10:00')); self.reloaded()
+        # Another row at the same time is an assignment, not a move: no reason.
+        self.drag(self.item('Unassigned', 'Synthetic Unassigned Garage'), 'Crew One', 780)
+        dialog = self.page.get_by_role('dialog'); expect(dialog).to_contain_text('Crew One · Tue, Sep 22 · 1:00 PM – 3:00 PM'); expect(dialog.get_by_role('group', name='Why is this visit moving?')).to_have_count(0)
+        dialog.get_by_role('button', name='Save move', exact=True).click(); self.closed()
+        self.assertNotIn('reasonCode', self.calls[1]); self.assertNotIn('initiatedBy', self.calls[1]); self.assertEqual(self.calls[1]['changes'], {'assignedCrew': ['crew.one'], 'crewLead': 'crew.one', 'crewId': None}); self.reloaded()
+        # A split job starts at its earliest segment: moving a later segment keeps the visit's start.
+        self.drag(self.item('Crew Two', 'Synthetic Split Garage'), 'Lead One', 600)
+        dialog = self.page.get_by_role('dialog'); expect(dialog).to_contain_text('Lead One · Tue, Sep 22 · 10:00 AM – 2:00 PM'); expect(dialog.get_by_role('group', name='Why is this visit moving?')).to_have_count(0)
+        dialog.get_by_role('button', name='Back', exact=True).click(); self.closed(); self.reloaded()
+        self.drag(self.item('Crew One', 'Synthetic Split Garage'), 'Crew One', 420)
+        dialog = self.page.get_by_role('dialog'); expect(dialog.get_by_role('group', name='Why is this visit moving?')).to_be_visible()
+        dialog.get_by_role('combobox', name='Reason', exact=True).select_option('customer_request'); dialog.get_by_role('combobox', name='Who asked for it?', exact=True).select_option('customer')
+        dialog.get_by_role('button', name='Save move', exact=True).click(); self.closed()
+        self.assertEqual((self.calls[2]['reasonCode'], self.calls[2]['initiatedBy'], self.calls[2]['changes']['assignmentSegments'][0]['time']), ('customer_request', 'customer', '07:00'))
+        # Phone tap-assign never changes the time, so it needs no reason.
+        self.reloaded(); self.page.set_viewport_size({'width': 375, 'height': 812}); self.item('Crew Two', 'Synthetic Johnson Garage').click(); sheet = self.page.get_by_role('dialog')
+        sheet.get_by_role('button', name=re.compile('^Crew One')).click(); self.closed(); self.no_overflow(375)
+        self.assertNotIn('reasonCode', self.calls[3]); self.assertNotIn('time', self.calls[3]['changes'])
 
     def test_crew_lanes_assign_a_saved_crew_and_keep_the_time(self):
         self.start(); self.mode('Lanes'); expect(self.item('Crew One', 'Synthetic Johnson Garage')).to_have_count(1); gets = len(self.gets)

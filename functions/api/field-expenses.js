@@ -1,7 +1,7 @@
 import { getHubSession, hasBusinessAccess } from '../_lib/hub-session.js';
 import { firebaseServiceAccountConfigured } from '../_lib/firebase-service-account.js';
 import { createJobAssignmentAccess } from '../_lib/job-assignment.js';
-import { fieldFailure, fieldFingerprint, fieldId, fieldRequestId, fieldStage, fieldText } from '../_lib/field-execution.js';
+import { fieldCancelled, fieldFailure, fieldFingerprint, fieldId, fieldRequestId, fieldStage, fieldText } from '../_lib/field-execution.js';
 import { createFieldPhotoClient, decodeFieldPhoto, fieldPhotosConfigured, verifyFieldPhotoMetadata } from '../_lib/field-execution-photos.js';
 import { FIELD_EXPENSE_CLOSEOUT_GROUPS, FIELD_EXPENSE_INCOME_KINDS, FIELD_EXPENSE_KINDS, FIELD_EXPENSE_MAX_CENTS, FIELD_EXPENSE_PAYERS, FIELD_EXPENSE_SHAREABLE_KINDS, FIELD_EXPENSE_SHARE_JOBS, FIELD_EXPENSE_SHARE_WEIGHT_MAX, createFieldExpenseStore, fieldExpenseAttestation, fieldExpenseCapacity, fieldExpenseChange, fieldExpenseCloseout, fieldExpenseCloseoutRequired, fieldExpenseDamagePhotos, fieldExpenseListing, fieldExpenseRange, fieldExpenseRecord, fieldExpenseShareParts, fieldExpenseShareRows, fieldExpensesEnabled, validExpenseDate, validFieldExpenseShare } from '../_lib/field-expenses.js';
 
@@ -102,7 +102,7 @@ export function fieldExpenseHandlers({ session = getHubSession, storage = create
     const [rows, attestations] = await Promise.all([ctx.store.listExpenses(job.id), ctx.store.listAttestations(job.id)]);
     return {
       ...fieldExpenseListing(job.id, rows, { manager: ctx.manager, user: ctx.session.user, attestations, closeoutRequired: fieldExpenseCloseoutRequired(env) }),
-      canRecord: ctx.manager || fieldStage(job) !== 'cancelled', canManage: ctx.manager, receiptsAvailable: fieldPhotosConfigured(env),
+      canRecord: ctx.manager || !fieldCancelled(job), canManage: ctx.manager, receiptsAvailable: fieldPhotosConfigured(env),
       damagePhotos: fieldExpenseDamagePhotos(job).map(photo => ({ id: photo.id.toLowerCase(), caption: fieldText(photo.caption, 500), createdAt: fieldText(photo.createdAt, 40) })),
       limits: { maxAmountCents: FIELD_EXPENSE_MAX_CENTS, kinds: FIELD_EXPENSE_KINDS, incomeKinds: FIELD_EXPENSE_INCOME_KINDS, payers: FIELD_EXPENSE_PAYERS, shareableKinds: FIELD_EXPENSE_SHAREABLE_KINDS, maxShareJobs: FIELD_EXPENSE_SHARE_JOBS, maxShareWeight: FIELD_EXPENSE_SHARE_WEIGHT_MAX, closeoutGroups: FIELD_EXPENSE_CLOSEOUT_GROUPS },
       timezone: 'America/Denver',
@@ -126,7 +126,7 @@ export function fieldExpenseHandlers({ session = getHubSession, storage = create
     const days = shareWindow(job), jobs = [];
     if (!days) return [];
     for (const other of await ctx.store.listDays(days.start, days.end)) {
-      if (other.id === job.id || fieldStage(other) === 'cancelled' || !ctx.manager && !await ctx.access.assigned(other)) continue;
+      if (other.id === job.id || fieldCancelled(other) || !ctx.manager && !await ctx.access.assigned(other)) continue;
       jobs.push({ jobId: other.id, customer: fieldText(other.customer, 200), date: fieldText(other.date, 10), time: fieldText(other.time, 8) });
     }
     return jobs.sort((a, b) => `${a.date} ${a.time || '99:99'}`.localeCompare(`${b.date} ${b.time || '99:99'}`) || a.jobId.localeCompare(b.jobId)).slice(0, 50);
@@ -134,7 +134,7 @@ export function fieldExpenseHandlers({ session = getHubSession, storage = create
 
   const outcome = (alreadyApplied, entry) => ({ alreadyApplied, entryStatus: entry?.status === 'void' ? 'void' : 'recorded' });
   const voided = () => fieldFailure('Operations voided this cost before its receipt was confirmed, so it does not count toward the job. Record it again only if operations asks.', 409, 'FIELD_EXPENSE_VOID');
-  const closedDuringShare = () => fieldFailure('One of the jobs sharing this cost is cancelled. Ask operations before recording it.', 409, 'FIELD_JOB_CLOSED');
+  const closedDuringShare = () => fieldFailure('One of the jobs sharing this cost is cancelled or was a no-show. Ask operations before recording it.', 409, 'FIELD_JOB_CLOSED');
 
   async function record(ctx, env, job, input, fingerprint) {
     const id = input.requestId.toLowerCase();
@@ -147,7 +147,7 @@ export function fieldExpenseHandlers({ session = getHubSession, storage = create
     if (pending?.state === 'applied') return outcome(true, pending);
     if (pending?.status === 'void') throw voided();
     if (!pending && await ctx.store.readRequest(job.id, id)) throw fieldFailure('This entry ID was already used for a cost correction. Refresh before retrying.', 409, 'FIELD_IDEMPOTENCY_CONFLICT');
-    if (!ctx.manager && fieldStage(job) === 'cancelled') throw fieldFailure('This job is cancelled. Ask operations before recording costs.', 409, 'FIELD_JOB_CLOSED');
+    if (!ctx.manager && fieldCancelled(job)) throw fieldFailure('This job is cancelled or was a no-show. Ask operations before recording costs.', 409, 'FIELD_JOB_CLOSED');
     const picture = input.receiptDataUrl ? decodeFieldPhoto(input.receiptDataUrl) : null;
     let client = null;
     if (!pending) {
@@ -159,7 +159,7 @@ export function fieldExpenseHandlers({ session = getHubSession, storage = create
       const others = parts ? await Promise.all(parts.slice(1).map(part => sharedJob(ctx, part.jobId))) : [];
       const days = shareWindow(job);
       if (!ctx.manager && others.some(other => !onShareDays(other, days))) throw fieldFailure('Crew can split a shared load only with their other jobs on this job’s days. Refresh the job list and choose again.', 403, 'FIELD_EXPENSE_SHARE_JOB_UNAVAILABLE');
-      if (!ctx.manager && others.some(other => fieldStage(other) === 'cancelled')) throw closedDuringShare();
+      if (!ctx.manager && others.some(other => fieldCancelled(other))) throw closedDuringShare();
       const rows = parts ? fieldExpenseShareRows(draft, parts, [job, ...others]) : [draft];
       for (const row of rows) fieldExpenseCapacity(await ctx.store.listExpenses(row.jobId), { manager: ctx.manager, user: ctx.session.user, receipt: Boolean(picture) && row.id === id });
       if (!picture) { await ctx.store.createMany(rows.map(row => ({ ...row, state: 'applied', receipt: null }))); return outcome(false); }
@@ -187,9 +187,9 @@ export function fieldExpenseHandlers({ session = getHubSession, storage = create
       if (!current || current.fingerprint !== fingerprint || current.receipt?.fileId !== fileId) throw fieldFailure('This receipt record changed. Contact operations.', 409, 'FIELD_IDEMPOTENCY_CONFLICT');
       if (current.state === 'applied') return outcome(true, current);
       if (current.status === 'void') throw voided();
-      if (!ctx.manager && fieldStage(latest) === 'cancelled') throw fieldFailure('The job was cancelled during upload. The cost has not been recorded.', 409, 'FIELD_JOB_CLOSED');
+      if (!ctx.manager && fieldCancelled(latest)) throw fieldFailure('The job was cancelled or marked a no-show during upload. The cost has not been recorded.', 409, 'FIELD_JOB_CLOSED');
       const linked = await linkedRows(ctx, current, { authorize: true });
-      if (!ctx.manager && linked.some(item => fieldStage(item.job) === 'cancelled')) throw closedDuringShare();
+      if (!ctx.manager && linked.some(item => fieldCancelled(item.job))) throw closedDuringShare();
       const verifiedAt = now().toISOString(), applied = { state: 'applied', updatedAt: verifiedAt };
       try {
         await ctx.store.update(job.id, current, { ...applied, receipt: { fileId, verified: true, mime: picture.mime, bytes: picture.bytes.length, verifiedAt } }, { jobRevision: latest.__updateTime, related: linked.map(item => ({ jobId: item.row.jobId, expense: item.row, patch: applied })), fences: linked.map(item => ({ jobId: item.job.id, revision: item.job.__updateTime })) });
@@ -235,7 +235,7 @@ export function fieldExpenseHandlers({ session = getHubSession, storage = create
     const prior = await ctx.store.readRequest(job.id, requestId);
     if (prior) { if (prior.fingerprint !== fingerprint) throw fieldFailure('This entry ID was already used for different information. Refresh before retrying.', 409, 'FIELD_IDEMPOTENCY_CONFLICT'); return { alreadyApplied: true }; }
     if (await ctx.store.readExpense(job.id, requestId)) throw fieldFailure('This entry ID was already used to record a cost. Refresh before retrying.', 409, 'FIELD_IDEMPOTENCY_CONFLICT');
-    if (!ctx.manager && fieldStage(job) === 'cancelled') throw fieldFailure('This job is cancelled. Ask operations before changing its costs.', 409, 'FIELD_JOB_CLOSED');
+    if (!ctx.manager && fieldCancelled(job)) throw fieldFailure('This job is cancelled or was a no-show. Ask operations before changing its costs.', 409, 'FIELD_JOB_CLOSED');
     const at = now().toISOString(), request = { id: requestId, action: 'attest', group: group.id, fingerprint, actorId: ctx.session.user, at, state: 'applied' };
     for (let attempt = 0; ; attempt++) {
       const [rows, attestations] = await Promise.all([ctx.store.listExpenses(job.id), ctx.store.listAttestations(job.id)]), closeout = fieldExpenseCloseout(rows, attestations);

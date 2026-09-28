@@ -4,6 +4,11 @@ import { localInstant } from './operations-portal-records.js';
 import { customerIdentityPatch } from './customer-identity.js';
 import { suggestedDurationMinutes } from './quote-duration.js';
 import { estimateTotals, included, normalizeLineItems, toWalkthroughLineItem, validateSelection } from './quote-model.js';
+import { funnelEventWrite } from './funnel-events.js';
+import { funnelHubId } from './funnel-definitions.js';
+import { instantMs } from './funnel-calendar.js';
+import { validDate } from './dispatch-time.js';
+import { eventActor } from './dispatch-funnel.js';
 
 const plain = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const safeId = value => typeof value === 'string' && /^[A-Za-z0-9_-]{1,180}$/.test(value) && !/^(secure_|_egc_)/.test(value);
@@ -156,6 +161,30 @@ function financePatch(plan, previous, jobId, actor, now) {
   if (changed && previous.invoice?.amount && !['void', 'superseded'].includes(previous.invoice.status)) patch.invoice = { ...previous.invoice, status: 'superseded', supersededAt: now, supersededReason: 'walkthrough_revised' };
   return patch;
 }
+// FUN-02: the sale this signature records, in the handoff commit. The signed
+// time is the iPad's clock, accepted only inside the two-sided bounds (now + 5
+// min, and walkthrough start - 1 h / scheduled date - 1 day); otherwise the sale
+// is attested and dated at the bound or server time. A revision first retires
+// the approval it replaces, so the net of deal.sold minus
+// deal.approval_superseded is always the current signed contract.
+async function saleEvents({ plan, previous, source, job, actor, requestId, receiptId, now }) {
+  const base = { idempotencyKey: { kind: 'requestId', value: requestId }, projectId: funnelHubId(job.projectId) ? job.projectId : undefined, jobId: job.id, walkthroughId: funnelHubId(source?.id) ? source.id : undefined, customerId: funnelHubId(job.customerId) ? job.customerId : undefined,
+    highlevelContactId: /^[A-Za-z0-9_-]{1,120}$/.test(job.highlevelContactId || '') ? job.highlevelContactId : undefined, actor: eventActor({ id: actor.user, kind: 'human', role: actor.role }), via: 'hub', source: { collection: 'walkthroughHandoffs', id: receiptId }, eligibility: { hub: job } };
+  const writes = [], prior = previous?.customerApproval;
+  if (prior?.status === 'approved' && typeof prior.amount === 'number' && Number.isFinite(prior.amount) && prior.amount >= 0) writes.push(await funnelEventWrite(null, now, { ...base, type: 'deal.approval_superseded', data: { amountCents: Math.round(prior.amount * 100), ...(Number.isInteger(previous.estimate?.revision) ? { estimateRevision: previous.estimate.revision } : {}) } }));
+  const startedAt = source?.walkthroughVisit?.startedAt;
+  writes.push(await funnelEventWrite(null, now, { ...base, type: 'deal.sold', data: { amountCents: Math.round(plan.quote.total * 100), estimateRevision: job.estimate.revision },
+    deviceAt: plan.acceptance.accepted_at, deviceBounds: { startedAt: instantMs(startedAt) === null ? null : startedAt, scheduledDate: validDate(source?.date) ? source.date : null } }));
+  return writes;
+}
+// The walkthrough's sold_on_site outcome in FUN-05's walkthroughOutcome shape, dated like
+// its deal.sold. Its occurrence is FUN-05's {number, date, time, startAt, scheduleOccurrence}.
+function soldOutcome(source, sold, actor, requestId, deviceAt) {
+  const date = validDate(source.date) ? source.date : null, time = typeof source.time === 'string' && /^\d\d:\d\d$/.test(source.time) ? source.time : null;
+  const counter = Number.isInteger(source.scheduleOccurrence) && source.scheduleOccurrence >= 1 && source.scheduleOccurrence <= 1000 ? source.scheduleOccurrence : null;
+  return { outcome: 'sold_on_site', reasonCode: null, finishedAt: sold.occurredAt, performedBy: assignmentKey(actor.user), recordingStatus: null, requestId: requestId.toLowerCase(), clockSource: sold.clockSource, deviceAt,
+    occurrence: { number: counter ?? 1, date, time, startAt: date && time ? localInstant(date, time) : null, scheduleOccurrence: counter }, repTime: { status: 'not_started', segmentId: null }, source: 'walkthrough_handoff' };
+}
 
 /** Resolve an already-saved handoff without changing history, customer identity,
  * money, or visit completion. Managers can safely resume after a lost response. */
@@ -230,7 +259,7 @@ export async function saveWalkthroughHandoff(store, actor, input, now = new Date
   });
   const instructions = handoffInstructions(plan, source?.id || '');
   const changes = { date: plan.quote.job_date, endDate: plan.quote.job_date, time: plan.quote.start_time, endTime: plan.quote.end_time, title: plan.quote.title, address: plan.client.address, serviceType: 'Garage transformation', crewNeeded: plan.logistics.crew_size, assignedCrew, jobInstructions: plan.internal_notes, accessInstructions: instructions.accessNotes, customerInstructions: plan.notes, notify: true, ...materialChanges(plan, previous ? previous.materials : source?.materials) };
-  const dispatchInput = previous ? { action: 'schedule.update', requestId: input.requestId, jobId: previous.id, expectedRevision: previous.revision, changes } : { action: 'schedule.create', requestId: input.requestId, customerId: customer.id, kind: 'job', ...(source ? { sourceWalkthroughId: source.id } : {}), changes };
+  const dispatchInput = previous ? { action: 'schedule.update', requestId: input.requestId, jobId: previous.id, expectedRevision: previous.revision, changes } : { action: 'schedule.create', requestId: input.requestId, customerId: customer.id, kind: 'job', ...(source ? { sourceWalkthroughId: source.id } : {}), booking: { channel: 'hub_in_person' }, changes };
   const adapter = { ...store,
     read: async (collection, id) => {
       const row = await store.read(collection, id);
@@ -255,9 +284,15 @@ export async function saveWalkthroughHandoff(store, actor, input, now = new Date
       // Also brings a legacy customer's derived phone/email lookup keys current.
       fence('customers', customer, customerIdentityPatch(customer, now));
       if (sourceProject) fence('projects', sourceProject);
-      if (source) fence('jobs', source, { customerId: customer.id, convertedJobId: target.id, conversionStatus: 'job_scheduled', updatedAt: now });
+      const sale = await saleEvents({ plan, previous, source, job: { ...previous, ...target.patch, id: target.id }, actor, requestId: input.requestId, receiptId, now });
+      // A signed handoff records the walkthrough's sold_on_site outcome (FUN-02). A walkthrough
+      // the rep Started (FUN-05) gets its outcome, completion and event from its own Finish, and
+      // an outcome the walkthrough visit already recorded is never overwritten.
+      const ownOutcome = plain(source?.walkthroughOutcome) || plain(source?.walkthroughVisit) && instantMs(source.walkthroughVisit.startedAt) !== null;
+      if (source) fence('jobs', source, { customerId: customer.id, convertedJobId: target.id, conversionStatus: 'job_scheduled', updatedAt: now, ...(ownOutcome ? {} : { walkthroughOutcome: soldOutcome(source, sale.at(-1).patch, actor, input.requestId, plan.acceptance.accepted_at) }) });
       // Scheduling a sold job is not proof the source visit has completed.
       // Its original status, actual completion time, signature and money stay intact.
+      writes.push(...sale);
       const dispatchReceipt = writes.find(write => write.collection === 'dispatchOperations' && write.id === receiptId);
       writes.push({ collection: 'walkthroughHandoffs', id: receiptId, patch: { fingerprint, actorId: actor.user, customerId: customer.id, jobId: target.id, sourceWalkthroughId: source?.id || '', sourceRevision: source?.revision || '', originalJobRevision: previous?.revision || '', acceptedAt: plan.acceptance.accepted_at, amountCents: Math.round(plan.quote.total * 100), signature: plan.signature, plan: providerPayload, priorEstimate: previous?.estimate || null, priorAcceptance: previous?.acceptance || null, createdAt: now, warnings: dispatchReceipt?.patch?.warnings || [] } });
       await store.commit(writes);

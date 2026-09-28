@@ -145,6 +145,7 @@ test('every defined event type accepts its required fields, so the vocabulary is
     if (field.type === 'boolean') return true;
     if (field.type === 'slug') return 'scheduled';
     if (field.type === 'sha256') return 'a'.repeat(64);
+    if (field.type === 'instant') return NOW;
     if (field.type === 'reasonCode') return reasonCodes[spec.reasons][0];
     return field.values.split('.').reduce((node, key) => node[key], funnelDefinitions())[0];
   };

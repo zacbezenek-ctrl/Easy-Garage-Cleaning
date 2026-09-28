@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { randomUUID, webcrypto } from 'node:crypto';
 import vm from './helpers/vm-realm.mjs';
 import { arrivalWindowProblem, arrivalWindowFields } from '../functions/_lib/dispatch-arrival.js';
+import * as funnel from '../functions/_lib/dispatch-funnel.js';
 import { commitConflict, commitFailure } from '../functions/_lib/firestore-errors.js';
 import { bridgeCommandDenial, bridgeCommandPolicy } from '../egc-platform/services/operations/src/bridge-command-policy.ts';
 
@@ -26,6 +27,9 @@ function load() {
     DISPATCH_TIME_ZONE: 'America/Denver',
     legacyBlockMode: () => 'off',
     legacyBlockedDays: async () => ({ mode: 'off', rows: [] }),
+    // FUN-02 booking fields and funnel events run for real.
+    reasonInput: funnel.reasonInput, cancelPatch: funnel.cancelPatch, visitFunnelWrites: funnel.visitFunnelWrites,
+    requestKey: funnel.requestKey, eventActor: funnel.eventActor, eventVia: funnel.eventVia, defaultVisitPurpose: funnel.defaultVisitPurpose,
     // The real shared classifier, so commit error paths map as in production.
     commitConflict, commitFailure,
   });

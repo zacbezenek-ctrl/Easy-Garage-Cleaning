@@ -80,6 +80,7 @@ function dataValue(definitions, spec, name, value, reasonList) {
   if (spec.type === 'boolean') { if (typeof value !== 'boolean') throw bad(); return value; }
   if (spec.type === 'slug') { if (typeof value !== 'string' || !SLUG.test(value)) throw bad(); return value; }
   if (spec.type === 'sha256') { if (typeof value !== 'string' || !SHA256.test(value)) throw bad(); return value; }
+  if (spec.type === 'instant') { const at = typeof value === 'string' ? iso(value) : null; if (!at) throw bad(); return at; }
   const values = spec.type === 'reasonCode' ? definitions.reasonCodes[reasonList] : definitionsPath(definitions, spec.values);
   if (!Array.isArray(values) || !values.includes(value)) throw bad();
   return value;

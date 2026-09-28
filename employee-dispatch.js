@@ -83,7 +83,7 @@ function restoreRecovery(viewer) {
   try {
     const raw=sessionStorage.getItem(recoveryPrefix+viewer);if(!raw)return;
     const saved=JSON.parse(raw);
-    if(saved?.viewerId!==viewer||typeof saved.success!=='string'||!saved.request||!['schedule.create','schedule.update','schedule.cancel','schedule.restore','crew.save','vehicle.save','availability.save'].includes(saved.request.action)||!/^[a-f\d-]{36}$/i.test(saved.request.requestId||''))throw new Error('invalid');
+    if(saved?.viewerId!==viewer||typeof saved.success!=='string'||!saved.request||!['schedule.create','schedule.update','schedule.cancel','schedule.restore','schedule.no_show','crew.save','vehicle.save','availability.save'].includes(saved.request.action)||!/^[a-f\d-]{36}$/i.test(saved.request.requestId||''))throw new Error('invalid');
     S.recovery=saved;
   } catch {S.recovery={invalid:true};}
 }
@@ -166,6 +166,7 @@ function jobCard(job, {compact=false,date=null}={}) {
   const actions=h('div',{class:'dp-card-actions'});
   if(!blocked)actions.append(h('a',{class:'dp-btn primary',href:job.type==='walkthrough'?'/crew/gameplan.html?walkthroughId='+encodeURIComponent(job.id):'/crew/job.html?jobId='+encodeURIComponent(job.id)},job.type==='walkthrough'?'Open walkthrough':job.attention?.status==='open'?'Review job issue':'Open job'));
   if (active(job)) actions.append(btn('Edit / assign',()=>openJob(original)),btn('Cancel',()=>openStatus(original,'schedule.cancel'),'subtle'));
+  if (active(job)&&!blocked&&job.type!=='walkthrough'&&S.data?.funnel?.reasonCodes?.noShow&&Date.parse(original.startAt)-3600000<=Date.now()) actions.append(btn('No-show',()=>openStatus(original,'schedule.no_show'),'subtle'));
   if (active(job)&&job.type==='job'&&window.EGCRecurring&&!segmentsOf(original).length&&!original.segmentsInvalid) actions.append(btn('Repeat',()=>window.EGCRecurring.open({templateJob:original,onChange:()=>load({quiet:true})}),'subtle dp-repeat',{'aria-label':'Repeat '+(job.customer||'this job')+' on a schedule'}));
   if (['cancelled','canceled'].includes(job.status)) actions.append(btn('Restore',()=>openStatus(original,'schedule.restore')));
   card.append(actions);
@@ -218,6 +219,15 @@ function renderBody() {
 }
 function labeled(label,control,help) {const id=control.id||'dp-'+key();control.id=id;return h('label',{class:'dp-field',htmlFor:id},h('span',{},label),control,help?h('small',{},help):null);}
 function select(options,value,onChange,props={}) {return h('select',{onchange:e=>onChange(e.target.value),...props},options.map(([id,label])=>h('option',{value:id,selected:id===value},label)));}
+// FUN-02: reason, channel and visit-purpose codes come from the server's shared funnel definitions (GET funnel).
+const codeLabels={hub_phone:'By phone',hub_in_person:'In person',customer:'Customer',company:'EGC',diy:'Doing it themselves',service:'Service visit',install:'Install visit',return:'Return visit',rework:'Rework visit',crm_sync_pending:'CRM sync pending',no_crm_contact:'No CRM contact',b2b_account:'Business account',internal_or_test:'Internal or test'};
+function codeSelect(codes,value='',props={}) {return select([['','Choose…'],...codes.map(code=>[code,codeLabels[code]||words(code)])],value,()=>{},props);}
+function reasonControls(parent,list,{who=false,required=true}={}) {
+  const lists=S.data?.funnel;if(!Array.isArray(lists?.reasonCodes?.[list]))return null;
+  const code=codeSelect(lists.reasonCodes[list],'',{name:'reasonCode',required}),by=who&&Array.isArray(lists.initiatedBy)?codeSelect(lists.initiatedBy,'',{name:'initiatedBy',required}):null;
+  parent.append(labeled('Reason',code),...(by?[labeled('Who asked for it?',by)]:[]));
+  return Object.assign(()=>({...(code.value?{reasonCode:code.value}:{}),...(by?.value?{initiatedBy:by.value}:{})}),{controls:[code,by].filter(Boolean)});
+}
 function render() {
   if(!S.root||S.modal)return;
   const search=h('input',{type:'search',value:S.query,placeholder:'Filter this date range',oninput:e=>setFilter('query',e.target.value),'aria-label':'Search jobs'});
@@ -444,6 +454,20 @@ function openJob(job=null,options={}) {
   });
   const type=select([['job','Service job'],['walkthrough','Walkthrough']],job?.type||'job',()=>{},{name:'type',disabled:!!job});
   model.fields.append(labeled('Work type',type));
+  const lists=!job&&S.data.funnel,booking={};
+  if(lists&&Array.isArray(lists.bookingChannels)) {
+    booking.channel=codeSelect(lists.bookingChannels,'',{name:'bookingChannel',required:true});
+    booking.purpose=codeSelect((lists.visitPurposes||[]).filter(value=>['service','install','return','rework'].includes(value)),'service',{name:'visitPurpose'});
+    booking.original=h('input',{type:'text',name:'reworkOfJobId',maxLength:180,autocomplete:'off',autocapitalize:'off',spellcheck:false,placeholder:'Job ID from Search all jobs'});
+    booking.heard=codeSelect(lists.selfReportedChannels||[],'',{name:'channelSelfReported'});
+    booking.crm=Array.isArray(lists.crmLinkReasons)?codeSelect(lists.crmLinkReasons,'',{name:'crmLinkReason'}):null;
+    const purpose=labeled('Visit purpose',booking.purpose),original=labeled('Original job being reworked',booking.original,'The rework joins that job’s project. It must be this customer’s job.'),crm=booking.crm?labeled('Why is there no CRM contact?',booking.crm):null;
+    model.fields.append(labeled('How was this booked?',booking.channel),purpose,original,labeled('How did they hear about us?',booking.heard),...(crm?[crm]:[]));
+    // A rework names its original job; a customer with no CRM contact needs the reason (FUN-02).
+    const syncBooking=()=>{const isJob=type.value==='job',rework=isJob&&booking.purpose.value==='rework',unlinked=Boolean(crm)&&selectedCustomer?.crmLinked===false;purpose.hidden=!isJob;original.hidden=!rework;booking.original.required=rework;if(crm){crm.hidden=!unlinked;booking.crm.required=unlinked;}};
+    for(const control of [type,booking.purpose])control.addEventListener('change',syncBooking);
+    search.addEventListener('input',syncBooking);customerResults.addEventListener('click',syncBooking);syncBooking();
+  }
   const service=field(model,'serviceType','Service',job?.serviceType||'','text',{required:true,maxLength:200,placeholder:'Garage cleanout, organization, shelving…'});
   let date=options.moveTo||options.date||job?.date||S.date;
   const dayOffset=job?.date&&job?.endDate?Math.round((Date.parse(job.endDate+'T12:00Z')-Date.parse(job.date+'T12:00Z'))/86400000):0;
@@ -454,6 +478,9 @@ function openJob(job=null,options={}) {
   const endDate=field(model,'endDate','End date',options.moveTo?addDays(date,dayOffset):(options.endDate||job?.endDate||date),'date',{required:true});
   const endTime=field(model,'endTime','End time',options.endTime||job?.endTime||'10:00','time',{required:true});
   const timing=[startDate,startTime,endDate,endTime];
+  // Moving a placed visit asks why and who asked (FUN-02 reschedule reason).
+  const moveBox=h('fieldset',{class:'dp-wide',hidden:true},h('legend',{},'Why is this visit moving?')),moveReason=job?.date?reasonControls(moveBox,'reschedule',{who:true,required:false}):null;
+  if(moveReason)model.fields.append(moveBox);
   const toggle=()=>{for(const input of timing){input.disabled=unscheduled.checked;input.required=!unscheduled.checked;}};unscheduled.addEventListener('change',toggle);toggle();
   const blankArrival=arrivalBlankText(S.data?.arrivalDefaults);
   const arrivalHelp=h('small',{class:'dp-muted dp-wide',id:'dp-arrival-'+key()},'Optional customer arrival window in Mountain Time. It must include the start time; '+blankArrival);
@@ -555,6 +582,10 @@ function openJob(job=null,options={}) {
   field(model,'materials','Materials — one per line',(job?.materials||[]).map(m=>m.name).join('\n'),'textarea',{rows:3,maxLength:5000});
   field(model,'opsNotes','Internal dispatch notes',job?.opsNotes||'','textarea',{rows:3,maxLength:5000});
   model.footer.append(btn('Back',model.close),h('button',{class:'dp-btn primary',type:'submit'},job?'Save changes':'Create job'));
+  const firstStart=()=>{const first=segments.slice().sort((a,b)=>(a.date+'T'+a.time).localeCompare(b.date+'T'+b.time))[0];return first?first.date+'T'+first.time:unscheduled.checked?'':startDate.value+'T'+startTime.value;};
+  const moved=()=>Boolean(moveReason)&&firstStart()!==job.date+'T'+job.time;
+  const syncMove=()=>{if(!moveReason)return;const on=moved();moveBox.hidden=!on;for(const control of moveReason.controls)control.required=on;};
+  model.form.addEventListener('input',syncMove);model.form.addEventListener('change',syncMove);syncMove();
   model.form.addEventListener('submit',event=>{
     event.preventDefault();if(!job&&!selectedCustomer){model.status.replaceChildren(notice('Select an existing Hub customer before scheduling.','error'));search.focus();return;}
     const data=new FormData(model.form),members=[...checks].filter(([,input])=>input.checked).map(([id])=>id);
@@ -574,16 +605,22 @@ function openJob(job=null,options={}) {
     if(segments.length){for(const name of ['date','time','endDate','endTime','assignedCrew','crewId','crewLead','vehicleId'])delete changes[name];
       if(segmentsOn())changes.assignmentSegments=segments.map(s=>({id:s.id,date:s.date,time:s.time,endDate:s.endDate||s.date,endTime:s.endTime,assignedCrew:[...s.assignedCrew],crewLead:s.crewLead||null,...(s.crewId&&(S.data.crews||[]).some(c=>c.id===s.crewId&&c.status==='active')?{crewId:s.crewId}:{}),vehicleId:s.vehicleId||null,notes:(s.notes||'').trim()}));}
     else if(hadSegments)changes.assignmentSegments=[];
-    const body=job?{action:'schedule.update',requestId:key(),jobId:job.id,expectedRevision:job.revision,changes}:{action:'schedule.create',requestId:key(),customerId:selectedCustomer.id,kind:type.value,...(sourceJobId?{sourceJobId}:{}),changes};
+    const facts=booking.channel?Object.fromEntries([['channel',booking.channel.value],['visitPurpose',type.value==='job'?booking.purpose.value:''],['reworkOfJobId',booking.original.required?booking.original.value.trim():''],['channelSelfReported',booking.heard.value],['crmLinkReason',booking.crm?.required?booking.crm.value:'']].filter(([,value])=>value)):null;
+    const body=job?{action:'schedule.update',requestId:key(),jobId:job.id,expectedRevision:job.revision,changes,...(moved()?moveReason():{})}:{action:'schedule.create',requestId:key(),customerId:selectedCustomer.id,kind:type.value,...(sourceJobId?{sourceJobId}:{}),...(facts?{booking:facts}:{}),changes};
     void save(model,body,job?'Job updated.':'Job created.');
   });
   setTimeout(()=>search.focus(),0);
 }
 function openStatus(job,action) {
-  const cancel=action==='schedule.cancel',model=modal(cancel?'Cancel job':'Restore job',cancel?'The job remains in history. The assigned crew will see the cancellation on refresh.':'The original schedule and assignment will be checked for conflicts before restoration.');if(!model)return;
+  const cancel=action==='schedule.cancel',noShow=action==='schedule.no_show';
+  const model=modal(cancel?'Cancel job':noShow?'Record no-show':'Restore job',cancel?'The job remains in history. The assigned crew will see the cancellation on refresh.':noShow?'The visit did not happen. Its crew and time are freed. This does not message the customer or change the CRM appointment.':'The original schedule and assignment will be checked for conflicts before restoration.');if(!model)return;
   model.fields.append(h('p',{class:'dp-wide'},(job.customer||job.title)+' · '+(job.date?dateText(job.date)+' '+clock(job.time):'Unscheduled')));
-  model.footer.append(btn('Back',model.close),h('button',{type:'submit',class:'dp-btn '+(cancel?'danger':'primary')},cancel?'Cancel job':'Restore job'));
-  model.form.addEventListener('submit',e=>{e.preventDefault();void save(model,{action,requestId:key(),jobId:job.id,expectedRevision:job.revision,changes:{}},cancel?'Job cancelled.':'Job restored.');});
+  const reason=cancel||noShow?reasonControls(model.fields,noShow?'noShow':'cancel',{who:cancel}):null;
+  const note=cancel?field(model,'cancellationReason','Cancellation note (optional)','','textarea',{rows:2,maxLength:240}):null;
+  if(note)note.parentElement.classList.add('dp-wide');
+  if(noShow&&!reason)model.status.append(notice('No-show reasons could not be loaded. Refresh dispatch and try again.','error'));
+  model.footer.append(btn('Back',model.close),h('button',{type:'submit',class:'dp-btn '+(cancel||noShow?'danger':'primary'),disabled:noShow&&!reason},cancel?'Cancel job':noShow?'Record no-show':'Restore job'));
+  model.form.addEventListener('submit',e=>{e.preventDefault();const text=note?.value.trim();void save(model,{action,requestId:key(),jobId:job.id,expectedRevision:job.revision,changes:{},...(reason?reason():{}),...(text?{cancellationReason:text}:{})},cancel?'Job cancelled.':noShow?'No-show recorded.':'Job restored.');});
 }
 function openResources() {
   if(!S.data)return;const model=modal('Crews, vehicles & availability','Crew membership is copied onto each assignment. Editing a crew does not silently change scheduled jobs.');if(!model)return;
@@ -640,6 +677,6 @@ function registerView(name,view) {
   if(S.root&&!S.modal)render();
 }
 // Registered views share this client, its dialogs and the save-recovery protocol (same requestId on retry).
-const internals=Object.freeze({state:()=>S,api,save,modal,openJob,show,redraw:renderBody,person,crewName,vehicle,h,btn,pill,notice,errorText,clock,dateText,addDays,today,words,key,segmentsOf,segmentsOn,active,warningsFor});
+const internals=Object.freeze({state:()=>S,api,save,modal,openJob,show,redraw:renderBody,person,crewName,vehicle,h,btn,pill,notice,errorText,clock,dateText,addDays,today,words,key,segmentsOf,segmentsOn,active,warningsFor,reasonControls});
 window.EGCDispatch={mount,unmount,refresh:load,canLeave:()=>!S.modal&&!S.pending,registerView,internals};
 })();

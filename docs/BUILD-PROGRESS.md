@@ -265,6 +265,10 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   Responses call, then deterministic checks drop items whose sourceQuote is not in the transcript, null unknown catalog
   ids and unspoken owners/dates, and clear drafts with invented amounts, links or claims. Visit recordings store the v2
   conversation and proposedTasks (review-only, never sent). Gaps: written-out amounts can pass; needs P3-09's review UI.
+- **FUN-02** Booking facts on visits (channel, reported channel, booked by, purpose, rework/membership link) and funnel
+  events in the same commit as every visit change: booked/scheduled, rescheduled (reason, who asked, occurrence), cancelled,
+  a new job `schedule.no_show`, restored, assigned; the handoff writes deal.sold and recording approval scope.reviewed.
+  No-show is treated as closed like a cancel. Gaps: MCP cancels record other_legacy; no-show fee policy is FUN-30's.
 
 ## In progress
 
@@ -329,6 +333,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | PHOTO-OUTBOX | Queued crew photos in the field outbox survive session expiry and reloads; explicit sign-out purges them | merged (2ef0b70) |
 | TEAM-UI | Staff directory Team screen (roles, skills, pay history, availability) on the P1-08 API | merged (22a6fc0) |
 | P3-02 | Conversation extraction v2: evidence quotes validated against the transcript, review-only drafts (EGC_EXTRACTION_V2 off) | merged (9ddac3d) |
+| FUN-02 | Booking, dispatch and approval funnel events in the same commit as each visit change; schedule.no_show | merged (98925a0) |
 
 ## Next
 

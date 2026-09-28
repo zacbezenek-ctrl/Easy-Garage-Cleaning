@@ -18,7 +18,7 @@ const encoder = new TextEncoder();
 const SLUG = /^[a-z][a-z0-9_]{0,63}$/, TAG = /^(?=.{1,64}$)[a-z0-9]+(?:-[a-z0-9]+)*$/, FLAG = /^[A-Za-z][A-Za-z0-9_]{0,39}$/, TIME = /^([01]\d|2[0-3]):[0-5]\d$/, DATE = /^\d{4}-\d{2}-\d{2}$/;
 const EVENT_TYPE = /^[a-z][a-z_]{0,31}\.[a-z][a-z_]{0,39}$/, HUB_ID = /^[A-Za-z0-9_-]{1,180}$/;
 const DAYS = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
-const DATA_TYPES = new Set(['cents', 'integer', 'slug', 'reasonCode', 'enum', 'boolean', 'sha256']);
+const DATA_TYPES = new Set(['cents', 'integer', 'slug', 'reasonCode', 'enum', 'boolean', 'sha256', 'instant']);
 const SERVICE_LINE_SOURCES = ['explicit', 'visitPurpose', 'businessAccount', 'ghlGarageHelpRequested', 'salesExitService', 'legacyJobType'];
 const CLASSES = new Set(['never', 'test', 'internal', 'excluded']);
 const UNITS = ['day', 'week', 'month', 'quarter', 'year', 'custom'];

@@ -12,7 +12,9 @@ const textList = value => (Array.isArray(value) ? value : typeof value === 'stri
 const description = value => Array.isArray(value) ? textList(value).join('\n').slice(0, 4000) : fieldText(value);
 const checklistId = value => typeof value === 'string' && /^[a-zA-Z0-9_-]{1,80}$/.test(value) && !['__proto__', 'constructor', 'prototype'].includes(value);
 export const fieldStage = job => fieldText(job.pipelineStatus || job.status || 'scheduled', 40).toLowerCase();
-const closed = job => ['completed', 'invoiced', 'paid', 'review_requested', 'cancelled'].includes(fieldStage(job));
+// A dispatch no-show (FUN-02) ends the visit like a cancellation.
+export const fieldCancelled = job => ['cancelled', 'no_show', 'noshow', 'no-show'].includes(fieldStage(job));
+const closed = job => ['completed', 'invoiced', 'paid', 'review_requested'].includes(fieldStage(job)) || fieldCancelled(job);
 export function fieldActivity(job) {
   const stage = fieldStage(job), activity = job.fieldExecution?.activity;
   if (activity === stage) return stage;

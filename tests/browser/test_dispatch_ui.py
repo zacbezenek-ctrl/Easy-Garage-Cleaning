@@ -28,6 +28,11 @@ TRAVEL = {'ok': True, 'timeZone': 'America/Denver', 'date': DAY, 'asOf': '2026-0
                         {'employeeId': 'lead.one', 'name': 'Lead One', 'active': True, 'complete': False, 'jobs': [], 'legs': [], 'totals': {'stops': 0, 'legs': 0, 'shortLegs': 0, 'estimatedDriveMinutes': 0, 'unestimatedLegs': 0}}],
           'warnings': [{'code': 'travel_estimate_unavailable', 'count': 1, 'message': '1 leg has no drive estimate (unknown ZIP or address). The manual travel buffer applies.'}]}
 
+# FUN-02 code lists as GET /api/dispatch returns them from the shared funnel definitions.
+FUNNEL = {'visitPurposes': ['service', 'install', 'return', 'rework', 'member_visit'], 'bookingChannels': ['hub_phone', 'hub_in_person'], 'selfReportedChannels': ['google_search', 'referral', 'other'],
+          'crmLinkReasons': ['crm_sync_pending', 'other'], 'initiatedBy': ['customer', 'company'],
+          'reasonCodes': {'cancel': ['customer_changed_plans', 'weather', 'other'], 'reschedule': ['customer_request', 'weather', 'other'], 'noShow': ['customer_not_home', 'no_access', 'other']}}
+
 class Handler(SimpleHTTPRequestHandler):
     def log_message(self, *args): pass
     def do_GET(self):
@@ -59,7 +64,7 @@ class DispatchBrowserTests(unittest.TestCase):
         self.search_queries = []; self.search_results = []; self.search_failure = None; self.hang_once = False; self.hung_route = None
         self.arrival_defaults = {'enabled': False, 'minutes': 60}
         self.travel_queries = []; self.travel_failure = None
-        self.segments = None
+        self.segments = None; self.funnel = None; self.customers = [CUSTOMER]
         self.page.on('pageerror', lambda e: self.errors.append(str(e)))
         self.page.on('dialog', lambda dialog: dialog.accept())
         self.page.route('**/*', self.route)
@@ -86,12 +91,12 @@ class DispatchBrowserTests(unittest.TestCase):
         if req.method == 'GET':
             params = parse_qs(parsed.query); self.gets.append(params)
             if self.read_status != 200: send({'ok': False, 'code': 'dispatch_forbidden', 'error': 'Sign in required'}, self.read_status); return
-            if params.get('view') == ['customers']: send({'ok': True, 'customers': [CUSTOMER], 'total': 1}); return
+            if params.get('view') == ['customers']: send({'ok': True, 'customers': self.customers, 'total': len(self.customers)}); return
             first = params.get('startDate', [DAY])[0]; last = params.get('endDate', ['2026-09-29'])[0]
             rows = [row for row in self.jobs if not row.get('date') or (row['date'] < last and (row.get('endDate') or row['date']) >= first)]
             if self.bad_read: send({'ok': True}); return
             send({'ok': True, 'viewer': {'id': self.viewer}, 'timeZone': 'America/Denver', 'jobs': rows, 'roster': ROSTER, 'crews': self.crews, 'vehicles': self.vehicles, 'availability': self.availability,
-                  'warnings': [], 'coverage': {'complete': True, 'asOf': '2026-09-22T14:00:00Z'}, 'startDate': first, 'endDate': last, 'arrivalDefaults': self.arrival_defaults, **({'segments': self.segments} if self.segments else {})}); return
+                  'warnings': [], 'coverage': {'complete': True, 'asOf': '2026-09-22T14:00:00Z'}, 'startDate': first, 'endDate': last, 'arrivalDefaults': self.arrival_defaults, **({'segments': self.segments} if self.segments else {}), **({'funnel': self.funnel} if self.funnel else {})}); return
         body = req.post_data_json; self.calls.append(copy.deepcopy(body))
         if self.fail_once:
             status, code, error, details = self.fail_once; self.fail_once = None
@@ -109,6 +114,7 @@ class DispatchBrowserTests(unittest.TestCase):
             row.update(changes); row['revision'] += '-next'
             if action == 'schedule.cancel': row['status'] = 'cancelled'
             if action == 'schedule.restore': row['status'] = 'scheduled'
+            if action == 'schedule.no_show': row['status'] = 'no_show'
             response = {'ok': True, 'job': row, 'warnings': [], 'providerSync': 'pending'}
         else:
             group = {'crew.save': self.crews, 'vehicle.save': self.vehicles, 'availability.save': self.availability}[action]
@@ -425,5 +431,66 @@ class DispatchBrowserTests(unittest.TestCase):
         self.jobs += [self.split_job(), job(id='job-broken', revision='broken-rev-1', customer='Synthetic Broken Split', assignmentSegments=[], segmentsInvalid=True)]; self.open()
         expect(self.card().locator('.dp-repeat')).to_have_count(1)
         for name in ['Synthetic Split Garage', 'Synthetic Broken Split']: expect(self.card(name).get_by_role('button', name='Edit / assign', exact=True)).to_be_visible(); expect(self.card(name).locator('.dp-repeat')).to_have_count(0)
+    def test_booking_facts_and_reschedule_reason_come_from_the_shared_codes(self):
+        self.funnel = FUNNEL; self.open(); self.create(); dialog = self.page.get_by_role('dialog')
+        expect(dialog.get_by_role('combobox', name='Visit purpose', exact=True)).to_have_value('service')
+        self.submit('Create job'); self.assertEqual(self.calls, [], 'the booking channel is one required tap')
+        dialog.get_by_role('combobox', name='How was this booked?', exact=True).select_option('hub_phone'); dialog.get_by_role('combobox', name='Visit purpose', exact=True).select_option('return')
+        dialog.get_by_role('combobox', name='How did they hear about us?', exact=True).select_option('referral'); self.submit('Create job'); self.closed()
+        self.assertEqual(self.calls[-1]['booking'], {'channel': 'hub_phone', 'visitPurpose': 'return', 'channelSelfReported': 'referral'})
+        self.page.get_by_role('button', name='Create job', exact=True).first.click(); dialog.get_by_role('combobox', name='Work type', exact=True).select_option('walkthrough')
+        expect(dialog.get_by_role('combobox', name='Visit purpose', exact=True)).to_be_hidden(); self.page.get_by_role('button', name='Back', exact=True).click(); self.closed()
+        self.card().get_by_role('button', name='Edit / assign', exact=True).click(); expect(dialog.get_by_role('group', name='Why is this visit moving?')).to_be_hidden()
+        dialog.get_by_label('Access instructions', exact=True).fill('Use the side gate'); self.submit('Save changes'); self.closed(); self.assertNotIn('reasonCode', self.calls[-1])
+        self.card().get_by_role('button', name='Edit / assign', exact=True).click(); dialog.get_by_label('Start time', exact=True).fill('09:00'); dialog.get_by_label('End time', exact=True).fill('11:00')
+        moving = dialog.get_by_role('group', name='Why is this visit moving?'); expect(moving).to_be_visible(); calls = len(self.calls); self.submit('Save changes'); self.assertEqual(len(self.calls), calls, 'a move needs its reason')
+        moving.get_by_role('combobox', name='Reason', exact=True).select_option('weather'); moving.get_by_role('combobox', name='Who asked for it?', exact=True).select_option('company'); self.submit('Save changes'); self.closed()
+        self.assertEqual((self.calls[-1]['reasonCode'], self.calls[-1]['initiatedBy'], self.calls[-1]['changes']['time']), ('weather', 'company', '09:00'))
+    def test_phone_cancel_reason_and_no_show_are_recorded_with_codes(self):
+        self.funnel = FUNNEL; self.jobs.append(job(id='later', revision='later-rev', customer='Synthetic Later Garage', time='17:00', endTime='18:00', startAt=DAY+'T17:00:00-06:00', endAt=DAY+'T18:00:00-06:00', assignedCrew=['crew.two'], crewId=None, crewLead=None, vehicleId=None))
+        self.page.set_viewport_size({'width': 375, 'height': 812}); self.open(); dialog = self.page.get_by_role('dialog')
+        expect(self.card('Synthetic Later Garage').get_by_role('button', name='No-show', exact=True)).to_have_count(0)
+        self.card('Synthetic Later Garage').get_by_role('button', name='Cancel', exact=True).click(); self.submit('Cancel job'); self.assertEqual(self.calls, [])
+        dialog.get_by_role('combobox', name='Reason', exact=True).select_option('customer_changed_plans'); dialog.get_by_role('combobox', name='Who asked for it?', exact=True).select_option('customer')
+        dialog.get_by_label('Cancellation note (optional)', exact=True).fill('Synthetic: moving out of state')
+        for width in [375, 320]:
+            self.page.set_viewport_size({'width': width, 'height': 812}); self.assertLessEqual(self.page.evaluate('document.documentElement.scrollWidth'), width+1); self.assertLessEqual(dialog.evaluate('(el)=>el.scrollWidth'), dialog.evaluate('(el)=>el.clientWidth')+1)
+        for control in [dialog.get_by_role('combobox', name='Reason', exact=True), dialog.get_by_role('button', name='Cancel job', exact=True)]: self.assertGreaterEqual(control.bounding_box()['height'], 44)
+        self.assertEqual(dialog.get_by_role('combobox', name='Reason', exact=True).evaluate('(el)=>getComputedStyle(el).fontSize'), '16px')
+        self.submit('Cancel job'); self.closed()
+        self.assertEqual({key: self.calls[-1][key] for key in ['action', 'reasonCode', 'initiatedBy', 'cancellationReason']}, {'action': 'schedule.cancel', 'reasonCode': 'customer_changed_plans', 'initiatedBy': 'customer', 'cancellationReason': 'Synthetic: moving out of state'})
+        self.page.set_viewport_size({'width': 375, 'height': 812}); self.card().get_by_role('button', name='No-show', exact=True).click(); expect(dialog).to_contain_text('does not message the customer')
+        self.submit('Record no-show'); self.assertEqual(len(self.calls), 1, 'a no-show needs its reason')
+        dialog.get_by_role('combobox', name='Reason', exact=True).select_option('customer_not_home'); expect(dialog.get_by_role('combobox', name='Who asked for it?', exact=True)).to_have_count(0)
+        self.submit('Record no-show'); self.closed()
+        self.assertEqual({key: self.calls[-1][key] for key in ['action', 'jobId', 'expectedRevision', 'reasonCode', 'changes']}, {'action': 'schedule.no_show', 'jobId': 'job-1', 'expectedRevision': 'rev-1', 'reasonCode': 'customer_not_home', 'changes': {}})
+        expect(self.page.get_by_role('heading', name=CUSTOMER['name'], exact=True)).to_have_count(0); self.assertLessEqual(self.page.evaluate('document.documentElement.scrollWidth'), 376)
+    def test_rework_names_its_original_job_and_an_unlinked_customer_gives_the_crm_reason(self):
+        self.funnel = FUNNEL; self.customers = [{**CUSTOMER, 'crmLinked': False}]
+        self.page.set_viewport_size({'width': 375, 'height': 812}); self.open(); self.create(); dialog = self.page.get_by_role('dialog')
+        crm = dialog.get_by_role('combobox', name='Why is there no CRM contact?', exact=True); original = dialog.locator('input[name=reworkOfJobId]')
+        expect(crm).to_be_visible(); expect(original).to_be_hidden()
+        dialog.get_by_role('combobox', name='How was this booked?', exact=True).select_option('hub_phone'); dialog.get_by_role('combobox', name='Visit purpose', exact=True).select_option('rework')
+        expect(original).to_be_visible(); self.assertEqual(original.evaluate('(el)=>getComputedStyle(el).fontSize'), '16px'); self.assertGreaterEqual(original.bounding_box()['height'], 44)
+        self.submit('Create job'); self.assertEqual(self.calls, [], 'a rework needs its original job and the CRM reason')
+        original.fill(' job-original '); self.submit('Create job'); self.assertEqual(self.calls, [], 'the CRM reason is one required tap for an unlinked customer')
+        crm.select_option('crm_sync_pending')
+        self.assertLessEqual(self.page.evaluate('document.documentElement.scrollWidth'), 376); self.assertLessEqual(dialog.evaluate('(el)=>el.scrollWidth'), dialog.evaluate('(el)=>el.clientWidth')+1)
+        self.submit('Create job'); self.closed()
+        self.assertEqual(self.calls[-1]['booking'], {'channel': 'hub_phone', 'visitPurpose': 'rework', 'reworkOfJobId': 'job-original', 'crmLinkReason': 'crm_sync_pending'})
+        self.page.get_by_role('button', name='Create job', exact=True).first.click(); self.page.locator('input[name=customerSearch]').fill('Johnson')
+        self.customers = [{**CUSTOMER, 'crmLinked': True}]; self.page.locator('input[name=customerSearch]').fill('Johnso')
+        self.page.get_by_role('button', name=CUSTOMER['name']+' · '+CUSTOMER['phone'], exact=True).click()
+        expect(crm).to_be_hidden(); dialog.get_by_role('combobox', name='Visit purpose', exact=True).select_option('rework'); dialog.get_by_role('combobox', name='Work type', exact=True).select_option('walkthrough')
+        expect(original).to_be_hidden(); self.assertEqual(original.evaluate('(el)=>el.required'), False)
+    def test_no_show_is_offered_for_jobs_only_a_walkthrough_records_its_own(self):
+        self.funnel = FUNNEL
+        self.jobs = [job(), job(id='walk-1', revision='walk-rev', type='walkthrough', customer='Synthetic Walkthrough Garage', assignedCrew=['crew.two'], crewId=None, crewLead=None, vehicleId=None, time='07:00', endTime='07:30', startAt=DAY+'T07:00:00-06:00', endAt=DAY+'T07:30:00-06:00')]
+        self.open(); expect(self.card().get_by_role('button', name='No-show', exact=True)).to_have_count(1)
+        walk = self.card('Synthetic Walkthrough Garage'); expect(walk.get_by_role('button', name='Cancel', exact=True)).to_have_count(1); expect(walk.get_by_role('button', name='No-show', exact=True)).to_have_count(0)
+    def test_no_show_is_not_offered_without_the_shared_reason_codes(self):
+        self.open(); expect(self.card().get_by_role('button', name='No-show', exact=True)).to_have_count(0)
+        self.card().get_by_role('button', name='Cancel', exact=True).click(); expect(self.page.get_by_role('dialog').get_by_role('combobox', name='Reason', exact=True)).to_have_count(0); self.submit('Cancel job'); self.closed()
+        self.assertNotIn('reasonCode', self.calls[-1])
 
 if __name__ == '__main__': unittest.main(verbosity=2)

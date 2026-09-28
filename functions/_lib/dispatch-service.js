@@ -9,12 +9,15 @@ import { validDate, addDays, denverToday, scheduleInterval, availabilityInterval
 import { arrivalWindowPatch, arrivalDefaults } from './dispatch-arrival.js';
 import { legacyBlockedDays, legacyBlockWarning } from './dispatch-legacy-blocks.js';
 import { SEGMENT_HULL_KEYS, SEGMENT_LIMIT, segmented, segmentsInvalid, jobSegments, segmentDays, segmentLockEntries, ownsLockEntry, projectSegments, validateSegments } from './dispatch-segments.js';
+import { bookingInput, bookingPatch, reasonInput, cancelPatch, noShowProblem, visitFunnelWrites, requestKey, eventActor } from './dispatch-funnel.js';
 
 const TERMINAL = new Set(['cancelled','canceled','completed','invoiced','paid','review_requested','closed','noshow','no_show','no-show']);
 const JOB_TYPES = new Set(['job','walkthrough','cleanout','reorg','blocked']);
 const isObject = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const safeId = id => typeof id === 'string' && /^[A-Za-z0-9_-]{1,180}$/.test(id) && !/^(secure_|_egc_)/.test(id);
 const fail = (code, message, status = 400, details) => Object.assign(new Error(message), { code, status, ...(details ? { details } : {}) });
+const funnelFail = (reason, message, status) => fail(`dispatch_${reason}`, message, status);
+const REASON_LISTS = { 'schedule.update':'reschedule', 'schedule.cancel':'cancel', 'schedule.no_show':'noShow' };
 const state = job => job.pipelineStatus || job.status || 'unscheduled';
 const visibleJob = job => Boolean(job && safeId(job.id) && !job.recordType && JOB_TYPES.has(job.type));
 const activeJob = job => (visibleJob(job) || job.type === 'blocked') && !TERMINAL.has(state(job));
@@ -233,7 +236,7 @@ export async function dispatchOverview(store, session, query = {}, now = new Dat
     const needle = text(query.q || '', 'Search', 200).toLowerCase(), digits = needle.replace(/\D/g, '');
     const all = await store.customers();
     const matches = all.filter(customer => !needle || [customer.name, customer.firstName, customer.lastName, customer.phone, customer.email, customer.address].some(value => String(value || '').toLowerCase().includes(needle)) || digits.length >= 3 && String(customer.phone || '').replace(/\D/g,'').includes(digits));
-    return { ok: true, customers: matches.slice(0,50).map(customer => ({ id: customer.id, name: customer.name || [customer.firstName,customer.lastName].filter(Boolean).join(' '), phone: customer.phone || '', email: customer.email || '', address: customer.address || '' })), total: matches.length };
+    return { ok: true, customers: matches.slice(0,50).map(customer => ({ id: customer.id, name: customer.name || [customer.firstName,customer.lastName].filter(Boolean).join(' '), phone: customer.phone || '', email: customer.email || '', address: customer.address || '', crmLinked: Boolean(customer.highlevelContactId) })), total: matches.length };
   }
   const startDate = query.startDate || denverToday(now), endDate = query.endDate || addDays(startDate,7);
   if (!validDate(startDate) || !validDate(endDate) || startDate >= endDate || Date.parse(endDate) - Date.parse(startDate) > 93 * 86400000) throw fail('dispatch_range_invalid', 'Choose a valid date range of up to 93 days. The end date is exclusive.');
@@ -326,7 +329,7 @@ function conflictCheck(next, jobs, resources, roster,inspection) {
 }
 
 function auditState(job) {
-  return Object.fromEntries(['date','time','endDate','endTime','status','pipelineStatus','assignedCrew','assignedTo','crewId','crewLead','vehicleId','jobInstructions','operationalScope','accessInstructions','customerInstructions','opsNotes','requiredEquipment','materials','crewNeeded','travelBufferMinutes','title','address','serviceType','name','memberIds','leadId','notes','employeeId','allDay','reason','recurrence','reminderDays','notify','shiftPickupEnabled','openShift','sourceTemplateJobId','recurrenceParentId','cancellationReason','arrivalWindowStart','arrivalWindowEnd','arrivalWindow','assignmentSegments'].filter(key => job?.[key] !== undefined).map(key => [key,job[key]]));
+  return Object.fromEntries(['date','time','endDate','endTime','status','pipelineStatus','assignedCrew','assignedTo','crewId','crewLead','vehicleId','jobInstructions','operationalScope','accessInstructions','customerInstructions','opsNotes','requiredEquipment','materials','crewNeeded','travelBufferMinutes','title','address','serviceType','name','memberIds','leadId','notes','employeeId','allDay','reason','recurrence','reminderDays','notify','shiftPickupEnabled','openShift','sourceTemplateJobId','recurrenceParentId','cancellationReason','arrivalWindowStart','arrivalWindowEnd','arrivalWindow','assignmentSegments','visitPurpose','reworkOfJobId','membershipId','bookingChannel','channelSelfReported','crmLinkReason','scheduleOccurrence','cancellationReasonCode','cancellationInitiatedBy','lateCancel','noShowReasonCode'].filter(key => job?.[key] !== undefined).map(key => [key,job[key]]));
 }
 
 export async function mutateDispatch(store, session, input, now = new Date().toISOString(), options = {}) {
@@ -346,8 +349,13 @@ export async function mutateDispatch(store, session, input, now = new Date().toI
 async function executeDispatch(store, session, input, now, options = {}) {
   requireDispatcher(session);
   if (!isObject(input) || !DISPATCH_ACTIONS.includes(input.action) || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(input.requestId || '')) throw fail('dispatch_request_invalid','Use a supported dispatch action with a unique request ID.');
-  onlyKeys(input,['action','requestId','customerId','kind','sourceWalkthroughId','sourceTemplateJobId','sourceJobId','jobId','id','expectedRevision','changes','cancellationReason']);
+  onlyKeys(input,['action','requestId','customerId','kind','sourceWalkthroughId','sourceTemplateJobId','sourceJobId','jobId','id','expectedRevision','changes','cancellationReason','booking','reasonCode','initiatedBy']);
   if ('cancellationReason' in input && input.action !== 'schedule.cancel') throw fail('dispatch_cancel_patch_invalid','A cancellation reason can only be saved when cancelling a job.');
+  // FUN-02: booking facts on a customer visit create; a reason on a move, cancel or no-show.
+  if ('booking' in input && (input.action !== 'schedule.create' || input.kind === 'blocked')) throw fail('dispatch_booking_invalid','Booking details can only be saved when creating a customer visit.');
+  if (('reasonCode' in input || 'initiatedBy' in input) && !REASON_LISTS[input.action]) throw fail('dispatch_reason_code_invalid','A reason can only be saved when moving, cancelling or marking a no-show.');
+  const reason = REASON_LISTS[input.action] ? reasonInput(input,REASON_LISTS[input.action],funnelFail) : {reasonCode:null,initiatedBy:null};
+  if (input.action === 'schedule.no_show' && !reason.reasonCode) throw fail('dispatch_reason_code_required','Choose why the visit did not happen.');
   if ((input.sourceWalkthroughId || input.sourceTemplateJobId || input.sourceJobId) && input.action !== 'schedule.create') throw fail('dispatch_handoff_invalid','A source record can only be selected when creating a job.');
   if(input.sourceJobId&&input.sourceTemplateJobId&&input.sourceJobId!==input.sourceTemplateJobId)throw fail('dispatch_lineage_invalid','Choose one explicit source job for customer account ownership.');
   if(input.sourceJobId&&input.kind!=='job')throw fail('dispatch_lineage_invalid','Customer account lineage can only be chosen for an operational job.');
@@ -368,7 +376,9 @@ async function executeDispatch(store, session, input, now, options = {}) {
   let collection, id, current, patch, warnings = [], writes = [], providerSync = 'not_needed', fieldTimeSegment = null, lineage = null;
   if (input.action.startsWith('schedule.')) {
     collection = 'jobs';
-    const create = input.action === 'schedule.create', cancel = input.action === 'schedule.cancel', restore = input.action === 'schedule.restore';
+    // A no-show closes the visit like a cancellation, without a provider appointment change.
+    const create = input.action === 'schedule.create', noShow = input.action === 'schedule.no_show', cancel = input.action === 'schedule.cancel' || noShow, restore = input.action === 'schedule.restore';
+    let booking = null, rework = null;
     if (create) {
       if (input.kind === 'blocked') {
         if (input.customerId || input.sourceWalkthroughId || input.sourceTemplateJobId || input.sourceJobId) throw fail('dispatch_block_invalid','A company-wide scheduling block cannot have a customer or source job.');
@@ -379,6 +389,12 @@ async function executeDispatch(store, session, input, now, options = {}) {
       if (!safeId(input.customerId) || !['job','walkthrough'].includes(input.kind)) throw fail('dispatch_customer_required','Select an existing customer and job type before creating work.');
       const customer = await store.read('customers',input.customerId);
       if (!customer) throw fail('dispatch_customer_not_found','This customer no longer exists. Search again.',404);
+      booking = bookingInput(input.booking,input.kind,funnelFail);
+      if (booking.reworkOfJobId) {
+        if (input.sourceWalkthroughId || input.sourceTemplateJobId) throw fail('dispatch_booking_rework_invalid','A rework visit is booked from the original job, not from a walkthrough or a repeat template.');
+        rework = await store.read('jobs',booking.reworkOfJobId);
+        if (!rework || !['job','cleanout','reorg'].includes(rework.type) || rework.recordType || rework.customerId !== customer.id) throw fail('dispatch_booking_rework_invalid','The reworked job must be an operational job for this customer.',409);
+      }
       const changes = input.changes || {};
       // A split job is keyed by its first segment's start (the hull), like one visit.
       const start = store.segmentsEnabled === true && Array.isArray(changes.assignmentSegments) && changes.assignmentSegments.length ? validateSegments(changes.assignmentSegments,{roster,resources}).hull : changes;
@@ -410,12 +426,15 @@ async function executeDispatch(store, session, input, now, options = {}) {
         ...(template ? {...recurringTemplateFields(template,session.user,now),sourceTemplateJobId:template.id,sourceTemplateRevision:template.revision,recurrenceParentId:template.recurrenceParentId || template.id,address:template.address || customer.address || ''} : {}),
         ...(source?.propertyId || template?.propertyId ? {propertyId:source?.propertyId || template.propertyId} : {}),
       };
-      const projectId = source?.projectId || `project_${source?.id || id}`;
+      // A rework visit joins the project of the job it reworks (a stored link is used only when it is a valid Hub id).
+      if (rework?.projectId && !safeId(rework.projectId)) throw fail('dispatch_booking_rework_invalid','The reworked job has a project link that needs review before a rework visit can join it.',409);
+      const origin = source || rework, projectId = origin?.projectId || `project_${safeId(rework?.sourceWalkthroughId) ? rework.sourceWalkthroughId : origin?.id || id}`;
       const project = await store.read('projects',projectId);
       if (project && project.customerId !== customer.id) throw fail('dispatch_project_conflict','The source project belongs to another customer. Review the link before creating a job.',409);
       patch.projectId = projectId;
-      if (!project) writes.push({ collection:'projects', id:projectId, patch:{ id:projectId, customerId:customer.id, sourceRecordId:source?.id || id, sourceWalkthroughId:source?.id || (input.kind === 'walkthrough' ? id : null), authority:'employee_hub',createdAt:now,updatedAt:now,createdBy:session.user } });
-      if (source && !source.projectId) writes.push({ collection:'jobs',id:source.id,revision:source.revision,patch:{ projectId, updatedAt:now } });
+      Object.assign(patch,bookingPatch(booking,{bookedBy:session.user,highlevelContactId:patch.highlevelContactId}));
+      if (!project) writes.push({ collection:'projects', id:projectId, patch:{ id:projectId, customerId:customer.id, sourceRecordId:origin?.id || id, sourceWalkthroughId:source?.id || (input.kind === 'walkthrough' ? id : null), authority:'employee_hub',createdAt:now,updatedAt:now,createdBy:session.user,highlevelContactId:patch.highlevelContactId,crmLinkReason:patch.crmLinkReason,...(template?.projectId ? {previousProjectId:template.projectId} : {}) } });
+      if (origin && !origin.projectId) writes.push({ collection:'jobs',id:origin.id,revision:origin.revision,patch:{ projectId, updatedAt:now } });
       }
     } else {
       id = input.jobId;
@@ -425,6 +444,8 @@ async function executeDispatch(store, session, input, now, options = {}) {
       if (!input.expectedRevision || current.revision !== input.expectedRevision) throw fail('dispatch_revision_conflict','This job changed while you were editing. Refresh and review its latest details.',409);
       if (restore ? !['cancelled','canceled'].includes(state(current)) : TERMINAL.has(state(current))) throw fail('dispatch_terminal_job','This job cannot be changed in its current state. Cancelled jobs can be explicitly restored; completed work keeps its history.',409);
       if (input.customerId && input.customerId !== current.customerId) throw fail('dispatch_customer_immutable','Customer identity cannot be changed in dispatch.',409);
+      const missed = noShow ? noShowProblem(current,now) : null;
+      if (missed) throw fail(`dispatch_${missed}`,{no_show_too_early:'A no-show can be recorded from one hour before the scheduled start.',no_show_walkthrough:'Record a walkthrough no-show from the walkthrough visit itself.'}[missed] || 'Only a scheduled customer job can be marked as a no-show.',409);
       patch = {};
     }
     if (cancel && Object.keys(input.changes || {}).length) throw fail('dispatch_cancel_patch_invalid','Cancellation cannot also edit job details.');
@@ -449,7 +470,8 @@ async function executeDispatch(store, session, input, now, options = {}) {
     if (create || restore) Object.assign(patch,{ status:interval ? 'scheduled' : 'unscheduled',pipelineStatus:interval ? 'scheduled' : 'unscheduled' });
     if (!create && !restore && !cancel && state(current) === 'unscheduled' && interval) Object.assign(patch,{status:'scheduled',pipelineStatus:'scheduled'});
     if (!cancel && !interval && !create && state(current) === 'scheduled') Object.assign(patch,{status:'unscheduled',pipelineStatus:'unscheduled'});
-    if (cancel) Object.assign(patch,{status:'cancelled',pipelineStatus:'cancelled',cancelledAt:now,cancelledBy:session.user,cancellationReason:text(input.cancellationReason || '','Cancellation reason',240)});
+    if (noShow) Object.assign(patch,{status:'no_show',pipelineStatus:'no_show',noShowAt:now,noShowBy:session.user,noShowReasonCode:reason.reasonCode});
+    else if (cancel) Object.assign(patch,{status:'cancelled',pipelineStatus:'cancelled',cancelledAt:now,cancelledBy:session.user,cancellationReason:text(input.cancellationReason || '','Cancellation reason',240),...cancelPatch(reason,current,now)});
     if (restore) Object.assign(patch,{cancelledAt:null,cancelledBy:null,restoredAt:now,restoredBy:session.user});
     if ((cancel || restore) && current?.fieldExecution?.jobTime) {
       const safeInstant=value=>typeof value==='string'&&/^\d{4}-\d\d-\d\dT/.test(value)&&Number.isFinite(Date.parse(value));
@@ -469,7 +491,7 @@ async function executeDispatch(store, session, input, now, options = {}) {
       patch.openShift=next.type === 'job' && next.shiftPickupEnabled === true && ['scheduled','confirmed','crew_assigned'].includes(state(next)) && Boolean(interval) && legacyMembers(next,roster).length < (next.crewNeeded || next.requiredCrewSize || 1) && !segmented(next);
       next={...next,...patch};
     }
-    const scheduleChanged = create || cancel || restore || ['date','time','endDate','endTime','title','address'].some(key => key in patch && patch[key] !== current?.[key]);
+    const scheduleChanged = create || (cancel && !noShow) || restore || ['date','time','endDate','endTime','title','address'].some(key => key in patch && patch[key] !== current?.[key]);
     if (scheduleChanged && current && (current.highlevelContactId || current.highlevelAppointmentId)) {
       const customer = current.customerId ? await store.read('customers',current.customerId) : null;
       if (!customer) throw fail('dispatch_customer_link_required','This provider-linked job needs its canonical customer linked before its appointment can be changed.',409);
@@ -506,6 +528,10 @@ async function executeDispatch(store, session, input, now, options = {}) {
     }
     if(lineage?.metadata&&!lineage.metadata.memoryAddressMatches)warnings.push({code:'customer_memory_not_inherited',jobId:id,message:'The verified customer account is linked, but this property does not match the selected account history. Property instructions remain specific to this job; review access and scope before dispatch.'});
     if(arrival?.reset)warnings.push({code:'arrival_window_reset',jobId:id,message:'The saved arrival window did not include the new start time and was cleared. Review the arrival window the customer sees.'});
+    // FUN-02: the funnel events for this change commit with the visit and its receipt.
+    const crewBefore = current ? legacyMembers(current,roster).sort() : [], crewAfter = legacyMembers(next,roster).sort();
+    const funnel = await visitFunnelWrites({action:create ? 'create' : noShow ? 'no_show' : cancel ? 'cancel' : restore ? 'restore' : 'update',before:current,after:next,actor:eventActor({id:session.user,kind:'human',role:session.role}),via:'hub',key:requestKey(input.requestId),source:{collection:'dispatchOperations',id:receiptId},reason:{...reason,lateCancel:patch.lateCancel},crewChanged:!cancel && crewAfter.length > 0 && canonical(crewAfter) !== canonical(crewBefore),now});
+    Object.assign(patch,funnel.patch); writes.push(...funnel.writes);
   } else {
     collection = 'dispatchResources';
     id = input.id || `${input.action.split('.')[0]}_${receiptId.replaceAll('-','')}`;
@@ -636,6 +662,7 @@ export async function mutateDispatchSelfAssignment(store,session,input,now = new
     if (legacy.mode === 'enforce' && blocked.length) throw fail('dispatch_conflict','This shift is on a day blocked on the Hub calendar. Ask dispatch before picking it up.',409,{conflicts:blocked});
     writes.push({collection:'dispatchState',id:'revision',revision:guard?.revision,patch:{updatedAt:now,lastRequestId:input.requestId}});
     writes.push({collection:'dispatchOperations',id:receiptId,patch:{fingerprint,actorId:identity,action:`shift.${input.action}`,collection:'jobs',targetId:job.id,requestId:input.requestId,createdAt:now,before:auditState(job),after:auditState(next)}});
+    if (assignedCrew.length) writes.push(...(await visitFunnelWrites({action:'update',before:job,after:next,actor:eventActor({id:identity,kind:'human',role:session.role}),via:'hub',key:requestKey(input.requestId),source:{collection:'dispatchOperations',id:receiptId},crewChanged:true,now})).writes);
     await store.commit(writes);
     const saved = await store.read('jobs',job.id);
     if (!saved || saved.dispatchRequestId !== input.requestId) throw fail('dispatch_changed_since_operation','Your assignment saved, but dispatch has changed it again. Refresh your schedule.',409);

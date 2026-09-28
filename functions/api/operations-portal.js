@@ -23,7 +23,7 @@ export async function onRequestPost({request,env}) {
     if(['portal.note.add','portal.job.edit','portal.project.ensure'].includes(command.command))return reply(200,await mutatePortalRecord(bridge.store(schedulingStorage(env)),c.actor,command,now));
     if(command.command==='schedule.link_customer')return reply(200,await linkScheduledCustomer(bridge.store(schedulingStorage(env)),c.actor,command,now));
     if(command.command==='schedule.resolve')return reply(200,await resolveScheduledVisit(schedulingStorage(env),command.portalVisitId));
-    if(command.command==='schedule.mutate')return reply(200,await mutateScheduledVisit(bridge.store(schedulingStorage(env)),c.actor,command,now));
+    if(command.command==='schedule.mutate')return reply(200,await mutateScheduledVisit(bridge.store(schedulingStorage(env)),c.actor,command,now,{via:bridge.via}));
     if(command.command==='schedule.bind_provider')return reply(200,await bindScheduledProvider(bridge.store(schedulingStorage(env)),c.actor,command,now));
     if(command.command==='calendar')return reply(200,await portalCalendar(env,command));
     if(command.command==='portal.members')return reply(200,{ok:true,authority:'employee_hub',members:await operationsMembers(env)});
