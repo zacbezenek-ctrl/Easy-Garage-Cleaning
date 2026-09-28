@@ -34,6 +34,10 @@ jobs:
         run: npm install --no-save --ignore-scripts firebase-tools@15.30.2 @firebase/rules-unit-testing@5.0.2 firebase@12.19.0 playwright@1.63.0
       - name: Install browser for operational acceptance
         run: npx --no-install playwright install --with-deps chromium
+      # Download the emulator jar once. Two cold-cache emulators started side by side both download it into
+      # the same cache path, and one of them can start from a half-written jar and exit 1.
+      - name: Download the Firestore emulator before the parallel runs
+        run: npx --no-install firebase setup:emulators:firestore
       - name: Verify real rules, atomic dispatch and hub audit, and the emulator harness, on parallel private emulators
         env:
           EGC_FIREBASE_EMULATOR_TEST: '1'
