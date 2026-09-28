@@ -1,5 +1,6 @@
 import { getHubSession, hasBusinessAccess } from '../_lib/hub-session.js';
 import { readJob } from '../_lib/firestore-job.js';
+import { createEmailTracking, markEmailTrackingSent, trackingPixelUrl } from '../_lib/email-tracking.js';
 
 const HOST = /^(?:easygaragecleaning\.com|www\.easygaragecleaning\.com|easy-garage-cleaning\.pages\.dev|localhost(?::\d+)?|127\.0\.0\.1(?::\d+)?)$/;
 const reply = (status, body) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' } });
@@ -39,6 +40,21 @@ export async function onRequestPost({ request, env }) {
   const appointmentDate = /^\d{4}-\d{2}-\d{2}$/.test(job.date || '')
     ? new Date(`${job.date}T12:00:00`).toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric', timeZone: 'America/Denver' })
     : 'Date TBD';
+
+  let tracking = null;
+  try {
+    tracking = await createEmailTracking(env, {
+      recipient,
+      subject: `Easy Garage Cleaning — ${safe(job.type || job.serviceType || 'Walkthrough', 100)} confirmation`,
+      messageId: jobId,
+      campaign: 'booking-confirmation',
+      contactId: safe(job.highlevelContactId, 180),
+      source: 'emailjs',
+    });
+  } catch {
+    // Tracking must never prevent a customer confirmation from sending.
+  }
+
   const upstream = await fetch('https://api.emailjs.com/api/v1.0/email/send', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -55,11 +71,13 @@ export async function onRequestPost({ request, env }) {
         address: safe(job.address || 'TBD', 240),
         employee_name: safe(job.assignedTo || session.displayName || session.user, 120),
         notes: safe(job.notes, 600),
+        tracking_pixel_url: tracking ? trackingPixelUrl(tracking.token) : '',
       },
     }),
   }).catch(() => null);
   if (!upstream?.ok) return reply(502, { ok: false, error: 'Confirmation email could not be sent' });
-  return reply(200, { ok: true, sent: true });
+  if (tracking) await markEmailTrackingSent(env, tracking.token).catch(() => false);
+  return reply(200, { ok: true, sent: true, tracking: Boolean(tracking) });
 }
 
 export async function onRequestGet() {
