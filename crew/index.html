@@ -66,6 +66,7 @@
   .load-note{padding:18px;background:var(--paper);border:1.5px dashed var(--line);border-radius:14px;color:var(--khaki);font-size:14px}
   .sync-banner{display:none;background:#fff3cd;color:#6f5300;padding:9px 14px;text-align:center;font-size:12px;font-weight:700}.sync-banner.on{display:block}
   [hidden]{display:none!important}.access-note{background:#fff4ed;border:1px solid #f2b498;color:#8b3513;padding:12px 14px;margin:0 0 18px;border-radius:10px;font-size:13px;font-weight:700}
+  .access-note button{display:block;min-height:44px;margin-top:8px;padding:0 16px;border:0;border-radius:10px;background:var(--orange);color:#fff;font:inherit;font-size:14px;cursor:pointer}
   @media(max-width:560px){main{padding:22px 14px 34px}.crew-overview{grid-template-columns:1fr 1fr}.status-card strong{font-size:21px}.job-meta{grid-template-columns:1fr}.job-row{grid-template-columns:65px 1fr auto}.quick-grid{grid-template-columns:1fr 1fr}.next-card{padding:18px}}
 </style>
 <link rel="stylesheet" href="/crew/crew-brand.css?v=20260904c">
@@ -102,16 +103,19 @@
   </div>
 </div>
 <script src="/crew/hub-auth.js?v=20260904c"></script>
+<script type="module" src="/staff-login.js?v=20260928gate"></script>
 <script>
 async function gateLogin(){
   const button=document.querySelector("#egc-gate .gbtn"),error=document.getElementById("gate-err");
   button.disabled=true;button.textContent="Signing in…";error.style.display="none";
-  try{await EGCHubAuth.signIn(document.getElementById("gate-u").value.trim(),document.getElementById("gate-p").value);document.getElementById("egc-gate").classList.add("off");await openCrewHome()}
+  try{await EGCHubAuth.signIn(document.getElementById("gate-u").value.trim(),document.getElementById("gate-p").value);if(window.EGCStaffNext&&EGCStaffNext.go())return;document.getElementById("egc-gate").classList.add("off");await openCrewHome()}
   catch(e){error.textContent=e.message||"Unable to sign in. Try again.";error.style.display="block"}
   finally{button.disabled=false;button.textContent="Unlock"}
 }
 async function gateLock(){await EGCHubAuth.signOut();location.reload()}
-document.addEventListener('DOMContentLoaded',()=>EGCHubAuth.session().then(user=>{if(user){document.getElementById("egc-gate").classList.add("off");openCrewHome();return}document.getElementById("gate-p").addEventListener("keydown",e=>{if(e.key==="Enter")gateLogin()});document.getElementById("gate-u").addEventListener("keydown",e=>{if(e.key==="Enter")document.getElementById("gate-p").focus()})}));
+// The edge keeps refusing the requested page (the automatic return already ran): say so instead of silently opening home.
+function nextRefused(){document.getElementById("next-note").hidden=false;document.getElementById("next-signin").addEventListener("click",gateLock)}
+document.addEventListener('DOMContentLoaded',()=>EGCHubAuth.session().then(user=>{if(user){if(window.EGCStaffNext&&EGCStaffNext.resume())return;document.getElementById("egc-gate").classList.add("off");if(window.EGCStaffNext&&EGCStaffNext.target())nextRefused();openCrewHome();return}document.getElementById("gate-p").addEventListener("keydown",e=>{if(e.key==="Enter")gateLogin()});document.getElementById("gate-u").addEventListener("keydown",e=>{if(e.key==="Enter")document.getElementById("gate-p").focus()})}));
 </script>
 
 <div id="topbar">
@@ -123,6 +127,7 @@ document.addEventListener('DOMContentLoaded',()=>EGCHubAuth.session().then(user=
 <div id="offline" class="sync-banner" role="status">You’re offline. Your schedule and pay may be out of date, and nothing is saved or sent until you reconnect.</div>
 
 <main>
+  <div class="access-note" id="next-note" role="alert" hidden>Your session could not open that page. Sign in again to continue.<button type="button" id="next-signin">Sign in again</button></div>
   <div class="access-note" id="access-note" hidden>Walkthrough is a business tool for Zac, Tyler, and Alex. Your pre-job and closeout steps are in each assigned job’s field workflow.</div>
   <div class="eyebrow">Your workday</div>
   <h1 id="hello">Crew home</h1>

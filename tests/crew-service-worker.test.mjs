@@ -3,6 +3,9 @@ import assert from 'node:assert/strict';
 import { readFileSync, existsSync } from 'node:fs';
 import vm from 'node:vm';
 import { fakeIndexedDB } from './helpers/fake-indexeddb.mjs';
+import { onRequest } from '../functions/_middleware.js';
+import { createHubSessionCookie } from '../functions/_lib/hub-session.js';
+import { createPagesHandler } from './lighthouse/serve.mjs';
 
 const read = path => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
 const ORIGIN = 'https://easygaragecleaning.com';
@@ -12,13 +15,14 @@ const basic = response => Object.defineProperty(response, 'type', { value: 'basi
 // Inside a worker, relative request URLs resolve against the worker's origin.
 class WorkerRequest extends Request { constructor(input, init) { super(typeof input === 'string' ? new URL(input, ORIGIN).href : input, init); } }
 const NOW = Date.parse('2026-09-22T15:00:00.000Z');
+const SHELL_CACHE = 'egc-crew-shell-20260928gate';
 
-function harness({ config = { enabled: true }, indexedDB = fakeIndexedDB(), api = null } = {}) {
+function harness({ config = { enabled: true }, indexedDB = fakeIndexedDB(), api = null, network = null } = {}) {
   const listeners = {}, stores = new Map(), fetched = [], messages = [];
   // The worker and the outbox it imports see only this clock, advanced explicitly.
   const clock = { at: NOW, advance(ms) { clock.at += ms; } };
   class WorkerDate extends Date { constructor(...args) { super(...(args.length ? args : [clock.at])); } static now() { return clock.at; } }
-  const state = { online: true, stall: false, config, unregistered: 0, claimed: 0, skipped: 0, headers: {} };
+  const state = { online: true, stall: false, config, unregistered: 0, claimed: 0, skipped: 0, headers: {}, status: 200, redirectTo: '' };
   const caches = {
     async open(name) {
       if (!stores.has(name)) stores.set(name, new Map());
@@ -37,13 +41,15 @@ function harness({ config = { enabled: true }, indexedDB = fakeIndexedDB(), api 
     const url = new URL(typeof input === 'string' ? input : input.url, ORIGIN), method = (typeof input === 'string' ? init.method : input.method) || 'GET';
     fetched.push(`${method} ${url.pathname}${url.search}`);
     if (!state.online) throw new TypeError('Failed to fetch');
+    if (network) return network(input, init);
     if (url.pathname === '/crew/sw-config.json') return basic(Response.json(state.config));
     if (url.pathname.startsWith('/api/')) {
       if (api) return api(url, method, typeof input === 'string' ? init.body : null);
       return basic(Response.json({ ok: true, customer: 'Synthetic Customer', phone: '9705550100' }, { headers: { 'Cache-Control': 'private, no-store' } }));
     }
     if (state.stall && url.pathname.startsWith('/crew/')) return new Promise(() => {});
-    return basic(new Response(`network ${url.pathname}`, { headers: { 'Content-Type': url.pathname.endsWith('.js') ? 'application/javascript' : 'text/html', ...state.headers } }));
+    const response = basic(new Response(`network ${url.pathname}`, { status: state.status, headers: { 'Content-Type': url.pathname.endsWith('.js') ? 'application/javascript' : 'text/html', ...state.headers } }));
+    return state.redirectTo ? Object.defineProperties(response, { redirected: { value: true }, url: { value: new URL(state.redirectTo, ORIGIN).href } }) : response;
   }
   const context = {
     caches, fetch, indexedDB, Request: WorkerRequest, Response, Headers, URL, Promise, JSON, Date: WorkerDate, Map, Set, Error, TypeError, console, encodeURIComponent,
@@ -82,10 +88,10 @@ test('install caches only the static job shell under a versioned cache and activ
   await sw.context.caches.open('unrelated-cache');
   await sw.dispatch('install');
   assert.equal(sw.state.skipped, 1);
-  const shell = (await sw.cached()).filter(([name]) => name === 'egc-crew-shell-20260927pwa').map(([, path]) => path).sort();
+  const shell = (await sw.cached()).filter(([name]) => name === SHELL_CACHE).map(([, path]) => path).sort();
   assert.deepEqual(shell, ['/crew/field-expenses.css?v=20260927exp', '/crew/field-expenses.js?v=20260927exp2', '/crew/field-outbox.js?v=20260927pwa', '/crew/job-photo-sharing.css?v=20260927photo', '/crew/job-photo-sharing.js?v=20260928photo', '/crew/job.css?v=20260927pwa', '/crew/job.html', '/crew/job.js?v=20260927pwa', '/crew/manifest.webmanifest', '/crew/offline.html']);
   await sw.dispatch('activate');
-  assert.deepEqual([...sw.stores.keys()].sort(), ['egc-crew-shell-20260927pwa', 'unrelated-cache'], 'older shell versions are removed; other caches are left alone');
+  assert.deepEqual([...sw.stores.keys()].sort(), [SHELL_CACHE, 'unrelated-cache'], 'older shell versions are removed; other caches are left alone');
   assert.equal(sw.state.claimed, 1); assert.equal(sw.state.unregistered, 0);
 });
 
@@ -103,7 +109,7 @@ test('Today’s work loads network-first and falls back to the cached shell, or 
   const sw = await installed();
   const online = await sw.fetchEvent('/crew/job.html?jobId=job-a', { mode: 'navigate' });
   assert.equal(await online.response.text(), 'network /crew/job.html', 'online navigations always use the fresh page');
-  assert.equal(await (await (await sw.context.caches.open('egc-crew-shell-20260927pwa')).match('/crew/job.html')).text(), 'network /crew/job.html', 'the fresh page replaces the cached shell');
+  assert.equal(await (await (await sw.context.caches.open(SHELL_CACHE)).match('/crew/job.html')).text(), 'network /crew/job.html', 'the fresh page replaces the cached shell');
   sw.state.online = false;
   for (const path of ['/crew/job.html?jobId=job-b', '/crew/job?jobId=job-b']) assert.equal(await (await sw.fetchEvent(path, { mode: 'navigate' })).response.text(), 'network /crew/job.html', `${path} reloads offline from the shell`);
   assert.equal(await (await sw.fetchEvent('/crew/prejob.html?jobId=job-a', { mode: 'navigate' })).response.text(), 'network /crew/offline.html');
@@ -118,15 +124,29 @@ test('a stalled network falls back to the cached shell instead of leaving the cr
   assert.equal(await (await sw.fetchEvent('/crew/job.html?jobId=job-a', { mode: 'navigate' }, { settle: false })).response.text(), 'network /crew/job.html');
 });
 
-test('shell assets refresh on each online load, keep one copy per file, and never store no-store responses', async () => {
+// STAFF-GATE: the edge marks every allowed staff file 'private, no-store' (aimed at HTTP caches), so the shell cache no
+// longer reads Cache-Control; it keeps only a 200 for the file it asked for and never a 401, error or redirect elsewhere.
+test('shell assets refresh on each online load, keep one copy per file, and store only a 200 for the file itself', async () => {
   const sw = await installed();
   await sw.fetchEvent('/crew/job.js?v=20261001next');
   const scripts = (await sw.cached()).filter(([, path]) => path.startsWith('/crew/job.js'));
   assert.deepEqual(scripts.map(([, path]) => path), ['/crew/job.js?v=20261001next'], 'a newer build replaces the older cached copy');
-  sw.state.headers = { 'Cache-Control': 'no-store' };
-  const response = await sw.fetchEvent('/crew/job.css?v=20261001next');
-  assert.equal(await response.response.text(), 'network /crew/job.css');
-  assert.equal((await sw.cached()).some(([, path]) => path === '/crew/job.css?v=20261001next'), false);
+  sw.state.headers = { 'Cache-Control': 'private, no-store' };
+  await sw.fetchEvent('/crew/job.css?v=20261001next');
+  assert.ok((await sw.cached()).some(([, path]) => path === '/crew/job.css?v=20261001next'), 'a signed-in staff file is kept on this phone');
+  for (const [label, status, redirectTo] of [['401', 401, ''], ['500', 500, ''], ['sign-in redirect', 200, '/crew/?next=%2Fcrew%2Fjob.html'], ['another page', 200, '/crew/offline']]) {
+    Object.assign(sw.state, { status, redirectTo });
+    const response = await sw.fetchEvent('/crew/field-expenses.js?v=20261001next');
+    assert.equal(response.response.status, status, `${label} is passed through`);
+    assert.equal((await sw.cached()).some(([, path]) => path === '/crew/field-expenses.js?v=20261001next'), false, `${label} is never stored`);
+    const page = await sw.fetchEvent('/crew/job.html?jobId=job-z', { mode: 'navigate' });
+    assert.equal(page.response.status, status);
+  }
+  assert.equal(await (await (await sw.context.caches.open(SHELL_CACHE)).match('/crew/job.html')).text(), 'network /crew/job.html', 'the cached job page is never replaced by a refusal');
+  Object.assign(sw.state, { status: 200, redirectTo: '/crew/job' });
+  await sw.fetchEvent('/crew/job.html?jobId=job-a', { mode: 'navigate' });
+  const pretty = await (await sw.context.caches.open(SHELL_CACHE)).match('/crew/job.html');
+  assert.equal(pretty.redirected, false, 'a pretty-URL redirect to the same page is stored as a plain response');
 });
 
 test('the kill switch unregisters the worker and removes the shell cache', async () => {
@@ -178,7 +198,7 @@ test('Background Sync replays the signed-in account’s queued actions and asks 
 test('the precached shell matches the versioned files Today’s work and the offline page load', () => {
   const job = read('crew/job.html'), offline = read('crew/offline.html'), assets = [...worker.matchAll(/'(\/crew\/[a-z-]+\.(?:js|css)\?v=[^']+)'/g)].map(match => match[1]);
   for (const path of [...job.matchAll(/(?:src|href)="(\/crew\/[^"]+\?v=[^"]+)"/g)].map(match => match[1])) assert.ok(assets.includes(path), `${path} must be precached for offline reloads`);
-  assert.match(offline, /href="\/crew\/job\.css\?v=20260927pwa"/);
+  assert.doesNotMatch(offline, /<link\b|<script\b/, 'the offline page is self-contained: it renders signed out and offline');
   assert.match(job, /<link rel="manifest" href="\/crew\/manifest\.webmanifest">/);
   assert.ok(job.indexOf('field-outbox.js') < job.indexOf('/crew/job.js'), 'the outbox loads before the page script');
   assert.match(read('crew/job.js'), /navigator\.serviceWorker\.register\('\/crew\/sw\.js', \{ scope: '\/crew\/' \}\)/);
@@ -194,4 +214,104 @@ test('the manifest, headers and config scope the installable app to /crew/', () 
   assert.match(headers, /\/crew\/sw-config\.json\n  Cache-Control: no-store/);
   assert.deepEqual(JSON.parse(read('crew/sw-config.json')), { enabled: true });
   assert.doesNotMatch(read('crew/index.html'), /will sync when your connection returns/, 'the crew home no longer claims offline work syncs');
+});
+
+// STAFF-GATE: the worker against the real edge. functions/_middleware.js runs with EGC_STAFF_PAGE_GATE=on in front of the
+// repo's static files (Pages pretty URLs included); a signed-in phone sends the Hub cookie. Navigations use redirect:
+// 'manual' like a browser's, so a sign-in redirect reaches the worker as an opaqueredirect.
+const STAFF_ENV = Object.freeze({ EGC_STAFF_PAGE_GATE: 'on', HUB_SESSION_SECRET: 'synthetic-crew-sw-gate-secret-0123456789abcdef', HUB_AUTH_USERS_JSON: JSON.stringify({ 'synthetic.crew': { passwordHash: 'c'.repeat(64), displayName: 'Synthetic Crew', role: 'crew' } }) });
+const pages = createPagesHandler();
+function gatedSite({ env = STAFF_ENV, accept = '*/*' } = {}) {
+  const phone = { cookie: '', edge: [] };
+  const next = url => async () => {
+    const out = pages({ method: 'GET', url: url.pathname + url.search, headers: { 'accept-encoding': 'identity' } });
+    return new Response(out.status === 308 ? null : out.body, { status: out.status, headers: Object.entries(out.headers).filter(([name]) => name !== 'content-length') });
+  };
+  phone.fetch = async input => {
+    const navigate = typeof input !== 'string' && input.mode === 'navigate';
+    let url = new URL(typeof input === 'string' ? input : input.url, ORIGIN), redirected = false;
+    for (let hop = 0; hop < 5; hop++) {
+      const headers = new Headers(navigate ? { Accept: 'text/html,application/xhtml+xml', 'Sec-Fetch-Mode': 'navigate', 'Sec-Fetch-Dest': 'document' } : { Accept: accept, 'Sec-Fetch-Mode': 'same-origin' });
+      if (phone.cookie) headers.set('Cookie', phone.cookie);
+      const response = await onRequest({ request: new Request(url, { headers }), env, next: next(url) });
+      phone.edge.push([url.pathname + url.search, response.status, response.headers.get('location') || '']);
+      if (response.status < 300 || response.status > 399) return Object.defineProperties(response, { type: { value: 'basic' }, redirected: { value: redirected }, url: { value: url.href } });
+      if (navigate) return Object.defineProperties(new Response(null), { type: { value: 'opaqueredirect' }, status: { value: 0 }, ok: { value: false } });
+      url = new URL(response.headers.get('location'), url); redirected = true;
+    }
+    throw new TypeError('Too many redirects');
+  };
+  phone.signIn = async () => { phone.cookie = (await createHubSessionCookie(env, 'synthetic.crew')).split(';')[0]; };
+  return phone;
+}
+const PUBLIC_KEYS = ['/crew/field-outbox.js?v=20260927pwa', '/crew/manifest.webmanifest', '/crew/offline.html'];
+const STAFF_KEYS = ['/crew/field-expenses.css?v=20260927exp', '/crew/field-expenses.js?v=20260927exp2', '/crew/job-photo-sharing.css?v=20260927photo', '/crew/job-photo-sharing.js?v=20260928photo', '/crew/job.css?v=20260927pwa', '/crew/job.html', '/crew/job.js?v=20260927pwa'];
+const shellKeys = async sw => (await sw.cached()).filter(([name]) => name === SHELL_CACHE).map(([, path]) => path).sort();
+
+test('staff gate on: a signed-out install caches the public shell, refusals are never stored, and signing in fills in the job shell', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: NOW });
+  const phone = gatedSite(), sw = harness({ network: phone.fetch });
+  const imported = /importScripts\('([^']+)'\)/.exec(worker)[1];
+  assert.equal((await phone.fetch(imported)).status, 200, 'the outbox the worker imports loads signed out, so a signed-out update check cannot fail');
+  const install = await sw.dispatch('install');
+  assert.deepEqual(install.settled.map(result => result.status), ['fulfilled'], 'refused staff files do not reject the install');
+  assert.equal(sw.state.skipped, 1);
+  assert.deepEqual(await shellKeys(sw), PUBLIC_KEYS);
+  for (const key of STAFF_KEYS) assert.ok(phone.edge.some(([path, status]) => path === key && status === 401), `${key} was refused by the edge`);
+  assert.match(await (await (await sw.context.caches.open(SHELL_CACHE)).match('/crew/offline.html')).text(), /You are offline/);
+  await sw.dispatch('activate');
+  assert.equal(sw.state.claimed, 1);
+
+  const page = await sw.fetchEvent('/crew/job.html?jobId=synthetic-job-1', { mode: 'navigate' });
+  assert.equal(page.response.type, 'opaqueredirect', 'the sign-in redirect goes back to the browser untouched');
+  assert.deepEqual(phone.edge.at(-1), ['/crew/job.html?jobId=synthetic-job-1', 302, '/crew/?next=%2Fcrew%2Fjob.html%3FjobId%3Dsynthetic-job-1']);
+  const script = await sw.fetchEvent('/crew/job.js?v=20260927pwa');
+  assert.equal(script.response.status, 401);
+  assert.equal(await script.response.text(), 'Sign in required.\n');
+  assert.deepEqual(await shellKeys(sw), PUBLIC_KEYS, 'no redirect or 401 is stored');
+  sw.state.online = false;
+  assert.match(await (await sw.fetchEvent('/crew/job.html?jobId=synthetic-job-1', { mode: 'navigate' })).response.text(), /You are offline/, 'offline without a job shell shows the offline page');
+
+  sw.state.online = true;
+  await phone.signIn();
+  const job = await sw.fetchEvent('/crew/job?jobId=synthetic-job-1', { mode: 'navigate' });
+  assert.equal(job.response.status, 200);
+  assert.equal(job.response.headers.get('cache-control'), 'private, no-store');
+  for (const key of STAFF_KEYS.filter(key => key !== '/crew/job.html')) assert.equal((await sw.fetchEvent(key)).response.status, 200, key);
+  assert.deepEqual(await shellKeys(sw), [...PUBLIC_KEYS, ...STAFF_KEYS].sort(), 'a signed-in load fills in the job shell at runtime');
+  sw.state.online = false;
+  const offline = await sw.fetchEvent('/crew/job.html?jobId=synthetic-job-2', { mode: 'navigate' });
+  assert.equal(await offline.response.text(), readFileSync(new URL('../crew/job.html', import.meta.url), 'utf8'), 'Today’s work reloads offline from the signed-in copy');
+});
+
+test('staff gate on: a signed-in install caches the whole shell, pretty-URL redirects included, and never a sign-in page', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: NOW });
+  const phone = gatedSite();
+  await phone.signIn();
+  const sw = harness({ network: phone.fetch }), older = await sw.context.caches.open('egc-crew-shell-20260927pwa');
+  await older.put('/crew/job.html', new Response('older build'));
+  const install = await sw.dispatch('install');
+  assert.deepEqual(install.settled.map(result => result.status), ['fulfilled']);
+  assert.deepEqual(await shellKeys(sw), [...PUBLIC_KEYS, ...STAFF_KEYS].sort());
+  assert.ok(phone.edge.some(([path, status, location]) => path === '/crew/job.html' && status === 308 && location === '/crew/job'), 'the job page arrived through the Pages pretty-URL redirect');
+  const cached = await (await sw.context.caches.open(SHELL_CACHE)).match('/crew/job.html');
+  assert.equal(await cached.text(), readFileSync(new URL('../crew/job.html', import.meta.url), 'utf8'));
+  await sw.dispatch('activate');
+  assert.deepEqual([...sw.stores.keys()], [SHELL_CACHE], 'the bumped version replaces the older shell');
+
+  // A fetch that the edge treats as a page load is redirected to the crew sign-in; following it must not store that page.
+  const html = gatedSite({ accept: 'text/html' }), signedOut = harness({ network: html.fetch });
+  assert.deepEqual((await signedOut.dispatch('install')).settled.map(result => result.status), ['fulfilled']);
+  assert.ok(html.edge.some(([path, status, location]) => path === '/crew/job.html' && status === 302 && location === '/crew/?next=%2Fcrew%2Fjob.html'));
+  assert.deepEqual(await shellKeys(signedOut), PUBLIC_KEYS);
+});
+
+test('a public shell file the install cannot get still fails the install, so a broken worker never replaces a working one', async () => {
+  const sw = harness({ network: async input => {
+    const url = new URL(typeof input === 'string' ? input : input.url, ORIGIN);
+    return basic(url.pathname === '/crew/offline.html' ? new Response('down', { status: 503 }) : new Response(`network ${url.pathname}`));
+  } });
+  const install = await sw.dispatch('install');
+  assert.deepEqual(install.settled.map(result => result.status), ['rejected']);
+  assert.equal(sw.state.skipped, 0);
 });

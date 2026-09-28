@@ -193,6 +193,11 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   flags); only the owner saves settings (labels never reused, `pricingSettingsVersions`) or publishes an immutable later
   version, each with a `catalogOperations` receipt and hub_audit entry in one commit. Validation runs once at publish;
   reads trust the pointer hash. Gaps: sales still 403; cold GET/publish exceed the Workers Free 10 ms CPU limit.
+- **STAFF-GATE** Behind `EGC_STAFF_PAGE_GATE` (exactly "on"; off is byte-identical) the middleware refuses the staff
+  pages and scripts in `staff-paths.js` without a Hub session (302 to `/staff-login` or `/crew/` with a validated
+  `next`, else 401; allowed responses private/no-store). The crew worker caches only same-origin 200 shell files, so a
+  sign-in page or 401 is never kept (VERSION 20260928gate). Gaps: older/preview deployments stay ungated (Cloudflare
+  Access); any staff session still sees pay copy (PRICE-SCRUB). New staff files must be listed in `staff-paths.js`.
 
 ## In progress
 
@@ -241,6 +246,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | M3 | Server-authoritative money mutation API, audit and payment ledger (MONEY_API_ENABLED) | merged (8b095ec) |
 | P1-08 | Staff roles and capabilities, staff directory (skills, effective-dated pay, availability), vault migrations | merged (fcf6b5b) |
 | P2-03 | Catalog and owner pricing settings API with versioned, audited Firestore storage (CATALOG_QUOTES_ENABLED) | merged (9d16e9e) |
+| STAFF-GATE | Server-side Hub session gate for staff pages and scripts, /staff-login (EGC_STAFF_PAGE_GATE) | merged (107ef94) |
 
 ## Next
 

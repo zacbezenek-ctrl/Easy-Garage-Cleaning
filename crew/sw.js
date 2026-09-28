@@ -2,13 +2,16 @@
    offline reloads. API responses, customer data and non-GET requests are never
    intercepted or cached; queued work lives in the explicit field outbox. */
 'use strict';
-const VERSION = '20260927pwa';
+const VERSION = '20260928gate';
 const CACHE_PREFIX = 'egc-crew-shell-';
 const CACHE = `${CACHE_PREFIX}${VERSION}`;
 const CONFIG = '/crew/sw-config.json';
 const PAGES = { '/crew/job.html': '/crew/job.html', '/crew/job': '/crew/job.html', '/crew/offline.html': '/crew/offline.html', '/crew/offline': '/crew/offline.html' };
 const ASSETS = ['/crew/job.css?v=20260927pwa', '/crew/job.js?v=20260927pwa', '/crew/field-outbox.js?v=20260927pwa', '/crew/field-expenses.css?v=20260927exp', '/crew/field-expenses.js?v=20260927exp2', '/crew/job-photo-sharing.css?v=20260927photo', '/crew/job-photo-sharing.js?v=20260928photo', '/crew/manifest.webmanifest'];
 const ASSET_PATHS = new Set(ASSETS.map(asset => asset.split('?')[0]));
+// With EGC_STAFF_PAGE_GATE=on the edge refuses the job page and its files without a Hub session (staff-paths.js). Every
+// install needs this public part; the rest is cached when the install, or a later signed-in load, receives it.
+const PUBLIC_SHELL = new Set(['/crew/offline.html', '/crew/field-outbox.js', '/crew/manifest.webmanifest']);
 const NETWORK_WAIT = 6000;
 let configCheckedAt = 0;
 
@@ -21,7 +24,11 @@ async function clean(response) {
   return new Response(await response.blob(), { status: response.status, statusText: response.statusText, headers: response.headers });
 }
 
-const cacheable = response => response.ok && response.type === 'basic' && !/no-store|private/i.test(response.headers.get('Cache-Control') || '');
+// A shell file is kept only as the 200 it asked for (a pretty-URL redirect to the same page is fine), never a sign-in
+// redirect, 401 or other page. The gate's private, no-store is for HTTP caches; this cache is the phone's own copy.
+const pageOf = path => path.split('?')[0].replace(/\.html$/, '');
+const shellResponse = (key, response) => response.status === 200 && response.type === 'basic' &&
+  (!response.redirected || pageOf(new URL(response.url || '/', self.location.origin).pathname) === pageOf(key));
 
 async function store(key, response) {
   const cache = await caches.open(CACHE), path = key.split('?')[0];
@@ -33,11 +40,14 @@ async function store(key, response) {
 async function precache() {
   const shell = [...new Set(Object.values(PAGES)), ...ASSETS];
   const responses = await Promise.all(shell.map(async key => {
-    const response = await fetch(new Request(key, { cache: 'reload', credentials: 'same-origin' }));
-    if (!cacheable(response)) throw new Error(`Crew shell file ${key} could not be cached.`);
-    return [key, response];
+    const response = await fetch(new Request(key, { cache: 'reload', credentials: 'same-origin' })).catch(() => null);
+    // Read (or release) each body at once: an unread one keeps its connection busy and can stall the rest of the install.
+    if (response && shellResponse(key, response)) return [key, new Response(await response.blob(), { status: 200, statusText: response.statusText, headers: response.headers })];
+    await response?.body?.cancel().catch(() => {});
+    if (PUBLIC_SHELL.has(key.split('?')[0])) throw new Error(`Crew shell file ${key} could not be cached.`);
+    return null;
   }));
-  for (const [key, response] of responses) await store(key, response);
+  for (const entry of responses) if (entry) await store(...entry);
 }
 
 async function removeCaches(keep = '') {
@@ -93,7 +103,7 @@ self.addEventListener('fetch', event => {
   const navigation = request.mode === 'navigate';
   if (!navigation && !ASSET_PATHS.has(url.pathname)) return;
   const key = navigation ? PAGES[url.pathname] || '' : url.pathname + url.search;
-  const network = fetch(request), saved = network.then(response => key && cacheable(response) ? store(key, response.clone()) : null);
+  const network = fetch(request), saved = network.then(response => key && shellResponse(key, response) ? store(key, response.clone()) : null);
   event.waitUntil(saved.then(() => navigation && killSwitch()).catch(() => {}));
   event.respondWith(networkFirst(network, key, navigation ? '/crew/offline.html' : ''));
 });

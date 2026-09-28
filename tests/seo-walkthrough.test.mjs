@@ -8,7 +8,7 @@ import { encodeFirestoreFields } from '../functions/_lib/firestore-job.js';
 import { sourceFiles } from './source-files.mjs';
 
 const root = path.resolve(new URL('..', import.meta.url).pathname.replace(/^\/(.:)/, '$1'));
-const privateNames = new Set(['employee.html', 'employee-signup.html', 'customer-portal.html', 'quote.html', 'copilot.html', 'sop.html', 'tyler-contract.html']);
+const privateNames = new Set(['employee.html', 'employee-signup.html', 'customer-portal.html', 'quote.html', 'copilot.html', 'sop.html', 'staff-login.html', 'tyler-contract.html']);
 
 const nonPublicDirs = new Set(['crew', 'contracts']);
 

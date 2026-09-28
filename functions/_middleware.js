@@ -1,4 +1,5 @@
 import { enforceBusinessProjectWrite } from './_lib/business-hub-write-guard.js';
+import { gateStaffPage, privateStaffResponse } from './_lib/staff-page-gate.js';
 
 // Source trees, tooling and deploy configs sit beside the static site; never serve them.
 const PRIVATE_PATH = /^(?:\/(?:auth-verifier|contracts|docs|scripts|tests|egc-platform|functions|tools|\.github|\.claude|node_modules)(?:\/|$)|\/(?:sop|tyler-contract)(?:\.html)?\/?$|\/EGC-Lead-System-SOP\.pdf$|\/(?:package(?:-lock)?\.json|README\.md|firebase(?:\.emulator|\.field-day)?\.json|firestore\.rules|pnpm-(?:lock|workspace)\.yaml|\.firebaserc|\.env(?:\.example)?|_[^/]+)(?:$|\/)|\/.*\.py\/?$)/i;
@@ -46,7 +47,9 @@ export async function onRequest(context) {
   const { pathname } = new URL(context.request.url);
   if (privatePath(pathname)) return blockedResponse();
 
-  const upstream = await enforceBusinessProjectWrite(context.request, context.env) || await context.next();
+  // EGC_STAFF_PAGE_GATE=on: staff pages and scripts need a Hub session (staff-paths.js); off leaves every response as before.
+  const staffPage = await gateStaffPage(context.request, context.env);
+  const upstream = staffPage?.refusal || await enforceBusinessProjectWrite(context.request, context.env) || await context.next();
   const explicit404 = pathname === '/404' || pathname === '/404.html';
   const response = new Response(upstream.body, {
     status: explicit404 ? 404 : upstream.status,
@@ -66,7 +69,7 @@ export async function onRequest(context) {
   response.headers.set('Permissions-Policy', `camera=(), microphone=${voiceInput ? '(self)' : '()'}, geolocation=(self), payment=(), usb=()`);
   response.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
   response.headers.set('X-Content-Type-Options', 'nosniff');
-  response.headers.set('X-Frame-Options', pathname.startsWith('/employee') || pathname.startsWith('/crew/') || pathname.startsWith('/copilot') ? 'DENY' : 'SAMEORIGIN');
+  response.headers.set('X-Frame-Options', pathname.startsWith('/employee') || pathname.startsWith('/crew/') || pathname.startsWith('/copilot') || pathname.startsWith('/staff-login') ? 'DENY' : 'SAMEORIGIN');
   response.headers.delete('Access-Control-Allow-Origin');
   if (ownerSetup) {
     response.headers.set('Cache-Control', 'no-store');
@@ -97,6 +100,7 @@ export async function onRequest(context) {
   if (upstream.status === 404 || explicit404) {
     response.headers.set('X-Robots-Tag', 'noindex, nofollow');
   }
+  if (staffPage) privateStaffResponse(response);
   // Refresh a formerly immutable shared script URL and add a discoverable
   // business entry in server-rendered navigation, even with JavaScript disabled.
   if (response.status === 200 && response.headers.get('Content-Type')?.includes('text/html') && typeof HTMLRewriter !== 'undefined') {

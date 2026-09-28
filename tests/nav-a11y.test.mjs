@@ -9,7 +9,7 @@ import { renderPublicGallery } from '../functions/before-after.js';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 // Mirrors PRIVATE_HTML / PRIVATE_DIRS in _generate_site.py.
-const privateNames = new Set(['business-hub.html', 'client-login.html', 'copilot.html', 'customer-portal.html', 'dispatch.html', 'hub-login-setup.html', 'message-templates.html', 'quote.html', 'sop.html', 'tyler-contract.html']);
+const privateNames = new Set(['business-hub.html', 'client-login.html', 'copilot.html', 'customer-portal.html', 'dispatch.html', 'hub-login-setup.html', 'message-templates.html', 'quote.html', 'sop.html', 'staff-login.html', 'tyler-contract.html']);
 const privateDirs = new Set(['crew', 'contracts', 'docs', 'egc-platform', 'functions', 'tests', 'tools', 'scripts', 'auth-verifier', 'internal-gallery-assets', 'venv', 'field-qa', 'test-results', 'dist', 'node_modules']);
 const isPrivateDir = part => part.startsWith('.') || privateDirs.has(part);
 const publicPages = sourceFiles(root)

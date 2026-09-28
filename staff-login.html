@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="robots" content="noindex,nofollow,noarchive">
+<meta name="referrer" content="no-referrer">
+<meta name="theme-color" content="#13203a">
+<title>Staff Sign-In | Easy Garage Cleaning</title>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+<style>
+  :root{--navy:#13203a;--navy2:#1d2d4f;--orange:#e8581c;--muted:#aeb8cc;--line:rgba(255,255,255,.15)}
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{background:var(--navy)}
+  body{min-height:100vh;min-height:100dvh;background:var(--navy);color:#fff;font:16px/1.5 Inter,system-ui,-apple-system,'Segoe UI',sans-serif;display:grid;place-items:center;padding:24px 16px max(env(safe-area-inset-bottom),24px)}
+  main{width:100%;max-width:400px}
+  .card{width:100%;background:var(--navy2);border:1px solid rgba(255,255,255,.1);border-radius:16px;padding:28px 22px;box-shadow:0 24px 64px rgba(0,0,0,.45)}
+  .pill{display:inline-block;background:var(--orange);color:#fff;font-size:11px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;padding:4px 12px;border-radius:99px;margin-bottom:12px}
+  h1{font-size:26px;line-height:1.15;letter-spacing:.01em;margin:0 0 6px}
+  .sub,.dest{color:var(--muted);font-size:14px;overflow-wrap:anywhere}
+  .dest{margin-top:6px}.dest strong{color:#fff;font-weight:700}
+  label{display:block;color:var(--muted);font-size:12px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;margin:16px 0 6px}
+  input{display:block;width:100%;min-height:48px;background:var(--navy);border:1.5px solid var(--line);border-radius:10px;color:#fff;font:inherit;font-size:16px;padding:12px 13px}
+  input:focus{outline:none;border-color:var(--orange);box-shadow:0 0 0 3px rgba(232,88,28,.3)}
+  button{display:block;width:100%;min-height:52px;margin-top:22px;background:var(--orange);border:0;border-radius:10px;color:#fff;font:inherit;font-size:16px;font-weight:800;letter-spacing:.04em;cursor:pointer}
+  button:disabled{opacity:.65;cursor:progress}
+  button:focus-visible,a:focus-visible{outline:3px solid #fff;outline-offset:2px}
+  .error{background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.35);color:#fca5a5;border-radius:8px;padding:10px 12px;font-size:14px;margin-top:16px;overflow-wrap:anywhere}
+  .links{display:grid;gap:4px;margin-top:14px}
+  .links a{display:flex;align-items:center;justify-content:center;min-height:44px;color:#d9e2f1;font-size:14px;font-weight:700;text-underline-offset:3px}
+  [hidden]{display:none!important}
+  @media(max-width:680px){body{place-items:end center}.card{padding:24px 18px}}
+</style>
+</head>
+<body>
+<main>
+  <form class="card" id="staff-login" method="post" action="/staff-login" aria-labelledby="sl-title" novalidate>
+    <div class="pill">EGC Staff</div>
+    <h1 id="sl-title">Staff sign-in</h1>
+    <p class="sub">Use your employee portal username and password.</p>
+    <p class="dest" id="sl-next" hidden></p>
+    <div class="error" id="login-error" role="alert" hidden></div>
+    <label for="user">Username</label>
+    <input id="user" name="username" type="text" autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="80" required>
+    <label for="pass">Password</label>
+    <input id="pass" name="password" type="password" autocomplete="current-password" required>
+    <button type="submit" id="sl-submit" disabled aria-busy="true">Sign in</button>
+    <noscript><p class="error">Staff sign-in needs JavaScript. Turn it on and reload this page.</p></noscript>
+    <div class="links">
+      <a href="/employee-signup">New employee? Create your account</a>
+      <a href="/crew/">Crew tools sign-in</a>
+    </div>
+  </form>
+</main>
+<script src="/crew/hub-auth.js?v=20260904c"></script>
+<script type="module" src="/staff-login.js?v=20260928gate"></script>
+</body>
+</html>

@@ -7,10 +7,10 @@ on:
         required: false
         default: ''
   pull_request:
-    paths: ['egc-platform/**','functions/**','employee*','tests/**','crew/**','scripts/repair-stale-schedule-instants.mjs','_generate_site.py','_services_data.py','_finalize_urls.py','tools/site-build.json','tools/gallery/**','scripts/render-before-after.mjs','gallery-simple.js','package.json','*.html','blog/**','projects/**','sitemap.xml','llms.txt','message-templates.*','customer-portal.html','.github/workflows/egc-action-center-ci.yml']
+    paths: ['egc-platform/**','functions/**','employee*','tests/**','crew/**','scripts/repair-stale-schedule-instants.mjs','_generate_site.py','_services_data.py','_finalize_urls.py','tools/site-build.json','tools/gallery/**','scripts/render-before-after.mjs','gallery-simple.js','package.json','*.html','blog/**','projects/**','sitemap.xml','llms.txt','message-templates.*','customer-portal.html','staff-paths.js','staff-login.*','.github/workflows/egc-action-center-ci.yml']
   push:
     branches: [main]
-    paths: ['egc-platform/**','functions/**','employee*','tests/**','crew/**','scripts/repair-stale-schedule-instants.mjs','_generate_site.py','_services_data.py','_finalize_urls.py','tools/site-build.json','tools/gallery/**','scripts/render-before-after.mjs','gallery-simple.js','package.json','*.html','blog/**','projects/**','sitemap.xml','llms.txt','message-templates.*','customer-portal.html','.github/workflows/egc-action-center-ci.yml']
+    paths: ['egc-platform/**','functions/**','employee*','tests/**','crew/**','scripts/repair-stale-schedule-instants.mjs','_generate_site.py','_services_data.py','_finalize_urls.py','tools/site-build.json','tools/gallery/**','scripts/render-before-after.mjs','gallery-simple.js','package.json','*.html','blog/**','projects/**','sitemap.xml','llms.txt','message-templates.*','customer-portal.html','staff-paths.js','staff-login.*','.github/workflows/egc-action-center-ci.yml']
 permissions:
   contents: read
 # Push runs are keyed by commit SHA: a shared refs/heads/main group would let a newer queued
@@ -156,6 +156,8 @@ jobs:
         run: python tests/browser/test_portal_documents_ui.py
       - name: Hub money actions on the server money API, flag fallback and phone layout
         run: python3 -m unittest tests/browser/test_money_actions_ui.py
+      - name: Staff page gate sign-in redirects, 401 scripts and crew service worker installs
+        run: python tests/browser/test_staff_gate_ui.py
       - name: Customer before/after photos and manager sharing on a phone
         run: python tests/browser/test_customer_photos_ui.py
       - name: Public nav drawer keyboard contract and footer tap targets
