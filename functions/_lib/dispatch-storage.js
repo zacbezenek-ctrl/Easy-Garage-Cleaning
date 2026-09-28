@@ -81,6 +81,7 @@ export function dispatchStorage(env, fetcher = firestoreFetch) {
     resources: () => scan('dispatchResources', null, 2000),
     customers: () => scan('customers', ['name','firstName','lastName','phone','email','address','highlevelContactId'], 20000),
     settings: async () => arrivalSettings(env),
+    recurringPlans: () => scan('recurringPlans', null, 2000),
     async read(collection, id) {
       const response = await send(`${BASE}/${collection}/${encodeURIComponent(id)}`);
       if (response.status === 404) return null;

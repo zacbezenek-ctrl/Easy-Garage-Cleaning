@@ -44,6 +44,10 @@
  * reminderDays:integer1..30,notify:boolean,shiftPickupEnabled:boolean,notes:string.
  * Cadence and notification preferences are stored metadata, not a guarantee that
  * another visit or message has been created. Provider sync reports separately.
+ * Server-owned repeats live in /api/recurring-plans (recurring-plan-service.js):
+ * each generated visit is an ordinary schedule.create with sourceTemplateJobId
+ * and a deterministic requestId, plus recurringPlanId/occurrenceDate (and
+ * recurrenceConflict when saved unscheduled); those extra fields are not DTO fields.
  * openShift is derived server-side from pickup permission, crew capacity, valid
  * schedule and lifecycle; it is never accepted as an arbitrary client field.
  * Schedule dates store local Denver calendar values and derived startAt/endAt.

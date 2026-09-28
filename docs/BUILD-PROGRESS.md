@@ -114,6 +114,11 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   Google Distance Matrix with a hashed 30-day cache and 25-call budget): dispatch warnings and openings (optional address
   or zip) use max(buffer, estimate), manager-only `GET /api/dispatch-travel` + Drive times dialog, and
   `EGC_DISPATCH_BLOCK_TRAVEL_SHORT` blocks only saves that move a stop. Gaps: crew self-assignment ignores estimates; no Routes API.
+- **P1-05** Server recurring plans behind `EGC_RECURRING_PLANS_ENABLED` (off): pure Denver-calendar generator (weekly to
+  quarterly, nth/last weekday, skipDates, endsOn/count), `recurringPlans` + receipts, idempotent `extendHorizon`
+  (deterministic requestIds through unchanged `schedule.create`; conflicts saved unscheduled), manager
+  `/api/recurring-plans`, Dispatch > Recurring plans/Repeat UI, and `saveSeries` plans when on. Gaps: no horizon cron
+  (P1-DS-11); plan edits never move existing visits; visits still carry no price (#27).
 
 ## In progress
 
@@ -126,7 +131,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | P1-02 | Employee vault store extraction + centralized business/owner identity (behavior-preserving) | building |
 | P1-03 | Weekly timesheet + Colorado/federal overtime engine, server payroll CSV, job labor costing | building |
 | P1-04 | Arrival windows in dispatch, field and portal | building |
-| P1-05 | Recurring plans: server record, generator, idempotent extendHorizon, API, UI | building |
+| P1-05 | Recurring plans: server record, generator, idempotent extendHorizon, API, UI | merged (a8bc498) |
 | P1-07 | Travel-time estimates (offline ZIP-centroid estimator; optional Google; default off) | merged (ae810dd) |
 | LI-CORE | One canonical line-item model (quotes, invoices, portal, catalog, duration) + money core + duration engine | merged (08b5ec8) |
 | M2 | Crew card payments recorded via Stripe webhook + Garage Guard membership linkage | merged (e948368) |

@@ -61,7 +61,7 @@ function payloadFields(job){
 function intent(job,previous){return{kind:job.type==='walkthrough'?'walkthrough':job.type==='blocked'?'blocked':'job',jobId:previous?.id||null,customerId:job.customerId||previous?.customerId||null,
   customer:{name:job.customer||'',phone:job.phone||'',email:job.email||'',address:job.address||'',highlevelContactId:job.highlevelContactId||''},
   sourceTemplateJobId:job.sourceTemplateJobId||null,sourceWalkthroughId:job.sourceWalkthroughId||null,assignedCrew:job.assignedCrew,assignedTo:job.assignedTo||'',changes:payloadFields(job)};}
-async function request(key,fingerprint,build,{endpoint='/api/dispatch',field='job'}={}){
+async function request(key,fingerprint,build,{endpoint='/api/dispatch',field='job',whole=false}={}){
   const storageKey=cacheKey(key),started=generation,identity=user();
   const current=()=>{if(started!==generation||identity!==user())throw error('The signed-in account changed. Sign in again before continuing.','booking_session_changed',401);};
   if(busy.has(storageKey))throw error('This booking is already saving. Wait for the result.','booking_in_progress',409);
@@ -69,13 +69,13 @@ async function request(key,fingerprint,build,{endpoint='/api/dispatch',field='jo
   if(record&&record.fingerprint!==fingerprint)throw error('The previous save has an unknown outcome. Retry its unchanged fields before editing this booking.','booking_pending_operation',409);
   busy.add(storageKey);
   try{
-    if(!record){const body=await build();current();record={fingerprint,request:body,endpoint,field};rememberStored(storageKey,record);}
+    if(!record){const body=await build();current();record={fingerprint,request:body,endpoint,field,...(whole?{whole}:{})};rememberStored(storageKey,record);}
     current();
     const result=await api('',record.request,endpoint);
     current();
     if(!result[field]?.id||!result[field].revision)throw error('The server returned an incomplete save. Retry this same booking to verify it.','booking_outcome_unknown',503);
     if(field==='job')Object.defineProperty(result.job,'arrivalNotice',{value:arrivalNotice(result.warnings),enumerable:false});
-    rememberStored(storageKey,null);return result[field];
+    rememberStored(storageKey,null);return record.whole?result:result[field];
   }catch(problem){
     if(started===generation&&problem.status&&problem.status<500&&![401,403,408,429].includes(problem.status)&&problem.code!=='booking_pending_operation')rememberStored(storageKey,null);
     problem.message=message(problem);throw problem;
@@ -114,10 +114,44 @@ async function cancel(job,reason,options={}){
   return request(key,fingerprint,async()=>{const current=await snapshot(job.id);if(job.revision&&job.revision!==current.job.revision||job.updatedAt&&job.updatedAt!==current.job.updatedAt)throw error('This job changed after it was opened. Refresh before cancelling.','dispatch_revision_conflict',409);return{action:'schedule.cancel',requestId:crypto.randomUUID(),jobId:job.id,expectedRevision:current.job.revision,cancellationReason:String(reason||'').trim(),changes:{}};});
 }
 function recurringDate(date,cadence,index){const base=new Date(date+'T12:00:00Z');if(cadence==='weekly'||cadence==='biweekly')base.setUTCDate(base.getUTCDate()+index*(cadence==='weekly'?7:14));else{const day=base.getUTCDate();base.setUTCDate(1);base.setUTCMonth(base.getUTCMonth()+index*(cadence==='monthly'?1:3));const last=new Date(Date.UTC(base.getUTCFullYear(),base.getUTCMonth()+1,0)).getUTCDate();base.setUTCDate(Math.min(day,last));}return base.toISOString().slice(0,10);}
+const PLAN_HORIZON={weekly:56,biweekly:84,monthly:93,quarterly:190};
+/* Runs before anything is saved, so a failed check never leaves a pending booking. */
+async function plansEnabled(){const unchecked=()=>error('Recurring booking settings could not be checked, so nothing was saved. Retry the booking.','booking_recurring_status_unavailable',503);let data;try{data=await api('?view=status',null,'/api/recurring-plans');}catch(problem){if([401,403].includes(problem.status))throw problem;throw unchecked();}if(typeof data.enabled!=='boolean')throw unchecked();return data.enabled;}
+/* With EGC_RECURRING_PLANS_ENABLED=true a new repeating job books its first visit,
+ * then a server plan owns the cadence and adds later visits inside its horizon. */
+async function planSeries(key,plan,lock,started,identity){
+  const current=()=>{if(started!==generation||identity!==user())throw error('Sign in again to continue the booking.','booking_session_changed',401);};
+  const finish=warning=>{seriesRecord(key,null);return{job:plan.saved[0],visits:[plan.saved[0],...plan.visits],remaining:0,plan:plan.plan||null,...(warning?{warning}:{})};};
+  busy.add(lock);
+  try{
+    try{if(!plan.saved.length){current();plan.saved.push(await save(plan.job,plan.previous,{operationKey:key+':visit:0'}));seriesRecord(key,plan);}}
+    catch(problem){if(!(problem.status>=500||[401,403,408,429].includes(problem.status)||problem.code==='booking_pending_operation'))seriesRecord(key,null);throw problem;}
+    // A series booked in the wizard keeps the legacy reminder behavior for every visit.
+    const first=plan.saved[0],cadence={frequency:plan.job.recurrence},notifyCustomer=plan.job.notify!==false;
+    try{
+      current();
+      if(!plan.plan){plan.plan=await request(key+':visit:plan',canonical({templateJobId:first.id,cadence,notifyCustomer}),async()=>({action:'create',requestId:crypto.randomUUID(),plan:{templateJobId:first.id,cadence,horizonDays:PLAN_HORIZON[cadence.frequency],notifyCustomer}}),{endpoint:'/api/recurring-plans',field:'plan'});seriesRecord(key,plan);}
+      while(plan.rounds<15){
+        current();
+        const result=await request(key+':visit:extend-'+plan.rounds,canonical({planId:plan.plan.id,round:plan.rounds}),async()=>({action:'extend',requestId:crypto.randomUUID(),planId:plan.plan.id,expectedRevision:plan.plan.revision,limit:4}),{endpoint:'/api/recurring-plans',field:'plan',whole:true});
+        plan.plan=result.plan;plan.rounds++;plan.visits.push(...(result.created||[]).filter(job=>!plan.visits.some(row=>row.id===job.id)));plan.conflicts.push(...(result.conflicts||[]));seriesRecord(key,plan);
+        if(result.blocked)return finish(plan.visits.length+1+' visit(s) saved and the recurring plan was created, but more visits were not added: '+result.blocked.message);
+        if(result.complete||!result.created?.length&&!result.retryable)break;
+      }
+    }catch(problem){if(problem.status>=500||[401,403,408,429].includes(problem.status)||problem.code==='booking_pending_operation')throw problem;return finish(plan.visits.length+1+' visit(s) saved. '+(plan.plan?'The recurring plan was created, but more visits were not added: ':'The recurring plan was not created: ')+message(problem)+' Open Recurring plans in Dispatch to finish it.');}
+    return finish(plan.conflicts.length?plan.conflicts.length+' recurring visit(s) conflicted with other work and were saved unscheduled. Choose new times in Dispatch.':'');
+  }finally{busy.delete(lock);recoveryPanel();}
+}
 async function saveSeries(job,previous={},options={}){
   const key=options.operationKey||job?.id||'legacy-series',lock=cacheKey('series:'+key),started=generation,identity=user();if(busy.has(lock))throw error('The recurring booking is already saving.','booking_in_progress',409);
   let plan=seriesRecord(key);if(plan&&job&&plan.fingerprint!==canonical({job,previous}))throw error('Retry the original recurring booking before changing its fields.','booking_pending_operation',409);
-  if(!plan){if(!job)throw error('The saved recurring booking is unavailable.');plan={job,previous,fingerprint:canonical({job,previous}),saved:[]};seriesRecord(key,plan);}
+  if(!plan){
+    if(!job)throw error('The saved recurring booking is unavailable.');
+    let mode='legacy';
+    if(!previous?.id&&!['walkthrough','blocked'].includes(job.type)&&PLAN_HORIZON[job.recurrence]){busy.add(lock);try{if(await plansEnabled())mode='plan';}finally{busy.delete(lock);}if(started!==generation||identity!==user())throw error('Sign in again to continue the booking.','booking_session_changed',401);}
+    plan={job,previous,fingerprint:canonical({job,previous}),saved:[],...(mode==='plan'?{mode,rounds:0,visits:[],conflicts:[]}:{})};seriesRecord(key,plan);
+  }
+  if(plan.mode==='plan')return planSeries(key,plan,lock,started,identity);
   const count=plan.previous?.id?0:({weekly:8,biweekly:6,monthly:6,quarterly:4}[plan.job.recurrence]||0);busy.add(lock);
   try{
     for(let index=plan.saved.length;index<=count;index++){
