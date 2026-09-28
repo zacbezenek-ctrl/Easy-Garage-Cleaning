@@ -18,7 +18,7 @@ describe("hub registry commands over the portal bridge",()=>{
   expect(claims.actor).toEqual(actor);expect(claims.request.body).toEqual(command);
  });
  it("preserves hub and dispatch refusal codes and status instead of collapsing them",async()=>{
-  for(const [status,error] of [[403,"hub_delegate_unverified"],[403,"hub_integration_write_forbidden"],[400,"hub_command_unknown"],[400,"dispatch_range_invalid"],[503,"dispatch_storage_unavailable"],[503,"hub_source_unavailable"]] as const){
+  for(const [status,error] of [[403,"hub_delegate_unverified"],[403,"hub_integration_write_forbidden"],[400,"hub_command_unknown"],[400,"dispatch_range_invalid"],[503,"dispatch_storage_unavailable"],[503,"hub_source_unavailable"],[400,"hub_funnel_cursor_invalid"],[409,"hub_funnel_cursor_expired"],[404,"hub_funnel_case_not_found"],[503,"hub_funnel_storage_unavailable"]] as const){
    const p=portalAdapter("https://portal.test",key,"egc",upstream(status,{error}) as unknown as typeof fetch,{});
    await expect(p.read(actor,{command:"hub.dispatch.overview",view:"schedule",delegate:"zacb"})).rejects.toMatchObject({code:error,status:status>=500?503:status,details:{upstreamStatus:status}});
   }

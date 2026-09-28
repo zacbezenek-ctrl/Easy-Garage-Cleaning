@@ -1,6 +1,7 @@
 import {HUB_COMMAND_POLICY,hubCommandDenial,isHubCommandName,isHubRequestId} from '../../egc-platform/services/operations/src/hub-command-policy.ts';
 import {dispatchOverview} from './dispatch-service.js';
 import {dispatchStorage} from './dispatch-storage.js';
+import {funnelCase,funnelCaseInput,funnelEventsFeed,funnelEventsInput,funnelFeedStorage,walkthroughOutcomesFeed,walkthroughOutcomesInput} from './funnel-feed.js';
 import {listHubUserProfiles} from './hub-session.js';
 import {operationsActorSession,operationsDelegates} from './operations-actor-session.js';
 
@@ -48,7 +49,13 @@ export const HUB_COMMAND_REGISTRY=Object.freeze({
       if(!Array.isArray(roster))throw fail('hub_source_unavailable',503);
       return {staff:roster.map(staffRow),coverage:{complete:true,asOf:now.toISOString()}};
     }}),
+  // FUN-37: the funnel event feed over the server-only funnelEvents ledger (funnel-feed.js).
+  'hub.funnel.events':Object.freeze({...HUB_COMMAND_POLICY['hub.funnel.events'],input:funnelEventsInput,handler:(store,actor,command,now)=>funnelEventsFeed(store,command,now)}),
+  'hub.walkthrough.outcomes':Object.freeze({...HUB_COMMAND_POLICY['hub.walkthrough.outcomes'],input:walkthroughOutcomesInput,handler:(store,actor,command,now)=>walkthroughOutcomesFeed(store,command,now)}),
+  'hub.funnel.case':Object.freeze({...HUB_COMMAND_POLICY['hub.funnel.case'],input:funnelCaseInput,handler:(store,actor,command,now)=>funnelCase(store,command,now)}),
 });
+/** Dispatch storage plus the funnel feed's ledger queries and masked record reads. */
+export const hubCommandStorage=env=>({...dispatchStorage(env),...funnelFeedStorage(env)});
 
 export const isHubCommand=command=>isHubCommandName(command?.command);
 
@@ -118,7 +125,7 @@ async function runWrite(store,entry,bridgeActor,input,at,{command,requestId,atte
   return recover(null);
 }
 
-export async function runHubCommand(env,actor,command,{registry=HUB_COMMAND_REGISTRY,storage=dispatchStorage,profiles=()=>listHubUserProfiles(env),delegates=()=>operationsDelegates(env),now=()=>new Date(),attemptId=()=>crypto.randomUUID()}={}){
+export async function runHubCommand(env,actor,command,{registry=HUB_COMMAND_REGISTRY,storage=hubCommandStorage,profiles=()=>listHubUserProfiles(env),delegates=()=>operationsDelegates(env),now=()=>new Date(),attemptId=()=>crypto.randomUUID()}={}){
   try{
     if(!isObject(actor))throw fail('hub_actor_invalid',403);
     if(!isObject(command))throw fail('hub_command_invalid');

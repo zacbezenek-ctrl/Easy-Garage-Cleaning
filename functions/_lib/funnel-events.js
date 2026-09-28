@@ -14,12 +14,15 @@ export const FUNNEL_EVENTS_COLLECTION = 'funnelEvents';
 // Composite indexes for the §4.1 reads (mirrored in firestore.indexes.json).
 // The (recordedAt, id) feed cursor needs only the automatic single-field index;
 // the FUN-37 feed's types[] filter (type in [...] order by recordedAt) needs
-// (type, recordedAt).
+// (type, recordedAt), and its case read (hub.funnel.case) orders a project's,
+// job's, walkthrough's or contact's events by occurredAt.
 export const FUNNEL_EVENT_INDEXES = Object.freeze([
   Object.freeze(['type', 'denverDate']),
   Object.freeze(['projectId', 'occurredAt']),
   Object.freeze(['jobId', 'occurredAt']),
   Object.freeze(['type', 'recordedAt']),
+  Object.freeze(['walkthroughId', 'occurredAt']),
+  Object.freeze(['highlevelContactId', 'occurredAt']),
 ]);
 
 const MINUTE = 60000;

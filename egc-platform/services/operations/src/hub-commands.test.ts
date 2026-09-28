@@ -2,7 +2,7 @@ import {describe,it,expect,vi} from "vitest";
 import {randomUUID} from "node:crypto";
 import * as z from "zod/v4";
 import {authorize,commandSchema,OperationsError,WRITE_COMMANDS,type Actor,type Command} from "./contracts.js";
-import {HUB_COMMANDS,HUB_COMMAND_POLICY,HUB_REQUEST_ID_PATTERN,HUB_WRITE_COMMANDS,PORTAL_PASSTHROUGH,assertHubContract,hubCommandDenial,hubReadCommand,hubRequestId,hubWriteCommand,isHubRequestId,type HubCommandPolicy} from "./hub-commands.js";
+import {HUB_COMMANDS,HUB_COMMAND_POLICY,HUB_FUNNEL_CASE_CURSOR_PATTERN,HUB_FUNNEL_FEED_CURSOR_PATTERN,HUB_REQUEST_ID_PATTERN,HUB_WRITE_COMMANDS,PORTAL_PASSTHROUGH,assertHubContract,hubCommandDenial,hubReadCommand,hubRequestId,hubWriteCommand,isHubRequestId,type HubCommandPolicy} from "./hub-commands.js";
 import {OperationsService} from "./service.js";
 
 const owner:Actor={id:"zacb",role:"owner",kind:"human",workspace:"egc"};
@@ -91,6 +91,42 @@ describe("hub command registry contract",()=>{
   expect(commandSchema.parse({command:"hub.dispatch.overview",startDate:"2026-09-22",endDate:"2026-09-29"})).toEqual({command:"hub.dispatch.overview",view:"schedule",startDate:"2026-09-22",endDate:"2026-09-29"});
   expect(commandSchema.safeParse({command:"hub.dispatch.overview",view:"job",jobId:"job-a",delegate:"zacb"}).success).toBe(true);
   for(const body of [{command:"hub.dispatch.overview",view:"job"},{command:"hub.dispatch.overview",view:"job",jobId:"secure_vault"},{command:"hub.dispatch.overview",view:"job",jobId:"_egc_lock"},{command:"hub.dispatch.overview",jobId:"job-a"},{command:"hub.dispatch.overview",view:"customers"},{command:"hub.dispatch.overview",startDate:"09/22/2026"},{command:"hub.dispatch.overview",actor:{id:"zacb"}},{command:"hub.staff.roster",includePay:true},{command:"hub.staff.roster",delegate:"Not Valid"},{command:"hub.unknown"}])expect(commandSchema.safeParse(body).success).toBe(false);
+ });
+});
+
+describe("FUN-37 funnel feed commands",()=>{
+ const cursor=`f1~2026-09-22T12:00:00.000Z~fe_${"a".repeat(40)}`,caseCursor=`c1~2026-09-22T12:00:00.123456Z~projectId~project_w1~2026-09-22T11:00:00.000Z~fe_${"b".repeat(40)}~0123456789abcdef`;
+ it("parses the feed, outcome and case reads with their cursors, and nothing else",()=>{
+  expect(commandSchema.parse({command:"hub.funnel.events",sinceCursor:cursor,types:["deal.sold","walkthrough.completed"],limit:200,delegate:"zacb"})).toEqual({command:"hub.funnel.events",sinceCursor:cursor,types:["deal.sold","walkthrough.completed"],limit:200,delegate:"zacb"});
+  expect(commandSchema.parse({command:"hub.funnel.events",sinceCursor:null})).toEqual({command:"hub.funnel.events",sinceCursor:null});
+  expect(commandSchema.parse({command:"hub.walkthrough.outcomes"})).toEqual({command:"hub.walkthrough.outcomes"});
+  for(const key of [{projectId:"project_w1"},{jobId:"job-a"},{highlevelContactId:"contactA"}])expect(commandSchema.safeParse({command:"hub.funnel.case",...key,cursor:caseCursor,limit:10}).success).toBe(true);
+  expect(HUB_FUNNEL_FEED_CURSOR_PATTERN.test(cursor)).toBe(true);expect(HUB_FUNNEL_CASE_CURSOR_PATTERN.test(caseCursor)).toBe(true);
+  for(const body of [
+   {command:"hub.funnel.events",sinceCursor:"f1~2026-09-22T12:00:00Z~fe_x"},{command:"hub.funnel.events",sinceCursor:caseCursor},{command:"hub.funnel.events",types:[]},{command:"hub.funnel.events",types:["deal.sold","deal.sold"]},
+   {command:"hub.funnel.events",types:Array.from({length:31},(_,i)=>`job.t${"a".repeat(i)}`)},{command:"hub.funnel.events",types:["DROP TABLE"]},{command:"hub.funnel.events",limit:0},{command:"hub.funnel.events",limit:201},{command:"hub.funnel.events",offset:100},
+   {command:"hub.funnel.events",requestId:randomUUID()},{command:"hub.funnel.events",includeCosts:true},{command:"hub.walkthrough.outcomes",types:["deal.sold"]},{command:"hub.walkthrough.outcomes",sinceCursor:caseCursor},
+   {command:"hub.funnel.case"},{command:"hub.funnel.case",projectId:"project_w1",jobId:"job-a"},{command:"hub.funnel.case",jobId:"secure_vault"},{command:"hub.funnel.case",projectId:"_egc_lock"},{command:"hub.funnel.case",highlevelContactId:"has space"},
+   {command:"hub.funnel.case",customerId:"c1"},{command:"hub.funnel.case",projectId:"project_w1",cursor}
+  ])expect(commandSchema.safeParse(body).success,JSON.stringify(body)).toBe(false);
+ });
+ it("admits owners, managers and delegated integrations, and refuses sales, crew and undelegated workers",()=>{
+  const worker:Actor={id:"walkthrough-followup-worker",role:"integration",kind:"integration",workspace:"egc"};
+  for(const [name,body] of [["hub.funnel.events",{}],["hub.walkthrough.outcomes",{}],["hub.funnel.case",{projectId:"project_w1"}]] as const){
+   expect(HUB_COMMAND_POLICY[name]).toEqual({write:false,integrationAllowed:true,roles:["owner","manager"],ownerOnly:false,confirmRequired:false,revisioned:false});
+   expect(PORTAL_PASSTHROUGH.has(name)).toBe(true);expect(WRITE_COMMANDS.has(name)).toBe(false);
+   for(const actor of [owner,manager])expect(()=>authorize(actor,commandSchema.parse({command:name,...body}),"egc")).not.toThrow();
+   denied(()=>authorize(sales,commandSchema.parse({command:name,...body}),"egc"),"hub_role_forbidden");
+   denied(()=>authorize(worker,commandSchema.parse({command:name,...body}),"egc"),"hub_delegate_required");
+   expect(()=>authorize(worker,commandSchema.parse({command:name,...body,delegate:"zacb"}),"egc")).not.toThrow();
+   for(const role of ["crew","crew_lead"] as const)denied(()=>authorize({...owner,role},commandSchema.parse({command:name,...body}),"egc"),"role_forbidden");
+  }
+ });
+ it("forwards a feed read unchanged to the Hub without touching PostgreSQL",async()=>{
+  const portalRead=vi.fn(async()=>({ok:true,authority:"employee_hub",events:[],nextCursor:cursor}));
+  const service=new OperationsService(new Proxy({},{get(){throw new Error("database must not be used");}}) as never,{workspace:"egc",portalRead});
+  await expect(service.execute(manager,{command:"hub.funnel.events",sinceCursor:cursor,types:["deal.sold"]},randomUUID())).resolves.toMatchObject({nextCursor:cursor});
+  expect(portalRead).toHaveBeenCalledWith(manager,{command:"hub.funnel.events",sinceCursor:cursor,types:["deal.sold"]});
  });
 });
 

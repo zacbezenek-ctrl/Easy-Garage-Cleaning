@@ -30,8 +30,21 @@ export const HUB_ROLES:readonly HubRole[] = Object.freeze(["owner","manager","sa
 const policy = (value:HubCommandPolicy):HubCommandPolicy => Object.freeze({...value,roles:Object.freeze([...value.roles])});
 export const HUB_COMMAND_POLICY = Object.freeze({
   "hub.dispatch.overview": policy({write:false,integrationAllowed:true,roles:["owner","manager"],ownerOnly:false,confirmRequired:false,revisioned:false}),
-  "hub.staff.roster": policy({write:false,integrationAllowed:true,roles:["owner","manager","sales"],ownerOnly:false,confirmRequired:false,revisioned:false})
+  "hub.staff.roster": policy({write:false,integrationAllowed:true,roles:["owner","manager","sales"],ownerOnly:false,confirmRequired:false,revisioned:false}),
+  // FUN-37: the funnel event feed (functions/_lib/funnel-feed.js) for owners, managers and their delegated workers.
+  "hub.funnel.events": policy({write:false,integrationAllowed:true,roles:["owner","manager"],ownerOnly:false,confirmRequired:false,revisioned:false}),
+  "hub.walkthrough.outcomes": policy({write:false,integrationAllowed:true,roles:["owner","manager"],ownerOnly:false,confirmRequired:false,revisioned:false}),
+  "hub.funnel.case": policy({write:false,integrationAllowed:true,roles:["owner","manager"],ownerOnly:false,confirmRequired:false,revisioned:false})
 });
+/** FUN-37 wire formats, read by the API schema and the Hub feed alike. A feed cursor is the
+ * (recordedAt, id) position of the last event delivered; a case cursor pins the Firestore
+ * readTime, the resolved case query, the (occurredAt, id) position and a digest of the key. */
+export const HUB_FUNNEL_FEED_CURSOR_PATTERN = /^f1~(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z)~(fe_[0-9a-f]{40})$/;
+export const HUB_FUNNEL_CASE_CURSOR_PATTERN = /^c1~(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z)~(projectId|jobId|walkthroughId|highlevelContactId)~([A-Za-z0-9_-]{1,180})~(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z)~(fe_[0-9a-f]{40})~([0-9a-f]{16})$/;
+export const HUB_FUNNEL_EVENT_TYPE_PATTERN = /^[a-z][a-z_]{0,39}\.[a-z][a-z_]{0,39}$/;
+export const HUB_FUNNEL_PAGE_LIMIT = 200;
+/** Firestore allows at most 30 values in one `in` filter. */
+export const HUB_FUNNEL_MAX_TYPES = 30;
 export type HubCommandName = keyof typeof HUB_COMMAND_POLICY;
 export const isHubCommandName = (name:unknown):name is string => typeof name === "string" && name.startsWith("hub.");
 export function hubCommandPolicy(name:unknown, policies:Readonly<Record<string,HubCommandPolicy>> = HUB_COMMAND_POLICY):HubCommandPolicy|null {

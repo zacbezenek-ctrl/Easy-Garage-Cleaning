@@ -31,6 +31,22 @@
         { "fieldPath": "type", "order": "ASCENDING" },
         { "fieldPath": "recordedAt", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "funnelEvents",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "walkthroughId", "order": "ASCENDING" },
+        { "fieldPath": "occurredAt", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "funnelEvents",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "highlevelContactId", "order": "ASCENDING" },
+        { "fieldPath": "occurredAt", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

@@ -299,6 +299,11 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   owner-only); the walkthrough caches tables per user/version and fails closed offline. The six catalog services bundle
   as a generated plain module (checked on Wrangler 3 and 4 in CI). Managers stop seeing others' pay in /api/employee-hub
   (`EGC_STAFF_PAY_OWNER_ONLY`). Gaps: /api/timesheets and payroll CSV still show pay; pay-field edits need pay.manage later.
+- **FUN-37** Bridge funnel event feed: read-only `hub.funnel.events` (keyset cursor over (recordedAt, id) with a 5-minute
+  settle window), `hub.walkthrough.outcomes` (Finish/No-show/handoff sale with the visit's reason and occurrence;
+  unprovable handoff sales go to `unverified`) and `hub.funnel.case` (a project's events pinned to one readTime),
+  registered in HUB_COMMAND_POLICY for owners, managers and owner/manager delegates. Gaps: no platform consumer yet
+  (FUN-09/14/31); the new composite indexes must be deployed; recurring horizon writes share one clock (follow-up task).
 
 ## In progress
 
@@ -370,6 +375,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | P3-04 | Follow-up owner and due-time policy (phone/sales owner) | merged (063369d) |
 | OVERDUE | Overdue follow-ups widget on Hub home and MCP egc.whats_overdue | merged (33334e7) |
 | PRICE-SCRUB | Serve internal prices, pay and targets by role instead of shipping them in browser code | merged (36b1803) |
+| FUN-37 | Bridge funnel event feed: hub.funnel.events, hub.walkthrough.outcomes and hub.funnel.case (read-only, owner/manager and delegates) | merged (d33e15a) |
 
 ## Next
 
