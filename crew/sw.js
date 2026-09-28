@@ -7,7 +7,7 @@ const CACHE_PREFIX = 'egc-crew-shell-';
 const CACHE = `${CACHE_PREFIX}${VERSION}`;
 const CONFIG = '/crew/sw-config.json';
 const PAGES = { '/crew/job.html': '/crew/job.html', '/crew/job': '/crew/job.html', '/crew/offline.html': '/crew/offline.html', '/crew/offline': '/crew/offline.html' };
-const ASSETS = ['/crew/job.css?v=20260927pwa', '/crew/job.js?v=20260927pwa', '/crew/field-outbox.js?v=20260927pwa', '/crew/field-expenses.css?v=20260927exp', '/crew/field-expenses.js?v=20260927exp2', '/crew/job-photo-sharing.css?v=20260927photo', '/crew/job-photo-sharing.js?v=20260928photo', '/crew/manifest.webmanifest'];
+const ASSETS = ['/crew/job.css?v=20260927pwa', '/crew/job.js?v=20260927pwa', '/crew/field-outbox.js?v=20260927pwa', '/crew/field-expenses.css?v=20260928fun19', '/crew/field-expenses.js?v=20260928fun19', '/crew/job-photo-sharing.css?v=20260927photo', '/crew/job-photo-sharing.js?v=20260928photo', '/crew/manifest.webmanifest'];
 const ASSET_PATHS = new Set(ASSETS.map(asset => asset.split('?')[0]));
 // With EGC_STAFF_PAGE_GATE=on the edge refuses the job page and its files without a Hub session (staff-paths.js). Every
 // install needs this public part; the rest is cached when the install, or a later signed-in load, receives it.

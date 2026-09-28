@@ -151,6 +151,8 @@ jobs:
         run: python tests/browser/test_hub_mobile_ui.py
       - name: Field job-cost capture on a phone
         run: python tests/browser/test_field_expenses_ui.py
+      - name: Owner stocked item costs screen, manager read-only view and phone layout
+        run: python tests/browser/test_standard_costs_ui.py
       - name: Crew pre-job customer texts are idempotent and never re-sent
         run: python tests/browser/test_prejob_sms_ui.py
       - name: Server-rendered estimate, invoice and receipt documents on a phone

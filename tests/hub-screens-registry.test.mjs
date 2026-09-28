@@ -167,6 +167,8 @@ test('a screen whose files fail to load shows unavailable with Retry, never an e
 
 test('registration rejects ambiguous access, unsafe asset paths and markup in labels', () => {
   const page = hubPage(), registry = page.context.EGCHubScreens, base = fixtureScreen().spec;
+  // Screens shipped in MANIFEST (FUN-19 added stocked_costs) register first.
+  const shipped = registry.list().map(entry => entry.id);
   registry.register(base);
   const invalid = [
     { ...base },
@@ -182,7 +184,7 @@ test('registration rejects ambiguous access, unsafe asset paths and markup in la
     { ...base, id: 'no_mount', mount: undefined },
   ];
   for (const spec of invalid) assert.throws(() => registry.register(spec), /Hub screen registry/, spec.id);
-  assert.deepEqual([...registry.list().map(entry => entry.id)], ['fixture_ledger']);
+  assert.deepEqual([...registry.list().map(entry => entry.id)], [...shipped, 'fixture_ledger']);
   assert.ok(Object.isFrozen(registry.get('fixture_ledger')));
 });
 
@@ -232,7 +234,12 @@ test("labels are plain text: '&' and quotes are accepted and escaped by the shel
 
 test('one invalid MANIFEST line is skipped with a console warning and every other screen still registers', () => {
   const source = readFileSync(new URL('../employee-hub-screens.js', import.meta.url), 'utf8');
-  assert.match(source, /const MANIFEST=\[\n\];/, 'the shipped manifest is empty until a screen lands');
+  // Screens have landed (FUN-19: stocked_costs), so the fixtures are appended after the shipped lines, and
+  // every shipped line must itself register cleanly.
+  const manifest = /const MANIFEST=\[\n((?:\{[^\n]*\},\n)*)\];/.exec(source);
+  assert.ok(manifest, 'MANIFEST keeps one {...}, line per screen');
+  const shipped = [...manifest[1].matchAll(/^\{id:'([a-z][a-z0-9_]+)'/gm)].map(match => match[1]);
+  assert.ok(shipped.includes('stocked_costs'));
   const lines = [
     "{id:'fixture_first',group:'SYSTEM',label:'First & foremost',capability:'business',mount(){}}",
     "{id:'Bad Id',group:'SYSTEM',label:'Broken',capability:'business',mount(){}}",
@@ -244,8 +251,8 @@ test('one invalid MANIFEST line is skipped with a console warning and every othe
   const warnings = [], errors = [], listeners = {};
   const context = { document: createDocument(), console: { warn: (...args) => warnings.push(args.join(' ')), error: (...args) => errors.push(args), log() {} }, addEventListener: (name, listener) => { (listeners[name] ||= []).push(listener); }, Promise, Map, Set, Error, Object, String, Array };
   context.window = context;
-  vm.runInNewContext(source.replace('const MANIFEST=[\n];', `const MANIFEST=[\n${lines.join(',\n')}\n];`), context, { filename: 'employee-hub-screens.js' });
-  assert.deepEqual([...context.EGCHubScreens.list().map(entry => entry.id)], ['fixture_first', 'fixture_last']);
+  vm.runInNewContext(source.replace(manifest[0], `const MANIFEST=[\n${manifest[1]}${lines.join(',\n')}\n];`), context, { filename: 'employee-hub-screens.js' });
+  assert.deepEqual([...context.EGCHubScreens.list().map(entry => entry.id)], [...shipped, 'fixture_first', 'fixture_last']);
   assert.equal(context.EGCHubScreens.get('fixture_first').label, 'First & foremost');
   assert.equal(warnings.length, 4, warnings.join('\n'));
   assert.ok(warnings.every(line => /Hub screen registry skipped a MANIFEST entry: Hub screen registry: /.test(line)), warnings.join('\n'));

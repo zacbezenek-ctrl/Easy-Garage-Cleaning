@@ -86,6 +86,10 @@ test('actual Firestore rules isolate canonical operations from crew SDK access',
     await t.test('customer portal revocation receipts remain server-only even for business SDK sessions',async()=>{
       for(const db of [publicDb,crew,manager]){const path='customerPortalOperations/receipt';await assertFails(db.doc(path).get());await assertFails(db.doc(path).set({linkVersion:0}));await assertFails(db.doc(path).delete());}
     });
+    await t.test('job-cost closeout attestations and stocked-item standard costs remain server-only even for business SDK sessions',async()=>{
+      for(const db of [publicDb,crew,lead,manager]) for(const path of ['jobs/assigned/fieldExpenseCloseout/material','jobs/assigned/fieldExpenses/entry','catalogStandardCosts/current','catalogStandardCostOperations/receipt']){await assertFails(db.doc(path).get());await assertFails(db.doc(path).set({attestation:'none',standardUnitCostCents:1}));await assertFails(db.doc(path).delete());}
+      for(const db of [crew,manager]){await assertFails(db.collection('catalogStandardCosts').get());await assertFails(db.collection('jobs/assigned/fieldExpenseCloseout').get());}
+    });
     await t.test('portal document settings (insurance certificate pointer) remain server-only even for business SDK sessions',async()=>{
       for(const db of [publicDb,crew,lead,manager]){const path='portal_settings/documents';await assertFails(db.doc(path).get());await assertFails(db.collection('portal_settings').get());await assertFails(db.doc(path).set({insuranceCertificate:{driveFileId:'attacker-file-0001',expiresOn:'2099-12-31'}}));await assertFails(db.doc(path).update({'insuranceCertificate.expiresOn':'2099-12-31'}));await assertFails(db.doc(path).delete());await assertFails(db.doc('portal_settings/new').set({insuranceCertificate:null}));}
     });

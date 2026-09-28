@@ -10,6 +10,7 @@ const KIT={js:'employee-ui-kit.js',css:'employee-ui-kit.css',v:'20260927hubreg'}
 // The screen file defines window.EGCName={mount(host,ctx), unmount(), canLeave(), refresh()}; ctx is
 // {identity, role, capabilities, hubFetch, toast, askAction, go, screen}. The kit (window.EGCHubKit) loads first.
 const MANIFEST=[
+{id:'stocked_costs',group:'SYSTEM',label:'Stocked item costs',capability:'business',iconPath:'M4 7l8-4 8 4v10l-8 4-8-4zM4 7l8 4 8-4M12 11v10',load:{js:'employee-standard-costs.js',css:'employee-standard-costs.css',v:'20260928fun19'},module:'EGCStandardCosts'},
 ];
 const ID=/^[a-z][a-z0-9_]{1,47}$/,CAPABILITY=/^[a-z][a-z0-9_]{1,40}$/,MODULE=/^EGC[A-Za-z0-9]{1,40}$/,VERSION=/^[A-Za-z0-9._-]{1,40}$/,ICON=/^[MmLlHhVvCcSsQqTtAaZz0-9 .,-]{1,800}$/;
 const ASSET=/^\/?(?:[A-Za-z0-9_-][A-Za-z0-9._-]*\/)*[A-Za-z0-9_-][A-Za-z0-9._-]*\.(?:js|css)$/,ASSET_TIMEOUT=30000;

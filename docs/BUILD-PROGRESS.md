@@ -245,6 +245,10 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   (employee or saved-crew rows, 6 AM-8 PM, unavailable/blocked shading, travel gaps) through an `EGCDispatch.registerView`
   hook. Desktop drag opens a confirm; phones tap-assign from a bottom sheet; both save via schedule.update with
   expectedRevision and the same retry recovery. Client only, no flag. Gap: lane footnote keeps the drag hint on phones.
+- **FUN-19** Job costs closeout: new kinds (subcontractor, fuel, damage claim citing damage photos, other, recovery
+  income), who-paid on every cost, shared dump loads split in exact cents, per-kind "None" attestation, a manager
+  job-costing view where unknown stays null, and owner-set standard costs for stocked catalog items (Hub System screen).
+  `FIELD_EXPENSE_CLOSEOUT_REQUIRED` (off) gates completion. Crew sw VERSION bump left for FIELD-MULTIDAY's cache-bust.
 
 ## In progress
 
@@ -304,6 +308,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | P0-4 | Firestore 400 FAILED_PRECONDITION on a stale updateTime is a revision conflict (409) across the stores (shared firestore-errors.js) | merged (d410b88) |
 | BRIDGE-AUTHZ | SEC-04 bridge command policy table (crew refused, sales read-only, audited writes, confirm flag off) | merged (e4309f5) |
 | DISPATCH-CAL | Dispatch Month and Lanes views: drag to reschedule on desktop, tap-assign on phones (client only) | merged (f3f74c8) |
+| FUN-19 | Closeout expense attestation, cost kinds, payer, shared loads and stocked-item standard costs | merged (84f8d37) |
 
 ## Next
 

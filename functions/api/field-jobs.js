@@ -7,7 +7,7 @@ import { createFieldStore } from '../_lib/field-execution-store.js';
 import { createFieldPhotoClient, decodeFieldPhoto, fieldPhotosConfigured, verifyFieldPhotoMetadata } from '../_lib/field-execution-photos.js';
 import { syncFieldCompletion } from '../_lib/field-execution-sync.js';
 import { fieldJobTime } from '../_lib/field-execution-time.js';
-import { fieldExpensesEnabled } from '../_lib/field-expenses.js';
+import { fieldExpenseCloseoutMissing, fieldExpensesEnabled, requireFieldExpenseCloseout } from '../_lib/field-expenses.js';
 
 const reply = (status, body) => Response.json(body, { status, headers: { 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' } });
 const mutationOriginAllowed = request => {
@@ -55,8 +55,11 @@ async function displayContext(ctx, env, jobs) {
 async function detail(ctx, env, jobId, cursor = '') {
   const job = await authorizedJob(ctx, jobId);
   const [history, display] = await Promise.all([ctx.store.events(jobId, cursor), displayContext(ctx, env, [job])]);
+  const projection = fieldJobProjection(job, history.events, display(job));
+  // With FIELD_EXPENSE_CLOSEOUT_REQUIRED on, an open job lists its missing cost closeout (no amounts).
+  if (projection.canEdit) projection.completionMissing.push(...await fieldExpenseCloseoutMissing(env, job.id, { safe: true }));
   // features lets the job page skip optional modules (and their API calls) that are switched off.
-  return { job: fieldJobProjection(job, history.events, display(job)), historyCursor: history.cursor, photosAvailable: fieldPhotosConfigured(env), features: { jobCosts: fieldExpensesEnabled(env) }, timezone: 'America/Denver' };
+  return { job: projection, historyCursor: history.cursor, photosAvailable: fieldPhotosConfigured(env), features: { jobCosts: fieldExpensesEnabled(env) }, timezone: 'America/Denver' };
 }
 
 function errorResponse(error) {
@@ -166,6 +169,7 @@ export async function onRequestPost(handlerContext) {
     }
     else {
       if (receipt) throw fieldFailure('This action is pending verification. Retry shortly.', 409, 'FIELD_ACTION_PENDING');
+      if (input.action === 'complete') await requireFieldExpenseCloseout(env, job, input);
       const result = fieldCommand(job, { ...ctx.session, manager: ctx.manager }, input);
       await ctx.store.commit(job, result.patch, { ...result.event, fingerprint });
       if (input.action === 'complete' && typeof handlerContext.waitUntil === 'function') {

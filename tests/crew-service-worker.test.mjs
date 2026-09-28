@@ -89,7 +89,8 @@ test('install caches only the static job shell under a versioned cache and activ
   await sw.dispatch('install');
   assert.equal(sw.state.skipped, 1);
   const shell = (await sw.cached()).filter(([name]) => name === SHELL_CACHE).map(([, path]) => path).sort();
-  assert.deepEqual(shell, ['/crew/field-expenses.css?v=20260927exp', '/crew/field-expenses.js?v=20260927exp2', '/crew/field-outbox.js?v=20260927pwa', '/crew/job-photo-sharing.css?v=20260927photo', '/crew/job-photo-sharing.js?v=20260928photo', '/crew/job.css?v=20260927pwa', '/crew/job.html', '/crew/job.js?v=20260927pwa', '/crew/manifest.webmanifest', '/crew/offline.html']);
+  // FUN-19 bumped the Job costs module (closeout, kinds, payer, shared loads) to ?v=20260928fun19.
+  assert.deepEqual(shell, ['/crew/field-expenses.css?v=20260928fun19', '/crew/field-expenses.js?v=20260928fun19', '/crew/field-outbox.js?v=20260927pwa', '/crew/job-photo-sharing.css?v=20260927photo', '/crew/job-photo-sharing.js?v=20260928photo', '/crew/job.css?v=20260927pwa', '/crew/job.html', '/crew/job.js?v=20260927pwa', '/crew/manifest.webmanifest', '/crew/offline.html']);
   await sw.dispatch('activate');
   assert.deepEqual([...sw.stores.keys()].sort(), [SHELL_CACHE, 'unrelated-cache'], 'older shell versions are removed; other caches are left alone');
   assert.equal(sw.state.claimed, 1); assert.equal(sw.state.unregistered, 0);
@@ -245,7 +246,7 @@ function gatedSite({ env = STAFF_ENV, accept = '*/*' } = {}) {
   return phone;
 }
 const PUBLIC_KEYS = ['/crew/field-outbox.js?v=20260927pwa', '/crew/manifest.webmanifest', '/crew/offline.html'];
-const STAFF_KEYS = ['/crew/field-expenses.css?v=20260927exp', '/crew/field-expenses.js?v=20260927exp2', '/crew/job-photo-sharing.css?v=20260927photo', '/crew/job-photo-sharing.js?v=20260928photo', '/crew/job.css?v=20260927pwa', '/crew/job.html', '/crew/job.js?v=20260927pwa'];
+const STAFF_KEYS = ['/crew/field-expenses.css?v=20260928fun19', '/crew/field-expenses.js?v=20260928fun19', '/crew/job-photo-sharing.css?v=20260927photo', '/crew/job-photo-sharing.js?v=20260928photo', '/crew/job.css?v=20260927pwa', '/crew/job.html', '/crew/job.js?v=20260927pwa'];
 const shellKeys = async sw => (await sw.cached()).filter(([name]) => name === SHELL_CACHE).map(([, path]) => path).sort();
 
 test('staff gate on: a signed-out install caches the public shell, refusals are never stored, and signing in fills in the job shell', async t => {

@@ -138,7 +138,8 @@ test('negative, zero, fractional, string and huge amounts and invalid details ar
     assert.equal(response.status, 400, String(amountCents)); assert.equal((await response.json()).code, 'FIELD_EXPENSE_AMOUNT_INVALID');
   }
   assert.equal((await client.post('Crew.One', `{"jobId":"job-1","requestId":"${uuid()}","kind":"material","amountCents":1e400,"vendor":"Synthetic"}`)).status, 400, 'JSON overflow to Infinity');
-  for (const [overrides, code] of [[{ kind: 'fuel' }, 'FIELD_EXPENSE_KIND_INVALID'], [{ vendor: ' ' }, 'FIELD_EXPENSE_VENDOR_INVALID'], [{ vendor: 'x'.repeat(121) }, 'FIELD_EXPENSE_VENDOR_INVALID'], [{ kind: 'other', note: '' }, 'FIELD_EXPENSE_NOTE_INVALID'], [{ note: 'x'.repeat(1001) }, 'FIELD_EXPENSE_NOTE_INVALID']]) {
+  // FUN-19 made fuel a supported kind, so an unsupported kind is now e.g. lunch.
+  for (const [overrides, code] of [[{ kind: 'lunch' }, 'FIELD_EXPENSE_KIND_INVALID'], [{ kind: 'fuel', payer: 'petty_cash' }, 'FIELD_EXPENSE_PAYER_INVALID'], [{ vendor: ' ' }, 'FIELD_EXPENSE_VENDOR_INVALID'], [{ vendor: 'x'.repeat(121) }, 'FIELD_EXPENSE_VENDOR_INVALID'], [{ kind: 'other', note: '' }, 'FIELD_EXPENSE_NOTE_INVALID'], [{ note: 'x'.repeat(1001) }, 'FIELD_EXPENSE_NOTE_INVALID']]) {
     assert.equal((await (await client.post('Crew.One', entry(overrides))).json()).code, code);
   }
   assert.equal((await client.post('Crew.One', { ...entry(), jobTotal: 1 })).status, 400, 'unknown keys are refused');
@@ -164,7 +165,7 @@ test('crew see only their own amounts; unassigned employees and customers-facing
   assert.equal((await client.get('nobody', '?jobId=job-1')).status, 401);
   const manager = await (await client.get('ZacB', '?jobId=job-1')).json();
   assert.equal(manager.scope, 'job'); assert.equal(manager.entries.length, 2); assert.equal(manager.totals.totalCents, 78623);
-  assert.deepEqual(manager.totals.byKind, { material: 77123, dump_fee: 1500, other: 0 });
+  assert.deepEqual(manager.totals.byKind, { material: 77123, dump_fee: 1500, subcontractor: 0, fuel: 0, damage_claim: 0, other: 0, recovery_income: 0 });
   assert.deepEqual(manager.entries.map(item => item.recordedBy.id).sort(), ['Crew.One', 'Crew.Two']);
   fixture.put('jobs/job-1', { ...fixture.get('jobs/job-1'), assignedCrew: ['Crew.Two'] });
   assert.equal((await client.get('Crew.One', '?jobId=job-1')).status, 403, 'a reassigned recorder loses access to the job costs');
@@ -314,11 +315,12 @@ test('sumFieldExpenses totals verified, non-void costs and flags unreadable rows
   const row = (overrides = {}) => { const id = uuid(); fixture.put(`jobs/job-1/fieldExpenses/${id}`, { id, jobId: 'forged-job', kind: 'material', amountCents: 1000, vendor: 'Synthetic', state: 'applied', status: 'recorded', actorId: 'Crew.One', createdAt: NOW, ...overrides }); };
   row(); row({ kind: 'dump_fee', amountCents: 6500, receipt: { fileId: 'file-x', verified: true } }); row({ status: 'void', amountCents: 99999 }); row({ state: 'pending', amountCents: 4000 });
   let summary = await sumFieldExpenses(env, 'job-1');
-  assert.deepEqual(summary, { jobId: 'job-1', currency: 'USD', totalCents: 7500, byKind: { material: 1000, dump_fee: 6500, other: 0 }, count: 2, voidCount: 1, pendingCount: 1, invalidCount: 0, receiptCount: 1, complete: false });
+  // FUN-19 widened the summary: every kind, net of recovery income, and costs by payer (legacy rows are unspecified).
+  assert.deepEqual(summary, { jobId: 'job-1', currency: 'USD', totalCents: 7500, costCents: 7500, recoveryIncomeCents: 0, byKind: { material: 1000, dump_fee: 6500, subcontractor: 0, fuel: 0, damage_claim: 0, other: 0, recovery_income: 0 }, byPayer: { company_card: 0, crew_reimbursable: 0, account_billed: 0, unspecified: 7500 }, count: 2, voidCount: 1, pendingCount: 1, invalidCount: 0, receiptCount: 1, sharedCount: 0, complete: false });
   row({ amountCents: '12.50' });
   summary = await sumFieldExpenses(env, 'job-1'); assert.equal(summary.invalidCount, 1); assert.equal(summary.totalCents, 7500);
   const listed = await createFieldExpenseStore(env).listExpenses('job-1'); assert.ok(listed.every(item => item.jobId === 'job-1'), 'the storage path, not stored data, identifies the job');
-  assert.deepEqual(summarizeFieldExpenses([]), { currency: 'USD', totalCents: 0, byKind: { material: 0, dump_fee: 0, other: 0 }, count: 0, voidCount: 0, pendingCount: 0, invalidCount: 0, receiptCount: 0, complete: true });
+  assert.deepEqual(summarizeFieldExpenses([]), { currency: 'USD', totalCents: 0, costCents: 0, recoveryIncomeCents: 0, byKind: { material: 0, dump_fee: 0, subcontractor: 0, fuel: 0, damage_claim: 0, other: 0, recovery_income: 0 }, byPayer: { company_card: 0, crew_reimbursable: 0, account_billed: 0, unspecified: 0 }, count: 0, voidCount: 0, pendingCount: 0, invalidCount: 0, receiptCount: 0, sharedCount: 0, complete: true });
   await assert.rejects(sumFieldExpenses(env, '_egc_schedule_lock_2026-09-22'), error => error.status === 400);
 });
 
@@ -547,5 +549,5 @@ test('the job page payload reports whether job costs are on, without any cost da
 test('sumFieldExpenses takes env first and accepts an injected store', async () => {
   await assert.rejects(sumFieldExpenses('job-1'), TypeError, 'the spec shorthand sumFieldExpenses(jobId) fails loudly');
   const store = { listExpenses: async jobId => [{ id: uuid(), jobId, kind: 'dump_fee', amountCents: 2550, state: 'applied', status: 'recorded' }] };
-  assert.deepEqual(await sumFieldExpenses({}, 'job-1', { store }), { jobId: 'job-1', currency: 'USD', totalCents: 2550, byKind: { material: 0, dump_fee: 2550, other: 0 }, count: 1, voidCount: 0, pendingCount: 0, invalidCount: 0, receiptCount: 0, complete: true });
+  assert.deepEqual(await sumFieldExpenses({}, 'job-1', { store }), { jobId: 'job-1', currency: 'USD', totalCents: 2550, costCents: 2550, recoveryIncomeCents: 0, byKind: { material: 0, dump_fee: 2550, subcontractor: 0, fuel: 0, damage_claim: 0, other: 0, recovery_income: 0 }, byPayer: { company_card: 0, crew_reimbursable: 0, account_billed: 0, unspecified: 2550 }, count: 1, voidCount: 0, pendingCount: 0, invalidCount: 0, receiptCount: 0, sharedCount: 0, complete: true });
 });

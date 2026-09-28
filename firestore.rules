@@ -389,6 +389,15 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // Owner-entered standard costs for stocked catalog items and their save
+    // receipts. Managers read and the owner writes them via /api/standard-costs.
+    match /catalogStandardCosts/{documentId} {
+      allow read, write: if false;
+    }
+    match /catalogStandardCostOperations/{documentId} {
+      allow read, write: if false;
+    }
+
     // Hub bridge command receipts hold the audited before/after and the
     // idempotency fingerprint for every registry write. Server-only.
     match /hub_command_operations/{documentId} {

@@ -12,7 +12,7 @@ OUT = ROOT / 'test-results' / 'staff-gate'
 MANAGER = ('tylerg', 'synthetic-manager-password')
 CREW = ('synthetic.crew', 'synthetic-crew-password')
 PUBLIC_SHELL = ['/crew/field-outbox.js?v=20260927pwa', '/crew/manifest.webmanifest', '/crew/offline.html']
-STAFF_SHELL = ['/crew/field-expenses.css?v=20260927exp', '/crew/field-expenses.js?v=20260927exp2', '/crew/job-photo-sharing.css?v=20260927photo', '/crew/job-photo-sharing.js?v=20260928photo', '/crew/job.css?v=20260927pwa', '/crew/job.html', '/crew/job.js?v=20260927pwa']
+STAFF_SHELL = ['/crew/field-expenses.css?v=20260928fun19', '/crew/field-expenses.js?v=20260928fun19', '/crew/job-photo-sharing.css?v=20260927photo', '/crew/job-photo-sharing.js?v=20260928photo', '/crew/job.css?v=20260927pwa', '/crew/job.html', '/crew/job.js?v=20260927pwa']
 # Registers the crew worker (the job page's own registration is reused), waits until it is activated, and lists its shell cache.
 WORKER_SHELL = """async () => {
   const registration = await navigator.serviceWorker.register('/crew/sw.js', { scope: '/crew/' });

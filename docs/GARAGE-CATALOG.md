@@ -279,3 +279,11 @@ To re-check an item:
 6. Run `node --test tests/catalog.test.mjs tests/catalog-pricing.test.mjs`. `validateCatalog` rejects missing sources, dates in the future, wrong coverage claims, image links and unsafe crew settings, and names the exact failing field.
 
 The next units add a Firestore-published catalog (`catalogVersions/{version}`, falling back to this seed file) and an owner screen for these edits.
+
+## Stocked item standard costs (cost, not price)
+
+Retail prices in this catalog are what a customer would pay a store. They are **never** used as EGC's cost. For items EGC keeps in stock (shelving, totes, racks), the owner enters a `standardUnitCostCents` per catalog `priceUnit` on the Hub screen **System → Stocked item costs** (owner only; managers can read it). It is stored server-side in `catalogStandardCosts/current`, with a receipt per save in `catalogStandardCostOperations/{requestId}` and an owner-visibility `hub_audit` entry in the same commit.
+
+- Only active catalog products can take a cost. The list is generated from this file into `functions/_data/catalog-stock-items.js` (`node scripts/catalog-stock-items.mjs --write` after a catalog change; `tests/standard-costs.test.mjs` fails while it is stale). It carries no prices.
+- An item without an entered cost is **unknown** (`null`), never $0 and never its retail price. Clearing a cost makes it unknown again.
+- Job costing may use a standard cost only as a **provisional** cost for a stocked item used on a job, until a real field expense replaces it (`standardCostLine(await readStandardCosts(env), itemId, quantity)`).
