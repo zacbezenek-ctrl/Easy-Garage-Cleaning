@@ -766,7 +766,13 @@ h1.hero-title .marker { background: linear-gradient(180deg, transparent 62%, rgb
     const zip = (document.getElementById('zip').value || '').trim();
     const inServiceArea = SERVICE_ZIPS.has(zip);
 
-    if (typeof fbq !== 'undefined') fbq('track', 'Lead', { service_area: inServiceArea ? 'in_area' : 'out_of_area' });
+    // FUN-13: this handler cancels the native submit, so fb-capture.js never sees it; hand the lead to the Hub relay here.
+    // Its inquiry id is the Meta Lead eventID, so a server-side CAPI Lead on the same pixel deduplicates against this one.
+    const inquiryId = window.EGCLeadCapture ? window.EGCLeadCapture.relay(form, { items: inServiceArea ? 'Ads landing lead (in service area)' : 'Ads landing lead (OUT OF SERVICE AREA)' }) : false;
+    if (typeof fbq !== 'undefined') {
+      if (inquiryId) fbq('track', 'Lead', { service_area: inServiceArea ? 'in_area' : 'out_of_area' }, { eventID: inquiryId });
+      else fbq('track', 'Lead', { service_area: inServiceArea ? 'in_area' : 'out_of_area' });
+    }
     if (typeof gtag !== 'undefined') gtag('event', 'generate_lead', { 'event_category': 'form', 'event_label': inServiceArea ? 'in_area' : 'out_of_area', 'zip': zip });
 
     submitBtn.disabled = true;

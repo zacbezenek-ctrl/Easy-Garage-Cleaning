@@ -535,5 +535,42 @@ test('actual Firestore rules isolate canonical operations from crew SDK access',
       assert.equal((await store.read('jobs','fun-job')).status,'cancelled','the business change is rejected with its duplicate event');
       for(const db of [publicDb,crew,lead,manager,partner]){const ref=db.doc('funnelEvents/'+write.id);await assertFails(ref.get());await assertFails(ref.set({type:'deal.sold'}));await assertFails(ref.update({type:'deal.sold'}));await assertFails(ref.delete());await assertFails(db.collection('funnelEvents').get());await assertFails(db.doc('funnelEvents/fe_forged').set({type:'deal.sold',data:{amountCents:1}}));}
     });
+    await t.test('FUN-13 web lead receipts: one create-only commit with the event, the retryAt due query and the claim CAS hold on actual Firestore, and no SDK session reaches them',async()=>{
+      const {webLeadStorage,receiveWebLead,retryWebLeadReceipts,webLeadMeta,WEB_LEAD_RECEIPTS}=await import('../functions/_lib/web-lead-intake.js');
+      const store=webLeadStorage({},async(_env,url,options={})=>{
+        const target=new URL(url);target.protocol='http:';target.host=host;target.pathname=target.pathname.replace('/projects/egcw-1ec83/','/projects/'+projectId+'/');
+        return fetch(target,{...options,...(options.body ? {body:options.body.replaceAll('projects/egcw-1ec83/','projects/'+projectId+'/')} : {}),headers:{...options.headers,Authorization:'Bearer owner'}});
+      });
+      const env={HUB_SESSION_SECRET:'synthetic-web-lead-emulator-secret-0123456789'},now='2099-09-22T18:00:00.000Z',inquiryId=crypto.randomUUID();
+      const flat={name:'Synthetic Emulator',phone:'(970) 555-0120',page_url:'https://easygaragecleaning.com/book',source:'Website',sms_consent:''};
+      const webLead={name:flat.name,phone:flat.phone,flat},meta=webLeadMeta(flat,webLead);
+      const failing=await receiveWebLead({store,env,now,sync:async()=>{throw Object.assign(new Error('synthetic'),{code:'highlevel_unavailable'});},relay:async()=>assert.fail('no relay after a failed sync')},{lead:webLead,inquiryId,clientInquiryId:true,meta,held:null});
+      assert.equal(failing.status,202);
+      const saved=await store.read(WEB_LEAD_RECEIPTS,inquiryId);
+      assert.deepEqual([saved.ghlSyncStatus,saved.attempts,saved.retryAt,saved.lastError],['failed',1,'2099-09-22T18:05:00.000Z','highlevel_unavailable']);
+      assert.equal((await store.read('funnelEvents',saved.funnelEventId)).type,'inquiry.received');
+      const replay=await receiveWebLead({store,env,now,sync:async()=>assert.fail('a replay never syncs'),relay:async()=>assert.fail('a replay never relays')},{lead:webLead,inquiryId,clientInquiryId:true,meta,held:null});
+      assert.deepEqual([replay.status,replay.body.replayed],[202,true]);
+      await assert.rejects(store.commit([{collection:WEB_LEAD_RECEIPTS,id:inquiryId,patch:{attempts:9}}]),error=>error.code==='web_lead_revision_conflict','a receipt is create-only');
+      assert.deepEqual((await store.dueReceipts('2099-09-22T18:04:59.999Z',5)).map(row=>row.id),[]);
+      assert.deepEqual((await store.dueReceipts('2099-09-22T18:05:00.000Z',5)).map(row=>row.id),[inquiryId]);
+      const synced=[];
+      const [a,b]=await Promise.all([1,2].map(()=>retryWebLeadReceipts({store,env,sync:async value=>{synced.push(value.phone);return {configured:true,synced:true,contactId:'contact-emulator',opportunityId:''};}},{now:new Date('2099-09-22T18:06:00.000Z')})));
+      assert.deepEqual([a.synced+b.synced,synced],[1,['(970) 555-0120']],'the claim CAS lets exactly one tick sync the lead');
+      const done=await store.read(WEB_LEAD_RECEIPTS,inquiryId);
+      assert.deepEqual([done.ghlSyncStatus,done.attempts,done.contactId,done.sealedPayload,done.retryAt],['synced',2,'contact-emulator',null,null]);
+      assert.deepEqual(await store.dueReceipts('2099-09-23T18:00:00.000Z',5),[]);
+      // A lead with 20,000 3-byte characters: Firestore keeps its ~80,000-character sealed copy intact and the retry opens it.
+      const bigId=crypto.randomUUID(),bigFlat={...flat,what_to_remove:'車庫'.repeat(5000),photo_description:'写真'.repeat(5000)},big={name:bigFlat.name,phone:bigFlat.phone,flat:bigFlat};
+      const bigFailing=await receiveWebLead({store,env,now,sync:async()=>{throw Object.assign(new Error('synthetic'),{code:'highlevel_unavailable'});},relay:async()=>assert.fail('no relay after a failed sync')},{lead:big,inquiryId:bigId,clientInquiryId:true,meta:webLeadMeta(bigFlat,big),held:null});
+      assert.deepEqual([bigFailing.status,bigFailing.body.highlevel.retry],[202,'scheduled']);
+      const bigSaved=await store.read(WEB_LEAD_RECEIPTS,bigId);
+      assert.ok(bigSaved.payloadSealed===true&&bigSaved.sealedPayload.ct.length>16*4096,String(bigSaved.sealedPayload?.ct?.length));
+      const bigSynced=[];
+      const bigTick=await retryWebLeadReceipts({store,env,sync:async value=>{bigSynced.push(value);return {configured:true,synced:true,contactId:'contact-emulator-big',opportunityId:''};}},{now:new Date('2099-09-22T18:06:00.000Z')});
+      assert.deepEqual([bigTick.synced,bigTick.abandoned,bigSynced.length,bigSynced[0]?.what_to_remove===bigFlat.what_to_remove,bigSynced[0]?.photo_description===bigFlat.photo_description],[1,0,1,true,true]);
+      assert.deepEqual((({ghlSyncStatus,sealedPayload,contactId})=>[ghlSyncStatus,sealedPayload,contactId])(await store.read(WEB_LEAD_RECEIPTS,bigId)),['synced',null,'contact-emulator-big']);
+      for(const db of [publicDb,crew,lead,manager,partner]){const ref=db.doc(WEB_LEAD_RECEIPTS+'/'+inquiryId);await assertFails(ref.get());await assertFails(ref.set({ghlSyncStatus:'synced'}));await assertFails(ref.update({attempts:0}));await assertFails(ref.delete());await assertFails(db.collection(WEB_LEAD_RECEIPTS).get());await assertFails(db.doc(WEB_LEAD_RECEIPTS+'/forged').set({ghlSyncStatus:'failed',retryAt:'2000-01-01T00:00:00.000Z'}));}
+    });
   } finally {await environment.cleanup();}
 });

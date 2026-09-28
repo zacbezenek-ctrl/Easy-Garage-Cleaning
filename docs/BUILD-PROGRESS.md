@@ -314,6 +314,12 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   member matches (link or dismiss), and message sends left uncertain/sending (delivered / not delivered, never resent);
   a Command Center alert, and the webhook now reads every checkout back from Stripe with its charge before recording it.
   Flag: `PAYMENT_REVIEW_CHECKOUT_BLOCK_ENABLED` (off). Gaps: no Hub refund action on job money; resolved items live in hub_audit.
+- **FUN-13** Website lead intake reliability: ads.html leads now reach /api/web-lead (fb-capture.js relay with one v4
+  inquiry_id per answer set, reused as the Meta Lead eventID; book.html gets data-meta-lead). Behind
+  `WEB_LEAD_RECEIPTS_ENABLED` a sealed server-only web_lead_receipts record and inquiry.received event are written before
+  the HighLevel sync, and failed syncs retry on the signed messaging cron. Ads leads stay held until
+  `WEB_LEAD_ADS_RELAY_ENABLED`; the egc-delayed-sync tag is opt-in (`WEB_LEAD_DELAYED_SYNC_TAG`). Gaps: no Hub list of
+  failed receipts (FUN-25); the ads.html pixel move waits for the owner's Meta check.
 
 ## In progress
 
@@ -388,6 +394,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | FUN-37 | Bridge funnel event feed: hub.funnel.events, hub.walkthrough.outcomes and hub.funnel.case (read-only, owner/manager and delegates) | merged (d33e15a) |
 | MCP-OAUTH | MCP OAuth multi-client (Claude/ChatGPT metadata documents, DCR, revocation, lockout) and Hub-approved grants (migration 0014) | merged (b4cd2ac) |
 | REVIEWS-UI | Review queues for held Stripe charges, member matches and unconfirmed sends; Command Center alert; checkout block flag | merged (297acde) |
+| FUN-13 | Website lead intake: ads relay fix, inquiry ids, durable sealed receipts with cron retries (flags off) | merged (61a1fff) |
 
 ## Next
 

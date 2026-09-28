@@ -1,7 +1,7 @@
 import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest';
 vi.mock('@egc/database',()=>({schema:{syncCursors:{key:'key'}},getDb:()=>{throw new Error('the database is injected in these tests');}}));
 import {SERVICE_ORIGINS,servicePublicKeySet,signServiceRequest,verifyServiceRequest} from '@egc/operations';
-import {MESSAGING_CRON_PATH,messagingCronCounts,runMessagingCronTick,startMessagingCronWorker,type MessagingCronResult} from '../src/messaging-cron-worker.js';
+import {MESSAGING_CRON_PATH,messagingCronCounts,runMessagingCronTick,startMessagingCronWorker,webLeadRetryCounts,type MessagingCronResult} from '../src/messaging-cron-worker.js';
 
 const SECRET='synthetic-messaging-cron-api-root-secret-0123456789';
 const NOW=Date.parse('2026-09-22T18:00:00.000Z');
@@ -98,6 +98,30 @@ describe('messaging cron worker',()=>{
   expect(JSON.parse(value)).toEqual({event:'messaging_cron',status:'completed',code:'',httpStatus:200,...messagingCronCounts(SUMMARY),observedAt:'2026-09-22T18:15:00.000Z'});
   const everything=JSON.stringify([writes,logger.info.mock.calls,logger.error.mock.calls]);
   for(const secret of [SECRET,'synthetic-secret','job-synthetic-private','Synthetic Customer','envelope'])expect(everything).not.toContain(secret);
+ });
+
+ it('reports FUN-13 website-lead retry counts on completed and disabled ticks, never lead data, and alerts on abandoned or unavailable retries',async()=>{
+  const leads={at:'2026-09-22T18:00:00.000Z',dryRun:false,due:3,attempted:2,synced:1,failed:0,abandoned:1,held:0,purged:1,skipped:0,notAttempted:1,timeLimited:true,deferred:'time_window',name:'Synthetic Lead',phone:'(970) 555-0101'};
+  const counts={webLeadsDue:3,webLeadsAttempted:2,webLeadsSynced:1,webLeadsFailed:0,webLeadsAbandoned:1,webLeadsHeld:0,webLeadsPurged:1,webLeadsNotAttempted:1,webLeadsDeferred:'time_window',webLeadsUnavailable:false};
+  expect(webLeadRetryCounts(leads)).toEqual(counts);
+  expect(webLeadRetryCounts(undefined)).toEqual({});
+  expect(webLeadRetryCounts({error:'web_lead_retry_unavailable'})).toMatchObject({webLeadsDue:null,webLeadsUnavailable:true});
+  expect(webLeadRetryCounts({deferred:'Not A Code; phone=970'}).webLeadsDeferred).toBeNull();
+  const completed=await runMessagingCronTick({env:ENV,fetcher:hub(()=>Response.json({ok:true,runId:'run',summary:SUMMARY,webLeads:leads})).fetcher,now:()=>NOW});
+  expect(completed.counts).toEqual({...messagingCronCounts(SUMMARY),...counts});
+  // While server messaging is off the Hub still retries leads; the worker now reports them instead of logging nothing.
+  const disabled=await runMessagingCronTick({env:ENV,fetcher:hub(()=>Response.json({ok:false,code:'messaging_cron_disabled',error:'Server messaging is turned off.',webLeads:leads},{status:409})).fetcher,now:()=>NOW});
+  expect(disabled).toEqual({status:'disabled',code:'messaging_cron_disabled',httpStatus:409,counts});
+  expect(JSON.stringify([completed,disabled])).not.toMatch(/Synthetic Lead|555-0101/);
+  const tickOf=(result:MessagingCronResult)=>vi.fn(async()=>result);
+  for(const [result,alerts] of [[disabled,1],[{...disabled,counts:{...counts,webLeadsAbandoned:0}},0],[{...completed,counts:{...messagingCronCounts(SUMMARY),...webLeadRetryCounts({error:'web_lead_retry_unavailable'})}},1],[{...completed,counts:messagingCronCounts(SUMMARY)},0]] as Array<[MessagingCronResult,number]>){
+   const logger={error:vi.fn(),info:vi.fn()};
+   stops.push(startMessagingCronWorker({env:ENV,tick:tickOf(result),record:async()=>{},logger,now:()=>NOW}));
+   await vi.waitFor(()=>expect(logger.info).toHaveBeenCalledTimes(1));
+   expect(JSON.parse(String(logger.info.mock.calls[0]![0]))).toMatchObject({event:'messaging_cron',status:result.status,...result.counts});
+   expect(logger.error).toHaveBeenCalledTimes(alerts);
+   if(alerts)expect(logger.error).toHaveBeenCalledWith('Website lead HighLevel retries were abandoned or unavailable; inspect web_lead_receipts in Firestore.');
+  }
  });
 
  it('signs with the shared API root so the Hub resolves the key the API already publishes',async()=>{

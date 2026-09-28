@@ -2315,6 +2315,8 @@ def render_book():
     card_start = form.index('<div class="quote-form">')
     card_end = form.index('\n      </div>\n    </div>\n  </div>\n</section>', card_start) + len('\n      </div>')
     form_card = form[card_start:card_end].replace('</form>', '</form>\n' + BOOK_TRUST_BADGES, 1)
+    # FUN-13: fb-capture.js reports this form's Meta Lead, with the relay's inquiry id as the eventID (CAPI deduplication).
+    form_card = form_card.replace('<form class="multi-step-form"', '<form class="multi-step-form" data-meta-lead="walkthrough_request"', 1)
     book_form = f'''<section class="book-section" id="quote" aria-label="Walkthrough request">
   <div class="wrap">
     <div class="book-layout reveal">
