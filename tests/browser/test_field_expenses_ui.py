@@ -195,6 +195,8 @@ class FieldExpensesBrowserTests(unittest.TestCase):
         card.get_by_label('Amount paid (USD)').fill('12.00'); card.get_by_label('Store, landfill or vendor').fill('Synthetic Hardware')
         self.page.locator('[data-check="departure-address"]').check()
         expect(self.page.locator('[data-check="departure-address"]')).to_be_checked()
+        # The outbox stores the action before sending it, so wait for the server-confirmed re-render.
+        expect(self.page.locator('label.check', has=self.page.locator('[data-check="departure-address"]'))).to_contain_text('Saved by')
         self.assertEqual(len(self.job_posts), 1)
         expect(card.get_by_label('Amount paid (USD)')).to_have_value('12.00'); expect(card.get_by_label('Store, landfill or vendor')).to_have_value('Synthetic Hardware')
         self.assertEqual(self.expense_reads, 1, 'job re-renders reuse the loaded costs')
