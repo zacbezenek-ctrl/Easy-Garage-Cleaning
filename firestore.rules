@@ -402,6 +402,23 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // Garage catalog versions (immutable snapshots and the published pointer),
+    // owner pricing settings, every saved settings version and their request
+    // receipts are server-only. Managers read and the owner writes them
+    // through /api/catalog.
+    match /catalogVersions/{documentId} {
+      allow read, write: if false;
+    }
+    match /pricingSettings/{documentId} {
+      allow read, write: if false;
+    }
+    match /pricingSettingsVersions/{documentId} {
+      allow read, write: if false;
+    }
+    match /catalogOperations/{documentId} {
+      allow read, write: if false;
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }

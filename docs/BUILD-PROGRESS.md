@@ -188,6 +188,11 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   `/api/staff-directory` behind `EGC_STAFF_DIRECTORY_ENABLED` (off) keeps versioned skills, effective-dated pay (owner-only,
   Denver date at clock-in) and weekly availability on the sealed profiles with receipts and hub_audit, plus an owner-only
   dry-run vault migration API. Gaps: no Hub directory screen; configured-user skips count as 'unchanged' in migrations.
+- **P2-03** Catalog and pricing settings API behind `CATALOG_QUOTES_ENABLED` (off): owner/manager `GET /api/catalog`
+  prices the published catalog one unit at a time with the settings in force (revision, readiness, 90-day Denver stale
+  flags); only the owner saves settings (labels never reused, `pricingSettingsVersions`) or publishes an immutable later
+  version, each with a `catalogOperations` receipt and hub_audit entry in one commit. Validation runs once at publish;
+  reads trust the pointer hash. Gaps: sales still 403; cold GET/publish exceed the Workers Free 10 ms CPU limit.
 
 ## In progress
 
@@ -235,6 +240,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | CI-WF | Wire merged units' tests into the existing CI workflows (pending CI notes) | merged (31e1562) |
 | M3 | Server-authoritative money mutation API, audit and payment ledger (MONEY_API_ENABLED) | merged (8b095ec) |
 | P1-08 | Staff roles and capabilities, staff directory (skills, effective-dated pay, availability), vault migrations | merged (fcf6b5b) |
+| P2-03 | Catalog and owner pricing settings API with versioned, audited Firestore storage (CATALOG_QUOTES_ENABLED) | merged (9d16e9e) |
 
 ## Next
 

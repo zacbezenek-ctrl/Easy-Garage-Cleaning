@@ -115,6 +115,52 @@ test('actual Firestore rules isolate canonical operations from crew SDK access',
       for(const db of [crew,manager]) for(const name of ['staffDirectoryOperations','employeeVaultMigrations']) await assertFails(db.collection(name).get());
       await assertFails(manager.doc('staffDirectoryOperations/forged').set({fingerprint:'0'.repeat(64)}));
     });
+    await t.test('garage catalog versions, pricing settings, settings versions and catalog receipts remain server-only even for business SDK sessions',async()=>{
+      const paths=['catalogVersions/current','catalogVersions/2099-09-01.1','pricingSettings/current','catalogOperations/receipt','pricingSettingsVersions/synthetic'];
+      await environment.withSecurityRulesDisabled(async context=>{const db=context.firestore();await db.doc(paths[0]).set({version:'2099-09-01.1'});await db.doc(paths[1]).set({catalogVersion:'2099-09-01.1',catalogJson:'{}'});await db.doc(paths[2]).set({settingsVersion:'synthetic',readyForCustomers:false});await db.doc(paths[3]).set({actorId:'zacb',action:'catalog.publish'});await db.doc(paths[4]).set({settingsVersion:'synthetic',readyForCustomers:false});});
+      for(const db of [publicDb,crew,lead,manager,partner]) for(const path of paths){await assertFails(db.doc(path).get());await assertFails(db.doc(path).set({readyForCustomers:true}));await assertFails(db.doc(path).update({readyForCustomers:true}));await assertFails(db.doc(path).delete());}
+      for(const db of [crew,manager,partner]) for(const name of ['catalogVersions','pricingSettings','pricingSettingsVersions','catalogOperations']) await assertFails(db.collection(name).get());
+      await assertFails(manager.doc('catalogVersions/2099-09-02.1').set({catalogVersion:'2099-09-02.1',catalogJson:'{}'}));
+      await environment.withSecurityRulesDisabled(async context=>{for(const path of paths)await context.firestore().doc(path).delete();});
+    });
+    await t.test('catalog publishes and settings saves keep their Firestore REST preconditions and audit atomically',async()=>{
+      const {catalogStorage,mutateCatalog,readCatalogState}=await import('../functions/_lib/catalog-store.js');
+      const {hubAuditStorage,listAudit}=await import('../functions/_lib/hub-audit.js');
+      const fetcher=async(_env,url,options={})=>{
+        const target=new URL(url);target.protocol='http:';target.host=host;target.pathname=target.pathname.replace('/projects/egcw-1ec83/','/projects/'+projectId+'/');
+        assert.equal(target.hostname,hostname);
+        return fetch(target,{...options,...(options.body ? {body:options.body.replaceAll('projects/egcw-1ec83/','projects/'+projectId+'/')} : {}),headers:{...options.headers,Authorization:'Bearer owner'}});
+      };
+      const store=catalogStorage({},fetcher),owner={user:'zacb',role:'owner',businessAccess:true},now='2099-09-10T18:00:00.000Z';
+      const shipped=JSON.parse(await readFile(new URL('../functions/_data/garage-catalog.json',import.meta.url),'utf8'));
+      const defaults=JSON.parse(await readFile(new URL('../functions/_data/pricing-settings.defaults.json',import.meta.url),'utf8'));
+      assert.equal((await readCatalogState(store)).publication.source,'seed');
+      const publish={action:'catalog.publish',requestId:crypto.randomUUID(),basedOnVersion:shipped.catalogVersion,catalog:{...shipped,catalogVersion:'2099-09-10.1',generatedOn:'2099-09-10'}};
+      const copies=await Promise.all([mutateCatalog(store,owner,publish,now),mutateCatalog(store,owner,publish,now)]);
+      assert.deepEqual(copies.map(copy=>copy.publication.version),['2099-09-10.1','2099-09-10.1']);
+      assert.equal(copies.filter(copy=>copy.replayed).length,1,'a racing copy of the same request recovers the one commit');
+      const state=await readCatalogState(store);
+      assert.deepEqual([state.publication.source,state.publication.version,state.catalog.items.length],['firestore','2099-09-10.1',shipped.items.length],'a full catalog fits one verified snapshot document');
+      assert.equal((await listAudit(hubAuditStorage({},fetcher),{entity:'catalogVersions/2099-09-10.1'})).entries.length,1);
+      await assert.rejects(mutateCatalog(store,owner,{...publish,requestId:crypto.randomUUID(),catalog:{...publish.catalog,catalogVersion:'2099-09-10.2'}},now),error=>error.code==='catalog_version_conflict');
+      const saved=await mutateCatalog(store,owner,{action:'settings.update',requestId:crypto.randomUUID(),expectedRevision:null,settings:{...defaults,settingsVersion:'emulator:1'}},now);
+      assert.match(saved.settings.revision,/^\d{4}-\d{2}-\d{2}T/);
+      assert.equal((await store.read('pricingSettings','current')).revision,saved.settings.revision,'the commit write result is the stored revision');
+      assert.equal((await store.read('pricingSettingsVersions','emulator:1')).settings.settingsVersion,'emulator:1');
+      // The emulator's not-found answer for a missing document (an id with ':' included) reads as absent.
+      assert.equal(await store.read('pricingSettingsVersions','emulator:missing'),null);
+      await assert.rejects(mutateCatalog(store,owner,{action:'settings.update',requestId:crypto.randomUUID(),expectedRevision:saved.settings.revision,settings:{...defaults,settingsVersion:'emulator:1',laborRateCents:9000}},now),error=>error.code==='catalog_settings_version_unchanged');
+      // A stale updateTime is FAILED_PRECONDITION (HTTP 400) and a create over an existing document is
+      // ALREADY_EXISTS (409): both are revision conflicts, and Firestore applies no write of the commit.
+      const receipt={collection:'catalogOperations',id:crypto.randomUUID(),patch:{action:'settings.update'}};
+      await assert.rejects(store.commit([{collection:'pricingSettings',id:'current',revision:'2000-01-01T00:00:00.000000Z',patch:{updatedBy:'stale'}},receipt]),error=>error.code==='catalog_revision_conflict');
+      await assert.rejects(store.commit([{collection:'catalogVersions',id:'2099-09-10.1',patch:{catalogJson:'{}'}},receipt]),error=>error.code==='catalog_revision_conflict');
+      // Updating a document that was deleted since it was read is a conflict too.
+      await assert.rejects(store.commit([{collection:'pricingSettingsVersions',id:'emulator-deleted',revision:saved.settings.revision,patch:{settingsVersion:'emulator-deleted'}},receipt]),error=>error.code==='catalog_revision_conflict');
+      assert.equal(await store.read('catalogOperations',receipt.id),null);
+      assert.equal((await store.read('pricingSettings','current')).revision,saved.settings.revision);
+      await environment.withSecurityRulesDisabled(async context=>{for(const path of ['catalogVersions/current','catalogVersions/2099-09-10.1','pricingSettings/current','pricingSettingsVersions/emulator:1'])await context.firestore().doc(path).delete();});
+    });
     await t.test('manager administrative schedule and customer access remains functional',async()=>{
       await assertSucceeds(manager.doc('jobs/assigned').get());
       await assertSucceeds(manager.doc('customers/customer').get());
