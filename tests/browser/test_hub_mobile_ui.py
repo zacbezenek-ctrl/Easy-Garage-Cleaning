@@ -60,7 +60,7 @@ class HubMobileBrowserTests(HubShell, unittest.TestCase):
         expect(menu).to_have_attribute('aria-expanded', 'false')
         expect(menu).to_have_attribute('aria-controls', 'ops-rail')
         expect(rail).to_be_hidden()
-        self.assertTrue(rail.evaluate('el=>el.inert'))
+        expect(rail).to_have_js_property('inert', True)
         point = {'x': 340, 'y': 420}
         beneath = page.evaluate('({x,y})=>{const el=document.elementFromPoint(x,y);return el?el.closest("button,a,input,article,section")?.tagName||el.tagName:null}', point)
         self.assertIsNotNone(beneath)
@@ -69,7 +69,7 @@ class HubMobileBrowserTests(HubShell, unittest.TestCase):
         expect(menu).to_have_attribute('aria-expanded', 'true')
         expect(rail).to_be_visible()
         expect(scrim).to_be_visible()
-        self.assertFalse(rail.evaluate('el=>el.inert'))
+        expect(rail).to_have_js_property('inert', False)
         expect(page.locator('.ops-nav button.active')).to_be_focused()
         self.assertEqual(page.evaluate('({x,y})=>document.elementFromPoint(x,y).className', point), 'ops-scrim')
         page.touchscreen.tap(point['x'], point['y'])
@@ -83,13 +83,13 @@ class HubMobileBrowserTests(HubShell, unittest.TestCase):
         page.keyboard.press('Escape')
         expect(menu).to_be_focused()
         expect(menu).to_have_attribute('aria-expanded', 'false')
-        self.assertTrue(rail.evaluate('el=>el.inert'))
+        expect(rail).to_have_js_property('inert', True)
         menu.click()
         page.locator('.ops-nav [data-ops-tab="finance"]').click()
         expect(page.locator('#ops-title')).to_have_text('Estimates & payments')
         expect(menu).to_have_attribute('aria-expanded', 'false')
         expect(menu).to_be_focused()
-        self.assertTrue(rail.evaluate('el=>el.inert'))
+        expect(rail).to_have_js_property('inert', True)
         menu.click()
         expect(page.locator('.ops-nav button.active')).to_be_focused()
         page.keyboard.press('Tab')
@@ -98,7 +98,8 @@ class HubMobileBrowserTests(HubShell, unittest.TestCase):
         expect(menu).to_be_focused()
         page.set_viewport_size({'width': 1100, 'height': 812})
         expect(rail).to_be_visible()
-        self.assertFalse(rail.evaluate('el=>el.inert'), 'the desktop rail is always usable')
+        # The shell clears inert from its matchMedia change listener, which fires after the resize.
+        expect(rail, 'the desktop rail is always usable').to_have_js_property('inert', False)
 
     def test_sign_in_cycles_reuse_one_set_of_shell_listeners(self):
         page = self.open_page(375, 812)
