@@ -437,5 +437,25 @@ test('actual Firestore rules isolate canonical operations from crew SDK access',
       assert.deepEqual({raced,link:racedResult.link,reason:racedResult.reason,mirrored:racedResult.mirrored},{raced:true,link:'needs_review',reason:'ambiguous_customer',mirrored:false});
       assert.equal((await store.read('jobs','gg-second-root')).garageGuard,undefined,'the stale one-customer decision never reaches the job');
     });
+    await t.test('funnel events are server-only and land atomically with their business change through actual Firestore REST',async()=>{
+      const {dispatchStorage}=await import('../functions/_lib/dispatch-storage.js');
+      const {funnelEventWrite}=await import('../functions/_lib/funnel-events.js');
+      const store=dispatchStorage({},async(_env,url,options={})=>{
+        const target=new URL(url);target.protocol='http:';target.host=host;target.pathname=target.pathname.replace('/projects/egcw-1ec83/','/projects/'+projectId+'/');
+        return fetch(target,{...options,...(options.body ? {body:options.body.replaceAll('projects/egcw-1ec83/','projects/'+projectId+'/')} : {}),headers:{...options.headers,Authorization:'Bearer owner'}});
+      });
+      await environment.withSecurityRulesDisabled(context=>context.firestore().doc('jobs/fun-job').set({type:'job',customerId:'customer',status:'scheduled'}));
+      const job=await store.read('jobs','fun-job'),requestId=crypto.randomUUID();
+      const event=input=>funnelEventWrite(store,'2099-09-10T12:00:00.000Z',{type:'job.cancelled',idempotencyKey:{kind:'requestId',value:requestId},jobId:'fun-job',actor:{id:'zacb',kind:'human',role:'owner'},via:'hub',source:{collection:'dispatchOperations',id:requestId},data:{reasonCode:'weather',initiatedBy:'company',...input},eligibility:{hub:job}});
+      const write=await event();
+      await store.commit([{collection:'jobs',id:'fun-job',revision:job.revision,patch:{status:'cancelled'}},write]);
+      assert.equal((await store.read('funnelEvents',write.id)).data.reasonCode,'weather');
+      assert.equal(await event(),null,'a retry after a lost response finds the identical saved event');
+      await assert.rejects(event({reasonCode:'crew_unavailable'}),error=>error.code==='funnel_event_idempotency_conflict');
+      const after=await store.read('jobs','fun-job');
+      await assert.rejects(store.commit([{collection:'jobs',id:'fun-job',revision:after.revision,patch:{status:'scheduled'}},write]),error=>error.code==='dispatch_revision_conflict','an event id is never written twice');
+      assert.equal((await store.read('jobs','fun-job')).status,'cancelled','the business change is rejected with its duplicate event');
+      for(const db of [publicDb,crew,lead,manager,partner]){const ref=db.doc('funnelEvents/'+write.id);await assertFails(ref.get());await assertFails(ref.set({type:'deal.sold'}));await assertFails(ref.update({type:'deal.sold'}));await assertFails(ref.delete());await assertFails(db.collection('funnelEvents').get());await assertFails(db.doc('funnelEvents/fe_forged').set({type:'deal.sold',data:{amountCents:1}}));}
+    });
   } finally {await environment.cleanup();}
 });

@@ -41,6 +41,9 @@ jobs:
       - name: Static Before & After fallback matches the server render
         if: ${{ !cancelled() }}
         run: node scripts/render-before-after.mjs --check
+      - name: Funnel definitions copies match the canonical data file
+        if: ${{ !cancelled() }}
+        run: node scripts/funnel-definitions.mjs --check
   shifted-clock:
     name: Root suite with the clock moved 400 days ahead
     runs-on: ubuntu-latest

@@ -208,6 +208,11 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   estimate-expiring reminders plus portal-invitation retries through the approved-send core (Denver quiet hours, 25 per
   tick, dry run, `messaging_runs`/`messaging_holds`). With `EGC_SERVER_MESSAGING_ENABLED` the Hub stops page-load triggers
   and skips legacy-sent reminders. Gaps: worker holds the API root secret; no crew_assignment outbox.
+- **FUN-01** Funnel foundations: one canonical `functions/_data/funnel-definitions.data.json` (eligibility, vocabularies,
+  calendar, cycle and event-integrity rules) generated into the Hub copy and the `@egc/funnel-definitions` package
+  (`scripts/funnel-definitions.mjs --check` in root CI); `funnel-calendar.js` (Denver business hours, holidays, periods),
+  `funnel-events.js` (create-only `funnelEvents` rows in the business commit; device times clamped). Fixes the revenue
+  scan counting internal jobs. Gaps: platform services still use their own exclusion lists (FUN-14/31); cutoverDate null.
 
 ## In progress
 
@@ -259,6 +264,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | STAFF-GATE | Server-side Hub session gate for staff pages and scripts, /staff-login (EGC_STAFF_PAGE_GATE) | merged (107ef94) |
 | SEGMENTS | Assignment segments: multi-crew jobs, split crews and per-day work windows (EGC_DISPATCH_SEGMENTS) | merged (ec78661) |
 | MSG-CRON | Signed messaging cron (Railway worker -> /api/messaging-cron), server-side reminders, browser triggers behind a flag | merged (7ad17e3) |
+| FUN-01 | Funnel definitions, business calendar and funnelEvents ledger library | merged (7ab606e) |
 
 ## Next
 

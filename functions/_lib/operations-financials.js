@@ -1,10 +1,12 @@
 import {firestoreFetch} from './firebase-service-account.js';
 import {decodeFirestoreFields} from './firestore-job.js';
+import {hubEligibilityFields,hubRecordEligibility,stripeEligibility} from './funnel-definitions.js';
 const BASE='https://firestore.googleapis.com/v1/projects/egcw-1ec83/databases/(default)/documents/jobs';
 const instant=value=>typeof value==='string'&&/^\d{4}-\d\d-\d\dT/.test(value)&&Number.isFinite(Date.parse(value))?new Date(value).toISOString():null;
 export function moneyCents(value){if(value===null||value===undefined||value==='')return null;if(typeof value==='string'&&!/^\d+(?:\.\d{1,2})?$/.test(value.trim()))return null;const n=Number(value);return Number.isFinite(n)&&n>=0&&Number.isSafeInteger(Math.round(n*100))?Math.round(n*100):null;}
 const accepted=value=>['accepted','approved'].includes(String(value||'').toLowerCase());
-const jobEligible=job=>['job','cleanout','reorg'].includes(job.type)&&!job.recordType&&!/^(secure_|_egc_)/.test(job.id||'')&&job.isTest!==true&&job.test!==true;
+// FUN-01 shared eligibility: private records, test and internal jobs never count.
+const jobEligible=job=>['job','cleanout','reorg'].includes(job.type)&&hubRecordEligibility(job).eligible;
 export function uniqueReceipts(receipts){const parents=new Map(),root=k=>{if(!parents.has(k))parents.set(k,k);let r=k;while(parents.get(r)!==r)r=parents.get(r);return r;};const keys=r=>[r.paymentIntentId&&/^pi_[A-Za-z0-9_]+$/.test(r.paymentIntentId)?'intent:'+r.paymentIntentId:null,r.sessionId&&/^cs_(?:live_)?[A-Za-z0-9_]+$/.test(r.sessionId)?'session:'+r.sessionId:null].filter(Boolean);
   for(const r of receipts){const ids=keys(r);for(const id of ids.slice(1))parents.set(root(id),root(ids[0]));}const groups=new Map();for(const r of receipts){const id=root(keys(r)[0]||r.key);groups.set(id,[...(groups.get(id)||[]),r]);}const unique=[],conflicts=[];for(const[id,rows]of groups){if(rows.some(r=>r.amountCents!==rows[0].amountCents||r.at!==rows[0].at))conflicts.push(id);else unique.push(rows[0]);}return{unique,conflicts};}
 export function financialFacts(job){
@@ -21,7 +23,7 @@ export function financialFacts(job){
   const payment=job.payment||{},payments=[],staffPayments=[];
   if(payment.verified===true&&Array.isArray(payment.stripeSessions))for(const item of payment.stripeSessions){
     if(!item||typeof item!=='object'){exceptions.push('payment_receipt_details_unknown');continue;}
-    if(String(item.sessionId||'').startsWith('cs_test_'))continue;
+    if(!stripeEligibility({sessionId:item.sessionId,livemode:item.livemode}).eligible)continue;
     const key=typeof item.paymentIntentId==='string'&&/^pi_[A-Za-z0-9_]+$/.test(item.paymentIntentId)?item.paymentIntentId:typeof item.sessionId==='string'&&/^cs_(?:live_)?[A-Za-z0-9_]+$/.test(item.sessionId)?item.sessionId:null;
     const at=instant(item.verifiedAt),amountCents=moneyCents(item.amount);
     if(!key||!at||amountCents===null){exceptions.push('payment_receipt_details_unknown');continue;}
@@ -58,7 +60,7 @@ export function summarizeFinancialJobs(jobs,from,to){
 export async function portalRevenue(env,command,fetcher=firestoreFetch){
   summarizeFinancialJobs([],command.from,command.to);
   const docs=[],seen=new Set(),tokens=new Set();let token='',pages=0;
-  do{if(++pages>200)throw Object.assign(new Error('revenue_scan_incomplete'),{status:503});const url=new URL(BASE);url.searchParams.set('pageSize','500');if(token)url.searchParams.set('pageToken',token);for(const f of ['type','recordType','isTest','test','status','pipelineStatus','estimate','customerApproval','payment','invoice','completedAt','postJobChecklist','refunds'])url.searchParams.append('mask.fieldPaths',f);
+  do{if(++pages>200)throw Object.assign(new Error('revenue_scan_incomplete'),{status:503});const url=new URL(BASE);url.searchParams.set('pageSize','500');if(token)url.searchParams.set('pageToken',token);for(const f of ['type',...hubEligibilityFields(),'status','pipelineStatus','estimate','customerApproval','payment','invoice','completedAt','postJobChecklist','refunds'])url.searchParams.append('mask.fieldPaths',f);
     const r=await fetcher(env,url.toString());if(!r.ok)throw Object.assign(new Error('revenue_source_unavailable'),{status:503});const page=await r.json();if(page.documents!==undefined&&!Array.isArray(page.documents))throw Object.assign(new Error('revenue_source_invalid'),{status:503});
     for(const raw of page.documents||[]){const id=String(raw.name||'').split('/').pop();if(seen.has(id))throw Object.assign(new Error('revenue_scan_changed'),{status:503});seen.add(id);docs.push({...decodeFirestoreFields(raw.fields),id});}token=page.nextPageToken||'';if(token&&tokens.has(token))throw Object.assign(new Error('revenue_pagination_stalled'),{status:503});tokens.add(token);
   }while(token);

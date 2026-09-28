@@ -431,6 +431,13 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // Funnel event ledger (FUN-01): append-only rows written only in the same
+    // server commit as their business change. Staff read through the API and
+    // the platform through the signed bridge; no SDK session reads or writes.
+    match /funnelEvents/{documentId} {
+      allow read, write: if false;
+    }
+
     match /{document=**} {
       allow read, write: if false;
     }

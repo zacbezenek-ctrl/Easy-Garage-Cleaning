@@ -22,6 +22,8 @@
  *   WEBSITE_LEAD_HOOK_URL — Zapier Catch Hook URL. That's the only var needed.
  */
 
+import { webLeadTiming } from '../_lib/funnel-calendar.js';
+
 const ALLOWED_HOST_RE = /^(?:easygaragecleaning\.com|www\.easygaragecleaning\.com|easy-garage-cleaning\.pages\.dev|localhost(?::\d+)?|127\.0\.0\.1(?::\d+)?)$/;
 const MAX_BODY = 32 * 1024;
 const FIELDS = ['name', 'phone', 'email', 'items', 'service_type', 'job_size', 'what_to_remove', 'photo_description', 'source', 'subject', 'city', 'serviceZip', 'preferred_date', 'preferred_timing', 'booking_slot', 'estimated_range', 'flow_type', 'sms_consent', 'request_id', 'fbc', 'fbp', 'fbclid', 'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'gclid', 'msclkid', 'landing_url', 'referrer', 'page_url'];
@@ -187,18 +189,12 @@ function normalizePhone(raw) {
   return '';
 }
 
-// Mon–Sat 07:00–19:00 Mountain. Fails to "in-hours" (better to promise a call
-// "in a couple minutes" than to wrongly promise tomorrow).
+// Mon–Sat 07:00–19:00 Mountain from the shared FUN-01 business calendar
+// (holidays not applied, so the Zap sees exactly the legacy value). Fails to
+// "in-hours" (better to promise a call "in a couple minutes" than to wrongly
+// promise tomorrow).
 function leadTiming() {
-  try {
-    const parts = new Intl.DateTimeFormat('en-US', {
-      timeZone: 'America/Denver', weekday: 'short', hour: 'numeric', hour12: false,
-    }).formatToParts(new Date());
-    const wd = parts.find((p) => p.type === 'weekday').value;
-    let hr = parseInt(parts.find((p) => p.type === 'hour').value, 10);
-    if (hr === 24) hr = 0;
-    return (wd !== 'Sun' && hr >= 7 && hr < 19) ? 'in-hours' : 'out-of-hours';
-  } catch { return 'in-hours'; }
+  return webLeadTiming(new Date());
 }
 
 export async function onRequestOptions() {

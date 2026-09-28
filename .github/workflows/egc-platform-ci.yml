@@ -4,6 +4,8 @@ on:
   pull_request:
     paths:
       - "egc-platform/**"
+      - "functions/_data/funnel-definitions.data.json"
+      - "scripts/funnel-definitions.mjs"
       - ".github/workflows/egc-platform-ci.yml"
 
 concurrency:

@@ -5,6 +5,7 @@ import { MAX_TOTAL_CENTS, customerLineItem, customerMoneyTotals, depositCents, e
 import { estimateChanged, estimateFingerprint, legacyLineItems } from './quote-model.js';
 import { ledgerPatch, reconcileLedger } from './money-ledger.js';
 import { customerPaymentNeedsReview } from './customer-payments.js';
+import { hubRecordEligibility } from './funnel-definitions.js';
 
 /**
  * M3 server-authoritative money mutations for one job:
@@ -55,8 +56,12 @@ const pick = (value, keys) => plain(value) ? Object.fromEntries(keys.filter(key 
 const str = (value, max = 200) => typeof value === 'string' ? value.slice(0, max) : null;
 
 export const moneyApiEnabled = env => env?.MONEY_API_ENABLED === 'true';
-/** Jobs whose money the Hub manages: customer work, never walkthroughs, blocks or private records. */
-export const moneyJob = job => Boolean(job) && safeId(job.id) && !job.recordType && !['walkthrough', 'blocked', 'availability'].includes(job.type);
+/**
+ * Jobs whose money the Hub manages: customer work, never walkthroughs, blocks
+ * or private records (the FUN-01 shared eligibility). Test and internal jobs
+ * stay manageable; funnel and revenue metrics exclude them separately.
+ */
+export const moneyJob = job => Boolean(job) && safeId(job.id) && hubRecordEligibility(job).exclusion !== 'private_record' && !['walkthrough', 'blocked', 'availability'].includes(job.type);
 /**
  * Recorded money that is not verified: the portal and crew payments already
  * wait on it (customerPaymentNeedsReview), and so must new Hub money, which

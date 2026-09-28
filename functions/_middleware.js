@@ -2,7 +2,7 @@ import { enforceBusinessProjectWrite } from './_lib/business-hub-write-guard.js'
 import { gateStaffPage, privateStaffResponse } from './_lib/staff-page-gate.js';
 
 // Source trees, tooling and deploy configs sit beside the static site; never serve them.
-const PRIVATE_PATH = /^(?:\/(?:auth-verifier|contracts|docs|scripts|tests|egc-platform|functions|tools|\.github|\.claude|node_modules)(?:\/|$)|\/(?:sop|tyler-contract)(?:\.html)?\/?$|\/EGC-Lead-System-SOP\.pdf$|\/(?:package(?:-lock)?\.json|README\.md|firebase(?:\.emulator|\.field-day)?\.json|firestore\.rules|pnpm-(?:lock|workspace)\.yaml|\.firebaserc|\.env(?:\.example)?|_[^/]+)(?:$|\/)|\/.*\.py\/?$)/i;
+const PRIVATE_PATH = /^(?:\/(?:auth-verifier|contracts|docs|scripts|tests|egc-platform|functions|tools|\.github|\.claude|node_modules)(?:\/|$)|\/(?:sop|tyler-contract)(?:\.html)?\/?$|\/EGC-Lead-System-SOP\.pdf$|\/(?:package(?:-lock)?\.json|README\.md|firebase(?:\.emulator|\.field-day)?\.json|firestore\.(?:rules|indexes\.json)|pnpm-(?:lock|workspace)\.yaml|\.firebaserc|\.env(?:\.example)?|_[^/]+)(?:$|\/)|\/.*\.py\/?$)/i;
 
 function privatePath(pathname) {
   let path;
