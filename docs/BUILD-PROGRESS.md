@@ -218,6 +218,11 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   return `{items,page,asOf,coverage}` with anchored cursors (24h expiry, filters in SQL, id tie-break, 200-row pages) and
   flag `rows_changed_after_asOf`; unknown input keys are rejected. BREAKING for MCP clients: read `result.items` and follow
   `page.nextCursor`. Gap: rows deleted or leaving a filter mid-walk can still shift a page unflagged.
+- **SEC-13** Staff Firebase sessions are revoked (Identity Toolkit `accounts:update validSince` on `hub:<user>`) when an
+  employee account's status/role changes or configured staff are removed or re-roled. An intent is recorded first,
+  failures queue in server-only `firebaseSessionRevocations/state` (CAS, per-uid `revokedThrough`) and retry on business
+  Hub loads; Integrations shows "Firebase sign-out". Needs the Firebase Authentication Admin role. Gaps: issued ID tokens
+  live up to 1 h; roster reconcile only on production hosts; no cron (retries on Hub load).
 
 ## In progress
 
@@ -271,6 +276,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | MSG-CRON | Signed messaging cron (Railway worker -> /api/messaging-cron), server-side reminders, browser triggers behind a flag | merged (7ad17e3) |
 | FUN-01 | Funnel definitions, business calendar and funnelEvents ledger library | merged (7ab606e) |
 | MCP-READS | Registry CRM reads with cursor pagination and per-tool contract gate | merged (44e2882) |
+| SEC-13 | Revoke staff Firebase sessions when access changes | merged (251fcf7) |
 
 ## Next
 

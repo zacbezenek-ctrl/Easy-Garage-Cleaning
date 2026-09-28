@@ -3,8 +3,10 @@ const encoder = new TextEncoder();
 const CUSTOM_TOKEN_AUDIENCE = 'https://identitytoolkit.googleapis.com/google.identity.identitytoolkit.v1.IdentityToolkit';
 const OAUTH_TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const FIRESTORE_SCOPE = 'https://www.googleapis.com/auth/datastore';
+const IDENTITY_TOOLKIT_SCOPE = 'https://www.googleapis.com/auth/identitytoolkit';
 
-let cachedAccessToken = null;
+// One cached access token per OAuth scope, bound to the credential that minted it.
+const cachedAccessTokens = new Map();
 
 function unitTestKey(env = {}) {
   const key = String(env.FIREBASE_API_KEY || '');
@@ -84,18 +86,20 @@ export async function createFirebaseCustomToken(env, uid, claims = {}) {
   });
 }
 
-export async function getFirestoreAccessToken(env) {
+// signal: the caller's deadline, which also bounds the token exchange.
+async function serviceAccessToken(env, scope, signal) {
   const account = serviceAccount(env);
   const now = Math.floor(Date.now() / 1000);
   const credentialId = base64Url(new Uint8Array(await crypto.subtle.digest(
     'SHA-256', encoder.encode(`${account.client_email}\n${account.private_key}`),
   )));
-  if (cachedAccessToken?.credentialId === credentialId && cachedAccessToken.expiresAt > now + 60) {
-    return cachedAccessToken.token;
+  const cached = cachedAccessTokens.get(scope);
+  if (cached?.credentialId === credentialId && cached.expiresAt > now + 60) {
+    return cached.token;
   }
   const assertion = await signedJwt(account, {
     iss: account.client_email,
-    scope: FIRESTORE_SCOPE,
+    scope,
     aud: OAUTH_TOKEN_URL,
     iat: now,
     exp: now + 3600,
@@ -104,15 +108,33 @@ export async function getFirestoreAccessToken(env) {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({ grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer', assertion }),
+    ...(signal ? { signal } : {}),
   });
   const result = await response.json().catch(() => ({}));
   if (!response.ok || !result.access_token) throw new Error(`Firebase service authentication failed (${response.status})`);
-  cachedAccessToken = {
+  cachedAccessTokens.set(scope, {
     credentialId,
     token: result.access_token,
     expiresAt: now + Math.max(300, Number(result.expires_in || 3600)),
-  };
-  return cachedAccessToken.token;
+  });
+  return result.access_token;
+}
+
+export async function getFirestoreAccessToken(env, signal) {
+  return serviceAccessToken(env, FIRESTORE_SCOPE, signal);
+}
+
+// Firebase Auth administration (Identity Toolkit) needs the real service
+// account; the unit-test Firestore key can never authorize it.
+export function firebaseAdminConfigured(env = {}) {
+  try { serviceAccount(env); return true; }
+  catch { return false; }
+}
+
+export async function identityToolkitFetch(env, input, init = {}) {
+  const headers = new Headers(init.headers || {});
+  headers.set('Authorization', `Bearer ${await serviceAccessToken(env, IDENTITY_TOOLKIT_SCOPE, init.signal)}`);
+  return fetch(String(input), { ...init, headers });
 }
 
 export async function firestoreFetch(env, input, init = {}) {
@@ -121,6 +143,6 @@ export async function firestoreFetch(env, input, init = {}) {
   const headers = new Headers(init.headers || {});
   const testKey = unitTestKey(env);
   if (testKey) url.searchParams.set('key', testKey);
-  else headers.set('Authorization', `Bearer ${await getFirestoreAccessToken(env)}`);
+  else headers.set('Authorization', `Bearer ${await getFirestoreAccessToken(env, init.signal)}`);
   return fetch(url, { ...init, headers });
 }

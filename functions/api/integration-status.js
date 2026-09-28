@@ -1,14 +1,22 @@
-import { getHubSession } from '../_lib/hub-session.js';
+import { getHubSession, hasBusinessAccess, listHubUserProfiles } from '../_lib/hub-session.js';
 import { firebaseServiceAccountConfigured } from '../_lib/firebase-service-account.js';
 import { customerPortalConfigured } from '../_lib/customer-portal.js';
 import { employeeAccountsConfigured } from '../_lib/employee-accounts.js';
 import { gustoConfiguration } from '../_lib/gusto-client.js';
 import { moneyApiEnabled } from '../_lib/money-service.js';
 import { serverMessagingEnabled } from '../_lib/messaging-settings.js';
+import { firebaseRevocations, firebaseRevocationStatus, reconcilesStaffRoster } from '../_lib/firebase-revocation.js';
 
-/** Returns configuration readiness only. Secret values never leave the server. */
-export async function onRequestGet({request,env}){
-  if(!await getHubSession(request,env))return new Response(JSON.stringify({ok:false,code:'HUB_AUTH_REQUIRED',error:'Sign in to the EGC Hub'}),{status:401,headers:{'Content-Type':'application/json','Cache-Control':'no-store'}});
+/** Returns configuration readiness only. Secret values never leave the server.
+ * Business users also get the Firebase session revocation state (a slow read
+ * answers 'unavailable' after 3 s); reading it retries pending revocations
+ * and, on the production host only, reconciles removed or changed staff after
+ * the response (context.waitUntil). */
+export function integrationStatusHandlers({session=getHubSession,revocations=firebaseRevocations,now=()=>new Date()}={}){
+  return {async get(context){
+  const {request,env}=context;
+  const viewer=await session(request,env);
+  if(!viewer)return new Response(JSON.stringify({ok:false,code:'HUB_AUTH_REQUIRED',error:'Sign in to the EGC Hub'}),{status:401,headers:{'Content-Type':'application/json','Cache-Control':'no-store'}});
   const all=(...keys)=>keys.every(k=>Boolean(env[k]));
   const any=(...keys)=>keys.some(k=>Boolean(env[k]));
   const normalized=(...keys)=>{const wanted=keys.map(key=>key.toLowerCase().replace(/[^a-z0-9]/g,''));return Object.entries(env||{}).some(([key,value])=>Boolean(value)&&wanted.includes(key.toLowerCase().replace(/[^a-z0-9]/g,'')))};
@@ -30,7 +38,16 @@ export async function onRequestGet({request,env}){
     // retries; the Hub then stops triggering them from a manager's page load.
     serverMessaging:serverMessagingEnabled(env)
   };
+  if(hasBusinessAccess(viewer)){
+    const defer=typeof context.waitUntil==='function'?work=>context.waitUntil(work):null;
+    const profiles=reconcilesStaffRoster(request.url)?()=>listHubUserProfiles(env):null;
+    Object.assign(status,await firebaseRevocationStatus(revocations(env),profiles,now().toISOString(),{defer}));
+  }
   // Browser feature flags (booleans only); money writes stay in the browser unless moneyApi is on.
   const flags={moneyApi:moneyApiEnabled(env)};
   return new Response(JSON.stringify({ok:true,status,flags}),{headers:{'Content-Type':'application/json','Cache-Control':'no-store'}});
+  }};
 }
+
+const handlers=integrationStatusHandlers();
+export const onRequestGet=handlers.get;

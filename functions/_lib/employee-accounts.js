@@ -316,12 +316,17 @@ async function accountRows(env) {
   return accounts;
 }
 
-export async function reviewEmployeeApplication(env, username, decision, reviewer) {
+export async function reviewEmployeeApplication(env, username, decision, reviewer, now = new Date().toISOString()) {
+  return (await reviewEmployeeApplicationChange(env, username, decision, reviewer, now)).account;
+}
+
+// accessChanged is true when the review changed the account status or the role
+// its sessions carry; a repeated identical review changes neither.
+export async function reviewEmployeeApplicationChange(env, username, decision, reviewer, now = new Date().toISOString()) {
   if (!['approved', 'rejected'].includes(decision)) throw new Error('Choose approve or reject');
   if (isReservedEmployeeUsername(username)) throw new Error('Business accounts are managed through secure staff configuration');
   const account = await readAccount(env, username);
   if (!account) throw new Error('Employee application not found');
-  const now = new Date().toISOString();
   const updated = {
     ...account,
     status: decision,
@@ -334,7 +339,8 @@ export async function reviewEmployeeApplication(env, username, decision, reviewe
     updatedAt: now,
   };
   await writeAccount(env, updated);
-  return publicAccount(updated);
+  const accessChanged = account.status !== updated.status || namedStaffRole(account) !== namedStaffRole(updated);
+  return { account: publicAccount(updated), accessChanged };
 }
 
 // The invitation service uses the same encrypted employee account and password

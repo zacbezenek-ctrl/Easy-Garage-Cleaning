@@ -85,13 +85,18 @@ test('rotating a Firebase key invalidates the cached service token even when its
   } finally { globalThis.fetch = originalFetch; }
 });
 
-test('integration readiness cannot report an employee database connection from a public Firebase key', async () => {
-  for (const [testEnv, expected] of [[{ ...env, FIREBASE_API_KEY: 'public-web-key' }, false], [withAccount(first.account), true]]) {
+test('integration readiness cannot report an employee database connection from a public Firebase key', async t => {
+  // Owner readiness now reads the Firebase session revocation record; Google is
+  // unreachable here, so that state must read as unavailable, never as clear.
+  t.mock.method(globalThis, 'fetch', async () => { throw new Error('synthetic offline network'); });
+  for (const [testEnv, expected, revocation] of [[{ ...env, FIREBASE_API_KEY: 'public-web-key' }, false, 'not_configured'], [withAccount(first.account), true, 'unavailable']]) {
     const response = await integrationStatus({ request: request(), env: testEnv });
     assert.equal(response.status, 200);
     const body = await response.json();
     assert.equal(body.status.firebase, expected);
     assert.equal(body.status.employeeAccounts, expected);
+    assert.equal(body.status.firebaseRevocation, false);
+    assert.equal(body.status.firebaseRevocationState, revocation);
     assert.doesNotMatch(JSON.stringify(body), /private_key|synthetic-session/);
   }
 });
