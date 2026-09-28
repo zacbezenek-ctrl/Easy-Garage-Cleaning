@@ -4,6 +4,7 @@ import type {Express} from 'express';
 import {blockedToolCall,directSendsBlocked,operationsPrincipal,DIRECT_SEND_TOOLS,LEGACY_MUTATIONS_DISABLED} from '../src/operations.js';
 import {accessStatement,authenticatedMcpPrincipal,registerOauthRoutes,READ_SCOPE,WRITE_SCOPE,type AccessMode} from '../src/oauth.js';
 import {buildServer} from '../src/server.js';
+import {memoryOAuthStore} from './oauth-memory-store.js';
 
 const env={...process.env};
 beforeEach(()=>{for(const key of ['EGC_OPERATIONS_ENABLED','EGC_MCP_DIRECT_SENDS_ENABLED','MCP_BEARER_WRITE_ENABLED','MCP_PUBLIC_ORIGIN','DATABASE_URL'])delete process.env[key];});
@@ -72,7 +73,8 @@ describe('consent text, /mcp-info and audit identity are truthful',()=>{
   function routes(mode:AccessMode){
     const handlers=new Map<string,(req:any,res:any)=>unknown>();
     const app={get:(path:string,...fns:any[])=>handlers.set(`GET ${path}`,fns.at(-1)),post:(path:string,...fns:any[])=>handlers.set(`POST ${path}`,fns.at(-1))} as unknown as Express;
-    registerOauthRoutes(app,()=>mode);
+    // The password POST records a lockout attempt first; without a database the Postgres store fails closed (503), so inject the in-memory store.
+    registerOauthRoutes(app,()=>mode,{store:memoryOAuthStore().store});
     const call=async(key:string,req:Record<string,unknown>={})=>{const res:any={statusCode:200,headers:{},body:''};Object.assign(res,{status:(c:number)=>(res.statusCode=c,res),set:(k:string,v:string)=>(res.headers[k]=v,res),type:(t:string)=>(res.headers['content-type']=t,res),send:(b:string)=>(res.body=b,res),json:(b:unknown)=>(res.body=JSON.stringify(b),res)});await handlers.get(key)!({query:{},body:{},...req},res);return res;};
     return call;
   }

@@ -19,6 +19,16 @@ export const actorSchema = z.object({
   kind: z.enum(["human", "integration"])
 }).strict();
 export type Actor = z.infer<typeof actorSchema>;
+// A Hub user on whose behalf an MCP OAuth grant acts. The actor stays an integration;
+// the delegate only narrows what that grant may do. The assertion is the Hub-signed
+// grant (service-auth verifyMcpGrant), so a receiver need not trust the MCP's word.
+export const DELEGATE_ROLES = ["owner", "manager", "sales", "crew_lead", "crew"] as const;
+export const delegateSchema = z.object({
+  user: z.string().regex(/^[a-z0-9][a-z0-9_.@-]{0,119}$/),
+  role: z.enum(DELEGATE_ROLES),
+  assertion: z.string().min(16).max(8200)
+}).strict();
+export type Delegate = z.infer<typeof delegateSchema>;
 export const taskKind = z.enum(TASK_KINDS);
 export const priority = z.enum(["low", "medium", "high", "urgent"]);
 export const waitingOn = z.enum(["none", "EGC", "customer", "provider"]);
@@ -167,7 +177,7 @@ export const WRITE_COMMANDS = new Set(["provider.note.ensure","portal.note.add",
 export const requestSchema = z.object({requestId:entityId,body:commandSchema}).strict();
 export const signedClaimsSchema = z.object({
   v:z.literal(CONTRACT_VERSION),iss:z.enum(["portal","mcp"]),aud:z.enum(["egc-operations","egc-portal"]),
-  iat:z.number().int(),nonce:entityId,actor:actorSchema,request:requestSchema
+  iat:z.number().int(),nonce:entityId,actor:actorSchema,delegate:delegateSchema.optional(),request:requestSchema
 }).strict();
 export type SignedClaims = z.infer<typeof signedClaimsSchema>;
 
@@ -196,4 +206,10 @@ export function authorize(actor:Actor, command:Command, workspace:string, hubPol
   if (command.command === "task.send" && actor.kind !== "human") throw new OperationsError("human_send_confirmation_required",403);
   if (actor.kind === "integration" && WRITE_COMMANDS.has(command.command) && !["provider.note.ensure","portal.note.add","portal.job.edit","portal.project.ensure","inbound.reconcile","task.create","task.edit","task.snooze","task.complete","task.complete_from_message","task.cancel","brief.create","schedule.mutate","schedule.bind_provider","schedule.sync_provider","schedule.link_customer","schedule.adopt"].includes(command.command))
     throw new OperationsError("integration_write_forbidden",403);
+}
+/** A delegated MCP grant must name its delegate in the actor id, and only an owner or manager delegate may write. */
+export function authorizeDelegate(actor:Actor, command:Command, delegate:Delegate|undefined) {
+  if (!delegate) return;
+  if (actor.kind !== "integration" || actor.role !== "integration" || !actor.id.startsWith(`mcp:${delegate.user}:`)) throw new OperationsError("delegate_invalid",403);
+  if (WRITE_COMMANDS.has(command.command) && !["owner","manager"].includes(delegate.role)) throw new OperationsError("delegate_write_forbidden",403);
 }

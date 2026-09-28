@@ -3,7 +3,7 @@ import {getCustomerTimeline} from '@egc/customer-state';
 import {registerPortalRecordTools} from "./portal-record-tools.js";
 import {verifyOperationsOnStart} from "./operations-smoke.js";
 import {executeCommunication,reconcileCommunication,preflightRecipient,persistOutboundMessage} from "./communication-execution.js";
-import {registerOperationsTools,operationsPrincipal,operationsEnabled,blockedToolCall,directSendsBlocked,DIRECT_SEND_DISABLED,callOperations} from "./operations.js";
+import {registerOperationsTools,operationsPrincipal,operationsEnabled,blockedToolCall,directSendsBlocked,DIRECT_SEND_DISABLED,callOperations,runAsPrincipal,type Principal} from "./operations.js";
 import {registerDomainTools,DOMAIN_TOOLS} from "./tools/index.js";
 import type {RegisterOptions} from "./tools/define.js";
 import {taskPrioritySchema,taskStatusSchema,withCanonicalContexts} from "./tools/domains/crm-reads.js";
@@ -22,7 +22,7 @@ import { getDb, schema } from "@egc/database";
 import { approveLegacyWalkthrough, isManagedWalkthrough, LegacyWalkthroughError } from "@egc/operations";
 import { walkthroughExtractionSchema } from "@egc/schemas";
 import { GhlClient, asDate, asRecord, asString, findArray } from "@egc/ghl";
-import { authenticatedMcpPrincipal, authorizeMcpRequest, mcpAuthenticateChallenge, oauthSecurityMetadata, READ_SCOPE, registerOauthRoutes, WRITE_SCOPE } from "./oauth.js";
+import { mcpAuthenticateChallenge, oauthSecurityMetadata, READ_SCOPE, registerOauthRoutes, verifiedMcpPrincipal, WRITE_SCOPE, type VerifiedMcpPrincipal } from "./oauth.js";
 import { registerMetaConversionTools } from "./meta-conversion-tools.js";
 import { requiredToolScope } from "./tool-access.js";
 import { verifyMetaConversionsOnStart } from "./meta-conversion-smoke.js";
@@ -2660,37 +2660,49 @@ app.use((req, res, next) => {
 const handler = toNodeHandler(createMcpHandler(() => buildServer()));
 const oauth = registerOauthRoutes(app,()=>connectorMode(DOMAIN_TOOLS));
 
-app.all(
-  "/mcp",
-  async (req, res, next) => {
+const principalActor=(principal:VerifiedMcpPrincipal):Principal=>({id:principal.id,role:"integration",kind:"integration",workspace:process.env.EGC_OPERATIONS_WORKSPACE??"egc",...(principal.delegate?{delegate:principal.delegate}:{})});
+const toolNameOf=(body:unknown)=>{
+  const params=(body as {params?:unknown}|undefined)?.params;
+  return params&&typeof params==="object"&&typeof (params as {name?:unknown}).name==="string"?(params as {name:string}).name:"";
+};
+
+// /mcp keeps discovery open so ChatGPT can initialize and list protected tools before
+// linking; a tool call without the scope it needs gets an in-band challenge. /mcp/oauth
+// follows the MCP authorization spec for clients such as Claude: every request needs a
+// token and a missing or insufficient one is an HTTP 401/403 with WWW-Authenticate.
+function mcpAuthentication(strict:boolean):express.RequestHandler {
+  return async (req, res, next) => {
     if(Array.isArray(req.body)){res.status(400).json({jsonrpc:"2.0",id:null,error:{code:-32600,message:"Batch requests are not supported"}});return;}
     const body = req.body as { id?: string | number | null; method?: string } | undefined;
+    const call = body?.method === "tools/call";
 
-    // Keep MCP discovery unauthenticated so ChatGPT can initialize and list
-    // protected tools. Authentication is enforced when a tool is invoked.
-    if (body?.method !== "tools/call") {
+    if (!strict && !call) {
       next();
       return;
     }
 
-    const toolName =
-      body &&
-      typeof (body as { params?: unknown }).params === "object" &&
-      (body as { params?: { name?: unknown } }).params !== null &&
-      typeof (body as { params?: { name?: unknown } }).params?.name === "string"
-        ? (body as { params: { name: string } }).params.name
-        : "";
-
-    const requiredScope = requiredToolScope(toolName);
-
-    const principal=await authenticatedMcpPrincipal(req.header("authorization"),requiredScope);
+    const toolName = call ? toolNameOf(body) : "";
+    const requiredScope = call ? requiredToolScope(toolName) : READ_SCOPE;
+    let principal: VerifiedMcpPrincipal | null;
+    try { principal = await verifiedMcpPrincipal(req.header("authorization"), requiredScope); }
+    catch { res.status(503).set("Retry-After", "30").json({jsonrpc:"2.0",id:body?.id??null,error:{code:-32603,message:"Authentication is temporarily unavailable. Retry shortly."}}); return; }
     if (principal) {
-      const blocked=blockedToolCall(toolName);
+      const blocked = call ? blockedToolCall(toolName) : null;
       if(blocked) {
-        res.status(200).json({jsonrpc:"2.0",id:body.id??null,result:{content:[{type:"text",text:JSON.stringify(blocked)}],isError:true}});
+        res.status(200).json({jsonrpc:"2.0",id:body?.id??null,result:{content:[{type:"text",text:JSON.stringify(blocked)}],isError:true}});
         return;
       }
-      operationsPrincipal.run({id:principal,role:"integration",kind:"integration",workspace:process.env.EGC_OPERATIONS_WORKSPACE??"egc"},()=>next());
+      runAsPrincipal(principalActor(principal),principal.assertion,()=>next());
+      return;
+    }
+
+    if (strict) {
+      const presented = Boolean(req.header("authorization"));
+      const insufficient = presented && requiredScope !== READ_SCOPE && Boolean(await verifiedMcpPrincipal(req.header("authorization"), READ_SCOPE).catch(() => null));
+      const scope = `${READ_SCOPE} ${WRITE_SCOPE}`;
+      res.status(insufficient ? 403 : 401)
+        .set("WWW-Authenticate", `Bearer resource_metadata="${oauth.oauthEndpointResourceMetadataUrl}", scope="${scope}"${presented ? `, error="${insufficient ? "insufficient_scope" : "invalid_token"}"` : ""}`)
+        .json({jsonrpc:"2.0",id:body?.id??null,error:{code:-32001,message:insufficient?"This connection does not have write access.":"Authentication required: connect your Easy Garage Cleaning account to continue."}});
       return;
     }
 
@@ -2702,7 +2714,7 @@ app.all(
 
     res.status(200).json({
       jsonrpc: "2.0",
-      id: body.id ?? null,
+      id: body?.id ?? null,
       result: {
         content: [{
           type: "text",
@@ -2714,9 +2726,11 @@ app.all(
         }
       }
     });
-  },
-  (req, res) => void handler(req, res, req.body)
-);
+  };
+}
+
+app.all("/mcp", mcpAuthentication(false), (req, res) => void handler(req, res, req.body));
+app.all("/mcp/oauth", mcpAuthentication(true), (req, res) => void handler(req, res, req.body));
 
 const port = Number(process.env.PORT ?? process.env.MCP_PORT ?? 4200);
 if(process.argv[1] && pathToFileURL(process.argv[1]).href===import.meta.url) {

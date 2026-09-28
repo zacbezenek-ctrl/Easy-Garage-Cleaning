@@ -304,6 +304,11 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   unprovable handoff sales go to `unverified`) and `hub.funnel.case` (a project's events pinned to one readTime),
   registered in HUB_COMMAND_POLICY for owners, managers and owner/manager delegates. Gaps: no platform consumer yet
   (FUN-09/14/31); the new composite indexes must be deployed; recurring horizon writes share one clock (follow-up task).
+- **MCP-OAUTH** MCP OAuth for several clients: ChatGPT and Claude through pinned client ID metadata documents, RFC 7591
+  registration (`MCP_OAUTH_DCR_ENABLED`), RFC 7009 revocation, a Postgres sign-in lockout and /mcp/oauth (401 challenge).
+  Behind `MCP_OAUTH_HUB_IDENTITY_ENABLED` a Hub owner/manager approves at /api/mcp-grant; the grant acts as
+  `mcp:<hub user>:<grant>` and the API re-verifies the Hub-signed delegate before the SEC-04 table applies (migration 0014).
+  Gaps: no Hub screen to revoke grants (30-day re-approval); Hub-approved grants cannot run legacy bridge writes yet.
 
 ## In progress
 
@@ -376,6 +381,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | OVERDUE | Overdue follow-ups widget on Hub home and MCP egc.whats_overdue | merged (33334e7) |
 | PRICE-SCRUB | Serve internal prices, pay and targets by role instead of shipping them in browser code | merged (36b1803) |
 | FUN-37 | Bridge funnel event feed: hub.funnel.events, hub.walkthrough.outcomes and hub.funnel.case (read-only, owner/manager and delegates) | merged (d33e15a) |
+| MCP-OAUTH | MCP OAuth multi-client (Claude/ChatGPT metadata documents, DCR, revocation, lockout) and Hub-approved grants (migration 0014) | merged (b4cd2ac) |
 
 ## Next
 

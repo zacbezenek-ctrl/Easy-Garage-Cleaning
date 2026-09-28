@@ -8,7 +8,7 @@ import {ensureProviderNote} from "./provider-notes.js";
 import {actionSendEnabled,actionSendHook} from "./action-send.js";
 import {getCanonicalReport,getCustomerTimeline,getCustomerStateDiagnostics} from '@egc/customer-state';
 import {reconcileHubBookings} from './booking-worker.js';
-import {serviceAuthEnabled,signApiServiceRequest,verifyOperationsClaims} from './service-bridge.js';
+import {serviceAuthEnabled,signApiServiceRequest,verifyDelegatedClaims,verifyOperationsClaims} from './service-bridge.js';
 import {reconciliationDiagnostic,safeReconciliationCode} from './reconciliation-diagnostics.js';
 
 export function portalAdapter(origin:string,key:string,workspace:string,fetcher:typeof fetch=fetch,env:NodeJS.ProcessEnv=process.env) {
@@ -65,6 +65,9 @@ export async function registerOperationsRoutes(app:FastifyInstance,options:{serv
       // A customer send is confirmed in the Hub only: whatever actor another issuer (the MCP)
       // signs, it never reaches task.send.
       if(claims.request.body.command==="task.send"&&claims.iss!=="portal"&&claims.iss!==SERVICE_ORIGINS.hub)throw new OperationsError("human_send_confirmation_required",403);
+      // MCP-OAUTH: a Hub-approved grant's delegate is re-verified here; service.execute then
+      // applies authorize() (the SEC-04 BRIDGE-AUTHZ table) to the same actor.
+      await verifyDelegatedClaims(claims);
       if(claims.request.body.command==="inbound.reconcile"){
         authorize(claims.actor,claims.request.body,env.EGC_OPERATIONS_WORKSPACE??"egc");if(!inbound)throw new OperationsError("inbound_reconciliation_not_configured",503);
         const command=claims.request.body;return reply.send(await inbound.run({limit:command.limit,...(command.lookbackDays?{lookbackDays:command.lookbackDays}:{})}));

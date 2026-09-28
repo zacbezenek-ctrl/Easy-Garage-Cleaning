@@ -388,6 +388,10 @@ service cloud.firestore {
     match /payment_reviews/{documentId} {
       allow read, write: if false;
     }
+    // Single-use receipts for Hub approvals of MCP OAuth grants (/api/mcp-grant).
+    match /mcp_grant_nonces/{documentId} {
+      allow read, write: if false;
+    }
 
     // Owner-entered standard costs for stocked catalog items and their save
     // receipts. Managers read and the owner writes them via /api/standard-costs.

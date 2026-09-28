@@ -1,6 +1,6 @@
 import {getDb,schema} from '@egc/database';
 import {lt} from 'drizzle-orm';
-import {OperationsError,ServiceAuthenticationError,actorSchema,requestSchema,verifyRequest,verifyServiceRequest,signServiceRequest,servicePublicKeySet,type Actor} from '@egc/operations';
+import {OperationsError,ServiceAuthenticationError,actorSchema,authorizeDelegate,requestSchema,verifyMcpGrant,verifyRequest,verifyServiceRequest,signServiceRequest,servicePublicKeySet,type Actor,type Command,type Delegate,type ServiceKeyResolver} from '@egc/operations';
 import type {FastifyInstance} from 'fastify';
 
 export const serviceAuthEnabled=(env:NodeJS.ProcessEnv)=>{const mode=env.EGC_OPERATIONS_SERVICE_AUTH;if(mode&&mode!=='v2'&&mode!=='legacy')throw new OperationsError('service_auth_mode_invalid',503);return mode==='v2';};
@@ -30,6 +30,14 @@ export async function verifyOperationsClaims(token:unknown,env:NodeJS.ProcessEnv
  // The MCP is a separate existing trusted issuer. A failed Hub v2 signature
  // never falls back to this path or to the legacy shared Portal key.
  return verifyRequest(token,{...(serviceAuthEnabled(env)?{}:env.EGC_OPERATIONS_PORTAL_SIGNING_SECRET?{portal:env.EGC_OPERATIONS_PORTAL_SIGNING_SECRET}:{}),...(env.EGC_OPERATIONS_MCP_SIGNING_SECRET?{mcp:env.EGC_OPERATIONS_MCP_SIGNING_SECRET}:{})});
+}
+/** A delegated MCP grant must carry the Hub's signature over exactly this user and role; only owner or manager delegates write. */
+export async function verifyDelegatedClaims(claims:{actor:Actor;request:{body:Command};delegate?:Delegate|undefined},options:{resolveKey?:ServiceKeyResolver;now?:number}={}){
+ const delegate=claims.delegate;if(!delegate)return;
+ authorizeDelegate(claims.actor,claims.request.body,delegate);
+ // The grant is proof of what the Hub signed at approval time, so its 60-second lifetime is not re-applied here.
+ const grant=await verifyMcpGrant(delegate.assertion,{allowExpired:true,...options}).catch(error=>{throw error instanceof ServiceAuthenticationError&&error.status>=500?new OperationsError(error.code,503):new OperationsError('delegate_invalid',403);});
+ if(grant.hubUser!==delegate.user||grant.role!==delegate.role||grant.businessAccess!==true)throw new OperationsError('delegate_invalid',403);
 }
 export async function signApiServiceRequest(actor:Actor,body:Record<string,unknown>,path:string,requestId:string,env:NodeJS.ProcessEnv){
  return signServiceRequest({service:'api',rootSecret:serviceRootSecret(env),workspace:workspace(env),path,actor,request:{requestId,body}});

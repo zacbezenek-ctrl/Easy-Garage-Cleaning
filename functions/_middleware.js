@@ -57,9 +57,10 @@ export async function onRequest(context) {
     headers: upstream.headers,
   });
   const ownerSetup = /^\/hub-login-setup(?:\.html|\.js)?$/.test(pathname);
-  const gustoAuth = pathname === '/api/gusto-auth';
-  // These responses carry their own stricter CSP (OAuth nonce page, no-script money document).
-  const ownPolicy = gustoAuth || pathname === '/api/money-document';
+  // These responses carry their own stricter CSP (OAuth nonce page, no-script money document), and
+  // the relay pages set their own narrower CSP for the one other origin they post to.
+  const relayPage = pathname === '/api/gusto-auth' || pathname === '/api/mcp-grant';
+  const ownPolicy = relayPage || pathname === '/api/money-document';
   if (!ownPolicy || !response.headers.has('Content-Security-Policy')) response.headers.set('Content-Security-Policy', ownerSetup
     ? "default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; connect-src 'none'; form-action 'none'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'"
     : CSP);
@@ -82,7 +83,9 @@ export async function onRequest(context) {
     response.headers.set('X-Robots-Tag', 'noindex, nofollow');
   }
   if (ownPolicy) {
-    response.headers.set('Referrer-Policy', 'no-referrer');
+    // The MCP approval page may keep same-origin, so its own form POST carries a real Origin; the rest send none.
+    const sameOriginApproval = pathname === '/api/mcp-grant' && upstream.headers.get('Referrer-Policy') === 'same-origin';
+    response.headers.set('Referrer-Policy', sameOriginApproval ? 'same-origin' : 'no-referrer');
     response.headers.set('X-Frame-Options', 'DENY');
   }
   // Private certificate PDFs keep their handler's sandboxed CSP and never send a referrer.

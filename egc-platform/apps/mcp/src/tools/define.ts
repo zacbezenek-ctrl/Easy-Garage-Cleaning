@@ -2,7 +2,7 @@ import type {McpServer} from "@modelcontextprotocol/server";
 import * as z from "zod/v4";
 import type {Actor} from "@egc/operations";
 import {oauthSecurityMetadata,READ_SCOPE,WRITE_SCOPE} from "../oauth.js";
-import {operationsPrincipal} from "../operations.js";
+import {operationsPrincipal,type Principal} from "../operations.js";
 import {error,isRecord,result,settle,type ToolResult} from "./result.js";
 
 export const TOOL_CLASSES=["read","write","destructive","send","money"] as const;
@@ -54,13 +54,14 @@ export type ConfirmGate={
 export const confirmationUnavailable:ConfirmGate={issue:()=>null,verify:()=>false};
 export type RegisterOptions={confirm?:ConfirmGate;now?:()=>Date;reserved?:Iterable<string>};
 const confirmationEnvelope=z.object({requiresConfirmation:z.literal(true),executed:z.literal(false),tool:z.string(),requestId:z.string(),preview:z.unknown(),confirmToken:z.string().optional(),expiresAt:z.string().optional(),confirmation:z.literal("unavailable").optional(),instruction:z.string()});
-// OAuth grants come from the owner's interactive login; the static service bearer is not the owner.
-export const isOwnerGrant=(actor:Actor)=>actor.id.startsWith("mcp-oauth-grant:");
+// A Hub-approved grant is the owner's only when its delegate role is owner. A shared-login grant
+// (mcp-oauth-grant:) is the owner's interactive login; the static service bearer is not the owner.
+export const isOwnerGrant=(actor:Principal)=>actor.delegate?actor.delegate.role==="owner"&&actor.id.startsWith(`mcp:${actor.delegate.user}:`):actor.id.startsWith("mcp-oauth-grant:");
 
 export async function invokeTool(def:ToolDef,raw:unknown,options:RegisterOptions={}):Promise<ToolResult>{
   const actor=operationsPrincipal.getStore();
   if(!actor)return error("verified_principal_required");
-  if(def.policy.ownerOnly&&!isOwnerGrant(actor))return error("owner_grant_required",{instruction:"Connect with the owner's OAuth login to use this tool."});
+  if(def.policy.ownerOnly&&!isOwnerGrant(actor))return error("owner_grant_required",{instruction:"Connect with the owner's Employee Hub login to use this tool."});
   const ctx:ToolContext={actor,now:options.now??(()=>new Date())},args=isRecord(raw)?raw:{};
   const {confirmToken,...request}=args,requestId=String(request.requestId);
   let executing=false;

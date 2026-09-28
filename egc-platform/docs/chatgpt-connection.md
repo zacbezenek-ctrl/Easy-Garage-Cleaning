@@ -21,11 +21,15 @@ What `egc:write` can do depends on the server mode, and the consent page and `/m
 
 ## Server discovery endpoints
 
-- `/.well-known/oauth-protected-resource`
-- `/.well-known/oauth-authorization-server`
+- `/.well-known/oauth-protected-resource` (also `/.well-known/oauth-protected-resource/mcp` and `/.well-known/oauth-protected-resource/mcp/oauth` for clients that derive it from the endpoint URL)
+- `/.well-known/oauth-authorization-server` — advertises `revocation_endpoint`, and `registration_endpoint` when `MCP_OAUTH_DCR_ENABLED=true`
 - `/oauth/authorize`
 - `/oauth/token`
-- `/mcp`
+- `/oauth/revoke` — RFC 7009 token revocation
+- `/oauth/register` — RFC 7591 dynamic client registration (only when `MCP_OAUTH_DCR_ENABLED=true`; see [claude-connection.md](claude-connection.md))
+- `/oauth/hub-callback` — receives the Employee Hub's signed approval
+- `/mcp` — tools are discoverable before account linking (ChatGPT)
+- `/mcp/oauth` — every request needs a token (Claude and other spec-following clients)
 - `/mcp-info` — plain-text description of the live access policy
 - `/health`
 
@@ -33,11 +37,20 @@ What `egc:write` can do depends on the server mode, and the consent page and `/m
 
 ChatGPT can initialize the MCP and discover tools before account linking. Protected tool invocation returns an MCP `mcp/www_authenticate` challenge when the required scope is missing.
 
-The authorization server uses authorization code + PKCE S256, resource-bound tokens, one-hour access tokens, rotating refresh tokens, and SHA-256 token/code hashes in Postgres.
+The authorization server uses authorization code + PKCE S256, resource-bound tokens, one-hour access tokens, rotating refresh tokens, and SHA-256 token/code hashes in Postgres. The token format and hashing are unchanged, so existing ChatGPT grants keep working. ChatGPT is still identified by its client ID metadata document (`https://chatgpt.com/oauth/client.json`), and Claude by its own (`https://claude.ai/oauth/mcp-oauth-client-metadata`); both documents are pinned in the server, not fetched, and no other metadata-document URL is accepted. Dynamically registered clients must use an allowlisted redirect URI. The `resource` parameter may be omitted or name the origin or an MCP endpoint (`/mcp`, `/mcp/oauth`); tokens are always bound to the origin.
+
+### Who a grant acts for
+
+There are two ways to approve a connection on the consent page:
+
+- **Continue with Employee Hub** (`MCP_OAUTH_HUB_IDENTITY_ENABLED=true`). The MCP stores the validated request under a single-use nonce and sends the browser to `https://easygaragecleaning.com/api/mcp-grant`. A signed-in Hub owner or manager approves it there; the Hub claims the nonce once in `mcp_grant_nonces` (server-only Firestore collection, audited in `hub_audit`) and returns a 60-second Ed25519 assertion `{hubUser, role, businessAccess, grantNonce, resource, scope, client}` with audience `egc-mcp`, signed with the existing Hub service key from `/api/operations-service-keys`. `scope` and `client` are the access and client label the Hub approval page showed. The MCP verifies the signature, audience, lifetime, its own origin and the nonce; checks that the approval came back to the browser that started it (a per-request `__Host-egc_hub_grant_*` cookie, `SameSite=None`, ten minutes) and that the signed label and access match the stored request; then stores `principal_id`/`principal_role` on the grant. Tools run as `mcp:<hub user>:<grant id>` with `delegate {user, role}`, and the operations envelope forwards the Hub assertion so the API re-verifies it and refuses writes from any delegate who is not an owner or manager. Only owner and manager grants get `egc:write`; owner-only tools require an owner delegate. A Hub grant must be re-approved 30 days after approval.
+- **Shared connector login** (`MCP_OAUTH_USER`/`MCP_OAUTH_PASSWORD`), today's behavior, kept while `MCP_OAUTH_SHARED_LOGIN_ENABLED` is not `false`. Its grants act as `mcp-oauth-grant:<grant id>`. Setting the flag to `false` removes the password form and refuses every shared-login grant.
+
+**Continue with Employee Hub** starts are capped at 300 per 15 minutes server-wide (HTTP 429 past that; refused starts store nothing). A shared-login username is locked while it has 5 failed attempts in the last 15 minutes, even for the right password; attempts refused while locked are not counted. Past 30 failures across all usernames, failures are answered with HTTP 429, but the right username and password still sign in (details in [claude-connection.md](claude-connection.md#sign-in-protection)). The rollout order is in [claude-connection.md](claude-connection.md#rollout-order-hub-identity).
 
 The optional static `MCP_BEARER_TOKEN` (internal diagnostics only) is read-only. It is accepted for `egc:write` tools only while `MCP_BEARER_WRITE_ENABLED=true`, which startup verifications that write (`EGC_OPERATIONS_CANARY_ON_START`, the dry-run sync in `META_CAPI_VERIFY_ON_START`, and `META_CAPI_TEST_ON_START`) need for the duration of that check. Without it the canary fails with `verification_bearer_write_disabled` and the Meta verification skips its write-scoped checks and logs `bearer_write_disabled`.
 
-Audit rows record the verified principal: `mcp-oauth-grant:<grant id>` for an OAuth connection or `mcp-service-grant` for the static bearer.
+Audit rows record the verified principal: `mcp:<hub user>:<grant id>` for a Hub-approved connection, `mcp-oauth-grant:<grant id>` for a shared-login connection, or `mcp-service-grant` for the static bearer.
 
 ## ChatGPT setup
 
@@ -46,8 +59,8 @@ Audit rows record the verified principal: `mcp-oauth-grant:<grant id>` for an OA
 3. Enable Developer mode under Security & login if needed.
 4. Add a custom MCP/server in Plugins developer mode.
 5. Enter `https://<mcp-host>/mcp`.
-6. Complete the account-link flow.
-7. Authorize `egc:read` and `egc:write` for full EGC operations.
+6. Complete the account-link flow: choose **Continue with Employee Hub** and approve in the Hub (or, while it is enabled, use the shared connector login).
+7. Authorize `egc:read` and `egc:write` for full EGC operations (write is granted only to owner and manager approvals).
 
 ## Read acceptance prompt
 
@@ -63,7 +76,7 @@ Verify in both Postgres/portal and GHL before enabling production write use.
 
 - automation messages do not count as human outreach;
 - appointment creation time is separate from scheduled time;
-- writes require `egc:write`; the static bearer is read-only unless explicitly enabled;
+- writes require `egc:write`, granted only to owner and manager Hub approvals (or the shared login); the static bearer is read-only unless explicitly enabled;
 - contact creation uses GHL upsert;
 - duplicate exact appointment creates are blocked;
 - all writes create EGC audit-log entries attributed to the verified principal;

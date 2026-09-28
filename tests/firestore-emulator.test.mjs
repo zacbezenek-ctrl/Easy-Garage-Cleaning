@@ -182,6 +182,10 @@ test('actual Firestore rules isolate canonical operations from crew SDK access',
       for(const db of [publicDb,crew,lead,manager,partner]){const ref=db.doc('operations_settings/followups');await assertFails(ref.get());await assertFails(ref.set({ownerId:'attacker'}));await assertFails(ref.update({ownerId:'attacker'}));await assertFails(ref.delete());await assertFails(db.doc('operations_settings/other').set({ownerId:'attacker'}));}
       for(const db of [crew,manager])await assertFails(db.collection('operations_settings').get());
     });
+    await t.test('MCP grant approval receipts are server-only even for business SDK sessions',async()=>{
+      await environment.withSecurityRulesDisabled(async context=>{await context.firestore().doc(`mcp_grant_nonces/${'a'.repeat(64)}`).set({hubUser:'zacb',role:'owner',mcp:'https://mcp.example.invalid'});});
+      for(const db of [publicDb,crew,lead,manager]){const path=`mcp_grant_nonces/${'a'.repeat(64)}`;await assertFails(db.doc(path).get());await assertFails(db.doc(path).update({hubUser:'crew1'}));await assertFails(db.doc(path).delete());await assertFails(db.doc(`mcp_grant_nonces/${'b'.repeat(64)}`).set({hubUser:'zacb',role:'owner'}));await assertFails(db.collection('mcp_grant_nonces').get());}
+    });
     await t.test('manager administrative schedule and customer access remains functional',async()=>{
       await assertSucceeds(manager.doc('jobs/assigned').get());
       await assertSucceeds(manager.doc('customers/customer').get());

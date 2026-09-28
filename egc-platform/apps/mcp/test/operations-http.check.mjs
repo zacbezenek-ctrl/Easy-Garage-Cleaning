@@ -127,3 +127,27 @@ for(const enabled of [false,true]) {
     }finally{await server.stop();}
   });
 }
+
+test('/mcp/oauth answers with HTTP 401/403 challenges per the MCP authorization spec while /mcp keeps open discovery',{timeout:20000},async()=>{
+  const server=await start(true,{MCP_OAUTH_DCR_ENABLED:'true'});
+  try {
+    const post=(body,headers={})=>fetch(`${server.origin}/mcp/oauth`,{method:'POST',signal:AbortSignal.timeout(5000),headers:{'Content-Type':'application/json','Accept':'application/json,text/event-stream',...headers},body:JSON.stringify(body)});
+    const params={protocolVersion:'2025-06-18',capabilities:{},clientInfo:{name:'isolated-egc-ci',version:'1'}};
+    const anonymous=await post({jsonrpc:'2.0',id:1,method:'initialize',params});
+    assert.equal(anonymous.status,401);
+    assert.equal(anonymous.headers.get('www-authenticate'),`Bearer resource_metadata="${server.origin}/.well-known/oauth-protected-resource/mcp/oauth", scope="egc:read egc:write"`);
+    // No database in this check: an OAuth token cannot be verified, which is a retryable 503, never a pass or a crash.
+    const unverifiable=await post({jsonrpc:'2.0',id:1,method:'initialize',params},{Authorization:'Bearer egc_at_isolated-unverifiable-token'});
+    assert.equal(unverifiable.status,503);assert.equal((await unverifiable.json()).error.code,-32603);
+    const metadata=await (await fetch(`${server.origin}/.well-known/oauth-protected-resource/mcp/oauth`,{signal:AbortSignal.timeout(5000)})).json();
+    assert.equal(metadata.resource,`${server.origin}/mcp/oauth`);assert.deepEqual(metadata.authorization_servers,[server.origin]);
+    const authed=await post({jsonrpc:'2.0',id:1,method:'initialize',params},{Authorization:`Bearer ${token}`});
+    assert.equal(authed.status,200);
+    // The static bearer is read-only: a write tool is refused with 403 insufficient_scope before any handler runs.
+    const write=await post({jsonrpc:'2.0',id:2,method:'tools/call',params:{name:'actions.propose',arguments:{}}},{Authorization:`Bearer ${token}`});
+    assert.equal(write.status,403);assert.match(write.headers.get('www-authenticate'),/error="insufficient_scope"/);
+    assert.equal((await server.rpc('initialize',params)).status,200);
+    const discovery=await (await fetch(`${server.origin}/.well-known/oauth-authorization-server`,{signal:AbortSignal.timeout(5000)})).json();
+    assert.equal(discovery.revocation_endpoint,`${server.origin}/oauth/revoke`);assert.equal(discovery.registration_endpoint,`${server.origin}/oauth/register`);
+  }finally{await server.stop();}
+});
