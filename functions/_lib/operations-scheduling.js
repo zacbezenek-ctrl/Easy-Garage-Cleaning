@@ -9,6 +9,7 @@ import {legacyBlockMode,legacyBlockedDays} from './dispatch-legacy-blocks.js';
 import {customerIdentityFields} from './customer-identity.js';
 import {segmented} from './dispatch-segments.js';
 import {commitConflict,commitFailure} from './firestore-errors.js';
+import {bridgeCommandDenial,bridgeCommandPolicy} from '../../egc-platform/services/operations/src/bridge-command-policy.ts';
 const ROOT='projects/egcw-1ec83/databases/(default)/documents';
 const URL=`https://firestore.googleapis.com/v1/${ROOT}`;
 const safeId=id=>typeof id==='string'&&/^[A-Za-z0-9_-]{1,180}$/.test(id)&&!/^(_egc_|secure_)/.test(id);
@@ -78,6 +79,9 @@ export async function linkScheduledCustomer(store,actor,input,now=new Date().toI
 /** Uses the Hub's existing jobs and per-day schedule-lock documents. The receipt,
  * visit and both affected day locks commit atomically with revision preconditions. */
 export async function mutateScheduledVisit(store,actor,input,now=new Date().toISOString()){
+  // SEC-04: the shared bridge policy's roles (owner/manager or integration) hold for every
+  // caller; the signed bridge matched the exact integration principal before this runs.
+  if(bridgeCommandDenial(actor,bridgeCommandPolicy({command:'schedule.mutate',mode:input?.mode}),{principals:false}))throw failure('schedule_actor_forbidden',403);
   if(!uuid(input.requestId)||!safeId(input.portalCustomerId)||!['create','update','cancel'].includes(input.mode))throw failure('schedule_request_invalid',400);
   // The business identity survives fresh request IDs and different entry points.
   // Cancelled visits retain this identity and cannot be accidentally resurrected.

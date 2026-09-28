@@ -22,7 +22,7 @@ export function portalAdapter(origin:string,key:string,workspace:string,fetcher:
     let result:Record<string,unknown>;
     try{result=await response.json() as Record<string,unknown>;}catch{throw new OperationsError('invalid_json_response',503,{upstreamStatus:response.status});}
     if(!response.ok){
-      const code=safeReconciliationCode(result.error)??(typeof result.error==="string"&&/^(?:schedule|record|project|note|job|completion|operational_scope|hub|dispatch)_[a-z_]+$/.test(result.error)?result.error:"portal_authority_unavailable");
+      const code=safeReconciliationCode(result.error)??(typeof result.error==="string"&&/^(?:schedule|record|project|note|job|completion|operational_scope|hub|dispatch|bridge|confirm_token)_[a-z_]+$/.test(result.error)?result.error:"portal_authority_unavailable");
       throw new OperationsError(code,response.status>=500?503:response.status,{upstreamStatus:response.status});
     }
     return result;

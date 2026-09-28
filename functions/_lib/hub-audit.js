@@ -126,7 +126,7 @@ function required(value, pattern, label) {
  * Owner-only records (payroll, pay rates, account approval, Gusto) must pass
  * visibility:'owner' so managers never read their snapshots or reason.
  */
-export function auditWrite({ actor, via, action, entity, before = null, after = null, requestId = null, reason = null, visibility = 'business', now = new Date().toISOString() } = {}) {
+export function auditWrite({ actor, via, action, entity, before = null, after = null, requestId = null, reason = null, visibility = 'business', onBehalfOf = null, now = new Date().toISOString() } = {}) {
   const ms = instantMs(now), at = new Date(ms).toISOString();
   const actorId = required(String(actor?.id ?? '').toLowerCase(), ACTOR, 'actor');
   const kind = required(actor?.kind, /^[a-z]+$/, 'actor kind');
@@ -138,6 +138,7 @@ export function auditWrite({ actor, via, action, entity, before = null, after = 
   if (requestId !== null && (typeof requestId !== 'string' || !UUID.test(requestId))) throw fail('hub_audit_invalid', 'The audit entry needs a valid request ID. Nothing was saved.', 503);
   if (reason !== null && typeof reason !== 'string') throw fail('hub_audit_invalid', 'The audit reason must be text. Nothing was saved.', 503);
   if (!VISIBILITY.has(visibility)) throw fail('hub_audit_invalid', 'The audit entry needs a valid visibility. Nothing was saved.', 503);
+  const behalf = onBehalfOf === null || onBehalfOf === undefined || onBehalfOf === '' ? null : required(typeof onBehalfOf === 'string' ? onBehalfOf.toLowerCase() : '', ACTOR, 'on-behalf-of account');
   const state = { truncated: false };
   const safeBefore = auditSnapshot(before, state), safeAfter = auditSnapshot(after, state);
   let note = reason === null ? null : safeText(reason.trim(), state);
@@ -152,6 +153,8 @@ export function auditWrite({ actor, via, action, entity, before = null, after = 
     before: safeBefore === null ? null : JSON.stringify(safeBefore),
     after: safeAfter === null ? null : JSON.stringify(safeAfter),
     changedKeys: changedKeys(before, after), truncated: state.truncated, visibility,
+    // The account an integration acted for (bridge onBehalfOf); present only when given.
+    ...(behalf ? { onBehalfOf: behalf } : {}),
   };
   return { collection: HUB_AUDIT_COLLECTION, id: prefix(ms) + suffix, patch: doc, data: doc };
 }
@@ -183,6 +186,7 @@ function projectEntry(row, owner) {
     changedKeys: Array.isArray(row.changedKeys) ? row.changedKeys.filter(key => typeof key === 'string').slice(0, LIMIT.changed) : [],
     truncated: row.truncated === true, visibility: restricted ? 'owner' : 'business',
   };
+  if (typeof row.onBehalfOf === 'string' && ACTOR.test(row.onBehalfOf)) entry.onBehalfOf = row.onBehalfOf;
   if (withheld) entry.withheld = true;
   if (flags.unreadable) entry.unreadable = true;
   return entry;

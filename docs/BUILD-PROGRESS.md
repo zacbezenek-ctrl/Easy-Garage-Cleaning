@@ -237,6 +237,10 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   and non-ALREADY_EXISTS 409s are `stale`, other 4xx `rejected`. Dispatch and its stores, scheduling bridge, business hub,
   Gusto, patchJob, staff accounts, field costs, recording approval, nonces and Quo receipts return a 409 revision conflict
   instead of a 503 retry loop (replaces SEGMENTS' flag-only mapping). Gap: portal conflict()/payments treat any 400 as a conflict.
+- **BRIDGE-AUTHZ** SEC-04 policy table for legacy bridge commands (`bridge-command-policy.ts`, shared by the API and the Hub
+  via `operations-command-policy.js`): crew/crew_lead refused, sales read-only, integration writers named (MCP principals,
+  schedule-sync, note-link, booking-adoption-worker); every bridge write commits a hub_audit entry in the same commit.
+  Cancel confirm tokens only with `EGC_OPERATIONS_BRIDGE_CONFIRM_REQUIRED` (off; no issuer yet). Gap: no onBehalfOf.
 
 ## In progress
 
@@ -294,6 +298,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | JOB-CUT | Jobber cutover import tooling (dry run by default) and runbook | merged (a233020) |
 | LEGACY-SEND | Legacy customer send hardening, bounded sales-exit lookups, owner messaging setup doc | merged (cb34f34) |
 | P0-4 | Firestore 400 FAILED_PRECONDITION on a stale updateTime is a revision conflict (409) across the stores (shared firestore-errors.js) | merged (d410b88) |
+| BRIDGE-AUTHZ | SEC-04 bridge command policy table (crew refused, sales read-only, audited writes, confirm flag off) | merged (e4309f5) |
 
 ## Next
 

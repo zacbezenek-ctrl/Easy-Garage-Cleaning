@@ -1,7 +1,9 @@
 import * as z from "zod/v4";
 import {isMessageTaskKind,MESSAGE_ATTACHMENT_KINDS,TASK_KINDS} from "./action-kinds.js";
-import {HUB_COMMANDS,HUB_COMMAND_POLICY,HUB_WRITE_COMMANDS,hubCommandDenial,hubCommandPolicy,isHubCommandName,type HubCommandPolicy} from "./hub-commands.js";
+import {HUB_COMMANDS,HUB_COMMAND_POLICY,HUB_WRITE_COMMANDS,PORTAL_PASSTHROUGH,hubCommandDenial,hubCommandPolicy,isHubCommandName,type HubCommandPolicy} from "./hub-commands.js";
+import {BRIDGE_COMMAND_POLICY,bridgeCommandDenial,bridgeCommandPolicy,type BridgeCommandPolicy} from "./bridge-command-policy.js";
 export * from "./hub-commands.js";
+export * from "./bridge-command-policy.js";
 
 export const CONTRACT_VERSION = 1;
 export const isoTime = z.string().datetime({ offset: true });
@@ -169,7 +171,7 @@ export type SignedClaims = z.infer<typeof signedClaimsSchema>;
 export class OperationsError extends Error {
   constructor(public code:string, public status=400, public details:Record<string,unknown>={}) { super(code); }
 }
-export function authorize(actor:Actor, command:Command, workspace:string, hubPolicies:Readonly<Record<string,HubCommandPolicy>>=HUB_COMMAND_POLICY) {
+export function authorize(actor:Actor, command:Command, workspace:string, hubPolicies:Readonly<Record<string,HubCommandPolicy>>=HUB_COMMAND_POLICY, bridgePolicies:Readonly<Record<string,BridgeCommandPolicy>>=BRIDGE_COMMAND_POLICY) {
   if (!actorSchema.safeParse(actor).success || (actor.role === "integration") !== (actor.kind === "integration")) throw new OperationsError("invalid_actor",403);
   if (actor.workspace !== workspace) throw new OperationsError("workspace_forbidden",403);
   if(command.command==='schedule.adopt'&&(actor.kind!=='integration'||actor.role!=='integration'||actor.id!=='booking-adoption-worker'))throw new OperationsError('schedule_adoption_internal_only',403);
@@ -179,6 +181,11 @@ export function authorize(actor:Actor, command:Command, workspace:string, hubPol
   if (isHubCommandName(command.command) && !hub) throw new OperationsError("hub_command_unknown",403);
   const hubDenied=hub&&hubCommandDenial(actor,command,hub);
   if (hubDenied) throw new OperationsError(hubDenied,403);
+  // SEC-04: the legacy commands the Hub runs answer to the same table the Hub enforces.
+  const bridge=bridgeCommandPolicy(command,bridgePolicies);
+  if (!bridge && !isHubCommandName(command.command) && PORTAL_PASSTHROUGH.has(command.command)) throw new OperationsError("bridge_command_unknown",403);
+  const bridgeDenied=bridge&&bridgeCommandDenial(actor,bridge);
+  if (bridgeDenied) throw new OperationsError(bridgeDenied,403);
   if (["tasks.approve","task.reject"].includes(command.command) &&
       (actor.kind !== "human" || !["owner","manager"].includes(actor.role)))
     throw new OperationsError("human_manager_approval_required",403);

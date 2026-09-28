@@ -5,6 +5,7 @@ import { randomUUID, webcrypto } from 'node:crypto';
 import vm from './helpers/vm-realm.mjs';
 import { arrivalWindowProblem, arrivalWindowFields } from '../functions/_lib/dispatch-arrival.js';
 import { commitConflict, commitFailure } from '../functions/_lib/firestore-errors.js';
+import { bridgeCommandDenial, bridgeCommandPolicy } from '../egc-platform/services/operations/src/bridge-command-policy.ts';
 
 // Execute the actual scheduling mutator, isolating only imported I/O and time/
 // conflict helpers. This suite proves atomic dependency guards, not live
@@ -20,6 +21,8 @@ function load() {
     encodeFirestoreFields: value => value,
     // Pure arrival-window rules run for real; these fixtures have no windows.
     arrivalWindowProblem, arrivalWindowFields,
+    // The shared SEC-04 bridge policy runs for real (the owner actor below is allowed).
+    bridgeCommandDenial, bridgeCommandPolicy,
     DISPATCH_TIME_ZONE: 'America/Denver',
     legacyBlockMode: () => 'off',
     legacyBlockedDays: async () => ({ mode: 'off', rows: [] }),

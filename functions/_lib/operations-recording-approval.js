@@ -20,7 +20,9 @@ export async function resolveRecordingIdentity(env,jobId,fetcher=firestoreFetch)
   if(visitId!==job.id){const visit=await read(env,'jobs/'+visitId,fetcher);if(!visit||visit.type!=='walkthrough'||visit.customerId!==job.customerId||(visit.convertedJobId&&visit.convertedJobId!==job.id))fail('recording_visit_job_mismatch');}
   return{portalJobId:job.id,portalVisitId:visitId,portalCustomerId:job.customerId,portalProjectId:id(job.projectId)?job.projectId:null,portalRevision:job.revision,highlevelContactId:job.highlevelContactId||customer.highlevelContactId||null,authority:'employee_hub'};
 }
-export async function applyRecordingApproval(env,command,actor,fetcher=firestoreFetch){
+/** audit(entity,before,after) returns one create-only write (operations-command-policy.js)
+ * that joins the approval's commit, so the hub_audit entry lands exactly with it. */
+export async function applyRecordingApproval(env,command,actor,fetcher=firestoreFetch,{now=new Date().toISOString(),audit=null}={}){
   if(!uuid(command.recordingId)||!uuid(command.requestId)||!/^[a-f0-9]{64}$/.test(command.fingerprint||'')||!id(command.portalJobId)||typeof command.expectedRevision!=='string')fail('invalid_recording_approval',400);
   if(actor.kind!=='human'||!['owner','manager'].includes(actor.role))fail('human_manager_approval_required',403);
   const path='operation_recording_approvals/'+command.recordingId;
@@ -32,13 +34,15 @@ export async function applyRecordingApproval(env,command,actor,fetcher=firestore
   if(identity.portalVisitId!==command.portalVisitId||identity.portalCustomerId!==command.portalCustomerId||identity.portalProjectId!==(command.portalProjectId||null))fail('recording_identity_changed');
   const extraction=command.extraction;
   if(!extraction||typeof extraction!=='object'||Array.isArray(extraction)||JSON.stringify(extraction).length>90000)fail('invalid_recording_scope',400);
-  const appliedAt=new Date().toISOString();
+  const appliedAt=now;
   // Staff review is not customer acceptance. Existing sold scope, signatures, prices and payment evidence stay intact.
   const reviewed={recordingId:command.recordingId,approvedBy:actor.id,approvedAt:appliedAt,scope:extraction,sourceRevision:identity.portalRevision,approvalKind:'staff_recording_review'};
   const receipt={...identity,recordingId:command.recordingId,requestId:command.requestId,fingerprint:command.fingerprint,actorId:actor.id,appliedAt,reviewed};
+  const audited=audit?[audit({collection:'jobs',id:identity.portalJobId},null,{reviewedWalkthroughScope:reviewed})]:[];
   const r=await fetcher(env,BASE+':commit',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({writes:[
     {update:{name:NAME+'/jobs/'+identity.portalJobId,fields:encodeFirestoreFields({reviewedWalkthroughScope:reviewed,updatedAt:appliedAt})},updateMask:{fieldPaths:['reviewedWalkthroughScope','updatedAt']},currentDocument:{updateTime:identity.portalRevision}},
-    {update:{name:NAME+'/'+path,fields:encodeFirestoreFields(receipt)},currentDocument:{exists:false}}
+    {update:{name:NAME+'/'+path,fields:encodeFirestoreFields(receipt)},currentDocument:{exists:false}},
+    ...audited.map(write=>({update:{name:NAME+'/'+write.collection+'/'+write.id,fields:encodeFirestoreFields(write.patch)},currentDocument:{exists:false}}))
   ]})});
   if(!r.ok){
     if(!commitConflict(await commitFailure(r)))fail('recording_approval_outcome_unknown',503);
