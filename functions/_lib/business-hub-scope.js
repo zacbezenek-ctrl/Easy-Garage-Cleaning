@@ -1,7 +1,7 @@
 /* Per-property member access. A member without propertyIds (or with an empty list) sees every property, so existing
    members need no backfill; administrators always see every property. Scope is read from the saved member on every
    request, so narrowing applies to the next request (including delegated /customer-portal access) without a sign-out. */
-import { LIMITS, fail, isId, digest, accountView, requireLinkedJob, businessActor } from './business-hub-core.js';
+import { LIMITS, fail, isId, digest, accountView, requireLinkedJob, businessActor, receiptExpiry } from './business-hub-core.js';
 import { auditWrite } from './hub-audit.js';
 
 export const PROPERTY_DENIED = 'Your property access does not include this property. Ask your account administrator.';
@@ -22,8 +22,8 @@ export function canSeeProperty(member, propertyId) {
 const unlinked = ({ jobId, ...request }) => request;
 // A read-only view: requests, linked projects and request-linked messages of other properties are removed. General
 // account messages stay visible. A request keeps its jobId only while that project is an active link of a visible
-// property, so a project re-linked to another property is not named here. The copy is marked so it can never be saved
-// over the full account.
+// property, so a project re-linked to another property is not named here. The copy is marked, and it is not the stored
+// account save() accepts (business-hub-service.js isStoredAccount), so neither it nor any copy of it can overwrite the full account.
 export function scopeAccount(account, member) {
   const ids = memberPropertyIds(member);
   if (!ids) return account;
@@ -93,7 +93,8 @@ export function scopedAccountView(account, member, projects, options = {}) {
 // requestId receipts in business_operations (the create_account pattern). The same actor repeating the same change on
 // the same account gets {duplicate:true} and nothing is re-applied, even if someone changed the record since; any other
 // use of the id is refused with 409. The receipt is create-only and joins the change's own commit, so two racing
-// requests with one id cannot both apply. Without a requestId there is no receipt.
+// requests with one id cannot both apply. Without a requestId there is no receipt. The receipt expires RECEIPT_DAYS later
+// (expireAt, the business_operations TTL policy), so receipts stay bounded.
 export async function operationReceipt(store, ctx, action, requestId, fields, at) {
   if (requestId == null) return { duplicate: false, writes: [] };
   const actorId = ctx.member.id, accountId = ctx.account.id;
@@ -103,12 +104,13 @@ export async function operationReceipt(store, ctx, action, requestId, fields, at
     if (saved.action !== action || saved.actorId !== actorId || saved.accountId !== accountId || saved.fingerprint !== fingerprint) throw fail(409, 'Request reference already exists.');
     return { duplicate: true, writes: [] };
   }
-  return { duplicate: false, writes: [{ collection: 'business_operations', id: requestId, data: { action, actorId, fingerprint, accountId, at } }] };
+  return { duplicate: false, writes: [{ collection: 'business_operations', id: requestId, data: { action, actorId, fingerprint, accountId, at, expireAt: receiptExpiry(Date.parse(at)) } }] };
 }
 
 // set_member_properties: team permission (client administrators and EGC staff). The change is live on the member's
 // next request, so no sign-out or version bump is needed. Repeating the current setting changes nothing and writes only
-// the requestId receipt, so that id cannot later apply a different change.
+// the requestId receipt (expiring like every receipt), so that id cannot later apply a different change and its replay
+// still answers {duplicate:true}; the current state alone cannot tell a replay from a new request.
 async function setMemberProperties(ctx, input, { save, requirePermission, response, store, now }) {
   requirePermission(ctx, 'team');
   if (!isId(input.memberId)) throw fail(400, 'Select a member of this account.');

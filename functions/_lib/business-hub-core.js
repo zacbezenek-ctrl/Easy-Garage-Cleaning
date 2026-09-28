@@ -8,6 +8,14 @@ export const ROLES = Object.freeze({
   viewer: { view: true, request: false, decide: false, pay: false, team: false },
 });
 export const INVITE_HOURS = 48, INVITE_ORIGIN = 'https://easygaragecleaning.com';
+// business_operations records carry expireAt, a Firestore timestamp for the collection's TTL policy. A requestId receipt is
+// kept RECEIPT_DAYS (its page retries only while open), and nothing relies on the deletion: an expired receipt still answers.
+export const RECEIPT_DAYS = 30;
+export const receiptExpiry = at => new Date(at + RECEIPT_DAYS * 86400000);
+// An invitation email cap record (kind 'invite_email_quota') counts the sends of the last QUOTA_WINDOW, so it counts nothing
+// once its newest send leaves that rolling day: it expires a day after the later of its write and that send.
+export const QUOTA_WINDOW = 24 * 3600000;
+export const quotaExpiry = (sends, at) => new Date(Math.max(at, ...sends.map(entry => entry?.at).filter(Number.isFinite)) + QUOTA_WINDOW);
 export const fail = (status, message) => Object.assign(new Error(message), { status, publicMessage: message });
 export const uid = () => crypto.randomUUID().replaceAll('-', '');
 export const isId = value => typeof value === 'string' && /^[a-f0-9]{32}$/.test(value);

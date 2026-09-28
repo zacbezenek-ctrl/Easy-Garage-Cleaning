@@ -7,7 +7,7 @@ import vm from 'node:vm';
 
 const enabled = process.env.EGC_FIREBASE_EMULATOR_TEST === '1';
 
-test('actual Firestore rules isolate canonical operations from crew SDK access', {skip:!enabled,timeout:90000},async t=>{
+test('actual Firestore rules isolate canonical operations from crew SDK access', {skip:!enabled,timeout:150000},async t=>{
   const host = process.env.FIRESTORE_EMULATOR_HOST || '';
   assert.match(host,/^(?:127\.0\.0\.1|localhost):\d{2,5}$/,'This test may only connect to a loopback Firestore emulator.');
   const projectId='demo-egc-field-rules';
@@ -572,5 +572,104 @@ test('actual Firestore rules isolate canonical operations from crew SDK access',
       assert.deepEqual((({ghlSyncStatus,sealedPayload,contactId})=>[ghlSyncStatus,sealedPayload,contactId])(await store.read(WEB_LEAD_RECEIPTS,bigId)),['synced',null,'contact-emulator-big']);
       for(const db of [publicDb,crew,lead,manager,partner]){const ref=db.doc(WEB_LEAD_RECEIPTS+'/'+inquiryId);await assertFails(ref.get());await assertFails(ref.set({ghlSyncStatus:'synced'}));await assertFails(ref.update({attempts:0}));await assertFails(ref.delete());await assertFails(db.collection(WEB_LEAD_RECEIPTS).get());await assertFails(db.doc(WEB_LEAD_RECEIPTS+'/forged').set({ghlSyncStatus:'failed',retryAt:'2000-01-01T00:00:00.000Z'}));}
     });
+  } finally {await environment.cleanup();}
+});
+
+// Its own environment and timeout: this drives the real business hub through a few hundred emulator round trips.
+test('every business_* collection, including receipts and invitation email caps, is server-only; TTL fields are real timestamps', {skip:!enabled,timeout:90000},async()=>{
+  const host = process.env.FIRESTORE_EMULATOR_HOST || '';
+  assert.match(host,/^(?:127\.0\.0\.1|localhost):\d{2,5}$/,'This test may only connect to a loopback Firestore emulator.');
+  const projectId='demo-egc-field-rules';
+  const require = process.env.EGC_FIREBASE_TEST_MODULES ? createRequire(resolve(process.env.EGC_FIREBASE_TEST_MODULES,'package.json')) : createRequire(new URL('../package.json',import.meta.url));
+  const {initializeTestEnvironment,assertFails}=require('@firebase/rules-unit-testing');
+  require('firebase/firestore').setLogLevel('silent');
+  const [hostname,port]=host.split(':');
+  const rules=await readFile(new URL('../firestore.rules',import.meta.url),'utf8');
+  const environment=await initializeTestEnvironment({projectId,firestore:{host:hostname,port:Number(port),rules}});
+  const claims=(username,role='crew',business=false)=>({username,role,business_access:business,assignment_version:1,assignment_identities:[username],assignment_keys:[username.toLowerCase()]});
+  const crew=environment.authenticatedContext('crew-one',claims('crew1')).firestore();
+  const otherCrew=environment.authenticatedContext('crew-two',claims('crew2')).firestore();
+  const lead=environment.authenticatedContext('lead-one',claims('lead1','crew_lead')).firestore();
+  const manager=environment.authenticatedContext('manager',claims('zacb','owner',true)).firestore();
+  const partner=environment.authenticatedContext('partner',claims('TylerG','manager',true)).firestore();
+  const publicDb=environment.unauthenticatedContext().firestore();
+  const compat=require('firebase/compat/app');const {Timestamp}=(compat.default||compat).firestore;
+  try {
+    const {createBusinessStore,BUSINESS_COLLECTIONS}=await import('../functions/_lib/business-hub-store.js');
+    const {createBusinessHandler}=await import('../functions/_lib/business-hub-service.js');
+    const {businessHubModules}=await import('../functions/_lib/business-hub-modules.js');
+    const {RECEIPT_DAYS}=await import('../functions/_lib/business-hub-core.js');
+    const emulator=async(_env,url,options={})=>{
+      const target=new URL(url);target.protocol='http:';target.host=host;target.pathname=target.pathname.replace('/projects/egcw-1ec83/','/projects/'+projectId+'/');target.searchParams.delete('key');
+      assert.equal(target.hostname,hostname);
+      return fetch(target,{...options,...(options.body ? {body:options.body.replaceAll('projects/egcw-1ec83/','projects/'+projectId+'/')} : {}),headers:{...Object.fromEntries(new Headers(options.headers)),Authorization:'Bearer owner'}});
+    };
+    // The real hub on real Firestore: onboarding by email writes the account, audit rows, the requestId receipt and both
+    // email cap records; redeeming writes a session; a property limit and a no-op each write a receipt.
+    const origin='https://easygaragecleaning.com',DAY=86400000,links=[],hex=()=>crypto.randomUUID().replaceAll('-','');let clock=Date.UTC(2099,8,10,12);
+    const handler=createBusinessHandler({store:createBusinessStore({},emulator),getStaff:async()=>({user:'zacb',displayName:'Synthetic Owner',businessAccess:true,role:'owner'}),finance:()=>({}),needsReview:()=>false,projectCookie:async()=>'project=; HttpOnly',clearProjectCookie:()=>'project=; Max-Age=0',now:()=>clock,
+      invites:{enabled:true,deliver:async({link})=>{links.push(link);return {status:'submitted',messageId:'synthetic-message'};}},...businessHubModules});
+    const call=async(payload,{url='',cookie=''}={})=>{const res=await handler(new Request(origin+'/api/business-hub'+url,{method:'POST',headers:{Origin:origin,'Content-Type':'application/json','X-EGC-Business':'1',Cookie:cookie},body:JSON.stringify(payload)}));return {status:res.status,data:await res.json(),cookie:res.headers.get('Set-Cookie')};};
+    const created=hex(),onboarded=clock,run=hex().slice(0,8);
+    const account=await call({action:'create_account',requestId:created,company:'Synthetic Rules Co '+run,name:'Synthetic Admin',email:`rules-${run}@example.invalid`,deliver:'email'},{url:'?staff=1'});
+    assert.equal(account.status,201,JSON.stringify(account.data));assert.equal(account.data.delivery.status,'submitted');
+    const accountId=account.data.accountId,staffUrl='?staff=1&account='+accountId;
+    clock+=60000;const redeemed=await call({action:'redeem',invite:new URL(links[0]).hash.slice('#invite='.length)});assert.equal(redeemed.status,200);
+    const property=(await call({action:'save_property',requestId:hex(),name:'Synthetic Lot',address:'1 Example Way'},{url:staffUrl})).data.propertyId;
+    const scoped=hex(),noop=hex(),memberId=account.data.memberId;
+    const viewer=await call({action:'invite_member',name:'Synthetic Viewer',email:`viewer-${run}@example.invalid`,role:'viewer'},{url:staffUrl});assert.equal(viewer.status,201);
+    assert.equal((await call({action:'set_member_properties',memberId:viewer.data.memberId,propertyIds:[property],requestId:scoped},{url:staffUrl})).status,200);
+    assert.deepEqual((await call({action:'set_member_properties',memberId:viewer.data.memberId,propertyIds:[property],requestId:noop},{url:staffUrl})).data,{ok:true,unchanged:true});
+    assert.deepEqual((await call({action:'set_member_properties',memberId:viewer.data.memberId,propertyIds:[property],requestId:noop},{url:staffUrl})).data,{ok:true,duplicate:true});
+    const docs={};
+    await environment.withSecurityRulesDisabled(async context=>{const db=context.firestore();for(const name of BUSINESS_COLLECTIONS)docs[name]=(await db.collection(name).get()).docs.filter(doc=>JSON.stringify(doc.data()).includes(accountId)||doc.id===accountId);});
+    assert.deepEqual(Object.fromEntries(Object.entries(docs).map(([name,list])=>[name,list.length>0])),{business_accounts:true,business_sessions:true,business_audit:true,business_operations:true});
+    const operations=Object.fromEntries(docs.business_operations.map(doc=>[doc.id,doc.data()])),quotas=Object.values(operations).filter(row=>row.kind==='invite_email_quota');
+    // The TTL policy only deletes documents whose field is a Firestore timestamp; the store writes a JavaScript Date as one.
+    for(const id of [created,scoped,noop]){assert.equal(typeof operations[id]?.expireAt?.toMillis,'function',id);assert.equal(operations[id].expireAt.toMillis(),Date.parse(operations[id].at)+RECEIPT_DAYS*DAY);}
+    assert.equal(operations[created].expireAt.toMillis(),onboarded+RECEIPT_DAYS*DAY);
+    assert.deepEqual(quotas.map(row=>row.scope).sort(),['address','sender']);
+    for(const row of quotas){assert.equal(typeof row.expireAt?.toMillis,'function',row.scope);assert.equal(row.expireAt.toMillis(),onboarded+DAY);}
+    assert.equal(docs.business_accounts[0].data().members.find(m=>m.id===memberId).status,'active');
+    // The read-only rollback export pages the real collection with its field mask and lists the limited member only.
+    const {exportMemberScopes}=await import('../scripts/business-members-scope-export.mjs');
+    const report=await exportMemberScopes({},{fetcher:emulator,now:new Date(clock).toISOString()});
+    assert.deepEqual(report.members.filter(m=>m.accountId===accountId).map(m=>[m.memberId,m.status,m.propertyIds,m.widensOnRollback]),[[viewer.data.memberId,'invited',[property],true]]);
+    assert.equal(/inviteHash|accessHistory|attemptId/.test(JSON.stringify(report)),false);
+    // Every browser SDK role, including signed-in business staff, is denied every business_* record and listing.
+    const paths=Object.entries(docs).flatMap(([name,list])=>list.map(doc=>`${name}/${doc.id}`));
+    assert.ok(paths.some(path=>path===`business_operations/${noop}`)&&paths.filter(path=>path.startsWith('business_operations/')).length>=5);
+    for(const db of [publicDb,crew,otherCrew,lead,manager,partner]){
+      for(const path of [...paths,`business_accounts/${accountId}/members/${memberId}`]){
+        await assertFails(db.doc(path).get());await assertFails(db.doc(path).set({status:'forged'}));await assertFails(db.doc(path).update({status:'forged'}));await assertFails(db.doc(path).delete());
+      }
+      // invite_email_quota is a kind inside business_operations; its own name is denied too, should the caps ever move.
+      for(const name of [...BUSINESS_COLLECTIONS,'invite_email_quota']){
+        await assertFails(db.collection(name).get());await assertFails(db.collection(name).where('accountId','==',accountId).get());
+        await assertFails(db.doc(`${name}/${'f'.repeat(32)}`).set({accountId,action:'forged',kind:'invite_email_quota',expireAt:Timestamp.fromMillis(0)}));
+      }
+    }
+    await environment.withSecurityRulesDisabled(async context=>assert.equal((await context.firestore().doc(`business_operations/${'f'.repeat(32)}`).get()).exists,false));
+    // Records written before expireAt existed: the dry-run-by-default backfill gives them real timestamps and changes nothing else.
+    const {runOperationsTtlBackfill}=await import('../scripts/business-operations-ttl-backfill.mjs');
+    const legacyReceipt=hex(),legacyQuota=hex()+hex(),legacy={
+      [legacyReceipt]:{action:'set_member_properties',actorId:'staff:zacb',fingerprint:'e'.repeat(64),accountId,at:new Date(clock-2*DAY).toISOString()},
+      [legacyQuota]:{kind:'invite_email_quota',scope:'address',sends:[{at:clock-3600000,attemptId:hex()}],updatedAt:new Date(clock-7200000).toISOString()},
+    };
+    // Counted against a baseline, so records another emulator suite left behind never change the answer.
+    const base=await runOperationsTtlBackfill({},{fetcher:emulator,now:new Date(clock).toISOString()});
+    assert.ok(base.operations.current>=5,'every record the hub wrote above already has expireAt');
+    await environment.withSecurityRulesDisabled(async context=>{for(const [id,data] of Object.entries(legacy))await context.firestore().doc(`business_operations/${id}`).set(data);});
+    const dry=await runOperationsTtlBackfill({},{fetcher:emulator,now:new Date(clock).toISOString()});
+    assert.deepEqual([dry.mode,dry.writes.planned-base.writes.planned,dry.operations.receipts-base.operations.receipts,dry.operations.quotas-base.operations.quotas,dry.operations.current,dry.operations.unrecognized],['dry_run',2,1,1,base.operations.current,base.operations.unrecognized]);
+    const applied=await runOperationsTtlBackfill({},{fetcher:emulator,apply:true,now:new Date(clock).toISOString()});
+    assert.deepEqual(applied.writes,{planned:dry.writes.planned,committed:dry.writes.planned,changedDuringRun:[]});
+    await environment.withSecurityRulesDisabled(async context=>{
+      const read=async id=>(await context.firestore().doc(`business_operations/${id}`).get()).data();
+      const receipt=await read(legacyReceipt),quota=await read(legacyQuota);
+      assert.equal(receipt.expireAt.toMillis(),clock-2*DAY+RECEIPT_DAYS*DAY);assert.equal(quota.expireAt.toMillis(),clock-3600000+DAY);
+      const {expireAt:_r,...receiptRest}=receipt,{expireAt:_q,...quotaRest}=quota;assert.deepEqual(receiptRest,legacy[legacyReceipt]);assert.deepEqual(quotaRest,legacy[legacyQuota]);
+    });
+    assert.equal((await runOperationsTtlBackfill({},{fetcher:emulator,apply:true,now:new Date(clock).toISOString()})).writes.planned,0,'a rerun is a no-op');
   } finally {await environment.cleanup();}
 });

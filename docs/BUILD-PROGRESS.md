@@ -320,6 +320,11 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   the HighLevel sync, and failed syncs retry on the signed messaging cron. Ads leads stay held until
   `WEB_LEAD_ADS_RELAY_ENABLED`; the egc-delayed-sync tag is opt-in (`WEB_LEAD_DELAYED_SYNC_TAG`). Gaps: no Hub list of
   failed receipts (FUN-25); the ads.html pixel move waits for the owner's Meta check.
+- **B2B-HARDEN** Business hub isolation hardening: save() writes only the stored account object (a scoped view, spread or
+  clone is refused with 503; `copyStoredAccount` is the one way to derive a savable copy), business_operations receipts and
+  invite cap records carry `expireAt` for a declared Firestore TTL policy (dry-run backfill script), a read-only member
+  scope export for rollbacks past B2B-SCOPE, and emulator denies on every business_* collection for every client role.
+  Gaps: the TTL policy must be enabled once; scripts that build the raw store directly are outside the save guard.
 
 ## In progress
 
@@ -395,6 +400,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | MCP-OAUTH | MCP OAuth multi-client (Claude/ChatGPT metadata documents, DCR, revocation, lockout) and Hub-approved grants (migration 0014) | merged (b4cd2ac) |
 | REVIEWS-UI | Review queues for held Stripe charges, member matches and unconfirmed sends; Command Center alert; checkout block flag | merged (297acde) |
 | FUN-13 | Website lead intake: ads relay fix, inquiry ids, durable sealed receipts with cron retries (flags off) | merged (61a1fff) |
+| B2B-HARDEN | B2B isolation hardening: stored-account save guard, receipt/quota TTL, scope export, business_* emulator denies | merged (a1c706f) |
 
 ## Next
 
