@@ -162,6 +162,21 @@ class CustomerPhotosBrowserTests(unittest.TestCase):
         thumbs.nth(3).focus(); self.page.keyboard.press('Enter'); expect(viewer).to_be_visible()
         expect(self.page.locator('#gallery-position')).to_contain_text('Photo 4 of 5')
         self.page.get_by_role('button', name='Close').tap(); expect(viewer).to_be_hidden()
+    def test_a_late_close_event_never_steals_focus_or_blanks_a_reopened_photo(self):
+        # The dialog's close event is queued, so it can arrive after the viewer is reopened or focus has moved on.
+        self.open_portal()
+        thumbs = self.page.locator('.ba-thumb'); viewer = self.page.locator('#gallery-viewer')
+        thumbs.nth(0).tap(); expect(viewer).to_be_visible()
+        self.page.get_by_role('button', name='Close').tap(); expect(viewer).to_be_hidden()
+        thumbs.nth(3).focus()
+        # Replay the queued close event of that session, while its opener is still recorded.
+        self.page.evaluate("openGalleryPhoto.opener = document.querySelectorAll('.ba-thumb')[0]; document.getElementById('gallery-viewer').dispatchEvent(new Event('close'))")
+        self.assertTrue(self.page.evaluate('document.activeElement === document.querySelectorAll(".ba-thumb")[3]'), 'a late close event keeps the focus the viewer already moved to')
+        self.page.keyboard.press('Enter'); expect(viewer).to_be_visible()
+        expect(self.page.locator('#gallery-position')).to_contain_text('Photo 4 of 5')
+        self.page.evaluate("document.getElementById('gallery-viewer').dispatchEvent(new Event('close'))")
+        expect(self.page.locator('#gallery-image')).to_have_attribute('src', f'/api/customer-portal-photo?photoId={IDS[3]}')
+        self.page.get_by_role('button', name='Close').tap(); expect(viewer).to_be_hidden()
     def test_portal_marks_an_unavailable_photo_and_hides_the_gallery_without_photos(self):
         self.broken = {IDS[2]}; self.open_portal()
         self.page.locator('.ba-thumb').nth(2).scroll_into_view_if_needed()
