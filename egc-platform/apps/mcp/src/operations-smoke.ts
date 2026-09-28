@@ -62,7 +62,7 @@ async function verifyAttempt(port:number,env:NodeJS.ProcessEnv,now:()=>number){
     const status=await tool('egc.operations_status',{});if(status.ok!==true)throw new Error('verification_operations_unavailable');summary.operationsRead=true;
     stage='hub_owners';
     const owners=await tool('egc.operations_owners',{});
-    if(owners.ok!==true||owners.authority!=='employee_hub'||!Array.isArray(owners.members)||!owners.members.length||owners.members.some((m:any)=>!m||typeof m.id!=='string'||!m.id||!['owner','manager','sales','crew_lead','crew'].includes(m.role))||new Set(owners.members.map((m:any)=>m.id)).size!==owners.members.length)throw fault('verification_owner_unverified');
+    if(owners.ok!==true||owners.authority!=='employee_hub'||!Array.isArray(owners.members)||!owners.members.length||owners.members.some((m:any)=>!m||typeof m.id!=='string'||!m.id||!['owner','manager','sales','phone','crew_lead','crew'].includes(m.role))||new Set(owners.members.map((m:any)=>m.id)).size!==owners.members.length)throw fault('verification_owner_unverified');
     summary.hubOwnersRead=true;summary.hubOwnerCount=owners.members.length;
     stage='hub_calendar';
     const window=calendarWindow(now()),ids=new Set<string>();let offset=0,total:number|undefined,pages=0,finished=false,timeNeedsReview=0;

@@ -71,6 +71,10 @@ describe('operations startup verification',()=>{
  it.each([{ok:true,authority:'ghl',members:[{id:'owner',role:'owner'}]},{ok:true,authority:'employee_hub',members:[]},{ok:true,authority:'employee_hub',members:[{id:'owner',role:'owner'},{id:'owner',role:'owner'}]}])('requires an authoritative valid owner roster before calendar access',async owners=>{
   const f=await fixture({owners}),log=await f.run();expect(log.mock.calls[0]?.[0]).toMatchObject({ok:false,errorCode:'verification_owner_unverified'});expect(f.requests.some(r=>r.params?.name==='egc.calendar')).toBe(false);
  });
+ it('accepts the P1-08/P3-04 roster: sales and phone staff tagged businessAccess:false next to the business users',async()=>{
+  const f=await fixture({owners:{ok:true,authority:'employee_hub',members:[{id:'owner-0',role:'owner'},{id:'Zoe.Synthetic',name:'Synthetic Zoe',role:'sales',staffRoles:['sales'],businessAccess:false},{id:'Phone.Person',name:'Synthetic Phone',role:'phone',staffRoles:['phone'],businessAccess:false}]},calendar:args=>calendar(args)}),log=await f.run();
+  expect(log.mock.calls[0]?.[0]).toMatchObject({ok:true,hubOwnersRead:true,hubOwnerCount:3});
+ });
  it.each(['http','tool','disconnect'] as const)('retries transient Hub deployment failure using nonblocking 30s delays, then verifies the full path (%s)',async mode=>{
   const sleep=vi.fn(async()=>{}),f=await fixture({failure:{tool:'egc.operations_owners',count:2,mode}}),log=await f.run({}, {sleep});
   expect(log.mock.calls).toHaveLength(3);expect(log.mock.calls.map(c=>c[0].attempt)).toEqual([1,2,3]);expect(log.mock.calls.slice(0,2).every(c=>c[0].ok===false&&c[0].retryScheduled===true)).toBe(true);expect(log.mock.calls[2]?.[0]).toMatchObject({ok:true,hubCalendarRead:true,retryScheduled:false});expect(sleep.mock.calls).toEqual([[30000],[30000]]);expect(f.requests.some(r=>r.params?.name==='actions.propose')).toBe(false);expect(JSON.stringify(log.mock.calls)).not.toContain('provider-secret');

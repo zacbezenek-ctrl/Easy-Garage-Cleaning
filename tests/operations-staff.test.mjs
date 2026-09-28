@@ -60,9 +60,9 @@ test('with the flag on, approved sales and phone staff join as members with id =
   const on = { EGC_OPERATIONS_STAFF_MEMBERS: 'true' };
   const body = await (await command(on, { command: 'portal.members' })).json();
   assert.deepEqual(body.members, [...legacyMembers(env),
-    { id: 'Zoe.Synthetic', name: 'Synthetic Zoe.Synthetic', role: 'sales', staffRoles: ['sales'] },
-    { id: 'Phone.Person', name: 'Synthetic Phone.Person', role: 'phone', staffRoles: ['phone'] },
-  ], 'business members keep their order and shape; sales and phone staff follow');
+    { id: 'Zoe.Synthetic', name: 'Synthetic Zoe.Synthetic', role: 'sales', staffRoles: ['sales'], businessAccess: false },
+    { id: 'Phone.Person', name: 'Synthetic Phone.Person', role: 'phone', staffRoles: ['phone'], businessAccess: false },
+  ], 'business members keep their order and shape; sales and phone staff follow, tagged businessAccess:false (P3-04)');
   const policy = async extra => (await (await command({ ...on, ...extra }, { command: 'portal.rules' })).json()).inboundResponse;
   assert.equal((await policy({})).ownerId, 'ZacB', 'unset follow-up role keeps the sole owner');
   assert.deepEqual(await policy({ EGC_OPERATIONS_FOLLOWUP_ROLE: 'phone' }), { enabled: true, ownerId: 'Phone.Person', dueMinutes: 60, ownerSource: 'sole_followup_role_member', dueSource: 'default_60_minute_response_rule', blockedReason: null });
@@ -145,7 +145,7 @@ test('configured Hub users carry their staffRoles with the flag on, so a configu
   const on = { EGC_OPERATIONS_STAFF_MEMBERS: 'true' }, members = (await (await run(on, { command: 'portal.members' })).json()).members;
   assert.deepEqual(members.find(member => member.id === 'TylerG'), { id: 'TylerG', name: 'Synthetic Manager', role: 'manager', staffRoles: ['manager', 'sales'] });
   assert.deepEqual(members.find(member => member.id === 'ZacB'), { id: 'ZacB', name: 'Synthetic Owner', role: 'owner' }, 'no stored roles, nothing attached');
-  assert.deepEqual(members.find(member => member.id === 'Phone.Config'), { id: 'Phone.Config', name: 'Synthetic Configured Phone', role: 'phone', staffRoles: ['phone'] }, 'a stored owner role is dropped');
+  assert.deepEqual(members.find(member => member.id === 'Phone.Config'), { id: 'Phone.Config', name: 'Synthetic Configured Phone', role: 'phone', staffRoles: ['phone'], businessAccess: false }, 'a stored owner role is dropped; a configured user without business access is tagged');
   assert.equal(members.some(member => ['Sales.Config', 'Crew.Static'].includes(member.id)), false, 'configured users join only through stored sales or phone roles');
   const policy = async extra => (await (await run({ ...on, ...extra }, { command: 'portal.rules' })).json()).inboundResponse;
   const sales = await policy({ EGC_OPERATIONS_FOLLOWUP_ROLE: 'sales' });

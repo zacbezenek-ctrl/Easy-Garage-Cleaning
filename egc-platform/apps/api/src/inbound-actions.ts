@@ -5,7 +5,22 @@ import {OperationsError,type Actor,type OperationsService} from '@egc/operations
 import {inboundReviewCopy} from './inbound-triage.js';
 import {ReconciliationFailure,reconciliationDiagnostic,type ReconciliationDiagnostic,type ReconciliationStage} from './reconciliation-diagnostics.js';
 type Db=ReturnType<typeof getDb>;
-export type InboundPolicy={authority:'employee_hub';inboundResponse:{enabled:boolean;ownerId:string|null;dueMinutes:number|null;ownerSource:string;dueSource:string;blockedReason:string|null}};
+// P3-04: portal.rules carries `followup` only when the Hub sets EGC_OPERATIONS_FOLLOWUP_POLICY_ENABLED.
+export type FollowupPolicy={enabled:boolean;ownerId:string|null;ownerRole:string|null;ownerSource:'settings'|'env'|'unresolved';dueMinutes:number|null;dueSource:'settings'|'default'|null;sendWindow:{startHour:number;endHour:number;timeZone:'America/Denver'}|null;blockedReason:string|null};
+export type InboundPolicy={authority:'employee_hub';version?:number;inboundResponse:{enabled:boolean;ownerId:string|null;dueMinutes:number|null;ownerSource:string;dueSource:string;blockedReason:string|null};followup?:FollowupPolicy};
+const denverParts=(at:number)=>Object.fromEntries(new Intl.DateTimeFormat('en-CA',{timeZone:'America/Denver',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).formatToParts(new Date(at)).map(p=>[p.type,p.value])) as Record<string,string>;
+function denverInstant(date:string,hour:number){const [y,m,d]=date.split('-').map(Number),wall=Date.UTC(y!,m!-1,d!,hour);const offsets=new Set([-86400000,0,86400000].map(delta=>{const p=denverParts(wall+delta);return Date.UTC(+p.year!,+p.month!-1,+p.day!,+p.hour!,+p.minute!)-(wall+delta);}));const found=[...offsets].map(o=>wall-o).filter(ts=>{const p=denverParts(ts);return`${p.year}-${p.month}-${p.day}T${p.hour}`===`${date}T${String(hour).padStart(2,'0')}`&&p.minute==='00';});return found.length===1?found[0]!:null;}
+// The Hub's follow-up owner and due time for work that started at `from`: dueMinutes later, moved to the next
+// opening of the Denver send window when that lands outside it. Never invents an owner or a due time.
+export function followupAssignment(policy:InboundPolicy,from:Date){
+  const f=policy.followup,w=f?.sendWindow,at=from.getTime();
+  if(policy.authority!=='employee_hub'||!f||!f.enabled||!f.ownerId||!Number.isInteger(f.dueMinutes)||f.dueMinutes!<15||f.dueMinutes!>10080||!w||w.timeZone!=='America/Denver'||!Number.isInteger(w.startHour)||!Number.isInteger(w.endHour)||w.startHour<8||w.endHour>21||w.startHour>=w.endHour||!Number.isFinite(at))throw new OperationsError('followup_policy_unresolved',409);
+  const due=at+f.dueMinutes!*60000,p=denverParts(due),minute=+p.hour!*60+ +p.minute!;
+  if(minute>=w.startHour*60&&minute<w.endHour*60)return{assignedUserId:f.ownerId,dueAt:new Date(due).toISOString(),timeZone:'America/Denver' as const};
+  const date=`${p.year}-${p.month}-${p.day}`,day=minute<w.startHour*60?date:new Date(Date.parse(date+'T12:00:00Z')+86400000).toISOString().slice(0,10),opens=denverInstant(day,w.startHour);
+  if(opens===null)throw new OperationsError('followup_policy_unresolved',409);
+  return{assignedUserId:f.ownerId,dueAt:new Date(opens).toISOString(),timeZone:'America/Denver' as const};
+}
 export function inboundRequestId(messageId:string){const h=createHash('sha256').update('inbound-action:'+messageId).digest('hex');return`${h.slice(0,8)}-${h.slice(8,12)}-5${h.slice(13,16)}-a${h.slice(17,20)}-${h.slice(20,32)}`;}
 export function inboundAction(message:{id:string;contactId:string;occurredAt:Date;body:string|null},policy:InboundPolicy){
   const p=policy.inboundResponse;if(policy.authority!=='employee_hub'||!p.enabled||!p.ownerId||!Number.isInteger(p.dueMinutes)||p.dueMinutes!<5)throw new OperationsError('inbound_policy_unresolved',409);

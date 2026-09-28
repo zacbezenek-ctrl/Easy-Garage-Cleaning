@@ -1,0 +1,14 @@
+/* P3-04 follow-up owner settings (registered Hub screen). Kit tokens only; phone first. */
+.egc-followups{max-width:760px}
+.egc-followups .fu-status{display:grid;gap:var(--hub-space-3);min-width:0}
+.egc-followups .hub-notice p{margin:4px 0 0}
+.egc-followups .fu-note{margin:0;color:var(--hub-muted);font-size:13px;line-height:1.45;overflow-wrap:anywhere}
+.egc-followups .fu-form{display:grid;gap:var(--hub-space-4)}
+.egc-followups .fu-window{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--hub-space-3)}
+.egc-followups .fu-actions{display:flex;flex-wrap:wrap;gap:var(--hub-space-2)}
+.egc-followups .fu-actions .hub-btn[type=submit]{flex:1 1 220px}
+.egc-followups [data-fu-body]{display:grid;gap:var(--hub-space-4);min-width:0}
+@media (max-width:680px){
+  .egc-followups .fu-actions{position:sticky;bottom:0;z-index:1;margin:0 calc(-1*var(--hub-space-4)) calc(-1*var(--hub-space-4));padding:var(--hub-space-3) var(--hub-space-4);background:var(--hub-card);border-top:1px solid var(--hub-line)}
+  .egc-followups .fu-actions .hub-btn{flex:1 1 auto}
+}

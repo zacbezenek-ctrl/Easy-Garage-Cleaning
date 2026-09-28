@@ -284,6 +284,11 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   re-exports it); one provider request per approved revision, retries only read back, and the task completes only on
   verified delivery. Sales cannot self-approve: they send only on an unexpired owner/manager approval of the exact revision.
   Gaps: no in-dialog edit; attachments are not checked on the provider read-back; started-send detection reads 100 events.
+- **P3-04** Follow-up owner and due-time policy: an owner-only Hub screen (SYSTEM > Follow-up owner, audited,
+  revision-checked) picks the phone/sales owner, due minutes and Denver send window; `portal.rules` carries it only with
+  `EGC_OPERATIONS_FOLLOWUP_POLICY_ENABLED` (off: byte-identical). A bad configured owner blocks with a reason, never falls
+  through. Sales/phone staff join the Action Center owners with EGC_OPERATIONS_STAFF_MEMBERS (fail-soft on roster errors).
+  Gap: nothing consumes the policy yet (FUN-09 / Phase 3 call actions will).
 
 ## In progress
 
@@ -352,6 +357,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | B2B-SCOPE | B2B per-property member access (propertyIds) and audited member invite/revoke/scope changes | merged (d8257e6) |
 | B2B-INVITE | B2B member invitations by email via the approved-send core, resend/reset, send caps and audited membership changes | merged (e2e32fc) |
 | P3-06 | One-tap approved send from the Action Center (task.send); sales cannot self-approve | merged (8e0a1a4) |
+| P3-04 | Follow-up owner and due-time policy (phone/sales owner) | merged (063369d) |
 
 ## Next
 

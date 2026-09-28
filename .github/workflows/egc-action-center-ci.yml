@@ -150,6 +150,8 @@ jobs:
         run: python tests/browser/test_hub_shell_ui.py
       - name: Hub mobile shell at phone widths
         run: python tests/browser/test_hub_mobile_ui.py
+      - name: Follow-up owner and due-time settings on a phone
+        run: python tests/browser/test_followup_settings_ui.py
       - name: Staff directory Team screen on a phone
         run: python tests/browser/test_staff_ui.py
       - name: Field job-cost capture on a phone

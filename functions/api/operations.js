@@ -1,5 +1,6 @@
 import {getHubSession,hasBusinessAccess,listHubUserProfiles} from '../_lib/hub-session.js';
 import {operationsEnabled,operationsAuthMode,operationsApiOrigin,signPortalServiceEnvelope} from '../_lib/operations-service-auth.js';
+import {operationsMembers,operationsStaffMembersEnabled} from '../_lib/operations-staff.js';
 const reply=(status,body)=>new Response(JSON.stringify(body),{status,headers:{'Content-Type':'application/json','Cache-Control':'no-store'}});
 export function sameOrigin(request) {
   if(request.headers.get('Sec-Fetch-Site')==='cross-site')return false;
@@ -9,12 +10,22 @@ async function sessionFor(request,env) {
   const session=await getHubSession(request,env);
   return session&&hasBusinessAccess(session)?session:null;
 }
+// With EGC_OPERATIONS_STAFF_MEMBERS the assignable sales and phone staff (businessAccess:false) join the owners.
+// When that staff roster cannot be read or is ambiguous, the business users stay assignable and
+// staffOwners:{available:false,code} says so, so the Action Center still loads.
+export async function actionCenterOwners(env,members=operationsMembers) {
+  const business=()=>listHubUserProfiles(env).filter(hasBusinessAccess).map(p=>({id:p.user,name:p.displayName,role:p.role}));
+  if(!operationsStaffMembersEnabled(env))return{owners:business()};
+  try{return{owners:(await members(env)).map(({id,name,role,businessAccess})=>businessAccess===false?{id,name,role,businessAccess}:{id,name,role}),staffOwners:{available:true}};}
+  catch(e){return{owners:business(),staffOwners:{available:false,code:e?.message==='portal_members_ambiguous'?'portal_members_ambiguous':'portal_source_unavailable'}};}
+}
 export async function onRequestGet({request,env}) {
   try {
     const session=await sessionFor(request,env);
     if(!session)return reply(403,{error:'business_session_required'});
+    const {owners,staffOwners}=await actionCenterOwners(env);
     return reply(200,{ok:true,enabled:operationsEnabled(env),authMode:operationsAuthMode(env),actor:{id:session.user,role:session.role,kind:'human',workspace:env.EGC_OPERATIONS_WORKSPACE||'egc'},
-      owners:listHubUserProfiles(env).filter(hasBusinessAccess).map(p=>({id:p.user,name:p.displayName,role:p.role})),timeZone:'America/Denver'});
+      owners,...(staffOwners?{staffOwners}:{}),timeZone:'America/Denver'});
   }catch{return reply(503,{error:'operations_identity_unavailable'});}
 }
 export async function onRequestPost({request,env}) {

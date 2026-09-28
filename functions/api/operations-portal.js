@@ -1,10 +1,11 @@
-import {operationsMembers} from '../_lib/operations-staff.js';
+import {operationsMembers,operationsRoster} from '../_lib/operations-staff.js';
 import {operationsEnabled,verifyApiServiceEnvelope} from '../_lib/operations-service-auth.js';
 import {isHubCommand,runHubCommand} from '../_lib/operations-hub-commands.js';
 import {portalCalendar,portalJob,portalEvidence} from '../_lib/operations-portal-records.js';
 import {portalRevenue} from '../_lib/operations-financials.js';
 import {mutatePortalRecord} from '../_lib/operations-job-records.js';
 import {inboundResponsePolicy} from '../_lib/operations-rules.js';
+import {followupPolicyEnabled,followupSettingsStorage,readFollowupPolicy} from '../_lib/operations-followup-policy.js';
 import {schedulingStorage,resolveScheduledVisit,mutateScheduledVisit,bindScheduledProvider,linkScheduledCustomer} from '../_lib/operations-scheduling.js';
 import {adoptionStorage,adoptScheduledVisit} from '../_lib/operations-adoption.js';
 import {prepareBridgeCommand} from '../_lib/operations-command-policy.js';
@@ -30,7 +31,11 @@ export async function onRequestPost({request,env}) {
     if(command.command==='portal.job')return reply(200,await portalJob(env,command.jobId));
     if(command.command==='portal.evidence')return reply(200,await portalEvidence(env,command));
     if(command.command==='portal.revenue')return reply(200,await portalRevenue(env,command));
-    if(command.command==='portal.rules')return reply(200,{ok:true,...inboundResponsePolicy(env,(await operationsMembers(env)).map(({id,role,staffRoles})=>staffRoles?{id,role,staffRoles}:{id,role}))});
+    if(command.command==='portal.rules'){
+      const roster=await operationsRoster(env),inbound=inboundResponsePolicy(env,roster.members.map(({id,role,staffRoles})=>staffRoles?{id,role,staffRoles}:{id,role}));
+      if(!followupPolicyEnabled(env))return reply(200,{ok:true,...inbound});
+      return reply(200,{ok:true,...inbound,followup:(await readFollowupPolicy(env,roster,followupSettingsStorage(env))).followup});
+    }
     return reply(400,{error:'read_only_portal_command_required'});
   }catch(e){return reply(e.status||(e.message==='Unauthorized'?401:503),{error:e.status?e.message:e.message==='Unauthorized'?'unauthorized':'portal_source_unavailable'});}
 }

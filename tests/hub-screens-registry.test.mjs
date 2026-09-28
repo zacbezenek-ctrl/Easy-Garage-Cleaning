@@ -170,6 +170,8 @@ test('registration rejects ambiguous access, unsafe asset paths and markup in la
   // Screens shipped in MANIFEST (FUN-19 stocked_costs, TEAM-UI staff) register first; none of the invalid specs may join them.
   const shipped = registry.list().map(entry => entry.id);
   registry.register(base);
+  const registered = [...registry.list().map(entry => entry.id)];
+  assert.ok(registered.includes('fixture_ledger'));
   const invalid = [
     { ...base },
     { ...base, id: 'Bad-Id' },
@@ -185,6 +187,7 @@ test('registration rejects ambiguous access, unsafe asset paths and markup in la
   ];
   for (const spec of invalid) assert.throws(() => registry.register(spec), /Hub screen registry/, spec.id);
   assert.deepEqual([...registry.list().map(entry => entry.id)], [...shipped, 'fixture_ledger']);
+  assert.deepEqual([...registry.list().map(entry => entry.id)], registered, 'no invalid spec registered (shipped MANIFEST screens stay as they were)');
   assert.ok(Object.isFrozen(registry.get('fixture_ledger')));
 });
 
@@ -234,12 +237,18 @@ test("labels are plain text: '&' and quotes are accepted and escaped by the shel
 
 test('one invalid MANIFEST line is skipped with a console warning and every other screen still registers', () => {
   const source = readFileSync(new URL('../employee-hub-screens.js', import.meta.url), 'utf8');
-  // Screens have landed (FUN-19 stocked_costs, TEAM-UI staff), so the fixtures are appended after the shipped lines, and
+  // Screens have landed (FUN-19 stocked_costs, TEAM-UI staff, P3-04 followup_settings), so the fixtures are appended after the shipped lines, and
   // every shipped line must itself register cleanly.
   const manifest = /const MANIFEST=\[\n((?:\{[^\n]*\},\n)*)\];/.exec(source);
   assert.ok(manifest, 'MANIFEST keeps one {...}, line per screen');
   const shipped = [...manifest[1].matchAll(/^\{id:'([a-z][a-z0-9_]+)'/gm)].map(match => match[1]);
-  for (const id of ['stocked_costs', 'staff']) assert.ok(shipped.includes(id), `${id} ships in MANIFEST`);
+  for (const id of ['stocked_costs', 'staff', 'followup_settings']) assert.ok(shipped.includes(id), `${id} ships in MANIFEST`);
+  // P3-04: the shipped source itself registers every MANIFEST line with no warnings, one screen per line.
+  const shippedWarnings = [], shippedContext = { document: createDocument(), console: { warn: (...args) => shippedWarnings.push(args.join(' ')), error() {}, log() {} }, addEventListener() {}, Promise, Map, Set, Error, Object, String, Array };
+  shippedContext.window = shippedContext;
+  vm.runInNewContext(source, shippedContext, { filename: 'employee-hub-screens.js' });
+  assert.deepEqual(shippedWarnings, [], 'every shipped MANIFEST line registers');
+  assert.deepEqual([...shippedContext.EGCHubScreens.list().map(entry => entry.id)], shipped, 'one registered screen per shipped line');
   const lines = [
     "{id:'fixture_first',group:'SYSTEM',label:'First & foremost',capability:'business',mount(){}}",
     "{id:'Bad Id',group:'SYSTEM',label:'Broken',capability:'business',mount(){}}",

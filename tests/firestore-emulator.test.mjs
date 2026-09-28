@@ -177,6 +177,11 @@ test('actual Firestore rules isolate canonical operations from crew SDK access',
       assert.equal((await store.read('pricingSettings','current')).revision,saved.settings.revision);
       await environment.withSecurityRulesDisabled(async context=>{for(const path of ['catalogVersions/current','catalogVersions/2099-09-10.1','pricingSettings/current','pricingSettingsVersions/emulator:1'])await context.firestore().doc(path).delete();});
     });
+    await t.test('operations follow-up settings are server-only even for business SDK sessions',async()=>{
+      await environment.withSecurityRulesDisabled(async context=>{await context.firestore().doc('operations_settings/followups').set({ownerId:'Zoe.Synthetic',dueMinutes:240,sendWindow:{startHour:8,endHour:19,timeZone:'America/Denver'},updatedBy:'zacb'});});
+      for(const db of [publicDb,crew,lead,manager,partner]){const ref=db.doc('operations_settings/followups');await assertFails(ref.get());await assertFails(ref.set({ownerId:'attacker'}));await assertFails(ref.update({ownerId:'attacker'}));await assertFails(ref.delete());await assertFails(db.doc('operations_settings/other').set({ownerId:'attacker'}));}
+      for(const db of [crew,manager])await assertFails(db.collection('operations_settings').get());
+    });
     await t.test('manager administrative schedule and customer access remains functional',async()=>{
       await assertSucceeds(manager.doc('jobs/assigned').get());
       await assertSucceeds(manager.doc('customers/customer').get());
