@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<meta name="theme-color" content="#204c6b">
+<title>Crew Today | Easy Garage Cleaning</title>
+<link rel="icon" href="/favicon.ico">
+<link rel="stylesheet" href="/employee-field-today.css">
+<style>
+body{margin:0;background:#f2f5f7;color:#172c43;font:15px/1.5 system-ui,sans-serif}
+.lh-top{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 14px;background:#fff;border-bottom:1px solid #c7d3dd}
+.lh-top h1{margin:0;font-size:16px;line-height:1.3}
+.lh-top a{display:inline-flex;align-items:center;min-height:44px;padding:0 4px;color:#135b83;font-weight:650}
+.lh-main{max-width:720px;margin:0 auto;padding:14px 14px 32px}
+</style>
+</head>
+<body>
+<!-- Lighthouse harness only: mounts the production crew Today module against /api/field-jobs fixtures. Served at /field-today by tests/lighthouse/serve.mjs; /tests is denied in production. -->
+<header class="lh-top"><h1>Easy Garage Cleaning crew</h1><a href="/crew/job">Field schedule</a></header>
+<main class="lh-main"><div id="ops-field-today"></div></main>
+<script src="/employee-field-today.js"></script>
+<script>window.EGCFieldToday.mount(document.getElementById('ops-field-today'));</script>
+</body>
+</html>

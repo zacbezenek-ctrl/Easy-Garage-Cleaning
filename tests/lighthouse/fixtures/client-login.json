@@ -1,0 +1,1 @@
+{ "ok": true, "signedIn": false, "channels": ["sms", "email"], "support": { "phone": "(970) 555-0100", "email": "support@example.invalid" } }

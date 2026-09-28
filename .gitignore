@@ -1,6 +1,9 @@
 __pycache__/
 *.pyc
 
+# Local Lighthouse CI output (tests/lighthouse, docs/lighthouse-ci.md; .lighthouseci/ is listed below)
+lighthouse-reports/
+
 # Secrets — never commit
 .env
 .env.local

@@ -1,0 +1,67 @@
+{
+  "ok": true,
+  "date": "2026-09-22",
+  "endDate": "2026-09-23",
+  "timezone": "America/Denver",
+  "photosAvailable": false,
+  "generatedAt": "2026-09-22T15:00:00.000Z",
+  "jobs": [
+    {
+      "id": "synthetic_field_3000", "expectedRevision": "2026-09-22T13:40:00.000000Z", "type": "job",
+      "customer": "Synthetic Early Pickup", "phone": "(970) 555-0120", "address": "400 Synthetic Lane, Fort Collins, CO 80525",
+      "date": "2026-09-22", "time": "07:00", "endDate": "2026-09-22", "endTime": "07:45", "arrivalWindow": "",
+      "status": "completed", "fieldStatus": "completed", "statusReason": "", "serviceType": "Junk removal",
+      "assignedCrew": ["synthetic.crew", "synthetic.lead"], "crewMembers": [{ "id": "synthetic.crew", "name": "Synthetic Crew" }, { "id": "synthetic.lead", "name": "Synthetic Lead" }],
+      "crewLead": "synthetic.lead", "crewName": "Synthetic Crew A", "vehicleName": "Synthetic Box Truck", "crewNeeded": 2,
+      "scope": "Synthetic scope: curbside couch pickup.", "customerGoal": "", "accessInstructions": "", "customerInstructions": "", "requiredEquipment": ["Dolly"],
+      "checklist": [{ "id": "arrival", "label": "Arrival photo", "completed": true }, { "id": "completion", "label": "Completion photo", "completed": true }],
+      "photos": [], "history": [], "canEdit": false, "allowedStatuses": []
+    },
+    {
+      "id": "synthetic_field_3001", "expectedRevision": "2026-09-22T14:05:00.000000Z", "type": "job",
+      "customer": "Synthetic Garage Reset", "phone": "(970) 555-0121", "address": "500 Synthetic Avenue, Fort Collins, CO 80526",
+      "date": "2026-09-22", "time": "08:30", "endDate": "2026-09-22", "endTime": "12:00", "arrivalWindow": "8:30 AM – 9:00 AM",
+      "status": "in_progress", "fieldStatus": "in_progress", "statusReason": "", "serviceType": "Garage Turnaround",
+      "assignedCrew": ["synthetic.crew", "synthetic.lead"], "crewMembers": [{ "id": "synthetic.crew", "name": "Synthetic Crew" }, { "id": "synthetic.lead", "name": "Synthetic Lead" }],
+      "crewLead": "synthetic.lead", "crewName": "Synthetic Crew A", "vehicleName": "Synthetic Box Truck", "crewNeeded": 2,
+      "scope": "Synthetic scope: sort keep, donate and haul-away zones; clear the left wall; sweep the floor; final walkthrough with the customer.",
+      "customerGoal": "Park one car inside before winter.",
+      "accessInstructions": "Synthetic: side garage door is unlocked.", "customerInstructions": "Synthetic: the blue shelving unit stays.",
+      "requiredEquipment": ["Dolly", "Broom", "Contractor bags"],
+      "checklist": [{ "id": "arrival", "label": "Arrival photo", "completed": true }, { "id": "walkthrough", "label": "Customer walkthrough", "completed": true }, { "id": "completion", "label": "Completion photo", "completed": false }],
+      "photos": [], "history": [], "canEdit": true, "allowedStatuses": ["paused", "waiting", "delayed", "in_progress"]
+    },
+    {
+      "id": "synthetic_field_3002", "expectedRevision": "2026-09-22T12:00:00.000000Z", "type": "job",
+      "customer": "Synthetic Afternoon Cleanout", "phone": "(970) 555-0122", "address": "600 Synthetic Drive, Loveland, CO 80538",
+      "date": "2026-09-22", "time": "13:00", "endDate": "2026-09-22", "endTime": "15:30", "arrivalWindow": "1:00 PM – 1:30 PM",
+      "status": "scheduled", "fieldStatus": "scheduled", "statusReason": "", "serviceType": "Garage cleanout",
+      "assignedCrew": ["synthetic.crew", "synthetic.lead"], "crewMembers": [{ "id": "synthetic.crew", "name": "Synthetic Crew" }, { "id": "synthetic.lead", "name": "Synthetic Lead" }],
+      "crewLead": "synthetic.lead", "crewName": "Synthetic Crew A", "vehicleName": "Synthetic Box Truck", "crewNeeded": 2,
+      "scope": "Synthetic scope: remove old shelving and haul away two loads.", "customerGoal": "",
+      "accessInstructions": "Synthetic: gate code provided by operations.", "customerInstructions": "", "requiredEquipment": ["Dolly", "Drill"],
+      "checklist": [{ "id": "arrival", "label": "Arrival photo", "completed": false }],
+      "photos": [], "history": [], "canEdit": true, "allowedStatuses": ["dispatched"]
+    },
+    {
+      "id": "synthetic_field_3003", "expectedRevision": "2026-09-22T12:10:00.000000Z", "type": "job",
+      "customer": "Synthetic Evening Haul", "phone": "(970) 555-0123", "address": "700 Synthetic Road, Windsor, CO 80550",
+      "date": "2026-09-22", "time": "16:00", "endDate": "2026-09-22", "endTime": "17:00", "arrivalWindow": "",
+      "status": "scheduled", "fieldStatus": "scheduled", "statusReason": "", "serviceType": "Junk removal",
+      "assignedCrew": ["synthetic.crew", "synthetic.lead"], "crewMembers": [{ "id": "synthetic.crew", "name": "Synthetic Crew" }, { "id": "synthetic.lead", "name": "Synthetic Lead" }],
+      "crewLead": "synthetic.lead", "crewName": "Synthetic Crew A", "vehicleName": "Synthetic Box Truck", "crewNeeded": 2,
+      "scope": "Synthetic scope: treadmill and mattress removal.", "customerGoal": "", "accessInstructions": "", "customerInstructions": "", "requiredEquipment": [],
+      "checklist": [], "photos": [], "history": [], "canEdit": true, "allowedStatuses": ["dispatched"]
+    },
+    {
+      "id": "synthetic_field_3004", "expectedRevision": "2026-09-22T12:20:00.000000Z", "type": "job",
+      "customer": "Synthetic Tomorrow Garage", "phone": "(970) 555-0124", "address": "800 Synthetic Circle, Fort Collins, CO 80521",
+      "date": "2026-09-23", "time": "09:00", "endDate": "2026-09-23", "endTime": "12:00", "arrivalWindow": "9:00 AM – 9:30 AM",
+      "status": "scheduled", "fieldStatus": "scheduled", "statusReason": "", "serviceType": "Garage Turnaround",
+      "assignedCrew": ["synthetic.crew", "synthetic.lead"], "crewMembers": [{ "id": "synthetic.crew", "name": "Synthetic Crew" }, { "id": "synthetic.lead", "name": "Synthetic Lead" }],
+      "crewLead": "synthetic.lead", "crewName": "Synthetic Crew A", "vehicleName": "Synthetic Box Truck", "crewNeeded": 2,
+      "scope": "Synthetic scope: full garage turnaround.", "customerGoal": "", "accessInstructions": "", "customerInstructions": "", "requiredEquipment": ["Dolly"],
+      "checklist": [], "photos": [], "history": [], "canEdit": true, "allowedStatuses": ["dispatched"]
+    }
+  ]
+}

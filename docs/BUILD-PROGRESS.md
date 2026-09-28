@@ -106,6 +106,10 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   and `functions/_lib/catalog.js` (strict validator, need/zone lookups, Denver stale flag, per-unit integer-cent pricing;
   `catalogLine()` feeds LI-CORE strict). Merge: `quote-model.js` accepts dated catalog versions. Gaps: 113 prices
   unverified, 12 needs lack a verified option, 8 two-person items have doubled minutes; no UI/API/Firestore yet.
+- **SITE-5** Mobile Lighthouse CI: `egc-lighthouse.yml` (pinned @lhci/cli 0.15.1, 375x812 simulated, median of 3,
+  performance/accessibility >= 0.9, private artifact + job summary; warn-only until repo variable `LIGHTHOUSE_ENFORCE=true`)
+  over a local server (`tests/lighthouse/serve.mjs`) with synthetic fixtures for portal, business hub and crew Today, plus
+  a render check (`test_lighthouse_pages_ui.py`). Gap: local baseline has 5 of 12 pages below 90 on performance.
 
 ## In progress
 
@@ -139,7 +143,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | HUB-REG | Hub screen registry, UI kit, shell stability, mobile shell pass, microphone policy fix | building |
 | B2B-SEAMS | B2B hub extension seams + mobile compliance + idempotency/leak fixes | merged (4edcf75) |
 | SITE-0 | Site generator determinism/scope, regenerate stale before-after.html, nav a11y | merged (69ccc6d) |
-| SITE-5 | Lighthouse CI (mobile perf/a11y >= 90) harness + workflow | building |
+| SITE-5 | Lighthouse CI (mobile perf/a11y >= 90) harness + workflow | merged (9ad1915) |
 | SEC-A | Firestore rules hardening (vault/receipts/audit_log) + block private source paths | merged (c8905cd) |
 | SEC-B | Purpose-scoped keys + server-only hub_audit + single-use confirm tokens | merged (75b9e1b) |
 | SEC-C | Env inventory script/test + complete both .env.example files | merged |

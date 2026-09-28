@@ -1,0 +1,24 @@
+{
+  "account": { "id": "5f0c1a2b3c4d4e5f8a9b0c1d2e3f4a5b", "company": "Synthetic Property Group", "billingEmail": "billing@example.invalid", "reference": "PO-SYN-2026", "status": "active" },
+  "viewer": { "name": "Synthetic Admin", "role": "admin", "permissions": { "view": true, "request": true, "decide": true, "pay": true, "team": true } },
+  "properties": [
+    { "id": "a1b2c3d4e5f60718293a4b5c6d7e8f90", "name": "Synthetic North Duplex", "address": "200 Synthetic Way, Fort Collins, CO 80524", "contact": "Synthetic Site Contact · (970) 555-0112", "access": "Synthetic: lockbox on the side gate; code shared by phone." },
+    { "id": "b2c3d4e5f60718293a4b5c6d7e8f90a1", "name": "Synthetic South Rental", "address": "300 Synthetic Court, Loveland, CO 80537", "contact": "", "access": "" }
+  ],
+  "requests": [
+    { "id": "c3d4e5f60718293a4b5c6d7e8f90a1b2", "propertyId": "b2c3d4e5f60718293a4b5c6d7e8f90a1", "service": "Property or storage cleanout", "scope": "Synthetic request: turnover cleanout of the garage and storage closet.", "preferredDate": "2026-10-02", "purchaseOrder": "PO-SYN-2026-14", "onsiteContact": "Synthetic Site Contact", "payer": "Synthetic Property Group", "status": "reviewing", "createdAt": "2026-09-20T16:00:00.000Z", "createdBy": "Synthetic Admin" }
+  ],
+  "messages": [
+    { "id": "d4e5f60718293a4b5c6d7e8f90a1b2c3", "author": "Synthetic Account Manager", "fromStaff": true, "body": "Synthetic note: the South Rental request is being reviewed for an early-October opening.", "at": "2026-09-21T15:00:00.000Z", "requestId": "c3d4e5f60718293a4b5c6d7e8f90a1b2" }
+  ],
+  "members": [
+    { "id": "e5f60718293a4b5c6d7e8f90a1b2c3d4", "name": "Synthetic Admin", "role": "admin", "status": "active", "email": "admin@example.invalid" },
+    { "id": "f60718293a4b5c6d7e8f90a1b2c3d4e5", "name": "Synthetic Billing", "role": "billing", "status": "active", "email": "billing@example.invalid" }
+  ],
+  "projects": [
+    { "jobId": "synthetic_job_2001", "propertyId": "a1b2c3d4e5f60718293a4b5c6d7e8f90", "service": "Garage cleanout and reset", "status": "completed", "date": "2026-09-12", "time": "09:00", "quoteStatus": "approved", "quoteNumber": "EST-SYN-2001", "total": 980, "invoiceNumber": "INV-SYN-2001", "invoiceStatus": "sent", "dueDate": "2026-09-26", "balance": 490, "paid": 490, "paymentNeedsReview": false, "receiptUrl": "" },
+    { "jobId": "synthetic_job_2002", "propertyId": "b2c3d4e5f60718293a4b5c6d7e8f90a1", "service": "Junk / furniture / appliance removal", "status": "scheduled", "date": "2026-09-29", "time": "13:00", "quoteStatus": "sent", "quoteNumber": "EST-SYN-2002", "total": 420, "invoiceNumber": "", "invoiceStatus": "not_issued", "dueDate": "", "balance": null, "paid": null, "paymentNeedsReview": false, "receiptUrl": "" }
+  ],
+  "coverage": { "linked": 2, "unavailable": 0, "paymentReview": 0 },
+  "updatedAt": "2026-09-22T14:45:00.000Z"
+}

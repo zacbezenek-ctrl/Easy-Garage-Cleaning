@@ -1,0 +1,43 @@
+{
+  "ok": true,
+  "viewer": { "owner": true, "actorId": "", "name": "", "permissions": { "view": true, "decide": true, "pay": true, "rebook": true } },
+  "customer": { "firstName": "Synthetic", "name": "Synthetic Customer" },
+  "appointment": {
+    "date": "2026-09-24", "time": "09:00", "endTime": "13:00",
+    "address": "100 Synthetic Way, Fort Collins, CO 80521", "service": "Garage Turnaround", "status": "scheduled",
+    "arrivalWindow": "9:00 AM – 9:30 AM"
+  },
+  "estimate": {
+    "number": "EST-SYN-1001", "status": "approved", "amount": 1400, "service": "Garage Turnaround",
+    "scope": "Synthetic scope: sort keep, donate and haul-away zones, remove the haul-away load, sweep the floor and finish with a walkthrough.",
+    "approvedAt": "2026-09-18T17:00:00.000Z", "approvedBy": "Synthetic Customer", "validUntil": "2026-10-15", "revision": 1, "depositRequired": 700,
+    "lineItems": [
+      { "name": "Synthetic garage turnaround", "description": "One bundled service based on the walkthrough scope.", "quantity": 1, "amount": 1150 },
+      { "name": "Synthetic haul-away load", "description": "Disposal, donation drop-off and recycling.", "quantity": 1, "amount": 250 }
+    ],
+    "terms": "This flat-rate estimate covers the scope shown. The displayed deposit is due upfront after approval and is applied to your total. The remaining balance is due on completion. Any material change requires your approval before additional work or charges."
+  },
+  "payment": {
+    "total": 1400, "paid": 700, "balance": 700, "dueNow": 0, "purpose": "deposit",
+    "deposit": { "required": 700, "paid": 700, "due": 0, "dueNow": 0, "purpose": "deposit", "remainder": 700 },
+    "needsReview": false, "status": "partial", "receiptUrl": "", "receiptEmail": "synthetic.customer@example.invalid",
+    "invoiceNumber": "INV-SYN-1001", "invoiceStatus": "sent", "dueDate": "2026-09-24", "creditApplied": 0, "completionRequiresPayment": true
+  },
+  "progress": { "status": "scheduled", "dispatchedAt": "", "startedAt": "", "completedAt": "", "updatedAt": "2026-09-22T14:30:00.000Z" },
+  "photos": { "customerUploadCount": 2, "lastUploadedAt": "2026-09-19T16:00:00.000Z" },
+  "conversation": [
+    { "id": "synthetic-message-1", "direction": "to_customer", "authorRole": "crew", "authorName": "Synthetic Crew Lead", "body": "Synthetic update: your walkthrough notes are saved and the crew is confirmed for Thursday morning.", "createdAt": "2026-09-22T14:00:00.000Z", "delivery": { "channel": "portal", "status": "sent", "attemptedAt": "2026-09-22T14:00:00.000Z" } },
+    { "id": "synthetic-message-2", "direction": "from_customer", "authorRole": "customer", "authorName": "Synthetic Customer", "body": "Thanks. The blue shelving unit stays; everything on the left wall can go.", "createdAt": "2026-09-22T14:20:00.000Z", "delivery": { "channel": "portal", "status": "sent", "attemptedAt": "2026-09-22T14:20:00.000Z" } }
+  ],
+  "messaging": { "highLevelLinked": false, "refreshSeconds": 20 },
+  "experience": {
+    "memory": { "accessInstructions": "Synthetic: use the side garage door.", "parkingNotes": "Synthetic: the driveway is clear for the truck.", "petNotes": "", "alarmNotes": "", "importantItems": "Synthetic: the blue shelving unit stays.", "communicationPreference": "text", "preferredCrew": "" },
+    "jobDayRules": { "awayMode": false, "decisionMaker": "Synthetic Customer", "payer": "Synthetic Customer", "approvalLimit": 100, "noResponseAction": "pause", "remoteCompletionAllowed": false },
+    "collaborators": [],
+    "decisions": [],
+    "rebooking": [],
+    "giftWallet": { "cards": [], "available": 0, "applied": 0 },
+    "garageGuard": { "plan": "", "status": "", "visitsIncluded": 0, "visitsRemaining": 0, "nextVisit": "", "renewalDate": "" }
+  },
+  "support": { "phone": "(970) 555-0100", "phoneHref": "tel:+19705550100", "smsHref": "sms:+19705550100" }
+}
