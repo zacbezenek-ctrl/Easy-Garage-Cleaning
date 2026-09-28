@@ -352,7 +352,9 @@ test('closeout preserves verified payments and directs manual receipts to Financ
 
 test('signed-in crew can create and verify a Stripe-hosted job payment',async()=>{
   const api=await import('../functions/api/job-payment.js'),originalFetch=globalThis.fetch,calls=[];
-  globalThis.fetch=async(url,options={})=>{calls.push({url:String(url),options});if(String(url).includes('firestore.googleapis.com'))return new Response(JSON.stringify({name:'projects/egcw-1ec83/databases/(default)/documents/jobs/job-1',updateTime:'2026-09-22T00:00:00.000001Z',fields:encodeFirestoreFields({customer:'Test Customer',email:'customer@example.com',total:1250,assignedCrew:['ZacB']})}),{status:200});if(options.method==='POST')return new Response(JSON.stringify({id:'cs_test_job123',url:'https://checkout.stripe.com/c/pay/cs_test_job123'}),{status:200});return new Response(JSON.stringify({id:'cs_test_job123',mode:'payment',status:'complete',payment_status:'paid',payment_intent:'pi_job123',amount_total:125000,currency:'usd',client_reference_id:'job-1',metadata:{kind:'egc_job_payment',job_id:'job-1'},customer_details:{email:'customer@example.com'}}),{status:200})};
+  // No charge is held for review (payment_reviews/{sessionId} is absent); every other Firestore read is the job.
+  // The verification reads the session with expand[]=payment_intent.latest_charge, so Stripe answers with the PaymentIntent object and its charge.
+  globalThis.fetch=async(url,options={})=>{calls.push({url:String(url),options});if(String(url).includes('/documents/payment_reviews/'))return new Response('{}',{status:404});if(String(url).includes('firestore.googleapis.com'))return new Response(JSON.stringify({name:'projects/egcw-1ec83/databases/(default)/documents/jobs/job-1',updateTime:'2026-09-22T00:00:00.000001Z',fields:encodeFirestoreFields({customer:'Test Customer',email:'customer@example.com',total:1250,assignedCrew:['ZacB']})}),{status:200});if(options.method==='POST')return new Response(JSON.stringify({id:'cs_test_job123',url:'https://checkout.stripe.com/c/pay/cs_test_job123'}),{status:200});return new Response(JSON.stringify({id:'cs_test_job123',mode:'payment',status:'complete',payment_status:'paid',payment_intent:{id:'pi_job123',latest_charge:{id:'ch_job123'}},amount_total:125000,currency:'usd',client_reference_id:'job-1',metadata:{kind:'egc_job_payment',job_id:'job-1'},customer_details:{email:'customer@example.com'}}),{status:200})};
   try{
     const env={...TEST_HUB_ENV,FIREBASE_API_KEY:'firebase-test-payment',STRIPE_SECRET_KEY:'sk_test_fake123'};
     const create=await api.onRequestPost({request:new Request('https://easygaragecleaning.com/api/job-payment',{method:'POST',headers:{Origin:'https://easygaragecleaning.com',Cookie:TEST_HUB_COOKIE,'Content-Type':'application/json'},body:JSON.stringify({job_id:'job-1',request_id:'attempt-1',amount_cents:125000,customer:'Test Customer',email:'customer@example.com'})}),env}),created=await create.json();
@@ -363,6 +365,8 @@ test('signed-in crew can create and verify a Stripe-hosted job payment',async()=
     assert.equal(verify.status,200);assert.equal(verified.paid,true);assert.equal(verified.paymentIntentId,'pi_job123');assert.equal(verified.jobId,'job-1');assert.equal(verified.amountTotal,125000);
     // M2: verification now runs the shared webhook-safe recorder (kind + revision checked) and returns the recorded job copy.
     assert.ok(calls.some(call=>call.url.includes('/checkout/sessions/cs_test_job123?expand')));assert.equal(verified.payment.verified,true);assert.equal(verified.invoice.balance,0);assert.equal(verified.paymentSyncPayload.sessionId,'cs_test_job123');
+    // REVIEWS-UI: a resolved payment review is final, so the recorder checks it before writing the job.
+    assert.ok(calls.some(call=>call.url.includes('/documents/payment_reviews/cs_test_job123')));
   }finally{globalThis.fetch=originalFetch}
 });
 

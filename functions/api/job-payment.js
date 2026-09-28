@@ -1,7 +1,7 @@
 import { getHubSession, hasBusinessAccess } from '../_lib/hub-session.js';
 import { readJob } from '../_lib/firestore-job.js';
 import { createJobAssignmentAccess } from '../_lib/job-assignment.js';
-import { customerMoneyState, customerPaymentNeedsReview, recordCrewStripePayment, stripeSecretKey as stripeKey } from '../_lib/customer-payments.js';
+import { customerMoneyState, customerPaymentNeedsReview, openPaymentReview, paymentReviewCheckoutBlockEnabled, recordCrewStripePayment, stripeSecretKey as stripeKey } from '../_lib/customer-payments.js';
 
 const STRIPE_API = 'https://api.stripe.com/v1';
 const HOST = /^(?:easygaragecleaning\.com|www\.easygaragecleaning\.com|easy-garage-cleaning\.pages\.dev|localhost(?::\d+)?|127\.0\.0\.1(?::\d+)?)$/;
@@ -70,6 +70,11 @@ export async function onRequestPost({ request, env }) {
   const job = await authorizedJob(env, jobId, session);
   if (!job) return json(403, { ok: false, error: 'This job is not assigned to you' });
   if (customerPaymentNeedsReview(job)) return json(409, { ok: false, error: 'An earlier recorded payment needs manager verification before taking another payment' });
+  if (paymentReviewCheckoutBlockEnabled(env)) {
+    let held;
+    try { held = await openPaymentReview(env, jobId); } catch { return json(503, { ok: false, code: 'payment_review_unavailable', error: 'Payment reviews could not be checked. Retry before taking a payment.' }); }
+    if (held) return json(409, { ok: false, code: 'payment_review_open', error: 'A confirmed card payment on this job is waiting for manager review. Do not charge again; a manager resolves it in Hub > Review queues.' });
+  }
   const customer = safe(job.customer || job.customerName, 120);
   const email = safe(job.email, 180);
   const finance = customerMoneyState(job);

@@ -175,6 +175,8 @@ jobs:
         run: python tests/browser/test_followup_settings_ui.py
       - name: Hub home overdue follow-ups widget (isolated and Command center)
         run: python tests/browser/test_home_widgets_ui.py
+      - name: Review queues for held Stripe charges, member matches and unconfirmed sends, and the Command Center alert
+        run: python tests/browser/test_review_queues_ui.py
       - name: Walkthrough pricing served by role, offline copy and Hub outage messages
         run: python tests/browser/test_gameplan_pricing_ui.py
       - name: Staff directory Team screen on a phone

@@ -309,6 +309,11 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   Behind `MCP_OAUTH_HUB_IDENTITY_ENABLED` a Hub owner/manager approves at /api/mcp-grant; the grant acts as
   `mcp:<hub user>:<grant>` and the API re-verifies the Hub-signed delegate before the SEC-04 table applies (migration 0014).
   Gaps: no Hub screen to revoke grants (30-day re-approval); Hub-approved grants cannot run legacy bridge writes yet.
+- **REVIEWS-UI** Hub Review queues (owners and managers): held Stripe crew/portal charges (reconcile; owner-only Record
+  refund after a read-only Stripe check, with kept-amount and on-job acknowledgements and refund follow-ups), Garage Guard
+  member matches (link or dismiss), and message sends left uncertain/sending (delivered / not delivered, never resent);
+  a Command Center alert, and the webhook now reads every checkout back from Stripe with its charge before recording it.
+  Flag: `PAYMENT_REVIEW_CHECKOUT_BLOCK_ENABLED` (off). Gaps: no Hub refund action on job money; resolved items live in hub_audit.
 
 ## In progress
 
@@ -382,6 +387,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | PRICE-SCRUB | Serve internal prices, pay and targets by role instead of shipping them in browser code | merged (36b1803) |
 | FUN-37 | Bridge funnel event feed: hub.funnel.events, hub.walkthrough.outcomes and hub.funnel.case (read-only, owner/manager and delegates) | merged (d33e15a) |
 | MCP-OAUTH | MCP OAuth multi-client (Claude/ChatGPT metadata documents, DCR, revocation, lockout) and Hub-approved grants (migration 0014) | merged (b4cd2ac) |
+| REVIEWS-UI | Review queues for held Stripe charges, member matches and unconfirmed sends; Command Center alert; checkout block flag | merged (297acde) |
 
 ## Next
 

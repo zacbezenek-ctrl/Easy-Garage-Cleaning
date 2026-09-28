@@ -392,6 +392,10 @@ service cloud.firestore {
     match /mcp_grant_nonces/{documentId} {
       allow read, write: if false;
     }
+    // Receipts for review resolutions made in the Hub (/api/stripe-reviews).
+    match /stripe_review_operations/{documentId} {
+      allow read, write: if false;
+    }
 
     // Owner-entered standard costs for stocked catalog items and their save
     // receipts. Managers read and the owner writes them via /api/standard-costs.

@@ -22,6 +22,8 @@ const DAY_MS = 86400000;
 const DUMMY_LINK = 'https://easygaragecleaning.com/';
 const encoder = new TextEncoder();
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
+// A provider answer that arrived after a person reconciled the send (message-reconcile.js) is kept as lateResult.
+const lateSubmitted = row => object(row?.lateResult) && row.lateResult.status === 'submitted';
 const safeId = value => typeof value === 'string' && /^[A-Za-z0-9_-]{1,180}$/.test(value) && !/^(secure_|_egc_)/.test(value);
 const fail = (code, message, status = 400, details) => Object.assign(new Error(message), { code, status, ...(details ? { details } : {}) });
 const firstWord = value => String(value || '').trim().split(/\s+/)[0].slice(0, 40);
@@ -275,6 +277,8 @@ export function createApprovedSendService({
     if (!existing) return null;
     if (HELD.has(existing.status)) return { status: existing.status === 'submitted' ? 'already_sent' : existing.status, attempts: existing.attempts || 0, alreadyRecorded: true };
     if (existing.status === 'dry_run' && flags.dryRun) return { status: 'dry_run', attempts: existing.attempts || 0, alreadyRecorded: true };
+    // HighLevel accepted it after a person marked it not delivered: it reached the customer, so it is never sent again.
+    if (lateSubmitted(existing)) return { status: 'already_sent', reason: 'late_result_submitted', attempts: existing.attempts || 0, alreadyRecorded: true };
     if (existing.status === 'failed' && Number(existing.attempts || 0) >= ctx.policy.maxAttempts) return { status: 'attempts_exhausted', attempts: existing.attempts, alreadyRecorded: true };
     return null;
   }
@@ -426,15 +430,30 @@ export function createApprovedSendService({
       httpStatus: Number.isInteger(result?.httpStatus) ? result.httpStatus : null, reason: String(result?.reason || ''), completedAt: now().toISOString(),
     };
     state.history = [...claim.history.slice(0, -1), { ...claim.history.at(-1), status, completedAt: state.completedAt }];
-    let saved = false;
-    for (let attempt = 0; attempt < 3 && !saved; attempt += 1) {
+    let saved = false, reconciled = null, lateSaved = false;
+    for (let attempt = 0; attempt < 3 && !saved && !lateSaved; attempt += 1) {
       try {
         const latest = await store.read(MESSAGE_SENDS, ctx.ledgerId);
-        if (latest?.attemptId !== attemptId) break;
+        if (latest?.attemptId !== attemptId) {
+          // A person reconciled this attempt while it was in flight. Their
+          // outcome stays on the ledger; what HighLevel answered is kept beside
+          // it (a later send sees an accepted message as sent), and the job's
+          // display copy is left as the person set it.
+          if (!object(latest?.reconciled) || latest.reconciled.attemptId !== attemptId) break;
+          reconciled = latest.reconciled;
+          const lateResult = { status, messageId: state.messageId, conversationId: state.conversationId, httpStatus: state.httpStatus, reason: state.reason, attempt: attempts, attemptId, at: state.completedAt };
+          await store.commit([{ collection: MESSAGE_SENDS, id: ctx.ledgerId, revision: latest.revision, patch: { lateResult } }]);
+          lateSaved = true;
+          continue;
+        }
         await store.commit([{ collection: MESSAGE_SENDS, id: ctx.ledgerId, revision: latest.revision, patch: state }]);
         saved = true;
       } catch { /* Retry the ledger write; never repeat the provider call. */ }
     }
+    if (reconciled) return {
+      ...base, status, reason: 'reconciled_before_result', messageId: state.messageId, conversationId: state.conversationId, attempts, attachments: claim.attachments,
+      ...(state.httpStatus ? { httpStatus: state.httpStatus } : {}), ledgerSaved: false, lateResultSaved: lateSaved, reconciled: { outcome: String(reconciled.outcome || ''), by: String(reconciled.by || ''), at: String(reconciled.at || '') }, mirror: 'skipped', delivery: flags,
+    };
     // An unsaved outcome leaves the claim in 'sending', which is never resent.
     if (!saved) state = { ...state, status: status === 'submitted' ? 'submitted' : 'uncertain', reason: 'delivery_status_not_saved' };
     return {
@@ -462,7 +481,8 @@ export function createApprovedSendService({
       ...base, channel: existing.channel, status: existing.status, attempts: existing.attempts || 0, recipient: { channel: existing.channel, masked: existing.recipient || '' },
       approval: existing.approval, source: existing.source, actorId: existing.actorId, template: { kind: existing.templateKind, version: existing.templateVersion },
       attemptedAt: existing.attemptedAt || '', completedAt: existing.completedAt || '', messageId: existing.messageId || '',
-      canRetry: existing.status === 'failed' && Number(existing.attempts || 0) < ctx.policy.maxAttempts,
+      ...(object(existing.lateResult) ? { lateResult: { status: String(existing.lateResult.status || ''), messageId: String(existing.lateResult.messageId || ''), at: String(existing.lateResult.at || '') } } : {}),
+      canRetry: existing.status === 'failed' && Number(existing.attempts || 0) < ctx.policy.maxAttempts && !lateSubmitted(existing),
     };
   }
 

@@ -20,6 +20,10 @@ function fixtureScreen(overrides = {}) {
   return { spec, calls, state };
 }
 const tabs = page => page.document.querySelectorAll('[data-ops-tab]').map(button => button.getAttribute('data-ops-tab'));
+// Screens the shipped MANIFEST registers (REVIEWS-UI); fixtures register after them. SHIPPED are the business
+// screens; P3-04's owner-only followup_settings registers first and is checked separately.
+const SHIPPED = ['reviews', 'message_templates', 'stocked_costs', 'staff'];
+const OWNER_SHIPPED = ['followup_settings'];
 
 test('a registered screen joins the nav under its group only when the capability matches', () => {
   for (const [who, expected] of [[{}, true], [MANAGER, true], [CREW, false]]) {
@@ -270,4 +274,23 @@ test('one invalid MANIFEST line is skipped with a console warning and every othe
   assert.match(warnings.join('\n'), /fixture_first is already registered/);
   assert.deepEqual(errors, []);
   assert.equal(typeof listeners['egc:signout']?.[0], 'function', 'the registry finished installing after the bad lines');
+});
+
+test('the shipped screens register cleanly for business viewers only and lazy-load their own files', () => {
+  const warnings = [], context = { document: createDocument(), console: { warn: (...args) => warnings.push(args.join(' ')), error() {}, log() {} }, addEventListener() {}, Promise, Map, Set, Error, Object, String, Array };
+  context.window = context;
+  vm.runInNewContext(readFileSync(new URL('../employee-hub-screens.js', import.meta.url), 'utf8'), context, { filename: 'employee-hub-screens.js' });
+  assert.deepEqual(warnings, []);
+  const registry = context.EGCHubScreens;
+  assert.deepEqual([...registry.list().map(entry => entry.id)], [...OWNER_SHIPPED, ...SHIPPED]);
+  assert.equal(registry.get('followup_settings').capability, 'owner');
+  const reviews = registry.get('reviews'), templates = registry.get('message_templates');
+  assert.deepEqual([reviews.group, reviews.label, reviews.capability, reviews.module, reviews.load.js, reviews.load.css], ['RUN THE BUSINESS', 'Review queues', 'business', 'EGCReviews', 'employee-reviews.js', 'employee-reviews.css']);
+  assert.deepEqual([templates.group, templates.label, templates.capability, templates.module, templates.load.js, templates.load.css], ['SYSTEM', 'Message templates', 'business', 'EGCMessageTemplates', 'message-templates.js', 'message-templates.css']);
+  assert.match(readFileSync(new URL('../message-templates.js', import.meta.url), 'utf8'), /window\.EGCMessageTemplates = \{ mount, unmount, refresh, canLeave \}/, 'the standalone templates page module is the Hub screen');
+  for (const [who, visible] of [[CREW, false], [MANAGER, true], [{}, true]]) {
+    const page = hubPage(who), nav = page.api.visibleNav().map(item => item[1]);
+    for (const id of SHIPPED) assert.equal(nav.includes(id), visible, `${id} for ${JSON.stringify(who)}`);
+    if (visible) assert.ok(nav.indexOf('reviews') > nav.indexOf('delivery') && nav.indexOf('message_templates') > nav.indexOf('settings'), 'each joins the end of its nav group');
+  }
 });

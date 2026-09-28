@@ -915,7 +915,8 @@ test('the Staff directory is a registered business screen that lazily mounts EGC
     load: { js: 'employee-staff.js', css: 'employee-staff.css', v: '20260928team' }, module: 'EGCStaff', mount: null, unmount: null, canLeave: null, refresh: null, homeWidget: null });
   const nav = page.api.visibleNav(), at = nav.findIndex(item => item[1] === 'staff');
   assert.deepEqual([...nav[at]], ['RUN THE BUSINESS', 'staff', 'Staff directory']);
-  assert.equal(nav[at - 1][1], 'delivery');
+  // REVIEWS-UI's Review queues registers first in RUN THE BUSINESS, so the directory follows it.
+  assert.equal(nav[at - 1][1], 'reviews');
   page.context.EGCHubKit = {};
   page.api.install();
   await page.flush();

@@ -8,9 +8,14 @@
  * starts, renews-fails, or cancels, so the first visit gets scheduled and
  * lapsed members get a call.
  *
- * A confirmed crew charge the job cannot take (above the balance, or while an
- * unverified receipt is on the job) is held in payment_reviews/{sessionId} for
- * a manager (GET /api/stripe-reviews) and acknowledged; the job is unchanged.
+ * The webhook payload carries only the PaymentIntent ID, so before recording a
+ * customer-portal or crew payment the session is read again from Stripe with
+ * its charge expanded (STRIPE_SECRET_KEY); a Stripe error or a missing key is a
+ * 503, so Stripe retries. A confirmed charge the job cannot take (a crew charge
+ * above the balance or while an unverified receipt is on the job, or any charge
+ * Stripe shows refunded) is held in payment_reviews/{sessionId} for a person
+ * (GET /api/stripe-reviews) and acknowledged; the job is unchanged. A charge
+ * that already has an open review is never settled by a webhook.
  *
  * With GARAGE_GUARD_MEMBERSHIP_SYNC_ENABLED=true, membership events are also
  * recorded once per event.id (stripe_events) in memberships/{subscriptionId},
@@ -39,7 +44,7 @@
  *      forwarded (Stripe Dashboard remains the record).
  */
 
-import { CHECKOUT_KINDS, recordCrewStripePayment, recordCustomerStripePayment } from '../_lib/customer-payments.js';
+import { CHECKOUT_KINDS, readStripeCheckout, recordCrewStripePayment, recordCustomerStripePayment } from '../_lib/customer-payments.js';
 import { applyGarageGuardEvent, claimGarageGuardAlert, expireGarageGuardAlert, garageGuardEvent, garageGuardMembershipSyncEnabled, membershipStorage, settleGarageGuardAlert } from '../_lib/garage-guard-membership.js';
 
 const MAX_BODY = 256 * 1024;
@@ -149,7 +154,7 @@ export function hookDelivery(response) {
   return response && response.status >= 400 && response.status < 500 && response.status !== 408 ? 'failed' : 'uncertain';
 }
 
-export function stripeWebhookHandlers({ storage = membershipStorage, now = () => new Date(), send = (url, init) => fetch(url, init) } = {}) {
+export function stripeWebhookHandlers({ storage = membershipStorage, now = () => new Date(), send = (url, init) => fetch(url, init), readCheckout = readStripeCheckout } = {}) {
   const json = (status, body) =>
     new Response(JSON.stringify(body), {
       status,
@@ -195,9 +200,13 @@ export function stripeWebhookHandlers({ storage = membershipStorage, now = () =>
       if (checkout.metadata?.kind === CHECKOUT_KINDS.portal) {
         if (checkout.payment_status !== 'paid') return json(200, { ok: true, received: true, processing: true });
         try {
-          const payment = await recordCustomerStripePayment(env, checkout, '', stamp);
+          // The charge (and any refund on it) is read from Stripe, never taken from the payload.
+          const current = await readCheckout(env, checkout.id);
+          const payment = await recordCustomerStripePayment(env, current, '', stamp, { recordedBy: 'stripe_webhook', settleHeld: false });
           return json(200, { ok: true, received: true, recorded: true, duplicate: payment.duplicate });
-        } catch {
+        } catch (error) {
+          // A charge held in payment_reviews (Stripe shows it refunded) is durable and the job is unchanged.
+          if (error.reviewRecorded) return json(200, { ok: true, received: true, recorded: false, reviewRequired: true, reason: error.code });
           // Stripe must retry a verified payment until its durable job record succeeds.
           return json(503, { ok: false, error: 'Payment recording needs retry' });
         }
@@ -205,7 +214,8 @@ export function stripeWebhookHandlers({ storage = membershipStorage, now = () =>
       if (checkout.metadata?.kind === CHECKOUT_KINDS.crew) {
         if (checkout.payment_status !== 'paid') return json(200, { ok: true, received: true, processing: true });
         try {
-          const payment = await recordCrewStripePayment(env, checkout, { recordedBy: 'stripe_webhook', now: stamp });
+          const current = await readCheckout(env, checkout.id);
+          const payment = await recordCrewStripePayment(env, current, { recordedBy: 'stripe_webhook', settleHeld: false, now: stamp });
           return json(200, { ok: true, received: true, recorded: true, duplicate: payment.duplicate });
         } catch (error) {
           // A confirmed charge the job cannot take is durably held in
