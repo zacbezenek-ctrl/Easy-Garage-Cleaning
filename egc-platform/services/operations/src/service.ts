@@ -6,12 +6,20 @@ import {and,asc,desc,eq,gt,gte,inArray,isNull,lt,ne,notInArray,or,sql} from "dri
 import {getDb,schema} from "@egc/database";
 import {buildDueWorkSnapshot,collectTaskPages,pageDueWork,type QueueSnapshot,type SourceCoverage,type WaitingOn} from "@egc/lead-audit/operations-core";
 import {authorize,commandSchema,OperationsError,WRITE_COMMANDS,type Actor,type Command} from "./contracts.js";
-import {assertCompletion,assertEditable,assertTiming,digest,jsonRecord} from "./policy.js";
+import {assertCompletion,assertEditable,assertTiming,digest,jsonRecord,requestDigest} from "./policy.js";
+import {isMessageTaskKind} from "./action-kinds.js";
 
 type Db=ReturnType<typeof getDb>;
 type Tx=Parameters<Parameters<Db["transaction"]>[0]>[0];
 type Task=typeof schema.tasks.$inferSelect;
 const active=["open","in_progress","blocked"];
+// The provider payload must carry exactly the approved attachment URLs, in order.
+// Legacy drafts and payloads without attachments both mean none.
+function sameAttachmentUrls(sent:unknown,approved:unknown) {
+  const list=(value:unknown)=>value===undefined?[]:Array.isArray(value)?value:null;
+  const actual=list(sent),expected=list(approved)?.map(a=>(a as {url?:unknown}|null)?.url);
+  return Boolean(actual&&expected&&actual.length===expected.length&&expected.every((url,i)=>typeof url==="string"&&url===actual[i]));
+}
 export interface PortalJobReference {
   id:string; revision:string; type:string; highlevelContactId:string|null;
   sourceWalkthroughId:string|null; customer:string|null; status:string;
@@ -85,12 +93,12 @@ export class OperationsService {
       if (!this.config.portalRead) throw new OperationsError("portal_authority_unavailable",503);
       return this.config.portalRead(actor,command);
     }
-    const requestDigest=digest({actor:{id:actor.id,kind:actor.kind,role:actor.role,workspace:actor.workspace},command});
+    const digestOfRequest=requestDigest(actor,command);
     // Recover completed retries before calling any optional upstream identity adapter.
     // The transactional check below is still required for competing first attempts.
     if(WRITE_COMMANDS.has(command.command)) {
       const [prior]=await this.db.select().from(schema.operationRequests).where(and(eq(schema.operationRequests.workspaceId,actor.workspace),eq(schema.operationRequests.actorId,actor.id),eq(schema.operationRequests.requestId,requestId))).limit(1);
-      if(prior) {if(prior.digest!==requestDigest)throw new OperationsError("idempotency_key_payload_conflict",409);return {...prior.response,replayed:true};}
+      if(prior) {if(prior.digest!==digestOfRequest)throw new OperationsError("idempotency_key_payload_conflict",409);return {...prior.response,replayed:true};}
     }
     const owner=command.command==="task.create"?command.task.assignedUserId:command.command==="task.edit"?command.changes.assignedUserId:undefined;
     if(owner && (!this.config.resolveOwner || !await this.config.resolveOwner(owner)))throw new OperationsError("owner_not_verified",409);
@@ -113,13 +121,13 @@ export class OperationsService {
       const [prior]=await tx.select().from(schema.operationRequests).where(and(
         eq(schema.operationRequests.workspaceId,actor.workspace),eq(schema.operationRequests.actorId,actor.id),eq(schema.operationRequests.requestId,requestId))).limit(1);
       if (prior) {
-        if (prior.digest!==requestDigest) throw new OperationsError("idempotency_key_payload_conflict",409);
+        if (prior.digest!==digestOfRequest) throw new OperationsError("idempotency_key_payload_conflict",409);
         return {...prior.response,replayed:true};
       }
       await tx.execute(sql`select set_config('egc.operations_actor',${actor.id},true),set_config('egc.operations_actor_kind',${actor.kind},true)`);
       const result=await this.write(tx,actor,command,portal);
       const response=jsonRecord(result);
-      await tx.insert(schema.operationRequests).values({workspaceId:actor.workspace,actorId:actor.id,requestId,digest:requestDigest,response});
+      await tx.insert(schema.operationRequests).values({workspaceId:actor.workspace,actorId:actor.id,requestId,digest:digestOfRequest,response});
       return response;
     });
   }
@@ -246,7 +254,7 @@ export class OperationsService {
         priority:input.priority,assignedUserId:input.assignedUserId,dueAt:new Date(input.dueAt),timeZone:input.timeZone,waitingOn:input.waitingOn,
         reviewAt:input.reviewAt?new Date(input.reviewAt):null,portalJobId:input.portalJobId,portalVisitId:input.portalVisitId,portalRevision:portal?.revision??null,
         contactId,jobId:input.jobId,completionCondition:input.completionCondition,sourceEvidence:input.sourceEvidence,dependencies:input.dependencies,
-        draftPayload:input.draft?jsonRecord(input.draft):null,dedupeKey:input.dedupeKey??null,approvalStatus:input.kind==="followup_message"?"pending":"not_required",
+        draftPayload:input.draft?jsonRecord(input.draft):null,dedupeKey:input.dedupeKey??null,approvalStatus:isMessageTaskKind(input.kind)?"pending":"not_required",
         source:"operations",status:"open",createdAt:this.now(),updatedAt:this.now()}).returning();
       if(!task) throw new OperationsError("task_create_failed",500);
       await this.event(tx,actor,task,"task.created",{task,portalReference:portal});
@@ -261,7 +269,7 @@ export class OperationsService {
       for(const item of [...command.items].sort((a,b)=>a.taskId.localeCompare(b.taskId))) {
         const task=await this.task(tx,actor,item.taskId,true);
         this.assertRevision(task,item.revision);assertEditable(actor,task);assertTiming(task);
-        if(task.kind!=="followup_message" || !task.draftPayload) throw new OperationsError("task_has_no_message_draft",409);
+        if(!isMessageTaskKind(task.kind) || !task.draftPayload) throw new OperationsError("task_has_no_message_draft",409);
         if(task.status==="blocked") throw new OperationsError("blocked_task_requires_review",409);
         if(new Date(String(task.draftPayload.sendWindowEnd))<=now)throw new OperationsError("draft_window_expired",409);
         const preview=await this.preview(tx,task);
@@ -323,8 +331,8 @@ export class OperationsService {
       if(actor.role==="sales" && c.assignedUserId && c.assignedUserId!==actor.id)throw new OperationsError("assignment_requires_manager",403);
       const next={...task,...patch};
       assertTiming(next as Task);
-      if(task.kind==="followup_message" && !next.draftPayload)throw new OperationsError("message_draft_required",400);
-      if(task.kind!=="followup_message" && next.draftPayload)throw new OperationsError("unexpected_message_draft",400);
+      if(isMessageTaskKind(task.kind) && !next.draftPayload)throw new OperationsError("message_draft_required",400);
+      if(!isMessageTaskKind(task.kind) && next.draftPayload)throw new OperationsError("unexpected_message_draft",400);
       note={changes:jsonRecord(c)};
     } else if(command.command==="task.snooze") {
       const until=new Date(command.until);
@@ -332,7 +340,7 @@ export class OperationsService {
       patch= {...patch,...(["customer","provider"].includes(task.waitingOn)?{reviewAt:until}:{dueAt:until})};
       note={reason:command.reason,until};
     } else if(command.command==="task.complete_from_message") {
-      if(task.kind!=="followup_message"||!task.draftPayload||!task.contactId||task.status==="blocked"||!["approved","invalidated"].includes(task.approvalStatus))throw new OperationsError("message_task_not_ready_for_completion",409);
+      if(!isMessageTaskKind(task.kind)||!task.draftPayload||!task.contactId||task.status==="blocked"||!["approved","invalidated"].includes(task.approvalStatus))throw new OperationsError("message_task_not_ready_for_completion",409);
       const [execution]=await tx.select().from(schema.communicationExecutions).where(and(eq(schema.communicationExecutions.id,command.executionId),eq(schema.communicationExecutions.contactId,task.contactId))).for("update");
       if(!execution||execution.status!=="accepted"||!execution.providerMessageId||execution.response?.delivered!==true||!execution.verifiedAt||execution.verifiedAt.valueOf()<now.valueOf()-300000||execution.verifiedAt>now)throw new OperationsError("message_delivery_not_freshly_verified",409);
       const [used]=await tx.select({id:schema.operationEvents.id}).from(schema.operationEvents).where(and(eq(schema.operationEvents.type,"task.complete_from_message"),sql`${schema.operationEvents.evidence}->>'executionId'=${execution.id}`)).limit(1);
@@ -340,7 +348,7 @@ export class OperationsService {
       const evidence=execution.response.matchEvidence as Record<string,unknown>|undefined,draft=task.draftPayload;
       const occurredAt=typeof evidence?.occurredAt==="string"?new Date(evidence.occurredAt):null;
       const bodyHash=createHash("sha256").update(String(draft.body)).digest("hex");
-      if(!evidence||evidence.version!==1||evidence.payloadHash!==execution.payloadHash||evidence.bodyHash!==bodyHash||evidence.channel!==draft.channel||evidence.recipient!==draft.recipient||(draft.channel==="email"&&evidence.subject!==draft.subject)||!occurredAt||!Number.isFinite(occurredAt.valueOf())||occurredAt>now||occurredAt<new Date(String(draft.sendWindowStart))||occurredAt>new Date(String(draft.sendWindowEnd)))throw new OperationsError("message_draft_delivery_mismatch",409);
+      if(!evidence||evidence.version!==1||evidence.payloadHash!==execution.payloadHash||evidence.bodyHash!==bodyHash||evidence.channel!==draft.channel||evidence.recipient!==draft.recipient||(draft.channel==="email"&&evidence.subject!==draft.subject)||!sameAttachmentUrls(execution.payload.attachments,draft.attachments)||!occurredAt||!Number.isFinite(occurredAt.valueOf())||occurredAt>now||occurredAt<new Date(String(draft.sendWindowStart))||occurredAt>new Date(String(draft.sendWindowEnd)))throw new OperationsError("message_draft_delivery_mismatch",409);
       const [contact]=await tx.select().from(schema.contacts).where(eq(schema.contacts.id,task.contactId)).limit(1);
       if(!contact||contact.provider!=="ghl"||contact.providerId!==execution.payload.contactId)throw new OperationsError("message_contact_evidence_mismatch",409);
       // The matching sent message itself legitimately invalidated the draft. Its

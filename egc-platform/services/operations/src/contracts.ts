@@ -1,4 +1,5 @@
 import * as z from "zod/v4";
+import {isMessageTaskKind,MESSAGE_ATTACHMENT_KINDS,TASK_KINDS} from "./action-kinds.js";
 
 export const CONTRACT_VERSION = 1;
 export const isoTime = z.string().datetime({ offset: true });
@@ -14,7 +15,7 @@ export const actorSchema = z.object({
   kind: z.enum(["human", "integration"])
 }).strict();
 export type Actor = z.infer<typeof actorSchema>;
-export const taskKind = z.enum(["manual", "callback", "prepare_quote", "followup_message", "review_notes", "verify_deposit", "job_readiness"]);
+export const taskKind = z.enum(TASK_KINDS);
 export const priority = z.enum(["low", "medium", "high", "urgent"]);
 export const waitingOn = z.enum(["none", "EGC", "customer", "provider"]);
 export const evidence = z.object({
@@ -22,13 +23,34 @@ export const evidence = z.object({
   id: z.string().min(1).max(200),
   excerpt: z.string().max(2000).default("")
 }).strict();
+// Customer-facing links are stored in WHATWG canonical form (the parsed URL's href), so
+// what a manager approves, what the guard compares and what a sender delivers are the
+// same string: "HTTPS://A.com\x", "https:a.com/x" and "https://a.com/x" all become one URL.
+// Invisible format characters, loopback/IP-literal and single-label hosts are refused.
+const publicHost = (host:string) => {
+  const name=host.replace(/\.$/,"").toLowerCase();
+  return name.includes(".") && !name.endsWith(".localhost") && !/^\d{1,3}(\.\d{1,3}){3}$/.test(name) && !name.startsWith("[");
+};
+const canonicalUrl = (value:string) => { try { return new URL(value).href; } catch { return value; } };
+const httpsUrl = z.string().min(1).max(2000).refine(value => {
+  try { const url=new URL(value); return url.protocol==="https:" && publicHost(url.hostname) && !url.username && !url.password && !/[\s\u0000-\u001f\u007f]|\p{Cf}/u.test(value); } catch { return false; }
+}, "Attachments require a public https URL without credentials").overwrite(canonicalUrl)
+  .refine(value => value.length<=2000, "Attachment URLs must be at most 2000 characters once canonicalized");
+export const messageAttachment = z.object({
+  kind: z.enum(MESSAGE_ATTACHMENT_KINDS),
+  url: httpsUrl,
+  label: z.string().trim().min(1).max(120),
+  refId: z.string().regex(/^[A-Za-z0-9:._-]{1,180}$/).nullable().default(null)
+}).strict();
+export type MessageAttachment = z.infer<typeof messageAttachment>;
 export const messageDraft = z.object({
   channel: z.enum(["sms", "email"]),
   recipient: z.string().min(3).max(320),
   subject: z.string().max(250).default(""),
   body: z.string().min(1).max(10000),
   sendWindowStart: isoTime,
-  sendWindowEnd: isoTime
+  sendWindowEnd: isoTime,
+  attachments: z.array(messageAttachment).max(10).default([])
 }).strict().superRefine((draft, ctx) => {
   if (Date.parse(draft.sendWindowEnd) <= Date.parse(draft.sendWindowStart))
     ctx.addIssue({code:"custom",message:"Send window must have positive duration"});
@@ -36,6 +58,9 @@ export const messageDraft = z.object({
     ctx.addIssue({code:"custom",message:"SMS recipient must be an E.164 phone number"});
   if (draft.channel === "email" && !z.string().email().safeParse(draft.recipient).success)
     ctx.addIssue({code:"custom",message:"Email recipient is invalid"});
+  // URLs are canonical here, so case, "\" and "//" spellings of one link are duplicates.
+  if (Array.isArray(draft.attachments) && new Set(draft.attachments.map(a=>a?.url)).size !== draft.attachments.length)
+    ctx.addIssue({code:"custom",message:"Each attachment URL may appear only once",path:["attachments"]});
 });
 export type MessageDraft = z.infer<typeof messageDraft>;
 const createFields = {
@@ -63,9 +88,9 @@ export const createTaskSchema = z.object(createFields).strict().superRefine((tas
     ctx.addIssue({code:"custom",message:"Waiting work requires a review time"});
   if (task.portalVisitId && !task.portalJobId)
     ctx.addIssue({code:"custom",message:"A visit link requires an exact portal record"});
-  if (task.kind === "followup_message" && !task.draft)
+  if (isMessageTaskKind(task.kind) && !task.draft)
     ctx.addIssue({code:"custom",message:"Message actions require the exact draft"});
-  if (task.kind !== "followup_message" && task.draft)
+  if (!isMessageTaskKind(task.kind) && task.draft)
     ctx.addIssue({code:"custom",message:"Only message actions contain a message draft"});
 });
 export const patchTaskSchema = z.object({

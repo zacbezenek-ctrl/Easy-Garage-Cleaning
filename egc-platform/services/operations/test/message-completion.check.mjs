@@ -9,18 +9,25 @@ const url=new URL(process.env.DATABASE_URL||'http://invalid');
 if(process.env.EGC_OPERATIONS_TEST!=='isolated'||!['localhost','127.0.0.1'].includes(url.hostname)||url.pathname!=='/egc_operations_test'||!['postgres:','postgresql:'].includes(url.protocol))throw new Error('Only isolated loopback egc_operations_test is allowed');
 globalThis.fetch=async()=>{throw new Error('No external HTTP in message completion tests');};
 const db=getDb(),owner={id:'owner-fixture',role:'owner',kind:'human',workspace:'egc'},integration={id:'verified-grant',role:'integration',kind:'integration',workspace:'egc'};
+const NOW='2026-10-01T15:00:00.000Z';
 let service,now,contact,task,execution,body;
 const call=(c,actor=owner,id=randomUUID())=>service.execute(actor,c,id);
 const complete=(extra={},requestId=randomUUID())=>call({command:'task.complete_from_message',taskId:task.id,revision:task.revision,executionId:execution.id,...extra},integration,requestId);
+// Creates, approves and records verified delivery for one message task. A legacy
+// draft is stored without the attachments key, as rows written before action kinds v2.
+async function setup({kind='followup_message',attachments,providerId='synthetic-provider',providerMessageId='synthetic-message',legacyDraft=false}={}){
+ [contact]=await db.insert(schema.contacts).values({provider:'ghl',providerId,phone:'+12025550100'}).returning();
+ body='Synthetic exact approved message';const draft={channel:'sms',recipient:'+12025550100',subject:'',body,sendWindowStart:new Date(now-60000).toISOString(),sendWindowEnd:new Date(+now+3600000).toISOString(),...(attachments?{attachments}:{})};
+ task=(await call({command:'task.create',task:{title:'Send reviewed followup',kind,assignedUserId:owner.id,dueAt:new Date(+now+3600000).toISOString(),contactId:contact.id,completionCondition:'Verify exact message delivered',draft}})).task;
+ if(legacyDraft){await db.transaction(async tx=>{await tx.execute(sql`select set_config('egc.operations_actor','legacy-row-fixture',true)`);const {attachments:_,...legacy}=task.draftPayload;await tx.update(schema.tasks).set({draftPayload:legacy}).where(eq(schema.tasks.id,task.id));});task=(await call({command:'task.get',taskId:task.id})).task;}
+ const preview=await call({command:'task.get',taskId:task.id});await call({command:'tasks.approve',items:[{taskId:task.id,revision:task.revision,previewHash:preview.previewHash}],expiresAt:new Date(+now+3600000).toISOString()});
+ const occurred=new Date(+now+1000);now=new Date(+now+2000);const payload={type:'SMS',contactId:contact.providerId,message:body,toNumber:draft.recipient,...(attachments?.length?{attachments:attachments.map(a=>a.url)}:{})};
+ [execution]=await db.insert(schema.communicationExecutions).values({requestId:randomUUID(),actorId:integration.id,contactId:contact.id,channel:'SMS',payloadHash:'proofhash',payload,status:'accepted',providerMessageId,createdAt:occurred,verifiedAt:now,response:{messageId:providerMessageId,status:'delivered',delivered:true,matchEvidence:{version:1,channel:'sms',recipient:draft.recipient,subject:'',bodyHash:createHash('sha256').update(body).digest('hex'),payloadHash:'proofhash',occurredAt:occurred.toISOString()}}}).returning();
+}
 beforeEach(async()=>{
  await db.execute(sql`truncate operation_events,operation_approvals,operation_requests,operation_briefs,tasks,communication_executions,contacts cascade`);
- now=new Date();service=new OperationsService(db,{workspace:'egc',now:()=>now,resolveOwner:async()=>true});
- [contact]=await db.insert(schema.contacts).values({provider:'ghl',providerId:'synthetic-provider',phone:'+12025550100'}).returning();
- body='Synthetic exact approved message';const draft={channel:'sms',recipient:'+12025550100',subject:'',body,sendWindowStart:new Date(now-60000).toISOString(),sendWindowEnd:new Date(+now+3600000).toISOString()};
- task=(await call({command:'task.create',task:{title:'Send reviewed followup',kind:'followup_message',assignedUserId:owner.id,dueAt:new Date(+now+3600000).toISOString(),contactId:contact.id,completionCondition:'Verify exact message delivered',draft}})).task;
- const preview=await call({command:'task.get',taskId:task.id});await call({command:'tasks.approve',items:[{taskId:task.id,revision:task.revision,previewHash:preview.previewHash}],expiresAt:new Date(+now+3600000).toISOString()});
- const occurred=new Date(+now+1000);now=new Date(+now+2000);const payload={type:'SMS',contactId:contact.providerId,message:body,toNumber:draft.recipient};
- [execution]=await db.insert(schema.communicationExecutions).values({requestId:randomUUID(),actorId:integration.id,contactId:contact.id,channel:'SMS',payloadHash:'proofhash',payload,status:'accepted',providerMessageId:'synthetic-message',createdAt:occurred,verifiedAt:now,response:{messageId:'synthetic-message',status:'delivered',delivered:true,matchEvidence:{version:1,channel:'sms',recipient:draft.recipient,subject:'',bodyHash:createHash('sha256').update(body).digest('hex'),payloadHash:'proofhash',occurredAt:occurred.toISOString()}}}).returning();
+ now=new Date(NOW);service=new OperationsService(db,{workspace:'egc',now:()=>now,resolveOwner:async()=>true});
+ await setup();
 });
 after(async()=>{await db.$client.end({timeout:5});});
 test('verified delivered message completes exact task atomically and retries do not add evidence',async()=>{const id=randomUUID(),r=await complete({},id);assert.equal(r.task.status,'completed');assert.equal(r.task.completionEvidence[0].kind,'verified_communication');assert.equal(r.task.completionEvidence[0].approvedRevision,1);assert.equal((await complete({},id)).replayed,true);const [stored]=await db.select().from(schema.tasks).where(eq(schema.tasks.id,task.id));assert.equal(stored.completionEvidence.length,1);});
@@ -37,4 +44,37 @@ test('database guard independently rejects wrong approval ID or recipient even w
  await db.update(schema.communicationExecutions).set({payload:{...execution.payload,toNumber:'+12025550199'}}).where(eq(schema.communicationExecutions.id,execution.id));
  await assert.rejects(direct(approval.id),e=>String(e.cause?.message||e.message).includes('provider_evidence_completion_not_activated'));
  assert.equal((await call({command:'task.get',taskId:task.id})).task.status,'open');
+});
+const depositAttachments=[{kind:'payment_link',url:'https://easygaragecleaning.com/pay/synthetic-deposit',label:'Pay your deposit',refId:'job-synthetic-1'},{kind:'portal_quote',url:'https://easygaragecleaning.com/portal/quote/synthetic-1',label:'Your quote',refId:null}];
+const directComplete=approvalId=>db.transaction(async tx=>{await tx.execute(sql`select set_config('egc.operations_actor','isolated-guard-test',true),set_config('egc.operations_actor_kind','integration',true),set_config('egc.communication_completion',${task.id},true)`);return tx.update(schema.tasks).set({status:'completed',completedAt:now,completionEvidence:[{kind:'verified_communication',executionId:execution.id,taskId:task.id,approvedRevision:task.revision,approvalId,providerMessageId:execution.providerMessageId}]}).where(eq(schema.tasks.id,task.id)).returning();});
+const withPayload=payload=>db.update(schema.communicationExecutions).set({payload}).where(eq(schema.communicationExecutions.id,execution.id));
+test('deposit_reminder completes from verified delivery that carries exactly the approved attachment URLs',async()=>{
+ await setup({kind:'deposit_reminder',attachments:depositAttachments,providerId:'synthetic-deposit',providerMessageId:'synthetic-deposit-message'});
+ assert.equal(task.kind,'deposit_reminder');assert.deepEqual(task.draftPayload.attachments,depositAttachments);assert.deepEqual(execution.payload.attachments,depositAttachments.map(a=>a.url));
+ const r=await complete();assert.equal(r.task.status,'completed');assert.equal(r.task.kind,'deposit_reminder');assert.equal(r.task.completedAt,now.toISOString());const proof=r.task.completionEvidence[0];assert.equal(proof.kind,'verified_communication');assert.equal(proof.executionId,execution.id);assert.equal(proof.providerMessageId,'synthetic-deposit-message');assert.equal(proof.approvedRevision,1);
+});
+test('a delivery whose attachment URLs differ from the approval never completes the message task',async()=>{
+ await setup({kind:'deposit_reminder',attachments:depositAttachments,providerId:'synthetic-deposit',providerMessageId:'synthetic-deposit-message'});
+ const urls=depositAttachments.map(a=>a.url),{attachments:_,...bare}=execution.payload;
+ for(const attachments of [undefined,null,[],[urls[0]],[...urls].reverse(),[...urls,'https://easygaragecleaning.com/extra'],[urls[0],'https://easygaragecleaning.com/pay/other'],urls.join(',')]){await withPayload(attachments===undefined?bare:{...bare,attachments});await assert.rejects(complete(),e=>e.code==='message_draft_delivery_mismatch',JSON.stringify(attachments));}
+ assert.equal((await call({command:'task.get',taskId:task.id})).task.status,'open');
+});
+test('database guard independently requires the exact approved attachment URLs for message kinds',async()=>{
+ await setup({kind:'deposit_reminder',attachments:depositAttachments,providerId:'synthetic-deposit',providerMessageId:'synthetic-deposit-message'});
+ const [approval]=await db.select().from(schema.operationApprovals).where(eq(schema.operationApprovals.taskId,task.id)),urls=depositAttachments.map(a=>a.url),{attachments:_,...bare}=execution.payload;
+ for(const payload of [bare,{...bare,attachments:[...urls].reverse()},{...bare,attachments:[urls[0]]}]){await withPayload(payload);await assert.rejects(directComplete(approval.id),e=>String(e.cause?.message||e.message).includes('provider_evidence_completion_not_activated'));}
+ await withPayload({...bare,attachments:urls});const [done]=await directComplete(approval.id);assert.equal(done.status,'completed');assert.equal(done.kind,'deposit_reminder');
+});
+test('a legacy draft stored without attachments still completes only from a payload without attachments',async()=>{
+ await db.execute(sql`truncate operation_events,operation_approvals,operation_requests,tasks,communication_executions,contacts cascade`);
+ await setup({legacyDraft:true});assert.equal('attachments' in task.draftPayload,false);assert.equal(task.revision,2);
+ const {attachments:_,...bare}=execution.payload;await withPayload({...bare,attachments:['https://easygaragecleaning.com/unapproved']});await assert.rejects(complete(),e=>e.code==='message_draft_delivery_mismatch');
+ await withPayload(bare);const r=await complete();assert.equal(r.task.status,'completed');assert.equal(r.task.completionEvidence[0].approvedRevision,2);
+});
+test('attachments submitted in a non-canonical spelling complete only from the canonical URL',async()=>{
+ await db.execute(sql`truncate operation_events,operation_approvals,operation_requests,tasks,communication_executions,contacts cascade`);
+ await setup({kind:'send_quote',attachments:[{kind:'portal_quote',url:'HTTPS://EasyGarageCleaning.com\\portal\\quote\\synthetic-7',label:'Your quote'}],providerId:'synthetic-canonical',providerMessageId:'synthetic-canonical-message'});
+ const canonical='https://easygaragecleaning.com/portal/quote/synthetic-7';assert.equal(task.draftPayload.attachments[0].url,canonical);
+ const {attachments:_,...bare}=execution.payload;await withPayload({...bare,attachments:['HTTPS://EasyGarageCleaning.com\\portal\\quote\\synthetic-7']});await assert.rejects(complete(),e=>e.code==='message_draft_delivery_mismatch');
+ await withPayload({...bare,attachments:[canonical]});const r=await complete();assert.equal(r.task.status,'completed');assert.equal(r.task.kind,'send_quote');
 });

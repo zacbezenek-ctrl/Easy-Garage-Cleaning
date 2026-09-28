@@ -117,4 +117,49 @@ class BrowserTests(unittest.TestCase):
         self.sold_revenue={'valueCents':0,'knownSubtotalCents':0,'unknownOccurrenceCount':0,'unknownValueCount':0,'coverageIncomplete':False,'qualification':'Verified dated outcomes in this period.','unknownOccurrenceEvents':[]}
         self.collected_revenue['qualification']='<img src=x onerror="window.injected=true">'
         self.open();self.page.get_by_role('tab',name='Sales evidence',exact=True).click();sold=self.page.locator('[data-revenue-kind="Sold revenue"]');expect(sold.locator('strong')).to_have_text('$0.00');expect(sold).not_to_contain_text('Total unavailable');self.assertEqual(self.page.locator('img').count(),0);self.assertIsNone(self.page.evaluate('window.injected'))
+    # Message kinds v2: every attachment link is visible and verifiable before approval, and
+    # Edit keeps the exact draft. Fixed clock and a non-Denver browser zone prove Denver times.
+    FIXED=datetime.datetime(2026,10,1,15,0,tzinfo=datetime.timezone.utc)
+    def fixed(self,hours=0): return (self.FIXED+datetime.timedelta(hours=hours)).isoformat().replace('+00:00','Z')
+    def fixed_context(self,width=1360):
+        self.context.close();self.context=self.browser.new_context(viewport={'width':width,'height':900},timezone_id='Asia/Tokyo',is_mobile=width<500,has_touch=width<500);self.page=self.context.new_page()
+        self.page.on('pageerror',lambda e:self.errors.append(str(e)));self.page.route('**/*',self.route);self.page.clock.install(time=self.FIXED)
+    def message_task(self,kind='send_quote',links=None,**extra):
+        draft={'channel':'email','recipient':'synthetic@example.invalid','subject':'Your synthetic quote','body':'Exact synthetic quote text','sendWindowStart':self.fixed(0),'sendWindowEnd':self.fixed(12)}
+        if links is not None:draft['attachments']=links
+        return task(kind=kind,title='Synthetic '+kind,approvalStatus='pending',dueAt=self.fixed(1),draftPayload=draft,**extra)
+    LINKS=[{'kind':'portal_quote','url':'https://easygaragecleaning.com/portal/quote/synthetic-1?view=full','label':'Your quote <img src=x onerror="window.injected=true">','refId':'quote:synthetic-1'},{'kind':'payment_link','url':'https://pay.example.com/'+'synthetic-long-segment-'*12+'end','label':'Pay the deposit','refId':None}]
+    def open_task(self,title):self.page.locator('.ac-row').filter(has_text=title).first.click();expect(self.page.get_by_role('dialog')).to_contain_text('Completion condition')
+    def test_every_attachment_link_is_shown_and_fingerprinted_before_approval(self):
+        self.fixed_context(375);self.items=[self.message_task(links=self.LINKS)];self.open();self.open_task('Synthetic send_quote');dialog=self.page.get_by_role('dialog')
+        for text in ['Attachment links · 2','Portal quote · Your quote <img','Payment link · Pay the deposit','Opens easygaragecleaning.com','Opens pay.example.com',self.LINKS[0]['url'],self.LINKS[1]['url'],'Reference: quote:synthetic-1']:expect(dialog).to_contain_text(text)
+        expect(dialog.get_by_role('button',name='Complete',exact=True)).to_have_count(0);expect(dialog.get_by_role('button',name='Edit',exact=True)).to_be_visible()
+        self.page.get_by_role('button',name='Review approval').click();dialog=self.page.get_by_role('dialog')
+        for text in ['Subject: Your synthetic quote','Exact synthetic quote text',self.LINKS[0]['url'],self.LINKS[1]['url'],'Review fingerprint '+'a'*16,'2 attachment links and revision 1']:expect(dialog).to_contain_text(text)
+        links=dialog.get_by_role('link',name='Open link to verify');expect(links).to_have_count(2)
+        for i,link in enumerate(self.LINKS):
+            anchor=links.nth(i);self.assertEqual(anchor.get_attribute('href'),link['url']);self.assertEqual(anchor.get_attribute('target'),'_blank');self.assertEqual(set(anchor.get_attribute('rel').split()),{'noopener','noreferrer'})
+        self.assertEqual(self.page.locator('img').count(),0);self.assertIsNone(self.page.evaluate('window.injected'))
+        self.assertLessEqual(self.page.evaluate('document.documentElement.scrollWidth'),375);out=ROOT/'test-results';out.mkdir(exist_ok=True);self.page.screenshot(path=str(out/'action-center-attachments-mobile.png'),full_page=True)
+        expect(self.page.get_by_label('I reviewed the exact recipient, message, and revision',exact=True)).to_have_count(0)
+        approve=self.page.get_by_role('button',name='Approve draft — does not send');approve.click();expect(dialog).to_be_visible();self.assertEqual([r for r in self.calls if r['body']['command']=='tasks.approve'],[])
+        self.page.get_by_label('I reviewed the exact recipient, message, every attachment link, and revision').check();approve.click();expect(self.page.get_by_role('dialog')).to_have_count(0)
+        writes=[r['body'] for r in self.calls if r['body']['command']=='tasks.approve'];self.assertEqual(len(writes),1);self.assertEqual(writes[0]['items'],[{'taskId':self.items[0]['id'],'revision':1,'previewHash':'a'*64}]);self.assertRegex(writes[0]['expiresAt'],r'^2026-10-02T14:00:[0-5]\d\.\d{3}Z$')
+        self.assertFalse(any('send' in r['body']['command'] for r in self.calls))
+    def test_a_draft_with_links_the_hub_cannot_show_is_not_approvable(self):
+        self.fixed_context();bad=[{**self.LINKS[0],'url':'http://easygaragecleaning.com/portal/quote/synthetic-1'},{**self.LINKS[1],'signedUrl':'https://pay.example.com/secret'}];self.items=[self.message_task(kind='deposit_reminder',links=bad)];self.open();self.open_task('Synthetic deposit_reminder');dialog=self.page.get_by_role('dialog')
+        alert=dialog.get_by_role('alert').filter(has_text='cannot be approved');expect(alert).to_contain_text('Attachment 1 does not have a canonical https link.');expect(alert).to_contain_text('Attachment 2 has a field this screen cannot show: signedUrl.')
+        expect(dialog).to_contain_text('This link cannot be verified here.');expect(dialog.get_by_role('link',name='Open link to verify')).to_have_count(1)
+        expect(dialog.get_by_role('button',name='Review approval')).to_have_count(0);expect(dialog.get_by_role('button',name='Reject',exact=True)).to_be_visible();expect(dialog.get_by_role('button',name='Complete',exact=True)).to_have_count(0)
+        self.assertEqual([r for r in self.calls if r['body']['command']=='tasks.approve'],[])
+    def test_edit_sends_the_exact_draft_for_every_message_kind_and_keeps_links(self):
+        self.fixed_context();self.items=[self.message_task(links=self.LINKS),self.message_task(kind='answer_question',links=None),self.message_task(kind='send_before_afters',links=[])];self.open()
+        expected={'channel':'email','recipient':'synthetic@example.invalid','subject':'Your synthetic quote','body':'Exact synthetic quote text','sendWindowStart':'2026-10-01T15:00:00.000Z','sendWindowEnd':'2026-10-02T03:00:00.000Z'}
+        for item,links in [(self.items[0],self.LINKS),(self.items[1],[]),(self.items[2],[])]:
+            title=item['title'];self.open_task(title);expect(self.page.get_by_role('dialog').get_by_role('button',name='Complete',exact=True)).to_have_count(0);self.page.get_by_role('button',name='Edit',exact=True).click()
+            form=self.page.get_by_role('dialog');expect(form.get_by_label('Exact recipient',exact=True)).to_be_visible();expect(form.get_by_label('Exact recipient',exact=True)).to_have_value('synthetic@example.invalid')
+            if links:expect(form).to_contain_text(links[0]['url']);expect(form).to_contain_text('Links stay exactly as proposed')
+            form.get_by_label('Action',exact=True).fill('Edited '+title);form.get_by_role('button',name='Save',exact=True).click();expect(self.page.get_by_role('dialog')).to_have_count(0)
+            edit=[r['body'] for r in self.calls if r['body']['command']=='task.edit'][-1];self.assertEqual(edit['taskId'],item['id']);self.assertEqual(edit['changes']['title'],'Edited '+title);self.assertEqual(edit['changes']['draft'],{**expected,'attachments':links})
+        self.assertEqual(len([r for r in self.calls if r['body']['command']=='task.edit']),3)
 if __name__=='__main__':unittest.main(verbosity=2)

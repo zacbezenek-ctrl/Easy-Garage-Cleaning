@@ -1,7 +1,8 @@
--- Additive guards for the existing task table. Installed via checked-in migrations
--- (latest: 0013_action_kinds_v2). Every message kind requires an exact draft, and its
--- completion requires an accepted, verified delivered execution, exact approval and
--- exactly the approved attachment URLs. Internal kinds never carry a draft.
+-- Action kinds v2. Replaces the task guard with the same body except: the kind
+-- whitelist adds the v2 kinds; every message kind (not only followup_message) needs a
+-- draft and verified-delivery completion proof; and the delivered execution payload must
+-- carry exactly the approved draft attachment URLs, in order. Inbound or outbound
+-- communication also invalidates every message kind's approval, as it did for followups.
 CREATE OR REPLACE FUNCTION egc_task_revision_guard() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE content_changed boolean; actor text; system_actor text;
 BEGIN
@@ -67,27 +68,6 @@ BEGIN
   RETURN NEW;
 END $$;
 --> statement-breakpoint
-DROP TRIGGER IF EXISTS egc_tasks_revision_guard ON tasks;
---> statement-breakpoint
-CREATE TRIGGER egc_tasks_revision_guard BEFORE INSERT OR UPDATE ON tasks FOR EACH ROW EXECUTE FUNCTION egc_task_revision_guard();
---> statement-breakpoint
-CREATE OR REPLACE FUNCTION egc_task_change_audit() RETURNS trigger LANGUAGE plpgsql AS $$
-DECLARE actor text; system_actor text;
-BEGIN
-  IF NEW.revision=OLD.revision AND NEW.approval_status IS NOT DISTINCT FROM OLD.approval_status THEN RETURN NEW; END IF;
-  actor:=nullif(current_setting('egc.operations_actor',true),'');
-  system_actor:=nullif(current_setting('egc.operations_system',true),'');
-  INSERT INTO operation_events(workspace_id,task_id,revision,type,actor_id,actor_kind,source,evidence)
-    VALUES(NEW.workspace_id,NEW.id,NEW.revision,'task.revision_recorded',coalesce(system_actor,actor,'legacy-writer'),
-      CASE WHEN system_actor IS NULL AND actor IS NOT NULL THEN coalesce(nullif(current_setting('egc.operations_actor_kind',true),''),'integration') ELSE 'integration' END,
-      'database_guard',jsonb_build_object('previousRevision',OLD.revision,'previousStatus',OLD.status,'status',NEW.status,'approvalStatus',NEW.approval_status));
-  RETURN NEW;
-END $$;
---> statement-breakpoint
-DROP TRIGGER IF EXISTS egc_tasks_change_audit ON tasks;
---> statement-breakpoint
-CREATE TRIGGER egc_tasks_change_audit AFTER UPDATE ON tasks FOR EACH ROW EXECUTE FUNCTION egc_task_change_audit();
---> statement-breakpoint
 CREATE OR REPLACE FUNCTION egc_communication_invalidates_drafts() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE contact uuid; inbound boolean; t record; previous_system text;
 BEGIN
@@ -101,11 +81,3 @@ BEGIN
   PERFORM set_config('egc.operations_system',coalesce(previous_system,''),true);
   IF TG_OP='DELETE' THEN RETURN OLD; ELSE RETURN NEW; END IF;
 END $$;
---> statement-breakpoint
-DROP TRIGGER IF EXISTS egc_messages_invalidate_drafts ON messages;
---> statement-breakpoint
-CREATE TRIGGER egc_messages_invalidate_drafts AFTER INSERT OR UPDATE OR DELETE ON messages FOR EACH ROW EXECUTE FUNCTION egc_communication_invalidates_drafts();
---> statement-breakpoint
-DROP TRIGGER IF EXISTS egc_calls_invalidate_drafts ON calls;
---> statement-breakpoint
-CREATE TRIGGER egc_calls_invalidate_drafts AFTER INSERT OR UPDATE OR DELETE ON calls FOR EACH ROW EXECUTE FUNCTION egc_communication_invalidates_drafts();
