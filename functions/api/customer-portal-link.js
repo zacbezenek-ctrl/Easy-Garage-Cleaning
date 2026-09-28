@@ -1,6 +1,7 @@
 import { getHubSession, hasBusinessAccess } from '../_lib/hub-session.js';
 import { createCustomerPortalAccessToken } from '../_lib/customer-portal.js';
 import { customerPortalLinkAccount } from '../_lib/customer-portal-revocation.js';
+import { businessAccountJob } from '../_lib/portal-invitation.js';
 import { readJob, patchJob } from '../_lib/firestore-job.js';
 
 const HOST = /^(?:easygaragecleaning\.com|www\.easygaragecleaning\.com|easy-garage-cleaning\.pages\.dev|localhost(?::\d+)?|127\.0\.0\.1(?::\d+)?)$/;
@@ -27,6 +28,8 @@ export function customerPortalLinkHandler({ now = () => new Date() } = {}) {
     if (!jobId) return reply(400, { ok: false, error: 'Select a job first' });
     const job = await readJob(env, jobId).catch(() => null);
     if (!job) return reply(404, { ok: false, error: 'Job not found' });
+    // A homeowner owner link would bypass the company's member roles.
+    if (businessAccountJob(job)) return reply(409, { ok: false, error: 'This job is shared with a business account. Its team opens it from the Business Hub, so no homeowner portal link was created.' });
     // Embed the account's current version and root: this link works until
     // staff next revoke the account's portal links or re-parent the job.
     let account, linkVersion;

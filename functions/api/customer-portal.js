@@ -6,11 +6,14 @@ import { fieldActivity } from '../_lib/field-execution.js';
 import { patchJob, patchJobsAtomic, readJob } from '../_lib/firestore-job.js';
 import { appendConversationMessage, cleanMessage, cleanRequestId, conversationMessages, deliverHighLevelMessage, findConversationMessage, replaceConversationMessage } from '../_lib/customer-messaging.js';
 import { customerMoneyState as moneyState, customerDepositState, customerPaymentNeedsReview, createCustomerStripeCheckout, recordCustomerStripePayment, stripeRequest as stripe, stripeSecretKey as stripeKey } from '../_lib/customer-payments.js';
+import { parseBusinessActor } from '../_lib/business-hub-core.js';
+import { businessAccountJob } from '../_lib/portal-invitation.js';
 
 const HOST = /^(?:easygaragecleaning\.com|www\.easygaragecleaning\.com|easy-garage-cleaning\.pages\.dev|localhost(?::\d+)?|127\.0\.0\.1(?::\d+)?)$/;
 const DEFAULT_REVIEW_URL = 'https://search.google.com/local/writereview?placeid=ChIJ17AGfBiyRIsRyJ3k4mDtX8Q';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const REVIEW_CLICK_WINDOW_MS = 60 * 1000;
+const APPROVAL_ACTOR_FIELDS = ['approvedByActorId', 'approvedByBusinessAccountId', 'approvedByBusinessMemberId'];
 
 function reply(status, body, headers = {}) {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', ...headers } });
@@ -108,6 +111,22 @@ function id(value, prefix = 'item') {
   return cleaned || newId(prefix);
 }
 
+// A company (biz_) approval names the delegated member, so an AP sign-off stays
+// attributable after that member's name, role or access changes. Homeowner and
+// family approvals keep their existing shape. Only the saved job holds these
+// ids: the approval response and portal DTOs never return them.
+function approvalActor(actorId) {
+  if (!String(actorId || '').startsWith('biz_')) return {};
+  const { accountId, memberId } = parseBusinessActor(actorId);
+  return { approvedByActorId: actorId, approvedByBusinessAccountId: accountId, approvedByBusinessMemberId: memberId };
+}
+
+// The estimate is spread forward on re-approval; an earlier company approver
+// must never be credited with a later signature.
+function withoutApprovalActor(estimate) {
+  return Object.fromEntries(Object.entries(estimate || {}).filter(([key]) => !APPROVAL_ACTOR_FIELDS.includes(key)));
+}
+
 // Firestore answers a stale currentDocument.updateTime with 400
 // FAILED_PRECONDITION (as business-hub-store.js assumes); 409/412 count too.
 function conflict(error) {
@@ -141,6 +160,9 @@ function customerExperience(job, owner = true) {
       permissions: { view: person.permissions?.view !== false, decide: Boolean(person.permissions?.decide), pay: Boolean(person.permissions?.pay), rebook: Boolean(person.permissions?.rebook) },
       status: person.status === 'removed' ? 'removed' : 'active',
     })),
+    // A company project's people are managed in its business account, and the
+    // server refuses invitations for it (CUSTOMER_PORTAL_BUSINESS_PROJECT).
+    invitesAvailable: owner && !businessAccountJob(job),
     decisions: decisions.slice(-20).map(item => ({
       id: id(item.id, 'decision'), title: safe(item.title, 180), details: safe(item.details, 1200),
       photoUrl: /^https:\/\/(?:drive|docs)\.google\.com\//i.test(item.photoUrl || '') ? item.photoUrl : '',
@@ -286,11 +308,11 @@ async function handlePost({ request, env }, { clock, read }) {
     if (finance.total < .01) return reply(409, { ok: false, error: 'The estimate is not ready yet' });
     if (result.job.estimate?.validUntil && String(result.job.estimate.validUntil) < today) return reply(409, { ok: false, error: 'This estimate has expired. Ask the team for an updated estimate.' });
     const approval = { status: 'approved', approvedAt: now, approvedBy: signedName, amount: finance.total, source: 'customer_portal' };
-    const deposit = customerDepositState(result.job, finance);
+    const deposit = customerDepositState(result.job, finance), actor = approvalActor(result.session.actorId);
     try {
       await patchJob(env, result.session.jobId, {
-        customerApproval: approval,
-        estimate: { ...(result.job.estimate || {}), status: 'approved', acceptedAt: now, acceptedBy: signedName, amount: finance.total, depositRequired: deposit.required },
+        customerApproval: { ...approval, ...actor },
+        estimate: { ...withoutApprovalActor(result.job.estimate), status: 'approved', acceptedAt: now, acceptedBy: signedName, amount: finance.total, depositRequired: deposit.required, ...actor },
         deposit: { ...(result.job.deposit || {}), amount: deposit.required, paidAmount: deposit.paid, status: deposit.due < .01 ? 'paid' : deposit.paid ? 'partial' : 'due' },
         quoteStatus: 'approved',
         updatedAt: now,
@@ -381,6 +403,9 @@ async function handlePost({ request, env }, { clock, read }) {
   }
 
   if (body.action === 'create_collaborator_invite') {
+    // A company project's people are managed in its business account. An owner
+    // link that predates the business link can never mint more access to it.
+    if (businessAccountJob(result.job)) return reply(403, { ok: false, code: 'CUSTOMER_PORTAL_BUSINESS_PROJECT', error: 'This project is managed through a business account, so invitations are not available here. Contact Easy Garage Cleaning to add someone.' });
     const personId = id(body.person_id, 'person');
     const people = Array.isArray(result.job.customerCollaborators) ? result.job.customerCollaborators : [];
     const person = people.find(item => item.id === personId && item.status !== 'removed' && !personId.startsWith('biz_'));

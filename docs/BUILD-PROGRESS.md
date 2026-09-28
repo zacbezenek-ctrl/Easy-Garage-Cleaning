@@ -144,6 +144,10 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   that replays field and time-clock actions in order with their request ids and fresh revisions, stopping visibly on
   conflicts. Sign-out retires offline copies. `EGC_OFFLINE_CLOCK_ENABLED` (off) keeps phone clock times; off, stale
   offline clock actions are refused. Gaps: no Hub deviceTime review badge (keep the flag off); photos not queued.
+- **B2B-SAFE** (B2B-06) Business-linked jobs never get a homeowner owner-level portal link: the accepted-quote invite is
+  recorded as suppressed before any HighLevel call (re-checked after the claim), Copy portal link is 409 and collaborator
+  invites 403. Company approvals store the approving actor/account/member ids (never shown in the portal), and older
+  writers strip them from new approvals. Audit #28 and #99 done. Gap: links issued before a project was linked stay valid.
 
 ## In progress
 
@@ -183,6 +187,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | SEC-C | Env inventory script/test + complete both .env.example files | merged |
 | CI-A | Always-on root CI, split platform gate, clock-shift guard, field-execution acceptance in CI | merged (a067d1f) |
 | CI-B | Pages Functions test router, parallel-safe emulator harness, Playwright iPhone/Android/desktop projects | building |
+| B2B-SAFE | Portal B2B safety: no homeowner owner links for business-linked jobs; attributed company approvals (B2B-06) | merged (4dd1be5) |
 | CI-WF | Wire merged units' tests into the existing CI workflows (pending CI notes) | merged (31e1562) |
 
 ## Next
@@ -247,7 +252,7 @@ Scope: all 188 findings the maps exported (160 bug reports plus 28 mission or in
 | 25 | Quotes | Change orders the customer approves in the portal are saved as `approvedChangeTotal` but never added to the total, balance, invoice or Stripe checkout, so they are not billed. † | `functions/api/customer-portal.js:350-352`; `functions/_lib/customer-payments.js:17`; `employee-suite.js:232` | LI-CORE (totals math), then P2-11 |
 | 26 | Quotes | Walkthrough handoff collapses the signed quote to a single 'Garage cleanout and reset' line, so add-ons (pressure wash, trapping, pest waste, shelving) never appear itemized on the estimate, portal, invoice or print. | `functions/_lib/walkthrough-handoff.js:70` and :91; `crew/gameplan-handoff.js` signedPlan() | LI-CORE (line-item shapes), then P2-05 |
 | 27 | Money | Recurring visits copy scope and duration but not the price, so their invoices and deposits show $0. | `functions/_lib/dispatch-service.js:67` | NEW: carry per-visit price onto recurring visits (P1-05 plan occurrences inherit this gap) |
-| 28 | B2B hub | Approving a quote on a B2B-linked job auto-sends an owner-level homeowner portal link (collaborators, wallet) to the job phone or email, which may be a tenant or on-site contact. † | `functions/_lib/portal-invitation.js:92`; `functions/_lib/walkthrough-handoff.js:184`; `functions/api/highlevel.js:570` | B2B-06 |
+| 28 | B2B hub | Approving a quote on a B2B-linked job auto-sends an owner-level homeowner portal link (collaborators, wallet) to the job phone or email, which may be a tenant or on-site contact. † | `functions/_lib/portal-invitation.js:92`; `functions/_lib/walkthrough-handoff.js:184`; `functions/api/highlevel.js:570` | B2B-SAFE (done; was B2B-06) |
 | 29 | Messaging | The crew arrival-text endpoint ignores the idempotency key the crew page sends, so a retry or double tap texts the customer twice; the body is free text with no DND/consent check and is not logged to the conversation. | `functions/api/quo-send.js:63-72`; `crew/prejob.html` (smsCustomer) | F-LEG (done; P1-13 moves on-my-way to the approved-send path) |
 | 30 | Crew app | Pending offline field and shift actions live only in sessionStorage and only one can be queued, so a killed tab loses it and crew cannot record a second offline change. | `crew/job.js:15` | F-PWA (done) |
 | 31 | Crew app | Marking a multi-day job 'complete' closes the whole job, with no per-day visit state for crews finishing day one. | `functions/_lib/field-execution.js:190` | P1-10 |
@@ -323,7 +328,7 @@ Scope: all 188 findings the maps exported (160 bug reports plus 28 mission or in
 | 96 | Customer portal | Estimate expiry compares against the UTC date (an estimate valid through today expires about 6 pm Denver), and portal handlers read the real clock so tests cannot inject time. | `functions/api/customer-portal.js:55` (also :254) | P4-01 |
 | 97 | Customer portal | Inbound customer texts and emails attach to the contact's most recently updated job, so replies can land on the wrong job's thread. | `functions/api/highlevel-message-event.js:10` | P4-12 |
 | 98 | Customer portal | Creating a portal link writes the job with no revision check and swallows errors, so link metadata can be overwritten or silently not saved. | `functions/api/customer-portal-link.js:50` | NEW: revision check in customer-portal-link.js |
-| 99 | B2B hub | Estimate approvals by business members record only the typed name, not which company member approved. | `functions/api/customer-portal.js:249` | B2B-06 |
+| 99 | B2B hub | Estimate approvals by business members record only the typed name, not which company member approved. | `functions/api/customer-portal.js:249` | B2B-SAFE (done; was B2B-06) |
 | 100 | B2B hub | Re-sending an invite to an active member resets them to 'invited' and logs them out of the hub and delegated projects. | `functions/_lib/business-hub-service.js:53` | B2B-SEAMS |
 | 101 | B2B hub | Unlinking or relinking a project leaves requests showing a stale 'project_linked' status. | `functions/_lib/business-hub-service.js:163` | B2B-04 |
 | 102 | B2B hub | Creating a company account or a new property has no idempotency key, so a retry or double submit creates duplicates. | `functions/_lib/business-hub-service.js:102` | B2B-SEAMS |
@@ -360,7 +365,7 @@ Not yet launched.
 - **Phase 2:** P2-02 catalog seed and pricing engine; P2-05 itemized signed handoff; P2-08 portal option toggling with revision-bound approval; P2-09 server estimate service (race fix); P2-11 bill approved change orders.
 - **Phase 3:** P3-03 transcript input for recordings (injects the RecordingService clock); P3-04 follow-up assignment policy (phone/sales owner); P3-09 Action Center UI v2 and recording mapping; P3-10 "My follow-ups" workspace for sales/phone staff.
 - **Phase 4:** P4-07 crew profiles and on-the-way projection; P4-12 account message record and deterministic inbound routing.
-- **B2B:** B2B-04 client-visible request progress; B2B-06 portal B2B safety fixes (suppress homeowner invite for B2B jobs, approval actor); B2B-08 B2B end-to-end acceptance.
+- **B2B:** B2B-04 client-visible request progress; B2B-08 B2B end-to-end acceptance.
 - **MCP:** MCP-02 unified audit log; MCP-03 OAuth multi-client (Claude connector) with dynamic client registration; MCP-12 contract tests and production smoke.
 - **Security:** SEC-04 bridge command authorization policy (including the schedule.mutate role check); SEC-12 data-driven staff roles and capabilities; SEC-13 Firebase session revocation.
 - **CI:** CI-11 portal isolation and B2B end-to-end suites.

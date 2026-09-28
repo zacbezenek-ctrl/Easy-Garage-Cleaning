@@ -38,6 +38,15 @@ async function mirrorState(env, jobId, state) {
   } catch { /* Delivery remains recorded in the server-only ledger. */ }
 }
 
+// A company project is shared through its business account's delegated,
+// role-checked access. A homeowner owner-level link would bypass those roles,
+// so a linked job (any non-empty marker, even a malformed one) never gets one.
+// Unlinking clears the marker to '', which restores homeowner delivery.
+export function businessAccountJob(job) {
+  const value = job?.businessAccountId;
+  return typeof value === 'string' ? value.trim() !== '' : value != null && value !== false;
+}
+
 export function quoteApproved(job = {}) {
   return job.type === 'job' && ![job.status, job.pipelineStatus].some(value => ['cancelled', 'superseded'].includes(String(value || '').toLowerCase())) &&
     ['accepted', 'approved'].includes(String(job.estimate?.status || '').toLowerCase()) &&
@@ -84,7 +93,7 @@ async function recipient(c, job) {
 // One invitation per job, not per browser timestamp or save. A compare-and-set
 // claim prevents concurrent sends. Ambiguous provider responses never auto-retry.
 // Store delivery metadata only: staff-readable job records must not hold tokens.
-export async function sendAcceptedQuotePortal(env, jobId, { requireRequested = false } = {}) {
+export async function sendAcceptedQuotePortal(env, jobId, { requireRequested = false, now: clock = () => new Date() } = {}) {
   if (!/^[A-Za-z0-9_-]{1,120}$/.test(String(jobId || ''))) return { status: 'needs_job' };
   if (!firebaseServiceAccountConfigured(env)) return { status: 'not_configured', reason: 'secure_storage' };
   let job;
@@ -96,7 +105,7 @@ export async function sendAcceptedQuotePortal(env, jobId, { requireRequested = f
   try { ledger = await readState(env, jobId); } catch { return { status: 'storage_unavailable' }; }
   const previous = ledger.state;
   if (terminal.has(previous.status)) { await mirrorState(env, jobId, previous); return previous; }
-  const now = new Date().toISOString();
+  const now = clock().toISOString();
   const base = { jobId, requestedAt: previous.requestedAt || now, attemptedAt: now, attempts: Number(previous.attempts || 0) + 1 };
   const save = async value => {
     const state = { ...base, ...value };
@@ -107,6 +116,7 @@ export async function sendAcceptedQuotePortal(env, jobId, { requireRequested = f
     } catch { return { status: 'busy', jobId }; }
   };
   if (!job.__updateTime) return { status: 'storage_unavailable' };
+  if (businessAccountJob(job)) return save({ status: 'suppressed', reason: 'business_account_job' });
   if (job.notify === false) return save({ status: 'suppressed', reason: 'job_notifications_off' });
   const c = config(env);
   if (!customerPortalConfigured(env) || !c.token || !c.locationId) return save({ status: 'not_configured', reason: 'portal_or_highlevel' });
@@ -118,19 +128,44 @@ export async function sendAcceptedQuotePortal(env, jobId, { requireRequested = f
   // notification preference while HighLevel was being checked.
   let current;
   try { current = await readJob(env, jobId); } catch { return { status: 'storage_unavailable' }; }
+  if (current && businessAccountJob(current)) return save({ status: 'suppressed', reason: 'business_account_job' });
   if (!current || !quoteApproved(current) || current.notify === false || phone(current.phone) !== phone(job.phone) || email(current.email) !== email(job.email) || current.highlevelContactId !== job.highlevelContactId) return { status: 'busy', jobId };
   // The link carries the account's current version and root, so a later staff
   // revocation (or re-parenting) also ends this invitation. An unverifiable
   // account never sends.
   let account, linkVersion;
   try { ({ account, linkVersion } = await customerPortalLinkAccount(id => readJob(env, id), current)); } catch { return { status: 'storage_unavailable' }; }
-  const token = await createCustomerPortalAccessToken(env, jobId, Date.now(), linkVersion, account.id);
+  const token = await createCustomerPortalAccessToken(env, jobId, clock().getTime(), linkVersion, account.id);
   const url = `${PORTAL}?access=${encodeURIComponent(token)}`;
   const firstName = String(job.customer || '').trim().split(/\s+/)[0].replace(/[<>]/g, '').slice(0, 50);
   const message = `${firstName ? `Hi ${firstName}, your` : 'Your'} quote is approved. Here is your private Easy Garage Cleaning project portal for job details, messages, and payments: ${url}`;
   const attemptId = crypto.randomUUID();
   const claimed = await save({ status: 'sending', channel: to.channel, attemptId });
   if (claimed.status !== 'sending') return claimed;
+  // Only this claim may settle the ledger. Re-read it each time because the
+  // scheduling sync may have updated other job fields meanwhile.
+  const settle = async state => {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        const latest = await readState(env, jobId);
+        if (latest.state.attemptId !== attemptId) break;
+        await writeState(env, jobId, state, latest.updateTime);
+        await mirrorState(env, jobId, state);
+        return true;
+      } catch { /* Retry metadata persistence; never repeat the external send. */ }
+    }
+    return false;
+  };
+  // A business link or opt-out saved after the last check (link_project does
+  // not consult this ledger) still wins: release the claim before HighLevel is
+  // called. A job that cannot be re-read never sends.
+  let halt;
+  try {
+    const latest = await readJob(env, jobId);
+    halt = !latest ? { status: 'needs_job' } : businessAccountJob(latest) ? { status: 'suppressed', reason: 'business_account_job' }
+      : latest.notify === false ? { status: 'suppressed', reason: 'job_notifications_off' } : null;
+  } catch { halt = { status: 'storage_unavailable' }; }
+  if (halt) { const state = { ...base, ...halt }; return await settle(state) ? state : claimed; }
   let result;
   try {
     const { response, data } = await requestHighLevel(c, '/conversations/messages', { method: 'POST', body: JSON.stringify({
@@ -144,16 +179,7 @@ export async function sendAcceptedQuotePortal(env, jobId, { requireRequested = f
       ? { status: 'submitted', messageId, conversationId: String(data.conversationId || '') }
       : { status: response.status >= 400 && response.status < 500 && response.status !== 408 ? 'failed' : 'uncertain' };
   } catch { result = { status: 'uncertain' }; }
-  const state = { ...claimed, ...result, completedAt: new Date().toISOString() };
-  // Re-read because the scheduling sync may have updated other job fields.
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    try {
-      const latest = await readState(env, jobId);
-      if (latest.state.attemptId !== attemptId) break;
-      await writeState(env, jobId, state, latest.updateTime);
-      await mirrorState(env, jobId, state);
-      return state;
-    } catch { /* Retry metadata persistence; never repeat the external send. */ }
-  }
+  const state = { ...claimed, ...result, completedAt: clock().toISOString() };
+  if (await settle(state)) return state;
   return { ...state, status: 'uncertain', reason: 'delivery_status_not_saved' };
 }
