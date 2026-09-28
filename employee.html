@@ -1400,6 +1400,8 @@ async function doLogout() {
   // Crew job pages keep offline copies per tab; a sign-out retires them on this device.
   try { localStorage.setItem('egc-field:signed-out-at', String(Date.now())); } catch {}
   try { for (let i = sessionStorage.length - 1; i >= 0; i--) { const name = sessionStorage.key(i) || ''; if (name === 'egc-field:viewer' || /^egc-field:.*:(snapshot|shift-snapshot)$/.test(name)) sessionStorage.removeItem(name); } } catch {}
+  // crew/job.html keeps unconfirmed manager photo-sharing retries in this tab; it never loads here.
+  try { for (let i = sessionStorage.length - 1; i >= 0; i--) { const key = sessionStorage.key(i); if (key?.startsWith('egc.photo-sharing.pending.v1.')) sessionStorage.removeItem(key); } } catch {}
   window.dispatchEvent(new Event('egc:signout'));
   document.body.classList.remove('has-session');
   document.getElementById('oncall-overlay').classList.remove('open');

@@ -83,7 +83,7 @@ test('install caches only the static job shell under a versioned cache and activ
   await sw.dispatch('install');
   assert.equal(sw.state.skipped, 1);
   const shell = (await sw.cached()).filter(([name]) => name === 'egc-crew-shell-20260927pwa').map(([, path]) => path).sort();
-  assert.deepEqual(shell, ['/crew/field-expenses.css?v=20260927exp', '/crew/field-expenses.js?v=20260927exp2', '/crew/field-outbox.js?v=20260927pwa', '/crew/job.css?v=20260927pwa', '/crew/job.html', '/crew/job.js?v=20260927pwa', '/crew/manifest.webmanifest', '/crew/offline.html']);
+  assert.deepEqual(shell, ['/crew/field-expenses.css?v=20260927exp', '/crew/field-expenses.js?v=20260927exp2', '/crew/field-outbox.js?v=20260927pwa', '/crew/job-photo-sharing.css?v=20260927photo', '/crew/job-photo-sharing.js?v=20260928photo', '/crew/job.css?v=20260927pwa', '/crew/job.html', '/crew/job.js?v=20260927pwa', '/crew/manifest.webmanifest', '/crew/offline.html']);
   await sw.dispatch('activate');
   assert.deepEqual([...sw.stores.keys()].sort(), ['egc-crew-shell-20260927pwa', 'unrelated-cache'], 'older shell versions are removed; other caches are left alone');
   assert.equal(sw.state.claimed, 1); assert.equal(sw.state.unregistered, 0);

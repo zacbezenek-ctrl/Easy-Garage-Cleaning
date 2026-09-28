@@ -1,0 +1,13 @@
+.ps-panel{margin:0 0 14px;padding:12px 14px;border:1px solid #c6d6c7;border-radius:10px;background:#f3f8f1;overflow-wrap:anywhere}
+.ps-panel p{margin:0;font-size:14px;line-height:1.45}
+.ps-panel .ps-status:not(:empty){margin-top:8px;font-weight:650;color:#174b36}
+.ps-panel .ps-status.error{color:#81261b}
+.ps-actions:not(:empty){display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.ps-actions button{min-height:44px;font-size:14px}
+.ps-tile{display:flex;flex-direction:column;gap:6px;min-width:0}
+.ps-tile .photo-tile{width:100%}
+.ps-toggle{width:100%;min-width:0;min-height:48px;display:flex;flex-direction:column;align-items:flex-start;justify-content:center;gap:2px;padding:7px 10px;border:1px solid #8ba394;border-radius:8px;background:#fff;color:#1b3529;font-size:13px;line-height:1.25;text-align:left}
+.ps-toggle.on{background:#d9eddf;border-color:#2c6e4b;color:#123b28}
+.ps-toggle .ps-state{font-weight:750;overflow-wrap:break-word}
+.ps-toggle small{font-size:12px;font-weight:500;color:inherit;overflow-wrap:break-word}
+.ps-toggle.on .ps-state:before{content:"\2713  "}

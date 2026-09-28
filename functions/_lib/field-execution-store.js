@@ -48,7 +48,11 @@ export function createFieldStore(env) {
         { update: { name: `${ROOT}/jobs/${job.id}`, fields: encodeFirestoreFields(patch) }, updateMask: { fieldPaths: Object.keys(patch) }, currentDocument: { updateTime: job.__updateTime } },
         { update: { name: `${ROOT}/jobs/${job.id}/fieldEvents/${event.id}`, fields: encodeFirestoreFields(event) }, currentDocument: previousEvent?.__updateTime ? { updateTime: previousEvent.__updateTime } : { exists: false } },
       ] }) });
-      if (response.status === 409 || response.status === 412) throw fieldFailure('This job changed while you were working. Refresh to review the changes, then retry.', 409, 'FIELD_REVISION_CONFLICT');
+      // Real Firestore answers a stale currentDocument.updateTime with 400
+      // FAILED_PRECONDITION; other 400s (bad data) stay storage failures.
+      const failure = response.status === 400 ? await response.json().catch(() => ({})) : null;
+      const stale = (Array.isArray(failure) ? failure[0] : failure)?.error?.status === 'FAILED_PRECONDITION';
+      if (response.status === 409 || response.status === 412 || stale) throw fieldFailure('This job changed while you were working. Refresh to review the changes, then retry.', 409, 'FIELD_REVISION_CONFLICT');
       if (!response.ok) throw fieldFailure('The change could not be saved. Retry with the same action to check its result.', 503, 'FIELD_STORAGE_UNAVAILABLE');
     },
   };

@@ -3,6 +3,7 @@ import { clearCustomerPortalSessionCookie, createCustomerPortalCollaboratorAcces
 import { readCustomerPortalContext } from '../_lib/customer-portal-access.js';
 import { denverToday } from '../_lib/dispatch-time.js';
 import { fieldActivity } from '../_lib/field-execution.js';
+import { customerPhotoPolicy, customerPhotoProjection, customerPhotosEnabled } from '../_lib/customer-photo-visibility.js';
 import { patchJob, patchJobsAtomic, readJob } from '../_lib/firestore-job.js';
 import { CUSTOMER_PORTAL_CONTENT, CUSTOMER_PORTAL_TERMS_VERSION, approvalTermsVersion, customerPortalDocuments } from '../_lib/customer-portal-content.js';
 import { appendConversationMessage, cleanMessage, cleanRequestId, conversationMessages, deliverHighLevelMessage, findConversationMessage, replaceConversationMessage } from '../_lib/customer-messaging.js';
@@ -255,7 +256,10 @@ async function handleGet({ request, env }, deps) {
   const result = await requirePortal(request, env, deps);
   if (result.error) return result.error;
   const at = deps.clock();
-  return reply(200, { ...sanitize(result.job, result.session, { today: denverToday(at), reviewUrl: customerReviewUrl(env) }), moneyDocuments: moneyDocumentLinks(result.job, { enabled: moneyDocumentEnabled(env), now: at.toISOString() }) });
+  const body = { ...sanitize(result.job, result.session, { today: denverToday(at), reviewUrl: customerReviewUrl(env) }), moneyDocuments: moneyDocumentLinks(result.job, { enabled: moneyDocumentEnabled(env), now: at.toISOString() }) };
+  // Default off: without the flag the DTO keeps its current shape.
+  if (customerPhotosEnabled(env) && result.session.permissions?.view !== false) body.beforeAfter = customerPhotoProjection(result.job, customerPhotoPolicy(env));
+  return reply(200, body);
 }
 
 async function handlePost({ request, env }, { clock, read }) {

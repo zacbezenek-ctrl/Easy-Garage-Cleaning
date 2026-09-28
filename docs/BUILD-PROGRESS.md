@@ -163,6 +163,11 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   owners/managers upload, renew or withdraw in Hub > Settings with requestId/fingerprint/revision CAS), plus the site's
   guarantee and terms copied verbatim at version `2026-09-portal`; approvals record the terms version shown (409 if stale).
   Merge renamed M4's portal field to `moneyDocuments`. Gaps: no Command Center alert for an expired certificate.
+- **PHOTO** Customer before/after photos behind `FIELD_CUSTOMER_PHOTOS_ENABLED` (off; optional
+  `FIELD_CUSTOMER_PHOTOS_SINCE` cutoff): one visibility policy (verified before/after on completed jobs; other
+  categories only when a manager shares that photo; hide always wins), owner/manager share toggles on `/crew/job.html`
+  via `/api/field-photo-sharing` (receipted, revision-checked), and a session-checked `/api/customer-portal-photo`
+  stream with a portal gallery and camera capture. Gap: thumbnails stream full images; add a WAF rate limit.
 
 ## In progress
 
@@ -205,6 +210,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | B2B-SAFE | Portal B2B safety: no homeowner owner links for business-linked jobs; attributed company approvals (B2B-06) | merged (4dd1be5) |
 | M4 | Server-rendered branded estimate/invoice/receipt document with pay link (MONEY_DOCUMENT_ENABLED) | merged (fac0a2c) |
 | P4-09 | Portal documents: certificate of insurance (private Drive PDF via session-checked proxy), guarantee and terms (versioned) | merged (835f29a) |
+| PHOTO | Customer-visible before/after photos, manager share toggle, portal photo stream (FIELD_CUSTOMER_PHOTOS_ENABLED) | merged (77ebb4f) |
 | CI-WF | Wire merged units' tests into the existing CI workflows (pending CI notes) | merged (31e1562) |
 
 ## Next

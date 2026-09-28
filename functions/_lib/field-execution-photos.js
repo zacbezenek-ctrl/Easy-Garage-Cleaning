@@ -18,13 +18,34 @@ export function decodeFieldPhoto(dataUrl) {
   return { bytes, mime: match[1], extension: match[1] === 'image/jpeg' ? 'jpg' : match[1].slice(6) };
 }
 
-export async function createFieldPhotoClient(env) {
-  if (!fieldPhotosConfigured(env)) throw fieldFailure('Photo storage is not connected. Your photo has not been uploaded; contact operations.', 503, 'FIELD_PHOTO_STORAGE_UNAVAILABLE');
+// One Drive access token per isolate, keyed by a digest of the OAuth
+// credential, so each photo request does not repeat the refresh-token
+// exchange. Only the token string is shared between requests (never an
+// in-flight promise), and a token without a stated lifetime is not kept.
+const driveTokens = { current: null };
+
+async function driveAccessToken(env, now, tokens) {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`${env.GOOGLE_CLIENT_ID}\n${env.GOOGLE_CLIENT_SECRET}\n${env.GOOGLE_REFRESH_TOKEN}`));
+  const credential = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join(''), cached = tokens.current;
+  const requestedAt = now();
+  if (cached?.credential === credential && cached.expiresAt - 60000 > requestedAt) return cached.token;
   const tokenResponse = await fetch('https://oauth2.googleapis.com/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: env.GOOGLE_REFRESH_TOKEN, client_id: env.GOOGLE_CLIENT_ID, client_secret: env.GOOGLE_CLIENT_SECRET }), signal: AbortSignal.timeout(15000) });
   const tokenData = await tokenResponse.json().catch(() => ({}));
-  if (!tokenResponse.ok || !tokenData.access_token) throw fieldFailure('Photo storage could not connect. Your photo is still available to retry.', 503, 'FIELD_PHOTO_STORAGE_UNAVAILABLE');
-  const headers = { Authorization: `Bearer ${tokenData.access_token}` };
-  const call = (url, init = {}) => fetch(url, { ...init, headers: { ...headers, ...(init.headers || {}) }, redirect: 'error', signal: AbortSignal.timeout(45000) });
+  if (!tokenResponse.ok || typeof tokenData.access_token !== 'string' || !tokenData.access_token) throw fieldFailure('Photo storage could not connect. Your photo is still available to retry.', 503, 'FIELD_PHOTO_STORAGE_UNAVAILABLE');
+  const lifetime = Number(tokenData.expires_in);
+  tokens.current = Number.isFinite(lifetime) && lifetime > 120 ? { credential, token: tokenData.access_token, expiresAt: requestedAt + Math.min(lifetime, 3600) * 1000 } : null;
+  return tokenData.access_token;
+}
+
+export async function createFieldPhotoClient(env, { now = () => Date.now(), tokens = driveTokens } = {}) {
+  if (!fieldPhotosConfigured(env)) throw fieldFailure('Photo storage is not connected. Your photo has not been uploaded; contact operations.', 503, 'FIELD_PHOTO_STORAGE_UNAVAILABLE');
+  const token = await driveAccessToken(env, now, tokens), headers = { Authorization: `Bearer ${token}` };
+  const call = async (url, init = {}) => {
+    const response = await fetch(url, { ...init, headers: { ...headers, ...(init.headers || {}) }, redirect: 'error', signal: AbortSignal.timeout(45000) });
+    // A revoked or expired token is dropped so the next request exchanges again.
+    if (response.status === 401 && tokens.current?.token === token) tokens.current = null;
+    return response;
+  };
   return {
     async allocate() {
       const response = await call(`${FILES}/generateIds?count=1&space=drive&type=files`), result = await response.json().catch(() => ({}));
