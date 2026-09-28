@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 import { getCustomerDetail } from "../../../lib/data";
-import {portalTime} from "../../../lib/format";
+import {employeeHubRecordingsUrl,portalTime} from "../../../lib/format";
 import {getCustomerTimeline,label,money} from "../../../lib/intelligence";
 import {CustomerEvidence} from "../../components/customer-evidence";
 import type {CustomerProjection} from "@egc/customer-state";
@@ -21,7 +21,7 @@ export default async function CustomerDetailPage({ params }: { params: Promise<{
           <h1>{data.contact.name ?? "Customer"}</h1>
           <p className="muted">{data.contact.phone ?? "No phone"} · {data.contact.email ?? "No email"}</p>
         </div>
-        <a className="button compact" href={"/walkthroughs/" + data.contact.id}>Open EGC Hub walkthrough</a>
+        <a className="button compact" href={employeeHubRecordingsUrl()}>Open recordings in EGC Hub</a>
       </div>
       <div className="stats">
         <div className="stat"><span>Operational state</span><strong>{projection?.state??"Reconciliation pending"}</strong></div>

@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 import { getLeadDetail } from "../../../lib/data";
-import {portalTime} from "../../../lib/format";
+import {employeeHubRecordingsUrl,portalTime} from "../../../lib/format";
 import {getCustomerTimeline} from "../../../lib/intelligence";
 import {CustomerEvidence} from "../../components/customer-evidence";
 import type {CustomerProjection} from "@egc/customer-state";
@@ -23,7 +23,7 @@ export default async function LeadDetailPage({ params }: { params: Promise<{ id:
         </div>
         <div className="actions">
           <a className="button secondary compact" href={"/customers/" + data.contact.id}>Customer</a>
-          <a className="button compact" href={"/walkthroughs/" + data.contact.id}>Open EGC Hub walkthrough</a>
+          <a className="button compact" href={employeeHubRecordingsUrl()}>Open recordings in EGC Hub</a>
         </div>
       </div>
       <div className="stats">

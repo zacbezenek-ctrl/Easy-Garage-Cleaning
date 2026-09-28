@@ -6,6 +6,7 @@
     "dev": "next dev -p 4300",
     "build": "next build",
     "typecheck": "tsc --noEmit",
+    "test": "vitest run",
     "start": "next start"
   },
   "dependencies": {
@@ -20,6 +21,7 @@
     "@types/node": "^24.5.2",
     "@types/react": "^19.1.12",
     "@types/react-dom": "^19.1.9",
-    "typescript": "^6.0.2"
+    "typescript": "^6.0.2",
+    "vitest": "^3.2.4"
   }
 }

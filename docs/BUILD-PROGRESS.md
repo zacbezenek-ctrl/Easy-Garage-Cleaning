@@ -79,6 +79,10 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   completion; `schedule_job`/`callback` internal), drafts carry up to 10 canonical https attachments, and migration 0013
   replaces the task guard so delivery proof must carry exactly the approved attachment URLs. The Hub shows every link
   before approval. Gaps: senders never attach yet, so tasks with attachments cannot complete; verify 0013 in CI first.
+- **P3-13** Railway portal recorder retired: lead/customer/job/walkthrough links deep-link to the Hub
+  (`/employee?view=action_center` or `?view=walkthroughs`), `/walkthroughs/[contactId]` is a handoff page, the 409
+  `/api/walkthrough*` stubs are gone (now 404) and portal vitest render tests guard it. `scripts/verify-crew.mjs` (hard-coded
+  ZacB hash) deleted with its .gitignore entry; audit #85 and #122 done. Gap: the deep link opens Action Center, not the visit tab.
 
 ## In progress
 
@@ -99,6 +103,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | CAT-DATA | Researched garage catalog data file, schema validation, pricing engine, docs/GARAGE-CATALOG.md | building |
 | P3-00 | **Production blocker**: walkthrough extraction crash (strict structured output) | building |
 | P3-01 | Action kinds v2 (8 new kinds, drafts, attachments) + migration 0013 | merged (106af38) |
+| P3-13 | Retire the dead portal recorder (Hub deep links) and scripts/verify-crew.mjs (audit #85, #122) | merged (4152a18) |
 | MCP-01 | MCP tool registry/policy framework + safety defaults (sends blocked in operations mode, read-only static bearer, real audit actor) | merged (dfccb8d) |
 | BRIDGE | Operations bridge command registry (API + Hub) with delegated human actors | building |
 | P4-01 | Customer portal correctness fixes + review request tracking | merged (5a617a8) |
@@ -242,7 +247,7 @@ Scope: all 188 findings the maps exported (160 bug reports plus 28 mission or in
 | 82 | Hub mobile | Copilot has 38 px voice/send buttons, smaller copy/logout buttons, and inputs under 16 px that make iOS zoom on focus. | `copilot.html:178` (:53) | NEW: copilot mobile fixes |
 | 83 | Dispatch | Drag-to-reschedule uses HTML5 drag events that touch devices never fire and only changes the day, so mobile has no quick tap-to-assign. | `employee-dispatch.js:119` | P1-11 |
 | 84 | AI recordings | Approving a recording adds a second recording-evidence entry to every task, and its excerpt is the commitment text rather than the quote. | `egc-platform/apps/api/src/recordings.ts:111` | P3-09 |
-| 85 | AI recordings | The old portal recorder is still linked from the lead page but always gets 409, so staff can record audio that can never be saved. † | `egc-platform/apps/portal/app/walkthroughs/[contactId]/recorder.tsx:55`; `egc-platform/apps/portal/app/leads/[id]/page.tsx:26` | P3-13 |
+| 85 | AI recordings | The old portal recorder is still linked from the lead page but always gets 409, so staff can record audio that can never be saved. † | `egc-platform/apps/portal/app/walkthroughs/[contactId]/recorder.tsx:55`; `egc-platform/apps/portal/app/leads/[id]/page.tsx:26` | P3-13 (done) |
 | 86 | AI recordings | RecordingService and the Hub approval path read the real clock instead of an injected one, so lease and expiry tests depend on wall time. | `egc-platform/apps/api/src/recordings.ts:77` | P3-03 |
 | 87 | MCP | `/mcp-info` still says 'read-only MCP', and the connection doc claims there are no delete or messaging tools although they exist. † | `egc-platform/apps/mcp/src/oauth.ts:227`; `egc-platform/docs/chatgpt-connection.md:15` | MCP-01 |
 | 88 | MCP | The OAuth login checks one shared password with no rate limit or lockout. | `egc-platform/apps/mcp/src/oauth.ts:276` | MCP-03 |
@@ -279,7 +284,7 @@ Scope: all 188 findings the maps exported (160 bug reports plus 28 mission or in
 | 119 | Public site | The 'Customer Portal' link is added by JavaScript on only about 45 pages (not blog posts, FAQ or thank-you) and points to a page that needs a private token. | `site-enhancements.js:52` | SITE-2 |
 | 120 | CI | Local CI-equivalent runs leave a dirty tree: `pnpm build` rewrites the tracked portal next-env.d.ts, and firestore-debug.log, .lighthouseci/ and field-qa/ are not gitignored. † | `egc-platform/apps/portal/next-env.d.ts:1`; `.gitignore:1` | CI-A |
 | 121 | CI | Turbo lists only dist/** as build output, so the portal's Next build is never cached. | `egc-platform/turbo.json:4` | CI-A |
-| 122 | Tests | scripts/verify-crew.mjs is a stale manual verifier that stubs retired Jobber endpoints and signs in with a session token derived from a hard-coded ZacB hash. | `scripts/verify-crew.mjs:25` | CI-14 |
+| 122 | Tests | scripts/verify-crew.mjs is a stale manual verifier that stubs retired Jobber endpoints and signs in with a session token derived from a hard-coded ZacB hash. | `scripts/verify-crew.mjs:25` | P3-13 (done; was CI-14) |
 | 123 | Data security | About 120 lines of unused rule helpers (assignedUpdateIsSafe and three others) wrongly suggest that crew SDK writes are allowed. † | `firestore.rules:109-233` | SEC-A |
 | 124 | B2B hub | The business audit log records only account, actor, action and time (no before/after or request id), and business session documents are never purged. | `functions/_lib/business-hub-service.js:42` | SEC-B (hub_audit writer usable by the B2B store); NEW: purge expired business sessions |
 | 125 | B2B hub | Zoe's named sales invitation expired 2026-09-25 18:23 UTC; if unredeemed, staff setup returns 410 until the owner commits a new digest. *(info)* | `functions/_lib/staff-invitation-manifest.js:5` | NEW: owner re-issues the invitation if unredeemed (owner action) |
@@ -291,12 +296,12 @@ Not yet launched.
 - **Phase 1:** P1-06 server PTO workflow; P1-08 staff directory (roles, skills, pay, availability); P1-09 dispatch roster, permissions, settings and rules; P1-10 assignment segments; P1-11 calendar month view, lanes and tap-to-assign; P1-13 reminders and on-my-way; P1-15 timesheet review UI, geolocation policy and clock reliability.
 - **Money:** M3 server money API and ledger; M7 payment reminders cron; M9 job costing.
 - **Phase 2:** P2-02 catalog seed and pricing engine; P2-05 itemized signed handoff; P2-08 portal option toggling with revision-bound approval; P2-09 server estimate service (race fix); P2-11 bill approved change orders.
-- **Phase 3:** P3-03 transcript input for recordings (injects the RecordingService clock); P3-04 follow-up assignment policy (phone/sales owner); P3-09 Action Center UI v2 and recording mapping; P3-10 "My follow-ups" workspace for sales/phone staff; P3-13 retire the legacy portal recorder.
+- **Phase 3:** P3-03 transcript input for recordings (injects the RecordingService clock); P3-04 follow-up assignment policy (phone/sales owner); P3-09 Action Center UI v2 and recording mapping; P3-10 "My follow-ups" workspace for sales/phone staff.
 - **Phase 4:** P4-07 crew profiles and on-the-way projection; P4-12 account message record and deterministic inbound routing.
 - **B2B:** B2B-04 client-visible request progress; B2B-06 portal B2B safety fixes (suppress homeowner invite for B2B jobs, approval actor); B2B-08 B2B end-to-end acceptance.
 - **MCP:** MCP-02 unified audit log; MCP-03 OAuth multi-client (Claude connector) with dynamic client registration; MCP-12 contract tests and production smoke.
 - **Security:** SEC-04 bridge command authorization policy (including the schedule.mutate role check); SEC-12 data-driven staff roles and capabilities; SEC-13 Firebase session revocation.
-- **CI:** CI-11 portal isolation and B2B end-to-end suites; CI-14 retire verify-crew.
+- **CI:** CI-11 portal isolation and B2B end-to-end suites.
 - **Site:** SITE-2 Client Login link site-wide; SITE-4 mobile performance pass.
 
 **Count:** 188 input lines (160 bug reports + 28 broken requirements) deduplicated to 125 rows: 1 critical, 16 high, 46 medium, 61 low, 1 info; 31 rows cover broken requirements; 81 rows name a launched unit, 33 only planned units, 11 only `NEW:` work.

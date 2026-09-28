@@ -1,4 +1,5 @@
 import { getWalkthroughs } from "../../lib/data";
+import {employeeHubUrl} from "../../lib/format";
 
 export const dynamic = "force-dynamic";
 
@@ -18,7 +19,7 @@ export default async function WalkthroughsPage() {
                 <td><span className="pill">{walkthrough.status}</span></td>
                 <td>{walkthrough.createdAt.toLocaleString()}</td>
                 <td>{walkthrough.approvedAt?.toLocaleString() ?? "—"}</td>
-                <td><a className="tablelink" href={"/walkthroughs/" + contact.id}>Start another</a></td>
+                <td><a className="tablelink" href={employeeHubUrl("walkthroughs")}>Start in EGC Hub</a></td>
               </tr>
             ))}
           </tbody>

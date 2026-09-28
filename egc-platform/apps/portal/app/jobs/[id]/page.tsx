@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import { getJobDetail } from "../../../lib/data";
+import {employeeHubUrl} from "../../../lib/format";
 
 export const dynamic = "force-dynamic";
 
@@ -25,7 +26,7 @@ export default async function JobDetailPage({ params }: { params: Promise<{ id: 
           <h1>{contact?.name ?? "Job"}</h1>
           <p className="muted">{job.serviceAddress ?? "No service address"} · {job.status}</p>
         </div>
-        {contact && <a className="button compact" href={"/walkthroughs/" + contact.id}>New walkthrough</a>}
+        <a className="button compact" href={employeeHubUrl("walkthroughs")}>Open Hub walkthroughs</a>
       </div>
       <div className="stats">
         <div className="stat"><span>Scheduled</span><strong>{job.scheduledAt?.toLocaleString() ?? "—"}</strong></div>

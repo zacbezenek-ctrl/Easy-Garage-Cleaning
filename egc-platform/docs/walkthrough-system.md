@@ -1,6 +1,8 @@
 # Voice walkthrough system
 
-## Mobile flow
+> Walkthrough audio is now recorded and reviewed on the exact Hub visit in the Employee Hub (Action Center → Portal schedule → Recordings). The reporting portal no longer records audio; its walkthrough links open the Hub. The flow below is the legacy API path kept for rollback compatibility; it returns `409 use_employee_hub_recording_review` once `EGC_OPERATIONS_ENABLED=true`.
+
+## Legacy mobile flow
 
 1. Open customer/job.
 2. Tap **Start walkthrough**.
