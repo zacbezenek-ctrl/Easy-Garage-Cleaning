@@ -207,6 +207,9 @@ importers:
 
   packages/ai:
     dependencies:
+      '@egc/operations':
+        specifier: workspace:*
+        version: link:../../services/operations
       '@egc/schemas':
         specifier: workspace:*
         version: link:../schemas

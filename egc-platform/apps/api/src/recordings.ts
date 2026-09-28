@@ -3,20 +3,26 @@ import {and,desc,eq,inArray,isNull,lt,or,sql} from 'drizzle-orm';
 import type {FastifyInstance} from 'fastify';
 import {getDb,schema} from '@egc/database';
 import {getObject,putObject} from '@egc/storage';
-import {extractWalkthrough,transcribeWalkthrough} from '@egc/ai';
+import {conversationExtractionSchema,extractConversation,extractWalkthrough,loadCatalogIndex,transcribeWalkthrough,walkthroughExtractionFromConversation} from '@egc/ai';
 import {walkthroughExtractionSchema} from '@egc/schemas';
 import {OperationsError,operationsService,SERVICE_ORIGINS,type Actor} from '@egc/operations';
+import {recordingTaskProposals} from './conversation-tasks.js';
 import {portalAdapter} from './operations.js';
 import {fingerprint,MAX_AUDIO_BYTES,safeRecordingError,signRecordingEnvelope,stableUuid,verifyRecordingEnvelope,verifiedHubRecordingClaims,type RecordingClaims,type RecordingCommand} from './recording-contracts.js';
 import {serviceAuthEnabled,signApiServiceRequest,verifyHubServiceClaims,tokenVersion} from './service-bridge.js';
 type Row=typeof schema.walkthroughs.$inferSelect;
 type Identity={portalJobId:string;portalVisitId:string;portalCustomerId:string;portalProjectId:string|null;portalRevision:string;highlevelContactId:string|null;authority:'employee_hub'};
 type Approval=Extract<RecordingCommand,{command:'recording.approve'}>;
-export type RecordingDependencies={put:typeof putObject;get:typeof getObject;transcribe:typeof transcribeWalkthrough;extract:typeof extractWalkthrough};
-const publicRow=(r:Row)=>{const{audioObjectKey,approvalPayload,audioSha256,...safe}=r;return{...safe,revision:r.updatedAt.toISOString(),pendingReview:r.status==='approval_pending'?(approvalPayload as {command?:unknown}|null)?.command??null:null,linkageExceptions:r.portalProjectId?[]:['project_link_not_established']};};
+export type RecordingDependencies={put:typeof putObject;get:typeof getObject;transcribe:typeof transcribeWalkthrough;extract:typeof extractWalkthrough;conversation?:typeof extractConversation;catalog?:typeof loadCatalogIndex};
+// v2 rows keep the reviewed walkthrough shape in `extraction` (what the review screen edits and approves) and the
+// evidence-validated conversation proposals beside it; the DTO lifts them out with their Action Center task drafts.
+// Once a review is approved or pending, its tasks exist or are being created, so proposedTasks is empty.
+const hasConversation=(extraction:unknown):extraction is {conversation:unknown}=>typeof extraction==='object'&&extraction!==null&&Object.hasOwn(extraction,'conversation');
+const conversationView=(r:Row)=>{if(!hasConversation(r.extraction))return{};const{conversation,...extraction}=r.extraction,parsed=conversationExtractionSchema.safeParse(conversation),reviewed=r.status==='approved'||r.status==='approval_pending';return{extraction,conversation:parsed.success?parsed.data:null,proposedTasks:parsed.success&&!reviewed?recordingTaskProposals(parsed.data,r):[]};};
+const publicRow=(r:Row)=>{const{audioObjectKey,approvalPayload,audioSha256,...safe}=r;return{...safe,...conversationView(r),revision:r.updatedAt.toISOString(),pendingReview:r.status==='approval_pending'?(approvalPayload as {command?:unknown}|null)?.command??null:null,linkageExceptions:r.portalProjectId?[]:['project_link_not_established']};};
 
 export class RecordingService{
-  constructor(private env:NodeJS.ProcessEnv=process.env,private db=getDb(),private fetcher:typeof fetch=fetch,private io:RecordingDependencies={put:putObject,get:getObject,transcribe:transcribeWalkthrough,extract:extractWalkthrough}){}
+  constructor(private env:NodeJS.ProcessEnv=process.env,private db=getDb(),private fetcher:typeof fetch=fetch,private io:RecordingDependencies={put:putObject,get:getObject,transcribe:transcribeWalkthrough,extract:extractWalkthrough,conversation:extractConversation,catalog:loadCatalogIndex}){}
   private get workspace(){return this.env.EGC_OPERATIONS_WORKSPACE??'egc';}
   private async portal(actor:Actor,body:Record<string,unknown>){
     const key=this.env.EGC_OPERATIONS_PORTAL_SIGNING_SECRET??'',origin=new URL(this.env.EGC_PORTAL_ORIGIN??'https://invalid.invalid');
@@ -84,10 +90,20 @@ export class RecordingService{
     if(!row)return false;
     try{
       const audio=await this.io.get(row.audioObjectKey!),transcript=await this.io.transcribe(audio,row.audioFilename??'recording',row.audioContentType??'audio/webm');
-      const extraction=walkthroughExtractionSchema.parse(await this.io.extract(transcript));
-      await this.db.update(schema.walkthroughs).set({transcript,extraction,status:'draft',processingLeaseUntil:null,lastErrorCode:null,updatedAt:new Date()}).where(and(eq(schema.walkthroughs.id,row.id),eq(schema.walkthroughs.attemptCount,row.attemptCount),eq(schema.walkthroughs.status,'processing')));
+      const {extraction,extractionVersion}=this.env.EGC_EXTRACTION_V2==='true'?await this.extractConversation(row,transcript):await this.extractWalkthrough(transcript);
+      await this.db.update(schema.walkthroughs).set({transcript,extraction,extractionVersion,status:'draft',processingLeaseUntil:null,lastErrorCode:null,updatedAt:new Date()}).where(and(eq(schema.walkthroughs.id,row.id),eq(schema.walkthroughs.attemptCount,row.attemptCount),eq(schema.walkthroughs.status,'processing')));
     }catch{await this.db.update(schema.walkthroughs).set({status:'failed',processingLeaseUntil:null,lastErrorCode:'recording_processing_failed',updatedAt:new Date()}).where(and(eq(schema.walkthroughs.id,row.id),eq(schema.walkthroughs.attemptCount,row.attemptCount),eq(schema.walkthroughs.status,'processing')));}
     return true;
+  }
+  private async extractWalkthrough(transcript:string){return{extraction:walkthroughExtractionSchema.parse(await this.io.extract(transcript)),extractionVersion:1};}
+  // EGC_EXTRACTION_V2: proposals are drafts for review. Nothing here creates a task, assigns an owner or due time, or sends.
+  private async extractConversation(row:Row,transcript:string){
+    const catalog=(this.io.catalog??loadCatalogIndex)();
+    const result=await(this.io.conversation??extractConversation)(transcript,{catalog:catalog.items,catalogVersion:catalog.catalogVersion,context:{sourceKind:'visit_recording',occurredAt:row.createdAt.toISOString()}});
+    // Too long for v2: the walkthrough extraction (the flag-off path) keeps the recording reviewable instead of failing it for good.
+    if(!result.ok&&result.code==='conversation_transcript_too_large')return this.extractWalkthrough(transcript);
+    if(!result.ok)throw new OperationsError('recording_processing_failed',result.retryable?503:422);
+    return{extraction:{...walkthroughExtractionFromConversation(result.extraction),conversation:result.extraction},extractionVersion:2};
   }
   private async approve(actor:Actor,requestId:string,command:Approval){
     if(!['owner','manager'].includes(actor.role)||actor.kind!=='human')throw new OperationsError('human_manager_approval_required',403);
@@ -109,7 +125,7 @@ export class RecordingService{
       await this.portal(stored.actor,{command:'recording.apply',recordingId:row.id,requestId:row.approvalRequestId,fingerprint:hash,expectedRevision:row.portalRevision,portalJobId:row.portalJobId,portalVisitId:row.portalVisitId,portalCustomerId:row.portalCustomerId,portalProjectId:row.portalProjectId,extraction:stored.command.extraction});
       const bridge=portalAdapter(this.env.EGC_PORTAL_ORIGIN!,this.env.EGC_OPERATIONS_PORTAL_SIGNING_SECRET??'',this.workspace,this.fetcher,this.env),operations=operationsService({workspace:this.workspace,resolvePortalJob:bridge.resolve,resolveOwner:bridge.owner,portalRead:bridge.read});
       for(let i=0;i<stored.command.actions.length;i++){const action=stored.command.actions[i]!;await operations.execute(stored.actor,{command:'task.create',task:{...action,dedupeKey:`recording:${row.id}:action:${i}`,sourceEvidence:[...action.sourceEvidence,{source:'recording',id:row.id,excerpt:action.description.slice(0,2000)}]}},stableUuid(`recording:${row.id}:action:${i}`));}
-      await this.db.transaction(async tx=>{const[current]=await tx.select().from(schema.walkthroughs).where(eq(schema.walkthroughs.id,row.id)).for('update');if(current?.status==='approved')return;await tx.update(schema.walkthroughs).set({status:'approved',extraction:stored.command.extraction,approvedBy:stored.actor.id,approvedAt:new Date(),approvedRevision:row.portalRevision,lastErrorCode:null,updatedAt:new Date()}).where(eq(schema.walkthroughs.id,row.id));await tx.insert(schema.auditLogs).values({actor:stored.actor.id,action:'recording.approve',entity:'walkthrough',entityId:row.id,source:'employee_hub',newValue:{portalJobId:row.portalJobId,portalVisitId:row.portalVisitId,fingerprint:hash,actions:stored.command.actions.length}});});
+      await this.db.transaction(async tx=>{const[current]=await tx.select().from(schema.walkthroughs).where(eq(schema.walkthroughs.id,row.id)).for('update');if(current?.status==='approved')return;const approved=hasConversation(current?.extraction)?{...stored.command.extraction,conversation:current.extraction.conversation}:stored.command.extraction;await tx.update(schema.walkthroughs).set({status:'approved',extraction:approved,approvedBy:stored.actor.id,approvedAt:new Date(),approvedRevision:row.portalRevision,lastErrorCode:null,updatedAt:new Date()}).where(eq(schema.walkthroughs.id,row.id));await tx.insert(schema.auditLogs).values({actor:stored.actor.id,action:'recording.approve',entity:'walkthrough',entityId:row.id,source:'employee_hub',newValue:{portalJobId:row.portalJobId,portalVisitId:row.portalVisitId,fingerprint:hash,actions:stored.command.actions.length}});});
       return{ok:true,recording:publicRow(await this.row(row.id))};
     }catch(error){await this.db.update(schema.walkthroughs).set({lastErrorCode:safeRecordingError(error),updatedAt:new Date()}).where(and(eq(schema.walkthroughs.id,row.id),eq(schema.walkthroughs.status,'approval_pending')));throw error;}
   }
@@ -121,5 +137,6 @@ export async function registerRecordingRoutes(app:FastifyInstance,env:NodeJS.Pro
   function failure(error:unknown,reply:import('fastify').FastifyReply){return reply.code(error instanceof OperationsError?error.status:503).send({error:safeRecordingError(error),retryable:!(error instanceof OperationsError)||error.status>=500});}
   app.post('/recordings/rpc',{bodyLimit:220000},async(request,reply)=>{reply.header('Cache-Control','no-store');try{const c=await claims((request.body as {envelope?:unknown})?.envelope,'/recordings/rpc');return await s!.execute(c);}catch(e){return failure(e,reply);}});
   app.post('/recordings/upload',async(request,reply)=>{reply.header('Cache-Control','no-store');try{let c:RecordingClaims|undefined,audio:Buffer|undefined,type='';for await(const part of request.parts({limits:{fileSize:MAX_AUDIO_BYTES,files:1,fields:1}})){if(part.type==='field'&&part.fieldname==='envelope')c=await claims(part.value,'/recordings/upload');else if(part.type==='file'&&part.fieldname==='audio'){if(!c)throw new OperationsError('recording_signature_required_first',401);audio=await part.toBuffer();type=part.mimetype;}}if(!c||!audio)throw new OperationsError('recording_audio_required',400);return reply.code(202).send(await s!.upload(c,audio,type));}catch(e){return failure(e,reply);}});
+  if(enabled&&env.EGC_EXTRACTION_V2==='true'){const skipped=loadCatalogIndex().skippedItems;if(skipped)app.log.warn({code:'catalog_index_items_skipped',count:skipped},'Catalog index items were left out; their mentions get no catalogItemId');}
   if(enabled&&s){let running=false;const tick=async()=>{if(running)return;running=true;try{await s.processNext();}catch{app.log.warn({code:'recording_worker_unavailable'},'Recording processing will retry');}finally{running=false;}};const timer=setInterval(()=>void tick(),15000);timer.unref();app.addHook('onClose',async()=>{clearInterval(timer);});app.addHook('onReady',async()=>{void tick();});}
 }

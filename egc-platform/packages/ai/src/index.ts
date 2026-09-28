@@ -1,4 +1,4 @@
-import OpenAI, { toFile } from "openai";
+import { toFile } from "openai";
 import { zodTextFormat } from "openai/helpers/zod";
 import {
   walkthroughExtractionSchema,
@@ -6,18 +6,13 @@ import {
   type WalkthroughExtraction,
   type WalkthroughModelOutput
 } from "@egc/schemas";
+import { DEFAULT_EXTRACTION_MODEL, DEFAULT_TRANSCRIBE_MODEL, modelName as model, openaiClient as client } from "./provider.js";
+import { isMessageTaskKind } from "@egc/operations/action-kinds";
+import type { ConversationExtraction } from "./conversation-extraction.js";
 
-export const DEFAULT_TRANSCRIBE_MODEL = "gpt-transcribe";
-export const DEFAULT_EXTRACTION_MODEL = "gpt-5.6-luna";
-
-function client() {
-  if (!process.env.OPENAI_API_KEY) throw new Error("OPENAI_API_KEY is required");
-  return new OpenAI({ apiKey: process.env.OPENAI_API_KEY, timeout: 120_000, maxRetries: 1 });
-}
-
-function model(name: "OPENAI_TRANSCRIBE_MODEL" | "OPENAI_EXTRACTION_MODEL", fallback: string) {
-  return process.env[name]?.trim() || fallback;
-}
+export { DEFAULT_EXTRACTION_MODEL, DEFAULT_TRANSCRIBE_MODEL };
+export * from "./catalog-index.js";
+export * from "./conversation-extraction.js";
 
 /** Folds the model's evidence array back into the stored per-field record; the first quote for a field wins. */
 export function walkthroughEvidenceRecord(evidence: WalkthroughModelOutput["evidence"]): WalkthroughExtraction["evidence"] {
@@ -85,4 +80,19 @@ export async function extractWalkthrough(transcript: string): Promise<Walkthroug
     throw new Error("Walkthrough extraction returned no structured output");
   }
   return walkthroughExtractionFromModel(response.output_parsed);
+}
+
+const LEGACY_INTERNAL_KINDS = ["callback", "prepare_quote", "review_notes", "job_readiness", "manual"] as const;
+/** The stored/approval walkthrough shape of a v2 visit extraction, so walkthrough readers and the current
+ * review screen keep working: message kinds become followup_message and schedule_job becomes manual. */
+export function walkthroughExtractionFromConversation(conversation: ConversationExtraction): WalkthroughExtraction {
+  const { evidence = [], ...scope } = conversation.scope ?? {};
+  return walkthroughExtractionSchema.parse({
+    ...scope,
+    evidence: walkthroughEvidenceRecord(evidence),
+    proposedActions: conversation.proposedActions.map(action => ({
+      title: action.title, kind: isMessageTaskKind(action.kind) ? "followup_message" : LEGACY_INTERNAL_KINDS.find(kind => kind === action.kind) ?? "manual",
+      commitment: action.commitment, sourceQuote: action.sourceQuote, ownerMention: action.ownerMention, dueMention: action.dueMention, confidence: action.confidence
+    }))
+  });
 }

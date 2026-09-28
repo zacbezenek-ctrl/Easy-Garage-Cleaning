@@ -261,6 +261,10 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   API: role chips, skills, effective-dated pay history and weekly availability with capability-driven owner/manager
   editors; saves carry the opened revision and expectedUser (401 staff_directory_account_changed on a tab switch).
   `/api/hub-auth` reports capabilityMode; with EGC_STAFF_ROLE_PERMISSIONS the suite only narrows business views.
+- **P3-02** Conversation extraction v2 behind `EGC_EXTRACTION_V2` (Railway egc-api, off): a strict schema and one strict
+  Responses call, then deterministic checks drop items whose sourceQuote is not in the transcript, null unknown catalog
+  ids and unspoken owners/dates, and clear drafts with invented amounts, links or claims. Visit recordings store the v2
+  conversation and proposedTasks (review-only, never sent). Gaps: written-out amounts can pass; needs P3-09's review UI.
 
 ## In progress
 
@@ -324,6 +328,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | FUN-05 | Walkthrough visit API: start/finish/no-show with funnel events, rep lock and timecard segment (flag off) | merged (11f1788) |
 | PHOTO-OUTBOX | Queued crew photos in the field outbox survive session expiry and reloads; explicit sign-out purges them | merged (2ef0b70) |
 | TEAM-UI | Staff directory Team screen (roles, skills, pay history, availability) on the P1-08 API | merged (22a6fc0) |
+| P3-02 | Conversation extraction v2: evidence quotes validated against the transcript, review-only drafts (EGC_EXTRACTION_V2 off) | merged (9ddac3d) |
 
 ## Next
 

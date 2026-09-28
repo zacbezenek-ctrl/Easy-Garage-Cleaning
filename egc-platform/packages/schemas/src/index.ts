@@ -79,3 +79,5 @@ export const jobBriefSchema = z.object({
   salesNotes: z.array(z.string())
 });
 export type JobBrief = z.infer<typeof jobBriefSchema>;
+
+export * from "./conversation-extraction.js";

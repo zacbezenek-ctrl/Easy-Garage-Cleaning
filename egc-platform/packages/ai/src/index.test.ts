@@ -6,22 +6,7 @@ const {parse,transcribe,constructed}=vi.hoisted(()=>({parse:vi.fn(),transcribe:v
 vi.mock('openai',async importOriginal=>({...await importOriginal<typeof import('openai')>(),default:class OpenAI {static APIError=class APIError extends Error{};responses={parse};audio={transcriptions:{create:transcribe}};constructor(options:unknown){constructed.push(options);}}}));
 import {DEFAULT_EXTRACTION_MODEL,DEFAULT_TRANSCRIBE_MODEL,extractWalkthrough,transcribeWalkthrough,walkthroughEvidenceRecord,walkthroughExtractionFromModel} from './index.js';
 
-type Schema=Record<string,unknown>;
-/** Strict Structured Outputs contract: every object node is closed and requires every one of its properties. Returns the object paths it checked. */
-function validate(schema:Schema,path='#',objects:string[]=[]):string[]{
-  const type=schema.type;
-  if(type==='object'||(Array.isArray(type)&&type.includes('object'))){
-    expect(schema.additionalProperties,path).toBe(false);expect(schema.properties,path).toBeTypeOf('object');
-    const properties=schema.properties as Record<string,Schema>;
-    expect([...(schema.required as string[]??[])].sort(),path).toEqual(Object.keys(properties).sort());objects.push(path);
-    for(const [key,child] of Object.entries(properties))validate(child,`${path}/properties/${key}`,objects);
-  }
-  expect(schema.patternProperties,path).toBeUndefined();
-  if(schema.items!==undefined)validate(schema.items as Schema,`${path}/items`,objects);
-  for(const keyword of ['anyOf','oneOf','allOf'])for(const [i,branch] of ((schema[keyword] as Schema[]|undefined)??[]).entries())validate(branch,`${path}/${keyword}/${i}`,objects);
-  for(const keyword of ['$defs','definitions'])for(const [name,child] of Object.entries((schema[keyword] as Record<string,Schema>|undefined)??{}))validate(child,`${path}/${keyword}/${name}`,objects);
-  return objects;
-}
+import {validate,type Schema} from './strict-schema.test-helper.js';
 const transcript='Synthetic walkthrough. Customer: it is a two car garage. Haul away the old couch but keep the bikes. I will send the quote tomorrow.';
 const modelOutput=()=>({garageSize:'2_car',junkVolumeYards:null,itemsRemove:['old couch'],itemsKeep:['bikes'],itemsRelocate:[],storageRequirements:[],bikeRacks:0,toolRacks:0,shelving:[],pressureWashing:false,pestObservations:[],activeInfestation:null,accessNotes:null,estimatedLaborHours:null,customerPreferences:[],customerObjections:[],salesNotes:[],crewNotes:[],pricingNotes:[],
   proposedActions:[{title:'Send quote',kind:'prepare_quote',commitment:'Send the quote tomorrow',sourceQuote:'I will send the quote tomorrow.',ownerMention:null,dueMention:'tomorrow',confidence:.9}],
