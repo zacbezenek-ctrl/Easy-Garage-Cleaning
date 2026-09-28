@@ -2,12 +2,14 @@
 // models open/upgrade, keyPath stores, get/getAll/put/delete requests, transaction
 // completion, databases()/deleteDatabase(), plus injectable failures for
 // unavailable storage and a full device (QuotaExceededError aborts the write).
+// idle() lets a test wait for this fake's outstanding work by events, not time.
 const copy = value => JSON.parse(JSON.stringify(value));
-const later = callback => setTimeout(callback, 0);
 
 export function fakeIndexedDB() {
-  const databases = new Map(), stats = { opens: 0, closes: 0, transactions: 0, deleted: [] };
-  let failOpen = false, quota = false;
+  const databases = new Map(), stats = { opens: 0, closes: 0, transactions: 0, deleted: [] }, waiters = [];
+  let failOpen = false, quota = false, scheduled = 0;
+  // Requests and transactions complete on a later turn, like the real API.
+  const later = callback => { scheduled++; setTimeout(() => { scheduled--; callback(); if (!scheduled) for (const resolve of waiters.splice(0)) resolve(); }, 0); };
   const request = () => ({ result: undefined, onsuccess: null, onerror: null, onupgradeneeded: null, onblocked: null });
   function connection(name) {
     const data = databases.get(name);
@@ -42,6 +44,16 @@ export function fakeIndexedDB() {
     stored: databases, stats,
     failNextOpen() { failOpen = true; },
     fillNextWrite() { quota = true; },
+    // Resolves once no request or transaction of this fake is outstanding and
+    // every promise callback they led to has run (setImmediate follows the
+    // microtask queue), however slow the machine is.
+    async idle() {
+      for (;;) {
+        await new Promise(resolve => setImmediate(resolve));
+        if (!scheduled) return;
+        await new Promise(resolve => waiters.push(resolve));
+      }
+    },
     async databases() { return [...databases.entries()].map(([name, data]) => ({ name, version: data.version })); },
     deleteDatabase(name) { stats.deleted.push(name); databases.delete(name); const pending = request(); later(() => pending.onsuccess?.()); return pending; },
     rows(name, store) { return [...(databases.get(name)?.stores.get(store)?.rows.values() || [])].map(copy); },

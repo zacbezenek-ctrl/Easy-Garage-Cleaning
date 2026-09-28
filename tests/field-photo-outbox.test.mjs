@@ -197,15 +197,17 @@ test('on a full phone a job or time action is still kept in page memory and sent
 test('discarding a waiting photo waits for a running upload and never reports an uploaded photo as discarded', async () => {
   const names = [];
   const locks = { request: async (name, task) => { names.push(name); return task(); } };
-  const { box } = outbox({ locks }), uploading = photo('Crew.One', 'job-a', 'after'), waiting = photo('Crew.One', 'job-a', 'damage');
+  const { box, indexedDB } = outbox({ locks }), uploading = photo('Crew.One', 'job-a', 'after'), waiting = photo('Crew.One', 'job-a', 'damage');
   await box.enqueue(uploading); await box.enqueue(waiting);
-  let release; const gate = new Promise(resolve => { release = resolve; });
-  const wire = transport({ field: async input => { if (input.requestId === uploading.requestId) await gate; } });
+  let release, started; const gate = new Promise(resolve => { release = resolve; }), sending = new Promise(resolve => { started = resolve; });
+  const wire = transport({ field: async input => { if (input.requestId === uploading.requestId) { started(); await gate; } } });
   const flush = box.flush({ user: 'Crew.One', transport: wire });
-  await new Promise(resolve => setTimeout(resolve, 10));
+  // The replay has read the queue and is uploading the photo, held open until release().
+  await sending;
   let settled = false;
   const withdrawn = box.withdraw(uploading.requestId).then(value => { settled = true; return value; });
-  await new Promise(resolve => setTimeout(resolve, 10));
+  // All the discard could do without waiting for the upload has run by now.
+  await indexedDB.idle();
   assert.equal(settled, false, 'the discard waits while the photo is uploading');
   release(); await flush;
   assert.equal(await withdrawn, false, 'the photo was saved to the job, so it is not reported as discarded');
@@ -220,7 +222,7 @@ test('discarding a waiting photo waits for a running upload and never reports an
 test('while a photo uploads, a photo waiting behind it is discarded at once and never sent', async () => {
   const names = [];
   const locks = { request: async (name, task) => { names.push(name); return task(); } };
-  const { box } = outbox({ locks }), uploading = photo('Crew.One', 'job-a', 'before'), behind = photo('Crew.One', 'job-a', 'progress'), note = field('Crew.One', 'job-a', 'note', { body: 'Sent after the photos', issue: false, visibility: 'crew' });
+  const { box, indexedDB } = outbox({ locks }), uploading = photo('Crew.One', 'job-a', 'before'), behind = photo('Crew.One', 'job-a', 'progress'), note = field('Crew.One', 'job-a', 'note', { body: 'Sent after the photos', issue: false, visibility: 'crew' });
   for (const item of [uploading, behind, note]) await box.enqueue(item);
   let release; const gate = new Promise(resolve => { release = resolve; });
   const wire = transport({ field: async input => { if (input.requestId === uploading.requestId) await gate; } });
@@ -228,7 +230,7 @@ test('while a photo uploads, a photo waiting behind it is discarded at once and 
   while (!wire.sent('field').length) await new Promise(resolve => setTimeout(resolve, 1));
   assert.equal(await box.withdraw(behind.requestId), true, 'the discard does not wait for the upload in progress');
   let settled = false; const sending = box.withdraw(uploading.requestId).then(value => { settled = true; return value; });
-  await new Promise(resolve => setTimeout(resolve, 10));
+  await indexedDB.idle();
   assert.equal(settled, false, 'the photo being sent still waits for its upload');
   release(); await flush;
   assert.equal(await sending, false, 'it was saved to the job, so it is not reported as discarded');
