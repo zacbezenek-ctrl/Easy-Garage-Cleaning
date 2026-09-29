@@ -833,8 +833,10 @@ test('open-shift scheduling fields persist on the canonical job record',()=>{
   // (PAY-TIMESHEETS fourth check): the profile form's rate field only for a viewer who sets pay; (SYNC-QUEUE) page-load
   // sync retries skip visits the server schedule-sync queue owns; (PAY-TIMESHEETS after SYNC-QUEUE and P1-06) one new tag;
   // (CHANGE-ORDERS) "Send decision" now appends to the decisions saved at that moment in a transaction; (QUOTE-DRAFT) a
-  // signed handoff syncs from its saved snapshot only for its own sync.
-  assert.match(employee,/employee-suite\.js\?v=20260929quote/);
+  // signed handoff syncs from its saved snapshot only for its own sync; (MONEY-GHL-PARITY) the suite exposes its
+  // lifecycle helper to server money saves; (HUB-PWA) the offline queue's clock saves; (TIPS) tipped payments and held
+  // tipped charges in the finance board.
+  assert.match(employee,/employee-suite\.js\?v=20260929tips/);
 });
 
 test('recurring visits request a server-side handoff clone instead of copying prior execution or payments',()=>{

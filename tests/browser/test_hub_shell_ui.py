@@ -98,7 +98,9 @@ class HubShellBrowserTests(HubShell, unittest.TestCase):
         page = self.open('crew_chat', width=390, profile=CREW)
         box = page.locator('.ops-chat-compose textarea')
         box.fill('Running ten minutes late to the synthetic job')
-        box.evaluate('el=>el.setSelectionRange(8,11)')
+        # One page task finds the live field and moves its caret: a background render between a separate lookup and the
+        # call would move the caret of a field already replaced (a race in the test, not in the Hub).
+        page.evaluate("document.querySelector('.ops-chat-compose textarea').setSelectionRange(8,11)")
         node = box.element_handle()
         page.clock.run_for(61000)
         page.evaluate('refresh()')
@@ -122,7 +124,7 @@ class HubShellBrowserTests(HubShell, unittest.TestCase):
         page = self.open('customers', width=390)
         search = page.locator('.ops-customer-tools input[type=search]')
         search.fill('johnson')
-        search.evaluate('el=>el.setSelectionRange(3,3)')
+        page.evaluate("document.querySelector('.ops-customer-tools input[type=search]').setSelectionRange(3,3)")
         node = search.element_handle()
         expect(page.locator('#ops-customer-count')).to_have_text('1 customer shown')
         page.evaluate('refresh()')

@@ -16,7 +16,7 @@ const MANIFEST=[
 {id:'followup_settings',group:'SYSTEM',label:'Follow-up owner',iconPath:'M12 3a4 4 0 1 1 0 8 4 4 0 0 1 0-8zM4 21a8 8 0 0 1 16 0',capability:'owner',load:{js:'employee-followup-settings.js',css:'employee-followup-settings.css',v:'20260928followup'},module:'EGCFollowupSettings'},
 {id:'ad_spend',group:'GROW THE ENGINE',label:'Ad spend',iconPath:'M3 10v4h4l5 4V6l-5 4zM16 9a4 4 0 0 1 0 6M19 6a8 8 0 0 1 0 12',capability:'owner',load:{js:'employee-ad-spend.js',css:'employee-ad-spend.css',v:'20260928adspend'},module:'EGCAdSpend'},
 {id:'catalog',group:'SYSTEM',label:'Catalog & pricing',iconPath:'M4 4h7l9 9-7 7-9-9zM8 8h.01',capability:'owner',load:{js:'employee-catalog.js',css:'employee-catalog.css',v:'20260928catalog'},module:'EGCCatalog'},
-{id:'reviews',group:'RUN THE BUSINESS',label:'Review queues',iconPath:'M9 3h6v3H9zM6 5h3v1h6V5h3v16H6zM9 13l2 2 4-4',capability:'business',load:{js:'employee-reviews.js',css:'employee-reviews.css',v:'20260928reviews'},module:'EGCReviews'},
+{id:'reviews',group:'RUN THE BUSINESS',label:'Review queues',iconPath:'M9 3h6v3H9zM6 5h3v1h6V5h3v16H6zM9 13l2 2 4-4',capability:'business',load:{js:'employee-reviews.js',css:'employee-reviews.css',v:'20260929reviewstips7'},module:'EGCReviews'},
 {id:'message_templates',group:'SYSTEM',label:'Message templates',iconPath:'M4 5h16v11H9l-5 4z',capability:'business',load:{js:'message-templates.js',css:'message-templates.css',v:'20260928crew'},module:'EGCMessageTemplates'},
 {id:'stocked_costs',group:'SYSTEM',label:'Stocked item costs',capability:'business',iconPath:'M4 7l8-4 8 4v10l-8 4-8-4zM4 7l8 4 8-4M12 11v10',load:{js:'employee-standard-costs.js',css:'employee-standard-costs.css',v:'20260928fun19'},module:'EGCStandardCosts'},
 {id:'staff',group:'RUN THE BUSINESS',label:'Staff directory',iconPath:'M9 11a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7zM2 20c0-3.5 3-6 7-6s7 2.5 7 6M16 4.5a3.5 3.5 0 0 1 0 6.5M18 14c2.5.6 4 2.8 4 6',capability:'business',load:{js:'employee-staff.js',css:'employee-staff.css',v:'20260928team'},module:'EGCStaff'},
@@ -203,9 +203,62 @@ function unmountHome(){
 }
 const current=()=>active?{id:active.id,mounted:active.mounted}:null;
 function clearDrafts(){try{for(let i=sessionStorage.length-1;i>=0;i--){const key=sessionStorage.key(i);if(String(key||'').startsWith(DRAFTS))sessionStorage.removeItem(key);}}catch{}}
+// HUB_OFFLINE_ENABLED (/api/hub-offline): an installable Hub (employee.webmanifest) whose worker (hub-sw.js) keeps the
+// versioned employee-* files and whose time-clock and chat posts queue on the device (employee-offline-queue.js).
+// A definite off removes an earlier install's worker and file cache. An unreachable or unclear answer changes nothing
+// (the queue neither holds new saves nor removes any, though the Hub still shows what an earlier page left queued) and
+// is asked again when the connection returns, the Hub is shown again or the Hub next polls its records (pollPeople in
+// employee-suite.js), until a definite answer arrives.
+const OFFLINE=Object.freeze({config:'/api/hub-offline',worker:'/hub-sw.js',scope:'/',manifest:'/employee.webmanifest',cache:'egc-hub-assets-'});
+let offlineSetting=null;
+const hubWorker=registration=>[registration?.active,registration?.waiting,registration?.installing].some(worker=>{try{return new URL(worker?.scriptURL||'',location.href).pathname===OFFLINE.worker;}catch{return false;}});
+async function installOffline(){
+  if(!document.querySelector('link[rel="manifest"]')){const link=document.createElement('link');link.rel='manifest';link.href=OFFLINE.manifest;document.head.append(link);}
+  try{await navigator.serviceWorker?.register(OFFLINE.worker,{scope:OFFLINE.scope});}catch(error){console.warn('Hub offline worker was not registered:',error?.message||error);}
+}
+// The worker keeps serving the pages it controls until they close, so it is told to keep nothing more (and answers)
+// before it is unregistered and its files are deleted; a worker that does not answer within 2 s is removed anyway.
+const tell=(worker,type)=>new Promise(resolve=>{
+  if(typeof worker?.postMessage!=='function'||typeof MessageChannel!=='function')return resolve();
+  const channel=new MessageChannel(),done=()=>{clearTimeout(timer);channel.port1.close();resolve();},timer=setTimeout(done,2000);
+  channel.port1.onmessage=done;
+  try{worker.postMessage({type},[channel.port2]);}catch{done();}
+});
+const retire=worker=>tell(worker,'egc-hub-offline-retire');
+async function removeOffline(){
+  try{for(const registration of await navigator.serviceWorker?.getRegistrations?.()||[])if(hubWorker(registration)){await retire(registration.active);await registration.unregister();}}catch{}
+  try{for(const name of await caches.keys())if(name.startsWith(OFFLINE.cache))await caches.delete(name);}catch{}
+}
+async function readOffline(){
+  if(typeof fetch!=='function')return null;
+  let enabled=null;
+  try{const response=await fetch(OFFLINE.config,{credentials:'same-origin',cache:'no-store'}),data=await response.json();if(response.ok&&data?.ok===true&&typeof data.enabled==='boolean')enabled=data.enabled;}catch{enabled=null;}
+  if(enabled)await installOffline();else if(enabled===false)await removeOffline();
+  // Only a definite answer switches the queue: an unknown one never turns it on, nor removes what waits on the device.
+  if(enabled!==null)window.EGCHubOffline?.configure?.({enabled});
+  return enabled;
+}
+// A definite answer holds for the life of the page; an unknown one (a signal blip as the Hub loads) is not kept.
+function offline(){
+  if(offlineSetting)return offlineSetting;
+  const answer=offlineSetting=readOffline().then(enabled=>{if(enabled===null&&offlineSetting===answer)offlineSetting=null;return enabled;});
+  return answer;
+}
+const recheckOffline=()=>{if(!offlineSetting)void offline();};
+window.addEventListener('online',recheckOffline);
+document.addEventListener?.('visibilitychange',()=>{if(document.visibilityState!=='hidden')recheckOffline();});
+// Signing out clears the device copies of the Hub's files, so on a shared phone a signed-out load (EGC_STAFF_PAGE_GATE)
+// never gets staff scripts from them offline. The worker is told first, so a file still loading is not kept either; it
+// keeps copies again from the next signed-in load. (A Hub left signed in keeps its copies until it signs out.)
+async function forgetOfflineFiles(){
+  try{for(const registration of await navigator.serviceWorker?.getRegistrations?.()||[])if(hubWorker(registration))await tell(registration.active,'egc-hub-offline-signout');}catch{}
+  try{for(const name of await caches.keys())if(name.startsWith(OFFLINE.cache)){const cache=await caches.open(name);for(const request of await cache.keys())await cache.delete(request);}}catch{}
+}
 window.addEventListener('egc:signout',()=>{unmountAll();unmountHome();clearDrafts();});
+window.addEventListener('egc:signout',()=>{void forgetOfflineFiles();});
 window.addEventListener('beforeunload',event=>{if(active?.mounted&&!canLeave(active.id)){event.preventDefault();event.returnValue='';}});
-window.EGCHubScreens=Object.freeze({register,list,get,allowed,visible,widgets,mount,unmountAll,canLeave,refresh,current,registerWidget,homeWidgets,mountHome,unmountHome,kit:KIT});
+window.EGCHubScreens=Object.freeze({register,list,get,allowed,visible,widgets,mount,unmountAll,canLeave,refresh,current,registerWidget,homeWidgets,mountHome,unmountHome,offline,kit:KIT});
 for(const spec of MANIFEST){try{register(spec);}catch(error){console.warn('Hub screen registry skipped a MANIFEST entry:',error?.message||error);}}
 for(const spec of HOME_WIDGETS){try{registerWidget(spec);}catch(error){console.warn('Hub screen registry skipped a HOME_WIDGETS entry:',error?.message||error);}}
+void offline();
 })();

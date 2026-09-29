@@ -75,6 +75,67 @@ test('manager corrections clear prior approval, preserve attribution, recompute 
   assert.throws(() => administer(approved, { clockOutAt: '2026-09-22T13:00:00Z' }), /invalid shift/);
 });
 
+test('a closed timecard’s location is final for a manager too: late position fixes, trails, errors and tracking are refused; clock-out replays, repeated values, approvals and reopening are not', () => {
+  const closed = update(create(), { clockOutAt: 'browser-time', status: 'submitted', locationTracking: false, locationStatus: 'stopped' });
+  assert.deepEqual([closed.status, closed.locationStatus, closed.locationTracking], ['submitted', 'stopped', false]);
+  const late = { lat: 40.7, lng: -105.2, accuracy: 5, capturedAt: '2026-09-22T18:30:00.000Z' };
+  for (const incoming of [
+    { lastLocation: late, locationTrail: [...closed.locationTrail, late], locationStatus: 'tracking', locationUpdatedAt: late.capturedAt },
+    { locationStatus: 'unavailable', locationError: 'Synthetic timeout', locationUpdatedAt: late.capturedAt },
+    { lastLocation: late }, { locationTrail: [] }, { locationUpdatedAt: late.capturedAt }, { locationError: 'Synthetic timeout' }, { locationStatus: 'tracking' }, { locationTracking: true },
+  ]) {
+    assert.throws(() => administer(closed, incoming), error => error.status === 409 && /shift is closed/.test(error.message), JSON.stringify(incoming));
+  }
+  assert.throws(() => administer({ ...closed, approvalStatus: 'approved' }, { lastLocation: late }), /shift is closed/);
+  // The clock-out's own fields, a replay of them, and values the card already has are accepted.
+  assert.equal(administer(closed, { clockOutAt: closed.clockOutAt, status: 'submitted', locationTracking: false, locationStatus: 'stopped' }).locationStatus, 'stopped');
+  assert.deepEqual(administer(closed, { lastLocation: closed.lastLocation, locationTrail: closed.locationTrail, locationUpdatedAt: closed.locationUpdatedAt }).lastLocation, closed.lastLocation);
+  assert.equal(administer(closed, { approvalStatus: 'approved' }).approvalStatus, 'approved');
+  // A manager who reopens the shift may set its location with it; an open shift's location is unaffected.
+  const reopened = administer(closed, { status: 'active', clockOutAt: '', locationTracking: true, locationStatus: 'tracking', lastLocation: late });
+  assert.deepEqual([reopened.status, reopened.locationStatus, reopened.lastLocation], ['active', 'tracking', late]);
+  assert.deepEqual(administer(create(), { lastLocation: late, locationStatus: 'tracking' }).lastLocation, late);
+});
+
+test('a manager’s own queued clock action is applied once: a replayed clock-in or clock-out never reopens or un-approves the card, and a break is recorded by its request ID, at the time the Hub showed, only on an open shift; direct saves work as before', () => {
+  const at = time => `2026-09-22T${time}:00.000Z`, requests = ['11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222', '33333333-3333-4333-8333-333333333333'];
+  const save = (existing, incoming, { queued = true, session = manager, now = at('19:00') } = {}) => authorizeTimecard({ session, manager: true, id: 'shift-zacb', existing, incoming, now, queued });
+  // The Hub's clock-in, clock-out and break saves, as its offline queue sends them for a manager (employee-offline-queue.js prepare()).
+  const clockInBody = { id: 'shift-zacb', employee: 'ZacB', employeeName: 'Manager', role: 'owner', hourlyRate: 0, clockInAt: start, clockOutAt: '', status: 'active', approvalStatus: 'open',
+    jobId: '', jobLabel: '', locationTracking: true, locationConsentAt: start, locationStatus: 'tracking', lastLocation: point, locationTrail: [point], locationUpdatedAt: start, breaks: [], createdAt: start, updatedAt: start };
+  const startBreak = { breaks: [{ startAt: at('16:00'), endAt: '', requestId: requests[0] }], updatedAt: at('16:00') };
+  const endBreak = { breaks: [{ startAt: at('16:00'), endAt: at('16:30'), requestId: requests[1] }], updatedAt: at('16:30') };
+  const clockOutBody = { clockOutAt: at('18:00'), status: 'submitted', approvalStatus: 'pending', hours: 3.5, grossEstimate: 0, locationTracking: false, locationStatus: 'stopped', updatedAt: at('18:00') };
+  // The first clock-in creates the card with the manager's own times, as before; its replay leaves the open card as it is.
+  const open = save(null, clockInBody, { now: start });
+  assert.deepEqual([open.clockInAt, open.status, open.employee], [start, 'active', 'ZacB']);
+  assert.strictEqual(save(open, clockInBody), open);
+  // A break keeps the time the Hub showed and its request ID; replayed (after it ended, too) it changes nothing.
+  const onBreak = save(open, startBreak, { now: at('16:20') });
+  assert.deepEqual(onBreak.breaks, [{ startAt: at('16:00'), endAt: '', startRequestId: requests[0] }]);
+  assert.strictEqual(save(onBreak, startBreak), onBreak);
+  const back = save(onBreak, endBreak, { now: at('16:40') });
+  assert.deepEqual(back.breaks, [{ startAt: at('16:00'), endAt: at('16:30'), startRequestId: requests[0], endRequestId: requests[1] }]);
+  for (const replay of [startBreak, endBreak, clockInBody]) assert.strictEqual(save(back, replay), back);
+  assert.throws(() => save(back, { breaks: [{ startAt: at('15:00'), endAt: at('15:10'), requestId: requests[2] }, { startAt: at('17:00'), endAt: '' }] }), /cannot be rewritten/, 'a queued break built on other breaks never replaces them');
+  // The first clock-out closes the open shift with the manager's time, as before; the owner approves it.
+  const closed = save(back, clockOutBody);
+  assert.deepEqual([closed.clockOutAt, closed.status, closed.approvalStatus, closed.hours, closed.locationTracking], [at('18:00'), 'submitted', 'pending', 3.5, false]);
+  const approved = save(closed, { approvalStatus: 'approved' }, { queued: false, now: at('19:00') });
+  assert.deepEqual([approved.approvalStatus, approved.approvedBy, approved.approvedAt], ['approved', 'ZacB', at('19:00')]);
+  // Every replay after that (a lost reply resent hours later) is a no-op: nothing reopens, un-approves or rewrites the card.
+  for (const replay of [clockInBody, clockOutBody, startBreak, endBreak]) assert.strictEqual(save(approved, replay, { now: at('21:00') }), approved, JSON.stringify(replay).slice(0, 60));
+  // A break the closed shift never recorded is refused, not added to it.
+  assert.throws(() => save(approved, { breaks: [...endBreak.breaks, { startAt: at('17:30'), endAt: '', requestId: requests[2] }] }), error => error.status === 409 && /shift is closed, so this break was not recorded/.test(error.message));
+  // Direct saves keep today's behaviour: a manager may reopen a shift, and correct its breaks.
+  const reopened = save(approved, { status: 'active', clockOutAt: '', locationTracking: true }, { queued: false });
+  assert.deepEqual([reopened.status, reopened.clockOutAt], ['active', '']);
+  assert.deepEqual(save(approved, { breaks: [{ startAt: at('16:00'), endAt: at('16:15') }] }, { queued: false }).breaks, [{ startAt: at('16:00'), endAt: at('16:15') }]);
+  // Another employee's card, queued or not, is corrected as before.
+  const crewCard = update(create(), { clockOutAt: 'browser-time', status: 'submitted' });
+  assert.equal(authorizeTimecard({ session: manager, manager: true, id: crewCard.id, existing: crewCard, incoming: { status: 'active', clockOutAt: '', locationTracking: true }, now: at('19:00'), queued: true }).status, 'active');
+});
+
 test('Denver work dates and elapsed hours survive midnight, DST transitions and foreign browser zones', () => {
   assert.equal(timecardWorkDate('2026-09-28T05:30:00Z'), '2026-09-27');
   assert.equal(timecardWorkDate('2026-09-28T06:00:00Z'), '2026-09-28');

@@ -8,8 +8,8 @@ import {walkthroughExtractionSchema} from '@egc/schemas';
 import {OperationsError,operationsService,SERVICE_ORIGINS,type Actor} from '@egc/operations';
 import {recordingTaskProposals} from './conversation-tasks.js';
 import {portalAdapter} from './operations.js';
-import {fingerprint,MAX_AUDIO_BYTES,safeRecordingError,signRecordingEnvelope,stableUuid,verifyRecordingEnvelope,verifiedHubRecordingClaims,type RecordingClaims,type RecordingCommand} from './recording-contracts.js';
-import {serviceAuthEnabled,signApiServiceRequest,verifyHubServiceClaims,tokenVersion} from './service-bridge.js';
+import {fingerprint,MAX_AUDIO_BYTES,RecordingIssuerRefusal,safeRecordingError,signRecordingEnvelope,stableUuid,verifyRecordingEnvelope,verifiedHubRecordingClaims,type RecordingClaims,type RecordingCommand} from './recording-contracts.js';
+import {auditLogWriter,recordIssuerRefusal,serviceAuthEnabled,signApiServiceRequest,verifyHubServiceClaims,tokenVersion,type AuditRow} from './service-bridge.js';
 type Row=typeof schema.walkthroughs.$inferSelect;
 type Identity={portalJobId:string;portalVisitId:string;portalCustomerId:string;portalProjectId:string|null;portalRevision:string;highlevelContactId:string|null;authority:'employee_hub'};
 type Approval=Extract<RecordingCommand,{command:'recording.approve'}>;
@@ -131,9 +131,11 @@ export class RecordingService{
   }
 }
 
-export async function registerRecordingRoutes(app:FastifyInstance,env:NodeJS.ProcessEnv=process.env,service?:RecordingService){
+export async function registerRecordingRoutes(app:FastifyInstance,env:NodeJS.ProcessEnv=process.env,service?:RecordingService,audit:(row:AuditRow)=>Promise<unknown>=auditLogWriter){
   const enabled=env.EGC_OPERATIONS_ENABLED==='true',s=service??(enabled?new RecordingService(env):undefined);
-  async function claims(token:unknown,path:string){if(!enabled||!s)throw new OperationsError('operations_not_enabled',503);if(serviceAuthEnabled(env)&&tokenVersion(token)===2)return verifiedHubRecordingClaims(await verifyHubServiceClaims(token,path,env),env.EGC_OPERATIONS_WORKSPACE??'egc');return verifyRecordingEnvelope(token,{portal:serviceAuthEnabled(env)?'':env.EGC_OPERATIONS_PORTAL_SIGNING_SECRET??'',mcp:env.EGC_OPERATIONS_MCP_SIGNING_SECRET??''},env.EGC_OPERATIONS_WORKSPACE??'egc');}
+  async function verified(token:unknown,path:string){if(serviceAuthEnabled(env)&&tokenVersion(token)===2)return verifiedHubRecordingClaims(await verifyHubServiceClaims(token,path,env),env.EGC_OPERATIONS_WORKSPACE??'egc');return verifyRecordingEnvelope(token,{portal:serviceAuthEnabled(env)?'':env.EGC_OPERATIONS_PORTAL_SIGNING_SECRET??'',mcp:env.EGC_OPERATIONS_MCP_SIGNING_SECRET??''},env.EGC_OPERATIONS_WORKSPACE??'egc');}
+  // BRIDGE-ADOPT-AUTHZ: an unbound integration actor is logged and audited like /operations/rpc before the refusal is returned.
+  async function claims(token:unknown,path:string){if(!enabled||!s)throw new OperationsError('operations_not_enabled',503);try{return await verified(token,path);}catch(e){if(e instanceof RecordingIssuerRefusal){const c=e.claims;await recordIssuerRefusal(app.log,audit,e,{issuer:e.issuer,actor:c.actor,command:c.request.body.command,requestId:c.request.requestId,entity:'recording_request',source:'recordings'});}throw e;}}
   function failure(error:unknown,reply:import('fastify').FastifyReply){return reply.code(error instanceof OperationsError?error.status:503).send({error:safeRecordingError(error),retryable:!(error instanceof OperationsError)||error.status>=500});}
   app.post('/recordings/rpc',{bodyLimit:220000},async(request,reply)=>{reply.header('Cache-Control','no-store');try{const c=await claims((request.body as {envelope?:unknown})?.envelope,'/recordings/rpc');return await s!.execute(c);}catch(e){return failure(e,reply);}});
   app.post('/recordings/upload',async(request,reply)=>{reply.header('Cache-Control','no-store');try{let c:RecordingClaims|undefined,audio:Buffer|undefined,type='';for await(const part of request.parts({limits:{fileSize:MAX_AUDIO_BYTES,files:1,fields:1}})){if(part.type==='field'&&part.fieldname==='envelope')c=await claims(part.value,'/recordings/upload');else if(part.type==='file'&&part.fieldname==='audio'){if(!c)throw new OperationsError('recording_signature_required_first',401);audio=await part.toBuffer();type=part.mimetype;}}if(!c||!audio)throw new OperationsError('recording_audio_required',400);return reply.code(202).send(await s!.upload(c,audio,type));}catch(e){return failure(e,reply);}});

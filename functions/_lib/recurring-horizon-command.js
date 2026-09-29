@@ -3,7 +3,8 @@
  * (functions/api/operations-portal.js) from egc-api's hourly timer, as the
  * recurring-horizon-worker integration actor.
  *
- * - Actor: exactly {kind:'integration', role:'integration', id:'recurring-horizon-worker'}.
+ * - Actor: exactly the integration actor recurring-horizon-worker (kind and role
+ *   both 'integration'), which egc-api mints (bound to api in bridge-command-policy.ts).
  * - Clock: `now` comes from the signed envelope (iat), never from the command body.
  * - Gate: a no-op unless EGC_RECURRING_PLANS_ENABLED=true on the Hub.
  * - Bounds: at most maxPlans plans (default 10, max 25) and `limit` dispatch or

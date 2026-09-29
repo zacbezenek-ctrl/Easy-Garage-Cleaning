@@ -1,0 +1,19 @@
+/* Customer card tips on Time approvals (employee-crew-tips.js). Mobile first: one column, 44px buttons, no sideways scroll. */
+.ops-crew-tips{margin:22px 0;padding:18px;min-width:0}
+.ops-crew-tips .ops-card-head{display:flex;flex-direction:column;align-items:stretch;gap:12px}
+.ops-crew-tips h2{margin:6px 0 0;overflow-wrap:anywhere}
+.ops-crew-tips-actions{display:flex;flex-wrap:wrap;gap:10px}
+.ops-crew-tips-actions .ops-button{flex:1 1 150px;white-space:normal;text-align:center}
+.ops-crew-tips-totals{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,140px),1fr));gap:10px;margin:16px 0}
+.ops-crew-tips-totals>div{border:1px solid var(--ops-line);background:#fafbfc;padding:12px 14px;min-width:0}
+.ops-crew-tips-totals span{display:block;font-size:12px;color:var(--ops-muted)}
+.ops-crew-tips-totals strong{display:block;font-size:20px;margin-top:4px;overflow-wrap:anywhere}
+.ops-crew-tips-warning{color:#79450d;background:#fff5e3;padding:12px 14px;border-left:3px solid #d78a1e;font-size:13px;line-height:1.5;overflow-wrap:anywhere}
+.ops-crew-tips-warning ul{margin:6px 0 0;padding-left:18px}
+.ops-crew-tips-rows,.ops-crew-tips-jobs{display:grid;gap:10px;margin-top:14px}
+.ops-crew-tips-rows article,.ops-crew-tips-jobs article{display:flex;flex-wrap:wrap;justify-content:space-between;gap:8px 16px;padding:14px;border:1px solid var(--ops-line);background:#fafbfc;min-width:0}
+.ops-crew-tips-rows article>div,.ops-crew-tips-jobs article>div{display:flex;flex-direction:column;gap:4px;min-width:0}
+.ops-crew-tips small{color:var(--ops-muted);line-height:1.45;overflow-wrap:anywhere}
+.ops-crew-tips-jobs summary{min-height:44px;display:flex;align-items:center;cursor:pointer;font-weight:700}
+.ops-crew-tips-jobs article>p{flex-basis:100%;margin:0;font-size:13px;color:#79450d;overflow-wrap:anywhere}
+@media(min-width:761px){.ops-crew-tips{padding:24px}.ops-crew-tips .ops-card-head{flex-direction:row;align-items:flex-start;justify-content:space-between}.ops-crew-tips-actions .ops-button{flex:0 0 auto}}

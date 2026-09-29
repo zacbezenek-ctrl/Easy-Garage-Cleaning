@@ -447,6 +447,26 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   saves queue per-employee notices in the same commit, and the signed messaging cron texts them (crew_assignment,
   crew_unassignment, crew_schedule_change; owner-approved wording) only to an opted-in employee's own number on a
   HighLevel contact tagged egc-staff. MY EGC → Schedule alerts shows each employee their feed. Gaps: no Web Push yet.
+- **MONEY-GHL-PARITY** With `MONEY_API_ENABLED` on, a confirmed server money save (estimate, approval, deposit, payment,
+  invoice) starts the same egc-<event> HighLevel lifecycle trigger as the legacy finance save, through the suite's own
+  syncCustomerCommunication (claimed once per save; a save it cannot confirm shows as needs attention). Flag off: no
+  change. Gap: server estimate/invoice saves do not turn on automatic reminders (owner decision).
+- **BRIDGE-ADOPT-AUTHZ** Fail-closed binding of bridge integration actor ids: BRIDGE_ACTOR_BINDINGS (shared by egc-api and
+  the Hub) binds every minted id to the service whose key signs it (mcp, hub, api, worker); unknown or mismatched ids get
+  403 before any policy or storage work, audited (hub_audit bridge.issuer_refused, audit_logs operations.issuer_refused).
+  Always on. Gaps: egc-worker shares the API key; MCP-signed human actors are still accepted (follow-ups).
+- **HUB-PWA** Installable Employee Hub with an on-device queue behind `HUB_OFFLINE_ENABLED` (off): employee.webmanifest,
+  hub-sw.js (versioned employee-* files only, network first with ETag) and employee-offline-queue.js, which queues the
+  viewer's own clock in/out, breaks and crew chat in IndexedDB and replays them with the same request id. Queued manager
+  saves are idempotent; a closed card's location is locked. Gaps: employee.html itself is not cached offline.
+- **GHL-ALIGN** HighLevel owns follow-ups: the 6-month check-in is a HighLevel task (from the closeout and, read first
+  so it is created once, from each verified field completion while the bridge is on); egc-api opens a platform task only
+  with `EGC_OPERATIONS_CHECKIN_TASKS_ENABLED`. A messaging dry run writes nothing to HighLevel. The inbound reconciler runs
+  only with `EGC_OPERATIONS_INBOUND_TASKS_ENABLED` (both off). docs/HIGHLEVEL-BOUNDARY.md lists every send and its owner.
+- **TIPS** Optional crew tips behind `CUSTOMER_TIPS_ENABLED` (off): the portal and crew closeout add a "Tip for your crew"
+  Checkout line (whole cents, at most half the balance or $500) on a balance payment; only the service part reaches
+  payment.amount and the invoice, tips go to payment.tips[] and the ledger, and /api/tip-allocation splits them by on-site
+  minutes (CSV). Tipped charges held in payment_reviews are never booked automatically. Gap: not in the payroll CSV itself.
 
 ## In progress
 
@@ -551,6 +571,11 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | FUN-29 | Service line and funnel path on every project (definitions 2026-09-28.6) | merged (4c1d165) |
 | QUOTE-DRAFT | Unsigned quote drafts with a confirmed send (estimate-ready via approved send, off) and the quote-author role (flag off) | merged (0658534) |
 | CREW-NOTIFY | Crew schedule notices: dispatch queues, messaging cron texts opted-in staff on egc-staff contacts (flag off) | merged (b95eee8) |
+| MONEY-GHL-PARITY | Server money saves start the same HighLevel lifecycle triggers as the finance tools (MONEY_API_ENABLED) | merged (890742e) |
+| BRIDGE-ADOPT-AUTHZ | Fail-closed binding of bridge integration actor ids to their signing service (always on) | merged (93e8b20) |
+| HUB-PWA | Installable Hub and on-device clock/chat queue (HUB_OFFLINE_ENABLED, off) | merged (92153dc) |
+| GHL-ALIGN | HighLevel owns follow-ups: check-in task, dry run without writes, inbound reconciler opt-in (flags off) | merged (cb90ce9) |
+| TIPS | Optional crew tips on card balance payments, held tipped charges and tip allocation (CUSTOMER_TIPS_ENABLED, off) | merged (99d4c1e) |
 
 ## Next
 

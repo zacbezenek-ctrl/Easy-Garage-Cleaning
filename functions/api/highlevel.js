@@ -32,6 +32,7 @@ import { createJobAssignmentAccess } from '../_lib/job-assignment.js';
 import { syncNativeSchedule } from '../_lib/operations-schedule-sync.js';
 import { syncNativeNote } from '../_lib/operations-note-sync.js';
 import { operationsEnabled } from '../_lib/operations-service-auth.js';
+import { ensureHighLevelCheckin } from '../_lib/highlevel-checkin.js';
 
 const API = 'https://services.leadconnectorhq.com';
 const DEFAULT_LEAD_RESET_AT = '2026-09-03T21:51:19.314Z';
@@ -679,7 +680,14 @@ export async function onRequestPost({ request, env }) {
     let taskId = '';
     if (isCloseout) {
       await addTags(c, contactId, ['egc-job-complete', 'egc-review-ready']);
-      if(operationsEnabled(env))taskId=note.followupTaskId||'';
+      // The 6-month check-in is a HighLevel task. The operations platform reports its own task id only when the
+      // owner opts in (egc-api EGC_OPERATIONS_CHECKIN_TASKS_ENABLED); then HighLevel gets none, so never both.
+      if(operationsEnabled(env)&&note.followupTaskId)taskId=note.followupTaskId;
+      else if(operationsEnabled(env)){
+        // Anchored to the saved completion (else the closeout's completed_at or sent_at) and read back before writing, so a retried closeout adds no second task. With no such anchor a retry could not find it again, so none is written.
+        const saved=payload.job_id?await readJob(env,payload.job_id).catch(()=>null):null,completedAt=[saved?.completedAt,payload.completed_at,payload.sent_at].find(value=>typeof value==='string'&&Number.isFinite(Date.parse(value)))||'';
+        taskId=completedAt?(await ensureHighLevelCheckin(env,{contactId,completedAt})).taskId||'':'';
+      }
       else {const due = new Date(); due.setMonth(due.getMonth() + 6);
       try {
         const task = await ghl(c, `/contacts/${encodeURIComponent(contactId)}/tasks`, { method: 'POST', body: JSON.stringify({

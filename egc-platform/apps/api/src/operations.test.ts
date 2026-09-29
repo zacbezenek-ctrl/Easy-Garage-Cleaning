@@ -3,6 +3,7 @@ import Fastify from "fastify";
 import {randomUUID} from "node:crypto";
 import {OperationsError,signRequest,type OperationsService,type SignedClaims} from "@egc/operations";
 import {registerOperationsRoutes,portalAdapter} from "./operations.js";
+import {INBOUND_TASKS_DISABLED,type InboundActionReconciler} from "./inbound-actions.js";
 const key="isolated-api-signing-key-only-01234567890123456789";
 const env={EGC_OPERATIONS_ENABLED:"true",EGC_OPERATIONS_PORTAL_SIGNING_SECRET:key};
 const claim=():SignedClaims=>({v:1,iss:"portal",aud:"egc-operations",iat:Math.floor(Date.now()/1000),nonce:randomUUID(),actor:{id:"test-owner",role:"owner",kind:"human",workspace:"egc"},request:{requestId:randomUUID(),body:{command:"status"}}});
@@ -12,11 +13,11 @@ async function app(execute=vi.fn(async()=>({ok:true})),settings:NodeJS.ProcessEn
 describe("operations HTTP boundary",()=>{
  it("disabled is 503 not an empty queue",async()=>{const{a,execute}=await app(undefined,{});const r=await a.inject({method:"POST",url:"/operations/rpc",payload:{}});expect(r.statusCode).toBe(503);expect(execute).not.toHaveBeenCalled();});
  it("unsigned calls cannot reach the service",async()=>{const{a,execute}=await app();const r=await a.inject({method:"POST",url:"/operations/rpc",payload:{actor:claim().actor}});expect(r.statusCode).toBe(401);expect(execute).not.toHaveBeenCalled();});
- it("valid signature supplies the actual principal and stable request ID",async()=>{const{a,execute}=await app(),c=claim();const r=await a.inject({method:"POST",url:"/operations/rpc",payload:{envelope:signRequest(c,key),actor:{id:"forged"}}});expect(r.statusCode).toBe(200);expect(execute).toHaveBeenCalledWith(c.actor,c.request.body,c.request.requestId);expect(r.headers['cache-control']).toBe('no-store');});
+ it("valid signature supplies the actual principal and stable request ID",async()=>{const{a,execute}=await app(),c=claim();const r=await a.inject({method:"POST",url:"/operations/rpc",payload:{envelope:signRequest(c,key),actor:{id:"forged"}}});expect(r.statusCode).toBe(200);expect(execute).toHaveBeenCalledWith(c.actor,c.request.body,c.request.requestId,"hub");expect(r.headers['cache-control']).toBe('no-store');});
  it("task.send from the legacy Hub issuer still reaches the service; the MCP issuer never does",async()=>{
   const mcp="isolated-mcp-signing-key-only-0123456789012345678",{a,execute}=await app(undefined,{...env,EGC_OPERATIONS_MCP_SIGNING_SECRET:mcp});
   const send={command:"task.send",taskId:randomUUID(),revision:1,previewHash:"a".repeat(64),confirm:true} as const,hub={...claim(),request:{requestId:randomUUID(),body:send}};
-  expect((await a.inject({method:"POST",url:"/operations/rpc",payload:{envelope:signRequest(hub,key)}})).statusCode).toBe(200);expect(execute).toHaveBeenCalledWith(hub.actor,send,hub.request.requestId);
+  expect((await a.inject({method:"POST",url:"/operations/rpc",payload:{envelope:signRequest(hub,key)}})).statusCode).toBe(200);expect(execute).toHaveBeenCalledWith(hub.actor,send,hub.request.requestId,"hub");
   const forged=await a.inject({method:"POST",url:"/operations/rpc",payload:{envelope:signRequest({...hub,iss:"mcp",nonce:randomUUID(),request:{requestId:randomUUID(),body:send}},mcp)}});
   expect(forged.statusCode).toBe(403);expect(forged.json()).toEqual({error:"human_send_confirmation_required"});expect(execute).toHaveBeenCalledTimes(1);
   expect((await a.inject({method:"POST",url:"/operations/rpc",payload:{envelope:signRequest({...claim(),iss:"mcp"},mcp)}})).statusCode).toBe(200);
@@ -46,4 +47,23 @@ describe("portal adapter never substitutes provider records",()=>{
  it("refuses invalid/mutable origins",()=>{for(const origin of ["http://example.com","https://example.com/path","https://user:pass@example.com","https://example.com/?x=1"])expect(()=>portalAdapter(origin,key,"egc")).toThrow();});
  it("requires exact identity and authoritative owner evidence",async()=>{const f=vi.fn(async()=>new Response(JSON.stringify({authority:"employee_hub",job:{id:"wrong",revision:"v1"}}),{status:200}));const p=portalAdapter("https://portal.test",key,"egc",f as unknown as typeof fetch);await expect(p.resolve("right")).rejects.toMatchObject({code:"portal_identity_unverified"});expect(await p.owner("owner-test")).toBe(false);});
  it("provider failure is surfaced, never a fallback calendar",async()=>{const f=vi.fn(async()=>new Response('{"error":"down"}',{status:503}));const p=portalAdapter("https://portal.test",key,"egc",f as unknown as typeof fetch);await expect(p.read(claim().actor,{command:"calendar",startDate:"2026-09-18",endDate:"2026-09-20",timeZone:"America/Denver",offset:0,limit:50})).rejects.toMatchObject({code:"portal_authority_unavailable"});expect(f).toHaveBeenCalledTimes(1);});
+});
+describe("GHL-ALIGN: HighLevel owns follow-ups, so the inbound reconciler is opt-in",()=>{
+ const reconcile=():SignedClaims=>({...claim(),request:{requestId:randomUUID(),body:{command:"inbound.reconcile",limit:50}}});
+ async function inboundApp(settings:NodeJS.ProcessEnv){const run=vi.fn(async()=>({ok:true,created:3})),execute=vi.fn(async()=>({ok:true})),a=Fastify();apps.push(a);await registerOperationsRoutes(a,{service:{execute} as unknown as OperationsService,env:settings,inbound:{run} as unknown as Pick<InboundActionReconciler,"run">});await a.ready();return{a,run,execute};}
+ it("creates nothing, ticks nothing and answers disabled unless EGC_OPERATIONS_INBOUND_TASKS_ENABLED is exactly true",async()=>{
+  for(const value of [undefined,"","false","TRUE","True","1","yes"," true","true "]){
+   const{a,run,execute}=await inboundApp({...env,...(value===undefined?{}:{EGC_OPERATIONS_INBOUND_TASKS_ENABLED:value})});
+   const r=await a.inject({method:"POST",url:"/operations/rpc",payload:{envelope:signRequest(reconcile(),key)}});
+   expect(r.statusCode,String(value)).toBe(200);expect(r.json()).toEqual({...INBOUND_TASKS_DISABLED});expect(r.json().message).toBe("disabled: follow-ups live in HighLevel");
+   expect(run).not.toHaveBeenCalled();expect(execute).not.toHaveBeenCalled();
+  }
+ });
+ it("an unauthorized caller is still refused before the disabled answer",async()=>{const{a,run}=await inboundApp(env);const c=reconcile();c.actor={id:"crew-1",role:"crew",kind:"human",workspace:"egc"};const r=await a.inject({method:"POST",url:"/operations/rpc",payload:{envelope:signRequest(c,key)}});expect(r.statusCode).toBe(403);expect(run).not.toHaveBeenCalled();});
+ it("the owner's explicit opt-in keeps today's reconciler: startup tick and inbound.reconcile both run it",async()=>{
+  const{a,run,execute}=await inboundApp({...env,EGC_OPERATIONS_INBOUND_TASKS_ENABLED:"true"});
+  await vi.waitFor(()=>expect(run).toHaveBeenCalledTimes(1));
+  const r=await a.inject({method:"POST",url:"/operations/rpc",payload:{envelope:signRequest(reconcile(),key)}});
+  expect(r.json()).toEqual({ok:true,created:3});expect(run).toHaveBeenCalledTimes(2);expect(run).toHaveBeenLastCalledWith({limit:50});expect(execute).not.toHaveBeenCalled();
+ });
 });

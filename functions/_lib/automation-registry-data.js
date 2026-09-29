@@ -6,6 +6,7 @@
    automation on or off. Unknown stays null, never guessed. */
 const HL = 'functions/api/highlevel.js', WEB_LEAD = 'functions/api/web-lead.js', WEB_LEAD_INTAKE = 'functions/_lib/web-lead-intake.js', MESSAGING_CRON = 'functions/api/messaging-cron.js', SUITE = 'employee-suite.js', HANDOFF = 'crew/gameplan-handoff.js';
 const MCP = 'egc-platform/apps/mcp/src/server.ts', GHL_CLIENT = 'egc-platform/packages/ghl/src/index.ts';
+const CHECKIN = 'functions/_lib/highlevel-checkin.js';
 const HANDOFF_DOC = 'docs/highlevel-sales-handoff.md', ROUTING_DOC = 'docs/ghl-live-routing-2026-09-20.md';
 const COMMUNICATION = 'egc-platform/services/operations/src/communication-execution.ts', SCHEDULING = 'egc-platform/apps/api/src/scheduling.ts', NOTE_OUTBOX = 'egc-platform/services/operations/src/note-outbox.ts';
 
@@ -116,7 +117,9 @@ export const AUTOMATION_REGISTRY = deepFreeze({
       write(HL, [SUITE, HANDOFF, 'crew/prejob.html', 'crew/postjob.html'], 'the Game Plan internal brief, the closeout note, and lifecycle notes (cancellations, communication notes, the verified crew card payment note and the crew-on-the-way note, which is written even when suppress_automation skips the tag)', true),
       write(WEB_LEAD_INTAKE, [WEB_LEAD, 'fb-capture.js', 'customer-portal.html', MESSAGING_CRON], 'the website lead details note and the client hub help note (also on a cron retry)', true),
       write(NOTE_OUTBOX, ['functions/_lib/operations-note-sync.js'], 'with the operations bridge on, the same Hub notes are written by the provider note outbox', true)]),
-    trigger('contact:task_added', 'task_added', 'Task added to a contact', [write(HL, [SUITE], 'tool=post_job: the 6-month garage check-in task after a closeout (operations bridge off)', true)]),
+    trigger('contact:task_added', 'task_added', 'Task added to a contact', [
+      write(HL, [SUITE], 'tool=post_job: the 6-month garage check-in task after a legacy closeout retry with Hub operations off', true),
+      write(CHECKIN, [HL, 'functions/_lib/field-execution-sync.js', 'functions/api/field-jobs.js'], 'GHL-ALIGN: the same 6-month garage check-in task, read back first so it is created once, after a closeout with Hub operations on and the egc-api note verified, or after each verified field completion while the bridge is on (Hub operations and egc-api EGC_OPERATIONS_ENABLED=true); none when egc-api reports its own platform task (EGC_OPERATIONS_CHECKIN_TASKS_ENABLED=true, off)', true)]),
     trigger('fb_form:free_walkthrough_offer', 'fb_lead_form', 'Facebook lead forms: Easy Garage Cleaning - Free Walkthrough offer and the three untitled 5/21/26 forms', [], 'Started by Facebook, not the Hub.'),
     trigger('fb_form:curb_side_pickup', 'fb_lead_form', 'Facebook lead form: Curb Side Pickup', [], 'Started by Facebook, not the Hub.'),
     trigger('inbound:message', 'inbound_message', 'Customer message or reply', [], 'Started by the customer, not the Hub.'),
@@ -200,8 +203,8 @@ export const AUTOMATION_REGISTRY = deepFreeze({
       ['appointment:created', 'appointment_status:changed'], { code: code(HL, 'ghl_appointment_write'),
         ownerCheck: 'List workflows triggered by Customer Booked Appointment or Appointment Status with their texts; toNotify false is not relied on to stop them. The FUN-11 booking dialog shows these texts even when the visit notify flag is off.' }),
     unverifiedGhl('ghl.note_task_workflows', 'HighLevel Note Added / Task Added workflows (unverified)', 'Notes the Hub adds (Game Plan brief, closeout, lifecycle and website lead notes) and the 6-month check-in task',
-      ['contact:note_added', 'contact:task_added'], { speedToLead: 'automation_touch', code: [...code(HL, 'ghl_note_task_write'), ...code(WEB_LEAD_INTAKE, 'ghl_note_task_write')],
-        ownerCheck: 'List workflows triggered by Note Added or Task Added with their texts; a website lead note is written on every lead, so one could be the first touch.' }),
+      ['contact:note_added', 'contact:task_added'], { speedToLead: 'automation_touch', code: [...code(HL, 'ghl_note_task_write'), ...code(WEB_LEAD_INTAKE, 'ghl_note_task_write'), ...code(CHECKIN, 'ghl_note_task_write')],
+        ownerCheck: 'List workflows triggered by Note Added or Task Added with their texts; a website lead note is written on every lead, so one could be the first touch. Once the bridge is on, each verified field completion creates the HighLevel task "6-month garage check-in"; check that no Task Added workflow reacts to it in a way you do not want.' }),
     entry({ id: 'ghl.conversation_ai', name: 'HighLevel Conversation AI auto-reply (LC GPT Connector)', system: 'ghl_conversation_ai', trigger: 'Inbound customer message, if a Conversation AI bot is in auto-reply mode',
       listensTo: ['inbound:message'], audience: 'customer', channel: 'SMS', contentSource: 'ai_generated', classification: 'disabled', disposition: 'retire', sendsToday: 'unknown', speedToLead: 'automation_touch',
       evidence: [ROUTING_DOC], notes: 'AI-written replies with no human review are not allowed under the approval rule; the design default is off. This registry does not change the setting.',
@@ -406,6 +409,8 @@ export const AUTOMATION_REGISTRY = deepFreeze({
     // FUN-29: GET contacts/{id} for the lead-form service-line suggestion (read-only, flag off by default).
     'functions/_lib/funnel-dimensions.js': { ghl_contact_write: 1 },
     'functions/_lib/ghl-messenger.js': { ghl_message_send: 1, ghl_tag_write: 1, ghl_contact_write: 2 },
+    // GHL-ALIGN: GET then POST contacts/{id}/tasks for the 6-month check-in (one path string, read first).
+    'functions/_lib/highlevel-checkin.js': { ghl_note_task_write: 1 },
     'functions/_lib/portal-invitation.js': { ghl_message_send: 1, ghl_contact_write: 2 },
     'functions/_lib/web-lead-intake.js': { ghl_message_send: 1, ghl_tag_write: 1, ghl_contact_write: 1, ghl_note_task_write: 1, ghl_opportunity_write: 1, zapier_hook: 2 },
     'functions/_lib/sales-followup-exit.js': { ghl_tag_write: 1, ghl_contact_write: 1, ghl_opportunity_write: 1, ghl_appointment_write: 1 },

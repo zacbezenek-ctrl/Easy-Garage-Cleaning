@@ -9,7 +9,7 @@ import { customerPhotoPolicy, customerPhotoProjection, customerPhotosEnabled } f
 import { commitDocuments, patchJob, readJob } from '../_lib/firestore-job.js';
 import { CUSTOMER_PORTAL_CONTENT, CUSTOMER_PORTAL_TERMS_VERSION, approvalTermsVersion, customerPortalDocuments } from '../_lib/customer-portal-content.js';
 import { appendConversationMessage, cleanMessage, cleanRequestId, conversationMessages, deliverHighLevelMessage, findConversationMessage, replaceConversationMessage } from '../_lib/customer-messaging.js';
-import { customerMoneyState as moneyState, customerDepositState, customerPaymentNeedsReview, customerQuoteTotal, createCustomerStripeCheckout, recordCustomerStripePayment, stripeRequest as stripe, stripeSecretKey as stripeKey } from '../_lib/customer-payments.js';
+import { TIP_PRESETS, customerMoneyState as moneyState, customerDepositState, customerPaymentNeedsReview, customerQuoteTotal, customerTipsEnabled, createCustomerStripeCheckout, portalPaymentHeld, recordCustomerStripePayment, recordedTipCents, requestTip, stripeRequest as stripe, stripeSecretKey as stripeKey, tipLimitCents, tipRefusal } from '../_lib/customer-payments.js';
 import { approvalClosed, billedChangeCents, billedChangeOrders, changeOrderBillingEnabled, changeOrderSaved, decisionDeltaCents, respondToDecision } from '../_lib/change-orders.js';
 import { parseBusinessActor } from '../_lib/business-hub-core.js';
 import { businessAccountJob } from '../_lib/portal-invitation.js';
@@ -309,10 +309,24 @@ function customerExperience(job, owner = true, { billing = false, now = '' } = {
   };
 }
 
+// Shown only with CUSTOMER_TIPS_ENABLED: a tip is offered on the balance
+// payment to a viewer who may pay, never on the deposit or while review waits
+// (or a card payment is held for the team), and never on a closed, void-invoice
+// or refunded job (tipRefusal).
+function tipOffer(job, finance, permissions, held = false) {
+  const needsReview = customerPaymentNeedsReview(job), due = customerDepositState(job, finance), dueCents = Math.round(due.dueNow * 100);
+  const available = !needsReview && held !== true && !tipRefusal(job) && due.purpose === 'balance' && dueCents >= 50 && permissions?.pay !== false;
+  return { available, maxCents: available ? tipLimitCents(dueCents) : 0, presets: [...TIP_PRESETS], paidCents: recordedTipCents(job) };
+}
+
 // An opaque per-job key the page scopes its saved requests with (never the job id).
 const portalJobKey = jobId => bytesToHex(sha256(new TextEncoder().encode(`egc-portal-job:${jobId}`))).slice(0, 16);
 
-function sanitize(job, session = {}, { today, reviewUrl, draftsRejected = false, billing = false, now = '' }) {
+// held (tips on only): true while a card payment is held for the team (the Pay
+// button is hidden and nothing is due now), false when not, null when the
+// checkout ledger or the job's payment reviews could not be read (Pay then
+// refuses until they can be).
+function sanitize(job, session = {}, { today, reviewUrl, draftsRejected = false, billing = false, now = '', tips = false, held = false }) {
   const finance = moneyState(job), withheld = unsentQuoteDraft(job);
   const estimate = withheld ? withheldEstimate(job) : estimateState(job, finance, today, draftsRejected);
   const state = portalStatus(job), review = reviewReady(job);
@@ -330,7 +344,7 @@ function sanitize(job, session = {}, { today, reviewUrl, draftsRejected = false,
     estimate,
     payment: withheld ? withheldPayment(job, finance) : {
       total: finance.total, paid: finance.paid, balance: finance.balance, approvedChanges: billedChangeCents(job) / 100,
-      dueNow: customerPaymentNeedsReview(job) ? 0 : customerDepositState(job, finance).dueNow,
+      dueNow: customerPaymentNeedsReview(job) || (tips && held === true) ? 0 : customerDepositState(job, finance).dueNow,
       purpose: customerDepositState(job, finance).purpose,
       deposit: customerDepositState(job, finance),
       needsReview: customerPaymentNeedsReview(job),
@@ -341,6 +355,7 @@ function sanitize(job, session = {}, { today, reviewUrl, draftsRejected = false,
       invoiceStatus: safe(job.invoice?.status || '', 30),
       dueDate: safe(job.invoice?.dueDate || '', 30),
       creditApplied: Math.max(0, amount(job.payment?.giftCreditApplied)), completionRequiresPayment: true,
+      ...(tips ? { held, tip: tipOffer(job, finance, session.actorId ? session.permissions : null, held) } : {}),
     },
     progress: {
       status: state, activity: portalActivity(job),
@@ -375,8 +390,11 @@ async function handleGet({ request, env }, deps) {
   if (!allowed(request)) return reply(403, { ok: false, error: 'Forbidden origin' });
   const result = await requirePortal(request, env, deps);
   if (result.error) return result.error;
-  const at = deps.clock();
-  const body = { ...sanitize(result.job, result.session, { today: denverToday(at), reviewUrl: customerReviewUrl(env), draftsRejected: rejectDrafts(env), billing: changeOrderBillingEnabled(env), now: at.toISOString() }), moneyDocuments: moneyDocumentLinks(result.job, { enabled: moneyDocumentEnabled(env), now: at.toISOString() }) };
+  const at = deps.clock(), tips = customerTipsEnabled(env);
+  // Only with tips on, so the tips-off read is unchanged: held means Pay would be refused now (a held tipped charge,
+  // or with PAYMENT_REVIEW_CHECKOUT_BLOCK_ENABLED any open review), derived from the reviews themselves.
+  const held = tips ? await portalPaymentHeld(env, result.session.jobId, result.job, at.toISOString()).catch(() => null) : false;
+  const body = { ...sanitize(result.job, result.session, { today: denverToday(at), reviewUrl: customerReviewUrl(env), draftsRejected: rejectDrafts(env), billing: changeOrderBillingEnabled(env), now: at.toISOString(), tips, held }), moneyDocuments: moneyDocumentLinks(result.job, { enabled: moneyDocumentEnabled(env), now: at.toISOString() }) };
   // Default off: without the flag the DTO keeps its current shape.
   if (customerPhotosEnabled(env) && result.session.permissions?.view !== false) body.beforeAfter = customerPhotoProjection(result.job, customerPhotoPolicy(env));
   // Default off as well. Only active crew profiles appear; a profile read failure hides the crew, never the project.
@@ -501,9 +519,12 @@ async function handlePost({ request, env }, { clock, read }) {
     if (!secret) return reply(501, { ok: false, error: 'Online payments are not configured' });
     const requestId = safe(body.request_id, 120);
     if (!requestId) return reply(400, { ok: false, error: 'Payment request ID required' });
+    let tipCents;
+    try { tipCents = requestTip(body.tip_cents); } catch (error) { return reply(400, { ok: false, code: 'CUSTOMER_PORTAL_TIP_INVALID', error: error.message }); }
+    if (tipCents && !customerTipsEnabled(env)) return reply(409, { ok: false, code: 'CUSTOMER_PORTAL_TIPS_DISABLED', error: 'Tips are not available online right now. Pay the balance without a tip.' });
     try {
-      return reply(200, await createCustomerStripeCheckout(env, secret, result.session.jobId, new URL(request.url).origin, { now }));
-    } catch (error) { return reply(error.status || 502, { ok: false, ...(error.code === 'CUSTOMER_PORTAL_ESTIMATE_NOT_APPROVABLE' ? { code: error.code } : {}), error: error.message || 'Secure checkout could not be created', ...(error.reviewRecorded ? { code: error.code, reviewRecorded: true } : {}) }); }
+      return reply(200, await createCustomerStripeCheckout(env, secret, result.session.jobId, new URL(request.url).origin, { tipCents, now }));
+    } catch (error) { return reply(error.status || 502, { ok: false, ...(error.code === 'CUSTOMER_PORTAL_ESTIMATE_NOT_APPROVABLE' ? { code: error.code } : {}), error: error.message || 'Secure checkout could not be created', ...(/^tip_/.test(error.code || '') ? { code: 'CUSTOMER_PORTAL_TIP_INVALID' } : {}), ...(error.reviewRecorded ? { code: error.code, reviewRecorded: true } : {}) }); }
   }
 
   if (body.action === 'verify_payment') {

@@ -1,0 +1,14 @@
+/* Crew tip picker (customer-tip.js), scoped to .egc-tip. Mobile first: 44px+ taps, 16px input, no horizontal scroll. */
+.egc-tip{--tip-ink:#071a31;--tip-muted:#5a6878;--tip-line:#d6dde5;--tip-accent:#ff5315;--tip-accent-ink:#a4330c;--tip-bg:#f7f9fb;margin:14px 0 12px;padding:14px;border:1px solid var(--tip-line);border-radius:12px;background:var(--tip-bg);color:var(--tip-ink);min-width:0;font-family:inherit}
+.egc-tip-title{margin:0 0 10px;font-size:15px;font-weight:800;line-height:1.3}.egc-tip-title span{color:var(--tip-muted);font-weight:600}
+.egc-tip-chips{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.egc-tip-chip{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;min-width:0;min-height:52px;padding:6px 4px;border:1.5px solid var(--tip-line);border-radius:10px;background:#fff;color:var(--tip-ink);font:inherit;cursor:pointer;touch-action:manipulation}
+.egc-tip-chip b{font-size:15px;line-height:1.1}.egc-tip-chip small{font-size:12px;color:var(--tip-muted);overflow-wrap:anywhere}.egc-tip-chip small:empty{display:none}
+.egc-tip-chip[aria-pressed="true"]{border-color:var(--tip-accent);background:#fff2ec;color:var(--tip-accent-ink);box-shadow:inset 0 0 0 1px var(--tip-accent)}
+.egc-tip-chip:focus-visible,.egc-tip-input:focus-visible{outline:3px solid #1d6fd8;outline-offset:2px}.egc-tip-chip:disabled{opacity:.45;cursor:not-allowed}
+.egc-tip-custom{margin-top:10px}.egc-tip-custom[hidden]{display:none}.egc-tip-custom label{display:block;margin-bottom:5px;font-size:13px;font-weight:700}
+.egc-tip-field{display:flex;align-items:center;gap:6px;min-width:0;padding:0 12px;border:1.5px solid var(--tip-line);border-radius:10px;background:#fff}.egc-tip-field span{color:var(--tip-muted);font-weight:700}
+.egc-tip-input{flex:1 1 0;width:0;min-width:0;min-height:46px;border:0;background:transparent;color:var(--tip-ink);font:inherit;font-size:16px}
+.egc-tip-error{margin:8px 0 0;color:#a32618;font-size:13px;font-weight:700}.egc-tip-error:empty,.egc-tip-summary:empty{display:none}
+.egc-tip-summary{margin:10px 0 0;font-size:14px;font-weight:700;overflow-wrap:anywhere}.egc-tip-note{margin:8px 0 0;color:var(--tip-muted);font-size:12px;line-height:1.45}
+@media(min-width:560px){.egc-tip-chips{grid-template-columns:repeat(5,minmax(0,1fr))}}

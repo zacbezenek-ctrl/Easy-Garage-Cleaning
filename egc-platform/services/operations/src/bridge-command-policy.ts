@@ -79,3 +79,60 @@ export function bridgeCommandDenial(actor:BridgeActor|null|undefined, rule:Bridg
   if (rule.actors.some(allowed => allowed.kind === actor.kind && allowed.role === actor.role && (!principals || !allowed.idPattern || allowed.idPattern.test(id)))) return null;
   return actor.kind === "integration" ? "bridge_integration_forbidden" : "bridge_role_forbidden";
 }
+/**
+ * BRIDGE-ADOPT-AUTHZ: an integration actor id is only a claim inside a signed envelope,
+ * so each one is bound to the service that mints it, and every verifier checks that
+ * binding against the key it verified before any policy, storage or lib work:
+ *   mcp     egc-mcp: one principal per OAuth grant plus its service bearer, and per Hub-approved
+ *           grant mcp:<hub user>:<grant id> (apps/mcp/src/oauth.ts verifiedMcpPrincipal). Signs the
+ *           API's /operations/rpc and /recordings/* with EGC_OPERATIONS_MCP_SIGNING_SECRET.
+ *   hub     the Employee Hub's per-user sync identities (functions/_lib/operations-schedule-sync.js,
+ *           operations-note-sync.js). Signs the API with its v2 key or the legacy portal key.
+ *   api     egc-api's own workers and the sync identities it derives for a verified caller
+ *           (apps/api operations.ts, inbound-actions.ts, booking-worker.ts, booking-adoption.ts,
+ *           scheduling.ts, provider-notes.ts, schedule-sync-worker.ts) and the delegated funnel feed
+ *           reader (FUN-37).
+ *           Signs the Hub with its v2 key or the legacy key, and also presents the mcp and hub
+ *           principals whose requests it verified and relays.
+ *   worker  egc-worker's messaging cron. It signs with the API's key, so the Hub admits it
+ *           only at /api/messaging-cron (messaging-cron.js): no bridge endpoint accepts it.
+ * Humans are not bound here. A new integration principal is ONE bind() line below. An id
+ * that no line (or more than one line) matches is refused as bridge_integration_issuer_unknown,
+ * and an id its verified signer neither mints nor relays as bridge_integration_issuer_mismatch.
+ */
+/** A Hub-approved MCP grant: the approving Hub user (hub-identity.ts DELEGATE_USER) and the grant uuid. */
+export const MCP_DELEGATED_PRINCIPAL_PATTERN = /^mcp:[a-z0-9][a-z0-9_.@-]{0,119}:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+export type BridgeIssuer = "api" | "hub" | "mcp" | "worker";
+export type BridgeActorBinding = Readonly<{idPattern:RegExp;issuer:BridgeIssuer}>;
+const bind = (idPattern:RegExp, issuer:BridgeIssuer):BridgeActorBinding => Object.freeze({idPattern,issuer});
+export const BRIDGE_ACTOR_BINDINGS:readonly BridgeActorBinding[] = Object.freeze([
+  bind(MCP_PRINCIPAL_PATTERN,"mcp"),
+  bind(MCP_DELEGATED_PRINCIPAL_PATTERN,"mcp"),
+  bind(/^hub-(?:schedule|note):.+$/,"hub"),
+  bind(/^(?:schedule-sync|note-link):.+$/,"api"),
+  bind(/^operations-api$/,"api"),
+  bind(/^inbound-response-reconciler$/,"api"),
+  bind(/^booking-reconciler$/,"api"),
+  bind(/^booking-adoption-worker$/,"api"),
+  bind(/^post-job-followup$/,"api"),
+  bind(/^schedule-sync-worker$/,"api"),
+  bind(/^walkthrough-followup-worker$/,"api"),
+  bind(/^recurring-horizon-worker$/,"api"),
+  bind(/^messaging-cron-worker$/,"worker")
+]);
+/** The principals each verified signer may present: its own and, for the API, the ones it relays. */
+export const BRIDGE_SIGNER_PRESENTS:Readonly<Partial<Record<BridgeIssuer,readonly BridgeIssuer[]>>> = Object.freeze({api:Object.freeze(["api","mcp","hub"] as BridgeIssuer[]),hub:Object.freeze(["hub"] as BridgeIssuer[]),mcp:Object.freeze(["mcp"] as BridgeIssuer[])});
+/** The service that mints this integration id, or null when no single binding matches. */
+export function bridgeActorIssuer(id:unknown, bindings:readonly BridgeActorBinding[] = BRIDGE_ACTOR_BINDINGS):BridgeIssuer|null {
+  if (typeof id !== "string") return null;
+  const matched = bindings.filter(binding => binding.idPattern.test(id));
+  return matched.length === 1 ? matched[0]!.issuer : null;
+}
+/** Returns the denial code or null. signer is the service whose key signed the envelope
+ * (null when the verifier could not name one); humans pass to the role policy. */
+export function bridgeIssuerDenial(actor:BridgeActor|null|undefined, signer:BridgeIssuer|null, bindings:readonly BridgeActorBinding[] = BRIDGE_ACTOR_BINDINGS):string|null {
+  if (actor?.kind !== "integration") return null;
+  const issuer = bridgeActorIssuer(actor.id,bindings);
+  if (!issuer) return "bridge_integration_issuer_unknown";
+  return signer && BRIDGE_SIGNER_PRESENTS[signer]?.includes(issuer) ? null : "bridge_integration_issuer_mismatch";
+}

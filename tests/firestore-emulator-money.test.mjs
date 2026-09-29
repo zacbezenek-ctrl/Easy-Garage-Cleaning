@@ -93,3 +93,83 @@ test('the money API commit, receipt, audit and ledger contracts hold on real Fir
     assert.equal((await runChangeOrderBackfill(store, { apply: true, now: NOW })).preview.length, 0, 'a voided change is never backfilled again');
   });
 });
+
+// TIPS: a tipped charge with no review is booked in ONE commit, the job update plus a precondition-only delete of
+// payment_reviews/{sessionId} (currentDocument.exists=false). The recorder relies on Firestore treating that delete as a
+// no-op while no review exists (nothing is created, a later create-only review still succeeds) and failing the whole
+// commit with ALREADY_EXISTS, the job unchanged, once one does. Checked here on the emulator, raw and through the recorder.
+test('the tipped booking commit (job update plus precondition-only review delete) holds on real Firestore', { skip: !enabled, timeout: 180000 }, async t => {
+  const host = process.env.FIRESTORE_EMULATOR_HOST || '';
+  assert.match(host, /^(?:127\.0\.0\.1|localhost):\d{2,5}$/, 'This test may only connect to a loopback Firestore emulator.');
+  const run = randomUUID().slice(0, 8), projectId = `demo-egc-money-race-${run}`, [hostname] = host.split(':');
+  const root = `projects/${projectId}/databases/(default)/documents`, NOW = '2026-09-22T18:00:00.000Z';
+  const realFetch = globalThis.fetch, statuses = [];
+  let beforeCommit = null;
+  // Production Firestore URLs and bodies are rewritten to this run's demo project; anything else is refused.
+  const emulator = async (input, init = {}) => {
+    const target = new URL(String(input));
+    assert.equal(target.hostname, 'firestore.googleapis.com', `unexpected request to ${target.hostname}`);
+    target.protocol = 'http:'; target.host = host; target.pathname = target.pathname.replace('/projects/egcw-1ec83/', `/projects/${projectId}/`); target.searchParams.delete('key');
+    assert.equal(target.hostname, hostname);
+    const commit = target.pathname.endsWith('/documents:commit');
+    if (commit && beforeCommit) { const run = beforeCommit; beforeCommit = null; await run(); }
+    const response = await realFetch(target, { ...init, ...(init.body ? { body: String(init.body).replaceAll('projects/egcw-1ec83/', `projects/${projectId}/`) } : {}), headers: { ...Object.fromEntries(new Headers(init.headers)), Authorization: 'Bearer owner' } });
+    if (commit) statuses.push(response.status);
+    return response;
+  };
+  const { encodeFirestoreFields, decodeFirestoreFields } = await import('../functions/_lib/firestore-job.js');
+  const direct = (path, init = {}) => realFetch(`http://${host}/v1/${root}${path}`, { ...init, headers: { 'Content-Type': 'application/json', Authorization: 'Bearer owner' } });
+  const read = async path => { const response = await direct(`/${path}`); return response.status === 404 ? null : { status: response.status, ...(await response.json()) }; };
+  const create = (path, value) => direct(`/${path}?currentDocument.exists=false`, { method: 'PATCH', body: JSON.stringify({ fields: encodeFirestoreFields(value) }) });
+  const commit = writes => direct(':commit', { method: 'POST', body: JSON.stringify({ writes }) });
+  const booking = (jobId, updateTime, sessionId, amount) => [
+    { update: { name: `${root}/jobs/${jobId}`, fields: encodeFirestoreFields({ amount }) }, updateMask: { fieldPaths: ['amount'] }, currentDocument: { updateTime } },
+    { delete: `${root}/payment_reviews/${sessionId}`, currentDocument: { exists: false } },
+  ];
+
+  await t.test('raw: the delete is a no-op precondition while no review exists, and refuses the whole commit once one does', async () => {
+    const jobId = `race-raw-${run}`, sessionId = `cs_test_race_raw_${run}`;
+    assert.equal((await create(`jobs/${jobId}`, { amount: 500 })).status, 200);
+    const job = await read(`jobs/${jobId}`);
+    const booked = await commit(booking(jobId, job.updateTime, sessionId, 1000));
+    assert.equal(booked.status, 200);
+    assert.equal(decodeFirestoreFields((await read(`jobs/${jobId}`)).fields).amount, 1000);
+    assert.equal(await read(`payment_reviews/${sessionId}`), null, 'the precondition-only delete creates nothing');
+    // A review created afterwards (create-only, as recordPaymentReview writes it) still succeeds.
+    assert.equal((await create(`payment_reviews/${sessionId}`, { sessionId, status: 'open' })).status, 200);
+    const current = await read(`jobs/${jobId}`), refused = await commit(booking(jobId, current.updateTime, sessionId, 1500)), body = await refused.json();
+    assert.deepEqual([refused.status, body.error?.status], [409, 'ALREADY_EXISTS']);
+    assert.deepEqual([decodeFirestoreFields((await read(`jobs/${jobId}`)).fields).amount, (await read(`jobs/${jobId}`)).updateTime], [1000, current.updateTime], 'nothing in the commit was applied');
+    assert.equal(decodeFirestoreFields((await read(`payment_reviews/${sessionId}`)).fields).status, 'open', 'the review is untouched');
+  });
+
+  await t.test('the recorder books a tipped charge with no review, and holds one whose review lands just before its commit', async st => {
+    st.mock.method(globalThis, 'fetch', emulator);
+    const { recordCustomerStripePayment } = await import('../functions/_lib/customer-payments.js');
+    const env = { FIREBASE_API_KEY: 'firebase-test-money-race', CUSTOMER_TIPS_ENABLED: 'true' };
+    const job = { type: 'job', customer: 'Synthetic Tip Customer', total: 1000, status: 'completed', completedAt: '2026-09-22T10:00:00.000Z', estimate: { status: 'accepted', amount: 1000, depositRequired: 500 },
+      deposit: { amount: 500, paidAmount: 500, status: 'paid', verified: true }, payment: { amount: 500, verified: true, method: 'stripe', stripeSessions: [{ sessionId: `cs_test_deposit_${run}`, paymentIntentId: `pi_deposit_${run}`, amount: 500, purpose: 'deposit', verifiedAt: '2026-09-18T16:05:00.000Z' }] } };
+    const checkout = (jobId, sessionId) => ({ id: sessionId, object: 'checkout.session', mode: 'payment', status: 'complete', payment_status: 'paid', currency: 'usd', amount_total: 55000, client_reference_id: jobId, livemode: false,
+      metadata: { kind: 'egc_customer_portal_payment', job_id: jobId, payment_purpose: 'balance', tip_cents: '5000' }, payment_intent: { id: `pi_${sessionId}`, latest_charge: { receipt_url: `https://pay.stripe.com/receipts/${sessionId}` } } });
+    // No review: one commit books the service part and the tip, and leaves no review document behind.
+    const quiet = `race-quiet-${run}`, first = `cs_test_race_quiet_${run}`;
+    assert.equal((await create(`jobs/${quiet}`, job)).status, 200);
+    const result = await recordCustomerStripePayment(env, checkout(quiet, first), quiet, NOW, { recordedBy: 'stripe_webhook', settleHeld: false });
+    assert.deepEqual([result.paid, result.duplicate, statuses], [true, false, [200]]);
+    const booked = decodeFirestoreFields((await read(`jobs/${quiet}`)).fields);
+    assert.deepEqual([booked.payment.amount, booked.payment.tips.map(tip => tip.amountCents), booked.payment.stripeSessions.length], [1000, [5000], 2]);
+    assert.equal(await read(`payment_reviews/${first}`), null);
+    // A webhook that saw a refund records its review between this return's reads and its booking commit: the emulator
+    // refuses the whole commit (409 ALREADY_EXISTS), and the retry finds the review and holds the charge.
+    const raced = `race-held-${run}`, second = `cs_test_race_held_${run}`;
+    assert.equal((await create(`jobs/${raced}`, job)).status, 200);
+    const before = await read(`jobs/${raced}`);
+    beforeCommit = async () => assert.equal((await create(`payment_reviews/${second}`, { sessionId: second, jobId: raced, kind: 'egc_customer_portal_payment', reason: 'payment_refunded', status: 'open', amountCents: 55000, tipCents: 5000, refundedCents: 20000, createdAt: NOW })).status, 200);
+    statuses.length = 0;
+    await assert.rejects(recordCustomerStripePayment(env, checkout(raced, second), raced, NOW, { recordedBy: 'customer_portal' }), error => error.code === 'payment_refunded' && error.reviewRecorded === true && error.reviewOpen === true);
+    assert.deepEqual(statuses, [409], 'the booking commit was refused as a whole');
+    const after = await read(`jobs/${raced}`);
+    assert.deepEqual([after.updateTime, decodeFirestoreFields(after.fields).payment], [before.updateTime, job.payment], 'the refunded tipped charge is never booked');
+    assert.equal(decodeFirestoreFields((await read(`payment_reviews/${second}`)).fields).status, 'open');
+  });
+});

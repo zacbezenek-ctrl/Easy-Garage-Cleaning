@@ -43,7 +43,7 @@ async function seedStaff() {
 }
 const writeSettings = (fire, fields) => fire.documents.set(SETTINGS, { name: `${ROOT}/${SETTINGS}`, fields: encodeFirestoreFields(fields), updateTime: '2026-09-21T12:00:00.000001Z' });
 async function rpc(extraEnv, body) {
-  const claims = { v: 1, iss: 'portal', aud: 'egc-portal', iat: Math.floor(Date.now() / 1000), nonce: crypto.randomUUID(), actor: { id: 'synthetic-integration', role: 'integration', kind: 'integration', workspace: 'egc' }, request: { requestId: crypto.randomUUID(), body } };
+  const claims = { v: 1, iss: 'portal', aud: 'egc-portal', iat: Math.floor(Date.now() / 1000), nonce: crypto.randomUUID(), actor: { id: 'inbound-response-reconciler', role: 'integration', kind: 'integration', workspace: 'egc' }, request: { requestId: crypto.randomUUID(), body } };
   const request = new Request('https://portal.test/api/operations-portal', { method: 'POST', body: JSON.stringify({ envelope: await signOperationsEnvelope(claims, key) }) });
   const response = await portal({ request, env: { ...env, EGC_OPERATIONS_ENABLED: 'true', EGC_OPERATIONS_SERVICE_AUTH: 'legacy', EGC_OPERATIONS_PORTAL_SIGNING_SECRET: key, ...extraEnv } });
   return { status: response.status, text: await response.text() };

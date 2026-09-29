@@ -1,20 +1,21 @@
 import {randomUUID} from "node:crypto";
 import type {FastifyInstance} from "fastify";
-import {OperationsError,operationsService,signRequest,authorize,SERVICE_ORIGINS,type Actor,type Command,type OperationsService,type PortalJobReference} from "@egc/operations";
+import {OperationsError,operationsService,signRequest,authorize,SERVICE_ORIGINS,type Actor,type BridgeIssuer,type Command,type OperationsService,type PortalJobReference} from "@egc/operations";
 import {getDb,schema} from "@egc/database";
-import {InboundActionReconciler,type InboundPolicy} from "./inbound-actions.js";
+import {InboundActionReconciler,INBOUND_TASKS_DISABLED,inboundTasksEnabled,type InboundPolicy} from "./inbound-actions.js";
 import {syncPortalSchedule} from "./scheduling.js";
 import {ensureProviderNote} from "./provider-notes.js";
 import {actionSendEnabled,actionSendHook} from "./action-send.js";
 import {getCanonicalReport,getCustomerTimeline,getCustomerStateDiagnostics} from '@egc/customer-state';
 import {reconcileHubBookings} from './booking-worker.js';
-import {serviceAuthEnabled,signApiServiceRequest,verifyDelegatedClaims,verifyOperationsClaims} from './service-bridge.js';
+import {auditLogWriter,claimsIssuer,recordIssuerRefusal,serviceAuthEnabled,signApiServiceRequest,verifyDelegatedClaims,verifyOperationsClaims,type AuditRow} from './service-bridge.js';
 import {reconciliationDiagnostic,safeReconciliationCode} from './reconciliation-diagnostics.js';
 import {registerScheduleSyncWorker,type ScheduleSyncExecute} from './schedule-sync-worker.js';
 import {registerRecurringHorizon} from './recurring-horizon-worker.js';
 
 /** Run only by the in-process schedule-sync loop (schedule-sync-worker.ts calls OperationsService.execute
- * directly). The API does not bind integration actor ids to an issuer, so no signed envelope reaches them. */
+ * directly), so no signed envelope reaches them. BRIDGE-ADOPT-AUTHZ also binds schedule-sync-worker to the
+ * API, so neither the MCP nor the Hub key may present it; this check refuses the commands for any actor. */
 const INTERNAL_ONLY_COMMANDS:ReadonlySet<string>=new Set(["schedule.sync_due","schedule.sync_failed"]);
 
 export function portalAdapter(origin:string,key:string,workspace:string,fetcher:typeof fetch=fetch,env:NodeJS.ProcessEnv=process.env) {
@@ -42,10 +43,22 @@ export function portalAdapter(origin:string,key:string,workspace:string,fetcher:
     return job;
   }};
 }
-export async function registerOperationsRoutes(app:FastifyInstance,options:{service?:OperationsService;env?:NodeJS.ProcessEnv}={}) {
+export async function registerOperationsRoutes(app:FastifyInstance,options:{service?:OperationsService;env?:NodeJS.ProcessEnv;audit?:(row:AuditRow)=>Promise<unknown>;inbound?:Pick<InboundActionReconciler,"run">}={}) {
   const env=options.env??process.env;
+  // BRIDGE-ADOPT-AUTHZ: runs a signed request with the issuer its claims verified. A refusal of an
+  // actor that issuer may not present is logged and kept in audit_logs (best effort) before it is rethrown.
+  const audit=options.audit??auditLogWriter;
+  const signed=async<T>(claims:Awaited<ReturnType<typeof verifyOperationsClaims>>,run:(issuer:BridgeIssuer)=>T|Promise<T>):Promise<T>=>{
+    const issuer=claimsIssuer(claims);
+    try{return await run(issuer);}
+    catch(error){
+      await recordIssuerRefusal(app.log,audit,error,{issuer,actor:claims.actor,command:claims.request.body.command,requestId:claims.request.requestId,entity:"operations_request",source:"operations"});
+      throw error;
+    }
+  };
   let service=options.service;
-  let inbound:InboundActionReconciler|undefined;
+  // The inbound reconciler exists, ticks and answers inbound.reconcile only when EGC_OPERATIONS_INBOUND_TASKS_ENABLED is exactly "true".
+  let inbound:Pick<InboundActionReconciler,"run">|undefined=inboundTasksEnabled(env)?options.inbound:undefined;
   let bookingTick:(()=>Promise<unknown>)|undefined;
   let scheduleSyncExecute:ScheduleSyncExecute|undefined;
   if(!service && env.EGC_OPERATIONS_ENABLED==="true") {
@@ -58,12 +71,12 @@ export async function registerOperationsRoutes(app:FastifyInstance,options:{serv
       if(command.command==='intelligence.report')return getCanonicalReport({since:command.since,until:command.until,...(command.cohortSince?{cohortSince:command.cohortSince}:{}),...(command.cohortUntil?{cohortUntil:command.cohortUntil}:{}),refresh:true});
       if(command.command==='intelligence.customer')return getCustomerTimeline({contactId:command.contactId});
       return getCustomerStateDiagnostics();
-    },...(bridge?{resolvePortalJob:bridge.resolve,resolveOwner:bridge.owner,portalRead:bridge.read,syncSchedule:(actor,command)=>syncPortalSchedule(actor,command,bridge.read,{env}),ensureProviderNote:(actor,command)=>ensureProviderNote(actor,command,bridge.read,{service:service!})}:{})});
+    },...(bridge?{resolvePortalJob:bridge.resolve,resolveOwner:bridge.owner,portalRead:bridge.read,syncSchedule:(actor,command)=>syncPortalSchedule(actor,command,bridge.read,{env}),ensureProviderNote:(actor,command)=>ensureProviderNote(actor,command,bridge.read,{service:service!,env})}:{})});
     if(bridge)bookingTick=()=>reconcileHubBookings(bridge.read,env);
     if(bridge){const operations=service;scheduleSyncExecute=(actor,body,requestId)=>operations.execute(actor,body,requestId);}
     // Hourly recurring-plan horizon over this same bridge; no timer unless EGC_RECURRING_PLANS_ENABLED=true.
     if(bridge)registerRecurringHorizon(app,{env,read:bridge.read,workspace});
-    if(bridge){const actor:Actor={id:"inbound-response-reconciler",kind:"integration",role:"integration",workspace};inbound=new InboundActionReconciler(getDb(),service,async()=>await bridge.read(actor,{command:"portal.rules"}) as unknown as InboundPolicy,workspace);}
+    if(bridge&&inboundTasksEnabled(env)){const actor:Actor={id:"inbound-response-reconciler",kind:"integration",role:"integration",workspace};inbound=new InboundActionReconciler(getDb(),service,async()=>await bridge.read(actor,{command:"portal.rules"}) as unknown as InboundPolicy,workspace);}
   }
   if(bookingTick){let running=false;const mark=async(key:string,value?:string)=>{const now=new Date(),cursor=value??now.toISOString();await getDb().insert(schema.syncCursors).values({key,cursor}).onConflictDoUpdate({target:schema.syncCursors.key,set:{cursor,updatedAt:now}});};const tick=async()=>{if(running)return;running=true;try{await mark('customer_state:last_booking_attempt');await bookingTick!();await mark('customer_state:last_booking_success');}catch(error){const failure=reconciliationDiagnostic(error);await mark('customer_state:last_booking_failure').catch(()=>{});await mark('customer_state:last_booking_error',JSON.stringify({at:new Date().toISOString(),...failure})).catch(()=>{});app.log.warn({code:'booking_reconciliation_unavailable',...failure},'Hub booking reconciliation needs attention');}finally{running=false;}};const timer=setInterval(()=>void tick(),5*60000);timer.unref();app.addHook('onReady',async()=>{void tick();});app.addHook('onClose',async()=>{clearInterval(timer);});}
   // Server-driven schedule mirror queue (P1-DS-02): off unless EGC_SCHEDULE_SYNC_WORKER=true; needs the Hub bridge.
@@ -82,10 +95,10 @@ export async function registerOperationsRoutes(app:FastifyInstance,options:{serv
       // applies authorize() (the SEC-04 BRIDGE-AUTHZ table) to the same actor.
       await verifyDelegatedClaims(claims);
       if(claims.request.body.command==="inbound.reconcile"){
-        authorize(claims.actor,claims.request.body,env.EGC_OPERATIONS_WORKSPACE??"egc");if(!inbound)throw new OperationsError("inbound_reconciliation_not_configured",503);
+        await signed(claims,issuer=>authorize(claims.actor,claims.request.body,env.EGC_OPERATIONS_WORKSPACE??"egc",undefined,undefined,issuer));if(!inboundTasksEnabled(env))return reply.send(INBOUND_TASKS_DISABLED);if(!inbound)throw new OperationsError("inbound_reconciliation_not_configured",503);
         const command=claims.request.body;return reply.send(await inbound.run({limit:command.limit,...(command.lookbackDays?{lookbackDays:command.lookbackDays}:{})}));
       }
-      const result=await service.execute(claims.actor,claims.request.body,claims.request.requestId);
+      const result=await signed(claims,issuer=>service!.execute(claims.actor,claims.request.body,claims.request.requestId,issuer));
       return reply.send(result);
     }catch(e) {
       if(e instanceof OperationsError)return reply.code(e.status).send({error:e.code,...e.details});

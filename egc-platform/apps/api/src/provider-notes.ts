@@ -9,12 +9,17 @@ type Portal=(actor:Actor,command:Command)=>Promise<Json>;
 type Provider=Pick<GhlClient,'getContact'|'getContactNotes'|'createContactNote'|'locationId'>;
 const record=(v:unknown):Json=>v&&typeof v==='object'&&!Array.isArray(v)?v as Json:{};
 const digest=(v:unknown)=>createHash('sha256').update(JSON.stringify(v)).digest('hex');
+// GHL-ALIGN: the 6-month check-in is a HighLevel task the Hub creates. A platform task is opened only when the owner
+// opts in with exactly "true"; the Hub then sees followupTaskId and creates no HighLevel task, so a check-in is never both.
+export const checkinTasksEnabled=(env:NodeJS.ProcessEnv=process.env)=>env.EGC_OPERATIONS_CHECKIN_TASKS_ENABLED==="true";
+const followupKey=(portalJobId:string,source:Json)=>{const job=record(source.job),completion=job.completedAt??record(record(source.financials).completion).at;return typeof completion==='string'&&Number.isFinite(Date.parse(completion))?'post_job_6_month:'+portalJobId+':'+new Date(completion).toISOString():null;};
+const followupTask=async(db:ReturnType<typeof getDb>,workspace:string,dedupeKey:string)=>(await db.select({id:schema.tasks.id}).from(schema.tasks).where(and(eq(schema.tasks.workspaceId,workspace),eq(schema.tasks.dedupeKey,dedupeKey))).limit(1))[0];
 export function sixMonthCheckin(completedAt:string){const d=new Date(completedAt);if(!Number.isFinite(d.getTime()))throw new OperationsError('post_job_completion_time_required',409);const day=d.getUTCDate();d.setUTCDate(1);d.setUTCMonth(d.getUTCMonth()+6);const last=new Date(Date.UTC(d.getUTCFullYear(),d.getUTCMonth()+1,0)).getUTCDate();d.setUTCDate(Math.min(day,last));return d.toISOString();}
 async function ensurePostJobFollowup(actor:Actor,command:NoteCommand,source:Json,portal:Portal,db:ReturnType<typeof getDb>,service:OperationsService){
   const job=record(source.job),completion=job.completedAt??record(record(source.financials).completion).at;
   if(job.type!=='job'||typeof completion!=='string'||!Number.isFinite(Date.parse(completion))||Date.parse(completion)>Date.now()+300000)throw new OperationsError('post_job_completion_time_required',409);
-  const completedAt=new Date(completion).toISOString(),dedupeKey='post_job_6_month:'+command.portalJobId+':'+completedAt;
-  const find=async()=>(await db.select({id:schema.tasks.id}).from(schema.tasks).where(and(eq(schema.tasks.workspaceId,actor.workspace),eq(schema.tasks.dedupeKey,dedupeKey))).limit(1))[0];
+  const completedAt=new Date(completion).toISOString(),dedupeKey=followupKey(command.portalJobId,source)!;
+  const find=()=>followupTask(db,actor.workspace,dedupeKey);
   const prior=await find();if(prior)return prior.id;
   const policy=await portal(actor,{command:'portal.rules'}),owner=record(policy.inboundResponse).ownerId;
   if(policy.authority!=='employee_hub'||typeof owner!=='string'||!owner)throw new OperationsError('post_job_followup_owner_unresolved',409);
@@ -23,7 +28,7 @@ async function ensurePostJobFollowup(actor:Actor,command:NoteCommand,source:Json
   try{const result=await service.execute(system,{command:'task.create',task:{title:'6-month garage check-in',description:'Ask how the completed garage system is holding up and whether maintenance would help. Review customer preferences before contacting them.',kind:'callback',priority:'medium',assignedUserId:owner,dueAt:sixMonthCheckin(completedAt),timeZone:'America/Denver',waitingOn:'none',portalJobId:command.portalJobId,portalVisitId:typeof job.sourceWalkthroughId==='string'?job.sourceWalkthroughId:null,completionCondition:'Record the check-in result or a documented decision not to contact the customer.',sourceEvidence:[{source:'portal_job',id:command.portalJobId,excerpt:'Job completion recorded at '+completedAt}],dedupeKey}},requestId);const task=record(result.task);if(typeof task.id!=='string')throw new OperationsError('post_job_followup_unverified',503);return task.id;}catch(error){const existing=await find();if(existing)return existing.id;throw error;}
 }
 /** One intent and verified receipt shared by native requests and scheduled workers. */
-export async function ensureProviderNote(actor:Actor,command:NoteCommand,portal:Portal,options:{db?:ReturnType<typeof getDb>;provider?:Provider;service?:OperationsService}={}){
+export async function ensureProviderNote(actor:Actor,command:NoteCommand,portal:Portal,options:{db?:ReturnType<typeof getDb>;provider?:Provider;service?:OperationsService;env?:NodeJS.ProcessEnv}={}){
   const db=options.db??getDb(),provider=options.provider??GhlClient.fromEnv();
   const source=await portal(actor,{command:'portal.job',jobId:command.portalJobId}),job=record(source.job);
   if(source.authority!=='employee_hub'||job.id!==command.portalJobId||!['job','walkthrough'].includes(String(job.type)))throw new OperationsError('provider_note_source_unverified',409);
@@ -48,7 +53,16 @@ export async function ensureProviderNote(actor:Actor,command:NoteCommand,portal:
   event=await find();const noteId=event?.payload._egcVerifiedNoteId;
   if(event?.processingStatus==='processed'&&typeof noteId==='string'){
     let followupTaskId:string|undefined;
-    if(command.scope==='post_job'){
+    const stamped=event.payload._egcFollowupTaskId;
+    // A platform task that already exists is reported whatever the flag says now, so the Hub never adds a HighLevel one beside it.
+    if(command.scope==='post_job'&&typeof stamped==='string'&&stamped)followupTaskId=stamped;
+    else if(command.scope==='post_job'&&!checkinTasksEnabled(options.env)){
+      // HighLevel owns this check-in: the event is labelled 'highlevel' so operations health never counts it as a pending platform follow-up.
+      try{const key=followupKey(command.portalJobId,source),prior=key?await followupTask(db,actor.workspace,key):undefined;followupTaskId=prior?.id;
+        await db.update(schema.outboxEvents).set({payload:prior?sql`jsonb_set(jsonb_set(${schema.outboxEvents.payload},'{_egcFollowupStatus}','"complete"'),'{_egcFollowupTaskId}',${JSON.stringify(prior.id)}::jsonb)`:sql`jsonb_set(${schema.outboxEvents.payload},'{_egcFollowupStatus}','"highlevel"')`}).where(and(eq(schema.outboxEvents.id,event.id),sql`coalesce(${schema.outboxEvents.payload}->>'_egcFollowupStatus','')<>'complete'`));}
+      catch{return{ok:false,error:'post_job_followup_unavailable',outboxId:event.id,providerSync:'verified'};}
+    }
+    else if(command.scope==='post_job'){
       try{if(!options.service)throw new OperationsError('post_job_followup_unavailable',503);followupTaskId=await ensurePostJobFollowup(actor,command,source,portal,db,options.service);await db.update(schema.outboxEvents).set({payload:sql`jsonb_set(jsonb_set(${schema.outboxEvents.payload},'{_egcFollowupStatus}','"complete"'),'{_egcFollowupTaskId}',${JSON.stringify(followupTaskId)}::jsonb)`}).where(eq(schema.outboxEvents.id,event.id));}
       catch(error){await db.update(schema.outboxEvents).set({payload:sql`jsonb_set(${schema.outboxEvents.payload},'{_egcFollowupStatus}','"blocked"')`}).where(and(eq(schema.outboxEvents.id,event.id),sql`coalesce(${schema.outboxEvents.payload}->>'_egcFollowupStatus','')<>'complete'`));return{ok:false,error:error instanceof OperationsError&&['post_job_completion_time_required','post_job_followup_owner_unresolved'].includes(error.code)?error.code:'post_job_followup_unavailable',outboxId:event.id,providerSync:'verified',followupStatus:'blocked'};}
     }

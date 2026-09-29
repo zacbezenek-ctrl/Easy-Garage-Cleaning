@@ -1,0 +1,36 @@
+/* Pending sync chip and panel for the Hub offline queue (employee-offline-queue.js). Phone first (375x812): the chip sits
+   above the toast in thumb reach, never wider than the screen, below the nav drawer's scrim; every target is 44px. */
+.egc-hub-sync{position:fixed;left:16px;bottom:calc(76px + env(safe-area-inset-bottom));z-index:88;max-width:calc(100vw - 32px)}
+.egc-hub-sync[hidden]{display:none}
+.hs-chip{display:inline-flex;align-items:center;gap:8px;min-height:44px;max-width:100%;padding:0 16px;border:1px solid #d69a21;border-radius:999px;background:#fff8e6;color:#3d2c05;font:700 14px/1.2 Inter,system-ui,-apple-system,'Segoe UI',sans-serif;box-shadow:0 8px 24px rgba(7,15,27,.25);cursor:pointer;touch-action:manipulation}
+.hs-chip:focus-visible,.hs-panel button:focus-visible{outline:3px solid rgba(238,92,43,.45);outline-offset:2px}
+.hs-label{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.hs-dot{width:9px;height:9px;flex:0 0 9px;border-radius:50%;background:#d69a21}
+.egc-hub-sync.refused .hs-chip{border-color:#b83b44;background:#fdecea;color:#5c1109}
+.egc-hub-sync.refused .hs-dot{background:#b83b44}
+.hs-panel{width:min(440px,calc(100vw - 12px));max-width:calc(100vw - 12px);max-height:calc(100dvh - 12px);padding:0;border:0;border-radius:10px;background:#fbfaf7;color:#172033;font:15px/1.45 Inter,system-ui,-apple-system,'Segoe UI',sans-serif;box-shadow:0 30px 80px rgba(0,0,0,.35);overflow:auto;box-sizing:border-box}
+.hs-panel[open]{display:flex;flex-direction:column}
+.hs-panel::backdrop{background:rgba(7,15,27,.6)}
+.hs-panel *{box-sizing:border-box}
+.hs-panel header{position:sticky;top:0;z-index:1;padding:16px 16px 8px;background:#fbfaf7}
+.hs-panel h2{margin:0;font:800 22px/1.2 'Fraunces',Georgia,serif;color:#0c1829}
+.hs-panel h3{margin:0 0 6px;font:800 15px/1.3 Inter,system-ui,sans-serif;color:#b83b44}
+.hs-body{display:grid;gap:12px;padding:0 16px}
+.hs-status{margin:0;color:#536173}
+.hs-list{display:grid;gap:8px;margin:0;padding:0;list-style:none}
+.hs-list li{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px;border:1px solid #d5dbe2;border-radius:6px;background:#fff;min-width:0}
+.hs-list li>div{display:grid;gap:2px;min-width:0}
+.hs-list strong{color:#0c1829;overflow-wrap:anywhere}
+.hs-list span{color:#536173;font-size:13px;overflow-wrap:anywhere}
+.hs-refused{display:grid;gap:8px;padding:12px;border:1px solid #efb5b8;border-radius:6px;background:#fdecea}
+.hs-panel button{min-height:44px;min-width:44px;padding:0 14px;border:1px solid #d5dbe2;border-radius:6px;background:#fff;color:#172033;font:700 14px/1.2 Inter,system-ui,sans-serif;cursor:pointer;touch-action:manipulation}
+.hs-panel button:disabled{opacity:.55;cursor:not-allowed}
+/* A long confirm label ("Tap again to discard this shift") wraps inside the button, which stays where it was tapped. */
+.hs-panel .hs-discard{flex:0 0 auto;max-width:50%;padding:4px 14px;white-space:normal;border-color:#efb5b8;color:#b83b44}
+.hs-panel .hs-dismiss{justify-self:start}
+.hs-panel footer{position:sticky;bottom:0;display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px;margin:4px -16px 0;padding:12px 16px calc(12px + env(safe-area-inset-bottom));border-top:1px solid #d5dbe2;background:#fbfaf7}
+.hs-panel .hs-sync{background:#ee5c2b;border-color:#ee5c2b;color:#fff}
+@media (max-width:680px){
+  .hs-panel{width:calc(100vw - 12px);border-radius:10px 10px 0 0;margin:auto auto 0}
+  .hs-panel footer button{flex:1 1 0}
+}

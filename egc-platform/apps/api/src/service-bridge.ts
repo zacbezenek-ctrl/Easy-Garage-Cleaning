@@ -1,7 +1,7 @@
 import {getDb,schema} from '@egc/database';
 import {lt} from 'drizzle-orm';
-import {OperationsError,ServiceAuthenticationError,actorSchema,authorizeDelegate,requestSchema,verifyMcpGrant,verifyRequest,verifyServiceRequest,signServiceRequest,servicePublicKeySet,type Actor,type Command,type Delegate,type ServiceKeyResolver} from '@egc/operations';
-import type {FastifyInstance} from 'fastify';
+import {OperationsError,ServiceAuthenticationError,actorSchema,authorizeDelegate,bridgeActorIssuer,requestSchema,verifyMcpGrant,verifyRequest,verifyServiceRequest,signServiceRequest,servicePublicKeySet,SERVICE_ORIGINS,type Actor,type BridgeIssuer,type Command,type Delegate,type ServiceKeyResolver} from '@egc/operations';
+import type {FastifyBaseLogger,FastifyInstance} from 'fastify';
 
 export const serviceAuthEnabled=(env:NodeJS.ProcessEnv)=>{const mode=env.EGC_OPERATIONS_SERVICE_AUTH;if(mode&&mode!=='v2'&&mode!=='legacy')throw new OperationsError('service_auth_mode_invalid',503);return mode==='v2';};
 const workspace=(env:NodeJS.ProcessEnv)=>env.EGC_OPERATIONS_WORKSPACE??'egc';
@@ -30,6 +30,26 @@ export async function verifyOperationsClaims(token:unknown,env:NodeJS.ProcessEnv
  // The MCP is a separate existing trusted issuer. A failed Hub v2 signature
  // never falls back to this path or to the legacy shared Portal key.
  return verifyRequest(token,{...(serviceAuthEnabled(env)?{}:env.EGC_OPERATIONS_PORTAL_SIGNING_SECRET?{portal:env.EGC_OPERATIONS_PORTAL_SIGNING_SECRET}:{}),...(env.EGC_OPERATIONS_MCP_SIGNING_SECRET?{mcp:env.EGC_OPERATIONS_MCP_SIGNING_SECRET}:{})});
+}
+/** BRIDGE-ADOPT-AUTHZ: the service whose key signed verified operations claims. The MCP key
+ * is the MCP's; the Hub v2 key and the legacy portal key are the Hub's (the API never signs
+ * its own RPC). authorize() binds every integration actor to this issuer. */
+export function claimsIssuer(claims:{iss:string}):BridgeIssuer{
+ if(claims.iss==='mcp')return 'mcp';
+ if(claims.iss==='portal'||claims.iss===SERVICE_ORIGINS.hub)return 'hub';
+ throw new OperationsError('invalid_operations_signature',401);
+}
+export type AuditRow=typeof schema.auditLogs.$inferInsert;
+export const auditLogWriter=async(row:AuditRow)=>getDb().insert(schema.auditLogs).values(row);
+export type IssuerRefusal={issuer:BridgeIssuer;actor:Actor;command:string;requestId:string;entity:'operations_request'|'recording_request';source:'operations'|'recordings'};
+/** BRIDGE-ADOPT-AUTHZ: a signed request refused because its signer may not present its integration
+ * actor (bridge_integration_issuer_*) is logged and kept in audit_logs, best effort: a lost audit
+ * write never changes the refusal. Any other error is left alone. */
+export async function recordIssuerRefusal(log:FastifyBaseLogger,audit:(row:AuditRow)=>Promise<unknown>,error:unknown,refused:IssuerRefusal){
+ if(!(error instanceof OperationsError)||!/^bridge_integration_issuer_[a-z_]+$/.test(error.code))return;
+ const actor=/^[A-Za-z0-9_:@.\-]{1,200}$/.test(refused.actor.id)?refused.actor.id:'invalid',{issuer,command}=refused;
+ log.warn({code:error.code,issuer,actor,command},'Refused a signed request for an actor its signer does not present');
+ await Promise.resolve().then(()=>audit({actor,action:'operations.issuer_refused',entity:refused.entity,entityId:refused.requestId,newValue:{code:error.code,issuer,boundTo:bridgeActorIssuer(refused.actor.id),command},source:refused.source})).catch(()=>{});
 }
 /** A delegated MCP grant must carry the Hub's signature over exactly this user and role; only owner or manager delegates write. */
 export async function verifyDelegatedClaims(claims:{actor:Actor;request:{body:Command};delegate?:Delegate|undefined},options:{resolveKey?:ServiceKeyResolver;now?:number}={}){

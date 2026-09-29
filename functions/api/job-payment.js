@@ -1,9 +1,10 @@
 import { getHubSession, hasBusinessAccess } from '../_lib/hub-session.js';
 import { readJob } from '../_lib/firestore-job.js';
 import { createJobAssignmentAccess } from '../_lib/job-assignment.js';
-import { customerMoneyState, customerPaymentNeedsReview, openPaymentReview, paymentReviewCheckoutBlockEnabled, recordCrewStripePayment, stripeSecretKey as stripeKey } from '../_lib/customer-payments.js';
+import { CHECKOUT_HOLD_CODE, CHECKOUT_HOLD_TEXT, STRIPE_API_VERSION, TIP_PRESETS, addTipLine, checkoutHold, customerMoneyState, customerPaymentNeedsReview, customerTipsEnabled, recordCrewStripePayment, requestTip, stripeSecretKey as stripeKey, tipRefusal, validTip } from '../_lib/customer-payments.js';
 
 const STRIPE_API = 'https://api.stripe.com/v1';
+const SESSION_ID = /^cs_(?:test_|live_)?[A-Za-z0-9_]+$/;
 const HOST = /^(?:easygaragecleaning\.com|www\.easygaragecleaning\.com|easy-garage-cleaning\.pages\.dev|localhost(?::\d+)?|127\.0\.0\.1(?::\d+)?)$/;
 
 function json(status, body) {
@@ -37,6 +38,9 @@ async function stripe(secret, path, options = {}) {
     ...options,
     headers: {
       Authorization: basicAuth(secret),
+      // Pinned like every customer-payment call: the crew return needs payment_intent.latest_charge (2022-11-15 and
+      // later) whatever the Stripe account's default API version is.
+      'Stripe-Version': STRIPE_API_VERSION,
       ...(options.body ? { 'Content-Type': 'application/x-www-form-urlencoded' } : {}),
       ...(options.headers || {}),
     },
@@ -49,6 +53,21 @@ async function stripe(secret, path, options = {}) {
     throw error;
   }
   return data;
+}
+
+// A crew device that changes the amount or tip, or comes back from a cancelled checkout, names the checkout it
+// opened before so only one link per job stays payable. Only this job's own crew checkout is ever closed; a
+// completed one that is not on the job yet must be verified first, never charged again. Null means go ahead.
+async function closeEarlierCheckout(secret, job, jobId, sessionId) {
+  const earlier = await stripe(secret, `checkout/sessions/${encodeURIComponent(sessionId)}`).catch(error => { if (error.status === 404) return null; throw error; });
+  if (!earlier || earlier.metadata?.kind !== 'egc_job_payment' || earlier.metadata?.job_id !== jobId || earlier.client_reference_id !== jobId) return null;
+  if (earlier.status === 'complete') {
+    const recorded = job.payment?.verified === true && (Array.isArray(job.payment.stripeSessions) ? job.payment.stripeSessions : []).some(item => String(item?.sessionId || item) === sessionId);
+    return recorded ? null : json(409, { ok: false, code: 'JOB_PAYMENT_EARLIER_CHECKOUT_PAID', error: 'The earlier card checkout for this job was paid. Verify it before taking another payment. Do not charge again.', sessionId });
+  }
+  if (earlier.status !== 'open') return null;
+  const closed = await stripe(secret, `checkout/sessions/${encodeURIComponent(sessionId)}/expire`, { method: 'POST' });
+  return closed.status === 'expired' ? null : json(409, { ok: false, code: 'JOB_PAYMENT_EARLIER_CHECKOUT_OPEN', error: 'The earlier card checkout could not be closed yet. Retry in a moment.' });
 }
 
 export async function onRequestPost({ request, env }) {
@@ -67,14 +86,28 @@ export async function onRequestPost({ request, env }) {
   if (!jobId || !requestId || !Number.isInteger(amountCents) || amountCents < 50 || amountCents > 1000000) {
     return json(400, { ok: false, error: 'A valid job, request, and payment amount are required' });
   }
+  let tipCents;
+  try { tipCents = requestTip(body.tip_cents); } catch (error) { return json(400, { ok: false, code: 'JOB_PAYMENT_TIP_INVALID', error: error.message }); }
+  // Checkout rotation ships with tips: with CUSTOMER_TIPS_ENABLED unset, replaces_session_id is ignored and a card
+  // payment request is handled exactly as it was before tips.
+  const tipsEnabled = customerTipsEnabled(env), named = body.replaces_session_id;
+  const replaces = !tipsEnabled || named === undefined || named === null || named === '' ? '' : safe(named, 180);
+  if (replaces && !SESSION_ID.test(replaces)) return json(400, { ok: false, code: 'JOB_PAYMENT_CHECKOUT_INVALID', error: 'The earlier checkout reference is invalid' });
+  if (tipCents && !tipsEnabled) return json(409, { ok: false, code: 'JOB_PAYMENT_TIPS_DISABLED', error: 'Tips are not available for card payments right now. Take the payment without a tip.' });
   const job = await authorizedJob(env, jobId, session);
   if (!job) return json(403, { ok: false, error: 'This job is not assigned to you' });
   if (customerPaymentNeedsReview(job)) return json(409, { ok: false, error: 'An earlier recorded payment needs manager verification before taking another payment' });
-  if (paymentReviewCheckoutBlockEnabled(env)) {
-    let held;
-    try { held = await openPaymentReview(env, jobId); } catch { return json(503, { ok: false, code: 'payment_review_unavailable', error: 'Payment reviews could not be checked. Retry before taking a payment.' }); }
-    if (held) return json(409, { ok: false, code: 'payment_review_open', error: 'A confirmed card payment on this job is waiting for manager review. Do not charge again; a manager resolves it in Hub > Review queues.' });
-  }
+  // One check (one query) for both rules, fail closed; neither flag on means no read, exactly as before:
+  // - CUSTOMER_TIPS_ENABLED: a tipped charge held for a manager (an open payment review, from this or any device or
+  //   the portal) stops every new card checkout for the job, whatever the device remembers (a tip-config read that timed
+  //   out sends a fresh request naming no earlier checkout), until it is resolved in Hub > Review queues;
+  // - PAYMENT_REVIEW_CHECKOUT_BLOCK_ENABLED: any open payment review does.
+  let held;
+  try { held = await checkoutHold(env, jobId, job); } catch { return json(503, { ok: false, code: 'payment_review_unavailable', error: 'Payment reviews could not be checked. Retry before taking a payment.' }); }
+  if (held) return json(409, { ok: false, code: CHECKOUT_HOLD_CODE, error: CHECKOUT_HOLD_TEXT.crew });
+  // A tip never rides on a cancelled, superseded or lost job, a void invoice, or a refunded job.
+  const refusal = tipCents ? tipRefusal(job) : '';
+  if (refusal) return json(409, { ok: false, code: 'JOB_PAYMENT_TIP_UNAVAILABLE', error: `${refusal} Take the payment without a tip, or ask a manager.` });
   const customer = safe(job.customer || job.customerName, 120);
   const email = safe(job.email, 180);
   const finance = customerMoneyState(job);
@@ -84,6 +117,9 @@ export async function onRequestPost({ request, env }) {
   if (!Number.isInteger(totalCents) || totalCents < 50 || amountCents > balanceCents) {
     return json(409, { ok: false, error: 'Payment exceeds the current job balance' });
   }
+  // The tip is bounded by what this card charge pays toward the balance: a partial charge carries at most half of
+  // itself, so it is never a tip-only checkout (amount_cents is at least $0.50 above).
+  try { validTip(tipCents, balanceCents, 'balance', amountCents); } catch (error) { return json(error.status || 400, { ok: false, code: 'JOB_PAYMENT_TIP_INVALID', error: error.message }); }
   if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return json(400, { ok: false, error: 'Customer email is invalid' });
   const origin = new URL(request.url).origin;
   const returnJob = encodeURIComponent(jobId);
@@ -107,12 +143,18 @@ export async function onRequestPost({ request, env }) {
     params.set('customer_email', email);
     params.set('payment_intent_data[receipt_email]', email);
   }
+  addTipLine(params, tipCents);
   try {
+    const stop = replaces ? await closeEarlierCheckout(secret, job, jobId, replaces) : null;
+    if (stop) return stop;
+    // A different tip is a different checkout; the same request and tip reuse Stripe's session.
     const checkout = await stripe(secret, 'checkout/sessions', {
       method: 'POST',
-      headers: { 'Idempotency-Key': `egc-job-payment:${jobId}:${requestId}`.slice(0, 255) },
+      headers: { 'Idempotency-Key': `egc-job-payment:${jobId}:${requestId}${tipCents ? `:tip:${tipCents}` : ''}`.slice(0, 255) },
       body: params,
     });
+    // Never hand out the checkout just closed (a request can only replace an earlier one, not itself).
+    if (replaces && checkout.id === replaces) return json(409, { ok: false, code: 'JOB_PAYMENT_REQUEST_STALE', error: 'This card payment request is out of date. Take the payment again.' });
     if (!/^https:\/\/checkout\.stripe\.com\//.test(checkout.url || '')) throw new Error('Stripe did not return a safe Checkout URL');
     return json(200, { ok: true, sessionId: checkout.id || '', url: checkout.url });
   } catch (error) {
@@ -129,8 +171,11 @@ export function jobPaymentVerifier({ now = () => new Date() } = {}) {
     if (!session) return json(401, { ok: false, code: 'HUB_AUTH_REQUIRED', error: 'Sign in to verify payment' });
     const secret = stripeKey(env);
     if (!secret) return json(501, { ok: false, code: 'STRIPE_NOT_CONFIGURED', error: 'Stripe is not configured' });
-    const id = safe(new URL(request.url).searchParams.get('session_id'), 180);
-    if (!/^cs_(?:test_|live_)?[A-Za-z0-9_]+$/.test(id)) return json(400, { ok: false, error: 'Invalid Checkout session' });
+    const params = new URL(request.url).searchParams;
+    // Closeout asks once whether it may offer the tip chips before a card payment.
+    if (params.get('config') === 'tips' && [...params.keys()].length === 1) return json(200, { ok: true, tips: { enabled: customerTipsEnabled(env), presets: [...TIP_PRESETS] } });
+    const id = safe(params.get('session_id'), 180);
+    if (!SESSION_ID.test(id)) return json(400, { ok: false, error: 'Invalid Checkout session' });
     try {
       const checkout = await stripe(secret, `checkout/sessions/${encodeURIComponent(id)}?expand[]=payment_intent.latest_charge`);
       const paid = checkout.payment_status === 'paid' && checkout.status === 'complete';
@@ -154,7 +199,7 @@ export function jobPaymentVerifier({ now = () => new Date() } = {}) {
         currency: checkout.currency || 'usd',
         jobId,
         receiptEmail: safe(checkout.customer_details?.email || checkout.customer_email, 180),
-        ...(recorded ? { duplicate: recorded.duplicate, receiptUrl: recorded.receiptUrl, payment: recorded.payment, invoice: recorded.invoice, paymentSyncPayload: recorded.paymentSyncPayload } : {}),
+        ...(recorded ? { duplicate: recorded.duplicate, receiptUrl: recorded.receiptUrl, payment: recorded.payment, invoice: recorded.invoice, paymentSyncPayload: recorded.paymentSyncPayload, ...(recorded.tipPaid ? { tipPaid: recorded.tipPaid } : {}) } : {}),
       });
     } catch (error) {
       return json(502, { ok: false, error: 'Stripe payment could not be verified', detail: error.type || '' });

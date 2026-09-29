@@ -211,8 +211,10 @@ test('HTTP: a manager cannot claim a timecard with no employee, or read the pay 
   const s = await shift(t);
   // Canaries no hour count, id or timestamp contains.
   const RATE = 44.47, BONUS = 12.37;
-  const orphan = await s.post(s.owner, 'timeEntries', 'orphan', { employeeName: 'Synthetic nobody', clockInAt: '2026-09-21T14:00:00.000Z', clockOutAt: '2026-09-21T18:00:00.000Z', status: 'submitted', approvalStatus: 'pending', hourlyRate: RATE, bonus: BONUS });
-  assert.deepEqual([orphan.employee, orphan.hourlyRate, orphan.bonus], [undefined, RATE, BONUS], 'precondition: the owner stored pay on a timecard with no employee');
+  // A new timecard must name its employee (HUB-PWA), so the legacy orphan is made by clearing the employee afterwards.
+  await s.post(s.owner, 'timeEntries', 'orphan', { employee: 'Crew.Account', employeeName: 'Synthetic nobody', clockInAt: '2026-09-21T14:00:00.000Z', clockOutAt: '2026-09-21T18:00:00.000Z', status: 'submitted', approvalStatus: 'pending', hourlyRate: RATE, bonus: BONUS });
+  const orphan = await s.post(s.owner, 'timeEntries', 'orphan', { employee: '' });
+  assert.deepEqual([orphan.employee, orphan.hourlyRate, orphan.bonus], ['', RATE, BONUS], 'precondition: the owner stored pay on a timecard with no employee');
   const before = s.fire.snapshot();
   for (const employee of ['TylerG', ' tylerg ']) {
     const response = await s.send(s.manager, 'timeEntries', 'orphan', { employee });
@@ -222,7 +224,7 @@ test('HTTP: a manager cannot claim a timecard with no employee, or read the pay 
   }
   assert.equal(s.fire.snapshot(), before, 'nothing was written');
   const saved = await s.stored('orphan');
-  assert.deepEqual([saved.data.employee, saved.data.hourlyRate, saved.data.bonus], [undefined, RATE, BONUS]);
+  assert.deepEqual([saved.data.employee, saved.data.hourlyRate, saved.data.bonus], ['', RATE, BONUS]);
   const seen = (await s.get(s.manager)).collections.timeEntries.find(row => row.id === 'orphan');
   assert.ok(seen, 'the manager still sees the timecard\'s hours');
   for (const field of PAY_FIELDS) assert.equal(field in seen, false, field);

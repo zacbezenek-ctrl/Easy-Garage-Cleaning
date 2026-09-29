@@ -21,6 +21,10 @@ export function followupAssignment(policy:InboundPolicy,from:Date){
   if(opens===null)throw new OperationsError('followup_policy_unresolved',409);
   return{assignedUserId:f.ownerId,dueAt:new Date(opens).toISOString(),timeZone:'America/Denver' as const};
 }
+// GHL-ALIGN: unanswered customer texts are followed up in HighLevel's own conversations. Review tasks for them are
+// opened only when the owner opts in with exactly "true" (egc-api; egc-mcp checks its own copy before calling).
+export const inboundTasksEnabled=(env:NodeJS.ProcessEnv=process.env)=>env.EGC_OPERATIONS_INBOUND_TASKS_ENABLED==="true";
+export const INBOUND_TASKS_DISABLED=Object.freeze({ok:false,disabled:true,error:'inbound_tasks_disabled',message:'disabled: follow-ups live in HighLevel',created:0,instruction:'Nothing was created. Unanswered customer texts stay in HighLevel conversations; follow up there.'});
 export function inboundRequestId(messageId:string){const h=createHash('sha256').update('inbound-action:'+messageId).digest('hex');return`${h.slice(0,8)}-${h.slice(8,12)}-5${h.slice(13,16)}-a${h.slice(17,20)}-${h.slice(20,32)}`;}
 export function inboundAction(message:{id:string;contactId:string;occurredAt:Date;body:string|null},policy:InboundPolicy){
   const p=policy.inboundResponse;if(policy.authority!=='employee_hub'||!p.enabled||!p.ownerId||!Number.isInteger(p.dueMinutes)||p.dueMinutes!<5)throw new OperationsError('inbound_policy_unresolved',409);

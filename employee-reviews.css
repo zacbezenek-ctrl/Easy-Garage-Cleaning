@@ -33,6 +33,7 @@
 .rv-excerpt{margin:0;padding:var(--hub-space-2) var(--hub-space-3);border-left:3px solid var(--hub-line);color:var(--hub-ink);font-size:14px;line-height:1.45;background:#fff}
 .rv-actions{margin-top:var(--hub-space-1)}
 .rv-refund{margin:0}
+.rv-tip{margin:0;font-size:14px;line-height:1.45;overflow-wrap:anywhere}
 .rv-late{display:grid;gap:var(--hub-space-2);min-width:0;margin-top:var(--hub-space-2)}
 .rv-late h3{font-size:1.05rem;line-height:1.3;margin:0}
 .rv-late>p{margin:0}

@@ -15,12 +15,14 @@ export const STAFF_GATED_PATHS = Object.freeze([
 
 // Staff-adjacent files that stay reachable signed out: the sign-in pages and their scripts, and the crew app shell. The
 // crew service worker installs and updates signed out, so it, the outbox queue it imports (no prices or pay), the offline
-// page and the manifest stay public; crew/offline.html loads nothing gated.
+// page and the manifest stay public; crew/offline.html loads nothing gated. Browsers fetch a web app manifest without
+// cookies, so the Hub's (names and icons only) is public too; the Hub worker, /hub-sw.js, sits outside these families.
 export const STAFF_PUBLIC_PATHS = Object.freeze([
   '/staff-login', '/staff-login.html', '/staff-login.js', '/staff-paths.js',
   '/crew', '/crew/', '/crew/index.html', '/crew/hub-auth.js', '/crew/crew-brand.css',
   '/crew/manifest.webmanifest', '/crew/sw.js', '/crew/field-outbox.js', '/crew/offline', '/crew/offline.html', '/crew/sw-config.json',
   '/employee-signup', '/employee-signup.html', '/hub-login-setup', '/hub-login-setup.html', '/hub-login-setup.js',
+  '/employee.webmanifest',
 ]);
 
 const glob = (flags) => path => new RegExp('^' + path.split('*').map(part => part.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('[^/]*') + '$', flags);

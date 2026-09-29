@@ -34,7 +34,8 @@ export function moneyStorage(env, fetcher = firestoreFetch) {
   }
   return {
     read: (collection, id) => mapped(() => base.read(collection, id), 'The job money record could not be loaded. Retry.'),
-    jobs: () => mapped(() => base.jobRecords([...MONEY_JOB_FIELDS]), 'The complete job money records could not be loaded. Retry.'),
+    // A caller that needs a few more job fields (tip allocation reads the assigned crew) names them; the mask still applies.
+    jobs: (extra = []) => mapped(() => base.jobRecords([...new Set([...MONEY_JOB_FIELDS, ...extra])]), 'The complete job money records could not be loaded. Retry.'),
     // JOB-COST-PRIVACY: the private labor records, and each job's legacy labor copy for the backfill that moves it.
     laborRecords: () => mapped(() => base.jobLaborCosts(), 'The complete job labor costs could not be loaded. Retry.'),
     laborCopies: () => mapped(() => base.jobRecords(['type', 'recordType', 'costs.labor', 'costs.laborCents', 'costs.recordedAt', 'costs.recordedBy', 'laborCost']), 'The complete job records could not be loaded. Retry.'),

@@ -94,7 +94,7 @@ function expectEffect(name:string,effect:Effect,run:Awaited<ReturnType<typeof ex
 beforeAll(()=>{
   // Registry tools get the clock through buildServer; legacy handlers read Date directly, so Date alone is pinned too.
   vi.useFakeTimers({toFake:['Date'],now:new Date(AT)});
-  for(const key of ['EGC_MCP_DIRECT_SENDS_ENABLED','MCP_BEARER_WRITE_ENABLED','GHL_WRITEBACK_ENABLED','GHL_WALKTHROUGH_CALENDAR_ID','GHL_JOBS_CALENDAR_ID'])delete process.env[key];
+  for(const key of ['EGC_MCP_DIRECT_SENDS_ENABLED','MCP_BEARER_WRITE_ENABLED','GHL_WRITEBACK_ENABLED','GHL_WALKTHROUGH_CALENDAR_ID','GHL_JOBS_CALENDAR_ID','EGC_OPERATIONS_INBOUND_TASKS_ENABLED'])delete process.env[key];
   Object.assign(process.env,{EGC_OPERATIONS_API_ORIGIN:'https://operations.example.test',EGC_OPERATIONS_MCP_SIGNING_SECRET:SECRET});
   driver=sqlDriver(statement=>{
     const rows=statement.op==='select'&&statement.table?state.rows[statement.table]:undefined;

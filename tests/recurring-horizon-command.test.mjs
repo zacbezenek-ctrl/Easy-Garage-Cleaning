@@ -275,9 +275,9 @@ async function signed(actor, body, env, iat) {
 
 test('the signed portal endpoint runs the command with the envelope clock and refuses other actors', async t => {
   t.mock.timers.enable({ apis:['Date'], now:Date.parse(NOW) });
-  const hosts = [];
-  t.mock.method(globalThis, 'fetch', async input => {
-    const url = new URL(String(input)); hosts.push(url.pathname.split('/').pop());
+  const hosts = [], bodies = [];
+  t.mock.method(globalThis, 'fetch', async (input, options = {}) => {
+    const url = new URL(String(input)); hosts.push(url.pathname.split('/').pop()); bodies.push(String(options.body || ''));
     assert.equal(url.hostname, 'firestore.googleapis.com');
     return new Response(JSON.stringify({ documents:[] }), { status:200, headers:{ 'Content-Type':'application/json' } });
   });
@@ -291,9 +291,16 @@ test('the signed portal endpoint runs the command with the envelope clock and re
   // (runRecurringHorizonCommand keeps its own recurring_horizon_internal_only check, tested above).
   hosts.length = 0;
   assert.deepEqual(await signed({ id:'zacb', kind:'human', role:'owner', workspace:'egc' }, command(), { ...env, EGC_RECURRING_PLANS_ENABLED:'true' }, iat), { status:403, body:{ error:'bridge_role_forbidden' } });
-  for (const id of ['booking-adoption-worker', 'mcp-service-grant', 'recurring-horizon-worker-2'])
+  for (const id of ['booking-adoption-worker', 'mcp-service-grant'])
     assert.deepEqual(await signed({ ...worker, id }, command(), { ...env, EGC_RECURRING_PLANS_ENABLED:'true' }, iat), { status:403, body:{ error:'bridge_integration_forbidden' } }, id);
   assert.deepEqual(hosts, [], 'A refused caller never reaches storage.');
+  // BRIDGE-ADOPT-AUTHZ (merge): an id no service mints is refused by the issuer binding, before the command policy;
+  // the only write is its create-only bridge.issuer_refused hub_audit entry.
+  bodies.length = 0;
+  assert.deepEqual(await signed({ ...worker, id:'recurring-horizon-worker-2' }, command(), { ...env, EGC_RECURRING_PLANS_ENABLED:'true' }, iat), { status:403, body:{ error:'bridge_integration_issuer_unknown' } });
+  assert.deepEqual(hosts, ['documents:commit'], 'The refused id reaches storage only for its audit entry.');
+  assert.match(bodies[0], /\/documents\/hub_audit\//); assert.match(bodies[0], /bridge\.issuer_refused/); assert.doesNotMatch(bodies[0], /recurringPlans/);
+  hosts.length = 0;
   assert.deepEqual(await signed(worker, command({ limit:99 }), { ...env, EGC_RECURRING_PLANS_ENABLED:'true' }, iat), { status:400, body:{ error:'recurring_horizon_invalid' } });
   assert.deepEqual(await signed({ ...worker, workspace:'other' }, command(), { ...env, EGC_RECURRING_PLANS_ENABLED:'true' }, iat), { status:403, body:{ error:'workspace_forbidden' } });
 });

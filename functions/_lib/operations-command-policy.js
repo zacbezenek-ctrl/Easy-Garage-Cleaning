@@ -1,7 +1,8 @@
-import {BRIDGE_COMMAND_POLICY,MCP_PRINCIPAL_PATTERN,bridgeCommandDenial,bridgeCommandPolicy} from '../../egc-platform/services/operations/src/bridge-command-policy.ts';
+import {BRIDGE_COMMAND_POLICY,MCP_PRINCIPAL_PATTERN,bridgeActorIssuer,bridgeCommandDenial,bridgeCommandPolicy,bridgeIssuerDenial} from '../../egc-platform/services/operations/src/bridge-command-policy.ts';
+import {SERVICE_ORIGINS} from '../../egc-platform/services/operations/src/service-auth.ts';
 import {HUB_COMMAND_POLICY,hubCommandDenial,hubCommandPolicy,isHubCommandName} from '../../egc-platform/services/operations/src/hub-command-policy.ts';
 import {consumeConfirmation,verifyConfirmation} from './confirm-token.js';
-import {auditWrite} from './hub-audit.js';
+import {auditWrite,hubAuditStorage} from './hub-audit.js';
 
 /* SEC-04: one authorization step for every command the signed operations bridge
  * dispatches. BRIDGE_COMMAND_POLICY (the same file the API authorize() reads) covers
@@ -36,6 +37,31 @@ export const OPERATIONS_COMMAND_POLICY=Object.freeze({...BRIDGE_COMMAND_POLICY,.
 
 /** Destructive legacy commands (a visit cancellation) need a token once the owner turns this on. */
 export const bridgeConfirmationRequired=env=>env?.EGC_OPERATIONS_BRIDGE_CONFIRM_REQUIRED==='true';
+
+/* BRIDGE-ADOPT-AUTHZ: the service whose key signed verified bridge claims, in the policy file's
+ * binding vocabulary. The Hub resolves only the API's v2 key, and only the API signs egc-portal
+ * envelopes with the legacy key (the Hub never calls its own bridge); anything else is null. */
+export function bridgeSigner(claims){
+  if(claims?.v===2&&claims.iss===SERVICE_ORIGINS.api&&/^api-v2-[a-f0-9]{32}$/.test(String(claims.kid)))return 'api';
+  if(claims?.v===1&&claims.iss==='portal'&&claims.aud==='egc-portal')return 'api';
+  return null;
+}
+
+// A refused binding still leaves a hub_audit entry; a lost audit write never admits the request.
+// The entry carries the envelope's own request id (the API's audit entityId) and is stamped with the
+// envelope's signed time, so a replayed envelope maps to the same create-only entry.
+async function auditIssuerRefusal(actor,body,{code,signer,claims,now},record){
+  const claimed=String(actor?.id??'').toLowerCase(),auditable=ACCOUNT.test(claimed);
+  const command=isObject(body)&&typeof body.command==='string'&&/^[A-Za-z0-9_.:-]{1,180}$/.test(body.command)?body.command:'unknown';
+  const requestId=claims?.request?.requestId;
+  try{
+    const signedAt=Number.isSafeInteger(claims?.iat)&&claims.iat>0?new Date(claims.iat*1000).toISOString():now;
+    await record(auditWrite({actor:{id:auditable?claimed:'unbound-integration',kind:'integration',role:typeof actor?.role==='string'&&/^[a-z][a-z_]{0,39}$/.test(actor.role)?actor.role:null},
+      via:'bridge',action:'bridge.issuer_refused',entity:{collection:'operations_bridge',id:command},requestId:typeof requestId==='string'&&UUID.test(requestId)?requestId:null,
+      after:{code,signer,claimedActor:auditable?claimed:null,boundTo:bridgeActorIssuer(actor?.id),target:bridgeTarget(body)},
+      reason:'Refused before any work: the signed actor is not one its signing service mints or relays.',now:signedAt}));
+  }catch{}
+}
 
 /** The record a command changes, for confirmation binding and the audit entry. */
 export function bridgeTarget(command){
@@ -106,8 +132,15 @@ function bridgeStore(env,inner,{command,confirmation},audit){
  * confirm policies when EGC_OPERATIONS_BRIDGE_CONFIRM_REQUIRED is 'true', and is
  * always verified and consumed when one is sent. An expired token (flagged
  * confirmation.expired) still replays a committed request but never commits.
+ * An endpoint passes its verified `claims`: an integration actor the signing service
+ * neither mints nor relays is refused (bridge_integration_issuer_*) with a hub_audit
+ * entry, before its policy and any other storage access. Direct lib callers omit it.
  */
-export async function prepareBridgeCommand(env,actor,body,{now=new Date(),confirmRequired=bridgeConfirmationRequired(env),...options}={}){
+export async function prepareBridgeCommand(env,actor,body,{now=new Date(),confirmRequired=bridgeConfirmationRequired(env),claims,recordRefusal=entry=>hubAuditStorage(env).record(entry),...options}={}){
+  if(claims!==undefined){
+    const signer=bridgeSigner(claims),unbound=bridgeIssuerDenial(actor,signer);
+    if(unbound){await auditIssuerRefusal(actor,body,{code:unbound,signer,claims,now},recordRefusal);throw fail(unbound);}
+  }
   const rule=authorizeCommand(actor,body,options);
   const {via,onBehalfOf,...rest}=body;
   if(via!==undefined&&!VIA.has(via))throw fail('bridge_via_invalid',400);

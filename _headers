@@ -44,6 +44,13 @@
 /crew/sw-config.json
   Cache-Control: no-store
 
+# Employee Hub service worker (HUB_OFFLINE_ENABLED). Revalidate on every update check so a fix or the setting turning
+# off reaches devices at once. It keeps its own copies of the versioned /employee-*.js|css files (the Cache Storage it
+# fills is not an HTTP cache, so the no-store below still applies to browsers and proxies) and never employee.html.
+/hub-sw.js
+  Cache-Control: no-cache
+  Service-Worker-Allowed: /
+
 # Internal operations hub — never index, frame, or keep a stale application shell.
 /employee*
   X-Robots-Tag: noindex

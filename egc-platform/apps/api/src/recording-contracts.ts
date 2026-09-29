@@ -1,6 +1,6 @@
 import {createHash,createHmac,timingSafeEqual} from 'node:crypto';
 import * as z from 'zod/v4';
-import {actorSchema,createTaskSchema,OperationsError,type Actor} from '@egc/operations';
+import {actorSchema,bridgeIssuerDenial,createTaskSchema,OperationsError,type Actor,type BridgeIssuer} from '@egc/operations';
 import {walkthroughExtractionSchema} from '@egc/schemas';
 export const MAX_AUDIO_BYTES=24*1024*1024;
 const recordId=z.string().uuid();
@@ -37,7 +37,12 @@ export function verifiedHubRecordingClaims(claims:{iat:number;nonce:string;actor
   if(!parsed.success)throw new OperationsError('invalid_recording_request',400);
   return authorizeRecordingClaims(parsed.data,workspace);
 }
+/** BRIDGE-ADOPT-AUTHZ: a verified recording envelope whose integration actor its signer may not
+ * present. It carries the verified claims so the route can log and audit the refusal. */
+export class RecordingIssuerRefusal extends OperationsError{constructor(code:string,readonly issuer:BridgeIssuer,readonly claims:RecordingClaims){super(code,403);}}
 function authorizeRecordingClaims(c:RecordingClaims,workspace:string):RecordingClaims{
+  // BRIDGE-ADOPT-AUTHZ: the MCP key presents only MCP principals; the Hub keys only Hub identities.
+  const signer=c.iss==='mcp'?'mcp':'hub',unbound=bridgeIssuerDenial(c.actor,signer);if(unbound)throw new RecordingIssuerRefusal(unbound,signer,c);
   const integrationRead=c.iss==='mcp'&&c.actor.kind==='integration'&&c.actor.role==='integration'&&['recording.list','recording.get','recording.retry'].includes(c.request.body.command);
   const human=c.iss==='portal'&&c.actor.kind==='human'&&['owner','manager','sales'].includes(c.actor.role);
   if(c.actor.workspace!==workspace||(!human&&!integrationRead))throw new OperationsError('recording_role_forbidden',403);

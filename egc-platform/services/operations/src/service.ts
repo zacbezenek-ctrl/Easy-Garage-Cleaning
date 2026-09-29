@@ -9,6 +9,7 @@ import {authorize,commandSchema,OperationsError,PORTAL_PASSTHROUGH,RECURRING_HOR
 import {assertCompletion,assertEditable,assertTiming,digest,jsonRecord,requestDigest,withoutEmptyAttachments} from "./policy.js";
 import {isMessageTaskKind} from "./action-kinds.js";
 import {isSpendRequest,spendRead,spendWrite} from "./spend-service.js";
+import type {BridgeIssuer} from "./bridge-command-policy.js";
 
 type Db=ReturnType<typeof getDb>;
 type Tx=Parameters<Parameters<Db["transaction"]>[0]>[0];
@@ -53,11 +54,12 @@ export interface OperationsConfiguration {
 export class OperationsService {
   constructor(private db:Db, private config:OperationsConfiguration) {}
   private now() {return this.config.now?.() ?? new Date();}
-  async execute(actor:Actor,raw:unknown,requestId:string):Promise<Record<string,unknown>> {
+  /** issuer: the signer the public adapter verified (BRIDGE-ADOPT-AUTHZ); omitted for in-process callers. */
+  async execute(actor:Actor,raw:unknown,requestId:string,issuer?:BridgeIssuer):Promise<Record<string,unknown>> {
     const parsed=commandSchema.safeParse(raw);
     if (!parsed.success) throw new OperationsError("invalid_command",400,{issues:parsed.error.issues.map(i=>({path:i.path,message:i.message}))});
     const command=parsed.data;
-    authorize(actor,command,this.config.workspace);
+    authorize(actor,command,this.config.workspace,undefined,undefined,issuer);
     // Adoption proof is produced by the backend's exact-source verifier. Public
     // RPC/MCP callers cannot supply proof or bypass that verifier via this service.
     if(command.command==='schedule.adopt')throw new OperationsError('schedule_adoption_internal_only',403);
