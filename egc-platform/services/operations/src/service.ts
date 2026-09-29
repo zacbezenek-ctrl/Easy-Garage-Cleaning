@@ -8,6 +8,7 @@ import {buildDueWorkSnapshot,collectTaskPages,pageDueWork,type QueueSnapshot,typ
 import {authorize,commandSchema,OperationsError,PORTAL_PASSTHROUGH,WRITE_COMMANDS,type Actor,type Command} from "./contracts.js";
 import {assertCompletion,assertEditable,assertTiming,digest,jsonRecord,requestDigest,withoutEmptyAttachments} from "./policy.js";
 import {isMessageTaskKind} from "./action-kinds.js";
+import {isSpendRequest,spendRead,spendWrite} from "./spend-service.js";
 
 type Db=ReturnType<typeof getDb>;
 type Tx=Parameters<Parameters<Db["transaction"]>[0]>[0];
@@ -141,7 +142,7 @@ export class OperationsService {
         return {...prior.response,replayed:true};
       }
       await tx.execute(sql`select set_config('egc.operations_actor',${actor.id},true),set_config('egc.operations_actor_kind',${actor.kind},true)`);
-      const result=await this.write(tx,actor,command,portal);
+      const result=await this.write(tx,actor,command,portal,requestId);
       const response=jsonRecord(result);
       await tx.insert(schema.operationRequests).values({workspaceId:actor.workspace,actorId:actor.id,requestId,digest:digestOfRequest,response});
       return response;
@@ -276,6 +277,7 @@ export class OperationsService {
       type,actorId:actor.id,actorKind:actor.kind,source:"operations",evidence:jsonRecord(evidence),occurredAt:this.now()});
   }
   private async read(tx:Tx,actor:Actor,command:Command,portalEvents:PortalTimelineEvent[]=[],nativeEvidence?:NativeHistoryEvidence):Promise<Record<string,unknown>> {
+    if(isSpendRequest(command))return spendRead(tx,actor,command,this.now());
     switch(command.command) {
       case "status": return {ok:true,contractVersion:1,workspace:actor.workspace,actor,health:await operationalHealth(tx,actor.workspace),
         capabilities:{tasks:true,exactDraftApprovals:true,persistedBriefs:true,externalExecution:false,actionSend:Boolean(this.config.sendTaskMessage),portalIdentity:Boolean(this.config.resolvePortalJob)},
@@ -337,7 +339,8 @@ export class OperationsService {
       default:throw new OperationsError("unsupported_read",400);
     }
   }
-  private async write(tx:Tx,actor:Actor,command:Command,portal:PortalJobReference|null):Promise<Record<string,unknown>> {
+  private async write(tx:Tx,actor:Actor,command:Command,portal:PortalJobReference|null,requestId:string):Promise<Record<string,unknown>> {
+    if(isSpendRequest(command))return spendWrite(tx,actor,command,requestId,this.now());
     if(command.command==="task.create") {
       const input=command.task;
       if(actor.role==="sales" && input.assignedUserId!==actor.id) throw new OperationsError("assignment_requires_manager",403);

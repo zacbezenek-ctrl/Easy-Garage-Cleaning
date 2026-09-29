@@ -173,6 +173,9 @@ importers:
 
   apps/worker:
     dependencies:
+      '@egc/ad-spend':
+        specifier: workspace:*
+        version: link:../../services/ad-spend
       '@egc/customer-state':
         specifier: workspace:*
         version: link:../../services/customer-state
@@ -294,6 +297,28 @@ importers:
         specifier: ^6.0.2
         version: 6.0.3
 
+  services/ad-spend:
+    dependencies:
+      '@egc/database':
+        specifier: workspace:*
+        version: link:../../packages/database
+      drizzle-orm:
+        specifier: 0.44.5
+        version: 0.44.5(postgres@3.4.7)
+    devDependencies:
+      '@types/node':
+        specifier: ^24.5.2
+        version: 24.13.6
+      postgres:
+        specifier: 3.4.7
+        version: 3.4.7
+      typescript:
+        specifier: ^6.0.2
+        version: 6.0.3
+      vitest:
+        specifier: ^3.2.4
+        version: 3.2.7(@types/node@24.13.6)(tsx@4.23.13)
+
   services/customer-state:
     dependencies:
       '@egc/database':
@@ -353,6 +378,9 @@ importers:
 
   services/operations:
     dependencies:
+      '@egc/ad-spend':
+        specifier: workspace:*
+        version: link:../ad-spend
       '@egc/database':
         specifier: workspace:*
         version: link:../../packages/database

@@ -365,6 +365,11 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   `EGC_MCP_KEYSET_CURSORS` (off: offset cursors as today; turning it off refuses keyset cursors with invalid_cursor so a
   rollback is real). Keys are exact microsecond Postgres text plus id; rows whose order key can move mid-walk are
   reported as coverage.complete=false, never silently skipped. Gap: Hub/bridge reads still page by offset.
+- **FUN-15** Ad spend ingestion (@egc/ad-spend): hourly read-only Meta and Google Ads daily spend, impressions and clicks
+  by campaign/ad set in integer cents on Denver dates with a 3-day restatement window, Meta lead-form counts, and an
+  append-only owner spend ledger for channels without an API (trigger-enforced; owner-only spend.* bridge commands and an
+  owner-only Hub "Ad spend" screen). Unknown days stay null. Migration renumbered to 0015_ad_spend. Flags:
+  `EGC_AD_SPEND_META_ENABLED`, `EGC_AD_SPEND_GOOGLE_ENABLED` (off). Gap: live APIs unverified (no credentials yet).
 
 ## In progress
 
@@ -450,6 +455,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | PAY-TIMESHEETS | Owner-only pay in timesheets, payroll CSV and pay-field writes; payroll week card | merged (a990d27) |
 | JOB-COST-PRIVACY | Owner-only job labor dollars (server-only jobLaborCosts, finance board, job-costing and money API) | merged (d7b8fe1) |
 | MCP-CURSORS | Keyset cursors for MCP Postgres CRM reads (flag off) | merged (8bd7af1) |
+| FUN-15 | Ad spend ingestion (Meta, Google), owner spend ledger and Ad spend screen (migration 0015, flags off) | merged (3caad96) |
 
 ## Next
 

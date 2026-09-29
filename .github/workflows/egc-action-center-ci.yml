@@ -71,6 +71,10 @@ jobs:
           pnpm --filter @egc/database migrate:runtime
           pnpm --filter @egc/database migrate:runtime
         working-directory: egc-platform
+      # FUN-15: ad spend daily rows, sync days, lead-form counts and the append-only owner spend ledger.
+      - name: Ad spend ingestion ledger and owner spend entries
+        run: node --test services/ad-spend/test/postgres.check.mjs
+        working-directory: egc-platform
       - name: Existing task adapter database regression tests
         run: pnpm --filter @egc/lead-audit test:operations:integration
         working-directory: egc-platform
@@ -194,6 +198,8 @@ jobs:
         run: python tests/browser/test_payroll_week_ui.py
       - name: Field job-cost capture on a phone
         run: python tests/browser/test_field_expenses_ui.py
+      - name: Owner-only ad spend screen, manual spend entries and connection health on a phone
+        run: python tests/browser/test_ad_spend_ui.py
       - name: Owner stocked item costs screen, manager read-only view and phone layout
         run: python tests/browser/test_standard_costs_ui.py
       - name: Crew pre-job customer texts are idempotent and never re-sent

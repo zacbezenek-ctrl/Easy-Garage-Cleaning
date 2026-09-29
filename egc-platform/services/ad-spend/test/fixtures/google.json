@@ -1,0 +1,31 @@
+{
+  "_comment": "Synthetic recordings shaped like Google Ads API REST searchStream responses (proto3 JSON omits zero metrics). Ids, names and amounts are fictitious.",
+  "token": { "access_token": "ya29.synthetic-access-token-for-tests-only", "expires_in": 3599, "scope": "https://www.googleapis.com/auth/adwords", "token_type": "Bearer" },
+  "customer": [
+    { "results": [ { "customer": { "resourceName": "customers/1234567890", "id": "1234567890", "currencyCode": "USD", "timeZone": "America/Denver" } } ], "fieldMask": "customer.id,customer.currencyCode,customer.timeZone", "requestId": "synthetic-customer" }
+  ],
+  "totals": [
+    { "results": [
+      { "customer": { "resourceName": "customers/1234567890" }, "metrics": { "costMicros": "20000000", "impressions": "1000", "clicks": "30" }, "segments": { "date": "2026-09-19" } },
+      { "customer": { "resourceName": "customers/1234567890" }, "metrics": { "costMicros": "15500000", "impressions": "900" }, "segments": { "date": "2026-09-20" } },
+      { "customer": { "resourceName": "customers/1234567890" }, "metrics": { "costMicros": "10000000", "impressions": "500", "clicks": "5" }, "segments": { "date": "2026-09-21" } }
+    ], "fieldMask": "segments.date,metrics.costMicros,metrics.impressions,metrics.clicks", "requestId": "synthetic-totals" }
+  ],
+  "campaigns": [
+    { "results": [
+      { "campaign": { "resourceName": "customers/1234567890/campaigns/2100000010", "id": "2100000010", "name": "Synthetic Search - garage cleanout" }, "metrics": { "costMicros": "12000000", "impressions": "600", "clicks": "20" }, "segments": { "date": "2026-09-19" } },
+      { "campaign": { "resourceName": "customers/1234567890/campaigns/2100000011", "id": "2100000011", "name": "Synthetic Performance Max" }, "metrics": { "costMicros": "8000000", "impressions": "400", "clicks": "10" }, "segments": { "date": "2026-09-19" } }
+    ], "fieldMask": "campaign.id,campaign.name,segments.date,metrics.costMicros,metrics.impressions,metrics.clicks", "requestId": "synthetic-campaigns-1" },
+    { "results": [
+      { "campaign": { "resourceName": "customers/1234567890/campaigns/2100000010", "id": "2100000010", "name": "Synthetic Search - garage cleanout" }, "metrics": { "costMicros": "15500000", "impressions": "900" }, "segments": { "date": "2026-09-20" } },
+      { "campaign": { "resourceName": "customers/1234567890/campaigns/2100000011", "id": "2100000011", "name": "Synthetic Performance Max" }, "metrics": { "costMicros": "10000000", "impressions": "500", "clicks": "5" }, "segments": { "date": "2026-09-21" } }
+    ], "fieldMask": "campaign.id,campaign.name,segments.date,metrics.costMicros,metrics.impressions,metrics.clicks", "requestId": "synthetic-campaigns-2" }
+  ],
+  "adGroups": [
+    { "results": [
+      { "campaign": { "resourceName": "customers/1234567890/campaigns/2100000010", "id": "2100000010" }, "adGroup": { "resourceName": "customers/1234567890/adGroups/3100000100", "id": "3100000100", "name": "Garage cleanout exact" }, "metrics": { "costMicros": "7000000", "impressions": "350", "clicks": "12" }, "segments": { "date": "2026-09-19" } },
+      { "campaign": { "resourceName": "customers/1234567890/campaigns/2100000010", "id": "2100000010" }, "adGroup": { "resourceName": "customers/1234567890/adGroups/3100000101", "id": "3100000101", "name": "Garage organization phrase" }, "metrics": { "costMicros": "5000000", "impressions": "250", "clicks": "8" }, "segments": { "date": "2026-09-19" } },
+      { "campaign": { "resourceName": "customers/1234567890/campaigns/2100000010", "id": "2100000010" }, "adGroup": { "resourceName": "customers/1234567890/adGroups/3100000100", "id": "3100000100", "name": "Garage cleanout exact" }, "metrics": { "costMicros": "15500000", "impressions": "900" }, "segments": { "date": "2026-09-20" } }
+    ], "fieldMask": "campaign.id,adGroup.id,adGroup.name,segments.date,metrics.costMicros,metrics.impressions,metrics.clicks", "requestId": "synthetic-ad-groups" }
+  ]
+}

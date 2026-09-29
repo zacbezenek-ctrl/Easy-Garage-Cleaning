@@ -5,6 +5,7 @@ import { getDb, schema } from "@egc/database";
 import { GhlClient, asDate, asRecord, asString, findArray } from "@egc/ghl";
 import { recomputeLeadState, callContactEvidence, isCallMessage } from "@egc/lead-audit";
 import { startMetaConversionWorker } from "./meta-conversion-worker.js";
+import { startAdSpendWorker } from "./ad-spend-worker.js";
 import { startCustomerStateWorker } from './customer-state-worker.js';
 import {startProviderNotesWorker} from './provider-notes-worker.js';
 import {parseProviderTranscript,persistProviderTranscript,startCallTranscriptWorker} from './call-transcript-worker.js';
@@ -658,6 +659,7 @@ async function main() {
   startCallTranscriptWorker();
   startMetaConversionWorker();
   startMessagingCronWorker();
+  startAdSpendWorker();
   // A transient GHL startup failure must not stop Meta synchronization or the
   // existing webhook/outbox polling loops from being scheduled.
   setInterval(() => void reconcile().catch(() => console.error("GHL background operation failed; inspect synchronization health")), 5 * 60_000);

@@ -4,6 +4,8 @@ import {HUB_COMMANDS,HUB_COMMAND_POLICY,HUB_WRITE_COMMANDS,PORTAL_PASSTHROUGH,hu
 import {BRIDGE_COMMAND_POLICY,bridgeCommandDenial,bridgeCommandPolicy,type BridgeCommandPolicy} from "./bridge-command-policy.js";
 export * from "./hub-commands.js";
 export * from "./bridge-command-policy.js";
+import {SPEND_COMMANDS,SPEND_WRITE_COMMANDS,isSpendCommand,spendCommandDenial} from "./spend-commands.js";
+export * from "./spend-commands.js";
 
 export const CONTRACT_VERSION = 1;
 export const isoTime = z.string().datetime({ offset: true });
@@ -172,10 +174,11 @@ export const commandSchema = z.discriminatedUnion("command", [
   z.object({command:z.literal("brief.get"),briefId:entityId,...page}).strict(),
   z.object({command:z.literal("brief.latest"),...page}).strict(),
   z.object({command:z.literal("history"),contactId:entityId.optional(),portalJobId:portalId.optional(),...page}).strict().refine(c=>Boolean(c.contactId||c.portalJobId),"An exact contact or portal record is required"),
-  ...Object.values(HUB_COMMANDS)
+  ...Object.values(HUB_COMMANDS),
+  ...Object.values(SPEND_COMMANDS)
 ]);
 export type Command = z.infer<typeof commandSchema>;
-export const WRITE_COMMANDS = new Set(["provider.note.ensure","portal.note.add","portal.job.edit","portal.project.ensure","inbound.reconcile","task.create","task.edit","task.complete","task.complete_from_message","task.cancel","task.snooze","tasks.approve","task.reject","task.send","brief.create","schedule.mutate","schedule.bind_provider","schedule.sync_provider","schedule.sync_failed","schedule.link_customer","schedule.adopt",...HUB_WRITE_COMMANDS]);
+export const WRITE_COMMANDS = new Set(["provider.note.ensure","portal.note.add","portal.job.edit","portal.project.ensure","inbound.reconcile","task.create","task.edit","task.complete","task.complete_from_message","task.cancel","task.snooze","tasks.approve","task.reject","task.send","brief.create","schedule.mutate","schedule.bind_provider","schedule.sync_provider","schedule.sync_failed","schedule.link_customer","schedule.adopt",...HUB_WRITE_COMMANDS,...SPEND_WRITE_COMMANDS]);
 /** The only principal allowed to read the schedule mirror queue and record its failures. */
 export const SCHEDULE_SYNC_WORKER_ID = "schedule-sync-worker";
 export const requestSchema = z.object({requestId:entityId,body:commandSchema}).strict();
@@ -197,6 +200,8 @@ export function authorize(actor:Actor, command:Command, workspace:string, hubPol
   const hub=hubCommandPolicy(command.command,hubPolicies);
   // Fail closed: a hub.* command without a policy entry is never authorized.
   if (isHubCommandName(command.command) && !hub) throw new OperationsError("hub_command_unknown",403);
+  const spendDenied=isSpendCommand(command.command)&&spendCommandDenial(actor);
+  if (spendDenied) throw new OperationsError(spendDenied,403);
   const hubDenied=hub&&hubCommandDenial(actor,command,hub);
   if (hubDenied) throw new OperationsError(hubDenied,403);
   // SEC-04: the legacy commands the Hub runs answer to the same table the Hub enforces.
