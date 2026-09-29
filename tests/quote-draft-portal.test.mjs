@@ -259,5 +259,6 @@ test('a payment verified while a revision is withheld is recorded, and its reply
   assert.deepEqual([sent.status, sent.body.duplicate, sent.body.balance, 'balanceWithheld' in sent.body], [200, true, 39, false]);
   // The portal page says only "Payment verified." when no balance comes back.
   const page = readFileSync(new URL('../customer-portal.html', import.meta.url), 'utf8');
-  assert.match(page, /typeof verified\.balance==='number'\?`Payment verified\. \$\{money\(verified\.balance\)\} remaining\.`:'Payment verified\.'/);
+  // (merge) TIPS thanks the customer for a tip between the two; with no balance the notice stays exactly 'Payment verified.'.
+  assert.match(page, /typeof verified\.balance==='number'\?`Payment verified\..*? \$\{money\(verified\.balance\)\} remaining\.`:'Payment verified\.'/);
 });

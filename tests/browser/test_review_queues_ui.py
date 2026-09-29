@@ -317,19 +317,192 @@ class ReviewQueuesBrowserTests(unittest.TestCase):
         # The dialog reopens with Stripe's amounts, keeps what was typed and asks for the amount kept.
         dialog = page.locator('dialog.rv-dialog'); expect(dialog.get_by_role('heading')).to_have_text('Record a partial Stripe refund?')
         expect(dialog).to_contain_text('Stripe shows $200.00 of $500.00 refunded. The $300.00 kept is not on the job')
+        # The money kept is recorded on the job first, while the open review still holds a new checkout, then the refund.
+        expect(dialog).to_contain_text('recording this refund closes the review for good. Before recording it, record the $300.00 kept on the job under Estimates & payments.')
         expect(dialog.get_by_label('Reason')).to_have_value('exceeds_balance'); expect(dialog.get_by_label('Note (owner only)')).to_have_value('Refunded the excess over the balance')
         expect(page.get_by_role('button', name='Retry original change')).to_have_count(0)
         dialog.get_by_role('button', name='Record refund').click()
         expect(dialog.get_by_role('alert')).to_have_text('Confirm the $300.00 kept before recording the refund.'); self.assertEqual(len(self.posts), 1)
         self.assert_mobile()
-        dialog.get_by_label('The $300.00 kept is not on the job; I will record it under Estimates & payments').check(); dialog.get_by_role('button', name='Record refund').click()
+        dialog.get_by_label('I have recorded the $300.00 kept on the job under Estimates & payments').check(); dialog.get_by_role('button', name='Record refund').click()
         expect(page.locator('dialog.rv-dialog')).to_have_count(0)
         first, second = self.posts[0][1], self.posts[1][1]
         self.assertNotIn('keptCentsAcknowledged', first)
         self.assertEqual({key: second[key] for key in ('action', 'reason', 'note', 'keptCentsAcknowledged', 'expectedRevision')}, {'action': 'payment.refund', 'reason': 'exceeds_balance', 'note': 'Refunded the excess over the balance', 'keptCentsAcknowledged': 30000, 'expectedRevision': 'rev-p1'})
         self.assertNotEqual(first['requestId'], second['requestId'], 'the refused request is not replayed; the confirmed one is new')
-        expect(page.locator('#toasts')).to_contain_text('Refund recorded: $200.00 of $500.00 refunded. Record the $300.00 kept on the job under Estimates & payments.')
+        expect(page.locator('#toasts')).to_contain_text('Refund recorded: $200.00 of $500.00 refunded. The $300.00 kept belongs on the job: check it is recorded under Estimates & payments.')
         expect(page.get_by_text('No card payments are held for review.')).to_be_visible()
+
+    def test_a_held_tipped_charge_shows_its_tip_apart_and_the_owner_records_only_the_kept_service_part(self):
+        # TIPS: a tipped charge is resolved here like any held charge; the tip is shown apart and never recorded as service.
+        self.stripe = stripe_view(can_refund=True); self.stripe['checkoutBlock'] = False
+        self.stripe['paymentReviews'][0].update({'reason': 'payment_tip_refused', 'amountCents': 55000, 'tipCents': 5000, 'serviceCents': 50000, 'createdBy': 'customer_portal'})
+        self.open(); page = self.page
+        card = page.locator('.rv-card').filter(has_text='$550.00')
+        expect(card).to_contain_text('Includes a crew tip, and the job was closed, voided or refunded after checkout opened.')
+        expect(card.locator('.rv-tip')).to_have_text('Includes a crew tip: $500.00 service + $50.00 tip. Only the service part is ever recorded on the job; the tip is paid to the crew by hand.')
+        expect(page.get_by_text('One held charge includes a crew tip: while customer tips are on, no new card checkout opens on its job until it is resolved. Resolve it before turning customer tips off.')).to_be_visible()
+        # Reconciling it says to record the service part first, never the tip.
+        card.get_by_role('button', name='Mark reconciled').click()
+        dialog = self.dialog(); expect(dialog).to_contain_text('Record its $500.00 service part on the job under Estimates & payments before marking it reconciled (never the $50.00 crew tip, which is paid to the crew by hand)')
+        dialog.get_by_role('button', name='Cancel').click(); expect(page.locator('dialog.rv-dialog')).to_have_count(0)
+        self.assert_mobile()
+        # Stripe shows part of it refunded: the kept money is split, and its service part is recorded on the job first.
+        self.stripe = copy.deepcopy(self.stripe)
+        self.stripe['paymentReviews'][0].update({'reason': 'payment_refunded', 'heldReason': 'payment_tip_refused', 'refundedCents': 20000, 'keptCents': 35000, 'keptServiceCents': 30000, 'keptTipCents': 5000, 'refundSeenAt': '2026-09-22T17:00:00.000Z'})
+        page.get_by_role('button', name='Refresh').click(); expect(page.get_by_role('button', name='Refresh')).to_be_enabled()
+        expect(card.locator('.rv-refund')).to_have_text('Stripe shows $200.00 of $550.00 refunded; the $350.00 kept is not on the job. Before recording the refund, record its service part on the job under Estimates & payments ($300.00 if the refund came out of the service first, or $350.00 if the crew tip was refunded first); up to $50.00 of the $350.00 kept is the crew tip, which is never a service payment.')
+        expect(card).to_contain_text('First held because: includes a crew tip, and the job was closed, voided or refunded after checkout opened.')
+        def saved(route, path, body):
+            self.stripe = {**self.stripe, 'paymentReviews': []}
+            route.fulfill(status=200, content_type='application/json', body=json.dumps({'ok': True, 'authority': 'employee_hub', 'requestId': body['requestId'], 'action': body['action'], 'replayed': False,
+                'review': {'id': body['reviewId'], 'kind': 'payment', 'status': 'resolved', 'resolution': 'refunded', 'amountCents': 55000, 'refundedCents': 20000, 'keptCents': 35000, 'refundFull': False, 'recordedOnJobAtResolution': False, 'tipCents': 5000, 'keptServiceCents': 30000, 'keptTipCents': 5000}}))
+        def not_recorded(route, path, body):
+            self.post_reply = saved
+            route.fulfill(status=409, content_type='application/json', body=json.dumps({'ok': False, 'code': 'stripe_review_kept_not_recorded', 'error': "Record the $300.00 service part kept on the job under Estimates & payments first: the job's payments have grown by $0.00 since this charge was held, so the customer's Pay button would ask again for money this charge already paid. Then record the refund. Nothing was saved.",
+                'details': {'amountCents': 55000, 'refundedCents': 20000, 'keptCents': 35000, 'keptServiceCents': 30000, 'keptTipCents': 5000, 'recordedSinceCents': 0}}))
+        def partial(route, path, body):
+            self.post_reply = not_recorded
+            route.fulfill(status=409, content_type='application/json', body=json.dumps({'ok': False, 'code': 'stripe_review_refund_partial', 'error': 'Stripe shows $200.00 of $550.00 refunded.', 'details': {'amountCents': 55000, 'refundedCents': 20000, 'keptCents': 35000, 'keptServiceCents': 30000, 'keptTipCents': 5000}}))
+        self.post_reply = partial
+        card.get_by_role('button', name='Record refund').click()
+        dialog = self.dialog(); dialog.get_by_label('Reason').select_option('other')
+        # The row already shows a partial refund, so the dialog asks which part was refunded.
+        dialog.get_by_label('Which part did you refund in Stripe?').select_option('service'); dialog.get_by_role('button', name='Record refund').click()
+        dialog = page.locator('dialog.rv-dialog'); expect(dialog.get_by_role('heading')).to_have_text('Record a partial Stripe refund?')
+        expect(dialog).to_contain_text('The $350.00 kept is not on the job, and recording this refund closes the review for good (the customer’s Pay button comes back). Before recording it, record its service part on the job under Estimates & payments ($300.00 if the refund came out of the service first, or $350.00 if the crew tip was refunded first)')
+        expect(dialog.get_by_label('Which part did you refund in Stripe?')).to_have_value('service')
+        self.assert_mobile()
+        dialog.get_by_label('I have recorded the service part kept ($300.00, or $350.00 if the crew tip was refunded first) on the job under Estimates & payments, never the tip').check(); dialog.get_by_role('button', name='Record refund').click()
+        # Nothing was recorded on the job yet: the server refuses, the dialog stays open with its reason, and nothing is kept for a retry.
+        expect(dialog.get_by_role('alert')).to_contain_text('Record the $300.00 service part kept on the job under Estimates & payments first')
+        expect(page.locator('.rv-card').filter(has_text='$550.00')).to_be_visible(); expect(page.get_by_role('button', name='Retry original change')).to_have_count(0)
+        dialog.get_by_role('button', name='Record refund').click()
+        expect(page.locator('dialog.rv-dialog')).to_have_count(0)
+        self.assertEqual({key: self.posts[1][1][key] for key in ('action', 'reason', 'keptCentsAcknowledged', 'tipRefundedFirst')}, {'action': 'payment.refund', 'reason': 'other', 'keptCentsAcknowledged': 35000, 'tipRefundedFirst': False})
+        self.assertEqual(self.posts[2][1]['keptCentsAcknowledged'], 35000); self.assertNotEqual(self.posts[1][1]['requestId'], self.posts[2][1]['requestId'])
+        expect(page.locator('#toasts')).to_contain_text('Refund recorded: $200.00 of $550.00 refunded. Of the $350.00 kept, the $300.00 service part belongs on the job (under Estimates & payments) and the $50.00 crew tip is paid to the crew by hand, never as a service payment.')
+        page.screenshot(path=str(ROOT / 'test-results' / 'review-queues-tipped-375.png'), full_page=True)
+
+    def test_a_refund_on_a_tipped_charge_already_on_the_job_reduces_only_its_service_part(self):
+        # TIPS: the job counts only the $500 service part of a $550 tipped charge; the $50 tip is kept apart for tip payroll.
+        self.stripe = stripe_view(can_refund=True)
+        base = {'reason': 'payment_refunded', 'amountCents': 55000, 'tipCents': 5000, 'serviceCents': 50000, 'recordedOnJob': True, 'createdBy': 'customer_portal', 'refundSeenAt': '2026-09-22T17:00:00.000Z'}
+        cases = [
+            (55000, 'Stripe shows the full $550.00 refunded. The job counts only the $500.00 service part as paid; the $50.00 tip is kept apart, and tip payroll holds it until you pay what is owed by hand. Reduce the job’s service payment by $500.00 and pay the crew none of the $50.00 tip.'),
+            (52000, 'Stripe shows $520.00 of $550.00 refunded. The job counts only the $500.00 service part as paid; the $50.00 tip is kept apart, and tip payroll holds it until you pay what is owed by hand. If the refund came out of the service first, reduce the job’s service payment by $500.00 and pay the crew only $30.00 of the $50.00 tip. If the crew tip was refunded first, reduce the job’s service payment by $470.00 and pay the crew none of the $50.00 tip.'),
+            (20000, 'Stripe shows $200.00 of $550.00 refunded. The job counts only the $500.00 service part as paid; the $50.00 tip is kept apart, and tip payroll holds it until you pay what is owed by hand. If the refund came out of the service first, reduce the job’s service payment by $200.00 and pay the crew the whole $50.00 tip. If the crew tip was refunded first, reduce the job’s service payment by $150.00 and pay the crew none of the $50.00 tip.'),
+        ]
+        page = self.page
+        for index, (refunded, text) in enumerate(cases):
+            self.stripe = copy.deepcopy(self.stripe); kept = 55000 - refunded
+            self.stripe['paymentReviews'][0] = {**stripe_view()['paymentReviews'][0], **base, 'refundedCents': refunded, 'keptCents': kept, 'keptServiceCents': max(0, kept - 5000), 'keptTipCents': min(kept, 5000)}
+            if index == 0: self.open()
+            else: page.get_by_role('button', name='Refresh').click(); expect(page.get_by_role('button', name='Refresh')).to_be_enabled()
+            card = page.locator('.rv-card').filter(has_text='$550.00')
+            expect(card).to_contain_text('Already on the job')
+            expect(card.locator('.rv-tip')).to_have_text('Includes a crew tip: $500.00 service + $50.00 tip. The job counts only the service part as paid; the tip is kept apart on the job for tip payroll.')
+            expect(card.locator('.rv-refund')).to_have_text(text)
+            # Never the full Stripe amount, and never "paid to the crew by hand" as if the tip were not on the job.
+            expect(card).not_to_contain_text('counts the full'); expect(card).not_to_contain_text('reduce the job’s payment by')
+            self.assert_mobile()
+        # The owner records the $200 refund, saying the crew tip was refunded first; the notice gives that correction.
+        def saved(route, path, body):
+            self.stripe = {**self.stripe, 'paymentReviews': []}
+            route.fulfill(status=200, content_type='application/json', body=json.dumps({'ok': True, 'authority': 'employee_hub', 'requestId': body['requestId'], 'action': body['action'], 'replayed': False,
+                'review': {'id': body['reviewId'], 'kind': 'payment', 'status': 'resolved', 'resolution': 'refunded', 'amountCents': 55000, 'refundedCents': 20000, 'keptCents': 35000, 'refundFull': False, 'recordedOnJobAtResolution': True, 'tipCents': 5000, 'keptServiceCents': 35000, 'keptTipCents': 0, 'tipRefundedFirst': True}}))
+        self.post_reply = saved
+        page.locator('.rv-card').filter(has_text='$550.00').get_by_role('button', name='Record refund').click()
+        dialog = self.dialog(); expect(dialog).to_contain_text('This charge is already on the job, which counts its $500.00 service part as paid (the $50.00 tip is kept apart).')
+        dialog.get_by_label('Reason').select_option('other'); dialog.get_by_label('Which part did you refund in Stripe?').select_option('tip')
+        dialog.get_by_label('I will correct the job’s service payment and the crew tip').check()
+        self.assert_mobile()
+        dialog.get_by_role('button', name='Record refund').click(); expect(page.locator('dialog.rv-dialog')).to_have_count(0)
+        self.assertEqual({key: self.posts[0][1][key] for key in ('action', 'jobPaymentAcknowledged', 'tipRefundedFirst')}, {'action': 'payment.refund', 'jobPaymentAcknowledged': True, 'tipRefundedFirst': True})
+        self.assertNotIn('keptCentsAcknowledged', self.posts[0][1])
+        expect(page.locator('#toasts')).to_contain_text('Refund recorded: $200.00 of $550.00 refunded. Reduce the job’s service payment by $150.00 and pay the crew none of the $50.00 tip.')
+        # The Command Center never names a lump amount for a tipped charge.
+        self.stripe = copy.deepcopy(stripe_view()); self.stripe['paymentReviews'][0].update({**base, 'refundedCents': 20000, 'keptCents': 35000})
+        page.goto(self.url + '/hub-alerts')
+        row = page.locator('.egc-review-alert').get_by_role('button').filter(has_text='1 card payment is held for review')
+        expect(row).to_contain_text('Stripe shows $200.00 of $550.00 refunded on a charge with a crew tip that the job already counts as paid (its service part). Only the owner settles it: record the refund, then correct the job’s service payment and the crew tip as Review queues shows.')
+        expect(row).not_to_contain_text('reduce the job’s payment by')
+        self.assert_mobile()
+
+    def test_reconciling_a_tipped_charge_not_on_its_job_needs_its_service_part_recorded_or_the_applied_elsewhere_box(self):
+        # Seventh review: closing the hold gives the customer's Pay button back, so the service part must be on the job first.
+        self.stripe = stripe_view(can_refund=True); self.stripe['checkoutBlock'] = False
+        self.stripe['paymentReviews'][0].update({'reason': 'payment_tip_refused', 'amountCents': 55000, 'tipCents': 5000, 'serviceCents': 50000, 'createdBy': 'customer_portal'})
+        self.open(); page = self.page
+        refusal = "Not on the job: closing this review lets the job's $500.00 balance be paid again. First record its $500.00 service part under Estimates & payments (never the $50.00 tip); $0.00 recorded since the hold. Or tick that it went to another job or outside the Hub. Nothing was saved."
+        def saved(route, path, body):
+            self.stripe = {**self.stripe, 'paymentReviews': []}
+            route.fulfill(status=200, content_type='application/json', body=json.dumps({'ok': True, 'authority': 'employee_hub', 'requestId': body['requestId'], 'action': body['action'], 'replayed': False,
+                'review': {'id': body['reviewId'], 'kind': 'payment', 'status': 'resolved', 'resolution': 'reconciled', 'amountCents': 55000, 'tipCents': 5000, 'recordedOnJobAtResolution': False, 'serviceAppliedElsewhere': True}}))
+        def refused(route, path, body):
+            self.post_reply = saved
+            route.fulfill(status=409, content_type='application/json', body=json.dumps({'ok': False, 'code': 'stripe_review_service_not_recorded', 'error': refusal, 'details': {'amountCents': 55000, 'tipCents': 5000, 'serviceCents': 50000, 'recordedSinceCents': 0, 'jobBalanceCents': 50000}}))
+        self.post_reply = refused
+        card = page.locator('.rv-card').filter(has_text='$550.00')
+        card.get_by_role('button', name='Mark reconciled').click()
+        dialog = self.dialog()
+        expect(dialog).to_contain_text('or, if it was applied to another job or settled outside the Hub, tick that box below.')
+        expect(dialog.locator('.rv-dialog-warning')).to_have_text('Marking it reconciled lets the customer pay the job’s balance again. The Hub refuses it until its $500.00 service part is recorded on the job, unless you tick the box.')
+        box = dialog.get_by_label('Applied to another job or settled outside the Hub: its $500.00 service part is not recorded on this job')
+        expect(box).not_to_be_checked()
+        self.assert_mobile()
+        # Unticked, with nothing recorded: the server refuses, the dialog keeps what was typed and shows why.
+        dialog.get_by_label('How it was reconciled').fill('Service recorded by hand'); dialog.get_by_role('button', name='Mark reconciled').click()
+        expect(dialog.get_by_role('alert')).to_have_text(refusal)
+        expect(dialog.get_by_label('How it was reconciled')).to_have_value('Service recorded by hand')
+        self.assertNotIn('appliedElsewhere', self.posts[0][1])
+        expect(page.get_by_role('button', name='Retry original change')).to_have_count(0)
+        # The service part went to another job: tick the box and save.
+        dialog.get_by_label('How it was reconciled').fill('Applied the service part to job-2; tip paid with payroll'); box.check()
+        dialog.get_by_role('button', name='Mark reconciled').click(); expect(page.locator('dialog.rv-dialog')).to_have_count(0)
+        self.assertEqual({key: self.posts[1][1][key] for key in ('action', 'reviewId', 'note', 'appliedElsewhere')}, {'action': 'payment.reconcile', 'reviewId': 'cs_test_held', 'note': 'Applied the service part to job-2; tip paid with payroll', 'appliedElsewhere': True})
+        self.assertNotEqual(self.posts[0][1]['requestId'], self.posts[1][1]['requestId'])
+        expect(page.locator('#toasts')).to_have_text('Charge marked reconciled. Its service part was applied to another job or settled outside the Hub.')
+        # An untipped charge, or one already on the job, never shows the box.
+        self.stripe = stripe_view(can_refund=True); page.get_by_role('button', name='Refresh').click(); expect(page.get_by_role('button', name='Refresh')).to_be_enabled()
+        page.locator('.rv-card').filter(has_text='$500.00').get_by_role('button', name='Mark reconciled').click()
+        expect(self.dialog().get_by_label('Applied to another job or settled outside the Hub', exact=False)).to_have_count(0)
+
+    def test_a_further_refund_after_a_closed_review_of_a_charge_not_on_its_job_is_corrected_where_that_review_put_the_money(self):
+        # Seventh review: $200 of a $550 tipped charge was refunded and the $300 service part kept recorded by hand; Stripe now shows it all refunded.
+        self.stripe = stripe_view(can_refund=True); self.stripe['checkoutBlock'] = False
+        self.stripe['paymentReviews'][0].update({'reviewId': 'cs_test_held:refund', 'reason': 'payment_refunded', 'heldReason': 'payment_tip_refused', 'amountCents': 55000, 'tipCents': 5000, 'serviceCents': 50000,
+            'refundedCents': 55000, 'keptCents': 0, 'keptServiceCents': 0, 'keptTipCents': 0, 'priorRefundedCents': 20000, 'priorKeptServiceCents': 30000, 'priorKeptTipCents': 5000, 'refundSeenAt': '2026-09-22T17:00:00.000Z', 'createdBy': 'customer_portal', 'recordedOnJob': False})
+        self.open(); page = self.page
+        card = page.locator('.rv-card').filter(has_text='$550.00')
+        expect(card).to_contain_text('Not on the job')
+        expect(card.locator('.rv-refund')).to_have_text('Stripe shows the full $550.00 refunded; a $200.00 refund was recorded earlier. When this charge’s earlier review was closed, what it kept was recorded on the job by hand or applied to another job. Reduce the job’s service payment by $300.00 more and pay the crew none of the $50.00 tip.')
+        expect(card).not_to_contain_text('kept is not on the job'); expect(card).not_to_contain_text('Before recording the refund')
+        expect(card).to_contain_text('A $200.00 refund on this charge was recorded earlier, and Stripe now shows more refunded. Correct only for the refund beyond it.')
+        self.assert_mobile()
+        def saved(route, path, body):
+            self.stripe = {**self.stripe, 'paymentReviews': []}
+            route.fulfill(status=200, content_type='application/json', body=json.dumps({'ok': True, 'authority': 'employee_hub', 'requestId': body['requestId'], 'action': body['action'], 'replayed': False,
+                'review': {'id': body['reviewId'], 'kind': 'payment', 'status': 'resolved', 'resolution': 'refunded', 'amountCents': 55000, 'refundedCents': 55000, 'keptCents': 0, 'refundFull': True, 'recordedOnJobAtResolution': False, 'settledEarlierAtResolution': True, 'tipCents': 5000}}))
+        self.post_reply = saved
+        card.get_by_role('button', name='Record refund').click()
+        dialog = self.dialog(); expect(dialog).to_contain_text('when its earlier review was closed, what it kept was recorded on the job by hand or applied to another job')
+        expect(dialog.get_by_text('I have recorded')).to_have_count(0)
+        dialog.get_by_label('Reason').select_option('other'); dialog.get_by_role('button', name='Record refund').click()
+        expect(dialog.get_by_role('alert')).to_have_text('Confirm that you will correct that payment before recording the refund.'); self.assertEqual(self.posts, [])
+        dialog.get_by_label('I will correct the payment recorded when the earlier review was closed (on this job or another) and the crew tip').check()
+        self.assert_mobile()
+        dialog.get_by_role('button', name='Record refund').click(); expect(page.locator('dialog.rv-dialog')).to_have_count(0)
+        self.assertEqual({key: self.posts[0][1][key] for key in ('action', 'reviewId', 'jobPaymentAcknowledged')}, {'action': 'payment.refund', 'reviewId': 'cs_test_held:refund', 'jobPaymentAcknowledged': True})
+        self.assertNotIn('keptCentsAcknowledged', self.posts[0][1])
+        expect(page.locator('#toasts')).to_contain_text('Refund recorded. What the earlier review kept was recorded by hand, on this job or another: reduce the job’s service payment by $300.00 more and pay the crew none of the $50.00 tip.')
+        # The Command Center says to correct that payment, never to record the amount kept.
+        self.stripe = copy.deepcopy(stripe_view()); self.stripe['paymentReviews'][0].update({'reviewId': 'cs_test_held:refund', 'reason': 'payment_refunded', 'amountCents': 55000, 'tipCents': 5000, 'refundedCents': 55000, 'keptCents': 0, 'priorRefundedCents': 20000})
+        page.goto(self.url + '/hub-alerts')
+        row = page.locator('.egc-review-alert').get_by_role('button').filter(has_text='1 card payment is held for review')
+        expect(row).to_contain_text('Stripe shows a further refund on a charge not on its job whose earlier review was closed')
+        expect(row).not_to_contain_text('not applied to the job'); expect(row).not_to_contain_text('Estimates & payments')
+        self.assert_mobile()
 
     def test_a_charge_stripe_shows_refunded_shows_the_amounts_and_only_the_owner_settles_it(self):
         self.stripe = stripe_view()
@@ -371,13 +544,13 @@ class ReviewQueuesBrowserTests(unittest.TestCase):
         dialog.get_by_label('Reason').select_option('exceeds_balance'); dialog.get_by_role('button', name='Record refund').click()
         expect(dialog.get_by_role('alert')).to_have_text('Confirm the $300.00 kept before recording the refund.'); self.assertEqual(len(self.posts), 1)
         self.assert_mobile()
-        dialog.get_by_label('The $300.00 kept is not on the job; I will record it under Estimates & payments').check(); dialog.get_by_role('button', name='Record refund').click()
+        dialog.get_by_label('I have recorded the $300.00 kept on the job under Estimates & payments').check(); dialog.get_by_role('button', name='Record refund').click()
         expect(page.locator('dialog.rv-dialog')).to_have_count(0)
         first, second = self.posts[0][1], self.posts[1][1]
         self.assertEqual({key: first[key] for key in ('action', 'note', 'expectedRevision')}, {'action': 'payment.reconcile', 'note': 'Refunded the $200 over the balance', 'expectedRevision': 'rev-p1'})
         self.assertEqual({key: second[key] for key in ('action', 'reason', 'note', 'keptCentsAcknowledged', 'expectedRevision')}, {'action': 'payment.refund', 'reason': 'exceeds_balance', 'note': 'Refunded the $200 over the balance', 'keptCentsAcknowledged': 30000, 'expectedRevision': 'rev-p1'})
         self.assertNotEqual(first['requestId'], second['requestId'])
-        expect(page.locator('#toasts')).to_contain_text('Refund recorded: $200.00 of $500.00 refunded. Record the $300.00 kept on the job under Estimates & payments.')
+        expect(page.locator('#toasts')).to_contain_text('Refund recorded: $200.00 of $500.00 refunded. The $300.00 kept belongs on the job: check it is recorded under Estimates & payments.')
 
     def test_a_manager_reconciling_a_charge_stripe_shows_refunded_is_told_only_the_owner_settles_it(self):
         self.open(); page = self.page
@@ -505,7 +678,7 @@ class ReviewQueuesInHubTests(HubShell, unittest.TestCase):
         expect(page.locator('#ops-title')).to_have_text('Review queues'); expect(page.locator('#ops-kicker')).to_have_text('RUN THE BUSINESS')
         expect(page.locator('.egc-reviews .rv-card').filter(has_text='$500.00')).to_be_visible()
         assets = page.evaluate("[...document.querySelectorAll('[data-egc-hub-asset]')].map(node=>node.getAttribute('src')||node.getAttribute('href')).sort()")
-        self.assertIn('employee-reviews.js?v=20260928reviews', assets); self.assertIn('employee-reviews.css?v=20260928reviews', assets)
+        self.assertIn('employee-reviews.js?v=20260929reviewstips7', assets); self.assertIn('employee-reviews.css?v=20260929reviewstips7', assets)
         scroll = self.no_horizontal_scroll(); self.assertLessEqual(scroll['width'], 375, scroll)
         self.assertEqual(self.small_targets('.egc-reviews'), [])
         page.locator('.egc-reviews .rv-card').filter(has_text='$500.00').get_by_role('button', name='Mark reconciled').click()

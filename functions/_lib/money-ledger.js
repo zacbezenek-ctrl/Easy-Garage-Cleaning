@@ -5,7 +5,7 @@ import { MAX_TOTAL_CENTS, PAYMENT_KINDS, paymentLedger } from './money-core.js';
  * (payment.amount) stays authoritative for every existing reader; the ledger
  * itemizes it with the LI-CORE entry shape plus verified/source:
  *   {id, kind, amountCents, method, processor, processorRef, receiptUrl, at, by, verified, source}
- * Itemized entries are verified Stripe sessions and gift credits (derived by
+ * Itemized entries are verified Stripe sessions, card tips and gift credits (derived by
  * money-core paymentLedger, the same evidence the revenue report trusts) and
  * payments recorded through the money API. Whatever the paid total holds that
  * no itemized entry explains (payments recorded before the ledger existed or
@@ -15,9 +15,9 @@ import { MAX_TOTAL_CENTS, PAYMENT_KINDS, paymentLedger } from './money-core.js';
  * on read. Pure: no I/O and no clock.
  */
 export const LEDGER_VERSION = 1;
-export const LEDGER_SOURCES = Object.freeze(['stripe_session', 'gift_credit', 'gift_credit_total', 'hub_offline', 'legacy_aggregate']);
+export const LEDGER_SOURCES = Object.freeze(['stripe_session', 'stripe_tip', 'gift_credit', 'gift_credit_total', 'hub_offline', 'legacy_aggregate']);
 export const LEGACY_ENTRY_ID = 'legacy:manual';
-const EVIDENCE = new Set(['stripe_session', 'gift_credit', 'gift_credit_total']);
+const EVIDENCE = new Set(['stripe_session', 'stripe_tip', 'gift_credit', 'gift_credit_total']);
 const ID = /^[A-Za-z0-9_:.-]{1,200}$/, METHOD = /^[a-z][a-z0-9_]{0,39}$/;
 const plain = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const instant = value => typeof value === 'string' && /^\d{4}-\d\d-\d\dT\d\d:\d\d(?::\d\d(?:\.\d{1,9})?)?(?:Z|[+-]\d\d:\d\d)$/.test(value) && Number.isFinite(Date.parse(value)) ? new Date(value).toISOString() : null;
@@ -78,3 +78,25 @@ export function reconcileLedger(job, extra = []) {
 
 /** Fields that persist a reconciled ledger on the job. */
 export const ledgerPatch = (ledger, now) => ({ paymentLedger: ledger.entries, paymentLedgerVersion: LEDGER_VERSION, paymentLedgerStatus: ledger.complete ? 'complete' : 'needs_review', paymentLedgerIssues: ledger.issues, paymentLedgerUpdatedAt: now });
+
+// Payments a person recorded on the job by hand through the money API (Estimates & payments): the stored ledger's
+// hub_offline entries. Card payments, gift credits, tips and the legacy aggregate are never among them.
+const manualRows = job => (Array.isArray(job?.paymentLedger) ? job.paymentLedger : []).map(storedEntry).filter(row => row && row.source === 'hub_offline' && row.verified && row.kind !== 'tip');
+/** Ids of the payments a person has recorded on this job by hand (hub_offline ledger entries), at most 200. */
+export const manualEntryIds = job => [...new Set(manualRows(job).map(row => row.id))].slice(0, 200);
+/**
+ * Whole cents a person recorded on this job by hand (hub_offline ledger entries) at or after `since` (an ISO instant),
+ * leaving out the entries named in `exclude` (ones the job already had then). Each entry counts once; a refund entry
+ * counts against the total, which is never below 0. 0 when `since` cannot be read. Pure: no clock.
+ */
+export function manualCentsSince(job, since, exclude = []) {
+  const from = instant(since);
+  if (!from) return 0;
+  const skip = new Set(Array.isArray(exclude) ? exclude.map(String) : []), seen = new Set();
+  let cents = 0;
+  for (const row of manualRows(job)) {
+    if (seen.has(row.id) || skip.has(row.id) || !row.at || Date.parse(row.at) < Date.parse(from)) continue;
+    seen.add(row.id); cents += signed(row);
+  }
+  return Math.max(0, cents);
+}

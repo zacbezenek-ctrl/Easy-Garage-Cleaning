@@ -7,7 +7,7 @@
 'use strict';
 const SCREEN='reviews',TZ='America/Denver';
 const API={stripe:'/api/stripe-reviews',sends:'/api/message-sends',insurance:'/api/portal-documents-admin'};
-const PAYMENT_REASONS={payment_exceeds_balance:'Charged more than the job balance at the time',payment_needs_review:'An earlier payment on the job was not verified yet',payment_refunded:'Stripe shows a refund on this charge'};
+const PAYMENT_REASONS={payment_exceeds_balance:'Charged more than the job balance at the time',payment_needs_review:'An earlier payment on the job was not verified yet',payment_refunded:'Stripe shows a refund on this charge',payment_tip_refused:'Includes a crew tip, and the job was closed, voided or refunded after checkout opened'};
 const MEMBER_REASONS={no_customer_match:'No Hub customer has this phone or email',ambiguous_customer:'More than one Hub customer matches',contact_conflict:'The phone and email match different customers',too_many_jobs:'The customer has too many visits to check automatically',multiple_account_roots:'The customer has more than one account',account_link_invalid:'The customer’s account links need repair',no_account_job:'The customer has no account job yet',account_has_other_membership:'That account already has another membership',account_link_changed:'The linked account changed'};
 const PLANS={lite:'Guard Lite',guard:'Garage Guard',black:'Guard Black'};
 const INSURANCE={expiring_soon:['warning','Insurance certificate expires soon'],expired:['error','Insurance certificate expired'],missing:['error','No insurance certificate uploaded'],invalid:['error','Insurance certificate needs review'],unavailable:['error','Insurance certificate is unavailable to customers']};
@@ -33,11 +33,68 @@ const VALID={
 const request=(path,opts={})=>kit().requestJSON(path,{prefix:'reviews',fetcher:S.ctx?.hubFetch,...opts});
 // The review APIs are for operations managers and the owner; other business roles get 403, which is not an outage.
 const restricted=key=>Number(S.errors[key]?.status)===403;
-// Stripe's refund split in whole cents ({amountCents, refundedCents, keptCents}), or null when it is not known.
+// Stripe's refund split in whole cents ({amountCents, refundedCents, keptCents}), or null when it is not known. A tipped
+// charge's split also names the kept service part and tip (keptServiceCents, keptTipCents; null when unreadable).
 function refundSplit(value){
   const amount=value?.amountCents,refunded=value?.refundedCents;
   if(!Number.isSafeInteger(amount)||!Number.isSafeInteger(refunded)||refunded<=0||refunded>amount)return null;
-  return {amountCents:amount,refundedCents:refunded,keptCents:Number.isSafeInteger(value.keptCents)&&value.keptCents>=0?value.keptCents:amount-refunded};
+  const split={amountCents:amount,refundedCents:refunded,keptCents:Number.isSafeInteger(value.keptCents)&&value.keptCents>=0?value.keptCents:amount-refunded};
+  if('keptServiceCents' in value||'keptTipCents' in value){const service=value.keptServiceCents,tip=value.keptTipCents,known=Number.isSafeInteger(service)&&Number.isSafeInteger(tip)&&service>=0&&tip>=0&&service+tip===split.keptCents;split.keptServiceCents=known?service:null;split.keptTipCents=known?tip:null;}
+  return split;
+}
+// A row's crew tip in cents: 0 when untipped (or from before tips), null when it could not be read.
+const tipOf=row=>row?.tipCents===null?null:Number.isSafeInteger(row?.tipCents)&&row.tipCents>0?row.tipCents:0;
+const whole=value=>Number.isSafeInteger(value)&&value>=0;
+// What a tipped charge keeps after a refund, split into service and tip (the server's keptSplit): the refund read as coming
+// out of the service first, or (tipFirst) the crew tip first. tipBefore is the tip still kept before this refund.
+function keptParts(kept,tip,{tipFirst=false,refunded=null,tipBefore=tip}={}){
+  if(!whole(kept)||!(tip>0))return null;
+  const before=whole(tipBefore)&&tipBefore<=tip?tipBefore:tip,keptTip=tipFirst?(whole(refunded)?Math.max(0,before-refunded):null):Math.min(kept,before);
+  return keptTip===null||keptTip>kept?null:{keptServiceCents:kept-keptTip,keptTipCents:keptTip};
+}
+// Both readings of a tipped row's refund. A follow-up that names what the earlier recorded refund kept is read on its own
+// (stacked): only the refund beyond that one is split, out of what it left.
+function readings(row,split){
+  const tip=tipOf(row),prior=Number.isSafeInteger(row.priorRefundedCents)&&row.priorRefundedCents>0?row.priorRefundedCents:0;
+  const stacked=Boolean(prior)&&whole(row.priorKeptTipCents)&&whole(row.priorKeptServiceCents)&&split.refundedCents>=prior;
+  const base={refunded:stacked?split.refundedCents-prior:split.refundedCents,tipBefore:stacked?row.priorKeptTipCents:tip};
+  return {service:keptParts(split.keptCents,tip,base),tip:keptParts(split.keptCents,tip,{...base,tipFirst:true}),stacked,prior,serviceBefore:stacked?row.priorKeptServiceCents:Number.isSafeInteger(row.serviceCents)?row.serviceCents:null};
+}
+// What to record on the job, BEFORE the refund is recorded, from money kept on a charge not on the job (the open review
+// still holds the customer's Pay button): a tipped charge's service part only, which depends on which part was refunded.
+function keptFirst(row,split){
+  const {money}=kit(),tip=tipOf(row);
+  if(tip===0)return 'record the '+money(split.keptCents)+' kept on the job under Estimates & payments';
+  const r=tip===null?null:readings(row,split);
+  if(!r?.service||!r.tip)return 'check in Stripe how much of the '+money(split.keptCents)+' kept is the crew tip, and record only the service part on the job under Estimates & payments';
+  const amounts=r.service.keptServiceCents===r.tip.keptServiceCents?'its '+money(r.service.keptServiceCents)+' service part on the job under Estimates & payments':'its service part on the job under Estimates & payments ('+money(r.service.keptServiceCents)+' if the refund came out of the service first, or '+money(r.tip.keptServiceCents)+' if the crew tip was refunded first)';
+  return 'record '+amounts+'; up to '+money(r.service.keptTipCents)+' of the '+money(split.keptCents)+' kept is the crew tip, which is never a service payment';
+}
+// What the crew is owed of a tip once part of it may have been refunded.
+function tipPay(keptTip,tip){const {money}=kit();return keptTip<=0?'pay the crew none of the '+money(tip)+' tip':keptTip<tip?'pay the crew only '+money(keptTip)+' of the '+money(tip)+' tip':'pay the crew the whole '+money(tip)+' tip';}
+// The correction for a refund on a tipped charge the job already counts as paid: its service payment (only the service
+// part is in the job's paid total) and the crew tip (kept apart on the job; tip payroll holds it until it is paid by hand).
+function onJobFix(parts,serviceBefore,tip,more){
+  const {money}=kit(),reduce=serviceBefore-parts.keptServiceCents;
+  return (reduce>0?'reduce the job’s service payment by '+money(reduce)+(more?' more':''):'leave the job’s service payment as it is')+' and '+tipPay(parts.keptTipCents,tip);
+}
+const cap=text=>text.charAt(0).toUpperCase()+text.slice(1);
+function onJobTipped(row,split){
+  const {money}=kit(),tip=tipOf(row),r=readings(row,split);
+  if(!r.service||!r.tip||!whole(r.serviceBefore))return 'Check in Stripe how much of the refund was the crew tip, then correct the job’s service payment and the crew tip.';
+  // An earlier refund whose split is not known: what the job was already corrected by cannot be read here.
+  if(r.prior&&!r.stacked)return 'Check the job’s service payment and the crew tip against Stripe before changing them.';
+  const intro=(r.stacked?'After the earlier refund the job counts '+money(r.serviceBefore)+' of service as paid':'The job counts only the '+money(r.serviceBefore)+' service part as paid')+'; the '+money(tip)+' tip is kept apart, and tip payroll holds it until you pay what is owed by hand. ';
+  const a=onJobFix(r.service,r.serviceBefore,tip,r.stacked),b=onJobFix(r.tip,r.serviceBefore,tip,r.stacked);
+  return intro+(a===b?cap(a)+'.':'If the refund'+(r.stacked?' beyond it':'')+' came out of the service first, '+a+'. If the crew tip was refunded first, '+b+'.');
+}
+// A tipped charge: its service part and crew tip, so the tip is never settled as service money.
+function tipLine(row){
+  const {money}=kit();
+  if(row.tipCents===null)return 'Includes a crew tip whose amount could not be read: check the charge in Stripe before settling it.';
+  if(!(Number.isSafeInteger(row.tipCents)&&row.tipCents>0))return '';
+  const parts='Includes a crew tip: '+(Number.isSafeInteger(row.serviceCents)?money(row.serviceCents)+' service + ':'')+money(row.tipCents)+' tip. ';
+  return parts+(row.recordedOnJob?'The job counts only the service part as paid; the tip is kept apart on the job for tip payroll.':'Only the service part is ever recorded on the job; the tip is paid to the crew by hand.');
 }
 function pending(){try{return kit().pending(SCREEN);}catch{return null;}}
 // A payment review is resolved by its own ID: the session ID, or a refund follow-up ({sessionId}:refund, {sessionId}:refund:2 ...) the server names in reviewId.
@@ -126,8 +183,8 @@ function discardSaved(){pending()?.discard();S.failure=null;S.notice='';void loa
 // A test-mode charge the Hub's Stripe key cannot show (no key, or a live key) is closed by the owner without the check; the notice says so.
 const UNCHECKED={other_mode:'the Hub now uses a live Stripe key',unconfigured:'no Stripe key is set'};
 function reconcileNotice(data){
-  const check=data?.review?.stripeCheck;
-  return UNCHECKED[check]?'Charge marked reconciled without a Stripe check (test-mode charge; '+UNCHECKED[check]+').':'Charge marked reconciled.';
+  const check=data?.review?.stripeCheck,elsewhere=data?.review?.serviceAppliedElsewhere===true?' Its service part was applied to another job or settled outside the Hub.':'';
+  return (UNCHECKED[check]?'Charge marked reconciled without a Stripe check (test-mode charge; '+UNCHECKED[check]+').':'Charge marked reconciled.')+elsewhere;
 }
 // The Hub checks the charge in Stripe before it is reconciled. A charge Stripe shows refunded is never reconciled:
 // the owner is taken to Record refund (which confirms any amount kept), with what was typed carried over.
@@ -135,12 +192,18 @@ function reconcilePayment(row){
   const refunded=row.reason==='payment_refunded';
   // Only a test-mode charge can be closed without the Stripe check, and only by the owner.
   const unchecked=row.livemode?'':' If Stripe cannot be checked for this test-mode charge (no Stripe key, or a live key), only the owner can close it, without the check.';
+  // A tipped charge not on its job (not a follow-up, whose earlier close settled where its money went): closing it gives the
+  // customer's Pay button back, so its service part must be on the job first, or the person says it went elsewhere.
+  const tip=tipOf(row),service=!row.recordedOnJob&&tip!==0&&paymentId(row)===row.sessionId;
+  const {money}=kit(),part=Number.isSafeInteger(row.serviceCents)?'its '+money(row.serviceCents)+' service part':'its service part';
   openDialog({title:'Mark this charge reconciled?',confirmLabel:'Mark reconciled',draftKey:'payment.reconcile:'+paymentId(row),
-    copy:(refunded?'Stripe showed a refund on this charge. A refund in Stripe is not reconciled here: record it with Record refund. Mark it reconciled only if Stripe no longer shows the refund (for example, the refund failed), and say how the charge was settled. The Hub checks Stripe first. Nothing changes on the job or in Stripe.'
+    copy:(refunded?'Stripe showed a refund on this charge. A refund in Stripe is not reconciled here: record it with Record refund. Mark it reconciled only if Stripe no longer shows the refund (for example, the refund failed), and say how the charge was settled. The Hub checks Stripe first. Nothing changes on the job or in Stripe.'+(service?' Its service part must be on the job first, as below.':'')
       :row.recordedOnJob?'This charge is already on the job. Marking it reconciled closes the review; nothing changes on the job or in Stripe. The Hub checks Stripe first: if it shows a refund, the owner records the refund instead.'
-      :'This charge is not on the job. Say how it was settled (for example, recorded on the job by hand or applied to another job). A refund in Stripe is not reconciled here: the owner records it with Record refund. The Hub checks Stripe first. Nothing changes on the job or in Stripe.')+unchecked,
-    fields:[{label:row.recordedOnJob?'Note (optional)':'How it was reconciled',name:'note',type:'textarea',required:!row.recordedOnJob,maxlength:500,rows:3}],
-    submit:(values,draft)=>save(API.stripe,{action:'payment.reconcile',reviewId:paymentId(row),expectedRevision:row.revision,...(values.note?{note:values.note}:{})},reconcileNotice,draft,
+      :(service?'This charge is not on the job. Record '+part+' on the job under Estimates & payments before marking it reconciled (never the '+(tip>0?money(tip)+' ':'')+'crew tip, which is paid to the crew by hand), or, if it was applied to another job or settled outside the Hub, tick that box below. ':'This charge is not on the job. Say how it was settled (for example, recorded on the job by hand or applied to another job). ')+'A refund in Stripe is not reconciled here: the owner records it with Record refund. The Hub checks Stripe first. Nothing changes on the job or in Stripe.')+unchecked,
+    warning:service?'Marking it reconciled lets the customer pay the job’s balance again. The Hub refuses it until '+part+' is recorded on the job, unless you tick the box.':'',
+    fields:[{label:row.recordedOnJob?'Note (optional)':'How it was reconciled',name:'note',type:'textarea',required:!row.recordedOnJob,maxlength:500,rows:3},
+      ...(service?[{label:'Applied to another job or settled outside the Hub: '+part+' is not recorded on this job',name:'appliedElsewhere',type:'checkbox'}]:[])],
+    submit:(values,draft)=>save(API.stripe,{action:'payment.reconcile',reviewId:paymentId(row),expectedRevision:row.revision,...(values.note?{note:values.note}:{}),...(service&&values.appliedElsewhere===true?{appliedElsewhere:true}:{})},reconcileNotice,draft,
       {stripe_review_refund_shown:error=>refundInstead(row,error,values)})});
 }
 // Stripe shows a refund on the charge being reconciled (409 stripe_review_refund_shown with Stripe's amounts):
@@ -149,30 +212,59 @@ function refundInstead(row,error,values){
   const split=refundSplit(error.details),onJob=error.details?.recordedOnJob===true;
   if(!split||S.data.stripe?.viewer?.canRecordRefund!==true)return kit().errorText(error);
   S.draft=values.note?{key:'payment.refund:'+paymentId(row),values:{note:values.note}}:null;
-  S.next=()=>refundPayment({...row,recordedOnJob:onJob},split.keptCents>0&&!onJob?split:null,'Stripe shows a refund on this charge, so it is recorded as a refund, not reconciled.');
+  S.next=()=>refundPayment({...row,recordedOnJob:onJob,...(onJob?{amountCents:split.amountCents,refundedCents:split.refundedCents,keptCents:split.keptCents}:{})},split.keptCents>0&&!onJob?split:null,'Stripe shows a refund on this charge, so it is recorded as a refund, not reconciled.');
   closeDialog();return '';
 }
-// What the saved refund means for the job, from the resolved review.
-function refundNotice(data){
-  const {money}=kit(),review=data?.review||{},split=refundSplit(review),onJob=review.recordedOnJobAtResolution===true;
-  if(split&&review.refundFull===false)return 'Refund recorded: '+money(split.refundedCents)+' of '+money(split.amountCents)+' refunded. '+(onJob?'The job still counts this charge as paid until its payment is corrected.':'Record the '+money(split.keptCents)+' kept on the job under Estimates & payments.');
+// What the saved refund means for the job, from the resolved review (row: the queue row it resolved, for a tipped charge's
+// service part and any earlier recorded refund).
+function refundNotice(data,row={}){
+  const {money}=kit(),review=data?.review||{},split=refundSplit(review),onJob=review.recordedOnJobAtResolution===true,tip=tipOf(review);
+  // A follow-up of a charge not on its job: what its earlier review kept was recorded by hand (on this job or another).
+  const later=!onJob&&review.settledEarlierAtResolution===true;
+  if((onJob||later)&&tip>0){
+    const parts=review.refundFull===true?{keptServiceCents:0,keptTipCents:0}:whole(review.keptServiceCents)&&whole(review.keptTipCents)?{keptServiceCents:review.keptServiceCents,keptTipCents:review.keptTipCents}:null;
+    const r=split?readings({...row,tipCents:tip,serviceCents:Number.isSafeInteger(review.amountCents)?review.amountCents-tip:row.serviceCents},split):null;
+    const head=split&&review.refundFull===false?'Refund recorded: '+money(split.refundedCents)+' of '+money(split.amountCents)+' refunded. ':'Refund recorded. ';
+    if(parts&&r&&whole(r.serviceBefore)&&!(r.prior&&!r.stacked))return head+(later?'What the earlier review kept was recorded by hand, on this job or another: ':'')+(later?onJobFix(parts,r.serviceBefore,tip,r.stacked):cap(onJobFix(parts,r.serviceBefore,tip,r.stacked)))+'.';
+    return head+(later?'Correct the payment recorded when the earlier review was closed, and the crew tip.':'The job still counts this charge’s service part as paid until its payment and the crew tip are corrected.');
+  }
+  if(later)return (split&&review.refundFull===false?'Refund recorded: '+money(split.refundedCents)+' of '+money(split.amountCents)+' refunded. ':'Refund recorded. ')+'The payment recorded when this charge’s earlier review was closed (on this job or another) still counts until it is corrected.';
+  if(split&&review.refundFull===false){
+    if(onJob)return 'Refund recorded: '+money(split.refundedCents)+' of '+money(split.amountCents)+' refunded. The job still counts this charge as paid until its payment is corrected.';
+    const head='Refund recorded: '+money(split.refundedCents)+' of '+money(split.amountCents)+' refunded. ';
+    if(tip===0)return head+'The '+money(split.keptCents)+' kept belongs on the job: check it is recorded under Estimates & payments.';
+    if(whole(split.keptServiceCents)&&whole(split.keptTipCents))return head+'Of the '+money(split.keptCents)+' kept, the '+money(split.keptServiceCents)+' service part belongs on the job (under Estimates & payments) and the '+money(split.keptTipCents)+' crew tip is paid to the crew by hand, never as a service payment.';
+    return head+'Record only the service part of the '+money(split.keptCents)+' kept on the job under Estimates & payments, never the crew tip.';
+  }
   if(onJob)return 'Refund recorded. The job still counts this charge as paid until its payment is corrected.';
   return split?'Refund recorded: Stripe shows the full '+money(split.amountCents)+' refunded.':'Refund recorded.';
 }
-// partial is Stripe's split from a stripe_review_refund_partial answer: the owner then confirms the exact amount kept.
-// why says why the dialog opened when it replaces a reconcile.
+// partial is Stripe's split from a stripe_review_refund_partial answer: the owner records the money kept on the job first,
+// then confirms the exact amount kept. why says why the dialog opened when it replaces a reconcile. A tipped charge
+// partly refunded also asks which part was refunded, which decides its service part.
 function refundPayment(row,partial=null,why=''){
-  const {money}=kit(),reasons=S.data.stripe?.reasons?.refund||{},onJob=row.recordedOnJob===true,keep=partial&&!onJob?partial.keptCents:null;
-  const warning=[why,onJob?'This charge is already on the job, which counts it as paid. Recording the refund here closes the review but does not change the job: correct the job’s payment afterwards.':'',
-    keep!==null?'Stripe shows '+money(partial.refundedCents)+' of '+money(partial.amountCents)+' refunded. The '+money(keep)+' kept is not on the job, and recording this refund closes the review for good: record the '+money(keep)+' on the job under Estimates & payments afterwards.':''].filter(Boolean).join(' ');
+  const {money}=kit(),reasons=S.data.stripe?.reasons?.refund||{},onJob=row.recordedOnJob===true,tip=tipOf(row);
+  // A follow-up of a charge not on its job: its earlier close already put what it kept on the job by hand (or elsewhere),
+  // so, as for a charge on the job, the owner confirms the correction and records nothing more first.
+  const later=!onJob&&paymentId(row)!==row.sessionId,keep=partial&&!onJob&&!later?partial.keptCents:null;
+  const known=partial||refundSplit(row),askPart=tip>0&&Boolean(known)&&known.keptCents>0;
+  const r=keep!==null&&tip>0?readings(row,partial):null,kept=r?.service&&r.tip?[r.service.keptServiceCents,r.tip.keptServiceCents]:null;
+  const warning=[why,later?'This charge is not on the job, but when its earlier review was closed, what it kept was recorded on the job by hand or applied to another job. Recording this further refund closes the review but changes neither: correct that payment'+(tip!==0?' and the crew tip':'')+' afterwards, as the card shows.':onJob?(tip>0&&Number.isSafeInteger(row.serviceCents)?'This charge is already on the job, which counts its '+money(row.serviceCents)+' service part as paid (the '+money(tip)+' tip is kept apart). Recording the refund here closes the review but does not change the job: correct the job’s service payment and the crew tip afterwards, as the card shows.':'This charge is already on the job, which counts it as paid. Recording the refund here closes the review but does not change the job: correct the job’s payment afterwards.'):'',
+    keep!==null?'Stripe shows '+money(partial.refundedCents)+' of '+money(partial.amountCents)+' refunded. The '+money(keep)+' kept is not on the job, and recording this refund closes the review for good'+(tip===0?'':' (the customer’s Pay button comes back)')+'. Before recording it, '+keptFirst(row,partial)+'.':''].filter(Boolean).join(' ');
+  const keptLabel=tip===0?'I have recorded the '+money(keep)+' kept on the job under Estimates & payments'
+    :kept?'I have recorded the service part kept ('+(kept[0]===kept[1]?money(kept[0]):money(kept[0])+', or '+money(kept[1])+' if the crew tip was refunded first')+') on the job under Estimates & payments, never the tip'
+      :'I have recorded only the service part kept on the job under Estimates & payments, never the tip';
   openDialog({title:partial?'Record a partial Stripe refund?':'Record the Stripe refund?',confirmLabel:'Record refund',danger:true,draftKey:'payment.refund:'+paymentId(row),
-    copy:'Refund the charge in the Stripe dashboard first (all of it or part of it). The Hub checks Stripe and records the refund only when Stripe shows it. If only part was refunded, the Hub shows the amount kept, which you then record on the job. Your note is visible to the owner only.',
+    copy:'Refund the charge in the Stripe dashboard first (all of it or part of it). The Hub checks Stripe and records the refund only when Stripe shows it. If only part was refunded, the Hub shows the amount kept, which you record on the job before recording the refund. Your note is visible to the owner only.',
     warning,
-    fields:[{label:'Reason',name:'reason',type:'select',required:true,options:[{value:'',label:'Choose a reason'},...Object.entries(reasons).map(([value,label])=>({value,label}))]},{label:'Note (owner only)',name:'note',type:'textarea',maxlength:500,rows:3},
-      ...(onJob?[{label:'I will correct the job’s payment; the job still counts this charge as paid',name:'jobPaymentAcknowledged',type:'checkbox',required:true,requiredText:'Confirm that you will correct the job’s payment before recording the refund.'}]:[]),
-      ...(keep!==null?[{label:'The '+money(keep)+' kept is not on the job; I will record it under Estimates & payments',name:'keptAcknowledged',type:'checkbox',required:true,requiredText:'Confirm the '+money(keep)+' kept before recording the refund.'}]:[])],
-    submit:(values,draft)=>save(API.stripe,{action:'payment.refund',reviewId:paymentId(row),expectedRevision:row.revision,reason:values.reason,...(values.note?{note:values.note}:{}),...(onJob?{jobPaymentAcknowledged:values.jobPaymentAcknowledged===true}:{}),...(keep!==null&&values.keptAcknowledged===true?{keptCentsAcknowledged:keep}:{})},
-      refundNotice,draft,{stripe_review_refund_partial:error=>{
+    fields:[{label:'Reason',name:'reason',type:'select',required:true,options:[{value:'',label:'Choose a reason'},...Object.entries(reasons).map(([value,label])=>({value,label}))]},
+      ...(askPart?[{label:'Which part did you refund in Stripe?',name:'refundedPart',type:'select',required:true,options:[{value:'',label:'Choose which part'},{value:'service',label:'The service first (the tip only past the service part)'},{value:'tip',label:'The crew tip first, then the service'}]}]:[]),
+      {label:'Note (owner only)',name:'note',type:'textarea',maxlength:500,rows:3},
+      ...(onJob?[{label:tip>0?'I will correct the job’s service payment and the crew tip; the job still counts the service part as paid':'I will correct the job’s payment; the job still counts this charge as paid',name:'jobPaymentAcknowledged',type:'checkbox',required:true,requiredText:'Confirm that you will correct the job’s payment before recording the refund.'}]:[]),
+      ...(later?[{label:'I will correct the payment recorded when the earlier review was closed (on this job or another)'+(tip!==0?' and the crew tip':''),name:'jobPaymentAcknowledged',type:'checkbox',required:true,requiredText:'Confirm that you will correct that payment before recording the refund.'}]:[]),
+      ...(keep!==null?[{label:keptLabel,name:'keptAcknowledged',type:'checkbox',required:true,requiredText:'Confirm the '+money(keep)+' kept before recording the refund.'}]:[])],
+    submit:(values,draft)=>save(API.stripe,{action:'payment.refund',reviewId:paymentId(row),expectedRevision:row.revision,reason:values.reason,...(values.note?{note:values.note}:{}),...(onJob||later?{jobPaymentAcknowledged:values.jobPaymentAcknowledged===true}:{}),...(keep!==null&&values.keptAcknowledged===true?{keptCentsAcknowledged:keep}:{}),...(askPart?{tipRefundedFirst:values.refundedPart==='tip'}:{})},
+      data=>refundNotice(data,row),draft,{stripe_review_refund_partial:error=>{
         // Stripe shows only part refunded: reopen with the amounts and a required confirmation, keeping what was typed.
         const split=refundSplit(error.details);
         if(!split||split.keptCents<1)return kit().errorText(error);
@@ -224,11 +316,31 @@ function insuranceAlert(){
   const until=dateLabel(data.insurance.expiresOn),detail={expiring_soon:'It expires '+(until||'soon')+'. Upload the renewed certificate before then so customers can keep downloading it.',expired:'It expired '+(until||'')+'. Customers cannot download it until the renewed certificate is uploaded.',missing:'Customers are asked to call or text for a copy until one is uploaded.',invalid:'The saved record is incomplete. Upload the certificate again.',unavailable:'Google Drive is not connected, so customers cannot download it.'}[state];
   return h('div',{class:'hub-notice '+copy[0]+' rv-alert',role:copy[0]==='error'?'alert':'status'},h('strong',{},copy[1]),h('p',{},detail),h('div',{class:'hub-actions'},button('Open Settings',()=>S.ctx?.go?.('settings'))));
 }
-// What Stripe's refund means for the job. A charge already on the job is counted there in full, so the job is reduced by the
-// amount refunded, less a refund recorded earlier on the same charge (prior, from a follow-up review), so it is never reduced
-// twice; a charge not on the job leaves any amount kept on no job until it is recorded there.
+// What Stripe's refund means for the job. An untipped charge already on the job is counted there in full, so the job is
+// reduced by the amount refunded, less a refund recorded earlier on the same charge (prior, from a follow-up review), so it
+// is never reduced twice. A tipped charge on the job is counted there by its service part only (its tip is kept apart), so
+// only the service refunded comes off the job's payment and the crew is paid only the tip kept. A charge not on the job
+// leaves any amount kept on no job until it is recorded there, before the refund is recorded.
 function refundLine(row,split,prior=0){
-  const {money}=kit(),full=split.keptCents<=0;
+  const {money}=kit(),full=split.keptCents<=0,tip=tipOf(row);
+  // A follow-up of a charge not on its job: when its earlier review was closed, what it kept was recorded on the job by
+  // hand (or the charge was applied to another job), so the further refund is corrected there, never recorded again.
+  if(row.recordedOnJob!==true&&typeof row.reviewId==='string'&&row.reviewId!==''&&row.reviewId!==row.sessionId){
+    const shown='Stripe shows '+(full?'the full '+money(split.amountCents):money(split.refundedCents)+' of '+money(split.amountCents))+' refunded'+(prior?'; a '+money(prior)+' refund was recorded earlier':'')+'. ';
+    const where='When this charge’s earlier review was closed, what it kept was recorded on the job by hand or applied to another job. ';
+    if(prior&&split.refundedCents<=prior)return shown+where+'Check that payment against Stripe before changing it.';
+    if(tip===null)return shown+where+'Check in Stripe how much of it was the crew tip, then correct that service payment and the crew tip.';
+    if(tip===0)return shown+where+'Reduce that payment by '+money(split.refundedCents-prior)+(prior?' more':'')+'.';
+    const r=readings(row,split);
+    if(!r.service||!r.tip||!whole(r.serviceBefore)||(r.prior&&!r.stacked))return shown+where+'Check that service payment and the crew tip against Stripe before changing them.';
+    const a=onJobFix(r.service,r.serviceBefore,tip,r.stacked),b=onJobFix(r.tip,r.serviceBefore,tip,r.stacked);
+    return shown+where+(a===b?cap(a)+'.':'If the refund'+(r.stacked?' beyond it':'')+' came out of the service first, '+a+'. If the crew tip was refunded first, '+b+'.');
+  }
+  if(row.recordedOnJob&&tip!==0){
+    const shown='Stripe shows '+(full?'the full '+money(split.amountCents):money(split.refundedCents)+' of '+money(split.amountCents))+' refunded'+(prior?'; a '+money(prior)+' refund was recorded earlier':'')+'. ';
+    if(prior&&split.refundedCents<=prior)return shown+'Check the job’s service payment and the crew tip against Stripe before changing them.';
+    return shown+(tip===null?'Check in Stripe how much of it was the crew tip, then correct the job’s service payment and the crew tip.':onJobTipped(row,split));
+  }
   if(row.recordedOnJob&&prior){
     const shown='Stripe shows '+(full?'the full '+money(split.amountCents):money(split.refundedCents)+' of '+money(split.amountCents))+' refunded. ';
     if(split.refundedCents<=prior)return shown+'A '+money(prior)+' refund was recorded earlier: check the job’s payment against Stripe before changing it.';
@@ -236,7 +348,7 @@ function refundLine(row,split,prior=0){
   }
   if(row.recordedOnJob)return full?'Stripe shows the full '+money(split.amountCents)+' refunded. The job still counts it as paid: reduce the job’s payment by '+money(split.amountCents)+'.'
     :'Stripe shows '+money(split.refundedCents)+' of '+money(split.amountCents)+' refunded. The job still counts the full '+money(split.amountCents)+' as paid: reduce the job’s payment by the '+money(split.refundedCents)+' refunded, so it counts only the '+money(split.keptCents)+' kept.';
-  return full?'Stripe shows the full '+money(split.amountCents)+' refunded.':'Stripe shows '+money(split.refundedCents)+' of '+money(split.amountCents)+' refunded; the '+money(split.keptCents)+' kept is not on the job.';
+  return full?'Stripe shows the full '+money(split.amountCents)+' refunded.':'Stripe shows '+money(split.refundedCents)+' of '+money(split.amountCents)+' refunded; the '+money(split.keptCents)+' kept is not on the job'+(tip===0?'.':'. Before recording the refund, '+keptFirst(row,split)+'.');
 }
 function paymentCard(row,canRefund){
   const {h,button,money}=kit(),reason=PAYMENT_REASONS[row.reason]||'Held for review',refunded=row.reason==='payment_refunded',split=refunded?refundSplit(row):null;
@@ -246,9 +358,10 @@ function paymentCard(row,canRefund){
   return h('article',{class:'hub-card rv-card'},
     h('div',{class:'rv-card-head'},h('h3',{},money(row.amountCents)+' · '+(row.customer||(row.jobFound?'Customer not named':'Job not found'))),h('span',{class:'rv-badge '+(row.recordedOnJob?'good':'warn')},row.recordedOnJob?'Already on the job':'Not on the job')),
     h('p',{class:'rv-reason'},reason+'.'),
+    tipLine(row)?h('p',{class:'rv-tip'},tipLine(row)):null,
     split?h('p',{class:'hub-notice warning rv-refund'},refundLine(row,split,prior)):null,
     first?h('p',{class:'rv-muted'},'First held because: '+first.charAt(0).toLowerCase()+first.slice(1)+'.'):null,
-    paymentId(row)!==row.sessionId?h('p',{class:'rv-muted'},prior?'A '+money(prior)+' refund on this charge was recorded earlier, and Stripe now shows more refunded. If the job was already reduced by '+money(prior)+', reduce it only by the difference.':'Stripe showed this refund after the charge’s earlier review was closed.'):null,
+    paymentId(row)!==row.sessionId?h('p',{class:'rv-muted'},prior?'A '+money(prior)+' refund on this charge was recorded earlier, and Stripe now shows more refunded. '+(!row.recordedOnJob?'Correct only for the refund beyond it.':tipOf(row)!==0?'Correct the job only for the refund beyond it.':'If the job was already reduced by '+money(prior)+', reduce it only by the difference.'):'Stripe showed this refund after the charge’s earlier review was closed.'):null,
     h('dl',{class:'rv-facts'},
       h('div',{},h('dt',{},'Job'),h('dd',{},row.jobId||'Unknown')),
       h('div',{},h('dt',{},'When held'),h('dd',{},when(row.createdAt)||'Unknown')),
@@ -300,9 +413,17 @@ function stripeSections(){
   const payments=data.paymentReviews.length?h('div',{class:'rv-list'},data.paymentReviews.map(row=>paymentCard(row,data.viewer?.canRecordRefund===true))):h('p',{class:'rv-empty'},'No card payments are held for review.');
   const members=data.membershipReviews.length?h('div',{class:'rv-list'},data.membershipReviews.map(memberCard)):h('p',{class:'rv-empty'},'Every Garage Guard member is linked or closed.');
   return[
-    section('payments','Held card payments',data.paymentReviews.length,[partial,payments],data.checkoutBlock&&data.paymentReviews.length?h('p',{class:'rv-muted'},'New card checkouts on these jobs are blocked until each review is resolved.'):null),
+    section('payments','Held card payments',data.paymentReviews.length,[partial,payments],paymentNote(data)),
     section('members','Garage Guard member matches',data.membershipReviews.length,members),
   ];
+}
+// The block flag stops new checkouts on every job listed; a held tipped charge not on its job stops them while customer
+// tips are on, and turning tips off lifts that stop, so the owner resolves those first.
+function paymentNote(data){
+  const {h}=kit(),tipped=data.paymentReviews.filter(row=>row.recordedOnJob!==true&&(row.tipCents===null||Number.isSafeInteger(row.tipCents)&&row.tipCents>0)).length;
+  const notes=[data.checkoutBlock&&data.paymentReviews.length?'New card checkouts on these jobs are blocked until each review is resolved.':'',
+    tipped?(tipped===1?'One held charge includes a crew tip':tipped+' held charges include a crew tip')+(data.checkoutBlock?'.':': while customer tips are on, no new card checkout opens on '+(tipped===1?'its job':'their jobs')+' until '+(tipped===1?'it is':'each is')+' resolved.')+' Resolve '+(tipped===1?'it':'them')+' before turning customer tips off.':''].filter(Boolean);
+  return notes.length?h('p',{class:'rv-muted'},notes.join(' ')):null;
 }
 function sendSection(){
   const {h}=kit(),data=S.data.sends;

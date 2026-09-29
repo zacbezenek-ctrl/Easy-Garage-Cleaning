@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { encodeFirestoreFields } from '../functions/_lib/firestore-job.js';
-import { REVIEW_LIST_LIMIT, stripeReviewOverview, stripeReviewStorage } from '../functions/_lib/stripe-reviews.js';
+import { REVIEW_LIST_LIMIT, keptSplit, reviewKeptSplit, stripeReviewOverview, stripeReviewStorage } from '../functions/_lib/stripe-reviews.js';
 import { stripeReviewHandlers } from '../functions/api/stripe-reviews.js';
 import { applyGarageGuardEvent, garageGuardEvent } from '../functions/_lib/garage-guard-membership.js';
 
@@ -58,6 +58,58 @@ test('managers get open payment and membership reviews, newest first, with count
   assert.deepEqual(view.coverage, { complete: true, asOf: NOW.toISOString() });
   assert.doesNotMatch(JSON.stringify(view), /synthetic-secret|jobRevision|internalNotes/, 'only allowlisted fields leave the server');
   assert.equal(db.calls.filter(call => call.includes('/documents/jobs/')).length, 1, 'each job is read once; private ids are never read');
+});
+
+test('a held charge shows its service part and crew tip apart; rows from before tips read as no tip', async () => {
+  const db = firestore({
+    'jobs/job-1': { type: 'job', customer: 'Synthetic Customer' },
+    'payment_reviews/cs_test_tipped': heldCharge('cs_test_tipped', { amountCents: 180000, tipCents: 20000, createdAt: '2026-09-21T15:00:00.000Z' }),
+    'payment_reviews/cs_test_legacy': heldCharge('cs_test_legacy', { createdAt: '2026-09-21T14:00:00.000Z' }),
+    'payment_reviews/cs_test_bad_tip': heldCharge('cs_test_bad_tip', { tipCents: 'lots', createdAt: '2026-09-21T13:00:00.000Z' }),
+    'payment_reviews/cs_test_big_tip': heldCharge('cs_test_big_tip', { tipCents: 50001, createdAt: '2026-09-21T12:00:00.000Z' }),
+  });
+  const view = await stripeReviewOverview(stripeReviewStorage(env, db.fetcher), owner, NOW);
+  assert.deepEqual(view.paymentReviews.map(row => [row.sessionId, row.amountCents, row.tipCents, row.serviceCents]), [
+    ['cs_test_tipped', 180000, 20000, 160000], ['cs_test_legacy', 50000, 0, 50000],
+    ['cs_test_bad_tip', 50000, null, null], ['cs_test_big_tip', 50000, 50001, null],
+  ], 'an unreadable split is unknown (null), never folded into the service amount');
+});
+
+// Stripe does not say which part of a tipped charge it refunded: the tip is counted as kept first, so the service part
+// recorded on the job never holds tip money (at worst it is too small, and the owner adds the rest).
+test('money kept from a partly refunded tipped charge is split with the tip counted as kept first', async () => {
+  assert.deepEqual(keptSplit(35000, 5000), { keptServiceCents: 30000, keptTipCents: 5000 });
+  assert.deepEqual(keptSplit(3000, 5000), { keptServiceCents: 0, keptTipCents: 3000 }, 'less kept than the tip: all of it may be tip');
+  assert.deepEqual(keptSplit(35000, 0), {}, 'an untipped charge has nothing to split');
+  for (const [kept, tip] of [[35000, null], [null, 5000], [1.5, 5000]]) assert.deepEqual(keptSplit(kept, tip), { keptServiceCents: null, keptTipCents: null }, `${kept}/${tip}`);
+  const db = firestore({
+    'jobs/job-1': { type: 'job', customer: 'Synthetic Customer' },
+    'payment_reviews/cs_test_tipped': heldCharge('cs_test_tipped', { amountCents: 55000, tipCents: 5000, reason: 'payment_refunded', refundedCents: 20000, createdAt: '2026-09-21T15:00:00.000Z' }),
+    'payment_reviews/cs_test_plain': heldCharge('cs_test_plain', { reason: 'payment_refunded', refundedCents: 20000, createdAt: '2026-09-21T14:00:00.000Z' }),
+  });
+  const view = await stripeReviewOverview(stripeReviewStorage(env, db.fetcher), owner, NOW);
+  assert.deepEqual(view.paymentReviews.map(row => [row.sessionId, row.keptCents, row.keptServiceCents, row.keptTipCents]), [['cs_test_tipped', 35000, 30000, 5000], ['cs_test_plain', 30000, undefined, undefined]]);
+  assert.equal('keptServiceCents' in view.paymentReviews[1], false, 'an untipped row keeps the shape it had before tips');
+});
+
+// The owner, who made the refund, may say the crew tip was refunded first (the customer asked to drop it): the kept money
+// is then service first. A follow-up review reads only the refund beyond the earlier recorded one, out of what it kept.
+test('a refund read as the crew tip first keeps the service part, and a follow-up splits only the refund beyond the earlier one', async () => {
+  assert.deepEqual(keptSplit(50000, 5000, { tipRefundedFirst: true, refundedCents: 5000 }), { keptServiceCents: 50000, keptTipCents: 0 }, 'exactly the tip refunded');
+  assert.deepEqual(keptSplit(53000, 5000, { tipRefundedFirst: true, refundedCents: 2000 }), { keptServiceCents: 50000, keptTipCents: 3000 }, 'part of the tip refunded');
+  assert.deepEqual(keptSplit(35000, 5000, { tipRefundedFirst: true, refundedCents: 20000 }), { keptServiceCents: 35000, keptTipCents: 0 }, 'the tip, then $150 of service');
+  assert.deepEqual(keptSplit(0, 5000, { tipRefundedFirst: true, refundedCents: 55000 }), { keptServiceCents: 0, keptTipCents: 0 });
+  for (const refundedCents of [null, -1, 1.5]) assert.deepEqual(keptSplit(35000, 5000, { tipRefundedFirst: true, refundedCents }), { keptServiceCents: null, keptTipCents: null }, String(refundedCents));
+  assert.deepEqual(keptSplit(35000, 0, { tipRefundedFirst: true, refundedCents: 20000 }), {}, 'untipped: nothing to split');
+  // A $50 tip refunded first and recorded; Stripe then shows $250 refunded in all: the $200 more is read on its own.
+  const followUp = { tipCents: 5000, amountCents: 55000, priorRefundedCents: 5000, priorKeptServiceCents: 50000, priorKeptTipCents: 0 };
+  assert.deepEqual(reviewKeptSplit(followUp, 25000, 30000), { keptServiceCents: 30000, keptTipCents: 0 }, 'no tip is left to count as kept');
+  assert.deepEqual(reviewKeptSplit(followUp, 25000, 30000, true), { keptServiceCents: 30000, keptTipCents: 0 });
+  // $200 of service refunded and recorded (the tip kept); then $30 more: out of the service first, or the tip.
+  const served = { tipCents: 5000, amountCents: 55000, priorRefundedCents: 20000, priorKeptServiceCents: 30000, priorKeptTipCents: 5000 };
+  assert.deepEqual([reviewKeptSplit(served, 23000, 32000), reviewKeptSplit(served, 23000, 32000, true)], [{ keptServiceCents: 27000, keptTipCents: 5000 }, { keptServiceCents: 30000, keptTipCents: 2000 }]);
+  // Without the earlier split (a follow-up from before it was kept) the whole refund is read at once.
+  assert.deepEqual(reviewKeptSplit({ tipCents: 5000, priorRefundedCents: 20000 }, 23000, 32000), keptSplit(32000, 5000));
 });
 
 test('a ledger larger than the cap is reported incomplete, and unreadable pages fail closed', async () => {

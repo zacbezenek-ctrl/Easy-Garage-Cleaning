@@ -15,7 +15,21 @@
  * above the balance or while an unverified receipt is on the job, or any charge
  * Stripe shows refunded) is held in payment_reviews/{sessionId} for a person
  * (GET /api/stripe-reviews) and acknowledged; the job is unchanged. A charge
- * that already has an open review is never settled by a webhook.
+ * that already has an open review is never settled by a webhook. The answer says
+ * reviewRequired:true only while an open review is queued for a person; a charge
+ * whose reviews are all closed answers reviewRequired:false (payment_review_resolved).
+ *
+ * With CUSTOMER_TIPS_ENABLED=true, charge.refunded (sent for full and partial
+ * refunds) holds a tipped Hub checkout's refund: the PaymentIntent's checkout
+ * session is found and read again from Stripe, and a refund it shows opens the
+ * payment review (or the {sessionId}:refund follow-up once the charge's earlier
+ * review was closed), so Review queues and tip payroll hold the tip without
+ * waiting for a browser return. It only ever holds: when Stripe shows no refund
+ * (it failed or was reversed) and no review holds the charge, it is acknowledged
+ * and ignored with nothing written, and booking the charge is left to
+ * checkout.session.completed and the browser returns. Every other charge.refunded
+ * (tips off, an untipped or non-Hub charge) is acknowledged and ignored, as before.
+ * Disputes (charge.dispute.*) are not read: check Stripe for disputes before exporting tips.
  *
  * With GARAGE_GUARD_MEMBERSHIP_SYNC_ENABLED=true, membership events are also
  * recorded once per event.id (stripe_events) in memberships/{subscriptionId},
@@ -41,7 +55,8 @@
  *   1. Stripe Dashboard → Developers → Webhooks → Add endpoint:
  *        https://easygaragecleaning.com/api/stripe-webhook
  *      Events: checkout.session.completed, checkout.session.async_payment_succeeded,
- *              invoice.paid, invoice.payment_failed, customer.subscription.deleted
+ *              invoice.paid, invoice.payment_failed, customer.subscription.deleted,
+ *              and, with customer tips on, charge.refunded
  *   2. Copy the endpoint's signing secret (whsec_...) into Cloudflare Pages
  *      env var STRIPE_WEBHOOK_SECRET.
  *   3. Optional: GARAGE_GUARD_HOOK_URL — Zapier Catch Hook for the team
@@ -49,7 +64,7 @@
  *      forwarded (Stripe Dashboard remains the record).
  */
 
-import { CHECKOUT_KINDS, readStripeCheckout, recordCrewStripePayment, recordCustomerStripePayment } from '../_lib/customer-payments.js';
+import { CHECKOUT_KINDS, customerTipsEnabled, findStripeCheckoutByPaymentIntent, readStripeCheckout, recordCrewStripePayment, recordCustomerStripePayment } from '../_lib/customer-payments.js';
 import { applyGarageGuardEvent, claimGarageGuardAlert, expireGarageGuardAlert, garageGuardEvent, garageGuardMembershipSyncEnabled, membershipStorage, settleGarageGuardAlert } from '../_lib/garage-guard-membership.js';
 import { garageGuardBilling, garageGuardLedgerStore, garageGuardVisitTrackingEnabled } from '../_lib/garage-guard-ledger.js';
 
@@ -62,7 +77,12 @@ const HANDLED = new Set([
   'invoice.paid',
   'invoice.payment_failed',
   'customer.subscription.deleted',
+  // Only with CUSTOMER_TIPS_ENABLED, and only for a tipped Hub checkout; anything else is ignored as before.
+  'charge.refunded',
 ]);
+const IGNORED = { ok: true, received: true, ignored: true };
+// A Hub checkout session carrying a crew tip (metadata the Hub alone writes when it opens the checkout).
+const tippedHubCheckout = session => [CHECKOUT_KINDS.portal, CHECKOUT_KINDS.crew].includes(session?.metadata?.kind) && /^[1-9]\d{0,8}$/.test(String(session?.metadata?.tip_cents ?? ''));
 
 // Tolerant env read: exact name first, then any dashboard var whose name
 // normalizes (case/underscores/whitespace ignored) to the name or an alias.
@@ -160,7 +180,7 @@ export function hookDelivery(response) {
   return response && response.status >= 400 && response.status < 500 && response.status !== 408 ? 'failed' : 'uncertain';
 }
 
-export function stripeWebhookHandlers({ storage = membershipStorage, now = () => new Date(), send = (url, init) => fetch(url, init), readCheckout = readStripeCheckout } = {}) {
+export function stripeWebhookHandlers({ storage = membershipStorage, now = () => new Date(), send = (url, init) => fetch(url, init), readCheckout = readStripeCheckout, findCheckout = findStripeCheckoutByPaymentIntent } = {}) {
   const json = (status, body) =>
     new Response(JSON.stringify(body), {
       status,
@@ -202,6 +222,34 @@ export function stripeWebhookHandlers({ storage = membershipStorage, now = () =>
     if (!HANDLED.has(event.type)) return json(200, { ok: true, received: true, ignored: true });
 
     const checkout = event.data?.object || {};
+    // A charge a review holds: reviewRequired only while an open review is queued for a person, never for a charge
+    // whose reviews are all closed (payment_review_resolved).
+    const held = error => json(200, { ok: true, received: true, recorded: false, reviewRequired: error.reviewOpen === true, reason: error.code });
+    if (event.type === 'charge.refunded') {
+      // Tips off: acknowledged and ignored exactly as before this event was handled.
+      if (!customerTipsEnabled(env)) return json(200, IGNORED);
+      const paymentIntentId = typeof checkout.payment_intent === 'string' ? checkout.payment_intent : checkout.payment_intent?.id;
+      if (typeof paymentIntentId !== 'string' || !/^pi_[A-Za-z0-9_]+$/.test(paymentIntentId)) return json(200, IGNORED);
+      try {
+        // The charge event names only its PaymentIntent: its Hub checkout is looked up, then read again with its charge.
+        const found = await findCheckout(env, paymentIntentId);
+        if (!tippedHubCheckout(found)) return json(200, IGNORED);
+        const current = await readCheckout(env, found.id);
+        // Hold-only: a refund Stripe shows opens (or updates) the review; this event never books a charge or writes the job.
+        await (found.metadata.kind === CHECKOUT_KINDS.portal
+          ? recordCustomerStripePayment(env, current, '', stamp, { recordedBy: 'stripe_webhook', settleHeld: false, holdOnly: true })
+          : recordCrewStripePayment(env, current, { recordedBy: 'stripe_webhook', settleHeld: false, holdOnly: true, now: stamp }));
+        return json(200, IGNORED);
+      } catch (error) {
+        // Stripe shows no refund (it failed or was reversed) and no review holds the charge: nothing was written, and
+        // booking it is left to checkout.session.completed and the browser returns.
+        if (error.nothingHeld) return json(200, IGNORED);
+        // The refund is durably held for the owner (a review, or a follow-up review of the same charge).
+        if (error.reviewRecorded) return held(error);
+        if (error.code === 'payment_unverified') return json(409, { ok: false, error: 'Payment needs manager review' });
+        return json(503, { ok: false, error: 'Payment recording needs retry' });
+      }
+    }
     if (event.type.startsWith('checkout.session.')) {
       if (checkout.metadata?.kind === CHECKOUT_KINDS.portal) {
         if (checkout.payment_status !== 'paid') return json(200, { ok: true, received: true, processing: true });
@@ -211,8 +259,9 @@ export function stripeWebhookHandlers({ storage = membershipStorage, now = () =>
           const payment = await recordCustomerStripePayment(env, current, '', stamp, { recordedBy: 'stripe_webhook', settleHeld: false });
           return json(200, { ok: true, received: true, recorded: true, duplicate: payment.duplicate });
         } catch (error) {
-          // A charge held in payment_reviews (Stripe shows it refunded) is durable and the job is unchanged.
-          if (error.reviewRecorded) return json(200, { ok: true, received: true, recorded: false, reviewRequired: true, reason: error.code });
+          // A charge held in payment_reviews (Stripe shows it refunded, or a tipped charge on a job that closed after
+          // checkout opened) is durable and the job is unchanged.
+          if (error.reviewRecorded) return held(error);
           // Stripe must retry a verified payment until its durable job record succeeds.
           return json(503, { ok: false, error: 'Payment recording needs retry' });
         }
@@ -227,7 +276,7 @@ export function stripeWebhookHandlers({ storage = membershipStorage, now = () =>
           // A confirmed charge the job cannot take is durably held in
           // payment_reviews for a manager, and the job is unchanged, so Stripe
           // can stop retrying this session.
-          if (error.reviewRecorded) return json(200, { ok: true, received: true, recorded: false, reviewRequired: true, reason: error.code });
+          if (error.reviewRecorded) return held(error);
           // A session that fails verification (kind, currency, binding) was not
           // created by the Hub; it stays a failing delivery in Stripe.
           if (error.code === 'payment_unverified') return json(409, { ok: false, error: 'Payment needs manager review' });

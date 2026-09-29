@@ -21,3 +21,21 @@ export function payrollCsv(week) {
     fixed(row.regularRate, 4), fixed(row.straightPay, 2), fixed(row.overtimePremium, 2), fixed(row.ptoPay, 2), fixed(row.bonus, 2), fixed(row.tips, 2), fixed(row.grossPay, 2), row.overtimeBasis,
     row.approvedTimecards, row.pendingTimecards, row.flags.join(' ')])]);
 }
+
+const TIP_HEADER = ['Employee name', 'Employee username', 'Tips received from', 'Tips received through', 'Job ID', 'Customer', 'Service date', 'Job work minutes', 'Employee work minutes', 'Job card tips', 'Employee tip share', 'Review flags'];
+const lastDay = end => new Date(Date.parse(`${end}T12:00:00Z`) - 86400000).toISOString().slice(0, 10);
+
+export const customerTipsCsvFilename = allocation => `egc-customer-tips-${allocation.start}-to-${lastDay(allocation.end)}.csv`;
+
+/** Customer card tips for payroll, one row per employee share of a job's tips (computeTipAllocation). Tips on a job
+ * with no recorded work time, or with crew time not tracked to it (untracked_job_time: every share is 0.00 and the
+ * tracked minutes are listed), are an unassigned row so a manager pays them by hand, never silently dropped. */
+export function customerTipsCsv(allocation) {
+  const dollars = cents => (cents / 100).toFixed(2), through = lastDay(allocation.end), rows = [];
+  for (const job of allocation.jobs) {
+    const base = [allocation.start, through, job.jobId, job.customer, job.serviceDate, job.workMinutes];
+    for (const share of job.employees) rows.push([share.name, share.employee, ...base, share.minutes, dollars(job.tipCents), dollars(share.tipCents), job.reasons.join(' ')]);
+    if (job.unallocatedCents) rows.push(['Unassigned - pay by hand', '', ...base, 0, dollars(job.tipCents), dollars(job.unallocatedCents), job.reasons.join(' ')]);
+  }
+  return csvRows([TIP_HEADER, ...rows]);
+}

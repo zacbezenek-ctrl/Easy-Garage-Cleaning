@@ -127,10 +127,48 @@ test('the alert counts every waiting item, flags the certificate, and is empty o
     'Stripe shows $100.00 of $500.00 refunded on a charge the job already counts as paid. Only the owner settles it: record the refund, then check the job’s payment against Stripe before changing it: $200.00 was recorded earlier.');
   assert.equal(await alertText([refund({ recordedOnJob: true, refundedCents: 40000, keptCents: 10000, priorRefundedCents: 10000 }), refund({ recordedOnJob: true })]),
     'Stripe shows refunds on 2 charges their jobs already count as paid ($500.00 more to reduce in all, $100.00 recorded earlier). Only the owner settles them: record each refund, then reduce each job’s payment by the amount refunded, less any refund recorded earlier on that charge.');
+  // TIPS: a charge with a crew tip counts only its service part on the job, so the alert never names a lump amount to
+  // record or reduce; Review queues shows the service and tip split.
+  const tipped = extra => refund({ amountCents: 55000, tipCents: 5000, serviceCents: 50000, ...extra });
+  assert.equal(await alertText([tipped({ recordedOnJob: true, refundedCents: 55000, keptCents: 0 })]),
+    'Stripe shows the full $550.00 refunded on a charge with a crew tip that the job already counts as paid (its service part). Only the owner settles it: record the refund, then correct the job’s service payment and the crew tip as Review queues shows.');
+  assert.doesNotMatch(await alertText([tipped({ recordedOnJob: true, refundedCents: 20000, keptCents: 35000 })]), /reduce the job’s payment by|\$200\.00 refunded\./);
+  assert.match(await alertText([tipped({ refundedCents: 20000, keptCents: 35000 })]), /\$200\.00 of \$550\.00 was refunded, so the \$350\.00 kept is not on the job and includes a crew tip: record only its service part under Estimates & payments \(Review queues shows how much\) before the refund is recorded\.$/);
+  assert.match(await alertText([tipped({ recordedOnJob: true, refundedCents: 20000, keptCents: 35000 }), refund({ recordedOnJob: true })]), /A charge with a crew tip is corrected by its service part and tip apart, as Review queues shows\.$/);
 
   const cached = alertModule(waiting);
   cached.mount(); await cached.flush(); cached.mount(); await cached.flush();
   assert.equal(cached.reads.length, 3, 'a background render reuses the recent counts');
   cached.listeners['egc:signout'][0]();
   assert.equal(cached.slot.childNodes.length, 0, 'sign-out clears the counts');
+});
+
+// Seventh review: a charge with a crew tip is never in a lump amount, however many refunds the alert lists; it goes to
+// Review queues on its own. A further refund after a closed review of a charge not on its job is corrected where that
+// review put the money, never recorded again.
+test('the alert keeps tipped charges out of every lump amount and names follow-ups of charges not on their jobs', async () => {
+  const alertText = async reviews => { const page = alertModule({ ...clear(), '/api/stripe-reviews': [200, { ok: true, paymentReviews: reviews, membershipReviews: [] }] }); page.mount(); await page.flush(); return page.slot.querySelector('small').textContent; };
+  const refund = (extra = {}) => ({ reason: 'payment_refunded', amountCents: 50000, refundedCents: 20000, keptCents: 30000, ...extra });
+  const tipped = extra => refund({ amountCents: 55000, tipCents: 5000, serviceCents: 50000, ...extra });
+  // On the job: one untipped and one tipped refund. The untipped one is named alone; the tipped one goes to Review queues.
+  const mixed = await alertText([tipped({ recordedOnJob: true, refundedCents: 55000, keptCents: 0 }), refund({ recordedOnJob: true })]);
+  assert.equal(mixed, 'Stripe shows $200.00 of $500.00 refunded on a charge the job already counts as paid. Only the owner settles it: record the refund, then reduce the job’s payment by the $200.00 refunded. Stripe also shows a refund on 1 charge with a crew tip that its job already counts as paid (by the service part); only the owner settles it: record the refund in Review queues. A charge with a crew tip is corrected by its service part and tip apart, as Review queues shows.');
+  assert.doesNotMatch(mixed, /refunded in all|\$750\.00|\$550\.00|reduce each job’s payment/);
+  // Two untipped and two tipped: only the untipped are summed and told to reduce each job's payment.
+  const four = await alertText([refund({ recordedOnJob: true }), tipped({ recordedOnJob: true, refundedCents: 20000, keptCents: 35000 }), refund({ recordedOnJob: true, refundedCents: 10000, keptCents: 40000 }), tipped({ recordedOnJob: true, refundedCents: 55000, keptCents: 0 })]);
+  assert.equal(four, 'Stripe shows refunds on 2 charges their jobs already count as paid ($300.00 refunded in all). Only the owner settles them: record each refund, then reduce each job’s payment by the amount refunded. Stripe also shows refunds on 2 charges with a crew tip that their jobs already count as paid (by the service part); only the owner settles them: record each refund in Review queues. A charge with a crew tip is corrected by its service part and tip apart, as Review queues shows.');
+  // Only tipped charges: no lump at all.
+  const tippedOnly = await alertText([tipped({ recordedOnJob: true }), tipped({ recordedOnJob: true, tipCents: null })]);
+  assert.equal(tippedOnly, 'Stripe shows refunds on 2 charges with a crew tip that their jobs already count as paid (by the service part); only the owner settles them: record each refund in Review queues. A charge with a crew tip is corrected by its service part and tip apart, as Review queues shows.');
+  assert.doesNotMatch(tippedOnly, /refunded in all|reduce each job’s payment|\$/);
+  // Not on the job, partly refunded: the kept money of a tipped charge (which includes its tip) is never in the lump.
+  const held = await alertText([refund(), refund({ refundedCents: 10000, keptCents: 40000 }), tipped({ refundedCents: 20000, keptCents: 35000 })]);
+  assert.match(held, /Stripe shows a refund on 3 of them; only the owner settles those\. 2 were only partly refunded: the \$700\.00 kept is not on any job until it is recorded under Estimates & payments\. 1 partly refunded charge includes a crew tip: record only its service part under Estimates & payments, as Review queues shows, before the refund is recorded\.$/);
+  assert.doesNotMatch(held, /\$1,050\.00/);
+  // A follow-up of a charge not on its job: correct where the earlier review put the money; never "record the kept amount".
+  const later = await alertText([tipped({ sessionId: 'cs_test_later', reviewId: 'cs_test_later:refund', refundedCents: 55000, keptCents: 0, priorRefundedCents: 20000 })]);
+  assert.equal(later, 'Stripe shows a further refund on a charge not on its job whose earlier review was closed: what that review kept was recorded on the job by hand or applied to another job. Only the owner settles it: record the refund, then correct that payment as Review queues shows.');
+  assert.doesNotMatch(later, /not applied to the job|kept is not on|Estimates & payments/);
+  assert.match(await alertText([refund({ sessionId: 'cs_a', reviewId: 'cs_a:refund' }), refund({ sessionId: 'cs_b', reviewId: 'cs_b:refund:2' }), refund({ sessionId: 'cs_c', reviewId: 'cs_c' })]),
+    /^Stripe confirmed the charge but it was not applied to the job\. .*Stripe shows further refunds on 2 charges not on their jobs whose earlier reviews were closed/);
 });

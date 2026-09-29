@@ -144,6 +144,8 @@ test('actual Firestore rules isolate canonical operations from crew SDK access',
       await assertFails(manager.collection('payment_reviews').get());
       await assertFails(manager.collection('garage_guard_operations').get());
       await assertFails(crew.doc('payment_reviews/cs_test_forged').set({status:'resolved',jobId:'assigned'}));
+      // A held (tipped or untipped) charge is resolved only through POST /api/stripe-reviews, never from a browser SDK.
+      await assertFails(manager.doc('payment_reviews/cs_test_synthetic').update({status:'resolved',resolution:'refunded'}));
     });
     await t.test('Client Login rate limits, sign-in links and customer sessions remain server-only even for business SDK sessions',async()=>{
       await environment.withSecurityRulesDisabled(async context=>{const db=context.firestore();await db.doc('rate_limits/rl_synthetic').set({bucket:'customer_login_ip',count:1});await db.doc('customer_login_links/ml_synthetic').set({customerId:'customer-a',usedAt:null});await db.doc('customer_sessions/cs_synthetic').set({customerId:'customer-a',sessionVersion:0});});

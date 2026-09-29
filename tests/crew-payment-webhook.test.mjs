@@ -245,7 +245,7 @@ test('managers see held charges, and whether the session has since reached the j
   assert.equal(response.status, 200); assert.equal(response.headers.get('Cache-Control'), 'no-store');
   assert.deepEqual({ counts: body.counts, coverage: body.coverage, memberships: body.membershipReviews }, { counts: { paymentReviews: 1, membershipReviews: 0 }, coverage: { complete: true, asOf: NOW }, memberships: [] });
   // revision is the review's Firestore updateTime; resolving a review in the Hub is revision-checked against it.
-  assert.deepEqual(body.paymentReviews, [{ sessionId: id, reviewId: id, revision: '2026-09-22T00:00:00.000001Z', jobId: 'job-1', reason: 'payment_exceeds_balance', status: 'open', amountCents: 50000, currency: 'usd', paymentIntentId: `pi_${id}`, livemode: false,
+  assert.deepEqual(body.paymentReviews, [{ sessionId: id, reviewId: id, revision: '2026-09-22T00:00:00.000001Z', jobId: 'job-1', reason: 'payment_exceeds_balance', status: 'open', amountCents: 50000, tipCents: 0, serviceCents: 50000, currency: 'usd', paymentIntentId: `pi_${id}`, livemode: false,
     jobTotalCents: 100000, jobPaidCents: 70000, jobBalanceCents: 30000, createdBy: 'crew1', recordedBy: 'stripe_webhook', createdAt: NOW, customer: 'Synthetic Crew Customer', jobFound: true, recordedOnJob: false }]);
   // The manager corrects the earlier record; the crew return now applies the session, and the review shows it.
   f.edit({ payment: { amount: 200, verified: true, method: 'check', stripeSessions: [] } });
@@ -294,9 +294,9 @@ for (const [label, action, extra, refund] of [
     assert.equal(crewReturn.status, 409);
     assert.deepEqual([body.code, body.reviewRecorded], ['payment_review_resolved', true]);
     assert.match(body.error, /already resolved this Stripe charge.*Do not charge again/);
-    // A webhook retry stops at 200 without recording anything.
+    // A webhook retry stops at 200 without recording anything; nothing is queued, so it never says a review is required.
     const retry = await f.event(f.webhookObject(id));
-    assert.equal(retry.status, 200); assert.deepEqual(await retry.json(), { ok: true, received: true, recorded: false, reviewRequired: true, reason: 'payment_review_resolved' });
+    assert.equal(retry.status, 200); assert.deepEqual(await retry.json(), { ok: true, received: true, recorded: false, reviewRequired: false, reason: 'payment_review_resolved' });
     assert.deepEqual(f.job(), before, 'job.payment is unchanged'); assert.equal(f.jobPatches(), patches);
     assert.equal(f.job().payment.amount, 200); assert.deepEqual(f.job().payment.stripeSessions, []);
     assert.equal(f.docs.get(`payment_reviews/${id}`).value.status, 'resolved');
@@ -771,10 +771,10 @@ test('a refund Stripe shows after the review of a charge on the job was closed r
   assert.deepEqual([savedBody.review.id, savedBody.review.resolution, savedBody.review.refundFull, savedBody.review.recordedOnJobAtResolution], [`${id}:refund`, 'refunded', true, true]);
   const audit = audits(f).find(entry => entry.entityKey === followUp);
   assert.deepEqual([audit.action, audit.visibility, audit.reason], ['stripe_review.payment.refund', 'owner', 'Customer asked for a refund (the job still counts this charge as paid)']);
-  // Resolved: later returns and redeliveries say so, and nothing else is opened.
+  // Resolved: later returns and redeliveries say so (with nothing queued, the webhook says no review is required), and nothing else is opened.
   const after = await f.verify(id), afterBody = await after.json();
   assert.deepEqual([after.status, afterBody.code], [409, 'payment_review_resolved']); assert.match(afterBody.error, /office already resolved it/);
-  assert.deepEqual(await (await f.event(f.webhookObject(id))).json(), { ok: true, received: true, recorded: false, reviewRequired: true, reason: 'payment_review_resolved' });
+  assert.deepEqual(await (await f.event(f.webhookObject(id))).json(), { ok: true, received: true, recorded: false, reviewRequired: false, reason: 'payment_review_resolved' });
   assert.deepEqual(reviewKeys(), [`payment_reviews/${id}`, followUp]);
   assert.equal(f.job().payment.amount, 600, 'the owner corrects the job payment by hand');
 });

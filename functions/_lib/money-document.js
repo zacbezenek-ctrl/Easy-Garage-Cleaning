@@ -229,8 +229,10 @@ export function moneyDocumentModel(job, { kind, now, payUrl = null, contact = tr
   const due = Number.isSafeInteger(totals.dueNowCents) && totals.dueNowCents > 0, deposit = totals.purpose === 'deposit';
   const offer = url && due && !needsReview && !cancelled && !closed && (approval.approved || !deposit);
   // The checkout charges the legacy amount plus change orders billed through
-  // the portal (tips count as paid, an approval without a change-order line
-  // is not charged): the button appears only when it charges this figure.
+  // the portal (a tip saved inside payment.amount counts as paid there, while
+  // card tips kept in payment.tips[] never do; an approval without a
+  // change-order line is not charged): the button appears only when it charges
+  // this figure.
   const charge = offer ? checkoutCents(job) : null;
   const pay = offer && charge !== null && charge >= 50 && charge === totals.dueNowCents ? { url, amountCents: totals.dueNowCents, label: `Pay ${usd(totals.dueNowCents)} ${deposit ? 'deposit' : 'balance'} securely` } : null;
   let payNote = '';

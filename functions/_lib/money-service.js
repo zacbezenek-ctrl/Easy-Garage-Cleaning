@@ -235,9 +235,10 @@ const recordOffline = kind => async ({ store, job, input, actor, now }) => {
   // Recording more money must never verify an earlier unverified entry.
   if (paymentNeedsVerification(job)) throw fail('payment_needs_review', 'An earlier payment on this job is recorded but not verified, so no more money can be recorded yet. The owner confirms it against the check, bank or Stripe record and marks it verified on the job (the payment ledger backfill lists these jobs under needsVerification).', 409);
   const totals = customerMoneyTotals(job);
-  if ([totals.totalCents, totals.paidCents, totals.appliedCents, totals.balanceCents].includes(null)) throw fail('total_unknown', 'The quote and recorded payments must be readable before more money is recorded. Review this job.', 409, { issues: totals.issues });
+  if ([totals.totalCents, totals.paidCents, totals.recordedCents, totals.appliedCents, totals.balanceCents].includes(null)) throw fail('total_unknown', 'The quote and recorded payments must be readable before more money is recorded. Review this job.', 409, { issues: totals.issues });
   if (amount > totals.balanceCents) throw fail('amount_exceeds_balance', `The amount cannot be more than the ${usd(totals.balanceCents)} balance.`, 409, { balanceCents: totals.balanceCents });
-  const paidCents = totals.paidCents + amount, appliedCents = totals.appliedCents + amount, balanceCents = totals.balanceCents - amount, deposit = kind === 'deposit';
+  // payment.amount never holds payment.tips[], so it grows from the recorded total, not from paidCents.
+  const paidCents = totals.recordedCents + amount, appliedCents = totals.appliedCents + amount, balanceCents = totals.balanceCents - amount, deposit = kind === 'deposit';
   const nextPayment = { ...payment, amount: paidCents / 100, lastAmount: amount / 100, lastReceivedAt: receivedAt, method: deposit ? 'deposit' : input.method, reference, verified: true, recordedBy: actor.user };
   const entry = { ...paymentEntry({ id: `offline:${input.requestId.toLowerCase()}`, kind: deposit ? 'deposit' : 'offline', amountCents: amount, method: input.method, processorRef: reference, at: receivedAt, by: actor.user }), processor: '', verified: true, source: 'hub_offline' };
   const ledger = reconcileLedger({ ...job, payment: nextPayment }, [entry]), patch = { payment: nextPayment, ...ledgerPatch(ledger, now) }, warnings = [], writes = [], mirrors = [];

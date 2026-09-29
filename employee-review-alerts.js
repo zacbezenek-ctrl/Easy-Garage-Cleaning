@@ -12,6 +12,9 @@ function h(tag,props,...children){const node=document.createElement(tag);for(con
 const plural=(count,one,many)=>count+' '+(count===1?one:many);
 const usd=new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'}),money=cents=>usd.format(cents/100);
 const refundKnown=row=>Number.isSafeInteger(row.amountCents)&&Number.isSafeInteger(row.refundedCents)&&row.refundedCents>0;
+// A charge with a crew tip (or one whose tip could not be read): only its service part is ever service money, so the
+// alert never names a lump amount to record or reduce; Review queues shows the service and tip split.
+const tipped=row=>row?.tipCents===null||Number.isSafeInteger(row?.tipCents)&&row.tipCents>0;
 // Held charges not on their job: Stripe shows refunded ones are the owner's to settle; a partial refund leaves money kept that is on no job.
 function heldCopy(rows){
   let copy='Stripe confirmed the charge but it was not applied to the job. Reconcile it, or the owner records the refund.';
@@ -19,17 +22,37 @@ function heldCopy(rows){
   if(!refunded.length)return copy;
   copy+=rows.length===1?' Stripe shows a refund on it, so only the owner settles it.':' Stripe shows a refund on '+refunded.length+' of them; only the owner settles those.';
   const partial=refunded.filter(row=>refundKnown(row)&&Number.isSafeInteger(row.keptCents)&&row.keptCents>0);
-  if(partial.length===1){const row=partial[0];copy+=' '+money(row.refundedCents)+' of '+money(row.amountCents)+' was refunded, so the '+money(row.keptCents)+' kept is not on the job until it is recorded under Estimates & payments.';}
-  else if(partial.length)copy+=' '+partial.length+' were only partly refunded: the '+money(partial.reduce((sum,row)=>sum+row.keptCents,0))+' kept is not on any job until it is recorded under Estimates & payments.';
+  if(partial.length===1){const row=partial[0];copy+=' '+money(row.refundedCents)+' of '+money(row.amountCents)+' was refunded, so the '+money(row.keptCents)+' kept is not on the job '+(tipped(row)?'and includes a crew tip: record only its service part under Estimates & payments (Review queues shows how much) before the refund is recorded.':'until it is recorded under Estimates & payments.');}
+  else if(partial.length){
+    // A tipped charge's kept money includes its crew tip, which is never recorded as a service payment: it is never in the lump.
+    const plain=partial.filter(row=>!tipped(row)),tips=partial.length-plain.length;
+    if(plain.length)copy+=' '+(plain.length===1?'1 was':plain.length+' were')+' only partly refunded: the '+money(plain.reduce((sum,row)=>sum+row.keptCents,0))+' kept is not on '+(plain.length===1?'its job':'any job')+' until it is recorded under Estimates & payments.';
+    if(tips)copy+=' '+(tips===1?'1 partly refunded charge includes':tips+' partly refunded charges include')+' a crew tip: record only '+(tips===1?'its':'each one’s')+' service part under Estimates & payments, as Review queues shows, before the refund is recorded.';
+  }
   return copy;
+}
+// A further refund on a charge not on its job whose earlier review was closed (a follow-up review): what that review kept
+// was recorded on the job by hand, or applied to another job, so it is corrected there, never recorded again.
+const followUp=row=>typeof row?.reviewId==='string'&&row.reviewId!==''&&typeof row.sessionId==='string'&&row.reviewId!==row.sessionId;
+function laterCopy(rows){
+  return rows.length===1?'Stripe shows a further refund on a charge not on its job whose earlier review was closed: what that review kept was recorded on the job by hand or applied to another job. Only the owner settles it: record the refund, then correct that payment as Review queues shows.'
+    :'Stripe shows further refunds on '+rows.length+' charges not on their jobs whose earlier reviews were closed: what those reviews kept was recorded on the jobs by hand or applied to other jobs. Only the owner settles them: record each refund, then correct those payments as Review queues shows.';
 }
 // A refund on this charge the owner recorded earlier (a follow-up review), confirming then that the job is reduced by it: only the difference is left.
 const priorOf=row=>Number.isSafeInteger(row.priorRefundedCents)&&row.priorRefundedCents>0?row.priorRefundedCents:0;
 // Refunds on charges their job already counts as paid in full: the owner records each refund and reduces the job by the amount
 // refunded, less any refund recorded earlier on the same charge, so acting from the alert never reduces a job twice.
 function onJobRefundCopy(rows){
+  // A charge with a crew tip is never in a lump amount to reduce: it goes to Review queues on its own.
+  if(rows.length>1&&rows.some(tipped)){
+    const plain=rows.filter(row=>!tipped(row)),tips=rows.length-plain.length,parts=plain.length?[onJobRefundCopy(plain)]:[];
+    parts.push('Stripe '+(plain.length?'also ':'')+'shows '+(tips===1?'a refund on 1 charge with a crew tip that its job already counts':'refunds on '+tips+' charges with a crew tip that their jobs already count')+' as paid (by the service part); only the owner settles '+(tips===1?'it':'them')+': record '+(tips===1?'the refund':'each refund')+' in Review queues. A charge with a crew tip is corrected by its service part and tip apart, as Review queues shows.');
+    return parts.join(' ');
+  }
   if(rows.length===1){
     const row=rows[0],prior=priorOf(row);
+    // A tipped charge counts only its service part on the job: the correction splits service and tip (Review queues shows it).
+    if(tipped(row))return 'Stripe shows '+(refundKnown(row)?(row.refundedCents>=row.amountCents?'the full '+money(row.amountCents):money(row.refundedCents)+' of '+money(row.amountCents))+' refunded':'a refund')+' on a charge with a crew tip that the job already counts as paid (its service part). Only the owner settles it: record the refund, then correct the job’s service payment and the crew tip as Review queues shows.';
     if(!refundKnown(row))return 'Stripe shows a refund on a charge the job already counts as paid. Only the owner settles it: record the refund, then reduce the job’s payment by the amount refunded'+(prior?' beyond the '+money(prior)+' recorded earlier':'')+'.';
     const shown=row.refundedCents>=row.amountCents?'the full '+money(row.amountCents):money(row.refundedCents)+' of '+money(row.amountCents);
     const reduce=!prior?'then reduce the job’s payment by the '+money(row.refundedCents)+' refunded.'
@@ -42,8 +65,9 @@ function onJobRefundCopy(rows){
   return 'Stripe shows refunds on '+rows.length+' charges their jobs already count as paid'+total+'. Only the owner settles them: record each refund, then reduce each job’s payment by the amount refunded'+(prior?', less any refund recorded earlier on that charge':'')+'.';
 }
 function paymentCopy(rows){
-  const onJob=rows.filter(row=>row?.recordedOnJob===true),held=rows.filter(row=>row?.recordedOnJob!==true),refunded=onJob.filter(row=>row?.reason==='payment_refunded'),settled=onJob.length-refunded.length,parts=[];
+  const onJob=rows.filter(row=>row?.recordedOnJob===true),off=rows.filter(row=>row?.recordedOnJob!==true),later=off.filter(followUp),held=off.filter(row=>!followUp(row)),refunded=onJob.filter(row=>row?.reason==='payment_refunded'),settled=onJob.length-refunded.length,parts=[];
   if(held.length)parts.push(heldCopy(held));
+  if(later.length)parts.push(laterCopy(later));
   if(refunded.length)parts.push(onJobRefundCopy(refunded));
   // A held charge a crew return has since put on its job only needs its review closed.
   if(settled)parts.push(settled===1?'One held charge is now on its job: mark it reconciled to close its review.':settled+' held charges are now on their jobs: mark them reconciled to close their reviews.');

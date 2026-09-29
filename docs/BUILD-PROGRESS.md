@@ -463,6 +463,10 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   so it is created once, from each verified field completion while the bridge is on); egc-api opens a platform task only
   with `EGC_OPERATIONS_CHECKIN_TASKS_ENABLED`. A messaging dry run writes nothing to HighLevel. The inbound reconciler runs
   only with `EGC_OPERATIONS_INBOUND_TASKS_ENABLED` (both off). docs/HIGHLEVEL-BOUNDARY.md lists every send and its owner.
+- **TIPS** Optional crew tips behind `CUSTOMER_TIPS_ENABLED` (off): the portal and crew closeout add a "Tip for your crew"
+  Checkout line (whole cents, at most half the balance or $500) on a balance payment; only the service part reaches
+  payment.amount and the invoice, tips go to payment.tips[] and the ledger, and /api/tip-allocation splits them by on-site
+  minutes (CSV). Tipped charges held in payment_reviews are never booked automatically. Gap: not in the payroll CSV itself.
 
 ## In progress
 
@@ -571,6 +575,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | BRIDGE-ADOPT-AUTHZ | Fail-closed binding of bridge integration actor ids to their signing service (always on) | merged (93e8b20) |
 | HUB-PWA | Installable Hub and on-device clock/chat queue (HUB_OFFLINE_ENABLED, off) | merged (92153dc) |
 | GHL-ALIGN | HighLevel owns follow-ups: check-in task, dry run without writes, inbound reconciler opt-in (flags off) | merged (cb90ce9) |
+| TIPS | Optional crew tips on card balance payments, held tipped charges and tip allocation (CUSTOMER_TIPS_ENABLED, off) | merged (99d4c1e) |
 
 ## Next
 

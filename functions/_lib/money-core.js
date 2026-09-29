@@ -89,6 +89,14 @@ export function approvedChangeCents(job, issues = []) {
   return cents;
 }
 
+/** Refunds recorded on the job in any shape; they are not reconciled here yet (money_refunds_unreconciled). An empty
+ * refunds list (or empty object) records no refund. */
+export function refundsRecorded(job) {
+  const payment = plain(job?.payment) ? job.payment : {};
+  const listed = value => Array.isArray(value) ? value.length > 0 : plain(value) ? Object.keys(value).length > 0 : Boolean(value);
+  return listed(job?.refunds) || listed(payment.refunds) || moneyCents(payment.refundedAmount) > 0;
+}
+
 /** Unified payment evidence for one job plus a reconciliation against the recorded paid total. */
 export function paymentLedger(job) {
   const payment = plain(job?.payment) ? job.payment : {}, entries = [], issues = [], byId = new Map(), stripeRefs = new Set();
@@ -118,6 +126,31 @@ export function paymentLedger(job) {
   const { unique, conflicts } = uniqueReceipts(cards);
   for (const card of unique) push(card.entry);
   if (conflicts.length) issues.push('money_payment_conflict');
+  // Tips recorded beside a card balance payment (payment.tips[]) are not part
+  // of payment.amount: they are added to the paid total here and itemized as
+  // 'tip' entries, so applied money (paid minus tips) is exactly payment.amount.
+  const tipRows = Array.isArray(payment.tips) ? payment.tips : [];
+  let separateTipCents = 0;
+  if (payment.tips !== undefined && payment.tips !== null && !Array.isArray(payment.tips)) { issues.push('money_tips_invalid'); separateTipCents = null; }
+  // Tips on an unverified payment record are not itemized, so what was tipped is unknown rather than zero.
+  if (tipRows.length && payment.verified !== true) { issues.push('money_payment_not_verified'); separateTipCents = null; }
+  const tipsByRef = new Map();
+  if (payment.verified === true) for (const item of tipRows) {
+    const row = plain(item) ? item : {};
+    const sessionId = /^cs_(?:test_|live_)?[A-Za-z0-9_]+$/.test(row.sessionId || '') ? row.sessionId : '';
+    const intentId = /^pi_[A-Za-z0-9_]+$/.test(row.paymentIntentId || '') ? row.paymentIntentId : '';
+    const stored = Number.isSafeInteger(row.amountCents) && row.amountCents > 0 && row.amountCents <= MAX_TOTAL_CENTS ? row.amountCents : null, dollars = row.amount === undefined ? stored : readCents(row.amount);
+    const cents = stored !== null && dollars === stored ? stored : null;
+    if (!sessionId && !intentId) { issues.push('money_tip_receipt_unknown'); separateTipCents = null; continue; }
+    // One Stripe payment is one tip: a row repeating an earlier row's session or PaymentIntent is counted once, and
+    // flagged; if the copies disagree on the amount, the tip total is unknown.
+    const earlier = [sessionId, intentId].filter(Boolean).map(ref => tipsByRef.get(ref)).find(Boolean);
+    if (earlier) { issues.push('money_tip_conflict'); if (earlier.amountCents !== cents) separateTipCents = null; continue; }
+    const entry = { id: `tip:${sessionId || intentId}`, kind: 'tip', amountCents: cents, method: 'card', processor: 'stripe', processorRef: intentId || sessionId, receiptUrl: '', at: instant(row.verifiedAt), by: clean(row.recordedBy, 120) || 'stripe', verified: true, source: 'stripe_tip' };
+    [sessionId, intentId].filter(Boolean).forEach(ref => tipsByRef.set(ref, entry));
+    push(entry);
+    separateTipCents = separateTipCents === null || cents === null ? null : separateTipCents + cents;
+  }
   // The job keeps one receipt link: the most recent card payment's.
   const latest = cards.at(-1), owner = latest && unique.find(card => latest.sessionId && card.sessionId === latest.sessionId || latest.paymentIntentId && card.paymentIntentId === latest.paymentIntentId);
   if (owner) owner.entry.receiptUrl = receipt(payment.receiptUrl);
@@ -139,18 +172,20 @@ export function paymentLedger(job) {
   if (credit === null) issues.push('money_gift_credit_invalid');
   else if (credit > itemized) push({ id: `gift:${clean(job?.id, 120) || 'job'}:applied`, kind: 'balance', amountCents: credit - itemized, method: 'gift_credit', processor: '', processorRef: '', receiptUrl: '', at: null, by: 'customer', verified: true, source: 'gift_credit_total' });
   else if (credit < itemized) issues.push('money_gift_credit_conflict');
-  if (job?.refunds || payment.refunds || moneyCents(payment.refundedAmount) > 0) issues.push('money_refunds_unreconciled');
+  if (refundsRecorded(job)) issues.push('money_refunds_unreconciled');
   entries.sort((a, b) => (a.at === null) - (b.at === null) || String(a.at).localeCompare(String(b.at)) || a.id.localeCompare(b.id));
   const sum = rows => rows.reduce((total, row) => total === null || row.amountCents === null ? null : total + (row.kind === 'refund' ? -row.amountCents : row.amountCents), 0);
   const paidRaw = payment.amount ?? job?.invoice?.paid ?? job?.invoice?.amountPaid ?? job?.deposit?.paidAmount;
-  const paidCents = paidRaw === undefined || paidRaw === null ? 0 : readCents(paidRaw);
-  if (paidCents === null) issues.push('money_paid_invalid');
+  // recordedCents is the saved paid total (payment.amount): what money writers extend.
+  const recordedCents = paidRaw === undefined || paidRaw === null ? 0 : readCents(paidRaw);
+  if (recordedCents === null) issues.push('money_paid_invalid');
+  const paidCents = recordedCents === null || separateTipCents === null ? null : recordedCents + separateTipCents;
   // A conflicting receipt group is left out of the entries, so neither the
   // reconciliation nor (when any card row is a tip) the tip total is known.
   const ledgerCents = sum(entries), unreconciledCents = paidCents === null || ledgerCents === null || conflicts.length ? null : paidCents - ledgerCents;
-  const tipCents = conflicts.length && cards.some(card => card.entry.kind === 'tip') ? null : sum(entries.filter(row => row.kind === 'tip'));
+  const tipCents = conflicts.length && cards.some(card => card.entry.kind === 'tip') || separateTipCents === null ? null : sum(entries.filter(row => row.kind === 'tip'));
   const found = [...new Set(issues)];
-  return { entries, ledgerCents, tipCents, paidCents, unreconciledCents, conflicts, complete: unreconciledCents === 0 && found.length === 0, issues: found };
+  return { entries, ledgerCents, tipCents, paidCents, recordedCents, unreconciledCents, conflicts, complete: unreconciledCents === 0 && found.length === 0, issues: found };
 }
 
 export const paymentEntries = job => paymentLedger(job).entries;
@@ -176,16 +211,20 @@ export function paymentEntry(raw) {
  * amount chain; totalCents adds approved change orders. The deposit term is on
  * the base quote exactly as customerDepositState computes it (saved
  * depositRequired or deposit.amount, else 50% rounded half-up). Tips paid
- * through the ledger are excluded from what counts toward the balance. Never
- * throws: out-of-range money (above $1,000,000) is null plus an issue.
+ * through the ledger are excluded from what counts toward the balance. paidCents
+ * is everything received, tips included; recordedCents is the saved
+ * payment.amount, which never holds payment.tips[]. Never throws: out-of-range
+ * money (above $1,000,000) is null plus an issue.
  */
 export function customerMoneyTotals(job) {
   const issues = [], quoteCents = quotedAmountCents(job);
   if (quoteCents === null) issues.push([job?.estimate?.amount, job?.total, job?.priceQuoted, job?.lockedTotal, job?.rate, job?.customerApproval?.amount].some(value => value !== undefined && value !== null) ? 'money_quote_invalid' : 'money_quote_missing');
   const changeCents = approvedChangeCents(job, issues), ledger = paymentLedger(job);
-  const { paidCents, tipCents } = ledger;
+  const { paidCents, tipCents, recordedCents } = ledger;
   if (paidCents === null) issues.push('money_paid_invalid');
   if (tipCents === null) issues.push('money_tips_unknown');
+  // A repeated tip row is counted once, but the figures rest on a record that needs cleaning up.
+  if (ledger.issues.includes('money_tip_conflict')) issues.push('money_tip_conflict');
   const totalCents = quoteCents === null || changeCents === null ? null : quoteCents + changeCents;
   const appliedCents = paidCents === null || tipCents === null ? null : Math.max(0, paidCents - tipCents);
   const known = (...values) => values.every(value => value !== null);
@@ -202,7 +241,7 @@ export function customerMoneyTotals(job) {
   const dueNowCents = closing ? balanceCents : depositDueCents;
   return {
     quoteCents, approvedChangeCents: changeCents, totalCents, revenueCents: totalCents,
-    paidCents, tipCents, appliedCents, balanceCents, overpaidCents: known(totalCents, appliedCents) ? Math.max(0, appliedCents - totalCents) : null,
+    paidCents, tipCents, appliedCents, recordedCents, balanceCents, overpaidCents: known(totalCents, appliedCents) ? Math.max(0, appliedCents - totalCents) : null,
     depositRequiredCents, depositPaidCents, depositDueCents, dueNowCents, purpose: closing ? 'balance' : 'deposit',
     remainderCents: known(balanceCents, dueNowCents) ? Math.max(0, balanceCents - dueNowCents) : null,
     complete: issues.length === 0, issues: [...new Set(issues)],

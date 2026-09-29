@@ -1,5 +1,7 @@
 import { firestoreFetch } from './firebase-service-account.js';
 import { readJob, patchJob, encodeFirestoreFields, decodeFirestoreFields } from './firestore-job.js';
+import { paymentLedger, refundsRecorded } from './money-core.js';
+import { manualEntryIds } from './money-ledger.js';
 import { billedChangeCents } from './change-orders.js';
 import { unsentQuoteDraft } from './quote-model.js';
 
@@ -13,6 +15,79 @@ const failure = (message, status = 409, code = '') => Object.assign(new Error(me
 const knownSession = (job, sessionId) => job.payment?.verified === true && (job.payment?.stripeSessions || []).some(item => String(item?.sessionId || item) === sessionId);
 const RECEIPT_URL = /^https:\/\/pay\.stripe\.com\/receipts\//;
 export const CHECKOUT_KINDS = Object.freeze({ portal: 'egc_customer_portal_payment', crew: 'egc_job_payment' });
+
+// Optional tips on card balance payments. A tip is a second Checkout line and
+// is recorded apart from the service money: payment.amount, the invoice and the
+// deposit never include it, so it never lowers a balance or counts as revenue.
+export const TIP_PRESETS = Object.freeze([10, 15, 20]);
+export const TIP_LINE_NAME = 'Tip for your crew';
+const TIP_FLOOR_CENTS = 50000;
+/** CUSTOMER_TIPS_ENABLED === 'true' lets the portal and crew card checkouts carry a tip.
+ * With it unset, money behaves exactly as before tips. The accepted differences from the pre-tips build, none of which
+ * changes an amount charged, recorded or held: crew Stripe calls (checkout create, expire and session reads) send
+ * Stripe-Version 2024-06-20 like every other customer-payment call, so payment_intent.latest_charge never depends on
+ * the account's default API version; GET /api/stripe-reviews rows also carry tipCents (0) and serviceCents; with
+ * PAYMENT_REVIEW_CHECKOUT_BLOCK_ENABLED the payment_reviews query also selects sessionId, reason, resolution and
+ * tipCents; the portal checkout ledger's createdAt comes from the injected clock; crew/postjob asks
+ * GET /api/job-payment?config=tips once per render; and charge.refunded webhooks stay acknowledged and ignored.
+ * Two Review queues fixes apply whatever the flag, neither changing an amount charged or recorded: a refund Stripe
+ * shows after the review of a charge NOT on its job was closed, beyond what that close settled, opens the
+ * {sessionId}:refund follow-up exactly as it always did for a charge on its job (instead of answering "already
+ * resolved" with nothing queued); and the webhook answers reviewRequired:false, not true, for a charge whose reviews
+ * are all closed (payment_review_resolved), since nothing is queued for a person. */
+export const customerTipsEnabled = env => String(env?.CUSTOMER_TIPS_ENABLED ?? '').trim() === 'true';
+/** The most a tip may be: half the balance, or $500 when that is more, on a charge that pays the whole balance (the
+ * portal always does). A partial card charge (crew closeout) may carry at most half of what it charges, so a small
+ * partial charge can never carry a large, effectively tip-only, payment. The $500 floor is the product rule for a
+ * whole balance, so a small remaining balance (even $0.50) may still carry up to a $500 tip; that is accepted, not
+ * an oversight (the tip is still recorded apart from the balance and needs a real balance charge beside it). */
+export const tipLimitCents = (balanceCents, chargeCents = balanceCents) => {
+  const balance = Math.max(0, Number(balanceCents) || 0), charge = Math.max(0, Number(chargeCents) || 0);
+  return charge < balance ? Math.round(charge / 2) : Math.max(Math.round(balance / 2), TIP_FLOOR_CENTS);
+};
+const CLOSED_STATUSES = ['cancelled', 'canceled', 'superseded', 'lost'];
+// A no-show is terminal in dispatch (dispatch-service TERMINAL) but not closed to a balance payment (payable() is
+// unchanged), so only a tip is refused on it. Completed, invoiced, paid, review_requested and closed jobs are the
+// normal place for a balance tip.
+const TIP_CLOSED_STATUSES = [...CLOSED_STATUSES, 'no_show', 'no-show', 'noshow'];
+/** Why no tip can be added to this job, or '' when one can: never on a cancelled, superseded, lost or no-show job, on
+ * a void or superseded invoice, or while refunds are recorded on it (money-core does not reconcile those yet). */
+export function tipRefusal(job) {
+  if (!job || [job.status, job.pipelineStatus].some(status => TIP_CLOSED_STATUSES.includes(String(status || '').toLowerCase()))) return 'This job is closed, so a tip cannot be added.';
+  if (['void', 'superseded'].includes(String(job.invoice?.status || '').toLowerCase())) return 'This invoice is no longer open, so a tip cannot be added.';
+  if (refundsRecorded(job)) return 'A refund is recorded on this job, so a tip cannot be added. Contact the team.';
+  return '';
+}
+/** A browser-supplied tip in whole cents; absent means no tip. */
+export function requestTip(value) {
+  if (value === undefined || value === null) return 0;
+  if (!Number.isSafeInteger(value) || value < 0) throw failure('Choose a tip in whole dollars and cents.', 400, 'tip_invalid');
+  return value;
+}
+/** A tip rides only on a balance payment of at least $0.50, never alone or on a deposit, and within tipLimitCents
+ * of the amount actually charged toward the balance (chargeCents; the whole balance unless a crew card charge is partial). */
+export function validTip(tipCents, balanceCents, purpose = 'balance', chargeCents = balanceCents) {
+  if (requestTip(tipCents) === 0) return 0;
+  if (purpose !== 'balance') throw failure('A tip can be added when the remaining balance is paid, not with the deposit.', 409, 'tip_not_balance');
+  if (!(balanceCents >= 50) || !(chargeCents >= 50)) throw failure('A tip can only be added to a balance payment.', 409, 'tip_without_balance');
+  const limit = tipLimitCents(balanceCents, chargeCents), usd = value => `$${(value / 100).toFixed(2)}`;
+  if (tipCents > limit) throw failure(`A tip can be at most ${usd(limit)} on ${chargeCents < balanceCents ? `a partial card payment of ${usd(chargeCents)}` : 'this balance'}.`, 400, 'tip_over_limit');
+  return tipCents;
+}
+/** Adds the tip as Checkout line 2 and names it in the session and PaymentIntent metadata. */
+export function addTipLine(params, tipCents) {
+  if (!tipCents) return params;
+  params.set('line_items[1][quantity]', '1'); params.set('line_items[1][price_data][currency]', 'usd');
+  params.set('line_items[1][price_data][unit_amount]', String(tipCents));
+  params.set('line_items[1][price_data][product_data][name]', TIP_LINE_NAME);
+  params.set('line_items[1][price_data][product_data][description]', 'Optional. It goes to your crew and is not part of the service total.');
+  params.set('metadata[tip_cents]', String(tipCents)); params.set('payment_intent_data[metadata][tip_cents]', String(tipCents));
+  return params;
+}
+/** Tips recorded on the job, in cents, exactly as money-core counts them (a repeated row once, verified payments
+ * only), so the portal and the receipt agree; null when the tip total cannot be read (copies that disagree, tips on
+ * an unverified payment, an unreadable tip list). */
+export const recordedTipCents = job => paymentLedger(job).tipCents;
 
 // Tolerant env read shared by every Stripe payment endpoint. Restricted keys
 // (rk_) are accepted alongside secret keys; publishable keys never are.
@@ -65,7 +140,7 @@ export function customerDepositState(job, finance = customerMoneyState(job)) {
 // A Hub quote draft that was not sent in its current revision (P2-07) is never
 // payable, even once the job is completed: the customer has not seen that total.
 export function payable(job) {
-  if (!job || [job.status, job.pipelineStatus].some(status => ['cancelled', 'canceled', 'superseded', 'lost'].includes(String(status || '').toLowerCase()))) throw failure('This job is not available for payment');
+  if (!job || [job.status, job.pipelineStatus].some(status => CLOSED_STATUSES.includes(String(status || '').toLowerCase()))) throw failure('This job is not available for payment');
   if (unsentQuoteDraft(job)) throw failure('Your estimate is being updated. Payment opens once Easy Garage Cleaning sends it to you for review.', 409, 'CUSTOMER_PORTAL_ESTIMATE_NOT_APPROVABLE');
   if (customerPaymentNeedsReview(job)) throw failure('A recorded payment is awaiting team verification. Please wait before paying again.');
   const status = String(job.customerApproval?.status || job.estimate?.status || job.quoteStatus || '').toLowerCase();
@@ -105,7 +180,25 @@ export async function readStripeCheckout(env, sessionId) {
   return checkout;
 }
 
-const ledgerUrl = jobId => `${DB}/customer_payment_checkouts/${encodeURIComponent(jobId)}`;
+// The Hub checkout session a PaymentIntent was paid through, as Stripe lists it
+// (payment_intent a plain ID), or null when there is none: a charge event
+// (charge.refunded) names only its PaymentIntent. Throws 503 like
+// readStripeCheckout when Stripe is not configured or cannot answer.
+export async function findStripeCheckoutByPaymentIntent(env, paymentIntentId) {
+  const secret = stripeSecretKey(env), id = clean(paymentIntentId);
+  if (!secret) throw failure('Stripe is not configured, so the payment cannot be verified', 503, 'payment_stripe_unconfigured');
+  if (!/^pi_[A-Za-z0-9_]+$/.test(id)) return null;
+  let list;
+  try { list = await stripeRequest(secret, `checkout/sessions?payment_intent=${encodeURIComponent(id)}&limit=1`, { signal: AbortSignal.timeout(15000) }); }
+  catch { throw failure('Stripe could not confirm this payment. Please try again.', 503, 'payment_stripe_unavailable'); }
+  if (!Array.isArray(list?.data)) throw failure('Stripe could not confirm this payment. Please try again.', 503, 'payment_stripe_unavailable');
+  const session = list.data[0];
+  return plainObject(session) && (session.payment_intent?.id || session.payment_intent) === id ? session : null;
+}
+
+// The portal checkout ledger, one server-only document per job.
+export const PORTAL_CHECKOUT_COLLECTION = 'customer_payment_checkouts';
+const ledgerUrl = jobId => `${DB}/${PORTAL_CHECKOUT_COLLECTION}/${encodeURIComponent(jobId)}`;
 async function readLedger(env, jobId) {
   const response = await firestoreFetch(env, ledgerUrl(jobId));
   if (response.status === 404) return { state: {}, version: '' };
@@ -124,10 +217,14 @@ async function saveLedger(env, jobId, state, version) {
   return { state, version: doc.updateTime };
 }
 
+// metadata.tip_cents is written only by the Hub when it opens a checkout; the
+// rest of amount_total is the service payment, which must still be a real charge.
 function verifiedCheckout(checkout, kind, expectedJobId) {
-  const jobId = clean(checkout?.metadata?.job_id, 120), sessionId = clean(checkout?.id);
-  if (!/^cs_(?:test_|live_)?[A-Za-z0-9_]+$/.test(sessionId) || !jobId || (expectedJobId && jobId !== expectedJobId) || checkout.client_reference_id !== jobId || checkout.metadata?.kind !== kind || checkout.currency !== 'usd' || checkout.mode !== 'payment' || checkout.status !== 'complete' || checkout.payment_status !== 'paid' || !Number.isInteger(checkout.amount_total) || checkout.amount_total <= 0) throw failure('Stripe has not verified this job payment', 409, 'payment_unverified');
-  return { jobId, sessionId };
+  const jobId = clean(checkout?.metadata?.job_id, 120), sessionId = clean(checkout?.id), rawTip = checkout?.metadata?.tip_cents;
+  const tipCents = rawTip === undefined || rawTip === null || rawTip === '' ? 0 : /^\d{1,9}$/.test(String(rawTip)) ? Number(rawTip) : NaN;
+  if (!/^cs_(?:test_|live_)?[A-Za-z0-9_]+$/.test(sessionId) || !jobId || (expectedJobId && jobId !== expectedJobId) || checkout.client_reference_id !== jobId || checkout.metadata?.kind !== kind || checkout.currency !== 'usd' || checkout.mode !== 'payment' || checkout.status !== 'complete' || checkout.payment_status !== 'paid' || !Number.isInteger(checkout.amount_total) || checkout.amount_total <= 0
+    || !Number.isSafeInteger(tipCents) || tipCents && checkout.amount_total - tipCents < 50) throw failure('Stripe has not verified this job payment', 409, 'payment_unverified');
+  return { jobId, sessionId, tipCents, serviceCents: checkout.amount_total - tipCents };
 }
 
 async function paymentJob(env, jobId) {
@@ -137,17 +234,21 @@ async function paymentJob(env, jobId) {
 }
 
 // A Stripe-confirmed charge that the job cannot take (a crew charge above the
-// balance or behind an unverified receipt, or any charge Stripe shows refunded)
-// is never left only in Stripe's retry queue. payment_reviews/{sessionId} is
+// balance or behind an unverified receipt, any charge Stripe shows refunded, or
+// a tipped charge on a job that closed after its checkout opened) is never left
+// only in Stripe's retry queue. payment_reviews/{sessionId} is
 // server-only and created once, so the webhook and the browser returns can all
 // record it and the first record wins; later changes (a refund seen later, the
 // mark when the charge reaches the job, a Hub resolution) are revision-checked
-// updates. The job's money fields stay exactly as they were.
+// updates. The job's money fields stay exactly as they were. A review of a
+// tipped charge carries tipCents (its refund follow-ups too), so Review queues
+// and the tip hold below can tell the service part from the crew tip.
 export const PAYMENT_REVIEW_COLLECTION = 'payment_reviews';
-// A refund Stripe shows on a charge the job counts as paid, beyond what the
-// last closed review in that charge's chain settled (nothing when it was
-// reconciled, the refund the owner recorded when it was refunded), goes to the
-// owner in a follow-up review: payment_reviews/{sessionId}:refund, then
+// A refund Stripe shows on a charge, beyond what the last closed review in that
+// charge's chain settled (nothing when it was reconciled, the refund the owner
+// recorded when it was refunded), goes to the owner in a follow-up review, whether
+// the job counts the charge as paid or its earlier close had the money kept
+// recorded on the job by hand (or applied elsewhere): payment_reviews/{sessionId}:refund, then
 // {sessionId}:refund:2, :3 ... when that follow-up is closed too and Stripe
 // later shows more refunded. Each is created once (reason payment_refunded,
 // sessionId the same charge); the chain is walked from the charge's own review,
@@ -203,6 +304,21 @@ async function patchJobWithReview(env, jobId, patch, updateTime, review, mark) {
   if (!response.ok) throw Object.assign(new Error(`Job storage write failed (${response.status})`), { storageStatus: response.status });
 }
 
+// A tipped charge with no review is booked in ONE commit with a precondition-only
+// write: deleting payment_reviews/{sessionId} with currentDocument.exists=false is
+// a no-op while no review exists, and fails the whole commit (409 ALREADY_EXISTS,
+// nothing applied) once one does, even one created after this job was read. An
+// untipped charge keeps its single job PATCH, exactly as before tips.
+async function patchJobUnlessReviewed(env, jobId, patch, updateTime, sessionId) {
+  const root = 'projects/egcw-1ec83/databases/(default)/documents';
+  const writes = [
+    { update: { name: `${root}/jobs/${encodeURIComponent(jobId)}`, fields: encodeFirestoreFields(patch) }, updateMask: { fieldPaths: Object.keys(patch) }, currentDocument: { updateTime } },
+    { delete: `${root}/${PAYMENT_REVIEW_COLLECTION}/${encodeURIComponent(sessionId)}`, currentDocument: { exists: false } },
+  ];
+  const response = await firestoreFetch(env, `${DB}:commit`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ writes }) });
+  if (!response.ok) throw Object.assign(new Error(`Job storage write failed (${response.status})`), { storageStatus: response.status });
+}
+
 // Updates an open review under its revision. 'changed' means it was written
 // since it was read (or the response was lost): re-read before deciding.
 async function patchPaymentReview(env, review, patch) {
@@ -225,30 +341,85 @@ const refundedCentsOf = (charge, amountCents) => Number.isSafeInteger(charge?.am
 // portal) opens for that job until a manager resolves the review in the Hub.
 export const paymentReviewCheckoutBlockEnabled = env => env?.PAYMENT_REVIEW_CHECKOUT_BLOCK_ENABLED === 'true';
 const REVIEW_SCAN = 200;
+const reviewsUnavailable = () => failure('Payment reviews could not be verified. Please try again shortly.', 503, 'payment_review_unavailable');
+const tippedReview = review => Number.isSafeInteger(review?.tipCents) && review.tipCents > 0;
 
-/** True when the job has an open payment review. Fails closed (503) when it cannot be verified. */
-export async function openPaymentReview(env, jobId, fetcher = firestoreFetch) {
-  const unavailable = () => failure('Payment reviews could not be verified. Please try again shortly.', 503, 'payment_review_unavailable');
+// One page of this job's payment reviews, read with one filtered query (an
+// equality filter needs only the automatic single-field index). Fails closed
+// (503): an unreadable answer is never taken to mean "no review".
+async function jobPaymentReviews(env, jobId, fetcher) {
   let response;
   try {
     response = await fetcher(env, `${DB}:runQuery`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: AbortSignal.timeout(15000), body: JSON.stringify({ structuredQuery: {
-      from: [{ collectionId: PAYMENT_REVIEW_COLLECTION }], select: { fields: [{ fieldPath: 'status' }, { fieldPath: 'jobId' }] },
+      from: [{ collectionId: PAYMENT_REVIEW_COLLECTION }], select: { fields: ['sessionId', 'jobId', 'status', 'reason', 'resolution', 'tipCents'].map(fieldPath => ({ fieldPath })) },
       where: { fieldFilter: { field: { fieldPath: 'jobId' }, op: 'EQUAL', value: { stringValue: String(jobId) } } }, limit: REVIEW_SCAN,
     } }) });
-  } catch { throw unavailable(); }
-  if (!response.ok) throw unavailable();
+  } catch { throw reviewsUnavailable(); }
+  if (!response?.ok) throw reviewsUnavailable();
   const rows = await response.json().catch(() => null);
-  if (!Array.isArray(rows)) throw unavailable();
+  if (!Array.isArray(rows)) throw reviewsUnavailable();
   const reviews = rows.filter(row => row?.document).map(row => decodeFirestoreFields(row.document.fields || {}));
-  if (reviews.some(review => review.jobId !== jobId)) throw unavailable();
+  if (reviews.some(review => review.jobId !== jobId)) throw reviewsUnavailable();
+  return reviews;
+}
+
+/** Every payment review of each job, as a Map of jobId to its rows ({sessionId, jobId, status, reason, resolution,
+ * tipCents}); one query per job, a few at a time. Fails closed (503): a job whose reviews cannot all be read (or fill a
+ * whole page) is never taken to have none. */
+export async function paymentReviewsForJobs(env, jobIds, fetcher = firestoreFetch) {
+  const ids = [...new Set(jobIds)], found = new Map();
+  for (let index = 0; index < ids.length; index += 8) {
+    const chunk = ids.slice(index, index + 8);
+    const pages = await Promise.all(chunk.map(jobId => jobPaymentReviews(env, jobId, fetcher)));
+    chunk.forEach((jobId, at) => { if (pages[at].length >= REVIEW_SCAN) throw reviewsUnavailable(); found.set(jobId, pages[at]); });
+  }
+  return found;
+}
+
+/** True when the job has an open payment review. Fails closed (503) when it cannot be verified. */
+export async function openPaymentReview(env, jobId, fetcher = firestoreFetch) {
+  const reviews = await jobPaymentReviews(env, jobId, fetcher);
   if (reviews.some(review => review.status === 'open')) return true;
   // A full page without an open review cannot prove there is none beyond it.
-  if (reviews.length >= REVIEW_SCAN) throw unavailable();
+  if (reviews.length >= REVIEW_SCAN) throw reviewsUnavailable();
   return false;
 }
 
-async function checkoutReviewHold(env, jobId) {
-  if (paymentReviewCheckoutBlockEnabled(env) && await openPaymentReview(env, jobId)) throw failure('A recent card payment on this job is being reviewed by our team. Please wait for us to confirm it before paying again.', 409, 'payment_review_open');
+/**
+ * The open review that stops a new card checkout (crew link or portal) for this
+ * job, or null; one query serves both rules, and none runs when both are off:
+ * - CUSTOMER_TIPS_ENABLED: an open review on a tipped charge. Such a charge is
+ *   never booked automatically, so the customer may already have paid the
+ *   balance it holds. A review on a charge the job already counts as paid (a
+ *   refund Stripe showed after the charge was recorded, whether its own review or
+ *   a {sessionId}:refund follow-up) does not count: the balance a new checkout
+ *   charges already counts that charge, so it cannot be charged twice, and the
+ *   refund stays with the owner in Review queues (the *_balance_open wording).
+ * - PAYMENT_REVIEW_CHECKOUT_BLOCK_ENABLED: any open review.
+ * Throws 503 payment_review_unavailable when the reviews cannot be read, or a
+ * full page holds no match (one beyond it cannot be ruled out).
+ */
+export async function checkoutHold(env, jobId, job = null, fetcher = firestoreFetch) {
+  const tips = customerTipsEnabled(env), block = paymentReviewCheckoutBlockEnabled(env);
+  if (!tips && !block) return null;
+  const reviews = await jobPaymentReviews(env, jobId, fetcher);
+  const held = reviews.find(review => review.status === 'open' && (block || tippedReview(review) && !(job && knownSession(job, clean(review.sessionId)))));
+  if (held) return { sessionId: clean(held.sessionId), reason: clean(held.reason, 60), tipped: tippedReview(held) };
+  if (reviews.length >= REVIEW_SCAN) throw reviewsUnavailable();
+  return null;
+}
+
+// The one refusal for a checkout while checkoutHold finds a review, for the crew
+// link (job-payment.js answers it itself) and the portal. With tips on it carries
+// reviewRecorded, so the portal passes its code on and refreshes into the held view.
+export const CHECKOUT_HOLD_CODE = 'payment_review_open';
+export const CHECKOUT_HOLD_TEXT = Object.freeze({
+  crew: 'A confirmed card payment on this job is waiting for manager review. Do not charge again; a manager resolves it in Hub > Review queues.',
+  portal: 'A recent card payment on this job is being reviewed by our team. Please wait for us to confirm it before paying again.',
+});
+const portalHoldRefusal = env => Object.assign(failure(CHECKOUT_HOLD_TEXT.portal, 409, CHECKOUT_HOLD_CODE), customerTipsEnabled(env) ? { reviewRecorded: true } : {});
+async function checkoutReviewHold(env, jobId, job) {
+  if (await checkoutHold(env, jobId, job)) throw portalHoldRefusal(env);
 }
 
 // What the crew (closeout screen) and the customer (portal) are told when a
@@ -256,7 +427,9 @@ async function checkoutReviewHold(env, jobId) {
 // a charge the job already counts as paid holds new checkouts only with
 // PAYMENT_REVIEW_CHECKOUT_BLOCK_ENABLED; without it the balance (which already
 // counts that charge) can still be paid, so the *_balance_open wording says so
-// instead of "do not pay again".
+// instead of "do not pay again". A tipped charge with any review is held under
+// that review's reason (payment_tip_refused, payment_exceeds_balance,
+// payment_needs_review ...), never booked automatically.
 const HELD = {
   crew: {
     payment_refunded: 'Stripe shows a refund on this charge, so it was not added to the job. It is saved for manager review. Do not charge again.',
@@ -264,6 +437,9 @@ const HELD = {
     payment_refunded_on_job_balance_open: 'Stripe shows a refund on this charge, which the job already counts as paid, so the job balance is unchanged. The owner is reviewing the refund. Do not charge again for this payment; any balance the job still shows can be collected as usual.',
     payment_review_resolved: 'The office already resolved this Stripe charge, so it was not added to the job. Do not charge again.',
     payment_review_resolved_on_job: 'Stripe shows a refund on this charge, and the office already resolved it. Check with the office before charging again.',
+    payment_tip_refused: 'Stripe confirmed this payment, but the job is now closed, voided or refunded, so its tip cannot be added. The charge is saved for manager review. Do not charge again.',
+    payment_exceeds_balance: 'Stripe confirmed this payment, but it exceeds the current job balance. The charge is saved for manager review. Do not charge again.',
+    payment_needs_review: 'Stripe confirmed this payment, but an earlier recorded payment needs manager verification. The charge is saved for manager review. Do not charge again.',
     held: 'This Stripe charge is held for manager review, so it was not added to the job. Do not charge again.',
   },
   portal: {
@@ -272,6 +448,9 @@ const HELD = {
     payment_refunded_on_job_balance_open: 'Stripe shows a refund on this payment, and our team is reviewing it. Your remaining balance is unchanged.',
     payment_review_resolved: 'Our team already reviewed this payment, so it was not added to your balance. Please contact us before paying again.',
     payment_review_resolved_on_job: 'Stripe shows this payment was refunded, and our team already reviewed it. Please contact us before paying again.',
+    payment_tip_refused: 'Your card payment is confirmed. This job was closed, voided or refunded after checkout opened, so our team will review the payment and your tip before applying them. Please do not pay again.',
+    payment_exceeds_balance: 'Your card payment is confirmed, but it is more than the balance now due, so our team will review it before applying it. Please do not pay again.',
+    payment_needs_review: 'Your card payment is confirmed. An earlier recorded payment needs team verification, so our team will review this one before applying it. Please do not pay again.',
     held: 'This payment is held for our team to review, so it was not added to your balance. Please do not pay again until we contact you.',
   },
 };
@@ -284,22 +463,72 @@ const HELD = {
 // webhook reads it again (readStripeCheckout) because its payload has no charge.
 // settleHeld:false (the webhook) never puts a charge that already has an open
 // review on the job: only a person's action does (a browser return or Review queues).
-async function recordStripeCheckout(env, checkout, { kind, expectedJobId = '', recordedBy = '', settleHeld = true, now = new Date().toISOString() }) {
-  const crew = kind === CHECKOUT_KINDS.crew, { jobId, sessionId } = verifiedCheckout(checkout, kind, expectedJobId), text = HELD[crew ? 'crew' : 'portal'];
+// holdOnly:true (the charge.refunded webhook) only ever holds: it opens or updates
+// a review for a refund Stripe shows, and otherwise throws nothingHeld without
+// writing anything, so booking is left to the completion webhook and the returns.
+// A tipped checkout (metadata.tip_cents) is split into its service part
+// (serviceCents: the only money that counts toward the job, its balance check and
+// payment.amount) and the tip (payment.tips[]). A tipped charge is never booked
+// automatically while it has any review, whoever returns (settleHeld does not
+// apply to it), and one paid after its job closed (tipRefusal) is held as
+// payment_tip_refused; only Review queues closes those reviews.
+// Every error that says a review holds the charge carries reviewRecorded, and
+// reviewOpen: true when an open review holds it now (one is queued for a person),
+// false when the charge's reviews are all closed (payment_review_resolved).
+async function recordStripeCheckout(env, checkout, { kind, expectedJobId = '', recordedBy = '', settleHeld = true, holdOnly = false, now = new Date().toISOString() }) {
+  const crew = kind === CHECKOUT_KINDS.crew, { jobId, sessionId, tipCents, serviceCents } = verifiedCheckout(checkout, kind, expectedJobId), text = HELD[crew ? 'crew' : 'portal'];
   // Money is recorded only from a session whose charge was read: fail closed (retryable) otherwise.
   if (!plainObject(checkout.payment_intent) || !plainObject(checkout.payment_intent.latest_charge)) throw failure('Stripe could not confirm this payment. Please try again.', 503, 'payment_charge_unread');
-  const ledger = crew ? null : await readLedger(env, jobId);
-  if (ledger?.state.sessionId === sessionId && Number(ledger.state.amountCents) !== checkout.amount_total) throw failure('The payment amount does not match this checkout');
+  const ledger = crew ? null : await readLedger(env, jobId), ledgerTip = Number(ledger?.state.tipCents || 0);
+  // The portal ledger keeps the service amount and the tip apart; together they are what Stripe charged.
+  if (ledger?.state.sessionId === sessionId && (Number(ledger.state.amountCents) + ledgerTip !== checkout.amount_total || ledgerTip !== tipCents)) throw failure('The payment amount does not match this checkout');
   const paymentIntentId = clean(checkout.payment_intent.id), charge = checkout.payment_intent.latest_charge;
+  const tipped = tipCents ? { tipPaid: tipCents / 100 } : {};
   // An existing review is already durable (create-only, first record wins); otherwise create it first.
-  // id is the review document (the session ID, or its refund follow-up).
+  // id is the review document (the session ID, or its refund follow-up). A tipped review also names the payments a
+  // person had recorded on the job by hand when it was held (jobLedgerIds), so Review queues counts only the service
+  // money recorded since (stripe-reviews keptServiceMissing), never a payment that was already there.
   const heldForReview = async (job, finance, reason, message, review = null, extra = {}, id = sessionId) => {
     if (!review) await recordPaymentReview(env, {
-      sessionId, jobId, kind, reason, status: 'open', amountCents: checkout.amount_total, currency: 'usd', paymentIntentId, livemode: checkout.livemode === true,
+      sessionId, jobId, kind, reason, status: 'open', amountCents: checkout.amount_total, ...(tipCents ? { tipCents, jobLedgerIds: manualEntryIds(job) } : {}), currency: 'usd', paymentIntentId, livemode: checkout.livemode === true,
       jobRevision: job.__updateTime, jobTotalCents: cents(finance.total), jobPaidCents: cents(finance.paid), jobBalanceCents: cents(finance.balance),
       createdBy: crew ? clean(checkout.metadata?.created_by, 80) : 'customer_portal', recordedBy: clean(recordedBy, 80), createdAt: now, ...extra,
     }, id);
-    return Object.assign(failure(message, 409, reason), { reviewRecorded: true });
+    return Object.assign(failure(message, 409, reason), { reviewRecorded: true, reviewOpen: true });
+  };
+  // Every review of this charge is closed and settled what Stripe shows: nothing is queued for a person.
+  const resolved = (message, extra = {}) => Object.assign(failure(message, 409, 'payment_review_resolved'), { reviewRecorded: true, reviewOpen: false, ...extra });
+  // holdOnly found nothing to hold: nothing was written.
+  const nothingHeld = () => Object.assign(failure('Stripe shows no refund on this charge and no review holds it, so nothing was held.', 409, 'payment_nothing_held'), { nothingHeld: true });
+  // A charge's reviews form a chain: {sessionId}, then {sessionId}:refund, {sessionId}:refund:2 ... each created only
+  // once the one before it was closed and Stripe later showed more refunded than it settled. The chain is walked from
+  // `review` to its open review, or to the next id free for a follow-up; the last closed review is the latest word on the
+  // charge (an earlier review that settled more, a refund recorded and then closed as "Stripe no longer shows a refund",
+  // settles nothing now). lastSettled is what that last close settled, null when `review` is open or missing. A
+  // follow-up names the earlier close (followUpOf, priorResolution, the reason the charge was first held) and, when it
+  // recorded a refund, what it settled (priorRefundedCents) and, on a tipped charge, the service part and tip it left
+  // kept, so Review queues reads only the refund beyond it.
+  const refundChain = async review => {
+    let extra = {}, id = sessionId, lastSettled = null;
+    for (let index = 1; review && review.status !== 'open'; index++) {
+      lastSettled = settledRefundCents(review);
+      if (index > MAX_REFUND_FOLLOW_UPS) break;
+      const heldReason = review.reason && review.reason !== 'payment_refunded' ? review.reason : review.heldReason;
+      const priorSplit = lastSettled > 0 && lastSettled !== Number.MAX_SAFE_INTEGER && Number.isSafeInteger(review.keptServiceCents) && Number.isSafeInteger(review.keptTipCents) ? { priorKeptServiceCents: review.keptServiceCents, priorKeptTipCents: review.keptTipCents } : {};
+      extra = { followUpOf: sessionId, ...(review.resolution ? { priorResolution: clean(review.resolution, 30) } : {}), ...(heldReason ? { heldReason: clean(heldReason, 60) } : {}), ...(lastSettled > 0 ? { priorRefundedCents: lastSettled, ...priorSplit } : {}) };
+      id = refundFollowUpId(sessionId, index);
+      review = await readPaymentReview(env, sessionId, id);
+    }
+    return { review, extra, id, lastSettled };
+  };
+  // A tipped portal charge held for a person marks its checkout ledger 'held', so
+  // Pay stops re-reading this session and the portal shows the payment held. It is
+  // only a mark: the review keeps the charge off the job, and every reader checks
+  // the review again (portalPaymentHeld, createCustomerStripeCheckout), so a mark
+  // that outlives a resolve never holds Pay. Best effort; never written without a tip.
+  const markLedgerHeld = async reason => {
+    if (crew || !tipCents || ledger.state.sessionId !== sessionId || ledger.state.status === 'held') return;
+    try { await saveLedger(env, jobId, { ...ledger.state, status: 'held', heldReason: reason, heldAt: now }, ledger.version); } catch { /* The review still holds the charge. */ }
   };
   // Marks an open review with the refund Stripe shows now (under its revision). 'saved' when nothing had to change.
   const markRefund = async (review, refundedCents) => {
@@ -317,24 +546,13 @@ async function recordStripeCheckout(env, checkout, { kind, expectedJobId = '', r
       // charge as paid, so a new checkout for that balance cannot charge it twice.
       if (chargeRefunded(charge)) {
         const refundedCents = refundedCentsOf(charge, checkout.amount_total);
-        let review = await readPaymentReview(env, sessionId), extra = {}, id = sessionId, lastSettled = null;
-        // The chain is walked to its last closed review, whose close is the latest word
-        // on this charge: an earlier review that settled more (a refund recorded, then
-        // closed as "Stripe no longer shows a refund") settles nothing now. When Stripe
-        // shows more refunded than that last close settled (reconciled before any refund,
-        // or a smaller refund recorded), the rest goes to the owner in the next follow-up
-        // review, created once, never answered with a silent "already resolved".
-        for (let index = 1; review && review.status !== 'open'; index++) {
-          lastSettled = settledRefundCents(review);
-          if (index > MAX_REFUND_FOLLOW_UPS) break;
-          const heldReason = review.reason && review.reason !== 'payment_refunded' ? review.reason : review.heldReason;
-          extra = { followUpOf: sessionId, ...(review.resolution ? { priorResolution: clean(review.resolution, 30) } : {}), ...(heldReason ? { heldReason: clean(heldReason, 60) } : {}), ...(lastSettled > 0 ? { priorRefundedCents: lastSettled } : {}) };
-          id = refundFollowUpId(sessionId, index);
-          review = await readPaymentReview(env, sessionId, id);
-        }
+        // When Stripe shows more refunded than the chain's last close settled (reconciled
+        // before any refund, or a smaller refund recorded), the rest goes to the owner in
+        // the next follow-up review, created once, never answered with a silent "already resolved".
+        const { review, extra, id, lastSettled } = await refundChain(await readPaymentReview(env, sessionId));
         // Resolved only when the walk ends on a closed review that settled at least what Stripe shows.
         if (lastSettled !== null && review?.status !== 'open') {
-          if (refundedCents <= lastSettled) throw Object.assign(failure(text.payment_review_resolved_on_job, 409, 'payment_review_resolved'), { reviewRecorded: true, recordedOnJob: true });
+          if (refundedCents <= lastSettled) throw resolved(text.payment_review_resolved_on_job, { recordedOnJob: true });
           // Every follow-up is used and closed: fail closed rather than open one past the last.
           if (review) throw failure('Payment information is temporarily unavailable', 503, 'payment_storage_unavailable');
         }
@@ -344,6 +562,8 @@ async function recordStripeCheckout(env, checkout, { kind, expectedJobId = '', r
         const message = paymentReviewCheckoutBlockEnabled(env) ? text.payment_refunded_on_job : text.payment_refunded_on_job_balance_open;
         throw Object.assign(await heldForReview(job, finance, 'payment_refunded', message, review, { ...extra, refundedCents, refundSeenAt: now }, id), { recordedOnJob: true });
       }
+      // holdOnly never touches a charge already on the job that Stripe shows no refund on (not even its receipt link).
+      if (holdOnly) throw nothingHeld();
       const latest = job.payment.stripeSessions.at(-1), saved = job.payment.stripeSessions.find(item => String(item?.sessionId || item) === sessionId);
       const receiptUrl = String(latest?.sessionId || latest) === sessionId && RECEIPT_URL.test(charge.receipt_url || '') ? charge.receipt_url : job.payment.receiptUrl || '';
       let payment = job.payment;
@@ -353,13 +573,30 @@ async function recordStripeCheckout(env, checkout, { kind, expectedJobId = '', r
         try { await patchJob(env, jobId, { payment: { ...job.payment, receiptUrl } }, job.__updateTime); payment = { ...job.payment, receiptUrl }; }
         catch { if (attempt < 2) continue; }
       }
-      const item = saved && typeof saved === 'object' ? saved : { sessionId, paymentIntentId, amount: checkout.amount_total / 100 };
-      return { result: { paid: true, duplicate: true, amountPaid: checkout.amount_total / 100, balance: finance.balance, receiptUrl }, payment, invoice: job.invoice || {}, paymentSyncPayload: { ...item, balance: finance.balance, paidTotal: finance.paid }, withheld: unsentQuoteDraft(job) };
+      const item = saved && typeof saved === 'object' ? saved : { sessionId, paymentIntentId, amount: serviceCents / 100 };
+      return { result: { paid: true, duplicate: true, amountPaid: serviceCents / 100, ...tipped, balance: finance.balance, receiptUrl }, payment, invoice: job.invoice || {}, paymentSyncPayload: { ...item, balance: finance.balance, paidTotal: finance.paid }, withheld: unsentQuoteDraft(job) };
     }
     // A review the office closed (reconciled elsewhere, refunded) is final:
     // neither a browser return nor a webhook retry ever puts that charge on the job.
     const review = await readPaymentReview(env, sessionId);
-    if (review && review.status !== 'open') throw Object.assign(failure(text.payment_review_resolved, 409, 'payment_review_resolved'), { reviewRecorded: true });
+    if (review && review.status !== 'open') {
+      if (!chargeRefunded(charge)) throw resolved(text.payment_review_resolved);
+      // Stripe shows more refunded than the chain's last close settled (a partial refund recorded with the money kept
+      // put on the job by hand, or a charge reconciled before any refund): the owner gets the next follow-up review,
+      // exactly as for a charge on the job, so what that close recorded or applied elsewhere is corrected, never a
+      // silent "already resolved". No more than it settled: resolved, nothing queued.
+      const refundedCents = refundedCentsOf(charge, checkout.amount_total), chain = await refundChain(review);
+      if (chain.review?.status !== 'open') {
+        if (refundedCents <= chain.lastSettled) throw resolved(text.payment_review_resolved);
+        if (chain.review) throw failure('Payment information is temporarily unavailable', 503, 'payment_storage_unavailable');
+      }
+      const marked = chain.review ? await markRefund(chain.review, refundedCents) : 'saved';
+      if (marked !== 'saved') { storageFailed = marked === 'failed'; continue; }
+      throw await heldForReview(job, finance, 'payment_refunded', text.payment_refunded, chain.review, { ...chain.extra, refundedCents, refundSeenAt: now }, chain.id);
+    }
+    // holdOnly: Stripe shows no refund and no review holds the charge, so there is nothing to hold; booking it is left
+    // to the completion webhook and the returns.
+    if (holdOnly && !review && !chargeRefunded(charge)) throw nothingHeld();
     // Money Stripe shows as refunded never counts as paid on its own, for any
     // checkout kind; the owner settles it in Review queues. A review opened for
     // another reason is updated (under its revision) so the queue shows the refund.
@@ -367,34 +604,62 @@ async function recordStripeCheckout(env, checkout, { kind, expectedJobId = '', r
       const refundedCents = chargeRefunded(charge) ? refundedCentsOf(charge, checkout.amount_total) : null;
       const marked = refundedCents === null ? 'saved' : await markRefund(review, refundedCents);
       if (marked !== 'saved') { storageFailed = marked === 'failed'; continue; }
-      throw await heldForReview(job, finance, 'payment_refunded', text.payment_refunded, review, refundedCents === null ? {} : { refundedCents, refundSeenAt: now });
+      const held = await heldForReview(job, finance, 'payment_refunded', text.payment_refunded, review, refundedCents === null ? {} : { refundedCents, refundSeenAt: now });
+      await markLedgerHeld('payment_refunded');
+      throw held;
+    }
+    // A tipped charge with any open review stays held whatever the job looks like
+    // now (restored, re-invoiced, its refund record removed, its balance freed) and
+    // whoever returns: it is never booked automatically, only closed in Review queues.
+    if (tipCents && review) {
+      const reason = clean(review.reason, 60) || 'payment_needs_review', held = await heldForReview(job, finance, reason, text[reason] || text.held, review);
+      await markLedgerHeld(reason);
+      throw held;
+    }
+    // A tip is refused when a checkout opens, but a tipped checkout opened earlier
+    // can still be paid after the job is cancelled, marked a no-show, voided or
+    // refunded: that charge is held too, never booked onto the closed job.
+    if (tipCents && tipRefusal(job)) {
+      const held = await heldForReview(job, finance, 'payment_tip_refused', text.payment_tip_refused);
+      await markLedgerHeld('payment_tip_refused');
+      throw held;
     }
     // A webhook never settles a charge that already has an open review: only a
     // person's action does (the crew return, or Review queues). Stripe gets 200
     // and the job is unchanged.
     if (review && !settleHeld) throw await heldForReview(job, finance, clean(review.reason, 60) || 'payment_needs_review', text.held, review);
+    // holdOnly never books a charge, nor saves a receipt for one.
+    if (holdOnly) throw nothingHeld();
     if (customerPaymentNeedsReview(job)) {
-      if (crew) throw await heldForReview(job, finance, 'payment_needs_review', 'Stripe confirmed this payment, but an earlier recorded payment needs manager verification. The charge is saved for manager review. Do not charge again.', review);
+      if (crew) throw await heldForReview(job, finance, 'payment_needs_review', text.payment_needs_review, review);
       // A crew-entered receipt cannot become verified merely because a separate
       // Stripe charge succeeds. Keep the confirmed charge durably recoverable,
       // and let Stripe retry after the manager verifies the earlier receipt.
-      await saveLedger(env, jobId, { ...ledger.state, verifiedReceipt: { sessionId, amount: checkout.amount_total / 100, paymentIntentId, confirmedAt: now }, requiresReview: true }, ledger.version);
+      // amount is everything Stripe charged; a tipped charge also keeps serviceAmount (what counts toward the balance)
+      // and tipCents apart, so settling it by hand never books the tip as service money.
+      await saveLedger(env, jobId, { ...ledger.state, verifiedReceipt: { sessionId, amount: checkout.amount_total / 100, ...(tipCents ? { serviceAmount: serviceCents / 100, tipCents } : {}), paymentIntentId, confirmedAt: now }, requiresReview: true }, ledger.version);
       throw failure('Your Stripe payment is confirmed. An earlier recorded payment needs team verification before the balance can be updated. Please do not pay again.', 409, 'payment_needs_review');
     }
     // A crew link was sized to the balance when it opened. A payment recorded
     // since then means this charge needs a manager before it changes the job.
-    if (crew && (cents(finance.total) <= 0 || checkout.amount_total > cents(finance.balance))) throw await heldForReview(job, finance, 'payment_exceeds_balance', 'Stripe confirmed this payment, but it exceeds the current job balance. The charge is saved for manager review. Do not charge again.', review);
-    const paidCents = cents(finance.paid) + checkout.amount_total;
+    // Only the service part is checked against the balance; the tip never counts toward it.
+    if (crew && (cents(finance.total) <= 0 || serviceCents > cents(finance.balance))) throw await heldForReview(job, finance, 'payment_exceeds_balance', text.payment_exceeds_balance, review);
+    // Only the service part is paid toward the job; the tip is kept in payment.tips.
+    const paidCents = cents(finance.paid) + serviceCents;
     // Preserve every confirmed dollar, including any unexpected excess, for reconciliation.
     const paidTotal = paidCents / 100, balance = Math.max(0, cents(finance.total) - paidCents) / 100;
     const deposit = customerDepositState(job, { ...finance, paid: paidTotal, balance });
     const receiptUrl = RECEIPT_URL.test(charge.receipt_url || '') ? charge.receipt_url : job.payment?.receiptUrl || '';
     const receiptEmail = clean(checkout.customer_details?.email || checkout.customer_email);
+    const tipField = tipCents ? { tipCents } : {};
     const paymentItem = crew
-      ? { sessionId, paymentIntentId, amount: checkout.amount_total / 100, receiptEmail, createdBy: clean(checkout.metadata?.created_by, 80), recordedBy: clean(recordedBy, 80), verifiedAt: now }
-      : { sessionId, paymentIntentId, amount: checkout.amount_total / 100, purpose: clean(checkout.metadata?.payment_purpose, 20), quoteRevision: clean(checkout.metadata?.quote_revision, 20), quotedTotalCents: Number(checkout.metadata?.quoted_total_cents || 0), verifiedAt: now };
+      ? { sessionId, paymentIntentId, amount: serviceCents / 100, ...tipField, receiptEmail, createdBy: clean(checkout.metadata?.created_by, 80), recordedBy: clean(recordedBy, 80), verifiedAt: now }
+      : { sessionId, paymentIntentId, amount: serviceCents / 100, ...tipField, purpose: clean(checkout.metadata?.payment_purpose, 20), quoteRevision: clean(checkout.metadata?.quote_revision, 20), quotedTotalCents: Number(checkout.metadata?.quoted_total_cents || 0), verifiedAt: now };
     const trustedSessions = job.payment?.verified === true ? (job.payment.stripeSessions || []) : [];
-    const payment = { ...(job.payment || {}), amount: paidTotal, lastAmount: paymentItem.amount, lastReceivedAt: now, method: 'stripe', processor: 'stripe', verified: true, receiptUrl, receiptEmail, reference: paymentIntentId || sessionId, stripeSessions: [...trustedSessions, paymentItem], ...(crew ? { recordedBy: paymentItem.recordedBy } : {}) };
+    const trustedTips = job.payment?.verified === true && Array.isArray(job.payment.tips) ? job.payment.tips : [];
+    const tip = tipCents ? { sessionId, paymentIntentId, amountCents: tipCents, amount: tipCents / 100, source: crew ? 'crew_card' : 'customer_portal', createdBy: clean(checkout.metadata?.created_by, 80), recordedBy: clean(recordedBy, 80) || 'stripe', verifiedAt: now } : null;
+    const tips = tip || Array.isArray(job.payment?.tips) ? { tips: [...trustedTips, ...(tip ? [tip] : [])] } : {};
+    const payment = { ...(job.payment || {}), amount: paidTotal, lastAmount: paymentItem.amount, lastReceivedAt: now, method: 'stripe', processor: 'stripe', verified: true, receiptUrl, receiptEmail, reference: paymentIntentId || sessionId, stripeSessions: [...trustedSessions, paymentItem], ...tips, ...(crew ? { recordedBy: paymentItem.recordedBy } : {}) };
     const invoice = { ...(job.invoice || {}), amount: finance.total, paid: paidTotal, balance, status: balance < .01 ? 'paid' : 'partial', updatedAt: now };
     const paymentSyncPayload = { ...paymentItem, balance, paidTotal };
     const patch = {
@@ -405,8 +670,11 @@ async function recordStripeCheckout(env, checkout, { kind, expectedJobId = '', r
     };
     try {
       if (review) await patchJobWithReview(env, jobId, patch, job.__updateTime, review, { jobRecordedAt: now, jobRecordedBy: clean(recordedBy, 80) });
+      // A tipped charge is booked only while it still has no review: a webhook or return that saw a refund Stripe shows
+      // after this read creates payment_reviews/{sessionId}, which fails this commit, and the retry takes the hold path.
+      else if (tipCents) await patchJobUnlessReviewed(env, jobId, patch, job.__updateTime, sessionId);
       else await patchJob(env, jobId, patch, job.__updateTime);
-      return { result: { paid: true, duplicate: false, amountPaid: paymentItem.amount, balance, receiptUrl }, payment, invoice, paymentSyncPayload, withheld: unsentQuoteDraft(job) };
+      return { result: { paid: true, duplicate: false, amountPaid: paymentItem.amount, ...tipped, balance, receiptUrl }, payment, invoice, paymentSyncPayload, withheld: unsentQuoteDraft(job) };
     } catch (error) { storageFailed = ![400, 409, 412].includes(error.storageStatus); } // Firestore answers a stale updateTime with 400 FAILED_PRECONDITION.
   }
   // Each retry re-reads the job, so a write whose response was lost is found above as a duplicate.
@@ -414,12 +682,13 @@ async function recordStripeCheckout(env, checkout, { kind, expectedJobId = '', r
 }
 
 // recordedBy names who saw a held charge first ('customer_portal' for the portal
-// return, 'stripe_webhook' for the webhook); settleHeld:false is the webhook.
+// return, 'stripe_webhook' for the webhook); settleHeld:false is the webhook;
+// holdOnly:true (charge.refunded) never books, and throws nothingHeld when there is nothing to hold.
 // While a Hub quote draft has an unsent revision, the job's total is that revision, so the customer's reply
 // (verify_payment, and create_payment's alreadyPaid) confirms the payment without a balance measured against
 // terms they have not been sent. The payment itself is recorded in full either way.
-export async function recordCustomerStripePayment(env, checkout, expectedJobId = '', now = new Date().toISOString(), { recordedBy = 'customer_portal', settleHeld = true } = {}) {
-  const { result, withheld } = await recordStripeCheckout(env, checkout, { kind: CHECKOUT_KINDS.portal, expectedJobId, recordedBy, settleHeld, now });
+export async function recordCustomerStripePayment(env, checkout, expectedJobId = '', now = new Date().toISOString(), { recordedBy = 'customer_portal', settleHeld = true, holdOnly = false } = {}) {
+  const { result, withheld } = await recordStripeCheckout(env, checkout, { kind: CHECKOUT_KINDS.portal, expectedJobId, recordedBy, settleHeld, holdOnly, now });
   if (!withheld) return result;
   const { balance, ...confirmed } = result;
   return { ...confirmed, balanceWithheld: true };
@@ -428,14 +697,36 @@ export async function recordCustomerStripePayment(env, checkout, expectedJobId =
 // Crew card links (job-payment.js) settle through the same verification from
 // the Stripe webhook or the crew browser return; the latter also receives the
 // recorded job copy it shows during closeout.
-export async function recordCrewStripePayment(env, checkout, { expectedJobId = '', recordedBy = '', settleHeld = true, now = new Date().toISOString() } = {}) {
-  const { result, payment, invoice, paymentSyncPayload } = await recordStripeCheckout(env, checkout, { kind: CHECKOUT_KINDS.crew, expectedJobId, recordedBy, settleHeld, now });
+export async function recordCrewStripePayment(env, checkout, { expectedJobId = '', recordedBy = '', settleHeld = true, holdOnly = false, now = new Date().toISOString() } = {}) {
+  const { result, payment, invoice, paymentSyncPayload } = await recordStripeCheckout(env, checkout, { kind: CHECKOUT_KINDS.crew, expectedJobId, recordedBy, settleHeld, holdOnly, now });
   return { ...result, payment, invoice, paymentSyncPayload };
 }
 
-const fingerprint = job => JSON.stringify({ total: customerMoneyState(job).total, paid: customerMoneyState(job).paid, ...customerDepositState(job), revision: job.estimate?.revision || 1, approval: job.customerApproval?.status || job.estimate?.status || job.quoteStatus || '', status: job.pipelineStatus || job.status || '' });
-// An open portal checkout whose saved fingerprint differs no longer matches the quote.
-export const checkoutFingerprint = job => fingerprint(job);
+
+/**
+ * Whether Pay is held for this job right now (the portal GET, with tips on only).
+ * 'held' is derived from the reviews, never trusted from a mark: the portal
+ * checkout ledger marked 'held' counts only while that session's review is still
+ * open (a missing review counts as held, failing closed); a mark whose review was
+ * resolved is not held and is settled here, best effort. Otherwise it is held
+ * when checkoutHold finds a review that would refuse a new checkout. Throws 503
+ * when either cannot be read. `now` (ISO) stamps a settled mark.
+ */
+export async function portalPaymentHeld(env, jobId, job = null, now = new Date().toISOString()) {
+  const ledger = await readLedger(env, jobId);
+  if (ledger.state.status === 'held') {
+    const review = ledger.state.sessionId ? await readPaymentReview(env, ledger.state.sessionId) : null;
+    if (!review || review.status === 'open') return true;
+    await saveLedger(env, jobId, { ...ledger.state, status: 'settled', settledAt: now, settledBy: 'review_resolved' }, ledger.version).catch(() => null);
+  }
+  return Boolean(await checkoutHold(env, jobId, job));
+}
+
+// A checkout with no tip keeps the exact fingerprint it had before tips existed,
+// so an open session saved earlier is still resumed rather than expired.
+const fingerprint = (job, tipCents = 0) => JSON.stringify({ total: customerMoneyState(job).total, paid: customerMoneyState(job).paid, ...customerDepositState(job), revision: job.estimate?.revision || 1, approval: job.customerApproval?.status || job.estimate?.status || job.quoteStatus || '', status: job.pipelineStatus || job.status || '', ...(tipCents ? { tipCents } : {}) });
+// An open portal checkout whose saved fingerprint (with its saved tip) differs no longer matches the quote.
+export const checkoutFingerprint = (job, tipCents = 0) => fingerprint(job, tipCents);
 
 /**
  * Closes the job's portal card checkout when it no longer charges exactly what
@@ -466,16 +757,38 @@ export async function expireStaleCustomerCheckout(env, secret, jobId) {
   return 'expired';
 }
 
-// now (ISO) stamps a charge this call records or holds for review.
-export async function createCustomerStripeCheckout(env, secret, jobId, origin, { now = new Date().toISOString() } = {}) {
+// now (ISO) stamps a charge this call records or holds for review, and the checkout claim it saves.
+export async function createCustomerStripeCheckout(env, secret, jobId, origin, { tipCents = 0, now = new Date().toISOString() } = {}) {
   let ledger = await readLedger(env, jobId), state = ledger.state;
   let job = await readJob(env, jobId);
   if (!job?.__updateTime) throw failure('Payment information is temporarily unavailable', 503);
+  // Check a tip against the job and the balance before any earlier checkout is resumed or expired.
+  if (requestTip(tipCents)) {
+    const refusal = tipRefusal(job);
+    if (refusal) throw failure(refusal, 409, 'tip_unavailable');
+    const due = payable(job); validTip(tipCents, cents(due.dueNow), due.purpose);
+  }
+  // A portal checkout marked held (a tipped charge held for a person) is checked
+  // against its review before Stripe is read: while the review is open (or cannot
+  // be found) Pay is refused; once Review queues resolved it, the mark is settled
+  // here and the balance can be paid. The held charge is never booked from here.
+  if (state.status === 'held') {
+    const review = state.sessionId ? await readPaymentReview(env, state.sessionId) : null;
+    if (!review || review.status === 'open') throw Object.assign(failure(CHECKOUT_HOLD_TEXT.portal, 409, CHECKOUT_HOLD_CODE), { reviewRecorded: true });
+    ledger = await saveLedger(env, jobId, { ...state, status: 'settled', settledAt: now, settledBy: 'review_resolved' }, ledger.version);
+    state = ledger.state;
+  }
+  // With tips on, a held tipped charge (this portal checkout's, or a crew card
+  // link's) and, with PAYMENT_REVIEW_CHECKOUT_BLOCK_ENABLED, any open review stop
+  // Pay before Stripe is read; the review decides and nothing is written here.
+  // Tips off: the block flag alone is checked where it always was, below.
+  const tips = customerTipsEnabled(env);
+  if (tips) await checkoutReviewHold(env, jobId, job);
   let checkout;
   if (state.status === 'creating' && !state.sessionId) {
     // Persist both the key and exact parameters before Stripe. A lost response or
     // another browser can only recover the same session, never create a second.
-    if (Date.now() - Date.parse(state.createdAt) > 23 * 3600000) throw failure('An earlier checkout needs confirmation by the team before another payment can be opened.');
+    if (Date.parse(now) - Date.parse(state.createdAt) > 23 * 3600000) throw failure('An earlier checkout needs confirmation by the team before another payment can be opened.');
     checkout = await stripeRequest(secret, 'checkout/sessions', { method: 'POST', headers: { 'Idempotency-Key': state.key }, body: new URLSearchParams(state.params) });
     if (!checkout.id) throw failure('Stripe did not confirm a checkout session', 502);
     ledger = await saveLedger(env, jobId, { ...state, sessionId: checkout.id, status: 'open' }, ledger.version);
@@ -485,9 +798,10 @@ export async function createCustomerStripeCheckout(env, secret, jobId, origin, {
     checkout = checkout || await stripeRequest(secret, `checkout/sessions/${encodeURIComponent(state.sessionId)}?expand[]=payment_intent.latest_charge`);
     if (checkout.status === 'complete') {
       if (checkout.payment_status !== 'paid') throw failure('Your previous payment is still processing. Please wait before paying again.');
-      // A charge held for review (for example, one Stripe shows refunded) stops
-      // here with its "do not pay again" message. Once the office has resolved
-      // it, that checkout is settled and the current balance can be paid.
+      // A charge held for review (for example, one Stripe shows refunded, or a
+      // tipped charge on a job that closed) stops here with its "do not pay again"
+      // message. Once the office has resolved it, that checkout is settled and the
+      // current balance can be paid.
       // A refund on a charge the job already counts as paid still opens its
       // payment_refunded review, but the balance a new checkout charges already
       // counts that charge as paid, so it cannot be charged twice: it holds new
@@ -506,11 +820,13 @@ export async function createCustomerStripeCheckout(env, secret, jobId, origin, {
       job = await readJob(env, jobId);
     } else if (checkout.status === 'open') {
       // Validate the current saved amount even when resuming an existing link.
+      // The same tip resumes it; a different tip (or none) expires it below.
       let stillPayable = false;
+      const savedTip = Number(state.tipCents || 0);
       try { stillPayable = payable(job).dueNow >= .5; } catch { /* Expire stale/cancelled scope below. */ }
-      if (stillPayable && state.fingerprint === fingerprint(job) && checkout.amount_total === state.amountCents && /^https:\/\/checkout\.stripe\.com\//.test(checkout.url || '')) {
-        await checkoutReviewHold(env, jobId);
-        return { ok: true, url: checkout.url, amount: state.amountCents / 100, purpose: state.purpose };
+      if (stillPayable && state.fingerprint === fingerprint(job, tipCents) && checkout.amount_total === state.amountCents + savedTip && /^https:\/\/checkout\.stripe\.com\//.test(checkout.url || '')) {
+        if (!tips) await checkoutReviewHold(env, jobId, job);
+        return { ok: true, url: checkout.url, amount: state.amountCents / 100, ...(savedTip ? { tip: savedTip / 100 } : {}), purpose: state.purpose };
       }
       const expired = await stripeRequest(secret, `checkout/sessions/${encodeURIComponent(state.sessionId)}/expire`, { method: 'POST' });
       if (expired.status !== 'expired') throw failure('The earlier checkout must finish closing before another payment can be opened.');
@@ -523,7 +839,8 @@ export async function createCustomerStripeCheckout(env, secret, jobId, origin, {
   }
   const deposit = payable(job), amountCents = cents(deposit.dueNow), changeCents = billedChangeCents(job);
   if (amountCents < 50) throw failure(customerMoneyState(job).balance < .5 ? 'There is no outstanding balance' : 'Your deposit is paid. The remaining balance is due on completion.');
-  await checkoutReviewHold(env, jobId);
+  const tip = validTip(tipCents, amountCents, deposit.purpose);
+  if (!tips) await checkoutReviewHold(env, jobId, job);
   const params = new URLSearchParams({
     mode: 'payment', submit_type: 'pay', client_reference_id: jobId,
     success_url: `${origin}/customer-portal?payment=stripe-success&session_id={CHECKOUT_SESSION_ID}`,
@@ -541,8 +858,9 @@ export async function createCustomerStripeCheckout(env, secret, jobId, origin, {
   if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(job.email || '')) {
     params.set('customer_email', job.email); params.set('payment_intent_data[receipt_email]', job.email);
   }
-  state = { status: 'creating', sessionId: '', key: `egc-customer-payment:${crypto.randomUUID()}`, params: params.toString(), amountCents, purpose: deposit.purpose, fingerprint: fingerprint(job), createdAt: new Date().toISOString() };
+  addTipLine(params, tip);
+  state = { status: 'creating', sessionId: '', key: `egc-customer-payment:${crypto.randomUUID()}`, params: params.toString(), amountCents, ...(tip ? { tipCents: tip } : {}), purpose: deposit.purpose, fingerprint: fingerprint(job, tip), createdAt: now };
   await saveLedger(env, jobId, state, ledger.version);
   // Recover through the same path, including the current-scope check, before returning a link.
-  return createCustomerStripeCheckout(env, secret, jobId, origin, { now });
+  return createCustomerStripeCheckout(env, secret, jobId, origin, { tipCents, now });
 }

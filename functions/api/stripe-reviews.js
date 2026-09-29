@@ -17,8 +17,11 @@
  * keptCentsAcknowledged?} (owner only, confirmed against Stripe; the first
  * acknowledgement is required when the charge is already on the job, the second
  * (the exact cents kept, from the 409 stripe_review_refund_partial details) when
- * Stripe shows only part of a charge that is not on the job refunded),
- * membership.link {customerId}, membership.dismiss {reason, note}. Nothing
+ * Stripe shows only part of a charge that is not on the job refunded; on a
+ * tipped charge, tipRefundedFirst? says the crew tip was refunded before the
+ * service, and the service part kept must already be recorded on the job, or
+ * it is 409 stripe_review_kept_not_recorded), membership.link {customerId},
+ * membership.dismiss {reason, note}. Nothing
  * here charges, refunds or messages. A resolved payment review is final: the
  * crew return and webhook never put that charge on the job afterwards. A
  * payment reviewId is the checkout session ID, or {sessionId}:refund (then

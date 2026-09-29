@@ -588,8 +588,10 @@ test('crew closeout still offers the card payment for a billed change after the 
     CENTRAL_JOB_ID: 'job-1', ACTIVE: {}, restoreAll() {}, saveAll() {}, restoreSharedProgress() {}, normalizedInstructions: () => [],
     HUBDB: { collection: () => ({ doc: () => ({ get: async () => ({ exists: true, id: 'job-1', data: () => structuredClone(saved) }) }) }) },
     document: { getElementById: node, querySelector: selector => selector === '#stripe_pay button' ? node('stripe-button') : null },
+    // TIPS: the panel also checks this device's earlier checkout record (none here) and redraws the tip picker (off here).
+    localStorage: { getItem: () => null, setItem() {}, removeItem() {} }, renderCrewTip() {},
   });
-  vm.runInContext(portalScript(html, ['function stripeStatus(', 'function updateStripePanel(', 'function billedChangeTotal(', 'async function loadCentralJob(']), context);
+  vm.runInContext(portalScript(html, ['function stripeStatus(', 'function updateStripePanel(', 'function billedChangeTotal(', 'async function loadCentralJob(', 'const CREW_CHECKOUT_ID=', 'function crewCheckoutRecord(', 'function crewCheckoutPending(']), context);
   await context.loadCentralJob();
   context.updateStripePanel();
   assert.deepEqual([context.ACTIVE.total, context.ACTIVE.paidToDate], [1150, 1000]);
