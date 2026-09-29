@@ -321,15 +321,19 @@ service cloud.firestore {
       // funnelSale (FUN-03) names the sale the funnel ledger counts for the job;
       // only the server writers that record or retire that sale may set it. The
       // FUN-33 paid-in-full fields (paymentEventFields) are server-only the same way.
+      // ghlTagEntry (GHL-TRACK-1) points at the visit's HighLevel tag outbox entry,
+      // which decides whether the browser sync adds the booking tags; only the
+      // server commit that writes the entry may set it.
       allow create: if businessUser() && !serverOwnedJobRecord(documentId) &&
         !serverOwnedJobData(request.resource.data, documentId) &&
         !('funnelSale' in request.resource.data) &&
         !request.resource.data.keys().hasAny(paymentEventFields()) &&
+        !('ghlTagEntry' in request.resource.data) &&
         jobLaborUnchanged(request.resource.data, {}, documentId);
       allow update: if businessUser() && !serverOwnedJobRecord(documentId) &&
         !serverOwnedJobData(resource.data, documentId) &&
         !serverOwnedJobData(request.resource.data, documentId) &&
-        !request.resource.data.diff(resource.data).affectedKeys().hasAny(['funnelSale']) &&
+        !request.resource.data.diff(resource.data).affectedKeys().hasAny(['funnelSale', 'ghlTagEntry']) &&
         !request.resource.data.diff(resource.data).affectedKeys().hasAny(paymentEventFields()) &&
         jobLaborUnchanged(request.resource.data, resource.data, documentId);
       allow delete: if businessUser() && !serverOwnedJobRecord(documentId) &&
@@ -550,6 +554,14 @@ service cloud.firestore {
     match /employeeVaultMigrations/{documentId} {
       allow read, write: if false;
     }
+    // STAFF-ACCESS receipts (sign-in resets, password changes, account reviews,
+    // Apply rate) and the payroll week export records are server-only too.
+    match /staffAccessOperations/{documentId} {
+      allow read, write: if false;
+    }
+    match /payrollWeekExports/{documentId} {
+      allow read, write: if false;
+    }
 
     // Garage catalog versions (immutable snapshots and the published pointer),
     // owner pricing settings, every saved settings version and their request
@@ -588,6 +600,17 @@ service cloud.firestore {
     // What each employee last heard about each job: written only with the
     // cron's notice closes, read by the cron and /api/crew-notifications.
     match /crewNoticeHeard/{documentId} {
+      allow read, write: if false;
+    }
+
+    // HighLevel tag outbox (GHL-TRACK-1): written only in the server commit of a
+    // schedule change or walkthrough outcome, drained by /api/ghl-tag-drain.
+    match /ghlTagOutbox/{documentId} {
+      allow read, write: if false;
+    }
+    // The HighLevel tag worker's check-in, written by each signed drain tick and
+    // read by the Command center's stuck view.
+    match /ghlTagDrainState/{documentId} {
       allow read, write: if false;
     }
 

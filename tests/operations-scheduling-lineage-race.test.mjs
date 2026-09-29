@@ -5,6 +5,7 @@ import { randomUUID, webcrypto } from 'node:crypto';
 import vm from './helpers/vm-realm.mjs';
 import { arrivalWindowProblem, arrivalWindowFields } from '../functions/_lib/dispatch-arrival.js';
 import { crewNotificationWrites, crewNotificationsEnabled } from '../functions/_lib/crew-notifications.js';
+import { ghlTagOutboxEnabled, scheduleTagWrites } from '../functions/_lib/ghl-tag-outbox.js';
 import * as funnel from '../functions/_lib/dispatch-funnel.js';
 import * as dimensions from '../functions/_lib/funnel-dimensions.js';
 import { commitConflict, commitFailure } from '../functions/_lib/firestore-errors.js';
@@ -26,6 +27,8 @@ function load() {
     arrivalWindowProblem, arrivalWindowFields,
     // Crew notices run for real too; these stores leave the flag off.
     crewNotificationWrites, crewNotificationsEnabled,
+    // GHL-TRACK-1 HighLevel tag outbox runs for real; these stores leave the flag off.
+    ghlTagOutboxEnabled, scheduleTagWrites,
     // The shared SEC-04 bridge policy runs for real (the owner actor below is allowed).
     bridgeCommandDenial, bridgeCommandPolicy,
     DISPATCH_TIME_ZONE: 'America/Denver',

@@ -8,6 +8,7 @@
    opens the document same-origin. Every {{payLink}} carries next=pay
    (message-links.js). */
 import { moneyDocumentEnabled, moneyDocumentKinds } from './money-document.js';
+import { moneyInvoiceStateEnabled } from './money-core.js';
 
 export const PORTAL_HOME = '/customer-portal';
 export const PORTAL_PAY = '/customer-portal#pay';
@@ -29,7 +30,7 @@ export function portalLanding(next, { env = {}, job = null, viewer = null, now }
   const target = portalNext(next);
   if (!target) return PORTAL_HOME;
   if (target === 'invoice' && moneyDocumentEnabled(env) && viewer?.permissions?.view !== false) {
-    try { if (moneyDocumentKinds(job, now).includes('invoice')) return PORTAL_INVOICE; } catch { /* unreadable money falls back to the payment card */ }
+    try { if (moneyDocumentKinds(job, now, { invoiceState: moneyInvoiceStateEnabled(env) }).includes('invoice')) return PORTAL_INVOICE; } catch { /* unreadable money falls back to the payment card */ }
   }
   return PORTAL_PAY;
 }

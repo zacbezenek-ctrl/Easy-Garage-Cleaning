@@ -420,9 +420,15 @@ fall back to the raw-spelling lookups, and the HighLevel open-opportunity check 
      and crew, and schedule it. Dispatch runs every conflict and lock check.
   3. For each entry in the report's `multiVisitJobs`: the Hub job holds one visit. Schedule it, then create each other
      listed visit in Dispatch for the same customer (or cancel it with the customer). Tick every listed date off.
-  4. Customer notifications stay off on imported jobs. Tick "Save confirmation and reminder preferences" in the Hub
-     schedule's edit dialog only if you want confirmations and reminders to go out.
+  4. Customer notifications stay off on imported jobs until someone turns them on. In Dispatch the card shows
+     **Reminders off** and the Edit dialog says "Imported from Jobber: reminders were off". Leave **HighLevel
+     confirmation and reminders** checked when you book the job (it starts checked with
+     `EGC_DISPATCH_NOTIFY_IMPORTED_ON=true`, the recommended setting, see GO-LIVE D3) so HighLevel confirms and reminds
+     the customer; uncheck it to keep that customer silent. The Hub schedule's "Save confirmation and reminder
+     preferences" tick still works as before.
   5. Record the agreed price on the job's estimate. Imported jobs carry no Hub price, only the Jobber value in notes.
+     Until the customer approves a price, Dispatch shows owners and managers **Price this job** on the card, which
+     opens that job in Estimates & payments.
 - **Recurring plans.** For each entry in `recurringPlans`, schedule the next visit. Then set its visit cadence in the
   Hub schedule and use "next visit", which is saved through Dispatch as a repeat of that job. Once P1-05 merges, use a
   recurring plan instead.

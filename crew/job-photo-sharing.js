@@ -31,20 +31,23 @@
     try { const key = pendingKey(); if (!key) return; if (value) sessionStorage.setItem(key, JSON.stringify(value)); else sessionStorage.removeItem(key); } catch { /* The in-page copy still allows an exact retry. */ }
   }
   function setStatus(text, error = false) { S.status = text; S.statusError = error; }
-  // job.js restores its data-draft fields after a render; any other typed or
-  // changed field (the checklist editor, a photo caption, a status reason) and
-  // any <details> opened or closed since the render would be lost by a reload.
+  // job.js restores its data-draft fields after a render, and the fields and
+  // panels it marks data-kept (a status reason, the checklist editor, the note
+  // and completion choices, the history list); any other typed or changed field
+  // and any other <details> opened or closed since the render would be lost by
+  // a reload.
   function remember() { S.host?.querySelectorAll('details').forEach(details => { details.dataset.psOpen = details.open ? '1' : '0'; }); }
   function unsavedEdits() {
     const active = document.activeElement;
-    if (active && S.host.contains(active) && active.matches('textarea, input:not([type=file]):not([type=checkbox]):not([type=radio]):not([type=button]):not([type=submit])')) return true;
+    const kept = field => field.dataset.draft || field.dataset.kept != null;
+    if (active && S.host.contains(active) && !kept(active) && active.matches('textarea, input:not([type=file]):not([type=checkbox]):not([type=radio]):not([type=button]):not([type=submit])')) return true;
     for (const field of S.host.querySelectorAll('input, textarea, select')) {
-      if (field.dataset.draft || field.disabled) continue;
+      if (kept(field) || field.disabled) continue;
       if (field.tagName === 'SELECT') { const initial = [...field.options].filter(option => option.defaultSelected).pop() || [...field.options].find(option => !option.disabled); if (field.value !== (initial?.value ?? '')) return true; }
       else if (['checkbox', 'radio'].includes(field.type)) { if (field.checked !== field.defaultChecked) return true; }
       else if (!['file', 'hidden', 'button', 'submit', 'reset'].includes(field.type) && field.value !== field.defaultValue) return true;
     }
-    return [...S.host.querySelectorAll('details')].some(details => details.open !== (details.dataset.psOpen === '1'));
+    return [...S.host.querySelectorAll('details:not([data-kept])')].some(details => details.open !== (details.dataset.psOpen === '1'));
   }
   function refreshJob() { const reload = S.host?.querySelector('[data-action="reload"]'); if (!reload || reload.disabled) return false; S.needsRefresh = ''; reload.click(); return true; }
 
@@ -182,7 +185,7 @@
     // Any job.js reload (its own Refresh or ours) brings it onto the latest version.
     if (event.target.closest?.('[data-action="reload"]')) { S.needsRefresh = ''; return; }
     const action = event.target.closest?.('[data-ps-action]')?.dataset.psAction;
-    if (action === 'refresh-job') { if (!unsavedEdits() || window.confirm('Refresh the job now? Unsaved changes on this page, such as checklist edits, will be cleared.')) { setStatus(''); if (!refreshJob()) { setStatus('The job is busy saving. Tap Refresh job when it finishes.', true); decorate(); } } }
+    if (action === 'refresh-job') { if (!unsavedEdits() || window.confirm('Refresh the job now? Changes on this page that are not saved yet will be cleared. A checklist edit, a status reason and other drafts stay.')) { setStatus(''); if (!refreshJob()) { setStatus('The job is busy saving. Tap Refresh job when it finishes.', true); decorate(); } } }
     else if (action === 'retry' && S.pending) send(S.pending);
     else if (action === 'discard') { S.pending = null; writePending(null); setStatus(''); load(); }
     else if (action === 'reload') load();

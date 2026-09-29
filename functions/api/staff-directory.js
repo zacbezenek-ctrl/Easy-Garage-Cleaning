@@ -2,10 +2,13 @@ import { getHubSession } from '../_lib/hub-session.js';
 import { createStaffDirectoryService, staffDirectoryEnabled } from '../_lib/staff-directory.js';
 import { staffDirectoryStorage } from '../_lib/staff-directory-storage.js';
 import { firebaseRevocations } from '../_lib/firebase-revocation.js';
+import { staffPasswordResetEnabled } from '../_lib/staff-roles.js';
+import { createStaffAccessService, staffAccessStorage } from '../_lib/staff-access.js';
 
 const LIMIT = 16 * 1024;
 const reply = (status, body) => Response.json(body, { status, headers: { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' } });
 function errorResponse(error) {
+  if (/^staff_access_[a-z_]+$/.test(error?.code || '') || error?.code === 'pay_owner_only') return reply(error.status || 503, { ok: false, code: error.code, error: error.message, ...(error.details ? { details: error.details } : {}) });
   if (error?.code?.startsWith('staff_directory_')) return reply(error.status || 503, { ok: false, code: error.code, error: error.message, ...(error.details ? { details: error.details } : {}) });
   if (/^EMPLOYEE_(HUB|ACCOUNT)_/.test(error?.code || '')) return reply(503, { ok: false, code: 'staff_directory_storage_unreadable', error: 'Employee records could not be read safely. Nothing was changed; ask the owner to check the Hub setup.' });
   return reply(503, { ok: false, code: 'staff_directory_unavailable', error: 'The staff directory could not be verified. Keep your request and retry the same change.' });
@@ -18,7 +21,10 @@ function sameOrigin(request) {
 const disabled = () => reply(503, { ok: false, code: 'staff_directory_not_enabled', error: 'The staff directory is not enabled yet.' });
 
 // revocations(env): the Firebase session revocation service a role change uses (null without the server account).
-export function staffDirectoryHandlers({ session = getHubSession, storage = staffDirectoryStorage, revocations = firebaseRevocations, now = () => new Date() } = {}) {
+// STAFF-ACCESS (EGC_STAFF_PASSWORD_RESET on): the owner's 'Apply rate to open weeks' (preview_apply_rate, apply_rate) is
+// served here beside set_pay by staff-access.js (accessStorage). Off: those actions are unsupported, as before.
+const RATE_ACTIONS = new Set(['preview_apply_rate', 'apply_rate']);
+export function staffDirectoryHandlers({ session = getHubSession, storage = staffDirectoryStorage, revocations = firebaseRevocations, now = () => new Date(), accessStorage = staffAccessStorage } = {}) {
   function service(env) {
     const store = storage(env);
     if (!store.configured()) throw Object.assign(new Error('Employee Hub storage is not configured.'), { code: 'staff_directory_not_configured', status: 503 });
@@ -46,6 +52,11 @@ export function staffDirectoryHandlers({ session = getHubSession, storage = staf
         const raw = await request.text();
         if (new TextEncoder().encode(raw).byteLength > LIMIT) return reply(413, { ok: false, code: 'staff_directory_request_too_large', error: 'The staff directory request is too large.' });
         let body; try { body = JSON.parse(raw); } catch { return reply(400, { ok: false, code: 'staff_directory_json_invalid', error: 'The staff directory request was incomplete. Retry from the form.' }); }
+        if (staffPasswordResetEnabled(env) && RATE_ACTIONS.has(body?.action)) {
+          service(env);
+          const access = createStaffAccessService({ store: accessStorage(env), env, now, revocations: () => revocations(env) });
+          return reply(200, body.action === 'apply_rate' ? await access.applyRate(actor, body) : await access.previewApplyRate(actor, body));
+        }
         return reply(200, await service(env).mutate(actor, body));
       } catch (error) { return errorResponse(error); }
     },

@@ -12,8 +12,8 @@ import { assignedOn, fieldVisitsEnabled } from '../_lib/field-execution-visits.j
 import { denverToday } from '../_lib/dispatch-time.js';
 import { ptoOffOn } from '../_lib/pto-pay.js';
 import { legacyManagerProfile, legacyProfileView, mirrorLegacyPay, profileHourlyRate } from '../_lib/staff-directory.js';
-import { assertNoOthersPay, assertPayUnchanged, canSetPay, payOwnerField, seesOthersPay, visiblePay, withoutPayWrites } from '../_lib/pay-visibility.js';
-import { can } from '../_lib/staff-roles.js';
+import { assertNoOthersPay, assertPayUnchanged, canSetPay, payHidden, payOwnerField, seesOthersPay, visiblePay, withoutPayWrites } from '../_lib/pay-visibility.js';
+import { can, staffPasswordResetEnabled } from '../_lib/staff-roles.js';
 
 const PROJECT_ID = 'egcw-1ec83';
 const COLLECTIONS = EMPLOYEE_HUB_COLLECTIONS;
@@ -399,7 +399,8 @@ export async function onRequestGet({ request, env }) {
   const session = await getHubSession(request, env);
   if (!session) return reply(401, { ok: false, error: 'Sign in required' });
   const includeAccounts = new URL(request.url).searchParams.get('include') === 'accounts';
-  if (includeAccounts && (!manager(session) || normalizeEmployeeUsername(session.user) !== OWNER_USERNAME)) {
+  // STAFF-ACCESS: with EGC_STAFF_PASSWORD_RESET on, a manager the owner lets approve accounts (accounts.approve) reads them too.
+  if (includeAccounts && (!manager(session) || normalizeEmployeeUsername(session.user) !== OWNER_USERNAME) && !(staffPasswordResetEnabled(env) && manager(session) && can(session, 'accounts.approve', env))) {
     return reply(403, { ok: false, error: 'Only Zac can approve employee accounts' });
   }
   if (!vaultSecret(env) || !firebaseServiceAccountConfigured(env)) return reply(503, { ok: false, error: 'Employee Hub storage is not configured' });
@@ -485,7 +486,7 @@ export async function onRequestGet({ request, env }) {
     for (const name of ['profiles', 'timeEntries', 'requests']) collections[name] = collections[name].map(row => visiblePay(session, env, name, row));
     // Each timecard's job time (current segment, per-job work and travel, general time) for the Hub's labels.
     collections.timeEntries = collections.timeEntries.map(row => withJobTime(row, viewedAt));
-    return reply(200, { ok: true, collections, payVisibility: seesOthersPay(session, env) ? 'all' : 'own', clockInWithoutFix: clockInWithoutFix(env), timecardCorrections: manager(session) && can(session, 'time.approve', env) && timecardCorrectionsEnabled(env), ...(includeAccounts ? { accounts } : {}) });
+    return reply(200, { ok: true, collections, payVisibility: seesOthersPay(session, env) ? 'all' : 'own', clockInWithoutFix: clockInWithoutFix(env), timecardCorrections: manager(session) && can(session, 'time.approve', env) && timecardCorrectionsEnabled(env), ...(includeAccounts ? { accounts: seesOthersPay(session, env) ? accounts : accounts.map(account => payHidden('accounts', account)) } : {}) });
   } catch (error) {
     return reply(502, { ok: false, ...(error.code ? { code: error.code } : {}), error: String(error.message || 'Employee Hub storage failed') });
   }

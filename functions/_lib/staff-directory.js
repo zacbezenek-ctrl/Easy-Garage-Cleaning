@@ -1,10 +1,10 @@
 import { addDays, denverToday, validDate } from './dispatch-time.js';
-import { STAFF_ROLES, can, defaultStaffRoles, primaryStaffRole, sanitizeStaffRoles, staffCapabilities } from './staff-roles.js';
+import { STAFF_ROLES, can, defaultStaffRoles, primaryStaffRole, sanitizeStaffRoles, staffCapabilities, staffPasswordResetEnabled } from './staff-roles.js';
 import { SKILL_CATALOG, SKILL_CATALOG_VERSION, SKILL_LEVELS, storedSkills, validateSkills } from './staff-skills.js';
 import { auditWrite } from './hub-audit.js';
 import { payOwnerOnly } from './pay-visibility.js';
 import { firebaseRevocationTime, recordStaffFirebaseIntent, revokeStaffFirebaseSessions, settleStaffFirebaseIntent } from './firebase-revocation.js';
-import { staffRoleAccessEnabled } from './hub-session.js';
+import { isHubOwner, staffRoleAccessEnabled } from './hub-session.js';
 
 // Staff directory: roles, skills, effective-dated pay, weekly availability and the Gusto
 // employee ID are additive fields on the existing encrypted 'profiles' payload (no new
@@ -128,24 +128,40 @@ function validateInput(input) {
   return reasonText(input.reason);
 }
 
-function staffRolesChange(person, input) {
+function staffRolesChange(person, input, session) {
   if (person.source !== 'employee_account') throw fail('configured_account', 'Configured Hub users keep the roles and pay set in the Hub user configuration.', 409);
   const roles = input.staffRoles;
   if (!Array.isArray(roles) || !roles.length || roles.length > STAFF_ROLES.length || roles.some(role => typeof role !== 'string' || !STAFF_ROLES.includes(role)) || new Set(roles).size !== roles.length) throw fail('invalid_roles', 'Choose one or more staff roles: manager, crew_lead, crew, sales or phone.');
   if (roles.includes('owner')) throw fail('owner_role_reserved', 'The owner role belongs only to the configured owner account.', 403);
   const next = STAFF_ROLES.filter(role => roles.includes(role));
+  // A manager the owner lets approve accounts (STAFF-ACCESS) sets roles, but never gives or removes the manager role and
+  // never changes a manager's roles (as for their account review and sign-in reset).
+  if (!isHubOwner(session) && (next.includes('manager') || person.staffRoles.includes('manager'))) throw fail('owner_role_reserved', 'Only the owner can give or remove the manager role, or change a manager\'s roles.', 403);
   return canonicalJson(next) === canonicalJson(person.staffRoles) ? null : { scope: 'roles', staffRoles: next, before: { staffRoles: person.staffRoles }, after: { staffRoles: next } };
 }
 
 // employee-hub.js falls back to the account's rate when the profile has none.
-const payProfile = person => {
+export const payProfile = person => {
   const profile = person.profile || {};
   return legacyRate(profile) === null && legacyRate({ hourlyRate: person.accountHourlyRate }) !== null ? { ...profile, hourlyRate: person.accountHourlyRate } : profile;
 };
 
-function payChange(person, input, actor, nowIso, today) {
+// STAFF-ACCESS (EGC_STAFF_PASSWORD_RESET on): an employee account's first rate (no rate above $0 yet: no pay schedule, or
+// one holding only $0 entries such as the legacy baseline the staff-profile-pay-roles-v1 migration or a $0 set_pay
+// writes) may take effect from the Denver day its account was first approved, so the owner can pay shifts worked before
+// the rate was set ('Apply rate to open weeks' then updates those $0 timecards). '' when there is no earlier floor.
+export function firstRateFrom(person, today, env) {
+  if (!staffPasswordResetEnabled(env) || person?.source !== 'employee_account') return '';
+  const profile = payProfile(person), rates = storedPayRates(profile.payRates);
+  if (profile.payRates !== undefined && !rates?.every(entry => entry.hourlyRate === 0) || (legacyRate(profile) ?? 0) > 0) return '';
+  const approved = Date.parse(person.approvedAt || ''), day = Number.isFinite(approved) ? denverToday(new Date(approved)) : '';
+  return validDate(day) && day < today ? day : '';
+}
+
+export function payChange(person, input, actor, nowIso, today, firstFrom = '') {
   if (person.source !== 'employee_account') throw fail('configured_account', 'Configured Hub users keep the roles and pay set in the Hub user configuration.', 409);
-  if (!validDate(input.effectiveFrom) || input.effectiveFrom < today || input.effectiveFrom > addDays(today, 366)) throw fail('invalid_pay', 'Choose an effective date from today through one year ahead (Denver time). Earlier timecards keep the rate saved at clock-in.');
+  if (firstFrom && validDate(input.effectiveFrom) && input.effectiveFrom < today && input.effectiveFrom < firstFrom) throw fail('invalid_pay', `This first rate can take effect from ${firstFrom}, the day the account was approved (Denver time), through one year ahead.`);
+  if (!validDate(input.effectiveFrom) || input.effectiveFrom < (firstFrom || today) || input.effectiveFrom > addDays(today, 366)) throw fail('invalid_pay', 'Choose an effective date from today through one year ahead (Denver time). Earlier timecards keep the rate saved at clock-in.');
   const profile = payProfile(person), stored = storedPayRates(profile.payRates);
   if (profile.payRates !== undefined && !stored) throw fail('pay_needs_review', 'The saved pay schedule needs owner review before it can be changed.', 409);
   const current = effectivePayRate(profile, today);
@@ -246,21 +262,27 @@ export function legacyManagerProfile({ env, session, existing, incoming, id, now
   return mirrorLegacyPay(existing, next, now, own || Object.hasOwn(input, 'hourlyRate'));
 }
 
-function payView(person, today) {
+function payView(person, today, firstFrom = '') {
   const profile = payProfile(person);
   const current = effectivePayRate(profile, today), rates = storedPayRates(profile?.payRates) || [];
   // Configured Hub users' pay lives in the Hub configuration, which set_pay cannot change.
-  return { current, upcoming: rates.filter(entry => entry.effectiveFrom > today), schedule: rates, needsReview: person.source !== 'configured' && (current.source === 'pay_rates_need_review' || current.drift) };
+  return { current, upcoming: rates.filter(entry => entry.effectiveFrom > today), schedule: rates, needsReview: person.source !== 'configured' && (current.source === 'pay_rates_need_review' || current.drift), ...(firstFrom ? { firstRateFrom: firstFrom } : {}) };
 }
 
 // The profile record the directory reads and writes for a person: the one saved under their key, else a legacy key.
 // Profiles for their username under any other id make the record ambiguous (profileNeedsReview) instead of guessed.
-function withProfile(person, records) {
+export function withProfile(person, records) {
   const candidates = records.filter(row => record(row.data) && same(row.data.username, person.username));
   const target = [person.key, ...legacyPersonKeys(person.username)].map(id => candidates.find(row => row.data.id === id)).find(Boolean);
   const chosen = target || candidates.at(-1);
   return Object.assign(person, { record: target || null, profile: chosen ? chosen.data : null, revision: target ? target.updateTime : '', profileNeedsReview: !target && candidates.length > 0 });
 }
+
+// An employee account's roles as the directory reads them: the stored roles, else the default its account role names.
+const accountRoles = account => {
+  const stored = sanitizeStaffRoles(account.staffRoles, { user: account.username, businessAccess: false });
+  return { staffRoles: stored || defaultStaffRoles({ role: account.role }), staffRolesSource: stored ? 'account' : 'default' };
+};
 
 // revocations(): the Firebase session revocation service (firebase-revocation.js), or null.
 export function createStaffDirectoryService({ store, env = {}, now = () => new Date(), revocations = () => null }) {
@@ -277,9 +299,10 @@ export function createStaffDirectoryService({ store, env = {}, now = () => new D
       add({ key: personKey(profile.user), username: profile.user, displayName: profile.displayName || profile.user, source: 'configured', staffRoles: stored || defaultStaffRoles(profile), staffRolesSource: stored ? 'configuration' : 'default' });
     }
     for (const account of accounts.filter(account => account?.status === 'approved')) {
-      const stored = sanitizeStaffRoles(account.staffRoles, { user: account.username, businessAccess: false });
       add({ key: personKey(account.username), username: String(account.username), displayName: account.displayName || account.username, source: 'employee_account', accountStatus: account.status, accountHourlyRate: account.hourlyRate,
-        staffRoles: stored || defaultStaffRoles({ role: account.role }), staffRolesSource: stored ? 'account' : 'default' });
+        ...accountRoles(account),
+        // The first approval day (STAFF-ACCESS stamps approvedAt once); older accounts have only their last review time.
+        approvedAt: typeof account.approvedAt === 'string' && account.approvedAt ? account.approvedAt : typeof account.reviewedAt === 'string' ? account.reviewedAt : '' });
     }
     for (const person of people.values()) withProfile(person, records);
     return { people, records, accounts };
@@ -316,7 +339,7 @@ export function createStaffDirectoryService({ store, env = {}, now = () => new D
       staffRoles: person.staffRoles, staffRolesSource: person.staffRolesSource, primaryRole: primaryStaffRole(person.staffRoles),
       skills: storedSkills(profile.skills), weeklyAvailability: storedWeeklyAvailability(profile.weeklyAvailability),
       weeklyAvailabilityNeedsReview: profile.weeklyAvailability !== undefined && profile.weeklyAvailability !== null && !storedWeeklyAvailability(profile.weeklyAvailability),
-      ...(pay ? { pay: payView(person, today) } : {}),
+      ...(pay ? { pay: payView(person, today, firstRateFrom(person, today, env)) } : {}),
       ...(owner ? { gustoEmployeeId: storedGustoEmployeeId(profile.gustoEmployeeId), gustoExcluded: profile.gustoExcluded === true } : {}),
       history, revision: person.revision, profileNeedsReview: person.profileNeedsReview,
     };
@@ -380,7 +403,7 @@ export function createStaffDirectoryService({ store, env = {}, now = () => new D
       if (!person) throw fail('not_found', input.action === 'set_gusto_id' ? 'That person has no staff profile or employee account.' : 'That staff member is not in the active directory.', 404);
       if (person.profileNeedsReview) throw fail('profile_ambiguous', 'This employee has a profile saved under an unrecognized id. Ask the owner to review it before changing the directory.', 409);
       if (input.expectedRevision !== person.revision) throw fail('revision_conflict', 'This staff record changed since you opened it. Refresh and review the latest before saving.', 409, { currentRevision: person.revision });
-      const change = input.action === 'set_roles' ? staffRolesChange(person, input) : input.action === 'set_pay' ? payChange(person, input, actor, nowIso, today)
+      const change = input.action === 'set_roles' ? staffRolesChange(person, input, session) : input.action === 'set_pay' ? payChange(person, input, actor, nowIso, today, firstRateFrom(person, today, env))
         : input.action === 'set_skills' ? skillsChange(person, input, actor, nowIso) : input.action === 'set_gusto_id' ? gustoIdChange(person, input, gustoHolders(staff)) : availabilityChange(person, input);
       if (!change) return { ok: true, authority: 'employee_hub', unchanged: true, person: view(person, session, today) };
       const { scope, before, after, auditView = { before, after }, ...fields } = change, current = person.record?.data || {};
@@ -392,6 +415,13 @@ export function createStaffDirectoryService({ store, env = {}, now = () => new D
       if (input.action === 'set_roles') {
         const saved = await store.readAccount(person.username);
         if (!saved?.account || saved.account.status !== 'approved' || !same(saved.account.username, person.username)) throw fail('revision_conflict', 'This employee account changed since you opened it. Refresh and review the latest before saving.', 409);
+        // The account write is fenced on this read, so the roles checked above (from the roster read) must still be its
+        // roles: a review or role change that landed in between (the owner making this person a manager, even at a rate
+        // that leaves the profile unwritten) refuses the change instead of landing on the newer account. The manager
+        // rule runs again on the saved roles as well.
+        const savedRoles = accountRoles(saved.account).staffRoles;
+        if (canonicalJson(savedRoles) !== canonicalJson(person.staffRoles)) throw fail('revision_conflict', 'This employee account changed since you opened it. Refresh and review the latest before saving.', 409);
+        if (!isHubOwner(session) && (fields.staffRoles.includes('manager') || savedRoles.includes('manager'))) throw fail('owner_role_reserved', 'Only the owner can give or remove the manager role, or change a manager\'s roles.', 403);
         // A role change revokes existing Hub sessions (sessionVersion).
         account = { account: { ...saved.account, staffRoles: fields.staffRoles, sessionVersion: crypto.randomUUID(), rolesUpdatedAt: nowIso, rolesUpdatedBy: actor, updatedAt: nowIso }, version: saved.version };
       }

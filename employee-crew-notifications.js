@@ -17,7 +17,9 @@ const REASONS={staff_contact_not_linked:'No HighLevel staff contact is linked fo
   messaging_sms_too_long:'The approved wording leaves too little room to name every changed day in one text. Shorten it at Message templates, then send again.'};
 const CONTACT=/^[A-Za-z0-9_-]{1,120}$/;
 const ERRORS={crew_notifications_not_enabled:'Schedule alerts are not turned on for this Hub yet.',crew_notifications_revision_conflict:'Your text setting changed on another device. The latest setting is shown; review it and save again.',crew_notifications_not_found:'A notice was already cleared. Your list was refreshed.'};
-const S={root:null,ctx:null,gen:0,data:null,busy:false,message:'',error:'',loadError:null,team:null,teamError:null,teamGen:0,editing:''};
+// smsDraft and contactDraft hold what was changed and not saved yet (the text setting, the contact ID being edited), so a
+// refresh draws them back; refresh() from the Hub waits while either differs from what is saved.
+const S={root:null,ctx:null,gen:0,data:null,busy:false,message:'',error:'',loadError:null,team:null,teamError:null,teamGen:0,editing:'',smsDraft:null,contactDraft:null};
 const kit=()=>window.EGCHubKit;
 const DATE=/^\d{4}-\d{2}-\d{2}$/,TIME=/^([01]\d|2[0-3]):([0-5]\d)$/;
 // Denver wall-clock values are shown as saved, never converted through the device time zone.
@@ -44,6 +46,10 @@ const dispatcher=()=>[...(S.ctx?.capabilities||[])].includes('business');
 const memberValid=row=>row&&typeof row.id==='string'&&typeof row.name==='string'&&typeof row.sms==='boolean'&&typeof row.staffContactId==='string'&&typeof row.revision==='string';
 const teamValid=data=>Array.isArray(data.team)&&data.team.every(memberValid)&&Array.isArray(data.attention)&&data.attention.every(row=>noticeValid(row)&&typeof row.employeeId==='string'&&typeof row.status==='string'&&typeof row.canRetry==='boolean')&&data.coverage&&typeof data.coverage.complete==='boolean';
 function say(text,error=false){S.message=error?'':text;S.error=error?text:'';}
+function dirty(){
+  const member=S.editing&&S.team?.team.find(row=>row.id===S.editing);
+  return S.smsDraft!==null&&S.smsDraft!==S.data?.preferences?.sms||Boolean(member)&&S.contactDraft!==null&&S.contactDraft!==member.staffContactId;
+}
 function errorText(error){return kit().errorText(error,ERRORS);}
 
 async function load(){
@@ -67,7 +73,7 @@ async function loadTeam(){
 async function teamChange(body,done){
   if(S.busy)return;
   S.busy=true;say('Saving…');render();const gen=S.gen;
-  try{const data=await teamPending().submit(PATH,body,{prefix:'crew_notifications',validate:data=>data.ok===true});if(gen!==S.gen)return;S.editing='';say(done(data));S.busy=false;await loadTeam();return;}
+  try{const data=await teamPending().submit(PATH,body,{prefix:'crew_notifications',validate:data=>data.ok===true});if(gen!==S.gen)return;S.editing='';S.contactDraft=null;say(done(data));S.busy=false;await loadTeam();return;}
   catch(error){if(gen!==S.gen)return;say(errorText(error),true);if(/_revision_conflict$|_not_retryable$|_not_found$/.test(String(error?.code||''))){teamPending().discard();S.busy=false;await loadTeam();say(errorText(error),true);}}
   finally{if(gen===S.gen)S.busy=false;}
   render();
@@ -86,17 +92,17 @@ async function savePreference(sms){
   try{
     const data=await pending().submit(PATH,{action:'set_preferences',sms,expectedRevision:S.data.preferences.revision},{prefix:'crew_notifications',validate:prefsValid});
     if(gen!==S.gen)return;
-    S.data.preferences=data.preferences;say(data.preferences.sms?'Schedule texts are on.':'Schedule texts are off.');
+    S.data.preferences=data.preferences;S.smsDraft=null;say(data.preferences.sms?'Schedule texts are on.':'Schedule texts are off.');
   }catch(error){
     if(gen!==S.gen)return;
     say(errorText(error),true);
-    if(/_revision_conflict$/.test(String(error?.code||''))){S.busy=false;pending().discard();await load();say(errorText(error),true);render();return;}
+    if(/_revision_conflict$/.test(String(error?.code||''))){S.busy=false;S.smsDraft=null;pending().discard();await load();say(errorText(error),true);render();return;}
   }finally{if(gen===S.gen)S.busy=false;}
   render();
 }
 async function replaySaved(){
   if(S.busy)return;S.busy=true;say('Retrying your saved change…');render();const gen=S.gen;
-  try{const data=await pending().replay({prefix:'crew_notifications',validate:prefsValid});if(gen!==S.gen)return;if(S.data&&data.preferences)S.data.preferences=data.preferences;say('Your saved change was confirmed.');}
+  try{const data=await pending().replay({prefix:'crew_notifications',validate:prefsValid});if(gen!==S.gen)return;if(S.data&&data.preferences)S.data.preferences=data.preferences;S.smsDraft=null;say('Your saved change was confirmed.');}
   catch(error){if(gen!==S.gen)return;say(errorText(error),true);}
   finally{if(gen===S.gen)S.busy=false;}
   render();
@@ -136,16 +142,16 @@ function noticeCard(row){
     h('div',{class:'hub-actions'},button('Got it',()=>acknowledge([row.id]),'',{disabled:S.busy,'aria-label':'Clear notice: '+INTENTS[row.intent]+' '+when})));
 }
 function preferencesCard(){
-  const {h,button,field}=kit(),prefs=S.data.preferences,saved=pending().get();
-  const toggle=field({label:'Text me when my schedule changes',name:'sms',type:'checkbox',value:prefs.sms,
+  const {h,button,field}=kit(),prefs=S.data.preferences,saved=pending().get(),sms=S.smsDraft??prefs.sms;
+  const toggle=field({label:'Text me when my schedule changes',name:'sms',type:'checkbox',value:sms,
     help:prefs.phoneStatus==='on_file'?`Texts go to ${prefs.phone} from your employee account.`:prefs.phoneStatus==='unavailable'?'Your phone number could not be checked right now.':'No mobile number is on file for you. Ask the office to add one before texts can reach you.'});
-  const input=toggle.querySelector('input'),save=button('Save text setting',()=>savePreference(input.checked),'primary',{disabled:true});
+  const input=toggle.querySelector('input'),save=button('Save text setting',()=>savePreference(input.checked),'primary',{disabled:S.busy||sms===prefs.sms});
   input.disabled=S.busy||Boolean(saved);
-  input.addEventListener('change',()=>{save.disabled=S.busy||input.checked===prefs.sms;});
+  input.addEventListener('change',()=>{S.smsDraft=input.checked===prefs.sms?null:input.checked;save.disabled=S.busy||input.checked===prefs.sms;});
   return h('div',{class:'hub-card ca-prefs'},h('h2',{},'Schedule texts'),
     h('p',{class:'ca-muted'},'Texts are only about your own schedule and only after you turn them on. Quiet hours are 8 PM to 8 AM.'),toggle,
     saved?h('div',{class:'hub-notice warning',role:'alert'},'A text-setting change was not confirmed. Retry it before making another.',
-      h('div',{class:'hub-actions'},button('Retry saved change',replaySaved,'primary',{disabled:S.busy}),button('Discard',()=>{pending().discard();say('');render();},'',{disabled:S.busy}))):
+      h('div',{class:'hub-actions'},button('Retry saved change',replaySaved,'primary',{disabled:S.busy}),button('Discard',()=>{pending().discard();S.smsDraft=null;say('');render();},'',{disabled:S.busy}))):
     h('div',{class:'hub-actions'},save));
 }
 function memberCard(row){
@@ -154,13 +160,13 @@ function memberCard(row){
     h('span',{class:'ca-chip '+(row.staffContactId?'ca-texted':'ca-off')},row.staffContactId?'Staff contact linked':'No staff contact'));
   if(!editing)return h('li',{class:'hub-card ca-member','data-member':row.id},h('div',{class:'ca-notice-head'},h('strong',{class:'ca-intent'},row.name),chips),
     row.staffContactId?h('p',{class:'ca-muted'},'HighLevel contact '+row.staffContactId):null,
-    h('div',{class:'hub-actions'},button(row.staffContactId?'Change contact':'Link contact',()=>{S.editing=row.id;say('');render();S.root?.querySelector('[data-member="'+CSS.escape(row.id)+'"] input')?.focus();},'',{disabled:S.busy,'aria-label':(row.staffContactId?'Change HighLevel contact for ':'Link HighLevel contact for ')+row.name})));
-  const input=field({label:'HighLevel contact ID',name:'contactId',value:row.staffContactId,maxlength:120,autocomplete:'off',help:'The staff contact you created in HighLevel for '+row.name+', tagged egc-staff. Leave empty to unlink.'});
-  const control=input.querySelector('input');control.setAttribute('autocapitalize','none');control.spellcheck=false;
+    h('div',{class:'hub-actions'},button(row.staffContactId?'Change contact':'Link contact',()=>{S.editing=row.id;S.contactDraft=null;say('');render();S.root?.querySelector('[data-member="'+CSS.escape(row.id)+'"] input')?.focus();},'',{disabled:S.busy,'aria-label':(row.staffContactId?'Change HighLevel contact for ':'Link HighLevel contact for ')+row.name})));
+  const input=field({label:'HighLevel contact ID',name:'contactId',value:S.contactDraft??row.staffContactId,maxlength:120,autocomplete:'off',help:'The staff contact you created in HighLevel for '+row.name+', tagged egc-staff. Leave empty to unlink.'});
+  const control=input.querySelector('input');control.setAttribute('autocapitalize','none');control.spellcheck=false;control.addEventListener('input',()=>{S.contactDraft=control.value;});
   const save=()=>{const value=control.value.trim();if(value&&!CONTACT.test(value)){say('Use the contact ID from HighLevel: letters, numbers, - and _ only.',true);render();return;}
     teamChange({action:'link_staff_contact',employeeId:row.id,contactId:value,expectedRevision:row.revision},data=>data.member?.staffContactId?'Staff contact linked for '+row.name+'.':'Staff contact removed for '+row.name+'.');};
   return h('li',{class:'hub-card ca-member','data-member':row.id},h('strong',{class:'ca-intent'},row.name),input,
-    h('div',{class:'hub-actions'},button('Save contact',save,'primary',{disabled:S.busy}),button('Cancel',()=>{S.editing='';render();},'',{disabled:S.busy})));
+    h('div',{class:'hub-actions'},button('Save contact',save,'primary',{disabled:S.busy}),button('Cancel',()=>{S.editing='';S.contactDraft=null;render();},'',{disabled:S.busy})));
 }
 function attentionCard(row){
   const {h,button}=kit(),removal=REMOVALS.has(row.intent);
@@ -198,6 +204,8 @@ function teamSection(){
 }
 function render(){
   if(!S.root)return;
+  // The field being typed in (a contact ID) is drawn again from S; it keeps focus and its caret.
+  const active=document.activeElement,typing=S.root.contains(active)&&active.name?{name:active.name,member:active.closest('[data-member]')?.dataset.member||'',range:typeof active.selectionStart==='number'?[active.selectionStart,active.selectionEnd]:null}:null;
   const {h,button}=kit();
   const head=h('header',{class:'hub-head'},h('div',{},h('span',{class:'hub-eyebrow'},'MY EGC'),h('h1',{},'Schedule alerts'),h('p',{},'Changes dispatch made to your jobs, newest first.')),
     h('div',{class:'hub-actions'},button('Refresh',()=>load(),'',{disabled:S.busy})));
@@ -219,15 +227,17 @@ function render(){
   }
   S.root.replaceChildren(...[head,alert,status,body].filter(Boolean));
   S.root.setAttribute('aria-busy',S.busy?'true':'false');
+  const scope=typing?.member?S.root.querySelector('[data-member="'+CSS.escape(typing.member)+'"]'):S.root,again=typing&&scope?.querySelector('[name="'+CSS.escape(typing.name)+'"]');
+  if(again&&!again.disabled){again.focus({preventScroll:true});if(typing.range)try{again.setSelectionRange(...typing.range);}catch{}}
 }
 
 function mount(host,ctx={}){
   unmount();
-  S.ctx=ctx;S.data=null;S.busy=false;S.message='';S.error='';S.loadError=null;S.team=null;S.teamError=null;S.editing='';
+  S.ctx=ctx;S.data=null;S.busy=false;S.message='';S.error='';S.loadError=null;S.team=null;S.teamError=null;S.editing='';S.smsDraft=null;S.contactDraft=null;
   S.root=kit().h('section',{class:'hub-screen egc-crew-alerts','aria-label':'Schedule alerts'});
   host.append(S.root);
   return load();
 }
-function unmount(){S.gen++;S.teamGen++;S.root?.remove();S.root=null;S.data=null;S.team=null;S.busy=false;S.editing='';}
-window.EGCCrewNotifications=Object.freeze({mount,unmount,canLeave:()=>!S.busy,refresh:()=>S.root?load():Promise.resolve()});
+function unmount(){S.gen++;S.teamGen++;S.root?.remove();S.root=null;S.data=null;S.team=null;S.busy=false;S.editing='';S.smsDraft=null;S.contactDraft=null;}
+window.EGCCrewNotifications=Object.freeze({mount,unmount,canLeave:()=>!S.busy,refresh:()=>S.root&&!dirty()?load():Promise.resolve()});
 })();

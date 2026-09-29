@@ -2,7 +2,7 @@ import { getHubSession, hasBusinessAccess } from '../_lib/hub-session.js';
 import { readJob } from '../_lib/firestore-job.js';
 import { createJobAssignmentAccess } from '../_lib/job-assignment.js';
 import { CHECKOUT_HOLD_CODE, CHECKOUT_HOLD_TEXT, STRIPE_API_VERSION, TIP_PRESETS, addTipLine, checkoutHold, customerMoneyState, customerPaymentNeedsReview, customerTipsEnabled, customerTotalsShadow, recordCrewStripePayment, requestTip, stripeSecretKey as stripeKey, tipRefusal, validTip } from '../_lib/customer-payments.js';
-import { customerMoneyTotals, moneyTotalsMode } from '../_lib/money-core.js';
+import { customerMoneyTotals, moneyInvoiceStateEnabled, moneyTotalsMode } from '../_lib/money-core.js';
 
 const STRIPE_API = 'https://api.stripe.com/v1';
 const SESSION_ID = /^cs_(?:test_|live_)?[A-Za-z0-9_]+$/;
@@ -227,7 +227,8 @@ export function jobPaymentVerifier({ now = () => new Date() } = {}) {
         currency: checkout.currency || 'usd',
         jobId,
         receiptEmail: safe(checkout.customer_details?.email || checkout.customer_email, 180),
-        ...(recorded ? { duplicate: recorded.duplicate, receiptUrl: recorded.receiptUrl, payment: recorded.payment, invoice: recorded.invoice, paymentSyncPayload: recorded.paymentSyncPayload, ...(recorded.tipPaid ? { tipPaid: recorded.tipPaid } : {}) } : {}),
+        // MONEY_INVOICE_STATE_ENABLED: a job with no issued invoice keeps its invoice as it was, so closeout reads the balance here.
+        ...(recorded ? { duplicate: recorded.duplicate, receiptUrl: recorded.receiptUrl, payment: recorded.payment, invoice: recorded.invoice, paymentSyncPayload: recorded.paymentSyncPayload, ...(recorded.tipPaid ? { tipPaid: recorded.tipPaid } : {}), ...(moneyInvoiceStateEnabled(env) ? { balance: recorded.balance } : {}) } : {}),
       });
     } catch (error) {
       return json(502, { ok: false, error: 'Stripe payment could not be verified', detail: error.type || '' });

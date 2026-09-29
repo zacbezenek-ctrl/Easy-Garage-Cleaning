@@ -75,7 +75,7 @@ function team() { const cols=ext.members.filter(c=>{try{return !c.visible||Boole
 function messages() { const writable=staff||data.viewer.role!=='viewer'; return `<section class="card"><h2>Account conversation</h2><p class="small">Messages here are visible to this company and its EGC account team. They are saved to the business hub, not sent as an SMS or email. For urgent timing changes, call Zoe.</p><div class="thread">${data.messages.length?data.messages.map(m=>`<article class="message ${m.fromStaff?'staff':''}"><b>${esc(m.author)}</b><small>${esc(stamp(m.at))}${m.requestId?' · Service request':''}</small><p>${esc(m.body)}</p></article>`).join(''):empty('No account messages yet.')}</div>${writable?`<form data-form="message" data-id="${id()}"><label>Related request (optional)<select name="requestId"><option value="">General account message</option>${data.requests.map(r=>`<option value="${r.id}">${esc(propName(r.propertyId))} · ${esc(r.service)}</option>`).join('')}</select></label>${area('Message to the account team','body','',true)}<button class="primary">Save message to account</button></form>`:''}</section>`; }
 function accounts() { listNext=data.next||''; return `<div class="grid"><section class="card"><h2>Business accounts</h2>${data.limited?'<p class="coverage">Showing the first 50 assigned accounts. Ask a manager for the complete paged list.</p>':''}${data.accounts.length?`<div class="table-wrap"><table><thead><tr><th>Company</th><th>Properties</th><th>New requests</th><th></th></tr></thead><tbody>${data.accounts.map(a=>`<tr><td data-label="Company"><strong>${esc(a.company)}</strong><small>${esc(a.status)}</small></td><td data-label="Properties">${a.properties}</td><td data-label="New requests">${a.requests}</td><td class="actions"><button data-account="${a.id}">Open account</button></td></tr>`).join('')}</tbody></table></div>`:empty('No business accounts on this page. Create the first account below.')}<div class="request-actions">${listHistory.length?'<button id="previous-accounts">Previous page</button>':''}${listNext?'<button id="next-accounts">Next page</button>':''}</div></section><section class="card"><h2>Onboard a business client</h2><p class="small">Create a separate company workspace and a private invitation for its first administrator. Existing homeowner jobs are not shared automatically.</p><form data-form="create" data-id="${id()}">${field('Company name','company','text','',true,150,{autocomplete:'off'})}${field('First administrator name','name','text','',true,100,PERSON)}${field('Administrator email','email','email','',true,180,OTHER_EMAIL)}${field('Billing email (optional)','billingEmail','email','',false,180,OTHER_EMAIL)}${deliverySelect()}<button class="primary">Create account and invitation</button></form></section></div>`; }
 function render() {
- const list=staff&&!account, p=data.viewer?.permissions||{}, names={overview:'Overview',properties:'Properties',requests:'Service requests',projects:'Projects & quotes',billing:'Invoices & billing',team:'Team access',messages:'Messages'};
+ const kept=keep(),list=staff&&!account, p=data.viewer?.permissions||{}, names={overview:'Overview',properties:'Properties',requests:'Service requests',projects:'Projects & quotes',billing:'Invoices & billing',team:'Team access',messages:'Messages'};
  const extra=list?[]:ext.tabs.filter(t=>{try{return !t.visible||Boolean(t.visible(data));}catch{return false;}}); for(const t of extra)names[t.key]=t.label; if(!Object.hasOwn(names,tab))tab='overview';
  $('company').innerHTML=list?'EGC account management<small>Authorized staff</small>':`${esc(data.account.company)}<small>${esc(data.viewer.name)} · ${esc(pretty(data.viewer.role))}</small>`;
  $('tabs').innerHTML=list?'<button aria-current="page">Business accounts</button>':Object.entries(names).map(([key,name])=>`<button data-tab="${esc(key)}" ${key===tab?'aria-current="page"':''}>${esc(name)}</button>`).join('');
@@ -83,12 +83,53 @@ function render() {
  $('workspace-kicker').textContent=staff?'EGC ACCOUNT MANAGEMENT':'BUSINESS PARTNERSHIPS';
  const c=data.coverage||{}; $('coverage').hidden=!(c.unavailable||c.paymentReview); $('coverage').textContent=`${c.unavailable||0} linked project(s) unavailable; ${c.paymentReview||0} payment record(s) awaiting review. Totals include only available, verified issued-invoice balances.`;
  const custom=extra.find(t=>t.key===tab);
- if(list||!custom){$('content').innerHTML=list?accounts():({overview,properties,requests,projects,billing,team,messages}[tab]||overview)();rendered(list);return;}
+ if(list||!custom){$('content').innerHTML=list?accounts():({overview,properties,requests,projects,billing,team,messages}[tab]||overview)();rendered(list,kept);return;}
  let out;try{out=custom.render(data);}catch{out=empty('This section could not be displayed. Refresh or contact Zoe.');}
  if(out instanceof Node)$('content').replaceChildren(out);else $('content').innerHTML=String(out??'');
- rendered(list);
+ rendered(list,kept);
 }
-function rendered(list){if(!list)for(const fn of ext.rendered){try{fn($('content'),data,tab);}catch{}}}
+function rendered(list,kept){if(!list)for(const fn of ext.rendered){try{fn($('content'),data,tab);}catch{}}putBack(kept,list);}
+// A reload re-renders the whole tab (after a save, a row action or Refresh). Every other form someone typed in keeps its
+// values and its request ID, the panels left open stay open and the field being typed in keeps its caret; the form just
+// submitted is reset as before, and its panel closes. A form put back remembers the form it was first drawn from, so a
+// copy a reload (Refresh, a row action) drew while that form was saving resets with it; a saved request ID is never put back.
+const edited=new WeakSet(),sent=new WeakSet(),spent=new Set(),from=new WeakMap();let drawn=null;
+const CHECK=['checkbox','radio'],fieldsOf=form=>[...form.elements].filter(el=>el.matches('input:not([type=hidden]):not([type=submit]):not([type=button]):not([type=reset]),select,textarea'));
+const keyed=(items,key)=>{const seen=new Map();return items.map(item=>{const k=key(item),n=seen.get(k)||0;seen.set(k,n+1);return [k+'#'+n,item];});};
+const formKey=form=>form.dataset.form+'|'+(form.querySelector('input[type=hidden][name=propertyId]')?.value||''),fieldKey=el=>[el.tagName,el.name,el.type,CHECK.includes(el.type)?el.value:''].join('|');
+const panelKey=d=>{const form=d.querySelector('form[data-form]');return form?'form:'+formKey(form):'summary:'+(d.querySelector('summary')?.textContent||'');};
+const mark=event=>{const form=event.target.closest?.('form[data-form]');if(form&&$('content').contains(form))edited.add(form);};
+document.addEventListener('input',mark);document.addEventListener('change',mark);
+function keep(){
+ const content=$('content'),active=document.activeElement,forms=new Map();let focus=null;
+ for(const [key,form] of keyed([...content.querySelectorAll('form[data-form]')],formKey)){
+  if(!edited.has(form)||sent.has(form)||spent.has(form.dataset.id))continue;const fields=new Map();
+  for(const [k,el] of keyed(fieldsOf(form),fieldKey)){fields.set(k,CHECK.includes(el.type)?el.checked:el.value);if(el===active)focus={form:key,field:k,range:typeof el.selectionStart==='number'?[el.selectionStart,el.selectionEnd]:null};}
+  forms.set(key,{id:form.dataset.id,fields,from:from.get(form)||form});
+ }
+ const panels=new Map(keyed([...content.querySelectorAll('details')],panelKey).filter(([,d])=>!sent.has(d.querySelector('form[data-form]'))).map(([k,d])=>[k,d.open]));
+ return {...drawn,forms,panels,focus};
+}
+function putBack(kept,list){
+ const content=$('content');drawn={list,tab,account};
+ if(!kept||kept.list!==list||kept.tab!==tab||kept.account!==account)return;
+ let focus=null;
+ for(const [key,form] of keyed([...content.querySelectorAll('form[data-form]')],formKey)){
+  const saved=kept.forms.get(key);if(!saved)continue;edited.add(form);from.set(form,saved.from);if(saved.id&&form.dataset.id&&!spent.has(saved.id))form.dataset.id=saved.id;
+  for(const [k,el] of keyed(fieldsOf(form),fieldKey)){
+   if(kept.focus?.form===key&&kept.focus.field===k)focus=el;
+   if(!saved.fields.has(k))continue;const value=saved.fields.get(k),check=CHECK.includes(el.type);
+   if(check?el.checked===value||el.type==='radio'&&!value:el.value===value)continue;
+   if(el.tagName==='SELECT'&&![...el.options].some(option=>option.value===value))continue;
+   if(check)el.checked=value;else el.value=value;
+   // Listeners that follow a field (the invitation's role and property access) see the value put back.
+   el.dispatchEvent(new Event('change',{bubbles:true}));
+  }
+ }
+ for(const [k,d] of keyed([...content.querySelectorAll('details')],panelKey))if(kept.panels.has(k))d.open=kept.panels.get(k);
+ if(focus&&!focus.disabled){focus.focus({preventScroll:true});if(kept.focus.range)try{focus.setSelectionRange(...kept.focus.range);}catch{}}
+}
+function submitted(form){const origin=from.get(form)||form;if(form.dataset.id)spent.add(form.dataset.id);for(const f of [form,...$('content').querySelectorAll('form[data-form]')])if(f===form||from.get(f)===origin){edited.delete(f);sent.add(f);}}
 function exportInvoices() {
  const rows=[['Property','Job ID','Invoice','Status','Due date','Total','Recorded paid','Balance','Payment review']];
  data.projects.filter(p=>p.invoiceNumber||p.unavailable).forEach(p=>rows.push([propName(p.propertyId),p.jobId,p.invoiceNumber||'',p.unavailable?'Unavailable':p.invoiceStatus,p.dueDate||'',p.total??'',p.paid??'',p.balance??'',p.paymentNeedsReview?'Yes':'No']));
@@ -130,7 +171,7 @@ document.addEventListener('submit',async event=>{
   if(kind==='link')payload.sharingAuthorized=Boolean(form.querySelector('[name=sharingAuthorized]').checked);
   for(const fn of ext.submits.get(kind)||[])fn(form,payload,data);
   if(payload.deliver==='email'&&!confirm('EGC will email a private sign-in link to '+payload.email+'. Send it now?'))return;
-  const result=await api(payload);if(kind==='create'){setAccount(result.accountId);tab='overview';}await load();if(result.invite||(result.delivery?.channel==='email'&&!result.duplicate))invite(result);else toast(kind==='request'?'Request saved. EGC still needs to confirm pricing and the service date.':kind==='message'?'Message saved in this account.':kind==='create'&&result.duplicate?'This account was already created. If its first invitation was not delivered, resend it from Team access.':kind==='invite'&&result.duplicate?'This invitation was already created. Use Resend in the team list if it did not arrive.':'Saved.');
+  const result=await api(payload);submitted(form);if(kind==='create'){setAccount(result.accountId);tab='overview';}await load();if(result.invite||(result.delivery?.channel==='email'&&!result.duplicate))invite(result);else toast(kind==='request'?'Request saved. EGC still needs to confirm pricing and the service date.':kind==='message'?'Message saved in this account.':kind==='create'&&result.duplicate?'This account was already created. If its first invitation was not delivered, resend it from Team access.':kind==='invite'&&result.duplicate?'This invitation was already created. Use Resend in the team list if it did not arrive.':'Saved.');
  }catch(error){toast(error.message,true);if(form.id==='staff-login'||form.id==='invite-form')$('gate-status').textContent=error.message;}finally{if(button)button.disabled=false;}
 });
 function registerTab(key,label,renderTab,visible){

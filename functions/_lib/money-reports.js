@@ -20,27 +20,40 @@ const str = (value, max = 200) => typeof value === 'string' ? value.slice(0, max
 const instant = value => typeof value === 'string' && /^\d{4}-\d\d-\d\dT\d\d:\d\d/.test(value) && Number.isFinite(Date.parse(value)) ? new Date(value).toISOString() : null;
 const denverDate = at => at ? denverToday(new Date(at)) : null;
 const newestFirst = (a, b) => (a.at === null) - (b.at === null) || String(b.at).localeCompare(String(a.at)) || a.key.localeCompare(b.key);
+// A service credit (gift card or account credit) redeemed against the balance: applied, never collected as money.
+const creditEntry = entry => !cashPayment(entry.method) || ['gift_credit', 'gift_credit_total'].includes(entry.source);
+const signed = row => row.amountCents === null || row.amountCents === undefined ? null : row.kind === 'refund' ? -row.amountCents : row.amountCents;
+const sum = rows => rows.reduce((total, row) => total === null || signed(row) === null ? null : total + signed(row), 0);
 
 // With MONEY_UNIFIED_TOTALS=true an active invoice's amount is the unified total its paid and balance are measured
 // against (money-service invoiceAmount: savedAmountCents keeps the saved figure, issues flags invoice_amount_stale).
-function invoiceRow(job, now, unified = false) {
+// invoiceState (MONEY_INVOICE_STATE_ENABLED): an invoice a payment wrote without issuing it (not_issued) is not listed.
+function invoiceRow(job, now, unified = false, invoiceState = false) {
   const invoice = plain(job.invoice) ? job.invoice : null;
   if (!invoice || !(invoice.status || invoice.issuedAt || invoice.amount !== undefined && invoice.amount !== null)) return null;
+  const status = invoiceStatus(job, now, { unified, invoiceState });
+  if (invoiceState && status === 'not_issued') return null;
   const totals = customerMoneyTotals(job, { unified }), issuedAt = instant(invoice.issuedAt), active = !['void', 'superseded'].includes(invoice.status), billed = invoiceAmount(job, totals, unified);
-  return { key: job.id, at: issuedAt, jobId: job.id, customerId: str(job.customerId), customer: str(job.customer), serviceDate: str(job.date, 10), number: str(invoice.number, 80), status: invoiceStatus(job, now, { unified }), savedStatus: str(invoice.status, 40),
+  return { key: job.id, at: issuedAt, jobId: job.id, customerId: str(job.customerId), customer: str(job.customer), serviceDate: str(job.date, 10), number: str(invoice.number, 80), status, savedStatus: str(invoice.status, 40),
     amountCents: billed.amountCents, paidCents: active ? totals.appliedCents : moneyCents(invoice.paid), balanceCents: active ? totals.balanceCents : moneyCents(invoice.balance),
     dueDate: validDate(invoice.dueDate) ? invoice.dueDate : '', issuedAt, issuedDate: denverDate(issuedAt), customerReference: str(invoice.customerReference, 120), ...billed.extra };
 }
 
 // With FUN-33 payment events on (store.paymentEvents), each row also says whether it is non-cash credit
-// (a gift-credit redemption: applied to the balance, never collected as money).
-function paymentRows(job, events) {
+// (a gift-credit redemption: applied to the balance, never collected as money). With invoiceState
+// (MONEY_INVOICE_STATE_ENABLED) such a row is kind 'credit' (report only: the ledger and funnel kinds are unchanged).
+function paymentRows(job, events, invoiceState = false) {
   const ledger = reconcileLedger(job);
-  return ledger.entries.map(entry => ({ key: `${job.id}/${entry.id}`, at: entry.at, jobId: job.id, customerId: str(job.customerId), customer: str(job.customer), entryId: entry.id, kind: entry.kind, method: entry.method, ...(events ? { nonCashCredit: !cashPayment(entry.method) } : {}), amountCents: entry.amountCents,
+  return ledger.entries.map(entry => ({ key: `${job.id}/${entry.id}`, at: entry.at, jobId: job.id, customerId: str(job.customerId), customer: str(job.customer), entryId: entry.id, kind: invoiceState && creditEntry(entry) ? 'credit' : entry.kind, method: entry.method, ...(events ? { nonCashCredit: !cashPayment(entry.method) } : {}), amountCents: entry.amountCents,
     processorRef: entry.processorRef, receivedAt: entry.at, receivedDate: denverDate(entry.at), recordedBy: entry.by, verified: entry.verified, source: entry.source, ledgerComplete: ledger.complete }));
 }
 
-/** Filters, sorts (newest first) and pages one view. `rows` holds every match for CSV. */
+/**
+ * Filters, sorts (newest first) and pages one view. `rows` holds every match for CSV. With store.invoiceState
+ * (MONEY_INVOICE_STATE_ENABLED) the payments view pages cash rows only in `items`; service credits (kind 'credit')
+ * are listed apart in `credits`, and `totals` gives cashCents (every cash row, tips included, refunds netted), tipCents
+ * and creditCents over all matches (null when a row's amount is unknown). CSV rows are the cash rows, then the credits.
+ */
 export async function listMoney(store, query = {}, now) {
   const invalid = message => fail('query_invalid', message);
   const view = query.view === undefined || query.view === '' ? 'invoices' : query.view;
@@ -57,16 +70,18 @@ export async function listMoney(store, query = {}, now) {
   if (query.format !== undefined && !['json', 'csv'].includes(query.format)) throw invalid('Choose json or csv.');
   const jobs = await store.jobs();
   if (!Array.isArray(jobs)) throw fail('storage_incomplete', 'The complete job money records could not be loaded. Retry.', 503);
-  const inRange = date => (!startDate || date && date >= startDate) && (!endDate || date && date < endDate), rows = [];
+  const inRange = date => (!startDate || date && date >= startDate) && (!endDate || date && date < endDate), rows = [], strict = store.invoiceState === true;
   for (const job of jobs) {
     if (!moneyJob(job) || customerId && job.customerId !== customerId) continue;
     // MONEY_UNIFIED_TOTALS=shadow: each invoice logs where the unified totals would differ.
-    if (view === 'invoices') { const row = invoiceRow(job, now, store.totalsMode === 'unified'); if (row && store.totalsMode === 'shadow') servedMoneyTotals(job, 'shadow', { surface: 'invoice_list' }); if (row && (!status || row.status === status) && inRange(row.issuedDate)) rows.push(row); }
-    else for (const row of paymentRows(job, store.paymentEvents === true)) if (inRange(row.receivedDate)) rows.push(row);
+    if (view === 'invoices') { const row = invoiceRow(job, now, store.totalsMode === 'unified', strict); if (row && store.totalsMode === 'shadow') servedMoneyTotals(job, 'shadow', { surface: 'invoice_list' }); if (row && (!status || row.status === status) && inRange(row.issuedDate)) rows.push(row); }
+    else for (const row of paymentRows(job, store.paymentEvents === true, strict)) if (inRange(row.receivedDate)) rows.push(row);
   }
   rows.sort(newestFirst);
-  const clean = rows.map(({ key, at, ...row }) => row);
-  return { view, items: clean.slice(offset, offset + limit), total: clean.length, offset, limit, nextOffset: offset + limit < clean.length ? offset + limit : null, asOf: now, coverage: { complete: true, asOf: now }, filters: { status: status || null, startDate: startDate || null, endDate: endDate || null, customerId: customerId || null }, rows: clean };
+  const clean = rows.map(({ key, at, ...row }) => row), split = strict && view === 'payments';
+  const credits = split ? clean.filter(row => row.kind === 'credit') : [], listed = split ? clean.filter(row => row.kind !== 'credit') : clean;
+  return { view, items: listed.slice(offset, offset + limit), total: listed.length, offset, limit, nextOffset: offset + limit < listed.length ? offset + limit : null, asOf: now, coverage: { complete: true, asOf: now }, filters: { status: status || null, startDate: startDate || null, endDate: endDate || null, customerId: customerId || null },
+    ...(split ? { credits, totals: { cashCents: sum(listed), tipCents: sum(listed.filter(row => row.kind === 'tip')), creditCents: sum(credits) } } : {}), rows: split ? [...listed, ...credits] : clean };
 }
 
 /** Spreadsheet-safe cell: formula-leading text gets a quote prefix; every cell is quoted. */

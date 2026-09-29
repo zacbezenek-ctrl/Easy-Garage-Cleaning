@@ -4,9 +4,11 @@ import { employeeVaultSecret } from '../_lib/employee-vault-key.js';
 import { PAY_REVIEW_REASONS, computeTimesheetWeek, overtimePolicy, ptoFromRequests, timesheetWeekStart } from '../_lib/timesheet-week.js';
 import { GUSTO_NOT_INCLUDED_HEADER, gustoHoursFile, gustoHoursFilename, payrollCsv, payrollCsvFilename } from '../_lib/payroll-export.js';
 import { payChangeRefused, seesOthersPay, timesheetPayView } from '../_lib/pay-visibility.js';
-import { can, staffRoleAccessEnabled } from '../_lib/staff-roles.js';
+import { can, staffPasswordResetEnabled, staffRoleAccessEnabled } from '../_lib/staff-roles.js';
 import { gustoPayrollProfiles, staffDirectoryEnabled } from '../_lib/staff-directory.js';
 import { readEmployeeHubRecords } from './employee-hub.js';
+import { dispatchStorage } from '../_lib/dispatch-storage.js';
+import { PAYROLL_WEEK_EXPORTS, recordPayrollWeekExport } from '../_lib/payroll-week-exports.js';
 
 const headers = { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' };
 const reply = (status, body) => Response.json(body, { status, headers });
@@ -48,7 +50,26 @@ function query(url) {
   return { weekStart: timesheetWeekStart(values.start), csv: ['csv', 'gusto'].includes(values.format), gusto: values.format === 'gusto', includePending: values.includePending === '1', acknowledged: new Set(acknowledged) };
 }
 
-export function timesheetHandlers({ session = getHubSession, read = readTimesheetRecords, gustoProfiles = readGustoPayrollProfiles, now = () => new Date() } = {}) {
+// STAFF-ACCESS (EGC_STAFF_PASSWORD_RESET on): each payroll CSV or Gusto hours download is recorded against its week before
+// the file is returned, so 'Apply rate to open weeks' never changes an exported week. The week's record is read before the
+// timecards and the export is recorded on that revision, so a rate applied in between refuses the download (409: retry it)
+// instead of both landing. A download that cannot be recorded is refused (503) and nothing is handed over.
+export function timesheetHandlers({ session = getHubSession, read = readTimesheetRecords, gustoProfiles = readGustoPayrollProfiles, now = () => new Date(), exportStore = dispatchStorage } = {}) {
+  const unrecorded = () => fail('The payroll export could not be recorded, so nothing was downloaded. Retry the download.', 'timesheet_export_unrecorded', 503);
+  // The week's export record before the timecards are read; null when this download is not recorded (flag off, JSON).
+  const observe = async (env, input) => {
+    if (!input.csv || !staffPasswordResetEnabled(env)) return null;
+    const store = exportStore(env);
+    try { return { store, current: await store.read(PAYROLL_WEEK_EXPORTS, input.weekStart) }; } catch { throw unrecorded(); }
+  };
+  const recorded = async (observed, actor, week, format) => {
+    if (!observed) return;
+    try { await recordPayrollWeekExport(observed.store, { weekStart: week.weekStart, weekEnd: week.weekEnd, format, actor: String(actor.user), now: now().toISOString() }, observed.current); }
+    catch (error) {
+      if (error?.code === 'dispatch_revision_conflict') throw fail('This week\'s pay changed while the file was being prepared, so nothing was downloaded. Retry the download to get the current file.', 'timesheet_export_changed', 409);
+      throw unrecorded();
+    }
+  };
   return {
     async get({ request, env }) {
       try {
@@ -61,7 +82,7 @@ export function timesheetHandlers({ session = getHubSession, read = readTimeshee
         if (input.csv && !input.gusto && !seesOthersPay(actor, env)) throw payChangeRefused('Only the owner can download the payroll export. Managers review hours and approvals here.');
         // The Gusto hours file (GUSTO-EXPORT) is the owner's whatever EGC_STAFF_PAY_OWNER_ONLY says: it runs payroll.
         if (input.gusto && !can(actor, 'pay.manage', env)) throw payChangeRefused('Only the owner can download the Gusto hours file. Managers review hours and approvals here.');
-        const policy = overtimePolicy(env), records = await read(env);
+        const observed = await observe(env, input), policy = overtimePolicy(env), records = await read(env);
         if (!Array.isArray(records?.timecards) || !Array.isArray(records?.requests)) throw fail('Timecards could not be read as a complete list.', 'timesheet_records_invalid', 503);
         const week = computeTimesheetWeek({ timecards: records.timecards, pto: ptoFromRequests(records.requests), policy, weekStart: input.weekStart, includePending: input.includePending, now: now().toISOString() });
         if (!input.csv) return reply(200, { ok: true, ...timesheetPayView(actor, env, week) });
@@ -82,11 +103,14 @@ export function timesheetHandlers({ session = getHubSession, read = readTimeshee
             if (error?.code === 'timesheet_gusto_id_missing' && !staffDirectoryEnabled(env)) error.message += ' The staff directory is off: the owner turns it on with EGC_STAFF_DIRECTORY_ENABLED=true.';
             throw error;
           }
+          await recorded(observed, actor, week, 'gusto');
           // Who was left out as not paid through Gusto, for the Hub's notice after the download.
           const left = file.notInGusto.length ? { [GUSTO_NOT_INCLUDED_HEADER]: encodeURIComponent(JSON.stringify(file.notInGusto)) } : {};
           return new Response(file.csv, { status: 200, headers: { ...headers, ...left, 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="${gustoHoursFilename(week)}"` } });
         }
-        return new Response(payrollCsv(week), { status: 200, headers: { ...headers, 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="${payrollCsvFilename(week)}"` } });
+        const csv = payrollCsv(week);
+        await recorded(observed, actor, week, 'csv');
+        return new Response(csv, { status: 200, headers: { ...headers, 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="${payrollCsvFilename(week)}"` } });
       } catch (error) {
         if (typeof error?.code === 'string' && (error.code.startsWith('timesheet_') || error.code === 'pay_owner_only')) return reply(error.status || 503, { ok: false, code: error.code, error: error.message, ...(error.details ? { details: error.details } : {}) });
         return reply(503, { ok: false, code: 'timesheet_unavailable', error: 'Timesheets could not be read safely. Retry, or contact the Hub administrator.' });

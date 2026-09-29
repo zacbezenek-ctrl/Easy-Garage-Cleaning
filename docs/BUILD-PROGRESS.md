@@ -515,6 +515,26 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   access; Sales and Phone book, move, cancel and no-show walkthroughs and jobs (dispatch-booking.js, never crew, pay, cost or
   money); a booker's handoff lands unassigned ("Sold: needs crew"). Every check goes through can(), /api/hub-auth reports the
   same; a role change or flag-off revokes Firebase business_access (pending shown in Integrations). EGC_STAFF_PAGE_GATE accepts on/true.
+- **GHL-TRACK-1** (P1 HighLevel; EGC_GHL_TAG_OUTBOX on Pages and EGC_GHL_TAG_DRAIN_ENABLED on egc-worker, off) Dispatch and
+  bridge schedule changes and walkthrough outcomes commit a ghlTagOutbox entry with the change; first attempt after the save, then a
+  signed egc-worker drain every 2 min; cancel/no-show set the appointment status with toNotify:false. Tags only, no message or stage.
+  Command center shows a stopped worker and stuck entries with Retry. Turn both on before EGC_SCHEDULE_SYNC_WORKER (GO-LIVE 4.13).
+- **FIX-MONEY-INVOICE-STATE** (P1 money; MONEY_INVOICE_STATE_ENABLED off) No payment or credit creates, numbers or changes an
+  invoice that was never issued (portal, crew link, webhook, held settle, portal credit, record_offline); an invoice with no number
+  and no issuedAt reads not_issued. Receipts are named after the cash ledger entry; /api/money lists credits apart from cash. Dry-run
+  backfill scripts/backfill-numberless-invoices.mjs. Gap: "Verified collected" still counts credits (FIX-HUB-COLLECTED-CREDITS).
+- **FIX-DISPATCH-READY** (P1 Dispatch; reads only; EGC_DISPATCH_NOTIFY_IMPORTED_ON off) Cards show reminder readiness from the tag
+  outbox or the page's calendar sync ("Reminder set" only on positive evidence), and for owners and managers price and deposit
+  readiness from money-core (no_price, deposit_unpaid within 2 Denver days). Notify toggle on Create/Edit (notifySetAt); recurring
+  plans show their reminder setting; bookers see "HighLevel stuck" without Retry. The bridge overview stays money-free.
+- **FIX-EDIT-WIPE** (P1 UI; no flag) Text typed during a send or a background re-render is kept: Hub crew chat and the customer
+  thread (caret kept; the HighLevel thread request is byte-identical, one send per tap), crew/job.js status reasons and the manager
+  checklist editor (superseded notice for a crew-mate's same status), business hub forms and open panels (fresh request id per
+  submit), and schedule alerts (refresh waits while edits are unsaved).
+- **STAFF-ACCESS** (P1 auth/pay; EGC_STAFF_PASSWORD_RESET off, EGC_STAFF_MANAGER_GRANTS) Reset sign-in makes a single-use 24 h link
+  (digest stored, never sent) that rotates sessions, revokes Firebase and locks the old password; Change password under My EGC;
+  approvals set a role and (owner) a starting rate; backdated first rate floored at approvedAt; owner Apply rate to open weeks;
+  payroll CSV/Gusto downloads recorded in payrollWeekExports (409 on a race). Grants never include pay.manage (GO-LIVE 3.6).
 
 ## In progress
 
@@ -636,6 +656,11 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | GUSTO-EXPORT | Approved, settled week in Gusto's hours-import format (owner only) | merged (6795b00) |
 | FIX-MONEY-TOTALS | P1 money: one integer-cents total everywhere, including approved change orders (MONEY_UNIFIED_TOTALS, off) | merged (52065e2) |
 | AUTH-ROLES | P1 auth: business access and booking rights from owner-set roles (EGC_STAFF_ROLE_ACCESS, off) | merged (a02d5e5) |
+| GHL-TRACK-1 | P1 HighLevel: durable tag outbox for bookings, changes and walkthrough outcomes (EGC_GHL_TAG_OUTBOX, off) | merged (31a8de8) |
+| FIX-MONEY-INVOICE-STATE | P1 money: payments never fabricate invoices; credits are not cash (MONEY_INVOICE_STATE_ENABLED, off) | merged (924ed44) |
+| FIX-DISPATCH-READY | P1 Dispatch: reminder, price and deposit readiness on each visit (EGC_DISPATCH_NOTIFY_IMPORTED_ON, off) | merged (d8de34c) |
+| FIX-EDIT-WIPE | P1 UI: typed text survives background reloads (Hub chat and customer thread, crew job reason and checklist, business hub forms, schedule alerts) | merged (6f5dd90) |
+| STAFF-ACCESS | P1 auth/pay: staff sign-in reset and password change; approvals set role and starting rate (EGC_STAFF_PASSWORD_RESET, off) | merged (d3e8358) |
 
 ## Next
 

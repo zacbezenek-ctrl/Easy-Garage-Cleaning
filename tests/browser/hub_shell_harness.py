@@ -117,6 +117,8 @@ class HubShell:
         if not hasattr(self, 'errors'): self.errors = []
         self.context = self.browser.new_context(viewport={'width': width, 'height': height}, timezone_id='Asia/Tokyo', is_mobile=mobile, has_touch=mobile, bypass_csp=True)
         self.page = self.context.new_page(); self.page.set_default_timeout(7000)
+        # employee.html loads dozens of scripts; a loaded CI runner can take longer than an action timeout to navigate.
+        self.page.set_default_navigation_timeout(20000)
         self.page.on('pageerror', lambda error: self.errors.append(str(error)))
         self.page.clock.install(time=NOW)
         self.page.add_init_script('window.__egcJobs=' + json.dumps(JOBS) + ';')
@@ -180,6 +182,8 @@ class HubShell:
                   'defaults': values, 'skills': [{'id': 'shelving', 'label': 'Shelving install'}], 'viewer': {'id': 'zacb'},
                   'environment': {'arrival': {'enabled': False, 'minutes': 60}, 'envArrivalMinutes': 60, 'travelEstimates': 'off', 'envBlockTravelShort': False, 'staffDirectory': False}}); return
         if path == '/api/staff-directory' and request.method == 'GET': send(copy.deepcopy(STAFF)); return
+        # GHL-TRACK-1: the Command center's HighLevel tag widget asks whether anything is stuck; the outbox is off here.
+        if path == '/api/ghl-tag-drain' and request.method == 'GET': send({'ok': True, 'enabled': False}); return
         if path == '/api/operations' and request.method == 'GET':
             send({'ok': True, 'enabled': False, 'actor': {'id': 'zacb', 'role': 'owner', 'kind': 'human'}, 'owners': [{'id': 'zacb', 'name': 'Synthetic Owner', 'role': 'owner'}]}); return
         send({'ok': False, 'error': 'Synthetic service unavailable'}, 503)

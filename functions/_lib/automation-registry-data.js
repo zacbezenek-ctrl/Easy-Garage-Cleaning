@@ -7,6 +7,10 @@
 const HL = 'functions/api/highlevel.js', WEB_LEAD = 'functions/api/web-lead.js', WEB_LEAD_INTAKE = 'functions/_lib/web-lead-intake.js', MESSAGING_CRON = 'functions/api/messaging-cron.js', SUITE = 'employee-suite.js', HANDOFF = 'crew/gameplan-handoff.js';
 const MCP = 'egc-platform/apps/mcp/src/server.ts', GHL_CLIENT = 'egc-platform/packages/ghl/src/index.ts';
 const CHECKIN = 'functions/_lib/highlevel-checkin.js';
+// GHL-TRACK-1: the durable tag outbox (off unless EGC_GHL_TAG_OUTBOX=true) and the shared HighLevel writer it and highlevel.js call.
+const TAG_OUTBOX = 'functions/_lib/ghl-tag-outbox.js', HL_TAGS = 'functions/_lib/highlevel-tags.js';
+const OUTBOX_SCHEDULE = ['functions/_lib/dispatch-service.js', 'functions/_lib/operations-scheduling.js', 'functions/api/dispatch.js', 'functions/api/ghl-tag-drain.js'], OUTBOX_OUTCOME = ['functions/_lib/walkthrough-visit.js', 'functions/api/walkthrough-visit.js', 'functions/api/ghl-tag-drain.js'];
+const OUTBOX_WHEN = 'GHL-TRACK-1, only with EGC_GHL_TAG_OUTBOX=true (off): queued in the commit of the change, then added by the first attempt after the save or the egc-worker drain (EGC_GHL_TAG_DRAIN_ENABLED)';
 const HANDOFF_DOC = 'docs/highlevel-sales-handoff.md', ROUTING_DOC = 'docs/ghl-live-routing-2026-09-20.md';
 const COMMUNICATION = 'egc-platform/services/operations/src/communication-execution.ts', SCHEDULING = 'egc-platform/apps/api/src/scheduling.ts', NOTE_OUTBOX = 'egc-platform/services/operations/src/note-outbox.ts';
 
@@ -19,7 +23,7 @@ const entry = fields => ({ providerId: null, verifiedAt: null, listensTo: [], su
 const unverifiedGhl = (id, name, triggerText, listensTo, fields = {}) => entry({ id, name, system: 'ghl_workflow', trigger: triggerText, listensTo, audience: 'customer', channel: 'unknown',
   contentSource: 'provider_template', classification: 'owner_automation', disposition: 'needs_owner_approval', sendsToday: 'unknown', speedToLead: 'none', ...fields });
 const lifecycle = (event, disposition, when, fields = {}) => unverifiedGhl(`ghl.lifecycle.${event.replace(/-/g, '_')}`, `HighLevel workflow on egc-${event}`, `Tag egc-${event} added by POST /api/highlevel tool=lifecycle (${when})`,
-  [`tag:egc-${event}`], { code: [...code(HL, 'ghl_tag_write'), ...code(SUITE, 'hub_lifecycle_trigger')], ...(disposition === 'retire' ? { classification: 'disabled', disposition: 'retire' } : {}),
+  [`tag:egc-${event}`], { code: [...code(HL, 'ghl_tag_helper_call'), ...code(SUITE, 'hub_lifecycle_trigger')], ...(disposition === 'retire' ? { classification: 'disabled', disposition: 'retire' } : {}),
     ownerCheck: disposition === 'retire' ? `Confirm whether a workflow listens to egc-${event} and record its text; it is scheduled to retire with the browser auto-fire (FUN-27), replaced by an approved send.` : `Record every workflow on egc-${event} with its exact text, or move this send to an approved-send kind.`, ...fields });
 const msgCore = (kind, name, channel, fields = {}) => entry({ id: `hub.msgcore.${kind}`, name, system: 'hub', trigger: `POST /api/messages kind=${kind} after the policy's approval (functions/_lib/message-policies.js)`, audience: 'customer', channel,
   contentSource: 'message_templates', classification: 'human_approved', disposition: 'approved_human', sendsToday: 'unknown', speedToLead: 'none', msgCoreKind: kind,
@@ -51,13 +55,24 @@ export const AUTOMATION_REGISTRY = deepFreeze({
   triggers: [
     trigger('tag:egc-hub-scheduled', 'tag_added', 'Tag egc-hub-scheduled', [
       write(HL, [SUITE], 'tool=schedule: a saved visit syncs to HighLevel after booking, and pending syncs retry when a manager opens the Hub (skipped for silent updates)', true),
-      write(HL, [HANDOFF], 'tool=game_plan: a signed Game Plan that carries a job date', true)]),
+      write(HL, [HANDOFF], 'tool=game_plan: a signed Game Plan that carries a job date', true),
+      write(TAG_OUTBOX, OUTBOX_SCHEDULE, `${OUTBOX_WHEN}: a dispatch or bridge booking, first placement, time change or restore; the browser sync then leaves its own copy out`, true)]),
     trigger('tag:egc-job-scheduled', 'tag_added', 'Tag egc-job-scheduled', [
       write(HL, [SUITE], 'tool=schedule for a job visit, written even when the visit notify flag is off', true),
-      write(HL, [HANDOFF], 'tool=game_plan: a signed Game Plan that carries a job date', true)]),
-    trigger('tag:egc-walkthrough-scheduled', 'tag_added', 'Tag egc-walkthrough-scheduled', [write(HL, [SUITE], 'tool=schedule for a walkthrough visit, written even when the visit notify flag is off', true)]),
-    trigger('tag:egc-reminder-{n}d', 'tag_added', 'Tag egc-reminder-<n>d', [write(HL, [SUITE], 'tool=schedule when the visit notify flag is on; n is the visit reminderDays (1-30, default 2)', true)]),
-    trigger('tag:egc-walkthrough-complete', 'tag_added', 'Tag egc-walkthrough-complete', [write(HL, [HANDOFF], 'tool=game_plan: signed walkthrough sync (a handoff only once the source walkthrough is completed)', true)]),
+      write(HL, [HANDOFF], 'tool=game_plan: a signed Game Plan that carries a job date', true),
+      write(TAG_OUTBOX, OUTBOX_SCHEDULE, `${OUTBOX_WHEN}: a visit of type job booked, first placed, moved or restored, after its appointment is written, even with notify off`, true)]),
+    trigger('tag:egc-walkthrough-scheduled', 'tag_added', 'Tag egc-walkthrough-scheduled', [write(HL, [SUITE], 'tool=schedule for a walkthrough visit, written even when the visit notify flag is off', true),
+      write(TAG_OUTBOX, OUTBOX_SCHEDULE, `${OUTBOX_WHEN}: a walkthrough, cleanout or reorg (the browser sync's mapping) booked, first placed, moved or restored, after its appointment is written, even with notify off`, true)]),
+    trigger('tag:egc-reminder-{n}d', 'tag_added', 'Tag egc-reminder-<n>d', [write(HL, [SUITE], 'tool=schedule when the visit notify flag is on; n is the visit reminderDays (1-30, default 2)', true),
+      write(TAG_OUTBOX, OUTBOX_SCHEDULE, `${OUTBOX_WHEN}: with the scheduled tags when the visit notify flag is on`, true)]),
+    trigger('tag:egc-walkthrough-complete', 'tag_added', 'Tag egc-walkthrough-complete', [write(HL, [HANDOFF], 'tool=game_plan: signed walkthrough sync (a handoff only once the source walkthrough is completed)', true),
+      write(TAG_OUTBOX, OUTBOX_OUTCOME, `${OUTBOX_WHEN}: a walkthrough finished with the quote_to_follow outcome (FUN-05/FUN-06)`, true)]),
+    trigger('tag:egc-quote-to-follow', 'tag_added', 'Tag egc-quote-to-follow', [write(TAG_OUTBOX, OUTBOX_OUTCOME, `${OUTBOX_WHEN}: a walkthrough finished with the quote_to_follow outcome`, true)], 'GHL-TRACK-1: no HighLevel workflow listens to it until the owner builds one.'),
+    trigger('tag:egc-walkthrough-lost', 'tag_added', 'Tag egc-walkthrough-lost', [write(TAG_OUTBOX, OUTBOX_OUTCOME, `${OUTBOX_WHEN}: a walkthrough finished as not interested; the reason code goes in an internal note first`, true)], 'GHL-TRACK-1: no HighLevel workflow listens to it until the owner builds one.'),
+    trigger('tag:egc-walkthrough-no-show', 'tag_added', 'Tag egc-walkthrough-no-show', [write(TAG_OUTBOX, OUTBOX_OUTCOME, `${OUTBOX_WHEN}: a walkthrough no-show recorded from the visit, with its appointment set to noshow`, true)], 'GHL-TRACK-1: no HighLevel workflow listens to it until the owner builds one.'),
+    trigger('tag:egc-visit-rescheduled', 'tag_added', 'Tag egc-visit-rescheduled', [write(TAG_OUTBOX, OUTBOX_SCHEDULE, `${OUTBOX_WHEN}: a scheduled visit moved to a new start after HighLevel was told its earlier time, with the scheduled tags`, true)], 'GHL-TRACK-1: no HighLevel workflow listens to it until the owner builds one.'),
+    trigger('tag:egc-visit-cancelled', 'tag_added', 'Tag egc-visit-cancelled', [write(TAG_OUTBOX, OUTBOX_SCHEDULE, `${OUTBOX_WHEN}: a visit cancelled in Dispatch or through the bridge, with its appointment set to cancelled; never for a booking HighLevel never heard of (no appointment and no earlier time told)`, true)], 'GHL-TRACK-1: no HighLevel workflow listens to it until the owner builds one.'),
+    trigger('tag:egc-visit-no-show', 'tag_added', 'Tag egc-visit-no-show', [write(TAG_OUTBOX, ['functions/_lib/dispatch-service.js', 'functions/api/dispatch.js', 'functions/api/ghl-tag-drain.js'], `${OUTBOX_WHEN}: a job marked a no-show in Dispatch, with its appointment set to noshow; never for a booking HighLevel never heard of (no appointment and no earlier time told)`, true)], 'GHL-TRACK-1: no HighLevel workflow listens to it until the owner builds one.'),
     trigger('tag:egc-quote-ready', 'tag_added', 'Tag egc-quote-ready', [write(HL, [HANDOFF], 'tool=game_plan while the saved estimate is sent or open and no sales-exit milestone is reached (HIGHLEVEL_QUOTE_READY_TAGS replaces the list)', true)]),
     trigger('tag:gc-quote-open', 'tag_added', 'Tag gc-quote-open', [write(HL, [HANDOFF], 'tool=game_plan while the saved estimate is sent or open and no sales-exit milestone is reached (HIGHLEVEL_QUOTE_READY_TAGS replaces the list)', true)]),
     trigger('tag:egc-job-complete', 'tag_added', 'Tag egc-job-complete', [write(HL, [SUITE], 'tool=post_job: closeout sync after a job is closed out', true)]),
@@ -97,6 +112,7 @@ export const AUTOMATION_REGISTRY = deepFreeze({
     trigger('contact:upsert', 'contact_created', 'Contact created or its fields updated (upsert, create, or update by id)', [
       write(WEB_LEAD_INTAKE, [WEB_LEAD, 'fb-capture.js', 'customer-portal.html', MESSAGING_CRON], 'every website lead and client hub help request (also on a cron retry)', true),
       write(HL, [SUITE, HANDOFF], 'ensureContact when a sync has no linked contact id', true),
+      write(HL_TAGS, [HL, TAG_OUTBOX], 'the shared ensureContact (GHL-TRACK-1 moved it here unchanged); the tag outbox calls it only outside a messaging dry run (EGC_MESSAGING_DRY_RUN=false) for a visit whose customer has no linked contact', true),
       write('functions/_lib/portal-invitation.js', [HL, 'functions/api/customer-portal-invitation.js'], 'recipient resolution before a portal invitation', true),
       write('functions/_lib/ghl-messenger.js', ['functions/api/messages.js'], 'recipient resolution before an approved send', false),
       write(MCP, [], 'MCP contacts.create or contacts.update (explicit user authorization)', false)]),
@@ -112,11 +128,13 @@ export const AUTOMATION_REGISTRY = deepFreeze({
     trigger('appointment_status:changed', 'appointment_status', 'Appointment status changed', [
       write(HL, [HANDOFF, SUITE], 'completeAppointment marks the walkthrough completed after a Game Plan, lifecycle requests set cancelled or confirmed, and a booking sync that updates a linked appointment writes confirmed (toNotify false is not relied on to stop workflow triggers)', true),
       write(SCHEDULING, ['functions/_lib/operations-schedule-sync.js'], 'schedule.sync_provider writes the status from the Hub visit (confirmed, showed, noshow or cancelled) with the operations bridge on', true),
+      write(HL_TAGS, [TAG_OUTBOX, HL], `completeAppointment, shared since GHL-TRACK-1. ${OUTBOX_WHEN}: cancelled on a cancel and noshow on a job or walkthrough no-show, with toNotify false; with the flag on the booking sync also writes cancelled or noshow for a closed visit instead of confirmed`, true),
       write(MCP, [], 'MCP appointments.update, appointments.cancel or appointments.delete (deleteCalendarEvent)', false)]),
     trigger('contact:note_added', 'note_added', 'Note added to a contact', [
       write(HL, [SUITE, HANDOFF, 'crew/prejob.html', 'crew/postjob.html'], 'the Game Plan internal brief, the closeout note, and lifecycle notes (cancellations, communication notes, the verified crew card payment note and the crew-on-the-way note, which is written even when suppress_automation skips the tag)', true),
       write(WEB_LEAD_INTAKE, [WEB_LEAD, 'fb-capture.js', 'customer-portal.html', MESSAGING_CRON], 'the website lead details note and the client hub help note (also on a cron retry)', true),
-      write(NOTE_OUTBOX, ['functions/_lib/operations-note-sync.js'], 'with the operations bridge on, the same Hub notes are written by the provider note outbox', true)]),
+      write(NOTE_OUTBOX, ['functions/_lib/operations-note-sync.js'], 'with the operations bridge on, the same Hub notes are written by the provider note outbox', true),
+      write(HL_TAGS, [TAG_OUTBOX], `${OUTBOX_WHEN}: the internal note with the reason code of a walkthrough lost as not interested`, true)]),
     trigger('contact:task_added', 'task_added', 'Task added to a contact', [
       write(HL, [SUITE], 'tool=post_job: the 6-month garage check-in task after a legacy closeout retry with Hub operations off', true),
       write(CHECKIN, [HL, 'functions/_lib/field-execution-sync.js', 'functions/api/field-jobs.js'], 'GHL-ALIGN: the same 6-month garage check-in task, read back first so it is created once, after a closeout with Hub operations on and the egc-api note verified, or after each verified field completion while the bridge is on (Hub operations and egc-api EGC_OPERATIONS_ENABLED=true); none when egc-api reports its own platform task (EGC_OPERATIONS_CHECKIN_TASKS_ENABLED=true, off)', true)]),
@@ -166,10 +184,10 @@ export const AUTOMATION_REGISTRY = deepFreeze({
       sendsToday: 'yes', speedToLead: 'none', evidence: [HANDOFF_DOC], notes: 'Removes only gc-quote-open and gc-quote-cold.' }),
     // HighLevel workflows that listen to Hub writes but were never exported.
     unverifiedGhl('ghl.booking_confirmation_workflows', 'HighLevel workflows on the booking tags (unverified)', 'Tags egc-hub-scheduled, egc-job-scheduled and egc-walkthrough-scheduled; the type tag is written even when the visit notify flag is off',
-      ['tag:egc-hub-scheduled', 'tag:egc-job-scheduled', 'tag:egc-walkthrough-scheduled'], { speedToLead: 'automation_touch', code: [...code(HL, 'ghl_tag_write'), ...code(SUITE, 'hub_send_endpoint_call'), ...code(HANDOFF, 'hub_send_endpoint_call')],
+      ['tag:egc-hub-scheduled', 'tag:egc-job-scheduled', 'tag:egc-walkthrough-scheduled'], { speedToLead: 'automation_touch', code: [...code(HL, 'ghl_tag_helper_call'), ...code(HL_TAGS, 'ghl_tag_write'), ...code(TAG_OUTBOX, 'ghl_tag_helper_call'), ...code(SUITE, 'hub_send_endpoint_call'), ...code(HANDOFF, 'hub_send_endpoint_call')],
         ownerCheck: 'List every workflow started by these tags with its step texts. The FUN-11 booking dialog shows these texts, and the notify toggle can default on only when all are registered.' }),
     unverifiedGhl('ghl.appointment_reminder_workflows', 'HighLevel reminder workflows on egc-reminder-<n>d (unverified)', 'Tag egc-reminder-<n>d written on a booking sync with notify on', ['tag:egc-reminder-{n}d'],
-      { code: code(HL, 'ghl_tag_write'), ownerCheck: 'List every reminder workflow (1-30 days) with its step texts.' }),
+      { code: [...code(HL, 'ghl_tag_helper_call'), ...code(TAG_OUTBOX, 'ghl_tag_helper_call')], ownerCheck: 'List every reminder workflow (1-30 days) with its step texts.' }),
     entry({ id: 'ghl.calendar_notifications', name: 'HighLevel calendar notifications (EGC Customer Jobs, EGC Customer Walkthroughs)', system: 'ghl_calendar', trigger: 'Appointment created or updated with toNotify true',
       listensTo: ['appointment:created_notify'], audience: 'customer', channel: 'unknown', contentSource: 'provider_template', classification: 'owner_automation', disposition: 'needs_owner_approval',
       sendsToday: 'unknown', speedToLead: 'automation_touch', code: code(HL, 'ghl_appointment_write'), evidence: [HANDOFF_DOC],
@@ -180,30 +198,34 @@ export const AUTOMATION_REGISTRY = deepFreeze({
     lifecycle('invoice-issued', 'retire', 'automatic on invoice issue'),
     lifecycle('invoice-overdue', 'retire', 'automatic reminder on a manager refresh'),
     lifecycle('deposit-received', 'retire', 'automatic on a recorded deposit'),
-    lifecycle('payment-received', 'retire', 'automatic on a recorded payment or a verified crew card payment', { code: [...code(HL, 'ghl_tag_write'), ...code(SUITE, 'hub_lifecycle_trigger'), ...code('crew/postjob.html', 'hub_lifecycle_trigger')] }),
+    lifecycle('payment-received', 'retire', 'automatic on a recorded payment or a verified crew card payment', { code: [...code(HL, 'ghl_tag_helper_call'), ...code(SUITE, 'hub_lifecycle_trigger'), ...code('crew/postjob.html', 'hub_lifecycle_trigger')] }),
     lifecycle('appointment-reminder', 'needs_owner_approval', 'manual button'),
     lifecycle('review-requested', 'needs_owner_approval', 'manual button'),
     lifecycle('decision-needed', 'needs_owner_approval', 'remote decision request'),
     lifecycle('rebooking-received', 'needs_owner_approval', 'no button today'),
     unverifiedGhl('ghl.closeout_workflows', 'HighLevel workflows on egc-job-complete and egc-review-ready (unverified)', 'Tags written by the closeout sync', ['tag:egc-job-complete', 'tag:egc-review-ready'],
-      { code: code(HL, 'ghl_tag_write'), ownerCheck: 'Record every workflow on these tags (they may start review requests) with its texts, or disable it so review asks go through the approved review_request send.' }),
+      { code: code(HL, 'ghl_tag_helper_call'), ownerCheck: 'Record every workflow on these tags (they may start review requests) with its texts, or disable it so review asks go through the approved review_request send.' }),
     unverifiedGhl('ghl.walkthrough_complete_workflows', 'HighLevel workflows on egc-walkthrough-complete (unverified)', 'Tag written by the signed walkthrough sync', ['tag:egc-walkthrough-complete'],
-      { code: code(HL, 'ghl_tag_write'), ownerCheck: 'Record every workflow on this tag with its texts.' }),
+      { code: [...code(HL, 'ghl_tag_helper_call'), ...code(TAG_OUTBOX, 'ghl_tag_helper_call')], ownerCheck: 'Record every workflow on this tag with its texts.' }),
+    unverifiedGhl('ghl.visit_change_workflows', 'HighLevel workflows on the visit-change and walkthrough-outcome tags (none until the owner builds them)', 'Tags egc-visit-rescheduled, egc-visit-cancelled, egc-visit-no-show, egc-walkthrough-no-show, egc-walkthrough-lost and egc-quote-to-follow, written by the Hub tag outbox only with EGC_GHL_TAG_OUTBOX=true (off)',
+      ['tag:egc-visit-rescheduled', 'tag:egc-visit-cancelled', 'tag:egc-visit-no-show', 'tag:egc-walkthrough-no-show', 'tag:egc-walkthrough-lost', 'tag:egc-quote-to-follow'],
+      { sendsToday: 'no', code: code(TAG_OUTBOX, 'ghl_tag_helper_call'), notes: 'GHL-TRACK-1: the Hub only adds the tag (and sets the appointment status); HighLevel decides what, if anything, the customer hears.',
+        ownerCheck: 'Before turning EGC_GHL_TAG_OUTBOX on, record every workflow you build on these tags with its texts; with none, the tags are tracking only.' }),
     unverifiedGhl('ghl.website_lead_workflows', 'HighLevel workflows on the website lead tags (unverified)', 'Tags egc-website-lead, egc-sms-consent, egc-no-sms-consent and egc-client-hub-help (and the opt-in egc-delayed-sync marker)',
       ['tag:egc-website-lead', 'tag:egc-sms-consent', 'tag:egc-no-sms-consent', 'tag:egc-client-hub-help', 'tag:egc-delayed-sync'], { speedToLead: 'automation_touch', code: [...code(WEB_LEAD_INTAKE, 'ghl_tag_write'), ...code('fb-capture.js', 'hub_send_endpoint_call')],
         ownerCheck: 'Record every workflow on these tags with its texts; they would be the first touch on a website lead.' }),
     unverifiedGhl('ghl.contact_change_workflows', 'HighLevel Contact Created / Contact Changed / custom-field workflows (unverified)', 'Contact upserts from the Hub and platform, and the attribution fields FUN-35 plans',
-      ['contact:upsert', 'contact_field:attribution'], { speedToLead: 'automation_touch', code: [...code(WEB_LEAD_INTAKE, 'ghl_contact_write'), ...code(HL, 'ghl_contact_write')],
+      ['contact:upsert', 'contact_field:attribution'], { speedToLead: 'automation_touch', code: [...code(WEB_LEAD_INTAKE, 'ghl_contact_write'), ...code(HL, 'ghl_contact_write'), ...code(HL_TAGS, 'ghl_contact_write')],
         ownerCheck: 'List workflows triggered by Contact Created, Contact Changed or custom-field changes, with their texts.' }),
     unverifiedGhl('ghl.opportunity_workflows', 'HighLevel Opportunity Created / Stage Changed / Status Changed workflows (unverified)', 'Opportunity creation, the Scheduled, Walkthrough complete and Job complete stages, and status lost',
       ['opportunity:created', 'opportunity_stage:scheduled', 'opportunity_stage:walkthrough_complete', 'opportunity_stage:job_complete', 'opportunity_status:lost'],
       { speedToLead: 'automation_touch', code: [...code(HL, 'ghl_opportunity_write'), ...code(WEB_LEAD_INTAKE, 'ghl_opportunity_write')],
         ownerCheck: 'List pipeline workflows on these stages and statuses with their texts. FUN-12 (opportunity lost) stays gated until this is verified.' }),
     unverifiedGhl('ghl.appointment_status_workflows', 'HighLevel Customer Booked Appointment and Appointment Status workflows (unverified)', 'Every appointment the Hub creates or updates (status confirmed, with notify on or off) and the status changes it writes (completed, cancelled, confirmed, showed, noshow)',
-      ['appointment:created', 'appointment_status:changed'], { code: code(HL, 'ghl_appointment_write'),
+      ['appointment:created', 'appointment_status:changed'], { code: [...code(HL, 'ghl_appointment_write'), ...code(HL_TAGS, 'ghl_appointment_write')],
         ownerCheck: 'List workflows triggered by Customer Booked Appointment or Appointment Status with their texts; toNotify false is not relied on to stop them. The FUN-11 booking dialog shows these texts even when the visit notify flag is off.' }),
     unverifiedGhl('ghl.note_task_workflows', 'HighLevel Note Added / Task Added workflows (unverified)', 'Notes the Hub adds (Game Plan brief, closeout, lifecycle and website lead notes) and the 6-month check-in task',
-      ['contact:note_added', 'contact:task_added'], { speedToLead: 'automation_touch', code: [...code(HL, 'ghl_note_task_write'), ...code(WEB_LEAD_INTAKE, 'ghl_note_task_write'), ...code(CHECKIN, 'ghl_note_task_write')],
+      ['contact:note_added', 'contact:task_added'], { speedToLead: 'automation_touch', code: [...code(HL, 'ghl_note_task_write'), ...code(WEB_LEAD_INTAKE, 'ghl_note_task_write'), ...code(CHECKIN, 'ghl_note_task_write'), ...code(HL_TAGS, 'ghl_note_task_write')],
         ownerCheck: 'List workflows triggered by Note Added or Task Added with their texts; a website lead note is written on every lead, so one could be the first touch. Once the bridge is on, each verified field completion creates the HighLevel task "6-month garage check-in"; check that no Task Added workflow reacts to it in a way you do not want.' }),
     entry({ id: 'ghl.conversation_ai', name: 'HighLevel Conversation AI auto-reply (LC GPT Connector)', system: 'ghl_conversation_ai', trigger: 'Inbound customer message, if a Conversation AI bot is in auto-reply mode',
       listensTo: ['inbound:message'], audience: 'customer', channel: 'SMS', contentSource: 'ai_generated', classification: 'disabled', disposition: 'retire', sendsToday: 'unknown', speedToLead: 'automation_touch',
@@ -360,6 +382,7 @@ export const AUTOMATION_REGISTRY = deepFreeze({
   tagPatterns: [
     { file: 'functions/_lib/sales-followup-exit.js', token: 'egc-{*}-sales-exit', expands: ['egc-garage-sales-exit', 'egc-junk-sales-exit'] },
     { file: HL, token: 'egc-reminder-{*}d', expands: ['egc-reminder-{n}d'] },
+    { file: TAG_OUTBOX, token: 'egc-reminder-{*}d', expands: ['egc-reminder-{n}d'] },
     { file: HL, token: 'egc-{*}', expands: 'lifecycle' },
   ],
   // Browser lifecycle events sent to /api/highlevel tool=lifecycle; each becomes tag egc-<event> unless suppressed.
@@ -407,6 +430,10 @@ export const AUTOMATION_REGISTRY = deepFreeze({
     // FUN-29: GET contacts/{id} for the lead-form service-line suggestion (read-only, flag off by default).
     'functions/_lib/funnel-dimensions.js': { ghl_contact_write: 1 },
     'functions/_lib/ghl-messenger.js': { ghl_message_send: 1, ghl_tag_write: 1, ghl_contact_write: 2 },
+    // GHL-TRACK-1: the tag outbox drain adds tags through the shared writer (addTags); its contact, appointment and note writes are the shared helpers below.
+    'functions/_lib/ghl-tag-outbox.js': { ghl_tag_helper_call: 1 },
+    // GHL-TRACK-1: ensureContact, addTags and completeAppointment moved here unchanged from highlevel.js, plus the outbox's internal note.
+    'functions/_lib/highlevel-tags.js': { ghl_tag_write: 1, ghl_contact_write: 1, ghl_note_task_write: 1, ghl_appointment_write: 1 },
     // GHL-ALIGN: GET then POST contacts/{id}/tasks for the 6-month check-in (one path string, read first).
     'functions/_lib/highlevel-checkin.js': { ghl_note_task_write: 1 },
     'functions/_lib/portal-invitation.js': { ghl_message_send: 1, ghl_contact_write: 2 },
@@ -420,7 +447,8 @@ export const AUTOMATION_REGISTRY = deepFreeze({
     // FUN-03: a replayed portal approval (same request_id) re-runs the idempotent sales-exit sync, so the portal calls it twice plus its message delivery.
     'functions/api/customer-portal.js': { hub_send_helper_call: 3 },
     'functions/api/email-confirmation.js': { emailjs_send: 1 },
-    'functions/api/highlevel.js': { ghl_tag_write: 1, ghl_contact_write: 2, ghl_note_task_write: 3, ghl_opportunity_write: 3, ghl_appointment_write: 3, hub_send_helper_call: 3 },
+    // GHL-TRACK-1: tags, the contact upsert and completeAppointment go through functions/_lib/highlevel-tags.js (five addTags calls).
+    'functions/api/highlevel.js': { ghl_tag_helper_call: 5, ghl_contact_write: 1, ghl_note_task_write: 3, ghl_opportunity_write: 3, ghl_appointment_write: 2, hub_send_helper_call: 3 },
     'functions/api/integration-status.js': { zapier_hook: 5 },
     'functions/api/job-payment.js': { stripe_receipt_email: 1 },
     'functions/api/messages.js': { hub_send_helper_call: 2 },

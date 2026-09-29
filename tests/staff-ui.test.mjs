@@ -977,7 +977,7 @@ test('the Staff directory is a registered business screen that lazily mounts EGC
   const page = shell();
   const entry = page.context.EGCHubScreens.get('staff');
   assert.deepEqual({ ...entry, load: { ...entry.load } }, { id: 'staff', group: 'RUN THE BUSINESS', label: 'Staff directory', iconPath: entry.iconPath, capability: 'business', crewVisible: false,
-    load: { js: 'employee-staff.js', css: 'employee-staff.css', v: '20260929rolesgusto' }, module: 'EGCStaff', mount: null, unmount: null, canLeave: null, refresh: null, homeWidget: null });
+    load: { js: 'employee-staff.js', css: 'employee-staff.css', v: '20260929access' }, module: 'EGCStaff', mount: null, unmount: null, canLeave: null, refresh: null, homeWidget: null });
   const nav = page.api.visibleNav(), at = nav.findIndex(item => item[1] === 'staff');
   assert.deepEqual([...nav[at]], ['RUN THE BUSINESS', 'staff', 'Staff directory']);
   // REVIEWS-UI's Review queues registers first in RUN THE BUSINESS, so the directory follows it.
@@ -991,8 +991,9 @@ test('the Staff directory is a registered business screen that lazily mounts EGC
   const main = page.main();
   assert.equal(main.querySelector('h1').textContent, 'Staff directory');
   assert.ok(cardFor(main, 'Zoe.Phone'));
-  // Bumped deliberately (GUSTO-EXPORT): the directory gained the owner's Gusto employee ID editor.
-  assert.deepEqual(page.document.assets.map(node => node.getAttribute('src') || node.getAttribute('href')).filter(url => /staff/.test(url)).sort(), ['employee-staff.css?v=20260929rolesgusto', 'employee-staff.js?v=20260929rolesgusto']);
+  // Bumped deliberately (GUSTO-EXPORT): the directory gained the owner's Gusto employee ID editor; (STAFF-ACCESS) the
+  // first-rate date and the owner's Apply rate to open weeks.
+  assert.deepEqual(page.document.assets.map(node => node.getAttribute('src') || node.getAttribute('href')).filter(url => /staff/.test(url)).sort(), ['employee-staff.css?v=20260929access', 'employee-staff.js?v=20260929access']);
   // A draft on the registered screen blocks leaving through the registry's canLeave.
   click(buttonLabel(main, 'Edit skills for Synthetic Zoe.Phone'));
   change(named(main, 'skill_cleanout'), 'lead', 'change');
@@ -1178,9 +1179,10 @@ test('the crew sign-in client stores and clears the capability mode with the cap
 
 test('employee.html loads the staff directory before the suite with one cache-busted script', () => {
   const page = readFileSync(new URL('../employee.html', import.meta.url), 'utf8');
-  // Bumped deliberately (GUSTO-EXPORT): the directory gained the owner's Gusto employee ID editor.
-  assert.equal(page.match(/<script src="employee-staff\.js\?v=20260929rolesgusto"><\/script>/g)?.length, 1);
-  assert.equal(page.match(/<link rel="stylesheet" href="employee-staff\.css\?v=20260929rolesgusto">/g)?.length, 1);
+  // Bumped deliberately (GUSTO-EXPORT): the directory gained the owner's Gusto employee ID editor; (STAFF-ACCESS) the
+  // first-rate date and the owner's Apply rate to open weeks.
+  assert.equal(page.match(/<script src="employee-staff\.js\?v=20260929access"><\/script>/g)?.length, 1);
+  assert.equal(page.match(/<link rel="stylesheet" href="employee-staff\.css\?v=20260929access">/g)?.length, 1);
   assert.ok(page.indexOf('employee-staff.js?v=') < page.indexOf('employee-suite.js?v='));
   // Loading it again through the screen registry must not reset the module (the registry injects its own tag).
   const context = { window: null, document: createDocument(), addEventListener() {}, crypto, AbortController, sessionStorage: storage() };

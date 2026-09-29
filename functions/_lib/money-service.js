@@ -2,7 +2,7 @@ import { requireDispatcher } from './dispatch-service.js';
 import { auditWrite } from './hub-audit.js';
 import { moneySupersedeWrite } from './job-funnel-events.js';
 import { denverToday, validDate } from './dispatch-time.js';
-import { MAX_TOTAL_CENTS, customerLineItem, customerMoneyTotals, depositCents, estimateTotals, invoiceFromEstimate, invoiceLineItems, invoiceNumber, invoiceStatus, moneyCents, normalizeLineItems, paymentEntry } from './money-core.js';
+import { MAX_TOTAL_CENTS, customerLineItem, customerMoneyTotals, depositCents, estimateTotals, invoiceFromEstimate, invoiceLineItems, invoiceNumber, invoiceStatus, invoiceTakesPayment, moneyCents, normalizeLineItems, paymentEntry } from './money-core.js';
 import { estimateChanged, estimateFingerprint, legacyLineItems } from './quote-model.js';
 import { ledgerPatch, reconcileLedger } from './money-ledger.js';
 import { customerPaymentNeedsReview } from './customer-payments.js';
@@ -38,6 +38,12 @@ import { cashPayment, funnelTimeAccepted, moneyEventWrites, paidInFullState } fr
  * job.balance_reopened crossing any action causes, keyed by the requestId, with
  * paidInFullAt/paidInFullRevision; the DTO then adds paidInFull and
  * payments[].nonCashCredit. Unset, commits and responses are exactly as before.
+ * With store.invoiceState (MONEY_INVOICE_STATE_ENABLED) payment.record_offline
+ * reserves no invoice number and changes only an invoice that takes payments
+ * (money-core invoiceTakesPayment: issued, or numbered and live, which it pays
+ * down exactly as before the flag under its own number); on any other job it
+ * records the payment and ledger alone, and the DTO's invoice status reads
+ * not_issued for an invoice a payment wrote.
  */
 export const MONEY_ACTIONS = Object.freeze(['estimate.save', 'estimate.record_approval', 'estimate.mark_sent', 'deposit.record_offline', 'payment.record_offline', 'invoice.issue', 'invoice.void', 'change_order.void', 'costs.save']);
 export const OFFLINE_METHODS = Object.freeze(['cash', 'check', 'card_terminal', 'bank_transfer', 'other']);
@@ -78,6 +84,8 @@ const str = (value, max = 200) => typeof value === 'string' ? value.slice(0, max
 // money-core's unified totals (approved changes are the billed change-order lines only).
 const unifiedTotals = store => store?.totalsMode === 'unified';
 const totalsOf = (store, job) => customerMoneyTotals(job, { unified: unifiedTotals(store) });
+// store.invoiceState is MONEY_INVOICE_STATE_ENABLED (money-core moneyInvoiceStateEnabled).
+const invoiceStateOn = store => store?.invoiceState === true;
 
 export const moneyApiEnabled = env => env?.MONEY_API_ENABLED === 'true';
 /**
@@ -262,14 +270,16 @@ const recordOffline = kind => async ({ store, job, input, actor, now }) => {
     patch.deposit = { ...deposits, amount: required / 100, paidAmount: depositPaid / 100, status: depositPaid >= required ? 'paid' : 'partial', receivedAt, reference, method: input.method, verified: true };
     if (amount > totals.depositDueCents) warnings.push({ code: 'deposit_exceeds_due', message: `More than the ${usd(totals.depositDueCents)} deposit due was recorded as a deposit.` });
   } else {
-    const invoice = plain(job.invoice) ? job.invoice : {};
+    const invoice = plain(job.invoice) ? job.invoice : {}, strict = invoiceStateOn(store);
     if (['void', 'superseded'].includes(invoice.status)) warnings.push({ code: 'invoice_not_active', message: 'The payment was recorded. The job has no active invoice; issue one to show the new balance.' });
     else {
-      const numbered = await reserveNumber(store, job, now);
+      // invoiceState: only an invoice that takes payments (issued, or numbered and live) is paid down, under its own
+      // number; nothing is reserved, and a job no one invoiced gets no invoice.
+      const issued = !strict || invoiceTakesPayment(invoice), numbered = !strict ? await reserveNumber(store, job, now) : { number: invoice.number, writes: [], warnings: [] };
       writes.push(...numbered.writes); warnings.push(...numbered.warnings);
-      patch.invoice = { ...invoice, number: numbered.number, status: balanceCents === 0 ? 'paid' : 'partial', amount: totals.totalCents / 100, amountCents: totals.totalCents, paid: appliedCents / 100, paidCents: appliedCents, balance: balanceCents / 100, balanceCents, updatedAt: now };
+      if (issued) patch.invoice = { ...invoice, number: numbered.number, status: balanceCents === 0 ? 'paid' : 'partial', amount: totals.totalCents / 100, amountCents: totals.totalCents, paid: appliedCents / 100, paidCents: appliedCents, balance: balanceCents / 100, balanceCents, updatedAt: now };
       // A display mirror, as the legacy tool's set-merge was: it never holds the job commit back.
-      if (safeId(job.customerId)) mirrors.push({ collection: 'customers', id: job.customerId, exists: true, patch: { latestJobId: job.id, lastPaymentStatus: patch.invoice.status, lastPaymentBalance: balanceCents / 100, paymentUpdatedAt: now, updatedAt: now } });
+      if (safeId(job.customerId)) mirrors.push({ collection: 'customers', id: job.customerId, exists: true, patch: { latestJobId: job.id, lastPaymentStatus: balanceCents === 0 ? 'paid' : 'partial', lastPaymentBalance: balanceCents / 100, paymentUpdatedAt: now, updatedAt: now } });
     }
     // A prepaid job stays on the schedule; only finished work closes as paid.
     if (balanceCents === 0 && (['completed', 'invoiced'].includes(stage(job)) || job.completedAt)) Object.assign(patch, { status: 'paid', pipelineStatus: 'paid' });
@@ -448,8 +458,9 @@ export function invoiceAmount(job, totals, unified = false) {
  * `paymentEvents` (the store's FUNNEL_PAYMENT_EVENTS_ENABLED) adds the FUN-33 read fields:
  * payments[].nonCashCredit and paidInFull; unset, the DTO is exactly as before.
  * `unified` (MONEY_UNIFIED_TOTALS) shows money-core's unified totals, and an active invoice's unified total (invoiceAmount).
+ * `invoiceState` (MONEY_INVOICE_STATE_ENABLED) reads the invoice status by its rules.
  */
-export function moneyProjection(job, now, { laborRecord = null, laborHidden = false, paymentEvents = false, unified = false } = {}) {
+export function moneyProjection(job, now, { laborRecord = null, laborHidden = false, paymentEvents = false, unified = false, invoiceState = false } = {}) {
   const events = paymentEvents === true;
   const totals = customerMoneyTotals(job, { unified }), estimate = plain(job.estimate) ? job.estimate : null, invoice = plain(job.invoice) ? job.invoice : null, billed = invoiceAmount(job, totals, unified);
   const lines = legacyLineItems(job, { record: 'estimate', surface: 'invoice', totalCents: totals.quoteCents }), ledger = reconcileLedger(job);
@@ -460,7 +471,7 @@ export function moneyProjection(job, now, { laborRecord = null, laborHidden = fa
       termsVersion: str(estimate.termsVersion), sentAt: str(estimate.sentAt, 40), sentChannel: str(estimate.sentChannel, 20), acceptedAt: str(estimate.acceptedAt, 40), acceptedBy: str(estimate.acceptedBy, 120), fingerprint: estimateFingerprint(estimate) } : null,
     lineItems: lines.lineItems.map(line => ({ ...customerLineItem(line), customerSupplied: line.customerSupplied === true, grouped: Boolean(line.group) })), linesComplete: !lines.issues.length,
     approval: pick(job.customerApproval, ['status', 'approvedAt', 'approvedBy', 'source', 'supersededAt', 'reason', 'estimateRevision']),
-    invoice: { status: invoiceStatus(job, now, { unified }), savedStatus: str(invoice?.status), number: str(invoice?.number), amountCents: billed.amountCents, dueDate: validDate(invoice?.dueDate) ? invoice.dueDate : null,
+    invoice: { status: invoiceStatus(job, now, { unified, invoiceState }), savedStatus: str(invoice?.status), number: str(invoice?.number), amountCents: billed.amountCents, dueDate: validDate(invoice?.dueDate) ? invoice.dueDate : null,
       issuedAt: str(invoice?.issuedAt, 40), customerReference: str(invoice?.customerReference, 120), voidedAt: str(invoice?.voidedAt, 40), voidReason: str(invoice?.voidReason, 500), ...billed.extra },
     invoicePreview: invoicePreview(job, totals),
     // Changes the customer approved in the portal that are billed on top of the quote (a manager can void one).
@@ -472,7 +483,7 @@ export function moneyProjection(job, now, { laborRecord = null, laborHidden = fa
   };
 }
 
-const result = async (store, actor, input, job, warnings, replayed, now) => ({ ok: true, authority: 'employee_hub', requestId: input.requestId, action: input.action, replayed, job: moneyProjection(job, now, { ...await moneyLaborView(store, actor, job.id), paymentEvents: store.paymentEvents === true, unified: unifiedTotals(store) }), warnings });
+const result = async (store, actor, input, job, warnings, replayed, now) => ({ ok: true, authority: 'employee_hub', requestId: input.requestId, action: input.action, replayed, job: moneyProjection(job, now, { ...await moneyLaborView(store, actor, job.id), paymentEvents: store.paymentEvents === true, unified: unifiedTotals(store), invoiceState: invoiceStateOn(store) }), warnings });
 
 // True when a new invoice number this plan reserves is now held by another job.
 async function numberTaken(store, writes, job) {

@@ -22,10 +22,13 @@ function fixtureScreen(overrides = {}) {
 const tabs = page => page.document.querySelectorAll('[data-ops-tab]').map(button => button.getAttribute('data-ops-tab'));
 // Screens the shipped MANIFEST registers (REVIEWS-UI, M5 invoicing); fixtures register after them. SHIPPED are the business
 // screens; the owner-only screens (P3-04 followup_settings, FUN-15 ad_spend, CATALOG-ADMIN catalog, DISPATCH-RULES dispatch_rules) register first and are checked separately.
-// CREW-NOTIFY's Schedule alerts is crewVisible (every signed-in viewer sees it) and registers before them.
+// CREW-NOTIFY's Schedule alerts is crewVisible (every signed-in viewer sees it) and registers before them. STAFF-ACCESS's
+// Password (My EGC) follows it and needs the 'password' capability, which the suite adds only when the server reports
+// password.change (EGC_STAFF_PASSWORD_RESET on, an employee account).
 const SHIPPED = ['reviews', 'message_templates', 'stocked_costs', 'staff', 'invoicing'];
 const OWNER_SHIPPED = ['followup_settings', 'ad_spend', 'catalog', 'dispatch_rules'];
 const CREW_SHIPPED = ['crew_alerts'];
+const PASSWORD_SHIPPED = ['password'];
 
 test('a registered screen joins the nav under its group only when the capability matches', () => {
   for (const [who, expected] of [[{}, true], [MANAGER, true], [CREW, false]]) {
@@ -287,7 +290,10 @@ test('the shipped screens register cleanly for business viewers only and lazy-lo
   vm.runInNewContext(readFileSync(new URL('../employee-hub-screens.js', import.meta.url), 'utf8'), context, { filename: 'employee-hub-screens.js' });
   assert.deepEqual(warnings, []);
   const registry = context.EGCHubScreens;
-  assert.deepEqual([...registry.list().map(entry => entry.id)], [...CREW_SHIPPED, ...OWNER_SHIPPED, ...SHIPPED]);
+  assert.deepEqual([...registry.list().map(entry => entry.id)], [...CREW_SHIPPED, ...PASSWORD_SHIPPED, ...OWNER_SHIPPED, ...SHIPPED]);
+  const password = registry.get('password');
+  assert.deepEqual([password.group, password.label, password.capability, password.crewVisible, password.module, password.load.js, password.load.css], ['MY EGC', 'Password', 'password', false, 'EGCStaffAccess', 'employee-staff-access.js', 'employee-staff-access.css']);
+  assert.ok(!registry.allowed(password, ['crew', 'business', 'owner']) && registry.allowed(password, ['crew', 'password']));
   for (const id of OWNER_SHIPPED) assert.equal(registry.get(id).capability, 'owner', id);
   const invoicing = registry.get('invoicing');
   assert.deepEqual([invoicing.group, invoicing.label, invoicing.capability, invoicing.crewVisible, invoicing.module, invoicing.load.js, invoicing.load.css], ['CLIENT WORK', 'Invoicing', 'business', false, 'EGCMoney', 'employee-money.js', 'employee-money.css']);

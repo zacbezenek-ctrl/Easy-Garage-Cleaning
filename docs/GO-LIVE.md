@@ -213,6 +213,7 @@ Tell the team:
 - **Managers** no longer see other employees' pay on the Team roster and timecards. Hours and approvals stay.
 - **Review queues** (owners and managers) list held card charges, Garage Guard member matches and customer messages whose delivery is unknown. The Command Center shows a "Needs your review" alert.
 - **Saving over someone else's change** now says "someone changed this, reload" instead of retrying forever.
+- **Dispatch shows reminder, price and deposit readiness (FIX-DISPATCH-READY).** Each visit card says whether the customer's HighLevel reminder is set, waiting, stuck, not told yet or off, and what that is based on: the HighLevel tag outbox when `EGC_GHL_TAG_OUTBOX` is on, otherwise the page's calendar sync. Anything the Hub cannot confirm reads "Reminder not confirmed", never "Reminder set": "Reminder set" needs the tag outbox entry, or the page's sync, to have told HighLevel the visit's `egc-reminder-{n}d` tag, so visits last synced before this build read "Reminder not confirmed" until their next sync. A job booked by a walkthrough's Game Plan is added to HighLevel without the reminder tag (as today), so it reads "Reminder on, HighLevel not told yet" until a Dispatch date or time change tells HighLevel (with `EGC_GHL_TAG_OUTBOX` off, a job sold before the walkthrough handoff keeps syncing through the Game Plan, without the reminder tag). Turning reminders off does not take back a reminder tag HighLevel already has: the card then says "Reminders off, HighLevel may still remind" (also after later moves), or "Reminders off · HighLevel may still remind (not confirmed)" when the Hub cannot tell, and the Edit dialog says to stop that reminder in HighLevel. A page sync made while the tag outbox owned the visit's tags is not counted as reminder evidence, so after turning `EGC_GHL_TAG_OUTBOX` off those visits read "Reminder not confirmed" until their next sync. The Create and Edit dialogs have a **HighLevel confirmation and reminders** toggle (the visit's Notify customer, on for new visits as today); a change to it on a booked visit reaches HighLevel with the visit's next date or time change, and the card says "Reminder on, HighLevel not told yet" until then. For owners and managers only, service jobs show **Price approved**, **Plan price** (a recurring plan's visit at the plan's per-visit price, which needs no per-visit approval and raises no warning) or **Price this job**, and **Deposit paid**, **Deposit not verified**, **No deposit** or **Deposit unpaid · $X**, each problem linking to that job in Estimates & payments (a deposit on a job with a refund recorded on it, or with conflicting card receipts, reads **Deposit not verified**; a Stripe refund recorded only as a payment review, and not on the job, is not seen by this readiness, so check the review queue before relying on **Deposit paid**); Dispatch warns "No approved price" and, from 2 Denver days before the visit, "Deposit unpaid". Nothing is blocked, walkthroughs get no money chips, and crew, crew leads and sales never see these figures. Recurring plans show **Customer reminders: On/Off** with **Change**.
 - The Hub page can record walkthrough audio (the microphone is allowed on `/employee`).
 - **Location is taken once, at clock-in** (owner decision, CREW-TIME). The Hub and the crew app read the phone's position only as a shift starts; nothing tracks it during the shift once every open Hub tab has been reloaded after the deploy. The clock card says "Location shared once at clock-in". See [4.9](#49-clock-in-location-once-no-switch).
 - **Time labels are honest.** The Hub clock card, My pay, timesheet rows and the payroll CSV name each job's work and travel; "General company time" means only time on no job. A shift whose job segments need a manager's review (a manager moved its clock-in later than its first segment, say) reads "Job time needs manager review" in the Hub and in the payroll CSV's Job time column; it is not a review flag and changes no hours or pay.
@@ -325,6 +326,7 @@ Every website lead already goes to HighLevel. Stage 2 makes that durable (nothin
 | 3.3 | Recording in the Hub | Railway bridge (B5) |
 | 3.4 | `EGC_WALKTHROUGH_VISIT_ENABLED=true` (after FUN-06) | Cloudflare, plain |
 | 3.5 | `EGC_STAFF_ROLE_ACCESS=true` (owner decision: on) | Cloudflare, plain |
+| 3.6 | `EGC_STAFF_PASSWORD_RESET=true`, `EGC_STAFF_MANAGER_GRANTS=accounts.reset,accounts.approve` | Cloudflare, plain |
 
 ### 3.1 Team roles (staff directory)
 
@@ -401,6 +403,31 @@ Every website lead already goes to HighLevel. Stage 2 makes that durable (nothin
   5. Sign in as yourself. You still have owner access.
 - **Roll back:** delete the variable and retry the deployment. Business access goes back to the configured business users, and Sales and Phone can no longer book. Saved roles stay. A stored manager's Firebase data session ends the next time a business user loads the Hub on easygaragecleaning.com. A session issued in the half minute before that load ends on a later load. Hub → Integrations shows any sign-out still pending.
 
+
+### 3.6 Staff sign-in resets, password change and approvals
+
+- **Set:** `EGC_STAFF_PASSWORD_RESET=true`. Optional, recommended: `EGC_STAFF_MANAGER_GRANTS=accounts.reset,accounts.approve`.
+- **Where:** Cloudflare Pages, plain. Preview first, then Production.
+- **Turns on:**
+  - **Reset sign-in** on each Team card, for you (and managers granted `accounts.reset`, never on a manager's account). It makes a single-use link that works once, for 24 hours. The Hub shows it to copy and never sends it: give it to the person yourself. It ends their Hub and Firebase data sessions at once and locks the old password until the link sets a new one.
+  - **Change password** under My EGC, for employee accounts.
+  - **Approve account** asks for the starting role and, from you, the starting rate. A manager granted `accounts.approve` reviews pending requests only and sets the role only; pay stays pending for you.
+  - A first rate you may date back to the day the account was approved, and **Apply rate to open weeks**, which fills $0 timecards in weeks not yet exported.
+  - Payroll CSV and Gusto hours downloads are recorded per week, so Apply rate never changes a week already exported. If a download says the week's pay changed while the file was prepared, download it again.
+  - Pay is always yours: it can never be granted. A granted manager never touches a manager's account or roles, or an account already approved or rejected.
+- **Needs first:**
+  1. The staff directory is on and its migrations have run ([3.1](#31-team-roles-staff-directory)).
+  2. The Firebase service account has the **Firebase Authentication Admin** role ([1.3](#13-security-steps-with-no-switch), step 3), so a reset signs the person out of Firebase data at once.
+  3. The rules from this build are published ([B4](#b4-publish-firestore-rules-and-indexes)). The reset receipts and payroll export records are server-only.
+- **Grants and role access:** `accounts.approve` also lets that manager change staff roles in the directory. With `EGC_STAFF_ROLE_ACCESS` on ([3.5](#35-staff-roles-grant-access-owner-decision-on)), giving someone Sales or Phone gives them booking and every customer's contact details in Dispatch.
+- **Payroll weeks paid before the switch:** downloads made before it was on are not recorded. When you use **Apply rate**, untick any week you have already paid.
+- **New hires:** approve them with a starting rate. If a manager approved one, set the first rate back to the approval day, then **Apply rate** before exporting that week.
+- **Check it worked (Preview):**
+  1. On a test employee's Team card, press **Reset sign-in** and copy the link. Their old password no longer works. The link sets a new one once, and opening it again fails.
+  2. Sign in as that employee and use **Change password** under My EGC.
+  3. Approve a test account request with a role and a starting rate. Its first timecards show pay after **Apply rate to open weeks**.
+- **Roll back:** delete the variables. Approval, sign-in, the setup page, the staff directory and timesheets behave exactly as before. Reset links not yet used stop working, and those people's old passwords work again.
+
 ## Stage 4: Crew scheduling and the field day
 
 | # | Set | Where |
@@ -417,6 +444,7 @@ Every website lead already goes to HighLevel. Stage 2 makes that durable (nothin
 | 4.10 | `EGC_CLOCK_IN_WITHOUT_FIX=true` (owner decision: on) | Cloudflare, plain |
 | 4.11 | `EGC_JOB_STATUS_MOVES_TIME=true` (optional) | Cloudflare, plain |
 | 4.12 | `EGC_TIMECARD_CORRECTIONS=true` (optional) | Cloudflare, plain |
+| 4.13 | `EGC_GHL_TAG_OUTBOX=true`, then `EGC_GHL_TAG_DRAIN_ENABLED=true` | Cloudflare, plain; Railway egc-worker |
 
 ### 4.1 Drive times
 
@@ -532,6 +560,29 @@ Every website lead already goes to HighLevel. Stage 2 makes that durable (nothin
 - **Check it worked:** on Preview, clock a test account in and leave it running. As a manager, open Time approvals, tap **Close shift** on that row, enter the real end time and a reason, and save. The card reads pending, its history shows the reason and your name, and the payroll week card's hours change once it is approved. **Correct time** on another test card works the same way. Close every shift under Needs attention before the payroll export.
 - **Roll back:** delete the variable. Corrections already saved stay in the timecards and their history.
 
+### 4.13 HighLevel hears about every booking change (tag outbox)
+
+- **Set:** `EGC_GHL_TAG_OUTBOX=true` on Cloudflare Pages, then `EGC_GHL_TAG_DRAIN_ENABLED=true` on the Railway egc-worker.
+- **Where:** Cloudflare Pages, plain (Preview first, then Production); Railway → egc-worker → Variables.
+- **Turns on:** a booking, move, restore, cancel or no-show in Dispatch or through the bridge, and a walkthrough outcome, saves the HighLevel tags it needs in the same save as the change. The Hub tries them once right after the save. After that, egc-worker retries every 2 minutes (waiting 1, 5, 15, then 60 minutes between tries) until they are added, and parks a change after 8 tries.
+  - **What it writes:** tags only, plus two things. A cancelled or no-show visit's appointment is set to Cancelled or No Show with no calendar notice (`toNotify: false`). A lost walkthrough gets an internal note with the reason code. It sends no message and never moves a stage or creates an opportunity.
+  - **Your existing workflows:** booking and reminder workflows get the same tags as today, after the appointment is written, so they keep working unchanged.
+  - **New tags:** `egc-visit-rescheduled`, `egc-visit-cancelled`, `egc-visit-no-show`, `egc-walkthrough-no-show`, `egc-walkthrough-lost` and `egc-quote-to-follow`. Each starts nothing until you build a workflow on it.
+  - **What you see:** Dispatch cards show **HighLevel told**, **HighLevel waiting** or **HighLevel stuck** with **Retry**. The Command center shows **HighLevel tags stuck for N visits** with **Retry**, and **The HighLevel tag worker has not run** when egc-worker has not checked in for 10 minutes.
+- **Needs first:**
+  1. Decide whether you want HighLevel workflows on the new tags and on the appointment status Cancelled or No Show. None is needed; without a workflow the tags are tracking only.
+  2. Check that no existing **Appointment Status** workflow would message a customer you did not intend to.
+  3. egc-worker's `API_BEARER_TOKEN` matches the Hub's, the Hub uses v2 service auth, and `HIGHLEVEL_API_KEY` and `HIGHLEVEL_LOCATION_ID` are set on Cloudflare Pages ([B5](#b5-railway-platform-and-the-signed-bridge)).
+  4. The rules from this build are published ([B4](#b4-publish-firestore-rules-and-indexes)). The outbox records are server-only.
+- **Order of the switches:** never set `EGC_SCHEDULE_SYNC_WORKER` (the server calendar sync, on Cloudflare Pages and egc-api) before both switches here are on. With that sync on and the outbox off, confirmations and reminders stop.
+- **Messaging dry run:** while `EGC_MESSAGING_DRY_RUN` is not exactly `false`, a change for a visit whose customer has no linked HighLevel contact is retried for about 4 hours and then shows as stuck. Link the customer's contact and press **Retry**. The outbox creates a contact only outside a dry run.
+- **Check it worked (Preview, phone):**
+  1. Book a test visit for a test contact in Dispatch. Once its calendar sync has run, the card says **HighLevel told** with a time, and the contact has `egc-hub-scheduled`.
+  2. Move it to another day. The contact gets `egc-visit-rescheduled`.
+  3. Cancel it. The contact gets `egc-visit-cancelled`, and the appointment shows Cancelled with no calendar notice.
+  4. Open the Command center. There is no "tag worker has not run" line.
+- **Roll back:** if `EGC_SCHEDULE_SYNC_WORKER` is on, delete it first (Cloudflare Pages and egc-api). Then delete `EGC_GHL_TAG_OUTBOX` and retry the deployment, and delete `EGC_GHL_TAG_DRAIN_ENABLED` on egc-worker. The browser tag sync works as before. Tags already added stay.
+
 ### Keep off for now
 
 `EGC_RECURRING_PLANS_ENABLED`: only after the recurring-plan background job (RECUR-CRON) lands. Before that, someone would have to press "Add upcoming visits" on every plan or visits stop being added.
@@ -561,6 +612,7 @@ Each is a dry run first; review, then run again with `--apply`. All need `FIREBA
 | 5.4 | `PAYMENT_REVIEW_CHECKOUT_BLOCK_ENABLED=true` (optional) | Cloudflare, plain |
 | 5.5 | `GARAGE_GUARD_MEMBERSHIP_SYNC_ENABLED=true` (optional) | Cloudflare, plain |
 | 5.6 | `MONEY_UNIFIED_TOTALS=shadow`, then `true` | Cloudflare, plain |
+| 5.7 | `MONEY_INVOICE_STATE_ENABLED=true` (after 5.2 and 5.6) | Cloudflare, plain |
 
 ### 5.1 Card payments and Review queues (no switch)
 
@@ -630,6 +682,30 @@ Each is a dry run first; review, then run again with `--apply`. All need `FIREBA
 - **HighLevel impact:** none. No new tags or messages. HighLevel notes and triggers (overdue reminders, the Customer messages buttons, the crew closeout payment note) keep today's figures. Payment reminders, the account list and the business hub also keep today's figures until a follow-up unit, so on the jobs the shadow log names they can differ from what checkout charges.
 - **Check it worked (phone):** on a test job with a $1,000 quote, a $500 deposit paid and a $150 approved change, the portal shows $1,150 total, $650 due and a Pay button; the Hub finance row shows $1,150 with a $650 balance; the invoice page says Balance due $650.
 - **Roll back:** delete the variable. Every page goes back to today's figures. Payments recorded meanwhile stay recorded.
+
+### 5.7 Invoices only when you issue them
+
+- **Set:** `MONEY_INVOICE_STATE_ENABLED=true`
+- **Where:** Cloudflare Pages, plain. Preview first.
+- **Turns on:** payments stop creating invoices nobody issued.
+  - A card deposit or balance (portal, crew link or Stripe webhook), a Hub offline payment and a portal gift or account credit update a job's invoice only when the job already has one that takes payments: an issued invoice, or one with a number that is not draft, void or superseded. Its paid, balance and status stay current, as today.
+  - On every other job they record the payment alone. No payment reserves an `INV-` number any more.
+  - An invoice with no number and no issue time reads **not issued** everywhere. A card-paid job therefore leaves the invoice list and can be invoiced from **Invoicing** once the work is done.
+  - The receipt is named after its card or offline payment (for example `stripe:cs_…`), never after a credit, refund or tip. It prints an invoice number only for an issued invoice.
+  - The money API's payments view lists gift and account credits apart from cash.
+  - HighLevel tags, payment tracking events and paid-in-full are unchanged.
+- **Needs first:** `MONEY_API_ENABLED=true` ([5.2](#52-server-money-records)) and `MONEY_UNIFIED_TOTALS=true` ([5.6](#56-one-money-total-everywhere)). Until both are on, the Hub finance board shows a card-paid job with a billed change order short by the change, and the older browser payment tool still numbers invoices.
+- **Developer backfill (once it is on):**
+  1. `node scripts/backfill-numberless-invoices.mjs` (dry run). Review `jobs.needsReview[].reasons`. Those jobs keep their invoice and are never written.
+  2. Run it with `--apply --hub-unified-totals`, only once both money switches above are on.
+  3. Run it again. It must plan 0.
+- **Numbered but never issued:** the dry run also lists `numberedNotIssued` invoices: an `INV-` number a Hub offline payment reserved without issuing the invoice. Payments keep them current. Issue each one from **Estimates & payments** when the customer should get it.
+- **Known gap:** until the FIX-HUB-COLLECTED-CREDITS follow-up, **Verified collected** on the Hub finance board still counts gift and account credit applied to jobs as collected.
+- **Check it worked (Preview):**
+  1. On a test job with a quote and no invoice, pay the deposit by card from the portal. The job shows no invoice status and is not in the invoice list.
+  2. Once the job is done, it appears in **Invoicing**.
+  3. The receipt shows the `stripe:cs_…` reference, not `INV-`.
+- **Roll back:** delete the variable. Payments write the job's invoice exactly as before. Payments and the payment ledger are never changed by this switch or the backfill.
 
 ## Stage 6: Customer portal and business client hub
 
@@ -797,6 +873,7 @@ Before moving any of these, check which HighLevel workflows and calendar notific
 - On Day 0: turn off Jobber's automatic client messages (reminders, follow-ups, review requests) so customers do not hear from both; pause Dispatch changes, AI scheduling and customer scheduling links while the import runs.
 - Switch Jobber off only when every item in its section 6 is ticked. Keep Jobber read-only for 30 days after.
 - After the cutover, set the tracking cutover date (FUN) so earlier periods are labelled partial.
+- **Reminders for imported Jobber jobs (recommended: on once scheduled).** Imported jobs arrive with reminders off. Set `EGC_DISPATCH_NOTIFY_IMPORTED_ON=true` on Cloudflare Pages before the Dispatch review of imported jobs, and the first Dispatch booking of each one saves Notify customer on: its Edit dialog starts with **HighLevel confirmation and reminders** checked and says "Imported from Jobber: reminders were off", and a dispatcher who unchecks it keeps that customer silent. The booking then adds the same `egc-reminder-2d` tag and HighLevel appointment notifications as any Hub booking with Notify on; no workflow change is needed. Unset, imported jobs keep reminders off until someone turns the toggle on per job. **Roll back:** delete the variable; visits already booked keep their saved choice.
 
 ### D4. Payroll burden rate
 
@@ -820,7 +897,7 @@ Before moving any of these, check which HighLevel workflows and calendar notific
 | 1 | `EGC_STAFF_PAGE_GATE=off` | Staff pages open without the gate |
 | 2 | Delete `WEB_LEAD_ADS_RELAY_ENABLED`, then `WEB_LEAD_RECEIPTS_ENABLED` | Web3Forms emails for any lead in doubt |
 | 3 | Delete `EGC_WALKTHROUGH_VISIT_ENABLED`, `EGC_STAFF_ROLE_ACCESS` or `EGC_STAFF_DIRECTORY_ENABLED` | Timecards of reps with open walkthroughs; Hub → Integrations for pending Firebase sign-outs |
-| 4 | Delete the `EGC_DISPATCH_…` or `FIELD_EXPENSES_ENABLED` switch; crew app: `/crew/sw-config.json` (developer) | Dispatch saves; crew phones reload |
+| 4 | Delete the `EGC_DISPATCH_…` or `FIELD_EXPENSES_ENABLED` switch; crew app: `/crew/sw-config.json` (developer); delete `EGC_GHL_TAG_OUTBOX` only after `EGC_SCHEDULE_SYNC_WORKER` is off | Dispatch saves; crew phones reload; HighLevel booking tags |
 | 5 | Delete `MONEY_API_ENABLED`, `MONEY_DOCUMENT_ENABLED` or `PAYMENT_REVIEW_CHECKOUT_BLOCK_ENABLED` | Do not re-save itemized estimates in the old editor |
 | 6 | Delete `FIELD_CUSTOMER_PHOTOS_ENABLED` | Portal shows no photos |
 | 7 | Delete `MCP_OAUTH_SHARED_LOGIN_ENABLED`, `MCP_OAUTH_HUB_IDENTITY_ENABLED` or `EGC_MCP_PUBLIC_ORIGIN` | Consent page |

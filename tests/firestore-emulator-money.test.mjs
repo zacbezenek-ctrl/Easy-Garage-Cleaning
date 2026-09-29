@@ -92,6 +92,26 @@ test('the money API commit, receipt, audit and ledger contracts hold on real Fir
     assert.deepEqual([job.changeOrders[0].status, job.approvedChangeTotal, billedChangeCents(job), voided.job.totals.totalCents, voided.job.changeOrders], ['void', 0, 0, 100000, []]);
     assert.equal((await runChangeOrderBackfill(store, { apply: true, now: NOW })).preview.length, 0, 'a voided change is never backfilled again');
   });
+
+  await t.test('FIX-MONEY-INVOICE-STATE: an offline payment writes no invoice, and the backfill deletes a made-up one, on real Firestore', async () => {
+    const { runNumberlessInvoiceBackfill } = await import('../scripts/backfill-numberless-invoices.mjs');
+    const strict = moneyStorage({ MONEY_INVOICE_STATE_ENABLED: 'true' }, fetcher), openJob = `money-open-${run}`, madeUp = `money-made-up-${run}`;
+    const quoted = { type: 'job', customerId: `cust-${run}`, customer: 'Synthetic Customer', serviceType: 'Garage transformation', date: '2026-09-24', status: 'scheduled', pipelineStatus: 'scheduled', total: 1000, estimate: { amount: 1000, status: 'approved' } };
+    await store.commit([{ collection: 'jobs', id: openJob, patch: quoted }, { collection: 'jobs', id: madeUp, patch: { ...quoted, payment: { amount: 500, verified: true, method: 'gift_credit', giftCreditApplied: 500 }, invoice: { amount: 1000, paid: 500, balance: 500, status: 'partial', updatedAt: NOW } } }]);
+    const job = await strict.read('jobs', openJob);
+    const paid = await mutateMoney(strict, owner, { action: 'payment.record_offline', requestId: randomUUID(), jobId: openJob, expectedRevision: job.revision, amountCents: 20000, method: 'check', reference: 'CHK-STRICT' }, NOW);
+    const saved = await strict.read('jobs', openJob);
+    assert.deepEqual([saved.invoice, saved.payment.amount, paid.job.invoice.status], [undefined, 200, 'not_issued']);
+    // The earlier money job shares the run suffix, so INV-{last 6} may already be its number: none is reserved for this job.
+    assert.notEqual((await strict.read('moneyInvoiceNumbers', `n_INV-${openJob.slice(-6).toUpperCase()}`))?.jobId, openJob, 'no invoice number is reserved');
+    const report = await runNumberlessInvoiceBackfill(strict, { apply: true, now: NOW });
+    assert.equal(report.aborted, undefined); assert.deepEqual(report.preview.map(row => row.id), [madeUp]);
+    const cleared = await strict.read('jobs', madeUp);
+    assert.deepEqual([Object.hasOwn(cleared, 'invoice'), cleared.payment.giftCreditApplied, cleared.payment.amount], [false, 500, 500], 'the invoice field is deleted; the payment stays');
+    const receipt = await strict.read('moneyOperations', report.writes.receipts[0]);
+    assert.deepEqual([receipt.scope, receipt.targets.map(row => row.id)], ['numberless_invoice_backfill', [madeUp]]);
+    assert.equal((await runNumberlessInvoiceBackfill(strict, { apply: true, now: NOW })).writes.planned, 0, 'a rerun finds 0');
+  });
 });
 
 // TIPS: a tipped charge with no review is booked in ONE commit, the job update plus a precondition-only delete of

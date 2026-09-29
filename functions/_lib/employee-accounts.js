@@ -159,10 +159,30 @@ async function passwordDigest(password, salt) {
 
 function publicAccount(account) {
   if (!account) return null;
-  const { passwordHash, passwordSalt, invitation, ...safe } = account;
+  const { passwordHash, passwordSalt, invitation, signInReset, ...safe } = account;
   // The listed role is derived like the session role, so a stored 'sales' needs the invitation.
-  return { ...safe, role: namedStaffRole(account) };
+  // A pending STAFF-ACCESS reset is listed by its expiry only; its token digest never leaves the server.
+  return { ...safe, role: namedStaffRole(account), ...(pendingSignInReset(account) ? { signInResetPending: true, signInResetExpiresAt: String(signInReset.expiresAt || '') } : {}) };
 }
+
+// The listing shape (no credentials, reset digest or invitation), for STAFF-ACCESS review answers.
+export const publicEmployeeAccount = account => publicAccount(account);
+
+// The signup password rule, for STAFF-ACCESS resets and changes (at most 128 characters there): '' when acceptable.
+export function employeePasswordProblem(password) {
+  if (typeof password !== 'string' || password.length < 10 || !/[a-z]/.test(password) || !/[A-Z]/.test(password) || !/\d/.test(password)) return 'Password must be at least 10 characters with uppercase, lowercase, and a number';
+  return password.length > 128 ? 'Password must be at most 128 characters' : '';
+}
+
+// Whether password is this sealed account's password (the signup PBKDF2 digest, compared in constant time).
+export async function employeePasswordMatches(account, password) {
+  if (typeof password !== 'string' || !account?.passwordSalt || !account?.passwordHash) return false;
+  return safeEqual(await passwordDigest(password, account.passwordSalt), account.passwordHash);
+}
+
+// STAFF-ACCESS: a sign-in reset a manager issued and nobody has used yet. With EGC_STAFF_PASSWORD_RESET on it locks the
+// old password until the single-use link sets a new one (expired links keep it locked: ask for another).
+export const pendingSignInReset = account => Boolean(account?.signInReset) && typeof account.signInReset === 'object' && !account.signInReset.consumedAt;
 
 function validateApplication(input) {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('Enter your employee account details');
@@ -234,10 +254,11 @@ export async function authenticateEmployeeAccount(env, username, password) {
   if (account.status === 'pending') throw accountError('EMPLOYEE_ACCOUNT_PENDING', 'Your account is waiting for Zac to approve it. You do not need to register again.', 401);
   if (account.status === 'rejected') throw accountError('EMPLOYEE_ACCOUNT_REJECTED', 'Your account request was not approved. Contact Zac before registering again.', 401);
   if (account.status !== 'approved') return null;
+  if (env?.EGC_STAFF_PASSWORD_RESET === 'true' && pendingSignInReset(account)) throw accountError('EMPLOYEE_ACCOUNT_RESET_PENDING', 'Your sign-in was reset. Open the sign-in link your manager gave you to choose a new password, or ask them for a new link.', 401);
   return employeeSessionProfile(account);
 }
 
-function employeeSessionProfile(account) {
+export function employeeSessionProfile(account) {
   return {
     user: account.username,
     displayName: account.displayName || account.username,
@@ -255,7 +276,7 @@ function employeeSessionProfile(account) {
 export async function getEmployeeSessionProfile(env, username, sessionVersion) {
   if (isReservedEmployeeUsername(username) || !employeeAccountsConfigured(env)) return null;
   const account = await readAccount(env, username);
-  if (!account || account.status !== 'approved') return null;
+  if (!account || account.status !== 'approved' || env?.EGC_STAFF_PASSWORD_RESET === 'true' && pendingSignInReset(account)) return null;
   const profile = employeeSessionProfile(account);
   // Legacy sessions remain usable only until the first account status change.
   return safeEqual(profile.sessionVersion, String(sessionVersion || '')) ? profile : null;

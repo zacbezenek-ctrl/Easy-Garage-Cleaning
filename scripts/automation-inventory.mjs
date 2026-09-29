@@ -32,6 +32,8 @@ const CODE=/\.(?:[cm]?js|tsx?|html)$/,TEST_CODE=/\.(?:test|spec|check|browser)\.
 export const SIGNATURES=Object.freeze({
   ghl_message_send:/\/conversations\/messages(?=['"`])/g,
   ghl_tag_write:/\/contacts\/[^'"`\n]*\/tags(?=['"`])/g,
+  // A call to the shared tag writer (functions/_lib/highlevel-tags.js addTags, GHL-TRACK-1): the caller's tag literals are its tag writes.
+  ghl_tag_helper_call:/(?<!function\s)(?<![\w$.])addTags\(/g,
   ghl_contact_write:/\/contacts\/(?:upsert)?(?=['"`])|\/contacts\/\$\{[^}]+\}(?:\/(?!(?:tags|notes|tasks)['"`\/])[^'"`\n]*)?(?=['"`])/g,
   ghl_note_task_write:/\/contacts\/[^'"`\n]*\/(?:notes|tasks)(?:\/\$\{[^}]+\})?(?=['"`])/g,
   ghl_opportunity_write:/\/opportunities\/(?:upsert)?(?=['"`])|\/opportunities\/\$\{[^}]+\}(?=['"`])/g,
@@ -63,10 +65,10 @@ export function scanSendPaths(root=REPO_ROOT,files=scanFiles(root)){
   return inventory;
 }
 
-// HighLevel tag literals in server tag writers; ${...} becomes {*} and a comma-joined default list is split.
+// HighLevel tag literals in server tag writers (a tag write path or a call to the shared tag writer); ${...} becomes {*} and a comma-joined default list is split.
 export function scanTagTokens(root=REPO_ROOT,inventory=scanSendPaths(root)){
   const tokens={};
-  for(const file of Object.keys(inventory).filter(file=>file.startsWith('functions/')&&inventory[file].ghl_tag_write)){
+  for(const file of Object.keys(inventory).filter(file=>file.startsWith('functions/')&&(inventory[file].ghl_tag_write||inventory[file].ghl_tag_helper_call))){
     const source=readFileSync(join(root,file),'utf8'),found=new Set();
     for(const match of source.matchAll(/(['"`])((?:egc|gc|fb)-[a-z0-9-]*(?:(?:\$\{[^}`]+\}|,)[a-z0-9-]*)*)\1/g))
       for(const token of match[2].replace(/\$\{[^}]+\}/g,'{*}').split(','))if(/^(?:egc|gc|fb)-/.test(token))found.add(token);

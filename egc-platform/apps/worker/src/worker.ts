@@ -10,6 +10,7 @@ import { startCustomerStateWorker } from './customer-state-worker.js';
 import {startProviderNotesWorker} from './provider-notes-worker.js';
 import {parseProviderTranscript,persistProviderTranscript,startCallTranscriptWorker} from './call-transcript-worker.js';
 import {startMessagingCronWorker} from './messaging-cron-worker.js';
+import {startGhlTagWorker} from './ghl-tag-worker.js';
 
 const db = getDb();
 const ghl = GhlClient.fromEnv();
@@ -659,6 +660,7 @@ async function main() {
   startCallTranscriptWorker();
   startMetaConversionWorker();
   startMessagingCronWorker();
+  startGhlTagWorker();
   startAdSpendWorker();
   // A transient GHL startup failure must not stop Meta synchronization or the
   // existing webhook/outbox polling loops from being scheduled.

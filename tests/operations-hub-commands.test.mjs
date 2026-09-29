@@ -402,6 +402,32 @@ test('the signed portal endpoint routes hub commands through the registry and ke
   assert.deepEqual(hosts,[]);
 });
 
+// FIX-DISPATCH-READY: notifyImportedOn (EGC_DISPATCH_NOTIFY_IMPORTED_ON) and readiness are for the Hub's own GET /api/dispatch
+// only. The signed bridge answers the same with the flag on as off, and never carries money.
+test('with EGC_DISPATCH_NOTIFY_IMPORTED_ON on, the signed hub.dispatch.overview answers exactly as with it off: no notifyImportedOn, no money',async t=>{
+  t.mock.timers.enable({apis:['Date'],now:Date.parse(NOW)});
+  const doc=(collection,id,fields)=>({name:`projects/egcw-1ec83/databases/(default)/documents/${collection}/${id}`,updateTime:'2026-09-21T18:00:00.000000Z',fields:encodeFirestoreFields(fields)});
+  const jobs=[doc('jobs','job-a',{type:'job',customerId:'c1',customer:'Synthetic Customer',address:'100 Synthetic Street',date:'2026-09-23',time:'08:00',endTime:'10:00',assignedCrew:['crew1'],jobInstructions:'Synthetic scope',status:'scheduled',
+      estimate:{amount:4321,status:'accepted',depositRequired:1234},customerApproval:{status:'approved',amount:4321},payment:{amount:1234,verified:true},notify:true,notifySetAt:'2026-09-21T10:00:00.000Z'}),
+    doc('jobs','jobber_job_1',{type:'job',customerId:'c1',customer:'Synthetic Imported Customer',address:'100 Synthetic Street',date:'',time:'',endTime:'',assignedCrew:[],jobInstructions:'Synthetic imported scope',status:'unscheduled',scheduleSource:'jobber_import',notify:false,customerAutomationEnabled:false})];
+  const hosts=new Set();
+  t.mock.method(globalThis,'fetch',async input=>{
+    const url=new URL(String(input));hosts.add(url.hostname);assert.equal(url.hostname,'firestore.googleapis.com');
+    if(url.pathname.endsWith('/dispatchSettings/current'))return new Response('{}',{status:404});
+    const one=jobs.find(row=>url.pathname.endsWith(`/jobs/${row.name.split('/').pop()}`));
+    if(one)return new Response(JSON.stringify(one),{status:200,headers:{'Content-Type':'application/json'}});
+    return new Response(JSON.stringify({documents:url.pathname.endsWith('/jobs')?jobs:[]}),{status:200,headers:{'Content-Type':'application/json'}});
+  });
+  for(const body of [{command:'hub.dispatch.overview',view:'schedule',includeUnscheduled:true},{command:'hub.dispatch.overview',view:'job',jobId:'job-a'}]){
+    const off=await signed(manager,body),on=await signed(manager,body,staffEnv({EGC_DISPATCH_NOTIFY_IMPORTED_ON:'true'}));
+    assert.equal(off.status,200,JSON.stringify(off.body));
+    assert.deepEqual(on,off,body.view);
+    const text=JSON.stringify(on.body);
+    for(const leak of ['notifyImportedOn','ghlTagRetry','moneyReady','"reminder"','4321','1234','depositRequiredCents','"estimate"','"payment"','notifySetAt'])assert.equal(text.includes(leak),false,`${body.view}: ${leak}`);
+  }
+  assert.deepEqual([...hosts],['firestore.googleapis.com']);
+});
+
 test('the signed portal endpoint serves hub.dispatch.overview from Firestore storage and fails closed when storage is unavailable',async t=>{
   t.mock.timers.enable({apis:['Date'],now:Date.parse(NOW)});
   const doc=(collection,id,fields)=>({name:`projects/egcw-1ec83/databases/(default)/documents/${collection}/${id}`,updateTime:'2026-09-21T18:00:00.000000Z',fields:encodeFirestoreFields(fields)});

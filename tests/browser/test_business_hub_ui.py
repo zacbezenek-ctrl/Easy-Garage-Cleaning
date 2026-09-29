@@ -155,7 +155,7 @@ class BusinessHubBrowserTests(unittest.TestCase):
     def tearDownClass(cls):
         cls.browser.close(); cls.pw.stop(); cls.server.shutdown(); cls.server.server_close()
     def setUp(self):
-        self.errors = []; self.calls = []; self.gets = []; self.role = 'admin'; self.signed_out = False; self.abort_next = 0; self.replies = []; self.contexts = []; self.dialogs = []; self.dismiss = False; self.hub_auth = []
+        self.errors = []; self.calls = []; self.gets = []; self.role = 'admin'; self.signed_out = False; self.abort_next = 0; self.replies = []; self.contexts = []; self.dialogs = []; self.dismiss = False; self.hub_auth = []; self.hold_get = False; self.held = None; self.hold_post = None; self.held_post = None
     def tearDown(self):
         for context in self.contexts: context.close()
         self.assertEqual(self.errors, [], f'Browser errors: {self.errors}')
@@ -179,10 +179,12 @@ class BusinessHubBrowserTests(unittest.TestCase):
         query = parse_qs(parsed.query)
         if req.method == 'GET':
             self.gets.append(query)
+            if self.hold_get: self.hold_get = False; self.held = route; return
             if self.signed_out: send({'error': 'Open your private business sign-in link or contact Zoe.'}, 401); return
             if query.get('staff') == ['1']: send(snapshot('staff') if query.get('account') else ACCOUNTS); return
             send(snapshot(self.role)); return
         body = req.post_data_json; self.calls.append({'body': copy.deepcopy(body), 'headers': req.headers})
+        if self.hold_post and self.hold_post == body.get('action'): self.hold_post = None; self.held_post = route; return
         if self.abort_next: self.abort_next -= 1; route.abort('connectionfailed'); return
         if self.replies: status, data = self.replies.pop(0); send(data, status); return
         if body['action'] in ('invite_member', 'create_account', 'resend_invite', 'reset_sign_in'):
@@ -402,6 +404,122 @@ class BusinessHubBrowserTests(unittest.TestCase):
         expect(field.locator('.scope-prefill')).to_have_text('Your choice here replaces Synthetic Billing’s saved property access.'); self.audit(page, 'invite prefill note')
         form.get_by_role('button', name='Create private invitation').click(); expect(page.locator('#invite-dialog')).to_be_visible()
         sent = self.wait_posts(page, 'invite_member', 1)[-1]; self.assertEqual((sent['email'], sent['propertyIds']), ('billing@example.invalid', [P1]))
+
+    def release(self, page):
+        # FIX-EDIT-WIPE: the reload after a save or row action is held in route() until more has been typed. Playwright
+        # reports a routed request and then hands it to the route handler in the same step, so one round trip to the page
+        # after expect_request has run the handler that holds it.
+        page.evaluate('0')
+        self.assertIsNotNone(self.held, 'the reload is held until more has been typed')
+        held, self.held = self.held, None
+        held.fulfill(status=200, content_type='application/json', body=json.dumps(snapshot(self.role)))
+    def reload_request(self, page):
+        return page.expect_request(lambda request: request.method == 'GET' and urlparse(request.url).path == '/api/business-hub')
+
+    def test_a_reload_after_a_save_keeps_other_typed_forms_and_open_panels_at_390(self):
+        page = self.open('/business-hub', 390, 844); self.tab(page, 'Properties')
+        north = page.locator('article.property').first; panel = north.locator('details'); edit = panel.locator('form')
+        north.locator('summary').click(); expect(panel).to_have_attribute('open', '')
+        edit.locator('input[name=contact]').fill('Synthetic Night Super 970-555-0199')
+        add = page.locator('section.card').filter(has=page.get_by_role('heading', name='Add a property')).locator('form'); first_id = add.get_attribute('data-id')
+        add.locator('input[name=name]').fill('Synthetic Warehouse East'); add.locator('input[name=address]').fill('9 Synthetic Road, Windsor, CO')
+        self.hold_get = True
+        with self.reload_request(page): add.get_by_role('button', name='Add property').click()
+        # Typed in the open Edit property panel while the tab reloads after the new property was saved.
+        access = edit.locator('textarea[name=access]'); access.fill('Gate opens at 7; ring the super.')
+        self.release(page)
+        expect(page.locator('#notice')).to_have_text('Saved.')
+        expect(panel).to_have_attribute('open', '')
+        expect(edit.locator('input[name=contact]')).to_have_value('Synthetic Night Super 970-555-0199'); expect(access).to_have_value('Gate opens at 7; ring the super.')
+        self.assertEqual(page.evaluate("(()=>{const el=document.activeElement;return [el.name,el.selectionStart,el.selectionEnd]})()"), ['access', 32, 32], 'the field being typed in keeps focus and its caret')
+        # The form that was saved is reset as before, with a new request ID.
+        expect(add.locator('input[name=name]')).to_have_value(''); self.assertNotEqual(add.get_attribute('data-id'), first_id)
+        created = self.posts('save_property')
+        self.assertEqual(len(created), 1); self.assertEqual((created[0]['name'], created[0]['requestId'], created[0]['propertyId']), ('Synthetic Warehouse East', first_id, ''))
+        self.audit(page, 'kept edit property panel')
+        # The normal save of the kept panel sends what was typed, and its panel closes after the reload.
+        edit.get_by_role('button', name='Save property changes').click()
+        expect(panel).not_to_have_attribute('open', '')
+        saved = self.posts('save_property')[-1]
+        self.assertEqual({key: saved[key] for key in ('propertyId', 'name', 'contact', 'access')}, {'propertyId': P1, 'name': 'Synthetic Tower North Parking Structure', 'contact': 'Synthetic Night Super 970-555-0199', 'access': 'Gate opens at 7; ring the super.'})
+        self.assertEqual(len(self.posts('save_property')), 2)
+
+    def test_a_row_action_reload_keeps_a_half_typed_invitation_and_its_property_choice_at_375(self):
+        page = self.open('/business-hub'); self.tab(page, 'Team access'); form = page.locator('form[data-form=invite]'); field = form.locator('.scope-field')
+        request_id = form.get_attribute('data-id'); self.assertRegex(request_id, HEX32)
+        form.locator('input[name=name]').fill('Synthetic Colleague'); form.locator('select[name=role]').select_option('billing')
+        field.get_by_label('Only selected properties').check(); field.get_by_label(re.compile('Synthetic Storage Annex')).check()
+        self.hold_get = True
+        with self.reload_request(page): page.locator('tr', has_text='Synthetic Viewer').get_by_role('button', name='Revoke access').click()
+        # Typed while the team list reloads after the revoke.
+        email = form.locator('input[name=email]'); email.fill('colleague@example.invalid')
+        self.release(page)
+        expect(page.locator('#notice')).to_have_text('Saved.')
+        self.assertEqual([post['memberId'] for post in self.posts('revoke_member')], [M2])
+        expect(form.locator('input[name=name]')).to_have_value('Synthetic Colleague'); expect(email).to_have_value('colleague@example.invalid'); expect(form.locator('select[name=role]')).to_have_value('billing')
+        expect(field.get_by_label('Only selected properties')).to_be_checked(); expect(field.locator('.scope-list')).to_be_visible()
+        expect(field.get_by_label(re.compile('Synthetic Storage Annex'))).to_be_checked(); expect(field.get_by_label(re.compile('Synthetic Tower North'))).not_to_be_checked()
+        self.assertEqual(page.evaluate('document.activeElement.name'), 'email', 'the field being typed in keeps focus')
+        self.assertEqual(form.get_attribute('data-id'), request_id, 'the kept invitation keeps its request ID')
+        self.audit(page, 'kept invitation')
+        # The normal send: one invitation with what was typed, then the form is reset.
+        form.get_by_role('button', name='Create private invitation').click()
+        expect(page.locator('#invite-dialog')).to_be_visible(); page.locator('.dialog-close').click()
+        sent = self.posts('invite_member'); self.assertEqual(len(sent), 1)
+        self.assertEqual({key: sent[0][key] for key in ('name', 'email', 'role', 'propertyIds', 'requestId')}, {'name': 'Synthetic Colleague', 'email': 'colleague@example.invalid', 'role': 'billing', 'propertyIds': [P2], 'requestId': request_id})
+        expect(form.locator('input[name=name]')).to_have_value(''); self.assertNotEqual(form.get_attribute('data-id'), request_id)
+
+    def test_a_saved_message_resets_with_a_new_id_though_typed_in_while_the_reload_is_held_at_375(self):
+        page = self.open('/business-hub'); self.tab(page, 'Messages')
+        form = page.locator('form[data-form=message]'); body = form.locator('textarea[name=body]'); first_id = form.get_attribute('data-id')
+        body.fill('Synthetic first message')
+        self.hold_get = True
+        with self.reload_request(page): form.get_by_role('button', name='Save message to account').click()
+        # Typed into the saved form while the tab reloads after the save.
+        body.press('End'); body.press_sequentially(' extra')
+        self.release(page)
+        expect(page.locator('#notice')).to_have_text('Message saved in this account.')
+        expect(body).to_have_value(''); next_id = form.get_attribute('data-id'); self.assertRegex(next_id, HEX32); self.assertNotEqual(next_id, first_id)
+        self.assertEqual([(m['body'], m['messageId']) for m in self.posts('message')], [('Synthetic first message', first_id)])
+        self.audit(page, 'saved message reset')
+        # The next message goes out under the new ID, never the one already saved.
+        body.fill('Synthetic second message'); form.get_by_role('button', name='Save message to account').click()
+        sent = self.wait_posts(page, 'message', 2); self.assertEqual((sent[1]['body'], sent[1]['messageId']), ('Synthetic second message', next_id))
+
+    def refresh_while_saving(self, page, form, action, button):
+        # The save is held in route() while Refresh draws the tab again: the copy keeps what was typed (and the request ID).
+        self.hold_post = action
+        with page.expect_request(lambda request: request.method == 'POST'): form.get_by_role('button', name=button).click()
+        page.evaluate('0'); self.assertIsNotNone(self.held_post, 'the save is held')
+        form.evaluate("form => { form.dataset.before = '1'; }")
+        with self.reload_request(page): page.locator('#refresh').click()
+        expect(page.locator('form[data-before]')).to_have_count(0)
+    def release_save(self):
+        held, self.held_post = self.held_post, None
+        held.fulfill(status=200, content_type='application/json', body=json.dumps({'ok': True}))
+
+    def test_a_refresh_while_saving_does_not_keep_the_saved_form_or_its_request_id_at_375(self):
+        page = self.open('/business-hub'); self.tab(page, 'Messages')
+        form = page.locator('form[data-form=message]'); body = form.locator('textarea[name=body]'); first_id = form.get_attribute('data-id')
+        body.fill('Synthetic held message')
+        self.refresh_while_saving(page, form, 'message', 'Save message to account')
+        expect(body).to_have_value('Synthetic held message'); self.assertEqual(form.get_attribute('data-id'), first_id)
+        self.release_save()
+        expect(page.locator('#notice')).to_have_text('Message saved in this account.')
+        expect(body).to_have_value(''); next_id = form.get_attribute('data-id'); self.assertRegex(next_id, HEX32); self.assertNotEqual(next_id, first_id)
+        self.assertEqual([(m['body'], m['messageId']) for m in self.posts('message')], [('Synthetic held message', first_id)])
+        body.fill('Synthetic next message'); form.get_by_role('button', name='Save message to account').click()
+        self.assertEqual(self.wait_posts(page, 'message', 2)[1]['messageId'], next_id)
+        # A form without a request ID (billing details) is drawn from the account again once saved, not from the copy.
+        self.tab(page, 'Invoices & billing'); account = page.locator('form[data-form=account]'); reference = account.locator('input[name=reference]')
+        reference.fill('PO-SYN-HELD')
+        self.refresh_while_saving(page, account, 'save_account', 'Save account details')
+        expect(reference).to_have_value('PO-SYN-HELD')
+        self.release_save()
+        expect(page.locator('#notice')).to_have_text('Saved.')
+        expect(reference).to_have_value('PO-2026-SYN')
+        self.assertEqual([post['reference'] for post in self.posts('save_account')], ['PO-SYN-HELD'])
+        self.audit(page, 'saved account details reset')
 
     def test_limited_member_sees_badge_and_cannot_add_properties_at_375(self):
         self.role = 'limited'; page = self.open('/business-hub'); expect(page.locator('#heading')).to_have_text('Overview')

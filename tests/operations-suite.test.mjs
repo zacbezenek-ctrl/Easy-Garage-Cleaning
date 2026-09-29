@@ -154,7 +154,10 @@ test('operations suite follows the EGC operating model instead of duplicating th
 });
 
 test('HighLevel bridge keeps credentials server-side and supports field continuity',()=>{
-  for(const marker of ['HIGHLEVEL_API_KEY','HIGHLEVEL_LOCATION_ID','HIGHLEVEL_JOB_CALENDAR_ID','/opportunities/search','/calendars/events','/calendars/events/appointments','/contacts/upsert','egc-job-scheduled','egc-review-ready','6-month garage check-in'])assert.match(highlevel,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
+  // GHL-TRACK-1 moved the contact upsert, tag and appointment-status writers unchanged into functions/_lib/highlevel-tags.js
+  // (shared with the tag outbox), so the markers are checked across the bridge and that module.
+  const bridge=highlevel+read('functions/_lib/highlevel-tags.js');
+  for(const marker of ['HIGHLEVEL_API_KEY','HIGHLEVEL_LOCATION_ID','HIGHLEVEL_JOB_CALENDAR_ID','/opportunities/search','/calendars/events','/calendars/events/appointments','/contacts/upsert','egc-job-scheduled','egc-review-ready','6-month garage check-in'])assert.match(bridge,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
   assert.doesNotMatch(employee,/HIGHLEVEL_API_KEY\s*[:=]\s*['"][^'"]+/);
   assert.match(crew,/\/api\/highlevel/);
   assert.match(crew,/highlevel_contact_id/);
@@ -849,8 +852,13 @@ test('open-shift scheduling fields persist on the canonical job record',()=>{
   // names that download; (GUSTO-EXPORT on the final TIME-CORRECT) one new tag; (FIX-MONEY-TOTALS) the finance board's
   // unified totals, with HighLevel milestones, notes, the Customer messages buttons and board on today's figures;
   // (FIX-MONEY-TOTALS after GUSTO-EXPORT) one new tag; (AUTH-ROLES on GUSTO-EXPORT) one new tag; (AUTH-ROLES after
-  // FIX-MONEY-TOTALS) one combined tag.
-  assert.match(employee,/employee-suite\.js\?v=20260929totalsroles/);
+  // FIX-MONEY-TOTALS) one combined tag; (FIX-DISPATCH-READY) finance rows carry data-finance-job for Dispatch's price and
+  // deposit links, and the calendar sync records the reminder tag it added; (FIX-DISPATCH-READY second review) a sync whose
+  // tags the HighLevel tag outbox owns records no reminder evidence; (FIX-DISPATCH-READY after AUTH-ROLES) one combined tag;
+  // (FIX-EDIT-WIPE) the Hub chat and customer-thread drafts survive a send; (FIX-EDIT-WIPE after FIX-DISPATCH-READY) one
+  // combined tag; (STAFF-ACCESS) the Team card's Reset sign-in, the approval dialog for approvers the owner allows and the
+  // Password screen's capability; (STAFF-ACCESS after FIX-EDIT-WIPE) one combined tag.
+  assert.match(employee,/employee-suite\.js\?v=20260929editaccess"/);
 });
 
 test('recurring visits request a server-side handoff clone instead of copying prior execution or payments',()=>{

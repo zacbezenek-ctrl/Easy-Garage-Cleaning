@@ -76,6 +76,7 @@ class CrewNotificationsBrowserTests(unittest.TestCase):
         self.prefs = {'sms': False, 'revision': '', 'updatedAt': '', 'phone': '(•••) •••-0155', 'phoneStatus': 'on_file'}
         self.read_failures = []; self.lose_next_post = False
         self.team = team(); self.team_reads = 0; self.retry_replaced = False; self.retry_regrouped = []
+        self.reads = 0; self.hold_get = False; self.held = None
         self.context = None
 
     def tearDown(self):
@@ -100,10 +101,11 @@ class CrewNotificationsBrowserTests(unittest.TestCase):
         if request.method == 'GET' and parsed.query == 'view=team':
             self.team_reads += 1; send(copy.deepcopy(self.team)); return
         if request.method == 'GET':
+            self.reads += 1
+            if self.hold_get: self.hold_get = False; self.held = route; return
             if self.read_failures:
                 status, code = self.read_failures.pop(0); send({'ok': False, 'code': code, 'error': 'Synthetic failure for ' + code}, status); return
-            send({'ok': True, 'authority': 'employee_hub', 'timeZone': 'America/Denver', 'viewer': {'id': 'synthetic.crew'}, 'notices': copy.deepcopy(self.rows),
-                  'preferences': copy.deepcopy(self.prefs), 'coverage': {'complete': True, 'asOf': NOW}}); return
+            send(self.feed()); return
         body = request.post_data_json; self.posts.append(copy.deepcopy(body))
         if body['requestId'] in self.completed: send(self.completed[body['requestId']]); return
         if body['action'] == 'link_staff_contact':
@@ -125,6 +127,10 @@ class CrewNotificationsBrowserTests(unittest.TestCase):
         self.completed[body['requestId']] = response
         if self.lose_next_post: self.lose_next_post = False; route.abort('connectionfailed'); return
         send(response)
+
+    def feed(self):
+        return {'ok': True, 'authority': 'employee_hub', 'timeZone': 'America/Denver', 'viewer': {'id': 'synthetic.crew'}, 'notices': copy.deepcopy(self.rows),
+                'preferences': copy.deepcopy(self.prefs), 'coverage': {'complete': True, 'asOf': NOW}}
 
     def fits(self, width):
         return self.page.evaluate('''()=>{const html=document.documentElement;html.style.overflowX='visible';document.body.style.overflowX='visible';
@@ -333,6 +339,55 @@ class CrewNotificationsBrowserTests(unittest.TestCase):
         page.locator('[data-attention]').nth(0).get_by_role('button', name=re.compile('^Send again')).click()
         expect(page.locator('[data-attention]')).to_have_count(1)
         self.assertEqual((self.posts[1]['action'], self.posts[1]['ids']), ('retry', ['crew_' + 'e' * 40]))
+
+    def test_a_typed_contact_and_text_setting_survive_a_refresh_and_the_hub_refresh_waits_for_them(self):
+        page = self.open(375, page='crew-alerts-dispatcher.html')
+        members = page.locator('[data-member]'); expect(members).to_have_count(2)
+        sms = page.get_by_label('Text me when my schedule changes'); sms.check()
+        expect(page.get_by_role('button', name='Save text setting')).to_be_enabled()
+        members.nth(1).get_by_role('button', name=re.compile('^Link HighLevel contact for Riley')).click()
+        contact = page.get_by_label('HighLevel contact ID'); expect(contact).to_be_focused(); contact.fill('staff-')
+        # The screen's Refresh reads the notices again; that read is held until more has been typed.
+        self.rows = notices() + [{'id': 'crew_' + '0' * 40, 'intent': 'restored', 'jobId': 'job-12', 'jobType': 'job', 'serviceType': '', 'slot': slot('2026-09-26', '09:00', '11:00'),
+                                  'slots': [slot('2026-09-26', '09:00', '11:00')], 'previousSlots': [], 'createdAt': NOW, 'delivery': 'queued', 'acknowledged': False}]
+        self.team['team'][0]['sms'] = False
+        self.hold_get = True
+        with page.expect_request(lambda request: request.method == 'GET' and urlparse(request.url).path == '/api/crew-notifications' and not urlparse(request.url).query):
+            page.get_by_role('button', name='Refresh', exact=True).click()
+        contact.press('End'); contact.press_sequentially('riley')
+        page.evaluate('0')
+        self.assertIsNotNone(self.held, 'the read is held until more has been typed')
+        held, self.held = self.held, None
+        held.fulfill(status=200, content_type='application/json', body=json.dumps(self.feed()))
+        # Both reads have drawn the screen again: the new notice, then the crew list.
+        expect(page.locator('[data-notice="crew_' + '0' * 40 + '"]')).to_contain_text('Job back on')
+        expect(members.nth(0)).to_contain_text('Texts off')
+        expect(contact).to_have_value('staff-riley')
+        self.assertEqual(page.evaluate("(()=>{const el=document.activeElement;return [el.name,el.selectionStart,el.selectionEnd]})()"), ['contactId', 11, 11], 'the contact ID keeps focus and its caret')
+        expect(sms).to_be_checked(); expect(page.get_by_role('button', name='Save text setting')).to_be_enabled()
+        # The Hub's top-bar refresh waits while there are unsaved edits: it makes no request.
+        reads = (self.reads, self.team_reads)
+        page.evaluate('window.EGCCrewNotifications.refresh()')
+        self.assertEqual((self.reads, self.team_reads), reads)
+        expect(contact).to_have_value('staff-riley')
+        size = self.fits(375)
+        self.assertLessEqual(size['width'], 375, size['wide'])
+        self.assertEqual(self.posts, [], 'a refresh saves nothing')
+        # The normal saves send what was typed.
+        page.get_by_role('button', name='Save contact').click()
+        expect(page.locator('.ca-status')).to_have_text('Staff contact linked for Riley Other with a long synthetic surname.')
+        expect(members.nth(1)).to_contain_text('HighLevel contact staff-riley')
+        self.assertEqual((self.posts[0]['action'], self.posts[0]['employeeId'], self.posts[0]['contactId'], self.posts[0]['expectedRevision']), ('link_staff_contact', 'crew2', 'staff-riley', ''))
+        expect(sms).to_be_checked()
+        page.get_by_role('button', name='Save text setting').click()
+        expect(page.locator('.ca-status')).to_have_text('Schedule texts are on.')
+        self.assertEqual((self.posts[1]['action'], self.posts[1]['sms'], self.posts[1]['expectedRevision']), ('set_preferences', True, ''))
+        self.assertEqual(len(self.posts), 2)
+        # With nothing unsaved, the top-bar refresh reads again.
+        reads = self.reads
+        page.evaluate('window.EGCCrewNotifications.refresh()')
+        self.assertEqual(self.reads, reads + 1)
+        page.screenshot(path=str(RESULTS / 'crew-alerts-kept-edits-375.png'), full_page=True)
 
 
 if __name__ == '__main__':
