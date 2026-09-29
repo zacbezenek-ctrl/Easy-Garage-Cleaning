@@ -415,6 +415,10 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   site on disk minus staff and redirected pages) on iPhone 375, Pixel 7, iPad Mini 768, desktop 1440 and 320px, with an
   empty allowlist. A second styles.css max-width:1023px block clears the remaining 602 targets (blog, FAQ, what-we-take,
   thank-you, apply, projects, legacy city pages); the before-after slider is 44px tall. styles.css is ?v=20260928p.
+- **CHANGE-ORDERS** Portal-approved change orders are billed through change-order lines (functions/_lib/change-orders.js)
+  behind `CHANGE_ORDER_BILLING_ENABLED`: money-core, the portal balance and card checkout, the messaging scheduler and crew
+  closeout all count them, a manager can void one (change_order.void, which lowers a matching issued invoice and closes a
+  stale portal checkout), and scripts/backfill-change-orders.mjs lists stored totals it cannot explain for review.
 
 ## In progress
 
@@ -511,6 +515,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | SITE-4 | Public-site mobile performance pass (Lighthouse >= 90 on every page; enforcement on) | merged (38125bf) |
 | MOBILE-TAP | 44px tap targets on public pages and Hub shells (allowlist to zero) | merged (502f9b4) |
 | PUBLIC-TAP | 44px tap targets and no horizontal scroll on every public page | merged (3a8d78c) |
+| CHANGE-ORDERS | Bill approved portal change orders as lines; manager void (flag off) | merged (ab396f7) |
 
 ## Next
 

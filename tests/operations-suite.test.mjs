@@ -829,8 +829,9 @@ test('open-shift scheduling fields persist on the canonical job record',()=>{
   // Bumped deliberately (LEGACY-SEND): the customer thread delivery labels changed; (TEAM-UI) then (PAY-TIMESHEETS merged
   // with PRICE-SCRUB): the timesheet screen mounts the payroll week card and shows pay only where the server sent it;
   // (PAY-TIMESHEETS fourth check): the profile form's rate field only for a viewer who sets pay; (SYNC-QUEUE) page-load
-  // sync retries skip visits the server schedule-sync queue owns; (PAY-TIMESHEETS after SYNC-QUEUE and P1-06) one new tag.
-  assert.match(employee,/employee-suite\.js\?v=20260929payowner/);
+  // sync retries skip visits the server schedule-sync queue owns; (PAY-TIMESHEETS after SYNC-QUEUE and P1-06) one new tag;
+  // (CHANGE-ORDERS) "Send decision" now appends to the decisions saved at that moment in a transaction.
+  assert.match(employee,/employee-suite\.js\?v=20260929change/);
 });
 
 test('recurring visits request a server-side handoff clone instead of copying prior execution or payments',()=>{

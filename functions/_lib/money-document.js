@@ -130,7 +130,8 @@ function payments(job, { tips }) {
 }
 
 // What the portal checkout would charge right now, in cents (payable() in
-// customer-payments.js, still on the legacy money state), or null if it refuses.
+// customer-payments.js, on the legacy money state plus billed change orders),
+// or null if it refuses.
 function checkoutCents(job) {
   try { return Math.round(checkoutPayable(job).dueNow * 100); } catch { return null; }
 }
@@ -217,8 +218,9 @@ export function moneyDocumentModel(job, { kind, now, payUrl = null, contact = tr
   const closed = kind === 'invoice' && ['void', 'superseded'].includes(status) || kind === 'estimate' && ['expired', 'superseded'].includes(status);
   const due = Number.isSafeInteger(totals.dueNowCents) && totals.dueNowCents > 0, deposit = totals.purpose === 'deposit';
   const offer = url && due && !needsReview && !cancelled && !closed && (approval.approved || !deposit);
-  // The checkout still charges the legacy amount (no approved changes, tips
-  // counted as paid): the button appears only when it charges this figure.
+  // The checkout charges the legacy amount plus change orders billed through
+  // the portal (tips count as paid, an approval without a change-order line
+  // is not charged): the button appears only when it charges this figure.
   const charge = offer ? checkoutCents(job) : null;
   const pay = offer && charge !== null && charge >= 50 && charge === totals.dueNowCents ? { url, amountCents: totals.dueNowCents, label: `Pay ${usd(totals.dueNowCents)} ${deposit ? 'deposit' : 'balance'} securely` } : null;
   let payNote = '';

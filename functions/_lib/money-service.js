@@ -5,6 +5,7 @@ import { MAX_TOTAL_CENTS, customerLineItem, customerMoneyTotals, depositCents, e
 import { estimateChanged, estimateFingerprint, legacyLineItems } from './quote-model.js';
 import { ledgerPatch, reconcileLedger } from './money-ledger.js';
 import { customerPaymentNeedsReview } from './customer-payments.js';
+import { billedChangeOrders, voidChangeOrder } from './change-orders.js';
 import { hubRecordEligibility } from './funnel-definitions.js';
 import { JOB_LABOR_COSTS, laborCostVisible, laborOnJob, laborRecordPatch, legacyJobLabor, legacyLaborMove, validLaborCents } from './job-labor-private.js';
 
@@ -26,10 +27,11 @@ import { JOB_LABOR_COSTS, laborCostVisible, laborOnJob, laborRecordPatch, legacy
  * after that commit on a best-effort basis, as the legacy tool did. A replay returns
  * the saved result; the same requestId with another payload is
  * money_idempotency_conflict. Nothing here sends anything to a customer:
- * estimate.mark_sent only records that a person sent the estimate.
+ * estimate.mark_sent only records that a person sent the estimate, and
+ * change_order.void stops billing a change the customer approved in the portal.
  * All math and record shapes come from money-core/quote-model (integer cents).
  */
-export const MONEY_ACTIONS = Object.freeze(['estimate.save', 'estimate.record_approval', 'estimate.mark_sent', 'deposit.record_offline', 'payment.record_offline', 'invoice.issue', 'invoice.void', 'costs.save']);
+export const MONEY_ACTIONS = Object.freeze(['estimate.save', 'estimate.record_approval', 'estimate.mark_sent', 'deposit.record_offline', 'payment.record_offline', 'invoice.issue', 'invoice.void', 'change_order.void', 'costs.save']);
 export const OFFLINE_METHODS = Object.freeze(['cash', 'check', 'card_terminal', 'bank_transfer', 'other']);
 export const SENT_CHANNELS = Object.freeze(['email', 'text', 'in_person', 'phone', 'other']);
 export const COST_KEYS = Object.freeze(['labor', 'disposal', 'materials', 'fuel', 'processing', 'other']);
@@ -44,7 +46,7 @@ const COMMON = ['action', 'requestId', 'jobId', 'expectedRevision', 'actorId'];
 const FIELDS = {
   'estimate.save': ['lineItems', 'scope', 'depositCents', 'validUntil'], 'estimate.record_approval': ['approvedBy'], 'estimate.mark_sent': ['channel', 'note'],
   'deposit.record_offline': ['amountCents', 'method', 'reference', 'receivedAt'], 'payment.record_offline': ['amountCents', 'method', 'reference', 'receivedAt'],
-  'invoice.issue': ['dueDate', 'customerReference'], 'invoice.void': ['reason'], 'costs.save': ['costs', 'expectedLaborRevision'],
+  'invoice.issue': ['dueDate', 'customerReference'], 'invoice.void': ['reason'], 'change_order.void': ['changeOrderId', 'reason'], 'costs.save': ['costs', 'expectedLaborRevision'],
 };
 const FINAL = new Set(['money_idempotency_conflict', 'money_changed_since_operation', 'money_actor_changed']);
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -279,6 +281,39 @@ function voidInvoice({ job, input, actor, now }) {
   return { patch, warnings: totals.appliedCents > 0 ? [{ code: 'payments_kept', message: 'Recorded payments stay on the job. Issue a new invoice to apply them.' }] : [], reason };
 }
 
+// A billed change-order line (change-orders.js) that was priced or approved
+// by mistake: the line and its decision stay as evidence, marked void, and an
+// issued invoice that still matches the job's money drops to the new total in
+// the same commit. Money already paid for it stays recorded (refund it apart).
+function voidChange({ job, input, actor, now }) {
+  if (typeof input.changeOrderId !== 'string' || !/^change-[A-Za-z0-9_-]{1,60}$/.test(input.changeOrderId)) throw fail('request_invalid', 'Choose an approved change to void.');
+  const reason = text(input.reason, 'A reason for voiding', 500, { required: true, min: 3 });
+  const planned = voidChangeOrder(job, input.changeOrderId, { reason, by: actor.user, now });
+  if (!planned) throw fail('change_order_missing', 'This change is no longer billed on the job. Refresh the job money.', 409);
+  const before = customerMoneyTotals(job), after = customerMoneyTotals({ ...job, ...planned.patch }), patch = { ...planned.patch }, warnings = [];
+  const invoice = plain(job.invoice) ? job.invoice : null, status = String(invoice?.status || '').toLowerCase();
+  if (invoice && given(invoice.amount) && !['draft', 'void', 'superseded'].includes(status)) {
+    if (before.totalCents !== null && moneyCents(invoice.amount) === before.totalCents && after.totalCents !== null && after.appliedCents !== null) {
+      const balanceCents = Math.max(0, after.totalCents - after.appliedCents), next = { ...invoice, amount: after.totalCents / 100, balance: balanceCents / 100, updatedAt: now };
+      // The invoice's paid figure is brought to the recorded payments the balance was computed from (it goes stale when a payment is recorded after the invoice):
+      // money-core's applied payments (tips excluded), the figure a portal approval raises the invoice with (raisedInvoice), and only when money-core can read them.
+      if (given(invoice.paid)) next.paid = after.appliedCents / 100;
+      if (Number.isSafeInteger(invoice.paidCents)) next.paidCents = after.appliedCents;
+      if (Number.isSafeInteger(invoice.amountCents)) next.amountCents = after.totalCents;
+      if (Number.isSafeInteger(invoice.balanceCents)) next.balanceCents = balanceCents;
+      if (Number.isSafeInteger(invoice.approvedChangeCents)) next.approvedChangeCents = after.approvedChangeCents;
+      if (Array.isArray(invoice.lineItems)) {
+        next.lineItems = invoice.lineItems.filter(item => item?.id !== planned.line.id);
+        if (next.lineItems.length === invoice.lineItems.length) warnings.push({ code: 'invoice_lines_stale', message: 'The invoice total was lowered, but its lines did not list this change. Issue the invoice again to refresh its lines.' });
+      }
+      if (balanceCents === 0 && ['issued', 'partial', 'overdue'].includes(status)) next.status = job.payment?.verified === true ? 'paid' : 'pending_verification';
+      patch.invoice = next;
+    } else warnings.push({ code: 'invoice_not_updated', message: 'The issued invoice did not match this job\'s money, so it was left as it was. Issue the invoice again to show the new total.' });
+  }
+  if (after.overpaidCents > 0) warnings.push({ code: 'payments_exceed_total', message: `Recorded payments are ${usd(after.overpaidCents)} more than the new total. The payments were kept; refund the difference and review them.` });
+  return { patch, warnings, reason: `${usd(planned.line.totalCents)} ${planned.line.name}: ${reason}` };
+}
+
 // Labor dollars are owner-only (JOB-COST-PRIVACY): a viewer who does not see them saves the other five costs, and
 // any laborCents or expectedLaborRevision from them is refused by its presence alone, never compared with the saved
 // figure. Their save moves an older labor copy off the job into the private record, except a copy that needs the
@@ -315,7 +350,7 @@ async function saveCosts({ store, job, input, actor, now }) {
   return plan(saved, move.remove.filter(path => !path.startsWith('costs.')), move.writes, record ? record.laborCents : move.writes.length ? move.writes[0].patch.laborCents : before);
 }
 
-const PLANS = { 'estimate.save': saveEstimate, 'estimate.record_approval': recordApproval, 'estimate.mark_sent': markSent, 'deposit.record_offline': recordOffline('deposit'), 'payment.record_offline': recordOffline('payment'), 'invoice.issue': issueInvoice, 'invoice.void': voidInvoice, 'costs.save': saveCosts };
+const PLANS = { 'estimate.save': saveEstimate, 'estimate.record_approval': recordApproval, 'estimate.mark_sent': markSent, 'deposit.record_offline': recordOffline('deposit'), 'payment.record_offline': recordOffline('payment'), 'invoice.issue': issueInvoice, 'invoice.void': voidInvoice, 'change_order.void': voidChange, 'costs.save': saveCosts };
 
 /**
  * Money fields for the audit trail: no signatures, notes or contact details.
@@ -329,6 +364,7 @@ export function moneySnapshot(job, { costs = false, laborCents } = {}) {
   return { status: job.status ?? null, pipelineStatus: job.pipelineStatus ?? null, quoteStatus: job.quoteStatus ?? null, total: job.total ?? null, estimate,
     customerApproval: pick(job.customerApproval, ['status', 'approvedAt', 'approvedBy', 'amount', 'source', 'supersededAt', 'reason']), deposit: pick(job.deposit, ['amount', 'paidAmount', 'status', 'reference', 'method', 'verified']),
     payment: pick(job.payment, ['amount', 'lastAmount', 'lastReceivedAt', 'method', 'reference', 'verified', 'recordedBy']), invoice: pick(job.invoice, ['number', 'status', 'amount', 'paid', 'balance', 'dueDate', 'issuedAt', 'voidedAt', 'voidReason', 'supersededAt']),
+    ...(Array.isArray(job.changeOrders) ? { approvedChangeTotal: job.approvedChangeTotal ?? null, changeOrders: job.changeOrders.slice(0, 50).map(line => pick(line, ['id', 'decisionId', 'totalCents', 'approvedAt', 'status', 'voidedAt', 'voidReason'])) } : {}),
     ...(costs ? { costs: snapshotCosts(job, laborCents) } : {}), paymentLedger: Array.isArray(job.paymentLedger) ? job.paymentLedger.slice(0, 50).map(row => pick(row, ['id', 'kind', 'amountCents', 'method', 'at'])) : null };
 }
 
@@ -381,6 +417,8 @@ export function moneyProjection(job, now, { laborRecord = null, laborHidden = fa
     invoice: { status: invoiceStatus(job, now), savedStatus: str(invoice?.status), number: str(invoice?.number), amountCents: Number.isSafeInteger(invoice?.amountCents) ? invoice.amountCents : moneyCents(invoice?.amount), dueDate: validDate(invoice?.dueDate) ? invoice.dueDate : null,
       issuedAt: str(invoice?.issuedAt, 40), customerReference: str(invoice?.customerReference, 120), voidedAt: str(invoice?.voidedAt, 40), voidReason: str(invoice?.voidReason, 500) },
     invoicePreview: invoicePreview(job, totals),
+    // Changes the customer approved in the portal that are billed on top of the quote (a manager can void one).
+    changeOrders: billedChangeOrders(job).map(line => ({ id: line.id, name: str(line.name, 160) || '', totalCents: line.totalCents, approvedAt: str(line.approvedAt, 40), approvedBy: str(line.approvedBy, 120), backfilled: line.backfilled === true })),
     payments: ledger.entries.map(projectEntry), ledger: { stored: ledger.stored, complete: ledger.complete, legacyCents: ledger.legacyCents, unreconciledCents: ledger.unreconciledCents, issues: ledger.issues },
     costs: costsProjection(job, laborRecord, laborHidden),
   };

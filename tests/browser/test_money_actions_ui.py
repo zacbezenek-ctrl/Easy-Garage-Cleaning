@@ -12,11 +12,17 @@ CLOCK = '2026-09-23T05:30:00Z'
 UUID = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$')
 PROJECTIONS = r'''
 import { moneyProjection } from './functions/_lib/money-service.js';
+import { respondToDecision } from './functions/_lib/change-orders.js';
 const NOW = '2026-09-23T05:30:00.000Z', line = (id, name, unitCents, quantity = 1, extra = {}) => ({ id, kind: 'service', name, description: '', quantity, unitCents, totalCents: unitCents * quantity, amount: unitCents * quantity / 100, ...extra });
 const base = { type: 'job', customerId: 'c1', customer: 'Synthetic Customer', serviceType: 'Garage transformation', date: '2026-09-24', status: 'scheduled', pipelineStatus: 'scheduled', phone: '9705550100' };
 const estimate = { number: 'EST-ABC123', status: 'draft', revision: 1, amount: 1400, depositRequired: 700, scope: 'Clear and reset the two-car garage.', validUntil: '2026-10-06', lineItems: [line('line-1', 'Garage cleanout', 90000), line('line-2', 'Shelving install', 25000, 2)] };
+// A change the customer approved in the portal with billing on: a billed change-order line.
+const working = { ...base, status: 'in_progress', pipelineStatus: 'in_progress', total: 1400, estimate: { ...estimate, status: 'accepted' }, customerApproval: { status: 'approved', amount: 1400 },
+  customerDecisions: [{ id: 'decision-freezer', title: 'Haul the old freezer', details: '', priceDelta: 150, status: 'pending' }] };
+const approval = { decisionId: 'decision-freezer', response: 'approved', respondedBy: 'Synthetic Customer', note: '', requestId: '2b7f0c1e-5a4d-4c3b-9e8f-7a6b5c4d3e2f', priceDeltaCents: 15000 };
 const jobs = {
   'job-draft': { ...base, total: 1400, estimate },
+  'job-billed': { ...working, ...respondToDecision(working, approval, { billing: true, now: NOW }).patch },
   'job-new': { ...base, total: 800 },
   'job-options': { ...base, total: 900, estimate: { ...estimate, amount: 900, depositRequired: 450, lineItems: [line('base', 'Garage cleanout', 90000), line('epoxy', 'Epoxy floor', 300000, 1, { optional: true, selected: false })] } },
   'job-approved': { ...base, total: 1400, estimate: { ...estimate, status: 'accepted' }, customerApproval: { status: 'approved', approvedBy: 'Synthetic Customer', amount: 1400 } },
@@ -177,6 +183,30 @@ class MoneyActionsBrowserTests(unittest.TestCase):
         for width in [375, 320]:
             self.page.set_viewport_size({'width': width, 'height': 812}); self.assertLessEqual(self.page.evaluate("document.querySelector('.egc-money').scrollWidth"), width)
         (ROOT / 'test-results').mkdir(exist_ok=True); self.page.screenshot(path=str(ROOT / 'test-results' / 'money-invoice-320.png'))
+
+    def test_a_billed_change_is_voided_only_with_a_reason_and_nothing_is_sent(self):
+        self.open('job-billed', 'invoice')
+        change = self.page.locator('.em-line', has_text='Approved change: Haul the old freezer')
+        expect(change).to_contain_text('$150.00'); expect(change).to_contain_text('Approved by Synthetic Customer in the portal')
+        expect(self.page.locator('.em-preview-total')).to_contain_text('$1,550.00')
+        change.scroll_into_view_if_needed(); (ROOT / 'test-results').mkdir(exist_ok=True); self.page.screenshot(path=str(ROOT / 'test-results' / 'money-billed-change-375.png'))
+        change.get_by_role('button', name='Void this change…', exact=True).click()
+        expect(self.page.locator('#em-title')).to_contain_text('Void approved change'); expect(self.primary()).to_have_text('Void change')
+        expect(self.page.locator('.em-body')).to_contain_text('The customer is no longer charged for it')
+        self.page.get_by_role('button', name='Back', exact=True).click(); expect(self.page.locator('.em-preview-total')).to_be_visible()
+        self.page.get_by_role('button', name='Void this change…', exact=True).click()
+        self.primary().click(); expect(self.page.get_by_role('alert')).to_contain_text('why the change'); self.assertEqual(self.posts, [])
+        self.label('Reason').fill('The crew left the freezer in place')
+        for width in [375, 320]:
+            self.page.set_viewport_size({'width': width, 'height': 812}); self.assertLessEqual(self.page.evaluate("document.querySelector('.egc-money').scrollWidth"), width)
+            heights = self.page.locator('.egc-money button:visible, .egc-money textarea:visible').evaluate_all('els=>els.map(e=>e.getBoundingClientRect().height)')
+            self.assertTrue(all(height >= 44 for height in heights), heights)
+        (ROOT / 'test-results').mkdir(exist_ok=True); self.page.screenshot(path=str(ROOT / 'test-results' / 'money-void-change-320.png'))
+        self.primary().click(); expect(self.page.get_by_role('dialog')).to_have_count(0)
+        body = self.posts[-1]
+        self.assertTrue(UUID.match(body['requestId']))
+        self.assertEqual({key: body[key] for key in ('action', 'jobId', 'expectedRevision', 'actorId', 'changeOrderId', 'reason')}, {'action': 'change_order.void', 'jobId': 'job-billed', 'expectedRevision': 'r1', 'actorId': 'zacb', 'changeOrderId': 'change-decision-freezer', 'reason': 'The crew left the freezer in place'})
+        self.assertEqual(self.page.evaluate('toasts.at(-1)'), 'Approved change voided · nothing was sent to the customer')
 
     def test_flag_turned_off_while_the_dialog_is_open_hands_over_to_the_standard_tools(self):
         self.open('job-invoiced', 'payment')

@@ -6,10 +6,10 @@ const ROOT = 'projects/egcw-1ec83/databases/(default)/documents';
 const BASE = `https://firestore.googleapis.com/v1/${ROOT}`;
 const failure = (code, message, status = 503) => Object.assign(new Error(message), { code, status });
 
-// Everything the money reads, lists, CSV exports and the ledger backfill need.
+// Everything the money reads, lists, CSV exports and the ledger and change-order backfills need.
 // A mask is mandatory: raw job bodies also carry signature images and private notes.
 export const MONEY_JOB_FIELDS = Object.freeze(['type', 'recordType', 'customer', 'customerId', 'date', 'status', 'pipelineStatus', 'serviceType', 'scopeSummary', 'notify',
-  'total', 'priceQuoted', 'lockedTotal', 'rate', 'estimate', 'customerApproval', 'quoteStatus', 'invoice', 'payment', 'deposit', 'approvedChangeTotal', 'customerDecisions',
+  'total', 'priceQuoted', 'lockedTotal', 'rate', 'estimate', 'customerApproval', 'quoteStatus', 'invoice', 'payment', 'deposit', 'approvedChangeTotal', 'customerDecisions', 'changeOrders',
   'giftWallet.redemptions', 'refunds', 'completedAt', 'postJobChecklist.completedAt', 'postJobProgress.standardItems', 'costs',
   'paymentLedger', 'paymentLedgerStatus', 'paymentLedgerIssues', 'paymentLedgerVersion', 'moneyRequestId']);
 

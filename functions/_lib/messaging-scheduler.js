@@ -27,9 +27,12 @@ export const CRON_ACTOR = Object.freeze({ id: CRON_ACTOR_ID, kind: 'system', sou
 export const SCHEDULED_KINDS = Object.freeze(['day_before_reminder', 'deposit_reminder', 'payment_reminder', 'estimate_expiring']);
 // The only job fields the scheduler reads. Money and contact fields feed the
 // same helpers the portal and checkout use; nothing else leaves storage.
+// changeOrders carries the billed change-order lines (change-orders.js): the
+// checkout balance (customerMoneyState) bills them, so without them a change
+// money-core counts would read as a money_mismatch and never be reminded.
 export const SCHEDULER_JOB_FIELDS = Object.freeze([
   'type','recordType','date','time','status','pipelineStatus','notify','customerAutomationEnabled','phone','email',
-  'estimate','invoice','payment','deposit','total','priceQuoted','lockedTotal','rate','customerApproval.amount','customerDecisions','approvedChangeTotal',
+  'estimate','invoice','payment','deposit','total','priceQuoted','lockedTotal','rate','customerApproval.amount','customerDecisions','approvedChangeTotal','changeOrders',
   'giftWallet.redemptions','refunds','completedAt','postJobChecklist.completedAt','postJobProgress.standardItems',
   'customerPortalInvitationRequestedAt','customerPortalInvitation','communicationLog','automationMilestones',
 ]);

@@ -1,5 +1,6 @@
 import { firestoreFetch } from './firebase-service-account.js';
 import { readJob, patchJob, encodeFirestoreFields, decodeFirestoreFields } from './firestore-job.js';
+import { billedChangeCents } from './change-orders.js';
 
 const DB = 'https://firestore.googleapis.com/v1/projects/egcw-1ec83/databases/(default)/documents';
 const clean = (value, limit = 180) => String(value || '').replace(/[\r\n\t]/g, ' ').trim().slice(0, limit);
@@ -29,18 +30,27 @@ export function customerPaymentNeedsReview(job) {
   return !(job.deposit?.verified === true && cents(job.deposit.paidAmount) >= cents(paid));
 }
 
+// Crew can update an unpaid invoice during closeout, but cannot edit these
+// protected quote fields. An invoice never authorizes a larger card charge.
+const quoteCents = job => cents(job.estimate?.amount ?? job.total ?? job.priceQuoted ?? job.lockedTotal ?? job.rate ?? job.customerApproval?.amount);
+
+/** The quote the customer signs, without approved change orders (what the estimate card shows and an approval binds to). */
+export function customerQuoteTotal(job) {
+  return quoteCents(job) / 100;
+}
+
 export function customerMoneyState(job) {
-  // Crew can update an unpaid invoice during closeout, but cannot edit these
-  // protected quote fields. An invoice never authorizes a larger card charge.
-  const totalCents = cents(job.estimate?.amount ?? job.total ?? job.priceQuoted ?? job.lockedTotal ?? job.rate ?? job.customerApproval?.amount);
+  // Change-order lines billed from portal approvals (change-orders.js) are owed on top of the quote.
+  const totalCents = quoteCents(job) + billedChangeCents(job);
   const paidCents = cents(job.payment?.amount ?? job.invoice?.paid ?? job.invoice?.amountPaid ?? job.deposit?.paidAmount);
   return { total: totalCents / 100, paid: paidCents / 100, balance: Math.max(0, totalCents - paidCents) / 100 };
 }
 
 export function customerDepositState(job, finance = customerMoneyState(job)) {
   // Honor an existing signed deposit term; every new quote defaults to 50%.
-  const saved = job.estimate?.depositRequired ?? job.deposit?.amount;
-  const requiredCents = Math.min(cents(finance.total), saved == null ? Math.round(cents(finance.total) / 2) : cents(saved));
+  // The term is on the quote: billed change orders are due with the balance.
+  const saved = job.estimate?.depositRequired ?? job.deposit?.amount, quote = Math.max(0, cents(finance.total) - billedChangeCents(job));
+  const requiredCents = Math.min(quote, saved == null ? Math.round(quote / 2) : cents(saved));
   const dueCents = Math.max(0, requiredCents - cents(finance.paid));
   const rawStatus = String(job.pipelineStatus || job.status || '').toLowerCase();
   const finalWalkthroughDone = (job.postJobProgress?.standardItems || []).some(item => item.key === '0_1' && item.completed === true);
@@ -415,6 +425,35 @@ export async function recordCrewStripePayment(env, checkout, { expectedJobId = '
 
 const fingerprint = job => JSON.stringify({ total: customerMoneyState(job).total, paid: customerMoneyState(job).paid, ...customerDepositState(job), revision: job.estimate?.revision || 1, approval: job.customerApproval?.status || job.estimate?.status || job.quoteStatus || '', status: job.pipelineStatus || job.status || '' });
 
+/**
+ * Closes the job's portal card checkout when it no longer charges exactly what
+ * is due (a Hub change_order.void lowered the balance after it opened), so the
+ * customer cannot pay the old amount; the next Pay opens one for the new
+ * figure. Returns 'none' (no checkout is open), 'current' (it still charges
+ * exactly what is due), 'expired' (it was closed now), 'paid' (the customer
+ * already completed it; the payment webhook records it) or 'pending' (it is
+ * still being created, or Stripe did not close it). Throws when storage or
+ * Stripe cannot be read.
+ */
+export async function expireStaleCustomerCheckout(env, secret, jobId) {
+  const ledger = await readLedger(env, jobId), state = ledger.state;
+  if (!state.status || ['expired', 'settled'].includes(state.status)) return 'none';
+  if (!state.sessionId) return 'pending';
+  const job = await readJob(env, jobId);
+  if (!job?.__updateTime) throw failure('Payment information is temporarily unavailable', 503);
+  let due = null;
+  try { due = cents(payable(job).dueNow); } catch { /* nothing may be charged now: close it */ }
+  // Charging exactly what is due is harmless (a deposit checkout survives a void of a change due with the balance).
+  if (due !== null && due >= 50 && Number(state.amountCents) === due) return 'current';
+  const session = `checkout/sessions/${encodeURIComponent(state.sessionId)}`, checkout = await stripeRequest(secret, session);
+  if (checkout.status === 'complete') return 'paid';
+  if (checkout.status === 'open') {
+    if ((await stripeRequest(secret, `${session}/expire`, { method: 'POST' })).status !== 'expired') return 'pending';
+  } else if (checkout.status !== 'expired') return 'pending';
+  await saveLedger(env, jobId, { ...state, status: 'expired' }, ledger.version);
+  return 'expired';
+}
+
 // now (ISO) stamps a charge this call records or holds for review.
 export async function createCustomerStripeCheckout(env, secret, jobId, origin, { now = new Date().toISOString() } = {}) {
   let ledger = await readLedger(env, jobId), state = ledger.state;
@@ -470,7 +509,7 @@ export async function createCustomerStripeCheckout(env, secret, jobId, origin, {
       state = ledger.state;
     } else throw failure('Your previous checkout is still being confirmed. Please try again.');
   }
-  const deposit = payable(job), amountCents = cents(deposit.dueNow);
+  const deposit = payable(job), amountCents = cents(deposit.dueNow), changeCents = billedChangeCents(job);
   if (amountCents < 50) throw failure(customerMoneyState(job).balance < .5 ? 'There is no outstanding balance' : 'Your deposit is paid. The remaining balance is due on completion.');
   await checkoutReviewHold(env, jobId);
   const params = new URLSearchParams({
@@ -481,11 +520,12 @@ export async function createCustomerStripeCheckout(env, secret, jobId, origin, {
     'line_items[0][quantity]': '1', 'line_items[0][price_data][currency]': 'usd',
     'line_items[0][price_data][unit_amount]': String(amountCents),
     'line_items[0][price_data][product_data][name]': `Easy Garage Cleaning — ${deposit.purpose === 'deposit' ? 'upfront deposit' : 'remaining balance'}`,
-    'line_items[0][price_data][product_data][description]': `${clean(job.serviceType || 'Garage service', 100)}. ${deposit.purpose === 'deposit' ? 'Applied to your approved quote; remaining balance due on completion.' : 'Balance after previous payments and credits.'}`,
+    'line_items[0][price_data][product_data][description]': `${clean(job.serviceType || 'Garage service', 100)}. ${deposit.purpose === 'deposit' ? 'Applied to your approved quote; remaining balance due on completion.' : `Balance after previous payments and credits${changeCents ? `, including ${(changeCents / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD' })} in approved changes` : ''}.`}`,
     'metadata[kind]': 'egc_customer_portal_payment', 'metadata[job_id]': jobId, 'metadata[payment_purpose]': deposit.purpose,
     'metadata[quote_revision]': String(job.estimate?.revision || 1), 'metadata[quoted_total_cents]': String(cents(customerMoneyState(job).total)),
     'payment_intent_data[metadata][kind]': 'egc_customer_portal_payment', 'payment_intent_data[metadata][job_id]': jobId, 'payment_intent_data[metadata][payment_purpose]': deposit.purpose,
   });
+  if (changeCents) params.set('metadata[approved_change_cents]', String(changeCents));
   if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(job.email || '')) {
     params.set('customer_email', job.email); params.set('payment_intent_data[receipt_email]', job.email);
   }

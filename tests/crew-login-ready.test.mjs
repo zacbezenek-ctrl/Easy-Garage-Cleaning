@@ -94,6 +94,9 @@ function harness(page, { jobId = 'job-test', readError = null, missing = false, 
     const line = html.split(/\r?\n/).find(row => row.startsWith(prefix));
     if (line) vm.runInContext(line, context, { filename: `${page}-storage-key.js` });
   }
+  // postjob's loader adds billed change orders to the balance through this one-line helper.
+  const changes = html.split(/\r?\n/).find(line => line.startsWith('function billedChangeTotal('));
+  if (changes) vm.runInContext(changes, context, { filename: `${page}-changes.js` });
   vm.runInContext(centralLoader, context, { filename: `${page}-central.js` });
   vm.runInContext(restoration, context, { filename: `${page}-restore.js` });
   const restore = context.restoreAll, save = context.saveAll;

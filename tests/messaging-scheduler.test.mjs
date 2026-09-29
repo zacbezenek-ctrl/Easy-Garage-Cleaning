@@ -6,6 +6,7 @@ import { mutateTemplate, readTemplate } from '../functions/_lib/message-template
 import { dueMessages, portalRetries, runDueMessages, stageDue, SCHEDULER_JOB_FIELDS, CRON_ACTOR, CRON_ACTOR_ID } from '../functions/_lib/messaging-scheduler.js';
 import { DEFAULT_MESSAGING_SETTINGS, normalizeMessagingSettings, serverMessagingEnabled } from '../functions/_lib/messaging-settings.js';
 import { portalLinkProviders } from '../functions/_lib/message-links.js';
+import { respondToDecision } from '../functions/_lib/change-orders.js';
 import { verifyCustomerPortalAccessToken } from '../functions/_lib/customer-portal.js';
 import { env, owner, job, memoryStore, fakeGhl, clock, uuid, NOW } from './helpers/messaging-fixture.mjs';
 
@@ -147,6 +148,33 @@ test('a balance money-core counts but checkout would refuse is reported instead 
   const f = await setup({ jobs, approved: ['payment_reminder'] });
   const summary = await f.run();
   assert.deepEqual([summary.attempted, summary.sent, summary.skipped], [1, 1, { money_mismatch: 1 }]);
+});
+
+test('a change billed through the portal after the quote was paid is reminded through the masked scan, and a voided one is not', async () => {
+  // A $1,000 quote paid in full; the customer then approved +$150 in the portal with billing on, which raised
+  // INV-1 (due September 29) to partial with $150 owed. The crew finished afterwards.
+  const decision = { id: 'decision-freezer', title: 'Haul the old freezer', details: 'Synthetic crew note.', priceDelta: 150, status: 'pending', promptedAt: '2026-09-21T16:00:00.000Z' };
+  const working = quiet({ status: 'in_progress', pipelineStatus: 'in_progress', estimate: { number: 'EST-1', status: 'accepted', amount: 1000, depositRequired: 500 }, deposit: { amount: 500, paidAmount: 500, verified: true },
+    payment: { amount: 1000, verified: true, method: 'card', stripeSessions: [{ sessionId: 'cs_test_synthetic_full', amount: 1000, purpose: 'balance', verifiedAt: '2026-09-20T16:00:00.000Z' }] },
+    invoice: { number: 'INV-1', status: 'paid', amount: 1000, paid: 1000, balance: 0, dueDate: '2026-09-29' }, customerDecisions: [decision] });
+  const approval = respondToDecision(working, { decisionId: decision.id, response: 'approved', respondedBy: 'Synthetic Customer', note: '', requestId: uuid(), priceDeltaCents: 15000 }, { billing: true, now: '2026-09-21T17:00:00.000Z', paidCents: 100000 });
+  const finished = { status: 'completed', pipelineStatus: 'completed', completedAt: '2026-09-21T20:00:00.000Z' };
+  const billed = { ...working, ...approval.patch, ...finished };
+  assert.deepEqual([billed.invoice.status, billed.invoice.balance, billed.approvedChangeTotal, billed.changeOrders.length], ['partial', 150, 150, 1]);
+  // Voided from the Hub: the line stays as evidence, nothing is billed, and the invoice was left as it was.
+  const voided = { ...billed, changeOrders: billed.changeOrders.map(line => ({ ...line, status: 'void', voidedAt: '2026-09-22T16:00:00.000Z', voidedBy: 'zacb', voidReason: 'Synthetic void' })),
+    customerDecisions: billed.customerDecisions.map(item => ({ ...item, changeOrderVoidedAt: '2026-09-22T16:00:00.000Z', changeOrderVoidedBy: 'zacb' })), approvedChangeTotal: 0 };
+  const at = '2026-09-30T18:00:00.000Z';
+  assert.ok(SCHEDULER_JOB_FIELDS.includes('changeOrders'), 'the scan reads the billed lines the checkout balance bills');
+  // Without the lines the checkout balance reads the job as paid while money-core owes the change.
+  const unmasked = masked({ ...billed, id: 'change-billed', revision: 'r' }, SCHEDULER_JOB_FIELDS.filter(field => field !== 'changeOrders'));
+  assert.deepEqual(dueMessages([unmasked], { now: new Date(at), settings: SETTINGS }).skipped, { money_mismatch: 1 });
+  const f = await setup({ jobs: { 'change-billed': billed, 'change-voided': voided }, approved: ['payment_reminder'], at });
+  const summary = await f.run();
+  assert.deepEqual([summary.scanned, summary.due, summary.sent, summary.skipped], [2, 1, 1, {}]);
+  assert.deepEqual(summary.results.map(row => [row.kind, row.jobId, row.step, row.status]), [['payment_reminder', 'change-billed', 1, 'submitted']]);
+  assert.match(f.ghl.sends()[0].body.message, /invoice INV-1 has \$150\.00 due September 29/);
+  assert.deepEqual(f.store.scans, [[...SCHEDULER_JOB_FIELDS]]);
 });
 
 test('Denver tomorrow is DST-safe on both clock changes and ambiguous start times are never reminded', () => {

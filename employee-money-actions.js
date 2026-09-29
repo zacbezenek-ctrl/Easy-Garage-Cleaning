@@ -92,6 +92,7 @@ function freshDraft(){
   if(S.view==='invoice')return{dueDate:job.invoice.dueDate&&job.invoice.dueDate>=today()?job.invoice.dueDate:addDays(today(),7),customerReference:job.invoice.customerReference||''};
   if(S.view==='sent')return{channel:'email',note:''};
   if(S.view==='void')return{reason:''};
+  if(S.view==='change')return{changeOrderId:S.draft?.changeOrderId||'',reason:''};
   return{};
 }
 const newId=()=>'l'+crypto.randomUUID().replace(/-/g,'').slice(0,10);
@@ -114,11 +115,12 @@ function body(){
   if(S.view==='invoice'){if(!validDate(d.dueDate)||d.dueDate<today())problem('Choose a payment due date of today or later.');return{action:'invoice.issue',...base,dueDate:d.dueDate,...(d.customerReference.trim()?{customerReference:d.customerReference.trim()}:{})};}
   if(S.view==='sent')return{action:'estimate.mark_sent',...base,channel:d.channel,...(d.note.trim()?{note:d.note.trim()}:{})};
   if(S.view==='void'){if(d.reason.trim().length<3)problem('Enter why the invoice is being voided.');return{action:'invoice.void',...base,reason:d.reason.trim()};}
+  if(S.view==='change'){if(d.reason.trim().length<3)problem('Enter why the change is being voided.');return{action:'change_order.void',...base,changeOrderId:d.changeOrderId,reason:d.reason.trim()};}
   problem('Choose a money action.');
 }
 function estimateTotal(){let total=0;for(const line of S.draft.lines){const value=lineTotal(line);if(value===null)return null;total+=value;}return total;}
 
-const SAVED={'estimate.save':'Estimate saved','estimate.record_approval':'Approval recorded','estimate.mark_sent':'Estimate marked as sent','deposit.record_offline':'Deposit recorded','payment.record_offline':'Payment recorded','invoice.issue':'Invoice issued','invoice.void':'Invoice voided'};
+const SAVED={'estimate.save':'Estimate saved','estimate.record_approval':'Approval recorded','estimate.mark_sent':'Estimate marked as sent','deposit.record_offline':'Deposit recorded','payment.record_offline':'Payment recorded','invoice.issue':'Invoice issued','invoice.void':'Invoice voided','change_order.void':'Approved change voided'};
 async function submit(){
   if(S.busy||!S.job)return;
   if(S.pending){S.error='Retry or discard the earlier unconfirmed save first.';S.errorKind='pending';render();return;}
@@ -166,8 +168,9 @@ function handOver(viewer,message){
 function discardPending(){if(S.busy||!S.pending)return;clearPending(S.pending.viewer,S.pending.body.jobId);S.pending=null;S.error='';S.errorKind='';S.draft=freshDraft();render();}
 async function reloadLatest(){if(S.busy)return;await load();}
 function switchView(view){if(S.busy)return;S.view=view;S.error='';S.errorKind='';S.draft=freshDraft();render();focusFirst();}
+function voidChange(id){if(S.busy)return;S.view='change';S.error='';S.errorKind='';S.draft={changeOrderId:id,reason:''};render();focusFirst();}
 
-const TITLES={estimate:['CUSTOMER ESTIMATE','Estimate'],accept:['CUSTOMER APPROVAL','Record approval'],deposit:['OFFLINE DEPOSIT','Record a deposit'],payment:['OFFLINE PAYMENT','Record a payment'],invoice:['CUSTOMER INVOICE','Invoice'],sent:['CUSTOMER ESTIMATE','Record that the estimate was sent'],void:['VOID INVOICE','Void invoice']};
+const TITLES={estimate:['CUSTOMER ESTIMATE','Estimate'],accept:['CUSTOMER APPROVAL','Record approval'],deposit:['OFFLINE DEPOSIT','Record a deposit'],payment:['OFFLINE PAYMENT','Record a payment'],invoice:['CUSTOMER INVOICE','Invoice'],sent:['CUSTOMER ESTIMATE','Record that the estimate was sent'],void:['VOID INVOICE','Void invoice'],change:['APPROVED CHANGE','Void approved change']};
 function field(label,input,help){const id=input.id||'em-'+input.name;input.id=id;if(help)input.setAttribute('aria-describedby',id+'-help');return h('div',{class:'em-field'},h('label',{htmlFor:id},label),input,help?h('small',{id:id+'-help'},help):null);}
 function bind(name,{tag='input',after,...props}={}){const d=S.draft;return h(tag,{name,...props,value:d[name]??'',oninput:e=>{d[name]=e.target.value;if(after)after();},onchange:e=>{d[name]=e.target.value;}});}
 function select(name,options){const d=S.draft,node=h('select',{name,onchange:e=>{d[name]=e.target.value;}},options.map(([value,label])=>h('option',{value},label)));node.value=d[name];return node;}
@@ -238,13 +241,25 @@ function invoiceView(){
     h('div',{class:'em-pair'},field('Payment due date',bind('dueDate',{type:'date',min:today(),required:true})),field('PO / customer reference',bind('customerReference',{maxLength:120,autocomplete:'off'}),'Optional')),
     note('Issuing does not send anything. The invoice shows in the customer portal with its balance.'),
     active&&invoice.status!=='paid'?h('button',{type:'button',class:'em-button danger',onclick:()=>switchView('void')},'Void this invoice…'):null,
+    changeList(),
   ];
+}
+// Changes the customer approved in the portal that are billed on top of the quote.
+function changeList(){
+  const changes=Array.isArray(S.job.changeOrders)?S.job.changeOrders:[];
+  if(!changes.length)return null;
+  return[h('p',{class:'em-muted'},'Approved changes billed to the customer on top of the quote'),changes.map(line=>h('div',{class:'em-line'},h('p',{},h('b',{},money(line.totalCents)),' · ',line.name),h('p',{class:'em-muted'},`Approved by ${line.approvedBy||'the customer'} in the portal${line.backfilled?' (billed later)':''}`),h('div',{class:'em-line-foot'},h('button',{type:'button',class:'em-button danger',onclick:()=>voidChange(line.id)},'Void this change…'))))];
+}
+function changeView(){
+  const line=(Array.isArray(S.job.changeOrders)?S.job.changeOrders:[]).find(item=>item.id===S.draft.changeOrderId);
+  if(!line)return[h('p',{class:'em-notice warn'},'This change is no longer billed on the job.')];
+  return[h('p',{},`Void “${line.name}” (${money(line.totalCents)})${line.approvedBy?', approved by '+line.approvedBy:''}. The customer is no longer charged for it, and an issued invoice drops to the new total.`),field('Reason',bind('reason',{tag:'textarea',rows:3,maxLength:500,required:true}),'Kept in the audit trail.'),note('Nothing is sent to the customer. Money already paid for this change stays recorded; refund it separately.')];
 }
 function sentView(){return[field('How it was sent',select('channel',CHANNELS)),field('Note (optional)',bind('note',{tag:'textarea',rows:3,maxLength:500})),note('Records that you already sent the estimate yourself. Nothing is sent from here.')];}
 function voidView(){const invoice=S.job.invoice;return[h('p',{},`Void invoice ${invoice.number||''} (${invoice.status.replace('_',' ')}). Recorded payments stay on the job.`),field('Reason',bind('reason',{tag:'textarea',rows:3,maxLength:500,required:true}),'Kept in the audit trail.'),note('Nothing is sent to the customer.')];}
-const VIEWS={estimate:estimateView,accept:acceptView,deposit:paymentView,payment:paymentView,invoice:invoiceView,sent:sentView,void:voidView};
-const LABELS={estimate:'Save estimate',accept:'Record approval',deposit:'Save deposit',payment:'Save payment',invoice:'Issue invoice',sent:'Record sent',void:'Void invoice'};
-function canSubmit(){const job=S.job;if(!job)return false;if(S.view==='estimate')return!(job.estimate&&lockedEstimate(job));if(S.view==='accept')return Boolean(job.estimate)&&job.totals.quoteCents>0&&job.approval?.status!=='approved'&&!['accepted','approved'].includes(job.estimate.status);if(S.view==='deposit'||S.view==='payment')return job.totals.totalCents>0&&job.totals.balanceCents>0;if(S.view==='invoice')return job.totals.totalCents>0;return true;}
+const VIEWS={estimate:estimateView,accept:acceptView,deposit:paymentView,payment:paymentView,invoice:invoiceView,sent:sentView,void:voidView,change:changeView};
+const LABELS={estimate:'Save estimate',accept:'Record approval',deposit:'Save deposit',payment:'Save payment',invoice:'Issue invoice',sent:'Record sent',void:'Void invoice',change:'Void change'};
+function canSubmit(){const job=S.job;if(!job)return false;if(S.view==='estimate')return!(job.estimate&&lockedEstimate(job));if(S.view==='accept')return Boolean(job.estimate)&&job.totals.quoteCents>0&&job.approval?.status!=='approved'&&!['accepted','approved'].includes(job.estimate.status);if(S.view==='deposit'||S.view==='payment')return job.totals.totalCents>0&&job.totals.balanceCents>0;if(S.view==='invoice')return job.totals.totalCents>0;if(S.view==='change')return(Array.isArray(job.changeOrders)?job.changeOrders:[]).some(line=>line.id===S.draft?.changeOrderId);return true;}
 
 function render(){
   const dialog=S.dialog;if(!dialog)return;
@@ -261,9 +276,9 @@ function render(){
   } else {
     fill(main,summary(),S.error?h('p',{class:'em-notice error',role:'alert',tabIndex:-1},S.error):null,VIEWS[S.view]());
     if(S.errorKind==='conflict')actions.append(h('button',{type:'button',class:'em-button',disabled:S.busy,onclick:()=>void reloadLatest()},'Load latest details'));
-    if(['sent','void'].includes(S.view))actions.append(h('button',{type:'button',class:'em-button',disabled:S.busy,onclick:()=>switchView(S.view==='sent'?'estimate':'invoice')},'Back'));
+    if(['sent','void','change'].includes(S.view))actions.append(h('button',{type:'button',class:'em-button',disabled:S.busy,onclick:()=>switchView(S.view==='sent'?'estimate':'invoice')},'Back'));
     else actions.append(h('button',{type:'button',class:'em-button',disabled:S.busy,onclick:()=>close()},'Cancel'));
-    if(canSubmit())actions.append(h('button',{type:'submit',class:'em-button primary'+(S.view==='void'?' danger':''),disabled:S.busy||S.loading},S.busy?'Saving…':LABELS[S.view]));
+    if(canSubmit())actions.append(h('button',{type:'submit',class:'em-button primary'+(['void','change'].includes(S.view)?' danger':''),disabled:S.busy||S.loading},S.busy?'Saving…':LABELS[S.view]));
     if(S.busy)status.textContent='Saving…';else if(S.loading)status.textContent='Refreshing job money…';
   }
   const form=h('form',{class:'em-sheet',noValidate:true,'aria-busy':S.busy||S.loading?'true':'false',onsubmit:e=>{e.preventDefault();void submit();}},head,main,h('footer',{class:'em-foot'},status,actions));
