@@ -154,7 +154,10 @@ test('operations suite follows the EGC operating model instead of duplicating th
 });
 
 test('HighLevel bridge keeps credentials server-side and supports field continuity',()=>{
-  for(const marker of ['HIGHLEVEL_API_KEY','HIGHLEVEL_LOCATION_ID','HIGHLEVEL_JOB_CALENDAR_ID','/opportunities/search','/calendars/events','/calendars/events/appointments','/contacts/upsert','egc-job-scheduled','egc-review-ready','6-month garage check-in'])assert.match(highlevel,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
+  // GHL-TRACK-1 moved the contact upsert, tag and appointment-status writers unchanged into functions/_lib/highlevel-tags.js
+  // (shared with the tag outbox), so the markers are checked across the bridge and that module.
+  const bridge=highlevel+read('functions/_lib/highlevel-tags.js');
+  for(const marker of ['HIGHLEVEL_API_KEY','HIGHLEVEL_LOCATION_ID','HIGHLEVEL_JOB_CALENDAR_ID','/opportunities/search','/calendars/events','/calendars/events/appointments','/contacts/upsert','egc-job-scheduled','egc-review-ready','6-month garage check-in'])assert.match(bridge,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
   assert.doesNotMatch(employee,/HIGHLEVEL_API_KEY\s*[:=]\s*['"][^'"]+/);
   assert.match(crew,/\/api\/highlevel/);
   assert.match(crew,/highlevel_contact_id/);

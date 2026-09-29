@@ -158,6 +158,23 @@ test('actual Firestore rules isolate canonical operations from crew SDK access',
       for(const db of [publicDb,crew,lead,manager]) for(const path of ['crewNotifications/crew_notice','crewNotificationPrefs/assigned-crew','crewNoticeHeard/heard_notice']){await assertFails(db.doc(path).get());await assertFails(db.doc(path).set({sms:false}));await assertFails(db.doc(path).update({acknowledged:true}));await assertFails(db.doc(path).delete());}
       for(const db of [crew,manager]) for(const name of ['crewNotifications','crewNotificationPrefs','crewNoticeHeard']) await assertFails(db.collection(name).get());
     });
+    await t.test('the HighLevel tag outbox, its worker\'s check-in and each visit\'s pointer at it (GHL-TRACK-1) stay server-only, even for business SDK sessions',async()=>{
+      await environment.withSecurityRulesDisabled(async context=>{await context.firestore().doc('ghlTagOutbox/gto_synthetic').set({jobId:'assigned',status:'pending',addTags:['egc-hub-scheduled']});await context.firestore().doc('ghlTagDrainState/worker').set({lastRunAt:'2099-09-09T12:00:00.000Z',workerId:'ghl-tag-worker'});});
+      for(const db of [publicDb,crew,lead,manager])for(const path of ['ghlTagOutbox/gto_synthetic','ghlTagDrainState/worker']){await assertFails(db.doc(path).get());await assertFails(db.doc(path).set({status:'done'}));await assertFails(db.doc(path).update({status:'parked'}));await assertFails(db.doc(path).delete());}
+      for(const db of [crew,manager])for(const name of ['ghlTagOutbox','ghlTagDrainState'])await assertFails(db.collection(name).get());
+      // The visit's pointer at its entry decides whether the browser sync adds the booking tags: only the server sets it.
+      const pointer={id:'gto_'+'a'.repeat(40),kind:'scheduled',startAt:'2099-09-10T15:00:00.000Z',requestId:'00000000-0000-4000-8000-000000000001',queuedAt:'2099-09-09T12:00:00.000Z'};
+      await environment.withSecurityRulesDisabled(context=>context.firestore().doc('jobs/ghl-tagged').set({type:'walkthrough',customerId:'ghl-tag-customer',status:'scheduled',ghlTagEntry:pointer}));
+      for(const db of [manager,partner]){
+        await assertSucceeds(db.doc('jobs/ghl-tagged').set({opsNotes:'Synthetic note'},{merge:true}));
+        await assertFails(db.doc('jobs/ghl-tagged').set({ghlTagEntry:null},{merge:true}));
+        await assertFails(db.doc('jobs/ghl-tagged').update({'ghlTagEntry.startAt':'2099-09-11T15:00:00.000Z'}));
+        await assertFails(db.doc('jobs/ghl-tagged').set({type:'walkthrough',customerId:'ghl-tag-customer',status:'scheduled'}),'a full overwrite may not drop the pointer');
+        await assertFails(db.doc('jobs/assigned').update({ghlTagEntry:pointer}));
+        await assertFails(db.doc('jobs/forged-ghl-tag').set({type:'walkthrough',customerId:'ghl-tag-customer',ghlTagEntry:pointer}));
+      }
+      await environment.withSecurityRulesDisabled(async context=>assert.deepEqual((await context.firestore().doc('jobs/ghl-tagged').get()).data().ghlTagEntry,pointer));
+    });
     await t.test('Garage Guard memberships, Stripe event receipts and reviews are webhook-only',async()=>{
       for(const db of [publicDb,crew,manager]) for(const path of ['memberships/sub_synthetic','stripe_events/evt_synthetic','membership_reviews/sub_synthetic','payment_reviews/cs_test_synthetic','garage_guard_operations/receipt']){await assertFails(db.doc(path).get());await assertFails(db.doc(path).update({status:'changed'}));await assertFails(db.doc(path).delete());}
       await assertFails(manager.doc('memberships/sub_new').set({plan:'black',status:'active'}));

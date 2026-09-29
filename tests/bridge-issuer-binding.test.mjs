@@ -146,7 +146,7 @@ test('the binding table is frozen, anchored and names one service per id; signer
   }
   assert.deepEqual(Object.fromEntries(Object.entries(BRIDGE_SIGNER_PRESENTS).map(([k,v])=>[k,[...v]])),{api:['api','mcp','hub'],hub:['hub'],mcp:['mcp']});
   const cases={[GRANT]:'mcp','mcp-service-grant':'mcp','hub-schedule:zacb':'hub','hub-note:tylerg':'hub','schedule-sync:hub-schedule:zacb':'api','schedule-sync:booking-reconciler':'api','note-link:hub-note:tylerg':'api',
-    'operations-api':'api','inbound-response-reconciler':'api','booking-reconciler':'api','booking-adoption-worker':'api','post-job-followup':'api','schedule-sync-worker':'api','walkthrough-followup-worker':'api','recurring-horizon-worker':'api','messaging-cron-worker':'worker',
+    'operations-api':'api','inbound-response-reconciler':'api','booking-reconciler':'api','booking-adoption-worker':'api','post-job-followup':'api','schedule-sync-worker':'api','walkthrough-followup-worker':'api','recurring-horizon-worker':'api','messaging-cron-worker':'worker','ghl-tag-worker':'worker','ghl-tag-worker-2':null,
     [DELEGATED]:'mcp','mcp:first.last@example.invalid:3b1f7e0a-8d2c-4e5f-9a6b-7c8d9e0f1a2b':'mcp','mcp:Zacb:3b1f7e0a-8d2c-4e5f-9a6b-7c8d9e0f1a2b':null,'mcp:zacb:3B1F7E0A-8D2C-4E5F-9A6B-7C8D9E0F1A2B':null,
     'mcp:zacb:synthetic':null,'mcp::3b1f7e0a-8d2c-4e5f-9a6b-7c8d9e0f1a2b':null,'mcp:a:b:3b1f7e0a-8d2c-4e5f-9a6b-7c8d9e0f1a2b':null,[`mcp:${'x'.repeat(121)}:3b1f7e0a-8d2c-4e5f-9a6b-7c8d9e0f1a2b`]:null,'walkthrough-followup-worker-2':null,'recurring-horizon-worker-2':null,
     'mcp-oauth-grant:synthetic':null,'mcp-oauth-grant:6BA7B810-9DAD-41D1-80B4-00C04FD430C8':null,'mcp-service-grant:x':null,'booking-adoption-worker-2':null,'schedule-sync-worker-2':null,'stripe_webhook':null,'x-booking-adoption-worker':null,'hub-schedule:':null,'schedule-sync':null,'verified-grant':null,'':null};
@@ -156,7 +156,7 @@ test('the binding table is frozen, anchored and names one service per id; signer
   assert.equal(bridgeActorIssuer('booking-reconciler',[...BRIDGE_ACTOR_BINDINGS,{idPattern:/^booking-reconciler$/,issuer:'mcp'}]),null);
   for(const [id,signer,code] of [[GRANT,'mcp',null],[GRANT,'api',null],[GRANT,'hub','bridge_integration_issuer_mismatch'],[DELEGATED,'mcp',null],[DELEGATED,'api',null],[DELEGATED,'hub','bridge_integration_issuer_mismatch'],['walkthrough-followup-worker','api',null],['walkthrough-followup-worker','mcp','bridge_integration_issuer_mismatch'],['hub-note:tylerg','hub',null],['hub-note:tylerg','mcp','bridge_integration_issuer_mismatch'],
     ['booking-adoption-worker','api',null],['booking-adoption-worker','mcp','bridge_integration_issuer_mismatch'],['booking-adoption-worker','hub','bridge_integration_issuer_mismatch'],['booking-adoption-worker',null,'bridge_integration_issuer_mismatch'],
-    ['messaging-cron-worker','api','bridge_integration_issuer_mismatch'],['messaging-cron-worker','worker','bridge_integration_issuer_mismatch'],['forged-worker','api','bridge_integration_issuer_unknown']])
+    ['messaging-cron-worker','api','bridge_integration_issuer_mismatch'],['messaging-cron-worker','worker','bridge_integration_issuer_mismatch'],['ghl-tag-worker','api','bridge_integration_issuer_mismatch'],['forged-worker','api','bridge_integration_issuer_unknown']])
     assert.equal(bridgeIssuerDenial(actor(id),signer),code,`${id} via ${signer}`);
   for(const principal of [{id:'zacb',kind:'human',role:'owner'},null,undefined])assert.equal(bridgeIssuerDenial(principal,'mcp'),null,'Humans answer to the role policy.');
 });

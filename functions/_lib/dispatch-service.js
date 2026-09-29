@@ -16,6 +16,7 @@ import { crewNotificationWrites } from './crew-notifications.js';
 import { bookingInput, bookingPatch, reasonInput, cancelPatch, noShowProblem, visitFunnelWrites, requestKey, eventActor } from './dispatch-funnel.js';
 import { dispatchDurationFields, dispatchDurationOverride, dispatchCrewSize, withQuoteLines, ESTIMATED_DURATION_MIN } from './dispatch-duration.js';
 import { bookingDimensions, firstPlacementDimensions } from './funnel-dimensions.js';
+import { scheduleTagWrites, withGhlTagStatus } from './ghl-tag-outbox.js';
 
 const TERMINAL = new Set(['cancelled','canceled','completed','invoiced','paid','review_requested','closed','noshow','no_show','no-show']);
 const JOB_TYPES = new Set(['job','walkthrough','cleanout','reorg','blocked']);
@@ -76,7 +77,7 @@ function legacyMembers(job, roster) {
   return [...new Set(ids)];
 }
 
-const DTO_FIELDS = ['id','revision','type','customerId','customer','phone','address','title','date','time','endDate','endTime','assignedTo','crewLead','crewId','vehicleId','crewNeeded','travelBufferMinutes','jobInstructions','accessInstructions','customerInstructions','opsNotes','requiredEquipment','materials','serviceType','syncStatus','highlevelAppointmentId','sourceWalkthroughId','sourceTemplateJobId','recurrence','recurrenceParentId','reminderDays','notify','shiftPickupEnabled','openShift','notes','durationMin','estimatedDurationMin','createdAt','updatedAt','completedAt','arrivalWindowStart','arrivalWindowEnd','arrivalWindow','requiredSkills'];
+const DTO_FIELDS = ['id','revision','type','customerId','customer','phone','address','title','date','time','endDate','endTime','assignedTo','crewLead','crewId','vehicleId','crewNeeded','travelBufferMinutes','jobInstructions','accessInstructions','customerInstructions','opsNotes','requiredEquipment','materials','serviceType','syncStatus','highlevelAppointmentId','sourceWalkthroughId','sourceTemplateJobId','recurrence','recurrenceParentId','reminderDays','notify','shiftPickupEnabled','openShift','notes','durationMin','estimatedDurationMin','createdAt','updatedAt','completedAt','arrivalWindowStart','arrivalWindowEnd','arrivalWindow','requiredSkills','ghlTagEntry'];
 const scopeText = job => typeof job.operationalScope?.text === 'string' ? job.operationalScope.text : typeof job.jobInstructions === 'string' ? job.jobInstructions : job.jobInstructions?.operationalScope || (typeof job.scope === 'string' ? job.scope : '') || job.scopeOfWork || '';
 function recurringTemplateFields(source,actor,now) {
   const output={};
@@ -250,7 +251,7 @@ export async function dispatchOverview(store, session, query = {}, now = new Dat
     if (!visibleJob(job)) throw fail('dispatch_job_not_found','This operational job could not be found.',404);
     const inspection=await withTravel(scheduleInspection(jobs,resources,roster,rules),[job],roster,options.travel);
     if(rules.blockTravelShort&&options.travel?.enabled)inspection.blockTravelShort=true;
-    return {ok:true,job:projectDispatchJob(job,roster,new Date(now).toISOString()),roster,crews:resources.filter(row=>row.recordType==='crew'),vehicles:resources.filter(row=>row.recordType==='vehicle'),warnings:jobWarnings(job,jobs,resources,roster,inspection),arrivalDefaults:arrivalDefaults(effectiveArrivalSettings(settings,rules)),segments:{enabled:store.segmentsEnabled===true,max:SEGMENT_LIMIT},dispatchRules:dispatchRulesView(rules)};
+    return {ok:true,job:(await withGhlTagStatus(store,[projectDispatchJob(job,roster,new Date(now).toISOString())],now))[0],...(store.ghlTagOutbox===true?{ghlTagOutbox:true}:{}),roster,crews:resources.filter(row=>row.recordType==='crew'),vehicles:resources.filter(row=>row.recordType==='vehicle'),warnings:jobWarnings(job,jobs,resources,roster,inspection),arrivalDefaults:arrivalDefaults(effectiveArrivalSettings(settings,rules)),segments:{enabled:store.segmentsEnabled===true,max:SEGMENT_LIMIT},dispatchRules:dispatchRulesView(rules)};
   }
   if (query.view === 'customers') {
     const needle = text(query.q || '', 'Search', 200).toLowerCase(), digits = needle.replace(/\D/g, '');
@@ -265,7 +266,7 @@ export async function dispatchOverview(store, session, query = {}, now = new Dat
   selected.sort((a,b) => String(a.date || '9999').localeCompare(String(b.date || '9999')) || String(a.time || '').localeCompare(String(b.time || '')) || a.id.localeCompare(b.id));
   const [inspection,withLines]=await Promise.all([withTravel(scheduleInspection(jobs,resources,roster,rules),selected,roster,options.travel),withQuoteLines(store,selected)]);
   if(rules.blockTravelShort&&options.travel?.enabled)inspection.blockTravelShort=true;
-  return { ok: true, timeZone: DISPATCH_TIME_ZONE, startDate, endDate, jobs: withLines.map(job=>projectDispatchJob(job,roster,new Date(now).toISOString())), roster,
+  return { ok: true, timeZone: DISPATCH_TIME_ZONE, startDate, endDate, jobs: await withGhlTagStatus(store,withLines.map(job=>projectDispatchJob(job,roster,new Date(now).toISOString())),now), ...(store.ghlTagOutbox===true?{ghlTagOutbox:true}:{}), roster,
     crews: resources.filter(row => row.recordType === 'crew'), vehicles: resources.filter(row => row.recordType === 'vehicle'),
     availability: resources.filter(row => row.recordType === 'availability').concat(jobs.filter(row => row.type === 'availability' || row.recordType === 'crew_availability').map(row => ({ ...row, employeeId: resolveMember(row.employee,roster,true) || row.employee }))).filter(row => row.date < endDate && (row.endDate || row.date) >= startDate),
     warnings: selected.flatMap(job => jobWarnings(job, jobs, resources, roster,inspection)), coverage: { complete: true, asOf: now.toISOString() }, arrivalDefaults: arrivalDefaults(effectiveArrivalSettings(settings,rules)), segments: { enabled: store.segmentsEnabled === true, max: SEGMENT_LIMIT }, dispatchRules: dispatchRulesView(rules) };
@@ -584,6 +585,9 @@ async function executeDispatch(store, session, input, now, options = {}) {
     const dimensions = dimensionContext ? await bookingDimensions(store,{picks:booking,visit:next,...dimensionContext,facts:store.dimensionFacts,actor:session.user,now,writes}) : await firstPlacementDimensions(store,current,next);
     const funnel = await visitFunnelWrites({action:create ? 'create' : noShow ? 'no_show' : cancel ? 'cancel' : restore ? 'restore' : 'update',before:current,after:next,actor:eventActor({id:session.user,kind:'human',role:session.role}),via:'hub',key:requestKey(input.requestId),source:{collection:'dispatchOperations',id:receiptId},reason:{...reason,lateCancel:patch.lateCancel},crewChanged:!cancel && crewAfter.length > 0 && canonical(crewAfter) !== canonical(crewBefore),dimensions,now});
     Object.assign(patch,funnel.patch); writes.push(...funnel.writes);
+    // EGC_GHL_TAG_OUTBOX (GHL-TRACK-1): the HighLevel tags this change needs commit with it, or not at all.
+    const tags = store.ghlTagOutbox === true ? await scheduleTagWrites({jobId:id,before:current,after:{...current,...patch},action:input.action,requestId:input.requestId,now}) : null;
+    if (tags) { patch.ghlTagEntry = tags.pointer; writes.push(tags.write); }
   } else {
     collection = 'dispatchResources';
     id = input.id || `${input.action.split('.')[0]}_${receiptId.replaceAll('-','')}`;

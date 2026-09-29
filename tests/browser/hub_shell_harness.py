@@ -180,6 +180,8 @@ class HubShell:
                   'defaults': values, 'skills': [{'id': 'shelving', 'label': 'Shelving install'}], 'viewer': {'id': 'zacb'},
                   'environment': {'arrival': {'enabled': False, 'minutes': 60}, 'envArrivalMinutes': 60, 'travelEstimates': 'off', 'envBlockTravelShort': False, 'staffDirectory': False}}); return
         if path == '/api/staff-directory' and request.method == 'GET': send(copy.deepcopy(STAFF)); return
+        # GHL-TRACK-1: the Command center's HighLevel tag widget asks whether anything is stuck; the outbox is off here.
+        if path == '/api/ghl-tag-drain' and request.method == 'GET': send({'ok': True, 'enabled': False}); return
         if path == '/api/operations' and request.method == 'GET':
             send({'ok': True, 'enabled': False, 'actor': {'id': 'zacb', 'role': 'owner', 'kind': 'human'}, 'owners': [{'id': 'zacb', 'name': 'Synthetic Owner', 'role': 'owner'}]}); return
         send({'ok': False, 'error': 'Synthetic service unavailable'}, 503)

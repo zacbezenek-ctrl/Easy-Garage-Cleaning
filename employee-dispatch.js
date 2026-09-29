@@ -145,6 +145,34 @@ function warningsFor(job) {
   }
   return warnings;
 }
+// GHL-TRACK-1 (EGC_GHL_TAG_OUTBOX): what HighLevel was told about the visit's last change. Nothing shows while the outbox is off.
+function ghlTime(value) {
+  const at=new Date(value);if(!Number.isFinite(at.getTime()))return '';
+  const day=d=>new Intl.DateTimeFormat('en-CA',{timeZone:TZ,year:'numeric',month:'2-digit',day:'2-digit'}).format(d);
+  return (day(at)===day(new Date())?'':new Intl.DateTimeFormat('en-US',{timeZone:TZ,month:'short',day:'numeric'}).format(at)+', ')+new Intl.DateTimeFormat('en-US',{timeZone:TZ,hour:'numeric',minute:'2-digit'}).format(at);
+}
+// Stuck: parked after 8 tries, or waiting well past its turn (the tag worker is not running). A change the visit has
+// moved past (current:false, e.g. its start has passed) closes without telling HighLevel, so it shows nothing.
+function ghlChip(job) {
+  if(S.data?.ghlTagOutbox!==true||job.type==='blocked'||!job.ghlTagEntry)return null;
+  const tags=job.ghlTags||{status:'pending'};
+  if(tags.status==='done'&&tags.skipped||tags.status!=='done'&&tags.current===false)return null;
+  const stuck=tags.status==='parked'||tags.status==='pending'&&tags.overdue===true;
+  const row=h('div',{class:'dp-ghl','data-ghl':stuck&&tags.status==='pending'?'overdue':tags.status});
+  if(tags.status==='done')row.append(pill('HighLevel told '+ghlTime(tags.doneAt),'ok'));
+  else if(stuck)row.append(pill('HighLevel stuck','stuck'),btn('Retry',event=>void retryGhl(job,event.currentTarget),'',{'aria-label':'Retry telling HighLevel about '+(job.customer||'this visit')}));
+  else row.append(pill(tags.status==='unknown'?'HighLevel status unknown':'HighLevel waiting','muted'));
+  return row;
+}
+async function retryGhl(job,button) {
+  button.disabled=true;
+  try {
+    const {response,data}=await requestJSON('/api/ghl-tag-drain',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'retry',requestId:key(),jobId:job.id})});
+    if(!response.ok||data.ok!==true||!Number.isInteger(data.requeued))throw new Error(data.error||'The retry could not be confirmed.');
+    S.notice=data.requeued?'HighLevel will be told again in a moment.':'Nothing for this visit was waiting on HighLevel.';
+    await load({quiet:true});
+  } catch(error) { button.disabled=false;S.notice='HighLevel retry did not go through: '+(error.message||'try again.');renderBody(); }
+}
 function jobCard(job, {compact=false,date=null}={}) {
   const original=job.sourceJob||job,warnings=warningsFor(job),blocked=job.type==='blocked';
   const card=h('article',{class:'dp-job '+(active(job)?'':'dp-terminal'),draggable:active(job),
@@ -167,6 +195,7 @@ function jobCard(job, {compact=false,date=null}={}) {
   if (!compact&&job.requiredEquipment?.length) card.append(h('p',{class:'dp-equipment'},'Equipment: '+job.requiredEquipment.join(', ')));
   if(!compact&&job.jobTime?.recorded)card.append(h('p',{class:'dp-equipment'},'Recorded job work: '+(job.jobTime.workMs/3600000).toFixed(1)+' hr'+(job.jobTime.estimatedMs?' · scheduled '+(job.jobTime.estimatedMs/3600000).toFixed(1)+' hr':'')+(job.jobTime.partialHistory?' · partial history':'')));
   }else if(job.opsNotes||job.notes)card.append(h('p',{class:'dp-scope'},job.opsNotes||job.notes));
+  const ghl=ghlChip(original);if(ghl)card.append(ghl);
   for (const warning of warnings.slice(0,3)) card.append(h('p',{class:'dp-warning'},warning.message||words(warning.code)));
   if(warnings.length>3)card.append(h('p',{class:'dp-muted'},(warnings.length-3)+' more items to review'));
   const actions=h('div',{class:'dp-card-actions'});
@@ -705,9 +734,10 @@ function openJob(job=null,options={}) {
   setTimeout(()=>search.focus(),0);
 }
 function openStatus(job,action) {
-  const cancel=action==='schedule.cancel',noShow=action==='schedule.no_show';
-  const model=modal(cancel?'Cancel job':noShow?'Record no-show':'Restore job',cancel?'The job remains in history. The assigned crew will see the cancellation on refresh.':noShow?'The visit did not happen. Its crew and time are freed. This does not message the customer or change the CRM appointment.':'The original schedule and assignment will be checked for conflicts before restoration.');if(!model)return;
+  const cancel=action==='schedule.cancel',noShow=action==='schedule.no_show',told=S.data?.ghlTagOutbox===true&&job.type!=='blocked';
+  const model=modal(cancel?'Cancel job':noShow?'Record no-show':'Restore job',cancel?'The job remains in history. The assigned crew will see the cancellation on refresh.':noShow?(told?'The visit did not happen. Its crew and time are freed.':'The visit did not happen. Its crew and time are freed. This does not message the customer or change the CRM appointment.'):'The original schedule and assignment will be checked for conflicts before restoration.');if(!model)return;
   model.fields.append(h('p',{class:'dp-wide'},(job.customer||job.title)+' · '+(job.date?dateText(job.date)+' '+clock(job.time):'Unscheduled')));
+  if(told&&(cancel||noShow))model.fields.append(h('p',{class:'dp-wide dp-ghl-note','data-ghl-note':''},'HighLevel will be told (appointment marked '+(cancel?'cancelled':'no-show')+'). Your HighLevel workflow decides what the customer hears.'));
   const reason=cancel||noShow?reasonControls(model.fields,noShow?'noShow':'cancel',{who:cancel}):null;
   const note=cancel?field(model,'cancellationReason','Cancellation note (optional)','','textarea',{rows:2,maxLength:240}):null;
   if(note)note.parentElement.classList.add('dp-wide');

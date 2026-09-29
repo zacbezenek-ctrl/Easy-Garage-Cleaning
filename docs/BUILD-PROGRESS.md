@@ -515,6 +515,10 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   access; Sales and Phone book, move, cancel and no-show walkthroughs and jobs (dispatch-booking.js, never crew, pay, cost or
   money); a booker's handoff lands unassigned ("Sold: needs crew"). Every check goes through can(), /api/hub-auth reports the
   same; a role change or flag-off revokes Firebase business_access (pending shown in Integrations). EGC_STAFF_PAGE_GATE accepts on/true.
+- **GHL-TRACK-1** (P1 HighLevel; EGC_GHL_TAG_OUTBOX on Pages and EGC_GHL_TAG_DRAIN_ENABLED on egc-worker, off) Dispatch and
+  bridge schedule changes and walkthrough outcomes commit a ghlTagOutbox entry with the change; first attempt after the save, then a
+  signed egc-worker drain every 2 min; cancel/no-show set the appointment status with toNotify:false. Tags only, no message or stage.
+  Command center shows a stopped worker and stuck entries with Retry. Turn both on before EGC_SCHEDULE_SYNC_WORKER (GO-LIVE 4.13).
 
 ## In progress
 
@@ -636,6 +640,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | GUSTO-EXPORT | Approved, settled week in Gusto's hours-import format (owner only) | merged (6795b00) |
 | FIX-MONEY-TOTALS | P1 money: one integer-cents total everywhere, including approved change orders (MONEY_UNIFIED_TOTALS, off) | merged (52065e2) |
 | AUTH-ROLES | P1 auth: business access and booking rights from owner-set roles (EGC_STAFF_ROLE_ACCESS, off) | merged (a02d5e5) |
+| GHL-TRACK-1 | P1 HighLevel: durable tag outbox for bookings, changes and walkthrough outcomes (EGC_GHL_TAG_OUTBOX, off) | merged (31a8de8) |
 
 ## Next
 

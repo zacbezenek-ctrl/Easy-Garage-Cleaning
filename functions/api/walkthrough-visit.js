@@ -1,5 +1,6 @@
 import { getHubSession } from '../_lib/hub-session.js';
 import { recordWalkthroughVisit, walkthroughVisitEnabled, walkthroughVisitState, walkthroughVisitStorage } from '../_lib/walkthrough-visit.js';
+import { firstGhlTagAttempt, ghlTagChangeKey, ghlTagEntryId, ghlTagOutboxEnabled } from '../_lib/ghl-tag-outbox.js';
 
 const LIMIT = 8192;
 const reply = (status, body) => Response.json(body, { status, headers: { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' } });
@@ -17,7 +18,7 @@ function sameOrigin(request) {
   try { return new URL(origin).origin === new URL(request.url).origin; } catch { return false; }
 }
 
-export function walkthroughVisitHandlers({ session = getHubSession, storage = walkthroughVisitStorage, now = () => new Date() } = {}) {
+export function walkthroughVisitHandlers({ session = getHubSession, storage = walkthroughVisitStorage, now = () => new Date(), ghlTags = firstGhlTagAttempt } = {}) {
   return {
     async get({ request, env }) {
       try {
@@ -30,7 +31,7 @@ export function walkthroughVisitHandlers({ session = getHubSession, storage = wa
         return reply(200, { ...await walkthroughVisitState(storage(env), actor, Object.fromEntries(params), now().toISOString()), enabled: walkthroughVisitEnabled(env) });
       } catch (error) { return failure(error); }
     },
-    async post({ request, env }) {
+    async post({ request, env, waitUntil }) {
       try {
         if (!sameOrigin(request)) return reply(403, { ok: false, code: 'walkthrough_visit_origin_forbidden', error: 'Open the walkthrough in the Employee Hub before recording it.' });
         const actor = await session(request, env);
@@ -42,7 +43,10 @@ export function walkthroughVisitHandlers({ session = getHubSession, storage = wa
         if (new TextEncoder().encode(raw).byteLength > LIMIT) return reply(413, { ok: false, code: 'walkthrough_visit_too_large', error: 'The walkthrough action is too large.' });
         let input;
         try { input = JSON.parse(raw); } catch { return reply(400, { ok: false, code: 'walkthrough_visit_json_invalid', error: 'The walkthrough action could not be read.' }); }
-        return reply(200, await recordWalkthroughVisit(storage(env), actor, input, now().toISOString()));
+        const at = now().toISOString(), result = await recordWalkthroughVisit(storage(env), actor, input, at);
+        // EGC_GHL_TAG_OUTBOX: an outcome's HighLevel tags (if it queued any) get their first attempt after the response.
+        if (ghlTagOutboxEnabled(env) && result.action !== 'start') ghlTags({ env, waitUntil }, [await ghlTagEntryId(result.visit?.id, ghlTagChangeKey('walkthrough-outcome', result.requestId))], at);
+        return reply(200, result);
       } catch (error) { return failure(error); }
     },
   };

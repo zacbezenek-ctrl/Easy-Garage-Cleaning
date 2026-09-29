@@ -91,8 +91,12 @@ test('one added, removed or changed send path in the real tree fails with exactl
   assert.deepEqual(variant(copy => { copy.inventory['functions/api/crew-rebook.js'] = { ghl_message_send: 1 }; }),
     ['unregistered send path: functions/api/crew-rebook.js ghl_message_send x1. Classify it in functions/_lib/automation-registry-data.js (codeInventory plus an automation\'s code list).']);
   assert.deepEqual(variant(copy => { delete copy.inventory['functions/api/stripe-webhook.js']; }), ['stale registry entry: functions/api/stripe-webhook.js zapier_hook is no longer in the code.']);
+  // GHL-TRACK-1 moved the contact upsert into functions/_lib/highlevel-tags.js, so the booking sync keeps one contact path (the read by id).
   assert.deepEqual(variant(copy => { copy.inventory['functions/api/highlevel.js'].ghl_contact_write += 1; }),
-    ['changed send path: functions/api/highlevel.js ghl_contact_write found 3, registered 2. Review the new or removed call and update the registry.'], 'a new contact update by id in the booking sync is caught');
+    ['changed send path: functions/api/highlevel.js ghl_contact_write found 2, registered 1. Review the new or removed call and update the registry.'], 'a new contact update by id in the booking sync is caught');
+  assert.deepEqual(variant(copy => { copy.inventory['functions/api/highlevel.js'].ghl_tag_helper_call += 1; }),
+    ['changed send path: functions/api/highlevel.js ghl_tag_helper_call found 6, registered 5. Review the new or removed call and update the registry.'], 'a new call to the shared tag writer is caught');
+  assert.deepEqual(variant(copy => { copy.tags['functions/_lib/ghl-tag-outbox.js'].push('egc-visit-lost'); }), ['unregistered tag write: functions/_lib/ghl-tag-outbox.js writes egc-visit-lost. Add trigger tag:egc-visit-lost with this Hub write.']);
   assert.deepEqual(variant(copy => { copy.inventory['functions/api/highlevel.js'].ghl_note_task_write += 1; }),
     ['changed send path: functions/api/highlevel.js ghl_note_task_write found 4, registered 3. Review the new or removed call and update the registry.']);
   // FUN-13 moved the website lead HighLevel writes from functions/api/web-lead.js to functions/_lib/web-lead-intake.js.

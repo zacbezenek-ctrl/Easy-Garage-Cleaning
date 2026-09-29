@@ -87,7 +87,9 @@ test('the invariants reject unsafe or inconsistent classifications', async () =>
 test('every automation lists the Hub writes that can start it', () => {
   const writes = id => hubWritesFor(AUTOMATION_REGISTRY, id);
   assert.deepEqual([...new Set(writes('ghl.booking_confirmation_workflows').map(item => item.trigger))], ['tag:egc-hub-scheduled', 'tag:egc-job-scheduled', 'tag:egc-walkthrough-scheduled']);
-  assert.ok(writes('ghl.booking_confirmation_workflows').every(item => item.file === 'functions/api/highlevel.js' && item.automatic === true));
+  // GHL-TRACK-1: the tag outbox is the second writer of the booking tags, only with EGC_GHL_TAG_OUTBOX on.
+  assert.ok(writes('ghl.booking_confirmation_workflows').every(item => ['functions/api/highlevel.js', 'functions/_lib/ghl-tag-outbox.js'].includes(item.file) && item.automatic === true));
+  assert.ok(writes('ghl.booking_confirmation_workflows').filter(item => item.file === 'functions/_lib/ghl-tag-outbox.js').every(item => /EGC_GHL_TAG_OUTBOX=true \(off\)/.test(item.when)));
   assert.deepEqual(writes('ghl.garage_sales_exit').map(item => item.file), ['functions/_lib/sales-followup-exit.js']);
   assert.deepEqual(writes('ghl.lifecycle.payment_received').flatMap(item => item.via).sort(), ['crew/postjob.html', 'employee-suite.js']);
   assert.deepEqual(writes('ghl.garage_instant_text_nurture'), [], 'Facebook forms start the nurture, not the Hub');
@@ -97,7 +99,7 @@ test('every automation lists the Hub writes that can start it', () => {
   assert.ok(appointment.some(item => item.trigger === 'appointment:created' && item.file === 'egc-platform/apps/api/src/scheduling.ts'));
   assert.ok(appointment.some(item => item.trigger === 'appointment_status:changed' && /deleteCalendarEvent/.test(item.when)));
   assert.deepEqual([...new Set(writes('ghl.note_task_workflows').map(item => `${item.trigger} ${item.file}`))].sort(), ['contact:note_added egc-platform/services/operations/src/note-outbox.ts',
-    'contact:note_added functions/_lib/web-lead-intake.js', 'contact:note_added functions/api/highlevel.js', 'contact:task_added functions/_lib/highlevel-checkin.js', 'contact:task_added functions/api/highlevel.js']);
+    'contact:note_added functions/_lib/highlevel-tags.js', 'contact:note_added functions/_lib/web-lead-intake.js', 'contact:note_added functions/api/highlevel.js', 'contact:task_added functions/_lib/highlevel-checkin.js', 'contact:task_added functions/api/highlevel.js']);
   assert.deepEqual(writes('unknown.id'), []);
   assert.deepEqual(listenersFor(AUTOMATION_REGISTRY, 'call:missed').map(item => item.id), ['ghl.missed_call_textback', 'ghl.missed_call_cooldown_helper']);
   assert.equal(resolveSurface(AUTOMATION_REGISTRY, 'tag:egc-reminder-14d').id, 'tag:egc-reminder-{n}d');

@@ -417,6 +417,7 @@ Every website lead already goes to HighLevel. Stage 2 makes that durable (nothin
 | 4.10 | `EGC_CLOCK_IN_WITHOUT_FIX=true` (owner decision: on) | Cloudflare, plain |
 | 4.11 | `EGC_JOB_STATUS_MOVES_TIME=true` (optional) | Cloudflare, plain |
 | 4.12 | `EGC_TIMECARD_CORRECTIONS=true` (optional) | Cloudflare, plain |
+| 4.13 | `EGC_GHL_TAG_OUTBOX=true`, then `EGC_GHL_TAG_DRAIN_ENABLED=true` | Cloudflare, plain; Railway egc-worker |
 
 ### 4.1 Drive times
 
@@ -531,6 +532,29 @@ Every website lead already goes to HighLevel. Stage 2 makes that durable (nothin
 - **Needs first:** with `EGC_STAFF_ROLE_PERMISSIONS` on, check that each manager's staff role is manager. Confirm no Hub sign-in username (`HUB_AUTH_USERS_JSON`, `HUB_AUTH_ADDITIONAL_USERS_JSON`) contains `'` `"` `\` `` ` `` `<` `>` `&`, a tab or a line break: such accounts can no longer clock in from the crew app. Developer: before turning this on in Production, look for existing timecards whose IDs contain quotes or markup. New ones are refused; older ones still show on the board and stay savable.
 - **Check it worked:** on Preview, clock a test account in and leave it running. As a manager, open Time approvals, tap **Close shift** on that row, enter the real end time and a reason, and save. The card reads pending, its history shows the reason and your name, and the payroll week card's hours change once it is approved. **Correct time** on another test card works the same way. Close every shift under Needs attention before the payroll export.
 - **Roll back:** delete the variable. Corrections already saved stay in the timecards and their history.
+
+### 4.13 HighLevel hears about every booking change (tag outbox)
+
+- **Set:** `EGC_GHL_TAG_OUTBOX=true` on Cloudflare Pages, then `EGC_GHL_TAG_DRAIN_ENABLED=true` on the Railway egc-worker.
+- **Where:** Cloudflare Pages, plain (Preview first, then Production); Railway → egc-worker → Variables.
+- **Turns on:** a booking, move, restore, cancel or no-show in Dispatch or through the bridge, and a walkthrough outcome, saves the HighLevel tags it needs in the same save as the change. The Hub tries them once right after the save. After that, egc-worker retries every 2 minutes (waiting 1, 5, 15, then 60 minutes between tries) until they are added, and parks a change after 8 tries.
+  - **What it writes:** tags only, plus two things. A cancelled or no-show visit's appointment is set to Cancelled or No Show with no calendar notice (`toNotify: false`). A lost walkthrough gets an internal note with the reason code. It sends no message and never moves a stage or creates an opportunity.
+  - **Your existing workflows:** booking and reminder workflows get the same tags as today, after the appointment is written, so they keep working unchanged.
+  - **New tags:** `egc-visit-rescheduled`, `egc-visit-cancelled`, `egc-visit-no-show`, `egc-walkthrough-no-show`, `egc-walkthrough-lost` and `egc-quote-to-follow`. Each starts nothing until you build a workflow on it.
+  - **What you see:** Dispatch cards show **HighLevel told**, **HighLevel waiting** or **HighLevel stuck** with **Retry**. The Command center shows **HighLevel tags stuck for N visits** with **Retry**, and **The HighLevel tag worker has not run** when egc-worker has not checked in for 10 minutes.
+- **Needs first:**
+  1. Decide whether you want HighLevel workflows on the new tags and on the appointment status Cancelled or No Show. None is needed; without a workflow the tags are tracking only.
+  2. Check that no existing **Appointment Status** workflow would message a customer you did not intend to.
+  3. egc-worker's `API_BEARER_TOKEN` matches the Hub's, the Hub uses v2 service auth, and `HIGHLEVEL_API_KEY` and `HIGHLEVEL_LOCATION_ID` are set on Cloudflare Pages ([B5](#b5-railway-platform-and-the-signed-bridge)).
+  4. The rules from this build are published ([B4](#b4-publish-firestore-rules-and-indexes)). The outbox records are server-only.
+- **Order of the switches:** never set `EGC_SCHEDULE_SYNC_WORKER` (the server calendar sync, on Cloudflare Pages and egc-api) before both switches here are on. With that sync on and the outbox off, confirmations and reminders stop.
+- **Messaging dry run:** while `EGC_MESSAGING_DRY_RUN` is not exactly `false`, a change for a visit whose customer has no linked HighLevel contact is retried for about 4 hours and then shows as stuck. Link the customer's contact and press **Retry**. The outbox creates a contact only outside a dry run.
+- **Check it worked (Preview, phone):**
+  1. Book a test visit for a test contact in Dispatch. Once its calendar sync has run, the card says **HighLevel told** with a time, and the contact has `egc-hub-scheduled`.
+  2. Move it to another day. The contact gets `egc-visit-rescheduled`.
+  3. Cancel it. The contact gets `egc-visit-cancelled`, and the appointment shows Cancelled with no calendar notice.
+  4. Open the Command center. There is no "tag worker has not run" line.
+- **Roll back:** if `EGC_SCHEDULE_SYNC_WORKER` is on, delete it first (Cloudflare Pages and egc-api). Then delete `EGC_GHL_TAG_OUTBOX` and retry the deployment, and delete `EGC_GHL_TAG_DRAIN_ENABLED` on egc-worker. The browser tag sync works as before. Tags already added stay.
 
 ### Keep off for now
 
@@ -820,7 +844,7 @@ Before moving any of these, check which HighLevel workflows and calendar notific
 | 1 | `EGC_STAFF_PAGE_GATE=off` | Staff pages open without the gate |
 | 2 | Delete `WEB_LEAD_ADS_RELAY_ENABLED`, then `WEB_LEAD_RECEIPTS_ENABLED` | Web3Forms emails for any lead in doubt |
 | 3 | Delete `EGC_WALKTHROUGH_VISIT_ENABLED`, `EGC_STAFF_ROLE_ACCESS` or `EGC_STAFF_DIRECTORY_ENABLED` | Timecards of reps with open walkthroughs; Hub → Integrations for pending Firebase sign-outs |
-| 4 | Delete the `EGC_DISPATCH_…` or `FIELD_EXPENSES_ENABLED` switch; crew app: `/crew/sw-config.json` (developer) | Dispatch saves; crew phones reload |
+| 4 | Delete the `EGC_DISPATCH_…` or `FIELD_EXPENSES_ENABLED` switch; crew app: `/crew/sw-config.json` (developer); delete `EGC_GHL_TAG_OUTBOX` only after `EGC_SCHEDULE_SYNC_WORKER` is off | Dispatch saves; crew phones reload; HighLevel booking tags |
 | 5 | Delete `MONEY_API_ENABLED`, `MONEY_DOCUMENT_ENABLED` or `PAYMENT_REVIEW_CHECKOUT_BLOCK_ENABLED` | Do not re-save itemized estimates in the old editor |
 | 6 | Delete `FIELD_CUSTOMER_PHOTOS_ENABLED` | Portal shows no photos |
 | 7 | Delete `MCP_OAUTH_SHARED_LOGIN_ENABLED`, `MCP_OAUTH_HUB_IDENTITY_ENABLED` or `EGC_MCP_PUBLIC_ORIGIN` | Consent page |

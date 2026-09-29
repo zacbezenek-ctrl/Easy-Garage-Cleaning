@@ -10,6 +10,7 @@ import { legacyPersonKeys, staffDirectoryEnabled, storedWeeklyAvailability } fro
 import { storedSkills } from './staff-skills.js';
 import { segmentsEnabled } from './dispatch-segments.js';
 import { crewNotificationsEnabled } from './crew-notifications.js';
+import { ghlTagOutboxEnabled } from './highlevel-tags.js';
 import { commitConflict, commitFailure } from './firestore-errors.js';
 import { dispatchReadMode, windowedJobs, pagedQuery, customerCoverage, aggregateCount } from './dispatch-window-reads.js';
 
@@ -30,7 +31,9 @@ export const JOB_FIELDS = Object.freeze(['type','recordType','date','time','endD
   // them for the sold jobs a dispatch list projects.
   'estimate.status','durationOverride.minutes','durationOverride.reason','durationOverride.crewSize','durationOverride.source','logistics.crew_size',
   // Required skills are read by the dispatch rules (dispatch-rules.js).
-  'requiredSkills']);
+  'requiredSkills',
+  // GHL-TRACK-1: the visit's newest HighLevel tag outbox entry (ghl-tag-outbox.js), for the card's HighLevel chip.
+  'ghlTagEntry']);
 
 /** Owner decision F19: the owner and managers are office staff and join assignment
  * lists only when they take field work, recorded as stored staffRoles that also
@@ -138,6 +141,8 @@ export function dispatchStorage(env, fetcher = firestoreFetch) {
     segmentsEnabled: segmentsEnabled(env),
     // EGC_CREW_NOTIFICATIONS_ENABLED: dispatch saves queue crew notices in the same commit.
     crewNotificationsEnabled: crewNotificationsEnabled(env),
+    // EGC_GHL_TAG_OUTBOX: schedule changes queue their HighLevel tags in the same commit (ghl-tag-outbox.js).
+    ghlTagOutbox: ghlTagOutboxEnabled(env),
     async legacyBlockedDays(dates) {
       const found = await Promise.all(dates.map(async date => {
         const response = await send(`${BASE}/blocked_days/${encodeURIComponent(date)}?mask.fieldPaths=blockedAt`);

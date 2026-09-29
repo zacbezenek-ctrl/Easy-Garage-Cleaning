@@ -27,14 +27,15 @@ import { getHubSession, hasBusinessAccess } from '../_lib/hub-session.js';
 import { sendAcceptedQuotePortal } from '../_lib/portal-invitation.js';
 import { syncSalesFollowupExit, salesExitMilestone } from '../_lib/sales-followup-exit.js';
 import { readJob, patchJob } from '../_lib/firestore-job.js';
-import { customerCalendars, isStaffScheduledCalendar } from '../_lib/highlevel-calendars.js';
+import { isStaffScheduledCalendar } from '../_lib/highlevel-calendars.js';
 import { createJobAssignmentAccess } from '../_lib/job-assignment.js';
 import { syncNativeSchedule } from '../_lib/operations-schedule-sync.js';
 import { syncNativeNote } from '../_lib/operations-note-sync.js';
 import { operationsEnabled } from '../_lib/operations-service-auth.js';
 import { ensureHighLevelCheckin } from '../_lib/highlevel-checkin.js';
+import { addTags, completeAppointment, ensureContact, ghl, highLevelConfig } from '../_lib/highlevel-tags.js';
+import { ghlTagOutboxEnabled, handOffScheduleTags, scheduleTagOwner } from '../_lib/ghl-tag-outbox.js';
 
-const API = 'https://services.leadconnectorhq.com';
 const DEFAULT_LEAD_RESET_AT = '2026-09-03T21:51:19.314Z';
 const HOST = /^(?:easygaragecleaning\.com|www\.easygaragecleaning\.com|easy-garage-cleaning\.pages\.dev|localhost(?::\d+)?|127\.0\.0\.1(?::\d+)?)$/;
 
@@ -52,41 +53,24 @@ function allowed(request) {
   try { return HOST.test(new URL(raw).host); } catch { return false; }
 }
 
+function config(env) {
+  return {
+    ...highLevelConfig(env),
+    quoteReadyTags: String(env.HIGHLEVEL_QUOTE_READY_TAGS || env.GHL_QUOTE_READY_TAGS || 'egc-quote-ready,gc-quote-open').split(',').map(x => x.trim()).filter(Boolean),
+  };
+}
+
 async function mayChangeJob(session, job, access) {
   if (hasBusinessAccess(session)) return true;
   return access.assigned(job);
 }
 
-function config(env) {
-  return {
-    token: env.HIGHLEVEL_API_KEY || env.GHL_API_KEY || '',
-    locationId: env.HIGHLEVEL_LOCATION_ID || env.GHL_LOCATION_ID || '',
-    ...customerCalendars(env),
-    pipelineId: env.HIGHLEVEL_PIPELINE_ID || env.GHL_PIPELINE_ID || 'anSgrMpYHtAX6YlUHnIR',
-    scheduledStageId: env.HIGHLEVEL_SCHEDULED_STAGE_ID || env.GHL_SCHEDULED_STAGE_ID || env.HIGHLEVEL_PIPELINE_STAGE_SCHEDULED_ID || env.GHL_PIPELINE_STAGE_SCHEDULED_ID || '06b78f36-b53d-4028-9e36-b41ac4d2da09',
-    walkthroughCompleteStageId: env.HIGHLEVEL_QUOTED_STAGE_ID || env.GHL_QUOTED_STAGE_ID || env.HIGHLEVEL_PIPELINE_STAGE_WALKTHROUGH_COMPLETE_ID || env.GHL_PIPELINE_STAGE_WALKTHROUGH_COMPLETE_ID || '85c56b3e-4886-4fc1-be95-87ad0b0d2bcc',
-    jobCompleteStageId: env.HIGHLEVEL_COMPLETE_STAGE_ID || env.GHL_COMPLETE_STAGE_ID || env.HIGHLEVEL_PIPELINE_STAGE_JOB_COMPLETE_ID || env.GHL_PIPELINE_STAGE_JOB_COMPLETE_ID || '0ccca1f9-3ffb-412a-b15a-3f4be1619514',
-    userId: env.HIGHLEVEL_USER_ID || env.GHL_USER_ID || 'w92vfhwm3a8twTIowpQz',
-    quoteReadyTags: String(env.HIGHLEVEL_QUOTE_READY_TAGS || env.GHL_QUOTE_READY_TAGS || 'egc-quote-ready,gc-quote-open').split(',').map(x => x.trim()).filter(Boolean),
-  };
-}
-
-async function ghl(c, path, options = {}) {
-  const headers = {
-    Accept: 'application/json',
-    Authorization: `Bearer ${c.token}`,
-    Version: 'v3',
-    ...(options.body ? { 'Content-Type': 'application/json' } : {}),
-  };
-  const response = await fetch(API + path, { ...options, headers: { ...headers, ...(options.headers || {}) } });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const error = new Error(`HighLevel returned ${response.status}`);
-    error.status = response.status;
-    error.detail = JSON.stringify(data).slice(0, 400);
-    throw error;
-  }
-  return data;
+// GHL-TRACK-1: once the sync has written the appointment and linked the contact, the outbox entry that owns the
+// visit's scheduled tags gets its attempt (after the response when the runtime keeps it alive).
+function handOffTags(env, waitUntil, plan) {
+  if (!plan.entryId) return;
+  const attempt = handOffScheduleTags(env, plan.entryId, { now: new Date().toISOString() }).catch(() => null);
+  if (typeof waitUntil === 'function') waitUntil(attempt); else return attempt;
 }
 
 function contactShape(contact = {}) {
@@ -245,22 +229,6 @@ async function getSchedule(c, start, end) {
   return { events, calendars: list.map(x => ({ id: x.id, name: x.name || 'Calendar' })) };
 }
 
-async function ensureContact(c, client, source = 'EGC Hub') {
-  let contactId = client.highlevel_contact_id || client.ghl_contact_id || client.contactId || '';
-  if (contactId) return contactId;
-  const upsert = await ghl(c, '/contacts/upsert', { method: 'POST', body: JSON.stringify({
-    locationId: c.locationId, name: client.name || client.customer || '', phone: client.phone || '', email: client.email || '',
-    address1: client.address || '', source: client.lead_source || source
-  })});
-  return upsert.contact?.id || '';
-}
-
-async function addTags(c, contactId, tags) {
-  const clean = [...new Set((tags || []).filter(Boolean))];
-  if (!clean.length) return;
-  await ghl(c, `/contacts/${encodeURIComponent(contactId)}/tags`, { method: 'POST', body: JSON.stringify({ tags: clean }) });
-}
-
 function opportunityForContact(rows, contactId, pipelineId) {
   return (rows || []).find(row => {
     const rowContact = row.contactId || row.contact?.id || '';
@@ -316,32 +284,6 @@ async function advanceOpportunity(c, contactId, stageId, fallbackTag, opportunit
     return { updated: true, opportunityId: id, pipelineStageId: stageId, fallbackTag };
   } catch (error) {
     return { updated: false, reason: 'update-failed', detail: error.detail || error.message, fallbackTag };
-  }
-}
-
-async function completeAppointment(c, appointmentId, targetStatus = 'completed') {
-  if (!appointmentId) return { updated: false, reason: 'appointment-not-linked' };
-  try {
-    const path = `/calendars/events/appointments/${encodeURIComponent(appointmentId)}`;
-    const currentResult = await ghl(c, path);
-    const current = currentResult.appointment || currentResult.event || currentResult;
-    await ghl(c, path, {
-      method: 'PUT', body: JSON.stringify({
-        calendarId: current.calendarId,
-        title: current.title || 'EGC Free Walkthrough',
-        startTime: current.startTime,
-        endTime: current.endTime,
-        address: current.address || '',
-        description: current.description || current.notes || '',
-        assignedUserId: current.assignedUserId || c.userId || undefined,
-        appointmentStatus: targetStatus,
-        toNotify: false,
-        ...(isStaffScheduledCalendar(current.calendarId) ? { ignoreFreeSlotValidation: true } : {}),
-      }),
-    });
-    return { updated: true, appointmentId, appointmentStatus: targetStatus };
-  } catch (error) {
-    return { updated: false, reason: 'update-failed', detail: error.detail || error.message };
   }
 }
 
@@ -534,7 +476,7 @@ export async function onRequestGet({ request, env }) {
   }
 }
 
-export async function onRequestPost({ request, env }) {
+export async function onRequestPost({ request, env, waitUntil }) {
   if (!allowed(request)) return reply(403, { ok: false, error: 'Forbidden origin' });
   const session = await getHubSession(request, env);
   if (!session) return reply(401, { ok: false, code: 'HUB_AUTH_REQUIRED', error: 'Sign in to the EGC Hub' });
@@ -628,20 +570,30 @@ export async function onRequestPost({ request, env }) {
     if (!contactId) return reply(502, { ok: false, error: 'HighLevel did not return a contact ID' });
     if (payload.tool === 'schedule') {
       if (!payload.start_time || !payload.end_time) return reply(400, { ok: false, error: 'Schedule start and end are required' });
-      const event = await createAppointment(c, payload, contactId);
+      // EGC_GHL_TAG_OUTBOX (GHL-TRACK-1): the saved visit is read first, so a cancelled or no-show visit's appointment is
+      // written with that status and toNotify false, as the outbox writes it (never re-confirmed, never created), and a
+      // visit whose tag outbox entry is current leaves its scheduled tags to the outbox. Off: the requests are exactly as before.
+      const outbox = ghlTagOutboxEnabled(env), saved = outbox && payload.job_id ? await readJob(env, payload.job_id).catch(() => null) : null;
+      const closed = outbox ? { cancelled: 'cancelled', canceled: 'cancelled', noshow: 'noshow', no_show: 'noshow', 'no-show': 'noshow' }[String(saved?.pipelineStatus || saved?.status || '').toLowerCase()] || '' : '';
+      const event = closed && !payload.appointment_id && !operationsEnabled(env) ? { updated: false, reason: 'visit-closed' } : await createAppointment(c, closed ? { ...payload, status: closed, notify: false } : payload, contactId);
       if (payload.silent_update) return reply(200, { ok: true, contactId, ...event, pipeline: { updated: false, reason: 'silent-appointment-update' }, automation: { silent: true, notificationsRequested: false } });
       // Notify customer (payload.notify) governs the appointment's own automations and the reminder tag only; the
       // scheduled tags and the Scheduled stage follow every scheduled visit. A cancelled visit (read from storage, never
       // the browser) is synced as its cancellation alone: no scheduled or reminder tag, and no move to Scheduled.
-      const stored = payload.job_id ? await readJob(env, payload.job_id).catch(() => null) : null;
+      const stored = outbox ? saved : payload.job_id ? await readJob(env, payload.job_id).catch(() => null) : null;
       if (['cancelled', 'canceled'].includes(String(stored?.pipelineStatus || stored?.status || '').toLowerCase())) return finish(contactId, { ok: true, contactId, ...event, pipeline: { updated: false, reason: 'visit-cancelled' }, automation: { trigger: '', reminderTrigger: '', cancelled: true, notificationsRequested: payload.notify !== false } });
+      if (closed === 'noshow') return finish(contactId, { ok: true, contactId, ...event, pipeline: { updated: false, reason: 'visit-no-show' }, automation: { trigger: '', reminderTrigger: '', noShow: true, notificationsRequested: payload.notify !== false } });
       const typeTag = payload.event_type === 'job' ? 'egc-job-scheduled' : 'egc-walkthrough-scheduled';
       const reminderDays = Math.min(30, Math.max(1, Number(payload.reminder_days || 2)));
       const reminderTag = payload.notify === false ? '' : `egc-reminder-${reminderDays}d`;
-      let tagSynced = true;
-      try { await addTags(c, contactId, ['egc-hub-scheduled', typeTag, reminderTag]); } catch { tagSynced = false; }
+      // tagSynced is true only for tags that were added: by this request, or already by the outbox.
+      const tagPlan = await scheduleTagOwner(env, stored), outboxTags = tagPlan.owner === 'outbox';
+      let tagSynced = !outboxTags || tagPlan.status === 'done';
+      if (!outboxTags) try { await addTags(c, contactId, ['egc-hub-scheduled', typeTag, reminderTag]); } catch { tagSynced = false; }
       const stage = payload.event_type === 'job' ? await advanceOpportunity(c, contactId, c.scheduledStageId, typeTag, payload.opportunity_id || '', opportunityInput(payload, client)) : { updated: false, reason: 'walkthrough-is-not-a-booked-job' };
-      return finish(contactId, { ok: true, contactId, ...event, pipeline: stage, automation: { trigger: typeTag, reminderTrigger: reminderTag, tagSynced, notificationsRequested: payload.notify !== false } });
+      const response = await finish(contactId, { ok: true, contactId, ...event, pipeline: stage, automation: { trigger: typeTag, reminderTrigger: reminderTag, tagSynced, notificationsRequested: payload.notify !== false, ...(outboxTags ? { tagOwner: 'outbox', tagStatus: tagPlan.status } : {}) } });
+      await handOffTags(env, waitUntil, tagPlan);
+      return response;
     }
     if (payload.tool === 'lifecycle') {
       const event = String(payload.event || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
@@ -718,10 +670,13 @@ export async function onRequestPost({ request, env }) {
           end_time: q.end_at || `${q.job_date}T${q.end_time}:00-06:00`, title: q.title || 'EGC Garage Service',
           address: client.address, notes: appointmentInstructions(payload), notify: handoffRequestId ? payload.notify !== false : true, idempotency_key: payload.idempotency_key || '',
         }, contactId);
-        let tagSynced = true;
-        try { await addTags(c, contactId, ['egc-hub-scheduled', 'egc-job-scheduled']); } catch { tagSynced = false; }
+        const tagPlan = await scheduleTagOwner(env, savedJob), outboxTags = tagPlan.owner === 'outbox';
+        let tagSynced = !outboxTags || tagPlan.status === 'done';
+        if (!outboxTags) try { await addTags(c, contactId, ['egc-hub-scheduled', 'egc-job-scheduled']); } catch { tagSynced = false; }
         const stage = await advanceOpportunity(c, contactId, c.scheduledStageId, 'egc-job-scheduled', payload.opportunity_id || '', opportunityInput(payload, client));
-        return finish(contactId, { ok: true, contactId, noteId: note.note?.id || '', taskId, ...scheduled, walkthrough, pipeline: stage, portalInvitation, automation: { trigger: 'egc-job-scheduled', tagSynced } });
+        const response = await finish(contactId, { ok: true, contactId, noteId: note.note?.id || '', taskId, ...scheduled, walkthrough, pipeline: stage, portalInvitation, automation: { trigger: 'egc-job-scheduled', tagSynced, ...(outboxTags ? { tagOwner: 'outbox', tagStatus: tagPlan.status } : {}) } });
+        await handOffTags(env, waitUntil, tagPlan);
+        return response;
       }
       const stage = await advanceOpportunity(c, contactId, c.walkthroughCompleteStageId, 'egc-walkthrough-complete', payload.opportunity_id || '', opportunityInput(payload, client));
       return finish(contactId, { ok: true, contactId, noteId: note.note && note.note.id || '', taskId, walkthrough, pipeline: stage, portalInvitation, automation: { trigger: 'egc-walkthrough-complete' } });

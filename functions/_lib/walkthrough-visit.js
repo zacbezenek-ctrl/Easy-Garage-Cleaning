@@ -12,6 +12,7 @@ import { activeTimecard, authorizeTimecard } from './employee-timecards.js';
 import { activeJobSegment, ownJobTimeProjection } from './employee-job-time.js';
 import { canonicalJson, funnelHubId, funnelReasonCodes, funnelVocabulary, sha256Hex } from './funnel-definitions.js';
 import { funnelEventWrite } from './funnel-events.js';
+import { ghlTagOutboxEnabled, outcomeTagWrites } from './ghl-tag-outbox.js';
 
 // FUN-05: the walkthrough visit record. Start, Finish and No-show on a
 // walkthrough job write walkthroughVisit / walkthroughOutcome /
@@ -305,6 +306,9 @@ export async function recordWalkthroughVisit(store, session, input, now = new Da
     patch.walkthroughOccurrences = [...history, { occurrence: previous.outcome.occurrence, walkthroughVisit: startRecord, walkthroughOutcome: previous.outcome, archivedAt: now, archivedBy: actor, archivedRequestId: receiptId }].slice(-OCCURRENCES);
     if (request.action === 'start') patch.walkthroughOutcome = null;
   }
+  // EGC_GHL_TAG_OUTBOX (GHL-TRACK-1): the outcome's HighLevel tags commit with it (a sale keeps the Game Plan's tags).
+  const tags = store.ghlTagOutbox === true && request.action !== 'start' ? await outcomeTagWrites({ visit, outcome: request.outcome, reasonCode: request.reasonCode, requestId: receiptId, now }) : null;
+  if (tags) { patch.ghlTagEntry = tags.pointer; writes.push(tags.write); }
   writes.unshift({ collection: 'jobs', id: visit.id, revision: visit.revision, patch });
   writes.push({ collection: WALKTHROUGH_VISIT_OPERATIONS, id: receiptId, patch: { requestId: receiptId, action: request.action, visitId: visit.id, actorId: actor, fingerprint, repTime, createdAt: now } });
   try { await store.commit(writes); }
@@ -347,6 +351,8 @@ export function walkthroughVisitStorage(env, fetcher = firestoreFetch) {
   return {
     // The deployment settings the staff-role capability and timecard rules read.
     env,
+    // EGC_GHL_TAG_OUTBOX: an outcome queues its HighLevel tags in the same commit (ghl-tag-outbox.js).
+    ghlTagOutbox: ghlTagOutboxEnabled(env),
     async read(collection, id) {
       try { return await dispatch.read(collection, id); }
       catch { throw fail('storage_unavailable', 'Walkthrough records could not be loaded. Retry.', 503); }

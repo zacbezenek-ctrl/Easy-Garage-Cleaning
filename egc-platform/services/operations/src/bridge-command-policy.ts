@@ -94,8 +94,9 @@ export function bridgeCommandDenial(actor:BridgeActor|null|undefined, rule:Bridg
  *           reader (FUN-37).
  *           Signs the Hub with its v2 key or the legacy key, and also presents the mcp and hub
  *           principals whose requests it verified and relays.
- *   worker  egc-worker's messaging cron. It signs with the API's key, so the Hub admits it
- *           only at /api/messaging-cron (messaging-cron.js): no bridge endpoint accepts it.
+ *   worker  egc-worker's messaging cron and HighLevel tag drain (GHL-TRACK-1). They sign with the
+ *           API's key, so the Hub admits them only at /api/messaging-cron (messaging-cron.js) and
+ *           /api/ghl-tag-drain (ghl-tag-drain.js): no bridge endpoint accepts them.
  * Humans are not bound here. A new integration principal is ONE bind() line below. An id
  * that no line (or more than one line) matches is refused as bridge_integration_issuer_unknown,
  * and an id its verified signer neither mints nor relays as bridge_integration_issuer_mismatch.
@@ -118,7 +119,8 @@ export const BRIDGE_ACTOR_BINDINGS:readonly BridgeActorBinding[] = Object.freeze
   bind(/^schedule-sync-worker$/,"api"),
   bind(/^walkthrough-followup-worker$/,"api"),
   bind(/^recurring-horizon-worker$/,"api"),
-  bind(/^messaging-cron-worker$/,"worker")
+  bind(/^messaging-cron-worker$/,"worker"),
+  bind(/^ghl-tag-worker$/,"worker")
 ]);
 /** The principals each verified signer may present: its own and, for the API, the ones it relays. */
 export const BRIDGE_SIGNER_PRESENTS:Readonly<Partial<Record<BridgeIssuer,readonly BridgeIssuer[]>>> = Object.freeze({api:Object.freeze(["api","mcp","hub"] as BridgeIssuer[]),hub:Object.freeze(["hub"] as BridgeIssuer[]),mcp:Object.freeze(["mcp"] as BridgeIssuer[])});
