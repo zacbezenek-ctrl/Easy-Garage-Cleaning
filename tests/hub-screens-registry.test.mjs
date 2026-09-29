@@ -93,7 +93,7 @@ test('render lazily loads the kit then the screen once, mounts with the Hub cont
   page.api.go('fixture_lazy');
   assert.ok(page.main().querySelector('.hub-screen-loading'), 'a skeleton shows while assets load');
   await page.flush();
-  assert.deepEqual(requested.sort(), ['employee-ui-kit.css?v=20260927hubreg', 'employee-ui-kit.js?v=20260927hubreg', 'fixture-lazy.css?v=t1', 'fixture-lazy.js?v=t1']);
+  assert.deepEqual(requested.sort(), ['employee-ui-kit.css?v=20260929mobilehub', 'employee-ui-kit.js?v=20260929mobilehub', 'fixture-lazy.css?v=t1', 'fixture-lazy.js?v=t1']);
   assert.equal(mounts.length, 1);
   const { host, ctx } = mounts[0];
   assert.equal(host, page.main());

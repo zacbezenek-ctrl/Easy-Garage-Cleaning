@@ -6,7 +6,7 @@ import {join} from 'node:path';
 import {allowlist,difference,mergePending,ratchet} from './e2e/helpers/allowlist.mjs';
 import {e2eWorkers} from './e2e/helpers/workers.mjs';
 
-const TOUCH_PROJECTS=['iphone-375','android-pixel7','tablet-768'];
+const TOUCH_PROJECTS=['iphone-375','android-pixel7','tablet-768','phone-320','phone-390','phone-414','phone-landscape','ipad-820','ipad-1180'];
 
 test('multiset difference counts repeated identical controls instead of collapsing them',()=>{
  assert.deepEqual(difference(['a','a','b','c'],['a','c']),['a','b']);

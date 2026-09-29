@@ -24,10 +24,11 @@ class HubShellBrowserTests(HubShell, unittest.TestCase):
                 expect(page.locator('#ops-title')).to_have_text('Fixture screen')
                 expect(page.locator('#ops-kicker')).to_have_text('SYSTEM')
                 assets = page.evaluate("[...document.querySelectorAll('[data-egc-hub-asset]')].map(node=>node.getAttribute('src')||node.getAttribute('href')).sort()")
-                self.assertEqual(assets, ['employee-ui-kit.css?v=20260927hubreg', 'employee-ui-kit.js?v=20260927hubreg', 'fixture-screen.js?v=test'])
+                self.assertEqual(assets, ['employee-ui-kit.css?v=20260929mobilehub', 'employee-ui-kit.js?v=20260929mobilehub', 'fixture-screen.js?v=test'])
                 self.assertGreaterEqual(page.locator('.fixture-screen .hub-btn').first.bounding_box()['height'], 44)
                 font = page.locator('.fixture-screen input[name=phone]').evaluate('el=>getComputedStyle(el).fontSize')
-                self.assertEqual(font, '16px' if width <= 680 else '15px')
+                # MOBILE-HUB (TABLET-01): 16px at every width, not only phones; iOS zooms into anything smaller on an iPad too.
+                self.assertEqual(font, '16px')
                 scroll = self.no_horizontal_scroll()
                 self.assertLessEqual(scroll['width'], width, scroll)
                 table = page.locator('.fixture-screen .hub-table-scroll')

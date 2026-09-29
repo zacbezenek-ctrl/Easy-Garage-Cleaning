@@ -279,9 +279,16 @@ function shell(profile, { roleAccess = false, fetcher, before } = {}) {
   } });
 }
 const views = page => Array.from(page.api.visibleNav(), item => item[1]);
+// (SALES-BOOKING after MOBILE-HUB) MOBILE-HUB deliberately lists RUN THE BUSINESS first for business users. The recorded base
+// order is kept within each part: the business group's views first, then every other view, each in the recorded order.
+const businessFirst = (page, ids) => {
+  const group = new Map(Array.from(page.api.visibleNav(), item => [item[1], item[0]])), business = id => group.get(id) === 'RUN THE BUSINESS';
+  return Array.from(page.api.hubCapabilities()).includes('business') ? [...ids.filter(business), ...ids.filter(id => !business(id))] : ids;
+};
+const baseNav = (page, base) => businessFirst(page, BASE_NAV[base]);
 
 test('with EGC_STAFF_ROLE_ACCESS off (no roleAccess from /api/hub-auth), navigation is identical to before for every kind of account', () => {
-  for (const [name, [profile, base]] of Object.entries(PROFILES)) assert.deepEqual(views(shell(profile)), BASE_NAV[base], name);
+  for (const [name, [profile, base]] of Object.entries(PROFILES)) { const page = shell(profile); assert.deepEqual(views(page), baseNav(page, base), name); }
 });
 
 test('with roleAccess, Sales and Phone see leads, walkthroughs, the team schedule and the Action Center, as their server capabilities allow', () => {
@@ -296,7 +303,7 @@ test('with roleAccess, Sales and Phone see leads, walkthroughs, the team schedul
   assert.deepEqual(views(shell({ user: 'Synthetic.Follow', business: false, role: 'sales', caps: ['followups.own'] }, { roleAccess: true })), [...EMPLOYEE_VIEWS, 'action_center']);
   assert.deepEqual(views(shell({ user: 'Synthetic.Book', business: false, role: 'phone', caps: ['schedule.book'] }, { roleAccess: true })), [...EMPLOYEE_VIEWS, 'schedule', 'walkthroughs', 'pipeline']);
   // A crew account, a manager and the owner are exactly as they were.
-  for (const name of ['crew', 'crewRoles', 'owner', 'manager', 'storedManager']) assert.deepEqual(views(shell(PROFILES[name][0], { roleAccess: true })), BASE_NAV[PROFILES[name][1]], name);
+  for (const name of ['crew', 'crewRoles', 'owner', 'manager', 'storedManager']) { const page = shell(PROFILES[name][0], { roleAccess: true }); assert.deepEqual(views(page), baseNav(page, PROFILES[name][1]), name); }
   // A deep link opens a booker's view; one they cannot open lands on My day.
   for (const [search, active] of [['?view=action_center', 'action_center'], ['?view=pipeline', 'pipeline'], ['?view=finance', 'my_day']]) {
     const page = shell(PROFILES.phone[0], { roleAccess: true, before: context => { context.location.search = search; context.location.href += search; } });

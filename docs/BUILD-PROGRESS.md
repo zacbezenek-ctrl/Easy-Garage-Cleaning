@@ -547,6 +547,9 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   work oldest first with Denver-day age, Sold/Approved/Added, source (Walkthrough, Portal approval, Jobber, Hub), Jobber's time with
   Use this time, and price/deposit chips for dispatchers only. Online approvals of undated jobs set needsDispatchReview; the first
   schedule (Dispatch or bridge) clears it. Closed walkthroughs never queue (checklist 122).
+- **MOBILE-HUB** (P1 UI; no flag) The Hub shell stops loading the public /styles.css (the tokens and base rules it needs move
+  into employee-suite.css), drops the dead legacy lead drawer and lead/customer-detail markup, makes phone dialogs safe-area bottom
+  sheets, 16px fields, 44px targets, AA contrast, business users' RUN THE BUSINESS first, and landscape/iPad fixes (checklist 123).
 
 ## In progress
 
@@ -676,6 +679,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | SALES-BOOKING | P1 booking: phone and sales booking tools; public /book explicit slots behind EGC_BOOKING_EXPLICIT_SLOTS (off) | merged (845020b) |
 | WT-OUTCOME | P1 walkthroughs: outcomes visible to the office; rebook; the rep's day | merged (0903732) |
 | FIX-DISPATCH-QUEUE | P1 Dispatch: 'To schedule' queue with age, source and Jobber times; portal approvals flagged for the office | merged (68ba13e) |
+| MOBILE-HUB | P1 UI: Hub shell mobile pass (no public stylesheet, safe-area dialogs, 16px fields, 44px targets, AA contrast, landscape and iPad) | merged (7c329dd) |
 
 ## Next
 

@@ -2,7 +2,7 @@
    MANIFEST line below; employee-suite.js adds it to the nav and mounts it. */
 (function(){
 'use strict';
-const KIT={js:'employee-ui-kit.js',css:'employee-ui-kit.css',v:'20260927hubreg'};
+const KIT={js:'employee-ui-kit.js',css:'employee-ui-kit.css',v:'20260929mobilehub'};
 // One line per screen: {id, group, label, iconPath, capability:'business'|'owner' or crewVisible:true, load:{js, css, v}, module:'EGCName'}.
 // Capabilities come from the signed-in server profile (businessAccess and the owner flag), never a client staff list.
 // Group and label are plain text (the shell escapes them, so 'Estimates & payments' is fine); angle brackets,

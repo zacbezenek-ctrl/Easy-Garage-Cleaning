@@ -188,6 +188,8 @@ jobs:
         run: python tests/browser/test_crew_home_walkthroughs_ui.py
       - name: Hub shell registry, draft-safe refreshes and navigation history
         run: python tests/browser/test_hub_shell_ui.py
+      - name: Hub shell on phones, landscape and iPad (safe-area dialogs, 16px fields, 44px targets, AA contrast, no public stylesheet)
+        run: python tests/browser/test_hub_shell_mobile_ui.py
       - name: Hub mobile shell at phone widths
         run: python tests/browser/test_hub_mobile_ui.py
       - name: Owner catalog and pricing screen on a phone
