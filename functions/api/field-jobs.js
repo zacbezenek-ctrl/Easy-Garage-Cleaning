@@ -88,7 +88,10 @@ async function detail(ctx, env, jobId, cursor = '') {
   if (view.canEdit) view.completionMissing.push(...await fieldExpenseCloseoutMissing(env, job.id, { safe: true }));
   // features lets the job page skip optional modules (and their API calls) that are switched off. The CREW-TIME switches
   // are listed only when on (EGC_JOB_STATUS_MOVES_TIME, EGC_CLOCK_IN_WITHOUT_FIX), so an off page is as before.
-  const features = { jobCosts: fieldExpensesEnabled(env), fieldPay: fieldPaymentsReady(env) && (canDispatch(ctx.session, env) || allowed.lead), ...(jobStatusMovesTime(env) ? { statusMovesTime: true } : {}), ...(clockInWithoutFix(env) ? { clockInWithoutFix: true } : {}) };
+  const fieldPayReview = canDispatch(ctx.session, env);
+  const fieldPayReady = fieldPaymentsReady(env);
+  const fieldPayLead = fieldPayReady && allowed.lead && allowed.assigned && (!ctx.visits || await assignedOn(job, fieldToday(new Date()), ctx.access));
+  const features = { jobCosts: fieldExpensesEnabled(env), fieldPay: fieldPayReady && (fieldPayReview || fieldPayLead), fieldPayReview, ...(jobStatusMovesTime(env) ? { statusMovesTime: true } : {}), ...(clockInWithoutFix(env) ? { clockInWithoutFix: true } : {}) };
   return { job: view, historyCursor: history.cursor, photosAvailable: fieldPhotosConfigured(env), features, timezone: 'America/Denver' };
 }
 

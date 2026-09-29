@@ -165,3 +165,30 @@ test('over HTTP with the flag off any assigned crew member still completes, exac
   const manager = await http(env, 'ZacB', null, '?jobId=job-1');
   assert.equal(manager.body.job.capabilities.configureChecklist, true);
 });
+
+test('field payment visibility follows dispatch review and the lead\'s current visit day', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.parse(NOW) });
+  const store = storage(t), money = { EGC_FIELD_PAY_ENABLED: 'true', MONEY_API_ENABLED: 'true', MONEY_UNIFIED_TOTALS: 'true' };
+  const env = { ...httpEnv(''), ...money, FIELD_MULTIDAY_VISITS: 'true' };
+  store.put('jobs/job-1', readyJob({ endDate: '2026-09-23', endTime: '17:00', assignmentSegments: [
+    { id: 'first', date: '2026-09-22', time: '08:00', endDate: '2026-09-22', endTime: '17:00', assignedCrew: ['Crew.Two'], crewLead: null, crewId: null, vehicleId: null, notes: '' },
+    { id: 'second', date: '2026-09-23', time: '08:00', endDate: '2026-09-23', endTime: '17:00', assignedCrew: ['Lead.One'], crewLead: 'Lead.One', crewId: null, vehicleId: null, notes: '' },
+  ] }));
+  const view = async (config, user) => {
+    const result = await http(config, user, null, '?jobId=job-1');
+    assert.equal(result.status, 200, `${user}: ${JSON.stringify(result.body)}`);
+    return result.body;
+  };
+  assert.deepEqual((await view(env, 'ZacB')).features, { jobCosts: false, fieldPay: true, fieldPayReview: true }, 'dispatcher reviews any visit day');
+  assert.deepEqual((await view(env, 'Lead.One')).features, { jobCosts: false, fieldPay: false, fieldPayReview: false }, 'named lead is off today despite job-level assignment');
+  assert.deepEqual((await view(env, 'Crew.Two')).features, { jobCosts: false, fieldPay: false, fieldPayReview: false }, 'today\'s nonlead cannot collect');
+  t.mock.timers.setTime(Date.parse('2026-09-23T18:00:00.000Z'));
+  assert.deepEqual((await view(env, 'Lead.One')).features, { jobCosts: false, fieldPay: true, fieldPayReview: false }, 'lead sees collection on their assigned day');
+  const off = { ...env, EGC_FIELD_PAY_ENABLED: '' };
+  assert.deepEqual((await view(off, 'ZacB')).features, { jobCosts: false, fieldPay: false, fieldPayReview: true }, 'review stays visible when intake flag is off');
+  assert.deepEqual((await view(off, 'Lead.One')).features, { jobCosts: false, fieldPay: false, fieldPayReview: false });
+  const revoked = { ...env, EGC_STAFF_ROLE_PERMISSIONS: 'true', HUB_AUTH_USERS_JSON: users({ TylerG: { passwordHash: 'synthetic', role: 'manager', displayName: 'Synthetic Manager', staffRoles: ['crew'] } }) };
+  const downgraded = await view(revoked, 'TylerG');
+  assert.equal(downgraded.job.canAddManagementNote, true, 'older job management capability remains separate');
+  assert.deepEqual(downgraded.features, { jobCosts: false, fieldPay: false, fieldPayReview: false }, 'revoked dispatch permission cannot open payment review');
+});
