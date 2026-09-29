@@ -71,7 +71,7 @@ class StaffDirectoryBrowserTests(unittest.TestCase):
     def setUp(self):
         self.context = self.browser.new_context(viewport={'width': 375, 'height': 812}, is_mobile=True, has_touch=True, timezone_id='Asia/Tokyo')
         self.page = self.context.new_page(); self.page.set_default_timeout(6000); self.page.clock.install(time=NOW)
-        self.errors = []; self.posts = []; self.gets = 0; self.get_status = 200; self.post_answers = []
+        self.errors = []; self.posts = []; self.gets = 0; self.get_status = 200; self.post_answers = []; self.former = []
         self.people = [person('Zoe.Phone', 'Synthetic Zoe Phone-Followup-With-A-Long-Name'), person('Crew.Two', 'Synthetic Crew Two', staffRoles=['crew'], primaryRole='crew', skills=[], weeklyAvailability=None)]
         self.page.on('pageerror', lambda error: self.errors.append(str(error))); self.page.route('**/*', self.route)
     def tearDown(self):
@@ -85,17 +85,19 @@ class StaffDirectoryBrowserTests(unittest.TestCase):
         if request.method == 'GET':
             self.gets += 1
             if self.get_status != 200: send({'ok': False, 'code': 'staff_directory_unavailable', 'error': 'The staff directory could not be verified. Keep your request and retry the same change.'}, self.get_status); return
-            send(directory(copy.deepcopy(self.people))); return
+            send({**directory(copy.deepcopy(self.people)), **({'formerStaff': copy.deepcopy(self.former)} if self.former else {})}); return
         body = request.post_data_json; self.posts.append(body)
         if self.post_answers:
             answer = self.post_answers.pop(0)
             if answer == 'abort': route.abort(); return
-        index = next(i for i, row in enumerate(self.people) if row['username'] == body['username'])
-        updated = copy.deepcopy(self.people[index]); updated['revision'] = 'rev-' + str(len(self.posts) + 1)
+        rows = self.people if any(row['username'] == body['username'] for row in self.people) else self.former
+        index = next(i for i, row in enumerate(rows) if row['username'] == body['username'])
+        updated = copy.deepcopy(rows[index]); updated['revision'] = 'rev-' + str(len(self.posts) + 1)
         if body['action'] == 'set_pay': updated['pay']['schedule'].append(rate(body['effectiveFrom'], body['hourlyRate'])); updated['pay']['schedule'].sort(key=lambda row: row['effectiveFrom'])
         if body['action'] == 'set_roles': updated['staffRoles'] = body['staffRoles']
         if body['action'] == 'set_availability': updated['weeklyAvailability'] = body['weeklyAvailability']
-        self.people[index] = updated
+        if body['action'] == 'set_gusto_id': updated['gustoEmployeeId'] = body['gustoEmployeeId'] or None; updated['gustoExcluded'] = body.get('gustoExcluded', updated.get('gustoExcluded', False))
+        rows[index] = updated
         send({'ok': True, 'authority': 'employee_hub', 'person': updated, **({'sessionsRevoked': True} if body['action'] == 'set_roles' else {})})
 
     def open(self):
@@ -171,6 +173,61 @@ class StaffDirectoryBrowserTests(unittest.TestCase):
         self.assertEqual(self.posts[-1]['expectedRevision'], 'rev-2', 'the second save uses the revision the first returned')
         expect(zoe.locator('.st-chip').first).to_have_text('Crew lead')
 
+    def test_owner_sets_a_gusto_employee_id_on_a_phone(self):
+        # GUSTO-EXPORT: the server sends gustoEmployeeId (a string or null) to the owner only.
+        self.people[0]['gustoEmployeeId'] = None; self.people[1]['gustoEmployeeId'] = 'gusto-syn-2'
+        page = self.open()
+        zoe = page.locator('article.st-person', has=page.get_by_text('@Zoe.Phone'))
+        expect(zoe.locator('section[aria-label="Gusto employee ID"]')).to_contain_text('Not set. The payroll week’s Gusto hours file names this employee')
+        expect(page.locator('article.st-person', has=page.get_by_text('@Crew.Two')).locator('.st-gusto-id')).to_have_text('gusto-syn-2')
+        zoe.get_by_role('button', name='Set Gusto ID for Synthetic Zoe Phone-Followup-With-A-Long-Name').click()
+        field = zoe.locator('input[name=gustoEmployeeId]')
+        self.assertEqual([field.get_attribute('type'), field.get_attribute('inputmode'), field.get_attribute('autocomplete'), field.get_attribute('maxlength')], ['text', 'text', 'off', '64'])
+        self.assert_mobile('gusto')
+        page.screenshot(path=str(RESULTS / 'staff-editor-gusto-375.png'), full_page=True)
+        field.fill('gusto-syn-1')
+        zoe.get_by_role('button', name='Save Gusto ID').click()
+        expect(page.locator('.st-notice.success')).to_contain_text('Saved: Gusto employee ID for Synthetic Zoe')
+        body = self.posts[-1]
+        self.assertRegex(body['requestId'], UUID)
+        self.assertEqual({k: v for k, v in body.items() if k != 'requestId'}, {'action': 'set_gusto_id', 'username': 'Zoe.Phone', 'expectedRevision': 'rev-1', 'expectedUser': 'zacb', 'gustoEmployeeId': 'gusto-syn-1', 'gustoExcluded': False})
+        expect(zoe.locator('.st-gusto-id')).to_have_text('gusto-syn-1')
+
+    def test_owner_marks_not_paid_through_gusto_and_sets_a_former_employee_id_on_a_phone(self):
+        # GUSTO-EXPORT review: someone not paid through Gusto is marked, not given a made-up ID; former staff (a rejected
+        # account with hours still to pay) are listed for the owner with the Gusto editor only.
+        self.people[0]['gustoEmployeeId'] = None; self.people[0]['gustoExcluded'] = False; self.people[1]['gustoEmployeeId'] = 'gusto-syn-2'; self.people[1]['gustoExcluded'] = False
+        self.former = [{'username': 'Gone.Crew', 'displayName': 'Synthetic Gone Crew With A Long Former Name', 'source': 'former', 'accountStatus': 'rejected', 'gustoEmployeeId': None, 'gustoExcluded': False,
+                        'history': [], 'revision': 'rev-gone', 'profileNeedsReview': False}]
+        page = self.open()
+        zoe = page.locator('article.st-person', has=page.get_by_text('@Zoe.Phone'))
+        zoe.get_by_role('button', name='Set Gusto ID for Synthetic Zoe Phone-Followup-With-A-Long-Name').click()
+        box = zoe.locator('input[name=gustoExcluded]')
+        self.assertEqual(box.get_attribute('type'), 'checkbox')
+        self.assert_mobile('gusto marker')
+        zoe.get_by_text('Not paid through Gusto (the owner, a 1099 worker)').click()
+        expect(box).to_be_checked()
+        zoe.get_by_role('button', name='Save Gusto ID').click()
+        expect(page.locator('.st-notice.success')).to_contain_text('Saved: Gusto employee ID for Synthetic Zoe')
+        self.assertEqual([self.posts[-1]['gustoEmployeeId'], self.posts[-1]['gustoExcluded']], ['', True])
+        expect(zoe.locator('.st-gusto-excluded')).to_contain_text('Not paid through Gusto: left out of the Gusto hours file')
+        former = page.locator('details.st-former')
+        expect(former.locator('summary')).to_have_text('Former staff (1) · Gusto IDs only')
+        expect(former.locator('article')).to_be_hidden()
+        former.locator('summary').click()
+        gone = former.locator('article.st-former-person')
+        expect(gone).to_contain_text('@Gone.Crew · Account not approved')
+        expect(gone.get_by_role('button')).to_have_text(['Set Gusto ID'])
+        gone.get_by_role('button', name='Set Gusto ID for Synthetic Gone Crew With A Long Former Name').click()
+        self.assert_mobile('former')
+        page.screenshot(path=str(RESULTS / 'staff-former-gusto-375.png'), full_page=True)
+        gone.locator('input[name=gustoEmployeeId]').fill('gusto-syn-gone')
+        gone.get_by_role('button', name='Save Gusto ID').click()
+        expect(page.locator('.st-notice.success')).to_contain_text('Saved: Gusto employee ID for Synthetic Gone Crew')
+        self.assertEqual({k: v for k, v in self.posts[-1].items() if k != 'requestId'}, {'action': 'set_gusto_id', 'username': 'Gone.Crew', 'expectedRevision': 'rev-gone', 'expectedUser': 'zacb', 'gustoEmployeeId': 'gusto-syn-gone', 'gustoExcluded': False})
+        expect(page.locator('details.st-former article .st-gusto-id')).to_have_text('gusto-syn-gone')
+        expect(page.locator('details.st-former')).to_have_attribute('open', '')
+
     def test_failed_load_is_unavailable_with_retry_not_an_empty_team(self):
         self.get_status = 503
         self.page.goto(self.url + '/hub-staff')
@@ -241,7 +298,9 @@ class StaffDirectoryShellTests(HubShell, unittest.TestCase):
         expect(page.locator('#ops-main h1.st-title')).to_have_text('Staff directory')
         expect(page.locator('#ops-main article.st-person')).to_have_count(1)
         assets = page.evaluate("[...document.querySelectorAll('[data-egc-hub-asset]')].map(node=>node.getAttribute('src')||node.getAttribute('href')).filter(url=>/staff/.test(url)).sort()")
-        self.assertEqual(assets, ['employee-staff.css?v=20260928team', 'employee-staff.js?v=20260928team'])
+        # Bumped deliberately (GUSTO-EXPORT): the directory gained the owner's Gusto employee ID editor; (AUTH-ROLES on
+        # GUSTO-EXPORT) one new tag for the sign-out outcome and the Gusto editor together.
+        self.assertEqual(assets, ['employee-staff.css?v=20260929rolesgusto', 'employee-staff.js?v=20260929rolesgusto'])
         self.assertEqual(page.evaluate('document.querySelectorAll(".egc-staff").length'), 1)
         scroll = self.no_horizontal_scroll()
         self.assertLessEqual(scroll['width'], 375, scroll)

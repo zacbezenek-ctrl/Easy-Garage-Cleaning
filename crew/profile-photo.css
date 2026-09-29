@@ -21,6 +21,7 @@
 .cp-form{display:grid;gap:12px;margin:14px 0 0;padding:14px 0 0;border-top:1px solid #e1e6df}
 .cp-field{display:grid;gap:6px;font-weight:650}.cp-field input{font:inherit;font-size:16px;min-height:48px;padding:10px 12px;border:1px solid #9fb3a5;border-radius:9px;background:#fff;color:#192d26;width:100%;min-width:0}
 .cp-check{display:flex;align-items:center;gap:10px;min-height:48px;font-weight:600}.cp-check input{width:24px;height:24px;flex:none;accent-color:var(--cp-green)}
+.cp-field input:disabled{background:#eef2ec;color:var(--cp-muted);cursor:wait}.cp-check input:disabled{cursor:wait}
 .cp-status{margin:10px 0;padding:12px 14px;border-radius:10px;background:#eef4ec;border:1px solid #cfdcca}.cp-status.error{background:#fff1ed;color:#8b2e1c;border-color:#e5baa9}.cp-status:empty{display:none}
 .cp-loading,.cp-skeleton{color:var(--cp-muted);padding:24px 0}
 .cp-skeleton span{display:block;height:18px;margin:12px 0;border-radius:8px;background:linear-gradient(90deg,#e6ebe4,#f4f7f2,#e6ebe4);background-size:200% 100%;animation:cp-shimmer 1.4s infinite}.cp-skeleton span.wide{height:88px}

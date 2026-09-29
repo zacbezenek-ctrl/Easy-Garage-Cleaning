@@ -101,3 +101,7 @@
   .st-remove{grid-column:1 / -1;justify-self:end}
 }
 @media (max-width:359px){.st-window{grid-template-columns:minmax(0,1fr)}}
+/* Former staff (owner only, GUSTO-EXPORT): collapsed under the active directory, Gusto fields only. */
+.st-former summary{min-height:44px;display:flex;align-items:center;cursor:pointer;font-weight:700;color:var(--st-navy)}
+.st-former>.st-muted{margin:4px 0 12px}
+.st-former-person{box-shadow:none;background:#fff}

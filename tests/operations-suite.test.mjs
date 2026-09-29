@@ -445,16 +445,17 @@ test('pre-job and closeout share walkthrough styling and preserve important-item
 });
 
 test('weekly timesheets use individual timecards with a legacy closeout fallback',()=>{
-  for(const marker of ["'timesheets'",'Weekly timesheets','timesheetRows',"timeEntries:'timeEntries'",'clockInAt','clockOutAt','approvalStatus','opsApproveTime','opsDownloadTimesheets','Download CSV','Individual timecards','timeTracking?.elapsedHours'])assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
+  // TIME-CORRECT removed the board's own hours CSV ('Download CSV', opsDownloadTimesheets): it exported open shifts with a
+  // blank end time and no approval, rate or overtime columns. Payroll comes from the server export in the payroll week card.
+  for(const marker of ["'timesheets'",'Weekly timesheets','timesheetRows',"timeEntries:'timeEntries'",'clockInAt','clockOutAt','approvalStatus','opsApproveTime','Individual timecards','timeTracking?.elapsedHours','Download payroll CSV'])assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')));
   assert.match(suite,/\(crew\.length\?crew:fallback\)\.forEach/);
-  assert.match(suite,/a\.download=`egc-timesheets-/);
   assert.match(suite,/if\(\/\^\[=\+\\-@\]\//);
 });
 
-test('Gusto Smart Import export includes approved completed shifts only',()=>{
-  for(const marker of ['approvedGustoRows','opsDownloadGusto','Download for Gusto','Gusto Smart Import','gusto-smart-import-','Employee name','Workweeks','Hours worked',"approvalStatus==='approved'",'Boolean(entry.clockOutAt)']){
-    assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),marker+' is missing');
-  }
+test('the board has no client-side payroll exports: the hours CSV and the Gusto Smart Import file are gone (TIME-CORRECT; GUSTO-EXPORT replaces the Gusto file)',()=>{
+  // These pinned the legacy 'Download for Gusto' file (approved shifts only, but straight rows without the server's
+  // overtime or pay-review checks) and the hours CSV; both are removed on purpose, and the server payroll CSV is the export.
+  for(const marker of ['approvedGustoRows','opsDownloadGusto','Download for Gusto','gusto-smart-import-','opsDownloadTimesheets','Download CSV','egc-timesheets-'])assert.equal(suite.includes(marker),false,marker+' is still in the suite');
 });
 
 test('legacy closeout cannot waive the server completion requirements',()=>{
@@ -842,8 +843,14 @@ test('open-shift scheduling fields persist on the canonical job record',()=>{
   // conflict's own reason; (MONEY-GHL-PARITY) the suite exposes its lifecycle helper to server money saves; (HUB-PWA) the
   // offline queue's clock saves; (TIPS) tipped payments and held tipped charges in the finance board; (CREW-TIME)
   // clock-in-only location and job-time labels; (M5-SEND trim) the invoice-overdue HighLevel trigger stays on the page
-  // whatever serverMessaging says; (DISPATCH-RULES after M5-SEND) one new tag.
-  assert.match(employee,/employee-suite\.js\?v=20260929rules/);
+  // whatever serverMessaging says; (DISPATCH-RULES after M5-SEND) one new tag; (TIME-CORRECT) server totals on the
+  // timesheet board, no legacy exports, and the Correct time / Close shift dialogs; (TIME-CORRECT after DISPATCH-RULES)
+  // one new tag; (GUSTO-EXPORT) the payroll week card gets the owner grant for its Gusto hours button, and the timesheet note
+  // names that download; (GUSTO-EXPORT on the final TIME-CORRECT) one new tag; (FIX-MONEY-TOTALS) the finance board's
+  // unified totals, with HighLevel milestones, notes, the Customer messages buttons and board on today's figures;
+  // (FIX-MONEY-TOTALS after GUSTO-EXPORT) one new tag; (AUTH-ROLES on GUSTO-EXPORT) one new tag; (AUTH-ROLES after
+  // FIX-MONEY-TOTALS) one combined tag.
+  assert.match(employee,/employee-suite\.js\?v=20260929totalsroles/);
 });
 
 test('recurring visits request a server-side handoff clone instead of copying prior execution or payments',()=>{

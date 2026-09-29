@@ -37,6 +37,10 @@
     try { for (let index = sessionStorage.length - 1; index >= 0; index--) { const key = sessionStorage.key(index) || ''; if (key.startsWith(PREFIX)) sessionStorage.removeItem(key); } } catch { /* Nothing was stored. */ }
   }
   function setStatus(text, error = false) { S.status = text; S.statusError = error; }
+  // Every change reloads the profiles, and the cards stay on screen meanwhile with the older revisions. Until the
+  // latest profiles are drawn nothing can be typed, ticked or sent: the reload would wipe the edit, and a save would
+  // go out against a revision the change just replaced.
+  const locked = () => S.busy || S.loading;
 
   async function call(body) {
     const controller = new AbortController(), timer = setTimeout(() => controller.abort(), TIMEOUT);
@@ -68,7 +72,7 @@
   // Every change is saved in this tab before it is sent; a lost answer is retried with the same request ID.
   // A photo that lost a revision race stays as a draft that can be sent again against the latest profile.
   async function mutate(body, label) {
-    if (S.busy || !S.data) return;
+    if (locked() || !S.data) return;
     const request = { ...body, requestId: UUID.test(body.requestId || '') ? body.requestId : crypto.randomUUID() }, gen = S.gen;
     S.pending = { body: request, label }; writePending(S.pending);
     S.busy = true; setStatus(`${label}: saving…`); render();
@@ -108,7 +112,7 @@
   }
   async function upload(input, row) {
     const file = input.files?.[0]; input.value = '';
-    if (!file || S.busy) return;
+    if (!file || locked()) return;
     setStatus('Preparing the photo…'); render();
     let dataUrl;
     try { dataUrl = await prepare(file); } catch (error) { setStatus(error.message, true); render(); return; }
@@ -128,29 +132,29 @@
   }
   // Someone who left the roster can only be hidden and have their photo removed (the server refuses the rest).
   function photoButtons(row, own, departed = false) {
-    const pick = (text, extra) => h('label', { class: 'cp-btn primary', 'aria-disabled': S.busy ? 'true' : null }, text, h('input', { type: 'file', class: 'cp-file', accept: 'image/*', disabled: S.busy, ...extra, onchange: event => upload(event.target, row) }));
+    const pick = (text, extra) => h('label', { class: 'cp-btn primary', 'aria-disabled': locked() ? 'true' : null }, text, h('input', { type: 'file', class: 'cp-file', accept: 'image/*', disabled: locked(), ...extra, onchange: event => upload(event.target, row) }));
     const remove = () => { if (window.confirm(own ? 'Remove your crew photo? Customers stop seeing it right away.' : `Remove ${nameOf(row)}’s crew photo? Customers stop seeing it right away.`)) mutate({ action: 'remove_photo', username: row.username, expectedRevision: row.revision }, own ? 'Remove your photo' : `Remove photo for ${nameOf(row)}`); };
     const hide = () => mutate({ action: 'set_profile', username: row.username, expectedRevision: row.revision, firstName: row.firstName, active: false }, `Hide ${nameOf(row)} from customers`);
     return h('div', { class: 'cp-actions' },
       departed ? null : [pick(own ? 'Take a selfie' : 'Take a photo', { capture: own ? 'user' : 'environment' }), pick('Choose a photo')],
-      row.photo || row.pendingPhoto || row.uploadInProgress ? h('button', { type: 'button', class: 'cp-btn danger', disabled: S.busy, onclick: remove }, own ? 'Remove my photo' : 'Remove photo') : null,
-      departed && row.active ? h('button', { type: 'button', class: 'cp-btn danger', disabled: S.busy, onclick: hide }, 'Hide from customers') : null);
+      row.photo || row.pendingPhoto || row.uploadInProgress ? h('button', { type: 'button', class: 'cp-btn danger', disabled: locked(), onclick: remove }, own ? 'Remove my photo' : 'Remove photo') : null,
+      departed && row.active ? h('button', { type: 'button', class: 'cp-btn danger', disabled: locked(), onclick: hide }, 'Hide from customers') : null);
   }
   function pendingPhoto(row, manager, departed = false) {
     if (!row.pendingPhoto) return null;
     const review = action => mutate({ action, username: row.username, expectedRevision: row.revision, photoRequestId: row.pendingPhoto.requestId }, `${action === 'approve_photo' ? 'Approve' : 'Reject'} photo for ${nameOf(row)}`);
     return h('div', { class: 'cp-pending' }, avatar(row, row.pendingPhoto, true),
       h('div', {}, h('strong', {}, manager ? 'New photo to review' : 'Waiting for a manager to approve this photo'), h('p', { class: 'cp-muted' }, departed ? 'This person is no longer on the roster, so this photo can only be rejected.' : manager ? 'Approve only a clear, friendly headshot of this person.' : 'Customers keep seeing the approved photo (if any) until then.'),
-        manager ? h('div', { class: 'cp-actions' }, departed ? null : h('button', { type: 'button', class: 'cp-btn primary', disabled: S.busy, onclick: () => review('approve_photo') }, 'Approve photo'), h('button', { type: 'button', class: 'cp-btn danger', disabled: S.busy, onclick: () => review('reject_photo') }, 'Reject photo')) : null));
+        manager ? h('div', { class: 'cp-actions' }, departed ? null : h('button', { type: 'button', class: 'cp-btn primary', disabled: locked(), onclick: () => review('approve_photo') }, 'Approve photo'), h('button', { type: 'button', class: 'cp-btn danger', disabled: locked(), onclick: () => review('reject_photo') }, 'Reject photo')) : null));
   }
   function profileForm(row) {
-    const first = h('input', { type: 'text', id: `cp-first-${row.username}`, value: row.firstName, maxlength: 30, autocomplete: 'off', autocapitalize: 'words', spellcheck: 'false', enterkeyhint: 'done' });
-    const shown = h('input', { type: 'checkbox', checked: row.active });
+    const first = h('input', { type: 'text', id: `cp-first-${row.username}`, value: row.firstName, maxlength: 30, autocomplete: 'off', autocapitalize: 'words', spellcheck: 'false', enterkeyhint: 'done', disabled: locked() });
+    const shown = h('input', { type: 'checkbox', checked: row.active, disabled: locked() });
     const save = event => { event.preventDefault(); mutate({ action: 'set_profile', username: row.username, expectedRevision: row.revision, firstName: first.value.trim(), active: shown.checked }, `Profile for ${nameOf(row)}`); };
     return h('form', { class: 'cp-form', onsubmit: save },
       h('label', { class: 'cp-field', for: first.id }, 'First name customers see (one word)', first),
       h('label', { class: 'cp-check' }, shown, 'Show to customers on jobs this person is assigned to'),
-      h('button', { type: 'submit', class: 'cp-btn', disabled: S.busy }, 'Save profile'));
+      h('button', { type: 'submit', class: 'cp-btn', disabled: locked() }, 'Save profile'));
   }
   function card(row, own, manager) {
     const departed = manager && !own && row.onRoster === false;
@@ -162,16 +166,16 @@
   }
   function pendingCard() {
     const conflict = S.pending.conflict === true && S.pending.body.action === 'upload_photo' && DRAFT_PHOTO.test(S.pending.body.dataUrl || '');
-    const discard = h('button', { type: 'button', class: 'cp-btn', disabled: S.busy, onclick: () => { S.pending = null; writePending(null); setStatus(''); if (conflict) load(); else render(); } }, conflict ? 'Discard draft and load latest' : 'Discard this change');
+    const discard = h('button', { type: 'button', class: 'cp-btn', disabled: locked(), onclick: () => { S.pending = null; writePending(null); setStatus(''); if (conflict) load(); else render(); } }, conflict ? 'Discard draft and load latest' : 'Discard this change');
     if (!conflict) return h('section', { class: 'cp-card', role: 'alert' }, h('h2', {}, 'A change is not confirmed yet'), h('p', {}, `${S.pending.label}. It keeps its request ID, so retrying can never save it twice.`),
-      h('div', { class: 'cp-actions' }, h('button', { type: 'button', class: 'cp-btn primary', disabled: S.busy, onclick: () => mutate(S.pending.body, S.pending.label) }, 'Retry original save'), discard));
+      h('div', { class: 'cp-actions' }, h('button', { type: 'button', class: 'cp-btn primary', disabled: locked(), onclick: () => mutate(S.pending.body, S.pending.label) }, 'Retry original save'), discard));
     // The draft goes out as a new request against the latest revision, so it can never overwrite a change unseen.
     const latest = S.data?.profiles.find(row => row.username === S.pending.body.username);
     const resend = () => { if (latest) mutate({ ...S.pending.body, requestId: crypto.randomUUID(), expectedRevision: latest.revision }, S.pending.label); };
     return h('section', { class: 'cp-card', role: 'alert', 'aria-label': 'Photo not saved yet' }, h('h2', {}, 'This photo was not saved yet'),
       h('div', { class: 'cp-pending' }, h('img', { class: 'cp-avatar small', src: S.pending.body.dataUrl, alt: 'The photo you chose', width: 64, height: 64 }),
         h('p', {}, `${S.pending.label}: the profile changed before this photo was saved (another upload, a removal or a manager’s change). Check the latest profile below, then send this photo again or discard it.`)),
-      h('div', { class: 'cp-actions' }, h('button', { type: 'button', class: 'cp-btn primary', disabled: S.busy || !latest, onclick: resend }, 'Send this photo again'), discard));
+      h('div', { class: 'cp-actions' }, h('button', { type: 'button', class: 'cp-btn primary', disabled: locked() || !latest, onclick: resend }, 'Send this photo again'), discard));
   }
   function render() {
     if (!S.host) return;

@@ -11,6 +11,7 @@ import { listHubUserProfiles } from '../functions/_lib/hub-session.js';
 import { ROLE_CAPABILITIES, STAFF_CAPABILITIES, STAFF_ROLES } from '../functions/_lib/staff-roles.js';
 import { SKILL_CATALOG, SKILL_CATALOG_VERSION, SKILL_LEVELS } from '../functions/_lib/staff-skills.js';
 import { WEEK_DAYS } from '../functions/_lib/staff-directory.js';
+import { createFirebaseRevocationService } from '../functions/_lib/firebase-revocation.js';
 
 const source = readFileSync(new URL('../employee-staff.js', import.meta.url), 'utf8');
 const NOW = '2026-09-22T18:00:00.000Z', TODAY = '2026-09-22';
@@ -725,12 +726,12 @@ function memoryStore(env, { accounts, profiles }) {
     },
   };
 }
-function serverUi(user, capabilities) {
+function serverUi(user, capabilities, { env: flags = {}, revocations } = {}) {
   // The session is shared by every tab: signInAs models another tab signing in with the same cookie jar.
-  const env = staffEnv({ EGC_STAFF_DIRECTORY_ENABLED: 'true' }), profile = name => listHubUserProfiles(env).find(row => row.user === name);
+  const env = staffEnv({ EGC_STAFF_DIRECTORY_ENABLED: 'true', ...flags }), profile = name => listHubUserProfiles(env).find(row => row.user === name);
   let actor = profile(user);
   const store = memoryStore(env, { accounts: [{ username: 'Zoe.Phone', displayName: 'Synthetic Zoe', status: 'approved', role: 'crew', payType: 'hourly', hourlyRate: 21, businessAccess: false }], profiles: [{ id: 'zoe.phone', username: 'Zoe.Phone', hourlyRate: 21, payType: 'hourly' }] });
-  const handlers = staffDirectoryHandlers({ session: async () => actor, storage: () => store, now: () => new Date(NOW) }), statuses = [];
+  const handlers = staffDirectoryHandlers({ session: async () => actor, storage: () => store, now: () => new Date(NOW), ...(revocations ? { revocations } : {}) }), statuses = [];
   const ui = staffUi({ identity: user, capabilities });
   ui.context.EGCStaff.unmount();
   const hubFetch = async (url, init = {}) => {
@@ -739,7 +740,21 @@ function serverUi(user, capabilities) {
     statuses.push([request.method, response.status]);
     return response;
   };
-  return { ui, store, statuses, signInAs: name => { actor = profile(name); }, mount: () => ui.context.EGCStaff.mount(ui.host, { identity: user, capabilities, hubFetch, toast() {} }) };
+  return { ui, store, statuses, signInAs: name => { actor = profile(name); }, mount: (extra = {}) => ui.context.EGCStaff.mount(ui.host, { identity: user, capabilities, hubFetch, toast() {}, ...extra }) };
+}
+
+// The Firebase session revocation record in memory (dispatchStorage shape: revision per write, compare-and-set).
+function revocationStore() {
+  const rows = new Map();
+  let n = 0;
+  return {
+    rows,
+    read: async (collection, id) => structuredClone(rows.get(`${collection}/${id}`) ?? null),
+    async commit(writes) {
+      for (const write of writes) { const old = rows.get(`${write.collection}/${write.id}`); if (write.revision ? old?.revision !== write.revision : old) throw Object.assign(new Error('Conflict'), { code: 'dispatch_revision_conflict', status: 409 }); }
+      for (const write of writes) rows.set(`${write.collection}/${write.id}`, { ...(write.revision ? rows.get(`${write.collection}/${write.id}`) : {}), ...structuredClone(write.patch), id: write.id, revision: `r${++n}` });
+    },
+  };
 }
 
 test('against the real staff directory API the owner sets Zoe as phone, schedules a raise, records skills and a week', async () => {
@@ -791,6 +806,55 @@ test('against the real staff directory API the owner sets Zoe as phone, schedule
   assert.deepEqual(all(zoe(), '.st-history li').map(node => node.firstElementChild.textContent),
     ['Weekly availability updated', 'Skills updated (1 recorded)', 'Pay from Oct 1, 2026: $23.50/hr', 'Roles: Crew → Phone · calls and follow-ups']);
   assert.match(zoe().querySelector('.st-history').textContent, /ZacB · Sep 22, 2026, 12:00 PM · Synthetic phone coverage/);
+});
+
+test('against the real API with role access on, a role change whose Firebase sign-out is pending never says they were signed out', async () => {
+  // The server account lacks the Firebase Authentication Admin role: Identity Toolkit refuses every revocation.
+  const store = revocationStore(), refused = [];
+  const service = createFirebaseRevocationService({ store, revoke: async uid => { refused.push(uid); throw Object.assign(new Error('denied'), { code: 'firebase_revocation_permission_denied' }); } });
+  const { ui, statuses, mount } = serverUi('ZacB', ['crew', 'business', 'owner'], { env: { EGC_STAFF_ROLE_ACCESS: 'true' }, revocations: () => service });
+  const toasts = [];
+  let refreshed = 0;
+  mount({ toast: text => toasts.push(text), refreshIntegrations: async () => { refreshed += 1; } });
+  await settle();
+  click(buttonLabel(ui.host, 'Edit roles for Synthetic Zoe'));
+  toggle(checkbox(ui.host, 'manager'), true);
+  submit(ui.host);
+  await settle();
+  assert.deepEqual(statuses, [['GET', 200], ['POST', 200]]);
+  assert.deepEqual(refused, ['hub:zoe.phone']);
+  assert.equal(store.rows.get('firebaseSessionRevocations/state').pending[0].lastError, 'permission_denied', 'the sign-out is queued for retry');
+  const text = 'Saved: Roles for Synthetic Zoe. The new roles apply at their next Hub sign-in. Their Firebase data sign-out is pending; see Integrations.';
+  const notice = ui.host.querySelector('.st-notice');
+  assert.deepEqual([notice.textContent, notice.className, notice.getAttribute('role'), notice.getAttribute('aria-live')], [text, 'st-notice warning', 'status', 'polite']);
+  assert.doesNotMatch(ui.text(), /signed out/);
+  assert.deepEqual(toasts, [text]);
+  assert.equal(refreshed, 1, 'Integrations reloads so it shows the pending sign-out, as after an account review');
+});
+
+test('the saved-roles notice follows the Firebase sign-out outcome the server reports', async () => {
+  const cases = [
+    [{ status: 'revocation_pending', error: 'unavailable' }, 'Saved: Roles for Synthetic Zoe.Phone. The new roles apply at their next Hub sign-in. Their Firebase data sign-out is pending; see Integrations.', 'warning', 1],
+    [{ status: 'revocation_failed' }, 'Saved: Roles for Synthetic Zoe.Phone. The new roles apply at their next Hub sign-in. Their Firebase data sign-out could not be confirmed; check Integrations.', 'warning', 1],
+    [{ status: 'revoked' }, 'Saved: Roles for Synthetic Zoe.Phone. They were signed out so the new roles apply at their next sign-in.', 'success', 0],
+    [{ status: 'not_configured' }, 'Saved: Roles for Synthetic Zoe.Phone. They were signed out so the new roles apply at their next sign-in.', 'success', 0],
+    [undefined, 'Saved: Roles for Synthetic Zoe.Phone. They were signed out so the new roles apply at their next sign-in.', 'success', 0],
+  ];
+  for (const [firebaseRevocation, text, kind, refreshes] of cases) {
+    const ui = staffUi({ post: async body => ({ body: { ok: true, authority: 'employee_hub', person: person(body.username, { staffRoles: ['sales'], primaryRole: 'sales', revision: `rev-${body.username}-2` }), sessionsRevoked: true, ...(firebaseRevocation ? { firebaseRevocation } : {}) } }) });
+    let refreshed = 0;
+    ui.mount(ui.host, { refreshIntegrations: () => { refreshed += 1; return Promise.reject(new Error('Synthetic integrations failure')); } });
+    await settle();
+    click(buttonLabel(ui.host, 'Edit roles for Synthetic Zoe.Phone'));
+    toggle(checkbox(ui.host, 'crew'), false); toggle(checkbox(ui.host, 'sales'), true);
+    submit(ui.host);
+    await settle();
+    const label = JSON.stringify(firebaseRevocation);
+    assert.equal(ui.host.querySelector('.st-notice').textContent, text, label);
+    assert.equal(ui.host.querySelector('.st-notice').className, `st-notice ${kind}`, label);
+    assert.deepEqual(ui.toasts, [text], label);
+    assert.equal(refreshed, refreshes, label);
+  }
 });
 
 test('against the real API a change made as the owner is refused, and kept, after another tab signs in as a manager', async () => {
@@ -850,8 +914,9 @@ test('the staff directory API checks expectedUser before permissions and validat
 const json = (body, status = 200) => ({ ok: status < 400, status, json: async () => structuredClone(body) });
 const collections = () => Object.fromEntries(['profiles', 'timeEntries', 'announcements', 'requests', 'incidents', 'equipment', 'training', 'teamMessages', 'jobMessages', 'messageReads'].map(name => [name, []]));
 function shell(options = {}, answers = {}) {
-  const page = hubPage({ fetcher: async url => {
-    if (url.startsWith('/api/staff-directory')) return answers.staff ? answers.staff() : json(directory());
+  const page = hubPage({ fetcher: async (url, init = {}) => {
+    if (url.startsWith('/api/staff-directory')) return answers.staff ? answers.staff(url, init) : json(directory());
+    if (url.startsWith('/api/integration-status') && answers.integrations) return answers.integrations();
     if (url.startsWith('/api/employee-hub')) return answers.employeeHub ? answers.employeeHub() : json({ ok: true, collections: collections(), accounts: [] });
     if (url.startsWith('/api/highlevel')) return json({ ok: true, pipelines: [], opportunities: [], events: [] });
     return json({ ok: false, error: 'Synthetic service unavailable' }, 503);
@@ -912,7 +977,7 @@ test('the Staff directory is a registered business screen that lazily mounts EGC
   const page = shell();
   const entry = page.context.EGCHubScreens.get('staff');
   assert.deepEqual({ ...entry, load: { ...entry.load } }, { id: 'staff', group: 'RUN THE BUSINESS', label: 'Staff directory', iconPath: entry.iconPath, capability: 'business', crewVisible: false,
-    load: { js: 'employee-staff.js', css: 'employee-staff.css', v: '20260928team' }, module: 'EGCStaff', mount: null, unmount: null, canLeave: null, refresh: null, homeWidget: null });
+    load: { js: 'employee-staff.js', css: 'employee-staff.css', v: '20260929rolesgusto' }, module: 'EGCStaff', mount: null, unmount: null, canLeave: null, refresh: null, homeWidget: null });
   const nav = page.api.visibleNav(), at = nav.findIndex(item => item[1] === 'staff');
   assert.deepEqual([...nav[at]], ['RUN THE BUSINESS', 'staff', 'Staff directory']);
   // REVIEWS-UI's Review queues registers first in RUN THE BUSINESS, so the directory follows it.
@@ -926,7 +991,8 @@ test('the Staff directory is a registered business screen that lazily mounts EGC
   const main = page.main();
   assert.equal(main.querySelector('h1').textContent, 'Staff directory');
   assert.ok(cardFor(main, 'Zoe.Phone'));
-  assert.deepEqual(page.document.assets.map(node => node.getAttribute('src') || node.getAttribute('href')).filter(url => /staff/.test(url)).sort(), ['employee-staff.css?v=20260928team', 'employee-staff.js?v=20260928team']);
+  // Bumped deliberately (GUSTO-EXPORT): the directory gained the owner's Gusto employee ID editor.
+  assert.deepEqual(page.document.assets.map(node => node.getAttribute('src') || node.getAttribute('href')).filter(url => /staff/.test(url)).sort(), ['employee-staff.css?v=20260929rolesgusto', 'employee-staff.js?v=20260929rolesgusto']);
   // A draft on the registered screen blocks leaving through the registry's canLeave.
   click(buttonLabel(main, 'Edit skills for Synthetic Zoe.Phone'));
   change(named(main, 'skill_cleanout'), 'lead', 'change');
@@ -939,6 +1005,35 @@ test('the Staff directory is a registered business screen that lazily mounts EGC
   assert.ok(cardFor(page.main().querySelector('#ops-staff-directory'), 'Zoe.Phone'));
   page.fire('egc:signout');
   assert.equal(page.document.querySelectorAll('.egc-staff').length, 0, 'sign-out removes the directory');
+});
+
+test('in the Hub a saved role change whose Firebase sign-out is pending reloads Integrations, as an account review does', async () => {
+  let pending = 0;
+  const saved = { ok: true, authority: 'employee_hub', person: person('Zoe.Phone', { staffRoles: ['manager'], primaryRole: 'manager', revision: 'rev-Zoe.Phone-2' }), sessionsRevoked: true,
+    firebaseRevocation: { status: 'revocation_pending', error: 'permission_denied', message: 'Synthetic pending message' } };
+  const page = shell({}, {
+    staff: (url, init) => { if (init.method !== 'POST') return json(directory()); pending = 1; return json(saved); },
+    integrations: () => json({ ok: true, status: { firebaseRevocation: false, firebaseRevocationState: pending ? 'revocation_pending' : 'verified', firebaseRevocationPending: pending, firebaseRevocationError: pending ? 'permission_denied' : '' } }),
+  });
+  page.context.EGCHubKit = {};
+  page.api.install();
+  await page.flush();
+  page.api.go('staff');
+  await settle();
+  await page.flush();
+  const loads = () => page.calls.filter(call => call.url.startsWith('/api/integration-status')).length, before = loads();
+  click(buttonLabel(page.main(), 'Edit roles for Synthetic Zoe.Phone'));
+  toggle(checkbox(page.main(), 'manager'), true);
+  submit(page.main());
+  await settle();
+  await page.flush();
+  assert.match(page.main().querySelector('.st-notice').textContent, /^Saved: Roles for Synthetic Zoe\.Phone\. The new roles apply at their next Hub sign-in\. Their Firebase data sign-out is pending; see Integrations\.$/);
+  assert.match(page.toasts.at(-1), /Their Firebase data sign-out is pending; see Integrations\./);
+  assert.equal(loads(), before + 1, 'Integrations reloads once');
+  assert.deepEqual([page.api.S.integrations.firebaseRevocationPending, page.api.S.integrations.firebaseRevocationError], [1, 'permission_denied']);
+  page.api.go('settings');
+  await page.flush();
+  assert.match(page.main().textContent, /1 staff sign-out pending · server account lacks permission/);
 });
 
 test('leaving the Team page for another registered screen unmounts the directory, so coming back loads it again', async () => {
@@ -1083,8 +1178,9 @@ test('the crew sign-in client stores and clears the capability mode with the cap
 
 test('employee.html loads the staff directory before the suite with one cache-busted script', () => {
   const page = readFileSync(new URL('../employee.html', import.meta.url), 'utf8');
-  assert.equal(page.match(/<script src="employee-staff\.js\?v=20260928team"><\/script>/g)?.length, 1);
-  assert.equal(page.match(/<link rel="stylesheet" href="employee-staff\.css\?v=20260928team">/g)?.length, 1);
+  // Bumped deliberately (GUSTO-EXPORT): the directory gained the owner's Gusto employee ID editor.
+  assert.equal(page.match(/<script src="employee-staff\.js\?v=20260929rolesgusto"><\/script>/g)?.length, 1);
+  assert.equal(page.match(/<link rel="stylesheet" href="employee-staff\.css\?v=20260929rolesgusto">/g)?.length, 1);
   assert.ok(page.indexOf('employee-staff.js?v=') < page.indexOf('employee-suite.js?v='));
   // Loading it again through the screen registry must not reset the module (the registry injects its own tag).
   const context = { window: null, document: createDocument(), addEventListener() {}, crypto, AbortController, sessionStorage: storage() };

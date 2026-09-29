@@ -32,6 +32,7 @@ import { getHubSession } from '../_lib/hub-session.js';
 import { requireDispatcher } from '../_lib/dispatch-service.js';
 import { paymentReviewCheckoutBlockEnabled } from '../_lib/customer-payments.js';
 import { resolveStripeReview, stripeReviewClient, stripeReviewOverview, stripeReviewStorage } from '../_lib/stripe-reviews.js';
+import { moneyTotalsMode } from '../_lib/money-core.js';
 
 const MAX_BYTES = 8192;
 const reply = (status, body) => Response.json(body, { status, headers: { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' } });
@@ -80,8 +81,9 @@ export function stripeReviewHandlers({ session = getHubSession, storage = stripe
         if (new TextEncoder().encode(raw).byteLength > MAX_BYTES) return reply(413, { ok: false, code: 'stripe_review_request_too_large', error: 'The review request is too large.' });
         let input;
         try { input = JSON.parse(raw); } catch { return reply(400, { ok: false, code: 'stripe_review_json_invalid', error: 'The review request was incomplete. Refresh and try again.' }); }
-        // Both payment actions check the held charge in Stripe (read-only) before anything is saved.
-        return reply(200, await resolveStripeReview(storage(env), actor, input, now().toISOString(), { stripe: ['payment.refund', 'payment.reconcile'].includes(input?.action) ? stripe(env) : null }));
+        // Both payment actions check the held charge in Stripe (read-only) before anything is saved, and measure a tipped
+        // charge's service part against the balance a new checkout would charge (MONEY_UNIFIED_TOTALS).
+        return reply(200, await resolveStripeReview(storage(env), actor, input, now().toISOString(), { stripe: ['payment.refund', 'payment.reconcile'].includes(input?.action) ? stripe(env) : null, totalsMode: moneyTotalsMode(env) }));
       } catch (error) { return failure(error); }
     },
   };

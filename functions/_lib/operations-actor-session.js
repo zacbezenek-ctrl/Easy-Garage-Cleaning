@@ -1,4 +1,4 @@
-import {hasBusinessAccess} from './hub-session.js';
+import {hasBusinessAccess,withStaffRoleAccess} from './hub-session.js';
 
 /* A verified bridge actor reaches dispatch/timecard modules only as a session-shaped
  * object built from the CURRENT Hub profile. A human is the signed Hub user; an
@@ -42,6 +42,7 @@ export function operationsActorSession(actor,{profiles=[],delegates=new Map(),de
   if(!BRIDGE_ROLES.includes(profile.role)||!hasBusinessAccess(profile))throw fail('hub_actor_role_forbidden');
   // The signed role is at most a minute old; a changed Hub role must sign in again.
   if(actor.kind==='human'&&profile.role!==actor.role)throw fail('hub_actor_changed');
-  return Object.freeze({user:profile.user,displayName:String(profile.displayName||profile.user),role:profile.role,businessAccess:true,source:'operations_bridge',
-    actorId:actor.id,actorKind:actor.kind,delegatedBy:actor.kind==='integration'?actor.id:null,readOnly:actor.kind==='integration'});
+  // A stored manager (EGC_STAFF_ROLE_ACCESS) keeps the business access its profile carries.
+  return Object.freeze(withStaffRoleAccess(profile,{user:profile.user,displayName:String(profile.displayName||profile.user),role:profile.role,businessAccess:true,source:'operations_bridge',
+    actorId:actor.id,actorKind:actor.kind,delegatedBy:actor.kind==='integration'?actor.id:null,readOnly:actor.kind==='integration'}));
 }

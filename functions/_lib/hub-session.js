@@ -1,4 +1,4 @@
-import { authenticateEmployeeAccount, getEmployeeSessionProfile } from './employee-accounts.js';
+import { approvedEmployeeProfiles, authenticateEmployeeAccount, employeeAccountsConfigured, getEmployeeSessionProfile } from './employee-accounts.js';
 import { BUSINESS_USERS, OWNER_USERNAME } from './business-users.js';
 import { pbkdf2 } from '@noble/hashes/pbkdf2.js';
 import { sha256 } from '@noble/hashes/sha2.js';
@@ -10,12 +10,43 @@ const PASSWORD_HASH_PREFIX = 'pbkdf2-sha256';
 const PASSWORD_HASH_ITERATIONS = 210000;
 const PASSWORD_HASH_BYTES = 32;
 
+// EGC_STAFF_ROLE_ACCESS (AUTH-ROLES): exactly "true" lets owner-set staff roles grant
+// Hub access. An account whose stored roles name manager gets business access like the
+// configured business users (staffRoleAccess below), and the sales and phone roles book
+// visits (staff-roles.js). It also turns on EGC_STAFF_ROLE_PERMISSIONS. Unset: only the
+// configured business users have business access, exactly as before.
+export const staffRoleAccessEnabled = env => env?.EGC_STAFF_ROLE_ACCESS === 'true';
+
+// Set only by staffRoleAccess below on a profile this module built; a stored row, a
+// request body or a copied businessAccess field never carries it.
+const STAFF_MANAGER = Symbol('egc.staffRoleManager');
+
+// The configured business users (business-users.js) on their signed profile.
+export function configuredBusinessAccess(profile) {
+  return Boolean(profile) && typeof profile === 'object' && profile.businessAccess === true && BUSINESS_USERS.has(String(profile.user || '').trim().toLowerCase());
+}
+
 export function hasBusinessAccess(profileOrUsername) {
   if (profileOrUsername && typeof profileOrUsername === 'object') {
-    const username = String(profileOrUsername.user || '').trim().toLowerCase();
-    return profileOrUsername.businessAccess === true && BUSINESS_USERS.has(username);
+    return configuredBusinessAccess(profileOrUsername) || profileOrUsername[STAFF_MANAGER] === true && profileOrUsername.businessAccess === true && Boolean(String(profileOrUsername.user || '').trim());
   }
   return BUSINESS_USERS.has(String(profileOrUsername || '').trim().toLowerCase());
+}
+
+// EGC_STAFF_ROLE_ACCESS (AUTH-ROLES): an account outside the configured business
+// users whose owner-set staff roles name manager signs in as a manager with
+// business access, like those users. Stored roles never make anyone the owner
+// (isHubOwner needs the configured owner). Flag off: the profile is unchanged.
+function staffRoleAccess(env, profile) {
+  if (!profile || !staffRoleAccessEnabled(env) || BUSINESS_USERS.has(String(profile.user || '').trim().toLowerCase()) || !Array.isArray(profile.staffRoles) || !profile.staffRoles.includes('manager')) return profile;
+  return { ...profile, role: 'manager', businessAccess: true, [STAFF_MANAGER]: true };
+}
+
+// A session another module builds field by field from a profile this module built (the
+// operations bridge, a recurring plan's manager) keeps that profile's stored-role business
+// access; any other object gets nothing.
+export function withStaffRoleAccess(profile, session) {
+  return profile && typeof profile === 'object' && profile[STAFF_MANAGER] === true && profile.businessAccess === true && session?.businessAccess === true ? { ...session, [STAFF_MANAGER]: true } : session;
 }
 
 // Owner-only features require a signed profile, never a bare username.
@@ -110,11 +141,25 @@ export function getHubUserProfile(env, username) {
   const record = userRecord(env, username);
   if (!record) return null;
   const { passwordHash, username: canonical, ...profile } = record;
-  return { user: canonical, ...profile, businessAccess: hasBusinessAccess(canonical) };
+  return staffRoleAccess(env, { user: canonical, ...profile, businessAccess: hasBusinessAccess(canonical) });
 }
 
 export function listHubUserProfiles(env = {}) {
   return Object.keys(users(env)).map(username => getHubUserProfile(env, username)).filter(Boolean);
+}
+
+// The configured Hub users and, with EGC_STAFF_ROLE_ACCESS, each approved employee account
+// whose stored roles give it business access (a stored manager). The operations bridge resolves actors
+// against it, and Firebase session reconciliation (firebase-revocation.js) revokes anyone
+// who leaves it or whose role or business access changes, such as a demoted manager or
+// every stored manager once the flag is turned off. Flag off: listHubUserProfiles, and no
+// employee account is read.
+export async function listHubAccessProfiles(env = {}) {
+  const configured = listHubUserProfiles(env);
+  if (!staffRoleAccessEnabled(env) || !employeeAccountsConfigured(env)) return configured;
+  const taken = new Set(configured.map(profile => String(profile.user).trim().toLowerCase()));
+  const accounts = (await approvedEmployeeProfiles(env)).filter(profile => !taken.has(String(profile.user).trim().toLowerCase()));
+  return [...configured, ...accounts.map(profile => staffRoleAccess(env, profile)).filter(hasBusinessAccess)];
 }
 
 function sessionSecret(env = {}) {
@@ -261,7 +306,7 @@ export async function authenticateHubCredential(env, username, password) {
     error.code = 'HUB_AUTH_CONFIGURATION';
     throw error;
   }
-  return authenticateEmployeeAccount(env, username, password);
+  return staffRoleAccess(env, await authenticateEmployeeAccount(env, username, password));
 }
 
 export async function createHubSessionToken(env, username, now = Date.now(), suppliedProfile = null) {
@@ -286,7 +331,7 @@ export async function verifyHubSessionToken(env, token, now = Date.now()) {
     if (!Number.isFinite(session.exp) || session.exp <= now) return null;
     if (session.v === 2 && session.u && session.d) {
       const profile = await getEmployeeSessionProfile(env, String(session.u), session.av);
-      return profile ? { ...profile, expiresAt: session.exp } : null;
+      return profile ? staffRoleAccess(env, { ...profile, expiresAt: session.exp }) : null;
     }
     if (session.v !== 1 || !Object.hasOwn(users(env), session.u)) return null;
     const profile = getHubUserProfile(env, session.u);

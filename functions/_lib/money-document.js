@@ -130,10 +130,10 @@ function payments(job, { tips }) {
 }
 
 // What the portal checkout would charge right now, in cents (payable() in
-// customer-payments.js, on the legacy money state plus billed change orders),
-// or null if it refuses.
-function checkoutCents(job) {
-  try { return Math.round(checkoutPayable(job).dueNow * 100); } catch { return null; }
+// customer-payments.js, on the legacy money state plus billed change orders, or
+// with `unified` on money-core's unified totals), or null if it refuses.
+function checkoutCents(job, unified = false) {
+  try { return Math.round(checkoutPayable(job, unified ? 'unified' : 'off').dueNow * 100); } catch { return null; }
 }
 
 /**
@@ -142,22 +142,23 @@ function checkoutCents(job) {
  * once a payment is recorded. Unknown money makes no document available. A Hub
  * quote draft that has not been sent in its current revision (unsentQuoteDraft)
  * keeps only its receipt, which then lists the recorded payments and never the
- * unsent total, lines or balance (see moneyDocumentModel).
+ * unsent total, lines or balance (see moneyDocumentModel). `unified`
+ * (MONEY_UNIFIED_TOTALS) reads money-core's unified totals.
  */
-export function moneyDocumentKinds(job, now) {
+export function moneyDocumentKinds(job, now, { unified = false } = {}) {
   const at = instant(now);
   if (!at) throw fail('now_required', 'Pass the current time in; documents never read the clock.', 500);
   if (!plain(job)) return [];
-  const totals = customerMoneyTotals(job);
+  const totals = customerMoneyTotals(job, { unified });
   if (!known(totals.quoteCents, totals.totalCents, totals.appliedCents, totals.balanceCents) || totals.totalCents <= 0) return [];
   if (unsentQuoteDraft(job)) return totals.paidCents > 0 ? ['receipt'] : [];
-  return MONEY_DOCUMENT_KINDS.filter(kind => kind === 'estimate' || kind === 'invoice' && PORTAL_INVOICE.has(invoiceStatus(job, at)) || kind === 'receipt' && totals.paidCents > 0);
+  return MONEY_DOCUMENT_KINDS.filter(kind => kind === 'estimate' || kind === 'invoice' && PORTAL_INVOICE.has(invoiceStatus(job, at, { unified })) || kind === 'receipt' && totals.paidCents > 0);
 }
 
 /** Customer portal links (session-scoped: no job id and never a token). Empty while the flag is off. */
-export function moneyDocumentLinks(job, { enabled = false, now } = {}) {
+export function moneyDocumentLinks(job, { enabled = false, now, unified = false } = {}) {
   if (!enabled) return [];
-  return moneyDocumentKinds(job, now).map(kind => ({ kind, label: `View ${kind}`, url: `/api/money-document?kind=${kind}` }));
+  return moneyDocumentKinds(job, now, { unified }).map(kind => ({ kind, label: `View ${kind}`, url: `/api/money-document?kind=${kind}` }));
 }
 
 /**
@@ -170,14 +171,16 @@ export function moneyDocumentLinks(job, { enabled = false, now } = {}) {
  * printed or handed on, which cannot carry the customer's portal session.
  * For a customer, a Hub quote draft not sent in its current revision is
  * withheld: only a receipt of the recorded payments, without the unsent
- * service total, lines, balance or a pay button.
+ * service total, lines, balance or a pay button. `unified`
+ * (MONEY_UNIFIED_TOTALS) shows money-core's unified totals: approved changes
+ * are the billed change-order lines only, as the portal checkout charges them.
  */
-export function moneyDocumentModel(job, { kind, now, payUrl = null, contact = true, audience = 'customer' } = {}) {
+export function moneyDocumentModel(job, { kind, now, payUrl = null, contact = true, audience = 'customer', unified = false } = {}) {
   if (!MONEY_DOCUMENT_KINDS.includes(kind)) throw fail('invalid_kind', 'Choose an estimate, invoice or receipt.');
   const at = instant(now);
   if (!at) throw fail('now_required', 'Pass the current time in; documents never read the clock.', 500);
   if (!plain(job) || typeof job.id !== 'string' || !JOB_ID.test(job.id) || /^(secure_|_egc_)/.test(job.id) || job.recordType) throw fail('not_found', 'That job is not available.', 404);
-  const totals = customerMoneyTotals(job), issues = [...totals.issues];
+  const totals = customerMoneyTotals(job, { unified }), issues = [...totals.issues];
   if (!known(totals.quoteCents, totals.totalCents, totals.appliedCents, totals.balanceCents)) throw fail('total_unknown', 'The amounts on this job need review by Easy Garage Cleaning before a document can be produced.', 409);
   if (totals.totalCents <= 0) throw fail('empty', 'There is nothing to show on this document yet.', 409);
   if (kind === 'receipt' && !(totals.paidCents > 0)) throw fail('unavailable', 'No payment has been recorded for this job yet.', 409);
@@ -199,7 +202,7 @@ export function moneyDocumentModel(job, { kind, now, payUrl = null, contact = tr
     lines = projected.lineItems.map(line => ({ ...line, included: true, choice: '' }));
     number = invoiceNumber(job.id, 'invoice', clean(invoice.number, 80));
     if (kind === 'invoice') {
-      status = invoiceStatus(job, at); statusLabel = INVOICE_STATUS[status] || 'Issued';
+      status = invoiceStatus(job, at, { unified }); statusLabel = INVOICE_STATUS[status] || 'Issued';
       dates = [['Issued', instantDay(invoice.issuedAt) || 'Not issued yet'], ['Payment due', dayLabel(invoice.dueDate) || 'Not specified']];
       if (clean(invoice.customerReference, 120)) dates.push(['Your reference', clean(invoice.customerReference, 120)]);
     }
@@ -233,7 +236,7 @@ export function moneyDocumentModel(job, { kind, now, payUrl = null, contact = tr
   // card tips kept in payment.tips[] never do; an approval without a
   // change-order line is not charged): the button appears only when it charges
   // this figure.
-  const charge = offer ? checkoutCents(job) : null;
+  const charge = offer ? checkoutCents(job, unified) : null;
   const pay = offer && charge !== null && charge >= 50 && charge === totals.dueNowCents ? { url, amountCents: totals.dueNowCents, label: `Pay ${usd(totals.dueNowCents)} ${deposit ? 'deposit' : 'balance'} securely` } : null;
   let payNote = '';
   if (pay) payNote = audience === 'staff' ? PAY_NOTE.staff : PAY_NOTE.customer;

@@ -1,6 +1,7 @@
 import { getHubSession } from '../_lib/hub-session.js';
 import { createStaffDirectoryService, staffDirectoryEnabled } from '../_lib/staff-directory.js';
 import { staffDirectoryStorage } from '../_lib/staff-directory-storage.js';
+import { firebaseRevocations } from '../_lib/firebase-revocation.js';
 
 const LIMIT = 16 * 1024;
 const reply = (status, body) => Response.json(body, { status, headers: { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' } });
@@ -16,11 +17,12 @@ function sameOrigin(request) {
 }
 const disabled = () => reply(503, { ok: false, code: 'staff_directory_not_enabled', error: 'The staff directory is not enabled yet.' });
 
-export function staffDirectoryHandlers({ session = getHubSession, storage = staffDirectoryStorage, now = () => new Date() } = {}) {
+// revocations(env): the Firebase session revocation service a role change uses (null without the server account).
+export function staffDirectoryHandlers({ session = getHubSession, storage = staffDirectoryStorage, revocations = firebaseRevocations, now = () => new Date() } = {}) {
   function service(env) {
     const store = storage(env);
     if (!store.configured()) throw Object.assign(new Error('Employee Hub storage is not configured.'), { code: 'staff_directory_not_configured', status: 503 });
-    return createStaffDirectoryService({ store, env, now });
+    return createStaffDirectoryService({ store, env, now, revocations: () => revocations(env) });
   }
   return {
     async get({ request, env }) {

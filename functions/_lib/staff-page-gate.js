@@ -1,8 +1,17 @@
 import { getHubSession, readCookie } from './hub-session.js';
 import { safeStaffNext, staffGatedPath, staffPathForms } from '../../staff-paths.js';
 
-// Exactly "on" gates the staff pages and scripts in staff-paths.js; anything else keeps today's public static files.
-export const staffPageGateEnabled = env => env?.EGC_STAFF_PAGE_GATE === 'on';
+// "on" or "true" (any case, spaces trimmed) gates the staff pages and scripts in staff-paths.js; anything else keeps
+// today's public static files, and /api/integration-status names a value that is neither on nor off (OPS-08).
+const GATE_ON = new Set(['on', 'true']), GATE_OFF = new Set(['', 'off', 'false']);
+const gateValue = env => typeof env?.EGC_STAFF_PAGE_GATE === 'string' ? env.EGC_STAFF_PAGE_GATE.trim().toLowerCase() : '';
+export const staffPageGateEnabled = env => GATE_ON.has(gateValue(env));
+
+// {enabled, recognized}: recognized is false for a set value that means neither on nor off (the gate stays off).
+export function staffPageGateState(env) {
+  const value = gateValue(env);
+  return { enabled: GATE_ON.has(value), recognized: GATE_ON.has(value) || GATE_OFF.has(value) };
+}
 
 function htmlNavigation(request) {
   return request.headers.get('Sec-Fetch-Mode') === 'navigate' || /\btext\/html\b/i.test(request.headers.get('Accept') || '');

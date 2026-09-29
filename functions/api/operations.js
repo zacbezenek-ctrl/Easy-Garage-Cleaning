@@ -1,14 +1,24 @@
 import {getHubSession,hasBusinessAccess,listHubUserProfiles} from '../_lib/hub-session.js';
 import {operationsEnabled,operationsAuthMode,operationsApiOrigin,signPortalServiceEnvelope} from '../_lib/operations-service-auth.js';
 import {operationsMembers,operationsStaffMembersEnabled} from '../_lib/operations-staff.js';
+import {can,capabilityRoleSet,staffRoleAccessEnabled} from '../_lib/staff-roles.js';
 const reply=(status,body)=>new Response(JSON.stringify(body),{status,headers:{'Content-Type':'application/json','Cache-Control':'no-store'}});
 export function sameOrigin(request) {
   if(request.headers.get('Sec-Fetch-Site')==='cross-site')return false;
   return request.headers.get('Origin')===new URL(request.url).origin;
 }
+// EGC_STAFF_ROLE_ACCESS: followups.own holders (a stored manager, sales, phone) reach the Action Center, and the
+// platform sees the role their owner-set roles give: owner, manager, or sales (its own-tasks-only role) for sales and
+// phone. Off: business access and the session role, as before.
 async function sessionFor(request,env) {
   const session=await getHubSession(request,env);
-  return session&&hasBusinessAccess(session)?session:null;
+  if(!staffRoleAccessEnabled(env))return session&&hasBusinessAccess(session)?session:null;
+  return session&&can(session,'followups.own',env)?session:null;
+}
+function actorRole(session,env) {
+  const roles=staffRoleAccessEnabled(env)?capabilityRoleSet(session,env):null;
+  if(!roles)return session.role;
+  return roles.includes('owner')?'owner':roles.includes('manager')?'manager':'sales';
 }
 // With EGC_OPERATIONS_STAFF_MEMBERS the assignable sales and phone staff (businessAccess:false) join the owners.
 // When that staff roster cannot be read or is ambiguous, the business users stay assignable and
@@ -24,7 +34,7 @@ export async function onRequestGet({request,env}) {
     const session=await sessionFor(request,env);
     if(!session)return reply(403,{error:'business_session_required'});
     const {owners,staffOwners}=await actionCenterOwners(env);
-    return reply(200,{ok:true,enabled:operationsEnabled(env),authMode:operationsAuthMode(env),actor:{id:session.user,role:session.role,kind:'human',workspace:env.EGC_OPERATIONS_WORKSPACE||'egc'},
+    return reply(200,{ok:true,enabled:operationsEnabled(env),authMode:operationsAuthMode(env),actor:{id:session.user,role:actorRole(session,env),kind:'human',workspace:env.EGC_OPERATIONS_WORKSPACE||'egc'},
       owners,...(staffOwners?{staffOwners}:{}),timeZone:'America/Denver'});
   }catch{return reply(503,{error:'operations_identity_unavailable'});}
 }
@@ -40,7 +50,7 @@ export async function onRequestPost({request,env}) {
     let input;try{input=JSON.parse(text)}catch{return reply(400,{error:'invalid_json'});}
     if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(input?.requestId||'')||!input.body||typeof input.body!=='object')return reply(400,{error:'invalid_request'});
     // Ignore client-provided identity/role fields. The authenticated Hub session is the only principal.
-    const actor={id:session.user,role:session.role,kind:'human',workspace:env.EGC_OPERATIONS_WORKSPACE||'egc'};
+    const actor={id:session.user,role:actorRole(session,env),kind:'human',workspace:env.EGC_OPERATIONS_WORKSPACE||'egc'};
     const envelope=await signPortalServiceEnvelope(env,{path:'/operations/rpc',actor,request:{requestId:input.requestId,body:input.body}});
     const upstream=await fetch(new URL('/operations/rpc',origin),{method:'POST',redirect:'manual',headers:{'Content-Type':'application/json'},body:JSON.stringify({envelope}),signal:AbortSignal.timeout(20000)});
     if(upstream.status>=300&&upstream.status<400)return reply(502,{error:'operations_invalid_upstream'});

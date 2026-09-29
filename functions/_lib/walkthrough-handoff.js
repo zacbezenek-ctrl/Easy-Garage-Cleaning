@@ -14,6 +14,7 @@ import { validDate } from './dispatch-time.js';
 import { eventActor } from './dispatch-funnel.js';
 import { pendingProjectDimensions } from './funnel-dimensions.js';
 import { stripCrewMoney, stripCrewMoneyDeep } from './crew-money.js';
+import { staffRoleAccessEnabled } from './staff-roles.js';
 
 // FIX-CREW-PRICE-LEAK: every crew-visible copy of the brief is written without currency amounts.
 export { stripCrewMoney };
@@ -47,7 +48,7 @@ const AUTHOR_TEXT = {
   employee_daily_capacity: row => `An assigned employee would pass the owner's daily limit${validDate(row.date) ? ` on ${row.date}` : ''}.`,
   travel_buffer_short: () => 'An assigned employee may not have enough travel time between this job and other work.',
 };
-const AUTHOR_FIXED = new Set(['crew_size_short', 'skill_missing', 'schedule_overlap', 'employee_unavailable', 'unverifiable_assignment', 'legacy_blocked_day', 'unassigned', 'missing_crew_lead', 'segment_unassigned', 'inactive_assignment', 'vehicle_unavailable', 'missing_address', 'missing_customer_link', 'missing_scope', 'invalid_schedule', 'unscheduled', 'segments_invalid', 'provider_sync_pending', 'customer_memory_not_inherited', 'arrival_window_reset', 'checkout_needs_review']);
+const AUTHOR_FIXED = new Set(['crew_size_short', 'skill_missing', 'schedule_overlap', 'employee_unavailable', 'unverifiable_assignment', 'legacy_blocked_day', 'unassigned', 'missing_crew_lead', 'segment_unassigned', 'inactive_assignment', 'vehicle_unavailable', 'missing_address', 'missing_customer_link', 'missing_scope', 'invalid_schedule', 'unscheduled', 'segments_invalid', 'provider_sync_pending', 'customer_memory_not_inherited', 'arrival_window_reset', 'checkout_needs_review', 'crew_assignment_ignored', 'sold_needs_crew']);
 export function authorRuleRows(rows) {
   return (Array.isArray(rows) ? rows : []).filter(plain).map(row => {
     const code = typeof row.code === 'string' ? row.code : '';
@@ -317,17 +318,22 @@ export async function saveWalkthroughHandoff(store, actor, input, now = new Date
   // name, one on the roster or not, gets the same refusal, so it cannot be used to
   // learn who is on the roster.
   const forbidden = () => fail('crew_assignment_forbidden', 'Only an operations manager or owner can assign crew. Clear the crew names; Dispatch will staff the job.', 403);
+  // AUTH-ROLES (EGC_STAFF_ROLE_ACCESS): their crew names are ignored instead, unread, and
+  // a sale that lands without crew is flagged 'Sold: needs crew' for a manager (soldNeedsCrew).
+  const roleAccess = !access.dispatcher && staffRoleAccessEnabled(env), crewIgnored = roleAccess && Boolean(assignedText) && !/^crew of \d+$/i.test(assignedText);
   let assignedCrew;
-  if (!assignedText || /^crew of \d+$/i.test(assignedText)) assignedCrew = previous?.assignedCrew || [];
+  if (roleAccess) assignedCrew = previous?.assignedCrew || [];
+  else if (!assignedText || /^crew of \d+$/i.test(assignedText)) assignedCrew = previous?.assignedCrew || [];
   else assignedCrew = jobCrewNames({ assignedTo: assignedText }).map(name => {
     const key = assignmentKey(name), exact = roster.filter(person => person.id === key), aliases = exact.length ? exact : roster.filter(person => assignmentKey(person.name) === key);
     if (aliases.length !== 1) throw access.dispatcher ? fail('crew_unverified', 'A requested crew member is not a unique active employee. Use the exact employee name or leave assignment for Dispatch.') : forbidden();
     return aliases[0].id;
   });
-  if (!access.dispatcher) {
+  if (!access.dispatcher && !roleAccess) {
     if (canonical([...assignedCrew].sort()) !== canonical([...(previous?.assignedCrew || [])].sort())) throw forbidden();
     assignedCrew = previous?.assignedCrew || [];
   }
+  const soldNeedsCrew = roleAccess && !assignedCrew.length;
   const instructions = stripCrewMoneyDeep(handoffInstructions(plan, source?.id || '')), crewNotes = stripCrewMoney(plan.notes);
   const changes = { date: plan.quote.job_date, endDate: plan.quote.job_date, time: plan.quote.start_time, endTime: plan.quote.end_time, title: plan.quote.title, address: placedAddress ?? plan.client.address, serviceType: 'Garage transformation', crewNeeded: plan.logistics.crew_size, assignedCrew, jobInstructions: stripCrewMoney(plan.crew_brief), accessInstructions: instructions.accessNotes, customerInstructions: crewNotes, notify: access.dispatcher || previous?.notify !== false, ...materialChanges(plan, previous ? previous.materials : source?.materials) };
   const dispatchInput = previous ? { action: 'schedule.update', requestId: input.requestId, jobId: previous.id, expectedRevision: previous.revision, changes } : { action: 'schedule.create', requestId: input.requestId, customerId: customer.id, kind: 'job', ...(source ? { sourceWalkthroughId: source.id } : {}), booking: { channel: 'hub_in_person' }, changes };
@@ -347,6 +353,8 @@ export async function saveWalkthroughHandoff(store, actor, input, now = new Date
       delete providerPayload.signature;
       Object.assign(target.patch, financePatch(plan, previous, target.id, actor, now), { handoffVersion: 1, handoffRequestId: input.requestId, handoffFingerprint: fingerprint, acceptedHandoffPayload: providerPayload, sourceWalkthroughId: source?.id || '', customer: plan.client.name, phone: plan.client.phone, email: plan.client.email, scope: plan.scope, discovery: plan.discovery, logistics: plan.logistics, jobInstructions: instructions, internalNotes: plan.internal_notes, clientChecklists: plan.client_checklists, notes: plan.notes, customerNotesSummary: crewNotes || instructions.customerGoal, durationMin: (Date.parse(plan.quote.end_at) - Date.parse(plan.quote.start_at)) / 60000, estimatedDurationMin: plan.quote.estimated_duration_min, estimatedDurationHours: plan.quote.estimated_duration_min / 60, expectedShiftHours: plan.quote.expected_shift_hours, crewSize: plan.logistics.crew_size, photoCount: plan.photos.before, photoSyncStatus: previous?.photoSyncStatus || 'device_only', walkthroughSyncedAt: now, syncIdempotencyKey: providerPayload.idempotency_key, walkthroughAppointmentId: source?.highlevelAppointmentId || previous?.walkthroughAppointmentId || '', providerSyncOwner: 'operations', syncStatus: 'pending', customerPortalInvitationRequestedAt: previous?.customerPortalInvitationRequestedAt || now });
       if (typeof target.patch.operationalScope?.text === 'string') target.patch.operationalScope.text = stripCrewMoney(target.patch.operationalScope.text);
+      if (soldNeedsCrew) target.patch.soldNeedsCrew = { at: now, by: actor.user, requestId: input.requestId };
+      const roleWarnings = [...(crewIgnored ? [{ code: 'crew_assignment_ignored', jobId: target.id, message: 'Crew names were not saved. A manager assigns the crew in Dispatch.' }] : []), ...(soldNeedsCrew ? [{ code: 'sold_needs_crew', jobId: target.id, message: 'Sold: needs crew. A manager assigns the crew in Dispatch.' }] : [])];
       function fence(collection, row, patch) {
         requireRevision(row);
         const found = writes.find(write => write.collection === collection && write.id === row.id);
@@ -372,7 +380,7 @@ export async function saveWalkthroughHandoff(store, actor, input, now = new Date
       // Its original status, actual completion time, signature and money stay intact.
       writes.push(...sale.writes);
       const dispatchReceipt = writes.find(write => write.collection === 'dispatchOperations' && write.id === receiptId);
-      writes.push({ collection: 'walkthroughHandoffs', id: receiptId, patch: { fingerprint, actorId: actor.user, customerId: customer.id, jobId: target.id, sourceWalkthroughId: source?.id || '', sourceRevision: source?.revision || '', originalJobRevision: previous?.revision || '', acceptedAt: plan.acceptance.accepted_at, amountCents: Math.round(plan.quote.total * 100), signature: plan.signature, plan: providerPayload, priorEstimate: previous?.estimate || null, priorAcceptance: previous?.acceptance || null, createdAt: now, warnings: dispatchReceipt?.patch?.warnings || [] } });
+      writes.push({ collection: 'walkthroughHandoffs', id: receiptId, patch: { fingerprint, actorId: actor.user, customerId: customer.id, jobId: target.id, sourceWalkthroughId: source?.id || '', sourceRevision: source?.revision || '', originalJobRevision: previous?.revision || '', acceptedAt: plan.acceptance.accepted_at, amountCents: Math.round(plan.quote.total * 100), signature: plan.signature, plan: providerPayload, priorEstimate: previous?.estimate || null, priorAcceptance: previous?.acceptance || null, createdAt: now, warnings: [...(dispatchReceipt?.patch?.warnings || []), ...roleWarnings] } });
       await store.commit(writes);
     },
   };

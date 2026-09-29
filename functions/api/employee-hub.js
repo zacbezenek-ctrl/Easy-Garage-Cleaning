@@ -5,7 +5,7 @@ import { employeeVaultSecret, employeeVaultReadOnly } from '../_lib/employee-vau
 import { EMPLOYEE_HUB_COLLECTIONS, expectedDocument, firestoreDoc, readAll, readCollection, readOne, seal, unreadableStorage, writeOne } from '../_lib/employee-vault.js';
 import { createJobAssignmentAccess } from '../_lib/job-assignment.js';
 import { listEmployeeApplications, normalizeEmployeeUsername } from '../_lib/employee-accounts.js';
-import { activeTimecard, authorizeTimecard, clockInWithoutFix, timecardError } from '../_lib/employee-timecards.js';
+import { activeTimecard, authorizeTimecard, clockInWithoutFix, correctionJobId, timecardCorrectionsEnabled, timecardError } from '../_lib/employee-timecards.js';
 import { activeJobSegment, applyCrewJobMove, crewJobMoveState, employeeJobTime, jobStatusMovesTime, jobTimeView, ownJobTimeProjection } from '../_lib/employee-job-time.js';
 import { fieldJobLead } from '../_lib/field-permissions.js';
 import { assignedOn, fieldVisitsEnabled } from '../_lib/field-execution-visits.js';
@@ -13,6 +13,7 @@ import { denverToday } from '../_lib/dispatch-time.js';
 import { ptoOffOn } from '../_lib/pto-pay.js';
 import { legacyManagerProfile, legacyProfileView, mirrorLegacyPay, profileHourlyRate } from '../_lib/staff-directory.js';
 import { assertNoOthersPay, assertPayUnchanged, canSetPay, payOwnerField, seesOthersPay, visiblePay, withoutPayWrites } from '../_lib/pay-visibility.js';
+import { can } from '../_lib/staff-roles.js';
 
 const PROJECT_ID = 'egcw-1ec83';
 const COLLECTIONS = EMPLOYEE_HUB_COLLECTIONS;
@@ -23,6 +24,15 @@ const isRecord = value => value !== null && typeof value === 'object' && !Array.
 // A Hub action kept on the device (employee-offline-queue.js, HUB_OFFLINE_ENABLED) carries its request ID in the body;
 // the Hub's direct saves and the crew app's never do, so only queued sends get the replay allowances below.
 const QUEUED_REQUEST = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+// A new timecard's ID is data, never markup or script: the manager boards carry it in an escaped data attribute, and older
+// screens put record IDs inside inline handlers. The Hub sends time-<letters and digits>-<base36 time>; the crew app sends
+// time-<signed-in username>-<base36 time> from the raw username, and a configured one (HUB_AUTH_USERS_JSON,
+// HUB_AUTH_ADDITIONAL_USERS_JSON) may hold '@', '+' or a space. So only what can end an HTML attribute or a JS string is
+// refused: quotes, backslash, backtick, < > &, and control characters or whitespace other than a plain space. A space
+// is kept because the older server took any ID up to 180 characters, so a crew clock-in queued on a phone before this
+// build replays under its same ID. Timecards saved earlier under any other ID stay readable and savable.
+const UNSAFE_TIMECARD_ID = /['"\\`<>&\p{Cc}]|[^\S ]/u;
+const newTimecardId = id => id.length > 0 && id.length <= 180 && !UNSAFE_TIMECARD_ID.test(id);
 
 function reply(status, body) {
   return new Response(JSON.stringify(body), {
@@ -270,11 +280,20 @@ async function payGuard(env, session, collection, incoming, existing, now) {
   return withoutPayWrites(input);
 }
 
+// A manager's timecard correction (EGC_TIMECARD_CORRECTIONS) that moves the card to another job labels it from that job,
+// which must be a scheduled job; the timecard rules refuse the correction when there is none.
+async function correctionJobLabel(env, session, incoming, existing) {
+  const jobId = isRecord(incoming.correction) && manager(session) && can(session, 'time.approve', env) && timecardCorrectionsEnabled(env) ? correctionJobId(incoming.jobId) : '';
+  if (!jobId || jobId === existing?.jobId) return null;
+  const job = await readJob(env, jobId);
+  return job && job.type === 'job' && !job.recordType ? String(job.customer || job.serviceType || 'Assigned job').slice(0, 180) : null;
+}
+
 async function authorizeMutation(env, session, collection, id, incoming, existing, queued = false) {
   const now = new Date().toISOString();
   incoming = await payGuard(env, session, collection, incoming, existing, now);
   if (collection === 'timeEntries') return authorizeTimecard({ session, manager: manager(session), id, incoming, existing,
-    hourlyRate: existing?.hourlyRate ?? await employeeRate(env, session, now), now, env, queued });
+    hourlyRate: existing?.hourlyRate ?? await employeeRate(env, session, now), now, env, queued, jobLabel: await correctionJobLabel(env, session, incoming, existing) });
   if (manager(session) && !(collection === 'training' && incoming.moduleId)) return collection === 'profiles' ? legacyManagerProfile({ env, session, existing, incoming, id, now }) : { ...(existing || {}), ...incoming, id };
 
   if (collection === 'profiles') {
@@ -466,7 +485,7 @@ export async function onRequestGet({ request, env }) {
     for (const name of ['profiles', 'timeEntries', 'requests']) collections[name] = collections[name].map(row => visiblePay(session, env, name, row));
     // Each timecard's job time (current segment, per-job work and travel, general time) for the Hub's labels.
     collections.timeEntries = collections.timeEntries.map(row => withJobTime(row, viewedAt));
-    return reply(200, { ok: true, collections, payVisibility: seesOthersPay(session, env) ? 'all' : 'own', clockInWithoutFix: clockInWithoutFix(env), ...(includeAccounts ? { accounts } : {}) });
+    return reply(200, { ok: true, collections, payVisibility: seesOthersPay(session, env) ? 'all' : 'own', clockInWithoutFix: clockInWithoutFix(env), timecardCorrections: manager(session) && can(session, 'time.approve', env) && timecardCorrectionsEnabled(env), ...(includeAccounts ? { accounts } : {}) });
   } catch (error) {
     return reply(502, { ok: false, ...(error.code ? { code: error.code } : {}), error: String(error.message || 'Employee Hub storage failed') });
   }
@@ -520,6 +539,7 @@ export async function onRequestPost({ request, env }) {
       }
       // A different vault key changes IDs; a 404 alone cannot prove this is new.
       if (!current.data) await readAll(env);
+      if (collection === 'timeEntries' && !current.data && !newTimecardId(id)) return reply(400, { ok: false, code: 'EMPLOYEE_TIMECARD_ID_INVALID', error: 'Invalid employee record' });
       const data = await authorizeMutation(env, session, collection, id, incoming, current.data, QUEUED_REQUEST.test(String(body.requestId ?? '')));
       try {
         if (collection === 'timeEntries') return reply(200, { ok: true, record: withJobTime(visiblePay(session, env, collection, await writeTimecard(env, session, id, data, target)), new Date().toISOString()) });

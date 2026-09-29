@@ -25,6 +25,15 @@ export const FIREBASE_REVOCATION_MAX_CALLS = 3;
 // integration-status answers 'unavailable' instead of holding the Hub render
 // on a slow state read.
 export const FIREBASE_REVOCATION_READ_TIMEOUT_MS = 3000;
+// /api/firebase-session waits at most this long to record a stored manager in
+// the roster snapshot (admit) before refusing to mint their session.
+export const FIREBASE_REVOCATION_ADMIT_TIMEOUT_MS = 5000;
+// How long after an admit its session may still begin: the admit wait above,
+// the response, and the browser's signInWithCustomToken, which the Hub and
+// /crew/ call as soon as the token arrives. A Firebase session's auth_time is
+// that sign-in, not the admit, so a removed admitted entry is revoked from the
+// first whole second after its admit time plus this.
+export const FIREBASE_REVOCATION_ADMIT_EXCHANGE_MS = 30 * 1000;
 const CALL_TIMEOUT_MS = 8000;
 const MAX_PENDING = 500;
 // How long a success is remembered per uid, so neither a stale retry nor an
@@ -130,22 +139,25 @@ function validPending(entry) {
 }
 const validIntent = entry => isRecord(entry) && validUid(entry.uid) && REASONS.has(entry.reason) && ISO.test(entry.at || '');
 const validRevoked = entry => isRecord(entry) && validUid(entry.uid) && ISO.test(entry.through || '');
+// at (optional): when admit() last recorded a session for this entry.
+const validRosterEntry = entry => isRecord(entry) && validUid(entry.uid) && typeof entry.fingerprint === 'string' && entry.fingerprint.length <= 80 &&
+  (entry.at === undefined || typeof entry.at === 'string' && ISO.test(entry.at));
+const rosterEntry = ({ uid, fingerprint, at }) => at ? { uid, fingerprint, at } : { uid, fingerprint };
 const validList = (list, valid, key) => Array.isArray(list) && list.length <= MAX_PENDING && list.every(valid) && new Set(list.map(key)).size === list.length;
 
 // A malformed record is never treated as empty or overwritten. intents and
-// revoked are optional (absent reads as none).
+// revoked are optional (absent reads as none), and so is a roster entry's at.
 export function decodeFirebaseRevocationState(row) {
   if (row === null) return { revision: undefined, pending: [], intents: [], revoked: [], staticRoster: null, verifiedAt: '', probedAt: '', probeError: '' };
   if (!isRecord(row)) throw unreadable();
   const pending = row.pending ?? [], intents = row.intents ?? [], revoked = row.revoked ?? [], roster = row.staticRoster ?? null;
   if (!validList(pending, validPending, entry => entry.uid) || !validList(intents, validIntent, entry => `${entry.uid}|${entry.at}`) ||
       !validList(revoked, validRevoked, entry => entry.uid)) throw unreadable();
-  if (roster !== null && (!Array.isArray(roster) || !roster.every(entry => isRecord(entry) && validUid(entry.uid) && typeof entry.fingerprint === 'string' && entry.fingerprint.length <= 80) ||
-      new Set(roster.map(entry => entry.uid)).size !== roster.length)) throw unreadable();
+  if (roster !== null && (!Array.isArray(roster) || !roster.every(validRosterEntry) || new Set(roster.map(entry => entry.uid)).size !== roster.length)) throw unreadable();
   if (!optionalIso(row.verifiedAt) || !optionalIso(row.probedAt) || !(row.probeError == null || row.probeError === '' || ERRORS.has(row.probeError))) throw unreadable();
   return {
     revision: row.revision, pending: pending.map(entry => ({ ...entry })), intents: intents.map(({ uid, reason, at }) => ({ uid, reason, at })),
-    revoked: revoked.map(({ uid, through }) => ({ uid, through })), staticRoster: roster && roster.map(({ uid, fingerprint }) => ({ uid, fingerprint })),
+    revoked: revoked.map(({ uid, through }) => ({ uid, through })), staticRoster: roster && roster.map(rosterEntry),
     verifiedAt: row.verifiedAt || '', probedAt: row.probedAt || '', probeError: row.probeError || '',
   };
 }
@@ -161,13 +173,14 @@ export function firebaseRevocationSummary(state) {
   return { firebaseRevocation: value === 'verified', firebaseRevocationState: value, firebaseRevocationPending: pending, firebaseRevocationError: error };
 }
 
-// results: [{uid, reason, ok, attempted, retry, error, covers, intents, skip}]
+// results: [{uid, reason, ok, attempted, retry, error, covers, since, intents, skip}]
 // applied to fresh state. A success clears only work requested at or before
 // the instant it revoked (covers) and is remembered per uid (revoked), so an
 // older request's failure saved late is not queued, and a queued time never
-// moves back. A retry of an entry that is already gone is not re-added. The
-// intents a result carries are settled: its call covered them, or its failure
-// is queued at a time after their change.
+// moves back. A failure is queued at its since (default now). A retry of an
+// entry that is already gone is not re-added. The intents a result carries are
+// settled: its call covered them, or its failure is queued at a time after
+// their change.
 function applyResults(state, results, now) {
   const pending = new Map(state.pending.map(entry => [entry.uid, entry]));
   const revoked = new Map(state.revoked.map(entry => [entry.uid, entry.through]));
@@ -182,11 +195,12 @@ function applyResults(state, results, now) {
       if (entry && time(entry.requestedAt) <= time(result.covers)) pending.delete(result.uid);
       continue;
     }
-    if (result.retry ? !entry : !entry && through && time(through) >= time(now)) continue;
+    const since = result.since || now;
+    if (result.retry ? !entry : !entry && through && time(through) >= time(since)) continue;
     pending.set(result.uid, {
       uid: result.uid,
       reason: result.retry ? entry.reason : result.reason,
-      requestedAt: result.retry || entry && time(entry.requestedAt) > time(now) ? entry.requestedAt : now,
+      requestedAt: result.retry || entry && time(entry.requestedAt) > time(since) ? entry.requestedAt : since,
       attempts: (entry?.attempts || 0) + (result.attempted ? 1 : 0),
       lastAttemptAt: result.attempted ? now : result.retry ? entry.lastAttemptAt : '',
       lastError: result.attempted ? result.error : entry?.lastError || '',
@@ -202,6 +216,14 @@ function applyResults(state, results, now) {
     revoked: remembered.map(([uid, through]) => ({ uid, through })).sort(byUid),
     verifiedAt,
   };
+}
+
+const laterOf = (left, right) => time(right) > time(left) ? right : left;
+// When a removed or changed roster entry's sessions must end from: `now`, or
+// for an admitted entry the first whole second after its admit time plus the
+// sign-in that follows it, whichever is later.
+function removalTime(entry, now) {
+  return entry.at ? laterOf(now, firebaseRevocationTime(new Date(time(entry.at) + FIREBASE_REVOCATION_ADMIT_EXCHANGE_MS))) : now;
 }
 
 const statePatch = state => ({ pending: state.pending, intents: state.intents, revoked: state.revoked, staticRoster: state.staticRoster, verifiedAt: state.verifiedAt, probedAt: state.probedAt, probeError: state.probeError });
@@ -251,7 +273,7 @@ export function createFirebaseRevocationService({ store, revoke }) {
     try { fresh = await within(read(), FIREBASE_REVOCATION_READ_TIMEOUT_MS); }
     catch { return { ok: false, attempted: false }; }
     const entry = fresh.pending.find(queued => queued.uid === item.uid);
-    if (item.retry && !entry) return { ok: false, attempted: false };
+    if (item.retry && (!entry || time(entry.requestedAt) > time(now))) return { ok: false, attempted: false };
     if (item.owed && !fresh.intents.some(intent => intent.uid === item.uid && item.intents.includes(intent.at))) return { skip: true };
     const since = item.retry ? entry.requestedAt : now;
     const through = fresh.revoked.find(done => done.uid === item.uid)?.through;
@@ -303,9 +325,32 @@ export function createFirebaseRevocationService({ store, revoke }) {
       return outcome('revocation_pending', failed[0].error);
     },
 
+    /** Before a Firebase session carries access that only stored staff roles
+     * give (a stored manager's business access under EGC_STAFF_ROLE_ACCESS),
+     * record its uid and claims in the roster snapshot, stamped with this
+     * admit's time (at). maintain() then revokes it once the roster stops
+     * showing that access (the flag turned off, a demotion), even when no
+     * production Hub load recorded the person in between, and from after the
+     * latest admit (removalTime). Every admit writes its stamp (a later one
+     * already saved is kept), so a reconciliation that read the snapshot
+     * before it fails its compare-and-set save and re-applies on state that
+     * shows this admit. */
+    async admit(profile, now) {
+      if (!ISO.test(now)) throw fail('firebase_revocation_invalid', 'Firebase session admission needs a valid time.');
+      const [entry] = staticStaffRoster([profile]);
+      await save(state => {
+        const roster = state.staticRoster || [];
+        const held = roster.find(row => row.uid === entry.uid && row.fingerprint === entry.fingerprint);
+        const at = held?.at && time(held.at) >= time(now) ? held.at : now;
+        if (held?.at === at) return state;
+        return { ...state, staticRoster: [...roster.filter(row => row.uid !== entry.uid), { ...entry, at }].sort(byUid) };
+      }, now);
+    },
+
     /** Reconcile configured staff (removed or changed people are revoked at
-     * `now`; profiles null leaves the roster snapshot alone), revoke owed
-     * intents at `now`, retry due pending revocations with the time they were
+     * `now`, and an admitted entry also from after its admit, removalTime;
+     * profiles null leaves the roster snapshot alone), revoke owed intents at
+     * `now`, retry pending revocations that are due with the time they were
      * requested and, until one call has proven the IAM grant, probe it. Does
      * no I/O when there is nothing to do. */
     async maintain(profiles, now, known = null) {
@@ -314,8 +359,13 @@ export function createFirebaseRevocationService({ store, revoke }) {
       const current = new Map((roster || []).map(entry => [entry.uid, entry.fingerprint]));
       const state = known || await read();
       const changedFrom = snapshot => roster === null ? [] : (snapshot || []).filter(entry => current.get(entry.uid) !== entry.fingerprint)
-        .map(entry => ({ uid: entry.uid, reason: current.has(entry.uid) ? 'static_changed' : 'static_removed', retry: false, intents: [] }));
-      const rosterChanged = roster !== null && JSON.stringify(state.staticRoster) !== JSON.stringify(roster);
+        .map(entry => ({ uid: entry.uid, reason: current.has(entry.uid) ? 'static_changed' : 'static_removed', retry: false, intents: [], since: removalTime(entry, now) }));
+      // The roster to save: an entry that still matches keeps its admit stamp.
+      const snapshotOf = previous => roster && roster.map(entry => {
+        const held = (previous || []).find(row => row.uid === entry.uid && row.fingerprint === entry.fingerprint);
+        return held?.at ? { ...entry, at: held.at } : entry;
+      });
+      const rosterChanged = roster !== null && JSON.stringify(state.staticRoster) !== JSON.stringify(snapshotOf(state.staticRoster));
       const items = changedFrom(state.staticRoster);
       // An intent its request never settled (it stopped after the change may
       // have landed) is owed once the retry window has passed. It is revoked
@@ -326,7 +376,9 @@ export function createFirebaseRevocationService({ store, revoke }) {
         else items.push({ uid: intent.uid, reason: intent.reason, retry: false, owed: true, intents: [intent.at] });
       }
       const covered = new Set(items.map(item => item.uid));
-      items.push(...state.pending.filter(entry => !covered.has(entry.uid) && (!entry.lastAttemptAt || at - time(entry.lastAttemptAt) >= FIREBASE_REVOCATION_RETRY_MS))
+      // A queued time after this pass (a removed entry admitted moments ago)
+      // waits for a later pass: validSince is never sent ahead of `now`.
+      items.push(...state.pending.filter(entry => !covered.has(entry.uid) && time(entry.requestedAt) <= at && (!entry.lastAttemptAt || at - time(entry.lastAttemptAt) >= FIREBASE_REVOCATION_RETRY_MS))
         .map(entry => ({ uid: entry.uid, reason: entry.reason, retry: true, intents: [] })));
       const probe = !state.verifiedAt && !state.pending.length && !items.length && (!state.probedAt || at - time(state.probedAt) >= FIREBASE_REVOCATION_PROBE_MS);
       if (!rosterChanged && !items.length && !probe) return firebaseRevocationSummary(state);
@@ -336,10 +388,16 @@ export function createFirebaseRevocationService({ store, revoke }) {
       }
       const probed = probe ? await call(FIREBASE_REVOCATION_PROBE_UID, now) : null;
       const next = await save(fresh => {
-        // Never drop a person from the snapshot without revoking or queueing them.
-        const handled = new Set(results.filter(result => !result.skip).map(result => result.uid));
-        const missed = changedFrom(fresh.staticRoster).filter(change => !handled.has(change.uid)).map(change => ({ ...change, ok: false, attempted: false }));
-        const applied = { ...applyResults(fresh, [...results, ...missed], now), ...(roster === null ? {} : { staticRoster: roster }) };
+        // Never drop a person from the snapshot without revoking or queueing
+        // them, from after their latest admit as fresh state records it: an
+        // admit that landed after this pass read state (and failed its save)
+        // is revoked too. A call that did not reach that time leaves it queued.
+        const changes = new Map(changedFrom(fresh.staticRoster).map(change => [change.uid, change]));
+        const timed = results.map(result => changes.has(result.uid) && !result.skip && !result.ok && !result.retry ? { ...result, since: laterOf(result.since || now, changes.get(result.uid).since) } : result);
+        // A failed retry stays queued at its own earlier time, so it does not reach the change.
+        const reached = (uid, since) => timed.some(result => result.uid === uid && !result.skip && (result.ok ? time(result.covers) >= time(since) : !result.retry));
+        const missed = [...changes.values()].filter(change => !reached(change.uid, change.since)).map(change => ({ ...change, ok: false, attempted: false }));
+        const applied = { ...applyResults(fresh, [...timed, ...missed], now), ...(roster === null ? {} : { staticRoster: snapshotOf(fresh.staticRoster) }) };
         if (!probed) return applied;
         return { ...applied, probedAt: now, probeError: probed.ok ? '' : probed.error, verifiedAt: probed.ok ? applied.verifiedAt || now : applied.verifiedAt };
       }, now, state);
@@ -378,6 +436,20 @@ export async function settleStaffFirebaseIntent(service, users, intentAt, now) {
   catch (error) { log('warn', 'firebase_revocation_intent_unsettled', { uids: uidsOf(users), code: String(error?.code || 'unknown') }); }
 }
 
+/** /api/firebase-session, before minting a session whose access only stored
+ * roles give: records it in the roster snapshot (admit). true when recorded or
+ * when revocation is not configured (no service account can mint either);
+ * false when it could not be recorded within timeoutMs, and the caller mints
+ * nothing. Never throws. */
+export async function admitStaffFirebaseSession(service, profile, now, { timeoutMs = FIREBASE_REVOCATION_ADMIT_TIMEOUT_MS } = {}) {
+  if (!service) return true;
+  try { await within(service.admit(profile, now), timeoutMs); return true; }
+  catch (error) {
+    log('warn', 'firebase_revocation_admit_failed', { uid: firebaseStaffUid(profile?.user), code: String(error?.code || 'unknown') });
+    return false;
+  }
+}
+
 /** Account status/role change: never throws and never blocks the change. */
 export async function revokeStaffFirebaseSessions(service, users, reason, now, intentAt = '') {
   if (!service) return outcome('not_configured');
@@ -389,28 +461,32 @@ export async function revokeStaffFirebaseSessions(service, users, reason, now, i
 }
 
 /** integration-status fields for business users. profiles: () => staff
- * profiles, or null where the production staff configuration is not served
- * (reconcilesStaffRoster). Maintenance runs after the response through defer
- * (context.waitUntil) when available. */
+ * profiles (or a promise of them, such as hub-session.js listHubAccessProfiles,
+ * read alongside the state within the same timeout), or null where the
+ * production staff configuration is not served (reconcilesStaffRoster).
+ * Maintenance runs after the response through defer (context.waitUntil) when
+ * available. */
 export async function firebaseRevocationStatus(service, profiles, now, { defer = null, timeoutMs = FIREBASE_REVOCATION_READ_TIMEOUT_MS } = {}) {
   const unknown = (state, error = '') => ({ firebaseRevocation: false, firebaseRevocationState: state, firebaseRevocationPending: null, firebaseRevocationError: error });
   if (!service) return unknown('not_configured');
+  const [read, listed] = await Promise.allSettled([within(service.read(), timeoutMs), profiles ? within(Promise.resolve().then(profiles), timeoutMs) : null]);
   // Unreadable staff configuration means removed staff are not being revoked,
   // so revocation is not reported as working; pending retries still run.
   let staff = null, staffError = '';
   if (profiles) {
-    try { staff = profiles(); staticStaffRoster(staff); }
-    catch (error) {
+    try {
+      if (listed.status === 'rejected') throw listed.reason;
+      staff = listed.value; staticStaffRoster(staff);
+    } catch (error) {
       staff = null; staffError = 'staff_config';
       log('warn', 'firebase_revocation_staff_config', { code: String(error?.code || 'unknown') });
     }
   }
-  let state;
-  try { state = await within(service.read(), timeoutMs); }
-  catch (error) {
-    log('warn', 'firebase_revocation_state_unavailable', { code: String(error?.code || 'unknown') });
+  if (read.status === 'rejected') {
+    log('warn', 'firebase_revocation_state_unavailable', { code: String(read.reason?.code || 'unknown') });
     return unknown('unavailable', staffError);
   }
+  const state = read.value;
   const answer = summary => staffError ? { ...summary, firebaseRevocation: false, firebaseRevocationState: 'unavailable', firebaseRevocationError: staffError } : summary;
   const maintenance = Promise.resolve().then(() => service.maintain(staff, now, state)).catch(error => {
     log('warn', 'firebase_revocation_maintenance_failed', { code: String(error?.code || 'unknown') });

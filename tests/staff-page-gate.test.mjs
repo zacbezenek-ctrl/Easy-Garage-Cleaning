@@ -293,10 +293,13 @@ test('flag on: public exceptions pass without a session and are byte-identical t
   }
 });
 
-test('flag off (unset, "off" or anything but exactly "on"): gated paths behave exactly as before and no session is read', async t => {
+// AUTH-ROLES (OPS-08) changed this deliberately: "on" or "true" in any case with spaces trimmed now turns the gate on
+// (EGC_STAFF_PAGE_GATE=true used to leave staff pages public without a word), so 'ON', 'true' and ' on' moved to the
+// accepted values (tests/auth-roles.test.mjs); every other value still leaves the gate off exactly as before.
+test('flag off (unset, "off", "false" or anything but on/true): gated paths behave exactly as before and no session is read', async t => {
   t.mock.timers.enable({ apis: ['Date'], now: NOW });
   const cookie = (await createHubSessionCookie(ON, 'synthetic.crew')).split(';')[0];
-  const variants = [NO_ENV, {}, { ...BASE_ENV, EGC_STAFF_PAGE_GATE: 'off' }, { EGC_STAFF_PAGE_GATE: 'ON' }, { EGC_STAFF_PAGE_GATE: 'true' }, { EGC_STAFF_PAGE_GATE: ' on' }, { EGC_STAFF_PAGE_GATE: '' }];
+  const variants = [NO_ENV, {}, { ...BASE_ENV, EGC_STAFF_PAGE_GATE: 'off' }, { EGC_STAFF_PAGE_GATE: 'OFF' }, { EGC_STAFF_PAGE_GATE: 'false' }, { EGC_STAFF_PAGE_GATE: 'yes' }, { EGC_STAFF_PAGE_GATE: '1' }, { EGC_STAFF_PAGE_GATE: 'enabled' }, { EGC_STAFF_PAGE_GATE: 'o n' }, { EGC_STAFF_PAGE_GATE: 'truee' }, { EGC_STAFF_PAGE_GATE: '' }];
   for (const path of [...GATED_URLS, '/crew/', '/staff-login', '/api/hub-auth']) {
     for (const headers of [HTML, ASSET, { ...HTML, Cookie: cookie }, { ...ASSET, Cookie: 'egc_hub_session=garbage' }]) {
       const baseline = await snapshot(await edge(path, { env: BASE_ENV, headers }));

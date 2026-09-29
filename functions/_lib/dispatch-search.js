@@ -13,8 +13,8 @@ const safeId=value=>typeof value==='string'&&/^[A-Za-z0-9_-]{1,180}$/.test(value
 
 /** Manager search spans all canonical Hub history, independently of the board
  * date range. Provider records are not merged or guessed by phone/name. */
-export async function dispatchSearch(store,session,query={},now=new Date()) {
-  requireDispatcher(session);
+export async function dispatchSearch(store,session,query={},now=new Date(),{authorize=requireDispatcher}={}) {
+  authorize(session);
   if(!query||typeof query!=='object'||Array.isArray(query)||Object.keys(query).some(key=>!['q','status'].includes(key)))throw fail('Use a search term and an optional job status.');
   if(typeof query.q!=='string'||query.q.trim().length<2||query.q.length>200)throw fail('Enter 2 to 200 characters to search all Hub jobs.');
   const status=query.status||'all';if(!['all','active','completed','cancelled','unscheduled'].includes(status))throw fail('Choose a supported job status.');

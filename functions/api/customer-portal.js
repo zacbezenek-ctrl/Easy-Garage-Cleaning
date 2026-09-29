@@ -9,12 +9,12 @@ import { customerPhotoPolicy, customerPhotoProjection, customerPhotosEnabled } f
 import { commitDocuments, patchJob, readJob } from '../_lib/firestore-job.js';
 import { CUSTOMER_PORTAL_CONTENT, CUSTOMER_PORTAL_TERMS_VERSION, approvalTermsVersion, customerPortalDocuments } from '../_lib/customer-portal-content.js';
 import { appendConversationMessage, cleanMessage, cleanRequestId, conversationMessages, deliverHighLevelMessage, findConversationMessage, replaceConversationMessage } from '../_lib/customer-messaging.js';
-import { TIP_PRESETS, customerMoneyState as moneyState, customerDepositState, customerPaymentNeedsReview, customerQuoteTotal, customerTipsEnabled, createCustomerStripeCheckout, portalPaymentHeld, recordCustomerStripePayment, recordedTipCents, requestTip, stripeRequest as stripe, stripeSecretKey as stripeKey, tipLimitCents, tipRefusal } from '../_lib/customer-payments.js';
+import { TIP_PRESETS, customerMoneyState as moneyState, customerDepositState, customerPaymentNeedsReview, customerQuoteTotal, customerTipsEnabled, customerTotalsShadow, createCustomerStripeCheckout, portalPaymentHeld, recordCustomerStripePayment, recordedTipCents, requestTip, stripeRequest as stripe, stripeSecretKey as stripeKey, tipLimitCents, tipRefusal, unknownMoneyRefusal } from '../_lib/customer-payments.js';
 import { approvalClosed, billedChangeCents, billedChangeOrders, changeOrderBillingEnabled, changeOrderSaved, decisionDeltaCents, respondToDecision } from '../_lib/change-orders.js';
 import { parseBusinessActor } from '../_lib/business-hub-core.js';
 import { businessAccountJob } from '../_lib/portal-invitation.js';
 import { moneyDocumentEnabled, moneyDocumentLinks } from '../_lib/money-document.js';
-import { customerMoneyTotals } from '../_lib/money-core.js';
+import { customerMoneyTotals, moneyTotalsMode } from '../_lib/money-core.js';
 import { estimateFingerprint, included, legacyLineItems, unsentQuoteDraft } from '../_lib/quote-model.js';
 import { crewPublicProfilesEnabled, customerCrew, customerCrewProjection, readCrewPublicProfiles } from '../_lib/crew-public-profile.js';
 import { liveSale, portalApprovalWrites, portalFunnelWrite, vocabularyValue } from '../_lib/job-funnel-events.js';
@@ -74,8 +74,8 @@ function paymentStatus(job, finance) {
 }
 
 // The review ask appears only after the work is complete and fully paid.
-function reviewReady(job) {
-  return ['completed', 'paid'].includes(portalStatus(job)) && paymentStatus(job, moneyState(job)) === 'paid';
+function reviewReady(job, mode = 'off') {
+  return ['completed', 'paid'].includes(portalStatus(job)) && paymentStatus(job, moneyState(job, mode)) === 'paid';
 }
 
 export function customerReviewUrl(env = {}) {
@@ -313,11 +313,14 @@ function customerExperience(job, owner = true, { billing = false, now = '' } = {
 // payment to a viewer who may pay, never on the deposit or while review waits
 // (or a card payment is held for the team), and never on a closed, void-invoice
 // or refunded job (tipRefusal).
-function tipOffer(job, finance, permissions, held = false) {
-  const needsReview = customerPaymentNeedsReview(job), due = customerDepositState(job, finance), dueCents = Math.round(due.dueNow * 100);
+function tipOffer(job, finance, permissions, held = false, mode = 'off') {
+  const needsReview = customerPaymentNeedsReview(job), due = customerDepositState(job, finance, mode), dueCents = Math.round(due.dueNow * 100);
   const available = !needsReview && held !== true && !tipRefusal(job) && due.purpose === 'balance' && dueCents >= 50 && permissions?.pay !== false;
   return { available, maxCents: available ? tipLimitCents(dueCents) : 0, presets: [...TIP_PRESETS], paidCents: recordedTipCents(job) };
 }
+
+// Each change the customer approved that is billed on the balance, as its own line (never an approval without a line).
+const approvedChanges = job => billedChangeOrders(job).map(line => ({ id: safe(line.id, 80), name: safe(line.name, 160) || 'Approved change', description: safe(line.description, 600), amount: line.totalCents / 100 }));
 
 // An opaque per-job key the page scopes its saved requests with (never the job id).
 const portalJobKey = jobId => bytesToHex(sha256(new TextEncoder().encode(`egc-portal-job:${jobId}`))).slice(0, 16);
@@ -326,10 +329,14 @@ const portalJobKey = jobId => bytesToHex(sha256(new TextEncoder().encode(`egc-po
 // button is hidden and nothing is due now), false when not, null when the
 // checkout ledger or the job's payment reviews could not be read (Pay then
 // refuses until they can be).
-function sanitize(job, session = {}, { today, reviewUrl, draftsRejected = false, billing = false, now = '', tips = false, held = false }) {
-  const finance = moneyState(job), withheld = unsentQuoteDraft(job);
-  const estimate = withheld ? withheldEstimate(job) : estimateState(job, finance, today, draftsRejected);
-  const state = portalStatus(job), review = reviewReady(job);
+// mode is the money totals mode (MONEY_UNIFIED_TOTALS, money-core moneyTotalsMode). The estimate card and the approval it
+// binds keep today's figures in every mode; in mode 'unified' the payment block serves money-core's unified totals, lists
+// each billed change (changes) and says when the amounts need the team's review (moneyReview: nothing is due online). A job
+// with no quote saved yet is shown as today, with nothing due and no review (unpriced).
+function sanitize(job, session = {}, { today, reviewUrl, draftsRejected = false, billing = false, now = '', tips = false, held = false, mode = 'off' }) {
+  const quoted = moneyState(job), finance = mode === 'unified' ? moneyState(job, mode) : quoted, withheld = unsentQuoteDraft(job);
+  const estimate = withheld ? withheldEstimate(job) : estimateState(job, quoted, today, draftsRejected);
+  const state = portalStatus(job), review = reviewReady(job, mode), { unknown = false, unpriced = false, ...deposit } = customerDepositState(job, finance, mode), moneyReview = unknown && !unpriced;
   const owner = !session.actorId, experience = customerExperience(job, owner, { billing, now }), actor = experience.collaborators.find(person => person.id === session.actorId);
   return {
     ok: true,
@@ -344,9 +351,9 @@ function sanitize(job, session = {}, { today, reviewUrl, draftsRejected = false,
     estimate,
     payment: withheld ? withheldPayment(job, finance) : {
       total: finance.total, paid: finance.paid, balance: finance.balance, approvedChanges: billedChangeCents(job) / 100,
-      dueNow: customerPaymentNeedsReview(job) || (tips && held === true) ? 0 : customerDepositState(job, finance).dueNow,
-      purpose: customerDepositState(job, finance).purpose,
-      deposit: customerDepositState(job, finance),
+      dueNow: customerPaymentNeedsReview(job) || (tips && held === true) ? 0 : deposit.dueNow,
+      purpose: deposit.purpose,
+      deposit,
       needsReview: customerPaymentNeedsReview(job),
       status: paymentStatus(job, finance),
       receiptUrl: /^https:\/\/pay\.stripe\.com\/receipts\//.test(job.payment?.receiptUrl || '') ? job.payment.receiptUrl : '',
@@ -355,7 +362,8 @@ function sanitize(job, session = {}, { today, reviewUrl, draftsRejected = false,
       invoiceStatus: safe(job.invoice?.status || '', 30),
       dueDate: safe(job.invoice?.dueDate || '', 30),
       creditApplied: Math.max(0, amount(job.payment?.giftCreditApplied)), completionRequiresPayment: true,
-      ...(tips ? { held, tip: tipOffer(job, finance, session.actorId ? session.permissions : null, held) } : {}),
+      ...(mode === 'unified' ? { changes: approvedChanges(job), moneyReview } : {}),
+      ...(tips ? { held, tip: tipOffer(job, finance, session.actorId ? session.permissions : null, held, mode) } : {}),
     },
     progress: {
       status: state, activity: portalActivity(job),
@@ -390,11 +398,12 @@ async function handleGet({ request, env }, deps) {
   if (!allowed(request)) return reply(403, { ok: false, error: 'Forbidden origin' });
   const result = await requirePortal(request, env, deps);
   if (result.error) return result.error;
-  const at = deps.clock(), tips = customerTipsEnabled(env);
+  const at = deps.clock(), tips = customerTipsEnabled(env), mode = moneyTotalsMode(env);
+  if (mode === 'shadow') customerTotalsShadow(result.job, 'portal');
   // Only with tips on, so the tips-off read is unchanged: held means Pay would be refused now (a held tipped charge,
   // or with PAYMENT_REVIEW_CHECKOUT_BLOCK_ENABLED any open review), derived from the reviews themselves.
   const held = tips ? await portalPaymentHeld(env, result.session.jobId, result.job, at.toISOString()).catch(() => null) : false;
-  const body = { ...sanitize(result.job, result.session, { today: denverToday(at), reviewUrl: customerReviewUrl(env), draftsRejected: rejectDrafts(env), billing: changeOrderBillingEnabled(env), now: at.toISOString(), tips, held }), moneyDocuments: moneyDocumentLinks(result.job, { enabled: moneyDocumentEnabled(env), now: at.toISOString() }) };
+  const body = { ...sanitize(result.job, result.session, { today: denverToday(at), reviewUrl: customerReviewUrl(env), draftsRejected: rejectDrafts(env), billing: changeOrderBillingEnabled(env), now: at.toISOString(), tips, held, mode }), moneyDocuments: moneyDocumentLinks(result.job, { enabled: moneyDocumentEnabled(env), now: at.toISOString(), unified: mode === 'unified' }) };
   // Default off: without the flag the DTO keeps its current shape.
   if (customerPhotosEnabled(env) && result.session.permissions?.view !== false) body.beforeAfter = customerPhotoProjection(result.job, customerPhotoPolicy(env));
   // Default off as well. Only active crew profiles appear; a profile read failure hides the crew, never the project.
@@ -692,28 +701,38 @@ async function handlePost({ request, env }, { clock, read }) {
   if (body.action === 'apply_gift_credit') {
     if (unsentQuoteDraft(result.job)) return reply(409, { ok: false, code: 'CUSTOMER_PORTAL_ESTIMATE_NOT_APPROVABLE', error: 'Your estimate is being updated. Credits can be applied once you review and approve it.' });
     if (customerPaymentNeedsReview(result.job)) return reply(409, { ok: false, error: 'A recorded payment needs team verification before applying another payment or credit' });
-    const finance = moneyState(result.job);
-    if (finance.balance < .01) return reply(409, { ok: false, error: 'This job is already paid in full' });
+    // finance is what payment.amount is written from; served is the balance the credit is capped at and answered with
+    // (money-core's unified totals in mode 'unified', which never apply credit against money it cannot read).
+    const mode = moneyTotalsMode(env), finance = moneyState(result.job), served = mode === 'unified' ? moneyState(result.job, mode) : finance;
+    if (mode === 'shadow') customerTotalsShadow(result.job, 'gift_credit');
+    if (served.unknown) return reply(409, { ok: false, ...unknownMoneyRefusal(served) });
+    if (served.balance < .01) return reply(409, { ok: false, error: 'This job is already paid in full' });
     const requestId = id(body.request_id, 'redeem');
     const wallet = result.job.giftWallet || {};
     const cards = Array.isArray(wallet.cards) ? wallet.cards : [];
     const redemptions = Array.isArray(wallet.redemptions) ? wallet.redemptions : [];
     const known = redemptions.find(item => item.requestId === requestId);
-    if (known) return reply(200, { ok: true, applied: amount(known.amount), balance: finance.balance });
+    if (known) return reply(200, { ok: true, applied: amount(known.amount), balance: served.balance });
     const cardId = id(body.card_id, 'credit');
     const card = cards.find(item => item.id === cardId);
     if (!card || amount(card.remainingAmount) < .01) return reply(409, { ok: false, error: 'That credit is no longer available' });
     const requested = Math.max(.01, amount(body.amount));
-    const applied = Math.min(requested, amount(card.remainingAmount), finance.balance);
+    const applied = Math.min(requested, amount(card.remainingAmount), served.balance);
     const updatedCards = cards.map(item => item.id === cardId ? { ...item, remainingAmount: Math.max(0, amount(item.remainingAmount) - applied), updatedAt: now } : item);
-    const paidTotal = Math.min(finance.total, finance.paid + applied);
-    const balance = Math.max(0, finance.total - paidTotal);
+    // Unified: payment.amount keeps every recorded dollar (an older tip inside it included) plus the credit, which is
+    // already capped at the unified balance; capping it at today's total would drop the credit above today's balance.
+    const paidTotal = served === finance ? Math.min(finance.total, finance.paid + applied) : (Math.round(finance.paid * 100) + Math.round(applied * 100)) / 100;
+    let balance = Math.max(0, finance.total - paidTotal), shown = { total: finance.total, paid: paidTotal };
+    if (served !== finance) {
+      const totalCents = Math.round(served.total * 100), paidCents = Math.min(totalCents, Math.round(served.paid * 100) + Math.round(applied * 100));
+      shown = { total: served.total, paid: paidCents / 100 }; balance = (totalCents - paidCents) / 100;
+    }
     const redemption = { id: newId('redemption'), requestId, cardId, amount: applied, appliedAt: now, jobId: result.session.jobId };
     const creditClass = vocabularyValue('creditClasses', card.creditClass) || vocabularyValue('creditClasses', card.source);
     const walletPatch = { giftWallet: { ...wallet, cards: updatedCards, redemptions: [...redemptions, redemption].slice(-40), updatedAt: now }, updatedAt: now };
     const jobPatch = {
       payment: { ...(result.job.payment || {}), amount: paidTotal, giftCreditApplied: amount(result.job.payment?.giftCreditApplied) + applied, lastAmount: applied, lastReceivedAt: now, method: finance.paid > 0 ? 'mixed_with_gift_credit' : 'gift_credit', verified: true },
-      invoice: { ...(result.job.invoice || {}), amount: finance.total, paid: paidTotal, balance, status: balance < .01 ? 'paid' : 'partial', updatedAt: now }, updatedAt: now,
+      invoice: { ...(result.job.invoice || {}), amount: shown.total, paid: shown.paid, balance, status: balance < .01 ? 'paid' : 'partial', updatedAt: now }, updatedAt: now,
     };
     try {
       // credit.redeemed for the credit applied to this job; the wallet may live on the account's root job.
@@ -759,7 +778,7 @@ async function handlePost({ request, env }, { clock, read }) {
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const clicks = Array.isArray(job.reviewClicks) ? job.reviewClicks : [];
       if (clicks.some(click => click?.requestId === requestId)) return reply(200, { ok: true, recorded: false, duplicate: true });
-      if (!reviewReady(job)) return reply(409, { ok: false, code: 'CUSTOMER_PORTAL_REVIEW_NOT_READY', error: 'Reviews open after your project is complete and paid.' });
+      if (!reviewReady(job, moneyTotalsMode(env))) return reply(409, { ok: false, code: 'CUSTOMER_PORTAL_REVIEW_NOT_READY', error: 'Reviews open after your project is complete and paid.' });
       // One visit per viewer per minute: repeat taps or a looping client cannot
       // inflate the staff count or keep bumping the job's revision.
       if (clicks.some(item => item?.viewer === viewer && String(item.actorId || '') === actorId && Math.abs(started.getTime() - Date.parse(item.clickedAt)) < REVIEW_CLICK_WINDOW_MS)) return reply(200, { ok: true, recorded: false, duplicate: false });

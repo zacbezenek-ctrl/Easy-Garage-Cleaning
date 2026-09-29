@@ -261,6 +261,13 @@ export async function getEmployeeSessionProfile(env, username, sessionVersion) {
   return safeEqual(profile.sessionVersion, String(sessionVersion || '')) ? profile : null;
 }
 
+// The session profile (employeeSessionProfile) of every approved account, for server-side
+// staff rosters (hub-session.js listHubAccessProfiles). Never returned to browsers.
+export async function approvedEmployeeProfiles(env) {
+  if (!employeeAccountsConfigured(env)) throw storageError();
+  return (await accountRows(env)).filter(({ account }) => account.status === 'approved' && !isReservedEmployeeUsername(account.username)).map(({ account }) => employeeSessionProfile(account));
+}
+
 export async function listEmployeeApplications(env) {
   if (!employeeAccountsConfigured(env)) throw new Error('Employee account signup is not configured');
   return (await accountRows(env)).map(row => publicAccount(row.account)).sort((left, right) => String(right.appliedAt).localeCompare(String(left.appliedAt)));

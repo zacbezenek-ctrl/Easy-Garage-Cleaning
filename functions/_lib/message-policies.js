@@ -23,7 +23,10 @@ const accepted = value => ['accepted','approved'].includes(String(value || '').t
 const reason = (why) => ({ eligible: false, reason: why });
 const ok = { eligible: true };
 // Amounts come from the helpers the portal and Stripe checkout use, so a
-// message never quotes a figure that checkout would not charge.
+// message never quotes a figure that checkout would not charge, while
+// MONEY_UNIFIED_TOTALS is unset or 'shadow'. With it 'true' checkout charges
+// money-core's unified figures and these still quote today's; a FIX-MONEY-TOTALS
+// follow-up moves these figures (not the eligibility rules) onto that mode.
 export const invoiceBalance = job => moneyCents(customerMoneyState(job).balance);
 export const depositDue = job => moneyCents(customerDepositState(job).due);
 const scheduled = (job, today) => !TERMINAL.has(stage(job)) && typeof job?.date === 'string' && job.date >= today;

@@ -2,6 +2,7 @@ import { firestoreFetch } from './firebase-service-account.js';
 import { encodeFirestoreFields } from './firestore-job.js';
 import { dispatchStorage } from './dispatch-storage.js';
 import { funnelPaymentEventsEnabled } from './payment-events.js';
+import { moneyTotalsMode } from './money-core.js';
 
 const ROOT = 'projects/egcw-1ec83/databases/(default)/documents';
 const BASE = `https://firestore.googleapis.com/v1/${ROOT}`;
@@ -31,7 +32,9 @@ export const MONEY_JOB_FIELDS = Object.freeze(['type', 'recordType', 'customer',
  * whole commit (money_revision_conflict, nothing applied) once it does.
  * paymentEvents (FUNNEL_PAYMENT_EVENTS_ENABLED and MONEY_API_ENABLED) tells
  * mutateMoney to add the FUN-33 funnel events and paid-in-full fields to its
- * commit, and the money reads to add their FUN-33 fields.
+ * commit, and the money reads to add their FUN-33 fields. totalsMode is
+ * MONEY_UNIFIED_TOTALS (money-core moneyTotalsMode): 'unified' makes the
+ * money reads, lists and actions use money-core's unified totals.
  */
 export function moneyStorage(env, fetcher = firestoreFetch) {
   const base = dispatchStorage(env, fetcher);
@@ -40,7 +43,7 @@ export function moneyStorage(env, fetcher = firestoreFetch) {
     catch (error) { throw failure(error?.code === 'dispatch_storage_incomplete' ? 'money_storage_incomplete' : 'money_storage_unavailable', message); }
   }
   return {
-    paymentEvents: funnelPaymentEventsEnabled(env),
+    paymentEvents: funnelPaymentEventsEnabled(env), totalsMode: moneyTotalsMode(env),
     read: (collection, id) => mapped(() => base.read(collection, id), 'The job money record could not be loaded. Retry.'),
     // A caller that needs a few more job fields (tip allocation reads the assigned crew) names them; the mask still applies.
     jobs: (extra = []) => mapped(() => base.jobRecords([...new Set([...MONEY_JOB_FIELDS, ...extra])]), 'The complete job money records could not be loaded. Retry.'),

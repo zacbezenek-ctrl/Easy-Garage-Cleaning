@@ -3,7 +3,8 @@ import { dispatchStorage } from './dispatch-storage.js';
 import { validDate } from './dispatch-time.js';
 import { localInstant } from './operations-portal-records.js';
 import { hasBusinessAccess } from './hub-session.js';
-import { can, capabilityMode } from './staff-roles.js';
+import { can, capabilityMode, staffRoleAccessEnabled } from './staff-roles.js';
+import { WALKTHROUGH_DENIAL } from './quote-permissions.js';
 import { assignmentKey, createJobAssignmentAccess } from './job-assignment.js';
 import { employeeVaultReadOnly, employeeVaultSecret } from './employee-vault-key.js';
 import { commitVaultDocuments, readCollectionRecords, readOne, sealedFields } from './employee-vault.js';
@@ -69,12 +70,17 @@ const occurrenceView = value => plain(value) ? { number: Number.isInteger(value.
 
 /** Owner, manager and sales reps record walkthroughs: with stored staff roles the P1-08
  * quotes.author capability (owner, manager, sales); otherwise the dispatch-level owner or
- * manager (business access) or the signed sales role. */
+ * manager (business access) or the signed sales role. With EGC_STAFF_ROLE_ACCESS
+ * (AUTH-ROLES) it is walkthrough.perform, the same capability the gameplan, its handoff
+ * and customer-resolve check. */
 export function walkthroughPerformer(session, env = {}) {
   if (!plain(session) || typeof session.user !== 'string' || !session.user.trim()) return false;
+  if (staffRoleAccessEnabled(env)) return can(session, 'walkthrough.perform', env);
   if (capabilityMode(session, env) === 'staff_roles') return can(session, 'quotes.author', env);
   return hasBusinessAccess(session) && ['owner', 'manager'].includes(session.role) || session.role === 'sales';
 }
+
+const denied = env => fail('forbidden', staffRoleAccessEnabled(env) ? WALKTHROUGH_DENIAL : 'Only sales reps, managers and the owner can record walkthrough visits.', 403);
 
 function normalize(input) {
   if (!plain(input)) throw invalid('Send one walkthrough action.');
@@ -175,7 +181,10 @@ export async function recordWalkthroughVisit(store, session, input, now = new Da
   if (!session) throw fail('sign_in_required', 'Sign in to the Employee Hub to record walkthroughs.', 401);
   const request = normalize(input), actor = assignmentKey(session.user), roles = store.env || {};
   if (request.actorId !== null && request.actorId !== actor) throw fail('actor_changed', 'The signed-in employee changed. Sign in as the employee who recorded this walkthrough to send it.', 403);
-  if (!walkthroughPerformer(session, roles)) throw fail('forbidden', 'Only sales reps, managers and the owner can record walkthrough visits.', 403);
+  // AUTH-ROLES: with EGC_STAFF_ROLE_ACCESS a booker (schedule.book: sales, phone) marks a
+  // walkthrough no-show like a manager, whoever it is assigned to.
+  const booker = request.action === 'no_show' && can(session, 'schedule.book', roles);
+  if (!walkthroughPerformer(session, roles) && !booker) throw denied(roles);
   const manager = can(session, 'dispatch.write', roles), receiptId = request.requestId;
   const fingerprint = sha256Hex(canonicalJson({ actor, input: request }));
   const result = (visit, receipt, replayed) => ({ ok: true, authority: 'employee_hub', requestId: receiptId, action: receipt.action, replayed, visit: walkthroughVisitProjection(visit), repTime: receipt.repTime || null });
@@ -197,7 +206,7 @@ export async function recordWalkthroughVisit(store, session, input, now = new Da
   // occurrence: this action records the rebooked one and keeps the earlier one in the history.
   const previous = rebooked(visit) ? { record: started(visit) ? visit.walkthroughVisit : null, outcome: outcomeOf(visit) } : null;
   const record = !previous && started(visit) ? visit.walkthroughVisit : null, outcome = previous ? null : outcomeOf(visit), startedBy = record ? assignmentKey(record.startedBy) : '';
-  if (!manager && !(startedBy ? startedBy === actor : await store.assigned(session, visit))) throw fail('not_assigned', 'This walkthrough is not assigned to you. Ask a manager to assign it before recording it.', 403);
+  if (!manager && !booker && !(startedBy ? startedBy === actor : await store.assigned(session, visit))) throw fail('not_assigned', 'This walkthrough is not assigned to you. Ask a manager to assign it before recording it.', 403);
   if (request.expectedRevision !== visit.revision) throw fail('revision_conflict', 'This walkthrough changed. Refresh it and review before recording.');
 
   const writes = [], role = typeof session.role === 'string' && session.role ? session.role : null;
@@ -310,7 +319,8 @@ export async function recordWalkthroughVisit(store, session, input, now = new Da
 export async function walkthroughVisitState(store, session, query = {}, now = new Date().toISOString()) {
   if (!session) throw fail('sign_in_required', 'Sign in to the Employee Hub to record walkthroughs.', 401);
   const roles = store.env || {}, actor = assignmentKey(session.user);
-  if (!walkthroughPerformer(session, roles)) throw fail('forbidden', 'Only sales reps, managers and the owner can record walkthrough visits.', 403);
+  const booker = can(session, 'schedule.book', roles);
+  if (!walkthroughPerformer(session, roles) && !booker) throw denied(roles);
   if (!plain(query) || Object.keys(query).some(key => key !== 'visitId') || query.visitId !== undefined && !safeId(query.visitId)) throw invalid('Choose a valid walkthrough visit.');
   const manager = can(session, 'dispatch.write', roles);
   let visit = null;
@@ -318,7 +328,7 @@ export async function walkthroughVisitState(store, session, query = {}, now = ne
     visit = await store.read('jobs', query.visitId);
     if (!visit || visit.type !== 'walkthrough' || visit.recordType) throw fail('not_found', 'This walkthrough visit could not be found. Refresh your schedule.', 404);
     const startedBy = started(visit) ? assignmentKey(visit.walkthroughVisit.startedBy) : '';
-    if (!manager && startedBy !== actor && !await store.assigned(session, visit)) throw fail('not_assigned', 'This walkthrough is not assigned to you.', 403);
+    if (!manager && !booker && startedBy !== actor && !await store.assigned(session, visit)) throw fail('not_assigned', 'This walkthrough is not assigned to you.', 403);
   }
   const lock = await store.read(WALKTHROUGH_VISIT_LOCKS, lockId(actor));
   const open = lock?.openVisitId ? await store.read('jobs', lock.openVisitId) : null;

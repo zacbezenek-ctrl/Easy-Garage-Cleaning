@@ -34,6 +34,59 @@ export function payrollCsv(week) {
     row.approvedTimecards, row.pendingTimecards, row.flags.join(' '), jobTimeText(row.jobTime)])]);
 }
 
+// Gusto's hours import (GUSTO-EXPORT, OPS-13). Gusto offers its API only to approved App Integrations (docs/gusto-sync.md),
+// so an approved week reaches Gusto as a file the owner imports. Neither docs/gusto-sync.md nor anything else in this repo
+// documents Gusto's hours-import template, so these headers are EGC's reading of it, not Gusto's confirmed layout. OWNER
+// ITEM (docs/OWNER-GO-LIVE-CHECKLIST.md): download Gusto's hours-import template once, compare its headers with these and,
+// if they differ, change them here. This constant is the whole column layout: each entry is [header, the export row field
+// that fills it], in file order, and gustoHoursFile writes nothing else.
+export const GUSTO_HOURS_COLUMNS = Object.freeze([
+  ['Gusto employee ID', 'gustoEmployeeId'],
+  ['Employee name', 'name'],
+  ['Regular hours', 'regularHours'],
+  ['Overtime hours', 'overtimeHours'],
+  ['Double overtime hours', 'doubleTimeHours'],
+  ['Paid time off hours', 'ptoHours'],
+].map(column => Object.freeze(column)));
+
+export const gustoHoursFilename = week => `egc-gusto-hours-${week.weekStart}-to-${week.weekEnd}.csv`;
+const gustoFail = (message, code, details) => Object.assign(new Error(message), { code, status: 409, details });
+const named = rows => rows.map(row => `${row.name} (${row.employee})`).join(', ');
+// Engine hours are exact thousandths; this rounds one to whole hundredths, half up.
+const hundredths = value => Math.round(Math.round(Number(value || 0) * 1000) / 10);
+
+/** The Gusto hours file of a settled computeTimesheetWeek week: { rows, csv, notInGusto }. profiles is staff-directory.js
+ * gustoPayrollProfiles (username to { gustoEmployeeId, gustoExcluded, displayName }). One row per employee with hours,
+ * keyed by their Gusto employee ID. The hours are the payroll engine's, as the payroll CSV has them: its overtime
+ * (Colorado or federal, never recomputed here), double time and approved paid time off. Overtime, double time and paid
+ * time off are rounded to the hundredth, and regular hours are the worked hours to the hundredth less overtime and double
+ * time, so a row's worked hours match the payroll CSV's rounded total. Someone the owner marked not paid through Gusto is
+ * left out and listed in notInGusto ({ employee, name }). An employee without an ID, or two in the file with one ID, stop
+ * the file (409) and are named. Rows with no hours are left out. The name is the timecards' (the payroll CSV's), or the
+ * profile's display name when the week has only the username, as for someone with paid time off and no timecard. */
+export function gustoHoursFile(week, profiles) {
+  const people = week.employees.map(row => {
+    const profile = profiles.get(row.employee) || {}, overtime = hundredths(row.overtimeHours), doubleTime = hundredths(row.doubleTimeHours);
+    const name = profile.displayName && String(row.name).trim().toLowerCase() === row.employee ? profile.displayName : row.name;
+    return { employee: row.employee, name, gustoEmployeeId: profile.gustoEmployeeId || '', excluded: profile.gustoExcluded === true, worked: hundredths(row.workedHours), overtime, doubleTime, pto: hundredths(row.ptoHours) };
+  }).filter(row => row.worked || row.pto);
+  const rows = people.filter(row => !row.excluded), notInGusto = people.filter(row => row.excluded).map(({ employee, name }) => ({ employee, name }));
+  const missing = rows.filter(row => !row.gustoEmployeeId);
+  if (missing.length) throw gustoFail(`Add the Gusto employee ID for ${named(missing)} in the staff directory (Team), or mark them not paid through Gusto there, before downloading the Gusto hours file. Former employees are listed under Former staff at the end of the directory.`, 'timesheet_gusto_id_missing', { missing: missing.map(({ employee, name }) => ({ employee, name })) });
+  const byId = new Map();
+  for (const row of rows) byId.set(row.gustoEmployeeId.toLowerCase(), [...byId.get(row.gustoEmployeeId.toLowerCase()) || [], row]);
+  const shared = [...byId.values()].filter(list => list.length > 1).flat();
+  if (shared.length) throw gustoFail(`${named(shared)} have the same Gusto employee ID. Give each employee their own in the staff directory (Team) before downloading the Gusto hours file.`, 'timesheet_gusto_id_conflict', { shared: shared.map(({ employee, name }) => ({ employee, name })) });
+  const fixed = value => (value / 100).toFixed(2);
+  const lines = rows.map(row => ({ gustoEmployeeId: row.gustoEmployeeId, name: row.name, regularHours: fixed(row.worked - row.overtime - row.doubleTime), overtimeHours: fixed(row.overtime), doubleTimeHours: fixed(row.doubleTime), ptoHours: fixed(row.pto) }));
+  return { rows: lines, csv: csvRows([GUSTO_HOURS_COLUMNS.map(([header]) => header), ...lines.map(row => GUSTO_HOURS_COLUMNS.map(([, field]) => row[field]))]), notInGusto };
+}
+export const gustoHoursRows = (week, profiles) => gustoHoursFile(week, profiles).rows;
+export const gustoHoursCsv = (week, profiles) => gustoHoursFile(week, profiles).csv;
+// The response header that lists who was left out as not paid through Gusto: URI-encoded JSON of notInGusto, so any name
+// fits a header. The Hub shows it after the download.
+export const GUSTO_NOT_INCLUDED_HEADER = 'X-EGC-Gusto-Not-Included';
+
 const TIP_HEADER = ['Employee name', 'Employee username', 'Tips received from', 'Tips received through', 'Job ID', 'Customer', 'Service date', 'Job work minutes', 'Employee work minutes', 'Job card tips', 'Employee tip share', 'Review flags'];
 const lastDay = end => new Date(Date.parse(`${end}T12:00:00Z`) - 86400000).toISOString().slice(0, 10);
 

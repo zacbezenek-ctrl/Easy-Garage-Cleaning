@@ -201,8 +201,8 @@ function routeQuery(query, now) {
 }
 
 /** Read-only per-employee day routes. No mutation; google mode may write cache. */
-export async function dispatchTravelRoutes(store, session, query = {}, now = new Date(), { travel = null } = {}) {
-  requireDispatcher(session);
+export async function dispatchTravelRoutes(store, session, query = {}, now = new Date(), { travel = null, authorize = requireDispatcher } = {}) {
+  authorize(session);
   const input = routeQuery(query, now), estimator = travel || travelEstimator();
   const [jobs, roster, rules] = await Promise.all([jobsForWindow(store, dayWindow(input.date), 'routes'), store.roster(), dispatchRuleSettings(store)]);
   if (input.employeeId && !roster.some(person => person.id === input.employeeId)) throw fail('dispatch_employee_inactive', 'That employee is not in the active roster. Refresh the roster.');

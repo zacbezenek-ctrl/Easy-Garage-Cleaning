@@ -682,7 +682,9 @@ test('the payroll week card is loaded as its own file, before the suite that mou
   const html = readFileSync(new URL('../employee.html', import.meta.url), 'utf8'), suite = readFileSync(new URL('../employee-suite.js', import.meta.url), 'utf8'), module = readFileSync(new URL('../employee-payroll-week.js', import.meta.url), 'utf8');
   const script = html.indexOf('<script src="employee-payroll-week.js?v='), css = html.indexOf('<link rel="stylesheet" href="employee-payroll-week.css?v=');
   assert.ok(script > 0 && css > 0 && script < html.indexOf('<script src="employee-suite.js?v='));
-  assert.match(suite, /if\(isManager\(\)&&host\)window\.EGCPayrollWeek\?\.mount\(host,\{startDate:range\.startDate,identity:employeeIdentity\(\),timecards:S\.people\.timeEntries,requests:S\.people\.requests\}\);/);
+  // Updated deliberately (GUSTO-EXPORT): the card also gets the owner grant, which shows its Gusto hours button (the server
+  // still refuses anyone but the owner).
+  assert.match(suite, /if\(isManager\(\)&&host\)window\.EGCPayrollWeek\?\.mount\(host,\{startDate:range\.startDate,identity:employeeIdentity\(\),owner:isOwnerAccount\(\),timecards:S\.people\.timeEntries,requests:S\.people\.requests\}\);/);
   // Security invariant: server data only reaches the page through textContent (the h() helper).
   assert.doesNotMatch(module, /innerHTML|insertAdjacentHTML|outerHTML|document\.write/);
 });

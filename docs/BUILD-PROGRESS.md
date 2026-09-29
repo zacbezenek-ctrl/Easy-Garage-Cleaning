@@ -499,6 +499,22 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   refresh notice, failed refreshes keep the portal (Reconnecting… after 3), and a Stripe return verifies after the page
   draws, retrying 2-32s with a 'being confirmed' notice; payment_needs_review answers carry their code so the portal stops.
   Gap: a button stays disabled after a failed post-action refresh until the next good refresh.
+- **TIME-CORRECT** (P1 payroll; EGC_TIMECARD_CORRECTIONS off) Owners and managers (time.approve) Correct time and Close shift
+  with a required reason, request id and card version; the card is recomputed, returned to pending and audited in its history;
+  shifts open over 14 h are listed under Needs attention. Board totals come from the server payroll week; the legacy Download
+  CSV / Download for Gusto buttons are removed (hours reach Gusto from the payroll CSV until GUSTO-EXPORT). Go-live card 4.12.
+- **GUSTO-EXPORT** (owner only; always on) /api/timesheets format=gusto (can(pay.manage), settled-week gate, the engine's
+  overtime and PTO) behind "Download Gusto hours" on the payroll week card; owner-only Set Gusto ID, a Not paid through Gusto
+  marker and Former staff in the staff directory; Connect Gusto hidden unless GUSTO_PRODUCTION_APPROVED. Golden 57 h and 56.5 h
+  CSVs. Gaps: Gusto template headers unconfirmed (GUSTO_HOURS_COLUMNS); ID uniqueness check not transactional (export fails closed).
+- **FIX-MONEY-TOTALS** (P1 money; MONEY_UNIFIED_TOTALS off, shadow logs money_totals_mismatch) One money-core integer-cents
+  total (billed approved change orders in, tips out) feeds the portal payload and its per-change lines, Stripe checkout, the
+  crew card cap and closeout, /api/money, invoices, money documents and the Hub finance board; an approval with no billed line
+  raises change_order_unbilled instead of counting. HighLevel notes and lifecycle triggers keep today's figures.
+- **AUTH-ROLES** (P1 auth; EGC_STAFF_ROLE_ACCESS off, it includes EGC_STAFF_ROLE_PERMISSIONS) Stored managers get business
+  access; Sales and Phone book, move, cancel and no-show walkthroughs and jobs (dispatch-booking.js, never crew, pay, cost or
+  money); a booker's handoff lands unassigned ("Sold: needs crew"). Every check goes through can(), /api/hub-auth reports the
+  same; a role change or flag-off revokes Firebase business_access (pending shown in Integrations). EGC_STAFF_PAGE_GATE accepts on/true.
 
 ## In progress
 
@@ -616,6 +632,10 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | FUN-33 | Payment funnel events on the ledger: payment.received and paid-in-full crossings committed with the job (FUNNEL_PAYMENT_EVENTS_ENABLED, off) | merged (b9c3b07) |
 | FIX-B2B-BILLING | P1: no customer messages or homeowner links for business jobs; effective B2B invoice status | merged (d5c037b) |
 | FIX-PORTAL-CRASH | P1: customer portal survives re-renders, failed refreshes and failed Stripe verification | merged (3185fc6) |
+| TIME-CORRECT | P1 payroll: manager timecard corrections, forgotten-shift close and server weekly totals (EGC_TIMECARD_CORRECTIONS, off) | merged (e8845e3) |
+| GUSTO-EXPORT | Approved, settled week in Gusto's hours-import format (owner only) | merged (6795b00) |
+| FIX-MONEY-TOTALS | P1 money: one integer-cents total everywhere, including approved change orders (MONEY_UNIFIED_TOTALS, off) | merged (52065e2) |
+| AUTH-ROLES | P1 auth: business access and booking rights from owner-set roles (EGC_STAFF_ROLE_ACCESS, off) | merged (a02d5e5) |
 
 ## Next
 

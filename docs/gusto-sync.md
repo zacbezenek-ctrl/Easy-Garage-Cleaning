@@ -1,5 +1,17 @@
 # EGC → Gusto timecard sync
 
+## Hours import file (GUSTO-EXPORT, the path in use)
+
+Gusto does not offer this API to internal integrations (see Access and configuration below), so the owner imports each approved week into Gusto as a file. On **Time approvals**, the payroll week card has **Download Gusto hours** (owner only; `/api/timesheets?view=week&start=YYYY-MM-DD&format=gusto`). It exports only a settled week, like the payroll CSV: one row per employee with regular, overtime, double overtime and paid time off hours to two decimals, from the Hub's payroll engine (Colorado or federal overtime per `EGC_OVERTIME_POLICY`, approved paid time off). Rows are keyed by the Gusto employee ID the owner sets in the staff directory (**Set Gusto ID**), with the employee's name to check (the profile's display name when the week knows only a username, as for paid time off with no timecard). An employee without an ID, or two employees with one ID, stop the download and are named. Someone not paid through Gusto (the owner's own field time, a 1099 worker) is marked **Not paid through Gusto** in the same editor instead of given an ID: their hours are left out of the file, the Hub names them after the download (the `X-EGC-Gusto-Not-Included` response header), and the payroll CSV still has them. Former staff (a stored profile or a rejected employee account, such as someone let go with a final week still to pay) are listed for the owner under **Former staff** at the end of the directory, with only this editor; setting their ID gives them no Hub access. Bonuses and tips are not in the file.
+
+The Gusto ID lives on the sealed employee profile. The profile's own history (owner only) keeps the IDs before and after each change; the plaintext audit log records only whether an ID is set and the not-paid-through-Gusto mark. Saving an ID already held by anyone else with a stored profile, active or former, is refused. That check is not transactional: two owner tabs saving the same new ID on two people at the same moment can both succeed, and the Gusto download then refuses the week (shared ID) for any week both have hours in.
+
+The headers are `GUSTO_HOURS_COLUMNS` in `functions/_lib/payroll-export.js`, the only place the layout is defined. Nothing in this repository documents Gusto's hours-import template, so they are EGC's reading of it: download Gusto's hours-import template once, compare its headers, and change that constant if they differ.
+
+**Connect Gusto** below is hidden in the Hub unless `GUSTO_PRODUCTION_APPROVED=true`.
+
+## API sync (needs Gusto's approval)
+
 The owner can send approved EGC shifts to Gusto Time Tracking from **Time approvals**. Employee matching and regular/overtime classification must be reviewed first. This integration does not create employees, change pay rates, submit payroll, or move money. Review and apply the hours to payroll in Gusto.
 
 ## Access and configuration

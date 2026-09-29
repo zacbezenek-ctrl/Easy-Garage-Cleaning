@@ -1,4 +1,5 @@
-"""Payroll week card (PAY-TIMESHEETS): other employees' pay reads "Pay hidden" (never $0) and only the owner gets the payroll CSV, on a phone."""
+"""Payroll week card (PAY-TIMESHEETS): other employees' pay reads "Pay hidden" (never $0) and only the owner gets the payroll CSV, on a phone.
+GUSTO-EXPORT: only the owner has the Gusto hours button, and the file is the server's byte for byte."""
 import json, os, pathlib, subprocess, threading, unittest
 from datetime import datetime, timezone
 from functools import partial
@@ -15,10 +16,14 @@ const at = (date, time) => `${date}T${time}:00-06:00`;
 const card = (id, employee, date, from, to, extra = {}) => ({ id, employee, employeeName: 'Synthetic ' + employee, payType: 'hourly', clockInAt: at(date, from), clockOutAt: at(date, to), status: 'submitted', approvalStatus: 'approved', breaks: [], ...extra });
 const timecards = [card('a', 'Crew.One', '2026-09-21', '06:00', '20:00', { hourlyRate: 37.13, bonus: 11.17, tips: 13.19 }), card('b', 'TylerG', '2026-09-23', '08:00', '12:00', { hourlyRate: 41.23 }), card('c', 'AlexK', '2026-09-24', '09:00', '13:00', { hourlyRate: 43.29 })];
 const requests = [{ id: 'pto', type: 'time_off', status: 'approved', employee: 'Crew.One', startDate: '2026-09-25', endDate: '2026-09-25', paidHoursPerDay: 8 }];
-const out = {};
-for (const [name, session, query] of [['owner', { user: 'ZacB', role: 'owner', businessAccess: true }, ''], ['manager', { user: 'TylerG', role: 'manager', businessAccess: true }, ''], ['csv', { user: 'ZacB', role: 'owner', businessAccess: true }, '&format=csv']]) {
-  const response = await timesheetHandlers({ session: async () => session, read: async () => ({ timecards, requests }), now: () => new Date('2026-10-05T18:00:00Z') }).get({ request: new Request('https://easygaragecleaning.com/api/timesheets?view=week&start=2026-09-21' + query), env: {} });
-  out[name] = query ? await response.text() : await response.json();
+const gusto = (gustoEmployeeId, extra = {}) => ({ gustoEmployeeId, gustoExcluded: false, displayName: null, ...extra });
+const out = {}, owner = { user: 'ZacB', role: 'owner', businessAccess: true }, ids = new Map([['crew.one', gusto('gusto-syn-1')], ['tylerg', gusto('gusto-syn-2')], ['alexk', gusto('gusto-syn-3')]]);
+// AlexK marked not paid through Gusto: left out of the file and named in its header (by the timecards' name).
+const marked = new Map([...ids, ['alexk', gusto(null, { gustoExcluded: true, displayName: 'Synthetic Alex Contractor' })]]);
+for (const [name, session, query, gustoProfiles] of [['owner', owner, ''], ['manager', { user: 'TylerG', role: 'manager', businessAccess: true }, ''], ['csv', owner, '&format=csv'], ['gusto', owner, '&format=gusto', ids], ['gustoMissing', owner, '&format=gusto', new Map()], ['gustoMarked', owner, '&format=gusto', marked]]) {
+  const response = await timesheetHandlers({ session: async () => session, read: async () => ({ timecards, requests }), gustoProfiles: async () => gustoProfiles, now: () => new Date('2026-10-05T18:00:00Z') }).get({ request: new Request('https://easygaragecleaning.com/api/timesheets?view=week&start=2026-09-21' + query), env: {} });
+  out[name] = response.headers.get('Content-Type').startsWith('text/csv') ? await response.text() : await response.json();
+  if (response.headers.has('X-EGC-Gusto-Not-Included')) out[name + 'Header'] = response.headers.get('X-EGC-Gusto-Not-Included');
 }
 console.log(JSON.stringify(out));
 """], cwd=ROOT, check=True, capture_output=True, text=True).stdout)
@@ -31,7 +36,7 @@ class Handler(SimpleHTTPRequestHandler):
             who = parse_qs(urlparse(self.path).query).get('who', ['TylerG'])[0]
             body = ('<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/employee-payroll-week.css"></head>'
                     '<body style="margin:0;padding:12px;background:#f1f5f8"><main id="host"><div class="ops-boundary">Individual timecards</div><div id="after">Timecards</div></main><script src="/employee-payroll-week.js"></script>'
-                    f'<script>EGCPayrollWeek.mount(document.querySelector("#host"),{{startDate:"2026-09-21",identity:{json.dumps(who)}}})</script></body></html>').encode()
+                    f'<script>EGCPayrollWeek.mount(document.querySelector("#host"),{{startDate:"2026-09-21",identity:{json.dumps(who)},owner:{json.dumps(who == "ZacB")}}})</script></body></html>').encode()
             self.send_response(200); self.send_header('Content-Type', 'text/html'); self.end_headers(); self.wfile.write(body)
         else: super().do_GET()
 
@@ -49,7 +54,7 @@ class PayrollWeekBrowserTests(unittest.TestCase):
     def setUp(self):
         self.context = self.browser.new_context(viewport={'width': 375, 'height': 812}, is_mobile=True, has_touch=True, timezone_id='Asia/Tokyo', accept_downloads=True)
         self.page = self.context.new_page(); self.page.set_default_timeout(5000); self.page.clock.install(time=NOW)
-        self.errors = []; self.requests = []; self.json_status = 200; self.csv_responses = []
+        self.errors = []; self.requests = []; self.json_status = 200; self.csv_responses = []; self.gusto_responses = []
         self.page.on('pageerror', lambda error: self.errors.append(str(error))); self.page.route('**/*', self.route)
     def tearDown(self):
         self.assertEqual(self.errors, []); self.context.close()
@@ -59,6 +64,11 @@ class PayrollWeekBrowserTests(unittest.TestCase):
         if parsed.path != '/api/timesheets': route.continue_(); return
         query = parse_qs(parsed.query); self.requests.append(query)
         send = lambda data, status=200: route.fulfill(status=status, content_type='application/json', headers={'Cache-Control': 'no-store'}, body=json.dumps(data))
+        if query.get('format') == ['gusto']:
+            if self.who != 'ZacB': send({'ok': False, 'code': 'pay_owner_only', 'error': 'Only the owner can download the Gusto hours file. Managers review hours and approvals here.'}, 403); return
+            status, data, *extra = self.gusto_responses.pop(0) if self.gusto_responses else (200, FIXTURE['gusto'])
+            if status != 200: send(data, status); return
+            route.fulfill(status=200, body=data, headers={'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': 'attachment; filename="egc-gusto-hours-2026-09-21-to-2026-09-27.csv"', 'Cache-Control': 'no-store', **(extra[0] if extra else {})}); return
         if query.get('format') == ['csv']:
             if self.who == 'TylerG': send({'ok': False, 'code': 'pay_owner_only', 'error': 'Only the owner can download the payroll export.'}, 403); return
             status, data = self.csv_responses.pop(0) if self.csv_responses else (200, FIXTURE['csv'])
@@ -82,11 +92,13 @@ class PayrollWeekBrowserTests(unittest.TestCase):
         rows = card.locator('.pw-rows > li')
         expect(rows).to_have_count(3)
         expect(rows.filter(has_text='Synthetic TylerG')).to_contain_text(money(164.92))
-        expect(rows.filter(has_text='Synthetic Crew.One')).to_contain_text('Pay hidden'); expect(rows.filter(has_text='Synthetic Crew.One')).to_contain_text('22.00 paid h · 2.00 overtime · 8.00 time off')
+        expect(rows.filter(has_text='Synthetic Crew.One')).to_contain_text('Pay hidden'); expect(rows.filter(has_text='Synthetic Crew.One')).to_contain_text('22.00 paid h · 12.00 regular · 2.00 overtime · 8.00 time off')  # TIME-CORRECT: regular hours are listed too
         expect(card.locator('.pw-total')).to_contain_text('Pay hidden'); expect(card.locator('.pw-hidden')).to_have_count(3)
         expect(card.get_by_text('Only the owner can download the payroll export.')).to_be_visible()
         expect(card.get_by_role('button', name='Download payroll CSV')).to_have_count(0)
+        expect(card.get_by_role('button', name='Download Gusto hours')).to_have_count(0)
         text = card.inner_text()
+        self.assertNotIn('Gusto', text)
         for row in FIXTURE['owner']['employees']:
             if row['employee'] == 'tylerg': continue
             for key in ('grossPay', 'straightPay', 'ptoPay', 'bonus', 'tips'):
@@ -94,7 +106,7 @@ class PayrollWeekBrowserTests(unittest.TestCase):
         self.assertNotIn(money(FIXTURE['owner']['totals']['grossPay']), text); self.assertNotIn('$0.00', text)
         card.screenshot(path=str(ROOT / 'test-results' / 'payroll-week-manager-375.png'))
         self.assert_mobile()
-        self.assertEqual([query.get('format') for query in self.requests], [None], 'the manager never asks for the CSV')
+        self.assertEqual([query.get('format') for query in self.requests], [None], 'the manager never asks for the CSV or the Gusto file')
 
     def test_the_owner_sees_every_gross_and_downloads_the_payroll_csv(self):
         card = self.open('ZacB')
@@ -105,6 +117,42 @@ class PayrollWeekBrowserTests(unittest.TestCase):
         self.assertEqual(pathlib.Path(download.value.path()).read_bytes().decode(), FIXTURE['csv'], 'the file is the server CSV byte for byte, CRLF rows included')
         expect(card.get_by_role('status')).to_contain_text('Payroll CSV for Sep 21 – Sep 27 downloaded')
         card.screenshot(path=str(ROOT / 'test-results' / 'payroll-week-owner-375.png'))
+        self.assert_mobile()
+
+    def test_the_owner_downloads_the_gusto_hours_file_where_the_old_gusto_button_was(self):
+        card = self.open('ZacB')
+        button = card.get_by_role('button', name='Download Gusto hours')
+        expect(button).to_be_visible()
+        expect(card).to_contain_text('keyed by the Gusto employee ID in the staff directory')
+        self.assert_mobile()
+        with self.page.expect_download() as download: button.click()
+        self.assertEqual(download.value.suggested_filename, 'egc-gusto-hours-2026-09-21-to-2026-09-27.csv')
+        body = pathlib.Path(download.value.path()).read_bytes().decode()
+        self.assertEqual(body, FIXTURE['gusto'], 'the file is the server Gusto file byte for byte, CRLF rows included')
+        self.assertTrue(body.startswith('"Gusto employee ID","Employee name","Regular hours","Overtime hours","Double overtime hours","Paid time off hours"\r\n'))
+        # The fixture week has a timecard bonus and tips: the notice says they are not in the Gusto file.
+        expect(card.get_by_role('status')).to_contain_text('Gusto hours file for Sep 21 – Sep 27 downloaded. This week also has $11.17 in timecard bonuses and $13.19 in timecard tips')
+        self.assertEqual([query.get('format') for query in self.requests if query.get('format')], [['gusto']])
+        card.screenshot(path=str(ROOT / 'test-results' / 'payroll-week-gusto-375.png'))
+        self.assert_mobile()
+        # A missing Gusto employee ID is the server's refusal, naming each employee; nothing downloads.
+        self.gusto_responses = [(409, FIXTURE['gustoMissing'])]
+        downloads = []; self.page.on('download', lambda item: downloads.append(item))
+        button.click()
+        expect(card.get_by_role('alert')).to_contain_text('Add the Gusto employee ID for Synthetic AlexK (alexk), Synthetic Crew.One (crew.one), Synthetic TylerG (tylerg)')
+        expect(card.get_by_role('button', name='Export with these flags')).to_have_count(0)
+        self.page.wait_for_timeout(200); self.assertEqual(downloads, [])
+        self.assert_mobile()
+
+    def test_the_owner_is_told_who_was_left_out_as_not_paid_through_gusto(self):
+        # GUSTO-EXPORT review: the server's file without AlexK, and its header naming them.
+        self.gusto_responses = [(200, FIXTURE['gustoMarked'], {'X-EGC-Gusto-Not-Included': FIXTURE['gustoMarkedHeader']})]
+        card = self.open('ZacB')
+        with self.page.expect_download() as download: card.get_by_role('button', name='Download Gusto hours').click()
+        body = pathlib.Path(download.value.path()).read_bytes().decode()
+        self.assertEqual(body, FIXTURE['gustoMarked']); self.assertNotIn('gusto-syn-3', body); self.assertNotIn('AlexK', body)
+        expect(card.get_by_role('status')).to_contain_text('Left out as not paid through Gusto (the payroll CSV has their hours): Synthetic AlexK.')
+        card.screenshot(path=str(ROOT / 'test-results' / 'payroll-week-gusto-left-out-375.png'))
         self.assert_mobile()
 
     def test_a_flagged_week_needs_an_explicit_acknowledgement_before_export(self):

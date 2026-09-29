@@ -1,7 +1,7 @@
 import { denverToday, validDate } from './dispatch-time.js';
-import { customerMoneyTotals, invoiceStatus, moneyCents } from './money-core.js';
+import { customerMoneyTotals, invoiceStatus, moneyCents, servedMoneyTotals } from './money-core.js';
 import { reconcileLedger } from './money-ledger.js';
-import { moneyJob } from './money-service.js';
+import { invoiceAmount, moneyJob } from './money-service.js';
 import { cashPayment } from './payment-events.js';
 
 /**
@@ -21,13 +21,15 @@ const instant = value => typeof value === 'string' && /^\d{4}-\d\d-\d\dT\d\d:\d\
 const denverDate = at => at ? denverToday(new Date(at)) : null;
 const newestFirst = (a, b) => (a.at === null) - (b.at === null) || String(b.at).localeCompare(String(a.at)) || a.key.localeCompare(b.key);
 
-function invoiceRow(job, now) {
+// With MONEY_UNIFIED_TOTALS=true an active invoice's amount is the unified total its paid and balance are measured
+// against (money-service invoiceAmount: savedAmountCents keeps the saved figure, issues flags invoice_amount_stale).
+function invoiceRow(job, now, unified = false) {
   const invoice = plain(job.invoice) ? job.invoice : null;
   if (!invoice || !(invoice.status || invoice.issuedAt || invoice.amount !== undefined && invoice.amount !== null)) return null;
-  const totals = customerMoneyTotals(job), issuedAt = instant(invoice.issuedAt), active = !['void', 'superseded'].includes(invoice.status);
-  return { key: job.id, at: issuedAt, jobId: job.id, customerId: str(job.customerId), customer: str(job.customer), serviceDate: str(job.date, 10), number: str(invoice.number, 80), status: invoiceStatus(job, now), savedStatus: str(invoice.status, 40),
-    amountCents: Number.isSafeInteger(invoice.amountCents) ? invoice.amountCents : moneyCents(invoice.amount), paidCents: active ? totals.appliedCents : moneyCents(invoice.paid), balanceCents: active ? totals.balanceCents : moneyCents(invoice.balance),
-    dueDate: validDate(invoice.dueDate) ? invoice.dueDate : '', issuedAt, issuedDate: denverDate(issuedAt), customerReference: str(invoice.customerReference, 120) };
+  const totals = customerMoneyTotals(job, { unified }), issuedAt = instant(invoice.issuedAt), active = !['void', 'superseded'].includes(invoice.status), billed = invoiceAmount(job, totals, unified);
+  return { key: job.id, at: issuedAt, jobId: job.id, customerId: str(job.customerId), customer: str(job.customer), serviceDate: str(job.date, 10), number: str(invoice.number, 80), status: invoiceStatus(job, now, { unified }), savedStatus: str(invoice.status, 40),
+    amountCents: billed.amountCents, paidCents: active ? totals.appliedCents : moneyCents(invoice.paid), balanceCents: active ? totals.balanceCents : moneyCents(invoice.balance),
+    dueDate: validDate(invoice.dueDate) ? invoice.dueDate : '', issuedAt, issuedDate: denverDate(issuedAt), customerReference: str(invoice.customerReference, 120), ...billed.extra };
 }
 
 // With FUN-33 payment events on (store.paymentEvents), each row also says whether it is non-cash credit
@@ -58,7 +60,8 @@ export async function listMoney(store, query = {}, now) {
   const inRange = date => (!startDate || date && date >= startDate) && (!endDate || date && date < endDate), rows = [];
   for (const job of jobs) {
     if (!moneyJob(job) || customerId && job.customerId !== customerId) continue;
-    if (view === 'invoices') { const row = invoiceRow(job, now); if (row && (!status || row.status === status) && inRange(row.issuedDate)) rows.push(row); }
+    // MONEY_UNIFIED_TOTALS=shadow: each invoice logs where the unified totals would differ.
+    if (view === 'invoices') { const row = invoiceRow(job, now, store.totalsMode === 'unified'); if (row && store.totalsMode === 'shadow') servedMoneyTotals(job, 'shadow', { surface: 'invoice_list' }); if (row && (!status || row.status === status) && inRange(row.issuedDate)) rows.push(row); }
     else for (const row of paymentRows(job, store.paymentEvents === true)) if (inRange(row.receivedDate)) rows.push(row);
   }
   rows.sort(newestFirst);
