@@ -356,6 +356,11 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   managers hours, approvals and paid time-off hours but not other employees' rates or gross, the payroll CSV is the
   owner's alone, and any save that carries or moves another employee's pay (or a manager's own) is 403 pay_owner_only;
   one pay-visibility.js module; a payroll week card in Time approvals. Gap: /api/job-costing (JOB-COST-PRIVACY, next).
+- **JOB-COST-PRIVACY** Job labor dollars owner-only under `EGC_STAFF_PAY_OWNER_ONLY` (default on): /api/job-costing,
+  /api/money laborCents, /api/job-labor-costs, raw jobs from /api/crew-jobs and /api/case-study and the Hub finance board
+  give everyone but the owner hours only ("Labor $ hidden", totals null); the owner's figures live in the server-only
+  jobLaborCosts record, firestore.rules keep browser writes from adding or changing a labor copy on a job, and
+  scripts/backfill-job-labor-private.mjs moves (or --restore returns) existing copies. Gap: run the backfill after deploy.
 
 ## In progress
 
@@ -439,6 +444,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | FUN-08 | Scheduling constraints in the v2 extraction, resolved against the walkthrough Start (Denver) | merged (354864f) |
 | GO-LIVE | Owner go-live runbook and checklist (docs only) | merged (f655cac) |
 | PAY-TIMESHEETS | Owner-only pay in timesheets, payroll CSV and pay-field writes; payroll week card | merged (a990d27) |
+| JOB-COST-PRIVACY | Owner-only job labor dollars (server-only jobLaborCosts, finance board, job-costing and money API) | merged (d7b8fe1) |
 
 ## Next
 

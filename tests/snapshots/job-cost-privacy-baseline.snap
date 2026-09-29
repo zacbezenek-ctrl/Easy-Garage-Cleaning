@@ -1,0 +1,497 @@
+legacy owner | job-costing solo ?start=2026-09-21&end=2026-09-28 | 1b06f033818abdd8
+legacy owner | job-costing solo ?start=2026-09-21&end=2026-09-28&includeTravel=1 | 1d37aa11c415b128
+legacy owner | job-costing solo ?start=2026-09-21&end=2026-09-28&jobId=job-solo | a4d246857d4a0053
+legacy owner | job-costing solo ?start=2026-09-21&end=2026-09-28&jobId=walk-1 | d2f0e476df93bde0
+legacy owner | job-costing solo ?start=2026-09-24&end=2026-09-26 | 9d6bd0b496786b7b
+legacy owner | job-costing team ?start=2026-09-21&end=2026-09-28 | 9d6e850eb90c118f
+legacy owner | job-costing team ?start=2026-09-21&end=2026-09-28&includeTravel=1 | 910720c79bcb3783
+legacy owner | job-costing team ?start=2026-09-21&end=2026-09-28&jobId=job-solo | 5c87396b08c2fa4d
+legacy owner | job-costing team ?start=2026-09-21&end=2026-09-28&jobId=walk-1 | d2f0e476df93bde0
+legacy owner | job-costing team ?start=2026-09-24&end=2026-09-26 | 9d6bd0b496786b7b
+legacy owner | job-costing overtime ?start=2026-09-21&end=2026-09-28 | 6e2a1972f932d2fb
+legacy owner | job-costing overtime ?start=2026-09-21&end=2026-09-28&includeTravel=1 | 5991021b48841076
+legacy owner | job-costing overtime ?start=2026-09-21&end=2026-09-28&jobId=job-solo | 906f3877fa15b2d9
+legacy owner | job-costing overtime ?start=2026-09-21&end=2026-09-28&jobId=walk-1 | d2f0e476df93bde0
+legacy owner | job-costing overtime ?start=2026-09-24&end=2026-09-26 | ef7a68cc66f657d4
+legacy owner | job-costing mixed ?start=2026-09-21&end=2026-09-28 | 74406d7a6ae68a0e
+legacy owner | job-costing mixed ?start=2026-09-21&end=2026-09-28&includeTravel=1 | 0dda46bafaf7f230
+legacy owner | job-costing mixed ?start=2026-09-21&end=2026-09-28&jobId=job-solo | 219ecfcc6d41c42f
+legacy owner | job-costing mixed ?start=2026-09-21&end=2026-09-28&jobId=walk-1 | 736d09f7d158413d
+legacy owner | job-costing mixed ?start=2026-09-24&end=2026-09-26 | 621bca32b99f55f0
+legacy owner | money GET ?jobId=job-costed | 12f8fba45e67ace9
+legacy owner | money GET ?jobId=job-uncosted | a36153f764e0e5cb
+legacy owner | money GET ?view=invoices | 89398bd0ccedc74b
+legacy owner | money GET ?view=invoices&format=csv | c210730abbf1093b
+legacy owner | money GET ?view=payments&format=csv | 118f25d30b6e05f7
+legacy owner | money POST costs.save | 9e5541f68cdc9cc5
+legacy owner | money POST estimate.mark_sent | 52e6991ab410768b
+legacy owner | integration-status GET | a977949d540134eb
+legacy manager | job-costing solo ?start=2026-09-21&end=2026-09-28 | 1b06f033818abdd8
+legacy manager | job-costing solo ?start=2026-09-21&end=2026-09-28&includeTravel=1 | 1d37aa11c415b128
+legacy manager | job-costing solo ?start=2026-09-21&end=2026-09-28&jobId=job-solo | a4d246857d4a0053
+legacy manager | job-costing solo ?start=2026-09-21&end=2026-09-28&jobId=walk-1 | d2f0e476df93bde0
+legacy manager | job-costing solo ?start=2026-09-24&end=2026-09-26 | 9d6bd0b496786b7b
+legacy manager | job-costing team ?start=2026-09-21&end=2026-09-28 | 9d6e850eb90c118f
+legacy manager | job-costing team ?start=2026-09-21&end=2026-09-28&includeTravel=1 | 910720c79bcb3783
+legacy manager | job-costing team ?start=2026-09-21&end=2026-09-28&jobId=job-solo | 5c87396b08c2fa4d
+legacy manager | job-costing team ?start=2026-09-21&end=2026-09-28&jobId=walk-1 | d2f0e476df93bde0
+legacy manager | job-costing team ?start=2026-09-24&end=2026-09-26 | 9d6bd0b496786b7b
+legacy manager | job-costing overtime ?start=2026-09-21&end=2026-09-28 | 6e2a1972f932d2fb
+legacy manager | job-costing overtime ?start=2026-09-21&end=2026-09-28&includeTravel=1 | 5991021b48841076
+legacy manager | job-costing overtime ?start=2026-09-21&end=2026-09-28&jobId=job-solo | 906f3877fa15b2d9
+legacy manager | job-costing overtime ?start=2026-09-21&end=2026-09-28&jobId=walk-1 | d2f0e476df93bde0
+legacy manager | job-costing overtime ?start=2026-09-24&end=2026-09-26 | ef7a68cc66f657d4
+legacy manager | job-costing mixed ?start=2026-09-21&end=2026-09-28 | 74406d7a6ae68a0e
+legacy manager | job-costing mixed ?start=2026-09-21&end=2026-09-28&includeTravel=1 | 0dda46bafaf7f230
+legacy manager | job-costing mixed ?start=2026-09-21&end=2026-09-28&jobId=job-solo | 219ecfcc6d41c42f
+legacy manager | job-costing mixed ?start=2026-09-21&end=2026-09-28&jobId=walk-1 | 736d09f7d158413d
+legacy manager | job-costing mixed ?start=2026-09-24&end=2026-09-26 | 621bca32b99f55f0
+legacy manager | money GET ?jobId=job-costed | 7b8276456c9e5b37
+legacy manager | money GET ?jobId=job-uncosted | e79523a20470abc9
+legacy manager | money GET ?view=invoices | 89398bd0ccedc74b
+legacy manager | money GET ?view=invoices&format=csv | c210730abbf1093b
+legacy manager | money GET ?view=payments&format=csv | 118f25d30b6e05f7
+legacy manager | money POST costs.save | b1c32af14ea6859f
+legacy manager | money POST estimate.mark_sent | 52e6991ab410768b
+legacy manager | integration-status GET | a977949d540134eb
+legacy managerTwo | job-costing solo ?start=2026-09-21&end=2026-09-28 | 1b06f033818abdd8
+legacy managerTwo | job-costing solo ?start=2026-09-21&end=2026-09-28&includeTravel=1 | 1d37aa11c415b128
+legacy managerTwo | job-costing solo ?start=2026-09-21&end=2026-09-28&jobId=job-solo | a4d246857d4a0053
+legacy managerTwo | job-costing solo ?start=2026-09-21&end=2026-09-28&jobId=walk-1 | d2f0e476df93bde0
+legacy managerTwo | job-costing solo ?start=2026-09-24&end=2026-09-26 | 9d6bd0b496786b7b
+legacy managerTwo | job-costing team ?start=2026-09-21&end=2026-09-28 | 9d6e850eb90c118f
+legacy managerTwo | job-costing team ?start=2026-09-21&end=2026-09-28&includeTravel=1 | 910720c79bcb3783
+legacy managerTwo | job-costing team ?start=2026-09-21&end=2026-09-28&jobId=job-solo | 5c87396b08c2fa4d
+legacy managerTwo | job-costing team ?start=2026-09-21&end=2026-09-28&jobId=walk-1 | d2f0e476df93bde0
+legacy managerTwo | job-costing team ?start=2026-09-24&end=2026-09-26 | 9d6bd0b496786b7b
+legacy managerTwo | job-costing overtime ?start=2026-09-21&end=2026-09-28 | 6e2a1972f932d2fb
+legacy managerTwo | job-costing overtime ?start=2026-09-21&end=2026-09-28&includeTravel=1 | 5991021b48841076
+legacy managerTwo | job-costing overtime ?start=2026-09-21&end=2026-09-28&jobId=job-solo | 906f3877fa15b2d9
+legacy managerTwo | job-costing overtime ?start=2026-09-21&end=2026-09-28&jobId=walk-1 | d2f0e476df93bde0
+legacy managerTwo | job-costing overtime ?start=2026-09-24&end=2026-09-26 | ef7a68cc66f657d4
+legacy managerTwo | job-costing mixed ?start=2026-09-21&end=2026-09-28 | 74406d7a6ae68a0e
+legacy managerTwo | job-costing mixed ?start=2026-09-21&end=2026-09-28&includeTravel=1 | 0dda46bafaf7f230
+legacy managerTwo | job-costing mixed ?start=2026-09-21&end=2026-09-28&jobId=job-solo | 219ecfcc6d41c42f
+legacy managerTwo | job-costing mixed ?start=2026-09-21&end=2026-09-28&jobId=walk-1 | 736d09f7d158413d
+legacy managerTwo | job-costing mixed ?start=2026-09-24&end=2026-09-26 | 621bca32b99f55f0
+legacy managerTwo | money GET ?jobId=job-costed | 604103f175ff6ad6
+legacy managerTwo | money GET ?jobId=job-uncosted | c91d93aa2d079bbf
+legacy managerTwo | money GET ?view=invoices | 89398bd0ccedc74b
+legacy managerTwo | money GET ?view=invoices&format=csv | c210730abbf1093b
+legacy managerTwo | money GET ?view=payments&format=csv | 118f25d30b6e05f7
+legacy managerTwo | money POST costs.save | 73deb8d8c1ddfca5
+legacy managerTwo | money POST estimate.mark_sent | 52e6991ab410768b
+legacy managerTwo | integration-status GET | a977949d540134eb
+legacy ownerRoleNotOwner | job-costing solo ?start=2026-09-21&end=2026-09-28 | 1b06f033818abdd8
+legacy ownerRoleNotOwner | job-costing solo ?start=2026-09-21&end=2026-09-28&includeTravel=1 | 1d37aa11c415b128
+legacy ownerRoleNotOwner | job-costing solo ?start=2026-09-21&end=2026-09-28&jobId=job-solo | a4d246857d4a0053
+legacy ownerRoleNotOwner | job-costing solo ?start=2026-09-21&end=2026-09-28&jobId=walk-1 | d2f0e476df93bde0
+legacy ownerRoleNotOwner | job-costing solo ?start=2026-09-24&end=2026-09-26 | 9d6bd0b496786b7b
+legacy ownerRoleNotOwner | job-costing team ?start=2026-09-21&end=2026-09-28 | 9d6e850eb90c118f
+legacy ownerRoleNotOwner | job-costing team ?start=2026-09-21&end=2026-09-28&includeTravel=1 | 910720c79bcb3783
+legacy ownerRoleNotOwner | job-costing team ?start=2026-09-21&end=2026-09-28&jobId=job-solo | 5c87396b08c2fa4d
+legacy ownerRoleNotOwner | job-costing team ?start=2026-09-21&end=2026-09-28&jobId=walk-1 | d2f0e476df93bde0
+legacy ownerRoleNotOwner | job-costing team ?start=2026-09-24&end=2026-09-26 | 9d6bd0b496786b7b
+legacy ownerRoleNotOwner | job-costing overtime ?start=2026-09-21&end=2026-09-28 | 6e2a1972f932d2fb
+legacy ownerRoleNotOwner | job-costing overtime ?start=2026-09-21&end=2026-09-28&includeTravel=1 | 5991021b48841076
+legacy ownerRoleNotOwner | job-costing overtime ?start=2026-09-21&end=2026-09-28&jobId=job-solo | 906f3877fa15b2d9
+legacy ownerRoleNotOwner | job-costing overtime ?start=2026-09-21&end=2026-09-28&jobId=walk-1 | d2f0e476df93bde0
+legacy ownerRoleNotOwner | job-costing overtime ?start=2026-09-24&end=2026-09-26 | ef7a68cc66f657d4
+legacy ownerRoleNotOwner | job-costing mixed ?start=2026-09-21&end=2026-09-28 | 74406d7a6ae68a0e
+legacy ownerRoleNotOwner | job-costing mixed ?start=2026-09-21&end=2026-09-28&includeTravel=1 | 0dda46bafaf7f230
+legacy ownerRoleNotOwner | job-costing mixed ?start=2026-09-21&end=2026-09-28&jobId=job-solo | 219ecfcc6d41c42f
+legacy ownerRoleNotOwner | job-costing mixed ?start=2026-09-21&end=2026-09-28&jobId=walk-1 | 736d09f7d158413d
+legacy ownerRoleNotOwner | job-costing mixed ?start=2026-09-24&end=2026-09-26 | 621bca32b99f55f0
+legacy ownerRoleNotOwner | money GET ?jobId=job-costed | 7b8276456c9e5b37
+legacy ownerRoleNotOwner | money GET ?jobId=job-uncosted | e79523a20470abc9
+legacy ownerRoleNotOwner | money GET ?view=invoices | 89398bd0ccedc74b
+legacy ownerRoleNotOwner | money GET ?view=invoices&format=csv | c210730abbf1093b
+legacy ownerRoleNotOwner | money GET ?view=payments&format=csv | 118f25d30b6e05f7
+legacy ownerRoleNotOwner | money POST costs.save | b1c32af14ea6859f
+legacy ownerRoleNotOwner | money POST estimate.mark_sent | 52e6991ab410768b
+legacy ownerRoleNotOwner | integration-status GET | a977949d540134eb
+legacy crew_lead | job-costing solo ?start=2026-09-21&end=2026-09-28 | b68aec98e5e31d87
+legacy crew_lead | job-costing solo ?start=2026-09-21&end=2026-09-28&includeTravel=1 | b68aec98e5e31d87
+legacy crew_lead | job-costing solo ?start=2026-09-21&end=2026-09-28&jobId=job-solo | b68aec98e5e31d87
+legacy crew_lead | job-costing solo ?start=2026-09-21&end=2026-09-28&jobId=walk-1 | b68aec98e5e31d87
+legacy crew_lead | job-costing solo ?start=2026-09-24&end=2026-09-26 | b68aec98e5e31d87
+legacy crew_lead | job-costing team ?start=2026-09-21&end=2026-09-28 | b68aec98e5e31d87
+legacy crew_lead | job-costing team ?start=2026-09-21&end=2026-09-28&includeTravel=1 | b68aec98e5e31d87
+legacy crew_lead | job-costing team ?start=2026-09-21&end=2026-09-28&jobId=job-solo | b68aec98e5e31d87
+legacy crew_lead | job-costing team ?start=2026-09-21&end=2026-09-28&jobId=walk-1 | b68aec98e5e31d87
+legacy crew_lead | job-costing team ?start=2026-09-24&end=2026-09-26 | b68aec98e5e31d87
+legacy crew_lead | job-costing overtime ?start=2026-09-21&end=2026-09-28 | b68aec98e5e31d87
+legacy crew_lead | job-costing overtime ?start=2026-09-21&end=2026-09-28&includeTravel=1 | b68aec98e5e31d87
+legacy crew_lead | job-costing overtime ?start=2026-09-21&end=2026-09-28&jobId=job-solo | b68aec98e5e31d87
+legacy crew_lead | job-costing overtime ?start=2026-09-21&end=2026-09-28&jobId=walk-1 | b68aec98e5e31d87
+legacy crew_lead | job-costing overtime ?start=2026-09-24&end=2026-09-26 | b68aec98e5e31d87
+legacy crew_lead | job-costing mixed ?start=2026-09-21&end=2026-09-28 | b68aec98e5e31d87
+legacy crew_lead | job-costing mixed ?start=2026-09-21&end=2026-09-28&includeTravel=1 | b68aec98e5e31d87
+legacy crew_lead | job-costing mixed ?start=2026-09-21&end=2026-09-28&jobId=job-solo | b68aec98e5e31d87
+legacy crew_lead | job-costing mixed ?start=2026-09-21&end=2026-09-28&jobId=walk-1 | b68aec98e5e31d87
+legacy crew_lead | job-costing mixed ?start=2026-09-24&end=2026-09-26 | b68aec98e5e31d87
+legacy crew_lead | money GET ?jobId=job-costed | 04ad75a07b891771
+legacy crew_lead | money GET ?jobId=job-uncosted | 04ad75a07b891771
+legacy crew_lead | money GET ?view=invoices | 04ad75a07b891771
+legacy crew_lead | money GET ?view=invoices&format=csv | 04ad75a07b891771
+legacy crew_lead | money GET ?view=payments&format=csv | 04ad75a07b891771
+legacy crew_lead | money POST costs.save | 04ad75a07b891771
+legacy crew_lead | money POST estimate.mark_sent | 04ad75a07b891771
+legacy crew_lead | integration-status GET | 359bd6cfd6110715
+legacy crew | job-costing solo ?start=2026-09-21&end=2026-09-28 | b68aec98e5e31d87
+legacy crew | job-costing solo ?start=2026-09-21&end=2026-09-28&includeTravel=1 | b68aec98e5e31d87
+legacy crew | job-costing solo ?start=2026-09-21&end=2026-09-28&jobId=job-solo | b68aec98e5e31d87
+legacy crew | job-costing solo ?start=2026-09-21&end=2026-09-28&jobId=walk-1 | b68aec98e5e31d87
+legacy crew | job-costing solo ?start=2026-09-24&end=2026-09-26 | b68aec98e5e31d87
+legacy crew | job-costing team ?start=2026-09-21&end=2026-09-28 | b68aec98e5e31d87
+legacy crew | job-costing team ?start=2026-09-21&end=2026-09-28&includeTravel=1 | b68aec98e5e31d87
+legacy crew | job-costing team ?start=2026-09-21&end=2026-09-28&jobId=job-solo | b68aec98e5e31d87
+legacy crew | job-costing team ?start=2026-09-21&end=2026-09-28&jobId=walk-1 | b68aec98e5e31d87
+legacy crew | job-costing team ?start=2026-09-24&end=2026-09-26 | b68aec98e5e31d87
+legacy crew | job-costing overtime ?start=2026-09-21&end=2026-09-28 | b68aec98e5e31d87
+legacy crew | job-costing overtime ?start=2026-09-21&end=2026-09-28&includeTravel=1 | b68aec98e5e31d87
+legacy crew | job-costing overtime ?start=2026-09-21&end=2026-09-28&jobId=job-solo | b68aec98e5e31d87
+legacy crew | job-costing overtime ?start=2026-09-21&end=2026-09-28&jobId=walk-1 | b68aec98e5e31d87
+legacy crew | job-costing overtime ?start=2026-09-24&end=2026-09-26 | b68aec98e5e31d87
+legacy crew | job-costing mixed ?start=2026-09-21&end=2026-09-28 | b68aec98e5e31d87
+legacy crew | job-costing mixed ?start=2026-09-21&end=2026-09-28&includeTravel=1 | b68aec98e5e31d87
+legacy crew | job-costing mixed ?start=2026-09-21&end=2026-09-28&jobId=job-solo | b68aec98e5e31d87
+legacy crew | job-costing mixed ?start=2026-09-21&end=2026-09-28&jobId=walk-1 | b68aec98e5e31d87
+legacy crew | job-costing mixed ?start=2026-09-24&end=2026-09-26 | b68aec98e5e31d87
+legacy crew | money GET ?jobId=job-costed | 04ad75a07b891771
+legacy crew | money GET ?jobId=job-uncosted | 04ad75a07b891771
+legacy crew | money GET ?view=invoices | 04ad75a07b891771
+legacy crew | money GET ?view=invoices&format=csv | 04ad75a07b891771
+legacy crew | money GET ?view=payments&format=csv | 04ad75a07b891771
+legacy crew | money POST costs.save | 04ad75a07b891771
+legacy crew | money POST estimate.mark_sent | 04ad75a07b891771
+legacy crew | integration-status GET | 359bd6cfd6110715
+legacy sales | job-costing solo ?start=2026-09-21&end=2026-09-28 | b68aec98e5e31d87
+legacy sales | job-costing solo ?start=2026-09-21&end=2026-09-28&includeTravel=1 | b68aec98e5e31d87
+legacy sales | job-costing solo ?start=2026-09-21&end=2026-09-28&jobId=job-solo | b68aec98e5e31d87
+legacy sales | job-costing solo ?start=2026-09-21&end=2026-09-28&jobId=walk-1 | b68aec98e5e31d87
+legacy sales | job-costing solo ?start=2026-09-24&end=2026-09-26 | b68aec98e5e31d87
+legacy sales | job-costing team ?start=2026-09-21&end=2026-09-28 | b68aec98e5e31d87
+legacy sales | job-costing team ?start=2026-09-21&end=2026-09-28&includeTravel=1 | b68aec98e5e31d87
+legacy sales | job-costing team ?start=2026-09-21&end=2026-09-28&jobId=job-solo | b68aec98e5e31d87
+legacy sales | job-costing team ?start=2026-09-21&end=2026-09-28&jobId=walk-1 | b68aec98e5e31d87
+legacy sales | job-costing team ?start=2026-09-24&end=2026-09-26 | b68aec98e5e31d87
+legacy sales | job-costing overtime ?start=2026-09-21&end=2026-09-28 | b68aec98e5e31d87
+legacy sales | job-costing overtime ?start=2026-09-21&end=2026-09-28&includeTravel=1 | b68aec98e5e31d87
+legacy sales | job-costing overtime ?start=2026-09-21&end=2026-09-28&jobId=job-solo | b68aec98e5e31d87
+legacy sales | job-costing overtime ?start=2026-09-21&end=2026-09-28&jobId=walk-1 | b68aec98e5e31d87
+legacy sales | job-costing overtime ?start=2026-09-24&end=2026-09-26 | b68aec98e5e31d87
+legacy sales | job-costing mixed ?start=2026-09-21&end=2026-09-28 | b68aec98e5e31d87
+legacy sales | job-costing mixed ?start=2026-09-21&end=2026-09-28&includeTravel=1 | b68aec98e5e31d87
+legacy sales | job-costing mixed ?start=2026-09-21&end=2026-09-28&jobId=job-solo | b68aec98e5e31d87
+legacy sales | job-costing mixed ?start=2026-09-21&end=2026-09-28&jobId=walk-1 | b68aec98e5e31d87
+legacy sales | job-costing mixed ?start=2026-09-24&end=2026-09-26 | b68aec98e5e31d87
+legacy sales | money GET ?jobId=job-costed | 04ad75a07b891771
+legacy sales | money GET ?jobId=job-uncosted | 04ad75a07b891771
+legacy sales | money GET ?view=invoices | 04ad75a07b891771
+legacy sales | money GET ?view=invoices&format=csv | 04ad75a07b891771
+legacy sales | money GET ?view=payments&format=csv | 04ad75a07b891771
+legacy sales | money POST costs.save | 04ad75a07b891771
+legacy sales | money POST estimate.mark_sent | 04ad75a07b891771
+legacy sales | integration-status GET | 359bd6cfd6110715
+staffRoles owner | job-costing solo ?start=2026-09-21&end=2026-09-28 | 1b06f033818abdd8
+staffRoles owner | job-costing solo ?start=2026-09-21&end=2026-09-28&includeTravel=1 | 1d37aa11c415b128
+staffRoles owner | job-costing solo ?start=2026-09-21&end=2026-09-28&jobId=job-solo | a4d246857d4a0053
+staffRoles owner | job-costing solo ?start=2026-09-21&end=2026-09-28&jobId=walk-1 | d2f0e476df93bde0
+staffRoles owner | job-costing solo ?start=2026-09-24&end=2026-09-26 | 9d6bd0b496786b7b
+staffRoles owner | job-costing team ?start=2026-09-21&end=2026-09-28 | 9d6e850eb90c118f
+staffRoles owner | job-costing team ?start=2026-09-21&end=2026-09-28&includeTravel=1 | 910720c79bcb3783
+staffRoles owner | job-costing team ?start=2026-09-21&end=2026-09-28&jobId=job-solo | 5c87396b08c2fa4d
+staffRoles owner | job-costing team ?start=2026-09-21&end=2026-09-28&jobId=walk-1 | d2f0e476df93bde0
+staffRoles owner | job-costing team ?start=2026-09-24&end=2026-09-26 | 9d6bd0b496786b7b
+staffRoles owner | job-costing overtime ?start=2026-09-21&end=2026-09-28 | 6e2a1972f932d2fb
+staffRoles owner | job-costing overtime ?start=2026-09-21&end=2026-09-28&includeTravel=1 | 5991021b48841076
+staffRoles owner | job-costing overtime ?start=2026-09-21&end=2026-09-28&jobId=job-solo | 906f3877fa15b2d9
+staffRoles owner | job-costing overtime ?start=2026-09-21&end=2026-09-28&jobId=walk-1 | d2f0e476df93bde0
+staffRoles owner | job-costing overtime ?start=2026-09-24&end=2026-09-26 | ef7a68cc66f657d4
+staffRoles owner | job-costing mixed ?start=2026-09-21&end=2026-09-28 | 74406d7a6ae68a0e
+staffRoles owner | job-costing mixed ?start=2026-09-21&end=2026-09-28&includeTravel=1 | 0dda46bafaf7f230
+staffRoles owner | job-costing mixed ?start=2026-09-21&end=2026-09-28&jobId=job-solo | 219ecfcc6d41c42f
+staffRoles owner | job-costing mixed ?start=2026-09-21&end=2026-09-28&jobId=walk-1 | 736d09f7d158413d
+staffRoles owner | job-costing mixed ?start=2026-09-24&end=2026-09-26 | 621bca32b99f55f0
+staffRoles owner | money GET ?jobId=job-costed | 12f8fba45e67ace9
+staffRoles owner | money GET ?jobId=job-uncosted | a36153f764e0e5cb
+staffRoles owner | money GET ?view=invoices | 89398bd0ccedc74b
+staffRoles owner | money GET ?view=invoices&format=csv | c210730abbf1093b
+staffRoles owner | money GET ?view=payments&format=csv | 118f25d30b6e05f7
+staffRoles owner | money POST costs.save | 9e5541f68cdc9cc5
+staffRoles owner | money POST estimate.mark_sent | 52e6991ab410768b
+staffRoles owner | integration-status GET | a977949d540134eb
+staffRoles manager | job-costing solo ?start=2026-09-21&end=2026-09-28 | 1b06f033818abdd8
+staffRoles manager | job-costing solo ?start=2026-09-21&end=2026-09-28&includeTravel=1 | 1d37aa11c415b128
+staffRoles manager | job-costing solo ?start=2026-09-21&end=2026-09-28&jobId=job-solo | a4d246857d4a0053
+staffRoles manager | job-costing solo ?start=2026-09-21&end=2026-09-28&jobId=walk-1 | d2f0e476df93bde0
+staffRoles manager | job-costing solo ?start=2026-09-24&end=2026-09-26 | 9d6bd0b496786b7b
+staffRoles manager | job-costing team ?start=2026-09-21&end=2026-09-28 | 9d6e850eb90c118f
+staffRoles manager | job-costing team ?start=2026-09-21&end=2026-09-28&includeTravel=1 | 910720c79bcb3783
+staffRoles manager | job-costing team ?start=2026-09-21&end=2026-09-28&jobId=job-solo | 5c87396b08c2fa4d
+staffRoles manager | job-costing team ?start=2026-09-21&end=2026-09-28&jobId=walk-1 | d2f0e476df93bde0
+staffRoles manager | job-costing team ?start=2026-09-24&end=2026-09-26 | 9d6bd0b496786b7b
+staffRoles manager | job-costing overtime ?start=2026-09-21&end=2026-09-28 | 6e2a1972f932d2fb
+staffRoles manager | job-costing overtime ?start=2026-09-21&end=2026-09-28&includeTravel=1 | 5991021b48841076
+staffRoles manager | job-costing overtime ?start=2026-09-21&end=2026-09-28&jobId=job-solo | 906f3877fa15b2d9
+staffRoles manager | job-costing overtime ?start=2026-09-21&end=2026-09-28&jobId=walk-1 | d2f0e476df93bde0
+staffRoles manager | job-costing overtime ?start=2026-09-24&end=2026-09-26 | ef7a68cc66f657d4
+staffRoles manager | job-costing mixed ?start=2026-09-21&end=2026-09-28 | 74406d7a6ae68a0e
+staffRoles manager | job-costing mixed ?start=2026-09-21&end=2026-09-28&includeTravel=1 | 0dda46bafaf7f230
+staffRoles manager | job-costing mixed ?start=2026-09-21&end=2026-09-28&jobId=job-solo | 219ecfcc6d41c42f
+staffRoles manager | job-costing mixed ?start=2026-09-21&end=2026-09-28&jobId=walk-1 | 736d09f7d158413d
+staffRoles manager | job-costing mixed ?start=2026-09-24&end=2026-09-26 | 621bca32b99f55f0
+staffRoles manager | money GET ?jobId=job-costed | 7b8276456c9e5b37
+staffRoles manager | money GET ?jobId=job-uncosted | e79523a20470abc9
+staffRoles manager | money GET ?view=invoices | 89398bd0ccedc74b
+staffRoles manager | money GET ?view=invoices&format=csv | c210730abbf1093b
+staffRoles manager | money GET ?view=payments&format=csv | 118f25d30b6e05f7
+staffRoles manager | money POST costs.save | b1c32af14ea6859f
+staffRoles manager | money POST estimate.mark_sent | 52e6991ab410768b
+staffRoles manager | integration-status GET | a977949d540134eb
+staffRoles managerTwo | job-costing solo ?start=2026-09-21&end=2026-09-28 | 1b06f033818abdd8
+staffRoles managerTwo | job-costing solo ?start=2026-09-21&end=2026-09-28&includeTravel=1 | 1d37aa11c415b128
+staffRoles managerTwo | job-costing solo ?start=2026-09-21&end=2026-09-28&jobId=job-solo | a4d246857d4a0053
+staffRoles managerTwo | job-costing solo ?start=2026-09-21&end=2026-09-28&jobId=walk-1 | d2f0e476df93bde0
+staffRoles managerTwo | job-costing solo ?start=2026-09-24&end=2026-09-26 | 9d6bd0b496786b7b
+staffRoles managerTwo | job-costing team ?start=2026-09-21&end=2026-09-28 | 9d6e850eb90c118f
+staffRoles managerTwo | job-costing team ?start=2026-09-21&end=2026-09-28&includeTravel=1 | 910720c79bcb3783
+staffRoles managerTwo | job-costing team ?start=2026-09-21&end=2026-09-28&jobId=job-solo | 5c87396b08c2fa4d
+staffRoles managerTwo | job-costing team ?start=2026-09-21&end=2026-09-28&jobId=walk-1 | d2f0e476df93bde0
+staffRoles managerTwo | job-costing team ?start=2026-09-24&end=2026-09-26 | 9d6bd0b496786b7b
+staffRoles managerTwo | job-costing overtime ?start=2026-09-21&end=2026-09-28 | 6e2a1972f932d2fb
+staffRoles managerTwo | job-costing overtime ?start=2026-09-21&end=2026-09-28&includeTravel=1 | 5991021b48841076
+staffRoles managerTwo | job-costing overtime ?start=2026-09-21&end=2026-09-28&jobId=job-solo | 906f3877fa15b2d9
+staffRoles managerTwo | job-costing overtime ?start=2026-09-21&end=2026-09-28&jobId=walk-1 | d2f0e476df93bde0
+staffRoles managerTwo | job-costing overtime ?start=2026-09-24&end=2026-09-26 | ef7a68cc66f657d4
+staffRoles managerTwo | job-costing mixed ?start=2026-09-21&end=2026-09-28 | 74406d7a6ae68a0e
+staffRoles managerTwo | job-costing mixed ?start=2026-09-21&end=2026-09-28&includeTravel=1 | 0dda46bafaf7f230
+staffRoles managerTwo | job-costing mixed ?start=2026-09-21&end=2026-09-28&jobId=job-solo | 219ecfcc6d41c42f
+staffRoles managerTwo | job-costing mixed ?start=2026-09-21&end=2026-09-28&jobId=walk-1 | 736d09f7d158413d
+staffRoles managerTwo | job-costing mixed ?start=2026-09-24&end=2026-09-26 | 621bca32b99f55f0
+staffRoles managerTwo | money GET ?jobId=job-costed | 604103f175ff6ad6
+staffRoles managerTwo | money GET ?jobId=job-uncosted | c91d93aa2d079bbf
+staffRoles managerTwo | money GET ?view=invoices | 89398bd0ccedc74b
+staffRoles managerTwo | money GET ?view=invoices&format=csv | c210730abbf1093b
+staffRoles managerTwo | money GET ?view=payments&format=csv | 118f25d30b6e05f7
+staffRoles managerTwo | money POST costs.save | 73deb8d8c1ddfca5
+staffRoles managerTwo | money POST estimate.mark_sent | 52e6991ab410768b
+staffRoles managerTwo | integration-status GET | a977949d540134eb
+staffRoles ownerRoleNotOwner | job-costing solo ?start=2026-09-21&end=2026-09-28 | 1b06f033818abdd8
+staffRoles ownerRoleNotOwner | job-costing solo ?start=2026-09-21&end=2026-09-28&includeTravel=1 | 1d37aa11c415b128
+staffRoles ownerRoleNotOwner | job-costing solo ?start=2026-09-21&end=2026-09-28&jobId=job-solo | a4d246857d4a0053
+staffRoles ownerRoleNotOwner | job-costing solo ?start=2026-09-21&end=2026-09-28&jobId=walk-1 | d2f0e476df93bde0
+staffRoles ownerRoleNotOwner | job-costing solo ?start=2026-09-24&end=2026-09-26 | 9d6bd0b496786b7b
+staffRoles ownerRoleNotOwner | job-costing team ?start=2026-09-21&end=2026-09-28 | 9d6e850eb90c118f
+staffRoles ownerRoleNotOwner | job-costing team ?start=2026-09-21&end=2026-09-28&includeTravel=1 | 910720c79bcb3783
+staffRoles ownerRoleNotOwner | job-costing team ?start=2026-09-21&end=2026-09-28&jobId=job-solo | 5c87396b08c2fa4d
+staffRoles ownerRoleNotOwner | job-costing team ?start=2026-09-21&end=2026-09-28&jobId=walk-1 | d2f0e476df93bde0
+staffRoles ownerRoleNotOwner | job-costing team ?start=2026-09-24&end=2026-09-26 | 9d6bd0b496786b7b
+staffRoles ownerRoleNotOwner | job-costing overtime ?start=2026-09-21&end=2026-09-28 | 6e2a1972f932d2fb
+staffRoles ownerRoleNotOwner | job-costing overtime ?start=2026-09-21&end=2026-09-28&includeTravel=1 | 5991021b48841076
+staffRoles ownerRoleNotOwner | job-costing overtime ?start=2026-09-21&end=2026-09-28&jobId=job-solo | 906f3877fa15b2d9
+staffRoles ownerRoleNotOwner | job-costing overtime ?start=2026-09-21&end=2026-09-28&jobId=walk-1 | d2f0e476df93bde0
+staffRoles ownerRoleNotOwner | job-costing overtime ?start=2026-09-24&end=2026-09-26 | ef7a68cc66f657d4
+staffRoles ownerRoleNotOwner | job-costing mixed ?start=2026-09-21&end=2026-09-28 | 74406d7a6ae68a0e
+staffRoles ownerRoleNotOwner | job-costing mixed ?start=2026-09-21&end=2026-09-28&includeTravel=1 | 0dda46bafaf7f230
+staffRoles ownerRoleNotOwner | job-costing mixed ?start=2026-09-21&end=2026-09-28&jobId=job-solo | 219ecfcc6d41c42f
+staffRoles ownerRoleNotOwner | job-costing mixed ?start=2026-09-21&end=2026-09-28&jobId=walk-1 | 736d09f7d158413d
+staffRoles ownerRoleNotOwner | job-costing mixed ?start=2026-09-24&end=2026-09-26 | 621bca32b99f55f0
+staffRoles ownerRoleNotOwner | money GET ?jobId=job-costed | 7b8276456c9e5b37
+staffRoles ownerRoleNotOwner | money GET ?jobId=job-uncosted | e79523a20470abc9
+staffRoles ownerRoleNotOwner | money GET ?view=invoices | 89398bd0ccedc74b
+staffRoles ownerRoleNotOwner | money GET ?view=invoices&format=csv | c210730abbf1093b
+staffRoles ownerRoleNotOwner | money GET ?view=payments&format=csv | 118f25d30b6e05f7
+staffRoles ownerRoleNotOwner | money POST costs.save | b1c32af14ea6859f
+staffRoles ownerRoleNotOwner | money POST estimate.mark_sent | 52e6991ab410768b
+staffRoles ownerRoleNotOwner | integration-status GET | a977949d540134eb
+staffRoles crew_lead | job-costing solo ?start=2026-09-21&end=2026-09-28 | b68aec98e5e31d87
+staffRoles crew_lead | job-costing solo ?start=2026-09-21&end=2026-09-28&includeTravel=1 | b68aec98e5e31d87
+staffRoles crew_lead | job-costing solo ?start=2026-09-21&end=2026-09-28&jobId=job-solo | b68aec98e5e31d87
+staffRoles crew_lead | job-costing solo ?start=2026-09-21&end=2026-09-28&jobId=walk-1 | b68aec98e5e31d87
+staffRoles crew_lead | job-costing solo ?start=2026-09-24&end=2026-09-26 | b68aec98e5e31d87
+staffRoles crew_lead | job-costing team ?start=2026-09-21&end=2026-09-28 | b68aec98e5e31d87
+staffRoles crew_lead | job-costing team ?start=2026-09-21&end=2026-09-28&includeTravel=1 | b68aec98e5e31d87
+staffRoles crew_lead | job-costing team ?start=2026-09-21&end=2026-09-28&jobId=job-solo | b68aec98e5e31d87
+staffRoles crew_lead | job-costing team ?start=2026-09-21&end=2026-09-28&jobId=walk-1 | b68aec98e5e31d87
+staffRoles crew_lead | job-costing team ?start=2026-09-24&end=2026-09-26 | b68aec98e5e31d87
+staffRoles crew_lead | job-costing overtime ?start=2026-09-21&end=2026-09-28 | b68aec98e5e31d87
+staffRoles crew_lead | job-costing overtime ?start=2026-09-21&end=2026-09-28&includeTravel=1 | b68aec98e5e31d87
+staffRoles crew_lead | job-costing overtime ?start=2026-09-21&end=2026-09-28&jobId=job-solo | b68aec98e5e31d87
+staffRoles crew_lead | job-costing overtime ?start=2026-09-21&end=2026-09-28&jobId=walk-1 | b68aec98e5e31d87
+staffRoles crew_lead | job-costing overtime ?start=2026-09-24&end=2026-09-26 | b68aec98e5e31d87
+staffRoles crew_lead | job-costing mixed ?start=2026-09-21&end=2026-09-28 | b68aec98e5e31d87
+staffRoles crew_lead | job-costing mixed ?start=2026-09-21&end=2026-09-28&includeTravel=1 | b68aec98e5e31d87
+staffRoles crew_lead | job-costing mixed ?start=2026-09-21&end=2026-09-28&jobId=job-solo | b68aec98e5e31d87
+staffRoles crew_lead | job-costing mixed ?start=2026-09-21&end=2026-09-28&jobId=walk-1 | b68aec98e5e31d87
+staffRoles crew_lead | job-costing mixed ?start=2026-09-24&end=2026-09-26 | b68aec98e5e31d87
+staffRoles crew_lead | money GET ?jobId=job-costed | 04ad75a07b891771
+staffRoles crew_lead | money GET ?jobId=job-uncosted | 04ad75a07b891771
+staffRoles crew_lead | money GET ?view=invoices | 04ad75a07b891771
+staffRoles crew_lead | money GET ?view=invoices&format=csv | 04ad75a07b891771
+staffRoles crew_lead | money GET ?view=payments&format=csv | 04ad75a07b891771
+staffRoles crew_lead | money POST costs.save | 04ad75a07b891771
+staffRoles crew_lead | money POST estimate.mark_sent | 04ad75a07b891771
+staffRoles crew_lead | integration-status GET | 359bd6cfd6110715
+staffRoles crew | job-costing solo ?start=2026-09-21&end=2026-09-28 | b68aec98e5e31d87
+staffRoles crew | job-costing solo ?start=2026-09-21&end=2026-09-28&includeTravel=1 | b68aec98e5e31d87
+staffRoles crew | job-costing solo ?start=2026-09-21&end=2026-09-28&jobId=job-solo | b68aec98e5e31d87
+staffRoles crew | job-costing solo ?start=2026-09-21&end=2026-09-28&jobId=walk-1 | b68aec98e5e31d87
+staffRoles crew | job-costing solo ?start=2026-09-24&end=2026-09-26 | b68aec98e5e31d87
+staffRoles crew | job-costing team ?start=2026-09-21&end=2026-09-28 | b68aec98e5e31d87
+staffRoles crew | job-costing team ?start=2026-09-21&end=2026-09-28&includeTravel=1 | b68aec98e5e31d87
+staffRoles crew | job-costing team ?start=2026-09-21&end=2026-09-28&jobId=job-solo | b68aec98e5e31d87
+staffRoles crew | job-costing team ?start=2026-09-21&end=2026-09-28&jobId=walk-1 | b68aec98e5e31d87
+staffRoles crew | job-costing team ?start=2026-09-24&end=2026-09-26 | b68aec98e5e31d87
+staffRoles crew | job-costing overtime ?start=2026-09-21&end=2026-09-28 | b68aec98e5e31d87
+staffRoles crew | job-costing overtime ?start=2026-09-21&end=2026-09-28&includeTravel=1 | b68aec98e5e31d87
+staffRoles crew | job-costing overtime ?start=2026-09-21&end=2026-09-28&jobId=job-solo | b68aec98e5e31d87
+staffRoles crew | job-costing overtime ?start=2026-09-21&end=2026-09-28&jobId=walk-1 | b68aec98e5e31d87
+staffRoles crew | job-costing overtime ?start=2026-09-24&end=2026-09-26 | b68aec98e5e31d87
+staffRoles crew | job-costing mixed ?start=2026-09-21&end=2026-09-28 | b68aec98e5e31d87
+staffRoles crew | job-costing mixed ?start=2026-09-21&end=2026-09-28&includeTravel=1 | b68aec98e5e31d87
+staffRoles crew | job-costing mixed ?start=2026-09-21&end=2026-09-28&jobId=job-solo | b68aec98e5e31d87
+staffRoles crew | job-costing mixed ?start=2026-09-21&end=2026-09-28&jobId=walk-1 | b68aec98e5e31d87
+staffRoles crew | job-costing mixed ?start=2026-09-24&end=2026-09-26 | b68aec98e5e31d87
+staffRoles crew | money GET ?jobId=job-costed | 04ad75a07b891771
+staffRoles crew | money GET ?jobId=job-uncosted | 04ad75a07b891771
+staffRoles crew | money GET ?view=invoices | 04ad75a07b891771
+staffRoles crew | money GET ?view=invoices&format=csv | 04ad75a07b891771
+staffRoles crew | money GET ?view=payments&format=csv | 04ad75a07b891771
+staffRoles crew | money POST costs.save | 04ad75a07b891771
+staffRoles crew | money POST estimate.mark_sent | 04ad75a07b891771
+staffRoles crew | integration-status GET | 359bd6cfd6110715
+staffRoles sales | job-costing solo ?start=2026-09-21&end=2026-09-28 | b68aec98e5e31d87
+staffRoles sales | job-costing solo ?start=2026-09-21&end=2026-09-28&includeTravel=1 | b68aec98e5e31d87
+staffRoles sales | job-costing solo ?start=2026-09-21&end=2026-09-28&jobId=job-solo | b68aec98e5e31d87
+staffRoles sales | job-costing solo ?start=2026-09-21&end=2026-09-28&jobId=walk-1 | b68aec98e5e31d87
+staffRoles sales | job-costing solo ?start=2026-09-24&end=2026-09-26 | b68aec98e5e31d87
+staffRoles sales | job-costing team ?start=2026-09-21&end=2026-09-28 | b68aec98e5e31d87
+staffRoles sales | job-costing team ?start=2026-09-21&end=2026-09-28&includeTravel=1 | b68aec98e5e31d87
+staffRoles sales | job-costing team ?start=2026-09-21&end=2026-09-28&jobId=job-solo | b68aec98e5e31d87
+staffRoles sales | job-costing team ?start=2026-09-21&end=2026-09-28&jobId=walk-1 | b68aec98e5e31d87
+staffRoles sales | job-costing team ?start=2026-09-24&end=2026-09-26 | b68aec98e5e31d87
+staffRoles sales | job-costing overtime ?start=2026-09-21&end=2026-09-28 | b68aec98e5e31d87
+staffRoles sales | job-costing overtime ?start=2026-09-21&end=2026-09-28&includeTravel=1 | b68aec98e5e31d87
+staffRoles sales | job-costing overtime ?start=2026-09-21&end=2026-09-28&jobId=job-solo | b68aec98e5e31d87
+staffRoles sales | job-costing overtime ?start=2026-09-21&end=2026-09-28&jobId=walk-1 | b68aec98e5e31d87
+staffRoles sales | job-costing overtime ?start=2026-09-24&end=2026-09-26 | b68aec98e5e31d87
+staffRoles sales | job-costing mixed ?start=2026-09-21&end=2026-09-28 | b68aec98e5e31d87
+staffRoles sales | job-costing mixed ?start=2026-09-21&end=2026-09-28&includeTravel=1 | b68aec98e5e31d87
+staffRoles sales | job-costing mixed ?start=2026-09-21&end=2026-09-28&jobId=job-solo | b68aec98e5e31d87
+staffRoles sales | job-costing mixed ?start=2026-09-21&end=2026-09-28&jobId=walk-1 | b68aec98e5e31d87
+staffRoles sales | job-costing mixed ?start=2026-09-24&end=2026-09-26 | b68aec98e5e31d87
+staffRoles sales | money GET ?jobId=job-costed | 04ad75a07b891771
+staffRoles sales | money GET ?jobId=job-uncosted | 04ad75a07b891771
+staffRoles sales | money GET ?view=invoices | 04ad75a07b891771
+staffRoles sales | money GET ?view=invoices&format=csv | 04ad75a07b891771
+staffRoles sales | money GET ?view=payments&format=csv | 04ad75a07b891771
+staffRoles sales | money POST costs.save | 04ad75a07b891771
+staffRoles sales | money POST estimate.mark_sent | 04ad75a07b891771
+staffRoles sales | integration-status GET | 359bd6cfd6110715
+======== 04ad75a07b891771
+403 application/json
+{"ok":false,"code":"money_forbidden","error":"Only an operations manager or owner can manage job money."}
+======== 0dda46bafaf7f230
+200 application/json
+{"ok":true,"policy":{"name":"colorado","weeklyHours":40,"dailyHours":12,"consecutiveHours":12,"consecutiveGapMinutes":60,"multiplier":1.5},"start":"2026-09-21","end":"2026-09-28","endExclusive":true,"jobId":"","includeTravel":true,"asOf":"2026-10-05T18:00:00.000Z","source":"explicit_employee_job_segments","jobs":[{"jobId":"job-team","jobLabel":"Synthetic job-team","approved":{"workHours":11,"travelHours":0,"laborHours":11,"straightCost":459.27,"overtimePremium":0,"cost":459.27},"pending":{"workHours":3,"travelHours":0,"laborHours":3,"straightCost":157.11,"overtimePremium":0,"cost":157.11},"projected":{"workHours":14,"travelHours":0,"laborHours":14,"straightCost":616.38,"overtimePremium":0,"cost":616.38},"employees":[{"employee":"crew.three","name":"Synthetic Three","approvedHours":4,"pendingHours":0,"approvedCost":92.68,"projectedCost":92.68},{"employee":"crew.two","name":"Synthetic Two","approvedHours":7,"pendingHours":3,"approvedCost":366.59,"projectedCost":523.7}],"approvedTimecards":3,"pendingTimecards":1,"openShifts":0,"needsReviewCount":0,"legacyAssociationOnlyCount":0,"missingRateCount":0},{"jobId":"job-solo","jobLabel":"Synthetic job-solo","approved":{"workHours":6.5,"travelHours":1,"laborHours":7.5,"straightCost":247.48,"overtimePremium":0,"cost":247.48},"pending":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":0,"cost":0},"projected":{"workHours":6.5,"travelHours":1,"laborHours":7.5,"straightCost":247.48,"overtimePremium":0,"cost":247.48},"employees":[{"employee":"crew.solo","name":"Synthetic Solo","approvedHours":5,"pendingHours":0,"approvedCost":189.55,"projectedCost":189.55},{"employee":"crew.three","name":"Synthetic Three","approvedHours":2.5,"pendingHours":0,"approvedCost":57.93,"projectedCost":57.93}],"approvedTimecards":2,"pendingTimecards":0,"openShifts":1,"needsReviewCount":0,"legacyAssociationOnlyCount":0,"missingRateCount":0},{"jobId":"job-salary","jobLabel":"Synthetic job-salary","approved":{"workHours":3,"travelHours":0,"laborHours":3,"straightCost":157.11,"overtimePremium":0,"cost":157.11},"pending":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":0,"cost":0},"projected":{"workHours":3,"travelHours":0,"laborHours":3,"straightCost":157.11,"overtimePremium":0,"cost":157.11},"employees":[{"employee":"crew.two","name":"Synthetic Two","approvedHours":3,"pendingHours":0,"approvedCost":157.11,"projectedCost":157.11}],"approvedTimecards":1,"pendingTimecards":0,"openShifts":0,"needsReviewCount":0,"legacyAssociationOnlyCount":0,"missingRateCount":0},{"jobId":"job-norate","jobLabel":"Synthetic job-norate","approved":{"workHours":2,"travelHours":0,"laborHours":2,"straightCost":0,"overtimePremium":0,"cost":0},"pending":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":0,"cost":0},"projected":{"workHours":2,"travelHours":0,"laborHours":2,"straightCost":0,"overtimePremium":0,"cost":0},"employees":[{"employee":"crew.three","name":"Synthetic Three","approvedHours":2,"pendingHours":0,"approvedCost":0,"projectedCost":0}],"approvedTimecards":1,"pendingTimecards":0,"openShifts":0,"needsReviewCount":0,"legacyAssociationOnlyCount":0,"missingRateCount":1}],"totals":{"approved":{"workHours":22.5,"travelHours":1,"laborHours":23.5,"straightCost":863.86,"overtimePremium":0,"cost":863.86},"pending":{"workHours":3,"travelHours":0,"laborHours":3,"straightCost":157.11,"overtimePremium":0,"cost":157.11},"projected":{"workHours":25.5,"travelHours":1,"laborHours":26.5,"straightCost":1020.97,"overtimePremium":0,"cost":1020.97}},"walkthroughLabor":{"costedAs":"acquisition","visits":[{"jobId":"walk-1","jobLabel":"Synthetic walk-1","approved":{"workHours":2,"travelHours":0,"laborHours":2,"straightCost":104.74,"overtimePremium":0,"cost":104.74},"pending":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":0,"cost":0},"projected":{"workHours":2,"travelHours":0,"laborHours":2,"straightCost":104.74,"overtimePremium":0,"cost":104.74},"employees":[{"employee":"crew.two","name":"Synthetic Two","approvedHours":2,"pendingHours":0,"approvedCost":104.74,"projectedCost":104.74}],"approvedTimecards":1,"pendingTimecards":0,"openShifts":0,"needsReviewCount":0,"legacyAssociationOnlyCount":0,"missingRateCount":0}],"totals":{"approved":{"workHours":2,"travelHours":0,"laborHours":2,"straightCost":104.74,"overtimePremium":0,"cost":104.74},"pending":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":0,"cost":0},"projected":{"workHours":2,"travelHours":0,"laborHours":2,"straightCost":104.74,"overtimePremium":0,"cost":104.74}}},"needsReviewCount":0,"openShifts":1,"legacyAssociationOnlyCount":0,"coverage":{"complete":false,"asOf":"2026-10-05T18:00:00.000Z","reasons":["open_shifts","pending_timecards","missing_rate","non_hourly_pay_type"]}}
+======== 118f25d30b6e05f7
+200 text/csv; charset=utf-8
+"Received (Denver)","Received at (UTC)","Customer","Customer ID","Job ID","Kind","Method","Amount","Reference","Recorded by","Verified","Source","Entry ID"
+
+======== 12f8fba45e67ace9
+200 application/json
+{"ok":true,"authority":"employee_hub","enabled":false,"viewer":{"id":"zacb"},"job":{"id":"job-costed","revision":"r0","customerId":"c1","customer":"Synthetic Customer","serviceType":"Garage transformation","date":"2026-09-24","status":"completed","notify":true,"totals":{"quoteCents":90000,"approvedChangeCents":0,"totalCents":90000,"paidCents":0,"tipCents":0,"appliedCents":0,"balanceCents":90000,"overpaidCents":0,"depositRequiredCents":45000,"depositPaidCents":0,"depositDueCents":45000,"dueNowCents":90000,"purpose":"balance","complete":true,"issues":[]},"estimate":{"number":"EST-000001","status":"accepted","revision":null,"scope":"","validUntil":null,"termsVersion":null,"sentAt":null,"sentChannel":null,"acceptedAt":null,"acceptedBy":null,"fingerprint":"bd953b52a8a6f79f2810de744cf36fd00027fce41ca7a02c4c0bb6dbcfe5159e"},"lineItems":[{"id":"line-1","kind":"service","name":"Synthetic cleanout","description":"","quantity":1,"unitCents":90000,"totalCents":90000,"amount":900,"optional":false,"selected":true,"taxable":false,"customerSupplied":false,"grouped":false}],"linesComplete":true,"approval":null,"invoice":{"status":"overdue","savedStatus":"issued","number":"INV-000001","amountCents":90000,"dueDate":"2026-10-01","issuedAt":"2026-09-24T20:00:00.000Z","customerReference":null,"voidedAt":null,"voidReason":null},"invoicePreview":{"lineItems":[{"id":"line-1","name":"Synthetic cleanout","quantity":1,"totalCents":90000}],"totalCents":90000,"notices":[]},"payments":[],"ledger":{"stored":false,"complete":true,"legacyCents":0,"unreconciledCents":0,"issues":[]},"costs":{"laborCents":15164,"disposalCents":8550,"materialsCents":0,"fuelCents":1200,"processingCents":0,"otherCents":0,"recordedAt":"2026-09-25T18:00:00.000Z","recordedBy":"zacb"}},"asOf":"2026-10-05T18:00:00.000Z"}
+======== 1b06f033818abdd8
+200 application/json
+{"ok":true,"policy":{"name":"colorado","weeklyHours":40,"dailyHours":12,"consecutiveHours":12,"consecutiveGapMinutes":60,"multiplier":1.5},"start":"2026-09-21","end":"2026-09-28","endExclusive":true,"jobId":"","includeTravel":false,"asOf":"2026-10-05T18:00:00.000Z","source":"explicit_employee_job_segments","jobs":[{"jobId":"job-solo","jobLabel":"Synthetic job-solo","approved":{"workHours":4,"travelHours":1,"laborHours":4,"straightCost":151.64,"overtimePremium":0,"cost":151.64},"pending":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":0,"cost":0},"projected":{"workHours":4,"travelHours":1,"laborHours":4,"straightCost":151.64,"overtimePremium":0,"cost":151.64},"employees":[{"employee":"crew.solo","name":"Synthetic Solo","approvedHours":4,"pendingHours":0,"approvedCost":151.64,"projectedCost":151.64}],"approvedTimecards":1,"pendingTimecards":0,"openShifts":0,"needsReviewCount":0,"legacyAssociationOnlyCount":0,"missingRateCount":0}],"totals":{"approved":{"workHours":4,"travelHours":1,"laborHours":4,"straightCost":151.64,"overtimePremium":0,"cost":151.64},"pending":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":0,"cost":0},"projected":{"workHours":4,"travelHours":1,"laborHours":4,"straightCost":151.64,"overtimePremium":0,"cost":151.64}},"walkthroughLabor":{"costedAs":"acquisition","visits":[],"totals":{"approved":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":0,"cost":0},"pending":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":0,"cost":0},"projected":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":0,"cost":0}}},"needsReviewCount":0,"openShifts":0,"legacyAssociationOnlyCount":0,"coverage":{"complete":true,"asOf":"2026-10-05T18:00:00.000Z","reasons":[]}}
+======== 1d37aa11c415b128
+200 application/json
+{"ok":true,"policy":{"name":"colorado","weeklyHours":40,"dailyHours":12,"consecutiveHours":12,"consecutiveGapMinutes":60,"multiplier":1.5},"start":"2026-09-21","end":"2026-09-28","endExclusive":true,"jobId":"","includeTravel":true,"asOf":"2026-10-05T18:00:00.000Z","source":"explicit_employee_job_segments","jobs":[{"jobId":"job-solo","jobLabel":"Synthetic job-solo","approved":{"workHours":4,"travelHours":1,"laborHours":5,"straightCost":189.55,"overtimePremium":0,"cost":189.55},"pending":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":0,"cost":0},"projected":{"workHours":4,"travelHours":1,"laborHours":5,"straightCost":189.55,"overtimePremium":0,"cost":189.55},"employees":[{"employee":"crew.solo","name":"Synthetic Solo","approvedHours":5,"pendingHours":0,"approvedCost":189.55,"projectedCost":189.55}],"approvedTimecards":1,"pendingTimecards":0,"openShifts":0,"needsReviewCount":0,"legacyAssociationOnlyCount":0,"missingRateCount":0}],"totals":{"approved":{"workHours":4,"travelHours":1,"laborHours":5,"straightCost":189.55,"overtimePremium":0,"cost":189.55},"pending":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":0,"cost":0},"projected":{"workHours":4,"travelHours":1,"laborHours":5,"straightCost":189.55,"overtimePremium":0,"cost":189.55}},"walkthroughLabor":{"costedAs":"acquisition","visits":[],"totals":{"approved":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":0,"cost":0},"pending":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":0,"cost":0},"projected":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":0,"cost":0}}},"needsReviewCount":0,"openShifts":0,"legacyAssociationOnlyCount":0,"coverage":{"complete":true,"asOf":"2026-10-05T18:00:00.000Z","reasons":[]}}
+======== 219ecfcc6d41c42f
+200 application/json
+{"ok":true,"policy":{"name":"colorado","weeklyHours":40,"dailyHours":12,"consecutiveHours":12,"consecutiveGapMinutes":60,"multiplier":1.5},"start":"2026-09-21","end":"2026-09-28","endExclusive":true,"jobId":"job-solo","includeTravel":false,"asOf":"2026-10-05T18:00:00.000Z","source":"explicit_employee_job_segments","jobs":[{"jobId":"job-solo","jobLabel":"Synthetic job-solo","approved":{"workHours":6.5,"travelHours":1,"laborHours":6.5,"straightCost":209.57,"overtimePremium":0,"cost":209.57},"pending":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":0,"cost":0},"projected":{"workHours":6.5,"travelHours":1,"laborHours":6.5,"straightCost":209.57,"overtimePremium":0,"cost":209.57},"employees":[{"employee":"crew.solo","name":"Synthetic Solo","approvedHours":4,"pendingHours":0,"approvedCost":151.64,"projectedCost":151.64},{"employee":"crew.three","name":"Synthetic Three","approvedHours":2.5,"pendingHours":0,"approvedCost":57.93,"projectedCost":57.93}],"approvedTimecards":2,"pendingTimecards":0,"openShifts":1,"needsReviewCount":0,"legacyAssociationOnlyCount":0,"missingRateCount":0}],"totals":{"approved":{"workHours":6.5,"travelHours":1,"laborHours":6.5,"straightCost":209.57,"overtimePremium":0,"cost":209.57},"pending":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":0,"cost":0},"projected":{"workHours":6.5,"travelHours":1,"laborHours":6.5,"straightCost":209.57,"overtimePremium":0,"cost":209.57}},"walkthroughLabor":{"costedAs":"acquisition","visits":[],"totals":{"approved":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":0,"cost":0},"pending":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":0,"cost":0},"projected":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":0,"cost":0}}},"needsReviewCount":0,"openShifts":1,"legacyAssociationOnlyCount":0,"coverage":{"complete":false,"asOf":"2026-10-05T18:00:00.000Z","reasons":["open_shifts","missing_rate"]}}
+======== 359bd6cfd6110715
+200 application/json
+{"ok":true,"status":{"firebase":false,"employeeAccounts":false,"customerPortal":false,"highlevel":false,"quo":false,"google":false,"openai":false,"stripe":false,"stripeWebhook":false,"quickbooks":false,"gusto":false,"highlevelPipeline":false,"automations":false,"serverMessaging":false,"serverScheduleSync":false},"flags":{"moneyApi":false}}
+======== 52e6991ab410768b
+409 application/json
+{"ok":false,"code":"money_already_approved","error":"This estimate is already approved. Save a revision first if the customer is approving a change."}
+======== 5991021b48841076
+200 application/json
+{"ok":true,"policy":{"name":"colorado","weeklyHours":40,"dailyHours":12,"consecutiveHours":12,"consecutiveGapMinutes":60,"multiplier":1.5},"start":"2026-09-21","end":"2026-09-28","endExclusive":true,"jobId":"","includeTravel":true,"asOf":"2026-10-05T18:00:00.000Z","source":"explicit_employee_job_segments","jobs":[{"jobId":"job-ot-a","jobLabel":"Synthetic job-ot-a","approved":{"workHours":30,"travelHours":0,"laborHours":30,"straightCost":1137.3,"overtimePremium":0,"cost":1137.3},"pending":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":113.73,"cost":113.73},"projected":{"workHours":30,"travelHours":0,"laborHours":30,"straightCost":1137.3,"overtimePremium":113.73,"cost":1251.03},"employees":[{"employee":"crew.solo","name":"Synthetic Solo","approvedHours":30,"pendingHours":0,"approvedCost":1137.3,"projectedCost":1251.03}],"approvedTimecards":3,"pendingTimecards":0,"openShifts":0,"needsReviewCount":0,"legacyAssociationOnlyCount":0,"missingRateCount":0},{"jobId":"job-ot-b","jobLabel":"Synthetic job-ot-b","approved":{"workHours":10,"travelHours":0,"laborHours":10,"straightCost":379.1,"overtimePremium":0,"cost":379.1},"pending":{"workHours":10,"travelHours":0,"laborHours":10,"straightCost":379.1,"overtimePremium":75.82,"cost":454.92},"projected":{"workHours":20,"travelHours":0,"laborHours":20,"straightCost":758.2,"overtimePremium":75.82,"cost":834.02},"employees":[{"employee":"crew.solo","name":"Synthetic Solo","approvedHours":10,"pendingHours":10,"approvedCost":379.1,"projectedCost":834.02}],"approvedTimecards":1,"pendingTimecards":1,"openShifts":0,"needsReviewCount":0,"legacyAssociationOnlyCount":0,"missingRateCount":0}],"totals":{"approved":{"workHours":40,"travelHours":0,"laborHours":40,"straightCost":1516.4,"overtimePremium":0,"cost":1516.4},"pending":{"workHours":10,"travelHours":0,"laborHours":10,"straightCost":379.1,"overtimePremium":189.55,"cost":568.65},"projected":{"workHours":50,"travelHours":0,"laborHours":50,"straightCost":1895.5,"overtimePremium":189.55,"cost":2085.05}},"walkthroughLabor":{"costedAs":"acquisition","visits":[],"totals":{"approved":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":0,"cost":0},"pending":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":0,"cost":0},"projected":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":0,"cost":0}}},"needsReviewCount":0,"openShifts":0,"legacyAssociationOnlyCount":0,"coverage":{"complete":false,"asOf":"2026-10-05T18:00:00.000Z","reasons":["pending_timecards"]}}
+======== 5c87396b08c2fa4d
+200 application/json
+{"ok":true,"policy":{"name":"colorado","weeklyHours":40,"dailyHours":12,"consecutiveHours":12,"consecutiveGapMinutes":60,"multiplier":1.5},"start":"2026-09-21","end":"2026-09-28","endExclusive":true,"jobId":"job-solo","includeTravel":false,"asOf":"2026-10-05T18:00:00.000Z","source":"explicit_employee_job_segments","jobs":[{"jobId":"job-solo","jobLabel":"Synthetic job-solo","approved":{"workHours":2.5,"travelHours":0,"laborHours":2.5,"straightCost":57.93,"overtimePremium":0,"cost":57.93},"pending":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":0,"cost":0},"projected":{"workHours":2.5,"travelHours":0,"laborHours":2.5,"straightCost":57.93,"overtimePremium":0,"cost":57.93},"employees":[{"employee":"crew.three","name":"Synthetic Three","approvedHours":2.5,"pendingHours":0,"approvedCost":57.93,"projectedCost":57.93}],"approvedTimecards":1,"pendingTimecards":0,"openShifts":0,"needsReviewCount":0,"legacyAssociationOnlyCount":0,"missingRateCount":0}],"totals":{"approved":{"workHours":2.5,"travelHours":0,"laborHours":2.5,"straightCost":57.93,"overtimePremium":0,"cost":57.93},"pending":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":0,"cost":0},"projected":{"workHours":2.5,"travelHours":0,"laborHours":2.5,"straightCost":57.93,"overtimePremium":0,"cost":57.93}},"walkthroughLabor":{"costedAs":"acquisition","visits":[],"totals":{"approved":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":0,"cost":0},"pending":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":0,"cost":0},"projected":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":0,"cost":0}}},"needsReviewCount":0,"openShifts":0,"legacyAssociationOnlyCount":0,"coverage":{"complete":true,"asOf":"2026-10-05T18:00:00.000Z","reasons":[]}}
+======== 604103f175ff6ad6
+200 application/json
+{"ok":true,"authority":"employee_hub","enabled":false,"viewer":{"id":"alexk"},"job":{"id":"job-costed","revision":"r0","customerId":"c1","customer":"Synthetic Customer","serviceType":"Garage transformation","date":"2026-09-24","status":"completed","notify":true,"totals":{"quoteCents":90000,"approvedChangeCents":0,"totalCents":90000,"paidCents":0,"tipCents":0,"appliedCents":0,"balanceCents":90000,"overpaidCents":0,"depositRequiredCents":45000,"depositPaidCents":0,"depositDueCents":45000,"dueNowCents":90000,"purpose":"balance","complete":true,"issues":[]},"estimate":{"number":"EST-000001","status":"accepted","revision":null,"scope":"","validUntil":null,"termsVersion":null,"sentAt":null,"sentChannel":null,"acceptedAt":null,"acceptedBy":null,"fingerprint":"bd953b52a8a6f79f2810de744cf36fd00027fce41ca7a02c4c0bb6dbcfe5159e"},"lineItems":[{"id":"line-1","kind":"service","name":"Synthetic cleanout","description":"","quantity":1,"unitCents":90000,"totalCents":90000,"amount":900,"optional":false,"selected":true,"taxable":false,"customerSupplied":false,"grouped":false}],"linesComplete":true,"approval":null,"invoice":{"status":"overdue","savedStatus":"issued","number":"INV-000001","amountCents":90000,"dueDate":"2026-10-01","issuedAt":"2026-09-24T20:00:00.000Z","customerReference":null,"voidedAt":null,"voidReason":null},"invoicePreview":{"lineItems":[{"id":"line-1","name":"Synthetic cleanout","quantity":1,"totalCents":90000}],"totalCents":90000,"notices":[]},"payments":[],"ledger":{"stored":false,"complete":true,"legacyCents":0,"unreconciledCents":0,"issues":[]},"costs":{"laborCents":15164,"disposalCents":8550,"materialsCents":0,"fuelCents":1200,"processingCents":0,"otherCents":0,"recordedAt":"2026-09-25T18:00:00.000Z","recordedBy":"zacb"}},"asOf":"2026-10-05T18:00:00.000Z"}
+======== 621bca32b99f55f0
+200 application/json
+{"ok":true,"policy":{"name":"colorado","weeklyHours":40,"dailyHours":12,"consecutiveHours":12,"consecutiveGapMinutes":60,"multiplier":1.5},"start":"2026-09-24","end":"2026-09-26","endExclusive":true,"jobId":"","includeTravel":false,"asOf":"2026-10-05T18:00:00.000Z","source":"explicit_employee_job_segments","jobs":[{"jobId":"job-salary","jobLabel":"Synthetic job-salary","approved":{"workHours":3,"travelHours":0,"laborHours":3,"straightCost":157.11,"overtimePremium":0,"cost":157.11},"pending":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":0,"cost":0},"projected":{"workHours":3,"travelHours":0,"laborHours":3,"straightCost":157.11,"overtimePremium":0,"cost":157.11},"employees":[{"employee":"crew.two","name":"Synthetic Two","approvedHours":3,"pendingHours":0,"approvedCost":157.11,"projectedCost":157.11}],"approvedTimecards":1,"pendingTimecards":0,"openShifts":0,"needsReviewCount":0,"legacyAssociationOnlyCount":0,"missingRateCount":0},{"jobId":"job-team","jobLabel":"Synthetic job-team","approved":{"workHours":2,"travelHours":0,"laborHours":2,"straightCost":104.74,"overtimePremium":0,"cost":104.74},"pending":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":0,"cost":0},"projected":{"workHours":2,"travelHours":0,"laborHours":2,"straightCost":104.74,"overtimePremium":0,"cost":104.74},"employees":[{"employee":"crew.two","name":"Synthetic Two","approvedHours":2,"pendingHours":0,"approvedCost":104.74,"projectedCost":104.74}],"approvedTimecards":1,"pendingTimecards":0,"openShifts":0,"needsReviewCount":0,"legacyAssociationOnlyCount":0,"missingRateCount":0},{"jobId":"job-norate","jobLabel":"Synthetic job-norate","approved":{"workHours":2,"travelHours":0,"laborHours":2,"straightCost":0,"overtimePremium":0,"cost":0},"pending":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":0,"cost":0},"projected":{"workHours":2,"travelHours":0,"laborHours":2,"straightCost":0,"overtimePremium":0,"cost":0},"employees":[{"employee":"crew.three","name":"Synthetic Three","approvedHours":2,"pendingHours":0,"approvedCost":0,"projectedCost":0}],"approvedTimecards":1,"pendingTimecards":0,"openShifts":0,"needsReviewCount":0,"legacyAssociationOnlyCount":0,"missingRateCount":1},{"jobId":"job-solo","jobLabel":"","approved":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":0,"cost":0},"pending":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":0,"cost":0},"projected":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":0,"cost":0},"employees":[],"approvedTimecards":0,"pendingTimecards":0,"openShifts":1,"needsReviewCount":0,"legacyAssociationOnlyCount":0,"missingRateCount":0}],"totals":{"approved":{"workHours":7,"travelHours":0,"laborHours":7,"straightCost":261.85,"overtimePremium":0,"cost":261.85},"pending":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":0,"cost":0},"projected":{"workHours":7,"travelHours":0,"laborHours":7,"straightCost":261.85,"overtimePremium":0,"cost":261.85}},"walkthroughLabor":{"costedAs":"acquisition","visits":[{"jobId":"walk-1","jobLabel":"Synthetic walk-1","approved":{"workHours":2,"travelHours":0,"laborHours":2,"straightCost":104.74,"overtimePremium":0,"cost":104.74},"pending":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":0,"cost":0},"projected":{"workHours":2,"travelHours":0,"laborHours":2,"straightCost":104.74,"overtimePremium":0,"cost":104.74},"employees":[{"employee":"crew.two","name":"Synthetic Two","approvedHours":2,"pendingHours":0,"approvedCost":104.74,"projectedCost":104.74}],"approvedTimecards":1,"pendingTimecards":0,"openShifts":0,"needsReviewCount":0,"legacyAssociationOnlyCount":0,"missingRateCount":0}],"totals":{"approved":{"workHours":2,"travelHours":0,"laborHours":2,"straightCost":104.74,"overtimePremium":0,"cost":104.74},"pending":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":0,"cost":0},"projected":{"workHours":2,"travelHours":0,"laborHours":2,"straightCost":104.74,"overtimePremium":0,"cost":104.74}}},"needsReviewCount":0,"openShifts":1,"legacyAssociationOnlyCount":0,"coverage":{"complete":false,"asOf":"2026-10-05T18:00:00.000Z","reasons":["open_shifts","pending_timecards","missing_rate","non_hourly_pay_type"]}}
+======== 6e2a1972f932d2fb
+200 application/json
+{"ok":true,"policy":{"name":"colorado","weeklyHours":40,"dailyHours":12,"consecutiveHours":12,"consecutiveGapMinutes":60,"multiplier":1.5},"start":"2026-09-21","end":"2026-09-28","endExclusive":true,"jobId":"","includeTravel":false,"asOf":"2026-10-05T18:00:00.000Z","source":"explicit_employee_job_segments","jobs":[{"jobId":"job-ot-a","jobLabel":"Synthetic job-ot-a","approved":{"workHours":30,"travelHours":0,"laborHours":30,"straightCost":1137.3,"overtimePremium":0,"cost":1137.3},"pending":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":113.73,"cost":113.73},"projected":{"workHours":30,"travelHours":0,"laborHours":30,"straightCost":1137.3,"overtimePremium":113.73,"cost":1251.03},"employees":[{"employee":"crew.solo","name":"Synthetic Solo","approvedHours":30,"pendingHours":0,"approvedCost":1137.3,"projectedCost":1251.03}],"approvedTimecards":3,"pendingTimecards":0,"openShifts":0,"needsReviewCount":0,"legacyAssociationOnlyCount":0,"missingRateCount":0},{"jobId":"job-ot-b","jobLabel":"Synthetic job-ot-b","approved":{"workHours":10,"travelHours":0,"laborHours":10,"straightCost":379.1,"overtimePremium":0,"cost":379.1},"pending":{"workHours":10,"travelHours":0,"laborHours":10,"straightCost":379.1,"overtimePremium":75.82,"cost":454.92},"projected":{"workHours":20,"travelHours":0,"laborHours":20,"straightCost":758.2,"overtimePremium":75.82,"cost":834.02},"employees":[{"employee":"crew.solo","name":"Synthetic Solo","approvedHours":10,"pendingHours":10,"approvedCost":379.1,"projectedCost":834.02}],"approvedTimecards":1,"pendingTimecards":1,"openShifts":0,"needsReviewCount":0,"legacyAssociationOnlyCount":0,"missingRateCount":0}],"totals":{"approved":{"workHours":40,"travelHours":0,"laborHours":40,"straightCost":1516.4,"overtimePremium":0,"cost":1516.4},"pending":{"workHours":10,"travelHours":0,"laborHours":10,"straightCost":379.1,"overtimePremium":189.55,"cost":568.65},"projected":{"workHours":50,"travelHours":0,"laborHours":50,"straightCost":1895.5,"overtimePremium":189.55,"cost":2085.05}},"walkthroughLabor":{"costedAs":"acquisition","visits":[],"totals":{"approved":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":0,"cost":0},"pending":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":0,"cost":0},"projected":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":0,"cost":0}}},"needsReviewCount":0,"openShifts":0,"legacyAssociationOnlyCount":0,"coverage":{"complete":false,"asOf":"2026-10-05T18:00:00.000Z","reasons":["pending_timecards"]}}
+======== 736d09f7d158413d
+200 application/json
+{"ok":true,"policy":{"name":"colorado","weeklyHours":40,"dailyHours":12,"consecutiveHours":12,"consecutiveGapMinutes":60,"multiplier":1.5},"start":"2026-09-21","end":"2026-09-28","endExclusive":true,"jobId":"walk-1","includeTravel":false,"asOf":"2026-10-05T18:00:00.000Z","source":"explicit_employee_job_segments","jobs":[],"totals":{"approved":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":0,"cost":0},"pending":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":0,"cost":0},"projected":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":0,"cost":0}},"walkthroughLabor":{"costedAs":"acquisition","visits":[{"jobId":"walk-1","jobLabel":"Synthetic walk-1","approved":{"workHours":2,"travelHours":0,"laborHours":2,"straightCost":104.74,"overtimePremium":0,"cost":104.74},"pending":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":0,"cost":0},"projected":{"workHours":2,"travelHours":0,"laborHours":2,"straightCost":104.74,"overtimePremium":0,"cost":104.74},"employees":[{"employee":"crew.two","name":"Synthetic Two","approvedHours":2,"pendingHours":0,"approvedCost":104.74,"projectedCost":104.74}],"approvedTimecards":1,"pendingTimecards":0,"openShifts":0,"needsReviewCount":0,"legacyAssociationOnlyCount":0,"missingRateCount":0}],"totals":{"approved":{"workHours":2,"travelHours":0,"laborHours":2,"straightCost":104.74,"overtimePremium":0,"cost":104.74},"pending":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":0,"cost":0},"projected":{"workHours":2,"travelHours":0,"laborHours":2,"straightCost":104.74,"overtimePremium":0,"cost":104.74}}},"needsReviewCount":0,"openShifts":0,"legacyAssociationOnlyCount":0,"coverage":{"complete":false,"asOf":"2026-10-05T18:00:00.000Z","reasons":["pending_timecards","non_hourly_pay_type"]}}
+======== 73deb8d8c1ddfca5
+200 application/json
+{"ok":true,"authority":"employee_hub","requestId":"6f1c7c1e-5d8a-4c55-9d2e-0a8f4f0e7a01","action":"costs.save","replayed":false,"job":{"id":"job-costed","revision":"r1","customerId":"c1","customer":"Synthetic Customer","serviceType":"Garage transformation","date":"2026-09-24","status":"completed","notify":true,"totals":{"quoteCents":90000,"approvedChangeCents":0,"totalCents":90000,"paidCents":0,"tipCents":0,"appliedCents":0,"balanceCents":90000,"overpaidCents":0,"depositRequiredCents":45000,"depositPaidCents":0,"depositDueCents":45000,"dueNowCents":90000,"purpose":"balance","complete":true,"issues":[]},"estimate":{"number":"EST-000001","status":"accepted","revision":null,"scope":"","validUntil":null,"termsVersion":null,"sentAt":null,"sentChannel":null,"acceptedAt":null,"acceptedBy":null,"fingerprint":"bd953b52a8a6f79f2810de744cf36fd00027fce41ca7a02c4c0bb6dbcfe5159e"},"lineItems":[{"id":"line-1","kind":"service","name":"Synthetic cleanout","description":"","quantity":1,"unitCents":90000,"totalCents":90000,"amount":900,"optional":false,"selected":true,"taxable":false,"customerSupplied":false,"grouped":false}],"linesComplete":true,"approval":null,"invoice":{"status":"overdue","savedStatus":"issued","number":"INV-000001","amountCents":90000,"dueDate":"2026-10-01","issuedAt":"2026-09-24T20:00:00.000Z","customerReference":null,"voidedAt":null,"voidReason":null},"invoicePreview":{"lineItems":[{"id":"line-1","name":"Synthetic cleanout","quantity":1,"totalCents":90000}],"totalCents":90000,"notices":[]},"payments":[],"ledger":{"stored":false,"complete":true,"legacyCents":0,"unreconciledCents":0,"issues":[]},"costs":{"laborCents":15164,"disposalCents":9000,"materialsCents":0,"fuelCents":1200,"processingCents":0,"otherCents":0,"recordedAt":"2026-10-05T18:00:00.000Z","recordedBy":"alexk"}},"warnings":[]}
+======== 74406d7a6ae68a0e
+200 application/json
+{"ok":true,"policy":{"name":"colorado","weeklyHours":40,"dailyHours":12,"consecutiveHours":12,"consecutiveGapMinutes":60,"multiplier":1.5},"start":"2026-09-21","end":"2026-09-28","endExclusive":true,"jobId":"","includeTravel":false,"asOf":"2026-10-05T18:00:00.000Z","source":"explicit_employee_job_segments","jobs":[{"jobId":"job-team","jobLabel":"Synthetic job-team","approved":{"workHours":11,"travelHours":0,"laborHours":11,"straightCost":459.27,"overtimePremium":0,"cost":459.27},"pending":{"workHours":3,"travelHours":0,"laborHours":3,"straightCost":157.11,"overtimePremium":0,"cost":157.11},"projected":{"workHours":14,"travelHours":0,"laborHours":14,"straightCost":616.38,"overtimePremium":0,"cost":616.38},"employees":[{"employee":"crew.three","name":"Synthetic Three","approvedHours":4,"pendingHours":0,"approvedCost":92.68,"projectedCost":92.68},{"employee":"crew.two","name":"Synthetic Two","approvedHours":7,"pendingHours":3,"approvedCost":366.59,"projectedCost":523.7}],"approvedTimecards":3,"pendingTimecards":1,"openShifts":0,"needsReviewCount":0,"legacyAssociationOnlyCount":0,"missingRateCount":0},{"jobId":"job-solo","jobLabel":"Synthetic job-solo","approved":{"workHours":6.5,"travelHours":1,"laborHours":6.5,"straightCost":209.57,"overtimePremium":0,"cost":209.57},"pending":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":0,"cost":0},"projected":{"workHours":6.5,"travelHours":1,"laborHours":6.5,"straightCost":209.57,"overtimePremium":0,"cost":209.57},"employees":[{"employee":"crew.solo","name":"Synthetic Solo","approvedHours":4,"pendingHours":0,"approvedCost":151.64,"projectedCost":151.64},{"employee":"crew.three","name":"Synthetic Three","approvedHours":2.5,"pendingHours":0,"approvedCost":57.93,"projectedCost":57.93}],"approvedTimecards":2,"pendingTimecards":0,"openShifts":1,"needsReviewCount":0,"legacyAssociationOnlyCount":0,"missingRateCount":0},{"jobId":"job-salary","jobLabel":"Synthetic job-salary","approved":{"workHours":3,"travelHours":0,"laborHours":3,"straightCost":157.11,"overtimePremium":0,"cost":157.11},"pending":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":0,"cost":0},"projected":{"workHours":3,"travelHours":0,"laborHours":3,"straightCost":157.11,"overtimePremium":0,"cost":157.11},"employees":[{"employee":"crew.two","name":"Synthetic Two","approvedHours":3,"pendingHours":0,"approvedCost":157.11,"projectedCost":157.11}],"approvedTimecards":1,"pendingTimecards":0,"openShifts":0,"needsReviewCount":0,"legacyAssociationOnlyCount":0,"missingRateCount":0},{"jobId":"job-norate","jobLabel":"Synthetic job-norate","approved":{"workHours":2,"travelHours":0,"laborHours":2,"straightCost":0,"overtimePremium":0,"cost":0},"pending":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":0,"cost":0},"projected":{"workHours":2,"travelHours":0,"laborHours":2,"straightCost":0,"overtimePremium":0,"cost":0},"employees":[{"employee":"crew.three","name":"Synthetic Three","approvedHours":2,"pendingHours":0,"approvedCost":0,"projectedCost":0}],"approvedTimecards":1,"pendingTimecards":0,"openShifts":0,"needsReviewCount":0,"legacyAssociationOnlyCount":0,"missingRateCount":1}],"totals":{"approved":{"workHours":22.5,"travelHours":1,"laborHours":22.5,"straightCost":825.95,"overtimePremium":0,"cost":825.95},"pending":{"workHours":3,"travelHours":0,"laborHours":3,"straightCost":157.11,"overtimePremium":0,"cost":157.11},"projected":{"workHours":25.5,"travelHours":1,"laborHours":25.5,"straightCost":983.06,"overtimePremium":0,"cost":983.06}},"walkthroughLabor":{"costedAs":"acquisition","visits":[{"jobId":"walk-1","jobLabel":"Synthetic walk-1","approved":{"workHours":2,"travelHours":0,"laborHours":2,"straightCost":104.74,"overtimePremium":0,"cost":104.74},"pending":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":0,"cost":0},"projected":{"workHours":2,"travelHours":0,"laborHours":2,"straightCost":104.74,"overtimePremium":0,"cost":104.74},"employees":[{"employee":"crew.two","name":"Synthetic Two","approvedHours":2,"pendingHours":0,"approvedCost":104.74,"projectedCost":104.74}],"approvedTimecards":1,"pendingTimecards":0,"openShifts":0,"needsReviewCount":0,"legacyAssociationOnlyCount":0,"missingRateCount":0}],"totals":{"approved":{"workHours":2,"travelHours":0,"laborHours":2,"straightCost":104.74,"overtimePremium":0,"cost":104.74},"pending":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":0,"cost":0},"projected":{"workHours":2,"travelHours":0,"laborHours":2,"straightCost":104.74,"overtimePremium":0,"cost":104.74}}},"needsReviewCount":0,"openShifts":1,"legacyAssociationOnlyCount":0,"coverage":{"complete":false,"asOf":"2026-10-05T18:00:00.000Z","reasons":["open_shifts","pending_timecards","missing_rate","non_hourly_pay_type"]}}
+======== 7b8276456c9e5b37
+200 application/json
+{"ok":true,"authority":"employee_hub","enabled":false,"viewer":{"id":"tylerg"},"job":{"id":"job-costed","revision":"r0","customerId":"c1","customer":"Synthetic Customer","serviceType":"Garage transformation","date":"2026-09-24","status":"completed","notify":true,"totals":{"quoteCents":90000,"approvedChangeCents":0,"totalCents":90000,"paidCents":0,"tipCents":0,"appliedCents":0,"balanceCents":90000,"overpaidCents":0,"depositRequiredCents":45000,"depositPaidCents":0,"depositDueCents":45000,"dueNowCents":90000,"purpose":"balance","complete":true,"issues":[]},"estimate":{"number":"EST-000001","status":"accepted","revision":null,"scope":"","validUntil":null,"termsVersion":null,"sentAt":null,"sentChannel":null,"acceptedAt":null,"acceptedBy":null,"fingerprint":"bd953b52a8a6f79f2810de744cf36fd00027fce41ca7a02c4c0bb6dbcfe5159e"},"lineItems":[{"id":"line-1","kind":"service","name":"Synthetic cleanout","description":"","quantity":1,"unitCents":90000,"totalCents":90000,"amount":900,"optional":false,"selected":true,"taxable":false,"customerSupplied":false,"grouped":false}],"linesComplete":true,"approval":null,"invoice":{"status":"overdue","savedStatus":"issued","number":"INV-000001","amountCents":90000,"dueDate":"2026-10-01","issuedAt":"2026-09-24T20:00:00.000Z","customerReference":null,"voidedAt":null,"voidReason":null},"invoicePreview":{"lineItems":[{"id":"line-1","name":"Synthetic cleanout","quantity":1,"totalCents":90000}],"totalCents":90000,"notices":[]},"payments":[],"ledger":{"stored":false,"complete":true,"legacyCents":0,"unreconciledCents":0,"issues":[]},"costs":{"laborCents":15164,"disposalCents":8550,"materialsCents":0,"fuelCents":1200,"processingCents":0,"otherCents":0,"recordedAt":"2026-09-25T18:00:00.000Z","recordedBy":"zacb"}},"asOf":"2026-10-05T18:00:00.000Z"}
+======== 89398bd0ccedc74b
+200 application/json
+{"ok":true,"authority":"employee_hub","enabled":false,"view":"invoices","items":[{"jobId":"job-costed","customerId":"c1","customer":"Synthetic Customer","serviceDate":"2026-09-24","number":"INV-000001","status":"overdue","savedStatus":"issued","amountCents":90000,"paidCents":0,"balanceCents":90000,"dueDate":"2026-10-01","issuedAt":"2026-09-24T20:00:00.000Z","issuedDate":"2026-09-24","customerReference":""}],"total":1,"offset":0,"limit":50,"nextOffset":null,"asOf":"2026-10-05T18:00:00.000Z","coverage":{"complete":true,"asOf":"2026-10-05T18:00:00.000Z"},"filters":{"status":null,"startDate":null,"endDate":null,"customerId":null}}
+======== 906f3877fa15b2d9
+200 application/json
+{"ok":true,"policy":{"name":"colorado","weeklyHours":40,"dailyHours":12,"consecutiveHours":12,"consecutiveGapMinutes":60,"multiplier":1.5},"start":"2026-09-21","end":"2026-09-28","endExclusive":true,"jobId":"job-solo","includeTravel":false,"asOf":"2026-10-05T18:00:00.000Z","source":"explicit_employee_job_segments","jobs":[{"jobId":"job-solo","jobLabel":"","approved":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":0,"cost":0},"pending":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":0,"cost":0},"projected":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":0,"cost":0},"employees":[],"approvedTimecards":0,"pendingTimecards":0,"openShifts":0,"needsReviewCount":0,"legacyAssociationOnlyCount":0,"missingRateCount":0}],"totals":{"approved":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":0,"cost":0},"pending":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":0,"cost":0},"projected":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":0,"cost":0}},"walkthroughLabor":{"costedAs":"acquisition","visits":[],"totals":{"approved":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":0,"cost":0},"pending":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":0,"cost":0},"projected":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":0,"cost":0}}},"needsReviewCount":0,"openShifts":0,"legacyAssociationOnlyCount":0,"coverage":{"complete":true,"asOf":"2026-10-05T18:00:00.000Z","reasons":[]}}
+======== 910720c79bcb3783
+200 application/json
+{"ok":true,"policy":{"name":"colorado","weeklyHours":40,"dailyHours":12,"consecutiveHours":12,"consecutiveGapMinutes":60,"multiplier":1.5},"start":"2026-09-21","end":"2026-09-28","endExclusive":true,"jobId":"","includeTravel":true,"asOf":"2026-10-05T18:00:00.000Z","source":"explicit_employee_job_segments","jobs":[{"jobId":"job-team","jobLabel":"Synthetic job-team","approved":{"workHours":9,"travelHours":0,"laborHours":9,"straightCost":354.53,"overtimePremium":0,"cost":354.53},"pending":{"workHours":3,"travelHours":0,"laborHours":3,"straightCost":157.11,"overtimePremium":0,"cost":157.11},"projected":{"workHours":12,"travelHours":0,"laborHours":12,"straightCost":511.64,"overtimePremium":0,"cost":511.64},"employees":[{"employee":"crew.three","name":"Synthetic Three","approvedHours":4,"pendingHours":0,"approvedCost":92.68,"projectedCost":92.68},{"employee":"crew.two","name":"Synthetic Two","approvedHours":5,"pendingHours":3,"approvedCost":261.85,"projectedCost":418.96}],"approvedTimecards":2,"pendingTimecards":1,"openShifts":0,"needsReviewCount":0,"legacyAssociationOnlyCount":0,"missingRateCount":0},{"jobId":"job-solo","jobLabel":"Synthetic job-solo","approved":{"workHours":2.5,"travelHours":0,"laborHours":2.5,"straightCost":57.93,"overtimePremium":0,"cost":57.93},"pending":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":0,"cost":0},"projected":{"workHours":2.5,"travelHours":0,"laborHours":2.5,"straightCost":57.93,"overtimePremium":0,"cost":57.93},"employees":[{"employee":"crew.three","name":"Synthetic Three","approvedHours":2.5,"pendingHours":0,"approvedCost":57.93,"projectedCost":57.93}],"approvedTimecards":1,"pendingTimecards":0,"openShifts":0,"needsReviewCount":0,"legacyAssociationOnlyCount":0,"missingRateCount":0}],"totals":{"approved":{"workHours":11.5,"travelHours":0,"laborHours":11.5,"straightCost":412.46,"overtimePremium":0,"cost":412.46},"pending":{"workHours":3,"travelHours":0,"laborHours":3,"straightCost":157.11,"overtimePremium":0,"cost":157.11},"projected":{"workHours":14.5,"travelHours":0,"laborHours":14.5,"straightCost":569.56,"overtimePremium":0,"cost":569.56}},"walkthroughLabor":{"costedAs":"acquisition","visits":[],"totals":{"approved":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":0,"cost":0},"pending":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":0,"cost":0},"projected":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":0,"cost":0}}},"needsReviewCount":0,"openShifts":0,"legacyAssociationOnlyCount":0,"coverage":{"complete":false,"asOf":"2026-10-05T18:00:00.000Z","reasons":["pending_timecards"]}}
+======== 9d6bd0b496786b7b
+200 application/json
+{"ok":true,"policy":{"name":"colorado","weeklyHours":40,"dailyHours":12,"consecutiveHours":12,"consecutiveGapMinutes":60,"multiplier":1.5},"start":"2026-09-24","end":"2026-09-26","endExclusive":true,"jobId":"","includeTravel":false,"asOf":"2026-10-05T18:00:00.000Z","source":"explicit_employee_job_segments","jobs":[],"totals":{"approved":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":0,"cost":0},"pending":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":0,"cost":0},"projected":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":0,"cost":0}},"walkthroughLabor":{"costedAs":"acquisition","visits":[],"totals":{"approved":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":0,"cost":0},"pending":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":0,"cost":0},"projected":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":0,"cost":0}}},"needsReviewCount":0,"openShifts":0,"legacyAssociationOnlyCount":0,"coverage":{"complete":true,"asOf":"2026-10-05T18:00:00.000Z","reasons":[]}}
+======== 9d6e850eb90c118f
+200 application/json
+{"ok":true,"policy":{"name":"colorado","weeklyHours":40,"dailyHours":12,"consecutiveHours":12,"consecutiveGapMinutes":60,"multiplier":1.5},"start":"2026-09-21","end":"2026-09-28","endExclusive":true,"jobId":"","includeTravel":false,"asOf":"2026-10-05T18:00:00.000Z","source":"explicit_employee_job_segments","jobs":[{"jobId":"job-team","jobLabel":"Synthetic job-team","approved":{"workHours":9,"travelHours":0,"laborHours":9,"straightCost":354.53,"overtimePremium":0,"cost":354.53},"pending":{"workHours":3,"travelHours":0,"laborHours":3,"straightCost":157.11,"overtimePremium":0,"cost":157.11},"projected":{"workHours":12,"travelHours":0,"laborHours":12,"straightCost":511.64,"overtimePremium":0,"cost":511.64},"employees":[{"employee":"crew.three","name":"Synthetic Three","approvedHours":4,"pendingHours":0,"approvedCost":92.68,"projectedCost":92.68},{"employee":"crew.two","name":"Synthetic Two","approvedHours":5,"pendingHours":3,"approvedCost":261.85,"projectedCost":418.96}],"approvedTimecards":2,"pendingTimecards":1,"openShifts":0,"needsReviewCount":0,"legacyAssociationOnlyCount":0,"missingRateCount":0},{"jobId":"job-solo","jobLabel":"Synthetic job-solo","approved":{"workHours":2.5,"travelHours":0,"laborHours":2.5,"straightCost":57.93,"overtimePremium":0,"cost":57.93},"pending":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":0,"cost":0},"projected":{"workHours":2.5,"travelHours":0,"laborHours":2.5,"straightCost":57.93,"overtimePremium":0,"cost":57.93},"employees":[{"employee":"crew.three","name":"Synthetic Three","approvedHours":2.5,"pendingHours":0,"approvedCost":57.93,"projectedCost":57.93}],"approvedTimecards":1,"pendingTimecards":0,"openShifts":0,"needsReviewCount":0,"legacyAssociationOnlyCount":0,"missingRateCount":0}],"totals":{"approved":{"workHours":11.5,"travelHours":0,"laborHours":11.5,"straightCost":412.46,"overtimePremium":0,"cost":412.46},"pending":{"workHours":3,"travelHours":0,"laborHours":3,"straightCost":157.11,"overtimePremium":0,"cost":157.11},"projected":{"workHours":14.5,"travelHours":0,"laborHours":14.5,"straightCost":569.56,"overtimePremium":0,"cost":569.56}},"walkthroughLabor":{"costedAs":"acquisition","visits":[],"totals":{"approved":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":0,"cost":0},"pending":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":0,"cost":0},"projected":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":0,"cost":0}}},"needsReviewCount":0,"openShifts":0,"legacyAssociationOnlyCount":0,"coverage":{"complete":false,"asOf":"2026-10-05T18:00:00.000Z","reasons":["pending_timecards"]}}
+======== 9e5541f68cdc9cc5
+200 application/json
+{"ok":true,"authority":"employee_hub","requestId":"6f1c7c1e-5d8a-4c55-9d2e-0a8f4f0e7a01","action":"costs.save","replayed":false,"job":{"id":"job-costed","revision":"r1","customerId":"c1","customer":"Synthetic Customer","serviceType":"Garage transformation","date":"2026-09-24","status":"completed","notify":true,"totals":{"quoteCents":90000,"approvedChangeCents":0,"totalCents":90000,"paidCents":0,"tipCents":0,"appliedCents":0,"balanceCents":90000,"overpaidCents":0,"depositRequiredCents":45000,"depositPaidCents":0,"depositDueCents":45000,"dueNowCents":90000,"purpose":"balance","complete":true,"issues":[]},"estimate":{"number":"EST-000001","status":"accepted","revision":null,"scope":"","validUntil":null,"termsVersion":null,"sentAt":null,"sentChannel":null,"acceptedAt":null,"acceptedBy":null,"fingerprint":"bd953b52a8a6f79f2810de744cf36fd00027fce41ca7a02c4c0bb6dbcfe5159e"},"lineItems":[{"id":"line-1","kind":"service","name":"Synthetic cleanout","description":"","quantity":1,"unitCents":90000,"totalCents":90000,"amount":900,"optional":false,"selected":true,"taxable":false,"customerSupplied":false,"grouped":false}],"linesComplete":true,"approval":null,"invoice":{"status":"overdue","savedStatus":"issued","number":"INV-000001","amountCents":90000,"dueDate":"2026-10-01","issuedAt":"2026-09-24T20:00:00.000Z","customerReference":null,"voidedAt":null,"voidReason":null},"invoicePreview":{"lineItems":[{"id":"line-1","name":"Synthetic cleanout","quantity":1,"totalCents":90000}],"totalCents":90000,"notices":[]},"payments":[],"ledger":{"stored":false,"complete":true,"legacyCents":0,"unreconciledCents":0,"issues":[]},"costs":{"laborCents":15164,"disposalCents":9000,"materialsCents":0,"fuelCents":1200,"processingCents":0,"otherCents":0,"recordedAt":"2026-10-05T18:00:00.000Z","recordedBy":"zacb"}},"warnings":[]}
+======== a36153f764e0e5cb
+200 application/json
+{"ok":true,"authority":"employee_hub","enabled":false,"viewer":{"id":"zacb"},"job":{"id":"job-uncosted","revision":"r0","customerId":"c2","customer":"Synthetic Other","serviceType":"Garage transformation","date":"2026-09-25","status":"scheduled","notify":true,"totals":{"quoteCents":null,"approvedChangeCents":0,"totalCents":null,"paidCents":0,"tipCents":0,"appliedCents":0,"balanceCents":null,"overpaidCents":null,"depositRequiredCents":null,"depositPaidCents":null,"depositDueCents":null,"dueNowCents":null,"purpose":"deposit","complete":false,"issues":["money_quote_missing"]},"estimate":null,"lineItems":[{"id":"legacy-1","kind":"service","name":"Garage transformation","description":"","quantity":1,"unitCents":null,"totalCents":null,"amount":null,"optional":false,"selected":true,"taxable":false,"customerSupplied":false,"grouped":false}],"linesComplete":false,"approval":null,"invoice":{"status":"not_issued","savedStatus":null,"number":null,"amountCents":null,"dueDate":null,"issuedAt":null,"customerReference":null,"voidedAt":null,"voidReason":null},"invoicePreview":null,"payments":[],"ledger":{"stored":false,"complete":true,"legacyCents":0,"unreconciledCents":0,"issues":[]},"costs":null},"asOf":"2026-10-05T18:00:00.000Z"}
+======== a4d246857d4a0053
+200 application/json
+{"ok":true,"policy":{"name":"colorado","weeklyHours":40,"dailyHours":12,"consecutiveHours":12,"consecutiveGapMinutes":60,"multiplier":1.5},"start":"2026-09-21","end":"2026-09-28","endExclusive":true,"jobId":"job-solo","includeTravel":false,"asOf":"2026-10-05T18:00:00.000Z","source":"explicit_employee_job_segments","jobs":[{"jobId":"job-solo","jobLabel":"Synthetic job-solo","approved":{"workHours":4,"travelHours":1,"laborHours":4,"straightCost":151.64,"overtimePremium":0,"cost":151.64},"pending":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":0,"cost":0},"projected":{"workHours":4,"travelHours":1,"laborHours":4,"straightCost":151.64,"overtimePremium":0,"cost":151.64},"employees":[{"employee":"crew.solo","name":"Synthetic Solo","approvedHours":4,"pendingHours":0,"approvedCost":151.64,"projectedCost":151.64}],"approvedTimecards":1,"pendingTimecards":0,"openShifts":0,"needsReviewCount":0,"legacyAssociationOnlyCount":0,"missingRateCount":0}],"totals":{"approved":{"workHours":4,"travelHours":1,"laborHours":4,"straightCost":151.64,"overtimePremium":0,"cost":151.64},"pending":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":0,"cost":0},"projected":{"workHours":4,"travelHours":1,"laborHours":4,"straightCost":151.64,"overtimePremium":0,"cost":151.64}},"walkthroughLabor":{"costedAs":"acquisition","visits":[],"totals":{"approved":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":0,"cost":0},"pending":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":0,"cost":0},"projected":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":0,"cost":0}}},"needsReviewCount":0,"openShifts":0,"legacyAssociationOnlyCount":0,"coverage":{"complete":true,"asOf":"2026-10-05T18:00:00.000Z","reasons":[]}}
+======== a977949d540134eb
+200 application/json
+{"ok":true,"status":{"firebase":false,"employeeAccounts":false,"customerPortal":false,"highlevel":false,"quo":false,"google":false,"openai":false,"stripe":false,"stripeWebhook":false,"quickbooks":false,"gusto":false,"highlevelPipeline":false,"automations":false,"serverMessaging":false,"serverScheduleSync":false,"firebaseRevocation":false,"firebaseRevocationState":"not_configured","firebaseRevocationPending":null,"firebaseRevocationError":""},"flags":{"moneyApi":false}}
+======== b1c32af14ea6859f
+200 application/json
+{"ok":true,"authority":"employee_hub","requestId":"6f1c7c1e-5d8a-4c55-9d2e-0a8f4f0e7a01","action":"costs.save","replayed":false,"job":{"id":"job-costed","revision":"r1","customerId":"c1","customer":"Synthetic Customer","serviceType":"Garage transformation","date":"2026-09-24","status":"completed","notify":true,"totals":{"quoteCents":90000,"approvedChangeCents":0,"totalCents":90000,"paidCents":0,"tipCents":0,"appliedCents":0,"balanceCents":90000,"overpaidCents":0,"depositRequiredCents":45000,"depositPaidCents":0,"depositDueCents":45000,"dueNowCents":90000,"purpose":"balance","complete":true,"issues":[]},"estimate":{"number":"EST-000001","status":"accepted","revision":null,"scope":"","validUntil":null,"termsVersion":null,"sentAt":null,"sentChannel":null,"acceptedAt":null,"acceptedBy":null,"fingerprint":"bd953b52a8a6f79f2810de744cf36fd00027fce41ca7a02c4c0bb6dbcfe5159e"},"lineItems":[{"id":"line-1","kind":"service","name":"Synthetic cleanout","description":"","quantity":1,"unitCents":90000,"totalCents":90000,"amount":900,"optional":false,"selected":true,"taxable":false,"customerSupplied":false,"grouped":false}],"linesComplete":true,"approval":null,"invoice":{"status":"overdue","savedStatus":"issued","number":"INV-000001","amountCents":90000,"dueDate":"2026-10-01","issuedAt":"2026-09-24T20:00:00.000Z","customerReference":null,"voidedAt":null,"voidReason":null},"invoicePreview":{"lineItems":[{"id":"line-1","name":"Synthetic cleanout","quantity":1,"totalCents":90000}],"totalCents":90000,"notices":[]},"payments":[],"ledger":{"stored":false,"complete":true,"legacyCents":0,"unreconciledCents":0,"issues":[]},"costs":{"laborCents":15164,"disposalCents":9000,"materialsCents":0,"fuelCents":1200,"processingCents":0,"otherCents":0,"recordedAt":"2026-10-05T18:00:00.000Z","recordedBy":"tylerg"}},"warnings":[]}
+======== b68aec98e5e31d87
+403 application/json
+{"ok":false,"code":"job_costing_forbidden","error":"Only operations managers can review job labor costs."}
+======== c210730abbf1093b
+200 text/csv; charset=utf-8
+"Invoice number","Status","Customer","Customer ID","Job ID","Service date","Issued (Denver)","Due date","Amount","Paid","Balance","Customer reference"
+"INV-000001","overdue","Synthetic Customer","c1","job-costed","2026-09-24","2026-09-24","2026-10-01","900.00","0.00","900.00",""
+
+======== c91d93aa2d079bbf
+200 application/json
+{"ok":true,"authority":"employee_hub","enabled":false,"viewer":{"id":"alexk"},"job":{"id":"job-uncosted","revision":"r0","customerId":"c2","customer":"Synthetic Other","serviceType":"Garage transformation","date":"2026-09-25","status":"scheduled","notify":true,"totals":{"quoteCents":null,"approvedChangeCents":0,"totalCents":null,"paidCents":0,"tipCents":0,"appliedCents":0,"balanceCents":null,"overpaidCents":null,"depositRequiredCents":null,"depositPaidCents":null,"depositDueCents":null,"dueNowCents":null,"purpose":"deposit","complete":false,"issues":["money_quote_missing"]},"estimate":null,"lineItems":[{"id":"legacy-1","kind":"service","name":"Garage transformation","description":"","quantity":1,"unitCents":null,"totalCents":null,"amount":null,"optional":false,"selected":true,"taxable":false,"customerSupplied":false,"grouped":false}],"linesComplete":false,"approval":null,"invoice":{"status":"not_issued","savedStatus":null,"number":null,"amountCents":null,"dueDate":null,"issuedAt":null,"customerReference":null,"voidedAt":null,"voidReason":null},"invoicePreview":null,"payments":[],"ledger":{"stored":false,"complete":true,"legacyCents":0,"unreconciledCents":0,"issues":[]},"costs":null},"asOf":"2026-10-05T18:00:00.000Z"}
+======== d2f0e476df93bde0
+200 application/json
+{"ok":true,"policy":{"name":"colorado","weeklyHours":40,"dailyHours":12,"consecutiveHours":12,"consecutiveGapMinutes":60,"multiplier":1.5},"start":"2026-09-21","end":"2026-09-28","endExclusive":true,"jobId":"walk-1","includeTravel":false,"asOf":"2026-10-05T18:00:00.000Z","source":"explicit_employee_job_segments","jobs":[{"jobId":"walk-1","jobLabel":"","approved":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":0,"cost":0},"pending":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":0,"cost":0},"projected":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":0,"cost":0},"employees":[],"approvedTimecards":0,"pendingTimecards":0,"openShifts":0,"needsReviewCount":0,"legacyAssociationOnlyCount":0,"missingRateCount":0}],"totals":{"approved":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":0,"cost":0},"pending":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":0,"cost":0},"projected":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":0,"cost":0}},"walkthroughLabor":{"costedAs":"acquisition","visits":[],"totals":{"approved":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":0,"cost":0},"pending":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":0,"cost":0},"projected":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":0,"cost":0}}},"needsReviewCount":0,"openShifts":0,"legacyAssociationOnlyCount":0,"coverage":{"complete":true,"asOf":"2026-10-05T18:00:00.000Z","reasons":[]}}
+======== e79523a20470abc9
+200 application/json
+{"ok":true,"authority":"employee_hub","enabled":false,"viewer":{"id":"tylerg"},"job":{"id":"job-uncosted","revision":"r0","customerId":"c2","customer":"Synthetic Other","serviceType":"Garage transformation","date":"2026-09-25","status":"scheduled","notify":true,"totals":{"quoteCents":null,"approvedChangeCents":0,"totalCents":null,"paidCents":0,"tipCents":0,"appliedCents":0,"balanceCents":null,"overpaidCents":null,"depositRequiredCents":null,"depositPaidCents":null,"depositDueCents":null,"dueNowCents":null,"purpose":"deposit","complete":false,"issues":["money_quote_missing"]},"estimate":null,"lineItems":[{"id":"legacy-1","kind":"service","name":"Garage transformation","description":"","quantity":1,"unitCents":null,"totalCents":null,"amount":null,"optional":false,"selected":true,"taxable":false,"customerSupplied":false,"grouped":false}],"linesComplete":false,"approval":null,"invoice":{"status":"not_issued","savedStatus":null,"number":null,"amountCents":null,"dueDate":null,"issuedAt":null,"customerReference":null,"voidedAt":null,"voidReason":null},"invoicePreview":null,"payments":[],"ledger":{"stored":false,"complete":true,"legacyCents":0,"unreconciledCents":0,"issues":[]},"costs":null},"asOf":"2026-10-05T18:00:00.000Z"}
+======== ef7a68cc66f657d4
+200 application/json
+{"ok":true,"policy":{"name":"colorado","weeklyHours":40,"dailyHours":12,"consecutiveHours":12,"consecutiveGapMinutes":60,"multiplier":1.5},"start":"2026-09-24","end":"2026-09-26","endExclusive":true,"jobId":"","includeTravel":false,"asOf":"2026-10-05T18:00:00.000Z","source":"explicit_employee_job_segments","jobs":[{"jobId":"job-ot-b","jobLabel":"Synthetic job-ot-b","approved":{"workHours":10,"travelHours":0,"laborHours":10,"straightCost":379.1,"overtimePremium":0,"cost":379.1},"pending":{"workHours":10,"travelHours":0,"laborHours":10,"straightCost":379.1,"overtimePremium":75.82,"cost":454.92},"projected":{"workHours":20,"travelHours":0,"laborHours":20,"straightCost":758.2,"overtimePremium":75.82,"cost":834.02},"employees":[{"employee":"crew.solo","name":"Synthetic Solo","approvedHours":10,"pendingHours":10,"approvedCost":379.1,"projectedCost":834.02}],"approvedTimecards":1,"pendingTimecards":1,"openShifts":0,"needsReviewCount":0,"legacyAssociationOnlyCount":0,"missingRateCount":0}],"totals":{"approved":{"workHours":10,"travelHours":0,"laborHours":10,"straightCost":379.1,"overtimePremium":0,"cost":379.1},"pending":{"workHours":10,"travelHours":0,"laborHours":10,"straightCost":379.1,"overtimePremium":75.82,"cost":454.92},"projected":{"workHours":20,"travelHours":0,"laborHours":20,"straightCost":758.2,"overtimePremium":75.82,"cost":834.02}},"walkthroughLabor":{"costedAs":"acquisition","visits":[],"totals":{"approved":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":0,"cost":0},"pending":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":0,"cost":0},"projected":{"workHours":0,"travelHours":0,"laborHours":0,"straightCost":0,"overtimePremium":0,"cost":0}}},"needsReviewCount":0,"openShifts":0,"legacyAssociationOnlyCount":0,"coverage":{"complete":false,"asOf":"2026-10-05T18:00:00.000Z","reasons":["pending_timecards"]}}

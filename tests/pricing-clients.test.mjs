@@ -278,15 +278,32 @@ test('the Hub keeps phone and owner pricing in memory for the session only, vali
 });
 
 const job = { id: 'job-1', type: 'job', customer: 'Synthetic Customer', date: '2026-09-22', time: '09:00', status: 'completed', pipelineStatus: 'completed', priceQuoted: 1000, hoursOnSite: 3, crewSize: 2 };
-async function suite({ owner, before, jobRow = job }) {
-  const page = hubPage({ user: owner ? 'ZacB' : 'TylerG', role: owner ? 'owner' : 'manager', before, fetcher: async url => url === '/api/pricing-config?parts=owner' ? partResponse('owner', plain(ownerEconomics())) : { ok: false, status: 503, json: async () => ({ ok: false, error: 'Synthetic service unavailable' }) } });
+// JOB-COST-PRIVACY: labor dollars are owner-only and live in the server-only jobLaborCosts record, which the Hub reads
+// and saves through /api/job-labor-costs (employee-labor-costs.js). This stands in for that server: the owner gets the
+// records and saves them, and a manager is answered "hidden" with no figures, as functions/api/job-labor-costs.js does.
+function laborServer(owner, records = {}) {
+  const saves = [];
+  const handle = async (url, init = {}) => {
+    if ((init.method || 'GET') === 'GET') return { ok: true, status: 200, json: async () => owner ? { ok: true, laborCostHidden: false, complete: true, jobs: Object.values(records) } : { ok: true, laborCostHidden: true, jobs: null } };
+    const body = JSON.parse(init.body);
+    saves.push(body);
+    records[body.jobId] = { jobId: body.jobId, laborCents: body.laborCents, revision: `l${saves.length}`, recordedAt: '2026-09-22T18:00:00.000Z', recordedBy: 'zacb' };
+    return { ok: true, status: 200, json: async () => ({ ok: true, labor: records[body.jobId] }) };
+  };
+  return { handle, saves, records };
+}
+async function suite({ owner, before, jobRow = job, pricing = true, records = {} }) {
+  const labor = laborServer(owner, records);
+  const page = hubPage({ user: owner ? 'ZacB' : 'TylerG', role: owner ? 'owner' : 'manager', before, fetcher: async (url, init) => url === '/api/pricing-config?parts=owner' && pricing ? partResponse('owner', plain(ownerEconomics())) : url === '/api/job-labor-costs' ? labor.handle(url, init) : { ok: false, status: 503, json: async () => ({ ok: false, error: 'Synthetic service unavailable' }) } });
   vm.runInContext(read('employee-pricing.js'), page.context);
+  vm.runInContext(read('employee-labor-costs.js'), page.context);
   page.context.jobsCache = [structuredClone(jobRow)];
   page.api.install();
   await page.api.loadAll();
+  await page.context.EGCLaborCosts.load();
   await page.flush();
   const view = name => { page.api.go(name); return page.main().textContent; };
-  return { page, view };
+  return { page, view, labor };
 }
 
 test('the owner sees the labor baseline, wages and targets from the config; a manager sees the same screens without numbers', async () => {
@@ -302,6 +319,10 @@ test('the owner sees the labor baseline, wages and targets from the config; a ma
   assert.match(finance, /Estimated labor uses the \$20\/crew-hour baseline/);
   assert.match(finance, /6\.0 crew-hrs · \$120 direct cost/);
   assert.match(finance, /\$880 contribution/);
+  // An older labor copy on the job is the owner's figure until it moves to the private record.
+  owner.page.context.jobsCache = [{ ...structuredClone(job), costs: { labor: 150, disposal: 40, recordedAt: '2026-09-22T20:00:00.000Z' } }];
+  assert.match(owner.view('finance'), /\$190 direct cost/);
+  assert.match(owner.view('finance'), /\$810 contribution/);
 
   const manager = await suite({ owner: false });
   assert.equal(manager.page.calls.some(call => call.url.startsWith('/api/pricing-config')), false, 'a manager never asks for the owner part');
@@ -313,27 +334,31 @@ test('the owner sees the labor baseline, wages and targets from the config; a ma
   }
   assert.match(manager.view('playbook'), /Lead owns communication, scope, payment, and closeout/);
   const finance2 = manager.view('finance');
-  assert.match(finance2, /Labor stays unknown until actual costs are entered/);
-  assert.match(finance2, /Labor cost unknown until actual costs are entered/);
-  assert.doesNotMatch(finance2, /direct cost ·|contribution ·/, 'no contribution is computed from a guessed labor cost');
+  assert.match(finance2, /Labor dollars, and the contribution and margin that include them, are for the owner only/);
+  assert.match(finance2, /6\.0 crew-hrs · Labor \$ hidden/);
+  assert.doesNotMatch(finance2, /direct cost ·|contribution ·|Labor cost unknown/, 'no labor-based figure, and no hint about the owner\'s labor');
+  // The same older labor copy: a manager gets the hours and the non-labor cost, never labor, direct cost or contribution.
   manager.page.context.jobsCache = [{ ...structuredClone(job), costs: { labor: 150, disposal: 40, recordedAt: '2026-09-22T20:00:00.000Z' } }];
-  assert.match(manager.view('finance'), /\$190 direct cost/);
-  assert.match(manager.view('finance'), /\$810 contribution/);
+  const finance3 = manager.view('finance');
+  assert.match(finance3, /6\.0 crew-hrs · Labor \$ hidden/);
+  assert.match(finance3, /\$40 non-labor cost/);
+  assert.doesNotMatch(finance3, /\$190|\$810|\$150|direct cost|contribution ·/);
 });
 
-// Job costing: a blank labor field means unknown, never a recorded $0 (the form used to pre-fill crew-hours x $20).
-async function costForm({ owner, jobRow = job }) {
+// Job costing: a blank labor field means unknown, never a recorded $0 (the form used to pre-fill crew-hours x $20), and
+// only the owner enters or blanks labor (JOB-COST-PRIVACY): the figure goes to the private record, never onto the job.
+async function costForm({ owner, jobRow = job, pricing = true, records = {} }) {
   const writes = [];
   const db = { collection: name => ({ doc: id => ({ set: async (update, options) => { writes.push({ name, id, update: structuredClone(update), options: { ...options } }); } }) }) };
-  const { page, view } = await suite({ owner, before: context => { context.db = db; }, jobRow });
+  const { page, view, labor } = await suite({ owner, before: context => { context.db = db; }, jobRow, pricing, records });
   const saving = page.context.opsFinanceAction('job-1', 'cost');
   await page.flush();
   const form = page.document.querySelector('.ops-action-dialog'), field = name => form.querySelector(`input[name="${name}"]`);
-  return { page, view, writes, field, submit: async values => { for (const [name, value] of Object.entries(values)) field(name).value = value; page.context.opsActionSubmit({ preventDefault() {}, currentTarget: form }); await saving; await page.flush(); } };
+  return { page, view, writes, labor, field, submit: async values => { for (const [name, value] of Object.entries(values)) field(name).value = value; page.context.opsActionSubmit({ preventDefault() {}, currentTarget: form }); await saving; await page.flush(); } };
 }
 
-test('a manager with no labor baseline who leaves labor blank records the other costs and labor stays unknown', async () => {
-  const form = await costForm({ owner: false });
+test('the owner with no labor baseline who leaves labor blank records the other costs and labor stays unknown; a manager has no labor field', async () => {
+  const form = await costForm({ owner: true, pricing: false });
   assert.equal(form.field('labor').value, '', 'no guessed labor is pre-filled');
   assert.equal(form.field('labor').hasAttribute('required'), false, 'labor can be left blank');
   assert.equal(form.field('labor').getAttribute('inputmode'), 'decimal');
@@ -342,46 +367,78 @@ test('a manager with no labor baseline who leaves labor blank records the other 
   assert.equal(form.writes.length, 1);
   const { name, id, update, options } = form.writes[0];
   assert.deepEqual([name, id, options], ['jobs', 'job-1', { merge: true }]);
-  assert.deepEqual(plain(update.costs), { labor: null, disposal: 40, materials: 0, fuel: 0, processing: 0, other: 0, recordedAt: '2026-09-22T18:00:00.000Z', recordedBy: 'TylerG', source: 'egc_hub' });
+  // Nothing was saved anywhere, so no record is made: the job's blank costs.labor (a null reveals nothing) says unknown.
+  assert.deepEqual(plain(update.costs), { labor: null, disposal: 40, materials: 0, fuel: 0, processing: 0, other: 0, recordedAt: '2026-09-22T18:00:00.000Z', recordedBy: 'ZacB', source: 'egc_hub' });
+  assert.deepEqual(form.labor.saves, []);
   const finance = form.view('finance');
   assert.match(finance, /Labor cost unknown until actual costs are entered/);
   assert.doesNotMatch(finance, /direct cost ·|contribution ·/, 'no contribution from an unknown labor cost');
-  // Reopening the form still shows labor blank, and an entered figure (even $0) is then recorded as known.
-  const again = await costForm({ owner: false, jobRow: { ...structuredClone(job), costs: plain(update.costs) } });
+  // Reopening the form still shows labor blank, and an entered figure (even $0) is then recorded as known, in the record.
+  const again = await costForm({ owner: true, pricing: false, jobRow: { ...structuredClone(job), costs: plain(update.costs) } });
   assert.equal(again.field('labor').value, '');
   assert.equal(again.field('disposal').value, '40');
   await again.submit({ labor: '0' });
-  assert.equal(again.writes[0].update.costs.labor, 0);
+  assert.deepEqual(again.labor.saves.map(body => [body.jobId, body.laborCents, body.expectedRevision]), [['job-1', 0, null]]);
+  assert.equal('labor' in again.writes[0].update.costs, false, 'labor never goes onto the job');
   assert.match(again.view('finance'), /\$40 direct cost/);
+
+  // A manager: the form has no labor field, the save carries no labor key, and nothing is sent to the labor record.
+  const manager = await costForm({ owner: false });
+  assert.equal(manager.field('labor'), null);
+  await manager.submit({ disposal: '40' });
+  assert.deepEqual(plain(manager.writes[0].update.costs), { disposal: 40, materials: 0, fuel: 0, processing: 0, other: 0, recordedAt: '2026-09-22T18:00:00.000Z', recordedBy: 'TylerG', source: 'egc_hub' });
+  assert.equal(manager.page.calls.some(call => call.url === '/api/job-labor-costs' && call.method === 'POST'), false);
+  assert.match(manager.view('finance'), /Labor \$ hidden/);
 });
 
-test('blanking a recorded labor cost clears it, and the owner\'s baseline estimate applies again', async () => {
-  const recorded = { ...structuredClone(job), costs: { labor: 300, disposal: 10, materials: 0, fuel: 0, processing: 0, other: 0, recordedAt: '2026-09-21T20:00:00.000Z' } };
-  const manager = await costForm({ owner: false, jobRow: recorded });
-  assert.equal(manager.field('labor').value, '300');
-  await manager.submit({ labor: '' });
-  assert.equal(manager.writes[0].update.costs.labor, null, 'an explicit null so the merge save drops the old figure');
-  const owner = await costForm({ owner: true, jobRow: { ...recorded, costs: plain(manager.writes[0].update.costs) } });
-  assert.equal(owner.field('labor').value, '120', 'the owner sees the 6 crew-hour x $20 baseline estimate');
-  owner.page.context.opsActionClose();
-  assert.match(owner.view('finance'), /6\.0 crew-hrs · \$130 direct cost/);
-  assert.equal(owner.writes.length, 0);
+test('blanking a recorded labor cost clears it, and the owner\'s baseline estimate applies again; only the owner can blank it', async () => {
+  const recorded = { ...structuredClone(job), costs: { disposal: 10, materials: 0, fuel: 0, processing: 0, other: 0, recordedAt: '2026-09-21T20:00:00.000Z' } };
+  const records = { 'job-1': { jobId: 'job-1', laborCents: 30000, revision: 'l0', recordedAt: '2026-09-21T20:00:00.000Z', recordedBy: 'zacb' } };
+  // A manager cannot see or blank the owner's figure: no labor field, and the record is untouched.
+  const manager = await costForm({ owner: false, jobRow: recorded, records: structuredClone(records) });
+  assert.equal(manager.field('labor'), null);
+  assert.doesNotMatch(manager.page.document.querySelector('.ops-action-dialog').textContent, /300/);
+  await manager.submit({ disposal: '10' });
+  assert.deepEqual([manager.labor.saves, manager.labor.records['job-1'].laborCents, 'labor' in manager.writes[0].update.costs], [[], 30000, false]);
+
+  const owner = await costForm({ owner: true, jobRow: recorded, records: structuredClone(records) });
+  assert.equal(owner.field('labor').value, '300');
+  await owner.submit({ labor: '' });
+  assert.deepEqual(owner.labor.saves.map(body => [body.laborCents, body.expectedRevision]), [[null, 'l0']], 'the record is blanked (unknown), not deleted or zeroed');
+  assert.equal('labor' in owner.writes[0].update.costs, false, 'the job carries no labor key');
+  const reopened = await costForm({ owner: true, jobRow: { ...recorded, costs: plain(owner.writes[0].update.costs) }, records: owner.labor.records });
+  assert.equal(reopened.field('labor').value, '120', 'the owner sees the 6 crew-hour x $20 baseline estimate');
+  reopened.page.context.opsActionClose();
+  assert.match(reopened.view('finance'), /6\.0 crew-hrs · \$130 direct cost/);
+  assert.equal(reopened.writes.length, 0);
+  // An older copy left on the job, with no record yet: the owner's blank goes through the record too, which moves it off.
+  const legacy = await costForm({ owner: true, jobRow: { ...recorded, costs: { ...recorded.costs, labor: 300 } } });
+  assert.equal(legacy.field('labor').value, '300');
+  await legacy.submit({ labor: '' });
+  assert.deepEqual([legacy.labor.saves.map(body => [body.laborCents, body.expectedRevision]), 'labor' in legacy.writes[0].update.costs], [[[null, null]], false]);
 });
 
-test('with no crew hours logged a blank labor cost stays unknown for the owner and a manager, instead of a silent $0', async () => {
+test('with no crew hours logged a blank labor cost stays unknown for the owner instead of a silent $0; a manager sees Labor $ hidden', async () => {
   const noHours = { ...structuredClone(job), hoursOnSite: 0 };
-  for (const owner of [true, false]) {
-    const form = await costForm({ owner, jobRow: noHours });
-    assert.equal(form.field('labor').value, '', 'no crew hours means no labor figure to suggest, not $0');
-    await form.submit({ labor: '', disposal: '40' });
-    assert.equal(form.writes[0].update.costs.labor, null);
-    const finance = form.view('finance');
-    assert.match(finance, /Labor cost unknown until actual costs are entered/, owner ? 'owner' : 'manager');
-    assert.doesNotMatch(finance, /direct cost ·|contribution ·/);
-  }
+  const form = await costForm({ owner: true, jobRow: noHours });
+  assert.equal(form.field('labor').value, '', 'no crew hours means no labor figure to suggest, not $0');
+  await form.submit({ labor: '', disposal: '40' });
+  assert.equal(form.writes[0].update.costs.labor, null);
+  const finance = form.view('finance');
+  assert.match(finance, /Labor cost unknown until actual costs are entered/);
+  assert.doesNotMatch(finance, /direct cost ·|contribution ·/);
+  const manager = await costForm({ owner: false, jobRow: noHours });
+  assert.equal(manager.field('labor'), null);
+  await manager.submit({ disposal: '40' });
+  assert.equal('labor' in manager.writes[0].update.costs, false);
+  const hidden = manager.view('finance');
+  assert.match(hidden, /Labor \$ hidden/);
+  assert.doesNotMatch(hidden, /Labor cost unknown|direct cost ·|contribution ·/);
   // Before any costs are saved a job with no hours shows nothing to cost, as before.
-  const untouched = await suite({ owner: false, jobRow: noHours });
-  assert.doesNotMatch(untouched.view('finance'), /Labor cost unknown|direct cost ·/);
+  for (const owner of [true, false]) {
+    const untouched = await suite({ owner, jobRow: noHours });
+    assert.doesNotMatch(untouched.view('finance'), /Labor cost unknown|direct cost ·|crew-hrs/, owner ? 'owner' : 'manager');
+  }
 });
 
 // Second review: an online device whose Hub answers without tables is told so, not that it is offline.

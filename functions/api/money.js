@@ -1,8 +1,9 @@
 import { getHubSession } from '../_lib/hub-session.js';
 import { moneyStorage } from '../_lib/money-storage.js';
-import { moneyApiEnabled, moneyJob, moneyProjection, mutateMoney, requireMoneyManager } from '../_lib/money-service.js';
+import { moneyApiEnabled, moneyJob, moneyLaborView, moneyProjection, mutateMoney, requireMoneyManager } from '../_lib/money-service.js';
 import { MONEY_QUERY_KEYS, listMoney, moneyCsv } from '../_lib/money-reports.js';
 import { denverToday } from '../_lib/dispatch-time.js';
+import { laborCostViewer } from '../_lib/job-labor-private.js';
 
 const LIMIT = 64000;
 const HEADERS = { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' };
@@ -26,12 +27,14 @@ function failure(error) {
 
 // Reads take the Date; mutations take its ISO string. Writes stay off unless
 // MONEY_API_ENABLED is exactly 'true' (the browser keeps today's tools then).
+// Labor dollars are owner-only (EGC_STAFF_PAY_OWNER_ONLY): laborCostViewer resolves
+// that from the signed session, and anyone else gets laborCents null (never 0).
 export function moneyHandlers({ session = getHubSession, storage = moneyStorage, now = () => new Date() } = {}) {
   return {
     async get({ request, env }) {
       if (!sameOrigin(request, true)) return reply(403, { ok: false, code: 'money_origin_forbidden', error: 'Open job finances in the Employee Hub.' });
       try {
-        const actor = await session(request, env); requireMoneyManager(actor);
+        const actor = laborCostViewer(await session(request, env), env); requireMoneyManager(actor);
         const params = new URL(request.url).searchParams, keys = [...params.keys()], at = now(), asOf = at.toISOString();
         if (new Set(keys).size !== keys.length || keys.some(key => !GET_KEYS.has(key)) || params.has('jobId') && keys.length !== 1) return reply(400, { ok: false, code: 'money_query_invalid', error: 'Use only the supported money filters, each at most once.' });
         const store = storage(env);
@@ -40,7 +43,7 @@ export function moneyHandlers({ session = getHubSession, storage = moneyStorage,
           if (!/^[A-Za-z0-9_-]{1,180}$/.test(jobId) || /^(secure_|_egc_)/.test(jobId)) return reply(400, { ok: false, code: 'money_query_invalid', error: 'Choose a valid job.' });
           const job = await store.read('jobs', jobId);
           if (!moneyJob(job)) return reply(404, { ok: false, code: 'money_job_not_found', error: 'This job is not available for money changes.' });
-          return reply(200, { ok: true, authority: 'employee_hub', enabled: moneyApiEnabled(env), viewer: { id: actor.user }, job: moneyProjection(job, asOf), asOf });
+          return reply(200, { ok: true, authority: 'employee_hub', enabled: moneyApiEnabled(env), viewer: { id: actor.user }, job: moneyProjection(job, asOf, await moneyLaborView(store, actor, jobId)), asOf });
         }
         const { rows, ...page } = await listMoney(store, Object.fromEntries(params), asOf);
         if (params.get('format') === 'csv') return new Response(moneyCsv(page.view, rows), { status: 200, headers: { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="egc-${page.view}-${denverToday(at)}.csv"`, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' } });
@@ -51,7 +54,7 @@ export function moneyHandlers({ session = getHubSession, storage = moneyStorage,
       if (!sameOrigin(request)) return reply(403, { ok: false, code: 'money_origin_forbidden', error: 'Open job finances in the Employee Hub to save changes.' });
       if (!moneyApiEnabled(env)) return reply(404, { ok: false, code: 'money_api_disabled', error: 'Server money actions are turned off. Use the standard finance tools.' });
       try {
-        const actor = await session(request, env); requireMoneyManager(actor);
+        const actor = laborCostViewer(await session(request, env), env); requireMoneyManager(actor);
         if (request.headers.get('Content-Type')?.split(';')[0].trim().toLowerCase() !== 'application/json') return reply(415, { ok: false, code: 'money_json_required', error: 'Money changes must be sent as JSON.' });
         if (Number(request.headers.get('Content-Length')) > LIMIT) return reply(413, { ok: false, code: 'money_request_too_large', error: 'The money request is too large.' });
         const raw = await request.text();

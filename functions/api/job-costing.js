@@ -3,6 +3,7 @@ import { firebaseServiceAccountConfigured } from '../_lib/firebase-service-accou
 import { employeeVaultSecret } from '../_lib/employee-vault-key.js';
 import { overtimePolicy } from '../_lib/timesheet-week.js';
 import { computeJobLaborCost, validateJobCostingRange } from '../_lib/job-labor-cost.js';
+import { seesLaborCost } from '../_lib/pay-visibility.js';
 import { readEmployeeTimecards } from './employee-hub.js';
 
 const reply = (status, body) => Response.json(body, { status, headers: { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' } });
@@ -36,7 +37,8 @@ export function jobCostingHandlers({ session = getHubSession, read = readJobCost
         validateJobCostingRange(input);
         const timecards = await read(env);
         if (!Array.isArray(timecards)) throw fail('Timecards could not be read as a complete list.', 'job_costing_records_invalid', 503);
-        return reply(200, { ok: true, ...computeJobLaborCost({ ...input, timecards, policy, now: now().toISOString() }) });
+        // Labor dollars are owner-only (EGC_STAFF_PAY_OWNER_ONLY): every other manager gets the hours.
+        return reply(200, { ok: true, ...computeJobLaborCost({ ...input, timecards, policy, now: now().toISOString(), laborCostHidden: !seesLaborCost(actor, env) }) });
       } catch (error) {
         if (typeof error?.code === 'string' && (error.code.startsWith('job_costing_') || error.code === 'timesheet_policy_invalid')) return reply(error.status || 503, { ok: false, code: error.code, error: error.message });
         return reply(503, { ok: false, code: 'job_costing_unavailable', error: 'Job labor costs could not be read safely. Retry, or contact the Hub administrator.' });

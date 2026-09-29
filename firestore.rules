@@ -270,6 +270,36 @@ service cloud.firestore {
         ] || (recordType == 'schedule_lock' && !documentId.matches('_egc_schedule_lock_.*'));
     }
 
+    function laborCopy(data, key) {
+      let costs = data.get('costs', null);
+      return costs is map ? costs.get(key, null) : null;
+    }
+
+    function laborCopiesKept(next, previous) {
+      return next.get('laborCost', null) == previous.get('laborCost', null) &&
+        laborCopy(next, 'labor') == laborCopy(previous, 'labor') &&
+        laborCopy(next, 'laborCents') == laborCopy(previous, 'laborCents');
+    }
+
+    function laborCopiesKeptOrDropped(next, previous) {
+      return next.get('laborCost', null) in [null, previous.get('laborCost', null)] &&
+        laborCopy(next, 'labor') in [null, laborCopy(previous, 'labor')] &&
+        laborCopy(next, 'laborCents') in [null, laborCopy(previous, 'laborCents')];
+    }
+
+    function jobLaborUnchanged(next, previous, documentId) {
+      // JOB-COST-PRIVACY: labor dollars live in the server-only jobLaborCosts
+      // record, because every business user reads jobs (on a one-person job,
+      // labor over hours is that employee's rate). A browser write keeps the
+      // copy an older save left on a job, never adds or changes one, and drops
+      // or blanks one only once the job's private record exists (the owner's
+      // figure is kept there; scripts/backfill-job-labor-private.mjs moves the
+      // rest). A blank costs.labor on a job with no copy stays allowed.
+      return laborCopiesKept(next, previous) ||
+        laborCopiesKeptOrDropped(next, previous) &&
+        exists(/databases/$(database)/documents/jobLaborCosts/$(documentId));
+    }
+
     // Canonical jobs include financial evidence, signatures and private notes.
     // Crew reads and execution writes go through assigned-only server DTOs;
     // otherwise direct SDK reads would bypass projection and completion gates.
@@ -279,10 +309,12 @@ service cloud.firestore {
       // Crew mutations use the session-authorized APIs and shared capacity locks.
       // Business SDK writes can neither touch nor produce a server-owned record.
       allow create: if businessUser() && !serverOwnedJobRecord(documentId) &&
-        !serverOwnedJobData(request.resource.data, documentId);
+        !serverOwnedJobData(request.resource.data, documentId) &&
+        jobLaborUnchanged(request.resource.data, {}, documentId);
       allow update: if businessUser() && !serverOwnedJobRecord(documentId) &&
         !serverOwnedJobData(resource.data, documentId) &&
-        !serverOwnedJobData(request.resource.data, documentId);
+        !serverOwnedJobData(request.resource.data, documentId) &&
+        jobLaborUnchanged(request.resource.data, resource.data, documentId);
       allow delete: if businessUser() && !serverOwnedJobRecord(documentId) &&
         !serverOwnedJobData(resource.data, documentId);
     }
@@ -416,6 +448,16 @@ service cloud.firestore {
       allow read, write: if false;
     }
     match /catalogStandardCostOperations/{documentId} {
+      allow read, write: if false;
+    }
+
+    // JOB-COST-PRIVACY: owner-entered job labor dollars and their save
+    // receipts. Only the server reads or writes them, for a viewer who sees
+    // labor dollars, via /api/job-labor-costs and /api/money.
+    match /jobLaborCosts/{documentId} {
+      allow read, write: if false;
+    }
+    match /jobLaborCostOperations/{documentId} {
       allow read, write: if false;
     }
 

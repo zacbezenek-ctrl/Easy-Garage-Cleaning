@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { mutateMoney, moneyProjection, moneySnapshot, paymentNeedsVerification, MAX_ESTIMATE_LINES } from '../functions/_lib/money-service.js';
 import { reconcileLedger } from '../functions/_lib/money-ledger.js';
 import { moneyStorage } from '../functions/_lib/money-storage.js';
+import { applyWrite } from './helpers/commit-write.mjs';
 
 const NOW = '2026-09-22T18:00:00.000Z'; // noon in Denver on 2026-09-22
 const LATER = '2026-09-23T18:00:00.000Z';
@@ -32,7 +33,11 @@ function fixture(job = {}, rows = []) {
         if (write.exists ? !old : write.revision ? old?.revision !== write.revision : old) throw Object.assign(new Error('Conflict'), { code: 'money_revision_conflict', status: 409 });
       }
       commits.push(structuredClone(writes));
-      for (const write of writes) { const key = `${write.collection}/${write.id}`; docs.set(key, { ...(write.revision || write.exists ? docs.get(key) : {}), ...structuredClone(write.patch), id: write.id, revision: `r${++n}` }); }
+      for (const write of writes) {
+        const key = `${write.collection}/${write.id}`;
+        // `mask` sets only its field paths and `remove` deletes paths in the same write (the Firestore updateMask).
+        docs.set(key, { ...applyWrite(write.revision || write.exists ? docs.get(key) : {}, write), id: write.id, revision: `r${++n}` });
+      }
     },
   };
   const f = { docs, store, commits, job: (id = 'job-abc123') => docs.get(`jobs/${id}`), beforeCommit: fn => { hook = fn; },
@@ -253,14 +258,84 @@ test('invoice.issue bills only the selected lines under a unique number; void ne
   assert.equal(f.job().invoice.voidReason, undefined, 'a reissued invoice starts fresh');
 });
 
-test('costs.save keeps cents and dollars, and its audit snapshot is owner-only', async () => {
+// Changed deliberately by JOB-COST-PRIVACY: labor dollars moved off the job (which every business user reads) into the
+// server-only jobLaborCosts record, and only a viewer who sees them enters them. money.js resolves laborCostVisible
+// (and, with EGC_STAFF_PAY_OWNER_ONLY=false, laborOnJob) from the session and env; here a viewer who sees labor
+// dollars saves in the owner-only mode.
+test('costs.save keeps cents and dollars, puts labor in the private record, never on the job, and its audit snapshot is owner-only', async () => {
   const f = fixture();
   await assert.rejects(f.run('costs.save', { costs: { laborCents: 100 } }), error => error.code === 'money_invalid_costs');
-  await f.run('costs.save', { costs: { laborCents: 32000, disposalCents: 8550, materialsCents: 0, fuelCents: 1200, processingCents: 0, otherCents: 0 } }, manager);
-  const job = f.job();
-  assert.deepEqual([job.costs.labor, job.costs.laborCents, job.costs.disposal, job.costs.recordedBy, job.costs.source], [320, 32000, 85.5, 'tylerg', 'egc_hub']);
+  await f.run('costs.save', { costs: { laborCents: 32000, disposalCents: 8550, materialsCents: 0, fuelCents: 1200, processingCents: 0, otherCents: 0 } }, { ...manager, laborCostVisible: true });
+  const job = f.job(), record = f.docs.get('jobLaborCosts/job-abc123');
+  assert.deepEqual([job.costs.disposal, job.costs.disposalCents, job.costs.fuel, job.costs.recordedBy, job.costs.source], [85.5, 8550, 12, 'tylerg', 'egc_hub']);
+  assert.deepEqual(['labor', 'laborCents'].filter(key => Object.hasOwn(job.costs, key)), [], 'no labor figure on the job');
+  assert.deepEqual([record.laborCents, record.recordedBy, record.source, record.jobId], [32000, 'tylerg', 'egc_hub', 'job-abc123']);
+  assert.deepEqual(f.commits[0].map(write => write.collection), ['jobs', 'jobLaborCosts', 'moneyOperations', 'hub_audit'], 'one commit');
   const [audit] = audits(f);
   assert.equal(audit.visibility, 'owner'); assert.equal(audit.action, 'money.costs.save'); assert.equal(audit.actor.id, 'tylerg');
+  assert.deepEqual([JSON.parse(audit.before).costs, JSON.parse(audit.after).costs.labor], [{ labor: null }, 320]);
+});
+
+test('costs.save with EGC_STAFF_PAY_OWNER_ONLY=false keeps today\'s costs map on the job, labor included, and the record gets the same figure', async () => {
+  const f = fixture({ laborCost: 189.55, costs: { labor: 151.64, laborCents: 15164, disposal: 1, disposalCents: 100 } }), flagOff = { ...manager, laborCostVisible: true, laborOnJob: true };
+  await f.run('costs.save', { costs: { laborCents: 32000, disposalCents: 8550, materialsCents: 0, fuelCents: 1200, processingCents: 0, otherCents: 0 } }, flagOff);
+  const job = f.job(), write = f.commits[0][0];
+  assert.deepEqual(job.costs, { recordedAt: NOW, recordedBy: 'tylerg', source: 'egc_hub', labor: 320, laborCents: 32000, disposal: 85.5, disposalCents: 8550, materials: 0, materialsCents: 0, fuel: 12, fuelCents: 1200, processing: 0, processingCents: 0, other: 0, otherCents: 0 });
+  assert.deepEqual([job.laborCost, write.remove], [189.55, undefined], 'nothing is removed: the job is written as before this change');
+  assert.equal(f.docs.get('jobLaborCosts/job-abc123').laborCents, 32000);
+  // The job revision changes with every labor save, so a stale expectedRevision is refused as before.
+  await assert.rejects(mutateMoney(f.store, flagOff, { ...f.input('costs.save', { costs: { laborCents: 1, disposalCents: 0, materialsCents: 0, fuelCents: 0, processingCents: 0, otherCents: 0 } }), expectedRevision: 'r0' }, LATER), error => error.code === 'money_revision_conflict');
+});
+
+test('costs.save refuses to overwrite a labor figure saved from another screen after this one read it', async () => {
+  const COSTS = { disposalCents: 0, materialsCents: 0, fuelCents: 0, processingCents: 0, otherCents: 0 };
+  const f = fixture({}, [{ collection: 'jobLaborCosts', id: 'job-abc123', data: { jobId: 'job-abc123', laborCents: 20250, requestId: 'other-screen' } }]);
+  // A saved record changes without touching the job, so the job revision alone cannot catch it: the labor revision must.
+  await assert.rejects(f.run('costs.save', { costs: { ...COSTS, laborCents: 15000 } }), error => error.code === 'money_labor_revision_required' && error.status === 409);
+  await assert.rejects(f.run('costs.save', { costs: { ...COSTS, laborCents: 15000 }, expectedLaborRevision: 'job-abc123-r-stale' }), error => error.code === 'money_labor_revision_conflict' && error.status === 409);
+  await assert.rejects(f.run('costs.save', { costs: { ...COSTS, laborCents: 15000 }, expectedLaborRevision: null }), error => error.code === 'money_labor_revision_conflict');
+  await assert.rejects(f.run('costs.save', { costs: { ...COSTS, laborCents: 15000 }, expectedLaborRevision: 7 }), error => error.code === 'money_request_invalid');
+  assert.deepEqual([f.commits.length, f.docs.get('jobLaborCosts/job-abc123').laborCents], [0, 20250], 'nothing was written');
+  await f.run('costs.save', { costs: { ...COSTS, laborCents: 15000 }, expectedLaborRevision: 'job-abc123-r' });
+  assert.equal(f.docs.get('jobLaborCosts/job-abc123').laborCents, 15000);
+  // The first figure on a job needs no revision (null, or none: the record is create-only), and a hidden viewer may not send one.
+  const g = fixture();
+  await g.run('costs.save', { costs: { ...COSTS, laborCents: 100 } });
+  await assert.rejects(g.run('costs.save', { costs: COSTS, expectedLaborRevision: 'r1' }, manager), error => error.code === 'money_labor_owner_only' && error.status === 403);
+});
+
+test('costs.save that resends the saved labor figure needs no expectedLaborRevision; any other figure still does', async () => {
+  const COSTS = { disposalCents: 4200, materialsCents: 0, fuelCents: 0, processingCents: 0, otherCents: 0 };
+  const f = fixture({}, [{ collection: 'jobLaborCosts', id: 'job-abc123', data: { jobId: 'job-abc123', laborCents: 20250, requestId: 'other-screen' } }]);
+  // Saving the other costs with the labor figure already saved cannot overwrite a newer one, so no revision is needed.
+  const result = await f.run('costs.save', { costs: { ...COSTS, laborCents: 20250 } });
+  const record = f.docs.get('jobLaborCosts/job-abc123'), job = f.job();
+  assert.equal(result.ok, true);
+  assert.deepEqual([record.laborCents, record.recordedBy, record.recordedAt, job.costs.disposalCents], [20250, 'zacb', NOW, 4200]);
+  assert.deepEqual(['labor', 'laborCents'].filter(key => Object.hasOwn(job.costs, key)), [], 'no labor figure on the job');
+  assert.deepEqual(f.commits[0].find(write => write.collection === 'jobLaborCosts').revision, 'job-abc123-r', 'the record write is still conditional on the revision it read');
+  const [audit] = audits(f);
+  assert.deepEqual([JSON.parse(audit.before).costs.labor, JSON.parse(audit.after).costs.labor], [202.5, 202.5]);
+  // A different figure (one cent off, or 0 over the owner's blank) without the revision is refused, and nothing is written.
+  await assert.rejects(f.run('costs.save', { costs: { ...COSTS, laborCents: 20251 } }, owner, LATER), error => error.code === 'money_labor_revision_required' && error.status === 409);
+  const blank = fixture({}, [{ collection: 'jobLaborCosts', id: 'job-abc123', data: { jobId: 'job-abc123', laborCents: null, requestId: 'owner-blank' } }]);
+  await assert.rejects(blank.run('costs.save', { costs: { ...COSTS, laborCents: 0 } }), error => error.code === 'money_labor_revision_required');
+  assert.deepEqual([f.commits.length, f.docs.get('jobLaborCosts/job-abc123').laborCents, blank.commits.length, blank.docs.get('jobLaborCosts/job-abc123').laborCents], [1, 20250, 0, null]);
+});
+
+test('a manager\'s costs.save keeps an unreadable or disagreeing labor copy, and a lone blank, exactly as they were', async () => {
+  const COSTS = { disposalCents: 100, materialsCents: 0, fuelCents: 0, processingCents: 0, otherCents: 0 };
+  for (const [costs, laborCost] of [[{ labor: '$177.03', disposal: 5 }, undefined], [{ labor: 200, laborCents: 15000 }, undefined], [{ laborCents: 20000 }, 150], [{ labor: null }, undefined]]) {
+    const f = fixture({ costs, ...(laborCost === undefined ? {} : { laborCost }) });
+    await f.run('costs.save', { costs: COSTS }, manager);
+    const job = f.job(), label = JSON.stringify(costs);
+    for (const key of ['labor', 'laborCents']) assert.deepEqual(job.costs[key], costs[key], `${label} ${key}`);
+    assert.deepEqual([job.laborCost, job.costs.disposalCents, f.docs.has('jobLaborCosts/job-abc123'), f.commits[0][0].remove ?? []], [laborCost, 100, false, []], label);
+  }
+  // A readable copy still moves to the record, and a blank hiding an older laborCost moves as a blank.
+  const blank = fixture({ laborCost: 311.19, costs: { labor: null } });
+  await blank.run('costs.save', { costs: COSTS }, manager);
+  assert.deepEqual([blank.docs.get('jobLaborCosts/job-abc123').laborCents, blank.job().laborCost, 'labor' in blank.job().costs], [null, undefined, false]);
 });
 
 test('every mutation writes an audit entry with the money before and after', async () => {
@@ -379,8 +454,10 @@ test('direct costs reach only the owner-only costs.save audit entry, never a lat
     assert.equal(entry.visibility, 'business', entry.action);
     for (const side of ['before', 'after']) assert.equal(Object.hasOwn(JSON.parse(entry[side]), 'costs'), false, `${entry.action} ${side}`);
   }
-  assert.equal(f.job().costs.labor, 320, 'the job keeps its costs');
-  assert.equal(Object.hasOwn(moneySnapshot(f.job()), 'costs'), false); assert.equal(moneySnapshot(f.job(), { costs: true }).costs.labor, 320);
+  // JOB-COST-PRIVACY: the labor figure is kept in the private record, not on the job.
+  assert.equal(f.docs.get('jobLaborCosts/job-abc123').laborCents, 32000, 'the owner\'s labor figure is kept');
+  assert.equal(Object.hasOwn(f.job().costs, 'labor'), false, 'never on the job');
+  assert.equal(Object.hasOwn(moneySnapshot(f.job()), 'costs'), false); assert.equal(moneySnapshot(f.job(), { costs: true, laborCents: 32000 }).costs.labor, 320);
 });
 
 test('new money never verifies earlier unverified money, including unverified card sessions saved without a paid total', async () => {

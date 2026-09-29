@@ -1,10 +1,21 @@
 import { can } from './staff-roles.js';
 
-// Pay is owner-only by default (EGC_STAFF_PAY_OWNER_ONLY): only the owner (the owner-only pay.manage capability) sees
-// other employees' pay and sets anyone's pay; everyone sees their own; managers keep hours, approvals, flags and paid
-// time-off hours. EGC_STAFF_PAY_OWNER_ONLY=false restores the older rules (every business user sees and edits pay).
-// This module covers /api/employee-hub reads and saves (and the record a save answers with), /api/timesheets and its
-// payroll CSV. Every refusal is 403 pay_owner_only.
+// Pay and job labor dollars are owner-only by default (EGC_STAFF_PAY_OWNER_ONLY, on unless exactly "false"): only the
+// owner (the owner-only pay.manage capability, as /api/staff-directory already applies) sees other employees' pay and
+// sets anyone's pay; everyone sees their own; managers keep hours, approvals, flags and paid time-off hours. The flag
+// covers:
+// - /api/employee-hub reads and saves (and the record a save answers with) of profiles, timecards and time-off
+//   requests. Every refusal there is 403 pay_owner_only.
+// - /api/timesheets, which hides other employees' rates and gross pay (pay totals null, never 0), and its payroll CSV,
+//   which only the owner downloads (403 pay_owner_only).
+// - Job labor dollars (seesLaborCost, JOB-COST-PRIVACY): /api/job-costing, /api/money, /api/job-labor-costs, the raw
+//   jobs /api/crew-jobs and /api/case-study send back, and the Hub finance board. On a job one employee worked alone,
+//   labor cost over hours is that employee's rate, so everyone else gets the hours only, and the figures live in the
+//   server-only jobLaborCosts record instead of on the job (functions/_lib/job-labor-private.js). Those modules refuse
+//   with their own codes.
+// EGC_STAFF_PAY_OWNER_ONLY=false restores the older rules: every business user sees and edits pay, and every
+// operations manager (owner or manager role; in /api/job-costing, every business user) sees and enters job labor
+// dollars, which saves also write back onto the job as before while still keeping the jobLaborCosts record.
 // A write to another employee's record never compares the pay it carries with the stored pay: its outcome
 // cannot depend on pay the caller may not see, or a caller could confirm guesses one request at a time.
 export const PAY_FIELDS = Object.freeze(['payType', 'hourlyRate', 'grossEstimate', 'bonus', 'tips']);
@@ -18,6 +29,8 @@ const READ_HIDDEN = Object.freeze([...new Set([...PAY_FIELDS, ...PAY_WRITE_FIELD
 
 export const staffPayOwnerOnly = env => env?.EGC_STAFF_PAY_OWNER_ONLY !== 'false';
 export const seesOthersPay = (session, env) => !staffPayOwnerOnly(env) || can(session, 'pay.manage', env);
+// Job labor dollars follow the same rule as other employees' pay.
+export const seesLaborCost = (session, env) => seesOthersPay(session, env);
 
 const same = (left, right) => String(left || '').trim().toLowerCase() === String(right || '').trim().toLowerCase();
 const record = value => value !== null && typeof value === 'object' && !Array.isArray(value);

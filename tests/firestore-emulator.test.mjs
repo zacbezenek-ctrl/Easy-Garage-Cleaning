@@ -61,6 +61,11 @@ test('actual Firestore rules isolate canonical operations from crew SDK access',
         'payment_reviews/cs_test_synthetic':{status:'open',reason:'payment_exceeds_balance',jobId:'assigned',amountCents:50000},
         'moneyOperations/receipt':{actorId:'zacb',action:'payment.record_offline',jobId:'assigned',fingerprint:'synthetic'},
         'moneyInvoiceNumbers/n_INV-ASSIGN':{number:'INV-ASSIGN',jobId:'assigned'},
+        'jobs/labor-copy':{id:'labor-copy',type:'job',status:'completed',laborCost:189.55,costs:{labor:151.64,laborCents:15164,disposal:85.5,recordedBy:'zacb'}},
+        'jobLaborCosts/assigned':{jobId:'assigned',laborCents:15164,source:'egc_hub'},
+        'jobs/labor-moved':{id:'labor-moved',type:'job',status:'completed',laborCost:189.55,costs:{labor:151.64,laborCents:15164,disposal:85.5,recordedBy:'zacb'}},
+        'jobLaborCosts/labor-moved':{jobId:'labor-moved',laborCents:15164,source:'legacy_job'},
+        'jobLaborCostOperations/receipt':{actorId:'zacb',jobId:'assigned',fingerprint:'synthetic'},
       };
       for (const [path,value] of Object.entries(entries)) await db.doc(path).set(value);
     });
@@ -206,6 +211,52 @@ test('actual Firestore rules isolate canonical operations from crew SDK access',
       await environment.withSecurityRulesDisabled(async context=>{
         for(const path of serverOwned) assert.notEqual((await context.firestore().doc(path).get()).data().recordType,'forged',path);
         assert.notEqual((await context.firestore().doc('jobs/assigned').get()).data().title,'Batched','A denied receipt write must reject the whole batch.');
+      });
+    });
+    await t.test('business SDK writes cannot add or change a job labor copy, drop one only once it has moved, and labor records stay server-only',async()=>{
+      // JOB-COST-PRIVACY: every business user reads jobs, so labor dollars live in the server-only jobLaborCosts record.
+      for(const db of [manager,partner]){
+        await assertFails(db.doc('jobs/assigned').update({'costs.labor':151.64}));
+        await assertFails(db.doc('jobs/assigned').set({costs:{laborCents:15164}},{merge:true}));
+        await assertFails(db.doc('jobs/assigned').update({laborCost:189.55}));
+        await assertFails(db.doc('jobs/labor-new').set({id:'labor-new',type:'job',costs:{labor:1,disposal:1}}));
+        await assertFails(db.collection('jobs').add({type:'job',laborCost:1}));
+        await assertFails(db.doc('jobs/labor-copy').update({'costs.labor':151.65}));
+        await assertFails(db.doc('jobs/labor-copy').update({'costs.laborCents':15165}));
+        await assertFails(db.doc('jobs/labor-copy').set({costs:{labor:0}},{merge:true}));
+        await assertFails(db.doc('jobs/labor-copy').update({laborCost:1}));
+        await assertFails(db.batch().update(db.doc('jobs/assigned'),{notes:'Batched'}).update(db.doc('jobs/labor-copy'),{'costs.labor':1}).commit());
+      }
+      // Other saves keep an older copy as it is, so managers work normally before the backfill.
+      await assertSucceeds(manager.doc('jobs/labor-copy').set({costs:{disposal:99.25,recordedBy:'tylerg'},updatedAt:'2099-09-01T12:00:00.000Z'},{merge:true}));
+      await assertSucceeds(partner.doc('jobs/labor-copy').update({notes:'Manager note still saves'}));
+      await assertSucceeds(manager.doc('jobs/labor-copy').set({costs:{labor:151.64,laborCents:15164,disposal:99.25}},{merge:true}));
+      // Dropping or blanking a copy that was never moved would destroy the owner's only figure.
+      for(const db of [manager,partner]){
+        await assertFails(db.doc('jobs/labor-copy').update({'costs.labor':FieldValue.delete(),laborCost:FieldValue.delete()}));
+        await assertFails(db.doc('jobs/labor-copy').update({laborCost:FieldValue.delete()}));
+        await assertFails(db.doc('jobs/labor-copy').update({'costs.laborCents':FieldValue.delete()}));
+        await assertFails(db.doc('jobs/labor-copy').set({costs:{labor:null}},{merge:true}));
+        await assertFails(db.doc('jobs/labor-copy').set({id:'labor-copy',type:'job',status:'completed',costs:{disposal:99.25}}));
+      }
+      // Once the job's private record exists the copy is stale, and a save may drop it.
+      await assertFails(manager.doc('jobs/labor-moved').update({'costs.labor':1}));
+      await assertSucceeds(manager.doc('jobs/labor-moved').update({'costs.labor':FieldValue.delete(),laborCost:FieldValue.delete()}));
+      await assertSucceeds(partner.doc('jobs/labor-moved').set({costs:{laborCents:null}},{merge:true}));
+      await assertSucceeds(manager.doc('jobs/labor-created').set({id:'labor-created',type:'job',status:'unscheduled',costs:{disposal:1}}));
+      // A blank labor field on a job with no copy (the Hub's unknown marker) reveals nothing and still saves.
+      await assertSucceeds(manager.doc('jobs/labor-created').set({costs:{labor:null,disposal:2}},{merge:true}));
+      for(const db of [publicDb,crew,lead,manager,partner]) for(const path of ['jobLaborCosts/assigned','jobLaborCostOperations/receipt']){await assertFails(db.doc(path).get());await assertFails(db.doc(path).set({laborCents:1}));await assertFails(db.doc(path).delete());}
+      for(const db of [crew,manager]){await assertFails(db.collection('jobLaborCosts').get());await assertFails(db.collection('jobLaborCostOperations').get());}
+      await environment.withSecurityRulesDisabled(async context=>{
+        const db=context.firestore(),copy=(await db.doc('jobs/labor-copy').get()).data();
+        assert.deepEqual([copy.costs.labor,copy.costs.laborCents,copy.costs.disposal,copy.laborCost,copy.notes],[151.64,15164,99.25,189.55,'Manager note still saves'],'the unmoved copy is intact');
+        const moved=(await db.doc('jobs/labor-moved').get()).data();
+        assert.deepEqual([moved.costs.labor,moved.costs.laborCents,moved.laborCost,(await db.doc('jobLaborCosts/labor-moved').get()).data().laborCents],[undefined,null,undefined,15164]);
+        assert.deepEqual((await db.doc('jobs/labor-created').get()).data().costs,{labor:null,disposal:2});
+        assert.equal((await db.doc('jobs/labor-new').get()).exists,false);
+        assert.notEqual((await db.doc('jobs/assigned').get()).data().notes,'Batched','a denied labor write rejects the whole batch');
+        assert.equal((await db.doc('jobLaborCosts/assigned').get()).data().laborCents,15164);
       });
     });
     await t.test('manager job, collection-wide read and schedule-lock workflows remain writable',async()=>{

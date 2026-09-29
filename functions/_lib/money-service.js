@@ -6,6 +6,7 @@ import { estimateChanged, estimateFingerprint, legacyLineItems } from './quote-m
 import { ledgerPatch, reconcileLedger } from './money-ledger.js';
 import { customerPaymentNeedsReview } from './customer-payments.js';
 import { hubRecordEligibility } from './funnel-definitions.js';
+import { JOB_LABOR_COSTS, laborCostVisible, laborOnJob, laborRecordPatch, legacyJobLabor, legacyLaborMove, validLaborCents } from './job-labor-private.js';
 
 /**
  * M3 server-authoritative money mutations for one job:
@@ -15,7 +16,13 @@ import { hubRecordEligibility } from './funnel-definitions.js';
  * input.expectedRevision), any invoice-number reservation, a create-only
  * moneyOperations/{requestId} receipt (sha256 of {actor,input}) and a
  * create-only hub_audit entry with the money before/after (direct costs only
- * in the owner-only costs.save entry). The customer payment mirror is written
+ * in the owner-only costs.save entry). Labor dollars never go on the job, which
+ * every business user can read: costs.save keeps them in the server-only
+ * jobLaborCosts record (JOB-COST-PRIVACY, job-labor-private.js), only a viewer
+ * who sees labor dollars (actor.laborCostVisible) enters or reads them, and a
+ * readable copy an older save left on the job moves there. With
+ * EGC_STAFF_PAY_OWNER_ONLY=false (actor.laborOnJob) the job keeps its costs map
+ * as before, labor included, and the record mirrors it. The customer payment mirror is written
  * after that commit on a best-effort basis, as the legacy tool did. A replay returns
  * the saved result; the same requestId with another payload is
  * money_idempotency_conflict. Nothing here sends anything to a customer:
@@ -26,6 +33,7 @@ export const MONEY_ACTIONS = Object.freeze(['estimate.save', 'estimate.record_ap
 export const OFFLINE_METHODS = Object.freeze(['cash', 'check', 'card_terminal', 'bank_transfer', 'other']);
 export const SENT_CHANNELS = Object.freeze(['email', 'text', 'in_person', 'phone', 'other']);
 export const COST_KEYS = Object.freeze(['labor', 'disposal', 'materials', 'fuel', 'processing', 'other']);
+const OTHER_COST_KEYS = COST_KEYS.filter(key => key !== 'labor');
 // The customer portal lists at most 12 lines and shows every saved line as a
 // charge, so estimates saved here are required, positive lines only.
 export const MAX_ESTIMATE_LINES = 12;
@@ -36,7 +44,7 @@ const COMMON = ['action', 'requestId', 'jobId', 'expectedRevision', 'actorId'];
 const FIELDS = {
   'estimate.save': ['lineItems', 'scope', 'depositCents', 'validUntil'], 'estimate.record_approval': ['approvedBy'], 'estimate.mark_sent': ['channel', 'note'],
   'deposit.record_offline': ['amountCents', 'method', 'reference', 'receivedAt'], 'payment.record_offline': ['amountCents', 'method', 'reference', 'receivedAt'],
-  'invoice.issue': ['dueDate', 'customerReference'], 'invoice.void': ['reason'], 'costs.save': ['costs'],
+  'invoice.issue': ['dueDate', 'customerReference'], 'invoice.void': ['reason'], 'costs.save': ['costs', 'expectedLaborRevision'],
 };
 const FINAL = new Set(['money_idempotency_conflict', 'money_changed_since_operation', 'money_actor_changed']);
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -97,6 +105,7 @@ function validate(input, actor) {
   if (unknown.length) throw fail('request_invalid', 'This request contains unsupported fields. Refresh the form and try again.', 400, { fields: unknown.slice(0, 10) });
   if (!safeId(input.jobId)) throw fail('request_invalid', 'Choose a valid job.');
   if (typeof input.expectedRevision !== 'string' || !input.expectedRevision || input.expectedRevision.length > 100) throw fail('request_invalid', 'Refresh the job before changing its money.');
+  if (input.expectedLaborRevision !== undefined && input.expectedLaborRevision !== null && (typeof input.expectedLaborRevision !== 'string' || !input.expectedLaborRevision || input.expectedLaborRevision.length > 100)) throw fail('request_invalid', 'Refresh the job\'s labor cost before changing it.');
   if (input.actorId !== undefined && String(input.actorId).trim().toLowerCase() !== String(actor.user).trim().toLowerCase()) throw fail('actor_changed', 'The signed-in employee changed. Sign in as the original employee to finish this request, or discard it.', 403);
 }
 
@@ -270,13 +279,40 @@ function voidInvoice({ job, input, actor, now }) {
   return { patch, warnings: totals.appliedCents > 0 ? [{ code: 'payments_kept', message: 'Recorded payments stay on the job. Issue a new invoice to apply them.' }] : [], reason };
 }
 
-function saveCosts({ input, actor, now }) {
-  const costs = input.costs, keys = COST_KEYS.map(key => `${key}Cents`);
-  if (!plain(costs) || Object.keys(costs).length !== keys.length || keys.some(key => !Object.hasOwn(costs, key))) throw fail('invalid_costs', 'Enter every direct cost: labor, disposal, materials, fuel, processing and other.');
+// Labor dollars are owner-only (JOB-COST-PRIVACY): a viewer who does not see them saves the other five costs, and
+// any laborCents or expectedLaborRevision from them is refused by its presence alone, never compared with the saved
+// figure. Their save moves an older labor copy off the job into the private record, except a copy that needs the
+// owner's review (unreadable, or copies that disagree) or is only blank: that one stays on the job as it was.
+// A viewer who sees labor dollars saves labor to the private record. expectedLaborRevision is the record revision
+// /api/job-labor-costs gave (null: no record); a record saved meanwhile from another screen is a
+// money_labor_revision_conflict, never silently overwritten. Once a record exists the owner-only mode requires it for
+// a figure that differs from the saved one (money_labor_revision_required); resending the saved figure needs none,
+// since it cannot overwrite a newer one.
+// With EGC_STAFF_PAY_OWNER_ONLY=false (actor.laborOnJob) the job keeps today's costs map, labor included, every labor
+// save also changes the job revision, and the record gets the same figure.
+async function saveCosts({ store, job, input, actor, now }) {
+  const visible = laborCostVisible(actor), onJob = visible && laborOnJob(actor), costs = input.costs, keys = (visible ? COST_KEYS : OTHER_COST_KEYS).map(key => `${key}Cents`);
+  if (!visible && (plain(costs) && Object.hasOwn(costs, 'laborCents') || Object.hasOwn(input, 'expectedLaborRevision'))) throw fail('labor_owner_only', 'Only the owner enters labor cost. Save the other direct costs; the saved labor figure stays as it is.', 403);
+  if (!plain(costs) || Object.keys(costs).length !== keys.length || keys.some(key => !Object.hasOwn(costs, key))) throw fail('invalid_costs', visible ? 'Enter every direct cost: labor, disposal, materials, fuel, processing and other.' : 'Enter every direct cost except labor: disposal, materials, fuel, processing and other.');
   const saved = { recordedAt: now, recordedBy: actor.user, source: 'egc_hub' };
-  for (const key of COST_KEYS) { const cents = whole(costs[`${key}Cents`], `The ${key} cost`, 0, MAX_TOTAL_CENTS); saved[key] = cents / 100; saved[`${key}Cents`] = cents; }
+  for (const key of onJob ? COST_KEYS : OTHER_COST_KEYS) { const cents = whole(costs[`${key}Cents`], `The ${key} cost`, 0, MAX_TOTAL_CENTS); saved[key] = cents / 100; saved[`${key}Cents`] = cents; }
+  const labor = visible ? whole(costs.laborCents, 'The labor cost', 0, MAX_TOTAL_CENTS) : null;
+  const record = await store.read(JOB_LABOR_COSTS, job.id), legacy = legacyJobLabor(job), before = record ? record.laborCents : legacy.state === 'value' ? legacy.cents : null;
+  if (visible && Object.hasOwn(input, 'expectedLaborRevision') && (record?.revision ?? null) !== input.expectedLaborRevision) throw fail('labor_revision_conflict', 'The labor cost changed after you opened it. Refresh and review the latest figure before saving.', 409);
+  if (visible && !Object.hasOwn(input, 'expectedLaborRevision') && record && !onJob && labor !== record.laborCents) throw fail('labor_revision_required', 'This job has a saved labor cost. Send expectedLaborRevision (from /api/job-labor-costs) with the figure you saw to change it.', 409);
+  const recordWrite = () => ({ collection: JOB_LABOR_COSTS, id: job.id, ...(record ? { revision: record.revision } : {}), patch: laborRecordPatch(job.id, labor, { recordedAt: now, recordedBy: actor.user, source: 'egc_hub', requestId: input.requestId }) });
   // Labor cost reveals pay, so its audit snapshot is owner-only.
-  return { patch: { costs: saved }, warnings: [], visibility: 'owner' };
+  const plan = (patchCosts, remove, writes, after) => ({ patch: { costs: patchCosts }, remove, writes, warnings: [], visibility: 'owner', labor: { before: before ?? null, after: after ?? null } });
+  if (onJob) return plan(saved, [], [recordWrite()], labor);
+  // The job's costs map is replaced without labor, so only the older top-level copy needs removing.
+  if (visible) return plan(saved, legacy.fields.filter(path => !path.startsWith('costs.')), [recordWrite()], labor);
+  const move = legacyLaborMove(job, record, now);
+  if (move.keep) {
+    // Kept exactly as it was: the replaced costs map carries the copy over, and laborCost is not touched.
+    for (const key of ['labor', 'laborCents']) if (plain(job.costs) && job.costs[key] !== undefined) saved[key] = job.costs[key];
+    return plan(saved, [], [], before);
+  }
+  return plan(saved, move.remove.filter(path => !path.startsWith('costs.')), move.writes, record ? record.laborCents : move.writes.length ? move.writes[0].patch.laborCents : before);
 }
 
 const PLANS = { 'estimate.save': saveEstimate, 'estimate.record_approval': recordApproval, 'estimate.mark_sent': markSent, 'deposit.record_offline': recordOffline('deposit'), 'payment.record_offline': recordOffline('payment'), 'invoice.issue': issueInvoice, 'invoice.void': voidInvoice, 'costs.save': saveCosts };
@@ -284,15 +320,21 @@ const PLANS = { 'estimate.save': saveEstimate, 'estimate.record_approval': recor
 /**
  * Money fields for the audit trail: no signatures, notes or contact details.
  * Direct costs (labor cost reveals pay) are included only with `costs`, which
- * only the owner-only costs.save entry passes.
+ * only the owner-only costs.save entry passes, with the labor figure it read
+ * from the private record as `laborCents`.
  */
-export function moneySnapshot(job, { costs = false } = {}) {
+export function moneySnapshot(job, { costs = false, laborCents } = {}) {
   const estimate = pick(job.estimate, ['number', 'status', 'revision', 'amount', 'depositRequired', 'validUntil', 'scope', 'sentAt', 'sentChannel', 'acceptedAt', 'acceptedBy', 'acceptanceMethod']);
   if (estimate && Array.isArray(job.estimate.lineItems)) estimate.lines = job.estimate.lineItems.slice(0, 20).map(line => pick(line, ['id', 'name', 'quantity', 'amount']));
   return { status: job.status ?? null, pipelineStatus: job.pipelineStatus ?? null, quoteStatus: job.quoteStatus ?? null, total: job.total ?? null, estimate,
     customerApproval: pick(job.customerApproval, ['status', 'approvedAt', 'approvedBy', 'amount', 'source', 'supersededAt', 'reason']), deposit: pick(job.deposit, ['amount', 'paidAmount', 'status', 'reference', 'method', 'verified']),
     payment: pick(job.payment, ['amount', 'lastAmount', 'lastReceivedAt', 'method', 'reference', 'verified', 'recordedBy']), invoice: pick(job.invoice, ['number', 'status', 'amount', 'paid', 'balance', 'dueDate', 'issuedAt', 'voidedAt', 'voidReason', 'supersededAt']),
-    ...(costs ? { costs: pick(job.costs, [...COST_KEYS, 'recordedAt', 'recordedBy']) } : {}), paymentLedger: Array.isArray(job.paymentLedger) ? job.paymentLedger.slice(0, 50).map(row => pick(row, ['id', 'kind', 'amountCents', 'method', 'at'])) : null };
+    ...(costs ? { costs: snapshotCosts(job, laborCents) } : {}), paymentLedger: Array.isArray(job.paymentLedger) ? job.paymentLedger.slice(0, 50).map(row => pick(row, ['id', 'kind', 'amountCents', 'method', 'at'])) : null };
+}
+
+function snapshotCosts(job, laborCents) {
+  const costs = pick(job.costs, [...COST_KEYS, 'recordedAt', 'recordedBy']);
+  return laborCents === undefined ? costs : { ...costs, labor: laborCents === null ? null : laborCents / 100 };
 }
 
 // The lines and total invoice.issue would save right now (the same
@@ -308,9 +350,26 @@ function invoicePreview(job, totals) {
 
 const projectEntry = row => ({ id: row.id, kind: row.kind, amountCents: row.amountCents, method: row.method, processorRef: row.processorRef || '', at: row.at, by: row.by, verified: row.verified, source: row.source });
 
+/**
+ * The costs a viewer gets (JOB-COST-PRIVACY): labor from the private record, else the job's legacy copy; for a
+ * viewer who does not see labor dollars laborCents is null (never 0) with laborCostHidden:true. No costs stay null.
+ */
+function costsProjection(job, laborRecord, laborHidden) {
+  const costs = plain(job.costs) ? job.costs : null, record = !laborHidden && plain(laborRecord) ? laborRecord : null;
+  if (!costs && !record) return null;
+  const figure = key => !costs ? null : Number.isSafeInteger(costs[`${key}Cents`]) ? costs[`${key}Cents`] : moneyCents(costs[key]);
+  const labor = laborHidden ? null : record ? (validLaborCents(record.laborCents) ? record.laborCents : null) : figure('labor');
+  return { ...Object.fromEntries(COST_KEYS.map(key => [`${key}Cents`, key === 'labor' ? labor : figure(key)])), recordedAt: str(costs ? costs.recordedAt : record.recordedAt, 40), recordedBy: str(costs ? costs.recordedBy : record.recordedBy, 120), ...(laborHidden ? { laborCostHidden: true } : {}) };
+}
+
+/** What moneyProjection needs to show this viewer's labor: the private record is read only for a viewer who sees labor dollars. */
+export async function moneyLaborView(store, actor, jobId) {
+  return laborCostVisible(actor) ? { laborRecord: await store.read(JOB_LABOR_COSTS, jobId) } : { laborHidden: true };
+}
+
 /** Business-manager DTO for one job's money (integer cents; an allowlist, never the raw job). */
-export function moneyProjection(job, now) {
-  const totals = customerMoneyTotals(job), estimate = plain(job.estimate) ? job.estimate : null, invoice = plain(job.invoice) ? job.invoice : null, costs = plain(job.costs) ? job.costs : null;
+export function moneyProjection(job, now, { laborRecord = null, laborHidden = false } = {}) {
+  const totals = customerMoneyTotals(job), estimate = plain(job.estimate) ? job.estimate : null, invoice = plain(job.invoice) ? job.invoice : null;
   const lines = legacyLineItems(job, { record: 'estimate', surface: 'invoice', totalCents: totals.quoteCents }), ledger = reconcileLedger(job);
   return {
     id: job.id, revision: job.revision, customerId: str(job.customerId), customer: str(job.customer), serviceType: str(job.serviceType), date: str(job.date, 10), status: stage(job) || null, notify: job.notify !== false,
@@ -323,11 +382,11 @@ export function moneyProjection(job, now) {
       issuedAt: str(invoice?.issuedAt, 40), customerReference: str(invoice?.customerReference, 120), voidedAt: str(invoice?.voidedAt, 40), voidReason: str(invoice?.voidReason, 500) },
     invoicePreview: invoicePreview(job, totals),
     payments: ledger.entries.map(projectEntry), ledger: { stored: ledger.stored, complete: ledger.complete, legacyCents: ledger.legacyCents, unreconciledCents: ledger.unreconciledCents, issues: ledger.issues },
-    costs: costs ? { ...Object.fromEntries(COST_KEYS.map(key => [`${key}Cents`, Number.isSafeInteger(costs[`${key}Cents`]) ? costs[`${key}Cents`] : moneyCents(costs[key])])), recordedAt: str(costs.recordedAt, 40), recordedBy: str(costs.recordedBy, 120) } : null,
+    costs: costsProjection(job, laborRecord, laborHidden),
   };
 }
 
-const result = (input, job, warnings, replayed, now) => ({ ok: true, authority: 'employee_hub', requestId: input.requestId, action: input.action, replayed, job: moneyProjection(job, now), warnings });
+const result = async (store, actor, input, job, warnings, replayed, now) => ({ ok: true, authority: 'employee_hub', requestId: input.requestId, action: input.action, replayed, job: moneyProjection(job, now, await moneyLaborView(store, actor, job.id)), warnings });
 
 // True when a new invoice number this plan reserves is now held by another job.
 async function numberTaken(store, writes, job) {
@@ -342,10 +401,10 @@ async function execute(store, actor, input, now, fingerprint, receiptId, via, re
   if (job.revision !== input.expectedRevision) throw fail('revision_conflict', 'This job changed after you opened it. Refresh and review the latest money details.', 409);
   const plan = await PLANS[input.action]({ store, job, input, actor, now, today: denverToday(new Date(now)) });
   const patch = { ...plan.patch, moneyRequestId: input.requestId, moneyUpdatedAt: now, updatedAt: now }, warnings = plan.warnings || [], owner = plan.visibility === 'owner';
-  const audit = auditWrite({ actor: { id: actor.user, kind: 'human', role: actor.role }, via, action: `money.${input.action}`, entity: { collection: 'jobs', id: job.id }, before: moneySnapshot(job, { costs: owner }), after: moneySnapshot({ ...job, ...patch }, { costs: owner }), requestId: input.requestId, reason: plan.reason ?? null, visibility: owner ? 'owner' : 'business', now });
+  const audit = auditWrite({ actor: { id: actor.user, kind: 'human', role: actor.role }, via, action: `money.${input.action}`, entity: { collection: 'jobs', id: job.id }, before: moneySnapshot(job, { costs: owner, laborCents: plan.labor?.before }), after: moneySnapshot({ ...job, ...patch }, { costs: owner, laborCents: plan.labor?.after }), requestId: input.requestId, reason: plan.reason ?? null, visibility: owner ? 'owner' : 'business', now });
   try {
     await store.commit([
-      { collection: 'jobs', id: job.id, revision: job.revision, patch },
+      { collection: 'jobs', id: job.id, revision: job.revision, patch, ...(plan.remove?.length ? { remove: plan.remove } : {}) },
       ...(plan.writes || []),
       { collection: MONEY_RECEIPTS, id: receiptId, patch: { fingerprint, actorId: actor.user, action: input.action, jobId: job.id, requestId: input.requestId, via, auditId: audit.id, warnings, createdAt: now } },
       audit,
@@ -364,7 +423,7 @@ async function execute(store, actor, input, now, fingerprint, receiptId, via, re
   const saved = await store.read('jobs', job.id);
   if (!saved) throw fail('outcome_unknown', 'The saved job could not be read back. Retry the same request.', 503);
   if (saved.moneyRequestId !== input.requestId) throw fail('changed_since_operation', 'The money change saved, but the job has changed again. Refresh to review it.', 409);
-  return result(input, saved, warnings, false, now);
+  return result(store, actor, input, saved, warnings, false, now);
 }
 
 export async function mutateMoney(store, actor, input, now = new Date().toISOString()) {
@@ -377,7 +436,7 @@ export async function mutateMoney(store, actor, input, now = new Date().toISOStr
     if (receipt.fingerprint !== fingerprint || receipt.actorId !== actor.user) throw fail('idempotency_conflict', 'This request ID was already used for a different money change. Refresh before saving.', 409);
     const job = await store.read('jobs', receipt.jobId);
     if (!job || job.moneyRequestId !== input.requestId) throw fail('changed_since_operation', 'That money change was saved, but the job has changed since. Refresh to see its current state.', 409);
-    return result(input, job, receipt.warnings || [], replayed, now);
+    return result(store, actor, input, job, receipt.warnings || [], replayed, now);
   }
   const prior = await replay(true);
   if (prior) return prior;

@@ -1,5 +1,7 @@
 import { getHubSession, hasBusinessAccess } from '../_lib/hub-session.js';
 import { patchJob, readJob } from '../_lib/firestore-job.js';
+import { seesLaborCost } from '../_lib/pay-visibility.js';
+import { withoutJobLabor } from '../_lib/job-labor-private.js';
 
 const HOST = /^(?:easygaragecleaning\.com|www\.easygaragecleaning\.com|easy-garage-cleaning\.pages\.dev|localhost(?::\d+)?|127\.0\.0\.1(?::\d+)?)$/;
 
@@ -100,5 +102,7 @@ export async function onRequestPost({ request, env }) {
     updatedBy: session.user,
   };
   const updated = await patchJob(env, jobId, { caseStudy, updatedAt: now }, job.__updateTime || '');
-  return reply(200, { ok: true, status, caseStudy, job: updated });
+  // The saved job goes back without any labor copy an older save left on it, unless this viewer sees labor dollars
+  // (JOB-COST-PRIVACY; scripts/backfill-job-labor-private.mjs moves those copies to the private record).
+  return reply(200, { ok: true, status, caseStudy, job: seesLaborCost(session, env) ? updated : withoutJobLabor(updated) });
 }
