@@ -146,6 +146,33 @@ test('the dispatch board tells a booker it is one (flag on); a manager and the f
   assert.equal((await board(off, cookies['Config.Phone'])).status, 403);
 });
 
+// WT-OUTCOME after SALES-BOOKING: the Hub Walkthroughs screen also opens for a Sales or Phone booker and reads GET
+// /api/dispatch as one. The walkthrough outcome fields reach them; a price, deposit, estimate, private note or performer never does.
+test('a booker reads walkthrough outcomes from the dispatch board with no money, notes or performer', async t => {
+  const { env, cookies } = await sessions(t, { EGC_STAFF_ROLE_ACCESS: 'true' });
+  const outcome = (value, extra = {}) => ({ outcome: value, reasonCode: null, finishedAt: '2026-09-22T15:40:00.000Z', performedBy: 'synthetic.secret.rep', typedNotes: ['SYNTHETIC-PRIVATE-NOTE'], ...extra });
+  const walk = (id, extra) => ({ id, revision: id + '-r1', type: 'walkthrough', status: 'scheduled', pipelineStatus: 'scheduled', customerId: 'c1', customer: 'Synthetic Customer', address: '100 Fixture Lane',
+    date: '2026-09-23', endDate: '2026-09-23', time: '09:00', endTime: '10:00', assignedCrew: ['crew.one'], scheduleSource: 'egc_hub', estimate: { status: 'accepted', amount: 98765, depositRequired: 43210 },
+    internalNotes: 'SYNTHETIC-PRIVATE-NOTE', ...extra });
+  const seeded = e => {
+    const store = memoryStore(e);
+    store.rows.set('jobs/walk-sold', walk('walk-sold', { convertedJobId: 'job-crewed', walkthroughOutcome: outcome('sold_on_site'), walkthroughCompletedAt: '2026-09-22T15:40:00.000Z' }));
+    store.rows.set('jobs/walk-noshow', walk('walk-noshow', { time: '11:00', endTime: '12:00', walkthroughOutcome: outcome('customer_no_show', { reasonCode: 'customer_not_home' }) }));
+    return store;
+  };
+  for (const user of ['Config.Sales', 'Config.Phone']) {
+    const session = await getHubSession(new Request(`${ORIGIN}/api/dispatch`, { headers: { Cookie: cookies[user] } }), env);
+    const response = await dispatchHandlers({ session: async () => session, storage: seeded, now: () => new Date(NOW) }).get({ env, request: new Request(`${ORIGIN}/api/dispatch?startDate=2026-09-22&endDate=2026-09-29&includeUnscheduled=true`) });
+    assert.equal(response.status, 200, user);
+    const body = await response.json(), text = JSON.stringify(body), dto = id => body.jobs.find(job => job.id === id);
+    assert.deepEqual(body.viewer, { id: user, booker: true });
+    assert.deepEqual([dto('walk-sold').walkthroughBadge, dto('walk-sold').convertedJobId, dto('walk-noshow').walkthroughState, dto('walk-noshow').walkthroughBadge], ['Sold \u2192 open job', 'job-crewed', 'no_show', 'No-show \u00b7 rebook']);
+    for (const secret of ['98765', '43210', 'SYNTHETIC-PRIVATE-NOTE', 'synthetic.secret.rep']) assert.equal(text.includes(secret), false, `${user}: ${secret}`);
+    assert.doesNotMatch(text, /"(?:moneyReady|depositRequiredCents|depositDueCents|hasApprovedPrice|estimate|total|typedNotes|performedBy)"/, user);
+    assert.notEqual(body.ghlTagRetry, true, `${user}: no HighLevel Retry for a booker`);
+  }
+});
+
 // web-lead, with EGC_BOOKING_EXPLICIT_SLOTS=true: the requested window is stored as an explicit Denver date resolved as the
 // lead arrives. With the flag off, tests/booking-slots-flag-off.test.mjs pins every output to the code before SALES-BOOKING.
 function ledgerStore() {

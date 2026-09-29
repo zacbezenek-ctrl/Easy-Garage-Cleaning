@@ -353,4 +353,28 @@ class DispatchCalendarTests(unittest.TestCase):
         self.assertEqual(self.page.locator('img').count(), 0); self.assertIsNone(self.page.evaluate('window.injected'))
         sheet.get_by_role('button', name='Back', exact=True).click(); self.closed(); self.assertEqual(self.calls, [])
 
+    # WT-OUTCOME review: the lanes sheet shows a walkthrough's outcome badge and offers Rebook, as the day and week cards do.
+    def test_lanes_sheet_shows_the_walkthrough_outcome_and_rebooks_a_no_show(self):
+        self.funnel = {'visitPurposes': ['service'], 'bookingChannels': ['hub_phone'], 'selfReportedChannels': ['other'], 'crmLinkReasons': ['other'], 'initiatedBy': ['customer', 'company'],
+                       'reasonCodes': {'cancel': ['other'], 'reschedule': ['customer_request', 'weather', 'other'], 'noShow': ['customer_not_home', 'other']}}
+        walk = dict(type='walkthrough', serviceType='', assignedCrew=['crew.two'], crewLead=None, crewId=None, vehicleId=None, crewNeeded=1, rebookPending=False)
+        self.jobs = [job(), job(id='walk-noshow', revision='wn-rev', customer='Synthetic No-show Garage', time='11:00', endTime='12:00', walkthroughState='no_show', walkthroughClosed=False, walkthroughBadge='No-show \u00b7 rebook',
+                             walkthroughOutcome={'outcome': 'customer_no_show', 'reasonCode': 'customer_not_home', 'finishedAt': DAY+'T17:10:00Z'}, rebook={'reasonCode': 'customer_request', 'initiatedBy': 'customer', 'label': 'Customer not home', 'missedOn': DAY}, **walk),
+                     job(id='walk-sold', revision='ws-rev', customer='Synthetic Sold Garage', time='14:00', endTime='15:00', walkthroughState='sold', walkthroughClosed=True, walkthroughBadge='Sold \u2192 open job', convertedJobId='job-sold', **walk)]
+        self.start(375, 812, mobile=True); self.mode('Lanes')
+        noshow = self.item('Crew Two', 'Synthetic No-show Garage'); expect(noshow).to_contain_text('No-show \u00b7 rebook')
+        noshow.tap(); sheet = self.page.get_by_role('dialog'); expect(sheet.locator('.dp-outcome')).to_have_text('No-show \u00b7 rebook')
+        rebook = sheet.get_by_role('button', name='Rebook the walkthrough for Synthetic No-show Garage', exact=True); self.assertGreaterEqual(rebook.bounding_box()['height'], 44); self.no_overflow(375)
+        rebook.tap(); dialog = self.page.get_by_role('dialog'); expect(dialog.get_by_role('heading', name='Rebook walkthrough', exact=True)).to_be_visible()
+        dialog.get_by_label('Start date', exact=True).fill('2026-09-24')
+        expect(dialog.get_by_role('combobox', name='Reason', exact=True)).to_have_value('customer_request'); expect(dialog.get_by_role('combobox', name='Who asked for it?', exact=True)).to_have_value('customer')
+        dialog.get_by_role('button', name='Save new time', exact=True).tap(); self.closed()
+        self.assertEqual([self.calls[-1]['action'], self.calls[-1]['jobId'], self.calls[-1]['reasonCode'], self.calls[-1]['changes']['date']], ['schedule.update', 'walk-noshow', 'customer_request', '2026-09-24'])
+        # A closed walkthrough is finished work: it shows under All statuses, with its job link and no Rebook.
+        self.reloaded(); expect(self.item('Crew Two', 'Synthetic Sold Garage')).to_have_count(0)
+        self.page.get_by_role('combobox', name='Filter by status', exact=True).select_option('all'); self.item('Crew Two', 'Synthetic Sold Garage').tap(); sheet = self.page.get_by_role('dialog')
+        expect(sheet.get_by_role('link', name='Sold \u2192 open job', exact=True)).to_have_attribute('href', '/crew/job.html?jobId=job-sold')
+        expect(sheet.get_by_role('button', name=re.compile('^Rebook'))).to_have_count(0)
+        sheet.get_by_role('button', name='Back', exact=True).tap(); self.closed(); self.assertEqual(len(self.calls), 1)
+
 if __name__ == '__main__': unittest.main(verbosity=2)

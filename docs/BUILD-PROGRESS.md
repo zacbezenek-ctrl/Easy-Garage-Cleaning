@@ -539,6 +539,10 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   Phone see Leads, Walkthroughs, Schedule and the Action Center; lead cards Call / Open in HighLevel / Book walkthrough (prefilled
   Create job, crew controls hidden, New customer via /api/customer-resolve, "HighLevel unavailable, retrying"); three read-only
   booker views of /api/highlevel. The flag gives /book explicit Denver windows; flag off is byte-identical (GO-LIVE 2.4, item 120).
+- **WT-OUTCOME** (P1 walkthroughs; no flag, no sends) walkthrough-state.js holds the closed rule and badges (Sold → open job, Quote
+  to follow, Lost, No-show · rebook); Dispatch, calendar and crew DTOs carry them only once a walkthrough has an outcome. Rebook
+  moves a walkthrough no-show; a service-job no-show books a new visit. New Hub Walkthroughs screen over EGCDispatch.openFor, also
+  open to Sales/Phone bookers (sync state, no Retry, no money); the rep's own walkthroughs on /api/field-jobs (checklist 121).
 
 ## In progress
 
@@ -666,6 +670,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | FIX-EDIT-WIPE | P1 UI: typed text survives background reloads (Hub chat and customer thread, crew job reason and checklist, business hub forms, schedule alerts) | merged (6f5dd90) |
 | STAFF-ACCESS | P1 auth/pay: staff sign-in reset and password change; approvals set role and starting rate (EGC_STAFF_PASSWORD_RESET, off) | merged (d3e8358) |
 | SALES-BOOKING | P1 booking: phone and sales booking tools; public /book explicit slots behind EGC_BOOKING_EXPLICIT_SLOTS (off) | merged (845020b) |
+| WT-OUTCOME | P1 walkthroughs: outcomes visible to the office; rebook; the rep's day | merged (0903732) |
 
 ## Next
 

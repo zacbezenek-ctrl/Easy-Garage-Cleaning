@@ -15,6 +15,7 @@ import { fieldCapabilities } from '../_lib/field-permissions.js';
 import { jobStatusMovesTime } from '../_lib/employee-job-time.js';
 import { clockInWithoutFix } from '../_lib/employee-timecards.js';
 import { addDays } from '../_lib/dispatch-time.js';
+import { walkthroughCard } from '../_lib/walkthrough-state.js';
 
 const reply = (status, body) => Response.json(body, { status, headers: { 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' } });
 const mutationOriginAllowed = request => {
@@ -112,18 +113,27 @@ export async function onRequestGet({ request, env }) {
     const date = params.get('date') || fieldToday(), days = Number(params.get('days') || 1), status = params.get('status') || 'all';
     if (!validDate(date) || !Number.isInteger(days) || days < 1 || days > 7 || !['all', 'active', 'completed', 'cancelled'].includes(status)) throw fieldFailure('Choose a valid Mountain date, 1–7 days and a supported status filter.');
     const end = new Date(`${date}T12:00:00Z`); end.setUTCDate(end.getUTCDate() + days - 1);
-    const source = await ctx.store.listDays(date, end.toISOString().slice(0, 10)), jobs = [];
+    const source = await ctx.store.listDays(date, end.toISOString().slice(0, 10), { walkthroughs: true }), jobs = [], walkthroughs = [];
     for (const job of source) {
       // This is the signed-in employee's day, including for managers. Managers
       // can open any job by ID and use dispatch for the company-wide view.
       if (!await assignedDuring(job, date, end.toISOString().slice(0, 10), ctx.access)) continue;
+      // WT-OUTCOME: the rep's own walkthroughs are read-only cards; the job actions below never take one.
+      if (job.type === 'walkthrough') {
+        const card = walkthroughCard(job), cancelled = card.walkthroughState === 'cancelled';
+        if (status === 'active' && (card.walkthroughClosed || cancelled) || status === 'completed' && !card.walkthroughClosed || status === 'cancelled' && !cancelled) continue;
+        // A sold card links to its job only when this viewer can open that job (the authorizedJob rule); a rep who
+        // is not on the job opens the walkthrough instead, as on crew home.
+        walkthroughs.push(card.convertedJobId ? walkthroughCard(job, { convertedJobOpen: await authorizedJob(ctx, card.convertedJobId).then(() => true, () => false) }) : card);
+        continue;
+      }
       const stage = fieldStage(job), completed = ['completed', 'paid', 'invoiced', 'review_requested'].includes(stage);
       if (status === 'active' && (completed || fieldCancelled(job)) || status === 'completed' && !completed || status === 'cancelled' && stage !== 'cancelled') continue;
       jobs.push(job);
     }
-    jobs.sort((a, b) => `${a.date} ${a.time || '99:99'}`.localeCompare(`${b.date} ${b.time || '99:99'}`) || a.id.localeCompare(b.id));
+    for (const list of [jobs, walkthroughs]) list.sort((a, b) => `${a.date} ${a.time || '99:99'}`.localeCompare(`${b.date} ${b.time || '99:99'}`) || a.id.localeCompare(b.id));
     const [display, allowed] = await Promise.all([displayContext(ctx, env, jobs), Promise.all(jobs.map(job => capabilities(ctx, env, job)))]);
-    return reply(200, { ok: true, jobs: await Promise.all(jobs.map((job, index) => projection(ctx, job, [], { ...display(job), capabilities: allowed[index] }))), date, endDate: end.toISOString().slice(0, 10), timezone: 'America/Denver', photosAvailable: fieldPhotosConfigured(env), generatedAt: new Date().toISOString() });
+    return reply(200, { ok: true, jobs: await Promise.all(jobs.map((job, index) => projection(ctx, job, [], { ...display(job), capabilities: allowed[index] }))), walkthroughs, date, endDate: end.toISOString().slice(0, 10), timezone: 'America/Denver', photosAvailable: fieldPhotosConfigured(env), generatedAt: new Date().toISOString() });
   } catch (error) { return errorResponse(error); }
 }
 

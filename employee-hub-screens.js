@@ -23,6 +23,7 @@ const MANIFEST=[
 {id:'stocked_costs',group:'SYSTEM',label:'Stocked item costs',capability:'business',iconPath:'M4 7l8-4 8 4v10l-8 4-8-4zM4 7l8 4 8-4M12 11v10',load:{js:'employee-standard-costs.js',css:'employee-standard-costs.css',v:'20260928fun19'},module:'EGCStandardCosts'},
 {id:'staff',group:'RUN THE BUSINESS',label:'Staff directory',iconPath:'M9 11a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7zM2 20c0-3.5 3-6 7-6s7 2.5 7 6M16 4.5a3.5 3.5 0 0 1 0 6.5M18 14c2.5.6 4 2.8 4 6',capability:'business',load:{js:'employee-staff.js',css:'employee-staff.css',v:'20260929access'},module:'EGCStaff'},
 {id:'invoicing',group:'CLIENT WORK',label:'Invoicing',iconPath:'M6 3h9l3 3v15H6z M9 9h6 M9 13h6 M9 17h4',capability:'business',load:{js:'employee-money.js',css:'employee-money.css',v:'20260929invoicingr3'},module:'EGCMoney'},
+{id:'walkthroughs',group:'RUN THE BUSINESS',label:'Walkthroughs',iconPath:'M9 4h6l1 2h3v14H5V6h3zM9 13l2 2 4-4',capability:'business',load:{js:'employee-walkthroughs.js',css:'employee-walkthroughs.css',v:'20260929wtoutcome2'},module:'EGCWalkthroughs'},
 ];
 // Home widgets, one line each: {id, label, homes:['today'|'my_day',...], capability:'business'|'owner' or crewVisible:true, module:'EGCName', load?:{js, css, v}}.
 // employee-suite.js renders one #ops-home-widgets node on the Command center (today) and on My day. mountHome() gives each

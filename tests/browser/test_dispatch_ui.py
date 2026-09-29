@@ -166,8 +166,11 @@ class DispatchBrowserTests(unittest.TestCase):
         self.open(); card = self.card(); expect(card).to_contain_text('8:00 AM – 10:00 AM'); expect(card).to_contain_text('North Crew'); expect(card).to_contain_text('Lead One'); expect(card).to_contain_text('Box Truck')
         expect(card.get_by_role('link', name='Open job', exact=True)).to_have_attribute('href', '/crew/job.html?jobId=job-1')
         expect(card.get_by_role('link', name=CUSTOMER['address'], exact=True)).to_have_attribute('href', 'https://www.google.com/maps/dir/?api=1&destination=123%20Synthetic%20Way%2C%20Fort%20Collins%2C%20CO')
-        self.page.get_by_role('button', name='Crew', exact=True).click(); expect(self.page.locator('.dp-crew-group')).to_contain_text('1 jobs · 2.0 reserved hours')
-        self.assertEqual(self.gets[-1]['startDate'], [DAY]); self.assertEqual(self.gets[-1]['endDate'], ['2026-09-29'])
+        # The crew view first redraws from the previous read, so wait for its own read rather than the last one recorded.
+        with self.page.expect_request(lambda request: urlparse(request.url).path == '/api/dispatch' and request.method == 'GET') as read:
+            self.page.get_by_role('button', name='Crew', exact=True).click()
+        params = parse_qs(urlparse(read.value.url).query); self.assertEqual(params['startDate'], [DAY]); self.assertEqual(params['endDate'], ['2026-09-29'])
+        expect(self.page.locator('.dp-crew-group')).to_contain_text('1 jobs · 2.0 reserved hours')
     def test_create_assign_lead_truck_duration_scope_and_reload(self):
         self.open(); self.create(); self.page.get_by_role('combobox', name='Saved crew', exact=True).select_option('crew-main'); self.page.get_by_role('combobox', name='Vehicle / truck', exact=True).select_option('truck-1')
         self.page.get_by_role('combobox', name='Expected duration', exact=True).select_option('180'); self.page.get_by_label('Scope of work', exact=True).fill('Keep the marked boxes; remove debris.'); self.submit('Create job'); self.closed()
@@ -802,5 +805,81 @@ class DispatchBrowserTests(unittest.TestCase):
         dialog.get_by_label('HighLevel confirmation and reminders', exact=True).uncheck(); expect(dialog).to_contain_text(kept)
         dialog.get_by_role('button', name='Close dialog', exact=True).click(); self.closed()
         self.assertEqual(self.calls, [], 'reading and closing writes nothing')
+
+    # WT-OUTCOME: the server's walkthrough outcome fields (walkthrough-state.js) as GET /api/dispatch projects them.
+    def outcome_rows(self):
+        def walk(id, customer, time, state, badge, closed, **extra):
+            end = '%02d:00' % (int(time[:2]) + 1)
+            return job(id=id, revision=id+'-rev', type='walkthrough', customer=customer, serviceType=extra.pop('serviceType', 'Free walkthrough'), time=time, endTime=end, startAt=DAY+'T'+time+':00-06:00', endAt=DAY+'T'+end+':00-06:00',
+                       assignedCrew=['crew.one'], crewLead=None, crewId=None, vehicleId=None, crewNeeded=1, requiredEquipment=[], materials=[], jobInstructions='',
+                       walkthroughState=state, walkthroughBadge=badge, walkthroughClosed=closed, rebookPending=False, convertedJobId=extra.pop('convertedJobId', None), **extra)
+        return [
+            # Booked outside Dispatch with no service name: the rebook still saves.
+            walk('walk-noshow', 'Synthetic No-show Garage', '07:00', 'no_show', 'No-show \u00b7 rebook', False, serviceType='', walkthroughOutcome={'outcome': 'customer_no_show', 'reasonCode': 'customer_not_home', 'finishedAt': DAY+'T13:40:00Z'},
+                 rebook={'reasonCode': 'customer_request', 'initiatedBy': 'customer', 'label': 'Customer not home', 'missedOn': DAY}),
+            walk('walk-lost', 'Synthetic Lost Garage', '09:00', 'lost', 'Lost: Price', True, walkthroughOutcome={'outcome': 'not_interested', 'reasonCode': 'price', 'finishedAt': DAY+'T15:40:00Z'}),
+            walk('walk-quote', 'Synthetic Quote Garage', '10:00', 'quote', 'Quote to follow', True, walkthroughOutcome={'outcome': 'quote_to_follow', 'reasonCode': None, 'finishedAt': DAY+'T16:40:00Z'}),
+            walk('walk-sold', 'Synthetic Sold Garage', '11:00', 'sold', 'Sold \u2192 open job', True, convertedJobId='job-sold', walkthroughOutcome={'outcome': 'sold_on_site', 'reasonCode': None, 'finishedAt': DAY+'T17:40:00Z'}),
+            job(id='job-missed', revision='missed-rev', customer='Synthetic Missed Job', time='06:00', endTime='07:00', startAt=DAY+'T06:00:00-06:00', endAt=DAY+'T07:00:00-06:00', status='no_show', noShowReasonCode='no_access',
+                assignedCrew=[], crewLead=None, crewId=None, vehicleId=None, rebook={'reasonCode': None, 'initiatedBy': None, 'label': 'No access', 'missedOn': DAY}),
+        ]
+    def no_overflow(self, *widths):
+        for width in widths:
+            self.page.set_viewport_size({'width': width, 'height': 844})
+            self.assertLessEqual(self.page.evaluate('document.documentElement.scrollWidth'), width, width)
+    def test_walkthrough_outcome_badges_and_a_prefilled_rebook_on_a_phone(self):
+        self.funnel = FUNNEL; self.jobs = [job()] + self.outcome_rows()
+        self.page.set_viewport_size({'width': 390, 'height': 844}); self.open()
+        noshow = self.card('Synthetic No-show Garage')
+        expect(noshow.locator('.dp-outcome')).to_have_text('No-show \u00b7 rebook')
+        expect(noshow).not_to_contain_text('Scheduled finish has passed')
+        for name in ['Synthetic Lost Garage', 'Synthetic Quote Garage', 'Synthetic Sold Garage']: expect(self.card(name)).to_have_count(0)
+        self.page.get_by_role('combobox', name='Filter by status', exact=True).select_option('all')
+        expect(self.card('Synthetic Lost Garage').locator('.dp-outcome')).to_have_text('Lost: Price')
+        expect(self.card('Synthetic Quote Garage').locator('.dp-outcome')).to_have_text('Quote to follow')
+        sold = self.card('Synthetic Sold Garage').get_by_role('link', name='Sold \u2192 open job', exact=True)
+        expect(sold).to_have_attribute('href', '/crew/job.html?jobId=job-sold')
+        for name in ['Synthetic Lost Garage', 'Synthetic Quote Garage', 'Synthetic Sold Garage']:
+            closed = self.card(name); expect(closed).to_have_class(re.compile('dp-terminal'))
+            expect(closed.get_by_role('button', name='Edit / assign', exact=True)).to_have_count(0); expect(closed.get_by_role('button', name=re.compile('^Rebook'))).to_have_count(0)
+        self.assertNotIn('Start walkthrough', self.page.locator('[data-dp-body]').inner_text())
+        rebook = noshow.get_by_role('button', name='Rebook the walkthrough for Synthetic No-show Garage', exact=True)
+        for target in [rebook, sold]: self.assertGreaterEqual(target.bounding_box()['height'], 44)
+        self.no_overflow(390, 320); self.page.set_viewport_size({'width': 390, 'height': 844})
+        out = ROOT/'test-results'; out.mkdir(exist_ok=True); self.page.screenshot(path=str(out/'dispatch-walkthrough-outcomes-390.png'), full_page=True)
+        rebook.click(); dialog = self.page.get_by_role('dialog')
+        expect(dialog.get_by_role('heading', name='Rebook walkthrough', exact=True)).to_be_visible()
+        expect(dialog.locator('[data-rebook]')).to_contain_text('No-show on Tue, Sep 22 (Customer not home)')
+        dialog.get_by_label('Start date', exact=True).fill('2026-09-24')
+        expect(dialog.get_by_role('combobox', name='Reason', exact=True)).to_have_value('customer_request')
+        expect(dialog.get_by_role('combobox', name='Who asked for it?', exact=True)).to_have_value('customer')
+        self.no_overflow(390, 320); self.page.set_viewport_size({'width': 390, 'height': 844})
+        self.submit('Save new time'); self.closed()
+        write = self.calls[-1]
+        self.assertEqual([write['action'], write['jobId'], write['expectedRevision'], write['reasonCode'], write['initiatedBy'], write['changes']['date']], ['schedule.update', 'walk-noshow', 'walk-noshow-rev', 'customer_request', 'customer', '2026-09-24'])
+        self.assertNotIn('sourceJobId', write); self.assertEqual(len([call for call in self.calls if call['action'] == 'schedule.create']), 0, 'the same visit moves; no second walkthrough')
+        expect(self.page.get_by_role('status').filter(has_text='Walkthrough moved to its new time.')).to_be_visible()
+    def test_service_job_no_show_rebooks_as_a_new_visit_from_that_job(self):
+        self.funnel = FUNNEL; self.jobs = [job()] + self.outcome_rows()
+        self.page.set_viewport_size({'width': 390, 'height': 844}); self.open()
+        self.page.get_by_role('combobox', name='Filter by status', exact=True).select_option('no_show')
+        missed = self.card('Synthetic Missed Job')
+        expect(self.card('Synthetic No-show Garage')).to_have_count(1)
+        for name in ['Synthetic Lost Garage', 'Synthetic Quote Garage', 'Synthetic Sold Garage']: expect(self.card(name)).to_have_count(0)
+        expect(missed.get_by_role('button', name='Restore', exact=True)).to_have_count(0)
+        missed.get_by_role('button', name='Rebook Synthetic Missed Job', exact=True).click(); dialog = self.page.get_by_role('dialog')
+        expect(dialog.get_by_role('heading', name='Rebook job', exact=True)).to_be_visible()
+        expect(dialog.locator('[data-rebook]')).to_contain_text('Books the no-show on Tue, Sep 22 (No access) again as a new visit for Synthetic Missed Job')
+        customer = dialog.locator('input[name=customerSearch]'); expect(customer).to_have_value('Synthetic Missed Job'); expect(customer).to_have_attribute('readonly', '')
+        expect(dialog.get_by_role('combobox', name='Work type', exact=True)).to_be_disabled()
+        expect(dialog.get_by_label('Service', exact=True)).to_have_value('Garage cleanout')
+        expect(dialog.get_by_label('Internal dispatch notes', exact=True)).to_have_value(re.compile('No access'))
+        dialog.get_by_role('combobox', name='How was this booked?', exact=True).select_option('hub_phone')
+        dialog.get_by_label('Start date', exact=True).fill('2026-09-25'); dialog.get_by_label('Start time', exact=True).fill('09:00'); dialog.get_by_label('End time', exact=True).fill('11:00')
+        self.no_overflow(390, 320); self.page.set_viewport_size({'width': 390, 'height': 844})
+        self.submit('Book again'); self.closed()
+        write = self.calls[-1]
+        self.assertEqual([write['action'], write['kind'], write['customerId'], write['sourceJobId'], write['booking']['channel'], write['changes']['date'], write['changes']['serviceType']], ['schedule.create', 'job', CUSTOMER['id'], 'job-missed', 'hub_phone', '2026-09-25', 'Garage cleanout'])
+        self.assertIn('No access', write['changes']['opsNotes']); self.assertEqual(write['changes']['assignedCrew'], [])
 
 if __name__ == '__main__': unittest.main(verbosity=2)

@@ -22,7 +22,8 @@ export function createFieldStore(env) {
     readJob: id => read(`jobs/${id}`),
     readEvent: (id, requestId) => read(`jobs/${id}/fieldEvents/${requestId}`),
     readResource: id => fieldId(id) ? read(`dispatchResources/${id}`) : null,
-    async listDays(start, end) {
+    // walkthroughs: also the walkthrough visits on those days (the rep's read-only cards, WT-OUTCOME).
+    async listDays(start, end, { walkthroughs = false } = {}) {
       const days = [], cursor = new Date(`${start}T12:00:00Z`);
       while (cursor.toISOString().slice(0, 10) <= end) { days.push(cursor.toISOString().slice(0, 10)); cursor.setUTCDate(cursor.getUTCDate() + 1); }
       const queries = days.map(day => ({ from: [{ collectionId: 'jobs' }], where: { fieldFilter: { field: { fieldPath: 'date' }, op: 'EQUAL', value: { stringValue: day } } } }));
@@ -30,7 +31,7 @@ export function createFieldStore(env) {
       // new composite index or a full scan of all historical jobs.
       queries.push({ from: [{ collectionId: 'jobs' }], where: { fieldFilter: { field: { fieldPath: 'endDate' }, op: 'GREATER_THAN_OR_EQUAL', value: { stringValue: start } } } });
       const rows = (await Promise.all(queries.map(querySpec => query('', querySpec)))).flat();
-      return [...new Map(rows.map(job => [job.id, job])).values()].filter(job => ['job', 'cleanout', 'reorg'].includes(job.type) && !job.recordType && fieldId(job.id) && job.date <= end && (job.endDate || job.date) >= start && !(job.date < start && job.endDate === start && /^00:00(?::00)?$/.test(job.endTime || '')));
+      return [...new Map(rows.map(job => [job.id, job])).values()].filter(job => (['job', 'cleanout', 'reorg'].includes(job.type) || walkthroughs && job.type === 'walkthrough') && !job.recordType && fieldId(job.id) && job.date <= end && (job.endDate || job.date) >= start && !(job.date < start && job.endDate === start && /^00:00(?::00)?$/.test(job.endTime || '')));
     },
     async events(id, cursor = '') {
       const spec = { from: [{ collectionId: 'fieldEvents' }], orderBy: [{ field: { fieldPath: 'createdAt' }, direction: 'DESCENDING' }, { field: { fieldPath: '__name__' }, direction: 'DESCENDING' }], limit: 51 };

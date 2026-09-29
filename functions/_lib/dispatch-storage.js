@@ -35,7 +35,9 @@ export const JOB_FIELDS = Object.freeze(['type','recordType','date','time','endD
   // GHL-TRACK-1: the visit's newest HighLevel tag outbox entry (ghl-tag-outbox.js), for the card's HighLevel chip.
   'ghlTagEntry',
   // FIX-DISPATCH-READY: reminder readiness from today's browser calendar sync and the Jobber import (dispatch-readiness.js).
-  'scheduleSource','notifySetAt','automationTagSynced','automationReminderTag','automationReminderTaggedAt','syncLastAttemptAt','syncedAt']);
+  'scheduleSource','notifySetAt','automationTagSynced','automationReminderTag','automationReminderTaggedAt','syncLastAttemptAt','syncedAt',
+  // WT-OUTCOME: where a walkthrough stands and what a no-show rebook prefills (walkthrough-state.js); never the rep's notes.
+  'walkthroughOutcome.outcome','walkthroughOutcome.reasonCode','walkthroughOutcome.finishedAt','walkthroughOutcome.occurrence','walkthroughCompletedAt','convertedJobId','scheduleOccurrence','noShowReasonCode','noShowAt']);
 
 /** Owner decision F19: the owner and managers are office staff and join assignment
  * lists only when they take field work, recorded as stored staffRoles that also

@@ -21,6 +21,10 @@ HUB_JOB = {'id': 'job-today', 'revision': 'rev-1', 'type': 'job', 'customerId': 
 TASK = {'id': 'task-1', 'revision': 1, 'title': 'Schedule the synthetic job', 'description': 'The customer asked to book the cleanout.', 'kind': 'schedule_job', 'status': 'open', 'priority': 'high',
         'assignedUserId': 'synthetic.sales', 'dueAt': DAY + 'T20:00:00.000Z', 'waitingOn': 'none', 'reviewAt': None, 'approvalStatus': 'not_required', 'completionCondition': 'The job is on the schedule',
         'portalJobId': 'job-today', 'sourceEvidence': [], 'completionEvidence': []}
+# WT-OUTCOME after SALES-BOOKING: a walkthrough on the booker's board whose HighLevel appointment sync failed.
+WALK = {'id': 'walk-today', 'revision': 'walk-rev-1', 'type': 'walkthrough', 'customerId': 'customer-7', 'customer': 'Synthetic Walkthrough Lead', 'phone': '(970) 555-0122', 'address': '7 Found Ct, Loveland, CO',
+        'date': DAY, 'time': '15:00', 'endDate': DAY, 'endTime': '16:00', 'status': 'scheduled', 'assignedCrew': ['synthetic.crew'], 'crewLead': None, 'crewId': None, 'vehicleId': None, 'crewNeeded': 1,
+        'startAt': DAY + 'T21:00:00.000Z', 'endAt': DAY + 'T22:00:00.000Z', 'serviceType': 'Free walkthrough', 'syncStatus': 'error', 'arrivalWindowStart': None, 'arrivalWindowEnd': None, 'arrivalWindow': ''}
 
 
 class SalesBookingBrowserTests(HubShell, unittest.TestCase):
@@ -29,7 +33,7 @@ class SalesBookingBrowserTests(HubShell, unittest.TestCase):
     @classmethod
     def tearDownClass(cls): cls.stop()
     def setUp(self):
-        self.errors = []; self.highlevel = None; self.contacts_down = False; self.resolves = []; self.saves = []; self.operations = []; self.lead_slot = None
+        self.errors = []; self.highlevel = None; self.contacts_down = False; self.resolves = []; self.saves = []; self.operations = []; self.lead_slot = None; self.dispatch_extra = []
     def tearDown(self):
         self.close_page()
         self.assertEqual(self.errors, [])
@@ -58,7 +62,7 @@ class SalesBookingBrowserTests(HubShell, unittest.TestCase):
                     send({'ok': True, 'requestId': body['requestId'], 'job': job, 'warnings': []}); return
                 if query.get('view') == ['customers']: send({'ok': True, 'customers': [], 'total': 0}); return
                 if query.get('view') == ['job']: send({'ok': True, 'job': copy.deepcopy(HUB_JOB), 'roster': ROSTER, 'crews': [], 'vehicles': [], 'warnings': []}); return
-                send({'ok': True, 'viewer': {'id': 'Synthetic.Sales', 'booker': True}, 'timeZone': 'America/Denver', 'jobs': [copy.deepcopy(HUB_JOB)], 'roster': ROSTER, 'crews': [], 'vehicles': [],
+                send({'ok': True, 'viewer': {'id': 'Synthetic.Sales', 'booker': True}, 'timeZone': 'America/Denver', 'jobs': [copy.deepcopy(HUB_JOB)] + copy.deepcopy(self.dispatch_extra), 'roster': ROSTER, 'crews': [], 'vehicles': [],
                       'availability': [], 'warnings': [], 'coverage': {'complete': True, 'asOf': DAY + 'T18:00:00Z'}, 'startDate': query.get('startDate', [DAY])[0], 'endDate': query.get('endDate', ['2026-09-29'])[0]}); return
             if parsed.path == '/api/employee-hub' and request.method == 'GET':
                 # The Sales account has finished onboarding, so a deep link opens its view rather than Getting started.
@@ -172,6 +176,28 @@ class SalesBookingBrowserTests(HubShell, unittest.TestCase):
         expect(self.dialog()).to_have_count(0)
         self.assertEqual([self.saves[-1]['kind'], self.saves[-1]['customerId']], ['job', 'customer-new'])
         self.assert_phone_fit(375, '#ops-main')
+
+    def test_sales_walkthroughs_is_the_hub_screen_with_the_sync_state_but_no_retry_or_money_at_375(self):
+        # WT-OUTCOME after SALES-BOOKING: Walkthroughs is now a Hub screen (business, and dispatch.write with staff roles). A
+        # schedule.book holder still opens it and reads /api/dispatch as a booker: the HighLevel sync shows, and its Retry
+        # (dispatch.write) does not. Reschedule opens the booker's form, without the crew controls.
+        self.dispatch_extra = [WALK]
+        page = self.open('walkthroughs', width=375, height=812, profile=SALES)
+        self.assertIn('walkthroughs', self.nav_views())
+        expect(page.get_by_role('heading', name='Walkthroughs', exact=True)).to_be_visible()
+        card = page.locator('.wt-card').filter(has=page.get_by_role('heading', name='Synthetic Walkthrough Lead', exact=True))
+        expect(card.locator('.wt-sync-state')).to_have_text('HighLevel sync failed')
+        expect(page.get_by_role('button', name=re.compile('^Retry the HighLevel sync'))).to_have_count(0)
+        expect(card.get_by_role('link', name='Call Synthetic Walkthrough Lead', exact=True)).to_have_attribute('href', 'tel:9705550122')
+        expect(page.locator('.egc-walkthroughs .wt-notice.error')).to_have_count(0)
+        expect(page.locator('#ops-main')).not_to_contain_text('$')
+        self.assert_phone_fit(375, '#ops-main')
+        page.screenshot(path=str(RESULTS / 'sales-booking-walkthroughs-375.png'), full_page=True)
+        card.get_by_role('button', name='Reschedule Synthetic Walkthrough Lead', exact=True).click()
+        dialog = self.dialog(); expect(dialog).to_have_attribute('aria-label', 'Edit / reschedule job')
+        expect(dialog.get_by_role('group', name='Assigned employees')).to_be_hidden()
+        expect(dialog).not_to_contain_text('$')
+        self.assertFalse(any(call[1] == '/api/highlevel' and call[0] != 'GET' for call in self.calls))
 
     def test_action_center_deep_link_calls_and_books_a_schedule_job_action(self):
         page = self.open('action_center', width=375, height=812, profile=SALES)

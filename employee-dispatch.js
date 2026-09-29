@@ -3,8 +3,9 @@
 'use strict';
 const TZ = 'America/Denver';
 const terminal = new Set(['completed', 'cancelled', 'canceled', 'paid', 'invoiced', 'review_requested', 'closed','noshow','no_show','no-show']);
-const active = job => !terminal.has(job.status || job.pipelineStatus);
-const S = { host:null, root:null, date:today(), view:'day', query:'', status:'active', employee:'', type:'', data:null, loading:false, generation:0, modal:null, refreshTimer:null, pending:false, error:'', notice:'', controller:null, viewer:null, recovery:null, pendingBook:null };
+// WT-OUTCOME: a closed walkthrough (sold, quote to follow, lost, done; server walkthroughClosed) is finished work like a completed job.
+const active = job => !terminal.has(job.status || job.pipelineStatus) && job.walkthroughClosed !== true;
+const S = { host:null, root:null, date:today(), view:'day', query:'', status:'active', employee:'', type:'', data:null, loading:false, generation:0, modal:null, refreshTimer:null, pending:false, error:'', notice:'', controller:null, viewer:null, recovery:null, pendingBook:null, detached:null };
 const recoveryPrefix='egc.dispatch.pending.v1.';
 // Extra views (employee-dispatch-calendar.js) register {label, range(date), step(date,count), render(target,jobs), help}; they save through save().
 const views=new Map();
@@ -125,7 +126,7 @@ function setDate(date) { if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return; S.date=d
 function filtered() {
   const q=S.query.toLowerCase().trim(), phone=q.replace(/\D/g,'');
   return (S.data?.jobs||[]).filter(j => (!S.employee || j.assignedCrew?.includes(S.employee)) &&
-    (!S.type || j.type===S.type) && (S.status==='all' || (S.status==='active'?active(j):S.status==='attention'?warningsFor(j).length:S.status==='unassigned'?active(j)&&j.type!=='blocked'&&!j.assignedCrew?.length:S.status==='unscheduled'?!j.date:j.status===S.status)) &&
+    (!S.type || j.type===S.type) && (S.status==='all' || (S.status==='active'?active(j):S.status==='attention'?warningsFor(j).length:S.status==='unassigned'?active(j)&&j.type!=='blocked'&&!j.assignedCrew?.length:S.status==='unscheduled'?!j.date:j.status===S.status||S.status==='completed'&&j.walkthroughClosed===true||S.status==='no_show'&&(['noshow','no-show'].includes(j.status)||j.walkthroughState==='no_show'))) &&
     (!q || [j.customer,j.address,j.phone,j.id,j.date,j.serviceType,crewName(j)].some(v=>String(v||'').toLowerCase().includes(q)) || phone.length>2&&String(j.phone||'').replace(/\D/g,'').includes(phone)))
     .sort((a,b)=>String(a.date||'9999').localeCompare(String(b.date||'9999'))||String(a.time||'').localeCompare(String(b.time||''))||String(a.customer||'').localeCompare(String(b.customer||'')));
 }
@@ -144,7 +145,7 @@ function warningsFor(job) {
   if(['pending','error','blocked'].includes(job.completionSync?.status))add('completion_sync_'+job.completionSync.status,job.completionSync.message||'Completion is saved; the CRM handoff needs verification.');
   if(active(job)&&job.type!=='blocked'){
     if(['paused','waiting','delayed'].includes(job.activity))add('job_'+job.activity,job.activityReason||'The crew reported this job as '+job.activity+'.');
-    if(job.endAt&&Number.isFinite(Date.parse(job.endAt))&&Date.parse(job.endAt)<Date.now())add('scheduled_finish_passed','Scheduled finish has passed; verify the current job status.');
+    if(job.endAt&&Number.isFinite(Date.parse(job.endAt))&&Date.parse(job.endAt)<Date.now()&&!['no_show','rescheduled'].includes(job.walkthroughState))add('scheduled_finish_passed','Scheduled finish has passed; verify the current job status.');
   }
   return warnings;
 }
@@ -215,6 +216,18 @@ function readyRow(job) {
   }
   return row.childElementCount?row:null;
 }
+// WT-OUTCOME: the server's walkthrough badge (walkthrough-state.js). A sold walkthrough links to its job.
+function outcomeBadge(job) {
+  if(job.type!=='walkthrough'||typeof job.walkthroughBadge!=='string'||!job.walkthroughBadge)return null;
+  if(job.walkthroughState==='sold'&&job.convertedJobId)return h('a',{class:'dp-btn dp-outcome-link','data-outcome':'sold',href:'/crew/job.html?jobId='+encodeURIComponent(job.convertedJobId)},job.walkthroughBadge);
+  return h('p',{class:'dp-outcome','data-outcome':job.walkthroughState||''},job.walkthroughBadge);
+}
+// Rebook for a visit, or null: a walkthrough no-show moves the same visit (GO-LIVE); a service-job no-show is booked again from that job.
+function rebookAction(job) {
+  if(!job?.rebook)return null;
+  if(job.type==='walkthrough')return active(job)&&['no_show','rescheduled'].includes(job.walkthroughState)?{label:'Rebook the walkthrough for '+(job.customer||'this customer'),open:()=>openJob(job,{rebook:job.rebook})}:null;
+  return ['no_show','noshow','no-show'].includes(job.status)&&job.customerId?{label:'Rebook '+(job.customer||'this job'),open:()=>openJob(null,{rebookFrom:job})}:null;
+}
 function jobCard(job, {compact=false,date=null}={}) {
   const original=job.sourceJob||job,warnings=warningsFor(job),blocked=job.type==='blocked';
   const card=h('article',{class:'dp-job '+(active(job)?'':'dp-terminal'),draggable:active(job),
@@ -225,6 +238,7 @@ function jobCard(job, {compact=false,date=null}={}) {
   if (job.endDate&&job.endDate!==job.date) card.append(h('small',{class:'dp-muted'},dateText(job.date,true)+' → '+dateText(job.endDate,true)));
   if (!blocked&&job.date&&job.arrivalWindow) card.append(h('p',{class:'dp-service dp-arrival'},'Arrival window: '+job.arrivalWindow));
   card.append(h('h3',{},title),h('p',{class:'dp-service'},blocked?'Company-wide blocked time':job.serviceType||words(job.type||'job')));
+  const outcome=outcomeBadge(original);if(outcome)card.append(outcome);
   if(!blocked){
   if (job.address) card.append(h('a',{class:'dp-address',href:directions(job.address),target:'_blank',rel:'noopener'},job.address));
   else card.append(h('p',{class:'dp-missing'},'Address needed'));
@@ -249,6 +263,7 @@ function jobCard(job, {compact=false,date=null}={}) {
   if (active(job)&&!blocked&&!original.date) actions.append(btn('Find a time',()=>openOpenings(original),'subtle',{'aria-label':'Find a time for '+(job.customer||'this job')}));
   if (active(job)&&job.type==='job'&&window.EGCRecurring&&!booker()&&!segmentsOf(original).length&&!original.segmentsInvalid) actions.append(btn('Repeat',()=>window.EGCRecurring.open({templateJob:original,onChange:()=>load({quiet:true})}),'subtle dp-repeat',{'aria-label':'Repeat '+(job.customer||'this job')+' on a schedule'}));
   if (['cancelled','canceled'].includes(job.status)) actions.append(btn('Restore',()=>openStatus(original,'schedule.restore')));
+  const rebook=rebookAction(original);if(rebook)actions.append(btn('Rebook',rebook.open,'primary',{'aria-label':rebook.label}));
   card.append(actions);
   return card;
 }
@@ -342,9 +357,9 @@ function dimensionControls(model,lists,read) {
   },250);};
   return {refresh,facts:()=>Object.assign({},...Object.entries(controls).map(([name,select])=>!select.value||select.value===derived[name]?{}:select.dataset.touched?{[name]:select.value}:select.value===suggested[name]?{[name]:select.value,serviceLineSuggested:true}:{}))};
 }
-function reasonControls(parent,list,{who=false,required=true}={}) {
+function reasonControls(parent,list,{who=false,required=true,value='',by:initiated=''}={}) {
   const lists=S.data?.funnel;if(!Array.isArray(lists?.reasonCodes?.[list]))return null;
-  const code=codeSelect(lists.reasonCodes[list],'',{name:'reasonCode',required}),by=who&&Array.isArray(lists.initiatedBy)?codeSelect(lists.initiatedBy,'',{name:'initiatedBy',required}):null;
+  const code=codeSelect(lists.reasonCodes[list],value||'',{name:'reasonCode',required}),by=who&&Array.isArray(lists.initiatedBy)?codeSelect(lists.initiatedBy,initiated||'',{name:'initiatedBy',required}):null;
   parent.append(labeled('Reason',code),...(by?[labeled('Who asked for it?',by)]:[]));
   return Object.assign(()=>({...(code.value?{reasonCode:code.value}:{}),...(by?.value?{initiatedBy:by.value}:{})}),{controls:[code,by].filter(Boolean)});
 }
@@ -357,7 +372,7 @@ function render() {
   for(const [id,label]of [['day','Day'],['week','Week'],['crew','Crew'],['jobs','Jobs'],...[...views].map(([id,view])=>[id,view.label])])modes.append(btn(label,()=>{S.view=id;void load();},S.view===id?'selected':'',{'aria-pressed':S.view===id?'true':'false'}));
   S.root.append(h('div',{class:'dp-controls'},h('div',{class:'dp-date-controls'},btn('←',()=>move(-1),'',{'aria-label':'Previous period'}),labeled('Schedule date',h('input',{type:'date',value:S.date,onchange:e=>setDate(e.target.value)})),btn('→',()=>move(1),'',{'aria-label':'Next period'}),h('div',{class:'dp-date-shortcuts'},btn('Today',()=>setDate(today())),btn('Tomorrow',()=>setDate(addDays(today(),1))))),modes));
   S.root.append(h('div',{class:'dp-filters'},search,
-    select([['active','Active work'],['all','All statuses'],['attention','Needs attention'],['unassigned','Unassigned'],['unscheduled','Unscheduled'],['completed','Completed'],['cancelled','Cancelled']],S.status,v=>setFilter('status',v),{'aria-label':'Filter by status'}),
+    select([['active','Active work'],['all','All statuses'],['attention','Needs attention'],['unassigned','Unassigned'],['unscheduled','Unscheduled'],['completed','Completed'],['cancelled','Cancelled'],['no_show','No-shows']],S.status,v=>setFilter('status',v),{'aria-label':'Filter by status'}),
     select([['','All employees'],...(S.data?.roster||[]).map(p=>[p.id,p.name])],S.employee,v=>setFilter('employee',v),{'aria-label':'Filter by employee'}),
     select([['','All work types'],['job','Jobs'],['walkthrough','Walkthroughs'],['blocked','Blocked time']],S.type,v=>setFilter('type',v),{'aria-label':'Filter by work type'})));
   S.root.append(h('div',{'data-dp-body':''}));renderBody();
@@ -397,7 +412,7 @@ async function save(model,body,success) {
     const result=await api('',model.request);
     if(S.modal!==model)return;
     S.notice=success+(result.warnings?.length?' '+result.warnings.map(w=>w.message||words(w.code)).join(' '):'')+(result.providerSync==='pending'?' Customer calendar sync is pending.':'');
-    formBusy(model,false);model.request=null;clearRecovery();model.close();await load();
+    formBusy(model,false);model.request=null;model.saved=S.notice;clearRecovery();model.close();await load();
   } catch(error) {
     if(S.modal!==model)return;
     formBusy(model,false);
@@ -681,16 +696,25 @@ function openPendingBook() {
   const slot=requestedWindow(prefill.requestedSlot);
   openJob(null,{...(slot&&!slot.state?{date:slot.date,time:slot.time,endTime:slot.endTime}:{}),prefill:{...prefill,slot}});
 }
+// WT-OUTCOME: what a rebook says it does; rebook is the server's prefill (walkthrough-state.js rebookPrefill).
+function rebookNote(job,rebook,walkthrough) {
+  const when=/^\d{4}-\d{2}-\d{2}$/.test(rebook?.missedOn||'')?' on '+dateText(rebook.missedOn,true):'',why=rebook?.label?' ('+rebook.label+')':'';
+  if(!walkthrough)return 'Books the no-show'+when+why+' again as a new visit for '+(job.customer||'this customer')+'. The missed visit keeps its history.';
+  return (job.walkthroughState==='rescheduled'?'Rescheduled at the door':'No-show')+when+why+'. Choose the new date and time: this same visit moves, and the move reason is filled in.';
+}
 function openJob(job=null,options={}) {
   if(!S.data)return;
   if(job?.type==='blocked')return openBlock(job,options);
-  const model=modal(job?(booker()?'Edit / reschedule job':'Edit / assign job'):'Create job','Times are Mountain Time. Conflicting employee and vehicle assignments are blocked.');if(!model)return;
+  // rebookFrom: a service-job no-show booked again for its customer; rebook: a walkthrough no-show moved to a new time.
+  const from=!job&&options.rebookFrom?.customerId?options.rebookFrom:null,seed=job||from;
+  const model=modal(job?(options.rebook?'Rebook walkthrough':booker()?'Edit / reschedule job':'Edit / assign job'):from?'Rebook job':'Create job','Times are Mountain Time. Conflicting employee and vehicle assignments are blocked.');if(!model)return;
   if(booker())model.dialog.classList.add('dp-booker');
-  let selectedCustomer=job?.customerId?{id:job.customerId,name:job.customer,address:job.address,phone:job.phone}:null,sourceJobId=null;
-  const search=field(model,'customerSearch','Customer',job?.customer||'','search',{required:!job,readOnly:!!job,autocomplete:'off',placeholder:'Search existing customers'});
+  let selectedCustomer=seed?.customerId?{id:seed.customerId,name:seed.customer,address:seed.address,phone:seed.phone}:null,sourceJobId=from?.id||null;
+  if(from||job&&options.rebook)model.fields.append(h('p',{class:'dp-wide dp-rebook-note','data-rebook':''},rebookNote(seed,options.rebook||from.rebook,!from)));
+  const search=field(model,'customerSearch','Customer',seed?.customer||'','search',{required:!seed,readOnly:!!seed,autocomplete:'off',placeholder:'Search existing customers'});
   const customerResults=h('div',{class:'dp-customer-results',role:'status'});search.parentElement.append(customerResults);
   const lineage=h('div',{class:'dp-wide'});model.fields.append(lineage);
-  const intake=job?null:customerIntake(model,(customer,result)=>{
+  const intake=seed?null:customerIntake(model,(customer,result)=>{
     selectedCustomer=customer;sourceJobId=null;lineage.replaceChildren();clearTimeout(customerTimer);customerGeneration++;search.value=customer.name;
     if(customer.address&&!address.value.trim())address.value=customer.address;
     customerResults.replaceChildren(h('small',{},result.created?'New customer saved and selected':'This mobile, email or HighLevel contact is already a Hub customer, so that customer is selected'));customerResults.click();
@@ -707,7 +731,7 @@ function openJob(job=null,options={}) {
   let customerGeneration=0,customerTimer=0;
   // One search once typing pauses; a newer keystroke or a closed form drops it.
   search.addEventListener('input',()=>{
-    if(job)return;selectedCustomer=null;sourceJobId=null;lineage.replaceChildren();clearTimeout(customerTimer);const g=++customerGeneration,q=search.value.trim();if(q.length<2){customerResults.replaceChildren(h('small',{},'Type at least 2 characters.'));return;}
+    if(seed)return;selectedCustomer=null;sourceJobId=null;lineage.replaceChildren();clearTimeout(customerTimer);const g=++customerGeneration,q=search.value.trim();if(q.length<2){customerResults.replaceChildren(h('small',{},'Type at least 2 characters.'));return;}
     customerResults.replaceChildren(h('small',{},'Searching…'));
     customerTimer=setTimeout(async()=>{
     if(g!==customerGeneration||S.modal!==model)return;
@@ -715,7 +739,7 @@ function openJob(job=null,options={}) {
     catch(error){if(g===customerGeneration&&S.modal===model)customerResults.replaceChildren(notice(errorText(error),'error'));}
     },CUSTOMER_SEARCH_DELAY_MS);
   });
-  const type=select([['job','Service job'],['walkthrough','Walkthrough']],job?.type||'job',()=>{},{name:'type',disabled:!!job});
+  const type=select([['job','Service job'],['walkthrough','Walkthrough']],job?.type||(!from&&options.kind==='walkthrough'?'walkthrough':'job'),()=>{},{name:'type',disabled:!!seed});
   model.fields.append(labeled('Work type',type));
   const lists=!job&&S.data.funnel,booking={};
   if(lists&&Array.isArray(lists.bookingChannels)) {
@@ -733,7 +757,7 @@ function openJob(job=null,options={}) {
     booking.dimensions=dimensionControls(model,lists,()=>selectedCustomer?.id?{customerId:selectedCustomer.id,kind:type.value,...(type.value==='job'&&booking.purpose.value?{visitPurpose:booking.purpose.value}:{}),...(booking.channel.value?{channel:booking.channel.value}:{}),...(booking.original.required&&booking.original.value.trim()?{reworkOfJobId:booking.original.value.trim()}:{}),...(model.form.querySelector('[name="serviceType"]')?.value.trim()?{serviceType:model.form.querySelector('[name="serviceType"]').value.trim().slice(0,200)}:{})}:null);
     if(booking.dimensions){for(const control of [type,booking.purpose,booking.channel])control.addEventListener('change',booking.dimensions.refresh);for(const control of [search,booking.original])control.addEventListener('input',booking.dimensions.refresh);customerResults.addEventListener('click',booking.dimensions.refresh);booking.dimensions.refresh();}
   }
-  const service=field(model,'serviceType','Service',job?.serviceType||'','text',{required:true,maxLength:200,placeholder:'Garage cleanout, organization, shelving…'});
+  const service=field(model,'serviceType','Service',job?.serviceType||'','text',{required:job?.type!=='walkthrough',maxLength:200,placeholder:'Garage cleanout, organization, shelving…'});
   if(booking.dimensions)service.addEventListener('input',booking.dimensions.refresh);
   let date=options.moveTo||options.date||job?.date||S.date;
   const dayOffset=job?.date&&job?.endDate?Math.round((Date.parse(job.endDate+'T12:00Z')-Date.parse(job.date+'T12:00Z'))/86400000):0;
@@ -745,7 +769,7 @@ function openJob(job=null,options={}) {
   const endTime=field(model,'endTime','End time',options.endTime||job?.endTime||'10:00','time',{required:true});
   const timing=[startDate,startTime,endDate,endTime];
   // Moving a placed visit asks why and who asked (FUN-02 reschedule reason).
-  const moveBox=h('fieldset',{class:'dp-wide',hidden:true},h('legend',{},'Why is this visit moving?')),moveReason=job?.date?reasonControls(moveBox,'reschedule',{who:true,required:false}):null;
+  const moveBox=h('fieldset',{class:'dp-wide',hidden:true},h('legend',{},'Why is this visit moving?')),moveReason=job?.date?reasonControls(moveBox,'reschedule',{who:true,required:false,...(options.rebook?{value:options.rebook.reasonCode,by:options.rebook.initiatedBy}:{})}):null;
   if(moveReason)model.fields.append(moveBox);
   const toggle=()=>{for(const input of timing){input.disabled=unscheduled.checked;input.required=!unscheduled.checked;}};unscheduled.addEventListener('change',toggle);toggle();
   const blankArrival=arrivalBlankText(S.data?.arrivalDefaults);
@@ -881,7 +905,9 @@ function openJob(job=null,options={}) {
   const skillFields=window.EGCDispatchRules?.jobFields(model,job,S.data,options.requiredSkills)||null;
   field(model,'materials','Materials — one per line',(job?.materials||[]).map(m=>m.name).join('\n'),'textarea',{rows:3,maxLength:5000});
   field(model,'opsNotes','Internal dispatch notes',job?.opsNotes||'','textarea',{rows:3,maxLength:5000});
-  model.footer.append(btn('Back',model.close),h('button',{class:'dp-btn primary',type:'submit'},job?'Save changes':'Create job'));
+  model.footer.append(btn('Back',model.close),h('button',{class:'dp-btn primary',type:'submit'},job?(options.rebook?'Save new time':'Save changes'):from?'Book again':'Create job'));
+  // A rebooked job starts from the missed visit's work and says why it was booked again; the crew and time are chosen fresh.
+  if(from){for(const [name,value] of Object.entries({serviceType:from.serviceType,address:from.address,scope:scope(from),accessInstructions:from.accessInstructions,customerInstructions:from.customerInstructions,requiredEquipment:(from.requiredEquipment||[]).join('\n'),materials:(from.materials||[]).map(m=>m.name).join('\n'),crewNeeded:from.crewNeeded,opsNotes:rebookNote(from,from.rebook,false)}))if(model.form.elements[name]&&(typeof value==='string'||Number.isInteger(value)))model.form.elements[name].value=String(value);booking.dimensions?.refresh();}
   const firstStart=()=>{const first=segments.slice().sort((a,b)=>(a.date+'T'+a.time).localeCompare(b.date+'T'+b.time))[0];return first?first.date+'T'+first.time:unscheduled.checked?'':startDate.value+'T'+startTime.value;};
   const moved=()=>Boolean(moveReason)&&firstStart()!==job.date+'T'+job.time;
   const syncMove=()=>{if(!moveReason)return;const on=moved();moveBox.hidden=!on;for(const control of moveReason.controls)control.required=on;};
@@ -909,7 +935,7 @@ function openJob(job=null,options={}) {
     else if(hadSegments)changes.assignmentSegments=[];
     const facts=booking.channel?Object.fromEntries([['channel',booking.channel.value],['visitPurpose',type.value==='job'?booking.purpose.value:''],['reworkOfJobId',booking.original.required?booking.original.value.trim():''],['channelSelfReported',booking.heard.value],['crmLinkReason',booking.crm?.required?booking.crm.value:''],...Object.entries(booking.dimensions?.facts()||{})].filter(([,value])=>value)):null;
     const body=job?{action:'schedule.update',requestId:key(),jobId:job.id,expectedRevision:job.revision,changes,...(moved()?moveReason():{})}:{action:'schedule.create',requestId:key(),customerId:selectedCustomer.id,kind:type.value,...(sourceJobId?{sourceJobId}:{}),...(facts?{booking:facts}:{}),changes};
-    void save(model,body,job?'Job updated.':'Job created.');
+    void save(model,body,job?(options.rebook?'Walkthrough moved to its new time.':'Job updated.'):from?'Job booked again.':'Job created.');
   });
   const prefill=!job&&options.prefill;
   if(prefill){
@@ -982,14 +1008,40 @@ function openResource(kind,resource=null) {
     void save(model,body,words(kind)+' saved.');
   });
 }
+// WT-OUTCOME: another Hub screen (Walkthroughs) opens a dispatch dialog for one visit without the board: 'edit'
+// (reschedule), 'rebook', 'schedule.cancel' or 'create' ({kind}). Off the board it first reads the board's lists and
+// the viewer (the dialogs use only its roster, crews, vehicles and lists; the server checks every conflict on save).
+// Returns {opened:true} or {opened:false, reason:'busy'|'recovery_invalid'|'unavailable'}; onClose({saved}) runs when
+// the dialog closes, with the success text when the save was verified. An unverified earlier save opens its own
+// review dialog first, as on the board.
+async function openFor(job,action,{onClose,kind}={}) {
+  if(!['edit','rebook','schedule.cancel','create'].includes(action)||action!=='create'&&!job?.id)return {opened:false,reason:'unavailable'};
+  if(S.modal||S.pending)return {opened:false,reason:'busy'};
+  const detached=!S.root;
+  if(detached){
+    const data=await api('?'+new URLSearchParams({startDate:today(),endDate:addDays(today(),1)}));
+    if(S.root||S.modal||S.pending)return {opened:false,reason:'busy'};
+    S.data=data;restoreRecovery(data.viewer.id);
+  }
+  if(S.recovery?.invalid)return {opened:false,reason:'recovery_invalid'};
+  if(action==='schedule.cancel')openStatus(job,action);
+  else if(action==='create')openJob(null,{kind});
+  else openJob(job,action==='rebook'&&job.rebook?{rebook:job.rebook}:{});
+  const model=S.modal;if(!model)return {opened:false,reason:'unavailable'};
+  // The Hub re-renders (and unmounts the board) while another screen is showing; that leaves this dialog open.
+  if(detached)S.detached=model;
+  model.dialog.addEventListener('close',()=>{if(S.detached===model)S.detached=null;onClose?.({saved:model.saved||''});},{once:true});
+  return {opened:true};
+}
 // options.type starts a fresh board on one work type (the Hub's Walkthroughs page for a booker).
 function mount(host,options) {
   if(!host)return;if(S.host===host&&S.root?.isConnected)return;
   unmount();if(typeof options?.type==='string')S.type=options.type;S.host=host;S.root=h('section',{class:'egc-dispatch'});host.replaceChildren(S.root);render();void load();
   S.refreshTimer=setInterval(()=>{if(!document.hidden&&!S.modal&&!S.pending)void load({quiet:true});},60000);
 }
-function unmount() {S.controller?.abort();S.generation++;if(S.refreshTimer)clearInterval(S.refreshTimer);S.refreshTimer=null;if(S.modal){S.modal.dialog.close();S.modal.dialog.remove();S.modal=null;}S.pending=false;S.root?.remove();S.root=null;S.host=null;S.data=null;S.viewer=null;S.recovery=null;S.pendingBook=null;}
-window.addEventListener('egc:signout',()=>{try{for(let i=sessionStorage.length-1;i>=0;i--){const name=sessionStorage.key(i);if(name?.startsWith(recoveryPrefix))sessionStorage.removeItem(name);}}catch{}unmount();});
+// A dialog another screen opened off the board (openFor) is not the board's: unmount leaves it until it closes or sign-out.
+function unmount({force=false}={}) {if(!force&&S.detached&&S.modal===S.detached&&!S.root)return;S.detached=null;S.controller?.abort();S.generation++;if(S.refreshTimer)clearInterval(S.refreshTimer);S.refreshTimer=null;if(S.modal){S.modal.dialog.close();S.modal.dialog.remove();S.modal=null;}S.pending=false;S.root?.remove();S.root=null;S.host=null;S.data=null;S.viewer=null;S.recovery=null;S.pendingBook=null;}
+window.addEventListener('egc:signout',()=>{try{for(let i=sessionStorage.length-1;i>=0;i--){const name=sessionStorage.key(i);if(name?.startsWith(recoveryPrefix))sessionStorage.removeItem(name);}}catch{}unmount({force:true});});
 window.addEventListener('beforeunload',event=>{if(S.modal){event.preventDefault();event.returnValue='';}});
 function registerView(name,view) {
   if(!/^[a-z][a-z0-9_]{1,23}$/.test(name)||['day','week','crew','jobs'].includes(name)||views.has(name)||typeof view?.label!=='string'||typeof view.range!=='function'||typeof view.render!=='function')throw new Error('Dispatch view '+name+' is invalid or already registered.');
@@ -997,8 +1049,8 @@ function registerView(name,view) {
   if(S.root&&!S.modal)render();
 }
 // Registered views share this client, its dialogs and the save-recovery protocol (same requestId on retry).
-const internals=Object.freeze({state:()=>S,api,save,modal,openJob,show,redraw:renderBody,person,assignable,crewName,vehicle,h,btn,pill,notice,errorText,clock,dateText,addDays,today,words,key,segmentsOf,segmentsOn,active,warningsFor,reasonControls});
-window.EGCDispatch={mount,unmount,refresh:load,canLeave:()=>!S.modal&&!S.pending,registerView,book,internals};
+const internals=Object.freeze({state:()=>S,api,save,modal,openJob,show,redraw:renderBody,person,assignable,crewName,vehicle,h,btn,pill,notice,errorText,clock,dateText,addDays,today,words,key,segmentsOf,segmentsOn,active,warningsFor,reasonControls,outcomeBadge,rebookAction});
+window.EGCDispatch={mount,unmount,refresh:load,canLeave:()=>!S.modal&&!S.pending,registerView,book,internals,openFor};
 // A readiness chip opened outside the Hub lands on /employee.html?view=finance&job=ID; that job's row is shown once the Hub renders it.
 try{if(typeof location!=='undefined'){const params=new URLSearchParams(location.search);if(params.get('view')==='finance'&&params.get('job'))focusFinanceRow(params.get('job'),100);}}catch{}
 })();

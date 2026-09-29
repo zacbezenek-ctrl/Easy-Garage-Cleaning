@@ -250,7 +250,7 @@ function laneStatus(lane) {
 function itemNode(k, S, lane, item) {
   const {h}=k, job=item.job, row=item.row, others=row.assignedCrew.filter(id => lane.kind!=='employee' || id!==lane.employeeId);
   const time=(item.startsToday?clock(row.time):'Earlier')+' – '+(item.endsToday?clock(row.endTime):'continues');
-  const meta=[job.type==='walkthrough'?'Walkthrough':job.serviceType||'', row.segmentId?'Crew segment':'', lane.kind==='employee'&&others.length?'with '+others.map(id => nameOf(S.data,id)).join(', '):lane.kind!=='employee'&&others.length?others.map(id => nameOf(S.data,id)).join(', '):''].filter(Boolean).join(' · ');
+  const meta=[job.type==='walkthrough'?'Walkthrough':job.serviceType||'', job.type==='walkthrough'&&typeof job.walkthroughBadge==='string'?job.walkthroughBadge:'', row.segmentId?'Crew segment':'', lane.kind==='employee'&&others.length?'with '+others.map(id => nameOf(S.data,id)).join(', '):lane.kind!=='employee'&&others.length?others.map(id => nameOf(S.data,id)).join(', '):''].filter(Boolean).join(' · ');
   const locked=refusal(S.data,job), node=h('button',{type:'button', class:'dc-item'+(locked?' dc-locked':'')+(item.start<AXIS_START?' dc-before':'')+(item.end>AXIS_END?' dc-after':'')+(inactive(job)?' dc-muted':''),
     'data-dc-item':item.key, title:time+' · '+jobLabel(job)+(meta?' · '+meta:''), 'aria-label':time+', '+jobLabel(job)+(meta?', '+meta:'')+'. '+(locked||'Assign or move.'),
     onclick:()=>{ if (C.suppressClick) { C.suppressClick=false; return; } openSheet(item); }},
@@ -369,6 +369,8 @@ function openSheet(item) {
   model.dialog.classList.add('dc-sheet'); model.form.insertBefore(model.status,model.fields);
   const from=item.lane?.startsWith('employee:') ? item.lane.slice(9) : '';
   model.fields.append(facts(k,[['When',when(k,row)+(row.segmentId?' · crew segment':'')],['Now',row.assignedCrew.length?row.assignedCrew.map(id => nameOf(S.data,id)).join(', ')+(row.crewLead?' · lead '+nameOf(S.data,row.crewLead):''):'Unassigned']]));
+  // WT-OUTCOME: the walkthrough's outcome badge (a sold one links to its job) and Rebook, as on the day and week cards.
+  const outcome=k.outcomeBadge?.(job); if (outcome) model.fields.append(h('div',{class:'dp-wide'},outcome));
   const send=(target,label) => { const result=moveChanges(S.data,item,target); if (result.error) { model.status.replaceChildren(k.notice(result.error,'error')); return; } void k.save(model,{action:'schedule.update',requestId:k.key(),jobId:job.id,expectedRevision:job.revision,changes:result.changes},'Assigned to '+label+'.'); };
   if (blocked) model.fields.append(k.notice(blocked,'error'));
   else {
@@ -387,8 +389,9 @@ function openSheet(item) {
     model.fields.append(...[people,crews.length?teams:null].filter(Boolean));
   }
   const edit=inactive(job)?null:k.btn('Edit / assign',()=>{ if (S.pending || model.request) return; model.close(); k.openJob(job); });
+  const rebook=k.rebookAction?.(job), again=rebook?k.btn('Rebook',()=>{ if (S.pending || model.request) return; model.close(); rebook.open(); },'primary',{'aria-label':rebook.label}):null;
   const open=h('a',{class:'dp-btn',href:job.type==='walkthrough'?'/crew/gameplan.html?walkthroughId='+encodeURIComponent(job.id):'/crew/job.html?jobId='+encodeURIComponent(job.id)},job.type==='walkthrough'?'Open walkthrough':'Open job');
-  model.footer.append(...[k.btn('Back',model.close),open,edit].filter(Boolean));
+  model.footer.append(...[k.btn('Back',model.close),open,edit,again].filter(Boolean));
 }
 
 // The last lane model holds customer schedule data; drop it with the rest of the Hub state.

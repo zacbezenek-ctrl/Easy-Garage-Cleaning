@@ -42,7 +42,7 @@ class FieldTodayBrowserTests(unittest.TestCase):
         self.page=self.context.new_page();self.page.set_default_timeout(5000)
         self.page.clock.install(time=datetime.datetime(2026,9,22,15,tzinfo=datetime.timezone.utc))
         self.jobs=[job(),job('job-2',customer='Synthetic Next Job',time='11:00',endTime='13:00')]
-        self.status=200;self.calls=[];self.errors=[];self.malformed=False
+        self.status=200;self.calls=[];self.errors=[];self.malformed=False;self.walkthroughs=None
         self.page.on('pageerror',lambda error:self.errors.append(str(error)))
         self.page.route('**/api/field-jobs?**',self.route)
     def tearDown(self):
@@ -50,6 +50,7 @@ class FieldTodayBrowserTests(unittest.TestCase):
     def route(self,route):
         self.calls.append(parse_qs(urlparse(route.request.url).query))
         body={'ok':True,'jobs':self.jobs,'generatedAt':DAY+'T15:00:00Z'} if self.status==200 else {'ok':False,'error':'Sign in again.' if self.status==401 else 'Current schedule could not be verified.'}
+        if self.status==200 and self.walkthroughs is not None: body['walkthroughs']=self.walkthroughs
         if self.malformed: body={'ok':True}
         route.fulfill(status=self.status,content_type='application/json',body=json.dumps(body))
     def open(self):
@@ -112,5 +113,55 @@ class FieldTodayBrowserTests(unittest.TestCase):
         self.open();self.assertFalse(self.page.evaluate('document.documentElement.scrollWidth>innerWidth'))
         for button in self.page.locator('.ft-actions a').all():
             self.assertGreaterEqual(button.bounding_box()['height'],44)
+
+    # WT-OUTCOME: /api/field-jobs lists the rep's own walkthroughs (walkthrough-state.js walkthroughCard) beside the jobs.
+    def walk(self,id='walk-1',**updates):
+        value={'id':id,'type':'walkthrough','customer':'Synthetic Walkthrough Garage','phone':'(970) 555-0123','address':'77 Synthetic Court, Fort Collins, Colorado',
+            'date':DAY,'time':'13:00','endDate':DAY,'endTime':'14:00','arrivalWindow':'','arrivalWindowStart':'12:30','arrivalWindowEnd':'13:30','status':'scheduled',
+            'walkthroughState':'open','walkthroughClosed':False,'walkthroughBadge':''}
+        value.update(updates)
+        return value
+    def test_rep_walkthroughs_are_read_only_cards_with_start_and_call(self):
+        self.walkthroughs=[self.walk(),self.walk('walk-2',customer='Synthetic Tomorrow Garage',date='2026-09-23',endDate='2026-09-23',time='09:00',endTime='10:00',arrivalWindowStart=None,arrivalWindowEnd=None),
+            self.walk('walk-noshow',customer='Synthetic Missed Garage',time='07:00',endTime='08:00',walkthroughState='no_show',walkthroughBadge='No-show \u00b7 rebook'),
+            self.walk('walk-sold',customer='Synthetic Sold Garage',time='06:00',endTime='07:00',walkthroughState='sold',walkthroughClosed=True,walkthroughBadge='Sold \u2192 open job',convertedJobId='job-sold',convertedJobOpen=True),
+            self.walk('walk-sold-other',customer='Synthetic Sold Elsewhere Garage',time='06:30',endTime='07:30',walkthroughState='sold',walkthroughClosed=True,walkthroughBadge='Sold \u2192 open job',convertedJobId='job-other',convertedJobOpen=False),
+            self.walk('walk-cancelled',customer='Synthetic Cancelled Garage',time='15:00',endTime='16:00',status='cancelled',walkthroughState='cancelled',walkthroughBadge='Cancelled'),
+            self.walk('walk-old',customer='Synthetic Yesterday Garage',date='2026-09-21',endDate='2026-09-21')]
+        self.open()
+        section=self.page.get_by_role('region',name='Your walkthroughs');expect(section).to_be_visible()
+        cards=section.locator('.ft-walk');expect(cards).to_have_count(5)
+        self.assertEqual(cards.evaluate_all('cards=>cards.map(card=>card.dataset.walkthrough)'),['walk-1','walk-2','walk-sold','walk-sold-other','walk-noshow'],'open visits first, then finished ones by time')
+        expect(self.page.locator('.ft-job:not(.ft-walk)')).to_have_count(2)
+        first=section.locator('[data-walkthrough=walk-1]')
+        for text in ['WALKTHROUGH','Synthetic Walkthrough Garage','1:00 PM – 2:00 PM','Arrival window: 12:30 PM – 1:30 PM','77 Synthetic Court']:expect(first).to_contain_text(text)
+        expect(first.get_by_role('link',name='Start walkthrough',exact=True)).to_have_attribute('href','/crew/gameplan.html?walkthroughId=walk-1')
+        expect(first.get_by_role('link',name='Call customer',exact=True)).to_have_attribute('href','tel:9705550123')
+        expect(section.locator('[data-walkthrough=walk-2]')).to_contain_text('WALKTHROUGH · TOMORROW')
+        expect(section.locator('[data-walkthrough=walk-2]')).not_to_contain_text('Arrival window')
+        missed=section.locator('[data-walkthrough=walk-noshow]');expect(missed.locator('.ft-outcome')).to_have_text('No-show \u00b7 rebook')
+        expect(missed.get_by_role('link',name='Start walkthrough',exact=True)).to_have_count(0)
+        expect(missed.get_by_role('link',name='Open walkthrough',exact=True)).to_have_attribute('href','/crew/gameplan.html?walkthroughId=walk-noshow')
+        expect(section.locator('[data-walkthrough=walk-sold]').get_by_role('link',name='Open job',exact=True)).to_have_attribute('href','/crew/job.html?jobId=job-sold')
+        # A sold visit whose job this rep is not on (the server's convertedJobOpen) opens the walkthrough, as on crew home.
+        other=section.locator('[data-walkthrough=walk-sold-other]');expect(other.locator('.ft-outcome')).to_have_text('Sold \u2192 open job')
+        expect(other.get_by_role('link',name='Open job',exact=True)).to_have_count(0)
+        expect(other.get_by_role('link',name='Open walkthrough',exact=True)).to_have_attribute('href','/crew/gameplan.html?walkthroughId=walk-sold-other')
+        # A cancelled visit is not the rep's work: the gameplan would refuse it, so it gets no card.
+        expect(section).not_to_contain_text('Synthetic Cancelled Garage')
+        expect(section).not_to_contain_text('Synthetic Yesterday Garage')
+        for button in section.locator('.ft-actions a').all():self.assertGreaterEqual(button.bounding_box()['height'],44)
+        for width in [390,320]:
+            self.page.set_viewport_size({'width':width,'height':844});self.assertFalse(self.page.evaluate('document.documentElement.scrollWidth>innerWidth'),width)
+        self.page.set_viewport_size({'width':390,'height':844})
+        out=ROOT/'test-results';out.mkdir(exist_ok=True);section.screenshot(path=str(out/'field-today-walkthroughs-390.png'))
+    def test_only_walkthroughs_today_says_no_field_jobs_not_nothing_assigned(self):
+        self.jobs=[];self.walkthroughs=[self.walk()];self.open()
+        expect(self.page.get_by_role('heading',name='No field jobs today')).to_be_visible();expect(self.page.get_by_role('heading',name='No jobs assigned today')).to_have_count(0)
+        expect(self.page.locator('.ft-walk')).to_have_count(1)
+    def test_malformed_walkthrough_list_is_an_error_not_a_partial_day(self):
+        self.walkthroughs=[{'customer':'No id'}];self.open_error()
+    def open_error(self):
+        self.page.goto(self.url);expect(self.page.get_by_role('alert')).to_contain_text('could not be verified');expect(self.page.locator('.ft-job')).to_have_count(0)
 
 if __name__=='__main__':unittest.main(verbosity=2)

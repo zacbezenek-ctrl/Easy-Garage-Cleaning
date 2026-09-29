@@ -9,6 +9,7 @@ import { mutateDispatchSelfAssignment } from '../_lib/dispatch-service.js';
 import { travelEstimator } from '../_lib/dispatch-travel.js';
 import { seesLaborCost } from '../_lib/pay-visibility.js';
 import { withoutJobLabor } from '../_lib/job-labor-private.js';
+import { walkthroughStatusFields } from '../_lib/walkthrough-state.js';
 
 const reply = (status, body) => new Response(JSON.stringify(body), {
   status,
@@ -100,7 +101,8 @@ export function crewJobsHandlers({ session = getHubSession, storage = dispatchSt
       const access = createJobAssignmentAccess(env, actor);
       const jobs = [];
       for (const job of rows.filter(row => !privateRecord(row))) {
-        if (manager || await access.assigned(job) || await availabilityOwner(job, access)) jobs.push(manager ? job : crewJobProjection(job, { viewer: actor.user }));
+        // A manager's walkthrough row also says where it stands (WT-OUTCOME), as the crew projection does.
+        if (manager || await access.assigned(job) || await availabilityOwner(job, access)) jobs.push(manager ? job.type === 'walkthrough' ? { ...job, ...walkthroughStatusFields(job) } : job : crewJobProjection(job, { viewer: actor.user }));
         else if (availableOpenShift(job)) jobs.push(publicOpenShift(job));
       }
       return reply(200, { ok: true, jobs, coverage: { complete: true, asOf: now().toISOString() } });

@@ -18,6 +18,7 @@ import { dispatchDurationFields, dispatchDurationOverride, dispatchCrewSize, wit
 import { bookingDimensions, firstPlacementDimensions } from './funnel-dimensions.js';
 import { scheduleTagWrites, withGhlTagStatus } from './ghl-tag-outbox.js';
 import { notifyPatch, withDispatchReadiness } from './dispatch-readiness.js';
+import { walkthroughStatusFields } from './walkthrough-state.js';
 
 const TERMINAL = new Set(['cancelled','canceled','completed','invoiced','paid','review_requested','closed','noshow','no_show','no-show']);
 const JOB_TYPES = new Set(['job','walkthrough','cleanout','reorg','blocked']);
@@ -78,7 +79,7 @@ function legacyMembers(job, roster) {
   return [...new Set(ids)];
 }
 
-const DTO_FIELDS = ['id','revision','type','customerId','customer','phone','address','title','date','time','endDate','endTime','assignedTo','crewLead','crewId','vehicleId','crewNeeded','travelBufferMinutes','jobInstructions','accessInstructions','customerInstructions','opsNotes','requiredEquipment','materials','serviceType','syncStatus','highlevelAppointmentId','sourceWalkthroughId','sourceTemplateJobId','recurrence','recurrenceParentId','reminderDays','notify','shiftPickupEnabled','openShift','notes','durationMin','estimatedDurationMin','createdAt','updatedAt','completedAt','arrivalWindowStart','arrivalWindowEnd','arrivalWindow','requiredSkills','ghlTagEntry'];
+const DTO_FIELDS = ['id','revision','type','customerId','customer','phone','address','title','date','time','endDate','endTime','assignedTo','crewLead','crewId','vehicleId','crewNeeded','travelBufferMinutes','jobInstructions','accessInstructions','customerInstructions','opsNotes','requiredEquipment','materials','serviceType','syncStatus','highlevelAppointmentId','sourceWalkthroughId','sourceTemplateJobId','recurrence','recurrenceParentId','reminderDays','notify','shiftPickupEnabled','openShift','notes','durationMin','estimatedDurationMin','createdAt','updatedAt','completedAt','arrivalWindowStart','arrivalWindowEnd','arrivalWindow','requiredSkills','ghlTagEntry','noShowReasonCode','noShowAt'];
 const scopeText = job => typeof job.operationalScope?.text === 'string' ? job.operationalScope.text : typeof job.jobInstructions === 'string' ? job.jobInstructions : job.jobInstructions?.operationalScope || (typeof job.scope === 'string' ? job.scope : '') || job.scopeOfWork || '';
 function recurringTemplateFields(source,actor,now) {
   const output={};
@@ -106,6 +107,8 @@ export function projectDispatchJob(job, roster = [], now = new Date().toISOStrin
     jobTime:fieldJobTime(job,now),
     arrivalWindowStart:job.arrivalWindowStart || null,arrivalWindowEnd:job.arrivalWindowEnd || null,arrivalWindow:job.arrivalWindow || '',
     ...(segmented(job) ? {assignmentSegments:projectSegments(job),...(segmentsInvalid(job) ? {segmentsInvalid:true} : {})} : {}),
+    // WT-OUTCOME: a walkthrough's outcome, converted job and badge, and what a rebook prefills (walkthrough-state.js).
+    ...walkthroughStatusFields(job),
     timeZone: DISPATCH_TIME_ZONE, timeNeedsReview: Boolean(job.date) && !interval };
 }
 

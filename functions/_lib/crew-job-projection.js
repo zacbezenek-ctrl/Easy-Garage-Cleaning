@@ -1,5 +1,6 @@
 import { fieldJobProjection } from './field-execution.js';
 import { segmented } from './dispatch-segments.js';
+import { walkthroughStatusFields } from './walkthrough-state.js';
 
 const text = (value, max=1000) => typeof value === 'string' ? value.slice(0,max) : '';
 /** Every stored field crewJobProjection and fieldJobProjection read (id and
@@ -22,6 +23,8 @@ export const CREW_PROJECTION_FIELDS = Object.freeze([
   'startedAt','completedAt','cancelledAt',
   'title','durationMin','estimatedDurationMin','shiftPickupEnabled','openShift','shiftClaims','lastShiftClaim',
   'customerConversation','customerConversationUpdatedAt','assignmentSegments',
+  // WT-OUTCOME: where an assigned walkthrough stands (walkthrough-state.js), never the rep's notes.
+  'walkthroughOutcome.outcome','walkthroughOutcome.reasonCode','walkthroughOutcome.finishedAt','walkthroughOutcome.occurrence','walkthroughCompletedAt','convertedJobId','scheduleOccurrence',
 ]);
 /** Compatibility DTO for the existing Hub shift and communication cards.
  * Raw Firestore records may contain signatures, costs, payment receipts and
@@ -50,6 +53,7 @@ export function crewJobProjection(job, options = {}) {
       authorRole:text(message.authorRole,40),authorName:text(message.authorName,150),body:text(message.body,4000),createdAt:text(message.createdAt,40),
       delivery:message.delivery?{channel:text(message.delivery.channel,30),status:text(message.delivery.status,40),attemptedAt:text(message.delivery.attemptedAt,40)}:null
     })),
-    customerConversationUpdatedAt:text(job.customerConversationUpdatedAt,40)
+    customerConversationUpdatedAt:text(job.customerConversationUpdatedAt,40),
+    ...(job.type==='walkthrough'?walkthroughStatusFields(job):{})
   };
 }

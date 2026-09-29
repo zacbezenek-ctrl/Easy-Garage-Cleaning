@@ -417,7 +417,7 @@ test('the crew home names the role a refused walkthrough needs once role access 
   const line = page.split(/\r?\n/).find(row => row.startsWith('async function openCrewHome('));
   const open = async profile => {
     const nodes = new Map(), node = id => { if (!nodes.has(id)) nodes.set(id, { id, hidden: false, textContent: id === 'access-note' ? 'Walkthrough is a business tool for Zac, Tyler, and Alex. Your pre-job and closeout steps are in each assigned job’s field workflow.' : '', dataset: { businessHref: '/crew/prejob' }, setAttribute() {} }); return nodes.get(id); };
-    const context = vm.createContext({ document: { getElementById: node }, location: { search: '?notice=walkthrough-restricted' }, URLSearchParams, Date, Promise, EGCHubAuth: { profile: () => profile, canRunBusiness: () => false, mountCrewNav() {} }, loadEmployeeData: async () => {}, loadAssignedJobs: async () => {} });
+    const context = vm.createContext({ document: { getElementById: node }, location: { search: '?notice=walkthrough-restricted' }, URLSearchParams, Date, Promise, EGCHubAuth: { profile: () => profile, canRunBusiness: () => false, canRunWalkthrough: () => false, mountCrewNav() {} }, loadEmployeeData: async () => {}, loadAssignedJobs: async () => {} });
     vm.runInContext(line, context);
     await vm.runInContext('openCrewHome()', context);
     return node('access-note');
