@@ -52,7 +52,7 @@
       "id": "HUB-INTEGRATION",
       "state": "merged_deployed_live_acceptance_incomplete",
       "owner": "build coordinator",
-      "action": "PR #87 final head bb41f03 passed all seven applicable workflows, including both dedicated WebKit suites, and merged to main as 5ed437c. All six applicable main push checks passed. Cloudflare matching assets and all four Railway 5ed deployments succeeded; API/MCP/portal health reported 5ed. PR #88 corrected strict-schema defaults and deployed as d4fff3d; retry of the same saved synthetic transcript failed with provider HTTP 429. Continue diagnostics and live acceptance."
+      "action": "PR #87 merged as 5ed437c with seven exact-head checks green; PR #88 merged as d4fff3d; PR #89 merged as baf7aa2 with seven checks green and all four Railway deployments healthy. The same saved synthetic transcript reached credit_balance_exhausted on attempt 3. Restore existing account credits before AI acceptance; no AI task or send has occurred."
     },
     {
       "id": "OWNER-LIVE",
@@ -76,15 +76,36 @@
       "id": "TRANSCRIPT-PRODUCTION-FIX",
       "state": "merged_deployed_provider_429_on_same_record_retry",
       "owner": "release coordinator",
-      "action": "PR #88 final 4a82e52 passed all four checks and merged as d4fff3d, with all four Railway services and Cloudflare matching. Same saved transcript for visit dispatch_beef26f85e694eb4b57d7a47a3c324d1 retried without duplicate intake but failed with provider HTTP 429 at 22:00:18Z. Classify provider limit before a bounded retry; verify one reviewed task and no customer send.",
-      "evidence": "Strict-schema defaults corrected and safer diagnostics deployed. Attempt 2 returned extraction provider_request_failed HTTP 429. Cause class among rate, usage, credit or spending is unknown; no office task or send."
+      "action": "PR #88 final 4a82e52 passed all four checks and merged as d4fff3d. Same saved transcript for visit dispatch_beef26f85e694eb4b57d7a47a3c324d1 was retried without duplicate intake; PR #89 diagnostics subsequently identified credit_balance_exhausted on attempt 3. Restore credits before further retry; verify one reviewed task and no customer send.",
+      "evidence": "Attempt 2 returned extraction provider_request_failed HTTP 429; attempt 3 on baf7aa2 at 22:24:50 UTC returned credit_balance_exhausted HTTP 429. No AI task or send."
     },
     {
       "id": "TRANSCRIPT-LIMIT-DIAGNOSTICS",
-      "state": "reviewed_24_api_tests_typecheck_passed_ci_pending_not_merged_or_deployed",
+      "state": "pr89_merged_deployed_credit_balance_exhausted_confirmed",
       "owner": "release coordinator",
-      "action": "Review codex/transcript-limit-diagnostics error-code allowlist, test, require exact-head CI and deploy. Inspect OpenAI usage/limits through owner sign-in before retrying the same saved transcript if appropriate. Do not rotate keys or change billing without separate authorization.",
-      "evidence": "The deployed processor safely reported provider_request_failed HTTP 429 but cannot yet distinguish the provider limit class. Primary and independent review clear; 24 focused API tests and typecheck passed locally."
+      "action": "PR #89 passed seven exact-head checks and both previews, merged as baf7aa2 and deployed. The owner requested restoring credits in the existing OpenAI account; complete the billing payment handoff before retrying the same saved transcript. Do not rotate keys or retry while exhausted.",
+      "evidence": "API log for attempt 3 at 2026-09-29T22:24:50.268800228Z: extraction, transcript source, credit_balance_exhausted, HTTP 429 on baf7aa2. Four Railway services deployed and API/MCP/portal health matched."
+    },
+    {
+      "id": "OPENAI-CREDITS",
+      "state": "owner_billing_payment_handoff_required",
+      "owner": "owner and billing administrator",
+      "action": "Restore credits in the existing OpenAI account, verify the available balance, then authorize a bounded retry of the same saved transcript. No key rotation or billing change has occurred in this handoff.",
+      "evidence": "Provider returned credit_balance_exhausted, HTTP 429, on attempt 3. No AI-created office task or customer send."
+    },
+    {
+      "id": "AUTH-AND-CREDIT-MESSAGE-DIAGNOSTICS",
+      "state": "next_pr_pending_not_live",
+      "owner": "release coordinator",
+      "action": "Review, test and run exact-head CI for auth-only commit 9e397576b1de2a99d5e7341aa7fba206a09a70e5 and bounded credit-specific recording message. Keep other HTTP 429 messages generic; do not claim a live sign-in or credit fix before deployment.",
+      "evidence": "Two transient Firebase SDK sign-in errors recovered after one reload without credential change. Auth diagnostics passed primary and independent review and 20 tests; credit-message UX is in progress."
+    },
+    {
+      "id": "MANUAL-OFFICE-TASK-ACCEPTANCE",
+      "state": "manual_persistence_completion_verified_ai_flow_still_open",
+      "owner": "release coordinator",
+      "action": "Retain the manual acceptance evidence separately from AI-created task acceptance; complete the latter only after OpenAI credits are restored.",
+      "evidence": "Task b2b10b59-7c38-4b0c-9ba5-10063406b2c2 linked to synthetic visit saved, reopened after full reload with owner Zac and Sep 30 noon MT due, then completed with no-contact note. Open count 86 to 85; task removed. No Completed history view exposed."
     },
     {
       "id": "DRIVE-JOB-PHOTOS",
