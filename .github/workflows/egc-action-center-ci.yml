@@ -194,6 +194,8 @@ jobs:
         run: python tests/browser/test_gameplan_pricing_ui.py
       - name: Staff directory Team screen on a phone
         run: python tests/browser/test_staff_ui.py
+      - name: Crew schedule alerts feed, acknowledgement and text opt-in on a phone
+        run: python tests/browser/test_crew_notifications_ui.py
       - name: Time-off requests, approvals and PTO pay edits on a phone
         run: python tests/browser/test_pto_requests_ui.py
       - name: 'Payroll week card: owner-only pay and CSV'

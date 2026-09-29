@@ -56,6 +56,17 @@ export const TEMPLATE_KINDS = Object.freeze({
     variables: ['firstName', 'serviceDate', 'arrivalWindow', 'loginLink', 'companyPhone'],
     body: 'Hi {{firstName}}, you are scheduled for an Easy Garage Cleaning job on {{serviceDate}} (arrival window {{arrivalWindow}}). Job details are in the Employee Hub: {{loginLink}}',
   },
+  crew_unassignment: {
+    label: 'Crew schedule removal', audience: 'crew', channel: 'SMS',
+    variables: ['firstName', 'serviceDate', 'arrivalWindow', 'loginLink', 'companyPhone'],
+    body: 'Hi {{firstName}}, you are no longer scheduled for the Easy Garage Cleaning job on {{serviceDate}}. Your current schedule is in the Employee Hub: {{loginLink}}',
+  },
+  // One text when a change both moves or adds work and takes days or hours away.
+  crew_schedule_change: {
+    label: 'Crew schedule change', audience: 'crew', channel: 'SMS',
+    variables: ['firstName', 'serviceDate', 'arrivalWindow', 'removedDates', 'loginLink', 'companyPhone'],
+    body: 'Hi {{firstName}}, your Easy Garage Cleaning schedule changed. Now: {{serviceDate}} (arrival window {{arrivalWindow}}). No longer: {{removedDates}}. Details are in the Employee Hub: {{loginLink}}',
+  },
   followup: {
     label: 'Follow-up', audience: 'customer', channel: 'SMS',
     variables: [...common, 'portalLink'],

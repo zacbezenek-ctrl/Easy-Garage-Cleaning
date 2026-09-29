@@ -8,6 +8,7 @@ import {DISPATCH_TIME_ZONE} from './dispatch-contract.js';
 import {legacyBlockMode,legacyBlockedDays} from './dispatch-legacy-blocks.js';
 import {customerIdentityFields,withCustomerSearchKeys} from './customer-identity.js';
 import {segmented} from './dispatch-segments.js';
+import {crewNotificationWrites,crewNotificationsEnabled} from './crew-notifications.js';
 import {reasonInput,cancelPatch,visitFunnelWrites,requestKey,eventActor,eventVia,defaultVisitPurpose} from './dispatch-funnel.js';
 import {eventDimensions,firstPlacementDimensions,legacyDimensionFacts,projectDimensionPatch,resolveDimensions,visitDimensionFacts} from './funnel-dimensions.js';
 import {commitConflict,commitFailure} from './firestore-errors.js';
@@ -36,6 +37,8 @@ export function schedulingStorage(env,fetcher=firestoreFetch){return{
   roster:()=>dispatchStorage(env,fetcher).roster(),
   settings:()=>dispatchStorage(env,fetcher).settings(),
   legacyBlockMode:legacyBlockMode(env),
+  // EGC_CREW_NOTIFICATIONS_ENABLED: moves and cancellations queue crew notices in the same commit.
+  crewNotificationsEnabled:crewNotificationsEnabled(env),
   legacyBlockedDays:dates=>dispatchStorage(env,fetcher).legacyBlockedDays(dates),
   async customers(providerId){const r=await fetcher(env,`${URL}:runQuery`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({structuredQuery:{from:[{collectionId:'customers'}],where:{fieldFilter:{field:{fieldPath:'highlevelContactId'},op:'EQUAL',value:{stringValue:providerId}}},limit:3}}),signal:AbortSignal.timeout(15000)});if(!r.ok)throw failure('schedule_source_unavailable',503);const rows=await r.json();if(!Array.isArray(rows))throw failure('schedule_source_incomplete',503);return rows.filter(x=>x.document).map(x=>fromDoc(x.document));},
   async read(collection,id){const r=await fetcher(env,`${URL}/${collection}/${encodeURIComponent(id)}`,{signal:AbortSignal.timeout(15000)});if(r.status===404)return null;if(!r.ok)throw failure('schedule_source_unavailable',503);return fromDoc(await r.json());},
@@ -207,6 +210,7 @@ export async function mutateScheduledVisit(store,actor,input,now=new Date().toIS
   const funnel=await visitFunnelWrites({action:input.mode,before:current,after:{...current,...patch},actor:eventActor(actor),via:eventVia(via),key:requestKey(input.requestId),source:{collection:'jobs',id:receiptId},reason:{...reason,lateCancel:patch.lateCancel},crewChanged:assigned,dimensions,now});
   Object.assign(patch,funnel.patch);
   const writes=[{collection:'jobs',id,revision:current?.revision,patch},...projectWrites,...identityWrites,...locks,...funnel.writes,{collection:'dispatchState',id:'revision',revision:dispatchGuard?.revision,patch:{updatedAt:now,lastRequestId:input.requestId}},{collection:'jobs',id:receiptId,patch:{recordType:'schedule_operation',fingerprint:hash,scheduleHash:await digest(scheduleState(next)),portalVisitId:id,actorId:actor.id,actorKind:actor.kind,requestId:input.requestId,mode:input.mode,before:current?{date:current.date,time:current.time,endTime:current.endTime,status:current.status,revision:current.revision}:null,after:{date:next.date,time:next.time,endTime:next.endTime,status:next.status},createdAt:now}}];
+  if(store.crewNotificationsEnabled===true)writes.push(...await crewNotificationWrites({jobId:id,requestId:input.requestId,action:`schedule.${input.mode}`,actorId:actor.id,type:next.type,before:current,after:next,roster,now,baseRevision:current?.revision}));
   try{await store.commit(writes);}catch(error){const receipt=await store.read('jobs',receiptId).catch(()=>null);if(!receipt||receipt.fingerprint!==hash)throw error;}
   const saved=await store.read('jobs',id);
   if(!saved||await digest(scheduleState(saved))!==await digest(scheduleState(next)))throw failure('schedule_changed_since_operation');

@@ -7,12 +7,13 @@ import { appendConversationMessage } from './customer-messaging.js';
 import { denverToday, validDate } from './dispatch-time.js';
 import { arrivalSettings, arrivalWindowFields } from './dispatch-arrival.js';
 import { HUMAN_APPROVALS, messagePolicy, quietHoursDecision, invoiceBalance, depositDue } from './message-policies.js';
-import { LINK_VARIABLES, messageDigest, renderTemplate, templateVariables, validateTemplateVersion } from './message-templates.js';
+import { LINK_VARIABLES, messageDigest, renderTemplate, templateRoom, templateVariables, validateTemplateVersion } from './message-templates.js';
 import { TEMPLATE_KINDS } from './message-template-defaults.js';
 import { templateRegistry } from './message-template-store.js';
 import { MESSAGE_SENDS, ledgerId } from './message-send-store.js';
-import { maskRecipient, recipientDestination } from './ghl-messenger.js';
+import { STAFF_CONTACT_TAG, maskRecipient, recipientDestination } from './ghl-messenger.js';
 import { fieldJobLead, fieldLeadOnlyComplete } from './field-permissions.js';
+import { describeLost, describeWork, jobCrewIds, lostOptions, shortestOption, workOptions } from './crew-notifications.js';
 
 export const COMPANY_PHONE = '(970) 999-1818';
 export const CONFIRM_TTL_MS = 10 * 60 * 1000;
@@ -21,6 +22,11 @@ const INPUT_KEYS = ['kind','jobId','accountId','overrides','confirmToken','reque
 const HELD = new Set(['submitted','uncertain','sending']);
 const DAY_MS = 86400000;
 const DUMMY_LINK = 'https://easygaragecleaning.com/';
+// Crew notice variables that name days, and the longest each may read.
+const CREW_DATED = Object.freeze(['serviceDate', 'removedDates']);
+const CREW_DATE_CAP = Object.freeze({ crew_assignment: 90, crew_unassignment: 90, crew_schedule_change: 70 });
+// The other queued visits a crew notice's grouped text names (none for one sent alone).
+const noticeBatchIds = batch => Array.isArray(batch?.ids) ? [...new Set(batch.ids.filter(id => typeof id === 'string' && /^crew_[a-f0-9]{40}$/.test(id)))].slice(0, 200) : [];
 const encoder = new TextEncoder();
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 // A provider answer that arrived after a person reconciled the send (message-reconcile.js) is kept as lateResult.
@@ -108,6 +114,10 @@ function parseOverrides(policy, value) {
     if (typeof value.taskId !== 'string' || !/^[A-Za-z0-9_-]{1,120}$/.test(value.taskId)) throw fail('messaging_override_invalid', 'The follow-up task reference is invalid.');
     result.taskId = value.taskId;
   }
+  if ('noticeId' in value) {
+    if (typeof value.noticeId !== 'string' || !/^[A-Za-z0-9_-]{1,120}$/.test(value.noticeId)) throw fail('messaging_override_invalid', 'The crew notice reference is invalid.');
+    result.noticeId = value.noticeId;
+  }
   return result;
 }
 
@@ -117,12 +127,14 @@ export function createApprovedSendService({
   // Policies with the 'account_staff' role ask the caller twice: staffGate(actor) before the record is read, then
   // accountAccess(actor, account) for the resolved account. Both refuse unless injected, so the role stays closed by default.
   staffGate = () => false, accountAccess = async () => false,
-  assignment = actor => createJobAssignmentAccess(env, actor), reserve = () => {},
+  assignment = actor => createJobAssignmentAccess(env, actor), reserve = () => {}, crewNotice = async () => null,
 } = {}) {
   const now = () => { const value = clock(); return value instanceof Date ? value : new Date(value); };
   const linkProviders = { loginLink: context => context.audience === 'crew' ? 'https://easygaragecleaning.com/employee.html' : undefined, ...links };
+  // The roster read once per service; `ok` is false when it could not be read.
   let rosterCache;
-  const roster = async () => rosterCache ||= (typeof store.roster === 'function' ? store.roster().catch(() => []) : Promise.resolve([]));
+  const rosterRead = () => rosterCache ||= (typeof store.roster === 'function' ? Promise.resolve().then(() => store.roster()).then(rows => ({ rows: Array.isArray(rows) ? rows : [], ok: Array.isArray(rows) }), () => ({ rows: [], ok: false })) : Promise.resolve({ rows: [], ok: true }));
+  const roster = async () => (await rosterRead()).rows;
   const rosterName = async id => { const key = assignmentKey(typeof id === 'string' ? id : id?.username || id?.user || id?.id || ''); return key ? (await roster()).find(person => person.id === key)?.name || '' : ''; };
 
   const forbidden = policy => fail('messaging_forbidden', policy.roles.includes('assigned_crew') ? 'Only crew assigned to this job or a manager can send this message.' : 'Your account cannot send this message.', 403);
@@ -175,7 +187,15 @@ export function createApprovedSendService({
     if (name === 'firstName') return firstWord(policy.audience === 'crew' ? ctx.crew?.name : account ? account.firstName || account.name : job?.customer);
     if (name === 'companyPhone') return COMPANY_PHONE;
     if (name === 'etaMinutes') return overrides.etaMinutes === undefined ? '' : String(overrides.etaMinutes);
+    // A crew notice names its own work (a segment, days taken away, or both),
+    // which can differ from the job's own date and time: every lost day, and
+    // the first new or changed slot with any others.
+    const slot = policy.audience === 'crew' && ctx.notice ? ctx.notice : null;
+    const budget = CREW_DATE_CAP[ctx.kind] || CREW_DATE_CAP.crew_assignment;
+    if (name === 'serviceDate' && slot) return ctx.kind === 'crew_unassignment' ? describeLost(slot.lost, { working: slot.slots, max: budget }) : describeWork(slot.added, { batch: slot.batch, max: budget });
+    if (name === 'removedDates') return slot ? describeLost(slot.lost, { working: slot.slots, max: budget }) : '';
     if (name === 'serviceDate') return dateText(job?.date);
+    if (name === 'arrivalWindow' && slot && (slot.segmentId || slot.date !== job?.date || slot.time !== job?.time)) { const start = minutesOf(slot.time); return start === null ? '' : clockText(start); }
     if (name === 'arrivalWindow') {
       // Dispatch's saved window (or its enabled default) is what the customer
       // was promised; the start-time estimate is only the legacy fallback.
@@ -189,6 +209,46 @@ export function createApprovedSendService({
     if (name === 'dueDate') return dateText(ctx.kind === 'estimate_expiring' ? job?.estimate?.validUntil : job?.invoice?.dueDate, false);
     if (name === 'crewLeadName') return firstWord(await rosterName(job?.crewLead) || (ctx.actorAssigned ? actor.displayName || actor.user : '') || await rosterName(jobCrewNames(job)[0]));
     return '';
+  }
+
+  // Every day a crew notice names must fit one text: serviceDate (the new or
+  // changed work, or the days lost for a removal) and removedDates share what
+  // the wording, the first name, the arrival window and the real link leave
+  // under the SMS limit. Each offers only lossless forms (every change named,
+  // or the first ones named and the rest counted), each at most CREW_DATE_CAP
+  // when it can be. The pair that fits and leaves the fewest changes only
+  // counted wins, then the one naming more of the days taken away, then the
+  // more readable. When no pair fits, the most compact forms render and the
+  // SMS limit refuses the text (messaging_sms_too_long): the notice fails
+  // where a dispatcher sees it instead of going out with days missing.
+  async function fitCrewDates(ctx, template, values, dated) {
+    const vars = { ...values };
+    for (const name of Object.keys(vars).filter(name => LINK_VARIABLES.includes(name))) {
+      const provider = linkProviders[name];
+      const link = typeof provider === 'function' ? await Promise.resolve().then(() => provider({ kind: ctx.kind, audience: ctx.policy.audience, sendKey: '', ledgerId: '', job: ctx.job, account: ctx.account, purpose: 'preview' })).catch(() => undefined) : undefined;
+      vars[name] = typeof link === 'string' && link ? link : DUMMY_LINK;
+    }
+    const { room, counts } = templateRoom(template, vars, dated), notice = ctx.notice;
+    const cap = CREW_DATE_CAP[ctx.kind] || CREW_DATE_CAP.crew_assignment, size = text => [...text].length;
+    const lost = () => lostOptions(notice.lost, { working: notice.slots });
+    const options = dated.map(name => {
+      const all = name === 'removedDates' || ctx.kind === 'crew_unassignment' ? lost() : workOptions(notice.added, { batch: notice.batch });
+      const capped = all.filter(option => size(option.text) <= cap);
+      return capped.length ? capped : all.length ? [shortestOption(all)] : [{ text: '', unnamed: 0, style: 0 }];
+    });
+    const lossAt = dated.indexOf('removedDates');
+    const rank = picks => [picks.reduce((sum, pick) => sum + pick.unnamed, 0), lossAt < 0 ? 0 : picks[lossAt].unnamed, -picks.reduce((sum, pick) => sum + pick.style, 0)];
+    const better = (left, right) => { for (let index = 0; index < left.length; index += 1) if (left[index] !== right[index]) return left[index] < right[index]; return false; };
+    let best = null;
+    const walk = (index, picks) => {
+      if (index < dated.length) { for (const option of options[index]) walk(index + 1, [...picks, option]); return; }
+      if (picks.reduce((sum, pick, at) => sum + counts[dated[at]] * size(pick.text), 0) > room) return;
+      const score = rank(picks);
+      if (!best || better(score, best.score)) best = { score, picks };
+    };
+    walk(0, []);
+    const chosen = best ? best.picks : options.map(shortestOption);
+    return Object.fromEntries(dated.map((name, index) => [name, chosen[index].text]));
   }
 
   function recipientSource(ctx) {
@@ -211,6 +271,8 @@ export function createApprovedSendService({
     if (automated && (source !== 'cron' || !policy.approvals.includes('owner_automation'))) throw fail('messaging_forbidden', 'This message cannot be sent automatically.', 403);
     if (!automated && !actor?.user) throw fail('messaging_sign_in_required', 'Sign in to the Employee Hub to send messages.', 401);
     const overrides = parseOverrides(policy, input.overrides);
+    // Crew notices are queued by dispatch and only the scheduler sends them.
+    if (overrides.noticeId !== undefined && !automated) throw fail('messaging_override_not_allowed', 'This message type does not allow those changes.', 400);
     const crewOnly = automated ? false : gate(policy, actor, source, input);
     const at = now(), { job, account } = await readTarget(policy, input, crewOnly), keyAt = new Date(keyMs ?? at.getTime());
     const ctx = { kind: input.kind, input, policy, actor, source, automated, overrides, job, account, now: at, nowMs: at.getTime(), today: denverToday(at), keyMs: keyAt.getTime(), keyDay: denverToday(keyAt), actorAssigned: false, crewId: overrides.crewId || '' };
@@ -225,7 +287,23 @@ export function createApprovedSendService({
     // FIELD_LEAD_ONLY_COMPLETE narrows the crew's on-my-way send to the job's crew lead (fieldCapabilities.sendOnMyWay); status stays readable.
     if (policy.kind === 'on_my_way' && fieldLeadOnlyComplete(env) && !automated && !(hasBusinessAccess(actor) && ['owner', 'manager'].includes(actor.role)) && !await fieldJobLead({ session: actor, job, access: assignment(actor) }).catch(() => false)) throw fail('messaging_forbidden', 'Only the crew lead or a manager can send the on-my-way message for this job.', 403);
     if (policy.audience === 'crew') {
-      if (!ctx.crewId || !jobCrewNames(job).some(name => assignmentKey(name) === ctx.crewId)) throw fail('messaging_not_eligible', 'Choose a crew member assigned to this job.', 409, { reason: 'crew_not_assigned' });
+      // A removal notice goes to someone no longer on the job; every other crew
+      // message needs the recipient assigned now, by username or (on a legacy
+      // job) by a display name only they carry on the roster.
+      // When the roster cannot be read, a crew stored by display name cannot be
+      // matched yet: that is a wait (roster_unavailable), never "not assigned".
+      const onJob = async () => {
+        if (jobCrewNames(job).some(name => assignmentKey(name) === ctx.crewId)) return true;
+        const { rows, ok } = await rosterRead();
+        if (jobCrewIds(job, rows).has(ctx.crewId)) return true;
+        if (!ok) throw fail('messaging_not_eligible', 'The crew roster could not be read. Try again shortly.', 409, { reason: 'roster_unavailable' });
+        return false;
+      };
+      if (!ctx.crewId || (policy.crewAssigned !== false && !await onJob())) throw fail('messaging_not_eligible', 'Choose a crew member assigned to this job.', 409, { reason: 'crew_not_assigned' });
+      if (overrides.noticeId !== undefined) {
+        ctx.notice = await crewNotice({ noticeId: overrides.noticeId, crewId: ctx.crewId, kind: ctx.kind, job, now: ctx.now });
+        if (!object(ctx.notice) || ctx.notice.id !== overrides.noticeId || ctx.notice.valid !== true) throw fail('messaging_not_eligible', 'This crew notice no longer matches the schedule.', 409, { reason: /^[a-z][a-z0-9_]{0,63}$/.test(String(ctx.notice?.reason || '')) ? ctx.notice.reason : 'notice_unavailable' });
+      }
       ctx.crew = await crewContact({ crewId: ctx.crewId, job });
       if (!object(ctx.crew) || !ctx.crew.name) throw fail('messaging_recipient_unavailable', 'This crew member\'s contact details are not available for messaging yet.', 409, { reason: 'crew_contact_unavailable' });
     }
@@ -242,7 +320,10 @@ export function createApprovedSendService({
     if (automated && template.automationEnabled !== true) throw fail('messaging_automation_disabled', 'The owner has not turned on automatic sending for this message.', 409);
     const names = [...new Set([...templateVariables(template.subject || ''), ...templateVariables(template.body)])];
     const values = {};
-    for (const name of names) values[name] = LINK_VARIABLES.includes(name) ? DUMMY_LINK : await variable(name, ctx);
+    // A crew notice's dates are sized to the room the rest of its text leaves.
+    const dated = policy.audience === 'crew' && ctx.notice && template.channel === 'SMS' ? CREW_DATED.filter(name => names.includes(name)) : [];
+    for (const name of names) if (!dated.includes(name)) values[name] = LINK_VARIABLES.includes(name) ? DUMMY_LINK : await variable(name, ctx);
+    if (dated.length) Object.assign(values, await fitCrewDates(ctx, template, values, dated));
     const display = renderTemplate(template, values).display;
     const bodyHash = await messageDigest({ channel: template.channel, subject: display.subject, body: display.body });
     ctx.bodyHash = bodyHash;
@@ -273,8 +354,14 @@ export function createApprovedSendService({
     if (ctx.policy.audience === 'customer' && record.notify === false) return { status: 'suppressed', reason: 'job_notifications_off' };
     if (ctx.automated && ctx.policy.audience === 'customer' && record.customerAutomationEnabled !== true) return { status: 'suppressed', reason: 'customer_automation_off' };
     if (!ctx.destination) return { status: 'needs_contact', reason: ctx.template.channel === 'SMS' ? 'no_phone' : 'no_email' };
+    if (ctx.policy.audience === 'crew' && !ctx.contact.contactId) return { status: 'needs_contact', reason: 'staff_contact_not_linked' };
     return null;
   }
+
+  // Staff messages never create or update a HighLevel contact: they go only to
+  // the linked staff contact, which must carry the staff tag. Customer sends
+  // upsert from saved data as before.
+  const lookup = (ctx, upsert) => ({ ...ctx.contact, preferred: ctx.template.channel, ...(ctx.policy.audience === 'crew' ? { upsert: false, requiredTag: STAFF_CONTACT_TAG } : { upsert }) });
 
   function held(existing, ctx, flags) {
     if (!existing) return null;
@@ -308,7 +395,7 @@ export function createApprovedSendService({
     const result = { ...base, attachments: files.map(file => file.name), length: [...rendered.body].length, delivery: flags };
     const prior = held(await store.read(MESSAGE_SENDS, ctx.ledgerId), ctx, flags);
     if (prior) return { ...result, ...prior };
-    const recipient = await messenger.resolveRecipient({ ...ctx.contact, preferred: ctx.template.channel, upsert: false });
+    const recipient = await messenger.resolveRecipient(lookup(ctx, false));
     result.recipient = { channel: ctx.template.channel, masked: recipient.masked || '' };
     if (recipient.status !== 'ready') return { ...result, status: recipient.status, reason: recipient.reason || '' };
     if (!HUMAN_APPROVALS.includes(result.approval)) return { ...result, status: 'ready' };
@@ -325,11 +412,18 @@ export function createApprovedSendService({
       templateKind: ctx.template.kind || '', templateVersion: ctx.template.version ?? null, templateHash: ctx.template.hash || '', humanAuthored: ctx.template.humanAuthored === true,
       channel: ctx.template.channel, recipient: recipient.masked || '', recipientHash: ctx.recipientHash, contactId: recipient.contactId || '',
       subject: ctx.display.subject, body: ctx.display.body, bodyHash: ctx.bodyHash, attachments: files.map(file => file.name), requestId: ctx.input.requestId || '',
+      // A crew notice's claim records the other queued visits its text names
+      // (a grouped recurring-run text), so they close only with a text that
+      // named them, whichever attempt of whichever tick sent it.
+      ...(ctx.notice ? { noticeBatch: noticeBatchIds(ctx.notice.batch) } : {}),
     };
   }
 
   async function mirror(ctx, state) {
-    if (!ctx.job) return 'skipped';
+    // A dispatch crew notice is recorded on its own notice row and ledger.
+    // Writing the job would move its revision minutes after a dispatch save,
+    // while a dispatcher may still be editing it, and crowd its customer log.
+    if (!ctx.job || ctx.overrides.noticeId !== undefined) return 'skipped';
     const entryId = `msg:${ctx.ledgerId.slice(0, 32)}`, at = state.completedAt || state.attemptedAt;
     for (let attempt = 0; attempt < 3; attempt += 1) {
       try {
@@ -393,9 +487,10 @@ export function createApprovedSendService({
       if (HELD.has(previous?.status) && Number.isFinite(lastMs) && notBefore > ctx.nowMs) return { ...base, status: 'deferred', reason: 'reminder_cadence', notBefore: new Date(notBefore).toISOString(), delivery: flags };
     }
     const { rendered, files } = await finalize(ctx, 'send');
-    const recipient = await messenger.resolveRecipient({ ...ctx.contact, preferred: ctx.template.channel, upsert: true });
+    const recipient = await messenger.resolveRecipient(lookup(ctx, true));
     base.recipient = { channel: ctx.template.channel, masked: recipient.masked || '' };
     if (recipient.status !== 'ready') return { ...base, status: recipient.status, reason: recipient.reason || '', delivery: flags };
+    if (!recipient.contactId) return { ...base, status: 'needs_contact', reason: 'contact_unresolved', delivery: flags };
     if (recipientDestination(ctx.template.channel, { phone: recipient.toNumber, email: recipient.emailTo }) !== ctx.destination) throw fail('messaging_target_changed', 'The recipient changed while the message was being prepared. Preview it again.', 409);
     // Re-check after the slow provider lookup: approval, contact, notification
     // preference, assignment and wording must still match what was confirmed.

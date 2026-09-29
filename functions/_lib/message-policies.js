@@ -2,6 +2,7 @@
    trigger, role and approval mode appear here; nothing is inferred. */
 import { denverToday, addDays, validDate } from './dispatch-time.js';
 import { localInstant } from './operations-portal-records.js';
+import { crewNoticeSendKey, slotUpcoming } from './crew-notifications.js';
 import { moneyCents } from './operations-financials.js';
 import { customerDepositState, customerMoneyState, customerPaymentNeedsReview } from './customer-payments.js';
 
@@ -54,7 +55,7 @@ function reminder(kind, { cadenceDays, series, anchor, ...options }) {
 function policy(kind, options) {
   return Object.freeze({
     kind, template: kind, audience: 'customer', target: 'job', triggers: ['hub', 'mcp'], roles: ['dispatcher'], approvals: ['preview_confirm'],
-    quietHours: false, maxAttempts: 3, overrides: [], customBody: false, adapterOnly: false, billing: false, cadenceDays: 0, previousKey: null, eligible: () => ok, ...options,
+    quietHours: false, maxAttempts: 3, overrides: [], customBody: false, adapterOnly: false, billing: false, cadenceDays: 0, previousKey: null, crewAssigned: true, eligible: () => ok, ...options,
   });
 }
 
@@ -69,10 +70,32 @@ export const MESSAGE_POLICIES = Object.freeze({
     dedupe: c => `day_before_reminder:${c.job.id}:${c.job.date}:${c.job.time || ''}`,
     eligible: c => !scheduled(c.job, c.today) ? reason('not_upcoming') : c.automated && c.job.date !== addDays(c.today, 1) ? reason('not_tomorrow') : ok,
   }),
+  // A dispatch crew notice (noticeId, scheduler only) names the work slot and
+  // is recorded under the notice's own send key (whichever crew wording it
+  // goes out with), so a crew member re-added to the same slot after a
+  // removal is told again and one notice is never texted twice; a human send
+  // keeps the job-level key.
   crew_assignment: policy('crew_assignment', {
-    audience: 'crew', triggers: ['hub', 'mcp', 'cron'], approvals: ['preview_confirm', 'owner_automation'], quietHours: true, overrides: ['crewId'],
-    dedupe: c => `crew_assignment:${c.job.id}:${c.crewId}:${c.job.date}:${c.job.time || ''}`,
-    eligible: c => !scheduled(c.job, c.today) ? reason('not_upcoming') : ok,
+    audience: 'crew', triggers: ['hub', 'mcp', 'cron'], approvals: ['preview_confirm', 'owner_automation'], quietHours: true, overrides: ['crewId', 'noticeId'],
+    dedupe: c => c.notice ? crewNoticeSendKey({ jobId: c.job.id, employeeId: c.crewId, id: c.notice.id }) : `crew_assignment:${c.job.id}:${c.crewId}:${c.job.date}:${c.job.time || ''}`,
+    // A notice's slot is upcoming until its work is over, not just its day.
+    eligible: c => !(c.notice ? scheduled({ ...c.job, date: c.today }, c.today) && slotUpcoming(c.notice, c.now) : scheduled(c.job, c.today)) ? reason('not_upcoming') : ok,
+  }),
+  // Tells a crew member they were taken off a job, some of its days or hours,
+  // or that it was cancelled. Only the scheduler sends it, from a dispatch
+  // notice naming every day they lost.
+  crew_unassignment: policy('crew_unassignment', {
+    audience: 'crew', triggers: ['cron'], approvals: ['owner_automation'], quietHours: true, overrides: ['crewId', 'noticeId'], crewAssigned: false,
+    dedupe: c => crewNoticeSendKey({ jobId: c.job.id, employeeId: c.crewId, id: c.notice?.id || '' }),
+    eligible: c => !c.notice ? reason('notice_required') : !slotUpcoming(c.notice, c.now) ? reason('not_upcoming') : ok,
+  }),
+  // One text for a change that moves or adds work and also takes days or hours
+  // away (a reschedule to another day, or a move plus a lost segment), so a
+  // move never hides a loss. Only the scheduler sends it, from a dispatch notice.
+  crew_schedule_change: policy('crew_schedule_change', {
+    audience: 'crew', triggers: ['cron'], approvals: ['owner_automation'], quietHours: true, overrides: ['crewId', 'noticeId'],
+    dedupe: c => crewNoticeSendKey({ jobId: c.job.id, employeeId: c.crewId, id: c.notice?.id || '' }),
+    eligible: c => !c.notice ? reason('notice_required') : !(scheduled({ ...c.job, date: c.today }, c.today) && slotUpcoming(c.notice, c.now)) ? reason('not_upcoming') : ok,
   }),
   // Billing kinds quote invoice numbers and balances. They are never copied
   // into the customer thread, which assigned crew can read.

@@ -412,7 +412,8 @@ function occurrenceInput(plan, template, date, requestId, conflict) {
 
 async function createOccurrence(store, actor, plan, template, date, { now, runId, conflict = null }) {
   const requestId = await createRequestId(plan, date, conflict), state = conflict ? 'conflict' : 'scheduled', key = await priceKey(plan);
-  const adapter = { ...store,
+  // CREW-NOTIFY: the visits one run creates are one crew text per employee.
+  const adapter = { ...store, crewNoticeBatch: `recurring:${plan.id}:${runId || now}`,
     commit: async writes => {
       const target = writes.find(write => write.collection === 'jobs' && write.patch?.dispatchRequestId === requestId);
       if (!target) throw fail('commit_incomplete', 'The recurring visit could not be prepared.', 503);

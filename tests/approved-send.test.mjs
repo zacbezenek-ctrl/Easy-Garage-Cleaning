@@ -325,7 +325,8 @@ test('human-written follow-ups are confirmed exactly as written and deduplicated
 
 test('crew notifications go only to assigned crew through an injected contact resolver', async () => {
   const crewContact = async ({ crewId }) => crewId === 'crew1' ? { name: 'Casey Crew', phone: '9705550155', highlevelContactId: 'crew-contact-1' } : null;
-  const contacts = { 'crew-contact-1': { id: 'crew-contact-1', locationId: 'location-1', phone: '+19705550155', tags: [] } };
+  // CREW-NOTIFY: staff messages only reach a linked contact tagged egc-staff.
+  const contacts = { 'crew-contact-1': { id: 'crew-contact-1', locationId: 'location-1', phone: '+19705550155', tags: ['egc-staff'] } };
   const f = await setup({ kinds: ['crew_assignment'], crewContact, ghl: { contacts }, jobFields: { date: '2026-09-24', notify: false } });
   const input = { kind: 'crew_assignment', jobId: 'job-1', overrides: { crewId: 'Crew1' } };
   const preview = await f.service.preview(manager, input);
@@ -341,6 +342,18 @@ test('crew notifications go only to assigned crew through an injected contact re
   await assert.rejects(unresolved.service.preview(manager, input), error => error.code === 'messaging_recipient_unavailable' && error.details.reason === 'crew_contact_unavailable');
   const noPhone = await setup({ kinds: ['crew_assignment'], jobFields: { date: '2026-09-24' }, crewContact: async () => ({ name: 'Casey Crew' }) });
   assert.deepEqual(await noPhone.service.preview(manager, input).then(result => [result.status, result.reason]), ['needs_contact', 'no_phone']);
+  assert.ok(f.ghl.calls.every(call => call.path !== '/contacts/upsert'), 'a staff message never creates or updates a HighLevel contact');
+});
+
+test('a staff message needs a linked HighLevel contact tagged egc-staff and never upserts one', async () => {
+  const input = { kind: 'crew_assignment', jobId: 'job-1', overrides: { crewId: 'crew1' } };
+  const unlinked = await setup({ kinds: ['crew_assignment'], jobFields: { date: '2026-09-24' }, crewContact: async () => ({ name: 'Casey Crew', phone: '9705550155', highlevelContactId: '' }) });
+  assert.deepEqual(await unlinked.service.preview(manager, input).then(result => [result.status, result.reason]), ['needs_contact', 'staff_contact_not_linked']);
+  assert.deepEqual([unlinked.ghl.calls.length, unlinked.ledgers().length], [0, 0], 'nothing is looked up, created or claimed without a linked staff contact');
+  const customer = { 'crew-contact-1': { id: 'crew-contact-1', locationId: 'location-1', phone: '+19705550155', tags: ['customer'] } };
+  const untagged = await setup({ kinds: ['crew_assignment'], ghl: { contacts: customer }, jobFields: { date: '2026-09-24' }, crewContact: async () => ({ name: 'Casey Crew', phone: '9705550155', highlevelContactId: 'crew-contact-1' }) });
+  assert.deepEqual(await untagged.service.preview(manager, input).then(result => [result.status, result.reason]), ['needs_contact', 'staff_tag_missing'], 'a contact without the staff tag is never texted as staff');
+  assert.deepEqual(untagged.ghl.calls.map(call => call.path), ['/contacts/crew-contact-1']);
 });
 
 test('account-targeted sign-in links use the saved account contact and an injected link provider', async () => {
@@ -546,7 +559,7 @@ test('failed and uncertain sends raise the Hub attention flag; dry runs and staf
   assert.deepEqual([dry.row().communicationLastStatus, dry.row().communicationLastEvent, dry.row().communicationLastAt], ['needs_attention', 'estimate_ready', '2026-09-21T15:00:00.000Z']);
   assert.equal(dry.row().communicationLog.at(-1).status, 'dry_run');
   const crewContact = async () => ({ name: 'Casey Crew', phone: '9705550155', highlevelContactId: 'crew-contact-1' });
-  const contacts = { 'crew-contact-1': { id: 'crew-contact-1', locationId: 'location-1', phone: '+19705550155', tags: [] } };
+  const contacts = { 'crew-contact-1': { id: 'crew-contact-1', locationId: 'location-1', phone: '+19705550155', tags: ['egc-staff'] } };
   const staff = await setup({ kinds: ['crew_assignment'], crewContact, ghl: { contacts, sendStatus: 503 }, jobFields: { date: '2026-09-24' } });
   await confirmAndSend(staff, manager, { kind: 'crew_assignment', jobId: 'job-1', overrides: { crewId: 'crew1' } });
   assert.equal(staff.row().communicationLastStatus, undefined); assert.equal(staff.row().communicationLog.at(-1).status, 'uncertain');

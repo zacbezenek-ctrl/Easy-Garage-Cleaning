@@ -9,6 +9,7 @@ import { primaryStaffRole, sanitizeStaffRoles } from './staff-roles.js';
 import { legacyPersonKeys, staffDirectoryEnabled, storedWeeklyAvailability } from './staff-directory.js';
 import { storedSkills } from './staff-skills.js';
 import { segmentsEnabled } from './dispatch-segments.js';
+import { crewNotificationsEnabled } from './crew-notifications.js';
 import { commitConflict, commitFailure } from './firestore-errors.js';
 import { dispatchReadMode, windowedJobs, pagedQuery, customerCoverage, aggregateCount } from './dispatch-window-reads.js';
 
@@ -123,6 +124,8 @@ export function dispatchStorage(env, fetcher = firestoreFetch) {
     legacyBlockMode: legacyBlockMode(env),
     // EGC_DISPATCH_SEGMENTS: segment writes; reads always honour saved segments.
     segmentsEnabled: segmentsEnabled(env),
+    // EGC_CREW_NOTIFICATIONS_ENABLED: dispatch saves queue crew notices in the same commit.
+    crewNotificationsEnabled: crewNotificationsEnabled(env),
     async legacyBlockedDays(dates) {
       const found = await Promise.all(dates.map(async date => {
         const response = await send(`${BASE}/blocked_days/${encodeURIComponent(date)}?mask.fieldPaths=blockedAt`);

@@ -443,6 +443,10 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   previews and confirms; the send re-fires the existing egc-estimate-ready workflow via the approved-send core (messaging
   off, dry run by default). Sales author quotes with EGC_STAFF_ROLE_PERMISSIONS; the portal withholds unsent revisions; a
   cancelled visit's GHL sync adds no scheduled tags. Gaps: no gameplan tier editor or portal option chooser yet.
+- **CREW-NOTIFY** Crew schedule notices behind `EGC_CREW_NOTIFICATIONS_ENABLED` (off): dispatch, bridge and recurring
+  saves queue per-employee notices in the same commit, and the signed messaging cron texts them (crew_assignment,
+  crew_unassignment, crew_schedule_change; owner-approved wording) only to an opted-in employee's own number on a
+  HighLevel contact tagged egc-staff. MY EGC → Schedule alerts shows each employee their feed. Gaps: no Web Push yet.
 
 ## In progress
 
@@ -546,6 +550,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | RECUR-CRON | Hourly recurring-plan horizon run over the bridge; per-visit plan prices (flag off) | merged (e68b03b) |
 | FUN-29 | Service line and funnel path on every project (definitions 2026-09-28.6) | merged (4c1d165) |
 | QUOTE-DRAFT | Unsigned quote drafts with a confirmed send (estimate-ready via approved send, off) and the quote-author role (flag off) | merged (0658534) |
+| CREW-NOTIFY | Crew schedule notices: dispatch queues, messaging cron texts opted-in staff on egc-staff contacts (flag off) | merged (b95eee8) |
 
 ## Next
 

@@ -11,6 +11,7 @@ import { sendAcceptedQuotePortal } from '../_lib/portal-invitation.js';
 import { portalLinkProviders } from '../_lib/message-links.js';
 import { serverMessagingEnabled } from '../_lib/messaging-settings.js';
 import { CLAIM_COST, CRON_ACTOR_ID, finishRun, runDueMessages, startRun } from '../_lib/messaging-scheduler.js';
+import { crewNotificationDeps } from '../_lib/crew-notification-delivery.js';
 import { webLeadRetryRunner } from '../_lib/web-lead-intake.js';
 import { jobberGuardSends } from '../_lib/jobber-guard.js';
 
@@ -51,6 +52,8 @@ export function messagingCronHandlers({
   portalInvite = env => jobId => sendAcceptedQuotePortal(env, jobId, { requireRequested: true }),
   links = (env, { store, clock }) => portalLinkProviders({ env, read: id => store.read('jobs', id), now: () => clock().getTime() }),
   options = () => ({}), crewOutbox = () => null, webLeads = env => webLeadRetryRunner(env), jobberGuard = jobberGuardSends,
+  // EGC_CREW_NOTIFICATIONS_ENABLED: the dispatch crew-notice outbox and its send hooks (null when off).
+  crew = crewNotificationDeps,
 } = {}) {
   return {
     async get() { return failure(405, 'messaging_cron_method_not_allowed', 'Use a signed POST from the EGC worker.'); },
@@ -100,12 +103,13 @@ export function messagingCronHandlers({
           return failure(409, 'messaging_run_in_progress', 'This run is still in progress.');
         }
         const reserve = () => { if (meter.left() < CLAIM_COST) throw Object.assign(new Error('This message was not attempted.'), { code: 'messaging_not_attempted', status: 503 }); };
-        const linkProviders = links(env, { store, clock: now });
+        const notices = crew(env, { store, charge: meter.charge, now: started });
+        const linkProviders = { ...(notices?.links || {}), ...links(env, { store, clock: now }) };
         // FUN-32: EGC_JOBBER_GUARD_BILLING / _MESSAGING hold automatic reminders for customers with open Jobber strays.
-        const service = await jobberGuard(createApprovedSendService({ store, messenger: meter.messenger, clock: now, env, secret: env?.HUB_SESSION_SECRET || '', links: linkProviders, reserve, ...options(env) }), { store, env, now: started });
+        const service = await jobberGuard(createApprovedSendService({ store, messenger: meter.messenger, clock: now, env, secret: env?.HUB_SESSION_SECRET || '', links: linkProviders, reserve, ...(notices ? { crewContact: notices.crewContact, crewNotice: notices.crewNotice } : {}), ...options(env) }), { store, env, now: started });
         let summary;
         try {
-          summary = await runDueMessages({ store, service, flags, links: linkProviders, portalInvite: portalInvite(env), crewOutbox: crewOutbox(env), budget: meter.left, charge: meter.charge }, { now: started, dryRun, requestId: claims.request.requestId });
+          summary = await runDueMessages({ store, service, flags, links: linkProviders, portalInvite: portalInvite(env), crewOutbox: notices?.outbox || crewOutbox(env), budget: meter.left, charge: meter.charge }, { now: started, dryRun, requestId: claims.request.requestId });
         } catch (error) {
           const code = /^messaging_[a-z_]+$/.test(error?.code || '') ? error.code : 'messaging_run_failed';
           await finishRun(store, runId, attemptId, { status: 'failed', code, completedAt: now().toISOString() });

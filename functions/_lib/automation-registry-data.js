@@ -281,6 +281,18 @@ export const AUTOMATION_REGISTRY = deepFreeze({
     msgCore('on_my_way', 'On my way (approved send)', 'SMS', { classification: 'human_approved', notes: 'Template plus a crew or dispatcher tap (template+human_trigger). EGC_MESSAGING_ENABLED gates every send.' }),
     msgCore('day_before_reminder', 'Day-before reminder (approved send)', 'SMS'),
     msgCore('crew_assignment', 'Crew assignment (approved send)', 'SMS', { audience: 'staff' }),
+    // CREW-NOTIFY: dispatch crew notices, texted only by the signed messaging cron to the employee's own approved number
+    // on a HighLevel contact tagged egc-staff (never upserted), behind EGC_CREW_NOTIFICATIONS_ENABLED (off).
+    msgCore('crew_unassignment', 'Crew removal or cancellation notice (approved send)', 'SMS', { audience: 'staff', classification: 'owner_automation', disposition: 'needs_owner_approval',
+      trigger: 'The signed messaging cron (/api/messaging-cron) sends a queued dispatch crew notice when a crew member is taken off a job, some of its days or hours, or the job is cancelled (EGC_CREW_NOTIFICATIONS_ENABLED)',
+      code: [...code('functions/_lib/ghl-messenger.js', 'ghl_message_send', 'ghl_contact_write'), ...code(MESSAGING_CRON, 'hub_send_helper_call')], evidence: ['functions/_lib/crew-notification-delivery.js', 'functions/_lib/crew-notifications.js', 'functions/_lib/message-policies.js'],
+      notes: 'Staff only: the recipient is the employee\'s own approved number after they opt in, and the HighLevel contact must already carry egc-staff. EGC_MESSAGING_ENABLED gates every send; the kind sends only once its wording is approved and its automation switch is on (off by default).',
+      ownerCheck: 'Approve the crew_unassignment wording at /message-templates and switch its automation on only when crew schedule texts should go out; keep staff contacts out of customer workflows.' }),
+    msgCore('crew_schedule_change', 'Crew schedule change notice (approved send)', 'SMS', { audience: 'staff', classification: 'owner_automation', disposition: 'needs_owner_approval',
+      trigger: 'The signed messaging cron (/api/messaging-cron) sends a queued dispatch crew notice for a change that moves or adds work and also takes days or hours away (EGC_CREW_NOTIFICATIONS_ENABLED)',
+      code: [...code('functions/_lib/ghl-messenger.js', 'ghl_message_send', 'ghl_contact_write'), ...code(MESSAGING_CRON, 'hub_send_helper_call')], evidence: ['functions/_lib/crew-notification-delivery.js', 'functions/_lib/crew-notifications.js', 'functions/_lib/message-policies.js'],
+      notes: 'Staff only, as crew_unassignment. EGC_MESSAGING_ENABLED gates every send; the kind sends only once its wording is approved and its automation switch is on (off by default).',
+      ownerCheck: 'Approve the crew_schedule_change wording at /message-templates and switch its automation on only when crew schedule texts should go out.' }),
     msgCore('invoice_send', 'Invoice with pay link (approved send)', 'Email'),
     msgCore('payment_reminder', 'Payment reminder (approved send)', 'SMS'),
     msgCore('deposit_reminder', 'Deposit reminder (approved send)', 'SMS'),

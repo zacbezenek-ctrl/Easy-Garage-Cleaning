@@ -564,6 +564,22 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // Crew schedule notices (CREW-NOTIFY) are queued only in the dispatch
+    // commit and delivered by the messaging cron; employees read and
+    // acknowledge their own through /api/crew-notifications, which also keeps
+    // their schedule-text opt-in. No SDK session reads or writes either.
+    match /crewNotifications/{documentId} {
+      allow read, write: if false;
+    }
+    match /crewNotificationPrefs/{documentId} {
+      allow read, write: if false;
+    }
+    // What each employee last heard about each job: written only with the
+    // cron's notice closes, read by the cron and /api/crew-notifications.
+    match /crewNoticeHeard/{documentId} {
+      allow read, write: if false;
+    }
+
     // Walkthrough visit request receipts and each rep's open-walkthrough lock
     // (FUN-05) are written only in the server commit that records the visit.
     match /walkthroughVisitOperations/{documentId} {

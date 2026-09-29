@@ -132,6 +132,11 @@ test('actual Firestore rules isolate canonical operations from crew SDK access',
       for(const db of [publicDb,crew,lead,manager]) for(const path of ['messaging_settings/automation','messaging_runs/run','messaging_holds/current']){await assertFails(db.doc(path).get());await assertFails(db.doc(path).set({paused:true}));await assertFails(db.doc(path).update({status:'changed'}));await assertFails(db.doc(path).delete());}
       for(const db of [crew,manager]) for(const name of ['messaging_settings','messaging_runs','messaging_holds']) await assertFails(db.collection(name).get());
     });
+    await t.test('crew schedule notices and text opt-ins stay server-only, even for the employee they belong to',async()=>{
+      await environment.withSecurityRulesDisabled(async context=>{const db=context.firestore();await db.doc('crewNotifications/crew_notice').set({employeeId:'assigned-crew',jobId:'assigned',intent:'assigned',status:'pending'});await db.doc('crewNotificationPrefs/assigned-crew').set({employeeId:'assigned-crew',sms:true});await db.doc('crewNoticeHeard/heard_notice').set({employeeId:'assigned-crew',jobId:'assigned',slots:[]});});
+      for(const db of [publicDb,crew,lead,manager]) for(const path of ['crewNotifications/crew_notice','crewNotificationPrefs/assigned-crew','crewNoticeHeard/heard_notice']){await assertFails(db.doc(path).get());await assertFails(db.doc(path).set({sms:false}));await assertFails(db.doc(path).update({acknowledged:true}));await assertFails(db.doc(path).delete());}
+      for(const db of [crew,manager]) for(const name of ['crewNotifications','crewNotificationPrefs','crewNoticeHeard']) await assertFails(db.collection(name).get());
+    });
     await t.test('Garage Guard memberships, Stripe event receipts and reviews are webhook-only',async()=>{
       for(const db of [publicDb,crew,manager]) for(const path of ['memberships/sub_synthetic','stripe_events/evt_synthetic','membership_reviews/sub_synthetic','payment_reviews/cs_test_synthetic','garage_guard_operations/receipt']){await assertFails(db.doc(path).get());await assertFails(db.doc(path).update({status:'changed'}));await assertFails(db.doc(path).delete());}
       await assertFails(manager.doc('memberships/sub_new').set({plan:'black',status:'active'}));

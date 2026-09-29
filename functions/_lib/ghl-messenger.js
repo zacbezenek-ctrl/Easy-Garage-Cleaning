@@ -2,10 +2,10 @@
    only from saved EGC data, and provider outcomes are classified so that an
    ambiguous result is never mistaken for a safe-to-retry failure. */
 import { escapeHtml } from './message-templates.js';
-import { NO_SMS_CONSENT_TAG } from './contact-consent.js';
+import { NO_SMS_CONSENT_TAG, STAFF_CONTACT_TAG } from './contact-consent.js';
 
 const API = 'https://services.leadconnectorhq.com';
-export { NO_SMS_CONSENT_TAG };
+export { NO_SMS_CONSENT_TAG, STAFF_CONTACT_TAG };
 // The only contact tags the messenger may add or remove, each registered with
 // its Hub write in the FUN-30 automation registry: egc-estimate-ready re-fires
 // the existing estimate-ready workflow for a confirmed quote send (estimate-ready.js).
@@ -50,8 +50,9 @@ export function createGhlMessenger({ env = {}, fetcher = fetch, clock = () => ne
   const unavailable = { status: 'unavailable', reason: 'provider_unreachable' };
 
   // Upsert only from saved data, then verify the contact's id, location and
-  // destination. DND applies per channel; the no-consent tag blocks SMS.
-  async function resolveRecipient({ contactId = '', phone = '', email = '', name = '', preferred = '', upsert = true } = {}) {
+  // destination. DND applies per channel; the no-consent tag blocks SMS. A
+  // requiredTag (staff messages) must be on the contact.
+  async function resolveRecipient({ contactId = '', phone = '', email = '', name = '', preferred = '', upsert = true, requiredTag = '' } = {}) {
     if (!c.token || !c.locationId) return { status: 'not_configured', reason: 'highlevel' };
     const channel = MESSAGE_CHANNELS.includes(preferred) ? preferred : normalizePhone(phone) ? 'SMS' : 'Email';
     const destination = recipientDestination(channel, { phone, email });
@@ -80,6 +81,7 @@ export function createGhlMessenger({ env = {}, fetcher = fetch, clock = () => ne
       const dnd = contact.dndSettings?.[channel]?.status;
       if (contact.dnd === true || (dnd && String(dnd).toLowerCase() !== 'inactive')) return { status: 'suppressed', reason: `contact_dnd_${channel.toLowerCase()}`, channel, masked };
       const tags = Array.isArray(contact.tags) ? contact.tags.map(tag => String(tag).trim().toLowerCase()) : [];
+      if (requiredTag && !tags.includes(requiredTag)) return { status: 'needs_contact', reason: 'staff_tag_missing', channel, masked };
       if (channel === 'SMS' && tags.includes(NO_SMS_CONSENT_TAG)) return { status: 'suppressed', reason: 'no_sms_consent', channel, masked };
       return { status: 'ready', contactId: id, channel, masked, ...to };
     } catch { return { ...unavailable, channel, masked }; }

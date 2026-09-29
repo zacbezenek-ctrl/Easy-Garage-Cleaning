@@ -10,6 +10,7 @@ import { validDate, addDays, denverToday, scheduleInterval, availabilityInterval
 import { arrivalWindowPatch, arrivalDefaults } from './dispatch-arrival.js';
 import { legacyBlockedDays, legacyBlockWarning } from './dispatch-legacy-blocks.js';
 import { SEGMENT_HULL_KEYS, SEGMENT_LIMIT, segmented, segmentsInvalid, jobSegments, segmentDays, segmentLockEntries, ownsLockEntry, projectSegments, validateSegments } from './dispatch-segments.js';
+import { crewNotificationWrites } from './crew-notifications.js';
 import { bookingInput, bookingPatch, reasonInput, cancelPatch, noShowProblem, visitFunnelWrites, requestKey, eventActor } from './dispatch-funnel.js';
 import { dispatchDurationFields, dispatchDurationOverride, dispatchCrewSize, withQuoteLines, ESTIMATED_DURATION_MIN } from './dispatch-duration.js';
 import { bookingDimensions, firstPlacementDimensions } from './funnel-dimensions.js';
@@ -572,6 +573,9 @@ async function executeDispatch(store, session, input, now, options = {}) {
   writes.push({collection,id,revision:current?.revision,patch});
   writes.push({collection:'dispatchState',id:'revision',revision:guard?.revision,patch:{updatedAt:now,lastRequestId:input.requestId}});
   writes.push({collection:'dispatchOperations',id:receiptId,patch:{fingerprint,actorId:session.user,action:input.action,collection,targetId:id,requestId:input.requestId,createdAt:now,before:current ? auditState(current) : null,after:auditState({...current,...patch}),warnings,...(fieldTimeSegment || lineage?.metadata ? {metadata:{...(fieldTimeSegment?{fieldTimeSegment}:{}),...(lineage?.metadata?{customerLineage:lineage.metadata}:{})}} : {})}});
+  // EGC_CREW_NOTIFICATIONS_ENABLED: crew notices commit with the change and its receipt, or not at all.
+  // A recurring-plan run names itself (store.crewNoticeBatch) so its new visits are one text per employee.
+  if (collection === 'jobs' && store.crewNotificationsEnabled === true) writes.push(...await crewNotificationWrites({jobId:id,requestId:input.requestId,action:input.action,actorId:session.user,type:(current || patch).type,before:current ? auditState(current) : null,after:auditState({...current,...patch}),roster,now,batch:typeof store.crewNoticeBatch === 'string' ? store.crewNoticeBatch : '',baseRevision:current?.revision}));
   for(const check of lineage?.checks || []) {
     const write=writes.find(item=>item.collection===check.collection&&item.id===check.id);
     if(write&&write.revision!==check.revision)throw fail('dispatch_revision_conflict','The source job changed while its account ownership was verified. Refresh and retry.',409);
