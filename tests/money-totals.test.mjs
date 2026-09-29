@@ -51,6 +51,76 @@ function hubModule(sessionValue = null) {
   return { api: context.window.EGCMoneyTotals, store, listeners, context };
 }
 
+// Exercise the rendered finance tiles with both the legacy and unified totals.
+// Credit lowers cash collected, but still settles the job and its open balance.
+function financeTiles(job, unified) {
+  const { context } = hubModule(unified ? 'true' : null);
+  const source = readFileSync(new URL('../employee-suite.js', import.meta.url), 'utf8');
+  const line = prefix => { const found = source.split(/\r?\n/).find(item => item.startsWith(prefix)); assert.ok(found, prefix); return found; };
+  Object.assign(context, { jobs: () => [job], jobStage: () => 'scheduled', day: () => '2026-09-29', jobEconomics: () => ({ known: false }), laborState: () => 'visible', money: value => `$${Number(value).toFixed(2)}` });
+  // financeSummary is multiline, so take its complete body through the next function.
+  vm.runInContext([line('function financeState('), source.slice(source.indexOf('function financeSummary(){'), source.indexOf('function cacheSalesExit('))].join('\n'), context);
+  const html = context.financeSummary(), tile = label => html.match(new RegExp(`<span>${label}</span><strong>([^<]+)</strong>`))?.[1];
+  return { cash: tile('Verified collected'), open: tile('Open / unverified'), balance: context.financeState(job).balance, html };
+}
+
+test('Hub collected tile excludes verified gift and account credit without reopening settled jobs', () => {
+  const quote = { id: 'credit-job', type: 'job', total: 100, estimate: { amount: 100, status: 'accepted' } };
+  const cases = [
+    { name: 'credit only', payment: { amount: 100, verified: true, method: 'gift_credit', giftCreditApplied: 100 }, cash: '$0.00', open: '$0.00', balance: 0 },
+    { name: 'mixed card and credit', payment: { amount: 100, verified: true, method: 'mixed_with_gift_credit', giftCreditApplied: 50 }, cash: '$50.00', open: '$0.00', balance: 0 },
+    { name: 'unverified cash', payment: { amount: 100, verified: false, method: 'card' }, cash: '$0.00', open: '$100.00', balance: 0 },
+    { name: 'cash without credit', payment: { amount: 100, verified: true, method: 'card' }, cash: '$100.00', open: '$0.00', balance: 0 },
+  ];
+  for (const unified of [false, true]) for (const row of cases) {
+    const result = financeTiles({ ...quote, payment: row.payment }, unified);
+    assert.deepEqual([result.cash, result.open, result.balance], [row.cash, row.open, row.balance], `${row.name}, unified=${unified}`);
+  }
+});
+
+test('Hub collected tile marks an unknown credit split for review, not as cash', () => {
+  const quote = { id: 'credit-review', type: 'job', total: 100, estimate: { amount: 100, status: 'accepted' } };
+  const cases = [
+    { amount: 100, verified: true, method: 'gift_credit' },
+    { amount: 100, verified: true, method: 'mixed_with_gift_credit', giftCreditApplied: 'bad' },
+    { amount: 100, verified: true, method: 'mixed_with_gift_credit', giftCreditApplied: true },
+    { amount: 100, verified: true, method: 'mixed_with_gift_credit', giftCreditApplied: [50] },
+    { amount: 100, verified: true, method: 'mixed_with_gift_credit', giftCreditApplied: 120 },
+  ];
+  for (const unified of [false, true]) for (const payment of cases) {
+    const result = financeTiles({ ...quote, payment }, unified);
+    assert.equal(result.cash, '—');
+    assert.equal(result.open, '$0.00');
+    assert.match(result.html, /Payment or credit amount needs review/);
+  }
+  const conflict = financeTiles({ ...quote, payment: { amount: 100, verified: true, giftCreditApplied: 20 },
+    giftWallet: { redemptions: [{ id: 'r1', jobId: quote.id, amount: 30 }] } }, true);
+  assert.equal(conflict.cash, '—', 'a local redemption exceeding the authoritative aggregate cannot be treated as cash');
+  for (const amount of [true, [10]]) {
+    const malformed = financeTiles({ ...quote, payment: { amount: 100, verified: true, giftCreditApplied: 20 },
+      giftWallet: { redemptions: [{ id: 'r1', jobId: quote.id, amount }] } }, true);
+    assert.equal(malformed.cash, '—', 'malformed redemption amounts cannot look like known cash');
+  }
+});
+
+test('Hub collected cash uses applied service money once: tips and corrected refunds are not double subtracted', () => {
+  const quote = { id: 'credit-adjustments', type: 'job', total: 100, estimate: { amount: 100, status: 'accepted' } };
+  const separateTip = { ...quote, payment: { amount: 100, verified: true, method: 'card', tips: [{ sessionId: 'cs_test_tip_service', amount: 10, amountCents: 1000 }] } };
+  const withCredit = { ...quote, payment: { amount: 100, verified: true, method: 'mixed_with_gift_credit', giftCreditApplied: 20 },
+    giftWallet: { redemptions: [{ id: 'other-job-credit', jobId: 'another-job', amount: 90 }] } };
+  for (const unified of [false, true]) {
+    assert.equal(financeTiles(separateTip, unified).cash, '$100.00', `tip is excluded from service money, unified=${unified}`);
+    assert.equal(financeTiles(withCredit, unified).cash, '$80.00', `account credit does not need a local redemption, unified=${unified}`);
+    const corrected = financeTiles({ ...withCredit, payment: { ...withCredit.payment, amount: 60 }, paymentLedger: [{ id: 'refund-1', kind: 'refund', amountCents: 4000, method: 'card' }] }, unified);
+    assert.deepEqual([corrected.cash, corrected.open, corrected.balance], ['$40.00', '$40.00', 40], `the corrected paid total already nets the refund, unified=${unified}`);
+  }
+  const reviewOnly = financeTiles({ ...withCredit, stripeReview: { status: 'refund_review' } }, true);
+  assert.equal(reviewOnly.cash, '$80.00', 'a refund review alone does not alter the job payment');
+  const legacyTip = { ...withCredit, payment: { ...withCredit.payment, amount: 110, stripeSessions: [{ sessionId: 'cs_live_old_tip', amount: 10, purpose: 'tip', verifiedAt: '2026-09-29T10:00:00Z' }] } };
+  assert.equal(financeTiles(legacyTip, false).cash, '$90.00', 'flag-off treatment of an older tip inside payment.amount is preserved');
+  assert.equal(financeTiles(legacyTip, true).cash, '$80.00', 'unified mode keeps its existing service-only applied amount');
+});
+
 test('moneyTotalsMode reads MONEY_UNIFIED_TOTALS: true is unified, shadow is shadow, anything else is off', () => {
   assert.deepEqual([...MONEY_TOTALS_MODES], ['off', 'shadow', 'unified']);
   for (const [value, mode] of [[undefined, 'off'], ['', 'off'], ['false', 'off'], ['TRUE', 'off'], ['yes', 'off'], ['1', 'off'], ['true', 'unified'], [' true ', 'unified'], ['shadow', 'shadow'], ['Shadow', 'off']]) {
