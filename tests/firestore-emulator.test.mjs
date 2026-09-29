@@ -140,6 +140,11 @@ test('actual Firestore rules isolate canonical operations from crew SDK access',
       await assertFails(manager.collection('garage_guard_operations').get());
       await assertFails(crew.doc('payment_reviews/cs_test_forged').set({status:'resolved',jobId:'assigned'}));
     });
+    await t.test('Client Login rate limits, sign-in links and customer sessions remain server-only even for business SDK sessions',async()=>{
+      await environment.withSecurityRulesDisabled(async context=>{const db=context.firestore();await db.doc('rate_limits/rl_synthetic').set({bucket:'customer_login_ip',count:1});await db.doc('customer_login_links/ml_synthetic').set({customerId:'customer-a',usedAt:null});await db.doc('customer_sessions/cs_synthetic').set({customerId:'customer-a',sessionVersion:0});});
+      for(const db of [publicDb,crew,lead,manager,partner]) for(const path of ['rate_limits/rl_synthetic','customer_login_links/ml_synthetic','customer_sessions/cs_synthetic']){await assertFails(db.doc(path).get());await assertFails(db.doc(path).set({customerId:'customer-b'}));await assertFails(db.doc(path).update({usedAt:null,revokedAt:null,count:0}));await assertFails(db.doc(path).delete());}
+      for(const db of [publicDb,manager]) for(const name of ['rate_limits','customer_login_links','customer_sessions']){await assertFails(db.collection(name).get());await assertFails(db.doc(`${name}/forged`).set({customerId:'customer-a'}));}
+    });
     await t.test('hub bridge command receipts (audit and idempotency) remain server-only even for business SDK sessions',async()=>{
       for(const db of [publicDb,crew,manager]){const ref=db.doc('hub_command_operations/receipt');await assertFails(ref.get());await assertFails(ref.set({fingerprint:'forged',before:'null',after:'{}'}));await assertFails(ref.delete());}
     });

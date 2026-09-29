@@ -39,7 +39,8 @@ test('the list is exactly the generator\'s public pages plus the customer app sh
   assert.deepEqual(generated.filter(path => !pages.includes(path)), ['/fort-collins-junk-removal.html', '/loveland-garage-cleanout.html', '/wellington-junk-removal.html', '/windsor-garage-cleanout.html']);
   for (const path of ['/junk-removal-fort-collins-co.html', '/garage-cleanouts-loveland-co.html', '/junk-removal-wellington-co.html', '/garage-cleanouts-windsor-co.html']) assert.ok(pages.includes(path), `${path} replaces a redirected legacy page`);
   // Served publicly but outside the generator: customer-facing app shells, each signed out here and with fixtures in hub-shells.spec.mjs.
-  assert.deepEqual(pages.filter(path => !generated.includes(path)), ['/business-hub.html', '/customer-portal.html', '/quote.html']);
+  // CLIENT-LOGIN adds /client-login.html, a public customer app shell held to the same tap-target contract.
+  assert.deepEqual(pages.filter(path => !generated.includes(path)), ['/business-hub.html', '/client-login.html', '/customer-portal.html', '/quote.html']);
   for (const path of ['/faq.html', '/blog/index.html', '/what-we-take.html', '/thank-you.html', '/apply.html', '/projects/index.html', '/timnath-junk-removal.html', '/estate-cleanout-fort-collins.html', '/404.html', '/before-after.html']) assert.ok(pages.includes(path), path);
 });
 

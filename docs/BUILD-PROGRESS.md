@@ -423,6 +423,10 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   decision answers and rebook requests commit their funnel event with the job (portal writers moved to :commit). A job's
   server-owned funnelSale names the one live deal.sold, so re-signatures, handoffs and M3 revisions retire or keep it
   instead of double counting; browser SDK writes cannot set it. Portal request_ids make retries replay, not repeat.
+- **CLIENT-LOGIN** Customer sign-in by magic link behind `CUSTOMER_LOGIN_ENABLED` (off): /client-login asks for a phone or
+  email, /api/customer-login sends the owner-approved portal_magic_link through the approved-send service and GHL messenger
+  (5 requests per identifier and 3 sends per customer per rolling day), and /api/customer-login-verify redeems the single-use
+  link into an account session and the owner's portal cookie; business-managed projects are excluded; staff revoke is audited.
 
 ## In progress
 
@@ -521,6 +525,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | PUBLIC-TAP | 44px tap targets and no horizontal scroll on every public page | merged (3a8d78c) |
 | CHANGE-ORDERS | Bill approved portal change orders as lines; manager void (flag off) | merged (ab396f7) |
 | FUN-03 | Field and portal funnel events; server-owned funnelSale | merged (74d1bfd) |
+| CLIENT-LOGIN | Customer magic-link sign-in and account sessions (flag off) | merged (d157286) |
 
 ## Next
 

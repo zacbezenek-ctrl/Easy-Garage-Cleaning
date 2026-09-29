@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="robots" content="noindex,nofollow,noarchive">
+<meta name="referrer" content="no-referrer">
+<meta name="description" content="Sign in to your Easy Garage Cleaning projects with a one-time link sent to the phone or email we have on file.">
+<meta name="theme-color" content="#071a31">
+<title>Client Login · Easy Garage Cleaning</title>
+<link rel="canonical" href="https://easygaragecleaning.com/client-login">
+<link rel="icon" href="/favicon.ico">
+<link rel="stylesheet" href="/client-login.css?v=20260928b">
+<script src="/client-login.js?v=20260928b" defer></script>
+</head>
+<body>
+<main class="cl-shell">
+  <p class="cl-brand"><img src="/images/brand/egc-icon-64.png" alt="" width="32" height="32"><span>Easy Garage Cleaning</span></p>
+  <section class="cl-card" aria-labelledby="cl-title">
+    <h1 id="cl-title">Client Login</h1>
+    <p class="cl-lead">Enter the mobile number or email you gave us. We’ll send a one-time sign-in link to the contact we have on file.</p>
+    <p id="cl-status" class="cl-status" role="status" aria-live="polite" hidden></p>
+    <a id="cl-status-portal" class="cl-button secondary cl-status-link" href="/customer-portal" hidden>Open my projects</a>
+    <form id="cl-form" class="cl-form" novalidate>
+      <fieldset class="cl-choice">
+        <legend>Sign in with</legend>
+        <label class="cl-tab"><input type="radio" name="method" value="phone" checked><span>Phone</span></label>
+        <label class="cl-tab"><input type="radio" name="method" value="email"><span>Email</span></label>
+      </fieldset>
+      <div class="cl-field" id="cl-phone-field">
+        <label for="cl-phone">Mobile number</label>
+        <input id="cl-phone" name="phone" type="tel" inputmode="tel" autocomplete="tel" maxlength="30" aria-describedby="cl-error">
+      </div>
+      <div class="cl-field" id="cl-email-field" hidden>
+        <label for="cl-email">Email address</label>
+        <input id="cl-email" name="email" type="email" inputmode="email" autocomplete="email" autocapitalize="off" spellcheck="false" maxlength="254" aria-describedby="cl-error">
+      </div>
+      <label class="cl-honeypot" aria-hidden="true">Leave this field blank<input name="botcheck" tabindex="-1" autocomplete="off"></label>
+      <p id="cl-error" class="cl-error" role="alert" hidden></p>
+      <button id="cl-submit" class="cl-button" type="submit">Send my sign-in link</button>
+    </form>
+    <div id="cl-sent" class="cl-sent" hidden>
+      <h2><span class="cl-sent-icon" aria-hidden="true">✓</span> Check your phone or email</h2>
+      <p id="cl-sent-message" role="status" aria-live="polite"></p>
+      <p>Nothing yet after a few minutes? Check the number or email, or text us.</p>
+      <button id="cl-again" class="cl-button secondary" type="button">Use a different phone or email</button>
+    </div>
+    <div id="cl-fallback" class="cl-fallback" hidden>
+      <h2>Text us for a secure link</h2>
+      <p id="cl-fallback-message" role="alert">Online sign-in isn’t available right now. Text or call us and we’ll send your private project link.</p>
+      <div class="cl-links">
+        <a class="cl-button" href="sms:+19709991818">Text (970) 999-1818</a>
+        <a class="cl-button secondary" href="tel:+19709991818">Call (970) 999-1818</a>
+      </div>
+    </div>
+    <noscript><p class="cl-note">Client Login needs JavaScript. Text us for a secure link at (970) 999-1818.</p></noscript>
+  </section>
+  <p class="cl-foot"><a href="/">Easy Garage Cleaning home</a> <a href="/privacy-policy">Privacy policy</a></p>
+</main>
+</body>
+</html>

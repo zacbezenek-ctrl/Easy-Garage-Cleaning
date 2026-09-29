@@ -14,13 +14,21 @@ const FIELDS=['requestId','jobId','expectedRevision','clearCollaborators'];
 // request (readCustomerPortalContext), so emptying it ends them immediately.
 const activeCollaborators=root=>(Array.isArray(root.customerCollaborators)?root.customerCollaborators:[]).filter(person=>plain(person)&&(person.status||'active')==='active').length;
 
-/** Resolve the account root whose version governs every homeowner link for a
- * job, exactly as readCustomerPortalContext does when the link is opened. */
-export async function customerPortalLinkAccount(read,job) {
+/** The account root for a job exactly as readCustomerPortalContext resolves
+ * it when a link is opened: a job with no owner is its own root, whatever its
+ * type (legacy jobs may have none); otherwise the owner chain is verified hop
+ * by hop. Throws dispatch_lineage_* when that chain needs review. */
+export async function customerPortalAccountRoot(read,job) {
   const cache=new Map([[job.id,Promise.resolve(job)]]);
   const load=id=>{if(!cache.has(id))cache.set(id,read(id));return cache.get(id);};
   const ownerId=job.customerAccountOwnerJobId||job.id;
-  const account=ownerId!==job.id?await verifiedAccountRoot(load,ownerId,job.customerId):job;
+  return ownerId!==job.id?await verifiedAccountRoot(load,ownerId,job.customerId):job;
+}
+
+/** Resolve the account root whose version governs every homeowner link for a
+ * job, exactly as readCustomerPortalContext does when the link is opened. */
+export async function customerPortalLinkAccount(read,job) {
+  const account=await customerPortalAccountRoot(read,job);
   const linkVersion=customerPortalLinkVersion(account);
   if(linkVersion===null)throw fail('ACCOUNT_REVIEW','This customer account has an invalid portal link version. Ask an owner to review it.',409);
   return {account,linkVersion};

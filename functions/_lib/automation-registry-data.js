@@ -286,7 +286,10 @@ export const AUTOMATION_REGISTRY = deepFreeze({
     msgCore('estimate_expiring', 'Estimate expiring (approved send)', 'SMS'),
     msgCore('review_request', 'Review request (approved send)', 'SMS'),
     msgCore('followup_draft', 'Follow-up after task approval (approved send)', 'SMS+Email', { contentSource: 'human_authored', speedToLead: 'human_touch', notes: 'The body is approved on the task (task_approval), so it counts as a human touch. EGC_MESSAGING_ENABLED gates every send.' }),
-    msgCore('portal_magic_link', 'Portal sign-in link (approved send)', 'SMS', { classification: 'customer_initiated', notes: 'Sent on the customer\'s own request or a staff preview confirm. EGC_MESSAGING_ENABLED gates every send.' }),
+    msgCore('portal_magic_link', 'Portal sign-in link (approved send)', 'SMS', { classification: 'customer_initiated',
+      trigger: 'POST /api/messages kind=portal_magic_link after the policy\'s approval (functions/_lib/message-policies.js), or a customer\'s own request on /client-login (POST /api/customer-login, CLIENT-LOGIN)',
+      code: [...code('functions/_lib/ghl-messenger.js', 'ghl_message_send', 'ghl_contact_write'), ...code('functions/api/messages.js', 'hub_send_helper_call'), ...code('functions/api/customer-login.js', 'hub_send_helper_call')],
+      notes: 'Sent on the customer\'s own request or a staff preview confirm. EGC_MESSAGING_ENABLED gates every send. CLIENT-LOGIN adds the /client-login request path through the same approved send and GHL messenger, off unless CUSTOMER_LOGIN_ENABLED is exactly "true", capped at 5 requests per phone or email and 3 sends per customer in any rolling day.' }),
     entry({ id: 'hub.messaging_cron', name: 'Signed messaging cron (due approved sends and the portal invitation retry)', system: 'hub', trigger: 'The Railway messaging worker POSTs a signed messaging.run to /api/messaging-cron (EGC_MESSAGING_CRON_ENABLED on Railway, EGC_SERVER_MESSAGING_ENABLED on the Hub)',
       audience: 'customer', channel: 'SMS+Email', contentSource: 'message_templates', classification: 'owner_automation', disposition: 'needs_owner_approval', sendsToday: 'no', speedToLead: 'none',
       code: code(MESSAGING_CRON, 'hub_send_helper_call'), evidence: [MESSAGING_CRON, 'functions/_lib/messaging-scheduler.js', 'functions/_lib/message-policies.js'],
@@ -385,6 +388,8 @@ export const AUTOMATION_REGISTRY = deepFreeze({
     'functions/_lib/sales-followup-exit.js': { ghl_tag_write: 1, ghl_contact_write: 1, ghl_opportunity_write: 1, ghl_appointment_write: 1 },
     'functions/api/crew-hook.js': { zapier_hook: 4 },
     'functions/api/crew-jobs.js': { hub_send_helper_call: 1 },
+    // CLIENT-LOGIN: /api/customer-login builds the approved send service and its GHL messenger for portal_magic_link.
+    'functions/api/customer-login.js': { hub_send_helper_call: 2 },
     'functions/api/customer-portal-invitation.js': { hub_send_helper_call: 1 },
     // FUN-03: a replayed portal approval (same request_id) re-runs the idempotent sales-exit sync, so the portal calls it twice plus its message delivery.
     'functions/api/customer-portal.js': { hub_send_helper_call: 3 },
