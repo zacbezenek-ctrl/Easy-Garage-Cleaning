@@ -5,6 +5,8 @@ import { manualEntryIds } from './money-ledger.js';
 import { billedChangeCents } from './change-orders.js';
 import { unsentQuoteDraft } from './quote-model.js';
 import { moneyStorage } from './money-storage.js';
+import { FIELD_CARD_CHECKOUTS, activeFieldCard, fieldCardClose } from './field-payment-card.js';
+import { syncFieldPayment } from './field-payment-sync.js';
 import { funnelPaymentEventsEnabled, moneyEventWrites, paymentKind, stripeChargeClock, stripePaymentMethod } from './payment-events.js';
 
 const DB = 'https://firestore.googleapis.com/v1/projects/egcw-1ec83/databases/(default)/documents';
@@ -102,6 +104,10 @@ export function stripeSecretKey(env = {}) {
 }
 
 export function customerPaymentNeedsReview(job) {
+  // A crew cash/check receipt has not entered the verified money ledger yet.
+  // Its server-owned job lock pauses portal and crew checkouts, credits, and
+  // ordinary offline payment entry until an operations manager reviews it.
+  if (job?.fieldPaymentPendingId) return true;
   const paid = customerMoneyState(job).paid;
   if (paid <= 0 || job.payment?.verified === true) return false;
   if (job.payment?.amount != null) return true;
@@ -189,6 +195,7 @@ export function payable(job, mode = 'off') {
   if (!job || [job.status, job.pipelineStatus].some(status => CLOSED_STATUSES.includes(String(status || '').toLowerCase()))) throw failure('This job is not available for payment');
   if (unsentQuoteDraft(job)) throw failure('Your estimate is being updated. Payment opens once Easy Garage Cleaning sends it to you for review.', 409, 'CUSTOMER_PORTAL_ESTIMATE_NOT_APPROVABLE');
   if (customerPaymentNeedsReview(job)) throw failure('A recorded payment is awaiting team verification. Please wait before paying again.');
+  if (job.fieldPaymentCardRequestId) throw failure('A field card checkout is open for this job. Please wait for the team to verify it before paying again.', 409, 'field_card_checkout_open');
   const status = String(job.customerApproval?.status || job.estimate?.status || job.quoteStatus || '').toLowerCase();
   if (!['accepted', 'approved'].includes(status) && !['completed', 'paid'].includes(String(job.pipelineStatus || job.status || '').toLowerCase())) throw failure('Approve the estimate before paying');
   const due = customerDepositState(job, undefined, mode);
@@ -724,7 +731,7 @@ async function recordStripeCheckout(env, checkout, { kind, expectedJobId = '', r
     // A tip is refused when a checkout opens, but a tipped checkout opened earlier
     // can still be paid after the job is cancelled, marked a no-show, voided or
     // refunded: that charge is held too, never booked onto the closed job.
-    if (tipCents && tipRefusal(job)) {
+    if ((tipCents || crew && checkout.metadata?.field_pay_mode === 'exact_balance') && tipRefusal(job)) {
       const held = await heldForReview(job, finance, 'payment_tip_refused', text.payment_tip_refused);
       await markLedgerHeld('payment_tip_refused');
       throw held;
@@ -749,7 +756,7 @@ async function recordStripeCheckout(env, checkout, { kind, expectedJobId = '', r
     // since then means this charge needs a manager before it changes the job.
     // Only the service part is checked against the balance; the tip never counts toward it.
     // Unified money that cannot be read is never measured against a guess: a person settles the charge.
-    if (crew && (served.unknown || cents(served.total) <= 0 || serviceCents > cents(served.balance))) throw await heldForReview(job, finance, 'payment_exceeds_balance', text.payment_exceeds_balance, review);
+    if (crew && (served.unknown || cents(served.total) <= 0 || serviceCents > cents(served.balance) || checkout.metadata?.field_pay_mode === 'exact_balance' && serviceCents !== cents(served.balance))) throw await heldForReview(job, finance, 'payment_exceeds_balance', text.payment_exceeds_balance, review);
     // Only the service part is paid toward the job; the tip is kept in payment.tips.
     const paidCents = cents(finance.paid) + serviceCents, appliedCents = served === finance || served.unknown ? paidCents : cents(served.paid) + serviceCents, totalCents = cents(served.total);
     // Preserve every confirmed dollar, including any unexpected excess, for reconciliation.
@@ -758,8 +765,9 @@ async function recordStripeCheckout(env, checkout, { kind, expectedJobId = '', r
     const receiptUrl = RECEIPT_URL.test(charge.receipt_url || '') ? charge.receipt_url : job.payment?.receiptUrl || '';
     const receiptEmail = clean(checkout.customer_details?.email || checkout.customer_email);
     const tipField = tipCents ? { tipCents } : {};
+    const fieldExact = crew && checkout.metadata?.field_pay_mode === 'exact_balance';
     const paymentItem = crew
-      ? { sessionId, paymentIntentId, amount: serviceCents / 100, ...tipField, receiptEmail, createdBy: clean(checkout.metadata?.created_by, 80), recordedBy: clean(recordedBy, 80), verifiedAt: now }
+      ? { sessionId, paymentIntentId, amount: serviceCents / 100, ...tipField, ...(fieldExact ? { fieldExact: true } : {}), receiptEmail, createdBy: clean(checkout.metadata?.created_by, 80), recordedBy: clean(recordedBy, 80), verifiedAt: now }
       : { sessionId, paymentIntentId, amount: serviceCents / 100, ...tipField, purpose: clean(checkout.metadata?.payment_purpose, 20), quoteRevision: clean(checkout.metadata?.quote_revision, 20), quotedTotalCents: Number(checkout.metadata?.quoted_total_cents || 0), verifiedAt: now };
     // FUN-33: a payment without a purpose (every crew link) is classed by the payment kind rule for its funnel
     // event (a tipped charge is always a balance). The session keeps its own purpose (none): the inference is
@@ -779,6 +787,7 @@ async function recordStripeCheckout(env, checkout, { kind, expectedJobId = '', r
       payment,
       deposit: { ...(job.deposit || {}), amount: deposit.required, paidAmount: deposit.paid, status: deposit.due < .01 ? 'paid' : deposit.paid ? 'partial' : 'due', verified: true, updatedAt: now },
       ...(invoice ? { invoice } : {}), paymentSyncStatus: 'pending', paymentSyncPayload,
+      ...(fieldExact ? { fieldPaymentSyncPendingIds: [...new Set([...(Array.isArray(job.fieldPaymentSyncPendingIds) ? job.fieldPaymentSyncPendingIds : []), `card:${sessionId}`])] } : {}),
       ...(appliedCents > totalCents ? { paymentReviewRequired: true } : {}), updatedAt: now,
     };
     const mark = { jobRecordedAt: now, jobRecordedBy: clean(recordedBy, 80) };
@@ -822,6 +831,16 @@ export async function recordCustomerStripePayment(env, checkout, expectedJobId =
 // recorded job copy it shows during closeout.
 export async function recordCrewStripePayment(env, checkout, { expectedJobId = '', recordedBy = '', settleHeld = true, holdOnly = false, now = new Date().toISOString(), fromWebhook = false } = {}) {
   const { result, payment, invoice, paymentSyncPayload } = await recordStripeCheckout(env, checkout, { kind: CHECKOUT_KINDS.crew, expectedJobId, recordedBy, settleHeld, holdOnly, now, fromWebhook });
+  if (result.paid && checkout.metadata?.field_pay_mode === 'exact_balance') {
+    // Either the Stripe webhook or the crew return may settle first. Clearing
+    // the durable field claim is best effort; the verified job payment itself
+    // is already committed and the next exact checkout still checks balance.
+    const store = moneyStorage(env), claim = await store.read(FIELD_CARD_CHECKOUTS, expectedJobId || checkout.metadata.job_id).catch(() => null);
+    if (activeFieldCard(claim) && claim.sessionId === checkout.id) await fieldCardClose(store, claim, 'settled').catch(() => null);
+    // The verified charge and retry marker are already durable. A CRM outage
+    // records an error for manager retry and never changes the money result.
+    await syncFieldPayment(env, store, expectedJobId || checkout.metadata.job_id, 'card', checkout.id).catch(() => null);
+  }
   return { ...result, payment, invoice, paymentSyncPayload };
 }
 
@@ -915,6 +934,11 @@ export async function createCustomerStripeCheckout(env, secret, jobId, origin, {
     // Persist both the key and exact parameters before Stripe. A lost response or
     // another browser can only recover the same session, never create a second.
     if (Date.parse(now) - Date.parse(state.createdAt) > 23 * 3600000) throw failure('An earlier checkout needs confirmation by the team before another payment can be opened.');
+    // A field collection may have claimed this job after the portal first
+    // saved its checkout intent. Re-read before contacting Stripe.
+    const current = await readJob(env, jobId);
+    const due = payable(current, mode);
+    if (cents(due.dueNow) !== state.amountCents) throw failure('The balance changed before the card checkout opened. Refresh before paying.', 409, 'payment_balance_changed');
     checkout = await stripeRequest(secret, 'checkout/sessions', { method: 'POST', headers: { 'Idempotency-Key': state.key }, body: new URLSearchParams(state.params) });
     if (!checkout.id) throw failure('Stripe did not confirm a checkout session', 502);
     ledger = await saveLedger(env, jobId, { ...state, sessionId: checkout.id, status: 'open' }, ledger.version);

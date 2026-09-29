@@ -45,6 +45,24 @@ jobs:
           path: test-results/recordings-webkit/
           if-no-files-found: ignore
           retention-days: 7
+  field-pay-webkit:
+    name: iPhone WebKit field payments and receipt review
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install playwright==1.57.0
+      - run: python -m playwright install --with-deps webkit
+      - name: Exact balance, private receipt, manager review and safe retries
+        env:
+          EGC_TEST_BROWSER: webkit
+        run: python tests/browser/test_field_pay_ui.py
   database-and-platform:
     runs-on: ubuntu-latest
     timeout-minutes: 18
@@ -240,6 +258,8 @@ jobs:
         run: python tests/browser/test_customer_tips_ui.py
       - name: Crew closeout tip picker, held tipped charges and the Hub tip allocation card
         run: python tests/browser/test_crew_tips_ui.py
+      - name: Crew exact-balance card collection and reviewed cash or check receipts
+        run: python tests/browser/test_field_pay_ui.py
       - name: Walkthrough pricing served by role, offline copy and Hub outage messages
         run: python tests/browser/test_gameplan_pricing_ui.py
       - name: Walkthrough recorder consent, offline sync, one tab per walkthrough and phone/iPad layout

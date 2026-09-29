@@ -69,6 +69,41 @@ test('actual Firestore rules isolate canonical operations from crew SDK access',
       };
       for (const [path,value] of Object.entries(entries)) await db.doc(path).set(value);
     });
+    await t.test('field payment evidence and active collection locks cannot be forged or erased through the browser SDK',async()=>{
+      const receiptId='d8c4a101-1718-4a0d-96f7-cc1e410a04be',cardId='de0d026e-5415-4ed0-a7df-f1b5f87d2803';
+      const pointers=['fieldPaymentPendingId','fieldPaymentLastId','fieldPaymentCardRequestId','fieldPaymentSyncPendingIds'];
+      const privateCollections=['fieldPaymentSubmissions','fieldPaymentReceipts','fieldPaymentCardCheckouts','fieldPaymentCardSessions'];
+      await environment.withSecurityRulesDisabled(async context=>{
+        const db=context.firestore();
+        await db.doc('jobs/field-cash-pending').set({id:'field-cash-pending',type:'job',status:'completed',fieldPaymentPendingId:receiptId,fieldPaymentLastId:receiptId,fieldPaymentCardRequestId:null,fieldPaymentSyncPendingIds:[]});
+        await db.doc('jobs/field-card-pending').set({id:'field-card-pending',type:'job',status:'completed',fieldPaymentPendingId:null,fieldPaymentLastId:null,fieldPaymentCardRequestId:cardId});
+        await db.doc('jobs/field-payment-settled').set({id:'field-payment-settled',type:'job',status:'completed',fieldPaymentPendingId:null,fieldPaymentLastId:receiptId,fieldPaymentCardRequestId:null,fieldPaymentSyncPendingIds:[receiptId]});
+        for(const collection of privateCollections)await db.doc(`${collection}/${receiptId}`).set({jobId:'field-cash-pending',status:'pending',base64:'synthetic-private-image'});
+      });
+      for(const db of [publicDb,crew,lead,manager,partner])for(const collection of privateCollections){
+        const record=db.doc(`${collection}/${receiptId}`);
+        await assertFails(record.get());await assertFails(db.collection(collection).get());
+        await assertFails(record.update({status:'accepted'}));await assertFails(record.delete());
+        await assertFails(db.doc(`${collection}/forged`).set({jobId:'assigned',status:'accepted'}));
+      }
+      for(const db of [manager,partner]){
+        await assertSucceeds(db.doc('jobs/field-cash-pending').get());
+        await assertSucceeds(db.doc('jobs/field-cash-pending').update({opsNotes:'Ordinary dispatch note stays editable'}));
+        for(const key of pointers){
+          await assertFails(db.doc('jobs/field-cash-pending').update({[key]:'forged-pointer'}));
+          await assertFails(db.doc('jobs/field-cash-pending').update({[key]:FieldValue.delete()}));
+          await assertFails(db.doc(`jobs/field-forged-${key}`).set({type:'job',[key]:receiptId}));
+        }
+        await assertFails(db.doc('jobs/field-cash-pending').update({fieldPaymentPendingId:null}));
+        await assertFails(db.doc('jobs/field-card-pending').update({fieldPaymentCardRequestId:null}));
+        await assertFails(db.doc('jobs/field-card-pending').update({opsNotes:'SDK changes wait for checkout settlement'}));
+        await assertFails(db.doc('jobs/field-cash-pending').set({type:'job',status:'completed'}));
+        await assertFails(db.doc('jobs/field-cash-pending').delete());
+        await assertFails(db.doc('jobs/field-card-pending').delete());
+      }
+      await assertSucceeds(manager.doc('jobs/field-payment-settled').update({opsNotes:'SDK editing resumes after the card lock is cleared'}));
+      await assertSucceeds(manager.doc('jobs/field-payment-settled').delete());
+    });
     await t.test('unsigned requests cannot read or mutate any operational record',async()=>{
       for(const path of ['jobs/assigned','jobs/open','customers/customer','dispatchResources/truck']){await assertFails(publicDb.doc(path).get());await assertFails(publicDb.doc(path).set({status:'completed'}));}
     });

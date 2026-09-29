@@ -11,19 +11,25 @@
       "order": 1,
       "item": "FIX-HUB-COLLECTED-CREDITS",
       "gate": "review and tests",
-      "candidateCommitSha": "6e62996caa0c87371676201832a8f8e6edacdc12",
+      "candidateCommitSha": "889f30744f0c3cbede5775d0e61c1e038d2107fb",
       "review": "primary and independent review passed; 159 targeted tests",
-      "state": "ready_for_first_queue_pick_pending_exact_head_ci"
+      "state": "picked_first_pending_batch8_exact_head_ci"
     },
     {
       "order": 2,
       "item": "handoff_commit",
-      "gate": "docs/HANDOFF.md and docs/handoff/ reviewed for actual status and missing specs"
+      "gate": "docs/HANDOFF.md and docs/handoff/ reviewed for actual status and missing specs",
+      "state": "picked_second",
+      "candidateCommitSha": "d173e719903a90b5d91ae42d04f7c1d48af2d401"
     },
     {
       "order": 3,
       "item": "FIELD-PAY",
-      "gate": "final fix, review, and green CI"
+      "gate": "final fix, review, and green CI",
+      "state": "picked_third_reviewed_pending_batch8_exact_head_ci",
+      "candidateCommitSha": "d769ac5385ce82c089359e316d120955f258fed6",
+      "activationFlag": "EGC_FIELD_PAY_ENABLED",
+      "activation": "off"
     },
     {
       "order": 4,
@@ -49,14 +55,39 @@
   ],
   "batch8ToMain": {
     "after": "FIELD-PAY included",
-    "requires": "green CI on exact batch head"
+    "requires": "green CI on exact batch head",
+    "candidateHeadSha": "d04baaf8ab036e3b3875c7a2b1e4bb5f59124e70",
+    "merged": false,
+    "applicableWorkflows": [
+      "Root",
+      "Platform",
+      "Firestore",
+      "Business Hub",
+      "Mobile Device E2E",
+      "Lighthouse",
+      "Action Center"
+    ],
+    "ciAtCandidateHead": {
+      "root": "success",
+      "platform": "success",
+      "actionCenter": "in_progress",
+      "operationsIntegration": "path_filtered_not_applicable",
+      "businessHub": "success",
+      "firestore": "success_real_field_payment_subtests_77_total",
+      "mobileDeviceE2E": "success",
+      "lighthouse": "in_progress"
+    }
   },
   "batch9": {
     "scope": "remaining completed units",
-    "requires": "PR and its own green CI"
+    "requires": "all eight workflows green on final PR #87 head and Batch 8 already merged to main",
+    "pr": 87,
+    "priorGreenHeadSha": "bf191d92c9de6ce394b8166d9fd53039d7e25104",
+    "localIntegration": "integrated_candidate_pending_eight_ci_and_batch8_main_gate"
   },
   "activation": {
     "FIX-REFUNDS": "off_at_merge",
-    "GHL-TRACK-2": "off_at_merge"
+    "GHL-TRACK-2": "off_at_merge",
+    "FIELD-PAY": "off_until_rules_and_money_prerequisites_verified"
   }
 }

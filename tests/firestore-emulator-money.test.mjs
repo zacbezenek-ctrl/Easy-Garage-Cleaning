@@ -4,6 +4,95 @@ import { randomUUID } from 'node:crypto';
 
 const enabled = process.env.EGC_FIREBASE_EMULATOR_TEST === '1';
 
+test('FIELD-PAY receipt approval and collection locks are atomic on real Firestore', { skip: !enabled, timeout: 90000 }, async t => {
+  const host = process.env.FIRESTORE_EMULATOR_HOST || '';
+  assert.match(host, /^(?:127\.0\.0\.1|localhost):\d{2,5}$/, 'Only a loopback Firestore emulator is permitted.');
+  const projectId = `demo-egc-field-pay-${randomUUID().slice(0, 8)}`, [hostname] = host.split(':');
+  const { moneyStorage } = await import('../functions/_lib/money-storage.js');
+  const { fieldPaymentHandlers } = await import('../functions/api/field-payments.js');
+  const { getHubUserProfile } = await import('../functions/_lib/hub-session.js');
+  const { fieldCardClaim, fieldPortalGuard } = await import('../functions/_lib/field-payment-card.js');
+  const env = { FIREBASE_API_KEY: 'firebase-test-emulator-only', EGC_FIELD_PAY_ENABLED: 'true', MONEY_API_ENABLED: 'true', MONEY_UNIFIED_TOTALS: 'true', MONEY_INVOICE_STATE_ENABLED: 'true', HUB_AUTH_USERS_JSON: JSON.stringify({
+    ZacB: { role: 'owner', passwordHash: 'synthetic' }, 'Lead.One': { role: 'crew', passwordHash: 'synthetic' },
+  }) };
+  const at = '2026-09-29T18:00:00.000Z', origin = 'https://easygaragecleaning.com';
+  const fetcher = async (_env, url, options = {}) => {
+    const target = new URL(url);
+    assert.equal(target.hostname, 'firestore.googleapis.com');
+    target.protocol = 'http:'; target.host = host; target.pathname = target.pathname.replace('/projects/egcw-1ec83/', `/projects/${projectId}/`); target.searchParams.delete('key');
+    assert.equal(target.hostname, hostname);
+    return fetch(target, { ...options, ...(options.body ? { body: options.body.replaceAll('projects/egcw-1ec83/', `projects/${projectId}/`) } : {}), headers: { ...Object.fromEntries(new Headers(options.headers)), Authorization: 'Bearer owner' } });
+  };
+  const store = moneyStorage(env, fetcher);
+  let loseReply = false, beforeCommit = null;
+  const guarded = { ...store, async commit(writes) {
+    if (beforeCommit) { const callback = beforeCommit; beforeCommit = null; await callback(); }
+    const result = await store.commit(writes);
+    if (loseReply) { loseReply = false; throw Object.assign(new Error('Synthetic lost commit reply'), { code: 'money_outcome_unknown', status: 503 }); }
+    return result;
+  } };
+  const handlers = fieldPaymentHandlers({ session: request => getHubUserProfile(env, request.headers.get('X-Test-User')), storage: () => guarded, hold: async () => false, now: () => new Date(at) });
+  const call = async (user, body) => {
+    const response = await handlers.post({ env, request: new Request(`${origin}/api/field-payments`, { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json', 'X-Test-User': user }, body: JSON.stringify(body) }) });
+    return { status: response.status, ...(await response.json()) };
+  };
+  const photo = `data:image/jpeg;base64,${Buffer.from([255,216,255,224,0,16,74,70,73,70,0,1,255,217]).toString('base64')}`;
+  const seed = async id => store.commit([{ collection: 'jobs', id, patch: { type: 'job', customer: 'Synthetic FIELD-PAY Customer', total: 100, status: 'completed', pipelineStatus: 'completed', assignedCrew: ['lead.one'], crewLead: 'lead.one', payment: { amount: 0, verified: true } } }]);
+  const submission = (jobId, extra = {}) => ({ action: 'submit', jobId, requestId: randomUUID(), expectedBalanceCents: 10000, method: 'check', amountCents: 4000, reference: 'SYNTHETIC-CHECK-1', receiptDataUrl: photo, ...extra });
+  const approval = (jobId, row, extra = {}) => ({ action: 'accept', jobId, submissionId: row.id, requestId: randomUUID(), expectedRevision: row.revision, ...extra });
+
+  await t.test('lost submit and approval replies replay without duplicating receipts or money', async () => {
+    const jobId = 'field-lifecycle'; await seed(jobId);
+    const input = submission(jobId); loseReply = true;
+    const submitted = await call('Lead.One', input);
+    assert.equal(submitted.status, 200, JSON.stringify(submitted)); assert.equal(submitted.alreadyApplied, true);
+    assert.equal((await store.read('jobs', jobId)).payment.amount, 0);
+    assert.equal((await store.read('fieldPaymentReceipts', input.requestId)).bytes, 14);
+    const approve = approval(jobId, submitted.submissions[0]); loseReply = true;
+    const accepted = await call('ZacB', approve);
+    assert.equal(accepted.status, 200, JSON.stringify(accepted)); assert.equal(accepted.alreadyApplied, true);
+    let job = await store.read('jobs', jobId);
+    assert.equal(job.payment.amount, 40); assert.equal(job.fieldPaymentPendingId, null);
+    assert.equal((await store.read('fieldPaymentSubmissions', input.requestId)).status, 'accepted');
+    const receipt = await store.read('moneyOperations', approve.requestId);
+    assert.equal(receipt.action, 'payment.record_offline'); assert.equal((await store.read('hub_audit', receipt.auditId)).action, 'money.payment.record_offline');
+    const next = await call('Lead.One', submission(jobId, { expectedBalanceCents: 6000, amountCents: 2000 }));
+    assert.equal(next.status, 200, JSON.stringify(next));
+    assert.equal((await call('ZacB', approve)).alreadyApplied, true);
+    job = await store.read('jobs', jobId);
+    assert.equal(job.payment.amount, 40); assert.equal(job.paymentLedger.filter(row => row.id === `offline:${approve.requestId}`).length, 1);
+    assert.equal(job.fieldPaymentPendingId, next.submissions[0].id);
+  });
+
+  await t.test('job revision races save neither an orphan photo nor an approval ledger', async () => {
+    const jobId = 'field-race'; await seed(jobId);
+    const touch = async () => { const job = await store.read('jobs', jobId); await store.commit([{ collection: 'jobs', id: jobId, revision: job.revision, patch: { opsNotes: randomUUID() } }]); };
+    const input = submission(jobId); beforeCommit = touch;
+    assert.equal((await call('Lead.One', input)).status, 409);
+    assert.equal(await store.read('fieldPaymentSubmissions', input.requestId), null); assert.equal(await store.read('fieldPaymentReceipts', input.requestId), null);
+    const submitted = await call('Lead.One', input); assert.equal(submitted.status, 200, JSON.stringify(submitted));
+    const approve = approval(jobId, submitted.submissions[0]); beforeCommit = touch;
+    assert.equal((await call('ZacB', approve)).status, 409);
+    assert.equal(await store.read('moneyOperations', approve.requestId), null);
+    assert.equal((await store.read('fieldPaymentSubmissions', input.requestId)).status, 'pending'); assert.equal((await store.read('jobs', jobId)).payment.amount, 0);
+  });
+
+  await t.test('portal and field card claims fence cash with real Firestore preconditions', async () => {
+    const jobId = 'field-card-lock'; await seed(jobId);
+    const job = await store.read('jobs', jobId), guard = await fieldPortalGuard(store, jobId, at);
+    // A portal checkout starts after the guard was read: the entire field claim must fail.
+    await store.commit([{ collection: 'customer_payment_checkouts', id: jobId, patch: { status: 'creating', jobId } }]);
+    await assert.rejects(fieldCardClaim(store, job, { requestId: randomUUID(), amountCents: 10000, tipCents: 0, actorId: 'lead.one', params: new URLSearchParams({ mode: 'payment' }), now: at, guards: [guard] }), error => error.code === 'money_revision_conflict');
+    assert.equal(await store.read('fieldPaymentCardCheckouts', jobId), null); assert.equal((await store.read('jobs', jobId)).fieldPaymentCardRequestId, undefined);
+    const portal = await store.read('customer_payment_checkouts', jobId);
+    await store.commit([{ collection: 'customer_payment_checkouts', id: jobId, revision: portal.revision, patch: { status: 'expired' } }]);
+    const requestId = randomUUID();
+    const claimed = await fieldCardClaim(store, await store.read('jobs', jobId), { requestId, amountCents: 10000, tipCents: 0, actorId: 'lead.one', params: new URLSearchParams({ mode: 'payment' }), now: at, guards: [await fieldPortalGuard(store, jobId, at)] });
+    assert.equal(claimed.status, 'creating'); assert.equal((await store.read('jobs', jobId)).fieldPaymentCardRequestId, requestId);
+    const cash = await call('Lead.One', submission(jobId)); assert.equal(cash.status, 409); assert.equal(cash.code, 'FIELD_PAY_CARD_OPEN');
+  });
+});
+
 test('the money API commit, receipt, audit and ledger contracts hold on real Firestore', { skip: !enabled, timeout: 180000 }, async t => {
   const host = process.env.FIRESTORE_EMULATOR_HOST || '';
   assert.match(host, /^(?:127\.0\.0\.1|localhost):\d{2,5}$/, 'This test may only connect to a loopback Firestore emulator.');

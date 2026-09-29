@@ -5,11 +5,24 @@
   "mainSha": "59d617acda3422de90537b9c87a11f8be34b93f8",
   "batch8": {
     "pr": 86,
-    "state": "open_draft",
-    "headSha": "6cc4cad8aa188778c3737cb97d17cfaabced55b6",
+    "state": "completion_candidate_ci_in_progress",
+    "headSha": "d04baaf8ab036e3b3875c7a2b1e4bb5f59124e70",
     "merged": false,
-    "ci": "failed_action_center_browser",
-    "failingRunId": 36604534261
+    "ci": "five_of_seven_green_two_in_progress",
+    "codeSnapshot": "d04baaf8ab036e3b3875c7a2b1e4bb5f59124e70",
+    "completionBranch": "codex/batch8-release-completion",
+    "historicalFailureRunId": 36604534261,
+    "applicableWorkflowCount": 7,
+    "ciAtHead": {
+      "lighthouse": "in_progress",
+      "platform": "success",
+      "root": "success",
+      "businessHub": "success",
+      "operationsIntegration": "path_filtered_not_applicable",
+      "mobileDeviceE2E": "success",
+      "firestore": "success_real_field_payment_subtests_77_total",
+      "actionCenter": "in_progress"
+    }
   },
   "units": [
     {
@@ -34,19 +47,32 @@
     },
     {
       "id": "FIX-HUB-COLLECTED-CREDITS",
-      "state": "implemented_reviewed_in_pr87_pending_queue_pick",
+      "state": "picked_first_on_batch8_candidate",
       "source": "Bounded completion of the existing queued unit",
       "merged": false,
-      "commitSha": "6e62996caa0c87371676201832a8f8e6edacdc12",
+      "commitSha": "889f30744f0c3cbede5775d0e61c1e038d2107fb",
       "portableMainBasedSha": "f7ecda5cae5ab639e2883b7b7575b6e34bc6fabd",
-      "review": "primary and independent review complete",
+      "review": "primary and independent review complete; 159 targeted tests passed",
       "targetedTests": "159/159 passed"
     },
     {
       "id": "FIELD-PAY",
-      "state": "reported_final_minor_fix_queued",
-      "source": "PR #86 description and owner queue",
-      "merged": false
+      "state": "implemented_reviewed_on_batch8_candidate_pending_ci",
+      "source": "Completion of existing queued unit; original unpublished candidate not recovered",
+      "merged": false,
+      "commitSha": "d769ac5385ce82c089359e316d120955f258fed6",
+      "sourceCommitSha": "2b1c1b8ace9deccd8b827f89a42c76e17d9fa00f",
+      "review": "primary and independent adversarial findings addressed",
+      "targetedTests": "139/139 focused local; 191 combined local; Chromium 15/15; WebKit 15/15",
+      "activation": "off",
+      "flag": "EGC_FIELD_PAY_ENABLED",
+      "prerequisites": [
+        "MONEY_API_ENABLED=true",
+        "MONEY_UNIFIED_TOTALS=true",
+        "published Firestore rules",
+        "verified payment ledger and unified totals rollout",
+        "matching operations API for native HighLevel note outbox"
+      ]
     },
     {
       "id": "FIX-REFUNDS",
@@ -85,7 +111,7 @@
   ],
   "laterAuthorizedHubIntegration": {
     "scope": "iOS Walkthroughs and recording/transcript to office tasks",
-    "state": "published_in_pr87_ui_ci_green_combined_credit_candidate_pending_ci_and_batch8_gate",
+    "state": "integrated_candidate_pending_eight_ci_and_batch8_main_gate",
     "branch": "codex/hub-ios-walkthrough-completion",
     "merged": false,
     "localBrowserResults": {
@@ -94,7 +120,8 @@
       "actionCenter": "32/32 after final visual refinement"
     },
     "recordingBrowserResults": "WebKit 13/13 locally",
-    "localRootSuite": "Windows POSIX/CRLF fixture expectations; Linux CI is merge evidence"
+    "localRootSuite": "Windows POSIX/CRLF fixture expectations; Linux CI is merge evidence",
+    "verifiedHeadSha": "bf191d92c9de6ce394b8166d9fd53039d7e25104"
   },
   "additionalRunningBuilds": {
     "ownerReportedCount": 7,
@@ -106,13 +133,13 @@
     "locatedCount": 0,
     "state": "missing_source"
   },
-  "note": "Reported states are claims from the PR description or owner message, not proof of merged code. Recheck GitHub before updating or merging.",
+  "note": "FIX-REFUNDS, GHL-TRACK-2, seven running builds and 41 specs remain source-unknown; reported states do not prove merged code. Refresh exact heads and CI before any merge.",
   "batch9": {
     "pr": 87,
     "branch": "codex/hub-ios-walkthrough-completion",
     "implementationSha": "a13e01e81552edfabd2dcc61e1479cd3ed0ddb42",
-    "checkedHeadSha": "9e810bd95cf152c016f721acc4efbeccb0da4afd",
-    "state": "draft_combined_credit_candidate_pending_final_ci_and_batch8",
+    "checkedHeadSha": "bf191d92c9de6ce394b8166d9fd53039d7e25104",
+    "state": "draft_integrated_candidate_pending_eight_ci_and_batch8_main_gate",
     "merged": false,
     "ciAtCheckedHead": {
       "root": "success",
@@ -127,22 +154,20 @@
       "actionCenterBrowser": "success",
       "actionCenterWebKit": "success"
     },
-    "followUp": {
-      "state": "included_with_this_handoff_revision_pending_ci",
-      "scope": [
-        "queued collected-credits fix",
-        "asset cache version refresh"
-      ],
-      "creditCommitSha": "6e62996caa0c87371676201832a8f8e6edacdc12",
-      "localResults": {
-        "creditsAndMoneyRegression": "159/159",
-        "officeHandoffBrowser": "7/7",
-        "recordingApi": "15/15",
-        "proxyContact": "14/14",
-        "dispatchRegressions": "43/43",
-        "webkitRecordings": "13/13"
-      },
-      "requires": "complete CI rerun on the final combined PR head; use live PR checks for the current result"
+    "localIntegration": {
+      "state": "integrated_candidate_pending_ci_at_snapshot",
+      "mergeGate": "Batch 8 must first merge to main with seven applicable checks green; combined PR #87 must pass all eight workflows on its final head",
+      "sourceBatch8CandidateSha": "d04baaf8ab036e3b3875c7a2b1e4bb5f59124e70",
+      "assetVersion": "20260929hubready2",
+      "localCombinedTests": "191 passed plus asset-version regression"
+    },
+    "localResults": {
+      "proxyContact": "14/14",
+      "dispatchRegressions": "43/43",
+      "recordingApi": "15/15",
+      "webkitRecordings": "13/13",
+      "creditsAndMoneyRegression": "159/159",
+      "officeHandoffBrowser": "7/7"
     }
   },
   "production": {
@@ -151,5 +176,11 @@
     "requiredVariableNamesPresent": true,
     "secretValuesInspected": false,
     "state": "requires_matching_api_and_hub_release_then_live_acceptance"
+  },
+  "productionDeployment": {
+    "completed": false,
+    "hubStaffSessionVerified": true,
+    "releaseConsoleAuthentication": "requested_pending",
+    "fieldPayEnabledByThisTask": false
   }
 }

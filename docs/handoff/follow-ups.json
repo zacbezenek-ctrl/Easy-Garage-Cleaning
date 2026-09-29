@@ -4,18 +4,18 @@
   "items": [
     {
       "id": "CREDITS-QUEUE",
-      "state": "implemented_reviewed_pending_queue_pick",
+      "state": "picked_first_on_batch8_candidate_pending_exact_head_ci",
       "owner": "build coordinator",
-      "action": "Pick the isolated credits fix first into the existing serial queue, run exact-head checks, then proceed to handoff and FIELD-PAY. Do not merge Batch 8 to main before FIELD-PAY.",
-      "commitSha": "6e62996caa0c87371676201832a8f8e6edacdc12",
+      "action": "Credits, handoff and FIELD-PAY are in the serial Batch 8 candidate. Verify seven applicable workflows on d04baaf before any main merge.",
+      "commitSha": "889f30744f0c3cbede5775d0e61c1e038d2107fb",
       "evidence": "159 targeted money, invoice, privacy and parity tests; primary and independent review passed"
     },
     {
       "id": "CI-01",
-      "state": "open",
+      "state": "five_of_seven_green_two_running_on_d04baaf",
       "owner": "build coordinator",
-      "action": "Fix or verify the Dispatch Find a time browser failure, then obtain green Action Center CI on the exact Batch 8 merge head.",
-      "evidence": "PR #86 run 36604534261, test_dispatch_ui.py:304"
+      "action": "Root, Platform, Firestore, Business Hub and Mobile Device E2E passed on Batch 8 d04baaf. Verify Lighthouse and Action Center on that exact head before main merge. Operations Integration is path-filtered here; all eight workflows must pass on the later combined PR #87 head.",
+      "evidence": "Old PR #86 Find a time failure: run 36604534261; initial 9f61d18 Root expectation and synthetic Firestore fixture failures were corrected in d04baaf. Root, Platform, Firestore, Business Hub and Mobile Device E2E passed there; two other applicable workflows remain pending."
     },
     {
       "id": "HANDOFF-41",
@@ -50,9 +50,9 @@
     },
     {
       "id": "HUB-INTEGRATION",
-      "state": "ui_ci_green_combined_candidate_pending_ci",
+      "state": "integrated_candidate_pending_eight_ci_and_batch8_main_gate",
       "owner": "build coordinator",
-      "action": "All eight workflows passed UI head 9e810bd. Verify all Linux CI workflows again on the final credits-plus-UI PR #87 head, then preserve Batch 8/FIELD-PAY ordering before merge and production smoke checks."
+      "action": "PR #87 bf191d92c9de6ce394b8166d9fd53039d7e25104 passed all eight workflows. Its candidate now incorporates Batch 8 d04baaf with both WebKit suites and shared assets; 191 local combined tests plus the asset regression passed. Publish and verify all eight workflows on the new head. Merge only after Batch 8 is green and in main."
     },
     {
       "id": "OWNER-LIVE",
@@ -65,6 +65,12 @@
       "state": "pending_deployment",
       "owner": "owner",
       "action": "Review evidence for each off-by-default flag before activation; leave refunds and milestone tags off until separately approved."
+    },
+    {
+      "id": "FIELD-PAY-ROLLOUT",
+      "state": "code_reviewed_pending_ci_merge_and_release_access",
+      "owner": "release coordinator and owner",
+      "action": "Publish reviewed Firestore rules/indexes, verify money backfill and unified totals gates, then enable EGC_FIELD_PAY_ENABLED in a new Cloudflare deployment only after preview acceptance. Keep refunds/milestone tags off. No real charge has been made by this task."
     }
   ]
 }

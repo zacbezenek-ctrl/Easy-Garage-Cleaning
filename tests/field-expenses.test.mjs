@@ -541,7 +541,7 @@ test('the job page payload reports whether job costs are on, without any cost da
   const fixture = storage(t); fixture.put('jobs/job-1', baseline());
   for (const [flag, expected] of [[undefined, false], ['false', false], ['1', false], ['true', true]]) {
     const detail = await (await fieldJobs.onRequestGet({ env: { ...env, FIELD_EXPENSES_ENABLED: flag }, request: new Request('https://easygaragecleaning.com/api/field-jobs?jobId=job-1', { headers: { Cookie: cookies.get('Crew.One') } }) })).json();
-    assert.equal(detail.ok, true); assert.deepEqual(detail.features, { jobCosts: expected }, String(flag));
+    assert.equal(detail.ok, true); assert.deepEqual(detail.features, { jobCosts: expected, fieldPay: false }, String(flag));
   }
   assert.equal(fixture.calls.queries.some(query => query.from?.[0]?.collectionId === 'fieldExpenses'), false, 'the flag never reads cost data');
 });

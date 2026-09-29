@@ -8,7 +8,7 @@ export const STAFF_GATED_PATHS = Object.freeze([
   '/copilot', '/copilot.html',
   // Also /crew/gameplan-handoff.js, /crew/job.js|css, any /crew/job-photo-sharing.* file and the job-cost capture tool.
   // PRICE-SCRUB's walkthrough price client is loaded only by the gated game plan.
-  '/crew/gameplan*', '/crew/quote-draft*', '/crew/prejob*', '/crew/postjob*', '/crew/job*', '/crew/field-expenses*', '/crew/walkthrough-pricing.js',
+  '/crew/gameplan*', '/crew/quote-draft*', '/crew/prejob*', '/crew/postjob*', '/crew/job*', '/crew/field-expenses*', '/crew/field-payments*', '/crew/walkthrough-pricing.js',
   // The crew photo page, its script and stylesheet (P4-07).
   '/crew/profile-photo*',
 ]);
