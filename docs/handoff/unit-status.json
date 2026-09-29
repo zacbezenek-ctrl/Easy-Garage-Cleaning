@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "asOf": "2026-09-29",
   "repository": "zacbezenek-ctrl/Easy-Garage-Cleaning",
-  "mainSha": "baf7aa2ca9624438cbc8d1959b0be3caf4108e7f",
+  "mainSha": "bc57eea94ed9da8aa984033027161a4ca829be36",
   "batch8": {
     "pr": 86,
     "state": "merged_to_main_after_seven_green_workflows",
@@ -219,11 +219,13 @@
     }
   },
   "production": {
-    "releaseSha": "baf7aa2ca9624438cbc8d1959b0be3caf4108e7f",
+    "releaseSha": "bc57eea94ed9da8aa984033027161a4ca829be36",
     "cloudflareProductionCheck": "success",
-    "liveHubAssets": "hubready3 recordings operations suite verified",
-    "railwayDeployments": "all_four_success_actual_commit_metadata_baf7aa2",
-    "apiMcpPortalHealth": "ready_release_baf7aa2_database_ready",
+    "liveHubAssets": "hubready4 recording script and empty toast role=status verified",
+    "railwayDeployments": "all_four_success_actual_commit_metadata_bc57eea; API 43c52a86-ab6d-44bd-84dc-e6853a788217; MCP d44a2e6d-cb1f-4c01-a710-d6eae292124e; worker e7fa5b00-ac15-470c-ac00-5921218c5609; portal f6c33402-181b-485b-9020-b36d015de01a",
+    "apiMcpPortalHealth": "ready_release_bc57eea_database_ready",
+    "cloudflareAndPasswordVerifierChecks": "success",
+    "mainPushCi": "three_of_six_success_three_running_no_known_failures",
     "requiredVariableNamesPresent": true,
     "secretValuesInspected": false,
     "syntheticVisit": {
@@ -244,7 +246,8 @@
       "originalRecordDurable": true,
       "officeTaskCreated": false,
       "customerSendOccurred": false,
-      "retryPlan": "restore credits in existing OpenAI account through billing handoff, then retry same saved transcript once; no key rotation or extra retry before restoration"
+      "retryPlan": "restore credits in existing OpenAI account through billing handoff, then retry same saved transcript once; no key rotation or extra retry before restoration",
+      "sameSavedRecordAfterFinalRelease": "failed state reopened; Source transcript expanded; exact 627-byte source readable; ask-operations AI-service message; old generic lastErrorCode retained by design; no attempt 4"
     },
     "jobPhotoStorage": {
       "state": "blocked_live_regular_job",
@@ -269,7 +272,7 @@
       "completedHistoryViewExposed": false,
       "distinctFromAiAcceptance": true
     },
-    "firebaseSdkSignInErrors": "two_transient_recovered_with_one_reload_without_credential_change_cause_unknown",
+    "firebaseSdkSignInErrors": "two_transient_recovered_with_one_reload_without_credential_change_cause_unknown; two post-bc57eea fresh reloads restored owner without sign-in error",
     "state": "matching_revision_deployed_credit_balance_exhausted_and_job_photos_blocked"
   },
   "productionDeployment": {
@@ -309,11 +312,23 @@
   "authSessionDiagnostics": {
     "branch": "codex/hub-session-diagnostics",
     "commitSha": "9e397576b1de2a99d5e7341aa7fba206a09a70e5",
-    "state": "reviewed_twenty_tests_passed_next_pr_ci_pending_not_live",
-    "scope": "surface safe Firebase SDK sign-in diagnostics for transient errors; not a claimed live auth fix"
+    "state": "pr90_seven_ci_green_merged_deployed_two_clean_reloads_no_causal_auth_fix_claim",
+    "pr": 90,
+    "finalHeadSha": "75dcad6991358e5b5bb0e252be6060ada9b710d5",
+    "mergeSha": "bc57eea94ed9da8aa984033027161a4ca829be36",
+    "scope": "surface safe Firebase SDK sign-in diagnostics for transient errors; not a claimed permanent auth fix"
   },
   "recordingCreditMessage": {
-    "state": "bounded_ux_fix_in_progress_not_deployed",
-    "scope": "store exact credit_balance_exhausted category and show staff that saved transcript AI drafting is paused until operations restores API credits; other 429 responses stay generic"
+    "state": "pr90_tested_merged_deployed_future_exact_category_not_live_triggered",
+    "scope": "store exact credit_balance_exhausted category and show staff that saved transcript AI drafting is paused until operations restores API credits; other 429 responses stay generic",
+    "tests": "API typecheck; 20 lifecycle; 15 WebKit passed",
+    "oldRecord": "retains generic lastErrorCode by design; expandable 627-byte Source transcript verified on bc57eea"
+  },
+  "pr90": {
+    "finalHeadSha": "75dcad6991358e5b5bb0e252be6060ada9b710d5",
+    "ci": "seven_of_seven_exact_head_success_both_previews_success",
+    "mergeSha": "bc57eea94ed9da8aa984033027161a4ca829be36",
+    "mergedTreeMatchesTestedHead": true,
+    "deployed": true
   }
 }
