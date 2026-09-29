@@ -33,9 +33,10 @@ test('payroll CSV has one guarded row per employee-week whose pay columns add up
   assert.ok(csv.endsWith('\r\n'));
   assert.equal(payrollCsvFilename(week), 'egc-payroll-2026-09-21-to-2026-09-27.csv');
   assert.deepEqual(rows[0], ['Employee name', 'Employee username', 'Week start', 'Week end', 'Overtime policy', 'Regular hours', 'Overtime hours', 'Double-time hours', 'Paid time off hours', 'Total paid hours',
-    'Regular rate', 'Straight-time pay', 'Overtime premium', 'Paid time off pay', 'Bonus', 'Tips', 'Gross pay', 'Overtime basis', 'Approved timecards', 'Pending timecards included', 'Review flags']);
+    'Regular rate', 'Straight-time pay', 'Overtime premium', 'Paid time off pay', 'Bonus', 'Tips', 'Gross pay', 'Overtime basis', 'Approved timecards', 'Pending timecards included', 'Review flags', 'Job time']);
   const crewRow = rows.find(row => row[1] === 'crew.one'), alexRow = rows.find(row => row[1] === 'crew.two');
-  assert.deepEqual(crewRow, ['Crew One', 'crew.one', '2026-09-21', '2026-09-27', 'colorado', '28.000', '4.000', '0.000', '0.000', '32.000', '20.0000', '640.00', '40.00', '0.00', '0.00', '0.00', '680.00', 'daily', '3', '0', '']);
+  // CREW-TIME added the trailing Job time column; these older shifts have no job segments.
+  assert.deepEqual(crewRow, ['Crew One', 'crew.one', '2026-09-21', '2026-09-27', 'colorado', '28.000', '4.000', '0.000', '0.000', '32.000', '20.0000', '640.00', '40.00', '0.00', '0.00', '0.00', '680.00', 'daily', '3', '0', '', 'No job segments 32.000 h']);
   assert.equal(alexRow[0], `'=HYPERLINK("https://evil.example","Alex")`);
   assert.deepEqual(alexRow.slice(5, 17), ['4.000', '0.000', '0.000', '0.000', '4.000', '30.0000', '120.00', '0.00', '0.00', '0.00', '0.00', '120.00']);
   for (const row of rows.slice(1)) assert.equal(row.slice(11, 16).reduce((total, value) => total + Number(value), 0).toFixed(2), row[16]);

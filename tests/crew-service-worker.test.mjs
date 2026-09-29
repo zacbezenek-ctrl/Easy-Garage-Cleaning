@@ -15,7 +15,7 @@ const basic = response => Object.defineProperty(response, 'type', { value: 'basi
 // Inside a worker, relative request URLs resolve against the worker's origin.
 class WorkerRequest extends Request { constructor(input, init) { super(typeof input === 'string' ? new URL(input, ORIGIN).href : input, init); } }
 const NOW = Date.parse('2026-09-22T15:00:00.000Z');
-const SHELL_CACHE = 'egc-crew-shell-20260929multiday';
+const SHELL_CACHE = 'egc-crew-shell-20260929crewtime2';
 
 function harness({ config = { enabled: true }, indexedDB = fakeIndexedDB(), api = null, network = null } = {}) {
   const listeners = {}, stores = new Map(), fetched = [], messages = [];
@@ -59,7 +59,7 @@ function harness({ config = { enabled: true }, indexedDB = fakeIndexedDB(), api 
     clients: { claim: async () => { state.claimed++; }, matchAll: async () => [{ postMessage: message => messages.push(message) }] },
     skipWaiting: async () => { state.skipped++; },
     addEventListener: (type, listener) => (listeners[type] ||= []).push(listener),
-    importScripts: path => { assert.equal(path, '/crew/field-outbox.js?v=20260929multiday'); vm.runInContext(outboxSource, context); },
+    importScripts: path => { assert.equal(path, '/crew/field-outbox.js?v=20260929crewtime2'); vm.runInContext(outboxSource, context); },
   };
   context.self = context;
   vm.createContext(context);
@@ -91,8 +91,10 @@ test('install caches only the static job shell under a versioned cache and activ
   const shell = (await sw.cached()).filter(([name]) => name === SHELL_CACHE).map(([, path]) => path).sort();
   // FUN-19 bumped the Job costs module (closeout, kinds, payer, shared loads) to ?v=20260928fun19;
   // PHOTO-OUTBOX bumped the outbox, the job page script and its styles to ?v=20260928photoq;
-  // FIELD-MULTIDAY bumped the outbox, the job page, its styles and the Job costs script to ?v=20260929multiday.
-  assert.deepEqual(shell, ['/crew/field-expenses.css?v=20260928fun19', '/crew/field-expenses.js?v=20260929multiday', '/crew/field-outbox.js?v=20260929multiday', '/crew/job-photo-sharing.css?v=20260927photo', '/crew/job-photo-sharing.js?v=20260928photo', '/crew/job.css?v=20260929multiday', '/crew/job.html', '/crew/job.js?v=20260929multiday', '/crew/manifest.webmanifest', '/crew/offline.html']);
+  // FIELD-MULTIDAY bumped the outbox, the job page, its styles and the Job costs script to ?v=20260929multiday; CREW-TIME
+  // bumped the outbox and the job page again (?v=20260929crewtime) for status-moved time and the clock-in-only location, and
+  // once more (?v=20260929crewtime2) for moving only an assigned crew member's own time and dropping a refused status move.
+  assert.deepEqual(shell, ['/crew/field-expenses.css?v=20260928fun19', '/crew/field-expenses.js?v=20260929multiday', '/crew/field-outbox.js?v=20260929crewtime2', '/crew/job-photo-sharing.css?v=20260927photo', '/crew/job-photo-sharing.js?v=20260928photo', '/crew/job.css?v=20260929multiday', '/crew/job.html', '/crew/job.js?v=20260929crewtime2', '/crew/manifest.webmanifest', '/crew/offline.html']);
   await sw.dispatch('activate');
   assert.deepEqual([...sw.stores.keys()].sort(), [SHELL_CACHE, 'unrelated-cache'], 'older shell versions are removed; other caches are left alone');
   assert.equal(sw.state.claimed, 1); assert.equal(sw.state.unregistered, 0);
@@ -116,7 +118,7 @@ test('Today’s work loads network-first and falls back to the cached shell, or 
   sw.state.online = false;
   for (const path of ['/crew/job.html?jobId=job-b', '/crew/job?jobId=job-b']) assert.equal(await (await sw.fetchEvent(path, { mode: 'navigate' })).response.text(), 'network /crew/job.html', `${path} reloads offline from the shell`);
   assert.equal(await (await sw.fetchEvent('/crew/prejob.html?jobId=job-a', { mode: 'navigate' })).response.text(), 'network /crew/offline.html');
-  assert.equal(await (await sw.fetchEvent('/crew/job.js?v=20260929multiday')).response.text(), 'network /crew/job.js');
+  assert.equal(await (await sw.fetchEvent('/crew/job.js?v=20260929crewtime2')).response.text(), 'network /crew/job.js');
   const missing = await sw.fetchEvent('/crew/job.js?v=never-cached');
   assert.equal(missing.response.status, 503);
 });
@@ -205,7 +207,7 @@ test('the precached shell matches the versioned files Today’s work and the off
   assert.match(job, /<link rel="manifest" href="\/crew\/manifest\.webmanifest">/);
   assert.ok(job.indexOf('field-outbox.js') < job.indexOf('/crew/job.js'), 'the outbox loads before the page script');
   assert.match(read('crew/job.js'), /navigator\.serviceWorker\.register\('\/crew\/sw\.js', \{ scope: '\/crew\/' \}\)/);
-  assert.match(worker, /importScripts\('\/crew\/field-outbox\.js\?v=20260929multiday'\)/);
+  assert.match(worker, /importScripts\('\/crew\/field-outbox\.js\?v=20260929crewtime2'\)/);
 });
 
 test('the manifest, headers and config scope the installable app to /crew/', () => {
@@ -247,8 +249,8 @@ function gatedSite({ env = STAFF_ENV, accept = '*/*' } = {}) {
   phone.signIn = async () => { phone.cookie = (await createHubSessionCookie(env, 'synthetic.crew')).split(';')[0]; };
   return phone;
 }
-const PUBLIC_KEYS = ['/crew/field-outbox.js?v=20260929multiday', '/crew/manifest.webmanifest', '/crew/offline.html'];
-const STAFF_KEYS = ['/crew/field-expenses.css?v=20260928fun19', '/crew/field-expenses.js?v=20260929multiday', '/crew/job-photo-sharing.css?v=20260927photo', '/crew/job-photo-sharing.js?v=20260928photo', '/crew/job.css?v=20260929multiday', '/crew/job.html', '/crew/job.js?v=20260929multiday'];
+const PUBLIC_KEYS = ['/crew/field-outbox.js?v=20260929crewtime2', '/crew/manifest.webmanifest', '/crew/offline.html'];
+const STAFF_KEYS = ['/crew/field-expenses.css?v=20260928fun19', '/crew/field-expenses.js?v=20260929multiday', '/crew/job-photo-sharing.css?v=20260927photo', '/crew/job-photo-sharing.js?v=20260928photo', '/crew/job.css?v=20260929multiday', '/crew/job.html', '/crew/job.js?v=20260929crewtime2'];
 const shellKeys = async sw => (await sw.cached()).filter(([name]) => name === SHELL_CACHE).map(([, path]) => path).sort();
 
 test('staff gate on: a signed-out install caches the public shell, refusals are never stored, and signing in fills in the job shell', async t => {
@@ -268,7 +270,7 @@ test('staff gate on: a signed-out install caches the public shell, refusals are 
   const page = await sw.fetchEvent('/crew/job.html?jobId=synthetic-job-1', { mode: 'navigate' });
   assert.equal(page.response.type, 'opaqueredirect', 'the sign-in redirect goes back to the browser untouched');
   assert.deepEqual(phone.edge.at(-1), ['/crew/job.html?jobId=synthetic-job-1', 302, '/crew/?next=%2Fcrew%2Fjob.html%3FjobId%3Dsynthetic-job-1']);
-  const script = await sw.fetchEvent('/crew/job.js?v=20260929multiday');
+  const script = await sw.fetchEvent('/crew/job.js?v=20260929crewtime2');
   assert.equal(script.response.status, 401);
   assert.equal(await script.response.text(), 'Sign in required.\n');
   assert.deepEqual(await shellKeys(sw), PUBLIC_KEYS, 'no redirect or 401 is stored');

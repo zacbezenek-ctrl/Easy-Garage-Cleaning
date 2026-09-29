@@ -12,6 +12,8 @@ import { fieldFunnelType, fieldFunnelWrite } from '../_lib/job-funnel-events.js'
 import { fieldJobTime } from '../_lib/field-execution-time.js';
 import { fieldExpenseCloseoutMissing, fieldExpensesEnabled, requireFieldExpenseCloseout } from '../_lib/field-expenses.js';
 import { fieldCapabilities } from '../_lib/field-permissions.js';
+import { jobStatusMovesTime } from '../_lib/employee-job-time.js';
+import { clockInWithoutFix } from '../_lib/employee-timecards.js';
 import { addDays } from '../_lib/dispatch-time.js';
 
 const reply = (status, body) => Response.json(body, { status, headers: { 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' } });
@@ -81,8 +83,10 @@ async function detail(ctx, env, jobId, cursor = '') {
   const view = await projection(ctx, job, history.events, { ...display(job), capabilities: allowed });
   // With FIELD_EXPENSE_CLOSEOUT_REQUIRED on, an open job lists its missing cost closeout (no amounts).
   if (view.canEdit) view.completionMissing.push(...await fieldExpenseCloseoutMissing(env, job.id, { safe: true }));
-  // features lets the job page skip optional modules (and their API calls) that are switched off.
-  return { job: view, historyCursor: history.cursor, photosAvailable: fieldPhotosConfigured(env), features: { jobCosts: fieldExpensesEnabled(env) }, timezone: 'America/Denver' };
+  // features lets the job page skip optional modules (and their API calls) that are switched off. The CREW-TIME switches
+  // are listed only when on (EGC_JOB_STATUS_MOVES_TIME, EGC_CLOCK_IN_WITHOUT_FIX), so an off page is as before.
+  const features = { jobCosts: fieldExpensesEnabled(env), ...(jobStatusMovesTime(env) ? { statusMovesTime: true } : {}), ...(clockInWithoutFix(env) ? { clockInWithoutFix: true } : {}) };
+  return { job: view, historyCursor: history.cursor, photosAvailable: fieldPhotosConfigured(env), features, timezone: 'America/Denver' };
 }
 
 function errorResponse(error) {

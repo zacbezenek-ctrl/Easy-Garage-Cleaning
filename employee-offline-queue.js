@@ -11,14 +11,13 @@
    account is signed in says so). Until an action is sent, refused, expired or discarded, the Hub shows it over the
    server's copy of its record (records(), also before the switch has answered), a Hub load that overlapped a change to
    the queue reads again (revision()), and settled() tells the Hub what became of an action this page saw leave the queue
-   so it can correct what it shows, and where shift location goes, without waiting for a reload. Switched off after it
-   was on, what a device still has queued is held there, never sent while it is off (hold()), and settled() lists it as
-   held so the Hub can pause shift location for a held clock-out and tell the crew member; once the Hub has told them
-   (supersede()) it is never sent, and what they do instead (resume location, clock out or in again) removes it
-   (release()). A queued clock-in discarded, or refused or expired before any attempt reached the server, takes the
-   clock actions queued after it for the same shift with it, unsent. Every clock-out queued here is also remembered on
-   the device for 12 hours after it leaves the queue (clockOut()), so a Hub tab that never saw it queued still sends no
-   position fix for that shift. */
+   so it can correct what it shows without waiting for a reload. Switched off after it was on, what a device still has
+   queued is held there, never sent while it is off (hold()), and settled() lists it as held so the Hub can say a held
+   clock-out was not sent and tell the crew member; once the Hub has told them (supersede()) it is never sent, and what
+   they do instead (Keep working, clock out or in again) removes it (release()). A queued clock-in discarded, or refused
+   or expired before any attempt reached the server, takes the clock actions queued after it for the same shift with it,
+   unsent. Every clock-out queued here is also remembered on the device for 12 hours after it leaves the queue
+   (clockOut()); the Hub no longer reads it since location is taken once at clock-in (CREW-TIME). */
 (function(root){
 'use strict';
 const DB='egc-hub-offline',STORE='requests',MARKS='clockOuts',VERSION=2,LOCK='egc-hub-offline',PATH='/api/employee-hub',AUTH='/api/hub-auth',TIMEOUT=30000,CHECK_MS=30000,CONFIRM_MS=5000,TZ='America/Denver';
@@ -128,13 +127,14 @@ function memoryStore(){
 }
 
 // The posts this queue may hold: the viewer's own clock in/out and break changes, and crew chat or job-room messages.
-// Location updates, approvals, profile saves and every other Hub request go straight to the network as before.
+// Approvals, profile saves and every other Hub request go straight to the network as before. A clock-in carries its one
+// position, or none when the phone found none and EGC_CLOCK_IN_WITHOUT_FIX lets it start without one.
 function describe(path,body,user){
   if(path!==PATH||!isRecord(body)||typeof body.id!=='string'||!body.id||!isRecord(body.data))return null;
   const data=body.data,keys=Object.keys(data);
   if(body.collection==='teamMessages'||body.collection==='jobMessages')return typeof data.body==='string'&&data.body.trim()?{kind:'message',op:'message',label:body.collection==='jobMessages'?'Job room message':'Crew chat message'}:null;
   if(body.collection!=='timeEntries')return null;
-  if(data.status==='active'&&!data.clockOutAt&&data.locationTracking===true&&typeof data.clockInAt==='string'&&isRecord(data.lastLocation)&&user&&same(data.employee,user))return {kind:'clock',op:'clock_in',label:'Clock in'};
+  if(data.status==='active'&&!data.clockOutAt&&data.locationTracking===true&&typeof data.clockInAt==='string'&&(isRecord(data.lastLocation)||data.locationStatus==='location_unavailable_at_clock_in')&&user&&same(data.employee,user))return {kind:'clock',op:'clock_in',label:'Clock in'};
   if(data.status==='submitted'&&typeof data.clockOutAt==='string'&&data.clockOutAt&&keys.every(key=>CLOCK_OUT_KEYS.includes(key)))return {kind:'clock',op:'clock_out',label:'Clock out'};
   const last=Array.isArray(data.breaks)?data.breaks.at(-1):null;
   if(isRecord(last)&&keys.every(key=>key==='breaks'||key==='updatedAt'))return last.endAt?{kind:'clock',op:'break_end',label:'End break'}:{kind:'clock',op:'break_start',label:'Start break'};
@@ -237,7 +237,7 @@ function create({store=idbStore(),now=()=>new Date(),locks=root.navigator?.locks
     const rows=(await store.marks()).filter(row=>fresh(row)&&same(row.user,user)&&row.id===id);
     return rows.sort((a,b)=>String(b.at).localeCompare(String(a.at)))[0]||null;
   }
-  // Forgets them (the crew member resumed shift location for that shift).
+  // Forgets them (the crew member tapped Keep working for that shift).
   const forget=(user,id)=>serial(async()=>{
     if(typeof store.marks!=='function')return;
     for(const row of await store.marks())if(same(row?.user,user)&&row?.id===id)await store.unmark(row.requestId);
@@ -457,7 +457,7 @@ function controller(deps={}){
   }
 
   // Removes actions that waited too long and lists the viewer's as not saved at once, before any replay sends a thing, so
-  // the Hub never restarts shift location for a clock-out that will never be sent while a pass is still under way.
+  // the Hub says a clock-out that will never be sent was not saved while a pass is still under way.
   async function expireNow(user){
     const old=(await queue().expire()).filter(item=>same(item.user,user));
     if(!old.length)return;
@@ -553,8 +553,8 @@ function controller(deps={}){
   // Switched off (a definite off): the viewer's actions still on this device from an earlier switch-on are held, never
   // sent while the switch is off, and the Hub shows the server's copy. They are found once per signed-in account per page
   // (which also removes every account's expired ones and lists the viewer's as not saved, as a replay would) and listed
-  // by settled() as held, so the Hub pauses shift location for a shift whose clock-out waits here and tells the crew
-  // member to clock out again. A device that never had a queue is not given one.
+  // by settled() as held, so the Hub says a shift's clock-out waiting here was not sent and tells the crew member to
+  // clock out again. A device that never had a queue is not given one.
   function hold(){
     const user=viewer().user;
     if(!state.known||state.enabled)return Promise.resolve([]);
@@ -607,7 +607,7 @@ function controller(deps={}){
     try{return await present()?await queue().supersede(requestId):[];}catch{return [];}
   }
   // What the crew member did instead of a held action, while offline saving is off, removes it from the device so a later
-  // switch-on never sends it: 'resume' (shift location resumed for that shift) its clock-out, which is also forgotten
+  // switch-on never sends it: 'resume' (Keep working on that shift) its clock-out, which is also forgotten
   // (clockOut() stops finding it, switched on or off); 'clock_out' (clocked out of that shift again) every clock action
   // held for that shift; 'clock_in' (clocked in to that new shift) every held clock-in for another shift, with the clock
   // actions queued after it. Returns what was removed; settled() lists each as released.

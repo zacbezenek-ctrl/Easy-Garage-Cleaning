@@ -214,6 +214,9 @@ Tell the team:
 - **Review queues** (owners and managers) list held card charges, Garage Guard member matches and customer messages whose delivery is unknown. The Command Center shows a "Needs your review" alert.
 - **Saving over someone else's change** now says "someone changed this, reload" instead of retrying forever.
 - The Hub page can record walkthrough audio (the microphone is allowed on `/employee`).
+- **Location is taken once, at clock-in** (owner decision, CREW-TIME). The Hub and the crew app read the phone's position only as a shift starts; nothing tracks it during the shift once every open Hub tab has been reloaded after the deploy. The clock card says "Location shared once at clock-in". See [4.9](#49-clock-in-location-once-no-switch).
+- **Time labels are honest.** The Hub clock card, My pay, timesheet rows and the payroll CSV name each job's work and travel; "General company time" means only time on no job. A shift whose job segments need a manager's review (a manager moved its clock-in later than its first segment, say) reads "Job time needs manager review" in the Hub and in the payroll CSV's Job time column; it is not a review flag and changes no hours or pay.
+- **Timesheet files changed (re-map imports before the first payroll).** The Hub's timesheet **Download CSV** column "Customer" is now "Job time". In the **Download for Gusto** (Smart Import) file, Job is now that job-time text (it was the job's label or "General company time") and Memo lists every job on the shift ("EGC Hub jobs a, b"; it was "EGC Hub job a"). The payroll CSV has a new last column, Job time. Every hour and pay column is unchanged. See [4.7](#47-timesheets-and-payroll).
 
 ## Stage 1: Safe security switches
 
@@ -381,6 +384,9 @@ Every website lead already goes to HighLevel. Stage 2 makes that durable (nothin
 | 4.6 | Offline crew app | No switch |
 | 4.7 | Timesheets and payroll | `EGC_OVERTIME_POLICY` unset |
 | 4.8 | Job costing | No switch |
+| 4.9 | Clock-in location once | No switch |
+| 4.10 | `EGC_CLOCK_IN_WITHOUT_FIX=true` (owner decision: on) | Cloudflare, plain |
+| 4.11 | `EGC_JOB_STATUS_MOVES_TIME=true` (optional) | Cloudflare, plain |
 
 ### 4.1 Drive times
 
@@ -448,12 +454,41 @@ Every website lead already goes to HighLevel. Stage 2 makes that durable (nothin
 - **Payroll export:** after the week ends and every timecard is approved, rejected or fixed, open `/api/timesheets?view=week&start=YYYY-MM-DD&format=csv` (the Monday) while signed in. There is no Hub button for it yet.
 - **Check it worked:** open that link for last week. You get a CSV, or a message listing the timecards still to approve.
 - **Paid time off:** only through the raw employee API today; the PTO screen (P1-06) is in the next batch.
+- **Columns changed with CREW-TIME:** the payroll CSV ends with a Job time column (each job's work and travel, general company time, "Job time needs manager review" for a shift whose segments need review, and "No job segments" for older shifts); the Review flags column is as before. The Hub timesheet CSV's "Customer" column is now "Job time", and the Gusto Smart Import file's Job and Memo values changed (Job is the job-time text, Memo lists every job). If a Gusto Smart Import mapping or a spreadsheet reads those columns by name, re-map it before the first payroll after the deploy. Hours and pay are unchanged.
 
 ### 4.8 Job costing (no switch)
 
 - **Where:** `/api/job-costing?start=YYYY-MM-DD&end=YYYY-MM-DD` (end date not included, 92 days at most), owners and managers. No Hub screen yet.
 - **What it shows:** labor per job from the time crews log against each job, at the pay rate saved at clock-in, plus the overtime premium spread across the week's jobs. "Approved" uses approved timecards and is final only when `coverage.complete` is true; "projected" adds pending ones. Walkthrough time is listed separately. Field costs stay on each job's Job costs card. Payroll taxes and burden are not added yet ([D4](#d4-payroll-burden-rate)).
 - **Check it worked:** open it for last week; it lists jobs with labor hours and cost.
+
+### 4.9 Clock-in location once (no switch)
+
+- **Turns on at deploy:** the Hub and `/crew/job.html` read the phone's position once, when the crew member taps Clock in. Nothing in this build reads or sends a position after that, with `HUB_OFFLINE_ENABLED` on or off (a tab still running the old build does until it is reloaded, see After deploy). The server stores that one position, adds no trail, and refuses any later location update to the shift (409 `EMPLOYEE_TIMECARD_LOCATION_CLOCK_IN_ONLY`). Old timecards keep their trails and stay readable.
+- **Weak signal:** the button says "Getting your location…". A timeout or no position is tried once more at lower accuracy, taking a position up to 5 minutes old. A denied location permission is not retried: "Clock-in needs location access."
+- **A clock-out not saved** (offline saving) now shows "Clock-out not saved" with **Keep working** instead of "Resume location".
+- **Needs first:** tell crews the clock-in reads their location once and never during the shift.
+- **After deploy (required):** reload every open Hub tab on every phone (or sign out and in). A tab opened before the deploy runs the old build: it ignores the server's refusal and keeps reading the phone's location for the rest of the shift (for a shift clocked in before the deploy, or one it clocks in itself). The server stores none of it, but the phone keeps reading location until that tab is reloaded or the shift is clocked out, so "nothing tracks you during the shift" holds only after the reload. Shifts left open across the deploy show "last tracked location" instead of "shared once at clock-in" until they are clocked out.
+- **Check it worked (phone):** clock in from My day. The card says "Location shared once at clock-in". Leave the Hub open for a few minutes: the phone's location indicator does not come back.
+- **Roll back:** a code rollback only. The earlier build tracked location during the shift.
+
+### 4.10 Clock in with no GPS position (owner decision: on)
+
+- **Set:** `EGC_CLOCK_IN_WITHOUT_FIX=true`
+- **Where:** Cloudflare Pages, plain.
+- **Turns on:** when the phone finds no position after the retry (indoors, weak GPS), the shift starts anyway without one. The Hub card and the crew job page say "No location at clock-in", the manager's team board shows it, and the week's timesheet row carries the `no_clock_in_location` flag (also in the payroll CSV's Review flags). A denied location permission still blocks clock-in.
+- **Unset:** the crew member is told to move near a window or outside and try again; no shift starts.
+- **Check it worked (phone):** allow location for the site, turn off Wi-Fi and go somewhere with no GPS (or use a phone with location services off but the site allowed), then clock in: "Clocked in without a location · a manager will review it".
+- **Roll back:** delete the variable. Shifts already flagged stay flagged.
+
+### 4.11 Job status moves crew time (optional)
+
+- **Set:** `EGC_JOB_STATUS_MOVES_TIME=true`
+- **Where:** Cloudflare Pages, plain.
+- **Turns on:** on `/crew/job.html` the job status moves the crew member's own time: **Mark en route** starts travel on the job, **Mark arrived** and **Start work** start work on it, pause, waiting and delay keep it, and **Complete** asks "End my job time?" (OK moves to general shift time). A line under the status buttons says "Your time: working on <job>". Only someone on the job's crew has their own time moved by its status; a manager who sets the status of a job they are not on keeps their own time (and a move the server refuses as not theirs is dropped with a notice, never left blocking their clock). When the job's crew lead marks arrived or starts work, they are asked once "Move my crew-mates to work too?"; the server moves only crew assigned to that job who clocked in today, are not on approved time off today, not on break, and are on general time or travelling there (with `FIELD_MULTIDAY_VISITS`, only those on today's crew), and tells the lead who was not moved and why (a shift still open from an earlier day is "still clocked in from an earlier day"). Online, the page reads the crew member's shift before a status moves their time, so a lead's move is never undone; a move that is already where the shift is changes nothing. Offline, the status and its time move sync in order. A crew move retried after a lost reply is answered as it stands, naming who it already moved; a partly applied one finishes the rest when retried within 2 minutes. A crew move the server refuses (saved offline for more than 2 minutes with crew-mates still to move, or the job closed) names who was already moved, waits at the top of the job for Retry or Discard, and never holds the lead's own clock buttons.
+- **Needs first:** every job has the right crew and lead. Tell crews that status taps now move their time.
+- **Check it worked (phone):** clock in, open a test job, tap Mark en route: the line says "Your time: travelling to …". Tap Mark arrived: "working on …". The Hub clock card shows the job's work.
+- **Roll back:** delete the variable. Statuses stop moving time; crews use "Start my work time here" as before.
 
 ### Keep off for now
 

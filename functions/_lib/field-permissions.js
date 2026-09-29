@@ -24,7 +24,9 @@ export async function fieldJobLead({ session, job, access }) {
 }
 
 /**
- * What the field UI may offer this viewer on this job. The server enforces each one: `complete` in fieldCommand,
+ * What the field UI may offer this viewer on this job. `assigned` says the viewer is on the job's crew (the check
+ * /api/employee-hub makes before new job time starts on it), so crew/job.js moves only a crew member's own time with the
+ * status they set, never a manager's who is not on the crew. The server enforces each one: `complete` in fieldCommand,
  * `sendOnMyWay` in approved-send's on_my_way policy (an owner/manager, or assigned crew, narrowed to the lead
  * by FIELD_LEAD_ONLY_COMPLETE), `sharePhotos` in /api/field-photo-sharing (owner/manager, customer photos on)
  * and `configureChecklist` in the manager-only checklist editor. With the flag off every assigned member (and
@@ -34,5 +36,5 @@ export async function fieldCapabilities({ session, manager = false, job, env = {
   const lead = await fieldJobLead({ session, job, access }), assigned = await access.assigned(job);
   const leader = manager === true || lead, dispatcher = hasBusinessAccess(session) && ['owner', 'manager'].includes(session?.role);
   const allowed = fieldLeadOnlyComplete(env) ? leader : leader || assigned;
-  return { lead, complete: allowed, sendOnMyWay: dispatcher || assigned && (lead || !fieldLeadOnlyComplete(env)), sharePhotos: dispatcher && customerPhotosEnabled(env), configureChecklist: manager === true };
+  return { lead, assigned, complete: allowed, sendOnMyWay: dispatcher || assigned && (lead || !fieldLeadOnlyComplete(env)), sharePhotos: dispatcher && customerPhotosEnabled(env), configureChecklist: manager === true };
 }

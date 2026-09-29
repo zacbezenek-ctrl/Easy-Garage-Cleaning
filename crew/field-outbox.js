@@ -9,7 +9,10 @@
   const PHOTO_DRAFTS = 'egc-field-photo-drafts', PHOTO_TIMEOUT = 120000, PHOTO_MAX = 8 * 1024 * 1024;
   const PHOTO_DATA = /^data:image\/(?:jpeg|png|webp);base64,[A-Za-z0-9+/]+={0,2}$/;
   const QUEUEABLE = ['checklist', 'material', 'note', 'status', 'photo', 'end_day'];
-  const CLOCK_OPS = ['clock_in', 'break_start', 'break_end', 'clock_out', 'job_time'];
+  const CLOCK_OPS = ['clock_in', 'break_start', 'break_end', 'clock_out', 'job_time', 'crew_time'];
+  // EGC_JOB_STATUS_MOVES_TIME: the time a job status moves the crew member's own shift to. Paused, waiting and delayed keep
+  // it where it is; completing moves it back to general shift time (crew/job.js asks first).
+  const STATUS_TIME = { dispatched: 'travel', arrived: 'work', in_progress: 'work' };
   // A first attempt the crew member is watching is dropped (and shown) when the
   // server definitively refuses it, exactly like the former single retry card.
   const DIRECT_DISCARD_CODES = ['FIELD_START_INCOMPLETE', 'FIELD_COMPLETION_INCOMPLETE', 'FIELD_STATUS_CONFLICT', 'FIELD_JOB_CLOSED', 'FIELD_ISSUE_CHANGED', 'FIELD_COMPLETION_NOT_FINAL_DAY', 'FIELD_VISIT_ENDED', 'FIELD_VISIT_NOT_STARTED', 'FIELD_VISIT_LIMIT'];
@@ -18,7 +21,8 @@
   const same = (left, right) => String(left || '').trim().toLowerCase() === String(right || '').trim().toLowerCase();
   const copy = value => JSON.parse(JSON.stringify(value));
   const failure = (message, status = 0, code = '') => Object.assign(new Error(message), { status, code });
-  const lane = item => `${String(item.user).trim().toLowerCase()}|${item.kind === 'clock' ? 'clock' : `job:${item.jobId}`}`;
+  // A lead's crew-mate move has its own lane, so one the server refuses never holds the lead's own clock actions.
+  const lane = item => `${String(item.user).trim().toLowerCase()}|${item.kind === 'clock' ? item.payload?.op === 'crew_time' ? 'crew' : 'clock' : `job:${item.jobId}`}`;
   const isPhoto = item => item?.kind === 'field' && item.payload?.action === 'photo';
   const unavailable = () => failure('This phone could not keep the action on the device. Keep this page open until it is saved.', 0, 'OUTBOX_UNAVAILABLE');
   // A full device is reported as such; it is not a reason to stop using IndexedDB.
@@ -102,7 +106,7 @@
     if (!input || !uuid(input.requestId) || typeof input.user !== 'string' || !input.user.trim() || !['field', 'clock'].includes(input.kind) || !payload || typeof payload !== 'object' || Array.isArray(payload)) throw failure('This action could not be queued. Refresh and try again.', 0, 'OUTBOX_INVALID');
     if (input.kind === 'field' && (payload.requestId !== input.requestId || typeof payload.action !== 'string' || !input.jobId || payload.jobId !== input.jobId || !same(payload.expectedUser, input.user))) throw failure('This job action could not be queued. Refresh and try again.', 0, 'OUTBOX_INVALID');
     if (input.kind === 'field' && payload.action === 'photo' && (typeof payload.category !== 'string' || !payload.category || typeof payload.caption !== 'string' || typeof payload.dataUrl !== 'string' || payload.dataUrl.length > PHOTO_MAX || !PHOTO_DATA.test(payload.dataUrl))) throw failure('This photo could not be kept on this phone. Take or choose it again.', 0, 'OUTBOX_INVALID');
-    if (input.kind === 'clock' && (!CLOCK_OPS.includes(payload.op) || typeof payload.entryId !== 'string' || !payload.entryId || payload.op === 'job_time' && payload.jobAction?.requestId !== input.requestId)) throw failure('This time action could not be queued. Refresh and try again.', 0, 'OUTBOX_INVALID');
+    if (input.kind === 'clock' && (!CLOCK_OPS.includes(payload.op) || typeof payload.entryId !== 'string' || !payload.entryId && payload.op !== 'crew_time' || ['job_time', 'crew_time'].includes(payload.op) && payload.jobAction?.requestId !== input.requestId)) throw failure('This time action could not be queued. Refresh and try again.', 0, 'OUTBOX_INVALID');
     return { requestId: input.requestId, kind: input.kind, user: input.user, jobId: String(input.jobId || ''), queuedAt: input.queuedAt || now().toISOString(), seq: 0, attempts: Math.max(0, Number(input.attempts) || 0), serverFailures: 0, state: 'queued', error: null, payload: copy(payload) };
   }
 
@@ -116,6 +120,10 @@
 
   // A refused photo is never dropped on its own: it waits, with its thumbnail, for Retry or Discard.
   const discardOnDirect = (item, error) => !isPhoto(item) && ([400, 403, 404, 415].includes(error.status) || item.kind === 'field' && DIRECT_DISCARD_CODES.includes(error.code));
+  // A job-time move a status tap queued behind its status (crew/job.js, EGC_JOB_STATUS_MOVES_TIME) that the server refuses
+  // as not allowed (403: this job is not one of the crew member's assigned jobs) is dropped and reported, never left in
+  // the crew member's clock lane where it would hold their own clock and job-time actions until they found it.
+  const dropOnRefusal = (item, error) => item.kind === 'clock' && item.payload?.op === 'job_time' && item.payload.source === 'status' && Number(error?.status) === 403;
   const detail = error => ({ message: String(error?.message || 'This action was not confirmed.').slice(0, 1000), code: String(error?.code || '').slice(0, 80), status: Number(error?.status) || 0, missing: Array.isArray(error?.missing) ? error.missing.map(item => String(item).slice(0, 500)).slice(0, 40) : [] });
 
   async function sendClock(item, transport) {
@@ -125,10 +133,13 @@
       // A clock-in creates a card for whoever is signed in, so it is re-checked here.
       const session = await transport.session();
       if (!same(session?.user, item.user)) throw failure('Your signed-in account changed. Sign in as the employee who recorded this time.', 401, 'FIELD_ACCOUNT_CHANGED');
-      // Today's work records one location; the Employee Hub resumes sharing it when opened.
-      return save({ locationTracking: true, lastLocation: item.payload.lastLocation, locationStatus: 'unavailable', ...device });
+      // Clock-in only: the one position taken as the shift starts (job_page_single_fix), or none when the phone found none
+      // and EGC_CLOCK_IN_WITHOUT_FIX lets it clock in anyway, flagged for a manager.
+      return save({ locationTracking: true, ...(item.payload.lastLocation ? { lastLocation: item.payload.lastLocation, locationStatus: 'job_page_single_fix' } : { locationStatus: 'location_unavailable_at_clock_in' }), ...device });
     }
     if (op === 'job_time') return save({ jobAction: { requestId: item.payload.jobAction.requestId, expectedSegmentId: item.payload.jobAction.expectedSegmentId, jobId: item.payload.jobAction.jobId, kind: item.payload.jobAction.kind, ...device } });
+    // The lead's "move my crew-mates to work": the server finds the job's clocked-in crew-mates and moves each once.
+    if (op === 'crew_time') return transport.employee({ collection: 'timeEntries', id: item.payload.jobAction.jobId, expectedUser: item.user, data: { crewJobAction: { requestId: item.payload.jobAction.requestId, jobId: item.payload.jobAction.jobId, kind: 'work', ...device } } });
     const own = await transport.shift(), entry = own?.entry || null;
     if (!same(own?.user, item.user)) throw failure('Your signed-in account changed. Sign in as the employee who recorded this time.', 401, 'FIELD_ACCOUNT_CHANGED');
     // Break end and clock-out are already satisfied when the shift is closed.
@@ -177,7 +188,7 @@
     const remove = requestId => serial(() => store.remove(requestId));
 
     async function replay({ user, transport, direct = '', retry = [], onStart, onApplied }) {
-      const result = { applied: [], stopped: null, remaining: 0 }, blocked = new Set(), retrying = new Set(retry);
+      const result = { applied: [], dropped: [], stopped: null, remaining: 0 }, blocked = new Set(), retrying = new Set(retry);
       for (let guard = 0; guard < 1000; guard++) {
         let item = null;
         for (const row of await items(user)) {
@@ -210,6 +221,7 @@
             if (moved) continue;
             result.stopped = { item, error, reason: kind }; break;
           }
+          if (kind === 'rejected' && dropOnRefusal(item, error)) { await remove(item.requestId); result.dropped.push({ item, error: detail(error) }); continue; }
           if (isDirect && discardOnDirect(item, error)) { await remove(item.requestId); result.stopped = { item, error, reason: 'rejected', discarded: true }; break; }
           const refused = exhausted ? { ...detail(error), message: `The server could not confirm this after ${serverFailures} tries. ${detail(error).message}`.slice(0, 1000) } : detail(error);
           // Nothing is left to review when it was discarded or deleted at sign-out meanwhile.
@@ -228,7 +240,7 @@
     // Flushes are serialized on this page and, through Web Locks, with the
     // service worker's Background Sync so two replays never overlap.
     function flush(options = {}) {
-      if (!options.user || !options.transport) return Promise.resolve({ applied: [], stopped: null, remaining: 0 });
+      if (!options.user || !options.transport) return Promise.resolve({ applied: [], dropped: [], stopped: null, remaining: 0 });
       const next = running.then(() => exclusive(async () => { replaying = true; try { return await replay(options); } finally { replaying = false; inflight = ''; } }));
       running = next.catch(() => {});
       return next;
@@ -337,11 +349,11 @@
 
   function projectShift(entry, items = []) {
     let view = entry ? { ...entry, queued: [] } : null;
-    for (const item of items.filter(row => row.kind === 'clock' && row.state !== 'error')) {
+    for (const item of items.filter(row => row.kind === 'clock' && row.state !== 'error' && row.payload.op !== 'crew_time')) {
       const { op, entryId, deviceCapturedAt: at, jobAction } = item.payload;
       if (op === 'clock_in' && (!view || view.id !== entryId)) {
         if (view) continue;
-        view = { id: entryId, clockInAt: at, onBreak: false, breaks: [], currentSegmentId: `clock-in:${entryId}`, current: { id: `clock-in:${entryId}`, kind: 'general', jobId: '', jobLabel: '', startedAt: at }, summary: { recorded: true, partialHistory: false, needsReview: false, jobs: [] }, queued: [] };
+        view = { id: entryId, clockInAt: at, onBreak: false, breaks: [], clockInLocation: item.payload.lastLocation ? 'shared' : 'missing', currentSegmentId: `clock-in:${entryId}`, current: { id: `clock-in:${entryId}`, kind: 'general', jobId: '', jobLabel: '', startedAt: at }, summary: { recorded: true, partialHistory: false, needsReview: false, jobs: [] }, queued: [] };
       }
       if (!view || view.id !== entryId) continue;
       if (op === 'clock_out') { view = null; continue; }
@@ -351,6 +363,16 @@
       view.queued = [...view.queued, item];
     }
     return view;
+  }
+
+  // The time a job action moves the crew member's shift to (EGC_JOB_STATUS_MOVES_TIME), or null when it stays: no open
+  // shift, segments that need review, or already there. Completing ends only time on this job.
+  function statusTime(input, shift, jobId) {
+    const kind = input?.action === 'status' ? STATUS_TIME[input.status] : input?.action === 'complete' ? 'general' : '';
+    if (!kind || !shift || shift.summary?.needsReview) return null;
+    const current = shift.current;
+    if (kind === 'general' ? !current || current.kind === 'general' || current.jobId !== jobId : current?.kind === kind && current.jobId === jobId) return null;
+    return { kind, jobId: kind === 'general' ? '' : jobId, expectedSegmentId: shift.currentSegmentId || '' };
   }
 
   function httpTransport(fetchImpl = root.fetch && root.fetch.bind(root), { timeout = 30000, photoTimeout = PHOTO_TIMEOUT } = {}) {
@@ -381,9 +403,9 @@
   async function replaySignedIn(outbox, transport) {
     let session;
     try { session = await transport.session(); }
-    catch (error) { return { applied: [], remaining: 0, stopped: { error, reason: classify(error) } }; }
+    catch (error) { return { applied: [], dropped: [], remaining: 0, stopped: { error, reason: classify(error) } }; }
     return outbox.flush({ user: session.user, transport });
   }
 
-  root.EGCFieldOutbox = { create, deviceStore, memoryStore, idbStore, httpTransport, projectJob, projectShift, replaySignedIn, classify, isPhoto, QUEUEABLE, CLOCK_OPS, SYNC_TAG: LOCK, PHOTO_DRAFTS };
+  root.EGCFieldOutbox = { create, deviceStore, memoryStore, idbStore, httpTransport, projectJob, projectShift, statusTime, replaySignedIn, classify, isPhoto, QUEUEABLE, CLOCK_OPS, SYNC_TAG: LOCK, PHOTO_DRAFTS };
 })(typeof self !== 'undefined' ? self : globalThis);

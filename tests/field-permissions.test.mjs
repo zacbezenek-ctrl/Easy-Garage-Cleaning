@@ -31,11 +31,11 @@ test('with FIELD_LEAD_ONLY_COMPLETE off every assigned member keeps today’s co
   const env = unitEnv({ FIELD_CUSTOMER_PHOTOS_ENABLED: 'true' });
   assert.equal(fieldLeadOnlyComplete(env), false);
   for (const flag of ['', 'false', 'TRUE', '1']) assert.equal(fieldLeadOnlyComplete({ FIELD_LEAD_ONLY_COMPLETE: flag }), false, flag);
-  assert.deepEqual(await capabilities(env, 'Lead.One', job()), { lead: true, complete: true, sendOnMyWay: true, sharePhotos: false, configureChecklist: false });
-  assert.deepEqual(await capabilities(env, 'Crew.Two', job()), { lead: false, complete: true, sendOnMyWay: true, sharePhotos: false, configureChecklist: false });
-  assert.deepEqual(await capabilities(env, 'ZacB', job()), { lead: false, complete: true, sendOnMyWay: true, sharePhotos: true, configureChecklist: true });
+  assert.deepEqual(await capabilities(env, 'Lead.One', job()), { lead: true, assigned: true, complete: true, sendOnMyWay: true, sharePhotos: false, configureChecklist: false });
+  assert.deepEqual(await capabilities(env, 'Crew.Two', job()), { lead: false, assigned: true, complete: true, sendOnMyWay: true, sharePhotos: false, configureChecklist: false });
+  assert.deepEqual(await capabilities(env, 'ZacB', job()), { lead: false, assigned: false, complete: true, sendOnMyWay: true, sharePhotos: true, configureChecklist: true });
   assert.equal((await capabilities(unitEnv(), 'ZacB', job())).sharePhotos, false, 'photo sharing follows FIELD_CUSTOMER_PHOTOS_ENABLED like /api/field-photo-sharing');
-  assert.deepEqual(await capabilities(env, 'Role.Lead', job()), { lead: false, complete: false, sendOnMyWay: false, sharePhotos: false, configureChecklist: false }, 'someone not on the job gets nothing');
+  assert.deepEqual(await capabilities(env, 'Role.Lead', job()), { lead: false, assigned: false, complete: false, sendOnMyWay: false, sharePhotos: false, configureChecklist: false }, 'someone not on the job gets nothing');
 });
 
 test('with the flag on only the named crew lead (exact username) or a manager may complete', async () => {
@@ -141,7 +141,7 @@ test('over HTTP with the flag on a crew member gets 403 FIELD_LEAD_REQUIRED, the
   const store = storage(t), env = httpEnv('true'); store.put('jobs/job-1', readyJob());
   const detail = await http(env, 'Crew.Two', null, '?jobId=job-1');
   assert.equal(detail.status, 200);
-  assert.deepEqual(detail.body.job.capabilities, { lead: false, complete: false, sendOnMyWay: false, sharePhotos: false, configureChecklist: false });
+  assert.deepEqual(detail.body.job.capabilities, { lead: false, assigned: true, complete: false, sendOnMyWay: false, sharePhotos: false, configureChecklist: false });
   const list = await http(env, 'Lead.One', null, '?date=2026-09-22');
   assert.deepEqual(list.body.jobs.map(row => row.capabilities.complete), [true]);
   const requestId = crypto.randomUUID(), before = store.revision('job-1');

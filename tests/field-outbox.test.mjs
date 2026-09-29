@@ -81,7 +81,7 @@ test('another account’s queued actions are never replayed, shown or removed', 
   assert.equal(result.remaining, 0);
   assert.deepEqual(plain((await box.items('crew.two')).map(item => item.requestId)), []);
   assert.equal((await box.items('Crew.One')).length, 2, 'the other account’s actions stay on the device untouched');
-  assert.deepEqual(await box.flush({ user: '', transport: wire }).then(plain), { applied: [], stopped: null, remaining: 0 });
+  assert.deepEqual(await box.flush({ user: '', transport: wire }).then(plain), { applied: [], dropped: [], stopped: null, remaining: 0 });
 });
 
 for (const [label, error, reason] of [
@@ -200,7 +200,8 @@ test('time-clock replays keep request IDs, send device capture times and build b
   const result = await box.flush({ user: 'Crew.One', transport: wire });
   assert.equal(result.applied.length, 5);
   const [inBody, workBody, startBody, endBody, outBody] = wire.sent('employee');
-  assert.deepEqual(inBody, { collection: 'timeEntries', id: 'time-crew.one-1', data: { locationTracking: true, lastLocation: { lat: 40.58, lng: -105.08, accuracy: 5 }, locationStatus: 'unavailable', deviceCapturedAt: '2026-09-22T14:30:00.000Z' } }, 'Today’s work does not keep sharing location, so it does not claim to');
+  // CREW-TIME (CD-04): the one clock-in position is labelled a single fix, not 'unavailable' (which read as a failed watch).
+  assert.deepEqual(inBody, { collection: 'timeEntries', id: 'time-crew.one-1', data: { locationTracking: true, lastLocation: { lat: 40.58, lng: -105.08, accuracy: 5 }, locationStatus: 'job_page_single_fix', deviceCapturedAt: '2026-09-22T14:30:00.000Z' } }, 'the job page shares its location once, at clock-in');
   assert.deepEqual(workBody.data, { jobAction: { requestId: work.requestId, expectedSegmentId: 'clock-in:time-crew.one-1', jobId: 'job-a', kind: 'work', deviceCapturedAt: '2026-09-22T14:30:00.000Z' } });
   assert.deepEqual(startBody.data.breaks, [{ startAt: '2026-09-22T14:00:00.000Z', endAt: '2026-09-22T14:05:00.000Z' }, { startAt: '2026-09-22T14:40:00.000Z', endAt: '', requestId: breakStart.requestId }], 'stored breaks are extended exactly as saved, with the action’s request ID');
   assert.deepEqual(endBody.data.breaks.at(-1), { startAt: '2026-09-22T14:40:00.000Z', endAt: '2026-09-22T14:50:00.000Z', requestId: breakEnd.requestId });

@@ -76,10 +76,13 @@ test('a queued break keeps its request ID, so a replay after the break changed e
   assert.deepEqual(update(started, { breaks: [{ startAt: 'phone', endAt: '', requestId: 'not-a-uuid' }] }, at(40), {}).breaks, [{ startAt: at(40), endAt: '' }], 'only a valid request ID is kept');
 });
 
-test('a clock-in from a page that does not keep sharing location records it as unavailable', () => {
-  assert.equal(clockIn({ locationStatus: 'unavailable' }, {}).locationStatus, 'unavailable');
-  assert.equal(clockIn({}, {}).locationStatus, 'tracking');
-  assert.equal(clockIn({ locationStatus: 'stopped' }, {}).locationStatus, 'tracking');
+// CREW-TIME (CD-04): the crew app's one clock-in position was stored as 'unavailable', so the Hub warned "Location stopped
+// unexpectedly". Every clock-in now records one position and says where it came from; nothing tracks after it.
+test('a clock-in records its one position as a single fix from the crew app or the Hub, never as tracking or unavailable', () => {
+  for (const [status, expected] of [['job_page_single_fix', 'job_page_single_fix'], ['unavailable', 'job_page_single_fix'], ['hub_single_fix', 'hub_single_fix'], [undefined, 'hub_single_fix'], ['tracking', 'hub_single_fix'], ['stopped', 'hub_single_fix']]) {
+    const entry = clockIn(status === undefined ? {} : { locationStatus: status }, {});
+    assert.deepEqual([entry.locationStatus, entry.locationTracking, entry.locationTrail, entry.lastLocation], [expected, false, undefined, { ...point, capturedAt: NOW }], String(status));
+  }
 });
 
 test('an accepted offline clock-in keeps the phone time, stays open for the shift, and is flagged for manager review', () => {

@@ -8,7 +8,19 @@ export const csvCell = value => {
 export const csvRows = rows => rows.map(row => row.map(csvCell).join(',')).join('\r\n') + '\r\n';
 
 const PAYROLL_HEADER = ['Employee name', 'Employee username', 'Week start', 'Week end', 'Overtime policy', 'Regular hours', 'Overtime hours', 'Double-time hours', 'Paid time off hours', 'Total paid hours',
-  'Regular rate', 'Straight-time pay', 'Overtime premium', 'Paid time off pay', 'Bonus', 'Tips', 'Gross pay', 'Overtime basis', 'Approved timecards', 'Pending timecards included', 'Review flags'];
+  'Regular rate', 'Straight-time pay', 'Overtime premium', 'Paid time off pay', 'Bonus', 'Tips', 'Gross pay', 'Overtime basis', 'Approved timecards', 'Pending timecards included', 'Review flags', 'Job time'];
+
+/** The week's worked time by job, from the crew's job segments: work and travel per job, then general company time,
+ * shifts whose segments need a manager's review (the Hub's wording) and time with no job segments. It explains the
+ * hours; pay is still the hour columns above. */
+export function jobTimeText(time) {
+  const fixed = value => `${Number(value || 0).toFixed(3)} h`, parts = [];
+  for (const job of time?.jobs || []) parts.push(`${job.jobLabel || `Job ${job.jobId}`}: work ${fixed(job.workHours)}${job.travelHours ? `, travel ${fixed(job.travelHours)}` : ''}`);
+  if (time?.generalHours) parts.push(`General company time ${fixed(time.generalHours)}`);
+  if (time?.reviewHours) parts.push(`Job time needs manager review ${fixed(time.reviewHours)}`);
+  if (time?.untrackedHours) parts.push(`No job segments ${fixed(time.untrackedHours)}`);
+  return parts.join('; ');
+}
 
 export const payrollCsvFilename = week => `egc-payroll-${week.weekStart}-to-${week.weekEnd}.csv`;
 
@@ -19,7 +31,7 @@ export function payrollCsv(week) {
   return csvRows([PAYROLL_HEADER, ...week.employees.map(row => [row.name, row.employee, week.weekStart, week.weekEnd, week.policy.name,
     fixed(row.regularHours, 3), fixed(row.overtimeHours, 3), fixed(row.doubleTimeHours, 3), fixed(row.ptoHours, 3), fixed(row.totalPaidHours, 3),
     fixed(row.regularRate, 4), fixed(row.straightPay, 2), fixed(row.overtimePremium, 2), fixed(row.ptoPay, 2), fixed(row.bonus, 2), fixed(row.tips, 2), fixed(row.grossPay, 2), row.overtimeBasis,
-    row.approvedTimecards, row.pendingTimecards, row.flags.join(' ')])]);
+    row.approvedTimecards, row.pendingTimecards, row.flags.join(' '), jobTimeText(row.jobTime)])]);
 }
 
 const TIP_HEADER = ['Employee name', 'Employee username', 'Tips received from', 'Tips received through', 'Job ID', 'Customer', 'Service date', 'Job work minutes', 'Employee work minutes', 'Job card tips', 'Employee tip share', 'Review flags'];

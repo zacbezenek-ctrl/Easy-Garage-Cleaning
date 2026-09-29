@@ -1,6 +1,7 @@
 """HUB-PWA: the real employee.html with HUB_OFFLINE_ENABLED on. A crew clock-out made offline is kept on the device,
 shown as Pending sync, and reaches the Hub exactly once when the connection returns; the installable Hub registers its
-worker and manifest, keeps its versioned files, and a switched-off setting removes both on the next load."""
+worker and manifest, keeps its versioned files, and a switched-off setting removes both on the next load.
+CREW-TIME (clock-in only): every Hub tab here counts its geolocation calls; none reads a position during a shift."""
 import copy, json, os, re, unittest
 from urllib.parse import urlparse
 from playwright.sync_api import expect
@@ -9,6 +10,8 @@ from hub_shell_harness import HubShell, CREW, RESULTS, DAY, NOW, JOBS, collectio
 UUID = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$')
 ACTIVE = {'id': 'time-syntheticcrew-1', 'employee': 'Synthetic.Crew', 'employeeName': 'Synthetic Crew', 'role': 'crew', 'status': 'active', 'approvalStatus': 'open',
           'clockInAt': DAY + 'T15:00:00Z', 'clockOutAt': '', 'hourlyRate': 20, 'breaks': [], 'locationTracking': False, 'locationStatus': 'stopped', 'jobLabel': 'Synthetic Johnson Garage'}
+# Counts the page's reads of the phone's position and the location watches it starts (CREW-TIME: clock-in only).
+GEO_COUNT = "(()=>{window.__geo={reads:0,watches:0};const g=navigator.geolocation;if(!g)return;const read=g.getCurrentPosition.bind(g),watch=g.watchPosition.bind(g);g.getCurrentPosition=(...a)=>{window.__geo.reads++;return read(...a)};g.watchPosition=(...a)=>{window.__geo.watches++;return watch(...a)};})();"
 
 
 class HubOfflineBrowserTests(HubShell, unittest.TestCase):
@@ -29,7 +32,7 @@ class HubOfflineBrowserTests(HubShell, unittest.TestCase):
         self.page = self.context.new_page(); self.page.set_default_timeout(7000)
         self.page.on('pageerror', lambda error: self.errors.append(str(error)))
         self.page.clock.install(time=NOW)
-        self.page.add_init_script('window.__egcJobs=' + json.dumps(JOBS) + ';')
+        self.page.add_init_script('window.__egcJobs=' + json.dumps(JOBS) + ';'); self.page.add_init_script(GEO_COUNT)
         self.page.route('**/*', self.route)
         self.page.goto(f'{self.url}/employee.html?view={view}')
         self.page.wait_for_function('document.querySelector("#ops-main")?.children.length>0 && window.EGCHubScreens && !document.querySelector(".hub-screen-loading")')
@@ -63,7 +66,7 @@ class HubOfflineBrowserTests(HubShell, unittest.TestCase):
         page = self.context.new_page(); page.set_default_timeout(7000)
         page.on('pageerror', lambda error: self.errors.append(str(error)))
         page.clock.install(time=NOW)
-        page.add_init_script('window.__egcJobs=' + json.dumps(JOBS) + ';')
+        page.add_init_script('window.__egcJobs=' + json.dumps(JOBS) + ';'); page.add_init_script(GEO_COUNT)
         page.route('**/*', self.route)
         page.goto(f'{self.url}/employee.html?view={view}')
         page.wait_for_function('document.querySelector("#ops-main")?.children.length>0 && window.EGCHubScreens && !document.querySelector(".hub-screen-loading")')
@@ -129,7 +132,7 @@ class HubOfflineBrowserTests(HubShell, unittest.TestCase):
         rows = page.evaluate("""new Promise(resolve=>{const open=indexedDB.open('egc-hub-offline');open.onsuccess=()=>{const tx=open.result.transaction('requests','readonly'),all=tx.objectStore('requests').getAll();all.onsuccess=()=>resolve(all.result.length);};})""")
         self.assertEqual(rows, 0, 'the device copy is removed once the Hub confirms it')
 
-    def test_refused_offline_clock_out_says_not_saved_and_keeps_location_paused_until_resumed(self):
+    def test_refused_offline_clock_out_says_not_saved_until_keep_working_and_reads_no_position(self):
         page = self.open_hub('my_day')
         page.wait_for_function('window.EGCHubOffline && window.EGCHubOffline.state().enabled')
         card = page.locator('.ops-clock-card')
@@ -143,11 +146,10 @@ class HubOfflineBrowserTests(HubShell, unittest.TestCase):
         self.refuse_clock_out = True
         self.offline = False; self.context.set_offline(False)
         expect(card).to_contain_text('Clock-out not saved — clock out again')
-        expect(card).to_contain_text('Location paused')
         expect(page.locator('.egc-hub-sync .hs-label')).to_have_text('1 not saved')
         self.assertEqual(self.entry['status'], 'active')
         self.assertEqual(len([body for body in self.employee_posts() if body.get('data', {}).get('clockOutAt')]), 1, 'the refused clock-out was sent once and dropped')
-        resume = card.get_by_role('button', name='Resume location')
+        resume = card.get_by_role('button', name='Keep working')
         expect(resume).to_be_visible()
         expect(card.get_by_role('button', name='Clock out')).to_be_visible()
         heights = page.evaluate("[...document.querySelectorAll('.ops-clock-card button')].map(b=>Math.round(b.getBoundingClientRect().height))")
@@ -160,24 +162,33 @@ class HubOfflineBrowserTests(HubShell, unittest.TestCase):
         self.settle()
         expect(card).to_contain_text('Clock-out not saved — clock out again')
         resume.click()
-        expect(page.locator('#toast')).to_contain_text('Shift location is on again')
+        expect(page.locator('#toast')).to_contain_text('Your shift stays open')
         expect(card).not_to_contain_text('Clock-out not saved')
-        expect(card).not_to_contain_text('Location paused')
+        expect(card).to_contain_text('CLOCKED IN')
         self.assertIsNone(page.evaluate("sessionStorage.getItem('egc_hub_location_paused')"))
+        self.assertEqual(page.evaluate('window.__geo'), {'reads': 0, 'watches': 0}, 'Keep working reads no position and starts no watch')
 
-    def test_a_hidden_tab_sends_no_position_after_another_tab_replays_its_clock_out(self):
-        # Shift location is on in two Hub tabs. Tab A clocks out with no signal and, once the signal is back, sends it before
-        # tab B (in the background, so it never polls) takes any position fix. Tab B's next fix sends nothing.
-        self.entry.update({'locationTracking': True, 'locationStatus': 'tracking'})
+    def test_neither_tab_reads_or_sends_a_position_during_a_shift_or_after_another_tab_replays_its_clock_out(self):
+        # A shift saved while the old shift location was on (a legacy card with a trail) is open in two Hub tabs. Neither tab
+        # reads or sends a position: not while the shift is open, not after tab A clocks out offline and replays it, and not
+        # when the hidden tab B is shown again and reads the shift closed.
+        where = {'lat': 40.58, 'lng': -105.08, 'accuracy': 5, 'capturedAt': DAY + 'T15:00:00Z'}
+        self.entry.update({'locationTracking': True, 'locationStatus': 'tracking', 'lastLocation': where, 'locationTrail': [where]})
         page = self.open_hub('my_day')
         self.context.grant_permissions(['geolocation']); self.context.set_geolocation({'latitude': 40.58, 'longitude': -105.08, 'accuracy': 5})
         page.wait_for_function('window.EGCHubOffline && window.EGCHubOffline.state().enabled')
         other = self.open_tab('my_day')
         other.wait_for_function('window.EGCHubOffline && window.EGCHubOffline.state().enabled')
         other.evaluate("Object.defineProperty(document,'hidden',{configurable:true,get:()=>true})")
-        for tab in (page, other): expect(tab.locator('.ops-clock-card')).to_contain_text('Location sharing on')
+        # Its lastLocation is the last watched position, so it is labelled as such, never as shared once at clock-in.
+        for tab in (page, other):
+            expect(tab.locator('.ops-clock-card')).to_contain_text('Last tracked location on file')
+            expect(tab.locator('.ops-clock-card')).not_to_contain_text('Location shared once at clock-in')
         self.settle()
-        self.assertTrue(any(body.get('data', {}).get('lastLocation') for body in self.posts), 'the watches send positions while the shift is open')
+        page.clock.fast_forward(61000); other.clock.fast_forward(61000)
+        self.context.set_geolocation({'latitude': 40.6, 'longitude': -105.1, 'accuracy': 5})
+        self.settle()
+        self.assertFalse(any('lastLocation' in body.get('data', {}) or 'locationTrail' in body.get('data', {}) for body in self.posts), 'no position is sent while the shift is open')
         self.offline = True; self.context.set_offline(True)
         page.locator('.ops-clock-card button', has_text='Clock out').click()
         expect(page.locator('#toast')).to_contain_text('Clock-out saved on this device')
@@ -190,15 +201,15 @@ class HubOfflineBrowserTests(HubShell, unittest.TestCase):
         self.assertEqual(self.entry['status'], 'submitted')
         rows = other.evaluate("""new Promise(resolve=>{const open=indexedDB.open('egc-hub-offline');open.onsuccess=()=>{const tx=open.result.transaction('requests','readonly'),all=tx.objectStore('requests').getAll();all.onsuccess=()=>resolve(all.result.length);};})""")
         self.assertEqual(rows, 0, 'nothing is queued any more')
-        # A minute later tab B's watch takes a position fix.
+        # The phone moves; later tab B is shown again and reads the shift closed.
         other.clock.fast_forward(61000)
         self.context.set_geolocation({'latitude': 40.7, 'longitude': -105.2, 'accuracy': 5})
+        other.evaluate("Object.defineProperty(document,'hidden',{configurable:true,get:()=>false});document.dispatchEvent(new Event('visibilitychange'))")
         expect(other.locator('.ops-clock-card')).to_contain_text('Ready when you are')
-        other.clock.fast_forward(61000)
-        self.context.set_geolocation({'latitude': 40.71, 'longitude': -105.21, 'accuracy': 5})
         self.settle()
         after = [body for body in self.posts[out[0] + 1:] if body.get('collection') == 'timeEntries']
         self.assertEqual(after, [], 'no position left the phone after the clock-out')
+        for tab in (page, other): self.assertEqual(tab.evaluate('window.__geo'), {'reads': 0, 'watches': 0}, 'no tab read a position or started a watch')
 
     def test_an_offline_shift_discarded_from_pending_sync_takes_its_clock_out_and_the_confirm_fits_a_phone(self):
         # No shift is open: the crew member clocks in and out with no signal, then discards the whole shift.
@@ -208,10 +219,12 @@ class HubOfflineBrowserTests(HubShell, unittest.TestCase):
         self.context.grant_permissions(['geolocation']); self.context.set_geolocation({'latitude': 40.58, 'longitude': -105.08, 'accuracy': 5})
         card = page.locator('.ops-clock-card')
         expect(card).to_contain_text('Ready when you are')
+        expect(card).to_contain_text('Clocking in shares your location once. Nothing tracks your location during your shift.')
         self.settle()
         self.offline = True; self.context.set_offline(True)
-        card.get_by_role('button', name='Clock in + start shift location').click()
+        card.get_by_role('button', name='Clock in').click()
         expect(page.locator('#toast')).to_contain_text('Clock-in saved on this device')
+        self.assertEqual(page.evaluate('window.__geo'), {'reads': 1, 'watches': 0}, 'one read as the shift started, no watch')
         card.locator('button', has_text='Clock out').click()
         chip = page.locator('.egc-hub-sync')
         expect(chip.locator('.hs-label')).to_have_text('Pending sync · 2')
@@ -232,6 +245,7 @@ class HubOfflineBrowserTests(HubShell, unittest.TestCase):
         self.assertGreaterEqual(rows.nth(0).locator('div').first.bounding_box()['width'], 120, 'the action and its time stay readable beside it')
         scroll = self.no_horizontal_scroll(); self.assertLessEqual(scroll['width'], 375, scroll)
         page.screenshot(path=str(RESULTS / 'hub-offline-discard-shift-375.png'))
+        self.assertEqual(page.evaluate('window.__geo'), {'reads': 1, 'watches': 0}, 'the clock-out read no position')
         discard.click()
         expect(rows).to_have_count(0)
         expect(panel).to_contain_text('Nothing is waiting to send.')

@@ -475,6 +475,10 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   `EGC_WALKTHROUGH_VISIT_ENABLED` flag): clock-in and consent first, recording in parts kept in IndexedDB and uploaded in
   order to the recording service, one tab per walkthrough (Web Locks), consent withdrawal per visit, and Voice Memos import.
   Gaps: parts are stitched only by FUN-34; iPads need iPadOS 15.4+; the gameplan is not in the offline shell.
+- **CREW-TIME** (P1 payroll; owner decision CLOCK-IN ONLY) Location is read once at clock-in in the Hub and crew app; the
+  server stores no trail and refuses later location updates. No-fix clock-ins are saved and flagged behind
+  `EGC_CLOCK_IN_WITHOUT_FIX`; with `EGC_JOB_STATUS_MOVES_TIME` job statuses move the crew member's time (travel/work) and
+  leads move clocked-in crew-mates. Timesheets, My pay, Gusto rows and the payroll CSV show per-job work and travel.
 
 ## In progress
 
@@ -586,6 +590,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | TIPS | Optional crew tips on card balance payments, held tipped charges and tip allocation (CUSTOMER_TIPS_ENABLED, off) | merged (99d4c1e) |
 | FIX-CREW-PRICE-LEAK | P1: keep quoted prices out of every crew-visible brief (crew_brief, strip on write and read, backfill) | merged (0162bfc) |
 | FUN-06 | iPad walkthrough recorder on the gameplan (EGC_WALKTHROUGH_VISIT_ENABLED) | merged (323c943) |
+| CREW-TIME | P1: clock-in-only location, status-driven job time and per-job pay rows (flags off) | merged (1507863) |
 
 ## Next
 

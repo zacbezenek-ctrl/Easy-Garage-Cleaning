@@ -1,4 +1,5 @@
 import { activeTimecard } from './employee-timecards.js';
+import { NO_CLOCK_IN_FIX, employeeJobTime } from './employee-job-time.js';
 import { addDays, validDate } from './dispatch-time.js';
 import { ptoPaidDays } from './pto-pay.js';
 
@@ -127,6 +128,27 @@ function measure(intervals) {
 
 const group = (map, key, item) => { if (!map.has(key)) map.set(key, []); map.get(key).push(item); };
 
+/** A paid shift's time by job from its segments (employee-job-time.js): net work and travel per job, general company
+ * time, and time with no job segments (older shifts). Paid rest breaks stay in, as they do in the worked hours, so the
+ * parts add up to the shift's worked time. A shift whose segments need review (a manager moved its clock-in later than
+ * its first segment, say) is not split by job at all: its worked time is "Job time needs manager review", as the Hub
+ * shows it. That label is only in the Job time text, never a review flag, and it changes no hour or pay column. */
+function cardJobTime(card, workedMs) {
+  const summary = employeeJobTime({ ...card, breaks: Array.isArray(card.breaks) ? card.breaks.filter(item => item?.kind !== 'rest') : card.breaks }, card.clockOutAt);
+  if (summary.needsReview) return { jobs: [], generalMs: 0, untrackedMs: 0, reviewMs: workedMs };
+  return { jobs: summary.jobs, generalMs: summary.generalMs, untrackedMs: summary.untrackedMs, reviewMs: 0 };
+}
+function addJobTime(total, time) {
+  for (const job of time.jobs) {
+    const row = total.jobs.get(job.jobId) || { jobId: job.jobId, jobLabel: '', workMs: 0, travelMs: 0 };
+    row.jobLabel ||= job.jobLabel; row.workMs += job.workMs; row.travelMs += job.travelMs; total.jobs.set(job.jobId, row);
+  }
+  total.generalMs += time.generalMs; total.untrackedMs += time.untrackedMs; total.reviewMs += time.reviewMs;
+  return total;
+}
+const jobTimeHours = total => ({ jobs: [...(total.jobs instanceof Map ? total.jobs.values() : total.jobs)].map(job => ({ jobId: job.jobId, jobLabel: String(job.jobLabel || '').slice(0, 180), workHours: hours(job.workMs), travelHours: hours(job.travelMs) })),
+  generalHours: hours(total.generalMs), untrackedHours: hours(total.untrackedMs), ...(total.reviewMs ? { reviewHours: hours(total.reviewMs) } : {}) });
+
 /** Expands approved time-off requests into paid PTO days through the one PTO pay model (pto-pay.js). An approval
  * made in the request workflow pays its recorded paidDates at hoursPerDay; those fields win whenever the request has
  * a boolean paid. An older approval pays only an explicit manager-set paidHoursPerDay, on Monday to Friday unless a
@@ -198,7 +220,7 @@ export function computeTimesheetWeeks({ timecards = [], pto = [], policy = 'colo
     const work = timecardWorkIntervals(card);
     const reason = work.reason || (!Number.isFinite(payAmount(card.bonus)) || !Number.isFinite(payAmount(card.tips)) ? 'invalid_bonus_or_tips' : '');
     if (reason) { unapproved(card, workDate, state); review(card, reason, [workDate]); continue; }
-    included.push({ card, state, workDate, week, key: personKey(card.employee), ...work });
+    included.push({ card, state, workDate, week, key: personKey(card.employee), time: cardJobTime(card, work.workedMs), ...work });
   }
   const byPerson = new Map(), daily = new Map(), rated = new Map(), gap = rules.consecutiveHours ? rules.consecutiveGapMinutes * 60000 : null;
   for (const item of included) group(byPerson, item.key, item);
@@ -242,6 +264,7 @@ export function computeTimesheetWeeks({ timecards = [], pto = [], policy = 'colo
     const { first, dates } = week, last = dates[6], employees = [];
     for (const row of week.people.values()) {
       let workedMs = 0, ratedMs = 0, dailyMs = 0, straight = 0, bonus = 0, tips = 0;
+      const jobTime = { jobs: new Map(), generalMs: 0, untrackedMs: 0, reviewMs: 0 };
       const paid = new Set(), days = new Map(dates.map(date => [date, { date, workedMs: 0, dailyOvertimeMs: 0, ptoHours: 0, timecards: 0 }]));
       row.cards.sort((a, b) => a.start - b.start);
       for (const item of row.cards) {
@@ -249,6 +272,8 @@ export function computeTimesheetWeeks({ timecards = [], pto = [], policy = 'colo
         if (!hourly) row.flags.add('missing_rate');
         if (item.card.payType && item.card.payType !== 'hourly') row.flags.add('non_hourly_pay_type');
         if (item.state === 'pending') row.flags.add('includes_pending');
+        if (item.card.locationReview === NO_CLOCK_IN_FIX) row.flags.add('no_clock_in_location');
+        addJobTime(jobTime, item.time);
         paid.add(hourly); workedMs += item.workedMs; dailyMs += overtime; straight += item.workedMs / HOUR * hourly;
         if (hourly) ratedMs += item.workedMs;
         bonus += payAmount(item.card.bonus); tips += payAmount(item.card.tips);
@@ -276,11 +301,11 @@ export function computeTimesheetWeeks({ timecards = [], pto = [], policy = 'colo
         totalPaidHours: hours(workedMs + ptoMs), dailyOvertimeHours: hours(dailyMs), weeklyOvertimeHours: hours(weeklyMs), overtimeBasis: !overtimeMs ? 'none' : weeklyMs >= dailyMs ? 'weekly' : 'daily',
         regularRate: Math.round(regularRate * 10000) / 10000, ...pay, grossPay: cents(pay.straightPay + pay.overtimePremium + pay.ptoPay + pay.bonus + pay.tips),
         approvedTimecards: row.cards.filter(item => item.state === 'approved').length, pendingTimecards: row.cards.filter(item => item.state === 'pending').length,
-        pendingExcludedTimecards: row.pendingExcluded, openShifts: row.open, flags: [...row.flags].sort(),
+        pendingExcludedTimecards: row.pendingExcluded, openShifts: row.open, flags: [...row.flags].sort(), jobTime: jobTimeHours(jobTime),
         days: [...days.values()].map(day => ({ date: day.date, workedHours: hours(day.workedMs), dailyOvertimeHours: hours(day.dailyOvertimeMs), ptoHours: Math.round(day.ptoHours * 1000) / 1000, timecards: day.timecards })),
         timecards: row.cards.map(item => ({ id: item.card.id, workDate: item.workDate, clockInAt: new Date(item.start).toISOString(), clockOutAt: new Date(item.end).toISOString(), workedHours: hours(item.workedMs),
           paidRestHours: hours(item.restMs), unpaidBreakHours: hours(item.unpaidMs), dailyOvertimeHours: hours(daily.get(item) || 0), hourlyRate: payRate(item.card.hourlyRate), bonus: cents(payAmount(item.card.bonus)), tips: cents(payAmount(item.card.tips)),
-          approvalStatus: item.state, jobId: String(item.card.jobId || '').slice(0, 180) })) });
+          approvalStatus: item.state, jobId: String(item.card.jobId || '').slice(0, 180), jobTime: jobTimeHours(item.time), ...(item.card.locationReview === NO_CLOCK_IN_FIX ? { locationReview: NO_CLOCK_IN_FIX } : {}) })) });
     }
     employees.sort((a, b) => a.name.localeCompare(b.name) || a.employee.localeCompare(b.employee));
     const sum = key => employees.reduce((total, row) => total + row[key], 0);

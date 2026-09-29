@@ -145,3 +145,11 @@ The rule behind all of it: **HighLevel sends every customer message and owns eve
 103. [ ] **Look at Review queues and the Command Center alert every week.** Held charges and unknown sends wait for you. [5.1](GO-LIVE.md#51-card-payments-and-review-queues-no-switch)
 104. [ ] **Reps open the walkthrough online once after every price change.** Their device caches the new prices for offline use. [What changes](GO-LIVE.md#what-changes-on-deploy-no-switch)
 105. [ ] **Developer, every few months: consider the optional Firebase tidy-ups (time-to-live policies, audit index exemptions).** The audit log and receipts only grow. [B4](GO-LIVE.md#b4-publish-firestore-rules-and-indexes)
+
+## Crew time and clock-in location (CREW-TIME)
+
+106. [ ] **Tell crews: the clock-in reads their location once, and nothing tracks it during the shift.** Owner decision; the Hub and crew app say so. [4.9](GO-LIVE.md#49-clock-in-location-once-no-switch)
+107. [ ] **After this deploy, have every crew member reload every open Hub tab (or sign out and in). Required.** A tab from before the deploy keeps reading the phone's location (the server refuses and stores none of it) until it is reloaded or the shift is clocked out, so "nothing tracks you" is true only after the reload. [4.9](GO-LIVE.md#49-clock-in-location-once-no-switch)
+108. [ ] **Set `EGC_CLOCK_IN_WITHOUT_FIX=true`, then review "No location at clock-in" shifts on the timesheet each week.** Owner decision: weak GPS never stops a clock-in. [4.10](GO-LIVE.md#410-clock-in-with-no-gps-position-owner-decision-on)
+109. [ ] **Optional: set `EGC_JOB_STATUS_MOVES_TIME=true` once every job has the right crew and lead.** Status taps then move crew time and the lead can move crew-mates. [4.11](GO-LIVE.md#411-job-status-moves-crew-time-optional)
+110. [ ] **Before the first payroll after this deploy, re-map the Gusto Smart Import (and any spreadsheet) that reads the Hub's timesheet files.** In the Download for Gusto file, Job is now the job-time text and Memo lists every job; the timesheet CSV's "Customer" column is now "Job time"; the payroll CSV has a new last column, Job time. Hours and pay columns are unchanged. [4.7](GO-LIVE.md#47-timesheets-and-payroll)

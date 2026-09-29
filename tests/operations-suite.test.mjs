@@ -835,8 +835,8 @@ test('open-shift scheduling fields persist on the canonical job record',()=>{
   // (CHANGE-ORDERS) "Send decision" now appends to the decisions saved at that moment in a transaction; (QUOTE-DRAFT) a
   // signed handoff syncs from its saved snapshot only for its own sync; (MONEY-GHL-PARITY) the suite exposes its
   // lifecycle helper to server money saves; (HUB-PWA) the offline queue's clock saves; (TIPS) tipped payments and held
-  // tipped charges in the finance board.
-  assert.match(employee,/employee-suite\.js\?v=20260929tips/);
+  // tipped charges in the finance board; (CREW-TIME) clock-in-only location and job-time labels.
+  assert.match(employee,/employee-suite\.js\?v=20260929crewtime2/);
 });
 
 test('recurring visits request a server-side handoff clone instead of copying prior execution or payments',()=>{
@@ -921,10 +921,12 @@ test('all employee and field-tool inline scripts parse',()=>{
 });
 
 test('employee hub v2 personalizes access, time, pay, communication, training, and safety',()=>{
-  for(const marker of ["'my_day'","'earnings'","'crew_chat'","'requests'","'training'","'safety'","'people'",'employeeViews','currentRole','canView','Employee Hub','My pay','Clock in + start shift location','watchPosition','clearWatch','locationConsentAt','locationTracking:false','Estimated gross paycheck','Made this year','All-time Hub earnings','opsApproveTime','opsSubmitRequest','opsNewAnnouncement','opsSubmitTraining','opsApproveTraining','opsSendChat','opsOpenJobRoom','opsReportIncident','Last shift location']){
+  for(const marker of ["'my_day'","'earnings'","'crew_chat'","'requests'","'training'","'safety'","'people'",'employeeViews','currentRole','canView','Employee Hub','My pay','Clocking in shares your location once','getCurrentPosition','locationConsentAt','locationTracking:false','Estimated gross paycheck','Made this year','All-time Hub earnings','opsApproveTime','opsSubmitRequest','opsNewAnnouncement','opsSubmitTraining','opsApproveTraining','opsSendChat','opsOpenJobRoom','opsReportIncident','Clock-in location']){
     assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),marker+' is missing');
   }
   assert.doesNotMatch(suite,/Clock in without location/);
+  // CREW-TIME (owner decision 2026-09-29): location is taken once at clock-in; the shift location watch is gone.
+  assert.doesNotMatch(suite,/watchPosition|clearWatch|locationTrail/);
   assert.doesNotMatch(read('functions/_lib/hub-session.js'),/DEFAULT_USER_META|DEFAULT_USERS/);
   assert.match(read('functions/_lib/hub-session.js'),/hourlyRate/);
   assert.match(employee,/rememberHubProfile/);

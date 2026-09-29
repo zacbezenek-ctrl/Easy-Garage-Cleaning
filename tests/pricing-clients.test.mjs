@@ -532,7 +532,10 @@ async function timesheets({ owner }) {
   const blobs = [];
   const own = { id: 'own-1', employee: 'TylerG', employeeName: 'Synthetic Manager', payType: 'salary', hourlyRate: 30, clockInAt: '2026-09-21T15:00:00.000Z', clockOutAt: '2026-09-21T19:00:00.000Z', status: 'submitted', approvalStatus: 'approved', jobLabel: 'Synthetic Customer', jobId: 'job-1', breaks: [] };
   // As /api/employee-hub sends another employee's shift: the owner gets the pay fields, a manager does not.
-  const crew = { id: 'crew-1', employee: 'Crew.One', employeeName: 'Crew One', clockInAt: '2026-09-22T15:00:00.000Z', clockOutAt: '2026-09-22T19:00:00.000Z', status: 'submitted', approvalStatus: 'pending', breaks: [], ...(owner ? { payType: 'salary', hourlyRate: 21 } : {}) };
+  // Each carries the jobTime /api/employee-hub derives from its job segments (CREW-TIME): the manager worked on job-1, the crew
+  // member's shift was general company time.
+  const crew = { id: 'crew-1', employee: 'Crew.One', employeeName: 'Crew One', clockInAt: '2026-09-22T15:00:00.000Z', clockOutAt: '2026-09-22T19:00:00.000Z', status: 'submitted', approvalStatus: 'pending', breaks: [], jobTime: { current: null, jobs: [], generalMs: 4 * 3600000, untrackedMs: 0, recorded: true, partialHistory: false, needsReview: false }, ...(owner ? { payType: 'salary', hourlyRate: 21 } : {}) };
+  own.jobTime = { current: null, jobs: [{ jobId: 'job-1', jobLabel: 'Synthetic Customer', workMs: 4 * 3600000, travelMs: 0 }], generalMs: 0, untrackedMs: 0, recorded: true, partialHistory: false, needsReview: false };
   const collections = Object.fromEntries(['profiles', 'timeEntries', 'announcements', 'requests', 'incidents', 'equipment', 'training', 'teamMessages', 'jobMessages', 'messageReads'].map(name => [name, name === 'timeEntries' ? [own, crew] : []]));
   const page = hubPage({ user: owner ? 'ZacB' : 'TylerG', role: owner ? 'owner' : 'manager', before: context => {
     context.Blob = class { constructor(parts) { blobs.push(parts.join('')); } };
@@ -554,9 +557,10 @@ async function timesheets({ owner }) {
 // here, so it is blank), and an employee whose pay the server did not send reads "Pay hidden", never a $0 total.
 test('the timesheet Service column is the job\'s service, never a pay type, and another employee\'s pay reads "Pay hidden" where it is not shown', async () => {
   const manager = await timesheets({ owner: false });
-  assert.equal(manager.csv[0], '"Employee","Date","Customer","Service","Job ID","Hours","Started at","Completed at"');
-  assert.equal(manager.csv.find(row => row.startsWith('"Crew One"')), '"Crew One","2026-09-22","General company time","","","4.00","2026-09-22T15:00:00.000Z","2026-09-22T19:00:00.000Z"');
-  assert.match(manager.csv.find(row => row.startsWith('"Synthetic Manager"')), /^"Synthetic Manager","2026-09-21","Synthetic Customer","","job-1",/, 'the manager\'s own Service is the job\'s too');
+  // CREW-TIME: the third column lists the shift's job time from its segments (it was the clock-in job label, "Customer").
+  assert.equal(manager.csv[0], '"Employee","Date","Job time","Service","Job ID","Hours","Started at","Completed at"');
+  assert.equal(manager.csv.find(row => row.startsWith('"Crew One"')), '"Crew One","2026-09-22","General company time 4.00 h","","","4.00","2026-09-22T15:00:00.000Z","2026-09-22T19:00:00.000Z"');
+  assert.match(manager.csv.find(row => row.startsWith('"Synthetic Manager"')), /^"Synthetic Manager","2026-09-21","Synthetic Customer: work 4.00 h","","job-1",/, 'the manager\'s own Service is the job\'s too');
   assert.doesNotMatch(manager.board, /hourly/);
   assert.doesNotMatch(manager.board, /salary/);
   assert.match(manager.board, /Crew One/);
@@ -565,7 +569,7 @@ test('the timesheet Service column is the job\'s service, never a pay type, and 
   assert.match(manager.board, /\$120/, 'the manager\'s own pay (4 hours at 30) stays');
   assert.doesNotMatch(manager.board, /\$84|\$0\b/, 'no figure, and no $0 stand-in, for the crew member');
   const owner = await timesheets({ owner: true });
-  assert.match(owner.csv.find(row => row.startsWith('"Crew One"')), /^"Crew One","2026-09-22","General company time","","",/);
+  assert.match(owner.csv.find(row => row.startsWith('"Crew One"')), /^"Crew One","2026-09-22","General company time 4.00 h","","",/);
   assert.doesNotMatch(owner.board, /salary|Pay hidden/);
   assert.match(owner.board, /\$84/, 'the owner sees the crew member\'s pay (4 hours at 21)');
 });

@@ -49,6 +49,14 @@ export function ptoPaidDays(request) {
   return { model: 'legacy', hours, dates: days.filter(date => (request.paidWeekends === true || ptoWeekday(date)) && (!cutoff || date < cutoff)), review: false };
 }
 
+/** Whether an approved time-off request has its employee off on this Denver date: one of its requested days before any
+ * early end, paid or unpaid. A lead's crew move (employee-hub.js) never moves someone who is off. */
+export function ptoOffOn(request, date) {
+  if (!record(request) || request.type !== 'time_off' || request.status !== 'approved' || !validDate(date)) return false;
+  const cutoff = validDate(request.endedEarlyFrom) ? request.endedEarlyFrom : '';
+  return ptoDays(request.startDate, request.endDate || request.startDate).includes(date) && (!cutoff || date < cutoff);
+}
+
 /** What a request pays as the Requests board shows it: unreadable terms pay nothing here and
  * are left to payroll review. */
 export function ptoPay(request) {
