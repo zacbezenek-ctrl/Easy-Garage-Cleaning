@@ -2,9 +2,10 @@ import {afterEach,describe,expect,it,vi} from 'vitest';
 import * as z from 'zod/v4';
 import type {McpServer} from '@modelcontextprotocol/server';
 import {schema} from '@egc/database';
+import {getTableColumns} from 'drizzle-orm';
 import {crmReadTools} from '../src/tools/domains/crm-reads.js';
 import {registerTools} from '../src/tools/define.js';
-import {CURSOR_CLOCK_SKEW_MS,CURSOR_MAX_AGE_MS,decodeCursor,encodeCursor,readCursor} from '../src/tools/pagination.js';
+import {CURSOR_CLOCK_SKEW_MS,CURSOR_MAX_AGE_MS,decodeCursor,encodeCursor,encodeKeysetCursor,readCursor} from '../src/tools/pagination.js';
 import {DOMAIN_TOOLS} from '../src/tools/index.js';
 import {requiredToolScope} from '../src/tool-access.js';
 import {operationsPrincipal} from '../src/operations.js';
@@ -21,9 +22,10 @@ const iso=(ms:number)=>new Date(ms).toISOString();
 const LEGACY_READS=['contacts.search','contacts.get','leads.search','leads.get','conversations.search','conversations.get','calls.search','calls.get','opportunities.search','opportunities.get','appointments.search','jobs.search','jobs.get','tasks.search','walkthroughs.search','walkthroughs.get'];
 type Registered={config:any;handler:(args:unknown)=>Promise<any>};
 
-function harness(respond:Respond=()=>[],timeline=vi.fn(async({contactId}:{contactId:string})=>({contactId,customer:{state:'JOB_SOLD'},coverage:{complete:true}})),clock:()=>Date=now){
+// Offset cursors unless a test turns keyset on; null leaves the flag to EGC_MCP_KEYSET_CURSORS, as production does.
+function harness(respond:Respond=()=>[],timeline=vi.fn(async({contactId}:{contactId:string})=>({contactId,customer:{state:'JOB_SOLD'},coverage:{complete:true}})),clock:()=>Date=now,keyset:(()=>boolean)|null=()=>false){
   const driver=sqlDriver(respond),tools=new Map<string,Registered>();
-  registerTools({registerTool:(name:string,config:unknown,handler:any)=>tools.set(name,{config,handler})} as unknown as McpServer,crmReadTools({db:()=>driver.db,timeline:timeline as never}),{now:()=>clock()});
+  registerTools({registerTool:(name:string,config:unknown,handler:any)=>tools.set(name,{config,handler})} as unknown as McpServer,crmReadTools({db:()=>driver.db,timeline:timeline as never,...(keyset?{keyset}:{})}),{now:()=>clock()});
   // Parse like the SDK does before the registry handler runs.
   const raw=async(name:string,args:Record<string,unknown>={})=>{const t=tools.get(name)!;return operationsPrincipal.run(actor,()=>t.handler(t.config.inputSchema.parse(args)));};
   const call=async(name:string,args:Record<string,unknown>={})=>(await raw(name,args)).structuredContent.result as Record<string,any>;
@@ -52,13 +54,33 @@ function slicer(walk:Walk,count:number):Respond{
   const rows=Array.from({length:count},(_,i)=>walk.row(i));
   return s=>{const extra=walk.extra?.(s);if(extra)return extra;if(s.table!==walk.table||isProbe(s))return [];const page=limitOffset(s);return page?rows.slice(page.offset,page.offset+page.limit):rows;};
 }
-// The clock moves on by step between pages, as it does between real calls.
-async function walkAll(walk:Walk,count:number,size:number,step=0,respond:Respond=slicer(walk,count)){
+// The clock moves on by step between pages, as it does between real calls; between(n) runs after page n, where data can change.
+async function walkAll(walk:Walk,count:number,size:number,step=0,respond:Respond=slicer(walk,count),keyset:()=>boolean=()=>false,between?:(pages:number)=>void){
   let clock=NOW.valueOf();
-  const h=harness(respond,undefined,()=>new Date(clock)),keys:string[]=[],pages:any[]=[];let cursor:string|null|undefined;
-  do{const r=await h.call(walk.name,{...walk.args,[walk.limitKey??'limit']:size,...(cursor?{cursor}:{})});const page=walk.page?walk.page(r):r;pages.push(page);keys.push(...page.items.map(walk.key));cursor=page.page.nextCursor;clock+=step;}while(cursor&&pages.length<20);
+  const h=harness(respond,undefined,()=>new Date(clock),keyset),keys:string[]=[],pages:any[]=[];let cursor:string|null|undefined;
+  do{const r=await h.call(walk.name,{...walk.args,[walk.limitKey??'limit']:size,...(cursor?{cursor}:{})});const page=walk.page?walk.page(r):r;pages.push(page);keys.push(...page.items.map(walk.key));cursor=page.page.nextCursor;clock+=step;between?.(pages.length);}while(cursor&&pages.length<20);
   const log=h.log.filter(s=>s.table===walk.table);
-  return {keys,pages,log:log.filter(s=>!isProbe(s)),probes:log.filter(isProbe)};
+  return {keys,pages,log:log.filter(s=>!isProbe(s)),probes:log.filter(isProbe),h};
+}
+// A keyed dataset row: its exact ordering key (microseconds, as the page statement selects it) and id, with created/updated times (ms) for the change probe.
+type Keyed={key:string;id:string;row:Record<string,unknown>;created?:number;updated?:number};
+// Microsecond n inside ONE millisecond, so a millisecond (JS Date) key could not tell these rows apart.
+const us=(n:number)=>`2026-09-22T11:00:00.123${String(n).padStart(3,'0')}Z`;
+const keyOrder=(dir:'asc'|'desc')=>(a:Keyed,b:Keyed)=>{const c=a.key<b.key?-1:a.key>b.key?1:a.id<b.id?-1:a.id>b.id?1:0;return dir==='asc'?c:-c;};
+const FIXED_KEY=new Set(['leads.search','calls.search','walkthroughs.search']),ANY_KEY=new Set(['appointments.search','conversations.get']);
+const decoded=(cursor:string)=>JSON.parse(Buffer.from(cursor,'base64url').toString());
+/** Answers a page statement like PostgreSQL: the statement's order with its id tie-breaker, its keyset predicate, then LIMIT/OFFSET; position columns come back under their aliases.
+ * A change probe (anchor bound last before its LIMIT) finds a row updated after the anchor, and with a created_at bound only one that also existed at the anchor. */
+function keysetResponder(walk:Walk,data:()=>Keyed[]):Respond{
+  return s=>{
+    const extra=walk.extra?.(s);if(extra)return extra;
+    if(s.table!==walk.table)return [];
+    if(isProbe(s)){const anchor=Date.parse(String(s.params[s.params.length-2])),existed=/"created_at" <= \$/.test(s.sql);return data().some(r=>r.updated!==undefined&&r.updated>anchor&&(!existed||(r.created??0)<=anchor))?[{}]:[];}
+    const text=flat(s.sql),dir=/ order by \S+ (asc|desc), /.exec(text)![1] as 'asc'|'desc',after=/\) ([<>]) \(\$(\d+)::timestamptz, \$(\d+)::uuid\)/.exec(text),page=limitOffset(s)!,cmp=keyOrder(dir);
+    let rows=[...data()].sort(cmp);
+    if(after){expect(after[1]).toBe(dir==='asc'?'>':'<');const at={key:String(s.params[Number(after[2])-1]),id:String(s.params[Number(after[3])-1]),row:{}};rows=rows.filter(r=>cmp(r,at)>0);}
+    return rows.slice(page.offset,page.offset+page.limit).map(r=>({...r.row,egc_page_key:r.key,egc_page_id:r.id}));
+  };
 }
 
 describe('legacy CRM reads on the registry',()=>{
@@ -239,6 +261,131 @@ describe('SQL-side filtering and pagination',()=>{
     const h=harness(s=>s.table==='conversations'?[dbRow(schema.conversations,{id:CONTACT,providerId:'x',contactId:OTHER})]:[]);
     const r=await h.raw('conversations.get',{conversationId:CONTACT,cursor:encodeCursor('conversations.get',{conversationId:OTHER},100)});
     expect(r.isError).toBe(true);expect(r.structuredContent.result.error).toBe('cursor_filter_mismatch');expect(h.log.filter(s=>s.table==='messages')).toHaveLength(0);
+  });
+});
+
+describe('keyset cursors (EGC_MCP_KEYSET_CURSORS)',()=>{
+  const on=()=>true,jobs=WALKS.find(w=>w.name==='jobs.search')!;
+  it.each(WALKS.map(w=>[w.name,w] as const))('%s: continues strictly after the last row at microsecond precision, through ties, without OFFSET',async(name,walk)=>{
+    const dir=name==='appointments.search'?'asc':'desc',data=[900,900,901,500,500,500,1].map((m,i)=>({key:us(m),id:id(i),row:walk.row(i)}));
+    const sorted=[...data].sort(keyOrder(dir)),{keys,pages,log,probes}=await walkAll(walk,7,3,90_000,keysetResponder(walk,()=>data),on);
+    expect(keys).toEqual(sorted.map(r=>r.id));
+    expect(pages.map(p=>[p.page.offset,p.page.returned,p.asOf,p.coverage.complete])).toEqual([[0,3,NOW.toISOString(),true],[3,3,NOW.toISOString(),true],[6,1,NOW.toISOString(),true]]);
+    expect(pages[2].page.nextCursor).toBeNull();
+    // Version 2 cursors carry the anchor, the rows already returned and the exact position of the last one.
+    expect(pages.slice(0,2).map(p=>decoded(p.page.nextCursor))).toEqual([{v:2,o:3,f:expect.any(String),a:NOW.valueOf(),k:[sorted[2]!.key,sorted[2]!.id]},{v:2,o:6,f:expect.any(String),a:NOW.valueOf(),k:[sorted[5]!.key,sorted[5]!.id]}]);
+    expect(log.map(limitOffset)).toEqual(Array(3).fill({limit:4,offset:0}));
+    expect(log.every(st=>/ as "egc_page_key", .* as "egc_page_id" from /.test(flat(st.sql))&&!/ offset \$/.test(st.sql))).toBe(true);
+    // Later pages bind the same filters and window as the first, then the previous page's last position.
+    const bound=(st:Statement)=>st.params.filter(p=>typeof p==='string');
+    expect(log.map(st=>bound(st).slice(bound(log[0]!).length))).toEqual([[],[sorted[2]!.key,sorted[2]!.id],[sorted[5]!.key,sorted[5]!.id]]);
+    expect(log.slice(1).every(st=>bound(st).slice(0,bound(log[0]!).length).join()===bound(log[0]!).join())).toBe(true);
+    expect(pages.flatMap(p=>p.items).some((item:any)=>'egcPageKey' in item||'egcPageId' in item)).toBe(false);
+    // Only an update can move a row across the cursor: fixed keys need no probe, updatedAt orders look for a row that existed at the anchor and was updated after it,
+    // and keys an update can move either way look for any row written after the anchor, as an offset walk does.
+    if(FIXED_KEY.has(name))expect(probes).toHaveLength(0);
+    else{
+      expect(probes).toHaveLength(2);
+      for(const probe of probes)if(ANY_KEY.has(name)){expect(flat(probe.sql)).toMatch(/ and "\w+"\."updated_at" > \$\d+\) limit \$\d+$/);expect(probe.sql).not.toMatch(/created_at/);expect(probe.params).toEqual([...bound(log[0]!),NOW.toISOString(),1]);}
+      else{expect(flat(probe.sql)).toMatch(/"created_at" <= \$\d+ and "\w+"\."updated_at" > \$\d+\)\)? limit \$\d+$/);expect(probe.params).toEqual([...bound(log[0]!),NOW.toISOString(),NOW.toISOString(),1]);}
+    }
+  });
+  it.each([...ANY_KEY].map(name=>[name,WALKS.find(w=>w.name===name)!] as const))('%s: a row created after asOf, returned, then moved past the cursor is reported on the pages it can repeat on, never a silent duplicate',async(name,walk)=>{
+    // Four rows at asOf, two per page. One is booked between them after page 1 (returned on page 2), then rescheduled past the cursor (returned again on page 3).
+    const pos=(n:number)=>us(name==='appointments.search'?n:500-n),old=NOW.valueOf()-DAY;
+    const data:Keyed[]=[100,200,300,400].map((n,i)=>({key:pos(n),id:id(i),row:walk.row(i),created:old,updated:old}));
+    const {keys,pages,probes}=await walkAll(walk,5,2,30_000,keysetResponder(walk,()=>data),on,n=>{
+      if(n===1)data.push({key:pos(250),id:id(9),row:walk.row(9),created:NOW.valueOf()+10_000,updated:NOW.valueOf()+10_000});
+      if(n===2)Object.assign(data[4]!,{key:pos(350),updated:NOW.valueOf()+40_000});
+    });
+    expect(keys).toEqual([id(0),id(1),id(9),id(2),id(9),id(3)]);
+    expect(pages.map(p=>[p.asOf,p.coverage.complete,p.coverage.reason])).toEqual([[NOW.toISOString(),true,undefined],[NOW.toISOString(),false,'rows_changed_after_asOf'],[NOW.toISOString(),false,'rows_changed_after_asOf']]);
+    expect(pages[2].coverage.instruction).toMatch(/created or updated after asOf.*either way across the cursor.*missing or repeated.*Omit cursor/);
+    // The existed-at-asOf probe of the updatedAt orders would find nothing here: the moved row was created after asOf.
+    expect(probes.every(p=>!/created_at/.test(p.sql))).toBe(true);
+  });
+  it('rows removed or added ahead of the cursor between pages never skip or repeat a keyset row; the same changes shift an offset walk',async()=>{
+    const fresh=()=>Array.from({length:6},(_,i)=>({key:us(600-i*100),id:id(i),row:jobs.row(i)}));
+    const walk=async(keyset:boolean,change:(data:Keyed[])=>void)=>{const data=fresh();return (await walkAll(jobs,6,2,0,keysetResponder(jobs,()=>data),()=>keyset,n=>{if(n===1)change(data);})).keys;};
+    const removeFirst=(data:Keyed[])=>{data.splice(0,1);},addAtHead=(data:Keyed[])=>{data.push({key:us(999),id:id(9),row:jobs.row(9)});};
+    const all=[0,1,2,3,4,5].map(n=>id(n));
+    expect(await walk(true,removeFirst)).toEqual(all);expect(await walk(true,addAtHead)).toEqual(all);
+    // Offsets: the removal skips row 2 and the insert repeats row 1, silently.
+    expect(await walk(false,removeFirst)).toEqual([id(0),id(1),id(3),id(4),id(5)]);
+    expect(await walk(false,addAtHead)).toEqual([id(0),id(1),id(1),id(2),id(3),id(4),id(5)]);
+  });
+  it('pins the keyset statements: position columns in the select, the row-value predicate after the filters, no OFFSET, and a plain page for the client',async()=>{
+    const data=[3,2,1].map((m,i)=>({key:us(m),id:id(i),row:jobs.row(i)})),h=harness(keysetResponder(jobs,()=>data),undefined,now,on);
+    const paged=()=>h.log.filter(st=>st.table==='jobs'&&!isProbe(st));
+    const first=await h.call('jobs.search',{status:'scheduled',limit:2});
+    expect(flat(paged()[0]!.sql)).toMatch(/^select .*"updated_at", to_char\("updated_at" at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS\.US"Z"'\) as "egc_page_key", "id" as "egc_page_id" from "jobs" where "jobs"\."status" = \$1 order by "jobs"\."updated_at" desc, "jobs"\."id" desc limit \$2$/);
+    expect(paged()[0]!.params).toEqual(['scheduled',3]);
+    const second=await h.call('jobs.search',{status:'scheduled',limit:2,cursor:first.page.nextCursor});
+    expect(flat(paged()[1]!.sql)).toMatch(/ from "jobs" where \("jobs"\."status" = \$1 and \("jobs"\."updated_at", "jobs"\."id"\) < \(\$2::timestamptz, \$3::uuid\)\) order by "jobs"\."updated_at" desc, "jobs"\."id" desc limit \$4$/);
+    expect(paged()[1]!.params).toEqual(['scheduled',us(2),id(1),3]);
+    expect(first.items.map((x:any)=>x.id)).toEqual([id(0),id(1)]);expect(Object.keys(first.items[0]).sort()).toEqual([...Object.keys(getTableColumns(schema.jobs)),'operational'].sort());
+    expect(second).toMatchObject({items:[{id:id(2)}],page:{limit:2,offset:2,returned:1,nextCursor:null},asOf:NOW.toISOString(),coverage:{complete:true}});
+    for(const value of [first,second])expect(h.tools.get('jobs.search')!.config.outputSchema.safeParse({result:value}).success).toBe(true);
+    // Ascending walks continue with >.
+    const appointments=WALKS.find(w=>w.name==='appointments.search')!,a=harness(keysetResponder(appointments,()=>[]),undefined,now,on);
+    await a.call('appointments.search',{limit:2,cursor:encodeKeysetCursor('appointments.search',{daysPast:30,daysFuture:90},2,NOW,{key:us(5),id:id(1)})});
+    expect(flat(a.log[0]!.sql)).toMatch(/and \("appointments"\."appointment_start_at", "appointments"\."id"\) > \(\$3::timestamptz, \$4::uuid\)\) order by "appointments"\."appointment_start_at" asc, "appointments"\."id" asc limit \$5$/);
+  });
+  it('reports a row that existed at asOf and was updated after it, never probes a fixed-key order, and runs the full probe for a key that moves either way',async()=>{
+    const h=harness(st=>isProbe(st)?[{}]:[],undefined,now,on);
+    const moved=await h.call('jobs.search',{limit:2,cursor:encodeKeysetCursor('jobs.search',{},2,NOW,{key:us(5),id:id(1)})});
+    expect(moved.coverage).toEqual({complete:false,reason:'rows_changed_after_asOf',instruction:expect.stringMatching(/existed at asOf.*across the cursor.*missing or repeated.*Omit cursor/)});
+    expect(flat(h.log.find(isProbe)!.sql)).toMatch(/^select 1 from "jobs" where \("jobs"\."created_at" <= \$1 and "jobs"\."updated_at" > \$2\) limit \$3$/);expect(h.log.find(isProbe)!.params).toEqual([NOW.toISOString(),NOW.toISOString(),1]);
+    for(const [name,filters] of [['leads.search',{state:'JOB_SOLD',days:30}],['leads.search',{days:30}],['calls.search',{days:30}],['walkthroughs.search',{status:'draft'}]] as const){
+      const fixed=harness(st=>isProbe(st)?[{}]:[],undefined,now,on),r=await fixed.call(name,{...filters,limit:1,cursor:encodeKeysetCursor(name,filters,1,NOW,{key:us(5),id:id(1)})});
+      expect(r.coverage,name).toEqual({complete:true});expect(fixed.log.filter(isProbe),name).toHaveLength(0);
+    }
+    // A key an update can move either way runs the offset probe: any matching row written after asOf, including one created after it.
+    for(const [name,filters,args] of [['appointments.search',{daysPast:30,daysFuture:90},{limit:2}],['conversations.get',{conversationId:CONTACT},{conversationId:CONTACT,messageLimit:2}]] as const){
+      const any=harness(st=>st.table==='conversations'?[dbRow(schema.conversations,{id:CONTACT,providerId:'x',contactId:OTHER})]:isProbe(st)?[{}]:[],undefined,now,on);
+      const r=await any.call(name,{...args,cursor:encodeKeysetCursor(name,filters,2,NOW,{key:us(5),id:id(1)})}),coverage=name==='conversations.get'?r.messages.coverage:r.coverage;
+      expect(coverage,name).toEqual({complete:false,reason:'rows_changed_after_asOf',instruction:expect.stringMatching(/created or updated after asOf.*either way across the cursor.*missing or repeated.*Omit cursor/)});
+      const probe=any.log.find(isProbe)!;expect(flat(probe.sql),name).toMatch(/ and "\w+"\."updated_at" > \$\d+\) limit \$\d+$/);expect(probe.sql,name).not.toMatch(/created_at/);expect(probe.params.slice(-2),name).toEqual([NOW.toISOString(),1]);
+    }
+  });
+  it('the flag chooses the kind of a new walk only; an offset cursor still continues by offset and a keyset cursor is refused once the flag is off',async()=>{
+    const data=[3,2,1].map((m,i)=>({key:us(m),id:id(i),row:jobs.row(i)}));
+    // Exactly "true" turns keyset on for new walks; the default reads the environment on every call.
+    for(const [value,version] of [[undefined,1],['true',2],['TRUE',1],['1',1],['false',1]] as const){
+      if(value===undefined)delete process.env.EGC_MCP_KEYSET_CURSORS;else process.env.EGC_MCP_KEYSET_CURSORS=value;
+      const r=await harness(keysetResponder(jobs,()=>data),undefined,now,null).call('jobs.search',{limit:1});
+      expect(decoded(r.page.nextCursor).v,String(value)).toBe(version);
+    }
+    const offsetCursor=encodeCursor('jobs.search',{},1,NOW),keysetCursor=encodeKeysetCursor('jobs.search',{},1,NOW,{key:us(3),id:id(0)});
+    const off=harness(keysetResponder(jobs,()=>data),undefined,now,()=>false),refused=await off.raw('jobs.search',{limit:1,cursor:keysetCursor});
+    expect(refused.isError).toBe(true);expect(refused.structuredContent.result).toMatchObject({error:'invalid_cursor',instruction:expect.stringMatching(/Omit cursor/)});expect(off.log).toHaveLength(0);
+    const onH=harness(keysetResponder(jobs,()=>data),undefined,now,on),continued=await onH.call('jobs.search',{limit:1,cursor:offsetCursor});
+    expect(flat(onH.log[0]!.sql)).toMatch(/ limit \$1 offset \$2$/);expect(onH.log[0]!.sql).not.toMatch(/egc_page_key/);
+    expect(continued.items.map((x:any)=>x.id)).toEqual([id(1)]);expect(decoded(continued.page.nextCursor)).toMatchObject({v:1,o:2,a:NOW.valueOf()});
+  });
+  it('refuses a forged, foreign or stale keyset cursor before querying',async()=>{
+    const h=harness(keysetResponder(jobs,()=>[]),undefined,now,on),good=decoded(encodeKeysetCursor('jobs.search',{status:'scheduled'},2,NOW,{key:us(3),id:id(0)}));
+    const forge=(patch:Record<string,unknown>)=>Buffer.from(JSON.stringify({...good,...patch})).toString('base64url');
+    const cases:[Record<string,unknown>,Record<string,unknown>,string][]=[
+      [{},{status:'completed'},'cursor_filter_mismatch'],
+      [{a:undefined},{status:'scheduled'},'invalid_cursor'],[{k:undefined},{status:'scheduled'},'invalid_cursor'],[{v:1},{status:'scheduled'},'invalid_cursor'],
+      [{k:['2026-09-22T11:00:00.123Z',id(0)]},{status:'scheduled'},'invalid_cursor'],[{k:['2026-02-30T11:00:00.123000Z',id(0)]},{status:'scheduled'},'invalid_cursor'],
+      [{k:[us(3),id(0).toUpperCase()]},{status:'scheduled'},'invalid_cursor'],[{k:[us(3),"x' or 1=1 --"]},{status:'scheduled'},'invalid_cursor'],[{k:[us(3)]},{status:'scheduled'},'invalid_cursor'],
+      [{k:[us(3),id(0),'extra']},{status:'scheduled'},'invalid_cursor'],[{o:-1},{status:'scheduled'},'invalid_cursor'],
+      [{a:NOW.valueOf()-CURSOR_MAX_AGE_MS-1},{status:'scheduled'},'invalid_cursor'],[{a:NOW.valueOf()+CURSOR_CLOCK_SKEW_MS+1},{status:'scheduled'},'invalid_cursor']
+    ];
+    for(const [patch,args,code] of cases){
+      const r=await h.raw('jobs.search',{...args,cursor:forge(patch)});
+      expect(r.isError,JSON.stringify(patch)).toBe(true);expect(r.structuredContent.result.error,JSON.stringify(patch)).toBe(code);
+    }
+    expect(h.log).toHaveLength(0);
+    expect((await h.call('jobs.search',{status:'scheduled',cursor:forge({})})).page.offset).toBe(2);
+  });
+  it('a row whose position cannot be encoded ends the page with an offset cursor at the same place, and the walk still finishes',async()=>{
+    const data=[5,4,3,2].map((m,i)=>({key:us(m),id:id(i),row:jobs.row(i)})),inner=keysetResponder(jobs,()=>data);
+    const respond:Respond=st=>inner(st)?.map(row=>row.egc_page_id===id(1)?{...row,egc_page_key:null}:row);
+    const {keys,pages}=await walkAll(jobs,4,2,0,respond,on);
+    expect(keys).toEqual([0,1,2,3].map(n=>id(n)));expect(decoded(pages[0].page.nextCursor)).toMatchObject({v:1,o:2,a:NOW.valueOf()});expect(pages[1].page).toMatchObject({offset:2,nextCursor:null});
   });
 });
 

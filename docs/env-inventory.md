@@ -194,6 +194,7 @@ Read by `egc-platform/apps`, `egc-platform/services`, `egc-platform/packages`.
 | `META_CAPI_TEST_ON_START` | Railway egc-mcp | no | Temporary: "true" (shadow mode and the self-check only) sends one synthetic test event at startup; reset afterwards. | no test event. | `egc-platform/apps/mcp/src/meta-conversion-smoke.ts` |
 | `MCP_BEARER_WRITE_ENABLED` | Railway egc-mcp | no | Exactly "true" gives the static MCP_BEARER_TOKEN egc:write scope; set only while a writing startup verification (EGC_OPERATIONS_CANARY_ON_START, META_CAPI_VERIFY_ON_START / META_CAPI_TEST_ON_START) runs, then remove it. | the static bearer is read-only. | `egc-platform/apps/mcp/src/meta-conversion-smoke.ts`, `egc-platform/apps/mcp/src/oauth.ts`, `egc-platform/apps/mcp/src/operations-smoke.ts` |
 | `EGC_MCP_DIRECT_SENDS_ENABLED` | Railway egc-mcp | no | Exactly "true" re-enables one-step MCP customer sends (conversations.send_message, send_sms, egc.send_followup) when EGC_OPERATIONS_ENABLED=true; this bypasses Hub approval, so leave it unset. | those sends are refused in operations mode. | `egc-platform/apps/mcp/src/operations.ts` |
+| `EGC_MCP_KEYSET_CURSORS` | Railway egc-mcp | no | Exactly "true" starts new walks of the Postgres .search reads and conversations.get messages on keyset cursors, which rows added or removed mid-walk cannot shift; remove it to roll back (keyset cursors then answer invalid_cursor and the client starts again). | offset cursors, as before. | `egc-platform/apps/mcp/src/tools/domains/crm-reads.ts` |
 
 Runtime-provided (never configured by the owner):
 

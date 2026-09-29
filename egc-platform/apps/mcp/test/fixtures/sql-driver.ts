@@ -20,7 +20,8 @@ export function classify(text:string):Pick<Statement,'op'|'table'>{
 }
 function columns(text:string,table:string|null){
   const list=/ returning ([\s\S]*)$/i.exec(text)?.[1]??/^select ([\s\S]*?) from "/i.exec(text.trimStart())?.[1];
-  return list?list.split(', ').map(token=>{const key=unquote(token);return key.includes('.')||!table?key:`${table}.${key}`;}):[];
+  // An aliased expression (`expr as "alias"`) is keyed by its bare alias.
+  return list?list.split(', ').map(token=>{const alias=/ as "([^"]+)"$/.exec(token.trim())?.[1];if(alias)return alias;const key=unquote(token);return key.includes('.')||!table?key:`${table}.${key}`;}):[];
 }
 /** Row keyed by qualified database column names from JS field names, e.g. dbRow(schema.jobs,{id,contactId}) -> {'jobs.id':..,'jobs.contact_id':..}. */
 export function dbRow(table:Table,values:Record<string,unknown>){

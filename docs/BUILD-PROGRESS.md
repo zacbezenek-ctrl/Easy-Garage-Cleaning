@@ -361,6 +361,10 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   give everyone but the owner hours only ("Labor $ hidden", totals null); the owner's figures live in the server-only
   jobLaborCosts record, firestore.rules keep browser writes from adding or changing a labor copy on a job, and
   scripts/backfill-job-labor-private.mjs moves (or --restore returns) existing copies. Gap: run the backfill after deploy.
+- **MCP-CURSORS** Keyset cursors for the MCP Postgres CRM reads (.search tools and conversations.get messages) behind
+  `EGC_MCP_KEYSET_CURSORS` (off: offset cursors as today; turning it off refuses keyset cursors with invalid_cursor so a
+  rollback is real). Keys are exact microsecond Postgres text plus id; rows whose order key can move mid-walk are
+  reported as coverage.complete=false, never silently skipped. Gap: Hub/bridge reads still page by offset.
 
 ## In progress
 
@@ -445,6 +449,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | GO-LIVE | Owner go-live runbook and checklist (docs only) | merged (f655cac) |
 | PAY-TIMESHEETS | Owner-only pay in timesheets, payroll CSV and pay-field writes; payroll week card | merged (a990d27) |
 | JOB-COST-PRIVACY | Owner-only job labor dollars (server-only jobLaborCosts, finance board, job-costing and money API) | merged (d7b8fe1) |
+| MCP-CURSORS | Keyset cursors for MCP Postgres CRM reads (flag off) | merged (8bd7af1) |
 
 ## Next
 
