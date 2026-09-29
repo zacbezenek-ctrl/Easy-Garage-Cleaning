@@ -128,7 +128,30 @@ function financeState(job,legacy,today){
   const invoice=balance>0&&dueDate&&dueDate<today&&!['paid','void','superseded'].includes(base)?'overdue':base;
   return{...legacy,total:money.totalCents/100,paid,verifiedPaid:verified?paid:0,pendingPaid:verified?0:paid,balance,invoice,approvedChanges:money.approvedChangeCents/100,unbilledChange,moneyReview:false};
 }
+// The finance tile excludes credit from the existing verified collection figure;
+// paid/balance and the served mode's tip treatment stay unchanged. A redemption may live on the account's
+// root job, so payment.giftCreditApplied is the authoritative total.
+function verifiedCashCents(job,finance){
+  if(!plain(job)||!plain(finance))return null;
+  const payment=plain(job.payment)?job.payment:{};
+  if(payment.verified!==true)return 0;
+  const applied=cents(finance.verifiedPaid),raw=payment.giftCreditApplied;
+  const creditAmount=value=>typeof value==='number'||typeof value==='string'?cents(value):null;
+  const credit=raw===undefined||raw===null?0:creditAmount(raw);
+  if(applied===null||credit===null||credit>applied)return null;
+  const method=String(payment.method||'').toLowerCase();
+  if(credit===0&&applied>0&&['gift_credit','mixed_with_gift_credit'].includes(method))return null;
+  let itemized=0;
+  for(const redemption of Array.isArray(job.giftWallet?.redemptions)?job.giftWallet.redemptions:[]){
+    if(!plain(redemption)||redemption.jobId!==job.id)continue;
+    const amount=creditAmount(redemption.amount);
+    if(amount===null)return null;
+    itemized+=amount;
+    if(itemized>credit)return null;
+  }
+  return applied-credit;
+}
 function configure(flags){S.enabled=flags?.unifiedTotals===true;try{sessionStorage.setItem(KEY,String(S.enabled));}catch{}}
 window.addEventListener?.('egc:signout',()=>{S.enabled=false;try{sessionStorage.removeItem(KEY);}catch{}});
-window.EGCMoneyTotals={configure,enabled:()=>S.enabled,totals,financeState};
+window.EGCMoneyTotals={configure,enabled:()=>S.enabled,totals,financeState,verifiedCashCents};
 })();
