@@ -21,6 +21,14 @@ const failure=(code,status=409)=>Object.assign(new Error(code),{status});
 const canonical=v=>Array.isArray(v)?`[${v.map(canonical).join(',')}]`:v&&typeof v==='object'?`{${Object.entries(v).sort(([a],[b])=>a.localeCompare(b)).map(([k,x])=>`${JSON.stringify(k)}:${canonical(x)}`).join(',')}}`:JSON.stringify(v);
 const digest=async v=>[...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(canonical(v))))].map(x=>x.toString(16).padStart(2,'0')).join('');
 const scheduleState=visit=>({date:visit.date,...(visit.endDate&&visit.endDate!==visit.date?{endDate:visit.endDate}:{}),time:visit.time,endTime:visit.endTime,status:visit.pipelineStatus||visit.status,title:visit.title||null,address:visit.address||null,assignedTo:visit.assignedTo||null});
+/** The visit's own sync key after a bridge schedule change: fresh per change, but minted
+ * here so it never equals the caller's requestId. MCP egc.schedule_visit reuses that
+ * requestId for its own schedule.sync_provider (automations off unless asked), while the
+ * page's syncJobRecord sends this key with automations on; the appointment ledger never
+ * takes two payloads under one key. The schedule-sync mirror appends ':mirror'. */
+export const scheduleMutateSyncKey=requestId=>`schedule-mutate:${requestId}`;
+/** A fresh sync key for a visit whose provider appointment drifted from the synced Hub schedule. */
+export const scheduleDriftSyncKey=operationId=>`schedule-drift:${operationId}`;
 function fromDoc(doc){return{...decodeFirestoreFields(doc.fields||{}),id:String(doc.name||'').split('/').pop(),revision:doc.updateTime};}
 export function schedulingStorage(env,fetcher=firestoreFetch){return{
   resources:()=>dispatchStorage(env,fetcher).resources(),
@@ -73,7 +81,10 @@ export async function linkScheduledCustomer(store,actor,input,now=new Date().toI
   if(!project)writes.push({collection:'projects',id:projectId,patch:{id:projectId,customerId:id,sourceRecordId:root.id,sourceWalkthroughId:root.type==='walkthrough'?root.id:null,createdAt:now,updatedAt:now,authority:'employee_hub'}});
   if(!customer)writes.push({collection:'customers',id,patch:{id,name:contact.name||[contact.firstName,contact.lastName].filter(Boolean).join(' ')||visit.customer||'',phone:contact.phone||'',email:contact.email||'',...customerIdentityFields(contact),address:visit.address||contact.address1||'',highlevelContactId:contact.id,createdAt:now,updatedAt:now,source:'verified_provider_contact'}});
   else if(!customer.highlevelContactId)writes.push({collection:'customers',id,revision:customer.revision,patch:{highlevelContactId:contact.id,...customerIdentityFields(customer),updatedAt:now}});
-  try{await store.commit(writes);}catch(error){const latest=await store.read('jobs',visit.id).catch(()=>null);if(!latest||latest.customerId!==id||latest.highlevelContactId!==contact.id)throw error;}
+  // An already exact link is not rewritten: repeated provider syncs must not churn the
+  // visit revision that the schedule-sync queue guards its failure backoff with.
+  const linked=writes.length===1&&visit.customerId===id&&visit.projectId===projectId&&visit.highlevelContactId===contact.id&&visit.providerSyncOwner==='operations';
+  if(!linked)try{await store.commit(writes);}catch(error){const latest=await store.read('jobs',visit.id).catch(()=>null);if(!latest||latest.customerId!==id||latest.highlevelContactId!==contact.id)throw error;}
   return resolveScheduledVisit(store,visit.id);
 }
 
@@ -124,7 +135,7 @@ export async function mutateScheduledVisit(store,actor,input,now=new Date().toIS
   if(current?.assignedCrew?.length&&changes.assignedTo!==undefined&&changes.assignedTo!==current.assignedTo)throw failure('schedule_assignment_requires_dispatch');
   const kind=visitKind(current?.type)||input.kind;if(!['walkthrough','job'].includes(kind))throw failure('schedule_visit_kind_required',400);
   const patch={...changes,id,type:current?.type||kind,customerId:customer.id,customer:current?.customer||customer.name||'',
-    highlevelContactId:current?.highlevelContactId||customer.highlevelContactId||'',scheduleSource:'egc_hub',providerSyncOwner:'operations',syncStatus:'pending',updatedAt:now};
+    highlevelContactId:current?.highlevelContactId||customer.highlevelContactId||'',scheduleSource:'egc_hub',providerSyncOwner:'operations',syncStatus:'pending',syncIdempotencyKey:scheduleMutateSyncKey(input.requestId),updatedAt:now};
   if(input.mode==='create')Object.assign(patch,{bookingKey,status:'scheduled',pipelineStatus:'scheduled',createdAt:now,createdBy:actor.id,phone:customer.phone||'',email:customer.email||'',address:changes.address||customer.address||'',serviceType:kind==='walkthrough'?'Free garage walkthrough':'Customer job',
     bookingChannel:actor.kind==='integration'?'mcp':null,channelSelfReported:null,bookedBy:actor.id,visitPurpose:defaultVisitPurpose(kind),crmLinkReason:null});
   // Cancelling an already cancelled visit keeps the original cancellation's time, actor and reason facts.
@@ -208,10 +219,31 @@ export async function bindScheduledProvider(store,actor,input,now=new Date().toI
   const providerStatus=({active:'confirmed',canceled:'cancelled',completed:'showed',no_show:'noshow','no-show':'noshow'})[rawStatus]||rawStatus;
   const state=String(identity.status).toLowerCase();
   const expectedStatus=['cancelled','canceled'].includes(state)?'cancelled':['completed','paid','invoiced','closed','review_requested'].includes(state)?'showed':['noshow','no_show','no-show'].includes(state)?'noshow':'confirmed';
-  if(!identity.startTime||!identity.endTimeInstant||Date.parse(event.startTime)!==Date.parse(identity.startTime)||Date.parse(event.endTime)!==Date.parse(identity.endTimeInstant)||providerStatus!==expectedStatus)throw failure('schedule_provider_state_conflict');
-  if(receipt)return {ok:true,authority:'employee_hub',visit:identity,replayed:true};
-  if(current.revision!==input.expectedRevision)throw failure('schedule_revision_conflict');
+  if(!identity.startTime||!identity.endTimeInstant||Date.parse(event.startTime)!==Date.parse(identity.startTime)||Date.parse(event.endTime)!==Date.parse(identity.endTimeInstant)||providerStatus!==expectedStatus){
+    // A verified provider event that disagrees with a Hub already synced to this very appointment
+    // means a sync that resolved an older schedule wrote after a newer change was mirrored: the
+    // provider is stale. Re-queue the visit under a fresh drift key (a ledger replay of an earlier
+    // key would vouch for the stale event again) so the next schedule-sync tick or page retry
+    // re-mirrors the Hub schedule. The bind itself is still refused. A stale write that binds while the
+    // visit is still pending cannot be told from an ordinary refusal here; the sync that binds after it
+    // reads the appointment back (egc-platform/apps/api/src/scheduling.ts, with EGC_SCHEDULE_SYNC_WORKER)
+    // and re-binds the event it found, which re-queues the now synced visit through this same rule.
+    if(!receipt&&current.syncStatus==='synced'&&identity.highlevelAppointmentId&&event.id===identity.highlevelAppointmentId){
+      const patch={syncStatus:'pending',syncIdempotencyKey:scheduleDriftSyncKey(input.operationId),syncError:'schedule_provider_drift',syncNextRetryAt:'',syncDriftAt:now,updatedAt:now};
+      // A concurrent change re-queues or re-mirrors the visit on its own.
+      await store.commit([{collection:'jobs',id:current.id,revision:current.revision,patch}]).catch(()=>{});
+    }
+    throw failure('schedule_provider_state_conflict');
+  }
   const patch={highlevelAppointmentId:event.id,highlevelCalendarId:event.calendarId||'',providerAppointmentStatus:providerStatus,syncStatus:'synced',syncedAt:now,updatedAt:now};
+  if(receipt){
+    // A replayed operation proves the same verified provider state. A later unconditional
+    // page write (syncStatus 'error' under the same key) is healed here, never left to loop.
+    if(current.syncStatus==='synced'&&current.highlevelAppointmentId===event.id)return {ok:true,authority:'employee_hub',visit:identity,replayed:true};
+    try{await store.commit([{collection:'jobs',id:current.id,revision:current.revision,patch:{...patch,syncError:'',syncNextRetryAt:''}}]);}catch(error){const latest=await store.read('jobs',current.id).catch(()=>null);if(latest?.syncStatus!=='synced'||latest.highlevelAppointmentId!==event.id)throw error;}
+    return {...await resolveScheduledVisit(store,current.id),replayed:true};
+  }
+  if(current.revision!==input.expectedRevision)throw failure('schedule_revision_conflict');
   try{await store.commit([{collection:'jobs',id:current.id,revision:current.revision,patch},{collection:'jobs',id:receiptId,patch:{recordType:'schedule_provider_receipt',portalVisitId:current.id,providerAppointmentId:event.id,operationId:input.operationId,actorId:actor.id,createdAt:now}}]);}catch(error){const recovered=await store.read('jobs',receiptId).catch(()=>null);if(!recovered||recovered.providerAppointmentId!==event.id)throw error;}
   return {...await resolveScheduledVisit(store,current.id),providerSync:'verified'};
 }

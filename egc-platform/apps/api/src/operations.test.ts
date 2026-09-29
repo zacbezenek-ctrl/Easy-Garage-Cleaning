@@ -23,6 +23,21 @@ describe("operations HTTP boundary",()=>{
  });
  it("wrong-key and stale requests never execute",async()=>{const{a,execute}=await app();const c=claim();c.iat-=120;for(const token of [signRequest(c,key),signRequest(claim(),key+'wrong')]){const r=await a.inject({method:"POST",url:"/operations/rpc",payload:{envelope:token}});expect(r.statusCode).toBe(401);}expect(execute).not.toHaveBeenCalled();});
  it("known conflicts preserve conflict status and unknown SQL errors are redacted",async()=>{const execute=vi.fn(async()=>{throw new OperationsError("task_revision_conflict",409,{currentRevision:4});});const{a}=await app(execute);const r=await a.inject({method:"POST",url:"/operations/rpc",payload:{envelope:signRequest(claim(),key)}});expect(r.statusCode).toBe(409);expect(r.json().currentRevision).toBe(4);execute.mockImplementation(async()=>{throw new Error("postgres://private-password@db customer PII");});const failure=await a.inject({method:"POST",url:"/operations/rpc",payload:{envelope:signRequest(claim(),key)}});expect(failure.statusCode).toBe(503);expect(failure.body).not.toContain('private-password');});
+ it("never lets a signed envelope reach the in-process schedule-sync queue commands",async()=>{
+  const mcpKey="isolated-mcp-signing-key-only-012345678901234567890";
+  const{a,execute}=await app(undefined,{...env,EGC_OPERATIONS_MCP_SIGNING_SECRET:mcpKey});
+  const worker={id:"schedule-sync-worker",kind:"integration",role:"integration",workspace:"egc"} as const;
+  const bodies=[{command:"schedule.sync_due",limit:25},{command:"schedule.sync_failed",requestId:randomUUID(),portalVisitId:"visit-a",expectedRevision:"r1",syncRequestId:"key:mirror",code:"schedule_provider_sync_unavailable"}];
+  for(const body of bodies)for(const [iss,secret] of [["portal",key],["mcp",mcpKey]] as const){
+   const signed={...claim(),iss,actor:worker,request:{requestId:randomUUID(),body}} as SignedClaims;
+   const r=await a.inject({method:"POST",url:"/operations/rpc",payload:{envelope:signRequest(signed,secret)}});
+   expect([r.statusCode,r.json()],`${iss} ${body.command}`).toEqual([403,{error:"schedule_sync_queue_internal_only"}]);
+  }
+  expect(execute).not.toHaveBeenCalled();
+  // Other commands from the same issuers still reach the service.
+  const status=await a.inject({method:"POST",url:"/operations/rpc",payload:{envelope:signRequest({...claim(),iss:"mcp",actor:worker},mcpKey)}});
+  expect(status.statusCode).toBe(200);
+ });
  it("bounds body size and has no GET side effects",async()=>{const{a,execute}=await app();expect((await a.inject({method:"POST",url:"/operations/rpc",payload:{envelope:"x".repeat(220001)}})).statusCode).toBe(413);expect((await a.inject({method:"GET",url:"/operations/rpc"})).statusCode).toBe(404);expect(execute).not.toHaveBeenCalled();});
 });
 describe("portal adapter never substitutes provider records",()=>{

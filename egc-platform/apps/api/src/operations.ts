@@ -10,6 +10,11 @@ import {getCanonicalReport,getCustomerTimeline,getCustomerStateDiagnostics} from
 import {reconcileHubBookings} from './booking-worker.js';
 import {serviceAuthEnabled,signApiServiceRequest,verifyDelegatedClaims,verifyOperationsClaims} from './service-bridge.js';
 import {reconciliationDiagnostic,safeReconciliationCode} from './reconciliation-diagnostics.js';
+import {registerScheduleSyncWorker,type ScheduleSyncExecute} from './schedule-sync-worker.js';
+
+/** Run only by the in-process schedule-sync loop (schedule-sync-worker.ts calls OperationsService.execute
+ * directly). The API does not bind integration actor ids to an issuer, so no signed envelope reaches them. */
+const INTERNAL_ONLY_COMMANDS:ReadonlySet<string>=new Set(["schedule.sync_due","schedule.sync_failed"]);
 
 export function portalAdapter(origin:string,key:string,workspace:string,fetcher:typeof fetch=fetch,env:NodeJS.ProcessEnv=process.env) {
   const url=new URL(origin);
@@ -41,6 +46,7 @@ export async function registerOperationsRoutes(app:FastifyInstance,options:{serv
   let service=options.service;
   let inbound:InboundActionReconciler|undefined;
   let bookingTick:(()=>Promise<unknown>)|undefined;
+  let scheduleSyncExecute:ScheduleSyncExecute|undefined;
   if(!service && env.EGC_OPERATIONS_ENABLED==="true") {
     const workspace=env.EGC_OPERATIONS_WORKSPACE??"egc";
     const bridge=env.EGC_PORTAL_ORIGIN&&(env.EGC_OPERATIONS_PORTAL_SIGNING_SECRET||serviceAuthEnabled(env))?portalAdapter(env.EGC_PORTAL_ORIGIN,env.EGC_OPERATIONS_PORTAL_SIGNING_SECRET??'',workspace,fetch,env):null;
@@ -53,15 +59,19 @@ export async function registerOperationsRoutes(app:FastifyInstance,options:{serv
       return getCustomerStateDiagnostics();
     },...(bridge?{resolvePortalJob:bridge.resolve,resolveOwner:bridge.owner,portalRead:bridge.read,syncSchedule:(actor,command)=>syncPortalSchedule(actor,command,bridge.read,{env}),ensureProviderNote:(actor,command)=>ensureProviderNote(actor,command,bridge.read,{service:service!})}:{})});
     if(bridge)bookingTick=()=>reconcileHubBookings(bridge.read,env);
+    if(bridge){const operations=service;scheduleSyncExecute=(actor,body,requestId)=>operations.execute(actor,body,requestId);}
     if(bridge){const actor:Actor={id:"inbound-response-reconciler",kind:"integration",role:"integration",workspace};inbound=new InboundActionReconciler(getDb(),service,async()=>await bridge.read(actor,{command:"portal.rules"}) as unknown as InboundPolicy,workspace);}
   }
   if(bookingTick){let running=false;const mark=async(key:string,value?:string)=>{const now=new Date(),cursor=value??now.toISOString();await getDb().insert(schema.syncCursors).values({key,cursor}).onConflictDoUpdate({target:schema.syncCursors.key,set:{cursor,updatedAt:now}});};const tick=async()=>{if(running)return;running=true;try{await mark('customer_state:last_booking_attempt');await bookingTick!();await mark('customer_state:last_booking_success');}catch(error){const failure=reconciliationDiagnostic(error);await mark('customer_state:last_booking_failure').catch(()=>{});await mark('customer_state:last_booking_error',JSON.stringify({at:new Date().toISOString(),...failure})).catch(()=>{});app.log.warn({code:'booking_reconciliation_unavailable',...failure},'Hub booking reconciliation needs attention');}finally{running=false;}};const timer=setInterval(()=>void tick(),5*60000);timer.unref();app.addHook('onReady',async()=>{void tick();});app.addHook('onClose',async()=>{clearInterval(timer);});}
+  // Server-driven schedule mirror queue (P1-DS-02): off unless EGC_SCHEDULE_SYNC_WORKER=true; needs the Hub bridge.
+  registerScheduleSyncWorker(app,{env,execute:scheduleSyncExecute,record:async(key,cursor)=>getDb().insert(schema.syncCursors).values({key,cursor}).onConflictDoUpdate({target:schema.syncCursors.key,set:{cursor,updatedAt:new Date()}})});
   app.post("/operations/rpc",{bodyLimit:220000},async(request,reply)=>{
     reply.header("Cache-Control","no-store");
     if(env.EGC_OPERATIONS_ENABLED!=="true"||!service)return reply.code(503).send({error:"operations_not_enabled"});
     try {
       const body=request.body as {envelope?:unknown}|null;
       const claims=await verifyOperationsClaims(body?.envelope,env);
+      if(INTERNAL_ONLY_COMMANDS.has(claims.request.body.command))throw new OperationsError("schedule_sync_queue_internal_only",403);
       // A customer send is confirmed in the Hub only: whatever actor another issuer (the MCP)
       // signs, it never reaches task.send.
       if(claims.request.body.command==="task.send"&&claims.iss!=="portal"&&claims.iss!==SERVICE_ORIGINS.hub)throw new OperationsError("human_send_confirmation_required",403);

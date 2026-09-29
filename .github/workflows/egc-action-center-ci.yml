@@ -88,6 +88,7 @@ jobs:
           node --test apps/mcp/test/oauth-postgres.check.mjs
           pnpm --filter @egc/mcp test:crm-reads:postgres
           node --test apps/api/test/scheduling-postgres.check.mjs
+          node --test apps/api/test/schedule-sync-postgres.check.mjs
           node --test apps/api/test/service-auth-postgres.check.mjs
         working-directory: egc-platform
       - name: Durable recording intake, retries and authoritative review

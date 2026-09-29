@@ -5,14 +5,16 @@ import { employeeAccountsConfigured } from '../_lib/employee-accounts.js';
 import { gustoConfiguration } from '../_lib/gusto-client.js';
 import { moneyApiEnabled } from '../_lib/money-service.js';
 import { serverMessagingEnabled } from '../_lib/messaging-settings.js';
+import { serverScheduleSyncActive } from '../_lib/schedule-sync-queue.js';
 import { firebaseRevocations, firebaseRevocationStatus, reconcilesStaffRoster } from '../_lib/firebase-revocation.js';
 
 /** Returns configuration readiness only. Secret values never leave the server.
  * Business users also get the Firebase session revocation state (a slow read
  * answers 'unavailable' after 3 s); reading it retries pending revocations
  * and, on the production host only, reconciles removed or changed staff after
- * the response (context.waitUntil). */
-export function integrationStatusHandlers({session=getHubSession,revocations=firebaseRevocations,now=()=>new Date()}={}){
+ * the response (context.waitUntil). With EGC_SCHEDULE_SYNC_WORKER on, it also
+ * reads the schedule-sync worker's last check-in (3 s cap). */
+export function integrationStatusHandlers({session=getHubSession,revocations=firebaseRevocations,scheduleSync=serverScheduleSyncActive,now=()=>new Date()}={}){
   return {async get(context){
   const {request,env}=context;
   const viewer=await session(request,env);
@@ -36,7 +38,11 @@ export function integrationStatusHandlers({session=getHubSession,revocations=fir
     automations:all('WEBSITE_LEAD_HOOK_URL','QUOTE_FOLLOWUP_WEBHOOK_URL','BOOKING_WEBHOOK_URL','REVIEW_WEBHOOK_URL','META_SIGNAL_WEBHOOK_URL'),
     // True once the signed messaging cron owns reminders and portal-invitation
     // retries; the Hub then stops triggering them from a manager's page load.
-    serverMessaging:serverMessagingEnabled(env)
+    serverMessaging:serverMessagingEnabled(env),
+    // True while EGC_SCHEDULE_SYNC_WORKER is on AND the platform schedule-sync worker
+    // checked in recently; page loads then stop auto-retrying the operations visits it
+    // mirrors. Off, silent or unreadable: false, and page loads retry as before.
+    serverScheduleSync:await scheduleSync(env,{now:now()})
   };
   if(hasBusinessAccess(viewer)){
     const defer=typeof context.waitUntil==='function'?work=>context.waitUntil(work):null;

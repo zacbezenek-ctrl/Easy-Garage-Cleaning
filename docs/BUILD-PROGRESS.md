@@ -334,6 +334,11 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   2026-09-28.3); a ledger failure is saved as ledgerError and never blocks the membership. Member visits count against a
   membership with `GARAGE_GUARD_VISIT_TRACKING_ENABLED` (off); GET/POST /api/garage-guard-members lists members and applies,
   links or reconciles visits. Gaps: pre-FUN-20 members stay unknown until a renewal; no UI screen (FUN-26).
+- **SYNC-QUEUE** Server-driven HighLevel calendar mirror (P1-DS-02): the Hub answers schedule.sync_due / sync_failed for
+  the `schedule-sync-worker` principal only, and an egc-api loop (every 2 min, automations off, ':mirror' keys) runs
+  schedule.sync_provider for due operations-owned visits with backoff; page loads stop auto-retrying those visits while
+  the worker has checked in. Both sides gated by `EGC_SCHEDULE_SYNC_WORKER` (off). Documented flag-off change: the page's
+  synced write is fenced so a drift re-queue wins. Gap: deploy the jobs(providerSyncOwner, syncStatus) index first.
 
 ## In progress
 
@@ -412,6 +417,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | B2B-HARDEN | B2B isolation hardening: stored-account save guard, receipt/quota TTL, scope export, business_* emulator denies | merged (a1c706f) |
 | FUN-37-FIX | FUN-37 follow-up: legacy rework case, backfill source ids, cursor skew, authz matrix and deterministic test ids | merged (0a00c28) |
 | FUN-20 | Garage Guard membership ledger: amounts, billing periods, churn, member visits and deferred revenue (flags off) | merged (3390387) |
+| SYNC-QUEUE | Server-driven HighLevel schedule mirror queue (egc-api loop, flag off) | merged (6185062) |
 
 ## Next
 

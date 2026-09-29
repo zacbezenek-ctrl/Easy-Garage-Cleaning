@@ -9,9 +9,10 @@ import {followupPolicyEnabled,followupSettingsStorage,readFollowupPolicy} from '
 import {schedulingStorage,resolveScheduledVisit,mutateScheduledVisit,bindScheduledProvider,linkScheduledCustomer} from '../_lib/operations-scheduling.js';
 import {adoptionStorage,adoptScheduledVisit} from '../_lib/operations-adoption.js';
 import {prepareBridgeCommand} from '../_lib/operations-command-policy.js';
+import {runScheduleSyncCommand,scheduleSyncStorage} from '../_lib/schedule-sync-queue.js';
 const reply=(status,body)=>new Response(JSON.stringify(body),{status,headers:{'Content-Type':'application/json','Cache-Control':'no-store'}});
 // SEC-04: every legacy command this endpoint runs; each is authorized by its shared policy before dispatch.
-export const PORTAL_COMMANDS=Object.freeze(['schedule.adopt','portal.note.add','portal.job.edit','portal.project.ensure','schedule.link_customer','schedule.resolve','schedule.mutate','schedule.bind_provider','calendar','portal.members','portal.job','portal.evidence','portal.revenue','portal.rules']);
+export const PORTAL_COMMANDS=Object.freeze(['schedule.adopt','portal.note.add','portal.job.edit','portal.project.ensure','schedule.link_customer','schedule.resolve','schedule.mutate','schedule.bind_provider','calendar','portal.members','portal.job','portal.evidence','portal.revenue','portal.rules','schedule.sync_due','schedule.sync_failed']);
 export async function onRequestPost({request,env}) {
   if(!operationsEnabled(env))return reply(503,{error:'operations_not_enabled'});
   try {
@@ -20,6 +21,7 @@ export async function onRequestPost({request,env}) {
     if(c.actor.workspace!==(env.EGC_OPERATIONS_WORKSPACE||'egc'))return reply(403,{error:'workspace_forbidden'});
     const bridge=await prepareBridgeCommand(env,c.actor,c.request.body,{commands:PORTAL_COMMANDS,hub:true,unknown:'read_only_portal_command_required'}),command=bridge.command,now=bridge.now;
     if(isHubCommand(command))return reply(200,await runHubCommand(env,c.actor,command));
+    if(['schedule.sync_due','schedule.sync_failed'].includes(command.command))return reply(200,await runScheduleSyncCommand(env,c.actor,command,{store:bridge.store(scheduleSyncStorage(env)),now:new Date(now)}));
     if(command.command==='schedule.adopt')return reply(200,await adoptScheduledVisit(bridge.store(adoptionStorage(env)),c.actor,command,now));
     if(['portal.note.add','portal.job.edit','portal.project.ensure'].includes(command.command))return reply(200,await mutatePortalRecord(bridge.store(schedulingStorage(env)),c.actor,command,now));
     if(command.command==='schedule.link_customer')return reply(200,await linkScheduledCustomer(bridge.store(schedulingStorage(env)),c.actor,command,now));
