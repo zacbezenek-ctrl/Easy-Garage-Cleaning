@@ -20,7 +20,11 @@ function decode(document,collection,id) {
   if (!path||path.includes('/')||id&&path!==id||typeof document.updateTime!=='string'||!document.updateTime||document.fields!==undefined&&(!document.fields||typeof document.fields!=='object'||Array.isArray(document.fields))) throw failure('dispatch_storage_incomplete','Dispatch received a record without a verifiable identity or revision. Refresh before changing work.');
   return {...decodeFirestoreFields(document.fields || {}),id:path,revision:document.updateTime};
 }
-const JOB_FIELDS = ['type','recordType','date','time','endDate','endTime','customerId','customerAccountOwnerJobId','customerMemoryInheritedFrom','propertyId','customer','phone','address','title','serviceType','status','pipelineStatus','assignedCrew','assignedTo','crewLead','crewId','vehicleId','crewNeeded','requiredCrewSize','travelBufferMinutes','jobInstructions','operationalScope.text','scope','scopeOfWork','accessInstructions','customerInstructions','opsNotes','requiredEquipment','materials','syncStatus','highlevelAppointmentId','highlevelContactId','sourceWalkthroughId','sourceTemplateJobId','recurrence','recurrenceParentId','reminderDays','notify','shiftPickupEnabled','openShift','notes','durationMin','estimatedDurationMin','createdAt','updatedAt','completedAt','cancelledAt','startedAt','employee','employeeId','allDay','reason','startAt','endAt','fieldExecution.activity','fieldExecution.activityReason','fieldExecution.activityAt','fieldExecution.activityBy','fieldExecution.attention','fieldExecution.jobTime','fieldLastActionAt','fieldCompletionSync.status','fieldCompletionSync.message','fieldCompletionSync.attemptedAt','fieldCompletionSync.syncedAt','arrivalWindowStart','arrivalWindowEnd','arrivalWindow','assignmentSegments'];
+const JOB_FIELDS = ['type','recordType','date','time','endDate','endTime','customerId','customerAccountOwnerJobId','customerMemoryInheritedFrom','propertyId','customer','phone','address','title','serviceType','status','pipelineStatus','assignedCrew','assignedTo','crewLead','crewId','vehicleId','crewNeeded','requiredCrewSize','travelBufferMinutes','jobInstructions','operationalScope.text','scope','scopeOfWork','accessInstructions','customerInstructions','opsNotes','requiredEquipment','materials','syncStatus','highlevelAppointmentId','highlevelContactId','sourceWalkthroughId','sourceTemplateJobId','recurrence','recurrenceParentId','reminderDays','notify','shiftPickupEnabled','openShift','notes','durationMin','estimatedDurationMin','createdAt','updatedAt','completedAt','cancelledAt','startedAt','employee','employeeId','allDay','reason','startAt','endAt','fieldExecution.activity','fieldExecution.activityReason','fieldExecution.activityAt','fieldExecution.activityBy','fieldExecution.attention','fieldExecution.jobTime','fieldLastActionAt','fieldCompletionSync.status','fieldCompletionSync.message','fieldCompletionSync.attemptedAt','fieldCompletionSync.syncedAt','arrivalWindowStart','arrivalWindowEnd','arrivalWindow','assignmentSegments',
+  // Server-side only (dispatch-duration.js). The quote lines themselves are
+  // large and carry money, so no shared scan loads them: quoteLines() reads
+  // them for the sold jobs a dispatch list projects.
+  'estimate.status','durationOverride.minutes','durationOverride.reason','durationOverride.crewSize','durationOverride.source','logistics.crew_size'];
 
 // Roles come from stored staff roles (configuration or the encrypted account), else the
 // configured role or namedStaffRole(). With EGC_STAFF_DIRECTORY_ENABLED the rows also
@@ -126,6 +130,19 @@ export function dispatchStorage(env, fetcher = firestoreFetch) {
       const rows = await response.json();
       if (!Array.isArray(rows)) throw failure('dispatch_storage_incomplete', 'Dispatch returned incomplete records. Retry.');
       return rows.filter(row => row?.found).map(row => decode(row.found,collection));
+    },
+    // Map id -> {id,revision,estimate:{lineItems}} for the jobs found.
+    async quoteLines(ids) {
+      const found = new Map(), chunks = [];
+      for (let index = 0; index < ids.length; index += 100) chunks.push(ids.slice(index, index + 100));
+      await Promise.all(chunks.map(async chunk => {
+        const response = await send(`${BASE}:batchGet`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ documents: chunk.map(id => `${ROOT}/jobs/${id}`), mask: { fieldPaths: ['estimate.lineItems'] } }) });
+        if (!response.ok) throw failure('dispatch_storage_unavailable', 'The quote lines could not be loaded. Retry.');
+        const rows = await response.json();
+        if (!Array.isArray(rows)) throw failure('dispatch_storage_incomplete', 'Dispatch returned incomplete quote lines. Retry.');
+        for (const row of rows) if (row?.found) { const job = decode(row.found, 'jobs'); found.set(job.id, job); }
+      }));
+      return found;
     },
     async commit(writes) {
       let response,transaction;

@@ -390,6 +390,11 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   price-check age, and a local draft (verify, edit, add) published as a new catalog version after a field-by-field diff.
   Saves retry the identical request after a lost reply and rebase three ways on conflicts; unsent drafts are cleared at
   sign-out. Needs `CATALOG_QUOTES_ENABLED`. Gap: publishing exceeds the Workers Free CPU limit (P2-03 carry-over).
+- **DISPATCH-DURATION** Suggested job length in dispatch (functions/_lib/dispatch-duration.js over quote-duration.js):
+  the sold quote's selected lines' person-minutes divided by the crew, rounded up to 15 minutes; a recorded walkthrough or
+  dispatch length for the same crew wins. The DTO gains only suggestedDurationMin/durationSource/durationCoverage/
+  durationCapped (no line or amount); quote lines are read masked for the sold jobs a list returns. Dispatch accepts
+  estimatedDurationMin (15..10080, audited) and prefills Expected duration and "Find a time". No flag.
 
 ## In progress
 
@@ -480,6 +485,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | FUN-30 | GHL/Zapier automation registry, drift check and FUN-11/12/35 gates (read-only) | merged (cfd58b6) |
 | CREW-PROFILE | Crew public profiles (approved headshots, portal crew card) and lead-only completion (flags off) | merged (6f141a7) |
 | CATALOG-ADMIN | Owner catalog and pricing screen (settings review/release, items, draft publish) | merged (b46c461) |
+| DISPATCH-DURATION | Suggested job duration from the sold quote lines in dispatch | merged (5cbbff0) |
 
 ## Next
 

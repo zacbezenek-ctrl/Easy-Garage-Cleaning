@@ -69,6 +69,14 @@
  * requiredEquipment:string[], materials:[{id,name,quantity:number}].
  * Also recurrence:'none'|'weekly'|'biweekly'|'monthly'|'quarterly',
  * reminderDays:integer1..30,notify:boolean,shiftPickupEnabled:boolean,notes:string.
+ * estimatedDurationMin:integer 15..10080|null is the expected on-site length (it
+ * may span days); it never moves the saved schedule and blocks do not accept it.
+ * Saving a value also records durationOverride {minutes,reason:'Set in dispatch',
+ * source:'dispatch',crewSize,recordedBy,recordedAt} for the crew the job is then
+ * planned for, so it outranks the quote lines for that crew (the suggestion
+ * below reports it as estimated_duration). null clears both fields, and the
+ * suggestion falls back to the quote lines, the schedule span or the default.
+ * Crew and open-shift views treat a length over 1440 as multi-day, not one shift.
  * Cadence and notification preferences are stored metadata, not a guarantee that
  * another visit or message has been created. Provider sync reports separately.
  * Server-owned repeats live in /api/recurring-plans (recurring-plan-service.js):
@@ -151,6 +159,24 @@
  * range label such as '9:00 AM – 10:00 AM', '' when none is saved),
  * assignmentSegments (only on segmented jobs): [{id,date,time,endDate,endTime,
  * startAt,endAt,assignedCrew,crewLead,crewId,vehicleId,notes}].
+ * suggestedDurationMin (integer minutes, a multiple of 15, or null when the
+ * saved data cannot be read) and durationSource ('duration_override'|
+ * 'line_items'|'estimated_duration'|'schedule_span'|'default'|null) come from
+ * functions/_lib/dispatch-duration.js (P1-DS-05). A length recorded for the
+ * crew the job is planned for wins: the walkthrough manager's override
+ * (duration_override, judged for logistics.crew_size) or a length saved in
+ * dispatch (estimated_duration). Otherwise the selected lines of a sold
+ * (accepted/approved) quote give person-minutes (durationMinutes, else
+ * split.laborMinutes, x quantity) divided by the crew (crewNeeded) and rounded
+ * up to 15 minutes; without line minutes it falls back to estimatedDurationMin,
+ * the saved schedule span, then 120. durationCoverage is 'complete'|'partial'
+ * for line_items ('partial': some sold lines carry no minutes) and null
+ * otherwise; durationCapped is true when the total was capped at one day. Both
+ * mark an undercount. Masked scans never load quote lines: lists read them only
+ * for the sold jobs they return, and a job whose lines cannot be read or changed
+ * meanwhile gets nulls. No line, amount or price reaches the DTO. The Hub
+ * prefills Expected duration (only when it fits one workday) and the openings
+ * search from it.
  * Date/time invalid or absent is represented as startAt:null.
  * Financial/credential/employee payroll fields are deliberately absent.
  *

@@ -15,7 +15,9 @@ import { included, normalizeLineItems } from './quote-model.js';
  *   1. job.estimatedDurationMin (walkthrough estimate, 15..1440)
  *   2. the saved schedule span (Denver date/time/endDate/endTime)
  *   3. settings.defaultMinutes
- * Every result carries {minutes, source, crewSize, breakdown}.
+ * Every result carries {minutes, source, crewSize, breakdown}. A caller that
+ * already holds scheduleInterval(job) passes it as `interval` so the Denver
+ * conversion is not repeated; the span is only computed when it is used.
  */
 
 export const DURATION_DEFAULTS = Object.freeze({ crewSize: 1, setupMinutes: 0, roundToMinutes: 15, minMinutes: 15, maxMinutes: 1440, defaultMinutes: 120 });
@@ -46,7 +48,7 @@ function finish(rawMinutes, settings) {
   return { minutes, rawMinutes, roundedMinutes: rounded, roundToMinutes: settings.roundToMinutes, clamped: minutes > rounded ? 'min' : minutes < rounded ? 'max' : null };
 }
 
-export function suggestedDurationMinutes(lineItems, { crewSize, setupMinutes, baseMinutes, settings, job } = {}) {
+export function suggestedDurationMinutes(lineItems, { crewSize, setupMinutes, baseMinutes, settings, job, interval } = {}) {
   const config = durationSettings(settings);
   if (crewSize !== undefined && !whole(crewSize, LIMITS.crewSize)) throw fail('invalid_crew_size', 'Crew size must be a whole number from 1 to 20.');
   const setup = setupMinutes ?? baseMinutes ?? config.setupMinutes;
@@ -66,8 +68,8 @@ export function suggestedDurationMinutes(lineItems, { crewSize, setupMinutes, ba
     const crewMinutes = Math.ceil(personMinutes / crew), result = finish(setup + crewMinutes, config);
     return { minutes: result.minutes, source: 'line_items', crewSize: crew, breakdown: { ...result, personMinutes, crewMinutes, setupMinutes: setup, items, unestimated, coverage: unestimated.length ? 'partial' : 'complete' } };
   }
-  const span = job ? scheduleInterval(job) : null;
-  const [source, raw] = whole(job?.estimatedDurationMin, [15, 1440]) ? ['estimated_duration', job.estimatedDurationMin] : span ? ['schedule_span', Math.round((span.end - span.start) / 60000)] : ['default', config.defaultMinutes];
+  const estimated = whole(job?.estimatedDurationMin, [15, 1440]), span = estimated ? null : interval !== undefined ? interval : job ? scheduleInterval(job) : null;
+  const [source, raw] = estimated ? ['estimated_duration', job.estimatedDurationMin] : span ? ['schedule_span', Math.round((span.end - span.start) / 60000)] : ['default', config.defaultMinutes];
   const result = finish(raw, config);
   return { minutes: result.minutes, source, crewSize: crew, breakdown: { ...result, personMinutes: 0, crewMinutes: null, setupMinutes: 0, items, unestimated, coverage: 'fallback' } };
 }

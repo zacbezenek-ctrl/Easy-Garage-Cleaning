@@ -234,6 +234,80 @@ class DispatchBrowserTests(unittest.TestCase):
         self.assertEqual(self.opening_queries[-1]['zip'], ['80525']); self.assertNotIn('address', self.opening_queries[-1])
         place.fill('  200 Synthetic Ave, Loveland, CO 80537 '); self.submit('Check openings'); expect(self.page.get_by_role('button', name='Use this opening', exact=True)).to_be_visible()
         self.assertEqual(self.opening_queries[-1]['address'], ['200 Synthetic Ave, Loveland, CO 80537']); self.assertNotIn('zip', self.opening_queries[-1]); self.assertEqual(self.calls, [])
+    def quoted_backlog(self, **changes):
+        return job(**{'id': 'job-quoted', 'revision': 'quoted-rev-1', 'customer': 'Synthetic Quoted Garage', 'date': '', 'time': '', 'endDate': '', 'endTime': '', 'startAt': None, 'endAt': None, 'status': 'unscheduled',
+                      'assignedCrew': ['crew.one', 'crew.two'], 'crewLead': 'crew.one', 'crewId': None, 'vehicleId': None, 'crewNeeded': 3, 'travelBufferMinutes': 35, 'suggestedDurationMin': 165, 'durationSource': 'line_items', **changes})
+    def test_quote_duration_prefills_unscheduled_work_and_keeps_the_end_with_the_start(self):
+        self.jobs = [job(), self.quoted_backlog()]; self.open(); self.card('Synthetic Quoted Garage').get_by_role('button', name='Edit / assign', exact=True).click()
+        length = self.page.get_by_role('combobox', name='Expected duration', exact=True); end_date = self.page.get_by_label('End date', exact=True); end = self.page.get_by_label('End time', exact=True); start = self.page.get_by_label('Start time', exact=True)
+        expect(length).to_have_value('165'); expect(length.locator('option:checked')).to_have_text('2 hr 45 min · suggested'); expect(end).to_have_value('10:45')
+        self.assertEqual(length.evaluate("el=>document.getElementById(el.getAttribute('aria-describedby')).textContent"), 'Suggested from the sold quote: 2 hr 45 min for a crew of 3.')
+        self.page.get_by_label('Keep unscheduled', exact=True).uncheck(); self.page.get_by_label('Start date', exact=True).fill('2026-09-24'); start.fill('22:30')
+        expect(end_date).to_have_value('2026-09-25'); expect(end).to_have_value('01:15')
+        start.fill('13:00'); expect(end_date).to_have_value('2026-09-24'); expect(end).to_have_value('15:45'); self.assertEqual(self.calls, [])
+        self.submit('Save changes'); self.closed(); write = self.calls[-1]
+        self.assertEqual((write['action'], write['jobId'], write['expectedRevision']), ('schedule.update', 'job-quoted', 'quoted-rev-1'))
+        self.assertEqual([write['changes'][key] for key in ['date', 'time', 'endDate', 'endTime']], ['2026-09-24', '13:00', '2026-09-24', '15:45']); self.assertNotIn('estimatedDurationMin', write['changes'])
+    def test_scheduled_work_keeps_its_end_until_a_length_is_chosen_and_a_hand_edited_end_stops_following(self):
+        self.jobs = [job(suggestedDurationMin=180, durationSource='line_items')]; self.open(); self.card().get_by_role('button', name='Edit / assign', exact=True).click()
+        length = self.page.get_by_role('combobox', name='Expected duration', exact=True); end = self.page.get_by_label('End time', exact=True); start = self.page.get_by_label('Start time', exact=True)
+        expect(length).to_have_value(''); expect(length.locator('option[value="180"]')).to_have_text('3 hours · suggested'); expect(end).to_have_value('10:00')
+        expect(self.page.get_by_role('dialog')).to_contain_text('Suggested from the sold quote: 3 hr for a crew of 2.')
+        length.select_option('180'); expect(end).to_have_value('11:00'); start.fill('09:00'); expect(end).to_have_value('12:00')
+        end.fill('12:30'); expect(length).to_have_value(''); start.fill('09:30'); expect(end).to_have_value('12:30')
+        self.submit('Save changes'); self.closed(); self.assertEqual([self.calls[-1]['changes'][key] for key in ['time', 'endTime']], ['09:30', '12:30'])
+    def test_span_and_default_lengths_are_not_offered_as_suggestions(self):
+        self.jobs = [job(suggestedDurationMin=120, durationSource='schedule_span'), self.quoted_backlog(suggestedDurationMin=120, durationSource='default')]; self.open()
+        for name in [CUSTOMER['name'], 'Synthetic Quoted Garage']:
+            self.card(name).get_by_role('button', name='Edit / assign', exact=True).click(); dialog = self.page.get_by_role('dialog')
+            expect(self.page.get_by_role('combobox', name='Expected duration', exact=True)).to_have_value(''); expect(dialog).not_to_contain_text('suggested'); expect(dialog).not_to_contain_text('Suggested from')
+            expect(self.page.get_by_label('End time', exact=True)).to_have_value('10:00'); self.page.get_by_role('button', name='Back', exact=True).click(); self.closed()
+        expect(self.page.get_by_role('button', name='Find a time for '+CUSTOMER['name'], exact=True)).to_have_count(0)
+    def test_find_a_time_searches_with_the_quote_length_and_books_the_same_unscheduled_job(self):
+        self.jobs = [job(), self.quoted_backlog()]; self.open(); self.page.set_viewport_size({'width': 375, 'height': 812})
+        find = self.page.get_by_role('button', name='Find a time for Synthetic Quoted Garage', exact=True); self.assertGreaterEqual(find.bounding_box()['height'], 44); find.click()
+        dialog = self.page.get_by_role('dialog'); expect(dialog).to_have_attribute('aria-label', 'Find a time for Synthetic Quoted Garage')
+        expect(self.page.get_by_label('Job duration (minutes)', exact=True)).to_have_value('165'); expect(self.page.get_by_label('Travel buffer (minutes)', exact=True)).to_have_value('35')
+        expect(dialog).to_contain_text('Suggested from the sold quote: 2 hr 45 min for a crew of 3.')
+        for name, checked in [('Crew One', True), ('Crew Two', True), ('Lead One', False)]: self.assertEqual(self.page.get_by_label(name, exact=True).is_checked(), checked, name)
+        self.assertLessEqual(self.page.evaluate('document.documentElement.scrollWidth'), 375); self.assertLessEqual(dialog.evaluate('(el)=>el.scrollWidth'), dialog.evaluate('(el)=>el.clientWidth')+1)
+        self.submit('Check openings'); expect(self.page.get_by_role('button', name='Use this opening', exact=True)).to_be_visible(); query = self.opening_queries[-1]
+        self.assertEqual((query['durationMinutes'], query['employeeIds'], query['travelBufferMinutes']), (['165'], ['crew.one,crew.two'], ['35']))
+        self.page.get_by_role('button', name='Use this opening', exact=True).click(); expect(dialog).to_have_attribute('aria-label', 'Edit / assign job')
+        expect(self.page.get_by_label('Keep unscheduled', exact=True)).not_to_be_checked(); expect(self.page.get_by_label('Start date', exact=True)).to_have_value(DAY)
+        expect(self.page.get_by_label('Start time', exact=True)).to_have_value('13:00'); expect(self.page.get_by_label('End time', exact=True)).to_have_value('15:00'); self.assertEqual(self.calls, [])
+        self.submit('Save changes'); self.closed(); write = self.calls[-1]
+        self.assertEqual((write['action'], write['jobId'], write['expectedRevision']), ('schedule.update', 'job-quoted', 'quoted-rev-1'))
+        self.assertEqual([write['changes'][key] for key in ['date', 'time', 'endDate', 'endTime']], [DAY, '13:00', DAY, '15:00']); self.assertEqual(write['changes']['assignedCrew'], ['crew.one', 'crew.two'])
+    def test_a_suggestion_longer_than_a_workday_is_listed_but_never_applied_as_one_overnight_block(self):
+        self.jobs = [job(), self.quoted_backlog(suggestedDurationMin=2010, durationSource='estimated_duration')]; self.open(); self.page.set_viewport_size({'width': 375, 'height': 812})
+        self.page.get_by_role('button', name='Find a time for Synthetic Quoted Garage', exact=True).click(); dialog = self.page.get_by_role('dialog')
+        expect(self.page.get_by_label('Job duration (minutes)', exact=True)).to_have_value('120'); expect(dialog).to_contain_text('Suggested from the saved estimate: 33 hr 30 min. Openings cover one day at a time')
+        self.page.get_by_role('button', name='Back', exact=True).click(); self.closed(); self.card('Synthetic Quoted Garage').get_by_role('button', name='Edit / assign', exact=True).click()
+        length = self.page.get_by_role('combobox', name='Expected duration', exact=True); expect(length).to_have_value(''); expect(length.locator('option[value="2010"]')).to_have_text('33 hr 30 min · suggested')
+        expect(self.page.get_by_label('End date', exact=True)).to_have_value(DAY); expect(self.page.get_by_label('End time', exact=True)).to_have_value('10:00')
+        self.assertEqual(length.evaluate("el=>document.getElementById(el.getAttribute('aria-describedby')).textContent"), 'Suggested from the saved estimate: 33 hr 30 min. That is longer than one workday, so split it across days rather than one overnight block.')
+        self.assertLessEqual(self.page.evaluate('document.documentElement.scrollWidth'), 375); self.assertLessEqual(dialog.evaluate('(el)=>el.scrollWidth'), dialog.evaluate('(el)=>el.clientWidth')+1)
+        out = ROOT/'test-results'; out.mkdir(exist_ok=True); length.scroll_into_view_if_needed(); self.page.screenshot(path=str(out/'dispatch-duration-mobile.png'))
+        self.page.get_by_role('button', name='Back', exact=True).click(); self.closed()
+        self.jobs[1].update({'suggestedDurationMin': 1440, 'durationSource': 'line_items', 'durationCoverage': 'partial', 'durationCapped': True}); self.page.reload(); self.card('Synthetic Quoted Garage').get_by_role('button', name='Edit / assign', exact=True).click()
+        expect(self.page.get_by_role('combobox', name='Expected duration', exact=True)).to_have_value(''); expect(self.page.get_by_label('End time', exact=True)).to_have_value('10:00')
+        expect(self.page.locator('.dp-duration-hint')).to_have_text('Suggested from the sold quote: 24 hr for a crew of 3. Some sold lines have no time estimate, so allow extra time. The lines add up to more than 24 hr, so plan the work across days.')
+    def test_changing_the_crew_size_drops_an_applied_suggestion_until_the_server_recalculates_it(self):
+        self.jobs = [job(), self.quoted_backlog()]; self.open(); self.card('Synthetic Quoted Garage').get_by_role('button', name='Edit / assign', exact=True).click()
+        length = self.page.get_by_role('combobox', name='Expected duration', exact=True); crew = self.page.get_by_label('Required crew size', exact=True); hint = self.page.locator('.dp-duration-hint'); end = self.page.get_by_label('End time', exact=True)
+        expect(length).to_have_value('165'); expect(end).to_have_value('10:45'); expect(hint).to_have_attribute('aria-live', 'polite')
+        crew.fill('4'); expect(length).to_have_value(''); expect(hint).to_have_text('Suggested from the sold quote: 2 hr 45 min for a crew of 3. The crew size changed, so check the end time; the suggestion is recalculated after you save.')
+        crew.fill('3'); expect(hint).to_have_text('Suggested from the sold quote: 2 hr 45 min for a crew of 3.'); expect(length).to_have_value('')
+        self.page.get_by_label('Keep unscheduled', exact=True).uncheck(); self.page.get_by_label('Start time', exact=True).fill('13:00'); expect(end).to_have_value('10:45'); self.assertEqual(self.calls, [])
+    def test_an_opening_is_booked_with_the_buffer_employees_and_lead_it_was_checked_with(self):
+        self.jobs = [job(), self.quoted_backlog()]; self.open(); self.page.get_by_role('button', name='Find a time for Synthetic Quoted Garage', exact=True).click()
+        self.page.get_by_label('Travel buffer (minutes)', exact=True).fill('50'); self.page.get_by_label('Crew One', exact=True).uncheck(); self.submit('Check openings')
+        query = self.opening_queries[-1]; self.assertEqual((query['travelBufferMinutes'], query['employeeIds']), (['50'], ['crew.two']))
+        self.page.get_by_role('button', name='Use this opening', exact=True).click(); expect(self.page.get_by_role('dialog')).to_have_attribute('aria-label', 'Edit / assign job')
+        expect(self.page.get_by_label('Travel buffer (minutes)', exact=True)).to_have_value('50'); expect(self.page.get_by_role('combobox', name='Crew lead', exact=True)).to_have_value('')
+        self.submit('Save changes'); self.closed(); changes = self.calls[-1]['changes']
+        self.assertEqual((changes['travelBufferMinutes'], changes['assignedCrew'], changes['crewLead']), (50, ['crew.two'], None))
     def test_drive_times_show_ordered_legs_without_writes_and_fit_phones(self):
         self.open(); self.page.set_viewport_size({'width': 375, 'height': 812}); self.page.get_by_role('button', name='Drive times', exact=True).click()
         dialog = self.page.get_by_role('dialog'); expect(dialog).to_have_attribute('aria-label', 'Drive times'); expect(dialog).to_contain_text('Crew One'); self.assertEqual(self.travel_queries[-1]['date'], [DAY])

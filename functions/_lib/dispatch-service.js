@@ -10,6 +10,7 @@ import { arrivalWindowPatch, arrivalDefaults } from './dispatch-arrival.js';
 import { legacyBlockedDays, legacyBlockWarning } from './dispatch-legacy-blocks.js';
 import { SEGMENT_HULL_KEYS, SEGMENT_LIMIT, segmented, segmentsInvalid, jobSegments, segmentDays, segmentLockEntries, ownsLockEntry, projectSegments, validateSegments } from './dispatch-segments.js';
 import { bookingInput, bookingPatch, reasonInput, cancelPatch, noShowProblem, visitFunnelWrites, requestKey, eventActor } from './dispatch-funnel.js';
+import { dispatchDurationFields, dispatchDurationOverride, dispatchCrewSize, withQuoteLines, ESTIMATED_DURATION_MIN } from './dispatch-duration.js';
 
 const TERMINAL = new Set(['cancelled','canceled','completed','invoiced','paid','review_requested','closed','noshow','no_show','no-show']);
 const JOB_TYPES = new Set(['job','walkthrough','cleanout','reorg','blocked']);
@@ -88,6 +89,7 @@ export function projectDispatchJob(job, roster = [], now = new Date().toISOStrin
   return { ...output, assignedCrew: roster.length ? legacyMembers(job,roster) : jobCrewNames(job), crewLead: job.crewLead ? resolveMember(job.crewLead,roster,true) || job.crewLead : null, status: state(job), endDate: job.endDate || job.date || '',
     jobInstructions:scopeText(job),
     crewNeeded: job.crewNeeded || job.requiredCrewSize || 1, startAt: interval?.startAt || null, endAt: interval?.endAt || null,
+    ...dispatchDurationFields(job,interval),
     activity:fieldActivity(job),activityReason:job.fieldExecution?.activityReason || '',activityAt:job.fieldExecution?.activityAt || null,
     attention:job.fieldExecution?.attention?.status === 'open' ? {status:'open',reason:job.fieldExecution.attention.reason || '',at:job.fieldExecution.attention.at || null,actorName:job.fieldExecution.attention.actorName || ''} : null,
     completionSync:job.fieldCompletionSync ? {status:job.fieldCompletionSync.status,message:String(job.fieldCompletionSync.message || '').slice(0,600),attemptedAt:job.fieldCompletionSync.attemptedAt || null,syncedAt:job.fieldCompletionSync.syncedAt || null} : null,
@@ -244,14 +246,14 @@ export async function dispatchOverview(store, session, query = {}, now = new Dat
   const includeUnscheduled = query.includeUnscheduled === true || query.includeUnscheduled === 'true';
   const selected = jobs.filter(visibleJob).filter(job => !job.date ? includeUnscheduled : !validDate(job.date) || job.endDate && (!validDate(job.endDate) || job.endDate < job.date) || job.date < endDate && (job.endDate || job.date) >= startDate);
   selected.sort((a,b) => String(a.date || '9999').localeCompare(String(b.date || '9999')) || String(a.time || '').localeCompare(String(b.time || '')) || a.id.localeCompare(b.id));
-  const inspection=await withTravel(scheduleInspection(jobs,resources,roster),selected,roster,options.travel);
-  return { ok: true, timeZone: DISPATCH_TIME_ZONE, startDate, endDate, jobs: selected.map(job=>projectDispatchJob(job,roster,new Date(now).toISOString())), roster,
+  const [inspection,withLines]=await Promise.all([withTravel(scheduleInspection(jobs,resources,roster),selected,roster,options.travel),withQuoteLines(store,selected)]);
+  return { ok: true, timeZone: DISPATCH_TIME_ZONE, startDate, endDate, jobs: withLines.map(job=>projectDispatchJob(job,roster,new Date(now).toISOString())), roster,
     crews: resources.filter(row => row.recordType === 'crew'), vehicles: resources.filter(row => row.recordType === 'vehicle'),
     availability: resources.filter(row => row.recordType === 'availability').concat(jobs.filter(row => row.type === 'availability' || row.recordType === 'crew_availability').map(row => ({ ...row, employeeId: resolveMember(row.employee,roster,true) || row.employee }))).filter(row => row.date < endDate && (row.endDate || row.date) >= startDate),
     warnings: selected.flatMap(job => jobWarnings(job, jobs, resources, roster,inspection)), coverage: { complete: true, asOf: now.toISOString() }, arrivalDefaults: arrivalDefaults(settings), segments: { enabled: store.segmentsEnabled === true, max: SEGMENT_LIMIT } };
 }
 
-const SCHEDULE_KEYS = ['date','time','endDate','endTime','assignedCrew','crewLead','crewId','vehicleId','crewNeeded','travelBufferMinutes','title','address','serviceType','jobInstructions','accessInstructions','customerInstructions','opsNotes','requiredEquipment','materials','recurrence','reminderDays','notify','shiftPickupEnabled','notes','arrivalWindowStart','arrivalWindowEnd','assignmentSegments'];
+const SCHEDULE_KEYS = ['date','time','endDate','endTime','assignedCrew','crewLead','crewId','vehicleId','crewNeeded','travelBufferMinutes','title','address','serviceType','jobInstructions','accessInstructions','customerInstructions','opsNotes','requiredEquipment','materials','recurrence','reminderDays','notify','shiftPickupEnabled','notes','arrivalWindowStart','arrivalWindowEnd','assignmentSegments','estimatedDurationMin'];
 function schedulePatch(changes, current, resources, roster, now, actor, segmentsOn = false) {
   onlyKeys(changes, SCHEDULE_KEYS);
   const patch = {};
@@ -290,6 +292,11 @@ function schedulePatch(changes, current, resources, roster, now, actor, segments
   }
   if ('crewNeeded' in changes) patch.crewNeeded = integer(changes.crewNeeded,'Crew size',1,20);
   if ('travelBufferMinutes' in changes) patch.travelBufferMinutes = integer(changes.travelBufferMinutes,'Travel time',0,180);
+  if ('estimatedDurationMin' in changes) {
+    // A saved length outranks the quote lines for the crew it was set for; null clears it.
+    const minutes = changes.estimatedDurationMin === null ? null : integer(changes.estimatedDurationMin,'Expected duration (minutes)',ESTIMATED_DURATION_MIN.min,ESTIMATED_DURATION_MIN.max);
+    Object.assign(patch,{estimatedDurationMin:minutes,durationOverride:minutes === null ? null : dispatchDurationOverride(minutes,dispatchCrewSize({...current,...patch}),actor,now)});
+  }
   if ('requiredEquipment' in changes) {
     if (!Array.isArray(changes.requiredEquipment) || changes.requiredEquipment.length > 100) throw fail('dispatch_equipment_invalid','Enter at most 100 pieces of required equipment.');
     patch.requiredEquipment = [...new Set(changes.requiredEquipment.map(value => text(value,'Equipment',200)).filter(Boolean))];
@@ -329,7 +336,7 @@ function conflictCheck(next, jobs, resources, roster,inspection) {
 }
 
 function auditState(job) {
-  return Object.fromEntries(['date','time','endDate','endTime','status','pipelineStatus','assignedCrew','assignedTo','crewId','crewLead','vehicleId','jobInstructions','operationalScope','accessInstructions','customerInstructions','opsNotes','requiredEquipment','materials','crewNeeded','travelBufferMinutes','title','address','serviceType','name','memberIds','leadId','notes','employeeId','allDay','reason','recurrence','reminderDays','notify','shiftPickupEnabled','openShift','sourceTemplateJobId','recurrenceParentId','cancellationReason','arrivalWindowStart','arrivalWindowEnd','arrivalWindow','assignmentSegments','visitPurpose','reworkOfJobId','membershipId','bookingChannel','channelSelfReported','crmLinkReason','scheduleOccurrence','cancellationReasonCode','cancellationInitiatedBy','lateCancel','noShowReasonCode'].filter(key => job?.[key] !== undefined).map(key => [key,job[key]]));
+  return Object.fromEntries(['date','time','endDate','endTime','status','pipelineStatus','assignedCrew','assignedTo','crewId','crewLead','vehicleId','jobInstructions','operationalScope','accessInstructions','customerInstructions','opsNotes','requiredEquipment','materials','crewNeeded','travelBufferMinutes','title','address','serviceType','name','memberIds','leadId','notes','employeeId','allDay','reason','recurrence','reminderDays','notify','shiftPickupEnabled','openShift','sourceTemplateJobId','recurrenceParentId','cancellationReason','arrivalWindowStart','arrivalWindowEnd','arrivalWindow','assignmentSegments','visitPurpose','reworkOfJobId','membershipId','bookingChannel','channelSelfReported','crmLinkReason','scheduleOccurrence','cancellationReasonCode','cancellationInitiatedBy','lateCancel','noShowReasonCode','estimatedDurationMin','durationOverride'].filter(key => job?.[key] !== undefined).map(key => [key,job[key]]));
 }
 
 export async function mutateDispatch(store, session, input, now = new Date().toISOString(), options = {}) {

@@ -39,7 +39,8 @@ export function crewJobProjection(job, options = {}) {
     ...field,type:text(job.type||'job',40),pipelineStatus:field.status,revision:field.expectedRevision,
     assignedTo:field.assignedCrew.join(' + '),title:text(job.title,300),
     durationMin:Number.isFinite(Number(job.durationMin))?Number(job.durationMin):null,
-    estimatedDurationMin:Number.isFinite(Number(job.estimatedDurationMin))?Number(job.estimatedDurationMin):null,
+    // Dispatch clears a saved length with null; that reads as no estimate, not 0.
+    estimatedDurationMin:job.estimatedDurationMin!==null&&Number.isFinite(Number(job.estimatedDurationMin))?Number(job.estimatedDurationMin):null,
     shiftPickupEnabled:job.shiftPickupEnabled===true,openShift:job.openShift===true,
     // A split job is never an open shift; its old claims would name other segments' crew.
     shiftClaims:(!split&&Array.isArray(job.shiftClaims)?job.shiftClaims:[]).map(ownClaim),
