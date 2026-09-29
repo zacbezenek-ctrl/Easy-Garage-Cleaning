@@ -18,6 +18,14 @@ const LATER = '2026-09-22T18:02:00.000Z';
 const VIEWED = '2026-09-22T19:00:00.000Z';
 const owner = { user: 'zacb', role: 'owner', businessAccess: true, displayName: 'Synthetic Owner' };
 const HUB = { HUB_SESSION_SECRET: 'synthetic-quote-draft-portal-secret-0123456789' };
+// Whether a withheld amount or line shows anywhere in a portal response. Text is matched as is. An amount (digits and
+// commas) matches as dollars or cents ('938', '$938.00', 93800) but never inside a run of hex or digits, so the random
+// ids, the jobKey, the sha-256 fingerprint and the estimate number can never contain it by chance.
+const leaks = (text, token) => {
+  if (!/^[\d,]+$/.test(token)) return text.includes(token);
+  const amount = token.replace(/,/g, '\\,');
+  return new RegExp(`(?<![0-9a-f])(?:${amount}|${amount}00)(?![0-9a-f])`, 'i').test(text);
+};
 const shelf = { id: 'shelving', label: 'Shelving', selection: 'single', required: true };
 const lines = () => [
   { id: 'cleanout', kind: 'service', name: 'Garage cleanout and reset', description: 'Sorting, hauling and disposal', quantity: 1, unitCents: 90000, totalCents: 90000 },
@@ -64,7 +72,7 @@ test('a quote draft that was never sent is withheld from the portal and cannot b
     assert.equal(view.status, 200);
     assert.deepEqual(withheldShape(view.body.estimate), ['being_updated', true, false, 0, 0, 0, '', ''], JSON.stringify(testEnv));
     assert.deepEqual([view.body.payment.total, view.body.payment.balance, view.body.payment.dueNow, view.body.payment.deposit.required], [0, 0, 0, 0]);
-    for (const unsent of ['1798', '1,798', '899', 'Wood shelving unit', 'Garage cleanout and reset', 'Cleanout plus your choice']) assert.equal(text.includes(unsent), false, `${unsent} ${JSON.stringify(testEnv)}`);
+    for (const unsent of ['1798', '1,798', '899', 'Wood shelving unit', 'Garage cleanout and reset', 'Cleanout plus your choice']) assert.equal(leaks(text, unsent), false, `${unsent} ${JSON.stringify(testEnv)}`);
     assert.deepEqual(view.body.moneyDocuments, []);
     // Neither the withheld page nor a request naming the real revision, total and content can approve it.
     for (const body of [approve(view.body.estimate), approve(twin)]) {
@@ -94,7 +102,7 @@ test('a sent quote is approvable; an unsent revision of it is withheld until tha
     const view = await portalView(handlers, cookie, testEnv), text = JSON.stringify(view.body);
     assert.deepEqual(withheldShape(view.body.estimate), ['being_updated', true, false, 0, 0, 0, '', ''], JSON.stringify(testEnv));
     assert.equal(view.body.estimate.revision, 2);
-    for (const unsent of ['938', '469', 'Garage cleanout and reset']) assert.equal(text.includes(unsent), false, unsent);
+    for (const unsent of ['938', '469', 'Garage cleanout and reset']) assert.equal(leaks(text, unsent), false, unsent);
     assert.deepEqual(view.body.moneyDocuments, []);
     // The page from before the revision, and one naming the unsent revision and total, are both refused.
     for (const body of [approve(sent), approve(sent, { estimate_revision: 2, amount_cents: 93800 })]) {
