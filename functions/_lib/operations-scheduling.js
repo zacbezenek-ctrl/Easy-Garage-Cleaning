@@ -14,6 +14,7 @@ import {reasonInput,cancelPatch,visitFunnelWrites,requestKey,eventActor,eventVia
 import {eventDimensions,firstPlacementDimensions,legacyDimensionFacts,projectDimensionPatch,resolveDimensions,visitDimensionFacts} from './funnel-dimensions.js';
 import {commitConflict,commitFailure} from './firestore-errors.js';
 import {bridgeCommandDenial,bridgeCommandPolicy} from '../../egc-platform/services/operations/src/bridge-command-policy.ts';
+import {dispatchReviewCleared} from './dispatch-queue.js';
 const ROOT='projects/egcw-1ec83/databases/(default)/documents';
 const URL=`https://firestore.googleapis.com/v1/${ROOT}`;
 const safeId=id=>typeof id==='string'&&/^[A-Za-z0-9_-]{1,180}$/.test(id)&&!/^(_egc_|secure_)/.test(id);
@@ -178,6 +179,8 @@ export async function mutateScheduledVisit(store,actor,input,now=new Date().toIS
   if(!start||!end||end<=start)throw failure('schedule_time_invalid_or_ambiguous',400);
   // Single-day visits keep the dispatch-derived instants in step with the wall time.
   Object.assign(patch,{endDate:next.date,startAt:start,endAt:end,timeZone:DISPATCH_TIME_ZONE});Object.assign(next,patch);
+  // FIX-DISPATCH-QUEUE: an update that books work waiting in To schedule clears its review flag, as a dispatch save does (dispatch-queue.js).
+  if(input.mode==='update')Object.assign(patch,dispatchReviewCleared(current,{startAt:start,endAt:end},actor.id,now));
   // This path returns no warnings, so legacy calendar day blocks matter only when enforced.
   if(store.legacyBlockMode==='enforce'&&input.mode!=='cancel'&&(input.mode==='create'||['date','time','endTime'].some(key=>next[key]!==current?.[key]))){
     const legacy=await legacyBlockedDays(store,[next.date]).catch(()=>{throw failure('schedule_source_unavailable',503);});

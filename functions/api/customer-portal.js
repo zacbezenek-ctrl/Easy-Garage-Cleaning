@@ -18,6 +18,7 @@ import { customerMoneyTotals, invoiceTakesPayment, moneyInvoiceStateEnabled, mon
 import { estimateFingerprint, included, legacyLineItems, unsentQuoteDraft } from '../_lib/quote-model.js';
 import { crewPublicProfilesEnabled, customerCrew, customerCrewProjection, readCrewPublicProfiles } from '../_lib/crew-public-profile.js';
 import { liveSale, portalApprovalWrites, portalFunnelWrite, vocabularyValue } from '../_lib/job-funnel-events.js';
+import { dispatchReviewPatch, queued } from '../_lib/dispatch-queue.js';
 
 const HOST = /^(?:easygaragecleaning\.com|www\.easygaragecleaning\.com|easy-garage-cleaning\.pages\.dev|localhost(?::\d+)?|127\.0\.0\.1(?::\d+)?)$/;
 const DEFAULT_REVIEW_URL = 'https://search.google.com/local/writereview?placeid=ChIJ17AGfBiyRIsRyJ3k4mDtX8Q';
@@ -509,6 +510,8 @@ async function handlePost({ request, env }, { clock, read }) {
         estimate: { ...withoutApprovalActor(result.job.estimate), status: 'approved', acceptedAt: now, acceptedBy: signedName, amount: quote, depositRequired: deposit.required, acceptedTermsVersion: termsVersion, ...actor },
         deposit: { ...(result.job.deposit || {}), amount: deposit.required, paidAmount: deposit.paid, status: deposit.due < .01 ? 'paid' : deposit.paid ? 'partial' : 'due' },
         quoteStatus: 'approved',
+        // FIX-DISPATCH-QUEUE: approved online with no date: flagged for the office in Dispatch's To schedule.
+        ...(queued(result.job) ? dispatchReviewPatch('portal_approval', now) : {}),
         updatedAt: now,
       } }], sale.writes);
     } catch (error) {

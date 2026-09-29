@@ -543,6 +543,10 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   to follow, Lost, No-show · rebook); Dispatch, calendar and crew DTOs carry them only once a walkthrough has an outcome. Rebook
   moves a walkthrough no-show; a service-job no-show books a new visit. New Hub Walkthroughs screen over EGCDispatch.openFor, also
   open to Sales/Phone bookers (sync state, no Retry, no money); the rep's own walkthroughs on /api/field-jobs (checklist 121).
+- **FIX-DISPATCH-QUEUE** (P1 Dispatch; no flag, no sends) A "To schedule" view and header badge ("N to schedule · M new"): undated
+  work oldest first with Denver-day age, Sold/Approved/Added, source (Walkthrough, Portal approval, Jobber, Hub), Jobber's time with
+  Use this time, and price/deposit chips for dispatchers only. Online approvals of undated jobs set needsDispatchReview; the first
+  schedule (Dispatch or bridge) clears it. Closed walkthroughs never queue (checklist 122).
 
 ## In progress
 
@@ -671,6 +675,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | STAFF-ACCESS | P1 auth/pay: staff sign-in reset and password change; approvals set role and starting rate (EGC_STAFF_PASSWORD_RESET, off) | merged (d3e8358) |
 | SALES-BOOKING | P1 booking: phone and sales booking tools; public /book explicit slots behind EGC_BOOKING_EXPLICIT_SLOTS (off) | merged (845020b) |
 | WT-OUTCOME | P1 walkthroughs: outcomes visible to the office; rebook; the rep's day | merged (0903732) |
+| FIX-DISPATCH-QUEUE | P1 Dispatch: 'To schedule' queue with age, source and Jobber times; portal approvals flagged for the office | merged (68ba13e) |
 
 ## Next
 

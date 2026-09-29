@@ -152,6 +152,10 @@ class DispatchBrowserTests(unittest.TestCase):
         return job(id='job-split', revision='split-rev-1', customer='Synthetic Split Garage', endDate='2026-09-24', endTime='12:00', endAt='2026-09-24T12:00:00-06:00', assignedCrew=['crew.one', 'crew.two'], crewLead='crew.one', crewId=None, vehicleId=None,
                    assignmentSegments=[segment('s1', DAY, '08:00', '17:00', ['crew.one'], 'crew.one', 'truck-1', 'Synthetic front bay'), segment('s2', DAY, '08:00', '17:00', ['crew.two']), segment('s3', '2026-09-24', '08:00', '12:00', ['crew.two'])])
     def card(self, name=CUSTOMER['name']): return self.page.locator('.dp-job').filter(has=self.page.get_by_role('heading', name=name, exact=True)).first
+    # FIX-DISPATCH-QUEUE: undated work waits in the To schedule view, one compact row each, not as cards under the board.
+    def to_schedule(self): self.page.get_by_role('button', name=re.compile(r'^To schedule \(')).click(); expect(self.page.locator('.dp-queue-row').first).to_be_visible()
+    def queued(self, name): return self.page.locator('.dp-queue-row').filter(has=self.page.get_by_role('heading', name=name, exact=True)).first
+    def schedule(self, name): self.to_schedule(); self.queued(name).get_by_role('button', name='Schedule '+name, exact=True).click()
     def create(self):
         self.page.get_by_role('button', name='Create job', exact=True).first.click()
         self.page.locator('input[name=customerSearch]').fill('Johnson')
@@ -180,7 +184,7 @@ class DispatchBrowserTests(unittest.TestCase):
     def test_unscheduled_create_and_filter(self):
         self.open(); self.create(); self.page.get_by_label('Keep unscheduled', exact=True).check(); expect(self.page.get_by_label('Start date', exact=True)).to_be_disabled(); self.submit('Create job'); self.closed()
         for key in ['date', 'time', 'endDate', 'endTime']: self.assertEqual(self.calls[-1]['changes'][key], '')
-        self.page.get_by_label('Filter by status', exact=True).select_option('unscheduled'); expect(self.page.locator('.dp-job')).to_have_count(1); expect(self.page.locator('.dp-unscheduled')).to_contain_text('New synthetic service')
+        self.page.get_by_label('Filter by status', exact=True).select_option('unscheduled'); expect(self.page.locator('.dp-queue-row')).to_have_count(1); expect(self.page.locator('.dp-queue-row')).to_contain_text('New synthetic service'); expect(self.page.locator('.dp-job')).to_have_count(0)
     def test_customer_search_waits_for_typing_to_pause_on_a_phone(self):
         self.page.set_viewport_size({'width': 375, 'height': 812}); self.open(); self.page.get_by_role('button', name='Create job', exact=True).first.click()
         searches = lambda: [params['q'] for params in self.gets if params.get('view') == ['customers']]
@@ -268,7 +272,7 @@ class DispatchBrowserTests(unittest.TestCase):
         return job(**{'id': 'job-quoted', 'revision': 'quoted-rev-1', 'customer': 'Synthetic Quoted Garage', 'date': '', 'time': '', 'endDate': '', 'endTime': '', 'startAt': None, 'endAt': None, 'status': 'unscheduled',
                       'assignedCrew': ['crew.one', 'crew.two'], 'crewLead': 'crew.one', 'crewId': None, 'vehicleId': None, 'crewNeeded': 3, 'travelBufferMinutes': 35, 'suggestedDurationMin': 165, 'durationSource': 'line_items', **changes})
     def test_quote_duration_prefills_unscheduled_work_and_keeps_the_end_with_the_start(self):
-        self.jobs = [job(), self.quoted_backlog()]; self.open(); self.card('Synthetic Quoted Garage').get_by_role('button', name='Edit / assign', exact=True).click()
+        self.jobs = [job(), self.quoted_backlog()]; self.open(); self.schedule('Synthetic Quoted Garage')
         length = self.page.get_by_role('combobox', name='Expected duration', exact=True); end_date = self.page.get_by_label('End date', exact=True); end = self.page.get_by_label('End time', exact=True); start = self.page.get_by_label('Start time', exact=True)
         expect(length).to_have_value('165'); expect(length.locator('option:checked')).to_have_text('2 hr 45 min · suggested'); expect(end).to_have_value('10:45')
         self.assertEqual(length.evaluate("el=>document.getElementById(el.getAttribute('aria-describedby')).textContent"), 'Suggested from the sold quote: 2 hr 45 min for a crew of 3.')
@@ -288,13 +292,15 @@ class DispatchBrowserTests(unittest.TestCase):
         self.submit('Save changes'); self.closed(); self.assertEqual([self.calls[-1]['changes'][key] for key in ['time', 'endTime']], ['09:30', '12:30'])
     def test_span_and_default_lengths_are_not_offered_as_suggestions(self):
         self.jobs = [job(suggestedDurationMin=120, durationSource='schedule_span'), self.quoted_backlog(suggestedDurationMin=120, durationSource='default')]; self.open()
+        expect(self.page.get_by_role('button', name='Find a time for '+CUSTOMER['name'], exact=True)).to_have_count(0)
         for name in [CUSTOMER['name'], 'Synthetic Quoted Garage']:
-            self.card(name).get_by_role('button', name='Edit / assign', exact=True).click(); dialog = self.page.get_by_role('dialog')
+            if name == CUSTOMER['name']: self.card(name).get_by_role('button', name='Edit / assign', exact=True).click()
+            else: self.schedule(name)
+            dialog = self.page.get_by_role('dialog')
             expect(self.page.get_by_role('combobox', name='Expected duration', exact=True)).to_have_value(''); expect(dialog).not_to_contain_text('suggested'); expect(dialog).not_to_contain_text('Suggested from')
             expect(self.page.get_by_label('End time', exact=True)).to_have_value('10:00'); self.page.get_by_role('button', name='Back', exact=True).click(); self.closed()
-        expect(self.page.get_by_role('button', name='Find a time for '+CUSTOMER['name'], exact=True)).to_have_count(0)
     def test_find_a_time_searches_with_the_quote_length_and_books_the_same_unscheduled_job(self):
-        self.jobs = [job(), self.quoted_backlog()]; self.open(); self.page.set_viewport_size({'width': 375, 'height': 812})
+        self.jobs = [job(), self.quoted_backlog()]; self.open(); self.page.set_viewport_size({'width': 375, 'height': 812}); self.to_schedule()
         find = self.page.get_by_role('button', name='Find a time for Synthetic Quoted Garage', exact=True); self.assertGreaterEqual(find.bounding_box()['height'], 44); find.click()
         dialog = self.page.get_by_role('dialog'); expect(dialog).to_have_attribute('aria-label', 'Find a time for Synthetic Quoted Garage')
         expect(self.page.get_by_label('Job duration (minutes)', exact=True)).to_have_value('165'); expect(self.page.get_by_label('Travel buffer (minutes)', exact=True)).to_have_value('35')
@@ -310,28 +316,28 @@ class DispatchBrowserTests(unittest.TestCase):
         self.assertEqual((write['action'], write['jobId'], write['expectedRevision']), ('schedule.update', 'job-quoted', 'quoted-rev-1'))
         self.assertEqual([write['changes'][key] for key in ['date', 'time', 'endDate', 'endTime']], [DAY, '13:00', DAY, '15:00']); self.assertEqual(write['changes']['assignedCrew'], ['crew.one', 'crew.two'])
     def test_a_suggestion_longer_than_a_workday_is_listed_but_never_applied_as_one_overnight_block(self):
-        self.jobs = [job(), self.quoted_backlog(suggestedDurationMin=2010, durationSource='estimated_duration')]; self.open(); self.page.set_viewport_size({'width': 375, 'height': 812})
+        self.jobs = [job(), self.quoted_backlog(suggestedDurationMin=2010, durationSource='estimated_duration')]; self.open(); self.page.set_viewport_size({'width': 375, 'height': 812}); self.to_schedule()
         self.page.get_by_role('button', name='Find a time for Synthetic Quoted Garage', exact=True).click(); dialog = self.page.get_by_role('dialog')
         expect(self.page.get_by_label('Job duration (minutes)', exact=True)).to_have_value('120'); expect(dialog).to_contain_text('Suggested from the saved estimate: 33 hr 30 min. Openings cover one day at a time')
-        self.page.get_by_role('button', name='Back', exact=True).click(); self.closed(); self.card('Synthetic Quoted Garage').get_by_role('button', name='Edit / assign', exact=True).click()
+        self.page.get_by_role('button', name='Back', exact=True).click(); self.closed(); self.queued('Synthetic Quoted Garage').get_by_role('button', name='Schedule Synthetic Quoted Garage', exact=True).click()
         length = self.page.get_by_role('combobox', name='Expected duration', exact=True); expect(length).to_have_value(''); expect(length.locator('option[value="2010"]')).to_have_text('33 hr 30 min · suggested')
         expect(self.page.get_by_label('End date', exact=True)).to_have_value(DAY); expect(self.page.get_by_label('End time', exact=True)).to_have_value('10:00')
         self.assertEqual(length.evaluate("el=>document.getElementById(el.getAttribute('aria-describedby')).textContent"), 'Suggested from the saved estimate: 33 hr 30 min. That is longer than one workday, so split it across days rather than one overnight block.')
         self.assertLessEqual(self.page.evaluate('document.documentElement.scrollWidth'), 375); self.assertLessEqual(dialog.evaluate('(el)=>el.scrollWidth'), dialog.evaluate('(el)=>el.clientWidth')+1)
         out = ROOT/'test-results'; out.mkdir(exist_ok=True); length.scroll_into_view_if_needed(); self.page.screenshot(path=str(out/'dispatch-duration-mobile.png'))
         self.page.get_by_role('button', name='Back', exact=True).click(); self.closed()
-        self.jobs[1].update({'suggestedDurationMin': 1440, 'durationSource': 'line_items', 'durationCoverage': 'partial', 'durationCapped': True}); self.page.reload(); self.card('Synthetic Quoted Garage').get_by_role('button', name='Edit / assign', exact=True).click()
+        self.jobs[1].update({'suggestedDurationMin': 1440, 'durationSource': 'line_items', 'durationCoverage': 'partial', 'durationCapped': True}); self.page.reload(); self.schedule('Synthetic Quoted Garage')
         expect(self.page.get_by_role('combobox', name='Expected duration', exact=True)).to_have_value(''); expect(self.page.get_by_label('End time', exact=True)).to_have_value('10:00')
         expect(self.page.locator('.dp-duration-hint')).to_have_text('Suggested from the sold quote: 24 hr for a crew of 3. Some sold lines have no time estimate, so allow extra time. The lines add up to more than 24 hr, so plan the work across days.')
     def test_changing_the_crew_size_drops_an_applied_suggestion_until_the_server_recalculates_it(self):
-        self.jobs = [job(), self.quoted_backlog()]; self.open(); self.card('Synthetic Quoted Garage').get_by_role('button', name='Edit / assign', exact=True).click()
+        self.jobs = [job(), self.quoted_backlog()]; self.open(); self.schedule('Synthetic Quoted Garage')
         length = self.page.get_by_role('combobox', name='Expected duration', exact=True); crew = self.page.get_by_label('Required crew size', exact=True); hint = self.page.locator('.dp-duration-hint'); end = self.page.get_by_label('End time', exact=True)
         expect(length).to_have_value('165'); expect(end).to_have_value('10:45'); expect(hint).to_have_attribute('aria-live', 'polite')
         crew.fill('4'); expect(length).to_have_value(''); expect(hint).to_have_text('Suggested from the sold quote: 2 hr 45 min for a crew of 3. The crew size changed, so check the end time; the suggestion is recalculated after you save.')
         crew.fill('3'); expect(hint).to_have_text('Suggested from the sold quote: 2 hr 45 min for a crew of 3.'); expect(length).to_have_value('')
         self.page.get_by_label('Keep unscheduled', exact=True).uncheck(); self.page.get_by_label('Start time', exact=True).fill('13:00'); expect(end).to_have_value('10:45'); self.assertEqual(self.calls, [])
     def test_an_opening_is_booked_with_the_buffer_employees_and_lead_it_was_checked_with(self):
-        self.jobs = [job(), self.quoted_backlog()]; self.open(); self.page.get_by_role('button', name='Find a time for Synthetic Quoted Garage', exact=True).click()
+        self.jobs = [job(), self.quoted_backlog()]; self.open(); self.to_schedule(); self.page.get_by_role('button', name='Find a time for Synthetic Quoted Garage', exact=True).click()
         self.page.get_by_label('Travel buffer (minutes)', exact=True).fill('50'); self.page.get_by_label('Crew One', exact=True).uncheck(); self.submit('Check openings')
         query = self.opening_queries[-1]; self.assertEqual((query['travelBufferMinutes'], query['employeeIds']), (['50'], ['crew.two']))
         self.page.get_by_role('button', name='Use this opening', exact=True).click(); expect(self.page.get_by_role('dialog')).to_have_attribute('aria-label', 'Edit / assign job')
@@ -735,14 +741,14 @@ class DispatchBrowserTests(unittest.TestCase):
             with self.subTest(flag=flag):
                 self.jobs = [job(), imported()]; self.read_extra = {'notifyImportedOn': True} if flag else {}; self.page.goto(self.url)
                 self.page.get_by_label('Filter by status', exact=True).select_option('unscheduled')
-                card = self.card('Synthetic Imported Garage'); expect(card.locator('.dp-reminders-off')).to_have_text('Reminders off')
-                card.get_by_role('button', name='Edit / assign', exact=True).click(); dialog = self.page.get_by_role('dialog'); toggle = dialog.get_by_label('HighLevel confirmation and reminders', exact=True)
+                card = self.queued('Synthetic Imported Garage'); expect(card.locator('.dp-reminders-off')).to_have_text('Reminders off')
+                card.get_by_role('button', name='Schedule Synthetic Imported Garage', exact=True).click(); dialog = self.page.get_by_role('dialog'); toggle = dialog.get_by_label('HighLevel confirmation and reminders', exact=True)
                 expect(dialog.get_by_text('Imported from Jobber: reminders were off', exact=True)).to_be_visible()
                 (expect(toggle).to_be_checked if flag else expect(toggle).not_to_be_checked)()
                 # Saving it still unscheduled sends no choice; booking it sends the shown one.
                 self.submit('Save changes'); self.closed(); self.assertNotIn('notify', self.calls[-1]['changes'])
                 self.page.get_by_role('button', name='Refresh', exact=True).click()
-                self.card('Synthetic Imported Garage').get_by_role('button', name='Edit / assign', exact=True).click(); dialog = self.page.get_by_role('dialog')
+                self.queued('Synthetic Imported Garage').get_by_role('button', name='Schedule Synthetic Imported Garage', exact=True).click(); dialog = self.page.get_by_role('dialog')
                 dialog.get_by_label('Keep unscheduled', exact=True).uncheck(); dialog.get_by_label('Start date', exact=True).fill('2026-09-24'); dialog.get_by_label('End date', exact=True).fill('2026-09-24')
                 dialog.get_by_label('Start time', exact=True).fill('09:00'); dialog.get_by_label('End time', exact=True).fill('11:00'); self.submit('Save changes'); self.closed()
                 self.assertIs(self.calls[-1]['changes']['notify'], flag); self.assertEqual(self.calls[-1]['changes']['date'], '2026-09-24')
@@ -751,7 +757,7 @@ class DispatchBrowserTests(unittest.TestCase):
         self.calls.clear(); decided = imported(); decided['reminder'] = {'state': 'off', 'source': 'none'}
         self.jobs = [job(), decided]; self.read_extra = {'notifyImportedOn': True}; self.page.goto(self.url)
         self.page.get_by_label('Filter by status', exact=True).select_option('unscheduled')
-        self.card('Synthetic Imported Garage').get_by_role('button', name='Edit / assign', exact=True).click(); dialog = self.page.get_by_role('dialog')
+        self.queued('Synthetic Imported Garage').get_by_role('button', name='Schedule Synthetic Imported Garage', exact=True).click(); dialog = self.page.get_by_role('dialog')
         expect(dialog.get_by_label('HighLevel confirmation and reminders', exact=True)).not_to_be_checked(); expect(dialog).not_to_contain_text('Imported from Jobber')
         dialog.get_by_label('Keep unscheduled', exact=True).uncheck(); dialog.get_by_label('Start date', exact=True).fill('2026-09-24'); dialog.get_by_label('End date', exact=True).fill('2026-09-24')
         dialog.get_by_label('Start time', exact=True).fill('09:00'); dialog.get_by_label('End time', exact=True).fill('11:00'); self.submit('Save changes'); self.closed()

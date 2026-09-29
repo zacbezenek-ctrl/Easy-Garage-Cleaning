@@ -5,6 +5,14 @@ const TZ = 'America/Denver';
 const terminal = new Set(['completed', 'cancelled', 'canceled', 'paid', 'invoiced', 'review_requested', 'closed','noshow','no_show','no-show']);
 // WT-OUTCOME: a closed walkthrough (sold, quote to follow, lost, done; server walkthroughClosed) is finished work like a completed job.
 const active = job => !terminal.has(job.status || job.pipelineStatus) && job.walkthroughClosed !== true;
+// FIX-DISPATCH-QUEUE: active customer work with no date waits in To schedule (functions/_lib/dispatch-queue.js), not on the board.
+// A board read with queueFacts lists exactly the jobs the server sent queue facts for; anything else (a search result, an
+// older response) is judged by the server's own rule, undated.
+const VISIT_TYPES = new Set(['job', 'walkthrough', 'cleanout', 'reorg']);
+// (FIX-DISPATCH-QUEUE after WT-OUTCOME) a closed walkthrough (walkthroughClosed: sold, quote to follow, lost, done) is finished
+// work, never waiting in To schedule; the server's queued() (dispatch-queue.js) applies the same walkthrough-state.js rule.
+const undated = job => !job.date && VISIT_TYPES.has(job.type) && !terminal.has(String(job.pipelineStatus || job.status || 'unscheduled').toLowerCase()) && job.walkthroughClosed !== true;
+const queued = job => S.data?.queueFacts === true ? Boolean(job.queue) : undated(job);
 const S = { host:null, root:null, date:today(), view:'day', query:'', status:'active', employee:'', type:'', data:null, loading:false, generation:0, modal:null, refreshTimer:null, pending:false, error:'', notice:'', controller:null, viewer:null, recovery:null, pendingBook:null, detached:null };
 const recoveryPrefix='egc.dispatch.pending.v1.';
 // Extra views (employee-dispatch-calendar.js) register {label, range(date), step(date,count), render(target,jobs), help}; they save through save().
@@ -119,16 +127,18 @@ async function load({quiet=false}={}) {
   } catch (error) { if (generation!==S.generation || error.name==='AbortError') return; if([401,403].includes(error.status))S.data=null; S.error=errorText(error); S.errorStatus=error.status; }
   finally { if (generation===S.generation && S.root) { S.loading=false; if(S.pendingBook&&S.error&&!S.data){S.pendingBook=null;S.error+=' The booking form did not open: book again once the schedule loads.';} render(); openPendingBook(); } }
 }
-function setFilter(field,value) { S[field]=value; renderBody(); }
+function setFilter(field,value) { if(field==='status'&&value==='unscheduled'){S.status='active';showQueue();return;} S[field]=value; renderBody(); }
+function showQueue() { S.view='queue'; S.focusQueue=true; void load(); }
 function move(count) { const view=views.get(S.view); S.date=view?.step?view.step(S.date,count):addDays(S.date,count*(S.view==='week'||S.view==='crew'?7:1)); void load(); }
 function show(view,date) { if(/^\d{4}-\d{2}-\d{2}$/.test(date||''))S.date=date; if(view)S.view=view; void load(); }
 function setDate(date) { if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return; S.date=date; void load(); }
-function filtered() {
+function filtered(queue=false) {
   const q=S.query.toLowerCase().trim(), phone=q.replace(/\D/g,'');
-  return (S.data?.jobs||[]).filter(j => (!S.employee || j.assignedCrew?.includes(S.employee)) &&
-    (!S.type || j.type===S.type) && (S.status==='all' || (S.status==='active'?active(j):S.status==='attention'?warningsFor(j).length:S.status==='unassigned'?active(j)&&j.type!=='blocked'&&!j.assignedCrew?.length:S.status==='unscheduled'?!j.date:j.status===S.status||S.status==='completed'&&j.walkthroughClosed===true||S.status==='no_show'&&(['noshow','no-show'].includes(j.status)||j.walkthroughState==='no_show'))) &&
-    (!q || [j.customer,j.address,j.phone,j.id,j.date,j.serviceType,crewName(j)].some(v=>String(v||'').toLowerCase().includes(q)) || phone.length>2&&String(j.phone||'').replace(/\D/g,'').includes(phone)))
-    .sort((a,b)=>String(a.date||'9999').localeCompare(String(b.date||'9999'))||String(a.time||'').localeCompare(String(b.time||''))||String(a.customer||'').localeCompare(String(b.customer||'')));
+  const rows=(S.data?.jobs||[]).filter(j => (!S.employee || j.assignedCrew?.includes(S.employee)) &&
+    (!S.type || j.type===S.type) && (queue ? queued(j) : S.status==='all' || (S.status==='active'?active(j):S.status==='attention'?warningsFor(j).length:S.status==='unassigned'?active(j)&&j.type!=='blocked'&&!j.assignedCrew?.length:S.status==='unscheduled'?!j.date:j.status===S.status||S.status==='completed'&&j.walkthroughClosed===true||S.status==='no_show'&&(['noshow','no-show'].includes(j.status)||j.walkthroughState==='no_show'))) &&
+    (!q || [j.customer,j.address,j.phone,j.id,j.date,j.serviceType,crewName(j)].some(v=>String(v||'').toLowerCase().includes(q)) || phone.length>2&&String(j.phone||'').replace(/\D/g,'').includes(phone)));
+  // To schedule keeps the server's oldest-first order (dispatch-queue.js queueOrder).
+  return queue ? rows : rows.sort((a,b)=>String(a.date||'9999').localeCompare(String(b.date||'9999'))||String(a.time||'').localeCompare(String(b.time||''))||String(a.customer||'').localeCompare(String(b.customer||'')));
 }
 function spanOnDate(item,date) { const last=item.endDate&&item.endDate>item.date&&item.endTime==='00:00'?addDays(item.endDate,-1):item.endDate||item.date;return Boolean(item.date && item.date<=date && last>=date); }
 // A split job appears only on the days one of its segments works.
@@ -138,8 +148,10 @@ function segmentList(job,date) {
   if(!shown.length)return null;
   return h('ul',{class:'dp-segment-list','aria-label':'Crew segments'},shown.map(s=>h('li',{},h('strong',{},(date&&s.date===date&&(s.endDate||s.date)===date?'':dateText(s.date,true)+' ')+clock(s.time)+' – '+clock(s.endTime)),' · '+(s.assignedCrew?.length?s.assignedCrew.map(person).join(', '):'Unassigned')+(s.crewLead?' · Lead '+person(s.crewLead):'')+' · '+vehicle(s.vehicleId)+(s.notes?' · '+s.notes:''))));
 }
+// Work with no date already says so by waiting in To schedule, so its no time, no crew and crew size lines are left out.
+const UNSCHEDULED_NOISE=new Set(['unscheduled','unassigned','crew_size_short']);
 function warningsFor(job) {
-  const warnings=(S.data?.warnings||[]).filter(w=>w.jobId===job.id),codes=new Set(warnings.map(w=>w.code));
+  const warnings=(S.data?.warnings||[]).filter(w=>w.jobId===job.id&&!(!job.date&&UNSCHEDULED_NOISE.has(w.code))),codes=new Set(warnings.map(w=>w.code));
   const add=(code,message)=>{if(!codes.has(code)){warnings.push({code,message,jobId:job.id});codes.add(code);}};
   if(job.attention?.status==='open')add('needs_follow_up',job.attention.reason||'The crew requested management follow-up.');
   if(['pending','error','blocked'].includes(job.completionSync?.status))add('completion_sync_'+job.completionSync.status,job.completionSync.message||'Completion is saved; the CRM handoff needs verification.');
@@ -207,11 +219,8 @@ function readyRow(job) {
   if(money&&typeof money==='object') {
     if(money.checked!==true)row.append(pill('Price and deposit not checked','muted'));
     else {
-      row.append(money.hasApprovedPrice===true?pill('Price approved','ok'):money.priceStatus==='plan'?pill('Plan price','ok'):financeLink(job,'Price this job','warn',money.priceStatus==='not_approved'?'the price has no customer approval':'no approved price'));
-      const soon=warningsFor(job).some(w=>w.code==='deposit_unpaid');
-      if(wholeCents(money.depositDueCents)&&money.depositDueCents>0)row.append(financeLink(job,'Deposit unpaid · '+USD.format(money.depositDueCents/100),soon?'warn':'',soon?'the job starts within 2 days':''));
-      else if(money.depositRequiredCents===0)row.append(pill('No deposit','muted'));
-      else if(wholeCents(money.depositRequiredCents)&&money.depositDueCents===0)row.append(money.depositVerified===true?pill('Deposit paid','ok'):pill('Deposit not verified','warn'));
+      row.append(priceChip(job,money));
+      const deposit=depositChip(job,money);if(deposit)row.append(deposit);
     }
   }
   return row.childElementCount?row:null;
@@ -227,6 +236,17 @@ function rebookAction(job) {
   if(!job?.rebook)return null;
   if(job.type==='walkthrough')return active(job)&&['no_show','rescheduled'].includes(job.walkthroughState)?{label:'Rebook the walkthrough for '+(job.customer||'this customer'),open:()=>openJob(job,{rebook:job.rebook})}:null;
   return ['no_show','noshow','no-show'].includes(job.status)&&job.customerId?{label:'Rebook '+(job.customer||'this job'),open:()=>openJob(null,{rebookFrom:job})}:null;
+}
+// The price and deposit chips of a checked moneyReady (dispatchers only), shared by the job card and the To schedule row.
+function priceChip(job,money) {
+  return money.hasApprovedPrice===true?pill('Price approved','ok'):money.priceStatus==='plan'?pill('Plan price','ok'):financeLink(job,'Price this job','warn',money.priceStatus==='not_approved'?'the price has no customer approval':'no approved price');
+}
+function depositChip(job,money) {
+  const soon=warningsFor(job).some(w=>w.code==='deposit_unpaid');
+  if(wholeCents(money.depositDueCents)&&money.depositDueCents>0)return financeLink(job,'Deposit unpaid · '+USD.format(money.depositDueCents/100),soon?'warn':'',soon?'the job starts within 2 days':'');
+  if(money.depositRequiredCents===0)return pill('No deposit','muted');
+  if(wholeCents(money.depositRequiredCents)&&money.depositDueCents===0)return money.depositVerified===true?pill('Deposit paid','ok'):pill('Deposit not verified','warn');
+  return null;
 }
 function jobCard(job, {compact=false,date=null}={}) {
   const original=job.sourceJob||job,warnings=warningsFor(job),blocked=job.type==='blocked';
@@ -268,6 +288,56 @@ function jobCard(job, {compact=false,date=null}={}) {
   return card;
 }
 function empty(text='No jobs match these filters.') { return h('div',{class:'dp-empty'},h('h3',{},text),h('p',{},'Change the date or filters, or schedule work for a customer.'),btn('Create job',()=>openJob(),'primary')); }
+// FIX-DISPATCH-QUEUE: the To schedule view. The server sends each queued job's queue facts ({since, sinceKind, ageDays,
+// source, jobber?}) in oldest-first order; a row shows who, what, since when, from where and the price and deposit chips.
+const QUEUE_SOURCE={walkthrough:'Walkthrough',portal:'Portal approval',jobber:'Jobber',hub:'Hub'},QUEUE_SINCE={sold:'Sold',approved:'Approved',created:'Added'};
+const QUEUE_REVIEW={portal_approval:'Approved online: needs review',sold_schedule_later:'Sold, schedule later: needs review',jobber_import:'From Jobber: needs review'};
+const DATE=/^\d{4}-\d{2}-\d{2}$/,TIME=/^\d{2}:\d{2}$/;
+const queueCount=()=>(S.data?.jobs||[]).filter(queued).length;
+function ageText(days) { return !Number.isInteger(days)||days<0?'Age unknown':days===0?'Today':days===1?'1 day':days+' days'; }
+function sinceText(queue) {
+  const at=new Date(queue?.since||'');if(!Number.isFinite(at.getTime()))return '';
+  return (QUEUE_SINCE[queue.sinceKind]||'Added')+' '+new Intl.DateTimeFormat('en-US',{timeZone:TZ,month:'short',day:'numeric',...(queue.ageDays>=300?{year:'numeric'}:{})}).format(at);
+}
+// The first visit Jobber had for an imported job, as Jobber showed it (Denver wall clock).
+function jobberVisit(job) {
+  const v=job.queue?.jobber;if(!v||!DATE.test(v.date||''))return null;
+  const end=DATE.test(v.endDate||'')?v.endDate:v.date,timed=TIME.test(v.time||'')&&TIME.test(v.endTime||'');
+  const when=v.allDay===true?'(anytime)':timed?clock(v.time)+' – '+(end!==v.date?dateText(end,true)+' ':'')+clock(v.endTime):'time not set';
+  return {text:'Jobber had: '+dateText(v.date,true)+' · '+when+(v.timeNeedsReview===true?' (time needs review)':'')+(v.past===true?' · already passed':''),use:v.usable===true&&v.past!==true&&timed?{date:v.date,time:v.time,endDate:end,endTime:v.endTime}:null};
+}
+function queueRow(job) {
+  const q=job.queue||{},title=job.customer||job.title||'Customer needs attention',review=job.needsDispatchReview===true,visit=jobberVisit(job),money=job.moneyReady;
+  const pills=h('div',{class:'dp-queue-pills'},review?pill(QUEUE_REVIEW[job.dispatchReviewReason]||'Needs review','warn'):null,pill(QUEUE_SOURCE[q.source]||'Hub',review?'':'muted'),job.notify===false?pill('Reminders off','warn dp-reminders-off'):null);
+  // Quote drafts and sent quotes wait here too: a dispatcher sees the price chip; anyone else sees work with no sale or approval yet.
+  if(money&&typeof money==='object'&&money.checked===true){pills.append(priceChip(job,money));const chip=depositChip(job,money);if(chip)pills.append(chip);}
+  else{if(q.sinceKind==='created'&&(q.source==='walkthrough'||q.source==='portal'))pills.append(pill('Not sold yet','muted dp-queue-unsold'));if(money&&typeof money==='object')pills.append(pill('Price and deposit not checked','muted'));}
+  const listed=warningsFor(job).filter(w=>!MONEY_WARNINGS.has(w.code));
+  const actions=h('div',{class:'dp-queue-actions'});
+  if(visit?.use)actions.append(btn('Use this time',()=>openJob(job,{...visit.use}),'primary',{'aria-label':'Use Jobber’s time for '+title}));
+  actions.append(btn('Schedule',()=>openJob(job),visit?.use?'':'primary',{'aria-label':'Schedule '+title}),btn('Find a time',()=>openOpenings(job),'',{'aria-label':'Find a time for '+title}),
+    h('a',{class:'dp-btn',href:job.type==='walkthrough'?'/crew/gameplan.html?walkthroughId='+encodeURIComponent(job.id):'/crew/job.html?jobId='+encodeURIComponent(job.id),'aria-label':'Open '+title},job.type==='walkthrough'?'Open walkthrough':'Open job'),
+    btn('Cancel',()=>openStatus(job,'schedule.cancel'),'subtle',{'aria-label':'Cancel '+title}));
+  return h('article',{class:'dp-queue-row'+(review?' dp-queue-review':''),'data-queue-job':job.id},
+    h('div',{class:'dp-queue-main'},
+      h('div',{class:'dp-queue-top'},h('h3',{},title),h('span',{class:'dp-queue-age','data-age':Number.isInteger(q.ageDays)?String(q.ageDays):''},ageText(q.ageDays))),
+      h('p',{class:'dp-queue-meta'},[job.type==='walkthrough'?'Walkthrough':job.serviceType||words(job.type||'job'),sinceText(q)].filter(Boolean).join(' · ')),
+      pills,visit?h('p',{class:'dp-queue-jobber'},visit.text):null,
+      listed.length?h('p',{class:'dp-queue-warn'},(listed[0].message||words(listed[0].code))+(listed.length>1?' · '+(listed.length-1)+' more to review':'')):null),
+    actions);
+}
+function renderQueue(target) {
+  const all=(S.data.jobs||[]).filter(queued),rows=filtered(true),review=all.filter(j=>j.needsDispatchReview===true).length;
+  const heading=h('h2',{tabIndex:-1},'To schedule · '+all.length);
+  const section=h('section',{class:'dp-queue','aria-label':'To schedule'},h('header',{class:'dp-queue-head'},heading,h('p',{class:'dp-muted'},'Work with no date yet, oldest sale first.'+(review?' '+review+(review===1?' needs':' need')+' review.':''))));
+  if(!all.length)section.append(h('p',{class:'dp-empty-day'},'Nothing is waiting to be scheduled.'));
+  else if(!rows.length)section.append(h('p',{class:'dp-empty-day'},'No work to schedule matches these filters.'));
+  else section.append(h('ol',{class:'dp-queue-list'},rows.map(j=>h('li',{},queueRow(j)))));
+  target.append(section);
+  // Opened from its button or link: the list starts in view on a phone, with focus on its heading.
+  if(S.focusQueue&&!S.loading){S.focusQueue=false;heading.focus?.({preventScroll:true});const first=section.querySelector('.dp-queue-row')||heading;if(first.getBoundingClientRect().bottom>window.innerHeight)heading.scrollIntoView?.({block:'start'});}
+}
+function queueLink(count) { return h('p',{class:'dp-queue-link'},h('button',{type:'button',class:'dp-link',onclick:showQueue},count+' to schedule →')); }
 function dayColumn(date,jobs) {
   const column=h('section',{class:'dp-day '+(date===today()?'dp-today':''),
     ondragover:e=>{if(e.dataTransfer.types.includes('text/plain')){e.preventDefault();e.dataTransfer.dropEffect='move';column.classList.add('dp-drop');}},
@@ -287,13 +357,15 @@ function renderBody() {
   if(S.recovery){target.append(notice(S.recovery.invalid?'A saved request could not be read. Reopen this browser session before making another dispatch change.':'A previous dispatch save has not been verified. Review and retry its original request before making another change.','error'));if(!S.recovery.invalid)target.append(btn('Review unverified save',openRecovery,'primary'));}
   if(S.data.coverage?.complete===false)target.append(notice('Some records could not be loaded. This schedule is incomplete; verify missing work before dispatching.','error'));
   if(S.notice)target.append(notice(S.notice));
+  const footnote=h('p',{class:'dp-footnote'},'All scheduling times use Mountain Time. '+(S.data.coverage?.asOf?'Updated '+new Intl.DateTimeFormat('en-US',{timeZone:TZ,hour:'numeric',minute:'2-digit'}).format(new Date(S.data.coverage.asOf))+'.':'')+' '+(S.view==='queue'?'Schedule or find a time for each job; every save is checked for conflicts.':views.get(S.view)?.help||'Drag a job onto a day to review its new time.'));
+  if(S.view==='queue'){renderQueue(target);target.append(footnote);return;}
   const all=S.data.jobs||[], dateJobs=all.filter(j=>onDate(j,S.date)&&j.type!=='blocked'), running=dateJobs.filter(j=>active(j)&&['dispatched','arrived','in_progress','paused','waiting','delayed'].includes(j.activity||j.status)), due=dateJobs.filter(active),attention=dateJobs.filter(j=>warningsFor(j).length);
   const stats=h('div',{class:'dp-stats'});
   for(const [label,count]of [['Scheduled',dateJobs.filter(j=>!['cancelled','canceled','noshow','no_show','no-show'].includes(j.status)).length],['In progress',running.length],['Remaining',due.length],['Unassigned',due.filter(j=>!j.assignedCrew?.length).length],['Needs attention',attention.length]])stats.append(h('article',{},h('span',{},label),h('strong',{},count),label==='Needs attention'&&count?btn('Review',()=>{S.status='attention';render();},'subtle',{'aria-label':'Review jobs needing attention'}):null));
   target.append(stats);
-  const jobs=filtered();
-  if(!jobs.length&&!views.has(S.view)){target.append(empty());return;}
-  const unscheduled=jobs.filter(j=>!j.date);
+  // Undated active work lives in To schedule; the other views link to it on one line.
+  const jobs=filtered().filter(j=>!queued(j)),waiting=queueCount();
+  if(!jobs.length&&!views.has(S.view)){target.append(empty());if(waiting)target.append(queueLink(waiting));return;}
   if(S.view==='jobs') {
     target.append(h('div',{class:'dp-job-grid'},jobs.map(j=>jobCard(j))));
   } else if(views.has(S.view)) {
@@ -309,8 +381,8 @@ function renderBody() {
   } else {
     target.append(h('div',{class:S.view==='week'?'dp-week':'dp-day-board'},Array.from({length:S.view==='week'?7:1},(_,i)=>dayColumn(addDays(S.date,i),jobs))));
   }
-  if(unscheduled.length&&S.view!=='jobs')target.append(h('section',{class:'dp-unscheduled'},h('h2',{},'Unscheduled work · '+unscheduled.length),h('div',{class:'dp-job-grid'},unscheduled.map(j=>jobCard(j)))));
-  target.append(h('p',{class:'dp-footnote'},'All scheduling times use Mountain Time. '+(S.data.coverage?.asOf?'Updated '+new Intl.DateTimeFormat('en-US',{timeZone:TZ,hour:'numeric',minute:'2-digit'}).format(new Date(S.data.coverage.asOf))+'.':'')+' '+(views.get(S.view)?.help||'Drag a job onto a day to review its new time.')));
+  if(waiting)target.append(queueLink(waiting));
+  target.append(footnote);
 }
 function labeled(label,control,help) {const id=control.id||'dp-'+key();control.id=id;return h('label',{class:'dp-field',htmlFor:id},h('span',{},label),control,help?h('small',{},help):null);}
 function select(options,value,onChange,props={}) {return h('select',{onchange:e=>onChange(e.target.value),...props},options.map(([id,label])=>h('option',{value:id,selected:id===value},label)));}
@@ -366,11 +438,15 @@ function reasonControls(parent,list,{who=false,required=true,value='',by:initiat
 function render() {
   if(!S.root||S.modal)return;
   const search=h('input',{type:'search',value:S.query,placeholder:'Filter this date range',oninput:e=>setFilter('query',e.target.value),'aria-label':'Search jobs'});
-  S.root.replaceChildren(h('header',{class:'dp-header'},h('div',{},h('span',{class:'dp-eyebrow'},'EGC OPERATIONS'),h('h1',{},'Dispatch'),h('p',{},'Schedule, assign and run the day.')),h('div',{class:'dp-header-actions'},btn('Search all jobs',openSearch,'',{disabled:!S.data}),btn('Find opening',openOpenings,'',{disabled:!S.data}),booker()?null:btn('Block time',()=>openBlock(),'',{disabled:!S.data}),booker()?null:btn('Crews & vehicles',()=>openResources()),window.EGCRecurring&&!booker()?btn('Recurring plans',()=>window.EGCRecurring.open({onChange:()=>load({quiet:true})})):null,btn('Refresh',()=>load(),'',{disabled:S.loading}),btn('Create job',()=>openJob(),'primary',{disabled:!S.data}))));
+  const waiting=S.data?queueCount():0,review=S.data?(S.data.jobs||[]).filter(j=>queued(j)&&j.needsDispatchReview===true).length:0;
+  const badge=waiting?h('button',{type:'button',class:'dp-queue-badge','data-dp-queue-badge':'',onclick:showQueue,'aria-label':waiting+' to schedule'+(review?', '+review+' need review':'')+'. Open To schedule.'},waiting+' to schedule',review?h('strong',{},' · '+review+' new'):null):null;
+  S.root.replaceChildren(h('header',{class:'dp-header'},h('div',{},h('span',{class:'dp-eyebrow'},'EGC OPERATIONS'),h('div',{class:'dp-title-row'},h('h1',{},'Dispatch'),badge),h('p',{},'Schedule, assign and run the day.')),h('div',{class:'dp-header-actions'},btn('Search all jobs',openSearch,'',{disabled:!S.data}),btn('Find opening',openOpenings,'',{disabled:!S.data}),booker()?null:btn('Block time',()=>openBlock(),'',{disabled:!S.data}),booker()?null:btn('Crews & vehicles',()=>openResources()),window.EGCRecurring&&!booker()?btn('Recurring plans',()=>window.EGCRecurring.open({onChange:()=>load({quiet:true})})):null,btn('Refresh',()=>load(),'',{disabled:S.loading}),btn('Create job',()=>openJob(),'primary',{disabled:!S.data}))));
   S.root.querySelector('.dp-header-actions').insertBefore(btn('Drive times',openTravel,'',{disabled:!S.data}),S.root.querySelector('.dp-header-actions .primary'));
   const modes=h('div',{class:'dp-modes',role:'group','aria-label':'Calendar view'});
   for(const [id,label]of [['day','Day'],['week','Week'],['crew','Crew'],['jobs','Jobs'],...[...views].map(([id,view])=>[id,view.label])])modes.append(btn(label,()=>{S.view=id;void load();},S.view===id?'selected':'',{'aria-pressed':S.view===id?'true':'false'}));
-  S.root.append(h('div',{class:'dp-controls'},h('div',{class:'dp-date-controls'},btn('←',()=>move(-1),'',{'aria-label':'Previous period'}),labeled('Schedule date',h('input',{type:'date',value:S.date,onchange:e=>setDate(e.target.value)})),btn('→',()=>move(1),'',{'aria-label':'Next period'}),h('div',{class:'dp-date-shortcuts'},btn('Today',()=>setDate(today())),btn('Tomorrow',()=>setDate(addDays(today(),1))))),modes));
+  modes.append(btn(['To schedule',S.data?h('span',{class:'dp-badge','data-dp-queue-count':'','aria-hidden':'true'},String(waiting)):null],showQueue,'dp-queue-mode'+(S.view==='queue'?' selected':''),{'aria-pressed':S.view==='queue'?'true':'false','aria-label':S.data?'To schedule ('+waiting+')':'To schedule'}));
+  // The queue has no date: its view leaves the date controls out.
+  S.root.append(h('div',{class:'dp-controls'},S.view==='queue'?null:h('div',{class:'dp-date-controls'},btn('←',()=>move(-1),'',{'aria-label':'Previous period'}),labeled('Schedule date',h('input',{type:'date',value:S.date,onchange:e=>setDate(e.target.value)})),btn('→',()=>move(1),'',{'aria-label':'Next period'}),h('div',{class:'dp-date-shortcuts'},btn('Today',()=>setDate(today())),btn('Tomorrow',()=>setDate(addDays(today(),1))))),modes));
   S.root.append(h('div',{class:'dp-filters'},search,
     select([['active','Active work'],['all','All statuses'],['attention','Needs attention'],['unassigned','Unassigned'],['unscheduled','Unscheduled'],['completed','Completed'],['cancelled','Cancelled'],['no_show','No-shows']],S.status,v=>setFilter('status',v),{'aria-label':'Filter by status'}),
     select([['','All employees'],...(S.data?.roster||[]).map(p=>[p.id,p.name])],S.employee,v=>setFilter('employee',v),{'aria-label':'Filter by employee'}),
@@ -459,7 +535,7 @@ function openSearch() {
       for(const row of data.results){const job=row.job,blocked=job.type==='blocked';
         const actions=h('div',{class:'dp-card-actions'});
         if(!blocked)actions.append(h('a',{class:'dp-btn primary',href:job.type==='walkthrough'?'/crew/gameplan.html?walkthroughId='+encodeURIComponent(job.id):'/crew/job.html?jobId='+encodeURIComponent(job.id)},job.type==='walkthrough'?'Open walkthrough':'Open job'));
-        actions.append(btn('Show in dispatch',()=>{model.close();S.date=/^\d{4}-\d{2}-\d{2}$/.test(job.date||'')?job.date:today();S.view=job.date?'day':'jobs';S.status='all';S.employee='';S.type='';S.query=job.date?'':job.id;S.notice='Showing '+(job.customer||job.title||job.id)+(job.date?' on '+dateText(job.date)+'.':' in unscheduled work.');void load();}));
+        actions.append(btn('Show in dispatch',()=>{model.close();S.date=/^\d{4}-\d{2}-\d{2}$/.test(job.date||'')?job.date:today();S.view=job.date?'day':undated(job)?'queue':'jobs';S.status='all';S.employee='';S.type='';S.query=job.date?'':job.id;S.notice='Showing '+(job.customer||job.title||job.id)+(job.date?' on '+dateText(job.date)+'.':undated(job)?' in To schedule.':' in unscheduled work.');void load();}));
         results.append(h('article',{class:'dp-search-result'},h('div',{class:'dp-job-top'},h('strong',{},job.customer||job.title||row.canonicalCustomerName||job.id),pill(words(job.activity||job.status))),row.canonicalCustomerName&&row.canonicalCustomerName!==job.customer?h('small',{class:'dp-muted'},'Customer record: '+row.canonicalCustomerName):null,h('p',{},job.date?job.date+' · '+clock(job.time)+' – '+clock(job.endTime):'Unscheduled'),job.address?h('p',{},job.address):null,h('p',{class:'dp-muted'},[job.serviceType||words(job.type),job.id].filter(Boolean).join(' · ')),actions));
       }
     }catch(error){if(S.modal===model){results.replaceChildren();model.status.replaceChildren(notice(errorText(error),'error'));if(error.status===401)model.status.append(signInLink());}}
@@ -1044,12 +1120,12 @@ function unmount({force=false}={}) {if(!force&&S.detached&&S.modal===S.detached&
 window.addEventListener('egc:signout',()=>{try{for(let i=sessionStorage.length-1;i>=0;i--){const name=sessionStorage.key(i);if(name?.startsWith(recoveryPrefix))sessionStorage.removeItem(name);}}catch{}unmount({force:true});});
 window.addEventListener('beforeunload',event=>{if(S.modal){event.preventDefault();event.returnValue='';}});
 function registerView(name,view) {
-  if(!/^[a-z][a-z0-9_]{1,23}$/.test(name)||['day','week','crew','jobs'].includes(name)||views.has(name)||typeof view?.label!=='string'||typeof view.range!=='function'||typeof view.render!=='function')throw new Error('Dispatch view '+name+' is invalid or already registered.');
+  if(!/^[a-z][a-z0-9_]{1,23}$/.test(name)||['day','week','crew','jobs','queue'].includes(name)||views.has(name)||typeof view?.label!=='string'||typeof view.range!=='function'||typeof view.render!=='function')throw new Error('Dispatch view '+name+' is invalid or already registered.');
   views.set(name,Object.freeze({label:view.label,range:view.range,step:typeof view.step==='function'?view.step:null,render:view.render,help:typeof view.help==='string'?view.help:''}));
   if(S.root&&!S.modal)render();
 }
 // Registered views share this client, its dialogs and the save-recovery protocol (same requestId on retry).
-const internals=Object.freeze({state:()=>S,api,save,modal,openJob,show,redraw:renderBody,person,assignable,crewName,vehicle,h,btn,pill,notice,errorText,clock,dateText,addDays,today,words,key,segmentsOf,segmentsOn,active,warningsFor,reasonControls,outcomeBadge,rebookAction});
+const internals=Object.freeze({state:()=>S,api,save,modal,openJob,show,redraw:renderBody,person,assignable,crewName,vehicle,h,btn,pill,notice,errorText,clock,dateText,addDays,today,words,key,segmentsOf,segmentsOn,active,queued,undated,warningsFor,reasonControls,outcomeBadge,rebookAction});
 window.EGCDispatch={mount,unmount,refresh:load,canLeave:()=>!S.modal&&!S.pending,registerView,book,internals,openFor};
 // A readiness chip opened outside the Hub lands on /employee.html?view=finance&job=ID; that job's row is shown once the Hub renders it.
 try{if(typeof location!=='undefined'){const params=new URLSearchParams(location.search);if(params.get('view')==='finance'&&params.get('job'))focusFinanceRow(params.get('job'),100);}}catch{}

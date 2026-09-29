@@ -19,6 +19,7 @@ import { bookingDimensions, firstPlacementDimensions } from './funnel-dimensions
 import { scheduleTagWrites, withGhlTagStatus } from './ghl-tag-outbox.js';
 import { notifyPatch, withDispatchReadiness } from './dispatch-readiness.js';
 import { walkthroughStatusFields } from './walkthrough-state.js';
+import { dispatchReviewCleared, withQueueFacts } from './dispatch-queue.js';
 
 const TERMINAL = new Set(['cancelled','canceled','completed','invoiced','paid','review_requested','closed','noshow','no_show','no-show']);
 const JOB_TYPES = new Set(['job','walkthrough','cleanout','reorg','blocked']);
@@ -79,7 +80,7 @@ function legacyMembers(job, roster) {
   return [...new Set(ids)];
 }
 
-const DTO_FIELDS = ['id','revision','type','customerId','customer','phone','address','title','date','time','endDate','endTime','assignedTo','crewLead','crewId','vehicleId','crewNeeded','travelBufferMinutes','jobInstructions','accessInstructions','customerInstructions','opsNotes','requiredEquipment','materials','serviceType','syncStatus','highlevelAppointmentId','sourceWalkthroughId','sourceTemplateJobId','recurrence','recurrenceParentId','reminderDays','notify','shiftPickupEnabled','openShift','notes','durationMin','estimatedDurationMin','createdAt','updatedAt','completedAt','arrivalWindowStart','arrivalWindowEnd','arrivalWindow','requiredSkills','ghlTagEntry','noShowReasonCode','noShowAt'];
+const DTO_FIELDS = ['id','revision','type','customerId','customer','phone','address','title','date','time','endDate','endTime','assignedTo','crewLead','crewId','vehicleId','crewNeeded','travelBufferMinutes','jobInstructions','accessInstructions','customerInstructions','opsNotes','requiredEquipment','materials','serviceType','syncStatus','highlevelAppointmentId','sourceWalkthroughId','sourceTemplateJobId','recurrence','recurrenceParentId','reminderDays','notify','shiftPickupEnabled','openShift','notes','durationMin','estimatedDurationMin','createdAt','updatedAt','completedAt','arrivalWindowStart','arrivalWindowEnd','arrivalWindow','requiredSkills','ghlTagEntry','noShowReasonCode','noShowAt','needsDispatchReview','dispatchReviewReason'];
 const scopeText = job => typeof job.operationalScope?.text === 'string' ? job.operationalScope.text : typeof job.jobInstructions === 'string' ? job.jobInstructions : job.jobInstructions?.operationalScope || (typeof job.scope === 'string' ? job.scope : '') || job.scopeOfWork || '';
 function recurringTemplateFields(source,actor,now) {
   const output={};
@@ -282,7 +283,9 @@ export async function dispatchOverview(store, session, query = {}, now = new Dat
   if(rules.blockTravelShort&&options.travel?.enabled)inspection.blockTravelShort=true;
   const projected = withLines.map(job=>projectDispatchJob(job,roster,new Date(now).toISOString()));
   const ready = options.readiness === true ? await withDispatchReadiness(store,session,selected,projected,now) : { jobs: await withGhlTagStatus(store,projected,now), warnings: [] };
-  return { ok: true, timeZone: DISPATCH_TIME_ZONE, startDate, endDate, jobs: ready.jobs, ...(store.ghlTagOutbox===true?{ghlTagOutbox:true}:{}), ...(options.readiness === true ? readinessFlags(store,ready) : {}), roster,
+  // FIX-DISPATCH-QUEUE: the Hub's To schedule rows (dispatch-queue.js) come with readiness, with queueFacts:true saying the queued
+  // jobs are exactly those that carry queue facts; the signed bridge never gets them.
+  return { ok: true, timeZone: DISPATCH_TIME_ZONE, startDate, endDate, jobs: options.readiness === true ? withQueueFacts(selected, ready.jobs, now) : ready.jobs, ...(options.readiness === true ? { queueFacts: true } : {}), ...(store.ghlTagOutbox===true?{ghlTagOutbox:true}:{}), ...(options.readiness === true ? readinessFlags(store,ready) : {}), roster,
     crews: resources.filter(row => row.recordType === 'crew'), vehicles: resources.filter(row => row.recordType === 'vehicle'),
     availability: resources.filter(row => row.recordType === 'availability').concat(jobs.filter(row => row.type === 'availability' || row.recordType === 'crew_availability').map(row => ({ ...row, employeeId: resolveMember(row.employee,roster,true) || row.employee }))).filter(row => row.date < endDate && (row.endDate || row.date) >= startDate),
     warnings: [...selected.flatMap(job => jobWarnings(job, jobs, resources, roster,inspection)),...ready.warnings], coverage: { complete: true, asOf: now.toISOString() }, arrivalDefaults: arrivalDefaults(effectiveArrivalSettings(settings,rules)), segments: { enabled: store.segmentsEnabled === true, max: SEGMENT_LIMIT }, dispatchRules: dispatchRulesView(rules) };
@@ -523,6 +526,8 @@ async function executeDispatch(store, session, input, now, options = {}) {
     if (!cancel && next.type === 'blocked' && !interval) throw fail('dispatch_block_invalid','A company-wide scheduling block needs valid start and end times.');
     // FIX-DISPATCH-READY: when Notify customer was last set; an imported Jobber job's first booking turns it on (EGC_DISPATCH_NOTIFY_IMPORTED_ON).
     if (!create && !cancel && next.type !== 'blocked') { const notify = notifyPatch(current,input.changes || {},next,now,{importedOn:store.notifyImportedOn === true}); Object.assign(patch,notify); next = {...next,...notify}; }
+    // FIX-DISPATCH-QUEUE: the first save that books work waiting in To schedule clears its review flag (dispatch-queue.js).
+    if (!cancel) Object.assign(patch,dispatchReviewCleared(current,interval,session.user,now));
     if (!cancel && !hasSchedule && current?.highlevelAppointmentId) throw fail('dispatch_linked_unschedule_unsupported','A provider-linked appointment must be rescheduled or cancelled, not cleared.');
     const arrival = cancel || next.type === 'blocked' ? null : arrivalWindowPatch(current,next,input.changes || {},effectiveArrivalSettings(store.settings ? await store.settings() : {},rules));
     if (arrival) Object.assign(patch,arrival.patch);
