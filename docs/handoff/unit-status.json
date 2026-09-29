@@ -34,9 +34,13 @@
     },
     {
       "id": "FIX-HUB-COLLECTED-CREDITS",
-      "state": "reported_reviewed_queued",
-      "source": "PR #86 description and owner queue",
-      "merged": false
+      "state": "implemented_reviewed_in_pr87_pending_queue_pick",
+      "source": "Bounded completion of the existing queued unit",
+      "merged": false,
+      "commitSha": "6e62996caa0c87371676201832a8f8e6edacdc12",
+      "portableMainBasedSha": "f7ecda5cae5ab639e2883b7b7575b6e34bc6fabd",
+      "review": "primary and independent review complete",
+      "targetedTests": "159/159 passed"
     },
     {
       "id": "FIELD-PAY",
@@ -81,7 +85,7 @@
   ],
   "laterAuthorizedHubIntegration": {
     "scope": "iOS Walkthroughs and recording/transcript to office tasks",
-    "state": "published_in_pr87_pending_final_ci_and_batch8_gate",
+    "state": "published_in_pr87_ui_ci_green_combined_credit_candidate_pending_ci_and_batch8_gate",
     "branch": "codex/hub-ios-walkthrough-completion",
     "merged": false,
     "localBrowserResults": {
@@ -107,8 +111,8 @@
     "pr": 87,
     "branch": "codex/hub-ios-walkthrough-completion",
     "implementationSha": "a13e01e81552edfabd2dcc61e1479cd3ed0ddb42",
-    "checkedHeadSha": "d0d09ce67159e6b3e7ae21020a36e48080e62008",
-    "state": "draft_pending_followup_ci_and_batch8",
+    "checkedHeadSha": "9e810bd95cf152c016f721acc4efbeccb0da4afd",
+    "state": "draft_combined_credit_candidate_pending_final_ci_and_batch8",
     "merged": false,
     "ciAtCheckedHead": {
       "root": "success",
@@ -117,25 +121,28 @@
       "firestore": "success",
       "businessHub": "success",
       "mobileDeviceE2E": "success",
-      "lighthouse": "in_progress",
+      "lighthouse": "success",
       "actionCenterFunctionsBundle": "success",
       "actionCenterDatabasePlatform": "success",
-      "actionCenterBrowser": "in_progress",
+      "actionCenterBrowser": "success",
       "actionCenterWebKit": "success"
     },
     "followUp": {
       "state": "included_with_this_handoff_revision_pending_ci",
       "scope": [
-        "office visual refinement and readable labels"
+        "queued collected-credits fix",
+        "asset cache version refresh"
       ],
+      "creditCommitSha": "6e62996caa0c87371676201832a8f8e6edacdc12",
       "localResults": {
+        "creditsAndMoneyRegression": "159/159",
         "officeHandoffBrowser": "7/7",
         "recordingApi": "15/15",
         "proxyContact": "14/14",
         "dispatchRegressions": "43/43",
-        "webkitRecordingsAfterLaunchFix": "13/13"
+        "webkitRecordings": "13/13"
       },
-      "requires": "new PR head and complete CI rerun"
+      "requires": "complete CI rerun on the final combined PR head; use live PR checks for the current result"
     }
   },
   "production": {

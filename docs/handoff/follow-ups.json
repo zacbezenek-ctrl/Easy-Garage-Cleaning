@@ -3,6 +3,14 @@
   "asOf": "2026-09-29",
   "items": [
     {
+      "id": "CREDITS-QUEUE",
+      "state": "implemented_reviewed_pending_queue_pick",
+      "owner": "build coordinator",
+      "action": "Pick the isolated credits fix first into the existing serial queue, run exact-head checks, then proceed to handoff and FIELD-PAY. Do not merge Batch 8 to main before FIELD-PAY.",
+      "commitSha": "6e62996caa0c87371676201832a8f8e6edacdc12",
+      "evidence": "159 targeted money, invoice, privacy and parity tests; primary and independent review passed"
+    },
+    {
       "id": "CI-01",
       "state": "open",
       "owner": "build coordinator",
@@ -42,9 +50,9 @@
     },
     {
       "id": "HUB-INTEGRATION",
-      "state": "committed_pending_ci",
+      "state": "ui_ci_green_combined_candidate_pending_ci",
       "owner": "build coordinator",
-      "action": "Verify all Linux CI workflows on PR #87, then preserve Batch 8/FIELD-PAY ordering before merge and production smoke checks."
+      "action": "All eight workflows passed UI head 9e810bd. Verify all Linux CI workflows again on the final credits-plus-UI PR #87 head, then preserve Batch 8/FIELD-PAY ordering before merge and production smoke checks."
     },
     {
       "id": "OWNER-LIVE",
