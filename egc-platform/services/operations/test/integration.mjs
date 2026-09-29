@@ -38,6 +38,30 @@ test('create, edit and complete use one canonical task ID and append durable evi
  const done=await call({command:'task.complete',taskId:t.id,revision:2,outcome:'Called; customer requested a later quote'});assert.equal(done.task.id,t.id);assert.equal(done.task.revision,3);assert.equal(done.task.status,'completed');assert.equal(done.task.completionEvidence[0].kind,'staff_attestation');
  assert.equal((await queue()).total,0);const detail=await get(t.id);assert.ok(detail.history.some(e=>e.type==='task.complete'));assert.ok(detail.history.some(e=>e.type==='task.revision_recorded'));
 });
+test('completed queue keeps proof and owner scope while ordering by completion, legacy update time, then ID',async()=>{
+ const old=await create({title:'Older completed action'}),salesTask=await create({title:'Sales completed action',assignedUserId:sales.id});
+ await create({title:'Still open'});
+ await call({command:'task.complete',taskId:old.id,revision:1,outcome:'Older callback completed and recorded'});
+ now=new Date(now.valueOf()+3600000);
+ const [legacy]=await db.insert(schema.tasks).values({title:'Legacy completed action',source:'mcp',status:'completed',assignedUserId:owner.id,dueAt:new Date(at(-1)),updatedAt:now}).returning();
+ now=new Date(now.valueOf()+3600000);
+ await call({command:'task.complete',taskId:salesTask.id,revision:1,outcome:'Sales callback completed and recorded'});
+ now=new Date(now.valueOf()+3600000);
+ const tiedA=await create({title:'First tied action'}),tiedB=await create({title:'Second tied action'});
+ for(const task of [tiedA,tiedB])await call({command:'task.complete',taskId:task.id,revision:1,outcome:'Tied callback completed and recorded'});
+ const result=await queue({view:'completed'}),tied=[tiedA.id,tiedB.id].sort((a,b)=>b.localeCompare(a));
+ assert.deepEqual(result.items.map(task=>task.id),[...tied,salesTask.id,legacy.id,old.id]);
+ assert.equal(result.items.find(task=>task.id===legacy.id).completedAt,null);
+ assert.equal(result.total,5);assert.equal((await queue()).total,1);
+ assert.deepEqual((await queue({view:'completed',offset:0,limit:2})).items.map(task=>task.id),tied);
+ assert.equal((await queue({view:'completed',owner:sales.id})).items[0].id,salesTask.id);
+ assert.equal((await queue({view:'completed',owner:sales.id})).total,1);
+ assert.equal((await get(salesTask.id)).task.completionEvidence[0].outcome,'Sales callback completed and recorded');
+ const command={command:'queue',view:'completed',dueBefore:at(24),offset:0,limit:10};
+ assert.equal(commandSchema.parse(command).view,'completed');
+ await rejects(call(command,{...owner,workspace:'other'}),'workspace_forbidden');
+ await rejects(call(command,{...owner,role:'crew'}),'role_forbidden');
+});
 test('ten concurrent retries create one row and one create event',async()=>{
  const requestId=randomUUID();const results=await Promise.all(Array.from({length:10},()=>create({},owner,requestId)));
  assert.equal(new Set(results.map(t=>t.id)).size,1);assert.equal((await queue()).total,1);

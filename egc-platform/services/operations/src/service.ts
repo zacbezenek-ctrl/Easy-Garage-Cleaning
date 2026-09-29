@@ -289,7 +289,7 @@ export class OperationsService {
       case "queue": {
         const now=this.now();
         const attention=sql<Date>`case when ${schema.tasks.waitingOn} in ('customer','provider') then ${schema.tasks.reviewAt} else ${schema.tasks.dueAt} end`;
-        const conditions=[eq(schema.tasks.workspaceId,actor.workspace),inArray(schema.tasks.status,active)];
+        const conditions=[eq(schema.tasks.workspaceId,actor.workspace),command.view==="completed"?eq(schema.tasks.status,"completed"):inArray(schema.tasks.status,active)];
         if (command.owner) conditions.push(eq(schema.tasks.assignedUserId,command.owner));
         // SQL expressions lack a column's Date encoder; bind ISO strings so the
         // postgres driver receives valid timestamp parameters in every queue view.
@@ -301,7 +301,8 @@ export class OperationsService {
         if (command.view==="ownerless") conditions.push(or(isNull(schema.tasks.assignedUserId),eq(schema.tasks.assignedUserId,""))!);
         const predicate=and(...conditions);
         const [count]=await tx.select({n:sql<number>`count(*)::int`}).from(schema.tasks).where(predicate);
-        const rows=await tx.select().from(schema.tasks).where(predicate).orderBy(asc(attention),asc(schema.tasks.id)).limit(command.limit).offset(command.offset);
+        const completedAt=sql<Date>`coalesce(${schema.tasks.completedAt},${schema.tasks.updatedAt})`;
+        const rows=await tx.select().from(schema.tasks).where(predicate).orderBy(...(command.view==="completed"?[desc(completedAt),desc(schema.tasks.id)]:[asc(attention),asc(schema.tasks.id)])).limit(command.limit).offset(command.offset);
         return {ok:true,items:rows,total:count?.n??0,offset:command.offset,nextOffset:command.offset+rows.length<(count?.n??0)?command.offset+rows.length:null,
           asOf:now.toISOString(),consistency:"repeatable-read-for-this-page",coverage:{registeredTasks:"complete",inferredCommitments:"not_complete",portalCalendar:"separate_authority"}};
       }

@@ -14,15 +14,16 @@ import {auditLogWriter,recordIssuerRefusal,serviceAuthEnabled,signApiServiceRequ
 type Row=typeof schema.walkthroughs.$inferSelect;
 type Identity={portalJobId:string;portalVisitId:string;portalCustomerId:string;portalProjectId:string|null;portalRevision:string;highlevelContactId:string|null;authority:'employee_hub'};
 type Approval=Extract<RecordingCommand,{command:'recording.approve'}>;
+type ManualTaskReview=Extract<RecordingCommand,{command:'recording.review_manual_tasks'}>;
 const TRANSCRIPT_CONTENT_TYPE='text/plain; charset=utf-8';
 const isTranscriptRow=(row:Row)=>row.audioContentType===TRANSCRIPT_CONTENT_TYPE&&row.audioObjectKey===null;
-export type RecordingDependencies={put:typeof putObject;get:typeof getObject;transcribe:typeof transcribeWalkthrough;extract:typeof extractWalkthrough;conversation?:typeof extractConversation;catalog?:typeof loadCatalogIndex};
+export type RecordingDependencies={put:typeof putObject;get:typeof getObject;transcribe:typeof transcribeWalkthrough;extract:typeof extractWalkthrough;conversation?:typeof extractConversation;catalog?:typeof loadCatalogIndex;createManualTask?:(actor:Actor,task:ManualTaskReview['actions'][number],requestId:string)=>Promise<unknown>};
 // v2 rows keep the reviewed walkthrough shape in `extraction` (what the review screen edits and approves) and the
 // evidence-validated conversation proposals beside it; the DTO lifts them out with their Action Center task drafts.
 // Once a review is approved or pending, its tasks exist or are being created, so proposedTasks is empty.
 const hasConversation=(extraction:unknown):extraction is {conversation:unknown}=>typeof extraction==='object'&&extraction!==null&&Object.hasOwn(extraction,'conversation');
 const conversationView=(r:Row)=>{if(!hasConversation(r.extraction))return{};const{conversation,...extraction}=r.extraction,parsed=conversationExtractionSchema.safeParse(conversation),reviewed=r.status==='approved'||r.status==='approval_pending';return{extraction,conversation:parsed.success?parsed.data:null,proposedTasks:parsed.success&&!reviewed?recordingTaskProposals(parsed.data,r):[]};};
-const publicRow=(r:Row)=>{const{audioObjectKey,approvalPayload,audioSha256,...safe}=r;return{...safe,...conversationView(r),sourceKind:isTranscriptRow(r)?'transcript':'audio',sourceFilename:r.audioFilename,sourceBytes:r.audioBytes,revision:r.updatedAt.toISOString(),pendingReview:r.status==='approval_pending'?(approvalPayload as {command?:unknown}|null)?.command??null:null,linkageExceptions:r.portalProjectId?[]:['project_link_not_established']};};
+const publicRow=(r:Row)=>{const{audioObjectKey,approvalPayload,audioSha256,...safe}=r;return{...safe,...conversationView(r),sourceKind:isTranscriptRow(r)?'transcript':'audio',reviewMode:r.extractionVersion===0?'manual_tasks':'ai_scope',sourceFilename:r.audioFilename,sourceBytes:r.audioBytes,revision:r.updatedAt.toISOString(),pendingReview:r.status==='approval_pending'?(approvalPayload as {command?:unknown}|null)?.command??null:null,linkageExceptions:r.portalProjectId?[]:['project_link_not_established']};};
 
 export class RecordingService{
   constructor(private env:NodeJS.ProcessEnv=process.env,private db=getDb(),private fetcher:typeof fetch=fetch,private io:RecordingDependencies={put:putObject,get:getObject,transcribe:transcribeWalkthrough,extract:extractWalkthrough,conversation:extractConversation,catalog:loadCatalogIndex}){}
@@ -109,6 +110,15 @@ export class RecordingService{
     if(command.command==='recording.get')return{ok:true,recording:publicRow(row)};
     if(command.command==='recording.refresh_source'){
       if(!['owner','manager'].includes(c.actor.role))throw new OperationsError('human_manager_approval_required',403);
+      // A manual task claim may already have created some tasks. Never erase its saved request or dedupe identity.
+      if(row.extractionVersion===0)throw new OperationsError('recording_manual_review_refresh_not_safe',409);
+      if(row.status==='failed'&&isTranscriptRow(row)&&row.transcript?.trim()){
+        // A human checks the current visit before drafting tasks from a saved transcript.
+        // Keep the failed source and its diagnostic intact, while issuing a fresh row revision.
+        const[refreshed]=await this.db.update(schema.walkthroughs).set({portalProjectId:identity.portalProjectId,portalRevision:identity.portalRevision,updatedAt:new Date(Math.max(Date.now(),row.updatedAt.getTime()+1))}).where(and(eq(schema.walkthroughs.id,row.id),eq(schema.walkthroughs.workspaceId,this.workspace),eq(schema.walkthroughs.status,'failed'),eq(schema.walkthroughs.updatedAt,row.updatedAt))).returning();
+        if(!refreshed)throw new OperationsError('recording_revision_conflict',409);
+        return{ok:true,recording:publicRow(refreshed),requiresNewReview:true};
+      }
       if(row.status!=='draft'&&!(row.status==='approval_pending'&&row.lastErrorCode==='recording_source_revision_conflict'))throw new OperationsError('recording_review_refresh_not_safe',409);
       await this.db.update(schema.walkthroughs).set({status:'draft',portalProjectId:identity.portalProjectId,portalRevision:identity.portalRevision,approvalPayload:null,approvalFingerprint:null,approvalRequestId:null,lastErrorCode:null,updatedAt:new Date()}).where(and(eq(schema.walkthroughs.id,row.id),eq(schema.walkthroughs.updatedAt,row.updatedAt)));
       return{ok:true,recording:publicRow(await this.row(row.id)),requiresNewReview:true};
@@ -119,6 +129,7 @@ export class RecordingService{
       if(row.status!=='failed'||row.lastErrorCode==='recording_upload_failed')throw new OperationsError('recording_retry_not_available',409);
       await this.db.update(schema.walkthroughs).set({status:'uploaded',lastErrorCode:null,processingLeaseUntil:null,updatedAt:new Date()}).where(and(eq(schema.walkthroughs.id,row.id),eq(schema.walkthroughs.status,'failed')));return{ok:true,recording:publicRow(await this.row(row.id))};
     }
+    if(command.command==='recording.review_manual_tasks')return this.reviewManualTasks(c.actor,c.request.requestId,command,identity);
     return this.approve(c.actor,c.request.requestId,command);
   }
   async processNext(onFailure:(details:ReturnType<typeof recordingFailureDiagnostic>&{event:string;stage:string;attempt:number;sourceKind:string})=>void=()=>{}){
@@ -158,6 +169,69 @@ export class RecordingService{
     if(!result.ok)throw new OperationsError(result.code,result.retryable?503:422);
     return{extraction:{...walkthroughExtractionFromConversation(result.extraction),conversation:result.extraction},extractionVersion:2};
   }
+  // A failed saved transcript can still yield office work after a human manager reads it.
+  // This path does not apply scope to the portal or claim that AI generated the tasks.
+  private async reviewManualTasks(actor:Actor,requestId:string,command:ManualTaskReview,identity:Identity){
+    if(!['owner','manager'].includes(actor.role)||actor.kind!=='human')throw new OperationsError('human_manager_approval_required',403);
+    const hash=fingerprint({mode:'manual_tasks',actions:command.actions});
+    const row=await this.db.transaction(async tx=>{
+      const[r]=await tx.select().from(schema.walkthroughs).where(and(eq(schema.walkthroughs.id,command.recordingId),eq(schema.walkthroughs.workspaceId,this.workspace))).for('update');
+      if(!r)throw new OperationsError('recording_not_found',404);
+      if(['approval_pending','approved'].includes(r.status)){
+        if(r.extractionVersion!==0||r.approvalFingerprint!==hash)throw new OperationsError('recording_approval_request_conflict',409);
+        return r;
+      }
+      if(r.status!=='failed'||!isTranscriptRow(r)||!r.transcript?.trim())throw new OperationsError('recording_manual_review_not_available',409);
+      if(r.updatedAt.toISOString()!==command.revision)throw new OperationsError('recording_revision_conflict',409);
+      if(!r.portalJobId||!r.portalVisitId||!r.portalCustomerId)throw new OperationsError('recording_identity_unverified',409);
+      if(r.portalRevision!==identity.portalRevision||r.portalProjectId!==identity.portalProjectId)throw new OperationsError('recording_source_revision_conflict',409);
+      for(const action of command.actions){
+        const evidence=action.sourceEvidence;
+        if(action.kind!=='manual'||action.draft!==null||action.dependencies.length||action.dedupeKey||action.portalJobId!==r.portalJobId||action.portalVisitId!==r.portalVisitId||action.jobId||action.contactId||
+          action.description.trim().length<3||action.completionCondition.trim().length<3||evidence.length!==1||evidence[0]?.source!=='recording'||evidence[0].id!==r.id||evidence[0].excerpt.trim().length<3||!r.transcript.includes(evidence[0].excerpt))
+          throw new OperationsError('recording_manual_task_invalid',400);
+      }
+      const[claimed]=await tx.update(schema.walkthroughs).set({status:'approval_pending',extractionVersion:0,approvalRequestId:requestId,approvalFingerprint:hash,approvalPayload:{actor,command},lastErrorCode:null,updatedAt:new Date()}).where(eq(schema.walkthroughs.id,r.id)).returning();
+      return claimed!;
+    });
+    if(row.status==='approved')return{ok:true,alreadyApplied:true,recording:publicRow(row)};
+    const stored=row.approvalPayload as {actor:Actor;command:ManualTaskReview};
+    try{
+      const bridge=portalAdapter(this.env.EGC_PORTAL_ORIGIN!,this.env.EGC_OPERATIONS_PORTAL_SIGNING_SECRET??'',this.workspace,this.fetcher,this.env);
+      for(const action of stored.command.actions)if(!await bridge.owner(action.assignedUserId))throw new OperationsError('recording_action_owner_unverified',409);
+      const checkedPortalJob=async(id:string)=>{
+        if(id!==row.portalJobId)throw new OperationsError('recording_identity_changed',409);
+        const source=await this.resolveSource(stored.actor,id);
+        this.assertCurrentSource(row,source);
+        const job=await bridge.resolve(id);
+        // The canonical task writer reads the Hub job separately. Its revision must be
+        // the one whose exact customer identity we just checked, even on a relink race.
+        if(job.id!==id||job.revision!==source.portalRevision)throw new OperationsError('recording_source_revision_conflict',409);
+        return job;
+      };
+      const operations=this.io.createManualTask?null:operationsService({workspace:this.workspace,resolvePortalJob:checkedPortalJob,resolveOwner:bridge.owner,portalRead:bridge.read});
+      for(let i=0;i<stored.command.actions.length;i++){
+        // Revalidate the exact source even when a retry's task ID was already committed.
+        this.assertCurrentSource(row,await this.resolveSource(stored.actor,row.portalJobId!));
+        const action=stored.command.actions[i]!,key=stableUuid(`recording:${row.id}:manual:${i}`),task={...action,dedupeKey:`recording:${row.id}:manual:${i}`};
+        if(this.io.createManualTask){await checkedPortalJob(action.portalJobId!);await this.io.createManualTask(stored.actor,task,key);}
+        else await operations!.execute(stored.actor,{command:'task.create',task},key);
+      }
+      this.assertCurrentSource(row,await this.resolveSource(stored.actor,row.portalJobId!));
+      await this.db.transaction(async tx=>{
+        const[current]=await tx.select().from(schema.walkthroughs).where(eq(schema.walkthroughs.id,row.id)).for('update');
+        if(current?.status==='approved')return;
+        if(current?.status!=='approval_pending'||current.approvalFingerprint!==hash)throw new OperationsError('recording_approval_request_conflict',409);
+        await tx.update(schema.walkthroughs).set({status:'approved',approvedBy:stored.actor.id,approvedAt:new Date(),lastErrorCode:null,updatedAt:new Date()}).where(eq(schema.walkthroughs.id,row.id));
+        await tx.insert(schema.auditLogs).values({actor:stored.actor.id,action:'recording.review_manual_tasks',entity:'walkthrough',entityId:row.id,source:'employee_hub',newValue:{portalJobId:row.portalJobId,portalVisitId:row.portalVisitId,reviewMode:'manual_tasks',fingerprint:hash,actions:stored.command.actions.length}});
+      });
+      return{ok:true,recording:publicRow(await this.row(row.id))};
+    }catch(error){
+      const code=error instanceof OperationsError?error.code:'recording_manual_task_create_failed';
+      await this.db.update(schema.walkthroughs).set({lastErrorCode:code,updatedAt:new Date()}).where(and(eq(schema.walkthroughs.id,row.id),eq(schema.walkthroughs.status,'approval_pending')));
+      throw error;
+    }
+  }
   private async approve(actor:Actor,requestId:string,command:Approval){
     if(!['owner','manager'].includes(actor.role)||actor.kind!=='human')throw new OperationsError('human_manager_approval_required',403);
     const validationBridge=portalAdapter(this.env.EGC_PORTAL_ORIGIN!,this.env.EGC_OPERATIONS_PORTAL_SIGNING_SECRET??'',this.workspace,this.fetcher,this.env);
@@ -166,6 +240,7 @@ export class RecordingService{
     const row=await this.db.transaction(async tx=>{
       const[r]=await tx.select().from(schema.walkthroughs).where(and(eq(schema.walkthroughs.id,command.recordingId),eq(schema.walkthroughs.workspaceId,this.workspace))).for('update');
       if(!r)throw new OperationsError('recording_not_found',404);
+      if(r.extractionVersion===0)throw new OperationsError('recording_manual_review_not_scope_approval',409);
       if(!r.portalJobId||!r.portalVisitId||!r.portalCustomerId||!r.portalRevision)throw new OperationsError('recording_identity_unverified',409);
       if(['approved','approval_pending'].includes(r.status)){if(r.approvalFingerprint!==hash)throw new OperationsError('recording_approval_request_conflict',409);return r;}
       if(r.status!=='draft'||r.updatedAt.toISOString()!==command.revision)throw new OperationsError('recording_revision_conflict',409);

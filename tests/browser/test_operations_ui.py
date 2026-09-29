@@ -48,7 +48,7 @@ class BrowserTests(unittest.TestCase):
         if req.method=='GET':send({'ok':True,'enabled':self.enabled,'actor':{'id':'test-owner','role':self.actor_role,'kind':'human'},'owners':[{'id':'test-owner','name':'Test owner','role':'owner'}]});return
         r=req.post_data_json;self.calls.append(r);c=r['body'];name=c['command']
         if name=='queue':
-            rows=[t for t in self.items if t['status'] in ['open','in_progress','blocked']]
+            rows=[t for t in self.items if t['status']=='completed'] if c['view']=='completed' else [t for t in self.items if t['status'] in ['open','in_progress','blocked']]
             if c['view']=='approvals':rows=[t for t in rows if t['approvalStatus'] in ['pending','invalidated']]
             if c['view']=='blocked':rows=[t for t in rows if t['status']=='blocked']
             if c['view']=='waiting':rows=[t for t in rows if t['waitingOn'] in ['customer','provider']]
@@ -124,6 +124,17 @@ class BrowserTests(unittest.TestCase):
             handoff.get_by_role('button',name='Copy office instructions').click()
             self.assertFalse(any('task.send'==r['body']['command'] for r in self.calls))
             self.page.get_by_role('dialog').get_by_role('button',name='Close',exact=True).click()
+    def test_recording_handoff_withholds_customer_and_copy_after_visit_revision_changes(self):
+        self.items=[task(kind='manual',portalJobId='visit-synthetic',portalRevision='reviewed-revision',sourceEvidence=[{'source':'recording','id':'recording-synthetic','excerpt':'Call tomorrow.'}])]
+        self.handoff_response={'ok':True,'job':{'id':'visit-synthetic','revision':'new-revision'},'customerHandoff':{'name':'Different Customer','phone':'9705550199','highlevelContactUrl':'https://app.gohighlevel.com/v2/location/loc/contacts/detail/contact','reasonCode':None}}
+        self.open();self.detail();handoff=self.page.locator('.ac-office-handoff')
+        expect(handoff).to_contain_text('Ask a manager to verify the customer and visit')
+        expect(handoff).not_to_contain_text('Different Customer')
+        expect(handoff).not_to_contain_text('9705550199')
+        expect(handoff.get_by_role('button',name='Copy office instructions')).to_be_disabled()
+        expect(handoff.get_by_role('link',name='Open customer in HighLevel')).to_have_count(0)
+        expect(handoff.get_by_role('link',name='Open HighLevel',exact=True)).to_have_count(0)
+        self.assertEqual(len(self.dispatch_reads),1)
     def test_recording_handoff_permission_error_has_no_guessed_contact(self):
         self.items=[task(kind='manual',portalJobId='visit-synthetic',sourceEvidence=[{'source':'recording','id':'recording-synthetic','excerpt':'Call tomorrow.'}])]
         self.handoff_status=403;self.handoff_response={'ok':False,'code':'dispatch_forbidden'}
@@ -151,6 +162,21 @@ class BrowserTests(unittest.TestCase):
         expect(handoff.get_by_role('link',name='Open HighLevel',exact=True)).to_have_attribute('href','https://app.gohighlevel.com/')
     def test_disabled_is_not_a_fake_empty_queue(self):
         self.enabled=False;self.open();expect(self.page.locator('[data-ac-content]')).to_contain_text('not an empty work queue');self.assertEqual([r for r in self.calls if r['body']['command']=='queue'],[])
+    def test_completed_history_reopens_proof_without_open_action_controls(self):
+        finished=task(title='Completed synthetic callback',status='completed',portalJobId='visit-synthetic',dueAt=at(-72),completedAt=at(-2),sourceEvidence=[{'source':'recording','id':'recording-synthetic','excerpt':'Call after walkthrough.'}],completionEvidence=[{'kind':'staff_attestation','actor':'test-owner','outcome':'Called and confirmed the requested follow-up.'}])
+        self.items=[task(title='Still open synthetic callback'),finished]
+        self.open();self.page.get_by_role('tab',name='Completed',exact=True).click()
+        history=self.page.get_by_role('region',name='Completed action history')
+        expect(history).to_contain_text('Completed synthetic callback');expect(history).not_to_contain_text('Still open synthetic callback')
+        row=history.locator('.ac-row').first
+        expect(row).to_contain_text('Completed');expect(row).not_to_contain_text('Overdue');expect(row).not_to_contain_text('Owned next action')
+        row.click();dialog=self.page.get_by_role('dialog')
+        expect(dialog).to_contain_text('Completion evidence');expect(dialog).to_contain_text('Called and confirmed the requested follow-up.')
+        for label in ['Edit','Complete','Snooze','Cancel action','Book','Copy office instructions']:expect(dialog.get_by_role('button',name=label,exact=True)).to_have_count(0)
+        expect(dialog.get_by_role('link',name='Open HighLevel',exact=True)).to_have_count(0)
+        self.assertEqual(self.dispatch_reads,[])
+        self.assertTrue(any(r['body'].get('view')=='completed' for r in self.calls if r['body']['command']=='queue'))
+        self.assertFalse(any(r['body']['command'] in ['task.edit','task.complete','task.snooze','task.cancel'] for r in self.calls))
     def test_desktop_and_mobile_have_no_horizontal_overflow(self):
         self.open()
         for width in [1360,390]:
