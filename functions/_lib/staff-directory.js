@@ -3,6 +3,8 @@ import { STAFF_ROLES, can, defaultStaffRoles, primaryStaffRole, sanitizeStaffRol
 import { SKILL_CATALOG, SKILL_CATALOG_VERSION, SKILL_LEVELS, storedSkills, validateSkills } from './staff-skills.js';
 import { auditWrite } from './hub-audit.js';
 import { payOwnerOnly } from './pay-visibility.js';
+import { firebaseRevocationTime, recordStaffFirebaseIntent, revokeStaffFirebaseSessions, settleStaffFirebaseIntent } from './firebase-revocation.js';
+import { staffRoleAccessEnabled } from './hub-session.js';
 
 // Staff directory: roles, skills, effective-dated pay, weekly availability and the Gusto
 // employee ID are additive fields on the existing encrypted 'profiles' payload (no new
@@ -260,7 +262,8 @@ function withProfile(person, records) {
   return Object.assign(person, { record: target || null, profile: chosen ? chosen.data : null, revision: target ? target.updateTime : '', profileNeedsReview: !target && candidates.length > 0 });
 }
 
-export function createStaffDirectoryService({ store, env = {}, now = () => new Date() }) {
+// revocations(): the Firebase session revocation service (firebase-revocation.js), or null.
+export function createStaffDirectoryService({ store, env = {}, now = () => new Date(), revocations = () => null }) {
   const managesStaff = session => can(session, 'time.approve', env) || can(session, 'dispatch.write', env);
 
   async function roster() {
@@ -389,9 +392,18 @@ export function createStaffDirectoryService({ store, env = {}, now = () => new D
       if (input.action === 'set_roles') {
         const saved = await store.readAccount(person.username);
         if (!saved?.account || saved.account.status !== 'approved' || !same(saved.account.username, person.username)) throw fail('revision_conflict', 'This employee account changed since you opened it. Refresh and review the latest before saving.', 409);
-        // A role change revokes existing Hub sessions (sessionVersion); Firebase claims refresh at the next sign-in.
+        // A role change revokes existing Hub sessions (sessionVersion).
         account = { account: { ...saved.account, staffRoles: fields.staffRoles, sessionVersion: crypto.randomUUID(), rolesUpdatedAt: nowIso, rolesUpdatedBy: actor, updatedAt: nowIso }, version: saved.version };
       }
+      // With EGC_STAFF_ROLE_ACCESS it can also add or remove business access (a stored manager), which a
+      // minted Firebase session keeps until its refresh tokens are revoked. Intent first, as for an
+      // account review (employee-accounts.js): a change that lands after this request stops is still revoked.
+      // Flag off, stored roles never reach a claim firestore.rules reads (business_access, role), so a role
+      // change records and calls nothing and answers exactly as before AUTH-ROLES.
+      const firebaseAccess = Boolean(account) && staffRoleAccessEnabled(env);
+      const firebase = firebaseAccess ? revocations() : null, users = [person.username];
+      const intent = firebaseAccess ? await recordStaffFirebaseIntent(firebase, users, 'account_status', nowIso) : '';
+      const revoke = async () => firebaseAccess ? { firebaseRevocation: await revokeStaffFirebaseSessions(firebase, users, 'account_status', firebaseRevocationTime(now()), intent) } : {};
       const receiptData = { kind: 'staff_directory_receipt_v1', action: input.action, actor: personKey(actor), target: person.key, fingerprint, createdAt: nowIso };
       // SEC-02: the audit entry joins the same commit; pay snapshots and Gusto ID changes are owner-only.
       const audit = auditWrite({ actor: { id: auditActor(actor), kind: 'human', role: session.role || null }, via: 'hub', action: `staff_directory.${input.action}`,
@@ -400,15 +412,18 @@ export function createStaffDirectoryService({ store, env = {}, now = () => new D
       try {
         saved = await store.commit({ profile: { id: profileId, documentId: person.record?.documentId || '', revision: person.revision, data }, account, receipt: { id: requestId, data: receiptData }, audit, now: nowIso });
       } catch (error) {
-        if (!['staff_directory_revision_conflict', 'staff_directory_outcome_unknown'].includes(error?.code)) throw error;
+        const known = ['staff_directory_revision_conflict', 'staff_directory_outcome_unknown'].includes(error?.code);
         // A lost response or a racing retry of this same request may already have applied it.
-        const applied = await store.readReceipt(requestId).then(found => found?.fingerprint === fingerprint ? replay(session, found, requestId, today) : null, () => null);
-        if (applied) return applied;
+        const applied = known ? await store.readReceipt(requestId).then(found => found?.fingerprint === fingerprint ? replay(session, found, requestId, today) : null, () => null) : null;
+        if (applied) return { ...applied, ...await revoke() };
+        // A refused change needs no revocation; any other failure may have saved it.
+        if (error?.code === 'staff_directory_revision_conflict') await settleStaffFirebaseIntent(firebase, users, intent, now().toISOString());
+        else await revoke();
         throw error;
       }
       const updated = { ...person, profile: data, record: { documentId: person.record?.documentId || '', updateTime: saved.profileRevision, data }, revision: saved.profileRevision,
         ...(fields.staffRoles ? { staffRoles: fields.staffRoles, staffRolesSource: 'account' } : {}) };
-      return { ok: true, authority: 'employee_hub', person: view(updated, session, today), ...(account ? { sessionsRevoked: true } : {}) };
+      return { ok: true, authority: 'employee_hub', person: view(updated, session, today), ...(account ? { sessionsRevoked: true, ...await revoke() } : {}) };
     },
   };
 }

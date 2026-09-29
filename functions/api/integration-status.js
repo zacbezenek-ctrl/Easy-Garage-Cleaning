@@ -1,4 +1,4 @@
-import { getHubSession, hasBusinessAccess, listHubUserProfiles } from '../_lib/hub-session.js';
+import { getHubSession, hasBusinessAccess, listHubAccessProfiles } from '../_lib/hub-session.js';
 import { firebaseServiceAccountConfigured } from '../_lib/firebase-service-account.js';
 import { customerPortalConfigured } from '../_lib/customer-portal.js';
 import { employeeAccountsConfigured } from '../_lib/employee-accounts.js';
@@ -9,12 +9,14 @@ import { lifecycleApiEnabled } from '../_lib/customer-lifecycle.js';
 import { serverMessagingEnabled } from '../_lib/messaging-settings.js';
 import { serverScheduleSyncActive } from '../_lib/schedule-sync-queue.js';
 import { firebaseRevocations, firebaseRevocationStatus, reconcilesStaffRoster } from '../_lib/firebase-revocation.js';
+import { staffPageGateState } from '../_lib/staff-page-gate.js';
 
 /** Returns configuration readiness only. Secret values never leave the server.
  * Business users also get the Firebase session revocation state (a slow read
  * answers 'unavailable' after 3 s); reading it retries pending revocations
  * and, on the production host only, reconciles removed or changed staff after
- * the response (context.waitUntil). With EGC_SCHEDULE_SYNC_WORKER on, it also
+ * the response (context.waitUntil), including employee accounts whose stored
+ * manager role gives them business access. With EGC_SCHEDULE_SYNC_WORKER on, it also
  * reads the schedule-sync worker's last check-in (3 s cap). */
 export function integrationStatusHandlers({session=getHubSession,revocations=firebaseRevocations,scheduleSync=serverScheduleSyncActive,now=()=>new Date()}={}){
   return {async get(context){
@@ -46,9 +48,16 @@ export function integrationStatusHandlers({session=getHubSession,revocations=fir
     // mirrors. Off, silent or unreadable: false, and page loads retry as before.
     serverScheduleSync:await scheduleSync(env,{now:now()})
   };
+  // OPS-08: once EGC_STAFF_PAGE_GATE is set, whether the edge gates the staff pages; a value that is neither on nor
+  // off leaves them public, so business users also see that value to correct it.
+  if(typeof env?.EGC_STAFF_PAGE_GATE==='string'&&env.EGC_STAFF_PAGE_GATE.trim()){
+    const gate=staffPageGateState(env);
+    status.staffPageGate={...gate,...(!gate.recognized&&hasBusinessAccess(viewer)?{value:env.EGC_STAFF_PAGE_GATE.trim().slice(0,40)}:{})};
+  }
   if(hasBusinessAccess(viewer)){
     const defer=typeof context.waitUntil==='function'?work=>context.waitUntil(work):null;
-    const profiles=reconcilesStaffRoster(request.url)?()=>listHubUserProfiles(env):null;
+    // With EGC_STAFF_ROLE_ACCESS the roster also holds employee accounts that are stored managers (AUTH-ROLES).
+    const profiles=reconcilesStaffRoster(request.url)?()=>listHubAccessProfiles(env):null;
     Object.assign(status,await firebaseRevocationStatus(revocations(env),profiles,now().toISOString(),{defer}));
   }
   // Browser feature flags (booleans only); money writes stay in the browser unless moneyApi is on,

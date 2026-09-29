@@ -188,6 +188,8 @@ function jobWarnings(job, jobs, resources, roster, inspection=scheduleInspection
   if (!job.customerId) add('missing_customer_link', 'This legacy job needs its canonical customer link reviewed.');
   if (!String(scopeText(job)).trim()) add('missing_scope', 'Add the work scope so the crew knows what was sold.');
   if (!crew.length) add('unassigned', 'No employees are assigned.');
+  // AUTH-ROLES: a sale saved by someone who cannot assign crew waits in To schedule for a manager.
+  if (!crew.length && isObject(job.soldNeedsCrew)) add('sold_needs_crew', 'Sold: needs crew. A manager assigns the crew in Dispatch.');
   const short = enforced(crewSizeShort(job,crew.length,inspection.rules.settings),inspection.rules.enforce);
   if (short) warnings.push(short);
   if (crew.some(id => !roster.some(person => person.id === id))) add('inactive_assignment', 'An assigned employee is no longer in the active roster.');
@@ -238,8 +240,9 @@ function jobWarnings(job, jobs, resources, roster, inspection=scheduleInspection
   return warnings;
 }
 
+// options.authorize (dispatch-booking.js) lets a schedule.book holder read the board.
 export async function dispatchOverview(store, session, query = {}, now = new Date(), options = {}) {
-  requireDispatcher(session);
+  (options.authorize || requireDispatcher)(session);
   if (query.view === 'job') {
     if (!safeId(query.jobId)) throw fail('dispatch_job_not_found','Choose a valid job.',404);
     const found = store.read('jobs',query.jobId);
@@ -364,7 +367,8 @@ function auditState(job) {
 }
 
 // options.authorize replaces requireDispatcher only for server-built inputs
-// (walkthrough handoffs and quote drafts run by a verified quote author), and
+// (walkthrough handoffs and quote drafts run by a verified quote author) and for
+// a booker's input that mutateBooking (dispatch-booking.js) has checked, and
 // options.enforce(warning) lets such a caller keep an owner rule a warning.
 export async function mutateDispatch(store, session, input, now = new Date().toISOString(), options = {}) {
   (options.authorize || requireDispatcher)(session);
@@ -560,8 +564,8 @@ async function executeDispatch(store, session, input, now, options = {}) {
     if(!changed(job=>[placement(job,roster,row=>row.vehicleId||null),String(job.address||'').trim(),job.propertyId||null]))inspection.blockTravelShort=false;
     // Likewise a blocking rule only stops a change to what that rule reads.
     if(!changed(job=>[placement(job,roster),job.crewNeeded||job.requiredCrewSize||1,requiredSkillsOf(job).sort(),job.shiftPickupEnabled===true]))inspection.rules.enforce=()=>false;
-    // options.enforce (server-built saves only, e.g. a signed handoff that leaves
-    // staffing to Dispatch) can keep a rule a warning; it never adds a block.
+    // options.enforce (server-built saves and checked bookings only, e.g. a signed
+    // handoff that leaves staffing to Dispatch) can keep a rule a warning; it never adds a block.
     else if(typeof options.enforce==='function')inspection.rules.enforce=warning=>options.enforce(warning)===true;
     conflictCheck(next,finalJobs,resources,roster,inspection);
     warnings = jobWarnings(next,finalJobs,resources,roster,inspection);

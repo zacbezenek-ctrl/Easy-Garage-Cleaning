@@ -1,5 +1,5 @@
 (function () {
-  const KEYS = ['egc_u', 'egc_tok', 'egc_exp', 'egc_name', 'egc_role', 'egc_pay_type', 'egc_hourly_rate', 'egc_business_access', 'egc_owner', 'egc_capabilities', 'egc_capability_mode'];
+  const KEYS = ['egc_u', 'egc_tok', 'egc_exp', 'egc_name', 'egc_role', 'egc_pay_type', 'egc_hourly_rate', 'egc_business_access', 'egc_owner', 'egc_capabilities', 'egc_capability_mode', 'egc_role_access'];
   let authVersion = 0;
   let authQueue = Promise.resolve();
   let firebaseQueue = Promise.resolve();
@@ -39,6 +39,8 @@
         storage.setItem('egc_owner', profile.owner === true ? 'true' : 'false');
         storage.setItem('egc_capabilities', JSON.stringify(Array.isArray(profile.capabilities) ? profile.capabilities.filter(item => typeof item === 'string') : []));
         storage.setItem('egc_capability_mode', profile.capabilityMode === 'staff_roles' ? 'staff_roles' : 'legacy');
+        // EGC_STAFF_ROLE_ACCESS: the server's capabilities alone decide what this account may open.
+        if (profile.roleAccess === true) storage.setItem('egc_role_access', 'true'); else storage.removeItem('egc_role_access');
         storage.removeItem('egc_tok');
         storage.removeItem('egc_exp');
       }
@@ -213,6 +215,7 @@
       businessAccess: get('egc_business_access') === 'true',
       owner: get('egc_owner') === 'true',
       capabilities: capabilities(get('egc_capabilities')),
+      ...(get('egc_role_access') === 'true' ? { roleAccess: true } : {}),
     };
   }
 
@@ -229,9 +232,12 @@
 
   // P2-12: the walkthrough also opens for an account the server reports can author
   // quotes (sales/walkthrough role); /api/walkthrough-handoff and /api/quote-draft re-check it.
+  // With EGC_STAFF_ROLE_ACCESS (roleAccess) it opens exactly for walkthrough.perform, the
+  // capability those APIs and customer-resolve then check.
   function canRunWalkthrough(user = profile().user) {
     const current = profile(), signedIn = String(current.user || '').trim().toLowerCase();
     if (!signedIn || String(user || '').trim().toLowerCase() !== signedIn) return false;
+    if (current.roleAccess === true) return current.capabilities.includes('walkthrough.perform');
     return canRunBusiness(user) || current.capabilities.includes('quotes.author');
   }
 

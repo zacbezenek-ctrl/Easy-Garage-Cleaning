@@ -848,8 +848,9 @@ test('open-shift scheduling fields persist on the canonical job record',()=>{
   // one new tag; (GUSTO-EXPORT) the payroll week card gets the owner grant for its Gusto hours button, and the timesheet note
   // names that download; (GUSTO-EXPORT on the final TIME-CORRECT) one new tag; (FIX-MONEY-TOTALS) the finance board's
   // unified totals, with HighLevel milestones, notes, the Customer messages buttons and board on today's figures;
-  // (FIX-MONEY-TOTALS after GUSTO-EXPORT) one new tag.
-  assert.match(employee,/employee-suite\.js\?v=20260929totalsgusto/);
+  // (FIX-MONEY-TOTALS after GUSTO-EXPORT) one new tag; (AUTH-ROLES on GUSTO-EXPORT) one new tag; (AUTH-ROLES after
+  // FIX-MONEY-TOTALS) one combined tag.
+  assert.match(employee,/employee-suite\.js\?v=20260929totalsroles/);
 });
 
 test('recurring visits request a server-side handoff clone instead of copying prior execution or payments',()=>{

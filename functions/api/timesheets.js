@@ -4,7 +4,7 @@ import { employeeVaultSecret } from '../_lib/employee-vault-key.js';
 import { PAY_REVIEW_REASONS, computeTimesheetWeek, overtimePolicy, ptoFromRequests, timesheetWeekStart } from '../_lib/timesheet-week.js';
 import { GUSTO_NOT_INCLUDED_HEADER, gustoHoursFile, gustoHoursFilename, payrollCsv, payrollCsvFilename } from '../_lib/payroll-export.js';
 import { payChangeRefused, seesOthersPay, timesheetPayView } from '../_lib/pay-visibility.js';
-import { can } from '../_lib/staff-roles.js';
+import { can, staffRoleAccessEnabled } from '../_lib/staff-roles.js';
 import { gustoPayrollProfiles, staffDirectoryEnabled } from '../_lib/staff-directory.js';
 import { readEmployeeHubRecords } from './employee-hub.js';
 
@@ -12,6 +12,9 @@ const headers = { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosnif
 const reply = (status, body) => Response.json(body, { status, headers });
 const fail = (message, code, status = 400, details) => Object.assign(new Error(message), { code, status, ...(details ? { details } : {}) });
 const PARAMS = new Set(['view', 'start', 'format', 'includePending', 'acknowledge']);
+// Payroll review is time.approve. With EGC_STAFF_ROLE_ACCESS on, can() decides it from the owner-set
+// roles (a stored manager reviews; sales and phone do not); off, business access as before.
+const reviewsTimesheets = (actor, env) => staffRoleAccessEnabled(env) ? can(actor, 'time.approve', env) : hasBusinessAccess(actor);
 
 // Swappable reader: one vault pass for timecards plus time-off requests (paid PTO).
 export async function readTimesheetRecords(env) {
@@ -51,7 +54,7 @@ export function timesheetHandlers({ session = getHubSession, read = readTimeshee
       try {
         const actor = await session(request, env);
         if (!actor?.user) throw fail('Sign in to review timesheets.', 'timesheet_sign_in_required', 401);
-        if (!hasBusinessAccess(actor)) throw fail('Only operations managers can review payroll timesheets.', 'timesheet_forbidden', 403);
+        if (!reviewsTimesheets(actor, env)) throw fail(staffRoleAccessEnabled(env) ? 'Timesheets need the Manager role. Ask the owner.' : 'Only operations managers can review payroll timesheets.', 'timesheet_forbidden', 403);
         const input = query(request.url);
         // EGC_STAFF_PAY_OWNER_ONLY (default on): the payroll CSV is the owner's (pay.manage), and every other viewer's
         // JSON loses the other employees' pay (timesheetPayView). Off, every business user gets both as before.

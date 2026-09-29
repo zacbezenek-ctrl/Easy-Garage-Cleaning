@@ -2,7 +2,7 @@ import {HUB_COMMAND_POLICY,hubCommandDenial,isHubCommandName,isHubRequestId} fro
 import {dispatchOverview} from './dispatch-service.js';
 import {dispatchStorage} from './dispatch-storage.js';
 import {funnelCase,funnelCaseInput,funnelEventsFeed,funnelEventsInput,funnelFeedStorage,walkthroughOutcomesFeed,walkthroughOutcomesInput} from './funnel-feed.js';
-import {listHubUserProfiles} from './hub-session.js';
+import {listHubAccessProfiles} from './hub-session.js';
 import {operationsActorSession,operationsDelegates} from './operations-actor-session.js';
 
 /* One registry for Hub domains reached through the signed operations bridge.
@@ -125,7 +125,7 @@ async function runWrite(store,entry,bridgeActor,input,at,{command,requestId,atte
   return recover(null);
 }
 
-export async function runHubCommand(env,actor,command,{registry=HUB_COMMAND_REGISTRY,storage=hubCommandStorage,profiles=()=>listHubUserProfiles(env),delegates=()=>operationsDelegates(env),now=()=>new Date(),attemptId=()=>crypto.randomUUID()}={}){
+export async function runHubCommand(env,actor,command,{registry=HUB_COMMAND_REGISTRY,storage=hubCommandStorage,profiles=()=>listHubAccessProfiles(env),delegates=()=>operationsDelegates(env),now=()=>new Date(),attemptId=()=>crypto.randomUUID()}={}){
   try{
     if(!isObject(actor))throw fail('hub_actor_invalid',403);
     if(!isObject(command))throw fail('hub_command_invalid');
@@ -137,7 +137,7 @@ export async function runHubCommand(env,actor,command,{registry=HUB_COMMAND_REGI
     if(!entry.write&&requestId!==undefined||!entry.revisioned&&expectedRevision!==undefined||!entry.confirmRequired&&confirmed!==undefined)throw fail('hub_command_invalid');
     const denied=hubCommandDenial(actor,command,entry);
     if(denied)throw fail(denied,403);
-    const session=operationsActorSession(actor,{profiles:profiles(),delegates:actor.kind==='integration'?delegates():new Map(),delegate,write:entry.write});
+    const session=operationsActorSession(actor,{profiles:await profiles(),delegates:actor.kind==='integration'?delegates():new Map(),delegate,write:entry.write});
     if(!entry.roles.includes(session.role))throw fail('hub_role_forbidden',403);
     if(entry.ownerOnly&&session.role!=='owner')throw fail('hub_owner_required',403);
     const input={...entry.input(fields),command:name,...(entry.write?{requestId}:{}),...(entry.revisioned?{expectedRevision}:{})};

@@ -90,8 +90,8 @@ function mergeIntervals(intervals,start,end) {
  * rules (dispatch-rules.js): recorded weekly working hours limit the gaps,
  * required skills pick the employees ('any qualified' when none are named) and
  * daily limits skip a date only when the owner made them blocking. */
-export async function dispatchOpenings(store,session,query={},now=new Date(),{travel=null}={}) {
-  requireDispatcher(session);
+export async function dispatchOpenings(store,session,query={},now=new Date(),{travel=null,authorize=requireDispatcher}={}) {
+  authorize(session);
   const parsed=parseQuery(query,now),data=await snapshot(store,parsed.dates),legacy=await legacyBlockedDays(store,parsed.dates),settings=data.settings,input=withSettings(parsed,settings);
   if (input.employeeIds.some(id=>!data.roster.some(person=>person.id===id))) throw fail('dispatch_employee_inactive','A selected employee is no longer active. Refresh the roster.');
   if (input.vehicleId&&!data.resources.some(row=>row.recordType==='vehicle'&&row.id===input.vehicleId&&row.status==='available')) throw fail('dispatch_vehicle_unavailable','The selected vehicle is missing, inactive, or out of service.');

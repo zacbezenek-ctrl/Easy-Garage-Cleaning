@@ -1,6 +1,6 @@
 import { getHubSession } from '../_lib/hub-session.js';
 import { dispatchStorage } from '../_lib/dispatch-storage.js';
-import { requireDispatcher } from '../_lib/dispatch-service.js';
+import { bookerAuthorize, requireScheduleAccess } from '../_lib/dispatch-booking.js';
 import { dispatchOpenings } from '../_lib/dispatch-openings.js';
 import { travelEstimator } from '../_lib/dispatch-travel.js';
 
@@ -8,11 +8,11 @@ const reply=(status,body)=>new Response(JSON.stringify(body),{status,headers:{'C
 export function dispatchOpeningsHandlers({session=getHubSession,storage=dispatchStorage,now=()=>new Date(),travel=travelEstimator}={}) {
   return {async get({request,env}) {
     try {
-      const actor=await session(request,env);requireDispatcher(actor,env);
+      const actor=await session(request,env),access=requireScheduleAccess(actor,env);
       const params=new URL(request.url).searchParams;
       if(new Set(params.keys()).size!==[...params.keys()].length)return reply(400,{ok:false,code:'dispatch_openings_invalid',error:'Each openings filter can only be supplied once.'});
       const store=storage(env);
-      return reply(200,await dispatchOpenings(store,actor,Object.fromEntries(params),now(),{travel:travel({env,store,now})}));
+      return reply(200,await dispatchOpenings(store,actor,Object.fromEntries(params),now(),{travel:travel({env,store,now}),...(access.booker?{authorize:bookerAuthorize(env)}:{})}));
     } catch(error) {
       if(error?.code?.startsWith('dispatch_'))return reply(error.status||503,{ok:false,code:error.code,error:error.message});
       return reply(503,{ok:false,code:'dispatch_openings_unavailable',error:'Scheduling capacity could not be verified. Retry before choosing a time.'});

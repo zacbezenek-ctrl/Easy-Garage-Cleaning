@@ -23,7 +23,7 @@
  *   plan and date, so two runs with the same clock create nothing twice.
  * The response carries counts and ids only: no customer names, addresses or money. */
 import { RECURRING_HORIZON_ACTOR, RECURRING_HORIZON_COMMAND } from '../../egc-platform/services/operations/src/hub-command-policy.ts';
-import { hasBusinessAccess, listHubUserProfiles } from './hub-session.js';
+import { hasBusinessAccess, listHubAccessProfiles, withStaffRoleAccess } from './hub-session.js';
 import { dispatchStorage } from './dispatch-storage.js';
 import { moneyApiEnabled } from './money-service.js';
 import { extendHorizon, planHasWork, recurringPlansEnabled } from './recurring-plan-service.js';
@@ -45,13 +45,13 @@ export function planManagerSession(plan, profiles, actor) {
   const user = username(plan?.updatedBy || plan?.createdBy), matches = (Array.isArray(profiles) ? profiles : []).filter(profile => user && username(profile?.user) === user);
   const [profile] = matches;
   if (matches.length !== 1 || !['owner','manager'].includes(profile.role) || !hasBusinessAccess(profile)) throw Object.assign(new Error('The manager who last saved this plan can no longer schedule work. A current manager must open and save the plan before more visits are added.'), { code: 'recurring_plan_manager_inactive', status: 409 });
-  return Object.freeze({ user: profile.user, displayName: String(profile.displayName || profile.user), role: profile.role, businessAccess: true, source: 'recurring_horizon', via: 'cron', actorId: actor.id, actorKind: 'integration', delegatedBy: actor.id });
+  return Object.freeze(withStaffRoleAccess(profile, { user: profile.user, displayName: String(profile.displayName || profile.user), role: profile.role, businessAccess: true, source: 'recurring_horizon', via: 'cron', actorId: actor.id, actorKind: 'integration', delegatedBy: actor.id }));
 }
 
 const summary = outcome => ({ planId: outcome.planId, created: outcome.created?.length || 0, conflicts: outcome.conflicts?.length || 0, adopted: outcome.adopted?.length || 0, updated: outcome.updated?.length || 0, kept: outcome.kept?.length || 0, priced: (outcome.priced || []).filter(row => row.status === 'applied').length,
   attempts: outcome.attempts || 0, blocked: outcome.blocked?.code || null, complete: outcome.complete === true, retryable: outcome.retryable === true, error: outcome.error?.code || null });
 
-export async function runRecurringHorizonCommand(env, actor, command, { now, runId = null, storage = dispatchStorage, profiles = () => listHubUserProfiles(env) } = {}) {
+export async function runRecurringHorizonCommand(env, actor, command, { now, runId = null, storage = dispatchStorage, profiles = () => listHubAccessProfiles(env) } = {}) {
   try {
     if (actor?.kind !== 'integration' || actor.role !== 'integration' || actor.id !== RECURRING_HORIZON_ACTOR) throw fail('recurring_horizon_internal_only', 403);
     if (!command || typeof command !== 'object' || Array.isArray(command) || command.command !== RECURRING_HORIZON_COMMAND || Object.keys(command).some(key => !['command','after','maxPlans','limit'].includes(key))) throw fail('recurring_horizon_invalid');
@@ -61,7 +61,7 @@ export async function runRecurringHorizonCommand(env, actor, command, { now, run
     const base = { ok: true, authority: 'employee_hub', command: RECURRING_HORIZON_COMMAND, asOf: now, runId };
     if (!recurringPlansEnabled(env)) return { ...base, enabled: false, plans: [], complete: true, more: false, after: null };
     const store = storage(env), pricing = moneyApiEnabled(env), waiting = (await store.recurringPlans()).filter(plan => safeId(plan?.id) && (after === null || plan.id > after) && planHasWork(plan, now, { pricing })).sort(byId);
-    const page = waiting.slice(0, maxPlans), people = page.length ? profiles() : [];
+    const page = waiting.slice(0, maxPlans), people = page.length ? await profiles() : [];
     const run = page.length ? await extendHorizon(store, null, { now, planIds: page.map(plan => plan.id), limit, runId, actorFor: plan => planManagerSession(plan, people, actor), pricing }) : { plans: [] };
     const plans = run.plans.map(summary), attempts = plans.reduce((sum, row) => sum + row.attempts, 0);
     // Resume at the first plan this call ran out of budget on (one that made

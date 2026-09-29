@@ -218,6 +218,18 @@ async function save(kind,person){
   await send(S.pending);
 }
 const accountChanged=()=>S.error?.code==='staff_directory_account_changed';
+// With EGC_STAFF_ROLE_ACCESS a role change also ends the person's Firebase data sessions (firebaseRevocation). One the
+// server could not finish is saved but still owed, so the screen never says they were signed out while it is.
+function signOutOwed(data){
+  const status=String(data?.firebaseRevocation?.status||'');
+  return status==='revocation_pending'?'Their Firebase data sign-out is pending; see Integrations.':status==='revocation_failed'?'Their Firebase data sign-out could not be confirmed; check Integrations.':'';
+}
+function savedText(data,label){
+  if(data.unchanged)return'Nothing changed: '+label+' already matched.';
+  const owed=signOutOwed(data),lead=(data.replayed?'Confirmed: ':'Saved: ')+label;
+  if(owed)return lead+'. The new roles apply at their next Hub sign-in. '+owed;
+  return lead+(data.sessionsRevoked?'. They were signed out so the new roles apply at their next sign-in.':'.');
+}
 async function send(row){
   if(S.busy||!row||!manager()||accountChanged())return;
   const generation=S.generation;
@@ -231,9 +243,11 @@ async function send(row){
     const swap=list=>list.map(person=>same(person.username,data.person.username)?data.person:person);
     if(S.data){if(former)S.data.formerStaff=swap(S.data.formerStaff||[]);else S.data.people=swap(S.data.people);}
     if(S.edit&&S.edit.kind===row.kind&&same(S.edit.username,row.body.username)){S.focus=S.edit.opener;S.edit=null;S.draft=null;S.dirty=false;}
-    const text=data.unchanged?'Nothing changed: '+row.label+' already matched.':(data.replayed?'Confirmed: ':'Saved: ')+row.label+(data.sessionsRevoked?'. They were signed out so the new roles apply at their next sign-in.':'.');
-    S.notice={kind:'success',text};
+    const text=savedText(data,row.label),owed=Boolean(signOutOwed(data));
+    S.notice={kind:owed?'warning':'success',text};
     if(typeof S.ctx?.toast==='function')S.ctx.toast(text);
+    // Like an account review: Integrations reloads so its pending sign-out count is current.
+    if(owed&&typeof S.ctx?.refreshIntegrations==='function')Promise.resolve().then(()=>S.ctx.refreshIntegrations()).catch(()=>{});
   }catch(error){
     if(generation!==S.generation)return;
     const keep=retryable(error),code=String(error.code||''),conflict=/_revision_conflict$/.test(code);
@@ -274,7 +288,8 @@ function noticeBlock(){
   const actions=[];
   if(n.conflict)actions.push(button('Reload record, keep my draft',()=>{S.notice=null;void load({rebase:true});}),button('Discard draft and load latest',()=>{S.focus=S.edit?.opener||'';S.edit=null;S.draft=null;S.dirty=false;S.notice=null;void load();},'quiet'));
   else if(n.reload)actions.push(button('Reload staff directory',()=>{S.notice=null;void load();}));
-  return h('div',{class:'st-notice '+(n.kind==='success'?'success':'error'),role:n.kind==='success'?'status':'alert','aria-live':n.kind==='success'?'polite':null},h('p',{},n.text),actions.length?h('div',{class:'st-actions'},actions):null);
+  const quiet=n.kind==='success'||n.kind==='warning';
+  return h('div',{class:'st-notice '+(quiet?n.kind:'error'),role:quiet?'status':'alert','aria-live':quiet?'polite':null},h('p',{},n.text),actions.length?h('div',{class:'st-actions'},actions):null);
 }
 function unavailable(){
   const error=S.error,off=error?.code==='staff_directory_not_enabled',denied=Number(error?.status)===403,changed=accountChanged();

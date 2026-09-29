@@ -99,6 +99,24 @@ test('the Firebase session revocation record is server-only and its compare-and-
       assert.deepEqual(state.revoked.find(entry => entry.uid === 'hub:jamier'), { uid: 'hub:jamier', through: at(31) });
     });
 
+    await t.test('an admit stamp round-trips, re-stamps a matching entry and refuses a reconciliation that read before it', async () => {
+      const revoke = revoker(() => 'revoked');
+      const service = createFirebaseRevocationService({ store, revoke });
+      const manager = { user: 'Mgr.Account', role: 'manager', businessAccess: true };
+      await service.admit(manager, at(40));
+      const known = await service.read();
+      assert.deepEqual(known.staticRoster.find(entry => entry.uid === 'hub:mgr.account'), { uid: 'hub:mgr.account', fingerprint: 'manager|true', at: at(40) });
+      // A later admit of the same claims writes its stamp, so the reconciliation's stale updateTime is refused.
+      interleave = () => service.admit(manager, `${at(41).slice(0, 17)}05.000Z`);
+      failures.length = 0;
+      await service.maintain(staff, at(41), known);
+      assert.equal(failures.length, 1, 'Firestore refused the reconciliation that read before the admit');
+      const state = await service.read();
+      assert.equal(state.staticRoster.some(entry => entry.uid === 'hub:mgr.account'), false);
+      assert.deepEqual(state.pending.map(entry => [entry.uid, entry.reason, entry.requestedAt]), [['hub:mgr.account', 'static_removed', `${at(41).slice(0, 17)}36.000Z`]]);
+      assert.deepEqual(revoke.calls, [{ uid: 'hub:mgr.account', validSince: Math.floor(Date.parse(at(41)) / 1000) }], 'sessions from before the Hub load end at once');
+    });
+
     await t.test('no browser SDK session can read, list or forge the revocation record', async () => {
       const contexts = [environment.unauthenticatedContext().firestore(), environment.authenticatedContext('hub:syntheticcrew', claims('SyntheticCrew')).firestore(), environment.authenticatedContext('hub:zacb', claims('ZacB', 'owner', true)).firestore()];
       for (const db of contexts) {
