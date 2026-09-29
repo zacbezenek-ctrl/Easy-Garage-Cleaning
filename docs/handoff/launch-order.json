@@ -1,0 +1,62 @@
+{
+  "schemaVersion": 1,
+  "asOf": "2026-09-29",
+  "source": "owner wrap-up instruction",
+  "originalQueueNewUnitsMayStart": false,
+  "laterAuthorizedWork": "Complete the Hub iOS Walkthroughs and transcript-to-office-task integration already in the working tree.",
+  "mergeMode": "one_at_a_time",
+  "testEachMerge": true,
+  "steps": [
+    {
+      "order": 1,
+      "item": "FIX-HUB-COLLECTED-CREDITS",
+      "gate": "review and tests",
+      "candidateCommitSha": "6e62996caa0c87371676201832a8f8e6edacdc12",
+      "review": "primary and independent review passed; 159 targeted tests",
+      "state": "ready_for_first_queue_pick_pending_exact_head_ci"
+    },
+    {
+      "order": 2,
+      "item": "handoff_commit",
+      "gate": "docs/HANDOFF.md and docs/handoff/ reviewed for actual status and missing specs"
+    },
+    {
+      "order": 3,
+      "item": "FIELD-PAY",
+      "gate": "final fix, review, and green CI"
+    },
+    {
+      "order": 4,
+      "item": "batch8_merge_to_main",
+      "gate": "FIELD-PAY included and all CI green on the exact head"
+    },
+    {
+      "order": 5,
+      "item": "FIX-REFUNDS",
+      "gate": "review state written in commit and handoff; activation flag off"
+    },
+    {
+      "order": 6,
+      "item": "GHL-TRACK-2",
+      "gate": "clean review; review state written in commit and handoff; activation flag off"
+    },
+    {
+      "order": 7,
+      "item": "seven_running_builds",
+      "gate": "identify each unit and merge only as it finishes with tests",
+      "idsKnown": false
+    }
+  ],
+  "batch8ToMain": {
+    "after": "FIELD-PAY included",
+    "requires": "green CI on exact batch head"
+  },
+  "batch9": {
+    "scope": "remaining completed units",
+    "requires": "PR and its own green CI"
+  },
+  "activation": {
+    "FIX-REFUNDS": "off_at_merge",
+    "GHL-TRACK-2": "off_at_merge"
+  }
+}
