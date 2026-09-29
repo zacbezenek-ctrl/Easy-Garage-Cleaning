@@ -76,6 +76,7 @@ class DispatchBrowserTests(unittest.TestCase):
         self.arrival_defaults = {'enabled': False, 'minutes': 60}
         self.travel_queries = []; self.travel_failure = None
         self.segments = None; self.funnel = None; self.customers = [CUSTOMER]; self.prefill = prefill; self.prefill_queries = []
+        self.read_warnings = []; self.read_extra = {}
         self.page.on('pageerror', lambda e: self.errors.append(str(e)))
         self.page.on('dialog', lambda dialog: dialog.accept())
         self.page.route('**/*', self.route)
@@ -110,7 +111,7 @@ class DispatchBrowserTests(unittest.TestCase):
             rows = [row for row in self.jobs if not row.get('date') or (row['date'] < last and (row.get('endDate') or row['date']) >= first)]
             if self.bad_read: send({'ok': True}); return
             send({'ok': True, 'viewer': {'id': self.viewer}, 'timeZone': 'America/Denver', 'jobs': rows, 'roster': ROSTER, 'crews': self.crews, 'vehicles': self.vehicles, 'availability': self.availability,
-                  'warnings': [], 'coverage': {'complete': True, 'asOf': '2026-09-22T14:00:00Z'}, 'startDate': first, 'endDate': last, 'arrivalDefaults': self.arrival_defaults, **({'segments': self.segments} if self.segments else {}), **({'funnel': self.funnel} if self.funnel else {})}); return
+                  'warnings': copy.deepcopy(self.read_warnings), 'coverage': {'complete': True, 'asOf': '2026-09-22T14:00:00Z'}, 'startDate': first, 'endDate': last, 'arrivalDefaults': self.arrival_defaults, **({'segments': self.segments} if self.segments else {}), **({'funnel': self.funnel} if self.funnel else {}), **self.read_extra}); return
         body = req.post_data_json; self.calls.append(copy.deepcopy(body))
         if self.fail_once:
             status, code, error, details = self.fail_once; self.fail_once = None
@@ -658,5 +659,148 @@ class DispatchBrowserTests(unittest.TestCase):
         # A response for another customer is never applied.
         self.prefill = lambda query: {**prefill(query), 'customerId': 'someone-else', 'funnelPath': {'value': 'walkthrough', 'source': 'walkthrough', 'required': False}}
         self.create(); expect(dialog.get_by_text('The suggestion could not be loaded. Choose one.').first).to_be_visible(); expect(path).to_have_value('')
+
+    # FIX-DISPATCH-READY: reminder, price and deposit readiness chips (functions/_lib/dispatch-readiness.js) and the Notify customer toggle.
+    def readiness_board(self):
+        money = lambda **values: {'checked': True, 'hasApprovedPrice': True, 'priceStatus': 'approved', 'depositRequiredCents': 50000, 'depositPaidCents': 50000, 'depositDueCents': 0, 'depositVerified': True, **values}
+        self.jobs[0].update({'notify': False, 'reminder': {'state': 'off', 'source': 'calendar_sync'}, 'moneyReady': money(hasApprovedPrice=False, priceStatus='missing', depositRequiredCents=None, depositPaidCents=None, depositDueCents=None, depositVerified=None)})
+        later = lambda start, end, **values: job(time=start, endTime=end, startAt=DAY+'T'+start+':00-06:00', endAt=DAY+'T'+end+':00-06:00', **values)
+        self.jobs += [later('13:00', '14:00', id='ready-job', customer='Synthetic Ready Garage', reminder={'state': 'set', 'source': 'ghl_outbox'}, moneyReady=money()),
+                      later('14:30', '15:30', id='due-job', customer='Synthetic Deposit Garage', reminder={'state': 'not_told', 'source': 'calendar_sync'}, moneyReady=money(depositPaidCents=0, depositDueCents=50000, depositVerified=None)),
+                      later('16:00', '17:00', id='unknown-job', customer='Synthetic Unknown Garage', reminder={'state': 'unknown', 'source': 'ghl_outbox'}, moneyReady={'checked': False, 'hasApprovedPrice': None, 'priceStatus': 'unknown', 'depositRequiredCents': None, 'depositPaidCents': None, 'depositDueCents': None, 'depositVerified': None}),
+                      later('17:30', '18:00', id='walk-job', type='walkthrough', customer='Synthetic Walkthrough Garage', reminder={'state': 'pending', 'source': 'calendar_sync'}),
+                      later('18:30', '19:00', id='plan-job', customer='Synthetic Plan Garage', recurringPlanId='plan-1', reminder={'state': 'not_told', 'source': 'calendar_sync'}, moneyReady=money(hasApprovedPrice=False, priceStatus='plan', depositRequiredCents=0, depositPaidCents=0, depositDueCents=0, depositVerified=None))]
+        self.read_warnings = [{'code': 'no_price', 'jobId': 'job-1', 'message': 'No approved price: price it before the job'},
+                              {'code': 'deposit_unpaid', 'jobId': 'due-job', 'message': 'Deposit unpaid: $500.00 is still due before this job.', 'depositDueCents': 50000}]
+    def test_readiness_badges_and_money_chips_at_phone_and_desktop_widths(self):
+        self.readiness_board(); self.open()
+        for width in (390, 1440):
+            with self.subTest(width=width):
+                self.page.set_viewport_size({'width': width, 'height': 900}); self.page.get_by_role('button', name='Day', exact=True).click()
+                off = self.card().locator('.dp-ready'); expect(off.locator('.dp-reminders-off')).to_have_text('Reminders off')
+                price = off.get_by_role('link', name=re.compile('^Price this job for ' + CUSTOMER['name']))
+                expect(price).to_have_attribute('href', '/employee.html?view=finance&job=job-1'); expect(price).to_have_text('Price this job')
+                expect(self.card()).not_to_contain_text('No approved price: price it before the job')
+                ready = self.card('Synthetic Ready Garage').locator('.dp-ready')
+                expect(ready.locator('[data-reminder]')).to_have_text('Reminder set · HighLevel tag outbox'); expect(ready).to_contain_text('Price approved'); expect(ready).to_contain_text('Deposit paid'); expect(ready.get_by_role('link')).to_have_count(0)
+                due = self.card('Synthetic Deposit Garage').locator('.dp-ready')
+                expect(due.locator('[data-reminder]')).to_have_text('Reminder on, HighLevel not told yet · calendar sync')
+                deposit = due.get_by_role('link', name=re.compile('^Deposit unpaid · \\$500\\.00 for Synthetic Deposit Garage'))
+                expect(deposit).to_have_text('Deposit unpaid · $500.00'); expect(deposit).to_have_class(re.compile('warn')); expect(deposit).to_have_attribute('href', '/employee.html?view=finance&job=due-job')
+                expect(self.card('Synthetic Deposit Garage')).not_to_contain_text('is still due before this job')
+                # Unknown never reads as confirmed: no "set", no "approved", no "paid".
+                unknown = self.card('Synthetic Unknown Garage').locator('.dp-ready')
+                expect(unknown).to_contain_text('Reminder not confirmed · HighLevel tag outbox'); expect(unknown).to_contain_text('Price and deposit not checked')
+                for claim in ('Reminder set', 'Price approved', 'Deposit paid', 'Price this job'): expect(unknown).not_to_contain_text(claim)
+                # A recurring plan's visit at the plan price: priced, nothing to fix.
+                plan = self.card('Synthetic Plan Garage').locator('.dp-ready')
+                expect(plan).to_contain_text('Plan price'); expect(plan).to_contain_text('No deposit'); expect(plan.get_by_role('link')).to_have_count(0); expect(plan).not_to_contain_text('Price this job')
+                walk = self.card('Synthetic Walkthrough Garage').locator('.dp-ready')
+                expect(walk).to_contain_text('Reminder waiting on HighLevel'); expect(walk.get_by_role('link')).to_have_count(0); expect(walk).not_to_contain_text('Price')
+                heights = self.page.evaluate("[...document.querySelectorAll('.dp-ready-link')].map(a=>a.getBoundingClientRect().height)")
+                self.assertTrue(heights and min(heights) >= 44, heights)
+                self.assertLessEqual(self.page.evaluate('document.documentElement.scrollWidth'), width + 1)
+                out = ROOT/'test-results'; out.mkdir(exist_ok=True); self.page.screenshot(path=str(out/f'dispatch-readiness-{width}.png'), full_page=True)
+        # Money warnings still count toward Needs attention (the first job also ended before now), and inside the Hub a chip opens that job's finance row.
+        expect(self.page.locator('.dp-stats article').filter(has_text='Needs attention').locator('strong')).to_have_text('2')
+        self.page.evaluate("()=>{window.opsGo=name=>{window.wentTo=name;const row=document.createElement('article');row.dataset.financeJob='due-job';row.append(Object.assign(document.createElement('button'),{textContent:'Record deposit'}));document.body.append(row);};}")
+        self.card('Synthetic Deposit Garage').locator('.dp-ready-link').click()
+        self.assertEqual(self.page.evaluate('window.wentTo'), 'finance'); expect(self.page.locator('[data-finance-job="due-job"]')).to_have_class(re.compile('dp-finance-focus'))
+        self.assertEqual(self.page.evaluate('location.pathname'), '/'); self.assertEqual(self.calls, [], 'readiness never writes')
+    def test_reminder_toggle_is_saved_on_create_and_edit_at_phone_and_desktop_widths(self):
+        self.open()
+        for width in (390, 1440):
+            with self.subTest(width=width):
+                self.page.set_viewport_size({'width': width, 'height': 900})
+                self.create(); toggle = self.page.get_by_role('dialog').get_by_label('HighLevel confirmation and reminders', exact=True)
+                expect(toggle).to_be_checked(); toggle.uncheck(); self.submit('Create job'); self.closed()
+                self.assertIs(self.calls[-1]['changes']['notify'], False, 'a new visit can start with reminders off')
+                self.card().get_by_role('button', name='Edit / assign', exact=True).click(); toggle = self.page.get_by_role('dialog').get_by_label('HighLevel confirmation and reminders', exact=True)
+                expect(toggle).to_be_checked(); self.submit('Save changes'); self.closed(); self.assertNotIn('notify', self.calls[-1]['changes'], 'an untouched toggle sends nothing')
+                self.card().get_by_role('button', name='Edit / assign', exact=True).click(); dialog = self.page.get_by_role('dialog')
+                dialog.get_by_label('HighLevel confirmation and reminders', exact=True).uncheck(); expect(dialog).to_contain_text('HighLevel is told with the next change to this visit\u2019s date or time.')
+                box = dialog.get_by_label('HighLevel confirmation and reminders', exact=True).locator('xpath=..').bounding_box(); self.assertGreaterEqual(box['height'], 44)
+                self.assertLessEqual(dialog.evaluate('(el)=>el.scrollWidth'), dialog.evaluate('(el)=>el.clientWidth') + 1)
+                self.submit('Save changes'); self.closed(); self.assertIs(self.calls[-1]['changes']['notify'], False)
+                expect(self.card().locator('.dp-reminders-off')).to_have_text('Reminders off')
+                self.jobs[0]['notify'] = True; self.page.get_by_role('button', name='Refresh', exact=True).click(); expect(self.card().locator('.dp-reminders-off')).to_have_count(0)
+    def test_imported_jobber_job_preselects_reminders_only_with_the_server_flag(self):
+        imported = lambda: job(id='jobber_job_7', revision='imp-1', customer='Synthetic Imported Garage', date='', time='', endDate='', endTime='', startAt=None, endAt=None, status='unscheduled', assignedCrew=[], crewLead=None, crewId=None, vehicleId=None,
+                               notify=False, reminder={'state': 'off', 'source': 'none', 'jobberImport': True})
+        self.page.set_viewport_size({'width': 390, 'height': 900})
+        for flag in (True, False):
+            with self.subTest(flag=flag):
+                self.jobs = [job(), imported()]; self.read_extra = {'notifyImportedOn': True} if flag else {}; self.page.goto(self.url)
+                self.page.get_by_label('Filter by status', exact=True).select_option('unscheduled')
+                card = self.card('Synthetic Imported Garage'); expect(card.locator('.dp-reminders-off')).to_have_text('Reminders off')
+                card.get_by_role('button', name='Edit / assign', exact=True).click(); dialog = self.page.get_by_role('dialog'); toggle = dialog.get_by_label('HighLevel confirmation and reminders', exact=True)
+                expect(dialog.get_by_text('Imported from Jobber: reminders were off', exact=True)).to_be_visible()
+                (expect(toggle).to_be_checked if flag else expect(toggle).not_to_be_checked)()
+                # Saving it still unscheduled sends no choice; booking it sends the shown one.
+                self.submit('Save changes'); self.closed(); self.assertNotIn('notify', self.calls[-1]['changes'])
+                self.page.get_by_role('button', name='Refresh', exact=True).click()
+                self.card('Synthetic Imported Garage').get_by_role('button', name='Edit / assign', exact=True).click(); dialog = self.page.get_by_role('dialog')
+                dialog.get_by_label('Keep unscheduled', exact=True).uncheck(); dialog.get_by_label('Start date', exact=True).fill('2026-09-24'); dialog.get_by_label('End date', exact=True).fill('2026-09-24')
+                dialog.get_by_label('Start time', exact=True).fill('09:00'); dialog.get_by_label('End time', exact=True).fill('11:00'); self.submit('Save changes'); self.closed()
+                self.assertIs(self.calls[-1]['changes']['notify'], flag); self.assertEqual(self.calls[-1]['changes']['date'], '2026-09-24')
+        # An imported job whose reminder choice was recorded, then unscheduled: the server no longer marks it jobberImport,
+        # so the dialog shows the saved choice (off), proposes nothing, and booking it sends no notify change.
+        self.calls.clear(); decided = imported(); decided['reminder'] = {'state': 'off', 'source': 'none'}
+        self.jobs = [job(), decided]; self.read_extra = {'notifyImportedOn': True}; self.page.goto(self.url)
+        self.page.get_by_label('Filter by status', exact=True).select_option('unscheduled')
+        self.card('Synthetic Imported Garage').get_by_role('button', name='Edit / assign', exact=True).click(); dialog = self.page.get_by_role('dialog')
+        expect(dialog.get_by_label('HighLevel confirmation and reminders', exact=True)).not_to_be_checked(); expect(dialog).not_to_contain_text('Imported from Jobber')
+        dialog.get_by_label('Keep unscheduled', exact=True).uncheck(); dialog.get_by_label('Start date', exact=True).fill('2026-09-24'); dialog.get_by_label('End date', exact=True).fill('2026-09-24')
+        dialog.get_by_label('Start time', exact=True).fill('09:00'); dialog.get_by_label('End time', exact=True).fill('11:00'); self.submit('Save changes'); self.closed()
+        self.assertEqual(self.calls[-1]['changes']['date'], '2026-09-24'); self.assertNotIn('notify', self.calls[-1]['changes'], 'the recorded choice is never re-sent as on')
+    def test_reminder_toggle_says_a_reminder_highlevel_has_is_not_taken_back(self):
+        later = lambda start, end, **values: job(time=start, endTime=end, startAt=DAY+'T'+start+':00-06:00', endAt=DAY+'T'+end+':00-06:00', **values)
+        self.jobs = [job(), later('13:00', '14:00', id='set-job', customer='Synthetic Reminded Garage', reminder={'state': 'set', 'source': 'calendar_sync'}),
+                     later('14:30', '15:30', id='told-off-job', customer='Synthetic Told Garage', notify=False, reminder={'state': 'off_told', 'source': 'ghl_outbox'}),
+                     later('16:00', '17:00', id='fresh-job', customer='Synthetic Fresh Garage', reminder={'state': 'not_told', 'source': 'calendar_sync'})]
+        self.page.set_viewport_size({'width': 390, 'height': 900}); self.open(); self.page.get_by_role('button', name='Day', exact=True).click()
+        kept = 'HighLevel may still send the reminder it already has for this visit. To stop it, remove it in HighLevel.'
+        self.card('Synthetic Reminded Garage').get_by_role('button', name='Edit / assign', exact=True).click(); dialog = self.page.get_by_role('dialog')
+        expect(dialog).to_contain_text('it does not take back one HighLevel already has'); expect(dialog).not_to_contain_text('hears nothing about this visit')
+        dialog.get_by_label('HighLevel confirmation and reminders', exact=True).uncheck(); expect(dialog).to_contain_text(kept)
+        self.assertLessEqual(self.page.evaluate('document.documentElement.scrollWidth'), 391)
+        self.submit('Save changes'); self.closed(); self.assertIs(self.calls[-1]['changes']['notify'], False)
+        self.card('Synthetic Told Garage').get_by_role('button', name='Edit / assign', exact=True).click(); dialog = self.page.get_by_role('dialog')
+        expect(dialog.get_by_label('HighLevel confirmation and reminders', exact=True)).not_to_be_checked(); expect(dialog).to_contain_text(kept)
+        dialog.get_by_label('HighLevel confirmation and reminders', exact=True).check(); expect(dialog).to_contain_text('HighLevel is told with the next change to this visit\u2019s date or time.')
+        dialog.get_by_role('button', name='Close dialog', exact=True).click(); self.closed()
+        self.card('Synthetic Fresh Garage').get_by_role('button', name='Edit / assign', exact=True).click(); dialog = self.page.get_by_role('dialog')
+        expect(dialog).to_contain_text('Turn off so this customer hears nothing about this visit.'); dialog.get_by_label('HighLevel confirmation and reminders', exact=True).uncheck()
+        expect(dialog).to_contain_text('HighLevel is told with the next change to this visit\u2019s date or time.'); expect(dialog).not_to_contain_text(kept)
+
+    def test_reminders_off_that_highlevel_may_still_have_are_never_a_plain_off_at_390(self):
+        # Second review: notify off with an unknown reminder (an unreadable outbox chain, or a page sync the tag outbox owned)
+        # says HighLevel may still remind, and the Edit dialog says turning it off takes nothing back. A deposit with an
+        # unreconciled refund or conflicting receipts (depositVerified false) reads "Deposit not verified".
+        later = lambda start, end, **values: job(time=start, endTime=end, startAt=DAY+'T'+start+':00-06:00', endAt=DAY+'T'+end+':00-06:00', **values)
+        refunded = {'checked': True, 'hasApprovedPrice': True, 'priceStatus': 'approved', 'depositRequiredCents': 50000, 'depositPaidCents': 50000, 'depositDueCents': 0, 'depositVerified': False}
+        self.jobs = [job(notify=False, reminder={'state': 'off', 'source': 'calendar_sync'}),
+                     later('13:00', '14:00', id='maybe-job', customer='Synthetic Maybe Garage', notify=False, reminder={'state': 'unknown', 'source': 'calendar_sync'}, moneyReady=refunded),
+                     later('14:30', '15:30', id='unknown-on-job', customer='Synthetic Unconfirmed Garage', reminder={'state': 'unknown', 'source': 'ghl_outbox'})]
+        self.page.set_viewport_size({'width': 390, 'height': 900}); self.open(); self.page.get_by_role('button', name='Day', exact=True).click()
+        expect(self.card().locator('.dp-reminders-off')).to_have_text('Reminders off')
+        maybe = self.card('Synthetic Maybe Garage').locator('.dp-ready')
+        expect(maybe.locator('.dp-reminders-off')).to_have_text('Reminders off · HighLevel may still remind (not confirmed)')
+        expect(maybe.locator('.dp-reminders-off')).to_have_attribute('data-reminder', 'unknown')
+        expect(maybe).to_contain_text('Deposit not verified'); expect(maybe).not_to_contain_text('Deposit paid')
+        expect(self.card('Synthetic Unconfirmed Garage').locator('[data-reminder]')).to_have_text('Reminder not confirmed · HighLevel tag outbox')
+        self.assertLessEqual(self.page.evaluate('document.documentElement.scrollWidth'), 391)
+        out = ROOT/'test-results'; out.mkdir(exist_ok=True); self.page.screenshot(path=str(out/'dispatch-reminders-maybe-390.png'), full_page=True)
+        kept = 'HighLevel may still send the reminder it already has for this visit. To stop it, remove it in HighLevel.'
+        self.card('Synthetic Maybe Garage').get_by_role('button', name='Edit / assign', exact=True).click(); dialog = self.page.get_by_role('dialog')
+        expect(dialog.get_by_label('HighLevel confirmation and reminders', exact=True)).not_to_be_checked()
+        expect(dialog).to_contain_text('it does not take back one HighLevel already has'); expect(dialog).to_contain_text(kept); expect(dialog).not_to_contain_text('hears nothing about this visit')
+        self.assertLessEqual(dialog.evaluate('(el)=>el.scrollWidth'), dialog.evaluate('(el)=>el.clientWidth') + 1)
+        dialog.get_by_role('button', name='Close dialog', exact=True).click(); self.closed()
+        self.card('Synthetic Unconfirmed Garage').get_by_role('button', name='Edit / assign', exact=True).click(); dialog = self.page.get_by_role('dialog')
+        expect(dialog).to_contain_text('it does not take back one HighLevel already has')
+        dialog.get_by_label('HighLevel confirmation and reminders', exact=True).uncheck(); expect(dialog).to_contain_text(kept)
+        dialog.get_by_role('button', name='Close dialog', exact=True).click(); self.closed()
+        self.assertEqual(self.calls, [], 'reading and closing writes nothing')
 
 if __name__ == '__main__': unittest.main(verbosity=2)

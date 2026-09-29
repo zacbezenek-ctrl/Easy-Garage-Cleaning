@@ -2,7 +2,7 @@
 (function () {
 'use strict';
 const TZ = 'America/Denver', recoveryPrefix = 'egc.recurring.pending.v1.';
-const S = { host:null, root:null, dialog:null, data:null, loading:false, error:'', errorStatus:0, actionError:'', notice:'', noticeKind:'', stale:[], generation:0, busy:false, viewer:null, recovery:null, view:'list', template:null, plan:null, confirm:null, onChange:null };
+const S = { host:null, root:null, dialog:null, data:null, loading:false, error:'', errorStatus:0, actionError:'', notice:'', noticeKind:'', stale:[], generation:0, busy:false, viewer:null, recovery:null, view:'list', template:null, plan:null, confirm:null, onChange:null, focus:'' };
 const FREQUENCIES = [['weekly','Every week'],['biweekly','Every 2 weeks'],['every_n_weeks','Every few weeks'],['monthly','Monthly'],['quarterly','Every 3 months']];
 const HORIZONS = [[28,'4 weeks ahead'],[56,'8 weeks ahead'],[84,'12 weeks ahead'],[182,'6 months ahead'],[364,'1 year ahead']];
 const STATES = { scheduled:'Scheduled', conflict:'Needs a new time', template:'Original visit', existing:'Existing booking', not_generated:'Not on schedule yet', updating:'Moving to the new plan', cancelled:'Cancelled in Dispatch', missing:'Removed from Dispatch', moved:'Moved', rescheduled:'Rescheduled', completed:'Completed', off_pattern:'No longer in this plan', covered:'Booked separately' };
@@ -153,13 +153,18 @@ function retryRecovery() {
     else showSaved(saved.success, result.warnings || []);
   });
 }
+function editPlan(plan, focus = '') { S.view = 'form'; S.plan = plan; S.template = null; S.focus = focus; S.notice = S.actionError = S.noticeKind = ''; S.stale = []; render(); }
 function planCard(plan) {
   const active = plan.status === 'active', ends = plan.count ? 'Ends after ' + plan.count + ' visits' : plan.endsOn ? 'Ends ' + dateText(plan.endsOn, false) : 'No end date';
+  // FIX-DISPATCH-READY: whether each added visit gets the customer's HighLevel reminders (notifyCustomer), with a way to change it.
+  const reminders = plan.notifyCustomer === true;
   const card = h('article', { class:'rp-plan rp-' + plan.status, 'data-plan':plan.id },
     h('div', { class:'rp-plan-top' }, h('h3', {}, plan.customer || 'Customer'), pill(plan.status === 'active' ? 'Active' : plan.status === 'paused' ? 'Paused' : 'Ended', active ? '' : 'muted')),
     h('p', { class:'rp-cadence' }, plan.cadenceLabel + ' · ' + clock(plan.time) + ' – ' + clock(plan.endTime) + (plan.spanDays ? ' (+' + plan.spanDays + ' day)' : '')),
     plan.address ? h('p', { class:'rp-muted' }, plan.address) : null,
     Number.isInteger(plan.pricePerVisitCents) ? h('p', { class:'rp-price' }, money(plan.pricePerVisitCents) + ' per visit') : null,
+    h('p', { class:'rp-reminders', 'data-reminders':reminders ? 'on' : 'off' }, h('span', {}, 'Customer reminders: ', h('strong', {}, reminders ? 'On' : 'Off')),
+      plan.status !== 'ended' ? btn('Change', () => editPlan(plan, 'notifyCustomer'), 'subtle rp-link', { disabled:!S.data?.enabled || S.busy, 'aria-label':'Change customer reminders for ' + (plan.customer || 'this plan') }) : null),
     h('p', { class:'rp-muted' }, [ends, plan.skipDates.length ? plan.skipDates.length + ' skipped date' + (plan.skipDates.length === 1 ? '' : 's') : '', 'Crew: ' + (plan.assignment?.assignedCrew?.length ? plan.assignment.assignedCrew.map(person).join(', ') : 'Unassigned')].filter(Boolean).join(' · ')));
   if (plan.lastRun?.status === 'blocked' || plan.lastRun?.status === 'error') card.append(h('p', { class:'rp-warning' }, (plan.lastRun.status === 'error' && STOPPED[plan.lastRun.stage] || STOPPED.create) + (plan.lastRun.message || 'review this plan.')));
   for (const row of plan.attention || []) card.append(h('p', { class:'rp-warning' }, attentionText(row)));
@@ -171,7 +176,7 @@ function planCard(plan) {
     actions.append(btn('Keep plan', () => { S.confirm = null; render(); }), btn('End plan', () => stateChange(plan, 'end'), 'danger'));
   } else if (plan.status !== 'ended') {
     if (active) actions.append(btn('Add upcoming visits', () => act(() => extendAll(plan, 'Plan checked.')), 'primary', { disabled:!S.data?.enabled || S.busy }));
-    actions.append(btn('Edit', () => { S.view = 'form'; S.plan = plan; S.template = null; S.notice = S.actionError = S.noticeKind = ''; S.stale = []; render(); }, '', { disabled:!S.data?.enabled || S.busy }),
+    actions.append(btn('Edit', () => editPlan(plan), '', { disabled:!S.data?.enabled || S.busy }),
       btn(active ? 'Pause' : 'Resume', () => stateChange(plan, active ? 'pause' : 'resume'), '', { disabled:S.busy || (!active && !S.data?.enabled) }),
       btn('End', () => { S.confirm = plan.id; render(); }, 'subtle', { disabled:S.busy }));
   }
@@ -273,7 +278,8 @@ function renderForm(body) {
     void act(async () => { if (!plan) await extendAll(result.plan, note); else if (request.applyToBooked && result.plan.status === 'active') { await extendAll(result.plan, note); S.stale = (result.warnings || []).flatMap(row => row.code === 'generated_visits_off_pattern' && Array.isArray(row.visits) ? row.visits : []); if (S.stale.length) S.noticeKind = 'warn'; } else showSaved('Plan updated.', result.warnings || []); });
   });
   body.append(form);
-  setTimeout(() => frequency.focus(), 0);
+  const focus = S.focus === 'notifyCustomer' ? reminders : frequency; S.focus = '';
+  setTimeout(() => focus.focus(), 0);
 }
 function render() {
   if (!S.root) return;
@@ -316,7 +322,7 @@ function open(options = {}) {
   mount(dialog, options); S.dialog = dialog;
   render();
 }
-function unmount() { S.generation++; S.root?.remove(); S.root = null; S.host = null; S.dialog = null; S.data = null; S.viewer = null; S.recovery = null; S.error = ''; S.notice = ''; S.noticeKind = ''; S.stale = []; S.view = 'list'; S.plan = null; S.template = null; S.confirm = null; S.busy = false; S.actionError = ''; }
+function unmount() { S.generation++; S.root?.remove(); S.root = null; S.host = null; S.dialog = null; S.data = null; S.viewer = null; S.recovery = null; S.error = ''; S.notice = ''; S.noticeKind = ''; S.stale = []; S.view = 'list'; S.plan = null; S.template = null; S.confirm = null; S.busy = false; S.actionError = ''; S.focus = ''; }
 window.addEventListener('egc:signout', () => { try { for (let i = sessionStorage.length - 1; i >= 0; i--) { const name = sessionStorage.key(i); if (name?.startsWith(recoveryPrefix)) sessionStorage.removeItem(name); } } catch {} const dialog = S.dialog; unmount(); dialog?.remove(); });
 window.addEventListener('beforeunload', event => { if (S.busy || (S.recovery && !S.recovery.invalid)) { event.preventDefault(); event.returnValue = ''; } });
 window.EGCRecurring = { mount, unmount, open, refresh:load, canLeave:() => !S.busy && !(S.recovery && !S.recovery.invalid) };

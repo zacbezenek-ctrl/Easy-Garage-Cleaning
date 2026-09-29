@@ -153,6 +153,8 @@ function ghlTime(value) {
 }
 // Stuck: parked after 8 tries, or waiting well past its turn (the tag worker is not running). A change the visit has
 // moved past (current:false, e.g. its start has passed) closes without telling HighLevel, so it shows nothing.
+// FIX-DISPATCH-READY: Retry (POST /api/ghl-tag-drain) needs dispatch.write; GET /api/dispatch says ghlTagRetry:false to a
+// viewer without it (a booker), who then sees the stuck pill without a Retry that would always be refused.
 function ghlChip(job) {
   if(S.data?.ghlTagOutbox!==true||job.type==='blocked'||!job.ghlTagEntry)return null;
   const tags=job.ghlTags||{status:'pending'};
@@ -160,7 +162,7 @@ function ghlChip(job) {
   const stuck=tags.status==='parked'||tags.status==='pending'&&tags.overdue===true;
   const row=h('div',{class:'dp-ghl','data-ghl':stuck&&tags.status==='pending'?'overdue':tags.status});
   if(tags.status==='done')row.append(pill('HighLevel told '+ghlTime(tags.doneAt),'ok'));
-  else if(stuck)row.append(pill('HighLevel stuck','stuck'),btn('Retry',event=>void retryGhl(job,event.currentTarget),'',{'aria-label':'Retry telling HighLevel about '+(job.customer||'this visit')}));
+  else if(stuck){row.append(pill('HighLevel stuck','stuck'));if(S.data?.ghlTagRetry!==false)row.append(btn('Retry',event=>void retryGhl(job,event.currentTarget),'',{'aria-label':'Retry telling HighLevel about '+(job.customer||'this visit')}));}
   else row.append(pill(tags.status==='unknown'?'HighLevel status unknown':'HighLevel waiting','muted'));
   return row;
 }
@@ -172,6 +174,43 @@ async function retryGhl(job,button) {
     S.notice=data.requeued?'HighLevel will be told again in a moment.':'Nothing for this visit was waiting on HighLevel.';
     await load({quiet:true});
   } catch(error) { button.disabled=false;S.notice='HighLevel retry did not go through: '+(error.message||'try again.');renderBody(); }
+}
+// FIX-DISPATCH-READY: reminder, price and deposit readiness (functions/_lib/dispatch-readiness.js). reminder comes on
+// every visit; moneyReady only for owners and managers. A chip never claims a reminder, price or deposit it cannot confirm.
+const MONEY_WARNINGS=new Set(['no_price','deposit_unpaid']);
+const REMINDER_TEXT={set:['Reminder set','ok'],pending:['Reminder waiting on HighLevel','muted'],stuck:['Reminder not sent to HighLevel','stuck'],not_told:['Reminder on, HighLevel not told yet','warn'],off_told:['Reminders off, HighLevel may still remind','warn'],no_contact:['No reminder: not linked to HighLevel','warn'],unknown:['Reminder not confirmed','muted']};
+const REMINDER_SOURCE={ghl_outbox:'HighLevel tag outbox',calendar_sync:'calendar sync'};
+const USD=new Intl.NumberFormat('en-US',{style:'currency',currency:'USD'});
+const wholeCents=value=>Number.isSafeInteger(value)&&value>=0;
+// The finance row for one job in Estimates & payments. Inside the Hub it opens there directly; elsewhere the link loads the Hub.
+function focusFinanceRow(id,tries=20) {
+  if(typeof document.querySelectorAll!=='function')return;
+  const row=[...document.querySelectorAll('[data-finance-job]')].find(node=>node.dataset.financeJob===id);
+  if(row){row.classList.add('dp-finance-focus');row.scrollIntoView?.({block:'center'});(row.querySelector('button,a')||row).focus?.({preventScroll:true});return;}
+  if(tries>0)setTimeout(()=>focusFinanceRow(id,tries-1),150);
+}
+function financeLink(job,label,kind,detail) {
+  return h('a',{class:'dp-ready-link '+kind,href:'/employee.html?view=finance&job='+encodeURIComponent(job.id),'aria-label':label+' for '+(job.customer||'this job')+' in Estimates & payments'+(detail?': '+detail:''),
+    onclick:event=>{if(typeof window.opsGo!=='function')return;event.preventDefault();window.opsGo('finance');focusFinanceRow(job.id);}},label);
+}
+function readyRow(job) {
+  if(job.type==='blocked'||!active(job))return null;
+  const row=h('div',{class:'dp-ready','data-ready':''}),reminder=job.reminder,money=job.moneyReady;
+  // Reminders off, but whether HighLevel already has this visit's reminder cannot be confirmed: never a plain "off".
+  if(job.notify===false&&reminder?.state==='unknown')row.append(h('span',{class:'dp-pill warn dp-reminders-off','data-reminder':'unknown','data-source':reminder.source||'none'},'Reminders off · HighLevel may still remind (not confirmed)'));
+  else if(job.notify===false&&reminder?.state!=='off_told')row.append(pill('Reminders off','warn dp-reminders-off'));
+  else if(REMINDER_TEXT[reminder?.state]){const [text,kind]=REMINDER_TEXT[reminder.state],source=REMINDER_SOURCE[reminder.source];row.append(h('span',{class:'dp-pill '+kind,'data-reminder':reminder.state,'data-source':reminder.source||'none'},text,source?h('small',{},' · '+source):null));}
+  if(money&&typeof money==='object') {
+    if(money.checked!==true)row.append(pill('Price and deposit not checked','muted'));
+    else {
+      row.append(money.hasApprovedPrice===true?pill('Price approved','ok'):money.priceStatus==='plan'?pill('Plan price','ok'):financeLink(job,'Price this job','warn',money.priceStatus==='not_approved'?'the price has no customer approval':'no approved price'));
+      const soon=warningsFor(job).some(w=>w.code==='deposit_unpaid');
+      if(wholeCents(money.depositDueCents)&&money.depositDueCents>0)row.append(financeLink(job,'Deposit unpaid · '+USD.format(money.depositDueCents/100),soon?'warn':'',soon?'the job starts within 2 days':''));
+      else if(money.depositRequiredCents===0)row.append(pill('No deposit','muted'));
+      else if(wholeCents(money.depositRequiredCents)&&money.depositDueCents===0)row.append(money.depositVerified===true?pill('Deposit paid','ok'):pill('Deposit not verified','warn'));
+    }
+  }
+  return row.childElementCount?row:null;
 }
 function jobCard(job, {compact=false,date=null}={}) {
   const original=job.sourceJob||job,warnings=warningsFor(job),blocked=job.type==='blocked';
@@ -196,8 +235,10 @@ function jobCard(job, {compact=false,date=null}={}) {
   if(!compact&&job.jobTime?.recorded)card.append(h('p',{class:'dp-equipment'},'Recorded job work: '+(job.jobTime.workMs/3600000).toFixed(1)+' hr'+(job.jobTime.estimatedMs?' · scheduled '+(job.jobTime.estimatedMs/3600000).toFixed(1)+' hr':'')+(job.jobTime.partialHistory?' · partial history':'')));
   }else if(job.opsNotes||job.notes)card.append(h('p',{class:'dp-scope'},job.opsNotes||job.notes));
   const ghl=ghlChip(original);if(ghl)card.append(ghl);
-  for (const warning of warnings.slice(0,3)) card.append(h('p',{class:'dp-warning'},warning.message||words(warning.code)));
-  if(warnings.length>3)card.append(h('p',{class:'dp-muted'},(warnings.length-3)+' more items to review'));
+  const ready=readyRow(original);if(ready)card.append(ready);
+  const listed=warnings.filter(w=>!MONEY_WARNINGS.has(w.code));
+  for (const warning of listed.slice(0,3)) card.append(h('p',{class:'dp-warning'},warning.message||words(warning.code)));
+  if(listed.length>3)card.append(h('p',{class:'dp-muted'},(listed.length-3)+' more items to review'));
   const actions=h('div',{class:'dp-card-actions'});
   if(!blocked)actions.append(h('a',{class:'dp-btn primary',href:job.type==='walkthrough'?'/crew/gameplan.html?walkthroughId='+encodeURIComponent(job.id):'/crew/job.html?jobId='+encodeURIComponent(job.id)},job.type==='walkthrough'?'Open walkthrough':job.attention?.status==='open'?'Review job issue':'Open job'));
   if (active(job)) actions.append(btn('Edit / assign',()=>openJob(original)),btn('Cancel',()=>openStatus(original,'schedule.cancel'),'subtle'));
@@ -595,6 +636,21 @@ function openJob(job=null,options={}) {
   model.fields.append(labeled('Arrival from',arrivalStart),labeled('Arrival to',arrivalEnd),arrivalHelp,arrivalNote);
   for(const input of arrival)input.addEventListener('input',()=>arrivalNote.replaceChildren());
   const arrivalToggle=()=>{for(const input of arrival)input.disabled=unscheduled.checked;};unscheduled.addEventListener('change',arrivalToggle);arrivalToggle();
+  // FIX-DISPATCH-READY: Notify customer (notify) decides whether HighLevel gets this visit's reminder tag. An imported Jobber
+  // job nobody has decided on yet (the server marks it jobberImport only then) starts on at its first booking when the
+  // server says so (EGC_DISPATCH_NOTIFY_IMPORTED_ON) and always sends the choice; a recorded choice is never re-proposed.
+  const imported=Boolean(job?.reminder?.jobberImport)&&job.notify===false&&!job.date;
+  // A reminder tag HighLevel has, may have (unknown), or is about to get from the tag outbox, is never taken back by turning this off.
+  const reminded=Boolean(job?.date)&&(['set','off_told','unknown'].includes(job?.reminder?.state)||job?.reminder?.source==='ghl_outbox'&&['pending','stuck'].includes(job?.reminder?.state));
+  const kept='HighLevel may still send the reminder it already has for this visit. To stop it, remove it in HighLevel.';
+  const reminders=h('input',{type:'checkbox',name:'notify',checked:imported?S.data.notifyImportedOn===true:job?job.notify!==false:true});
+  const reminderNote=h('small',{class:'dp-muted','aria-live':'polite'},reminded&&job.notify===false?kept:'');
+  const reminderBox=h('div',{class:'dp-wide dp-reminder-field'},h('label',{class:'dp-check'},reminders,h('span',{},'HighLevel confirmation and reminders')),
+    h('small',{class:'dp-muted'},'HighLevel sends the confirmation and reminders from its own workflows; the Hub only tags the visit. '+(reminded?'Turning this off leaves the reminder out of this visit\u2019s next HighLevel update; it does not take back one HighLevel already has.':'Turn off so this customer hears nothing about this visit.')),
+    imported?notice('Imported from Jobber: reminders were off'):null,reminderNote);
+  let reminderTouched=false;
+  reminders.addEventListener('change',()=>{reminderTouched=true;reminderNote.textContent=reminded&&!reminders.checked?kept:job?.date&&reminders.checked!==(job.notify!==false)?'HighLevel is told with the next change to this visit\u2019s date or time.':'';});
+  model.fields.append(reminderBox);
   let previousStart=startTime.value;
   // Moving the start time moves a custom arrival window with it. A window that
   // would cross midnight is cleared, and the manager is told why.
@@ -723,6 +779,8 @@ function openJob(job=null,options={}) {
       accessInstructions:String(data.get('accessInstructions')||'').trim(),customerInstructions:String(data.get('customerInstructions')||'').trim(),opsNotes:String(data.get('opsNotes')||'').trim(),
       requiredEquipment:list('requiredEquipment'),materials:list('materials').map((name,i)=>{const existing=job?.materials?.find(m=>m.name===name);return existing||{id:'material-'+i+'-'+name.toLowerCase().replace(/[^a-z0-9]/g,'').slice(0,30),name,quantity:1};})};
     Object.assign(changes,{arrivalWindowStart:from||null,arrivalWindowEnd:to||null},skillFields?.changes());
+    // An imported job's preselected choice is saved when this save books it, or when the dispatcher changed it.
+    if(!job||(imported?!unscheduled.checked||reminderTouched:reminders.checked!==(job.notify!==false)))changes.notify=reminders.checked;
     // The server derives the job time and crew from segments; it never takes both.
     if(segments.length){for(const name of ['date','time','endDate','endTime','assignedCrew','crewId','crewLead','vehicleId'])delete changes[name];
       if(segmentsOn())changes.assignmentSegments=segments.map(s=>({id:s.id,date:s.date,time:s.time,endDate:s.endDate||s.date,endTime:s.endTime,assignedCrew:[...s.assignedCrew],crewLead:s.crewLead||null,...(s.crewId&&(S.data.crews||[]).some(c=>c.id===s.crewId&&c.status==='active')?{crewId:s.crewId}:{}),vehicleId:s.vehicleId||null,notes:(s.notes||'').trim()}));}
@@ -803,4 +861,6 @@ function registerView(name,view) {
 // Registered views share this client, its dialogs and the save-recovery protocol (same requestId on retry).
 const internals=Object.freeze({state:()=>S,api,save,modal,openJob,show,redraw:renderBody,person,assignable,crewName,vehicle,h,btn,pill,notice,errorText,clock,dateText,addDays,today,words,key,segmentsOf,segmentsOn,active,warningsFor,reasonControls});
 window.EGCDispatch={mount,unmount,refresh:load,canLeave:()=>!S.modal&&!S.pending,registerView,internals};
+// A readiness chip opened outside the Hub lands on /employee.html?view=finance&job=ID; that job's row is shown once the Hub renders it.
+try{if(typeof location!=='undefined'){const params=new URLSearchParams(location.search);if(params.get('view')==='finance'&&params.get('job'))focusFinanceRow(params.get('job'),100);}}catch{}
 })();

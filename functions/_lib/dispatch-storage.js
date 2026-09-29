@@ -33,7 +33,9 @@ export const JOB_FIELDS = Object.freeze(['type','recordType','date','time','endD
   // Required skills are read by the dispatch rules (dispatch-rules.js).
   'requiredSkills',
   // GHL-TRACK-1: the visit's newest HighLevel tag outbox entry (ghl-tag-outbox.js), for the card's HighLevel chip.
-  'ghlTagEntry']);
+  'ghlTagEntry',
+  // FIX-DISPATCH-READY: reminder readiness from today's browser calendar sync and the Jobber import (dispatch-readiness.js).
+  'scheduleSource','notifySetAt','automationTagSynced','automationReminderTag','automationReminderTaggedAt','syncLastAttemptAt','syncedAt']);
 
 /** Owner decision F19: the owner and managers are office staff and join assignment
  * lists only when they take field work, recorded as stored staffRoles that also
@@ -143,6 +145,8 @@ export function dispatchStorage(env, fetcher = firestoreFetch) {
     crewNotificationsEnabled: crewNotificationsEnabled(env),
     // EGC_GHL_TAG_OUTBOX: schedule changes queue their HighLevel tags in the same commit (ghl-tag-outbox.js).
     ghlTagOutbox: ghlTagOutboxEnabled(env),
+    // EGC_DISPATCH_NOTIFY_IMPORTED_ON: an imported Jobber job's first booking turns reminders on (dispatch-readiness.js notifyPatch).
+    notifyImportedOn: env?.EGC_DISPATCH_NOTIFY_IMPORTED_ON === 'true',
     async legacyBlockedDays(dates) {
       const found = await Promise.all(dates.map(async date => {
         const response = await send(`${BASE}/blocked_days/${encodeURIComponent(date)}?mask.fieldPaths=blockedAt`);

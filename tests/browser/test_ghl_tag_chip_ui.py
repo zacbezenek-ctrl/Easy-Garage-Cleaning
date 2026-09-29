@@ -53,7 +53,7 @@ class GhlTagChipTests(unittest.TestCase):
     def setUp(self):
         self.context = self.browser.new_context(viewport={'width': 390, 'height': 844}, timezone_id='Asia/Tokyo', is_mobile=True, has_touch=True)
         self.page = self.context.new_page(); self.page.set_default_timeout(7000)
-        self.errors = []; self.retries = []; self.writes = []; self.jobs = jobs(); self.outbox = True
+        self.errors = []; self.retries = []; self.writes = []; self.jobs = jobs(); self.outbox = True; self.read_extra = {}
         self.page.clock.install(time=DAY + 'T18:00:00Z')
         self.page.on('pageerror', lambda e: self.errors.append(str(e)))
         self.page.route('**/*', self.route)
@@ -73,7 +73,7 @@ class GhlTagChipTests(unittest.TestCase):
         if req.method == 'GET':
             params = parse_qs(parsed.query); first = params.get('startDate', [DAY])[0]; last = params.get('endDate', ['2026-09-29'])[0]
             send({'ok': True, 'viewer': {'id': 'manager.one'}, 'timeZone': 'America/Denver', 'jobs': copy.deepcopy(self.jobs), 'roster': ROSTER, 'crews': [], 'vehicles': [], 'availability': [], 'warnings': [],
-                  'coverage': {'complete': True, 'asOf': DAY + 'T18:00:00Z'}, 'startDate': first, 'endDate': last, 'arrivalDefaults': {'enabled': False, 'minutes': 60}, 'funnel': FUNNEL, **({'ghlTagOutbox': True} if self.outbox else {})}); return
+                  'coverage': {'complete': True, 'asOf': DAY + 'T18:00:00Z'}, 'startDate': first, 'endDate': last, 'arrivalDefaults': {'enabled': False, 'minutes': 60}, 'funnel': FUNNEL, **({'ghlTagOutbox': True} if self.outbox else {}), **self.read_extra}); return
         self.writes.append(req.post_data_json); send({'ok': False, 'code': 'dispatch_unavailable', 'error': 'Synthetic: no write in this test'}, 503)
     def open(self):
         self.page.goto(self.url)
@@ -124,6 +124,24 @@ class GhlTagChipTests(unittest.TestCase):
         expect(self.page.locator('.dp-notice').first).to_contain_text('HighLevel will be told again in a moment.')
         self.assertEqual([(row['action'], row['jobId']) for row in self.retries], [('retry', 'job-overdue')])
         self.assertEqual(self.writes, [])
+
+    def test_a_booker_sees_stuck_without_retry_and_a_manager_keeps_it_at_390(self):
+        # FIX-DISPATCH-READY (GHL-TRACK-1 third review): with EGC_STAFF_ROLE_ACCESS a booker (schedule.book: Sales/Phone) can
+        # read the board, but Retry needs dispatch.write, so GET /api/dispatch says ghlTagRetry:false and the chip offers none.
+        self.jobs.append(job('job-overdue', 'Synthetic Overdue Garage', '14:30', '15:30', ghlTagEntry=ENTRY(4), ghlTags={'status': 'pending', 'doneAt': None, 'skipped': None, 'attempts': 0, 'nextAttemptAt': DAY + 'T15:00:00.000Z', 'lastError': None, 'overdue': True, 'current': True}))
+        stuck_name = 'Synthetic Stuck Garage With A Very Long Customer Name For Phones'
+        for allowed in (False, True):
+            with self.subTest(ghlTagRetry=allowed):
+                self.read_extra = {'ghlTagRetry': allowed}; self.open()
+                for name in (stuck_name, 'Synthetic Overdue Garage'):
+                    chip = self.card(name).locator('.dp-ghl')
+                    expect(chip).to_contain_text('HighLevel stuck')
+                    expect(chip.get_by_role('button', name='Retry telling HighLevel about ' + name)).to_have_count(1 if allowed else 0)
+                expect(self.card('Synthetic Waiting Garage').locator('.dp-ghl')).to_have_text('HighLevel waiting')
+                scroll = self.no_horizontal_scroll()
+                self.assertLessEqual(scroll['width'], 390, scroll); self.assertEqual(scroll['wide'], [])
+                if not allowed: self.page.screenshot(path=str(RESULTS / 'ghl-tag-chip-booker-390.png'), full_page=True)
+        self.assertEqual(self.retries, [], 'nothing was retried'); self.assertEqual(self.writes, [])
 
     def test_cancel_and_no_show_dialogs_say_highlevel_will_be_told(self):
         self.open()

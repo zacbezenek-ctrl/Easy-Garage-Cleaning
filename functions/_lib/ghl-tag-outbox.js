@@ -393,16 +393,19 @@ export function ghlTagStatusView(row, { at = NaN, job = null } = {}) {
 
 /** Adds ghlTags {status, doneAt, ...} to projected dispatch jobs that point at an outbox entry. An unreadable
  * outbox marks them 'unknown' instead of failing the board. Flag off: the jobs come back unchanged. `now` (a Date or
- * ISO string) lets the view say whether a pending entry is overdue and a stuck one still current. */
-export async function withGhlTagStatus(store, jobs, now = null) {
+ * ISO string) lets the view say whether a pending entry is overdue and a stuck one still current. `read`, when given
+ * (Dispatch's reminder readiness, dispatch-readiness.js), also gets the entries read, with their addTags and
+ * previousEntryId, as read.entries (by id), or read.unreadable = true, so a board reads each entry once. */
+export async function withGhlTagStatus(store, jobs, now = null, read = null) {
   if (store.ghlTagOutbox !== true) return jobs;
   const ids = [...new Set(jobs.map(job => job?.ghlTagEntry?.id).filter(id => ENTRY_ID.test(id || '')))];
   if (!ids.length) return jobs;
   const at = now === null ? NaN : new Date(now).getTime();
   let rows;
-  try { rows = typeof store.readMany === 'function' ? await store.readMany(GHL_TAG_OUTBOX, ids, ['status', 'doneAt', 'skipped', 'attempts', 'nextAttemptAt', 'lastError', 'claimedUntil', 'createdAt', 'expect']) : (await Promise.all(ids.map(id => store.read(GHL_TAG_OUTBOX, id)))).filter(Boolean); }
-  catch { return jobs.map(job => ENTRY_ID.test(job?.ghlTagEntry?.id || '') ? { ...job, ghlTags: { status: 'unknown' } } : job); }
+  try { rows = typeof store.readMany === 'function' ? await store.readMany(GHL_TAG_OUTBOX, ids, ['status', 'doneAt', 'skipped', 'attempts', 'nextAttemptAt', 'lastError', 'claimedUntil', 'createdAt', 'expect', ...(read ? ['addTags', 'previousEntryId'] : [])]) : (await Promise.all(ids.map(id => store.read(GHL_TAG_OUTBOX, id)))).filter(Boolean); }
+  catch { if (read) read.unreadable = true; return jobs.map(job => ENTRY_ID.test(job?.ghlTagEntry?.id || '') ? { ...job, ghlTags: { status: 'unknown' } } : job); }
   const byId = new Map(rows.map(row => [row.id, row]));
+  if (read) read.entries = byId;
   return jobs.map(job => { const row = byId.get(job?.ghlTagEntry?.id); return row ? { ...job, ghlTags: ghlTagStatusView(row, { at, job }) } : ENTRY_ID.test(job?.ghlTagEntry?.id || '') ? { ...job, ghlTags: { status: 'unknown' } } : job; });
 }
 

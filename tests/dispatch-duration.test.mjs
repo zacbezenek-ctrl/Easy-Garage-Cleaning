@@ -146,6 +146,20 @@ function moneyJob(extra = {}) {
     estimate: { amount: 98765.43, depositRequired: 424242, status: 'accepted', lineItems: [line({ name: 'CANARY-LINE', description: 'CANARY-DESC', unitCents: 1234567, totalCents: 1234567, amount: 12345.67, durationMinutes: 150, catalog: { itemId: 'canary-catalog', version: 2 }, split: { productCents: 424242, laborCents: 313131, markupCents: 12345, laborMinutes: 150 } })] },
     durationOverride: { suggestedMinutes: 75, minutes: 90, reason: 'CANARY-REASON' }, logistics: { crew_size: 2 }, estimatedDurationMin: 90, ...extra };
 }
+// FIX-DISPATCH-READY (updated deliberately): GET /api/dispatch now adds, for an owner or manager, moneyReady (money-core
+// cents for the price and deposit chips) and the no_price / deposit_unpaid warnings. Those are checked to be exactly
+// that and set aside; every other part of a dispatch read stays free of quote money, as DISPATCH-DURATION requires.
+const READY_KEYS = ['checked', 'depositDueCents', 'depositPaidCents', 'depositRequiredCents', 'depositVerified', 'hasApprovedPrice', 'priceStatus'];
+function withoutReadiness(value) {
+  if (Array.isArray(value)) return value.map(withoutReadiness);
+  if (!value || typeof value !== 'object') return value;
+  const out = {};
+  for (const [key, item] of Object.entries(value)) {
+    if (key === 'moneyReady') { assert.deepEqual(Object.keys(item).sort(), READY_KEYS); continue; }
+    out[key] = key === 'warnings' && Array.isArray(item) ? item.filter(warning => !['no_price', 'deposit_unpaid'].includes(warning?.code)).map(withoutReadiness) : withoutReadiness(item);
+  }
+  return out;
+}
 function assertNoMoney(value, label) {
   const json = JSON.stringify(value);
   for (const canary of CANARIES) assert.ok(!json.includes(canary), `${label} leaks ${canary}`);
@@ -200,7 +214,8 @@ test('every dispatch read path returns the suggestion without quote money', asyn
   // money field): it must be exactly that list, and everything else in the reply is checked for quote money.
   const { funnel, ...reply } = body;
   assert.deepEqual(funnel, dispatchFunnelOptions());
-  assert.equal(body.jobs.find(job => job.id === 'job-money').suggestedDurationMin, 75); assertNoMoney(reply, 'GET /api/dispatch');
+  assert.equal(body.jobs.find(job => job.id === 'job-money').suggestedDurationMin, 75); assert.ok(body.jobs.find(job => job.id === 'job-money').moneyReady, 'the manager board carries money readiness');
+  assertNoMoney(withoutReadiness(reply), 'GET /api/dispatch');
 });
 
 // A Firestore REST mask returns only the named paths.

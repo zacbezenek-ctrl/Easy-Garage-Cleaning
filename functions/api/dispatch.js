@@ -39,7 +39,7 @@ export function dispatchHandlers({ session = getHubSession, storage = dispatchSt
       try {
         const actor = await session(request,env), access = requireScheduleAccess(actor,env);
         const params = Object.fromEntries(new URL(request.url).searchParams.entries());
-        const store = storage(env), photos = crewRosterPhotoStore(store), overview = await dispatchOverview(photos.store,actor,params,now(),{travel:travel({env,store,now}),...(access.booker ? {authorize:bookerAuthorize(env)} : {})});
+        const store = storage(env), photos = crewRosterPhotoStore(store), overview = await dispatchOverview(photos.store,actor,params,now(),{travel:travel({env,store,now}),readiness:true,...(access.booker ? {authorize:bookerAuthorize(env)} : {})});
         // Approved crew headshots (P4-07), read alongside the job scans; an unreadable profile store leaves the roster unchanged.
         return reply(200,{...overview,...(Array.isArray(overview.roster) ? {roster:await photos.attach(overview.roster)} : {}),...(access.booker && Array.isArray(overview.availability) ? {availability:overview.availability.map(away)} : {}),viewer:{id:actor.user},funnel:dispatchFunnelOptions()});
       } catch(error) { return errorResponse(error); }

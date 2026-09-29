@@ -523,6 +523,10 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   invoice that was never issued (portal, crew link, webhook, held settle, portal credit, record_offline); an invoice with no number
   and no issuedAt reads not_issued. Receipts are named after the cash ledger entry; /api/money lists credits apart from cash. Dry-run
   backfill scripts/backfill-numberless-invoices.mjs. Gap: "Verified collected" still counts credits (FIX-HUB-COLLECTED-CREDITS).
+- **FIX-DISPATCH-READY** (P1 Dispatch; reads only; EGC_DISPATCH_NOTIFY_IMPORTED_ON off) Cards show reminder readiness from the tag
+  outbox or the page's calendar sync ("Reminder set" only on positive evidence), and for owners and managers price and deposit
+  readiness from money-core (no_price, deposit_unpaid within 2 Denver days). Notify toggle on Create/Edit (notifySetAt); recurring
+  plans show their reminder setting; bookers see "HighLevel stuck" without Retry. The bridge overview stays money-free.
 
 ## In progress
 
@@ -646,6 +650,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | AUTH-ROLES | P1 auth: business access and booking rights from owner-set roles (EGC_STAFF_ROLE_ACCESS, off) | merged (a02d5e5) |
 | GHL-TRACK-1 | P1 HighLevel: durable tag outbox for bookings, changes and walkthrough outcomes (EGC_GHL_TAG_OUTBOX, off) | merged (31a8de8) |
 | FIX-MONEY-INVOICE-STATE | P1 money: payments never fabricate invoices; credits are not cash (MONEY_INVOICE_STATE_ENABLED, off) | merged (924ed44) |
+| FIX-DISPATCH-READY | P1 Dispatch: reminder, price and deposit readiness on each visit (EGC_DISPATCH_NOTIFY_IMPORTED_ON, off) | merged (d8de34c) |
 
 ## Next
 

@@ -381,5 +381,21 @@ class RecurringBrowserTests(unittest.TestCase):
         expect(card).to_contain_text('Visit prices stopped being saved: The 2026-09-30 visit could not be priced')
         expect(card).not_to_contain_text('Visits stopped being added')
 
+    def test_each_plan_shows_its_customer_reminders_and_changes_them_on_a_phone(self):
+        # FIX-DISPATCH-READY: the plan list says whether added visits get the customer's HighLevel reminders, with a Change link.
+        self.start(375, 812); self.plans = [plan(notifyCustomer=False), plan(id='plan-2', revision='plan-2-rev', customer='Synthetic Reminded Garage', notifyCustomer=True), plan(id='plan-3', customer='Synthetic Ended Garage', status='ended', notifyCustomer=False)]
+        self.open_dispatch(); self.open_plans(); dialog = self.dialog()
+        off, on, ended = (dialog.locator(f'[data-plan="{id}"] .rp-reminders') for id in ('plan-1', 'plan-2', 'plan-3'))
+        expect(off).to_have_text(re.compile('^Customer reminders: Off')); expect(off).to_have_attribute('data-reminders', 'off')
+        expect(on).to_have_text(re.compile('^Customer reminders: On')); expect(on).to_have_attribute('data-reminders', 'on')
+        expect(ended.get_by_role('button')).to_have_count(0)
+        change = off.get_by_role('button', name='Change customer reminders for ' + CUSTOMER, exact=True)
+        self.assertGreaterEqual(change.bounding_box()['height'], 44); self.assertLessEqual(self.page.evaluate('document.documentElement.scrollWidth'), 375)
+        change.click(); expect(dialog.get_by_role('heading', name='Edit recurring plan', exact=True)).to_be_visible()
+        reminders = dialog.locator('input[name=notifyCustomer]'); expect(reminders).to_be_focused(); expect(reminders).not_to_be_checked()
+        reminders.check(); dialog.get_by_role('button', name='Save plan changes', exact=True).click()
+        expect(dialog.get_by_role('status').filter(has_text='Plan updated.')).to_be_visible()
+        self.assertEqual(self.calls[-1]['action'], 'update'); self.assertIs(self.calls[-1]['plan']['notifyCustomer'], True)
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)

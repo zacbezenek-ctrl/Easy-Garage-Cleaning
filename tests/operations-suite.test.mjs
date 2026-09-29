@@ -852,8 +852,10 @@ test('open-shift scheduling fields persist on the canonical job record',()=>{
   // names that download; (GUSTO-EXPORT on the final TIME-CORRECT) one new tag; (FIX-MONEY-TOTALS) the finance board's
   // unified totals, with HighLevel milestones, notes, the Customer messages buttons and board on today's figures;
   // (FIX-MONEY-TOTALS after GUSTO-EXPORT) one new tag; (AUTH-ROLES on GUSTO-EXPORT) one new tag; (AUTH-ROLES after
-  // FIX-MONEY-TOTALS) one combined tag.
-  assert.match(employee,/employee-suite\.js\?v=20260929totalsroles/);
+  // FIX-MONEY-TOTALS) one combined tag; (FIX-DISPATCH-READY) finance rows carry data-finance-job for Dispatch's price and
+  // deposit links, and the calendar sync records the reminder tag it added; (FIX-DISPATCH-READY second review) a sync whose
+  // tags the HighLevel tag outbox owns records no reminder evidence; (FIX-DISPATCH-READY after AUTH-ROLES) one combined tag.
+  assert.match(employee,/employee-suite\.js\?v=20260929totalsready"/);
 });
 
 test('recurring visits request a server-side handoff clone instead of copying prior execution or payments',()=>{

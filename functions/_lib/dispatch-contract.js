@@ -51,6 +51,29 @@
  *   an accepted residual risk that scripts/dispatch-window-audit.mjs reports.
  * GET /api/dispatch?view=job&jobId=exact-ID
  *   => {ok,job:DispatchJob,roster,crews,vehicles,warnings,arrivalDefaults,segments}; no date-range filter.
+ * FIX-DISPATCH-READY (functions/_lib/dispatch-readiness.js; read-only, no HighLevel write or send): GET /api/dispatch's
+ *   board and job view (dispatchOverview option readiness; never the signed hub.dispatch.overview bridge) add to each
+ *   customer visit reminder:{state:'set'|'pending'|'stuck'|'not_told'|'off'|'off_told'|'no_contact'|'unknown'|
+ *   'not_scheduled',source:'ghl_outbox'|'calendar_sync'|'none',jobberImport?:true}, absent for blocks,
+ *   closed visits and visits already started; jobberImport only while an imported Jobber job's reminder choice is
+ *   undecided (no notifySetAt). With EGC_GHL_TAG_OUTBOX and a current tag outbox entry it reads that entry (its tags
+ *   and told/waiting/stuck status; a pending entry the tag worker is overdue on is 'stuck'), else today's browser
+ *   calendar-sync fields; 'set' only on positive evidence that HighLevel got the reminder tag for the current time
+ *   after notifySetAt (the entry, or the browser sync's recorded automationReminderTag; 'outbox' there means the tag
+ *   outbox owned that sync's tags and reads 'unknown'); 'off_told' while any entry or browser sync on the visit told
+ *   HighLevel a reminder tag (automationReminderTaggedAt, or earlier entries via previousEntryId), 'unknown' when that
+ *   cannot be known. For a dispatch.write viewer only
+ *   (owner or manager, never sales or crew), service jobs (not walkthroughs or blocks) add moneyReady:{checked,
+ *   hasApprovedPrice,priceStatus:'approved'|'plan'|'not_approved'|'missing'|'unreadable'|'unknown',
+ *   depositRequiredCents,depositPaidCents,depositDueCents,depositVerified} from money-core (null figures when unknown,
+ *   checked:false when unreadable; 'plan' is a recurring plan's visit at the plan's per-visit price; depositVerified is
+ *   false while the payment record has an unreconciled refund or conflicting receipts), and warnings add
+ *   no_price (never for 'plan') and, from 2 Denver days before the visit, deposit_unpaid {depositDueCents}. The same
+ *   read adds ghlTags from one outbox read, and ghlTagRetry:boolean (the viewer has dispatch.write, which the chip's
+ *   Retry at POST /api/ghl-tag-drain needs). A schedule.update that changes notify saves
+ *   notifySetAt. With EGC_DISPATCH_NOTIFY_IMPORTED_ON (these readiness reads add notifyImportedOn:true; the bridge
+ *   never does) the first booking of an undated scheduleSource:'jobber_import' job with notify:false saves notify:true
+ *   unless the request sends notify.
  *
  * POST /api/dispatch always requires requestId = crypto.randomUUID(). Keep the
  * SAME requestId and unchanged body when retrying a lost/network response.
