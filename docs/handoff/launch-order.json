@@ -13,20 +13,20 @@
       "gate": "review and tests",
       "candidateCommitSha": "889f30744f0c3cbede5775d0e61c1e038d2107fb",
       "review": "primary and independent review passed; 159 targeted tests",
-      "state": "picked_first_pending_batch8_exact_head_ci"
+      "state": "merged_first_in_batch8"
     },
     {
       "order": 2,
       "item": "handoff_commit",
       "gate": "docs/HANDOFF.md and docs/handoff/ reviewed for actual status and missing specs",
-      "state": "picked_second",
+      "state": "merged_second_in_batch8",
       "candidateCommitSha": "d173e719903a90b5d91ae42d04f7c1d48af2d401"
     },
     {
       "order": 3,
       "item": "FIELD-PAY",
       "gate": "final fix, review, and green CI",
-      "state": "picked_third_reviewed_pending_batch8_exact_head_ci",
+      "state": "merged_third_in_batch8_flag_off",
       "candidateCommitSha": "d769ac5385ce82c089359e316d120955f258fed6",
       "activationFlag": "EGC_FIELD_PAY_ENABLED",
       "activation": "off"
@@ -34,7 +34,9 @@
     {
       "order": 4,
       "item": "batch8_merge_to_main",
-      "gate": "FIELD-PAY included and all CI green on the exact head"
+      "gate": "FIELD-PAY included and all CI green on the exact head",
+      "state": "merged_to_main_after_seven_green",
+      "mergeSha": "a0297623276e0d0bed78dbdb789957367b8a60dd"
     },
     {
       "order": 5,
@@ -56,8 +58,8 @@
   "batch8ToMain": {
     "after": "FIELD-PAY included",
     "requires": "green CI on exact batch head",
-    "candidateHeadSha": "d04baaf8ab036e3b3875c7a2b1e4bb5f59124e70",
-    "merged": false,
+    "candidateHeadSha": "d765eba3a79f269e5c39c9e302fbcdd21124d8df",
+    "merged": true,
     "applicableWorkflows": [
       "Root",
       "Platform",
@@ -70,20 +72,30 @@
     "ciAtCandidateHead": {
       "root": "success",
       "platform": "success",
-      "actionCenter": "in_progress",
+      "actionCenter": "success",
       "operationsIntegration": "path_filtered_not_applicable",
       "businessHub": "success",
-      "firestore": "success_real_field_payment_subtests_77_total",
+      "firestore": "success",
       "mobileDeviceE2E": "success",
-      "lighthouse": "in_progress"
+      "lighthouse": "success"
+    },
+    "mergeSha": "a0297623276e0d0bed78dbdb789957367b8a60dd",
+    "ciRunIds": {
+      "lighthouse": 36629315570,
+      "firestore": 36629315519,
+      "platform": 36629315656,
+      "businessHub": 36629316036,
+      "actionCenter": 36629315563,
+      "mobileDeviceE2E": 36629315606,
+      "root": 36629315555
     }
   },
   "batch9": {
     "scope": "remaining completed units",
-    "requires": "all eight workflows green on final PR #87 head and Batch 8 already merged to main",
+    "requires": "all eight workflows green on final PR #87 head before its main merge",
     "pr": 87,
-    "priorGreenHeadSha": "bf191d92c9de6ce394b8166d9fd53039d7e25104",
-    "localIntegration": "integrated_candidate_pending_eight_ci_and_batch8_main_gate"
+    "priorGreenHeadSha": "6bfc032f9317a7ceeeeb23863c7f4c7174f2b769",
+    "localIntegration": "main_a029_merged_at_6d215_final_role_fix_candidate_pending_exact_head_eight_ci"
   },
   "activation": {
     "FIX-REFUNDS": "off_at_merge",

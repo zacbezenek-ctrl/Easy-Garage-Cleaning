@@ -4,18 +4,18 @@
   "items": [
     {
       "id": "CREDITS-QUEUE",
-      "state": "picked_first_on_batch8_candidate_pending_exact_head_ci",
+      "state": "merged_first_in_batch8",
       "owner": "build coordinator",
-      "action": "Credits, handoff and FIELD-PAY are in the serial Batch 8 candidate. Verify seven applicable workflows on d04baaf before any main merge.",
+      "action": "Credits, handoff and FIELD-PAY landed in order in Batch 8 main merge a0297623276e0d0bed78dbdb789957367b8a60dd after seven exact-head green workflows.",
       "commitSha": "889f30744f0c3cbede5775d0e61c1e038d2107fb",
       "evidence": "159 targeted money, invoice, privacy and parity tests; primary and independent review passed"
     },
     {
       "id": "CI-01",
-      "state": "five_of_seven_green_two_running_on_d04baaf",
+      "state": "resolved_batch8_final_head_seven_green",
       "owner": "build coordinator",
-      "action": "Root, Platform, Firestore, Business Hub and Mobile Device E2E passed on Batch 8 d04baaf. Verify Lighthouse and Action Center on that exact head before main merge. Operations Integration is path-filtered here; all eight workflows must pass on the later combined PR #87 head.",
-      "evidence": "Old PR #86 Find a time failure: run 36604534261; initial 9f61d18 Root expectation and synthetic Firestore fixture failures were corrected in d04baaf. Root, Platform, Firestore, Business Hub and Mobile Device E2E passed there; two other applicable workflows remain pending."
+      "action": "PR #86 final head d765eba3a79f269e5c39c9e302fbcdd21124d8df passed all seven applicable workflows and merged as a0297623276e0d0bed78dbdb789957367b8a60dd. Preserve this result separately from the pending final PR #87 eight-workflow gate.",
+      "evidence": "Business 36629316036; Root 36629315555; Firestore 36629315519; Platform 36629315656; Mobile 36629315606; Action Center 36629315563; Lighthouse 36629315570. Operations Integration path-filtered."
     },
     {
       "id": "HANDOFF-41",
@@ -50,9 +50,9 @@
     },
     {
       "id": "HUB-INTEGRATION",
-      "state": "integrated_candidate_pending_eight_ci_and_batch8_main_gate",
+      "state": "final_role_fix_candidate_pending_exact_head_eight_ci",
       "owner": "build coordinator",
-      "action": "PR #87 bf191d92c9de6ce394b8166d9fd53039d7e25104 passed all eight workflows. Its candidate now incorporates Batch 8 d04baaf with both WebKit suites and shared assets; 191 local combined tests plus the asset regression passed. Publish and verify all eight workflows on the new head. Merge only after Batch 8 is green and in main."
+      "action": "PR #87 published combined head 6bfc032f9317a7ceeeeb23863c7f4c7174f2b769 passed all eight workflows. The final role-fix candidate now includes Batch 8 main a029762 via local merge 6d215cc; 231 normal isolated Node tests passed again on the combined tree. Focused field-payment browser 16/16 Chromium and 16/16 WebKit passed on identical d765 role-fix code before integration. Verify all eight workflows on the final PR #87 head before its main merge."
     },
     {
       "id": "OWNER-LIVE",
@@ -68,7 +68,7 @@
     },
     {
       "id": "FIELD-PAY-ROLLOUT",
-      "state": "code_reviewed_pending_ci_merge_and_release_access",
+      "state": "merged_code_flag_off_pending_release_access_and_activation_review",
       "owner": "release coordinator and owner",
       "action": "Publish reviewed Firestore rules/indexes, verify money backfill and unified totals gates, then enable EGC_FIELD_PAY_ENABLED in a new Cloudflare deployment only after preview acceptance. Keep refunds/milestone tags off. No real charge has been made by this task."
     }
