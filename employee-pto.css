@@ -1,0 +1,9 @@
+/* Requests board: unconfirmed-save banner and 44px request actions. */
+.ops-pto-pending{display:grid;gap:10px;margin:0 0 16px;padding:14px 16px;border:1px solid var(--ops-line,#d8dde5);border-left:4px solid var(--ops-orange,#ff5b1f);background:#fff}
+.ops-pto-pending p{margin:0;font-size:14px;line-height:1.5;overflow-wrap:anywhere}
+.ops-pto-pending div{display:flex;flex-wrap:wrap;gap:8px}
+.ops-request-list button{min-height:44px}
+.ops-request-list button:disabled,.ops-request-actions .ops-button:disabled{opacity:.55;cursor:not-allowed}
+.ops-request-list article>div:first-child{min-width:0}
+.ops-request-list h3,.ops-request-list p{overflow-wrap:anywhere}
+@media(max-width:680px){.ops-request-list article>div:last-child button{flex:1 1 30%}.ops-action-dialog input,.ops-action-dialog select,.ops-action-dialog textarea{font-size:16px}}

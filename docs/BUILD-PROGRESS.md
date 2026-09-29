@@ -339,6 +339,12 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   schedule.sync_provider for due operations-owned visits with backoff; page loads stop auto-retrying those visits while
   the worker has checked in. Both sides gated by `EGC_SCHEDULE_SYNC_WORKER` (off). Documented flag-off change: the page's
   synced write is fenced so a drift re-queue wins. Gap: deploy the jobs(providerSyncOwner, syncStatus) index first.
+- **P1-06** Server time-off workflow at `/api/employee-pto` (request, approve, deny, cancel, end, manager `amend`):
+  approved time off becomes one native availability block through the lock/revision/receipt contract, and the generic
+  employee-hub request write now returns 403. `functions/_lib/pto-pay.js` is the one PTO pay model (paid hours at the
+  timecard rate); pay terms count only when the latest workflow decision set them. `scripts/pto-pay-audit.mjs` is read-only.
+  Merged by the coordinator on the owner's direct authorization. Gap: managers still read rates via /api/timesheets until
+  PAY-TIMESHEETS merges (next).
 
 ## In progress
 
@@ -418,6 +424,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | FUN-37-FIX | FUN-37 follow-up: legacy rework case, backfill source ids, cursor skew, authz matrix and deterministic test ids | merged (0a00c28) |
 | FUN-20 | Garage Guard membership ledger: amounts, billing periods, churn, member visits and deferred revenue (flags off) | merged (3390387) |
 | SYNC-QUEUE | Server-driven HighLevel schedule mirror queue (egc-api loop, flag off) | merged (6185062) |
+| P1-06 | Server time-off workflow and single PTO pay model (/api/employee-pto; employee-hub request writes 403) | merged (6c914d2) |
 
 ## Next
 

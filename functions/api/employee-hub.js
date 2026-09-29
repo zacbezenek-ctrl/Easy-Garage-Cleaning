@@ -230,13 +230,6 @@ async function authorizeMutation(env, session, collection, id, incoming, existin
 
   if (existing && !visibleTo(session, collection, existing)) throw new Error('This record belongs to another employee');
 
-  if (collection === 'requests') {
-    if (existing) throw new Error('Only a manager can change a submitted request');
-    // Paid time-off hours and weekend pay are set by a manager; an employee request cannot pre-fill them.
-    const { paidHoursPerDay, paidWeekends, ...requested } = incoming;
-    return { ...requested, id, employee: session.user, status: 'pending', reviewedBy: '', reviewedAt: '' };
-  }
-
   if (collection === 'training') {
     const moduleId = String(incoming.moduleId || '');
     const module = TRAINING_CHECKS.get(moduleId);
@@ -393,6 +386,8 @@ export async function onRequestPost({ request, env }) {
   const collection = String(body.collection || '');
   const id = String(body.id || '').trim();
   if (!COLLECTIONS.has(collection) || !id || id.length > 180) return reply(400, { ok: false, error: 'Invalid employee record' });
+  // Requests change only through /api/employee-pto: field whitelist, decision history and availability locks.
+  if (collection === 'requests') return reply(403, { ok: false, code: 'EMPLOYEE_HUB_REQUEST_WORKFLOW_REQUIRED', error: 'Requests are sent and reviewed through the request workflow. Refresh the Hub and try again.' });
   if (body.data !== undefined && !isRecord(body.data)) return reply(400, { ok: false, error: 'Invalid employee record data' });
   let incoming;
   try {
