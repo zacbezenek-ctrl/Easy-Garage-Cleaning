@@ -160,7 +160,7 @@ export const commandSchema = z.discriminatedUnion("command", [
   z.object({command:z.literal("portal.rules")}).strict(),
   z.object({command:z.literal("inbound.reconcile"),lookbackDays:z.number().int().min(1).max(90).optional(),limit:z.number().int().min(1).max(200).default(50)}).strict(),
   z.object({command:z.literal("portal.members")}).strict(),
-  z.object({command:z.literal("queue"), view:z.enum(["all", "due", "overdue", "approvals", "blocked", "waiting", "ownerless"]).default("due"),
+  z.object({command:z.literal("queue"), view:z.enum(["all", "due", "overdue", "approvals", "blocked", "waiting", "ownerless", "completed"]).default("due"),
     dueBefore:isoTime, owner:z.string().max(200).optional(), ...page}).strict(),
   z.object({command:z.literal("task.get"),taskId:entityId}).strict(),
   z.object({command:z.literal("task.create"),task:createTaskSchema}).strict(),

@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "asOf": "2026-09-29",
   "repository": "zacbezenek-ctrl/Easy-Garage-Cleaning",
-  "mainSha": "bc57eea94ed9da8aa984033027161a4ca829be36",
+  "mainSha": "a28c019ff3446a537135ceb973ac3793bd15d6a2",
   "batch8": {
     "pr": 86,
     "state": "merged_to_main_after_seven_green_workflows",
@@ -230,7 +230,7 @@
     "secretValuesInspected": false,
     "syntheticVisit": {
       "visitId": "dispatch_beef26f85e694eb4b57d7a47a3c324d1",
-      "customerName": "INTERNAL TEST — Hub release 2026-09-29",
+      "customerName": "INTERNAL TEST \u2014 Hub release 2026-09-29",
       "email": "hub-release-20260929@example.invalid",
       "scheduled": false,
       "phonePresent": false,
@@ -252,14 +252,14 @@
     "jobPhotoStorage": {
       "state": "blocked_live_regular_job",
       "completionRequiresBeforeAfter": true,
-      "driveAuthPage": "Drive setup — missing config",
+      "driveAuthPage": "Drive setup \u2014 missing config",
       "bindingFinding": "GOOGLE_REFRESH_TOKEN absent; GOOGLE_CLIENT_ID or GOOGLE_CLIENT_SECRET missing or unusable; values not read",
       "recovery": "Cloudflare Production /api/drive-auth as Hub manager with company Google; redirect https://easygaragecleaning.com/api/drive-auth; verify upload",
       "fieldPayReceiptStorageSeparate": true
     },
     "manualSyntheticOfficeTask": {
       "taskId": "b2b10b59-7c38-4b0c-9ba5-10063406b2c2",
-      "title": "INTERNAL TEST — office task persistence 2026-09-29",
+      "title": "INTERNAL TEST \u2014 office task persistence 2026-09-29",
       "visitId": "dispatch_beef26f85e694eb4b57d7a47a3c324d1",
       "assignedOwner": "Zac",
       "due": "2026-09-30 noon Mountain Time",
@@ -301,7 +301,7 @@
     "finalHeadPrefix": "297cc9b",
     "mergeSha": "baf7aa2ca9624438cbc8d1959b0be3caf4108e7f",
     "ci": "seven_of_seven_exact_head_success_both_previews_green",
-    "mainPushCi": "three_of_six_success_three_running_at_snapshot",
+    "mainPushCi": "six_of_six_applicable_success",
     "scope": "add currently documented provider error codes to safe allowlist",
     "review": "primary_and_independent_clear",
     "localTests": "24 focused API tests and typecheck passed",
@@ -329,6 +329,36 @@
     "ci": "seven_of_seven_exact_head_success_both_previews_success",
     "mergeSha": "bc57eea94ed9da8aa984033027161a4ca829be36",
     "mergedTreeMatchesTestedHead": true,
-    "deployed": true
+    "deployed": true,
+    "mainPushCi": "six_of_six_applicable_success"
+  },
+  "resilientOfficeWorkflow": {
+    "branch": "codex/hub-resilient-operations",
+    "state": "implementation_under_review_pending_exact_head_ci_and_live_acceptance",
+    "baseMainSha": "a28c019ff3446a537135ceb973ac3793bd15d6a2",
+    "scope": [
+      "human_reviewed_manual_tasks_from_saved_failed_transcript",
+      "read_only_completed_task_history"
+    ],
+    "browserAssetVersion": "20260929hubready5",
+    "aiCreditsRestored": false,
+    "scopeOrPriceMutation": false,
+    "customerSend": false,
+    "newServiceOrCredential": false,
+    "gate": "primary and independent review, targeted tests, exact-head CI, serial merge, matching deployments, synthetic live acceptance"
+  },
+  "publishedSourceRecheck": {
+    "branches": 91,
+    "openPullRequests": [
+      78,
+      16,
+      13,
+      12,
+      1
+    ],
+    "specsLocated": 0,
+    "specsPromised": 41,
+    "reportedBuildIdsLocated": 0,
+    "unpublishedWorkNotExcluded": true
   }
 }

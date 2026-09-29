@@ -154,5 +154,20 @@
     "FIX-REFUNDS": "off_at_merge",
     "GHL-TRACK-2": "off_at_merge",
     "FIELD-PAY": "off_until_rules_and_money_prerequisites_verified"
+  },
+  "resilientOfficeWorkflow": {
+    "branch": "codex/hub-resilient-operations",
+    "state": "implementation_under_review_pending_exact_head_ci_and_live_acceptance",
+    "baseMainSha": "a28c019ff3446a537135ceb973ac3793bd15d6a2",
+    "scope": [
+      "human_reviewed_manual_tasks_from_saved_failed_transcript",
+      "read_only_completed_task_history"
+    ],
+    "browserAssetVersion": "20260929hubready5",
+    "aiCreditsRestored": false,
+    "scopeOrPriceMutation": false,
+    "customerSend": false,
+    "newServiceOrCredential": false,
+    "gate": "primary and independent review, targeted tests, exact-head CI, serial merge, matching deployments, synthetic live acceptance"
   }
 }

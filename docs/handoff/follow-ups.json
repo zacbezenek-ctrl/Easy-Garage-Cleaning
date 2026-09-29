@@ -83,7 +83,7 @@
       "id": "TRANSCRIPT-LIMIT-DIAGNOSTICS",
       "state": "pr89_merged_deployed_credit_balance_exhausted_confirmed",
       "owner": "release coordinator",
-      "action": "PR #89 passed seven exact-head checks and both previews, merged as baf7aa2 and deployed. The owner requested restoring credits in the existing OpenAI account; complete the billing payment handoff before retrying the same saved transcript. Do not rotate keys or retry while exhausted.",
+      "action": "PR #89 passed seven exact-head checks and both previews, merged as baf7aa2 and deployed. Credit restoration was requested from the owner in the existing OpenAI account; complete the billing payment handoff before retrying the same saved transcript. Do not rotate keys or retry while exhausted.",
       "evidence": "API log for attempt 3 at 2026-09-29T22:24:50.268800228Z: extraction, transcript source, credit_balance_exhausted, HTTP 429 on baf7aa2. Four Railway services deployed and API/MCP/portal health matched."
     },
     {
@@ -113,6 +113,27 @@
       "owner": "owner and release coordinator",
       "action": "Complete Cloudflare Production Drive OAuth at /api/drive-auth as Hub manager with company Google account, using exact redirect https://easygaragecleaning.com/api/drive-auth; verify regular job before/after uploads before crew completion acceptance.",
       "evidence": "Live crew job showed Photo storage is unavailable. Drive setup page requested client ID/secret; route proves refresh token absent, and at least one client binding missing or unusable. FIELD-PAY receipt Firestore is separate."
+    },
+    {
+      "id": "RESILIENT-OFFICE-WORKFLOW",
+      "state": "implementation_under_review_pending_exact_head_ci_and_live_acceptance",
+      "owner": "release coordinator",
+      "action": "Complete exact-head review and CI, deploy the manual transcript review and Completed history, then verify one manual transcript task and the existing completed task in the live Hub. Preserve AI credit and photo launch blockers separately."
     }
-  ]
+  ],
+  "resilientOfficeWorkflow": {
+    "branch": "codex/hub-resilient-operations",
+    "state": "implementation_under_review_pending_exact_head_ci_and_live_acceptance",
+    "baseMainSha": "a28c019ff3446a537135ceb973ac3793bd15d6a2",
+    "scope": [
+      "human_reviewed_manual_tasks_from_saved_failed_transcript",
+      "read_only_completed_task_history"
+    ],
+    "browserAssetVersion": "20260929hubready5",
+    "aiCreditsRestored": false,
+    "scopeOrPriceMutation": false,
+    "customerSend": false,
+    "newServiceOrCredential": false,
+    "gate": "primary and independent review, targeted tests, exact-head CI, serial merge, matching deployments, synthetic live acceptance"
+  }
 }

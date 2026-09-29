@@ -4,6 +4,7 @@ import {actorSchema,bridgeIssuerDenial,createTaskSchema,OperationsError,type Act
 import {walkthroughExtractionSchema} from '@egc/schemas';
 export const MAX_AUDIO_BYTES=24*1024*1024;
 export const MAX_TRANSCRIPT_BYTES=80_000;
+export const MAX_MANUAL_REVIEW_BYTES=120_000;
 export const MAX_RECORDING_ENVELOPE_CHARS=650_000;
 const recordId=z.string().uuid();
 const hubId=z.string().regex(/^[A-Za-z0-9_-]{1,180}$/);
@@ -15,6 +16,8 @@ export const recordingCommand=z.discriminatedUnion('command',[
   z.object({command:z.literal('recording.refresh_source'),recordingId:recordId}).strict(),
   z.object({command:z.literal('recording.upload'),portalJobId:hubId,audioSha256:z.string().regex(/^[a-f0-9]{64}$/)}).strict(),
   z.object({command:z.literal('recording.transcript'),portalJobId:hubId,transcript:z.string().min(1).max(MAX_TRANSCRIPT_BYTES),filename:sourceFilename.optional()}).strict(),
+  z.object({command:z.literal('recording.review_manual_tasks'),recordingId:recordId,revision:z.string().datetime({offset:true}),confirm:z.literal(true),
+    actions:z.array(createTaskSchema).min(1).max(30)}).strict().refine(value=>Buffer.byteLength(JSON.stringify(value),'utf8')<=MAX_MANUAL_REVIEW_BYTES),
   z.object({command:z.literal('recording.approve'),recordingId:recordId,revision:z.string().datetime({offset:true}),extraction:walkthroughExtractionSchema,
     actions:z.array(createTaskSchema).max(30).default([])}).strict()
 ]);
@@ -50,7 +53,7 @@ export function authorizeRecordingClaims(c:RecordingClaims,workspace:string):Rec
   const integrationRead=c.iss==='mcp'&&c.actor.kind==='integration'&&c.actor.role==='integration'&&['recording.list','recording.get','recording.retry'].includes(c.request.body.command);
   const human=c.iss==='portal'&&c.actor.kind==='human'&&['owner','manager','sales'].includes(c.actor.role);
   if(c.actor.workspace!==workspace||(!human&&!integrationRead))throw new OperationsError('recording_role_forbidden',403);
-  if(['recording.approve','recording.refresh_source'].includes(c.request.body.command)&&!['owner','manager'].includes(c.actor.role))throw new OperationsError('human_manager_approval_required',403);
+  if(['recording.approve','recording.refresh_source','recording.review_manual_tasks'].includes(c.request.body.command)&&!['owner','manager'].includes(c.actor.role))throw new OperationsError('human_manager_approval_required',403);
   return c;
 }
 export function safeRecordingError(error:unknown){return error instanceof OperationsError?error.code:'recording_processing_failed';}

@@ -5,7 +5,7 @@ import multipart from '@fastify/multipart';
 import {walkthroughExtractionSchema} from '@egc/schemas';
 import {conversationExtractionSchema} from '@egc/ai';
 import {servicePublicKeySet,signServiceRequest,verifyServiceRequest} from '@egc/operations';
-import {fingerprint,MAX_TRANSCRIPT_BYTES,signRecordingEnvelope,verifyRecordingEnvelope,stableUuid,type RecordingClaims} from './recording-contracts.js';
+import {fingerprint,MAX_MANUAL_REVIEW_BYTES,MAX_TRANSCRIPT_BYTES,signRecordingEnvelope,verifyRecordingEnvelope,stableUuid,type RecordingClaims} from './recording-contracts.js';
 import {registerRecordingRoutes,RecordingService} from './recordings.js';
 import {tokenVersion} from './service-bridge.js';
 const key='isolated-recording-signing-test-only-0123456789';
@@ -14,6 +14,16 @@ const apps:ReturnType<typeof Fastify>[]=[];afterEach(async()=>{for(const a of ap
 describe('recording authentication and request contracts',()=>{
 it('binds the exact actor, payload, workspace and audience',()=>{const c=claims();expect(verifyRecordingEnvelope(signRecordingEnvelope(c,key),key,'egc')).toEqual(c);expect(()=>verifyRecordingEnvelope(signRecordingEnvelope(c,key),key,'other')).toThrow();expect(()=>verifyRecordingEnvelope(signRecordingEnvelope({...c,aud:'egc-operations'},key),key,'egc')).toThrow();expect(()=>verifyRecordingEnvelope(signRecordingEnvelope(c,key),key+'wrong','egc')).toThrow();expect(()=>verifyRecordingEnvelope(signRecordingEnvelope({...c,iat:c.iat-120},key),key,'egc')).toThrow();});
 it('sales can read but only human owners/managers can approve',()=>{const c=claims();c.actor.role='sales';expect(verifyRecordingEnvelope(signRecordingEnvelope(c,key),key,'egc').actor.role).toBe('sales');c.request.body={command:'recording.approve',recordingId:randomUUID(),revision:new Date().toISOString(),extraction:walkthroughExtractionSchema.parse({}),actions:[]};expect(()=>verifyRecordingEnvelope(signRecordingEnvelope(c,key),key,'egc')).toThrow('human_manager_approval_required');c.actor={...c.actor,kind:'integration',role:'integration'};expect(()=>verifyRecordingEnvelope(signRecordingEnvelope(c,key),key,'egc')).toThrow();});
+it('manual follow-up approval is signed and manager-only',()=>{
+  const c=claims();c.actor.role='sales';c.request.body={command:'recording.review_manual_tasks',recordingId:randomUUID(),revision:new Date().toISOString(),confirm:true,actions:[{title:'Call back',description:'Call about access',kind:'manual',priority:'medium',assignedUserId:'test-owner',dueAt:'2026-09-30T15:00:00Z',timeZone:'America/Denver',waitingOn:'none',reviewAt:null,portalJobId:'visit-synthetic',portalVisitId:'visit-synthetic',contactId:null,jobId:null,completionCondition:'Record the outcome',sourceEvidence:[{source:'recording',id:randomUUID(),excerpt:'Call me about access'}],dependencies:[],draft:null}]};
+  expect(()=>verifyRecordingEnvelope(signRecordingEnvelope(c,key),key,'egc')).toThrow('human_manager_approval_required');
+  c.actor.role='manager';expect(verifyRecordingEnvelope(signRecordingEnvelope(c,key),key,'egc').request.body.command).toBe('recording.review_manual_tasks');
+  const action=c.request.body.command==='recording.review_manual_tasks'?c.request.body.actions[0]!:null;
+  const oversized={...c,request:{...c.request,body:{...c.request.body,actions:Array.from({length:30},()=>({...action,description:'x'.repeat(5000),sourceEvidence:[{source:'recording',id:randomUUID(),excerpt:'q'.repeat(2000)}]}))}}};
+  expect(Buffer.byteLength(JSON.stringify(oversized.request.body),'utf8')).toBeGreaterThan(MAX_MANUAL_REVIEW_BYTES);
+  expect(()=>verifyRecordingEnvelope(signRecordingEnvelope(oversized,key),key,'egc')).toThrow('invalid_recording_request');
+  c.iss='mcp';c.actor={...c.actor,id:'mcp-service-grant',kind:'integration',role:'integration'};expect(()=>verifyRecordingEnvelope(signRecordingEnvelope(c,key),key,'egc')).toThrow();
+});
 it('stable logical IDs and canonical fingerprints resist key ordering',()=>{expect(stableUuid('one')).toBe(stableUuid('one'));expect(stableUuid('one')).not.toBe(stableUuid('two'));expect(fingerprint({a:1,b:2})).toBe(fingerprint({b:2,a:1}));expect(fingerprint({a:1})).not.toBe(fingerprint({a:2}));});
 it('proposals require source evidence and do not invent deadlines or owners',()=>{const extraction=walkthroughExtractionSchema.parse({proposedActions:[{title:'Call back',kind:'callback',commitment:'Call about timing',sourceQuote:'I will call you about timing',ownerMention:null,dueMention:null,confidence:0.9}]});expect(extraction.proposedActions[0]?.ownerMention).toBeNull();expect(()=>walkthroughExtractionSchema.parse({proposedActions:[{title:'Guessed task'}]})).toThrow();expect(walkthroughExtractionSchema.parse({}).proposedActions).toEqual([]);});
 it('allows a signed sales transcript, refuses integrations and unsafe source filenames, and keeps approval manager-only',()=>{
@@ -48,14 +58,24 @@ it('accepts a maximally escaped transcript through the v2 signed service protoco
 describe('durable text transcript intake',()=>{
   function setupService(){
     let row:Record<string,unknown>|null=null,sourceCustomer='customer-synthetic',sourceProject:string|null=null,sourceRevision='source-v1';
-    const select=()=>{const chain={from:()=>chain,where:()=>chain,orderBy:()=>chain,limit:()=>chain,offset:async()=>row?[row]:[],for:async()=>row&&['uploaded','processing'].includes(String(row.status))?[row]:[],then:(resolve:(value:unknown[])=>unknown)=>Promise.resolve(row?[row]:[]).then(resolve)};return chain;};
-    const db={select,insert:()=>({values:(values:Record<string,unknown>)=>({onConflictDoNothing:async()=>{if(!row)row={attemptCount:0,createdAt:new Date('2026-09-29T12:00:00.000Z'),updatedAt:new Date('2026-09-29T12:00:00.000Z'),...values};}})}),update:()=>({set:(values:Record<string,unknown>)=>{const result={where:()=>result,returning:async()=>{row={...row,...values};return[row];},then:(resolve:(value:unknown)=>unknown)=>{row={...row,...values};return Promise.resolve(undefined).then(resolve);}};return result;}}),transaction:async(fn:(tx:unknown)=>Promise<unknown>)=>fn(db)};
-    const io={put:vi.fn(),get:vi.fn(),transcribe:vi.fn(),extract:vi.fn(),catalog:vi.fn(()=>({items:[],catalogVersion:'synthetic'})),conversation:vi.fn(async(_text:string,options:{context:{sourceKind:'visit_recording'|'visit_transcript';occurredAt:string}})=>({ok:true,extraction:conversationExtractionSchema.parse({version:2,sourceKind:options.context.sourceKind,occurredAt:options.context.occurredAt,model:'synthetic',catalogVersion:'synthetic',scope:null,proposedActions:[],catalogMentions:[],preferences:[],validation:{droppedProposedActions:0,droppedCatalogMentions:0,droppedPreferences:0,droppedEvidence:0,clearedCatalogItemIds:0,clearedMentions:0,clearedDraftSuggestions:0}})}))};
-    const fetcher=vi.fn(async()=>Response.json({identity:{authority:'employee_hub',portalJobId:'visit-synthetic',portalVisitId:'visit-synthetic',portalCustomerId:sourceCustomer,portalProjectId:sourceProject,portalRevision:sourceRevision,highlevelContactId:null}}));
+    const select=()=>{const chain={from:()=>chain,where:()=>chain,orderBy:()=>chain,limit:()=>chain,offset:async()=>row?[row]:[],for:async()=>row?[row]:[],then:(resolve:(value:unknown[])=>unknown)=>Promise.resolve(row?[row]:[]).then(resolve)};return chain;};
+    const db={select,insert:()=>({values:(values:Record<string,unknown>)=>({onConflictDoNothing:async()=>{if(!row)row={attemptCount:0,extraction:null,createdAt:new Date('2026-09-29T12:00:00.000Z'),updatedAt:new Date('2026-09-29T12:00:00.000Z'),...values};}})}),update:()=>({set:(values:Record<string,unknown>)=>{const result={where:()=>result,returning:async()=>{row={...row,...values};return[row];},then:(resolve:(value:unknown)=>unknown)=>{row={...row,...values};return Promise.resolve(undefined).then(resolve);}};return result;}}),transaction:async(fn:(tx:unknown)=>Promise<unknown>)=>fn(db)};
+    const io={put:vi.fn(),get:vi.fn(),transcribe:vi.fn(),extract:vi.fn(),createManualTask:vi.fn(async(_actor:unknown,_task:unknown,_requestId:string)=>({ok:true})),catalog:vi.fn(()=>({items:[],catalogVersion:'synthetic'})),conversation:vi.fn(async(_text:string,options:{context:{sourceKind:'visit_recording'|'visit_transcript';occurredAt:string}})=>({ok:true,extraction:conversationExtractionSchema.parse({version:2,sourceKind:options.context.sourceKind,occurredAt:options.context.occurredAt,model:'synthetic',catalogVersion:'synthetic',scope:null,proposedActions:[],catalogMentions:[],preferences:[],validation:{droppedProposedActions:0,droppedCatalogMentions:0,droppedPreferences:0,droppedEvidence:0,clearedCatalogItemIds:0,clearedMentions:0,clearedDraftSuggestions:0}})}))};
+    const portalCommands:string[]=[];let onMembersRead:(()=>void)|null=null,onJobRead:(()=>void)|null=null;
+    const fetcher=vi.fn(async(url:RequestInfo|URL,init?:RequestInit)=>{
+      const envelope=JSON.parse(String(init?.body)).envelope as string,command=JSON.parse(Buffer.from(envelope.split('.')[0]!,'base64url').toString()).request.body.command as string;
+      portalCommands.push(command);
+      if(String(url).includes('/api/operations-portal')){
+        if(command==='portal.members'){onMembersRead?.();return Response.json({authority:'employee_hub',members:[{id:'test-owner'}]});}
+        if(command==='portal.job'){onJobRead?.();return Response.json({authority:'employee_hub',job:{id:'visit-synthetic',revision:sourceRevision,type:'walkthrough',highlevelContactId:null,sourceWalkthroughId:null,customer:'Synthetic customer',status:'active'}});}
+      }
+      return Response.json({identity:{authority:'employee_hub',portalJobId:'visit-synthetic',portalVisitId:'visit-synthetic',portalCustomerId:sourceCustomer,portalProjectId:sourceProject,portalRevision:sourceRevision,highlevelContactId:null}});
+    });
     const service=new RecordingService({EGC_OPERATIONS_WORKSPACE:'egc',EGC_PORTAL_ORIGIN:'https://synthetic.invalid',EGC_OPERATIONS_PORTAL_SIGNING_SECRET:key,EGC_EXTRACTION_V2:'false'},db as never,fetcher,io as never);
-    return{service,io,fetcher,get row(){return row;},changeCustomer:(value:string)=>{sourceCustomer=value;},linkProject:(value:string)=>{sourceProject=value;sourceRevision='source-v2';}};
+    return{service,io,fetcher,portalCommands,get row(){return row;},changeCustomer:(value:string)=>{sourceCustomer=value;sourceRevision='source-v3';},linkProject:(value:string)=>{sourceProject=value;sourceRevision='source-v2';},onMembersRead:(fn:()=>void)=>{onMembersRead=fn;},onJobRead:(fn:()=>void)=>{onJobRead=fn;}};
   }
   const transcript=(text='Customer: Keep the shelves.',requestId:string=randomUUID())=>{const c=claims();c.actor.role='sales';c.request.requestId=requestId;c.request.body={command:'recording.transcript',portalJobId:'visit-synthetic',transcript:text,filename:'visit.srt'};return c;};
+  const manualTask=(recordingId:string)=>({title:'Call the customer',description:'Confirm access with the customer.',kind:'manual' as const,priority:'medium' as const,assignedUserId:'test-owner',dueAt:'2026-09-30T15:00:00Z',timeZone:'America/Denver',waitingOn:'none' as const,reviewAt:null,portalJobId:'visit-synthetic',portalVisitId:'visit-synthetic',contactId:null,jobId:null,completionCondition:'Record the outcome in the job notes.',sourceEvidence:[{source:'recording' as const,id:recordingId,excerpt:'Please call me about access.'}],dependencies:[],draft:null});
   it('stores exact text once, rejects changed replays, and processes without touching audio',async()=>{
     const {service,io}=setupService(),c=transcript('00:00:01 --> 00:00:02\nCustomer: Keep the shelves.');
     const first=await service.saveTranscript(c);expect(first.recording).toMatchObject({status:'uploaded',sourceKind:'transcript',sourceFilename:'visit.srt',transcript:c.request.body.command==='recording.transcript'?c.request.body.transcript:null});
@@ -134,6 +154,96 @@ describe('durable text transcript intake',()=>{
     const first=await fixture.service.saveTranscript(c);
     expect(await fixture.service.processNext()).toBe(true);
     expect(await fixture.service.execute({...c,request:{requestId:randomUUID(),body:{command:'recording.get',recordingId:first.recording.id}}})).toMatchObject({recording:{status:'failed',lastErrorCode:'recording_processing_failed',transcript:'Customer: Keep the shelves.'}});
+  });
+  it('reviews exact-source manual office tasks without applying or inventing a walkthrough scope',async()=>{
+    const fixture=setupService(),c=transcript('Customer: Please call me about access.');
+    fixture.io.conversation.mockRejectedValueOnce(Object.assign(new Error('provider billing detail'),{status:429,code:'credit_balance_exhausted'}));
+    const first=await fixture.service.saveTranscript(c);await fixture.service.processNext();
+    const failed=await fixture.service.execute({...c,request:{requestId:randomUUID(),body:{command:'recording.get',recordingId:first.recording.id}}}) as {recording:{revision:string}};
+    const task=manualTask(first.recording.id),manual:RecordingClaims={...c,actor:{...c.actor,role:'manager'},request:{requestId:randomUUID(),body:{command:'recording.review_manual_tasks',recordingId:first.recording.id,revision:failed.recording.revision,confirm:true,actions:[task]}}};
+    const reviewed=await fixture.service.execute(manual);
+    expect(reviewed).toMatchObject({ok:true,recording:{id:first.recording.id,status:'approved',reviewMode:'manual_tasks',extractionVersion:0,extraction:null,transcript:'Customer: Please call me about access.',approvedBy:'test-owner'}});
+    expect(fixture.io.createManualTask).toHaveBeenCalledExactlyOnceWith(manual.actor,expect.objectContaining({kind:'manual',sourceEvidence:task.sourceEvidence,dedupeKey:`recording:${first.recording.id}:manual:0`}),stableUuid(`recording:${first.recording.id}:manual:0`));
+    expect(fixture.portalCommands).not.toContain('recording.apply');
+    expect(await fixture.service.execute(manual)).toMatchObject({alreadyApplied:true,recording:{status:'approved',reviewMode:'manual_tasks'}});
+    expect(fixture.io.createManualTask).toHaveBeenCalledTimes(1);
+    const changed={...manual,request:{requestId:randomUUID(),body:{...manual.request.body,actions:[{...task,title:'Different task'}]}}} as RecordingClaims;
+    await expect(fixture.service.execute(changed)).rejects.toThrow('recording_approval_request_conflict');
+  });
+  it('refreshes a failed transcript for an explicit current-visit review, without losing source or diagnostic',async()=>{
+    const fixture=setupService(),c=transcript('Customer: Please call me about access.');
+    fixture.io.conversation.mockRejectedValueOnce(new Error('synthetic provider failure'));
+    const first=await fixture.service.saveTranscript(c);await fixture.service.processNext();
+    const get={...c,request:{requestId:randomUUID(),body:{command:'recording.get' as const,recordingId:first.recording.id}}};
+    const failed=await fixture.service.execute(get) as {recording:{revision:string}};
+    const manual:RecordingClaims={...c,actor:{...c.actor,role:'manager'},request:{requestId:randomUUID(),body:{command:'recording.review_manual_tasks',recordingId:first.recording.id,revision:failed.recording.revision,confirm:true,actions:[manualTask(first.recording.id)]}}};
+    fixture.linkProject('project-synthetic');
+    await expect(fixture.service.execute(manual)).rejects.toThrow('recording_source_revision_conflict');
+    expect(fixture.io.createManualTask).not.toHaveBeenCalled();
+    const refresh={...manual,request:{requestId:randomUUID(),body:{command:'recording.refresh_source' as const,recordingId:first.recording.id}}};
+    const refreshed=await fixture.service.execute(refresh) as {recording:{revision:string;portalRevision:string}};
+    expect(refreshed).toMatchObject({requiresNewReview:true,recording:{status:'failed',sourceKind:'transcript',portalProjectId:'project-synthetic',portalRevision:'source-v2',lastErrorCode:'recording_processing_failed',transcript:'Customer: Please call me about access.'}});
+    expect(refreshed.recording.revision).not.toBe(failed.recording.revision);
+    const current={...manual,request:{...manual.request,body:{...manual.request.body,revision:refreshed.recording.revision}}} as RecordingClaims;
+    expect(await fixture.service.execute(current)).toMatchObject({recording:{status:'approved',reviewMode:'manual_tasks'}});
+    expect(fixture.portalCommands).not.toContain('recording.apply');
+  });
+  it('keeps a pending manual claim frozen and blocks identity races before writing any task',async()=>{
+    const fixture=setupService(),c=transcript('Customer: Please call me about access.');
+    fixture.io.conversation.mockRejectedValueOnce(new Error('synthetic provider failure'));
+    const first=await fixture.service.saveTranscript(c);await fixture.service.processNext();
+    const failed=await fixture.service.execute({...c,request:{requestId:randomUUID(),body:{command:'recording.get',recordingId:first.recording.id}}}) as {recording:{revision:string}};
+    const manual:RecordingClaims={...c,actor:{...c.actor,role:'manager'},request:{requestId:randomUUID(),body:{command:'recording.review_manual_tasks',recordingId:first.recording.id,revision:failed.recording.revision,confirm:true,actions:[manualTask(first.recording.id)]}}};
+    fixture.onMembersRead(()=>fixture.changeCustomer('other-customer'));
+    await expect(fixture.service.execute(manual)).rejects.toThrow('recording_identity_changed');
+    expect(fixture.io.createManualTask).not.toHaveBeenCalled();
+    expect(fixture.row).toMatchObject({status:'approval_pending',approvalRequestId:manual.request.requestId,approvalPayload:{command:manual.request.body}});
+    const refresh={...manual,request:{requestId:randomUUID(),body:{command:'recording.refresh_source' as const,recordingId:first.recording.id}}};
+    await expect(fixture.service.execute(refresh)).rejects.toThrow('recording_identity_changed');
+    fixture.changeCustomer('customer-synthetic');
+    await expect(fixture.service.execute(refresh)).rejects.toThrow('recording_manual_review_refresh_not_safe');
+    fixture.onMembersRead(()=>{});
+    expect(await fixture.service.execute(manual)).toMatchObject({recording:{status:'approved',reviewMode:'manual_tasks'}});
+    expect(fixture.io.createManualTask).toHaveBeenCalledTimes(1);
+  });
+  it('refuses a customer relink between exact source lookup and canonical Hub job read',async()=>{
+    const fixture=setupService(),c=transcript('Customer: Please call me about access.');
+    fixture.io.conversation.mockRejectedValueOnce(new Error('synthetic provider failure'));
+    const first=await fixture.service.saveTranscript(c);await fixture.service.processNext();
+    const failed=await fixture.service.execute({...c,request:{requestId:randomUUID(),body:{command:'recording.get',recordingId:first.recording.id}}}) as {recording:{revision:string}};
+    const manual:RecordingClaims={...c,actor:{...c.actor,role:'manager'},request:{requestId:randomUUID(),body:{command:'recording.review_manual_tasks',recordingId:first.recording.id,revision:failed.recording.revision,confirm:true,actions:[manualTask(first.recording.id)]}}};
+    fixture.onJobRead(()=>fixture.changeCustomer('other-customer'));
+    await expect(fixture.service.execute(manual)).rejects.toThrow('recording_source_revision_conflict');
+    expect(fixture.io.createManualTask).not.toHaveBeenCalled();
+    expect(fixture.row).toMatchObject({status:'approval_pending',approvalRequestId:manual.request.requestId});
+  });
+  it('rejects invented source quotes, changed visit identity and wrong customer before manual task creation',async()=>{
+    const fixture=setupService(),c=transcript('Customer: Please call me about access.');
+    fixture.io.conversation.mockRejectedValueOnce(new Error('synthetic provider failure'));
+    const first=await fixture.service.saveTranscript(c);await fixture.service.processNext();
+    const failed=await fixture.service.execute({...c,request:{requestId:randomUUID(),body:{command:'recording.get',recordingId:first.recording.id}}}) as {recording:{revision:string}};
+    const task=manualTask(first.recording.id),manual:RecordingClaims={...c,actor:{...c.actor,role:'manager'},request:{requestId:randomUUID(),body:{command:'recording.review_manual_tasks',recordingId:first.recording.id,revision:failed.recording.revision,confirm:true,actions:[task]}}};
+    await expect(fixture.service.execute({...manual,request:{...manual.request,body:{...manual.request.body,actions:[{...task,sourceEvidence:[{source:'recording',id:first.recording.id,excerpt:'Invented customer promise'}]}]}}} as RecordingClaims)).rejects.toThrow('recording_manual_task_invalid');
+    await expect(fixture.service.execute({...manual,request:{...manual.request,body:{...manual.request.body,actions:[{...task,portalVisitId:'other-visit'}]}}} as RecordingClaims)).rejects.toThrow('recording_manual_task_invalid');
+    expect(fixture.row).toMatchObject({status:'failed'});expect(fixture.io.createManualTask).not.toHaveBeenCalled();
+    fixture.changeCustomer('different-customer');await expect(fixture.service.execute(manual)).rejects.toThrow('recording_identity_changed');
+    expect(fixture.io.createManualTask).not.toHaveBeenCalled();
+  });
+  it('retries an uncertain manual task write with the same durable task identity and no scope mutation',async()=>{
+    const fixture=setupService(),c=transcript('Customer: Please call me about access.');
+    fixture.io.conversation.mockRejectedValueOnce(new Error('synthetic provider failure'));
+    const first=await fixture.service.saveTranscript(c);await fixture.service.processNext();
+    const failed=await fixture.service.execute({...c,request:{requestId:randomUUID(),body:{command:'recording.get',recordingId:first.recording.id}}}) as {recording:{revision:string}};
+    const manual:RecordingClaims={...c,actor:{...c.actor,role:'owner'},request:{requestId:randomUUID(),body:{command:'recording.review_manual_tasks',recordingId:first.recording.id,revision:failed.recording.revision,confirm:true,actions:[manualTask(first.recording.id)]}}};
+    fixture.io.createManualTask.mockRejectedValueOnce(new Error('unknown response after task commit'));
+    await expect(fixture.service.execute(manual)).rejects.toThrow('unknown response after task commit');
+    expect(fixture.row).toMatchObject({status:'approval_pending',lastErrorCode:'recording_manual_task_create_failed',transcript:'Customer: Please call me about access.'});
+    const pending=await fixture.service.execute({...c,request:{requestId:randomUUID(),body:{command:'recording.get',recordingId:first.recording.id}}});
+    expect(pending.recording).toMatchObject({status:'approval_pending',reviewMode:'manual_tasks',pendingReview:manual.request.body});
+    expect(await fixture.service.execute(manual)).toMatchObject({recording:{status:'approved',reviewMode:'manual_tasks'}});
+    expect(fixture.io.createManualTask).toHaveBeenCalledTimes(2);
+    expect(fixture.io.createManualTask.mock.calls[0]?.[2]).toBe(fixture.io.createManualTask.mock.calls[1]?.[2]);
+    expect(fixture.portalCommands).not.toContain('recording.apply');
   });
   it('keeps a processing failure retryable even when its diagnostic logger throws',async()=>{
     const fixture=setupService(),c=transcript();

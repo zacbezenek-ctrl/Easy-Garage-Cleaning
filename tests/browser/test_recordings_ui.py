@@ -23,8 +23,8 @@ class RecordingTests(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):cls.browser.close();cls.pw.stop();cls.server.shutdown();cls.server.server_close()
     def setUp(self):
-        self.context=self.browser.new_context(viewport={'width':390,'height':900});self.page=self.context.new_page();self.calls=[];self.errors=[];self.fail=False;self.fail_text=False
-        self.row={'id':str(uuid.uuid4()),'createdAt':'2026-09-21T12:00:00Z','revision':'2026-09-21T12:01:00Z','status':'draft','portalJobId':'visit-synthetic','portalVisitId':'visit-synthetic','linkageExceptions':['project_link_not_established'],'transcript':'I will call before work starts. Keep the bicycle.','extraction':{'garageSize':'2_car','junkVolumeYards':None,'itemsRemove':[],'itemsKeep':['Bicycle'],'itemsRelocate':[],'storageRequirements':[],'bikeRacks':0,'toolRacks':0,'shelving':[],'pressureWashing':False,'pestObservations':[],'activeInfestation':None,'accessNotes':None,'estimatedLaborHours':None,'customerPreferences':[],'customerObjections':[],'salesNotes':[],'crewNotes':[],'pricingNotes':[],'evidence':{},'proposedActions':[{'title':'Call before work','kind':'callback','commitment':'Call before work starts','sourceQuote':'I will call before work starts','ownerMention':None,'dueMention':None,'confidence':0.9}]}}
+        self.context=self.browser.new_context(viewport={'width':390,'height':900});self.page=self.context.new_page();self.calls=[];self.errors=[];self.fail=False;self.fail_text=False;self.fail_manual=False
+        self.row={'id':str(uuid.uuid4()),'createdAt':'2026-09-21T12:00:00Z','revision':'2026-09-21T12:01:00Z','status':'draft','portalJobId':'visit-synthetic','portalVisitId':'visit-synthetic','portalCustomerId':'customer-synthetic','portalProjectId':None,'portalRevision':'source-v1','linkageExceptions':['project_link_not_established'],'transcript':'I will call before work starts. Keep the bicycle.','extraction':{'garageSize':'2_car','junkVolumeYards':None,'itemsRemove':[],'itemsKeep':['Bicycle'],'itemsRelocate':[],'storageRequirements':[],'bikeRacks':0,'toolRacks':0,'shelving':[],'pressureWashing':False,'pestObservations':[],'activeInfestation':None,'accessNotes':None,'estimatedLaborHours':None,'customerPreferences':[],'customerObjections':[],'salesNotes':[],'crewNotes':[],'pricingNotes':[],'evidence':{},'proposedActions':[{'title':'Call before work','kind':'callback','commitment':'Call before work starts','sourceQuote':'I will call before work starts','ownerMention':None,'dueMention':None,'confidence':0.9}]}}
         self.page.on('pageerror',lambda e:self.errors.append(str(e)));self.page.route('**/*',self.route)
     def tearDown(self):self.assertEqual(self.errors,[]);self.context.close()
     def route(self,route):
@@ -41,6 +41,12 @@ class RecordingTests(unittest.TestCase):
         elif name=='recording.approve':
             if self.fail:self.fail=False;self.fail_text=False;route.fulfill(status=503,content_type='application/json',body='{"error":"recording_unavailable"}');return
             self.row['status']='approved';self.row['approvedBy']='test-owner';result['recording']=self.row
+        elif name=='recording.refresh_source':
+            self.row['revision']='2026-09-21T12:02:00Z';result['recording']=self.row;result['requiresNewReview']=True
+        elif name=='recording.review_manual_tasks':
+            if self.fail_manual:
+                status=self.fail_manual;self.fail_manual=False;route.fulfill(status=status,content_type='application/json',body='{"error":"recording_source_revision_conflict"}' if status==409 else '{"error":"recording_unavailable"}');return
+            self.row.update(status='approved',reviewMode='manual_tasks',approvedBy='test-owner');result['recording']=self.row
         elif name=='recording.retry':self.row['status']='processing';result['recording']=self.row
         route.fulfill(status=200,content_type='application/json',body=json.dumps(result))
     def open(self):self.page.goto(self.url);self.page.get_by_role('button',name='Recordings',exact=True).click();self.page.get_by_role('button',name='Open recording',exact=True).click();expect(self.page.get_by_text('Status: draft',exact=True)).to_be_visible()
@@ -65,6 +71,37 @@ class RecordingTests(unittest.TestCase):
         self.page.goto(self.url);self.page.get_by_role('button',name='Recordings',exact=True).click();self.page.get_by_role('button',name='Open recording',exact=True).click()
         expect(self.page.get_by_role('alert')).to_contain_text('review draft could not be prepared')
         self.assertNotIn('API credits',self.page.get_by_role('alert').inner_text())
+    def test_manager_manual_review_checks_current_visit_and_creates_only_exact_source_tasks(self):
+        self.row.update(status='failed',sourceKind='transcript',lastErrorCode='recording_ai_credits_exhausted',extraction=None)
+        self.page.goto(self.url);self.page.get_by_role('button',name='Recordings',exact=True).click();self.page.get_by_role('button',name='Open recording',exact=True).click()
+        self.page.get_by_role('button',name='Create manual office follow-ups').click()
+        expect(self.page.get_by_text('Current visit and customer link checked. Review this transcript against the visit you opened.')).to_be_visible()
+        self.assertEqual([call['body']['command'] for call in self.calls].count('recording.refresh_source'),1)
+        self.assertLessEqual(self.page.evaluate('document.documentElement.scrollWidth'),390)
+        if os.environ.get('EGC_SCREENSHOT_DIR'):
+            target=pathlib.Path(os.environ['EGC_SCREENSHOT_DIR']);target.mkdir(parents=True,exist_ok=True);self.page.screenshot(path=str(target/'walkthrough-manual-review-iphone.png'),full_page=True)
+        self.page.get_by_label('Task title').fill('Call before work')
+        self.page.get_by_label('Office instructions').fill('Confirm the arrival time with the customer.')
+        self.page.get_by_label('Exact transcript excerpt').fill('I will call before work starts.')
+        self.page.get_by_label('Task owner').select_option('test-owner')
+        self.page.get_by_label('Due time · America/Denver').fill('2026-10-01T09:00')
+        self.page.get_by_label('What proves completion?').fill('Record the agreed arrival time in the visit notes.')
+        self.page.get_by_label('I checked this current visit and linked customer, read the transcript, and reviewed every manual follow-up').check()
+        self.fail_manual=503;self.page.get_by_role('button',name='Create reviewed office follow-ups').click()
+        expect(self.page.get_by_role('button',name='Retry exact reviewed follow-ups')).to_be_visible()
+        self.fail_manual=409;self.page.get_by_role('button',name='Retry exact reviewed follow-ups').click()
+        expect(self.page.get_by_role('button',name='Retry exact reviewed follow-ups')).to_be_visible()
+        expect(self.page.get_by_role('button',name='Check saved review status')).to_be_visible()
+        self.page.get_by_role('button',name='Retry exact reviewed follow-ups').click()
+        expect(self.page.get_by_text('Status: approved',exact=True)).to_be_visible()
+        writes=[call for call in self.calls if call['body']['command']=='recording.review_manual_tasks']
+        self.assertEqual(len(writes),3);self.assertEqual(writes[0],writes[1]);self.assertEqual(writes[1],writes[2]);self.assertEqual(writes[0]['body']['revision'],'2026-09-21T12:02:00Z')
+        task=writes[0]['body']['actions'][0];self.assertEqual(task['kind'],'manual');self.assertEqual(task['sourceEvidence'],[{'source':'recording','id':self.row['id'],'excerpt':'I will call before work starts.'}]);self.assertEqual(task['assignedUserId'],'test-owner');self.assertEqual(task['dueAt'],'2026-10-01T15:00:00.000Z')
+        self.assertFalse(any(call['body']['command']=='recording.approve' for call in self.calls))
+    def test_sales_cannot_start_manual_task_review(self):
+        self.row.update(status='failed',sourceKind='transcript',lastErrorCode='recording_processing_failed',extraction=None)
+        self.page.goto(self.url);self.page.evaluate("EGCRecordings.open('visit-synthetic',{actor:{role:'sales'},owners:[]})");self.page.get_by_role('button',name='Open recording',exact=True).click()
+        expect(self.page.get_by_role('button',name='Create manual office follow-ups')).to_have_count(0)
     def add_transcript(self):
         self.page.goto(self.url);self.page.get_by_role('button',name='Recordings',exact=True).click();self.page.get_by_role('button',name='Add transcript',exact=True).click()
     def test_pasted_transcript_saves_exact_text_on_current_visit(self):
