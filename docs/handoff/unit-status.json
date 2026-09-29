@@ -2,57 +2,82 @@
   "schemaVersion": 1,
   "asOf": "2026-09-29",
   "repository": "zacbezenek-ctrl/Easy-Garage-Cleaning",
-  "mainSha": "59d617acda3422de90537b9c87a11f8be34b93f8",
+  "mainSha": "a0297623276e0d0bed78dbdb789957367b8a60dd",
   "batch8": {
     "pr": 86,
-    "state": "completion_candidate_pending_ci",
-    "headSha": null,
-    "merged": false,
-    "ci": "pending_final_combined_head",
-    "failingRunId": 36604534261,
-    "codeSnapshot": "d769ac5",
-    "completionBranch": "codex/batch8-release-completion"
+    "state": "merged_to_main_after_seven_green_workflows",
+    "headSha": "d765eba3a79f269e5c39c9e302fbcdd21124d8df",
+    "merged": true,
+    "ci": "seven_of_seven_success_on_final_head",
+    "codeSnapshot": "d765eba3a79f269e5c39c9e302fbcdd21124d8df",
+    "historicalFailureRunId": 36604534261,
+    "applicableWorkflowCount": 7,
+    "ciAtHead": {
+      "lighthouse": "success",
+      "platform": "success",
+      "root": "success",
+      "businessHub": "success",
+      "operationsIntegration": "path_filtered_not_applicable",
+      "mobileDeviceE2E": "success",
+      "firestore": "success",
+      "actionCenter": "success"
+    },
+    "mergeSha": "a0297623276e0d0bed78dbdb789957367b8a60dd",
+    "sourceBranch": "claude/amazing-shannon-n614n7",
+    "ciRunIds": {
+      "businessHub": 36629316036,
+      "platform": 36629315656,
+      "lighthouse": 36629315570,
+      "mobileDeviceE2E": 36629315606,
+      "actionCenter": 36629315563,
+      "root": 36629315555,
+      "firestore": 36629315519
+    }
   },
   "units": [
     {
       "id": "SALES-BOOKING",
       "state": "committed_in_batch8_pr",
-      "source": "PR #86 head"
+      "source": "PR #86 head",
+      "merged": true
     },
     {
       "id": "WT-OUTCOME",
       "state": "committed_in_batch8_pr",
-      "source": "PR #86 head"
+      "source": "PR #86 head",
+      "merged": true
     },
     {
       "id": "FIX-DISPATCH-QUEUE",
       "state": "committed_in_batch8_pr",
-      "source": "PR #86 head"
+      "source": "PR #86 head",
+      "merged": true
     },
     {
       "id": "MOBILE-HUB",
       "state": "committed_in_batch8_pr",
-      "source": "PR #86 head"
+      "source": "PR #86 head",
+      "merged": true
     },
     {
       "id": "FIX-HUB-COLLECTED-CREDITS",
-      "state": "picked_first_on_batch8_candidate",
+      "state": "merged_in_batch8",
       "source": "Bounded completion of the existing queued unit",
-      "merged": false,
-      "commitSha": "889f307",
+      "merged": true,
+      "commitSha": "889f30744f0c3cbede5775d0e61c1e038d2107fb",
       "portableMainBasedSha": "f7ecda5cae5ab639e2883b7b7575b6e34bc6fabd",
       "review": "primary and independent review complete; 159 targeted tests passed",
       "targetedTests": "159/159 passed"
     },
     {
       "id": "FIELD-PAY",
-      "state": "implemented_reviewed_on_batch8_candidate_pending_ci",
+      "state": "merged_in_batch8_flag_off",
       "source": "Completion of existing queued unit; original unpublished candidate not recovered",
-      "merged": false,
-      "commitSha": "d769ac5",
+      "merged": true,
+      "commitSha": "d769ac5385ce82c089359e316d120955f258fed6",
       "sourceCommitSha": "2b1c1b8ace9deccd8b827f89a42c76e17d9fa00f",
       "review": "primary and independent adversarial findings addressed",
-      "targetedTests": "139/139 combined payment, money, review and automation tests; Chromium 15/15; WebKit 15/15",
+      "targetedTests": "139/139 focused local; 191 Batch 8 combined; 231 normal isolated Node on final combined tree 6d215cc; field-payment browser 16/16 Chromium and 16/16 WebKit on Batch 8 d765 role-fix code",
       "activation": "off",
       "flag": "EGC_FIELD_PAY_ENABLED",
       "prerequisites": [
@@ -100,7 +125,7 @@
   ],
   "laterAuthorizedHubIntegration": {
     "scope": "iOS Walkthroughs and recording/transcript to office tasks",
-    "state": "all_eight_workflows_green_waiting_batch8_then_reintegration",
+    "state": "final_role_fix_integration_pending_exact_head_seven_applicable_ci",
     "branch": "codex/hub-ios-walkthrough-completion",
     "merged": false,
     "localBrowserResults": {
@@ -110,7 +135,8 @@
     },
     "recordingBrowserResults": "WebKit 13/13 locally",
     "localRootSuite": "Windows POSIX/CRLF fixture expectations; Linux CI is merge evidence",
-    "verifiedHeadSha": "bf191d92c9de6ce394b8166d9fd53039d7e25104"
+    "verifiedHeadSha": "6bfc032f9317a7ceeeeb23863c7f4c7174f2b769",
+    "priorVerifiedHeadSha": "bf191d92c9de6ce394b8166d9fd53039d7e25104"
   },
   "additionalRunningBuilds": {
     "ownerReportedCount": 7,
@@ -122,13 +148,13 @@
     "locatedCount": 0,
     "state": "missing_source"
   },
-  "note": "Reported states are claims from the PR description or owner message, not proof of merged code. Recheck GitHub before updating or merging.",
+  "note": "FIX-REFUNDS, GHL-TRACK-2, seven running builds and 41 specs remain source-unknown; reported states do not prove merged code. Refresh exact heads and CI before any merge.",
   "batch9": {
     "pr": 87,
     "branch": "codex/hub-ios-walkthrough-completion",
     "implementationSha": "a13e01e81552edfabd2dcc61e1479cd3ed0ddb42",
-    "checkedHeadSha": "9e810bd95cf152c016f721acc4efbeccb0da4afd",
-    "state": "draft_combined_credit_candidate_pending_final_ci_and_batch8",
+    "checkedHeadSha": "6bfc032f9317a7ceeeeb23863c7f4c7174f2b769",
+    "state": "final_role_fix_candidate_pending_exact_head_seven_applicable_ci",
     "merged": false,
     "ciAtCheckedHead": {
       "root": "success",
@@ -143,22 +169,39 @@
       "actionCenterBrowser": "success",
       "actionCenterWebKit": "success"
     },
-    "followUp": {
-      "state": "included_with_this_handoff_revision_pending_ci",
-      "scope": [
-        "queued collected-credits fix",
-        "asset cache version refresh"
+    "ciAtCheckedHeadScope": "historical eight-workflow result at 6bfc032 before Batch 8 merged to main",
+    "localIntegration": {
+      "state": "main_merged_into_local_final_candidate_pending_ci",
+      "mergeGate": "all seven applicable workflows green on the final PR #87 head before Batch 9 main merge",
+      "applicableWorkflows": [
+        "Root",
+        "Platform",
+        "Operations Integration",
+        "Firestore",
+        "Mobile Device E2E",
+        "Lighthouse",
+        "Action Center"
       ],
-      "creditCommitSha": "6e62996caa0c87371676201832a8f8e6edacdc12",
-      "localResults": {
-        "creditsAndMoneyRegression": "159/159",
-        "officeHandoffBrowser": "7/7",
-        "recordingApi": "15/15",
-        "proxyContact": "14/14",
-        "dispatchRegressions": "43/43",
-        "webkitRecordings": "13/13"
+      "businessHubAcceptance": {
+        "state": "path_filtered_not_applicable",
+        "reason": "PR #87 diff against Batch 8 main changes no path listed in egc-business-hub-acceptance.yml pull_request.paths",
+        "lastRelevantMainRunId": 36630649618,
+        "lastRelevantMainRunState": "success"
       },
-      "requires": "complete CI rerun on the final combined PR head; use live PR checks for the current result"
+      "sourceBatch8CandidateSha": "d765eba3a79f269e5c39c9e302fbcdd21124d8df",
+      "assetVersion": "20260929hubready3",
+      "localCombinedTests": "231 normal isolated Node tests passed on combined tree 6d215cc; focused field-payment browser Chromium 16/16 and WebKit 16/16 on identical d765 role-fix code before integration",
+      "mainMergeSha": "a0297623276e0d0bed78dbdb789957367b8a60dd",
+      "mainIntegrationCommitSha": "6d215cc15ad8ae1cda0c0a7029f4a5a10d83cd9d",
+      "crewAssetVersion": "20260929fieldpay2"
+    },
+    "localResults": {
+      "proxyContact": "14/14",
+      "dispatchRegressions": "43/43",
+      "recordingApi": "15/15",
+      "webkitRecordings": "13/13",
+      "creditsAndMoneyRegression": "159/159",
+      "officeHandoffBrowser": "7/7"
     }
   },
   "production": {

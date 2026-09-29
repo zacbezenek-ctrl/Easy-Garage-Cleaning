@@ -13,11 +13,11 @@ const originalFetch=globalThis.fetch;globalThis.fetch=async()=>{throw new Error(
 const db=getDb(),actor={id:'test-owner',kind:'human',role:'owner',workspace:'egc'},env={EGC_OPERATIONS_WORKSPACE:'egc',EGC_PORTAL_ORIGIN:'https://synthetic.invalid',EGC_OPERATIONS_PORTAL_SIGNING_SECRET:'isolated-recording-test-signing-key-01234567890'};
 const extraction=()=>walkthroughExtractionSchema.parse({itemsKeep:['Synthetic bicycle'],proposedActions:[{title:'Call about shelf placement',kind:'callback',commitment:'Call before work starts',sourceQuote:'I will call before work starts',ownerMention:null,dueMention:null,confidence:0.9}]});
 const claims=(body,requestId=randomUUID())=>({v:1,iss:'portal',aud:'egc-recordings',iat:Math.floor(Date.now()/1000),nonce:randomUUID(),actor,request:{requestId,body}});
-let service,stored,receipts,sourceRevision,transcribeFails,appliedCount,unknownAfterApply,storageFails,commands,fetcher,io;
+let service,stored,receipts,sourceRevision,sourceCustomer,sourceProject,transcribeFails,appliedCount,unknownAfterApply,storageFails,commands,fetcher,io;
 const row=async id=>(await db.select().from(schema.walkthroughs).where(eq(schema.walkthroughs.id,id)))[0];
-beforeEach(async()=>{await db.execute(sql`truncate operation_events,operation_approvals,operation_requests,operation_briefs,tasks,contacts,walkthroughs,audit_logs cascade`);stored=new Map();receipts=new Set();sourceRevision='source-v1';transcribeFails=false;storageFails=false;appliedCount=0;unknownAfterApply=false;commands=[];
+beforeEach(async()=>{await db.execute(sql`truncate operation_events,operation_approvals,operation_requests,operation_briefs,tasks,contacts,walkthroughs,audit_logs cascade`);stored=new Map();receipts=new Set();sourceRevision='source-v1';sourceCustomer='customer-synthetic';sourceProject=null;transcribeFails=false;storageFails=false;appliedCount=0;unknownAfterApply=false;commands=[];
   fetcher=async(url,options)=>{const token=JSON.parse(options.body).envelope,body=JSON.parse(Buffer.from(token.split('.')[0],'base64url')).request.body;commands.push(body.command);
-    if(body.command==='recording.resolve')return Response.json({identity:{authority:'employee_hub',portalJobId:'visit-synthetic',portalVisitId:'visit-synthetic',portalCustomerId:'customer-synthetic',portalProjectId:null,portalRevision:sourceRevision,highlevelContactId:null}});
+    if(body.command==='recording.resolve')return Response.json({identity:{authority:'employee_hub',portalJobId:'visit-synthetic',portalVisitId:'visit-synthetic',portalCustomerId:sourceCustomer,portalProjectId:sourceProject,portalRevision:sourceRevision,highlevelContactId:null}});
     if(body.command==='recording.apply'){if(receipts.has(body.recordingId))return Response.json({ok:true,alreadyApplied:true});if(body.expectedRevision!==sourceRevision)return Response.json({error:'recording_source_revision_conflict'},{status:409});receipts.add(body.recordingId);appliedCount++;sourceRevision='source-v2';if(unknownAfterApply){unknownAfterApply=false;throw new Error('Unknown transport failure after commit');}return Response.json({ok:true});}
     if(body.command==='portal.members')return Response.json({authority:'employee_hub',members:[{id:actor.id}]});
     if(body.command==='portal.job')return Response.json({authority:'employee_hub',job:{id:'visit-synthetic',revision:sourceRevision,type:'walkthrough',highlevelContactId:null,sourceWalkthroughId:null,customer:'Synthetic',status:'scheduled'}});
@@ -27,6 +27,7 @@ beforeEach(async()=>{await db.execute(sql`truncate operation_events,operation_ap
 });
 after(async()=>{globalThis.fetch=originalFetch;await db.$client.end({timeout:5});});
 async function upload(id=randomUUID(),audio=Buffer.from('synthetic-audio')){return service.upload(claims({command:'recording.upload',portalJobId:'visit-synthetic',audioSha256:createHash('sha256').update(audio).digest('hex')},id),audio,'audio/webm');}
+async function submitTranscript(text,id=randomUUID(),filename='visit.vtt'){return service.execute(claims({command:'recording.transcript',portalJobId:'visit-synthetic',transcript:text,filename},id));}
 const get=id=>service.execute(claims({command:'recording.get',recordingId:id}));
 async function draft(){const r=await upload();await service.processNext();return(await get(r.recording.id)).recording;}
 const review=(r,extra={})=>({command:'recording.approve',recordingId:r.id,revision:r.revision,extraction:r.extraction,actions:[],...extra});
@@ -35,7 +36,28 @@ test('failed upload retains durable record and retries original bytes without du
 test('transcription failure is safe, retryable and never applies scope or invents a job',async()=>{const r=await upload();transcribeFails=true;await service.processNext();assert.equal((await row(r.recording.id)).status,'failed');assert.equal((await row(r.recording.id)).lastErrorCode,'recording_processing_failed');await service.execute(claims({command:'recording.retry',recordingId:r.recording.id}));transcribeFails=false;await service.processNext();const d=await row(r.recording.id);assert.equal(d.status,'draft');assert.equal(d.attemptCount,2);assert.equal(appliedCount,0);assert.equal((await db.select().from(schema.jobs)).length,0);});
 test('two processors claim one recording and stale recording revision cannot approve',async()=>{const r=await upload();const claimsResult=await Promise.all([service.processNext(),service.processNext()]);assert.equal(claimsResult.filter(Boolean).length,1);const d=(await get(r.recording.id)).recording;await assert.rejects(service.execute(claims(review(d,{revision:'2000-01-01T00:00:00.000Z'}))),e=>e.code==='recording_revision_conflict');assert.equal(appliedCount,0);});
 test('unknown Hub approval outcome safely resumes identical review and creates one shared task',async()=>{const d=await draft();const action={title:'Call before work starts',kind:'callback',description:'Explicit synthetic promise',priority:'medium',assignedUserId:actor.id,dueAt:new Date(Date.now()+86400000).toISOString(),timeZone:'America/Denver',waitingOn:'none',reviewAt:null,portalJobId:'visit-synthetic',portalVisitId:'visit-synthetic',contactId:null,jobId:null,completionCondition:'Record call result',sourceEvidence:[],dependencies:[],draft:null};const c=claims(review(d,{actions:[action]}));unknownAfterApply=true;await assert.rejects(service.execute(c),e=>e.code==='recording_approval_outcome_unknown');assert.equal((await row(d.id)).status,'approval_pending');await assert.rejects(service.execute(claims(review(d,{extraction:{...d.extraction,itemsKeep:['Changed']}}))),e=>e.code==='recording_approval_request_conflict');const done=await service.execute(c);assert.equal(done.recording.status,'approved');await service.execute(c);assert.equal(appliedCount,1);assert.equal((await db.select().from(schema.tasks)).length,1);assert.equal((await db.select().from(schema.jobs)).length,0);assert.equal((await db.select().from(schema.auditLogs)).filter(e=>e.action==='recording.approve').length,1);});
-test('source changes require explicit refreshed review; no automatic scope overwrite',async()=>{const d=await draft();sourceRevision='source-edited';await assert.rejects(service.execute(claims(review(d))),e=>e.code==='recording_source_revision_conflict');assert.equal(appliedCount,0);const refreshed=await service.execute(claims({command:'recording.refresh_source',recordingId:d.id}));assert.equal(refreshed.requiresNewReview,true);assert.equal(refreshed.recording.status,'draft');await service.execute(claims(review(refreshed.recording)));assert.equal(appliedCount,1);});
+test('source changes require explicit refreshed review; a new exact project link cannot strand the recording',async()=>{const d=await draft();sourceProject='project-synthetic';sourceRevision='source-edited';assert.equal((await get(d.id)).recording.portalProjectId,null,'old record remains readable for review');await assert.rejects(service.execute(claims(review(d))),e=>e.code==='recording_source_revision_conflict');assert.equal(appliedCount,0);const refreshed=await service.execute(claims({command:'recording.refresh_source',recordingId:d.id}));assert.equal(refreshed.requiresNewReview,true);assert.equal(refreshed.recording.status,'draft');assert.equal(refreshed.recording.portalProjectId,'project-synthetic');assert.deepEqual(refreshed.recording.linkageExceptions,[]);await service.execute(claims(review(refreshed.recording)));assert.equal(appliedCount,1);});
+
+test('text transcript is durable, replay-stable, and retry processing never fetches or transcribes audio',async()=>{
+  const text='00:00:01 --> 00:00:02\nCustomer: Keep the bicycle. I will call before work starts.',requestId=randomUUID();
+  const v=v2Service({flag:'false',transcript:text,outputs:['not json',v2Output()]});service=v.service;
+  const first=await submitTranscript(text,requestId,'walkthrough.vtt');
+  assert.equal(first.recording.status,'uploaded');assert.equal(first.recording.sourceKind,'transcript');assert.equal(first.recording.sourceFilename,'walkthrough.vtt');
+  const persisted=await row(first.recording.id);assert.equal(persisted.transcript,text);assert.equal(persisted.audioObjectKey,null);assert.equal(persisted.audioSha256,createHash('sha256').update(text).digest('hex'));
+  const replay=await submitTranscript(text,requestId,'walkthrough.vtt');assert.equal(replay.alreadySaved,true);assert.equal(replay.recording.id,first.recording.id);
+  await assert.rejects(submitTranscript(text+' changed',requestId,'walkthrough.vtt'),e=>e.code==='recording_upload_request_conflict');
+  await assert.rejects(submitTranscript(text,requestId,'other.vtt'),e=>e.code==='recording_upload_request_conflict');
+  await service.processNext();assert.equal((await row(first.recording.id)).status,'failed');
+  await service.execute(claims({command:'recording.retry',recordingId:first.recording.id}));
+  await service.processNext();assert.equal((await row(first.recording.id)).status,'draft');assert.equal((await row(first.recording.id)).attemptCount,2);
+  assert.equal(v.transcribeCalls,0);assert.equal(v.model.length,2,'retry uses the saved text and v2 review proposals even while the audio v2 flag is off');
+});
+
+test('a changed authoritative visit blocks text replay and every recording read',async()=>{
+  const first=await submitTranscript('Customer: Keep the bicycle.');sourceCustomer='different-customer';
+  await assert.rejects(submitTranscript('Customer: Keep the bicycle.',first.recording.uploadRequestId),e=>e.code==='recording_identity_changed');
+  for(const body of [{command:'recording.list',portalJobId:'visit-synthetic',offset:0},{command:'recording.get',recordingId:first.recording.id},{command:'recording.retry',recordingId:first.recording.id}])await assert.rejects(service.execute(claims(body)),e=>e.code==='recording_identity_changed');
+});
 
 // P3-02 conversation extraction v2 behind EGC_EXTRACTION_V2 (default off). The model is a synthetic client; the
 // deterministic evidence validation, recording storage, review DTO and approval path are the real ones.
@@ -47,10 +69,23 @@ const v2Output=()=>({scope:{garageSize:'2_car',junkVolumeYards:null,itemsRemove:
   catalogMentions:[{catalogItemId:'invented-garage-item',tier:'better',name:'Gladiator wall panels',category:'wall systems',zone:null,quantity:null,measurements:null,sourceQuote:'I like the Gladiator wall panels',confidence:0.8}],
   preferences:[{topic:'contact',statement:'Prefers texts over calls',polarity:'prefer',sourceQuote:'I prefer texts over calls',confidence:0.9}]});
 function v2Service({flag='true',transcript=visitTranscript,outputs=[v2Output()]}={}){
-  const calls=[],model=[],client={responses:{create:async request=>{model.push(request);const next=outputs.length>1?outputs.shift():outputs[0];return{output_text:typeof next==='string'?next:JSON.stringify(next)};}}};
+  const calls=[],model=[];let transcribeCalls=0;const client={responses:{create:async request=>{model.push(request);const next=outputs.length>1?outputs.shift():outputs[0];return{output_text:typeof next==='string'?next:JSON.stringify(next)};}}};
   const conversation=async(text,options)=>{calls.push(options);return extractConversation(text,{...options,client});};
-  return{calls,model,service:new RecordingService({...env,...(flag===null?{}:{EGC_EXTRACTION_V2:flag})},db,fetcher,{...io,transcribe:async()=>transcript,conversation})};
+  return{calls,model,get transcribeCalls(){return transcribeCalls;},service:new RecordingService({...env,...(flag===null?{}:{EGC_EXTRACTION_V2:flag})},db,fetcher,{...io,transcribe:async()=>{transcribeCalls++;return transcript;},conversation})};
 }
+test('text visit proposals become office tasks only after the manager reviews the exact draft',async()=>{
+  const v=v2Service({flag:'false',outputs:[{...v2Output(),proposedActions:[v2Action()]}]});service=v.service;
+  const received=await submitTranscript(visitTranscript);await service.processNext();
+  const d=(await get(received.recording.id)).recording;
+  assert.equal(d.sourceKind,'transcript');assert.equal(d.conversation.sourceKind,'visit_transcript');assert.equal(d.status,'draft');
+  assert.equal(d.proposedTasks.length,1);assert.equal(d.proposedTasks[0].task.kind,'callback');
+  assert.equal((await db.select().from(schema.tasks)).length,0,'extraction cannot create a task');
+  const action={...d.proposedTasks[0].task,assignedUserId:actor.id,dueAt:new Date(Date.now()+86400000).toISOString(),completionCondition:'Log call outcome'};
+  const approved=await service.execute(claims(review(d,{actions:[action]})));
+  assert.equal(approved.recording.status,'approved');assert.equal((await db.select().from(schema.tasks)).length,1);
+  const [task]=await db.select().from(schema.tasks);assert.equal(task.kind,'callback');assert.ok(task.sourceEvidence.some(e=>e.source==='recording'&&e.id===d.id&&e.excerpt==='Call me back after 5 about timing'));
+  assert.equal(v.transcribeCalls,0);assert.equal(appliedCount,1);assert.deepEqual([...new Set(commands)].sort(),['portal.job','portal.members','recording.apply','recording.resolve']);
+});
 test('EGC_EXTRACTION_V2 off (unset or not exactly "true") keeps the walkthrough extraction and never runs v2',async()=>{
   for(const flag of [null,'TRUE','1','false']){
     await db.execute(sql`truncate walkthroughs cascade`);const v=v2Service({flag});service=v.service;const d=await draft();

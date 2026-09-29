@@ -21,6 +21,15 @@ const CUSTOMER_SEARCH_DELAY_MS=300;
 // SALES-BOOKING: a Sales or Phone booker (EGC_STAFF_ROLE_ACCESS schedule.book) books, moves and cancels visits; crew
 // assignment, crews, vehicles and company blocks stay with managers, so the board hides those controls for them.
 const booker = () => S.data?.viewer?.booker === true;
+// A phone booker can change a visit's schedule but cannot open crew work. Sales can open only walkthroughs
+// assigned to them. The capability is omitted in flag-off legacy responses; dispatchers kept that access.
+function canOpenField(job) {
+  const viewer=S.data?.viewer;
+  if(job.type!=='walkthrough')return !booker();
+  if(viewer?.canPerformWalkthrough===false)return false;
+  if(booker())return viewer?.canPerformWalkthrough===true&&job.assignedCrew?.includes(viewer.id);
+  return viewer?.canPerformWalkthrough===true||!Object.hasOwn(viewer||{},'canPerformWalkthrough');
+}
 function h(tag, props, ...children) {
   const node = document.createElement(tag);
   for (const [key, value] of Object.entries(props || {})) {
@@ -130,8 +139,8 @@ async function load({quiet=false}={}) {
 function setFilter(field,value) { if(field==='status'&&value==='unscheduled'){S.status='active';showQueue();return;} S[field]=value; renderBody(); }
 function showQueue() {
   S.view='queue'; S.focusQueue=true;
-  // Every board read includes the queue. Avoid replacing a row while the office
-  // is tapping Schedule or Find a time after switching views.
+  // Every board read already includes undated work and its queue facts. Reuse that read when changing views so
+  // a second fetch cannot replace a queue row while someone is tapping Schedule or Find a time.
   if(S.data)render();else void load();
 }
 function move(count) { const view=views.get(S.view); S.date=view?.step?view.step(S.date,count):addDays(S.date,count*(S.view==='week'||S.view==='crew'?7:1)); void load(); }
@@ -233,7 +242,7 @@ function readyRow(job) {
 // WT-OUTCOME: the server's walkthrough badge (walkthrough-state.js). A sold walkthrough links to its job.
 function outcomeBadge(job) {
   if(job.type!=='walkthrough'||typeof job.walkthroughBadge!=='string'||!job.walkthroughBadge)return null;
-  if(job.walkthroughState==='sold'&&job.convertedJobId)return h('a',{class:'dp-btn dp-outcome-link','data-outcome':'sold',href:'/crew/job.html?jobId='+encodeURIComponent(job.convertedJobId)},job.walkthroughBadge);
+  if(job.walkthroughState==='sold'&&job.convertedJobId&&!booker())return h('a',{class:'dp-btn dp-outcome-link','data-outcome':'sold',href:'/crew/job.html?jobId='+encodeURIComponent(job.convertedJobId)},job.walkthroughBadge);
   return h('p',{class:'dp-outcome','data-outcome':job.walkthroughState||''},job.walkthroughBadge);
 }
 // Rebook for a visit, or null: a walkthrough no-show moves the same visit (GO-LIVE); a service-job no-show is booked again from that job.
@@ -282,7 +291,7 @@ function jobCard(job, {compact=false,date=null}={}) {
   for (const warning of listed.slice(0,3)) card.append(h('p',{class:'dp-warning'},warning.message||words(warning.code)));
   if(listed.length>3)card.append(h('p',{class:'dp-muted'},(listed.length-3)+' more items to review'));
   const actions=h('div',{class:'dp-card-actions'});
-  if(!blocked)actions.append(h('a',{class:'dp-btn primary',href:job.type==='walkthrough'?'/crew/gameplan.html?walkthroughId='+encodeURIComponent(job.id):'/crew/job.html?jobId='+encodeURIComponent(job.id)},job.type==='walkthrough'?'Open walkthrough':job.attention?.status==='open'?'Review job issue':'Open job'));
+  if(!blocked&&canOpenField(job))actions.append(h('a',{class:'dp-btn primary',href:job.type==='walkthrough'?'/crew/gameplan.html?walkthroughId='+encodeURIComponent(job.id):'/crew/job.html?jobId='+encodeURIComponent(job.id)},job.type==='walkthrough'?'Open walkthrough':job.attention?.status==='open'?'Review job issue':'Open job'));
   if (active(job)) actions.append(btn(booker()?'Edit / reschedule':'Edit / assign',()=>openJob(original)),btn('Cancel',()=>openStatus(original,'schedule.cancel'),'subtle'));
   if (active(job)&&!blocked&&job.type!=='walkthrough'&&S.data?.funnel?.reasonCodes?.noShow&&Date.parse(original.startAt)-3600000<=Date.now()) actions.append(btn('No-show',()=>openStatus(original,'schedule.no_show'),'subtle'));
   if (active(job)&&!blocked&&!original.date) actions.append(btn('Find a time',()=>openOpenings(original),'subtle',{'aria-label':'Find a time for '+(job.customer||'this job')}));
@@ -320,9 +329,9 @@ function queueRow(job) {
   const listed=warningsFor(job).filter(w=>!MONEY_WARNINGS.has(w.code));
   const actions=h('div',{class:'dp-queue-actions'});
   if(visit?.use)actions.append(btn('Use this time',()=>openJob(job,{...visit.use}),'primary',{'aria-label':'Use Jobber’s time for '+title}));
-  actions.append(btn('Schedule',()=>openJob(job),visit?.use?'':'primary',{'aria-label':'Schedule '+title}),btn('Find a time',()=>openOpenings(job),'',{'aria-label':'Find a time for '+title}),
-    h('a',{class:'dp-btn',href:job.type==='walkthrough'?'/crew/gameplan.html?walkthroughId='+encodeURIComponent(job.id):'/crew/job.html?jobId='+encodeURIComponent(job.id),'aria-label':'Open '+title},job.type==='walkthrough'?'Open walkthrough':'Open job'),
-    btn('Cancel',()=>openStatus(job,'schedule.cancel'),'subtle',{'aria-label':'Cancel '+title}));
+  actions.append(btn('Schedule',()=>openJob(job),visit?.use?'':'primary',{'aria-label':'Schedule '+title}),btn('Find a time',()=>openOpenings(job),'',{'aria-label':'Find a time for '+title}));
+  if(canOpenField(job))actions.append(h('a',{class:'dp-btn',href:job.type==='walkthrough'?'/crew/gameplan.html?walkthroughId='+encodeURIComponent(job.id):'/crew/job.html?jobId='+encodeURIComponent(job.id),'aria-label':'Open '+title},job.type==='walkthrough'?'Open walkthrough':'Open job'));
+  actions.append(btn('Cancel',()=>openStatus(job,'schedule.cancel'),'subtle',{'aria-label':'Cancel '+title}));
   return h('article',{class:'dp-queue-row'+(review?' dp-queue-review':''),'data-queue-job':job.id},
     h('div',{class:'dp-queue-main'},
       h('div',{class:'dp-queue-top'},h('h3',{},title),h('span',{class:'dp-queue-age','data-age':Number.isInteger(q.ageDays)?String(q.ageDays):''},ageText(q.ageDays))),
@@ -539,7 +548,7 @@ function openSearch() {
       if(!data.results.length)results.append(h('p',{},'No Hub jobs match. Try another customer name, phone, address, employee or date.'));
       for(const row of data.results){const job=row.job,blocked=job.type==='blocked';
         const actions=h('div',{class:'dp-card-actions'});
-        if(!blocked)actions.append(h('a',{class:'dp-btn primary',href:job.type==='walkthrough'?'/crew/gameplan.html?walkthroughId='+encodeURIComponent(job.id):'/crew/job.html?jobId='+encodeURIComponent(job.id)},job.type==='walkthrough'?'Open walkthrough':'Open job'));
+        if(!blocked&&canOpenField(job))actions.append(h('a',{class:'dp-btn primary',href:job.type==='walkthrough'?'/crew/gameplan.html?walkthroughId='+encodeURIComponent(job.id):'/crew/job.html?jobId='+encodeURIComponent(job.id)},job.type==='walkthrough'?'Open walkthrough':'Open job'));
         actions.append(btn('Show in dispatch',()=>{model.close();S.date=/^\d{4}-\d{2}-\d{2}$/.test(job.date||'')?job.date:today();S.view=job.date?'day':undated(job)?'queue':'jobs';S.status='all';S.employee='';S.type='';S.query=job.date?'':job.id;S.notice='Showing '+(job.customer||job.title||job.id)+(job.date?' on '+dateText(job.date)+'.':undated(job)?' in To schedule.':' in unscheduled work.');void load();}));
         results.append(h('article',{class:'dp-search-result'},h('div',{class:'dp-job-top'},h('strong',{},job.customer||job.title||row.canonicalCustomerName||job.id),pill(words(job.activity||job.status))),row.canonicalCustomerName&&row.canonicalCustomerName!==job.customer?h('small',{class:'dp-muted'},'Customer record: '+row.canonicalCustomerName):null,h('p',{},job.date?job.date+' · '+clock(job.time)+' – '+clock(job.endTime):'Unscheduled'),job.address?h('p',{},job.address):null,h('p',{class:'dp-muted'},[job.serviceType||words(job.type),job.id].filter(Boolean).join(' · ')),actions));
       }

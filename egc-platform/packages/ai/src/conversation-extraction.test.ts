@@ -204,6 +204,10 @@ describe('extractConversation with an injected client',()=>{
     expect(extraction.validation.droppedEvidence).toBe(2);expect(extraction.scope!.itemsRemove[1]).toHaveLength(500);
     const nullScope=await extracted(output({scope:null}));
     expect(nullScope.extraction.scope).toMatchObject({garageSize:'unknown',itemsRemove:[],evidence:[]});
+    const pastedVisit=await extracted(output(),{context:{sourceKind:'visit_transcript',occurredAt:'2026-09-22T12:00:00.000Z'}});
+    expect(pastedVisit.extraction.sourceKind).toBe('visit_transcript');
+    expect(pastedVisit.extraction.scope).toMatchObject({garageSize:'2_car',itemsRemove:['old couch']});
+    expect(pastedVisit.call.mock.calls[0]![0]).toMatchObject({input:[{content:[{text:expect.stringContaining('scope holds the walkthrough scope')}]},{}]});
     const call=await extracted(output(),{context:{sourceKind:'phone_call',occurredAt:'2026-09-22T12:00:00.000Z'}});
     expect(call.extraction.scope).toBeNull();expect(call.extraction.sourceKind).toBe('phone_call');
     expect(call.call.mock.calls[0]![0]).toMatchObject({input:[{content:[{text:expect.stringContaining('scope must be null for this source.')}]},{}]});

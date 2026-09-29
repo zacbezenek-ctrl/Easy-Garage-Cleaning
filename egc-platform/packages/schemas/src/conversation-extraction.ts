@@ -9,7 +9,7 @@ import { walkthroughModelOutputSchema } from "./index.js";
  * the only kind list (this package cannot depend on it without a cycle).
  */
 export const CONVERSATION_EXTRACTION_VERSION = 2;
-export const CONVERSATION_SOURCE_KINDS = ["visit_recording", "phone_call", "message_thread"] as const;
+export const CONVERSATION_SOURCE_KINDS = ["visit_recording", "visit_transcript", "phone_call", "message_thread"] as const;
 export const conversationSourceKindSchema = z.enum(CONVERSATION_SOURCE_KINDS);
 export type ConversationSourceKind = z.infer<typeof conversationSourceKindSchema>;
 export const CATALOG_TIERS = ["good", "better", "best"] as const;

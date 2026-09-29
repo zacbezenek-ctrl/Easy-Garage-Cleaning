@@ -8,7 +8,7 @@
 (function(){
 'use strict';
 const TZ='America/Denver',PAST_DAYS=14,AHEAD_DAYS=60;
-const S={host:null,root:null,data:null,error:'',status:0,loading:false,generation:0,controller:null,notice:'',warn:'',busy:false,retrying:''};
+const S={host:null,root:null,context:null,data:null,error:'',status:0,loading:false,generation:0,controller:null,notice:'',warn:'',busy:false,retrying:''};
 // Why EGCDispatch.openFor did not open its dialog.
 const REFUSED={busy:'Another scheduling form is open or still saving. Finish it, then retry.',recovery_invalid:'A saved dispatch request in this browser could not be read, so scheduling is paused here. Reopen this browser session before making another dispatch change.',unavailable:'The scheduling form could not open. Retry.'};
 // The visit's HighLevel appointment sync (dispatch DTO syncStatus), as the Hub's schedule shows it.
@@ -31,6 +31,17 @@ const dateText=date=>new Intl.DateTimeFormat('en-US',{timeZone:'UTC',weekday:'sh
 function clock(value){const match=/^(\d{2}):(\d{2})$/.exec(value||'');if(!match)return '';const hour=Number(match[1]);return (hour%12||12)+':'+match[2]+' '+(hour<12?'AM':'PM');}
 const state=job=>job.walkthroughState||(['cancelled','canceled'].includes(job.status)?'cancelled':'open');
 const rep=job=>{const ids=Array.isArray(job.assignedCrew)?job.assignedCrew:[];return ids.map(id=>S.data?.roster?.find(person=>person.id===id)?.name||id).join(', ');};
+const manager=()=>['owner','manager'].includes(String(S.context?.role||'').toLowerCase());
+const assigned=job=>{const viewer=String(S.data?.viewer?.id||'').trim().toLowerCase();return Boolean(viewer&&Array.isArray(job.assignedCrew)&&job.assignedCrew.some(id=>String(id||'').trim().toLowerCase()===viewer));};
+// Dispatch reports the server's walkthrough.perform permission. Sales can enter only their assigned visit;
+// managers may inspect any visit. Crew pages and recording intake retain their own server checks.
+const canPerform=job=>{
+  const viewer=S.data?.viewer||{};
+  // The legacy business board predates this permission field. An explicit false from the staff-role board wins.
+  const permitted=viewer.canPerformWalkthrough===true||(viewer.canPerformWalkthrough==null&&manager()&&viewer.booker!==true);
+  return permitted&&(manager()||assigned(job));
+};
+const officeLink=(kind='')=>h('a',{class:('hub-btn wt-office-link '+kind).trim(),href:'/employee.html?view=action_center'},'Office follow-ups');
 // Overdue: the visit's end (or its whole day) has passed and nobody recorded an outcome.
 function overdue(job){
   if(state(job)!=='open'||!job.date)return false;
@@ -73,6 +84,10 @@ async function retrySync(job){
   try{await window.opsRetrySync(job.id);}catch{S.warn='The HighLevel retry did not go through. The visit is still saved in the Hub; retry again.';}
   finally{S.retrying='';if(S.root){render();void load({quiet:true});}}
 }
+function recordings(job){
+  if(typeof window.EGCRecordings?.open!=='function'){S.warn='Audio and transcripts could not open. Refresh the Hub and try again.';render();return;}
+  Promise.resolve().then(()=>window.EGCRecordings.open(job.id)).catch(()=>{S.warn='Audio and transcripts could not open. Retry from this visit.';render();});
+}
 function syncLine(job){
   const [text,kind]=SYNC[job.syncStatus]||[];if(!text)return null;
   // A booker (viewer.booker: schedule.book without dispatch.write, SALES-BOOKING) sees the sync but never its Retry.
@@ -81,16 +96,21 @@ function syncLine(job){
     retry?btn(S.retrying===job.id?'Retrying…':'Retry',()=>retrySync(job),'',{disabled:Boolean(S.retrying),'aria-label':'Retry the HighLevel sync for '+(job.customer||'this walkthrough')}):null);
 }
 function card(job,group){
-  const current=state(job),late=group==='attention'&&overdue(job),phone=String(job.phone||'').replace(/[^+0-9]/g,''),arrives=arrival(job),who=rep(job);
+  const current=state(job),late=group==='attention'&&overdue(job),phone=String(job.phone||'').replace(/[^+0-9]/g,''),arrives=arrival(job),who=rep(job),field=canPerform(job);
   const walkthrough='/crew/gameplan.html?walkthroughId='+encodeURIComponent(job.id);
   const badge=late?'Overdue: record outcome':job.walkthroughBadge||'';
-  const primary=current==='sold'&&job.convertedJobId?h('a',{class:'hub-btn primary',href:'/crew/job.html?jobId='+encodeURIComponent(job.convertedJobId)},'Open job')
-    :current==='open'?h('a',{class:'hub-btn primary',href:walkthrough},late?'Record outcome':'Start walkthrough')
-    :h('a',{class:'hub-btn',href:walkthrough},'Open walkthrough');
-  const actions=h('div',{class:'wt-card-actions'},primary,phone?h('a',{class:'hub-btn',href:'tel:'+phone,'aria-label':'Call '+(job.customer||'the customer')},'Call customer'):null);
   const rebook=['no_show','rescheduled'].includes(current);
-  if(current==='open'||rebook)actions.append(btn(rebook?'Rebook':job.date?'Reschedule':'Schedule',()=>open(job,rebook?'rebook':'edit'),rebook?'dark':'',{disabled:S.busy,'aria-label':(rebook?'Rebook ':'Reschedule ')+(job.customer||'this walkthrough')}),
-    btn('Cancel',()=>open(job,'schedule.cancel'),'danger',{disabled:S.busy,'aria-label':'Cancel the walkthrough for '+(job.customer||'this customer')}));
+  const primary=rebook?btn('Rebook',()=>open(job,'rebook'),'primary',{disabled:S.busy,'aria-label':'Rebook '+(job.customer||'this walkthrough')})
+    :current==='open'&&!job.date?btn('Schedule',()=>open(job,'edit'),'primary',{disabled:S.busy,'aria-label':'Schedule '+(job.customer||'this walkthrough')})
+    :current==='sold'&&job.convertedJobId&&manager()?h('a',{class:'hub-btn primary',href:'/crew/job.html?jobId='+encodeURIComponent(job.convertedJobId)},'Open job')
+    :field?h('a',{class:'hub-btn primary',href:walkthrough},current==='open'?(late?'Record outcome':'Start walkthrough'):'View walkthrough')
+    :officeLink('primary');
+  const actions=h('div',{class:'wt-card-actions'},primary,
+    phone?h('a',{class:'hub-btn',href:'tel:'+phone,'aria-label':'Call '+(job.customer||'the customer')},'Call customer'):null);
+  if(!field&&primary.textContent!=='Office follow-ups')actions.append(officeLink());
+  if(field)actions.append(btn('Audio & transcript',()=>recordings(job),'wt-recordings',{disabled:S.busy,'aria-label':'Audio and transcript for '+(job.customer||'this walkthrough')}));
+  if(current==='open'&&job.date)actions.append(btn('Reschedule',()=>open(job,'edit'),'',{disabled:S.busy,'aria-label':'Reschedule '+(job.customer||'this walkthrough')}));
+  if(current==='open'||rebook)actions.append(btn('Cancel',()=>open(job,'schedule.cancel'),'danger',{disabled:S.busy,'aria-label':'Cancel the walkthrough for '+(job.customer||'this customer')}));
   return h('article',{class:'wt-card','data-walkthrough':job.id,'data-state':late?'overdue':current},
     h('div',{class:'wt-when'},h('strong',{},job.date?dateText(job.date):'Needs a time'),job.date?h('span',{class:'wt-time'},clock(job.time)&&clock(job.endTime)?clock(job.time)+' – '+clock(job.endTime):clock(job.time)||'Time needed'):null,
       arrives?h('small',{},'Arrival '+arrives):null),
@@ -100,12 +120,14 @@ function card(job,group){
     actions);
 }
 function section(title,rows,group,empty){
-  return h('section',{class:'wt-group','data-group':group,'aria-label':title},h('h2',{},title+' · '+rows.length),rows.length?h('div',{class:'wt-list'},rows.map(job=>card(job,group))):h('p',{class:'wt-empty'},empty));
+  return h('section',{class:'wt-group',id:'wt-'+group,'data-group':group,'aria-label':title},
+    h('div',{class:'wt-group-head'},h('h2',{},title),h('span',{class:'wt-group-count','aria-label':rows.length+' visits'},rows.length)),
+    rows.length?h('div',{class:'wt-list'},rows.map(job=>card(job,group))):h('p',{class:'wt-empty'},empty));
 }
 function render(){
   if(!S.root)return;
-  const head=h('header',{class:'hub-head wt-head'},h('div',{},h('span',{class:'hub-eyebrow'},'SELL THE DIAGNOSIS'),h('h1',{},'Walkthroughs'),h('p',{},'Every walkthrough the office acts on: who is going, when, and what happened. Mountain Time.')),
-    h('div',{class:'hub-actions wt-actions'},btn('Book walkthrough',()=>open(null,'create','walkthrough'),'primary',{disabled:S.busy||!S.data}),h('a',{class:'hub-btn',href:'/crew/gameplan.html'},'Start manual walkthrough')));
+  const head=h('header',{class:'hub-head wt-head'},h('div',{class:'wt-head-copy'},h('span',{class:'hub-eyebrow'},'VISIT WORKFLOW'),h('h1',{},'Walkthroughs'),h('p',{},'Book the visit, capture what happened, and hand the next step to the office. All times are Mountain Time.')),
+    h('div',{class:'hub-actions wt-actions'},btn('Book walkthrough',()=>open(null,'create','walkthrough'),'primary',{disabled:S.busy||!S.data}),S.data&&(S.data.viewer?.canPerformWalkthrough===true||S.data.viewer?.canPerformWalkthrough==null&&manager()&&S.data.viewer?.booker!==true)?h('a',{class:'hub-btn',href:'/crew/gameplan.html'},'Start manual walkthrough'):null));
   const body=h('div',{class:'wt-body-wrap','aria-busy':S.loading?'true':'false'});
   S.root.replaceChildren(head,body);
   if(!S.data&&!S.error){body.append(h('p',{class:'hub-sr-only',role:'status'},'Loading walkthroughs…'),...[0,1,2].map(()=>h('div',{class:'wt-skeleton'})));return;}
@@ -119,17 +141,21 @@ function render(){
   const upcoming=walks.filter(job=>state(job)==='open'&&job.date&&!overdue(job)).sort(order);
   const unscheduled=walks.filter(job=>state(job)==='open'&&!job.date);
   const outcomes=walks.filter(job=>job.walkthroughClosed===true&&(!job.date||job.date>=addDays(date,-PAST_DAYS))).sort((a,b)=>order(b,a));
-  body.append(section('Needs an outcome or a rebook',attention,'attention','Nothing overdue. Every past walkthrough has an outcome.'),
+  body.append(h('nav',{class:'wt-overview','aria-label':'Walkthrough sections'},
+    h('a',{href:'#wt-attention'},h('strong',{},attention.length),h('span',{},'Needs action')),
+    h('a',{href:'#wt-upcoming'},h('strong',{},upcoming.length),h('span',{},'Upcoming')),
+    h('a',{href:'#wt-outcomes'},h('strong',{},outcomes.length),h('span',{},'Recent outcomes'))),
+    section('Needs an outcome or a rebook',attention,'attention','Nothing overdue. Every past walkthrough has an outcome.'),
     section('Upcoming',upcoming,'upcoming','No walkthroughs booked. Book one when a customer calls.'),
     ...(unscheduled.length?[section('Needs a time',unscheduled,'unscheduled','')]:[]),
     section('Recent outcomes',outcomes,'outcomes','No outcomes in the last two weeks.'),
     h('p',{class:'wt-foot'},'Mountain Time. '+(S.data.coverage?.asOf?'Updated '+new Intl.DateTimeFormat('en-US',{timeZone:TZ,hour:'numeric',minute:'2-digit'}).format(new Date(S.data.coverage.asOf))+'. ':'')+'Past walkthroughs leave this list after two weeks; Search all jobs in Dispatch finds older ones.'));
 }
-function mount(host){
+function mount(host,context={}){
   if(!host)return;if(S.host===host&&S.root?.isConnected)return;
-  unmount();S.host=host;S.root=h('section',{class:'hub-screen egc-walkthroughs'});host.replaceChildren(S.root);render();void load();
+  unmount();S.host=host;S.context=context;S.root=h('section',{class:'hub-screen egc-walkthroughs'});host.replaceChildren(S.root);render();void load();
 }
-function unmount(){S.controller?.abort();S.generation++;S.root?.remove();S.root=null;S.host=null;S.data=null;S.error='';S.notice='';S.warn='';S.busy=false;S.retrying='';S.loading=false;}
+function unmount(){S.controller?.abort();S.generation++;S.root?.remove();S.root=null;S.host=null;S.context=null;S.data=null;S.error='';S.notice='';S.warn='';S.busy=false;S.retrying='';S.loading=false;}
 window.addEventListener('egc:signout',unmount);
 window.EGCWalkthroughs={mount,unmount,refresh:()=>load({quiet:true}),canLeave:()=>!window.EGCDispatch||window.EGCDispatch.canLeave()};
 })();

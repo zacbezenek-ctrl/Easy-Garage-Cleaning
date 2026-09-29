@@ -70,7 +70,7 @@ class DispatchBrowserTests(unittest.TestCase):
         self.page.clock.install(time=DAY + 'T18:00:00Z')
         self.crews = [{'id': 'crew-main', 'revision': 'crew-rev-1', 'name': 'North Crew', 'memberIds': ['crew.one', 'lead.one'], 'leadId': 'lead.one', 'status': 'active'}]
         self.vehicles = [{'id': 'truck-1', 'revision': 'truck-rev-1', 'name': 'Box Truck', 'status': 'available', 'notes': 'Check straps'}, {'id': 'truck-2', 'revision': 'truck-rev-2', 'name': 'Spare Truck', 'status': 'out_of_service', 'notes': 'Repair pending'}]
-        self.availability = []; self.fail_once = None; self.read_status = 200; self.completed = {}; self.lost_once = False; self.malformed_once = False; self.viewer = 'manager.one'; self.bad_read = False
+        self.availability = []; self.fail_once = None; self.read_status = 200; self.completed = {}; self.lost_once = False; self.malformed_once = False; self.viewer = 'manager.one'; self.booker = False; self.can_perform_walkthrough = None; self.bad_read = False
         self.opening_queries = []; self.opening_failure = None; self.opening_candidates = [{'date': DAY, 'time': '13:00', 'endDate': DAY, 'endTime': '15:00', 'startAt': DAY+'T19:00:00Z', 'endAt': DAY+'T21:00:00Z', 'gapMinutes': 240}]
         self.search_queries = []; self.search_results = []; self.search_failure = None; self.hang_once = False; self.hung_route = None
         self.arrival_defaults = {'enabled': False, 'minutes': 60}
@@ -110,7 +110,8 @@ class DispatchBrowserTests(unittest.TestCase):
             first = params.get('startDate', [DAY])[0]; last = params.get('endDate', ['2026-09-29'])[0]
             rows = [row for row in self.jobs if not row.get('date') or (row['date'] < last and (row.get('endDate') or row['date']) >= first)]
             if self.bad_read: send({'ok': True}); return
-            send({'ok': True, 'viewer': {'id': self.viewer}, 'timeZone': 'America/Denver', 'jobs': rows, 'roster': ROSTER, 'crews': self.crews, 'vehicles': self.vehicles, 'availability': self.availability,
+            viewer = {'id': self.viewer, **({'booker': True} if self.booker else {}), **({'canPerformWalkthrough': self.can_perform_walkthrough} if self.can_perform_walkthrough is not None else {})}
+            send({'ok': True, 'viewer': viewer, 'timeZone': 'America/Denver', 'jobs': rows, 'roster': ROSTER, 'crews': self.crews, 'vehicles': self.vehicles, 'availability': self.availability,
                   'warnings': copy.deepcopy(self.read_warnings), 'coverage': {'complete': True, 'asOf': '2026-09-22T14:00:00Z'}, 'startDate': first, 'endDate': last, 'arrivalDefaults': self.arrival_defaults, **({'segments': self.segments} if self.segments else {}), **({'funnel': self.funnel} if self.funnel else {}), **self.read_extra}); return
         body = req.post_data_json; self.calls.append(copy.deepcopy(body))
         if self.fail_once:
@@ -175,6 +176,29 @@ class DispatchBrowserTests(unittest.TestCase):
             self.page.get_by_role('button', name='Crew', exact=True).click()
         params = parse_qs(urlparse(read.value.url).query); self.assertEqual(params['startDate'], [DAY]); self.assertEqual(params['endDate'], ['2026-09-29'])
         expect(self.page.locator('.dp-crew-group')).to_contain_text('1 jobs · 2.0 reserved hours')
+    def test_field_links_follow_server_walkthrough_capability_and_dispatch_access(self):
+        self.jobs = [job(), job(id='walk-assigned', type='walkthrough', customer='Assigned Walkthrough', assignedCrew=['Synthetic.Sales']),
+                     job(id='walk-other', type='walkthrough', customer='Other Walkthrough', assignedCrew=['crew.one']),
+                     job(id='walk-sold', type='walkthrough', customer='Sold Walkthrough', walkthroughState='sold', walkthroughBadge='Sold → open job', convertedJobId='job-converted', walkthroughClosed=True),
+                     job(id='job-queued', customer='Queued Job', date='', time='', endDate='', endTime='', startAt=None, endAt=None, status='unscheduled')]
+        self.viewer = 'Synthetic.Phone'; self.booker = True; self.can_perform_walkthrough = False; self.open()
+        self.page.get_by_role('combobox', name='Filter by status').select_option('all')
+        for name in [CUSTOMER['name'], 'Assigned Walkthrough', 'Other Walkthrough']:
+            expect(self.card(name).get_by_role('link', name=re.compile(r'^Open (job|walkthrough)$'))).to_have_count(0)
+        expect(self.card('Sold Walkthrough').locator('.dp-outcome-link')).to_have_count(0)
+        self.to_schedule(); expect(self.queued('Queued Job').get_by_role('link', name='Open Queued Job', exact=True)).to_have_count(0)
+
+        self.viewer = 'Synthetic.Sales'; self.can_perform_walkthrough = True; self.page.reload()
+        self.page.get_by_role('combobox', name='Filter by status').select_option('all')
+        expect(self.card('Assigned Walkthrough').get_by_role('link', name='Open walkthrough', exact=True)).to_have_attribute('href', '/crew/gameplan.html?walkthroughId=walk-assigned')
+        expect(self.card('Other Walkthrough').get_by_role('link', name='Open walkthrough', exact=True)).to_have_count(0)
+        expect(self.card().get_by_role('link', name='Open job', exact=True)).to_have_count(0)
+        expect(self.card('Sold Walkthrough').locator('.dp-outcome-link')).to_have_count(0)
+
+        self.viewer = 'manager.one'; self.booker = False; self.can_perform_walkthrough = True; self.page.reload()
+        self.page.get_by_role('combobox', name='Filter by status').select_option('all')
+        expect(self.card().get_by_role('link', name='Open job', exact=True)).to_have_attribute('href', '/crew/job.html?jobId=job-1')
+        expect(self.card('Sold Walkthrough').locator('.dp-outcome-link')).to_have_attribute('href', '/crew/job.html?jobId=job-converted')
     def test_create_assign_lead_truck_duration_scope_and_reload(self):
         self.open(); self.create(); self.page.get_by_role('combobox', name='Saved crew', exact=True).select_option('crew-main'); self.page.get_by_role('combobox', name='Vehicle / truck', exact=True).select_option('truck-1')
         self.page.get_by_role('combobox', name='Expected duration', exact=True).select_option('180'); self.page.get_by_label('Scope of work', exact=True).fill('Keep the marked boxes; remove debris.'); self.submit('Create job'); self.closed()
@@ -301,7 +325,8 @@ class DispatchBrowserTests(unittest.TestCase):
             expect(self.page.get_by_label('End time', exact=True)).to_have_value('10:00'); self.page.get_by_role('button', name='Back', exact=True).click(); self.closed()
     def test_find_a_time_searches_with_the_quote_length_and_books_the_same_unscheduled_job(self):
         self.jobs = [job(), self.quoted_backlog()]; self.open(); self.page.set_viewport_size({'width': 375, 'height': 812}); self.to_schedule()
-        find = self.page.get_by_role('button', name='Find a time for Synthetic Quoted Garage', exact=True); self.assertGreaterEqual(find.bounding_box()['height'], 44); find.click()
+        find = self.queued('Synthetic Quoted Garage').get_by_role('button', name='Find a time for Synthetic Quoted Garage', exact=True)
+        expect(find).to_be_visible(); self.assertGreaterEqual(find.bounding_box()['height'], 44); find.click()
         dialog = self.page.get_by_role('dialog'); expect(dialog).to_have_attribute('aria-label', 'Find a time for Synthetic Quoted Garage')
         expect(self.page.get_by_label('Job duration (minutes)', exact=True)).to_have_value('165'); expect(self.page.get_by_label('Travel buffer (minutes)', exact=True)).to_have_value('35')
         expect(dialog).to_contain_text('Suggested from the sold quote: 2 hr 45 min for a crew of 3.')

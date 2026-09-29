@@ -44,7 +44,7 @@ class Handler(SimpleHTTPRequestHandler):
             body = (b'<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Isolated Hub walkthroughs test</title>'
                     b'<link rel="stylesheet" href="/employee-ui-kit.css"><link rel="stylesheet" href="/employee-dispatch.css"><link rel="stylesheet" href="/employee-walkthroughs.css"></head>'
                     b'<body style="margin:0;padding:12px;background:#f1f0ec"><main id="host"></main><script src="/employee-dispatch.js"></script><script src="/employee-walkthroughs.js"></script>'
-                    b'<script>EGCWalkthroughs.mount(document.querySelector("#host"))</script></body></html>')
+                    b'<script>EGCWalkthroughs.mount(document.querySelector("#host"),window.__walkthroughContext||{identity:"zacb",role:"owner",capabilities:["business"]})</script></body></html>')
             self.send_response(200); self.send_header('Content-Type', 'text/html'); self.end_headers(); self.wfile.write(body)
         else: super().do_GET()
 
@@ -63,6 +63,7 @@ class WalkthroughsBrowserTests(unittest.TestCase):
     def setUp(self):
         self.context = self.browser.new_context(viewport={'width': 375, 'height': 812}, timezone_id='Asia/Tokyo', is_mobile=True, has_touch=True)
         self.page = self.context.new_page(); self.page.set_default_timeout(7000); self.errors = []; self.gets = []; self.calls = []; self.jobs = rows(); self.read_status = 200
+        self.viewer = {'id': 'zacb', 'canPerformWalkthrough': True}
         self.page.clock.install(time=DAY + 'T18:00:00Z')
         self.page.on('pageerror', lambda error: self.errors.append(str(error)))
         self.page.route('**/*', self.route)
@@ -79,7 +80,7 @@ class WalkthroughsBrowserTests(unittest.TestCase):
             if self.read_status != 200: send({'ok': False, 'code': 'dispatch_unavailable', 'error': 'Dispatch could not complete this request. Keep your changes and retry.'}, self.read_status); return
             first = params.get('startDate', [DAY])[0]; last = params.get('endDate', ['2026-09-23'])[0]
             listed = [row for row in self.jobs if not row.get('date') or first <= row['date'] < last]
-            send({'ok': True, 'viewer': {'id': 'zacb'}, 'timeZone': 'America/Denver', 'jobs': copy.deepcopy(listed), 'roster': ROSTER, 'crews': [], 'vehicles': [], 'availability': [], 'warnings': [],
+            send({'ok': True, 'viewer': self.viewer, 'timeZone': 'America/Denver', 'jobs': copy.deepcopy(listed), 'roster': ROSTER, 'crews': [], 'vehicles': [], 'availability': [], 'warnings': [],
                   'coverage': {'complete': True, 'asOf': DAY+'T18:00:00Z'}, 'startDate': first, 'endDate': last, 'arrivalDefaults': {'enabled': False}, 'funnel': FUNNEL}); return
         body = req.post_data_json; self.calls.append(copy.deepcopy(body)); action = body['action']
         if action == 'schedule.create':
@@ -96,7 +97,7 @@ class WalkthroughsBrowserTests(unittest.TestCase):
         for width in widths:
             self.page.set_viewport_size({'width': width, 'height': 812})
             self.assertLessEqual(self.page.evaluate('document.documentElement.scrollWidth'), width, width)
-            small = self.page.evaluate("""()=>[...document.querySelectorAll('.egc-walkthroughs a.hub-btn,.egc-walkthroughs button,.wt-address')].filter(n=>n.offsetParent).map(n=>[n.textContent.trim(),n.getBoundingClientRect().height]).filter(([,h])=>h<44)""")
+            small = self.page.evaluate("""()=>[...document.querySelectorAll('.egc-walkthroughs a.hub-btn,.egc-walkthroughs button,.wt-address,.wt-overview a')].filter(n=>n.offsetParent).map(n=>[n.textContent.trim(),n.getBoundingClientRect().height]).filter(([,h])=>h<44)""")
             self.assertEqual(small, [], f'tap targets under 44px at {width}px')
 
     def test_rep_12_hour_time_arrival_window_and_tel_link_on_a_phone(self):
@@ -108,6 +109,7 @@ class WalkthroughsBrowserTests(unittest.TestCase):
         for text in ['Wed, Sep 23', '2:00 PM – 3:00 PM', 'Arrival 1:30 PM – 2:30 PM', 'Rep: Synthetic Sales Rep']: expect(upcoming).to_contain_text(text)
         expect(upcoming.get_by_role('link', name='Call Synthetic Upcoming Garage', exact=True)).to_have_attribute('href', 'tel:9705550101')
         expect(upcoming.get_by_role('link', name='Start walkthrough', exact=True)).to_have_attribute('href', '/crew/gameplan.html?walkthroughId=w-upcoming')
+        expect(upcoming.get_by_role('button', name='Audio and transcript for Synthetic Upcoming Garage', exact=True)).to_be_visible()
         overdue = self.card('Synthetic Overdue Garage'); expect(overdue.locator('.wt-badge')).to_have_text('Overdue: record outcome')
         expect(overdue.get_by_role('link', name='Record outcome', exact=True)).to_have_attribute('href', '/crew/gameplan.html?walkthroughId=w-overdue')
         noshow = self.card('Synthetic No-show Garage'); expect(noshow.locator('.wt-badge')).to_have_text('No-show · rebook')
@@ -123,6 +125,32 @@ class WalkthroughsBrowserTests(unittest.TestCase):
         for hidden in ['Synthetic Cancelled Garage', 'Synthetic Old Garage', 'Synthetic Service Job']: expect(self.page.get_by_text(hidden)).to_have_count(0)
         self.fits(375, 320, 390)
         out = ROOT/'test-results'; out.mkdir(exist_ok=True); self.page.set_viewport_size({'width': 375, 'height': 812}); self.page.screenshot(path=str(out/'hub-walkthroughs-375.png'), full_page=True)
+
+    def test_phone_stays_in_office_workflow_without_crew_links_or_recording_intake(self):
+        self.viewer = {'id': 'synthetic.phone', 'booker': True, 'canPerformWalkthrough': False}
+        self.page.add_init_script('window.__walkthroughContext={identity:"synthetic.phone",role:"phone",capabilities:["crew"]}')
+        self.open()
+        expect(self.page.locator('.wt-head').get_by_role('link', name='Start manual walkthrough')).to_have_count(0)
+        for name in ['Synthetic Upcoming Garage', 'Synthetic Overdue Garage', 'Synthetic Lost Garage', 'Synthetic Sold Garage']:
+            card = self.card(name)
+            expect(card.get_by_role('link', name='Office follow-ups')).to_have_attribute('href', '/employee.html?view=action_center')
+            expect(card.locator('a[href^="/crew/"]')).to_have_count(0)
+            expect(card.get_by_role('button', name=re.compile('Audio and transcript'))).to_have_count(0)
+        expect(self.card('Synthetic No-show Garage').get_by_role('button', name='Rebook Synthetic No-show Garage')).to_be_visible()
+        self.fits(320, 375, 390)
+
+    def test_assigned_sales_rep_can_open_exact_visit_audio_but_unassigned_rep_cannot(self):
+        self.viewer = {'id': 'sales.rep', 'booker': True, 'canPerformWalkthrough': True}
+        self.page.add_init_script('window.__walkthroughContext={identity:"sales.rep",role:"sales",capabilities:["crew"]};window.EGCRecordings={open:id=>{window.openedVisit=id}}')
+        self.open()
+        upcoming = self.card('Synthetic Upcoming Garage')
+        expect(upcoming.get_by_role('link', name='Start walkthrough')).to_have_attribute('href', '/crew/gameplan.html?walkthroughId=w-upcoming')
+        upcoming.get_by_role('button', name='Audio and transcript for Synthetic Upcoming Garage').click()
+        self.assertEqual(self.page.evaluate('window.openedVisit'), 'w-upcoming')
+        unassigned = self.card('Synthetic Unscheduled Lead')
+        expect(unassigned.locator('a[href^="/crew/"]')).to_have_count(0)
+        expect(unassigned.get_by_role('button', name=re.compile('Audio and transcript'))).to_have_count(0)
+        expect(unassigned.get_by_role('link', name='Office follow-ups')).to_be_visible()
 
     def test_reschedule_and_cancel_reuse_the_dispatch_dialogs(self):
         self.open(); before = len(self.gets)

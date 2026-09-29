@@ -3,14 +3,18 @@ import * as z from 'zod/v4';
 import {actorSchema,bridgeIssuerDenial,createTaskSchema,OperationsError,type Actor,type BridgeIssuer} from '@egc/operations';
 import {walkthroughExtractionSchema} from '@egc/schemas';
 export const MAX_AUDIO_BYTES=24*1024*1024;
+export const MAX_TRANSCRIPT_BYTES=80_000;
+export const MAX_RECORDING_ENVELOPE_CHARS=650_000;
 const recordId=z.string().uuid();
 const hubId=z.string().regex(/^[A-Za-z0-9_-]{1,180}$/);
+const sourceFilename=z.string().min(1).max(160).regex(/^[^\\/\x00-\x1f\x7f]+$/);
 export const recordingCommand=z.discriminatedUnion('command',[
   z.object({command:z.literal('recording.list'),portalJobId:hubId,offset:z.number().int().min(0).default(0)}).strict(),
   z.object({command:z.literal('recording.get'),recordingId:recordId}).strict(),
   z.object({command:z.literal('recording.retry'),recordingId:recordId}).strict(),
   z.object({command:z.literal('recording.refresh_source'),recordingId:recordId}).strict(),
   z.object({command:z.literal('recording.upload'),portalJobId:hubId,audioSha256:z.string().regex(/^[a-f0-9]{64}$/)}).strict(),
+  z.object({command:z.literal('recording.transcript'),portalJobId:hubId,transcript:z.string().min(1).max(MAX_TRANSCRIPT_BYTES),filename:sourceFilename.optional()}).strict(),
   z.object({command:z.literal('recording.approve'),recordingId:recordId,revision:z.string().datetime({offset:true}),extraction:walkthroughExtractionSchema,
     actions:z.array(createTaskSchema).max(30).default([])}).strict()
 ]);
@@ -21,7 +25,7 @@ export function fingerprint(value:unknown):string{const canonical=(v:unknown):un
 export function stableUuid(value:string){const hash=createHash('sha256').update(value).digest('hex');return`${hash.slice(0,8)}-${hash.slice(8,12)}-5${hash.slice(13,16)}-a${hash.slice(17,20)}-${hash.slice(20,32)}`;}
 export function signRecordingEnvelope(claims:unknown,key:string){if(key.length<32)throw new OperationsError('recording_bridge_not_configured',503);const p=Buffer.from(JSON.stringify(claims)).toString('base64url');return p+'.'+createHmac('sha256',key).update(p).digest('base64url');}
 export function verifyRecordingEnvelope(token:unknown,keys:string|{portal:string;mcp:string},workspace:string,now=Date.now()):RecordingClaims{
-  if(typeof token!=='string'||token.length>200000)throw new OperationsError('invalid_recording_signature',401);
+  if(typeof token!=='string'||token.length>MAX_RECORDING_ENVELOPE_CHARS)throw new OperationsError('invalid_recording_signature',401);
   const parts=token.split('.');if(parts.length!==2||!parts.every(p=>/^[A-Za-z0-9_-]+$/.test(p)))throw new OperationsError('invalid_recording_signature',401);
   let decoded:unknown;try{decoded=JSON.parse(Buffer.from(parts[0]!,'base64url').toString());}catch{throw new OperationsError('invalid_recording_request',400);}
   const issuer=(decoded as {iss?:unknown})?.iss;if(issuer!=='portal'&&issuer!=='mcp')throw new OperationsError('invalid_recording_signature',401);
@@ -40,7 +44,7 @@ export function verifiedHubRecordingClaims(claims:{iat:number;nonce:string;actor
 /** BRIDGE-ADOPT-AUTHZ: a verified recording envelope whose integration actor its signer may not
  * present. It carries the verified claims so the route can log and audit the refusal. */
 export class RecordingIssuerRefusal extends OperationsError{constructor(code:string,readonly issuer:BridgeIssuer,readonly claims:RecordingClaims){super(code,403);}}
-function authorizeRecordingClaims(c:RecordingClaims,workspace:string):RecordingClaims{
+export function authorizeRecordingClaims(c:RecordingClaims,workspace:string):RecordingClaims{
   // BRIDGE-ADOPT-AUTHZ: the MCP key presents only MCP principals; the Hub keys only Hub identities.
   const signer=c.iss==='mcp'?'mcp':'hub',unbound=bridgeIssuerDenial(c.actor,signer);if(unbound)throw new RecordingIssuerRefusal(unbound,signer,c);
   const integrationRead=c.iss==='mcp'&&c.actor.kind==='integration'&&c.actor.role==='integration'&&['recording.list','recording.get','recording.retry'].includes(c.request.body.command);

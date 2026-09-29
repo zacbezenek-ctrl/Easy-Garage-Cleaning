@@ -16,6 +16,9 @@ type RootOptions = {service:ServiceIdentity;rootSecret:string;workspace:string};
 type Resolver = (service:ServiceIdentity,workspace:string,kid:string)=>Promise<ServicePublicJwk>;
 export type ServiceKeyResolver = Resolver;
 const encoder=new TextEncoder();
+// Text transcript intake needs room for JSON escaping at the 80 KB source limit.
+// Every other service route keeps the original 200 KB signed-token ceiling.
+const serviceRequestTokenLimit=(path:string)=>path==="/recordings/rpc"?650_000:200_000;
 const uuid=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const exact=(value:unknown,keys:string[])=>!!value&&typeof value==="object"&&!Array.isArray(value)&&Object.keys(value).length===keys.length&&keys.every(k=>Object.hasOwn(value,k));
 export class ServiceAuthenticationError extends Error {code:string;status:number;constructor(code:string,status=401){super(code);this.name="ServiceAuthenticationError";this.code=code;this.status=status;}}
@@ -56,7 +59,7 @@ export async function signServiceRequest(options:RootOptions&{path:string;actor:
   const key=await signingKey(options),jwk=await publicJwk(options,key),iat=Math.floor((options.now??Date.now())/1000);
   const claims:ServiceClaims={v:2,alg:"EdDSA",kid:jwk.kid,iss:SERVICE_ORIGINS[options.service],aud:SERVICE_ORIGINS[counterpart(options.service)],workspace:options.workspace,iat,nbf:iat-5,exp:iat+60,nonce:crypto.randomUUID(),method:"POST",path:options.path,actor:options.actor,request:options.request};
   validateClaims(claims,counterpart(options.service),options.workspace,options.path,options.now??Date.now());
-  const payload=b64(encoder.encode(JSON.stringify(claims)));if(payload.length>199900)fail("service_request_too_large",413);
+  const payload=b64(encoder.encode(JSON.stringify(claims)));if(payload.length>serviceRequestTokenLimit(options.path)-100)fail("service_request_too_large",413);
   return payload+"."+b64(new Uint8Array(await crypto.subtle.sign("Ed25519",key,encoder.encode(payload))));
 }
 export function createServiceKeyResolver(options:{fetcher?:typeof fetch;ttlMs?:number;now?:()=>number}={}):Resolver{
@@ -143,7 +146,7 @@ export async function verifyMcpGrant(token:unknown,options:{resource?:string;now
 }
 let defaultResolver:Resolver|undefined;
 export async function verifyServiceRequest(token:unknown,options:{service:ServiceIdentity;workspace:string;path:string;consumeNonce:(issuer:string,nonce:string,expiresAt:number)=>Promise<boolean>;now?:number;resolveKey?:Resolver}):Promise<ServiceClaims>{
-  if(typeof token!=="string"||token.length>200000)return fail();const parts=token.split(".");if(parts.length!==2)return fail();
+  if(typeof token!=="string"||token.length>serviceRequestTokenLimit(options.path))return fail();const parts=token.split(".");if(parts.length!==2)return fail();
   const payload=parts[0]!,signature=unb64(parts[1]!);if(signature.length!==64)return fail();
   let parsed:unknown;try{parsed=JSON.parse(new TextDecoder("utf-8",{fatal:true}).decode(unb64(payload)));}catch{return fail();}
   const claims=validateClaims(parsed,options.service,options.workspace,options.path,options.now??Date.now());

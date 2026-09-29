@@ -13,9 +13,9 @@ export async function consumeServiceNonce(issuer:string,nonce:string,expiresAt:n
  if(Date.now()-lastNonceCleanup>60_000){lastNonceCleanup=Date.now();void db.delete(schema.operationsServiceNonces).where(lt(schema.operationsServiceNonces.expiresAt,new Date(Date.now()-60_000))).catch(()=>{});}
  return rows.length===1;
 }
-export function tokenVersion(token:unknown){if(typeof token!=='string'||token.length>220000)return null;try{return (JSON.parse(Buffer.from(token.split('.')[0]??'','base64url').toString()) as {v?:unknown}).v;}catch{return null;}}
+export function tokenVersion(token:unknown,maxChars=220000){if(typeof token!=='string'||token.length>maxChars)return null;try{return (JSON.parse(Buffer.from(token.split('.')[0]??'','base64url').toString()) as {v?:unknown}).v;}catch{return null;}}
 export async function verifyHubServiceClaims(token:unknown,path:string,env:NodeJS.ProcessEnv){
- if(!serviceAuthEnabled(env)||tokenVersion(token)!==2)throw new OperationsError('invalid_service_auth_protocol',401);
+ if(!serviceAuthEnabled(env)||tokenVersion(token,path==='/recordings/rpc'?650_000:220_000)!==2)throw new OperationsError('invalid_service_auth_protocol',401);
  const claims=await verifyServiceRequest(token,{service:'api',workspace:workspace(env),path,consumeNonce:consumeServiceNonce}).catch(error=>{throw error instanceof ServiceAuthenticationError?new OperationsError(error.code,error.status):new OperationsError('service_auth_unavailable',503);});
  const actor=actorSchema.safeParse(claims.actor);
  if(!actor.success)throw new OperationsError('hub_principal_invalid',403);

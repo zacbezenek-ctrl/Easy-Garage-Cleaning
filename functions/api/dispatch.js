@@ -6,6 +6,7 @@ import { travelEstimator } from '../_lib/dispatch-travel.js';
 import { dispatchFunnelOptions } from '../_lib/dispatch-funnel.js';
 import { crewRosterPhotoStore } from '../_lib/crew-public-profile.js';
 import { firstGhlTagAttempt } from '../_lib/ghl-tag-outbox.js';
+import { can, staffRoleAccessEnabled } from '../_lib/staff-roles.js';
 
 function reply(status, body) {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type':'application/json','Cache-Control':'no-store','X-Content-Type-Options':'nosniff' } });
@@ -28,6 +29,34 @@ function errorResponse(error) {
 const AWAY_FIELDS = ['id','revision','type','recordType','employee','employeeId','date','endDate','time','endTime','allDay','status','startAt','endAt','timeZone'];
 const away = row => Object.fromEntries(AWAY_FIELDS.filter(key => row?.[key] !== undefined).map(key => [key, row[key]]));
 
+const handoffId = value => typeof value === 'string' && /^[A-Za-z0-9_-]{1,180}$/.test(value) && !/^(secure_|_egc_)/.test(value);
+const contactId = value => typeof value === 'string' && /^[A-Za-z0-9_-]{1,180}$/.test(value);
+const handoffText = (value, limit) => typeof value === 'string' ? value.trim().slice(0, limit) : '';
+const emptyHandoff = reasonCode => ({name:'',phone:'',highlevelContactUrl:'',reasonCode});
+
+// A contact link is offered only when the current persisted job and customer
+// both name the same valid HighLevel contact. This is an office convenience,
+// not an identity repair or a provider lookup.
+async function customerHandoff(store, shown, jobId, env) {
+  let job;
+  try { job = await store.read('jobs', jobId); }
+  catch { return emptyHandoff('job_unavailable'); }
+  if (!job || job.id !== jobId || job.recordType || !job.revision || job.revision !== shown?.revision || job.customerId !== shown?.customerId) return emptyHandoff('job_changed');
+  if (!handoffId(job.customerId)) return emptyHandoff('customer_unlinked');
+  let customer;
+  try { customer = await store.read('customers', job.customerId); }
+  catch { return emptyHandoff('customer_unavailable'); }
+  if (!customer || customer.id !== job.customerId || customer.recordType) return emptyHandoff('customer_missing');
+  const base = {name:handoffText(customer.name || [customer.firstName, customer.lastName].filter(Boolean).join(' '), 200),phone:handoffText(customer.phone, 40),highlevelContactUrl:''};
+  const jobContact = job.highlevelContactId, customerContact = customer.highlevelContactId;
+  if (jobContact && customerContact && jobContact !== customerContact) return {...base,reasonCode:'contact_link_conflict'};
+  if (!jobContact || !customerContact) return {...base,reasonCode:'contact_unlinked'};
+  if (!contactId(jobContact) || !contactId(customerContact)) return {...base,reasonCode:'contact_link_invalid'};
+  const locationId = env.HIGHLEVEL_LOCATION_ID;
+  if (!contactId(locationId)) return {...base,reasonCode:'location_unconfigured'};
+  return {...base,highlevelContactUrl:`https://app.gohighlevel.com/v2/location/${encodeURIComponent(locationId)}/contacts/detail/${encodeURIComponent(jobContact)}`,reasonCode:null};
+}
+
 // Dependency injection permits full request/permission tests without changing
 // production environment flags, cookies, Firestore credentials or the clock.
 // Reads take the Date; mutations take its ISO string (dispatch-contract.js).
@@ -42,7 +71,7 @@ export function dispatchHandlers({ session = getHubSession, storage = dispatchSt
         const params = Object.fromEntries(new URL(request.url).searchParams.entries());
         const store = storage(env), photos = crewRosterPhotoStore(store), overview = await dispatchOverview(photos.store,actor,params,now(),{travel:travel({env,store,now}),readiness:true,...(access.booker ? {authorize:bookerAuthorize(env)} : {})});
         // Approved crew headshots (P4-07), read alongside the job scans; an unreadable profile store leaves the roster unchanged.
-        return reply(200,{...overview,...(Array.isArray(overview.roster) ? {roster:await photos.attach(overview.roster)} : {}),...(access.booker && Array.isArray(overview.availability) ? {availability:overview.availability.map(away)} : {}),viewer:{id:actor.user,...(access.booker ? {booker:true} : {})},funnel:dispatchFunnelOptions()});
+        return reply(200,{...overview,...(params.view === 'job' ? {customerHandoff:await customerHandoff(photos.store,overview.job,params.jobId,env)} : {}),...(Array.isArray(overview.roster) ? {roster:await photos.attach(overview.roster)} : {}),...(access.booker && Array.isArray(overview.availability) ? {availability:overview.availability.map(away)} : {}),viewer:{id:actor.user,...(access.booker ? {booker:true} : {}),...(staffRoleAccessEnabled(env) ? {canPerformWalkthrough:can(actor,'walkthrough.perform',env)} : {})},funnel:dispatchFunnelOptions()});
       } catch(error) { return errorResponse(error); }
     },
     async post({request,env,waitUntil}) {

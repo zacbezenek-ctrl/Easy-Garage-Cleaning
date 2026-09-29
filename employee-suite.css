@@ -118,3 +118,13 @@ input,select,textarea{font-size:16px!important}
 /* SALES-BOOKING: lead card actions (call, open in HighLevel, book) and a failed HighLevel contact search.
    The site-wide footer rule in /styles.css painted the lead card's footer navy; the card keeps its own background. */
 .ops-pipeline article>footer{background:transparent}.ops-lead-actions{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 12px}.ops-lead-actions .ops-button{flex:1 1 auto;min-height:44px;padding:0 12px;font-size:14px}.ops-contact-error{margin:8px 0 0;padding:10px 12px;border-radius:6px;background:#fdecea;color:#8a1f16;font-size:14px;font-weight:600}
+
+/* A landscape iPhone can have a native dialog centred behind its asymmetric notch.
+   Bound it to the usable viewport; employee-mobile.css keeps the bottom-sheet height rule. */
+@media (orientation:landscape) and (max-height:500px){
+  dialog:modal:not(.rp-dialog,.dc-sheet,.hs-panel){
+    inset-inline-start:calc(var(--egc-safe-left) + 12px);
+    inset-inline-end:calc(var(--egc-safe-right) + 12px);
+    max-inline-size:calc(100vw - var(--egc-safe-left) - var(--egc-safe-right) - 24px);
+  }
+}
