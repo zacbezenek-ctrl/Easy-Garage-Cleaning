@@ -87,7 +87,7 @@
     "localBrowserResults": {
       "walkthroughs": "10/10",
       "hubMobile": "18/18",
-      "actionCenter": "27/27"
+      "actionCenter": "32/32 after final visual refinement"
     },
     "recordingBrowserResults": "WebKit 13/13 locally",
     "localRootSuite": "Windows POSIX/CRLF fixture expectations; Linux CI is merge evidence"
@@ -107,7 +107,7 @@
     "pr": 87,
     "branch": "codex/hub-ios-walkthrough-completion",
     "implementationSha": "a13e01e81552edfabd2dcc61e1479cd3ed0ddb42",
-    "checkedHeadSha": "954390453443c61b0c9263adeab040e7a426827f",
+    "checkedHeadSha": "d0d09ce67159e6b3e7ae21020a36e48080e62008",
     "state": "draft_pending_followup_ci_and_batch8",
     "merged": false,
     "ciAtCheckedHead": {
@@ -117,17 +117,32 @@
       "firestore": "success",
       "businessHub": "success",
       "mobileDeviceE2E": "success",
-      "lighthouse": "success",
+      "lighthouse": "in_progress",
       "actionCenterFunctionsBundle": "success",
       "actionCenterDatabasePlatform": "success",
-      "actionCenterBrowser": "success",
-      "actionCenterWebKit": "failed_linux_unsupported_no_sandbox_argument"
+      "actionCenterBrowser": "in_progress",
+      "actionCenterWebKit": "success"
     },
     "followUp": {
       "state": "included_with_this_handoff_revision_pending_ci",
-      "scope": ["authoritative office customer handoff", "exact recording project-link recovery", "Linux WebKit launch correction"],
-      "localResults": {"officeHandoffBrowser": "7/7", "recordingApi": "15/15", "proxyContact": "14/14", "dispatchRegressions": "43/43", "webkitRecordingsAfterLaunchFix": "13/13"},
+      "scope": [
+        "office visual refinement and readable labels"
+      ],
+      "localResults": {
+        "officeHandoffBrowser": "7/7",
+        "recordingApi": "15/15",
+        "proxyContact": "14/14",
+        "dispatchRegressions": "43/43",
+        "webkitRecordingsAfterLaunchFix": "13/13"
+      },
       "requires": "new PR head and complete CI rerun"
     }
+  },
+  "production": {
+    "apiSha": "8081d74b677bf2ff47523bf246236cdc4fbf4708",
+    "transcriptCommandAvailable": false,
+    "requiredVariableNamesPresent": true,
+    "secretValuesInspected": false,
+    "state": "requires_matching_api_and_hub_release_then_live_acceptance"
   }
 }

@@ -30,3 +30,24 @@
 .ac-send-summary dd{font-weight:700}
 @media(max-width:560px){.ac-dialog-footer .ac-btn.ac-send-now{flex:1 1 100%;order:2;min-height:48px}}
 .ac-book-actions{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:12px 0}.ac-book-actions .ac-btn{min-height:44px}.ac-book-actions p{margin:0}
+
+/* Reviewed recording follow-ups use the same warm paper and forest palette as Walkthroughs. */
+.ac-dialog[open]:has(.ac-office-handoff){display:flex;flex-direction:column;width:min(760px,calc(100vw - 24px - var(--egc-safe-left,0px) - var(--egc-safe-right,0px)));max-height:calc(100dvh - 24px - var(--egc-safe-top,0px) - var(--egc-safe-bottom,0px));border:1px solid #dedbd4;border-radius:18px;background:#fffdf9;color:#173329;box-shadow:0 24px 64px #10291f38}
+.ac-dialog[open]:has(.ac-office-handoff) .ac-dialog-header{flex:none;background:#f7f2ea;border-bottom-color:#e4dfd5}
+.ac-dialog[open]:has(.ac-office-handoff) .ac-dialog-body{flex:1 1 auto;min-height:0;max-height:none;overflow:auto;overscroll-behavior:contain}
+.ac-dialog[open]:has(.ac-office-handoff) .ac-dialog-footer{flex:none;background:#f7f2ea;border-top-color:#e4dfd5;padding-bottom:calc(16px + var(--egc-safe-bottom,0px))}
+.ac-dialog[open]:has(.ac-office-handoff) .ac-dialog-footer .ac-btn.primary{background:#174f42;border-color:#174f42;color:white}
+.ac-office-handoff{display:grid;gap:13px;min-width:0;margin:22px 0;padding:20px;border:1px solid #dedbd4;border-left:4px solid #1b6654;border-radius:14px;background:#f8f6f0;overflow-wrap:anywhere}
+.ac-office-handoff h4{margin:0;font-size:20px;line-height:1.25;letter-spacing:-.018em;color:#173b31}
+.ac-office-handoff>p{margin:0;font-size:14px;line-height:1.55}
+.ac-office-handoff .ac-muted{color:#53685e}
+.ac-handoff-customer{display:grid;gap:7px;min-width:0;padding:15px 17px;border:1px solid #d3dfd6;border-radius:11px;background:#fffdf9;color:#23463b;font-size:15px;line-height:1.45}
+.ac-handoff-customer p{margin:0;overflow-wrap:anywhere}
+.ac-handoff-customer a{display:inline-flex;align-items:center;min-height:44px;color:#145c4c;text-decoration:underline;text-underline-offset:3px}
+.ac-office-handoff .ac-handoff-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;align-items:stretch;margin-top:2px}
+.ac-handoff-actions .ac-btn{display:inline-flex;justify-content:center;align-items:center;min-width:0;min-height:48px;padding:10px 13px;text-align:center;line-height:1.35;white-space:normal}
+.ac-handoff-actions .ac-link{border-color:#174f42;background:#174f42;color:white;font-weight:750;text-decoration:none}
+.ac-handoff-actions .ac-link:hover{background:#103d33;border-color:#103d33}
+.ac-office-handoff [role=status]:last-child:not(.ac-handoff-customer):empty{display:none}
+@media(max-width:560px){.ac-dialog[open]:has(.ac-office-handoff) .ac-dialog-header,.ac-dialog[open]:has(.ac-office-handoff) .ac-dialog-body{padding:17px}.ac-dialog[open]:has(.ac-office-handoff) .ac-dialog-footer{padding:12px 17px calc(12px + var(--egc-safe-bottom,0px));gap:8px}.ac-office-handoff{margin:18px 0;padding:16px;gap:12px}.ac-office-handoff .ac-handoff-actions{grid-template-columns:minmax(0,1fr)}.ac-handoff-actions .ac-btn{width:100%}}
+@media(max-height:500px) and (orientation:landscape){.ac-dialog[open]:has(.ac-office-handoff){max-height:calc(100dvh - 12px - var(--egc-safe-top,0px) - var(--egc-safe-bottom,0px))}.ac-dialog[open]:has(.ac-office-handoff) .ac-dialog-header{padding-block:10px}.ac-dialog[open]:has(.ac-office-handoff) .ac-dialog-footer{padding-block:8px}}

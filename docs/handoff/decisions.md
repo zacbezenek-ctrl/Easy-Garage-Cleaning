@@ -17,4 +17,8 @@ The following is the owner's wrap-up instruction in this task. Keep its wording 
 
 > You know what I want? Use the existing key and just GET IT DONE
 
+## Production and design requirement (2026-09-29)
+
+> I just need it to be production ready and beautiful please
+
 The standing HighLevel boundary is recorded separately in [HIGHLEVEL-BOUNDARY.md](../HIGHLEVEL-BOUNDARY.md), including the owner's original words and the paths that can write or send.
