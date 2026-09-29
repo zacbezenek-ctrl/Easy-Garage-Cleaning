@@ -231,10 +231,12 @@ These harden the Hub without changing anyone's workflow. Do each in **Preview fi
 
 ### 1.1 Lock the staff pages
 
-- **Set:** `EGC_STAFF_PAGE_GATE=on`
+- **Set:** `EGC_STAFF_PAGE_GATE=on`. `true` works the same, in any case and with spaces around it ignored (`TRUE`, for example). Any other value leaves the staff pages public, and Hub → Integrations names that value so you can correct it.
 - **Where:** Cloudflare Pages, plain variable. Preview first, then Production.
 - **Turns on:** staff pages and scripts (the Hub, Dispatch, the crew job tools, message templates) need a Hub sign-in; signed-out visitors go to `/staff-login` (or `/crew/` for crew tools).
-- **Needs first:** preview deployments behind Cloudflare Access, and older deployments deleted ([1.3](#13-security-steps-with-no-switch)). They keep serving the old, unlocked files.
+- **Needs first:**
+  1. `HUB_SESSION_SECRET` set in Preview and Production ([B3](#b3-secrets-to-set-first)). The gate checks every staff page against a Hub sign-in, so without it nobody gets past the sign-in page.
+  2. Preview deployments behind Cloudflare Access, and older deployments deleted ([1.3](#13-security-steps-with-no-switch)). They keep serving the old, unlocked files.
 - **Check it worked (phone):**
   1. In a private browser tab, open `/employee`. You land on the staff sign-in page.
   2. In the same private tab, open `/employee-suite.js`. You get the sign-in page, not code.
@@ -322,6 +324,7 @@ Every website lead already goes to HighLevel. Stage 2 makes that durable (nothin
 | 3.2 | Booking in Dispatch | No switch |
 | 3.3 | Recording in the Hub | Railway bridge (B5) |
 | 3.4 | `EGC_WALKTHROUGH_VISIT_ENABLED=true` (after FUN-06) | Cloudflare, plain |
+| 3.5 | `EGC_STAFF_ROLE_ACCESS=true` (owner decision: on) | Cloudflare, plain |
 
 ### 3.1 Team roles (staff directory)
 
@@ -372,6 +375,31 @@ Every website lead already goes to HighLevel. Stage 2 makes that durable (nothin
 - If the timecard cannot be written, the segment stays open for a manager to close. A manager can also clear a rep's stuck Start by recording the outcome; the rep's timecard is then corrected by hand.
 - Walkthrough time is reported separately as the cost of winning the job, not as job labor.
 - To rebook a no-show, move the same visit to its new date in Dispatch; do not create a new one.
+
+### 3.5 Staff roles grant access (owner decision: on)
+
+- **Set:** `EGC_STAFF_ROLE_ACCESS=true`
+- **Where:** Cloudflare Pages, plain. Preview first, then Production.
+- **Turns on:** the roles you set in the staff directory ([3.1](#31-team-roles-staff-directory)) decide what each person can do. It also turns on `EGC_STAFF_ROLE_PERMISSIONS`.
+  - **Manager** role: the Hub treats that person as a manager, with business access to Hub screens, Firebase data and Action Center Hub commands.
+  - **Sales** and **Phone**: book, move, cancel and mark no-shows for walkthroughs **and** jobs in Dispatch. They never assign crew and never see pay, cost or money. The crew-size rule stays a warning for them.
+  - **Sales** also runs walkthroughs: the game plan, the signed hand-off and the visit recorder. A sale they hand off is saved with no crew and shows "Sold: needs crew" in Dispatch until a manager assigns the crew.
+  - **Contact details:** Sales and Phone see every customer's name, phone, email, address and full job history in Dispatch, its customer list and its search. Only the caller lookup stays masked.
+  - You always keep owner access. A saved role never makes anyone the owner.
+- **Needs first:**
+  1. The staff directory is on and its two migrations have run ([3.1](#31-team-roles-staff-directory)).
+  2. **Set every staff member's role before you turn this on.** Give each manager the Manager role, including the managers who sign in with the configured Hub accounts. Because this also turns on `EGC_STAFF_ROLE_PERMISSIONS`, a business account whose saved roles lack Manager loses the business screens.
+  3. Only Sales and Phone people should have those roles, since they will see all customer contacts.
+  4. The Firebase service account has the **Firebase Authentication Admin** role ([1.3](#13-security-steps-with-no-switch), step 3). Otherwise the Firebase sign-outs below stay pending.
+  5. No Hub sign-in username (`HUB_AUTH_USERS_JSON`, `HUB_AUTH_ADDITIONAL_USERS_JSON`) contains `'` `"` `\` `` ` `` `<` `>` `&`, a tab or a line break. Such accounts can no longer clock in from the crew app ([4.12](#412-correct-timecards-and-close-forgotten-shifts-optional)).
+- **Role changes while it is on:** the person is signed out of the Hub and of Firebase data straight away. If the staff directory says "Their Firebase data sign-out is pending" or "could not be confirmed", open Hub → Integrations until the pending sign-out clears.
+- **Check it worked (Preview, phone):**
+  1. Give a test account the Sales role and sign in as it. Dispatch opens: book a test walkthrough and move it. There is no crew assignment and no money, pay or cost anywhere.
+  2. Hand off a test sale as that account. The job shows "Sold: needs crew" in Dispatch.
+  3. Give another test account the Manager role and sign in as it. The business Hub screens open.
+  4. Take the Manager role away again. The staff directory confirms the sign-out, and Hub → Integrations shows no pending Firebase sign-out.
+  5. Sign in as yourself. You still have owner access.
+- **Roll back:** delete the variable and retry the deployment. Business access goes back to the configured business users, and Sales and Phone can no longer book. Saved roles stay. A stored manager's Firebase data session ends the next time a business user loads the Hub on easygaragecleaning.com. A session issued in the half minute before that load ends on a later load. Hub → Integrations shows any sign-out still pending.
 
 ## Stage 4: Crew scheduling and the field day
 
@@ -452,7 +480,8 @@ Every website lead already goes to HighLevel. Stage 2 makes that durable (nothin
 ### 4.7 Timesheets and payroll
 
 - **Set:** leave `EGC_OVERTIME_POLICY` unset (Colorado rules: time and a half over 40 a week, over 12 a day or over 12 hours in a row, whichever pays more). `federal` means over 40 a week only. Any other value stops payroll with an error, on purpose.
-- **Needs first:** your accountant confirms the Colorado rules and the EGC readings of them (Monday-Sunday Denver week; a shift across midnight counts to the day it started; bonuses count toward overtime, tips do not). Managers approve timecards weekly.
+- **Needs first:** your accountant confirms the Colorado rules and the EGC readings of them (Monday-Sunday Denver week; a shift across midnight counts to the day it started; bonuses count toward overtime, tips do not). They also confirm that the payroll week card's regular, overtime and gross figures are what payroll should use. Pending and open time is listed separately and never counted. Managers approve timecards weekly.
+- **Gusto pay rates:** Gusto works out pay from its own rates, so check that each employee's rate in Gusto matches their Hub rate.
 - **Payroll export:** after the week ends and every timecard is approved, rejected or fixed, choose **Download payroll CSV** on the payroll week card (Time approvals, owner only), or open `/api/timesheets?view=week&start=YYYY-MM-DD&format=csv` (the Monday) while signed in.
 - **Gusto hours file (GUSTO-EXPORT):** **Download Gusto hours** on the same card (owner only; managers get 403) is the week in Gusto's hours-import shape: one row per employee with regular, overtime, double-time and paid time off hours, to two decimals, from the same overtime rules and approved time off as the payroll CSV. It is keyed by each employee's **Gusto employee ID**, which only you set, in the staff directory (**Set Gusto ID**; needs `EGC_STAFF_DIRECTORY_ENABLED=true`). It refuses a week that is not settled, like the payroll CSV, and names every employee who has no Gusto ID yet. Mark anyone not paid through Gusto (your own field time, a 1099 worker) **Not paid through Gusto** in the same editor: their hours are left out of the file and named after the download, and the payroll CSV keeps them. Someone let go with hours still to pay is under **Former staff** at the end of the directory, where you can set only their Gusto fields. The column headers (Gusto employee ID, Employee name, Regular hours, Overtime hours, Double overtime hours, Paid time off hours) are EGC's reading of Gusto's template: download Gusto's hours-import template once and confirm them; if they differ, only the `GUSTO_HOURS_COLUMNS` constant in `functions/_lib/payroll-export.js` changes. Bonuses and tips are not in the file; enter them from the payroll CSV. Connect Gusto (the API sync) stays hidden unless `GUSTO_PRODUCTION_APPROVED=true`.
 - **Check it worked:** open that link for last week. You get a CSV, or a message listing the timecards still to approve.
@@ -499,7 +528,7 @@ Every website lead already goes to HighLevel. Stage 2 makes that durable (nothin
 - **Where:** Cloudflare Pages, plain. Preview first.
 - **Turns on:** owners and managers (`time.approve`) get **Correct time** on every Time approvals timecard (clock-in, clock-out, breaks and job; the rate only for someone who may set pay, the owner under `EGC_STAFF_PAY_OWNER_ONLY`) and **Close shift** on a shift someone forgot to clock out of. Each save needs a reason, is kept in the timecard's history with who made it, recomputes the hours, and sends the card back to pending for approval. Shifts open more than 14 hours are listed under **Needs attention** on the Command center and Time approvals. Crew never get the buttons; with `EGC_STAFF_ROLE_PERMISSIONS` off, every Hub user with business access counts as `time.approve`.
 - **Unset:** no correction buttons and no 14-hour list, and the server refuses a correction (403 `EMPLOYEE_TIMECARD_CORRECTIONS_OFF`). Weekly totals come from the server's payroll week card either way.
-- **Needs first:** with `EGC_STAFF_ROLE_PERMISSIONS` on, check that each manager's staff role is manager. Confirm no Hub sign-in username (`HUB_AUTH_USERS_JSON`, `HUB_AUTH_ADDITIONAL_USERS_JSON`) contains `'` `"` `\` `` ` `` `<` `>` `&`, a tab or a line break: such accounts can no longer clock in from the crew app.
+- **Needs first:** with `EGC_STAFF_ROLE_PERMISSIONS` on, check that each manager's staff role is manager. Confirm no Hub sign-in username (`HUB_AUTH_USERS_JSON`, `HUB_AUTH_ADDITIONAL_USERS_JSON`) contains `'` `"` `\` `` ` `` `<` `>` `&`, a tab or a line break: such accounts can no longer clock in from the crew app. Developer: before turning this on in Production, look for existing timecards whose IDs contain quotes or markup. New ones are refused; older ones still show on the board and stay savable.
 - **Check it worked:** on Preview, clock a test account in and leave it running. As a manager, open Time approvals, tap **Close shift** on that row, enter the real end time and a reason, and save. The card reads pending, its history shows the reason and your name, and the payroll week card's hours change once it is approved. **Correct time** on another test card works the same way. Close every shift under Needs attention before the payroll export.
 - **Roll back:** delete the variable. Corrections already saved stay in the timecards and their history.
 
@@ -728,7 +757,7 @@ Invoice sending and customer portal sign-in links by text or email are in the [n
 | --- | --- |
 | `EGC_OFFLINE_CLOCK_ENABLED` | The Hub timesheet has no "phone time" review badge yet; on, crew could backdate a clock action by up to 12 hours. |
 | `EGC_RECURRING_PLANS_ENABLED` | Waits for the recurring-plan background job (RECUR-CRON). |
-| `EGC_STAFF_ROLE_PERMISSIONS` | Can hide business screens from a manager whose saved roles lack them; check every business user's roles first. |
+| `EGC_STAFF_ROLE_PERMISSIONS` | Can hide business screens from a manager whose saved roles lack them; check every business user's roles first. `EGC_STAFF_ROLE_ACCESS` ([3.5](#35-staff-roles-grant-access-owner-decision-on)) turns it on for you, after the role checks there. |
 | `EGC_EXTRACTION_V2` (Railway egc-api) | Waits for the recording review screen (P3-09); also adds OpenAI cost per recording. |
 | `CATALOG_QUOTES_ENABLED` | No Hub screen yet (CATALOG-ADMIN), and the pricing settings are placeholders. |
 | `CUSTOMER_PORTAL_REJECT_DRAFT_ESTIMATES` | The Hub still saves estimates as draft, so customers could not approve. |
@@ -790,7 +819,7 @@ Before moving any of these, check which HighLevel workflows and calendar notific
 | Before anything | Bridge: `EGC_OPERATIONS_ENABLED=false` on egc-api, egc-mcp and Cloudflare | Hub schedules sync to HighLevel directly again |
 | 1 | `EGC_STAFF_PAGE_GATE=off` | Staff pages open without the gate |
 | 2 | Delete `WEB_LEAD_ADS_RELAY_ENABLED`, then `WEB_LEAD_RECEIPTS_ENABLED` | Web3Forms emails for any lead in doubt |
-| 3 | Delete `EGC_WALKTHROUGH_VISIT_ENABLED` or `EGC_STAFF_DIRECTORY_ENABLED` | Timecards of reps with open walkthroughs |
+| 3 | Delete `EGC_WALKTHROUGH_VISIT_ENABLED`, `EGC_STAFF_ROLE_ACCESS` or `EGC_STAFF_DIRECTORY_ENABLED` | Timecards of reps with open walkthroughs; Hub → Integrations for pending Firebase sign-outs |
 | 4 | Delete the `EGC_DISPATCH_…` or `FIELD_EXPENSES_ENABLED` switch; crew app: `/crew/sw-config.json` (developer) | Dispatch saves; crew phones reload |
 | 5 | Delete `MONEY_API_ENABLED`, `MONEY_DOCUMENT_ENABLED` or `PAYMENT_REVIEW_CHECKOUT_BLOCK_ENABLED` | Do not re-save itemized estimates in the old editor |
 | 6 | Delete `FIELD_CUSTOMER_PHOTOS_ENABLED` | Portal shows no photos |
