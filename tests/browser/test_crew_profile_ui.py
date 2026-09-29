@@ -72,7 +72,7 @@ class CrewProfileBrowserTests(unittest.TestCase):
         self.page = self.context.new_page(); self.page.set_default_timeout(7000)
         self.page.clock.install(time=NOW)
         self.errors = []; self.posts = []; self.post_status = []; self.photo_requests = []; self.broken_photos = False
-        self.overview = copy.deepcopy(FIXTURES['crewView']); self.after = None; self.result_profile = None; self.conflict_overview = None; self.gets = 0
+        self.overview = copy.deepcopy(FIXTURES['crewView']); self.after = None; self.result_profile = None; self.conflict_overview = None; self.gets = 0; self.hold_get = False; self.held = None
         self.page.on('pageerror', lambda error: self.errors.append(str(error)))
         self.page.route('**/*', self.route)
     def tearDown(self):
@@ -85,7 +85,10 @@ class CrewProfileBrowserTests(unittest.TestCase):
         if parsed.hostname != '127.0.0.1': route.abort(); return
         if parsed.path == '/api/crew-public-profile':
             if 'photo' in query: self.photo_requests.append(parsed.query); return route.fulfill(status=200, content_type='image/png', body=IMAGE)
-            if request.method == 'GET': self.gets += 1; return self.json(route, 200, self.overview)
+            if request.method == 'GET':
+                self.gets += 1
+                if self.hold_get: self.hold_get = False; self.held = route; return
+                return self.json(route, 200, self.overview)
             body = json.loads(request.post_data); self.posts.append(body)
             status = self.post_status.pop(0) if self.post_status else 200
             if status == 503: return self.json(route, 503, {'ok': False, 'code': 'crew_profile_outcome_unknown', 'error': 'The save could not be verified. Retry the same change to safely check whether it saved.'})
@@ -214,11 +217,18 @@ class CrewProfileBrowserTests(unittest.TestCase):
         expect(riley).to_be_visible(); expect(riley.get_by_text('New photo to review')).to_be_visible()
         self.phone_checks('.cp-btn, .egc-crew-profile input[type=text], .cp-check')
         self.assertEqual(self.page.evaluate("getComputedStyle(document.querySelector('.egc-crew-profile input[type=text]')).fontSize"), '16px', 'no iOS zoom on focus')
+        # The approval reloads the profiles; the reload is held here. Until it lands the older card is locked, so
+        # nothing typed is wiped by the reload and nothing is sent against the revision the approval replaced.
+        self.hold_get = True
         riley.get_by_role('button', name='Approve photo').click()
         self.wait_until(lambda: self.posts, 'the approval is sent')
         self.assertEqual({key: self.posts[0][key] for key in ('action', 'username', 'photoRequestId', 'expectedRevision')}, {'action': 'approve_photo', 'username': 'crew.two', 'photoRequestId': '20000000-0000-4000-8000-000000000002', 'expectedRevision': '2026-09-22T12:00:00.000002Z'})
         expect(self.page.get_by_role('status')).to_contain_text('Approve photo for Riley Synthetic: saved.')
         riley = self.page.get_by_role('region', name='Riley Synthetic crew profile')
+        self.wait_until(lambda: self.held, 'the latest profiles are requested')
+        for control in (riley.get_by_label('First name customers see (one word)'), riley.get_by_label('Show to customers on jobs this person is assigned to'), riley.get_by_role('button', name='Save profile'), riley.get_by_role('button', name='Approve photo')):
+            expect(control).to_be_disabled()
+        self.json(self.held, 200, self.overview); self.held = None
         riley.get_by_label('First name customers see (one word)').fill('Riley')
         riley.get_by_label('Show to customers on jobs this person is assigned to').check()
         riley.get_by_role('button', name='Save profile').click()
