@@ -55,7 +55,9 @@
 >
 > Definitions 2026-09-28.2 added `vocabularies.crmLinkReasons`, the `instant` data type with `fromStartAt` / `toStartAt` on both reschedule events, `occurrence` on `job.no_show`, and the `walkthrough.restored` event type (a restored walkthrough cancellation is never labelled a job).
 >
-> Owner decisions that are still defaults in the definitions: holidays (US federal, actual date), the repeat window (30 days), the lost-reason list, the self-reported channel list and the cutover date (`eventIntegrity.cutoverDate` is `null` until FUN-02/03/33 ship, so every period reports `pre_cutover_history`).
+> Definitions 2026-09-28.4 (the FUN-32 merge) add the `jobber` section (the Jobber cutover day, finding codes with their guard surfaces, and the HighLevel markers of Jobber-app records) and the `jobber_after_cutover` coverage reason to 2026-09-28.3 (FUN-20).
+>
+> Owner decisions that are still defaults in the definitions: holidays (US federal, actual date), the repeat window (30 days), the lost-reason list, the self-reported channel list and the cutover date (`eventIntegrity.cutoverDate` is `null` until FUN-02/03/33 ship, so every period reports `pre_cutover_history`). The Jobber cutover day (`jobber.cutoverDate`, FUN-32) is a separate owner decision and is also `null`.
 
 
 Status: design only. No repository files were changed.
@@ -747,7 +749,7 @@ Every number equals the recorded events and ledgers as of `asOf`. Anything not f
   - ambiguous P4-02 identities are listed;
   - contact ids that no longer resolve (merged or deleted) are listed;
   - Hub test records linked to real GHL contacts are flagged, and so are real records linked to test contacts.
-- **Jobber.** Requests, jobs and invoices created after the cutover are flagged (FUN-32).
+- **Jobber.** Requests, jobs and invoices created after the cutover, Jobber visits and payments after it, settled imported balances and HighLevel records the Jobber app created are flagged (FUN-32, `jobberGuard/latest`).
 - **Automations.** A new or changed GHL workflow or Zap not in the FUN-30 registry is flagged.
 
 ### 9.3 Mechanisms
@@ -1075,6 +1077,10 @@ The units are listed in dependency order. "Planned as" names the existing unit a
   - Remove the five lifecycle auto-fires and the `customerAutomationEnabled` reminders.
   - Rules tests.
 - **FUN-32 Jobber guard.** A read-only Jobber GraphQL check for requests, jobs and invoices created after the cutover. Detects GHL contacts and opportunities created by the Jobber app. Records the cutover date in the definitions file.
+  - **In the repository (FUN-32):** the Jobber cutover day is `jobber.cutoverDate` in the definitions (`null` until the owner decides; separate from `eventIntegrity.cutoverDate`), with `jobber.findings` (each finding code, its surfaces `booking | billing | messaging` and its scope `customer | job`) and `jobber.ghlAppMarkers` (how Jobber-app records are recognized). `vocabularies.coverageReasons` gains `jobber_after_cutover` for metrics a stray makes partial.
+  - `scripts/jobber-guard.mjs` (library `functions/_lib/jobber-guard.js`, shared read-only client `functions/_lib/jobber-graphql.js`) lists requests, jobs and invoices created on or after the cutover, Jobber visits on or after it, Jobber payments entered on or after it, imported balances Jobber has since settled, and HighLevel contacts and opportunities the Jobber app added on or after it, each matched to a Hub customer. `--save` stores a complete check in the server-only `jobberGuard/latest` (with a `jobberGuardRuns/<runId>` summary); `GET /api/jobber-guard` shows it to owners and managers. FUN-25 reads that state (or runs the same library) for its data-quality list.
+  - Per-surface switches, off by default, act from the cutover day: `EGC_JOBBER_GUARD_BOOKING` (no game plan reaches the Zap that creates a Jobber job), `EGC_JOBBER_GUARD_BILLING` (no Hub `invoice.issue`, and no automatic deposit or payment reminder, while the customer has an open Jobber bill) and `EGC_JOBBER_GUARD_MESSAGING` (no automatic reminder while Jobber may message the customer about open work or an open invoice). Holds never cancel Hub work or send anything. docs/JOBBER-CUTOVER.md section 10 is the owner guide.
+  - Mapping JOB-CUT history into funnel facts stays with FUN-04 (A22); funnel events are refused for `recordType` rows such as `jobber_history`, so FUN-04 decides that mapping.
 - **FUN-28 / FUN-39 / FUN-40 (optional):**
   - **FUN-28**: a generated Sheets export, owner-only or aggregate-only.
   - **FUN-39**: a read-only QuickBooks P&L for overhead and net profit, labelled "book basis".

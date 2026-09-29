@@ -127,6 +127,9 @@ Cloudflare Pages (Production and Preview), all documented in `.env.example` and 
 | `QUO_FROM` | plain | Quo sender number. |
 | `QUO_API_BASE` | plain | Quo API host override. |
 | `CREW_WEBHOOK_URL` | secret | Business-only crew hook to Zapier. |
+| `EGC_JOBBER_GUARD_BOOKING` | plain | Exactly `true` (FUN-32): from the Jobber cutover day on, the crew hook refuses `game_plan`, whose Zap branch creates a Jobber job. A backstop for old cached crew pages only: disable that Zap branch and uninstall the Official Jobber Integration (Jobber cutover section 8). See [Jobber cutover section 10](JOBBER-CUTOVER.md). |
+| `EGC_JOBBER_GUARD_BILLING` | plain | Exactly `true` (FUN-32): from the Jobber cutover day on, the messaging cron holds deposit and payment reminders (reason `jobber_guard_billing`) for a customer the saved Jobber guard check shows with an open Jobber bill. |
+| `EGC_JOBBER_GUARD_MESSAGING` | plain | Exactly `true` (FUN-32): from the Jobber cutover day on, the messaging cron holds automatic reminders (reason `jobber_guard_messaging`) for a customer Jobber may still be messaging about open work or an open invoice. Turn it on only if Jobber's own messages cannot be fully turned off, or after the imported visits are removed from Jobber; otherwise it can hold every imported customer's reminders (Jobber cutover section 10.4). |
 
 **Railway (messaging cron):** this build has no scheduled messaging job on Railway, so automated reminders (`owner_automation`) cannot run yet even when a kind's automation switch is on. When the signed messaging cron ships, its variables will be listed in `egc-platform/.env.example` and `docs/env-inventory.md`; it reaches the Hub through the existing operations bridge (`EGC_OPERATIONS_ENABLED`, `EGC_OPERATIONS_API_ORIGIN`, `EGC_OPERATIONS_SERVICE_AUTH`, `API_BEARER_TOKEN`). Keep `EGC_MESSAGING_DRY_RUN` unset while you first run it.
 

@@ -370,6 +370,11 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   append-only owner spend ledger for channels without an API (trigger-enforced; owner-only spend.* bridge commands and an
   owner-only Hub "Ad spend" screen). Unknown days stay null. Migration renumbered to 0015_ad_spend. Flags:
   `EGC_AD_SPEND_META_ENABLED`, `EGC_AD_SPEND_GOOGLE_ENABLED` (off). Gap: live APIs unverified (no credentials yet).
+- **FUN-32** Jobber coexistence guard: a read-only check (scripts/jobber-guard.mjs; `--save` stores a complete check in
+  the server-only jobberGuard/latest, GET /api/jobber-guard shows it) lists Jobber requests, jobs, visits, invoices and
+  payments on or after the owner's cutover day, imported balances Jobber changed, and HighLevel records the Jobber app
+  made, matched to Hub customers. Per-surface switches `EGC_JOBBER_GUARD_BOOKING` / `_BILLING` / `_MESSAGING` (off; from
+  `jobber.cutoverDate`, null) refuse the Jobber booking forward, hold invoice.issue and hold cron reminders. Definitions .4.
 
 ## In progress
 
@@ -456,6 +461,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | JOB-COST-PRIVACY | Owner-only job labor dollars (server-only jobLaborCosts, finance board, job-costing and money API) | merged (d7b8fe1) |
 | MCP-CURSORS | Keyset cursors for MCP Postgres CRM reads (flag off) | merged (8bd7af1) |
 | FUN-15 | Ad spend ingestion (Meta, Google), owner spend ledger and Ad spend screen (migration 0015, flags off) | merged (3caad96) |
+| FUN-32 | Jobber coexistence guard: read-only stray check and per-surface booking/billing/messaging holds (flags off) | merged (651fa38) |
 
 ## Next
 

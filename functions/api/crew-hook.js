@@ -21,6 +21,7 @@
  */
 
 import { getHubSession, hasBusinessAccess } from '../_lib/hub-session.js';
+import { jobberGuardSwitches } from '../_lib/jobber-guard.js';
 
 const ALLOWED_TOOLS = new Set(['game_plan', 'review_request', 'post_job', 'plan_text']);
 const MAX_BODY = 256 * 1024; // 256 KB — generous for a signature dataURL, caps abuse
@@ -49,7 +50,8 @@ export async function onRequestOptions({ request }) {
   });
 }
 
-export async function onRequestPost({ request, env }) {
+// The second argument only lets tests inject the clock and definitions.
+export async function onRequestPost({ request, env }, { now = () => new Date(), definitions } = {}) {
   const json = (status, body) =>
     new Response(JSON.stringify(body), {
       status,
@@ -76,6 +78,16 @@ export async function onRequestPost({ request, env }) {
 
   const tool = String(body.tool || '');
   if (!ALLOWED_TOOLS.has(tool)) return json(400, { ok: false, error: 'Unknown tool' });
+
+  // FUN-32 booking guard: from the Jobber cutover day on, a signed game plan is
+  // saved in the Hub only and never reaches the Zap branch that creates a Jobber
+  // job. Off unless EGC_JOBBER_GUARD_BOOKING is exactly 'true'.
+  if (tool === 'game_plan' && env.EGC_JOBBER_GUARD_BOOKING === 'true') {
+    let switches;
+    try { switches = jobberGuardSwitches(env, now(), definitions); }
+    catch { return json(503, { ok: false, code: 'CREW_HOOK_JOBBER_GUARD_UNAVAILABLE', error: 'The Jobber cutover could not be checked, so nothing was sent to Jobber. Retry.' }); }
+    if (switches.booking) return json(409, { ok: false, code: 'CREW_HOOK_JOBBER_RETIRED', error: `Jobber was retired on ${switches.cutoverDate}. The signed game plan is kept in the EGC Hub; nothing was sent to Jobber.` });
+  }
 
   // The review path actually sends an SMS downstream — never forward one
   // without both a destination and a message.

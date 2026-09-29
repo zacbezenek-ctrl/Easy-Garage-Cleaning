@@ -12,6 +12,7 @@ import { portalLinkProviders } from '../_lib/message-links.js';
 import { serverMessagingEnabled } from '../_lib/messaging-settings.js';
 import { CLAIM_COST, CRON_ACTOR_ID, finishRun, runDueMessages, startRun } from '../_lib/messaging-scheduler.js';
 import { webLeadRetryRunner } from '../_lib/web-lead-intake.js';
+import { jobberGuardSends } from '../_lib/jobber-guard.js';
 
 export const MESSAGING_CRON_PATH = '/api/messaging-cron';
 const MAX_BYTES = 32000;
@@ -49,7 +50,7 @@ export function messagingCronHandlers({
   verify = verifyApiServiceEnvelope, storage = messagingStorage, messenger = env => createGhlMessenger({ env }), now = () => new Date(),
   portalInvite = env => jobId => sendAcceptedQuotePortal(env, jobId, { requireRequested: true }),
   links = (env, { store, clock }) => portalLinkProviders({ env, read: id => store.read('jobs', id), now: () => clock().getTime() }),
-  options = () => ({}), crewOutbox = () => null, webLeads = env => webLeadRetryRunner(env),
+  options = () => ({}), crewOutbox = () => null, webLeads = env => webLeadRetryRunner(env), jobberGuard = jobberGuardSends,
 } = {}) {
   return {
     async get() { return failure(405, 'messaging_cron_method_not_allowed', 'Use a signed POST from the EGC worker.'); },
@@ -100,7 +101,8 @@ export function messagingCronHandlers({
         }
         const reserve = () => { if (meter.left() < CLAIM_COST) throw Object.assign(new Error('This message was not attempted.'), { code: 'messaging_not_attempted', status: 503 }); };
         const linkProviders = links(env, { store, clock: now });
-        const service = createApprovedSendService({ store, messenger: meter.messenger, clock: now, env, secret: env?.HUB_SESSION_SECRET || '', links: linkProviders, reserve, ...options(env) });
+        // FUN-32: EGC_JOBBER_GUARD_BILLING / _MESSAGING hold automatic reminders for customers with open Jobber strays.
+        const service = await jobberGuard(createApprovedSendService({ store, messenger: meter.messenger, clock: now, env, secret: env?.HUB_SESSION_SECRET || '', links: linkProviders, reserve, ...options(env) }), { store, env, now: started });
         let summary;
         try {
           summary = await runDueMessages({ store, service, flags, links: linkProviders, portalInvite: portalInvite(env), crewOutbox: crewOutbox(env), budget: meter.left, charge: meter.charge }, { now: started, dryRun, requestId: claims.request.requestId });

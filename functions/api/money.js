@@ -1,6 +1,7 @@
 import { getHubSession } from '../_lib/hub-session.js';
 import { moneyStorage } from '../_lib/money-storage.js';
-import { moneyApiEnabled, moneyJob, moneyLaborView, moneyProjection, mutateMoney, requireMoneyManager } from '../_lib/money-service.js';
+import { MONEY_RECEIPTS, moneyApiEnabled, moneyJob, moneyLaborView, moneyProjection, mutateMoney, requireMoneyManager } from '../_lib/money-service.js';
+import { jobberGuardBillingError, jobberGuardHoldView, jobberGuardInvoiceHolds } from '../_lib/jobber-guard.js';
 import { MONEY_QUERY_KEYS, listMoney, moneyCsv } from '../_lib/money-reports.js';
 import { denverToday } from '../_lib/dispatch-time.js';
 import { laborCostViewer } from '../_lib/job-labor-private.js';
@@ -29,7 +30,8 @@ function failure(error) {
 // MONEY_API_ENABLED is exactly 'true' (the browser keeps today's tools then).
 // Labor dollars are owner-only (EGC_STAFF_PAY_OWNER_ONLY): laborCostViewer resolves
 // that from the signed session, and anyone else gets laborCents null (never 0).
-export function moneyHandlers({ session = getHubSession, storage = moneyStorage, now = () => new Date() } = {}) {
+// jobberGuard is the FUN-32 billing hold on invoice.issue (EGC_JOBBER_GUARD_BILLING).
+export function moneyHandlers({ session = getHubSession, storage = moneyStorage, now = () => new Date(), jobberGuard = (store, env, input, at) => jobberGuardInvoiceHolds(store, env, input, at, { receipts: MONEY_RECEIPTS }) } = {}) {
   return {
     async get({ request, env }) {
       if (!sameOrigin(request, true)) return reply(403, { ok: false, code: 'money_origin_forbidden', error: 'Open job finances in the Employee Hub.' });
@@ -60,7 +62,9 @@ export function moneyHandlers({ session = getHubSession, storage = moneyStorage,
         const raw = await request.text();
         if (new TextEncoder().encode(raw).byteLength > LIMIT) return reply(413, { ok: false, code: 'money_request_too_large', error: 'The money request is too large.' });
         let input; try { input = JSON.parse(raw); } catch { return reply(400, { ok: false, code: 'money_json_invalid', error: 'The money request was incomplete. Refresh the form and try again.' }); }
-        return reply(200, await mutateMoney(storage(env), actor, input, now().toISOString()));
+        const store = storage(env), at = now().toISOString(), guard = await jobberGuard(store, env, input, at);
+        if (guard.holds.length) return reply(409, { ok: false, code: 'money_jobber_billing_hold', error: jobberGuardBillingError(guard.holds), details: { checkedAt: guard.state.checkedAt, findings: guard.holds.slice(0, 10).map(jobberGuardHoldView) } });
+        return reply(200, await mutateMoney(store, actor, input, at));
       } catch (error) { return failure(error); }
     },
   };

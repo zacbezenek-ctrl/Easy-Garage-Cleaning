@@ -22,6 +22,8 @@ const DATA_TYPES = new Set(['cents', 'integer', 'slug', 'reasonCode', 'enum', 'b
 const SERVICE_LINE_SOURCES = ['explicit', 'visitPurpose', 'businessAccount', 'ghlGarageHelpRequested', 'salesExitService', 'legacyJobType'];
 const CLASSES = new Set(['never', 'test', 'internal', 'excluded']);
 const UNITS = ['day', 'week', 'month', 'quarter', 'year', 'custom'];
+const JOBBER_SURFACES = ['booking', 'billing', 'messaging'];
+const JOBBER_FINDINGS = ['jobber_request_after_cutover', 'jobber_job_after_cutover', 'jobber_visit_after_cutover', 'jobber_invoice_after_cutover', 'jobber_payment_after_cutover', 'jobber_imported_balance_changed', 'ghl_contact_from_jobber', 'ghl_opportunity_from_jobber'];
 const plain = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 
 /** Canonical JSON: object keys sorted by UTF-16 code unit, arrays in order, no whitespace. */
@@ -152,6 +154,17 @@ export function validateFunnelDefinitions(d) {
     const reasoned = [...required, ...optional].includes('reasonCode');
     if (reasoned !== (spec.reasons !== undefined) || reasoned && !Array.isArray(reasons[spec.reasons])) problem(`event type ${type} must name its reason list exactly when it takes a reasonCode`);
   }
+  // FUN-32: the Jobber cutover day and the coexistence guard's findings.
+  const jobber = plain(d.jobber) ? d.jobber : (problem('jobber is required'), {});
+  if (jobber.cutoverDate !== null && !(typeof jobber.cutoverDate === 'string' && DATE.test(jobber.cutoverDate) && new Date(`${jobber.cutoverDate}T12:00:00Z`).toISOString().startsWith(jobber.cutoverDate))) problem('jobber.cutoverDate must be null or a real YYYY-MM-DD date');
+  const surfaces = list(jobber.guardSurfaces, SLUG, 'jobber.guardSurfaces');
+  for (const surface of JOBBER_SURFACES) if (!surfaces.includes(surface)) problem(`jobber.guardSurfaces needs ${surface}`);
+  const findings = plain(jobber.findings) ? jobber.findings : (problem('jobber.findings is required'), {});
+  for (const [code, spec] of Object.entries(findings)) if (!SLUG.test(code) || !plain(spec) || !Array.isArray(spec.surfaces) || !spec.surfaces.length || spec.surfaces.some(surface => !surfaces.includes(surface)) || new Set(spec.surfaces).size !== spec.surfaces.length || !['customer', 'job'].includes(spec.scope)) problem(`jobber finding ${code} is invalid`);
+  for (const code of JOBBER_FINDINGS) if (!Object.hasOwn(findings, code)) problem(`jobber finding ${code} is missing`);
+  const markers = plain(jobber.ghlAppMarkers) ? jobber.ghlAppMarkers : {};
+  const marked = [list(markers.sources, TAG, 'jobber.ghlAppMarkers.sources'), list(markers.tags, TAG, 'jobber.ghlAppMarkers.tags'), list(markers.createdBySourceIds, /^[A-Za-z0-9_-]{1,120}$/, 'jobber.ghlAppMarkers.createdBySourceIds')];
+  if (!marked.some(values => values.length)) problem('jobber.ghlAppMarkers needs at least one marker');
   return problems;
 }
 

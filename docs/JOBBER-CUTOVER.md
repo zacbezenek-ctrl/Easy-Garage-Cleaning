@@ -63,6 +63,7 @@ Status values:
 | Team roles and permissions | Business access for owner and managers, centralized identity (P1-02), server-owned records locked out of browser writes (SEC-A), server-only Hub audit log and two-step confirmations (SEC-B). | available (hard-coded managers). Data-driven roles: planned (SEC-12) |
 | Payroll | Gusto sync of approved timecards. | available. Payroll CSV and overtime: in progress (P1-03) |
 | Jobber data import | `scripts/jobber-import.mjs` (this document). | in progress (JOB-CUT) |
+| Running Jobber and the Hub side by side | The coexistence guard (section 10): a read-only check lists work, bills and messages that still start in Jobber after the cutover, and per-surface switches stop the Hub from doubling them. | available, off by default (FUN-32) |
 | QuickBooks sync | None. | out of scope. EGC does not run a two-way accounting sync. The bookkeeper takes the money CSV (M11) or Stripe reports |
 | GPS tracking | None. Only an optional location stamp on clock-in. | out of scope. No continuous crew tracking (privacy, battery, not needed at EGC's size). Clock-in location policy is P1-15 |
 
@@ -342,7 +343,10 @@ The dry run prints two fingerprints, and `--apply` needs both:
 - The Jobber app then needs the `read_jobs`, `read_scheduled_items` and `read_invoices` scopes, in addition to
   `read_clients`. Adding scopes needs a new consent and refresh token: remove `JOBBER_REFRESH_TOKEN` from Pages so
   `/api/jobber-auth` works again, re-authorize, then save the new token.
-- Keep **Refresh Token Rotation OFF**, so a local run does not orphan the deployed token.
+- Keep **Refresh Token Rotation OFF**, so a local run does not orphan the deployed token. If Jobber answers the grant
+  with a different refresh token (rotation on), the run stops before any query with `jobber_import_graphql_rotation_on`
+  (the guard check reports `jobber graphql_rotation_on`) and never prints the token: turn rotation off, re-authorize
+  through `/api/jobber-auth` and update `JOBBER_REFRESH_TOKEN` in Pages and in the local shell.
 - `JOBBER_GRAPHQL_VERSION` (read only by this script, from the local shell) overrides the API version header. The
   default is `2025-04-16`; the deployed `/api/jobber-clients` still pins `2023-11-15`.
 - The four queries and the filters the script sends were validated field by field against Jobber's published GraphQL
@@ -434,8 +438,9 @@ fall back to the raw-spelling lookups, and the HighLevel open-opportunity check 
 | When | What |
 | --- | --- |
 | T-7 days | Prerequisites merged and deployed (section 6). Owner checklist items for the Hub done. First CSV export and dry run. Clear conflicts in Jobber and in `resolutions.json`. Train crew on the Hub crew app and time clock. |
-| Day 0 (freeze) | Jobber becomes **read-only for new work**: no new clients, quotes, jobs or visits in Jobber. **Turn off Jobber's automatic client communications** (visit reminders, job follow-ups, quote and invoice follow-ups, review requests) so customers do not hear from both systems. Final export and dry run. **While apply runs, pause the writers the import cannot fence:** MCP and AI-assistant scheduling and customer-link actions, customer scheduling links, Dispatch changes and legacy Hub customer and job edits. Then apply with both fingerprints and resume. Dispatch schedules every imported job in the Hub, including every visit listed in `multiVisitJobs`. |
+| Day 0 (freeze) | Jobber becomes **read-only for new work**: no new clients, quotes, jobs or visits in Jobber. **Turn off Jobber's automatic client communications** (visit reminders, job follow-ups, quote and invoice follow-ups, review requests) so customers do not hear from both systems. Final export and dry run. **While apply runs, pause the writers the import cannot fence:** MCP and AI-assistant scheduling and customer-link actions, customer scheduling links, Dispatch changes and legacy Hub customer and job edits. Then apply with both fingerprints and resume. Dispatch schedules every imported job in the Hub, including every visit listed in `multiVisitJobs`. **Set the Jobber cutover day** (`jobber.cutoverDate`, section 10) to this date, deploy, run the guard check with `--save`, and turn on the guard switches you want. |
 | Days 1–14 | All new work is created, scheduled, clocked, invoiced and paid in the **Hub only**. Jobber is used only to look things up. Crew clock in and complete work only in the Hub. |
+| Daily during the parallel run | Run `node scripts/jobber-guard.mjs --save` (section 10) and clear every stray it lists: anything created in Jobber after the cutover, Jobber visits still on the calendar, Jobber payments to record in the Hub, and HighLevel records the Jobber app created. |
 | Weekly during the parallel run | Re-export and run a **dry run** with the same resolutions. Act on `changedSinceImport` and `imported_invoice_no_longer_open` by hand: a customer may have paid through an old Jobber invoice link. Apply again only if new stragglers appear. Reruns never duplicate or overwrite. |
 | Weekly during the parallel run | Export payroll from the Hub (Gusto sync; the P1-03 CSV once merged) and compare with what Jobber would have produced for the same week. |
 | End of the parallel run | Check the cutover condition (section 6). Cut over only when every item is ticked. Otherwise extend the parallel run, or roll back (section 7). |
@@ -477,6 +482,7 @@ Jobber is switched off only when **all** of these are true, in writing, signed o
   - every imported Jobber balance is either still open in both systems or recorded as paid in the Hub.
 - [ ] **Crew trained:** every active crew member has run at least one full day in the Hub crew app (clock in, job
   actions, photos, completion, clock out). Managers have used Dispatch and Hub finance for a full week.
+- [ ] **Jobber guard is clean:** the last saved `node scripts/jobber-guard.mjs --save` check (complete coverage, Jobber and HighLevel both read) lists no open stray, and every Jobber payment it lists is recorded in the Hub.
 - [ ] **Rollback plan rehearsed** (section 7), and the Jobber archive is saved to Drive.
 
 ## 7. Rollback plan
@@ -548,6 +554,138 @@ what happened in the Hub.
 - **Header names and the GraphQL queries were checked against Jobber's help center (through search results), its
   published GraphQL schema and a third-party spec of a real export, not against a live Jobber account.** The dry run's
   column report and `--mapping` cover label differences.
+
+## 10. Coexistence guard (FUN-32)
+
+While Jobber and the Hub run side by side (section 5), the guard finds work, bills and messages that still start in
+Jobber after the cutover, and can stop the Hub from doubling them. It **reads** Jobber and HighLevel and never writes to
+either. **Everything is off by default:** until a cutover day is set and a switch is turned on, the Hub behaves exactly as
+before.
+
+The code is `functions/_lib/jobber-guard.js` (rules, readers, holds), `scripts/jobber-guard.mjs` (the check),
+`functions/api/jobber-guard.js` (`GET /api/jobber-guard`, owners and managers) and the shared read-only Jobber client
+`functions/_lib/jobber-graphql.js`. Tests: `tests/jobber-guard.test.mjs` and `tests/jobber-guard-enforcement.test.mjs`.
+
+### 10.1 Set the cutover day
+
+1. The cutover day is `jobber.cutoverDate` in `functions/_data/funnel-definitions.data.json`, a Denver date such as
+   `"2026-10-05"`. It is `null` until you decide. It is separate from `eventIntegrity.cutoverDate`, the funnel's data
+   cutover (FUN-02/03/33).
+2. Edit that one value, run `node scripts/funnel-definitions.mjs --write`, commit and deploy. The check and every
+   switch use the deployed value; the day starts at midnight in Denver.
+3. Before you commit to a day, preview what the guard would find with `--since` (a preview is never saved).
+
+### 10.2 Run the check
+
+It runs on the same trusted machine as the import, with `FIREBASE_SERVICE_ACCOUNT_JSON`, `JOBBER_CLIENT_ID`,
+`JOBBER_CLIENT_SECRET`, `JOBBER_REFRESH_TOKEN`, `HIGHLEVEL_API_KEY` and `HIGHLEVEL_LOCATION_ID` in the local shell. The
+Jobber app needs read access to requests, jobs, scheduled items (visits), invoices and payments. If you authorized it
+only for the import, add those read scopes and re-consent as in section 4 ("GraphQL source"); a missing scope shows as
+`jobber graphql_failed` in the check's sources. The check uses the same refresh token as the deployed
+`/api/jobber-requests` and `/api/jobber-clients`, so Refresh Token Rotation must stay off; if Jobber returns a new
+refresh token, the check stops before any query and reports `jobber graphql_rotation_on` (section 4).
+
+```sh
+node scripts/jobber-guard.mjs --since 2026-10-05       # preview a cutover day; writes nothing
+node scripts/jobber-guard.mjs                           # check against jobber.cutoverDate; writes nothing
+node scripts/jobber-guard.mjs --report guard.json       # also write the report file (mode 0600)
+node scripts/jobber-guard.mjs --save                    # store the check for the switches (jobberGuard/latest)
+node scripts/jobber-guard.mjs --without-ghl --save      # HighLevel skipped on purpose (recorded as skipped)
+```
+
+- The report is PII-masked (initials, last four phone digits, first email letter). It prints to stdout; a one-line
+  summary goes to stderr.
+- `--save` stores only a **complete** check: Jobber, the Hub and HighLevel all read (or HighLevel skipped on purpose).
+  If a source cannot be read, nothing is saved and the last saved check stays in force. Each save also writes a
+  `jobberGuardRuns/<runId>` summary. Both collections are server-only.
+- Owners and managers can read the cutover day, each switch and the last saved check at `GET /api/jobber-guard`
+  (`stale: true` once the check is a week old or was made for another cutover day; `inForce: false` when it was made
+  for another cutover day, so no switch uses it). There is no Hub screen yet.
+
+### 10.3 What it finds
+
+| Finding | Meaning | What to do | Can hold |
+| --- | --- | --- | --- |
+| `jobber_request_after_cutover` | A Jobber request (a walkthrough booked in Jobber) created on or after the cutover | Book it in the Hub, then archive it in Jobber | nothing (report only) |
+| `jobber_job_after_cutover` | A Jobber job created on or after the cutover | Create or confirm the work in Dispatch, then close the Jobber job | messaging |
+| `jobber_visit_after_cutover` | Jobber visits still on the calendar on or after the cutover, one finding per Jobber job with the count and first and last day. This includes imported jobs whose Jobber visits were never removed and recurring Jobber jobs that keep generating visits | Make sure each visit is scheduled in the Hub, then remove the visits from Jobber | messaging |
+| `jobber_invoice_after_cutover` | A Jobber invoice created on or after the cutover; open while unpaid in Jobber | Bill only from the Hub: delete an unpaid Jobber invoice; record a Jobber payment in Hub finance | billing, messaging |
+| `jobber_payment_after_cutover` | A payment entered in Jobber on or after the cutover | Record it in Hub finance so the Hub never bills it again | nothing (report only) |
+| `jobber_imported_balance_changed` | An imported opening balance (`jobber_invoice_*`) that Jobber now shows paid, bad debt or with another balance; open while the Hub balance is still open | Record the payment in Hub finance, or correct the balance | billing (that job only) |
+| `ghl_contact_from_jobber`, `ghl_opportunity_from_jobber` | A HighLevel contact or opportunity added on or after the cutover by the Jobber app | Uninstall the Official Jobber Integration (section 8) and check which HighLevel workflows fired | nothing (report only) |
+
+Each finding is matched to a Hub customer by the imported Jobber client id, then the HighLevel contact id, then a unique
+phone, then a unique email. A stray that matches no customer, or several, is listed as `none` or `ambiguous` and never
+holds anything. **A match on phone or email alone is listed (`phone` or `email`) but never holds anything:** a phone or
+email is often shared (a spouse, a landlord, a property manager), and it must not block another Hub customer's bills or
+reminders. Check those by hand. Only a match on the imported Jobber client id, the HighLevel contact id or the imported
+balance itself can hold. A messaging hold also needs Jobber to be able to message that client: a client with Jobber
+reminders (or invoice follow-ups) switched off carries no messaging risk for that finding.
+
+### 10.4 The switches (one per surface)
+
+Set each in Cloudflare Pages → Settings → Environment variables, then redeploy. Only the exact value `true` turns a
+switch on; delete the variable (or set anything else) to turn it off. A switch acts only once the cutover day is set and
+reached.
+
+| Surface | Variable | On | Off (default) |
+| --- | --- | --- | --- |
+| Booking | `EGC_JOBBER_GUARD_BOOKING` | `/api/crew-hook` refuses `game_plan` (`CREW_HOOK_JOBBER_RETIRED`), the Zap branch that creates a Jobber job. The walkthrough handoff still saves in the Hub. This switch needs no saved check. It is defense in depth only (see below). | Game plans reach the Zap as today; Jobber strays are only reported. |
+| Billing | `EGC_JOBBER_GUARD_BILLING` | While the saved check shows an open Jobber invoice for the customer (or a Jobber-settled imported balance for the job), `/api/money` refuses `invoice.issue` (`money_jobber_billing_hold`, listing the Jobber numbers), and the messaging cron holds that customer's deposit and payment reminders (`jobber_guard_billing` in messaging holds). | No billing holds. |
+| Messaging | `EGC_JOBBER_GUARD_MESSAGING` | While the saved check shows open Jobber work or an open Jobber invoice that Jobber may message the customer about, the messaging cron holds that customer's automatic reminders: day-before, deposit, payment and estimate-expiring (`jobber_guard_messaging`). | No messaging holds. |
+
+- **The booking switch is defense in depth for old cached crew pages.** No page in the repository sends `game_plan` to
+  `/api/crew-hook` any more: the walkthrough game plan goes through `/api/walkthrough-handoff` and `/api/highlevel`, and
+  `crew/postjob.html` sends only `review_request` there. The switch only stops a phone still running an old cached
+  crew page. **The real protection against double booking is section 8:** disable the Zap branch "game_plan → Create
+  Job in Jobber" and uninstall the Official Jobber Integration in HighLevel. Work booked in Jobber itself (requests, jobs,
+  visits) and HighLevel records the Jobber app creates are only reported by the check, never blocked.
+- **A hold never cancels or changes Hub work and never sends anything.** The Hub stays the source of truth: the guard
+  never refuses a Hub booking because of a Jobber record. It stops the Hub feeding Jobber, stops the Hub billing twice,
+  and holds the Hub's automatic reminders while Jobber may be messaging the same customer.
+- **To release a hold,** clear the stray in Jobber (close the job, remove the visits, delete the unpaid invoice), record
+  Jobber payments in the Hub, then save a new check. A held reminder is tried again on later ticks while it is still
+  due.
+- If the saved check cannot be read while a switch is on, `invoice.issue` fails with a retry message and the cron holds
+  the guarded reminders as `jobber_guard_unavailable`. With no saved check yet, nothing is held.
+- **If you move the cutover day,** the saved check (made for the old day) stops holding anything as soon as the new day
+  is deployed; `GET /api/jobber-guard` shows it with `inForce: false`. Run `node scripts/jobber-guard.mjs --save` right
+  after the deploy so the holds follow the new day. A check that is merely old (over a week) still holds and shows
+  `stale: true`: save a new one.
+- **The messaging switch and Day 0 can together silence a customer.** Jobber's per-client "receives reminders" flag
+  stays on when you turn Jobber's messages off for the whole account on Day 0, so the check still treats every imported
+  customer whose Jobber visits were not removed as one Jobber may message, and holds that customer's Hub day-before,
+  deposit, payment and estimate-expiring reminders. Turn on `EGC_JOBBER_GUARD_MESSAGING` only if Jobber's own messages
+  cannot be fully turned off, or only after the imported visits have been removed from Jobber (the check then lists no
+  `jobber_visit_after_cutover` for them). Held reminders appear in messaging holds as `jobber_guard_messaging` (and
+  `jobber_guard_billing` for the billing switch). A day-before reminder is due only on the day before the job, so one
+  held past that day is never sent: send it by hand if the customer still needs it.
+- Not covered: invoices issued from the legacy browser finance tools (used while `MONEY_API_ENABLED` is off), reminders
+  the legacy manager-page triggers still send before server messaging owns them, human-approved sends (the person
+  previews the message before sending it), and Jobber's own messages: turn those off in Jobber on Day 0.
+- Suggested order: disable the Zap branch and uninstall the Official Jobber Integration at Day 0 (section 8) and turn on
+  booking as a backstop; save a check; turn on billing once the first saved check looks right, and messaging only under
+  the condition above. Turn them off (or leave them) after Jobber is cancelled; with Jobber gone the check has nothing to find.
+
+### 10.5 HighLevel records the Jobber app creates
+
+`jobber.ghlAppMarkers` in the definitions says how the app's records are recognized: a source containing the word
+`jobber`, a `jobber` tag, or the creating app id in `createdBySourceIds` (empty until known). Open one contact the Jobber
+app created in HighLevel and check its Source and tags. If the app marks records differently, add the marker (lowercase
+words joined by hyphens) and run `node scripts/funnel-definitions.mjs --write`. The check reads contacts and
+opportunities newest first and stops at the first one added before the cutover; if HighLevel does not return them newest
+first, the check reports HighLevel as incomplete instead of guessing.
+
+### 10.6 Limits
+
+- The check runs when you run it. There is no nightly run yet (FUN-25 will schedule it) and no Hub screen yet (FUN-23).
+  Holds rest on the last saved check, so save a new one after clearing strays.
+- At most 1,000 findings are kept; a larger check is reported but not saved.
+- Mapping imported Jobber history into funnel events is FUN-04's backfill (funnel design section 1, A22); the guard
+  does not write funnel events.
+- The Jobber queries and filters were validated field by field against Jobber's published GraphQL schema, and the
+  HighLevel reads follow the requests the Hub and platform already make. Neither has been run against the live accounts:
+  start with a preview (`--since`).
 
 ## Sources
 
