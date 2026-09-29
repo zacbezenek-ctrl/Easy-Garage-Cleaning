@@ -1,8 +1,8 @@
-import { and, asc, eq, gte, lt } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, lt } from "drizzle-orm";
 import { schema } from "@egc/database";
 import { API_SOURCES, CONFIG_CURSOR, parsePublishedConfiguration, RESTATEMENT_DAYS, SOURCES, type PublishedConfiguration } from "./config.js";
 import { addDays, dateRange, daysBetween, DENVER, denverDateReceivesDay, minDate, validDate, zonedDate } from "./dates.js";
-import { sourceHealth } from "./health.js";
+import { CURSOR_SUFFIXES, cursorKey, sourceHealth } from "./health.js";
 import { leadgenRetentionFloor } from "./plan.js";
 import { requireSpendOwner, SpendLedgerError, type Queryable, type SpendActor } from "./ledger.js";
 
@@ -20,6 +20,10 @@ export interface CoverageInput {
   entries: EntryRecord[]; entriesComplete: boolean; leadForms: LeadFormDay[]; cursors: ReadonlyMap<string, string>;
 }
 export const MAX_RANGE_DAYS = 400;
+/** Every sync_cursors key coverage reads, by exact key. A key range such as
+ * ['ad_spend:', 'ad_spend;') depends on the database collation: under en_US it matches none
+ * of these keys, so a connected platform read as unknown. */
+export const COVERAGE_CURSOR_KEYS: readonly string[] = [CONFIG_CURSOR, ...SOURCES.flatMap(source => CURSOR_SUFFIXES.map(suffix => cursorKey(source, suffix)))];
 const ENTRY_LIMIT = 5000, GAP_LIMIT = 200;
 const unique = (values: string[]) => [...new Set(values)].sort();
 
@@ -153,7 +157,7 @@ export async function readSpendCoverage(tx: Queryable, actor: SpendActor, range:
     .where(and(eq(e.workspaceId, actor.workspace), eq(e.status, "active"))).orderBy(asc(e.firstDate), asc(e.id)).limit(ENTRY_LIMIT + 1);
   const leadForms = await tx.select({ pageId: l.pageId, formId: l.formId, formName: l.formName, denverDate: l.denverDate, leadCount: l.leadCount }).from(l)
     .where(and(gte(l.denverDate, range.from), lt(l.denverDate, end)));
-  const cursors = new Map((await tx.select().from(c).where(and(gte(c.key, "ad_spend:"), lt(c.key, "ad_spend;")))).map(row => [row.key, row.cursor ?? ""]));
+  const cursors = new Map((await tx.select().from(c).where(inArray(c.key, [...COVERAGE_CURSOR_KEYS]))).map(row => [row.key, row.cursor ?? ""]));
   const report = computeSpendCoverage({ from: range.from, to: end, now, configuration: parsePublishedConfiguration(cursors.get(CONFIG_CURSOR)), syncDays,
     entries: entries.slice(0, ENTRY_LIMIT), entriesComplete: entries.length <= ENTRY_LIMIT, leadForms, cursors });
   return { ok: true, ...report, period: { from: range.from, to: end, requestedTo: range.to, timeZone: DENVER, inProgress: end > today } };

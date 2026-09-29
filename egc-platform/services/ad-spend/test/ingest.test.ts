@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { adSpendConfig, CONFIG_CURSOR, parsePublishedConfiguration } from "../src/config.js";
+import { COVERAGE_CURSOR_KEYS } from "../src/coverage.js";
 import { syncAdSpend } from "../src/ingest.js";
 import { ProviderFailure, type SpendProvider, type SpendReport } from "../src/provider.js";
 import { ENABLED_ENV, fixtureFetcher, IDS, SECRETS } from "./fixtures/router.mjs";
@@ -46,6 +47,8 @@ describe("ad spend ingestion orchestration", () => {
     }
     const cursorText = [...store.cursors.values()].join("\n");
     for (const secret of Object.values(SECRETS)) expect(cursorText).not.toContain(secret);
+    // Coverage reads the cursors by exact key: every key the sync writes must be one it reads.
+    expect([...store.cursors.keys()].filter(key => !COVERAGE_CURSOR_KEYS.includes(key))).toEqual([]);
   });
   it("settles a day on the first pull after it leaves the window and flags restatements", async () => {
     const store = memoryStore(), time = clock(NOW), totals: Record<string, number> = { "2026-09-19": 1000, "2026-09-20": 2000 };
@@ -79,6 +82,7 @@ describe("ad spend ingestion orchestration", () => {
     expect(JSON.parse(store.cursors.get("ad_spend:meta_ads:last_failure")!)).toEqual({ at: NOW.toISOString(), code: "meta_rate_limited", accountId: "222", httpStatus: 400 });
     expect(store.cursors.has("ad_spend:meta_ads:last_success")).toBe(false);
     expect(day(store, "meta_ads", "111", "2026-09-22")).toBeDefined();
+    expect([...store.cursors.keys()].filter(key => !COVERAGE_CURSOR_KEYS.includes(key))).toEqual([]);
   });
   it("never persists raw exception text and never stores a half-validated report", async () => {
     const store = memoryStore(), secret = `postgres://synthetic:${SECRETS.meta}@db.invalid`;

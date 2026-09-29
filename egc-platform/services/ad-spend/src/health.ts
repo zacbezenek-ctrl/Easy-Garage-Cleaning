@@ -1,6 +1,7 @@
 import type { AdSource, PublishedConfiguration } from "./config.js";
 
-export type CursorSuffix = "last_attempt" | "last_success" | "last_failure" | "last_run";
+export const CURSOR_SUFFIXES = ["last_attempt", "last_success", "last_failure", "last_run"] as const;
+export type CursorSuffix = typeof CURSOR_SUFFIXES[number];
 export const cursorKey = (source: AdSource, suffix: CursorSuffix) => `ad_spend:${source}:${suffix}`;
 export const HEALTH_STALE_MS = 3 * 3_600_000;
 const CODE = /^[a-z][a-z0-9_]{2,60}$/, ACCOUNT = /^[A-Za-z0-9_-]{1,64}$/;

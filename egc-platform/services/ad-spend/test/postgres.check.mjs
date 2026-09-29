@@ -40,7 +40,8 @@ const sync = (options = {}) => syncAdSpend({config: adSpendConfig(ENABLED_ENV), 
 
 beforeEach(async () => {
   await db.execute(sql`truncate ad_spend_daily, ad_sync_days, meta_leadgen_daily, spend_entries`);
-  await db.execute(sql`delete from sync_cursors where key >= 'ad_spend:' and key < 'ad_spend;'`);
+  // A prefix match, not a key range: range order depends on the database collation (CI's is en_US).
+  await db.execute(sql`delete from sync_cursors where starts_with(key, 'ad_spend:')`);
   await db.execute(sql`delete from operation_requests where actor_id in ('synthetic-owner','synthetic-manager')`);
 });
 after(async () => { globalThis.fetch = originalFetch; await db.$client.end(); });
