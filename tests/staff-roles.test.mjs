@@ -15,8 +15,11 @@ import { staffDirectoryHandlers } from '../functions/api/staff-directory.js';
 import { vaultFirestore, staffEnv, cookieFor, seedAccount, login, jsonRequest, PASSWORD } from './helpers/vault-fixture.mjs';
 
 const MANAGER = ['dispatch.write', 'time.approve', 'customer.send', 'followups.own', 'quotes.author', 'mcp.write', 'b2b.manage'];
-const dispatcher = session => { try { requireDispatcher(session); return true; } catch { return false; } };
-// Today's hard-coded checks, independent of staff-roles.js.
+// Today's hard-coded checks, independent of staff-roles.js. requireDispatcher now
+// delegates to can(session, 'dispatch.write'), so the dispatcher rule is written out
+// here and requireDispatcher is checked against it below.
+const dispatcher = session => hasBusinessAccess(session) && ['owner', 'manager'].includes(session.role);
+const requiresDispatcher = session => { try { requireDispatcher(session); return true; } catch { return false; } };
 const legacy = (session, capability) => OWNER_CAPABILITIES.includes(capability) ? isHubOwner(session) : capability === 'dispatch.write' ? dispatcher(session) : hasBusinessAccess(session);
 
 test('capability matrix: roles map only to known capabilities and owner-only capabilities stay with the owner role', () => {
@@ -52,6 +55,7 @@ test('with EGC_STAFF_ROLE_PERMISSIONS off, can() reproduces today\'s access for 
     for (const session of sessions) {
       for (const capability of STAFF_CAPABILITIES) assert.equal(can(session, capability, { ...env, ...flags }), legacy(session, capability), `${session.user} ${capability} ${JSON.stringify(flags)}`);
       assert.equal(capabilityMode(session, { ...env, ...flags }), 'legacy');
+      assert.equal(requiresDispatcher(session), dispatcher(session), `requireDispatcher without env is the legacy rule for ${session.user}`);
     }
   }
   const caps = Object.fromEntries(sessions.map(session => [session.user, staffCapabilities(session, env)]));

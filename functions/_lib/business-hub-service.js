@@ -308,7 +308,7 @@ export function createBusinessHandler({ store, getStaff, finance, needsReview, p
   async function snapshot(ctx) {
     const scoped = scopedContext(ctx), links = scoped.account.projects.filter(p => p.active !== false);
     const jobs = await store.jobs(links.map(p => p.jobId));
-    const projects = links.map(link => { const job = jobs.get(link.jobId); return projectView(scoped.account, link, job, job ? finance(job) : {}, job ? needsReview(job) : false); });
+    const at = now(), projects = links.map(link => { const job = jobs.get(link.jobId); return projectView(scoped.account, link, job, job ? finance(job) : {}, job ? needsReview(job) : false, at); });
     let view = scopedAccountView(ctx.account, ctx.member, projects, { ...ctx, now: now() });
     if (ctx.staff) view.inviteDelivery = { email: emailInvites };
     for (const fn of decorate) view = (await fn(view, scoped, jobs)) ?? view;

@@ -17,6 +17,9 @@
   // outcomes: the server may have committed, so the request is kept unchanged.
   const refused = error => /^confirm_token_/.test(error?.code || '') || error?.status >= 400 && error.status < 500 && !KEEP.has(error.status);
   const conflict = error => /_revision_conflict$/.test(error.code || '');
+  // A refused save names each owner dispatch rule (or overlapping work) that
+  // stopped it (details.conflicts), as the Hub's shift pickup does.
+  const refusal = (data, fallback) => [data?.error || fallback, ...[...new Set((Array.isArray(data?.details?.conflicts) ? data.details.conflicts : []).filter(row => row && row.code !== 'legacy_blocked_day' && typeof row.message === 'string' && row.message.trim()).map(row => row.message.trim()))].slice(0, 3)].join(' ');
   const canonical = value => Array.isArray(value) ? `[${value.map(canonical).join(',')}]` : value && typeof value === 'object' ? `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonical(value[key])}`).join(',')}}` : JSON.stringify(value ?? null);
   const sameDraft = (a, b) => canonical(JSON.parse(JSON.stringify(a ?? null))) === canonical(JSON.parse(JSON.stringify(b ?? null)));
   // The customer details a /api/customer-resolve request carries. Its requestId is
@@ -68,7 +71,7 @@
       try { data = await response.json(); } catch { data = null; }
       // A 2xx whose body is unreadable or not a success may still have committed.
       if (response.ok && data?.ok !== true) throw Object.assign(new Error('The server\'s answer could not be read. Your request is kept; retry it unchanged.'), { status: response.status, unknown: true, code: '' });
-      if (!response.ok) throw Object.assign(new Error(data?.error || 'The quote could not be verified. Retry without changing it.'), { status: response.status || 0, code: data?.code || '' });
+      if (!response.ok) throw Object.assign(new Error(refusal(data, 'The quote could not be verified. Retry without changing it.')), { status: response.status || 0, code: data?.code || '' });
       return data;
     }
     async function actor() { const user = await d.actor(); if (!user) throw Object.assign(new Error('Sign in to the Employee Hub before saving.'), { status: 401 }); return user; }

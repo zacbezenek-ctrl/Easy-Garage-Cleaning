@@ -37,6 +37,17 @@ test('changed signed content cannot overwrite an unresolved request; original re
  const f=fixture();f.lose();await assert.rejects(f.client.save());f.p.quote.total=2000;await assert.rejects(f.client.save(),e=>e.code==='handoff_original_request_required');
  const r=await f.client.save(true);assert.equal(r.pending.body.plan.quote.total,1000);assert.equal(f.calls.at(-1).body.plan.quote.total,1000);
 });
+test('only a dispatch conflict releases the frozen request; its message names each rule, and any other refusal keeps the original',async()=>{
+ const f=fixture(),fetch=f.deps.fetch;let answer=null;
+ f.deps.fetch=async(url,options={})=>url==='/api/walkthrough-handoff'&&answer?(f.calls.push({url,body:JSON.parse(options.body)}),reply(answer.body,answer.status)):fetch(url,options);
+ answer={status:409,body:{ok:false,code:'dispatch_conflict',error:'This change conflicts with scheduled work.',details:{conflicts:[{code:'skill_missing',message:'No assigned employee is qualified for Shelving install.'},{code:'skill_missing',message:'No assigned employee is qualified for Shelving install.'},{code:'legacy_blocked_day',message:'A blocked day.'}]}}};
+ await assert.rejects(factory(f.deps).save(),e=>e.refused===true&&e.message==='This change conflicts with scheduled work. No assigned employee is qualified for Shelving install.');
+ assert.equal(f.records.size,0,'nothing was saved, so the corrected plan is sent as a new request');
+ answer={status:409,body:{ok:false,code:'handoff_changed_since_save',error:'The earlier save succeeded, but this job has since changed.'}};
+ await assert.rejects(factory(f.deps).save(),e=>e.refused===undefined&&e.code==='handoff_changed_since_save');
+ assert.equal(f.records.size,1,'a refusal that may follow a save keeps the original request');
+ f.p.quote.total=2000;await assert.rejects(factory(f.deps).save(),e=>e.code==='handoff_original_request_required');
+});
 test('simultaneous clicks share one in-flight save and cannot race duplicate preparation',async()=>{
  const f=fixture(),a=f.client.save(),b=f.client.save();assert.equal(a,b);await a;assert.equal(f.calls.filter(x=>x.url==='/api/walkthrough-handoff').length,1);
 });

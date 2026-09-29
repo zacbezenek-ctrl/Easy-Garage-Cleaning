@@ -8,13 +8,18 @@ import { can, capabilityMode } from './staff-roles.js';
 // or for an account without stored roles, this is exactly requireDispatcher, so
 // today's access is unchanged. Being a quote author never grants dispatch:
 // crew assignment and every /api/dispatch action still require requireDispatcher.
+// dispatcher (the full rule rows, the roster and crew assignment in a signed
+// handoff, and unmasked customers in customer-resolve) follows the same
+// dispatch.write as /api/dispatch: with the flag on, an owner or manager whose
+// stored roles lack it (a manager lowered to ['sales']) is a quote author who is
+// not a dispatcher. Every caller passes the handler's env.
 const fail = (code, message, status) => Object.assign(new Error(message), { code, status });
 const signed = session => Boolean(session) && typeof session === 'object' && typeof session.user === 'string' && Boolean(session.user.trim());
 
 export const isDispatcher = session => signed(session) && hasBusinessAccess(session) && ['owner', 'manager'].includes(session.role);
 
 export function quoteAuthorAccess(session, env = {}) {
-  const dispatcher = isDispatcher(session);
+  const dispatcher = isDispatcher(session) && (capabilityMode(session, env) !== 'staff_roles' || can(session, 'dispatch.write', env));
   const author = dispatcher || signed(session) && capabilityMode(session, env) === 'staff_roles' && can(session, 'quotes.author', env);
   return { dispatcher, author };
 }

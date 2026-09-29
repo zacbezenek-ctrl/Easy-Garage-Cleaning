@@ -631,8 +631,8 @@ reached.
 | Surface | Variable | On | Off (default) |
 | --- | --- | --- | --- |
 | Booking | `EGC_JOBBER_GUARD_BOOKING` | `/api/crew-hook` refuses `game_plan` (`CREW_HOOK_JOBBER_RETIRED`), the Zap branch that creates a Jobber job. The walkthrough handoff still saves in the Hub. This switch needs no saved check. It is defense in depth only (see below). | Game plans reach the Zap as today; Jobber strays are only reported. |
-| Billing | `EGC_JOBBER_GUARD_BILLING` | While the saved check shows an open Jobber invoice for the customer (or a Jobber-settled imported balance for the job), `/api/money` refuses `invoice.issue` (`money_jobber_billing_hold`, listing the Jobber numbers), and the messaging cron holds that customer's deposit and payment reminders (`jobber_guard_billing` in messaging holds). | No billing holds. |
-| Messaging | `EGC_JOBBER_GUARD_MESSAGING` | While the saved check shows open Jobber work or an open Jobber invoice that Jobber may message the customer about, the messaging cron holds that customer's automatic reminders: day-before, deposit, payment and estimate-expiring (`jobber_guard_messaging`). | No messaging holds. |
+| Billing | `EGC_JOBBER_GUARD_BILLING` | While the saved check shows an open Jobber invoice for the customer (or a Jobber-settled imported balance for the job), `/api/money` and the Hub Invoicing batch refuse `invoice.issue` (`money_jobber_billing_hold`, listing the Jobber numbers), and the messaging cron holds that customer's deposit reminders (`jobber_guard_billing` in messaging holds). | No billing holds. |
+| Messaging | `EGC_JOBBER_GUARD_MESSAGING` | While the saved check shows open Jobber work or an open Jobber invoice that Jobber may message the customer about, the messaging cron holds that customer's automatic reminders: day-before, deposit and estimate-expiring (`jobber_guard_messaging`). | No messaging holds. |
 
 - **The booking switch is defense in depth for old cached crew pages.** No page in the repository sends `game_plan` to
   `/api/crew-hook` any more: the walkthrough game plan goes through `/api/walkthrough-handoff` and `/api/highlevel`, and
@@ -655,7 +655,7 @@ reached.
 - **The messaging switch and Day 0 can together silence a customer.** Jobber's per-client "receives reminders" flag
   stays on when you turn Jobber's messages off for the whole account on Day 0, so the check still treats every imported
   customer whose Jobber visits were not removed as one Jobber may message, and holds that customer's Hub day-before,
-  deposit, payment and estimate-expiring reminders. Turn on `EGC_JOBBER_GUARD_MESSAGING` only if Jobber's own messages
+  deposit and estimate-expiring reminders. Turn on `EGC_JOBBER_GUARD_MESSAGING` only if Jobber's own messages
   cannot be fully turned off, or only after the imported visits have been removed from Jobber (the check then lists no
   `jobber_visit_after_cutover` for them). Held reminders appear in messaging holds as `jobber_guard_messaging` (and
   `jobber_guard_billing` for the billing switch). A day-before reminder is due only on the day before the job, so one

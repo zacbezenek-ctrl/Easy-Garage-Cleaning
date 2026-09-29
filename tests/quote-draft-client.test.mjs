@@ -281,3 +281,18 @@ test('a resolve id the server already holds for other details is dropped after i
   assert.equal(saved.result.job.customerId, 'customer-2');
   assert.deepEqual(plain(f.resolves.map(call => [call.requestId === kept, call.status])), [[true, 200], [true, 409], [false, 200]]);
 });
+
+test('a refused quote save names each dispatch rule or overlap that stopped it, and the next save is a new request', async () => {
+  const f = fixture(), fetch = f.deps.fetch;
+  let refuseOnce = true;
+  f.deps.fetch = async (url, options = {}) => {
+    if (url !== '/api/quote-draft' || !refuseOnce) return fetch(url, options);
+    refuseOnce = false; f.calls.push({ url, body: JSON.parse(options.body) });
+    return reply({ ok: false, code: 'dispatch_conflict', error: 'This change conflicts with scheduled work.', details: { conflicts: [{ code: 'crew_size_short', message: 'Requires 2 crew members; 0 assigned.' }, { code: 'crew_size_short', message: 'Requires 2 crew members; 0 assigned.' }, { code: 'legacy_blocked_day', message: 'A blocked day.' }] } }, 409);
+  };
+  const client = createClient(f.deps);
+  await assert.rejects(client.save(f.draft()), error => error.code === 'dispatch_conflict' && error.message === 'This change conflicts with scheduled work. Requires 2 crew members; 0 assigned.');
+  const saved = await client.save(f.draft()), sent = f.calls.filter(call => call.url === '/api/quote-draft');
+  assert.equal(saved.retrying, false);
+  assert.notEqual(sent[1].body.requestId, sent[0].body.requestId, 'the refused request was released');
+});

@@ -102,6 +102,18 @@ test('employee lanes place each segment on its own crew, stack overlaps and shad
   assert.deepEqual(filtered.lanes.map(entry => entry.id), ['employee:crew2']);
 });
 
+test('owner decision F19: an office-only owner gets a lane only for work already assigned to them, and it takes no drops', () => {
+  const office = [...roster, { id: 'zacb', name: 'Synthetic Owner', role: 'owner', fieldWork: false }, { id: 'mgr1', name: 'Field Manager', role: 'manager' }];
+  const data = { roster: office, crews, availability: [], warnings: [] };
+  const free = cal.laneModel(data, [job()], DAY);
+  assert.deepEqual(free.lanes.map(entry => entry.id), ['employee:crew1', 'employee:crew2', 'employee:lead1', 'employee:mgr1'], 'no lane to drop new work on the office-only owner');
+  const assigned = cal.laneModel(data, [job(), job({ id: 'j5', customer: 'Synthetic Owner Visit', time: '12:00', endTime: '13:00', assignedCrew: ['zacb'], crewLead: 'zacb', crewId: null })], DAY);
+  assert.deepEqual(lane(assigned, 'employee:zacb').items.map(item => item.key), ['j5'], 'their existing work stays visible');
+  assert.equal(lane(assigned, 'employee:zacb').label, 'Synthetic Owner');
+  assert.equal(Boolean(lane(assigned, 'employee:zacb').drop), false); assert.equal(lane(assigned, 'employee:mgr1').drop, true);
+  assert.deepEqual(cal.laneModel(data, [], DAY, { employee: 'zacb' }).lanes.map(entry => entry.id), ['employee:zacb'], 'a board filtered to them still shows their lane');
+});
+
 test('crew lanes group work by saved crew, keep individual assignments apart and name who is unavailable', () => {
   const data = { roster, crews, availability: [{ id: 'a1', employeeId: 'lead1', date: DAY, allDay: false, time: '09:00', endTime: '11:30', reason: '', status: 'active' }], warnings: [] };
   const jobs = [job(), job({ id: 'j2', time: '13:00', endTime: '15:00', assignedCrew: [], crewLead: null, crewId: null }), split(), job({ id: 'j3', time: '16:00', endTime: '17:00', assignedCrew: ['crew2'], crewLead: 'crew2', crewId: 'old' })];

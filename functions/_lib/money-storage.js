@@ -1,6 +1,7 @@
 import { firestoreFetch } from './firebase-service-account.js';
 import { encodeFirestoreFields } from './firestore-job.js';
 import { dispatchStorage } from './dispatch-storage.js';
+import { funnelPaymentEventsEnabled } from './payment-events.js';
 
 const ROOT = 'projects/egcw-1ec83/databases/(default)/documents';
 const BASE = `https://firestore.googleapis.com/v1/${ROOT}`;
@@ -11,7 +12,7 @@ const failure = (code, message, status = 503) => Object.assign(new Error(message
 export const MONEY_JOB_FIELDS = Object.freeze(['type', 'recordType', 'customer', 'customerId', 'date', 'status', 'pipelineStatus', 'serviceType', 'scopeSummary', 'notify',
   'total', 'priceQuoted', 'lockedTotal', 'rate', 'estimate', 'customerApproval', 'quoteStatus', 'invoice', 'payment', 'deposit', 'approvedChangeTotal', 'customerDecisions', 'changeOrders',
   'giftWallet.redemptions', 'refunds', 'completedAt', 'postJobChecklist.completedAt', 'postJobProgress.standardItems', 'costs',
-  'paymentLedger', 'paymentLedgerStatus', 'paymentLedgerIssues', 'paymentLedgerVersion', 'moneyRequestId']);
+  'paymentLedger', 'paymentLedgerStatus', 'paymentLedgerIssues', 'paymentLedgerVersion', 'moneyRequestId', 'isTest', 'test', 'businessAccountId', 'customerAutomationEnabled']);
 
 /**
  * Money store over the same Firestore REST contract as dispatchStorage:
@@ -24,7 +25,13 @@ export const MONEY_JOB_FIELDS = Object.freeze(['type', 'recordType', 'customer',
  * money_outcome_unknown: retry the same requestId, whose receipt is the proof.
  * A write's optional `remove` lists field paths (e.g. 'costs.labor') deleted in the same write, and its optional
  * `mask` lists the field paths it sets (e.g. ['costs.labor'], leaving the rest of costs as it is) in place of its
- * patch's top-level keys. A write with `delete: true` deletes the document under its revision precondition.
+ * patch's top-level keys. A write with `delete: true` deletes the document under its revision precondition
+ * (exists:true without one). A write with `delete: true, exists: false` and no revision is a precondition only
+ * (FUN-33: the tipped booking's "no review yet"): a no-op while the document does not exist, and it fails the
+ * whole commit (money_revision_conflict, nothing applied) once it does.
+ * paymentEvents (FUNNEL_PAYMENT_EVENTS_ENABLED and MONEY_API_ENABLED) tells
+ * mutateMoney to add the FUN-33 funnel events and paid-in-full fields to its
+ * commit, and the money reads to add their FUN-33 fields.
  */
 export function moneyStorage(env, fetcher = firestoreFetch) {
   const base = dispatchStorage(env, fetcher);
@@ -33,6 +40,7 @@ export function moneyStorage(env, fetcher = firestoreFetch) {
     catch (error) { throw failure(error?.code === 'dispatch_storage_incomplete' ? 'money_storage_incomplete' : 'money_storage_unavailable', message); }
   }
   return {
+    paymentEvents: funnelPaymentEventsEnabled(env),
     read: (collection, id) => mapped(() => base.read(collection, id), 'The job money record could not be loaded. Retry.'),
     // A caller that needs a few more job fields (tip allocation reads the assigned crew) names them; the mask still applies.
     jobs: (extra = []) => mapped(() => base.jobRecords([...new Set([...MONEY_JOB_FIELDS, ...extra])]), 'The complete job money records could not be loaded. Retry.'),
@@ -41,7 +49,7 @@ export function moneyStorage(env, fetcher = firestoreFetch) {
     laborCopies: () => mapped(() => base.jobRecords(['type', 'recordType', 'costs.labor', 'costs.laborCents', 'costs.recordedAt', 'costs.recordedBy', 'laborCost']), 'The complete job records could not be loaded. Retry.'),
     async commit(writes) {
       let response;
-      const body = JSON.stringify({ writes: writes.map(write => write.delete === true ? { delete: `${ROOT}/${write.collection}/${write.id}`, currentDocument: write.revision ? { updateTime: write.revision } : { exists: true } } : {
+      const body = JSON.stringify({ writes: writes.map(write => write.delete === true ? { delete: `${ROOT}/${write.collection}/${write.id}`, currentDocument: write.revision ? { updateTime: write.revision } : write.exists === false ? { exists: false } : { exists: true } } : {
         update: { name: `${ROOT}/${write.collection}/${write.id}`, fields: encodeFirestoreFields(write.patch) },
         updateMask: { fieldPaths: [...(write.mask || Object.keys(write.patch)), ...(write.remove || [])] },
         currentDocument: write.revision ? { updateTime: write.revision } : { exists: write.exists === true },

@@ -129,8 +129,8 @@ export const prepaidOwnerLimitCents = env => ownerLimit(env?.PREPAID_CREDIT_OWNE
 export const lifecycleLimits = env => ({ courtesyOwnerLimitCents: courtesyOwnerLimitCents(env), prepaidOwnerLimitCents: prepaidOwnerLimitCents(env) });
 export const lifecycleOwner = session => isHubOwner(session) && session.role === 'owner';
 
-export function requireLifecycleManager(session) {
-  try { requireDispatcher(session); }
+export function requireLifecycleManager(session, env) {
+  try { requireDispatcher(session, env); }
   catch (error) {
     if (error.status === 401) throw fail('sign_in_required', 'Sign in to the Employee Hub to manage customer credits and requests.', 401);
     throw fail('forbidden', 'Only an operations manager or owner can manage customer credits and requests.', 403);

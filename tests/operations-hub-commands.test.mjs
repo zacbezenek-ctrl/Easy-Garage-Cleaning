@@ -409,12 +409,14 @@ test('the signed portal endpoint serves hub.dispatch.overview from Firestore sto
   t.mock.method(globalThis,'fetch',async input=>{
     const url=new URL(String(input));assert.equal(url.hostname,'firestore.googleapis.com');assert.equal(url.searchParams.get('key'),'firebase-test-hub-bridge');seen.push(url.pathname.split('/').pop());
     if(!available)return new Response('{}',{status:503});
+    // No owner dispatch settings are saved (dispatch-settings.js): the defaults apply.
+    if(url.pathname.endsWith('/dispatchSettings/current'))return new Response('{}',{status:404});
     const documents=url.pathname.endsWith('/jobs')?[doc('jobs','job-a',{type:'job',customerId:'c1',customer:'Synthetic Customer',address:'100 Synthetic Street',date:'2026-09-23',time:'08:00',endTime:'10:00',assignedCrew:['crew1'],jobInstructions:'Synthetic scope',status:'scheduled'})]:[];
     return new Response(JSON.stringify({documents}),{status:200,headers:{'Content-Type':'application/json'}});
   });
   const result=await signed(manager,{command:'hub.dispatch.overview',view:'schedule'});
   assert.equal(result.status,200);assert.deepEqual(result.body.jobs.map(job=>[job.id,job.revision,job.startAt]),[['job-a','2026-09-21T18:00:00.000000Z','2026-09-23T14:00:00.000Z']]);
-  assert.deepEqual(result.body.coverage,{complete:true,asOf:NOW});assert.deepEqual(seen.sort(),['dispatchResources','jobs']);
+  assert.deepEqual(result.body.coverage,{complete:true,asOf:NOW});assert.deepEqual(seen.sort(),['current','dispatchResources','jobs']);
   available=false;
   assert.deepEqual(await signed(manager,{command:'hub.dispatch.overview',view:'schedule'}),{status:503,body:{error:'dispatch_storage_unavailable'}});
 });

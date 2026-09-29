@@ -117,9 +117,16 @@ try {
   await page.getByRole('button', { name: 'Resume work', exact: true }).click(); await settled();
   assert.equal(store.get('jobs/browser-job').fieldExecution.jobTime.current.kind, 'work');
   loseReply = (url, method, body) => url.pathname === '/api/employee-hub' && method === 'POST' && Boolean(JSON.parse(body).data?.jobAction);
+  // The switch whose reply was lost waits on the phone only until the service worker's Background Sync replays it,
+  // about 0.1 s later, too briefly for polling locators to be sure to see it. The page is watched from before the tap
+  // for the moment it shows the switch awaiting confirmation in the outbox card and in the time card at once.
+  await page.evaluate(() => {
+    const shown = () => [...document.querySelectorAll('#outbox-card h2')].some(heading => heading.textContent.trim() === 'Action awaiting confirmation') && [...document.querySelectorAll('#employee-job-time strong')].some(label => label.textContent.trim() === 'Time awaiting confirmation');
+    const observer = new MutationObserver(() => { if (shown()) { observer.disconnect(); window.egcLostSwitchShown = true; } });
+    observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+  });
   await page.getByRole('button', { name: 'Start my work time here', exact: true }).click();
-  await page.getByRole('heading', { name: 'Action awaiting confirmation', exact: true }).waitFor();
-  await page.getByText('Time awaiting confirmation', { exact: true }).waitFor();
+  await page.waitForFunction(() => window.egcLostSwitchShown === true);
   assert.equal(loseReply, null, 'the job-time switch was committed before its reply was lost');
   await page.reload();
   await page.getByRole('button', { name: 'Recording work here', exact: true }).waitFor();
@@ -278,7 +285,12 @@ try {
   const reopened = await page.evaluate(async () => (await (await fetch('/api/employee-hub?view=own-job-time')).json()).entry);
   assert.match(reopened.id, /^time-crew\.one-/); assert.equal(reopened.deviceTime, false, 'a fresh device time records server time while EGC_OFFLINE_CLOCK_ENABLED is off');
   const reopenedCard = await page.evaluate(async id => (await (await fetch('/api/employee-hub')).json()).collections.timeEntries.find(entry => entry.id === id), reopened.id);
-  assert.equal(reopenedCard.locationTracking, true); assert.equal(reopenedCard.locationStatus, 'unavailable', 'Today’s work does not claim continuous location sharing');
+  // Owner decision CLOCK-IN ONLY (CREW-TIME): the crew app reads one position at clock-in and nothing tracks it after, so
+  // the card keeps that one fix under the crew app's job_page_single_fix status, with tracking off and no trail.
+  assert.equal(reopenedCard.locationTracking, false, 'clock-in only: nothing keeps sharing location during the shift');
+  assert.equal(reopenedCard.locationStatus, 'job_page_single_fix', 'the crew app clock-in records its single fix');
+  assert.deepEqual([reopenedCard.lastLocation?.lat, reopenedCard.lastLocation?.lng, reopenedCard.lastLocation?.accuracy], [40.58, -105.08, 8], 'the one clock-in position is stored');
+  assert.equal(reopenedCard.locationTrail, undefined, 'a clock-in-only shift keeps no location trail');
   assert.equal(await page.locator('#outbox-card .pending-action').count(), 0);
   const cachedUrls = await page.evaluate(async () => { const urls = []; for (const name of await caches.keys()) for (const request of await (await caches.open(name)).keys()) urls.push(request.url); return urls; });
   assert.ok(cachedUrls.some(url => new URL(url).pathname === '/crew/job.html'), 'the job shell is cached for offline reloads');

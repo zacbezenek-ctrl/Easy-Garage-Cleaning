@@ -27,7 +27,7 @@ class NativeBookingBrowserTests(unittest.TestCase):
  @classmethod
  def tearDownClass(cls):cls.browser.close();cls.pw.stop();cls.server.shutdown();cls.server.server_close()
  def setUp(self):
-  self.context=self.browser.new_context(viewport={'width':1360,'height':1000},timezone_id='Asia/Tokyo');self.page=self.context.new_page();self.page.set_default_timeout(6000);self.errors=[];self.calls=[];self.receipts={};self.jobs=[];self.lost=False;self.failure=None;self.plan_checks=0;self.page.on('pageerror',lambda e:self.errors.append(str(e)));self.page.route('**/*',self.route)
+  self.context=self.browser.new_context(viewport={'width':1360,'height':1000},timezone_id='Asia/Tokyo');self.page=self.context.new_page();self.page.set_default_timeout(6000);self.errors=[];self.calls=[];self.receipts={};self.jobs=[];self.lost=False;self.failure=None;self.plan_checks=0;self.roster=ROSTER;self.page.on('pageerror',lambda e:self.errors.append(str(e)));self.page.route('**/*',self.route)
  def tearDown(self):self.assertEqual(self.errors,[]);self.context.close()
  def route(self,route):
   req=route.request;url=urlparse(req.url)
@@ -38,7 +38,7 @@ class NativeBookingBrowserTests(unittest.TestCase):
   if url.path=='/api/recurring-plans':self.plan_checks+=1;send({'ok':True,'enabled':False});return
   if url.path!='/api/dispatch':send({'ok':False,'error':'Synthetic provider unavailable'},503);return
   if req.method=='GET':
-   args=parse_qs(url.query);found=next((row for row in self.jobs if row['id']==args.get('jobId',[''])[0]),None);send({'ok':True,'jobs':self.jobs,'job':found,'roster':ROSTER,'crews':[],'vehicles':[],'warnings':[]});return
+   args=parse_qs(url.query);found=next((row for row in self.jobs if row['id']==args.get('jobId',[''])[0]),None);send({'ok':True,'jobs':self.jobs,'job':found,'roster':self.roster,'crews':[],'vehicles':[],'warnings':[]});return
   body=req.post_data_json;self.calls.append(copy.deepcopy(body))
   if body['requestId'] in self.receipts:send(self.receipts[body['requestId']]);return
   if self.failure:send({'ok':False,'error':'Crew unavailable','code':'dispatch_conflict'},409);return
@@ -67,6 +67,14 @@ class NativeBookingBrowserTests(unittest.TestCase):
   self.legacy();self.page.locator('#job-recurrence').select_option('weekly');self.review();self.lost=True;self.page.locator('#btn-next').click();expect(self.page.locator('#btn-next')).to_have_text('Retry original booking');expect(self.page.locator('#btn-back')).to_be_disabled();self.page.locator('#btn-next').click();expect(self.page.locator('#booking-overlay')).not_to_have_class(re.compile('open'));self.assertEqual(len(self.jobs),9);self.assertEqual(self.calls[0],self.calls[1]);self.assertEqual(self.plan_checks,0,'walkthrough series never consult recurring plans')
  def test_phone_quote_preserves_range_as_notes(self):
   self.legacy();self.page.evaluate('(c)=>{closeBooking();openOnCall();oc.customer=c;oc.step=3;renderOcStep()}',CUSTOMER);self.page.locator('#oc-time').fill('13:00');self.page.locator('#oc-endtime').fill('14:00');self.page.locator('#oncall-crew').get_by_label('Lead One',exact=True).check();self.page.locator('#oc-email').uncheck();self.page.locator('#oc-next').click();expect(self.page.locator('#oncall-overlay')).not_to_have_class(re.compile('open'));self.assertEqual(self.calls[0]['changes']['assignedCrew'],['lead.one']);self.assertIn('$400–$600',self.calls[0]['changes']['notes']);self.assertNotIn('priceQuoted',self.calls[0]['changes'])
+ def test_office_only_staff_leave_both_booking_pickers_unless_already_assigned(self):
+  # F19 with the staff directory on: an office-only owner or manager row carries fieldWork:false.
+  self.roster=ROSTER+[{'id':'office.owner','name':'Office Owner','role':'owner','fieldWork':False}]
+  self.legacy();crew=self.page.locator('#booking-crew');expect(crew.get_by_label('Crew One',exact=True)).to_be_visible();expect(crew.get_by_label('Lead One',exact=True)).to_be_visible();expect(crew.get_by_label('Office Owner',exact=True)).to_have_count(0)
+  self.page.evaluate('(c)=>{closeBooking();openOnCall();oc.customer=c;oc.step=3;renderOcStep()}',CUSTOMER);oncall=self.page.locator('#oncall-crew');expect(oncall.get_by_label('Lead One',exact=True)).to_be_visible();expect(oncall.get_by_label('Office Owner',exact=True)).to_have_count(0)
+  # A job the office-only owner is already on keeps them listed (and checked) so the edit can keep or remove them.
+  job={'id':'existing','revision':'r1','type':'job','customerId':CUSTOMER['id'],'customer':CUSTOMER['name'],'date':'2026-09-22','time':'08:00','endDate':'2026-09-22','endTime':'10:00','assignedCrew':['office.owner'],'status':'scheduled'};self.jobs=[job]
+  self.page.goto(self.url+'/legacy');self.page.evaluate('(p)=>{window.syntheticCustomer=p.c;openBooking(null,p.j)}',{'c':CUSTOMER,'j':job});crew=self.page.locator('#booking-crew');expect(crew.get_by_label('Office Owner',exact=True)).to_be_checked();expect(crew.get_by_label('Crew One',exact=True)).not_to_be_checked()
  def test_phone_size_review_and_save(self):
   self.page.set_viewport_size({'width':390,'height':844});self.legacy();self.review();self.assertLessEqual(self.page.evaluate('document.documentElement.scrollWidth'),390);self.page.locator('#btn-next').click();expect(self.page.locator('#booking-overlay')).not_to_have_class(re.compile('open'))
 if __name__=='__main__':unittest.main(verbosity=2)

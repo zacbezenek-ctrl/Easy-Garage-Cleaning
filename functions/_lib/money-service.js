@@ -9,6 +9,7 @@ import { customerPaymentNeedsReview } from './customer-payments.js';
 import { billedChangeOrders, voidChangeOrder } from './change-orders.js';
 import { hubRecordEligibility } from './funnel-definitions.js';
 import { JOB_LABOR_COSTS, laborCostVisible, laborOnJob, laborRecordPatch, legacyJobLabor, legacyLaborMove, validLaborCents } from './job-labor-private.js';
+import { cashPayment, funnelTimeAccepted, moneyEventWrites, paidInFullState } from './payment-events.js';
 
 /**
  * M3 server-authoritative money mutations for one job:
@@ -31,6 +32,12 @@ import { JOB_LABOR_COSTS, laborCostVisible, laborOnJob, laborRecordPatch, legacy
  * estimate.mark_sent only records that a person sent the estimate, and
  * change_order.void stops billing a change the customer approved in the portal.
  * All math and record shapes come from money-core/quote-model (integer cents).
+ * With store.paymentEvents (FUNNEL_PAYMENT_EVENTS_ENABLED and MONEY_API_ENABLED)
+ * the same commit also carries the FUN-33 funnel events (payment-events.js):
+ * payment.received for offline money and the job.paid_in_full /
+ * job.balance_reopened crossing any action causes, keyed by the requestId, with
+ * paidInFullAt/paidInFullRevision; the DTO then adds paidInFull and
+ * payments[].nonCashCredit. Unset, commits and responses are exactly as before.
  */
 export const MONEY_ACTIONS = Object.freeze(['estimate.save', 'estimate.record_approval', 'estimate.mark_sent', 'deposit.record_offline', 'payment.record_offline', 'invoice.issue', 'invoice.void', 'change_order.void', 'costs.save']);
 export const OFFLINE_METHODS = Object.freeze(['cash', 'check', 'card_terminal', 'bank_transfer', 'other']);
@@ -50,6 +57,8 @@ const FIELDS = {
   'invoice.issue': ['dueDate', 'customerReference'], 'invoice.void': ['reason'], 'change_order.void': ['changeOrderId', 'reason'], 'costs.save': ['costs', 'expectedLaborRevision'],
 };
 const FINAL = new Set(['money_idempotency_conflict', 'money_changed_since_operation', 'money_actor_changed']);
+// Why an action can reopen a paid-in-full balance (reasonCodes.balanceReopened).
+const REOPEN_REASONS = { 'estimate.save': 'estimate_revised', 'estimate.record_approval': 'resigned' };
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const TOTAL_KEYS = ['quoteCents', 'approvedChangeCents', 'totalCents', 'paidCents', 'tipCents', 'appliedCents', 'balanceCents', 'overpaidCents', 'depositRequiredCents', 'depositPaidCents', 'depositDueCents', 'dueNowCents', 'purpose', 'complete', 'issues'];
 const plain = value => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -81,8 +90,8 @@ export const moneyJob = job => Boolean(job) && safeId(job.id) && hubRecordEligib
  */
 export const paymentNeedsVerification = job => customerPaymentNeedsReview(job) || job?.payment?.verified !== true && Array.isArray(job?.payment?.stripeSessions) && job.payment.stripeSessions.length > 0;
 
-export function requireMoneyManager(session) {
-  try { requireDispatcher(session); }
+export function requireMoneyManager(session, env) {
+  try { requireDispatcher(session, env); }
   catch (error) {
     if (error.status === 401) throw fail('sign_in_required', 'Sign in to the Employee Hub to manage job money.', 401);
     throw fail('forbidden', 'Only an operations manager or owner can manage job money.', 403);
@@ -230,7 +239,7 @@ const recordOffline = kind => async ({ store, job, input, actor, now }) => {
   if (!OFFLINE_METHODS.includes(input.method)) throw fail('invalid_payment_method', `Choose how the money was received: ${OFFLINE_METHODS.join(', ')}.`);
   const reference = text(input.reference, 'A receipt, check or transaction reference', 160, { required: true, min: 2 });
   const receivedAt = input.receivedAt === undefined ? now : instant(input.receivedAt);
-  if (!receivedAt || Date.parse(receivedAt) > Date.parse(now) + 300000) throw fail('invalid_received_at', 'The time received must be a valid time that is not in the future.');
+  if (!receivedAt || Date.parse(receivedAt) > Date.parse(now) + 300000 || store.paymentEvents === true && !funnelTimeAccepted(receivedAt)) throw fail('invalid_received_at', 'The time received must be a valid time that is not in the future.');
   const payment = plain(job.payment) ? job.payment : {};
   // Recording more money must never verify an earlier unverified entry.
   if (paymentNeedsVerification(job)) throw fail('payment_needs_review', 'An earlier payment on this job is recorded but not verified, so no more money can be recorded yet. The owner confirms it against the check, bank or Stripe record and marks it verified on the job (the payment ledger backfill lists these jobs under needsVerification).', 409);
@@ -261,7 +270,8 @@ const recordOffline = kind => async ({ store, job, input, actor, now }) => {
     // A prepaid job stays on the schedule; only finished work closes as paid.
     if (balanceCents === 0 && (['completed', 'invoiced'].includes(stage(job)) || job.completedAt)) Object.assign(patch, { status: 'paid', pipelineStatus: 'paid' });
   }
-  return { patch, writes, mirrors, warnings, reason: `${usd(amount)} ${input.method} ${reference}` };
+  // FUN-33: a staff-entered time received is attested; without one the server time stands.
+  return { patch, writes, mirrors, warnings, reason: `${usd(amount)} ${input.method} ${reference}`, payment: { amountCents: amount, kind: deposit ? 'deposit' : 'balance', method: input.method }, clock: input.receivedAt === undefined ? {} : { clockSource: 'attested', occurredAt: receivedAt } };
 };
 
 const ISSUE_MESSAGES = { money_line_items_mismatch: 'The saved lines did not add up to the quote, so the invoice shows one line for the quoted amount.', money_line_items_incomplete: 'Some saved lines could not be read, so the invoice shows one line for the quoted amount.' };
@@ -392,7 +402,9 @@ function invoicePreview(job, totals) {
   } catch { return null; }
 }
 
-const projectEntry = row => ({ id: row.id, kind: row.kind, amountCents: row.amountCents, method: row.method, processorRef: row.processorRef || '', at: row.at, by: row.by, verified: row.verified, source: row.source });
+// nonCashCredit (FUN-33, with payment events on) marks money applied to the balance that was never
+// collected as money: gift-credit redemptions. Card, ACH, check and cash rows are all false.
+const projectEntry = (row, events) => ({ id: row.id, kind: row.kind, amountCents: row.amountCents, method: row.method, ...(events ? { nonCashCredit: !cashPayment(row.method) } : {}), processorRef: row.processorRef || '', at: row.at, by: row.by, verified: row.verified, source: row.source });
 
 /**
  * The costs a viewer gets (JOB-COST-PRIVACY): labor from the private record, else the job's legacy copy; for a
@@ -411,8 +423,13 @@ export async function moneyLaborView(store, actor, jobId) {
   return laborCostVisible(actor) ? { laborRecord: await store.read(JOB_LABOR_COSTS, jobId) } : { laborHidden: true };
 }
 
-/** Business-manager DTO for one job's money (integer cents; an allowlist, never the raw job). */
-export function moneyProjection(job, now, { laborRecord = null, laborHidden = false } = {}) {
+/**
+ * Business-manager DTO for one job's money (integer cents; an allowlist, never the raw job).
+ * `paymentEvents` (the store's FUNNEL_PAYMENT_EVENTS_ENABLED) adds the FUN-33 read fields:
+ * payments[].nonCashCredit and paidInFull; unset, the DTO is exactly as before.
+ */
+export function moneyProjection(job, now, { laborRecord = null, laborHidden = false, paymentEvents = false } = {}) {
+  const events = paymentEvents === true;
   const totals = customerMoneyTotals(job), estimate = plain(job.estimate) ? job.estimate : null, invoice = plain(job.invoice) ? job.invoice : null;
   const lines = legacyLineItems(job, { record: 'estimate', surface: 'invoice', totalCents: totals.quoteCents }), ledger = reconcileLedger(job);
   return {
@@ -427,12 +444,14 @@ export function moneyProjection(job, now, { laborRecord = null, laborHidden = fa
     invoicePreview: invoicePreview(job, totals),
     // Changes the customer approved in the portal that are billed on top of the quote (a manager can void one).
     changeOrders: billedChangeOrders(job).map(line => ({ id: line.id, name: str(line.name, 160) || '', totalCents: line.totalCents, approvedAt: str(line.approvedAt, 40), approvedBy: str(line.approvedBy, 120), backfilled: line.backfilled === true })),
-    payments: ledger.entries.map(projectEntry), ledger: { stored: ledger.stored, complete: ledger.complete, legacyCents: ledger.legacyCents, unreconciledCents: ledger.unreconciledCents, issues: ledger.issues },
+    payments: ledger.entries.map(row => projectEntry(row, events)), ledger: { stored: ledger.stored, complete: ledger.complete, legacyCents: ledger.legacyCents, unreconciledCents: ledger.unreconciledCents, issues: ledger.issues },
+    // Computed from the ledger balance, never from status; the saved crossing when one was recorded.
+    ...(events ? { paidInFull: { paid: paidInFullState(job).paid, at: str(job.paidInFullAt, 40), revision: Number.isSafeInteger(job.paidInFullRevision) ? job.paidInFullRevision : null } } : {}),
     costs: costsProjection(job, laborRecord, laborHidden),
   };
 }
 
-const result = async (store, actor, input, job, warnings, replayed, now) => ({ ok: true, authority: 'employee_hub', requestId: input.requestId, action: input.action, replayed, job: moneyProjection(job, now, await moneyLaborView(store, actor, job.id)), warnings });
+const result = async (store, actor, input, job, warnings, replayed, now) => ({ ok: true, authority: 'employee_hub', requestId: input.requestId, action: input.action, replayed, job: moneyProjection(job, now, { ...await moneyLaborView(store, actor, job.id), paymentEvents: store.paymentEvents === true }), warnings });
 
 // True when a new invoice number this plan reserves is now held by another job.
 async function numberTaken(store, writes, job) {
@@ -447,6 +466,11 @@ async function execute(store, actor, input, now, fingerprint, receiptId, via, re
   if (job.revision !== input.expectedRevision) throw fail('revision_conflict', 'This job changed after you opened it. Refresh and review the latest money details.', 409);
   const plan = await PLANS[input.action]({ store, job, input, actor, now, today: denverToday(new Date(now)) });
   const patch = { ...plan.patch, moneyRequestId: input.requestId, moneyUpdatedAt: now, updatedAt: now }, warnings = plan.warnings || [], owner = plan.visibility === 'owner';
+  let events = [];
+  if (store.paymentEvents === true) {
+    const recorded = await moneyEventWrites({ before: job, after: { ...job, ...patch }, now, idempotencyKey: { kind: 'requestId', value: input.requestId }, actor: { id: actor.user, kind: 'human', role: actor.role }, via, source: { collection: MONEY_RECEIPTS, id: receiptId }, clock: plan.clock, payment: plan.payment, reason: REOPEN_REASONS[input.action] });
+    Object.assign(patch, recorded.patch); events = recorded.writes;
+  }
   const audit = auditWrite({ actor: { id: actor.user, kind: 'human', role: actor.role }, via, action: `money.${input.action}`, entity: { collection: 'jobs', id: job.id }, before: moneySnapshot(job, { costs: owner, laborCents: plan.labor?.before }), after: moneySnapshot({ ...job, ...patch }, { costs: owner, laborCents: plan.labor?.after }), requestId: input.requestId, reason: plan.reason ?? null, visibility: owner ? 'owner' : 'business', now });
   try {
     await store.commit([
@@ -454,6 +478,7 @@ async function execute(store, actor, input, now, fingerprint, receiptId, via, re
       ...(plan.writes || []),
       { collection: MONEY_RECEIPTS, id: receiptId, patch: { fingerprint, actorId: actor.user, action: input.action, jobId: job.id, requestId: input.requestId, via, auditId: audit.id, warnings, createdAt: now } },
       audit,
+      ...events,
     ]);
   } catch (error) {
     // Another job claimed the new invoice number after it was read; the job

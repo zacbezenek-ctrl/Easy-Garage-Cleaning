@@ -6,12 +6,20 @@ import { mutateTemplate, readTemplate } from '../functions/_lib/message-template
 import { env, owner, manager, crew, otherCrew, job, memoryStore, fakeGhl, clock, uuid, NOW } from './helpers/messaging-fixture.mjs';
 
 const ORIGIN = 'https://easygaragecleaning.com';
-async function fixture({ kinds = ['on_my_way', 'invoice_send'], jobs = { 'job-1': job(), 'job-2': job({ phone: '' }), 'job-3': job({ notify: false }) }, settings = {} } = {}) {
+// deposit_reminder is the manager-only billing kind here. It carries an owner-approved email wording, so the
+// email-only job-2 can be reached (a text needs a phone).
+async function fixture({ kinds = ['on_my_way', 'deposit_reminder'], email = ['deposit_reminder'], jobs = { 'job-1': job(), 'job-2': job({ phone: '' }), 'job-3': job({ notify: false }) }, settings = {} } = {}) {
   const rows = Object.fromEntries(Object.entries(jobs).map(([id, value]) => [`jobs/${id}`, value]));
   const store = memoryStore(rows), ghl = fakeGhl(), time = clock();
   for (const kind of kinds) {
     const state = await readTemplate(store, kind);
     await mutateTemplate(store, owner, { action: 'approve', requestId: uuid(), kind, expectedVersion: 1, version: 1, hash: state.versions[0].hash }, NOW);
+  }
+  for (const kind of email) {
+    const seed = await readTemplate(store, kind);
+    await mutateTemplate(store, manager, { action: 'save_draft', requestId: uuid(), kind, expectedVersion: seed.latestVersion, channel: 'Email', subject: 'Your Easy Garage Cleaning deposit', body: 'Hi {{firstName}},\n\nYour {{balance}} deposit for {{serviceDate}} can be paid securely here: {{payLink}}' }, NOW);
+    const drafted = await readTemplate(store, kind), version = drafted.versions.at(-1);
+    await mutateTemplate(store, owner, { action: 'approve', requestId: uuid(), kind, expectedVersion: drafted.latestVersion, version: version.version, hash: version.hash }, NOW);
   }
   const state = { viewer: owner };
   const handlers = messagesHandlers({
@@ -47,11 +55,11 @@ test('cross-site, foreign-origin, unauthenticated and malformed requests are rej
   assert.equal(response.headers.get('Cache-Control'), 'no-store'); assert.equal(response.headers.get('X-Content-Type-Options'), 'nosniff');
 });
 
-test('crew cannot preview or send invoices, and unassigned crew cannot send on-my-way', async () => {
+test('crew cannot preview or send billing reminders, and unassigned crew cannot send on-my-way', async () => {
   const f = await fixture();
   f.as(crew);
   for (const action of ['preview', 'send']) {
-    const response = await f.post({ action, requestId: uuid(), kind: 'invoice_send', jobId: 'job-1', confirmToken: 'x.y' });
+    const response = await f.post({ action, requestId: uuid(), kind: 'deposit_reminder', jobId: 'job-1', confirmToken: 'x.y' });
     assert.deepEqual([response.status, response.body.code], [403, 'messaging_forbidden'], action);
   }
   f.as(otherCrew);
@@ -96,11 +104,11 @@ test('batches are manager-only, capped at 10 and report partial failures per ite
   f.as(crew);
   assert.deepEqual(await f.post({ action: 'batch_preview', requestId: uuid(), items: [{ kind: 'on_my_way', jobId: 'job-1', overrides: { etaMinutes: 10 } }] }).then(r => [r.status, r.body.code]), [403, 'messaging_forbidden']);
   f.as(manager);
-  assert.deepEqual(await f.post({ action: 'batch_preview', requestId: uuid(), items: Array.from({ length: 11 }, () => ({ kind: 'invoice_send', jobId: 'job-1' })) }).then(r => [r.status, r.body.code]), [400, 'messaging_batch_too_large']);
+  assert.deepEqual(await f.post({ action: 'batch_preview', requestId: uuid(), items: Array.from({ length: 11 }, () => ({ kind: 'deposit_reminder', jobId: 'job-1' })) }).then(r => [r.status, r.body.code]), [400, 'messaging_batch_too_large']);
   assert.deepEqual(await f.post({ action: 'batch_preview', requestId: uuid(), items: [] }).then(r => [r.status, r.body.code]), [400, 'messaging_batch_invalid']);
-  assert.deepEqual(await f.post({ action: 'batch_preview', requestId: uuid(), kind: 'invoice_send', items: [{ kind: 'invoice_send', jobId: 'job-1' }] }).then(r => [r.status, r.body.code]), [400, 'messaging_batch_invalid']);
-  assert.deepEqual(await f.post({ action: 'batch_preview', requestId: uuid(), items: [{ kind: 'invoice_send', jobId: 'job-1', phone: '9705550000' }] }).then(r => [r.status, r.body.code]), [400, 'messaging_batch_invalid'], 'a browser-supplied destination is never accepted');
-  const items = [{ kind: 'invoice_send', jobId: 'job-1' }, { kind: 'invoice_send', jobId: 'job-2' }, { kind: 'invoice_send', jobId: 'job-3' }, { kind: 'invoice_send', jobId: 'missing' }, { kind: 'review_request', jobId: 'job-1' }];
+  assert.deepEqual(await f.post({ action: 'batch_preview', requestId: uuid(), kind: 'deposit_reminder', items: [{ kind: 'deposit_reminder', jobId: 'job-1' }] }).then(r => [r.status, r.body.code]), [400, 'messaging_batch_invalid']);
+  assert.deepEqual(await f.post({ action: 'batch_preview', requestId: uuid(), items: [{ kind: 'deposit_reminder', jobId: 'job-1', phone: '9705550000' }] }).then(r => [r.status, r.body.code]), [400, 'messaging_batch_invalid'], 'a browser-supplied destination is never accepted');
+  const items = [{ kind: 'deposit_reminder', jobId: 'job-1' }, { kind: 'deposit_reminder', jobId: 'job-2' }, { kind: 'deposit_reminder', jobId: 'job-3' }, { kind: 'deposit_reminder', jobId: 'missing' }, { kind: 'review_request', jobId: 'job-1' }];
   const previews = await f.post({ action: 'batch_preview', requestId: uuid(), items });
   assert.equal(previews.status, 200);
   assert.deepEqual(previews.body.results.map(row => [row.index, row.ok, row.status || row.code]), [[0, true, 'ready'], [1, true, 'ready'], [2, true, 'suppressed'], [3, false, 'messaging_target_not_found'], [4, false, 'messaging_not_eligible']]);
@@ -138,7 +146,7 @@ test('messaging stays off by default: previews work but sends are refused', asyn
 });
 
 test('batch sends stop before a subrequest budget runs out and never strand a claim', async () => {
-  const items = ['job-1', 'job-2', 'job-1'].map(jobId => ({ kind: 'invoice_send', jobId }));
+  const items = ['job-1', 'job-2', 'job-1'].map(jobId => ({ kind: 'deposit_reminder', jobId }));
   // The default fits the Free plan's 50; values outside 30-9500 fall back to it.
   for (const [settings, attempted] of [[{}, 2], [{ EGC_MESSAGING_SUBREQUEST_BUDGET: '30' }, 1], [{ EGC_MESSAGING_SUBREQUEST_BUDGET: '12' }, 2], [{ EGC_MESSAGING_SUBREQUEST_BUDGET: '900' }, 3]]) {
     const f = await fixture({ settings });
@@ -161,11 +169,11 @@ test('batch sends stop before a subrequest budget runs out and never strand a cl
 test('status accepts the send key returned by a send', async () => {
   const f = await fixture();
   f.as(manager);
-  const preview = await f.post({ action: 'preview', requestId: uuid(), kind: 'invoice_send', jobId: 'job-1' });
-  const sent = await f.post({ action: 'send', requestId: uuid(), kind: 'invoice_send', jobId: 'job-1', confirmToken: preview.body.confirmToken });
+  const preview = await f.post({ action: 'preview', requestId: uuid(), kind: 'deposit_reminder', jobId: 'job-1' });
+  const sent = await f.post({ action: 'send', requestId: uuid(), kind: 'deposit_reminder', jobId: 'job-1', confirmToken: preview.body.confirmToken });
   assert.equal(sent.body.status, 'submitted');
-  f.store.edit('jobs/job-1', { invoice: { ...job().invoice, status: 'void' } });
-  const status = await f.post({ action: 'status', requestId: uuid(), kind: 'invoice_send', jobId: 'job-1', sendKey: sent.body.sendKey });
+  f.store.edit('jobs/job-1', { payment: { amount: 300, verified: true } });
+  const status = await f.post({ action: 'status', requestId: uuid(), kind: 'deposit_reminder', jobId: 'job-1', sendKey: sent.body.sendKey });
   assert.deepEqual([status.status, status.body.status, status.body.sendKey], [200, 'submitted', sent.body.sendKey]);
-  assert.deepEqual(await f.post({ action: 'preview', requestId: uuid(), kind: 'invoice_send', jobId: 'job-1', sendKey: sent.body.sendKey }).then(r => [r.status, r.body.code]), [400, 'messaging_request_invalid'], 'only status takes a send key');
+  assert.deepEqual(await f.post({ action: 'preview', requestId: uuid(), kind: 'deposit_reminder', jobId: 'job-1', sendKey: sent.body.sendKey }).then(r => [r.status, r.body.code]), [400, 'messaging_request_invalid'], 'only status takes a send key');
 });

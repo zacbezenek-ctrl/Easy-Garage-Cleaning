@@ -262,6 +262,40 @@ test('a material quote draft revision retires the live portal sale with deal.app
   assert.equal(f.writesTo('funnelEvents').length, 1);
 });
 
+// QUOTE-DRAFT x FUN-33 (merge): with the payment events on, a material quote draft revision records the paid-in-full
+// crossing it causes in the revision's own commit, as the Hub estimate editor does (money-service estimate.save).
+test('with FUN-33 payment events on, a material quote draft revision reopens a paid-in-full balance in its own commit, and pays it off again', async () => {
+  const EVENTS = { ...ENV, FUNNEL_PAYMENT_EVENTS_ENABLED: 'true', MONEY_API_ENABLED: 'true' };
+  const choose = tier => d => { d.line_items = lines().map(line => line.group ? { ...line, selected: line.tier === tier } : line); };
+  async function prepaid(env) {
+    const f = fixture(), created = await save(f, f.input(), owner, env), id = created.job.id;
+    await sendFlow(f, id, { env });
+    // The customer approved revision 1 ($1,798) and paid it in full by check before the work started.
+    Object.assign(f.rows.get(`jobs/${id}`), { customerApproval: { status: 'approved', approvedAt: LATER, approvedBy: 'Synthetic Customer', amount: 1798 }, deposit: { ...f.job(id).deposit, paidAmount: 899, verified: true },
+      payment: { amount: 1798, verified: true, method: 'check', reference: 'CHK-1', lastAmount: 1798, lastReceivedAt: LATER, recordedBy: 'zacb' }, paidInFullAt: LATER, paidInFullRevision: 1 });
+    return { f, id };
+  }
+  const { f, id } = await prepaid(EVENTS), raised = revise(f, id, choose('best'));
+  await save(f, raised, owner, EVENTS);
+  const receipt = raised.requestId.toLowerCase(), commit = f.calls.at(-1), [reopened] = commit.filter(write => write.collection === 'funnelEvents').map(write => write.patch);
+  assert.ok(commit.some(write => write.collection === QUOTE_DRAFT_RECEIPTS && write.id === receipt), 'in the same commit as the revision receipt');
+  assert.deepEqual([reopened.type, reopened.data, reopened.via, reopened.source, reopened.idempotencyKey, reopened.occurredAt, reopened.actor],
+    ['job.balance_reopened', { amountCents: 10000, estimateRevision: 2, reasonCode: 'estimate_revised' }, 'hub', { collection: QUOTE_DRAFT_RECEIPTS, id: receipt }, `requestId:${receipt}`, NOW, { id: 'zacb', kind: 'human', role: 'owner' }]);
+  assert.deepEqual([f.job(id).paidInFullAt, f.job(id).paidInFullRevision, f.job(id).balanceReopenedAt, f.job(id).balanceReopenedReason], [null, null, NOW, 'estimate_revised']);
+  // A change that is not material writes no crossing; a revision below what was paid pays the job off again at its revision.
+  await save(f, revise(f, id, d => { choose('best')(d); d.valid_until = '2026-10-12'; }), owner, EVENTS);
+  assert.equal(f.calls.at(-1).some(write => write.collection === 'funnelEvents'), false);
+  await save(f, revise(f, id, choose('good')), owner, EVENTS, LATER);
+  const [paid] = f.calls.at(-1).filter(write => write.collection === 'funnelEvents').map(write => write.patch);
+  assert.deepEqual([paid.type, paid.data, paid.occurredAt], ['job.paid_in_full', { amountCents: 159800, estimateRevision: 3 }, LATER]);
+  assert.deepEqual([f.job(id).paidInFullAt, f.job(id).paidInFullRevision, f.job(id).payment.amount], [LATER, 3, 1798], 'payments are never touched');
+  // Flag off: the same revisions commit exactly as before, with no crossing and no crossing fields.
+  const off = await prepaid(ENV);
+  await save(off.f, revise(off.f, off.id, choose('best')));
+  assert.deepEqual([off.f.writesTo('funnelEvents').length, off.f.job(off.id).paidInFullAt, 'balanceReopenedAt' in off.f.job(off.id)], [0, LATER, false]);
+  assert.deepEqual(off.f.calls.at(-1).map(write => write.collection), ['jobs', 'customers', QUOTE_DRAFT_RECEIPTS, 'hub_audit']);
+});
+
 test('checkout expiry only touches an open session for other terms and reports what it could not close', async () => {
   const f = fixture(), job = { id: 'j1', estimate: { amount: 100, revision: 2 }, customerApproval: { status: 'approved' } };
   const calls = [], stripe = async path => { calls.push(path); return { status: 'expired' }; };
@@ -355,6 +389,23 @@ test('a sales author signs their unplaced quote draft into a scheduled job but c
   f.rows.set('jobs/other', { id: 'other', revision: 'or', type: 'job', status: 'unscheduled', pipelineStatus: 'unscheduled', customerId: 'c1', date: '', time: '', createdBy: 'tylerg' });
   await assert.rejects(prepareHandoff(f.store, sales, { jobId: 'other' }, { env: ROLES }), error => error.code === 'handoff_job_forbidden');
   assert.equal((await prepareHandoff(f.store, owner, { jobId: 'other' })).customer.id, 'c1');
+});
+
+test('with role permissions on, a manager lowered to sales drafts quotes as an author, not a dispatcher; with them off, as a dispatcher', async () => {
+  const lowered = { user: 'tylerg', role: 'manager', businessAccess: true, displayName: 'Synthetic Manager', staffRoles: ['sales'] };
+  const f = fixture(), open = (actor, query, env) => handoffHandlers({ session: async () => actor, storage: () => f.store }).get({ request: new Request(`https://easygaragecleaning.com/api/walkthrough-handoff?${query}`), env });
+  const drafts = actor => quoteDraftHandlers({ session: async () => actor, storage: () => f.store, now: () => new Date(NOW), delivery: () => ({ deliver: f.deliver }), stripe: () => null });
+  const saved = await drafts(lowered).post({ request: request('POST', { action: 'save', ...f.input() }), env: ROLES }), id = (await saved.json()).job.id;
+  assert.equal(saved.status, 200, 'a quote author');
+  const own = await (await open(lowered, `jobId=${id}`, ROLES)).json();
+  assert.deepEqual([own.jobId, own.customer.id, own.roster], [id, 'c1', []], 'its own draft, without the roster');
+  f.rows.set('jobs/other', { id: 'other', revision: 'or', type: 'job', status: 'unscheduled', pipelineStatus: 'unscheduled', customerId: 'c1', date: '', time: '', createdBy: 'zacb' });
+  const other = await open(lowered, 'jobId=other', ROLES);
+  assert.deepEqual([other.status, (await other.json()).code], [403, 'handoff_job_forbidden'], 'other jobs stay with Dispatch');
+  const legacy = await (await open(lowered, 'jobId=other', ENV)).json();
+  assert.deepEqual([legacy.jobId, legacy.roster.length], ['other', 2], 'flag off: a dispatcher, as today');
+  const crewOnly = await drafts({ ...lowered, staffRoles: ['crew'] }).post({ request: request('POST', { action: 'save', ...f.input() }), env: ROLES });
+  assert.deepEqual([crewOnly.status, (await crewOnly.json()).code], [403, 'quote_forbidden'], 'lowered to crew: no quote access');
 });
 
 test('drafting stops once work has started or the job is closed', async () => {

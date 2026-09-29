@@ -4,8 +4,11 @@
   // Dispatch clears a saved customer arrival window that no longer contains the
   // new start time; the person saving must see that warning.
   const arrivalNotice = warnings => (Array.isArray(warnings) ? warnings : []).filter(x => x?.code === 'arrival_window_reset').map(x => String(x.message || 'The saved arrival window was cleared. Review the arrival window the customer sees.')).join(' ');
+  // A refused save names each owner dispatch rule (or overlapping work) that
+  // stopped it, as the Hub's shift pickup does (employee-suite.js shiftRefusal).
+  const refusal = (data, fallback) => [data?.error || fallback, ...[...new Set((Array.isArray(data?.details?.conflicts) ? data.details.conflicts : []).filter(x => x && x.code !== 'legacy_blocked_day' && typeof x.message === 'string' && x.message.trim()).map(x => x.message.trim()))].slice(0, 3)].join(' ');
   function signedPlan(p) {
-    return { ...select(p, ['discovery','scope','logistics','internal_notes','client_checklists','signature','acceptance','terms_version','terms_accepted','photos','notes']),
+    return { ...select(p, ['discovery','scope','logistics','internal_notes','crew_brief','client_checklists','signature','acceptance','terms_version','terms_accepted','photos','notes']),
       client: select(p.client, ['name','phone','email','address','highlevel_contact_id']),
       quote: select(p.quote, ['title','total','deposit','job_date','start_time','end_time','estimated_duration_min','line_items','catalog_version','duration_override_reason']) };
   }
@@ -15,13 +18,33 @@
     let active = null;
     const key = (actor, source) => `egc-signed-handoff-v1:${actor}:${source || 'manual'}`;
     function read(k) { try { return JSON.parse(d.storage.getItem(k) || 'null'); } catch { throw new Error('The saved handoff request is unreadable. Review the existing job in Dispatch before saving again.'); } }
-    const identity = p => JSON.stringify({...p,client:{...p.client,highlevel_contact_id:undefined}});
+    // Requests Dispatch refused (nothing saved) and this browser released, shared by
+    // every tab through d.shared (localStorage): a duplicated tab still holding a copy
+    // of one drops it rather than offering to recover it after the owner's rules change.
+    const releasedKey = actor => `egc-signed-handoff-released-v1:${actor}`;
+    function released(actor) { try { const list = JSON.parse(d.shared?.getItem(releasedKey(actor)) || '[]'); return Array.isArray(list) ? list : []; } catch { return []; } }
+    function markReleased(actor, id) { try { d.shared?.setItem(releasedKey(actor), JSON.stringify([...released(actor).filter(x => x !== id), id].slice(-20))); } catch {} }
+    const releasedError = () => Object.assign(new Error('Dispatch refused that earlier signed save and nothing was saved, so it cannot be recovered. Review the plan and save it again.'), {code:'handoff_request_released',refused:true});
+    // A stale copy is removed from this tab; true when the request was released elsewhere.
+    function dropReleased(k, pending) {
+      if (!pending?.requestId || !released(pending.actor).includes(String(pending.requestId).toLowerCase())) return false;
+      if (read(k)?.requestId === pending.requestId) d.storage.removeItem(k);
+      return true;
+    }
+    // The manual handoffs (no source walkthrough) this browser saved, per actor, by customer
+    // and signature time, shared by every tab through d.shared: a duplicated tab that never
+    // learned the saved job revises it rather than creating a second job for the customer.
+    const jobsKey = actor => `egc-signed-handoff-jobs-v1:${actor}`;
+    function savedJobs(actor) { try { const list = JSON.parse(d.shared?.getItem(jobsKey(actor)) || '[]'); return Array.isArray(list) ? list.filter(x => x && typeof x === 'object') : []; } catch { return []; } }
+    function rememberJob(actor, entry) { try { d.shared?.setItem(jobsKey(actor), JSON.stringify([...savedJobs(actor).filter(x => x.customerId !== entry.customerId || x.acceptedAt !== entry.acceptedAt), entry].slice(-20))); } catch {} }
+    // crew_brief is internal_notes without prices, so a request frozen before it existed is the same signed version.
+    const identity = p => JSON.stringify({...p,crew_brief:undefined,client:{...p.client,highlevel_contact_id:undefined}});
     function remember(k, pending) { d.storage.setItem(k, JSON.stringify(pending)); }
     async function request(url, body) {
       const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),60000);
       let r;try{r = await d.fetch(url, body ? {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body),signal:controller.signal} : {cache:'no-store',signal:controller.signal});}finally{clearTimeout(timer);}
       const data = await r.json().catch(() => ({}));
-      if (!r.ok || data.ok !== true) throw Object.assign(new Error(data.error || 'The saved request could not be verified. Retry without changing it.'), {status:r.status,code:data.code});
+      if (!r.ok || data.ok !== true) throw Object.assign(new Error(refusal(data, 'The saved request could not be verified. Retry without changing it.')), {status:r.status,code:data.code});
       return data;
     }
     async function perform(recoverOriginal = false) {
@@ -29,6 +52,7 @@
       const source = d.source(), k = key(actor, source), currentPlan = signedPlan(d.plan());
       let pending = read(k);
       if (pending && pending.actor !== actor) throw new Error('This request belongs to another signed-in employee.');
+      if (dropReleased(k, pending)) { if (recoverOriginal) throw releasedError(); pending = null; }
       if (pending && !recoverOriginal && identity(pending.plan) !== identity(currentPlan)) {
         if (!pending.body) { d.storage.removeItem(k); pending = null; }
         else throw Object.assign(new Error('An earlier signed version has an unresolved or saved handoff. Recover that original save before submitting changes.'),{code:'handoff_original_request_required'});
@@ -49,15 +73,33 @@
           customerId=resolved.customer?.id;
         }
         if (!customerId) throw new Error('The canonical customer could not be verified.');
-        pending.body={actorId:actor,requestId:pending.requestId,customerId,sourceWalkthroughId:source,sourceRevision:prepared.sourceRevision || '',jobId:prepared.jobId || '',expectedRevision:prepared.expectedRevision || '',plan:pending.plan};
+        let jobId = prepared.jobId || '', expectedRevision = prepared.expectedRevision || '';
+        const signedAt = pending.plan.acceptance?.accepted_at, known = !source && !jobId && typeof signedAt === 'string' && signedAt && savedJobs(actor).find(x => x.customerId === customerId && x.acceptedAt === signedAt)?.jobId;
+        if (known) {
+          const saved = await request('/api/walkthrough-handoff?' + new URLSearchParams({jobId:String(known)}));
+          if (saved.viewer?.id !== actor || saved.jobId !== known || saved.customerId !== customerId) throw new Error('The job this signed walkthrough already saved could not be verified. Review Dispatch before saving again.');
+          jobId = saved.jobId; expectedRevision = saved.expectedRevision || '';
+        }
+        pending.body={actorId:actor,requestId:pending.requestId,customerId,sourceWalkthroughId:source,sourceRevision:prepared.sourceRevision || '',jobId,expectedRevision,plan:pending.plan};
         remember(k,pending);
       }
       if (await d.actor() !== actor) throw new Error('The signed-in account changed. Reopen the original account to recover this request.');
+      if (dropReleased(k, pending)) throw releasedError();
       // Re-read even a prior success: cancellation, changed evidence, and identity
       // changes must not be hidden by a success cached on this phone.
-      const result=await request('/api/walkthrough-handoff',pending.body);
+      let result;
+      try { result=await request('/api/walkthrough-handoff',pending.body); }
+      catch (error) {
+        // Dispatch refused this save for a schedule conflict or an owner rule, after the
+        // server found no saved copy of it: nothing was saved, so the frozen request is
+        // released and the corrected plan goes out as a new request. Every tab learns
+        // of the release, so none of them resends this request later.
+        if (error.status === 409 && error.code === 'dispatch_conflict') { markReleased(actor, String(pending.requestId).toLowerCase()); if (read(k)?.requestId === pending.requestId) d.storage.removeItem(k); error.refused = true; }
+        throw error;
+      }
       if (result.requestId !== pending.requestId || !result.job?.id || result.job.customerId !== pending.body.customerId) throw new Error('The saved job identity did not match the request. Review Dispatch before retrying.');
       pending.result=result;remember(k,pending);
+      if (!source && typeof pending.plan.acceptance?.accepted_at === 'string') rememberJob(actor, {customerId:result.job.customerId,acceptedAt:pending.plan.acceptance.accepted_at,jobId:result.job.id});
       d.accept(result,pending);
       return {result,pending,key:k,arrivalNotice:arrivalNotice(result.warnings)};
     }
@@ -82,7 +124,7 @@
   root.EGCWalkthroughHandoffClient=createClient;
   if (typeof S === 'undefined') return;
   const actor=async()=>{const user=await EGCHubAuth.session();return typeof user==='string'?user:user?.user || '';};
-  const client=createClient({storage:sessionStorage,fetch:(...args)=>EGCHubAuth.fetch(...args),actor,managerSync:()=>EGCHubAuth.canRunBusiness(),uuid:()=>crypto.randomUUID(),plan:()=>payload(),source:()=>S.sourceWalkthroughId || '',savedJobId:()=>S.handoffJobId || S.quoteDraftJobId || '',photoDraftId:()=>S.photoDraftJobId || S.jobId,
+  const client=createClient({storage:sessionStorage,shared:(()=>{try{return localStorage;}catch{return null;}})(),fetch:(...args)=>EGCHubAuth.fetch(...args),actor,managerSync:()=>EGCHubAuth.canRunBusiness(),uuid:()=>crypto.randomUUID(),plan:()=>payload(),source:()=>S.sourceWalkthroughId || '',savedJobId:()=>S.handoffJobId || S.quoteDraftJobId || '',photoDraftId:()=>S.photoDraftJobId || S.jobId,
     accept:(result,pending)=>{
       S.photoDraftJobId=pending.photoDraftJobId || S.photoDraftJobId || S.jobId;
       S.jobId=result.job.id; S.handoffJobId=result.job.id; S.customerId=result.job.customerId;
@@ -123,7 +165,7 @@
       const revise=document.createElement('button');revise.type='button';revise.textContent='Start a signed revision';
       revise.onclick=()=>{client.release(saved);invalidateAcceptance();save();render();};status.appendChild(revise);
     } catch(error) {
-      button.disabled=false;button.textContent=saved?'Retry synchronization':'Retry original save';
+      button.disabled=false;button.textContent=saved?'Retry synchronization':error.refused?'Save brief + schedule':'Retry original save';
       status.textContent=(saved?'The signed Hub job is saved. '+(saved.arrivalNotice?saved.arrivalNotice+' ':''):'')+(error.message || 'The request could not be verified. Keep this form and retry.');
       if(error.code==='handoff_original_request_required'){
         const recover=document.createElement('button');recover.type='button';recover.textContent='Recover original signed save';recover.onclick=()=>send(button,true);status.appendChild(recover);

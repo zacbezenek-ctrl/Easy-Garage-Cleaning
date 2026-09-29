@@ -30,6 +30,7 @@ describe("@egc/funnel-definitions", () => {
     expect(definitions.timeZone).toBe("America/Denver");
     expect(definitions.eligibility.ghl.exclusionTags["egc-test"]).toBe("test");
     expect(definitions.reasonCodes.walkthroughOutcome).toContain("quote_to_follow");
+    expect(definitions.reasonCodes.balanceReopened).toEqual(["estimate_revised", "change_order", "refund", "resigned"]);
     expect(definitions.cycles.repeatWindowDays).toBe(30);
     expect(definitions.eventTypes["deal.sold"]?.required).toContain("amountCents");
   });

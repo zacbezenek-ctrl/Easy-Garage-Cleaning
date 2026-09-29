@@ -241,14 +241,16 @@ test('crew payment endpoints cannot bypass review and verify a combined unverifi
 test('payment controls show deposit due now, then a receipt and remainder due on completion', () => {
   const html = readFileSync(new URL('../customer-portal.html', import.meta.url), 'utf8');
   const render = html.match(/function renderPayment\(data\)\{[^\n]+/)[0];
-  const nodes = new Map(), node = id => { if (!nodes.has(id)) nodes.set(id, { textContent: '', classList: { toggle(key, enabled) { this[key] = enabled; } } }); return nodes.get(id); };
+  const nodes = new Map(), node = id => { if (!nodes.has(id)) nodes.set(id, { textContent: '', dataset: {}, classList: { toggle(key, enabled) { this[key] = enabled; } } }); return nodes.get(id); };
   const context = vm.createContext({ $: node, setText: (id, value) => { node(id).textContent = value; }, money: value => `$${Number(value).toFixed(2)}` });
   vm.runInContext(render, context);
   const data = { estimate: { status: 'approved' }, appointment: { status: 'scheduled' }, payment: { balance: 1000, dueNow: 500, purpose: 'deposit' } };
   context.renderPayment(data); assert.equal(node('pay-button').textContent, 'Pay $500.00 upfront deposit');
+  assert.equal(node('pay-button').dataset.dueCents, '50000', 'the due drawn on the button, which a tip label adds to');
   assert.match(node('payment-due-now').textContent, /\$500.00 remaining after your deposit, due on completion/);
   context.renderPayment({ ...data, payment: { balance: 500, dueNow: 0, purpose: 'deposit' } });
   assert.equal(node('pay-button').classList.hidden, true); assert.match(node('payment-due-now').textContent, /Deposit received/);
+  assert.equal(node('pay-button').dataset.dueCents, '0');
   context.renderPayment({ ...data, payment: { balance: 500, dueNow: 500, purpose: 'balance' } });
   assert.equal(node('pay-button').classList.hidden, false); assert.equal(node('pay-button').textContent, 'Pay $500.00 remaining balance');
 });

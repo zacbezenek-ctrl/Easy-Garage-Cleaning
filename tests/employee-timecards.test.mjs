@@ -80,7 +80,7 @@ test('a closed timecard’s location is final for a manager too: late position f
   assert.deepEqual([closed.status, closed.locationStatus, closed.locationTracking], ['submitted', 'stopped', false]);
   const late = { lat: 40.7, lng: -105.2, accuracy: 5, capturedAt: '2026-09-22T18:30:00.000Z' };
   for (const incoming of [
-    { lastLocation: late, locationTrail: [...closed.locationTrail, late], locationStatus: 'tracking', locationUpdatedAt: late.capturedAt },
+    { lastLocation: late, locationTrail: [late], locationStatus: 'tracking', locationUpdatedAt: late.capturedAt },
     { locationStatus: 'unavailable', locationError: 'Synthetic timeout', locationUpdatedAt: late.capturedAt },
     { lastLocation: late }, { locationTrail: [] }, { locationUpdatedAt: late.capturedAt }, { locationError: 'Synthetic timeout' }, { locationStatus: 'tracking' }, { locationTracking: true },
   ]) {
@@ -91,10 +91,14 @@ test('a closed timecard’s location is final for a manager too: late position f
   assert.equal(administer(closed, { clockOutAt: closed.clockOutAt, status: 'submitted', locationTracking: false, locationStatus: 'stopped' }).locationStatus, 'stopped');
   assert.deepEqual(administer(closed, { lastLocation: closed.lastLocation, locationTrail: closed.locationTrail, locationUpdatedAt: closed.locationUpdatedAt }).lastLocation, closed.lastLocation);
   assert.equal(administer(closed, { approvalStatus: 'approved' }).approvalStatus, 'approved');
-  // A manager who reopens the shift may set its location with it; an open shift's location is unaffected.
-  const reopened = administer(closed, { status: 'active', clockOutAt: '', locationTracking: true, locationStatus: 'tracking', lastLocation: late });
-  assert.deepEqual([reopened.status, reopened.locationStatus, reopened.lastLocation], ['active', 'tracking', late]);
-  assert.deepEqual(administer(create(), { lastLocation: late, locationStatus: 'tracking' }).lastLocation, late);
+  // CREW-TIME (clock-in only, owner decision 2026-09-29): before, a manager reopening the shift could set a new location
+  // with it and an open shift took later position fixes. Now location is taken once at clock-in: a reopen keeps the
+  // clock-in position and never turns tracking back on, and an open shift's location is final too.
+  const reopened = administer(closed, { status: 'active', clockOutAt: '', locationTracking: true });
+  assert.deepEqual([reopened.status, reopened.locationTracking, reopened.lastLocation], ['active', false, closed.lastLocation]);
+  const clockInOnly = error => error.status === 409 && error.code === 'EMPLOYEE_TIMECARD_LOCATION_CLOCK_IN_ONLY' && /taken once at clock-in/.test(error.message);
+  assert.throws(() => administer(closed, { status: 'active', clockOutAt: '', locationTracking: true, locationStatus: 'tracking', lastLocation: late }), clockInOnly);
+  assert.throws(() => administer(create(), { lastLocation: late, locationStatus: 'tracking' }), clockInOnly);
 });
 
 test('a manager’s own queued clock action is applied once: a replayed clock-in or clock-out never reopens or un-approves the card, and a break is recorded by its request ID, at the time the Hub showed, only on an open shift; direct saves work as before', () => {

@@ -1,6 +1,8 @@
 import { assignmentKey } from './job-assignment.js';
 import { hasBusinessAccess } from './hub-session.js';
 import { requireDispatcher } from './dispatch-service.js';
+import { canDispatch } from './dispatch-permissions.js';
+import { capabilityMode } from './staff-roles.js';
 import { cancelManagedAvailability, createManagedAvailability } from './crew-availability.js';
 import { addDays, availabilityInterval, denverToday, validDate } from './dispatch-time.js';
 import { readAll, readCollection, readOne, writeOne } from './employee-vault.js';
@@ -107,12 +109,16 @@ export function paidTimeOffHours(records, startDate, endDate) {
   return {startDate,endDate,days,totals:[...totals].map(([employee,hours])=>({employee,hours})).sort((a,b)=>a.employee.localeCompare(b.employee))};
 }
 
-export async function ptoOverview(store, vault, session, query = {}, now = new Date()) {
+/** options.env (the handler's): with stored staff roles on for this viewer
+ * (EGC_STAFF_ROLE_PERMISSIONS), the everyone view follows the same dispatcher
+ * permission that approves requests (canDispatch with env); otherwise, as before,
+ * business access shows every request. */
+export async function ptoOverview(store, vault, session, query = {}, now = new Date(), { env } = {}) {
   if (!session?.user) throw fail('sign_in_required','Sign in to view requests.',401);
   keys(query,['startDate','endDate']);
   const range = query.startDate !== undefined || query.endDate !== undefined;
   if (range && (!validDate(query.startDate) || !validDate(query.endDate) || query.startDate >= query.endDate || Date.parse(query.endDate)-Date.parse(query.startDate) > 93*86400000)) throw fail('invalid_range','Choose a valid date range of up to 93 days. The end date is exclusive.');
-  const manager = hasBusinessAccess(session), employee = manager ? null : rosterIdentity(session,await store.roster());
+  const manager = env && capabilityMode(session, env) === 'staff_roles' ? canDispatch(session, env) : hasBusinessAccess(session), employee = manager ? null : rosterIdentity(session,await store.roster());
   if (!manager && !employee) throw fail('employee_inactive','Your active employee account could not be verified. Sign in again.',403);
   const records = (await vault.list()).filter(record => object(record) && recordId(record.id) && TYPES.includes(record.type) && (manager || assignmentKey(record.employee) === employee));
   return {ok:true,timeZone:TZ,employee,requests:records.map(projectPtoRequest).sort((a,b)=>b.createdAt.localeCompare(a.createdAt) || a.id.localeCompare(b.id)),

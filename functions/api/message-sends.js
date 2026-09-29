@@ -34,7 +34,7 @@ export function messageSendHandlers({ session = getHubSession, storage = message
     async get({ request, env }) {
       try {
         const actor = await session(request, env);
-        requireDispatcher(actor);
+        requireDispatcher(actor, env);
         if ([...new URL(request.url).searchParams.keys()].length) return reply(400, { ok: false, code: 'messaging_invalid_query', error: 'The message list takes no query parameters.' });
         return reply(200, await unsettledMessageSends(storage(env), actor, now().toISOString()));
       } catch (error) { return failure(error); }
@@ -43,7 +43,7 @@ export function messageSendHandlers({ session = getHubSession, storage = message
       if (!sameOrigin(request)) return reply(403, { ok: false, code: 'messaging_origin_forbidden', error: 'Open the Employee Hub to reconcile messages.' });
       try {
         const actor = await session(request, env);
-        requireDispatcher(actor);
+        requireDispatcher(actor, env);
         if (request.headers.get('Content-Type')?.split(';')[0].trim().toLowerCase() !== 'application/json') return reply(415, { ok: false, code: 'messaging_json_required', error: 'Message changes must be JSON.' });
         if (Number(request.headers.get('Content-Length')) > MAX_BYTES) return reply(413, { ok: false, code: 'messaging_request_too_large', error: 'The message request is too large.' });
         const raw = await request.text();

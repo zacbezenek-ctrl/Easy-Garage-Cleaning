@@ -563,7 +563,7 @@ export async function onRequestPost({ request, env }) {
     try {
       const saved = handoffRequestId ? await readJob(env, payload.job_id) : await readJob(env, payload.job_id).catch(()=>null);
       if (handoffRequestId || saved?.handoffVersion === 1) {
-        requireDispatcher(session);
+        requireDispatcher(session, env);
         if (!operationsEnabled(env)) return reply(503,{ok:false,code:'HANDOFF_NATIVE_SYNC_REQUIRED',error:'The signed job is saved. The native operations bridge must be available before CRM synchronization.'});
         if (!saved || saved.id !== payload.job_id) return reply(409,{ok:false,error:'The saved handoff job could not be verified.'});
         payload = savedHandoffPayload(saved, handoffRequestId);

@@ -724,6 +724,23 @@ test('with PAYMENT_REVIEW_CHECKOUT_BLOCK_ENABLED, a refund on a portal payment t
   assert.deepEqual([...f.docs.keys()].filter(key => key.startsWith('payment_reviews/')), [`payment_reviews/${id}`]);
 });
 
+// FIX-PORTAL-CRASH: the portal stops asking again only on an answer that names its code.
+test('a portal return for a charge waiting on an earlier unverified payment names payment_needs_review and leaves the job as it is', async t => {
+  const { f, id, call, job } = await portalPayment(t);
+  const row = f.docs.get('jobs/portal-job'); row.value = { ...row.value, payment: { amount: 200, verified: false, method: 'check' } }; row.version++;
+  const before = structuredClone(job());
+  const verified = await call({ action: 'verify_payment', session_id: id });
+  assert.deepEqual([verified.status, verified.body.code, verified.body.reviewRecorded, verified.body.paid], [409, 'payment_needs_review', undefined, undefined]);
+  assert.match(verified.body.error, /Your Stripe payment is confirmed\. An earlier recorded payment needs team verification.*Please do not pay again\./);
+  assert.deepEqual(job(), before);
+  assert.deepEqual([ledger(f).requiresReview, ledger(f).verifiedReceipt.sessionId, ledger(f).verifiedReceipt.amount, ledger(f).verifiedReceipt.confirmedAt], [true, id, 500, NOW]);
+  assert.deepEqual([...f.docs.keys()].filter(key => key.startsWith('payment_reviews/')), [], 'no review is opened for it');
+  // Other refusals still carry no code (Stripe has not settled this session).
+  f.sessions.get(id).status = 'open';
+  const unsettled = await call({ action: 'verify_payment', session_id: id });
+  assert.deepEqual([unsettled.status, unsettled.body], [409, { ok: false, error: 'Stripe has not verified this job payment' }]);
+});
+
 test('a refund Stripe shows after the review of a charge on the job was closed reaches the owner in one follow-up review', async t => {
   const f = await fixture(t), id = await f.checkout(); f.complete(id);
   const followUp = `payment_reviews/${id}:refund`, reviewKeys = () => [...f.docs.keys()].filter(key => key.startsWith('payment_reviews/'));

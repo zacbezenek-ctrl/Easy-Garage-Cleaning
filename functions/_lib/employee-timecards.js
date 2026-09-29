@@ -1,4 +1,4 @@
-import { applyEmployeeJobAction, finishEmployeeJobTime, initializeJobTracking } from './employee-job-time.js';
+import { NO_CLOCK_IN_FIX, applyEmployeeJobAction, finishEmployeeJobTime, initializeJobTracking, jobActionSatisfied } from './employee-job-time.js';
 
 const equal = (left, right) => JSON.stringify(left) === JSON.stringify(right);
 const text = (value, limit = 180) => String(value || '').trim().slice(0, limit);
@@ -46,13 +46,46 @@ export function timecardHours(entry, now = Date.now()) {
 
 export const activeTimecard = entry => Boolean(entry && entry.status === 'active' && !entry.clockOutAt);
 
-// Location a shift records while it is open: a position fix, its trail, and whether location is being shared.
+// Clock-in only (owner decision, 2026-09-29): one position is taken as the shift starts and nothing updates it after
+// (no watch, no trail). The crew app's clock-in says so with job_page_single_fix (its older 'unavailable' meant the same
+// one fix) and the Hub's with hub_single_fix. Trails saved before this stay on their cards, readable.
+// EGC_CLOCK_IN_WITHOUT_FIX: exactly "true" lets a phone that found no position (after its lower-accuracy retry) clock in
+// without one, flagged locationReview 'location_unavailable_at_clock_in' for a manager. Unset: a position is required.
+export const clockInWithoutFix = env => String(env?.EGC_CLOCK_IN_WITHOUT_FIX || '').trim().toLowerCase() === 'true';
+const SINGLE_FIX = ['job_page_single_fix', 'hub_single_fix'];
+const noFix = incoming => incoming.locationStatus === NO_CLOCK_IN_FIX && incoming.lastLocation == null;
+const noFixRefused = () => timecardError('This phone could not find its location. Move near a window or outside, then clock in again.');
+// Location a shift records: its clock-in position (and the trail older shifts kept), and the last location status.
 const locationFields = ['lastLocation', 'locationTrail', 'locationUpdatedAt', 'locationError'];
-// Whether a save changes a closed shift's location record: a new position, trail or location error, location turned back
-// on, or a status other than the 'stopped' that every clock-out (and its replay) sends.
-const lateLocation = (existing, incoming) => locationFields.some(key => own(incoming, key) && !equal(incoming[key], existing[key]))
-  || own(incoming, 'locationStatus') && incoming.locationStatus !== 'stopped' && incoming.locationStatus !== existing.locationStatus
-  || incoming.locationTracking === true && existing.locationTracking !== true;
+// Whether a save changes a shift's location record: a new position, trail or location error, or a status other than
+// the 'stopped' that every clock-out (and its replay) sends.
+const locationUpdate = (existing, incoming) => locationFields.some(key => own(incoming, key) && !equal(incoming[key], existing[key]))
+  || own(incoming, 'locationStatus') && incoming.locationStatus !== 'stopped' && incoming.locationStatus !== existing.locationStatus;
+// On a closed shift, location turned back on counts too.
+const lateLocation = (existing, incoming) => locationUpdate(existing, incoming) || incoming.locationTracking === true && existing.locationTracking !== true;
+// An open shift's location is its clock-in position: a later position fix, error or status (an older Hub tab's watch) is refused.
+const clockInOnly = () => Object.assign(timecardError('Location is taken once at clock-in, so this shift’s location is not updated.', 409), { code: 'EMPLOYEE_TIMECARD_LOCATION_CLOCK_IN_ONLY' });
+
+function clockInLocation(incoming, at, now, env) {
+  if (incoming.locationTracking !== true) throw timecardError('Shift location is required to clock in.');
+  if (noFix(incoming)) {
+    if (!clockInWithoutFix(env)) throw noFixRefused();
+    return { locationTracking: false, locationConsentAt: at, locationStatus: NO_CLOCK_IN_FIX, locationReview: NO_CLOCK_IN_FIX, locationUpdatedAt: now };
+  }
+  const point = location(incoming.lastLocation, at), source = ['job_page_single_fix', 'unavailable'].includes(incoming.locationStatus) ? 'job_page_single_fix' : 'hub_single_fix';
+  return { locationTracking: false, locationConsentAt: at, locationStatus: source, lastLocation: point, locationUpdatedAt: now };
+}
+
+// A manager's clock-in is kept as the Hub sent it, with its one position and no trail or tracking. Their own shift starts
+// its job segments on general time at its clock-in, as an employee's does, so its time is never "No job segments".
+function managerClockIn(next, env, session) {
+  const { locationTrail, ...entry } = next, tracking = sameEmployee(entry, session) ? { jobTracking: initializeJobTracking(entry.id, session, entry.clockInAt) } : {};
+  if (noFix(entry)) {
+    if (!clockInWithoutFix(env)) throw noFixRefused();
+    return { ...entry, locationTracking: false, locationReview: NO_CLOCK_IN_FIX, ...tracking };
+  }
+  return { ...entry, locationTracking: false, locationStatus: SINGLE_FIX.includes(entry.locationStatus) ? entry.locationStatus : 'hub_single_fix', ...tracking };
+}
 
 function location(value, now) {
   const lat = value?.lat, lng = value?.lng, accuracy = value?.accuracy;
@@ -163,12 +196,15 @@ function queuedClock(existing, incoming, now) {
 
 export function authorizeTimecard({ session, manager, id, incoming, existing, hourlyRate = 0, now = new Date().toISOString(), env = {}, queued = false }) {
   const device = offlineClockEnabled(env);
+  // jobTime is what /api/employee-hub derives for display on each read; a save never stores it.
+  if (own(incoming, 'jobTime')) { const { jobTime, ...rest } = incoming; incoming = rest; }
   if (incoming.jobAction) {
     if (Object.keys(incoming).some(key => key !== 'jobAction')) throw timecardError('Send job-time changes separately from other timecard edits.');
     const action = incoming.jobAction, segments = Array.isArray(existing?.jobTracking?.segments) ? existing.jobTracking.segments : [];
     const captured = action && typeof action === 'object' && own(action, 'deviceCapturedAt');
-    // A replayed receipt stays an exact no-op even after later events move the device-time floor.
-    if (!device || !captured || !existing || text(existing.employee).toLowerCase() !== text(session.user).toLowerCase() || segments.some(segment => segment?.id === action.requestId)) {
+    // A replayed receipt stays an exact no-op even after later events move the device-time floor, as does a switch to
+    // where the shift already is.
+    if (!device || !captured || !existing || text(existing.employee).toLowerCase() !== text(session.user).toLowerCase() || segments.some(segment => segment?.id === action.requestId) || jobActionSatisfied(existing, action)) {
       const next = applyEmployeeJobAction(existing, action, session, now);
       if (!device && captured && next !== existing) serverClockTime(action.deviceCapturedAt, now);
       return next;
@@ -182,17 +218,20 @@ export function authorizeTimecard({ session, manager, id, incoming, existing, ho
       const save = queuedClock(existing, incoming, now);
       if (save === existing) return existing;
       incoming = save;
-    }
-    const next = { ...(existing || {}), ...incoming, id };
+    } else if (existing && sameEmployee(existing, session) && activeTimecard(existing) && clockInSave(incoming)) return existing;
+    let next = { ...(existing || {}), ...incoming, id };
     // A new timecard names its employee, so a location update for a shift the server does not have (a queued clock-in
     // not yet replayed, discarded or refused) never creates an employee-less record out of it. Administrative imports
     // and corrections that name the employee are created as before.
     if (!existing && !text(next.employee)) throw timecardError('A new timecard needs an employee.');
-    // A closed shift's location record is final for a manager too (an employee's save to it is refused below): a position
-    // fix or location status sent after the clock-out (a Hub tab whose location watch outlived the shift) is refused, and
-    // the card keeps its clock-out location status. A save that repeats the stored values, or that reopens the shift, is
-    // unaffected.
+    if (!existing && clockInSave(incoming)) next = managerClockIn(next, env, session);
+    // A shift's location record is final once it starts, for a manager too (an employee's save is refused below): a
+    // position fix, error or status sent for an open shift, or for a shift being reopened, is refused, and a closed shift
+    // keeps its clock-out location status (a Hub tab whose location watch outlived the shift). A save that repeats the
+    // stored values is unaffected, and reopening a shift never turns location tracking back on.
+    if (existing && (activeTimecard(existing) || activeTimecard(next)) && locationUpdate(existing, incoming)) throw clockInOnly();
     if (existing && !activeTimecard(existing) && !activeTimecard(next) && lateLocation(existing, incoming)) throw timecardError('This shift is closed, so its location is no longer updated.', 409);
+    if (existing && incoming.locationTracking === true) next.locationTracking = existing.locationTracking === true;
     // Existing administrative import/correction support is preserved. Every
     // actual approval must nevertheless refer to a completed valid shift.
     const changedTime = existing && timeFields.some(key => own(incoming, key) && !equal(existing[key], next[key]));
@@ -222,13 +261,11 @@ export function authorizeTimecard({ session, manager, id, incoming, existing, ho
   const stamp = entry => deviceValue === undefined ? now : device ? deviceClockTime(deviceValue, now, entry) : serverClockTime(deviceValue, now);
   if (!existing) {
     if (incoming.locationTracking !== true) throw timecardError('Shift location is required to clock in.');
-    const at = stamp(null), point = location(incoming.lastLocation, at);
+    const at = stamp(null), place = clockInLocation(incoming, at, now, env);
     const entry = { id, employee: session.user, employeeName: session.displayName, role: session.role,
       payType: session.payType, hourlyRate, clockInAt: at, clockOutAt: '', status: 'active', approvalStatus: 'open', approvedBy: '', approvedAt: '',
-      jobId: text(incoming.jobId), jobLabel: text(incoming.jobLabel), locationTracking: true, locationConsentAt: at,
-      jobTracking: initializeJobTracking(id, session, at),
-      // A clock-in from a page that does not keep sharing location says so.
-      locationStatus: incoming.locationStatus === 'unavailable' ? 'unavailable' : 'tracking', lastLocation: point, locationTrail: [point], locationUpdatedAt: now, breaks: [], createdAt: now,
+      jobId: text(incoming.jobId), jobLabel: text(incoming.jobLabel), ...place,
+      jobTracking: initializeJobTracking(id, session, at), breaks: [], createdAt: now,
       recordedBy: session.user, recordingVersion: 1 };
     return withAudit(null, flagged ? deviceStamp(entry, 'clock_in', deviceValue, at, now) : entry, session, now, 'clock_in');
   }
@@ -239,6 +276,9 @@ export function authorizeTimecard({ session, manager, id, incoming, existing, ho
     if (existing.clockOutAt && clockOutSave(incoming)) return existing;
     throw timecardError('Only a manager can correct a submitted, approved, or rejected timecard.', 403);
   }
+  // A clock-in sent again after a lost reply answers with the open card it created.
+  if (incoming.locationTracking === true) return existing;
+  if (locationUpdate(existing, incoming)) throw clockInOnly();
   const next = { ...existing };
   // Identity, pay, original clock-in and historical attribution cannot be
   // changed by a full-record browser retry or forged client fields.
@@ -246,12 +286,6 @@ export function authorizeTimecard({ session, manager, id, incoming, existing, ho
   if (own(incoming, 'notes')) next.notes = text(incoming.notes, 2000);
   let breakAt = '';
   if (own(incoming, 'breaks')) next.breaks = changeBreak(existing.breaks, incoming.breaks, () => (breakAt = stamp(existing)), queued);
-  if (incoming.lastLocation) {
-    const point = location(incoming.lastLocation, now);
-    next.lastLocation = point; next.locationTrail = [...(existing.locationTrail || []), point].slice(-120); next.locationUpdatedAt = now;
-  }
-  if (['tracking', 'unavailable'].includes(incoming.locationStatus)) next.locationStatus = incoming.locationStatus;
-  if (own(incoming, 'locationError')) next.locationError = text(incoming.locationError, 120);
   if (incoming.clockOutAt || incoming.status === 'submitted') {
     if (!incoming.clockOutAt || incoming.status !== 'submitted') throw timecardError('A complete clock-out action is required.');
     const at = stamp(next);

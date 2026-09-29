@@ -316,6 +316,44 @@ class RecurringBrowserTests(unittest.TestCase):
         self.assertEqual([call['action'] for call in self.calls[4:]], ['extend', 'extend'])
         self.assertLessEqual(self.page.evaluate('document.documentElement.scrollWidth'), 375)
 
+    def test_a_visit_an_owner_rule_refused_names_the_rule_instead_of_other_work(self):
+        self.start(375, 812)
+        self.plans = [plan(attention=[{'date': '2026-10-07', 'jobId': 'occ-2', 'state': 'conflict', 'code': 'dispatch_conflict', 'rules': ['crew_size_short']}])]
+        reason, skill = 'Requires 2 crew members; 1 assigned.', 'No assigned employee is qualified for Shelving install.'
+        generic = 'This change conflicts with scheduled work or employee availability. Choose a different time, crew, or vehicle.'
+        self.extend_script = [{'created': [], 'complete': True,
+                               'conflicts': [{'date': '2026-10-14', 'jobId': 'occ-3', 'code': 'dispatch_conflict', 'message': generic + ' ' + reason + ' ' + skill, 'rules': ['crew_size_short', 'skill_missing'], 'reasons': [reason, skill]},
+                                             {'date': '2026-10-21', 'jobId': 'occ-4', 'code': 'dispatch_conflict', 'message': generic}],
+                               'kept': [{'date': '2026-10-28', 'jobId': 'occ-5', 'reason': 'dispatch_conflict', 'rules': ['outside_working_hours']}]}]
+        self.open_dispatch(); self.open_plans()
+        card = self.dialog().locator('[data-plan="plan-1"]')
+        expect(card).to_contain_text("Wed, Oct 7 broke the owner's dispatch rule (Crew size) and is unscheduled in Dispatch. Change the plan's crew or choose a new time there.")
+        expect(card).not_to_contain_text('conflicted with other work')
+        card.get_by_role('button', name='Add upcoming visits', exact=True).click()
+        status = self.dialog().get_by_role('status').filter(has_text='saved unscheduled because it breaks')
+        expect(status).to_contain_text("1 visit was saved unscheduled because it breaks the owner's dispatch rules: Wed, Oct 14 — Crew size, Required skills: " + reason + ' ' + skill + " Change the plan's crew or choose new times in Dispatch.")
+        expect(status).to_contain_text('1 visit conflicted with other work and was saved unscheduled')
+        expect(status).to_contain_text("Wed, Oct 28 (it would break the owner's dispatch rule (Working hours))")
+        self.assertLessEqual(self.page.evaluate('document.documentElement.scrollWidth'), 375)
+
+    def test_a_visit_refused_for_a_rule_and_overlapping_work_says_both(self):
+        self.start(375, 812)
+        self.plans = [plan(attention=[{'date': '2026-10-07', 'jobId': 'occ-2', 'state': 'conflict', 'code': 'dispatch_conflict', 'rules': ['crew_size_short'], 'overlaps': True}])]
+        reason = 'Requires 2 crew members; 1 assigned.'
+        generic = 'This change conflicts with scheduled work or employee availability. Choose a different time, crew, or vehicle.'
+        self.extend_script = [{'created': [], 'complete': True,
+                               'conflicts': [{'date': '2026-10-14', 'jobId': 'occ-3', 'code': 'dispatch_conflict', 'message': generic + ' ' + reason, 'rules': ['crew_size_short'], 'reasons': [reason], 'overlaps': True}],
+                               'kept': [{'date': '2026-10-28', 'jobId': 'occ-5', 'reason': 'dispatch_conflict', 'rules': ['outside_working_hours'], 'overlaps': True}]}]
+        self.open_dispatch(); self.open_plans()
+        card = self.dialog().locator('[data-plan="plan-1"]')
+        expect(card).to_contain_text("Wed, Oct 7 broke the owner's dispatch rule (Crew size) and overlaps other work and is unscheduled in Dispatch. Choose a new time there or change the plan's crew.")
+        card.get_by_role('button', name='Add upcoming visits', exact=True).click()
+        status = self.dialog().get_by_role('status').filter(has_text='saved unscheduled because it breaks')
+        expect(status).to_contain_text("1 visit was saved unscheduled because it breaks the owner's dispatch rules: Wed, Oct 14 — Crew size, and it overlaps other work: " + reason)
+        expect(status).not_to_contain_text('conflicted with other work')
+        expect(status).to_contain_text("Wed, Oct 28 (it would break the owner's dispatch rule (Working hours) and overlap other work)")
+        self.assertLessEqual(self.page.evaluate('document.documentElement.scrollWidth'), 375)
+
     def test_rounds_that_only_keep_booked_visits_continue_and_name_each_visit(self):
         self.start(375, 812)
         message = 'The 2026-10-14 visit could not be saved (dispatch_lock_unavailable). Each run retries it, and later visits wait for it. If this continues, add 2026-10-14 as a skipped date so later visits are added.'

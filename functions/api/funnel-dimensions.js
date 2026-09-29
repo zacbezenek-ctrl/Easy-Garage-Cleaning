@@ -16,7 +16,7 @@ export function funnelDimensionsHandlers({ session = getHubSession, storage = di
   return {
     async get({ request, env }) {
       try {
-        const actor = await session(request, env); requireDispatcher(actor);
+        const actor = await session(request, env); requireDispatcher(actor, env);
         const params = new URL(request.url).searchParams, keys = [...params.keys()];
         if (new Set(keys).size !== keys.length) return reply(400, { ok: false, code: 'funnel_dimensions_query_invalid', error: 'Each pre-fill field can be sent once.' });
         return reply(200, await bookingDimensionPrefill(storage(env), Object.fromEntries(params.entries()), { ghl: contactId => ghl(env, contactId), now: now().toISOString() }));

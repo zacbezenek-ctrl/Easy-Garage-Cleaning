@@ -2,6 +2,7 @@ import { denverToday, validDate } from './dispatch-time.js';
 import { customerMoneyTotals, invoiceStatus, moneyCents } from './money-core.js';
 import { reconcileLedger } from './money-ledger.js';
 import { moneyJob } from './money-service.js';
+import { cashPayment } from './payment-events.js';
 
 /**
  * Manager lists and CSV exports of invoices and payment-ledger entries from
@@ -29,9 +30,11 @@ function invoiceRow(job, now) {
     dueDate: validDate(invoice.dueDate) ? invoice.dueDate : '', issuedAt, issuedDate: denverDate(issuedAt), customerReference: str(invoice.customerReference, 120) };
 }
 
-function paymentRows(job) {
+// With FUN-33 payment events on (store.paymentEvents), each row also says whether it is non-cash credit
+// (a gift-credit redemption: applied to the balance, never collected as money).
+function paymentRows(job, events) {
   const ledger = reconcileLedger(job);
-  return ledger.entries.map(entry => ({ key: `${job.id}/${entry.id}`, at: entry.at, jobId: job.id, customerId: str(job.customerId), customer: str(job.customer), entryId: entry.id, kind: entry.kind, method: entry.method, amountCents: entry.amountCents,
+  return ledger.entries.map(entry => ({ key: `${job.id}/${entry.id}`, at: entry.at, jobId: job.id, customerId: str(job.customerId), customer: str(job.customer), entryId: entry.id, kind: entry.kind, method: entry.method, ...(events ? { nonCashCredit: !cashPayment(entry.method) } : {}), amountCents: entry.amountCents,
     processorRef: entry.processorRef, receivedAt: entry.at, receivedDate: denverDate(entry.at), recordedBy: entry.by, verified: entry.verified, source: entry.source, ledgerComplete: ledger.complete }));
 }
 
@@ -56,7 +59,7 @@ export async function listMoney(store, query = {}, now) {
   for (const job of jobs) {
     if (!moneyJob(job) || customerId && job.customerId !== customerId) continue;
     if (view === 'invoices') { const row = invoiceRow(job, now); if (row && (!status || row.status === status) && inRange(row.issuedDate)) rows.push(row); }
-    else for (const row of paymentRows(job)) if (inRange(row.receivedDate)) rows.push(row);
+    else for (const row of paymentRows(job, store.paymentEvents === true)) if (inRange(row.receivedDate)) rows.push(row);
   }
   rows.sort(newestFirst);
   const clean = rows.map(({ key, at, ...row }) => row);
@@ -73,7 +76,10 @@ const COLUMNS = {
   invoices: [['Invoice number', row => row.number], ['Status', row => row.status], ['Customer', row => row.customer], ['Customer ID', row => row.customerId], ['Job ID', row => row.jobId], ['Service date', row => row.serviceDate], ['Issued (Denver)', row => row.issuedDate], ['Due date', row => row.dueDate], ['Amount', row => dollars(row.amountCents)], ['Paid', row => dollars(row.paidCents)], ['Balance', row => dollars(row.balanceCents)], ['Customer reference', row => row.customerReference]],
   payments: [['Received (Denver)', row => row.receivedDate], ['Received at (UTC)', row => row.receivedAt], ['Customer', row => row.customer], ['Customer ID', row => row.customerId], ['Job ID', row => row.jobId], ['Kind', row => row.kind], ['Method', row => row.method], ['Amount', row => dollars(row.amountCents)], ['Reference', row => row.processorRef], ['Recorded by', row => row.recordedBy], ['Verified', row => row.verified ? 'yes' : 'no'], ['Source', row => row.source], ['Entry ID', row => row.entryId]],
 };
-export function moneyCsv(view, rows) {
-  const columns = COLUMNS[view] || COLUMNS.invoices;
+// "Non-cash credit" is yes only for gift-credit redemptions; card, ACH, check and cash rows are no.
+const NON_CASH_CREDIT = ['Non-cash credit', row => row.nonCashCredit ? 'yes' : 'no'];
+/** `paymentEvents` (FUN-33) appends the Non-cash credit column to the payments view; unset, the CSV is exactly as before. */
+export function moneyCsv(view, rows, { paymentEvents = false } = {}) {
+  const columns = view === 'payments' && paymentEvents === true ? [...COLUMNS.payments, NON_CASH_CREDIT] : COLUMNS[view] || COLUMNS.invoices;
   return [columns.map(([label]) => csvCell(label)).join(','), ...rows.map(row => columns.map(([, get]) => csvCell(get(row))).join(','))].join('\r\n') + '\r\n';
 }

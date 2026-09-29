@@ -30,7 +30,7 @@ export type FunnelDefinitions = {
     readonly exclusionClasses: Readonly<Record<string, "never" | "test" | "internal" | "excluded">>;
   };
   readonly vocabularies: Readonly<Record<string, readonly string[]>>;
-  readonly reasonCodes: Readonly<Record<"walkthroughOutcome" | "lost" | "cancel" | "reschedule" | "noShow", readonly string[]>>;
+  readonly reasonCodes: Readonly<Record<"walkthroughOutcome" | "lost" | "cancel" | "reschedule" | "noShow" | "balanceReopened", readonly string[]>>;
   readonly calendar: { readonly [key: string]: JsonValue };
   readonly cycles: { readonly repeatWindowDays: number; readonly expiredAfterDaysWithoutEvent: number; readonly stalledAfterDaysWithoutEvent: number; readonly [key: string]: JsonValue };
   readonly metricWindows: Readonly<Record<string, number>>;

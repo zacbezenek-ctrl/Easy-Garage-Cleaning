@@ -1157,6 +1157,41 @@ test('a tipped charge is booked only while it has no review: a refund review cre
   assert.deepEqual([calls.filter(call => call.url.includes(':commit')).length, calls.filter(call => call.method === 'PATCH' && call.url.includes('/documents/jobs/')).length, plain.job().payment.amount], [0, 1, 1000]);
 });
 
+// FUN-33: with the payment events on, the booking is one moneyStorage :commit (the job and its funnel events) that
+// still carries the "no review yet" precondition, as a precondition-only delete of payment_reviews/{sessionId}. The
+// same race therefore holds the charge: nothing is booked and no payment or payoff event is written for money Stripe
+// shows refunded.
+test('with FUN-33 payment events on, a tipped charge is still booked only while it has no review', async t => {
+  const EVENTS = { ...ON, FUNNEL_PAYMENT_EVENTS_ENABLED: 'true', MONEY_API_ENABLED: 'true' };
+  const funnelEvents = h => [...h.docs].filter(([key]) => key.startsWith('funnelEvents/')).map(([, row]) => row.value);
+  const f = await fixture(t, undefined, EVENTS), { body } = await f.pay({ tip_cents: 5000 }), id = body.url.split('/').pop(); f.complete(id);
+  let raced = null;
+  f.beforeNextCommit(keys => { raced = keys; f.docs.set(`payment_reviews/${id}`, { value: { sessionId: id, jobId: 'job-1', kind: 'egc_customer_portal_payment', reason: 'payment_refunded', status: 'open', amountCents: 55000, tipCents: 5000, refundedCents: 20000, jobPaidCents: 50000, createdAt: NOW }, version: 1 }); });
+  const back = await f.verifyPortal(id);
+  assert.deepEqual(raced.slice(0, 2), ['jobs/job-1', `payment_reviews/${id}`], 'the booking carries the precondition on the review');
+  assert.deepEqual(raced.slice(2).map(key => key.split('/')[0]), ['funnelEvents', 'funnelEvents'], 'beside its payment.received and job.paid_in_full');
+  assert.deepEqual([back.status, back.body.code, back.body.reviewRecorded], [409, 'payment_refunded', true]);
+  assert.deepEqual([f.job().payment.amount, f.job().payment.tips, f.job().payment.stripeSessions.length, f.job().paidInFullAt, f.jobPatches()], [500, undefined, 1, undefined, 0], 'the refunded tipped charge is never booked');
+  assert.deepEqual(funnelEvents(f), [], 'no payment or payoff event for money Stripe shows refunded');
+  assert.deepEqual([f.review(id).status, f.review(id).reason, (await f.view()).body.payment.held], ['open', 'payment_refunded', true]);
+  // Without a race the same commit books it with its events and leaves no review behind.
+  t.mock.restoreAll();
+  const g = await fixture(t, undefined, EVENTS), made = await g.pay({ tip_cents: 5000 }), session = made.body.url.split('/').pop(); g.complete(session);
+  assert.equal((await g.verifyPortal(session)).status, 200);
+  assert.deepEqual([g.job().payment.amount, g.job().payment.tips.map(tip => tip.amountCents), g.review(session), g.jobPatches(), g.job().paidInFullAt], [1000, [5000], undefined, 1, NOW]);
+  assert.deepEqual(g.commits.at(-1).slice(0, 2), ['jobs/job-1', `payment_reviews/${session}`]);
+  const booked = funnelEvents(g).sort((a, b) => a.type.localeCompare(b.type));
+  assert.deepEqual(booked.map(event => [event.type, event.data.amountCents, event.data.tipCents, event.idempotencyKey]), [
+    ['job.paid_in_full', 100000, undefined, `stripeSession:${session}`], ['payment.received', 50000, 5000, `stripeSession:${session}`],
+  ], 'one payment event for the service money, with the crew tip beside it');
+  // An untipped charge carries no review write: the job and its events only.
+  t.mock.restoreAll();
+  const plain = await fixture(t, undefined, EVENTS), open = await plain.pay({}), untipped = open.body.url.split('/').pop(); plain.complete(untipped);
+  assert.equal((await plain.verifyPortal(untipped)).status, 200);
+  assert.deepEqual(plain.commits.at(-1).map(key => key.split('/')[0]), ['jobs', 'funnelEvents', 'funnelEvents']);
+  assert.deepEqual([plain.job().payment.amount, plain.jobPatches()], [1000, 1]);
+});
+
 test('with tips on, Stripe’s charge.refunded brings a refund on a tipped charge to Review queues and tip payroll without a return', async t => {
   const f = await fixture(t), { body } = await f.pay({ tip_cents: 5000 }), id = body.url.split('/').pop(); f.complete(id);
   assert.equal((await f.verifyPortal(id)).status, 200);

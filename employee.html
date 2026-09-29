@@ -2447,7 +2447,8 @@ async function bookingCrew(hostId,state){
   try{
     const roster=await window.EGCBooking.roster();if(!host.isConnected||host._crewState!==state)return;
     state.assignedCrew=(state.assignedCrew||[]).map(value=>{const text=String(value).toLowerCase(),matches=roster.filter(row=>row.id===text||String(row.name||'').toLowerCase()===text);return matches.length===1?matches[0].id:value;});
-    host.replaceChildren();const selected=new Set(state.assignedCrew),rows=[...roster,...state.assignedCrew.filter(id=>!roster.some(row=>row.id===id)).map(id=>({id,name:id+' (not active; remove before saving)'}))];
+    // F19: an office-only owner or manager (fieldWork:false) is offered only while already assigned.
+    host.replaceChildren();const selected=new Set(state.assignedCrew),rows=[...roster.filter(row=>row.fieldWork!==false||selected.has(row.id)),...state.assignedCrew.filter(id=>!roster.some(row=>row.id===id)).map(id=>({id,name:id+' (not active; remove before saving)'}))];
     for(const person of rows){const label=document.createElement('label'),box=document.createElement('input'),name=document.createElement('span');label.className='egc-crew-choice';box.type='checkbox';box.checked=selected.has(person.id);box.value=person.id;box.onchange=()=>{if(state.saving||state.uncertain){box.checked=!box.checked;return;}if(box.checked)selected.add(person.id);else selected.delete(person.id);state.assignedCrew=[...selected];state.assignedTo=state.assignedCrew.join(', ');};name.textContent=person.name||person.id;label.append(box,name);host.append(label);}
     if(!rows.length){note.textContent='No active employees. Leave the job unassigned and update the roster in People.';host.append(note);}
   }catch(problem){note.textContent=problem.message||'Crew could not be loaded.';const retry=document.createElement('button');retry.type='button';retry.textContent='Retry crew list';retry.onclick=()=>bookingCrew(hostId,state);host.append(retry);}
@@ -2998,21 +2999,23 @@ window.addEventListener('egc:booking-recovered',event=>{const key=event.detail?.
 <script src="employee-operations.js?v=20260928sendowners"></script>
 <link rel="stylesheet" href="employee-dispatch.css?v=20260928segments">
 <link rel="stylesheet" href="employee-dispatch-calendar.css?v=20260928cal">
+<link rel="stylesheet" href="employee-dispatch-rules.css?v=20260928rules">
 <link rel="stylesheet" href="employee-field-today.css?v=20260922ops">
 <link rel="stylesheet" href="employee-availability.css?v=20260922ops">
-<script src="employee-dispatch.js?v=20260929fun29"></script>
-<script src="employee-dispatch-calendar.js?v=20260928calfun02"></script>
+<script src="employee-dispatch.js?v=20260929rules"></script>
+<script src="employee-dispatch-calendar.js?v=20260929rules"></script>
+<script src="employee-dispatch-rules.js?v=20260929rules"></script>
 <link rel="stylesheet" href="employee-recurring.css?v=20260928rcron">
-<script src="employee-recurring.js?v=20260928rcron3"></script>
+<script src="employee-recurring.js?v=20260929rules5"></script>
 <link rel="stylesheet" href="employee-booking.css?v=20260922ops">
 <script src="employee-booking.js?v=20260928recur"></script>
 <script src="employee-field-today.js?v=20260922ops"></script>
 <script src="employee-availability.js?v=20260922ops"></script>
 <link rel="stylesheet" href="employee-offline-queue.css?v=20260929hubpwa">
-<script src="employee-offline-queue.js?v=20260929hubpwa2"></script>
+<script src="employee-offline-queue.js?v=20260929crewtime"></script>
 <link rel="stylesheet" href="employee-pto.css?v=20260928pto">
 <script src="employee-pto.js?v=20260928ptoamend"></script>
-<script src="employee-hub-screens.js?v=20260929tips"></script>
+<script src="employee-hub-screens.js?v=20260929rules4"></script>
 <link rel="stylesheet" href="employee-followups-home.css?v=20260928overdue">
 <script src="employee-followups-home.js?v=20260928overdue"></script>
 <script src="employee-review-alerts.js?v=20260929reviewstips7"></script>
@@ -3022,7 +3025,7 @@ window.addEventListener('egc:booking-recovered',event=>{const key=event.detail?.
 <script src="employee-labor-costs.js?v=20260929laborforbidden"></script>
 <link rel="stylesheet" href="employee-staff.css?v=20260928team">
 <script src="employee-staff.js?v=20260928team"></script>
-<script src="employee-suite.js?v=20260929tips"></script>
+<script src="employee-suite.js?v=20260929rules"></script>
 <link rel="stylesheet" href="employee-money-actions.css?v=20260928money">
 <script src="employee-money-actions.js?v=20260929ghl"></script>
 <link rel="stylesheet" href="employee-customer-lifecycle.css?v=20260928fun36">

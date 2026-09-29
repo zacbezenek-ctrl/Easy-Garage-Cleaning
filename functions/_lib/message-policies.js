@@ -5,6 +5,7 @@ import { localInstant } from './operations-portal-records.js';
 import { crewNoticeSendKey, slotUpcoming } from './crew-notifications.js';
 import { moneyCents } from './operations-financials.js';
 import { customerDepositState, customerMoneyState, customerPaymentNeedsReview } from './customer-payments.js';
+import { businessAccountJob } from './portal-invitation.js';
 
 export const MESSAGE_TIME_ZONE = 'America/Denver';
 export const QUIET_HOURS = Object.freeze({ start: '08:00', end: '20:00' });
@@ -17,9 +18,6 @@ export const APPROVAL_MODES = Object.freeze([...HUMAN_APPROVALS, 'owner_automati
 
 const TERMINAL = new Set(['cancelled','canceled','completed','invoiced','paid','review_requested','closed','noshow','no_show','no-show','superseded']);
 const DONE = new Set(['completed','invoiced','paid','review_requested','closed']);
-const UNPAYABLE_JOB = new Set(['cancelled','canceled','superseded','lost']);
-// A missing status is treated as a draft, as the business hub does.
-const UNPAYABLE_INVOICE = new Set(['void','superseded','draft','paid','pending_verification']);
 const stage = job => String(job?.pipelineStatus || job?.status || '').toLowerCase();
 const accepted = value => ['accepted','approved'].includes(String(value || '').toLowerCase());
 const reason = (why) => ({ eligible: false, reason: why });
@@ -29,14 +27,6 @@ const ok = { eligible: true };
 export const invoiceBalance = job => moneyCents(customerMoneyState(job).balance);
 export const depositDue = job => moneyCents(customerDepositState(job).due);
 const scheduled = (job, today) => !TERMINAL.has(stage(job)) && typeof job?.date === 'string' && job.date >= today;
-
-// Only an issued, unpaid invoice on a live job can be sent or chased.
-export function payableInvoice(job) {
-  if (!job?.invoice?.number) return reason('no_invoice');
-  if (UNPAYABLE_JOB.has(stage(job)) || UNPAYABLE_INVOICE.has(String(job.invoice.status || 'draft').toLowerCase())) return reason('invoice_not_payable');
-  if (customerPaymentNeedsReview(job)) return reason('payment_needs_review');
-  return invoiceBalance(job) > 0 ? ok : reason('nothing_due');
-}
 
 // Reminders are keyed to fixed windows counted from a stable anchor (the due
 // date or service date), so a person or a daily job gets at most one reminder
@@ -52,11 +42,20 @@ function reminder(kind, { cadenceDays, series, anchor, ...options }) {
   return policy(kind, { ...options, cadenceDays, dedupe: c => key(c), previousKey: c => key(c, -cadenceDays) });
 }
 
+// A company project (businessAccountId) is shared through its business hub's
+// roles, and its job phone or email may be a tenant or an on-site contact, so
+// no customer message about the job goes out from here (B2B-SAFE): every
+// customer-audience job policy refuses it before its own rule runs. A visit
+// under a company project's account root is one too: approved-send passes the
+// verified root as c.accountRoot.
 function policy(kind, options) {
-  return Object.freeze({
+  const merged = {
     kind, template: kind, audience: 'customer', target: 'job', triggers: ['hub', 'mcp'], roles: ['dispatcher'], approvals: ['preview_confirm'],
     quietHours: false, maxAttempts: 3, overrides: [], customBody: false, adapterOnly: false, billing: false, cadenceDays: 0, previousKey: null, crewAssigned: true, eligible: () => ok, ...options,
-  });
+  };
+  const own = merged.eligible;
+  if (merged.audience === 'customer' && merged.target === 'job') merged.eligible = c => businessAccountJob(c.job) || businessAccountJob(c.accountRoot) ? reason('business_account_job') : own(c);
+  return Object.freeze(merged);
 }
 
 export const MESSAGE_POLICIES = Object.freeze({
@@ -97,18 +96,11 @@ export const MESSAGE_POLICIES = Object.freeze({
     dedupe: c => crewNoticeSendKey({ jobId: c.job.id, employeeId: c.crewId, id: c.notice?.id || '' }),
     eligible: c => !c.notice ? reason('notice_required') : !(scheduled({ ...c.job, date: c.today }, c.today) && slotUpcoming(c.notice, c.now)) ? reason('not_upcoming') : ok,
   }),
-  // Billing kinds quote invoice numbers and balances. They are never copied
-  // into the customer thread, which assigned crew can read.
-  invoice_send: policy('invoice_send', {
-    billing: true,
-    dedupe: c => `invoice_send:${c.job.id}:${c.job.invoice?.number || ''}:${invoiceBalance(c.job)}:${c.job.invoice?.dueDate || ''}`,
-    eligible: c => payableInvoice(c.job),
-  }),
-  payment_reminder: reminder('payment_reminder', {
-    billing: true, triggers: ['hub', 'mcp', 'cron'], approvals: ['preview_confirm', 'owner_automation'], quietHours: true,
-    cadenceDays: 7, series: c => `payment_reminder:${c.job.id}:${c.job.invoice?.number || ''}`, anchor: c => c.job.invoice?.dueDate,
-    eligible: c => payableInvoice(c.job),
-  }),
+  // Invoices and payment reminders are HighLevel's (the owner rule): issuing an
+  // invoice adds the egc-invoice-issued tag and an overdue invoice the
+  // egc-invoice-overdue tag, and HighLevel's workflows on them message the
+  // customer, so neither is an approved-send kind. Billing kinds quote balances
+  // and are never copied into the customer thread, which assigned crew can read.
   deposit_reminder: reminder('deposit_reminder', {
     billing: true, triggers: ['hub', 'mcp', 'cron'], approvals: ['preview_confirm', 'owner_automation'], quietHours: true,
     cadenceDays: 3, series: c => `deposit_reminder:${c.job.id}:${c.job.date || ''}`, anchor: c => c.job.date,

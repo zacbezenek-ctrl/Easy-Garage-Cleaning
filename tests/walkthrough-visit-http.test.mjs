@@ -180,8 +180,17 @@ test('HTTP: switched off by default for writes, same-origin JSON only, bounded, 
   const off = staffEnv();
   const disabled = await s.call(body, { environment: off });
   assert.equal(disabled.status, 503); assert.equal(disabled.body.code, 'walkthrough_visit_disabled');
+  const requestsBefore = s.fire.requests.length;
   const read = await s.call('?visitId=w1', { environment: off });
   assert.equal(read.status, 200); assert.equal(read.body.enabled, false);
+  // FUN-06: the gameplan asks on every open, so switched off the GET reads nothing beyond the sign-in check (its own
+  // account record): no visit, lock or timecard vault read. Switched on, the same GET reads them.
+  assert.deepEqual(read.body, { ok: true, enabled: false });
+  const beyondSignIn = from => s.fire.requests.slice(from).map(request => decodeURIComponent(request.url.pathname)).filter(path => !/\/documents\/jobs\/secure_account_[\w-]+$/.test(path));
+  assert.deepEqual(beyondSignIn(requestsBefore), []);
+  const onBefore = s.fire.requests.length;
+  assert.equal((await s.call('?visitId=w1')).body.enabled, true);
+  assert.ok(beyondSignIn(onBefore).length > 0, 'switched on, the visit and timecard are read');
   const checks = [
     [{ headers: { 'Sec-Fetch-Site': 'cross-site' } }, 403, 'walkthrough_visit_origin_forbidden'],
     [{ headers: { Origin: 'https://attacker.invalid' } }, 403, 'walkthrough_visit_origin_forbidden'],

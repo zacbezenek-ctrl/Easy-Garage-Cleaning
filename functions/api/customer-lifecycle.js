@@ -28,7 +28,7 @@ export function customerLifecycleHandlers({ session = getHubSession, storage = l
     async get({ request, env }) {
       if (!sameOrigin(request, true)) return reply(403, { ok: false, code: 'lifecycle_origin_forbidden', error: 'Open customer credits in the Employee Hub.' });
       try {
-        const actor = await session(request, env); requireLifecycleManager(actor);
+        const actor = await session(request, env); requireLifecycleManager(actor, env);
         const params = new URL(request.url).searchParams, keys = [...params.keys()];
         if (keys.length !== 1 || keys[0] !== 'jobId') return reply(400, { ok: false, code: 'lifecycle_query_invalid', error: 'Choose one job.' });
         const at = now(), view = await readLifecycle(storage(env), actor, params.get('jobId'), lifecycleLimits(env), at);
@@ -39,7 +39,7 @@ export function customerLifecycleHandlers({ session = getHubSession, storage = l
       if (!sameOrigin(request)) return reply(403, { ok: false, code: 'lifecycle_origin_forbidden', error: 'Open customer credits in the Employee Hub to save changes.' });
       if (!lifecycleApiEnabled(env)) return reply(404, { ok: false, code: 'lifecycle_api_disabled', error: 'Server customer actions are turned off. Use the standard customer tools.' });
       try {
-        const actor = await session(request, env); requireLifecycleManager(actor);
+        const actor = await session(request, env); requireLifecycleManager(actor, env);
         if (request.headers.get('Content-Type')?.split(';')[0].trim().toLowerCase() !== 'application/json') return reply(415, { ok: false, code: 'lifecycle_json_required', error: 'Customer changes must be sent as JSON.' });
         if (Number(request.headers.get('Content-Length')) > LIMIT) return reply(413, { ok: false, code: 'lifecycle_request_too_large', error: 'The customer request is too large.' });
         const raw = await request.text();

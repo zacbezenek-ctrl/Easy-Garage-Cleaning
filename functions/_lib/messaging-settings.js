@@ -11,10 +11,8 @@ export const MESSAGING_SETTINGS_ID = 'automation';
 export const MAX_SENDS_PER_TICK = 25;
 export const DEFAULT_MESSAGING_SETTINGS = Object.freeze({
   paused: false,
-  // Days after the invoice due date. Each stage falls in its own 7-day
-  // payment_reminder window, so every stage is one claim-once send; the
-  // approved-send cadence rule also keeps consecutive reminders 7 days apart.
-  paymentReminderDays: Object.freeze([1, 7, 14]),
+  // No payment reminder cadence: overdue invoices are HighLevel's (the Hub only
+  // adds egc-invoice-overdue), so a saved paymentReminderDays is ignored.
   // Days before the service date for an approved but unpaid deposit.
   depositReminderDaysBefore: Object.freeze([3]),
   // Days before estimate.validUntil (the Hub reminder has always been one day).
@@ -39,7 +37,6 @@ export function normalizeMessagingSettings(doc) {
   const settings = { ...DEFAULT_MESSAGING_SETTINGS, ...input };
   const invalid = [];
   if (typeof settings.paused !== 'boolean') invalid.push('paused');
-  if (!days(settings.paymentReminderDays, 0, 60) || !windows(settings.paymentReminderDays, 7, 1)) invalid.push('paymentReminderDays');
   if (!days(settings.depositReminderDaysBefore, 1, 30) || !windows(settings.depositReminderDaysBefore, 3, -1)) invalid.push('depositReminderDaysBefore');
   if (!Number.isInteger(settings.estimateExpiringDaysBefore) || settings.estimateExpiringDaysBefore < 0 || settings.estimateExpiringDaysBefore > 14) invalid.push('estimateExpiringDaysBefore');
   const window = settings.dayBeforeWindow;
@@ -47,7 +44,7 @@ export function normalizeMessagingSettings(doc) {
   if (!Number.isInteger(settings.maxSendsPerTick) || settings.maxSendsPerTick < 0 || settings.maxSendsPerTick > MAX_SENDS_PER_TICK) invalid.push('maxSendsPerTick');
   if (invalid.length) throw fail('The messaging schedule settings need review. Automatic messages are paused until they are fixed.', { fields: invalid });
   return {
-    paused: settings.paused, paymentReminderDays: [...settings.paymentReminderDays], depositReminderDaysBefore: [...settings.depositReminderDaysBefore],
+    paused: settings.paused, depositReminderDaysBefore: [...settings.depositReminderDaysBefore],
     estimateExpiringDaysBefore: settings.estimateExpiringDaysBefore, dayBeforeWindow: { start: window.start, end: window.end },
     maxSendsPerTick: settings.maxSendsPerTick, source: 'saved', revision: doc.revision || '',
   };

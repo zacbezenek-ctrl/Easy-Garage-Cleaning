@@ -534,3 +534,31 @@ test('the projection is an allowlist of schedule identity and the visit record',
   assert.equal(JSON.stringify(projected).includes('Synthetic notes'), false);
   assert.equal(walkthroughVisitProjection(null), null);
 });
+
+test('FUN-06: a walkthrough without audio carries up to three typed notes on its Finish, inside the request fingerprint', async () => {
+  const { canonicalJson, sha256Hex } = await import('../functions/_lib/funnel-definitions.js');
+  const f = fixture(); f.clockIn();
+  await f.run(sales, f.body('start', { recordingStatus: 'declined' }));
+  const notes = ['Synthetic: wants the two-car garage back', 'Synthetic: keep the workbench', 'Synthetic: side gate, dog in the yard'];
+  const finish = extra => f.body('finish', { outcome: 'quote_to_follow', recordingStatus: 'declined', ...extra });
+  for (const typedNotes of [[], ['a', 'b', 'c', 'd'], [''], ['  '], ['x'.repeat(401)], 'Synthetic note', [7]]) await rejects(f.run(sales, finish({ typedNotes }), FINISH), 'invalid', 400);
+  await rejects(f.run(sales, finish({ recordingStatus: 'recorded', typedNotes: notes }), FINISH), 'invalid', 400);
+  await rejects(f.run(sales, f.body('start', { visitId: 'w2', typedNotes: notes })), 'invalid', 400);
+  await rejects(f.run(sales, f.body('no_show', { visitId: 'w2', reasonCode: 'customer_not_home', typedNotes: notes })), 'invalid', 400);
+  assert.equal(f.commits.length, 1);
+  const input = finish({ typedNotes: [...notes.slice(0, 2), `  ${notes[2]}  `] }), result = await f.run(sales, input, FINISH);
+  assert.deepEqual(f.visit('w1').walkthroughOutcome.typedNotes, notes, 'stored trimmed on the outcome');
+  assert.deepEqual(f.events('walkthrough.completed')[0].data, { outcome: 'quote_to_follow', recordingStatus: 'declined' }, 'notes never enter the funnel event');
+  assert.equal(JSON.stringify(result).includes('Synthetic: keep the workbench'), false, 'the allowlisted projection leaves the notes out');
+  assert.equal((await f.run(sales, input, FINISH)).replayed, true);
+  await rejects(f.run(sales, { ...input, typedNotes: ['Synthetic: something else'] }, FINISH), 'idempotency_conflict', 409);
+  // A Finish without notes keeps the pre-FUN-06 fingerprint, so a request saved before this change still replays.
+  const g = fixture(); g.clockIn();
+  await g.run(sales, g.body('start'));
+  const plainFinish = g.body('finish', { outcome: 'quote_to_follow', recordingStatus: 'recorded' });
+  await g.run(sales, plainFinish, FINISH);
+  const { requestId, expectedRevision } = plainFinish;
+  const legacy = sha256Hex(canonicalJson({ actor: 'sales.rep', input: { action: 'finish', visitId: 'w1', requestId, expectedRevision, outcome: 'quote_to_follow', reasonCode: null, recordingStatus: 'recorded', deviceAt: null, skipTimecard: false, actorId: null } }));
+  assert.equal(g.rows.get(`${WALKTHROUGH_VISIT_OPERATIONS}/${requestId}`).fingerprint, legacy);
+  assert.equal('typedNotes' in g.visit('w1').walkthroughOutcome, false);
+});

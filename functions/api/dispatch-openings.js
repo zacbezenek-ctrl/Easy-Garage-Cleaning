@@ -8,7 +8,7 @@ const reply=(status,body)=>new Response(JSON.stringify(body),{status,headers:{'C
 export function dispatchOpeningsHandlers({session=getHubSession,storage=dispatchStorage,now=()=>new Date(),travel=travelEstimator}={}) {
   return {async get({request,env}) {
     try {
-      const actor=await session(request,env);requireDispatcher(actor);
+      const actor=await session(request,env);requireDispatcher(actor,env);
       const params=new URL(request.url).searchParams;
       if(new Set(params.keys()).size!==[...params.keys()].length)return reply(400,{ok:false,code:'dispatch_openings_invalid',error:'Each openings filter can only be supplied once.'});
       const store=storage(env);

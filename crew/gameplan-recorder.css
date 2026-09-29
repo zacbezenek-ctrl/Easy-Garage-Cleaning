@@ -1,0 +1,71 @@
+/* FUN-06 walkthrough recorder (crew/gameplan-recorder.js): the Start/Finish card above the plan and the
+   recording bar inside the fixed footer. Scoped to .egc-wt and .wt-bar; colors come from the gameplan tokens. */
+.egc-wt{max-width:1060px;margin:18px auto 0;padding:0 22px;display:grid;gap:12px;min-width:0}
+.egc-wt[hidden],.wt-bar[hidden]{display:none!important}
+.egc-wt .wt-panel{background:var(--card,#fff);border:1px solid var(--line,#d9d8d2);border-left:4px solid var(--orange,#ef5b2a);box-shadow:var(--shadow,none);padding:18px 20px;display:grid;gap:12px;min-width:0}
+.egc-wt h2{font-size:19px;line-height:1.2;margin:3px 0 0;overflow-wrap:anywhere}
+.egc-wt h3{font-size:15px;margin:0;overflow-wrap:anywhere}
+.egc-wt p{margin:0;overflow-wrap:anywhere}
+.wt-head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;min-width:0}
+.wt-head>div{min-width:0}
+.wt-eyebrow{font:700 11px 'JetBrains Mono',ui-monospace,monospace;letter-spacing:.12em;color:var(--orange,#ef5b2a);text-transform:uppercase}
+.wt-muted{color:var(--muted,#687386);font-size:14px}
+.wt-note{background:#f6f5f1;border-left:3px solid var(--orange,#ef5b2a);padding:10px 12px;font-size:14px}
+.wt-ok{color:var(--green,#18704c);font-weight:700}
+.wt-error{color:var(--red,#b33d45)}
+.wt-consent{font-size:18px;font-weight:700;line-height:1.35}
+.wt-row{display:flex;flex-wrap:wrap;gap:10px;align-items:center;min-width:0}
+.wt-btn{min-height:48px;padding:0 18px;border:1px solid var(--line,#d9d8d2);border-radius:3px;background:#fff;color:var(--navy,#111d30);font:800 16px/1.2 Inter,system-ui,sans-serif;display:inline-flex;align-items:center;justify-content:center;text-align:center;text-decoration:none;max-width:100%;overflow-wrap:anywhere}
+.wt-btn:focus-visible,.wt-choice:focus-visible,.wt-badge:focus-visible{outline:3px solid rgba(239,91,42,.35);outline-offset:2px}
+.wt-primary{background:var(--orange,#ef5b2a);border-color:var(--orange,#ef5b2a);color:#fff}
+.wt-quiet{min-height:44px;padding:0 8px;border-color:transparent;background:transparent;color:var(--muted,#687386);font-weight:700;text-decoration:underline}
+.wt-finish{background:var(--navy,#111d30);border-color:var(--navy,#111d30);color:#fff}
+.wt-choices{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,180px),1fr));gap:8px}
+.wt-choice{min-height:56px;padding:10px 12px;border:1px solid var(--line,#d9d8d2);border-radius:3px;background:#fff;color:var(--ink,#172033);font:700 16px/1.25 Inter,system-ui,sans-serif;text-align:left;overflow-wrap:anywhere}
+.wt-choice small{display:block;margin-top:3px;color:var(--muted,#687386);font-size:13px;font-weight:400}
+.wt-choice.on{border-color:var(--orange,#ef5b2a);box-shadow:inset 0 0 0 2px var(--orange,#ef5b2a);background:#fff7f3}
+.wt-field,.wt-file{display:grid;grid-template-columns:minmax(0,1fr);gap:6px;font-size:14px;font-weight:700;min-width:0}
+.wt-field select,.wt-field textarea{width:100%;max-width:100%;min-height:48px;padding:10px 12px;border:1px solid var(--line,#d9d8d2);border-radius:3px;background:#fff;color:var(--ink,#172033);font:400 16px/1.4 Inter,system-ui,sans-serif}
+.wt-field textarea{resize:vertical}
+.wt-file input{width:100%;min-width:0;max-width:100%;min-height:48px;font-size:16px}
+.wt-notes{display:grid;gap:10px;min-width:0;margin:0;padding:12px;border:1px solid var(--line,#d9d8d2)}
+.wt-notes legend{padding:0 4px;font-weight:800}
+.wt-skeleton .wt-line{display:block;height:14px;border-radius:3px;background:linear-gradient(90deg,#ece9e2,#f6f4ef,#ece9e2);background-size:200% 100%;animation:wt-shimmer 1.2s linear infinite}
+.wt-skeleton .wt-line.short{width:55%}
+@keyframes wt-shimmer{to{background-position:-200% 0}}
+.wt-sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+.wt-unsent{display:grid;gap:8px;min-width:0}
+.wt-badge{justify-self:start;max-width:100%;min-height:44px;padding:0 16px;border:0;border-radius:999px;background:var(--navy,#111d30);color:#fff;font:800 14px/1.2 Inter,system-ui,sans-serif;overflow-wrap:anywhere}
+.wt-unsent-list{display:grid;gap:12px;min-width:0;padding:14px;border:1px solid var(--line,#d9d8d2);background:#fff}
+.wt-session{display:grid;gap:6px;min-width:0;padding-bottom:12px;border-bottom:1px solid #ebe9e4}
+.wt-list{display:grid;gap:8px;margin:0;padding:0;list-style:none;font-size:14px}
+.wt-list li{display:grid;gap:6px;min-width:0;overflow-wrap:anywhere}
+.wt-part progress{width:100%;height:10px}
+.wt-part-error{color:var(--red,#b33d45)}
+/* A part on the recording service although consent was withdrawn: the rep tells the office. */
+.wt-part-notice{color:var(--red,#b33d45)}
+/* The recording bar sits in the fixed footer, above Back and Continue, within thumb reach. */
+.wt-bar{max-width:1016px;margin:0 auto 10px;display:grid;gap:6px;min-width:0}
+.wt-bar-in{display:flex;align-items:center;gap:10px;min-width:0}
+.wt-bar-text{flex:1;min-width:0;color:var(--navy,#111d30);font:700 14px/1.3 'JetBrains Mono',ui-monospace,monospace;overflow-wrap:anywhere}
+.wt-bar .wt-btn{flex:none;min-height:46px}
+.wt-dot{flex:none;width:12px;height:12px;border-radius:50%;background:#9aa3ae}
+.wt-dot.on{background:#d92d20;animation:wt-pulse 1.4s ease-in-out infinite}
+@keyframes wt-pulse{50%{opacity:.35}}
+.wt-warn{margin:0;color:var(--red,#b33d45);font-size:13px;font-weight:700;overflow-wrap:anywhere}
+.wt-bar-note{margin:0;color:var(--navy,#111d30);font-size:13px;font-weight:700;overflow-wrap:anywhere}
+/* The bar keeps what needs the rep to one line each: a dismissible warning and "needs your decision" with Decide, which
+   brings the choice on the card into view. The plan below keeps clear of the footer at its measured height (--wt-footer,
+   set by the recorder from a ResizeObserver on the footer). */
+.wt-warn-row,.wt-bar-alert{display:flex;align-items:center;gap:8px;min-width:0}
+.wt-warn-row .wt-warn,.wt-bar-alert p{flex:1;min-width:0}
+.wt-bar-alert p{margin:0;color:var(--red,#b33d45);font-size:13px;font-weight:800;overflow-wrap:anywhere}
+.wt-bar-alert .wt-btn,.wt-warn-row .wt-btn{flex:none;min-height:44px}
+body.wt-active main{padding-bottom:calc(var(--wt-footer,210px) + 24px)}
+/* Walkthroughs that need a decision, on every appointment. */
+.wt-decide{display:grid;gap:10px;min-width:0}
+.egc-wt .wt-decide-panel{border-left-color:var(--red,#b33d45)}
+.wt-decide-title{font-weight:800;color:var(--red,#b33d45)}
+@media (prefers-reduced-motion:reduce){.wt-skeleton .wt-line,.wt-dot.on{animation:none}}
+@media(max-width:760px){.egc-wt{margin-top:14px;padding:0 14px}.egc-wt .wt-panel{padding:15px}}
+@media(max-width:680px){.egc-wt select,.egc-wt textarea,.egc-wt input{font-size:16px}.egc-wt .wt-actions .wt-btn{flex:1 1 100%}.wt-bar-text{font-size:13px}}

@@ -6,7 +6,7 @@
   // busy locks the page while the crew member's action is being saved (acting)
   // or the sync is sending a job or time action (replaying). A photo upload
   // never holds it, so a weak signal does not freeze the job page.
-  const S = { user: null, job: null, historyCursor: null, acting: false, replaying: false, get busy() { return this.acting || this.replaying; }, set busy(value) { this.acting = value; }, syncing: false, saving: null, offline: false, initFailed: false, outbox: [], photosAvailable: false, preparing: false, sending: '', discarding: new Set(), resync: false, actionError: null, errorText: '', feedbackTimer: null, date: mountainDate(), filter: 'all' };
+  const S = { user: null, job: null, historyCursor: null, acting: false, replaying: false, get busy() { return this.acting || this.replaying; }, set busy(value) { this.acting = value; }, syncing: false, saving: null, offline: false, initFailed: false, outbox: [], photosAvailable: false, preparing: false, sending: '', discarding: new Set(), resync: false, actionError: null, errorText: '', feedbackTimer: null, date: mountainDate(), filter: 'all', features: {}, locating: false, afterApplied: new Set(), timeNotice: '' };
   const esc = value => String(value ?? '').replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
   const label = value => String(value || '').replaceAll('_', ' ');
   const stamp = value => { try { return value ? new Intl.DateTimeFormat('en-US', { timeZone: 'America/Denver', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(new Date(value)) : ''; } catch { return ''; } };
@@ -38,7 +38,9 @@
   // expired session keeps them for the next sign-in.
   const photosClearedAt = () => { try { return Number(localStorage.getItem(photosClearedKey)) || 0; } catch { return 0; } };
   const afterSignOut = saved => Number(saved?.savedAt) > signedOutAt();
-  function acceptJob(job) { S.job = job; S.timeSnapshot = job.jobTime; S.timeObservedAt = performance.now(); S.timeChanged = false; S.timeError = false; if (S.user && !S.offline) remember(snapshotKey(S.user.user), { job, photosAvailable: S.photosAvailable, savedAt: Date.now() }); }
+  function acceptJob(job) { S.job = job; S.timeSnapshot = job.jobTime; S.timeObservedAt = performance.now(); S.timeChanged = false; S.timeError = false; if (S.user && !S.offline) remember(snapshotKey(S.user.user), { job, photosAvailable: S.photosAvailable, features: S.features, savedAt: Date.now() }); }
+  // EGC_JOB_STATUS_MOVES_TIME (statusMovesTime) and EGC_CLOCK_IN_WITHOUT_FIX (clockInWithoutFix), as the job detail reports them.
+  function acceptFeatures(features) { S.features = { statusMovesTime: features?.statusMovesTime === true, clockInWithoutFix: features?.clockInWithoutFix === true }; }
   function h(tag, attributes = {}, ...children) {
     const element = document.createElement(tag);
     for (const [name, value] of Object.entries(attributes)) { if (value === false || value == null) continue; if (name === 'class') element.className = value; else element.setAttribute(name, value === true ? '' : String(value)); }
@@ -63,19 +65,30 @@
     S.timeRefreshing = true;
     try { const data = await api(`/api/field-jobs?jobId=${encodeURIComponent(jobId)}&view=timer`); S.timeSnapshot = data.jobTime; S.timeObservedAt = performance.now(); S.timeChanged = data.expectedRevision !== S.job?.expectedRevision; S.timeError = false; }
     catch (error) { S.timeError = true; if ([403, 404].includes(error.status)) { S.job = null; renderError(error.message); } }
-    finally { S.timeRefreshing = false; renderJobTime(); if (S.shiftEntry && !S.outbox.some(item => item.kind === 'clock')) await loadEmployeeJobTime(); }
+    finally { S.timeRefreshing = false; renderJobTime(); if (S.shiftEntry && !S.outbox.some(ownClock)) await loadEmployeeJobTime(); }
   }
-  const currentShift = () => Outbox.projectShift(S.shiftEntry, pending().filter(item => item.kind === 'clock'));
+  // The crew member's own time actions. A lead's crew-mate move (crew_time) has its own outbox lane: one the server refused
+  // is reviewed on its own and never holds the lead's clock, break or job-time buttons.
+  const ownClock = item => item.kind === 'clock' && item.payload?.op !== 'crew_time';
+  const currentShift = () => Outbox.projectShift(S.shiftEntry, pending().filter(ownClock));
   function renderEmployeeJobTime() {
     const host = document.getElementById('employee-job-time'); if (!host || !S.job) return;
-    const clock = pending().filter(item => item.kind === 'clock'), blocked = clock.some(item => item.state === 'error');
+    const clock = pending().filter(ownClock), blocked = clock.some(item => item.state === 'error'), crewRefused = pending().find(item => item.kind === 'clock' && item.payload?.op === 'crew_time' && item.state === 'error');
     const entry = currentShift(), current = entry?.current, thisJob = current?.jobId === jobId, recorded = entry?.summary?.jobs?.find(item => item.jobId === jobId), disabled = S.busy || S.preparing || S.shiftLoading || blocked;
-    host.innerHTML = `<h2>Your time on this job</h2><p>This records your own work and travel within your active employee shift. Earlier job segments keep their original job.</p>${S.shiftError ? `<p class="notice error">${esc(S.shiftError)}</p>` : ''}${clock.length ? `<div class="notice"><strong>${blocked ? 'Time action needs review' : 'Time awaiting confirmation'}</strong><p>${blocked ? 'A saved time action was not accepted. Review it at the top of this job before recording more time.' : `${clock.length} time action${clock.length === 1 ? ' is' : 's are'} saved on this phone and ${offline() ? 'will sync in order when you reconnect' : 'syncing in order'}. Each keeps its request ID, so nothing is recorded twice.`}</p></div>` : ''}${(S.shiftLoaded || clock.length) && !entry ? '<p>You are not clocked in. Clock in here or from the employee time clock before recording personal job time.</p>' : entry ? `<p><strong>${entry.onBreak ? 'On break — job minutes are excluded' : current?.kind === 'general' || !current ? 'General shift time' : `${esc(label(current.kind))}: ${esc(current.jobLabel || current.jobId)}`}</strong></p><dl class="detail-grid"><div><dt>Your recorded work here</dt><dd>${durationLabel(recorded?.workMs || 0)}</dd></div><div><dt>Your recorded travel here</dt><dd>${durationLabel(recorded?.travelMs || 0)}</dd></div></dl>${entry.summary?.partialHistory ? '<p class="notice">Earlier shift time has no verified job segments and is not assigned to this job.</p>' : ''}${entry.summary?.needsReview ? '<p class="notice error">Your job segments need manager review before more time can be assigned.</p>' : ''}${entry.deviceTime ? '<p class="muted">Some times on this shift came from this phone while offline. A manager reviews them before approval.</p>' : ''}<div class="actions">${S.job.canEdit ? [['work', thisJob && current.kind === 'work' ? 'Recording work here' : 'Start my work time here'], ['travel', thisJob && current.kind === 'travel' ? 'Recording travel here' : 'Start my travel time here']].map(([kind, text]) => `<button class="${kind === 'work' ? 'primary' : ''}" data-action="shift-time" data-kind="${kind}" ${disabled || entry.summary?.needsReview || thisJob && current.kind === kind ? 'disabled' : ''}>${text}</button>`).join('') : ''}${current?.kind !== 'general' && current ? `<button data-action="shift-time" data-kind="general" ${disabled ? 'disabled' : ''}>End my job time</button>` : ''}</div>${!S.job.canEdit && thisJob ? '<p class="notice">This job is closed. End your personal job time when your work and travel are finished.</p>' : ''}` : S.shiftError ? '' : '<p>Checking your active shift…</p>'}<div class="actions"><button data-action="refresh-shift-time" ${S.busy || S.shiftLoading || offline() ? 'disabled' : ''}>Refresh my shift</button><a class="button" href="/employee?view=my_day">Employee time clock</a></div>`;
+    host.innerHTML = `<h2>Your time on this job</h2><p>This records your own work and travel within your active employee shift. Earlier job segments keep their original job.</p>${S.shiftError ? `<p class="notice error">${esc(S.shiftError)}</p>` : ''}${S.timeNotice ? `<div class="notice" role="status"><strong>Your time was not moved</strong><p>${esc(S.timeNotice)}</p></div>` : ''}${clock.length ? `<div class="notice"><strong>${blocked ? 'Time action needs review' : 'Time awaiting confirmation'}</strong><p>${blocked ? 'A saved time action was not accepted. Review it at the top of this job before recording more time.' : `${clock.length} time action${clock.length === 1 ? ' is' : 's are'} saved on this phone and ${offline() ? 'will sync in order when you reconnect' : 'syncing in order'}. Each keeps its request ID, so nothing is recorded twice.`}</p></div>` : ''}${crewRefused ? `<div class="notice"><strong>Crew-mates not moved</strong><p>${esc(crewRefused.error?.message || 'The move of your crew-mates to work was not accepted.')} Review it at the top of this job. Your own time is not affected.</p></div>` : ''}${(S.shiftLoaded || clock.length) && !entry ? '<p>You are not clocked in. Clock in here or from the employee time clock before recording personal job time.</p>' : entry ? `<p><strong>${entry.onBreak ? 'On break — job minutes are excluded' : current?.kind === 'general' || !current ? 'General shift time' : `${esc(label(current.kind))}: ${esc(current.jobLabel || current.jobId)}`}</strong></p><dl class="detail-grid"><div><dt>Your recorded work here</dt><dd>${durationLabel(recorded?.workMs || 0)}</dd></div><div><dt>Your recorded travel here</dt><dd>${durationLabel(recorded?.travelMs || 0)}</dd></div></dl>${entry.summary?.partialHistory ? '<p class="notice">Earlier shift time has no verified job segments and is not assigned to this job.</p>' : ''}${entry.summary?.needsReview ? '<p class="notice error">Your job segments need manager review before more time can be assigned.</p>' : ''}${entry.deviceTime ? '<p class="muted">Some times on this shift came from this phone while offline. A manager reviews them before approval.</p>' : ''}${entry.clockInLocation === 'missing' ? '<p class="notice">No location at clock-in. A manager reviews this shift.</p>' : entry.clockInLocation === 'shared' ? '<p class="muted">Location shared once at clock-in.</p>' : entry.clockInLocation === 'tracked' ? '<p class="muted">This shift started before location became clock-in only. Its last tracked location stays on file.</p>' : ''}<div class="actions">${S.job.canEdit ? [['work', thisJob && current.kind === 'work' ? 'Recording work here' : 'Start my work time here'], ['travel', thisJob && current.kind === 'travel' ? 'Recording travel here' : 'Start my travel time here']].map(([kind, text]) => `<button class="${kind === 'work' ? 'primary' : ''}" data-action="shift-time" data-kind="${kind}" ${disabled || entry.summary?.needsReview || thisJob && current.kind === kind ? 'disabled' : ''}>${text}</button>`).join('') : ''}${current?.kind !== 'general' && current ? `<button data-action="shift-time" data-kind="general" ${disabled ? 'disabled' : ''}>End my job time</button>` : ''}</div>${!S.job.canEdit && thisJob ? '<p class="notice">This job is closed. End your personal job time when your work and travel are finished.</p>' : ''}` : S.shiftError ? '' : '<p>Checking your active shift…</p>'}<div class="actions"><button data-action="refresh-shift-time" ${S.busy || S.shiftLoading || offline() ? 'disabled' : ''}>Refresh my shift</button><a class="button" href="/employee?view=my_day">Employee time clock</a></div>`;
     const controls = h('div', { class: 'actions clock-actions' });
     if (S.user?.businessAccess === true) controls.append(h('p', { class: 'muted' }, 'Managers clock in, take breaks and clock out from the employee time clock.'));
     else if (entry) controls.append(h('button', { type: 'button', 'data-action': entry.onBreak ? 'break-end' : 'break-start', disabled }, entry.onBreak ? 'End break' : 'Start break'), h('button', { type: 'button', class: 'danger', 'data-action': 'clock-out', disabled }, 'Clock out'));
-    else if (S.shiftLoaded || clock.length) controls.append(h('button', { type: 'button', class: 'primary', 'data-action': 'clock-in', disabled }, 'Clock in'));
+    else if (S.shiftLoaded || clock.length) controls.append(h('p', { class: 'muted' }, 'Clocking in shares your location once. Nothing tracks your location during your shift.'), h('button', { type: 'button', class: 'primary', 'data-action': 'clock-in', disabled }, S.locating ? 'Getting your location…' : 'Clock in'));
     if (controls.childElementCount) host.lastElementChild.before(controls);
+    renderStatusTime();
+  }
+  // Under the status buttons (EGC_JOB_STATUS_MOVES_TIME): where the crew member's own time is going now.
+  function renderStatusTime() {
+    const host = document.getElementById('status-time'); if (!host || !S.job) return;
+    const shift = currentShift(), current = shift?.current, here = S.job.customer || 'this job';
+    host.textContent = !shift ? S.shiftLoaded ? 'Your time: not clocked in' : 'Your time: checking your shift…' : shift.onBreak ? 'Your time: on break'
+      : current?.kind === 'work' || current?.kind === 'travel' ? `Your time: ${current.kind === 'travel' ? 'travelling to' : 'working on'} ${current.jobId === jobId ? here : current.jobLabel || 'another job'}` : 'Your time: general shift time';
   }
   async function loadEmployeeJobTime() {
     if (!S.job || S.shiftLoading || S.offline) return;
@@ -105,8 +118,15 @@
     } catch (error) { S.managerLabor = null; S.managerLaborError = error.message; }
     finally { S.managerLaborLoading = false; renderManagerLabor(); }
   }
-  function currentPosition() {
-    return new Promise((resolve, reject) => { if (!navigator.geolocation) return reject(new Error('Location is unavailable.')); navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: true, maximumAge: 60000, timeout: 20000 }); });
+  function currentPosition(options = { enableHighAccuracy: true, maximumAge: 60000, timeout: 15000 }) {
+    return new Promise((resolve, reject) => { if (!navigator.geolocation) return reject(Object.assign(new Error('Location is unavailable.'), { code: 2 })); navigator.geolocation.getCurrentPosition(resolve, reject, options); });
+  }
+  // Clock-in only (owner decision): one position as the shift starts and nothing after it, here and in the Hub. A timeout
+  // or no position (indoors, weak GPS) is tried once more at lower accuracy, taking a fix up to 5 minutes old; a denied
+  // permission is not retried.
+  async function clockInPosition() {
+    try { return await currentPosition(); }
+    catch (error) { if (error?.code === 1) throw error; return currentPosition({ enableHighAccuracy: false, maximumAge: 300000, timeout: 10000 }); }
   }
   // Clock-in/out, breaks and job switches share the ordered outbox. Each keeps
   // the device time it was recorded at and one request ID for every retry.
@@ -114,18 +134,20 @@
     if (S.busy || S.preparing || !S.user || !S.job || S.user.businessAccess === true && op !== 'job_time') return;
     const entry = currentShift(), requestId = crypto.randomUUID();
     if (op === 'clock_in' ? entry : !entry) return;
-    if (S.outbox.some(item => item.kind === 'clock' && item.state === 'error')) return message('Review the saved time action that was not accepted before recording more time.', true);
+    if (S.outbox.some(item => ownClock(item) && item.state === 'error')) return message('Review the saved time action that was not accepted before recording more time.', true);
     if (op === 'clock_out' && !window.confirm('Clock out now? Your shift will be submitted for approval.')) return;
     let payload;
     // The time is taken once the action is confirmed (and located), not when the prompt opened.
     if (op === 'clock_in') {
-      let position;
-      S.busy = true; renderEmployeeJobTime();
-      try { position = await currentPosition(); } catch { S.busy = false; renderJob(); return message('Clock-in needs location access. Enable location for this site, then try again.', true); }
-      payload = { op, entryId: `time-${S.user.user.trim().toLowerCase()}-${Date.now().toString(36)}`, deviceCapturedAt: new Date().toISOString(), lastLocation: { lat: Number(position.coords.latitude.toFixed(6)), lng: Number(position.coords.longitude.toFixed(6)), accuracy: Math.round(position.coords.accuracy || 0) } };
+      let position = null, failure = null;
+      S.busy = true; S.locating = true; renderEmployeeJobTime();
+      try { position = await clockInPosition(); } catch (error) { failure = error; }
+      S.locating = false;
+      if (failure && (failure.code === 1 || !S.features.clockInWithoutFix)) { S.busy = false; renderJob(); return message(failure.code === 1 ? 'Clock-in needs location access. Enable location for this site, then try again.' : 'Your phone could not find its location. Move near a window or outside, then try again.', true); }
+      payload = { op, entryId: `time-${S.user.user.trim().toLowerCase()}-${Date.now().toString(36)}`, deviceCapturedAt: new Date().toISOString(), ...(position ? { lastLocation: { lat: Number(position.coords.latitude.toFixed(6)), lng: Number(position.coords.longitude.toFixed(6)), accuracy: Math.round(position.coords.accuracy || 0) } } : {}) };
     } else payload = { op, entryId: entry.id, deviceCapturedAt: new Date().toISOString(), ...(op === 'job_time' ? { jobAction: { requestId, expectedSegmentId: entry.currentSegmentId, jobId: kind === 'general' ? '' : jobId, kind } } : {}) };
     const capturedAt = payload.deviceCapturedAt, item = { requestId, kind: 'clock', user: S.user.user, jobId, payload };
-    S.busy = true; S.shiftError = ''; S.saving = { ...item, queuedAt: capturedAt, attempts: 0, state: 'queued' }; renderJob();
+    S.busy = true; S.shiftError = ''; S.timeNotice = ''; S.saving = { ...item, queuedAt: capturedAt, attempts: 0, state: 'queued' }; renderJob();
     let queued;
     try { queued = await outbox.enqueue(item); }
     catch (error) { S.busy = false; S.saving = null; renderJob(); return message(error.message, true); }
@@ -187,7 +209,7 @@
     S.offline = true; await preparePhotos(); await refreshOutbox();
     const saved = jobId ? recall(snapshotKey(viewer.user)) : null;
     if (saved?.job?.id === jobId && jobId && afterSignOut(saved)) {
-      S.photosAvailable = saved.photosAvailable === true; acceptJob(saved.job); S.historyCursor = null;
+      S.photosAvailable = saved.photosAvailable === true; acceptFeatures(saved.features); acceptJob(saved.job); S.historyCursor = null;
       const shift = recall(shiftKey(viewer.user)), fresh = afterSignOut(shift); S.shiftOwner = viewer.user; S.shiftEntry = fresh ? shift.entry || null : null; S.shiftLoaded = fresh; S.shiftError = fresh ? '' : 'Your shift could not be checked while offline.';
       renderJob();
     } else renderOffline();
@@ -219,10 +241,10 @@
   async function load() {
     await preparePhotos();
     if (!jobId) return loadDay();
-    if (S.shiftOwner !== S.user?.user) { S.shiftEntry = null; S.shiftLoaded = false; S.shiftError = ''; S.shiftOwner = S.user?.user; S.managerLabor = null; S.managerLaborError = ''; }
+    if (S.shiftOwner !== S.user?.user) { S.shiftEntry = null; S.shiftLoaded = false; S.shiftError = ''; S.timeNotice = ''; S.shiftOwner = S.user?.user; S.managerLabor = null; S.managerLaborError = ''; }
     try {
       const data = await api(`/api/field-jobs?jobId=${encodeURIComponent(jobId)}`);
-      S.photosAvailable = data.photosAvailable; acceptJob(data.job); S.historyCursor = data.historyCursor; S.jobCosts = data.features?.jobCosts === true;
+      S.photosAvailable = data.photosAvailable; acceptFeatures(data.features); acceptJob(data.job); S.historyCursor = data.historyCursor; S.jobCosts = data.features?.jobCosts === true;
       try { await outbox.migrate(sessionStorage, S.user.user, jobId); } catch (error) { message(error.message, true); }
       await refreshOutbox(); renderJob();
       await syncOutbox(); await loadEmployeeJobTime(); await loadManagerLabor();
@@ -233,7 +255,7 @@
   }
   async function refreshJob() {
     const data = await api(`/api/field-jobs?jobId=${encodeURIComponent(jobId)}`);
-    S.photosAvailable = data.photosAvailable; acceptJob(data.job); S.historyCursor = data.historyCursor; S.jobCosts = data.features?.jobCosts === true; return data;
+    S.photosAvailable = data.photosAvailable; acceptFeatures(data.features); acceptJob(data.job); S.historyCursor = data.historyCursor; S.jobCosts = data.features?.jobCosts === true; return data;
   }
   async function loadDay() {
     try {
@@ -250,7 +272,7 @@
   const statusText = status => ({ dispatched: 'Mark en route', arrived: 'Mark arrived', in_progress: 'Start or resume work', paused: 'Pause work', waiting: 'Waiting', delayed: 'Report delay' })[status] || label(status);
   function describe(item) {
     const input = item.payload;
-    if (item.kind === 'clock') return ({ clock_in: 'Clock in', break_start: 'Start break', break_end: 'End break', clock_out: 'Clock out' })[input.op] || (input.jobAction?.kind === 'general' ? 'End my job time' : `Start my ${label(input.jobAction?.kind)} time`);
+    if (item.kind === 'clock') return ({ clock_in: 'Clock in', break_start: 'Start break', break_end: 'End break', clock_out: 'Clock out', crew_time: 'Move my crew-mates to work here' })[input.op] || (input.jobAction?.kind === 'general' ? 'End my job time' : `Start my ${label(input.jobAction?.kind)} time`);
     if (input.action === 'checklist') return `${input.completed ? 'Check' : 'Reopen'}: ${S.job?.checklist.find(row => row.id === input.itemId)?.label || 'checklist item'}`;
     if (input.action === 'material') return `${S.job?.materials.find(row => row.id === input.materialId)?.name || 'Material'}: ${label(input.state)}`;
     if (input.action === 'note') return `${input.issue ? 'Issue' : 'Note'}: ${input.body}`;
@@ -267,7 +289,7 @@
     host.replaceChildren();
     if (!rows.length) { if (elsewhere) host.append(h('p', { class: 'notice' }, `${elsewhere} saved action${elsewhere === 1 ? '' : 's'} for other jobs ${elsewhere === 1 ? 'is' : 'are'} on this phone and will sync in order.`)); return; }
     const heading = errors.length ? 'Saved action needs review' : S.syncing || S.saving ? 'Saving to the job…' : unconfirmed ? 'Action awaiting confirmation' : `${rows.length} action${rows.length === 1 ? '' : 's'} saved on this phone`;
-    const intro = errors.length ? 'The server did not accept the action below. Review the message, then retry it with the same action ID or discard it. Later actions for this job wait behind it.' : S.syncing || S.saving ? 'Each action keeps its ID, so nothing is saved twice.' : offline() ? 'You are offline. These sync in order when you reconnect. Each keeps its action ID, so nothing is saved twice.' : 'These have not been confirmed by the server yet. They retry automatically with the same action ID, so nothing is saved twice.';
+    const intro = errors.length && errors.every(item => item.kind === 'clock' && item.payload?.op === 'crew_time') ? 'The server did not accept the move of your crew-mates below. Retry it or discard it; your own time and job actions do not wait behind it.' : errors.length ? 'The server did not accept the action below. Review the message, then retry it with the same action ID or discard it. Later actions for this job wait behind it.' : S.syncing || S.saving ? 'Each action keeps its ID, so nothing is saved twice.' : offline() ? 'You are offline. These sync in order when you reconnect. Each keeps its action ID, so nothing is saved twice.' : 'These have not been confirmed by the server yet. They retry automatically with the same action ID, so nothing is saved twice.';
     const list = h('ul', { class: 'outbox-list' }, rows.map(item => h('li', {}, h('strong', {}, describe(item)), h('small', {}, `Saved ${stamp(item.queuedAt)}${item.state === 'error' ? ' · not accepted' : item.attempts ? ' · not confirmed yet' : ' · waiting to sync'}`), item.state === 'error' ? [h('p', { class: 'outbox-error', role: 'alert' }, item.error?.message || 'This action was not accepted.'), item.error?.missing?.length ? h('ul', {}, item.error.missing.map(text => h('li', {}, text))) : null, h('div', { class: 'actions' }, h('button', { type: 'button', class: 'primary', 'data-action': 'outbox-retry', 'data-request': item.requestId, disabled: S.busy || offline() }, 'Refresh and retry'), h('button', { type: 'button', 'data-action': 'outbox-discard', 'data-request': item.requestId, disabled: S.busy }, 'Discard this action'))] : null)));
     host.append(h('section', { class: 'card pending-action', 'aria-live': 'polite' }, h('h2', {}, heading), h('p', {}, intro), list, elsewhere ? h('p', { class: 'muted' }, `${elsewhere} more for other jobs will sync too.`) : null, !errors.length && !S.syncing && !offline() ? h('div', { class: 'actions' }, h('button', { type: 'button', 'data-action': 'outbox-sync', disabled: S.busy }, 'Sync now')) : null));
   }
@@ -279,7 +301,7 @@
     const required = j.checklist.filter(item => item.required && !item.completed).length;
     const lead = j.crewMembers.find(member => member.id.toLowerCase() === j.crewLead.toLowerCase());
     const disabled = S.busy || S.preparing || dayLocked();
-    main.innerHTML = `<div class="toolbar"><a class="button" href="/crew/job.html">← My day</a><button data-action="reload" ${S.busy || S.preparing ? 'disabled' : ''}>Refresh job</button></div><span class="eyebrow">${esc(j.serviceType || 'Garage service')} · Job ${esc(j.id)}</span><h1>${esc(j.customer || 'Customer name pending')}</h1><div class="section-heading"><span class="badge ${j.completedAt ? 'done' : ['delayed', 'paused', 'waiting', 'cancelled'].includes(j.fieldStatus) ? 'alert' : ''}">${esc(label(j.fieldStatus))}</span>${j.statusQueued ? '<span class="badge queued">Waiting to sync</span>' : ''}<small>All times Mountain</small></div>${pendingCard()}${S.offline ? '<p class="notice">Offline: showing the last copy of this job confirmed in this tab. Other crew changes appear when you reconnect.</p>' : ''}${!j.address ? '<p class="notice">This job is missing its address. Contact operations before leaving.</p>' : ''}<section class="card"><h2>${esc(dateLabel(j.date))}</h2><p><strong>${esc(timeLabel(j.time))}–${esc(timeLabel(j.endTime))}${j.endDate !== j.date ? ` · through ${esc(dateLabel(j.endDate))}` : ''}</strong>${j.arrivalWindow ? `<br>Arrival window: ${esc(j.arrivalWindow)}` : ''}</p><p>${esc(j.address || 'Address pending')}</p><div class="actions">${j.address ? `<a class="button primary" href="${directions(j.address)}" target="_blank" rel="noopener">Navigate to job ↗</a>` : ''}${j.phone ? `<a class="button" href="tel:${esc(j.phone.replace(/[^+0-9]/g, ''))}">Call customer</a>` : ''}</div><dl class="detail-grid"><div><dt>Crew</dt><dd>${esc(j.crewMembers.map(member => member.name).join(', ') || 'Not assigned')}</dd></div><div><dt>Crew lead</dt><dd>${esc(lead?.name || j.crewLead || 'Not designated')}</dd></div><div><dt>Vehicle</dt><dd>${esc(j.vehicleName || j.vehicleId || 'Not assigned')}</dd></div><div><dt>Equipment</dt><dd>${esc(j.requiredEquipment.join(', ') || 'No equipment list recorded')}</dd></div></dl>${j.canEdit ? `<div class="actions">${j.allowedStatuses.filter(status => status !== j.fieldStatus).map(status => `<button class="${['dispatched', 'arrived', 'in_progress'].includes(status) ? 'primary' : ''}" data-action="status" data-status="${status}" ${disabled ? 'disabled' : ''}>${esc(({ dispatched: 'Mark en route', arrived: 'Mark arrived', in_progress: j.fieldStatus === 'day_ended' ? 'Start today’s work' : j.startedAt ? 'Resume work' : 'Start work', paused: 'Pause work', waiting: 'Waiting', delayed: 'Report delay' })[status] || label(status))}</button>`).join('')}</div><div id="status-reason"></div>` : ''}</section><div class="grid"><div><section class="card"><h2>Scope & instructions</h2>${block('Work to complete', j.scope) || '<p class="notice">No operational scope has been recorded. Confirm the scope with operations before starting.</p>'}${block('Customer goal', j.customerGoal)}${block('Customer instructions', j.customerInstructions)}${block('Access', [...j.access, j.accessInstructions].filter(Boolean).join('\n'))}${block('Keep and protect', j.keepItems)}${block('Remove', j.removeItems)}${block('Exclusions', j.exclusions)}${block('Hazards', j.hazards.join('\n'))}${block('Truck placement', j.truckPlacement)}</section><section class="card" id="checklist-card"><div class="section-heading"><h2>Job checklist</h2><span class="badge">${completed}/${j.checklist.length}</span></div><p>${required ? `${required} required items remaining.` : 'All required checks are complete.'} Changes save to this job for the entire crew.</p>${[['departure', 'Before departure'], ['arrival', 'At arrival'], ['work', 'Work execution'], ['finish', 'Finish & customer walkthrough']].map(([stage, name]) => `<div class="check-group"><h3>${name}</h3>${j.checklist.filter(item => item.stage === stage).map(item => `<label class="check"><input type="checkbox" data-check="${esc(item.id)}" ${item.completed ? 'checked' : ''} ${!j.canEdit || disabled ? 'disabled' : ''}><span class="check-label">${esc(item.label)}${!item.required ? ' <small>Optional</small>' : ''}${item.detail ? `<small>${esc(item.detail)}</small>` : ''}${item.queued ? '<small class="queued-tag">Saved on this phone · waiting to sync</small>' : item.completed ? `<small>Saved by ${esc(item.completedBy || 'crew')} · ${esc(stamp(item.completedAt))}</small>` : ''}</span></label>`).join('')}</div>`).join('')}${checklistEditor()}</section>${j.materials.length ? `<section class="card"><h2>Materials</h2>${j.materials.map(item => `<div class="material"><div><strong>${esc(item.name)}</strong>${item.quantity != null ? `<br><small>Quantity: ${esc(item.quantity)}</small>` : ''}${item.queued ? '<small class="queued-tag">Waiting to sync</small>' : ''}</div><select aria-label="${esc(item.name)} state" data-material="${esc(item.id)}" ${!j.canEdit || disabled ? 'disabled' : ''}>${['required', 'loaded', 'used', 'missing'].map(state => `<option value="${state}" ${state === item.state ? 'selected' : ''}>${label(state)}</option>`).join('')}</select></div>`).join('')}</section>` : ''}</div><div><section class="card" id="photos-card"><div class="section-heading"><h2>Job photos</h2><span class="badge">${j.photos.length} verified</span>${j.photoQueue.length ? `<span class="badge queued">${j.photoQueue.length} waiting to upload</span>` : ''}</div><p>Before, progress, after, and problem photos stay with this job.</p><div class="photo-grid">${S.offline ? '' : j.photos.map(photo => `<button class="photo-tile" data-action="view-photo" data-photo="${photo.id}"><img src="${esc(photo.url)}" alt="${esc(photo.caption || `${photo.category} photo`)}" loading="lazy"><span>${esc(label(photo.category))}${photo.caption ? ` · ${esc(photo.caption)}` : ''}</span></button>`).join('')}</div>${!j.photos.length ? '<p class="empty">No verified field photos yet.</p>' : ''}${j.status !== 'cancelled' && !dayLocked() ? photoForm() : ''}<div id="photo-queue"></div></section><section class="card"><h2>Crew notes & issues</h2><p>Notes are timestamped and shared with this job’s assigned crew and managers.</p>${issueMarkup()}<form id="note-form"><div class="field"><label for="note-body">Add a note</label><textarea id="note-body" data-draft="note" maxlength="4000" required placeholder="What should the crew or dispatcher know?">${esc(getDraft('note'))}</textarea></div><label class="check"><input type="checkbox" id="note-issue" ${getDraft('noteIssue') === 'yes' ? 'checked' : ''}><span>Flag an issue needing operations follow-up</span></label>${j.canAddManagementNote ? `<label class="check"><input type="checkbox" id="note-private" ${getDraft('notePrivate') === 'yes' ? 'checked' : ''}><span>Management only</span></label>` : ''}<button class="primary" type="submit" ${disabled ? 'disabled' : ''}>Save note</button></form></section><section class="card" id="history-card"><div class="section-heading"><h2>Job history</h2><span class="eyebrow">Server records</span></div>${historyMarkup(j.history)}${S.historyCursor ? '<button data-action="history-more">Load earlier history</button>' : ''}</section></div><section class="card full" id="complete-card">${completionMarkup()}</section></div><p class="offline-stamp">Showing the last confirmed server record. Refresh to see changes made by other crew members.</p>`;
+    main.innerHTML = `<div class="toolbar"><a class="button" href="/crew/job.html">← My day</a><button data-action="reload" ${S.busy || S.preparing ? 'disabled' : ''}>Refresh job</button></div><span class="eyebrow">${esc(j.serviceType || 'Garage service')} · Job ${esc(j.id)}</span><h1>${esc(j.customer || 'Customer name pending')}</h1><div class="section-heading"><span class="badge ${j.completedAt ? 'done' : ['delayed', 'paused', 'waiting', 'cancelled'].includes(j.fieldStatus) ? 'alert' : ''}">${esc(label(j.fieldStatus))}</span>${j.statusQueued ? '<span class="badge queued">Waiting to sync</span>' : ''}<small>All times Mountain</small></div>${pendingCard()}${S.offline ? '<p class="notice">Offline: showing the last copy of this job confirmed in this tab. Other crew changes appear when you reconnect.</p>' : ''}${!j.address ? '<p class="notice">This job is missing its address. Contact operations before leaving.</p>' : ''}<section class="card"><h2>${esc(dateLabel(j.date))}</h2><p><strong>${esc(timeLabel(j.time))}–${esc(timeLabel(j.endTime))}${j.endDate !== j.date ? ` · through ${esc(dateLabel(j.endDate))}` : ''}</strong>${j.arrivalWindow ? `<br>Arrival window: ${esc(j.arrivalWindow)}` : ''}</p><p>${esc(j.address || 'Address pending')}</p><div class="actions">${j.address ? `<a class="button primary" href="${directions(j.address)}" target="_blank" rel="noopener">Navigate to job ↗</a>` : ''}${j.phone ? `<a class="button" href="tel:${esc(j.phone.replace(/[^+0-9]/g, ''))}">Call customer</a>` : ''}</div><dl class="detail-grid"><div><dt>Crew</dt><dd>${esc(j.crewMembers.map(member => member.name).join(', ') || 'Not assigned')}</dd></div><div><dt>Crew lead</dt><dd>${esc(lead?.name || j.crewLead || 'Not designated')}</dd></div><div><dt>Vehicle</dt><dd>${esc(j.vehicleName || j.vehicleId || 'Not assigned')}</dd></div><div><dt>Equipment</dt><dd>${esc(j.requiredEquipment.join(', ') || 'No equipment list recorded')}</dd></div></dl>${j.canEdit ? `<div class="actions">${j.allowedStatuses.filter(status => status !== j.fieldStatus).map(status => `<button class="${['dispatched', 'arrived', 'in_progress'].includes(status) ? 'primary' : ''}" data-action="status" data-status="${status}" ${disabled ? 'disabled' : ''}>${esc(({ dispatched: 'Mark en route', arrived: 'Mark arrived', in_progress: j.fieldStatus === 'day_ended' ? 'Start today’s work' : j.startedAt ? 'Resume work' : 'Start work', paused: 'Pause work', waiting: 'Waiting', delayed: 'Report delay' })[status] || label(status))}</button>`).join('')}</div><div id="status-reason"></div>${S.features.statusMovesTime && onCrew() ? '<p class="muted" id="status-time" aria-live="polite"></p>' : ''}` : ''}</section><div class="grid"><div><section class="card"><h2>Scope & instructions</h2>${block('Work to complete', j.scope) || '<p class="notice">No operational scope has been recorded. Confirm the scope with operations before starting.</p>'}${block('Customer goal', j.customerGoal)}${block('Customer instructions', j.customerInstructions)}${block('Access', [...j.access, j.accessInstructions].filter(Boolean).join('\n'))}${block('Keep and protect', j.keepItems)}${block('Remove', j.removeItems)}${block('Exclusions', j.exclusions)}${block('Hazards', j.hazards.join('\n'))}${block('Truck placement', j.truckPlacement)}</section><section class="card" id="checklist-card"><div class="section-heading"><h2>Job checklist</h2><span class="badge">${completed}/${j.checklist.length}</span></div><p>${required ? `${required} required items remaining.` : 'All required checks are complete.'} Changes save to this job for the entire crew.</p>${[['departure', 'Before departure'], ['arrival', 'At arrival'], ['work', 'Work execution'], ['finish', 'Finish & customer walkthrough']].map(([stage, name]) => `<div class="check-group"><h3>${name}</h3>${j.checklist.filter(item => item.stage === stage).map(item => `<label class="check"><input type="checkbox" data-check="${esc(item.id)}" ${item.completed ? 'checked' : ''} ${!j.canEdit || disabled ? 'disabled' : ''}><span class="check-label">${esc(item.label)}${!item.required ? ' <small>Optional</small>' : ''}${item.detail ? `<small>${esc(item.detail)}</small>` : ''}${item.queued ? '<small class="queued-tag">Saved on this phone · waiting to sync</small>' : item.completed ? `<small>Saved by ${esc(item.completedBy || 'crew')} · ${esc(stamp(item.completedAt))}</small>` : ''}</span></label>`).join('')}</div>`).join('')}${checklistEditor()}</section>${j.materials.length ? `<section class="card"><h2>Materials</h2>${j.materials.map(item => `<div class="material"><div><strong>${esc(item.name)}</strong>${item.quantity != null ? `<br><small>Quantity: ${esc(item.quantity)}</small>` : ''}${item.queued ? '<small class="queued-tag">Waiting to sync</small>' : ''}</div><select aria-label="${esc(item.name)} state" data-material="${esc(item.id)}" ${!j.canEdit || disabled ? 'disabled' : ''}>${['required', 'loaded', 'used', 'missing'].map(state => `<option value="${state}" ${state === item.state ? 'selected' : ''}>${label(state)}</option>`).join('')}</select></div>`).join('')}</section>` : ''}</div><div><section class="card" id="photos-card"><div class="section-heading"><h2>Job photos</h2><span class="badge">${j.photos.length} verified</span>${j.photoQueue.length ? `<span class="badge queued">${j.photoQueue.length} waiting to upload</span>` : ''}</div><p>Before, progress, after, and problem photos stay with this job.</p><div class="photo-grid">${S.offline ? '' : j.photos.map(photo => `<button class="photo-tile" data-action="view-photo" data-photo="${photo.id}"><img src="${esc(photo.url)}" alt="${esc(photo.caption || `${photo.category} photo`)}" loading="lazy"><span>${esc(label(photo.category))}${photo.caption ? ` · ${esc(photo.caption)}` : ''}</span></button>`).join('')}</div>${!j.photos.length ? '<p class="empty">No verified field photos yet.</p>' : ''}${j.status !== 'cancelled' && !dayLocked() ? photoForm() : ''}<div id="photo-queue"></div></section><section class="card"><h2>Crew notes & issues</h2><p>Notes are timestamped and shared with this job’s assigned crew and managers.</p>${issueMarkup()}<form id="note-form"><div class="field"><label for="note-body">Add a note</label><textarea id="note-body" data-draft="note" maxlength="4000" required placeholder="What should the crew or dispatcher know?">${esc(getDraft('note'))}</textarea></div><label class="check"><input type="checkbox" id="note-issue" ${getDraft('noteIssue') === 'yes' ? 'checked' : ''}><span>Flag an issue needing operations follow-up</span></label>${j.canAddManagementNote ? `<label class="check"><input type="checkbox" id="note-private" ${getDraft('notePrivate') === 'yes' ? 'checked' : ''}><span>Management only</span></label>` : ''}<button class="primary" type="submit" ${disabled ? 'disabled' : ''}>Save note</button></form></section><section class="card" id="history-card"><div class="section-heading"><h2>Job history</h2><span class="eyebrow">Server records</span></div>${historyMarkup(j.history)}${S.historyCursor ? '<button data-action="history-more">Load earlier history</button>' : ''}</section></div><section class="card full" id="complete-card">${completionMarkup()}</section></div><p class="offline-stamp">Showing the last confirmed server record. Refresh to see changes made by other crew members.</p>`;
     mountJobSections();
     if (focusId) { const field = document.getElementById(focusId); if (field && !field.disabled) { field.focus({ preventScroll: true }); if (caret) try { field.setSelectionRange(...caret); } catch { /* Not a text field. */ } } }
   }
@@ -344,20 +366,58 @@
     return `<h2>Complete the job</h2><p>Check the work, save before and after photos, and record the actual services performed. Completion records your account and the server timestamp.</p>${j.completionMissing.length ? `<details open><summary>Required before completion</summary><ul class="completion-missing">${j.completionMissing.map(item => `<li>${esc(item)}</li>`).join('')}</ul></details>` : ''}<form id="completion-form"><div class="field"><label for="completion-notes">Completion notes</label><textarea id="completion-notes" data-draft="completion" minlength="10" maxlength="4000" required placeholder="Describe the services completed, customer walkthrough, and anything that changed.">${esc(getDraft('completion'))}</textarea></div><div class="field"><label for="completion-issues">Does anything need follow-up?</label><select id="completion-issues" required><option value="">Choose an answer</option><option value="no" ${getDraft('hasIssues') === 'no' ? 'selected' : ''}>No issues or damage to report</option><option value="yes" ${getDraft('hasIssues') === 'yes' ? 'selected' : ''}>Yes — issue, damage, or follow-up needed</option></select></div><div class="field"><label for="issue-notes">Issue details (required if yes)</label><textarea id="issue-notes" data-draft="issueNotes" maxlength="4000" placeholder="Describe the issue, customer impact, and next step.">${esc(getDraft('issueNotes'))}</textarea></div>${j.visits?.earlyCompletionReasonRequired ? `<div class="field"><label for="completion-early-reason">Reason for completing before ${esc(dateLabel(j.visits.finalDay))}</label><textarea id="completion-early-reason" data-draft="earlyReason" minlength="10" maxlength="1000" required placeholder="Why the work is finishing before the final scheduled day.">${esc(getDraft('earlyReason'))}</textarea></div>` : ''}<button class="primary" type="submit" ${completionBlocked() ? 'disabled' : ''}>Review & complete job</button><p class="muted">All queued photos must finish uploading and saved actions must sync first. Completing needs a connection.</p><div id="completion-error" role="alert"></div></form>`;
   }
   const completionBlocked = () => S.busy || S.preparing || offline() || jobQueued() || dayLocked();
+  // EGC_JOB_STATUS_MOVES_TIME: the status this crew member sets moves their own time on this job (Outbox.statusTime), and
+  // a lead starting work here is asked, once per job, whether their clocked-in crew-mates move to work too (the server
+  // picks and checks them). Completing asks before ending the job time (OK, the default, moves to general shift time).
+  // source 'status' marks the move as the status's follow-on: one the server refuses as not allowed (403) is dropped with
+  // a notice (field-outbox.js dropOnRefusal) instead of holding this crew member's clock lane.
+  const timeItem = (shift, move) => { const requestId = crypto.randomUUID(); return { requestId, kind: 'clock', user: S.user.user, jobId, payload: { op: 'job_time', source: 'status', entryId: shift.id, deviceCapturedAt: new Date().toISOString(), jobAction: { requestId, expectedSegmentId: move.expectedSegmentId, jobId: move.jobId, kind: move.kind } } }; };
+  const crewItem = () => { const requestId = crypto.randomUUID(); return { requestId, kind: 'clock', user: S.user.user, jobId, payload: { op: 'crew_time', entryId: '', deviceCapturedAt: new Date().toISOString(), jobAction: { requestId, jobId, kind: 'work' } } }; };
+  const movesTime = input => S.features.statusMovesTime && (input?.action === 'complete' || input?.action === 'status' && ['dispatched', 'arrived', 'in_progress'].includes(input.status));
+  // Only someone on this job's crew has their time moved by its status: the server starts job time only on a person's
+  // assigned jobs, and a manager can set the status of any job. The job detail says so (capabilities.assigned); a copy
+  // saved before it did falls back to the crew list.
+  const onCrew = () => typeof S.job?.capabilities?.assigned === 'boolean' ? S.job.capabilities.assigned : (S.job?.crewMembers || []).some(member => String(member?.id || '').trim().toLowerCase() === String(S.user?.user || '').trim().toLowerCase());
+  function followingTime(input) {
+    if (!S.features.statusMovesTime || !S.user || !S.job) return [];
+    const shift = currentShift(), move = Outbox.statusTime(input, shift, jobId), items = [];
+    // Ending time already on this job (completing) needs no assignment; starting travel or work here does.
+    if (move && (move.kind === 'general' ? window.confirm('End my job time? OK moves you to general shift time. Cancel keeps your time on this job running.') : onCrew())) items.push(timeItem(shift, move));
+    const work = input.action === 'status' && ['arrived', 'in_progress'].includes(input.status);
+    if (work && S.job.capabilities?.lead === true && S.job.crewMembers?.length > 1 && getDraft('crewMoved') !== 'yes' && window.confirm('Move my crew-mates to work too? Crew on this job who are clocked in on general time, or travelling here, start work on it now.')) { items.push(crewItem()); setDraft('crewMoved', 'yes'); }
+    return items;
+  }
+  function crewMoveMessage(data) {
+    const reasons = { not_clocked_in: 'not clocked in', already_working: 'already working here', on_another_job: 'on another job', needs_review: 'their time needs review', changed: 'their shift changed, try again', not_assigned: 'not scheduled here', not_scheduled_today: 'not on today’s crew', on_break: 'on break', stale_shift: 'still clocked in from an earlier day', on_pto: 'on time off today' };
+    const moved = (data?.moved || []).map(row => row.name), skipped = (data?.skipped || []).map(row => `${row.name} (${reasons[row.reason] || 'not moved'})`);
+    return `${moved.length ? `Moved to work here: ${moved.join(', ')}.` : 'No crew-mates needed moving.'}${skipped.length ? ` Not moved: ${skipped.join(', ')}.` : ''}`;
+  }
   // Every field action is written to the outbox before it is sent. A first
   // attempt uses the version the crew member saw; later replays refresh it.
   async function submitAction(payload) {
     if (S.busy || S.preparing || !S.job || !S.user) return;
     if (offline() && !Outbox.QUEUEABLE.includes(payload.action)) return message('Reconnect to finish this. Checklist, material, note, status and photo updates can be saved on this phone while offline.', true);
+    // Online, a status that moves time reads the shift first, so the move starts from where the crew member's time is now
+    // (a lead's crew move may have changed it since the last read), not from a copy up to 30 seconds old.
+    if (movesTime(payload) && !offline()) {
+      const user = S.user.user; S.busy = true; renderJob();
+      try { await loadEmployeeJobTime(); } finally { S.busy = false; }
+      if (!S.job || S.user?.user !== user) return;
+    }
+    // Asked before anything is saved. A completion's time move waits until the completion is confirmed.
+    const follow = followingTime(payload), afterComplete = payload.action === 'complete' ? follow.splice(0) : [];
     // Controls lock at once, before the action is stored, so a second tap cannot race it.
     const input = { ...payload, jobId, requestId: crypto.randomUUID(), expectedRevision: S.job.expectedRevision, expectedUser: S.user.user };
     const item = { requestId: input.requestId, kind: 'field', user: S.user.user, jobId, payload: input };
     S.actionError = null; S.busy = true; S.saving = { ...item, queuedAt: new Date().toISOString(), attempts: 0, state: 'queued' }; renderJob();
     let queued;
-    try { queued = await outbox.enqueue(item); }
+    try { queued = await outbox.enqueue(item); for (const extra of follow) await outbox.enqueue(extra); }
     catch (error) { S.busy = false; S.saving = null; renderJob(); return message(error.message, true); }
     if (input.action === 'note' && outbox.persistent) ['note', 'noteIssue', 'notePrivate'].forEach(suffix => setDraft(suffix, ''));
     if (input.action === 'end_day' && outbox.persistent) setDraft('endDay', '');
+    // The completion's time move (the crew member said OK) is saved once a sync, this one or one already running,
+    // confirms the completion; it is worked out again then, from the shift as it is at that moment.
+    if (afterComplete.length) S.afterApplied.add(input.requestId);
     await refreshOutbox(); S.busy = false; S.saving = null;
     if (offline()) { renderJob(); requestBackgroundSync(); return message('Saved on this phone. It will sync in order when you reconnect.'); }
     if (S.syncing) { S.resync = true; renderJob(); return message(queuedBehind); }
@@ -367,13 +427,14 @@
     if (applied.every(({ item }) => Outbox.isPhoto(item))) return applied.length === 1 && applied[0].data?.alreadyApplied ? 'This photo was already saved to the job.' : applied.length === 1 ? 'Photo verified and saved to the job.' : `${applied.length} photos verified and saved to the job.`;
     if (applied.length !== 1) return `${applied.length} saved actions are now confirmed.`;
     const [{ item, data, direct }] = applied;
-    if (item.kind === 'clock') return ({ clock_in: 'Clocked in. Your shift has started. Shift location updates while the Employee Hub is open.', break_start: 'Break started.', break_end: 'Break ended.', clock_out: 'Clocked out. Your shift is submitted for approval.' })[item.payload.op] || 'Your job time is saved. Previous segments and your shift remain intact.';
+    if (item.kind === 'clock' && item.payload.op === 'crew_time') return crewMoveMessage(data);
+    if (item.kind === 'clock') return ({ clock_in: item.payload.lastLocation ? 'Clocked in. Your location was shared once; nothing tracks it during your shift.' : 'Clocked in without a location. A manager will review this shift.', break_start: 'Break started.', break_end: 'Break ended.', clock_out: 'Clocked out. Your shift is submitted for approval.' })[item.payload.op] || 'Your job time is saved. Previous segments and your shift remain intact.';
     if (item.payload.action === 'retry_completion_sync' && S.job) return S.job.completionSync?.message || 'Internal handoff checked.';
     return data?.alreadyApplied ? 'This action was already saved. The current job is shown.' : direct ? 'Saved to the job.' : 'Your saved action is now confirmed on the job.';
   }
   async function syncOutbox({ direct = '', retry = [] } = {}) {
     if (!S.user || S.offline || S.syncing || !direct && !retry.length && !waiting()) return null;
-    const user = S.user.user; let clock = false, result;
+    const user = S.user.user; let clock = false, crewMove = null, endJobTime = false, result;
     S.syncing = true; if (S.job) renderJob();
     try {
       const options = { user, transport, direct, retry, onStart(item) {
@@ -383,7 +444,10 @@
         if (S.user?.user !== user || S.replaying === !photo && S.sending === sending) return;
         S.replaying = !photo; S.sending = sending; if (S.job) renderJob();
       }, onApplied(item, data) {
-        if (item.kind === 'clock') { clock = true; return; }
+        // An applied time action stays in the shift view until the shift is read again, so a status tapped in between
+        // moves time from where the crew member now is.
+        if (item.kind === 'clock') { clock = true; if (item.payload.op === 'crew_time') crewMove = data; else if (S.user?.user === user) S.shiftEntry = Outbox.projectShift(S.shiftEntry, [item]); return; }
+        if (S.afterApplied.delete(item.requestId)) endJobTime = true;
         if (item.jobId !== jobId || S.user?.user !== user) return;
         if (data?.job) { if (typeof data.photosAvailable === 'boolean') S.photosAvailable = data.photosAvailable; acceptJob(data.job); S.historyCursor = data.historyCursor; }
         if (item.payload.action === 'note' && !outbox.persistent) ['note', 'noteIssue', 'notePrivate'].forEach(suffix => setDraft(suffix, ''));
@@ -395,16 +459,20 @@
       } };
       result = await outbox.flush(options);
       // Photos taken while the last replay was finishing upload in the same pass.
-      while (S.resync && !result.stopped && S.user?.user === user) { S.resync = false; const more = await outbox.flush({ ...options, direct: '', retry: [] }); result = { ...more, applied: [...result.applied, ...more.applied] }; }
+      while (S.resync && !result.stopped && S.user?.user === user) { S.resync = false; const more = await outbox.flush({ ...options, direct: '', retry: [] }); result = { ...more, applied: [...result.applied, ...more.applied], dropped: [...(result.dropped || []), ...(more.dropped || [])] }; }
     } catch (error) { result = { applied: [], remaining: S.outbox.length, stopped: { error, reason: 'network' } }; }
     finally { S.syncing = false; S.replaying = false; S.sending = ''; S.resync = false; }
     if (S.user?.user !== user) return result;
     await refreshOutbox();
-    const stop = result.stopped;
+    const stop = result.stopped, dropped = (result.dropped || []).find(row => row.item.kind === 'clock');
+    // A status's time move the server refused (not on this job's crew) is gone from the phone; the notice says why.
+    if (dropped) { clock = true; S.timeNotice = `${dropped.error.message} Your time stays where it was.`; }
     if (stop?.reason === 'auth') { S.job = null; forgetSnapshots(); renderLogin(stop.error.message); return result; }
     if (stop?.reason === 'rejected' && stop.item.kind === 'field' && stop.item.jobId === jobId && [403, 404].includes(stop.error.status) && stop.error.code !== 'FIELD_JOB_NOT_ASSIGNED_TODAY') { S.job = null; renderError(stop.error.message); return result; }
     if (clock) { await loadEmployeeJobTime(); try { if (S.job) await refreshJob(); } catch { /* The job refreshes on the next action. */ } }
     if (stop?.reason === 'rejected') {
+      // A completion that is not accepted leaves the crew member's time where it is.
+      if (stop.discarded) S.afterApplied.delete(stop.item.requestId);
       if (stop.discarded && stop.item.kind === 'clock') S.shiftError = stop.error.message;
       else if (stop.discarded) {
         S.actionError = { message: stop.error.message, missing: stop.error.missing };
@@ -413,9 +481,18 @@
       }
       message(stop.error.message, true);
     } else if (stop) { requestBackgroundSync(); message(stop.item && stop.item.requestId === direct ? 'The server did not confirm this action. It is saved on this phone and will retry with the same action ID.' : 'Saved actions are waiting for the connection. They will retry automatically.', true); }
+    else if (dropped) message(`Your time was not moved: ${S.timeNotice}`, true);
+    else if (crewMove) message(crewMoveMessage(crewMove));
     else if (result.applied.length) message(appliedMessage(result.applied), result.applied.length === 1 && result.applied[0].item.payload.action === 'retry_completion_sync' && S.job?.completionSync?.status !== 'synced');
     if (S.workerApplied) await workerChanged();
     if (S.job) renderJob();
+    // The completion's time move starts from the shift as the server has it now.
+    if (endJobTime && S.user?.user === user && !clock && !offline()) await loadEmployeeJobTime();
+    const shift = endJobTime && S.user?.user === user ? currentShift() : null, move = Outbox.statusTime({ action: 'complete' }, shift, jobId);
+    if (move) {
+      try { await outbox.enqueue(timeItem(shift, move)); } catch (error) { message(error.message, true); return result; }
+      await refreshOutbox(); await syncOutbox();
+    }
     return result;
   }
   // Photos waiting on this phone for this job, refused ones included.
@@ -609,6 +686,9 @@
   navigator.serviceWorker?.addEventListener('message', async event => {
     if (event.data?.type !== 'egc-field-outbox-changed' || !S.user || S.offline) return;
     S.workerApplied = (S.workerApplied || 0) + (Number(event.data.applied) || 0);
+    // A status's time move Background Sync dropped (not on this job's crew) is reported here as the page's own sync does.
+    const dropped = Array.isArray(event.data.dropped) ? String(event.data.dropped[0] || '') : '';
+    if (dropped) { S.timeNotice = `${dropped} Your time stays where it was.`; message(`Your time was not moved: ${S.timeNotice}`, true); }
     if (S.busy || S.syncing) return;
     await workerChanged();
     if (S.job) renderJob();

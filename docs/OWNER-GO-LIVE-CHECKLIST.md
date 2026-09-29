@@ -11,6 +11,7 @@ The rule behind all of it: **HighLevel sends every customer message and owns eve
 1. [ ] **Map `inquiry_id` to the Meta Lead event_id in the website-lead Zap, before merging.** Otherwise book-page leads are counted twice in Meta. [B1](GO-LIVE.md#b1-merge-and-deploy-one-commit-everywhere)
 2. [ ] **Developer: confirm CI is green (migration 0013) and migration 0014 is safe to apply.** A bad migration blocks the API and AI deploy. [B1](GO-LIVE.md#b1-merge-and-deploy-one-commit-everywhere)
 3. [ ] **Merge the integration pull request into `main`.** This deploys the Hub with every new switch off. [B1](GO-LIVE.md#b1-merge-and-deploy-one-commit-everywhere)
+    - [ ] **If you removed the customer message steps from the `egc-invoice-issued` / `egc-invoice-overdue` HighLevel workflows (earlier messaging checklist), restore them before deploying.** Those workflows send every invoice and overdue reminder; the Hub only adds the tags. [What changes](GO-LIVE.md#what-changes-on-deploy-no-switch), [messaging owner setup](messaging-owner-setup.md#invoicing-hub-invoicing-screen)
 4. [ ] **Deploy the same commit to all four Railway services and confirm the commit on each.** The Hub and the platform refuse each other's older signed messages. [B1](GO-LIVE.md#b1-merge-and-deploy-one-commit-everywhere)
 5. [ ] **Hard-refresh office Hub pages and every crew iPad or phone.** Old cached pages send stale data. [B1](GO-LIVE.md#b1-merge-and-deploy-one-commit-everywhere)
 6. [ ] **Run the B1 phone checks (sign-in, API health, schedules, clock in and out, site menu).** Confirms the deploy landed. [B1](GO-LIVE.md#b1-merge-and-deploy-one-commit-everywhere)
@@ -65,6 +66,7 @@ The rule behind all of it: **HighLevel sends every customer message and owns eve
 45. [ ] **Book a test walkthrough in Dispatch and check the HighLevel calendar and tag.** HighLevel sends the confirmation, not the Hub. [3.2](GO-LIVE.md#32-booking-a-walkthrough-no-switch)
 46. [ ] **Upload a short test recording and retry any stuck ones.** Confirms walkthrough AI notes work after the crash fix. [3.3](GO-LIVE.md#33-recording-the-walkthrough)
 47. [ ] **When FUN-06 lands: assign reps in Dispatch, tell them to clock in first, then set `EGC_WALKTHROUGH_VISIT_ENABLED=true`.** Start and Finish then track the visit and the rep's time. [3.4](GO-LIVE.md#34-start-and-finish-after-fun-06)
+    - [ ] **Update every walkthrough iPad to iPadOS 15.4 or later (Settings > General > Software Update).** Recording in the Hub needs it; an older iPad records in Voice Memos instead. [3.4](GO-LIVE.md#34-start-and-finish-after-fun-06)
 48. [ ] **Rebook a no-show walkthrough by moving the same visit, never by creating a new one.** Keeps one history per walkthrough. [3.4](GO-LIVE.md#34-start-and-finish-after-fun-06)
 
 ## Stage 4: Crew scheduling and the field day
@@ -91,7 +93,8 @@ The rule behind all of it: **HighLevel sends every customer message and owns eve
 65. [ ] **Open Review queues as owner and as a manager; settle held charges and unknown-delivery messages.** Held money never counts as paid until you settle it. [5.1](GO-LIVE.md#51-card-payments-and-review-queues-no-switch)
 66. [ ] **Developer: run the payment-ledger backfill (dry run, then apply).** Server money records start from clean ledgers. [5.2](GO-LIVE.md#52-server-money-records)
 67. [ ] **Verify every job the backfill lists as needing verification, in the Firebase console, then rerun it.** Those jobs refuse new money until verified. [5.2](GO-LIVE.md#52-server-money-records)
-68. [ ] **Accept that finance saves stop starting HighLevel workflows, then set `MONEY_API_ENABLED=true`.** You press "Trigger in HighLevel" when a customer should hear. [5.2](GO-LIVE.md#52-server-money-records)
+68. [ ] **Set `MONEY_API_ENABLED=true`. Finance saves and the Invoicing screen then add the same `egc-<event>` tag as today's finance tools, so your HighLevel workflows still send.** Press "Trigger in HighLevel" only for a job or Invoicing row flagged not triggered or needs attention; after a normal save it adds the tag a second time. [5.2](GO-LIVE.md#52-server-money-records)
+    - [ ] **Decide whether issuing from the Invoicing screen should turn on the job's automatic reminders ("Enable auto"). Until you decide it does not: press Enable auto on each job that should get the overdue reminder.** A job invoiced there gets no automatic `egc-invoice-overdue` tag otherwise. [5.2](GO-LIVE.md#52-server-money-records), [messaging owner setup](messaging-owner-setup.md#invoicing-hub-invoicing-screen)
 69. [ ] **Add the email-obfuscation rule for `/api/money-document`, then set `MONEY_DOCUMENT_ENABLED=true` and check a Pay amount.** Customers get proper estimate, invoice and receipt pages. [5.3](GO-LIVE.md#53-branded-estimates-invoices-and-receipts)
 70. [ ] **Optional: `PAYMENT_REVIEW_CHECKOUT_BLOCK_ENABLED=true`.** No new checkout while a charge on the job is held. [5.4](GO-LIVE.md#54-block-checkouts-while-a-charge-is-held-optional)
 71. [ ] **Optional: `GARAGE_GUARD_MEMBERSHIP_SYNC_ENABLED=true`, then work the member matches.** Memberships link to customers automatically. [5.5](GO-LIVE.md#55-garage-guard-memberships-optional)
@@ -144,3 +147,11 @@ The rule behind all of it: **HighLevel sends every customer message and owns eve
 103. [ ] **Look at Review queues and the Command Center alert every week.** Held charges and unknown sends wait for you. [5.1](GO-LIVE.md#51-card-payments-and-review-queues-no-switch)
 104. [ ] **Reps open the walkthrough online once after every price change.** Their device caches the new prices for offline use. [What changes](GO-LIVE.md#what-changes-on-deploy-no-switch)
 105. [ ] **Developer, every few months: consider the optional Firebase tidy-ups (time-to-live policies, audit index exemptions).** The audit log and receipts only grow. [B4](GO-LIVE.md#b4-publish-firestore-rules-and-indexes)
+
+## Crew time and clock-in location (CREW-TIME)
+
+106. [ ] **Tell crews: the clock-in reads their location once, and nothing tracks it during the shift.** Owner decision; the Hub and crew app say so. [4.9](GO-LIVE.md#49-clock-in-location-once-no-switch)
+107. [ ] **After this deploy, have every crew member reload every open Hub tab (or sign out and in). Required.** A tab from before the deploy keeps reading the phone's location (the server refuses and stores none of it) until it is reloaded or the shift is clocked out, so "nothing tracks you" is true only after the reload. [4.9](GO-LIVE.md#49-clock-in-location-once-no-switch)
+108. [ ] **Set `EGC_CLOCK_IN_WITHOUT_FIX=true`, then review "No location at clock-in" shifts on the timesheet each week.** Owner decision: weak GPS never stops a clock-in. [4.10](GO-LIVE.md#410-clock-in-with-no-gps-position-owner-decision-on)
+109. [ ] **Optional: set `EGC_JOB_STATUS_MOVES_TIME=true` once every job has the right crew and lead.** Status taps then move crew time and the lead can move crew-mates. [4.11](GO-LIVE.md#411-job-status-moves-crew-time-optional)
+110. [ ] **Before the first payroll after this deploy, re-map the Gusto Smart Import (and any spreadsheet) that reads the Hub's timesheet files.** In the Download for Gusto file, Job is now the job-time text and Memo lists every job; the timesheet CSV's "Customer" column is now "Job time"; the payroll CSV has a new last column, Job time. Hours and pay columns are unchanged. [4.7](GO-LIVE.md#47-timesheets-and-payroll)

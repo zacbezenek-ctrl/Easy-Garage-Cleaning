@@ -10,6 +10,8 @@ import { MONEY_RECEIPTS } from '../functions/_lib/money-service.js';
 import { JOBBER_GUARD_ACTIONS, jobberGuardBillingError, jobberGuardInvoiceHolds, jobberGuardSends } from '../functions/_lib/jobber-guard.js';
 import * as hook from '../functions/api/crew-hook.js';
 import { moneyHandlers } from '../functions/api/money.js';
+import { invoiceBatchHandlers } from '../functions/api/invoice-batch.js';
+import { batchBillingHold } from '../functions/_lib/money-batch.js';
 import { messagingCronHandlers, MESSAGING_CRON_PATH } from '../functions/api/messaging-cron.js';
 import { env as messagingEnv, owner as messagingOwner, job, memoryStore, fakeGhl, clock, uuid, NOW } from './helpers/messaging-fixture.mjs';
 import { definitionsWith } from './helpers/jobber-guard-fixture.mjs';
@@ -126,18 +128,74 @@ test('billing guard: off, before the cutover, without a saved check or with a ch
   assert.deepEqual([unavailable.status, unavailable.body.code, broken.written()], [503, 'money_unavailable', []], 'an unreadable saved check fails closed while the switch is on');
 });
 
+// ── Billing: /api/invoice-batch (the Hub Invoicing screen) ─────────────────
+// The batch issues through the same money service but not through /api/money,
+// so it applies the same hold itself: a held job is refused, the rest issue.
+async function batchIssue(f, env, ids, definitions = DEFS) {
+  const handlers = invoiceBatchHandlers({ session: async () => moneyOwner, storage: () => f.store, now: () => new Date(NOW), billing: (store, target, at) => batchBillingHold(store, target, at, { definitions }) });
+  const body = { action: 'issue', requestId: randomUUID(), dueDate: '2026-09-29', items: ids.map(jobId => ({ jobId, expectedRevision: f.docs.get(`jobs/${jobId}`).revision })) };
+  const response = await handlers.post({ request: new Request(`${origin}/api/invoice-batch`, { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' }, body: JSON.stringify(body) }), env });
+  return { status: response.status, body: await response.json() };
+}
+function finishedFixture(guardState) {
+  const f = moneyFixture(guardState), done = { status: 'completed', pipelineStatus: 'completed', completedAt: '2026-09-21T20:00:00.000Z' };
+  for (const id of ['job-held', 'job-free', 'jobber_invoice_4001']) f.docs.set(`jobs/${id}`, { ...f.docs.get(`jobs/${id}`), ...done });
+  return f;
+}
+const IDS = ['job-held', 'job-free', 'jobber_invoice_4001'];
+
+test('billing guard: an invoice batch refuses each held job exactly as the money API does and issues the rest', async () => {
+  const f = finishedFixture(), held = await batchIssue(f, BILLING, IDS);
+  assert.equal(held.status, 200, JSON.stringify(held.body));
+  assert.deepEqual(held.body.results.map(row => [row.jobId, row.ok, row.code || row.status]), [['job-held', false, 'money_jobber_billing_hold'], ['job-free', true, 'issued'], ['jobber_invoice_4001', false, 'money_jobber_billing_hold']]);
+  const single = await moneyFixture().post(moneyFixture().issue('job-held'), BILLING);
+  assert.deepEqual([held.body.results[0].error, held.body.results[0].details], [single.body.error, single.body.details], 'the same reason and findings as /api/money');
+  assert.deepEqual(held.body.results[2].details.findings.map(item => item.code), ['jobber_imported_balance_changed']);
+  assert.deepEqual([f.docs.get('jobs/job-held').invoice, f.docs.get('jobs/jobber_invoice_4001').invoice, f.docs.get('jobs/job-free').invoice.status], [undefined, undefined, 'issued']);
+  for (const [env, definitions, guardState] of [[{ MONEY_API_ENABLED: 'true' }, DEFS, state(FINDINGS)], [BILLING, LATER_CUTOVER, state(FINDINGS)], [BILLING, DEFS, null], [BILLING, MOVED, state(FINDINGS)]]) {
+    const open = finishedFixture(guardState), result = await batchIssue(open, env, IDS, definitions);
+    assert.deepEqual(result.body.results.map(row => row.ok), [true, true, true], JSON.stringify([env, definitions.jobber.cutoverDate, Boolean(guardState)]));
+  }
+  const broken = finishedFixture({ schemaVersion: 1, findings: 'unreadable', checkedAt: NOW }), unavailable = await batchIssue(broken, BILLING, IDS);
+  assert.deepEqual([unavailable.status, unavailable.body.code, broken.written(), IDS.map(id => broken.docs.get(`jobs/${id}`).invoice)], [503, 'money_unavailable', [], [undefined, undefined, undefined]], 'an unreadable saved check fails closed before anything is written');
+});
+
+test('billing guard: a replayed invoice batch returns what it issued even while the saved check is unreadable or now holds the customer; a job it never issued is still held', async () => {
+  // The first answer is lost. job-free was issued; job-held failed on a transient storage error.
+  const f = finishedFixture(state([]));
+  let flaky = true;
+  const store = { ...f.store, commit: async writes => { if (flaky && writes.some(write => write.collection === 'jobs' && write.id === 'job-held')) { flaky = false; throw new Error('transient storage error'); } return f.store.commit(writes); } };
+  const handlers = invoiceBatchHandlers({ session: async () => moneyOwner, storage: () => store, now: () => new Date(NOW), billing: (target, env, at) => batchBillingHold(target, env, at, { definitions: DEFS }) });
+  const body = { action: 'issue', requestId: randomUUID(), dueDate: '2026-09-29', items: ['job-free', 'job-held'].map(jobId => ({ jobId, expectedRevision: f.docs.get(`jobs/${jobId}`).revision })) };
+  const post = async () => { const response = await handlers.post({ request: new Request(`${origin}/api/invoice-batch`, { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' }, body: JSON.stringify(body) }), env: BILLING }); return { status: response.status, body: await response.json() }; };
+  const first = await post();
+  assert.deepEqual(first.body.results.map(row => [row.jobId, row.ok, row.code || row.status]), [['job-free', true, 'issued'], ['job-held', false, 'money_unavailable']]);
+  const written = f.written().length;
+  // The saved check becomes unreadable: the retried batch still gets job-free's invoice back, as /api/money replays before its hold.
+  f.docs.set('jobberGuard/latest', { schemaVersion: 1, findings: 'unreadable', checkedAt: NOW, id: 'latest', revision: 'g1' });
+  const unreadable = await post();
+  assert.deepEqual([unreadable.status, unreadable.body.replayed], [200, true], JSON.stringify(unreadable.body));
+  assert.deepEqual(unreadable.body.results.map(row => [row.jobId, row.ok, row.ok ? row.replayed : row.code]), [['job-free', true, true], ['job-held', false, 'money_unavailable']], 'the job not issued yet fails closed');
+  // A new check now holds job-held's customer: the replay returns job-free and refuses job-held, as a new batch would.
+  f.docs.set('jobberGuard/latest', { ...state(FINDINGS), id: 'latest', revision: 'g2' });
+  const held = await post();
+  assert.deepEqual(held.body.results.map(row => [row.jobId, row.ok, row.ok ? row.replayed : row.code]), [['job-free', true, true], ['job-held', false, 'money_jobber_billing_hold']]);
+  assert.deepEqual([f.written().length, f.docs.get('jobs/job-held').invoice, f.docs.get('jobs/job-free').invoice.status], [written, undefined, 'issued'], 'no replay writes anything');
+});
+
 // ── Messaging and billing: the signed messaging cron ───────────────────────
 const API_ROOT = 'synthetic-jobber-guard-cron-api-root-secret-012345';
 const CRON_ENV = Object.freeze({ ...messagingEnv, EGC_SERVER_MESSAGING_ENABLED: 'true', EGC_MESSAGING_SUBREQUEST_BUDGET: '9500' });
 const ACTOR = Object.freeze({ id: 'messaging-cron-worker', kind: 'integration', role: 'integration', workspace: 'egc' });
 const tomorrow = overrides => job({ date: '2026-09-23', time: '09:00', deposit: { amount: 300, paidAmount: 300, verified: true }, invoice: { number: 'INV-2001', amount: 1200, dueDate: '2026-12-31', status: 'issued' }, ...overrides });
-const overdue = overrides => job({ date: '2026-12-01', status: 'completed', pipelineStatus: 'completed', completedAt: '2026-09-10T20:00:00.000Z', invoice: { number: 'INV-3001', amount: 1200, dueDate: '2026-09-21', status: 'issued' }, ...overrides });
+// An accepted job three days out with its deposit unpaid: the cron's billing reminder (payment reminders are HighLevel's).
+const depositDue = overrides => job({ date: '2026-09-25', time: '10:00', invoice: { number: 'INV-3001', amount: 1200, dueDate: '2026-12-31', status: 'issued' }, ...overrides });
 
 async function cronFixture({ guardState = state(FINDINGS), definitions = DEFS } = {}) {
-  const jobs = { 'day-held': tomorrow({ customerId: 'cust-held' }), 'day-ok': tomorrow({ customerId: 'cust-free', time: '13:00' }), 'pay-billed': overdue({ customerId: 'cust-billed' }), 'jobber_invoice_4001': overdue({ customerId: 'cust-free' }) };
+  const jobs = { 'day-held': tomorrow({ customerId: 'cust-held' }), 'day-ok': tomorrow({ customerId: 'cust-free', time: '13:00' }), 'dep-billed': depositDue({ customerId: 'cust-billed' }), 'jobber_invoice_4001': depositDue({ customerId: 'cust-free' }) };
   const store = memoryStore({ ...Object.fromEntries(Object.entries(jobs).map(([id, fields]) => [`jobs/${id}`, fields])), ...(guardState ? { 'jobberGuard/latest': guardState } : {}) });
   store.jobRecords = async () => Promise.all([...store.rows.keys()].filter(key => key.startsWith('jobs/')).map(key => store.read('jobs', key.slice(5))));
-  for (const kind of ['day_before_reminder', 'payment_reminder']) {
+  for (const kind of ['day_before_reminder', 'deposit_reminder']) {
     const template = await readTemplate(store, kind);
     await mutateTemplate(store, messagingOwner, { action: 'approve', requestId: uuid(), kind, expectedVersion: template.latestVersion, version: 1, hash: template.versions[0].hash }, NOW);
     await mutateTemplate(store, messagingOwner, { action: 'set_automation', requestId: uuid(), kind, expectedVersion: 1, enabled: true }, NOW);
@@ -163,18 +221,18 @@ const outcomes = summary => Object.fromEntries(summary.results.map(row => [row.j
 test('messaging and billing guards hold automatic reminders for customers with open Jobber strays and record why', async () => {
   const f = await cronFixture();
   const summary = await f.run({ ...CRON_ENV, EGC_JOBBER_GUARD_BILLING: 'true', EGC_JOBBER_GUARD_MESSAGING: 'true' });
-  assert.deepEqual(outcomes(summary), { 'day-held': 'suppressed:jobber_guard_messaging', 'day-ok': 'submitted', 'pay-billed': 'suppressed:jobber_guard_billing', 'jobber_invoice_4001': 'suppressed:jobber_guard_billing' });
+  assert.deepEqual(outcomes(summary), { 'day-held': 'suppressed:jobber_guard_messaging', 'day-ok': 'submitted', 'dep-billed': 'suppressed:jobber_guard_billing', 'jobber_invoice_4001': 'suppressed:jobber_guard_billing' });
   assert.equal(f.ghl.sends().length, 1, 'only the customer without Jobber strays is messaged');
   const holds = f.store.get('messaging_holds/current').entries.map(entry => [entry.key.split(':')[1], entry.reason]).sort();
-  assert.deepEqual(holds, [['day-held', 'jobber_guard_messaging'], ['jobber_invoice_4001', 'jobber_guard_billing'], ['pay-billed', 'jobber_guard_billing']], 'held reminders show in messaging holds');
+  assert.deepEqual(holds, [['day-held', 'jobber_guard_messaging'], ['dep-billed', 'jobber_guard_billing'], ['jobber_invoice_4001', 'jobber_guard_billing']], 'held reminders show in messaging holds');
   const billingOnly = await (await cronFixture()).run({ ...CRON_ENV, EGC_JOBBER_GUARD_BILLING: 'true' });
-  assert.deepEqual(outcomes(billingOnly), { 'day-held': 'submitted', 'day-ok': 'submitted', 'pay-billed': 'suppressed:jobber_guard_billing', 'jobber_invoice_4001': 'suppressed:jobber_guard_billing' }, 'each surface has its own switch');
+  assert.deepEqual(outcomes(billingOnly), { 'day-held': 'submitted', 'day-ok': 'submitted', 'dep-billed': 'suppressed:jobber_guard_billing', 'jobber_invoice_4001': 'suppressed:jobber_guard_billing' }, 'each surface has its own switch');
   const dry = await (await cronFixture()).run({ ...CRON_ENV, EGC_JOBBER_GUARD_MESSAGING: 'true' }, { command: 'messaging.run', dryRun: true });
-  assert.deepEqual(outcomes(dry), { 'day-held': 'suppressed:jobber_guard_messaging', 'day-ok': 'would_send', 'pay-billed': 'suppressed:jobber_guard_messaging', 'jobber_invoice_4001': 'would_send' }, 'a dry run previews the holds');
+  assert.deepEqual(outcomes(dry), { 'day-held': 'suppressed:jobber_guard_messaging', 'day-ok': 'would_send', 'dep-billed': 'suppressed:jobber_guard_messaging', 'jobber_invoice_4001': 'would_send' }, 'a dry run previews the holds');
 });
 
 test('the cron sends exactly as today when the guard is off, before the cutover or without a check for the deployed cutover day, and holds when the check is unreadable', async () => {
-  const allSent = { 'day-held': 'submitted', 'day-ok': 'submitted', 'pay-billed': 'submitted', 'jobber_invoice_4001': 'submitted' };
+  const allSent = { 'day-held': 'submitted', 'day-ok': 'submitted', 'dep-billed': 'submitted', 'jobber_invoice_4001': 'submitted' };
   assert.deepEqual(outcomes(await (await cronFixture()).run(CRON_ENV)), allSent);
   assert.deepEqual(outcomes(await (await cronFixture({ definitions: LATER_CUTOVER })).run({ ...CRON_ENV, EGC_JOBBER_GUARD_BILLING: 'true', EGC_JOBBER_GUARD_MESSAGING: 'true' })), allSent);
   assert.deepEqual(outcomes(await (await cronFixture({ guardState: null })).run({ ...CRON_ENV, EGC_JOBBER_GUARD_MESSAGING: 'true' })), allSent);
@@ -191,7 +249,7 @@ test('the send wrapper returns the service untouched unless a switched-on surfac
   assert.equal(await jobberGuardSends(service, { store: memoryStore(), env: { EGC_JOBBER_GUARD_MESSAGING: 'true' }, now: new Date(NOW), definitions: DEFS }), service);
   assert.equal(await jobberGuardSends(service, { store, env: { EGC_JOBBER_GUARD_MESSAGING: 'true' }, now: new Date(NOW), definitions: MOVED }), service, 'a check for another cutover day is not in force');
   const wrapped = await jobberGuardSends(service, { store, env: { EGC_JOBBER_GUARD_MESSAGING: 'true' }, now: new Date(NOW), definitions: DEFS });
-  assert.deepEqual(await wrapped.send({}, { kind: 'payment_reminder', jobId: 'job-1' }), { status: 'suppressed', reason: 'jobber_guard_messaging' });
+  assert.deepEqual(await wrapped.send({}, { kind: 'deposit_reminder', jobId: 'job-1' }), { status: 'suppressed', reason: 'jobber_guard_messaging' });
   assert.deepEqual(await wrapped.send({}, { kind: 'crew_assignment', jobId: 'job-1' }), { status: 'submitted' }, 'crew messages are never held');
   assert.equal(wrapped.status, service.status);
 });

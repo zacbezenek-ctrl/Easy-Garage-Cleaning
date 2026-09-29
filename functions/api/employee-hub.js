@@ -5,8 +5,12 @@ import { employeeVaultSecret, employeeVaultReadOnly } from '../_lib/employee-vau
 import { EMPLOYEE_HUB_COLLECTIONS, expectedDocument, firestoreDoc, readAll, readCollection, readOne, seal, unreadableStorage, writeOne } from '../_lib/employee-vault.js';
 import { createJobAssignmentAccess } from '../_lib/job-assignment.js';
 import { listEmployeeApplications, normalizeEmployeeUsername } from '../_lib/employee-accounts.js';
-import { activeTimecard, authorizeTimecard, timecardError } from '../_lib/employee-timecards.js';
-import { activeJobSegment, employeeJobTime, ownJobTimeProjection } from '../_lib/employee-job-time.js';
+import { activeTimecard, authorizeTimecard, clockInWithoutFix, timecardError } from '../_lib/employee-timecards.js';
+import { activeJobSegment, applyCrewJobMove, crewJobMoveState, employeeJobTime, jobStatusMovesTime, jobTimeView, ownJobTimeProjection } from '../_lib/employee-job-time.js';
+import { fieldJobLead } from '../_lib/field-permissions.js';
+import { assignedOn, fieldVisitsEnabled } from '../_lib/field-execution-visits.js';
+import { denverToday } from '../_lib/dispatch-time.js';
+import { ptoOffOn } from '../_lib/pto-pay.js';
 import { legacyManagerProfile, legacyProfileView, mirrorLegacyPay, profileHourlyRate } from '../_lib/staff-directory.js';
 import { assertNoOthersPay, assertPayUnchanged, canSetPay, payOwnerField, seesOthersPay, visiblePay, withoutPayWrites } from '../_lib/pay-visibility.js';
 
@@ -132,6 +136,7 @@ async function writeTimecard(env, session, id, data, target) {
 }
 
 const manager = session => hasBusinessAccess(session);
+const withJobTime = (entry, now) => isRecord(entry) ? { ...entry, jobTime: jobTimeView(entry, now) } : entry;
 const same = (left, right) => String(left || '').trim().toLowerCase() === String(right || '').trim().toLowerCase();
 const personKey = value => String(value || '').trim().toLowerCase();
 const legacyPersonKeys = value => [...new Set([
@@ -150,6 +155,60 @@ async function readEmployeeProfile(env, username) {
 async function jobMember(session, job, access) {
   if (manager(session)) return true;
   return access.assigned(job);
+}
+
+const CLOSED_JOB = ['completed', 'invoiced', 'paid', 'review_requested', 'cancelled', 'canceled'];
+// EGC_JOB_STATUS_MOVES_TIME: the job's crew lead (or a manager) moves the job's assigned crew-mates who are clocked in on
+// general time, or travelling to this job, onto work on it (crew/job.js asks the lead first). Each card keeps the move
+// under the lead's request ID, so a replay changes nothing, and each is saved as that crew-mate's own job time (their
+// assignment, their shift lock). With FIELD_MULTIDAY_VISITS a split job moves (and is moved by) only crew on today's Denver
+// crew, as every field write is. A crew-mate on break, still clocked in from an earlier day (stale_shift) or on approved
+// time off today (on_pto) is never moved. A crew-mate whose card cannot take the move is listed as skipped, so one card
+// never holds the rest.
+// Every crew-mate's state is worked out first. A replay whose crew-mates are all moved already (or skipped) is answered as
+// it stands, however long it waited on the phone. Only a move still to make is held to an open job and to the server's
+// time: one the lead's phone kept for more than 2 minutes is refused rather than moving people now for a tap made
+// earlier, and the refusal names who the first attempt already moved (details.moved, alreadyApplied). Within the 2
+// minutes a retry of a partly applied move finishes the rest.
+async function moveCrewJobTime(env, session, action) {
+  if (!jobStatusMovesTime(env)) throw timecardError('Moving crew-mates’ time is switched off.', 403);
+  if (!isRecord(action) || !QUEUED_REQUEST.test(String(action.requestId ?? '')) || action.kind !== 'work' || typeof action.jobId !== 'string' || !/^[A-Za-z0-9_-]{1,180}$/.test(action.jobId) || /^(?:_egc_|secure_)/.test(action.jobId)) throw timecardError('Choose a job and a unique request ID to move crew-mates to work.');
+  const now = new Date().toISOString(), captured = Date.parse(action.deviceCapturedAt ?? '');
+  const job = await readJob(env, action.jobId);
+  if (!job || job.type !== 'job' || job.recordType) throw timecardError('This job could not be found.', 404);
+  const leadAccess = createJobAssignmentAccess(env, session), today = denverToday(new Date(now)), visits = fieldVisitsEnabled(env);
+  if (!manager(session) && !await fieldJobLead({ session, job, access: leadAccess })) throw timecardError('Only this job’s crew lead or a manager can move crew-mates’ time.', 403);
+  if (!manager(session) && visits && !await assignedOn(job, today, leadAccess)) throw timecardError('You are not scheduled on this job today, so you cannot move crew-mates’ time to it.', 403);
+  const moved = [], skipped = [], pending = [];
+  // Approved time off is read once, only when a crew-mate is clocked in on this job.
+  let requests = null;
+  const onPto = async employee => (requests ??= await readCollection(env, 'requests')).some(request => same(request?.employee, employee) && ptoOffOn(request, today));
+  for (const entry of (await readEmployeeTimecards(env)).filter(row => activeTimecard(row) && !same(row.employee, session.user))) {
+    const mate = { user: entry.employee, displayName: entry.employeeName || entry.employee }, who = { employee: entry.employee, name: String(entry.employeeName || entry.employee).slice(0, 120) }, access = createJobAssignmentAccess(env, mate);
+    if (!await access.assigned(job)) continue;
+    const target = await readOne(env, 'timeEntries', entry.id), options = { onPto: await onPto(entry.employee) }, state = crewJobMoveState(target.data, action.jobId, action.requestId, now, options);
+    if (state === 'moved') { moved.push({ ...who, alreadyApplied: true }); continue; }
+    if (state === 'move' && visits && !await assignedOn(job, today, access)) { skipped.push({ ...who, reason: 'not_scheduled_today' }); continue; }
+    if (state !== 'move') { skipped.push({ ...who, reason: state }); continue; }
+    pending.push({ entry, target, mate, who, options });
+  }
+  if (pending.length) {
+    // Nobody is moved; the answer says who an earlier attempt of this same move already moved.
+    const refuse = (message, code) => Object.assign(timecardError(message, 409), { code, crewMove: { jobId: action.jobId, moved, skipped, notMoved: pending.map(row => row.who) } });
+    const names = rows => rows.map(row => row.name).join(', ');
+    if (CLOSED_JOB.includes(job.pipelineStatus || job.status)) throw refuse(`This job is closed, so crew time cannot move to it.${moved.length ? ` Already moved to work here: ${names(moved)}.` : ''}`, 'EMPLOYEE_TIMECARD_INVALID');
+    if (Number.isFinite(captured) && captured < Date.parse(now) - 120000) throw refuse(moved.length ? `This crew move waited on the phone too long to finish. Already moved to work here: ${names(moved)}. Not moved: ${names(pending.map(row => row.who))}. Ask them to start their own work time, or a manager to correct it.` : 'This crew move waited on the phone too long to apply now. Ask your crew-mates to start their own work time, or a manager to correct it.', 'EMPLOYEE_TIMECARD_DEVICE_TIME');
+  }
+  for (const { entry, target, mate, who, options } of pending) {
+    try { await writeTimecard(env, mate, entry.id, applyCrewJobMove(target.data, action, session, now, options), target); moved.push({ ...who, alreadyApplied: false }); }
+    catch (error) {
+      // Storage failures stop the request (the lead's phone retries it, and a crew-mate already moved is not moved twice);
+      // a refusal of this one card (a second open shift, timing that needs review) skips it.
+      if (error.code !== 'EMPLOYEE_HUB_WRITE_CONFLICT' && !(error.status >= 400 && error.status < 500)) throw error;
+      skipped.push({ ...who, reason: error.code === 'EMPLOYEE_HUB_WRITE_CONFLICT' ? 'changed' : error.status === 403 ? 'not_assigned' : 'needs_review' });
+    }
+  }
+  return { ok: true, jobId: action.jobId, moved, skipped };
 }
 
 function visibleTo(session, collection, data) {
@@ -335,7 +394,7 @@ export async function onRequestGet({ request, env }) {
         if (candidates.length > 1) return reply(409, { ok: false, error: 'More than one active shift needs manager review before job time can be started.' });
         active = candidates[0] || null;
       }
-      return reply(200, { ok: true, user: session.user, entry: ownJobTimeProjection(active) });
+      return reply(200, { ok: true, user: session.user, entry: ownJobTimeProjection(active), clockInWithoutFix: clockInWithoutFix(env) });
     }
     if (params.get('view') === 'job-labor') {
       if (!manager(session)) return reply(403, { ok: false, error: 'Only operations managers can view employee time for a job.' });
@@ -405,7 +464,9 @@ export async function onRequestGet({ request, env }) {
     }).map(profile => legacyProfileView(profile, viewedAt));
     // Other employees' pay goes to the owner only (EGC_STAFF_PAY_OWNER_ONLY); hours stay visible to managers.
     for (const name of ['profiles', 'timeEntries', 'requests']) collections[name] = collections[name].map(row => visiblePay(session, env, name, row));
-    return reply(200, { ok: true, collections, payVisibility: seesOthersPay(session, env) ? 'all' : 'own', ...(includeAccounts ? { accounts } : {}) });
+    // Each timecard's job time (current segment, per-job work and travel, general time) for the Hub's labels.
+    collections.timeEntries = collections.timeEntries.map(row => withJobTime(row, viewedAt));
+    return reply(200, { ok: true, collections, payVisibility: seesOthersPay(session, env) ? 'all' : 'own', clockInWithoutFix: clockInWithoutFix(env), ...(includeAccounts ? { accounts } : {}) });
   } catch (error) {
     return reply(502, { ok: false, ...(error.code ? { code: error.code } : {}), error: String(error.message || 'Employee Hub storage failed') });
   }
@@ -438,6 +499,10 @@ export async function onRequestPost({ request, env }) {
     incoming = JSON.parse(serialized);
   } catch { return reply(400, { ok: false, error: 'Invalid employee record data' }); }
   try {
+    if (collection === 'timeEntries' && isRecord(incoming.crewJobAction)) {
+      try { return reply(200, await moveCrewJobTime(env, session, incoming.crewJobAction)); }
+      catch (error) { if (error.crewMove) return reply(error.status, { ok: false, code: error.code, error: error.message, details: error.crewMove }); throw error; }
+    }
     const attempts = collection === 'profiles' ? 4 : 1;
     for (let attempt = 0; attempt < attempts; attempt += 1) {
       // Keep the target version separate from any legacy data used to seed it.
@@ -457,7 +522,7 @@ export async function onRequestPost({ request, env }) {
       if (!current.data) await readAll(env);
       const data = await authorizeMutation(env, session, collection, id, incoming, current.data, QUEUED_REQUEST.test(String(body.requestId ?? '')));
       try {
-        if (collection === 'timeEntries') return reply(200, { ok: true, record: visiblePay(session, env, collection, await writeTimecard(env, session, id, data, target)) });
+        if (collection === 'timeEntries') return reply(200, { ok: true, record: withJobTime(visiblePay(session, env, collection, await writeTimecard(env, session, id, data, target)), new Date().toISOString()) });
         const saved = data === current.data && ['teamMessages', 'jobMessages'].includes(collection) ? data : await writeOne(env, collection, id, data, collection === 'profiles' ? target : null);
         return reply(200, { ok: true, record: visiblePay(session, env, collection, collection === 'profiles' ? legacyProfileView(saved, new Date().toISOString()) : saved) });
       } catch (error) {

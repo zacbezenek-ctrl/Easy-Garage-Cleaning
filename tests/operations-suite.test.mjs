@@ -213,7 +213,10 @@ test('Hub rescheduling preserves the signed handoff and observed revision throug
 test('walkthrough conversion keeps canonical IDs and durable acceptance metadata',()=>{
   const handoff=read('functions/_lib/walkthrough-handoff.js'),client=read('crew/gameplan-handoff.js');
   for(const marker of ['sourceWalkthroughId','convertedJobId','conversionStatus','acceptedAt','acceptedBy','termsVersion','signatureCaptured','in_person_signature','syncIdempotencyKey'])assert.ok(handoff.includes(marker),marker+' is missing');
-  assert.match(handoff,/await mutateDispatch\(adapter, actor, dispatchInput, now, \{ authorize: session => requireQuoteAuthor\(session, env\) \}\)/);
+  // Updated deliberately (DISPATCH-RULES second review): the handoff also passes `enforce`, which keeps only the
+  // crew-size shortfall a warning when staffing is left to Dispatch; every other owner block still applies.
+  assert.match(handoff,/await mutateDispatch\(adapter, actor, dispatchInput, now, \{ authorize: session => requireQuoteAuthor\(session, env\), enforce \}\)/);
+  assert.match(handoff,/const staffingLeftToDispatch = !access\.dispatcher \|\| !assignedCrew\.length;\n\s*const enforce = warning => !\(staffingLeftToDispatch && warning\.code === 'crew_size_short'\);/);
   assert.match(handoff,/walkthroughHandoffs/);
   assert.doesNotMatch(handoff,/status: 'completed'|pipelineStatus: 'completed'/);
   assert.match(client,/highlevelOpportunityId/);
@@ -823,7 +826,9 @@ test('open-shift scheduling fields persist on the canonical job record',()=>{
   assert.match(suite,/b\.openShift=fd\.has\('openShift'\)/);
   assert.match(suite,/shiftPickupEnabled:b\.type==='job'/);
   assert.match(read('employee-booking.js'),/changes\.assignedCrew=ids\(job,data\.roster\)/);
-  assert.match(read('functions/_lib/dispatch-service.js'),/patch\.openShift=.*shiftPickupEnabled === true/);
+  // DISPATCH-RULES moved the predicate into dispatch-rules.js so the crew-size and skill blocks share it.
+  assert.match(read('functions/_lib/dispatch-service.js'),/patch\.openShift=offeredForPickup\(next,/);
+  assert.match(read('functions/_lib/dispatch-rules.js'),/export function offeredForPickup\([^)]*\) \{\n  return job\?\.type === 'job' && job\.shiftPickupEnabled === true/);
   assert.match(suite,/if\(k==='type'\)render\(true\)/);
   assert.match(suite,/b\.type==='job'\?'':'ops-hidden'/);
   assert.match(suite,/b\.type==='blocked'\?'ops-hidden':''/);
@@ -833,10 +838,12 @@ test('open-shift scheduling fields persist on the canonical job record',()=>{
   // (PAY-TIMESHEETS fourth check): the profile form's rate field only for a viewer who sets pay; (SYNC-QUEUE) page-load
   // sync retries skip visits the server schedule-sync queue owns; (PAY-TIMESHEETS after SYNC-QUEUE and P1-06) one new tag;
   // (CHANGE-ORDERS) "Send decision" now appends to the decisions saved at that moment in a transaction; (QUOTE-DRAFT) a
-  // signed handoff syncs from its saved snapshot only for its own sync; (MONEY-GHL-PARITY) the suite exposes its
-  // lifecycle helper to server money saves; (HUB-PWA) the offline queue's clock saves; (TIPS) tipped payments and held
-  // tipped charges in the finance board.
-  assert.match(employee,/employee-suite\.js\?v=20260929tips/);
+  // signed handoff syncs from its saved snapshot only for its own sync; (DISPATCH-RULES) a refused shift pickup shows each
+  // conflict's own reason; (MONEY-GHL-PARITY) the suite exposes its lifecycle helper to server money saves; (HUB-PWA) the
+  // offline queue's clock saves; (TIPS) tipped payments and held tipped charges in the finance board; (CREW-TIME)
+  // clock-in-only location and job-time labels; (M5-SEND trim) the invoice-overdue HighLevel trigger stays on the page
+  // whatever serverMessaging says; (DISPATCH-RULES after M5-SEND) one new tag.
+  assert.match(employee,/employee-suite\.js\?v=20260929rules/);
 });
 
 test('recurring visits request a server-side handoff clone instead of copying prior execution or payments',()=>{
@@ -921,10 +928,12 @@ test('all employee and field-tool inline scripts parse',()=>{
 });
 
 test('employee hub v2 personalizes access, time, pay, communication, training, and safety',()=>{
-  for(const marker of ["'my_day'","'earnings'","'crew_chat'","'requests'","'training'","'safety'","'people'",'employeeViews','currentRole','canView','Employee Hub','My pay','Clock in + start shift location','watchPosition','clearWatch','locationConsentAt','locationTracking:false','Estimated gross paycheck','Made this year','All-time Hub earnings','opsApproveTime','opsSubmitRequest','opsNewAnnouncement','opsSubmitTraining','opsApproveTraining','opsSendChat','opsOpenJobRoom','opsReportIncident','Last shift location']){
+  for(const marker of ["'my_day'","'earnings'","'crew_chat'","'requests'","'training'","'safety'","'people'",'employeeViews','currentRole','canView','Employee Hub','My pay','Clocking in shares your location once','getCurrentPosition','locationConsentAt','locationTracking:false','Estimated gross paycheck','Made this year','All-time Hub earnings','opsApproveTime','opsSubmitRequest','opsNewAnnouncement','opsSubmitTraining','opsApproveTraining','opsSendChat','opsOpenJobRoom','opsReportIncident','Clock-in location']){
     assert.match(suite,new RegExp(marker.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')),marker+' is missing');
   }
   assert.doesNotMatch(suite,/Clock in without location/);
+  // CREW-TIME (owner decision 2026-09-29): location is taken once at clock-in; the shift location watch is gone.
+  assert.doesNotMatch(suite,/watchPosition|clearWatch|locationTrail/);
   assert.doesNotMatch(read('functions/_lib/hub-session.js'),/DEFAULT_USER_META|DEFAULT_USERS/);
   assert.match(read('functions/_lib/hub-session.js'),/hourlyRate/);
   assert.match(employee,/rememberHubProfile/);

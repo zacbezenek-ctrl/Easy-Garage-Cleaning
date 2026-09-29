@@ -172,4 +172,50 @@ test('the tipped booking commit (job update plus precondition-only review delete
     assert.deepEqual([after.updateTime, decodeFirestoreFields(after.fields).payment], [before.updateTime, job.payment], 'the refunded tipped charge is never booked');
     assert.equal(decodeFirestoreFields((await read(`payment_reviews/${second}`)).fields).status, 'open');
   });
+
+  // FUN-33: with the payment events on, the booking is a moneyStorage :commit (the job plus its funnel events). Its
+  // precondition-only form {delete: true, exists: false} must keep the same "no review yet" guard on real Firestore.
+  await t.test('with FUN-33 payment events on, the moneyStorage booking keeps the same guard, events included', async st => {
+    st.mock.method(globalThis, 'fetch', emulator);
+    const { moneyStorage } = await import('../functions/_lib/money-storage.js');
+    const { recordCustomerStripePayment } = await import('../functions/_lib/customer-payments.js');
+    const env = { FIREBASE_API_KEY: 'firebase-test-money-race', CUSTOMER_TIPS_ENABLED: 'true', FUNNEL_PAYMENT_EVENTS_ENABLED: 'true', MONEY_API_ENABLED: 'true' };
+    const funnelEvents = async jobId => { const response = await direct('/funnelEvents'); return ((await response.json()).documents || []).map(doc => decodeFirestoreFields(doc.fields)).filter(event => event.jobId === jobId); };
+    // Raw: the precondition-only write is a no-op while no review exists and refuses the whole commit once one does.
+    const rawJob = `race-events-raw-${run}`, rawSession = `cs_test_race_events_raw_${run}`;
+    assert.equal((await create(`jobs/${rawJob}`, { amount: 500 })).status, 200);
+    const store = moneyStorage(env), guard = { collection: 'payment_reviews', id: rawSession, delete: true, exists: false };
+    await store.commit([{ collection: 'jobs', id: rawJob, revision: (await read(`jobs/${rawJob}`)).updateTime, patch: { amount: 1000 } }, guard]);
+    assert.deepEqual([decodeFirestoreFields((await read(`jobs/${rawJob}`)).fields).amount, await read(`payment_reviews/${rawSession}`)], [1000, null], 'the guard creates nothing');
+    assert.equal((await create(`payment_reviews/${rawSession}`, { sessionId: rawSession, status: 'open' })).status, 200);
+    const current = await read(`jobs/${rawJob}`);
+    await assert.rejects(store.commit([{ collection: 'jobs', id: rawJob, revision: current.updateTime, patch: { amount: 1500 } }, guard]), error => error.code === 'money_revision_conflict');
+    assert.deepEqual([decodeFirestoreFields((await read(`jobs/${rawJob}`)).fields).amount, (await read(`jobs/${rawJob}`)).updateTime], [1000, current.updateTime], 'nothing in the commit was applied');
+    // Through the recorder: the same job and tipped checkout as above.
+    const job = { type: 'job', customer: 'Synthetic Tip Customer', total: 1000, status: 'completed', completedAt: '2026-09-22T10:00:00.000Z', estimate: { status: 'accepted', amount: 1000, depositRequired: 500 },
+      deposit: { amount: 500, paidAmount: 500, status: 'paid', verified: true }, payment: { amount: 500, verified: true, method: 'stripe', stripeSessions: [{ sessionId: `cs_test_deposit_${run}`, paymentIntentId: `pi_deposit_${run}`, amount: 500, purpose: 'deposit', verifiedAt: '2026-09-18T16:05:00.000Z' }] } };
+    const checkout = (jobId, sessionId) => ({ id: sessionId, object: 'checkout.session', mode: 'payment', status: 'complete', payment_status: 'paid', currency: 'usd', amount_total: 55000, client_reference_id: jobId, livemode: false,
+      metadata: { kind: 'egc_customer_portal_payment', job_id: jobId, payment_purpose: 'balance', tip_cents: '5000' }, payment_intent: { id: `pi_${sessionId}`, latest_charge: { created: Date.parse(NOW) / 1000 - 60, receipt_url: `https://pay.stripe.com/receipts/${sessionId}` } } });
+    const quiet = `race-events-quiet-${run}`, first = `cs_test_race_events_quiet_${run}`;
+    assert.equal((await create(`jobs/${quiet}`, job)).status, 200);
+    statuses.length = 0;
+    const result = await recordCustomerStripePayment(env, checkout(quiet, first), quiet, NOW, { recordedBy: 'stripe_webhook', settleHeld: false, fromWebhook: true });
+    assert.deepEqual([result.paid, result.duplicate, statuses], [true, false, [200]]);
+    const booked = decodeFirestoreFields((await read(`jobs/${quiet}`)).fields);
+    assert.deepEqual([booked.payment.amount, booked.payment.tips.map(tip => tip.amountCents), booked.paidInFullAt], [1000, [5000], '2026-09-22T17:59:00.000Z']);
+    assert.equal(await read(`payment_reviews/${first}`), null);
+    const events = (await funnelEvents(quiet)).sort((a, b) => a.type.localeCompare(b.type));
+    assert.deepEqual(events.map(event => [event.type, event.data.amountCents, event.data.tipCents ?? null, event.actor.id]), [['job.paid_in_full', 100000, null, 'stripe_webhook'], ['payment.received', 50000, 5000, 'stripe_webhook']]);
+    const raced = `race-events-held-${run}`, second = `cs_test_race_events_held_${run}`;
+    assert.equal((await create(`jobs/${raced}`, job)).status, 200);
+    const before = await read(`jobs/${raced}`);
+    beforeCommit = async () => assert.equal((await create(`payment_reviews/${second}`, { sessionId: second, jobId: raced, kind: 'egc_customer_portal_payment', reason: 'payment_refunded', status: 'open', amountCents: 55000, tipCents: 5000, refundedCents: 20000, createdAt: NOW })).status, 200);
+    statuses.length = 0;
+    await assert.rejects(recordCustomerStripePayment(env, checkout(raced, second), raced, NOW, { recordedBy: 'customer_portal' }), error => error.code === 'payment_refunded' && error.reviewRecorded === true && error.reviewOpen === true);
+    assert.equal(statuses.length, 1, 'one booking commit was tried');
+    assert.ok([400, 409].includes(statuses[0]), `refused as a whole (${statuses[0]})`);
+    const after = await read(`jobs/${raced}`);
+    assert.deepEqual([after.updateTime, decodeFirestoreFields(after.fields).payment, decodeFirestoreFields(after.fields).paidInFullAt], [before.updateTime, job.payment, undefined], 'the refunded tipped charge is never booked');
+    assert.deepEqual(await funnelEvents(raced), [], 'and no event is written for it');
+  });
 });

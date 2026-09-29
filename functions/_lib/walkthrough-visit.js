@@ -28,7 +28,9 @@ export const WALKTHROUGH_VISIT_LOCKS = 'walkthroughVisitLocks';
 export const walkthroughVisitEnabled = env => env?.EGC_WALKTHROUGH_VISIT_ENABLED === 'true';
 
 const ACTIONS = ['start', 'finish', 'no_show'];
-const INPUT_KEYS = ['action', 'visitId', 'requestId', 'expectedRevision', 'outcome', 'reasonCode', 'recordingStatus', 'deviceAt', 'skipTimecard', 'actorId'];
+const INPUT_KEYS = ['action', 'visitId', 'requestId', 'expectedRevision', 'outcome', 'reasonCode', 'recordingStatus', 'deviceAt', 'skipTimecard', 'actorId', 'typedNotes'];
+// FUN-06: without audio (declined, or the device failed) the rep types up to three short notes at Finish instead.
+const TYPED_NOTES = 3, TYPED_NOTE_CHARS = 400, NOTE_STATUSES = new Set(['declined', 'failed_device']);
 // Outcomes that carry a reason code, and from which list.
 const OUTCOME_REASONS = { not_interested: 'lost', customer_no_show: 'noShow', rescheduled: 'reschedule' };
 const START_CLOSED = new Set(['cancelled', 'canceled', 'noshow', 'no_show', 'no-show', 'completed', 'closed']);
@@ -101,8 +103,16 @@ function normalize(input) {
     } else if (input.reasonCode !== undefined && input.reasonCode !== null) throw invalid('This outcome does not take a reason.');
     if (action === 'finish' && outcome !== 'customer_no_show' && recordingStatus === null) throw invalid('Say whether the walkthrough was recorded, declined or failed on the device.');
   }
+  let typedNotes;
+  if (input.typedNotes !== undefined) {
+    if (action !== 'finish' || !NOTE_STATUSES.has(recordingStatus)) throw invalid('Typed notes replace a recording: send them with the Finish of a walkthrough that was not recorded.');
+    const notes = Array.isArray(input.typedNotes) ? input.typedNotes.map(note => typeof note === 'string' ? note.trim() : null) : [];
+    if (!notes.length || notes.length > TYPED_NOTES || notes.some(note => !note || note.length > TYPED_NOTE_CHARS)) throw invalid(`Type one to ${TYPED_NOTES} short notes of up to ${TYPED_NOTE_CHARS} characters.`);
+    typedNotes = notes;
+  }
+  // typedNotes joins the request (and its fingerprint) only when sent, so earlier receipts still replay.
   return { action, visitId: input.visitId, requestId: input.requestId.toLowerCase(), expectedRevision: input.expectedRevision, outcome, reasonCode, recordingStatus,
-    deviceAt: input.deviceAt ?? null, skipTimecard: input.skipTimecard === true, actorId: input.actorId === undefined ? null : assignmentKey(input.actorId) };
+    deviceAt: input.deviceAt ?? null, skipTimecard: input.skipTimecard === true, actorId: input.actorId === undefined ? null : assignmentKey(input.actorId), ...(typedNotes ? { typedNotes } : {}) };
 }
 
 /** The allowlisted walkthrough view: schedule identity and the visit record, never money,
@@ -152,7 +162,8 @@ async function shiftSwitch(store, session, shift, action, visit, deviceAt, now) 
 /**
  * Records one walkthrough visit action for a signed-in owner, manager or sales rep:
  * {action: start | finish | no_show, visitId, requestId, expectedRevision, outcome?,
- *  reasonCode?, recordingStatus?, deviceAt?, skipTimecard?, actorId?}.
+ *  reasonCode?, recordingStatus?, deviceAt?, skipTimecard?, actorId?, typedNotes?}; typedNotes (1-3 short
+ *  notes) replace the audio on the Finish of a declined or failed recording.
  * Start opens the rep's work segment on the visit id (409 clock_in_required without an
  * active shift unless skipTimecard). The starter's Finish or No-show always closes it, at
  * the server time when the timecard refuses the device time; skipTimecard leaves it open
@@ -272,7 +283,7 @@ export async function recordWalkthroughVisit(store, session, input, now = new Da
     if (request.outcome === 'not_interested') writes.push(await event('deal.lost', { reasonCode: request.reasonCode, outcome: 'not_interested' }, startedAt, clock));
     const finishedAt = closing.patch.occurredAt;
     // Only a visit that took place is completed; a no-show or reschedule waits for its rebooked occurrence.
-    patch = { walkthroughOutcome: { outcome: request.outcome, reasonCode: request.reasonCode, finishedAt, performedBy: actor, recordingStatus: request.recordingStatus, requestId: receiptId, clockSource: closing.patch.clockSource, deviceAt: request.deviceAt, occurrence, repTime },
+    patch = { walkthroughOutcome: { outcome: request.outcome, reasonCode: request.reasonCode, finishedAt, performedBy: actor, recordingStatus: request.recordingStatus, requestId: receiptId, clockSource: closing.patch.clockSource, deviceAt: request.deviceAt, occurrence, repTime, ...(request.typedNotes ? { typedNotes: request.typedNotes } : {}) },
       ...(REBOOKABLE.has(request.outcome) ? {} : { walkthroughCompletedAt: finishedAt }), ...(previous?.record ? { walkthroughVisit: Object.keys(base).length ? base : null } : {}), updatedAt: now };
     if (startedBy) {
       const lock = await store.read(WALKTHROUGH_VISIT_LOCKS, lockId(startedBy));

@@ -1,5 +1,6 @@
 /* Account boundaries and public DTOs. No browser-supplied price or role is trusted. */
 import { businessRateCard } from './pricing-config.js';
+import { invoiceStatus } from './money-core.js';
 export const LIMITS = Object.freeze({ properties: 100, requests: 300, projects: 100, members: 30, messages: 400 });
 export const ROLES = Object.freeze({
   admin: { view: true, request: true, decide: true, pay: true, team: true },
@@ -112,7 +113,14 @@ export function projectReleased(job) {
   const state = String(job?.customerApproval?.status || job?.estimate?.status || job?.quoteStatus || '').toLowerCase();
   return Boolean(job?.estimate?.sentAt || ['sent', 'approved', 'accepted'].includes(state));
 }
-export function projectView(account, link, job, finance, needsReview) {
+// The invoice status is money-core's effective one at `now` (epoch ms, the handler's clock), so a past-due invoice
+// reads 'overdue' whatever status was saved. While a recorded payment awaits review a partly paid invoice reads
+// 'pending_verification', so the status never hints at an unverified figure.
+function issuedStatus(job, now, needsReview) {
+  const status = invoiceStatus(job, Number.isFinite(now) ? new Date(now).toISOString() : now);
+  return needsReview && status === 'partial' ? 'pending_verification' : status;
+}
+export function projectView(account, link, job, finance, needsReview, now) {
   try { requireLinkedJob(account, link.jobId, job, { allowUnreleased: true }); }
   catch { return { jobId: link.jobId, propertyId: link.propertyId, unavailable: true }; }
   const e = job.estimate || {}, invoice = job.invoice || {};
@@ -127,7 +135,7 @@ export function projectView(account, link, job, finance, needsReview) {
     time: typeof job.time === 'string' ? job.time.slice(0, 10) : '',
     quoteStatus: released ? quoteState : 'not_issued', quoteNumber: released ? String(e.number || '').slice(0, 100) : '',
     total: released ? finance.total : null, invoiceNumber: invoiceIssued ? String(invoice.number).slice(0, 100) : '',
-    invoiceStatus: invoiceIssued ? String(invoice.status || '').slice(0, 60) : 'not_issued',
+    invoiceStatus: invoiceIssued ? issuedStatus(job, now, needsReview) : 'not_issued',
     dueDate: invoiceIssued ? String(invoice.dueDate || '').slice(0, 10) : '',
     balance: invoiceIssued && !needsReview ? finance.balance : null,
     paid: invoiceIssued && !needsReview ? finance.paid : null,

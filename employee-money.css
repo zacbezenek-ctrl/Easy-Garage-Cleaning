@@ -1,0 +1,38 @@
+/* Invoicing screen (EGCMoney). Scoped under .egc-invoicing (the money-actions dialog owns .egc-money) with the Hub UI kit tokens; mobile first (375px). */
+.egc-invoicing{max-width:980px}
+.egc-invoicing .mn-section{display:grid;gap:var(--hub-space-3)}
+.egc-invoicing .mn-section>h2{font-size:22px}
+.egc-invoicing .mn-help,.egc-invoicing .mn-empty{margin:0;color:var(--hub-muted);font-size:14px;line-height:1.45}
+.egc-invoicing .mn-list{list-style:none;margin:0;padding:0;display:grid;gap:var(--hub-space-2);min-width:0}
+.egc-invoicing .mn-list.compact{gap:4px;padding-left:18px;list-style:disc;font-size:14px}
+.egc-invoicing .mn-row{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:var(--hub-space-3);min-height:var(--hub-tap);padding:10px 12px;border:1px solid var(--hub-line);border-radius:var(--hub-radius);background:#fff}
+.egc-invoicing .mn-row.picked{border-color:var(--hub-orange);background:#fff8f4}
+.egc-invoicing .mn-row>input[type="checkbox"]{width:24px;height:24px;margin:10px;flex:none;accent-color:var(--hub-orange)}
+.egc-invoicing .mn-main{display:grid;gap:2px;min-width:0;cursor:pointer;min-height:var(--hub-tap);align-content:center}
+.egc-invoicing .mn-open .mn-main{cursor:default}
+.egc-invoicing .mn-name{font-weight:700;color:var(--hub-ink);overflow-wrap:anywhere}
+.egc-invoicing .mn-meta{font-size:13px;color:var(--hub-muted);line-height:1.4;overflow-wrap:anywhere}
+.egc-invoicing .mn-amount{font:700 15px/1.2 var(--hub-mono);color:var(--hub-navy);white-space:nowrap}
+.egc-invoicing .mn-open{grid-template-columns:minmax(0,1fr) auto}
+.egc-invoicing .mn-tools{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,220px);gap:var(--hub-space-3);align-items:end}
+.egc-invoicing .mn-bar{position:sticky;bottom:0;z-index:2;display:flex;align-items:center;justify-content:space-between;gap:var(--hub-space-3);flex-wrap:wrap;padding:12px 0 calc(12px + env(safe-area-inset-bottom));background:var(--hub-card);border-top:1px solid var(--hub-line)}
+.egc-invoicing .mn-bar-text{margin:0;font-weight:700;color:var(--hub-ink)}
+.egc-invoicing .mn-results{display:grid;gap:var(--hub-space-2)}
+.egc-invoicing .mn-summary{margin:0;font-weight:700}
+.egc-invoicing .mn-result{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:4px var(--hub-space-3);padding:10px 12px;border:1px solid var(--hub-line);border-left:4px solid var(--hub-line);border-radius:var(--hub-radius);background:#fff}
+.egc-invoicing .mn-result .mn-meta{grid-column:1}
+.egc-invoicing .mn-tag{color:var(--hub-ink)}
+.egc-invoicing .mn-tag.warn{color:var(--hub-amber);font-weight:700}
+.egc-invoicing .mn-result.ok{border-left-color:var(--hub-green)}
+.egc-invoicing .mn-result.fail{border-left-color:var(--hub-red)}
+.egc-invoicing .mn-result.skip{border-left-color:var(--hub-amber)}
+.egc-invoicing .mn-review summary{min-height:var(--hub-tap);display:flex;align-items:center;cursor:pointer;font-weight:700;color:var(--hub-navy)}
+.egc-invoicing .mn-dialog h2{font-size:20px}
+@media (max-width:680px){
+  .egc-invoicing .mn-tools{grid-template-columns:minmax(0,1fr)}
+  .egc-invoicing .mn-row{grid-template-columns:auto minmax(0,1fr);padding:8px 10px}
+  .egc-invoicing .mn-row .mn-amount{grid-column:2;justify-self:start}
+  .egc-invoicing .mn-open{grid-template-columns:minmax(0,1fr) auto}
+  .egc-invoicing .mn-bar .hub-btn{flex:1 1 100%}
+  .egc-invoicing .mn-result{grid-template-columns:minmax(0,1fr)}
+}

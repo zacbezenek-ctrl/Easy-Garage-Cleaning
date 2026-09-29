@@ -13,6 +13,10 @@ import { instantMs } from './funnel-calendar.js';
 import { validDate } from './dispatch-time.js';
 import { eventActor } from './dispatch-funnel.js';
 import { pendingProjectDimensions } from './funnel-dimensions.js';
+import { stripCrewMoney, stripCrewMoneyDeep } from './crew-money.js';
+
+// FIX-CREW-PRICE-LEAK: every crew-visible copy of the brief is written without currency amounts.
+export { stripCrewMoney };
 
 const plain = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const safeId = value => typeof value === 'string' && /^[A-Za-z0-9_-]{1,180}$/.test(value) && !/^(secure_|_egc_)/.test(value);
@@ -32,6 +36,25 @@ const customerProjection = row => row ? Object.fromEntries(['id', 'name', 'phone
 // quote draft, the job of the walkthrough being handed off, or a job they
 // created. Every other job stays with Dispatch.
 const authorsJob = (job, source, actor) => plain(job?.quoteDraft) || Boolean(source) && job.sourceWalkthroughId === source.id || Boolean(job?.createdBy) && job.createdBy === actor.user;
+// DISPATCH-RULES: a quote author who is not a dispatcher never sees the roster
+// (prepareHandoff), so the Dispatch rows of a save (its warnings, replayed or
+// fresh, and a refusal's details.conflicts) reach them as a code and a message
+// that names no employee and shows no other job, time off or workload. A row
+// whose message is fixed text keeps it; the per-employee rules get name-free
+// text; any other row gets a generic line. Dispatchers keep the full rows.
+const AUTHOR_TEXT = {
+  outside_working_hours: row => `An assigned employee does not work at this time${validDate(row.date) ? ` (${row.date})` : ''}.`,
+  employee_daily_capacity: row => `An assigned employee would pass the owner's daily limit${validDate(row.date) ? ` on ${row.date}` : ''}.`,
+  travel_buffer_short: () => 'An assigned employee may not have enough travel time between this job and other work.',
+};
+const AUTHOR_FIXED = new Set(['crew_size_short', 'skill_missing', 'schedule_overlap', 'employee_unavailable', 'unverifiable_assignment', 'legacy_blocked_day', 'unassigned', 'missing_crew_lead', 'segment_unassigned', 'inactive_assignment', 'vehicle_unavailable', 'missing_address', 'missing_customer_link', 'missing_scope', 'invalid_schedule', 'unscheduled', 'segments_invalid', 'provider_sync_pending', 'customer_memory_not_inherited', 'arrival_window_reset', 'checkout_needs_review']);
+export function authorRuleRows(rows) {
+  return (Array.isArray(rows) ? rows : []).filter(plain).map(row => {
+    const code = typeof row.code === 'string' ? row.code : '';
+    const message = Object.hasOwn(AUTHOR_TEXT, code) ? AUTHOR_TEXT[code](row) : AUTHOR_FIXED.has(code) && typeof row.message === 'string' ? row.message : 'Dispatch will review this job.';
+    return { code, message };
+  });
+}
 
 function text(value, label, max = 4000, required = false) {
   if (typeof value !== 'string' || value.length > max || required && !value.trim()) throw fail('invalid_plan', `${label} is missing or too long.`, 400);
@@ -59,7 +82,7 @@ function checks(value) {
     output[key] = value[key].map(item => {
       if (!plain(item) || typeof item.id !== 'string' || !/^[A-Za-z0-9_-]{1,80}$/.test(item.id) || ['__proto__', 'constructor', 'prototype'].includes(item.id) || ids.has(item.id)) throw fail('invalid_checklist', 'Every crew check needs its own valid identity.', 400);
       ids.add(item.id);
-      return { id: item.id, label: text(item.label, 'Checklist label', 500, true), detail: text(item.detail || '', 'Checklist detail', 1000), critical: item.critical === true, required: true };
+      return { id: item.id, label: stripCrewMoney(text(item.label, 'Checklist label', 500, true)), detail: stripCrewMoney(text(item.detail || '', 'Checklist detail', 1000)), critical: item.critical === true, required: true };
     });
   }
   return output;
@@ -139,7 +162,9 @@ export function normalizeHandoffPlan(input, now = new Date().toISOString()) {
   const before = input.photos?.before;
   if (!Number.isInteger(before) || before < 0 || before > 1000) throw fail('invalid_plan', 'The walkthrough photo count is invalid.', 400);
   const lines = itemizedQuote(quote, totalCents, logistics.crew_size, minutes) || { line_items: [{ name: 'Garage cleanout and reset', qty: 1, total: totalCents / 100 }], line_items_count: 1 };
-  return { client, quote: { title: text(quote.title || 'EGC Garage Service', 'Job title', 500, true), total: totalCents / 100, deposit: depositCents / 100, job_date: date, start_time: start, end_time: end, start_at: startAt, end_at: endAt, estimated_duration_min: minutes, expected_shift_hours: (minutes + 90) / 60, ...lines }, discovery, scope, logistics, internal_notes: text(input.internal_notes, 'Job brief', 4900, true), client_checklists: checks(input.client_checklists), signature, acceptance: { accepted_at: new Date(acceptedAt).toISOString(), accepted_by: text(acceptance.accepted_by, 'Signer name', 200, true), method: 'in_person_signature', terms_version: terms, signature_captured: true }, terms_version: terms, terms_accepted: true, photos: { before }, notes: text(input.notes || '', 'Customer notes', 8000) };
+  // The priced internal_notes stay manager-only; crew get crew_brief (older pages send none: it is the internal brief without amounts).
+  const internalNotes = text(input.internal_notes, 'Job brief', 4900, true), crewBrief = input.crew_brief === undefined || input.crew_brief === null || input.crew_brief === '' ? internalNotes : text(input.crew_brief, 'Crew brief', 4900, true);
+  return { client, quote: { title: text(quote.title || 'EGC Garage Service', 'Job title', 500, true), total: totalCents / 100, deposit: depositCents / 100, job_date: date, start_time: start, end_time: end, start_at: startAt, end_at: endAt, estimated_duration_min: minutes, expected_shift_hours: (minutes + 90) / 60, ...lines }, discovery, scope, logistics, internal_notes: internalNotes, crew_brief: stripCrewMoney(crewBrief), client_checklists: checks(input.client_checklists), signature, acceptance: { accepted_at: new Date(acceptedAt).toISOString(), accepted_by: text(acceptance.accepted_by, 'Signer name', 200, true), method: 'in_person_signature', terms_version: terms, signature_captured: true }, terms_version: terms, terms_accepted: true, photos: { before }, notes: text(input.notes || '', 'Customer notes', 8000) };
 }
 export function identityMatches(left, right) {
   const a = phone(left.phone), b = phone(right.phone), c = email(left.email), d = email(right.email);
@@ -248,8 +273,10 @@ export async function saveWalkthroughHandoff(store, actor, input, now = new Date
     const open = checkout && !['none', 'current', 'expired'].includes(checkout.status) ? [{ code: 'checkout_needs_review', message: 'An open card checkout for the earlier quote could not be closed. Review it in Stripe before the customer pays.' }] : [];
     return result(saved, true, [...(receipt.warnings || []), ...open], checkout);
   }
+  // A quote author who is not a dispatcher gets no crew identities (assignedCrew is
+  // always []; the crew page does not read it): warnings say what staffing needs.
   function result(saved, replayed, warnings, checkout = null) {
-    return { ok: true, authority: 'employee_hub', requestId: input.requestId, replayed, ...(checkout ? { checkout } : {}), job: { id: saved.id, revision: saved.revision, customerId: saved.customerId, projectId: saved.projectId, sourceWalkthroughId: saved.sourceWalkthroughId || '', date: saved.date, time: saved.time, endTime: saved.endTime, status: state(saved), assignedCrew: saved.assignedCrew || [], crewNeeded: saved.crewNeeded, highlevelContactId: saved.highlevelContactId || '', highlevelAppointmentId: saved.highlevelAppointmentId || '', highlevelOpportunityId: saved.highlevelOpportunityId || '', syncStatus: saved.syncStatus || 'pending' }, warnings, financialState: 'accepted_quote_not_payment', fieldJobUrl: `/crew/job.html?jobId=${encodeURIComponent(saved.id)}` };
+    return { ok: true, authority: 'employee_hub', requestId: input.requestId, replayed, ...(checkout ? { checkout } : {}), job: { id: saved.id, revision: saved.revision, customerId: saved.customerId, projectId: saved.projectId, sourceWalkthroughId: saved.sourceWalkthroughId || '', date: saved.date, time: saved.time, endTime: saved.endTime, status: state(saved), assignedCrew: access.dispatcher ? saved.assignedCrew || [] : [], crewNeeded: saved.crewNeeded, highlevelContactId: saved.highlevelContactId || '', highlevelAppointmentId: saved.highlevelAppointmentId || '', highlevelOpportunityId: saved.highlevelOpportunityId || '', syncStatus: saved.syncStatus || 'pending' }, warnings: access.dispatcher ? warnings : authorRuleRows(warnings), financialState: 'accepted_quote_not_payment', fieldJobUrl: `/crew/job.html?jobId=${encodeURIComponent(saved.id)}` };
   }
   const prior = await replay(); if (prior) return prior;
   const customer = await store.read('customers', input.customerId); requireRevision(customer);
@@ -286,20 +313,23 @@ export async function saveWalkthroughHandoff(store, actor, input, now = new Date
   }
   if (source?.convertedJobId && source.convertedJobId !== previous?.id) throw fail('existing_job', 'This walkthrough already has a saved job. Recover that job rather than creating another.');
   const roster = await store.roster(), assignedText = text(plan.logistics.assigned_to || '', 'Crew assignment', 500);
+  // A quote author who is not a dispatcher keeps the saved crew exactly. Any other
+  // name, one on the roster or not, gets the same refusal, so it cannot be used to
+  // learn who is on the roster.
+  const forbidden = () => fail('crew_assignment_forbidden', 'Only an operations manager or owner can assign crew. Clear the crew names; Dispatch will staff the job.', 403);
   let assignedCrew;
   if (!assignedText || /^crew of \d+$/i.test(assignedText)) assignedCrew = previous?.assignedCrew || [];
   else assignedCrew = jobCrewNames({ assignedTo: assignedText }).map(name => {
     const key = assignmentKey(name), exact = roster.filter(person => person.id === key), aliases = exact.length ? exact : roster.filter(person => assignmentKey(person.name) === key);
-    if (aliases.length !== 1) throw fail('crew_unverified', 'A requested crew member is not a unique active employee. Use the exact employee name or leave assignment for Dispatch.');
+    if (aliases.length !== 1) throw access.dispatcher ? fail('crew_unverified', 'A requested crew member is not a unique active employee. Use the exact employee name or leave assignment for Dispatch.') : forbidden();
     return aliases[0].id;
   });
-  // A quote author who is not a dispatcher keeps the saved crew exactly.
   if (!access.dispatcher) {
-    if (canonical([...assignedCrew].sort()) !== canonical([...(previous?.assignedCrew || [])].sort())) throw fail('crew_assignment_forbidden', 'Only an operations manager or owner can assign crew. Clear the crew names; Dispatch will staff the job.', 403);
+    if (canonical([...assignedCrew].sort()) !== canonical([...(previous?.assignedCrew || [])].sort())) throw forbidden();
     assignedCrew = previous?.assignedCrew || [];
   }
-  const instructions = handoffInstructions(plan, source?.id || '');
-  const changes = { date: plan.quote.job_date, endDate: plan.quote.job_date, time: plan.quote.start_time, endTime: plan.quote.end_time, title: plan.quote.title, address: placedAddress ?? plan.client.address, serviceType: 'Garage transformation', crewNeeded: plan.logistics.crew_size, assignedCrew, jobInstructions: plan.internal_notes, accessInstructions: instructions.accessNotes, customerInstructions: plan.notes, notify: access.dispatcher || previous?.notify !== false, ...materialChanges(plan, previous ? previous.materials : source?.materials) };
+  const instructions = stripCrewMoneyDeep(handoffInstructions(plan, source?.id || '')), crewNotes = stripCrewMoney(plan.notes);
+  const changes = { date: plan.quote.job_date, endDate: plan.quote.job_date, time: plan.quote.start_time, endTime: plan.quote.end_time, title: plan.quote.title, address: placedAddress ?? plan.client.address, serviceType: 'Garage transformation', crewNeeded: plan.logistics.crew_size, assignedCrew, jobInstructions: stripCrewMoney(plan.crew_brief), accessInstructions: instructions.accessNotes, customerInstructions: crewNotes, notify: access.dispatcher || previous?.notify !== false, ...materialChanges(plan, previous ? previous.materials : source?.materials) };
   const dispatchInput = previous ? { action: 'schedule.update', requestId: input.requestId, jobId: previous.id, expectedRevision: previous.revision, changes } : { action: 'schedule.create', requestId: input.requestId, customerId: customer.id, kind: 'job', ...(source ? { sourceWalkthroughId: source.id } : {}), booking: { channel: 'hub_in_person' }, changes };
   const adapter = { ...store,
     // FUN-29: a job sold on a signed walkthrough plan came through the walkthrough path, and its signed lines are sold evidence.
@@ -315,7 +345,8 @@ export async function saveWalkthroughHandoff(store, actor, input, now = new Date
       if (!target) throw fail('commit_incomplete', 'The complete dispatch handoff could not be prepared.', 503);
       const providerPayload = { ...plan, signature: undefined, tool: 'game_plan', job_id: target.id, walkthrough_id: source?.id || '', idempotency_key: `walkthrough-handoff:${input.requestId}`, sent_at: now };
       delete providerPayload.signature;
-      Object.assign(target.patch, financePatch(plan, previous, target.id, actor, now), { handoffVersion: 1, handoffRequestId: input.requestId, handoffFingerprint: fingerprint, acceptedHandoffPayload: providerPayload, sourceWalkthroughId: source?.id || '', customer: plan.client.name, phone: plan.client.phone, email: plan.client.email, scope: plan.scope, discovery: plan.discovery, logistics: plan.logistics, jobInstructions: instructions, internalNotes: plan.internal_notes, clientChecklists: plan.client_checklists, notes: plan.notes, customerNotesSummary: plan.notes || instructions.customerGoal, durationMin: (Date.parse(plan.quote.end_at) - Date.parse(plan.quote.start_at)) / 60000, estimatedDurationMin: plan.quote.estimated_duration_min, estimatedDurationHours: plan.quote.estimated_duration_min / 60, expectedShiftHours: plan.quote.expected_shift_hours, crewSize: plan.logistics.crew_size, photoCount: plan.photos.before, photoSyncStatus: previous?.photoSyncStatus || 'device_only', walkthroughSyncedAt: now, syncIdempotencyKey: providerPayload.idempotency_key, walkthroughAppointmentId: source?.highlevelAppointmentId || previous?.walkthroughAppointmentId || '', providerSyncOwner: 'operations', syncStatus: 'pending', customerPortalInvitationRequestedAt: previous?.customerPortalInvitationRequestedAt || now });
+      Object.assign(target.patch, financePatch(plan, previous, target.id, actor, now), { handoffVersion: 1, handoffRequestId: input.requestId, handoffFingerprint: fingerprint, acceptedHandoffPayload: providerPayload, sourceWalkthroughId: source?.id || '', customer: plan.client.name, phone: plan.client.phone, email: plan.client.email, scope: plan.scope, discovery: plan.discovery, logistics: plan.logistics, jobInstructions: instructions, internalNotes: plan.internal_notes, clientChecklists: plan.client_checklists, notes: plan.notes, customerNotesSummary: crewNotes || instructions.customerGoal, durationMin: (Date.parse(plan.quote.end_at) - Date.parse(plan.quote.start_at)) / 60000, estimatedDurationMin: plan.quote.estimated_duration_min, estimatedDurationHours: plan.quote.estimated_duration_min / 60, expectedShiftHours: plan.quote.expected_shift_hours, crewSize: plan.logistics.crew_size, photoCount: plan.photos.before, photoSyncStatus: previous?.photoSyncStatus || 'device_only', walkthroughSyncedAt: now, syncIdempotencyKey: providerPayload.idempotency_key, walkthroughAppointmentId: source?.highlevelAppointmentId || previous?.walkthroughAppointmentId || '', providerSyncOwner: 'operations', syncStatus: 'pending', customerPortalInvitationRequestedAt: previous?.customerPortalInvitationRequestedAt || now });
+      if (typeof target.patch.operationalScope?.text === 'string') target.patch.operationalScope.text = stripCrewMoney(target.patch.operationalScope.text);
       function fence(collection, row, patch) {
         requireRevision(row);
         const found = writes.find(write => write.collection === collection && write.id === row.id);
@@ -345,8 +376,18 @@ export async function saveWalkthroughHandoff(store, actor, input, now = new Date
       await store.commit(writes);
     },
   };
-  try { await mutateDispatch(adapter, actor, dispatchInput, now, { authorize: session => requireQuoteAuthor(session, env) }); }
-  catch (error) { const recovered = await replay(); if (recovered) return recovered; throw error; }
+  // DISPATCH-RULES: a handoff that leaves staffing to Dispatch (no one assigned,
+  // or a quote author who cannot assign crew) is saved with the crew-size
+  // shortfall as a warning, since only Dispatch can fill it. Every other owner
+  // block applies, and its refusal names the rule (details.conflicts).
+  const staffingLeftToDispatch = !access.dispatcher || !assignedCrew.length;
+  const enforce = warning => !(staffingLeftToDispatch && warning.code === 'crew_size_short');
+  try { await mutateDispatch(adapter, actor, dispatchInput, now, { authorize: session => requireQuoteAuthor(session, env), enforce }); }
+  catch (error) {
+    const recovered = await replay(); if (recovered) return recovered;
+    if (!access.dispatcher && Array.isArray(error?.details?.conflicts)) error.details = { conflicts: authorRuleRows(error.details.conflicts) };
+    throw error;
+  }
   const saved = await replay();
   if (!saved) throw fail('outcome_unknown', 'The save could not be read back. Retry the identical request; do not create a second job.', 503);
   return { ...saved, replayed: false };

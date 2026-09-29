@@ -467,6 +467,38 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   Checkout line (whole cents, at most half the balance or $500) on a balance payment; only the service part reaches
   payment.amount and the invoice, tips go to payment.tips[] and the ledger, and /api/tip-allocation splits them by on-site
   minutes (CSV). Tipped charges held in payment_reviews are never booked automatically. Gap: not in the payroll CSV itself.
+- **FIX-CREW-PRICE-LEAK** (P1 readiness) Quoted prices stay out of every crew-visible brief: the gameplan sends a
+  price-free crew_brief, the handoff and fieldJobProjection strip amounts from every crew copy (stripCrewMoney), and
+  the priced brief stays in manager-only internalNotes and the signed HighLevel snapshot. scripts/backfill-crew-scope-
+  prices.mjs (dry run by default) cleans stored briefs. Gap: staff-written Dispatch scopes are cleaned only with --include-staff.
+- **FUN-06** iPad walkthrough recorder on the gameplan (crew/gameplan-recorder.js, behind the FUN-05
+  `EGC_WALKTHROUGH_VISIT_ENABLED` flag): clock-in and consent first, recording in parts kept in IndexedDB and uploaded in
+  order to the recording service, one tab per walkthrough (Web Locks), consent withdrawal per visit, and Voice Memos import.
+  Gaps: parts are stitched only by FUN-34; iPads need iPadOS 15.4+; the gameplan is not in the offline shell.
+- **CREW-TIME** (P1 payroll; owner decision CLOCK-IN ONLY) Location is read once at clock-in in the Hub and crew app; the
+  server stores no trail and refuses later location updates. No-fix clock-ins are saved and flagged behind
+  `EGC_CLOCK_IN_WITHOUT_FIX`; with `EGC_JOB_STATUS_MOVES_TIME` job statuses move the crew member's time (travel/work) and
+  leads move clocked-in crew-mates. Timesheets, My pay, Gusto rows and the payroll CSV show per-job work and travel.
+- **M5-SEND** (trimmed to the HighLevel rule) Hub Invoicing screen and /api/invoice-batch: owner/manager batch invoice
+  issue through money-service invoice.issue (one derived request id per job, replay-safe, MONEY_API_ENABLED), each
+  issue adding the egc-invoice-issued tag through the MONEY-GHL-PARITY trigger. The Hub's invoice_send and
+  payment_reminder sends are removed; HighLevel keeps the invoice and overdue messages.
+- **DISPATCH-RULES** Owner dispatch rules: dispatchSettings/current via owner-only /api/dispatch-settings (receipt, audit,
+  dispatchState guard) and dispatch-rules.js checks (skills, per-employee daily limits, working hours, crew size, drive
+  time) that warn until the owner turns on each block; jobs carry requiredSkills; openings and shift pickups honour them;
+  requireDispatcher uses can(dispatch.write). Gap: the bridge schedule.mutate path does not check owner rules yet.
+- **FUN-33** (money funnel events; flag off) With FUNNEL_PAYMENT_EVENTS_ENABLED and MONEY_API_ENABLED, Stripe checkout
+  payments (webhook, crew return, portal), /api/money writes and material quote-draft revisions commit the job with
+  payment.received and any job.paid_in_full / job.balance_reopened crossing in one commit; firestore.rules gains
+  paymentEventFields() (server-only crossing fields). Keep the flag unset until FUN-33b wires gift credit, change orders and handoff revisions.
+- **FIX-B2B-BILLING** (P1, always on; refusals only) Every customer-audience job message policy refuses business-account
+  jobs and visits under a business-linked account root; the scheduler counts them as skipped.business_account_job and
+  the portal-link backstop refuses business roots. The business hub shows money-core's effective invoice status (Overdue
+  pill); invoiceStatus reads 'paid' for a verified deposit covering everything. Gap: portal payment.invoiceStatus DTO still saved status.
+- **FIX-PORTAL-CRASH** (P1, money) The customer portal renders idempotently: a render error keeps the last good page with a
+  refresh notice, failed refreshes keep the portal (Reconnecting… after 3), and a Stripe return verifies after the page
+  draws, retrying 2-32s with a 'being confirmed' notice; payment_needs_review answers carry their code so the portal stops.
+  Gap: a button stays disabled after a failed post-action refresh until the next good refresh.
 
 ## In progress
 
@@ -576,6 +608,14 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | HUB-PWA | Installable Hub and on-device clock/chat queue (HUB_OFFLINE_ENABLED, off) | merged (92153dc) |
 | GHL-ALIGN | HighLevel owns follow-ups: check-in task, dry run without writes, inbound reconciler opt-in (flags off) | merged (cb90ce9) |
 | TIPS | Optional crew tips on card balance payments, held tipped charges and tip allocation (CUSTOMER_TIPS_ENABLED, off) | merged (99d4c1e) |
+| FIX-CREW-PRICE-LEAK | P1: keep quoted prices out of every crew-visible brief (crew_brief, strip on write and read, backfill) | merged (0162bfc) |
+| FUN-06 | iPad walkthrough recorder on the gameplan (EGC_WALKTHROUGH_VISIT_ENABLED) | merged (323c943) |
+| CREW-TIME | P1: clock-in-only location, status-driven job time and per-job pay rows (flags off) | merged (1507863) |
+| M5-SEND | Hub invoicing: batch issue plus the egc-invoice-issued tag (Hub invoice sends removed) | merged (023f80a) |
+| DISPATCH-RULES | Owner dispatch rules: skills, daily limits, working hours, crew size and drive time (warn until blocked) | merged (7013404) |
+| FUN-33 | Payment funnel events on the ledger: payment.received and paid-in-full crossings committed with the job (FUNNEL_PAYMENT_EVENTS_ENABLED, off) | merged (b9c3b07) |
+| FIX-B2B-BILLING | P1: no customer messages or homeowner links for business jobs; effective B2B invoice status | merged (d5c037b) |
+| FIX-PORTAL-CRASH | P1: customer portal survives re-renders, failed refreshes and failed Stripe verification | merged (3185fc6) |
 
 ## Next
 

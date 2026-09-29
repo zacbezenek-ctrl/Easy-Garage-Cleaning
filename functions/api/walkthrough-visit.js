@@ -25,6 +25,8 @@ export function walkthroughVisitHandlers({ session = getHubSession, storage = wa
         if (!actor) return reply(401, { ok: false, code: 'walkthrough_visit_sign_in_required', error: 'Sign in to the Employee Hub to record walkthroughs.' });
         const params = new URL(request.url).searchParams, keys = [...params.keys()];
         if (keys.some(key => key !== 'visitId') || new Set(keys).size !== keys.length) return reply(400, { ok: false, code: 'walkthrough_visit_invalid', error: 'Choose one walkthrough visit.' });
+        // Switched off, the answer is only that: no visit, lock or timecard read (the gameplan asks on every open).
+        if (!walkthroughVisitEnabled(env)) return reply(200, { ok: true, enabled: false });
         return reply(200, { ...await walkthroughVisitState(storage(env), actor, Object.fromEntries(params), now().toISOString()), enabled: walkthroughVisitEnabled(env) });
       } catch (error) { return failure(error); }
     },

@@ -187,12 +187,14 @@ test('photo upload rejects collaborators and missing portal access before creati
 test('quiet portal refresh hides revoked access and clears the retained customer data', async () => {
   const source = readFileSync(new URL('../customer-portal.html', import.meta.url), 'utf8');
   const lines = source.split(/\r?\n/), errors = [];
-  const context = { portalData: { customer: { name: 'Old Customer' } }, Error, showError: error => errors.push(error),
+  const root = { dataset: {} };
+  const context = { portalData: { customer: { name: 'Old Customer' } }, Error, showError: error => errors.push(error), document: { documentElement: root },
     fetch: async () => ({ ok: false, json: async () => ({ code: 'CUSTOMER_PORTAL_ACCESS_REVOKED', error: 'Your access to this private project has changed.' }) }) };
   vm.runInNewContext(lines.find(line => line.startsWith('function portalError(')) + '\n' + lines.find(line => line.startsWith('async function load(')), context);
   await context.load(true);
   assert.equal(context.portalData, null);
   assert.equal(errors.length, 1);
+  assert.equal(root.dataset.portalLoading, '0', 'the signed-out read is finished');
   assert.match(source, /uploadContext:'customer_portal'/);
 });
 

@@ -19,7 +19,9 @@ const ACTOR = Object.freeze({ id: 'messaging-cron-worker', kind: 'integration', 
 const LINKS = Object.freeze({ payLink: async () => 'https://easygaragecleaning.com/pay/synthetic', portalLink: async () => 'https://easygaragecleaning.com/portal/synthetic' });
 const AT = Date.parse(NOW);
 const tomorrow = (overrides = {}) => job({ date: '2026-09-23', time: '09:00', deposit: { amount: 300, paidAmount: 300, verified: true }, invoice: { number: 'INV-2001', amount: 1200, dueDate: '2026-12-31', status: 'issued' }, ...overrides });
-const overdue = (overrides = {}) => job({ date: '2026-12-01', status: 'completed', pipelineStatus: 'completed', completedAt: '2026-09-10T20:00:00.000Z', invoice: { number: 'INV-3001', amount: 1200, dueDate: '2026-09-21', status: 'issued' }, ...overrides });
+// An accepted job three days out with its $300 deposit unpaid: the deposit reminder is due.
+// (Payment reminders are HighLevel's, from the egc-invoice-overdue tag, so the cron never sends one.)
+const depositDue = (overrides = {}) => job({ date: '2026-09-25', time: '10:00', invoice: { number: 'INV-3001', amount: 1200, dueDate: '2026-12-31', status: 'issued' }, ...overrides });
 const claimsOf = token => JSON.parse(Buffer.from(token.split('.')[0], 'base64url').toString());
 const tamper = (token, patch) => Buffer.from(JSON.stringify({ ...claimsOf(token), ...patch })).toString('base64url') + '.' + token.split('.')[1];
 
@@ -43,7 +45,7 @@ function signedVerifier() {
   return { nonces, verify: (env, token, path, options) => verifyApiServiceEnvelope(env, token, path, { ...options, resolveKey: async () => (await keys).keys[0], firestoreFetch }) };
 }
 
-async function fixture({ jobs = { 'day-1': tomorrow(), 'pay-1': overdue() }, rows = {}, automated = ['day_before_reminder', 'payment_reminder'], ghl: ghlOptions = {}, webLeads } = {}) {
+async function fixture({ jobs = { 'day-1': tomorrow(), 'dep-1': depositDue() }, rows = {}, automated = ['day_before_reminder', 'deposit_reminder'], ghl: ghlOptions = {}, webLeads } = {}) {
   const store = memoryStore({ ...Object.fromEntries(Object.entries(jobs).map(([id, fields]) => [`jobs/${id}`, fields])), ...rows });
   store.jobRecords = async fields => { assert.ok(fields.length > 5, 'jobs scans are always masked'); return Promise.all([...store.rows.keys()].filter(key => key.startsWith('jobs/')).map(key => store.read('jobs', key.slice(5)))); };
   for (const kind of automated) {
@@ -105,7 +107,7 @@ test('a replayed envelope is refused while a fresh envelope for the same request
 });
 
 test('two ticks at the same instant send each message once', async () => {
-  const f = await fixture({ jobs: { 'day-1': tomorrow(), 'day-2': tomorrow({ time: '14:00' }), 'pay-1': overdue() } });
+  const f = await fixture({ jobs: { 'day-1': tomorrow(), 'day-2': tomorrow({ time: '14:00' }), 'dep-1': depositDue() } });
   const results = await Promise.all([f.post(await sign()), f.post(await sign())].map(async response => json(await response)));
   assert.deepEqual(results.map(result => result.status), [200, 200]);
   assert.equal(results.reduce((total, result) => total + result.body.summary.sent, 0), 3);
@@ -129,7 +131,7 @@ test('live runs stay off until the owner turns server messaging on; dry runs rep
 });
 
 test('the default subrequest budget sends what fits and still records the run', async () => {
-  const f = await fixture({ jobs: { 'day-1': tomorrow(), 'day-2': tomorrow({ time: '13:00' }), 'pay-1': overdue() } });
+  const f = await fixture({ jobs: { 'day-1': tomorrow(), 'day-2': tomorrow({ time: '13:00' }), 'dep-1': depositDue() } });
   const { EGC_MESSAGING_SUBREQUEST_BUDGET, ...standard } = ENV;
   const result = await json(await f.post(await sign(), { env: standard }));
   assert.equal(result.status, 200);
@@ -143,7 +145,7 @@ test('with the default budget, undeliverable reminders are held back so a delive
   // never reach the send ledger, so without holds they would use every tick.
   const dnd = { id: 'contact-dnd', locationId: 'location-1', phone: '+19705550123', email: 'synthetic@example.invalid', dnd: true, tags: [] };
   const ok = { id: 'contact-1', locationId: 'location-1', phone: '+19705550123', email: 'synthetic@example.invalid', dnd: false, tags: [] };
-  const f = await fixture({ jobs: { 'a-dnd': overdue({ highlevelContactId: 'contact-dnd' }), 'a-dnd2': overdue({ highlevelContactId: 'contact-dnd' }), 'a-dnd3': overdue({ highlevelContactId: 'contact-dnd' }), 'b-ok': overdue() }, automated: ['payment_reminder'], ghl: { contacts: { 'contact-1': ok, 'contact-dnd': dnd } } });
+  const f = await fixture({ jobs: { 'a-dnd': depositDue({ highlevelContactId: 'contact-dnd' }), 'a-dnd2': depositDue({ highlevelContactId: 'contact-dnd' }), 'a-dnd3': depositDue({ highlevelContactId: 'contact-dnd' }), 'b-ok': depositDue() }, automated: ['deposit_reminder'], ghl: { contacts: { 'contact-1': ok, 'contact-dnd': dnd } } });
   const { EGC_MESSAGING_SUBREQUEST_BUDGET, ...standard } = ENV;
   const tick = async (body = { command: 'messaging.run' }) => {
     const result = await json(await f.post(await sign({ at: f.time().getTime(), body }), { env: standard }));
@@ -158,7 +160,7 @@ test('with the default budget, undeliverable reminders are held back so a delive
   assert.deepEqual([rows(second), second.held], [['a-dnd3:suppressed', 'b-ok:submitted', 'a-dnd:not_attempted', 'a-dnd2:not_attempted'], 2], 'held items wait behind the deliverable one');
   assert.deepEqual(f.ghl.sends().map(call => call.body.contactId), ['contact-1']);
   assert.deepEqual([holds().day, holds().entries.map(entry => [entry.key, entry.status, entry.reason])], ['2026-09-22', [
-    ['payment_reminder:a-dnd:2026-09-21:1', 'suppressed', 'contact_dnd_sms'], ['payment_reminder:a-dnd2:2026-09-21:1', 'suppressed', 'contact_dnd_sms'], ['payment_reminder:a-dnd3:2026-09-21:1', 'suppressed', 'contact_dnd_sms'],
+    ['deposit_reminder:a-dnd:2026-09-25:-3', 'suppressed', 'contact_dnd_sms'], ['deposit_reminder:a-dnd2:2026-09-25:-3', 'suppressed', 'contact_dnd_sms'], ['deposit_reminder:a-dnd3:2026-09-25:-3', 'suppressed', 'contact_dnd_sms'],
   ]]);
   assert.equal(rows(await tick()).at(0), 'b-ok:already_sent');
   // Dry runs read the holds for the same order but never change them.
@@ -210,15 +212,15 @@ test('FUN-13: the lead retries get at most a third of the budget, and only what 
   assert.equal((await json(await light.post(await sign(), { env: standard }))).status, 200);
   assert.equal(seen[0], Math.floor((45 - 4) / 3), 'an idle reminder run leaves the lead retries their full third');
   // A reminder run that stops for budget ends with less left than one reminder needs (24), below a third of 86.
-  const jobs = Object.fromEntries(Array.from({ length: 12 }, (_, index) => [`pay-${String(index).padStart(2, '0')}`, overdue()]));
-  const busy = await fixture({ jobs, automated: ['payment_reminder'], webLeads: () => runner });
+  const jobs = Object.fromEntries(Array.from({ length: 12 }, (_, index) => [`dep-${String(index).padStart(2, '0')}`, depositDue()]));
+  const busy = await fixture({ jobs, automated: ['deposit_reminder'], webLeads: () => runner });
   const result = await json(await busy.post(await sign(), { env: { ...ENV, EGC_MESSAGING_SUBREQUEST_BUDGET: '90' } }));
   assert.deepEqual([result.status, result.body.summary.budgetExhausted, result.body.summary.limitReached], [200, true, false], JSON.stringify(result.body.summary));
   assert.ok(seen[1] >= 0 && seen[1] < 24, `the lead retries get only what the reminder run left (${seen[1]}), not their third (${Math.floor((90 - 4) / 3)})`);
 });
 
 test('unreadable settings fail the run closed and are recorded', async () => {
-  const f = await fixture({ rows: { 'messaging_settings/automation': { paymentReminderDays: 'weekly' } } });
+  const f = await fixture({ rows: { 'messaging_settings/automation': { depositReminderDaysBefore: 'weekly' } } });
   const result = await json(await f.post(await sign()));
   assert.deepEqual([result.status, result.body.code], [503, 'messaging_settings_invalid']);
   assert.match(result.body.error, /paused until they are fixed/);
@@ -240,7 +242,7 @@ test('transport, configuration and command checks fail before anything is read',
     [{ env: { ...ENV, HUB_SESSION_SECRET: 'short' } }, 503, 'messaging_cron_not_configured'],
   ];
   for (const [options, status, code] of cases) assert.deepEqual(await f.post(token, options).then(json).then(result => [result.status, result.body.code]), [status, code], code);
-  for (const body of [{ command: 'messaging.send' }, { command: 'messaging.run', dryRun: 'yes' }, { command: 'messaging.run', kind: 'payment_reminder' }]) {
+  for (const body of [{ command: 'messaging.send' }, { command: 'messaging.run', dryRun: 'yes' }, { command: 'messaging.run', kind: 'deposit_reminder' }]) {
     assert.deepEqual(await f.post(await sign({ body })).then(json).then(result => [result.status, result.body.code]), [400, 'messaging_cron_command_invalid'], JSON.stringify(body));
   }
   assert.deepEqual([f.runs().length, f.ghl.calls.length], [0, 0]);
@@ -314,15 +316,22 @@ function suite(status, { jobs = [], remembered } = {}) {
 }
 
 // A legacy overdue reminder whose HighLevel trigger failed earlier is saved
-// for the lifecycle retry loop; a cancellation sync failed the same way.
+// for the lifecycle retry loop; an estimate-expiring reminder and a
+// cancellation sync failed the same way.
 const failedReminder = { id: 'failed-reminder', estimate: { status: 'accepted', amount: 1200 }, invoice: { number: 'INV-2', amount: 1200, dueDate: '2026-12-01', status: 'issued' },
   lifecycleSync: { event: 'invoice-overdue', status: 'error', error: 'HighLevel lifecycle sync failed', attemptedAt: '2026-09-22T15:00:00.000Z' },
   lifecycleSyncPayload: { tool: 'lifecycle', event: 'invoice-overdue', job_id: 'failed-reminder', idempotency_key: 'communication:failed-reminder:invoice-overdue:2026-09-01' } };
+const failedEstimate = { id: 'failed-estimate', estimate: { status: 'sent', amount: 900, validUntil: '2026-12-01' },
+  lifecycleSync: { event: 'estimate-expiring', status: 'error', error: 'HighLevel lifecycle sync failed', attemptedAt: '2026-09-22T15:00:00.000Z' },
+  lifecycleSyncPayload: { tool: 'lifecycle', event: 'estimate-expiring', job_id: 'failed-estimate', idempotency_key: 'communication:failed-estimate:estimate-expiring:2026-09-21' } };
 const failedCancellation = { id: 'failed-cancel', estimate: { status: 'accepted', amount: 1200 },
   lifecycleSync: { event: 'job-cancelled', status: 'error', error: 'HighLevel lifecycle sync failed', attemptedAt: '2026-09-22T15:00:00.000Z' },
   lifecycleSyncPayload: { tool: 'lifecycle', event: 'job-cancelled', job_id: 'failed-cancel', idempotency_key: 'lifecycle:failed-cancel:job-cancelled:2026-09-22T15:00:00.000Z' } };
 
-test('once the server owns messaging, a manager page load makes no reminder or portal-invitation POSTs', async () => {
+// The server never sends payment reminders (HighLevel's egc-invoice-overdue
+// workflow does), so the page adds the invoice-overdue tag whatever
+// serverMessaging says; only the reminders the server owns stop on the page.
+test('once the server owns messaging, a manager page load makes no estimate-reminder or portal-invitation POSTs and still adds the invoice-overdue tag', async () => {
   const legacy = suite(false);
   await legacy.loadAll();
   assert.deepEqual(legacy.customerPosts().map(call => call.url === '/api/highlevel' ? `${call.body.event}:${call.body.job_id}` : `portal:${call.body.job_id}`).sort(), ['estimate-expiring:estimate-expiring', 'invoice-overdue:invoice-overdue', 'portal:portal-invite'], 'with the flag off today\'s browser triggers still run');
@@ -330,21 +339,22 @@ test('once the server owns messaging, a manager page load makes no reminder or p
     const server = suite(status);
     await server.loadAll();
     assert.ok(server.calls.some(call => call.url === '/api/integration-status'), 'the page did load');
-    assert.deepEqual(server.customerPosts(), [], String(status));
-    assert.equal(server.writes.filter(write => write.update.automationMilestones || write.update.communicationLog).length, 0);
+    assert.deepEqual(server.posted(), ['invoice-overdue:invoice-overdue'], String(status));
+    const logged = server.writes.filter(write => write.update.automationMilestones || write.update.communicationLog);
+    assert.ok(logged.length > 0 && logged.every(write => write.id === 'invoice-overdue'), 'only the overdue trigger writes its log and marker');
   }
 });
 
-test('once the server owns messaging, a failed legacy reminder is not retried from the page while other workflow retries continue', async () => {
-  const legacy = suite(false, { jobs: [failedReminder, failedCancellation] });
+test('once the server owns messaging, a failed estimate reminder is not retried from the page while the overdue tag and other workflow retries continue', async () => {
+  const legacy = suite(false, { jobs: [failedReminder, failedEstimate, failedCancellation] });
   await legacy.loadAll();
-  assert.ok(legacy.posted().includes('invoice-overdue:failed-reminder') && legacy.posted().includes('job-cancelled:failed-cancel'), 'with the flag off the legacy retry still runs');
-  const server = suite(true, { jobs: [failedReminder, failedCancellation] });
+  for (const expected of ['invoice-overdue:failed-reminder', 'estimate-expiring:failed-estimate', 'job-cancelled:failed-cancel']) assert.ok(legacy.posted().includes(expected), `with the flag off the legacy retry still runs: ${expected}`);
+  const server = suite(true, { jobs: [failedReminder, failedEstimate, failedCancellation] });
   await server.loadAll();
-  assert.deepEqual(server.posted(), ['job-cancelled:failed-cancel']);
-  // A manager's bulk "Retry all" leaves the reminder to the server too.
+  assert.deepEqual(server.posted(), ['invoice-overdue:failed-reminder', 'invoice-overdue:invoice-overdue', 'job-cancelled:failed-cancel']);
+  // A manager's bulk "Retry all" leaves the estimate reminder to the server too.
   await server.context.opsRetryAll();
-  assert.deepEqual(server.posted(), ['job-cancelled:failed-cancel']);
+  assert.deepEqual(server.posted(), ['invoice-overdue:failed-reminder', 'invoice-overdue:invoice-overdue', 'job-cancelled:failed-cancel']);
 });
 
 test('when the status check fails the tab keeps its last known answer, and only fails closed without one', async () => {
@@ -357,15 +367,15 @@ test('when the status check fails the tab keeps its last known answer, and only 
   for (const remembered of ['true', undefined, 'corrupt']) {
     const closed = suite('unavailable', { remembered, jobs: [failedReminder] });
     await closed.loadAll();
-    assert.deepEqual(closed.posted(), [], String(remembered));
+    assert.deepEqual(closed.posted(), ['invoice-overdue:failed-reminder', 'invoice-overdue:invoice-overdue'], `${remembered}: only the page-owned overdue tag runs`);
   }
   const switched = suite(true, { remembered: 'false' });
   await switched.loadAll();
-  assert.deepEqual([switched.posted(), switched.values.get('egc.serverMessaging.v1')], [[], 'true'], 'a fresh answer always wins over the remembered one');
+  assert.deepEqual([switched.posted(), switched.values.get('egc.serverMessaging.v1')], [['invoice-overdue:invoice-overdue'], 'true'], 'a fresh answer always wins over the remembered one');
 });
 
 test('the per-customer opt-in describes the reminders the server will send once it owns messaging', async () => {
-  for (const [status, expected] of [[false, /one estimate-expiring reminder and one invoice-overdue reminder/], [true, /day-before appointment, deposit, payment \(at most one a week\) and estimate-expiring/]]) {
+  for (const [status, expected] of [[false, /one estimate-expiring reminder and one invoice-overdue reminder/], [true, /day-before appointment, deposit and estimate-expiring\..*It also triggers one invoice-overdue reminder through HighLevel\./]]) {
     const hub = suite(status);
     await hub.loadAll();
     void hub.context.opsSetCustomerAutomation('estimate-expiring', true);

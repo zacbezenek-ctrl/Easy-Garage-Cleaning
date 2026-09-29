@@ -24,7 +24,8 @@ const point = { lat: 40.58, lng: -105.08, accuracy: 5, capturedAt: NOW };
 const STORE = ['egc-hub-offline', 'requests'];
 
 // The exact payloads employee-suite.js sends through peopleSet (opsClockIn/opsClockOut/opsStartBreak/opsEndBreak/opsSendChat).
-const hubClockIn = (user, time = NOW) => ({ id: 'time-crewone-1', employee: user, employeeName: 'Synthetic Crew', role: 'crew', payType: 'hourly', hourlyRate: 20, clockInAt: time, clockOutAt: '', status: 'active', approvalStatus: 'open', jobId: '', jobLabel: '', locationTracking: true, locationConsentAt: time, locationStatus: 'tracking', lastLocation: point, locationTrail: [point], locationUpdatedAt: time, breaks: [], createdAt: time, updatedAt: time });
+// CREW-TIME: a clock-in carries its one position (hub_single_fix) and no trail.
+const hubClockIn = (user, time = NOW) => ({ id: 'time-crewone-1', employee: user, employeeName: 'Synthetic Crew', role: 'crew', payType: 'hourly', hourlyRate: 20, clockInAt: time, clockOutAt: '', status: 'active', approvalStatus: 'open', jobId: '', jobLabel: '', locationTracking: true, locationConsentAt: time, locationStatus: 'hub_single_fix', lastLocation: point, locationUpdatedAt: time, breaks: [], createdAt: time, updatedAt: time });
 const hubClockOut = (time = NOW) => ({ clockOutAt: time, status: 'submitted', approvalStatus: 'pending', hours: 2, grossEstimate: 40, locationTracking: false, locationStatus: 'stopped', updatedAt: time });
 const hubMessage = (user, body, jobId = '') => ({ id: 'message-crewone-1', jobId, body, sender: user, senderName: 'Synthetic Crew', createdAt: NOW, updatedAt: NOW, status: 'active' });
 
@@ -764,19 +765,26 @@ test('a clock-out that a background pass sends first, as the Hub saves it, goes 
   assert.deepEqual(p.indexedDB.rows(...STORE), []);
 });
 
-// ── Shift location follows the queue: the real Hub (employee-suite.js + this queue) against the real endpoints ──
+// ── The Hub's clock follows the queue: the real Hub (employee-suite.js + this queue) against the real endpoints ──
 
-// navigator.geolocation for the Hub: every watch it starts or clears, and position fixes delivered to the live ones.
+// navigator.geolocation for the Hub. CREW-TIME (owner decision 2026-09-29, clock-in only): the Hub reads one position as
+// the shift starts (reads) and never watches it; a watch it started would be listed in watches, which every test below
+// expects empty, so no position fix can leave any tab after clock-in. (These tests once followed the HUB-PWA shift
+// location watch; its assertions now check that none exists.)
 function geolocation(coords = { latitude: 40.585, longitude: -105.084, accuracy: 6 }) {
-  const watches = [];
+  const watches = [], reads = [];
   return {
-    watches, live: () => watches.filter(watch => !watch.cleared),
-    getCurrentPosition: success => success({ coords }),
-    watchPosition: (success, failure) => { watches.push({ id: watches.length + 1, success, failure, cleared: false }); return watches.length; },
-    clearWatch: watchId => { const watch = watches.find(item => item.id === watchId); if (watch) watch.cleared = true; },
-    fix: async next => { for (const watch of watches.filter(item => !item.cleared)) await watch.success({ coords: next }); },
+    watches, reads, live: () => watches,
+    getCurrentPosition: (success, failure, options) => { reads.push(options); success({ coords }); },
+    watchPosition: (success, failure) => { watches.push({ success, failure }); return watches.length; },
+    clearWatch() {},
+    // The phone has a new position: with no watch, nothing on the page hears it.
+    fix: async () => { for (const watch of watches) await watch.success({ coords }); },
   };
 }
+// The viewer's open shift, as the Hub shows it.
+const openShiftId = p => p.S.people.timeEntries.find(entry => entry.status === 'active' && !entry.clockOutAt)?.id || '';
+const NO_WATCH = 'no location watch: the position is read once, at clock-in';
 const until = async (done, rounds = 400) => { for (let i = 0; i < rounds && !done(); i++) await idle(); return done(); };
 
 // gate.post(body) may answer a POST itself (or wait) before the real handler runs; gate.get(response) may hold a
@@ -844,7 +852,7 @@ const clockedIn = async (t, env, recordId) => {
   return { fire, cookie };
 };
 
-test('Hub + server: a reload that reads the server before a queued clock-out lands never restarts shift location; the shift shows submitted', async t => {
+test('Hub + server: a reload that reads the server before a queued clock-out lands never brings the shift back; it shows submitted and no position is read', async t => {
   for (const release of ['after the replay is confirmed', 'as the replay lands', 'not held']) {
     const recordId = `time-crewstatic-gps-${release.split(' ')[0]}`, { cookie } = await clockedIn(t, ENV, recordId);
     let hold = null, held = null, landed = null;
@@ -856,8 +864,8 @@ test('Hub + server: a reload that reads the server before a queued clock-out lan
     p.hub.api.install();
     await p.settle();
     assert.equal(p.shift(recordId)?.status, 'active', release);
-    assert.deepEqual(p.geo.live().map(watch => watch.id), [1], `${release}: shift location is on for the active shift`);
-    assert.equal(p.S.locationEntryId, recordId);
+    assert.deepEqual(p.geo.watches, [], NO_WATCH);
+    assert.equal(openShiftId(p), recordId);
 
     // Signal drops; the crew member clocks out.
     p.hub.context.navigator.onLine = false;
@@ -886,8 +894,8 @@ test('Hub + server: a reload that reads the server before a queued clock-out lan
     assert.deepEqual(p.snapshots.at(-1), [[recordId, 'submitted']], `${release}: the Hub's last read shows the clock-out`);
     assert.equal(p.shift(recordId).status, 'submitted', `${release}: the Hub shows the shift submitted`);
     assert.equal(p.shift(recordId).pendingSync, undefined, release);
-    assert.equal(p.S.locationWatch, null, `${release}: shift location stays off`);
-    assert.deepEqual(p.geo.live(), [], release); assert.equal(p.geo.watches.length, 1, `${release}: no second watch was started`);
+    assert.deepEqual(p.geo.watches, [], `${release}: shift location stays off`);
+    assert.deepEqual(p.geo.live(), [], release); assert.deepEqual(p.geo.watches, [], `${release}: no second watch was started`);
     assert.match(p.hub.document.querySelector('.ops-clock-card')?.textContent || '', /Ready when you are/, release);
     // Later reloads keep it off, and nothing sends location for the closed shift.
     p.hub.document.dispatch({ type: 'visibilitychange' });
@@ -897,13 +905,13 @@ test('Hub + server: a reload that reads the server before a queued clock-out lan
   }
 });
 
-test('Hub + server: a clock-out kept after a 503 shows submitted through a reload, never restarts shift location, and lands on the next pass', async t => {
+test('Hub + server: a clock-out kept after a 503 shows submitted through a reload and lands on the next pass; no position is read', async t => {
   const recordId = 'time-crewstatic-kept', { cookie } = await clockedIn(t, ENV, recordId);
   let refuse = true;
   const p = hubOnServer({ cookie, gate: { post: async body => body.data.clockOutAt && refuse ? Response.json({ ok: false, error: 'Synthetic service unavailable' }, { status: 503 }) : null } });
   p.hub.api.install();
   await p.settle();
-  assert.deepEqual(p.geo.live().map(watch => watch.entry ?? watch.id), [1]);
+  assert.deepEqual(p.geo.watches, [], NO_WATCH);
   await p.hub.context.opsClockOut();
   assert.equal(p.indexedDB.rows(...STORE).length, 1, 'the clock-out is kept on the device');
   assert.deepEqual(p.geo.live(), []);
@@ -913,8 +921,8 @@ test('Hub + server: a clock-out kept after a 503 shows submitted through a reloa
   assert.deepEqual(p.snapshots.at(-1), [[recordId, 'active']], 'the server has not seen the clock-out');
   assert.equal(p.shift(recordId).status, 'submitted', 'the kept clock-out still shows');
   assert.equal(p.shift(recordId).pendingSync, true);
-  assert.equal(p.S.locationWatch, null, 'shift location stays off for a shift with a queued clock-out');
-  assert.equal(p.geo.watches.length, 1);
+  assert.deepEqual(p.geo.watches, [], 'shift location stays off for a shift with a queued clock-out');
+  assert.deepEqual(p.geo.watches, []);
   refuse = false;
   await p.hub.context.EGCHubOffline.sync();
   await p.settle();
@@ -924,7 +932,7 @@ test('Hub + server: a clock-out kept after a 503 shows submitted through a reloa
   t.mock.timers.reset();
 });
 
-test('Hub + server: a queued clock-in the server refuses stops its location watch, and the next clock-in’s position fixes go to the new shift', async t => {
+test('Hub + server: a queued clock-in the server refuses leaves no shift, and the next clock-in keeps its own one position; no position fix follows either', async t => {
   t.mock.timers.enable({ apis: ['Date'], now: Date.parse(NOW) });
   vaultFirestore(t);
   const cookie = await cookieFor(ENV, CREW);
@@ -932,12 +940,12 @@ test('Hub + server: a queued clock-in the server refuses stops its location watc
   const p = hubOnServer({ cookie, online: false });
   p.hub.api.install();
   await p.settle();
-  // Offline, the crew member clocks in: kept on the device, and shift location starts for that record.
+  // Offline, the crew member clocks in: kept on the device with the one position the Hub read.
   await p.hub.context.opsClockIn();
-  const first = p.S.locationEntryId;
+  const first = openShiftId(p);
   assert.match(first, /^time-crewstatic-/);
   assert.equal(p.hub.toasts.at(-1), 'Clock-in saved on this device · it syncs when you are back online');
-  assert.deepEqual(p.geo.live().map(watch => watch.id), [1]);
+  assert.deepEqual(p.geo.watches, [], NO_WATCH); assert.equal(p.geo.reads.length, 1, 'one position, read at clock-in');
   // The signal returns ten minutes later; without EGC_OFFLINE_CLOCK_ENABLED the server refuses the stale time.
   t.mock.timers.setTime(Date.parse(at(10)));
   p.hub.context.navigator.onLine = true; p.hub.fire('online');
@@ -946,27 +954,24 @@ test('Hub + server: a queued clock-in the server refuses stops its location watc
   assert.match(p.hub.toasts.find(text => text.startsWith('Not saved: Clock in.')) || '', /Offline clock times are not enabled/);
   assert.deepEqual(p.snapshots.at(-1), [], 'the server has no shift');
   assert.deepEqual(p.S.people.timeEntries.filter(entry => entry.status === 'active'), [], 'the Hub shows no active shift');
-  assert.equal(p.S.locationWatch, null, 'shift location stops with the refused clock-in');
-  assert.deepEqual(p.geo.live(), []); assert.equal(p.S.locationEntryId, '');
+  assert.deepEqual(p.geo.watches, [], NO_WATCH);
   assert.match(p.hub.document.querySelector('.ops-clock-card')?.textContent || '', /Ready when you are/);
-  // Clocking in again, online, starts shift location for the new shift, and its fixes update that shift.
+  // Clocking in again, online, reads one position for the new shift; later fixes send nothing.
   const later = Date.parse(at(10));
   p.hub.context.Date = class extends Date { constructor(...args) { super(...(args.length ? args : [later])); } static now() { return later; } };
   await p.hub.context.opsClockIn();
   await p.settle();
-  const second = p.S.locationEntryId, [entry] = p.snapshots.at(-1);
+  const second = openShiftId(p), [entry] = p.snapshots.at(-1);
   assert.notEqual(second, first);
   assert.deepEqual(entry, [second, 'active'], 'the server has the new shift');
-  assert.equal(p.hub.toasts.at(-1), 'Clocked in · shift location is on');
-  assert.deepEqual(p.geo.live().map(watch => watch.id), [2], 'one watch, started for the new shift');
-  assert.match(p.hub.document.querySelector('.ops-clock-card')?.textContent || '', /Location sharing on/);
-  const sent = p.locations().length;
+  assert.equal(p.hub.toasts.at(-1), 'Clocked in · location shared once');
+  assert.deepEqual(p.geo.watches, [], NO_WATCH); assert.equal(p.geo.reads.length, 2);
+  assert.match(p.hub.document.querySelector('.ops-clock-card')?.textContent || '', /Location shared once at clock-in/);
   await p.geo.fix({ latitude: 40.6, longitude: -105.1, accuracy: 5 });
   await p.settle();
-  assert.deepEqual(p.locations().slice(sent).map(body => body.id), [second], 'the fix goes to the new shift, never the refused one');
-  assert.equal(p.posts.filter(body => body.id === first && body.data.lastLocation && !body.data.clockInAt).length, 0);
-  const saved = await employeeHub.onRequestGet({ env: ENV, request: jsonRequest(PATH, undefined, cookie) }).then(response => response.json());
-  assert.deepEqual(plain(saved.collections.timeEntries.find(row => row.id === second).lastLocation), { lat: 40.6, lng: -105.1, accuracy: 5, capturedAt: at(10) });
+  assert.deepEqual(p.locations(), [], 'no position fix leaves the phone after clock-in');
+  const saved = await employeeHub.onRequestGet({ env: ENV, request: jsonRequest(PATH, undefined, cookie) }).then(response => response.json()), card = saved.collections.timeEntries.find(row => row.id === second);
+  assert.deepEqual([plain(card.lastLocation), card.locationStatus, card.locationTracking, card.locationTrail], [{ lat: 40.585, lng: -105.084, accuracy: 6, capturedAt: at(10) }, 'hub_single_fix', false, undefined], 'the clock-in position, once, with no trail');
   t.mock.timers.reset();
 });
 
@@ -1018,10 +1023,10 @@ test('records() lists the viewer’s queued records oldest first as the Hub save
   assert.deepEqual(plain((await p.hub.records()).map(row => row.id)), ['time-crewone-1', 'time-crewone-1']);
 });
 
-// ── What the Hub shows, and where shift location goes, settles on the device as the queue settles each action ──
+// ── What the Hub shows settles on the device as the queue settles each action; no position ever follows a clock-in ──
 
 for (const who of [{ user: CREW, business: false, role: 'crew' }, { user: 'TylerG', business: true, role: 'manager' }]) {
-  test(`Hub + server (${who.role}): a queued clock-in discarded offline leaves no shift and stops shift location at once; after reconnecting no position fix is sent and the server has no timecard`, async t => {
+  test(`Hub + server (${who.role}): a queued clock-in discarded offline leaves no shift at once; after reconnecting no position fix is sent and the server has no timecard`, async t => {
     t.mock.timers.enable({ apis: ['Date'], now: Date.parse(NOW) });
     vaultFirestore(t);
     const cookie = await cookieFor(ENV, who.user);
@@ -1030,22 +1035,20 @@ for (const who of [{ user: CREW, business: false, role: 'crew' }, { user: 'Tyler
     p.hub.api.install();
     await p.settle();
     await p.hub.context.opsClockIn();
-    const id = p.S.locationEntryId;
+    const id = openShiftId(p);
     assert.match(id, /^time-/);
     assert.equal(p.hub.toasts.at(-1), 'Clock-in saved on this device · it syncs when you are back online');
     assert.equal(p.shift(id).pendingSync, true);
-    assert.deepEqual(p.geo.live().map(watch => watch.id), [1]);
+    assert.deepEqual(p.geo.watches, [], NO_WATCH);
     // Still offline, the clock-in is discarded from Pending sync: the Hub cannot reload, and does not need to.
     await discardFirst(p);
     assert.deepEqual(p.indexedDB.rows(...STORE), []);
     assert.equal(p.shift(id), undefined, 'the clock-in only this device had is gone from the Hub');
-    assert.deepEqual(p.geo.live(), [], 'shift location stopped with the discard, without a reload');
-    assert.equal(p.S.locationEntryId, '');
+    assert.deepEqual(p.geo.watches, [], NO_WATCH);
     assert.notEqual(p.S.peopleState.error, '', 'the reload after the discard failed offline');
     // The signal returns and a position fix arrives before the Hub's next poll.
     p.hub.context.navigator.onLine = true; p.hub.fire('online');
     await p.settle();
-    p.S.lastLocationSave = 0;
     await p.geo.fix({ latitude: 40.6, longitude: -105.1, accuracy: 5 });
     await p.settle();
     assert.deepEqual(p.posts.filter(body => body.collection === 'timeEntries'), [], 'nothing about the discarded shift reached the server');
@@ -1053,7 +1056,7 @@ for (const who of [{ user: CREW, business: false, role: 'crew' }, { user: 'Tyler
     p.hub.document.dispatch({ type: 'visibilitychange' });
     await p.settle();
     assert.deepEqual(plain(p.S.people.timeEntries.filter(entry => entry.status === 'active')), []);
-    assert.deepEqual(p.geo.live(), []); assert.equal(p.geo.watches.length, 1, 'no watch was started again');
+    assert.deepEqual(p.geo.live(), []); assert.deepEqual(p.geo.watches, [], 'no watch was started again');
     p.hub.api.go('my_day');
     await p.settle();
     assert.match(p.card(), /Ready when you are/);
@@ -1061,7 +1064,7 @@ for (const who of [{ user: CREW, business: false, role: 'crew' }, { user: 'Tyler
   });
 }
 
-test('Hub + server: a queued clock-in the server refuses stops shift location even when the reload after it fails, and no position fix goes to the refused shift', async t => {
+test('Hub + server: a queued clock-in the server refuses no longer shows even when the reload after it fails, and no position fix goes to the refused shift', async t => {
   t.mock.timers.enable({ apis: ['Date'], now: Date.parse(NOW) });
   vaultFirestore(t);
   const cookie = await cookieFor(ENV, CREW);
@@ -1071,8 +1074,8 @@ test('Hub + server: a queued clock-in the server refuses stops shift location ev
   p.hub.api.install();
   await p.settle();
   await p.hub.context.opsClockIn();
-  const refused = p.S.locationEntryId;
-  assert.deepEqual(p.geo.live().map(watch => watch.id), [1]);
+  const refused = openShiftId(p);
+  assert.deepEqual(p.geo.watches, [], NO_WATCH);
   // Ten minutes later, on a weak signal, the replay reaches the server but the Hub's reload after it does not.
   t.mock.timers.setTime(Date.parse(at(10)));
   failReads = true;
@@ -1082,9 +1085,7 @@ test('Hub + server: a queued clock-in the server refuses stops shift location ev
   assert.match(p.S.peopleState.error, /Failed to fetch/, 'the reload failed');
   assert.equal(p.shift(refused), undefined, 'the refused clock-in no longer shows');
   assert.deepEqual(plain(p.S.people.timeEntries.filter(entry => entry.status === 'active')), []);
-  assert.deepEqual(p.geo.live(), [], 'shift location stopped without the reload');
-  assert.equal(p.S.locationEntryId, '');
-  p.S.lastLocationSave = 0;
+  assert.deepEqual(p.geo.watches, [], NO_WATCH);
   await p.geo.fix({ latitude: 40.6, longitude: -105.1, accuracy: 5 });
   await p.settle();
   assert.deepEqual(p.locations(), [], 'no location update for the refused shift');
@@ -1092,7 +1093,7 @@ test('Hub + server: a queued clock-in the server refuses stops shift location ev
   t.mock.timers.reset();
 });
 
-test('Hub + server (manager): a position fix before the queued clock-in is confirmed is not sent; once the replay confirms it the same watch updates that shift, which the replay created', async t => {
+test('Hub + server (manager): the replay of a queued clock-in creates the shift with its one clock-in position; no position fix is sent before or after it', async t => {
   t.mock.timers.enable({ apis: ['Date'], now: Date.parse(NOW) });
   vaultFirestore(t);
   const cookie = await cookieFor(ENV, 'TylerG');
@@ -1100,10 +1101,9 @@ test('Hub + server (manager): a position fix before the queued clock-in is confi
   p.hub.api.install();
   await p.settle();
   await p.hub.context.opsClockIn();
-  const id = p.S.locationEntryId;
+  const id = openShiftId(p);
   // The connection is back (navigator.onLine) but the queue has not replayed yet when a position fix arrives.
   p.hub.context.navigator.onLine = true;
-  p.S.lastLocationSave = 0;
   await p.geo.fix({ latitude: 40.61, longitude: -105.11, accuracy: 5 });
   await p.settle();
   assert.deepEqual(p.locations(), [], 'no location update for a shift the server does not have yet');
@@ -1114,12 +1114,12 @@ test('Hub + server (manager): a position fix before the queued clock-in is confi
   assert.equal(saved.id, id); assert.equal(saved.employee, 'TylerG'); assert.equal(saved.status, 'active'); assert.equal(saved.clockInAt, NOW);
   assert.deepEqual(saved.history.map(entry => entry.action), ['manager_timecard_create'], 'the replay created the shift; no location-only record came first');
   assert.equal(p.shift(id).pendingSync, undefined, 'the confirmed clock-in no longer shows as pending');
-  assert.deepEqual(p.geo.live().map(watch => watch.id), [1], 'the same watch keeps running for the confirmed shift');
+  assert.deepEqual(p.geo.watches, [], NO_WATCH);
   await p.geo.fix({ latitude: 40.62, longitude: -105.12, accuracy: 5 });
   await p.settle();
-  assert.deepEqual(p.locations().map(body => body.id), [id]);
+  assert.deepEqual(p.locations(), [], 'no position fix after the clock-in either');
   const [updated] = await serverRecords(cookie);
-  assert.deepEqual(plain(updated.lastLocation), { lat: 40.62, lng: -105.12, accuracy: 5, capturedAt: NOW });
+  assert.deepEqual([plain(updated.lastLocation), updated.locationStatus, updated.locationTracking, updated.locationTrail], [{ lat: 40.585, lng: -105.084, accuracy: 6, capturedAt: NOW }, 'hub_single_fix', false, undefined], 'a manager’s card keeps the clock-in position, with no trail');
   t.mock.timers.reset();
 });
 
@@ -1139,12 +1139,12 @@ test('server: a manager’s save for a timecard the server does not have must na
   t.mock.timers.reset();
 });
 
-test('Hub + server: a queued clock-out the server refuses never restarts shift location on its own; the time card says it was not saved until the crew member resumes location or clocks out again', async t => {
+test('Hub + server: a queued clock-out the server refuses keeps the time card saying it was not saved until the crew member taps Keep working or clocks out again; no position is ever sent', async t => {
   const recordId = 'time-crewstatic-paused', { cookie } = await clockedIn(t, ENV, recordId);
   const p = hubOnServer({ cookie });
   p.hub.api.install();
   await p.settle();
-  assert.deepEqual(p.geo.live().map(watch => watch.id), [1]);
+  assert.deepEqual(p.geo.watches, [], NO_WATCH);
   p.hub.context.navigator.onLine = false;
   await p.hub.context.opsClockOut();
   assert.equal(p.hub.toasts.at(-1), 'Clock-out saved on this device · 2.00 hours sync when you are back online');
@@ -1156,11 +1156,11 @@ test('Hub + server: a queued clock-out the server refuses never restarts shift l
   assert.match(p.hub.toasts.find(text => text.startsWith('Not saved: Clock out.')) || '', /Offline clock times are not enabled/);
   assert.deepEqual(p.snapshots.at(-1), [[recordId, 'active']], 'the server still has the shift open');
   assert.equal(p.shift(recordId).status, 'active'); assert.equal(p.shift(recordId).pendingSync, undefined);
-  assert.deepEqual(p.geo.live(), [], 'shift location stays off'); assert.equal(p.geo.watches.length, 1, 'no watch was started again');
+  assert.deepEqual(p.geo.watches, [], NO_WATCH);
   assert.match(p.card(), /Clock-out not saved — clock out again/);
-  assert.match(p.card(), /Location paused/); assert.doesNotMatch(p.card(), /Location sharing on/);
-  assert.ok(p.hub.document.querySelectorAll('.ops-clock-card button').some(button => button.getAttribute('onclick') === 'opsResumeLocation()' && button.textContent === 'Resume location'));
-  // Later reloads keep it paused, and nothing sends the off-duty position.
+  assert.match(p.card(), /Clock-out not saved/); assert.match(p.card(), /Location shared once at clock-in/);
+  assert.ok(p.hub.document.querySelectorAll('.ops-clock-card button').some(button => button.getAttribute('onclick') === 'opsKeepWorking()' && button.textContent === 'Keep working'));
+  // Later reloads keep saying so, and nothing sends a position.
   p.hub.document.dispatch({ type: 'visibilitychange' });
   await p.settle();
   assert.deepEqual(p.geo.live(), []); assert.deepEqual(p.locations(), []);
@@ -1170,14 +1170,14 @@ test('Hub + server: a queued clock-out the server refuses never restarts shift l
   pageTime(reopened.hub, at(20));
   reopened.hub.api.install();
   await reopened.settle();
-  assert.deepEqual(reopened.geo.watches, [], 'a reopened Hub does not restart it either');
+  assert.deepEqual(reopened.geo.watches, [], NO_WATCH);
   assert.match(reopened.card(), /Clock-out not saved — clock out again/);
-  // The crew member keeps working: Resume location.
-  p.hub.context.opsResumeLocation();
+  // The crew member is still working: Keep working.
+  p.hub.context.opsKeepWorking();
   await p.settle();
-  assert.equal(p.hub.toasts.at(-1), 'Shift location is on again');
-  assert.deepEqual(p.geo.live().map(watch => watch.id), [2], 'one watch, started by the crew member');
-  assert.match(p.card(), /Location sharing on/); assert.doesNotMatch(p.card(), /Clock-out not saved/);
+  assert.equal(p.hub.toasts.at(-1), 'Your shift stays open');
+  assert.deepEqual(p.geo.watches, [], NO_WATCH);
+  assert.match(p.card(), /Location shared once at clock-in/); assert.doesNotMatch(p.card(), /Clock-out not saved/);
   // Clocking out again, online, closes the shift and forgets the pause.
   await p.hub.context.opsClockOut();
   await p.settle();
@@ -1188,7 +1188,7 @@ test('Hub + server: a queued clock-out the server refuses never restarts shift l
   t.mock.timers.reset();
 });
 
-test('Hub + server: a Hub reopened after a queued clock-out expired shows it until the switch answers, then lists it as not saved and keeps the still-open shift’s location paused', async t => {
+test('Hub + server: a Hub reopened after a queued clock-out expired shows it until the switch answers, then lists it as not saved and the still-open shift says so', async t => {
   t.mock.timers.enable({ apis: ['Date'], now: Date.parse(NOW) });
   vaultFirestore(t);
   const cookie = await cookieFor(ENV, CREW);
@@ -1227,7 +1227,7 @@ test('Hub + server: a Hub reopened after a queued clock-out expired shows it unt
   t.mock.timers.reset();
 });
 
-test('Hub + server: a load the queue overtakes on all three reads is shown but read once more, and the Hub’s own clock-out that landed during the third read shows submitted without restarting shift location', async t => {
+test('Hub + server: a load the queue overtakes on all three reads is shown but read once more, and the Hub’s own clock-out that landed during the third read shows submitted, with no position read', async t => {
   const recordId = 'time-crewstatic-overtaken', { cookie } = await clockedIn(t, ENV, recordId);
   const holds = [], held = [];
   let landed = false;
@@ -1238,7 +1238,7 @@ test('Hub + server: a load the queue overtakes on all three reads is shown but r
   const p = hubOnServer({ cookie, gate });
   p.hub.api.install();
   await p.settle();
-  assert.deepEqual(p.geo.live().map(watch => watch.id), [1]);
+  assert.deepEqual(p.geo.watches, [], NO_WATCH);
   const hold = () => { let open; const promise = new Promise(resolve => { open = resolve; }); return { promise, open }; };
   const reads = [hold(), hold(), hold()];
   holds.push(...reads);
@@ -1262,19 +1262,19 @@ test('Hub + server: a load the queue overtakes on all three reads is shown but r
   assert.equal(p.hub.toasts.at(-1), 'Clocked out · 2.00 hours submitted');
   assert.deepEqual(p.snapshots.slice(start).map(rows => rows[0][1]), ['active', 'active', 'active', 'submitted'], 'a fourth read followed the overtaken third');
   assert.equal(p.shift(recordId).status, 'submitted');
-  assert.deepEqual(p.geo.live(), []); assert.equal(p.geo.watches.length, 1, 'shift location never started again, not even from the overtaken read');
+  assert.deepEqual(p.geo.live(), []); assert.deepEqual(p.geo.watches, [], 'shift location never started again, not even from the overtaken read');
   assert.match(p.card(), /Ready when you are/);
   t.mock.timers.reset();
 });
 
-test('Hub + server, switch off: the Hub’s own clock-out landing while a poll is out reads again instead of reusing the older read, so the shift shows submitted and shift location stays off', async t => {
+test('Hub + server, switch off: the Hub’s own clock-out landing while a poll is out reads again instead of reusing the older read, so the shift shows submitted', async t => {
   const recordId = 'time-crewstatic-poll', { cookie } = await clockedIn(t, ENV, recordId);
   let hold = null;
   const p = hubOnServer({ cookie, configure: false, gate: { get: async () => { if (hold) { const wait = hold; hold = null; await wait; } } } });
   p.hub.context.EGCHubOffline.configure({ enabled: false });
   p.hub.api.install();
   await p.settle();
-  assert.deepEqual(p.geo.live().map(watch => watch.id), [1]);
+  assert.deepEqual(p.geo.watches, [], NO_WATCH);
   let open;
   hold = new Promise(resolve => { open = resolve; });
   const start = p.snapshots.length;
@@ -1290,12 +1290,12 @@ test('Hub + server, switch off: the Hub’s own clock-out landing while a poll i
   assert.deepEqual(p.snapshots.slice(start).map(rows => rows[0][1]), ['active', 'submitted'], 'the save had the poll read again');
   assert.equal(p.hub.toasts.at(-1), 'Clocked out · 2.00 hours submitted');
   assert.equal(p.shift(recordId).status, 'submitted');
-  assert.deepEqual(p.geo.live(), []); assert.equal(p.geo.watches.length, 1);
+  assert.deepEqual(p.geo.live(), []); assert.deepEqual(p.geo.watches, []);
   assert.match(p.card(), /Ready when you are/);
   t.mock.timers.reset();
 });
 
-test('Hub + server: a Hub opened before the offline switch answers shows a clock-out another page left queued, keeps shift location off and removes nothing; the switch turning on sends it', async t => {
+test('Hub + server: a Hub opened before the offline switch answers shows a clock-out another page left queued, reads no position and removes nothing; the switch turning on sends it', async t => {
   const recordId = 'time-crewstatic-unknown', { cookie } = await clockedIn(t, ENV, recordId);
   const indexedDB = fakeIndexedDB();
   const first = hubOnServer({ cookie, indexedDB });
@@ -1359,7 +1359,7 @@ test('the Hub asks the offline switch again on its record polls until it answers
   assert.equal(asked.length, 3, 'a definite answer holds for the page');
 });
 
-test('Hub + server: a location update for the open shift keeps a break still queued for it showing', async t => {
+test('Hub + server: a break still queued for the open shift keeps showing, and a new position on the phone sends nothing (clock-in only)', async t => {
   const recordId = 'time-crewstatic-break', { cookie } = await clockedIn(t, ENV, recordId);
   const p = hubOnServer({ cookie, gate: { post: async body => body.data?.breaks ? Response.json({ ok: false, error: 'Synthetic service unavailable' }, { status: 503 }) : null } });
   p.hub.api.install();
@@ -1367,14 +1367,14 @@ test('Hub + server: a location update for the open shift keeps a break still que
   await p.hub.context.opsStartBreak();
   assert.equal(p.indexedDB.rows(...STORE).length, 1, 'the break is kept after the 503');
   assert.equal(p.shift(recordId).pendingSync, true); assert.equal(p.shift(recordId).breaks.length, 1);
-  p.S.lastLocationSave = 0;
   await p.geo.fix({ latitude: 40.6, longitude: -105.1, accuracy: 5 });
+  p.hub.document.dispatch({ type: 'visibilitychange' });
   await p.settle();
-  assert.deepEqual(p.locations().map(body => body.id), [recordId], 'the location update reached the server');
+  assert.deepEqual(p.locations(), [], 'no location update: the clock-in position is the shift’s only one');
   const shown = p.shift(recordId);
   assert.equal(shown.pendingSync, true, 'the queued break still shows over the server’s record');
   assert.equal(shown.breaks.length, 1); assert.equal(shown.breaks[0].endAt, '');
-  assert.deepEqual(plain(shown.lastLocation), { lat: 40.6, lng: -105.1, accuracy: 5, capturedAt: NOW }, 'with the location the server saved');
+  assert.deepEqual(plain(shown.lastLocation), { ...point, capturedAt: at(-120) }, 'with the clock-in position the server saved');
   t.mock.timers.reset();
 });
 
@@ -1430,7 +1430,7 @@ test('settled() tells the Hub what became of each action this page saw leave the
   assert.deepEqual(plain(p.hub.settled()), [], 'signing out forgets them');
 });
 
-test('Hub + server: a clock-out that expired on the device pauses the open shift’s location before a replay pass sends anything, so a Hub load during a slow pass never starts it', async t => {
+test('Hub + server: a clock-out that expired on the device is shown as not saved before a replay pass sends anything, so a Hub load during a slow pass never shows the shift clocked out', async t => {
   t.mock.timers.enable({ apis: ['Date'], now: Date.parse(NOW) });
   vaultFirestore(t);
   const cookie = await cookieFor(ENV, CREW);
@@ -1479,15 +1479,13 @@ test('Hub: a stale tab’s clock-in kept for the account that saved it sends no 
   hub.api.install();
   await hub.context.opsClockIn();
   assert.equal(hub.toasts.at(-1), 'Saved on this device. Sign in as Crew.One to send it.');
-  const id = hub.api.S.locationEntryId;
+  const id = openShiftId({ S: hub.api.S });
   assert.equal(hub.api.S.people.timeEntries.find(entry => entry.id === id).pendingSync, true);
   assert.equal(posts.filter(body => body.collection === 'timeEntries').length, 1, 'only the clock-in’s live attempt');
-  hub.api.S.lastLocationSave = 0;
   await geo.fix({ latitude: 40.6, longitude: -105.1, accuracy: 5 });
-  await geo.watches[0].failure({ message: 'Synthetic location timeout' });
   for (let i = 0; i < 20; i++) await idle();
-  assert.equal(posts.filter(body => body.collection === 'timeEntries').length, 1, 'no location update or status goes out for a shift the server does not have');
-  assert.deepEqual(geo.live(), [], 'the location error still stops the watch');
+  assert.equal(posts.filter(body => body.collection === 'timeEntries').length, 1, 'no location update or status goes out');
+  assert.deepEqual(geo.watches, [], NO_WATCH); assert.equal(geo.reads.length, 1, 'the one position read at clock-in');
 });
 
 // ── A queued clock-in carries the clock actions queued after it for the same shift ──
@@ -1557,7 +1555,7 @@ for (const who of [{ user: CREW, business: false, role: 'crew' }, { user: 'Tyler
     p.hub.api.install();
     await p.settle();
     await p.hub.context.opsClockIn();
-    const id = p.S.locationEntryId;
+    const id = openShiftId(p);
     await p.hub.context.opsClockOut();
     assert.equal(p.indexedDB.rows(...STORE).length, 2);
     assert.equal(p.shift(id).status, 'submitted'); assert.equal(p.shift(id).pendingSync, true);
@@ -1597,7 +1595,7 @@ for (const who of [{ user: CREW, business: false, role: 'crew' }, { user: 'Tyler
     p.hub.api.install();
     await p.settle();
     await p.hub.context.opsClockIn();
-    const id = p.S.locationEntryId;
+    const id = openShiftId(p);
     await p.hub.context.opsClockOut();
     p.hub.context.navigator.onLine = true; p.hub.fire('online');
     await p.hub.context.EGCHubOffline.sync();
@@ -1635,7 +1633,7 @@ const openShift = async (t, who, recordId) => {
 const clockInPosition = { lat: 40.58, lng: -105.08, accuracy: 5, capturedAt: at(-120) };
 
 for (const who of [{ user: CREW, business: false, role: 'crew' }, { user: 'TylerG', business: true, role: 'manager' }]) {
-  test(`Hub + server (${who.role}): a chat that settles while the Hub’s own online clock-out is still reloading never restarts shift location from the older records, and no position fix leaves the phone`, async t => {
+  test(`Hub + server (${who.role}): a chat that settles while the Hub’s own online clock-out is still reloading never brings the shift back from the older records, and no position fix leaves the phone`, async t => {
     const recordId = `time-${who.role}-inflight`, cookie = await openShift(t, who, recordId);
     const hold = () => { const gate = { held: false }; gate.promise = new Promise(resolve => { gate.open = resolve; }); return gate; };
     const slowPost = hold(), slowReload = hold();
@@ -1647,7 +1645,7 @@ for (const who of [{ user: CREW, business: false, role: 'crew' }, { user: 'Tyler
     const p = hubOnServer({ cookie, gate, ...who });
     p.hub.api.install();
     await p.settle();
-    assert.deepEqual(p.geo.live().map(watch => watch.id), [1]);
+    assert.deepEqual(p.geo.watches, [], NO_WATCH);
     // Online on a weak signal: the clock-out's request is slow, and a chat message sent meanwhile waits behind it.
     const out = p.hub.context.opsClockOut();
     await until(() => slowPost.held);
@@ -1661,14 +1659,13 @@ for (const who of [{ user: CREW, business: false, role: 'crew' }, { user: 'Tyler
     for (let i = 0; i < 40; i++) await idle();
     assert.deepEqual(p.indexedDB.rows(...STORE), [], 'both were sent');
     assert.deepEqual(p.geo.live(), [], 'the settled message did not restart shift location from the records read before the clock-out');
-    p.S.lastLocationSave = 0;
     await p.geo.fix({ latitude: 40.8, longitude: -105.3, accuracy: 5 });
     for (let i = 0; i < 20; i++) await idle();
     slowReload.open();
     await out; await chat;
     await p.settle();
     assert.deepEqual(p.locations(), [], 'no position fix left the phone after the clock-out');
-    assert.equal(p.geo.watches.length, 1, 'shift location was never started again');
+    assert.deepEqual(p.geo.watches, [], 'shift location was never started again');
     assert.equal(p.hub.toasts.find(text => text.startsWith('Clocked out')), 'Clocked out · 2.00 hours submitted');
     assert.equal(p.shift(recordId).status, 'submitted');
     const saved = (await serverRecords(cookie)).find(row => row.id === recordId);
@@ -1677,36 +1674,31 @@ for (const who of [{ user: CREW, business: false, role: 'crew' }, { user: 'Tyler
     t.mock.timers.reset();
   });
 
-  test(`Hub + server (${who.role}): another Hub tab sends no position fix for a shift clocked out offline in this tab; it reads the device queue they share, stops shift location and shows the clock-out pending`, async t => {
+  test(`Hub + server (${who.role}): another Hub tab sends no position fix for a shift clocked out offline in this tab; shown again after the replay, it reads the shift closed`, async t => {
     const recordId = `time-${who.role}-twotabs`, cookie = await openShift(t, who, recordId);
     const indexedDB = fakeIndexedDB();
     const A = hubOnServer({ cookie, indexedDB, network: true, ...who }), B = hubOnServer({ cookie, indexedDB, network: true, ...who });
     A.hub.api.install(); B.hub.api.install();
     await A.settle(); await B.settle();
-    assert.deepEqual(A.geo.live().map(watch => watch.id), [1]); assert.deepEqual(B.geo.live().map(watch => watch.id), [1]);
+    assert.deepEqual(A.geo.watches, [], NO_WATCH); assert.deepEqual(B.geo.watches, [], NO_WATCH);
     // The signal drops and the shift is clocked out in tab A; tab B is not told.
     A.hub.context.navigator.onLine = false; B.hub.context.navigator.onLine = false;
     await A.hub.context.opsClockOut();
     assert.equal(A.hub.toasts.at(-1), 'Clock-out saved on this device · 2.00 hours sync when you are back online');
     assert.equal(indexedDB.rows(...STORE).length, 1);
-    assert.equal(B.shift(recordId).status, 'active'); assert.deepEqual(B.geo.live().map(watch => watch.id), [1]);
+    assert.equal(B.shift(recordId).status, 'active'); assert.deepEqual(B.geo.watches, [], NO_WATCH);
     // The signal returns, and tab B's next position fix comes before tab A replays.
     A.hub.context.navigator.onLine = true; B.hub.context.navigator.onLine = true;
-    B.S.lastLocationSave = 0;
     await B.geo.fix({ latitude: 40.7, longitude: -105.2, accuracy: 5 });
     for (let i = 0; i < 20; i++) await idle();
-    assert.deepEqual(B.locations(), [], 'tab B sent no position fix for the shift clocked out on this device');
-    assert.deepEqual(B.geo.live(), [], 'tab B stopped shift location');
-    assert.equal(B.shift(recordId).status, 'submitted'); assert.equal(B.shift(recordId).pendingSync, true);
-    // A location error in tab B would not be sent either: there is no watch left to report one.
+    assert.deepEqual(B.locations(), [], 'tab B sent no position fix: nothing follows the shift after clock-in');
     A.hub.fire('online');
     await A.settle();
     assert.deepEqual(indexedDB.rows(...STORE), [], 'tab A sent the clock-out');
-    B.S.lastLocationSave = 0;
     await B.geo.fix({ latitude: 40.71, longitude: -105.21, accuracy: 5 });
     B.hub.document.dispatch({ type: 'visibilitychange' });
     await B.settle();
-    assert.deepEqual(B.locations(), []); assert.equal(B.geo.watches.length, 1, 'tab B never started shift location again');
+    assert.deepEqual(B.locations(), []); assert.deepEqual(B.geo.watches, [], NO_WATCH);
     assert.equal(B.shift(recordId).status, 'submitted'); assert.equal(B.shift(recordId).pendingSync, undefined);
     const saved = (await serverRecords(cookie)).find(row => row.id === recordId);
     assert.deepEqual([saved.status, saved.locationStatus, saved.locationTracking], ['submitted', 'stopped', false]);
@@ -1715,25 +1707,21 @@ for (const who of [{ user: CREW, business: false, role: 'crew' }, { user: 'Tyler
   });
 }
 
-test('Hub: a location error in another tab for a shift clocked out on this device is not sent either; the watch stops', async () => {
+// CREW-TIME replaced the HUB-PWA test of a watch's location error in a stale tab: there is no watch to report one.
+test('Hub: Keep working on an open shift (even one an older build tracked) reads no position and starts no watch', async () => {
   const { hub, posts } = hubWithQueue({ online: true });
   const geo = geolocation();
   hub.context.navigator.geolocation = geo;
   hub.context.EGCHubOffline.configure({ enabled: true });
   hub.api.install();
   await hub.flush();
-  hub.api.S.people.timeEntries = [{ id: 'time-crewone-1', employee: 'Crew.One', status: 'active', approvalStatus: 'open', clockInAt: at(-120), clockOutAt: '', hourlyRate: 20, breaks: [], locationTracking: true }];
-  hub.context.opsResumeLocation();
-  assert.deepEqual(geo.live().map(watch => watch.id), [1]);
-  // Another tab on this device keeps a clock-out for the shift (the queue is the device's, shared by every Hub tab).
-  const { api } = load(), box = api.create({ store: api.idbStore(hub.context.indexedDB), now: clock() });
-  await box.enqueue(action('Crew.One', 'timeEntries', hubClockOut(at(-1)), 'time-crewone-1'));
-  const before = posts.length;
-  await geo.watches[0].failure({ message: 'Synthetic location timeout' });
+  hub.api.S.people.timeEntries = [{ id: 'time-crewone-1', employee: 'Crew.One', status: 'active', approvalStatus: 'open', clockInAt: at(-120), clockOutAt: '', hourlyRate: 20, breaks: [], locationTracking: true, locationStatus: 'tracking', lastLocation: point }];
+  hub.context.opsKeepWorking();
+  await geo.fix({ latitude: 40.7, longitude: -105.2, accuracy: 5 });
   for (let i = 0; i < 20; i++) await idle();
-  assert.deepEqual(posts.slice(before).filter(body => body.data.locationStatus !== 'stopped' && ('locationError' in body.data || 'lastLocation' in body.data)), [], 'no location status went out for the shift clocked out on this device');
-  assert.deepEqual(geo.live(), []);
-  assert.equal(hub.api.S.people.timeEntries.find(entry => entry.id === 'time-crewone-1').status, 'submitted', 'the queued clock-out shows');
+  assert.deepEqual(geo.watches, [], NO_WATCH); assert.deepEqual(geo.reads, [], 'no position read after clock-in');
+  assert.deepEqual(posts.filter(body => 'lastLocation' in body.data || 'locationError' in body.data), [], 'no location went out');
+  assert.equal(hub.toasts.at(-1), 'Your shift stays open');
 });
 
 test('server: a closed shift’s location is final for a manager too; a position fix, trail, error or status sent after the clock-out is refused and the card keeps its clock-out location', async t => {
@@ -1753,7 +1741,7 @@ test('server: a closed shift’s location is final for a manager too; a position
     t.mock.timers.setTime(Date.parse(at(5)));
     const late = { lat: 40.8, lng: -105.3, accuracy: 5, capturedAt: at(5) };
     for (const data of [
-      { lastLocation: late, locationTrail: [...closed.locationTrail, late], locationStatus: 'tracking', locationUpdatedAt: at(5) },
+      { lastLocation: late, locationTrail: [late], locationStatus: 'tracking', locationUpdatedAt: at(5) },
       { locationStatus: 'unavailable', locationError: 'Synthetic location timeout', locationUpdatedAt: at(5) },
       { lastLocation: late }, { locationTrail: [late] }, { locationStatus: 'tracking' }, { locationTracking: true },
     ]) {
@@ -1776,7 +1764,7 @@ test('server: a closed shift’s location is final for a manager too; a position
 
 // ── HUB_OFFLINE_ENABLED turned off after it was on: what a device still has queued is held, and the Hub says so ──
 
-test('Hub + server: offline saving switched off with a clock-out still queued on the device: it is held, never sent; shift location stays off and the crew member is told to clock out again', async t => {
+test('Hub + server: offline saving switched off with a clock-out still queued on the device: it is held, never sent, and the crew member is told to clock out again', async t => {
   const told = 'A clock-out saved on this device was not sent because offline saving is off — clock out again.';
   for (const order of ['answered before the Hub loads', 'answered after the Hub shows it']) {
     const recordId = `time-crewstatic-rollback-${order.split(' ')[1]}`, { cookie } = await clockedIn(t, ENV, recordId);
@@ -1805,7 +1793,7 @@ test('Hub + server: offline saving switched off with a clock-out still queued on
     assert.equal(indexedDB.rows(...STORE).length, 1, 'the clock-out is held on the device');
     assert.deepEqual(next.posts.filter(body => body.collection === 'timeEntries'), [], 'and never sent while the switch is off');
     assert.deepEqual(next.hub.toasts, [told]);
-    assert.match(next.card(), /Clock-out not saved — clock out again/); assert.match(next.card(), /Location paused/);
+    assert.match(next.card(), /Clock-out not saved — clock out again/); assert.match(next.card(), /Clock-out not saved/);
     const chip = next.hub.document.querySelector('.egc-hub-sync');
     assert.ok(!chip || chip.hidden, 'no Pending sync chip while the switch is off');
     // Later reloads tell it once and start nothing.
@@ -1823,7 +1811,7 @@ test('Hub + server: offline saving switched off with a clock-out still queued on
   }
 });
 
-test('Hub + server: offline saving switched off with a clock-out that waited more than 12 hours: it is removed, listed as not saved, and the still-open shift’s location stays paused', async t => {
+test('Hub + server: offline saving switched off with a clock-out that waited more than 12 hours: it is removed, listed as not saved, and the still-open shift says its clock-out was not saved', async t => {
   t.mock.timers.enable({ apis: ['Date'], now: Date.parse(NOW) });
   vaultFirestore(t);
   const cookie = await cookieFor(ENV, CREW);
@@ -1852,7 +1840,7 @@ test('Hub + server: offline saving switched off with a clock-out that waited mor
   t.mock.timers.reset();
 });
 
-test('Hub + server: offline saving switched off with a clock-in still queued on the device: no shift or location starts for it and the crew member is told to clock in again', async t => {
+test('Hub + server: offline saving switched off with a clock-in still queued on the device: no shift starts for it and the crew member is told to clock in again', async t => {
   t.mock.timers.enable({ apis: ['Date'], now: Date.parse(NOW) });
   vaultFirestore(t);
   const cookie = await cookieFor(ENV, CREW);
@@ -1918,17 +1906,17 @@ test('a queue from before clock-out records (version 1) is upgraded in place: it
   await box.enqueue(action('Crew.One', 'timeEntries', hubClockOut(at(12 * 60)), 'time-crewone-2'));
   assert.deepEqual(indexedDB.rows('egc-hub-offline', 'clockOuts').map(row => row.id), ['time-crewone-2']);
   await box.forget('Crew.One', 'time-crewone-2');
-  assert.deepEqual(indexedDB.rows('egc-hub-offline', 'clockOuts'), [], 'resuming location for the shift forgets it');
+  assert.deepEqual(indexedDB.rows('egc-hub-offline', 'clockOuts'), [], 'Keep working on the shift forgets it');
 });
 
 for (const who of [{ user: CREW, business: false, role: 'crew' }, { user: 'TylerG', business: true, role: 'manager' }]) {
-  test(`Hub + server (${who.role}): a hidden Hub tab that takes no position fix while another tab’s clock-out is queued sends none after that tab replays it; its next fix finds the clock-out on the device, stops shift location and reads the shift closed`, async t => {
+  test(`Hub + server (${who.role}): a hidden Hub tab sends no position while another tab clocks out and replays it; shown again, it reads the shift closed`, async t => {
     const recordId = `time-${who.role}-stale-tab`, cookie = await openShift(t, who, recordId);
     const indexedDB = fakeIndexedDB();
     const A = hubOnServer({ cookie, indexedDB, network: true, ...who }), B = hubOnServer({ cookie, indexedDB, network: true, ...who });
     A.hub.api.install(); B.hub.api.install();
     await ready(A, B);
-    assert.deepEqual(B.geo.live().map(watch => watch.id), [1]);
+    assert.deepEqual(B.geo.watches, [], NO_WATCH);
     // Tab B is in the background, so it never polls its records.
     B.hub.document.hidden = true;
     A.hub.context.navigator.onLine = false; B.hub.context.navigator.onLine = false;
@@ -1941,15 +1929,17 @@ for (const who of [{ user: CREW, business: false, role: 'crew' }, { user: 'Tyler
     B.hub.fire('online');
     await B.settle();
     assert.equal(B.shift(recordId).status, 'active', 'tab B still shows the records it read before');
-    assert.deepEqual(B.geo.live().map(watch => watch.id), [1]);
+    assert.deepEqual(B.geo.watches, [], NO_WATCH);
     for (const minutes of [2, 4, 6]) {
       later(t, minutes, B);
       await B.geo.fix({ latitude: 40.7 + minutes / 100, longitude: -105.2, accuracy: 5 });
       await B.settle();
     }
     assert.deepEqual(B.locations(), [], 'no position fix left the phone after the clock-out');
-    assert.deepEqual(B.geo.live(), []); assert.equal(B.geo.watches.length, 1, 'shift location never started again');
-    assert.equal(B.shift(recordId).status, 'submitted', 'tab B read the server again, hidden, and shows the shift closed');
+    assert.deepEqual(B.geo.watches, [], NO_WATCH);
+    B.hub.document.hidden = false; B.hub.document.dispatch({ type: 'visibilitychange' });
+    await B.settle();
+    assert.equal(B.shift(recordId).status, 'submitted', 'tab B, shown again, read the server and shows the shift closed');
     assert.equal(B.hub.session.getItem('egc_hub_location_paused'), null, 'the clock-out was saved, so nothing is paused');
     const saved = (await serverRecords(cookie)).find(row => row.id === recordId);
     assert.deepEqual([saved.status, saved.locationStatus, saved.locationTracking], ['submitted', 'stopped', false]);
@@ -1957,7 +1947,7 @@ for (const who of [{ user: CREW, business: false, role: 'crew' }, { user: 'Tyler
     t.mock.timers.reset();
   });
 
-  test(`Hub + server (${who.role}): when another tab’s queued clock-out is refused, a stale tab’s next fix sends nothing and it pauses shift location as a clock-out not saved; resuming there sends the next fix`, async t => {
+  test(`Hub + server (${who.role}): when another tab’s queued clock-out is refused, a stale tab sends nothing, reads the shift still open when shown, and Keep working there reads no position`, async t => {
     const recordId = `time-${who.role}-stale-refused`, cookie = await openShift(t, who, recordId);
     const indexedDB = fakeIndexedDB(), refuse = { post: async body => body.data?.clockOutAt ? Response.json({ ok: false, error: 'Synthetic refusal' }, { status: 403 }) : null };
     const A = hubOnServer({ cookie, indexedDB, network: true, gate: refuse, ...who }), B = hubOnServer({ cookie, indexedDB, network: true, ...who });
@@ -1975,30 +1965,28 @@ for (const who of [{ user: CREW, business: false, role: 'crew' }, { user: 'Tyler
     await B.geo.fix({ latitude: 40.7, longitude: -105.2, accuracy: 5 });
     await B.settle();
     assert.deepEqual(B.locations(), [], 'the stale tab sent nothing');
-    assert.deepEqual(B.snapshots.at(-1), [[recordId, 'active']], 'it read the server again: the shift is still open');
-    assert.deepEqual(B.geo.live(), []); assert.equal(B.geo.watches.length, 1);
-    assert.deepEqual(JSON.parse(B.hub.session.getItem('egc_hub_location_paused')).ids, [recordId], 'shift location is paused there too');
-    if (who.role === 'crew') { assert.match(B.card(), /Clock-out not saved — clock out again/); assert.match(B.card(), /Location paused/); }
-    // Later reads keep it paused.
+    assert.deepEqual(B.geo.watches, [], NO_WATCH);
+    // Shown again, it reads the server: the shift is still open (tab A says its clock-out was not saved).
     B.hub.document.hidden = false; B.hub.document.dispatch({ type: 'visibilitychange' });
     await B.settle();
-    assert.deepEqual(B.geo.live(), []);
-    // The crew member is still working and resumes shift location in that tab: its next fix is sent.
-    B.hub.context.opsResumeLocation();
-    assert.equal(B.hub.toasts.at(-1), 'Shift location is on again');
-    assert.deepEqual(B.geo.live().map(watch => watch.id), [2]);
+    assert.deepEqual(B.snapshots.at(-1), [[recordId, 'active']], 'the shift is still open on the server');
+    assert.equal(B.shift(recordId).status, 'active');
+    if (who.role === 'crew') assert.match(A.card(), /Clock-out not saved — clock out again/);
+    // The crew member is still working and taps Keep working in that tab: no position is read or sent.
+    B.hub.context.opsKeepWorking();
+    assert.equal(B.hub.toasts.at(-1), 'Your shift stays open');
     later(t, 4, B);
     await B.geo.fix({ latitude: 40.71, longitude: -105.21, accuracy: 5 });
     await B.settle();
-    assert.equal(B.locations().length, 1, 'the position after resuming went out');
-    assert.deepEqual(B.geo.live().map(watch => watch.id), [2], 'and shift location stays on');
+    assert.deepEqual(B.locations(), [], 'nothing after clock-in');
+    assert.deepEqual(B.geo.watches, [], NO_WATCH); assert.deepEqual(B.geo.reads, []);
     assert.equal(B.hub.session.getItem('egc_hub_location_paused'), null);
     const saved = (await serverRecords(cookie)).find(row => row.id === recordId);
-    assert.deepEqual([saved.status, plain(saved.lastLocation).lat], ['active', 40.71]);
+    assert.deepEqual([saved.status, plain(saved.lastLocation)], ['active', clockInPosition], 'the card keeps its clock-in position');
     t.mock.timers.reset();
   });
 
-  test(`Hub + server (${who.role}): a Hub on another device, or with offline saving off, whose shift was clocked out elsewhere sends at most one position fix: the server’s refusal stops shift location and the Hub reads its records again`, async t => {
+  test(`Hub + server (${who.role}): a Hub on another device, or with offline saving off, whose shift was clocked out elsewhere sends no position fix, and reads the shift closed when shown again`, async t => {
     for (const setting of ['on', 'off']) {
       const recordId = `time-${who.role}-elsewhere-${setting}`, cookie = await openShift(t, who, recordId);
       const open = (options = {}) => { const p = hubOnServer({ cookie, network: true, configure: setting === 'on', ...who, ...options }); if (setting === 'off') p.hub.context.EGCHubOffline.configure({ enabled: false }); return p; };
@@ -2015,9 +2003,11 @@ for (const who of [{ user: CREW, business: false, role: 'crew' }, { user: 'Tyler
         await B.geo.fix({ latitude: 40.7 + minutes / 100, longitude: -105.2, accuracy: 5 });
         await B.settle();
       }
-      assert.equal(B.locations().length, 1, `${setting}: one position fix went out and was refused`);
-      assert.deepEqual(B.geo.live(), [], setting); assert.equal(B.geo.watches.length, 1, `${setting}: shift location stopped at the refusal`);
-      assert.equal(B.shift(recordId).status, 'submitted', `${setting}: the Hub read its records again`);
+      assert.deepEqual(B.locations(), [], `${setting}: no position fix went out`);
+      assert.deepEqual(B.geo.watches, [], `${setting}: ${NO_WATCH}`);
+      B.hub.document.hidden = false; B.hub.document.dispatch({ type: 'visibilitychange' });
+      await B.settle();
+      assert.equal(B.shift(recordId).status, 'submitted', `${setting}: shown again, the Hub read its records`);
       const saved = (await serverRecords(cookie)).find(row => row.id === recordId);
       assert.deepEqual([saved.status, saved.locationStatus], ['submitted', 'stopped'], setting);
       assert.deepEqual(plain(saved.lastLocation), clockInPosition, `${setting}: nothing was stored`);
@@ -2025,7 +2015,7 @@ for (const who of [{ user: CREW, business: false, role: 'crew' }, { user: 'Tyler
     }
   });
 
-  test(`Hub + server (${who.role}), switch off: resuming shift location for a shift whose clock-out is held keeps it on; the next fix is sent, the held clock-out is removed, and switching back on sends nothing`, async t => {
+  test(`Hub + server (${who.role}), switch off: Keep working on a shift whose clock-out is held removes the held clock-out, reads and sends no position, and switching back on sends nothing`, async t => {
     const recordId = `time-${who.role}-held-resume`, cookie = await openShift(t, who, recordId);
     const indexedDB = fakeIndexedDB();
     const first = hubOnServer({ cookie, indexedDB, ...who });
@@ -2041,21 +2031,17 @@ for (const who of [{ user: CREW, business: false, role: 'crew' }, { user: 'Tyler
     assert.deepEqual(next.hub.toasts, ['A clock-out saved on this device was not sent because offline saving is off — clock out again.']);
     assert.deepEqual(next.geo.watches, []);
     assert.deepEqual(indexedDB.rows(...STORE).map(row => row.superseded), [true], 'once told, it is never sent');
-    next.hub.context.opsResumeLocation();
-    assert.equal(next.hub.toasts.at(-1), 'Shift location is on again · the clock-out saved on this device will not be sent');
-    assert.deepEqual(next.geo.live().map(watch => watch.id), [1]);
+    next.hub.context.opsKeepWorking();
+    assert.equal(next.hub.toasts.at(-1), 'Your shift stays open · the clock-out saved on this device will not be sent');
+    assert.deepEqual(next.geo.watches, [], NO_WATCH);
     later(t, 2, next);
     await next.geo.fix({ latitude: 40.7, longitude: -105.2, accuracy: 5 });
     await next.settle();
-    assert.equal(next.locations().length, 1, 'the position went out');
-    assert.deepEqual(next.geo.live().map(watch => watch.id), [1], 'shift location stays on; it is not paused again');
+    assert.deepEqual(next.locations(), [], 'no position went out');
+    assert.deepEqual(next.geo.watches, [], NO_WATCH); assert.deepEqual(next.geo.reads, []);
     assert.equal(next.hub.session.getItem('egc_hub_location_paused'), null);
-    if (who.role === 'crew') { assert.match(next.card(), /Location sharing on/); assert.doesNotMatch(next.card(), /Clock-out not saved/); }
+    if (who.role === 'crew') { assert.match(next.card(), /Location shared once at clock-in/); assert.doesNotMatch(next.card(), /Clock-out not saved/); }
     assert.deepEqual(indexedDB.rows(...STORE), [], 'the held clock-out was removed from the device');
-    later(t, 4, next);
-    await next.geo.fix({ latitude: 40.71, longitude: -105.21, accuracy: 5 });
-    await next.settle();
-    assert.equal(next.locations().length, 2);
     // Switched back on later: nothing is sent, and the shift stays open.
     const on = hubOnServer({ cookie, indexedDB, ...who });
     pageTime(on.hub, at(4));
@@ -2063,7 +2049,7 @@ for (const who of [{ user: CREW, business: false, role: 'crew' }, { user: 'Tyler
     await on.settle();
     assert.deepEqual(on.posts.filter(body => body.data?.clockOutAt), []);
     const saved = (await serverRecords(cookie)).find(row => row.id === recordId);
-    assert.deepEqual([saved.status, plain(saved.lastLocation).lat], ['active', 40.71]);
+    assert.deepEqual([saved.status, plain(saved.lastLocation)], ['active', clockInPosition]);
     t.mock.timers.reset();
   });
 }
@@ -2127,13 +2113,14 @@ test('Hub + server: a queued clock-in saved with its reply lost and refused on i
   const cookie = await cookieFor(ENV, CREW);
   await onboarded(cookie);
   let lost = false;
-  // The clock-in reaches the server and is saved, but its reply never reaches the phone.
-  const gate = { post: async body => { if (body.data?.clockInAt && !lost) { lost = true; assert.equal((await post(cookie, body)).status, 200); throw new TypeError('Failed to fetch'); } return null; } };
+  // The clock-in reaches the server and is saved, but its reply never reaches the phone. Its retry is refused here: since
+  // CREW-TIME the server itself answers a clock-in retried onto its open card with that card, so the refusal is the gate's.
+  const gate = { post: async body => { if (body.data?.clockInAt && !lost) { lost = true; assert.equal((await post(cookie, body)).status, 200); throw new TypeError('Failed to fetch'); } if (body.data?.clockInAt) return Response.json({ ok: false, error: 'Synthetic refusal of the retried clock-in.' }, { status: 400 }); return null; } };
   const p = hubOnServer({ cookie, network: true, gate });
   p.hub.api.install();
   await p.settle();
   await p.hub.context.opsClockIn();
-  const id = p.S.locationEntryId;
+  const id = openShiftId(p);
   assert.equal(p.hub.toasts.at(-1), 'Clock-in saved on this device · it syncs when you are back online');
   assert.deepEqual((await serverRecords(cookie)).map(row => [row.id, row.status]), [[id, 'active']], 'the server has the timecard');
   // No signal now: the crew member clocks out, which waits behind the clock-in.
@@ -2145,7 +2132,7 @@ test('Hub + server: a queued clock-in saved with its reply lost and refused on i
   p.hub.context.navigator.onLine = true; p.hub.fire('online');
   await p.settle();
   assert.deepEqual(p.posts.filter(body => body.collection === 'timeEntries').map(clockInKind), ['clock-in', 'clock-in', 'clock-out'], 'the refused retry did not take the clock-out with it');
-  assert.deepEqual(p.hub.toasts.filter(text => text.startsWith('Not saved')), ['Not saved: Clock in. Recorded breaks cannot be rewritten. Ask a manager for a time correction.']);
+  assert.deepEqual(p.hub.toasts.filter(text => text.startsWith('Not saved')), ['Not saved: Clock in. Synthetic refusal of the retried clock-in.']);
   assert.deepEqual(p.indexedDB.rows(...STORE), []);
   const saved = (await serverRecords(cookie)).find(row => row.id === id);
   assert.deepEqual([saved.status, saved.locationStatus, saved.breaks.length], ['submitted', 'stopped', 1], 'the clock-out closed the shift');
@@ -2155,7 +2142,7 @@ test('Hub + server: a queued clock-in saved with its reply lost and refused on i
   t.mock.timers.reset();
 });
 
-test('Hub + server: discarding a queued shift whose clock-in was saved with its reply lost pauses that shift’s location once the server shows it open; nothing of it is sent and shift location never starts', async t => {
+test('Hub + server: discarding a queued shift whose clock-in was saved with its reply lost says that shift’s clock-out was not saved once the server shows it open; nothing of it is sent', async t => {
   t.mock.timers.enable({ apis: ['Date'], now: Date.parse(NOW) });
   vaultFirestore(t);
   const cookie = await cookieFor(ENV, CREW);
@@ -2166,7 +2153,7 @@ test('Hub + server: discarding a queued shift whose clock-in was saved with its 
   p.hub.api.install();
   await p.settle();
   await p.hub.context.opsClockIn();
-  const id = p.S.locationEntryId;
+  const id = openShiftId(p);
   p.hub.context.navigator.onLine = false;
   await p.hub.context.opsClockOut();
   // Believing the shift never reached the Hub, the crew member discards it from Pending sync.
@@ -2178,8 +2165,8 @@ test('Hub + server: discarding a queued shift whose clock-in was saved with its 
   await p.settle();
   assert.deepEqual(p.snapshots.at(-1), [[id, 'active']], 'the server has the shift open');
   assert.equal(p.shift(id).status, 'active');
-  assert.deepEqual(p.geo.live(), []); assert.equal(p.geo.watches.length, 1, 'shift location never started for the shift the crew member clocked out of');
-  assert.match(p.card(), /Clock-out not saved — clock out again/); assert.match(p.card(), /Location paused/);
+  assert.deepEqual(p.geo.live(), []); assert.deepEqual(p.geo.watches, [], 'shift location never started for the shift the crew member clocked out of');
+  assert.match(p.card(), /Clock-out not saved — clock out again/); assert.match(p.card(), /Clock-out not saved/);
   assert.deepEqual(p.posts.filter(body => body.collection === 'timeEntries').map(clockInKind), ['clock-in']);
   assert.deepEqual(p.locations(), []);
   t.mock.timers.reset();
@@ -2213,7 +2200,7 @@ test('Hub + server, switch off: a held clock-in the crew member was told about i
     first.hub.api.install();
     await first.settle();
     await first.hub.context.opsClockIn();
-    const heldShift = first.S.locationEntryId;
+    const heldShift = openShiftId(first);
     await first.hub.context.opsClockOut();
     assert.equal(indexedDB.rows(...STORE).length, 2);
     // Offline saving is switched off; ten minutes later the crew member opens the Hub online.
@@ -2246,7 +2233,7 @@ test('Hub + server, switch off: a held clock-in the crew member was told about i
 });
 
 for (const who of [{ user: CREW, business: false, role: 'crew' }, { user: 'TylerG', business: true, role: 'manager' }]) {
-  test(`Hub + server (${who.role}), switch off: a held clock-out the crew member was told about is never sent; clocking out again removes it, so switching back on keeps that clock-out time, and doing nothing keeps the shift open with location paused`, async t => {
+  test(`Hub + server (${who.role}), switch off: a held clock-out the crew member was told about is never sent; clocking out again removes it, so switching back on keeps that clock-out time, and doing nothing keeps the shift open, shown as not clocked out`, async t => {
     for (const then of ['clocks out again', 'does nothing']) {
       const recordId = `time-${who.role}-held-out-${then.split(' ')[0]}`, cookie = await openShift(t, who, recordId);
       const indexedDB = fakeIndexedDB();
@@ -2285,17 +2272,13 @@ for (const who of [{ user: CREW, business: false, role: 'crew' }, { user: 'Tyler
   });
 }
 
-test('Hub + server: a queued chat that settles while the Hub still shows a shift clocked out elsewhere never starts shift location from those records, with no clock save of the Hub’s own under way', async t => {
+test('Hub + server: a queued chat that settles while the Hub still shows a shift clocked out elsewhere reads no position from those records, with no clock save of the Hub’s own under way', async t => {
   const recordId = 'time-crewstatic-settle-only', { cookie } = await clockedIn(t, ENV, recordId);
   let reads = null;
   const p = hubOnServer({ cookie, network: true, gate: { get: async () => { if (reads) { reads.held = true; await reads.promise; } } } });
   p.hub.api.install();
   await ready(p);
-  assert.deepEqual(p.geo.live().map(watch => watch.id), [1]);
-  // A location error stops shift location; the Hub's next completed read of its records would start it again.
-  await p.geo.watches[0].failure({ message: 'Synthetic location timeout' });
-  await p.settle();
-  assert.deepEqual(p.geo.live(), []);
+  assert.deepEqual(p.geo.watches, [], NO_WATCH);
   // The shift is clocked out on another device, which this Hub has not read yet.
   assert.equal((await post(cookie, { collection: 'timeEntries', id: recordId, data: hubClockOut(NOW) })).status, 200);
   // With no signal the crew member sends a chat message, which waits on the device.
@@ -2310,23 +2293,23 @@ test('Hub + server: a queued chat that settles while the Hub still shows a shift
   assert.deepEqual(p.indexedDB.rows(...STORE), [], 'the message was sent');
   assert.equal(p.S.clockSaving, 0, 'no clock save of the Hub’s own is under way');
   assert.equal(p.shift(recordId).status, 'active', 'the Hub still shows the records it read before the clock-out');
-  assert.equal(p.geo.watches.length, 1, 'settling the message did not start shift location from them');
+  assert.deepEqual(p.geo.watches, [], NO_WATCH); assert.deepEqual(p.geo.reads, [], 'no position read after clock-in');
   reads.open();
   await p.settle();
   assert.equal(p.shift(recordId).status, 'submitted');
-  assert.deepEqual(p.geo.live(), []); assert.equal(p.geo.watches.length, 1);
+  assert.deepEqual(p.geo.live(), []); assert.deepEqual(p.geo.watches, []);
   assert.deepEqual(p.locations(), []);
   t.mock.timers.reset();
 });
 
-test('Hub + server, switch off: a read of the records that completes while the Hub’s own clock-out is still being saved never starts shift location from the records it read before the clock-out landed', async t => {
+test('Hub + server, switch off: a read of the records that completes while the Hub’s own clock-out is still being saved never shows the shift open from the records it read before the clock-out landed', async t => {
   const recordId = 'time-crewstatic-clock-saving', { cookie } = await clockedIn(t, ENV, recordId);
   const slowPost = gateHold();
   const p = hubOnServer({ cookie, configure: false, gate: { post: async body => { if (body.data?.clockOutAt && !slowPost.held) { slowPost.held = true; await slowPost.promise; } return null; } } });
   p.hub.context.EGCHubOffline.configure({ enabled: false });
   p.hub.api.install();
   await ready(p);
-  assert.deepEqual(p.geo.live().map(watch => watch.id), [1]);
+  assert.deepEqual(p.geo.watches, [], NO_WATCH);
   const out = p.hub.context.opsClockOut();
   await until(() => slowPost.held);
   assert.deepEqual(p.geo.live(), []);
@@ -2338,12 +2321,12 @@ test('Hub + server, switch off: a read of the records that completes while the H
   assert.deepEqual(p.snapshots.at(-1), [[recordId, 'active']]);
   assert.equal(p.S.clockSaving, 1, 'the Hub’s clock-out is still being saved');
   assert.equal(p.hub.context.EGCHubOffline.settled().length, 0, 'and the queue settled nothing');
-  assert.equal(p.geo.watches.length, 1, 'that read did not start shift location');
+  assert.deepEqual(p.geo.watches, [], 'that read did not start shift location');
   slowPost.open();
   await out;
   await p.settle();
   assert.equal(p.shift(recordId).status, 'submitted');
-  assert.deepEqual(p.geo.live(), []); assert.equal(p.geo.watches.length, 1);
+  assert.deepEqual(p.geo.live(), []); assert.deepEqual(p.geo.watches, []);
   assert.deepEqual(p.locations(), []);
   t.mock.timers.reset();
 });
@@ -2402,7 +2385,6 @@ for (const who of WHOS) {
     assert.equal(p.shift(recordId).status, 'submitted');
     assert.deepEqual(p.geo.live(), []);
     later(t, 203, p);
-    p.S.lastLocationSave = 0;
     await p.geo.fix({ latitude: 40.9, longitude: -105.3, accuracy: 5 });
     await p.settle();
     assert.deepEqual(p.locations(), []);
@@ -2506,19 +2488,18 @@ test('Hub + server (manager): breaks started and ended offline replay in order, 
 });
 
 for (const who of WHOS) {
-  test(`Hub + server (${who.role}): a position fix or location error that arrives just before the Hub’s own clock-out sends nothing after it, with offline saving on or off`, async t => {
-    for (const enabled of [true, false]) for (const kind of ['fix', 'error']) {
+  test(`Hub + server (${who.role}): a position on the phone just before the Hub’s own clock-out sends nothing before or after it, with offline saving on or off`, async t => {
+    for (const enabled of [true, false]) for (const kind of ['fix']) {
       const recordId = `time-${who.role}-inflight-${enabled ? 'on' : 'off'}-${kind}`, cookie = await openShift(t, who, recordId);
       const p = hubOnServer({ cookie, configure: false, ...who });
       p.hub.context.EGCHubOffline.configure({ enabled });
       p.hub.api.install();
       await ready(p);
       later(t, 2, p);
-      p.S.lastLocationSave = 0;
-      const [watch] = p.geo.live(), label = `${enabled ? 'on' : 'off'}, ${kind}`;
-      assert.ok(watch, label);
-      // The watch's callback reads this device's queue first; the clock-out is tapped while that read is still out.
-      const inflight = kind === 'fix' ? watch.success({ coords: { latitude: 40.9, longitude: -105.3, accuracy: 5 } }) : watch.failure({ message: 'Synthetic timeout' });
+      const label = `${enabled ? 'on' : 'off'}, ${kind}`;
+      assert.deepEqual(p.geo.watches, [], `${label}: ${NO_WATCH}`);
+      // A new position reaches the phone as the clock-out is tapped: with no watch, nothing hears it.
+      const inflight = p.geo.fix({ latitude: 40.9, longitude: -105.3, accuracy: 5 });
       const out = p.hub.context.opsClockOut();
       await inflight; await out;
       await p.settle();
@@ -2567,7 +2548,7 @@ for (const who of WHOS) {
     const A = hubOnServer({ cookie, indexedDB, network: true, ...who }), B = hubOnServer({ cookie, indexedDB: withoutDatabases(indexedDB), network: true, configure: false, ...who });
     A.hub.api.install(); B.hub.api.install();
     await ready(A, B);
-    assert.deepEqual(B.geo.live().map(watch => watch.id), [1]);
+    assert.deepEqual(B.geo.watches, [], NO_WATCH);
     B.hub.document.hidden = true;
     A.hub.context.navigator.onLine = false;
     await A.hub.context.opsClockOut();
@@ -2579,9 +2560,11 @@ for (const who of WHOS) {
       await B.geo.fix({ latitude: 40.7 + minutes / 100, longitude: -105.2, accuracy: 5 });
       await B.settle();
     }
-    assert.deepEqual(B.locations(), [], 'the clock-out on the device was found, so no position fix left the phone');
-    assert.deepEqual(B.geo.live(), []);
-    assert.equal(B.shift(recordId).status, 'submitted', 'tab B read the server again and shows the shift closed');
+    assert.deepEqual(B.locations(), [], 'no position fix left the phone');
+    assert.deepEqual(B.geo.watches, [], NO_WATCH);
+    B.hub.document.hidden = false; B.hub.document.dispatch({ type: 'visibilitychange' });
+    await B.settle();
+    assert.equal(B.shift(recordId).status, 'submitted', 'tab B, shown again, read the server and shows the shift closed');
     assert.deepEqual(plain((await serverRecords(cookie)).find(row => row.id === recordId).lastLocation), clockInPosition);
     t.mock.timers.reset();
   });

@@ -16,8 +16,8 @@ def version(number, body, status='draft', channel='SMS', subject='', **extra):
 def templates():
     return [
         {'kind': 'on_my_way', 'label': 'On my way', 'audience': 'customer', 'allowedVariables': BASE + ['crewLeadName', 'etaMinutes'], 'versions': [version(1, 'Hi {{firstName}}, this is {{crewLeadName}}. We arrive in about {{etaMinutes}} minutes.')], 'activeVersion': None, 'latestVersion': 1, 'automationEnabled': False, 'seeded': True, 'automatable': False},
-        {'kind': 'payment_reminder', 'label': 'Payment reminder', 'audience': 'customer', 'allowedVariables': BASE + ['invoiceNumber', 'balance', 'dueDate', 'payLink'], 'versions': [version(1, 'Hi {{firstName}}, {{balance}} is due {{dueDate}}: {{payLink}}', 'approved', approvedBy='zacb', approvedAt=NOW), version(2, 'Hi {{firstName}}, a reminder that {{balance}} is due {{dueDate}}. Pay here: {{payLink}}')], 'activeVersion': 1, 'latestVersion': 2, 'automationEnabled': False, 'seeded': False, 'automatable': True},
-        {'kind': 'invoice_send', 'label': 'Invoice with pay link', 'audience': 'customer', 'allowedVariables': BASE + ['invoiceNumber', 'balance', 'dueDate', 'payLink'], 'versions': [version(1, 'Hi {{firstName}},\n\nInvoice {{invoiceNumber}} is ready: {{payLink}}', 'approved', 'Email', 'Invoice {{invoiceNumber}}', approvedBy='zacb', approvedAt=NOW)], 'activeVersion': 1, 'latestVersion': 1, 'automationEnabled': False, 'seeded': False, 'automatable': False},
+        {'kind': 'deposit_reminder', 'label': 'Deposit reminder', 'audience': 'customer', 'allowedVariables': BASE + ['balance', 'serviceDate', 'payLink'], 'versions': [version(1, 'Hi {{firstName}}, {{balance}} is due {{serviceDate}}: {{payLink}}', 'approved', approvedBy='zacb', approvedAt=NOW), version(2, 'Hi {{firstName}}, a reminder that {{balance}} is due {{serviceDate}}. Pay here: {{payLink}}')], 'activeVersion': 1, 'latestVersion': 2, 'automationEnabled': False, 'seeded': False, 'automatable': True},
+        {'kind': 'b2b_invite', 'label': 'Business hub invitation', 'audience': 'customer', 'allowedVariables': BASE + ['inviteLink'], 'versions': [version(1, 'Hi {{firstName}},\n\nYour business hub invitation is ready: {{inviteLink}}', 'approved', 'Email', 'Your {{firstName}} business hub invitation', approvedBy='zacb', approvedAt=NOW)], 'activeVersion': 1, 'latestVersion': 1, 'automationEnabled': False, 'seeded': False, 'automatable': False},
     ]
 
 class Handler(SimpleHTTPRequestHandler):
@@ -84,12 +84,12 @@ class MessageTemplatesBrowserTests(unittest.TestCase):
     def test_list_shows_approval_state_and_fits_phone_widths(self):
         self.open()
         expect(self.page.locator('.mt-card[data-kind="on_my_way"]')).to_contain_text('Not approved')
-        expect(self.page.locator('.mt-card[data-kind="payment_reminder"]')).to_contain_text('Live v1')
-        expect(self.page.locator('.mt-card[data-kind="payment_reminder"]')).to_contain_text('Draft v2 awaiting owner')
+        expect(self.page.locator('.mt-card[data-kind="deposit_reminder"]')).to_contain_text('Live v1')
+        expect(self.page.locator('.mt-card[data-kind="deposit_reminder"]')).to_contain_text('Draft v2 awaiting owner')
         expect(self.page.get_by_role('status')).to_contain_text('Messaging is off')
         for box in self.page.locator('.mt-card, .mt-btn').evaluate_all('nodes=>nodes.map(node=>node.getBoundingClientRect().height)'): self.assertGreaterEqual(box, 44)
         self.no_horizontal_scroll()
-        self.page.locator('.mt-card[data-kind="invoice_send"]').click(); self.no_horizontal_scroll()
+        self.page.locator('.mt-card[data-kind="b2b_invite"]').click(); self.no_horizontal_scroll()
         self.assertEqual(self.page.evaluate("getComputedStyle(document.querySelector('#mt-body')).fontSize"), '16px')
         self.assertEqual(self.page.evaluate("getComputedStyle(document.querySelector('#mt-subject')).fontSize"), '16px')
 
@@ -123,12 +123,12 @@ class MessageTemplatesBrowserTests(unittest.TestCase):
         self.assertTrue(self.page.evaluate('EGCMessageTemplates.canLeave()'))
 
     def test_owner_approves_the_exact_text_only_after_confirming(self):
-        self.open('payment_reminder')
+        self.open('deposit_reminder')
         approve = self.page.get_by_role('button', name='Approve v2', exact=True)
         original = self.editor().input_value(); self.editor().fill(original + ' edited'); expect(approve).to_be_hidden()
         self.editor().fill(original); expect(approve).to_be_visible(); approve.click()
         dialog = self.page.get_by_role('dialog', name='Approve version 2?'); expect(dialog).to_be_visible()
-        expect(dialog.locator('.mt-exact')).to_contain_text('Hi {{firstName}}, a reminder that {{balance}} is due {{dueDate}}. Pay here: {{payLink}}')
+        expect(dialog.locator('.mt-exact')).to_contain_text('Hi {{firstName}}, a reminder that {{balance}} is due {{serviceDate}}. Pay here: {{payLink}}')
         confirm = dialog.get_by_role('button', name='Approve wording', exact=True)
         self.assertNotEqual(confirm.evaluate('node=>getComputedStyle(node).backgroundColor'), confirm.evaluate('node=>getComputedStyle(node).color'), 'the confirm button must be visible')
         self.assertGreaterEqual(confirm.bounding_box()['height'], 44)
@@ -141,7 +141,7 @@ class MessageTemplatesBrowserTests(unittest.TestCase):
         expect(self.page.get_by_role('button', name='Approve v3')).to_have_count(0)
 
     def test_owner_turns_on_automation_and_retires_with_confirmation(self):
-        self.open('payment_reminder')
+        self.open('deposit_reminder')
         self.page.get_by_role('button', name='Turn on automatic sending', exact=True).click()
         expect(self.page.get_by_role('dialog')).to_contain_text('between 8 AM and 8 PM Denver time')
         self.page.get_by_role('button', name='Turn on', exact=True).click()
@@ -174,7 +174,7 @@ class MessageTemplatesBrowserTests(unittest.TestCase):
 
     def test_history_uses_denver_time_and_untrusted_text_stays_text(self):
         self.rows[1]['versions'][1]['body'] = '<img src=x onerror="window.xss=1">{{firstName}}'
-        self.open('payment_reminder'); self.page.locator('.mt-history summary').click()
+        self.open('deposit_reminder'); self.page.locator('.mt-history summary').click()
         expect(self.page.locator('.mt-history')).to_contain_text('approved by zacb Sep 22, 12:00 PM')
         expect(self.page.locator('.mt-history')).to_contain_text('<img src=x')
         self.assertIsNone(self.page.evaluate('window.xss'))

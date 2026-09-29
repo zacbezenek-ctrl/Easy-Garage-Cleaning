@@ -2,12 +2,12 @@
    offline reloads. API responses, customer data and non-GET requests are never
    intercepted or cached; queued work lives in the explicit field outbox. */
 'use strict';
-const VERSION = '20260929multiday';
+const VERSION = '20260929crewtime2';
 const CACHE_PREFIX = 'egc-crew-shell-';
 const CACHE = `${CACHE_PREFIX}${VERSION}`;
 const CONFIG = '/crew/sw-config.json';
 const PAGES = { '/crew/job.html': '/crew/job.html', '/crew/job': '/crew/job.html', '/crew/offline.html': '/crew/offline.html', '/crew/offline': '/crew/offline.html' };
-const ASSETS = ['/crew/job.css?v=20260929multiday', '/crew/job.js?v=20260929multiday', '/crew/field-outbox.js?v=20260929multiday', '/crew/field-expenses.css?v=20260928fun19', '/crew/field-expenses.js?v=20260929multiday', '/crew/job-photo-sharing.css?v=20260927photo', '/crew/job-photo-sharing.js?v=20260928photo', '/crew/manifest.webmanifest'];
+const ASSETS = ['/crew/job.css?v=20260929multiday', '/crew/job.js?v=20260929crewtime2', '/crew/field-outbox.js?v=20260929crewtime2', '/crew/field-expenses.css?v=20260928fun19', '/crew/field-expenses.js?v=20260929multiday', '/crew/job-photo-sharing.css?v=20260927photo', '/crew/job-photo-sharing.js?v=20260928photo', '/crew/manifest.webmanifest'];
 const ASSET_PATHS = new Set(ASSETS.map(asset => asset.split('?')[0]));
 // With EGC_STAFF_PAGE_GATE=on the edge refuses the job page and its files without a Hub session (staff-paths.js). Every
 // install needs this public part; the rest is cached when the install, or a later signed-in load, receives it.
@@ -15,7 +15,7 @@ const PUBLIC_SHELL = new Set(['/crew/offline.html', '/crew/field-outbox.js', '/c
 const NETWORK_WAIT = 6000;
 let configCheckedAt = 0;
 
-importScripts('/crew/field-outbox.js?v=20260929multiday');
+importScripts('/crew/field-outbox.js?v=20260929crewtime2');
 
 // Pretty-URL redirects (/crew/job.html -> /crew/job) must not be replayed as a
 // redirected response, which browsers refuse for navigations.
@@ -112,7 +112,9 @@ async function syncOutbox() {
   const outbox = self.EGCFieldOutbox.create({ locks: self.navigator?.locks });
   const result = await self.EGCFieldOutbox.replaySignedIn(outbox, self.EGCFieldOutbox.httpTransport(self.fetch.bind(self)));
   const windows = await self.clients.matchAll({ type: 'window' });
-  windows.forEach(client => client.postMessage({ type: 'egc-field-outbox-changed', applied: result.applied.length, remaining: result.remaining }));
+  // A status's time move the server refused as not allowed is dropped (field-outbox.js dropOnRefusal); an open page says why.
+  const dropped = (result.dropped || []).filter(row => row.item?.kind === 'clock').map(row => String(row.error?.message || '').slice(0, 300)).slice(0, 5);
+  windows.forEach(client => client.postMessage({ type: 'egc-field-outbox-changed', applied: result.applied.length, remaining: result.remaining, dropped }));
   // Ask the browser to retry later while the connection is still down.
   if (['network', 'transient'].includes(result.stopped?.reason)) throw new Error('Queued field work is waiting for a connection.');
 }

@@ -6,6 +6,7 @@ import { createJobAssignmentAccess, jobCrewNames as crewNames } from '../_lib/jo
 import { crewJobProjection, CREW_PROJECTION_FIELDS } from '../_lib/crew-job-projection.js';
 import { dispatchStorage } from '../_lib/dispatch-storage.js';
 import { mutateDispatchSelfAssignment } from '../_lib/dispatch-service.js';
+import { travelEstimator } from '../_lib/dispatch-travel.js';
 import { seesLaborCost } from '../_lib/pay-visibility.js';
 import { withoutJobLabor } from '../_lib/job-labor-private.js';
 
@@ -86,7 +87,7 @@ const MANAGER_VIEW_FIELDS = ['customer', 'address', 'time', 'endTime', 'serviceT
   'customerAddress', 'customerPhone', 'phone', 'notes'];
 export const CREW_LISTING_FIELDS = Object.freeze([...new Set([...FILTER_FIELDS, ...CREW_PROJECTION_FIELDS, ...OPEN_SHIFT_FIELDS, ...MANAGER_VIEW_FIELDS])]);
 
-export function crewJobsHandlers({ session = getHubSession, storage = dispatchStorage, now = () => new Date() } = {}) {
+export function crewJobsHandlers({ session = getHubSession, storage = dispatchStorage, now = () => new Date(), travel = travelEstimator } = {}) {
   return {
     async get({ request, env }) {
       const actor = await session(request, env);
@@ -157,10 +158,12 @@ export function crewJobsHandlers({ session = getHubSession, storage = dispatchSt
       }
 
       try {
-        const result = await mutateDispatchSelfAssignment(storage(env), actor, {
+        const store = storage(env);
+        // Claims check cached drive times like manager saves (no provider call before the commit).
+        const result = await mutateDispatchSelfAssignment(store, actor, {
           action, jobId, requestId: payload.requestId,
           ...(payload.expectedRevision ? { expectedRevision: payload.expectedRevision } : {}),
-        }, now().toISOString());
+        }, now().toISOString(), { travel: travel({ env, store, now, googleLimit: 0, cacheWrites: false }) });
         return reply(200, { ok: true, action, replayed: result.replayed === true,
           job: action === 'claim' ? (hasBusinessAccess(actor) ? managerJob(result.job) : crewJobProjection(result.job, { viewer: actor.user })) : publicOpenShift(result.job),
           // Additive: travel-buffer and legacy calendar-block notices for this shift.

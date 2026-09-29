@@ -94,5 +94,16 @@ class MoneyDocumentBrowserTests(unittest.TestCase):
         out = ROOT / 'test-results'; out.mkdir(exist_ok=True)
         page.locator('#document-links').screenshot(path=str(out / 'portal-document-links-375.png'))
 
+    def test_an_invoice_link_lands_on_the_portal_with_its_view_invoice_link_in_focus(self):
+        # next=invoice lands on /customer-portal#invoice (never on the document itself, which refuses a cross-site
+        # chain from webmail); the portal's own link then opens the invoice same-origin.
+        page, _ = self.open('/customer-portal.html?preview=1#invoice')
+        invoice = page.get_by_role('link', name='View invoice', exact=True)
+        expect(invoice).to_be_focused()
+        expect(invoice).to_have_attribute('href', '/api/money-document?kind=invoice')
+        self.assertTrue(page.evaluate("(()=>{const r=[...document.querySelectorAll('#document-links a')].find(a=>a.textContent==='View invoice').getBoundingClientRect();return r.top>=0&&r.bottom<=innerHeight})()"))
+        expect(page.locator('#pay-button')).not_to_be_focused()
+        self.assert_no_overflow(page, 'portal #invoice at 375px')
+
 if __name__ == '__main__':
     unittest.main()

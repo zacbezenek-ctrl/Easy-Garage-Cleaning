@@ -61,7 +61,7 @@ export function stripeReviewHandlers({ session = getHubSession, storage = stripe
     async get({ request, env }) {
       try {
         const actor = await session(request, env);
-        requireDispatcher(actor);
+        requireDispatcher(actor, env);
         if ([...new URL(request.url).searchParams.keys()].length) return reply(400, { ok: false, code: 'stripe_review_invalid_query', error: 'Stripe reviews take no query parameters.' });
         return reply(200, await stripeReviewOverview(storage(env), actor, now(), { checkoutBlock: paymentReviewCheckoutBlockEnabled(env) }));
       } catch (error) {
@@ -73,7 +73,7 @@ export function stripeReviewHandlers({ session = getHubSession, storage = stripe
       if (!sameOrigin(request)) return reply(403, { ok: false, code: 'stripe_review_origin_forbidden', error: 'Open the Employee Hub to resolve reviews.' });
       try {
         const actor = await session(request, env);
-        requireDispatcher(actor);
+        requireDispatcher(actor, env);
         if (request.headers.get('Content-Type')?.split(';')[0].trim().toLowerCase() !== 'application/json') return reply(415, { ok: false, code: 'stripe_review_json_required', error: 'Review changes must be JSON.' });
         if (Number(request.headers.get('Content-Length')) > MAX_BYTES) return reply(413, { ok: false, code: 'stripe_review_request_too_large', error: 'The review request is too large.' });
         const raw = await request.text();
