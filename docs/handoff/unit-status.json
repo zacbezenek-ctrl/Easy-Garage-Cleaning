@@ -125,7 +125,7 @@
   ],
   "laterAuthorizedHubIntegration": {
     "scope": "iOS Walkthroughs and recording/transcript to office tasks",
-    "state": "final_role_fix_integration_pending_exact_head_eight_ci",
+    "state": "final_role_fix_integration_pending_exact_head_seven_applicable_ci",
     "branch": "codex/hub-ios-walkthrough-completion",
     "merged": false,
     "localBrowserResults": {
@@ -154,7 +154,7 @@
     "branch": "codex/hub-ios-walkthrough-completion",
     "implementationSha": "a13e01e81552edfabd2dcc61e1479cd3ed0ddb42",
     "checkedHeadSha": "6bfc032f9317a7ceeeeb23863c7f4c7174f2b769",
-    "state": "final_role_fix_candidate_pending_exact_head_eight_ci",
+    "state": "final_role_fix_candidate_pending_exact_head_seven_applicable_ci",
     "merged": false,
     "ciAtCheckedHead": {
       "root": "success",
@@ -169,9 +169,25 @@
       "actionCenterBrowser": "success",
       "actionCenterWebKit": "success"
     },
+    "ciAtCheckedHeadScope": "historical eight-workflow result at 6bfc032 before Batch 8 merged to main",
     "localIntegration": {
       "state": "main_merged_into_local_final_candidate_pending_ci",
-      "mergeGate": "all eight workflows green on the final PR #87 head before Batch 9 main merge",
+      "mergeGate": "all seven applicable workflows green on the final PR #87 head before Batch 9 main merge",
+      "applicableWorkflows": [
+        "Root",
+        "Platform",
+        "Operations Integration",
+        "Firestore",
+        "Mobile Device E2E",
+        "Lighthouse",
+        "Action Center"
+      ],
+      "businessHubAcceptance": {
+        "state": "path_filtered_not_applicable",
+        "reason": "PR #87 diff against Batch 8 main changes no path listed in egc-business-hub-acceptance.yml pull_request.paths",
+        "lastRelevantMainRunId": 36630649618,
+        "lastRelevantMainRunState": "success"
+      },
       "sourceBatch8CandidateSha": "d765eba3a79f269e5c39c9e302fbcdd21124d8df",
       "assetVersion": "20260929hubready3",
       "localCombinedTests": "231 normal isolated Node tests passed on combined tree 6d215cc; focused field-payment browser Chromium 16/16 and WebKit 16/16 on identical d765 role-fix code before integration",

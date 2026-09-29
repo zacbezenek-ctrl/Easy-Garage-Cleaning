@@ -14,7 +14,7 @@
       "id": "CI-01",
       "state": "resolved_batch8_final_head_seven_green",
       "owner": "build coordinator",
-      "action": "PR #86 final head d765eba3a79f269e5c39c9e302fbcdd21124d8df passed all seven applicable workflows and merged as a0297623276e0d0bed78dbdb789957367b8a60dd. Preserve this result separately from the pending final PR #87 eight-workflow gate.",
+      "action": "PR #86 final head d765eba3a79f269e5c39c9e302fbcdd21124d8df passed all seven applicable workflows and merged as a0297623276e0d0bed78dbdb789957367b8a60dd. Preserve this result separately from the pending final PR #87 seven-applicable-workflow gate.",
       "evidence": "Business 36629316036; Root 36629315555; Firestore 36629315519; Platform 36629315656; Mobile 36629315606; Action Center 36629315563; Lighthouse 36629315570. Operations Integration path-filtered."
     },
     {
@@ -50,9 +50,9 @@
     },
     {
       "id": "HUB-INTEGRATION",
-      "state": "final_role_fix_candidate_pending_exact_head_eight_ci",
+      "state": "final_role_fix_candidate_pending_exact_head_seven_applicable_ci",
       "owner": "build coordinator",
-      "action": "PR #87 published combined head 6bfc032f9317a7ceeeeb23863c7f4c7174f2b769 passed all eight workflows. The final role-fix candidate now includes Batch 8 main a029762 via local merge 6d215cc; 231 normal isolated Node tests passed again on the combined tree. Focused field-payment browser 16/16 Chromium and 16/16 WebKit passed on identical d765 role-fix code before integration. Verify all eight workflows on the final PR #87 head before its main merge."
+      "action": "PR #87 published combined head 6bfc032f9317a7ceeeeb23863c7f4c7174f2b769 and prior bf191d92c9de6ce394b8166d9fd53039d7e25104 each passed all eight workflows before Batch 8 merged to main. The final role-fix candidate includes Batch 8 main a029762 via local merge 6d215cc; 231 normal isolated Node tests passed on the combined tree. Focused field-payment browser 16/16 Chromium and 16/16 WebKit passed on identical d765 role-fix code before integration. Verify the seven applicable workflows on the final PR #87 head before merge. Business Hub Acceptance is path-filtered because the PR diff changes no listed workflow path; the last relevant Batch 8 main run 36630649618 passed."
     },
     {
       "id": "OWNER-LIVE",

@@ -92,10 +92,26 @@
   },
   "batch9": {
     "scope": "remaining completed units",
-    "requires": "all eight workflows green on final PR #87 head before its main merge",
+    "requires": "all seven applicable workflows green on final PR #87 head before its main merge",
+    "applicableWorkflows": [
+      "Root",
+      "Platform",
+      "Operations Integration",
+      "Firestore",
+      "Mobile Device E2E",
+      "Lighthouse",
+      "Action Center"
+    ],
+    "businessHubAcceptance": {
+      "state": "path_filtered_not_applicable",
+      "reason": "No PR #87 diff path against Batch 8 main matches egc-business-hub-acceptance.yml pull_request.paths",
+      "lastRelevantMainRunId": 36630649618,
+      "lastRelevantMainRunState": "success"
+    },
     "pr": 87,
     "priorGreenHeadSha": "6bfc032f9317a7ceeeeb23863c7f4c7174f2b769",
-    "localIntegration": "main_a029_merged_at_6d215_final_role_fix_candidate_pending_exact_head_eight_ci"
+    "priorGreenHeadScope": "historical all-eight-workflow result before Batch 8 main merge",
+    "localIntegration": "main_a029_merged_at_6d215_final_role_fix_candidate_pending_exact_head_seven_applicable_ci"
   },
   "activation": {
     "FIX-REFUNDS": "off_at_merge",
