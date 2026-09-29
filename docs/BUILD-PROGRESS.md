@@ -451,6 +451,10 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   invoice) starts the same egc-<event> HighLevel lifecycle trigger as the legacy finance save, through the suite's own
   syncCustomerCommunication (claimed once per save; a save it cannot confirm shows as needs attention). Flag off: no
   change. Gap: server estimate/invoice saves do not turn on automatic reminders (owner decision).
+- **BRIDGE-ADOPT-AUTHZ** Fail-closed binding of bridge integration actor ids: BRIDGE_ACTOR_BINDINGS (shared by egc-api and
+  the Hub) binds every minted id to the service whose key signs it (mcp, hub, api, worker); unknown or mismatched ids get
+  403 before any policy or storage work, audited (hub_audit bridge.issuer_refused, audit_logs operations.issuer_refused).
+  Always on. Gaps: egc-worker shares the API key; MCP-signed human actors are still accepted (follow-ups).
 
 ## In progress
 
@@ -556,6 +560,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | QUOTE-DRAFT | Unsigned quote drafts with a confirmed send (estimate-ready via approved send, off) and the quote-author role (flag off) | merged (0658534) |
 | CREW-NOTIFY | Crew schedule notices: dispatch queues, messaging cron texts opted-in staff on egc-staff contacts (flag off) | merged (b95eee8) |
 | MONEY-GHL-PARITY | Server money saves start the same HighLevel lifecycle triggers as the finance tools (MONEY_API_ENABLED) | merged (890742e) |
+| BRIDGE-ADOPT-AUTHZ | Fail-closed binding of bridge integration actor ids to their signing service (always on) | merged (93e8b20) |
 
 ## Next
 

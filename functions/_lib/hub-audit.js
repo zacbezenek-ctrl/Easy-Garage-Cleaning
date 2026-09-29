@@ -1,7 +1,7 @@
 import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex } from '@noble/hashes/utils.js';
 import { firestoreFetch } from './firebase-service-account.js';
-import { decodeFirestoreFields } from './firestore-job.js';
+import { decodeFirestoreFields, encodeFirestoreFields } from './firestore-job.js';
 import { hasBusinessAccess } from './hub-session.js';
 import { localInstant } from './operations-portal-records.js';
 import { validDate } from './dispatch-time.js';
@@ -245,6 +245,14 @@ export async function listAudit(store, query = {}, reader = null) {
 export function hubAuditStorage(env, fetcher = firestoreFetch) {
   const reference = id => ({ referenceValue: `${ROOT}/${HUB_AUDIT_COLLECTION}/${id}` });
   return {
+    // One create-only entry with no business commit to join (a refused bridge request).
+    async record(write) {
+      if (write?.collection !== HUB_AUDIT_COLLECTION || !AUDIT_ID.test(String(write.id)) || !write.patch) throw fail('hub_audit_invalid', 'The audit entry is invalid. Nothing was saved.', 503);
+      let response;
+      try { response = await fetcher(env, `${BASE}:commit`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ writes: [{ update: { name: `${ROOT}/${HUB_AUDIT_COLLECTION}/${write.id}`, fields: encodeFirestoreFields(write.patch) }, currentDocument: { exists: false } }] }), signal: AbortSignal.timeout(15000) }); }
+      catch { throw fail('hub_audit_unavailable', 'The audit entry could not be saved. Retry.', 503); }
+      if (!response.ok) throw fail('hub_audit_unavailable', 'The audit entry could not be saved. Retry.', 503);
+    },
     async auditPage({ entityKey, actorId, fromId, beforeId, after, limit }) {
       const filters = [];
       if (entityKey) filters.push({ fieldFilter: { field: { fieldPath: 'entityKey' }, op: 'EQUAL', value: { stringValue: entityKey } } });

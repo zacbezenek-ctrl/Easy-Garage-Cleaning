@@ -13,7 +13,7 @@ import {onRequestPost as portal} from '../functions/api/operations-portal.js';
 const NOW='2026-09-22T12:00:00.000Z',now=()=>new Date(NOW);
 const key='isolated-hub-bridge-test-key-0123456789abcdef';
 const owner={id:'zacb',role:'owner',kind:'human',workspace:'egc'},manager={id:'tylerg',role:'manager',kind:'human',workspace:'egc'},sales={id:'alexk',role:'sales',kind:'human',workspace:'egc'};
-const grant={id:'mcp-oauth-grant:synthetic',role:'integration',kind:'integration',workspace:'egc'};
+const grant={id:'mcp-oauth-grant:6ba7b810-9dad-41d1-80b4-00c04fd430c8',role:'integration',kind:'integration',workspace:'egc'};
 const profiles=[
   {user:'zacb',displayName:'Synthetic Owner',role:'owner',payType:'hourly',hourlyRate:987.65,businessAccess:true},
   {user:'tylerg',displayName:'Synthetic Manager',role:'manager',payType:'hourly',hourlyRate:876.54,businessAccess:true},

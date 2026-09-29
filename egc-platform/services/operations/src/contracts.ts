@@ -6,6 +6,7 @@ export * from "./hub-commands.js";
 export * from "./bridge-command-policy.js";
 import {SPEND_COMMANDS,SPEND_WRITE_COMMANDS,isSpendCommand,spendCommandDenial} from "./spend-commands.js";
 export * from "./spend-commands.js";
+import {bridgeIssuerDenial,type BridgeIssuer} from "./bridge-command-policy.js";
 
 export const CONTRACT_VERSION = 1;
 export const isoTime = z.string().datetime({ offset: true });
@@ -193,9 +194,14 @@ export type SignedClaims = z.infer<typeof signedClaimsSchema>;
 export class OperationsError extends Error {
   constructor(public code:string, public status=400, public details:Record<string,unknown>={}) { super(code); }
 }
-export function authorize(actor:Actor, command:Command, workspace:string, hubPolicies:Readonly<Record<string,HubCommandPolicy>>=HUB_COMMAND_POLICY, bridgePolicies:Readonly<Record<string,BridgeCommandPolicy>>=BRIDGE_COMMAND_POLICY) {
+/** issuer is the service whose key signed the request (apps/api claimsIssuer); only the
+ * API's own in-process callers omit it. */
+export function authorize(actor:Actor, command:Command, workspace:string, hubPolicies:Readonly<Record<string,HubCommandPolicy>>=HUB_COMMAND_POLICY, bridgePolicies:Readonly<Record<string,BridgeCommandPolicy>>=BRIDGE_COMMAND_POLICY, issuer?:BridgeIssuer) {
   if (!actorSchema.safeParse(actor).success || (actor.role === "integration") !== (actor.kind === "integration")) throw new OperationsError("invalid_actor",403);
   if (actor.workspace !== workspace) throw new OperationsError("workspace_forbidden",403);
+  // BRIDGE-ADOPT-AUTHZ: a signed integration actor must be one its signer mints or relays.
+  const unbound=issuer!==undefined&&bridgeIssuerDenial(actor,issuer);
+  if (unbound) throw new OperationsError(unbound,403);
   if(command.command==='schedule.adopt'&&(actor.kind!=='integration'||actor.role!=='integration'||actor.id!=='booking-adoption-worker'))throw new OperationsError('schedule_adoption_internal_only',403);
   if((command.command==="schedule.sync_due"||command.command==="schedule.sync_failed")&&(actor.kind!=="integration"||actor.role!=="integration"||actor.id!==SCHEDULE_SYNC_WORKER_ID))throw new OperationsError("schedule_sync_queue_internal_only",403);
   if(command.command===RECURRING_HORIZON_COMMAND&&(actor.kind!=='integration'||actor.role!=='integration'||actor.id!==RECURRING_HORIZON_ACTOR))throw new OperationsError('recurring_horizon_internal_only',403);

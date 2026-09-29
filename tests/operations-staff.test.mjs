@@ -27,7 +27,7 @@ function legacyPolicy(env,members){
 const legacyMembers = env => listHubUserProfiles(env).filter(hasBusinessAccess).map(p => ({ id: p.user, name: p.displayName, role: p.role }));
 
 async function command(extraEnv, body) {
-  const claims = { v: 1, iss: 'portal', aud: 'egc-portal', iat: Math.floor(Date.now() / 1000), nonce: crypto.randomUUID(), actor: { id: 'synthetic-integration', role: 'integration', kind: 'integration', workspace: 'egc' }, request: { requestId: crypto.randomUUID(), body } };
+  const claims = { v: 1, iss: 'portal', aud: 'egc-portal', iat: Math.floor(Date.now() / 1000), nonce: crypto.randomUUID(), actor: { id: 'operations-api', role: 'integration', kind: 'integration', workspace: 'egc' }, request: { requestId: crypto.randomUUID(), body } };
   const request = new Request('https://portal.test/api/operations-portal', { method: 'POST', body: JSON.stringify({ envelope: await signOperationsEnvelope(claims, key) }) });
   return portal({ request, env: { ...env, EGC_OPERATIONS_ENABLED: 'true', EGC_OPERATIONS_SERVICE_AUTH: 'legacy', EGC_OPERATIONS_PORTAL_SIGNING_SECRET: key, ...extraEnv } });
 }

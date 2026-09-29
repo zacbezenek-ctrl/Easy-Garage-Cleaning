@@ -9,7 +9,7 @@ export async function onRequestPost({request,env}){
   try{const text=await request.text();if(text.length>220000)return reply(413,{error:'request_too_large'});
     const c=await verifyApiServiceEnvelope(env,JSON.parse(text).envelope,'/api/operations-recording-approval');
     if(c.actor.workspace!==(env.EGC_OPERATIONS_WORKSPACE||'egc'))return reply(403,{error:'workspace_forbidden'});
-    const bridge=await prepareBridgeCommand(env,c.actor,c.request.body,{commands:RECORDING_COMMANDS,unknown:'unsupported_recording_command'}),command=bridge.command;
+    const bridge=await prepareBridgeCommand(env,c.actor,c.request.body,{commands:RECORDING_COMMANDS,unknown:'unsupported_recording_command',claims:c}),command=bridge.command;
     if(command.command==='recording.resolve')return reply(200,{ok:true,identity:await resolveRecordingIdentity(env,command.portalJobId)});
     if(command.command==='recording.apply')return reply(200,await applyRecordingApproval(env,command,c.actor,undefined,{now:bridge.now,audit:bridge.audit,via:bridge.via}));
     return reply(400,{error:'unsupported_recording_command'});

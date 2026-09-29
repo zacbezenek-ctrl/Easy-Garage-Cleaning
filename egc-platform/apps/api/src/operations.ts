@@ -1,6 +1,6 @@
 import {randomUUID} from "node:crypto";
 import type {FastifyInstance} from "fastify";
-import {OperationsError,operationsService,signRequest,authorize,SERVICE_ORIGINS,type Actor,type Command,type OperationsService,type PortalJobReference} from "@egc/operations";
+import {OperationsError,operationsService,signRequest,authorize,SERVICE_ORIGINS,type Actor,type BridgeIssuer,type Command,type OperationsService,type PortalJobReference} from "@egc/operations";
 import {getDb,schema} from "@egc/database";
 import {InboundActionReconciler,type InboundPolicy} from "./inbound-actions.js";
 import {syncPortalSchedule} from "./scheduling.js";
@@ -8,13 +8,14 @@ import {ensureProviderNote} from "./provider-notes.js";
 import {actionSendEnabled,actionSendHook} from "./action-send.js";
 import {getCanonicalReport,getCustomerTimeline,getCustomerStateDiagnostics} from '@egc/customer-state';
 import {reconcileHubBookings} from './booking-worker.js';
-import {serviceAuthEnabled,signApiServiceRequest,verifyDelegatedClaims,verifyOperationsClaims} from './service-bridge.js';
+import {auditLogWriter,claimsIssuer,recordIssuerRefusal,serviceAuthEnabled,signApiServiceRequest,verifyDelegatedClaims,verifyOperationsClaims,type AuditRow} from './service-bridge.js';
 import {reconciliationDiagnostic,safeReconciliationCode} from './reconciliation-diagnostics.js';
 import {registerScheduleSyncWorker,type ScheduleSyncExecute} from './schedule-sync-worker.js';
 import {registerRecurringHorizon} from './recurring-horizon-worker.js';
 
 /** Run only by the in-process schedule-sync loop (schedule-sync-worker.ts calls OperationsService.execute
- * directly). The API does not bind integration actor ids to an issuer, so no signed envelope reaches them. */
+ * directly), so no signed envelope reaches them. BRIDGE-ADOPT-AUTHZ also binds schedule-sync-worker to the
+ * API, so neither the MCP nor the Hub key may present it; this check refuses the commands for any actor. */
 const INTERNAL_ONLY_COMMANDS:ReadonlySet<string>=new Set(["schedule.sync_due","schedule.sync_failed"]);
 
 export function portalAdapter(origin:string,key:string,workspace:string,fetcher:typeof fetch=fetch,env:NodeJS.ProcessEnv=process.env) {
@@ -42,8 +43,19 @@ export function portalAdapter(origin:string,key:string,workspace:string,fetcher:
     return job;
   }};
 }
-export async function registerOperationsRoutes(app:FastifyInstance,options:{service?:OperationsService;env?:NodeJS.ProcessEnv}={}) {
+export async function registerOperationsRoutes(app:FastifyInstance,options:{service?:OperationsService;env?:NodeJS.ProcessEnv;audit?:(row:AuditRow)=>Promise<unknown>}={}) {
   const env=options.env??process.env;
+  // BRIDGE-ADOPT-AUTHZ: runs a signed request with the issuer its claims verified. A refusal of an
+  // actor that issuer may not present is logged and kept in audit_logs (best effort) before it is rethrown.
+  const audit=options.audit??auditLogWriter;
+  const signed=async<T>(claims:Awaited<ReturnType<typeof verifyOperationsClaims>>,run:(issuer:BridgeIssuer)=>T|Promise<T>):Promise<T>=>{
+    const issuer=claimsIssuer(claims);
+    try{return await run(issuer);}
+    catch(error){
+      await recordIssuerRefusal(app.log,audit,error,{issuer,actor:claims.actor,command:claims.request.body.command,requestId:claims.request.requestId,entity:"operations_request",source:"operations"});
+      throw error;
+    }
+  };
   let service=options.service;
   let inbound:InboundActionReconciler|undefined;
   let bookingTick:(()=>Promise<unknown>)|undefined;
@@ -82,10 +94,10 @@ export async function registerOperationsRoutes(app:FastifyInstance,options:{serv
       // applies authorize() (the SEC-04 BRIDGE-AUTHZ table) to the same actor.
       await verifyDelegatedClaims(claims);
       if(claims.request.body.command==="inbound.reconcile"){
-        authorize(claims.actor,claims.request.body,env.EGC_OPERATIONS_WORKSPACE??"egc");if(!inbound)throw new OperationsError("inbound_reconciliation_not_configured",503);
+        await signed(claims,issuer=>authorize(claims.actor,claims.request.body,env.EGC_OPERATIONS_WORKSPACE??"egc",undefined,undefined,issuer));if(!inbound)throw new OperationsError("inbound_reconciliation_not_configured",503);
         const command=claims.request.body;return reply.send(await inbound.run({limit:command.limit,...(command.lookbackDays?{lookbackDays:command.lookbackDays}:{})}));
       }
-      const result=await service.execute(claims.actor,claims.request.body,claims.request.requestId);
+      const result=await signed(claims,issuer=>service!.execute(claims.actor,claims.request.body,claims.request.requestId,issuer));
       return reply.send(result);
     }catch(e) {
       if(e instanceof OperationsError)return reply.code(e.status).send({error:e.code,...e.details});

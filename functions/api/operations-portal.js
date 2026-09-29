@@ -20,7 +20,7 @@ export async function onRequestPost({request,env}) {
     const content=await request.text();if(content.length>220000)return reply(413,{error:'request_too_large'});
     const c=await verifyApiServiceEnvelope(env,JSON.parse(content).envelope,'/api/operations-portal');
     if(c.actor.workspace!==(env.EGC_OPERATIONS_WORKSPACE||'egc'))return reply(403,{error:'workspace_forbidden'});
-    const bridge=await prepareBridgeCommand(env,c.actor,c.request.body,{commands:PORTAL_COMMANDS,hub:true,unknown:'read_only_portal_command_required'}),command=bridge.command,now=bridge.now;
+    const bridge=await prepareBridgeCommand(env,c.actor,c.request.body,{commands:PORTAL_COMMANDS,hub:true,unknown:'read_only_portal_command_required',claims:c}),command=bridge.command,now=bridge.now;
     if(isHubCommand(command))return reply(200,await runHubCommand(env,c.actor,command));
     if(['schedule.sync_due','schedule.sync_failed'].includes(command.command))return reply(200,await runScheduleSyncCommand(env,c.actor,command,{store:bridge.store(scheduleSyncStorage(env)),now:new Date(now)}));
     if(command.command==='schedule.adopt')return reply(200,await adoptScheduledVisit(bridge.store(adoptionStorage(env)),c.actor,command,now));
