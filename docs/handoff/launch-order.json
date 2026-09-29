@@ -132,8 +132,18 @@
   },
   "nextProductionDiagnostic": {
     "branch": "codex/transcript-limit-diagnostics",
-    "state": "reviewed_24_api_tests_typecheck_passed_ci_pending_not_merged_or_deployed",
-    "gate": "review documented error-code allowlist, tests, exact-head CI, matching deployment, inspect provider usage/limits before bounded retry"
+    "state": "pr89_seven_ci_green_merged_deployed_baf7aa2",
+    "pr": 89,
+    "mainMergeSha": "baf7aa2ca9624438cbc8d1959b0be3caf4108e7f",
+    "deployedRevision": "baf7aa2ca9624438cbc8d1959b0be3caf4108e7f",
+    "sameSavedTranscriptAttempt3": "credit_balance_exhausted_http_429_no_ai_task_or_send",
+    "gate": "restore credits in existing OpenAI account through billing payment handoff before further retry"
+  },
+  "nextAuthAndCreditUx": {
+    "branch": "codex/hub-session-diagnostics",
+    "authCommitSha": "9e397576b1de2a99d5e7341aa7fba206a09a70e5",
+    "state": "auth_diagnostics_reviewed_20_tests_passed_next_pr_ci_pending; bounded_credit_message_ux_in_progress_not_live",
+    "gate": "review focused tests, exact-head CI and deployment; do not claim sign-in or provider credit fix"
   },
   "activation": {
     "FIX-REFUNDS": "off_at_merge",

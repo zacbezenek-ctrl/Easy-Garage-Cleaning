@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "asOf": "2026-09-29",
   "repository": "zacbezenek-ctrl/Easy-Garage-Cleaning",
-  "mainSha": "d4fff3d3bcb1562fc35232dce8a0bb530b2aed4e",
+  "mainSha": "baf7aa2ca9624438cbc8d1959b0be3caf4108e7f",
   "batch8": {
     "pr": 86,
     "state": "merged_to_main_after_seven_green_workflows",
@@ -159,7 +159,7 @@
     "locatedCount": 0,
     "state": "missing_source"
   },
-  "note": "FIX-REFUNDS, GHL-TRACK-2, seven running builds and 41 specs remain source-unknown; reported states do not prove merged code. Batch 9 and PR #88 are deployed but live transcript retry failed with provider HTTP 429, so acceptance remains open.",
+  "note": "FIX-REFUNDS, GHL-TRACK-2, seven running builds and 41 specs remain source-unknown. Live transcript attempt 3 confirmed credit_balance_exhausted on the existing OpenAI account; no AI task or customer send was created. Restore account credits before further retry.",
   "batch9": {
     "pr": 87,
     "branch": "codex/hub-ios-walkthrough-completion",
@@ -219,11 +219,11 @@
     }
   },
   "production": {
-    "releaseSha": "d4fff3d3bcb1562fc35232dce8a0bb530b2aed4e",
+    "releaseSha": "baf7aa2ca9624438cbc8d1959b0be3caf4108e7f",
     "cloudflareProductionCheck": "success",
     "liveHubAssets": "hubready3 recordings operations suite verified",
-    "railwayDeployments": "all_four_success_actual_commit_metadata_d4fff3d",
-    "apiMcpPortalHealth": "ready_release_d4fff3d",
+    "railwayDeployments": "all_four_success_actual_commit_metadata_baf7aa2",
+    "apiMcpPortalHealth": "ready_release_baf7aa2_database_ready",
     "requiredVariableNamesPresent": true,
     "secretValuesInspected": false,
     "syntheticVisit": {
@@ -236,14 +236,15 @@
       "remindersEnabled": false,
       "assignedOwner": "Zac",
       "transcriptSaved": true,
-      "transcriptProcessing": "failed_attempt_2_provider_http_429",
+      "transcriptProcessing": "failed_attempt_3_credit_balance_exhausted_http_429",
       "secondAttemptAt": "2026-09-29T22:00:18Z",
-      "safeServerEvidence": "extraction provider_request_failed HTTP 429",
-      "providerLimitClass": "unknown_usage_rate_credit_or_spend",
+      "thirdAttemptAt": "2026-09-29T22:24:50.268800228Z",
+      "safeServerEvidence": "stage extraction; sourceKind transcript; code credit_balance_exhausted; status 429; deployment baf7aa2",
+      "providerLimitClass": "credit_balance_exhausted",
       "originalRecordDurable": true,
       "officeTaskCreated": false,
       "customerSendOccurred": false,
-      "retryPlan": "inspect usage and limits plus reviewed provider diagnostics; bounded retry of same saved transcript if appropriate"
+      "retryPlan": "restore credits in existing OpenAI account through billing handoff, then retry same saved transcript once; no key rotation or extra retry before restoration"
     },
     "jobPhotoStorage": {
       "state": "blocked_live_regular_job",
@@ -253,12 +254,28 @@
       "recovery": "Cloudflare Production /api/drive-auth as Hub manager with company Google; redirect https://easygaragecleaning.com/api/drive-auth; verify upload",
       "fieldPayReceiptStorageSeparate": true
     },
-    "state": "matching_revision_deployed_live_provider_429_and_job_photos_blocked"
+    "manualSyntheticOfficeTask": {
+      "taskId": "b2b10b59-7c38-4b0c-9ba5-10063406b2c2",
+      "title": "INTERNAL TEST — office task persistence 2026-09-29",
+      "visitId": "dispatch_beef26f85e694eb4b57d7a47a3c324d1",
+      "assignedOwner": "Zac",
+      "due": "2026-09-30 noon Mountain Time",
+      "savedAndReopenedAfterFullReload": true,
+      "completed": true,
+      "completionNote": "Verified saved task and test-visit linkage after reload; no customer contacted.",
+      "openCountBefore": 86,
+      "openCountAfter": 85,
+      "removedFromOpenList": true,
+      "completedHistoryViewExposed": false,
+      "distinctFromAiAcceptance": true
+    },
+    "firebaseSdkSignInErrors": "two_transient_recovered_with_one_reload_without_credential_change_cause_unknown",
+    "state": "matching_revision_deployed_credit_balance_exhausted_and_job_photos_blocked"
   },
   "productionDeployment": {
     "completed": true,
     "hubStaffSessionVerified": true,
-    "releaseConsoleAuthentication": "firebase_google_and_cloudflare_admin_pending",
+    "releaseConsoleAuthentication": "firebase_google_cloudflare_and_openai_billing_pending",
     "fieldPayEnabledByThisTask": false,
     "liveAcceptanceComplete": false
   },
@@ -276,12 +293,27 @@
   },
   "transcriptLimitDiagnostics": {
     "branch": "codex/transcript-limit-diagnostics",
-    "state": "reviewed_local_tests_passed_ci_pending_not_merged_or_deployed",
+    "state": "reviewed_seven_ci_green_merged_deployed",
+    "pr": 89,
+    "finalHeadPrefix": "297cc9b",
+    "mergeSha": "baf7aa2ca9624438cbc8d1959b0be3caf4108e7f",
+    "ci": "seven_of_seven_exact_head_success_both_previews_green",
+    "mainPushCi": "three_of_six_success_three_running_at_snapshot",
     "scope": "add currently documented provider error codes to safe allowlist",
     "review": "primary_and_independent_clear",
     "localTests": "24 focused API tests and typecheck passed",
-    "requires": "review, tests, exact-head CI, merge and deployment before bounded retry",
-    "ownerUsageLimitsSignIn": "requested",
+    "requires": "restore existing OpenAI account credits; no further retry until restoration",
+    "ownerUsageLimitsSignIn": "requested_billing_payment_handoff_required",
     "keyRotationOrBillingChange": false
+  },
+  "authSessionDiagnostics": {
+    "branch": "codex/hub-session-diagnostics",
+    "commitSha": "9e397576b1de2a99d5e7341aa7fba206a09a70e5",
+    "state": "reviewed_twenty_tests_passed_next_pr_ci_pending_not_live",
+    "scope": "surface safe Firebase SDK sign-in diagnostics for transient errors; not a claimed live auth fix"
+  },
+  "recordingCreditMessage": {
+    "state": "bounded_ux_fix_in_progress_not_deployed",
+    "scope": "store exact credit_balance_exhausted category and show staff that saved transcript AI drafting is paused until operations restores API credits; other 429 responses stay generic"
   }
 }

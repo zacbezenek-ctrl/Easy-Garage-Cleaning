@@ -139,9 +139,12 @@ export class RecordingService{
       stage='save_draft';
       await this.db.update(schema.walkthroughs).set({transcript,extraction,extractionVersion,status:'draft',processingLeaseUntil:null,lastErrorCode:null,updatedAt:new Date()}).where(and(eq(schema.walkthroughs.id,row.id),eq(schema.walkthroughs.attemptCount,row.attemptCount),eq(schema.walkthroughs.status,'processing')));
     }catch(error){
-      await this.db.update(schema.walkthroughs).set({status:'failed',processingLeaseUntil:null,lastErrorCode:'recording_processing_failed',updatedAt:new Date()}).where(and(eq(schema.walkthroughs.id,row.id),eq(schema.walkthroughs.attemptCount,row.attemptCount),eq(schema.walkthroughs.status,'processing')));
-      // Diagnostics are server-only and cannot prevent a durable, retryable failure.
-      try{onFailure({event:'recording_processing_failed',stage,attempt:row.attemptCount,sourceKind:isTranscriptRow(row)?'transcript':'audio',...recordingFailureDiagnostic(error)});}catch{}
+      let diagnostic:ReturnType<typeof recordingFailureDiagnostic>={code:'processing_failed'};
+      try{diagnostic=recordingFailureDiagnostic(error);}catch{}
+      const lastErrorCode=diagnostic.code==='credit_balance_exhausted'&&diagnostic.status===429?'recording_ai_credits_exhausted':'recording_processing_failed';
+      await this.db.update(schema.walkthroughs).set({status:'failed',processingLeaseUntil:null,lastErrorCode,updatedAt:new Date()}).where(and(eq(schema.walkthroughs.id,row.id),eq(schema.walkthroughs.attemptCount,row.attemptCount),eq(schema.walkthroughs.status,'processing')));
+      // Only the fixed credit recovery category is stored; provider details stay in safe server diagnostics.
+      try{onFailure({event:'recording_processing_failed',stage,attempt:row.attemptCount,sourceKind:isTranscriptRow(row)?'transcript':'audio',...diagnostic});}catch{}
     }
     return true;
   }

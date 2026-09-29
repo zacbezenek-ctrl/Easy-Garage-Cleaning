@@ -52,6 +52,19 @@ class RecordingTests(unittest.TestCase):
         self.open();self.fail=True;self.page.get_by_label('I reviewed the transcript, the current visit, the scope and each selected action').check();self.page.get_by_role('button',name='Approve reviewed scope',exact=True).click();expect(self.page.get_by_role('button',name='Retry exact review')).to_be_visible();expect(self.page.get_by_label('Keep',exact=True)).to_be_disabled();self.page.get_by_role('button',name='Retry exact review').click();expect(self.page.get_by_text('Status: approved',exact=True)).to_be_visible();writes=[x for x in self.calls if x['body']['command']=='recording.approve'];self.assertEqual(len(writes),2);self.assertEqual(writes[0],writes[1]);self.assertEqual(writes[0]['body']['actions'],[])
     def test_failed_processing_is_truthful_and_retryable(self):
         self.row['status']='failed';self.row['lastErrorCode']='recording_processing_failed';self.page.goto(self.url);self.page.get_by_role('button',name='Recordings',exact=True).click();self.page.get_by_role('button',name='Open recording',exact=True).click();expect(self.page.get_by_role('alert')).to_contain_text('Audio is saved');self.page.get_by_role('button',name='Retry processing').click();expect(self.page.get_by_text('Status: processing',exact=True)).to_be_visible()
+    def test_credit_exhaustion_shows_saved_transcript_and_keeps_retry_available(self):
+        self.row.update(status='failed',sourceKind='transcript',lastErrorCode='recording_ai_credits_exhausted')
+        self.page.goto(self.url);self.page.get_by_role('button',name='Recordings',exact=True).click();self.page.get_by_role('button',name='Open recording',exact=True).click()
+        expect(self.page.get_by_role('alert')).to_contain_text('Transcript saved; AI drafting paused until operations restores API credits')
+        self.page.get_by_text('Source transcript',exact=True).click()
+        expect(self.page.get_by_text('I will call before work starts. Keep the bicycle.',exact=True)).to_be_visible()
+        self.page.get_by_role('button',name='Retry processing').click();expect(self.page.get_by_text('Status: processing',exact=True)).to_be_visible()
+        self.assertEqual([call['body']['command'] for call in self.calls].count('recording.retry'),1)
+    def test_general_rate_limit_does_not_claim_api_credits_are_exhausted(self):
+        self.row.update(status='failed',sourceKind='transcript',lastErrorCode='recording_processing_failed')
+        self.page.goto(self.url);self.page.get_by_role('button',name='Recordings',exact=True).click();self.page.get_by_role('button',name='Open recording',exact=True).click()
+        expect(self.page.get_by_role('alert')).to_contain_text('review draft could not be prepared')
+        self.assertNotIn('API credits',self.page.get_by_role('alert').inner_text())
     def add_transcript(self):
         self.page.goto(self.url);self.page.get_by_role('button',name='Recordings',exact=True).click();self.page.get_by_role('button',name='Add transcript',exact=True).click()
     def test_pasted_transcript_saves_exact_text_on_current_visit(self):

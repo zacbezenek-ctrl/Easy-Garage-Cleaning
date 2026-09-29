@@ -1231,6 +1231,16 @@ function canRunBusiness() {
   return Boolean(me) && sessionStorage.getItem('egc_business_access') === 'true';
 }
 
+function firebaseSignInDiagnosticCode(error) {
+  // Firebase messages can contain request details. Only fixed SDK codes may reach the login screen.
+  const known = [
+    'auth/network-request-failed', 'auth/too-many-requests', 'auth/internal-error',
+    'auth/invalid-custom-token', 'auth/custom-token-mismatch', 'auth/invalid-api-key',
+    'auth/operation-not-allowed', 'auth/user-disabled'
+  ];
+  return known.includes(error?.code) ? error.code : 'unknown';
+}
+
 async function ensureFirebaseSession(version = hubAuthVersion) {
   if (!window.firebase?.auth) throw new Error('Secure employee data could not start. Reload the page and try again.');
   const response = await fetch('/api/firebase-session', { cache: 'no-store', credentials: 'same-origin' });
@@ -1244,7 +1254,7 @@ async function ensureFirebaseSession(version = hubAuthVersion) {
   const pending = hubFirebaseQueue.then(async () => {
     if (version !== hubAuthVersion) throw hubAuthInterrupted();
     try { await firebase.auth().signInWithCustomToken(data.token); }
-    catch { throw new Error('Your login was accepted, but secure employee data could not connect. Reload and retry; if it continues, ask Zac to check the Firebase setup.'); }
+    catch (error) { throw new Error(`Your login was accepted, but secure employee data could not connect. Reload and retry; if it continues, ask Zac to check the Firebase setup. Firebase code: ${firebaseSignInDiagnosticCode(error)}.`); }
     if (version !== hubAuthVersion) throw hubAuthInterrupted();
   });
   hubFirebaseQueue = pending.catch(() => {});
@@ -2959,7 +2969,7 @@ window.addEventListener('egc:booking-recovered',event=>{const key=event.detail?.
 <script src="employee-pricing.js?v=20260928price"></script>
 <link rel="stylesheet" href="employee-operations.css?v=20260929hubready3">
 <link rel="stylesheet" href="employee-recordings.css?v=20260929hubready3">
-<script src="employee-recordings.js?v=20260929hubready3"></script>
+<script src="employee-recordings.js?v=20260929hubready4"></script>
 <script src="employee-operations.js?v=20260929hubready3"></script>
 <link rel="stylesheet" href="employee-dispatch.css?v=20260929readysaleswtqueue">
 <link rel="stylesheet" href="employee-dispatch-calendar.css?v=20260928cal">

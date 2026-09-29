@@ -111,6 +111,30 @@ describe('durable text transcript intake',()=>{
     expect(fixture.io.conversation).toHaveBeenCalledTimes(2);
     expect(fixture.io.get).not.toHaveBeenCalled();expect(fixture.io.transcribe).not.toHaveBeenCalled();expect(fixture.io.put).not.toHaveBeenCalled();
   });
+  it('persists a safe credit-exhaustion code, keeps the transcript, and retries that same record after recovery',async()=>{
+    const fixture=setupService(),c=transcript('Customer: Keep the bicycle.');
+    fixture.io.conversation.mockRejectedValueOnce(Object.assign(new Error('private transcript and API credential'),{status:429,code:'credit_balance_exhausted'}));
+    const first=await fixture.service.saveTranscript(c),diagnostic=vi.fn();
+    expect(await fixture.service.processNext(diagnostic)).toBe(true);
+    expect(diagnostic).toHaveBeenCalledExactlyOnceWith({event:'recording_processing_failed',stage:'extraction',attempt:1,sourceKind:'transcript',code:'credit_balance_exhausted',status:429});
+    const get={...c,request:{requestId:randomUUID(),body:{command:'recording.get' as const,recordingId:first.recording.id}}};
+    expect(await fixture.service.execute(get)).toMatchObject({recording:{id:first.recording.id,status:'failed',lastErrorCode:'recording_ai_credits_exhausted',transcript:'Customer: Keep the bicycle.'}});
+    expect(JSON.stringify(fixture.row)).not.toContain('private transcript and API credential');
+    const retry={...c,request:{requestId:randomUUID(),body:{command:'recording.retry' as const,recordingId:first.recording.id}}};
+    expect(await fixture.service.execute(retry)).toMatchObject({recording:{id:first.recording.id,status:'uploaded',lastErrorCode:null,transcript:'Customer: Keep the bicycle.'}});
+    expect(await fixture.service.execute(retry)).toMatchObject({alreadyQueuedOrProcessed:true,recording:{id:first.recording.id,status:'uploaded'}});
+    expect(await fixture.service.processNext()).toBe(true);
+    expect(await fixture.service.execute(get)).toMatchObject({recording:{id:first.recording.id,status:'draft',attemptCount:2,transcript:'Customer: Keep the bicycle.'}});
+    expect(fixture.io.conversation).toHaveBeenCalledTimes(2);
+    expect(fixture.io.get).not.toHaveBeenCalled();expect(fixture.io.transcribe).not.toHaveBeenCalled();expect(fixture.io.put).not.toHaveBeenCalled();
+  });
+  it.each([{status:429,code:'rate_limit_exceeded'},{status:429,code:'insufficient_quota'},{status:503,code:'credit_balance_exhausted'}])('does not call another provider failure credit exhaustion: %o',async provider=>{
+    const fixture=setupService(),c=transcript();
+    fixture.io.conversation.mockRejectedValueOnce(Object.assign(new Error('private provider response'),provider));
+    const first=await fixture.service.saveTranscript(c);
+    expect(await fixture.service.processNext()).toBe(true);
+    expect(await fixture.service.execute({...c,request:{requestId:randomUUID(),body:{command:'recording.get',recordingId:first.recording.id}}})).toMatchObject({recording:{status:'failed',lastErrorCode:'recording_processing_failed',transcript:'Customer: Keep the shelves.'}});
+  });
   it('keeps a processing failure retryable even when its diagnostic logger throws',async()=>{
     const fixture=setupService(),c=transcript();
     fixture.io.conversation.mockRejectedValueOnce(new Error('synthetic failure'));
