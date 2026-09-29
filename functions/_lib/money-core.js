@@ -42,6 +42,34 @@ export function moneyTotalsMode(env) {
   const value = String(env?.MONEY_UNIFIED_TOTALS ?? '').trim();
   return value === 'true' ? 'unified' : value === 'shadow' ? 'shadow' : 'off';
 }
+/**
+ * MONEY_INVOICE_STATE_ENABLED (FIX-MONEY-INVOICE-STATE): exactly 'true' turns on the `invoiceState` rules. A payment
+ * of any kind (card deposit or balance, offline, service credit) changes job.invoice only when the invoice already
+ * exists as one (invoiceTakesPayment: issued, or numbered and live); invoiceStatus reads not_issued when the saved
+ * invoice has neither a number nor issuedAt; a payment never reserves or creates an invoice number; the receipt names
+ * the payment by its cash ledger entry id; and the payments list shows service credits as credits, never cash.
+ * Anything else (unset) is today's behaviour.
+ */
+export const moneyInvoiceStateEnabled = env => String(env?.MONEY_INVOICE_STATE_ENABLED ?? '').trim() === 'true';
+const INVOICE_CLOSED = ['void', 'superseded', 'draft'];
+const invoiceNumbered = invoice => plain(invoice) && typeof invoice.number === 'string' && Boolean(invoice.number.trim());
+const invoiceLive = invoice => !INVOICE_CLOSED.includes(String(invoice.status || '').toLowerCase());
+/**
+ * An invoice a person issued: it has a number, an issue time (or is a Jobber import, whose own issue date may be
+ * missing) and is not a draft, void or superseded.
+ */
+export function invoiceIssued(invoice) {
+  if (!invoiceNumbered(invoice) || !invoiceLive(invoice)) return false;
+  return Boolean(instant(invoice.issuedAt)) || invoice.source === 'jobber_import';
+}
+/**
+ * With invoiceState on, the invoices a payment of any kind (card, offline, service credit) may update: an issued
+ * invoice (invoiceIssued), or one that already has a number and is not void, superseded or draft though no issue time
+ * was saved (an INV-{last 6} a Hub offline payment reserved before the flag, or the legacy browser tool's). A payment
+ * keeps its paid, balance and status current exactly as before the flag, under the number it already has. A numberless
+ * invoice (one a payment wrote) is never touched, and a payment never reserves or creates a number.
+ */
+export const invoiceTakesPayment = invoice => invoiceIssued(invoice) || invoiceNumbered(invoice) && invoiceLive(invoice);
 /** An approval recorded without a billed change-order line (CHANGE_ORDER_BILLING_ENABLED off): never counted in unified totals. */
 export const CHANGE_ORDER_UNBILLED = 'change_order_unbilled';
 const UNREADABLE = ['money_quote_invalid', 'money_change_order_invalid', 'money_paid_invalid', 'money_tips_unknown', 'money_deposit_invalid'];
@@ -418,11 +446,14 @@ function paidVerified(job, appliedCents) {
  * or a verified deposit covering it), else pending_verification. `now` is a
  * required ISO instant (money_now_required when omitted). Never throws on
  * saved job data. `unified` (MONEY_UNIFIED_TOTALS) reads the unified totals.
+ * With `invoiceState` (MONEY_INVOICE_STATE_ENABLED) an invoice with neither a
+ * number nor issuedAt was never issued (a payment wrote it): not_issued.
  */
-export function invoiceStatus(job, now, { unified = false } = {}) {
+export function invoiceStatus(job, now, { unified = false, invoiceState = false } = {}) {
   const invoice = plain(job?.invoice) ? job.invoice : null, at = instant(requireNow(now));
   if (!at) throw fail('invalid_time', 'The status time must be an ISO instant.');
   if (!invoice || !invoice.status && !invoice.issuedAt && (invoice.amount === undefined || invoice.amount === null)) return 'not_issued';
+  if (invoiceState && !(typeof invoice.number === 'string' && invoice.number.trim()) && !invoice.issuedAt) return 'not_issued';
   const base = String(invoice.status || 'issued').toLowerCase();
   if (['void', 'superseded', 'draft'].includes(base)) return base;
   const totals = customerMoneyTotals(job, { unified });

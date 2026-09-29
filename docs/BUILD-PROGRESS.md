@@ -519,6 +519,10 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   bridge schedule changes and walkthrough outcomes commit a ghlTagOutbox entry with the change; first attempt after the save, then a
   signed egc-worker drain every 2 min; cancel/no-show set the appointment status with toNotify:false. Tags only, no message or stage.
   Command center shows a stopped worker and stuck entries with Retry. Turn both on before EGC_SCHEDULE_SYNC_WORKER (GO-LIVE 4.13).
+- **FIX-MONEY-INVOICE-STATE** (P1 money; MONEY_INVOICE_STATE_ENABLED off) No payment or credit creates, numbers or changes an
+  invoice that was never issued (portal, crew link, webhook, held settle, portal credit, record_offline); an invoice with no number
+  and no issuedAt reads not_issued. Receipts are named after the cash ledger entry; /api/money lists credits apart from cash. Dry-run
+  backfill scripts/backfill-numberless-invoices.mjs. Gap: "Verified collected" still counts credits (FIX-HUB-COLLECTED-CREDITS).
 
 ## In progress
 
@@ -641,6 +645,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | FIX-MONEY-TOTALS | P1 money: one integer-cents total everywhere, including approved change orders (MONEY_UNIFIED_TOTALS, off) | merged (52065e2) |
 | AUTH-ROLES | P1 auth: business access and booking rights from owner-set roles (EGC_STAFF_ROLE_ACCESS, off) | merged (a02d5e5) |
 | GHL-TRACK-1 | P1 HighLevel: durable tag outbox for bookings, changes and walkthrough outcomes (EGC_GHL_TAG_OUTBOX, off) | merged (31a8de8) |
+| FIX-MONEY-INVOICE-STATE | P1 money: payments never fabricate invoices; credits are not cash (MONEY_INVOICE_STATE_ENABLED, off) | merged (924ed44) |
 
 ## Next
 

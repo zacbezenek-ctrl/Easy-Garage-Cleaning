@@ -1,6 +1,6 @@
 import { firestoreFetch } from './firebase-service-account.js';
 import { readJob, patchJob, encodeFirestoreFields, decodeFirestoreFields } from './firestore-job.js';
-import { customerMoneyTotals, moneyTotalsMode, moneyUnpriced, paymentLedger, refundsRecorded, reportTotalsMismatch } from './money-core.js';
+import { customerMoneyTotals, invoiceTakesPayment, moneyInvoiceStateEnabled, moneyTotalsMode, moneyUnpriced, paymentLedger, refundsRecorded, reportTotalsMismatch } from './money-core.js';
 import { manualEntryIds } from './money-ledger.js';
 import { billedChangeCents } from './change-orders.js';
 import { unsentQuoteDraft } from './quote-model.js';
@@ -572,9 +572,12 @@ async function commitStripePayment(env, jobId, job, patch, { sessionId, amountCe
 // crossing (FUN-33, commitStripePayment), keyed by the session ID and dated at
 // the Stripe charge; every hold, refund and review rule above is unchanged.
 // fromWebhook is true only for the Stripe webhook delivery (who recorded the payment).
+// With MONEY_INVOICE_STATE_ENABLED (money-core invoiceState) a charge updates job.invoice only when it takes payments
+// (money-core invoiceTakesPayment: issued, or numbered and live, exactly as before the flag). On any other job it writes
+// the payment, deposit and ledger evidence only: job.invoice is left exactly as it was, and never gets a status or balance.
 async function recordStripeCheckout(env, checkout, { kind, expectedJobId = '', recordedBy = '', settleHeld = true, holdOnly = false, now = new Date().toISOString(), fromWebhook = false }) {
   const crew = kind === CHECKOUT_KINDS.crew, { jobId, sessionId, tipCents, serviceCents } = verifiedCheckout(checkout, kind, expectedJobId), text = HELD[crew ? 'crew' : 'portal'];
-  const events = funnelPaymentEventsEnabled(env), mode = moneyTotalsMode(env);
+  const events = funnelPaymentEventsEnabled(env), mode = moneyTotalsMode(env), invoiceState = moneyInvoiceStateEnabled(env);
   // Money is recorded only from a session whose charge was read: fail closed (retryable) otherwise.
   if (!plainObject(checkout.payment_intent) || !plainObject(checkout.payment_intent.latest_charge)) throw failure('Stripe could not confirm this payment. Please try again.', 503, 'payment_charge_unread');
   const ledger = crew ? null : await readLedger(env, jobId), ledgerTip = Number(ledger?.state.tipCents || 0);
@@ -768,14 +771,14 @@ async function recordStripeCheckout(env, checkout, { kind, expectedJobId = '', r
     const tip = tipCents ? { sessionId, paymentIntentId, amountCents: tipCents, amount: tipCents / 100, source: crew ? 'crew_card' : 'customer_portal', createdBy: clean(checkout.metadata?.created_by, 80), recordedBy: clean(recordedBy, 80) || 'stripe', verifiedAt: now } : null;
     const tips = tip || Array.isArray(job.payment?.tips) ? { tips: [...trustedTips, ...(tip ? [tip] : [])] } : {};
     const payment = { ...(job.payment || {}), amount: paidTotal, lastAmount: paymentItem.amount, lastReceivedAt: now, method: 'stripe', processor: 'stripe', verified: true, receiptUrl, receiptEmail, reference: paymentIntentId || sessionId, stripeSessions: [...trustedSessions, paymentItem], ...tips, ...(crew ? { recordedBy: paymentItem.recordedBy } : {}) };
-    const invoice = { ...(job.invoice || {}), amount: served.total, paid: appliedCents / 100, balance, status: balance < .01 ? 'paid' : 'partial', updatedAt: now };
+    const invoice = invoiceState && !invoiceTakesPayment(job.invoice) ? null : { ...(job.invoice || {}), amount: served.total, paid: appliedCents / 100, balance, status: balance < .01 ? 'paid' : 'partial', updatedAt: now };
     // The crew closeout sends this to HighLevel as its payment-received note (crew/postjob.html syncStripePaymentToHighLevel), so
     // it quotes today's figures in every mode, like every other HighLevel note; the answer and the invoice mirror are served money.
     const paymentSyncPayload = { ...paymentItem, balance: Math.max(0, cents(finance.total) - paidCents) / 100, paidTotal };
     const patch = {
       payment,
       deposit: { ...(job.deposit || {}), amount: deposit.required, paidAmount: deposit.paid, status: deposit.due < .01 ? 'paid' : deposit.paid ? 'partial' : 'due', verified: true, updatedAt: now },
-      invoice, paymentSyncStatus: 'pending', paymentSyncPayload,
+      ...(invoice ? { invoice } : {}), paymentSyncStatus: 'pending', paymentSyncPayload,
       ...(appliedCents > totalCents ? { paymentReviewRequired: true } : {}), updatedAt: now,
     };
     const mark = { jobRecordedAt: now, jobRecordedBy: clean(recordedBy, 80) };
@@ -793,7 +796,7 @@ async function recordStripeCheckout(env, checkout, { kind, expectedJobId = '', r
       // after this read creates payment_reviews/{sessionId}, which fails this commit, and the retry takes the hold path.
       else if (tipCents) await patchJobUnlessReviewed(env, jobId, patch, job.__updateTime, sessionId);
       else await patchJob(env, jobId, patch, job.__updateTime);
-      return { result: { paid: true, duplicate: false, amountPaid: paymentItem.amount, ...tipped, balance, receiptUrl }, payment, invoice, paymentSyncPayload, withheld: unsentQuoteDraft(job) };
+      return { result: { paid: true, duplicate: false, amountPaid: paymentItem.amount, ...tipped, balance, receiptUrl }, payment, invoice: invoice || job.invoice || {}, paymentSyncPayload, withheld: unsentQuoteDraft(job) };
     } catch (error) { storageFailed = !staleJobWrite(error); } // Firestore answers a stale updateTime with 400 FAILED_PRECONDITION.
   }
   // Each retry re-reads the job, so a write whose response was lost is found above as a duplicate.

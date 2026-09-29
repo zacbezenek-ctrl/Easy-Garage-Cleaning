@@ -14,7 +14,7 @@ import { approvalClosed, billedChangeCents, billedChangeOrders, changeOrderBilli
 import { parseBusinessActor } from '../_lib/business-hub-core.js';
 import { businessAccountJob } from '../_lib/portal-invitation.js';
 import { moneyDocumentEnabled, moneyDocumentLinks } from '../_lib/money-document.js';
-import { customerMoneyTotals, moneyTotalsMode } from '../_lib/money-core.js';
+import { customerMoneyTotals, invoiceTakesPayment, moneyInvoiceStateEnabled, moneyTotalsMode } from '../_lib/money-core.js';
 import { estimateFingerprint, included, legacyLineItems, unsentQuoteDraft } from '../_lib/quote-model.js';
 import { crewPublicProfilesEnabled, customerCrew, customerCrewProjection, readCrewPublicProfiles } from '../_lib/crew-public-profile.js';
 import { liveSale, portalApprovalWrites, portalFunnelWrite, vocabularyValue } from '../_lib/job-funnel-events.js';
@@ -403,7 +403,7 @@ async function handleGet({ request, env }, deps) {
   // Only with tips on, so the tips-off read is unchanged: held means Pay would be refused now (a held tipped charge,
   // or with PAYMENT_REVIEW_CHECKOUT_BLOCK_ENABLED any open review), derived from the reviews themselves.
   const held = tips ? await portalPaymentHeld(env, result.session.jobId, result.job, at.toISOString()).catch(() => null) : false;
-  const body = { ...sanitize(result.job, result.session, { today: denverToday(at), reviewUrl: customerReviewUrl(env), draftsRejected: rejectDrafts(env), billing: changeOrderBillingEnabled(env), now: at.toISOString(), tips, held, mode }), moneyDocuments: moneyDocumentLinks(result.job, { enabled: moneyDocumentEnabled(env), now: at.toISOString(), unified: mode === 'unified' }) };
+  const body = { ...sanitize(result.job, result.session, { today: denverToday(at), reviewUrl: customerReviewUrl(env), draftsRejected: rejectDrafts(env), billing: changeOrderBillingEnabled(env), now: at.toISOString(), tips, held, mode }), moneyDocuments: moneyDocumentLinks(result.job, { enabled: moneyDocumentEnabled(env), now: at.toISOString(), unified: mode === 'unified', invoiceState: moneyInvoiceStateEnabled(env) }) };
   // Default off: without the flag the DTO keeps its current shape.
   if (customerPhotosEnabled(env) && result.session.permissions?.view !== false) body.beforeAfter = customerPhotoProjection(result.job, customerPhotoPolicy(env));
   // Default off as well. Only active crew profiles appear; a profile read failure hides the crew, never the project.
@@ -730,9 +730,12 @@ async function handlePost({ request, env }, { clock, read }) {
     const redemption = { id: newId('redemption'), requestId, cardId, amount: applied, appliedAt: now, jobId: result.session.jobId };
     const creditClass = vocabularyValue('creditClasses', card.creditClass) || vocabularyValue('creditClasses', card.source);
     const walletPatch = { giftWallet: { ...wallet, cards: updatedCards, redemptions: [...redemptions, redemption].slice(-40), updatedAt: now }, updatedAt: now };
+    // MONEY_INVOICE_STATE_ENABLED: a credit updates only an invoice that takes payments (money-core invoiceTakesPayment:
+    // issued, or numbered and live, as before the flag) and never writes one on a job no one invoiced.
+    const touchInvoice = !moneyInvoiceStateEnabled(env) || invoiceTakesPayment(result.job.invoice);
     const jobPatch = {
       payment: { ...(result.job.payment || {}), amount: paidTotal, giftCreditApplied: amount(result.job.payment?.giftCreditApplied) + applied, lastAmount: applied, lastReceivedAt: now, method: finance.paid > 0 ? 'mixed_with_gift_credit' : 'gift_credit', verified: true },
-      invoice: { ...(result.job.invoice || {}), amount: shown.total, paid: shown.paid, balance, status: balance < .01 ? 'paid' : 'partial', updatedAt: now }, updatedAt: now,
+      ...(touchInvoice ? { invoice: { ...(result.job.invoice || {}), amount: shown.total, paid: shown.paid, balance, status: balance < .01 ? 'paid' : 'partial', updatedAt: now } } : {}), updatedAt: now,
     };
     try {
       // credit.redeemed for the credit applied to this job; the wallet may live on the account's root job.

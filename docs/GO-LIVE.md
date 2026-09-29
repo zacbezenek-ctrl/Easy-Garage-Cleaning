@@ -585,6 +585,7 @@ Each is a dry run first; review, then run again with `--apply`. All need `FIREBA
 | 5.4 | `PAYMENT_REVIEW_CHECKOUT_BLOCK_ENABLED=true` (optional) | Cloudflare, plain |
 | 5.5 | `GARAGE_GUARD_MEMBERSHIP_SYNC_ENABLED=true` (optional) | Cloudflare, plain |
 | 5.6 | `MONEY_UNIFIED_TOTALS=shadow`, then `true` | Cloudflare, plain |
+| 5.7 | `MONEY_INVOICE_STATE_ENABLED=true` (after 5.2 and 5.6) | Cloudflare, plain |
 
 ### 5.1 Card payments and Review queues (no switch)
 
@@ -654,6 +655,30 @@ Each is a dry run first; review, then run again with `--apply`. All need `FIREBA
 - **HighLevel impact:** none. No new tags or messages. HighLevel notes and triggers (overdue reminders, the Customer messages buttons, the crew closeout payment note) keep today's figures. Payment reminders, the account list and the business hub also keep today's figures until a follow-up unit, so on the jobs the shadow log names they can differ from what checkout charges.
 - **Check it worked (phone):** on a test job with a $1,000 quote, a $500 deposit paid and a $150 approved change, the portal shows $1,150 total, $650 due and a Pay button; the Hub finance row shows $1,150 with a $650 balance; the invoice page says Balance due $650.
 - **Roll back:** delete the variable. Every page goes back to today's figures. Payments recorded meanwhile stay recorded.
+
+### 5.7 Invoices only when you issue them
+
+- **Set:** `MONEY_INVOICE_STATE_ENABLED=true`
+- **Where:** Cloudflare Pages, plain. Preview first.
+- **Turns on:** payments stop creating invoices nobody issued.
+  - A card deposit or balance (portal, crew link or Stripe webhook), a Hub offline payment and a portal gift or account credit update a job's invoice only when the job already has one that takes payments: an issued invoice, or one with a number that is not draft, void or superseded. Its paid, balance and status stay current, as today.
+  - On every other job they record the payment alone. No payment reserves an `INV-` number any more.
+  - An invoice with no number and no issue time reads **not issued** everywhere. A card-paid job therefore leaves the invoice list and can be invoiced from **Invoicing** once the work is done.
+  - The receipt is named after its card or offline payment (for example `stripe:cs_…`), never after a credit, refund or tip. It prints an invoice number only for an issued invoice.
+  - The money API's payments view lists gift and account credits apart from cash.
+  - HighLevel tags, payment tracking events and paid-in-full are unchanged.
+- **Needs first:** `MONEY_API_ENABLED=true` ([5.2](#52-server-money-records)) and `MONEY_UNIFIED_TOTALS=true` ([5.6](#56-one-money-total-everywhere)). Until both are on, the Hub finance board shows a card-paid job with a billed change order short by the change, and the older browser payment tool still numbers invoices.
+- **Developer backfill (once it is on):**
+  1. `node scripts/backfill-numberless-invoices.mjs` (dry run). Review `jobs.needsReview[].reasons`. Those jobs keep their invoice and are never written.
+  2. Run it with `--apply --hub-unified-totals`, only once both money switches above are on.
+  3. Run it again. It must plan 0.
+- **Numbered but never issued:** the dry run also lists `numberedNotIssued` invoices: an `INV-` number a Hub offline payment reserved without issuing the invoice. Payments keep them current. Issue each one from **Estimates & payments** when the customer should get it.
+- **Known gap:** until the FIX-HUB-COLLECTED-CREDITS follow-up, **Verified collected** on the Hub finance board still counts gift and account credit applied to jobs as collected.
+- **Check it worked (Preview):**
+  1. On a test job with a quote and no invoice, pay the deposit by card from the portal. The job shows no invoice status and is not in the invoice list.
+  2. Once the job is done, it appears in **Invoicing**.
+  3. The receipt shows the `stripe:cs_…` reference, not `INV-`.
+- **Roll back:** delete the variable. Payments write the job's invoice exactly as before. Payments and the payment ledger are never changed by this switch or the backfill.
 
 ## Stage 6: Customer portal and business client hub
 

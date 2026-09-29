@@ -2,6 +2,8 @@ import { sha256 } from '@noble/hashes/sha2.js';
 import { customerPaymentNeedsReview, payable as checkoutPayable } from './customer-payments.js';
 import { denverToday, validDate } from './dispatch-time.js';
 import { customerMoneyTotals, invoiceLineItems, invoiceNumber, invoiceStatus, paymentLedger } from './money-core.js';
+import { LEGACY_ENTRY_ID, reconcileLedger } from './money-ledger.js';
+import { cashPayment } from './payment-events.js';
 import { customerLineItem, estimateTotals, included, legacyLineItems, singleLineItem, unsentQuoteDraft } from './quote-model.js';
 
 /**
@@ -129,6 +131,20 @@ function payments(job, { tips }) {
   return { rows, reconciled, latest: ledger.entries.map(entry => entry.at).filter(Boolean).at(-1) || instant(job.payment?.lastReceivedAt) };
 }
 
+// FIX-MONEY-INVOICE-STATE (invoiceState, MONEY_INVOICE_STATE_ENABLED): a receipt names the payment it is for by its
+// ledger entry id (money-ledger reconcileLedger, as the Hub payments list shows it): the latest dated cash payment (a
+// card deposit or balance, cash, check or another offline payment), never a tip, a refund, the legacy aggregate or a
+// service credit (money-reports creditEntry: a gift or account credit is applied, never cash). With no such payment
+// (cash held only in the legacy aggregate, or a job paid by credit alone) it is '': the receipt then carries no single
+// payment reference, and the header and title leave the number out. The invoice number is printed only for an issued invoice.
+const creditEntry = entry => !cashPayment(entry.method) || ['gift_credit', 'gift_credit_total'].includes(entry.source);
+const cashEntry = entry => !['tip', 'refund'].includes(entry.kind) && entry.id !== LEGACY_ENTRY_ID && !creditEntry(entry);
+function receiptReference(job) {
+  const rows = reconcileLedger(job).entries.filter(cashEntry);
+  return (rows.filter(entry => entry.at).at(-1) || rows.at(-1))?.id || '';
+}
+const issuedNumber = (job, status) => PORTAL_INVOICE.has(status) ? clean(job.invoice?.number, 80) : '';
+
 // What the portal checkout would charge right now, in cents (payable() in
 // customer-payments.js, on the legacy money state plus billed change orders, or
 // with `unified` on money-core's unified totals), or null if it refuses.
@@ -143,22 +159,23 @@ function checkoutCents(job, unified = false) {
  * quote draft that has not been sent in its current revision (unsentQuoteDraft)
  * keeps only its receipt, which then lists the recorded payments and never the
  * unsent total, lines or balance (see moneyDocumentModel). `unified`
- * (MONEY_UNIFIED_TOTALS) reads money-core's unified totals.
+ * (MONEY_UNIFIED_TOTALS) reads money-core's unified totals; `invoiceState`
+ * (MONEY_INVOICE_STATE_ENABLED) reads the invoice status by its rules.
  */
-export function moneyDocumentKinds(job, now, { unified = false } = {}) {
+export function moneyDocumentKinds(job, now, { unified = false, invoiceState = false } = {}) {
   const at = instant(now);
   if (!at) throw fail('now_required', 'Pass the current time in; documents never read the clock.', 500);
   if (!plain(job)) return [];
   const totals = customerMoneyTotals(job, { unified });
   if (!known(totals.quoteCents, totals.totalCents, totals.appliedCents, totals.balanceCents) || totals.totalCents <= 0) return [];
   if (unsentQuoteDraft(job)) return totals.paidCents > 0 ? ['receipt'] : [];
-  return MONEY_DOCUMENT_KINDS.filter(kind => kind === 'estimate' || kind === 'invoice' && PORTAL_INVOICE.has(invoiceStatus(job, at, { unified })) || kind === 'receipt' && totals.paidCents > 0);
+  return MONEY_DOCUMENT_KINDS.filter(kind => kind === 'estimate' || kind === 'invoice' && PORTAL_INVOICE.has(invoiceStatus(job, at, { unified, invoiceState })) || kind === 'receipt' && totals.paidCents > 0);
 }
 
 /** Customer portal links (session-scoped: no job id and never a token). Empty while the flag is off. */
-export function moneyDocumentLinks(job, { enabled = false, now, unified = false } = {}) {
+export function moneyDocumentLinks(job, { enabled = false, now, unified = false, invoiceState = false } = {}) {
   if (!enabled) return [];
-  return moneyDocumentKinds(job, now, { unified }).map(kind => ({ kind, label: `View ${kind}`, url: `/api/money-document?kind=${kind}` }));
+  return moneyDocumentKinds(job, now, { unified, invoiceState }).map(kind => ({ kind, label: `View ${kind}`, url: `/api/money-document?kind=${kind}` }));
 }
 
 /**
@@ -174,8 +191,13 @@ export function moneyDocumentLinks(job, { enabled = false, now, unified = false 
  * service total, lines, balance or a pay button. `unified`
  * (MONEY_UNIFIED_TOTALS) shows money-core's unified totals: approved changes
  * are the billed change-order lines only, as the portal checkout charges them.
+ * `invoiceState` (MONEY_INVOICE_STATE_ENABLED): the receipt's number is its
+ * cash payment's ledger entry id (receiptReference), or '' when no single cash
+ * payment exists (the header and title then carry no number); an issued
+ * invoice's number is listed beside it, and a not_issued invoice never prints an
+ * invoice number.
  */
-export function moneyDocumentModel(job, { kind, now, payUrl = null, contact = true, audience = 'customer', unified = false } = {}) {
+export function moneyDocumentModel(job, { kind, now, payUrl = null, contact = true, audience = 'customer', unified = false, invoiceState = false } = {}) {
   if (!MONEY_DOCUMENT_KINDS.includes(kind)) throw fail('invalid_kind', 'Choose an estimate, invoice or receipt.');
   const at = instant(now);
   if (!at) throw fail('now_required', 'Pass the current time in; documents never read the clock.', 500);
@@ -186,7 +208,7 @@ export function moneyDocumentModel(job, { kind, now, payUrl = null, contact = tr
   if (kind === 'receipt' && !(totals.paidCents > 0)) throw fail('unavailable', 'No payment has been recorded for this job yet.', 409);
   const withheld = audience !== 'staff' && unsentQuoteDraft(job);
   if (withheld && kind !== 'receipt') throw fail('unavailable', `Your ${kind} is being updated. Easy Garage Cleaning will send it to you for review.`, 409);
-  if (withheld) return withheldReceipt(job, totals, at, contact);
+  if (withheld) return withheldReceipt(job, totals, at, contact, invoiceState ? { status: invoiceStatus(job, at, { unified, invoiceState }) } : null);
   const estimate = plain(job.estimate) ? job.estimate : {}, invoice = plain(job.invoice) ? job.invoice : {};
   const today = denverToday(new Date(at)), approval = approvalOf(job);
   let lines, status, statusLabel, number, dates;
@@ -202,7 +224,8 @@ export function moneyDocumentModel(job, { kind, now, payUrl = null, contact = tr
     lines = projected.lineItems.map(line => ({ ...line, included: true, choice: '' }));
     number = invoiceNumber(job.id, 'invoice', clean(invoice.number, 80));
     if (kind === 'invoice') {
-      status = invoiceStatus(job, at, { unified }); statusLabel = INVOICE_STATUS[status] || 'Issued';
+      status = invoiceStatus(job, at, { unified, invoiceState }); statusLabel = INVOICE_STATUS[status] || 'Issued';
+      if (invoiceState && status === 'not_issued') number = '';
       dates = [['Issued', instantDay(invoice.issuedAt) || 'Not issued yet'], ['Payment due', dayLabel(invoice.dueDate) || 'Not specified']];
       if (clean(invoice.customerReference, 120)) dates.push(['Your reference', clean(invoice.customerReference, 120)]);
     }
@@ -214,6 +237,11 @@ export function moneyDocumentModel(job, { kind, now, payUrl = null, contact = tr
     statusLabel = { partial: 'Partial payment', pending_verification: 'Payment pending verification', paid: 'Paid in full' }[status];
     // Dated by the latest recorded payment, so reopening a receipt never redates it.
     dates = [['Receipt date', instantDay(ledger.latest) || instantDay(at)]];
+    if (invoiceState) {
+      const billed = issuedNumber(job, invoiceStatus(job, at, { unified, invoiceState }));
+      number = receiptReference(job);
+      if (billed) dates.push(['Invoice', billed]);
+    }
   }
   const rows = [];
   if (kind === 'receipt') {
@@ -264,13 +292,15 @@ export function moneyDocumentModel(job, { kind, now, payUrl = null, contact = tr
 // The receipt of an unsent quote draft: the recorded payments only. Paid toward
 // service and tips do not depend on the quote; the unsent total, balance and
 // any overpayment against it do, so they are left out.
-function withheldReceipt(job, totals, at, contact) {
+// `strict` ({status}, the invoice status) is set with invoiceState: the receipt is named by receiptReference.
+function withheldReceipt(job, totals, at, contact, strict = null) {
   const invoice = plain(job.invoice) ? job.invoice : {}, ledger = payments(job, { tips: true }), status = customerPaymentNeedsReview(job) ? 'pending_verification' : 'received';
   const rows = totals.tipCents > 0 ? [{ label: 'Paid toward service', cents: totals.appliedCents }, { label: 'Tips for your crew (not part of the service total)', cents: totals.tipCents, tip: true }, { label: 'Total paid', cents: totals.paidCents }] : [{ label: 'Total paid', cents: totals.paidCents }];
+  const billed = strict ? issuedNumber(job, strict.status) : '', dates = [['Receipt date', instantDay(ledger.latest) || instantDay(at)], ...(billed ? [['Invoice', billed]] : [])];
   return {
-    kind: 'receipt', title: TITLES.receipt, number: invoiceNumber(job.id, 'invoice', clean(invoice.number, 80)), status, statusLabel: status === 'received' ? 'Payment received' : 'Payment pending verification',
+    kind: 'receipt', title: TITLES.receipt, number: strict ? receiptReference(job) : invoiceNumber(job.id, 'invoice', clean(invoice.number, 80)), status, statusLabel: status === 'received' ? 'Payment received' : 'Payment pending verification',
     notice: 'Your estimate is being updated. This receipt lists the payments recorded so far; your service total and balance appear once Easy Garage Cleaning sends you the updated estimate.',
-    generatedAt: at, generatedLabel: instantStamp(at), dates: [['Receipt date', instantDay(ledger.latest) || instantDay(at)]],
+    generatedAt: at, generatedLabel: instantStamp(at), dates,
     customer: { name: clean(job.customer, 120) || 'Customer', address: clean(job.address, 240), phone: contact ? clean(job.phone, 40) : '', email: contact ? clean(job.email, 180) : '' },
     service: clean(job.serviceType, 120) || SERVICE_TYPES[job.type] || 'Garage service', scope: '', withheld: true,
     lines: [], rows, payments: ledger.rows, paymentsReconciled: ledger.reconciled, approval: '',
@@ -307,7 +337,7 @@ export function renderMoneyDocument(job, options = {}) {
   const good = ['approved', 'paid', 'received'].includes(doc.status);
   const party = [doc.customer.address, [doc.customer.phone, doc.customer.email].filter(Boolean).join(' · ')].filter(Boolean).map(text => `<span>${esc(text)}</span>`).join('');
   const body = [
-    `<header class="top">${logo}<div class="kind"><h1>${esc(doc.title)}</h1><p>${esc(doc.number)} · ${esc(doc.service)}</p><span class="status${good ? ' good' : ''}">${esc(doc.statusLabel)}</span></div></header>`,
+    `<header class="top">${logo}<div class="kind"><h1>${esc(doc.title)}</h1><p>${[doc.number, doc.service].filter(Boolean).map(esc).join(' · ')}</p><span class="status${good ? ' good' : ''}">${esc(doc.statusLabel)}</span></div></header>`,
     doc.notice ? `<p class="notice" role="note">${esc(doc.notice)}</p>` : '',
     `<section class="meta"><div class="party"><div class="label">Prepared for</div><strong>${esc(doc.customer.name)}</strong>${party}</div><dl class="dates">${doc.dates.map(([label, value]) => `<div><dt>${esc(label)}</dt><dd>${esc(value)}</dd></div>`).join('')}</dl></section>`,
     doc.scope ? `<p class="scope">${esc(doc.scope)}</p>` : '',
@@ -321,7 +351,7 @@ export function renderMoneyDocument(job, options = {}) {
     foot(doc.generatedLabel),
     '<p class="hint">To save a PDF, use your browser’s Print or Share menu.</p>',
   ].join('');
-  return page(`${doc.title} ${doc.number} · Easy Garage Cleaning`, body);
+  return page(`${[doc.title, doc.number].filter(Boolean).join(' ')} · Easy Garage Cleaning`, body);
 }
 
 /** A branded error page under the same CSP, for document links opened in a browser tab. */

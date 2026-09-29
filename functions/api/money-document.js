@@ -3,7 +3,7 @@ import { getCustomerPortalSession } from '../_lib/customer-portal.js';
 import { readCustomerPortalContext } from '../_lib/customer-portal-access.js';
 import { readJob } from '../_lib/firestore-job.js';
 import { MONEY_DOCUMENT_KINDS, moneyDocumentEnabled, moneyDocumentHeaders, moneyDocumentKinds, renderMoneyDocument, renderMoneyDocumentError } from '../_lib/money-document.js';
-import { moneyTotalsMode, servedMoneyTotals } from '../_lib/money-core.js';
+import { moneyInvoiceStateEnabled, moneyTotalsMode, servedMoneyTotals } from '../_lib/money-core.js';
 
 /**
  * GET /api/money-document?kind=estimate|invoice|receipt[&job_id=...]
@@ -19,7 +19,9 @@ import { moneyTotalsMode, servedMoneyTotals } from '../_lib/money-core.js';
  * Documents are text/html with no-store and a strict no-script CSP. Errors are
  * {ok:false, code, error} JSON, or a branded HTML page for browser navigations.
  * Figures follow MONEY_UNIFIED_TOTALS (money-core moneyTotalsMode): 'true'
- * shows the unified totals, 'shadow' logs where they differ.
+ * shows the unified totals, 'shadow' logs where they differ. With
+ * MONEY_INVOICE_STATE_ENABLED a receipt names its payment by the ledger entry id
+ * and an invoice no one issued prints no invoice number.
  */
 
 const JOB_ID = /^[A-Za-z0-9_-]{1,180}$/;
@@ -73,7 +75,7 @@ export function moneyDocumentHandlers({ session = getHubSession, portalSession =
       try {
         const url = new URL(request.url);
         if (!sameOrigin(request)) throw fail('origin_forbidden', 'Open this document from Easy Garage Cleaning.', 403);
-        const input = parse(url), clock = now(), at = clock.toISOString(), mode = moneyTotalsMode(env), unified = mode === 'unified';
+        const input = parse(url), clock = now(), at = clock.toISOString(), mode = moneyTotalsMode(env), unified = mode === 'unified', invoiceState = moneyInvoiceStateEnabled(env);
         const shadow = job => { if (mode === 'shadow') servedMoneyTotals(job, mode, { surface: 'money_document' }); };
         const staff = await session(request, env), business = staffAllowed(staff);
         if (input.probe) {
@@ -88,7 +90,7 @@ export function moneyDocumentHandlers({ session = getHubSession, portalSession =
           shadow(job);
           // Staff copies link to the customer's own portal, never to a portal
           // token, and say the payment needs the private link the customer holds.
-          return new Response(renderMoneyDocument(job, { kind: input.kind, now: at, payUrl: `${url.origin}/customer-portal#pay`, contact: true, audience: 'staff', unified }), { status: 200, headers: moneyDocumentHeaders() });
+          return new Response(renderMoneyDocument(job, { kind: input.kind, now: at, payUrl: `${url.origin}/customer-portal#pay`, contact: true, audience: 'staff', unified, invoiceState }), { status: 200, headers: moneyDocumentHeaders() });
         }
         const customer = await portalSession(request, env, clock.getTime());
         if (!customer) {
@@ -101,10 +103,10 @@ export function moneyDocumentHandlers({ session = getHubSession, portalSession =
         try { context = await portalContext(env, customer, { read }); } catch (error) { throw portalFailure(error); }
         const viewer = context.session, owner = !viewer.actorId;
         if (viewer.permissions?.view === false) throw fail('forbidden', 'Your access to this private project has changed.', 403);
-        if (!moneyDocumentKinds(context.job, at, { unified }).includes(input.kind)) throw fail('unavailable', `Your ${input.kind} is not available yet.`, 404);
+        if (!moneyDocumentKinds(context.job, at, { unified, invoiceState }).includes(input.kind)) throw fail('unavailable', `Your ${input.kind} is not available yet.`, 404);
         shadow(context.job);
         const payUrl = owner || viewer.permissions?.pay === true ? '/customer-portal#pay' : null;
-        return new Response(renderMoneyDocument(context.job, { kind: input.kind, now: at, payUrl, contact: owner, unified }), { status: 200, headers: moneyDocumentHeaders() });
+        return new Response(renderMoneyDocument(context.job, { kind: input.kind, now: at, payUrl, contact: owner, unified, invoiceState }), { status: 200, headers: moneyDocumentHeaders() });
       } catch (error) {
         return failure(request, error);
       }
