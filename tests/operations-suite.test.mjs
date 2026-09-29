@@ -844,8 +844,10 @@ test('open-shift scheduling fields persist on the canonical job record',()=>{
   // offline queue's clock saves; (TIPS) tipped payments and held tipped charges in the finance board; (CREW-TIME)
   // clock-in-only location and job-time labels; (M5-SEND trim) the invoice-overdue HighLevel trigger stays on the page
   // whatever serverMessaging says; (DISPATCH-RULES after M5-SEND) one new tag; (TIME-CORRECT) server totals on the
-  // timesheet board, no legacy exports, and the Correct time / Close shift dialogs.
-  assert.match(employee,/employee-suite\.js\?v=20260929timecorrectrules/);
+  // timesheet board, no legacy exports, and the Correct time / Close shift dialogs; (TIME-CORRECT after DISPATCH-RULES)
+  // one new tag; (GUSTO-EXPORT) the payroll week card gets the owner grant for its Gusto hours button, and the timesheet note
+  // names that download; (GUSTO-EXPORT on the final TIME-CORRECT) one new tag.
+  assert.match(employee,/employee-suite\.js\?v=20260929gustotimecorrect/);
 });
 
 test('recurring visits request a server-side handoff clone instead of copying prior execution or payments',()=>{

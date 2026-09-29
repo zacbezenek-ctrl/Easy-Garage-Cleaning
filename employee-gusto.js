@@ -1,4 +1,5 @@
-/* One-way approved EGC timecards to Gusto. Payroll is reviewed and run in Gusto. */
+/* One-way approved EGC timecards to Gusto. Payroll is reviewed and run in Gusto. Connect Gusto shows only once Gusto has
+   approved production API access (GUSTO_PRODUCTION_APPROVED); until then hours go to Gusto as the payroll week card's file. */
 (function(){
 'use strict';
 const esc=value=>String(value??'').replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
@@ -21,7 +22,7 @@ function draw(){
   const pending=eligible().slice(0,25);
   let content;
   if(!connection)content=`<p>${esc(state.loading?'Checking the Gusto connection…':'The Gusto connection has not been checked.')}</p>`;
-  else if(!ready)content=`<p>${esc(connection.message||connection.reason||'Connect Gusto before sending approved hours.')}</p>${connection.configured?'<a class="ops-button primary" href="/api/gusto-auth">Connect Gusto</a>':'<p class="ops-note">An approved Gusto API integration must be configured before this connection can be enabled.</p>'}`;
+  else if(!ready)content=`<p>${esc(connection.message||connection.reason||'Connect Gusto before sending approved hours.')}</p>${connection.configured&&connection.productionApproved===true?'<a class="ops-button primary" href="/api/gusto-auth">Connect Gusto</a>':'<p class="ops-note">Connect Gusto appears only after Gusto approves EGC’s API access (GUSTO_PRODUCTION_APPROVED). Until then, import each approved week into Gusto with Download Gusto hours on the payroll week card.</p>'}`;
   else content=`<p class="ops-note">Match each employee, review regular and overtime hours, then send their approved shifts. Review and run payroll in Gusto.</p><p class="ops-note">If a sent timecard is later deleted, reopened, or loses approval in EGC, correct its hours in Gusto before payroll.</p>${connection.environment==='demo'?'<p class="ops-gusto-warning"><strong>Demo connection:</strong> these transfers go to Gusto’s test environment.</p>':''}<div class="ops-gusto-actions"><button class="ops-button primary" onclick="egcGustoSync()" ${busy||!pending.length?'disabled':''}>${state.busy?'Working…':`Send ${pending.length} timecard${pending.length===1?'':'s'} to Gusto`}</button><a class="ops-button" href="https://app.gusto.com/" target="_blank" rel="noopener">Open Gusto ↗</a></div>${state.rows.length?`<div class="ops-gusto-rows">${state.rows.map(row=>{
     const status=row.sync?.status||'not_synced',classification=row.classification;
     const label={synced:'Sent to Gusto',changed:'Changes need review',uncertain:'Transfer needs checking',error:'Transfer failed',not_synced:'Not sent'}[status]||status;

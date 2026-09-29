@@ -4,9 +4,9 @@ import { SKILL_CATALOG, SKILL_CATALOG_VERSION, SKILL_LEVELS, storedSkills, valid
 import { auditWrite } from './hub-audit.js';
 import { payOwnerOnly } from './pay-visibility.js';
 
-// Staff directory: roles, skills, effective-dated pay and weekly availability are
-// additive fields on the existing encrypted 'profiles' payload (no new vault family,
-// so older readers keep working). Employee-account roles are authoritative on the
+// Staff directory: roles, skills, effective-dated pay, weekly availability and the Gusto
+// employee ID are additive fields on the existing encrypted 'profiles' payload (no new
+// vault family, so older readers keep working). Employee-account roles are authoritative on the
 // encrypted account (sessions read them there) and mirrored onto the profile.
 // hourlyRate stays on the profile, mirrored to the current effective rate.
 export const WEEK_DAYS = Object.freeze(['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun']);
@@ -16,7 +16,13 @@ const HISTORY_LIMIT = 200, PAY_RATE_LIMIT = 60, VIEW_HISTORY = 50;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const TIME = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
 const COMMON = ['action', 'requestId', 'username', 'expectedRevision', 'expectedUser', 'reason'];
-const ACTIONS = { set_roles: ['staffRoles'], set_skills: ['skills'], set_pay: ['effectiveFrom', 'hourlyRate', 'payType', 'overtimeMultiplier'], set_availability: ['weeklyAvailability'] };
+const ACTIONS = { set_roles: ['staffRoles'], set_skills: ['skills'], set_pay: ['effectiveFrom', 'hourlyRate', 'payType', 'overtimeMultiplier'], set_availability: ['weeklyAvailability'], set_gusto_id: ['gustoEmployeeId', 'gustoExcluded'] };
+// The employee's ID in Gusto (GUSTO-EXPORT): the owner copies it from Gusto, and the Gusto hours file is keyed by it.
+// Letters, digits, dots, dashes and underscores, so Gusto's numeric IDs and UUIDs both fit. Owner-only, never shown to crew.
+// gustoExcluded (true) marks someone not paid through Gusto (the owner's own field time, a 1099 worker): the Gusto file
+// leaves them out and says so. Absent means paid through Gusto, as before.
+const GUSTO_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+export const storedGustoEmployeeId = value => typeof value === 'string' && GUSTO_ID.test(value) ? value : null;
 
 export const staffDirectoryEnabled = env => env?.EGC_STAFF_DIRECTORY_ENABLED === 'true';
 const fail = (code, message, status = 400, details) => Object.assign(new Error(message), { code: 'staff_directory_' + code, status, ...(details ? { details } : {}) });
@@ -160,6 +166,36 @@ function payChange(person, input, actor, nowIso, today) {
     auditView: { before: replaced ? shape(replaced) : null, after: { ...shape(entry), currentRateChanged: resolved.hourlyRate !== current.hourlyRate } } };
 }
 
+// An empty ID removes it. Two people never share one ID, active or not: the Gusto file would pay one of them twice
+// (holders: gustoPayrollProfiles of every stored profile). gustoExcluded left out keeps the saved marker. The plaintext
+// audit log gets only whether an ID is set and the marker; the IDs stay in the sealed, owner-only profile history.
+function gustoIdChange(person, input, holders) {
+  const value = typeof input.gustoEmployeeId === 'string' ? input.gustoEmployeeId.trim() : null;
+  if (value === null || value && !GUSTO_ID.test(value)) throw fail('invalid_gusto_id', 'Enter the Gusto employee ID as Gusto shows it: letters, digits, dots, dashes or underscores, at most 64 characters. Leave it blank to remove it.');
+  if (input.gustoExcluded !== undefined && typeof input.gustoExcluded !== 'boolean') throw fail('invalid_gusto_id', 'Choose whether this person is paid through Gusto.');
+  const next = value || null, stored = person.profile?.gustoEmployeeId ?? null, before = storedGustoEmployeeId(stored);
+  const wasExcluded = person.profile?.gustoExcluded === true, excluded = input.gustoExcluded ?? wasExcluded;
+  if (next === stored && excluded === wasExcluded) return null;
+  const other = next && [...holders].find(([key, holder]) => key !== person.key && holder.gustoEmployeeId?.toLowerCase() === next.toLowerCase());
+  if (other) throw fail('gusto_id_in_use', `That Gusto employee ID is already saved for ${other[1].displayName || other[0]}. Each employee needs their own.`, 409);
+  return { scope: 'gusto', gustoEmployeeId: next, gustoExcluded: excluded, before: { gustoEmployeeId: before, gustoExcluded: wasExcluded }, after: { gustoEmployeeId: next, gustoExcluded: excluded },
+    auditView: { before: { gustoEmployeeIdSet: Boolean(before), gustoExcluded: wasExcluded }, after: { gustoEmployeeIdSet: Boolean(next), gustoExcluded: excluded } } };
+}
+
+/** What the Gusto hours file (GUSTO-EXPORT) needs from each username's profile, read from the profile the staff directory
+ * writes: the one saved under the username's key, else a legacy key for it, as the directory and the dispatch roster pick
+ * it. Each entry is { gustoEmployeeId (null when unset or unreadable), gustoExcluded, displayName (null when unset) }. A
+ * username with no such profile has no entry, so the Gusto file names that employee instead of guessing. */
+export function gustoPayrollProfiles(profiles) {
+  const chosen = new Map();
+  for (const row of Array.isArray(profiles) ? profiles : []) {
+    const key = personKey(row?.username), rank = key ? [key, ...legacyPersonKeys(key)].indexOf(row.id) : -1;
+    if (rank >= 0 && (!chosen.has(key) || rank < chosen.get(key).rank)) chosen.set(key, { rank, row });
+  }
+  return new Map([...chosen].map(([key, { row }]) => [key, { gustoEmployeeId: storedGustoEmployeeId(row.gustoEmployeeId), gustoExcluded: row.gustoExcluded === true,
+    displayName: typeof row.displayName === 'string' && row.displayName.trim() ? row.displayName.trim().slice(0, 180) : null }]));
+}
+
 // The plaintext audit log gets skill ids and levels only; verifications stay in the sealed history.
 const skillLevels = skills => skills.map(({ id, level }) => ({ id, level }));
 function skillsChange(person, input, actor, nowIso) {
@@ -186,8 +222,8 @@ export function appendHistory(history, entry) {
 // Fields only the staff directory (and vault migrations) write. The legacy
 // /api/employee-hub profile save cannot set them, and its reads omit the audit trail
 // and the pay schedule: /api/staff-directory serves those with its own permissions.
-export const DIRECTORY_PROFILE_FIELDS = Object.freeze(['staffRoles', 'skills', 'skillCatalogVersion', 'payRates', 'payRateMirror', 'weeklyAvailability', 'history', 'migrations', 'directoryRequestId', 'directoryUpdatedAt', 'directoryUpdatedBy']);
-const LEGACY_HIDDEN = new Set(['history', 'payRates', 'payRateMirror']), LEGACY_PAY_FIELDS = ['hourlyRate', 'payType'];
+export const DIRECTORY_PROFILE_FIELDS = Object.freeze(['staffRoles', 'skills', 'skillCatalogVersion', 'payRates', 'payRateMirror', 'weeklyAvailability', 'gustoEmployeeId', 'gustoExcluded', 'history', 'migrations', 'directoryRequestId', 'directoryUpdatedAt', 'directoryUpdatedBy']);
+const LEGACY_HIDDEN = new Set(['history', 'payRates', 'payRateMirror', 'gustoEmployeeId', 'gustoExcluded']), LEGACY_PAY_FIELDS = ['hourlyRate', 'payType'];
 export const legacyProfileInput = (incoming, { stripPay = false } = {}) => Object.fromEntries(Object.entries(incoming || {}).filter(([key]) => !DIRECTORY_PROFILE_FIELDS.includes(key) && !(stripPay && LEGACY_PAY_FIELDS.includes(key))));
 // Legacy readers (team board, profile form) see hourlyRate as the rate in effect today.
 export function legacyProfileView(profile, now = new Date().toISOString()) {
@@ -215,10 +251,19 @@ function payView(person, today) {
   return { current, upcoming: rates.filter(entry => entry.effectiveFrom > today), schedule: rates, needsReview: person.source !== 'configured' && (current.source === 'pay_rates_need_review' || current.drift) };
 }
 
+// The profile record the directory reads and writes for a person: the one saved under their key, else a legacy key.
+// Profiles for their username under any other id make the record ambiguous (profileNeedsReview) instead of guessed.
+function withProfile(person, records) {
+  const candidates = records.filter(row => record(row.data) && same(row.data.username, person.username));
+  const target = [person.key, ...legacyPersonKeys(person.username)].map(id => candidates.find(row => row.data.id === id)).find(Boolean);
+  const chosen = target || candidates.at(-1);
+  return Object.assign(person, { record: target || null, profile: chosen ? chosen.data : null, revision: target ? target.updateTime : '', profileNeedsReview: !target && candidates.length > 0 });
+}
+
 export function createStaffDirectoryService({ store, env = {}, now = () => new Date() }) {
   const managesStaff = session => can(session, 'time.approve', env) || can(session, 'dispatch.write', env);
 
-  async function directory() {
+  async function roster() {
     const [{ configured, accounts }, records] = await Promise.all([store.staff(), store.profiles()]);
     const people = new Map(), add = person => {
       if (!person.key || people.has(person.key)) throw fail('roster_ambiguous', 'Employee identities need review before the staff directory can be used.', 409);
@@ -233,51 +278,82 @@ export function createStaffDirectoryService({ store, env = {}, now = () => new D
       add({ key: personKey(account.username), username: String(account.username), displayName: account.displayName || account.username, source: 'employee_account', accountStatus: account.status, accountHourlyRate: account.hourlyRate,
         staffRoles: stored || defaultStaffRoles({ role: account.role }), staffRolesSource: stored ? 'account' : 'default' });
     }
-    for (const person of people.values()) {
-      const candidates = records.filter(row => record(row.data) && same(row.data.username, person.username));
-      const target = [person.key, ...legacyPersonKeys(person.username)].map(id => candidates.find(row => row.data.id === id)).find(Boolean);
-      const chosen = target || candidates.at(-1);
-      Object.assign(person, { record: target || null, profile: chosen ? chosen.data : null, revision: target ? target.updateTime : '', profileNeedsReview: !target && candidates.length > 0 });
-    }
-    return people;
+    for (const person of people.values()) withProfile(person, records);
+    return { people, records, accounts };
   }
 
+  // Former staff (GUSTO-EXPORT): people outside the active directory with a stored profile or a rejected employee account
+  // (how an employee is let go), who may still have approved hours in a week the owner has not paid yet. The owner sets
+  // only their Gusto fields (set_gusto_id); nothing here gives them Hub access or changes anything else of theirs.
+  function formerStaff({ people, records, accounts }) {
+    const former = new Map(), add = (username, displayName, accountStatus) => {
+      const key = personKey(username), known = former.get(key);
+      if (!key || people.has(key)) return;
+      former.set(key, { key, username: known?.username || String(username).trim(), displayName: known?.displayName || (typeof displayName === 'string' && displayName.trim() ? displayName.trim() : String(username).trim()),
+        source: 'former', ...(accountStatus || known?.accountStatus ? { accountStatus: accountStatus || known.accountStatus } : {}) });
+    };
+    for (const account of accounts) if (account?.status === 'rejected') add(account.username, account.displayName, account.status);
+    for (const row of records) if (record(row.data) && typeof row.data.username === 'string') add(row.data.username, row.data.displayName);
+    for (const person of former.values()) withProfile(person, records);
+    return former;
+  }
+  const formerView = person => {
+    const profile = person.profile || {};
+    return { username: person.username, displayName: person.displayName, source: 'former', ...(person.accountStatus ? { accountStatus: person.accountStatus } : {}),
+      gustoEmployeeId: storedGustoEmployeeId(profile.gustoEmployeeId), gustoExcluded: profile.gustoExcluded === true,
+      history: (Array.isArray(profile.history) ? profile.history : []).filter(entry => record(entry) && entry.scope === 'gusto').slice(-VIEW_HISTORY), revision: person.revision, profileNeedsReview: person.profileNeedsReview };
+  };
+
   function view(person, session, today) {
-    const self = same(person.username, session.user), pay = self || can(session, 'pay.manage', env), profile = person.profile || {};
-    const history = (Array.isArray(profile.history) ? profile.history : []).filter(entry => record(entry) && (pay || entry.scope !== 'pay')).slice(-VIEW_HISTORY);
+    if (person.source === 'former') return formerView(person);
+    const owner = can(session, 'pay.manage', env), self = same(person.username, session.user), pay = self || owner, profile = person.profile || {};
+    const history = (Array.isArray(profile.history) ? profile.history : []).filter(entry => record(entry) && (pay || entry.scope !== 'pay') && (owner || entry.scope !== 'gusto')).slice(-VIEW_HISTORY);
     return {
       username: person.username, displayName: person.displayName, source: person.source, ...(person.accountStatus ? { accountStatus: person.accountStatus } : {}),
       staffRoles: person.staffRoles, staffRolesSource: person.staffRolesSource, primaryRole: primaryStaffRole(person.staffRoles),
       skills: storedSkills(profile.skills), weeklyAvailability: storedWeeklyAvailability(profile.weeklyAvailability),
       weeklyAvailabilityNeedsReview: profile.weeklyAvailability !== undefined && profile.weeklyAvailability !== null && !storedWeeklyAvailability(profile.weeklyAvailability),
       ...(pay ? { pay: payView(person, today) } : {}),
+      ...(owner ? { gustoEmployeeId: storedGustoEmployeeId(profile.gustoEmployeeId), gustoExcluded: profile.gustoExcluded === true } : {}),
       history, revision: person.revision, profileNeedsReview: person.profileNeedsReview,
     };
   }
 
   function permitted(session, action, person) {
     if (action === 'set_roles') return can(session, 'accounts.approve', env);
-    if (action === 'set_pay') return can(session, 'pay.manage', env);
+    if (action === 'set_pay' || action === 'set_gusto_id') return can(session, 'pay.manage', env);
     if (action === 'set_skills') return managesStaff(session);
     return managesStaff(session) || same(person?.username ?? '', session.user);
   }
 
+  // Every stored profile's Gusto ID, named as the directory names them, so an ID held by former staff is caught too.
+  function gustoHolders(staff) {
+    const former = formerStaff(staff);
+    return new Map([...gustoPayrollProfiles(staff.records.map(row => row.data))].map(([key, holder]) => [key, { ...holder, displayName: (staff.people.get(key) || former.get(key))?.displayName || holder.displayName }]));
+  }
+
+  // The person a change is for: the active directory, or former staff for the owner's Gusto fields (set_gusto_id is
+  // owner-only, checked before this).
+  const target = (staff, action, key) => staff.people.get(key) || (action === 'set_gusto_id' ? formerStaff(staff).get(key) : undefined);
+
   // The saved outcome is returned only while the record still carries this request.
   async function replay(session, receipt, requestId, today) {
-    const person = (await directory()).get(receipt.target);
+    const person = target(await roster(), receipt.action, receipt.target);
     return person?.record?.data.directoryRequestId === requestId ? { ok: true, authority: 'employee_hub', replayed: true, person: view(person, session, today) } : null;
   }
 
   return {
     async list(session, query = {}) {
       if (!session?.user) throw fail('sign_in_required', 'Sign in to view the staff directory.', 401);
-      const date = now(), today = denverToday(date), people = [...(await directory()).values()];
+      const date = now(), today = denverToday(date), staff = await roster(), people = [...staff.people.values()], byName = (a, b) => String(a.displayName).localeCompare(String(b.displayName));
       const selected = people.filter(person => managesStaff(session) || same(person.username, session.user)).filter(person => !query.username || same(person.username, query.username));
       if (query.username && !selected.length) throw managesStaff(session) || same(query.username, session.user) ? fail('not_found', 'That staff member is not in the active directory.', 404) : fail('forbidden', 'You can view only your own staff record.', 403);
+      // The owner's whole directory also lists former staff, for their Gusto fields only.
+      const former = !query.username && can(session, 'pay.manage', env) ? { formerStaff: [...formerStaff(staff).values()].sort(byName).map(formerView) } : {};
       return { ok: true, authority: 'employee_hub', timeZone: 'America/Denver', today,
         viewer: { user: session.user, capabilities: staffCapabilities(session, env) },
         catalog: { version: SKILL_CATALOG_VERSION, skills: SKILL_CATALOG, levels: SKILL_LEVELS, roles: STAFF_ROLES, days: WEEK_DAYS },
-        people: selected.sort((a, b) => String(a.displayName).localeCompare(String(b.displayName))).map(person => view(person, session, today)),
+        people: selected.sort(byName).map(person => view(person, session, today)), ...former,
         coverage: { complete: true, asOf: date.toISOString() } };
     },
 
@@ -287,7 +363,7 @@ export function createStaffDirectoryService({ store, env = {}, now = () => new D
       // expectedUser (optional): the account the change was made under. The session cookie is shared by every tab, so a
       // change kept in one tab is refused after another tab signs in as someone else; the client keeps it (401).
       if (input.expectedUser !== undefined && !same(input.expectedUser, session.user)) throw fail('account_changed', 'This change was made while signed in as another account. Sign in as that account to retry it, or discard it.', 401);
-      if (!permitted(session, input.action, { username: input.username })) throw fail('forbidden', input.action === 'set_roles' || input.action === 'set_pay' ? 'Only the owner can change staff roles and pay.' : 'Only a manager can change another staff member.', 403);
+      if (!permitted(session, input.action, { username: input.username })) throw fail('forbidden', input.action === 'set_roles' || input.action === 'set_pay' ? 'Only the owner can change staff roles and pay.' : input.action === 'set_gusto_id' ? 'Only the owner can set Gusto employee IDs.' : 'Only a manager can change another staff member.', 403);
       if (store.readOnly()) throw fail('recovery_read_only', 'Employee setup is being verified. Existing records are preserved and cannot be changed yet.', 503);
       const requestId = input.requestId.toLowerCase(), fingerprint = await store.fingerprint(canonicalJson({ actor: personKey(actor), input }));
       const receipt = await store.readReceipt(requestId);
@@ -297,12 +373,12 @@ export function createStaffDirectoryService({ store, env = {}, now = () => new D
         if (saved) return saved;
         throw fail('changed_since_operation', 'This change was saved and the record has changed since. Refresh to see the latest.', 409);
       }
-      const person = (await directory()).get(personKey(input.username));
-      if (!person) throw fail('not_found', 'That staff member is not in the active directory.', 404);
+      const staff = await roster(), person = target(staff, input.action, personKey(input.username));
+      if (!person) throw fail('not_found', input.action === 'set_gusto_id' ? 'That person has no staff profile or employee account.' : 'That staff member is not in the active directory.', 404);
       if (person.profileNeedsReview) throw fail('profile_ambiguous', 'This employee has a profile saved under an unrecognized id. Ask the owner to review it before changing the directory.', 409);
       if (input.expectedRevision !== person.revision) throw fail('revision_conflict', 'This staff record changed since you opened it. Refresh and review the latest before saving.', 409, { currentRevision: person.revision });
       const change = input.action === 'set_roles' ? staffRolesChange(person, input) : input.action === 'set_pay' ? payChange(person, input, actor, nowIso, today)
-        : input.action === 'set_skills' ? skillsChange(person, input, actor, nowIso) : availabilityChange(person, input);
+        : input.action === 'set_skills' ? skillsChange(person, input, actor, nowIso) : input.action === 'set_gusto_id' ? gustoIdChange(person, input, gustoHolders(staff)) : availabilityChange(person, input);
       if (!change) return { ok: true, authority: 'employee_hub', unchanged: true, person: view(person, session, today) };
       const { scope, before, after, auditView = { before, after }, ...fields } = change, current = person.record?.data || {};
       const profileId = person.record?.data.id || person.key;
@@ -317,9 +393,9 @@ export function createStaffDirectoryService({ store, env = {}, now = () => new D
         account = { account: { ...saved.account, staffRoles: fields.staffRoles, sessionVersion: crypto.randomUUID(), rolesUpdatedAt: nowIso, rolesUpdatedBy: actor, updatedAt: nowIso }, version: saved.version };
       }
       const receiptData = { kind: 'staff_directory_receipt_v1', action: input.action, actor: personKey(actor), target: person.key, fingerprint, createdAt: nowIso };
-      // SEC-02: the audit entry joins the same commit; pay snapshots are owner-only.
+      // SEC-02: the audit entry joins the same commit; pay snapshots and Gusto ID changes are owner-only.
       const audit = auditWrite({ actor: { id: auditActor(actor), kind: 'human', role: session.role || null }, via: 'hub', action: `staff_directory.${input.action}`,
-        entity: { collection: 'staff', id: auditEntity(person.key) }, before: auditView.before, after: auditView.after, requestId, reason: reason || null, visibility: scope === 'pay' ? 'owner' : 'business', now: nowIso });
+        entity: { collection: 'staff', id: auditEntity(person.key) }, before: auditView.before, after: auditView.after, requestId, reason: reason || null, visibility: ['pay', 'gusto'].includes(scope) ? 'owner' : 'business', now: nowIso });
       let saved;
       try {
         saved = await store.commit({ profile: { id: profileId, documentId: person.record?.documentId || '', revision: person.revision, data }, account, receipt: { id: requestId, data: receiptData }, audit, now: nowIso });

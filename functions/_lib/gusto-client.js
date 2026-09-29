@@ -26,7 +26,8 @@ export function gustoConfiguration(env = {}) {
     if (!productionRedirect && !localRedirect) reason = 'Configure the exact approved Gusto redirect address.';
     else if (!employeeVaultSecret(env) || employeeVaultReadOnly(env) || !firebaseServiceAccountConfigured(env)) reason = 'Gusto secure storage configuration needs attention.';
   }
-  return { configured: !reason, environment, companyUuid, reason };
+  // productionApproved (GUSTO-EXPORT): the Hub offers Connect Gusto only once Gusto has approved EGC's production access.
+  return { configured: !reason, environment, companyUuid, reason, productionApproved: env.GUSTO_PRODUCTION_APPROVED === 'true' };
 }
 function requireConfiguration(env) {
   const config = gustoConfiguration(env);
