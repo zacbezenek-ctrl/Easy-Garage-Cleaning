@@ -130,7 +130,7 @@ test('outage wording: not configured is 501, a HighLevel failure is 502 without 
   assert.deepEqual([unconfigured.status, unconfigured.body.code], [501, 'HIGHLEVEL_NOT_CONFIGURED']);
 });
 
-test('the dispatch board tells a booker it is one (flag on); a manager and the flag-off board are unchanged', async t => {
+test('the dispatch board reports each booker’s walkthrough right while flag-off viewers stay unchanged', async t => {
   const { env: on, cookies } = await sessions(t, { EGC_STAFF_ROLE_ACCESS: 'true' });
   const off = staffEnv(HL, STAFF);
   const board = async (env, cookie) => {
@@ -140,8 +140,9 @@ test('the dispatch board tells a booker it is one (flag on); a manager and the f
   };
   const phone = await board(on, cookies['Config.Phone']);
   assert.equal(phone.status, 200);
-  assert.deepEqual(phone.body.viewer, { id: 'Config.Phone', booker: true });
-  assert.deepEqual((await board(on, cookies.ZacB)).body.viewer, { id: 'ZacB' });
+  assert.deepEqual(phone.body.viewer, { id: 'Config.Phone', booker: true, canPerformWalkthrough: false });
+  assert.deepEqual((await board(on, cookies['Config.Sales'])).body.viewer, { id: 'Config.Sales', booker: true, canPerformWalkthrough: true });
+  assert.deepEqual((await board(on, cookies.ZacB)).body.viewer, { id: 'ZacB', canPerformWalkthrough: true });
   assert.deepEqual((await board(off, cookies.ZacB)).body.viewer, { id: 'ZacB' });
   assert.equal((await board(off, cookies['Config.Phone'])).status, 403);
 });
@@ -165,7 +166,7 @@ test('a booker reads walkthrough outcomes from the dispatch board with no money,
     const response = await dispatchHandlers({ session: async () => session, storage: seeded, now: () => new Date(NOW) }).get({ env, request: new Request(`${ORIGIN}/api/dispatch?startDate=2026-09-22&endDate=2026-09-29&includeUnscheduled=true`) });
     assert.equal(response.status, 200, user);
     const body = await response.json(), text = JSON.stringify(body), dto = id => body.jobs.find(job => job.id === id);
-    assert.deepEqual(body.viewer, { id: user, booker: true });
+    assert.deepEqual(body.viewer, { id: user, booker: true, canPerformWalkthrough: user === 'Config.Sales' });
     assert.deepEqual([dto('walk-sold').walkthroughBadge, dto('walk-sold').convertedJobId, dto('walk-noshow').walkthroughState, dto('walk-noshow').walkthroughBadge], ['Sold \u2192 open job', 'job-crewed', 'no_show', 'No-show \u00b7 rebook']);
     for (const secret of ['98765', '43210', 'SYNTHETIC-PRIVATE-NOTE', 'synthetic.secret.rep']) assert.equal(text.includes(secret), false, `${user}: ${secret}`);
     assert.doesNotMatch(text, /"(?:moneyReady|depositRequiredCents|depositDueCents|hasApprovedPrice|estimate|total|typedNotes|performedBy)"/, user);

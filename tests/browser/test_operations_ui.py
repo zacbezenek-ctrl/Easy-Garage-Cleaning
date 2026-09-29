@@ -27,7 +27,7 @@ class BrowserTests(unittest.TestCase):
     def tearDownClass(cls): cls.browser.close();cls.pw.stop();cls.server.shutdown();cls.server.server_close()
     def setUp(self):
         self.context=self.browser.new_context(viewport={'width':1360,'height':1000});self.page=self.context.new_page()
-        self.items=[task()];self.calls=[];self.enabled=True;self.fail_once=False;self.stale=False;self.errors=[];self.calendar_available=False;self.send_available=False;self.send_errors=[];self.send_results=[];self.started=set()
+        self.items=[task()];self.calls=[];self.enabled=True;self.actor_role='owner';self.fail_once=False;self.stale=False;self.errors=[];self.calendar_available=False;self.send_available=False;self.send_errors=[];self.send_results=[];self.started=set()
         self.sold_revenue={'valueCents':None,'knownSubtotalCents':0,'unknownOccurrenceCount':1,'unknownValueCount':1,'missingValue':['confirmed-undated-sale'],'coverageIncomplete':True,'qualification':'Confirmed outcome has no verified occurrence date.','unknownOccurrenceEvents':[{'eventId':'confirmed-undated-sale','contactId':'synthetic-contact','valueCents':None,'currency':None}]}
         self.collected_revenue={'valueCents':None,'knownSubtotalCents':13900,'unknownOccurrenceCount':0,'unknownValueCount':0,'missingValue':[],'coverageIncomplete':True,'qualification':'Payment history is incomplete; the dated subtotal is not a complete total.','unknownOccurrenceEvents':[]}
         self.page.on('pageerror',lambda e:self.errors.append(str(e)))
@@ -42,7 +42,7 @@ class BrowserTests(unittest.TestCase):
         def send(body,status=200):
             if body.get('authority')=='canonical_customer_event_ledger':body={**body,'soldRevenue':self.sold_revenue,'collectedRevenue':self.collected_revenue}
             route.fulfill(status=status,content_type='application/json',body=json.dumps(body))
-        if req.method=='GET':send({'ok':True,'enabled':self.enabled,'actor':{'id':'test-owner','role':'owner','kind':'human'},'owners':[{'id':'test-owner','name':'Test owner','role':'owner'}]});return
+        if req.method=='GET':send({'ok':True,'enabled':self.enabled,'actor':{'id':'test-owner','role':self.actor_role,'kind':'human'},'owners':[{'id':'test-owner','name':'Test owner','role':'owner'}]});return
         r=req.post_data_json;self.calls.append(r);c=r['body'];name=c['command']
         if name=='queue':
             rows=[t for t in self.items if t['status'] in ['open','in_progress','blocked']]
@@ -89,6 +89,13 @@ class BrowserTests(unittest.TestCase):
     def detail(self):self.page.locator('.ac-row').filter(has_text=self.items[0]['title']).first.click();expect(self.page.get_by_role('dialog')).to_contain_text('Completion condition')
     def fill_create(self):
         self.page.get_by_role('button',name='New action',exact=True).click();self.page.get_by_label('Action',exact=True).fill('New synthetic commitment');self.page.get_by_label('What proves completion?',exact=True).fill('A recorded callback outcome')
+    def test_walkthrough_task_has_copy_handoff_without_sending(self):
+        self.items=[task(kind='manual',portalJobId='visit-synthetic',sourceEvidence=[{'source':'recording','id':'recording-synthetic','excerpt':'Send the shelving options.'}],description='Reviewed shelving options and next steps.')]
+        self.page.add_init_script("Object.defineProperty(navigator,'clipboard',{value:{writeText:async text=>{window.copiedOfficeText=text}}})")
+        self.open();self.detail();self.page.get_by_role('button',name='Copy office instructions',exact=True).click();expect(self.page.get_by_role('dialog')).to_contain_text('Copied. Open the customer in HighLevel');self.assertIn('Reviewed shelving options',self.page.evaluate('window.copiedOfficeText'));self.assertIn('visit-synthetic',self.page.evaluate('window.copiedOfficeText'));expect(self.page.get_by_role('link',name='Open HighLevel',exact=True)).to_have_attribute('href','https://app.gohighlevel.com/');self.assertFalse(any('send' in c['body']['command'] for c in self.calls))
+    def test_walkthrough_handoff_copy_has_manual_fallback(self):
+        self.items=[task(kind='manual',sourceEvidence=[{'source':'recording','id':'recording-synthetic','excerpt':'Call tomorrow.'}])];self.page.add_init_script("Object.defineProperty(navigator,'clipboard',{value:{writeText:async()=>{throw new Error('denied')}}})")
+        self.open();self.detail();self.page.get_by_role('button',name='Copy office instructions',exact=True).click();expect(self.page.get_by_label('Office instructions to copy')).to_be_visible();self.assertIn('Call synthetic customer',self.page.get_by_label('Office instructions to copy').input_value())
     def test_disabled_is_not_a_fake_empty_queue(self):
         self.enabled=False;self.open();expect(self.page.locator('[data-ac-content]')).to_contain_text('not an empty work queue');self.assertEqual([r for r in self.calls if r['body']['command']=='queue'],[])
     def test_desktop_and_mobile_have_no_horizontal_overflow(self):
@@ -117,6 +124,19 @@ class BrowserTests(unittest.TestCase):
         self.open();self.page.get_by_role('tab',name='Portal schedule',exact=True).click();expect(self.page.locator('[data-ac-content]')).to_contain_text('No other calendar was substituted')
     def test_authoritative_instructions_show_current_notes_and_escape_untrusted_content(self):
         self.calendar_available=True;self.open();self.page.get_by_role('tab',name='Portal schedule',exact=True).click();self.page.get_by_role('button',name='Instructions',exact=True).click();dialog=self.page.get_by_role('dialog');expect(dialog).to_contain_text('Protect shelving <img');expect(dialog).to_contain_text('Reviewed note');expect(dialog).not_to_contain_text('Old note');self.assertEqual(dialog.locator('img').count(),0);self.assertIsNone(self.page.evaluate('window.injected'));reads=[r['body'] for r in self.calls if r['body']['command']=='portal.job'];self.assertEqual(reads,[{'command':'portal.job','jobId':'exact-fixture-visit'}])
+    def test_portal_calendar_recordings_are_for_managers_and_exact_visits_only(self):
+        self.calendar_available=True
+        self.page.add_init_script("window.EGCRecordings={open:id=>{window.recordingOpenedFor=id}}")
+        self.open();self.page.get_by_role('tab',name='Portal schedule',exact=True).click()
+        self.page.get_by_role('button',name='Recordings',exact=True).click()
+        self.assertEqual(self.page.evaluate('window.recordingOpenedFor'),'exact-fixture-visit')
+    def test_sales_actor_on_action_center_cannot_open_calendar_recordings(self):
+        # Phone is represented to the Action Center by its canonical sales actor role.
+        # Sales uses the assigned Walkthroughs card for recording intake, and Phone has no intake.
+        self.actor_role='sales';self.calendar_available=True;self.open()
+        self.page.get_by_role('tab',name='Portal schedule',exact=True).click()
+        expect(self.page.get_by_role('button',name='Recordings',exact=True)).to_have_count(0)
+        expect(self.page.get_by_role('button',name='Add action',exact=True)).to_be_visible()
     def test_sales_evidence_separates_activity_cohort_and_pipeline_with_safe_transcripts(self):
         self.open();self.page.get_by_role('tab',name='Sales evidence',exact=True).click();view=self.page.locator('[data-ac-content]');expect(view).to_contain_text('Activity in this period');expect(view).to_contain_text('1 / 8');expect(view).to_contain_text('12.5%');expect(view).to_contain_text('Walkthrough pipeline · 1');expect(view).to_contain_text('Video quote pipeline · 1');expect(view).to_contain_text('Tuesday at 2:15 works <img');expect(view).to_contain_text('Amount unverified: 1');self.assertEqual(view.locator('img').count(),0);self.assertIsNone(self.page.evaluate('window.injected'))
         self.page.get_by_role('button',name='Customer evidence',exact=True).first.click();expect(self.page.get_by_role('dialog')).to_contain_text('Tuesday at 2:15 works');self.page.get_by_role('button',name='Close',exact=True).click();self.page.get_by_label('Sales evidence reporting window').select_option('7');expect(view).to_contain_text('Synthetic booked customer');reads=[r['body'] for r in self.calls if r['body']['command']=='intelligence.report'];self.assertEqual(len(reads),2);self.assertNotEqual(reads[0]['since'],reads[1]['since']);self.assertEqual(reads[1]['cohortSince'],reads[1]['since'])

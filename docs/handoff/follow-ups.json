@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "asOf": "2026-09-29",
+  "items": [
+    {"id": "CI-01", "state": "open", "owner": "build coordinator", "action": "Fix or verify the Dispatch Find a time browser failure, then obtain green Action Center CI on the exact Batch 8 merge head.", "evidence": "PR #86 run 36604534261, test_dispatch_ui.py:304"},
+    {"id": "HANDOFF-41", "state": "open", "owner": "build coordinator", "action": "Obtain and commit all 41 authoritative specs for unbuilt or in-flight units; reconcile IDs and launch states.", "evidence": "0 of 41 located in checked branch or PR head"},
+    {"id": "HANDOFF-REFRESH", "state": "open", "owner": "build coordinator", "action": "Refresh this handoff after each queued merge, with exact commit, review, CI, flag, and deployment state."},
+    {"id": "REFUNDS-REVIEW", "state": "open", "owner": "build coordinator", "action": "Complete review, record the review state and exact activation flag in commit and handoff, and merge disabled."},
+    {"id": "TAGS-REVIEW", "state": "open", "owner": "build coordinator", "action": "Obtain clean review of HighLevel milestone tags, record the review state and exact activation flag in commit and handoff, and merge disabled."},
+    {"id": "BUILD-IDS", "state": "open", "owner": "build coordinator", "action": "Name and track the seven owner-reported running builds before incorporating them into Batch 9."},
+    {"id": "HUB-INTEGRATION", "state": "open", "owner": "build coordinator", "action": "Commit, review, and run root, platform, browser, and applicable emulator tests for iOS Walkthroughs and transcript-to-office-task integration."},
+    {"id": "OWNER-LIVE", "state": "pending_deployment", "owner": "owner", "action": "Complete docs/OWNER-GO-LIVE-CHECKLIST.md on real accounts and devices, including sign-in, Firestore rules, iPhone safe areas, Walkthroughs, Dispatch, recordings/task routing, and HighLevel boundaries."},
+    {"id": "OWNER-FLAGS", "state": "pending_deployment", "owner": "owner", "action": "Review evidence for each off-by-default flag before activation; leave refunds and milestone tags off until separately approved."}
+  ]
+}

@@ -6,6 +6,7 @@ import { travelEstimator } from '../_lib/dispatch-travel.js';
 import { dispatchFunnelOptions } from '../_lib/dispatch-funnel.js';
 import { crewRosterPhotoStore } from '../_lib/crew-public-profile.js';
 import { firstGhlTagAttempt } from '../_lib/ghl-tag-outbox.js';
+import { can, staffRoleAccessEnabled } from '../_lib/staff-roles.js';
 
 function reply(status, body) {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type':'application/json','Cache-Control':'no-store','X-Content-Type-Options':'nosniff' } });
@@ -42,7 +43,7 @@ export function dispatchHandlers({ session = getHubSession, storage = dispatchSt
         const params = Object.fromEntries(new URL(request.url).searchParams.entries());
         const store = storage(env), photos = crewRosterPhotoStore(store), overview = await dispatchOverview(photos.store,actor,params,now(),{travel:travel({env,store,now}),readiness:true,...(access.booker ? {authorize:bookerAuthorize(env)} : {})});
         // Approved crew headshots (P4-07), read alongside the job scans; an unreadable profile store leaves the roster unchanged.
-        return reply(200,{...overview,...(Array.isArray(overview.roster) ? {roster:await photos.attach(overview.roster)} : {}),...(access.booker && Array.isArray(overview.availability) ? {availability:overview.availability.map(away)} : {}),viewer:{id:actor.user,...(access.booker ? {booker:true} : {})},funnel:dispatchFunnelOptions()});
+        return reply(200,{...overview,...(Array.isArray(overview.roster) ? {roster:await photos.attach(overview.roster)} : {}),...(access.booker && Array.isArray(overview.availability) ? {availability:overview.availability.map(away)} : {}),viewer:{id:actor.user,...(access.booker ? {booker:true} : {}),...(staffRoleAccessEnabled(env) ? {canPerformWalkthrough:can(actor,'walkthrough.perform',env)} : {})},funnel:dispatchFunnelOptions()});
       } catch(error) { return errorResponse(error); }
     },
     async post({request,env,waitUntil}) {

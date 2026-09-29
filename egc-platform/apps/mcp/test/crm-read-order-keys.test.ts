@@ -65,7 +65,7 @@ function writeSites(file:string,text:string):Site[]{
 
 describe('fixed keyset order keys',()=>{
   it('no write path rewrites leads.created_at, calls.started_at or walkthroughs.created_at after insert',()=>{
-    const sites=['apps','packages','services','infra'].flatMap(dir=>sources(join(ROOT,dir))).flatMap(path=>writeSites(relative(ROOT,path),readFileSync(path,'utf8')));
+    const sites=['apps','packages','services','infra'].flatMap(dir=>sources(join(ROOT,dir))).flatMap(path=>writeSites(relative(ROOT,path).replaceAll('\\','/'),readFileSync(path,'utf8')));
     expect(sites.filter(site=>site.problem)).toEqual([]);
     // The scan must see the real writers, or it proves nothing.
     const seen=(table:string,kind:Site['kind'])=>[...new Set(sites.filter(site=>site.table===table&&site.kind===kind).map(site=>site.file))].sort();

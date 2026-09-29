@@ -276,6 +276,20 @@ class HubShellMobileTests(HubShell, unittest.TestCase):
             self.close_page()
         self.assertEqual(problems, [])
 
+    def test_landscape_dialog_clears_the_side_notch(self):
+        # A landscape iPhone has a left camera inset and a right home-swipe inset.
+        # The native dialog must stay inside that usable width, even with a long title.
+        self.board = self.later_board()
+        page = self.show('walkthroughs', '844x390')
+        page.add_style_tag(content=':root{--egc-safe-top:0px;--egc-safe-right:21px;--egc-safe-bottom:21px;--egc-safe-left:47px}')
+        page.get_by_role('button', name='Reschedule ' + LONG_NAME + ' walkthrough', exact=True).click()
+        page.wait_for_selector('dialog.dp-dialog[open]')
+        box = self.box('dialog.dp-dialog[open]')
+        self.assertGreaterEqual(box['left'], 47 - 0.5, box)
+        self.assertLessEqual(box['right'], 844 - 21 + 0.5, box)
+        self.assertTrue(self.hit('dialog.dp-dialog[open] .dp-dialog-head [aria-label="Close dialog"]'))
+        self.close_page()
+
     def inset_problems(self, label, selector, close, submit, sheet=True):
         """Under PHONE_INSETS: a sheet's box clears the 47px status bar and the 34px home indicator; for every dialog the
         close sits below the status bar and takes the tap, and the save scrolls into view above the home indicator."""

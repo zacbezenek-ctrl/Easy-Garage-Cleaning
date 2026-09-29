@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "asOf": "2026-09-29",
+  "expectedCount": 41,
+  "locatedCount": 0,
+  "status": "missing_authoritative_source",
+  "sourceChecked": ["local codex/hub-ios-walkthrough-completion checkout", "GitHub Batch 8 PR #86 head"],
+  "specs": [],
+  "requiredNextStep": "Obtain the 41 authored specs, preserve their original IDs and text, and reconcile them to the unit-status and launch-order files. Do not create substitute specifications from the stale BUILD-PROGRESS Next list."
+}

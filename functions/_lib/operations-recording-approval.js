@@ -3,6 +3,11 @@ import {decodeFirestoreFields,encodeFirestoreFields} from './firestore-job.js';
 import {funnelEventWrite} from './funnel-events.js';
 import {eventActor,eventVia,requestKey} from './dispatch-funnel.js';
 import {commitConflict,commitFailure} from './firestore-errors.js';
+import {hasBusinessAccess,isHubOwner,listHubUserProfiles} from './hub-session.js';
+import {approvedEmployeeProfiles,employeeAccountsConfigured} from './employee-accounts.js';
+import {capabilityRoleSet} from './staff-roles.js';
+import {walkthroughPerformer} from './walkthrough-visit.js';
+import {assignmentKey,createJobAssignmentAccess} from './job-assignment.js';
 
 const BASE='https://firestore.googleapis.com/v1/projects/egcw-1ec83/databases/(default)/documents';
 const NAME='projects/egcw-1ec83/databases/(default)/documents';
@@ -10,17 +15,49 @@ const id=value=>typeof value==='string'&&/^[A-Za-z0-9_-]{1,180}$/.test(value)&&!
 const uuid=value=>typeof value==='string'&&/^[a-f0-9-]{36}$/i.test(value);
 function fail(code,status=409){throw Object.assign(new Error(code),{status});}
 async function read(env,path,fetcher){const r=await fetcher(env,BASE+'/'+path);if(r.status===404)return null;if(!r.ok)fail('recording_source_unavailable',503);const d=await r.json();return{...decodeFirestoreFields(d.fields),id:String(d.name||'').split('/').pop(),revision:d.updateTime};}
-export async function resolveRecordingIdentity(env,jobId,fetcher=firestoreFetch){return (await recordingSource(env,jobId,fetcher)).identity;}
-async function recordingSource(env,jobId,fetcher){
+/** The role sent to Operations is derived from the current signed Hub profile. */
+export function recordingActorRole(profile,env={}){
+  if(!walkthroughPerformer(profile,env))return null;
+  const roles=capabilityRoleSet(profile,env);
+  if(roles){
+    if(roles.includes('owner')&&isHubOwner(profile))return'owner';
+    if(roles.includes('manager'))return'manager';
+    return roles.includes('sales')?'sales':null;
+  }
+  if(hasBusinessAccess(profile)&&profile.role==='owner'&&isHubOwner(profile))return'owner';
+  if(hasBusinessAccess(profile)&&profile.role==='manager')return'manager';
+  return profile.role==='sales'?'sales':null;
+}
+/** Recheck the API's signed human actor against today's approved Hub accounts. */
+export async function currentRecordingProfile(env,actor){
+  if(actor?.kind!=='human'||!assignmentKey(actor.id))fail('recording_actor_changed',403);
+  const profiles=listHubUserProfiles(env);
+  if(employeeAccountsConfigured(env))profiles.push(...await approvedEmployeeProfiles(env));
+  const matching=profiles.filter(profile=>assignmentKey(profile.user)===assignmentKey(actor.id));
+  if(matching.length!==1||recordingActorRole(matching[0],env)!==actor.role)fail('recording_actor_changed',403);
+  return matching[0];
+}
+export async function resolveRecordingIdentity(env,jobId,fetcher=firestoreFetch,profile=null){return (await recordingSource(env,jobId,fetcher,profile)).identity;}
+async function recordingSource(env,jobId,fetcher,profile=null){
   if(!id(jobId))fail('recording_source_not_found',404);
   const job=await read(env,'jobs/'+jobId,fetcher);
   if(!job||job.id!==jobId||!['job','walkthrough'].includes(job.type)||!job.revision)fail('recording_source_not_found',404);
   if(!id(job.customerId))fail('recording_customer_link_missing');
-  const customer=await read(env,'customers/'+job.customerId,fetcher);
-  if(!customer||customer.id!==job.customerId)fail('recording_customer_link_missing');
   const visitId=job.type==='walkthrough'?job.id:job.sourceWalkthroughId;
   if(!id(visitId))fail('recording_visit_link_missing');
-  if(visitId!==job.id){const visit=await read(env,'jobs/'+visitId,fetcher);if(!visit||visit.type!=='walkthrough'||visit.customerId!==job.customerId||(visit.convertedJobId&&visit.convertedJobId!==job.id))fail('recording_visit_job_mismatch');}
+  const visit=visitId===job.id?job:await read(env,'jobs/'+visitId,fetcher);
+  if(!visit||visit.type!=='walkthrough'||visit.customerId!==job.customerId||(visitId!==job.id&&visit.convertedJobId&&visit.convertedJobId!==job.id))fail('recording_visit_job_mismatch');
+  if(profile){
+    const role=recordingActorRole(profile,env);
+    if(!role)fail('recording_actor_changed',403);
+    if(role==='sales'){
+      const assignment=createJobAssignmentAccess(env,profile);
+      const startedBy=assignmentKey(visit.walkthroughVisit?.startedBy);
+      if(startedBy!==assignmentKey(profile.user)&&!await assignment.assigned(visit)&&!await assignment.assigned(job))fail('recording_source_forbidden',403);
+    }
+  }
+  const customer=await read(env,'customers/'+job.customerId,fetcher);
+  if(!customer||customer.id!==job.customerId)fail('recording_customer_link_missing');
   return{job,identity:{portalJobId:job.id,portalVisitId:visitId,portalCustomerId:job.customerId,portalProjectId:id(job.projectId)?job.projectId:null,portalRevision:job.revision,highlevelContactId:job.highlevelContactId||customer.highlevelContactId||null,authority:'employee_hub'}};
 }
 /** audit(entity,before,after) returns one create-only write (operations-command-policy.js)

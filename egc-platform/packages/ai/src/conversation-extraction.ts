@@ -98,7 +98,7 @@ export function conversationPrompt(context: ConversationContext, catalog: readon
       ? `Catalog (id | name | category | brands | tiers):\n${catalog.map(item => [item.id, item.name, item.category, item.brands.join(", ") || "-", item.tiers.join(", ") || "-"].join(" | ")).join("\n")}`
       : "No catalog is available: every catalogItemId must be null.",
     // Per-call context goes last so the long static rules and catalog stay one cacheable prompt prefix.
-    context.sourceKind === "visit_recording"
+    (context.sourceKind === "visit_recording" || context.sourceKind === "visit_transcript")
       ? "scope holds the walkthrough scope; use null, unknown or empty values when not stated. Preserve remove, keep and relocate distinctions. Pest observations are observations only; do not infer an active infestation. scope.evidence lists at most one entry per scope field with the exact transcript words."
       : "scope must be null for this source.",
     `Source: ${context.sourceKind}. It happened at ${context.occurredAt}; that is for reference only, never to compute a date.`
@@ -268,7 +268,7 @@ export function validateConversationOutput(raw: unknown, transcript: string, met
   const proposedActions = keep(shape.data.proposedActions, raw => action(raw, grounded, spoken, claimed, counts), item => `${item.kind}|${normalizeEvidenceText(item.sourceQuote)}`, L.proposedActions, "droppedProposedActions");
   const catalogMentions = keep(shape.data.catalogMentions, raw => mention(raw, grounded, catalog, counts), item => `${item.catalogItemId ?? normalizeEvidenceText(item.name)}|${normalizeEvidenceText(item.sourceQuote)}`, L.catalogMentions, "droppedCatalogMentions");
   const preferences = keep(shape.data.preferences, raw => preference(raw, grounded), item => normalizeEvidenceText(`${item.topic} ${item.statement}`), L.preferences, "droppedPreferences");
-  const visitScope = meta.context.sourceKind === "visit_recording" ? scope(shape.data.scope, grounded, counts) : null;
+  const visitScope = meta.context.sourceKind === "visit_recording" || meta.context.sourceKind === "visit_transcript" ? scope(shape.data.scope, grounded, counts) : null;
   if (visitScope === undefined) return null;
   const schedulingConstraints = scheduling(shape.data.schedulingConstraints, grounded, counts);
   const result = conversationExtractionSchema.safeParse({
