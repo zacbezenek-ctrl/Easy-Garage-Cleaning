@@ -298,7 +298,7 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   walkthrough, phone, B2B rate card and owner economics by role through /api/pricing-config (crew 403, owner part
   owner-only); the walkthrough caches tables per user/version and fails closed offline. The six catalog services bundle
   as a generated plain module (checked on Wrangler 3 and 4 in CI). Managers stop seeing others' pay in /api/employee-hub
-  (`EGC_STAFF_PAY_OWNER_ONLY`). Gaps: /api/timesheets and payroll CSV still show pay; pay-field edits need pay.manage later.
+  (`EGC_STAFF_PAY_OWNER_ONLY`). Gaps: /api/timesheets and payroll CSV still show pay; pay-field edits need pay.manage later (both closed by PAY-TIMESHEETS).
 - **FUN-37** Bridge funnel event feed: read-only `hub.funnel.events` (keyset cursor over (recordedAt, id) with a 5-minute
   settle window), `hub.walkthrough.outcomes` (Finish/No-show/handoff sale with the visit's reason and occurrence;
   unprovable handoff sales go to `unverified`) and `hub.funnel.case` (a project's events pinned to one readTime),
@@ -352,6 +352,10 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   until FUN-09; named holidays stay unresolved until the shared business calendar lands.
 - **GO-LIVE** Owner runbook (docs/GO-LIVE.md) and a one-page owner go-live checklist (docs/OWNER-GO-LIVE-CHECKLIST.md):
   what to deploy, which flags to switch on and in what order, and what to check after each step. Docs only.
+- **PAY-TIMESHEETS** Owner-only pay everywhere under `EGC_STAFF_PAY_OWNER_ONLY` (default on): /api/timesheets shows
+  managers hours, approvals and paid time-off hours but not other employees' rates or gross, the payroll CSV is the
+  owner's alone, and any save that carries or moves another employee's pay (or a manager's own) is 403 pay_owner_only;
+  one pay-visibility.js module; a payroll week card in Time approvals. Gap: /api/job-costing (JOB-COST-PRIVACY, next).
 
 ## In progress
 
@@ -434,6 +438,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | P1-06 | Server time-off workflow and single PTO pay model (/api/employee-pto; employee-hub request writes 403) | merged (6c914d2) |
 | FUN-08 | Scheduling constraints in the v2 extraction, resolved against the walkthrough Start (Denver) | merged (354864f) |
 | GO-LIVE | Owner go-live runbook and checklist (docs only) | merged (f655cac) |
+| PAY-TIMESHEETS | Owner-only pay in timesheets, payroll CSV and pay-field writes; payroll week card | merged (a990d27) |
 
 ## Next
 

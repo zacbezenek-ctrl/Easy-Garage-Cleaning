@@ -304,8 +304,18 @@ test('owner-only pay: a manager or crew member cannot read or set another employ
     assert.deepEqual([response.status, JSON.parse(text).code], [403, 'timesheet_forbidden'], `${who}${format}`);
     assert.doesNotMatch(text, CANARY);
   }
+  // With PAY-TIMESHEETS the manager's timesheet week keeps the PTO hours but not the rate or the PTO pay, and the payroll
+  // CSV (which is all pay) is the owner's alone.
+  const managerWeek = await read(timesheetsGet, 'manager', '/api/timesheets?view=week&start=2026-09-21');
+  assert.doesNotMatch(managerWeek, CANARY);
+  const week = JSON.parse(managerWeek), hidden = week.employees.find(row => row.employee === 'crew.one');
+  assert.deepEqual([hidden.ptoHours, hidden.payHidden, Object.hasOwn(hidden, 'ptoPay'), Object.hasOwn(hidden, 'regularRate'), week.totals.ptoPay, week.payVisibility], [8, true, false, false, null, 'own']);
+  const managerCsv = await send(timesheetsGet, 'manager', '/api/timesheets?view=week&start=2026-09-21&format=csv'), refusedCsv = await managerCsv.text();
+  assert.deepEqual([managerCsv.status, JSON.parse(refusedCsv).code], [403, 'pay_owner_only']);
+  assert.doesNotMatch(refusedCsv, CANARY);
   // The canary is live: the owner, and a manager with the flag off, read the rate; PTO still pays 8 hours at the owner's rate.
   assert.match(await read(hubGet, 'manager', '/api/employee-hub', { ...env, EGC_STAFF_PAY_OWNER_ONLY: 'false' }), /37\.13/);
+  assert.match(await read(timesheetsGet, 'manager', '/api/timesheets?view=week&start=2026-09-21', { ...env, EGC_STAFF_PAY_OWNER_ONLY: 'false' }), /297\.04/);
   const owner = JSON.parse(await read(timesheetsGet, 'owner', '/api/timesheets?view=week&start=2026-09-21')).employees.find(row => row.employee === 'crew.one');
   assert.deepEqual([owner.ptoHours, owner.ptoPay, owner.regularRate], [8, 297.04, RATE]);
   const line = parse(await read(timesheetsGet, 'owner', '/api/timesheets?view=week&start=2026-09-21&format=csv')).find(row => row[1] === 'crew.one');

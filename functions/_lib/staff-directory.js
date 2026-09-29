@@ -2,6 +2,7 @@ import { addDays, denverToday, validDate } from './dispatch-time.js';
 import { STAFF_ROLES, can, defaultStaffRoles, primaryStaffRole, sanitizeStaffRoles, staffCapabilities } from './staff-roles.js';
 import { SKILL_CATALOG, SKILL_CATALOG_VERSION, SKILL_LEVELS, storedSkills, validateSkills } from './staff-skills.js';
 import { auditWrite } from './hub-audit.js';
+import { payOwnerOnly } from './pay-visibility.js';
 
 // Staff directory: roles, skills, effective-dated pay and weekly availability are
 // additive fields on the existing encrypted 'profiles' payload (no new vault family,
@@ -194,9 +195,9 @@ export function legacyProfileView(profile, now = new Date().toISOString()) {
   const view = Object.fromEntries(Object.entries(profile).filter(([key]) => !LEGACY_HIDDEN.has(key))), current = effectivePayRate(profile, denverToday(new Date(now)));
   return current.source === 'pay_rates' ? { ...view, hourlyRate: current.hourlyRate } : view;
 }
-// With the directory on, pay changes go only through set_pay: legacy profile saves by
-// anyone without pay.manage cannot set hourlyRate or payType.
-export const legacyPayLocked = (session, env) => staffDirectoryEnabled(env) && !can(session, 'pay.manage', env);
+// With the directory on, pay changes go only through set_pay, and with EGC_STAFF_PAY_OWNER_ONLY on (the default)
+// pay is the owner's: legacy profile saves by anyone without pay.manage cannot set hourlyRate or payType.
+export const legacyPayLocked = (session, env) => (staffDirectoryEnabled(env) || payOwnerOnly(env)) && !can(session, 'pay.manage', env);
 // A manager's legacy /api/employee-hub profile save. With pay locked, the manager's own
 // profile keeps mirroring the Hub configuration (what ensureOwnProfile sends); every other
 // profile keeps its stored pay.

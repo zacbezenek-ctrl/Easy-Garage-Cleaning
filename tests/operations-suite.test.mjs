@@ -826,8 +826,11 @@ test('open-shift scheduling fields persist on the canonical job record',()=>{
   assert.match(suite,/b\.type==='job'\?'':'ops-hidden'/);
   assert.match(suite,/b\.type==='blocked'\?'ops-hidden':''/);
   assert.match(employee,/employee-suite\.css\?v=20260909gusto/);
-  // Bumped deliberately (SYNC-QUEUE after TEAM-UI): page-load sync retries skip visits the server schedule-sync queue owns.
-  assert.match(employee,/employee-suite\.js\?v=20260928syncq3/);
+  // Bumped deliberately (LEGACY-SEND): the customer thread delivery labels changed; (TEAM-UI) then (PAY-TIMESHEETS merged
+  // with PRICE-SCRUB): the timesheet screen mounts the payroll week card and shows pay only where the server sent it;
+  // (PAY-TIMESHEETS fourth check): the profile form's rate field only for a viewer who sets pay; (SYNC-QUEUE) page-load
+  // sync retries skip visits the server schedule-sync queue owns; (PAY-TIMESHEETS after SYNC-QUEUE and P1-06) one new tag.
+  assert.match(employee,/employee-suite\.js\?v=20260929payowner/);
 });
 
 test('recurring visits request a server-side handoff clone instead of copying prior execution or payments',()=>{

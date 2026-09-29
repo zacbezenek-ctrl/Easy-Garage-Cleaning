@@ -493,14 +493,22 @@ async function timesheets({ owner }) {
   return { board, csv };
 }
 
-test('the timesheet Service column shows another employee\'s pay type only where their pay is shown, and a blank otherwise', async () => {
+// PAY-TIMESHEETS: the Service column is the job's service for every viewer, never a pay type (job-1 is not in the job cache
+// here, so it is blank), and an employee whose pay the server did not send reads "Pay hidden", never a $0 total.
+test('the timesheet Service column is the job\'s service, never a pay type, and another employee\'s pay reads "Pay hidden" where it is not shown', async () => {
   const manager = await timesheets({ owner: false });
   assert.equal(manager.csv[0], '"Employee","Date","Customer","Service","Job ID","Hours","Started at","Completed at"');
   assert.equal(manager.csv.find(row => row.startsWith('"Crew One"')), '"Crew One","2026-09-22","General company time","","","4.00","2026-09-22T15:00:00.000Z","2026-09-22T19:00:00.000Z"');
-  assert.match(manager.csv.find(row => row.startsWith('"Synthetic Manager"')), /^"Synthetic Manager","2026-09-21","Synthetic Customer","salary","job-1",/, 'the manager\'s own pay type stays');
+  assert.match(manager.csv.find(row => row.startsWith('"Synthetic Manager"')), /^"Synthetic Manager","2026-09-21","Synthetic Customer","","job-1",/, 'the manager\'s own Service is the job\'s too');
   assert.doesNotMatch(manager.board, /hourly/);
+  assert.doesNotMatch(manager.board, /salary/);
   assert.match(manager.board, /Crew One/);
-  assert.match(manager.board, /salary · job-1/);
+  assert.match(manager.board, /job-1/);
+  assert.match(manager.board, /Pay hidden/);
+  assert.match(manager.board, /\$120/, 'the manager\'s own pay (4 hours at 30) stays');
+  assert.doesNotMatch(manager.board, /\$84|\$0\b/, 'no figure, and no $0 stand-in, for the crew member');
   const owner = await timesheets({ owner: true });
-  assert.match(owner.csv.find(row => row.startsWith('"Crew One"')), /^"Crew One","2026-09-22","General company time","salary","",/);
+  assert.match(owner.csv.find(row => row.startsWith('"Crew One"')), /^"Crew One","2026-09-22","General company time","","",/);
+  assert.doesNotMatch(owner.board, /salary|Pay hidden/);
+  assert.match(owner.board, /\$84/, 'the owner sees the crew member\'s pay (4 hours at 21)');
 });

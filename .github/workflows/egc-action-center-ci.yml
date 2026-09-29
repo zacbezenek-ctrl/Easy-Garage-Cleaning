@@ -184,6 +184,8 @@ jobs:
         run: python tests/browser/test_staff_ui.py
       - name: Time-off requests, approvals and PTO pay edits on a phone
         run: python tests/browser/test_pto_requests_ui.py
+      - name: 'Payroll week card: owner-only pay and CSV'
+        run: python tests/browser/test_payroll_week_ui.py
       - name: Field job-cost capture on a phone
         run: python tests/browser/test_field_expenses_ui.py
       - name: Owner stocked item costs screen, manager read-only view and phone layout

@@ -9,6 +9,9 @@ import { employeeInvitationStore } from '../../functions/_lib/employee-accounts.
 // failures answer as the Firestore emulator does: a stale updateTime (or an update of a
 // missing document) is 400 FAILED_PRECONDITION and a create over an existing document is
 // 409 ALREADY_EXISTS. Anything but firestore.googleapis.com fails the test.
+// Dispatch storage (the request workflow's availability blocks) also needs collection
+// scans (one unpaginated page, masks ignored) and the :beginTransaction / :batchGet /
+// :rollback calls its verified commit makes.
 export const ROOT = 'projects/egcw-1ec83/databases/(default)/documents';
 export const ORIGIN = 'https://easygaragecleaning.com';
 export const PASSWORD = 'Synthetic-Staff-Password-904';
@@ -32,6 +35,12 @@ export function vaultFirestore(t) {
       const rows = [...documents].filter(([key, doc]) => key.startsWith(`${collection}/`) && matchesWhere(doc, body.structuredQuery.where)).map(([, doc]) => ({ document: structuredClone(doc) }));
       return Response.json(rows.length ? rows : [{ readTime: '2026-09-22T12:00:00Z' }]);
     }
+    if (path === ':beginTransaction') return Response.json({ transaction: 'synthetic-transaction' });
+    if (path === ':rollback') return Response.json({});
+    if (path === ':batchGet') return Response.json(body.documents.map(name => {
+      const doc = documents.get(name.split('/documents/')[1]);
+      return doc ? { found: structuredClone(doc) } : { missing: name };
+    }));
     if (path === ':commit') {
       if (hooks.beforeCommit) { const hook = hooks.beforeCommit; hooks.beforeCommit = null; await hook(); }
       if (hooks.commitStatus) { const status = hooks.commitStatus; hooks.commitStatus = 0; return Response.json({ error: { status: 'UNAVAILABLE' } }, { status }); }
@@ -55,6 +64,7 @@ export function vaultFirestore(t) {
       documents.set(key, { name: `${ROOT}/${key}`, fields: body.fields, updateTime: version() });
     }
     if (method !== 'GET' && method !== 'PATCH') throw new Error(`Unexpected ${method} ${url}`);
+    if (method === 'GET' && key.split('/').length % 2 === 1) return Response.json({ documents: [...documents].filter(([name]) => name.startsWith(`${key}/`) && !name.slice(key.length + 1).includes('/')).map(([, doc]) => structuredClone(doc)) });
     return documents.has(key) ? Response.json(structuredClone(documents.get(key))) : Response.json({ error: { status: 'NOT_FOUND' } }, { status: 404 });
   });
   const writes = () => requests.filter(request => request.method === 'PATCH' || request.url.pathname.endsWith(':commit'));
