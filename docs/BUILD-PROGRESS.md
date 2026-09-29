@@ -527,6 +527,10 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   outbox or the page's calendar sync ("Reminder set" only on positive evidence), and for owners and managers price and deposit
   readiness from money-core (no_price, deposit_unpaid within 2 Denver days). Notify toggle on Create/Edit (notifySetAt); recurring
   plans show their reminder setting; bookers see "HighLevel stuck" without Retry. The bridge overview stays money-free.
+- **FIX-EDIT-WIPE** (P1 UI; no flag) Text typed during a send or a background re-render is kept: Hub crew chat and the customer
+  thread (caret kept; the HighLevel thread request is byte-identical, one send per tap), crew/job.js status reasons and the manager
+  checklist editor (superseded notice for a crew-mate's same status), business hub forms and open panels (fresh request id per
+  submit), and schedule alerts (refresh waits while edits are unsaved).
 
 ## In progress
 
@@ -651,6 +655,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | GHL-TRACK-1 | P1 HighLevel: durable tag outbox for bookings, changes and walkthrough outcomes (EGC_GHL_TAG_OUTBOX, off) | merged (31a8de8) |
 | FIX-MONEY-INVOICE-STATE | P1 money: payments never fabricate invoices; credits are not cash (MONEY_INVOICE_STATE_ENABLED, off) | merged (924ed44) |
 | FIX-DISPATCH-READY | P1 Dispatch: reminder, price and deposit readiness on each visit (EGC_DISPATCH_NOTIFY_IMPORTED_ON, off) | merged (d8de34c) |
+| FIX-EDIT-WIPE | P1 UI: typed text survives background reloads (Hub chat and customer thread, crew job reason and checklist, business hub forms, schedule alerts) | merged (6f5dd90) |
 
 ## Next
 

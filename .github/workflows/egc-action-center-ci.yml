@@ -190,6 +190,10 @@ jobs:
         run: python tests/browser/test_hub_offline_ui.py
       - name: Crew job page time moves, crew-mate move, refused moves and clock-in-only location at phone widths
         run: python tests/browser/test_crew_time_ui.py
+      - name: Crew job status reason and checklist edits survive background syncs on a phone
+        run: python tests/browser/test_crew_job_drafts_ui.py
+      - name: Hub chat and customer thread keep text typed during a send
+        run: python tests/browser/test_chat_drafts_ui.py
       - name: Job labor dollars owner-only on the finance board and cost dialog
         run: python tests/browser/test_job_cost_privacy_ui.py
       - name: Follow-up owner and due-time settings on a phone

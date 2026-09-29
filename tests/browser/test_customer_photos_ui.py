@@ -214,30 +214,41 @@ class CustomerPhotosBrowserTests(unittest.TestCase):
         self.assertRegex(body['requestId'], r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'); self.assertNotIn('confirm', body)
         expect(self.page.locator('.ps-status')).to_have_text('Hidden from the customer.')
         self.settle_after_save(gets, shares); expect(self.toggle(0)).to_contain_text('Hidden by Synthetic Owner')
-    def test_unsaved_checklist_edits_block_the_automatic_reload(self):
+    def test_kept_edits_let_the_job_reload_and_other_unsaved_changes_block_it(self):
         self.crew = FIXTURES['activeCrew']; self.sharing = copy.deepcopy(FIXTURES['activeSharing']); self.open_job()
         expect(self.toggle(0)).to_contain_text('Shows when the job completes')
         self.page.get_by_text('Manager: configure this job’s checklist').tap()
         editor = self.page.locator('#checklist-lines'); editor.fill('work | required | Synthetic unsaved checklist edit')
-        self.page.locator('#photo-caption').fill('Synthetic unsaved caption')
+        caption = self.page.locator('#photo-caption'); caption.fill('Synthetic unsaved caption')
+        # FIX-EDIT-WIPE: job.js keeps a checklist edit (and its open panel) and the caption through a reload, so they no
+        # longer hold back the reload after a sharing change.
         gets, shares = self.job_gets, self.share_gets; self.toggle(0).tap()
         expect(self.toggle(0)).to_have_attribute('aria-pressed', 'true')
+        self.settle_after_save(gets, shares)
+        expect(editor).to_have_value('work | required | Synthetic unsaved checklist edit'); expect(caption).to_have_value('Synthetic unsaved caption')
+        expect(self.page.locator('#checklist-editor')).to_have_attribute('open', '')
+        expect(self.page.get_by_role('button', name='Refresh job now')).to_have_count(0)
+        expect(self.page.locator('.ps-status')).not_to_contain_text('Refresh job before')
+        # A change job.js does not keep (the Add photos panel closed) still holds the reload back and asks first.
+        self.page.locator('summary', has_text='Add photos').tap(); expect(self.page.locator('details:has(#photo-caption)')).not_to_have_attribute('open', '')
+        gets, shares = self.job_gets, self.share_gets; self.toggle(0).tap()
+        expect(self.toggle(0)).to_have_attribute('aria-pressed', 'false')
         expect(self.page.locator('.ps-status')).to_contain_text('not refreshed automatically because you have unsaved edits')
         self.page.wait_for_timeout(300)
-        self.assertEqual(self.job_gets, gets, 'job.js is not reloaded over unsaved edits')
-        expect(editor).to_have_value('work | required | Synthetic unsaved checklist edit'); expect(self.page.locator('#photo-caption')).to_have_value('Synthetic unsaved caption')
+        self.assertEqual(self.job_gets, gets, 'job.js is not reloaded over an unsaved change')
         refresh = self.page.get_by_role('button', name='Refresh job now'); expect(refresh).to_be_visible()
         self.assertGreaterEqual(refresh.bounding_box()['height'], 44); self.no_horizontal_scroll()
         prompts = []
         def answer(dialog):
             prompts.append(dialog.message); dialog.dismiss() if len(prompts) == 1 else dialog.accept()
         self.page.on('dialog', answer)
-        refresh.tap(); self.wait_until(lambda: len(prompts) == 1, 'refreshing over unsaved edits asks first')
-        self.assertIn('Unsaved changes', prompts[0]); self.page.wait_for_timeout(200); self.assertEqual(self.job_gets, gets)
-        expect(editor).to_have_value('work | required | Synthetic unsaved checklist edit')
+        refresh.tap(); self.wait_until(lambda: len(prompts) == 1, 'refreshing over an unsaved change asks first')
+        self.assertEqual(prompts[0], 'Refresh the job now? Changes on this page that are not saved yet will be cleared. A checklist edit, a status reason and other drafts stay.')
+        self.page.wait_for_timeout(200); self.assertEqual(self.job_gets, gets)
         refresh.tap(); self.settle_after_save(gets, shares)
         expect(self.page.get_by_role('button', name='Refresh job now')).to_have_count(0)
         expect(self.page.locator('.ps-status')).not_to_contain_text('Refresh job before')
+        expect(editor).to_have_value('work | required | Synthetic unsaved checklist edit'); expect(caption).to_have_value('Synthetic unsaved caption')
     def test_sensitive_photo_needs_confirmation_before_sharing(self):
         self.open_job(); answers = [False, True]; prompts = []
         def answer(dialog):

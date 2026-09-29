@@ -117,6 +117,8 @@ class HubShell:
         if not hasattr(self, 'errors'): self.errors = []
         self.context = self.browser.new_context(viewport={'width': width, 'height': height}, timezone_id='Asia/Tokyo', is_mobile=mobile, has_touch=mobile, bypass_csp=True)
         self.page = self.context.new_page(); self.page.set_default_timeout(7000)
+        # employee.html loads dozens of scripts; a loaded CI runner can take longer than an action timeout to navigate.
+        self.page.set_default_navigation_timeout(20000)
         self.page.on('pageerror', lambda error: self.errors.append(str(error)))
         self.page.clock.install(time=NOW)
         self.page.add_init_script('window.__egcJobs=' + json.dumps(JOBS) + ';')
