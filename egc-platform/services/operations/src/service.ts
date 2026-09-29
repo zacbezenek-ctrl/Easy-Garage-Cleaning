@@ -5,7 +5,7 @@ import {createHash,randomUUID} from "node:crypto";
 import {and,asc,desc,eq,gt,gte,inArray,isNull,lt,lte,ne,notInArray,or,sql} from "drizzle-orm";
 import {getDb,schema} from "@egc/database";
 import {buildDueWorkSnapshot,collectTaskPages,pageDueWork,type QueueSnapshot,type SourceCoverage,type WaitingOn} from "@egc/lead-audit/operations-core";
-import {authorize,commandSchema,OperationsError,PORTAL_PASSTHROUGH,WRITE_COMMANDS,type Actor,type Command} from "./contracts.js";
+import {authorize,commandSchema,OperationsError,PORTAL_PASSTHROUGH,RECURRING_HORIZON_COMMAND,WRITE_COMMANDS,type Actor,type Command} from "./contracts.js";
 import {assertCompletion,assertEditable,assertTiming,digest,jsonRecord,requestDigest,withoutEmptyAttachments} from "./policy.js";
 import {isMessageTaskKind} from "./action-kinds.js";
 import {isSpendRequest,spendRead,spendWrite} from "./spend-service.js";
@@ -61,6 +61,8 @@ export class OperationsService {
     // Adoption proof is produced by the backend's exact-source verifier. Public
     // RPC/MCP callers cannot supply proof or bypass that verifier via this service.
     if(command.command==='schedule.adopt')throw new OperationsError('schedule_adoption_internal_only',403);
+    // The horizon run goes straight from egc-api's timer to the Hub; RPC and MCP callers cannot start it.
+    if(command.command===RECURRING_HORIZON_COMMAND)throw new OperationsError('recurring_horizon_internal_only',403);
     if(command.command==="intelligence.report"||command.command==="intelligence.diagnostics"||command.command==="intelligence.customer"){
       if(!this.config.canonicalRead)throw new OperationsError("canonical_customer_state_unavailable",503);
       return this.config.canonicalRead(actor,command);

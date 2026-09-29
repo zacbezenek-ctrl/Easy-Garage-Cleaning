@@ -10,9 +10,10 @@ import {schedulingStorage,resolveScheduledVisit,mutateScheduledVisit,bindSchedul
 import {adoptionStorage,adoptScheduledVisit} from '../_lib/operations-adoption.js';
 import {prepareBridgeCommand} from '../_lib/operations-command-policy.js';
 import {runScheduleSyncCommand,scheduleSyncStorage} from '../_lib/schedule-sync-queue.js';
+import {runRecurringHorizonCommand} from '../_lib/recurring-horizon-command.js';
 const reply=(status,body)=>new Response(JSON.stringify(body),{status,headers:{'Content-Type':'application/json','Cache-Control':'no-store'}});
 // SEC-04: every legacy command this endpoint runs; each is authorized by its shared policy before dispatch.
-export const PORTAL_COMMANDS=Object.freeze(['schedule.adopt','portal.note.add','portal.job.edit','portal.project.ensure','schedule.link_customer','schedule.resolve','schedule.mutate','schedule.bind_provider','calendar','portal.members','portal.job','portal.evidence','portal.revenue','portal.rules','schedule.sync_due','schedule.sync_failed']);
+export const PORTAL_COMMANDS=Object.freeze(['schedule.adopt','recurring.extend_horizon','portal.note.add','portal.job.edit','portal.project.ensure','schedule.link_customer','schedule.resolve','schedule.mutate','schedule.bind_provider','calendar','portal.members','portal.job','portal.evidence','portal.revenue','portal.rules','schedule.sync_due','schedule.sync_failed']);
 export async function onRequestPost({request,env}) {
   if(!operationsEnabled(env))return reply(503,{error:'operations_not_enabled'});
   try {
@@ -23,6 +24,12 @@ export async function onRequestPost({request,env}) {
     if(isHubCommand(command))return reply(200,await runHubCommand(env,c.actor,command));
     if(['schedule.sync_due','schedule.sync_failed'].includes(command.command))return reply(200,await runScheduleSyncCommand(env,c.actor,command,{store:bridge.store(scheduleSyncStorage(env)),now:new Date(now)}));
     if(command.command==='schedule.adopt')return reply(200,await adoptScheduledVisit(bridge.store(adoptionStorage(env)),c.actor,command,now));
+    // The scheduled horizon run (recurring-horizon-worker only, per the shared policy)
+    // takes its clock from the signed envelope, never the Hub's wall clock. Its lib keeps
+    // its own trail: dispatchOperations receipts under the plan's manager, the plan's
+    // lastRun, and a money audit entry via 'cron' (with the money visibility rules) for
+    // each price save, so the bridge audit wrapper is not stacked on top of it.
+    if(command.command==='recurring.extend_horizon')return reply(200,await runRecurringHorizonCommand(env,c.actor,command,{now:new Date(c.iat*1000).toISOString(),runId:c.request.requestId}));
     if(['portal.note.add','portal.job.edit','portal.project.ensure'].includes(command.command))return reply(200,await mutatePortalRecord(bridge.store(schedulingStorage(env)),c.actor,command,now));
     if(command.command==='schedule.link_customer')return reply(200,await linkScheduledCustomer(bridge.store(schedulingStorage(env)),c.actor,command,now));
     if(command.command==='schedule.resolve')return reply(200,await resolveScheduledVisit(schedulingStorage(env),command.portalVisitId));

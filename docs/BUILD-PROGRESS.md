@@ -431,6 +431,10 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   classed credits, records gift-card sales as cash plus liability (reference claims stop duplicates), prompts customer
   decisions (change_order.proposed) and marks rebooking follow-ups, each with a receipt, audit entry and funnel event.
   Managers are capped per customer over 30 days (advisory until FUN-27). Definitions 2026-09-28.5.
+- **RECUR-CRON** Recurring plans extend themselves: egc-api's hourly timer signs recurring.extend_horizon over the Hub
+  bridge as the recurring-horizon-worker (SEC-04 policy entry and PORTAL_COMMANDS; human and other integrations refused),
+  and the Hub adds each plan's due visits under the plan's manager, bounded and resumable. With MONEY_API_ENABLED each
+  visit gets the plan's price through estimate.save, keyed by visit. Gated by EGC_RECURRING_PLANS_ENABLED on both sides.
 
 ## In progress
 
@@ -531,6 +535,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | FUN-03 | Field and portal funnel events; server-owned funnelSale | merged (74d1bfd) |
 | CLIENT-LOGIN | Customer magic-link sign-in and account sessions (flag off) | merged (d157286) |
 | FUN-36 | Server customer lifecycle actions: credits, gift-card sales, decision prompts, rebooking (flag off) | merged (999c6df) |
+| RECUR-CRON | Hourly recurring-plan horizon run over the bridge; per-visit plan prices (flag off) | merged (e68b03b) |
 
 ## Next
 

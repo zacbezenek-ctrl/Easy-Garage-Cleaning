@@ -11,6 +11,7 @@ import {reconcileHubBookings} from './booking-worker.js';
 import {serviceAuthEnabled,signApiServiceRequest,verifyDelegatedClaims,verifyOperationsClaims} from './service-bridge.js';
 import {reconciliationDiagnostic,safeReconciliationCode} from './reconciliation-diagnostics.js';
 import {registerScheduleSyncWorker,type ScheduleSyncExecute} from './schedule-sync-worker.js';
+import {registerRecurringHorizon} from './recurring-horizon-worker.js';
 
 /** Run only by the in-process schedule-sync loop (schedule-sync-worker.ts calls OperationsService.execute
  * directly). The API does not bind integration actor ids to an issuer, so no signed envelope reaches them. */
@@ -21,14 +22,14 @@ export function portalAdapter(origin:string,key:string,workspace:string,fetcher:
   if(url.protocol!=="https:" || url.username || url.password || url.pathname!=="/" || url.search || url.hash)
     throw new Error("EGC_PORTAL_ORIGIN must be an HTTPS origin");
   if(serviceAuthEnabled(env)&&url.origin!==SERVICE_ORIGINS.hub)throw new OperationsError('service_origin_not_trusted',503);
-  async function read(actor:Actor,body:Command) {
+  async function read(actor:Actor,body:Command,{timeoutMs=15000}:{timeoutMs?:number}={}) {
     const requestId=randomUUID(),path='/api/operations-portal';
     const envelope=serviceAuthEnabled(env)?await signApiServiceRequest(actor,body,path,requestId,env):signRequest({v:1,iss:"portal",aud:"egc-portal",iat:Math.floor(Date.now()/1000),nonce:randomUUID(),actor,request:{requestId,body}},key);
-    const response=await fetcher(new URL("/api/operations-portal",url),{method:"POST",redirect:"error",headers:{"Content-Type":"application/json"},body:JSON.stringify({envelope}),signal:AbortSignal.timeout(15000)});
+    const response=await fetcher(new URL("/api/operations-portal",url),{method:"POST",redirect:"error",headers:{"Content-Type":"application/json"},body:JSON.stringify({envelope}),signal:AbortSignal.timeout(timeoutMs)});
     let result:Record<string,unknown>;
     try{result=await response.json() as Record<string,unknown>;}catch{throw new OperationsError('invalid_json_response',503,{upstreamStatus:response.status});}
     if(!response.ok){
-      const code=safeReconciliationCode(result.error)??(typeof result.error==="string"&&/^(?:schedule|record|project|note|job|completion|operational_scope|hub|dispatch|bridge|confirm_token)_[a-z_]+$/.test(result.error)?result.error:"portal_authority_unavailable");
+      const code=safeReconciliationCode(result.error)??(typeof result.error==="string"&&/^(?:schedule|record|project|note|job|completion|operational_scope|hub|dispatch|bridge|confirm_token|recurring)_[a-z_]+$/.test(result.error)?result.error:"portal_authority_unavailable");
       throw new OperationsError(code,response.status>=500?503:response.status,{upstreamStatus:response.status});
     }
     return result;
@@ -60,6 +61,8 @@ export async function registerOperationsRoutes(app:FastifyInstance,options:{serv
     },...(bridge?{resolvePortalJob:bridge.resolve,resolveOwner:bridge.owner,portalRead:bridge.read,syncSchedule:(actor,command)=>syncPortalSchedule(actor,command,bridge.read,{env}),ensureProviderNote:(actor,command)=>ensureProviderNote(actor,command,bridge.read,{service:service!})}:{})});
     if(bridge)bookingTick=()=>reconcileHubBookings(bridge.read,env);
     if(bridge){const operations=service;scheduleSyncExecute=(actor,body,requestId)=>operations.execute(actor,body,requestId);}
+    // Hourly recurring-plan horizon over this same bridge; no timer unless EGC_RECURRING_PLANS_ENABLED=true.
+    if(bridge)registerRecurringHorizon(app,{env,read:bridge.read,workspace});
     if(bridge){const actor:Actor={id:"inbound-response-reconciler",kind:"integration",role:"integration",workspace};inbound=new InboundActionReconciler(getDb(),service,async()=>await bridge.read(actor,{command:"portal.rules"}) as unknown as InboundPolicy,workspace);}
   }
   if(bookingTick){let running=false;const mark=async(key:string,value?:string)=>{const now=new Date(),cursor=value??now.toISOString();await getDb().insert(schema.syncCursors).values({key,cursor}).onConflictDoUpdate({target:schema.syncCursors.key,set:{cursor,updatedAt:now}});};const tick=async()=>{if(running)return;running=true;try{await mark('customer_state:last_booking_attempt');await bookingTick!();await mark('customer_state:last_booking_success');}catch(error){const failure=reconciliationDiagnostic(error);await mark('customer_state:last_booking_failure').catch(()=>{});await mark('customer_state:last_booking_error',JSON.stringify({at:new Date().toISOString(),...failure})).catch(()=>{});app.log.warn({code:'booking_reconciliation_unavailable',...failure},'Hub booking reconciliation needs attention');}finally{running=false;}};const timer=setInterval(()=>void tick(),5*60000);timer.unref();app.addHook('onReady',async()=>{void tick();});app.addHook('onClose',async()=>{clearInterval(timer);});}

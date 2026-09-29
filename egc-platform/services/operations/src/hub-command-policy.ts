@@ -18,6 +18,12 @@
  *                  carry expectedRevision. The API schema (hubWriteCommand) and the
  *                  Hub registry both read THIS flag; never declare it elsewhere.
  */
+/** recurring.extend_horizon is not a hub.* command: it is the one integration-only
+ * Hub write, sent by egc-api's hourly timer (over its own Hub bridge) for the
+ * scheduled recurring-plan horizon run.
+ * The API authorize() and the Hub handler both accept exactly this actor id. */
+export const RECURRING_HORIZON_COMMAND = "recurring.extend_horizon";
+export const RECURRING_HORIZON_ACTOR = "recurring-horizon-worker";
 export type HubRole = "owner" | "manager" | "sales";
 export type HubCommandPolicy = Readonly<{write:boolean;integrationAllowed:boolean;roles:readonly HubRole[];ownerOnly:boolean;confirmRequired:boolean;revisioned:boolean}>;
 /** The ONE write requestId rule for the API schema and the Hub runner: an RFC 9562

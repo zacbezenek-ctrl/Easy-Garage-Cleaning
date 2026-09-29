@@ -520,12 +520,14 @@ test('an invoice number another job claims during the commit is re-reserved once
   assert.equal(h.commits.length, 0);
 });
 
-test('an MCP actor is audited and receipted as via mcp; a Hub session, or any other via, as hub', async () => {
+test('an MCP actor is audited and receipted as via mcp, a scheduled run as cron; a Hub session, or any other via, as hub', async () => {
   const f = fixture();
   const receipt = result => f.docs.get(`moneyOperations/${result.requestId.toLowerCase()}`), audit = result => audits(f).find(entry => entry.id === receipt(result).auditId);
   const hub = await estimate(f), mcp = await f.run('estimate.mark_sent', { channel: 'email' }, { ...owner, via: 'mcp' }), other = await f.run('estimate.mark_sent', { channel: 'text' }, { ...owner, via: 'portal' });
+  const cron = await f.run('estimate.mark_sent', { channel: 'other' }, { ...owner, via: 'cron' });
   assert.deepEqual([receipt(hub).via, audit(hub).via], ['hub', 'hub']);
   assert.deepEqual([receipt(mcp).via, audit(mcp).via, audit(mcp).actor.id, audit(mcp).action], ['mcp', 'mcp', 'zacb', 'money.estimate.mark_sent']);
+  assert.deepEqual([receipt(cron).via, audit(cron).via, audit(cron).actor.id], ['cron', 'cron', 'zacb']);
   assert.deepEqual([receipt(other).via, audit(other).via], ['hub', 'hub']);
 });
 

@@ -474,7 +474,7 @@ async function execute(store, actor, input, now, fingerprint, receiptId, via, re
 export async function mutateMoney(store, actor, input, now = new Date().toISOString()) {
   requireMoneyManager(actor);
   validate(input, actor);
-  const fingerprint = await digest({ actor: actor.user, input }), receiptId = input.requestId.toLowerCase(), via = actor.via === 'mcp' ? 'mcp' : 'hub';
+  const fingerprint = await digest({ actor: actor.user, input }), receiptId = input.requestId.toLowerCase(), via = ['mcp','cron'].includes(actor.via) ? actor.via : 'hub';
   async function replay(replayed) {
     const receipt = await store.read(MONEY_RECEIPTS, receiptId);
     if (!receipt) return null;
