@@ -7,6 +7,7 @@ import {conversationExtractionSchema,extractConversation,extractWalkthrough,load
 import {walkthroughExtractionSchema} from '@egc/schemas';
 import {OperationsError,operationsService,SERVICE_ORIGINS,type Actor} from '@egc/operations';
 import {recordingTaskProposals} from './conversation-tasks.js';
+import {recordingFailureDiagnostic} from './recording-diagnostics.js';
 import {portalAdapter} from './operations.js';
 import {authorizeRecordingClaims,fingerprint,MAX_AUDIO_BYTES,MAX_RECORDING_ENVELOPE_CHARS,MAX_TRANSCRIPT_BYTES,RecordingIssuerRefusal,safeRecordingError,signRecordingEnvelope,stableUuid,verifyRecordingEnvelope,verifiedHubRecordingClaims,type RecordingClaims,type RecordingCommand} from './recording-contracts.js';
 import {auditLogWriter,recordIssuerRefusal,serviceAuthEnabled,signApiServiceRequest,verifyHubServiceClaims,tokenVersion,type AuditRow} from './service-bridge.js';
@@ -120,7 +121,7 @@ export class RecordingService{
     }
     return this.approve(c.actor,c.request.requestId,command);
   }
-  async processNext(){
+  async processNext(onFailure:(details:ReturnType<typeof recordingFailureDiagnostic>&{event:string;stage:string;attempt:number;sourceKind:string})=>void=()=>{}){
     const now=new Date();
     const row=await this.db.transaction(async tx=>{
       const [r]=await tx.select().from(schema.walkthroughs).where(and(eq(schema.walkthroughs.workspaceId,this.workspace),or(eq(schema.walkthroughs.status,'uploaded'),and(eq(schema.walkthroughs.status,'processing'),or(isNull(schema.walkthroughs.processingLeaseUntil),lt(schema.walkthroughs.processingLeaseUntil,now)))))).orderBy(schema.walkthroughs.createdAt).limit(1).for('update',{skipLocked:true});
@@ -129,12 +130,19 @@ export class RecordingService{
       const [claimed]=await tx.update(schema.walkthroughs).set({status:'processing',attemptCount:r.attemptCount+1,processingLeaseUntil:new Date(now.getTime()+15*60*1000),lastErrorCode:null,updatedAt:now}).where(eq(schema.walkthroughs.id,r.id)).returning();return claimed!;
     });
     if(!row)return false;
+    let stage=isTranscriptRow(row)?'extraction':'transcription';
     try{
       const transcript=isTranscriptRow(row)?row.transcript:await this.io.transcribe(await this.io.get(row.audioObjectKey!),row.audioFilename??'recording',row.audioContentType??'audio/webm');
       if(!transcript)throw new OperationsError('recording_transcript_missing',409);
+      stage='extraction';
       const {extraction,extractionVersion}=isTranscriptRow(row)||this.env.EGC_EXTRACTION_V2==='true'?await this.extractConversation(row,transcript):await this.extractWalkthrough(transcript);
+      stage='save_draft';
       await this.db.update(schema.walkthroughs).set({transcript,extraction,extractionVersion,status:'draft',processingLeaseUntil:null,lastErrorCode:null,updatedAt:new Date()}).where(and(eq(schema.walkthroughs.id,row.id),eq(schema.walkthroughs.attemptCount,row.attemptCount),eq(schema.walkthroughs.status,'processing')));
-    }catch{await this.db.update(schema.walkthroughs).set({status:'failed',processingLeaseUntil:null,lastErrorCode:'recording_processing_failed',updatedAt:new Date()}).where(and(eq(schema.walkthroughs.id,row.id),eq(schema.walkthroughs.attemptCount,row.attemptCount),eq(schema.walkthroughs.status,'processing')));}
+    }catch(error){
+      await this.db.update(schema.walkthroughs).set({status:'failed',processingLeaseUntil:null,lastErrorCode:'recording_processing_failed',updatedAt:new Date()}).where(and(eq(schema.walkthroughs.id,row.id),eq(schema.walkthroughs.attemptCount,row.attemptCount),eq(schema.walkthroughs.status,'processing')));
+      // Diagnostics are server-only and cannot prevent a durable, retryable failure.
+      try{onFailure({event:'recording_processing_failed',stage,attempt:row.attemptCount,sourceKind:isTranscriptRow(row)?'transcript':'audio',...recordingFailureDiagnostic(error)});}catch{}
+    }
     return true;
   }
   private async extractWalkthrough(transcript:string){return{extraction:walkthroughExtractionSchema.parse(await this.io.extract(transcript)),extractionVersion:1};}
@@ -144,7 +152,7 @@ export class RecordingService{
     const result=await(this.io.conversation??extractConversation)(transcript,{catalog:catalog.items,catalogVersion:catalog.catalogVersion,context:{sourceKind:isTranscriptRow(row)?'visit_transcript':'visit_recording',occurredAt:row.createdAt.toISOString()}});
     // Too long for v2: the walkthrough extraction (the flag-off path) keeps the recording reviewable instead of failing it for good.
     if(!result.ok&&result.code==='conversation_transcript_too_large')return this.extractWalkthrough(transcript);
-    if(!result.ok)throw new OperationsError('recording_processing_failed',result.retryable?503:422);
+    if(!result.ok)throw new OperationsError(result.code,result.retryable?503:422);
     return{extraction:{...walkthroughExtractionFromConversation(result.extraction),conversation:result.extraction},extractionVersion:2};
   }
   private async approve(actor:Actor,requestId:string,command:Approval){
@@ -182,5 +190,5 @@ export async function registerRecordingRoutes(app:FastifyInstance,env:NodeJS.Pro
   app.post('/recordings/rpc',{bodyLimit:MAX_RECORDING_ENVELOPE_CHARS+10_000},async(request,reply)=>{reply.header('Cache-Control','no-store');try{const c=await claims((request.body as {envelope?:unknown})?.envelope,'/recordings/rpc');return await s!.execute(c);}catch(e){return failure(e,reply);}});
   app.post('/recordings/upload',async(request,reply)=>{reply.header('Cache-Control','no-store');try{let c:RecordingClaims|undefined,audio:Buffer|undefined,type='';for await(const part of request.parts({limits:{fileSize:MAX_AUDIO_BYTES,files:1,fields:1}})){if(part.type==='field'&&part.fieldname==='envelope')c=await claims(part.value,'/recordings/upload');else if(part.type==='file'&&part.fieldname==='audio'){if(!c)throw new OperationsError('recording_signature_required_first',401);audio=await part.toBuffer();type=part.mimetype;}}if(!c||!audio)throw new OperationsError('recording_audio_required',400);return reply.code(202).send(await s!.upload(c,audio,type));}catch(e){return failure(e,reply);}});
   if(enabled&&env.EGC_EXTRACTION_V2==='true'){const skipped=loadCatalogIndex().skippedItems;if(skipped)app.log.warn({code:'catalog_index_items_skipped',count:skipped},'Catalog index items were left out; their mentions get no catalogItemId');}
-  if(enabled&&s){let running=false;const tick=async()=>{if(running)return;running=true;try{await s.processNext();}catch{app.log.warn({code:'recording_worker_unavailable'},'Recording processing will retry');}finally{running=false;}};const timer=setInterval(()=>void tick(),15000);timer.unref();app.addHook('onClose',async()=>{clearInterval(timer);});app.addHook('onReady',async()=>{void tick();});}
+  if(enabled&&s){let running=false;const tick=async()=>{if(running)return;running=true;try{await s.processNext(details=>app.log.warn(details,'Recording draft could not be prepared'));}catch{app.log.warn({code:'recording_worker_unavailable'},'Recording processing will retry');}finally{running=false;}};const timer=setInterval(()=>void tick(),15000);timer.unref();app.addHook('onClose',async()=>{clearInterval(timer);});app.addHook('onReady',async()=>{void tick();});}
 }

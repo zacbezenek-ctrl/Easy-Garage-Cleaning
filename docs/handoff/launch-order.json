@@ -92,7 +92,7 @@
   },
   "batch9": {
     "scope": "remaining completed units",
-    "requires": "all seven applicable workflows green on final PR #87 head before its main merge",
+    "requires": "met: all seven applicable workflows green on final PR #87 head before its main merge",
     "applicableWorkflows": [
       "Root",
       "Platform",
@@ -109,9 +109,16 @@
       "lastRelevantMainRunState": "success"
     },
     "pr": 87,
+    "finalHeadSha": "bb41f03c56d129b77128ca9a5e8597ec7a4c6612",
+    "finalHeadCi": "seven_of_seven_applicable_success_with_both_dedicated_webkit_suites",
+    "merged": true,
+    "mainMergeSha": "5ed437cfb218d5edf3f17bd3df95b975cf62919c",
+    "mainPushCi": "six_of_six_applicable_success",
+    "deployedRevision": "5ed437cfb218d5edf3f17bd3df95b975cf62919c",
+    "liveAcceptance": "synthetic_transcript_saved_processing_failed_no_task_or_send",
     "priorGreenHeadSha": "6bfc032f9317a7ceeeeb23863c7f4c7174f2b769",
     "priorGreenHeadScope": "historical all-eight-workflow result before Batch 8 main merge",
-    "localIntegration": "main_a029_merged_at_6d215_final_role_fix_candidate_pending_exact_head_seven_applicable_ci"
+    "localIntegration": "main_a029_merged_at_6d215_then_final_bb41_checks_passed_and_main_merge_5ed437c"
   },
   "activation": {
     "FIX-REFUNDS": "off_at_merge",

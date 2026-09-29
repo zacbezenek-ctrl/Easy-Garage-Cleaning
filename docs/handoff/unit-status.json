@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "asOf": "2026-09-29",
   "repository": "zacbezenek-ctrl/Easy-Garage-Cleaning",
-  "mainSha": "a0297623276e0d0bed78dbdb789957367b8a60dd",
+  "mainSha": "5ed437cfb218d5edf3f17bd3df95b975cf62919c",
   "batch8": {
     "pr": 86,
     "state": "merged_to_main_after_seven_green_workflows",
@@ -32,6 +32,17 @@
       "actionCenter": 36629315563,
       "root": 36629315555,
       "firestore": 36629315519
+    },
+    "mainPushChecks": {
+      "state": "six_of_six_applicable_success",
+      "runIds": {
+        "root": 36630649638,
+        "businessHub": 36630649618,
+        "firestore": 36630649666,
+        "mobileDeviceE2E": 36630649639,
+        "actionCenter": 36630649600,
+        "lighthouse": 36630649686
+      }
     }
   },
   "units": [
@@ -125,9 +136,9 @@
   ],
   "laterAuthorizedHubIntegration": {
     "scope": "iOS Walkthroughs and recording/transcript to office tasks",
-    "state": "final_role_fix_integration_pending_exact_head_seven_applicable_ci",
+    "state": "merged_in_batch9_deployed_live_transcript_processing_failed",
     "branch": "codex/hub-ios-walkthrough-completion",
-    "merged": false,
+    "merged": true,
     "localBrowserResults": {
       "walkthroughs": "10/10",
       "hubMobile": "18/18",
@@ -135,7 +146,7 @@
     },
     "recordingBrowserResults": "WebKit 13/13 locally",
     "localRootSuite": "Windows POSIX/CRLF fixture expectations; Linux CI is merge evidence",
-    "verifiedHeadSha": "6bfc032f9317a7ceeeeb23863c7f4c7174f2b769",
+    "verifiedHeadSha": "bb41f03c56d129b77128ca9a5e8597ec7a4c6612",
     "priorVerifiedHeadSha": "bf191d92c9de6ce394b8166d9fd53039d7e25104"
   },
   "additionalRunningBuilds": {
@@ -148,14 +159,17 @@
     "locatedCount": 0,
     "state": "missing_source"
   },
-  "note": "FIX-REFUNDS, GHL-TRACK-2, seven running builds and 41 specs remain source-unknown; reported states do not prove merged code. Refresh exact heads and CI before any merge.",
+  "note": "FIX-REFUNDS, GHL-TRACK-2, seven running builds and 41 specs remain source-unknown; reported states do not prove merged code. Batch 9 is deployed but transcript processing failed live, so acceptance remains open.",
   "batch9": {
     "pr": 87,
     "branch": "codex/hub-ios-walkthrough-completion",
     "implementationSha": "a13e01e81552edfabd2dcc61e1479cd3ed0ddb42",
-    "checkedHeadSha": "6bfc032f9317a7ceeeeb23863c7f4c7174f2b769",
-    "state": "final_role_fix_candidate_pending_exact_head_seven_applicable_ci",
-    "merged": false,
+    "checkedHeadSha": "bb41f03c56d129b77128ca9a5e8597ec7a4c6612",
+    "state": "merged_main_deployed_live_acceptance_incomplete",
+    "merged": true,
+    "mergeSha": "5ed437cfb218d5edf3f17bd3df95b975cf62919c",
+    "finalHeadCi": "seven_of_seven_applicable_success_including_both_dedicated_webkit_suites",
+    "mainPushCi": "six_of_six_applicable_success",
     "ciAtCheckedHead": {
       "root": "success",
       "platform": "success",
@@ -171,8 +185,8 @@
     },
     "ciAtCheckedHeadScope": "historical eight-workflow result at 6bfc032 before Batch 8 merged to main",
     "localIntegration": {
-      "state": "main_merged_into_local_final_candidate_pending_ci",
-      "mergeGate": "all seven applicable workflows green on the final PR #87 head before Batch 9 main merge",
+      "state": "main_integrated_checks_green_merged",
+      "mergeGate": "met: all seven applicable workflows green on final PR #87 head before Batch 9 main merge",
       "applicableWorkflows": [
         "Root",
         "Platform",
@@ -205,16 +219,51 @@
     }
   },
   "production": {
-    "apiSha": "8081d74b677bf2ff47523bf246236cdc4fbf4708",
-    "transcriptCommandAvailable": false,
+    "releaseSha": "5ed437cfb218d5edf3f17bd3df95b975cf62919c",
+    "cloudflareProductionCheck": "success",
+    "liveHubAssets": "hubready3 recordings operations suite verified",
+    "railwayDeployments": "all_four_success_actual_commit_metadata_5ed437c",
+    "apiMcpPortalHealth": "ready_release_5ed437c",
     "requiredVariableNamesPresent": true,
     "secretValuesInspected": false,
-    "state": "requires_matching_api_and_hub_release_then_live_acceptance"
+    "syntheticVisit": {
+      "visitId": "dispatch_beef26f85e694eb4b57d7a47a3c324d1",
+      "customerName": "INTERNAL TEST — Hub release 2026-09-29",
+      "email": "hub-release-20260929@example.invalid",
+      "scheduled": false,
+      "phonePresent": false,
+      "highlevelContactPresent": false,
+      "remindersEnabled": false,
+      "assignedOwner": "Zac",
+      "transcriptSaved": true,
+      "transcriptProcessing": "failed",
+      "originalRecordDurable": true,
+      "officeTaskCreated": false,
+      "customerSendOccurred": false,
+      "retryPlan": "repeat same saved transcript after reviewed schema fix is deployed"
+    },
+    "jobPhotoStorage": {
+      "state": "blocked_live_regular_job",
+      "completionRequiresBeforeAfter": true,
+      "driveAuthPage": "Drive setup — missing config",
+      "bindingFinding": "GOOGLE_REFRESH_TOKEN absent; GOOGLE_CLIENT_ID or GOOGLE_CLIENT_SECRET missing or unusable; values not read",
+      "recovery": "Cloudflare Production /api/drive-auth as Hub manager with company Google; redirect https://easygaragecleaning.com/api/drive-auth; verify upload",
+      "fieldPayReceiptStorageSeparate": true
+    },
+    "state": "matching_revision_deployed_live_transcript_processing_and_job_photos_blocked"
   },
   "productionDeployment": {
-    "completed": false,
+    "completed": true,
     "hubStaffSessionVerified": true,
-    "releaseConsoleAuthentication": "requested_pending",
-    "fieldPayEnabledByThisTask": false
+    "releaseConsoleAuthentication": "firebase_google_and_cloudflare_admin_pending",
+    "fieldPayEnabledByThisTask": false,
+    "liveAcceptanceComplete": false
+  },
+  "transcriptProductionFix": {
+    "branch": "codex/transcript-production-schema-fix",
+    "state": "under_review_not_deployed",
+    "finding": "unsupported default annotations in strict extraction schema",
+    "diagnostics": "safer error reporting in review",
+    "requires": "review, exact-head CI, merge, matching deployment, retry same durable saved transcript"
   }
 }
