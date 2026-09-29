@@ -395,6 +395,10 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   dispatch length for the same crew wins. The DTO gains only suggestedDurationMin/durationSource/durationCoverage/
   durationCapped (no line or amount); quote lines are read masked for the sold jobs a list returns. Dispatch accepts
   estimatedDurationMin (15..10080, audited) and prefills Expected duration and "Find a time". No flag.
+- **FIELD-MULTIDAY** Multi-day visits behind `FIELD_MULTIDAY_VISITS` (functions/_lib/field-execution-visits.js): one visit per
+  Denver day in fieldExecution.visits, an "End today's visit" note that stops the job clock (queueable offline and closing the
+  day it was written for), completion only on the final day (managers give a reason), and a per-day write lock for field
+  actions, photos and job costs from split-job segments. Crew assets cache-busted to ?v=20260929multiday. Off: unchanged.
 
 ## In progress
 
@@ -486,6 +490,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | CREW-PROFILE | Crew public profiles (approved headshots, portal crew card) and lead-only completion (flags off) | merged (6f141a7) |
 | CATALOG-ADMIN | Owner catalog and pricing screen (settings review/release, items, draft publish) | merged (b46c461) |
 | DISPATCH-DURATION | Suggested job duration from the sold quote lines in dispatch | merged (5cbbff0) |
+| FIELD-MULTIDAY | Multi-day job visits: per-day visit record, end of day, final-day completion and day lock (flag off) | merged (fe447d1) |
 
 ## Next
 

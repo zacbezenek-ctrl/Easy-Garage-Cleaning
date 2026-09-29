@@ -18,7 +18,8 @@ const closed = job => ['completed', 'invoiced', 'paid', 'review_requested'].incl
 export function fieldActivity(job) {
   const stage = fieldStage(job), activity = job.fieldExecution?.activity;
   if (activity === stage) return stage;
-  if (activity === 'paused' && stage === 'in_progress' || activity === 'waiting' && ['arrived', 'in_progress'].includes(stage) || activity === 'delayed' && ['dispatched', 'in_progress'].includes(stage)) return activity;
+  // day_ended is written only by the multi-day 'end_day' action (field-execution-visits.js).
+  if (activity === 'paused' && stage === 'in_progress' || activity === 'waiting' && ['arrived', 'in_progress'].includes(stage) || activity === 'delayed' && ['dispatched', 'in_progress'].includes(stage) || activity === 'day_ended' && ['dispatched', 'arrived', 'in_progress'].includes(stage)) return activity;
   return stage;
 }
 export const FIELD_CHECKLIST_DEFAULTS = [
@@ -153,7 +154,7 @@ export function fieldJobProjection(job, events = [], options = {}) {
     startedAt: job.startedAt || null, completedAt: job.completedAt || null,
     completionMissing: frozen ? [] : fieldCompletionMissing(job),
     canEdit: !frozen, canManageChecklist: options.manager === true && !frozen, capabilities: options.capabilities || null,
-    allowedStatuses: frozen ? [] : ({ scheduled: ['dispatched'], confirmed: ['dispatched'], crew_assigned: ['dispatched'], dispatched: ['arrived', 'delayed'], arrived: ['in_progress', 'waiting'], in_progress: ['paused', 'waiting', 'delayed', 'in_progress'] }[stage] || []),
+    allowedStatuses: frozen ? [] : ({ scheduled: ['dispatched'], confirmed: ['dispatched'], crew_assigned: ['dispatched'], dispatched: ['arrived', 'delayed'], arrived: ['in_progress', 'waiting'], in_progress: ['paused', 'waiting', 'delayed', 'in_progress'] }[stage] || []).filter(status => status !== 'paused' || fieldActivity(job) !== 'day_ended'),
   };
 }
 

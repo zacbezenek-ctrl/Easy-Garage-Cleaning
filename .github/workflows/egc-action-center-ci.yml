@@ -200,6 +200,8 @@ jobs:
         run: python tests/browser/test_payroll_week_ui.py
       - name: Field job-cost capture on a phone
         run: python tests/browser/test_field_expenses_ui.py
+      - name: Crew multi-day visits, end of day and the day lock on a phone
+        run: python tests/browser/test_field_multiday_ui.py
       - name: Owner-only ad spend screen, manual spend entries and connection health on a phone
         run: python tests/browser/test_ad_spend_ui.py
       - name: Owner stocked item costs screen, manager read-only view and phone layout
