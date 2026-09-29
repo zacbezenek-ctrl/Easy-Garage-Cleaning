@@ -385,6 +385,11 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   Behind `CREW_PUBLIC_PROFILES_ENABLED` the portal shows the job's crew (lead first) through signed, session-checked
   /api/customer-crew-photo links and an "on the way" note on the service day; behind `FIELD_LEAD_ONLY_COMPLETE` only the
   crew lead or a manager completes a job or sends on-my-way. Gaps: no Hub screen entry or dispatch avatars yet.
+- **CATALOG-ADMIN** Owner-only Hub screen "Catalog & pricing" (employee-catalog.js/.css, one MANIFEST line) on the P2-03
+  /api/catalog handler: pricing settings with a change review and an explicit release for customer quotes, items with
+  price-check age, and a local draft (verify, edit, add) published as a new catalog version after a field-by-field diff.
+  Saves retry the identical request after a lost reply and rebase three ways on conflicts; unsent drafts are cleared at
+  sign-out. Needs `CATALOG_QUOTES_ENABLED`. Gap: publishing exceeds the Workers Free CPU limit (P2-03 carry-over).
 
 ## In progress
 
@@ -474,6 +479,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | FUN-32 | Jobber coexistence guard: read-only stray check and per-surface booking/billing/messaging holds (flags off) | merged (651fa38) |
 | FUN-30 | GHL/Zapier automation registry, drift check and FUN-11/12/35 gates (read-only) | merged (cfd58b6) |
 | CREW-PROFILE | Crew public profiles (approved headshots, portal crew card) and lead-only completion (flags off) | merged (6f141a7) |
+| CATALOG-ADMIN | Owner catalog and pricing screen (settings review/release, items, draft publish) | merged (b46c461) |
 
 ## Next
 

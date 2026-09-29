@@ -21,9 +21,9 @@ function fixtureScreen(overrides = {}) {
 }
 const tabs = page => page.document.querySelectorAll('[data-ops-tab]').map(button => button.getAttribute('data-ops-tab'));
 // Screens the shipped MANIFEST registers (REVIEWS-UI); fixtures register after them. SHIPPED are the business
-// screens; the owner-only screens (P3-04 followup_settings, FUN-15 ad_spend) register first and are checked separately.
+// screens; the owner-only screens (P3-04 followup_settings, FUN-15 ad_spend, CATALOG-ADMIN catalog) register first and are checked separately.
 const SHIPPED = ['reviews', 'message_templates', 'stocked_costs', 'staff'];
-const OWNER_SHIPPED = ['followup_settings', 'ad_spend'];
+const OWNER_SHIPPED = ['followup_settings', 'ad_spend', 'catalog'];
 
 test('a registered screen joins the nav under its group only when the capability matches', () => {
   for (const [who, expected] of [[{}, true], [MANAGER, true], [CREW, false]]) {
