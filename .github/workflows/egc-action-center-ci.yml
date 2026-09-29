@@ -81,6 +81,10 @@ jobs:
           node --test services/operations/test/message-completion.check.mjs
           node --test services/operations/test/legacy-walkthrough.check.mjs
         working-directory: egc-platform
+      # schedule-sync-postgres.check.mjs runs the real Hub queue from functions/_lib, which imports
+      # the root package's @noble/hashes (funnel-definitions.js); pnpm installs only egc-platform.
+      - name: Install root dependencies for the Hub modules the schedule-sync check imports
+        run: npm install --ignore-scripts --no-audit --no-fund
       - name: Durable appointment claims, unknown-outcome reconciliation, MCP safety defaults, OAuth clients and grants, and paged CRM reads
         run: |
           node --test apps/mcp/test/appointments-postgres.check.mjs
