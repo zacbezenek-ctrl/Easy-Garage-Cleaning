@@ -105,8 +105,11 @@ test('every public nav drawer ships closed and inert', () => {
 
 test('every drawer page runs the one shared init that toggles drawer.inert', () => {
   const variants = new Map();
+  // Generated pages load the init from /site-forms.js (SITE-4); hand-written pages keep it inline.
+  const shared = readFileSync(join(root, 'site-forms.js'), 'utf8').match(INIT)?.[0];
+  assert.ok(shared, 'site-forms.js carries the shared drawer init');
   for (const page of drawerPages) {
-    const init = page.html.match(INIT)?.[0];
+    const init = page.html.match(INIT)?.[0] || (/<script src="\/site-forms\.js\?v=[0-9a-f]{12}" defer><\/script>/.test(page.html) ? shared : null);
     if (init) { variants.set(init, [...(variants.get(init) || []), page.rel]); continue; }
     assert.match(page.html, /<script[^>]+src="\/gallery-simple\.js\?v=[^"]+"/, `${page.rel} has a drawer but no drawer script`);
   }
@@ -119,16 +122,17 @@ test('the public gallery drawer script follows the same focus contract', () => {
 });
 
 test('footer links are 44px tap targets on phones on every page with the site footer', () => {
+  // SITE-4 moved the rule from the inline <style id="footer-tap"> stopgap into styles.css.
+  const styles = readFileSync(join(root, 'styles.css'), 'utf8');
+  // Every link group in the shared footer: brand/contact/partner links, columns and the bottom bar.
+  const rule = styles.match(/@media\(max-width:640px\)\{(\.site-footer [^{]*)\{([^}]*)\}\}/);
+  assert.ok(rule, 'styles.css carries the footer tap rule as a max-width:640px media query');
+  assert.deepEqual(rule[1].split(',').sort(), ['.site-footer .foot-bar a', '.site-footer .foot-brand a', '.site-footer .foot-col a']);
+  assert.match(rule[2], /min-height:44px/);
   const failures = [];
   for (const page of pages.filter(page => page.html.includes('class="site-footer"'))) {
-    const style = page.html.match(/<style id="footer-tap">([\s\S]*?)<\/style>/)?.[1];
-    if (!style) { failures.push(page.rel); continue; }
-    // Every link group in the shared footer: brand/contact/partner links, columns and the bottom bar.
-    const rule = style.match(/@media\(max-width:640px\)\{([^{]*)\{([^}]*)\}\}/);
-    assert.ok(rule, `${page.rel}: footer tap rule must be a max-width:640px media query`);
-    assert.deepEqual(rule[1].split(',').sort(), ['.site-footer .foot-bar a', '.site-footer .foot-brand a', '.site-footer .foot-col a'], page.rel);
-    assert.match(rule[2], /min-height:44px/, page.rel);
-    assert.ok(page.html.indexOf('<style id="footer-tap">') < page.html.indexOf('</head>'), `${page.rel}: tap-target rule belongs in <head>`);
+    const link = page.html.search(/<link rel="stylesheet" href="\/styles\.css\?v=[^"]+">/);
+    if (link < 0 || link > page.html.indexOf('</head>')) failures.push(`${page.rel}: footer page without the shared stylesheet in <head>`);
   }
   assert.deepEqual(failures, []);
 });

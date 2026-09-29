@@ -56,7 +56,8 @@ test('booking links, phone, search, accessible sliders and no-script access rema
  assert.match(html,/href="\/book"/); assert.match(html,/tel:\+19709991818/);
  assert.match(html,/id="viewer"/); assert.match(html,/id="viewer-body"/);
  assert.equal((html.match(/type="range"/g)||[]).length,7);
- assert.equal((html.match(/<noscript>/g)||[]).length,7);
+ assert.equal((html.match(/<noscript><p>/g)||[]).length,7);
+ assert.equal((html.match(/<noscript>/g)||[]).length,8,'seven card fallbacks and the deferred font stylesheet');
  assert.match(html,/gallery-simple\.js/);
  const js=readFileSync('gallery-simple.js','utf8');
  assert.doesNotMatch(js,/fetch\(|XMLHttpRequest|gallery-showcase/); assert.match(js,/nav-toggle/);

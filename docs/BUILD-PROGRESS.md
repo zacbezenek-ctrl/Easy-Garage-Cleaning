@@ -403,6 +403,10 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   full scans; 'shadow' logs differences; 'true' reads only rows ending within 35 days before the window, plus undated and
   time-off rows, so multi-day jobs stay in). Saves query by customerId/sourceWalkthroughId; customers get versioned
   searchKeys (scripts/backfill-customer-search-keys.mjs). scripts/dispatch-window-audit.mjs reports rows windows miss.
+- **SITE-4** Public-site mobile performance: 368/552/704px WebP logos, one STYLES_VERSION (20260928a), 600w/1200w hero
+  srcsets with fetchpriority, deferred Google Fonts (sorted URLs fix the HTTP 400 on ads/apply/thank-you), generated pages'
+  inline script moved to a hashed /site-forms.js, the booking bar rendered in HTML (CLS 0), and portal photo thumbnails
+  (size=thumb). Lighthouse CI now enforces >= 90 by default (repository variable 'false' opts out).
 
 ## In progress
 
@@ -496,6 +500,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | DISPATCH-DURATION | Suggested job duration from the sold quote lines in dispatch | merged (5cbbff0) |
 | FIELD-MULTIDAY | Multi-day job visits: per-day visit record, end of day, final-day completion and day lock (flag off) | merged (fe447d1) |
 | DISPATCH-SCALE | Windowed dispatch reads and indexed customer search (flag off; shadow first) | merged (249dd76) |
+| SITE-4 | Public-site mobile performance pass (Lighthouse >= 90 on every page; enforcement on) | merged (38125bf) |
 
 ## Next
 

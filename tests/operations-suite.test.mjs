@@ -892,9 +892,12 @@ test('crew photo evidence is keyboard accessible',()=>{
 });
 
 test('public quote progress and production links stay configured',()=>{
-  assert.match(commercial,/const shell=form\.closest\('\.quote-form'\)\|\|document/);
-  assert.match(commercial,/const dots=shell\.querySelectorAll\('\.form-step-dot'\)/);
-  assert.match(commercial,/const lbl=shell\.querySelector\('\.form-step-label'\)/);
+  // Generated pages run the multi-step form from /site-forms.js (SITE-4) instead of an inline copy.
+  assert.match(commercial,/<script src="\/site-forms\.js\?v=[0-9a-f]{12}" defer><\/script>/);
+  const forms=read('site-forms.js');
+  assert.match(forms,/const shell=form\.closest\('\.quote-form'\)\|\|document/);
+  assert.match(forms,/const dots=shell\.querySelectorAll\('\.form-step-dot'\)/);
+  assert.match(forms,/const lbl=shell\.querySelector\('\.form-step-label'\)/);
   const publicSource=sourceFiles(new URL('..',import.meta.url))
     .filter(x=>x.isFile()&&/\.(?:html|py)$/.test(x.name))
     .map(x=>fs.readFileSync(`${x.parentPath}/${x.name}`,'utf8')).join('\n');

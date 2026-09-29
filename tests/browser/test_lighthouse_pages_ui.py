@@ -43,6 +43,8 @@ class LighthouseFixturePagesTests(unittest.TestCase):
         self.context = self.browser.new_context(viewport={'width': 375, 'height': 812}, device_scale_factor=3, is_mobile=True, has_touch=True, timezone_id=timezone)
         self.page = self.context.new_page(); self.page.set_default_timeout(8000)
         self.page.clock.install(time=now)
+        # Layout shifts from first paint on; the portal's loading screen must not move the page when the project arrives.
+        self.page.add_init_script("window.__shifts=[];new PerformanceObserver(list=>{for(const entry of list.getEntries())if(!entry.hadRecentInput)window.__shifts.push(entry.value)}).observe({type:'layout-shift',buffered:true});")
         self.errors, self.failed, self.api = [], [], []
         self.page.on('pageerror', lambda error: self.errors.append(str(error)))
         self.context.route('**/*', lambda route: route.continue_() if urlparse(route.request.url).hostname == '127.0.0.1' else route.abort())
@@ -72,6 +74,7 @@ class LighthouseFixturePagesTests(unittest.TestCase):
         expect(page.locator('#appointment-address')).to_have_text(data['appointment']['address'])
         expect(page.locator('#estimate-number')).to_have_text(data['estimate']['number'])
         self.assertIn(('GET', '/api/customer-portal'), [(method, path) for method, path, _, _ in self.api])
+        self.assertLess(sum(page.evaluate('window.__shifts')), 0.01, 'the loading screen holds the layout until the project renders')
         page.screenshot(path=str(OUT / 'customer-portal.png'), full_page=True)
 
     def test_business_hub_shows_the_signed_in_company_overview(self):

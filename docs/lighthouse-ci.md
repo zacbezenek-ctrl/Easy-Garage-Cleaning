@@ -2,8 +2,10 @@
 
 Every pull request and push to `main` that touches a page, shared stylesheet or script, the crew screens, the portals or
 this harness runs Lighthouse on a phone profile. The goal is a median score of **90 or more for both performance and
-accessibility** on every page listed below. The check is **warn-only** until the `LIGHTHOUSE_ENFORCE` repository variable
-is set to `true`. Flip it after SITE-3 and SITE-4 land and the job summary shows every page at 90 or above.
+accessibility** on every page listed below. SITE-4 brought every measured page to 90 or above (see "After the SITE-4
+performance pass" below), so the check is **enforced by default**: the workflow reads
+`LIGHTHOUSE_ENFORCE: ${{ vars.LIGHTHOUSE_ENFORCE || 'true' }}`, and setting the repository variable to `false` makes it
+warn-only again.
 
 ## What is measured
 
@@ -82,7 +84,8 @@ shape, `_headers`, this harness and the render check.
 4. Installs `playwright==1.57.0` with pip and runs `tests/browser/test_lighthouse_pages_ui.py` on the runner's Chrome. This is
    a hard failure: if it fails, the harness would be measuring the wrong screens.
 5. `lhci collect` (always required to succeed; a page that fails to load is a harness bug), then `lhci assert`.
-   The assert step fails the job only when `vars.LIGHTHOUSE_ENFORCE == 'true'`; otherwise it emits a warning annotation.
+   The assert step fails the job unless the `LIGHTHOUSE_ENFORCE` repository variable is set to something other than `true`
+   (unset means `true`); then it emits a warning annotation instead.
 6. `lhci upload --target=filesystem` writes every run's HTML and JSON report plus `manifest.json` into
    `test-results/lighthouse/`, and `tests/lighthouse/summary.mjs` writes the median score table into the job summary.
    The summary counts only fully measured pages as passing or below 90. It lists pages that are missing a score, and
@@ -91,7 +94,7 @@ shape, `_headers`, this harness and the render check.
    `egc-lighthouse-<run>-<attempt>` artifact (30 days). Reports are never sent to temporary public storage.
 
 Why the Lighthouse tool's dependencies are not locked: the repository convention keeps CI tools out of `package.json` and
-the lockfile, so no second lockfile is committed for a warn-only check. `@lhci/cli` is pinned exactly, and the bundled
+the lockfile, so no second lockfile is committed for this check. `@lhci/cli` is pinned exactly, and the bundled
 Lighthouse version comes from that release. Its transitive dependencies resolve from the release's own semver ranges on each
 run. `--ignore-scripts` means none of them can run install-time code; when this was checked, no package in the 0.15.1 tree
 had an install script. The resolved tree for each run is in the artifact's `tool-versions.txt`. If a score changes without
@@ -184,6 +187,50 @@ Accessibility (all pages pass 90, but these audits fail and cost points):
 - `heading-order` on `/` (`#turnaround-plan .hero-form-heading > h3`) and `/book` (`.book-layout .quote-form > h3`): the
   form heading skips a level.
 
+## After the SITE-4 performance pass (2026-09-28)
+
+The same configuration, run locally before and after SITE-4 on the same busy container (4 shared vCPUs, load average 26 to
+53, benchmark index 327 to 2367). Median of 3 runs:
+
+| Page | Performance before | Performance after | Accessibility after |
+| --- | ---: | ---: | ---: |
+| `/` | 91 | 97 | 95 |
+| `/garage-cleanouts-fort-collins-co` | **83** | 99 | 97 |
+| `/junk-removal-loveland-co` | **84** | 99 | 96 |
+| `/couch-removal-fort-collins-co` | 92 | 100 | 96 |
+| `/book` | **87** | 100 | 94 |
+| `/pricing` | 93 | 100 | 96 |
+| `/blog/how-much-does-garage-cleanout-cost-fort-collins` | 98 | 100 | 96 |
+| `/garage-turnaround-fort-collins-co` | **85** | 97 | 97 |
+| `/before-after` (static fallback) | 91 | 97 | 96 |
+| `/customer-portal` (fixture) | 96 | 99 | 96 |
+| `/business-hub` (fixture) | 100 | 100 | 95 |
+| `/field-today` (crew Today harness) | 100 | 100 | 100 |
+
+Accessibility did not change (it was 94 to 100 before as well). The before column is the unchanged tree measured the same
+morning. On a slow run the customer portal scored 72: its loading screen's 80px top margin collapsed through `<main>`, so
+the whole page jumped (CLS 0.92) when the project rendered. `main` is now a block formatting context and the loading screen
+holds the viewport, so that shift is gone (checked by `tests/browser/test_lighthouse_pages_ui.py`), and its font stylesheet
+no longer blocks rendering.
+
+What moved the numbers:
+
+- **Cumulative layout shift 0.118 to 0.191 is now 0** on every page: pages that load `site-enhancements.js` ship its booking and
+  customer-portal bar in the HTML (`render_customer_access` in `_generate_site.py`, styled by `styles.css`), so the script
+  no longer inserts it above the painted hero. The script still builds the bar on any page without it.
+- **LCP 3.7 to 4.0 s is now 1.7 to 2.1 s** on the service, city and turnaround pages: the hero before/after images are
+  `srcset` 600w/1200w WebP (`images/garage-{before,after}-600.webp`) with `sizes` and `fetchpriority="high"` on the first one,
+  so a phone downloads about 90 KB instead of 236 KB before the hero text settles.
+- **No render-blocking Google Fonts stylesheet** on any public page (`defer_google_fonts` patches hand-written pages to the
+  `media="print"` swap with a `<noscript>` copy; `functions/before-after.js` uses the same URL). `ads.html`, `apply.html` and
+  `thank-you.html` asked Google for an unsorted weight list, which Google answers with HTTP 400, so they never had their fonts;
+  `google_fonts_url` sorts and de-duplicates the tuples.
+- The header and footer logos are 368px WebP (11 KB and 7 KB) with 4 KB PNG fallbacks through `image-set`, instead of 2400px
+  PNGs (195 KB and 135 KB). Screens above 1x get a sharper WebP about 3x the widest phone box (552px header, 18 KB; 704px
+  footer, 16 KB), and the customer portal's two logo `<img>` tags use the same files in a `srcset`.
+- The generated pages' 11.6 KB inline nav, reveal and multi-step form script is `/site-forms.js` (deferred, immutable, `?v=` is
+  its content hash), and the footer 44px rule moved from the inline `<style id="footer-tap">` into `styles.css` (`20260928a`).
+
 ## Differences from production
 
 - No `functions/_middleware.js` in the loop: no CSP, and no HTMLRewriter business-hub link in the navigation.
@@ -193,7 +240,15 @@ Accessibility (all pages pass 90, but these audits fail and cost points):
 
 ## Owner checklist
 
-- Create the repository variable `LIGHTHOUSE_ENFORCE` (Settings, Secrets and variables, Actions, Variables). Leave it unset
-  or `false` for now.
-- After SITE-3 and SITE-4 land and a workflow run's summary shows every page at 90 or above, set it to `true`. Then
-  consider making "EGC Lighthouse (mobile)" a required status check on `main`.
+- Enforcement is the workflow default: `.github/workflows/egc-lighthouse.yml` sets
+  `LIGHTHOUSE_ENFORCE: ${{ vars.LIGHTHOUSE_ENFORCE || 'true' }}` in the assert and summary steps. Set the repository
+  variable `LIGHTHOUSE_ENFORCE` (Settings, Secrets and variables, Actions, Variables) to `false` only to make the check
+  warn-only again, for example while a runner's job summary shows a page below 90.
+- Then consider making "EGC Lighthouse (mobile)" a required status check on `main`.
+- `/before-after`: only the local photo pair has `-768` card thumbnails. The six concept pairs still load their full-size
+  CloudFront PNGs (lazy and below the fold, so the score holds). On a machine that can reach CloudFront, save a 768x576 WebP
+  of each of those twelve images under `images/gallery-simple/` with a name ending in `-768.webp` (the size and quality 83
+  that `tools/gallery/import-simple.py` uses for its thumbnails; do not rerun that importer, it rewrites the data file
+  without the photo pair), then point each pair's `beforeThumbnail`/`afterThumbnail` in
+  `functions/_lib/gallery-simple-data.js` at them. `renderPublicGallery()` adds the `srcset` with no code change; re-render
+  `before-after.html` with `node scripts/render-before-after.mjs`.

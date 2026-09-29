@@ -10,10 +10,11 @@ export const gallerySimplePairs = [
     "customerProject": false,
     "width": 1600,
     "height": 1200,
+    "sourceWidth": 1200,
     "before": "/images/garage-before.webp",
-    "beforeThumbnail": "/images/garage-before.webp",
+    "beforeThumbnail": "/images/garage-before-768.webp",
     "after": "/images/garage-after.webp",
-    "afterThumbnail": "/images/garage-after.webp"
+    "afterThumbnail": "/images/garage-after-768.webp"
   },
   {
     "id": "everyday-family-garage",

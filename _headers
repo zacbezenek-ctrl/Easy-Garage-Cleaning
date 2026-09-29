@@ -10,6 +10,10 @@
 /analytics-loader.js
   Cache-Control: public, max-age=31536000, immutable
 
+# Shared nav and lead-form behaviour for generated pages; ?v= is the file's content hash.
+/site-forms.js
+  Cache-Control: public, max-age=31536000, immutable
+
 # Shared navigation and current business contacts must revalidate on page load.
 /site-enhancements.js
   Cache-Control: no-cache

@@ -88,7 +88,10 @@ test('Cloudflare caches versioned public assets', () => {
     .filter((entry) => entry.isFile() && entry.name.endsWith('.html'))
     .map((entry) => ({ name: `${entry.parentPath}/${entry.name}`, html: readFileSync(`${entry.parentPath}/${entry.name}`, 'utf8') }))
     .filter((page) => page.html.includes('styles.css'));
-  for (const page of pages) assert.match(page.html, /styles\.css\?v=20260904j/, `${page.name} loads a stale shared stylesheet`);
+  // STYLES_VERSION in _generate_site.py is the one styles.css version (HEAD, patch_static_pages, before-after).
+  const version = read('_generate_site.py').match(/^STYLES_VERSION = "(\d{8}[a-z])"$/m)[1];
+  assert.equal(version, '20260928a');
+  for (const page of pages) assert.match(page.html, new RegExp(`styles\\.css\\?v=${version}`), `${page.name} loads a stale shared stylesheet`);
 });
 
 test('the shared visual refresh preserves readable text on light and dark surfaces', () => {

@@ -7,10 +7,10 @@ on:
         required: false
         default: ''
   pull_request:
-    paths: ['egc-platform/**','functions/**','employee*','tests/**','crew/**','scripts/repair-stale-schedule-instants.mjs','scripts/backfill-job-contact-keys.mjs','scripts/backfill-customer-identity.mjs','scripts/backfill-job-labor-private.mjs','_generate_site.py','_services_data.py','_finalize_urls.py','tools/site-build.json','tools/gallery/**','scripts/render-before-after.mjs','gallery-simple.js','package.json','*.html','blog/**','projects/**','sitemap.xml','llms.txt','message-templates.*','customer-portal.html','staff-paths.js','staff-login.*','fb-capture.js','analytics-loader.js','.github/workflows/egc-action-center-ci.yml']
+    paths: ['egc-platform/**','functions/**','employee*','tests/**','crew/**','scripts/repair-stale-schedule-instants.mjs','scripts/backfill-job-contact-keys.mjs','scripts/backfill-customer-identity.mjs','scripts/backfill-job-labor-private.mjs','_generate_site.py','_services_data.py','_finalize_urls.py','tools/site-build.json','tools/gallery/**','scripts/render-before-after.mjs','gallery-simple.js','package.json','*.html','blog/**','projects/**','sitemap.xml','llms.txt','message-templates.*','customer-portal.html','staff-paths.js','staff-login.*','fb-capture.js','analytics-loader.js','site-forms.js','site-enhancements.js','styles.css','.github/workflows/egc-action-center-ci.yml']
   push:
     branches: [main]
-    paths: ['egc-platform/**','functions/**','employee*','tests/**','crew/**','scripts/repair-stale-schedule-instants.mjs','scripts/backfill-job-contact-keys.mjs','scripts/backfill-customer-identity.mjs','scripts/backfill-job-labor-private.mjs','_generate_site.py','_services_data.py','_finalize_urls.py','tools/site-build.json','tools/gallery/**','scripts/render-before-after.mjs','gallery-simple.js','package.json','*.html','blog/**','projects/**','sitemap.xml','llms.txt','message-templates.*','customer-portal.html','staff-paths.js','staff-login.*','fb-capture.js','analytics-loader.js','.github/workflows/egc-action-center-ci.yml']
+    paths: ['egc-platform/**','functions/**','employee*','tests/**','crew/**','scripts/repair-stale-schedule-instants.mjs','scripts/backfill-job-contact-keys.mjs','scripts/backfill-customer-identity.mjs','scripts/backfill-job-labor-private.mjs','_generate_site.py','_services_data.py','_finalize_urls.py','tools/site-build.json','tools/gallery/**','scripts/render-before-after.mjs','gallery-simple.js','package.json','*.html','blog/**','projects/**','sitemap.xml','llms.txt','message-templates.*','customer-portal.html','staff-paths.js','staff-login.*','fb-capture.js','analytics-loader.js','site-forms.js','site-enhancements.js','styles.css','.github/workflows/egc-action-center-ci.yml']
 permissions:
   contents: read
 # Push runs are keyed by commit SHA: a shared refs/heads/main group would let a newer queued
@@ -222,6 +222,8 @@ jobs:
         run: python tests/browser/test_customer_photos_ui.py
       - name: Public nav drawer keyboard contract and footer tap targets
         run: python tests/browser/test_nav_drawer_ui.py
+      - name: Public site mobile performance (logos, hero srcset, deferred fonts, site-forms.js, static booking bar)
+        run: python tests/browser/test_public_performance_ui.py
       - name: Website lead relay, ads.html relay fix and book.html Meta Lead eventID on a phone
         run: python tests/browser/test_lead_relay_ui.py
       - name: Owner message template drafts, approval and conflict recovery
