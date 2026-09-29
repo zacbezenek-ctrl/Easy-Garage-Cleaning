@@ -122,7 +122,8 @@ test('every integration principal the services mint is bound to exactly the serv
     for(const id of mcpPrincipalIds(user).ids)assert.equal(bridgeActorIssuer(id),'mcp',id);
   // FUN-20: the Garage Guard ledger's hub_audit actor for Stripe webhook writes. It carries role null, so no
   // bridge verifier accepts it (actorSchema and bridgeCommandDenial need role 'integration'), and it is never signed.
-  const auditOnly=[['functions/_lib/garage-guard-ledger.js','stripe_webhook']];
+  // FUN-33: the same role-less actor on the payment funnel events a Stripe webhook records (customer-payments.js).
+  const auditOnly=[['functions/_lib/garage-guard-ledger.js','stripe_webhook'],['functions/_lib/customer-payments.js','stripe_webhook']];
   for(const [path,id] of auditOnly){
     assert.match(readFileSync(join(ROOT,path),'utf8'),new RegExp(`\\{\\s*id:\\s*'${id}',\\s*kind:\\s*'integration',\\s*role:\\s*null\\s*\\}`),`${path} ${id} stays a role-less audit actor`);
     assert.equal(bridgeActorIssuer(id),null,`${id} is not a bridge principal`);

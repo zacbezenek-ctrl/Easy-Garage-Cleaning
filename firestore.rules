@@ -300,6 +300,14 @@ service cloud.firestore {
         exists(/databases/$(database)/documents/jobLaborCosts/$(documentId));
     }
 
+    // FUN-33: the paid-in-full crossing the server money writers keep on a job
+    // (paidInFullAt/paidInFullRevision, the reopen, and a payment whose funnel
+    // event could not be built). The next writer reads them as the last crossing
+    // and the floor of its clock, so a browser edit could duplicate or hide one.
+    function paymentEventFields() {
+      return ['paidInFullAt', 'paidInFullRevision', 'balanceReopenedAt', 'balanceReopenedReason', 'paymentEventIssue'];
+    }
+
     // Canonical jobs include financial evidence, signatures and private notes.
     // Crew reads and execution writes go through assigned-only server DTOs;
     // otherwise direct SDK reads would bypass projection and completion gates.
@@ -311,15 +319,18 @@ service cloud.firestore {
       // Crew mutations use the session-authorized APIs and shared capacity locks.
       // Business SDK writes can neither touch nor produce a server-owned record.
       // funnelSale (FUN-03) names the sale the funnel ledger counts for the job;
-      // only the server writers that record or retire that sale may set it.
+      // only the server writers that record or retire that sale may set it. The
+      // FUN-33 paid-in-full fields (paymentEventFields) are server-only the same way.
       allow create: if businessUser() && !serverOwnedJobRecord(documentId) &&
         !serverOwnedJobData(request.resource.data, documentId) &&
         !('funnelSale' in request.resource.data) &&
+        !request.resource.data.keys().hasAny(paymentEventFields()) &&
         jobLaborUnchanged(request.resource.data, {}, documentId);
       allow update: if businessUser() && !serverOwnedJobRecord(documentId) &&
         !serverOwnedJobData(resource.data, documentId) &&
         !serverOwnedJobData(request.resource.data, documentId) &&
         !request.resource.data.diff(resource.data).affectedKeys().hasAny(['funnelSale']) &&
+        !request.resource.data.diff(resource.data).affectedKeys().hasAny(paymentEventFields()) &&
         jobLaborUnchanged(request.resource.data, resource.data, documentId);
       allow delete: if businessUser() && !serverOwnedJobRecord(documentId) &&
         !serverOwnedJobData(resource.data, documentId);

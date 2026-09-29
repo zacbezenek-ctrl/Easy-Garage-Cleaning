@@ -159,7 +159,12 @@ test('only settled events are served, so an event that commits after a later-sta
 });
 
 test('feed projections are allowlists: no cost, pay, fee or margin field, no fingerprints and no private ids', async () => {
-  assert.deepEqual(feedDataFields(), Object.keys(funnelDefinitions().dataFields), 'today every defined data field is shareable');
+  // Every defined data field is shared except the ones named like private pay data. FUN-33's tipCents (a crew tip on a
+  // card charge) is one: it is crew-pay data and never leaves the Hub feed.
+  const defined = Object.keys(funnelDefinitions().dataFields);
+  assert.deepEqual(feedDataFields(), defined.filter(name => !privateFieldName(name)));
+  assert.deepEqual(defined.filter(privateFieldName), ['tipCents'], 'tipCents is the only defined data field kept in the Hub');
+  assert.equal(feedDataFields().includes('tipCents'), false);
   for (const name of ['costCents', 'laborCostCents', 'stripeFeeCents', 'feeCents', 'marginCents', 'grossMarginPct', 'payRate', 'hourlyRate', 'payType', 'wageCents', 'contributionCents', 'profitCents', 'burdenCents', 'overtimePremiumCents', 'tipCents', 'commissionCents', 'labor_cents', 'COST'])
     assert.equal(privateFieldName(name), true, name);
   for (const name of ['amountCents', 'estimateRevision', 'kind', 'method', 'proposalRank', 'paymentMethod', 'occurrence', 'lateCancel', 'score']) assert.equal(privateFieldName(name), false, name);
@@ -177,6 +182,8 @@ test('feed projections are allowlists: no cost, pay, fee or margin field, no fin
   assert.deepEqual([projected.actor, projected.via, projected.source, projected.eligible, projected.isTest], [{ id: 'zacb', kind: 'human', role: 'owner' }, 'hub', { collection: 'jobs', id: null }, true, false]);
   // The projection takes the allowed list, so a definitions field named for a cost is dropped automatically.
   assert.deepEqual(projectFunnelEvent({ ...event, data: { amountCents: 1, feeCents: 2 } }, ['amountCents', 'feeCents'].filter(name => !privateFieldName(name))).data, { amountCents: 1 });
+  // FUN-33: a tipped card charge's payment.received keeps its crew tip in the Hub; the feed serves only the service money.
+  assert.deepEqual(projectFunnelEvent({ ...event, data: { amountCents: 50000, kind: 'balance', method: 'card', cash: true, tipCents: 7500 } }, feedDataFields()).data, { amountCents: 50000, kind: 'balance', method: 'card', cash: true });
   // A source id is shown only when it is neither a private record nor the event's idempotency key (a request receipt).
   const request = testUUID();
   for (const [source, idempotencyKey, shown] of [

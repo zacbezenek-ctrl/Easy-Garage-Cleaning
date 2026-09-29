@@ -31,6 +31,12 @@
  * (tips off, an untipped or non-Hub charge) is acknowledged and ignored, as before.
  * Disputes (charge.dispute.*) are not read: check Stripe for disputes before exporting tips.
  *
+ * With FUNNEL_PAYMENT_EVENTS_ENABLED=true (and MONEY_API_ENABLED=true) a job
+ * payment is committed together with its FUN-33 funnel events, dated at the
+ * Stripe charge of the session read back above. Both checkout recorders are
+ * told fromWebhook explicitly, so the event names the Stripe webhook as its
+ * actor; charge.refunded (holdOnly) never books, so it records no event.
+ *
  * With GARAGE_GUARD_MEMBERSHIP_SYNC_ENABLED=true, membership events are also
  * recorded once per event.id (stripe_events) in memberships/{subscriptionId},
  * linked to the Hub customer only by an exact match (otherwise a
@@ -256,7 +262,7 @@ export function stripeWebhookHandlers({ storage = membershipStorage, now = () =>
         try {
           // The charge (and any refund on it) is read from Stripe, never taken from the payload.
           const current = await readCheckout(env, checkout.id);
-          const payment = await recordCustomerStripePayment(env, current, '', stamp, { recordedBy: 'stripe_webhook', settleHeld: false });
+          const payment = await recordCustomerStripePayment(env, current, '', stamp, { recordedBy: 'stripe_webhook', settleHeld: false, fromWebhook: true });
           return json(200, { ok: true, received: true, recorded: true, duplicate: payment.duplicate });
         } catch (error) {
           // A charge held in payment_reviews (Stripe shows it refunded, or a tipped charge on a job that closed after
@@ -270,7 +276,7 @@ export function stripeWebhookHandlers({ storage = membershipStorage, now = () =>
         if (checkout.payment_status !== 'paid') return json(200, { ok: true, received: true, processing: true });
         try {
           const current = await readCheckout(env, checkout.id);
-          const payment = await recordCrewStripePayment(env, current, { recordedBy: 'stripe_webhook', settleHeld: false, now: stamp });
+          const payment = await recordCrewStripePayment(env, current, { recordedBy: 'stripe_webhook', settleHeld: false, now: stamp, fromWebhook: true });
           return json(200, { ok: true, received: true, recorded: true, duplicate: payment.duplicate });
         } catch (error) {
           // A confirmed charge the job cannot take is durably held in

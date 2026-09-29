@@ -122,6 +122,27 @@ test('actual Firestore rules isolate canonical operations from crew SDK access',
       }
       await environment.withSecurityRulesDisabled(async context=>assert.deepEqual((await context.firestore().doc('jobs/sold-job').get()).data().funnelSale,sale));
     });
+    await t.test('a job\'s paid-in-full crossing fields are written only by the server money writers (FUN-33)',async()=>{
+      const crossing={paidInFullAt:'2099-09-10T12:00:00.000Z',paidInFullRevision:2,balanceReopenedAt:'2099-09-09T12:00:00.000Z',balanceReopenedReason:'estimate_revised',paymentEventIssue:{code:'funnel_event_invalid',sessionId:'cs_test_synthetic',at:'2099-09-10T12:00:00.000Z'}};
+      const seededJob={type:'job',customerId:'paid-in-full-customer',status:'scheduled',payment:{amount:800,verified:true},...crossing};
+      await environment.withSecurityRulesDisabled(context=>context.firestore().doc('jobs/paid-job').set(seededJob));
+      for(const db of [manager,partner]){
+        // Named-field edits the Hub makes (notes, schedule) keep the crossing and are allowed.
+        await assertSucceeds(db.doc('jobs/paid-job').set({opsNotes:'Synthetic note'},{merge:true}));
+        // Regression guards: a full overwrite that carries the same crossing values, and an update to the same value, are not crossing writes.
+        await assertSucceeds(db.doc('jobs/paid-job').set({...seededJob,opsNotes:'Synthetic note'}),'a full overwrite keeping the crossing values');
+        await assertSucceeds(db.doc('jobs/paid-job').update({paidInFullRevision:2}),'an update to the same paidInFullRevision');
+        for(const [field,value] of Object.entries(crossing)){
+          await assertFails(db.doc('jobs/paid-job').set({[field]:null},{merge:true}),`clearing ${field}`);
+          await assertFails(db.doc('jobs/paid-job').update({[field]:field==='paidInFullRevision'?3:'2099-09-11T12:00:00.000Z'}),`rewriting ${field}`);
+          await assertFails(db.doc('jobs/paid-job').update({[field]:FieldValue.delete()}),`deleting ${field}`);
+          await assertFails(db.doc('jobs/assigned').update({[field]:value}),`adding ${field}`);
+          await assertFails(db.doc(`jobs/forged-${field.toLowerCase()}`).set({type:'job',customerId:'paid-in-full-customer',[field]:value}),`creating with ${field}`);
+        }
+        await assertFails(db.doc('jobs/paid-job').set({type:'job',customerId:'paid-in-full-customer',status:'scheduled'}),'a full overwrite may not drop the crossing');
+      }
+      await environment.withSecurityRulesDisabled(async context=>{const saved=(await context.firestore().doc('jobs/paid-job').get()).data();assert.deepEqual(Object.fromEntries(Object.keys(crossing).map(key=>[key,saved[key]])),crossing);assert.equal(saved.opsNotes,'Synthetic note');});
+    });
     await t.test('approved-send ledgers, message templates and messaging receipts remain server-only even for business SDK sessions',async()=>{
       await environment.withSecurityRulesDisabled(async context=>{const db=context.firestore();await db.doc('message_sends/send').set({kind:'payment_reminder',status:'submitted',targetId:'assigned'});await db.doc('message_templates/payment_reminder').set({kind:'payment_reminder',liveVersion:1});await db.doc('message_operations/receipt').set({actorId:'zacb',action:'template.approve'});});
       for(const db of [publicDb,crew,lead,manager]) for(const path of ['message_sends/send','message_templates/payment_reminder','message_operations/receipt']){await assertFails(db.doc(path).get());await assertFails(db.doc(path).set({status:'changed'}));await assertFails(db.doc(path).update({status:'changed'}));await assertFails(db.doc(path).delete());}

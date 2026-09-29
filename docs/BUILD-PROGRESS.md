@@ -487,6 +487,10 @@ draft PR. The owner merges in phase order. See **Decisions** D-001.
   dispatchState guard) and dispatch-rules.js checks (skills, per-employee daily limits, working hours, crew size, drive
   time) that warn until the owner turns on each block; jobs carry requiredSkills; openings and shift pickups honour them;
   requireDispatcher uses can(dispatch.write). Gap: the bridge schedule.mutate path does not check owner rules yet.
+- **FUN-33** (money funnel events; flag off) With FUNNEL_PAYMENT_EVENTS_ENABLED and MONEY_API_ENABLED, Stripe checkout
+  payments (webhook, crew return, portal), /api/money writes and material quote-draft revisions commit the job with
+  payment.received and any job.paid_in_full / job.balance_reopened crossing in one commit; firestore.rules gains
+  paymentEventFields() (server-only crossing fields). Keep the flag unset until FUN-33b wires gift credit, change orders and handoff revisions.
 
 ## In progress
 
@@ -601,6 +605,7 @@ one prefixed commit only after the full root suite (and the platform suite when 
 | CREW-TIME | P1: clock-in-only location, status-driven job time and per-job pay rows (flags off) | merged (1507863) |
 | M5-SEND | Hub invoicing: batch issue plus the egc-invoice-issued tag (Hub invoice sends removed) | merged (023f80a) |
 | DISPATCH-RULES | Owner dispatch rules: skills, daily limits, working hours, crew size and drive time (warn until blocked) | merged (7013404) |
+| FUN-33 | Payment funnel events on the ledger: payment.received and paid-in-full crossings committed with the job (FUNNEL_PAYMENT_EVENTS_ENABLED, off) | merged (b9c3b07) |
 
 ## Next
 

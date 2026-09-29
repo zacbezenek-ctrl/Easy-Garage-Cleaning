@@ -8,6 +8,7 @@ import { depositCents, estimateFingerprint, estimateChanged, estimateTotals, inc
 import { customerMoneyTotals, invoiceNumber } from './money-core.js';
 import { moneySnapshot } from './money-service.js';
 import { moneySupersedeWrite } from './job-funnel-events.js';
+import { funnelPaymentEventsEnabled, moneyEventWrites } from './payment-events.js';
 import { checkoutFingerprint } from './customer-payments.js';
 import { consumeConfirmation, issueConfirmation } from './confirm-token.js';
 import { messagingFlags } from './approved-send.js';
@@ -34,6 +35,11 @@ import { maskRecipient, normalizeEmail, normalizePhone } from './ghl-messenger.j
  * total the customer sees. A material revision bumps estimate.revision, returns
  * the quote to draft, supersedes any approval and issued invoice (payments are
  * kept) and asks `checkouts` to expire an open portal checkout for the old terms.
+ * With FUNNEL_PAYMENT_EVENTS_ENABLED (and MONEY_API_ENABLED) a material revision
+ * also carries the FUN-33 paid-in-full crossing it causes in its own commit
+ * (payment-events.js moneyEventWrites): job.balance_reopened (estimate_revised)
+ * when it raises a paid-in-full total, job.paid_in_full when it lowers an open
+ * balance to 0, or only the moved paidInFullRevision when the job stays paid.
  */
 export const QUOTE_DRAFT_RECEIPTS = 'quoteDraftOperations';
 export const CHECKOUT_LEDGER = 'customer_payment_checkouts';
@@ -231,12 +237,17 @@ export async function saveQuoteDraft(store, actor, input, now = new Date().toISO
       // and the cleared funnelSale are in this revision's commit.
       const retired = plan.material ? await moneySupersedeWrite(job, actor, { requestId: input.requestId, via: 'hub', source: { collection: QUOTE_DRAFT_RECEIPTS, id: receiptId } }, now) : null;
       if (retired) patch.funnelSale = null;
+      // FUN-33: the paid-in-full crossing of a material revision, in the same commit (nothing when the flag is off).
+      const crossing = plan.material && funnelPaymentEventsEnabled(env) ? await moneyEventWrites({ before: job, after: { ...job, ...patch }, now, idempotencyKey: { kind: 'requestId', value: input.requestId },
+        actor: { id: actor.user, kind: 'human', role: actor.role }, via: 'hub', source: { collection: QUOTE_DRAFT_RECEIPTS, id: receiptId }, reason: 'estimate_revised' }) : { patch: {}, writes: [] };
+      Object.assign(patch, crossing.patch);
       await store.commit([
         { collection: 'jobs', id: job.id, revision: job.revision, patch },
         { collection: 'customers', id: customer.id, revision: customer.revision, verify: true },
         { collection: QUOTE_DRAFT_RECEIPTS, id: receiptId, patch: saved.receipt },
         audit(job, patch, job.id),
         ...(retired ? [retired] : []),
+        ...crossing.writes,
       ]);
     } else await createDraft(store, actor, input, draft, customer, now, env, { record, audit, receiptId });
   } catch (error) {

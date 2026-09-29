@@ -262,6 +262,40 @@ test('a material quote draft revision retires the live portal sale with deal.app
   assert.equal(f.writesTo('funnelEvents').length, 1);
 });
 
+// QUOTE-DRAFT x FUN-33 (merge): with the payment events on, a material quote draft revision records the paid-in-full
+// crossing it causes in the revision's own commit, as the Hub estimate editor does (money-service estimate.save).
+test('with FUN-33 payment events on, a material quote draft revision reopens a paid-in-full balance in its own commit, and pays it off again', async () => {
+  const EVENTS = { ...ENV, FUNNEL_PAYMENT_EVENTS_ENABLED: 'true', MONEY_API_ENABLED: 'true' };
+  const choose = tier => d => { d.line_items = lines().map(line => line.group ? { ...line, selected: line.tier === tier } : line); };
+  async function prepaid(env) {
+    const f = fixture(), created = await save(f, f.input(), owner, env), id = created.job.id;
+    await sendFlow(f, id, { env });
+    // The customer approved revision 1 ($1,798) and paid it in full by check before the work started.
+    Object.assign(f.rows.get(`jobs/${id}`), { customerApproval: { status: 'approved', approvedAt: LATER, approvedBy: 'Synthetic Customer', amount: 1798 }, deposit: { ...f.job(id).deposit, paidAmount: 899, verified: true },
+      payment: { amount: 1798, verified: true, method: 'check', reference: 'CHK-1', lastAmount: 1798, lastReceivedAt: LATER, recordedBy: 'zacb' }, paidInFullAt: LATER, paidInFullRevision: 1 });
+    return { f, id };
+  }
+  const { f, id } = await prepaid(EVENTS), raised = revise(f, id, choose('best'));
+  await save(f, raised, owner, EVENTS);
+  const receipt = raised.requestId.toLowerCase(), commit = f.calls.at(-1), [reopened] = commit.filter(write => write.collection === 'funnelEvents').map(write => write.patch);
+  assert.ok(commit.some(write => write.collection === QUOTE_DRAFT_RECEIPTS && write.id === receipt), 'in the same commit as the revision receipt');
+  assert.deepEqual([reopened.type, reopened.data, reopened.via, reopened.source, reopened.idempotencyKey, reopened.occurredAt, reopened.actor],
+    ['job.balance_reopened', { amountCents: 10000, estimateRevision: 2, reasonCode: 'estimate_revised' }, 'hub', { collection: QUOTE_DRAFT_RECEIPTS, id: receipt }, `requestId:${receipt}`, NOW, { id: 'zacb', kind: 'human', role: 'owner' }]);
+  assert.deepEqual([f.job(id).paidInFullAt, f.job(id).paidInFullRevision, f.job(id).balanceReopenedAt, f.job(id).balanceReopenedReason], [null, null, NOW, 'estimate_revised']);
+  // A change that is not material writes no crossing; a revision below what was paid pays the job off again at its revision.
+  await save(f, revise(f, id, d => { choose('best')(d); d.valid_until = '2026-10-12'; }), owner, EVENTS);
+  assert.equal(f.calls.at(-1).some(write => write.collection === 'funnelEvents'), false);
+  await save(f, revise(f, id, choose('good')), owner, EVENTS, LATER);
+  const [paid] = f.calls.at(-1).filter(write => write.collection === 'funnelEvents').map(write => write.patch);
+  assert.deepEqual([paid.type, paid.data, paid.occurredAt], ['job.paid_in_full', { amountCents: 159800, estimateRevision: 3 }, LATER]);
+  assert.deepEqual([f.job(id).paidInFullAt, f.job(id).paidInFullRevision, f.job(id).payment.amount], [LATER, 3, 1798], 'payments are never touched');
+  // Flag off: the same revisions commit exactly as before, with no crossing and no crossing fields.
+  const off = await prepaid(ENV);
+  await save(off.f, revise(off.f, off.id, choose('best')));
+  assert.deepEqual([off.f.writesTo('funnelEvents').length, off.f.job(off.id).paidInFullAt, 'balanceReopenedAt' in off.f.job(off.id)], [0, LATER, false]);
+  assert.deepEqual(off.f.calls.at(-1).map(write => write.collection), ['jobs', 'customers', QUOTE_DRAFT_RECEIPTS, 'hub_audit']);
+});
+
 test('checkout expiry only touches an open session for other terms and reports what it could not close', async () => {
   const f = fixture(), job = { id: 'j1', estimate: { amount: 100, revision: 2 }, customerApproval: { status: 'approved' } };
   const calls = [], stripe = async path => { calls.push(path); return { status: 'expired' }; };

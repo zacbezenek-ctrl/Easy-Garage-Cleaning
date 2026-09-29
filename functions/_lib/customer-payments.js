@@ -4,6 +4,8 @@ import { paymentLedger, refundsRecorded } from './money-core.js';
 import { manualEntryIds } from './money-ledger.js';
 import { billedChangeCents } from './change-orders.js';
 import { unsentQuoteDraft } from './quote-model.js';
+import { moneyStorage } from './money-storage.js';
+import { funnelPaymentEventsEnabled, moneyEventWrites, paymentKind, stripeChargeClock, stripePaymentMethod } from './payment-events.js';
 
 const DB = 'https://firestore.googleapis.com/v1/projects/egcw-1ec83/databases/(default)/documents';
 const clean = (value, limit = 180) => String(value || '').replace(/[\r\n\t]/g, ' ').trim().slice(0, limit);
@@ -455,6 +457,50 @@ const HELD = {
   },
 };
 
+// The one mapping for every job write the recorder makes: true when nothing
+// was applied because the job (or another precondition in the same commit)
+// changed since it was read, so the recorder re-reads and decides again. A
+// single-document patch or a direct :commit reports it as storageStatus 400
+// FAILED_PRECONDITION (or 409/412); a :commit through moneyStorage as
+// money_revision_conflict. Anything else is a storage failure (503, and Stripe retries).
+const staleJobWrite = error => error?.code === 'money_revision_conflict' || [400, 409, 412].includes(error?.storageStatus);
+
+// FUN-33: Stripe payments are recorded as {actor, via}: the webhook, the crew return or the customer portal.
+// The webhook's actor is FUN-20's Stripe webhook audit actor (garage-guard-ledger.js), the same id on every Stripe
+// webhook event in the funnel ledger. It carries role null, so no bridge verifier accepts it: it is never signed.
+const STRIPE_ACTOR = Object.freeze({ id: 'stripe_webhook', kind: 'integration', role: null });
+function paymentSource({ fromWebhook, crew, recordedBy }) {
+  if (fromWebhook) return { via: 'stripe', actor: STRIPE_ACTOR };
+  if (!crew) return { via: 'portal', actor: { id: 'customer', kind: 'customer' } };
+  const user = String(recordedBy || '').trim().toLowerCase();
+  return { via: 'field', actor: { id: /^[a-z0-9][a-z0-9_.@:+-]{0,119}$/.test(user) ? user : 'staff', kind: 'human' } };
+}
+
+// FUN-33 (FUNNEL_PAYMENT_EVENTS_ENABLED): the job change, its funnel events and
+// paid-in-full fields in ONE :commit, with the review write the booking needs
+// (`writes`): the revision-checked mark on the charge's open review, or, for a
+// tipped charge with no review, the precondition-only delete of
+// payment_reviews/{sessionId} (exists:false) that patchJobUnlessReviewed sends. An
+// event that cannot be built never strands a confirmed charge: the payment is
+// recorded and paymentEventIssue marks the job for reconciliation (FUN-25).
+// The target is the verified metadata job ID (the document read), never a stored id field.
+// amountCents is the service money only; a crew tip on the same charge is tipCents.
+async function commitStripePayment(env, jobId, job, patch, { sessionId, amountCents, tipCents, classed, clock, method, now, livemode, via, actor, writes = [] }) {
+  const source = `${jobId}:stripeSessions:${sessionId}`, before = { ...job, id: jobId };
+  let recorded;
+  try {
+    recorded = await moneyEventWrites({
+      before, after: { ...before, ...patch }, now, idempotencyKey: { kind: 'stripeSession', value: sessionId }, actor, via, clock,
+      source: { collection: 'jobs', id: source.length <= 180 ? source : jobId }, payment: { amountCents, tipCents, kind: classed.kind, kindInferred: classed.inferred, method },
+      stripe: { sessionId, ...(typeof livemode === 'boolean' ? { livemode } : {}) },
+    });
+  } catch (error) {
+    if (!/^funnel_/.test(error?.code || '')) throw error;
+    recorded = { patch: { paymentEventIssue: { code: error.code, sessionId, at: now } }, writes: [] };
+  }
+  await moneyStorage(env).commit([{ collection: 'jobs', id: jobId, revision: job.__updateTime, patch: { ...patch, ...recorded.patch } }, ...writes, ...recorded.writes]);
+}
+
 // One verified path for every EGC Checkout kind. The Stripe session ID saved on
 // the job is the idempotency key, so a webhook, a browser return and their
 // replays can arrive in any order and still record a charge exactly once.
@@ -475,8 +521,14 @@ const HELD = {
 // Every error that says a review holds the charge carries reviewRecorded, and
 // reviewOpen: true when an open review holds it now (one is queued for a person),
 // false when the charge's reviews are all closed (payment_review_resolved).
-async function recordStripeCheckout(env, checkout, { kind, expectedJobId = '', recordedBy = '', settleHeld = true, holdOnly = false, now = new Date().toISOString() }) {
+// With FUNNEL_PAYMENT_EVENTS_ENABLED (and MONEY_API_ENABLED) the booking write
+// also carries the charge's payment.received event and any paid-in-full
+// crossing (FUN-33, commitStripePayment), keyed by the session ID and dated at
+// the Stripe charge; every hold, refund and review rule above is unchanged.
+// fromWebhook is true only for the Stripe webhook delivery (who recorded the payment).
+async function recordStripeCheckout(env, checkout, { kind, expectedJobId = '', recordedBy = '', settleHeld = true, holdOnly = false, now = new Date().toISOString(), fromWebhook = false }) {
   const crew = kind === CHECKOUT_KINDS.crew, { jobId, sessionId, tipCents, serviceCents } = verifiedCheckout(checkout, kind, expectedJobId), text = HELD[crew ? 'crew' : 'portal'];
+  const events = funnelPaymentEventsEnabled(env);
   // Money is recorded only from a session whose charge was read: fail closed (retryable) otherwise.
   if (!plainObject(checkout.payment_intent) || !plainObject(checkout.payment_intent.latest_charge)) throw failure('Stripe could not confirm this payment. Please try again.', 503, 'payment_charge_unread');
   const ledger = crew ? null : await readLedger(env, jobId), ledgerTip = Number(ledger?.state.tipCents || 0);
@@ -655,6 +707,11 @@ async function recordStripeCheckout(env, checkout, { kind, expectedJobId = '', r
     const paymentItem = crew
       ? { sessionId, paymentIntentId, amount: serviceCents / 100, ...tipField, receiptEmail, createdBy: clean(checkout.metadata?.created_by, 80), recordedBy: clean(recordedBy, 80), verifiedAt: now }
       : { sessionId, paymentIntentId, amount: serviceCents / 100, ...tipField, purpose: clean(checkout.metadata?.payment_purpose, 20), quoteRevision: clean(checkout.metadata?.quote_revision, 20), quotedTotalCents: Number(checkout.metadata?.quoted_total_cents || 0), verifiedAt: now };
+    // FUN-33: a payment without a purpose (every crew link) is classed by the payment kind rule for its funnel
+    // event (a tipped charge is always a balance). The session keeps its own purpose (none): the inference is
+    // only noted beside it, so the ledger, receipts and invoices read it exactly as before.
+    const clock = events ? stripeChargeClock(checkout, now) : {}, classed = events ? paymentKind(job, { purpose: paymentItem.purpose, amountCents: serviceCents, tipCents, occurredAt: clock.occurredAt || now }) : null;
+    if (classed?.inferred) paymentItem.inferredKind = classed.kind;
     const trustedSessions = job.payment?.verified === true ? (job.payment.stripeSessions || []) : [];
     const trustedTips = job.payment?.verified === true && Array.isArray(job.payment.tips) ? job.payment.tips : [];
     const tip = tipCents ? { sessionId, paymentIntentId, amountCents: tipCents, amount: tipCents / 100, source: crew ? 'crew_card' : 'customer_portal', createdBy: clean(checkout.metadata?.created_by, 80), recordedBy: clean(recordedBy, 80) || 'stripe', verifiedAt: now } : null;
@@ -668,14 +725,23 @@ async function recordStripeCheckout(env, checkout, { kind, expectedJobId = '', r
       invoice, paymentSyncStatus: 'pending', paymentSyncPayload,
       ...(paidTotal > finance.total ? { paymentReviewRequired: true } : {}), updatedAt: now,
     };
+    const mark = { jobRecordedAt: now, jobRecordedBy: clean(recordedBy, 80) };
     try {
-      if (review) await patchJobWithReview(env, jobId, patch, job.__updateTime, review, { jobRecordedAt: now, jobRecordedBy: clean(recordedBy, 80) });
+      // FUN-33: the same booking as below, as one :commit with the charge's funnel events and the same review
+      // preconditions. A held session's open review gets the same mark under its revision, so a manager resolving
+      // it at the same time fails this commit; a tipped charge with no review carries the same "still no review"
+      // precondition as patchJobUnlessReviewed, so a review created after this read fails it (money_revision_conflict)
+      // and the retry takes the hold path. An untipped charge with no review has no review write, as below.
+      if (events) await commitStripePayment(env, jobId, job, patch, { sessionId, amountCents: serviceCents, tipCents, classed, clock, method: stripePaymentMethod(checkout), now, livemode: checkout.livemode, ...paymentSource({ fromWebhook, crew, recordedBy }),
+        writes: review ? [{ collection: PAYMENT_REVIEW_COLLECTION, id: review.sessionId, revision: review.revision, patch: mark }]
+          : tipCents ? [{ collection: PAYMENT_REVIEW_COLLECTION, id: sessionId, delete: true, exists: false }] : [] });
+      else if (review) await patchJobWithReview(env, jobId, patch, job.__updateTime, review, mark);
       // A tipped charge is booked only while it still has no review: a webhook or return that saw a refund Stripe shows
       // after this read creates payment_reviews/{sessionId}, which fails this commit, and the retry takes the hold path.
       else if (tipCents) await patchJobUnlessReviewed(env, jobId, patch, job.__updateTime, sessionId);
       else await patchJob(env, jobId, patch, job.__updateTime);
       return { result: { paid: true, duplicate: false, amountPaid: paymentItem.amount, ...tipped, balance, receiptUrl }, payment, invoice, paymentSyncPayload, withheld: unsentQuoteDraft(job) };
-    } catch (error) { storageFailed = ![400, 409, 412].includes(error.storageStatus); } // Firestore answers a stale updateTime with 400 FAILED_PRECONDITION.
+    } catch (error) { storageFailed = !staleJobWrite(error); } // Firestore answers a stale updateTime with 400 FAILED_PRECONDITION.
   }
   // Each retry re-reads the job, so a write whose response was lost is found above as a duplicate.
   throw storageFailed ? failure('Payment information is temporarily unavailable', 503, 'payment_storage_unavailable') : failure('The payment record changed. Refresh to confirm the latest balance.', 409, 'payment_changed');
@@ -684,11 +750,12 @@ async function recordStripeCheckout(env, checkout, { kind, expectedJobId = '', r
 // recordedBy names who saw a held charge first ('customer_portal' for the portal
 // return, 'stripe_webhook' for the webhook); settleHeld:false is the webhook;
 // holdOnly:true (charge.refunded) never books, and throws nothingHeld when there is nothing to hold.
+// fromWebhook:true (the checkout.session webhook) records a FUN-33 payment event as the Stripe webhook's.
 // While a Hub quote draft has an unsent revision, the job's total is that revision, so the customer's reply
 // (verify_payment, and create_payment's alreadyPaid) confirms the payment without a balance measured against
 // terms they have not been sent. The payment itself is recorded in full either way.
-export async function recordCustomerStripePayment(env, checkout, expectedJobId = '', now = new Date().toISOString(), { recordedBy = 'customer_portal', settleHeld = true, holdOnly = false } = {}) {
-  const { result, withheld } = await recordStripeCheckout(env, checkout, { kind: CHECKOUT_KINDS.portal, expectedJobId, recordedBy, settleHeld, holdOnly, now });
+export async function recordCustomerStripePayment(env, checkout, expectedJobId = '', now = new Date().toISOString(), { recordedBy = 'customer_portal', settleHeld = true, holdOnly = false, fromWebhook = false } = {}) {
+  const { result, withheld } = await recordStripeCheckout(env, checkout, { kind: CHECKOUT_KINDS.portal, expectedJobId, recordedBy, settleHeld, holdOnly, now, fromWebhook });
   if (!withheld) return result;
   const { balance, ...confirmed } = result;
   return { ...confirmed, balanceWithheld: true };
@@ -697,8 +764,8 @@ export async function recordCustomerStripePayment(env, checkout, expectedJobId =
 // Crew card links (job-payment.js) settle through the same verification from
 // the Stripe webhook or the crew browser return; the latter also receives the
 // recorded job copy it shows during closeout.
-export async function recordCrewStripePayment(env, checkout, { expectedJobId = '', recordedBy = '', settleHeld = true, holdOnly = false, now = new Date().toISOString() } = {}) {
-  const { result, payment, invoice, paymentSyncPayload } = await recordStripeCheckout(env, checkout, { kind: CHECKOUT_KINDS.crew, expectedJobId, recordedBy, settleHeld, holdOnly, now });
+export async function recordCrewStripePayment(env, checkout, { expectedJobId = '', recordedBy = '', settleHeld = true, holdOnly = false, now = new Date().toISOString(), fromWebhook = false } = {}) {
+  const { result, payment, invoice, paymentSyncPayload } = await recordStripeCheckout(env, checkout, { kind: CHECKOUT_KINDS.crew, expectedJobId, recordedBy, settleHeld, holdOnly, now, fromWebhook });
   return { ...result, payment, invoice, paymentSyncPayload };
 }
 

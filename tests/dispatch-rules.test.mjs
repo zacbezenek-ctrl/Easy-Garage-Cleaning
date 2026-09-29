@@ -10,6 +10,7 @@ import { dispatchTravelRoutes, travelEstimator } from '../functions/_lib/dispatc
 import { dispatchStorage } from '../functions/_lib/dispatch-storage.js';
 import { scheduleInterval } from '../functions/_lib/dispatch-time.js';
 import { legacyDispatchScenario } from './helpers/dispatch-legacy-scenario.mjs';
+import { definitionsHash, funnelDefinitions } from '../functions/_lib/funnel-definitions.js';
 
 const owner = { user: 'zacb', displayName: 'Synthetic Owner', role: 'owner', businessAccess: true };
 const NOW = '2026-09-22T12:00:00.000Z', now = new Date(NOW);
@@ -195,6 +196,13 @@ test('with no saved settings and the staff directory off, saves, receipts and jo
   // estimates, a cancellation, then the board, the job view and openings.
   const before = JSON.parse(readFileSync(new URL('./snapshots/dispatch-legacy-output.json', import.meta.url), 'utf8'));
   const after = await legacyDispatchScenario({ mutateDispatch, mutateDispatchSelfAssignment, dispatchOverview, dispatchOpenings, travelEstimator });
+  // Funnel events carry the live funnel definitions stamp. A later unit that bumps the
+  // definitions (FUN-33: 2026-09-28.6 -> .7) changes only that stamp, not dispatch output,
+  // so the snapshot's events take the current stamp in place (same keys, same order).
+  const stamp = { definitionsVersion: funnelDefinitions().definitionsVersion, definitionsHash: definitionsHash() };
+  const snapshotEvents = Object.entries(before.documents).filter(([path]) => path.startsWith('funnelEvents/'));
+  assert.ok(snapshotEvents.length > 0 && snapshotEvents.every(([, doc]) => Object.keys(stamp).every(key => typeof doc[key] === 'string')), 'the snapshot\'s funnel events carry a definitions stamp');
+  for (const [, doc] of snapshotEvents) Object.assign(doc, stamp);
   assert.equal(before.saves.length, 7);
   assert.ok(before.saves.some(save => save.warnings.some(row => row.code === 'travel_buffer_short' && row.estimateSource === 'offline_zip')) && before.saves.some(save => save.action === 'claim'), 'the snapshot exercises drive estimates and a claim');
   assert.equal(JSON.stringify(after.saves), JSON.stringify(before.saves), 'every save response, warnings included');
