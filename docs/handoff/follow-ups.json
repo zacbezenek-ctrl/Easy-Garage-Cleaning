@@ -52,7 +52,7 @@
       "id": "HUB-INTEGRATION",
       "state": "merged_deployed_live_acceptance_incomplete",
       "owner": "build coordinator",
-      "action": "PR #87 final head bb41f03 passed all seven applicable workflows, including both dedicated WebKit suites, and merged to main as 5ed437c. All six applicable main push checks passed. Cloudflare matching assets and all four Railway 5ed deployments succeeded; API/MCP/portal health reported 5ed. A synthetic transcript saved but processing failed; complete the separate production fix and live acceptance."
+      "action": "PR #87 final head bb41f03 passed all seven applicable workflows, including both dedicated WebKit suites, and merged to main as 5ed437c. All six applicable main push checks passed. Cloudflare matching assets and all four Railway 5ed deployments succeeded; API/MCP/portal health reported 5ed. PR #88 corrected strict-schema defaults and deployed as d4fff3d; retry of the same saved synthetic transcript failed with provider HTTP 429. Continue diagnostics and live acceptance."
     },
     {
       "id": "OWNER-LIVE",
@@ -74,10 +74,17 @@
     },
     {
       "id": "TRANSCRIPT-PRODUCTION-FIX",
-      "state": "reviewed_local_tests_passed_ci_and_deployment_pending",
+      "state": "merged_deployed_provider_429_on_same_record_retry",
       "owner": "release coordinator",
-      "action": "Review and run exact-head CI on codex/transcript-production-schema-fix, merge and deploy it, then retry the same durable transcript saved for visit dispatch_beef26f85e694eb4b57d7a47a3c324d1. Verify one reviewed office task and no customer send; do not create a new intake to mask the failed saved one.",
-      "evidence": "Strict extraction schema had unsupported default annotations. Primary and independent review clear; AI 64 tests and API 18 tests plus typechecks passed locally. Production processing failed; original record persisted and no task/send occurred."
+      "action": "PR #88 final 4a82e52 passed all four checks and merged as d4fff3d, with all four Railway services and Cloudflare matching. Same saved transcript for visit dispatch_beef26f85e694eb4b57d7a47a3c324d1 retried without duplicate intake but failed with provider HTTP 429 at 22:00:18Z. Classify provider limit before a bounded retry; verify one reviewed task and no customer send.",
+      "evidence": "Strict-schema defaults corrected and safer diagnostics deployed. Attempt 2 returned extraction provider_request_failed HTTP 429. Cause class among rate, usage, credit or spending is unknown; no office task or send."
+    },
+    {
+      "id": "TRANSCRIPT-LIMIT-DIAGNOSTICS",
+      "state": "reviewed_24_api_tests_typecheck_passed_ci_pending_not_merged_or_deployed",
+      "owner": "release coordinator",
+      "action": "Review codex/transcript-limit-diagnostics error-code allowlist, test, require exact-head CI and deploy. Inspect OpenAI usage/limits through owner sign-in before retrying the same saved transcript if appropriate. Do not rotate keys or change billing without separate authorization.",
+      "evidence": "The deployed processor safely reported provider_request_failed HTTP 429 but cannot yet distinguish the provider limit class. Primary and independent review clear; 24 focused API tests and typecheck passed locally."
     },
     {
       "id": "DRIVE-JOB-PHOTOS",

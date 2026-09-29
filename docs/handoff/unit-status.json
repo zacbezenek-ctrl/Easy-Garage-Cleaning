@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "asOf": "2026-09-29",
   "repository": "zacbezenek-ctrl/Easy-Garage-Cleaning",
-  "mainSha": "5ed437cfb218d5edf3f17bd3df95b975cf62919c",
+  "mainSha": "d4fff3d3bcb1562fc35232dce8a0bb530b2aed4e",
   "batch8": {
     "pr": 86,
     "state": "merged_to_main_after_seven_green_workflows",
@@ -159,7 +159,7 @@
     "locatedCount": 0,
     "state": "missing_source"
   },
-  "note": "FIX-REFUNDS, GHL-TRACK-2, seven running builds and 41 specs remain source-unknown; reported states do not prove merged code. Batch 9 is deployed but transcript processing failed live, so acceptance remains open.",
+  "note": "FIX-REFUNDS, GHL-TRACK-2, seven running builds and 41 specs remain source-unknown; reported states do not prove merged code. Batch 9 and PR #88 are deployed but live transcript retry failed with provider HTTP 429, so acceptance remains open.",
   "batch9": {
     "pr": 87,
     "branch": "codex/hub-ios-walkthrough-completion",
@@ -219,11 +219,11 @@
     }
   },
   "production": {
-    "releaseSha": "5ed437cfb218d5edf3f17bd3df95b975cf62919c",
+    "releaseSha": "d4fff3d3bcb1562fc35232dce8a0bb530b2aed4e",
     "cloudflareProductionCheck": "success",
     "liveHubAssets": "hubready3 recordings operations suite verified",
-    "railwayDeployments": "all_four_success_actual_commit_metadata_5ed437c",
-    "apiMcpPortalHealth": "ready_release_5ed437c",
+    "railwayDeployments": "all_four_success_actual_commit_metadata_d4fff3d",
+    "apiMcpPortalHealth": "ready_release_d4fff3d",
     "requiredVariableNamesPresent": true,
     "secretValuesInspected": false,
     "syntheticVisit": {
@@ -236,11 +236,14 @@
       "remindersEnabled": false,
       "assignedOwner": "Zac",
       "transcriptSaved": true,
-      "transcriptProcessing": "failed",
+      "transcriptProcessing": "failed_attempt_2_provider_http_429",
+      "secondAttemptAt": "2026-09-29T22:00:18Z",
+      "safeServerEvidence": "extraction provider_request_failed HTTP 429",
+      "providerLimitClass": "unknown_usage_rate_credit_or_spend",
       "originalRecordDurable": true,
       "officeTaskCreated": false,
       "customerSendOccurred": false,
-      "retryPlan": "repeat same saved transcript after reviewed schema fix is deployed"
+      "retryPlan": "inspect usage and limits plus reviewed provider diagnostics; bounded retry of same saved transcript if appropriate"
     },
     "jobPhotoStorage": {
       "state": "blocked_live_regular_job",
@@ -250,7 +253,7 @@
       "recovery": "Cloudflare Production /api/drive-auth as Hub manager with company Google; redirect https://easygaragecleaning.com/api/drive-auth; verify upload",
       "fieldPayReceiptStorageSeparate": true
     },
-    "state": "matching_revision_deployed_live_transcript_processing_and_job_photos_blocked"
+    "state": "matching_revision_deployed_live_provider_429_and_job_photos_blocked"
   },
   "productionDeployment": {
     "completed": true,
@@ -261,9 +264,24 @@
   },
   "transcriptProductionFix": {
     "branch": "codex/transcript-production-schema-fix",
-    "state": "under_review_not_deployed",
+    "state": "reviewed_ci_green_merged_and_deployed",
+    "pr": 88,
+    "finalHeadSha": "4a82e521df66f7eddcb95bb9886af07666f1f9c5",
+    "mergeSha": "d4fff3d3bcb1562fc35232dce8a0bb530b2aed4e",
+    "ci": "four_of_four_applicable_success_including_dedicated_webkit_suites",
+    "localTests": "64 AI plus 18 API and typechecks passed",
     "finding": "unsupported default annotations in strict extraction schema",
-    "diagnostics": "safer error reporting in review",
-    "requires": "review, exact-head CI, merge, matching deployment, retry same durable saved transcript"
+    "diagnostics": "safer error reporting deployed; attempt 2 reported provider_request_failed HTTP 429",
+    "requires": "classify provider limit, then retry same durable saved transcript if appropriate"
+  },
+  "transcriptLimitDiagnostics": {
+    "branch": "codex/transcript-limit-diagnostics",
+    "state": "reviewed_local_tests_passed_ci_pending_not_merged_or_deployed",
+    "scope": "add currently documented provider error codes to safe allowlist",
+    "review": "primary_and_independent_clear",
+    "localTests": "24 focused API tests and typecheck passed",
+    "requires": "review, tests, exact-head CI, merge and deployment before bounded retry",
+    "ownerUsageLimitsSignIn": "requested",
+    "keyRotationOrBillingChange": false
   }
 }

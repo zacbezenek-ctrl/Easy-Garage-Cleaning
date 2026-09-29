@@ -3,6 +3,9 @@
 const knownCodes = new Set([
   'invalid_json_schema', 'invalid_api_key', 'insufficient_quota',
   'rate_limit_exceeded', 'model_not_found', 'permission_denied',
+  'credit_balance_exhausted', 'organization_spend_limit_exceeded',
+  'project_spend_limit_exceeded', 'organization_usage_limit_exceeded',
+  'slow_down', 'server_is_overloaded',
   'conversation_transcript_empty', 'conversation_transcript_too_large',
   'conversation_context_invalid', 'conversation_output_invalid',
   'recording_transcript_missing',

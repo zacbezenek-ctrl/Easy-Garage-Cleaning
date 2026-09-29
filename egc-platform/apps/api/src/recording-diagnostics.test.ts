@@ -2,6 +2,26 @@ import { describe, expect, it } from 'vitest';
 import { recordingFailureDiagnostic } from './recording-diagnostics.js';
 
 describe('recording processing diagnostics', () => {
+  it.each([
+    'credit_balance_exhausted',
+    'organization_spend_limit_exceeded',
+    'project_spend_limit_exceeded',
+    'organization_usage_limit_exceeded',
+    'slow_down',
+    'server_is_overloaded',
+  ])('preserves known provider code %s without exposing response data', (code) => {
+    const privateText = 'private transcript and credential';
+    const status = code === 'server_is_overloaded' ? 503 : 429;
+    const diagnostic = recordingFailureDiagnostic({
+      status,
+      code,
+      message: privateText,
+      headers: { authorization: privateText },
+      error: { input: privateText },
+    });
+    expect(diagnostic).toEqual({ code, status });
+    expect(JSON.stringify(diagnostic)).not.toContain(privateText);
+  });
   it('distinguishes actionable provider failures without logging bodies, messages, headers or arbitrary codes', () => {
     const privateText = 'private transcript and credential';
     expect(recordingFailureDiagnostic({ status: 400, code: 'invalid_json_schema', message: privateText, headers: { authorization: privateText }, error: { input: privateText } }))
