@@ -12,7 +12,7 @@ test('FIELD-PAY receipt approval and collection locks are atomic on real Firesto
   const { fieldPaymentHandlers } = await import('../functions/api/field-payments.js');
   const { getHubUserProfile } = await import('../functions/_lib/hub-session.js');
   const { fieldCardClaim, fieldPortalGuard } = await import('../functions/_lib/field-payment-card.js');
-  const env = { FIREBASE_API_KEY: 'synthetic-emulator-only', EGC_FIELD_PAY_ENABLED: 'true', MONEY_API_ENABLED: 'true', MONEY_UNIFIED_TOTALS: 'true', MONEY_INVOICE_STATE_ENABLED: 'true', HUB_AUTH_USERS_JSON: JSON.stringify({
+  const env = { FIREBASE_API_KEY: 'firebase-test-emulator-only', EGC_FIELD_PAY_ENABLED: 'true', MONEY_API_ENABLED: 'true', MONEY_UNIFIED_TOTALS: 'true', MONEY_INVOICE_STATE_ENABLED: 'true', HUB_AUTH_USERS_JSON: JSON.stringify({
     ZacB: { role: 'owner', passwordHash: 'synthetic' }, 'Lead.One': { role: 'crew', passwordHash: 'synthetic' },
   }) };
   const at = '2026-09-29T18:00:00.000Z', origin = 'https://easygaragecleaning.com';

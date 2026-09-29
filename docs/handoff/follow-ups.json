@@ -14,7 +14,7 @@
       "id": "CI-01",
       "state": "fix_in_candidate_pending_full_ci",
       "owner": "build coordinator",
-      "action": "Verify the Dispatch view-switch fix and all eight workflows on the final Batch 8 head, including real Firestore atomic/payment rules and dedicated iPhone WebKit field payment cases.",
+      "action": "Verify the Dispatch view-switch fix and all applicable workflows on the final Batch 8 head, including real Firestore atomic/payment rules and dedicated iPhone WebKit field payment cases. Operations Integration is path-filtered and does not run when egc-platform is unchanged; it runs again for Batch 9.",
       "evidence": "PR #86 run 36604534261, test_dispatch_ui.py:304"
     },
     {
