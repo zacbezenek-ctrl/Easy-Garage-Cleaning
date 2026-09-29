@@ -142,8 +142,13 @@
   "nextAuthAndCreditUx": {
     "branch": "codex/hub-session-diagnostics",
     "authCommitSha": "9e397576b1de2a99d5e7341aa7fba206a09a70e5",
-    "state": "auth_diagnostics_reviewed_20_tests_passed_next_pr_ci_pending; bounded_credit_message_ux_in_progress_not_live",
-    "gate": "review focused tests, exact-head CI and deployment; do not claim sign-in or provider credit fix"
+    "state": "pr90_seven_ci_green_merged_deployed_bc57eea",
+    "pr": 90,
+    "finalHeadSha": "75dcad6991358e5b5bb0e252be6060ada9b710d5",
+    "mainMergeSha": "bc57eea94ed9da8aa984033027161a4ca829be36",
+    "deployedRevision": "bc57eea94ed9da8aa984033027161a4ca829be36",
+    "liveEvidence": "two clean owner reloads; old failed recording source readable at 627 bytes; no attempt 4; future exact-credit message tested only",
+    "gate": "restore existing OpenAI credits, retry same saved transcript once, verify AI-reviewed task; photo/Firestore/flag owner gates remain"
   },
   "activation": {
     "FIX-REFUNDS": "off_at_merge",

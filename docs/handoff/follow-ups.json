@@ -95,10 +95,10 @@
     },
     {
       "id": "AUTH-AND-CREDIT-MESSAGE-DIAGNOSTICS",
-      "state": "next_pr_pending_not_live",
+      "state": "pr90_merged_deployed_future_credit_category_not_live_triggered",
       "owner": "release coordinator",
-      "action": "Review, test and run exact-head CI for auth-only commit 9e397576b1de2a99d5e7341aa7fba206a09a70e5 and bounded credit-specific recording message. Keep other HTTP 429 messages generic; do not claim a live sign-in or credit fix before deployment.",
-      "evidence": "Two transient Firebase SDK sign-in errors recovered after one reload without credential change. Auth diagnostics passed primary and independent review and 20 tests; credit-message UX is in progress."
+      "action": "PR #90 final head 75dcad6 passed seven exact-head checks and both previews, merged as bc57eea and deployed to matching Cloudflare/Railway services. Keep other HTTP 429 messages generic; do not infer a permanent sign-in fix or provider-credit restoration. After credits return, retry the same saved transcript once.",
+      "evidence": "Auth diagnostics passed 20 tests; credit UX passed API typecheck, 20 lifecycle and 15 WebKit tests. Two fresh final-release reloads restored signed owner with no error, but earlier transient Firebase cause remains unknown. Old saved recording reopened with readable 627-byte source and generic old lastErrorCode; no attempt 4."
     },
     {
       "id": "MANUAL-OFFICE-TASK-ACCEPTANCE",
